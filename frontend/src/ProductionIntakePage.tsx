@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { failureText, shippingApi, type Principal, type ProjectAddressee } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { ShipmentDataWindow } from "./ShipmentData";
+import { DispatchCard } from "./DispatchCard";
 import { DISPATCH_STAGES } from "./dispatchStage";
 import { formatDay } from "./format";
-import { canPack, hasWork, kbKey, num, ofKb, ofProject, packable, round2, SHIPPED_DAYS, shippedOnlyRows, stagePieces, type Pieces, type Tab } from "./intakeStages";
+import { canPack, hasWork, kbKey, num, ofKb, ofProject, packable, permittedPack, round2, SHIPPED_DAYS, shippedOnlyRows, stagePieces, type Pieces, type Tab } from "./intakeStages";
 import { isPickup, termsText } from "./carriers";
 import { canAct, canSee, hasFullAccess } from "./navigation";
 import { intakeApi, type DispatchShipment, type IntakeAct, type IntakeRow } from "./productionIntakeApi";
@@ -42,9 +43,9 @@ const TAB_COLUMNS: Record<Exclude<Tab, "all">, string[]> = {
   // и в «Колонках».
   production: ["project", "kb", "name", "needed", "launched", "remaining"],
   ready: ["project", "kb", "name", "needed", "remaining"],
-  accepted: ["project", "kb", "name", "accepted", "received", "grn", "packed"],
-  packed: ["project", "kb", "name", "grn", "packed", ...DELIVERY_COLUMNS, "track", "docs"],
-  to_ship: ["project", "kb", "name", "grn", "packed", ...DELIVERY_COLUMNS, "track", "docs", "ship"],
+  accepted: ["project", "kb", "name", "accepted", "received", "grn", "packed", "sent", "free", "upd"],
+  packed: ["project", "kb", "name", "grn", "packed", ...DELIVERY_COLUMNS, "track", "pl", "dn", "upd", "boxes"],
+  to_ship: ["project", "kb", "name", "grn", "packed", ...DELIVERY_COLUMNS, "track", "pl", "dn", "upd", "boxes", "ship"],
   shipped: ["project", "kb", "name", "grn", "sent", ...DELIVERY_COLUMNS, "track", "shippedAt"],
 };
 const EMPTY: Record<Tab, string> = {
@@ -70,18 +71,18 @@ function urlTab(): { tab: Tab | null; journal: boolean } {
   return { tab: TABS.some(([key]) => key === tab) ? tab as Tab : null, journal: false };
 }
 
-/** Акты остаются отдельными строками; первая несёт общие действия КБ. Ниже — только фактический остаток к приёмке. */
-type IntakeLine = IntakeRow & { act?: IntakeAct; left: number; kbActions: boolean };
+/** Итог и действия относятся ко всей КБ; акты показывают только фактический приход по ГРН. */
+type IntakeLine = IntakeRow & { act?: IntakeAct; left: number; kbActions: boolean; total?: boolean };
 function expand(row: IntakeRow, withActs: boolean, withRemainder: boolean): IntakeLine[] {
   const acts = withActs ? row.acts ?? [] : [];
   const left = leftOf(row);
-  const lines: IntakeLine[] = acts.map((act, index) => ({
-    ...row, act, kbActions: index === 0, left: 0, stage: "", launched: "0", delivered: "0", accepted: act.quantity, remaining: "0",
-    packed: index === 0 ? row.packed : "0", sent: index === 0 ? row.sent : "0",
+  const lines: IntakeLine[] = acts.map((act) => ({
+    ...row, act, kbActions: false, left: 0, stage: "", needed: "0", launched: "0", delivered: "0", accepted: act.quantity, remaining: "0",
+    packed: "0", sent: "0",
     grn: act.grn, location: act.location, tasks: [],
   }));
   if (!acts.length) lines.push({ ...row, left, kbActions: true });
-  else if (withRemainder && (left > 0 || num(row.remaining) > 0)) lines.push({ ...row, left, kbActions: false, accepted: "0", packed: "0", sent: "0", grn: null, location: "" });
+  else lines.unshift({ ...row, left: withRemainder ? left : 0, remaining: withRemainder ? row.remaining : "0", kbActions: true, total: true, grn: null });
   return lines;
 }
 
@@ -116,6 +117,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const [header, setHeader] = useState<"journal" | "good" | "request" | null>(fromUrl.current.journal ? "journal" : null);
   const [label, setLabel] = useState<{ grn: string; result: PrintResult | null; error: string; busy: boolean } | null>(null);
   const [card, setCard] = useState<DispatchShipment | null>(null);
+  const [projectData, setProjectData] = useState<string | null>(null);
 
   async function reload() {
     try {
@@ -176,6 +178,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     return [...new Set([cardOf(row)?.note, data.note, "tk_note" in data ? data.tk_note : ""].map((text) => text?.trim()).filter(Boolean))].join("\n");
   };
   const deliveryCell = (row: IntakeLine, field: typeof DELIVERY_COLUMNS[number]) => {
+    if (row.act) return dash;
     const entries = deliveryOf(row);
     return <span className="intake-delivery-list">{entries.length ? entries.map((data, index) => {
       const text = deliveryText(row, field, data);
@@ -240,10 +243,10 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     const row = source(line);
     const avail = packable(row);
     const open = kbShips(row).some((shipment) => ACTIVE.includes(shipment.status));
-    const waitDecision = avail > 0 && !row.pack_decided;
+    const waitDecision = avail > 0 && !canPack(row);
     const openPack = () => setOpened({ kind: "pack", project: row.project });
-    if (canPack(row)) return <button type="button" className="intake-take-btn" title={`Можно упаковать: ${avail}`}
-      aria-label={`Упаковать ${who(row)}: упаковано ${num(row.packed)}, можно ${avail}`} onClick={openPack}>{num(row.packed)}</button>;
+    if (canPack(row)) return <button type="button" className="intake-take-btn" title={`Можно упаковать: ${permittedPack(row)}; на складе: ${avail}`}
+      aria-label={`Упаковать ${who(row)}: упаковано ${num(row.packed)}, можно ${permittedPack(row)}`} onClick={openPack}>{line.total ? <>Упаковать остаток · {permittedPack(row)}</> : num(row.packed)}</button>;
     if (open) return <button type="button" className="intake-num-btn" title={waitDecision ? "Отправки проекта на упаковке; упаковать ещё — после решения менеджера «упаковывать»" : "Отправки проекта на упаковке: PL/DN, короба, этикетки"}
       aria-label={`Упаковка ${who(row)}: упаковано ${num(row.packed)}`} onClick={openPack}>{num(row.packed)}</button>;
     if (waitDecision) return <button type="button" className="intake-num-btn" disabled title="Упаковать можно после решения менеджера «упаковывать»"
@@ -275,33 +278,40 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   };
   /** Каждая отправка держит свои PL, DN и УПД; формирование и перевыпуск остаются явными действиями. */
   const docsShips = (row: IntakeLine) => row.kbActions ? shownShips(row).filter((shipment) => shipment.status === "Упакована") : [];
-  const docsCell = (row: IntakeLine) => {
+  const docsCell = (row: IntakeLine, kind: "pl" | "dn" | "upd" | "boxes") => {
+    if (kind === "upd" && tab === "accepted" && row.kbActions) {
+      const projectCard = cardOf(row);
+      return <button type="button" className="link-button intake-doc-action" aria-label={`Данные отправки ${row.project}`} onClick={() => setProjectData(row.project)}>
+        {projectCard?.upd_type === "БЕЗ УПД" ? "Без УПД" : <>{projectCard?.upd_number ? `УПД № ${projectCard.upd_number}` : "Внести УПД"}
+          {projectCard?.upd_url ? " · файл" : " · без файла"}</>}
+      </button>;
+    }
     const ships = docsShips(row);
     if (!ships.length) return dash;
-    return <span className="intake-docs">{ships.map((shipment) => {
+    return <span className="intake-docs">{ships.map((shipment, index) => {
       const upd = updState(shipment);
+      const number = kind === "pl" ? shipment.pl_number : shipment.dn_number;
       return <span className="intake-docs-line" key={shipment.id} data-shipment={shipment.id}>
-        {ships.length > 1 && <span className="intake-ship-no muted">{ships.indexOf(shipment) + 1} · {shipment.number}</span>}
-        {!shipment.pl_number
-          ? (rights.canEdit
-            ? <button type="button" className="secondary small intake-print" aria-label={`Сформировать отгрузочные ${shipment.number}`} onClick={() => setOpened({ kind: "pack", project: row.project })}>Сформировать отгрузочные</button>
+        {ships.length > 1 && <span className="intake-ship-no muted">{index + 1} · {shipment.number}</span>}
+        {kind === "pl" || kind === "dn"
+          ? !number ? <span className="muted">не сформирован</span>
+            : canPrintDocs ? <button type="button" className="link-button intake-doc-action"
+              aria-label={`Печать ${kind.toUpperCase()} ${shipment.number}`}
+              title={kind === "dn" && shipment.missing_data.length ? `Не хватает: ${shipment.missing_data.join(", ")}` : number}
+              disabled={Boolean(busy) || (kind === "dn" && shipment.missing_data.length > 0)}
+              onClick={() => void printDocument(shipment, kind)}>{kind.toUpperCase()}</button>
+            : <span title={number}>{kind.toUpperCase()}</span>
+          : kind === "upd" ? <>
+            {upd.href ? <a className="intake-doc-action" href={upd.href} target="_blank" rel="noreferrer">{upd.text}</a>
+              : <button type="button" className="link-button intake-doc-action" aria-label={`Внести УПД ${shipment.number}`} title={upd.text}
+                onClick={() => setCard(shipment)}>{upd.text}</button>}
+            {(upd.tone === "danger" || upd.tone === "warn") && <span className={`tone-${upd.tone}`}>{upd.tone === "danger" ? "нет файла УПД" : "тип УПД не выбран"}</span>}
+          </> : !shipment.pl_number ? (rights.canEdit
+            ? <button type="button" className="secondary small intake-print" aria-label={`Сформировать отгрузочные ${shipment.number}`}
+              onClick={() => setOpened({ kind: "pack", project: row.project })}>Сформировать отгрузочные</button>
             : <span className="muted">не сформированы</span>)
-          : <>
-            <span className="intake-doc-actions">
-              {canPrintDocs ? <>
-                <button type="button" className="link-button intake-doc-action" aria-label={`Печать PL ${shipment.number}`} title={shipment.pl_number}
-                  disabled={Boolean(busy)} onClick={() => void printDocument(shipment, "pl")}>PL</button>
-                <button type="button" className="link-button intake-doc-action" aria-label={`Печать DN ${shipment.number}`} disabled={Boolean(busy) || shipment.missing_data.length > 0}
-                  title={shipment.missing_data.length ? `Не хватает: ${shipment.missing_data.join(", ")}` : shipment.dn_number}
-                  onClick={() => void printDocument(shipment, "dn")}>DN</button>
-              </> : <><span>PL</span><span>DN</span></>}
-              {upd.href ? <a className="intake-doc-action" href={upd.href} target="_blank" rel="noreferrer">{upd.text}</a>
-                : <button type="button" className="link-button intake-doc-action" aria-label={`Внести УПД ${shipment.number}`} title={upd.text}
-                  onClick={() => setCard(shipment)}>{upd.text}</button>}
-              <button type="button" className="link-button intake-doc-action muted" aria-label={`Документы ${shipment.number}`} title="Короба, этикетки и перевыпуск"
-                onClick={() => setOpened({ kind: "docs", id: shipment.id })}>Короба…</button>
-            </span>
-            {(upd.tone === "danger" || upd.tone === "warn") && <span className={`tone-${upd.tone}`}>{upd.tone === "danger" ? "нет файла УПД" : "тип УПД не выбран"}</span>}</>}
+            : <button type="button" className="link-button intake-doc-action muted" aria-label={`Документы ${shipment.number}`} title="Короба, этикетки и перевыпуск"
+              onClick={() => setOpened({ kind: "docs", id: shipment.id })}>Короба…</button>}
       </span>;
     })}</span>;
   };
@@ -320,8 +330,8 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     { key: "project", title: "Проект", value: (row) => row.project, hidden: true },
     { key: "kb", title: "КБ", value: (row) => row.item_index, render: (row) => <span className="intake-kb">{row.item_index}</span> },
     // Строка — одна линия (владелец 15.10): длинное наименование обрезается «…», целиком — в подсказке.
-    { key: "name", title: "Наименование", value: (row) => row.name, render: (row) => <span className="intake-clip intake-name" title={row.name}>{row.name}</span> },
-    { key: "needed", title: "Заказано", value: (row) => num(row.needed), numeric: true, render: (row) => row.needed },
+    { key: "name", title: "Наименование", value: (row) => row.name, render: (row) => <span className="intake-clip intake-name" title={row.name}>{row.total && <strong>Итого по КБ<br /></strong>}{row.name}</span> },
+    { key: "needed", title: "Заказано", value: (row) => num(row.needed), numeric: true, render: (row) => row.act ? dash : row.needed },
     { key: "left", title: "Остаток", value: (row) => row.left, numeric: true, render: (row) => row.left > 0 ? row.left : dash },
     { key: "launched", title: "Запущено", value: (row) => num(row.launched), numeric: true, render: (row) => count(row.launched) },
     { key: "accepted", title: "Принято", value: (row) => num(row.accepted), numeric: true, render: (row) => count(row.accepted) },
@@ -332,7 +342,9 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
         return <button type="button" className="intake-take-btn" title={tasksText(row) || "Принять на склад"} aria-label={`Принять ${who(row)}: можно ${row.remaining}`}
           onClick={() => setIntake([source(row)])}>{row.remaining}</button>;
       } },
-    { key: "packed", title: "Упаковано", value: (row) => num(row.packed), numeric: true, render: packCell },
+    { key: "packed", title: tab === "accepted" ? "Упаковать" : "Упаковано", value: (row) => num(row.packed), numeric: true, render: (row) => row.total ? count(row.packed) : packCell(row) },
+    { key: "free", title: "Не упаковано", value: (row) => row.kbActions ? packable(source(row)) : 0, numeric: true,
+      render: (row) => row.kbActions ? <>{packable(source(row))}{row.total && <div>{packCell(row)}</div>}</> : dash },
     ...DELIVERY_COLUMNS.map((key): DataColumn<IntakeLine> => ({ key,
       title: ({ receiver: "Получатель", delivery: "Способ доставки", carrier: "Перевозчик", address: "Адрес", phone: "Телефон", warehouseNote: "Комментарий для склада" } as Record<string, string>)[key],
       value: (row) => deliveryOf(row).map((data) => deliveryText(row, key, data)).join("; "),
@@ -341,7 +353,14 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     })),
     { key: "track", title: "Трек", wrap: true, minWidth: 84, maxWidth: 140, value: (row) => shownShips(row).map((shipment) => shipment.track_number).filter(Boolean).join(", "),
       render: (row) => trackCell(row, tab === "packed" || tab === "all") },
-    { key: "docs", title: "Документы", wrap: true, minWidth: 100, maxWidth: 180, value: (row) => docsShips(row).map((shipment) => shipment.pl_number ? [shipment.pl_number, shipment.dn_number, updState(shipment).text].join(" · ") : "не сформированы").join(", "), render: docsCell },
+    ...(["pl", "dn", "upd", "boxes"] as const).map((kind): DataColumn<IntakeLine> => ({
+      key: kind, title: { pl: "PL", dn: "DN", upd: "УПД", boxes: "Короба" }[kind], wrap: true,
+      minWidth: kind === "upd" || kind === "boxes" ? 100 : 48, maxWidth: kind === "upd" || kind === "boxes" ? 180 : 120,
+      value: (row) => docsShips(row).map((shipment) => kind === "upd" ? updState(shipment).text
+        : kind === "boxes" ? (shipment.pl_number ? "Короба" : "не сформированы")
+        : (kind === "pl" ? shipment.pl_number : shipment.dn_number) || "не сформирован").join(", "),
+      render: (row) => docsCell(row, kind),
+    })),
     { key: "ship", title: "Отгрузка", value: (row) => readyShips(row).length, render: (row) => {
       if (!row.kbActions || !canDispatch || !readyShips(row).length) return dash;
       return <button type="button" className="primary small intake-print" title={`Готово к отгрузке: ${piecesOf(row).to_ship}`} aria-label={`Отгрузить ${who(row)}`}
@@ -383,7 +402,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     grn: (row) => Boolean(row.grn), received: (row) => Boolean(row.act), tasks: (row) => row.tasks.length > 0,
   };
   const visibleColumns = tab === "all"
-    ? columns.filter((column) => !["ship", "shippedAt", "docs"].includes(column.key) && (!OPTIONAL[column.key] || shown.some(OPTIONAL[column.key])))
+    ? columns.filter((column) => !["ship", "shippedAt", "pl", "dn", "upd", "boxes"].includes(column.key) && (!OPTIONAL[column.key] || shown.some(OPTIONAL[column.key])))
     : [...TAB_COLUMNS[tab], ...(!["packed", "to_ship", "shipped"].includes(tab) ? DELIVERY_COLUMNS : [])].flatMap((key) => columns.filter((column) => column.key === key))
       .map((column) => column.key === "tasks" ? { ...column, hidden: false } : column);
 
@@ -393,6 +412,8 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     const ready = groupRows.filter((row) => !row.act && num(row.remaining) > 0);
     const total = round2(ready.reduce((sum, row) => sum + num(row.remaining), 0));
     return <span className="intake-group"><span className="intake-group-title">{title}</span>
+      {tab === "accepted" && <button type="button" className="secondary small" onClick={(event) => { event.stopPropagation(); setProjectData(project); }}>
+        Данные отправки</button>}
       {canWarehouse && (tab === "ready" || tab === "production" || tab === "all") && ready.length > 1 && <button type="button" className="primary small" onClick={(event) => { event.stopPropagation(); setIntake(ready.map(source)); }}>
         Принять всё: {ready.length} КБ · {total} шт</button>}
       </span>;
@@ -437,5 +458,6 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     {header === "good" && <RegisterGoodWindow reload={reload} close={() => setHeader(null)} />}
     {header === "request" && <CreateShipmentWindow reload={reload} close={() => setHeader(null)} />}
     {card && <ShipmentDataWindow shipment={card} canEdit={canDispatch} canCorrectHistory={hasFullAccess(principal) && !principal.viewing} onSaved={reload} close={() => setCard(null)} />}
+    {projectData && <DispatchCard project={projectData} customer={head[projectData]?.customer} stage="accepted" canEdit={canDispatch} onSaved={() => void reload()} close={() => setProjectData(null)} />}
   </section>;
 }

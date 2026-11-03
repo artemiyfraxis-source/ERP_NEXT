@@ -14,20 +14,21 @@ import "./dispatch.css";
 const UPD: Array<[string, string]> = [["ЭДО", "ЭДО"], ["БУМАГА", "Бумага"], ["БЕЗ УПД", "Без УПД"]];
 const CONFLICT = "Данные отправки уже изменил другой сотрудник. Закройте окно и откройте его заново.";
 
-export type DispatchKey = "receiver" | "shipping_point" | "phone" | "upd_type" | "terms" | "carrier" | "note";
+export type DispatchKey = "receiver" | "shipping_point" | "phone" | "upd_type" | "upd_number" | "upd_date" | "terms" | "carrier" | "note";
 export type DispatchDraft = Record<DispatchKey, string>;
-const KEYS: DispatchKey[] = ["receiver", "shipping_point", "phone", "upd_type", "terms", "carrier", "note"];
+const KEYS: DispatchKey[] = ["receiver", "shipping_point", "phone", "upd_type", "upd_number", "upd_date", "terms", "carrier", "note"];
 
 export const dispatchDraft = (card?: Partial<ProjectAddressee> | Partial<DispatchData> | null): DispatchDraft => ({
   receiver: card?.receiver ?? "", shipping_point: card?.shipping_point ?? "", phone: card?.phone ?? "", upd_type: card?.upd_type ?? "",
   terms: card?.terms ?? "", carrier: card?.carrier ?? "", note: card?.note ?? "",
+  upd_number: card?.upd_number ?? "", upd_date: card?.upd_date ?? "",
 });
 
 /** Только изменённые поля; скрытый при самовывозе адрес остаётся в истории карточки. */
 export function changedDispatch(draft: DispatchDraft, card?: Partial<ProjectAddressee> | Partial<DispatchData> | null): Record<string, string | null> {
   const before = dispatchDraft(card);
   return Object.fromEntries(KEYS.filter((key) => !(key === "shipping_point" && draft.terms === "САМОВЫВОЗ") && draft[key].trim() !== before[key])
-    .map((key) => [key, key === "upd_type" || key === "terms" ? draft[key] || null : draft[key].trim()]));
+    .map((key) => [key, key === "upd_type" || key === "upd_date" || key === "terms" ? draft[key] || null : draft[key].trim()]));
 }
 
 export function readFile(file: File) {
@@ -43,7 +44,7 @@ const FIELDS: Array<["receiver" | "shipping_point" | "phone", string, string]> =
   ["receiver", "Получатель", "как в документах"], ["shipping_point", "Адрес доставки", "куда везём"], ["phone", "Телефон", ""],
 ];
 
-/** Получатель, адрес, телефон, вариант УПД и — у бумажной — её файл. Файл прикладывается сразу (загрузка + правка
+/** Получатель, адрес, телефон, тип, номер, дата и файл УПД. Файл прикладывается сразу (загрузка + правка
  *  карточки), поля сохраняет тот, кто встроил форму. `suffix` — к подписям для чтения с экрана, когда форм несколько. */
 export function DispatchFields({ project, draft, onChange, editable, card, onCardSaved, suffix = "", hideAddress = false, hideUpd = false }: {
   project: string; draft: DispatchDraft; onChange: (draft: DispatchDraft) => void; editable: boolean;
@@ -67,7 +68,7 @@ export function DispatchFields({ project, draft, onChange, editable, card, onCar
       let link = nextUrl;
       if (file) link = (await shippingApi.uploadCardUpd(project, await readFile(file))).file.url;
       const { addressee } = await shippingApi.saveAddressee({
-        project, version: card?.version ?? 0, upd_url: link, ...(link ? { upd_type: "БУМАГА" } : {}),
+        project, version: card?.version ?? 0, upd_url: link, ...(link ? { upd_type: draft.upd_type } : {}),
       });
       onCardSaved(addressee, message);
     } catch (reason) {
@@ -96,13 +97,17 @@ export function DispatchFields({ project, draft, onChange, editable, card, onCar
           inputMode={key === "phone" ? "tel" : undefined} onChange={(event) => onChange({ ...draft, [key]: event.target.value })} /></label>)}
       {!hideUpd && <label>УПД<select aria-label={`УПД${suffix}`} value={draft.upd_type} disabled={!editable} onChange={(event) => onChange({ ...draft, upd_type: event.target.value })}>
         <option value="">не выбрано</option>{UPD.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
+      {!hideUpd && draft.upd_type && draft.upd_type !== "БЕЗ УПД" && <>
+        <label>№ УПД<input aria-label={`№ УПД${suffix}`} maxLength={255} value={draft.upd_number} disabled={!editable} onChange={(event) => onChange({ ...draft, upd_number: event.target.value })} /></label>
+        <label>Дата УПД<input aria-label={`Дата УПД${suffix}`} type="date" value={draft.upd_date} disabled={!editable} onChange={(event) => onChange({ ...draft, upd_date: event.target.value })} /></label>
+      </>}
       <label className="wide">Комментарий для склада<textarea aria-label={`Комментарий для склада${suffix}`} value={draft.note} disabled={!editable} maxLength={5000}
         onChange={(event) => onChange({ ...draft, note: event.target.value })} /></label>
     </div>
-    {!hideUpd && draft.upd_type === "БУМАГА" && <div className="dispatch-upd">
+    {!hideUpd && (draft.upd_type === "БУМАГА" || draft.upd_type === "ЭДО") && <div className="dispatch-upd">
       {url
         ? <>УПД: <a href={url} target="_blank" rel="noreferrer">{fileName}</a></>
-        : <span className={editable ? "muted" : "tone-warn"}>Файл бумажной УПД не приложен</span>}
+        : <span className={editable ? "muted" : "tone-warn"}>{draft.upd_type === "БУМАГА" ? "Файл бумажной УПД не приложен" : "Файл УПД не приложен"}</span>}
       {editable && <>
         {fileInput}
         <button type="button" className={url ? "link-button" : "secondary small"} disabled={busy} onClick={() => input.current?.click()}>
@@ -124,6 +129,7 @@ export function DispatchCard({ project, customer, canEdit, close, onSaved, stage
   const [data, setData] = useState<DispatchData | null>(null);
   const [draft, setDraft] = useState<DispatchDraft>(dispatchDraft(null));
   const [loaded, setLoaded] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
   const [busy, setBusy] = useState(false);
@@ -132,7 +138,7 @@ export function DispatchCard({ project, customer, canEdit, close, onSaved, stage
     let live = true;
     intakeApi.dispatch(project)
       .then((result) => { if (live) { setData(result.addressee); setDraft(dispatchDraft(result.addressee)); } })
-      .catch((reason) => { if (live) setError(failureText(reason, "Не удалось загрузить данные отправки")); })
+      .catch((reason) => { if (live) { setLoadFailed(true); setError(failureText(reason, "Не удалось загрузить данные отправки")); } })
       .finally(() => { if (live) setLoaded(true); });
     return () => { live = false; };
   }, [project]);
@@ -154,12 +160,6 @@ export function DispatchCard({ project, customer, canEdit, close, onSaved, stage
     setData(card as DispatchData); setDraft((current) => ({ ...current, upd_type: card.upd_type ?? current.upd_type })); setSaved(message);
     onSaved?.();
   };
-  const decisionSaved = (card: ProjectAddressee) => {
-    const before = dispatchDraft(data), next = dispatchDraft(card);
-    setDraft((current) => Object.fromEntries(KEYS.map((key) => [key, current[key] === before[key] ? next[key] : current[key]])) as DispatchDraft);
-    setData(card as DispatchData);
-    onSaved?.();
-  };
 
   return <PageWindow label={`Данные отправки ${project}`} close={close} width={900}>
     <section className="panel dispatch-card">
@@ -167,10 +167,10 @@ export function DispatchCard({ project, customer, canEdit, close, onSaved, stage
         <button type="button" className="secondary small" onClick={close}>Закрыть</button></header>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {saved && <div className="success-banner" role="status">{saved}</div>}
-      {!loaded ? <div className="empty">Загрузка…</div> : <>
+      {!loaded ? <div className="empty">Загрузка…</div> : loadFailed ? <div className="empty">Закройте окно и откройте заново, чтобы загрузить данные.</div> : <>
         <DispatchFields project={project} draft={draft} onChange={(next) => { setDraft(next); setSaved(""); }} editable={canEdit}
           card={data} onCardSaved={fileSaved} hideUpd={early} />
-        {deciding && <PackDecision project={project} editable={canEdit} card={data} onCard={decisionSaved} />}
+        {deciding && <PackDecision project={project} editable={canEdit} onReload={async () => { await onSaved?.(); }} />}
         <div className="dispatch-actions">
           {canEdit
             ? <button type="button" className="primary" disabled={busy} onClick={() => void save()}>{busy ? "Сохраняем…" : "Сохранить"}</button>

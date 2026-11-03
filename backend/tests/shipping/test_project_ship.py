@@ -19,6 +19,7 @@ from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import AuditEventRow, OutboxMessageRow, create_schema
 from tests.factories import Actor
+from tests.shipping.test_api import decide_pack
 
 PROJECT = "591К.3"
 PDF = base64.b64encode(b"%PDF-1.4 upd").decode()
@@ -72,11 +73,7 @@ def _card(client, **fields) -> dict:
 
 
 def _decide(client) -> dict:
-    """Решение «упаковывать» (0162): без него склад не упаковывает и не отгружает из карточки."""
-    current = client.get("/api/shipping/project-addressee", params={"project": PROJECT}).json()["addressee"]
-    response = client.post("/api/shipping/project-pack-decision", json={"project": PROJECT, "version": current["version"], "decided": True})
-    assert response.status_code == 200, response.text
-    return response.json()["addressee"]
+    return decide_pack(client, PROJECT)
 
 
 def _body(goods: list[tuple[dict, str]], *, addressee_version=0, **extra) -> dict:
@@ -106,6 +103,7 @@ def test_manager_with_warehouse_ships_card_change_documents_and_file_in_one_requ
     client, sessions = env
     good = _stock(client)
     card = _card(client, shipping_point="Москва", terms="САМОВЫВОЗ", upd_type="БУМАГА")
+    _decide(client)
     response = _ship(client, _body([(good, "6")], addressee_version=card["version"],
         addressee={"contact": "Иванов", "phone": "+7 900"},
         documents={"upd_number": "77", "upd_date": "2026-09-22", "deadline": "2026-09-30"},
@@ -122,9 +120,9 @@ def test_manager_with_warehouse_ships_card_change_documents_and_file_in_one_requ
     goods = {row["id"]: row for row in client.get("/api/shipping/goods").json()["goods"]}
     assert (goods[good["id"]]["sent"], goods[good["id"]]["remaining"]) == ("6", "0")
     stored = client.get("/api/shipping/project-addressee", params={"project": PROJECT}).json()["addressee"]
-    # +1 — правка карточки, +1 — решение «упаковывать», которое ставит отправка менеджера.
-    assert (stored["version"], stored["contact"], stored["phone"]) == (card["version"] + 2, "Иванов", "+7 900")
-    assert stored["pack_decided"] is True
+    # Only the explicit card edit changes its version.
+    assert (stored["version"], stored["contact"], stored["phone"]) == (card["version"] + 1, "Иванов", "+7 900")
+    assert stored["pack_decided"] is False
     with sessions() as session:
         events = list(session.scalars(select(AuditEventRow.event_type).order_by(AuditEventRow.occurred_at)))
     assert {"shipping.addressee_set", "shipping.created", "shipping.picked", "shipping.packed", "shipping.upd_attached",
@@ -135,6 +133,7 @@ def test_shipping_without_upd_number_is_refused_and_says_why(env):
     client, _ = env
     good = _stock(client)
     _card(client, shipping_point="Москва", upd_type="ЭДО")
+    _decide(client)
     response = _ship(client, _body([(good, "4")], addressee_version=1, ship=True))
     # Без № УПД отправка не уезжает вовсе (владелец 28.10.2026), а не уезжает незакрытой.
     assert response.status_code == 422
@@ -145,11 +144,12 @@ def test_pack_only_manager_gets_packed_storekeeper_gets_assembled(env):
     client, _ = env
     first, second = _stock(client, "КБ1"), _stock(client, "КБ2")
     _card(client, shipping_point="Москва")
+    _decide(client)
     _as(MANAGER)
     by_manager = _ship(client, _body([(first, "2")], addressee_version=1), key="m").json()
     _as(STOREKEEPER)
-    # Отправка менеджера поставила решение «упаковывать» (карточка → версия 2): теперь упаковывает и склад.
-    by_storekeeper = _ship(client, _body([(second, "3")], addressee_version=2), key="s").json()
+    # Both KB caps were explicitly granted; shipment creation does not change the card.
+    by_storekeeper = _ship(client, _body([(second, "3")], addressee_version=1), key="s").json()
 
     assert (by_manager["shipment"]["status"], by_manager["shipped"]) == ("Упакована", False)
     assert by_manager["shipment"]["pl_number"]
@@ -161,6 +161,7 @@ def test_replay_with_same_key_and_body_returns_stored_result_and_writes_nothing(
     client, sessions = env
     good = _stock(client)
     _card(client, shipping_point="Москва", upd_type="ЭДО")
+    _decide(client)
     body = _body([(good, "5")], addressee_version=1, ship=True, documents={"upd_number": "5"})
     first = _ship(client, body).json()
     before = _snapshot(sessions)
@@ -178,6 +179,7 @@ def test_same_key_with_other_body_is_refused_and_writes_nothing(env):
     client, sessions = env
     good = _stock(client)
     _card(client, shipping_point="Москва")
+    _decide(client)
     _ship(client, _body([(good, "2")], addressee_version=1))
     before = _snapshot(sessions)
     fresh = client.get("/api/shipping/goods").json()["goods"][0]
@@ -192,6 +194,7 @@ def test_stale_good_version_or_addressee_version_is_409_and_nothing_written(env)
     client, sessions = env
     good = _stock(client)
     _card(client, shipping_point="Москва")
+    _decide(client)
     before = _snapshot(sessions)
 
     stale_good = _ship(client, _body([({**good, "version": good["version"] - 1}, "2")], addressee_version=1,
@@ -206,6 +209,7 @@ def test_quantity_above_stock_is_409_not_clamped(env):
     client, sessions = env
     good = _stock(client, quantity="6")
     _card(client, shipping_point="Москва")
+    _decide(client)
     before = _snapshot(sessions)
     response = _ship(client, _body([(good, "7")], addressee_version=1))
 
@@ -226,16 +230,16 @@ def test_role_matrix(env):
     before = _snapshot(sessions)
 
     _as(STOREKEEPER)
-    card_by_storekeeper = _ship(client, _body([(good, "1")], addressee_version=2, addressee={"contact": "Петров"}, ship=True), key="r1")
-    docs_by_storekeeper = _ship(client, _body([(good, "1")], addressee_version=2, documents={"upd_number": "5"}), key="r2")
+    card_by_storekeeper = _ship(client, _body([(good, "1")], addressee_version=1, addressee={"contact": "Петров"}, ship=True), key="r1")
+    docs_by_storekeeper = _ship(client, _body([(good, "1")], addressee_version=1, documents={"upd_number": "5"}), key="r2")
     _as(MANAGER)
-    ship_by_manager = _ship(client, _body([(good, "1")], addressee_version=2, ship=True), key="r3")
-    assert undecided.status_code == 422 and undecided.json()["detail"] == "Менеджер ещё не решил упаковывать"
+    ship_by_manager = _ship(client, _body([(good, "1")], addressee_version=1, ship=True), key="r3")
+    assert undecided.status_code == 422 and "разреш" in undecided.json()["detail"]
     assert (card_by_storekeeper.status_code, docs_by_storekeeper.status_code, ship_by_manager.status_code) == (403, 403, 403)
     assert _snapshot(sessions) == before
 
     _as(STOREKEEPER)
-    shipped = _ship(client, _body([(good, "1")], addressee_version=2, ship=True), key="r4")
+    shipped = _ship(client, _body([(good, "1")], addressee_version=1, ship=True), key="r4")
     assert shipped.status_code == 200, shipped.text
     assert shipped.json()["shipment"]["upd_number"] == "5"
     assert shipped.json()["shipment"]["status"] == "Отгружена"  # закроется, когда приложат файл УПД
@@ -245,6 +249,7 @@ def test_paper_upd_without_file_refuses_shipping_and_keeps_the_card_unchanged(en
     client, sessions = env
     good = _stock(client)
     _card(client, shipping_point="Москва", upd_type="БУМАГА")
+    _decide(client)
     before = _snapshot(sessions)
     response = _ship(client, _body([(good, "2")], addressee_version=1, addressee={"contact": "Петров"}, ship=True))
 
@@ -258,6 +263,7 @@ def test_failure_at_any_step_writes_nothing(env, monkeypatch, step):
     client, sessions = env
     good = _stock(client)
     _card(client, shipping_point="Москва", upd_type="БУМАГА")
+    _decide(client)
     before = _snapshot(sessions)
     original = getattr(application, step)
 

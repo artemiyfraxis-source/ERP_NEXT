@@ -16,7 +16,7 @@ from app.modules.shipping.documents import build_delivery_note
 from app.modules.shipping.domain import DeliveryTerms, ProjectAddressee, ShippingValidationError, UpdType
 from app.shared.http_auth import Principal, authenticated_principal
 from tests.factories import Actor
-from tests.shipping.test_api import decide_pack, shipping_api  # noqa: F401 — fixture
+from tests.shipping.test_api import permit_fixture_goods, decide_pack, shipping_api  # noqa: F401 — fixture
 from tests.shipping.test_domain import good, shipment
 from tests.workflows.test_finished_goods_register import _accept, flow_api  # noqa: F401 — fixture
 
@@ -80,6 +80,7 @@ def _stocked(client, item_index="КБ1", quantity="6", **accept) -> dict:
 def test_without_upd_shipment_waits_for_the_permit_through_the_api(shipping_api):
     client = shipping_api
     stocked = _stocked(client)
+    permit_fixture_goods(client)
     made = client.post("/api/shipping/shipments", json={
         "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "БЕЗ УПД",
         "lines": [{"good_id": stocked["id"], "quantity": "6"}],
@@ -95,6 +96,7 @@ def test_card_upd_type_without_upd_is_inherited_by_the_shipment(shipping_api):
     client = shipping_api
     stocked = _stocked(client)
     card = client.put("/api/shipping/project-addressee", json={"project": PROJECT, "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "БЕЗ УПД"})
+    permit_fixture_goods(client)
     made = client.post("/api/shipping/shipments", json={"lines": [{"good_id": stocked["id"], "quantity": "6"}]}).json()["shipment"]
 
     assert card.json()["addressee"]["upd_type"] == "БЕЗ УПД"
@@ -181,9 +183,11 @@ def test_own_deadline_and_note_of_a_shipment_win_over_the_card(shipping_api):
     client.put("/api/shipping/project-addressee", json={
         "project": PROJECT, "shipping_point": "Москва", "plan_date": "2026-10-20", "note": "Из карточки",
     })
+    permit_fixture_goods(client)
     own = client.post("/api/shipping/shipments", json={
         "deadline": "2026-10-25", "note": "Своё", "no_docs": True, "lines": [{"good_id": stocked["id"], "quantity": "1"}],
     }).json()["shipment"]
+    permit_fixture_goods(client)
     inherited = client.post("/api/shipping/shipments", json={
         "no_docs": True, "lines": [{"good_id": stocked["id"], "quantity": "1"}],
     }).json()["shipment"]

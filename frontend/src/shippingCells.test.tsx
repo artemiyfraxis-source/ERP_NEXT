@@ -2,42 +2,52 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PackDecision } from "./shippingCells";
 import { setRightsPrincipal } from "./rights";
-
 afterEach(() => { setRightsPrincipal(null); vi.unstubAllGlobals(); });
-
+const permission = { item_index: "КБ1", name: "Сборка", quantity: "10", consumed: "4", remaining: "6", physical_remaining: "8", version: 3 };
+const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+async function open() { render(<PackDecision project="П" editable />); fireEvent.click(screen.getByRole("button", { name: "Разрешить упаковку по КБ" })); }
 describe("PackDecision", () => {
-  it("failed standalone loading never invents an unchecked decision", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "Нет связи" }), { status: 503 })));
-    render(<PackDecision project="П" editable />);
-    expect(await screen.findByText("Упаковывать — решение не загружено")).toBeInTheDocument();
+  it("posts only explicitly selected KB and absolute cap with CAS version", async () => {
+    const fetcher = vi.fn(async (_url: unknown, _init?: RequestInit) => json({ permissions: [permission, { ...permission, item_index: "КБ2" }] }));
+    vi.stubGlobal("fetch", fetcher); await open();
+    const input = await screen.findByLabelText("Общий лимит КБ1");
+    expect(screen.getByRole("button", { name: /Сохранить разрешения/ })).toBeDisabled();
+    expect(screen.getByLabelText("Изменить КБ2")).not.toBeChecked();
+    fireEvent.change(input, { target: { value: "12" } });
+    fireEvent.click(screen.getByRole("button", { name: /Сохранить разрешения/ }));
+    await screen.findByText("Разрешения упаковки сохранены");
+    expect(JSON.parse(String(fetcher.mock.calls[1][1]?.body))).toEqual({ project: "П", lines: [{ item_index: "КБ1", quantity: "12", version: 3 }] });
+  });
+  it("rejects a cap below consumed without a write", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => json({ permissions: [permission] }))); await open();
+    fireEvent.change(await screen.findByLabelText("Общий лимит КБ1"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: /Сохранить разрешения/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("не может быть меньше");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it("CAS reload preserves input and uses refreshed version on retry", async () => {
+    let posts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (_url, init) => init?.method === "POST"
+      ? (++posts === 1 ? json({ detail: "Конфликт" }, 409) : json({ permissions: [{ ...permission, version: 5 }] }))
+      : json({ permissions: [{ ...permission, version: posts ? 4 : 3 }] })));
+    await open(); fireEvent.change(await screen.findByLabelText("Общий лимит КБ1"), { target: { value: "12" } });
+    fireEvent.click(screen.getByRole("button", { name: /Сохранить разрешения/ }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+    expect(screen.getByLabelText("Общий лимит КБ1")).toHaveValue(12);
+    fireEvent.click(screen.getByRole("button", { name: /Сохранить разрешения/ }));
+    await screen.findByText("Разрешения упаковки сохранены");
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[3][1]?.body)).lines[0].version).toBe(4);
+  });
+  it("failed loading invents no permission", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => json({ detail: "Нет связи" }, 503))); await open();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Нет связи");
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    expect(screen.queryByText(/склад ждёт решения/)).not.toBeInTheDocument();
   });
-
-  it("a failed write retains the confirmed state and reports the error", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "Решение не принято" }), { status: 422 })));
-    render(<PackDecision project="П" editable card={{ project: "П", version: 0, pack_decided: false }} />);
-    fireEvent.click(screen.getByRole("checkbox", { name: "Упаковывать П" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Решение не принято");
-    expect(screen.getByRole("checkbox")).not.toBeChecked();
-    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))).toEqual({ project: "П", version: 0, decided: true });
-  });
-
-  it("standalone conflict reloads the actual latest decision", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (input) => String(input).includes("project-pack-decision")
-      ? new Response(JSON.stringify({ detail: "Версия" }), { status: 409 })
-      : new Response(JSON.stringify({ addressee: { project: "П", version: 5, pack_decided: true } }))));
-    render(<PackDecision project="П" editable card={{ project: "П", version: 3, pack_decided: false }} />);
-    fireEvent.click(screen.getByRole("checkbox"));
-    await waitFor(() => expect(screen.getByRole("checkbox")).toBeChecked());
-    expect(screen.getByRole("alert")).toHaveTextContent("Данные проекта уже изменил другой сотрудник");
-  });
-
-  it("warehouse edit rights cannot enable the manager decision even inside an editable dialog", () => {
-    setRightsPrincipal({ user: { id: "u", name: "Склад", email: "s@example.test", department: "Склад" }, roles: ["receiver"],
-      permissions: { shipping: "view", shipping_goods: "edit" } });
-    render(<PackDecision project="П" editable card={{ project: "П", version: 3, pack_decided: true }} />);
-    expect(screen.getByRole("checkbox")).toBeChecked();
-    expect(screen.getByRole("checkbox")).toBeDisabled();
+  it("warehouse cannot edit manager permission", async () => {
+    setRightsPrincipal({ user: { id: "u", name: "Склад", email: "s@example.test", department: "Склад" }, roles: ["receiver"], permissions: { shipping: "view", shipping_goods: "edit" } });
+    vi.stubGlobal("fetch", vi.fn(async () => json({ permissions: [permission] })));
+    render(<PackDecision project="П" editable />); fireEvent.click(screen.getByRole("button", { name: "Разрешения упаковки по КБ" }));
+    expect(await screen.findByLabelText("Изменить КБ1")).toBeDisabled();
+    expect(screen.queryByLabelText("Общий лимит КБ1")).not.toBeInTheDocument();
   });
 });

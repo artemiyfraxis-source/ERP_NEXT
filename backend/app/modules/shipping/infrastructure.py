@@ -12,7 +12,7 @@ from uuid import UUID
 
 from sqlalchemy import (
     Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, Uuid, and_, func, or_,
-    select,
+    select, text,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
 
@@ -21,9 +21,10 @@ from app.shared.persistence import (
     check_read_version, note_written_version, track_read_versions,
 )
 from app.shared.project_number import normalize_project_number
+from app.shared.advisory_lock import lock_key
 from .domain import (
     ADDRESSEE_PLAN_FIELDS, ADDRESSEE_REQUISITE_FIELDS, AcceptanceAct, BoxItem, DeliveryTerms, FinishedGood, GoodMove, GoodsState, MOVE_ROUTES, MoveContext,
-    MoveKind, ProjectAddressee, Shipment, ShipmentBox, ShipmentLine, ShipmentStatus, StoredFile, UpdType,
+    MoveKind, PackPermission, ProjectAddressee, Shipment, ShipmentBox, ShipmentLine, ShipmentStatus, StoredFile, UpdType,
     acceptance_act, balance_moves, roll_back_acts,
 )
 
@@ -553,6 +554,50 @@ class SqlAlchemyShipmentRepository:
             self.session.delete(stale)
 
 
+class PackPermissionRow(Base):
+    __tablename__ = "shipping_pack_permissions"
+    __table_args__ = (
+        CheckConstraint("quantity >= 0", name="ck_shipping_pack_permissions_quantity"),
+        CheckConstraint("version >= 1", name="ck_shipping_pack_permissions_version"),
+        CheckConstraint("project_key <> '' AND item_index <> ''", name="ck_shipping_pack_permissions_key"),
+    )
+    project_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    item_index: Mapped[str] = mapped_column(String(255), primary_key=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+
+class SqlAlchemyPackPermissionRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def get(self, project: str, item_index: str) -> PackPermission | None:
+        row = self.session.get(PackPermissionRow, (normalize_project_number(project), item_index))
+        return self._domain(row) if row else None
+
+    def for_project(self, project: str) -> list[PackPermission]:
+        rows = self.session.scalars(select(PackPermissionRow).where(
+            PackPermissionRow.project_key == normalize_project_number(project),
+        ).order_by(PackPermissionRow.item_index))
+        return [self._domain(row) for row in rows]
+
+    @staticmethod
+    def _domain(row: PackPermissionRow) -> PackPermission:
+        return PackPermission(row.project_key, row.item_index, row.quantity, row.version, row.updated_by, row.updated_at)
+
+    def add(self, permission: PackPermission) -> None:
+        key = (normalize_project_number(permission.project), permission.item_index)
+        row = self.session.get(PackPermissionRow, key)
+        if row is None:
+            row = PackPermissionRow(project_key=key[0], item_index=key[1])
+            self.session.add(row)
+        for field in ("quantity", "version", "updated_by", "updated_at"):
+            setattr(row, field, getattr(permission, field))
+
+
 class SqlAlchemyProjectAddresseeRepository:
     def __init__(self, session: Session): self.session = session
     def _domain(self, row: ProjectAddresseeRow) -> ProjectAddressee:
@@ -637,13 +682,36 @@ class SqlAlchemyShippingUnitOfWork:
         self.session_factory = session_factory; self.session: Session | None = None; self.committed = False
     def __enter__(self):
         self.committed = False; self.session = self.session_factory()
+        self._locked_projects: set[str] = set()
         self.goods = SqlAlchemyFinishedGoodsRepository(self.session)
         self.shipments = SqlAlchemyShipmentRepository(self.session)
         self.addressees = SqlAlchemyProjectAddresseeRepository(self.session)
+        self.pack_permissions = SqlAlchemyPackPermissionRepository(self.session)
         self.files = SqlAlchemyUpdFileRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
         return self
+    def lock_projects(self, projects: Sequence[str]) -> None:
+        """Serialize cap edits and packing consumption, including the first missing permission row."""
+        if self.session is None:
+            raise RuntimeError("Unit of Work has not been entered")
+        requested = {normalize_project_number(project) for project in projects}
+        if requested <= self._locked_projects:
+            return
+        if self._locked_projects:
+            raise RuntimeError("All packing projects must be locked together before writes")
+        connection = self.session.connection()
+        if connection.dialect.name == "sqlite":
+            if not connection.connection.driver_connection.in_transaction:
+                connection.exec_driver_sql("BEGIN IMMEDIATE")
+        elif connection.dialect.name == "postgresql":
+            for project in sorted({normalize_project_number(project) for project in projects}):
+                self.session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {
+                    "key": lock_key("shipping-pack-permission", project),
+                })
+        # A caller may have read a shipment to discover its projects before obtaining the lock.
+        self.session.expire_all()
+        self._locked_projects.update(requested)
     def __exit__(self, exc_type, exc, traceback) -> None:
         if self.session is None: return
         if exc_type is not None or not self.committed: self.session.rollback()

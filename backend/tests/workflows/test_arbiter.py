@@ -161,6 +161,10 @@ def launch(erp, kit=None, item="КБ1", now=at(23)):
 
 
 def ship(erp, good, now=at(26)):
+    from app.modules.shipping.domain import PackPermission
+    with erp.shipping() as uow:
+        uow.pack_permissions.add(PackPermission(good.project, good.item_index, good.ordered, 1, ACTOR.name, now))
+        uow.commit()
     return create_shipment(CreateShipmentCommand(
         customer="ООО Заказчик", receiver="ООО Заказчик", shipping_point="Москва, склад 3", contact="", phone="",
         terms=None, carrier="", deadline=None, upd_type=None, upd_number="", upd_date=None, upd_url="", note="",

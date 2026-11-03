@@ -74,7 +74,8 @@ jobs:
   # Migrations on the production engine (PostgreSQL 16), which the SQLite tests above never touch: an empty database
   # up to head; the last migration over rows seeded at head-1, with an integrity snapshot before and after
   # (app.db_integrity: no table loses rows unless every migration in the range says DESTRUCTIVE = True, stock and
-  # reserves add up, the revision is head); then that migration's downgrade and upgrade again.
+  # reserves add up, the revision is head); then seeded downgrade/upgrade, except 0169's exact
+  # nonempty-permission refusal (verified to change nothing). The empty database always roundtrips.
   migrations-pg:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -140,13 +141,19 @@ jobs:
           python -m alembic upgrade head
           python -m app.db_integrity snapshot --out "$SNAPSHOTS/after.json"
           python -m app.db_integrity compare "$SNAPSHOTS/before.json" "$SNAPSHOTS/after.json"
-      - name: Downgrade the last migration and upgrade again
+      - name: Seeded downgrade contract (0169 must refuse permission loss)
         run: |
           export ERP_DATABASE_URL="$PG_ROOT/erp_seeded"
-          python -m alembic downgrade -1
-          python -m alembic upgrade head
+          python -m tests.migrations.check_seeded_downgrade
           python -m app.db_integrity snapshot --out "$SNAPSHOTS/again.json"
           python -m app.db_integrity compare "$SNAPSHOTS/after.json" "$SNAPSHOTS/again.json"
+      - name: Empty database downgrade and upgrade again
+        run: |
+          export ERP_DATABASE_URL="$PG_ROOT/erp_fresh"
+          python -m alembic downgrade -1
+          python -m alembic upgrade head
+          python -m app.db_integrity snapshot --out "$SNAPSHOTS/fresh-again.json"
+          python -m app.db_integrity compare "$SNAPSHOTS/fresh.json" "$SNAPSHOTS/fresh-again.json"
       - name: Keep the snapshots
         if: always()
         uses: actions/upload-artifact@v4

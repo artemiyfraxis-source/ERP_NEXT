@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from tests.shipping.test_api import permit_fixture_goods
 from app.main import app
 from app.modules.shipping.domain import (
     DeliveryTerms,
@@ -184,6 +185,7 @@ def test_every_shipping_path_writes_the_journal_and_it_sums_to_the_counters(regi
     over = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "21"})
     assert over.status_code == 422 and "тираж 50 шт, уже принято 30 — принять можно ещё 20" in over.json()["detail"]
 
+    permit_fixture_goods(client)
     made = client.post("/api/shipping/shipments", json={
         "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО", "upd_number": "1",
         "lines": [{"good_id": good["id"], "quantity": "20"}],
@@ -195,6 +197,7 @@ def test_every_shipping_path_writes_the_journal_and_it_sums_to_the_counters(regi
     shipment = client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": shipment["version"]}).json()["shipment"]
     assert shipment["status"] == "Отгружена"
 
+    permit_fixture_goods(client)
     second = client.post("/api/shipping/shipments", json={
         "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО", "upd_number": "1",
         "lines": [{"good_id": good["id"], "quantity": "6"}],
@@ -228,6 +231,7 @@ def test_only_the_head_rolls_back_shipped_and_never_without_a_reason(register_ap
         "project": "708К.4", "item_index": "КБ1", "name": "Жгут", "ordered": "5",
     }).json()["good"]
     good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "5"}).json()["good"]
+    permit_fixture_goods(client)
     shipment = client.post("/api/shipping/shipments", json={
         "receiver": "П", "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО", "upd_number": "1", "lines": [{"good_id": good["id"], "quantity": "5"}],
     }).json()["shipment"]

@@ -21,6 +21,7 @@ beforeEach(() => {
     const url = String(input), method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ url, method, body });
+    if (url.startsWith("/api/shipping/project-pack-permissions")) return json({ permissions: [{ item_index: "КБ1", name: "Жгут", quantity: method === "POST" ? (body.lines as Array<{ quantity: string }>)[0].quantity : "0", consumed: "0", remaining: "0", physical_remaining: "10", version: 4 }] });
     if (url.startsWith("/api/shipping/project-addressee?")) return json({ addressee: stored });
     if (url === "/api/shipping/upd-files") return json({ file: { id: "f1", url: "/api/shipping/files/f1", name: body.file_name } });
     if (url === "/api/shipping/project-addressee" && method === "PUT") {
@@ -40,9 +41,43 @@ const open = async (canEdit = true) => {
 };
 
 describe("Данные отправки", () => {
+  it("не разрешает запись по выдуманной версии после ошибки загрузки", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(json({ detail: "Нет связи" }, 503));
+    render(<DispatchCard project="591К.3" stage="accepted" canEdit close={() => undefined} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Нет связи");
+    expect(screen.queryByRole("button", { name: "Сохранить" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Получатель")).not.toBeInTheDocument();
+  });
+  it("до упаковки сохраняет №, дату, файл ЭДО и адрес без создания отправки", async () => {
+    render(<DispatchCard project="591К.3" stage="accepted" canEdit close={() => undefined} />);
+    fireEvent.change(await screen.findByLabelText("№ УПД"), { target: { value: "523" } });
+    fireEvent.change(screen.getByLabelText("Дата УПД"), { target: { value: "2026-11-03" } });
+    fireEvent.change(screen.getByLabelText("Адрес доставки"), { target: { value: "Тула" } });
+    fireEvent.change(screen.getByLabelText("Получатель"), { target: { value: "ООО Получатель" } });
+    fireEvent.change(screen.getByLabelText("Приложить УПД"), { target: { files: [new File(["%PDF-1.4"], "УПД.pdf", { type: "application/pdf" })] } });
+    await screen.findByText("УПД приложена");
+    expect(screen.getByLabelText("УПД")).toHaveValue("ЭДО");
+    expect(screen.getByLabelText("№ УПД")).toHaveValue("523");
+    expect(screen.getByLabelText("Адрес доставки")).toHaveValue("Тула");
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+    await screen.findByText("Данные отправки сохранены");
+    expect(calls.filter((call) => call.method === "PUT").map((call) => call.body)).toEqual([
+      { project: "591К.3", version: 2, upd_url: "/api/shipping/files/f1", upd_type: "ЭДО" },
+      { project: "591К.3", version: 3, upd_number: "523", upd_date: "2026-11-03", shipping_point: "Тула", receiver: "ООО Получатель" },
+    ]);
+    expect(calls.some(({ url }) => /project-ship|finished-goods|\/shipments/.test(url))).toBe(false);
+  });
+  it("номер и дата УПД до упаковки доступны только для просмотра без edit", async () => {
+    stored = { ...card, upd_number: "523", upd_date: "2026-11-03" };
+    await open(false);
+    expect(screen.getByLabelText("№ УПД")).toHaveValue("523");
+    expect(screen.getByLabelText("№ УПД")).toBeDisabled();
+    expect(screen.getByLabelText("Дата УПД")).toBeDisabled();
+    expect(calls.every(({ method }) => method === "GET")).toBe(true);
+  });
   it("показывает адресата, доставку и комментарий для склада", async () => {
     const dialog = await open();
-    expect(within(dialog).getAllByRole("textbox").map((input) => input.getAttribute("aria-label"))).toEqual(["Получатель", "Адрес доставки", "Телефон", "Комментарий для склада"]);
+    expect(within(dialog).getAllByRole("textbox").map((input) => input.getAttribute("aria-label"))).toEqual(["Получатель", "Адрес доставки", "Телефон", "№ УПД", "Комментарий для склада"]);
     expect(within(dialog).getAllByRole("combobox").map((input) => input.getAttribute("aria-label"))).toEqual(["Тип доставки", "Перевозчик", "УПД"]);
     for (const hidden of ["Контактное лицо", "Условия доставки", "Способ отгрузки / ТК", "Плановая дата отгрузки", "Комментарий"]) {
       expect(within(dialog).queryByLabelText(hidden)).not.toBeInTheDocument();
@@ -68,9 +103,9 @@ describe("Данные отправки", () => {
     expect(calls.find((call) => call.method === "PUT")!.body).toEqual({ project: "591К.3", version: 2, shipping_point: "Тула, ул. Ленина 1" });
   });
 
-  it("«Приложить УПД» — только у бумажной; файл загружается и встаёт в карточку", async () => {
+  it("файл УПД доступен для ЭДО и бумаги, но не для «Без УПД»", async () => {
     await open();
-    expect(screen.queryByLabelText("Приложить УПД")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Приложить УПД")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("УПД"), { target: { value: "БЕЗ УПД" } });
     expect(screen.queryByLabelText("Приложить УПД")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("УПД"), { target: { value: "БУМАГА" } });
@@ -107,7 +142,7 @@ describe("Данные отправки", () => {
     expect(screen.getByText("Только просмотр")).toBeInTheDocument();
   });
 
-  it("by stage: «В ожидании»/«В производстве» show only address, receiver, phone; «Готово»/«Принято» add УПД and «Упаковывать»", async () => {
+  it("by stage: waiting/production show address fields; ready/accepted add UPD and explicit KB permissions", async () => {
     for (const stage of ["waiting", "production"] as const) {
       const view = render(<DispatchCard project="591К.3" stage={stage} canEdit close={() => undefined} />);
       await waitFor(() => expect(screen.getByLabelText("Получатель")).toHaveValue("ООО Заказчик"));
@@ -115,33 +150,37 @@ describe("Данные отправки", () => {
       expect(screen.getByLabelText("Телефон")).toBeInTheDocument();
       expect(screen.queryByLabelText("УПД")).not.toBeInTheDocument();
       expect(screen.queryByLabelText("Упаковывать 591К.3")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Разрешить упаковку по КБ" })).not.toBeInTheDocument();
       view.unmount();
     }
     for (const stage of ["ready", "accepted"] as const) {
       const view = render(<DispatchCard project="591К.3" stage={stage} canEdit close={() => undefined} />);
       await waitFor(() => expect(screen.getByLabelText("Получатель")).toHaveValue("ООО Заказчик"));
       expect(screen.getByLabelText("УПД")).toBeInTheDocument();
-      expect(screen.getByLabelText("Упаковывать 591К.3")).not.toBeChecked();
+      expect(screen.getByRole("button", { name: "Разрешить упаковку по КБ" })).toBeEnabled();
       view.unmount();
     }
   });
 
-  it("«Упаковывать» posts the pack decision with the card version", async () => {
+  it("packing requires an explicit KB quantity and its own version, not the address version", async () => {
     render(<DispatchCard project="591К.3" stage="ready" canEdit close={() => undefined} />);
     await waitFor(() => expect(screen.getByLabelText("Получатель")).toHaveValue("ООО Заказчик"));
-    vi.mocked(fetch).mockImplementationOnce(async () => json({ addressee: { ...card, version: 3, pack_decided: true, pack_decided_by: "Ульяна", pack_decided_at: "2026-10-29T09:00:00" } }));
-    fireEvent.click(screen.getByLabelText("Упаковывать 591К.3"));
-    await waitFor(() => expect(screen.getByLabelText("Упаковывать 591К.3")).toBeChecked());
-    expect(screen.getByText(/решил Ульяна, 29\.10\.2026/)).toBeInTheDocument();
-    expect(JSON.parse(String(vi.mocked(fetch).mock.calls.at(-1)?.[1]?.body))).toEqual({ project: "591К.3", version: 2, decided: true });
+    fireEvent.click(screen.getByRole("button", { name: "Разрешить упаковку по КБ" }));
+    const permissions = within(await screen.findByRole("dialog", { name: "Разрешения упаковки 591К.3" }));
+    expect(await permissions.findByLabelText("Изменить КБ1")).not.toBeChecked();
+    expect(permissions.getByRole("button", { name: "Сохранить разрешения · 0 КБ" })).toBeDisabled();
+    fireEvent.change(permissions.getByLabelText("Общий лимит КБ1"), { target: { value: "6" } });
+    fireEvent.click(permissions.getByRole("button", { name: "Сохранить разрешения · 1 КБ" }));
+    await permissions.findByText("Разрешения упаковки сохранены");
+    expect(calls.find((call) => call.url === "/api/shipping/project-pack-permissions" && call.method === "POST")?.body).toEqual({ project: "591К.3", lines: [{ item_index: "КБ1", quantity: "6", version: 4 }] });
+    expect(calls.some((call) => call.url.endsWith("/project-pack-decision"))).toBe(false);
   });
 
-  it("a decision conflict refreshes the parent and save version while preserving edits and refreshing untouched fields", async () => {
+  it("a packing conflict preserves typed address fields and does not change the independent address version", async () => {
     const onSaved = vi.fn();
     const fallback = vi.mocked(fetch).getMockImplementation()!;
     vi.mocked(fetch).mockImplementation(async (input, init) => {
-      if (String(input) === "/api/shipping/project-pack-decision") {
-        stored = { ...card, version: 5, shipping_point: "Калуга", pack_decided: true };
+      if (String(input) === "/api/shipping/project-pack-permissions" && init?.method === "POST") {
         return json({ detail: "Версия изменилась" }, 409);
       }
       return fallback(input, init);
@@ -149,13 +188,18 @@ describe("Данные отправки", () => {
     render(<DispatchCard project="591К.3" stage="accepted" canEdit onSaved={onSaved} close={() => undefined} />);
     await waitFor(() => expect(screen.getByLabelText("Получатель")).toHaveValue(card.receiver));
     fireEvent.change(screen.getByLabelText("Телефон"), { target: { value: "+7 набрано" } });
-    fireEvent.click(screen.getByLabelText("Упаковывать 591К.3"));
-    await waitFor(() => expect(screen.getByLabelText("Упаковывать 591К.3")).toBeChecked());
-    expect(onSaved).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Разрешить упаковку по КБ" }));
+    const permissions = within(await screen.findByRole("dialog", { name: "Разрешения упаковки 591К.3" }));
+    fireEvent.change(await permissions.findByLabelText("Общий лимит КБ1"), { target: { value: "6" } });
+    fireEvent.click(permissions.getByRole("button", { name: "Сохранить разрешения · 1 КБ" }));
+    await permissions.findByText(/Разрешения изменились/);
+    expect(permissions.getByLabelText("Общий лимит КБ1")).toHaveValue(6);
+    expect(onSaved).not.toHaveBeenCalled();
+    fireEvent.click(permissions.getByRole("button", { name: "Закрыть" }));
     expect(screen.getByLabelText("Телефон")).toHaveValue("+7 набрано");
-    expect(screen.getByLabelText("Адрес доставки")).toHaveValue("Калуга");
+    expect(screen.getByLabelText("Адрес доставки")).toHaveValue("Москва");
     fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
     await screen.findByText("Данные отправки сохранены");
-    expect(calls.find((call) => call.method === "PUT")!.body).toEqual({ project: "591К.3", version: 5, phone: "+7 набрано" });
+    expect(calls.find((call) => call.method === "PUT")!.body).toEqual({ project: "591К.3", version: 2, phone: "+7 набрано" });
   });
 });

@@ -12,9 +12,8 @@ from uuid import UUID
 import pytest
 
 from app.main import app
-from app.modules.shipping.application import PACK_DECISION_LOCKED
 from app.modules.shipping.domain import (
-    PACK_NOT_DECIDED, DeliveryTerms, ProjectAddressee, ShipmentStatus, ShippingValidationError, UpdType,
+    DeliveryTerms, ProjectAddressee, ShipmentStatus, ShippingValidationError, UpdType,
 )
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import OutboxMessageRow
@@ -165,12 +164,15 @@ def _good(client, item_index="КБ1", accepted="6") -> dict:
 
 
 def _decision(client, decided: bool, version: int):
-    return client.post("/api/shipping/project-pack-decision", json={"project": PROJECT, "version": version, "decided": decided})
+    return client.post("/api/shipping/project-pack-permissions", json={
+        "project": PROJECT, "lines": [{"item_index": "КБ1", "quantity": "6" if decided else "0", "version": version}],
+    })
 
 
-def _titles() -> list[str]:
+def _permission_notifications():
     with app.state.shipping_uow_factory() as uow:
-        return [row.payload.get("title") for row in uow.session.query(OutboxMessageRow)]
+        return [row.payload for row in uow.session.query(OutboxMessageRow)
+                if row.idempotency_key.startswith("notify:shipping:pack-permissions:")]
 
 
 def test_storekeeper_packs_only_after_the_managers_decision(shipping_api):
@@ -183,42 +185,49 @@ def test_storekeeper_packs_only_after_the_managers_decision(shipping_api):
     intake_before = client.get("/api/shipping/project-addressee", params={"project": PROJECT}).json()["addressee"]
     _as(ADMIN)
     decided = _decision(client, True, 0)
+    repeated = _decision(client, True, 1)
     stale = _decision(client, False, 0)
     _as(STOREKEEPER)
     packed = client.post("/api/shipping/project-pack", json={"project": PROJECT, "lines": lines})
     _as(ADMIN)
-    locked = _decision(client, False, decided.json()["addressee"]["version"])
+    locked = _decision(client, False, decided.json()["permissions"][0]["version"])
 
-    assert refused.status_code == 422 and refused.json()["detail"] == PACK_NOT_DECIDED
+    assert refused.status_code == 422 and "разреш" in refused.json()["detail"]
     assert not_his.status_code == 403
     assert (intake_before["pack_decided"], intake_before["pack_decided_by"], intake_before["pack_decided_at"]) == (False, "", None)
     assert decided.status_code == 200
-    card = decided.json()["addressee"]
-    assert (card["pack_decided"], card["pack_decided_by"], card["version"]) == (True, "Администратор", 1)
-    assert card["pack_decided_at"].startswith("2026-09-22")
-    assert f"Можно упаковывать: проект {PROJECT}" in _titles()
+    permission = decided.json()["permissions"][0]
+    assert (permission["quantity"], permission["updated_by"], permission["version"]) == ("6", "Администратор", 1)
+    assert permission["updated_at"].startswith("2026-09-22")
+    assert repeated.status_code == 200 and repeated.json()["permissions"][0]["version"] == 1
+    notices = _permission_notifications()
+    assert len(notices) == 1
+    assert notices[0]["title"] == f"Разрешения упаковки: проект {PROJECT}"
+    assert "КБ1" in notices[0]["body"] and "6" in notices[0]["body"]
     assert stale.status_code == 409
     assert packed.status_code == 200 and packed.json()["shipment"]["lines"][0]["picked"] == "2"
-    assert locked.status_code == 422 and locked.json()["detail"] == PACK_DECISION_LOCKED
+    assert locked.status_code == 422 and "ниже уже упакованного" in locked.json()["detail"]
 
 
 def test_decision_can_be_withdrawn_before_anything_is_picked_and_then_picking_stops(shipping_api):
     client = shipping_api
     queued = _good(client, accepted="")
+    granted = _decision(client, True, 0)
+    assert granted.status_code == 200
     made = client.post("/api/shipping/shipments", json={
         "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО", "lines": [{"good_id": queued["id"], "quantity": "3"}],
     }).json()["shipment"]
     card = client.get("/api/shipping/project-addressee", params={"project": PROJECT}).json()["addressee"]
-    withdrawn = _decision(client, False, card["version"])
+    withdrawn = _decision(client, False, granted.json()["permissions"][0]["version"])
     fresh = client.get("/api/shipping/goods").json()["goods"][0]
     client.post(f"/api/shipping/goods/{fresh['id']}/accept", json={"version": fresh["version"], "quantity": "3"})
     _as(STOREKEEPER)
     pick = client.post(f"/api/shipping/shipments/{made['id']}/pick", json={"version": made["version"]})
 
-    # Отправка менеджера сама поставила решение (ничего не набрано — заявка «Новая»).
-    assert made["status"] == "Новая" and card["pack_decided"] is True
-    assert withdrawn.status_code == 200 and withdrawn.json()["addressee"]["pack_decided"] is False
-    assert pick.status_code == 422 and pick.json()["detail"] == PACK_NOT_DECIDED
+    # Shipment creation never grants permission; the explicit unused cap can be withdrawn.
+    assert made["status"] == "Новая" and card["pack_decided"] is False
+    assert withdrawn.status_code == 200 and withdrawn.json()["permissions"][0]["quantity"] == "0"
+    assert pick.status_code == 422 and "разреш" in pick.json()["detail"]
 
 
 def test_card_upd_number_goes_to_one_new_shipment(shipping_api):
@@ -244,6 +253,7 @@ def test_card_upd_number_goes_to_one_new_shipment(shipping_api):
 def test_track_through_the_api_is_refused_until_the_upd_is_there(shipping_api):
     client = shipping_api
     stocked = _good(client, accepted="6")
+    decide_pack(client)
     made = client.post("/api/shipping/shipments", json={
         "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": "ДОСТАВКА ТК", "carrier": "ПЭК",
         "upd_type": "ЭДО", "lines": [{"good_id": stocked["id"], "quantity": "6"}],
