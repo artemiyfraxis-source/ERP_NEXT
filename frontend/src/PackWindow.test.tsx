@@ -5,7 +5,7 @@ import type { IntakeRow } from "./productionIntakeApi";
 
 afterEach(() => vi.unstubAllGlobals());
 const row = { project: "П", item_index: "КБ1", name: "Сборка", accepted: "20", packed: "4", good_id: "g1", good_version: 2, pack_permission_remaining: "6", pack_decided: true } as IntakeRow;
-const rights = { canEdit: true, canManage: false, canShip: true };
+const rights = { canEdit: true, canManage: false, canWarehouse: true, canUnship: false };
 it("requires an explicit quantity, caps it by permission, and refreshes addressee CAS without losing intent", async () => {
   let dispatches = 0, posts = 0;
   const fetcher = vi.fn(async (input, init) => {
