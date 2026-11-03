@@ -131,3 +131,7 @@ table.ship-lines.ship-lines-compact td.ship-name { width: auto; min-width: 260px
 @media (pointer: coarse) { .ship-pl { min-height: 40px; } }
 .ship-ready .ship-gaps-list { white-space: normal; }
 .shipping-page .ship-forecast { color: var(--muted-foreground); font-weight: 400; }
+.pack-permission-window .intake-window-table { table-layout: fixed; width: 100%; min-width: 0; }
+.pack-permission-window .intake-window-table th,
+.pack-permission-window .intake-window-table td { white-space: normal; overflow-wrap: anywhere; }
+.pack-permission-window .ship-qty { max-width: 100%; }

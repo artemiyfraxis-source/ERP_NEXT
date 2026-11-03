@@ -154,12 +154,6 @@ export function DispatchCard({ project, customer, canEdit, close, onSaved, stage
     setData(card as DispatchData); setDraft((current) => ({ ...current, upd_type: card.upd_type ?? current.upd_type })); setSaved(message);
     onSaved?.();
   };
-  const decisionSaved = (card: ProjectAddressee) => {
-    const before = dispatchDraft(data), next = dispatchDraft(card);
-    setDraft((current) => Object.fromEntries(KEYS.map((key) => [key, current[key] === before[key] ? next[key] : current[key]])) as DispatchDraft);
-    setData(card as DispatchData);
-    onSaved?.();
-  };
 
   return <PageWindow label={`Данные отправки ${project}`} close={close} width={900}>
     <section className="panel dispatch-card">
@@ -170,7 +164,7 @@ export function DispatchCard({ project, customer, canEdit, close, onSaved, stage
       {!loaded ? <div className="empty">Загрузка…</div> : <>
         <DispatchFields project={project} draft={draft} onChange={(next) => { setDraft(next); setSaved(""); }} editable={canEdit}
           card={data} onCardSaved={fileSaved} hideUpd={early} />
-        {deciding && <PackDecision project={project} editable={canEdit} card={data} onCard={decisionSaved} />}
+        {deciding && <PackDecision project={project} editable={canEdit} onReload={async () => { await onSaved?.(); }} />}
         <div className="dispatch-actions">
           {canEdit
             ? <button type="button" className="primary" disabled={busy} onClick={() => void save()}>{busy ? "Сохраняем…" : "Сохранить"}</button>

@@ -254,7 +254,7 @@ describe("Приёмка с производства", () => {
   });
 
   it("multiple GRN lots keep one aggregate packing action on an accepted row and a real remainder of 27", async () => {
-    intakeRows = [row({ needed: "1000", accepted: "973", packed: "100", remaining: "27", pack_decided: true,
+    intakeRows = [row({ needed: "1000", accepted: "973", packed: "100", remaining: "27", pack_decided: true, pack_permission_remaining: "10000",
       acts: [["ГП.26.0000200", "500"], ["ГП.26.0000201", "473"]].map(([grn, quantity]) => ({ grn, quantity, received_at: "2026-10-30", location: "" })) })];
     render(<ProductionIntakePage principal={principal} />);
     fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
@@ -271,7 +271,7 @@ describe("Приёмка с производства", () => {
     intakeRows = [
       ...["15", "15", "50", "15"].map((quantity, index) => row({ project: "780К.1", item_index: `КБ${index + 1}`, stage: "Упаковано", project_stage: "Упаковано",
         needed: quantity, accepted: quantity, remaining: "0", acts: act(`ГП.26.000030${index}`, quantity) })),
-      row({ project: "713К.4", needed: "500", accepted: "24", remaining: "476", pack_decided: true, acts: act("ГП.26.0000037", "24") }),
+      row({ project: "713К.4", needed: "500", accepted: "24", remaining: "476", pack_decided: true, pack_permission_remaining: "10000", acts: act("ГП.26.0000037", "24") }),
       row({ project: "713К.4", item_index: "КБ2", stage: "Упаковано", needed: "500", accepted: "500", packed: "500", remaining: "0" }),
     ];
     shipments = [{ ...packedShipment, lines: [shipmentLine({ project: "713К.4", item_index: "КБ2", requested: "500", picked: "500" })] }];
@@ -551,7 +551,7 @@ describe("Приёмка с производства", () => {
 
 describe("Приёмка с производства: упаковка и отгрузка на этом же экране (владелец 29.10)", () => {
   const today = isoDay(new Date());
-  const multi = () => row({ needed: "40", delivered: "26", accepted: "20", packed: "10", sent: "3", remaining: "20", pack_decided: true, acts: [] });
+  const multi = () => row({ needed: "40", delivered: "26", accepted: "20", packed: "10", sent: "3", remaining: "20", pack_decided: true, pack_permission_remaining: "10000", acts: [] });
   const ready = { ...packedShipment, id: "s2", number: "ОТГ-20261029-02", ready_to_ship: true, ready_for_track: true, track_number: "TRK-1", missing_ship: [], missing_data: [], lines: [shipmentLine({ id: "l2", picked: "3", requested: "3" })] };
   const gone = { ...packedShipment, id: "s3", number: "ОТГ-20261029-03", status: "Отгружена", shipped_at: today, track_number: "TRK-0", missing_ship: [], missing_data: [], lines: [shipmentLine({ id: "l3", picked: "3", requested: "3" })] };
   const tab = (name: RegExp) => screen.getByRole("tab", { name });
@@ -614,12 +614,14 @@ describe("Приёмка с производства: упаковка и отг
     unmount();
 
     // На строке акта упаковка использует всё принятое по КБ.
-    intakeRows = [row({ accepted: "6", remaining: "0", delivered: "6", tasks: [], pack_decided: true, acts: [{ grn: "ГП.26.0000001", quantity: "6", received_at: isoDay(new Date()), location: "" }] })];
+    intakeRows = [row({ accepted: "6", remaining: "0", delivered: "6", tasks: [], pack_decided: true, pack_permission_remaining: "10000", acts: [{ grn: "ГП.26.0000001", quantity: "6", received_at: isoDay(new Date()), location: "" }] })];
     render(<ProductionIntakePage principal={principal} />);
     expect(await screen.findByRole("tab", { name: /^Принято/ })).toHaveAttribute("aria-selected", "true");
     fireEvent.click(await screen.findByRole("button", { name: "Упаковать 591К.3 КБ1: упаковано 0, можно 6" }));
     const dialog = await screen.findByRole("dialog", { name: "Упаковка 591К.3" });
-    expect(within(dialog).getByLabelText("Сколько упаковать КБ1")).toHaveValue(6);
+    expect(within(dialog).getByLabelText("Сколько упаковать КБ1")).toHaveValue(null);
+    expect(within(dialog).getByRole("button", { name: "Упаковать · 0 шт" })).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Сколько упаковать КБ1"), { target: { value: "6" } });
     const pack = within(dialog).getByRole("button", { name: "Упаковать · 6 шт" });
     await waitFor(() => expect(pack).toBeEnabled()); // версия карточки отправки пришла
     fireEvent.click(pack);

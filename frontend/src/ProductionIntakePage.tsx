@@ -5,7 +5,7 @@ import { ShipmentDataWindow } from "./ShipmentData";
 import { DISPATCH_STAGES } from "./dispatchStage";
 import { FinishedGoodsHandoff } from "./FinishedGoodsHandoff";
 import { formatDay } from "./format";
-import { canPack, hasWork, kbKey, num, ofKb, ofProject, packable, round2, SHIPPED_DAYS, shippedOnlyRows, stagePieces, type Pieces, type Tab } from "./intakeStages";
+import { canPack, hasWork, kbKey, num, ofKb, ofProject, packable, permittedPack, round2, SHIPPED_DAYS, shippedOnlyRows, stagePieces, type Pieces, type Tab } from "./intakeStages";
 import { isPickup, termsText } from "./carriers";
 import { canAct, canSee, hasFullAccess } from "./navigation";
 import { intakeApi, type DispatchShipment, type IntakeAct, type IntakeRow } from "./productionIntakeApi";
@@ -245,10 +245,10 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     const row = source(line);
     const avail = packable(row);
     const open = kbShips(row).some((shipment) => ACTIVE.includes(shipment.status));
-    const waitDecision = avail > 0 && !row.pack_decided;
+    const waitDecision = avail > 0 && !canPack(row);
     const openPack = () => setOpened({ kind: "pack", project: row.project });
-    if (canPack(row)) return <button type="button" className="intake-take-btn" title={`Можно упаковать: ${avail}`}
-      aria-label={`Упаковать ${who(row)}: упаковано ${num(row.packed)}, можно ${avail}`} onClick={openPack}>{num(row.packed)}</button>;
+    if (canPack(row)) return <button type="button" className="intake-take-btn" title={`Можно упаковать: ${permittedPack(row)}; на складе: ${avail}`}
+      aria-label={`Упаковать ${who(row)}: упаковано ${num(row.packed)}, можно ${permittedPack(row)}`} onClick={openPack}>{num(row.packed)}</button>;
     if (open) return <button type="button" className="intake-num-btn" title={waitDecision ? "Отправки проекта на упаковке; упаковать ещё — после решения менеджера «упаковывать»" : "Отправки проекта на упаковке: PL/DN, короба, этикетки"}
       aria-label={`Упаковка ${who(row)}: упаковано ${num(row.packed)}`} onClick={openPack}>{num(row.packed)}</button>;
     if (waitDecision) return <button type="button" className="intake-num-btn" disabled title="Упаковать можно после решения менеджера «упаковывать»"

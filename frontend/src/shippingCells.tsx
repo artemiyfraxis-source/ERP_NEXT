@@ -1,10 +1,7 @@
-import { useEffect, useState } from "react";
-import { ApiError, failureText, shippingApi, type ProjectAddressee, type ProjectForecast, type Shipment } from "./api";
+import { type ProjectForecast, type Shipment } from "./api";
 import { formatDate } from "./format";
 import { isoDay } from "./Gantt";
-import { intakeApi } from "./productionIntakeApi";
 import { daysUntil } from "./productionGraph";
-import { useCanAct } from "./rights";
 
 /* Общие мелочи списков отправок: срок, просрочка, проекты отправки и решение «Упаковывать». */
 
@@ -55,55 +52,4 @@ export function projectsOf(shipment: Shipment) {
   return [...byProject].map(([project, items]) => `${project}: ${items.join(", ")}`).join("; ");
 }
 
-/** Переключатель «Упаковывать» проекта (этапы «Готово» и «Принято»): решение менеджера, после него кладовщик может паковать.
- *  Карточку проекта берёт сам, если её не дали; после смены показывает, кто и когда решил. */
-export function PackDecision({ project, editable, card: given, onCard, onReload }: {
-  project: string; editable: boolean; card?: Partial<ProjectAddressee> | null; onCard?: (card: ProjectAddressee) => void;
-  onReload?: () => Promise<void>;
-}) {
-  const [card, setCard] = useState<Partial<ProjectAddressee> | null | undefined>(given);
-  const [busy, setBusy] = useState(false);
-  const [problem, setProblem] = useState("");
-  const managerCanEdit = useCanAct("shipping");
-  useEffect(() => { if (given !== undefined) setCard(given); }, [given]);
-  useEffect(() => {
-    if (given !== undefined) return;
-    let live = true;
-    intakeApi.dispatch(project).then((result) => { if (live) setCard(result.addressee ?? null); }).catch((reason) => {
-      if (live) { setCard(null); setProblem(failureText(reason, "Решение не загружено")); }
-    });
-    return () => { live = false; };
-  }, [project, given]);
-  const decided = Boolean(card?.pack_decided);
-  async function toggle(next: boolean) {
-    if (busy || !editable || !managerCanEdit || !card) return;
-    setBusy(true); setProblem("");
-    try {
-      const { addressee } = await shippingApi.packDecision(project, card.version ?? 0, next);
-      setCard(addressee); onCard?.(addressee);
-    } catch (reason) {
-      if (reason instanceof ApiError && reason.status === 409) {
-        setProblem("Данные проекта уже изменил другой сотрудник. Проверьте обновлённое решение.");
-        setCard(null);
-        try {
-          if (onReload) await onReload();
-          else {
-            const result = await intakeApi.dispatch(project);
-            setCard(result.addressee ?? null);
-            if (result.addressee) onCard?.(result.addressee as ProjectAddressee);
-          }
-        } catch (reloadReason) { setProblem(failureText(reloadReason, "Решение не загружено")); }
-      } else setProblem(failureText(reason, "Решение не сохранено"));
-    } finally { setBusy(false); }
-  }
-  const when = card?.pack_decided_at ? formatDate(String(card.pack_decided_at).slice(0, 10)) : "";
-  return <div className="ship-pack-decision" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} aria-live="polite">
-    {!card ? <span className="muted">{card === undefined ? "Упаковывать — загрузка…" : "Упаковывать — решение не загружено"}</span> : <>
-    <label className="inline-check"><input type="checkbox" aria-label={`Упаковывать ${project}`} checked={decided} disabled={!editable || !managerCanEdit || busy}
-      onChange={(event) => void toggle(event.target.checked)} /> Упаковывать <span className="muted">{project}</span></label>
-    {decided && <span className="muted"> — решил{card?.pack_decided_by ? ` ${card.pack_decided_by}` : ""}{when ? `, ${when}` : ""}; склад может паковать</span>}
-    {!decided && card !== undefined && <span className="muted"> — склад ждёт решения</span>}
-    </>}
-    {problem && <span className="tone-danger" role="alert"> {problem}</span>}
-  </div>;
-}
+export { PackDecision } from "./PackingPermissionWindow";

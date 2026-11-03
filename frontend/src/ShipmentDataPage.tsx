@@ -177,12 +177,12 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
   const allRows = useMemo(() => dataRows(shipments, intake), [shipments, intake]);
   const gapsOf = (row: DataRow) => row.shipment ? dataGaps(row.shipment) : cards?.[row.project]?.dispatch_gaps;
   const rows = allRows.filter((row) => !onlyGaps || (row.shipment ? dataGaps(row.shipment).length > 0
-    : gapsOf(row) === undefined || Boolean(gapsOf(row)?.length) || (deciding(row) && !cards?.[row.project]?.pack_decided)));
+    : gapsOf(row) === undefined || Boolean(gapsOf(row)?.length) || (deciding(row) && !intake.some((item) => kbKey(item) === kbKey(row) && num(item.pack_permission_remaining) > 0))));
   const current = open?.id.startsWith("project:") ? null : shipments.find((shipment) => shipment.id === open?.id) ?? null;
   const project = open?.id.startsWith("project:") ? open.row : null;
   const openRow = (row: DataRow) => setOpen({ id: row.shipment?.id ?? `project:${row.project}`, row });
   const decisionCell = (row: DataRow) => deciding(row) ? <PackDecision project={row.project} editable={canDecide}
-    card={cards?.[row.project] ?? null} onCard={(card) => setCards((old) => ({ ...old, [card.project]: card }))} onReload={reload} /> : null;
+    onReload={reload} /> : null;
   const dataCell = (row: DataRow) => {
     if (!row.shipment) {
       const gaps = gapsOf(row);

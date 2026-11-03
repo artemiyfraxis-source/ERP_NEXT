@@ -20,6 +20,9 @@ export interface IntakeRow {
   project_stage: string;
   /** Менеджер решила «упаковывать» (владелец 29.10): без этого склад принятое не упаковывает. */
   pack_decided?: boolean;
+  pack_permission_quantity?: string;
+  pack_permission_remaining?: string;
+  pack_permission_version?: number;
   needed: string;
   launched: string;
   delivered: string;

@@ -1709,6 +1709,11 @@ export type ShipmentHistoryField = "receiver" | "shipping_point" | "contact" | "
 export type ShipmentHistoryCorrection = { version: number; reason: string; source: string } & Partial<Record<ShipmentHistoryField, string>>;
 
 /** Карточка отгрузки проекта (`ОТГРУЗКА.ПРОЕКТЫ`): адресат, доставка, тип УПД и реквизиты DN. */
+export interface PackPermission {
+  item_index: string; name?: string; unit?: string; quantity: string; consumed: string;
+  remaining: string; physical_remaining: string; version: number; updated_by: string | null; updated_at: string | null;
+}
+
 export interface ProjectAddressee {
   project: string;
   version: number;
@@ -4073,7 +4078,11 @@ export const shippingApi = {
   uploadCardUpd: (project: string, file: { name: string; type: string; base64: string }) => api<{ file: { id: string; url: string; name: string } }>("/api/shipping/upd-files", {
     method: "POST", body: JSON.stringify({ project, file_name: file.name, content_type: file.type, content_base64: file.base64 }),
   }),
-  /** Решение «упаковывать» по проекту: `decided` true/false, версия карточки проекта. */
+  packPermissions: (project: string) => api<{ project: string; permissions: PackPermission[] }>(`/api/shipping/project-pack-permissions?project=${encodeURIComponent(project)}`),
+  savePackPermissions: (project: string, lines: { item_index: string; quantity: string; version: number }[]) => api<{ project: string; permissions: PackPermission[] }>("/api/shipping/project-pack-permissions", {
+    method: "POST", body: JSON.stringify({ project, lines }),
+  }),
+  /** Legacy project decision; retained for older API consumers. */
   packDecision: (project: string, version: number, decided: boolean) => api<{ addressee: ProjectAddressee }>("/api/shipping/project-pack-decision", {
     method: "POST", body: JSON.stringify({ project, version, decided }),
   }),
