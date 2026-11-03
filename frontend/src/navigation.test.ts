@@ -32,13 +32,14 @@ const EVERYTHING = {
   // «Мои заявки» and «Заявки» are no menu items (Витя's edits 2–3): the card and «Снабжение → Заявки» open them.
   "Снабжение": ["Оформить заявку", ...BUYER_MENU],
   "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства"],
-  "Менеджмент": ["Данные отправок", "Производственный план", "Сотрудники", "Доступы", "Уведомления", "Системный журнал"],
+  "Менеджмент": ["Данные отправок", "Производственный план"],
   "Документация": ["Первичная документация"],
   "Справочники": ["База данных", "Закупка"],
+  "Администрирование": ["Сотрудники", "Доступы", "Системный журнал"],
 };
 
-it("keeps SUPPLYMAP's four blocks in SUPPLYMAP's order, the documents next, reference books last", () => {
-  expect(BLOCKS.map((block) => block.title)).toEqual(["Производство", "Снабжение", "Склад", "Менеджмент", "Документация", "Справочники"]);
+it("keeps work blocks in their order and administrative tools in their own block", () => {
+  expect(BLOCKS.map((block) => block.title)).toEqual(["Производство", "Снабжение", "Склад", "Менеджмент", "Документация", "Справочники", "Администрирование"]);
 });
 
 it("shows superadmin and admin every block, «Доступы» and «Сотрудники» included, whatever the permissions map holds", () => {
@@ -71,7 +72,6 @@ it("gives the operator the request form, own rows, own tasks and read-only stock
     "Производство": ["Задания"],
     "Снабжение": ["Оформить заявку"],
     "Склад": ["Приёмка", "Склад"],
-    "Менеджмент": ["Уведомления"],
     "Справочники": ["База данных"],
   });
 });
@@ -81,7 +81,7 @@ it("gives the foreman the shop, the stock and the storekeeper's shipping, of the
     "Производство": ["Ресурсное планирование", "Задания", "ОТК"],
     "Снабжение": ["Оформить заявку", ...READER_MENU],
     "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства"],
-    "Менеджмент": ["Производственный план", "Уведомления"],
+    "Менеджмент": ["Производственный план"],
     // «Снабжение» on view reads its moved tabs too.
     "Документация": ["Первичная документация"],
     "Справочники": ["Закупка"],
@@ -93,7 +93,7 @@ it("gives the technical lead projects, planning, the whole supply block and the 
     "Производство": ["Проекты", "Ресурсное планирование", "ОТК"],
     "Снабжение": ["Оформить заявку", ...BUYER_MENU],
     "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства"],
-    "Менеджмент": ["Производственный план", "Уведомления"],
+    "Менеджмент": ["Производственный план"],
     "Документация": ["Первичная документация"],
     "Справочники": ["База данных", "Закупка"],
   });
@@ -104,7 +104,7 @@ it("gives the commercial lead projects, the supply sheets and shipping for readi
     "Производство": ["Проекты", "Ресурсное планирование"],
     "Снабжение": ["Оформить заявку", ...READER_MENU],
     "Склад": ["Склад", "Приёмка с производства"],
-    "Менеджмент": ["Производственный план", "Уведомления"],
+    "Менеджмент": ["Производственный план"],
     "Документация": ["Первичная документация"],
     "Справочники": ["Закупка"],
   });
@@ -125,9 +125,9 @@ it("opens «Задания» by myops alone, for any level", () => {
 
 it("opens «Ресурсное планирование» and «Производственный план» by production, not by myops", () => {
   expect(section(as("operator", { myops: "edit" }), "Производство")).toEqual(["Задания"]);
-  expect(section(as("operator", { myops: "edit" }), "Менеджмент")).toEqual(["Уведомления"]);
+  expect(section(as("operator", { myops: "edit" }), "Менеджмент")).toEqual([]);
   expect(section(as("foreman", { production: "view" }), "Производство")).toEqual(["Ресурсное планирование"]);
-  expect(section(as("foreman", { production: "view" }), "Менеджмент")).toEqual(["Производственный план", "Уведомления"]);
+  expect(section(as("foreman", { production: "view" }), "Менеджмент")).toEqual(["Производственный план"]);
 });
 
 // «ОТК» is the section `quality` (owner 04.10.2026): any grant opens the card, the page shows what the grant allows.
@@ -194,7 +194,7 @@ it("NAV-SECTIONS: picking and handout open by their own keys", () => {
 
 it("hides a block with no section the principal may open", () => {
   const blocks = visibleBlocks(as("operator", {}));
-  expect(blocks.map((block) => block.title)).toEqual(["Менеджмент"]);
+  expect(blocks).toEqual([]);
 });
 
 it("opens a section by its key and the mode alone: no level name decides, a missing key closes it", () => {
@@ -206,7 +206,7 @@ it("opens a section by its key and the mode alone: no level name decides, a miss
     expect(section(as(level, { receiving: "view" }), "Склад")).toEqual(["Приёмка"]);
     expect(section(as(level, { warehouse: "view" }), "Склад")).toEqual(["Склад"]);
   }
-  expect(layout(as("tech_lead", {}))).toEqual({ "Менеджмент": ["Уведомления"] });
+  expect(layout(as("tech_lead", {}))).toEqual({});
 });
 
 it("opens techcards, templates and the reference book by their own keys to any level (ID-3)", () => {
@@ -221,20 +221,27 @@ it("opens techcards, templates and the reference book by their own keys to any l
 
 it("opens «Доступы» and «Сотрудники» to superadmin and admin alone, not by any matrix grant", () => {
   for (const level of ["superadmin", "admin"]) {
-    expect(section(as(level, {}), "Менеджмент")).toEqual(
-      ["Данные отправок", "Производственный план", "Сотрудники", "Доступы", "Уведомления", "Системный журнал"],
+    expect(section(as(level, {}), "Администрирование")).toEqual(
+      ["Сотрудники", "Доступы", "Системный журнал"],
     );
   }
   for (const level of ["commercial", "tech_lead", "foreman", "operator"]) {
     const principal = as(level, { ...ALL_EDIT });
-    expect(section(principal, "Менеджмент")).not.toContain("Доступы");
-    expect(section(principal, "Менеджмент")).not.toContain("Сотрудники");
+    expect(section(principal, "Администрирование")).not.toContain("Доступы");
+    expect(section(principal, "Администрирование")).not.toContain("Сотрудники");
   }
 });
 
 it("opens «Системный журнал» by the operations key", () => {
-  expect(section(as("tech_lead", { operations: "view" }), "Менеджмент")).toEqual(["Уведомления", "Системный журнал"]);
-  expect(section(as("tech_lead", {}), "Менеджмент")).toEqual(["Уведомления"]);
+  expect(section(as("tech_lead", { operations: "view" }), "Администрирование")).toEqual(["Системный журнал"]);
+  expect(section(as("tech_lead", {}), "Администрирование")).toEqual([]);
+});
+
+it("keeps home and notification bookmarks available without making the inbox a menu item", () => {
+  const principal = as("operator", {});
+  expect(visibleNav(principal).find(({ id }) => id === "cabinet")?.label).toBe("Главная");
+  expect(visibleNav(principal).some(({ id }) => id === "notifications")).toBe(true);
+  expect(visibleBlocks(principal).flatMap(({ items }) => items).some(({ id }) => id === "notifications")).toBe(false);
 });
 
 it("tells a card open for reading only: all its keys are view grants, never for a full-access level", () => {

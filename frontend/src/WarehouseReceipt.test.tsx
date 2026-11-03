@@ -1,7 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { WarehousePage } from "./WarehousePage";
-import type { WarehouseLot } from "./api";
+import type { ScanAgentInfo, WarehouseLot } from "./api";
+import { forgetPersonalViews } from "./personalViews";
+import { forgetScanDevice } from "./ScanAgent";
 
 const lot: WarehouseLot = {
   id: "40000000-0000-0000-0000-000000000001", version: 1, warehouse: "ЦАР", grn: "FRX.26.0000009", package: "",
@@ -12,6 +14,11 @@ const receipt = {
   id: "r1", version: 1, warehouse: "ЦАР", supplier: "", invoice_number: "", invoice_date: null, upd_number: "", upd_date: null,
   purpose: "Склад", scan_file: "", created_at: "2026-10-23T10:00:00", created_by: "u", lots_count: 0,
 };
+const scanAgent: ScanAgentInfo = {
+  id: "receipt-pc", pc: "TEST", version: "2.2.0", live: true,
+  scanners: [{ id: "receipt-scanner", name: "Тестовый сканер" }],
+};
+const scanDevice = { agent_id: scanAgent.id, scanner_id: "receipt-scanner" };
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -28,6 +35,8 @@ function mockApi(handlers: Record<string, (call: Call) => Response | undefined> 
     calls.push(call);
     const custom = handlers[`${call.method} ${path.split("?")[0]}`]?.(call);
     if (custom) return custom;
+    if (call.method === "GET" && path === "/api/auth/ui-settings") return json({ views: { "scan.device": scanDevice } });
+    if (call.method === "GET" && path === "/api/stock/scan/agents") return json({ agents: [scanAgent] });
     if (call.method === "GET" && path.split("?")[0] === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
     if (path.startsWith("/api/stock/article-info")) return json({ info: null, places: [], expected: null });
     if (path.startsWith("/api/stock/receipts?")) return json({ receipts: [] });
@@ -41,7 +50,8 @@ function mockApi(handlers: Record<string, (call: Call) => Response | undefined> 
   return calls;
 }
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); window.localStorage.clear(); });
+beforeEach(() => { forgetPersonalViews(); forgetScanDevice(); });
+afterEach(() => { cleanup(); forgetPersonalViews(); forgetScanDevice(); vi.restoreAllMocks(); window.localStorage.clear(); });
 
 async function openSupply() {
   render(<WarehousePage />);
@@ -333,6 +343,8 @@ it("scans from the scanner: waits for the PC, then fills the header like a file 
   expect(screen.getByLabelText("Поставщик")).toHaveValue("ООО Сканер");
   expect(cellOf("Артикул")).toHaveValue("S-1");
   expect(calls.some((call) => call.method === "POST" && call.path === "/api/stock/receipts/scan-jobs")).toBe(true);
+  expect(calls.find((call) => call.method === "POST" && call.path === "/api/stock/receipts/scan-jobs")!.body)
+    .toEqual({ agent_id: scanDevice.agent_id, target_scanner: scanDevice.scanner_id });
   expect(screen.getByRole("button", { name: "+ Страница" })).toBeEnabled();
 });
 

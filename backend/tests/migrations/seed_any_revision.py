@@ -187,12 +187,20 @@ _COUPLED_VALUES: dict[tuple[str, str], Any] = {
     # A разрешительный ПИН's hash goes with its date (0163_approval_pin): a seeded credential has none.
     ("identity_credentials", "approval_pin_hash"): None,
     ("identity_credentials", "approval_pin_set_at"): None,
+    # A plain journal event has no piece counts (0166_kb_progress).
+    **{("production_plan_events", f"progress_{name}"): None
+       for name in ("run", "started", "done", "qc", "passed")},
 }
 # Values the column-by-column fill would leave empty by a CHECK's «other value → NULL» branch, although the row takes
 # the one value that needs them: a seeded tech record is `tab = 'ter'` (the first literal of the БД.ТЕР card CHECKs,
 # 0115), and a БД.ТЕР row is always in a list (0155_ter_lug_kind).
 _OVER_CHECK: dict[tuple[str, str], Any] = {
     ("tech_operation_records", "ter_kind"): "contact",
+    # Before 0167 arbitrary statuses were allowed; ACTIVE now needs all evidence despite nullable-date CHECKs.
+    ("production_instruments", "status"): "Действует",
+    ("production_instruments", "verification_number"): "TEST-PV",
+    ("production_instruments", "verified_at"): datetime(2026, 9, 1, tzinfo=timezone.utc),
+    ("production_instruments", "verification_due"): datetime(2027, 9, 1, tzinfo=timezone.utc),
 }
 # Values a CHECK shapes beyond `IN (…)`: an internal project number is «ВП-…» (0135_internal_projects), unique; the
 # label printer settings are bounded ranges and a numeric `dpi IN (203, 300)` (0138_warehouse_labels).

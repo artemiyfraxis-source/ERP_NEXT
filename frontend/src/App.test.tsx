@@ -1,7 +1,9 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import type { Principal } from "./api";
+import { AUTH_REQUIRED_EVENT, type Principal } from "./api";
+import { forgetPersonalViews, loadPersonalViews, SAVE_DELAY, savePersonalView } from "./personalViews";
+import { forgetScanDevice, loadScanDevice } from "./ScanAgent";
 
 const principal: Principal = {
   user: {
@@ -27,8 +29,34 @@ function json(body: unknown, status = 200) {
 }
 
 afterEach(() => {
+  forgetPersonalViews();
+  forgetScanDevice();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   window.history.replaceState({}, "", "/");
+});
+
+it("binds personal settings to the authenticated account and cancels pending writes before logout changes the cookie", async () => {
+  let finishLogout!: (response: Response) => void;
+  const logout = new Promise<Response>((resolve) => { finishLogout = resolve; });
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/auth/me") return json(principal);
+    if (path === "/api/auth/logout") return logout;
+    if (path === "/api/auth/login-staff") return json({ staff: [] });
+    if (path === "/api/auth/ui-settings") return json({ views: { plan: { hidden: [] } } });
+    return json({}, 404);
+  });
+  render(<App />);
+  await screen.findByText("Добрый день, Сотрудник");
+  expect(await loadPersonalViews(principal.user.id)).toEqual({ plan: { hidden: [] } });
+  vi.useFakeTimers();
+  savePersonalView("plan", { hidden: ["customer"] }, SAVE_DELAY, principal.user.id);
+  fireEvent.click(screen.getByRole("button", { name: "Выйти" }));
+  await act(() => vi.advanceTimersByTimeAsync(SAVE_DELAY));
+  expect(fetch.mock.calls.filter(([input, init]) => String(input).startsWith("/api/auth/ui-settings/") && init?.method === "PUT")).toHaveLength(0);
+  expect(await loadPersonalViews(principal.user.id)).toBeNull();
+  await act(async () => finishLogout(new Response(null, { status: 204 })));
 });
 
 it("returns to login when an active session is rejected", async () => {
@@ -49,7 +77,50 @@ it("returns to login when an active session is rejected", async () => {
   expect(await screen.findByRole("button", { name: "Войти" }, { timeout: 5000 })).toBeInTheDocument();
 });
 
+it.each(["logout", "expired"])("binds the scanner to B after A's %s without reloading the page", async (mode) => {
+  const other = { ...principal, user: { ...principal.user, id: "20000000-0000-0000-0000-000000000002", name: "Другой сотрудник" } };
+  const aChoice = { agent_id: "pc-a", scanner_id: "scanner-a" };
+  const bChoice = { agent_id: "pc-b", scanner_id: "scanner-b" };
+  let current = principal;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/auth/me") return json(current);
+    if (path === "/api/auth/logout") return new Response(null, { status: 204 });
+    if (path === "/api/auth/login") { current = other; return json(other); }
+    if (path === "/api/auth/ui-settings") return json({ views: { "scan.device": current === principal ? aChoice : bChoice } });
+    if (path === "/api/notifications/unread") return json({ unread: 0 });
+    return json({}, 404);
+  });
+  render(<App />); await screen.findByText("Добрый день, Сотрудник");
+  expect(await loadScanDevice()).toEqual(aChoice);
+  if (mode === "logout") fireEvent.click(screen.getByRole("button", { name: "Выйти" }));
+  else act(() => window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT)));
+  await screen.findByRole("button", { name: "Войти" });
+  expect(await loadScanDevice()).toBeNull();
+  fireEvent.change(screen.getByLabelText("Логин"), { target: { value: "b" } });
+  fireEvent.change(screen.getByLabelText("Пароль"), { target: { value: "password-b" } });
+  fireEvent.click(screen.getByRole("button", { name: "Войти" }));
+  await screen.findByText("Добрый день, Другой сотрудник");
+  expect(await loadScanDevice()).toEqual(bChoice);
+});
+
 const sidebar = () => within(screen.getByRole("navigation", { name: "Основная навигация" }));
+
+it.each(["/", "/?section=cabinet"])("keeps %s as Главная with the personal card only in the footer and notifications in the bell", async (address) => {
+  window.history.replaceState({}, "", address);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+    String(input) === "/api/auth/me" ? json(principal) : json({ detail: "нет в тесте" }, 404));
+  render(<App />);
+  await screen.findByText("Добрый день, Сотрудник");
+  expect(sidebar().getByRole("button", { name: "Главная" })).toBeInTheDocument();
+  expect(sidebar().queryByRole("button", { name: "Личный кабинет" })).toBeNull();
+  expect(sidebar().queryByRole("button", { name: "Уведомления" })).toBeNull();
+  expect(sidebar().queryByRole("button", { name: "Моя карточка" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Моя карточка" }).closest(".side-foot")).not.toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Уведомления" }));
+  expect(await screen.findByRole("heading", { name: "Уведомления", level: 1 })).toBeInTheDocument();
+  expect(new URL(window.location.href).searchParams.get("section")).toBe("notifications");
+});
 
 // Витя's edit 4: the old «Лист закупки» tabs moved out; bookmarks and links land in the new places (MOVED_TABS).
 describe("old «Лист закупки» links", () => {
@@ -103,13 +174,14 @@ it("opens procurement by the section grant alone: the level's name decides nothi
 });
 
 it("draws the block tiles with line icons, never emoji (audit М-6)", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(json(principal));
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(json(as("superadmin", {})));
 
   render(<App />);
 
   await screen.findByText("Добрый день, Сотрудник");
   const tiles = document.querySelectorAll(".block-tile");
   expect(tiles.length).toBeGreaterThan(0);
+  expect(screen.getByRole("button", { name: "Администрирование" }).querySelector("svg path")).not.toBeNull();
   tiles.forEach((tile) => {
     expect(tile.querySelector(".tile-icon svg.block-icon")).not.toBeNull();
     expect(tile.querySelector(".tile-icon")?.textContent).toBe("");
@@ -433,18 +505,17 @@ it("NAV-1: home shows the blocks as tiles and a block shows its section cards in
 it("NAV-1: a block with a single visible section opens that section directly", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/auth/me") return json({ ...principal, permissions: {} });
-    if (path === "/api/notifications") return json({ notifications: [], unread: 0 });
+    if (path === "/api/auth/me") return json({ ...principal, permissions: { production: "view" } });
     throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<App />);
 
   const main = await screen.findByRole("main");
-  expect(within(main).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Менеджмент"]);
+  expect(within(main).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Производство", "Менеджмент"]);
   fireEvent.click(within(main).getByRole("button", { name: "Менеджмент" }));
 
-  expect(await screen.findByRole("heading", { name: "Уведомления", level: 1 })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Производственный план", level: 1 })).toBeInTheDocument();
 });
 
 it("NAV-1: a block URL the principal cannot open falls back to home", async () => {

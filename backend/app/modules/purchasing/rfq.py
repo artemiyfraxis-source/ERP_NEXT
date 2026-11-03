@@ -3,7 +3,8 @@ several suppliers, their quotes land in a matrix compared with VAT by the cost o
 with the reasons the gate asks for — is written back into the procurement line.
 
 Procurement lines are seen only through `ProcurementLines` (app/workflows/purchasing_procurement_bridge.py). Only the
-line's own buyer puts it into a request or decides on it; every write to a request is its buyer's. Results are plain
+line's own buyer puts it into a request or decides on it; unclaimed new lines are taken in the request's transaction.
+Every write to a request is its buyer's. Results are plain
 JSON-ready dicts (Decimals as strings)."""
 
 from __future__ import annotations
@@ -127,11 +128,14 @@ class LineView:
     manufacturer: str | None = None  # ИЗГОТОВИТЕЛЬ the buyer wrote on the line
     order_number: str | None = None  # № ЗАКАЗА once the supplier request is formed
     invoice_number: str | None = None  # № СЧЕТА once the invoice is in
+    paid: bool = False
+    backorder: bool = False
 
 
 class ProcurementLines(Protocol):
     def mine(self, actor: Actor) -> list[LineView]: ...
     def get_many(self, line_ids: Iterable[UUID]) -> dict[UUID, LineView]: ...
+    def for_rfq(self, session: Session, line_ids: Iterable[UUID], actor: Actor, now: datetime) -> dict[UUID, LineView]: ...
     def apply_choice(
         self, line_id: UUID, *, supplier: str, quantity: Decimal, unit: str, expected_version: int, actor: Actor,
         now: datetime,
@@ -235,8 +239,9 @@ def _line_result(view: LineView) -> dict:
 
 
 def candidate_views(session: Session, lines: ProcurementLines, actor: Actor) -> list[LineView]:
-    """My lines «В работе»/«Готов к запросу» with something to buy and in no live request (the list and the pool)."""
-    mine = [view for view in lines.mine(actor) if view.to_buy > 0]
+    """Owned desk lines and unclaimed new lines with something to buy and in no live request."""
+    mine = [view for view in lines.mine(actor) if view.to_buy > 0 and not view.paid and not view.backorder
+            and ((view.buyer_id == actor.id and view.editable) or (view.buyer_id is None and view.status == "Новый"))]
     taken = set(session.scalars(
         select(RfqLineRow.procurement_line_id).where(RfqLineRow.removed_at.is_(None))
     )) if mine else set()
@@ -320,19 +325,19 @@ def create_rfq(
         raise Refused("Выберите строки для запроса")
     if sent_on is not None and (sent_on > _today(now) or sent_on < _today(now) - timedelta(days=60)):
         raise Refused("Дата отправки — не позже сегодняшней и не раньше чем за 60 дней")
-    views = lines.get_many(ids)
-    for line_id in ids:
-        view = views.get(line_id)
-        if view is None:
-            raise NotFound("Строка закупки не найдена")
-        if view.buyer_id != actor.id:
-            raise Forbidden(f"{view.legacy_id}: в запрос КП строку берёт только её закупщик")
-        if not view.editable:
-            raise Refused(f"{view.legacy_id}: в запрос КП — только строки «В работе» и «Готов к запросу»")
-        if view.to_buy <= 0:
-            raise Refused(f"{view.legacy_id}: всё покрыто со склада — покупать нечего")
     with uow:
         session = _session(uow)
+        views = lines.for_rfq(session, ids, actor, now)
+        for line_id in ids:
+            view = views.get(line_id)
+            if view is None:
+                raise NotFound("Строка закупки не найдена")
+            if view.buyer_id != actor.id:
+                raise Forbidden(f"{view.legacy_id}: в запрос КП строку берёт только её закупщик")
+            if not view.editable or view.paid or view.backorder:
+                raise Refused(f"{view.legacy_id}: строка недоступна для запроса КП")
+            if view.to_buy <= 0:
+                raise Refused(f"{view.legacy_id}: всё покрыто со склада — покупать нечего")
         taken = _in_live_rfq(session, ids)
         if taken:
             line_id, number = next(iter(taken.items()))

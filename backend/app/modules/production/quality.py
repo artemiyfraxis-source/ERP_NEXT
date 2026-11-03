@@ -70,11 +70,12 @@ class RegisterInstrumentCommand:
     inventory_number: str
     name: str
     instrument_type: str
-    verification_number: str
-    verified_at: datetime
-    verification_due: datetime
+    verification_number: str | None
+    verified_at: datetime | None
+    verification_due: datetime | None
     actor: Actor
     now: datetime
+    status: InstrumentStatus = InstrumentStatus.ACTIVE
 
 
 @dataclass(frozen=True)
@@ -111,24 +112,32 @@ def register_instrument(command: RegisterInstrumentCommand, uow: QualityUnitOfWo
         inventory_number = str(command.inventory_number or "").strip()
         name = str(command.name or "").strip()
         instrument_type = str(command.instrument_type or "").strip()
-        verification_number = str(command.verification_number or "").strip()
-        if not all((inventory_number, name, instrument_type, verification_number)):
-            raise ProductionValidationError("Для СИ обязательны номер, наименование, тип и поверка")
+        verification_number = command.verification_number.strip() if command.verification_number is not None else None
+        if not all((inventory_number, name, instrument_type)):
+            raise ProductionValidationError("Для СИ обязательны номер, наименование и тип")
         verified_at = command.verified_at
         verification_due = command.verification_due
-        if verified_at.tzinfo is None and verification_due.tzinfo is not None:
-            verified_at = verified_at.replace(tzinfo=verification_due.tzinfo)
-        elif verified_at.tzinfo is not None and verification_due.tzinfo is None:
-            verification_due = verification_due.replace(tzinfo=verified_at.tzinfo)
-        if verification_due < verified_at:
-            raise ProductionValidationError("Дата окончания поверки раньше даты поверки")
+        if command.status is InstrumentStatus.UNVERIFIED:
+            if any(value is not None for value in (verification_number, verified_at, verification_due)):
+                raise ProductionValidationError("Для неподтверждённой поверки оставьте номер и даты пустыми")
+        elif command.status is InstrumentStatus.ACTIVE:
+            if not verification_number or verified_at is None or verification_due is None:
+                raise ProductionValidationError("Для действующего СИ обязательны номер и обе даты поверки")
+            if verified_at.tzinfo is None and verification_due.tzinfo is not None:
+                verified_at = verified_at.replace(tzinfo=verification_due.tzinfo)
+            elif verified_at.tzinfo is not None and verification_due.tzinfo is None:
+                verification_due = verification_due.replace(tzinfo=verified_at.tzinfo)
+            if verification_due < verified_at:
+                raise ProductionValidationError("Дата окончания поверки раньше даты поверки")
+        else:
+            raise ProductionValidationError("Недопустимый статус регистрации СИ")
         if uow.instruments.by_inventory_number(inventory_number) is not None:
             raise ProductionValidationError("СИ с таким инвентарным номером уже есть")
         instrument = MeasurementInstrument(
             id=uuid4(), version=1, inventory_number=inventory_number,
             name=name, instrument_type=instrument_type,
             verification_number=verification_number, verified_at=verified_at,
-            verification_due=verification_due, status=InstrumentStatus.ACTIVE,
+            verification_due=verification_due, status=command.status,
         )
         uow.instruments.save(instrument)
         _audit(instrument.id, "production.instrument_registered", command.actor, command.now, {

@@ -12,17 +12,18 @@ from sqlalchemy.pool import StaticPool
 
 from app.main import app
 from app.modules.procurement.application import consume_procurement_requested
-from app.modules.procurement.infrastructure import ProcurementLineRow, SqlAlchemyProcurementUnitOfWork
+from app.modules.procurement.infrastructure import ProcurementLineRow, SqlAlchemyProcurementUnitOfWork, SqlAlchemyProcurementRepository
 from app.modules.purchasing.infrastructure import (
     DecisionRow,
     QuoteRow,
     RfqLineRow,
+    RfqRow,
     SqlAlchemyPurchasingUnitOfWork,
     SupplierRow,
 )
 from app.modules.requests.api import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
-from app.shared.persistence import create_schema
+from app.shared.persistence import AuditEventRow, OutboxMessageRow, create_schema
 from tests.factories import Actor
 from tests.procurement.test_api import message
 
@@ -85,6 +86,175 @@ def _quote(client, rfq_id, supplier_id, rfq_line_id, **line) -> str:
     response = client.post(f"{BASE}/{rfq_id}/quotes", json=body)
     assert response.status_code == 201, response.text
     return response.json()["id"]
+
+
+def test_direct_rfq_claims_new_line_and_keeps_take_prefill_audit_and_outbox(rfq_api, monkeypatch):
+    from types import SimpleNamespace
+
+    client, _, sessions = rfq_api
+    line = consume_procurement_requested(message(3), app.state.procurement_uow_factory())
+    with sessions() as session:
+        row = session.get(ProcurementLineRow, line.id)
+        row.link = "https://supplier.example/part"
+        row.stock_covered = Decimal("0.5")
+        session.commit()
+    monkeypatch.setattr(app.state, "procurement_supplier_directory", SimpleNamespace(
+        supplier_map=lambda: {"supplier.example": "ООО План"}), raising=False)
+    result = client.post(BASE, json={"line_ids": [str(line.id)], "suppliers": [{"name": "ООО Ответит"}]})
+    assert result.status_code == 201, result.text
+    with sessions() as session:
+        row = session.get(ProcurementLineRow, line.id)
+        assert row.buyer_id == Actor(name="Петров", department="Закупки").id
+        assert row.status == "Готов к запросу" and row.version == line.version + 1
+        assert row.actual_quantity == Decimal("1.5") and row.actual_unit == "шт"
+        assert row.stock_covered == Decimal("0.5") and row.supplier == "ООО План"
+        rfq_line = session.scalar(select(RfqLineRow).where(RfqLineRow.procurement_line_id == line.id))
+        assert rfq_line.quantity == Decimal("1.5")
+        events = set(session.scalars(select(AuditEventRow.event_type).where(AuditEventRow.aggregate_id == line.id)))
+        assert {"procurement.taken_in_work", "procurement.autofilled"} <= events
+        queued = session.scalar(select(OutboxMessageRow).where(
+            OutboxMessageRow.idempotency_key == f"autofill:{line.id}:v{row.version}"))
+        assert queued is not None and queued.topic == "procurement.autofill_requested"
+        assert session.scalar(select(func.count()).select_from(RfqRow)) == 1
+    summary = client.get("/api/procurement/requests-view", params={"batch": "RND|rnd.003"}).json()
+    assert summary["lines"][0]["rb_status"] == "in_rfq" and not summary["lines"][0]["selectable"]
+
+
+@pytest.mark.parametrize("failure", ["missing_supplier", "missing_line", "foreign", "paid", "closed", "backorder", "covered"])
+def test_direct_rfq_failure_rolls_back_owner_facts_audit_outbox_and_rfq(rfq_api, failure):
+    client, taken, sessions = rfq_api
+    line = consume_procurement_requested(message(3), app.state.procurement_uow_factory())
+    with sessions() as session:
+        row = session.get(ProcurementLineRow, line.id)
+        row.link = "https://supplier.example/part"
+        if failure == "paid":
+            row.paid_at = NOW
+        if failure == "closed":
+            row.status = "Отменено"
+        if failure == "backorder":
+            row.legacy_id += "-Д"
+        if failure == "covered":
+            row.stock_covered = row.calculated_quantity
+        session.commit()
+        before = (row.status, row.version, row.buyer_id, row.actual_quantity, row.actual_unit, row.stock_covered)
+        audit_count = session.scalar(select(func.count()).select_from(AuditEventRow))
+        outbox_count = session.scalar(select(func.count()).select_from(OutboxMessageRow))
+        supplier_count = session.scalar(select(func.count()).select_from(SupplierRow))
+    body = {"line_ids": [str(line.id)]}
+    if failure == "missing_supplier":
+        body["suppliers"] = [{"name": "Должен откатиться"}, {"supplier_id": str(uuid4())}]
+    if failure == "missing_line":
+        body["line_ids"].append(str(uuid4()))
+    if failure == "foreign":
+        body["line_ids"].append(str(taken[0].id))
+        _as("Иванов")
+    response = client.post(BASE, json=body)
+    assert response.status_code in {403, 404, 422}, response.text
+    with sessions() as session:
+        row = session.get(ProcurementLineRow, line.id)
+        assert (row.status, row.version, row.buyer_id, row.actual_quantity, row.actual_unit, row.stock_covered) == before
+        assert session.scalar(select(func.count()).select_from(AuditEventRow)) == audit_count
+        assert session.scalar(select(func.count()).select_from(OutboxMessageRow)) == outbox_count
+        assert session.scalar(select(func.count()).select_from(RfqRow)) == 0
+        assert session.scalar(select(func.count()).select_from(RfqLineRow)) == 0
+        assert session.scalar(select(func.count()).select_from(SupplierRow)) == supplier_count
+
+
+@pytest.mark.parametrize("winner", ["create", "take", "cancel"])
+def test_direct_rfq_loses_a_real_session_race_without_leaving_a_claim(rfq_api, monkeypatch, winner):
+    from app.modules.procurement.application import TakeProcurementInWorkCommand, take_procurement_in_work
+    from app.modules.procurement.requests_application import CancelManyCommand, CancelManyItem, cancel_procurement_lines
+    from app.modules.purchasing.rfq import create_rfq
+    from app.workflows.procurement_stock import SqlAlchemyProcurementStockUnitOfWork
+    from app.workflows.purchasing_procurement_bridge import ProcurementLinesBridge
+
+    client, _, sessions = rfq_api
+    line = consume_procurement_requested(message(3), app.state.procurement_uow_factory())
+    other = Actor(name="Иванов", department="Закупки")
+    original = SqlAlchemyProcurementRepository.add
+    raced = False
+
+    def competing_add(repository, updated):
+        nonlocal raced
+        if updated.id == line.id and not raced:
+            raced = True
+            if winner == "create":
+                create_rfq(SqlAlchemyPurchasingUnitOfWork(sessions),
+                           ProcurementLinesBridge(app.state.procurement_uow_factory), other, NOW, [line.id], None)
+            elif winner == "take":
+                take_procurement_in_work(TakeProcurementInWorkCommand([line.id], other, NOW),
+                                         app.state.procurement_uow_factory())
+            else:
+                result = cancel_procurement_lines(CancelManyCommand(
+                    (CancelManyItem(line.id, line.version),), "Дубль", other, NOW,
+                ), lambda: SqlAlchemyProcurementStockUnitOfWork(sessions))
+                assert len(result.cancelled) == 1
+        original(repository, updated)
+
+    monkeypatch.setattr(SqlAlchemyProcurementRepository, "add", competing_add)
+    response = client.post(BASE, json={"line_ids": [str(line.id)]})
+    assert raced and response.status_code in {403, 409, 422}, response.text
+    with sessions() as session:
+        row = session.get(ProcurementLineRow, line.id)
+        assert row.buyer_id == other.id and row.version == line.version + 1
+        assert row.status == ("Отменено" if winner == "cancel" else "В работе")
+        assert session.scalar(select(func.count()).select_from(RfqRow)) == (1 if winner == "create" else 0)
+        assert session.scalar(select(func.count()).select_from(RfqLineRow)) == (1 if winner == "create" else 0)
+        assert session.scalar(select(func.count()).select_from(AuditEventRow).where(
+            AuditEventRow.aggregate_id == line.id, AuditEventRow.actor_id == Actor(name="Петров", department="Закупки").id,
+            AuditEventRow.event_type == "procurement.taken_in_work")) == 0
+
+
+def test_viewer_cannot_create_rfq_or_edit_facts_of_unclaimed_new_line(rfq_api):
+    client, _, sessions = rfq_api
+    line = consume_procurement_requested(message(3), app.state.procurement_uow_factory())
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(name="Наблюдатель", department="Закупки"), email="view@example.test", roles=frozenset({"viewer"}),
+        permissions={"procurement": "view"},
+    )
+    assert client.post(BASE, json={"line_ids": [str(line.id)]}).status_code == 403
+    assert client.patch(f"/api/procurement/{line.id}/facts", json={
+        "version": line.version, "supplier": "ООО Другой", "actual_quantity": "1", "actual_unit": "шт",
+    }).status_code == 403
+    with sessions() as session:
+        row = session.get(ProcurementLineRow, line.id)
+        assert row.status == "Новый" and row.buyer_id is None and row.version == line.version
+
+
+def test_direct_rfq_does_not_allow_editing_facts_before_claim(rfq_api):
+    from app.workflows.purchasing_procurement_bridge import ProcurementLinesBridge
+
+    client, _, sessions = rfq_api
+    line = consume_procurement_requested(message(3), app.state.procurement_uow_factory())
+    assert not ProcurementLinesBridge(app.state.procurement_uow_factory).get_many([line.id])[line.id].editable
+    result = client.patch(f"/api/procurement/{line.id}/facts", json={
+        "version": line.version, "supplier": "ООО Изменение", "actual_quantity": "1", "actual_unit": "шт",
+    })
+    assert result.status_code in {403, 422}, result.text
+    with sessions() as session:
+        row = session.get(ProcurementLineRow, line.id)
+        assert row.buyer_id is None and row.status == "Новый" and row.version == line.version
+        assert row.supplier is None
+    assert client.post(BASE, json={"line_ids": [str(line.id)]}).status_code == 201
+
+
+def test_direct_new_line_and_owned_requote_share_one_rfq_without_retaking_owned_line(rfq_api):
+    client, owned, sessions = rfq_api
+    original = _rfq(client, owned[:1])
+    assert client.post(f"{BASE}/{original['id']}/close").status_code == 200
+    fresh = consume_procurement_requested(message(3), app.state.procurement_uow_factory())
+    with sessions() as session:
+        previous_version = session.get(ProcurementLineRow, owned[0].id).version
+        previous_events = session.scalar(select(func.count()).select_from(AuditEventRow).where(
+            AuditEventRow.aggregate_id == owned[0].id, AuditEventRow.event_type == "procurement.taken_in_work"))
+    created = client.post(BASE, json={"line_ids": [str(owned[0].id), str(fresh.id)]})
+    assert created.status_code == 201, created.text
+    with sessions() as session:
+        assert session.get(ProcurementLineRow, owned[0].id).version == previous_version
+        assert session.scalar(select(func.count()).select_from(AuditEventRow).where(
+            AuditEventRow.aggregate_id == owned[0].id, AuditEventRow.event_type == "procurement.taken_in_work")) == previous_events
+        assert set(session.scalars(select(RfqLineRow.procurement_line_id).where(
+            RfqLineRow.rfq_id == UUID(created.json()["id"])))) == {owned[0].id, fresh.id}
 
 
 def test_full_flow_from_candidates_to_the_procurement_line(rfq_api):

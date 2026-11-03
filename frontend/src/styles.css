@@ -2587,13 +2587,18 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .column-popover li { display: grid; grid-template-columns: 1fr 28px 28px; align-items: center; gap: 4px; min-height: 30px; }
 .column-popover li:hover { background: var(--accent); }
 .column-popover .check-inline { color: var(--foreground); font-size: 13px; padding: 0 4px; }
-.stock-toolbar .column-popover button.column-step { width: 28px; height: 26px; padding: 0; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); background: var(--card); font-size: 14px; line-height: 1; }
-.stock-toolbar .column-popover button.column-step:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
-.stock-toolbar .column-popover button.column-step:disabled { cursor: default; opacity: .3; }
-.stock-toolbar .column-popover button.column-reset { height: auto; padding: 6px 0 2px; font-size: 13px; }
+:is(.stock-toolbar, .zg-toolbar) .column-popover button.column-step { width: 28px; height: 26px; padding: 0; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); background: var(--card); font-size: 14px; line-height: 1; }
+:is(.stock-toolbar, .zg-toolbar) .column-popover button.column-step:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+:is(.stock-toolbar, .zg-toolbar) .column-popover button.column-step:disabled { cursor: default; opacity: .3; }
+:is(.stock-toolbar, .zg-toolbar) .column-popover button.column-reset { height: auto; padding: 6px 0 2px; font-size: 13px; }
+.zg-toolbar .column-menu { margin-left: auto; }
+.zg-toolbar .column-popover { width: min(420px, calc(100vw - 48px)); }
+.zg-toolbar .column-popover ul { max-height: 55vh; overflow-y: auto; }
+.zg-toolbar .column-popover .column-choice { display: flex; align-items: center; gap: 4px; }
+.zg-toolbar .column-popover li.dragging { opacity: .5; }
 @media (pointer: coarse) {
   .column-popover li { grid-template-columns: 1fr 40px 40px; min-height: 40px; }
-  .stock-toolbar .column-popover button.column-step { width: 40px; height: 36px; }
+  :is(.stock-toolbar, .zg-toolbar) .column-popover button.column-step { width: 40px; height: 36px; }
 }
 .more-menu { position: relative; }
 .more-menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; display: grid; min-width: 200px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 8px 24px rgba(0, 26, 24, .14); }
@@ -2697,11 +2702,20 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .kit-filters label { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; }
 .kit-filters select { width: auto; }
 .kit-filters input[type="checkbox"] { width: auto; margin: 0; }
-.kit-tiles { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
-.kit-tiles .kit-tile { min-height: 0; padding: 12px 14px; }
-.kit-tiles .tile-body { gap: 4px; }
-.kit-tiles .t-h { font-size: 15px; }
+.kit-tiles { grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 12px; }
+.kit-tiles .kit-tile { min-width: 0; min-height: 0; padding: 12px; }
+.kit-tiles .kit-tile:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.kit-tiles .tile-body { gap: 4px; grid-template-rows: 22px auto auto minmax(40px, auto); align-content: start; }
+.kit-tiles .t-h { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .kit-tiles .t-sub { font-size: 12px; }
+.kit-tiles .kit-tile-customer { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; color: var(--foreground); font-size: 14px; line-height: 20px; }
+.kit-tiles .kit-chips { align-content: start; align-items: start; }
+.kit-tiles .kit-tile-problems { min-width: 0; font-size: 13px; line-height: 20px; font-variant-numeric: tabular-nums; }
+.kit-tiles .kit-tile-problem-line { min-height: 20px; overflow-wrap: anywhere; }
+.kit-tiles .kit-tile-problem-line b { font-weight: 600; }
+.kit-tiles .kit-tile-problems [data-tone="warning"] { color: var(--chip-warning-fg); }
+.kit-tiles .kit-tile-problems [data-tone="danger"] { color: var(--chip-danger-fg); }
+.kit-tiles .kit-tile-details, .kit-tiles .proj-mark:not(.manual) { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .lot-card-passport { margin: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.4; }
 /* «Документы» of a lot in its «Правка» window: read-only label | value rows. */
 .lot-docs { margin: 0 0 12px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--accent); }

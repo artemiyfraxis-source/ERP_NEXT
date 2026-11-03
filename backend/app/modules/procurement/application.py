@@ -594,7 +594,7 @@ def _add_requested_line(
     )
     if buyer is not None:
         uow.audit.add(_taken_event(line, taken, buyer, message.created_at))
-        _queue_autofill(taken, message.created_at, uow)
+        _queue_autofill(taken, message.created_at, uow.outbox)
     return taken
 
 
@@ -809,43 +809,53 @@ def take_procurement_in_work_batch(
         raise ProcurementValidationError("Не выбрано ни одной строки закупки")
 
     with uow:
-        current: list[ProcurementLine] = []
-        for line_id in line_ids:
-            line = uow.procurement.get(line_id)
-            if line is None:
-                raise KeyError(f"Procurement line not found: {line_id}")
-            current.append(line)
-
-        taken: list[ProcurementLine] = []
-        skipped: list[ProcurementLine] = []
-        changed: list[tuple[ProcurementLine, ProcurementLine, tuple[str, ...]]] = []
-        supplier_map: dict[str, str] | None = None
-        for before in current:
-            try:
-                after = before.take_in_work(command.actor)
-            except ProcurementValidationError:
-                skipped.append(before)
-                continue
-            filled: tuple[str, ...] = ()
-            if after != before:
-                if suppliers is not None and not (after.supplier or "").strip() and (after.link or "").strip():
-                    if supplier_map is None:
-                        supplier_map = _supplier_map(suppliers)
-                    after, filled = after.fill_empty(supplier=supplier_from_link(after.link, supplier_map))
-                    after = after.with_work_stage()
-                changed.append((before, after, filled))
-            taken.append(after)
-        if not changed:
-            return taken, skipped
-
-        for before, after, filled in changed:
-            uow.procurement.add(after)
-            uow.audit.add(_taken_event(before, after, command.actor, command.now))
-            if filled:
-                uow.audit.add(_autofilled_event(after, filled, command.actor, command.now))
-            _queue_autofill(after, command.now, uow)
-        uow.commit()
+        taken, skipped, changed = take_procurement_in_work_pending(
+            command, uow.procurement, uow.audit, uow.outbox, suppliers,
+        )
+        if changed:
+            uow.commit()
         return taken, skipped
+
+
+def take_procurement_in_work_pending(
+    command: TakeProcurementInWorkCommand,
+    procurement: ProcurementRepository,
+    audit: AppendOnlyRepository,
+    outbox: AppendOnlyRepository,
+    suppliers: SupplierDirectory | None = None,
+) -> tuple[list[ProcurementLine], list[ProcurementLine], bool]:
+    """Stage taking and its existing side effects in the caller's transaction; never commit or close it."""
+    current: list[ProcurementLine] = []
+    for line_id in dict.fromkeys(command.line_ids):
+        line = procurement.get(line_id)
+        if line is None:
+            raise KeyError(f"Procurement line not found: {line_id}")
+        current.append(line)
+    taken: list[ProcurementLine] = []
+    skipped: list[ProcurementLine] = []
+    changed = False
+    supplier_map: dict[str, str] | None = None
+    for before in current:
+        try:
+            after = before.take_in_work(command.actor)
+        except ProcurementValidationError:
+            skipped.append(before)
+            continue
+        filled: tuple[str, ...] = ()
+        if after != before:
+            changed = True
+            if suppliers is not None and not (after.supplier or "").strip() and (after.link or "").strip():
+                if supplier_map is None:
+                    supplier_map = _supplier_map(suppliers)
+                after, filled = after.fill_empty(supplier=supplier_from_link(after.link, supplier_map))
+                after = after.with_work_stage()
+            procurement.add(after)
+            audit.add(_taken_event(before, after, command.actor, command.now))
+            if filled:
+                audit.add(_autofilled_event(after, filled, command.actor, command.now))
+            _queue_autofill(after, command.now, outbox)
+        taken.append(after)
+    return taken, skipped, changed
 
 
 def _taken_event(before: ProcurementLine, after: ProcurementLine, actor: Actor, now: datetime) -> AuditEvent:
@@ -863,12 +873,12 @@ def _taken_event(before: ProcurementLine, after: ProcurementLine, actor: Actor, 
     )
 
 
-def _queue_autofill(line: ProcurementLine, now: datetime, uow: UnitOfWork) -> None:
+def _queue_autofill(line: ProcurementLine, now: datetime, outbox: AppendOnlyRepository) -> None:
     """НАИМЕНОВАНИЕ (САЙТ), ИЗГОТОВИТЕЛЬ and СТРАНА from the page behind the link: queued in the caller's transaction,
     filled by `app.workflows.procurement_autofill` while the line keeps this version."""
     if not line.autofill_wanted:
         return
-    uow.outbox.add(
+    outbox.add(
         OutboxMessage(
             id=uuid4(),
             topic=AUTOFILL_TOPIC,
@@ -2241,7 +2251,7 @@ def split_procurement_line(
                 )
             )
             uow.audit.add(_taken_event(replace(copy, status=ProcurementStatus.NEW), copy, command.actor, command.now))
-            _queue_autofill(copy, command.now, uow)
+            _queue_autofill(copy, command.now, uow.outbox)
         uow.commit()
         return source, copies
 

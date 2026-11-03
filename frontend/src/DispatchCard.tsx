@@ -4,28 +4,30 @@ import { PageWindow } from "./PageWindow";
 import { intakeApi, type DispatchData } from "./productionIntakeApi";
 import type { DispatchStage } from "./dispatchStage";
 import { PackDecision } from "./shippingCells";
+import { CarrierSelect, PICKUP_CARRIER, termsFor } from "./carriers";
 import "./dispatch.css";
 
 /* «Данные отправки» проекта (владелец 14.10): «надо только получатель, адрес, телефон, вариант УПД; если УПД бумага —
    возможность приложить УПД». Окно в «Приёмке с производства» и тот же набор полей в «Отгрузке» (`DispatchFields`).
-   Остальные поля карточки (контакт, условия, ТК, план, реквизиты) хранятся как были — эти формы их не шлют. */
+   Менеджер также выбирает доставку и оставляет комментарий для склада; контакт, план и реквизиты сохраняются как были. */
 
 const UPD: Array<[string, string]> = [["ЭДО", "ЭДО"], ["БУМАГА", "Бумага"], ["БЕЗ УПД", "Без УПД"]];
 const CONFLICT = "Данные отправки уже изменил другой сотрудник. Закройте окно и откройте его заново.";
 
-export type DispatchKey = "receiver" | "shipping_point" | "phone" | "upd_type";
+export type DispatchKey = "receiver" | "shipping_point" | "phone" | "upd_type" | "terms" | "carrier" | "note";
 export type DispatchDraft = Record<DispatchKey, string>;
-const KEYS: DispatchKey[] = ["receiver", "shipping_point", "phone", "upd_type"];
+const KEYS: DispatchKey[] = ["receiver", "shipping_point", "phone", "upd_type", "terms", "carrier", "note"];
 
 export const dispatchDraft = (card?: Partial<ProjectAddressee> | Partial<DispatchData> | null): DispatchDraft => ({
   receiver: card?.receiver ?? "", shipping_point: card?.shipping_point ?? "", phone: card?.phone ?? "", upd_type: card?.upd_type ?? "",
+  terms: card?.terms ?? "", carrier: card?.carrier ?? "", note: card?.note ?? "",
 });
 
-/** Только изменённые поля из четырёх: остальное в карточке не трогается (PUT меняет присланное, пустое стирает). */
+/** Только изменённые поля; скрытый при самовывозе адрес остаётся в истории карточки. */
 export function changedDispatch(draft: DispatchDraft, card?: Partial<ProjectAddressee> | Partial<DispatchData> | null): Record<string, string | null> {
   const before = dispatchDraft(card);
-  return Object.fromEntries(KEYS.filter((key) => draft[key].trim() !== before[key])
-    .map((key) => [key, key === "upd_type" ? draft[key] || null : draft[key].trim()]));
+  return Object.fromEntries(KEYS.filter((key) => !(key === "shipping_point" && draft.terms === "САМОВЫВОЗ") && draft[key].trim() !== before[key])
+    .map((key) => [key, key === "upd_type" || key === "terms" ? draft[key] || null : draft[key].trim()]));
 }
 
 export function readFile(file: File) {
@@ -37,7 +39,7 @@ export function readFile(file: File) {
   });
 }
 
-const FIELDS: Array<[Exclude<DispatchKey, "upd_type">, string, string]> = [
+const FIELDS: Array<["receiver" | "shipping_point" | "phone", string, string]> = [
   ["receiver", "Получатель", "как в документах"], ["shipping_point", "Адрес доставки", "куда везём"], ["phone", "Телефон", ""],
 ];
 
@@ -83,11 +85,19 @@ export function DispatchFields({ project, draft, onChange, editable, card, onCar
 
   return <>
     <div className={hideAddress || hideUpd ? "form-grid dispatch-grid dispatch-grid-3" : "form-grid dispatch-grid"}>
-      {FIELDS.filter(([key]) => !(hideAddress && key === "shipping_point")).map(([key, label, placeholder]) => <label key={key}>{label}
+      <label>Тип доставки<select aria-label={`Тип доставки${suffix}`} value={draft.terms} disabled={!editable}
+        onChange={(event) => { const terms = event.target.value; onChange({ ...draft, terms, carrier: terms === "САМОВЫВОЗ" ? PICKUP_CARRIER : draft.carrier === PICKUP_CARRIER ? "" : draft.carrier }); }}>
+        <option value="">не выбран</option><option value="САМОВЫВОЗ">Самовывоз</option><option value="ДОСТАВКА ТК">Доставка ТК</option>
+      </select></label>
+      {draft.terms === "ДОСТАВКА ТК" && <label>Перевозчик<CarrierSelect label={`Перевозчик${suffix}`} value={draft.carrier} disabled={!editable}
+        onChange={(carrier) => onChange({ ...draft, carrier, terms: termsFor(carrier) ?? draft.terms })} /></label>}
+      {FIELDS.filter(([key]) => !((hideAddress || draft.terms === "САМОВЫВОЗ") && key === "shipping_point")).map(([key, label, placeholder]) => <label key={key}>{label}
         <input aria-label={`${label}${suffix}`} value={draft[key]} disabled={!editable} placeholder={editable ? placeholder : ""}
           inputMode={key === "phone" ? "tel" : undefined} onChange={(event) => onChange({ ...draft, [key]: event.target.value })} /></label>)}
       {!hideUpd && <label>УПД<select aria-label={`УПД${suffix}`} value={draft.upd_type} disabled={!editable} onChange={(event) => onChange({ ...draft, upd_type: event.target.value })}>
         <option value="">не выбрано</option>{UPD.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
+      <label className="wide">Комментарий для склада<textarea aria-label={`Комментарий для склада${suffix}`} value={draft.note} disabled={!editable} maxLength={5000}
+        onChange={(event) => onChange({ ...draft, note: event.target.value })} /></label>
     </div>
     {!hideUpd && draft.upd_type === "БУМАГА" && <div className="dispatch-upd">
       {url
@@ -144,6 +154,12 @@ export function DispatchCard({ project, customer, canEdit, close, onSaved, stage
     setData(card as DispatchData); setDraft((current) => ({ ...current, upd_type: card.upd_type ?? current.upd_type })); setSaved(message);
     onSaved?.();
   };
+  const decisionSaved = (card: ProjectAddressee) => {
+    const before = dispatchDraft(data), next = dispatchDraft(card);
+    setDraft((current) => Object.fromEntries(KEYS.map((key) => [key, current[key] === before[key] ? next[key] : current[key]])) as DispatchDraft);
+    setData(card as DispatchData);
+    onSaved?.();
+  };
 
   return <PageWindow label={`Данные отправки ${project}`} close={close} width={900}>
     <section className="panel dispatch-card">
@@ -154,7 +170,7 @@ export function DispatchCard({ project, customer, canEdit, close, onSaved, stage
       {!loaded ? <div className="empty">Загрузка…</div> : <>
         <DispatchFields project={project} draft={draft} onChange={(next) => { setDraft(next); setSaved(""); }} editable={canEdit}
           card={data} onCardSaved={fileSaved} hideUpd={early} />
-        {deciding && <PackDecision project={project} editable={canEdit} card={data} onCard={(card) => setData(card as DispatchData)} />}
+        {deciding && <PackDecision project={project} editable={canEdit} card={data} onCard={decisionSaved} />}
         <div className="dispatch-actions">
           {canEdit
             ? <button type="button" className="primary" disabled={busy} onClick={() => void save()}>{busy ? "Сохраняем…" : "Сохранить"}</button>

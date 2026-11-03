@@ -22,6 +22,7 @@ PLAN_KINDS = {
     "tcReview": "Проверка ТК",
     "status": "Статус проекта",
     "mark": "Отметка плана",
+    "progress": "Количество КБ",
 }
 # Владелец 29.10.2026: «чем стоп от холда отличается и стоп от паузы — не нужно раздувать статусы». Один блокер
 # «СТОП»; старые записи журнала (неизменяемы) с ХОЛД / ПАУЗА читаются как «СТОП», новые — отказ (422, CHECK 0161).
@@ -150,6 +151,81 @@ def kit_key_from_purpose(value: object) -> str:
     return kit_stage_key(project, item_index) if project else ""
 
 
+KB_PROGRESS_FIELDS = {"started": "Начато", "done": "Готово", "qc": "На ОТК", "passed": "ОТК прошло"}
+
+
+@dataclass(frozen=True)
+class KbProgress:
+    """Cumulative quantities entered by a person; None means never entered, not zero."""
+
+    run: int | None
+    started: int | None = None
+    done: int | None = None
+    qc: int | None = None
+    passed: int | None = None
+
+    def counts(self) -> dict[str, int | None]:
+        return {name: getattr(self, name) for name in KB_PROGRESS_FIELDS}
+
+    def warnings(self) -> tuple[str, ...]:
+        counts = self.counts()
+        warnings = []
+        if self.run is None:
+            warnings.append("Тираж КБ не задан — сохранённые количества требуют проверки.")
+        for name, value in counts.items():
+            if self.run is not None and value is not None and value > self.run:
+                warnings.append(f"{KB_PROGRESS_FIELDS[name]}: {value} больше текущего тиража {self.run}.")
+        known = [(name, value) for name, value in counts.items() if value is not None]
+        for (earlier, first), (later, second) in zip(known, known[1:]):
+            if second > first:
+                warnings.append(f"{KB_PROGRESS_FIELDS[later]}: {second} больше «{KB_PROGRESS_FIELDS[earlier]}»: {first}.")
+        return tuple(warnings)
+
+
+def change_kb_progress(
+    current: KbProgress | None, changes: Mapping[str, object], run: int | None,
+) -> tuple[KbProgress, tuple[str, ...]]:
+    if type(run) is not int or run <= 0:
+        raise ProductionValidationError("Тираж КБ не задан — количество не записано.")
+    if not changes or any(name not in KB_PROGRESS_FIELDS for name in changes):
+        raise ProductionValidationError("Укажите количество: Начато, Готово, На ОТК или ОТК прошло.")
+    previous = current.counts() if current is not None else dict.fromkeys(KB_PROGRESS_FIELDS)
+    counts = {**previous, **changes}
+    for name, value in changes.items():
+        if type(value) is not int or value < 0 or value > run:
+            raise ProductionValidationError(f"{KB_PROGRESS_FIELDS[name]} — целое число от 0 до тиража КБ ({run}).")
+    # Only a later INCREASE lifts earlier counters. A correction downward never repairs other entries.
+    raised = {}
+    fields = list(KB_PROGRESS_FIELDS)
+    for position, name in reversed(list(enumerate(fields))):
+        value = changes.get(name)
+        if value is None or value <= (previous[name] or 0):
+            continue
+        for earlier in fields[:position]:
+            if counts[earlier] is None or counts[earlier] < value:
+                raised.setdefault(earlier, counts[earlier])
+                counts[earlier] = value
+    if any(value is not None and value > run for value in counts.values()):
+        raise ProductionValidationError("Сохранённые количества больше тиража КБ — исправьте их перед записью.")
+    notices = tuple(
+        f"{KB_PROGRESS_FIELDS[name]}: {old if old is not None else '—'} → {counts[name]} (поднято автоматически)."
+        for name, old in raised.items()
+    )
+    return KbProgress(run=run, **counts), notices
+
+
+def kb_progress_stage(progress: KbProgress) -> str:
+    if progress.run is None or any(value is not None and value > progress.run for value in progress.counts().values()):
+        return "В работе" if any(progress.counts().values()) else "Новый"
+    if progress.passed is not None and progress.passed >= progress.run:
+        return "ОТК пройден"
+    if progress.qc:
+        return "ОТК"
+    if progress.done is not None and progress.done >= progress.run:
+        return "Готово"
+    return "В работе" if any(progress.counts().values()) else "Новый"
+
+
 @dataclass(frozen=True)
 class KitStage:
     item_index: str
@@ -163,6 +239,7 @@ class KitStage:
     kit: bool = False
     # Stages a manual pick jumped over and no fact covers since (ladder order): the card shows them as skipped.
     skipped: tuple[str, ...] = ()
+    progress: KbProgress | None = None
 
 
 @dataclass(frozen=True)
@@ -182,6 +259,7 @@ class KitMark:
     # Markers an old «ТК готова» / «КБ набрана» / «Распланировано» stage row turned on (cleared by «авто» / «Новый»).
     tc: bool = False
     kit: bool = False
+    progress: KbProgress | None = None
 
 
 @dataclass(frozen=True)
@@ -266,6 +344,8 @@ def project_stage(
         key = kit_stage_key(project, item_index)
         stage_index = _fact_index(key, facts)
         mark = marks.get(key, KitMark())
+        if mark.progress is not None:
+            stage_index = max(stage_index, KIT_STAGES.index(kb_progress_stage(mark.progress)))
         manual_index = KIT_STAGES.index(mark.stage) if mark.stage in KIT_STAGES else -1
         # Контрактное производство: отгрузка по проекту — последний статус, ручной этап её не перекрывает
         # (владелец 29.09; в SUPPLYMAP ручной этап перекрывал и отгрузку); так же приёмка ГП и упаковка (15.10).
@@ -280,6 +360,7 @@ def project_stage(
             tc=key in facts.get("tc", ()) or manual_tc or mark.tc,
             kit=key in facts.get("kit", ()) or mark.kit or status_index >= _WORK_INDEX,
             skipped=tuple(stage for stage in mark.skipped if stage_index < KIT_STAGES.index(stage) < status_index),
+            progress=mark.progress,
         ))
     project_index = min((KIT_STAGES.index(stage.status) for stage in stages), default=0)
     # A project without KBs (a shop row with no calculation, or already shipped) takes its stage
@@ -380,6 +461,8 @@ def project_stage_now(
         key = kit_stage_key(project, item_index)
         fact_index = _fact_index(key, facts)
         mark = marks.get(key, KitMark())
+        if mark.progress is not None:
+            fact_index = max(fact_index, KIT_STAGES.index(kb_progress_stage(mark.progress)))
         shipped = key in facts.get("shipped", ())
         floor = _warehouse_floor(key, facts)
         manual = mark.stage in KIT_STAGES
@@ -611,6 +694,7 @@ class PlanEvent:
     from_value: str = ""
     # Причина ручной смены этапа (назад — обязательна).
     reason: str = ""
+    progress: KbProgress | None = None
 
 
 @dataclass(frozen=True)
@@ -686,15 +770,18 @@ def project_terminal(snapshot: PlanProjectSnapshot | None, journal: ProjectJourn
 def summarize_kit_marks(events: Iterable[PlanEvent]) -> dict[str, KitMark]:
     marks: dict[str, KitMark] = {}
     for event in events:
-        if event.kind not in {PLAN_KINDS["stage"], PLAN_KINDS["tcReview"]}:
+        if event.kind not in {PLAN_KINDS["stage"], PLAN_KINDS["tcReview"], PLAN_KINDS["progress"]}:
             continue
         key = kit_stage_key(event.project, event.item_index)
         current = marks.get(key, KitMark())
+        if event.kind == PLAN_KINDS["progress"]:
+            marks[key] = replace(current, progress=event.progress)
+            continue
         if event.kind == PLAN_KINDS["stage"]:
             if event.value in LEGACY_MARKER_STAGES:
                 # A former stage that is a marker now (29.10): no manual stage — the facts decide — and its markers on.
                 markers = LEGACY_MARKER_STAGES[event.value]
-                marks[key] = KitMark(review=current.review, tc="tc" in markers, kit="kit" in markers)
+                marks[key] = KitMark(review=current.review, tc="tc" in markers, kit="kit" in markers, progress=current.progress)
                 continue
             # An old word (immutable journal row) reads as the current ladder stage, whatever store the event came from.
             stage = None if event.value == PLAN_STAGE_AUTO else stage_alias(event.value)
@@ -707,6 +794,7 @@ def summarize_kit_marks(events: Iterable[PlanEvent]) -> dict[str, KitMark]:
             keep = stage in KIT_STAGES and stage != KIT_STAGES[0]
             marks[key] = KitMark(
                 stage=stage, review=current.review, skipped=skipped, tc=current.tc and keep, kit=current.kit and keep,
+                progress=current.progress,
             )
         else:
             marks[key] = replace(current, review=KitReview(event.value, event.text, event.who, event.occurred_at))

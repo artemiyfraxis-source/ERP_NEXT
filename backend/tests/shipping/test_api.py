@@ -3,7 +3,7 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -11,7 +11,7 @@ from app.main import app
 from app.modules.shipping.infrastructure import SqlAlchemyShippingUnitOfWork
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
-from app.shared.persistence import AuditEventRow, create_schema
+from app.shared.persistence import AuditEventRow, OutboxMessageRow, create_schema
 from tests.factories import Actor
 
 
@@ -41,6 +41,183 @@ def decide_pack(client, project: str = "591К.3") -> dict:
     })
     assert response.status_code == 200, response.text
     return response.json()["addressee"]
+
+
+def comment_notifications():
+    with app.state.shipping_uow_factory() as uow:
+        return [row.payload for row in uow.session.query(OutboxMessageRow) if "warehouse-comment" in row.idempotency_key]
+
+
+def test_bulk_project_card_readiness_includes_virtual_defaults_without_writes(shipping_api):
+    client = shipping_api
+    client.put("/api/shipping/project-addressee", json={"project": "PART", "receiver": "Получатель"})
+    client.put("/api/shipping/project-addressee", json={
+        "project": "PICKUP", "receiver": "Получатель", "phone": "+7", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО",
+    })
+    params = [("project", project) for project in ["EMPTY", "PART", "PICKUP", "EMPTY"]]
+    response = client.get("/api/shipping/project-addressees", params=params)
+    assert response.status_code == 200, response.text
+    cards = {card["project"]: card for card in response.json()["addressees"]}
+    assert len(response.json()["addressees"]) == 3
+    assert cards["EMPTY"]["version"] == 0
+    assert cards["EMPTY"]["dispatch_gaps"] == ["получатель", "адрес доставки", "телефон", "вариант УПД"]
+    assert cards["PART"]["dispatch_gaps"] == ["адрес доставки", "телефон", "вариант УПД"]
+    assert cards["PICKUP"]["dispatch_gaps"] == []
+    assert "ready_to_ship" not in cards["PICKUP"]
+    assert {card["project"] for card in client.get("/api/shipping/project-addressees").json()["addressees"]} == {"PART", "PICKUP"}
+    assert client.get("/api/shipping/project-addressee", params={"project": "EMPTY"}).json()["addressee"]["dispatch_gaps"] == cards["EMPTY"]["dispatch_gaps"]
+
+
+def test_project_card_readiness_is_not_shipment_readiness_or_pack_permission(shipping_api):
+    client = shipping_api
+    for carrier in ["Свой курьер", "Свой курьер до клиента", "Самовывоз"]:
+        project = carrier
+        card = client.put("/api/shipping/project-addressee", json={
+            "project": project, "receiver": "Получатель", "phone": "+7", "carrier": carrier, "upd_type": "БУМАГА",
+        }).json()["addressee"]
+        assert card["dispatch_gaps"] == (["файл бумажной УПД"] if carrier == "Самовывоз" else ["адрес доставки", "файл бумажной УПД"])
+        assert not card["pack_decided"]
+    decided = decide_pack(client, "EMPTY")
+    assert decided["pack_decided"] and decided["dispatch_gaps"]
+
+
+def test_bulk_project_cards_filter_in_sql_instead_of_reading_unrelated_cards(shipping_api):
+    from app.modules.shipping.domain import ProjectAddressee
+    with app.state.shipping_uow_factory() as uow:
+        for index in range(12):
+            uow.addressees.add(ProjectAddressee(project=f"P{index:02}", version=1))
+        uow.commit()
+        engine = uow.session.get_bind()
+    statements = []
+    def sql(_connection, _cursor, statement, parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT") and "shipping_project_addressees" in statement:
+            statements.append((statement, parameters))
+    event.listen(engine, "before_cursor_execute", sql)
+    try:
+        response = shipping_api.get("/api/shipping/project-addressees", params=[("project", "P03"), ("project", "MISSING")])
+        assert response.status_code == 200
+        assert [card["project"] for card in response.json()["addressees"]] == ["P03", "MISSING"]
+        assert len(statements) == 1
+        assert set(statements[0][1]) == {"P03", "MISSING"}
+    finally:
+        event.remove(engine, "before_cursor_execute", sql)
+
+
+def test_project_warehouse_comment_notifies_storekeepers_once_per_change(shipping_api):
+    client = shipping_api
+    card = client.put("/api/shipping/project-addressee", json={"project": "591К.3", "version": 0, "note": "В понедельник сами приедут"}).json()["addressee"]
+    messages = comment_notifications()
+    assert len(messages) == 1
+    assert messages[0]["recipient_audiences"] == "storekeeper"
+    assert messages[0]["recipient_user_ids"] == ""
+    assert "В понедельник сами приедут" in messages[0]["body"]
+    assert "?section=intake" in messages[0]["body"] and "591К.3" in messages[0]["body"]
+    client.put("/api/shipping/project-addressee", json={"project": "591К.3", "version": card["version"], "note": "В понедельник сами приедут"})
+    other = client.put("/api/shipping/project-addressee", json={"project": "591К.3", "version": card["version"], "phone": "+7"}).json()["addressee"]
+    assert len(comment_notifications()) == 1
+    cleared = client.put("/api/shipping/project-addressee", json={"project": "591К.3", "version": other["version"], "note": ""})
+    assert cleared.status_code == 200
+    assert len(comment_notifications()) == 2
+    assert "очищен" in comment_notifications()[-1]["body"]
+    stale = client.put("/api/shipping/project-addressee", json={"project": "591К.3", "version": other["version"], "note": "stale"})
+    assert stale.status_code == 409 and len(comment_notifications()) == 2
+
+
+def test_project_warehouse_comment_rolls_back_with_notification(shipping_api, monkeypatch):
+    from app.modules.shipping import application
+    def fail(*args, **kwargs):
+        raise RuntimeError("outbox failed")
+    monkeypatch.setattr(application, "publish_notification", fail)
+    with pytest.raises(RuntimeError, match="outbox failed"):
+        shipping_api.put("/api/shipping/project-addressee", json={"project": "591К.3", "version": 0, "note": "Не сохранять"})
+    card = shipping_api.get("/api/shipping/project-addressee", params={"project": "591К.3"}).json()["addressee"]
+    assert card["version"] == 0 and card["note"] == ""
+    assert comment_notifications() == []
+
+
+def test_project_warehouse_comment_max_length(shipping_api):
+    assert shipping_api.put("/api/shipping/project-addressee", json={"project": "591К.3", "version": 0, "note": "x" * 5001}).status_code == 422
+    assert comment_notifications() == []
+
+
+def _shipment_for_comment(client):
+    good = client.post("/api/shipping/goods", json={
+        "project": "591К.3", "item_index": "КБ1", "name": "Жгут", "ordered": "2", "unit": "шт",
+    }).json()["good"]
+    response = client.post("/api/shipping/shipments", json={
+        "receiver": "Получатель", "lines": [{"good_id": good["id"], "quantity": "2"}],
+    })
+    assert response.status_code == 200, response.text
+    return response.json()["shipment"]
+
+
+def test_shipment_warehouse_comment_notifies_storekeepers_once_per_change(shipping_api):
+    client = shipping_api
+    shipment = _shipment_for_comment(client)
+    endpoint = f"/api/shipping/shipments/{shipment['id']}/head"
+    stale = client.put(endpoint, json={"version": shipment["version"] + 1, "note": "Старая версия"})
+    assert stale.status_code == 409 and comment_notifications() == []
+    changed = client.put(endpoint, json={"version": shipment["version"], "note": "В понедельник сами приедут"}).json()["shipment"]
+    messages = comment_notifications()
+    assert len(messages) == 1
+    assert messages[0]["recipient_audiences"] == "storekeeper"
+    assert messages[0]["recipient_user_ids"] == ""
+    assert messages[0]["reference"] == shipment["number"]
+    assert "В понедельник сами приедут" in messages[0]["body"]
+    assert shipment["number"] in messages[0]["body"] and "591К.3" in messages[0]["body"]
+    assert "?section=intake" in messages[0]["body"]
+    same = client.put(endpoint, json={"version": changed["version"], "note": " В понедельник сами приедут "}).json()["shipment"]
+    assert same["version"] == changed["version"]
+    other = client.put(endpoint, json={"version": same["version"], "phone": "+7"}).json()["shipment"]
+    assert len(comment_notifications()) == 1
+    cleared = client.put(endpoint, json={"version": other["version"], "note": ""})
+    assert cleared.status_code == 200 and cleared.json()["shipment"]["note"] == ""
+    assert len(comment_notifications()) == 2 and "очищен" in comment_notifications()[-1]["body"]
+    duplicate = client.put(endpoint, json={"version": other["version"], "note": ""})
+    assert duplicate.status_code == 409 and len(comment_notifications()) == 2
+
+
+def test_shipment_warehouse_comment_and_outbox_roll_back_together(shipping_api, monkeypatch):
+    from app.modules.shipping import application
+    shipment = _shipment_for_comment(shipping_api)
+    publish = application.publish_notification
+    def publish_then_fail(*args, **kwargs):
+        publish(*args, **kwargs)
+        raise RuntimeError("outbox transaction failed")
+    monkeypatch.setattr(application, "publish_notification", publish_then_fail)
+    with pytest.raises(RuntimeError, match="outbox transaction failed"):
+        shipping_api.put(f"/api/shipping/shipments/{shipment['id']}/head", json={"version": shipment["version"], "note": "Не сохранять"})
+    stored = shipping_api.get("/api/shipping/shipments").json()["shipments"][0]
+    assert stored["id"] == shipment["id"] and stored["version"] == shipment["version"] and stored["note"] == ""
+    assert comment_notifications() == []
+
+
+def test_shipment_warehouse_comment_max_length(shipping_api):
+    shipment = _shipment_for_comment(shipping_api)
+    response = shipping_api.put(f"/api/shipping/shipments/{shipment['id']}/head", json={"version": shipment["version"], "note": "x" * 5001})
+    assert response.status_code == 422 and comment_notifications() == []
+
+
+@pytest.mark.parametrize("carrier, required", [("Курьер (наш)", False), ("СДЭК", True), ("Яндекс Доставка", True), ("Курьер внешний", True)])
+def test_shipping_api_track_required_and_dispatch_without_track(shipping_api, carrier, required):
+    client = shipping_api
+    good = client.post("/api/shipping/goods", json={
+        "project": "591К.3", "item_index": "КБ1", "name": "Жгут", "ordered": "2", "unit": "шт",
+    }).json()["good"]
+    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "2"}).json()["good"]
+    made = client.post("/api/shipping/shipments", json={
+        "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": "ДОСТАВКА ТК", "carrier": carrier,
+        "upd_type": "ЭДО", "upd_number": "123", "upd_url": "https://files.example/upd.pdf", "lines": [{"good_id": good["id"], "quantity": "2"}],
+    })
+    assert made.status_code == 200, made.text
+    shipment = made.json()["shipment"]
+    assert shipment["track_required"] is required
+    assert shipment["ready_to_ship"] is not required
+    response = client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": shipment["version"]})
+    if required:
+        assert response.status_code == 422 and "трек-номер" in response.json()["detail"]
+    else:
+        assert response.status_code == 200 and response.json()["shipment"]["status"] == "Закрыта"
 
 
 def test_finished_good_partial_shipment_and_close_gates(shipping_api):
@@ -187,6 +364,32 @@ def _good_with_stock(client, *, project="591К.3", item_index="КБ1", accepted=
     if accepted:
         good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": accepted}).json()["good"]
     return good
+
+
+@pytest.mark.parametrize("terms, carrier, address_required", [
+    ("САМОВЫВОЗ", "", False),
+    (None, "Самовывоз", False),
+    ("ДОСТАВКА ТК", "СДЭК", True),
+    ("ДОСТАВКА ТК", "Курьер (наш)", True),
+])
+def test_acceptance_notifies_about_missing_address_only_for_delivery(shipping_api, terms, carrier, address_required):
+    client = shipping_api
+    card = client.put("/api/shipping/project-addressee", json={
+        "project": "591К.3", "receiver": "Получатель", "phone": "1", "terms": terms,
+        "carrier": carrier, "upd_type": "ЭДО",
+    })
+    assert card.status_code == 200, card.text
+    good = _good_with_stock(client, accepted="")
+
+    accepted = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "1"})
+
+    assert accepted.status_code == 200, accepted.text
+    with app.state.shipping_uow_factory() as uow:
+        notices = [row.payload for row in uow.session.scalars(select(OutboxMessageRow))
+                   if "Нет данных отправки" in str(row.payload.get("title"))]
+    assert len(notices) == int(address_required)
+    if address_required:
+        assert "данных отправки нет: адрес доставки." in notices[0]["body"]
 
 
 def _create(client, lines, **extra):

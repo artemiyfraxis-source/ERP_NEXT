@@ -425,7 +425,7 @@ it("keeps the position and the access level in separate table columns", async ()
   render(<StaffPage />);
   const table = await screen.findByRole("region", { name: "Сотрудники" });
   const headers = within(table).getAllByRole("columnheader").map((header) => header.textContent);
-  expect(headers.slice(0, 8)).toEqual(["ФИО", "Таб. №", "Должность", "Логин / e-mail", "Отдел", "Площадка", "Доступ", "Вход"]);
+  expect(headers.slice(0, 9)).toEqual(["ФИО", "Таб. №", "Должность", "Логин", "E-mail", "Отдел", "Площадка", "Доступ", "Вход"]);
   const cell = (name: string, column: string) => {
     const row = within(table).getByText(name).closest("tr") as HTMLElement;
     return within(row).getAllByRole("cell")[headers.indexOf(column)];
@@ -437,6 +437,10 @@ it("keeps the position and the access level in separate table columns", async ()
   expect(cell("Закупкин", "Должность")).not.toHaveTextContent("Технический руководитель");
   expect(cell("Закупкин", "Доступ")).toHaveTextContent("Технический руководитель");
   expect(cell("Админов", "Доступ")).toHaveTextContent("Суперадминистратор");
+  expect(cell("Админов", "Логин")).toHaveTextContent(/^admin$/);
+  expect(cell("Админов", "E-mail")).toHaveTextContent(/^admin@example.test$/);
+  expect(cell("Закупкин", "Логин")).toHaveTextContent(/^buyer@example.test$/);
+  expect(cell("Закупкин", "E-mail")).toHaveTextContent(/^buyer@example.test$/);
 });
 
 it("shows the current manager and refuses a name typed but not picked from the list", async () => {

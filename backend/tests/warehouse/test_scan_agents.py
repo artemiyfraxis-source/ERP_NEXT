@@ -31,18 +31,51 @@ def stand(tokens_api):  # noqa: F811
     return admin, agent, clock, sessions
 
 
-def _beat(agent, machine_id, *, pc="PC", scanners=(SCANNER,), lan="", version="2.0.0"):
+def _beat(agent, machine_id, *, pc="PC", scanners=(SCANNER,), lan="", version="2.2.0"):
     body = {"machine_id": machine_id, "pc_name": pc, "version": version, "lan_ip": lan, "scanners": list(scanners)}
     response = TestClient(app).post(BEAT, json=body, headers=agent)
     assert response.status_code == 200, response.text
     return response.json()
 
 
-def _press(admin, agent_id=None):
-    body = {"agent_id": agent_id} if agent_id else None
+def _press(admin, agent_id=None, scanner=SCANNER["id"]):
+    body = {"agent_id": agent_id, "target_scanner": scanner} if agent_id else None
     response = admin.post(JOBS, json=body, headers=_csrf(admin))
     assert response.status_code == 200, response.text
     return response.json()
+
+
+@pytest.mark.parametrize("agent_id,scanner", [("missing", "{wia-1}"), ("m-1", "{gone}"), ("m-1", "")])
+def test_invalid_explicit_choice_never_queues_on_another_scanner(stand, agent_id, scanner):
+    admin, agent, _clock, _sessions = stand
+    _beat(agent, "m-1")
+    _beat(agent, "m-2", scanners=(SECOND,))
+    assert _press(admin, agent_id, scanner)["status"] == "choose"
+    assert _claimed(agent, "m-1") is None
+    assert _claimed(agent, "m-2") is None
+
+
+def test_offline_or_pre_strict_agent_never_receives_a_new_scan(stand):
+    admin, agent, clock, _sessions = stand
+    _beat(agent, "m-1")
+    clock.now += scan_agents.LIVE_FOR + timedelta(seconds=1)
+    _beat(agent, "m-2")
+    assert _press(admin, "m-1")["status"] == "choose"
+    _beat(agent, "m-1", version="2.1.0")
+    assert _press(admin, "m-1")["status"] == "choose"
+    assert _claimed(agent, "m-1") is None
+    _beat(agent, "m-1", version="2.2.0")
+    assert _press(admin, "m-1")["status"] == "pending"
+
+
+def test_even_one_matching_ip_requires_the_pc_and_scanner_choice(stand):
+    admin, agent, clock, sessions = stand
+    _beat(agent, "m-1")
+    answer = _press(admin)
+    assert answer["status"] == "choose"
+    assert answer["agents"][0]["scanners"] == [SCANNER]
+    assert scan_agents.route(_uow(sessions), browser_ip="testclient", remembered="", now=clock.now).kind == scan_agents.CHOOSE
+    assert _claimed(agent, "m-1") is None
 
 
 def _claim(agent, machine_id=None, host="PC"):
@@ -97,10 +130,11 @@ def test_nobody_alive_is_no_agent_and_a_pc_without_a_scanner_is_named(stand):
     assert _press(admin) == {"status": "no_agent", "idle": ["BUHGALTER"]}
     _beat(agent, "m-2", pc="SKLAD")
     clock.now += scan_agents.LIVE_FOR + timedelta(seconds=1)
-    assert _press(admin)["status"] == "no_agent", "an agent not heard for 3 minutes is gone"
+    answer = _press(admin)
+    assert answer["status"] == "choose" and answer["agents"][0]["live"] is False, "offline devices remain visible"
 
 
-def test_routing_by_address_by_remembered_id_choose_and_legacy(stand):
+def test_addresses_and_legacy_preferences_never_replace_an_explicit_pair(stand):
     _admin, agent, clock, sessions = stand
     _beat(agent, "m-1", pc="SKLAD", lan="192.168.1.20")
     _beat(agent, "m-2", pc="OFFICE", lan="192.168.1.30")
@@ -113,18 +147,19 @@ def test_routing_by_address_by_remembered_id_choose_and_legacy(stand):
         return scan_agents.route(_uow(sessions), browser_ip=ip, remembered=remembered, now=clock.now)
 
     by_lan = route("192.168.1.30")
-    assert (by_lan.kind, by_lan.agent_id) == (scan_agents.AGENT, "m-2"), "the browser's address is the agent's LAN one"
+    assert (by_lan.kind, by_lan.agent_id) == (scan_agents.CHOOSE, None)
     both = route("203.0.113.5")
     assert both.kind == scan_agents.CHOOSE and len(both.agents) == 2, "one shop address, two PCs: choose"
-    assert route("203.0.113.5", "m-1").agent_id == "m-1", "…the remembered one wins among the matches"
-    assert route("198.51.100.7", "m-1").agent_id == "m-1", "no address matches: the remembered agent, if alive"
+    assert route("203.0.113.5", "m-1").kind == scan_agents.CHOOSE, "a PC id alone is incomplete"
+    assert route("198.51.100.7", "m-1").kind == scan_agents.CHOOSE
     other = route("198.51.100.7")
     assert other.kind == scan_agents.CHOOSE and [a.pc for a in other.agents] == ["OFFICE", "SKLAD"]
     assert route("198.51.100.7", "gone").kind == scan_agents.CHOOSE, "a remembered id nobody reports is ignored"
     clock.now += scan_agents.LIVE_FOR + timedelta(seconds=1)
-    assert route("192.168.1.30").kind == scan_agents.NO_AGENT
+    offline = route("192.168.1.30")
+    assert offline.kind == scan_agents.CHOOSE and all(not item.live for item in offline.agents)
     old_agent_alive(sessions, clock)
-    assert route("192.168.1.30").kind == scan_agents.LEGACY, "only an old agent alive: an untargeted job"
+    assert route("192.168.1.30").kind == scan_agents.CHOOSE, "legacy claims never enable untargeted creation"
 
 
 def test_a_job_is_made_for_the_chosen_agent_and_only_that_agent_claims_it(stand):
@@ -133,7 +168,7 @@ def test_a_job_is_made_for_the_chosen_agent_and_only_that_agent_claims_it(stand)
     _beat(agent, "m-2", pc="OFFICE")
     picked = _press(admin)
     assert picked["status"] == "choose" and {a["id"] for a in picked["agents"]} == {"m-1", "m-2"}
-    assert picked["agents"][0]["scanners"] == ["Pantum BM2300W"] and picked["agents"][0]["pc"] == "OFFICE"
+    assert picked["agents"][0]["scanners"] == [SCANNER] and picked["agents"][0]["pc"] == "OFFICE"
     job = _press(admin, "m-1")
     assert job["status"] == "pending"
     assert _claim(agent, "m-2") is None, "another PC's agent does not take it"
@@ -141,17 +176,16 @@ def test_a_job_is_made_for_the_chosen_agent_and_only_that_agent_claims_it(stand)
     assert _claim(agent, "m-1") == job["id"]
 
 
-def test_an_old_agent_still_takes_untargeted_jobs_and_a_new_one_does_too(stand):
+def test_only_a_legacy_agent_never_enables_a_new_untargeted_job(stand):
     admin, agent, clock, sessions = stand
     assert _claim(agent, host="SKLAD") is None, "the first claim of an old agent registers it"
-    job = _press(admin)
-    assert job["status"] == "pending", "an old agent alive: a job for «any agent»"
-    assert _claim(agent, host="SKLAD") == job["id"]
+    assert _press(admin)["status"] == "no_agent"
+    assert _claim(agent, host="SKLAD") is None
     with sessions() as session:
         legacy = session.query(scan_agents.ScanAgentRow).all()
     assert [(row.machine_id, row.legacy) for row in legacy] == [("legacy:SKLAD", True)]
-    again = _press(admin)
-    assert _claim(agent, "m-new", host="NEW") == again["id"], "an untargeted job is for any agent"
+    assert _press(admin)["status"] == "no_agent"
+    assert _claim(agent, "m-new", host="NEW") is None
 
 
 def test_a_claim_keeps_the_agent_alive_between_heartbeats(stand):
@@ -227,6 +261,27 @@ def test_the_repo_agent_carries_a_version_the_server_can_read():
     assert Path(agent_release.agent_dir(), "install.ps1").exists()
 
 
+def test_the_strict_release_manifest_and_heartbeat_use_the_same_served_script(stand):
+    admin, agent, _clock, _sessions = stand
+    served = admin.get("/api/stock/scan/agent/files/agent.ps1").content
+    manifest = admin.get("/api/stock/scan/agent/manifest").json()
+    assert manifest["version"] == "2.2.0"
+    assert manifest["sha256"] == hashlib.sha256(served).hexdigest()
+    update = _beat(agent, "m-old", version="2.1.0")["update"]
+    assert update["version"] == "2.2.0" and update["sha256"] == manifest["sha256"]
+    assert _press(admin, "m-old")["status"] == "choose", "update offered is not update installed"
+    assert _beat(agent, "m-old", version="2.2.0")["update"] is None
+    assert _press(admin, "m-old")["status"] == "pending"
+
+
+def test_duplicate_scanner_names_require_the_actual_id():
+    import json
+
+    raw = json.dumps([SCANNER, {"id": "{wia-3}", "name": SCANNER["name"]}])
+    assert scan_agents.matching_scanner(raw, SCANNER["name"]) is None
+    assert scan_agents.matching_scanner(raw, "{wia-3}") == "{wia-3}"
+
+
 def test_the_install_command_names_the_server_over_https_unless_a_local_address():
     # 28.10.2026: TLS ends at Tailscale Funnel, the request reached the API as http — the command must say https
     from starlette.requests import Request
@@ -272,7 +327,7 @@ def test_the_storekeeper_scans_a_level_without_the_scan_right_is_refused(stand, 
     _admin, agent, _clock, _sessions = stand
     _beat(agent, "m-1", pc="SKLAD")
     storekeeper = person("storekeeper")
-    assert storekeeper.post(JOBS, json={"agent_id": "m-1"}).json()["status"] == "pending"
+    assert storekeeper.post(JOBS, json={"agent_id": "m-1", "target_scanner": SCANNER["id"]}).json()["status"] == "pending"
     assert storekeeper.get("/api/stock/scan/agents").status_code == 200
     assert storekeeper.post("/api/stock/scan/agent/install-token").status_code == 200, "whoever scans installs"
 
@@ -318,10 +373,10 @@ def test_a_job_for_the_chosen_scanner_hands_it_to_the_agent(stand):
     assert _claimed(agent, "m-1") == {"id": by_id["id"], "target_scanner": "{wia-2}"}
     press(agent_id="m-1", target_scanner="Canon LiDE")
     assert _claimed(agent, "m-1")["target_scanner"] == "{wia-2}", "a name becomes the id the agent reported"
-    press(agent_id="m-1", target_scanner="{gone}")
-    assert _claimed(agent, "m-1")["target_scanner"] is None, "a scanner this PC no longer has: its first one"
-    press(agent_id="m-1")
-    assert _claimed(agent, "m-1")["target_scanner"] is None
+    assert press(agent_id="m-1", target_scanner="{gone}")["status"] == "choose"
+    assert _claimed(agent, "m-1") is None
+    assert press(agent_id="m-1")["status"] == "choose"
+    assert _claimed(agent, "m-1") is None
 
 
 def test_the_chosen_scanner_wins_over_the_browsers_address(stand):
@@ -333,16 +388,16 @@ def test_the_chosen_scanner_wins_over_the_browsers_address(stand):
         return scan_agents.route(_uow(sessions), browser_ip="192.168.1.20", remembered=remembered, now=clock.now,
                                  scanner=scanner)
 
-    assert (route().agent_id, route().scanner) == ("m-1", None), "no choice: the PC the browser sits at"
+    assert route().kind == scan_agents.CHOOSE, "no choice requires selecting both identities"
     chosen = route("m-2", "{wia-2}")
     assert (chosen.kind, chosen.agent_id, chosen.scanner) == (scan_agents.AGENT, "m-2", "{wia-2}")
-    assert route("m-2", "{gone}").agent_id == "m-1", "a scanner its agent no longer reports: the usual routing"
-    assert route("m-1", "{wia-2}").scanner is None, "the scanner is not on the routed PC: its first one"
+    assert route("m-2", "{gone}").kind == scan_agents.CHOOSE
+    assert route("m-1", "{wia-2}").kind == scan_agents.CHOOSE
 
 
-def test_an_old_agent_claims_an_untargeted_job_without_a_scanner(stand):
+def test_a_scanner_without_a_pc_never_creates_an_untargeted_job(stand):
     admin, agent, _clock, _sessions = stand
     _claimed(agent, host="SKLAD")
     job = admin.post(JOBS, json={"target_scanner": "{wia-2}"}, headers=_csrf(admin)).json()
-    assert _claimed(agent, host="SKLAD") == {"id": job["id"], "target_scanner": None}, \
-        "a scanner rides only on a job for a known agent"
+    assert job["status"] == "no_agent"
+    assert _claimed(agent, host="SKLAD") is None

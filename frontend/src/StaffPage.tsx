@@ -222,10 +222,8 @@ export function StaffPage({ openCard, openUserId }: {
       key: "job", title: "Должность", value: (user) => `${user.job_title} ${user.qualification}`.trim(),
       render: (user) => <>{user.job_title || "—"}{user.qualification && <small>{user.qualification}</small>}</>,
     },
-    {
-      key: "login", title: "Логин / e-mail", value: (user) => `${user.login} ${user.email}`,
-      render: (user) => <>{user.login}{user.email !== user.login && <small>{user.email}</small>}</>,
-    },
+    { key: "login", title: "Логин", value: (user) => user.login },
+    { key: "email", title: "E-mail", value: (user) => user.email },
     { key: "department", title: "Отдел", value: (user) => user.department, filter: true },
     { key: "site", title: "Площадка", value: (user) => user.site || "все", filter: true },
     { key: "level", title: "Доступ", hint: LEVEL_HINT, value: (user) => levelLabel(user), filter: true },

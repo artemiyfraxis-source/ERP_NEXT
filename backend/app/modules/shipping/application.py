@@ -22,7 +22,7 @@ from app.shared.notifications import (
 )
 
 from .domain import (
-    PACK_NOT_DECIDED, AcceptanceAct, DeliveryTerms, FinishedGood, GoodMove, MoveContext, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
+    HISTORY_CORRECTION_LIMITS, PACK_NOT_DECIDED, AcceptanceAct, DeliveryTerms, FinishedGood, GoodMove, MoveContext, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
     ShipmentStatus, ShippingValidationError, StoredFile, UpdType, check_boxes, effective_address, packed_by_index,
     plan_project_queue,
 )
@@ -69,7 +69,7 @@ class ShipmentRepository(Protocol):
 
 class ProjectAddresseeRepository(Protocol):
     def get(self, project: str) -> ProjectAddressee | None: ...
-    def list(self) -> Sequence[ProjectAddressee]: ...
+    def list(self, projects: Sequence[str] | None = None) -> Sequence[ProjectAddressee]: ...
     def add(self, addressee: ProjectAddressee) -> None: ...
 
 
@@ -232,7 +232,15 @@ class UpdateDocumentsCommand(ShipmentCommand):
     upd_number: str
     upd_date: date | None
     upd_url: str
-    track_number: str
+    track_number: str | None
+
+
+@dataclass(frozen=True)
+class HistoryCorrectionCommand(ShipmentCommand):
+    fields: dict[str, object]
+    reason: str
+    source: str
+    allowed: bool
 
 
 @dataclass(frozen=True)
@@ -681,6 +689,15 @@ def _set_project_addressee(command: SetProjectAddresseeCommand, uow: UnitOfWork)
     _audit(_addressee_id(project), "shipping.addressee_set", command.actor, command.now, {
         "project": project, "fields": sorted(command.fields),
     }, uow)
+    if updated.note != current.note:
+        publish_notification(uow.outbox, notification_requested(
+            key=f"shipping:warehouse-comment:{project}:v{updated.version}", now=command.now,
+            title=f"Комментарий для склада: проект {project}",
+            body=(f"{command.actor.name}: проект {project}\n"
+                  + (updated.note or "Комментарий для склада очищен")
+                  + "\n\nОткрыть: портал → Склад → Приёмка с производства (?section=intake)."),
+            kind="ship", reference=project, audiences=(STOREKEEPER_AUDIENCE,),
+        ))
     for shipment in uow.shipments.open_for_project(project):
         followed = shipment.follow(updated)
         if followed is not shipment:
@@ -701,6 +718,16 @@ def edit_shipment_head(command: EditHeadCommand, uow: UnitOfWork) -> Shipment:
             return shipment
         uow.shipments.add(updated)
         _audit(shipment.id, "shipping.head_edited", command.actor, command.now, {"fields": sorted(command.fields)}, uow)
+        if updated.note != shipment.note:
+            projects = ", ".join(dict.fromkeys(line.project for line in updated.lines))
+            publish_notification(uow.outbox, notification_requested(
+                key=f"shipping:shipment-warehouse-comment:{updated.id}:v{updated.version}", now=command.now,
+                title=f"Комментарий для склада: отправка {updated.number}",
+                body=(f"{command.actor.name}: отправка {updated.number}, проекты {projects}\n"
+                      + (updated.note or "Комментарий для склада очищен")
+                      + "\n\nОткрыть: портал → Склад → Приёмка с производства (?section=intake)."),
+                kind="ship", reference=updated.number, audiences=(STOREKEEPER_AUDIENCE,),
+            ))
         uow.commit()
         return updated
 
@@ -895,13 +922,39 @@ def _attach_upd(
     return updated
 
 
+def correct_shipment_history(command: HistoryCorrectionCommand, uow: UnitOfWork) -> Shipment:
+    if not command.allowed:
+        raise ShippingPermissionError("Исправлять историю отгрузки может только администратор")
+    for value, label in ((command.reason, "причину"), (command.source, "источник")):
+        if not isinstance(value, str) or not value.strip() or len(value) > 2000:
+            raise ShippingValidationError(f"Укажите {label} исправления (от 1 до 2000 символов)")
+    with uow:
+        shipment = _shipment(command.shipment_id, command.expected_version, uow)
+        updated = shipment.correct_history(command.fields)
+        if updated == shipment:
+            return shipment
+        details = {"reason": command.reason.strip(), "source": command.source.strip()}
+        for prefix, item in (("before", shipment), ("after", updated)):
+            details[f"{prefix}_version"] = str(item.version)
+            details[f"{prefix}_inherited"] = ",".join(sorted(item.inherited))
+            for key in HISTORY_CORRECTION_LIMITS:
+                details[f"{prefix}_{key}"] = getattr(item, key)
+        uow.shipments.add(updated)
+        _audit(shipment.id, "shipping.history_corrected", command.actor, command.now, details, uow)
+        uow.commit()
+        return updated
+
+
 def update_documents(command: UpdateDocumentsCommand, uow: UnitOfWork) -> Shipment:
     with uow:
         shipment = _shipment(command.shipment_id, command.expected_version, uow)
+        track = command.track_number
+        if track is None and shipment.status == ShipmentStatus.SHIPPED:
+            track = shipment.track_number
         updated = shipment.update_documents(
             upd_type=command.upd_type, upd_number=command.upd_number,
             upd_date=command.upd_date, upd_url=command.upd_url,
-            track_number=command.track_number, card=_card(shipment, uow),
+            track_number=track or "", card=_card(shipment, uow),
         )
         uow.shipments.add(updated)
         _audit(shipment.id, "shipping.documents_updated", command.actor, command.now, {}, uow)

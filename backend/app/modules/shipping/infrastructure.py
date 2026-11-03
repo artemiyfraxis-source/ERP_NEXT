@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 
 from datetime import date, datetime
 from decimal import Decimal
@@ -15,7 +16,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
 
-from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
+from app.shared.persistence import (
+    AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository,
+    check_read_version, note_written_version, track_read_versions,
+)
 from app.shared.project_number import normalize_project_number
 from .domain import (
     ADDRESSEE_PLAN_FIELDS, ADDRESSEE_REQUISITE_FIELDS, AcceptanceAct, BoxItem, DeliveryTerms, FinishedGood, GoodMove, GoodsState, MOVE_ROUTES, MoveContext,
@@ -120,6 +124,9 @@ class ShipmentRow(Base):
     no_upd_approved_by: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
     no_upd_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+
+track_read_versions(ShipmentRow)
 
 
 class ShipmentBoxRow(Base):
@@ -511,6 +518,8 @@ class SqlAlchemyShipmentRepository:
         row = self.session.get(ShipmentRow, shipment.id)
         if row is None:
             row = ShipmentRow(id=shipment.id); self.session.add(row)
+        else:
+            check_read_version(self.session, row, shipment.version)
         for key in (
             "number", "version", "created_at", "customer", "receiver", "shipping_point",
             "contact", "phone", "carrier", "deadline", "upd_number", "upd_date", "upd_url",
@@ -521,6 +530,7 @@ class SqlAlchemyShipmentRepository:
         row.status = shipment.status.value; row.terms = shipment.terms.value if shipment.terms else None
         row.upd_type = shipment.upd_type.value if shipment.upd_type else None
         row.inherited_fields = ",".join(sorted(shipment.inherited))
+        note_written_version(self.session, row)
         existing = {line.id: line for line in self.session.scalars(select(ShipmentLineRow).where(ShipmentLineRow.shipment_id == shipment.id))}
         for position, line in enumerate(shipment.lines):
             stored = existing.pop(line.id, None)
@@ -545,10 +555,7 @@ class SqlAlchemyShipmentRepository:
 
 class SqlAlchemyProjectAddresseeRepository:
     def __init__(self, session: Session): self.session = session
-    def get(self, project: str) -> ProjectAddressee | None:
-        row = self.session.get(ProjectAddresseeRow, project)
-        if row is None:
-            return None
+    def _domain(self, row: ProjectAddresseeRow) -> ProjectAddressee:
         return ProjectAddressee(
             project=row.project, version=row.version, receiver=row.receiver,
             shipping_point=row.shipping_point, contact=row.contact, phone=row.phone,
@@ -560,8 +567,16 @@ class SqlAlchemyProjectAddresseeRepository:
             upd_number=row.upd_number or "", upd_date=row.upd_date,
             pack_decided_by=row.pack_decided_by or "", pack_decided_at=row.pack_decided_at,
         )
-    def list(self) -> list[ProjectAddressee]:
-        return [self.get(project) for project in self.session.scalars(select(ProjectAddresseeRow.project).order_by(ProjectAddresseeRow.project))]
+    def get(self, project: str) -> ProjectAddressee | None:
+        row = self.session.get(ProjectAddresseeRow, project)
+        return self._domain(row) if row is not None else None
+    def list(self, projects: Sequence[str] | None = None) -> list[ProjectAddressee]:
+        if projects is not None and not projects:
+            return []
+        query = select(ProjectAddresseeRow).order_by(ProjectAddresseeRow.project)
+        if projects is not None:
+            query = query.where(ProjectAddresseeRow.project.in_(projects))
+        return [self._domain(row) for row in self.session.scalars(query)]
     def add(self, addressee: ProjectAddressee) -> None:
         row = self.session.get(ProjectAddresseeRow, addressee.project)
         if row is None:

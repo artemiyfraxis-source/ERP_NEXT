@@ -14,6 +14,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -21,19 +22,23 @@ from app.modules.procurement.application import (
     ConcurrentProcurementUpdate,
     SaveProcurementFactsCommand,
     SupplierDirectory,
+    TakeProcurementInWorkCommand,
     UnitOfWork as ProcurementUnitOfWork,
     save_procurement_facts,
+    take_procurement_in_work_pending,
 )
 from app.modules.procurement.domain import (
     FACT_PRICE_VAT,
     FACTS_EDITABLE,
     ProcurementFacts,
     ProcurementLine,
+    ProcurementStatus,
     ProcurementValidationError,
 )
-from app.modules.procurement.infrastructure import ProcurementLineRow
+from app.modules.procurement.infrastructure import ProcurementLineRow, SqlAlchemyProcurementRepository
 from app.modules.purchasing.rfq import LineChanged, LineRefused, LineView
 from app.shared.identity import Actor
+from app.shared.persistence import SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 
 _CHUNK = 500
 
@@ -73,6 +78,8 @@ def line_view(line: ProcurementLine) -> LineView:
         manufacturer=line.trace.manufacturer,
         order_number=line.order_number,
         invoice_number=line.invoice_number,
+        paid=line.paid_at is not None,
+        backorder=line.is_backorder,
     )
 
 
@@ -86,10 +93,33 @@ class ProcurementLinesBridge:
         self.suppliers = suppliers
 
     def mine(self, actor: Actor) -> list[LineView]:
-        """The buyer's own lines on the desk («В работе» / «Готов к запросу»)."""
+        """The buyer's desk and unclaimed new lines; reading the pool never takes ownership."""
         with self.procurement_uow_factory() as uow:
-            lines = list(uow.procurement.by_buyer(actor, 10_000))
-        return [line_view(line) for line in lines if line.status in FACTS_EDITABLE]
+            lines = list(uow.procurement.by_buyer(actor, 10_000)) + [
+                line for line in uow.procurement.available(10_000) if line.buyer is None
+            ]
+        return [line_view(line) for line in lines]
+
+    def for_rfq(self, session: Session, line_ids: Iterable[UUID], actor: Actor, now: datetime) -> dict[UUID, LineView]:
+        """Take new lines using the RFQ's session so ownership, audit and outbox roll back with the RFQ."""
+        ids = sorted(set(line_ids), key=str)
+        held = list(session.scalars(select(ProcurementLineRow).where(
+            ProcurementLineRow.id.in_(ids)).order_by(ProcurementLineRow.id).with_for_update()))
+        procurement = SqlAlchemyProcurementRepository(session)
+        current = {line_id: line for line_id in ids if (line := procurement.get(line_id)) is not None}
+        fresh = [line.id for line in current.values() if line.status is ProcurementStatus.NEW and line.buyer is None]
+        if fresh:
+            taken, skipped, _ = take_procurement_in_work_pending(
+                TakeProcurementInWorkCommand(fresh, actor, now), procurement,
+                SqlAlchemyAuditRepository(session), SqlAlchemyOutboxRepository(session), self.suppliers,
+            )
+            if skipped:
+                raise LineChanged("Строку закупки изменили — обновите")
+            current.update((line.id, line) for line in taken)
+        # Flush the version-checked claim before the caller inserts request lines; never commit here.
+        session.flush()
+        del held
+        return {line_id: line_view(line) for line_id, line in current.items()}
 
     def get_many(self, line_ids: Iterable[UUID]) -> dict[UUID, LineView]:
         wanted = list(dict.fromkeys(line_ids))

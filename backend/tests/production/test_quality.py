@@ -1,5 +1,7 @@
-from datetime import timedelta
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 
@@ -12,8 +14,20 @@ from app.modules.production.quality import (
     inspect_box,
     register_instrument,
 )
-from app.modules.production.traceability import BoxStatus, DefectDisposition, ProductionBox, SerialStatus, format_box_number
+from app.modules.production.traceability import BoxStatus, DefectDisposition, InstrumentStatus, MeasurementInstrument, ProductionBox, SerialStatus, format_box_number
 from tests.production.test_materials_finished_goods import stage_three_setup
+
+
+@pytest.mark.parametrize("changes", [{"verification_number": None}, {"verification_number": " "}, {"verified_at": None}, {"verification_due": None}])
+def test_active_instrument_with_missing_evidence_fails_closed(changes):
+    now = datetime(2026, 9, 23, tzinfo=timezone.utc)
+    active = MeasurementInstrument(
+        id=uuid4(), version=1, inventory_number="TEST-VALIDATION", name="Тестовый прибор", instrument_type="Тестер",
+        verification_number="TEST-PV", verified_at=now - timedelta(days=1), verification_due=now + timedelta(days=1),
+        status=InstrumentStatus.ACTIVE,
+    )
+    with pytest.raises(ProductionValidationError, match="не подтверждена"):
+        replace(active, **changes).validate_for(now)
 
 
 def test_qc_assigns_serials_and_isolates_rejected_units_with_checked_number():
@@ -47,7 +61,8 @@ def test_qc_assigns_serials_and_isolates_rejected_units_with_checked_number():
     engine.dispose()
 
 
-def test_qc_rejects_expired_measurement_instrument():
+@pytest.mark.parametrize("pending", [False, True])
+def test_qc_rejects_expired_or_unverified_measurement_instrument(pending):
     engine, _sessions, factory, master, operator, task, _line_id, now = stage_three_setup(fulfillment=False)
     box = ProductionBox.create(
         task_id=task.id, operation_id=task.operations[0].id, item=task.item,
@@ -59,16 +74,20 @@ def test_qc_rejects_expired_measurement_instrument():
         uow.commit()
     instrument = register_instrument(RegisterInstrumentCommand(
         inventory_number="СИ-OLD", name="Штангенциркуль", instrument_type="Линейный",
-        verification_number="ПВ-OLD", verified_at=now - timedelta(days=400),
-        verification_due=now - timedelta(days=1), actor=master, now=now,
+        verification_number=None if pending else "ПВ-OLD", verified_at=None if pending else now - timedelta(days=400),
+        verification_due=None if pending else now - timedelta(days=1), actor=master, now=now,
+        status=InstrumentStatus.UNVERIFIED if pending else InstrumentStatus.ACTIVE,
     ), factory())
 
-    with pytest.raises(ProductionValidationError, match="истекла"):
+    with pytest.raises(ProductionValidationError, match="не подтверждена" if pending else "истекла"):
         inspect_box(InspectBoxCommand(
             box_id=box.id, expected_version=box.version, accepted=1, rejected=0,
             defect_character="", defect_description="", instrument_ids=(instrument.id,),
             actor=master, now=now,
         ), factory())
+    with factory() as uow:
+        assert uow.qc.by_box(box.id) is None
+        assert uow.boxes.get(box.id) == box
     engine.dispose()
 
 

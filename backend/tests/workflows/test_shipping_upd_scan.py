@@ -4,20 +4,20 @@ right, scoped to a shipment, and the answer landing in the shipment (УПД file
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select
 
 from app.main import app
 from app.modules.shipping.infrastructure import SqlAlchemyShippingUnitOfWork
+from app.modules.warehouse import scan_agents
 from app.modules.warehouse.infrastructure import WarehouseReceiptFileRow
+from app.modules.warehouse.scan_jobs import ScanJobRow
 from app.shared.http_auth import Principal, authenticated_principal
 from tests.factories import Actor
 from tests.shipping.test_documents_api import _shipment, _stocked
 from tests.warehouse.test_receipts import NOW, stand  # noqa: F401 — fixture
-from tests.warehouse.test_scan_jobs import old_agent_alive
 
 EDO = (Path(__file__).parents[1] / "purchasing" / "fixtures" / "edo" / "upd-503.xml").read_bytes()
 PDF = b"%PDF-1.4\n% scan of a paper UPD\n"
@@ -67,10 +67,19 @@ def _get(client, shipment):
 def test_the_manager_with_the_shipping_right_scans_but_a_storekeeper_only_and_a_viewer_are_refused(desk):
     client, sessions = desk
     shipment = _new_shipment(client)
-    old_agent_alive(sessions, SimpleNamespace(now=NOW))
+    scan_agents.heartbeat(app.state.warehouse_uow_factory(), machine_id="shipping-pc", pc_name="TEST",
+                          version="2.2.0", ip_seen="testclient", ip_lan="",
+                          scanners=[{"id": "shipping-scanner", "name": "Тестовый сканер"}], now=NOW)
+    choice = client.post(_url(shipment, "jobs"))
+    assert choice.status_code == 200 and choice.json()["status"] == "choose", choice.text
+    with sessions() as session:
+        assert session.scalars(select(ScanJobRow)).first() is None, "no job before selecting the full pair"
 
-    started = client.post(_url(shipment, "jobs"))
+    started = client.post(_url(shipment, "jobs"), json={"agent_id": "shipping-pc", "target_scanner": "shipping-scanner"})
     assert started.status_code == 200 and started.json()["status"] == "pending", started.text
+    with sessions() as session:
+        job = session.get(ScanJobRow, UUID(started.json()["id"]))
+        assert (job.target_machine_id, job.target_scanner) == ("shipping-pc", "shipping-scanner")
     polled = client.get(_url(shipment, f"jobs/{started.json()['id']}")).json()
     assert polled["status"] == "pending" and polled["result"] is None
     assert client.delete(_url(shipment, f"jobs/{started.json()['id']}")).json()["status"] == "failed"

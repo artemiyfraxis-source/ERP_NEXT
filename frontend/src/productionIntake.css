@@ -4,8 +4,8 @@
 /* Кладовщик (владелец 29.10, Алексей): проект и заказчик крупно, КБ — обычным, всё крупнее — путался. */
 .intake-group-title { font-size: 16px; font-weight: 700; }
 .intake-kb { font-weight: 400; }
-.intake-page .data-table .grid td { font-size: 14px; }
-.intake-page .data-table .grid th { font-size: 13px; }
+.intake-page .data-table .grid td { font-size: 13px; vertical-align: top; }
+.intake-page .data-table .grid th { font-size: 12px; }
 .intake-page .seg-tabs { margin-bottom: 10px; }
 .intake-page .ship-handoff { margin-top: 16px; }
 .ship-inline .intake-location { width: 170px; flex: none; padding: 4px 8px; }
@@ -24,8 +24,7 @@
 .intake-page .ship-take .ship-qty, .intake-page .intake-place { height: 26px; padding-top: 2px; padding-bottom: 2px; }
 .intake-stage { max-width: 120px; }
 .intake-place { width: 116px; padding: 3px 8px; }
-.intake-due, .intake-all { font-weight: 400; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.intake-due.tone-danger { font-weight: 600; }
+.intake-all { font-weight: 400; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .intake-all { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
 @media (pointer: coarse) {
   .intake-page .intake-place { min-height: 40px; }
@@ -39,7 +38,10 @@
 .intake-take-btn { min-width: 44px; padding: 2px 10px; border: 1px solid var(--tone-ok); border-radius: 6px; background: color-mix(in srgb, var(--tone-ok) 16%, var(--card));
   color: var(--tone-ok); font-weight: 700; font-variant-numeric: tabular-nums; cursor: pointer; }
 .intake-take-btn:hover { background: var(--tone-ok); color: var(--card); }
-.intake-grn { display: inline-flex; align-items: center; gap: 6px; }
+.intake-grn { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; white-space: nowrap; }
+.intake-grn .goods-grn { max-width: none; overflow: visible; text-overflow: clip; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.intake-grn-link { font: inherit; padding: 0; }
+.intake-grn-link:focus-visible, .intake-doc-action:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .intake-print { padding: 1px 8px; line-height: 1.4; }
 .intake-window .intake-window-table td { vertical-align: top; }
 .intake-window .ship-row-error { display: block; white-space: normal; }
@@ -59,8 +61,15 @@
 .intake-num-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
 .intake-num-btn:disabled { color: var(--muted-foreground); border-style: dashed; cursor: not-allowed; }
 .intake-take-btn:focus-visible, .intake-num-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
-.intake-track-cell { display: inline-flex; align-items: center; gap: 6px; }
-.intake-tracks { max-width: 160px; font-variant-numeric: tabular-nums; }
+.intake-track-cell { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.intake-tracks { font-variant-numeric: tabular-nums; }
+.intake-delivery-list { display: flex; flex-direction: column; gap: 8px; white-space: normal; }
+.intake-delivery-line { display: flex; align-items: baseline; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.intake-delivery-line > span { white-space: pre-line; }
+.intake-shipment-index { flex: none; font-variant-numeric: tabular-nums; }
+.intake-contact, .intake-note-line { display: block; }
+.intake-contact { margin-top: 4px; font-size: 12px; }
+.intake-page td[data-label="Телефон"], .intake-page td[data-label="Дата приёмки"], .intake-page td[data-label="Дата отгрузки"] { font-variant-numeric: tabular-nums; }
 .intake-ships { display: grid; gap: 10px; margin-top: 14px; }
 .intake-ships h3, .intake-window h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--muted-foreground); }
 .intake-ship { display: grid; gap: 10px; }
@@ -76,9 +85,15 @@
   .intake-num-btn { min-height: 40px; }
   .intake-track-row input, .intake-pin input, .intake-pin select { min-height: 40px; }
 }
-/* «Документы» отправки (владелец 29.10): в строке — одна кнопка на отправку, печать — в окне. */
+/* Each shipment keeps its document actions together; layout and reissue stay in the existing window. */
 .intake-docs { display: inline-flex; flex-direction: column; gap: 2px; }
-.intake-docs-line { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.intake-docs-line { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; white-space: normal; }
+.intake-doc-actions { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; max-width: 180px; }
+.intake-doc-action { font: inherit; text-align: left; padding: 0; }
+.intake-doc-action:disabled { color: var(--muted-foreground); cursor: not-allowed; text-decoration: none; }
+@media (pointer: coarse) {
+  .intake-grn-link, .intake-doc-action { min-height: 40px; }
+}
 .intake-docs-line .intake-ship-no { font-variant-numeric: tabular-nums; }
 .docs-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .docs-list li { display: grid; grid-template-columns: 80px 1fr auto auto; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); }

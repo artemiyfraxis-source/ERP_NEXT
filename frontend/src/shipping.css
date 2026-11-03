@@ -91,3 +91,43 @@ table.ship-lines.ship-lines-compact td.ship-name { width: auto; min-width: 260px
 .ship-upd-cell { display: inline-flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; white-space: nowrap; }
 .data-card-upd { display: flex; gap: 2px 10px; align-items: baseline; font-size: 13px; }
 .data-card-due { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; font-size: 13px; }
+.ship-data-project { display: flex; flex-direction: column; gap: 4px; white-space: normal; }
+.ship-data-project > strong { font-size: 14px; font-variant-numeric: tabular-nums; }
+.ship-data-project > .ship-sub { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.ship-data-line { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; align-items: baseline; }
+.ship-data-line > span { overflow-wrap: anywhere; }
+.ship-data-grn { grid-column: 2; font-variant-numeric: tabular-nums; font-size: 12px; }
+.ship-data-kb, .ship-pl { font-variant-numeric: tabular-nums; }
+.data-card-main { display: flex; flex-direction: column; gap: 8px; width: 100%; min-width: 0; border: 0; padding: 0; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.data-card-main .data-card-head { align-items: flex-start; }
+.data-card-main:focus-visible, .ship-pl:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
+.data-card-main .ship-data-project { min-width: 0; }
+.shipping-page .ship-data-readiness { display: flex; flex-direction: column; gap: 4px; }
+.ship-positions-page .data-table .grid td { font-size: 13px; padding: 5px 6px; vertical-align: top; }
+.ship-positions-page .data-table .grid th { font-size: 12px; padding-left: 6px; padding-right: 6px; }
+.ship-position-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; white-space: normal; }
+.ship-positions-page .dt-card-group { margin-top: 12px; }
+.ship-positions-page .dt-card-group-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.ship-position-group-title { padding: 0; font: inherit; font-size: 16px; font-weight: 700; text-align: left; }
+.ship-position-group-data { font-size: 13px; font-weight: 400; }
+.ship-position-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4; overflow-wrap: anywhere; }
+.ship-position-shipment, .ship-position-document { display: flex; flex-direction: column; gap: 2px; line-height: 1.25; }
+.ship-position-document .ship-pl { padding: 0; font: inherit; text-align: left; line-height: 1.25; }
+.ship-position-grn, .ship-position-shipment .ship-sub,
+.ship-positions-page td[data-label="Количество"], .ship-positions-page td[data-label="Дата отгрузки"] { font-variant-numeric: tabular-nums; }
+.ship-position-shipment .ship-sub { font-size: 12px; overflow-wrap: anywhere; }
+.ship-positions-page .status-chip { font-size: 13px; }
+.ship-position-group-title:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
+.ship-position-document .ship-pl:disabled { color: var(--muted-foreground); text-decoration: none; cursor: not-allowed; }
+@media (pointer: coarse) {
+  .ship-position-document .ship-pl, .ship-position-group-title { min-height: 40px; }
+}
+.shipping-page .ship-pack-decision { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; font-size: 13px; overflow-wrap: anywhere; }
+.shipping-page .ship-pack-decision input:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+@media (pointer: coarse) {
+  .shipping-page .ship-pack-decision .inline-check { min-height: 40px; }
+}
+.ship-pl { touch-action: manipulation; }
+@media (pointer: coarse) { .ship-pl { min-height: 40px; } }
+.ship-ready .ship-gaps-list { white-space: normal; }
+.shipping-page .ship-forecast { color: var(--muted-foreground); font-weight: 400; }

@@ -196,6 +196,7 @@ class SerialStatus(str, Enum):
 class InstrumentStatus(str, Enum):
     ACTIVE = "Действует"
     INACTIVE = "Не используется"
+    UNVERIFIED = "Поверка не подтверждена"
 
 
 def _quantity(value: Decimal, label: str, *, allow_zero: bool = False) -> Decimal:
@@ -761,14 +762,18 @@ class MeasurementInstrument:
     inventory_number: str
     name: str
     instrument_type: str
-    verification_number: str
-    verified_at: datetime
-    verification_due: datetime
+    verification_number: str | None
+    verified_at: datetime | None
+    verification_due: datetime | None
     status: InstrumentStatus
 
     def validate_for(self, moment: datetime) -> None:
+        if self.status is InstrumentStatus.UNVERIFIED:
+            raise ProductionValidationError(f"Поверка СИ {self.inventory_number} не подтверждена")
         if self.status is not InstrumentStatus.ACTIVE:
             raise ProductionValidationError(f"СИ {self.inventory_number} не используется")
+        if not self.verification_number or not self.verification_number.strip() or self.verified_at is None or self.verification_due is None:
+            raise ProductionValidationError(f"Поверка СИ {self.inventory_number} не подтверждена")
         due = self.verification_due
         if due.tzinfo is None and moment.tzinfo is not None:
             due = due.replace(tzinfo=moment.tzinfo)

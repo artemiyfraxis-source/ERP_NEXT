@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectsPage, deleteSummary, kitBatch } from "./ProjectsPage";
+import { productionPlanApi, type KbProgressState } from "./api";
 
 // Редактор чертежа — внутри карточки проекта вкладкой; сам редактор в jsdom не нужен, достаточно заглушки с «← Назад».
 vi.mock("./HarnessPage", () => ({
@@ -77,10 +78,11 @@ describe("ProjectsPage", () => {
   it("lists project tiles with facts, filters by status and keeps the choice", async () => {
     render(<ProjectsPage principal={editor} />);
     expect(await screen.findByText("708К.4")).toBeTruthy();
-    // Факты — общим чипом статуса, с тем, о скольких КБ речь (аудит 10.10, ПР-4, ПР-11); корзины на плитке нет.
-    expect(screen.getByText("ТК 1 из 2 КБ").classList.contains("status-chip")).toBe(true);
+    // Счётчики — компактно, полный состав и проверка доступны в описании плитки; ручная готовность ТК сохранена.
+    const tile = screen.getByRole("button", { name: "Открыть проект 708К.4" });
+    expect(tile.querySelector(".kit-tile-problems")).toHaveTextContent("КБ не набрана 2");
     expect(screen.getByText("СТОП").classList.contains("status-chip")).toBe(true);
-    expect(screen.getByText("проверена — КБ1")).toBeTruthy();
+    expect(tile).toHaveAccessibleDescription(/проверена — КБ1/);
     expect(screen.queryByRole("button", { name: /Удалить/ })).toBeNull();
     expect(document.body.textContent).not.toMatch(/[⛔🗑✓]/u);
     fireEvent.change(screen.getByLabelText("Статус"), { target: { value: "В работе" } });
@@ -101,7 +103,7 @@ describe("ProjectsPage", () => {
     const ready = await screen.findByText("ТК готова", { selector: ".proj-mark" });
     expect(ready.getAttribute("data-tone")).toBe("success");
     expect(ready.getAttribute("title")).toBe("ТК готова — вручную");
-    const notPicked = screen.getByText("КБ не набрана");
+    const notPicked = screen.getByText("КБ не набрана", { selector: ".proj-mark" });
     expect(notPicked.getAttribute("data-tone")).toBe("neutral");
     expect(notPicked.getAttribute("title")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Статус проекта 708К.4: Новый" }));
@@ -128,6 +130,143 @@ describe("ProjectsPage", () => {
     expect(within(table).getByRole("columnheader", { name: "Отметки" })).toBeTruthy();
     expect(within(table).getByText("ТК готова").getAttribute("data-tone")).toBe("success");
     expect(within(table).getByText("КБ не набрана").getAttribute("data-tone")).toBe("neutral");
+  });
+
+  it("edits only the selected КБ quantities and refreshes its stage and counts after saving", async () => {
+    window.history.replaceState({}, "", "/?section=projects&project=708К.4");
+    let saved = false;
+    const posted: unknown[] = [];
+    const state: KbProgressState = { project: card.project, kb: "КБ2", run: 10, sequence: 7,
+      counts: { started: null, done: null, qc: null, passed: null }, warnings: [], unavailable: "" };
+    const updated = { ...state, sequence: 8, counts: { started: 4, done: 4, qc: null, passed: null } };
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4") return json({ ...card, assemblies: [card.assemblies[0], {
+        ...card.assemblies[0], index: "КБ2", name: "Второй жгут", stage: { ...card.assemblies[0].stage,
+          status: saved ? "В работе" : "Новый", ...(saved ? { progress: { run: 10, counts: updated.counts, warnings: [] } } : {}) },
+      }] });
+      if (url === "/api/techcards/kitsets/708К.4/progress/КБ2") {
+        if (init?.method === "POST") { posted.push(JSON.parse(String(init.body))); saved = true; return json(updated); }
+        return json(state);
+      }
+      return base(input, init);
+    });
+    render(<ProjectsPage principal={editor} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Количества КБ2" }));
+    const dialog = await screen.findByRole("dialog", { name: "Количества КБ" });
+    expect(within(dialog).getByText("Количества · 708К.4 · КБ2")).toBeInTheDocument();
+    expect(await within(dialog).findByLabelText("Начато")).toHaveValue("");
+    expect(within(dialog).getByLabelText("ОТК прошло")).toHaveValue("");
+    fireEvent.change(within(dialog).getByLabelText("Готово"), { target: { value: "4" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Сохранить количества" }));
+    await waitFor(() => expect(posted).toEqual([{ counts: { done: 4 }, expected_sequence: 7, expected_run: 10 }]));
+    await waitFor(() => expect(screen.getByLabelText("Этап КБ2")).toHaveTextContent("авто: В работе"));
+    expect(screen.getByLabelText("Количества КБ2", { selector: ".t-sub" })).toHaveTextContent("Начато: 4 · Готово: 4На ОТК: — · ОТК прошло: —");
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => decodeURIComponent(String(input)).includes("/progress/КБ1"))).toBe(false);
+    expect(vi.mocked(fetch).mock.calls.filter(([input]) => decodeURIComponent(String(input)) === "/api/techcards/kitsets/708К.4")).toHaveLength(2);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Закрыть" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("refreshes quantities after a conflict and retries using the fresh sequence and run", async () => {
+    window.history.replaceState({}, "", "/?section=projects&project=708К.4");
+    let loads = 0;
+    const posted: unknown[] = [];
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (decodeURIComponent(String(input)) !== "/api/techcards/kitsets/708К.4/progress/КБ1") return base(input, init);
+      const state: KbProgressState = { project: card.project, kb: "КБ1", run: loads > 1 ? 12 : 10, sequence: loads > 1 ? 9 : 7,
+        counts: { started: loads > 1 ? 3 : 1, done: null, qc: null, passed: null }, warnings: [], unavailable: "" };
+      if (init?.method === "POST") {
+        posted.push(JSON.parse(String(init.body)));
+        return posted.length === 1 ? json({ detail: "Количества КБ изменились — обновите и повторите." }, 409) : json({ ...state, counts: { ...state.counts, started: 5 } });
+      }
+      loads++;
+      return json({ ...state, ...(loads > 1 ? { sequence: 9, run: 12, counts: { ...state.counts, started: 3 } } : {}) });
+    });
+    render(<ProjectsPage principal={editor} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Количества КБ1" }));
+    await screen.findByLabelText("Начато");
+    fireEvent.change(screen.getByLabelText("Начато"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить количества" }));
+    expect(await screen.findByText("Количества КБ изменились — обновите и повторите.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Начато")).toHaveValue("3"));
+    expect(screen.getByText("Тираж КБ: 12")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Начато"), { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить количества" }));
+    await waitFor(() => expect(posted).toEqual([
+      { counts: { started: 2 }, expected_sequence: 7, expected_run: 10 },
+      { counts: { started: 5 }, expected_sequence: 9, expected_run: 12 },
+    ]));
+  });
+
+  it("shows an unavailable run and unknown quantities without inventing zeros", async () => {
+    window.history.replaceState({}, "", "/?section=projects&project=708К.4");
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => decodeURIComponent(String(input)) === "/api/techcards/kitsets/708К.4/progress/КБ1"
+      ? json({ project: card.project, kb: "КБ1", run: null, sequence: 7, counts: { started: null, done: null, qc: null, passed: null }, warnings: [], unavailable: "Тираж КБ не задан." }) : base(input, init));
+    render(<ProjectsPage principal={editor} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Количества КБ1" }));
+    expect(await screen.findByText("Тираж КБ: —")).toBeInTheDocument();
+    expect(screen.getByText("Тираж КБ не задан.")).toBeInTheDocument();
+    for (const name of ["Начато", "Готово", "На ОТК", "ОТК прошло"]) expect(screen.getByLabelText(name)).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Сохранить количества" })).toBeDisabled();
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+
+  it("shows quantities to a viewer but hides the edit action", async () => {
+    window.history.replaceState({}, "", "/?section=projects&project=708К.4");
+    const progress = { run: 10, counts: { started: 0, done: null, qc: null, passed: null }, warnings: [] };
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => decodeURIComponent(String(input)) === "/api/techcards/kitsets/708К.4"
+      ? json({ ...card, assemblies: [{ ...card.assemblies[0], stage: { ...card.assemblies[0].stage, progress } }] }) : base(input, init));
+    render(<ProjectsPage principal={viewer} />);
+    expect(await screen.findByLabelText("Количества КБ1")).toHaveTextContent("Начато: 0 · Готово: —На ОТК: — · ОТК прошло: —");
+    expect(screen.queryByRole("button", { name: /Количества/ })).toBeNull();
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("/progress/"))).toBe(false);
+  });
+
+  it.each(["loading", "error", "unavailable", "loaded"] as const)("focuses quantities and closes with Escape from the active element in the %s state", async (phase) => {
+    window.history.replaceState({}, "", "/?section=projects&project=708К.4");
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (decodeURIComponent(String(input)) !== "/api/techcards/kitsets/708К.4/progress/КБ1") return base(input, init);
+      if (phase === "loading") return new Promise<Response>(() => {});
+      if (phase === "error") return json({ detail: "Количества недоступны." }, 503);
+      return json({ project: card.project, kb: "КБ1", run: phase === "unavailable" ? null : 10, sequence: 7,
+        counts: { started: null, done: null, qc: null, passed: null }, warnings: [], unavailable: phase === "unavailable" ? "Тираж КБ не задан." : "" });
+    });
+    render(<ProjectsPage principal={editor} />);
+    const trigger = await screen.findByRole("button", { name: "Количества КБ1" });
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    // jsdom does not generate the browser's native click after Enter; detail 0 is keyboard activation.
+    fireEvent.click(trigger, { detail: 0 });
+    const dialog = screen.getByRole("dialog", { name: "Количества КБ" });
+    if (phase === "error") await screen.findByText("Количества недоступны.");
+    else if (phase === "unavailable") await screen.findByText("Тираж КБ не задан.");
+    else if (phase === "loaded") await screen.findByText("Тираж КБ: 10");
+    else expect(within(dialog).getByText("Загрузка…")).toBeInTheDocument();
+    const active = document.activeElement;
+    fireEvent.keyDown(active!, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Количества КБ" })).toBeNull();
+    expect(dialog.contains(active)).toBe(true);
+    expect(trigger).toHaveFocus();
+  });
+
+  it("uses the production plan progress endpoints with the same unwrapped state and concurrency guards", async () => {
+    const state: KbProgressState = { project: "708К.4", kb: "КБ2", run: 10, sequence: 7,
+      counts: { started: 2, done: null, qc: null, passed: null }, warnings: [], unavailable: "" };
+    vi.mocked(fetch).mockResolvedValue(json(state));
+    expect(await productionPlanApi.kbProgress("708К.4", "КБ2")).toEqual(state);
+    expect(decodeURIComponent(String(vi.mocked(fetch).mock.calls[0][0]))).toBe("/api/production/plan/kb-progress?project=708К.4&kb=КБ2");
+    vi.mocked(fetch).mockResolvedValue(json(state));
+    expect(await productionPlanApi.saveKbProgress("708К.4", "КБ2", { started: 2 }, 7, 10)).toEqual(state);
+    const [url, init] = vi.mocked(fetch).mock.calls[1];
+    expect(url).toBe("/api/production/plan/kb-progress");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body))).toEqual({ project: "708К.4", kb: "КБ2", counts: { started: 2 }, expected_sequence: 7, expected_run: 10 });
   });
 
   it("changes the project status in one click from the tile: stage, СТОП with a reason, close", async () => {

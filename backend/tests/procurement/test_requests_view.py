@@ -165,11 +165,47 @@ def test_rows_say_what_the_viewer_may_do():
     assert rows[str(mine.id)]["selectable"] and rows[str(mine.id)]["can_split"] and rows[str(mine.id)]["can_cancel"]
     assert rows[str(mine.id)]["free_stock"] == "4"
     assert not rows[str(foreign.id)]["selectable"] and not rows[str(foreign.id)]["can_cancel"]
-    assert rows[str(free.id)]["can_take"] and not rows[str(free.id)]["selectable"]
+    assert rows[str(free.id)]["can_take"] and rows[str(free.id)]["can_cancel"] and rows[str(free.id)]["selectable"]
     assert rows[str(gone.id)]["cancel_reason"] == "не закупаем" and rows[str(gone.id)]["can_resend"]
     # «Все» (no actor): nothing is selectable or actionable.
-    for row in line_results([mine, gone], {}, None):
+    for row in line_results([mine, free, gone], {}, None):
         assert not any(row[key] for key in ("selectable", "can_split", "can_cover", "can_cancel", "can_resend"))
+
+
+@pytest.mark.parametrize("changes", [
+    {"buyer_id": OTHER.id},
+    {"buyer_id": None, "status": "В работе"},
+    {"status": "Отменено"},
+    {"status": "В пути"},
+    {"status": "Карантин"},
+    {"status": "Готово"},
+    {"paid": True},
+    {"legacy_id": "SM-20261019-01-Д"},
+    {"stock_covered": Decimal("10")},
+    {"buyer_id": None, "status": "Новый", "paid": True},
+    {"buyer_id": None, "status": "Новый", "legacy_id": "SM-20261019-01-Д"},
+    {"buyer_id": None, "status": "Новый", "stock_covered": Decimal("10")},
+])
+def test_cancel_flag_keeps_ownership_payment_and_stock_restrictions(changes):
+    assert not line_results([view(**changes)], {}, BUYER.id)[0]["can_cancel"]
+
+
+def test_partially_covered_unclaimed_new_line_can_be_refused_or_requested_without_editing_facts():
+    row = line_results([view(status="Новый", buyer_id=None, stock_covered=Decimal("4"))], {}, BUYER.id)[0]
+    assert row["can_cancel"] and row["selectable"] and not row["can_split"] and not row["can_cover"]
+
+
+@pytest.mark.parametrize("changes", [
+    {"buyer_id": OTHER.id}, {"status": "Отменено"}, {"status": "Готово"}, {"paid": True},
+    {"legacy_id": "SM-20261019-01-Д"}, {"stock_covered": Decimal("10")},
+])
+def test_unclaimed_selection_keeps_owner_payment_backorder_and_cover_guards(changes):
+    assert not line_results([view(**{"status": "Новый", "buyer_id": None, **changes})], {}, BUYER.id)[0]["selectable"]
+
+
+def test_unclaimed_new_line_in_live_rfq_is_not_selectable():
+    line = view(status="Новый", buyer_id=None)
+    assert not line_results([line], {line.id: RfqState(live=True)}, BUYER.id)[0]["selectable"]
 
 
 def test_plan_is_the_calc_price_with_vat_and_where():

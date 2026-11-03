@@ -42,6 +42,9 @@ class DeliveryTerms(str, Enum):
     CARRIER = "ДОСТАВКА ТК"
 
 
+OWN_COURIER = "Курьер (наш)"
+
+
 class UpdType(str, Enum):
     EDO = "ЭДО"
     PAPER = "БУМАГА"
@@ -401,6 +404,10 @@ ADDRESSEE_CONTACT_FIELDS =("shipping_point", "contact", "phone")
 ADDRESSEE_CARD_FIELDS = ("receiver", "shipping_point", "contact", "phone", "terms", "carrier", "upd_type")
 # Шапка отправки, которую правят руками (`SHIP_HEAD_FIELDS_` без УПД и трека — они в «Документах»).
 SHIPMENT_HEAD_FIELDS = ("receiver", "shipping_point", "contact", "phone", "terms", "carrier", "deadline", "note")
+HISTORY_CORRECTION_LIMITS = {
+    "receiver": 512, "shipping_point": 5000, "contact": 255, "phone": 128,
+    "carrier": 255, "track_number": 255,
+}
 # Реквизиты отгрузочной ведомости (форма 04.1) в карточке проекта: `SHIP_PROJ_COLS_` «ЗАКАЗ №» … «ВРЕМЯ РАБОТЫ».
 ADDRESSEE_REQUISITE_FIELDS = ("po", "contract", "spec", "invoice", "pays", "customer_address", "hours")
 # План отгрузки в карточке проекта (владелец 14.10.2026): склад и менеджер заносят его заранее, пока КБ в цехе;
@@ -496,9 +503,10 @@ class ProjectAddressee:
 
     def dispatch_gaps(self) -> tuple[str, ...]:
         """Чего не хватает в «Данных отправки» (владелец 14.10.2026): получатель, адрес, телефон, вариант УПД,
-        у бумажной УПД — её файл."""
+        у бумажной УПД — её файл. Самовывозу адрес не нужен."""
+        pickup = self.terms == DeliveryTerms.PICKUP or self.carrier.strip() == "Самовывоз"
         gaps = [label for key, label in (("receiver", "получатель"), ("shipping_point", "адрес доставки"), ("phone", "телефон"))
-                if not str(getattr(self, key) or "").strip()]
+                if (key != "shipping_point" or not pickup) and not str(getattr(self, key) or "").strip()]
         if self.upd_type is None:
             gaps.append("вариант УПД")
         elif self.upd_type == UpdType.PAPER and not self.upd_url.strip():
@@ -675,7 +683,7 @@ class Shipment:
     # «ПРИМЕЧАНИЯ ДЛЯ ТК» и места (`ОТГРУЗКА.МЕСТА`) из окна «Сформировать отгрузочные».
     tk_note: str = ""
     boxes: tuple[ShipmentBox, ...] = ()
-    # Поля адресата, не заданные в самой отправке: идут за карточкой проекта, пока отправка не закрыта
+    # Поля адресата, не заданные в самой отправке: идут за карточкой проекта до отгрузки
     # (`shipHeadEff_` считает их при каждом чтении; ERP хранит итог и обновляет его при правке карточки).
     inherited: frozenset[str] = frozenset()
     # «Отгрузка без УПД — разрешение» (0162): кто разрешил своим PIN и когда; пусто — не разрешено. Откат «Отгружено»
@@ -760,24 +768,28 @@ class Shipment:
         self, *, upd_type: UpdType | None, upd_number: str, upd_date: date | None,
         upd_url: str, track_number: str, card: ProjectAddressee | None = None,
     ) -> Shipment:
-        """Пустой тип УПД — из карточки проекта (`shipUpdEff_`); №, дата и файл у каждой отправки свои."""
+        """Пустой тип УПД — из карточки до отгрузки; после отгрузки сохраняет записанный тип."""
         if self.status in {ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
             raise ShippingValidationError("Закрытую или отменённую отгрузку нельзя менять")
         inherited = self.inherited - {"upd_type"} if upd_type is not None else self.inherited | {"upd_type"}
+        if self.status == ShipmentStatus.SHIPPED and upd_type is None:
+            upd_type, inherited = self.upd_type, self.inherited
         edited = replace(
             self, upd_type=upd_type, upd_number=str(upd_number or "").strip(),
             upd_date=upd_date, upd_url=str(upd_url or "").strip(),
             track_number=str(track_number or "").strip(), inherited=inherited,
         )._followed(card)
+        if self.status == ShipmentStatus.SHIPPED and edited.track_number != self.track_number:
+            raise ShippingValidationError("Трек отгруженной отправки меняют через исправление истории")
         if edited.track_number and edited.track_number != self.track_number:
             _check_track(edited)
         return replace(edited, version=self.version + 1)
 
     def edit_head(self, fields: dict[str, object], card: ProjectAddressee | None) -> Shipment:
         """`shipSetHead_`: менеджер или кладовщик правит шапку отправки. Присланное поле адресата с
-        значением — своё у отправки; пустое — снова из карточки проекта. Закрытую и отменённую не правим."""
-        if self.status in {ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
-            raise ShippingValidationError("Закрытую или отменённую отгрузку нельзя менять")
+        значением — своё у отправки; пустое — снова из карточки проекта. После отгрузки — исправление истории."""
+        if self.status in {ShipmentStatus.SHIPPED, ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
+            raise ShippingValidationError("Шапку отгруженной отправки меняют через исправление истории; отменённую менять нельзя")
         unknown = set(fields) - set(SHIPMENT_HEAD_FIELDS)
         if unknown:
             raise ShippingValidationError("Эти поля отправки править нельзя: " + ", ".join(sorted(unknown)))
@@ -799,13 +811,13 @@ class Shipment:
         return replace(edited, version=self.version + 1)
 
     def follow(self, card: ProjectAddressee | None) -> Shipment:
-        """Карточка проекта изменилась: незаданные в отправке поля адресата берут её значения."""
-        if self.status in {ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
-            return self
+        """Карточка проекта изменилась: активная отправка следует за ней до отгрузки."""
         followed = self._followed(card)
         return self if followed == self else replace(followed, version=self.version + 1)
 
     def _followed(self, card: ProjectAddressee | None) -> Shipment:
+        if self.status in {ShipmentStatus.SHIPPED, ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
+            return self
         values: dict[str, object] = {}
         for key in self.inherited:
             theirs = getattr(card, key) if card is not None else None
@@ -813,6 +825,24 @@ class Shipment:
                 theirs = theirs or self.customer or self.receiver  # как при заведении: заказчик вместо пустого
             values[key] = theirs or (None if key in {"terms", "upd_type"} else "")
         return replace(self, **values) if values else self
+
+    def correct_history(self, fields: dict[str, object]) -> Shipment:
+        """Explicit historical header correction: omitted fields stay, empty strings clear."""
+        if self.status not in {ShipmentStatus.SHIPPED, ShipmentStatus.CLOSED}:
+            raise ShippingValidationError("Исправление истории доступно только отгруженной или закрытой отправке")
+        unknown = set(fields) - HISTORY_CORRECTION_LIMITS.keys()
+        if unknown:
+            raise ShippingValidationError("Эти поля истории править нельзя: " + ", ".join(sorted(unknown)))
+        changed = {}
+        for key, value in fields.items():
+            if not isinstance(value, str) or len(value) > HISTORY_CORRECTION_LIMITS[key]:
+                raise ShippingValidationError(f"Поле {key}: требуется строка не длиннее {HISTORY_CORRECTION_LIMITS[key]} символов")
+            value = value.strip()
+            if value != getattr(self, key):
+                changed[key] = value
+        if not changed:
+            return self
+        return replace(self, **changed, inherited=self.inherited - changed.keys(), version=self.version + 1)
 
     def mark_shipped(self, day: date) -> Shipment:
         """`shipShipped_`: груз уехал из любого активного статуса; гейт — `shipGateMiss_('Отгружена')`:
@@ -897,6 +927,10 @@ class Shipment:
             raise ShippingValidationError("Закрытую или отменённую отгрузку нельзя менять")
         return replace(self, boxes=boxes, tk_note=str(tk_note or "").strip(), version=self.version + 1)
 
+    @property
+    def track_required(self) -> bool:
+        return self.terms == DeliveryTerms.CARRIER and self.carrier.strip() != OWN_COURIER
+
     def close(self) -> Shipment:
         if self.status != ShipmentStatus.SHIPPED:
             raise ShippingValidationError("Закрыть можно только отгруженную заявку")
@@ -906,7 +940,7 @@ class Shipment:
             missing.append("№ УПД")
         if not self.upd_url:
             missing.append("файл УПД")
-        if self.terms == DeliveryTerms.CARRIER and not self.track_number:
+        if self.track_required and not self.track_number.strip():
             missing.append("трек-номер")
         if not self.shipped_at:
             missing.append("дата отгрузки")
@@ -931,7 +965,7 @@ def shipping_gaps(shipment: Shipment, *, with_track: bool = True) -> tuple[str, 
 
     Вносит менеджер (Ульяна): условия доставки, получатель, телефон, для ТК — перевозчик и адрес, УПД (тип, №, файл для
     бумажной; «без УПД» — разрешение по PIN, с ним УПД не нужен вовсе). Трек-номер ТК вписывает кладовщик при отгрузке; `with_track=False` — «всё, что должна
-    внести Ульяна», с этим списком печатается DN. Самовывозу адрес и трек не нужны."""
+    внести Ульяна», с этим списком печатается DN. Самовывозу адрес и трек не нужны; своему курьеру нужен адрес, но не трек."""
     gaps: list[str] = []
     carrier = shipment.terms == DeliveryTerms.CARRIER
     if shipment.terms is None:
@@ -956,7 +990,7 @@ def shipping_gaps(shipment: Shipment, *, with_track: bool = True) -> tuple[str, 
             gaps.append("№ УПД")
         if shipment.upd_type not in UPD_WITHOUT_FILE and not shipment.upd_url:
             gaps.append("файл УПД")
-    if carrier and with_track and not shipment.track_number.strip():
+    if shipment.track_required and with_track and not shipment.track_number.strip():
         gaps.append("трек-номер")
     return tuple(gaps)
 

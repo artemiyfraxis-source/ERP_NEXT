@@ -5,7 +5,6 @@ the API: the receiving edit right, the scan file kept as the delivery's УПД, 
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
-from types import SimpleNamespace
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -18,7 +17,9 @@ from app.modules.purchasing.infrastructure import SupplierNameRow, SupplierRow, 
 from app.modules.purchasing.suppliers import supplier_key
 from app.modules.receiving.domain import ReceivingLine, ReceivingStatus
 from app.modules.receiving.infrastructure import ReceivingLineRow
+from app.modules.warehouse import scan_agents
 from app.modules.warehouse.infrastructure import WarehouseReceiptFileRow
+from app.modules.warehouse.scan_jobs import ScanJobRow
 from app.shared.http_auth import Principal, authenticated_principal
 from app.workflows.receiving_by_upd import (
     SupplierBook,
@@ -30,7 +31,6 @@ from app.workflows.receiving_by_upd import (
 )
 from tests.factories import Actor
 from tests.warehouse.test_receipts import NOW, stand  # noqa: F401 — fixture
-from tests.warehouse.test_scan_jobs import old_agent_alive
 
 ELITAN = UUID("00000000-0000-0000-0000-0000000000e1")
 ROMASHKA = UUID("00000000-0000-0000-0000-0000000000a2")
@@ -349,10 +349,19 @@ def test_the_receiving_edit_right_starts_a_scanner_job_on_the_warehouse_queue(st
     _as("edit")
     refused = client.post("/api/receiving/upd/scan-jobs")
     assert refused.json()["status"] == "no_agent", "no agent alive: the screen shows the install guide"
-    old_agent_alive(sessions, SimpleNamespace(now=NOW))
+    scan_agents.heartbeat(app.state.warehouse_uow_factory(), machine_id="receiving-pc", pc_name="TEST",
+                          version="2.2.0", ip_seen="testclient", ip_lan="",
+                          scanners=[{"id": "receiving-scanner", "name": "Тестовый сканер"}], now=NOW)
+    choice = client.post("/api/receiving/upd/scan-jobs")
+    assert choice.status_code == 200 and choice.json()["status"] == "choose", choice.text
+    with sessions() as session:
+        assert session.scalars(select(ScanJobRow)).first() is None, "no job before selecting the full pair"
 
-    started = client.post("/api/receiving/upd/scan-jobs")
-    assert started.status_code == 200, started.text
+    started = client.post("/api/receiving/upd/scan-jobs", json={"agent_id": "receiving-pc", "target_scanner": "receiving-scanner"})
+    assert started.status_code == 200 and started.json()["status"] == "pending", started.text
+    with sessions() as session:
+        job = session.get(ScanJobRow, UUID(started.json()["id"]))
+        assert (job.target_machine_id, job.target_scanner) == ("receiving-pc", "receiving-scanner")
     polled = client.get(f"/api/receiving/upd/scan-jobs/{started.json()['id']}").json()
     assert polled["status"] == "pending" and polled["result"] is None
     assert client.delete(f"/api/receiving/upd/scan-jobs/{started.json()['id']}").json()["status"] == "failed"

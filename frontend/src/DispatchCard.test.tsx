@@ -40,13 +40,24 @@ const open = async (canEdit = true) => {
 };
 
 describe("Данные отправки", () => {
-  it("показывает только получателя, адрес, телефон и УПД", async () => {
+  it("показывает адресата, доставку и комментарий для склада", async () => {
     const dialog = await open();
-    expect(within(dialog).getAllByRole("textbox").map((input) => input.getAttribute("aria-label"))).toEqual(["Получатель", "Адрес доставки", "Телефон"]);
-    expect(within(dialog).getAllByRole("combobox").map((input) => input.getAttribute("aria-label"))).toEqual(["УПД"]);
+    expect(within(dialog).getAllByRole("textbox").map((input) => input.getAttribute("aria-label"))).toEqual(["Получатель", "Адрес доставки", "Телефон", "Комментарий для склада"]);
+    expect(within(dialog).getAllByRole("combobox").map((input) => input.getAttribute("aria-label"))).toEqual(["Тип доставки", "Перевозчик", "УПД"]);
     for (const hidden of ["Контактное лицо", "Условия доставки", "Способ отгрузки / ТК", "Плановая дата отгрузки", "Комментарий"]) {
       expect(within(dialog).queryByLabelText(hidden)).not.toBeInTheDocument();
     }
+  });
+
+  it("pickup hides the address, preserves history and saves the warehouse comment with the version", async () => {
+    await open();
+    fireEvent.change(screen.getByLabelText("Тип доставки"), { target: { value: "САМОВЫВОЗ" } });
+    expect(screen.queryByLabelText("Адрес доставки")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Комментарий для склада"), { target: { value: "В понедельник сами приедут" } });
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+    await screen.findByText("Данные отправки сохранены");
+    expect(calls.find((call) => call.method === "PUT")!.body).toEqual({ project: "591К.3", version: 2, terms: "САМОВЫВОЗ", carrier: "Самовывоз", note: "В понедельник сами приедут" });
+    expect(stored.shipping_point).toBe("Москва");
   });
 
   it("не шлёт скрытые поля: в PUT только версия и изменённое", async () => {
@@ -123,5 +134,28 @@ describe("Данные отправки", () => {
     await waitFor(() => expect(screen.getByLabelText("Упаковывать 591К.3")).toBeChecked());
     expect(screen.getByText(/решил Ульяна, 29\.10\.2026/)).toBeInTheDocument();
     expect(JSON.parse(String(vi.mocked(fetch).mock.calls.at(-1)?.[1]?.body))).toEqual({ project: "591К.3", version: 2, decided: true });
+  });
+
+  it("a decision conflict refreshes the parent and save version while preserving edits and refreshing untouched fields", async () => {
+    const onSaved = vi.fn();
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input) === "/api/shipping/project-pack-decision") {
+        stored = { ...card, version: 5, shipping_point: "Калуга", pack_decided: true };
+        return json({ detail: "Версия изменилась" }, 409);
+      }
+      return fallback(input, init);
+    });
+    render(<DispatchCard project="591К.3" stage="accepted" canEdit onSaved={onSaved} close={() => undefined} />);
+    await waitFor(() => expect(screen.getByLabelText("Получатель")).toHaveValue(card.receiver));
+    fireEvent.change(screen.getByLabelText("Телефон"), { target: { value: "+7 набрано" } });
+    fireEvent.click(screen.getByLabelText("Упаковывать 591К.3"));
+    await waitFor(() => expect(screen.getByLabelText("Упаковывать 591К.3")).toBeChecked());
+    expect(onSaved).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("Телефон")).toHaveValue("+7 набрано");
+    expect(screen.getByLabelText("Адрес доставки")).toHaveValue("Калуга");
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+    await screen.findByText("Данные отправки сохранены");
+    expect(calls.find((call) => call.method === "PUT")!.body).toEqual({ project: "591К.3", version: 5, phone: "+7 набрано" });
   });
 });

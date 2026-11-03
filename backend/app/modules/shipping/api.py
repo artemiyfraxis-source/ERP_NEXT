@@ -7,13 +7,13 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (
-    Principal, require_section, section_allowed, shipping_manager_principal, shipping_view_principal,
+    Principal, require_full_access, require_section, section_allowed, shipping_manager_principal, shipping_view_principal,
     shipping_warehouse_principal,
 )
 from app.shared.stored_files import decode_upload, file_response
@@ -23,11 +23,11 @@ from app.workflows.shipping_storekeeper import storekeeper_ids
 
 from .application import (
     AttachCardUpdCommand, AttachUpdCommand, attach_upd_file, store_card_upd_file, UPD_FILE_URL_PREFIX, upd_file_url,
-    ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand, EditHeadCommand,
+    ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand, EditHeadCommand, HistoryCorrectionCommand,
     LayOutCommand, PackDecisionCommand, PackProjectCommand, ProjectShipCommand, ProjectShipLine, QueueProjectCommand, RegisterGoodCommand,
     RequestedGood, RollbackShippedCommand, SetProjectAddresseeCommand, SetRequestedCommand, ShipmentCommand,
     ShippingPermissionError, UnitOfWork, UnpickCommand, UpdUpload, UpdateDocumentsCommand, cancel_shipment,
-    close_shipment, create_shipment, drop_project, edit_shipment_head, lay_out_shipment, mark_shipped, pack_project,
+    close_shipment, correct_shipment_history, create_shipment, drop_project, edit_shipment_head, lay_out_shipment, mark_shipped, pack_project,
     pack_shipment, pick_shipment, queue_project, register_good, rollback_shipped, set_project_addressee, set_requested,
     set_pack_decision, ship_project, unpick_line, update_documents,
 )
@@ -42,6 +42,7 @@ router = APIRouter(prefix="/api/shipping", tags=["shipping"])
 # SUPPLYMAP `portalIssueGuard_(…, 'ship')`: упаковать в карточке проекта, сформировать отгрузочные и
 # поправить «Заказано» может и менеджер («Отгрузка»), и кладовщик («Отгрузка — склад») — правка любого из двух.
 shipping_editor_principal = require_section(("shipping", "shipping_goods"), "edit")
+shipping_history_principal = require_full_access("Исправлять историю отгрузки может только администратор")
 Quantity = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
 
 
@@ -178,6 +179,27 @@ class RequestedPayload(VersionPayload):
     quantity: Quantity
 
 
+class HistoryCorrectionPayload(VersionPayload):
+    """Only supplied text fields change; null is invalid and an empty string clears."""
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=2000)
+    source: str = Field(min_length=1, max_length=2000)
+    receiver: str = Field(default="", max_length=512)
+    shipping_point: str = Field(default="", max_length=5000)
+    contact: str = Field(default="", max_length=255)
+    phone: str = Field(default="", max_length=128)
+    carrier: str = Field(default="", max_length=255)
+    track_number: str = Field(default="", max_length=255)
+
+    @field_validator("reason", "source")
+    @classmethod
+    def nonblank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Укажите причину и источник исправления")
+        return value.strip()
+
+
 class BoxItemPayload(BaseModel):
     item_index: str = Field(max_length=255)
     quantity: Decimal = Field(ge=0, max_digits=18, decimal_places=6)
@@ -288,6 +310,7 @@ def _addressee_result(addressee: ProjectAddressee) -> dict:
         # Решение «упаковывать» (0162): без него кладовщик не упаковывает.
         "pack_decided": addressee.pack_decided, "pack_decided_by": addressee.pack_decided_by,
         "pack_decided_at": addressee.pack_decided_at.isoformat() if addressee.pack_decided_at else None,
+        "dispatch_gaps": list(addressee.dispatch_gaps()),
     }
 
 
@@ -324,7 +347,7 @@ def _shipment_result(shipment: Shipment) -> dict:
         "upd_type": shipment.upd_type.value if shipment.upd_type else None, "upd_number": shipment.upd_number,
         "upd_date": shipment.upd_date.isoformat() if shipment.upd_date else None,
         "upd_url": shipment.upd_url, "pl_number": shipment.pl_number,
-        "dn_number": shipment.dn_number, "track_number": shipment.track_number,
+        "dn_number": shipment.dn_number, "track_number": shipment.track_number, "track_required": shipment.track_required,
         "packed_at": shipment.packed_at.isoformat() if shipment.packed_at else None,
         "shipped_at": shipment.shipped_at.isoformat() if shipment.shipped_at else None,
         "manager": shipment.manager, "note": shipment.note, "tk_note": shipment.tk_note,
@@ -436,9 +459,17 @@ def project_addressee(
 def project_addressees(
     _principal: Annotated[Principal, Depends(shipping_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+    project: Annotated[list[str] | None, Query()] = None,
 ) -> dict:
     """All project cards at once, like `portalShipList` returns `projects` for the «Проекты» tab."""
-    with uow_factory() as uow: rows = uow.addressees.list()
+    names = list(dict.fromkeys(name.strip() for name in project)) if project is not None else None
+    if names is not None:
+        if any(not name or len(name) > 255 for name in names):
+            raise HTTPException(status_code=422, detail="Проект обязателен, не более 255 символов")
+    with uow_factory() as uow: rows = uow.addressees.list(names)
+    if names is not None:
+        stored = {row.project: row for row in rows}
+        rows = [stored.get(name) or ProjectAddressee(project=name) for name in names]
     return {"addressees": _addressee_results(rows, uow_factory)}
 
 
@@ -577,7 +608,7 @@ def documents(shipment_id: UUID, payload: DocumentsPayload, principal: Annotated
     shipment = _run(lambda: update_documents(UpdateDocumentsCommand(
         shipment_id=shipment_id, expected_version=payload.version, actor=principal.actor, now=now,
         upd_type=payload.upd_type, upd_number=payload.upd_number, upd_date=payload.upd_date,
-        upd_url=payload.upd_url, track_number=payload.track_number,
+        upd_url=payload.upd_url, track_number=payload.track_number if "track_number" in payload.model_fields_set else None,
     ), uow_factory()))
     return {"shipment": _shipment_result(shipment)}
 
@@ -587,6 +618,22 @@ def head(shipment_id: UUID, payload: HeadPayload, principal: Annotated[Principal
     fields = {key: getattr(payload, key) for key in payload.model_fields_set if key != "version"}
     shipment = _run(lambda: edit_shipment_head(EditHeadCommand(
         shipment_id=shipment_id, expected_version=payload.version, actor=principal.actor, now=now, fields=fields,
+    ), uow_factory()))
+    return {"shipment": _shipment_result(shipment)}
+
+
+@router.post("/shipments/{shipment_id}/history-correction")
+def history_correction(
+    shipment_id: UUID, payload: HistoryCorrectionPayload,
+    principal: Annotated[Principal, Depends(shipping_history_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+) -> dict:
+    fields = payload.model_dump(exclude_unset=True, exclude={"version", "reason", "source"})
+    shipment = _run(lambda: correct_shipment_history(HistoryCorrectionCommand(
+        shipment_id=shipment_id, expected_version=payload.version, actor=principal.actor, now=now,
+        fields=fields, reason=payload.reason, source=payload.source,
+        allowed=principal.full_access and not principal.service,
     ), uow_factory()))
     return {"shipment": _shipment_result(shipment)}
 

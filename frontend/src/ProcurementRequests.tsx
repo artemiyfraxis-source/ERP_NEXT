@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from "react";
-import { failureText, isAborted, latestRead, requestsApi, procurementApi, type ProcurementLine, type RequestRow } from "./api";
+import { failureText, isAborted, latestRead, requestsApi, type ProcurementLine, type RequestRow } from "./api";
 import { countLabel, formatDay, formatNumber, formatQty, NBSP, unitLabel } from "./format";
 import { projectLabel, useInternalProjects } from "./internalProjects";
 import { projectFromDesignation } from "./projectNumber";
@@ -15,11 +15,12 @@ import {
 import { ProcurementStockPicker } from "./ProcurementStockPicker";
 import { SuggestPanel, type ChosenLine } from "./RfqPool";
 import { StatusChip } from "./StatusChip";
+import { PageWindow } from "./PageWindow";
 
 /* Roller_Buyer's «Заявки» (RequestsPage + RequestLinesTable) in «Лист закупки».
    Project → request (the lines of one batch, НАЗНАЧЕНИЕ) → lines; «Ход закупки» chips per project and per request;
-   lines grouped by type / plan from the calculation / last purchase; selection by group, Shift-range and drag (own new
-   and requote lines only); «Запросить КП» and «Отменить выбранные». Several buyers: «Мои» is one's own lines and the
+   lines grouped by type / plan from the calculation / last purchase; selection by group, Shift-range and drag (new
+   unclaimed, own desk and requote lines); «Запросить КП» and «Отменить выбранные». Several buyers: «Мои» is one's own lines and the
    unclaimed «Новый» ones, «Все» is read only. */
 
 const HANDOFF_LIMIT = 100; // как в реестре «Заявки»: столько заявок за один раз
@@ -80,8 +81,7 @@ export function ProcurementRequests({ readOnly = false, canHandoff = false, open
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [groupBy, setGroupBy] = useState<GroupBy>(readGroupBy);
   const [asking, setAsking] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
-  const [reason, setReason] = useState("не закупаем");
+  const [cancelling, setCancelling] = useState<RqLine[] | null>(null);
   const [busy, setBusy] = useState(false);
   const openRef = useRef(open);
   openRef.current = open;
@@ -204,17 +204,6 @@ export function ProcurementRequests({ readOnly = false, canHandoff = false, open
     }
   }
 
-  async function cancelSelected() {
-    const lines = [...selected].map((id) => known.get(id)).filter((line): line is RqLine => Boolean(line));
-    await act(async () => {
-      const result = await requestsViewApi.cancelMany(lines.map((line) => ({ id: line.id, version: line.version })), reason.trim());
-      setSelected(new Set());
-      setCancelling(false);
-      const skipped = result.skipped.map((item) => `${known.get(item.id)?.legacy_id ?? item.id} — ${item.reason}`);
-      return `Отменено строк: ${result.cancelled.length}` + (skipped.length ? `. Не отменены: ${skipped.join("; ")}` : "");
-    });
-  }
-
   const projects = view?.projects ?? [];
   const current = projects.find((item) => item.key === project) ?? null;
   const totals = useMemo(() => {
@@ -334,26 +323,18 @@ export function ProcurementRequests({ readOnly = false, canHandoff = false, open
         <div className="bulk-bar rfq-pool-bar rq-bulk" role="toolbar" aria-label="Выбранные строки">
           <span>Выбрано строк: {selected.size}</span>
           <span className="spacer" />
-          <button type="button" className="secondary small" onClick={() => { setSelected(new Set()); setCancelling(false); }}>Снять выбор</button>
-          {cancelling ? (
-            <>
-              <label className="rq-reason">Причина (видна в истории строки)
-                <input aria-label="Причина отмены" value={reason} maxLength={500} onChange={(event) => setReason(event.target.value)} />
-              </label>
-              <button type="button" className="primary small danger" disabled={busy || !reason.trim()} onClick={() => void cancelSelected()}>Подтвердить отмену</button>
-              <button type="button" className="secondary small" onClick={() => setCancelling(false)}>Не отменять</button>
-            </>
-          ) : (
-            <button
-              type="button" className="secondary small" disabled={busy}
-              title="Например, всю «Маркировку»: отметьте группу галочкой в заголовке и отмените разом"
-              onClick={() => setCancelling(true)}
-            >Отменить выбранные</button>
-          )}
-          {!cancelling && (
-            <button type="button" className="primary small" onClick={() => setAsking(true)}>Запросить КП ({selected.size})</button>
-          )}
+          <button type="button" className="secondary small" disabled={busy} onClick={() => setSelected(new Set())}>Снять выбор</button>
+          <button
+            type="button" className="secondary small" disabled={busy}
+            title="Например, всю «Маркировку»: отметьте группу галочкой в заголовке и отмените разом"
+            onClick={() => setCancelling([...selected].map((id) => known.get(id)).filter((line): line is RqLine => Boolean(line)))}
+          >Отменить выбранные</button>
+          <button type="button" className="primary small" disabled={busy} onClick={() => setAsking(true)}>Запросить КП ({selected.size})</button>
         </div>
+      )}
+      {canAct && cancelling && cancelling.length > 0 && (
+        <CancelDialog lines={cancelling} busy={busy} act={act} close={() => setCancelling(null)}
+          onDone={() => { setCancelling(null); setSelected(new Set()); }} />
       )}
     </section>
   );
@@ -436,8 +417,7 @@ function BatchRow({ batch, open, onToggle, lines, groupBy, onGroupBy, selected, 
         <td>{formatDay(batch.planned_date)}</td>
         <td className="num">
           {batch.lines}
-          {batch.selectable > 0 && <small className="rq-sub" title="Свои новые позиции и перезапрос — можно запросить КП"> к запросу {batch.selectable}</small>}
-          {batch.to_take > 0 && <small className="rq-sub" title="Неразобранные «Новый» — возьмите в работу"> взять {batch.to_take}</small>}
+          {batch.selectable > 0 && <small className="rq-sub" title="Новые позиции и перезапрос — можно запросить КП"> к запросу {batch.selectable}</small>}
         </td>
         <td><StatusChips counts={batch.counts} single={batch.lines === 1} /></td>
       </tr>
@@ -460,7 +440,63 @@ function BatchRow({ batch, open, onToggle, lines, groupBy, onGroupBy, selected, 
   );
 }
 
-type Panel = { id: string; kind: "split" | "cancel" | "stock" };
+function CancelDialog({ lines, busy, act, close, onDone, refusal = false }: {
+  lines: RqLine[]; busy: boolean; act: (run: () => Promise<string>) => Promise<void>;
+  close: () => void; onDone: () => void; refusal?: boolean;
+}) {
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const pending = useRef(false);
+  const title = refusal ? "Отказать в закупке" : "Отменить закупку";
+  const reasonLabel = refusal ? "Причина отказа" : "Причина отмены";
+  const locked = busy || submitting;
+  const dismiss = () => { if (!pending.current && !busy) close(); };
+  return (
+    <PageWindow label={title} close={dismiss} width={560}>
+      <section className="panel">
+        <h2>{title}</h2>
+        <p>{lines.length === 1 ? `${lines[0].name} · ${lines[0].legacy_id}` : `Выбрано строк: ${lines.length}`}</p>
+        <form className="dialog-form" onSubmit={(event) => {
+          event.preventDefault();
+          const text = reason.trim();
+          if (pending.current || busy || !text || text.length > 500) return;
+          pending.current = true;
+          setSubmitting(true);
+          setError("");
+          void act(async () => {
+            try {
+              const result = await requestsViewApi.cancelMany(lines.map((line) => ({ id: line.id, version: line.version })), text);
+              const skipped = result.skipped.map((item) => `${lines.find((line) => line.id === item.id)?.legacy_id ?? item.id} — ${item.reason}`);
+              onDone();
+              return `Отменено строк: ${result.cancelled.length}` + (skipped.length ? `. Не отменены: ${skipped.join("; ")}` : "");
+            } catch (cause) {
+              setError(failureText(cause, "Не получилось"));
+              throw cause;
+            } finally {
+              pending.current = false;
+              setSubmitting(false);
+            }
+          });
+        }}>
+          <label>{reasonLabel}
+            <textarea name="cancel_reason" autoComplete="off" aria-label={reasonLabel} required maxLength={500} rows={3} value={reason} disabled={locked}
+              onChange={(event) => setReason(event.target.value)} />
+          </label>
+          {error && <div className="error-banner" role="alert">{error}</div>}
+          <div className="move-actions">
+            <button type="submit" className="primary small danger" disabled={locked || !reason.trim()}>
+              {locked ? "Сохраняю…" : refusal ? "Подтвердить отказ" : "Подтвердить отмену"}
+            </button>
+            <button type="button" className="secondary small" disabled={locked} onClick={dismiss}>Не отменять</button>
+          </div>
+        </form>
+      </section>
+    </PageWindow>
+  );
+}
+
+type Panel = { id: string; kind: "split" | "stock" };
 
 /** RB `RequestLinesTable`: grouped lines, a checkbox per group and for all, Shift+click for a range, a drag down the
  *  checkbox column; each line with the calculation's plan and the last real purchase — the price to beat. */
@@ -477,7 +513,7 @@ export function RequestLinesTable({ lines, groupBy, onGroupBy, selected, onSet, 
   const drag = useRef<{ on: boolean; moved: boolean } | null>(null);
   const [panel, setPanel] = useState<Panel | null>(null);
   const [splitQty, setSplitQty] = useState("");
-  const [reason, setReason] = useState("");
+  const [cancelling, setCancelling] = useState<RqLine | null>(null);
 
   // A drag ends wherever the button is released.
   useEffect(() => {
@@ -515,7 +551,6 @@ export function RequestLinesTable({ lines, groupBy, onGroupBy, selected, onSet, 
   const togglePanel = (id: string, kind: Panel["kind"]) => {
     setPanel((current) => (current?.id === id && current.kind === kind ? null : { id, kind }));
     setSplitQty("");
-    setReason("");
   };
   const columns = 7 + (canAct ? 1 : 0) + (showBuyer ? 1 : 0);
 
@@ -583,7 +618,7 @@ export function RequestLinesTable({ lines, groupBy, onGroupBy, selected, onSet, 
                     highlighted={highlight === line.id} columns={columns} panel={panel?.id === line.id ? panel.kind : null}
                     onBox={(event) => clickBox(line, event)} onBoxDown={() => line.selectable && boxDown(line)}
                     onBoxEnter={(event) => boxEnter(line, event)} onPanel={(kind) => togglePanel(line.id, kind)}
-                    splitQty={splitQty} onSplitQty={setSplitQty} reason={reason} onReason={setReason}
+                    splitQty={splitQty} onSplitQty={setSplitQty} onCancel={() => setCancelling(line)}
                     onClosePanel={() => setPanel(null)} onHighlight={onHighlight} historyOpen={historyOpen} act={act}
                   />
                 ))}
@@ -592,6 +627,10 @@ export function RequestLinesTable({ lines, groupBy, onGroupBy, selected, onSet, 
           })}
         </tbody>
       </table>
+      {canAct && cancelling && (
+        <CancelDialog lines={[cancelling]} refusal={!cancelling.mine && cancelling.can_take} busy={busy} act={act}
+          close={() => setCancelling(null)} onDone={() => setCancelling(null)} />
+      )}
     </div>
   );
 }
@@ -606,13 +645,13 @@ function asStockLine(line: RqLine): ProcurementLine {
 
 function LineRows({
   line, canAct, showBuyer, busy, picked, highlighted, columns, panel, onBox, onBoxDown, onBoxEnter, onPanel, splitQty, onSplitQty,
-  reason, onReason, onClosePanel, onHighlight, historyOpen, act,
+  onCancel, onClosePanel, onHighlight, historyOpen, act,
 }: {
   line: RqLine; canAct: boolean; showBuyer: boolean; busy: boolean; picked: boolean; highlighted: boolean; columns: number;
   panel: Panel["kind"] | null;
   onBox: (event: MouseEvent) => void; onBoxDown: () => void; onBoxEnter: (event: PointerEvent) => void;
   onPanel: (kind: Panel["kind"]) => void;
-  splitQty: string; onSplitQty: (value: string) => void; reason: string; onReason: (value: string) => void;
+  splitQty: string; onSplitQty: (value: string) => void; onCancel: () => void;
   onClosePanel: () => void; onHighlight: (id: string | null) => void;
   historyOpen?: (lineId: string, title: string) => void;
   act: (run: () => Promise<string>) => Promise<void>;
@@ -689,17 +728,10 @@ function LineRows({
         </td>
         <td className="rq-actions"><div className="rq-actions-in">
           {historyOpen && <button type="button" className="secondary small" onClick={() => historyOpen(line.id, line.legacy_id)}>История</button>}
-          {canAct && line.can_take && (
-            <button
-              type="button" className="secondary small" disabled={busy}
-              onClick={() => void act(async () => {
-                const result = await procurementApi.take([line.id]);
-                return result.skipped?.length ? `${line.legacy_id} уже взял другой закупщик` : `${line.legacy_id} взята в работу`;
-              })}
-            >Взять в работу</button>
-          )}
           {mine && line.can_split && <button type="button" className="secondary small" disabled={busy} onClick={() => onPanel("split")}>Разделить</button>}
-          {mine && line.can_cancel && <button type="button" className="secondary small" disabled={busy} onClick={() => onPanel("cancel")}>Отменить</button>}
+          {canAct && line.can_cancel && <button type="button" className="secondary small" disabled={busy} onClick={onCancel}>
+            {!line.mine && line.can_take ? "Отказать" : "Отменить"}
+          </button>}
           {mine && line.can_resend && (
             <button
               type="button" className="secondary small" disabled={busy}
@@ -738,26 +770,6 @@ function LineRows({
           <button type="submit" className="primary small" disabled={busy || !quantityInput(splitQty)}>Разделить</button>
           <button type="button" className="secondary small" onClick={onClosePanel}>Отмена</button>
           <span className="muted">Например, чтобы часть взять у одного поставщика, а часть у другого: КП по строке останутся у обеих частей.</span>
-        </form>,
-      )}
-      {panel === "cancel" && sub(
-        <form
-          className="rq-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!reason.trim()) return;
-            onClosePanel();
-            void act(async () => {
-              const result = await requestsViewApi.cancelMany([{ id: line.id, version: line.version }], reason.trim());
-              return result.cancelled.length ? `${line.legacy_id} отменена` : `${line.legacy_id} не отменена: ${result.skipped[0]?.reason ?? ""}`;
-            });
-          }}
-        >
-          <label>Причина отмены
-            <input aria-label="Причина отмены" value={reason} maxLength={500} onChange={(event) => onReason(event.target.value)} />
-          </label>
-          <button type="submit" className="primary small danger" disabled={busy || !reason.trim()}>Подтвердить отмену</button>
-          <button type="button" className="secondary small" onClick={onClosePanel}>Отмена</button>
         </form>,
       )}
       {panel === "stock" && sub(

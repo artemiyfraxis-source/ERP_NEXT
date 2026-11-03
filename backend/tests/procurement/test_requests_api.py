@@ -9,11 +9,13 @@ from sqlalchemy import func, select
 
 from app.main import app
 from app.modules.procurement.infrastructure import ProcurementLineRow
+from app.modules.procurement.application import consume_procurement_requested
 from app.workflows.procurement_stock import SqlAlchemyProcurementStockUnitOfWork
 from app.modules.purchasing.infrastructure import QuoteLineRow, RfqLineRow, RfqSupplierLineRow
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import AuditEventRow
 from tests.factories import Actor
+from tests.procurement.test_api import message
 from tests.purchasing.test_rfq_api import BASE, _as, _quote, _rfq, _supplier, rfq_api  # noqa: F401 — fixture
 
 VIEW = "/api/procurement/requests-view"
@@ -204,6 +206,73 @@ def test_cancel_many_skips_another_buyers_line(api):
     body = {"lines": [{"id": str(lines[0].id), "version": _version(sessions, lines[0].id)}], "reason": "дубль"}
     result = client.post("/api/procurement/cancel-many", json=body).json()
     assert result == {"cancelled": [], "skipped": [{"id": str(lines[0].id), "reason": "строка другого закупщика"}]}
+    _as("Петров")
+
+
+def test_refuse_unclaimed_new_line_claims_it_and_preserves_reason_and_history(api):
+    client, _, sessions = api
+    line = consume_procurement_requested(message(3), app.state.procurement_uow_factory())
+    before = _version(sessions, line.id)
+    summary = _view(client)
+    batch = next(batch for batch in summary["batches"] if batch["designation"] == line.designation)
+    row = _lines(client, batch["key"])[line.legacy_id]
+    assert row["can_take"] and row["can_cancel"] and row["selectable"] and not row["mine"]
+
+    body = {"lines": [{"id": str(line.id), "version": before}], "reason": "  Дубль заявки  "}
+    result = client.post("/api/procurement/cancel-many", json=body)
+    assert result.status_code == 200, result.text
+    assert result.json() == {"cancelled": [str(line.id)], "skipped": []}
+    with sessions() as session:
+        row = session.get(ProcurementLineRow, line.id)
+        assert row.status == "Отменено" and row.version == before + 1
+        assert row.buyer_id == Actor(name="Петров", department="Закупки").id
+        event = session.scalar(select(AuditEventRow).where(
+            AuditEventRow.aggregate_id == line.id, AuditEventRow.event_type == "procurement.cancelled"))
+        assert event.details["reason"] == "Дубль заявки"
+    row = _lines(client, batch["key"])[line.legacy_id]
+    assert row["mine"] and row["rb_status"] == "cancelled" and row["cancel_reason"] == "Дубль заявки"
+    assert not row["can_take"] and not row["can_cancel"]
+    history = client.get(f"/api/procurement/{line.id}/history").json()["events"]
+    assert any(event["title"] == "Отменена" and "причина: Дубль заявки" in event["details"] for event in history)
+
+
+def test_refusal_after_another_buyer_takes_the_line_is_skipped_without_change(api):
+    client, _, sessions = api
+    line = consume_procurement_requested(message(3), app.state.procurement_uow_factory())
+    before = _version(sessions, line.id)
+    _as("Сидоров")
+    assert client.post("/api/procurement/take", json={"line_ids": [str(line.id)]}).status_code == 200
+    taken_version = _version(sessions, line.id)
+    _as("Петров")
+    result = client.post("/api/procurement/cancel-many", json={
+        "lines": [{"id": str(line.id), "version": before}], "reason": "Дубль",
+    })
+    assert result.status_code == 200
+    assert result.json() == {"cancelled": [], "skipped": [
+        {"id": str(line.id), "reason": "строка изменилась — обновите список"}]}
+    with sessions() as session:
+        row = session.get(ProcurementLineRow, line.id)
+        assert row.buyer_id == Actor(name="Сидоров", department="Закупки").id
+        assert row.status == "В работе" and row.version == taken_version
+        assert session.scalar(select(func.count()).select_from(AuditEventRow).where(
+            AuditEventRow.aggregate_id == line.id, AuditEventRow.event_type == "procurement.cancelled")) == 0
+
+
+def test_viewer_cannot_refuse_an_unclaimed_line(api):
+    client, _, sessions = api
+    line = consume_procurement_requested(message(3), app.state.procurement_uow_factory())
+    before = _version(sessions, line.id)
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(name="Наблюдатель", department="Закупки"), email="viewer@example.test",
+        roles=frozenset({"viewer"}), permissions={"procurement": "view"},
+    )
+    result = client.post("/api/procurement/cancel-many", json={
+        "lines": [{"id": str(line.id), "version": before}], "reason": "Дубль",
+    })
+    assert result.status_code == 403
+    with sessions() as session:
+        row = session.get(ProcurementLineRow, line.id)
+        assert row.status == "Новый" and row.buyer_id is None and row.version == before
     _as("Петров")
 
 

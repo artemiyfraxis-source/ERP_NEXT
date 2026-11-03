@@ -1,7 +1,11 @@
 /* ТК / способ отгрузки (владелец 22.10.2026): выбор из фиксированного списка, условия доставки выводятся из него.
    В базе `carrier` остаётся свободной строкой: старое значение вне списка показывается и сохраняется как есть. */
 export const PICKUP_CARRIER = "Самовывоз";
-export const CARRIERS = [PICKUP_CARRIER, "СДЭК", "Деловые линии", "Почта России", "Курьер (наш)", "Яндекс Доставка"] as const;
+export const OWN_COURIER = "Курьер (наш)";
+export const CARRIERS = [PICKUP_CARRIER, "СДЭК", "Деловые линии", "Почта России", OWN_COURIER, "Яндекс Доставка"] as const;
+
+export const needsTrack = (shipment: { terms: string | null; carrier: string; track_required?: boolean }) =>
+  shipment.track_required ?? (shipment.terms === "ДОСТАВКА ТК" && shipment.carrier.trim() !== OWN_COURIER);
 
 export type DeliveryTerms = "САМОВЫВОЗ" | "ДОСТАВКА ТК";
 const TERMS_TEXT: Record<DeliveryTerms, string> = { "САМОВЫВОЗ": "Самовывоз", "ДОСТАВКА ТК": "Доставка ТК" };

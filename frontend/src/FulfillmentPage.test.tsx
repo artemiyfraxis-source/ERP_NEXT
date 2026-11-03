@@ -683,6 +683,44 @@ async function openWholeOrder() {
   fireEvent.click(await screen.findByRole("button", { name: /^728К\.2/ }));
 }
 
+it("shows the purchased name in bold and unique read-only links across КБ and split lines", async () => {
+  const first = "https://supplier.test/one";
+  const second = "https://supplier.test/two";
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === "/api/issues") return json({ requests: [
+      { ...kb1, lines: [
+        { ...kb1.lines[0], requirement: "2", links: [first] },
+        { ...kb1.lines[0], id: "split", requirement: "2", links: [first] },
+      ] },
+      { ...kb2, lines: [{ ...kb2.lines[0], links: [first, second] }] },
+    ], next_cursor: null });
+    throw new Error(`Unexpected request: ${input}`);
+  });
+  render(<FulfillmentPage principal={{ ...principal, permissions: { fulfillment: "view" } }} mode="pick" />);
+  await showAll();
+  fireEvent.click(await screen.findByRole("button", { name: /^728К\.2/ }));
+  const row = screen.getByText("CON-001").closest("tr")!;
+  expect(within(row).getByText("Разъём").tagName).toBe("STRONG");
+  expect(within(row).getByText("CON-001").closest("strong")).toBeNull();
+  expect(within(row).getAllByRole("link")).toHaveLength(2);
+  expect(within(row).getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual([first, second]);
+  for (const link of within(row).getAllByRole("link")) {
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  }
+  expect(within(row).getByText("8 шт")).toBeInTheDocument();
+  expect(within(row).queryByRole("textbox")).not.toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "КБ1 · ждут 2" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "КБ2 · ждут 1" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "КБ2 0 / 4" }));
+  const kbRow = screen.getByText("CON-001").closest("tr")!;
+  expect(within(kbRow).getByText("Разъём").tagName).toBe("STRONG");
+  expect(within(kbRow).getByText("CON-001").closest("strong")).toBeNull();
+  expect(within(kbRow).getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual([first, second]);
+  expect(within(kbRow).getByText("4 шт")).toBeInTheDocument();
+  expect(within(kbRow).queryByRole("button")).not.toBeInTheDocument();
+});
+
 /* «Возможно есть» (owner 12.10.2026): the column, the row colour and the legend of the project card. */
 const candidateOf = (lot: (typeof projectLots)[number], kind: "exact" | "fuzzy", available = lot.available) =>
   ({ ...lot, lot_id: lot.id, kind, match: kind === "exact" ? "exact" : "fuzzy-separators", available });
