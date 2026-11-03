@@ -141,7 +141,7 @@ def _apply(shipment_id: UUID, payload: ApplyInput, principal: Principal, now: da
     typed = payload.invoice_number.strip()
     if typed and project:
         with uow_factory() as uow:
-            card = uow.addressees.get(project)
+            card = shipping._run(lambda: uow.addressees.get(project))
         if card is None or not card.invoice.strip():
             shipping._run(lambda: set_project_addressee(SetProjectAddresseeCommand(
                 project=project, fields={"invoice": typed}, expected_version=None, actor=actor, now=now,
