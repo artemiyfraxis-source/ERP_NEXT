@@ -78,7 +78,7 @@ beforeEach(() => { intakeRows = ROWS; shipments = []; addressees = []; approvals
 afterEach(() => { cleanup(); setRightsPrincipal(null); vi.unstubAllGlobals(); });
 
 describe("Приёмка с производства", () => {
-  it("accepted shows one current KB remainder, with receipt history collapsed rather than shipped work rows", async () => {
+  it("accepted keeps one current KB remainder and direct GRN links without click-to-open history", async () => {
     intakeRows = [row({ accepted: "500", packed: "24", sent: "24", needed: "500", remaining: "0", pack_permission_remaining: "476", acts: [
       { grn: "ГП.TEST.24", quantity: "24", received_at: "2026-10-30", location: "" },
       { grn: "ГП.TEST.476", quantity: "476", received_at: "2026-11-03", location: "" },
@@ -88,12 +88,11 @@ describe("Приёмка с производства", () => {
     expect(screen.queryByText("Итого по КБ")).not.toBeInTheDocument();
     expect(screen.getAllByText("Жгут")).toHaveLength(1);
     expect(document.querySelector('td[data-label="К упаковке"]')).toHaveTextContent("476");
-    expect(screen.queryByText("ГП.TEST.24")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Печать этикетки ГП.TEST.24" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Печать этикетки ГП.TEST.476" })).toBeInTheDocument();
     fireEvent.click(screen.getByText("Жгут"));
-    const history = screen.getByRole("region", { name: "История приёмки 591К.3 КБ1" });
-    expect(history).toHaveTextContent("ГП.TEST.24");
-    expect(history).toHaveTextContent("ГП.TEST.476");
-    expect(within(history).queryByRole("button", { name: /^Упаковать/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /История приёмки/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Жгут").closest("tr")).not.toHaveAttribute("aria-expanded");
     expect(screen.getByText("Показано 1 из 1")).toBeInTheDocument();
     expect(calls.every(call => call.method === "GET")).toBe(true);
   });
@@ -143,10 +142,9 @@ describe("Приёмка с производства", () => {
     expect(within(total).getByRole("button", { name: /^Упаковать / })).toHaveTextContent(`Упаковать · ${500 - sent}`);
     expect(screen.queryByText("Итого по КБ")).not.toBeInTheDocument();
     fireEvent.click(screen.getByText("Жгут"));
-    const history = screen.getByRole("region", { name: "История приёмки 591К.3 КБ1" });
-    expect(history.querySelectorAll(".intake-receipt-history > tbody > tr")).toHaveLength(amounts.length);
-    amounts.forEach((amount, index) => expect(history.querySelectorAll(".intake-receipt-history > tbody > tr")[index]).toHaveTextContent(String(amount)));
-    expect(within(history).queryByRole("button", { name: /^Упаковать|^Отгрузка / })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /История приёмки/ })).not.toBeInTheDocument();
+    amounts.forEach((_, index) => expect(within(total).getByRole("button", { name: `Печать этикетки ГП.ДЕМО.${index}` })).toBeInTheDocument());
+    expect(total.querySelector('td[data-label="Дата приёмки"]')).toHaveTextContent("—");
     expect(calls.every(({ method }) => method === "GET")).toBe(true);
   });
   it("принятое открывает данные проекта до упаковки без создания отправки", async () => {
@@ -607,10 +605,9 @@ describe("Приёмка с производства", () => {
     const ordered = [...document.querySelectorAll("tbody tr")].filter((tr) => tr.textContent?.includes("Жгут акты")).map(cells);
     expect(ordered).toHaveLength(1);
     fireEvent.click(screen.getByText("Жгут акты"));
-    const history = screen.getByRole("region", { name: "История приёмки 591К.3 КБ1" });
-    expect(history.querySelectorAll(".intake-receipt-history > tbody > tr")).toHaveLength(2);
-    expect(history).toHaveTextContent("500");
-    expect(history).toHaveTextContent("300");
+    expect(screen.queryByRole("region", { name: /История приёмки/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Печать этикетки ГП.26.0000010" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Печать этикетки ГП.26.0000011" })).toBeInTheDocument();
   });
 
   it("остаток по КБ при приёмке в несколько ГРН: 100+350+350+173 принято из 1000 — остаток 27 одной строкой", async () => {

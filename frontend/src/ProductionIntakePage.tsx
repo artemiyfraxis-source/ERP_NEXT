@@ -163,6 +163,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       : tab === "to_ship" ? shipment.status === "Упакована" && shipment.ready_to_ship
         : tab === "all" || ACTIVE.includes(shipment.status));
   const grnGroups = (row: IntakeRow) => {
+    if (tab === "accepted" && row.acts?.length) return [{ id: "", number: "", grns: [...new Set(row.acts.map((act) => act.grn).filter(Boolean))] }];
     const ships = ["packed", "to_ship", "shipped"].includes(tab) ? shownShips(row) : [];
     return ships.length ? ships.map((shipment) => ({ id: shipment.id, number: shipment.number,
       grns: [...new Set(shipment.lines.filter((line) => kbKey(line) === kbKey(row)).map((line) => line.grn).filter((grn): grn is string => Boolean(grn)))],
@@ -340,7 +341,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     { key: "project", title: "Проект", value: (row) => row.project, hidden: true },
     { key: "kb", title: "КБ", value: (row) => row.item_index, render: (row) => <span className="intake-kb">{row.item_index}</span> },
     // Строка — одна линия (владелец 15.10): длинное наименование обрезается «…», целиком — в подсказке.
-    { key: "name", title: "Наименование", value: (row) => row.name, render: (row) => <><span className="intake-clip intake-name" title={row.name}>{row.total && <strong>Итого по КБ<br /></strong>}{row.name}</span>{tab === "accepted" && (row.acts?.length ?? 0) > 1 && <small className="muted intake-history-hint">История приёмки · {row.acts!.length}</small>}</> },
+    { key: "name", title: "Наименование", value: (row) => row.name, render: (row) => <span className="intake-clip intake-name" title={row.name}>{row.total && <strong>Итого по КБ<br /></strong>}{row.name}</span> },
     { key: "needed", title: "Заказано", value: (row) => num(row.needed), numeric: true, render: (row) => row.act ? dash : row.needed },
     { key: "left", title: "Остаток", value: (row) => row.left, numeric: true, render: (row) => row.left > 0 ? row.left : dash },
     { key: "launched", title: "Запущено", value: (row) => num(row.launched), numeric: true, render: (row) => count(row.launched) },
@@ -452,15 +453,6 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       <p className="muted" title="Части одной КБ могут находиться на разных этапах; во «Все» КБ считается один раз. Поиск и фильтры таблицы не меняют счётчики.">{COUNTER_SCOPE}{shipments.length >= 200 ? " · Загружены последние 200 отправок" : ""}</p>
       <DataTable key={tab} label="Приёмка с производства" storageKey={tab === "all" ? "production-intake" : `production-intake:${tab}`} rows={shown} columns={visibleColumns} rowKey={lineKey}
         groupBy={(row) => row.project} groupLabel={groupLabel} exportName="Приёмка с производства"
-        rowTitle={tab === "accepted" ? () => "Открыть историю приёмки КБ" : undefined}
-        renderDetail={tab === "accepted" ? (row) => <section aria-label={`История приёмки ${who(row)}`}>
-          <h3>История приёмки · {row.item_index}</h3>
-          <p className="muted">Количество по актам — история прихода, не текущий остаток.</p>
-          {row.acts?.length ? <table className="intake-receipt-history"><thead><tr><th>Дата приёмки</th><th>ГРН</th><th>Принято по акту</th><th>Место</th></tr></thead>
-            <tbody>{row.acts.map((act, index) => <tr key={`${act.grn}:${index}`}><td>{formatDay(act.received_at)}</td><td>{canWarehouse
-              ? <button type="button" className="link-button" aria-label={`Печать этикетки ${act.grn}`} disabled={Boolean(label?.busy)} onClick={() => void printLabel({ ...row, grn: act.grn })}>{act.grn}</button> : act.grn}</td>
-              <td className="num">{act.quantity}</td><td>{act.location || "—"}</td></tr>)}</tbody></table> : <p>Акты приёмки не указаны.</p>}
-        </section> : undefined}
         searchPlaceholder="Проект, КБ, наименование или задание"
         rowClassName={(row) => row.act ? "intake-act-row" : tab === "all" && !DISPATCH_STAGES.some(([stage]) => hasWork(stage, row, piecesOf(row))) ? "ship-line-off" : ""}
         emptyText={allRows.length ? EMPTY[tab] : EMPTY.all} />
