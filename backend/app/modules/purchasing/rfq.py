@@ -132,10 +132,18 @@ class LineView:
     backorder: bool = False
 
 
+@dataclass(frozen=True)
+class PlannedLine:
+    id: UUID
+    expected_version: int
+    planned_quantity: Decimal
+
+
 class ProcurementLines(Protocol):
     def mine(self, actor: Actor) -> list[LineView]: ...
     def get_many(self, line_ids: Iterable[UUID]) -> dict[UUID, LineView]: ...
-    def for_rfq(self, session: Session, line_ids: Iterable[UUID], actor: Actor, now: datetime) -> dict[UUID, LineView]: ...
+    def for_rfq(self, session: Session, line_ids: Iterable[UUID], actor: Actor, now: datetime,
+                *, expected_versions: dict[UUID, int] | None = None) -> dict[UUID, LineView]: ...
     def apply_choice(
         self, line_id: UUID, *, supplier: str, quantity: Decimal, unit: str, expected_version: int, actor: Actor,
         now: datetime,
@@ -314,6 +322,7 @@ def stored_reason(reason: str) -> str:
 def create_rfq(
     uow: UnitOfWork, lines: ProcurementLines, actor: Actor, now: datetime, line_ids: Sequence[UUID], title: str | None,
     suppliers: Sequence[SupplierPick] = (), sent_on: date | None = None, declined: Sequence[UUID] = (),
+    planned_lines: Sequence[PlannedLine] | None = None,
 ) -> dict:
     """The request with its lines and, in the same transaction, the suppliers picked from the suggestion.
 
@@ -323,11 +332,22 @@ def create_rfq(
     ids = list(dict.fromkeys(line_ids))
     if not ids:
         raise Refused("Выберите строки для запроса")
+    planned = {item.id: item for item in planned_lines} if planned_lines is not None else None
+    if planned is not None:
+        if len(planned) != len(planned_lines) or set(planned) != set(ids):
+            raise Refused("Планируемое количество должно быть задано ровно один раз для каждой выбранной позиции")
+        for item in planned.values():
+            quantity = item.planned_quantity
+            if (item.expected_version < 1 or not quantity.is_finite() or quantity <= 0
+                    or quantity >= Decimal("1e12") or quantity != quantity.quantize(Decimal("0.000001"))):
+                raise Refused("Укажите положительное планируемое количество: до 12 цифр и 6 знаков после запятой")
     if sent_on is not None and (sent_on > _today(now) or sent_on < _today(now) - timedelta(days=60)):
         raise Refused("Дата отправки — не позже сегодняшней и не раньше чем за 60 дней")
     with uow:
         session = _session(uow)
-        views = lines.for_rfq(session, ids, actor, now)
+        views = (lines.for_rfq(session, ids, actor, now, expected_versions={
+            item.id: item.expected_version for item in planned.values()
+        }) if planned is not None else lines.for_rfq(session, ids, actor, now))
         for line_id in ids:
             view = views.get(line_id)
             if view is None:
@@ -356,7 +376,8 @@ def create_rfq(
             rfq_line_of[view.id] = uuid4()
             session.add(RfqLineRow(
                 id=rfq_line_of[view.id], rfq_id=rfq.id, procurement_line_id=view.id, item_id=items.get(view.id),
-                name=view.name[:512], article=(view.article or None) and view.article[:255], quantity=view.to_buy,
+                name=view.name[:512], article=(view.article or None) and view.article[:255],
+                quantity=planned[view.id].planned_quantity if planned is not None else view.to_buy,
                 unit=view.unit or "шт", need_by=view.need_by, budget_unit_gross=view.budget_unit_gross, created_at=now,
             ))
         added: dict[UUID, tuple[str, set[UUID] | None]] = {}  # supplier → (reason, its lines; None — every line)

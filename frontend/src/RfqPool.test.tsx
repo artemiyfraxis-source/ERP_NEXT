@@ -150,6 +150,7 @@ it("preselects the suggested suppliers and creates the request with lines and su
     path: "/api/purchasing/rfqs",
     body: {
       line_ids: ["a", "b"], title: "Кабель",
+      planned_lines: [{ id: "a", expected_version: 1, planned_quantity: "2" }, { id: "b", expected_version: 1, planned_quantity: "2" }],
       suppliers: [
         { supplier_id: "s-al", reason: "items", line_ids: ["a"] },
         { name: "ИП Неизвестный", reason: "category_history", line_ids: ["a", "b"] },
@@ -196,6 +197,7 @@ it("filters suppliers without dropping hidden supplier positions from the final 
   expect(posts).toEqual([{
     path: "/api/purchasing/rfqs", body: {
       line_ids: ["a", "b"], title: null, sent_on: null, declined_suggestions: [],
+      planned_lines: [{ id: "a", expected_version: 1, planned_quantity: "2" }, { id: "b", expected_version: 1, planned_quantity: "2" }],
       suppliers: [
         { supplier_id: "s-al", reason: "items", line_ids: ["a", "b"] },
         { name: "ИП Неизвестный", reason: "category_history", line_ids: ["a", "b"] },

@@ -11,6 +11,7 @@ from typing import Protocol, Sequence
 from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent, OutboxMessage
+from .composition import CompositionRepository, CompositionSeed, save_composition
 
 from .domain import (
     UNITS,
@@ -153,6 +154,7 @@ class OutboxRepository(AppendOnlyRepository, Protocol):
 
 class UnitOfWork(Protocol):
     requests: RequestRepository
+    compositions: CompositionRepository
     audit: AppendOnlyRepository
     outbox: OutboxRepository
 
@@ -189,6 +191,8 @@ class CreateRequestsCommand:
     # with no buyer — nobody presses «В закупку». Not part of the fingerprint: a retry of a batch filed before the
     # switch still matches its key.
     to_procurement: bool = False
+    composition: CompositionSeed | None = None
+    composition_source_rows: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -334,6 +338,14 @@ def create_requests(
                     )
                 )
             stored.append(handed)
+        if command.composition is not None:
+            if len(command.composition_source_rows) != len(stored):
+                raise ValidationError("Строки состава ЗКП не соответствуют создаваемым заявкам")
+            old = uow.compositions.get(command.composition.project)
+            save_composition(
+                command.composition, old.version if old else 0, command.actor, command.now, uow,
+                request_ids=dict(zip(command.composition_source_rows, (request.id for request in stored))),
+            )
         uow.commit()
         return stored
 

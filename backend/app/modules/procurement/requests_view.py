@@ -117,6 +117,9 @@ class LastPurchase:
     supplier: str | None
     unit: str | None
     source: str  # "procurement" — a paid procurement line, "upd" — a UPD of the registry
+    document_id: str | None = None
+    document_number: str | None = None
+    procurement_line_id: str | None = None
 
 
 def rb_status(line: ViewLine, rfq: RfqState | None = None, order: OrderState | None = None) -> str:
@@ -337,7 +340,9 @@ def line_results(
             "plan": {"price_with_vat": _num(gross), "link": line.link if line.link and is_web_link(line.link) else None,
                      "label": label} if gross is not None or label else None,
             "last": {"price": _num(bought.price), "date": bought.on.isoformat(), "supplier": bought.supplier,
-                     "unit": bought.unit, "source": bought.source} if bought is not None else None,
+                     "unit": bought.unit, "source": bought.source, "document_id": bought.document_id,
+                     "document_number": bought.document_number,
+                     "procurement_line_id": bought.procurement_line_id} if bought is not None else None,
             "free_stock": _num(free) if free is not None and free > 0 else None,
             "rfq": {"id": str(state.rfq_id), "number": state.rfq_number} if state is not None and state.live else None,
             "requote_from": state.requote_from if state is not None and status == "requote" else None,
