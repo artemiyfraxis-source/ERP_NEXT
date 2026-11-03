@@ -219,7 +219,8 @@ export const rfqApi = {
   candidates: () => api<{ lines: RfqCandidate[] }>(`${BASE}/candidates`),
   pool: () => api<RfqPoolResult>(`${BASE}/pool`),
   create: (lineIds: string[], title: string, suppliers: SupplierPick[] = [],
-    options: { sent_on?: string | null; declined_suggestions?: string[] } = {}) =>
+    options: { sent_on?: string | null; declined_suggestions?: string[];
+      planned_lines?: { id: string; expected_version: number; planned_quantity: string }[] } = {}) =>
     post<{ id: string; number: string; suppliers: number }>(BASE, { line_ids: lineIds, title: title || null, suppliers, ...options }),
   matrix: (id: string) => api<RfqMatrix>(`${BASE}/${id}`),
   directory: () => api<{ suppliers: SupplierBrief[] }>(`${BASE}/directory`),
