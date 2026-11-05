@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { notificationKind } from "./notificationLabels";
 
 describe("notificationKind", () => {
+  it("names equipment setup notifications without exposing their internal kind", () => {
+    expect(notificationKind("equipment_setup")).toEqual({ label: "Наладка оборудования", tone: "info" });
+  });
   it("names every kind the backend producers send in Russian", () => {
     const labels = ["digest", "disposal", "error", "nonconformity", "quarantine", "ready", "ship", "security", "leave", "status", "info",
       "arrival", "production"]

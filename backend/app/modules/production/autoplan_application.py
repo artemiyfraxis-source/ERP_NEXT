@@ -22,7 +22,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum
@@ -75,6 +75,7 @@ from .dispatch import localize
 from .domain import ProductionStatus, ProductionTask, ProductionValidationError
 from .launchable import ReadyCard, stage_name
 from .machine_load import MachineStep, task_steps
+from .resource_assignments import MachineBinding
 from .scheduling import work_seconds_between
 
 # Дальше восьми недель автоплан не заглядывает (владелец, 12.10: «capped at a sane maximum»).
@@ -117,6 +118,7 @@ class ApplyAutoplanCommand:
     plan: AutoplanCommand  # тот же запрос, что в предпросмотре: он входит в отпечаток
     items: tuple[tuple[UUID, UUID, UUID], ...]  # (задание, операция, монтажник) — подмножество предпросмотра
     fingerprint: str
+    machine_bindings: tuple[tuple[UUID, tuple[MachineBinding, ...]], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -132,6 +134,7 @@ class AutoplanPreview:
     batches: dict[UUID, tuple[Batch, ...]]
     period: tuple[datetime, date]  # начало расчёта и последний день плана
     scope: tuple[int, int, int]  # заданий, новых КБ, монтажников в расчёте
+    resources: dict[UUID, dict] = field(default_factory=dict)
 
     @property
     def placements(self) -> tuple[Placement, ...]:
@@ -367,6 +370,12 @@ def _prepare(
         capacity=capacity, start=start, end=end, holidays=holidays, shift=shift, steps=steps,
     )
     result = plan(data)
+    all_tasks = {**tasks, **{task_id: item.task for task_id, item in scope.new_tasks.items()}}
+    resources = getattr(uow, "resources", None)
+    resource_options = {
+        item.operation_id: resources.describe(all_tasks[item.task_id], item.operation_id, (item.operator_id,))
+        for item in result.placements
+    } if resources is not None else {}
     fingerprint = _fingerprint({
         "mode": command.mode.value,
         "project": normalize_project_number(command.project) if command.mode is AutoplanMode.PROJECT else "",
@@ -386,8 +395,9 @@ def _prepare(
         "holidays": sorted(holidays), "shift": repr(shift),
         "progress": sorted([str(key), str(value)] for key, value in progress.by_operation.items()),
         "cards": sorted(used_cards.items()), "units": sorted(units.items()),
+        "resource_generation": uow.resources.claims.generation() if getattr(uow, "resources", None) is not None else None,
+        "resource_options": sorted((str(identifier), options) for identifier, options in resource_options.items()),
     })
-    all_tasks = {**tasks, **{task_id: item.task for task_id, item in scope.new_tasks.items()}}
     return AutoplanPreview(
         result=result,
         unplaced=(*unplaced, *result.unplaced),
@@ -400,6 +410,7 @@ def _prepare(
         batches=batches(result.placements),
         period=(start, _last_day(command, start, end, result.placements, [*scope.eligible, *(item.task for item in scope.new_tasks.values())])),
         scope=(len([task for task in scope.eligible if task.id in free_tasks]), len(scope.new_tasks), len(team)),
+        resources=resource_options,
     )
 
 
@@ -447,8 +458,13 @@ def apply_autoplan(
         raise ProductionValidationError("Не выбрано ни одной операции")
     if len({item[1] for item in command.items}) != len(command.items):
         raise ProductionValidationError("Операция выбрана дважды")
+    choices = dict(command.machine_bindings)
+    if len(choices) != len(command.machine_bindings) or not choices.keys() <= {item[1] for item in command.items}:
+        raise ProductionValidationError("Некорректный список назначений оборудования")
     actor, now = command.plan.actor, command.plan.now
     with uow:
+        if choices and getattr(uow, "resources", None) is None:
+            raise ProductionValidationError("Назначение оборудования ещё не подключено")
         for task_id in sorted({item[0] for item in command.items}, key=str):
             uow.production.lock(task_id)
         # Номера запусков КБ — до расчёта: «Создать задание», прошедшее после этого чтения, займёт тот же номер, и
@@ -475,6 +491,7 @@ def apply_autoplan(
         ))
         for task_id in order:
             own = chosen[task_id]
+            own_choices = {operation_id: choices[operation_id] for operation_id in own if operation_id in choices}
             if task_id in preview.new_tasks:
                 new = preview.new_tasks[task_id]
                 # Один ключ на техкарту в этом плане: повтор того же применения не запустит КБ дважды.
@@ -490,6 +507,8 @@ def apply_autoplan(
                 created.append(task)
                 # Операции созданного задания — те же этапы маршрута, что в расчёте: сопоставляем по номеру этапа.
                 by_position = {operation.position: operation.id for operation in task.operations}
+                own_choices = {by_position[operation.position]: own_choices[operation.id]
+                    for operation in new.task.operations if operation.id in own_choices}
                 own = {
                     by_position[operation.position]: replace(own[operation.id], task_id=task.id, operation_id=by_position[operation.position])
                     for operation in new.task.operations if operation.id in own
@@ -503,6 +522,10 @@ def apply_autoplan(
                 for operation in task.operations
             ), mark)
             uow.production.add(result)
+            resources = getattr(uow, "resources", None)
+            if resources is not None:
+                for operation_id, placement in own.items():
+                    resources.ensure_assignment(result, operation_id, (placement.operator_id,), own_choices.get(operation_id))
             updated.append(result)
         applied = [placement for own in chosen.values() for placement in own.values()]
         uow.audit.add(AuditEvent(
@@ -626,6 +649,7 @@ def describe(preview: AutoplanPreview) -> dict:
             "machine": item.key.machine_label, "setup_label": item.key.label,
             "changeover_seconds": item.changeover_seconds, "setup_seconds": item.setup_seconds,
             "batched": item.pulled,
+            "resources": preview.resources.get(item.operation_id),
         }
 
     result = preview.result
@@ -635,6 +659,7 @@ def describe(preview: AutoplanPreview) -> dict:
         "new_tasks": [{
             "task_id": str(task_id), "techcard_id": str(item.card.techcard_id), "project": item.card.project,
             "index": item.card.index, "name": item.card.name, "quantity": item.task.quantity,
+            "techcard_revision": item.task.techcard_revision,
             "deadline": item.card.deadline.isoformat() if item.card.deadline else None,
         } for task_id, item in sorted(preview.new_tasks.items(), key=lambda pair: (pair[1].card.project, pair[1].card.index))],
         "proposals": [placement(item) for item in result.placements],

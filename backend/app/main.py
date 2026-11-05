@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
-from .database import configure_database
+from .database import configure_database, equipment_setup_enabled
 from .modules.operations.application import background_health
 from .modules.techcards.kitset_names import tls_exception_hosts
 from .shared.clock import moscow_now
@@ -174,8 +174,14 @@ app.include_router(finished_goods_api.router)
 app.include_router(production_intake_api.router)
 app.include_router(coax_vswr_api.router)
 
+_equipment_enabled = equipment_setup_enabled()
 if database_url := os.getenv("ERP_DATABASE_URL"):
-    configure_database(app, database_url)
+    configure_database(app, database_url, equipment_enabled=_equipment_enabled)
+elif _equipment_enabled:
+    raise RuntimeError("ERP_DATABASE_URL is required when equipment setup is enabled")
+if _equipment_enabled:
+    from .modules.equipment_setup.api import router as equipment_setup_router
+    app.include_router(equipment_setup_router)
 watch_stop_file()  # локальная ERP на ПК: обновление останавливает API файлом-стопом (scripts/update-local.ps1)
 
 

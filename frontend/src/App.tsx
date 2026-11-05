@@ -40,6 +40,8 @@ import { ProcurementPage } from "./ProcurementPage";
 import { PurchasingRefsPage } from "./PurchasingRefsPage";
 import { PrimaryDocsPage } from "./PrimaryDocsPage";
 import { ProductionPage } from "./ProductionPage";
+import { equipmentSetupApi } from "./equipmentSetupApi";
+const EquipmentSetupPage = lazy(() => import("./EquipmentSetupPage").then(module => ({ default: module.EquipmentSetupPage })));
 import { ProductionPlanPage } from "./ProductionPlanPage";
 import { QualityPage } from "./QualityPage";
 import { RequestsPage } from "./RequestsPage";
@@ -152,8 +154,24 @@ export function App() {
     return () => window.removeEventListener(AUTH_REQUIRED_EVENT, requireLogin);
   }, []);
 
-  const visibleNav = useMemo(() => (principal ? visibleNavFor(principal) : []), [principal]);
-  const blocks = useMemo(() => (principal ? visibleBlocks(principal) : []), [principal]);
+  const [setupAccess, setSetupAccess] = useState<{ principal: Principal; state: "ready" | "disabled" | "denied" | "error"; error?: string } | null>(null);
+  const [setupRetry, setSetupRetry] = useState(0);
+  useEffect(() => {
+    if (!principal || place.tsd) return;
+    let alive = true;
+    setSetupAccess(null);
+    equipmentSetupApi.viewer().then(() => { if (alive) setSetupAccess({ principal, state: "ready" }); }).catch(reason => {
+      if (!alive) return;
+      const state = reason instanceof ApiError && reason.status === 404 ? "disabled"
+        : reason instanceof ApiError && reason.status === 403 ? "denied" : "error";
+      setSetupAccess({ principal, state, error: failureText(reason, "Не удалось проверить доступ к наладке") });
+    });
+    return () => { alive = false; };
+  }, [principal, setupRetry, place.tsd]);
+  const setupState = setupAccess?.principal === principal ? setupAccess : null;
+  const setupAvailable = setupState?.state === "ready";
+  const visibleNav = useMemo(() => (principal ? visibleNavFor(principal, { equipmentSetup: setupAvailable }) : []), [principal, setupAvailable]);
+  const blocks = useMemo(() => (principal ? visibleBlocks(principal, { equipmentSetup: setupAvailable }) : []), [principal, setupAvailable]);
 
   function go(next: Place) {
     const url = new URL(window.location.href);
@@ -288,7 +306,7 @@ export function App() {
   }
   const relogin = expired && <SessionExpiredDialog onLogin={signInAgain} />;
   // A section or block the principal cannot open falls back to the home screen.
-  const activeSection = visibleNav.some(({ id }) => id === place.section) ? place.section : "cabinet";
+  const activeSection = place.section === "equipmentsetup" || visibleNav.some(({ id }) => id === place.section) ? place.section : "cabinet";
   const activeWithin = visibleNav.find(({ id }) => id === activeSection)?.within;
   const activeBlock = activeSection === "cabinet" ? blocks.find((block) => block.id === place.block) ?? null : null;
   // «Снабжение» is menu items per tab: the lit one follows `?tab=`; the «Заявки» register lights the «Заявки» tab.
@@ -389,6 +407,14 @@ export function App() {
         {activeSection === "handout" && <FulfillmentPage principal={principal} mode="give" />}
         {activeSection === "prodplan" && <ProductionPlanPage principal={principal} openProjectCard={visibleNav.some(({ id }) => id === "projects") ? openProjectCard : undefined} />}
         {activeSection === "production" && <ProductionPage principal={principal} />}
+        {activeSection === "equipmentsetup" && (setupAvailable
+          ? <Suspense fallback={<p className="empty">Загрузка наладки…</p>}><EquipmentSetupPage principal={principal} /></Suspense>
+          : <section className="page"><h1>Наладка оборудования</h1>
+            {!setupState ? <p className="empty" role="status">Проверяем доступ к наладке…</p>
+              : <><p className={setupState.state === "error" ? "error-banner" : "empty"} role={setupState.state === "error" ? "alert" : "status"}>
+                {setupState.state === "disabled" ? "Наладка оборудования ещё не включена." : setupState.state === "denied" ? "Наладка недоступна этому сотруднику." : setupState.error}
+              </p><button className="secondary" onClick={() => setSetupRetry(value => value + 1)}>Проверить снова</button></>}
+          </section>)}
         {activeSection === "myops" && <ProductionPage principal={principal} mine />}
         {activeSection === "quality" && <QualityPage principal={principal} />}
         {activeSection === "references" && <ReferencesPage key={visit} principal={principal} />}

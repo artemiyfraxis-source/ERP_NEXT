@@ -13,6 +13,7 @@ const KINDS: Record<string, { label: string; tone: NotificationTone }> = {
   nonconformity: { label: "Несоответствие", tone: "warn" },
   quarantine: { label: "Карантин", tone: "warn" },
   production: { label: "Цех", tone: "info" },
+  equipment_setup: { label: "Наладка оборудования", tone: "info" },
   ready: { label: "Готово к выдаче", tone: "ok" },
   ship: { label: "Отгрузка", tone: "info" },
   security: { label: "Безопасность", tone: "danger" },

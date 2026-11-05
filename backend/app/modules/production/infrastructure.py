@@ -688,8 +688,9 @@ class ProductionQcDecisionRow(Base):
 
 
 class SqlAlchemyProductionRepository:
-    def __init__(self, session: Session):
+    def __init__(self, session: Session, resources=None):
         self.session = session
+        self.resources = resources
 
     def _domain(self, row: ProductionTaskRow) -> ProductionTask:
         operation_rows = list(self.session.scalars(
@@ -850,6 +851,8 @@ class SqlAlchemyProductionRepository:
         }
 
     def add(self, task: ProductionTask, launch_seq: int | None = None) -> None:
+        if self.resources is not None:
+            self.resources.record_task(task)
         row = self.session.get(ProductionTaskRow, task.id)
         if row is None:
             # Номер запуска пишется только при создании задания; потом он не меняется.
@@ -987,6 +990,8 @@ class SqlAlchemyProductionRepository:
         ]
 
     def delete(self, task_id: UUID) -> None:
+        if self.resources is not None:
+            self.resources.remove_task(task_id)
         """Задание без следа работы (см. `worked`) уходит с долями, операциями и своими серийными номерами."""
         operations = select(ProductionOperationRow.id).where(ProductionOperationRow.task_id == task_id)
         self.session.execute(delete(ProductionOperationInputRow).where(ProductionOperationInputRow.operation_id.in_(operations)))
@@ -1409,8 +1414,9 @@ class SqlAlchemyBoxRepository:
 
 
 class SqlAlchemyWorkRepository:
-    def __init__(self, session: Session):
+    def __init__(self, session: Session, resources=None):
         self.session = session
+        self.resources = resources
 
     @staticmethod
     def _domain(row: ProductionWorkSessionRow) -> WorkSession:
@@ -1445,6 +1451,8 @@ class SqlAlchemyWorkRepository:
         return [MaterialInput(row.fulfillment_line_id, row.quantity) for row in rows]
 
     def save(self, session: WorkSession) -> None:
+        if self.resources is not None:
+            self.resources.record_session(session)
         row = self.session.get(ProductionWorkSessionRow, session.id)
         if row is None:
             row = ProductionWorkSessionRow(id=session.id)
@@ -2093,22 +2101,33 @@ class SqlAlchemyGenealogyRepository:
 
 
 class SqlAlchemyProductionUnitOfWork:
-    def __init__(self, session_factory: sessionmaker[Session]):
+    def __init__(self, session_factory: sessionmaker[Session], resource_factory=None):
         self.session_factory = session_factory
+        self.resource_factory = resource_factory
         self.session: Session | None = None
         self.committed = False
 
     def __enter__(self):
         self.committed = False
         self.session = self.session_factory()
-        self.production = SqlAlchemyProductionRepository(self.session)
+        self.resources = self.resource_factory(self.session) if self.resource_factory is not None else None
+        if self.resources is not None:
+            try:
+                if self.session.get_bind().dialect.name == "sqlite":
+                    self.session.execute(text("BEGIN IMMEDIATE"))
+                self.resources.acquire()
+            except Exception:
+                self.session.rollback()
+                self.session.close()
+                raise
+        self.production = SqlAlchemyProductionRepository(self.session, self.resources)
         self.operators = SqlAlchemyOperatorRepository(self.session)
         self.calendar = SqlAlchemyCalendarRepository(self.session)
         self.skills = SqlAlchemySkillRepository(self.session)
         self.plan_projects = SqlAlchemyPlanProjectRepository(self.session)
         self.plan_events = SqlAlchemyPlanEventRepository(self.session)
         self.boxes = SqlAlchemyBoxRepository(self.session)
-        self.work = SqlAlchemyWorkRepository(self.session)
+        self.work = SqlAlchemyWorkRepository(self.session, self.resources)
         self.outputs = SqlAlchemyOutputRepository(self.session)
         self.work_log = SqlAlchemyWorkLogRepository(self.session)
         self.consumption = SqlAlchemyConsumptionRepository(self.session)
@@ -2132,5 +2151,7 @@ class SqlAlchemyProductionUnitOfWork:
 
     def commit(self) -> None:
         if self.session is None: raise RuntimeError("Unit of Work has not been entered")
+        if self.resources is not None:
+            self.resources.flush()
         self.session.commit()
         self.committed = True

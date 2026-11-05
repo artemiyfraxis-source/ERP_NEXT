@@ -63,6 +63,8 @@ function masterFetch(extra: (path: string, init?: RequestInit) => Response | nul
     const path = String(input);
     const handled = extra(path, init);
     if (handled) return handled;
+    if (path.includes("/operations/") && path.includes("/resources?")) return json({ enabled: false });
+    if (path === "/api/production/board/resources") return json({ items: JSON.parse(String(init?.body)).items.map((_: unknown, index: number) => ({ index, resources: null })) });
     if (path === "/api/production/tasks") return json({ tasks, next_cursor: null });
     if (path === "/api/production/operators") return json({ operators: [
       { id: "10000000-0000-0000-0000-000000000002", name: "Оператор", site: "ЦАР" },
@@ -116,6 +118,56 @@ it("shows tasks on a Gantt, operation fact, and assigns with a server preview an
     dry: false,
   }));
   expect(bodies.some((body) => (body as { dry: boolean }).dry)).toBe(true);
+});
+
+it("does not assign a production operation until its physical machine is explicitly chosen", async () => {
+  const posts: Array<Record<string, unknown>> = [];
+  masterFetch((path, init) => {
+    if (path.includes("/resources?")) return json({ enabled: true, task_version: 2, site: "ЦАР", requirements: [
+      { etk_position: 4, family: "Резка", machines: [{ id: "ОБ.004:2", name: "Резка", model: "EW", site: "ЦАР" }] },
+    ] });
+    if (path.endsWith("/assign") && init?.method === "POST") {
+      posts.push(JSON.parse(String(init.body)));
+      return json({ task, plan: { start: task.planned_start, finish: task.planned_finish, warnings: [] }, warnings: [] });
+    }
+    return null;
+  }, [task]);
+  render(<ProductionPage principal={principal} />);
+  await openBoardProject("591K.3");
+  fireEvent.click(await screen.findByRole("button", { name: /ПЗ-0001/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Разделка/ }));
+  const selector = await screen.findByLabelText("Станок · операция ЭТК 4");
+  expect(screen.getByRole("button", { name: "Назначить" })).toBeDisabled();
+  expect(posts).toEqual([]);
+  fireEvent.change(selector, { target: { value: "ОБ.004:2" } });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Назначить" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Назначить" }));
+  await waitFor(() => expect(posts.some((post) => post.dry === false && JSON.stringify(post.machine_bindings) === JSON.stringify([{ etk_position: 4, machine_id: "ОБ.004:2" }]))).toBe(true));
+});
+
+it("applies schedule bindings by operation id only after explicit machine selection", async () => {
+  const posts: unknown[] = [];
+  const op = task.operations[0];
+  masterFetch((path, init) => {
+    if (path.endsWith("/schedule")) return json({ variants: [{ transfer_batch: 10, first_ready: task.planned_finish, finish: task.planned_finish,
+      idle_seconds: 0, warnings: [], operations: [{ operation_id: op.id, position: 1, operator_ids: op.operator_ids,
+        start: task.planned_start, finish: task.planned_finish, automatic: true }] }] });
+    if (path.includes("/resources?")) return json({ enabled: true, task_version: 2, requirements: [
+      { etk_position: 4, family: "Резка", machines: [{ id: "ОБ.004:2", name: "Резка", model: "EW", site: "ЦАР" }] },
+    ] });
+    if (path.endsWith("/schedule/apply")) { posts.push(JSON.parse(String(init?.body))); return json({ task }); }
+    return null;
+  }, [task]);
+  render(<ProductionPage principal={principal} />);
+  await openBoardProject("591K.3");
+  fireEvent.click(await screen.findByRole("button", { name: /ПЗ-0001/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Авторасчёт плана" }));
+  const selector = await screen.findByLabelText("Станок · операция ЭТК 4");
+  expect(screen.getByRole("button", { name: "Применить" })).toBeDisabled();
+  fireEvent.change(selector, { target: { value: "ОБ.004:2" } });
+  fireEvent.click(screen.getByRole("button", { name: "Применить" }));
+  await waitFor(() => expect(posts).toEqual([{ version: 2, replan: false, max_crew: 1, transfer_batch: 10,
+    machine_bindings: { [op.id]: [{ etk_position: 4, machine_id: "ОБ.004:2" }] } }]));
 });
 
 it("keeps «—» in the competency matrix: only set codes are saved", async () => {
@@ -416,7 +468,7 @@ it("groups the operator queue by plan day and hides start for a completed operat
   expect(screen.getByText(/^Завтра · /).closest("details")).toBeNull();
 });
 
-it("lets the master hand out operations of issued projects in a project window and an operation window", async () => {
+it.each([false, true])("lets the master hand out operations of issued projects with machine runtime %s", async (machineRuntime) => {
   const bodies: Array<{ path: string; body: unknown }> = [];
   const open: ProductionTask = { ...task, assigned: 0, operations: [
     { ...task.operations[0], operator_ids: [] },
@@ -439,6 +491,8 @@ it("lets the master hand out operations of issued projects in a project window a
       techcard_id: "80000000-0000-0000-0000-000000000009", project: "708К.4", index: "КБ2", item: "708К.4КБ2",
       name: "Кабель", customer: "", run: "5", deadline: "2026-10-10", launched: 0, operations: 4,
     }] });
+    if (path === "/api/production/board/resources") return json({ items: [{ index: 0, resources: machineRuntime ? { enabled: true, task_version: 2,
+      requirements: [{ etk_position: 8, family: "Резка", machines: [{ id: "ОБ.008:2", name: "Резка", model: "EW", site: "ЦАР" }] }] } : null }] });
     if (init?.method === "POST") {
       bodies.push({ path, body: JSON.parse(String(init.body)) });
       return json({ task: open, warnings: [], plan: { start: null, finish: null, warnings: [] }, dry: false });
@@ -480,9 +534,17 @@ it("lets the master hand out operations of issued projects in a project window a
   fireEvent.change(within(step).getByLabelText("Штук монтажнику"), { target: { value: "4" } });
   fireEvent.click(within(step).getByRole("button", { name: "День Попов Игнат 23.09" }));
   fireEvent.click(within(step).getByRole("button", { name: "Назначить Попов Игнат на 23.09 с 13:30" }));
+  if (machineRuntime) {
+    const machines = await screen.findByRole("dialog", { name: "Станки для назначения" });
+    expect(bodies.filter((entry) => entry.path.endsWith("/share") || entry.path.endsWith("/assign"))).toEqual([]);
+    expect(within(machines).getByRole("button", { name: "Назначить с выбранными станками" })).toBeDisabled();
+    fireEvent.change(within(machines).getByLabelText("Станок · операция ЭТК 8"), { target: { value: "ОБ.008:2" } });
+    fireEvent.click(within(machines).getByRole("button", { name: "Назначить с выбранными станками" }));
+  }
   await waitFor(() => expect(bodies.at(-1)).toEqual({
     path: `/api/production/tasks/${open.id}/operations/${open.operations[0].id}/share`,
-    body: { version: 2, operator_id: "10000000-0000-0000-0000-000000000003", quantity: 4, requested_start: "2026-09-23T13:30" },
+    body: { version: 2, operator_id: "10000000-0000-0000-0000-000000000003", quantity: 4, requested_start: "2026-09-23T13:30",
+      ...(machineRuntime ? { machine_bindings: [{ etk_position: 8, machine_id: "ОБ.008:2" }] } : {}) },
   }));
   // Окно операции остаётся (можно дробить дальше); Esc — назад к окну проекта.
   fireEvent.keyDown(screen.getByRole("dialog", { name: "Операция 1. Разделка" }), { key: "Escape" });
@@ -513,9 +575,16 @@ it("lets the master hand out operations of issued projects in a project window a
   expect(within(only).getByLabelText("День начала")).toHaveValue("2026-09-22");
   expect(within(only).getByText("Остальные исполнители будут сняты — все 10 шт получит Попов Игнат.")).toBeInTheDocument();
   fireEvent.click(within(only).getByRole("button", { name: "Назначить только Попов Игнат на 22.09 с 09:00" }));
+  if (machineRuntime) {
+    const machines = await screen.findByRole("dialog", { name: "Станки для назначения" });
+    expect(within(machines).getByLabelText("Станок · операция ЭТК 8")).toHaveValue("");
+    fireEvent.change(within(machines).getByLabelText("Станок · операция ЭТК 8"), { target: { value: "ОБ.008:2" } });
+    fireEvent.click(within(machines).getByRole("button", { name: "Назначить с выбранными станками" }));
+  }
   await waitFor(() => expect(bodies.at(-1)).toEqual({
     path: `/api/production/tasks/${open.id}/operations/${open.operations[1].id}/share`,
-    body: { version: 2, operator_id: "10000000-0000-0000-0000-000000000003", quantity: 10, requested_start: "2026-09-22T09:00" },
+    body: { version: 2, operator_id: "10000000-0000-0000-0000-000000000003", quantity: 10, requested_start: "2026-09-22T09:00",
+      ...(machineRuntime ? { machine_bindings: [{ etk_position: 8, machine_id: "ОБ.008:2" }] } : {}) },
   }));
   // Другой день — кнопка говорит его.
   fireEvent.change(within(only).getByLabelText("День начала"), { target: { value: "2026-09-24" } });

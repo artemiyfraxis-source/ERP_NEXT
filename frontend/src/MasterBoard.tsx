@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ProductionMachinePicker, type MachineSelection } from "./ProductionMachinePicker";
 import {
   kitsetsApi,
   productionApi,
@@ -14,6 +15,8 @@ import {
   type ProductionShift,
   type ProductionSkill,
   type ProductionTask,
+  type ProductionResources,
+  type ProductionMachineBinding,
 } from "./api";
 import { formatDayMonth, kbLabel } from "./format";
 import { MachineLoadGrid, MachineWarning } from "./MachineLoad";
@@ -543,6 +546,10 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const [view, setViewState] = useState<BoardView>(readView);
   // Ответ сервера на назначение: что не встало и предупреждения (допуск, станок занят).
   const [note, setNote] = useState<{ refused: string[]; warnings: string[] } | null>(null);
+  const [machineRequest, setMachineRequest] = useState<{ id: number; items: BoardAssignItem[]; resources: Array<ProductionResources | null>;
+    operator: string; start: string; save: (bindings: Array<ProductionMachineBinding[] | undefined>) => Promise<unknown> } | null>(null);
+  const [machineChoices, setMachineChoices] = useState<Record<number, MachineSelection>>({});
+  const machineSequence = useRef(0);
   const [groupSel, setGroupSel] = useState<Record<string, { who?: string; day?: string }>>({});
   // Тираж нового задания по id техкарты КБ, как ввёл мастер в окне проекта.
   const [runs, setRuns] = useState<Record<string, string>>({});
@@ -681,6 +688,14 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
     return item.pending && launched != null ? { launched } : {};
   };
   const pool: ProductionTask[] = [...live, ...futureTasks];
+  const machineTarget = (item: BoardAssignItem) => "task_id" in item
+    ? pool.find((candidate) => candidate.id === item.task_id)
+    : pool.find((candidate) => candidate.pending && candidate.techcard_id === item.techcard_id);
+  const machineStale = Boolean(machineRequest && (!canEdit || !people.some((person) => person.id === machineRequest.operator) || machineRequest.items.some((item) => {
+    const current = machineTarget(item);
+    return !current || ("task_id" in item ? current.version !== item.task_version
+      : current.techcard_version !== item.techcard_version || (item.launched !== undefined && (current as BoardTask).launched !== item.launched));
+  })));
   const equipmentOf = new Map<string, string>();
   for (const item of [...(boardNow?.tasks ?? []), ...futureTasks]) for (const op of item.operations) equipmentOf.set(op.id, op.equipment.label);
 
@@ -716,7 +731,24 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
 
   // Назначение через доску: будущие задания создаются из выданной техкарты, настоящие — как есть; одна транзакция.
   // Из окна операции (reopen) окно остаётся на той же операции уже созданного задания.
-  function runBoard(key: string, operatorId: string, start: string, items: BoardAssignItem[], reopen = false) {
+  async function chooseMachines(operatorId: string, start: string, items: BoardAssignItem[], save: (bindings: Array<ProductionMachineBinding[] | undefined>) => Promise<unknown>): Promise<unknown> {
+    const sequence = ++machineSequence.current;
+    setMachineRequest(null); setMachineChoices({});
+    setNote({ refused: [], warnings: ["Проверяем станки по выданной ЭТК…"] });
+    try {
+      const result = await productionApi.boardResources({ operator_id: operatorId, items });
+      if (sequence !== machineSequence.current) return;
+      if (!Array.isArray(result.items) || result.items.length !== items.length || result.items.some((item, index) => item.index !== index || item.resources === undefined)) throw new Error("Не получены требования к станкам для всех операций");
+      const resources = result.items.map((item) => item.resources);
+      setNote(null);
+      if (resources.every((item) => item === null || item.enabled === false)) { await save(items.map(() => undefined)); return; }
+      setMachineRequest({ id: sequence, items, resources, operator: operatorId, start, save });
+    } catch (reason) { if (sequence === machineSequence.current) setNote({ refused: [reason instanceof Error ? reason.message : "Станки не загружены"], warnings: [] }); }
+  }
+
+  function runBoard(key: string, operatorId: string, start: string, items: BoardAssignItem[], reopen = false, checked = false): Promise<unknown> {
+    if (!checked) return chooseMachines(operatorId, start, items, (bindings) => runBoard(key, operatorId, start,
+      items.map((item, index) => ({ ...item, ...(bindings[index] !== undefined ? { machine_bindings: bindings[index] } : {}) })), reopen, true));
     setNote(null);
     const out: { next?: Selected | null } = {};
     return mutate(key, async () => {
@@ -741,7 +773,8 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
       void runBoard(operation.id, personId, requestedAt(start), [boardItem(task, operation, quantity)], true);
       return;
     }
-    void mutate(operation.id, () => productionApi.share(task.id, operation.id, task.version, personId, quantity, requestedAt(start)));
+    void chooseMachines(personId, requestedAt(start), [boardItem(task, operation)], (bindings) =>
+      mutate(operation.id, () => productionApi.share(task.id, operation.id, task.version, personId, quantity, requestedAt(start), false, bindings[0])));
   }
   const capacity = shiftCapacity(workShift);
   // «Сейчас» для загрузки: затянувшаяся взятая работа занимает монтажника и после своего плана (loadWindow).
@@ -770,7 +803,8 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
       void runBoard(operation.id, onlyPerson.id, requestedAt(onlySlot.start), [boardItem(task, operation)], true);
       return;
     }
-    void mutate(operation.id, () => productionApi.share(task.id, operation.id, task.version, onlyPerson.id, task.quantity, requestedAt(onlySlot.start)));
+    void chooseMachines(onlyPerson.id, requestedAt(onlySlot.start), [boardItem(task, operation)], (bindings) =>
+      mutate(operation.id, () => productionApi.share(task.id, operation.id, task.version, onlyPerson.id, task.quantity, requestedAt(onlySlot.start), false, bindings[0])));
   }
 
   // «Уже сделано»: по умолчанию — первый назначенный, кто не закончил свою долю, иначе без исполнителя (отбить готовыми).
@@ -1182,6 +1216,28 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
     {shown && <PageWindow label={`Проект ${shown}`} width={1600} close={() => setOpenProject("")}>{renderProject(shown)}</PageWindow>}
     {shown && task && operation && <PageWindow label={`Операция ${operation.position}. ${operationName(operation)}`} width={1600} close={() => select(task, null)}>
       {renderOperation(task, operation)}
+    </PageWindow>}
+    {machineRequest && <PageWindow label="Станки для назначения" width={900} close={() => { machineSequence.current++; setMachineRequest(null); }}>
+      <div className="panel"><h2>Станки для назначения</h2>
+        <p>{operators.find((person) => person.id === machineRequest.operator)?.name ?? "Монтажник"} · {windowText(machineRequest.start, machineRequest.start)}</p>
+        {machineStale && <div role="alert" className="error-banner">Задание или монтажник изменились. Закройте окно и повторите назначение.</div>}
+        {machineRequest.resources.map((resources, index) => {
+          const item = machineRequest.items[index];
+          const target = machineTarget(item);
+          const op = target?.operations.find((candidate) => "operation_id" in item ? candidate.id === item.operation_id : candidate.position === item.position);
+          return <div key={index}><h3>{target ? taskItemLabel(target) : "Задание"} · {op ? operationName(op) : "Операция"}</h3>
+            <ProductionMachinePicker selectionKey={`${machineRequest.id}:${index}:${machineStale}`}
+              resources={resources} version={"task_version" in item ? item.task_version : undefined}
+              onChange={(value) => setMachineChoices((old) => ({ ...old, [index]: value }))} /></div>;
+        })}
+        <button className="primary" disabled={Boolean(busy) || machineStale || !machineRequest.items.every((_, index) => machineChoices[index]?.key === `${machineRequest.id}:${index}:false` && machineChoices[index].ready)}
+          onClick={() => {
+            const request = machineRequest;
+            if (machineStale || !request.items.every((_, index) => machineChoices[index]?.key === `${request.id}:${index}:false` && machineChoices[index].ready)) return;
+            setMachineRequest(null);
+            void request.save(request.items.map((_, index) => machineChoices[index].bindings));
+          }}>Назначить с выбранными станками</button>
+      </div>
     </PageWindow>}
     {autoplanFor && canEdit && <AutoplanPanel projectDeadlines={projectDeadlines} preset={{ project: autoplanFor, runs: autoplanRuns, ...(autoplanKb ? { kb: autoplanKb } : {}) }}
       close={() => setAutoplanFor("")}

@@ -71,14 +71,14 @@ function json(body: unknown, status = 200) {
 
 afterEach(() => { vi.restoreAllMocks(); leftovers = []; });
 
-function mockApi(applyResponse: () => Response) {
+function mockApi(applyResponse: () => Response, plan: AutoplanPreview = preview) {
   const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     const body = init?.body ? JSON.parse(String(init.body)) : {};
     calls.push({ path, body });
     if (path === "/api/production/autoplan/context") return json(context);
-    if (path === "/api/production/autoplan/preview") return json(preview);
+    if (path === "/api/production/autoplan/preview") return json(plan);
     if (path === "/api/production/autoplan/apply") return applyResponse();
     if (path === "/api/production/leftovers") return json({ leftovers });
     throw new Error(`Unexpected request: ${path}`);
@@ -87,6 +87,23 @@ function mockApi(applyResponse: () => Response) {
 }
 
 const bodies = (calls: Array<{ path: string; body: Record<string, unknown> }>, end: string) => calls.filter((call) => call.path.endsWith(end)).map((call) => call.body);
+
+it("requires an exact machine for a future proposal without fetching its uncreated task", async () => {
+  const future = { ...preview.proposals[2], resources: { enabled: true, task_version: 1, site: "ЦАР", requirements: [
+    { etk_position: 7, family: "Опрессовка", machines: [{ id: "ОБ.007:2", name: "Пресс", model: "EW", site: "ЦАР" }] },
+  ] } };
+  const calls = mockApi(() => json({ applied: 1, tasks: [], created: [] }), { ...preview, proposals: [future] });
+  render(<AutoplanPanel close={() => undefined} onApplied={() => undefined} />);
+  await openPreview();
+  const apply = screen.getByRole("button", { name: "Применить выбранное (1)" });
+  expect(apply).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Станок · операция ЭТК 7"), { target: { value: "ОБ.007:2" } });
+  await waitFor(() => expect(apply).toBeEnabled());
+  fireEvent.click(apply);
+  await waitFor(() => expect(bodies(calls, "/apply")[0]).toMatchObject({ items: [{ task_id: future.task_id, operation_id: future.operation_id,
+    machine_bindings: [{ etk_position: 7, machine_id: "ОБ.007:2" }] }] }));
+  expect(calls.some((call) => call.path.includes("/resources"))).toBe(false);
+});
 
 async function openPreview() {
   fireEvent.click(await screen.findByRole("button", { name: "Предложить план на 06.10–13.10" }));

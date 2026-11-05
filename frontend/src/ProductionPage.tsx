@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ProductionMachinePicker, type MachineSelection } from "./ProductionMachinePicker";
 import {
   ApiError,
   productionApi,
@@ -501,19 +502,22 @@ function AssignCard({ task, operation, tasks, operators, skills, holidays, week,
   const [start, setStart] = useState(toLocalInput(operation.planned_start));
   const [preview, setPreview] = useState<ProductionAssignPlan | null>(null);
   const [planError, setPlanError] = useState("");
+  const [machines, setMachines] = useState<MachineSelection | null>(null);
+  const machineKey = JSON.stringify([task.id, task.version, operation.id, [...selected].sort()]);
+  const machinesReady = !selected.length || (machines?.key === machineKey && machines.ready);
   const sequence = useRef(0);
 
   useEffect(() => {
     const current = ++sequence.current;
     setPlanError("");
-    if (!selected.length) { setPreview(null); return; }
+    if (!selected.length || !machinesReady) { setPreview(null); return; }
     const timer = window.setTimeout(() => {
-      productionApi.assign(task.id, operation.id, task.version, selected, start || null, true)
+      productionApi.assign(task.id, operation.id, task.version, selected, start || null, true, machines?.bindings)
         .then((result) => { if (current === sequence.current) setPreview(result.plan); })
         .catch((reason) => { if (current === sequence.current) { setPreview(null); setPlanError(reason instanceof Error ? reason.message : "План не рассчитан"); } });
     }, 350);
     return () => window.clearTimeout(timer);
-  }, [selected.join(","), start]);
+  }, [machineKey, machinesReady, JSON.stringify(machines?.bindings), start]);
 
   const live = tasks.filter((item) => item.status !== "Отменено");
   const rows: GanttRow[] = [];
@@ -544,13 +548,16 @@ function AssignCard({ task, operation, tasks, operators, skills, holidays, week,
     <div className="manual-stock-head"><div><h2>{task.number} · этап {operation.position} · {operation.stage}</h2><small>{taskItemLabel(task)} × {task.quantity}{requiredNote(task, operation)}{feedsText(task, operation) ? ` · ${feedsText(task, operation)}` : ""} · норма {hours(operation.norm_seconds)} на одного{operation.description ? ` · ${operation.description}` : ""}</small></div><button className="link-button" onClick={close}>Отмена</button></div>
     <div className="pa-ctl"><label>Плановый старт<input aria-label={`Старт этапа ${operation.position}`} type="datetime-local" value={start} onChange={(event) => setStart(event.target.value)} /></label><small>пусто — первое свободное время выбранных операторов</small></div>
     <Gantt rows={rows} labelHead="Оператор" week={week} onWeekChange={setWeek} holidays={holidays} />
+    {selected.length > 0 && <ProductionMachinePicker selectionKey={machineKey} taskId={task.id} operationId={operation.id}
+      version={task.version} operatorIds={selected} onChange={setMachines} />}
     <div className={`pa-plan${planError ? " err" : ""}`} role="status">
       {planError || (!selected.length
         ? `Операторы не выбраны${operation.operator_ids.length ? " — «Назначить» снимет назначение." : "."}`
         : preview ? <><b>План:</b> {formatMoment(preview.start)} → {formatMoment(preview.finish)}{preview.warnings.length > 0 && <ul>{preview.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}</> : "Считаю план…")}
     </div>
-    <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void mutate(operation.id, async () => {
-      const result = await productionApi.assign(task.id, operation.id, task.version, selected, start || null);
+    <div className="form-actions"><button className="primary" disabled={busy || !machinesReady} onClick={() => void mutate(operation.id, async () => {
+      if (!machinesReady) return;
+      const result = await productionApi.assign(task.id, operation.id, task.version, selected, start || null, false, selected.length ? machines?.bindings : undefined);
       close();
       return result;
     })}>Назначить</button></div>
@@ -568,6 +575,7 @@ function SchedulePlanner({ task, operators, busy, mutate }: {
   const [replan, setReplan] = useState(false);
   const [maxCrew, setMaxCrew] = useState(1);
   const [variants, setVariants] = useState<ProductionScheduleVariant[]>([]);
+  const [machines, setMachines] = useState<Record<string, MachineSelection>>({});
   const [pick, setPick] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -589,9 +597,11 @@ function SchedulePlanner({ task, operators, busy, mutate }: {
       .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "Автоплан не рассчитан"); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [show, replan, maxCrew]);
+  }, [show, replan, maxCrew, task.id, task.version]);
 
   const variant = variants[pick];
+  const machineKey = (operation: NonNullable<typeof variant>["operations"][number]) => JSON.stringify([task.id, task.version, replan, maxCrew, variant?.transfer_batch, operation.operation_id, operation.operator_ids]);
+  const machinesReady = Boolean(variant && variant.operations.every((operation) => machines[operation.operation_id]?.key === machineKey(operation) && machines[operation.operation_id].ready));
   return <div className="schedule-planner">
     <button className="secondary small" onClick={() => setShow((value) => !value)}>Авторасчёт плана</button>
     {show && <div className="schedule-panel">
@@ -618,7 +628,15 @@ function SchedulePlanner({ task, operators, busy, mutate }: {
         </tr>)}
       </tbody></table>}
       {variant?.warnings.length ? <ul>{variant.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul> : null}
-      <button className="primary small" disabled={busy || !variant} onClick={() => void mutate(`schedule:${task.id}`, () => productionApi.applySchedule(task.id, task.version, replan, maxCrew, variant.transfer_batch))}>Применить</button>
+      {variant?.operations.map((operation) => <div key={operation.operation_id}><h3>{operation.position}. {stages.get(operation.position)}</h3><ProductionMachinePicker selectionKey={machineKey(operation)}
+        taskId={task.id} operationId={operation.operation_id} version={task.version} operatorIds={operation.operator_ids}
+        onChange={(value) => setMachines((old) => ({ ...old, [operation.operation_id]: value }))} /></div>)}
+      <button className="primary small" disabled={busy || loading || !variant || !machinesReady} onClick={() => {
+        if (!variant || !machinesReady) return;
+        const bindings = Object.fromEntries(variant.operations.filter((operation) => machines[operation.operation_id].bindings !== undefined)
+          .map((operation) => [operation.operation_id, machines[operation.operation_id].bindings!]));
+        void mutate(`schedule:${task.id}`, () => productionApi.applySchedule(task.id, task.version, replan, maxCrew, variant.transfer_batch, Object.keys(bindings).length ? bindings : undefined));
+      }}>Применить</button>
     </div>}
   </div>;
 }

@@ -123,7 +123,7 @@ jobs:
         run: |
           : "${ERP_TEST_POSTGRES_URL:?PostgreSQL stock tests require ERP_TEST_POSTGRES_URL}"
           python -m pytest tests/procurement/test_stock_cover_postgres.py tests/procurement/test_stock_versions_postgres.py \
-            tests/test_api_workers.py -q --junitxml="$SNAPSHOTS/stock-pg.xml"
+            tests/test_api_workers.py tests/production/test_resource_claims_postgres.py -q --junitxml="$SNAPSHOTS/stock-pg.xml"
       - name: Empty database up to head
         run: |
           export ERP_DATABASE_URL="$PG_ROOT/erp_fresh"

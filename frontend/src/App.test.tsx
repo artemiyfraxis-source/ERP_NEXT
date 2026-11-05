@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { AUTH_REQUIRED_EVENT, type Principal } from "./api";
@@ -34,6 +34,61 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   window.history.replaceState({}, "", "/");
+});
+
+it.each([404, 403, 503])("explains unavailable setup deep links (%s) without fetching task data", async (status) => {
+  const requests: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+    const path = String(input); requests.push(path);
+    if (path === "/api/auth/me") return json(principal);
+    if (path.endsWith("/equipment-setup/viewer")) return json({ detail: "Сервис временно недоступен" }, status);
+    return json({}, 404);
+  });
+  window.history.replaceState({}, "", "/?section=equipmentsetup");
+  render(<App />);
+  const text = status === 404 ? "Наладка оборудования ещё не включена." : status === 403 ? "Наладка недоступна этому сотруднику." : "Сервис временно недоступен";
+  expect(await screen.findByText(text)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Наладка оборудования" })).not.toBeInTheDocument();
+  expect(requests.some(path => path.endsWith("/equipment-setup/tasks"))).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Проверить снова" }));
+  await waitFor(() => expect(requests.filter(path => path.endsWith("/equipment-setup/viewer"))).toHaveLength(2));
+});
+
+it("opens server-approved setup for the viewed employee without inferring assignment rights from admin", async () => {
+  const viewed = as("admin", {}, { viewing: { viewer: { id: "v", name: "Другой сотрудник" }, until: null } });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+    const path = String(input);
+    if (path === "/api/auth/me") return json(viewed);
+    if (path.endsWith("/equipment-setup/viewer")) return json({ actor_id: principal.user.id, site: "ЖУК", can_assign: true, writable: false });
+    if (path.includes("/equipment-setup/tasks") || path.includes("/equipment-setup/machines")) return json({ items: [], limit: 200, offset: 0 });
+    if (path === "/api/production/tasks") return json({ tasks: [], next_cursor: null });
+    return json({}, 404);
+  });
+  window.history.replaceState({}, "", "/?section=equipmentsetup");
+  render(<App />);
+  expect(await screen.findByText("Нет доступных заданий наладки. Мастер может назначить выданную операцию.")).toBeInTheDocument();
+  expect(screen.getByText("ЖУК")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Назначить наладку" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Наладка оборудования" })).toBeInTheDocument();
+});
+
+it("discards setup discovery from the previous principal when admin mode changes", async () => {
+  const base = as("operator", {}, { can_admin_mode: true, admin_mode: false });
+  let releaseOld!: (value: Response) => void;
+  const oldViewer = new Promise<Response>(resolve => { releaseOld = resolve; });
+  let calls = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+    const path = String(input);
+    if (path === "/api/auth/me") return json(base);
+    if (path === "/api/auth/admin-mode") return json({ ...base, admin_mode: true });
+    if (path.endsWith("/equipment-setup/viewer")) return ++calls === 1 ? oldViewer : json({ detail: "Недоступно" }, 403);
+    return json({}, 404);
+  });
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Режим админа" }));
+  await waitFor(() => expect(calls).toBe(2));
+  await act(async () => releaseOld(json({ actor_id: base.user.id, site: "ЦАР", can_assign: true, writable: true })));
+  expect(screen.queryByRole("button", { name: "Наладка оборудования" })).not.toBeInTheDocument();
 });
 
 it("binds personal settings to the authenticated account and cancels pending writes before logout changes the cookie", async () => {

@@ -14,6 +14,10 @@ from app.modules.warehouse import infrastructure as _warehouse  # noqa: F401
 from app.modules.fulfillment import infrastructure as _fulfillment  # noqa: F401
 from app.modules.production import infrastructure as _production  # noqa: F401
 from app.modules.production import downtime_infrastructure as _production_downtime  # noqa: F401
+from app.modules.production import resource_infrastructure as _production_resources  # noqa: F401
+from app.modules.production import resource_assignment_infrastructure as _production_allocations  # noqa: F401
+from app.modules.equipment_setup import infrastructure as _equipment_setup  # noqa: F401
+from app.modules.equipment_setup import recipe_infrastructure as _equipment_recipes  # noqa: F401
 from app.modules.shipping import infrastructure as _shipping  # noqa: F401
 from app.modules.references import infrastructure as _references  # noqa: F401
 from app.modules.operations import infrastructure as _operations  # noqa: F401

@@ -1,0 +1,99 @@
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
+
+import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session
+
+from app.modules.equipment_setup.domain import IssuedOperationRef, RecipeVersionRef, SetupStatus, SetupTask
+from app.modules.equipment_setup.application import SetupResourceConflict
+from app.modules.production.resource_claims import ResourceConflict, ResourceKey, ResourceKind, ResourceOwner, ResourceWindow
+from app.modules.production.resource_infrastructure import ActiveResourceRow, ResourceGenerationRow, ResourceReservationRow, SqlAlchemyResourceClaims
+from app.workflows.equipment_setup_resources import SetupResourceReservations
+
+
+NOW = datetime(2026, 11, 3, 8, tzinfo=UTC)
+
+
+@pytest.fixture
+def db():
+    engine = create_engine("sqlite://")
+    for row in (ResourceGenerationRow, ResourceReservationRow, ActiveResourceRow):
+        row.__table__.create(engine)
+    with Session(engine) as session:
+        session.add(ResourceGenerationRow(id=1, version=0))
+        session.commit()
+        session.execute(text("BEGIN IMMEDIATE"))
+        yield session
+    engine.dispose()
+
+
+def task():
+    return SetupTask.create(operation=IssuedOperationRef(uuid4(), 1, uuid4(), uuid4(), 1), machine_id="ОБ.027.2",
+        technician_id=uuid4(), recipe=RecipeVersionRef(uuid4(), 1), planned_start=NOW,
+        planned_finish=NOW + timedelta(hours=1), now=NOW)
+
+
+def test_not_integrated_fails_closed(db):
+    adapter = SetupResourceReservations(db, assert_legacy_available=lambda task: None)
+    with pytest.raises(SetupResourceConflict, match="не подключён"):
+        adapter.acquire()
+
+
+@pytest.mark.parametrize("available", [True, False])
+def test_blocked_releases_person_but_machine_only_if_available(db, available):
+    adapter = SetupResourceReservations(db, assert_legacy_available=lambda task: None, integration_ready=True)
+    first = task()
+    adapter.reserve(first)
+    started, _ = first.transition(SetupStatus.IN_PROGRESS, actor_id=first.technician_id, now=NOW)
+    adapter.reserve(started)
+    blocked, _ = started.transition(SetupStatus.BLOCKED, actor_id=first.technician_id, now=NOW,
+        reason="Проверка", machine_available=available)
+    adapter.block(blocked)
+    assert db.get(ActiveResourceRow, ("person", str(first.technician_id))) is None
+    assert (db.get(ActiveResourceRow, ("machine", first.machine_id)) is None) is available
+    resumed, _ = blocked.transition(SetupStatus.IN_PROGRESS, actor_id=first.technician_id, now=NOW)
+    adapter.reserve(resumed)
+    assert db.get(ActiveResourceRow, ("person", str(first.technician_id))) is not None
+    assert db.get(ActiveResourceRow, ("machine", first.machine_id)) is not None
+
+
+def test_unknown_legacy_holder_rejected_before_any_reservation(db):
+    def reject(task):
+        raise ResourceConflict("Не выбран экземпляр у текущей работы")
+    adapter = SetupResourceReservations(db, assert_legacy_available=reject, integration_ready=True)
+    first = task()
+    with pytest.raises(SetupResourceConflict) as captured:
+        adapter.reserve(first)
+    assert isinstance(captured.value.__cause__, ResourceConflict)
+    assert db.get(ResourceGenerationRow, 1).version == 0
+
+
+def test_blocked_person_can_really_be_assigned_elsewhere_and_resume_conflicts(db):
+    adapter = SetupResourceReservations(db, assert_legacy_available=lambda task: None, integration_ready=True)
+    first = task()
+    started, _ = first.transition(SetupStatus.IN_PROGRESS, actor_id=first.technician_id, now=NOW)
+    adapter.reserve(started)
+    blocked, _ = started.transition(SetupStatus.BLOCKED, actor_id=first.technician_id, now=NOW,
+        reason="Нет оснастки", machine_available=False)
+    adapter.block(blocked)
+    other = ResourceOwner("production", uuid4())
+    resources = (ResourceKey(ResourceKind.PERSON, str(first.technician_id)), ResourceKey(ResourceKind.MACHINE, "ОБ.027.3"))
+    claims = SqlAlchemyResourceClaims(db)
+    claims.replace_plan(other, resources, ResourceWindow(NOW, NOW + timedelta(minutes=30)))
+    claims.activate(other, uuid4(), resources, NOW)
+    resumed, _ = blocked.transition(SetupStatus.IN_PROGRESS, actor_id=first.technician_id, now=NOW)
+    with pytest.raises(SetupResourceConflict):
+        adapter.reserve(resumed)
+    assert db.get(ActiveResourceRow, ("machine", first.machine_id)).owner_id == first.id
+
+
+def test_ready_releases_exact_setup_only(db):
+    adapter = SetupResourceReservations(db, assert_legacy_available=lambda task: None, integration_ready=True)
+    first = task()
+    started, _ = first.transition(SetupStatus.IN_PROGRESS, actor_id=first.technician_id, now=NOW)
+    adapter.reserve(started)
+    ready, _ = started.transition(SetupStatus.READY, actor_id=first.technician_id, now=NOW)
+    adapter.release(ready)
+    assert db.get(ActiveResourceRow, ("person", str(first.technician_id))) is None
+    assert db.get(ActiveResourceRow, ("machine", first.machine_id)) is None

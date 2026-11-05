@@ -7,6 +7,14 @@ import {
 
 const user = { id: "1", email: "u@example.test", name: "Сотрудник", department: "КБ" };
 
+it("shows equipment setup only after server discovery, without inferring it from a role or matrix", () => {
+  for (const person of [as("admin", {}), as("operator", {}), as("buyer", { production: "edit" })]) {
+    expect(visibleNav(person).some(item => item.id === "equipmentsetup")).toBe(false);
+    expect(visibleNav(person, { equipmentSetup: true }).some(item => item.id === "equipmentsetup")).toBe(true);
+    expect(visibleBlocks(person, { equipmentSetup: true }).find(block => block.id === "prod")?.items.some(item => item.id === "equipmentsetup")).toBe(true);
+  }
+});
+
 // Access levels (owner 04.10.2026): `roles` holds the level key, `access_level` repeats it; screens read sections only.
 function as(level: string, permissions: Record<string, AccessMode>): Principal {
   return { user, roles: [level], access_level: level, permissions };

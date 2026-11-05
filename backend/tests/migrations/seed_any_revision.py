@@ -209,6 +209,9 @@ _LABEL_FORMATS = ("58x30", "58x40", "100x50")
 _LABEL_SETTINGS = {"width_mm": 58, "height_mm": 30, "dpi": 300, "gap_mm": 2, "density": 12, "speed": 2,
                    "offset_x_mm": 0, "offset_y_mm": 0}
 _SHAPED_VALUES: dict[tuple[str, str], Any] = {
+    # Exact resource reservations have positive windows; setup transitions follow version 1 (0170).
+    ("production_resource_reservations", "finish"): lambda i: datetime(2026, 9, 1, 10, tzinfo=timezone.utc) + timedelta(days=i),
+    ("equipment_setup_transitions", "version"): lambda i: i + 2,
     # A full source snapshot must contain a nonempty array (0168); never real source data.
     ("requests_calc_compositions", "rows"): lambda i: [{
         "source_row": 2, "name": f"Synthetic component {i}", "item_type": "Провод", "unit": "м",

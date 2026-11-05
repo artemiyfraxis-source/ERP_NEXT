@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
+from .resource_assignments import MachineBinding
 
 from .dispatch import (
     DispatchCalendar,
@@ -200,6 +201,7 @@ class AssignProductionCommand:
     actor: Actor
     now: datetime
     dry: bool = False
+    machine_bindings: tuple[MachineBinding, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -214,6 +216,7 @@ class AssignShareCommand:
     actor: Actor
     now: datetime
     remove: bool = False
+    machine_bindings: tuple[MachineBinding, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -262,6 +265,7 @@ class AutoScheduleCommand:
     max_crew: int
     actor: Actor
     now: datetime
+    machine_bindings: tuple[tuple[UUID, tuple[MachineBinding, ...]], ...] = ()
 
 
 def _fingerprint(command: LaunchProductionCommand) -> str:
@@ -513,9 +517,14 @@ def assign_production(command: AssignProductionCommand, uow: UnitOfWork) -> tupl
         if command.dry:
             # prodAssign_ dry: the preview is computed exactly like the save and nothing is written.
             return task, plan
+        if command.machine_bindings is not None and getattr(uow, "resources", None) is None:
+            raise ProductionValidationError("Назначение оборудования ещё не подключено")
         # След работы — до записи: снятая доля могла быть «взята».
         unstarted = bool(operation.shares) and not command.operator_ids and not _has_work(task, uow)
         uow.production.add(updated)
+        resources = getattr(uow, "resources", None)
+        if resources is not None:
+            resources.ensure_assignment(updated, operation.id, command.operator_ids, command.machine_bindings, crew=True)
         _audit(updated, "production.assigned", command.actor, command.now, {
             "operation_id": str(operation.id),
             "operator_ids": [str(value) for value in command.operator_ids],
@@ -633,6 +642,11 @@ def assign_share(command: AssignShareCommand, uow: UnitOfWork) -> tuple[Producti
             uow, tasks, task, operation, command.operator_id, command.quantity, command.requested_start,
             command.actor, now,
         )
+        resources = getattr(uow, "resources", None)
+        if resources is not None:
+            resources.ensure_assignment(updated, operation.id, (command.operator_id,), command.machine_bindings)
+        elif command.machine_bindings is not None:
+            raise ProductionValidationError("Назначение оборудования ещё не подключено")
         uow.commit()
         return updated, plan, lines
 
@@ -838,10 +852,16 @@ def record_fact(
         return
     session.flush()
     uow.production.lock(task_id)
+    resources = getattr(uow, "resources", None)
+    checkpoint = resources.checkpoint() if resources is not None else None
     try:
         with session.begin_nested():
             _record_fact(uow, task_id, operation_id, operator_id, actor, now, started, mine, total)
+            if resources is not None:
+                resources.sync_reflow()
     except Exception:
+        if resources is not None:
+            resources.restore(checkpoint)
         logger.exception("План по факту не сдвинут: задание %s, операция %s", task_id, operation_id)
 
 
@@ -852,7 +872,8 @@ def release_fact(uow, *, task_id: UUID, operation_id: UUID, operator_id: UUID, n
         session.flush()
         uow.production.lock(task_id)
     task = uow.production.get(task_id)
-    if task is None:
+    if task is None or task.status is ProductionStatus.CANCELLED:
+        # Closing actual work remains possible after plan cancellation; its frozen plan is not reopened.
         return
     operation = task.operation(operation_id)
     share = operation.share_of(operator_id)
@@ -1194,6 +1215,15 @@ def apply_auto_schedule(
             for item in variant.operations
         ), command.actor.name)
         uow.production.add(updated)
+        resources = getattr(uow, "resources", None)
+        if resources is not None:
+            choices = dict(command.machine_bindings)
+            if len(choices) != len(command.machine_bindings) or not choices.keys() <= {operation.id for operation in updated.operations}:
+                raise ProductionValidationError("Некорректный список назначений оборудования")
+            for operation in updated.operations:
+                resources.ensure_assignment(updated, operation.id, operation.operator_ids, choices.get(operation.id), crew=True)
+        elif command.machine_bindings:
+            raise ProductionValidationError("Назначение оборудования ещё не подключено")
         _audit(updated, "production.auto_scheduled", command.actor, command.now, {
             "transfer_batch": variant.transfer_batch,
             "max_crew": command.max_crew,

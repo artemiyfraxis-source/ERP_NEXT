@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ProductionMachinePicker, type MachineSelection } from "./ProductionMachinePicker";
 import { createPortal } from "react-dom";
 import {
   ApiError, failureText, productionApi,
@@ -148,6 +149,11 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
   const [error, setError] = useState("");
   const [result, setResult] = useState<{ preview: AutoplanPreview; request: AutoplanRequest } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [machines, setMachines] = useState<Record<string, MachineSelection>>({});
+  const [previewGeneration, setPreviewGeneration] = useState(0);
+  const machineKey = (item: AutoplanProposal) => JSON.stringify([previewGeneration, result?.preview.fingerprint, key(item), item.task_version, item.operator_id]);
+  const machinesReady = Boolean(result && result.preview.proposals.filter((item) => selected.has(key(item))).every((item) =>
+    item.resources == null || item.resources.enabled === false || (machines[key(item)]?.key === machineKey(item) && machines[key(item)].ready)));
   const semi = useSemiLeftovers();
 
   const dialogRef = useRef<HTMLFormElement>(null);
@@ -243,6 +249,7 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
     setError("");
     try {
       const preview = await productionApi.autoplanPreview(body);
+      setMachines({}); setPreviewGeneration((value) => value + 1);
       setResult({ preview, request: body });
       setSelected(new Set(preview.proposals.map(key)));
     } catch (reason) {
@@ -254,9 +261,10 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
   }
 
   async function apply() {
-    if (!result || applying) return;
+    if (!result || applying || !machinesReady) return;
     const items = result.preview.proposals.filter((item) => selected.has(key(item)))
-      .map((item) => ({ task_id: item.task_id, operation_id: item.operation_id, operator_id: item.operator_id }));
+      .map((item) => ({ task_id: item.task_id, operation_id: item.operation_id, operator_id: item.operator_id,
+        ...(item.resources?.enabled ? { machine_bindings: machines[key(item)].bindings } : {}) }));
     if (!items.length) return;
     setApplying(true);
     setError("");
@@ -419,6 +427,8 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
                     <span className="autoplan-op">{item.stage}{item.code && <small>{item.code}</small>}<LeftoverHint matches={leftoversFor(item)} /></span>
                     <span className="autoplan-slot">{slotText(item.start, item.finish)}</span>
                     <span className="autoplan-change">{item.changeover_seconds > 0 ? `переналадка ${minutesText(item.changeover_seconds)}` : "без переналадки"}</span>
+                    {selected.has(key(item)) && item.resources != null && item.resources.enabled !== false && <div className="autoplan-machine-binding"><ProductionMachinePicker selectionKey={machineKey(item)} resources={item.resources}
+                      version={item.task_version} onChange={(value) => setMachines((old) => ({ ...old, [key(item)]: value }))} /></div>}
                   </div>)}
                 </div>;
               })}
@@ -433,7 +443,7 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
       <div className="form-actions autoplan-actions">
         <button type="button" className="secondary" onClick={close}>{shipOnly ? "Закрыть" : "Отмена"}</button>
         {!shipOnly && result && !loading && proposeButton}
-        {!shipOnly && (result && !loading ? <button className="primary" disabled={applying || selected.size === 0} onClick={() => void apply()}>Применить выбранное ({selected.size})</button> : proposeButton)}
+        {!shipOnly && (result && !loading ? <button className="primary" disabled={applying || selected.size === 0 || !machinesReady} onClick={() => void apply()}>Применить выбранное ({selected.size})</button> : proposeButton)}
       </div>
     </form>
   </div>, document.body);

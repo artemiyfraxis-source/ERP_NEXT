@@ -20,7 +20,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Iterable, Mapping
 
-from .domain import ReferenceValidationError, StaleRecordError
+from .domain import ReferenceValidationError, StaleRecordError, TechOperationRecord, TechOperationTab
 
 NAME_KEYS = ("Наменование", "Наименование")  # the sheet header really says «Наменование»
 INV_KEY = "Инв. номер"
@@ -81,6 +81,46 @@ def name_of(fields: Mapping[str, str]) -> str:
 
 def type_of(fields: Mapping[str, str]) -> str:
     return field(fields, TYPE_KEY, "obType")
+
+
+@dataclass(frozen=True)
+class PhysicalEquipment:
+    id: str  # full inventory identity; reference-row UUIDs change on mirror replacement
+    inventory_number: str
+    name: str
+    model: str  # the actual row's article, not its inventory-number family
+    site: str  # ЦАР | ЖУК | "" (unknown)
+
+
+def physical_equipment(records: Iterable[TechOperationRecord]) -> tuple[PhysicalEquipment, ...]:
+    """Actual numbered equipment, never model counts or synthetic units.
+
+    A bare number is the documented single unit; a numeric suffix names an individual unit.
+    Keep their full spelling (including numeric padding), exclude calculation rows (.X / (R)),
+    and leave an unrecognized location unknown. Conflicting duplicates need a reference correction.
+    """
+    result: dict[str, PhysicalEquipment] = {}
+    for record in records:
+        if record.tab != TechOperationTab.EQUIPMENT:
+            continue
+        fields = {" ".join(str(key).split()).casefold(): value for key, value in record.fields.items()}
+        if field(fields, "тип", "obtype").casefold() not in {"оборудование", "оборудование (пр)"}:
+            continue
+        number = inv_key(field(fields, "инв. номер", "inventorynumber")).upper().replace("OБ", "ОБ")
+        parsed = parse_inventory(number)
+        name = field(fields, "наменование", "наименование")
+        model = field(fields, "артикул")
+        if (
+            parsed is None or parsed.prefix != DEFAULT_PREFIX or parsed.base <= 0 or parsed.instance <= 0
+            or not name or model.upper().endswith("(R)")
+        ):
+            continue
+        site = field(fields, "расположение").upper()
+        item = PhysicalEquipment(number, number, name, model, site if site in {"ЦАР", "ЖУК"} else "")
+        if item.id in result and result[item.id] != item:
+            raise ReferenceValidationError(f"Инв. номер {number} указан у разных станков — уточните справочник оборудования")
+        result[item.id] = item
+    return tuple(result[key] for key in sorted(result))
 
 
 def prefix_for_type(equipment_type: str, existing: Iterable[Mapping[str, str]]) -> str:

@@ -62,6 +62,7 @@ from .domain import (
 from .launchable import ReadyCard, launch_operations, launch_remainders, operation_code, route_from_document, stage_name
 from .machine_load import _machine
 from .scheduling import upstream_ids
+from .resource_assignments import MachineBinding
 
 NO_RUN_REASON = "Нет тиража КБ — задайте тираж в наборе проекта"
 # Идентификаторы будущих заданий: стабильные от техкарты и её версии, чтобы назначение узнало ту же операцию.
@@ -274,6 +275,7 @@ class BoardItem:
     quantity: int | None = None
     run: int | None = None
     launched: int | None = None
+    machine_bindings: tuple[MachineBinding, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -339,6 +341,29 @@ def _item_key(item: BoardItem) -> tuple:
     return (item.task_id, item.techcard_id, item.operation_id, item.position)
 
 
+def board_resources(command: BoardAssignCommand, uow: UnitOfWork, cards, ready) -> list[dict]:
+    """Read-only choices for the exact existing or virtual issued task, in request order."""
+    with uow:
+        stored = tuple(uow.production.with_status(ProductionStatus.RUNNING))
+        open_cards = {card.techcard_id: card for card in unlaunched_cards(uow, stored, ready, cards)}
+        resources = getattr(uow, "resources", None)
+        result = []
+        for index, item in enumerate(command.items):
+            if item.task_id is not None:
+                task = uow.production.get(item.task_id)
+                if task is None or task.version != item.task_version:
+                    raise StaleBoard("Задание изменилось — обновите доску")
+            else:
+                card = _open_card(open_cards, item.techcard_id, item.techcard_version, item.launched)
+                task = future_task(card, run_of(card, item.run), command.actor, command.now)
+            operation = _operation(task, item)
+            description = resources.describe(task, operation.id, (command.operator_id,)) if resources is not None else {
+                "enabled": False, "blocked_reason": "Общий учёт оборудования ещё не подключён",
+            }
+            result.append({"index": index, "resources": description})
+        return result
+
+
 def assign_board(
     command: BoardAssignCommand,
     uow: UnitOfWork,
@@ -355,6 +380,9 @@ def assign_board(
         raise ProductionValidationError("Операция выбрана дважды")
     now = command.now
     with uow:
+        resources = getattr(uow, "resources", None)
+        if resources is None and any(item.machine_bindings is not None for item in items):
+            raise ProductionValidationError("Назначение оборудования ещё не подключено")
         for task_id in sorted({item.task_id for item in items if item.task_id is not None}, key=str):
             uow.production.lock(task_id)
         # Номера запусков КБ — до чтения заданий: запуск, прошедший после этого чтения, займёт тот же номер, и наш
@@ -442,6 +470,8 @@ def assign_board(
             updated, plan, lines = place_share(
                 uow, tasks, task, operation, command.operator_id, entry.item.quantity, begin, command.actor, now,
             )
+            if resources is not None:
+                resources.ensure_assignment(updated, operation_id, (command.operator_id,), entry.item.machine_bindings)
             share = updated.operation(operation_id).share_of(command.operator_id)
             placed.append(Placed(task_id, operation_id, entry.operation.position, share.quantity if share else None,
                                  plan.start, plan.finish))

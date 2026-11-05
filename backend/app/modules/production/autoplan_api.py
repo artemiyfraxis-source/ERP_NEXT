@@ -19,7 +19,9 @@ from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, production_edit_principal
 
-from .api import closed_kbs, production_uow_factory, techcards_uow_factory
+from .api import MachineBindingPayload, closed_kbs, production_uow_factory, techcards_uow_factory
+from .resource_assignments import MachineBinding
+from .resource_claims import ResourceConflict
 from .application import ConcurrentProductionUpdate, UnitOfWork
 from .autoplan import equipment_units
 from .autoplan_application import (
@@ -62,6 +64,7 @@ class ApplyItem(BaseModel):
     task_id: UUID
     operation_id: UUID
     operator_id: UUID
+    machine_bindings: list[MachineBindingPayload] | None = Field(default=None, max_length=100)
 
 
 class ApplyPayload(PreviewPayload):
@@ -112,7 +115,7 @@ def _handle(operation):
         return operation()
     except AutoplanForbidden as error:
         raise HTTPException(status_code=403, detail=str(error)) from error
-    except (StaleAutoplan, ConcurrentProductionUpdate) as error:
+    except (StaleAutoplan, ConcurrentProductionUpdate, ResourceConflict) as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except ProductionValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
@@ -164,6 +167,8 @@ def apply(
             plan=_command(payload, principal, now),
             items=tuple((item.task_id, item.operation_id, item.operator_id) for item in payload.items),
             fingerprint=payload.fingerprint,
+            machine_bindings=tuple((item.operation_id, tuple(MachineBinding(binding.etk_position, binding.machine_id) for binding in item.machine_bindings))
+                for item in payload.items if item.machine_bindings is not None),
         ), uow_factory(), cards, units, ready)
         return {
             "applied": applied.operations,
