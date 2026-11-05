@@ -144,3 +144,13 @@ it("loads later production pages into assignment choices without replacing the f
   expect(equipmentSetupApi.moreProduction).toHaveBeenCalledWith("cursor-first");
   expect(screen.queryByRole("button", { name: "Ещё производственные задания" })).not.toBeInTheDocument();
 });
+
+it("shows the server's reason for an operation that can't take setup as is, not a generic «not found»", async () => {
+  const { ApiError } = await import("./api");
+  vi.mocked(equipmentSetupApi.assignmentContext).mockRejectedValue(new ApiError("Площадка не определена — назначьте исполнителя или выберите станок", 409));
+  render(<EquipmentSetupForm choices={[{ key: "operation", label: "Проект · Резка · ЭТК 2, рев. 3", operation: task.operation }]} saved={vi.fn()} close={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText("Выданная операция ЭТК"), { target: { value: "operation" } });
+  expect(await screen.findByRole("alert")).toHaveTextContent(/^Площадка не определена — назначьте исполнителя или выберите станок$/);
+  expect(screen.queryByText(/не найдена/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/нет подтверждённых станков/)).not.toBeInTheDocument();
+});
