@@ -11,10 +11,12 @@ import { PackDecision, ReadyForecast, readiness } from "./shippingCells";
 import { formatDate, formatNumber, NBSP } from "./format";
 import { useCanPrint } from "./rights";
 import { openShippingForms } from "./shippingPrint";
-import { DISPATCH_STAGES, projectDispatchStage, shipmentDispatchStage, stageLabel, type DispatchStage } from "./dispatchStage";
+import { DISPATCH_STAGES, stageLabel, type DispatchStage } from "./dispatchStage";
 import { DispatchCard } from "./DispatchCard";
 import { canAct, hasFullAccess } from "./navigation";
-import { COUNTER_SCOPE, dispatchBoard, kbKey, num, recentShipment, stagePieces, type Tab } from "./intakeStages";
+import { COUNTER_SCOPE, dispatchBoard, kbKey, num, recentShipment, type Tab } from "./intakeStages";
+import { dataRows, type DataRow } from "./dispatchPositionRows";
+export { dataRows, type DataRow } from "./dispatchPositionRows";
 
 /* «Данные отправок» (владелец 28.10.2026, раздел «Менеджмент»): менеджер (Ульяна Ладутько) вносит данные для
    отгрузки — тип доставки, перевозчик, адрес, получателя, телефон, УПД. Кладовщик упаковывает, а без этих данных
@@ -67,38 +69,7 @@ function UpdCell({ shipment, link = true }: { shipment: Shipment | null; link?: 
   </span>;
 }
 
-/** Строка списка: отправка или ещё не набранный остаток проекта. `stage` — этап общей лестницы (у отменённой — null). */
-export interface DataRow {
-  id: string; kind: "shipment" | "project"; project: string; customer: string; shipment: Shipment | null;
-  stage: DispatchStage | null; item_index: string; name: string; quantity: number; unit: string; grn: string; ownStage: string;
-}
-
-const deadlineOf = (row: DataRow) => row.shipment?.deadline ?? "9999";
 const rowStageLabel = (row: DataRow) => row.stage === null && row.shipment?.status !== "Отменена" ? "Не набрано" : stageLabel(row.stage);
-
-/** Все отправки (отменённые только под «Все») и проекты из приёмки с ещё не набранным остатком. */
-export function dataRows(shipments: Shipment[], intake: IntakeRow[] = []): DataRow[] {
-  const byKb = new Map(intake.map((row) => [kbKey(row), row]));
-  const rows: DataRow[] = shipments.flatMap((shipment) => shipment.lines.map((line) => {
-    const source = byKb.get(kbKey(line));
-    const ownStage = source?.stage || source?.project_stage || "Принято складом";
-    return { id: `${shipment.id}:${line.id}`, kind: "shipment" as const, project: line.project,
-      customer: shipment.customer || shipment.receiver, shipment, stage: num(line.picked) > 0 ? shipmentDispatchStage(shipment, "Принято складом") : null,
-      item_index: line.item_index, name: line.name, quantity: num(line.picked), unit: line.unit, grn: line.grn || "", ownStage };
-  }));
-  for (const source of intake) {
-    // Empty shipment input keeps only physical free quantities; actual picked lines already have their own rows.
-    const pieces = stagePieces(source, []);
-    const free = DISPATCH_STAGES.filter(([stage]) => stage !== "shipped" && pieces[stage] > 0);
-    if (!free.length && num(source.needed) <= 0 && num(source.sent) <= 0 && !shipments.some((shipment) => shipment.status !== "Отменена" && shipment.lines.some((line) => kbKey(line) === kbKey(source)))) {
-      free.push([projectDispatchStage(source.stage || source.project_stage), ""]);
-    }
-    for (const [stage] of free) rows.push({ id: `project:${kbKey(source)}:${stage}`, kind: "project", project: source.project,
-      customer: source.customer, shipment: null, stage, item_index: source.item_index, name: source.name,
-      quantity: pieces[stage], unit: source.unit, grn: source.grn || "", ownStage: source.stage || source.project_stage });
-  }
-  return rows.sort((a, b) => deadlineOf(a) < deadlineOf(b) ? -1 : deadlineOf(a) > deadlineOf(b) ? 1 : (a.shipment?.number ?? a.project).localeCompare(b.shipment?.number ?? b.project));
-}
 
 const STAGE_TONE: Record<DispatchStage, Tone> = { waiting: "neutral", production: "info", ready: "info", accepted: "warning", packed: "warning", to_ship: "info", shipped: "success" };
 
@@ -148,7 +119,7 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     const blocked = document === "dn" && ACTIVE.includes(shipment.status) && shipment.missing_data.length > 0;
     return <span className="ship-position-document" title={blocked ? `Не хватает: ${shipment.missing_data.join(", ")}` : number}>
       {canPrint ? <button type="button" className="link-button ship-pl" disabled={blocked}
-        aria-label={`Печать ${document === "pl" ? "ПЛ" : "DN"} ${number}`} onClick={(event) => { event.stopPropagation(); void printDocument(shipment, document); }}>{label}</button>
+        aria-label={`Печать ${document === "pl" ? "PL" : "DN"} ${number}`} onClick={(event) => { event.stopPropagation(); void printDocument(shipment, document); }}>{label}</button>
         : <span className="muted">{label}</span>}
       {blocked && <span className="muted">Не хватает данных</span>}
     </span>;
@@ -225,7 +196,7 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     { key: "shipmentStatus", title: "Статус отправки", value: (row) => row.shipment?.status ?? "Не создана", width: 130, wrap: true, maxWidth: 160,
       render: (row) => <span className="ship-position-shipment"><span>{row.shipment?.status ?? "Не создана"}</span>{row.shipment && <span className="muted ship-sub">{row.shipment.number}</span>}</span> },
     { key: "shippedAt", title: "Дата отгрузки", value: (row) => row.shipment?.shipped_at ?? "", width: 104, render: (row) => formatDate(row.shipment?.shipped_at) || "—" },
-    { key: "pl", title: "ПЛ", hint: "Упаковочный лист", value: (row) => row.shipment?.pl_number ?? "", width: 108, wrap: true, maxWidth: 132, render: (row) => documentCell(row.shipment, "pl") },
+    { key: "pl", title: "PL", hint: "Упаковочный лист", value: (row) => row.shipment?.pl_number ?? "", width: 108, wrap: true, maxWidth: 132, render: (row) => documentCell(row.shipment, "pl") },
     { key: "dn", title: "DN", hint: "Отгрузочная ведомость", value: (row) => row.shipment?.dn_number ?? "", width: 112, wrap: true, maxWidth: 132, render: (row) => documentCell(row.shipment, "dn") },
     { key: "upd", title: "УПД", value: (row) => row.shipment ? updText(row.shipment) : "", filter: true, width: 96, wrap: true, maxWidth: 120, render: (row) => <UpdCell shipment={row.shipment} /> },
     { key: "customer", title: "Заказчик", value: (row) => row.customer, filter: true, hidden: true },
