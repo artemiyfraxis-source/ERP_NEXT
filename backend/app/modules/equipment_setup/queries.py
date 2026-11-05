@@ -5,7 +5,7 @@ from uuid import UUID
 
 from app.shared.http_auth import Principal
 
-from .application import SetupPermissionError
+from .application import SITE_UNKNOWN, SITES, SetupOperationUnavailable, SetupPermissionError
 
 
 @dataclass(frozen=True)
@@ -102,9 +102,14 @@ def list_machines(uow, *, principal, limit=100, offset=0, operation=None):
             resolved = uow.context.issued_operation(operation)
             if resolved is None:
                 raise KeyError("Точная выданная операция не найдена")
-            if not principal.full_access and resolved.site != person.site:
-                raise SetupPermissionError("Операция другой площадки недоступна")
-            site, eligible = resolved.site, resolved.eligible_machine_ids
+            if resolved.site:
+                if not principal.full_access and resolved.site != person.site:
+                    raise SetupPermissionError("Операция другой площадки недоступна")
+                site = resolved.site
+            elif not principal.full_access and person.site not in SITES:
+                # The task fixes no site yet; the chosen machine will, but only among the viewer's own site.
+                raise SetupOperationUnavailable(SITE_UNKNOWN)
+            eligible = resolved.eligible_machine_ids
         return uow.context.machine_choices(site=site, eligible_ids=eligible, limit=limit, offset=offset)
 
 

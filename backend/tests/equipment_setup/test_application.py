@@ -9,7 +9,7 @@ import pytest
 
 from app.modules.equipment_setup.application import (
     AssignSetupCommand, ChangeSetupCommand, ConcurrentSetupUpdate, IssuedSetupOperation,
-    SetupAction, SetupCommandConflict, SetupMachine, SetupPermissionError, SetupPerson,
+    SetupAction, SetupCommandConflict, SetupMachine, SetupOperationUnavailable, SetupPermissionError, SetupPerson,
     assign_setup_task, change_setup_task,
 )
 from app.modules.equipment_setup.domain import IssuedOperationRef, RecipeVersionRef, SetupStatus, SetupValidationError
@@ -259,7 +259,7 @@ def test_exact_server_context_required(env, part):
 def test_cross_site_or_unknown_source_rejected_even_for_admin(env, part):
     uow, manager, technician, _, command = env
     if part.endswith("operation"):
-        uow.context.operations[command.operation] = IssuedSetupOperation(command.operation, "" if part.startswith("unknown") else "ЖУК", ("ОБ.027.2",))
+        uow.context.operations[command.operation] = IssuedSetupOperation(command.operation, "Неизвестно" if part.startswith("unknown") else "ЖУК", ("ОБ.027.2",))
     elif part.endswith("machine"):
         uow.context.machines[command.machine_id] = SetupMachine(command.machine_id, "" if part.startswith("unknown") else "ЖУК")
     else:
@@ -267,6 +267,15 @@ def test_cross_site_or_unknown_source_rejected_even_for_admin(env, part):
     with pytest.raises(SetupPermissionError):
         assign(env, caller=principal(manager, full_access=True))
     assert effects(uow) == (0, 0, 0, 0, 0, 0, 0)
+
+
+def test_operation_without_fixed_site_takes_the_chosen_machine_site(env):
+    uow, _, technician, _, command = env
+    uow.context.operations[command.operation] = IssuedSetupOperation(command.operation, "", ("ОБ.027.2",))
+    assert assign(env).technician_id == technician.actor.id
+    uow.context.machines[command.machine_id] = SetupMachine(command.machine_id, "")
+    with pytest.raises(SetupOperationUnavailable, match="^Площадка не определена — назначьте исполнителя или выберите станок$"):
+        assign(env, command=replace(command, idempotency_key="assign-2"))
 
 
 def test_full_access_can_assign_across_own_site_but_master_cannot(env):

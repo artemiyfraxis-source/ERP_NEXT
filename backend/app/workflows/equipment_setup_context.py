@@ -16,7 +16,8 @@ class SqlAlchemySetupContext:
     def __init__(self, session, *, resolve_issued_operation):
         self.session = session
         # Must resolve the exact revision, operation and ETK position in this same Session;
-        # unknown site/revision/machine applicability must return None, never latest fallback.
+        # unknown revision/machine applicability must return None, never latest fallback; an existing
+        # operation that can't take setup raises SetupOperationUnavailable with its reason.
         self.resolve_issued_operation = resolve_issued_operation
 
     def person(self, user_id):
@@ -59,7 +60,8 @@ class SqlAlchemySetupContext:
 
     def issued_operation(self, reference):
         result = self.resolve_issued_operation(reference)
-        if not isinstance(result, IssuedSetupOperation) or result.operation != reference or result.site not in {"ЦАР", "ЖУК"}:
+        # "" = the task fixes no site yet (no handed_to, no executors): the chosen machine's site decides.
+        if not isinstance(result, IssuedSetupOperation) or result.operation != reference or result.site not in {"", "ЦАР", "ЖУК"}:
             return None
         return result
 
