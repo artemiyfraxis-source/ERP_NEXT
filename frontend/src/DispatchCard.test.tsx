@@ -169,7 +169,7 @@ describe("Данные отправки", () => {
     const permissions = within(await screen.findByRole("dialog", { name: "Разрешения упаковки 591К.3" }));
     expect(await permissions.findByLabelText("Изменить КБ1")).not.toBeChecked();
     expect(permissions.getByRole("button", { name: "Сохранить разрешения · 0 КБ" })).toBeDisabled();
-    fireEvent.change(permissions.getByLabelText("Общий лимит КБ1"), { target: { value: "6" } });
+    fireEvent.change(permissions.getByLabelText("Разрешить ещё КБ1"), { target: { value: "6" } });
     fireEvent.click(permissions.getByRole("button", { name: "Сохранить разрешения · 1 КБ" }));
     await permissions.findByText("Разрешения упаковки сохранены");
     expect(calls.find((call) => call.url === "/api/shipping/project-pack-permissions" && call.method === "POST")?.body).toEqual({ project: "591К.3", lines: [{ item_index: "КБ1", quantity: "6", version: 4 }] });
@@ -190,10 +190,10 @@ describe("Данные отправки", () => {
     fireEvent.change(screen.getByLabelText("Телефон"), { target: { value: "+7 набрано" } });
     fireEvent.click(screen.getByRole("button", { name: "Разрешить упаковку по КБ" }));
     const permissions = within(await screen.findByRole("dialog", { name: "Разрешения упаковки 591К.3" }));
-    fireEvent.change(await permissions.findByLabelText("Общий лимит КБ1"), { target: { value: "6" } });
+    fireEvent.change(await permissions.findByLabelText("Разрешить ещё КБ1"), { target: { value: "6" } });
     fireEvent.click(permissions.getByRole("button", { name: "Сохранить разрешения · 1 КБ" }));
     await permissions.findByText(/Разрешения изменились/);
-    expect(permissions.getByLabelText("Общий лимит КБ1")).toHaveValue(6);
+    expect(permissions.getByLabelText("Разрешить ещё КБ1")).toHaveValue(6);
     expect(onSaved).not.toHaveBeenCalled();
     fireEvent.click(permissions.getByRole("button", { name: "Закрыть" }));
     expect(screen.getByLabelText("Телефон")).toHaveValue("+7 набрано");

@@ -48,7 +48,7 @@ function json(body: unknown) { return new Response(JSON.stringify(body)); }
 const permission = (quantity = "0", version = 4) => ({ item_index: "КБ1", name: "Жгут", quantity, consumed: "0", remaining: quantity, physical_remaining: "10", version });
 async function savePermission(project: string, quantity = "6") {
   const dialog = within(await screen.findByRole("dialog", { name: `Разрешения упаковки ${project}` }));
-  fireEvent.change(await dialog.findByLabelText("Общий лимит КБ1"), { target: { value: quantity } });
+  fireEvent.change(await dialog.findByLabelText("Разрешить ещё КБ1"), { target: { value: quantity } });
   fireEvent.click(dialog.getByRole("button", { name: "Сохранить разрешения · 1 КБ" }));
   await dialog.findByText("Разрешения упаковки сохранены");
   fireEvent.click(dialog.getByRole("button", { name: "Закрыть" }));
@@ -144,7 +144,7 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
       fireEvent.click(await screen.findByRole("button", { name: "Разрешения упаковки по КБ" }));
       const dialog = within(await screen.findByRole("dialog", { name: "Разрешения упаковки 780К.1" }));
       expect(await dialog.findByLabelText("Изменить КБ1")).toBeDisabled();
-      expect(dialog.queryByLabelText("Общий лимит КБ1")).not.toBeInTheDocument();
+      expect(dialog.queryByLabelText("Разрешить ещё КБ1")).not.toBeInTheDocument();
       expect(dialog.queryByRole("button", { name: /Сохранить разрешения/ })).not.toBeInTheDocument();
       expect(bodies("/project-pack-permissions")).toHaveLength(0);
       expect(bodies("/project-pack-decision")).toHaveLength(0);
@@ -161,7 +161,7 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     fireEvent.click(screen.getByLabelText("Только с недостающими данными"));
     fireEvent.click(await screen.findByRole("button", { name: "Разрешить упаковку по КБ" }));
     const permissions = within(await screen.findByRole("dialog", { name: "Разрешения упаковки 780К.1" }));
-    fireEvent.change(await permissions.findByLabelText("Общий лимит КБ1"), { target: { value: "6" } });
+    fireEvent.change(await permissions.findByLabelText("Разрешить ещё КБ1"), { target: { value: "6" } });
     fireEvent.click(permissions.getByRole("button", { name: "Сохранить разрешения · 1 КБ" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Разрешить упаковку по КБ" })).not.toBeInTheDocument());
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -219,11 +219,11 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^Принято/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Разрешить упаковку по КБ" }));
     const dialog = within(await screen.findByRole("dialog", { name: "Разрешения упаковки 780К.1" }));
-    fireEvent.change(await dialog.findByLabelText("Общий лимит КБ1"), { target: { value: "6" } });
+    fireEvent.change(await dialog.findByLabelText("Разрешить ещё КБ1"), { target: { value: "6" } });
     fireEvent.click(dialog.getByRole("button", { name: "Сохранить разрешения · 1 КБ" }));
     expect(await dialog.findByRole("alert")).toHaveTextContent("Разрешения изменились");
     await waitFor(() => expect(dialog.getByRole("button", { name: "Сохранить разрешения · 1 КБ" })).toBeEnabled());
-    expect(dialog.getByLabelText("Общий лимит КБ1")).toHaveValue(6);
+    expect(dialog.getByLabelText("Разрешить ещё КБ1")).toHaveValue(6);
     expect(dialog.queryByText("Разрешения упаковки сохранены")).not.toBeInTheDocument();
     expect(bodies("/project-pack-permissions")).toEqual([{ project: "780К.1", lines: [{ item_index: "КБ1", quantity: "6", version: 4 }] }]);
     fireEvent.click(dialog.getByRole("button", { name: "Сохранить разрешения · 1 КБ" }));
@@ -245,6 +245,24 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     expect(table.querySelectorAll("tbody tr:not(.group-row)")).toHaveLength(12);
     expect(table.querySelectorAll(".group-row")).toHaveLength(1);
     expect(within(table).getAllByText(base.number)).toHaveLength(12);
+  });
+
+  it.each([["ТЕСТ-А", "100", "25", 75], ["ТЕСТ-Б", "80", "53", 27], ["ТЕСТ-В", "120", "43", 77]])("does not assign an earlier receipt GRN to the manufacturing remainder of %s", (project, needed, sent, remainder) => {
+    const intake = { ...take(project, "В работе", needed), grn: "ГП.старый", accepted: sent, packed: sent, sent };
+    const history = { ...closed, lines: [{ ...base.lines[0], project, item_index: "КБ1", picked: sent, grn: "ГП.старый" }] };
+    const rows = dataRows([history] as never, [intake] as never);
+    expect(rows.find((row) => row.kind === "project")).toMatchObject({ stage: "production", quantity: remainder, grn: "", shipment: null });
+    expect(rows.find((row) => row.kind === "shipment")).toMatchObject({ grn: "ГП.старый", quantity: Number(sent), shipment: history });
+  });
+
+  it("shows only a proven receipt GRN for accepted remainder, never the aggregate good GRN of mixed receipts", () => {
+    const intake = { ...take("713К.4", "Принято складом", "500"), grn: "ГП.старый", packed: "24", sent: "24",
+      acts: [{ grn: "ГП.старый", quantity: "24", received_at: "2026-10-23", location: "" },
+        { grn: "ГП.новый", quantity: "476", received_at: "2026-11-03", location: "" }] };
+    expect(dataRows([], [intake] as never)[0]).toMatchObject({ stage: "accepted", quantity: 476, grn: "" });
+    const single = { ...intake, acts: [{ grn: "ГП.единственный", quantity: "500", received_at: "2026-11-03", location: "" }] };
+    expect(dataRows([], [single] as never)[0]).toMatchObject({ stage: "accepted", quantity: 476, grn: "ГП.единственный" });
+    expect(dataRows([], [{ ...intake, packed: "0", sent: "0", acts: [] }] as never)[0].grn).toBe("ГП.старый");
   });
 
   it("preserves each shipment line and free partial slices without adding picked quantities twice", () => {
@@ -289,7 +307,7 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     stub([one, two]); render(<ShipmentDataPage principal={principal} />);
     const row = (await screen.findByText("ОТГ-2")).closest<HTMLElement>(view === "cards" ? ".data-card" : "tr")!;
     const content = within(row);
-    fireEvent.click(content.getByRole("button", { name: "Печать ПЛ PL-2" }));
+    fireEvent.click(content.getByRole("button", { name: "Печать PL PL-2" }));
     fireEvent.click(content.getByRole("button", { name: "Печать DN DN-2" }));
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).startsWith("/api/shipping/shipments/exact-two/print?")).map(([url]) => String(url))).toEqual([
       "/api/shipping/shipments/exact-two/print?document=pl", "/api/shipping/shipments/exact-two/print?document=dn",
@@ -383,7 +401,7 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
   it("prints the PL directly by shipment id without opening or modifying the shipment", async () => {
     stub([base]);
     render(<ShipmentDataPage principal={principal} />);
-    fireEvent.click(await screen.findByRole("button", { name: `Печать ПЛ ${base.pl_number}` }));
+    fireEvent.click(await screen.findByRole("button", { name: `Печать PL ${base.pl_number}` }));
     await waitFor(() => expect(openShippingForms).toHaveBeenCalled());
     expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url) === `/api/shipping/shipments/${base.id}/print?document=pl`)).toBe(true);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -395,7 +413,7 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     try {
       stub([base]); render(<ShipmentDataPage principal={principal} />);
       await screen.findByRole("table");
-      expect(screen.queryByRole("button", { name: `Печать ПЛ ${base.pl_number}` })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: `Печать PL ${base.pl_number}` })).not.toBeInTheDocument();
     } finally { setRightsPrincipal(null); }
   });
 
@@ -403,14 +421,14 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     stub([{ ...base, pl_number: "" }]);
     const view = render(<ShipmentDataPage principal={principal} />);
     await screen.findByRole("table");
-    expect(screen.queryByRole("button", { name: /^Печать ПЛ/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Печать PL/ })).not.toBeInTheDocument();
     view.unmount();
     stub([base]);
     const original = vi.mocked(fetch).getMockImplementation()!;
     vi.mocked(fetch).mockImplementation((input, init) => String(input).includes("/print?")
       ? Promise.resolve(new Response(JSON.stringify({ detail: "Печать временно недоступна" }), { status: 503 })) : original(input, init));
     render(<ShipmentDataPage principal={principal} />);
-    fireEvent.click(await screen.findByRole("button", { name: `Печать ПЛ ${base.pl_number}` }));
+    fireEvent.click(await screen.findByRole("button", { name: `Печать PL ${base.pl_number}` }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Печать временно недоступна");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method && init.method !== "GET")).toHaveLength(0);
@@ -439,7 +457,7 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     render(<ShipmentDataPage principal={principal} />);
     const table = await screen.findByRole("table");
     const headers = within(table).getAllByRole("columnheader").map((cell) => cell.textContent?.replace(/[▲▼↑↓⇅]/gu, "").trim()).filter(Boolean);
-    expect(headers).toEqual(["КБ", "Наименование", "Количество", "Этап позиции", "ГРН", "Статус отправки", "Дата отгрузки", "ПЛ", "DN", "УПД"]);
+    expect(headers).toEqual(["КБ", "Наименование", "Количество", "Этап позиции", "ГРН", "Статус отправки", "Дата отгрузки", "PL", "DN", "УПД"]);
     const chips = within(screen.getByRole("group", { name: "Быстрый отбор" }));
     // 713К.4 (ОТК) стоит в живых отправках; проекты без живой отправки: 800К.1 (В работе), 810К.1 и 820К.3 (ждут производства).
     expect(chips.getAllByRole("button").map((button) => button.textContent)).toEqual([
@@ -541,13 +559,15 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     expect(await screen.findByRole("dialog", { name: "Данные отправки 800К.1" })).toBeInTheDocument();
   });
 
-  it("counts gaps only for live shipments; projects without a shipment come after the shipments", () => {
+  it("counts gaps only for live shipments and orders common rows naturally by project and KB", () => {
     expect(dataGaps(base)).toEqual(base.missing_data);
     for (const sent of [shippedNoFile, shippedOld, closed]) expect(dataGaps(sent as never)).toEqual([]);
     expect(sentNote(shippedNoFile as never)).toBe("Внести: файл УПД");
     expect(sentNote(shippedOld as never)).toBe("");
     const rows = dataRows([closed, complete, base, cancelled] as never, [take("713К.4", "ОТК"), take("800К.1", "В работе")] as never);
-    expect(rows.map((row) => row.shipment?.number ?? row.project)).toEqual(["ОТГ-20260901-05", "ОТГ-20261001-07", "ОТГ-20261028-01", "ОТГ-20261028-02", "713К.4", "800К.1"]);
+    expect(rows.map((row) => row.shipment?.number ?? row.project).sort()).toEqual(["ОТГ-20260901-05", "ОТГ-20261001-07", "ОТГ-20261028-01", "ОТГ-20261028-02", "713К.4", "800К.1"].sort());
+    const keys = rows.map(row => `${row.project}:${row.item_index}`);
+    expect(keys).toEqual([...keys].sort((a, b) => a.localeCompare(b, "ru", { numeric: true })));
   });
 
   it("maps project stages: below «В работе» and unknown words wait for production; the ladder otherwise", () => {

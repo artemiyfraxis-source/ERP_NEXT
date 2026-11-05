@@ -4,6 +4,7 @@ import { ProductionIntakePage } from "./ProductionIntakePage";
 import { isoDay } from "./Gantt";
 import { capturePrintFrames } from "./testPrintFrames";
 import { setRightsPrincipal } from "./rights";
+import { forgetPersonalViews } from "./personalViews";
 
 const principal = {
   user: { id: "u1", email: "k@example.test", name: "Кладовщик", department: "Склад" },
@@ -12,6 +13,15 @@ const principal = {
 const viewer = { ...principal, permissions: { shipping: "view" as const } };
 const admin = { ...principal, roles: ["admin"], access_level: "admin", permissions: { shipping: "edit" as const, shipping_goods: "edit" as const } };
 const deliveryHeaders = ["Получатель", "Способ доставки", "Перевозчик", "Адрес", "Телефон", "Комментарий для склада"];
+const positionHeaders = ["КБ", "Наименование", "Количество", "Этап позиции", "ГРН", "Статус отправки", "Дата отгрузки", "PL", "DN", "УПД"];
+function showDelivery() {
+  fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+  for (const name of deliveryHeaders) {
+    const checkbox = screen.getByLabelText(name) as HTMLInputElement;
+    if (!checkbox.checked) fireEvent.click(checkbox);
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+}
 
 const row = (over: Record<string, unknown>) => ({
   project: "591К.3", customer: "Заказчик", deadline: "2026-10-25", item_index: "КБ1", name: "Жгут", unit: "шт", stage: "В работе",
@@ -74,11 +84,68 @@ function stub(acceptStatus = 200, acceptBody: unknown = { goods: [], replayed: f
     return json({});
   }));
 }
-beforeEach(() => { intakeRows = ROWS; shipments = []; addressees = []; approvals = []; setRightsPrincipal(null); stub(); });
-afterEach(() => { cleanup(); setRightsPrincipal(null); vi.unstubAllGlobals(); });
+beforeEach(() => { window.localStorage.clear(); forgetPersonalViews(); intakeRows = ROWS; shipments = []; addressees = []; approvals = []; setRightsPrincipal(null); stub(); });
+afterEach(() => { cleanup(); setRightsPrincipal(null); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("Приёмка с производства", () => {
-  it("accepted keeps one current KB remainder and direct GRN links without click-to-open history", async () => {
+  it.each(["Отгружена", "Закрыта"])("prints historical DN despite missing UPD for %s", async (status) => {
+    const printed = capturePrintFrames();
+    intakeRows = [];
+    shipments = [{ ...packedShipment, status, shipped_at: isoDay(new Date()), missing_data: ["№ УПД", "файл УПД"] }];
+    render(<ProductionIntakePage principal={admin} />);
+    const button = await screen.findByRole("button", { name: "Печать DN ОТГ-20261029-01" });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    await waitFor(() => expect(calls.some(call => call.url === "/api/shipping/shipments/s1/print?document=dn")).toBe(true));
+    printed.restore();
+  });
+  it("shipped rows bind quantity, GRN, delivery and documents to each shipment line", async () => {
+    intakeRows = [row({ accepted: "500", packed: "500", sent: "500", remaining: "0" })];
+    addressees = [{ ...dispatchCard, note: "Текущий комментарий" }];
+    shipments = [
+      { ...packedShipment, id: "first", number: "ОТГ-ПЕРВАЯ", status: "Закрыта", shipped_at: isoDay(new Date()),
+        receiver: "Первый получатель", contact: "Первый получатель", note: "Первый комментарий", upd_number: "101", upd_url: "https://example.test/first.pdf",
+        lines: [shipmentLine({ id: "first-line", picked: "286", grn: "ГП.ПЕРВАЯ" })] },
+      { ...packedShipment, id: "second", number: "ОТГ-ВТОРАЯ", status: "Отгружена", shipped_at: isoDay(new Date()),
+        receiver: "Второй получатель", phone: "самовывоз", upd_number: "102", upd_url: "https://example.test/second.pdf",
+        lines: [shipmentLine({ id: "second-line", picked: "214", grn: null })] },
+    ];
+    render(<ProductionIntakePage principal={admin} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /^Отгружено/ }));
+    showDelivery();
+    expect(screen.getAllByText("Жгут")).toHaveLength(2);
+    const lines = ["ОТГ-ПЕРВАЯ", "ОТГ-ВТОРАЯ"].map(number => screen.getByRole("button", { name: `Данные отправки ${number}` }).closest("tr")!);
+    expect(lines.map(line => line.querySelector('td[data-label="Количество"]')?.textContent)).toEqual(["286 шт", "214 шт"]);
+    expect(within(lines[0]).getAllByText("Первый получатель")).toHaveLength(1);
+    expect(lines[0]).toHaveTextContent("Первый комментарий");
+    expect(lines[0]).not.toHaveTextContent("Текущий комментарий");
+    expect(within(lines[0]).getByRole("link", { name: /101/ })).toHaveAttribute("href", "https://example.test/first.pdf");
+    expect(within(lines[1]).getByRole("link", { name: /102/ })).toHaveAttribute("href", "https://example.test/second.pdf");
+    expect(lines[1].querySelector('td[data-label="ГРН"]')).toHaveTextContent("—");
+    expect(lines[1].querySelector('td[data-label="Телефон"]')).toHaveTextContent("—");
+    expect(screen.getByRole("columnheader", { name: "PL" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "DN" })).toBeInTheDocument();
+    fireEvent.click(within(lines[1]).getByRole("button", { name: "Данные отправки ОТГ-ВТОРАЯ" }));
+    expect(await screen.findByRole("dialog", { name: /ОТГ-ВТОРАЯ/ })).toBeInTheDocument();
+  });
+
+  it("preserves distinct same-KB shipment lines and naturally orders KB without deduplicating GRNs", async () => {
+    intakeRows = [];
+    shipments = [{ ...packedShipment, status: "Отгружена", shipped_at: isoDay(new Date()), lines: [
+      shipmentLine({ id: "ten", item_index: "КБ10", picked: "10" }),
+      shipmentLine({ id: "two-a", item_index: "КБ2", picked: "1000" }),
+      shipmentLine({ id: "one", item_index: "КБ1", picked: "1" }),
+      shipmentLine({ id: "two-b", item_index: "КБ2", picked: "1000" }),
+    ] }];
+    render(<ProductionIntakePage principal={viewer} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /^Отгружено/ }));
+    expect([...document.querySelectorAll('td[data-label="КБ"]')].map(cell => cell.textContent)).toEqual(["КБ1", "КБ2", "КБ2", "КБ10"]);
+    expect([...document.querySelectorAll('td[data-label="Количество"]')].map(cell => cell.textContent?.replace(/[^0-9]/g, ""))).toEqual(["1", "1000", "1000", "10"]);
+    expect(screen.getByRole("tab", { name: /^Отгружено/ }).querySelector(".page-count")).toHaveTextContent("3");
+    fireEvent.change(screen.getByPlaceholderText("Проект, КБ, наименование или задание"), { target: { value: "1000" } });
+    expect(screen.getAllByText("Жгут")).toHaveLength(2);
+  });
+  it("accepted keeps one current KB remainder without falsely binding old receipt GRNs or opening history", async () => {
     intakeRows = [row({ accepted: "500", packed: "24", sent: "24", needed: "500", remaining: "0", pack_permission_remaining: "476", acts: [
       { grn: "ГП.TEST.24", quantity: "24", received_at: "2026-10-30", location: "" },
       { grn: "ГП.TEST.476", quantity: "476", received_at: "2026-11-03", location: "" },
@@ -87,9 +154,10 @@ describe("Приёмка с производства", () => {
     fireEvent.click(await screen.findByRole("tab", { name: /^Принято/ }));
     expect(screen.queryByText("Итого по КБ")).not.toBeInTheDocument();
     expect(screen.getAllByText("Жгут")).toHaveLength(1);
-    expect(document.querySelector('td[data-label="К упаковке"]')).toHaveTextContent("476");
-    expect(screen.getByRole("button", { name: "Печать этикетки ГП.TEST.24" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Печать этикетки ГП.TEST.476" })).toBeInTheDocument();
+    expect(document.querySelector('td[data-label="Количество"]')).toHaveTextContent("476");
+    expect(screen.queryByRole("button", { name: "Печать этикетки ГП.TEST.24" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Печать этикетки ГП.TEST.476" })).not.toBeInTheDocument();
+    expect(document.querySelector('td[data-label="ГРН"]')).toHaveTextContent("—");
     fireEvent.click(screen.getByText("Жгут"));
     expect(screen.queryByRole("region", { name: /История приёмки/ })).not.toBeInTheDocument();
     expect(screen.getByText("Жгут").closest("tr")).not.toHaveAttribute("aria-expanded");
@@ -105,7 +173,7 @@ describe("Приёмка с производства", () => {
     fireEvent.click(await screen.findByRole("tab", { name: /^Принято/ }));
     expect(screen.queryByText("Отгруженный жгут")).not.toBeInTheDocument();
     expect(screen.getByText("Неотгруженный жгут")).toBeInTheDocument();
-    expect(document.querySelector('td[data-label="К упаковке"]')).toHaveTextContent("95");
+    expect(document.querySelector('td[data-label="Количество"]')).toHaveTextContent("95");
   });
   it("restores an active packed KB absent from intake without acceptance or packing writes", async () => {
     intakeRows = [];
@@ -138,13 +206,13 @@ describe("Приёмка с производства", () => {
     const total = (await screen.findByText("Жгут")).closest("tr")!;
     expect(screen.getByRole("columnheader", { name: "Упаковать" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /^Упаковано/ })).toBeInTheDocument();
-    expect(total.querySelector('td[data-label="К упаковке"]')).toHaveTextContent(String(500 - sent));
+    expect(total.querySelector('td[data-label="Количество"]')).toHaveTextContent(String(500 - sent));
     expect(within(total).getByRole("button", { name: /^Упаковать / })).toHaveTextContent(`Упаковать · ${500 - sent}`);
     expect(screen.queryByText("Итого по КБ")).not.toBeInTheDocument();
     fireEvent.click(screen.getByText("Жгут"));
     expect(screen.queryByRole("region", { name: /История приёмки/ })).not.toBeInTheDocument();
-    amounts.forEach((_, index) => expect(within(total).getByRole("button", { name: `Печать этикетки ГП.ДЕМО.${index}` })).toBeInTheDocument());
-    expect(total.querySelector('td[data-label="Дата приёмки"]')).toHaveTextContent("—");
+    amounts.forEach((_, index) => expect(within(total).queryByRole("button", { name: `Печать этикетки ГП.ДЕМО.${index}` })).not.toBeInTheDocument());
+    expect(total.querySelector('td[data-label="Дата отгрузки"]')).toHaveTextContent("—");
     expect(calls.every(({ method }) => method === "GET")).toBe(true);
   });
   it("принятое открывает данные проекта до упаковки без создания отправки", async () => {
@@ -173,6 +241,8 @@ describe("Приёмка с производства", () => {
   it("показывает данные доставки и комментарий из одной пакетной загрузки без записи и срока проекта", async () => {
     addressees = [{ ...dispatchCard, receiver: "Получатель проекта", contact: "Анна", phone: "+7 111", carrier: "Самовывоз", note: "Позвонить до приезда" }];
     render(<ProductionIntakePage principal={principal} />);
+    await screen.findByText("Жгут");
+    showDelivery();
     expect(await screen.findAllByText("Получатель проекта")).toHaveLength(2);
     expect(screen.getAllByText("Анна")).toHaveLength(2);
     expect(screen.getAllByText("+7 111")).toHaveLength(2);
@@ -221,17 +291,17 @@ describe("Приёмка с производства", () => {
     ];
     render(<ProductionIntakePage principal={principal} />);
     fireEvent.click(await screen.findByRole("tab", { name: /^Упаковано/ }));
-    for (const text of ["Получатель А", "Получатель Б", "Адрес А", "Адрес Б", "СДЭК", "Яндекс Доставка", "Самовывоз", "Доставка Яндекс", "Склад проекта", "На рампу А", "На рампу Б"]) {
+    showDelivery();
+    for (const text of ["Получатель А", "Получатель Б", "Адрес А", "Адрес Б", "СДЭК", "Яндекс Доставка", "Доставка Яндекс", "На рампу А", "На рампу Б"]) {
       expect((await screen.findAllByText(text, { exact: true })).length).toBeGreaterThan(0);
     }
     expect(screen.queryByText("Общий получатель")).not.toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: /^Перевозчик/ })).toBeInTheDocument();
-    const address = document.querySelector('td[data-label="Адрес"]')!;
-    expect(address.querySelector('[data-shipment="s1"]')).toHaveTextContent("Адрес А");
-    expect(address.querySelector('[data-shipment="s2"]')).toHaveTextContent("Адрес Б");
-    const tracks = document.querySelector('td[data-label="Трек"]')!;
-    expect(tracks.querySelector('[data-shipment="s1"]')).toHaveTextContent("Самовывоз");
-    expect(tracks.querySelector('[data-shipment="s2"]')).toHaveTextContent("Доставка Яндекс");
+    expect(document.querySelector('td[data-label="Адрес"] [data-shipment="s1"]')).toHaveTextContent("Адрес А");
+    expect(document.querySelector('td[data-label="Адрес"] [data-shipment="s2"]')).toHaveTextContent("Адрес Б");
+    expect(document.querySelector('td[data-label="Трек"] [data-shipment="s1"]')).toHaveTextContent("—");
+    expect(document.querySelector('td[data-label="Трек"] [data-shipment="s2"]')).toHaveTextContent("Доставка Яндекс");
+    expect(screen.queryByText("Склад проекта")).not.toBeInTheDocument();
     expect(calls.filter((call) => call.method !== "GET")).toEqual([]);
   });
 
@@ -258,11 +328,10 @@ describe("Приёмка с производства", () => {
     ];
     render(<ProductionIntakePage principal={principal} />);
     fireEvent.click(await screen.findByRole("tab", { name: /^Упаковано/ }));
-    const grns = document.querySelector<HTMLElement>('td[data-label="ГРН"]')!;
-    expect(grns.querySelector('[data-shipment="s1"]')).toHaveTextContent("1ГП.26.0000001");
-    expect(grns.querySelector('[data-shipment="s2"]')).toHaveTextContent("2ГП.26.0000001");
-    expect(grns.querySelector('[data-shipment="s3"]')).toHaveTextContent("3ГП.26.0000002");
-    expect(within(grns).getAllByRole("button", { name: "Печать этикетки ГП.26.0000001" })).toHaveLength(2);
+    expect(document.querySelector('td[data-label="ГРН"] [data-shipment="s1"]')).toHaveTextContent("ГП.26.0000001");
+    expect(document.querySelector('td[data-label="ГРН"] [data-shipment="s2"]')).toHaveTextContent("ГП.26.0000001");
+    expect(document.querySelector('td[data-label="ГРН"] [data-shipment="s3"]')).toHaveTextContent("ГП.26.0000002");
+    expect(screen.getAllByRole("button", { name: "Печать этикетки ГП.26.0000001" })).toHaveLength(2);
     expect(calls.filter((call) => call.method !== "GET")).toEqual([]);
   });
 
@@ -278,7 +347,7 @@ describe("Приёмка с производства", () => {
     fireEvent.change(search, { target: { value: "ГП.26.0000043" } });
     expect(screen.getByText("Жгут")).toBeInTheDocument();
     const grns = document.querySelector<HTMLElement>('td[data-label="ГРН"]')!;
-    expect(within(grns).getAllByRole("button", { name: "Печать этикетки ГП.26.0000042" })).toHaveLength(2);
+    expect(within(grns).queryByRole("button", { name: "Печать этикетки ГП.26.0000042" })).not.toBeInTheDocument();
 
     let blob: Blob | null = null;
     const create = vi.spyOn(URL, "createObjectURL").mockImplementation((value) => { blob = value as Blob; return "blob:intake"; });
@@ -288,7 +357,7 @@ describe("Приёмка с производства", () => {
       fireEvent.click(screen.getByRole("button", { name: "Excel" }));
       const text = new TextDecoder("utf-16le").decode(new Uint8Array(await blob!.arrayBuffer()).slice(2));
       const [headers, values] = text.split("\r\n").map((line) => line.split("\t"));
-      expect(values[headers.indexOf("ГРН")]).toBe("ГП.26.0000042; ГП.26.0000042, ГП.26.0000043");
+      expect(values[headers.indexOf("ГРН")]).toBe("ГП.26.0000043");
       expect(text).not.toContain("ГП.26.0000001");
     } finally { create.mockRestore(); revoke.mockRestore(); click.mockRestore(); }
     fireEvent.change(search, { target: { value: "ГП.26.0000001" } });
@@ -303,7 +372,8 @@ describe("Приёмка с производства", () => {
     fireEvent.click(await screen.findByRole("tab", { name: /^Упаковано/ }));
     expect(await screen.findByText("ГП.26.0000001")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Печать/ })).not.toBeInTheDocument();
-    expect(screen.getByText("Получатель", { selector: "td span span" })).toBeInTheDocument();
+    showDelivery();
+    expect(document.querySelector('td[data-label="Получатель"]')).toHaveTextContent("Получатель");
   });
 
   it("самовывоз показывает отсутствие необходимости трека, не предлагает ввод и не теряет комментарий", async () => {
@@ -314,6 +384,7 @@ describe("Приёмка с производства", () => {
     fireEvent.click(await screen.findByRole("tab", { name: /^Упаковано/ }));
     expect(document.querySelector('td[data-label="Трек"]')).toHaveTextContent("Не требуется");
     expect(screen.queryByRole("button", { name: /^Трек / })).not.toBeInTheDocument();
+    showDelivery();
     expect(screen.getAllByText("Приезд после 15:00")).toHaveLength(1);
   });
 
@@ -323,14 +394,15 @@ describe("Приёмка с производства", () => {
     shipments = [{ ...packedShipment, terms: null, carrier: "Самовывоз", shipping_point: "Старый адрес отправки" }];
     render(<ProductionIntakePage principal={principal} />);
     fireEvent.click(await screen.findByRole("tab", { name: /^В производстве/ }));
+    showDelivery();
     for (const cell of document.querySelectorAll('td[data-label="Способ доставки"]')) expect(cell).toHaveTextContent("Самовывоз");
     for (const cell of document.querySelectorAll('td[data-label="Адрес"]')) expect(cell).toHaveTextContent("Не требуется");
     expect(document.querySelector('td[data-label="Адрес"]')).toBeInTheDocument();
     expect(screen.queryByText("Старый адрес проекта")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: /^Упаковано/ }));
+    showDelivery();
     expect(document.querySelector('td[data-label="Способ доставки"]')).toHaveTextContent("Самовывоз");
-    expect(document.querySelector('td[data-label="Адрес"]')).toHaveTextContent("Не требуется");
-    expect(screen.queryByText("Старый адрес отправки")).not.toBeInTheDocument();
+    expect(document.querySelector('td[data-label="Адрес"]')).toHaveTextContent("Старый адрес отправки");
     expect(calls.filter((call) => call.method !== "GET")).toEqual([]);
   });
 
@@ -359,7 +431,7 @@ describe("Приёмка с производства", () => {
     fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
     const packing = screen.getAllByRole("button", { name: "Упаковать 591К.3 КБ1: упаковано 100, можно 873" });
     expect(packing).toHaveLength(1);
-    expect(packing[0].closest("tr")).toHaveTextContent("Итого по КБ");
+    expect(packing[0].closest("tr")).toHaveTextContent("873");
     expect(screen.getByRole("button", { name: "Принять 591К.3 КБ1: можно 27" })).toBeInTheDocument();
     fireEvent.click(packing[0]);
     expect(await screen.findByRole("dialog", { name: "Упаковка 591К.3" })).toBeInTheDocument();
@@ -394,11 +466,11 @@ describe("Приёмка с производства", () => {
     shipments = [{ ...packedShipment, missing_data: [], missing_ship: ["трек-номер"], ready_for_track: true }];
     render(<ProductionIntakePage principal={principal} />);
     fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
-    await screen.findByText("ГП.26.0000400");
-    for (const name of ["Трек 591К.3 КБ1", "Отгрузка 591К.3 КБ1: отгружено 0"]) {
+    await screen.findByText("ГП.26.0000001");
+    for (const name of ["Трек 591К.3 КБ1", "Отправка ОТГ-20261029-01"]) {
       const buttons = screen.getAllByRole("button", { name });
       expect(buttons).toHaveLength(1);
-      expect(buttons[0].closest("tr")).toHaveTextContent("Итого по КБ");
+      expect(buttons[0].closest("tr")).toHaveTextContent("ОТГ-20261029-01");
     }
     expect(screen.getByRole("button", { name: "Трек 591К.3 КБ1" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Трек 591К.3 КБ1" }));
@@ -416,8 +488,8 @@ describe("Приёмка с производства", () => {
     expect(screen.getByRole("heading", { name: "Приёмка с производства" })).toBeInTheDocument();
     expect(screen.queryByText("Шлейф")).not.toBeInTheDocument(); // в «Можно принять» только то, что сдано
     const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent ?? "");
-    for (const gone of ["Принять, шт", "Этап", "Сдано цехом", "Место хранения"]) expect(headers.some((text) => text.includes(gone))).toBe(false);
-    expect(headers.map((text) => text.replace(/[^А-Яа-яЁё ]/g, "").trim())).toEqual(["КБ", "Наименование", "Заказано", "Можно принять", ...deliveryHeaders]);
+    for (const gone of ["Принять, шт", "Сдано цехом", "Место хранения"]) expect(headers.some((text) => text.includes(gone))).toBe(false);
+    expect(headers.map((text) => text.replace(/[^А-Яа-яЁёA-Za-z ]/g, "").trim())).toEqual([...positionHeaders, "Можно принять"]);
     expect(screen.queryByLabelText("Сколько принять 591К.3 КБ1")).not.toBeInTheDocument(); // поля в строке нет
     fireEvent.click(screen.getByRole("button", { name: "Принять 591К.3 КБ1: можно 20" }));
     const dialog = await screen.findByRole("dialog", { name: "Приёмка 591К.3 КБ1" });
@@ -446,6 +518,21 @@ describe("Приёмка с производства", () => {
     expect(calls.find((call) => call.method === "POST")!.body).toMatchObject({
       lines: [{ project: "591К.3", item_index: "КБ1", quantity: "20" }, { project: "591К.3", item_index: "КБ2", quantity: "10", location: "Полка 1" }],
     });
+  });
+
+  it("All bulk acceptance deduplicates a KB split between production and ready", async () => {
+    intakeRows = [row({ needed: "100", accepted: "0", delivered: "20", remaining: "100" }),
+      row({ item_index: "КБ2", name: "Кабель", needed: "10", accepted: "0", delivered: "10", remaining: "10" })];
+    render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Принять всё: 2 КБ · 110 шт" }));
+    const dialog = await screen.findByRole("dialog", { name: "Принять всё 591К.3" });
+    expect(within(dialog).getAllByLabelText("Сколько принять 591К.3 КБ1")).toHaveLength(1);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Принять на склад · 110 шт" }));
+    await screen.findByText("Принято на склад: 110 шт");
+    expect(calls.find(call => call.method === "POST")!.body).toMatchObject({ lines: [
+      { project: "591К.3", item_index: "КБ1", quantity: "100" }, { project: "591К.3", item_index: "КБ2", quantity: "10" },
+    ] });
   });
 
   it("пустые колонки не показываются; срок проекта не отвлекает склад", async () => {
@@ -590,7 +677,7 @@ describe("Приёмка с производства", () => {
     expect(screen.queryByText("Жгут старый")).not.toBeInTheDocument();
     const kb1 = [...document.querySelectorAll("tbody tr")].filter((tr) => tr.textContent?.includes("Жгут акты"));
     expect(kb1).toHaveLength(1);
-    expect(kb1[0].textContent).toContain("1000");
+    expect(kb1[0].querySelector('td[data-label="Количество"]')).toHaveTextContent("200");
     expect(kb1[0].textContent).toContain("200");
     expect(screen.getAllByRole("button", { name: /^Принять 591К.3/ })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Принять 591К.3 КБ1: можно 200" }));
@@ -606,8 +693,8 @@ describe("Приёмка с производства", () => {
     expect(ordered).toHaveLength(1);
     fireEvent.click(screen.getByText("Жгут акты"));
     expect(screen.queryByRole("region", { name: /История приёмки/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Печать этикетки ГП.26.0000010" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Печать этикетки ГП.26.0000011" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Печать этикетки ГП.26.0000010" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Печать этикетки ГП.26.0000011" })).not.toBeInTheDocument();
   });
 
   it("остаток по КБ при приёмке в несколько ГРН: 100+350+350+173 принято из 1000 — остаток 27 одной строкой", async () => {
@@ -618,11 +705,11 @@ describe("Приёмка с производства", () => {
     await screen.findAllByText("CCW-0,2");
     const rowsIn = () => [...document.querySelectorAll("tbody tr")].filter((tr) => tr.textContent?.includes("CCW-0,2"));
     expect(rowsIn()).toHaveLength(1); // «Готово»: одна строка, «Можно принять» 27, без актов
-    expect([...rowsIn()[0].querySelectorAll("td")][3]?.textContent).toBe("27");
+    expect(rowsIn()[0].querySelector('td[data-label="Количество"]')).toHaveTextContent("27");
     fireEvent.click(screen.getByRole("tab", { name: /^Принято/ }));
     await waitFor(() => expect(rowsIn()).toHaveLength(1)); // одна рабочая строка КБ
     fireEvent.click(screen.getByRole("tab", { name: /^Все/ }));
-    await waitFor(() => expect(rowsIn()).toHaveLength(5)); // во «Все» итог также показывает фактический остаток
+    await waitFor(() => expect(rowsIn()).toHaveLength(2)); // отдельные остатки этапов, без дублирования актами
     expect(screen.getByRole("button", { name: "Принять 533К.12 КБ1: можно 27" })).toBeInTheDocument();
   });
 
@@ -694,7 +781,9 @@ describe("Приёмка с производства: упаковка и отг
     expect(await screen.findByText("Уехавший жгут")).toBeInTheDocument();
     expect(tab(/^Отгружено/)).toHaveAttribute("aria-selected", "true");
     const line = [...document.querySelectorAll("tbody tr")].filter((tr) => tr.textContent?.includes("Уехавший жгут"))[0];
-    expect([...line.querySelectorAll("button")].map((button) => button.getAttribute("aria-label"))).toEqual(["Печать этикетки ГП.26.0000001"]);
+    expect([...line.querySelectorAll("button")].map((button) => button.getAttribute("aria-label"))).toEqual([
+      "Печать этикетки ГП.26.0000001", "Данные отправки ОТГ-20261029-03", "Печать PL ОТГ-20261029-03", "Печать DN ОТГ-20261029-03", "Внести УПД ОТГ-20261029-03",
+    ]);
     expect(line.textContent).toContain("5");
   });
 
@@ -740,7 +829,7 @@ describe("Приёмка с производства: упаковка и отг
     const printed = capturePrintFrames();
     render(<ProductionIntakePage principal={principal} />);
     fireEvent.click(await screen.findByRole("tab", { name: /^Принято/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Упаковка 591К.3 КБ1: упаковано 4" }));
+    fireEvent.click((await screen.findAllByRole("button", { name: "Упаковка 591К.3 КБ1: упаковано 4" }))[0]);
     const dialog = await screen.findByRole("dialog", { name: "Упаковка 591К.3" });
     const card = within(within(dialog).getByRole("article", { name: "Отправка ОТГ-20261029-01" }));
     fireEvent.click(card.getByRole("button", { name: "Печать PL" }));
@@ -757,6 +846,19 @@ describe("Приёмка с производства: упаковка и отг
     expect(other.getByRole("button", { name: "Сформировать отгрузочные" })).toBeInTheDocument();
     expect(other.getByRole("button", { name: "Вернуть на склад" })).toBeInTheDocument();
     printed.restore();
+  });
+
+  it("track action is bound to its exact shipment when the same KB has two parties", async () => {
+    intakeRows = [row({ accepted: "8", packed: "8", remaining: "0", delivered: "8" })];
+    shipments = [packedShipment, { ...packedShipment, id: "s2", number: "ОТГ-20261029-02" }].map(shipment => ({
+      ...shipment, upd_number: "У-7", missing_data: [], missing_ship: ["трек-номер"], ready_for_track: true,
+    }));
+    render(<ProductionIntakePage principal={principal} />);
+    const party = (await screen.findByRole("button", { name: "Данные отправки ОТГ-20261029-02" })).closest("tr")!;
+    fireEvent.click(within(party).getByRole("button", { name: "Трек 591К.3 КБ1" }));
+    const dialog = await screen.findByRole("dialog", { name: "Трек 591К.3 КБ1" });
+    expect(within(dialog).getByLabelText("Трек-номер ОТГ-20261029-02")).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Трек-номер ОТГ-20261029-01")).not.toBeInTheDocument();
   });
 
   it("«Трек…» выключен, пока нет УПД и ТК; когда можно — окно сохраняет трек правкой документов с версией", async () => {
@@ -795,7 +897,7 @@ describe("Приёмка с производства: упаковка и отг
     shipments = [packedShipment, ready, gone];
     render(<ProductionIntakePage principal={admin} />);
     fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Отгрузка 591К.3 КБ1: отгружено 3, к отгрузке 3" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Отправка ОТГ-20261029-02" }));
     const dialog = await screen.findByRole("dialog", { name: "Отгрузка 591К.3" });
     const blocked = within(within(dialog).getByRole("article", { name: "Отправка ОТГ-20261029-01" }));
     expect(blocked.getByRole("button", { name: "Отгрузить" })).toBeDisabled();
@@ -818,7 +920,7 @@ describe("Приёмка с производства: упаковка и отг
     approvals = [[403, { detail: "Неверный разрешительный ПИН." }], [429, { detail: "Слишком много попыток. Подождите 10 минут." }], [200, { shipment: packedShipment }]];
     render(<ProductionIntakePage principal={principal} />);
     fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Отгрузка 591К.3 КБ1: отгружено 0" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Отправка ОТГ-20261029-01" }));
     const ships = await screen.findByRole("dialog", { name: "Отгрузка 591К.3" });
     fireEvent.click(within(ships).getByRole("button", { name: "Разрешить без УПД" }));
     const pinWindow = await screen.findByRole("dialog", { name: "Отгрузка без УПД · ОТГ-20261029-01" });
@@ -849,7 +951,7 @@ describe("Приёмка с производства: упаковка и отг
     shipments = [{ ...packedShipment, upd_type: "БЕЗ УПД", terms: "САМОВЫВОЗ", carrier: "", missing_data: [], missing_ship: ["разрешение на отгрузку без УПД"] }];
     render(<ProductionIntakePage principal={principal} />);
     fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Отгрузка 591К.3 КБ1: отгружено 0" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Отправка ОТГ-20261029-01" }));
     const ships = await screen.findByRole("dialog", { name: "Отгрузка 591К.3" });
     expect(within(ships).getByRole("button", { name: "Отгрузить" })).toBeDisabled();
     expect(within(ships).getByRole("button", { name: "Разрешить без УПД" })).toBeInTheDocument();
@@ -860,7 +962,7 @@ describe("Приёмка с производства: упаковка и отг
     shipments = [{ ...packedShipment, status: "Собрана", terms: "САМОВЫВОЗ", carrier: "", pl_number: "", dn_number: "", missing_data: [], missing_ship: [], ready_to_ship: true }];
     render(<ProductionIntakePage principal={principal} />);
     fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Отгрузка 591К.3 КБ1: отгружено 0" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Отправка ОТГ-20261029-01" }));
     const ships = await screen.findByRole("dialog", { name: "Отгрузка 591К.3" });
     expect(within(ships).getByRole("button", { name: "Отгрузить" })).toBeEnabled();
   });
@@ -870,7 +972,7 @@ describe("Приёмка с производства: упаковка и отг
     shipments = [{ ...packedShipment, missing_ship: ["№ УПД", "адрес доставки"] }];
     render(<ProductionIntakePage principal={principal} />);
     fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Отгрузка 591К.3 КБ1: отгружено 0" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Отправка ОТГ-20261029-01" }));
     const ships = await screen.findByRole("dialog", { name: "Отгрузка 591К.3" });
     expect(within(ships).queryByRole("button", { name: "Разрешить без УПД" })).not.toBeInTheDocument();
   });
@@ -884,13 +986,13 @@ describe("Приёмка с производства: упаковка и отг
     const lineButtons = () => [...document.querySelectorAll("tbody tr")].filter((tr) => tr.textContent?.includes("Жгут") && !tr.textContent.includes("Данные отправки"))
       .flatMap((tr) => [...tr.querySelectorAll("button")].map((button) => button.getAttribute("aria-label") ?? button.textContent ?? ""));
     const expected: Array<[RegExp, string[], RegExp | null]> = [
-      [/^В ожидании/, ["КБ", "Наименование", "Заказано"], null],
-      [/^В производстве/, ["КБ", "Наименование", "Заказано", "Запущено", "Можно принять", ...deliveryHeaders], /^Принять 591К\.3 КБ1/],
-      [/^Готово/, ["КБ", "Наименование", "Заказано", "Можно принять", ...deliveryHeaders], /^Принять 591К\.3 КБ1/],
-      [/^Принято/, ["КБ", "Наименование", "К упаковке", "Дата приёмки", "ГРН", "Упаковать", "УПД", ...deliveryHeaders], /^Упаковать|^Упаковка|^Печать этикетки|^Данные отправки|^Отгрузка /],
-      [/^Упаковано/, ["КБ", "Наименование", "ГРН", "Упаковано", ...deliveryHeaders, "Трек", "PL", "DN", "УПД", "Короба"], /^(Трек|Без УПД) 591К\.3 КБ1|^Документы ОТГ-|^Печать (PL|DN|этикетки)|^Внести УПД/],
-      [/^На отгрузку/, ["КБ", "Наименование", "ГРН", "Упаковано", "Отгрузка", ...deliveryHeaders, "Трек", "PL", "DN", "УПД", "Короба"], /^Отгрузить 591К\.3 КБ1|^Документы ОТГ-|^Печать (PL|DN|этикетки)|^Внести УПД/],
-      [/^Отгружено/, ["КБ", "Наименование", "ГРН", "Отгружено", ...deliveryHeaders, "Трек", "Дата отгрузки"], /^(Печать этикетки|Данные отправки)/],
+      [/^В ожидании/, positionHeaders, null],
+      [/^В производстве/, [...positionHeaders, "Можно принять"], /^Принять 591К\.3 КБ1/],
+      [/^Готово/, [...positionHeaders, "Можно принять"], /^Принять 591К\.3 КБ1/],
+      [/^Принято/, [...positionHeaders, "Упаковать"], /^Упаковать|^Упаковка|^Печать этикетки|^Данные отправки|^Отгрузка /],
+      [/^Упаковано/, [...positionHeaders, "Трек", "Короба"], /^(Трек|Без УПД) 591К\.3 КБ1|^Документы ОТГ-|^Печать (PL|DN|этикетки)|^Внести УПД|^Данные отправки/],
+      [/^На отгрузку/, [...positionHeaders, "Отгрузка", "Трек", "Короба"], /^Отгрузить 591К\.3 КБ1|^Документы ОТГ-|^Печать (PL|DN|этикетки)|^Внести УПД|^Данные отправки/],
+      [/^Отгружено/, positionHeaders, /^(Печать этикетки|Данные отправки|Печать PL|Печать DN|Внести УПД)/],
     ];
     for (const [name, heads, action] of expected) {
       fireEvent.click(tab(name));
@@ -930,12 +1032,10 @@ describe("Приёмка с производства: упаковка и отг
     setRightsPrincipal({ ...viewer, permissions: { shipping: "view", print: "view" } });
     render(<ProductionIntakePage principal={viewer} />);
     fireEvent.click(await screen.findByRole("tab", { name: /^Упаковано/ }));
-    const pl = document.querySelector('td[data-label="PL"]')!;
-    const upd = document.querySelector('td[data-label="УПД"]')!;
-    expect(pl.querySelector('[data-shipment="s1"]')).toHaveTextContent("ОТГ-20261029-01");
-    expect(pl.querySelector('[data-shipment="s2"]')).toHaveTextContent("не сформирован");
-    expect(within(upd.querySelector('[data-shipment="s1"]') as HTMLElement).getByRole("link")).toHaveAttribute("href", "/api/shipping/files/one");
-    expect(within(upd.querySelector('[data-shipment="s2"]') as HTMLElement).getByRole("link")).toHaveAttribute("href", "/api/shipping/files/two");
+    expect(document.querySelector('td[data-label="PL"] [data-shipment="s1"]')).toHaveTextContent("PL");
+    expect(document.querySelector('td[data-label="PL"] [data-shipment="s2"]')).toHaveTextContent("не сформирован");
+    expect(within(document.querySelector('td[data-label="УПД"] [data-shipment="s1"]') as HTMLElement).getByRole("link")).toHaveAttribute("href", "/api/shipping/files/one");
+    expect(within(document.querySelector('td[data-label="УПД"] [data-shipment="s2"]') as HTMLElement).getByRole("link")).toHaveAttribute("href", "/api/shipping/files/two");
     expect(screen.queryByRole("button", { name: /^Печать (PL|DN)/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Сформировать отгрузочные/ })).not.toBeInTheDocument();
     expect(calls.filter((call) => call.method !== "GET")).toEqual([]);
