@@ -1001,12 +1001,52 @@ def duplicate_equipment(record_id: UUID, actor: Actor, now: datetime, uow: UnitO
             tab=source.tab, display_text=display, search_text="", source_sheet="",
             sort_key=display, fields=fields, edited_in_erp=True,
         )
+        record = replace(record, equipment_model_id=source.equipment_model_id)  # another unit of the same model
         uow.tech_operations.save(record)
         _audit("references.tech_record_created", actor, now, {
             "record_id": str(record.id), "tab": record.tab.value, "copy_of": str(source.id),
         }, uow)
         uow.commit()
     return record
+
+
+# --- Equipment identity (owner 05.11.2026: links by id; `equipment_identity.py`) ---
+
+def equipment_models(uow: UnitOfWork) -> list[dict]:
+    with uow:
+        return uow.equipment.models()
+
+
+def equipment_links_report(uow: UnitOfWork) -> dict:
+    with uow:
+        return uow.equipment.report()
+
+
+def set_equipment_serves(unit_id: UUID, target_ids: Sequence[UUID], actor: Actor, now: datetime, uow: UnitOfWork) -> list[str]:
+    """«Обслуживает» of a supporting unit (compressor, chiller…): the whole list of units it serves."""
+    with uow:
+        result = uow.equipment.set_serves(unit_id, target_ids)
+        _audit("references.equipment_serves_set", actor, now, {"record_id": str(unit_id), "serves": result}, uow)
+        uow.commit()
+    return result
+
+
+def set_equipment_role(model_id: UUID, role: str, actor: Actor, now: datetime, uow: UnitOfWork) -> dict:
+    """«Операционное» / «обеспечивающее» of a model, confirmed by the owner."""
+    with uow:
+        result = uow.equipment.set_role(model_id, role)
+        _audit("references.equipment_role_set", actor, now, {"model_id": str(model_id), "role": role}, uow)
+        uow.commit()
+    return result
+
+
+def set_equipment_model(unit_id: UUID, model_id: UUID | None, actor: Actor, now: datetime, uow: UnitOfWork) -> str:
+    """Moves a unit to another model (None — a model of its own): the operations stay linked to the models."""
+    with uow:
+        result = uow.equipment.set_unit_model(unit_id, model_id)
+        _audit("references.equipment_model_set", actor, now, {"record_id": str(unit_id), "model_id": result}, uow)
+        uow.commit()
+    return result
 
 
 # --- «Кабели и провода»: the three lists, moving a БД.ПРОВ row between them, D1·D2·D3 of a coax cable ---

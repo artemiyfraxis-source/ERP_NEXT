@@ -9,7 +9,7 @@ from app.modules.equipment_setup.application import IssuedSetupOperation
 from app.modules.equipment_setup.domain import IssuedOperationRef
 from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.references.domain import TechOperationTab
-from app.modules.references.infrastructure import TechOperationRecordRow
+from app.modules.references.infrastructure import EquipmentModelRow, TechOperationRecordRow
 from app.modules.techcards.infrastructure import RefreshRequestRow
 from app.workflows.equipment_setup_context import SqlAlchemySetupContext
 
@@ -17,7 +17,7 @@ from app.workflows.equipment_setup_context import SqlAlchemySetupContext
 @pytest.fixture
 def db():
     engine = create_engine("sqlite://")
-    for row in (IdentityUserRow, TechOperationRecordRow, RefreshRequestRow):
+    for row in (IdentityUserRow, EquipmentModelRow, TechOperationRecordRow, RefreshRequestRow):
         row.__table__.create(engine)
     with Session(engine) as session:
         yield session
