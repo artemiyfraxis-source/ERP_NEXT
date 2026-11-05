@@ -2,8 +2,8 @@
 
 from sqlalchemy import select
 
-from app.modules.equipment_setup.application import IssuedSetupOperation
-from app.modules.production.domain import EtkOperation
+from app.modules.equipment_setup.application import SITE_UNKNOWN, SITES, IssuedSetupOperation, SetupOperationUnavailable
+from app.modules.production.domain import EtkOperation, ProductionValidationError
 from app.modules.production.infrastructure import ProductionTaskRow, ProductionWorkSessionRow, SqlAlchemyOperatorRepository, SqlAlchemyProductionRepository
 from app.modules.production.launchable import route_from_document
 from app.modules.production.machine_load import inventory_prefix
@@ -78,15 +78,28 @@ class SqlAlchemyProductionResourceContext:
             result[part.position] = next(iter(families), None)
         return result
 
-    def site(self, task, operator_ids):
-        if task.handed_to in {"ЦАР", "ЖУК"}:
+    def _fixed_site(self, task, operator_ids):
+        """Site fixed by the task itself: handed_to, else its executors'. "" = not fixed yet (nobody assigned)."""
+        if task.handed_to in SITES:
             return task.handed_to
         if task.handed_to:
             raise ResourceConflict("Площадка задания не определена")
+        if not operator_ids:
+            return ""
         people = SqlAlchemyOperatorRepository(self.session)
         sites = {person.site if (person := people.get(identifier)) is not None and person.active else "" for identifier in operator_ids}
-        if len(sites) != 1 or not sites.issubset({"ЦАР", "ЖУК"}):
+        if len(sites) != 1 or not sites.issubset(SITES):
             raise ResourceConflict("Уточните площадку исполнителей операции")
+        return next(iter(sites))
+
+    def site(self, task, operator_ids, machine_sites=()):
+        """handed_to → executors' site → the chosen machines' one site."""
+        fixed = self._fixed_site(task, operator_ids)
+        if fixed:
+            return fixed
+        sites = set(machine_sites)
+        if len(sites) != 1 or not sites.issubset(SITES):
+            raise ResourceConflict(SITE_UNKNOWN)
         return next(iter(sites))
 
     def validate(self, task, allocation):
@@ -95,26 +108,40 @@ class SqlAlchemyProductionResourceContext:
         selected = {item.etk_position: item.machine_id for item in allocation.machines}
         if selected.keys() != requirements.keys():
             raise ResourceConflict("Явно выберите физический станок каждой машинной операции ЭТК")
-        site = self.site(task, allocation.operator_ids)
         machines = {item.id: item for item in self.catalog()}
+        site = self.site(task, allocation.operator_ids, {machines[item].site for item in selected.values() if item in machines})
         for position, identifier in selected.items():
             machine = machines.get(identifier)
             if machine is None or machine.site != site or inventory_prefix(identifier) != requirements[position]:
                 raise ResourceConflict("Станок не соответствует операции ЭТК или площадке")
 
+    def _task(self, task_id):
+        return SqlAlchemyProductionRepository(self.session).get(task_id)
+
     def issued_operation(self, reference):
-        task = SqlAlchemyProductionRepository(self.session).get(reference.production_task_id)
-        if task is None or task.techcard_id != reference.card_id or task.techcard_revision != reference.card_revision:
+        """None only when the task, its operation/ETK position or the issued revision really doesn't exist."""
+        task = self._task(reference.production_task_id)
+        if task is None or task.techcard_id != reference.card_id:
             return None
+        if task.techcard_revision != reference.card_revision:
+            raise SetupOperationUnavailable("Ревизия ЭТК задания изменилась — обновите список операций")
         try:
             operation = task.operation(reference.production_operation_id)
-            family = self.requirements(task, operation).get(reference.etk_position)
-            site = self.site(task, operation.operator_ids)
-        except (KeyError, ValueError):
+            self._document(task)
+        except (KeyError, ProductionValidationError, ResourceConflict):
             return None
-        if not family:
-            return None
-        eligible = tuple(item.id for item in self.catalog() if item.site == site and inventory_prefix(item.id) == family)
+        try:
+            requirements = self.requirements(task, operation)
+            if reference.etk_position not in requirements:
+                return None
+            family = requirements[reference.etk_position]
+            if not family:
+                raise SetupOperationUnavailable("В ЭТК нет оборудования для операции")
+            site = self._fixed_site(task, operation.operator_ids)
+        except ValueError as error:  # ResourceConflict and route/ETK validation: the operation exists, say why
+            raise SetupOperationUnavailable(str(error)) from error
+        eligible = tuple(item.id for item in self.catalog()
+            if (item.site == site if site else item.site in SITES) and inventory_prefix(item.id) == family)
         return IssuedSetupOperation(operation=reference, site=site, eligible_machine_ids=eligible)
 
     def assert_legacy_available(self, resource, window, *, excluding=()):

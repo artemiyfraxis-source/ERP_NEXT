@@ -36,6 +36,16 @@ class SetupCommandConflict(ConcurrentSetupUpdate):
     pass
 
 
+class SetupOperationUnavailable(SetupResourceConflict):
+    """The exact issued operation exists, but setup cannot be planned on it; the message names the reason."""
+
+    pass
+
+
+SITES = frozenset({"ЦАР", "ЖУК"})
+SITE_UNKNOWN = "Площадка не определена — назначьте исполнителя или выберите станок"
+
+
 @dataclass(frozen=True)
 class SetupPerson:
     """Server-loaded employee; eligibility is activity and site, never a guessed job title."""
@@ -48,6 +58,8 @@ class SetupPerson:
 
 @dataclass(frozen=True)
 class IssuedSetupOperation:
+    """site is fixed by the task (handed_to, else its executors); "" means the chosen machine decides it."""
+
     operation: IssuedOperationRef
     site: str
     eligible_machine_ids: tuple[str, ...]
@@ -62,7 +74,8 @@ class SetupMachine:
 class SetupContext(Protocol):
     """Reads use the same transaction. None means missing, inactive source, or unresolved exact identity.
 
-    issued_operation verifies the production task/operation and issued card revision/ETK position together.
+    issued_operation verifies the production task/operation and issued card revision/ETK position together:
+    None only when they do not exist; SetupOperationUnavailable names why an existing one can't take setup.
     machine resolves one physical inventory identity, never a model. recipe_exists verifies the pinned
     version's applicability to that machine. These values must be loaded by adapters, never API DTOs.
     """
@@ -234,7 +247,11 @@ def _site(context: SetupContext, task: SetupTask, *, require_eligible_technician
         raise SetupValidationError("Выданная операция и точная ревизия ЭТК не найдены")
     if machine is None or machine.id != task.machine_id:
         raise SetupValidationError("Физический станок не найден")
-    if operation.site not in {"ЦАР", "ЖУК"} or machine.site != operation.site:
+    # "" = the task fixes no site (no handed_to, no executor): the chosen machine's site decides.
+    site = operation.site or machine.site
+    if not operation.site and site not in SITES:
+        raise SetupOperationUnavailable(SITE_UNKNOWN)
+    if site not in SITES or machine.site != site:
         raise SetupPermissionError("Операция и станок должны быть с одной известной площадки")
     if require_eligible_technician:
         if task.machine_id not in operation.eligible_machine_ids:
@@ -242,9 +259,9 @@ def _site(context: SetupContext, task: SetupTask, *, require_eligible_technician
         technician = context.person(task.technician_id)
         if technician is None or technician.actor.id != task.technician_id or not technician.active:
             raise SetupValidationError("Назначенный наладчик неактивен или не найден")
-        if technician.site != operation.site:
+        if technician.site != site:
             raise SetupPermissionError("Назначенный наладчик должен быть с площадки операции и станка")
-    return operation.site
+    return site
 
 
 def _authorize(principal: Principal, person: SetupPerson, site: str, *, manager: bool, task: SetupTask) -> None:

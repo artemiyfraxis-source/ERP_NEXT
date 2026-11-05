@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from app.modules.equipment_setup.api import router
-from app.modules.equipment_setup.application import SetupResourceConflict
+from app.modules.equipment_setup.application import IssuedSetupOperation, SetupMachine, SetupOperationUnavailable, SetupResourceConflict
 from tests.equipment_setup.test_application import env, principal
 from tests.equipment_setup.test_recipe_application import Recipes
 
@@ -151,7 +151,57 @@ def test_assignment_context_requires_exact_existing_issued_reference(client, env
     assert client.get(endpoint, params=params).status_code == 404
     params = jsonable_encoder(asdict(env[4].operation))
     params["production_operation_id"] = str(uuid4())
-    assert client.get(endpoint, params=params).status_code == 404
+    response = client.get(endpoint, params=params)
+    assert (response.status_code, response.json()["detail"]) == (404, "Точная выданная операция не найдена")
+
+
+CONTEXT = "/api/production/equipment-setup/assignment-context"
+
+
+def unfixed_site(env):
+    """Issued operation with no executor and no handed_to: the task fixes no site, the chosen machine will."""
+    uow, _, _, _, command = env
+    uow.context.machines["ОБ.027.3"] = SetupMachine("ОБ.027.3", "ЖУК")
+    uow.context.operations[command.operation] = IssuedSetupOperation(command.operation, "", ("ОБ.027.2", "ОБ.027.3"))
+    return jsonable_encoder(asdict(command.operation))
+
+
+def test_operation_without_executor_lists_own_site_machines_and_assigns_on_chosen_machine(client, env):
+    params = unfixed_site(env)
+    response = client.get(CONTEXT, params=params)
+    assert response.status_code == 200, response.text
+    assert [item["id"] for item in response.json()["items"]] == ["ОБ.027.2"]
+    client.app.state.test_principal = principal(env[1], full_access=True)
+    assert [item["id"] for item in client.get(CONTEXT, params=params).json()["items"]] == ["ОБ.027.2", "ОБ.027.3"]
+    client.app.state.test_principal = principal(env[1])
+    other = dict(payload(env), machine_id="ОБ.027.3", idempotency_key="other-site")
+    assert client.post("/api/production/equipment-setup/tasks", json=other).status_code == 403
+    response = client.post("/api/production/equipment-setup/tasks", json=payload(env))
+    assert response.status_code == 200, response.text
+    assert response.json()["machine_id"] == "ОБ.027.2"
+
+
+def test_operation_without_any_site_names_what_to_do(client, env):
+    params = unfixed_site(env)
+    env[0].context.people[env[1].actor.id] = replace(env[1], site="")
+    response = client.get(CONTEXT, params=params)
+    assert (response.status_code, response.json()["detail"]) == (409, "Площадка не определена — назначьте исполнителя или выберите станок")
+
+
+@pytest.mark.parametrize("message", [
+    "Ревизия ЭТК задания изменилась — обновите список операций",
+    "В ЭТК нет оборудования для операции",
+    "Площадка не определена — назначьте исполнителя или выберите станок",
+])
+def test_unavailable_operation_reason_reaches_the_screen_as_is(client, env, message):
+    def unavailable(reference):
+        raise SetupOperationUnavailable(message)
+    env[0].context.issued_operation = unavailable
+    response = client.get(CONTEXT, params=jsonable_encoder(asdict(env[4].operation)))
+    assert (response.status_code, response.json()["detail"]) == (409, message)
+    response = client.post("/api/production/equipment-setup/tasks", json=payload(env))
+    assert (response.status_code, response.json()["detail"]) == (409, message)
+    assert not env[0].tasks.items
 
 
 def test_recipe_version_and_trial_reads_follow_machine_and_task_rights(client, env):

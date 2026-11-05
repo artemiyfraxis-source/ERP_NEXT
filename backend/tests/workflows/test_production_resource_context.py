@@ -23,7 +23,7 @@ class Context(SqlAlchemyProductionResourceContext):
     def _document(self, task):
         return self.document
 
-    def site(self, task, operators):
+    def site(self, task, operators, machine_sites=()):
         return "ЦАР"
 
     def catalog(self):
