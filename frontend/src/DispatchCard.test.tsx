@@ -75,24 +75,34 @@ describe("Данные отправки", () => {
     expect(screen.getByLabelText("Дата УПД")).toBeDisabled();
     expect(calls.every(({ method }) => method === "GET")).toBe(true);
   });
-  it("показывает адресата, доставку и комментарий для склада", async () => {
+  it("окно проекта: только адрес, получатель, телефон и УПД — без типа доставки, ТК и комментария", async () => {
     const dialog = await open();
-    expect(within(dialog).getAllByRole("textbox").map((input) => input.getAttribute("aria-label"))).toEqual(["Получатель", "Адрес доставки", "Телефон", "№ УПД", "Комментарий для склада"]);
-    expect(within(dialog).getAllByRole("combobox").map((input) => input.getAttribute("aria-label"))).toEqual(["Тип доставки", "Перевозчик", "УПД"]);
-    for (const hidden of ["Контактное лицо", "Условия доставки", "Способ отгрузки / ТК", "Плановая дата отгрузки", "Комментарий"]) {
+    expect(within(dialog).getAllByRole("textbox").map((input) => input.getAttribute("aria-label"))).toEqual(["Получатель", "Адрес доставки", "Телефон", "№ УПД"]);
+    expect(within(dialog).getAllByRole("combobox").map((input) => input.getAttribute("aria-label"))).toEqual(["УПД"]);
+    for (const hidden of ["Тип доставки", "Перевозчик", "Комментарий для склада", "Контактное лицо", "Условия доставки", "Способ отгрузки / ТК", "Плановая дата отгрузки", "Комментарий"]) {
       expect(within(dialog).queryByLabelText(hidden)).not.toBeInTheDocument();
     }
   });
 
-  it("pickup hides the address, preserves history and saves the warehouse comment with the version", async () => {
+  it.each([
+    ["waiting", false], ["production", false], ["ready", true], ["accepted", true], ["packed", true], ["to_ship", true], ["shipped", true],
+  ] as const)("этап %s: адрес, получатель, телефон всегда; УПД с «Готово» (%s); доставки и ТК нет", async (stage, withUpd) => {
+    render(<DispatchCard project="591К.3" stage={stage} canEdit close={() => undefined} />);
+    await waitFor(() => expect(screen.getByLabelText("Получатель")).toHaveValue("ООО Заказчик"));
+    for (const label of ["Получатель", "Адрес доставки", "Телефон"]) expect(screen.getByLabelText(label)).toBeInTheDocument();
+    expect(Boolean(screen.queryByLabelText("УПД"))).toBe(withUpd);
+    for (const hidden of ["Тип доставки", "Перевозчик", "Комментарий для склада"]) expect(screen.queryByLabelText(hidden)).not.toBeInTheDocument();
+  });
+
+  it("самовывоз в карточке не прячет адрес и не стирает ТК: PUT не содержит доставки, ТК и комментария", async () => {
+    stored = { ...card, terms: "САМОВЫВОЗ", carrier: "Самовывоз" };
     await open();
-    fireEvent.change(screen.getByLabelText("Тип доставки"), { target: { value: "САМОВЫВОЗ" } });
-    expect(screen.queryByLabelText("Адрес доставки")).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Комментарий для склада"), { target: { value: "В понедельник сами приедут" } });
+    expect(screen.getByLabelText("Адрес доставки")).toHaveValue("Москва");
+    fireEvent.change(screen.getByLabelText("Телефон"), { target: { value: "+7 900" } });
     fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
     await screen.findByText("Данные отправки сохранены");
-    expect(calls.find((call) => call.method === "PUT")!.body).toEqual({ project: "591К.3", version: 2, terms: "САМОВЫВОЗ", carrier: "Самовывоз", note: "В понедельник сами приедут" });
-    expect(stored.shipping_point).toBe("Москва");
+    expect(calls.find((call) => call.method === "PUT")!.body).toEqual({ project: "591К.3", version: 2, phone: "+7 900" });
+    expect(stored.terms).toBe("САМОВЫВОЗ");
   });
 
   it("не шлёт скрытые поля: в PUT только версия и изменённое", async () => {
