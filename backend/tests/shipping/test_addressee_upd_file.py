@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import replace
 
+import pytest
 from sqlalchemy import select
 
 from app.main import app
-from app.modules.shipping.domain import ProjectAddressee, UpdType
+from app.modules.shipping.domain import DeliveryTerms, ProjectAddressee, UpdType
 from app.modules.shipping.infrastructure import ShippingFileRow
 from tests.shipping.test_api import permit_fixture_goods, decide_pack, shipping_api  # noqa: F401 — fixture
 from tests.shipping.test_dispatch_plan import _as
@@ -131,11 +133,31 @@ def test_own_file_or_electronic_upd_of_a_shipment_is_not_replaced_by_the_card(sh
     assert electronic["upd_url"] == ""
 
 
-def test_dispatch_gaps_name_what_is_missing():
-    empty = ProjectAddressee.empty(PROJECT)
-    paper = ProjectAddressee(project=PROJECT, receiver="П", shipping_point="М", phone="1", upd_type=UpdType.PAPER)
+@pytest.mark.parametrize("blank", ["-", " — ", "–", "  ", "--", "_"])
+def test_dash_or_spaces_count_as_empty(blank):
+    card = ProjectAddressee(project=PROJECT, receiver=blank, shipping_point=blank, phone=blank,
+                            terms=DeliveryTerms.CARRIER, carrier=blank, upd_type=UpdType.EDO, upd_number=blank)
 
-    assert empty.dispatch_gaps() == ("получатель", "адрес доставки", "телефон", "вариант УПД")
-    assert paper.dispatch_gaps() == ("файл бумажной УПД",)
-    assert ProjectAddressee(project=PROJECT, receiver="П", shipping_point="М", phone="1", upd_type=UpdType.EDO).dispatch_gaps() == ()
+    assert card.dispatch_gap_codes() == ("receiver", "phone", "carrier", "shipping_point", "upd_number")
+
+
+def test_edo_without_number_is_a_number_gap_not_a_missing_upd():
+    edo = ProjectAddressee(project=PROJECT, receiver="П", phone="1", terms=DeliveryTerms.PICKUP, upd_type=UpdType.EDO)
+
+    assert edo.dispatch_gaps() == ("№ УПД",) and edo.dispatch_gap_codes() == ("upd_number",)
+
+
+def test_dispatch_gaps_name_what_is_missing():
+    """Те же правила и слова, что у отправки (`shipping_gaps`): условия доставки, ТК, № УПД — тоже (06.11.2026)."""
+    empty = ProjectAddressee.empty(PROJECT)
+    paper = ProjectAddressee(project=PROJECT, receiver="П", shipping_point="М", phone="1", terms=DeliveryTerms.CARRIER,
+                             carrier="ПЭК", upd_type=UpdType.PAPER, upd_number="125")
+
+    assert empty.dispatch_gaps() == ("условия доставки", "получатель", "телефон получателя", "адрес доставки", "тип УПД")
+    assert empty.dispatch_gap_codes() == ("terms", "receiver", "phone", "shipping_point", "upd_type")
+    assert paper.dispatch_gaps() == ("файл УПД",)
     assert paper.edit({"upd_url": " /api/shipping/files/1 "}).dispatch_gaps() == ()
+    assert replace(paper, upd_type=UpdType.EDO).dispatch_gaps() == ()
+    # «Без УПД» у проекта — не пробел: разрешение по PIN дают отправке.
+    assert replace(paper, upd_type=UpdType.NONE, upd_number="").dispatch_gaps() == ()
+    assert replace(paper, upd_type=UpdType.EDO, carrier="").dispatch_gap_codes() == ("carrier",)

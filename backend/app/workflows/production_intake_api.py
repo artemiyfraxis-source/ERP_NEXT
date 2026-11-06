@@ -40,7 +40,9 @@ def list_intake(
         "project": row.project, "customer": row.customer,
         "deadline": row.deadline.isoformat() if row.deadline else None,
         "item_index": row.item_index, "name": row.name, "unit": row.unit, "stage": row.stage,
-        "project_stage": row.project_stage, "pack_decided": row.pack_decided,
+        "project_stage": row.project_stage, "pack_allowed": row.pack_allowed,
+        # Устаревшее имя `pack_allowed` (флаг 0162 умер с лимитами по КБ) — для старого фронтенда, на один выпуск.
+        "pack_decided": row.pack_allowed,
         "pack_permission_quantity": _number(row.pack_permission_quantity),
         "pack_permission_remaining": _number(row.pack_permission_remaining),
         "pack_permission_version": row.pack_permission_version,

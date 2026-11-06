@@ -200,8 +200,8 @@ def _shipment(sessions, manager=MANAGER, upd_url="", upd_type=UpdType.PAPER):
     """Упакованная отправка ТК с № УПД и телефоном: трек вписывается, когда УПД и ТК на месте (владелец 29.10.2026)."""
     uow = lambda: SqlAlchemyShippingUnitOfWork(sessions)
     from app.modules.shipping.domain import PackPermission
-    with uow() as card_uow:  # менеджер уже решил «упаковывать»; само решение — не предмет этих тестов
-        card_uow.addressees.add(replace(ProjectAddressee.empty("316К").decide_pack(True, manager.name, NOW), version=1))
+    with uow() as card_uow:  # лимит упаковки КБ уже есть; само разрешение — не предмет этих тестов
+        card_uow.addressees.add(replace(ProjectAddressee.empty("316К"), version=1))
         card_uow.pack_permissions.add(PackPermission("316К", "КБ1", Decimal("10"), 1, manager.name, NOW))
         card_uow.commit()
     good = register_good(RegisterGoodCommand(

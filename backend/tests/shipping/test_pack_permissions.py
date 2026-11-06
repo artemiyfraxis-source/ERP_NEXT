@@ -69,21 +69,106 @@ def test_permission_is_explicit_atomic_versioned_and_not_a_stock_write(shipping_
     assert (view["remaining"], view["physical_remaining"], view["consumed"]) == ("0", "2", "4")
 
 
-def test_legacy_flag_and_manager_create_cannot_bypass_explicit_cap(shipping_api):
+def permission_view(client, item_index="КБ1"):
+    rows = client.get("/api/shipping/project-pack-permissions", params={"project": PROJECT}).json()["permissions"]
+    return next(row for row in rows if row["item_index"] == item_index)
+
+
+def permission_events():
+    from sqlalchemy import select
+    from app.shared.persistence import AuditEventRow
+    with app.state.shipping_uow_factory() as uow:
+        return [row.details for row in uow.session.scalars(select(AuditEventRow).where(
+            AuditEventRow.event_type == "shipping.pack_permission_changed"))]
+
+
+def test_legacy_flag_does_not_bypass_cap_but_manager_shipment_grants_what_it_picks(shipping_api):
+    """Договорено 29.10.2026: отправка менеджера — сама решение упаковывать. Набирая, она поднимает лимит КБ до
+    набранного (журнал и уведомление — как у явного разрешения); старый флаг проекта (0162) ничего не разрешает."""
+    from dataclasses import replace
     from app.modules.shipping.domain import ProjectAddressee
     client = shipping_api
     good = _good(client)
     with app.state.shipping_uow_factory() as uow:
-        uow.addressees.add(ProjectAddressee.empty(PROJECT).decide_pack(True, "Менеджер", NOW))
+        uow.addressees.add(replace(ProjectAddressee.empty(PROJECT), pack_decided_by="Менеджер", pack_decided_at=NOW))
         uow.commit()
     assert pack(client, good).status_code == 422
     response = client.post("/api/shipping/shipments", json={
         "customer": "Заказчик", "receiver": "Получатель", "lines": [{"good_id": good["id"], "quantity": "4"}],
     })
-    assert response.status_code == 422, response.text
+    assert response.status_code == 200, response.text
+    assert response.json()["shipment"]["lines"][0]["picked"] == "4"
+    view = permission_view(client)
+    assert (view["quantity"], view["consumed"], view["remaining"], view["version"]) == ("4", "4", "0", 1)
+    (event,) = permission_events()
+    assert (event["before"], event["quantity"], event["shipment"]) == ("0", "4", response.json()["shipment"]["number"])
     assert client.post("/api/shipping/project-pack-decision", json={
         "project": PROJECT, "version": 0, "decided": True,
-    }).status_code == 422
+    }).status_code in {404, 405}
+
+
+def test_manager_request_ahead_of_production_needs_no_limit(shipping_api):
+    client = shipping_api
+    queued = _good(client, accepted="")
+    response = client.post("/api/shipping/shipments", json={
+        "customer": "Заказчик", "receiver": "Получатель", "lines": [{"good_id": queued["id"], "quantity": "10"}],
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["shipment"]["status"] == "Новая"
+    assert permission_view(client)["version"] == 0 and permission_events() == []
+
+
+def test_manager_request_beyond_stock_grants_only_what_is_in_stock(shipping_api):
+    client = shipping_api
+    good = _good(client, accepted="6")
+    response = client.post("/api/shipping/shipments", json={
+        "customer": "Заказчик", "receiver": "Получатель", "lines": [{"good_id": good["id"], "quantity": "10"}],
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["shipment"]["lines"][0]["picked"] == "6"
+    view = permission_view(client)
+    assert (view["quantity"], view["remaining"]) == ("6", "0")
+
+
+def test_limit_is_checked_against_what_is_picked_not_what_is_ordered(shipping_api):
+    """Кладовщик набирает заявку на 10, на складе 2 и лимит 2 — набор 2 проходит; лимит сверх набранного не нужен."""
+    from tests.shipping.test_pack_decision_no_upd import STOREKEEPER, _as
+    client = shipping_api
+    queued = _good(client, accepted="")
+    made = client.post("/api/shipping/shipments", json={
+        "customer": "Заказчик", "receiver": "Получатель", "lines": [{"good_id": queued["id"], "quantity": "10"}],
+    }).json()["shipment"]
+    assert grant(client, "2").status_code == 200
+    fresh = client.get("/api/shipping/goods").json()["goods"][0]
+    _as(STOREKEEPER)
+    assert client.post(f"/api/shipping/goods/{fresh['id']}/accept", json={"version": fresh["version"], "quantity": "2"}).status_code == 200
+    picked = client.post(f"/api/shipping/shipments/{made['id']}/pick", json={"version": made["version"]})
+    assert picked.status_code == 200, picked.text
+    assert picked.json()["shipment"]["lines"][0]["picked"] == "2"
+    assert permission_view(client)["quantity"] == "2"
+    # Кладовщик лимит не поднимает: больше на складе — больше разрешённого — отказ.
+    fresh = client.get("/api/shipping/goods").json()["goods"][0]
+    assert client.post(f"/api/shipping/goods/{fresh['id']}/accept", json={"version": fresh["version"], "quantity": "3"}).status_code == 200
+    again = client.post(f"/api/shipping/shipments/{made['id']}/pick", json={"version": picked.json()["shipment"]["version"]})
+    assert again.status_code == 422 and "разрешено ещё 0" in again.json()["detail"]
+
+
+def test_manager_project_ship_grants_and_storekeeper_project_ship_does_not(shipping_api):
+    from tests.shipping.test_pack_decision_no_upd import STOREKEEPER, _as
+    client = shipping_api
+    good = _good(client, accepted="6")
+    body = {"project": PROJECT, "addressee_version": 0, "ship": False,
+            "lines": [{"good_id": good["id"], "version": good["version"], "quantity": "3"}]}
+    _as(STOREKEEPER)
+    refused = client.post("/api/shipping/project-ship", json=body, headers={"Idempotency-Key": "store-1"})
+    assert refused.status_code == 422 and "разрешено ещё 0" in refused.json()["detail"]
+    from tests.shipping.test_pack_decision_no_upd import ADMIN
+    _as(ADMIN)
+    made = client.post("/api/shipping/project-ship", json=body, headers={"Idempotency-Key": "manager-1"})
+    assert made.status_code == 200, made.text
+    assert made.json()["shipment"]["lines"][0]["picked"] == "3"
+    view = permission_view(client)
+    assert (view["quantity"], view["remaining"], view["version"]) == ("3", "0", 1)
 
 
 def test_only_manager_can_grant_and_batch_is_all_or_nothing(shipping_api):
@@ -131,15 +216,19 @@ def test_sent_is_consumed_once_and_missing_permission_has_consumed_baseline(ship
     assert response.json()["permissions"][0]["remaining"] == "1"
 
 
-def test_explicit_cap_is_not_silently_truncated_on_manager_create(shipping_api):
+def test_manager_create_raises_explicit_cap_openly_instead_of_truncating(shipping_api):
     client = shipping_api
     good = _good(client)
     assert grant(client, "2").status_code == 200
     response = client.post("/api/shipping/shipments", json={
         "customer": "Заказчик", "receiver": "Получатель", "lines": [{"good_id": good["id"], "quantity": "3"}],
     })
-    assert response.status_code == 422
-    assert "разрешено ещё 2" in response.json()["detail"]
+    assert response.status_code == 200, response.text
+    assert response.json()["shipment"]["lines"][0]["picked"] == "3"
+    view = permission_view(client)
+    assert (view["quantity"], view["version"]) == ("3", 2)
+    assert [(event["before"], event["quantity"]) for event in permission_events()] == [("0", "2"), ("2", "3")]
+    assert pack(client, good, "1").status_code == 422  # склад сверх лимита не набирает
 
 
 def test_concurrent_reduction_and_pick_share_one_lock(tmp_path):

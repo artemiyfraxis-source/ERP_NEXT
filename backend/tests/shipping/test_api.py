@@ -62,6 +62,7 @@ def test_bulk_project_card_readiness_includes_virtual_defaults_without_writes(sh
     client.put("/api/shipping/project-addressee", json={"project": "PART", "receiver": "Получатель"})
     client.put("/api/shipping/project-addressee", json={
         "project": "PICKUP", "receiver": "Получатель", "phone": "+7", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО",
+        "upd_number": "УПД-1",
     })
     params = [("project", project) for project in ["EMPTY", "PART", "PICKUP", "EMPTY"]]
     response = client.get("/api/shipping/project-addressees", params=params)
@@ -69,9 +70,10 @@ def test_bulk_project_card_readiness_includes_virtual_defaults_without_writes(sh
     cards = {card["project"]: card for card in response.json()["addressees"]}
     assert len(response.json()["addressees"]) == 3
     assert cards["EMPTY"]["version"] == 0
-    assert cards["EMPTY"]["dispatch_gaps"] == ["получатель", "адрес доставки", "телефон", "вариант УПД"]
-    assert cards["PART"]["dispatch_gaps"] == ["адрес доставки", "телефон", "вариант УПД"]
-    assert cards["PICKUP"]["dispatch_gaps"] == []
+    assert cards["EMPTY"]["dispatch_gaps"] == ["условия доставки", "получатель", "телефон получателя", "адрес доставки", "тип УПД"]
+    assert cards["EMPTY"]["dispatch_gap_codes"] == ["terms", "receiver", "phone", "shipping_point", "upd_type"]
+    assert cards["PART"]["dispatch_gaps"] == ["условия доставки", "телефон получателя", "адрес доставки", "тип УПД"]
+    assert cards["PICKUP"]["dispatch_gaps"] == [] and cards["PICKUP"]["dispatch_gap_codes"] == []
     assert "ready_to_ship" not in cards["PICKUP"]
     assert {card["project"] for card in client.get("/api/shipping/project-addressees").json()["addressees"]} == {"PART", "PICKUP"}
     assert client.get("/api/shipping/project-addressee", params={"project": "EMPTY"}).json()["addressee"]["dispatch_gaps"] == cards["EMPTY"]["dispatch_gaps"]
@@ -84,10 +86,12 @@ def test_project_card_readiness_is_not_shipment_readiness_or_pack_permission(shi
         card = client.put("/api/shipping/project-addressee", json={
             "project": project, "receiver": "Получатель", "phone": "+7", "carrier": carrier, "upd_type": "БУМАГА",
         }).json()["addressee"]
-        assert card["dispatch_gaps"] == (["файл бумажной УПД"] if carrier == "Самовывоз" else ["адрес доставки", "файл бумажной УПД"])
+        assert card["dispatch_gaps"] == (["условия доставки", "№ УПД", "файл УПД"] if carrier == "Самовывоз"
+                                         else ["условия доставки", "адрес доставки", "№ УПД", "файл УПД"])
         assert not card["pack_decided"]
+    # Старый флаг «упаковывать» (0162) снят вместе с маршрутом: упаковку разрешают лимиты по КБ (0169).
     refused = client.post("/api/shipping/project-pack-decision", json={"project": "EMPTY", "version": 0, "decided": True})
-    assert refused.status_code == 422
+    assert refused.status_code in {404, 405}
     untouched = client.get("/api/shipping/project-addressee", params={"project": "EMPTY"}).json()["addressee"]
     assert not untouched["pack_decided"] and untouched["dispatch_gaps"]
 
@@ -391,7 +395,7 @@ def test_acceptance_notifies_about_missing_address_only_for_delivery(shipping_ap
     client = shipping_api
     card = client.put("/api/shipping/project-addressee", json={
         "project": "591К.3", "receiver": "Получатель", "phone": "1", "terms": terms,
-        "carrier": carrier, "upd_type": "ЭДО",
+        "carrier": carrier, "upd_type": "ЭДО", "upd_number": "УПД-1",
     })
     assert card.status_code == 200, card.text
     good = _good_with_stock(client, accepted="")
@@ -402,7 +406,9 @@ def test_acceptance_notifies_about_missing_address_only_for_delivery(shipping_ap
     with app.state.shipping_uow_factory() as uow:
         notices = [row.payload for row in uow.session.scalars(select(OutboxMessageRow))
                    if "Нет данных отправки" in str(row.payload.get("title"))]
-    assert len(notices) == int(address_required)
+    assert any("адрес доставки" in notice["body"] for notice in notices) is address_required
+    if terms is not None:
+        assert len(notices) == int(address_required)
     if address_required:
         assert "данных отправки нет: адрес доставки." in notices[0]["body"]
 
