@@ -7,7 +7,7 @@ There are no SQLAlchemy listeners, commits, automatic physical-machine choices o
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, ForeignKey, Index, JSON, Uuid, delete, select, text
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, Uuid, delete, select, text
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.shared.clock import MOSCOW
@@ -24,7 +24,16 @@ class ResourceAllocationRow(Base):
     task_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("production_tasks.id", ondelete="RESTRICT"), nullable=False, index=True)
     operation_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("production_operations.id", ondelete="RESTRICT"), nullable=False, index=True)
     crew: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    machines: Mapped[list] = mapped_column(JSON, nullable=False)
+
+
+class ResourceAllocationMachineRow(Base):
+    """The БД.ОБ unit chosen for one ETK position of an allocation (0172): by the unit's id, never its inventory
+    number, so renumbering a unit keeps the allocation and an allocated unit can't be deleted."""
+    __tablename__ = "production_resource_allocation_machines"
+    __table_args__ = (CheckConstraint("etk_position > 0", name="ck_resource_allocation_machine_position"),)
+    allocation_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("production_resource_allocations.id", ondelete="RESTRICT"), primary_key=True)
+    etk_position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    machine_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("tech_operation_records.id", ondelete="RESTRICT"), nullable=False, index=True)
 
 
 class ResourceAllocationMemberRow(Base):
@@ -59,6 +68,10 @@ def _owner(identifier):
     return ResourceOwner("production", identifier)
 
 
+def _bindings(allocation):
+    return [{"etk_position": item.etk_position, "machine_id": item.machine_id} for item in allocation.machines]
+
+
 def _moment(value: datetime):
     # Production's legacy naive wall times are shop times, not fabricated UTC timestamps.
     return value.replace(tzinfo=MOSCOW) if value.tzinfo is None else value
@@ -89,15 +102,17 @@ class SqlAlchemyProductionResources:
             members = [member for member in self._members(row.id) if member.current]
             if members:
                 current.append({"id": str(row.id), "crew": row.crew,
-                    "operator_ids": [str(member.operator_id) for member in members], "machine_bindings": row.machines})
+                    "operator_ids": [str(member.operator_id) for member in members], "machine_bindings": self._machines(row.id)})
         try:
             required = self.resolver.requirements(task, operation)
             site = self.resolver.site(task, tuple(operator_ids) if operator_ids is not None else operation.operator_ids)
             catalog = self.resolver.catalog()
-            choices = [{"etk_position": position, "family": family,
-                "machines": [{"id": machine.id, "name": machine.name, "model": machine.model, "site": machine.site}
-                    for machine in catalog if self.resolver.matches(machine, family, site)]}
-                for position, family in required.items() if family]
+            choices = [{"etk_position": position, "equipment_model_id": str(model),
+                "family": self.resolver.family_label(model, catalog),
+                "machines": [{"id": str(machine.id), "inventory_number": machine.inventory_number, "name": machine.name,
+                              "model": machine.model, "site": machine.site}
+                    for machine in catalog if self.resolver.matches(machine, model, site)]}
+                for position, model in required.items() if model]
             error = None
         except ResourceConflict as failure:
             choices, site, error = [], None, str(failure)
@@ -121,6 +136,7 @@ class SqlAlchemyProductionResources:
                 self.session.delete(member)
             self.claims.release_plan(_owner(row.id))
             self.session.execute(delete(ResourceGroupRunRow).where(ResourceGroupRunRow.allocation_id == row.id))
+            self.session.execute(delete(ResourceAllocationMachineRow).where(ResourceAllocationMachineRow.allocation_id == row.id))
             self.session.flush()
             self.session.delete(row)
         self.session.flush()
@@ -141,6 +157,15 @@ class SqlAlchemyProductionResources:
             # Empty means positively validated manual work, never the first matching machine.
             machines = ()
         self.configure(task, PhysicalAllocation(task.id, operation_id, tuple(operator_ids), tuple(machines), crew=crew))
+
+    def _machines(self, allocation_id):
+        """[{etk_position, machine_id: canonical unit UUID}] of an allocation, by ETK position."""
+        rows = self.session.scalars(select(ResourceAllocationMachineRow).where(
+            ResourceAllocationMachineRow.allocation_id == allocation_id).order_by(ResourceAllocationMachineRow.etk_position))
+        return [{"etk_position": row.etk_position, "machine_id": str(row.machine_id)} for row in rows]
+
+    def _machine_keys(self, allocation_id):
+        return tuple(ResourceKey(ResourceKind.MACHINE, key) for key in sorted({item["machine_id"] for item in self._machines(allocation_id)}))
 
     def _members(self, allocation_id):
         return list(self.session.scalars(select(ResourceAllocationMemberRow).where(
@@ -178,8 +203,8 @@ class SqlAlchemyProductionResources:
         if existing and len({member.allocation_id for member in existing}) == 1:
             old = self.session.get(ResourceAllocationRow, existing[0].allocation_id)
             current = {member.operator_id for member in self._members(old.id) if member.current}
-            expected = [{"etk_position": item.etk_position, "machine_id": item.machine_id} for item in allocation.machines]
-            if current == set(allocation.operator_ids) and old.machines == expected and old.crew == allocation.crew:
+            expected = sorted(_bindings(allocation), key=lambda item: item["etk_position"])
+            if current == set(allocation.operator_ids) and self._machines(old.id) == expected and old.crew == allocation.crew:
                 self.record_task(task)
                 return old.id
         if any(self._open_memberships(member.id) for member in existing):
@@ -189,10 +214,12 @@ class SqlAlchemyProductionResources:
             member.current = False
             self.claims.release_plan(_owner(member.id))
         self.session.flush()
-        row = ResourceAllocationRow(id=uuid4(), task_id=task.id, operation_id=operation.id,
-            crew=allocation.crew, machines=[{"etk_position": item.etk_position, "machine_id": item.machine_id} for item in allocation.machines])
+        row = ResourceAllocationRow(id=uuid4(), task_id=task.id, operation_id=operation.id, crew=allocation.crew)
         self.session.add(row)
         self.session.flush()
+        for item in allocation.machines:
+            self.session.add(ResourceAllocationMachineRow(allocation_id=row.id, etk_position=item.etk_position,
+                                                          machine_id=UUID(item.machine_id)))
         for operator in allocation.operator_ids:
             self.session.add(ResourceAllocationMemberRow(id=uuid4(), allocation_id=row.id,
                 operation_id=operation.id, operator_id=operator, current=True))
@@ -224,7 +251,7 @@ class SqlAlchemyProductionResources:
                     window = ResourceWindow(_moment(share.planned_start), _moment(share.planned_finish))
                     windows.append(window)
                     plans.append((_owner(member.id), (ResourceKey(ResourceKind.PERSON, str(member.operator_id)),), window))
-                machines = tuple(ResourceKey(ResourceKind.MACHINE, key) for key in sorted({item["machine_id"] for item in row.machines}))
+                machines = self._machine_keys(row.id)
                 if windows and machines:
                     window = ResourceWindow(min(item.start for item in windows), max(item.finish for item in windows))
                     plans.append((_owner(row.id), machines, window))
@@ -266,7 +293,7 @@ class SqlAlchemyProductionResources:
             run = ResourceGroupRunRow(id=uuid4(), allocation_id=allocation.id, closed=False)
             self.session.add(run)
             self.session.flush()
-        machines = tuple(ResourceKey(ResourceKind.MACHINE, key) for key in sorted({item["machine_id"] for item in allocation.machines}))
+        machines = self._machine_keys(allocation.id)
         now = _moment(work.started_at)
         if machines:
             self.claims.activate(_owner(allocation.id), run.id, machines, now)

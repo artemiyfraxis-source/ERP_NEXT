@@ -4,7 +4,7 @@ from dataclasses import asdict
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKeyConstraint, Integer, String, Uuid, select, text, update
+from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Integer, String, Uuid, select, text, update
 from sqlalchemy.orm import Mapped, Session
 
 from app.shared.advisory_lock import lock_key
@@ -36,7 +36,7 @@ def task_from_payload(payload: dict) -> SetupTask:
     for key in ("card_id", "production_task_id", "production_operation_id"):
         operation[key] = UUID(operation[key])
     recipe = data.pop("recipe")
-    for key in ("id", "technician_id"):
+    for key in ("id", "technician_id", "machine_id"):
         data[key] = UUID(data[key])
     for key in ("planned_start", "planned_finish", "created_at", "updated_at"):
         data[key] = datetime.fromisoformat(data[key])
@@ -57,7 +57,9 @@ class SetupTaskRow(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     technician_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
-    machine_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    # The БД.ОБ unit (0172): renumbering it keeps the task, a unit with setup tasks can't be deleted.
+    machine_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("tech_operation_records.id", ondelete="RESTRICT",
+                                                              name="fk_setup_task_unit"), nullable=False, index=True)
     recipe_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     recipe_version: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

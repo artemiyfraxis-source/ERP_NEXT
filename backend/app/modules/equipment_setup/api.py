@@ -51,7 +51,7 @@ class AssignPayload(Payload):
     idempotency_key: str = Field(min_length=1, max_length=128)
     expected_version: int = Field(strict=True, ge=0, le=0)
     operation: OperationPayload
-    machine_id: str = Field(min_length=1, max_length=128)
+    machine_id: UUID
     technician_id: UUID
     recipe: RecipePayload
     planned_start: datetime
@@ -74,7 +74,7 @@ class RecipeFieldPayload(Payload):
 
 class PublishRecipePayload(Payload):
     expected_version: int = Field(strict=True, ge=0)
-    machine_id: str = Field(min_length=1, max_length=128)
+    machine_id: UUID
     title: str = Field(min_length=1, max_length=200)
     geometry: list[RecipeFieldPayload] = Field(default_factory=list, max_length=100)
     panel_settings: list[RecipeFieldPayload] = Field(min_length=1, max_length=100)
@@ -195,7 +195,7 @@ def get_assignment_context(card_id: UUID, card_revision: Annotated[int, Query(ge
 
 
 @router.get("/executors")
-def get_executors(machine_id: Annotated[str, Query(min_length=1, max_length=128)],
+def get_executors(machine_id: UUID,
                   principal: Annotated[Principal, Depends(authenticated_principal)],
                   factory: Annotated[Callable, Depends(setup_uow_factory)],
                   limit: Annotated[int, Query(ge=1, le=200)] = 100, offset: Annotated[int, Query(ge=0)] = 0):
@@ -203,7 +203,7 @@ def get_executors(machine_id: Annotated[str, Query(min_length=1, max_length=128)
 
 
 @router.get("/recipes")
-def get_recipes(machine_id: Annotated[str, Query(min_length=1, max_length=128)],
+def get_recipes(machine_id: UUID,
                 principal: Annotated[Principal, Depends(authenticated_principal)],
                 factory: Annotated[Callable, Depends(setup_uow_factory)],
                 limit: Annotated[int, Query(ge=1, le=200)] = 100, offset: Annotated[int, Query(ge=0)] = 0):

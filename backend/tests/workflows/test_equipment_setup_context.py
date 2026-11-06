@@ -12,10 +12,26 @@ from app.modules.references.domain import TechOperationTab
 from app.modules.references.infrastructure import EquipmentModelRow, TechOperationRecordRow
 from app.modules.techcards.infrastructure import RefreshRequestRow
 from app.modules.production.resource_claims import ResourceConflict
-from app.modules.references.equipment import PhysicalEquipment
 from app.workflows.equipment_setup_context import SqlAlchemySetupContext
-from app.workflows.production_resource_context import SqlAlchemyProductionResourceContext
+from app.workflows.production_resource_context import MachineUnit, SqlAlchemyProductionResourceContext
 from tests.production.test_machine_load import etk, make_task, single
+
+# БД.ОБ units by record id (0172); ОБ.027.2 and ОБ.027.3 are one model, the press another, the compressor supporting.
+U2, U3, U98, AIR = uuid4(), uuid4(), uuid4(), uuid4()
+M27, M98, MAIR = uuid4(), uuid4(), uuid4()
+CATALOG = (MachineUnit(U2, "ОБ.027.2", "Автомат резки", "EW", "ЦАР", M27),
+           MachineUnit(U3, "ОБ.027.3", "Автомат резки", "EW", "ЖУК", M27),
+           MachineUnit(U98, "ОБ.098.1", "Пресс", "P", "ЦАР", M98),
+           MachineUnit(AIR, "ОБ.060.1", "Компрессор", "K1", "ЦАР", MAIR, "supporting"))
+
+
+def _record(db, number, site, **fields):
+    identifier = uuid4()
+    db.add(TechOperationRecordRow(id=identifier, tab=TechOperationTab.EQUIPMENT.value, display_text="Станок",
+        normalized_search="станок", source_sheet="test", sort_key=number, fields={"Тип": "Оборудование",
+        "Инв. номер": number, "Наименование": "Станок", "Расположение": site, **fields}))
+    db.flush()
+    return identifier
 
 
 @pytest.fixture
@@ -43,12 +59,14 @@ def test_context_uses_real_person_activity_and_site(db):
 
 @pytest.mark.parametrize("site", ["ЦАР", "", "Неизвестно"])
 def test_physical_machine_exact_identity_and_known_site_only(db, site):
-    db.add(TechOperationRecordRow(id=uuid4(), tab=TechOperationTab.EQUIPMENT.value, display_text="Станок", normalized_search="станок",
-        source_sheet="test", sort_key="1", fields={"Тип": "Оборудование", "Инв. номер": "ОБ.027.2",
-        "Наименование": "Станок", "Расположение": site}))
+    unit = _record(db, "ОБ.027.2", site)
     context = SqlAlchemySetupContext(db, resolve_issued_operation=lambda reference: None)
-    assert (context.machine("ОБ.027.2") is not None) is (site == "ЦАР")
-    assert context.machine("ОБ.027") is None
+    machine = context.machine(unit)
+    assert (machine is not None) is (site == "ЦАР")
+    if machine is not None:
+        assert (machine.id, machine.inventory_number, machine.operational) == (unit, "ОБ.027.2", True)
+    assert context.machine(uuid4()) is None
+    assert context.machine("ОБ.027.2") is None  # an inventory number is not an identity
 
 
 @pytest.mark.parametrize("kind", ["missing", "unknown_site", "wrong_revision"])
@@ -56,14 +74,14 @@ def test_unresolved_or_fallback_operation_rejected(db, kind):
     reference = IssuedOperationRef(uuid4(), 2, uuid4(), uuid4(), 1)
     value = None if kind == "missing" else IssuedSetupOperation(
         replace(reference, card_revision=3) if kind == "wrong_revision" else reference,
-        "Неизвестно" if kind == "unknown_site" else "ЦАР", ("ОБ.027.2",))
+        "Неизвестно" if kind == "unknown_site" else "ЦАР", (U2,))
     context = SqlAlchemySetupContext(db, resolve_issued_operation=lambda reference: value)
     assert context.issued_operation(reference) is None
 
 
 def test_operation_without_fixed_site_passes_through_for_the_machine_to_decide(db):
     reference = IssuedOperationRef(uuid4(), 2, uuid4(), uuid4(), 1)
-    value = IssuedSetupOperation(reference, "", ("ОБ.027.2", "ОБ.027.3"))
+    value = IssuedSetupOperation(reference, "", (U2, U3))
     assert SqlAlchemySetupContext(db, resolve_issued_operation=lambda reference: value).issued_operation(reference) == value
 
 
@@ -83,9 +101,7 @@ class Resolver(SqlAlchemyProductionResourceContext):
         return self.document
 
     def catalog(self):
-        return (PhysicalEquipment("ОБ.027.2", "ОБ.027.2", "Автомат резки", "EW", "ЦАР"),
-            PhysicalEquipment("ОБ.027.3", "ОБ.027.3", "Автомат резки", "EW", "ЖУК"),
-            PhysicalEquipment("ОБ.098.1", "ОБ.098.1", "Пресс", "P", "ЦАР"))
+        return CATALOG
 
 
 def issued(machine="ОБ.027", **changes):
@@ -98,20 +114,20 @@ def test_operation_without_executor_or_handed_to_resolves_and_machine_decides_si
     task, reference, document = issued()
     assert not task.operations[0].operator_ids and not task.handed_to
     result = Resolver(db, task, document).issued_operation(reference)
-    assert result == IssuedSetupOperation(reference, "", ("ОБ.027.2", "ОБ.027.3"))
+    assert result == IssuedSetupOperation(reference, "", (U2, U3))
     assert SqlAlchemySetupContext(db, resolve_issued_operation=lambda reference: result).issued_operation(reference) == result
 
 
 def test_site_order_handed_to_then_executors(db):
     task, reference, document = issued(handed_to="ЖУК")
-    assert Resolver(db, task, document).issued_operation(reference).eligible_machine_ids == ("ОБ.027.3",)
+    assert Resolver(db, task, document).issued_operation(reference).eligible_machine_ids == (U3,)
     person = uuid4()
     db.add(IdentityUserRow(id=person, login="op", email="op@example.test", name="Оператор", department="Цех",
         role="staff", site="ЦАР", active=True))
     task, reference, document = issued()
     task = task.with_operations((replace(task.operations[0], operator_ids=(person,), shares=()),))
     result = Resolver(db, task, document).issued_operation(reference)
-    assert (result.site, result.eligible_machine_ids) == ("ЦАР", ("ОБ.027.2",))
+    assert (result.site, result.eligible_machine_ids) == ("ЦАР", (U2,))
 
 
 @pytest.mark.parametrize("kind, message", [
@@ -163,11 +179,67 @@ def test_executor_choices_filter_activity_site_and_identity_before_page(db):
 
 
 def test_machine_choices_filter_site_and_eligibility_before_page(db):
-    for index, site in enumerate(("ЖУК", "", "ЦАР", "ЦАР"), start=1):
-        db.add(TechOperationRecordRow(id=uuid4(), tab=TechOperationTab.EQUIPMENT.value, display_text="Станок", normalized_search="станок",
-            source_sheet="test", sort_key=str(index), fields={"Тип": "Оборудование", "Инв. номер": f"ОБ.027.{index}",
-            "Наименование": "Станок", "Расположение": site}))
+    units = [_record(db, f"ОБ.027.{index}", site) for index, site in enumerate(("ЖУК", "", "ЦАР", "ЦАР"), start=1)]
     context = SqlAlchemySetupContext(db, resolve_issued_operation=lambda reference: None)
-    assert [item.id for item in context.machine_choices(site="ЦАР", limit=1, offset=1)] == ["ОБ.027.4"]
-    assert [item.id for item in context.machine_choices(site=None, eligible_ids=("ОБ.027.4",), limit=1, offset=0)] == ["ОБ.027.4"]
+    [choice] = context.machine_choices(site="ЦАР", limit=1, offset=1)
+    assert (choice.id, choice.inventory_number) == (units[3], "ОБ.027.4")
+    assert [item.id for item in context.machine_choices(site=None, eligible_ids=(units[3],), limit=1, offset=0)] == [units[3]]
     assert len(context.machine_choices(site=None, limit=100, offset=0)) == 3
+
+
+def tooling(*rows):
+    task, reference, document = issued()
+    document["operations"][0]["card"]["tooling"] = [{"section": "Оборудование", **row} for row in rows]
+    return task, reference, document
+
+
+def test_model_id_of_the_etk_decides_eligibility_not_the_inventory_number(db):
+    task, reference, document = tooling({"inventory_number": "ОБ.098", "equipment_model_id": str(M27)})
+    assert Resolver(db, task, document).issued_operation(reference).eligible_machine_ids == (U2, U3)
+
+
+@pytest.mark.parametrize("rows", [
+    [{"inventory_number": "ОБ.060", "equipment_model_id": str(MAIR)}],  # supporting by its model
+    [{"inventory_number": "ОБ.060"}],  # supporting by the one model of the family
+])
+def test_supporting_equipment_is_never_the_machine_of_an_operation(db, rows):
+    task, reference, document = tooling(*rows, {"inventory_number": "ОБ.027"})
+    assert Resolver(db, task, document).requirements(task, task.operations[0]) == {1: M27}
+    task, reference, document = tooling(*rows)
+    with pytest.raises(SetupOperationUnavailable, match="нет оборудования"):
+        Resolver(db, task, document).issued_operation(reference)
+
+
+def test_old_etk_family_of_several_models_asks_to_rebuild_the_etk(db):
+    class Ambiguous(Resolver):
+        def catalog(self):
+            return (*CATALOG, MachineUnit(uuid4(), "ОБ.027.9", "Другой автомат", "EW2", "ЦАР", uuid4()))
+
+    task, reference, document = issued()
+    with pytest.raises(ResourceConflict, match="ОБ.027 — несколько моделей БД.ОБ: пересоберите ЭТК"):
+        Ambiguous(db, task, document).requirements(task, task.operations[0])
+    with pytest.raises(SetupOperationUnavailable, match="пересоберите ЭТК"):
+        Ambiguous(db, task, document).issued_operation(reference)
+    task, reference, document = tooling({"inventory_number": "ОБ.027", "equipment_model_id": str(M27)})
+    assert Ambiguous(db, task, document).issued_operation(reference).eligible_machine_ids == (U2, U3)
+
+
+def test_unknown_model_or_family_is_a_conflict_not_manual_work(db):
+    task, _, document = tooling({"inventory_number": "ОБ.027", "equipment_model_id": str(uuid4())})
+    with pytest.raises(ResourceConflict, match="пересоберите ЭТК"):
+        Resolver(db, task, document).requirements(task, task.operations[0])
+    task, _, document = tooling({"inventory_number": "ОБ.555"})
+    with pytest.raises(ResourceConflict, match="ОБ.555 из ЭТК нет среди единиц"):
+        Resolver(db, task, document).requirements(task, task.operations[0])
+
+
+def test_catalog_reads_the_model_and_role_of_each_unit(db):
+    unit = _record(db, "ОБ.060.1", "ЦАР", **{"Наименование": "Компрессор"})
+    row = db.get(TechOperationRecordRow, unit)
+    db.get(EquipmentModelRow, row.equipment_model_id).role = "supporting"
+    db.flush()
+    [found] = SqlAlchemyProductionResourceContext(db).catalog()
+    assert (found.id, found.model_id, found.operational) == (unit, row.equipment_model_id, False)
+    context = SqlAlchemySetupContext(db, resolve_issued_operation=lambda reference: None)
+    assert context.machine(unit).operational is False
+    assert context.machine_choices(site=None, limit=100, offset=0) == ()
