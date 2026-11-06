@@ -28,6 +28,7 @@ from .backward_plan import BackwardResult, backward_plan
 from .domain import ProductionTask, ProductionValidationError
 from .first_delivery import DeliveryVariant, first_delivery_variants
 from .launchable import ReadyCard, stage_name
+from .equipment_catalog import EMPTY, EquipmentCatalog
 from .machine_load import MachineStep, task_steps
 
 
@@ -56,6 +57,7 @@ def _input(
     ready: Sequence[ReadyCard],
 ):
     """Вход расчёта — как в _prepare автоплана: свободное — не назначенное и прежний автоплан, ещё не начатый."""
+    equipment = units if isinstance(units, EquipmentCatalog) else EMPTY
     scope = _scope(command, uow, cards, ready)
     start, end = _horizon(command)
     now = command.now
@@ -95,9 +97,9 @@ def _input(
         if not any(operation.id in free or operation.planned_start for operation in task.operations):
             continue
         card = cards.get(card_key(task.project, task.item))
-        task_keys, _ = operation_keys(task, card.document if card is not None else None)
+        task_keys, _ = operation_keys(task, card.document if card is not None else None, equipment)
         keys.update(task_keys)
-        steps.update(task_steps(task, card.document if card is not None else None)[0])
+        steps.update(task_steps(task, card.document if card is not None else None, equipment)[0])
     data = AutoplanInput(
         tasks=tasks, free=frozenset(free), keys=keys, team=team, skills=_skills(uow), busy=busy,
         capacity={machine: max(1, int(units.get(machine, 0)) or 1) for machine in machine_names(keys, steps)},
