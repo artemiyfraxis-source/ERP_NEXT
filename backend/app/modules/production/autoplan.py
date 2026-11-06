@@ -4,8 +4,8 @@
 резка коаксиального с зачисткой — если там тоже схожие, надо это учитывать». Здесь — чистые правила: ключ наладки
 операции, цена переналадки и сам расчёт. Загрузка данных и запись — autoplan_application.py.
 
-Ключ наладки. Семейство = тип станка (префикс инвентарного номера «ОБ.027» из строки «Оборудование» карточки
-операции, иначе код операции) + для опрессовки: аппликатор и артикул терминала; для резки/разделки коаксиала: кабель и
+Ключ наладки. Семейство = станок (ID модели оборудования строки «Оборудование» карточки операции — equipment_catalog;
+модель не определена — номер модели «ОБ.027»; станка нет — код операции) + для опрессовки: аппликатор и артикул терминала; для резки/разделки коаксиала: кабель и
 разъём; для резки провода: артикул провода; для пайки/лужения: код и «Параметры» оснастки (жало, температура); для
 прочих: код и разъём операции. Точный ключ = семейство + подстройка (высота обжима или сечение; L1–L3/D1–D3 коаксиала;
 длины зачистки A/B). Длина резки в ключ не входит: её меняют без переналадки.
@@ -13,7 +13,8 @@
 Цена переналадки: тот же точный ключ — 0; то же семейство — min(подготовка карты tPrep, 10 мин); другое — tPrep.
 Наладка живёт на станке: у станка в одном экземпляре — общая для всех (кто бы ни работал на нём последним), у станков
 в нескольких экземплярах — своя у каждого монтажника («его» станок остаётся настроенным, пока он на нём не сменит
-наладку). Станков одного типа одновременно занято не больше, чем единиц в БД.ОБ с этим префиксом (нет в БД.ОБ — одна);
+наладку). Станков одной модели одновременно занято не больше, чем её операционных единиц в БД.ОБ (нет в БД.ОБ — одна;
+обеспечивающее оборудование единиц не даёт);
 операции без станка (только инструмент) по станкам не ограничены. Станок занимает каждая операция ЭТК со станком — у ПФ
 каждая своим станком, — на время по правилу загрузки станков (machine_load: подготовка карты + машинное время × штуки,
 подряд с начала окна операции): два ПФ на одном станке в один день не превысят его единиц. Нет шагов ЭТК во входе —
@@ -58,7 +59,9 @@ from .domain import (
     next_working_moment,
 )
 from .launchable import route_from_document, stage_name
-from .machine_load import MachineStep, inventory_prefix, lay_out, operation_occupancies, planned_windows
+from .equipment_catalog import EMPTY, EquipmentCatalog
+from .machine_load import MachineStep, _machine, lay_out, operation_occupancies, planned_windows
+from .machine_load import inventory_prefix  # noqa: F401 — номер модели «ОБ.027» для читателей автоплана
 from .scheduling import (
     ScheduledOperation,
     _allowed,
@@ -92,14 +95,14 @@ _COAX_SIZES = ("l1", "l2", "l3", "d1", "d2", "d3")
 
 @dataclass(frozen=True)
 class SetupKey:
-    """Наладка операции: тип станка, семейство (меняется долго) и точный ключ (семейство + подстройка)."""
+    """Наладка операции: станок (ID модели), семейство (меняется долго) и точный ключ (семейство + подстройка)."""
     machine: str
     family: tuple[str, ...]
     exact: tuple[str, ...]
     label: str
     family_label: str = ""
     machine_label: str = ""
-    limited: bool = False  # станок из «Оборудования» с инвентарным номером: занятость ограничена единицами БД.ОБ
+    limited: bool = False  # станок из «Оборудования» с номером ОБ: занятость ограничена единицами модели в БД.ОБ
 
 
 def changeover_seconds(previous: SetupKey | None, current: SetupKey, setup_seconds: Decimal) -> int:
@@ -109,16 +112,6 @@ def changeover_seconds(previous: SetupKey | None, current: SetupKey, setup_secon
     if previous.exact == current.exact:
         return 0
     return min(full, ADJUSTMENT_SECONDS)
-
-
-def equipment_units(inventory_numbers: Iterable[str]) -> dict[str, int]:
-    """Единиц каждого типа станка в БД.ОБ: разные инвентарные номера с общим префиксом."""
-    seen: dict[str, set[str]] = {}
-    for number in inventory_numbers:
-        prefix = inventory_prefix(number)
-        if prefix:
-            seen.setdefault(prefix, set()).add(" ".join(str(number).split()).upper())
-    return {prefix: len(numbers) for prefix, numbers in seen.items()}
 
 
 def _text(value: object) -> str:
@@ -147,20 +140,17 @@ def setup_key(
     built: Mapping[str, Any] | None,
     config_op: Mapping[str, Any] | None,
     config: Mapping[str, Any] | None,
+    equipment: EquipmentCatalog = EMPTY,
 ) -> SetupKey:
-    """Ключ наладки операции по выданной ЭТК: built — операция документа, config_op — операция генератора."""
+    """Ключ наладки операции по выданной ЭТК: built — операция документа, config_op — операция генератора; станок —
+    модель оборудования по каталогу БД.ОБ (equipment_catalog)."""
     built, op, config = _mapping(built), _mapping(config_op), _mapping(config)
     fields = _mapping(built.get("fields"))
     kind = _text(op.get("type") or built.get("type"))
     title = stage_name(stage) or stage_name(kind) or _text(code)
-    prefix, machine_name = "", ""
-    for tool in _mapping(built.get("card")).get("tooling") or []:
-        tool = _mapping(tool)
-        if _text(tool.get("section")) == "Оборудование" and inventory_prefix(tool.get("inventory_number")):
-            prefix, machine_name = inventory_prefix(tool.get("inventory_number")), _text(tool.get("name"))
-            break
-    machine = prefix or _text(code) or _text(stage)
-    machine_label = f"{prefix} {machine_name}".strip()
+    found = _machine(built, equipment)
+    machine = found.key if found is not None else _text(code) or _text(stage)
+    machine_label = found.label if found is not None else ""
 
     def key(family: Sequence[str], family_label: str, adjust: Sequence[str] = (), adjust_label: str = "") -> SetupKey:
         family_key = (machine, *family)
@@ -168,7 +158,7 @@ def setup_key(
         label = f"{title}: {family_label}" if family_label else title
         return SetupKey(
             machine, family_key, exact, f"{label}, {adjust_label}" if adjust_label else label, label,
-            machine_label, bool(prefix),
+            machine_label, found is not None,
         )
 
     endpoint = _mapping(op.get("ep"))
@@ -219,7 +209,9 @@ def setup_key(
     return key((_text(code) or _text(stage), connector), f"разъём {connector}" if connector else "")
 
 
-def operation_keys(task: ProductionTask, document: Mapping[str, Any] | None) -> tuple[dict[UUID, SetupKey], tuple[str, ...]]:
+def operation_keys(
+    task: ProductionTask, document: Mapping[str, Any] | None, equipment: EquipmentCatalog = EMPTY,
+) -> tuple[dict[UUID, SetupKey], tuple[str, ...]]:
     """Ключи наладки операций задания по текущей выданной техкарте (позиция этапа = номер операции ЭТК; у задания
     по ПФ — etk_ops, ключ ПФ собирается из ключей его операций). Нет техкарты или код расходится с ней — ключ по коду
     операции и предупреждение."""
@@ -253,7 +245,7 @@ def operation_keys(task: ProductionTask, document: Mapping[str, Any] | None) -> 
             found.append(setup_key(
                 code=part.code, stage=part.stage,
                 built=built[index] if index < len(built) else None,
-                config_op=config_ops[index] if index < len(config_ops) else None, config=config,
+                config_op=config_ops[index] if index < len(config_ops) else None, config=config, equipment=equipment,
             ))
         else:
             keys[operation.id] = found[0] if len(found) == 1 else semifinished_key(found)
@@ -286,7 +278,7 @@ class AutoplanInput:
     team: tuple[UUID, ...]  # монтажники ЦАР в стабильном порядке
     skills: dict[str, dict[UUID, OperatorSkill]]
     busy: dict[UUID, tuple[BusyInterval, ...]]  # назначенная работа и отсутствия монтажников
-    capacity: dict[str, int]  # единиц станка по префиксу; нет — одна
+    capacity: dict[str, int]  # единиц станка по ключу (ID модели); нет — одна
     start: datetime
     end: datetime
     holidays: frozenset[date]

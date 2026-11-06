@@ -74,6 +74,7 @@ from .board import (
 from .dispatch import localize
 from .domain import ProductionStatus, ProductionTask, ProductionValidationError
 from .launchable import ReadyCard, stage_name
+from .equipment_catalog import EMPTY, EquipmentCatalog
 from .machine_load import MachineStep, task_steps
 from .resource_assignments import MachineBinding
 from .scheduling import work_seconds_between
@@ -305,6 +306,7 @@ def _prepare(
     start, end = _horizon(command)
     now = command.now
     tasks = scope.tasks
+    equipment = units if isinstance(units, EquipmentCatalog) else EMPTY
     warnings = list(scope.warnings)
     progress = _progress(uow, [task.id for task in scope.eligible])
     free: set[UUID] = set()
@@ -353,10 +355,10 @@ def _prepare(
         card = cards.get(card_key(task.project, task.item))
         if card is not None:
             used_cards[str(card.id)] = card.version
-        task_keys, task_warnings = operation_keys(task, card.document if card is not None else None)
+        task_keys, task_warnings = operation_keys(task, card.document if card is not None else None, equipment)
         keys.update(task_keys)
         # Станки по операциям ЭТК; код, разошедшийся с техкартой, уже в предупреждениях наладки.
-        steps.update(task_steps(task, card.document if card is not None else None)[0])
+        steps.update(task_steps(task, card.document if card is not None else None, equipment)[0])
         if task.id in free_tasks:
             warnings.extend(task_warnings)
     machines = machine_names(keys, steps)
@@ -688,13 +690,3 @@ def describe(preview: AutoplanPreview) -> dict:
         },
         "fingerprint": preview.fingerprint,
     }
-
-
-def equipment_numbers(records: Sequence[Mapping[str, str]]) -> list[str]:
-    """Инвентарные номера записей БД.ОБ (колонка «Инв. номер»)."""
-    result: list[str] = []
-    for fields in records:
-        value = next((text for name, text in fields.items() if "инв" in str(name).casefold()), "")
-        if str(value or "").strip():
-            result.append(str(value))
-    return result
