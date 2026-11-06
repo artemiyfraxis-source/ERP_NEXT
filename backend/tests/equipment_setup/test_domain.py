@@ -8,6 +8,7 @@ from app.modules.equipment_setup.domain import (
     IssuedOperationRef, RecipeVersionRef, SetupStatus, SetupTask, SetupValidationError,
 )
 
+UNIT, OTHER = UUID("00000000-0000-4000-8000-000000000272"), UUID("00000000-0000-4000-8000-000000000273")  # БД.ОБ units
 
 NOW = datetime(2026, 11, 2, 8, tzinfo=UTC)
 
@@ -15,7 +16,7 @@ NOW = datetime(2026, 11, 2, 8, tzinfo=UTC)
 def make_task(**changes):
     values = dict(
         operation=IssuedOperationRef(uuid4(), 3, uuid4(), uuid4(), 4),
-        machine_id="ОБ.027.2", technician_id=uuid4(),
+        machine_id=UNIT, technician_id=uuid4(),
         recipe=RecipeVersionRef(uuid4(), 2), planned_start=NOW,
         planned_finish=NOW + timedelta(hours=1), now=NOW,
     )

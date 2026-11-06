@@ -19,7 +19,7 @@ def test_runtime_not_ready_is_explicit_and_does_not_discard_physical_choice(prod
     assert response.status_code == 200
     assert response.json()["enabled"] is False
     refused = client.post(f"{url}/assign", json={"version": item["version"], "operator_ids": [str(operator_id)],
-        "machine_bindings": [{"etk_position": 1, "machine_id": "ОБ.027.2"}]})
+        "machine_bindings": [{"etk_position": 1, "machine_id": str(uuid4())}]})
     assert refused.status_code == 422
     with app.state.production_uow_factory() as uow:
         assert uow.production.get(UUID(item["id"])).version == item["version"]

@@ -7,7 +7,7 @@ IMMEDIATE transaction before reading; PostgreSQL uses transaction advisory locks
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, DateTime, Integer, String, Uuid, delete, select, text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, Uuid, delete, select, text
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.shared.advisory_lock import lock_key
@@ -16,12 +16,20 @@ from app.shared.persistence import Base
 from .resource_claims import ResourceConflict, ResourceKey, ResourceKind, ResourceOwner, ResourceWindow, instant
 
 
+# A machine resource is a БД.ОБ unit (0172): its key is the unit's canonical UUID and `machine_id` the same unit as a
+# foreign key, so a held or planned unit can't be deleted and renumbering it changes nothing here.
+UNIT_TABLE = "tech_operation_records.id"
+MACHINE_UNIT_CHECK = ("(resource_kind = 'machine' AND machine_id IS NOT NULL)"
+                      " OR (resource_kind <> 'machine' AND machine_id IS NULL)")
+
+
 class ResourceReservationRow(Base):
     __tablename__ = "production_resource_reservations"
     __table_args__ = (
         CheckConstraint("resource_kind IN ('machine', 'person')", name="ck_resource_reservation_kind"),
         CheckConstraint("owner_kind IN ('setup', 'production')", name="ck_resource_reservation_owner"),
         CheckConstraint("finish > start", name="ck_resource_reservation_window"),
+        CheckConstraint(MACHINE_UNIT_CHECK, name="ck_resource_reservation_unit"),
     )
     owner_kind: Mapped[str] = mapped_column(String(16), primary_key=True)
     owner_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
@@ -29,6 +37,8 @@ class ResourceReservationRow(Base):
     resource_key: Mapped[str] = mapped_column(String(128), primary_key=True)
     start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finish: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    machine_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey(UNIT_TABLE, ondelete="RESTRICT", name="fk_resource_reservation_unit"), nullable=True, index=True)
 
 
 class ActiveResourceRow(Base):
@@ -36,6 +46,7 @@ class ActiveResourceRow(Base):
     __table_args__ = (
         CheckConstraint("resource_kind IN ('machine', 'person')", name="ck_active_resource_kind"),
         CheckConstraint("owner_kind IN ('setup', 'production')", name="ck_active_resource_owner"),
+        CheckConstraint(MACHINE_UNIT_CHECK, name="ck_active_resource_unit"),
     )
     # Database uniqueness prevents two owners from holding the same physical resource.
     resource_kind: Mapped[str] = mapped_column(String(16), primary_key=True)
@@ -44,6 +55,8 @@ class ActiveResourceRow(Base):
     owner_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     execution_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     activated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    machine_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey(UNIT_TABLE, ondelete="RESTRICT", name="fk_active_resource_unit"), nullable=True, index=True)
 
 
 class ResourceGenerationRow(Base):
@@ -140,7 +153,8 @@ class SqlAlchemyResourceClaims:
         for owner, resources, window in plans:
             for resource in resources:
                 self.session.add(ResourceReservationRow(owner_kind=owner.kind, owner_id=owner.id,
-                    resource_kind=resource.kind.value, resource_key=resource.key, start=window.start, finish=window.finish))
+                    resource_kind=resource.kind.value, resource_key=resource.key, start=window.start, finish=window.finish,
+                    machine_id=resource.unit_id))
         self._changed()
 
     def activate(self, owner: ResourceOwner, execution_id: UUID, resources: tuple[ResourceKey, ...], now: datetime):
@@ -171,7 +185,8 @@ class SqlAlchemyResourceClaims:
         if missing:
             for resource in missing:
                 self.session.add(ActiveResourceRow(resource_kind=resource.kind.value, resource_key=resource.key,
-                    owner_kind=owner.kind, owner_id=owner.id, execution_id=execution_id, activated_at=now))
+                    owner_kind=owner.kind, owner_id=owner.id, execution_id=execution_id, activated_at=now,
+                    machine_id=resource.unit_id))
             self._changed()
 
     def release_active(self, owner: ResourceOwner, execution_id: UUID, *, kinds: tuple[ResourceKind, ...]):

@@ -42,6 +42,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
 from app.modules.techcards import etk_derive
+from app.modules.techcards.etk_builder import EQUIPMENT_ID
 from app.modules.techcards.etk_derive import BUILD_FAILED, MISSING_OPERATION, NO_INPUTS, ROUTE_NOT_APPLIED, TEMPLATE_CHANGED
 from app.modules.techcards.infrastructure import ProjectTechcardRow, RefreshRequestRow, SqlAlchemyTechcardsUnitOfWork
 from app.modules.techcards.project_cards import ProjectTechcard, TechcardRevision, TechcardStatus, operation_key
@@ -63,9 +64,22 @@ _PROCESS_LOCK = threading.Lock()
 REFERENCE_TABLES = frozenset({
     "reference_entries", "tech_operation_records", "tech_operation_snapshots", "wire_gauges", "hookup_wires",
     "coax_cables", "coax_cable_layers", "coax_cable_connectors", "coax_cable_markers", "coax_cable_attenuation",
-    "coax_cable_aliases",
+    "coax_cable_aliases", "equipment_models", "equipment_template_tools",
 })
 TEMPLATE_TABLES = frozenset({"techcard_operation_templates", "techcard_operation_template_snapshots"})
+# Keys that only say WHICH record a row is (the equipment model of an «Оборудование» row and of the coax machine,
+# migration 0171), never what the card says: a card whose content is the same and only gained or lost them is unchanged —
+# no revision, no refreshed draft. A rename of the model changes the shown name, and that is a change.
+IDENTITY_KEYS = frozenset({EQUIPMENT_ID})
+
+
+def without_identity(value: Any) -> Any:
+    """A copy of a document (or any part of it) without the identity keys at any depth — what `evaluate` compares."""
+    if isinstance(value, Mapping):
+        return {key: without_identity(item) for key, item in value.items() if key not in IDENTITY_KEYS}
+    if isinstance(value, list):
+        return [without_identity(item) for item in value]
+    return value
 
 
 def auto_revision_enabled() -> bool:
@@ -220,7 +234,7 @@ def evaluate(card: ProjectTechcard, ctx: Context) -> tuple[ProjectTechcard | Non
         note: str | None = NOTE_PREFIX + "; ".join(dict.fromkeys(item["message"] for item in hard))
     else:
         note = None if (card.review_note or "").startswith(NOTE_PREFIX) else card.review_note
-    changes = etk_derive.document_diff(card.document, document)
+    changes = etk_derive.document_diff(without_identity(card.document), without_identity(document))
     status = "conflict" if hard else "unchanged"
     if not changes:
         if new_hash == card.derived_hash and note == card.review_note:

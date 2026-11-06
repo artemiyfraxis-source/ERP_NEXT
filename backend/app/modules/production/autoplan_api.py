@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
-from app.modules.references.domain import TechOperationTab
 from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
 from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.clock import moscow_now
@@ -23,7 +22,7 @@ from .api import MachineBindingPayload, closed_kbs, production_uow_factory, tech
 from .resource_assignments import MachineBinding
 from .resource_claims import ResourceConflict
 from .application import ConcurrentProductionUpdate, UnitOfWork
-from .autoplan import equipment_units
+from .equipment_catalog import EquipmentCatalog, load_catalog
 from .autoplan_application import (
     ApplyAutoplanCommand,
     AutoplanCommand,
@@ -35,7 +34,6 @@ from .autoplan_application import (
     autoplan_context,
     card_key,
     describe,
-    equipment_numbers,
     preview_autoplan,
 )
 from .domain import ProductionValidationError
@@ -101,13 +99,9 @@ def _techcards(factory: Callable[[], TechcardsUnitOfWork] | None, closed: frozen
     return result, ready_cards(rows, kitsets, closed)
 
 
-def _units(factory: Callable[[], Any] | None) -> dict[str, int]:
-    """Единицы станков по префиксу инвентарного номера из БД.ОБ."""
-    if factory is None:
-        return {}
-    with factory() as references:
-        records = references.tech_operations.list(tab=TechOperationTab.EQUIPMENT, query="", limit=100_000)
-    return equipment_units(equipment_numbers([record.fields for record in records]))
+def _units(factory: Callable[[], Any] | None) -> EquipmentCatalog:
+    """Станки БД.ОБ по ID модели: как Mapping — единиц станка по ключу (equipment_catalog)."""
+    return load_catalog(factory)
 
 
 def _handle(operation):

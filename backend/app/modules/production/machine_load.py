@@ -1,8 +1,8 @@
 """Загрузка станков (владелец, 17.10.2026: «в планировании надо учитывать загрузку станка»).
 
-Станок — тип по префиксу инвентарного номера «ОБ.098» из первой строки «Оборудование» операции выданной ЭТК (тот же,
-что в ключе наладки автоплана); единиц станка — разных инвентарных номеров с этим префиксом в БД.ОБ (нет в БД.ОБ —
-одна).
+Станок — модель оборудования первой строки «Оборудование» операции выданной ЭТК, что станок (тот же, что в ключе
+наладки автоплана; правила — equipment_catalog: ключ — ID модели, подпись — «ОБ.098 <наименование модели>»); единиц
+станка — физических единиц модели в БД.ОБ, обеспечивающее оборудование не станок (нет в БД.ОБ — одна).
 
 Занятость считается при чтении из плана, ничего не хранится. Доля операции задания (у бригады и у неразделённой
 операции — вся операция) занимает станок каждой своей операцией ЭТК со станком: подготовка шага + машинное
@@ -34,18 +34,12 @@ from .domain import (
     add_work_seconds,
     next_working_moment,
 )
+from .equipment_catalog import EMPTY, EquipmentCatalog, Machine, inventory_prefix
 from .launchable import _seconds, route_from_document, stage_name
 from .scheduling import work_seconds_between
 
 EQUIPMENT_SECTION = "Оборудование"
-_INVENTORY = re.compile(r"([ОO]Б)\s*\.\s*(\d+)", re.IGNORECASE)
-
-
-def inventory_prefix(value: object) -> str:
-    """«ОБ.027.2» / «ОБ.027.X» / «ОБ.027» → «ОБ.027»: тип станка, общий для всех его единиц (и ключ наладки
-    автоплана, и станок загрузки)."""
-    match = _INVENTORY.search(str(value or ""))
-    return f"ОБ.{match.group(2)}" if match else ""
+__all__ = ["inventory_prefix"]  # номер модели «ОБ.027» — и для читателей вне загрузки станков
 
 
 @dataclass(frozen=True)
@@ -53,10 +47,11 @@ class MachineStep:
     """Операция ЭТК, которая занимает станок: на сколько — подготовка + секунды на штуку."""
     position: int  # номер операции в ЭТК
     stage: str
-    machine: str  # «ОБ.098»
+    machine: str  # ключ станка: ID модели (или номер модели «ОБ.098», если модель не определена)
     machine_label: str  # «ОБ.098 Пресс»
     setup_seconds: Decimal
     unit_seconds: Decimal  # машинное время на штуку; нет — штучное время операции
+    code: str = ""  # «ОБ.098»; пусто — ключ и есть номер
 
 
 @dataclass(frozen=True)
@@ -76,6 +71,11 @@ class Occupancy:
     operator_ids: tuple[UUID, ...]
     start: datetime
     finish: datetime
+    machine_code: str = ""  # «ОБ.098» для текста; пусто — ключ и есть номер
+
+    @property
+    def code(self) -> str:
+        return self.machine_code or self.machine
 
 
 @dataclass(frozen=True)
@@ -100,6 +100,7 @@ class MachineRow:
     known: bool  # станок есть в БД.ОБ
     days: tuple[MachineDay, ...]
     items: tuple[Occupancy, ...]  # занятости, которые задевают период
+    code: str = ""  # «ОБ.098»; пусто — ключ
 
     def over(self, day: MachineDay) -> bool:
         """Перегруз дня: занятых секунд больше, чем у всех единиц, или одновременно занятостей больше единиц."""
@@ -130,16 +131,18 @@ def _text(value: object) -> str:
     return " ".join(str(value if value is not None else "").split())
 
 
-def _machine(built: Mapping[str, Any]) -> tuple[str, str]:
+def _machine(built: Mapping[str, Any], equipment: EquipmentCatalog = EMPTY) -> Machine | None:
+    """Станок операции ЭТК: первая строка «Оборудование» оснастки, что станок (обеспечивающее пропускается)."""
     for tool in _mapping(built.get("card")).get("tooling") or []:
         tool = _mapping(tool)
-        prefix = inventory_prefix(tool.get("inventory_number"))
-        if _text(tool.get("section")) == EQUIPMENT_SECTION and prefix:
-            return prefix, f"{prefix} {_text(tool.get('name'))}".strip()
-    return "", ""
+        if _text(tool.get("section")) == EQUIPMENT_SECTION and (machine := equipment.machine(tool)) is not None:
+            return machine
+    return None
 
 
-def task_steps(task: ProductionTask, document: Mapping[str, Any] | None) -> tuple[dict[UUID, tuple[MachineStep, ...]], tuple[str, ...]]:
+def task_steps(
+    task: ProductionTask, document: Mapping[str, Any] | None, equipment: EquipmentCatalog = EMPTY,
+) -> tuple[dict[UUID, tuple[MachineStep, ...]], tuple[str, ...]]:
     """Станки операций задания по выданной ЭТК: операция задания — её операции ЭТК (у ПФ — по порядку ПФ). Код,
     который разошёлся с техкартой, — станки этой операции не учитываются и предупреждение."""
     if not isinstance(document, Mapping):
@@ -163,15 +166,16 @@ def task_steps(task: ProductionTask, document: Mapping[str, Any] | None) -> tupl
                 steps = []
                 break
             etk = built[index] if index < len(built) else {}
-            machine, label = _machine(etk)
-            if not machine:
+            machine = _machine(etk, equipment)
+            if machine is None:
                 continue
             config_op = config_ops[index] if index < len(config_ops) else {}
             times = _mapping(etk.get("times"))
             machine_seconds = _seconds(config_op.get("tMachine") or times.get("machine_seconds"))
             steps.append(MachineStep(
-                part.position, stage_name(part.stage) or step.stage, machine, label, step.setup_seconds,
+                part.position, stage_name(part.stage) or step.stage, machine.key, machine.label, step.setup_seconds,
                 machine_seconds if machine_seconds > 0 else step.seconds_per_unit,
+                machine.code if machine.code != machine.key else "",
             ))
         if steps:
             result[operation.id] = tuple(steps)
@@ -216,7 +220,7 @@ def operation_occupancies(
             result.append(Occupancy(
                 step.machine, step.machine_label, task.id, task.number, task.project, task.item, operation.id,
                 operation.position, stage_name(operation.stage) or operation.stage, step.position, step.stage,
-                tuple(operator_ids), begin, end,
+                tuple(operator_ids), begin, end, step.code,
             ))
     return result
 
@@ -268,18 +272,23 @@ def _machine_order(machine: str) -> tuple[int, str]:
 def machine_load(
     occupancies: Sequence[Occupancy], units: Mapping[str, int], days: Sequence[date],
     holidays: frozenset[date], shift: WorkShift, tz: tzinfo | None, *, include_idle: bool = False,
+    codes: Mapping[str, str] | None = None,
 ) -> tuple[MachineRow, ...]:
-    """Загрузка станков по дням периода: строка на каждый станок, который занимает хоть одна операция плана."""
+    """Загрузка станков по дням периода: строка на каждый станок, который занимает хоть одна операция плана. codes —
+    номер модели по ключу станка (подпись и порядок строк); нет — номер из занятости, иначе сам ключ."""
     by_machine: dict[str, list[Occupancy]] = {}
     for item in occupancies:
         by_machine.setdefault(item.machine, []).append(item)
     if include_idle:
         for machine in units:
             by_machine.setdefault(machine, [])
+    shown_codes = dict(codes or {})
+    for item in occupancies:
+        shown_codes.setdefault(item.machine, item.code)
     bounds = [(day, datetime.combine(day, time.min, tz), datetime.combine(day + timedelta(days=1), time.min, tz)) for day in days]
     period = (bounds[0][1], bounds[-1][2]) if bounds else None
     rows: list[MachineRow] = []
-    for machine in sorted(by_machine, key=_machine_order):
+    for machine in sorted(by_machine, key=lambda key: (*_machine_order(shown_codes.get(key) or key), key)):
         items = sorted(by_machine[machine], key=lambda item: (item.start, item.finish, item.task_number))
         count = max(1, int(units.get(machine, 0) or 0))
         machine_days: list[MachineDay] = []
@@ -293,7 +302,7 @@ def machine_load(
         shown = tuple(item for item in items if period is not None and item.start < period[1] and item.finish > period[0])
         rows.append(MachineRow(
             machine, next((item.machine_label for item in items if item.machine_label), machine), count,
-            machine in units, tuple(machine_days), shown,
+            machine in units, tuple(machine_days), shown, shown_codes.get(machine) or machine,
         ))
     return tuple(rows)
 
@@ -306,7 +315,7 @@ def normalized_site(value: object) -> str:
 def site_machine_load(
     occupancies: Sequence[Occupancy], units: Mapping[tuple[str, str], int],
     operator_sites: Mapping[UUID, str], idle_labels: Mapping[tuple[str, str], str], days: Sequence[date],
-    holidays: frozenset[date], shift: WorkShift, tz: tzinfo | None,
+    holidays: frozenset[date], shift: WorkShift, tz: tzinfo | None, codes: Mapping[str, str] | None = None,
 ) -> dict[str, tuple[MachineRow, ...]]:
     """Local display projection; ambiguous brigades stay together in the unknown-site bucket."""
     grouped: dict[str, list[Occupancy]] = {"ЦАР": [], "ЖУК": [], "": []}
@@ -321,7 +330,7 @@ def site_machine_load(
             machine: count for (location, machine), count in units.items()
             if location == site and (machine in active or (site, machine) in idle_labels)
         }
-        rows = machine_load(items, local_units, days, holidays, shift, tz, include_idle=True)
+        rows = machine_load(items, local_units, days, holidays, shift, tz, include_idle=True, codes=codes)
         result[site] = tuple(replace(
             row,
             label=idle_labels.get((site, row.machine), row.label) if not row.items else row.label,
@@ -372,6 +381,6 @@ def conflict_text(conflict: Conflict, names: Mapping[UUID, str]) -> str:
     """«ОБ.098 занят 17.10 10:00–12:30: ПЗ-0012 · КБ1, этап 2 «Опрессовка» … (Анна)»."""
     taken = f" (заняты все {conflict.units} ед.)" if conflict.units > 1 else ""
     return (
-        f"{conflict.occupancy.machine} занят{taken} {window_text(conflict.start, conflict.finish)}: "
+        f"{conflict.occupancy.code} занят{taken} {window_text(conflict.start, conflict.finish)}: "
         + "; ".join(occupancy_text(item, names) for item in conflict.busy)
     )

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TechOperationRecord } from "./api";
-import { applicatorTokens, groupModels, inventoryOrder, inventoryRange, operationField, operationsOfModel, parseInventory, typeOf } from "./equipmentModel";
+import { applicatorTokens, groupModels, servedBy, servedUnits, inventoryOrder, inventoryRange, operationField, operationsOfModel, parseInventory, typeOf } from "./equipmentModel";
 
 const unit = (id: string, fields: Record<string, string>): TechOperationRecord =>
   ({ id, tab: "ob", display_text: "", source_sheet: "", fields } as TechOperationRecord);
@@ -50,5 +50,33 @@ describe("equipment model", () => {
     expect(applicatorTokens("S10/M10/M19/M49/A8").map((token) => token.code)).toEqual(["S10", "M10", "M19", "M49", "A8"]);
     expect(applicatorTokens("возможно S12/M12")).toEqual([{ code: "S12", doubtful: true }, { code: "M12", doubtful: true }]);
     expect(applicatorTokens("S5 совмест. M2")).toEqual([{ code: "S5", doubtful: false }, { code: "M2", doubtful: true }]);
+  });
+});
+
+describe("equipment identity", () => {
+  it("groups by equipment_model_id, not by name + article + maker; the role comes from the units", () => {
+    const models = groupModels([
+      { ...unit("a", { "Наменование": "Стрипер", "Инв. номер": "ОБ.100.1" }), equipment_model_id: "m1", equipment_role: "operational" },
+      { ...unit("b", { "Наменование": "Стрипер (другое имя)", "Артикул": "X", "Инв. номер": "ОБ.100.2" }), equipment_model_id: "m1", equipment_role: "operational" },
+      { ...unit("c", { "Наменование": "Стрипер", "Инв. номер": "ОБ.101" }), equipment_model_id: "m2", equipment_role: "supporting" },
+    ]);
+    expect(models).toHaveLength(2);
+    expect(models.find((model) => model.id === "m1")!.items.map((item) => item.id)).toEqual(["a", "b"]);
+    expect(models.find((model) => model.id === "m2")!.role).toBe("supporting");
+  });
+
+  it("finds the operations of a model through equipment_links, not by the «Машина» text", () => {
+    const [model] = groupModels([{ ...unit("a", { "Наменование": "Станция", "Для базы": "T21/Станция", "Инв. номер": "ОБ.071.1" }), equipment_model_id: "m1" }]);
+    const op = (id: string, fields: Record<string, string>, links: Array<{ column: string; position: number; model_id: string }>) =>
+      ({ id, tab: "op", display_text: "", source_sheet: "", fields, equipment_links: links }) as TechOperationRecord;
+    const ops = [op("o1", { "Машина": "другое написание" }, [{ column: "Машина", position: 0, model_id: "m1" }]), op("o2", { "Машина": "T21/Станция" }, [])];
+    expect(operationsOfModel(model, ops).map((item) => item.id)).toEqual(["o1"]);
+  });
+
+  it("lists the machines a supporting unit serves and who serves a machine", () => {
+    const pump = { ...unit("p", { "Инв. номер": "ОБ.200" }), serves_unit_ids: ["m"] } as TechOperationRecord;
+    const machine = unit("m", { "Инв. номер": "ОБ.010" });
+    expect(servedUnits(pump, [pump, machine]).map((item) => item.id)).toEqual(["m"]);
+    expect(servedBy(machine, [pump, machine]).map((item) => item.id)).toEqual(["p"]);
   });
 });

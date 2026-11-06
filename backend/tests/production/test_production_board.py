@@ -66,8 +66,14 @@ def reissue(card: ProjectTechcard) -> ProjectTechcard:
 
 @pytest.fixture()
 def library(client):
-    """БД.ОП с «Машиной» для резки и карточка операции ASM с категорией."""
+    """БД.ОП с «Машиной» для резки (связь с моделью автомата ОБ.005 БД.ОБ) и карточка операции ASM с категорией."""
     with app.state.references_uow_factory() as references:
+        references.tech_operations.save(TechOperationRecord.create(
+            tab=TechOperationTab.EQUIPMENT, display_text="Автомат мерной резки проводов", search_text="ОБ.005",
+            source_sheet="БД.ОБ", sort_key="ОБ.005",
+            fields={"Тип": "Оборудование", "Инв. номер": "ОБ.005", "Наименование": "Автомат мерной резки проводов",
+                    "Артикул": "EW-05F+M", "Для базы": "EW-05F+M/Автомат мерной резки проводов"},
+        ))
         references.tech_operations.save(TechOperationRecord.create(
             tab=TechOperationTab.OPERATION, display_text="Резка CUT_WIRE_auto", search_text="CUT_WIRE_auto",
             source_sheet="БД.ОП", sort_key="CUT_WIRE_auto",
@@ -118,8 +124,11 @@ def test_issued_kb_without_task_is_a_future_task_with_equipment_groups(library):
     assert future["pending"] is True and future["number"] == "Новое · 708К КБ2"
     assert (future["techcard_id"], future["techcard_version"], future["techcard_revision"]) == (str(card.id), card.version, 1)
     assert (future["quantity"], future["deadline"]) == (10, "2026-09-30")
+    with app.state.references_uow_factory() as references:
+        [cutter] = [item["id"] for item in references.equipment.models() if item["article"] == "EW-05F+M"]
     assert [operation["equipment"] for operation in future["operations"]] == [
-        {"key": "machine:ew-05f+m автомат мерной резки проводов", "label": "EW-05F+M Автомат мерной резки проводов", "limited": False},
+        # «Машина» БД.ОП — по связи ячейки с моделью: ключ — ID модели, подпись — номер и наименование модели.
+        {"key": cutter, "label": "ОБ.005 Автомат мерной резки проводов", "limited": False},
         {"key": "ОБ.027", "label": "ОБ.027 Пресс", "limited": True},
         {"key": "category:монтаж", "label": "Монтаж", "limited": False},
         {"key": "category:герметизация", "label": "Герметизация", "limited": False},

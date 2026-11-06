@@ -455,6 +455,9 @@ class TechOperationRecord:
     fields: dict[str, str]
     mirror_key: str = ""  # identity of the mirror row this record came from ('' — created in ERP); survives ERP edits
     edited_in_erp: bool = False  # edited/created in ERP: a mirror reload never overwrites or deletes it
+    # БД.ОБ: the equipment model the unit belongs to (`equipment_models`, migration 0171); None elsewhere and on a
+    # unit not saved yet (the repository gives it the model of its name + article + maker).
+    equipment_model_id: UUID | None = None
 
     # The cable kind (coax / wire / multi / lan) of a cable base's record and the БД.ТЕР kind (contact / lug) of a
     # «Терминалы» / «Наконечники» record — read from the tab (migration 0165 dropped the stored flags); None elsewhere.

@@ -1,4 +1,4 @@
-import type { TechOperationRecord } from "./api";
+import type { EquipmentRole, TechOperationRecord } from "./api";
 
 /** БД.ОБ as models: units of one machine («ОБ.070.1…8») are one row of the list and one card (owner 12.10.2026).
     Backend twin of the numbering: `references/equipment.py`. */
@@ -69,6 +69,9 @@ export function inventoryRange(numbers: string[]): string {
 
 export interface EquipmentModel {
   key: string;
+  /** Stable id of the model (БД.ОБ `equipment_model_id`); empty for records the server did not tag. */
+  id: string;
+  role: EquipmentRole;
   items: TechOperationRecord[]; // units, by inventory number
   name: string;
   article: string;
@@ -78,23 +81,28 @@ export interface EquipmentModel {
   base: string;
 }
 
-/** One model = the same name + article + maker. A unit without a name stands alone (never merged by its number). */
+/** One model = the server's `equipment_model_id` (owner 05.11.2026: links by id, not by name + article + maker).
+    A record without an id (old payload, tests) falls back to name + article + maker; a nameless one stands alone. */
 export function groupModels(records: TechOperationRecord[]): EquipmentModel[] {
   const byKey = new Map<string, TechOperationRecord[]>();
   for (const record of records) {
     const name = nameOf(record);
-    const key = name ? `${norm(name)}|${norm(articleOf(record))}|${norm(makerOf(record))}` : `#${record.id}`;
+    const key = record.equipment_model_id ? `m:${record.equipment_model_id}`
+      : name ? `${norm(name)}|${norm(articleOf(record))}|${norm(makerOf(record))}` : `#${record.id}`;
     byKey.set(key, [...(byKey.get(key) ?? []), record]);
   }
   return [...byKey.entries()].map(([key, items]) => {
     const sorted = [...items].sort((a, b) => inventoryOrder(invOf(a), invOf(b)));
     const first = sorted[0];
     return {
-      key, items: sorted, name: nameOf(first), article: articleOf(first), maker: makerOf(first), type: typeOf(first),
+      key, id: first.equipment_model_id ?? "", role: sorted.find((item) => item.equipment_role)?.equipment_role ?? "operational",
+      items: sorted, name: nameOf(first), article: articleOf(first), maker: makerOf(first), type: typeOf(first),
       places: [...new Set(sorted.map(placeOf).filter(Boolean))], base: baseOf(first),
     };
   });
 }
+
+export const ROLE_LABELS: Record<EquipmentRole, string> = { operational: "Операционное", supporting: "Обеспечивающее" };
 
 /** Rows of the БД.ОП that name a model in the column that suits its type. */
 export function operationField(type: string): string {
@@ -104,10 +112,25 @@ export function operationField(type: string): string {
 }
 export const OP_LINK_COLUMNS = ["Машина", "Инструмент", "Апликаторы / модули"];
 
+/** The operations of a model: by the ids of their cells (`equipment_links`); only a list the server did not tag
+    (no operation carries `equipment_links`) falls back to the «Для базы» text. */
 export function operationsOfModel(model: EquipmentModel, operations: TechOperationRecord[]): TechOperationRecord[] {
+  if (model.id && operations.some((op) => op.equipment_links)) {
+    return operations.filter((op) => op.equipment_links?.some((link) => link.model_id === model.id));
+  }
   const base = norm(model.base);
   if (!base) return [];
   return operations.filter((op) => OP_LINK_COLUMNS.some((column) => norm(op.fields[column] ?? "") === base));
+}
+
+/** Units a supporting unit serves, as records (unknown ids dropped). */
+export function servedUnits(unit: TechOperationRecord, records: TechOperationRecord[]): TechOperationRecord[] {
+  const ids = new Set(unit.serves_unit_ids ?? []);
+  return records.filter((record) => ids.has(record.id)).sort((a, b) => inventoryOrder(invOf(a), invOf(b)));
+}
+/** Supporting units that serve this unit (the reverse of «Обслуживает»). */
+export function servedBy(unit: TechOperationRecord, records: TechOperationRecord[]): TechOperationRecord[] {
+  return records.filter((record) => record.serves_unit_ids?.includes(unit.id)).sort((a, b) => inventoryOrder(invOf(a), invOf(b)));
 }
 
 /** The crimp-tool record of a model: the unit that owns the code, else the first one. */

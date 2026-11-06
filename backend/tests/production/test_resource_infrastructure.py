@@ -9,10 +9,11 @@ from sqlalchemy.orm import Session
 
 from app.modules.production.resource_claims import ResourceConflict, ResourceKey, ResourceKind, ResourceOwner, ResourceWindow
 from app.modules.production.resource_infrastructure import ActiveResourceRow, ResourceGenerationRow, ResourceReservationRow, SqlAlchemyResourceClaims
+from app.modules.references.infrastructure import EquipmentModelRow, TechOperationRecordRow  # the units machine claims name
 
 
 NOW = datetime(2026, 11, 3, 8, tzinfo=UTC)
-MACHINE = ResourceKey(ResourceKind.MACHINE, "ОБ.027.2")
+MACHINE = ResourceKey(ResourceKind.MACHINE, str(uuid4()))  # a БД.ОБ unit id
 PERSON = ResourceKey(ResourceKind.PERSON, str(uuid4()))
 WINDOW = ResourceWindow(NOW, NOW + timedelta(hours=1))
 
@@ -20,7 +21,7 @@ WINDOW = ResourceWindow(NOW, NOW + timedelta(hours=1))
 @pytest.fixture
 def db():
     engine = create_engine("sqlite://")
-    for row in (ResourceGenerationRow, ResourceReservationRow, ActiveResourceRow):
+    for row in (EquipmentModelRow, TechOperationRecordRow, ResourceGenerationRow, ResourceReservationRow, ActiveResourceRow):
         row.__table__.create(engine)
     with Session(engine) as session:
         session.add(ResourceGenerationRow(id=1, version=0))
@@ -57,9 +58,11 @@ def test_replan_removal_does_not_release_active(db):
     store = SqlAlchemyResourceClaims(db)
     first, execution = owner(), uuid4()
     store.replace_plan(first, (MACHINE,), WINDOW)
+    assert db.get(ResourceReservationRow, (first.kind, first.id, "machine", MACHINE.key)).machine_id == MACHINE.unit_id
     store.activate(first, execution, (MACHINE,), NOW)
     store.release_plan(first)
-    assert db.get(ActiveResourceRow, ("machine", MACHINE.key)).execution_id == execution
+    active = db.get(ActiveResourceRow, ("machine", MACHINE.key))
+    assert active.execution_id == execution and active.machine_id == MACHINE.unit_id  # the unit, as a FK
 
 
 def test_release_person_independently_from_machine_and_exact_execution(db):

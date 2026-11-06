@@ -43,7 +43,7 @@ class SetupResourceReservations:
 
     @staticmethod
     def _resources(task):
-        return (ResourceKey(ResourceKind.MACHINE, task.machine_id), ResourceKey(ResourceKind.PERSON, str(task.technician_id)))
+        return (ResourceKey(ResourceKind.MACHINE, str(task.machine_id)), ResourceKey(ResourceKind.PERSON, str(task.technician_id)))
 
     @_setup_conflict
     def reserve(self, task: SetupTask):

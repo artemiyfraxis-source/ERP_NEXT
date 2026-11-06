@@ -172,11 +172,12 @@ def test_site_boards_preserve_aggregate_contract_and_refresh_registered_idle_mac
     assert sites["ЖУК"] == [] and sites["ЦАР"][0]["units"] == 2
 
     with app.state.references_uow_factory() as references:
-        for number in ("ОБ.027.3", "ОБ.027.X", "ОБ.098.1"):
+        # ОБ.027.X — расчётная единица модели ОБ.027.3: станком площадки не считается; ОБ.098.1 — другая модель.
+        for number, name in (("ОБ.027.3", "Автомат"), ("ОБ.027.X", "Автомат"), ("ОБ.098.1", "Пресс-автомат")):
             references.tech_operations.save(TechOperationRecord.create(
                 tab=TechOperationTab.EQUIPMENT, display_text=f"Станок {number}", search_text=number,
                 source_sheet="БД.ОБ", sort_key=number,
-                fields={"Тип": "Оборудование", "Инв. номер": number, "Расположение": "жук", "Наименование": "Автомат"},
+                fields={"Тип": "Оборудование", "Инв. номер": number, "Расположение": "жук", "Наименование": name},
             ))
         references.commit()
     body = client.get("/api/production/machine-load", params=params).json()
@@ -222,7 +223,7 @@ def test_idle_machine_board_excludes_hand_tools_but_keeps_their_actual_occupancy
 
 
 def test_equipment_type_alias_survives_blank_legacy_type():
-    references = Mock()
+    references = Mock(equipment=None)  # записи без моделей: группа по номеру модели
     references.tech_operations.list.return_value = [SimpleNamespace(
         fields={"Тип": "   ", "obType": "Оборудование", "Инв. номер": "ОБ.027.1", "Расположение": "ЦАР"},
         display_text="Пресс",
