@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKeyConstraint, Integer, String, Uuid, select, text
+from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Integer, String, Uuid, select, text
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.shared.advisory_lock import lock_key
@@ -18,12 +18,13 @@ class RecipeVersionRow(Base):
     __tablename__ = "equipment_setup_recipe_versions"
     __table_args__ = (
         CheckConstraint("version >= 1", name="ck_setup_recipe_version"),
-        CheckConstraint("length(machine_id) > 0", name="ck_setup_recipe_machine"),
         CheckConstraint("length(source) > 0", name="ck_setup_recipe_source"),
     )
     recipe_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     version: Mapped[int] = mapped_column(Integer, primary_key=True)
-    machine_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    # The БД.ОБ unit (0172): renumbering it keeps the recipe, a unit with recipes can't be deleted.
+    machine_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("tech_operation_records.id", ondelete="RESTRICT",
+                                                              name="fk_setup_recipe_unit"), nullable=False)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     geometry: Mapped[list] = mapped_column(JSON, nullable=False)
     panel_settings: Mapped[list] = mapped_column(JSON, nullable=False)
@@ -89,7 +90,7 @@ class SqlAlchemyRecipes:
             source=value.source, created_by=value.created_by, created_at=value.created_at))
         self.session.flush()
 
-    def list_versions(self, machine_id: str, *, limit: int, offset: int):
+    def list_versions(self, machine_id: UUID, *, limit: int, offset: int):
         rows = self.session.scalars(select(RecipeVersionRow).where(RecipeVersionRow.machine_id == machine_id)
             .order_by(RecipeVersionRow.created_at.desc(), RecipeVersionRow.recipe_id, RecipeVersionRow.version.desc())
             .offset(offset).limit(limit))

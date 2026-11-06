@@ -15,6 +15,9 @@ from sqlalchemy.schema import CreateSchema, DropSchema
 
 from app.modules.production.resource_claims import ResourceConflict, ResourceKey, ResourceKind, ResourceOwner, ResourceWindow
 from app.modules.production.resource_infrastructure import ActiveResourceRow, ResourceGenerationRow, ResourceReservationRow, SqlAlchemyResourceClaims
+from app.modules.references.infrastructure import EquipmentModelRow, TechOperationRecordRow
+
+UNIT, MODEL = uuid4(), uuid4()  # the БД.ОБ unit a machine claim names by FK (0172)
 
 
 @pytest.fixture
@@ -37,10 +40,15 @@ def engine():
         with admin.begin() as connection:
             connection.execute(CreateSchema(schema))
         created = True
-        for row in (ResourceGenerationRow, ResourceReservationRow, ActiveResourceRow):
+        for row in (EquipmentModelRow, TechOperationRecordRow, ResourceGenerationRow, ResourceReservationRow, ActiveResourceRow):
             row.__table__.create(result)
         with Session(result) as session:
             session.add(ResourceGenerationRow(id=1, version=0))
+            session.add(EquipmentModelRow(id=MODEL, name="Автомат резки"))
+            session.flush()
+            session.add(TechOperationRecordRow(id=UNIT, tab="ob", display_text="ОБ.027.2", normalized_search="",
+                source_sheet="БД.ОБ", sort_key="1", fields={"Инв. номер": "ОБ.027.2"}, mirror_key="", edited_in_erp=False,
+                equipment_model_id=MODEL))
             session.commit()
         yield result
     finally:
@@ -53,7 +61,7 @@ def engine():
 
 @pytest.mark.parametrize("kind", [ResourceKind.MACHINE, ResourceKind.PERSON])
 def test_two_connections_cannot_reserve_same_absent_resource(engine, kind):
-    resource = ResourceKey(kind, "ОБ.027.2" if kind is ResourceKind.MACHINE else str(uuid4()))
+    resource = ResourceKey(kind, str(UNIT) if kind is ResourceKind.MACHINE else str(uuid4()))
     now = datetime(2026, 11, 3, 8, tzinfo=UTC)
     window = ResourceWindow(now, now + timedelta(hours=1))
     barrier = Barrier(2, timeout=10)

@@ -44,6 +44,7 @@ class SetupOperationUnavailable(SetupResourceConflict):
 
 SITES = frozenset({"ЦАР", "ЖУК"})
 SITE_UNKNOWN = "Площадка не определена — назначьте исполнителя или выберите станок"
+NOT_A_MACHINE = "Обеспечивающее оборудование не налаживается как станок операции"
 
 
 @dataclass(frozen=True)
@@ -62,13 +63,17 @@ class IssuedSetupOperation:
 
     operation: IssuedOperationRef
     site: str
-    eligible_machine_ids: tuple[str, ...]
+    eligible_machine_ids: tuple[UUID, ...]
 
 
 @dataclass(frozen=True)
 class SetupMachine:
-    id: str
+    """A БД.ОБ unit: id is its record, inventory_number only the display copy (it can be renumbered)."""
+
+    id: UUID
     site: str
+    inventory_number: str = ""
+    operational: bool = True  # False: «обеспечивающее» (compressor, chiller…) — never set up as a machine
 
 
 class SetupContext(Protocol):
@@ -76,14 +81,14 @@ class SetupContext(Protocol):
 
     issued_operation verifies the production task/operation and issued card revision/ETK position together:
     None only when they do not exist; SetupOperationUnavailable names why an existing one can't take setup.
-    machine resolves one physical inventory identity, never a model. recipe_exists verifies the pinned
+    machine resolves one physical БД.ОБ unit by its id, never a model or an inventory number. recipe_exists verifies the pinned
     version's applicability to that machine. These values must be loaded by adapters, never API DTOs.
     """
 
     def person(self, user_id: UUID) -> SetupPerson | None: ...
     def issued_operation(self, reference: IssuedOperationRef) -> IssuedSetupOperation | None: ...
-    def machine(self, machine_id: str) -> SetupMachine | None: ...
-    def recipe_exists(self, reference: RecipeVersionRef, machine_id: str) -> bool: ...
+    def machine(self, machine_id: UUID) -> SetupMachine | None: ...
+    def recipe_exists(self, reference: RecipeVersionRef, machine_id: UUID) -> bool: ...
 
 
 class SetupRepository(Protocol):
@@ -134,7 +139,7 @@ class AssignSetupCommand:
     idempotency_key: str
     expected_version: int
     operation: IssuedOperationRef
-    machine_id: str
+    machine_id: UUID
     technician_id: UUID
     recipe: RecipeVersionRef
     planned_start: datetime
@@ -247,6 +252,8 @@ def _site(context: SetupContext, task: SetupTask, *, require_eligible_technician
         raise SetupValidationError("Выданная операция и точная ревизия ЭТК не найдены")
     if machine is None or machine.id != task.machine_id:
         raise SetupValidationError("Физический станок не найден")
+    if not machine.operational:
+        raise SetupValidationError(NOT_A_MACHINE)
     # "" = the task fixes no site (no handed_to, no executor): the chosen machine's site decides.
     site = operation.site or machine.site
     if not operation.site and site not in SITES:
@@ -289,6 +296,8 @@ _STATUS_LABELS = {
 
 def _save(task: SetupTask, command, fingerprint: str, person: SetupPerson,
           now: datetime, uow: SetupUnitOfWork, action: str) -> SetupTask:
+    machine = uow.context.machine(task.machine_id)
+    label = (machine.inventory_number if machine is not None else "") or str(task.machine_id)
     uow.tasks.save(task, expected_version=command.expected_version)
     uow.audit.add(AuditEvent(
         id=uuid4(), aggregate_id=task.id, event_type=f"equipment_setup.{action}",
@@ -298,7 +307,7 @@ def _save(task: SetupTask, command, fingerprint: str, person: SetupPerson,
     ))
     message = notification_requested(
         key=f"equipment_setup:{task.id}:{task.version}", now=now,
-        title="Задание наладки", body=f"Станок {task.machine_id}: {_STATUS_LABELS[task.status]}",
+        title="Задание наладки", body=f"Станок {label}: {_STATUS_LABELS[task.status]}",
         kind="equipment_setup", reference=str(task.id), user_ids=(task.technician_id,),
     )
     if message is not None:
