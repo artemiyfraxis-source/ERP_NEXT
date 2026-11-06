@@ -139,7 +139,7 @@ export function MachineLoadGrid({ holidays, shift, days: given, week = 0, onWeek
         </tr></thead>
         <tbody>{group.machines.map((row) => {
           const total = row.days.reduce((sum, day) => sum + day.busy_seconds, 0);
-          return <tr key={row.machine}>
+          return <tr key={row.model_id ?? row.machine}>
             <th scope="row" title={row.label}><b>{machineName(row).title}</b>
               <small>{machineName(row).model ? `${machineName(row).model} · ` : ""}{row.units > 0 ? `${row.units} ед.${row.known ? "" : " · нет в БД.ОБ"}` : "Количество станков не указано"} · {total > 0 ? `${hoursOf(total)} ч за ${weeks} нед.` : "свободен"}</small></th>
             {days.map((day) => {
