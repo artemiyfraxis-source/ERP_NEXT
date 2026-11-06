@@ -466,6 +466,14 @@ class SqlAlchemyEquipmentRepository:
             state.models.values(), key=lambda item: (inventory_order(state.inventory(state.by_model[item.id][0].id))
                                                      if state.by_model.get(item.id) else (2,), norm(item.name)))]
 
+    def template_tools(self) -> list[dict]:
+        """The linked «Оборудование» rows of the card templates: template id, position, the row's text and inventory
+        number when linked, the model — what the ETK builder carries as `equipment_model_id` (workflows/techcard_build)."""
+        return [{"template_id": row.template_id, "position": row.position, "tool_name": row.tool_name,
+                 "inventory_number": row.inventory_number, "model_id": str(row.model_id)} for row in self.session.scalars(
+            select(EquipmentTemplateToolRow).where(EquipmentTemplateToolRow.model_id.is_not(None)).order_by(
+                EquipmentTemplateToolRow.template_id, EquipmentTemplateToolRow.position))]
+
     def record_extras(self, records: Sequence) -> dict[UUID, dict]:
         """What a list row of БД.ОБ / БД.ОП carries besides its cells: the model (id, role) of a unit with its tool and
         the units it serves; the models a БД.ОП row's cells link to."""

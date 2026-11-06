@@ -7,7 +7,8 @@ value the references no longer give disappears instead of lingering from the pre
 Ownership of keys:
   * reference-owned, always overwritten: `terminalNorm` / `terminalNormB`, `markKit`, `linearTiming`, the coax ends'
     `crimpHex` / `contactDepth` / `d1`–`d3`, the assembly's `coax.vswrNorm` (no screen types them; the references are
-    their only source);
+    their only source); the operations' `equipmentTools` and a coax `machine`'s `equipment_model_id`, name and number
+    (`enrich_equipment`: the equipment models of БД.ОБ, migration 0171);
   * wire `outerDiameter` / `conductorDiameter` — the one place where a person may also have typed a value. The
     reference answer wins when there is one (as before); where the references are silent, a value this enricher set
     earlier is dropped and a value it did not set (typed by hand, or from the generator) stays. Which values are its own
@@ -22,6 +23,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from decimal import Decimal
+from difflib import SequenceMatcher
 from functools import cached_property
 import hashlib
 import json
@@ -41,6 +43,8 @@ from app.modules.references.coax_vswr import (
     vswr_norm,
     with_customer_norm,
 )
+from app.modules.references.equipment import inv_key, parse_inventory
+from app.modules.references.equipment_identity import ref_key
 from app.modules.references.domain import CABLE_TABS, TERMINAL_TABS, TechOperationTab, cable_key, gost_awg_map, pick_wire_row
 from app.modules.references.wire_dia import outer_by_series
 from app.modules.references.technology import (
@@ -73,6 +77,10 @@ class Refs:
     coax_rows: tuple[Mapping[str, Any], ...] = ()
     dia_rows: tuple[Mapping[str, Any], ...] = ()
     coax_cards: tuple[CoaxCard, ...] = ()  # «Коаксиальные кабели»: затухание и рабочая частота для нормы КСВН
+    # Модели оборудования (migration 0171: id, артикул, наименование, роль, «Для базы», инв. номера единиц) и строки
+    # «Оборудование» шаблонов карт, связанные с моделью: из них ЭТК берёт `equipment_model_id` (enrich_equipment).
+    equipment_models: tuple[Mapping[str, Any], ...] = ()
+    template_tools: tuple[Mapping[str, Any], ...] = ()
 
     @cached_property
     def terminal_records(self) -> tuple[TerminalRecord, ...]:
@@ -87,6 +95,7 @@ class Refs:
             "gauges": [asdict(item) for item in self.gauges], "hookups": [asdict(item) for item in self.hookups],
             "wire": self.wire_rows, "coax": self.coax_rows, "dia": self.dia_rows,
             "coax_cards": [_card_stamp(card) for card in self.coax_cards],
+            "equipment_models": self.equipment_models, "template_tools": self.template_tools,
         }
         for name, part in parts.items():
             digest.update(name.encode())
@@ -112,9 +121,11 @@ def load_refs(references_factory: Callable[[], ReferencesUnitOfWork], *, coax: b
         gauges = tuple(uow.cable_structure.gauges())
         hookups = tuple(uow.cable_structure.hookups())
         wire_rows = _rows(uow.tech_operations.list(tab=CABLE_TABS, query="", limit=10_000))
+        equipment_models, template_tools = _equipment_identity(uow)
         if not metadata or metadata["schema_version"] != TECH_SNAPSHOT_SCHEMA_VERSION:
             # The wire Ø come from the cable bases, not from the snapshot: the ETK gets them even without it.
-            return Refs(None, gauges=gauges, hookups=hookups, wire_rows=wire_rows)
+            return Refs(None, gauges=gauges, hookups=hookups, wire_rows=wire_rows,
+                        equipment_models=equipment_models, template_tools=template_tools)
         terminal = _rows(uow.tech_operations.list(tab=TERMINAL_TABS, query="", limit=10_000))
         # ГОСТ section → AWG from «Сечения AWG ↔ мм²» of the база монтажных проводов (the old СПР.КАБ AWG table is
         # retired, owner 12.10.2026); the stored map only when the sizes table is empty.
@@ -134,8 +145,20 @@ def load_refs(references_factory: Callable[[], ReferencesUnitOfWork], *, coax: b
         }),
         terminal_rows=terminal, gost_awg=MappingProxyType(dict(gost_awg)), equipment=equipment, operations=operations,
         gauges=gauges, hookups=hookups, wire_rows=wire_rows, coax_rows=coax_rows, dia_rows=dia_rows,
-        coax_cards=coax_cards,
+        coax_cards=coax_cards, equipment_models=equipment_models, template_tools=template_tools,
     )
+
+
+def _equipment_identity(uow: ReferencesUnitOfWork) -> tuple[tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...]]:
+    """The equipment models and the linked template rows (empty — a unit of work without the equipment repository)."""
+    repository = getattr(uow, "equipment", None)
+    if repository is None:
+        return (), ()
+    keys = ("id", "article", "name", "role", "display", "inventory_numbers")
+    models = tuple(MappingProxyType({key: tuple(item.get(key) or ()) if key == "inventory_numbers" else str(item.get(key) or "")
+                                     for key in keys}) for item in repository.models())
+    tools = tuple(MappingProxyType(dict(item)) for item in repository.template_tools())
+    return models, tools
 
 
 def load_coax_refs(references_factory: Callable[[], ReferencesUnitOfWork]) -> tuple[
@@ -168,7 +191,8 @@ def with_technology(
             return dict(config), None
         refs = load_refs(references_factory, coax=isinstance(config.get("coax"), Mapping))
     if refs.snapshot is None:
-        return enrich_wire_diameters(config, refs.hookups, refs.gauges, refs.wire_rows), None
+        enriched = enrich_wire_diameters(config, refs.hookups, refs.gauges, refs.wire_rows)
+        return enrich_equipment(enriched, refs.equipment_models, refs.template_tools), None
     enriched = enrich_terminal_norms(config, refs.terminal_records, refs.gost_awg)
     enriched = enrich_marking(enriched, refs.equipment, refs.operations)
     enriched = enrich_linear_timing(enriched, refs.operations)
@@ -177,6 +201,7 @@ def with_technology(
     enriched = enrich_coax_depth(enriched, refs.coax_rows)
     enriched = enrich_coax_diameters(enriched, refs.dia_rows)
     enriched = enrich_coax_vswr_norm(enriched, refs.coax_rows, refs.coax_cards, refs.wire_rows)
+    enriched = enrich_equipment(enriched, refs.equipment_models, refs.template_tools)
     return enriched, dict(refs.snapshot)
 
 
@@ -344,6 +369,153 @@ def enrich_marking(
         op["markKit"] = deepcopy(kit)
     return enriched
 
+
+
+# --- Оборудование по ID (владелец 05.11.2026, migration 0171) ---
+# Строки «Оборудование» карты и станок резки коаксиала (`machine`) несут `equipment_model_id` модели БД.ОБ; название и
+# инв. номер — по текущей записи модели: переименование модели или перенумерация единиц видны в ЭТК. Текст шаблона, который
+# называет модель (артикул и наименование совпадают; «(R)», регистр и пробелы не в счёт), остаётся как есть — ЭТК не
+# меняется оттого, что строка получила ID. Обеспечивающее оборудование (компрессор, чиллер) машиной операции не бывает.
+EQUIPMENT_TOOLS = "equipmentTools"
+EQUIPMENT_ID = "equipment_model_id"
+SUPPORTING_ROLE = "supporting"
+_RETIRED_MARK = re.compile(r"\(R\)", re.IGNORECASE)
+_SAME_NAME = 0.85  # опечатка в БД.ОБ («прес» / «пресс») — то же наименование, не переименование
+
+
+def _plain_text(value: object) -> str:
+    return " ".join(_RETIRED_MARK.sub("", str(value or "")).casefold().split())
+
+
+def _label_parts(text: str) -> tuple[str, str, str]:
+    """«BZW-886+Q2 | Станок … мал. — кабель Ø до 5,5 мм» → артикул, наименование, примечание (« — …» или «»)."""
+    head, dash, note = str(text or "").partition(" — ")
+    article, bar, name = head.partition(" | ")
+    if not bar:
+        article, name = "", head
+    return article.strip(), name.strip(), f"{dash}{note}" if dash else ""
+
+
+def _same_name(given: str, current: str) -> bool:
+    left, right = _plain_text(given), _plain_text(current)
+    return left == right or bool(right and right in left) or SequenceMatcher(None, left, right).ratio() >= _SAME_NAME
+
+
+def _renamed(article: str, name: str, model: Mapping[str, Any]) -> bool:
+    """The text named the model and the model has a new article or a new name since. A text whose article and name
+    both differ from the model is the template's own wording (linked by the inventory number) — it stays."""
+    if not str(model.get("name") or "").strip():
+        return False
+    same_article = _plain_text(article) == _plain_text(model.get("article"))
+    return same_article != _same_name(name, str(model.get("name") or ""))
+
+
+def _model_label(model: Mapping[str, Any]) -> tuple[str, str]:
+    return str(model.get("article") or "").strip(), str(model.get("name") or "").strip()
+
+
+def _shown_tool_name(text: str, model: Mapping[str, Any]) -> str:
+    article, name, note = _label_parts(text)
+    if not _renamed(article, name, model):
+        return text
+    new_article, new_name = _model_label(model)
+    return (f"{new_article} | {new_name}" if new_article else new_name) + note
+
+
+def _family(value: object) -> tuple[str, int] | None:
+    parsed = parse_inventory(str(value or ""))
+    return (parsed.prefix, parsed.base) if parsed is not None else None
+
+
+def _shown_inventory(given: str, model: Mapping[str, Any]) -> str:
+    """The given number while it names a unit of the model (or the model's number «ОБ.071.X» / «ОБ.094»), else the
+    first unit's number (the units were renumbered); empty, or a model without units — as given."""
+    numbers = [str(item) for item in model.get("inventory_numbers") or () if str(item).strip()]
+    if not str(given or "").strip() or not numbers:
+        return given
+    if inv_key(given) in {inv_key(item) for item in numbers}:
+        return given
+    family = _family(given)
+    if family is not None and family in {_family(item) for item in numbers}:
+        return given
+    return numbers[0]
+
+
+class _Models:
+    def __init__(self, models: Iterable[Mapping[str, Any]]):
+        self.by_id = {str(item["id"]): item for item in models}
+        self.inventories: dict[str, set[str]] = {}
+        self.families: dict[tuple[str, int], set[str]] = {}
+        self.texts: dict[str, set[str]] = {}
+        for model_id, item in self.by_id.items():
+            for number in item.get("inventory_numbers") or ():
+                self.inventories.setdefault(inv_key(number), set()).add(model_id)
+                if (family := _family(number)) is not None:
+                    self.families.setdefault(family, set()).add(model_id)
+            article, name = _model_label(item)
+            for text in (item.get("display"), f"{article}/{name}" if name else ""):
+                if key := ref_key(_RETIRED_MARK.sub("", str(text or ""))):
+                    self.texts.setdefault(key, set()).add(model_id)
+
+    def machine(self, machine: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        """The model of a chosen machine: its own id, else the one model of its inventory number (the unit, then the
+        model number), else of its «артикул/наименование»; several — none."""
+        known = self.by_id.get(str(machine.get(EQUIPMENT_ID) or ""))
+        if known is not None:
+            return known
+        inventory = str(machine.get("inventory") or "")
+        family = _family(inventory)
+        text = ref_key(_RETIRED_MARK.sub("", f"{machine.get('model') or ''}/{machine.get('name') or ''}"))
+        for found in (self.inventories.get(inv_key(inventory)) if inventory.strip() else None,
+                      self.families.get(family) if family is not None else None, self.texts.get(text)):
+            if found:
+                return self.by_id[next(iter(found))] if len(found) == 1 else None
+        return None
+
+
+def enrich_equipment(
+    config: Mapping[str, Any], models: Iterable[Mapping[str, Any]], template_tools: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Copy of the config whose operations carry the equipment models: `equipmentTools` — the linked «Оборудование»
+    rows of the operation's template (position, the text and number the link was made on, the model id, the name and
+    number to show); a coax `machine` gets `equipment_model_id` and its name and number from the model, and goes when
+    its model is supporting equipment. Refreshing: `equipmentTools` is rebuilt every run."""
+    enriched = deepcopy(dict(config))
+    index = _Models(models)
+    by_template: dict[str, list[Mapping[str, Any]]] = {}
+    for row in template_tools:
+        by_template.setdefault(str(row.get("template_id") or ""), []).append(row)
+    for op in enriched.get("ops") or []:
+        if not isinstance(op, dict):
+            continue
+        op.pop(EQUIPMENT_TOOLS, None)
+        tools = []
+        for row in by_template.get(str(op.get("templateId") or "").strip(), ()):
+            model = index.by_id.get(str(row.get("model_id") or ""))
+            if model is None:
+                continue
+            text, number = str(row.get("tool_name") or ""), str(row.get("inventory_number") or "")
+            tools.append({"position": int(row.get("position") or 0), "tool": text, "inventory_number": number,
+                          EQUIPMENT_ID: str(model["id"]), "name": _shown_tool_name(text, model),
+                          "inventory": _shown_inventory(number, model)})
+        if tools:
+            op[EQUIPMENT_TOOLS] = tools
+        machine = op.get("machine")
+        if op.get("type") != "coaxCut" or not isinstance(machine, Mapping):
+            continue
+        model = index.machine(machine)
+        if model is None:
+            continue
+        if model.get("role") == SUPPORTING_ROLE:
+            op.pop("machine")  # компрессор / чиллер не станок операции: остаётся оборудование карты
+            continue
+        article, name = str(machine.get("model") or ""), str(machine.get("name") or "")
+        if _renamed(article, name, model):
+            article, name = _model_label(model)
+        op["machine"] = {**machine, "model": article, "name": name,
+                         "inventory": _shown_inventory(str(machine.get("inventory") or ""), model),
+                         EQUIPMENT_ID: str(model["id"])}
+    return enriched
 
 # «Погонная» операция БД.ОП (владелец 15.10.2026): время резки считается по узлам станка, как в расчётном листе цеха —
 # на штуку L / «Скорость проката» + «Скорость работы инструмента» × «Кол-во операций инструмента». «Скорость проката»

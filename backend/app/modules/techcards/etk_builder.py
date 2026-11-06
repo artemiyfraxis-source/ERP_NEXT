@@ -30,6 +30,10 @@ from .project_cards import CUSTOM_OP
 #    norms; production takes the setup out of them (`norms_include_setup`).
 ETK_VERSION = 4
 ETK_REBUILD_VERSION = 2
+# Оборудование по ID (migration 0171): строка «Оборудование» и станок `machine` несут id модели БД.ОБ. Это ключ
+# идентичности, не содержания: ревизию ЭТК он сам по себе не выпускает (workflows/etk_refresh.IDENTITY_KEYS).
+EQUIPMENT_ID = "equipment_model_id"
+EQUIPMENT_TOOLS = "equipmentTools"
 NO_COMPONENTS = {
     "SDR_tin", "INS_TUT", "PRS_SLEEVE_coax", "TWIST", "HEAT_TYT_short",
     "HEAT_TYT_long", "HEAT_TTK_short", "HEAT_TTK_long", "PRS_MHF",
@@ -1402,11 +1406,15 @@ def _hex_phrase(items: list[Mapping[str, str]]) -> str:
 
 def _coax_machine(op: Mapping[str, Any]) -> dict[str, str]:
     """The rotary machine the technologist chose for cutting coax with stripping (generator, owner 14.10): model,
-    inventory number and name from БД.ОБ; {} — no choice (the card's equipment stays as it is)."""
+    inventory number and name from БД.ОБ, and the id of its equipment model when the references know it
+    (workflows/techcard_build.enrich_equipment); {} — no choice (the card's equipment stays as it is)."""
     machine = op.get("machine")
     if op.get("type") != "coaxCut" or not isinstance(machine, Mapping) or not str(machine.get("model") or "").strip():
         return {}
-    return {key: str(machine.get(key) or "").strip() for key in ("model", "inventory", "name")}
+    chosen = {key: str(machine.get(key) or "").strip() for key in ("model", "inventory", "name")}
+    if str(machine.get(EQUIPMENT_ID) or "").strip():
+        chosen[EQUIPMENT_ID] = str(machine[EQUIPMENT_ID]).strip()
+    return chosen
 
 
 # A rotary cut-and-strip machine in a card's equipment («BZW-886+Q2 | Станок резки провода с роторной зачисткой мал.»).
@@ -1418,18 +1426,23 @@ def _machine_tooling(tooling: list[dict[str, Any]], machine: Mapping[str, str]) 
     (the card CUT_COAX+…strip lists both, «мал.» and «больш.»); a card without it gets it in place of its rotary machine
     (or at the end of «Оборудование»). The equipment rows are renumbered."""
     model = machine["model"].casefold()
+    model_id = machine.get(EQUIPMENT_ID) or ""
     own = lambda tool: tool["section"] == "Оборудование" and (
-        model in tool["name"].casefold() or (machine["inventory"] and tool["inventory_number"] == machine["inventory"]))
+        bool(model_id and tool.get(EQUIPMENT_ID) == model_id) or model in tool["name"].casefold()
+        or bool(machine["inventory"] and tool["inventory_number"] == machine["inventory"]))
     rotary = lambda tool: tool["section"] == "Оборудование" and bool(_ROTARY_MACHINE.search(tool["name"]))
     chosen = {
         "section": "Оборудование", "number": "", "name": " | ".join(part for part in (machine["model"], machine["name"]) if part),
         "inventory_number": machine["inventory"], "program": "", "parameters": "", "norm": "", "unit": "",
+        **({EQUIPMENT_ID: model_id} if model_id else {}),
     }
     has_own = any(own(tool) for tool in tooling)
     result: list[dict[str, Any]] = []
     placed = has_own
     for tool in tooling:
-        if own(tool) or not rotary(tool):
+        if own(tool):
+            result.append({**tool, EQUIPMENT_ID: model_id} if model_id else tool)
+        elif not rotary(tool):
             result.append(tool)
         elif not placed:
             result.append({**chosen, "program": tool["program"], "parameters": tool["parameters"]})
@@ -1734,9 +1747,39 @@ def _machine_applicator(value: str) -> str:
     return "/".join(automatic) or value
 
 
+def _equipment_links(op: Mapping[str, Any]) -> dict[int, Mapping[str, Any]]:
+    """The template's «Оборудование» rows linked to an equipment model, by the row's position (`equipmentTools`, put
+    on the operation by workflows/techcard_build.enrich_equipment)."""
+    links: dict[int, Mapping[str, Any]] = {}
+    raw = op.get(EQUIPMENT_TOOLS)
+    for item in raw if isinstance(raw, list) else ():
+        if isinstance(item, Mapping) and str(item.get(EQUIPMENT_ID) or "").strip():
+            try:
+                links[int(item.get("position"))] = item
+            except (TypeError, ValueError):
+                continue
+    return links
+
+
+def _linked_tool(tool: Any, row: dict[str, Any], link: Mapping[str, Any] | None, substitute: Any) -> dict[str, Any]:
+    """An «Оборудование» row of the template still as it was linked (text and number) carries the model id, and the
+    name and number the model has now in БД.ОБ (an unchanged model keeps the template's text as it is)."""
+    if (link is None or tool.section != "Оборудование" or tool.name.strip() != str(link.get("tool") or "").strip()
+            or tool.inventory_number.strip() != str(link.get("inventory_number") or "").strip()):
+        return row
+    name, number = str(link.get("name") or ""), str(link.get("inventory") or "")
+    if name and name != str(link.get("tool") or ""):
+        row["name"] = substitute(name)
+    if number != str(link.get("inventory_number") or ""):
+        row["inventory_number"] = number
+    row[EQUIPMENT_ID] = str(link[EQUIPMENT_ID]).strip()
+    return row
+
+
 def _resolve_card(
     card: OperationCardTemplate, replacements: Mapping[str, str], fields: Mapping[str, Any],
     cards_by_code: Mapping[str, OperationCardTemplate] | None = None,
+    equipment: Mapping[int, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     def substitute(value: object) -> str:
         text = str(value or "")
@@ -1786,7 +1829,7 @@ def _resolve_card(
         steps.append({"number": step.number, "kind": step.kind, "text": text, "tolerance": "" if tolerance in {"-", "—"} else tolerance})
     tooling = []
     applicator_set = False
-    for tool in card.tooling:
+    for position, tool in enumerate(card.tooling):
         program = substitute(tool.program)
         free_program = not program or (fields.get("cutCrimp") and program in {"-", "—"})
         if not applicator_set and fields.get("applicator") and tool.section == "Оборудование" and free_program:
@@ -1795,11 +1838,11 @@ def _resolve_card(
         name = substitute(tool.name)
         if isinstance(fields.get("crimpHex"), list) and tool.section == "Матрицы":
             name = f"{name.rstrip()} — {_hex_phrase(fields['crimpHex'])}"
-        tooling.append({
+        tooling.append(_linked_tool(tool, {
             "section": tool.section, "number": tool.number, "name": name,
             "inventory_number": tool.inventory_number, "program": program,
             "parameters": substitute(tool.parameters), "norm": tool.norm, "unit": tool.unit,
-        })
+        }, (equipment or {}).get(position), substitute))
     if isinstance(fields.get("machine"), Mapping):
         tooling = _machine_tooling(tooling, fields["machine"])
     if fields.get("noTooling"):
@@ -1882,7 +1925,7 @@ def _typed_operation(
         "side": str(op.get("side") or ""), "connector": connector,
         "connector_article": str(_endpoint(op).get("connArt") or _endpoint(op).get("connName") or ""),
         "template_id": str(op.get("templateId") or ""), "title": card.title if card else "",
-        "card": _resolve_card(card, replacements, fields, cards_by_code) if card else None,
+        "card": _resolve_card(card, replacements, fields, cards_by_code, _equipment_links(op)) if card else None,
         "components": _components(op, config, code, manual=manual), "semis": semis,
         "result": _result_rows(op, config, result, is_last, single, manual=manual) if result_rows is None else result_rows,
         "result_label": "Изделие" if is_last else "Полуфабрикат",
@@ -2553,7 +2596,7 @@ def _build_manual(
             warnings.append(f"Операция {item.position} ({item.label}): не задана норма времени")
         if item.card is not None:
             replacements = _placeholder_map(item.source, config, "; ".join(row["name"] for row in semis), result, {}, {})
-            card = _resolve_card(item.card, replacements, {}, cards_by_code)
+            card = _resolve_card(item.card, replacements, {}, cards_by_code, _equipment_links(item.source))
             card["name"] = item.label
         elif item.kind == CUSTOM_OP:
             card = {"name": item.label, "safety": "", "defects": "",
