@@ -222,7 +222,6 @@ describe("Приёмка с производства", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Данные отправки" }));
     const dialog = within(await screen.findByRole("dialog", { name: "Данные отправки 591К.3" }));
     expect(await dialog.findByLabelText("Получатель")).toBeEnabled();
-    fireEvent.change(dialog.getByLabelText("Тип доставки"), { target: { value: "ДОСТАВКА ТК" } });
     expect(dialog.getByLabelText("Адрес доставки")).toBeEnabled();
     fireEvent.change(dialog.getByLabelText("УПД"), { target: { value: "ЭДО" } });
     expect(dialog.getByLabelText("№ УПД")).toBeEnabled();
