@@ -1986,6 +1986,32 @@ export interface TechOperationRecord {
   ter_kind?: TerKind;
   ter_rule?: TerKind;
   fields: Record<string, string>;
+  /** БД.ОБ / БД.ОП — связи по id (миграция 0171): модель единицы, её вид, «Инструмент» и «Обслуживает»; ячейки БД.ОП → модели. */
+  equipment_model_id?: string;
+  equipment_role?: EquipmentRole | null;
+  tool_unit_id?: string | null;
+  serves_unit_ids?: string[];
+  equipment_links?: Array<{ column: string; position: number; model_id: string }>;
+}
+
+/** «Операционное» делает операции, «обеспечивающее» обслуживает машины (компрессор, чиллер) и не бывает машиной операции. */
+export type EquipmentRole = "operational" | "supporting";
+export interface EquipmentModelInfo {
+  id: string; name: string; article: string; maker: string; role: EquipmentRole; role_confirmed: boolean; display: string;
+  unit_ids: string[]; inventory_numbers: string[]; operations: number;
+}
+export interface EquipmentUnresolvedOperation {
+  operation_id: string; number: string; column: string; position: number; text: string;
+  reason: "unmatched" | "ambiguous" | "supporting"; candidates: Array<{ model_id: string; display: string }>;
+}
+export interface EquipmentLinksReport {
+  counts: Record<string, number>;
+  operations: EquipmentUnresolvedOperation[];
+  tools: Array<{ unit_id: string; inventory: string; text: string; reason: "unmatched" | "ambiguous" }>;
+  templates: Array<{ template_id: string; position: number; tool_name: string; inventory_number: string; reason: "unmatched" | "ambiguous" }>;
+  models_without_units: EquipmentModelInfo[];
+  models_units_disagree: EquipmentModelInfo[];
+  roles_unconfirmed: EquipmentModelInfo[];
 }
 
 /** БД.ТЕР: «Терминалы» — обжимные контакты разъёмов, «Наконечники» — НШВИ, НКИ, РПИ… (backend `references/lugs.py`). */
@@ -4194,6 +4220,16 @@ export const referencesApi = {
   duplicateRecord: (id: string) =>
     api<TechOperationRecord>(`/api/references/tech-operations/${id}/duplicate`, { method: "POST" }),
   crimps: (id: string) => api<CrimpOverview>(`/api/references/tech-operations/${id}/crimps`),
+  equipmentModels: () => visitRead<{ models: EquipmentModelInfo[] }>("/api/references/equipment-models"),
+  equipmentLinksReport: () => visitRead<EquipmentLinksReport>("/api/references/equipment-links/report"),
+  setEquipmentRole: (modelId: string, role: EquipmentRole) =>
+    api<EquipmentModelInfo>(`/api/references/equipment-models/${modelId}/role`, { method: "PUT", body: JSON.stringify({ role }) }),
+  /** «Обслуживает» единицы обеспечивающего оборудования: весь список обслуживаемых единиц. */
+  setEquipmentServes: (unitId: string, unitIds: string[]) =>
+    api<{ serves_unit_ids: string[] }>(`/api/references/tech-operations/${unitId}/serves`, { method: "PUT", body: JSON.stringify({ unit_ids: unitIds }) }),
+  /** Единица БД.ОБ → другая модель (null — своя модель). */
+  setEquipmentUnitModel: (unitId: string, modelId: string | null) =>
+    api<{ equipment_model_id: string }>(`/api/references/tech-operations/${unitId}/equipment-model`, { method: "PUT", body: JSON.stringify({ model_id: modelId }) }),
   crimpCodes: () => visitRead<CrimpCodes>("/api/references/tech-operations/crimp-codes"),
   crimpTerminal: (toolId: string, terminalId: string, add: boolean) =>
     api<CrimpTerminal>(`/api/references/tech-operations/${toolId}/crimps/terminals/${terminalId}`, { method: add ? "POST" : "DELETE" }),
