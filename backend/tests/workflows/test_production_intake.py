@@ -199,8 +199,11 @@ def test_intake_lists_every_kb_of_open_projects_until_everything_is_sent(intake_
     # Задание «Выполнено», коробок у ОТК нет — производство закончено: «Готово» (владелец 29.10).
     assert (done["stage"], done["delivered"], done["remaining"]) == ("Готово", "5", "5")
     # Permission for the shipped KB4 must not authorize other KBs of the same project.
-    assert partly_accepted["pack_decided"] is False and partly_handed["pack_decided"] is False
-    assert by_kb[("709К.1", "КБ1")]["pack_decided"] is False
+    assert partly_accepted["pack_allowed"] is False and partly_handed["pack_allowed"] is False
+    assert by_kb[("709К.1", "КБ1")]["pack_allowed"] is False
+    # `pack_decided` — устаревший синоним `pack_allowed` на один выпуск (старый фронтенд).
+    assert all(row["pack_decided"] is row["pack_allowed"] for row in rows)
+    assert all(row["pack_allowed"] is (Decimal(row["pack_permission_remaining"]) > 0) for row in rows)
 
     for row in rows:  # в работе — до заказанного (или сданного, если сдано больше); не запущена — до сданного
         in_work = row["tasks"] or row["stage"] in (

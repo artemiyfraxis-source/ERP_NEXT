@@ -23,7 +23,7 @@ from app.shared.notifications import (
 )
 
 from .domain import (
-    HISTORY_CORRECTION_LIMITS, PACK_NOT_DECIDED, AcceptanceAct, DeliveryTerms, FinishedGood, GoodMove, MoveContext, PackPermission, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
+    HISTORY_CORRECTION_LIMITS, AcceptanceAct, DeliveryTerms, FinishedGood, GoodMove, MoveContext, PackPermission, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
     ShipmentStatus, ShippingValidationError, StoredFile, UpdType, check_boxes, effective_address, packed_by_index,
     plan_project_queue,
 )
@@ -200,8 +200,9 @@ class CreateShipmentCommand:
     actor: Actor
     now: datetime
     no_docs: bool = False
-    # Отправку заводит менеджер («Отгрузка» на правку): его отправка сама ставит решение «упаковывать».
-    decide_pack: bool = False
+    # Отправку заводит менеджер («Отгрузка» на правку): его отправка — само решение упаковывать (договорено 29.10.2026):
+    # набирая, она поднимает лимит упаковки КБ до набранного (запись в журнал, как у явного разрешения).
+    grant_pack: bool = False
 
 
 @dataclass(frozen=True)
@@ -472,7 +473,6 @@ def _create_shipment(
     if not lines:
         raise ShippingValidationError("Не выбрано ни одной позиции с количеством")
     # The shipment's project is its first line's (`shipHeadEff_`).
-    # Creating a shipment, including a manager's command, never grants packing permission.
     card = uow.addressees.get(lines[0].project)
     address = effective_address(
         receiver=command.receiver, shipping_point=command.shipping_point, contact=command.contact,
@@ -504,8 +504,8 @@ def _create_shipment(
         "number": shipment.number, "inherited": sorted(address.inherited), **(details or {}),
     }, uow)
     # Shipment.gs shipRequestCreate_: набор сразу при заведении, затем PL/DN → «Упакована»;
-    # noDocs → остаётся «Собрана». Цех ещё ничего не сдал — заявка «Новая» и ждёт.
-    shipment, taken = _pick(shipment, command.actor, command.now, uow)
+    # noDocs → остаётся «Собрана». Цех ещё ничего не сдал — заявка «Новая» и ждёт (лимит упаковки ей не нужен).
+    shipment, taken = _pick(shipment, command.actor, command.now, uow, grant=command.grant_pack)
     if taken and not command.no_docs:
         shipment = _pack(shipment, command.actor, command.now, uow)
     return shipment
@@ -535,53 +535,6 @@ def _card_upd_number(
         for other in uow.shipments.for_project(card.project)
     )
     return None if taken else (card.upd_number, card.upd_date)
-
-
-def _decide_pack(project: str, actor: Actor, now: datetime, uow: UnitOfWork) -> ProjectAddressee:
-    """Решение «упаковывать» без фиксации: ставит его менеджер (или его отправка); уже стоит — ничего не меняется."""
-    current = uow.addressees.get(project) or ProjectAddressee.empty(project)
-    decided = current.decide_pack(True, actor.name, now)
-    if decided is current:
-        return current
-    updated = replace(decided, version=current.version + 1, updated_by=actor.name, updated_at=now)
-    uow.addressees.add(updated)
-    _audit(_addressee_id(project), "shipping.pack_decided", actor, now, {"project": project}, uow)
-    _notify_pack_decided(updated, actor, now, uow)
-    return updated
-
-
-def _notify_pack_decided(card: ProjectAddressee, actor: Actor, now: datetime, uow: UnitOfWork) -> None:
-    """Кладовщикам: «можно упаковывать» со ссылкой на «Склад → Приёмка с производства»."""
-    publish_notification(uow.outbox, notification_requested(
-        key=f"shipping:pack-decided:{card.project}:v{card.version}",
-        now=now,
-        title=f"Можно упаковывать: проект {card.project}",
-        body=(
-            f"{actor.name}: проект {card.project} можно упаковывать — принятое на склад ГП упаковывайте."
-            "\n\nОткрыть: портал → Склад → Приёмка с производства (?section=intake)."
-        ),
-        kind="ship",
-        reference=card.project,
-        audiences=(STOREKEEPER_AUDIENCE,),
-    ))
-
-
-def _require_pack_decision(shipment: Shipment, uow: UnitOfWork) -> None:
-    """Legacy project-wide flags are history only; each requested KB needs an explicit ceiling."""
-    for line in shipment.lines:
-        if line.shortage > 0 and uow.pack_permissions.get(line.project, line.item_index) is None:
-            raise ShippingValidationError(f"{line.item_index}: явно разрешите количество к упаковке")
-
-
-@dataclass(frozen=True)
-class PackDecisionCommand:
-    """«Упаковывать» в карточке проекта: `decided` — поставить или снять; версия — карточки проекта."""
-
-    project: str
-    expected_version: int
-    decided: bool
-    actor: Actor
-    now: datetime
 
 
 @dataclass(frozen=True)
@@ -624,66 +577,42 @@ def set_pack_permissions(
                 raise ConcurrentShippingUpdate("Разрешение упаковки изменилось — обновите страницу")
             updated = current.change(line.quantity, consumed, command.actor.name, command.now)
             changes.append((current, updated))
-        for current, updated in changes:
-            if updated is current:
-                continue
-            uow.pack_permissions.add(updated)
-            _audit(uuid5(NAMESPACE_URL, f"erp-next:packing:{project}:{updated.item_index}"),
-                   "shipping.pack_permission_changed", command.actor, command.now, {
-                       "project": project, "item_index": updated.item_index,
-                       "before": str(current.quantity), "quantity": str(updated.quantity), "version": updated.version,
-                   }, uow)
-        changed = [updated for current, updated in changes if current is not updated]
-        if changed:
-            fingerprint = sha256(json.dumps(
-                [project, sorted((item.item_index, item.version) for item in changed)], ensure_ascii=False,
-            ).encode("utf-8")).hexdigest()
-            publish_notification(uow.outbox, notification_requested(
-                key=f"shipping:pack-permissions:{fingerprint}", now=command.now,
-                title=f"Разрешения упаковки: проект {project}",
-                body=(f"{command.actor.name}: изменены общие лимиты упаковки по КБ (включая уже упакованное и отгруженное):\n"
-                      + "\n".join(f"{item.item_index}: {format(item.quantity.normalize(), 'f')}" for item in changed)
-                      + "\n\nОткрыть: портал → Склад → Приёмка с производства (?section=intake)."),
-                kind="ship", reference=project, audiences=(STOREKEEPER_AUDIENCE,),
-            ))
+        if _record_pack_permissions(project, changes, command.actor, command.now, uow):
             uow.commit()
         return tuple(updated for _, updated in changes)
 
 
-PACK_DECISION_LOCKED = "Решение «упаковывать» не снять: по проекту уже есть набранная отправка"
-
-
-def set_pack_decision(command: PackDecisionCommand, uow: UnitOfWork) -> ProjectAddressee:
-    """Ставит или снимает решение «упаковывать». Снять — только пока у проекта нет набранной (не отменённой) отправки;
-    поставленное решение уходит кладовщикам уведомлением «можно упаковывать»."""
-    project = str(command.project or "").strip()
-    if not project:
-        raise ShippingValidationError("Не указан проект")
-    with uow:
-        current = uow.addressees.get(project) or ProjectAddressee.empty(project)
-        if command.expected_version != current.version:
-            raise ConcurrentShippingUpdate("Карточка проекта изменилась после загрузки формы")
-        if command.decided == current.pack_decided:
-            return current
-        if command.decided:
-            updated = _decide_pack(project, command.actor, command.now, uow)
-        else:
-            picked = any(
-                shipment.status != ShipmentStatus.CANCELLED and any(line.picked > 0 for line in shipment.lines)
-                for shipment in uow.shipments.for_project(project)
-            )
-            if picked:
-                raise ShippingValidationError(PACK_DECISION_LOCKED)
-            updated = replace(
-                current.decide_pack(False, command.actor.name, command.now), version=current.version + 1,
-                updated_by=command.actor.name, updated_at=command.now,
-            )
-            uow.addressees.add(updated)
-            _audit(_addressee_id(project), "shipping.pack_decision_withdrawn", command.actor, command.now, {
-                "project": project, "was_by": current.pack_decided_by,
-            }, uow)
-        uow.commit()
-        return updated
+def _record_pack_permissions(
+    project: str, changes: Sequence[tuple[PackPermission, PackPermission]], actor: Actor, now: datetime, uow: UnitOfWork,
+    shipment: Shipment | None = None,
+) -> bool:
+    """Запись изменённых лимитов упаковки одного проекта без фиксации: строка, событие журнала на каждую КБ и одно
+    уведомление кладовщикам. `shipment` — лимит поднят отправкой менеджера (её набором). Изменений нет — False."""
+    changed = [(current, updated) for current, updated in changes if updated is not current]
+    for current, updated in changed:
+        uow.pack_permissions.add(updated)
+        _audit(uuid5(NAMESPACE_URL, f"erp-next:packing:{project}:{updated.item_index}"),
+               "shipping.pack_permission_changed", actor, now, {
+                   "project": project, "item_index": updated.item_index,
+                   "before": _plain(current.quantity), "quantity": _plain(updated.quantity), "version": updated.version,
+                   **({"shipment": shipment.number, "shipment_id": str(shipment.id)} if shipment is not None else {}),
+               }, uow)
+    if not changed:
+        return False
+    items = [updated for _, updated in changed]
+    fingerprint = sha256(json.dumps(
+        [project, sorted((item.item_index, item.version) for item in items)], ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    why = f" отправкой {shipment.number}" if shipment is not None else ""
+    publish_notification(uow.outbox, notification_requested(
+        key=f"shipping:pack-permissions:{fingerprint}", now=now,
+        title=f"Разрешения упаковки: проект {project}",
+        body=(f"{actor.name}: изменены{why} общие лимиты упаковки по КБ (включая уже упакованное и отгруженное):\n"
+              + "\n".join(f"{item.item_index}: {format(item.quantity.normalize(), 'f')}" for item in items)
+              + "\n\nОткрыть: портал → Склад → Приёмка с производства (?section=intake)."),
+        kind="ship", reference=project, audiences=(STOREKEEPER_AUDIENCE,),
+    ))
+    return True
 
 
 def _unset_fields(command: CreateShipmentCommand) -> frozenset[str]:
@@ -695,33 +624,53 @@ def _unset_fields(command: CreateShipmentCommand) -> frozenset[str]:
     return frozenset(key for key, value in own.items() if not (value.strip() if isinstance(value, str) else value))
 
 
-def _pick(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork) -> tuple[Shipment, dict[UUID, Decimal]]:
+def _pick(
+    shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork, *, grant: bool = False,
+) -> tuple[Shipment, dict[UUID, Decimal]]:
+    """Набор недобранного из склада ГП. Лимит упаковки КБ проверяется только по тому, что набирается сейчас
+    (min(остаток ГП, недобрано)): заявка вперёд производства ничего не набирает и лимита не требует. Набор сверх
+    лимита — отказ; с `grant` (отправка менеджера) лимит КБ поднимается до набираемого — с записью в журнал."""
     uow.lock_projects([line.project for line in shipment.lines])
-    _require_pack_decision(shipment, uow)
     goods = {line.finished_good_id: uow.goods.get(line.finished_good_id) for line in shipment.lines}
     if any(good is None for good in goods.values()):
         raise ShippingValidationError("Позиция готовой продукции больше не существует")
     typed = {good_id: good for good_id, good in goods.items() if good is not None}
+    taking = {
+        good_id: max(min(good.remaining, sum(
+            (line.shortage for line in shipment.lines if line.finished_good_id == good_id), Decimal("0"),
+        )), Decimal("0"))
+        for good_id, good in typed.items()
+    }
+    keys = {good_id: (normalize_project_number(good.project), good.item_index) for good_id, good in typed.items()}
+    picking: dict[tuple[str, str], Decimal] = {}
+    for good_id, key in keys.items():
+        picking[key] = picking.get(key, Decimal("0")) + taking[good_id]
+    budgets: dict[tuple[str, str], Decimal] = {}
+    grants: dict[str, list[tuple[PackPermission, PackPermission]]] = {}
+    for key, amount in picking.items():
+        budgets[key] = Decimal("0")
+        if amount <= 0:
+            continue
+        good = next(typed[good_id] for good_id, item in keys.items() if item == key)
+        permission = uow.pack_permissions.get(good.project, good.item_index)
+        consumed = sum((item.shipped for item in uow.goods.for_project(good.project)
+                        if item.item_index == good.item_index), Decimal("0"))
+        budgets[key] = permission.remaining(consumed) if permission else Decimal("0")
+        if amount <= budgets[key]:
+            continue
+        if not grant:
+            raise ShippingValidationError(
+                f"{good.item_index}: к упаковке разрешено ещё {format(budgets[key].normalize(), 'f')} {good.unit}; "
+                "уменьшите количество или измените разрешение",
+            )
+        current = permission or PackPermission(key[0], good.item_index, quantity=consumed)
+        grants.setdefault(key[0], []).append((current, current.change(consumed + amount, consumed, actor.name, now)))
+        budgets[key] = amount
+    for project, changes in grants.items():
+        _record_pack_permissions(project, changes, actor, now, uow, shipment=shipment)
     available = {}
-    budgets = {}
-    demand = {}
-    for line in shipment.lines:
-        key = (normalize_project_number(line.project), line.item_index)
-        demand[key] = demand.get(key, Decimal("0")) + line.shortage
-    for good_id, good in typed.items():
-        key = (normalize_project_number(good.project), good.item_index)
-        if key not in budgets:
-            permission = uow.pack_permissions.get(good.project, good.item_index)
-            consumed = sum((item.shipped for item in uow.goods.for_project(good.project)
-                            if item.item_index == good.item_index), Decimal("0"))
-            budgets[key] = permission.remaining(consumed) if permission else Decimal("0")
-            if demand[key] > budgets[key]:
-                raise ShippingValidationError(
-                    f"{good.item_index}: к упаковке разрешено ещё {format(budgets[key].normalize(), 'f')} {good.unit}; "
-                    "уменьшите количество или измените разрешение",
-                )
-        requested = sum((line.shortage for line in shipment.lines if line.finished_good_id == good_id), Decimal("0"))
-        available[good_id] = min(good.remaining, budgets[key], requested)
+    for good_id, key in keys.items():
+        available[good_id] = min(taking[good_id], budgets[key])
         budgets[key] -= available[good_id]
     updated, taken = shipment.pick(
         available,
@@ -1300,7 +1249,7 @@ def ship_project(command: ProjectShipCommand, uow: UnitOfWork) -> ProjectShipRes
             upd_number=command.upd_number.strip() if command.as_manager else "",
             upd_date=command.upd_date if command.as_manager and command.upd_number.strip() else None,
             upd_url="", note="", lines=tuple(requested), actor=command.actor, now=command.now,
-            no_docs=not command.as_manager, decide_pack=command.as_manager,
+            no_docs=not command.as_manager, grant_pack=command.as_manager,
         ), uow, shipment_id=shipment_id, details={"idempotency_key": key, "fingerprint": fingerprint, "project": project})
         if command.upd_file is not None:
             shipment = _attach_upd(
