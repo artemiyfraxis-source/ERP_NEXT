@@ -1643,7 +1643,10 @@ export interface ShipmentLine {
   picked: string;
   shortage: string;
   unit: string;
+  /** ГРН первой партии строки (прежнее поле). */
   grn: string | null;
+  /** Все ГРН партий, из которых набрана строка; первая = `grn`. Старый сервер их не присылает. */
+  grns?: string[] | null;
 }
 
 export interface Shipment {

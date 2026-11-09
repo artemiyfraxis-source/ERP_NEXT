@@ -1,72 +1,75 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { failureText, shippingApi, type Principal, type ProjectAddressee } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
-import { ShipmentDataWindow } from "./ShipmentData";
 import { DispatchCard } from "./DispatchCard";
 import { DISPATCH_STAGES, stageLabel, type DispatchStage } from "./dispatchStage";
 import { formatDay, formatNumber, NBSP } from "./format";
 import { StatusChip } from "./StatusChip";
 import type { Tone } from "./statusTone";
-import { dataRows } from "./dispatchPositionRows";
-import { canPack, COUNTER_SCOPE, dispatchBoard, hasWork, kbKey, num, ofKb, ofProject, packable, permittedPack, recentShipment, round2, SHIPPED_DAYS, stagePieces, type Pieces, type Tab } from "./intakeStages";
+import { actShares, dataRows } from "./dispatchPositionRows";
+import { defaultTab, dispatchBoard, hasWork, kbKey, num, ofProject, permittedPack, recentShipment, round2, SHIPPED_DAYS, stagePieces, type Tab } from "./intakeStages";
 import { isPickup, termsText } from "./carriers";
 import { canAct, canSee, hasFullAccess } from "./navigation";
 import { intakeApi, type DispatchShipment, type IntakeAct, type IntakeRow } from "./productionIntakeApi";
-import { IntakeWindow } from "./IntakeWindow";
+import { IntakeWindow, keyOf, leftOf } from "./IntakeWindow";
 import { PrintOutcome, type PrintResult } from "./LabelPrint";
 import { PackWindow } from "./PackWindow";
 import { PrintSetupButton } from "./PrintSetupWindow";
-import { ACTIVE, needsTrack, NoUpdWindow, onlyUpdBlocks, readyForTrack, type CardRights } from "./ShipmentCard";
+import { needsTrack, NoUpdWindow, onlyUpdBlocks, readyForTrack, readyToShip, type CardRights } from "./ShipmentCard";
 import { CreateShipmentWindow, JournalWindow, RegisterGoodWindow } from "./ShipmentJournal";
-import { ShipmentDocsWindow, updState } from "./ShipmentDocs";
-import { openShippingForms } from "./shippingPrint";
-import { useCanPrint } from "./rights";
+import { updState } from "./ShipmentDocs";
 import { ShipWindow } from "./ShipWindow";
 import { TrackWindow } from "./TrackWindow";
 import "./productionIntake.css";
 import "./shipping.css";
 
 /* «Приёмка с производства» (владелец 14.10, 29.10.2026): всё, что в работе, по проектам — и приёмка, и упаковка, и
-   отгрузка на одном экране, экран «Отгрузка» убран. Вкладки — шаги пути готовой продукции; КБ, у которой штуки сразу в
-   нескольких шагах, видна в каждом. Как в приёмке: число в колонке — кнопка, действие — во всплывающем окне.
-   «Можно принять» — окно приёмки; «Упаковано» — упаковка (после решения менеджера «упаковывать»), PL/DN, короба,
-   этикетки; «Трек…» — трек ТК, когда есть УПД и ТК; «Отгружено» — отправки проекта, «Отгрузить», без УПД — по ПИН. */
+   отгрузка на одном экране. Вкладки — шаги пути готовой продукции; КБ, у которой штуки сразу в нескольких шагах, видна в
+   каждом. У каждой вкладки свои колонки и одно своё действие (06.11), и кнопка называет штуки своей строки:
+   «В производстве» — «Принять досрочно» (предупреждение, не запрет), «Готово» — «Принять», «Принято» — строка на акт
+   приёмки с ГРН и «Упаковать», «Упаковано» — «Трек…» (или «Без УПД…», когда УПД нет совсем), «На отгрузку» — «Отгрузить».
+   Короба, PL/DN и этикетки — в окне упаковки и отгрузки. Данные отправки склад видит только для чтения. */
 
 const TABS: ReadonlyArray<readonly [Tab, string]> = [...DISPATCH_STAGES, ["all", "Все"]];
 /** Старые ссылки `?section=shipping&tab=…` и вкладки бывшей «Отгрузки» ведут в свои шаги. */
 const TAB_ALIASES: Record<string, Tab> = { stock: "accepted", pack: "accepted", shipments: "packed", ship: "to_ship", done: "shipped", production: "production" };
-/** Акты приёмки (зелёные строки с ГРН) — там, где о приёмке речь. */
 const DELIVERY_COLUMNS = ["receiver", "delivery", "carrier", "address", "phone", "warehouseNote"] as const;
-const POSITION_COLUMNS = ["project", "kb", "name", "quantity", "status", "grn", "shipmentStatus", "shippedAt", "pl", "dn", "upd"];
+type DeliveryField = typeof DELIVERY_COLUMNS[number];
+const DELIVERY_TITLES: Record<DeliveryField, string> = { receiver: "Получатель", delivery: "Способ доставки", carrier: "Перевозчик", address: "Адрес", phone: "Телефон", warehouseNote: "Комментарий для склада" };
 const STAGE_TONE: Record<DispatchStage, Tone> = { waiting: "neutral", production: "info", ready: "info", accepted: "warning", packed: "warning", to_ship: "info", shipped: "success" };
-/** Колонки и действие каждой вкладки (владелец 29.10: «зачем лишняя инфа, кнопки 2, приёмка в отгруженных»): шаг показывает
- *  только своё; полный набор — во «Все». «Проект» — скрытая колонка для поиска и группировки. */
-const TAB_COLUMNS: Record<Exclude<Tab, "all">, string[]> = {
-  waiting: POSITION_COLUMNS,
-  // «В работе» принимается до заказанного и без «Готово» (владелец 28.10 и 29.10: «кладовщик не может принять без статуса»).
-  // Кладовщику задания цеха не нужны (владелец 29.10: «зачем тут Алексею задания»): номера — в подсказке кнопки «Принять»
-  // и в «Колонках».
-  production: [...POSITION_COLUMNS, "remaining"],
-  ready: [...POSITION_COLUMNS, "remaining"],
-  accepted: [...POSITION_COLUMNS, "packed"],
-  packed: [...POSITION_COLUMNS, "track", "boxes"],
-  to_ship: [...POSITION_COLUMNS, "ship", "track", "boxes"],
-  shipped: POSITION_COLUMNS,
+/** Колонки вкладки: `shown` — видны сразу, `more` — в «Колонках» (данные отправки — только для чтения). «Проект» — скрытая
+ *  колонка поиска и группировки. Владелец 29.10: «зачем лишняя инфа, кнопки 2»; аудит 06.11 — колонки снова свои. */
+const TAB_COLUMNS: Record<Tab, { shown: string[]; more: string[] }> = {
+  waiting: { shown: ["kb", "name", "needed"], more: [...DELIVERY_COLUMNS, "upd"] },
+  production: { shown: ["kb", "name", "needed", "launched", "left", "tasks", "action"], more: [...DELIVERY_COLUMNS, "upd"] },
+  ready: { shown: ["kb", "name", "needed", "tasks", "action"], more: ["launched", "left", ...DELIVERY_COLUMNS, "upd"] },
+  accepted: { shown: ["kb", "name", "grn", "received", "quantity", "action"], more: ["needed", "shipment", "upd", ...DELIVERY_COLUMNS] },
+  packed: { shown: ["kb", "name", "shipment", "quantity", "track"], more: ["grn", "docs", "upd", ...DELIVERY_COLUMNS] },
+  to_ship: { shown: ["kb", "name", "shipment", "quantity", "track", "action"], more: ["grn", "docs", "upd", ...DELIVERY_COLUMNS] },
+  shipped: { shown: ["kb", "name", "shipment", "quantity", "track", "shippedAt", "grn"], more: ["docs", "upd", ...DELIVERY_COLUMNS] },
+  all: { shown: ["kb", "name", "stage", "quantity", "needed", "launched", "left", "grn", "received", "shipment", "track", "shippedAt", "action"],
+    more: ["tasks", "docs", "upd", ...DELIVERY_COLUMNS] },
 };
+const ACTION_TITLE: Partial<Record<Tab, string>> = { production: "Принять досрочно", ready: "Можно принять", accepted: "Упаковать", to_ship: "Отгрузка", all: "Действие" };
+const QUANTITY_TITLE: Partial<Record<Tab, string>> = { packed: "Упаковано", to_ship: "Упаковано", shipped: "Отгружено" };
 const EMPTY: Record<Tab, string> = {
   waiting: "В ожидании производства ничего нет.", production: "В производстве ничего нет.", ready: "Готового к приёмке нет.",
   accepted: "Принятого и не упакованного нет.", packed: "Упакованного, но не готового к отгрузке нет.",
   to_ship: "Готового к отгрузке нет — нужны УПД, ТК и трек.", shipped: `Отгруженного за ${SHIPPED_DAYS} дней нет — история в «Журнале».`, all: "Нет КБ в работе",
 };
+const DOCS_HINT = "PL — упаковочный лист, DN — отгрузочная ведомость; печать — в окне упаковки и отгрузки";
 
-const keyOf = (row: IntakeRow) => `${row.project}\u0000${row.item_index}`;
-const lineKey = (row: IntakeLine) => row.positionId;
-const dash = <span className="muted">—</span>;
-const count = (value: string) => num(value) > 0 ? value : dash;
-
-function tasksText(row: IntakeRow) {
-  return row.tasks.map((task) => `${task.number}${task.site ? ` · ${task.site}` : ""} · сдано ${task.delivered} из ${task.quantity}`).join("\n");
+/** Строка таблицы: часть КБ в одном шаге — строка отправки, акт приёмки (остаток по ГРН) или остаток шага. */
+interface IntakeLine {
+  id: string; project: string; item_index: string; name: string; unit: string;
+  stage: DispatchStage | null; quantity: number; kb: IntakeRow; shipment?: DispatchShipment; act?: IntakeAct; grns: string[];
+  /** «Принято», остаток на складе: сколько из этой строки можно упаковать по разрешению КБ. */
+  packNow: number;
 }
+
+const dash = <span className="muted">—</span>;
+const tasksText = (row: IntakeRow) => row.tasks.map((task) => `${task.number}${task.site ? ` · ${task.site}` : ""} · сдано ${task.delivered} из ${task.quantity}`).join("\n");
+const who = (row: Pick<IntakeRow, "project" | "item_index">) => `${row.project} ${row.item_index}`;
 
 function urlTab(): { tab: Tab | null; journal: boolean } {
   const wanted = new URLSearchParams(window.location.search).get("tab") ?? "";
@@ -75,24 +78,14 @@ function urlTab(): { tab: Tab | null; journal: boolean } {
   return { tab: TABS.some(([key]) => key === tab) ? tab as Tab : null, journal: false };
 }
 
-/** Итог и действия относятся ко всей КБ; акты показывают только фактический приход по ГРН. */
-type IntakeLine = IntakeRow & { positionId: string; positionStage: DispatchStage | null; positionQuantity: number; act?: IntakeAct; receipt?: IntakeAct; left: number; kbActions: boolean; total?: boolean; shipment?: DispatchShipment };
-
-/** Первая вкладка, где у кладовщика есть работа; без неё — первая непустая; пусто везде — «Все». */
-function defaultTab(rows: IntakeRow[], pieces: (row: IntakeRow) => Pieces, warehouse: boolean): Tab {
-  if (warehouse) for (const [stage] of DISPATCH_STAGES) if (rows.some((row) => hasWork(stage, row, pieces(row)))) return stage;
-  for (const [stage] of DISPATCH_STAGES) if (rows.some((row) => pieces(row)[stage] > 0)) return stage;
-  return "all";
-}
-
-type Opened = { kind: "pack" | "ship"; project: string } | { kind: "track"; row: IntakeRow } | { kind: "noupd"; shipment: DispatchShipment } | { kind: "docs"; id: string };
+type Opened = { kind: "pack" | "ship"; project: string } | { kind: "track"; title: string; shipment: DispatchShipment } | { kind: "noupd"; shipment: DispatchShipment };
+type Accepting = { rows: IntakeRow[]; quantities: Record<string, number> };
 
 export function ProductionIntakePage({ principal }: { principal: Principal }) {
   // Принимает, упаковывает и отгружает кладовщик («Отгрузка — склад»); менеджер («Отгрузка») — данные отправки, заявки.
   const canWarehouse = canAct(principal, "shipping_goods");
   const canManage = canAct(principal, "shipping");
   const canDispatch = canManage || canWarehouse;
-  const canPrintDocs = useCanPrint();
   const rights: CardRights = { canManage, canWarehouse, canEdit: canDispatch, canUnship: hasFullAccess(principal) };
   const fromUrl = useRef(urlTab());
   const [rows, setRows] = useState<IntakeRow[]>([]);
@@ -104,20 +97,15 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const [busy, setBusy] = useState("");
   const [tab, setTab] = useState<Tab>(fromUrl.current.tab ?? "ready");
   const tabChosen = useRef(Boolean(fromUrl.current.tab));
-  const [intake, setIntake] = useState<IntakeRow[] | null>(null);
+  const [accepting, setAccepting] = useState<Accepting | null>(null);
   const [opened, setOpened] = useState<Opened | null>(null);
   const [header, setHeader] = useState<"journal" | "good" | "request" | null>(fromUrl.current.journal ? "journal" : null);
   const [label, setLabel] = useState<{ grn: string; result: PrintResult | null; error: string; busy: boolean } | null>(null);
-  const [card, setCard] = useState<DispatchShipment | null>(null);
   const [projectData, setProjectData] = useState<string | null>(null);
 
   async function reload() {
     try {
-      const [intakeResult, shipmentResult, addresseeResult] = await Promise.all([
-        intakeApi.rows(),
-        intakeApi.shipments(),
-        shippingApi.addressees(),
-      ]);
+      const [intakeResult, shipmentResult, addresseeResult] = await Promise.all([intakeApi.rows(), intakeApi.shipments(), shippingApi.addressees()]);
       const loadedRows = intakeResult.rows ?? [];
       const loadedShipments = shipmentResult.shipments ?? [];
       setRows(loadedRows); setShipments(loadedShipments); setError("");
@@ -132,291 +120,197 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   }
   useEffect(() => { void reload(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Счётчики вкладок — общие с «Данными отправок» (`dispatchBoard`), строки — общие позиции (`dataRows`).
   const board = useMemo(() => dispatchBoard(rows, shipments), [rows, shipments]);
-  const { rows: allRows, pieces } = board;
-  const piecesOf = (row: IntakeRow) => pieces.get(kbKey(row)) ?? stagePieces(row, shipments);
-  const shown = useMemo(() => dataRows(shipments, rows)
-    .filter((position) => tab === "all" || position.stage === tab && (tab !== "shipped" || position.shipment && recentShipment(position.shipment)))
-    .map((position): IntakeLine => {
-      const source = allRows.find((row) => kbKey(row) === kbKey(position))!;
-      return { ...source, name: position.name, unit: position.unit, grn: position.grn || null,
-        positionId: position.id, positionStage: position.stage, positionQuantity: position.quantity,
-        shipment: position.shipment ?? undefined, sent: position.shipment ? String(position.quantity) : source.sent,
-        packed: position.shipment ? String(position.quantity) : source.packed, kbActions: true, left: 0,
-        remaining: !position.shipment && (position.stage === "production" || position.stage === "ready") ? source.remaining : "0",
-        receipt: position.stage === "accepted" && source.acts?.length === 1 ? source.acts[0] : undefined,
-      };
-    }),
-  [allRows, rows, shipments, tab]);
+  const piecesOf = (row: IntakeRow) => board.pieces.get(kbKey(row)) ?? stagePieces(row, shipments);
+  const lines = useMemo(() => {
+    const byKb = new Map(board.rows.map((row) => [kbKey(row), row]));
+    return dataRows(shipments, rows)
+      .filter((position) => tab === "all" || position.stage === tab && (tab !== "shipped" || Boolean(position.shipment && recentShipment(position.shipment))))
+      .flatMap((position): IntakeLine[] => {
+        const kb = byKb.get(kbKey(position))!;
+        const base = { project: position.project, item_index: position.item_index, name: position.name, unit: position.unit, stage: position.stage, kb, packNow: 0 };
+        if (position.shipment) return [{ ...base, id: position.id, quantity: position.quantity, shipment: position.shipment, grns: position.grns }];
+        if (position.stage !== "accepted") return [{ ...base, id: position.id, quantity: position.quantity, grns: position.grns }];
+        // «Принято»: строка на каждый акт приёмки со своим ГРН; разрешение КБ делится по строкам — старое первым.
+        let allowed = permittedPack(kb);
+        return actShares(kb, shipments).map((share, index) => {
+          const packNow = round2(Math.min(share.quantity, allowed));
+          allowed = round2(allowed - packNow);
+          return { ...base, id: `${position.id}:${share.act?.grn ?? index}`, quantity: share.quantity, act: share.act ?? undefined, grns: share.grn ? [share.grn] : [], packNow };
+        });
+      });
+  }, [board, rows, shipments, tab]);
   const head = useMemo(() => {
     const byProject: Record<string, IntakeRow> = {};
-    for (const row of allRows) if (!byProject[row.project]) byProject[row.project] = row;
+    for (const row of board.rows) if (!byProject[row.project]) byProject[row.project] = row;
     return byProject;
-  }, [allRows]);
-  const live = (shipment: DispatchShipment) => shipment.status !== "Отменена";
-  const kbShips = (row: IntakeRow) => shipments.filter((shipment) => live(shipment) && ofKb(shipment, row));
+  }, [board]);
   const addresseeByProject = useMemo(() => new Map(addressees.map((card) => [card.project.trim().toUpperCase(), card])), [addressees]);
-  const cardOf = (row: IntakeRow) => addresseeByProject.get(row.project.trim().toUpperCase());
-  const shownShips = (row: IntakeRow & { shipment?: DispatchShipment }) => row.shipment ? [row.shipment] : [];
-  const grnGroups = (row: IntakeLine) => {
-    return [{ id: row.shipment?.id ?? "", number: row.shipment?.number ?? "", grns: row.grn ? [row.grn] : [] }];
-  };
-  const deliveryOf = (row: IntakeLine) => {
-    const ships = shownShips(row);
-    return ships.length ? ships : [cardOf(row)].filter((card): card is ProjectAddressee => Boolean(card));
-  };
-  const contactText = (row: IntakeLine, value: string) => row.shipment && value.trim().toLowerCase() === "самовывоз" ? "" : value;
-  const deliveryText = (row: IntakeLine, field: typeof DELIVERY_COLUMNS[number], data: ProjectAddressee | DispatchShipment): string => {
-    if (field === "receiver") return [...new Set([data.receiver, data.contact].map(value => contactText(row, value)).filter(Boolean))].join(" · ");
+  const cardOf = (row: Pick<IntakeRow, "project">) => addresseeByProject.get(row.project.trim().toUpperCase());
+
+  /* Данные отправки — только для чтения: строки отправки — свои, остальные — карточка проекта. */
+  const deliveryOf = (line: IntakeLine): Array<ProjectAddressee | DispatchShipment> => line.shipment ? [line.shipment] : [cardOf(line)].filter((card): card is ProjectAddressee => Boolean(card));
+  const contactText = (line: IntakeLine, value: string) => line.shipment && value.trim().toLowerCase() === "самовывоз" ? "" : value;
+  const deliveryText = (line: IntakeLine, field: DeliveryField, data: ProjectAddressee | DispatchShipment): string => {
+    if (field === "receiver") return [...new Set([data.receiver, data.contact].map((value) => contactText(line, value)).filter(Boolean))].join(" · ");
     if (field === "delivery") return isPickup(data.carrier) ? "Самовывоз" : termsText(data.terms);
     if (field === "carrier") return data.carrier;
-    if (field === "address") return row.shipment ? contactText(row, data.shipping_point) : isPickup(data.carrier) ? "Не требуется" : data.shipping_point;
-    if (field === "phone") return contactText(row, data.phone);
-    return [...new Set([row.shipment ? "" : cardOf(row)?.note, data.note, "tk_note" in data ? data.tk_note : ""].map((text) => text?.trim()).filter(Boolean))].join("\n");
+    if (field === "address") return line.shipment ? contactText(line, data.shipping_point) : isPickup(data.carrier) ? "Не требуется" : data.shipping_point;
+    if (field === "phone") return contactText(line, data.phone);
+    return [...new Set([line.shipment ? "" : cardOf(line)?.note, data.note, "tk_note" in data ? data.tk_note : ""].map((text) => text?.trim()).filter(Boolean))].join("\n");
   };
-  const deliveryCell = (row: IntakeLine, field: typeof DELIVERY_COLUMNS[number]) => {
-    if (row.act) return dash;
-    const entries = deliveryOf(row);
-    return <span className="intake-delivery-list">{entries.length ? entries.map((data, index) => {
-      const text = deliveryText(row, field, data);
-      return <span className="intake-delivery-line" key={"id" in data ? data.id : data.project} title={"number" in data ? data.number : undefined}
-        data-shipment={"id" in data ? data.id : undefined}>
-        {entries.length > 1 && <small className="muted intake-shipment-index">{index + 1}</small>}
-        {field === "receiver" ? row.shipment ? <span>{text || "—"}</span> : <span><span>{data.receiver || "—"}</span>{data.contact && <small className="muted intake-contact">{data.contact}</small>}</span>
-          : field === "warehouseNote" ? <span>{text ? text.split("\n").map((note, line) => <span className="intake-note-line" key={line}>{note}</span>) : dash}</span>
-            : <span>{text || "—"}</span>}
-      </span>;
-    }) : dash}</span>;
+  const deliveryCell = (line: IntakeLine, field: DeliveryField) => {
+    const data = deliveryOf(line)[0];
+    if (!data) return dash;
+    const text = deliveryText(line, field, data);
+    if (field === "warehouseNote") return text ? <span className="intake-delivery-list">{text.split("\n").map((note, index) => <span className="intake-note-line" key={index}>{note}</span>)}</span> : dash;
+    return text ? <span>{text}</span> : dash;
   };
-  const readyShips = (row: IntakeRow & { shipment?: DispatchShipment }) => (row.shipment ? [row.shipment] : kbShips(row)).filter((shipment) => shipment.status === "Упакована" && shipment.ready_to_ship);
-  const trackShips = (row: IntakeRow & { shipment?: DispatchShipment }) => (row.shipment ? [row.shipment] : kbShips(row)).filter((shipment) => shipment.status === "Упакована" && needsTrack(shipment));
+  const updText = (line: IntakeLine) => {
+    if (line.shipment) return updState(line.shipment).text;
+    const card = cardOf(line);
+    if (!card) return "";
+    return card.upd_type === "БЕЗ УПД" ? "Без УПД" : card.upd_number ? `УПД № ${card.upd_number}` : "УПД не внесён";
+  };
+  const trackText = (shipment: DispatchShipment | undefined, line: IntakeLine) =>
+    !shipment ? "" : contactText(line, shipment.track_number) || (!needsTrack(shipment) ? "Не требуется" : "");
 
-  /** Общие действия КБ считают количества по серверной строке, а не по одному акту. */
-  const source = (line: IntakeRow) => allRows.find((row) => keyOf(row) === keyOf(line)) ?? line;
-
-  async function accepted(pieceCount: number) {
-    setIntake(null); setError("");
-    setNotice(`Принято на склад: ${pieceCount} шт`);
-    await reload();
-  }
-
-  /** «Печать этикетки» ГРН: та же очередь печати, что у приёмки закупки; статус — под таблицей. */
-  async function printLabel(row: IntakeLine) {
-    if (!row.grn || label?.busy) return;
-    const grn = row.grn;
+  /** «Печать» этикетки ГРН акта: та же очередь печати, что у приёмки закупки; статус — под таблицей. */
+  async function printLabel(grn: string) {
+    if (label?.busy) return;
     setLabel({ grn, result: null, error: "", busy: true });
-    try {
-      const result = await intakeApi.printLabel(grn);
-      setLabel({ grn, result, error: "", busy: false });
-    } catch (reason) {
-      setLabel({ grn, result: null, error: failureText(reason, "Этикетка не напечатана"), busy: false });
-    }
+    try { setLabel({ grn, result: await intakeApi.printLabel(grn), error: "", busy: false }); }
+    catch (reason) { setLabel({ grn, result: null, error: failureText(reason, "Этикетка не напечатана"), busy: false }); }
   }
-
-  async function printDocument(shipment: DispatchShipment, document: "pl" | "dn") {
-    if (!canPrintDocs || busy) return;
-    setBusy(`print:${shipment.id}:${document}`); setError("");
-    try { openShippingForms((await shippingApi.print(shipment.id, document)).forms); }
-    catch (reason) { setError(failureText(reason, "Не удалось подготовить печать")); }
-    finally { setBusy(""); }
-  }
-
-  const mutateBoxes = async (key: string, operation: () => Promise<unknown>, message: string) => {
+  const mutate = async (key: string, operation: () => Promise<unknown>, message: string) => {
     if (busy) return false;
     setBusy(key); setError(""); setNotice("");
     try { await operation(); setNotice(message); await reload(); return true; }
     catch (reason) { setError(failureText(reason, "Операция не выполнена")); return false; }
     finally { setBusy(""); }
   };
+  async function accepted(pieceCount: number) {
+    setAccepting(null); setError("");
+    setNotice(`Принято на склад: ${pieceCount} шт`);
+    await reload();
+  }
+  const accept = (kbs: IntakeRow[], quantity: (row: IntakeRow) => number) =>
+    setAccepting({ rows: kbs, quantities: Object.fromEntries(kbs.map((row) => [keyOf(row), quantity(row)])) });
 
-  const who = (row: IntakeRow) => `${row.project} ${row.item_index}`;
-  /** «Упаковано»: число — кнопка окна упаковки. Подсвечена, когда есть что упаковать и менеджер решила «упаковывать». */
-  const packCell = (line: IntakeLine) => {
-    if (!line.kbActions) return dash;
-    if (tab === "all" && line.positionStage !== "accepted") return dash;
-    // «Упаковано» и «На отгрузку»: только число штук своего шага, действие — в соседней колонке.
-    if (tab === "packed" || tab === "to_ship") return count(line.shipment ? line.packed : String(piecesOf(line)[tab]));
-    if (!canDispatch) return tab === "accepted" ? dash : count(line.packed);
-    const row = source(line);
-    const avail = packable(row);
-    const open = kbShips(row).some((shipment) => ACTIVE.includes(shipment.status));
-    const waitDecision = avail > 0 && !canPack(row);
-    const openPack = () => setOpened({ kind: "pack", project: row.project });
-    if (tab === "accepted" || tab === "all") return <span className="intake-pack-actions">
-        {canPack(row) && <button type="button" className="intake-take-btn" title={`Можно упаковать: ${permittedPack(row)}; не набрано: ${avail}`}
-          aria-label={`Упаковать ${who(row)}: упаковано ${num(row.packed)}, можно ${permittedPack(row)}`} onClick={openPack}>Упаковать · {permittedPack(row)}</button>}
-        {waitDecision && <span className="tone-warn">Нужно разрешение</span>}
-        {open && <button type="button" className="link-button" aria-label={`Упаковка ${who(row)}: упаковано ${num(row.packed)}`} onClick={openPack}>Открыть упаковку</button>}
-        {!canPack(row) && !waitDecision && !open && dash}
-      </span>;
-    if (canPack(row)) return <button type="button" className="intake-take-btn" title={`Можно упаковать: ${permittedPack(row)}; на складе: ${avail}`}
-      aria-label={`Упаковать ${who(row)}: упаковано ${num(row.packed)}, можно ${permittedPack(row)}`} onClick={openPack}>{line.total ? <>Упаковать остаток · {permittedPack(row)}</> : num(row.packed)}</button>;
-    if (open) return <button type="button" className="intake-num-btn" title={waitDecision ? "Отправки проекта на упаковке; упаковать ещё — после решения менеджера «упаковывать»" : "Отправки проекта на упаковке: PL/DN, короба, этикетки"}
-      aria-label={`Упаковка ${who(row)}: упаковано ${num(row.packed)}`} onClick={openPack}>{num(row.packed)}</button>;
-    if (waitDecision) return <button type="button" className="intake-num-btn" disabled title="Упаковать можно после решения менеджера «упаковывать»"
-      aria-label={`Упаковать ${who(row)}: ждёт решения менеджера`}>{num(row.packed)}</button>;
-    return count(row.packed);
+  /** «Принять досрочно» из «В производстве»: сколько можно принять сверх уже сданного цехом. */
+  const earlyQuantity = (line: IntakeLine) => round2(Math.min(line.quantity, Math.max(num(line.kb.remaining) - piecesOf(line.kb).ready, 0)));
+  /** «Трек…» упакованной отправки строки: одно действие — «Трек…», «Без УПД…» (УПД нет совсем) или выключенный «Трек…» с причиной. */
+  const trackAction = (line: IntakeLine) => {
+    const shipment = line.shipment;
+    if (!shipment || shipment.status !== "Упакована" || !canDispatch) return null;
+    const needing = needsTrack(shipment);
+    const ready = needing && (readyForTrack(shipment) || Boolean(shipment.track_number));
+    if (!ready && canWarehouse && onlyUpdBlocks(shipment)) return <button type="button" className="secondary small intake-print" title="УПД нет — отгрузку без УПД разрешает уполномоченный по ПИН"
+      aria-label={`Без УПД ${who(line)}`} onClick={() => setOpened({ kind: "noupd", shipment })}>Без УПД…</button>;
+    if (!needing) return null;
+    const gaps = shipment.missing_ship.filter((gap) => gap !== "трек-номер");
+    const button = <button type="button" className="secondary small intake-print" disabled={!ready}
+      title={ready ? "Вписать трек-номер ТК" : `Трек вносится, когда есть УПД и ТК${gaps.length ? ` — не хватает: ${gaps.join(", ")}` : ""}. Ждём данные менеджера`}
+      aria-label={`Трек ${who(line)}`} onClick={() => setOpened({ kind: "track", title: who(line), shipment })}>Трек…</button>;
+    // Почему выключено — видно сразу, не только в подсказке.
+    return ready || !gaps.length ? button : <span className="intake-track-cell">{button}<small className="muted">ждём: {gaps.join(", ")}</small></span>;
   };
-  /** «Трек»: у упакованных отправок с доставкой ТК; вписать можно, когда есть УПД и ТК. */
-  const trackCell = (row: IntakeLine, action = true) => {
-    if (!row.kbActions) return dash;
-    const ships = shownShips(row);
-    const needing = action ? ships.filter((shipment) => shipment.status === "Упакована" && needsTrack(shipment)) : [];
-    const text = ships.length ? <span className="intake-delivery-list">{ships.map((shipment, index) => <span className="intake-delivery-line intake-tracks" key={shipment.id}
-      data-shipment={shipment.id} title={shipment.number}>{ships.length > 1 && <small className="muted intake-shipment-index">{index + 1}</small>}
-      <span>{contactText(row, shipment.track_number) || (!needsTrack(shipment) ? "Не требуется" : "—")}</span></span>)}</span> : null;
-    if (!canDispatch || !action) return text ?? dash;
-    // Одно действие на строку: «Трек…», когда можно; «Без УПД…», когда держит только УПД; иначе выключенный «Трек…» с причиной.
-    const packedShips = ships.filter((shipment) => shipment.status === "Упакована");
-    const ready = needing.some((shipment) => readyForTrack(shipment) || Boolean(shipment.track_number));
-    const noUpd = canWarehouse && !ready ? packedShips.find(onlyUpdBlocks) : undefined;
-    if (noUpd) return <span className="intake-track-cell">{text}
-      <button type="button" className="secondary small intake-print" title="Отгрузка без УПД: разрешает уполномоченный по ПИН" aria-label={`Без УПД ${who(row)}`}
-        onClick={() => setOpened({ kind: "noupd", shipment: noUpd })}>Без УПД…</button></span>;
-    if (!needing.length) return text ?? dash;
-    const gaps = [...new Set(needing.flatMap((shipment) => shipment.missing_ship))];
-    return <span className="intake-track-cell">{text}
-      <button type="button" className="secondary small intake-print" disabled={!ready}
-        title={ready ? "Вписать трек-номер ТК" : `Трек вносится, когда есть УПД и ТК${gaps.length ? ` — не хватает: ${gaps.join(", ")}` : ""}. Ждём данные менеджера`}
-        aria-label={`Трек ${who(row)}`} onClick={() => setOpened({ kind: "track", row })}>Трек…</button></span>;
-  };
-  /** Каждая отправка держит свои PL, DN и УПД; формирование и перевыпуск остаются явными действиями. */
-  const docsShips = (row: IntakeLine) => row.kbActions ? shownShips(row).filter((shipment) => row.shipment || shipment.status === "Упакована") : [];
-  const docsCell = (row: IntakeLine, kind: "pl" | "dn" | "upd" | "boxes") => {
-    if (kind === "upd" && row.positionStage === "accepted" && !row.shipment && row.kbActions) {
-      const projectCard = cardOf(row);
-      return <button type="button" className="link-button intake-doc-action" aria-label={`Данные отправки ${row.project}`} onClick={() => setProjectData(row.project)}>
-        {projectCard?.upd_type === "БЕЗ УПД" ? "Без УПД" : <>{projectCard?.upd_number ? `УПД № ${projectCard.upd_number}` : "Внести УПД"}
-          {projectCard?.upd_url ? " · файл" : " · без файла"}</>}
-      </button>;
+  /** Одно действие строки — по её шагу; число на кнопке — штуки этой строки. */
+  const actionCell = (line: IntakeLine) => {
+    if (line.stage === "production") {
+      const quantity = earlyQuantity(line);
+      if (!canWarehouse || !(quantity > 0)) return dash;
+      return <button type="button" className="secondary small intake-early" title="Ещё в производстве — принять досрочно"
+        aria-label={`Принять досрочно ${who(line)}: ${quantity}`} onClick={() => accept([line.kb], () => quantity)}>Принять досрочно · {formatNumber(quantity)}</button>;
     }
-    const ships = docsShips(row);
-    if (!ships.length) return dash;
-    return <span className="intake-docs">{ships.map((shipment, index) => {
-      const upd = updState(shipment);
-      const number = kind === "pl" ? shipment.pl_number : shipment.dn_number;
-      return <span className="intake-docs-line" key={shipment.id} data-shipment={shipment.id}>
-        {ships.length > 1 && <span className="intake-ship-no muted">{index + 1} · {shipment.number}</span>}
-        {kind === "pl" || kind === "dn"
-          ? !number ? <span className="muted">не сформирован</span>
-            : canPrintDocs ? <button type="button" className="link-button intake-doc-action"
-              aria-label={`Печать ${kind.toUpperCase()} ${shipment.number}`}
-              title={kind === "dn" && ACTIVE.includes(shipment.status) && shipment.missing_data.length ? `Не хватает: ${shipment.missing_data.join(", ")}` : number}
-              disabled={Boolean(busy) || (kind === "dn" && ACTIVE.includes(shipment.status) && shipment.missing_data.length > 0)}
-              onClick={() => void printDocument(shipment, kind)}>{kind.toUpperCase()}</button>
-            : <span title={number}>{kind.toUpperCase()}</span>
-          : kind === "upd" ? <>
-            {upd.href ? <a className="intake-doc-action" href={upd.href} target="_blank" rel="noreferrer">{upd.text}</a>
-              : <button type="button" className="link-button intake-doc-action" aria-label={`Внести УПД ${shipment.number}`} title={upd.text}
-                onClick={() => setCard(shipment)}>{upd.text}</button>}
-            {(upd.tone === "danger" || upd.tone === "warn") && <span className={`tone-${upd.tone}`}>{upd.tone === "danger" ? "нет файла УПД" : "тип УПД не выбран"}</span>}
-          </> : !shipment.pl_number ? (rights.canEdit
-            ? <button type="button" className="secondary small intake-print" aria-label={`Сформировать отгрузочные ${shipment.number}`}
-              onClick={() => setOpened({ kind: "pack", project: row.project })}>Сформировать отгрузочные</button>
-            : <span className="muted">не сформированы</span>)
-            : <button type="button" className="link-button intake-doc-action muted" aria-label={`Документы ${shipment.number}`} title="Короба, этикетки и перевыпуск"
-              onClick={() => setOpened({ kind: "docs", id: shipment.id })}>Короба…</button>}
-      </span>;
-    })}</span>;
-  };
-  /** «Отгружено»: число — кнопка окна отправок проекта; подсвечена, когда есть готовое к отгрузке. */
-  const sentCell = (row: IntakeLine) => {
-    if (!row.kbActions) return dash;
-    if (tab === "shipped") return count(row.sent);
-    if (!canDispatch || !kbShips(row).length) return count(row.sent);
-    const toShip = piecesOf(row).to_ship;
-    return <button type="button" className={toShip > 0 ? "intake-take-btn" : "intake-num-btn"} title={toShip > 0 ? `Готово к отгрузке: ${toShip}` : "Отправки проекта"}
-      aria-label={`Отгрузка ${who(row)}: отгружено ${num(row.sent)}${toShip > 0 ? `, к отгрузке ${toShip}` : ""}`}
-      onClick={() => setOpened({ kind: "ship", project: row.project })}>{num(row.sent)}</button>;
+    if (line.stage === "ready") {
+      if (!canWarehouse) return <strong className="tone-ok" title={tasksText(line.kb)}>{formatNumber(line.quantity)}</strong>;
+      return <button type="button" className="intake-take-btn" title={tasksText(line.kb) || "Принять на склад"} aria-label={`Принять ${who(line)}: ${line.quantity}`}
+        onClick={() => accept([line.kb], () => line.quantity)}>Принять · {formatNumber(line.quantity)}</button>;
+    }
+    if (line.stage === "accepted") {
+      if (!canDispatch) return dash;
+      if (line.shipment) return <button type="button" className="intake-take-btn" title={`Набрано в ${line.shipment.number}: короба и PL/DN — в окне упаковки`}
+        aria-label={`Упаковать ${who(line)}: ${line.quantity}`} onClick={() => setOpened({ kind: "pack", project: line.project })}>Упаковать · {formatNumber(line.quantity)}</button>;
+      if (line.packNow > 0) return <button type="button" className="intake-take-btn" title={`Разрешено упаковать по КБ: ${permittedPack(line.kb)}`}
+        aria-label={`Упаковать ${who(line)}: ${line.packNow}`} onClick={() => setOpened({ kind: "pack", project: line.project })}>Упаковать · {formatNumber(line.packNow)}</button>;
+      return <span className="tone-warn" title="Упаковать можно после разрешения менеджера «упаковывать»">Нужно разрешение</span>;
+    }
+    if (line.stage === "packed") return trackAction(line) ?? dash;
+    if (line.stage === "to_ship" && line.shipment && canDispatch && readyToShip(line.shipment)) return <button type="button" className="primary small intake-print"
+      title={`Отгрузить ${line.shipment.number}`} aria-label={`Отгрузить ${who(line)}`} onClick={() => setOpened({ kind: "ship", project: line.project })}>Отгрузить</button>;
+    return dash;
   };
 
   const columns: DataColumn<IntakeLine>[] = [
-    { key: "project", title: "Проект", value: (row) => row.project, hidden: true },
-    { key: "kb", title: "КБ", width: 56, maxWidth: 72, value: (row) => row.item_index, render: (row) => <span className="intake-kb">{row.item_index}</span> },
+    { key: "project", title: "Проект", value: (line) => line.project, hidden: true },
+    { key: "kb", title: "КБ", width: 56, maxWidth: 72, value: (line) => line.item_index, render: (line) => <span className="intake-kb">{line.item_index}</span> },
     // Строка — одна линия (владелец 15.10): длинное наименование обрезается «…», целиком — в подсказке.
-    { key: "name", title: "Наименование", grow: true, minWidth: 160, wrap: true, value: (row) => row.name, render: (row) => <span className="ship-position-name" title={row.name}>{row.total && <strong>Итого по КБ<br /></strong>}{row.name}</span> },
-    { key: "quantity", title: "Количество", width: 88, numeric: true, value: (row) => row.positionQuantity,
-      render: (row) => `${formatNumber(row.positionQuantity)}${NBSP}${row.unit}` },
-    { key: "status", title: "Этап позиции", width: 112, value: (row) => row.positionStage === null && row.shipment?.status !== "Отменена" ? "Не набрано" : stageLabel(row.positionStage),
-      render: (row) => <StatusChip tone={row.positionStage ? STAGE_TONE[row.positionStage] : "neutral"}>{row.positionStage === null && row.shipment?.status !== "Отменена" ? "Не набрано" : stageLabel(row.positionStage)}</StatusChip> },
-    { key: "shipmentStatus", title: "Статус отправки", width: 130, maxWidth: 160, wrap: true,
-      value: (row) => row.shipment ? `${row.shipment.status} · ${row.shipment.number}` : "Не создана",
-      render: (row) => <span className="ship-position-shipment"><span>{row.shipment?.status ?? "Не создана"}</span>{row.shipment &&
-        <button type="button" className="link-button ship-sub" aria-label={`Данные отправки ${row.shipment.number}`} onClick={() => setCard(row.shipment!)}>{row.shipment.number}</button>}</span> },
-    { key: "needed", title: "Заказано", value: (row) => num(row.needed), numeric: true, render: (row) => row.act ? dash : row.needed },
-    { key: "left", title: "Остаток", value: (row) => row.left, numeric: true, render: (row) => row.left > 0 ? row.left : dash },
-    { key: "launched", title: "Запущено", value: (row) => num(row.launched), numeric: true, render: (row) => count(row.launched) },
-    { key: "accepted", title: tab === "accepted" ? "К упаковке" : "Принято", value: (row) => tab === "accepted" ? piecesOf(row).accepted : num(row.accepted), numeric: true,
-      render: (row) => count(String(tab === "accepted" ? piecesOf(row).accepted : row.accepted)) },
-    { key: "remaining", title: "Можно принять", value: (row) => row.act ? 0 : num(row.remaining), numeric: true,
-      render: (row) => {
-        if (row.act || !(num(row.remaining) > 0)) return dash;
-        if (!canWarehouse) return <strong className="tone-ok" title={tasksText(row)}>{row.remaining}</strong>;
-        return <button type="button" className="intake-take-btn" title={tasksText(row) || "Принять на склад"} aria-label={`Принять ${who(row)}: можно ${row.remaining}`}
-          onClick={() => setIntake([source(row)])}>{row.remaining}</button>;
-      } },
-    { key: "packed", title: tab === "accepted" || tab === "all" ? "Упаковать" : "Упаковано", value: (row) => row.positionStage === "accepted" ? permittedPack(source(row)) : num(row.packed), numeric: false, render: (row) => row.total ? count(row.packed) : packCell(row) },
-    { key: "free", title: "Не упаковано", value: (row) => row.kbActions ? packable(source(row)) : 0, numeric: true,
-      render: (row) => row.kbActions ? <>{packable(source(row))}{row.total && <div>{packCell(row)}</div>}</> : dash },
-    ...DELIVERY_COLUMNS.map((key): DataColumn<IntakeLine> => ({ key,
-      title: ({ receiver: "Получатель", delivery: "Способ доставки", carrier: "Перевозчик", address: "Адрес", phone: "Телефон", warehouseNote: "Комментарий для склада" } as Record<string, string>)[key],
-      value: (row) => deliveryOf(row).map((data) => deliveryText(row, key, data)).join("; "),
+    { key: "name", title: "Наименование", grow: true, minWidth: 160, wrap: true, value: (line) => line.name, render: (line) => <span className="ship-position-name" title={line.name}>{line.name}</span> },
+    { key: "stage", title: "Этап", width: 112, value: (line) => line.stage ? stageLabel(line.stage) : line.shipment?.status === "Отменена" ? "Отменена" : "Не набрано",
+      render: (line) => <StatusChip tone={line.stage ? STAGE_TONE[line.stage] : "neutral"}>{line.stage ? stageLabel(line.stage) : line.shipment?.status === "Отменена" ? "Отменена" : "Не набрано"}</StatusChip> },
+    { key: "quantity", title: QUANTITY_TITLE[tab] ?? "Количество", width: 88, numeric: true, value: (line) => line.quantity,
+      render: (line) => `${formatNumber(line.quantity)}${NBSP}${line.unit}` },
+    { key: "needed", title: "Заказано", numeric: true, value: (line) => num(line.kb.needed), render: (line) => num(line.kb.needed) > 0 ? formatNumber(num(line.kb.needed)) : dash },
+    { key: "launched", title: "Запущено", numeric: true, value: (line) => num(line.kb.launched), render: (line) => num(line.kb.launched) > 0 ? formatNumber(num(line.kb.launched)) : dash },
+    { key: "left", title: "Остаток", hint: "Заказано − принято по всем ГРН", numeric: true, value: (line) => leftOf(line.kb), render: (line) => leftOf(line.kb) > 0 ? formatNumber(leftOf(line.kb)) : dash },
+    // «Задания» видны в «В производстве» и «Готово» (что цех сдал и сколько); в остальных вкладках — в «Колонках» у «Все».
+    { key: "tasks", title: "Задания", wrap: true, maxWidth: 200, value: (line) => line.kb.tasks.map((task) => task.number).join(", "),
+      render: (line) => line.kb.tasks.length ? <span className="intake-clip intake-stage muted" title={tasksText(line.kb)}>{line.kb.tasks.map((task) => task.number).join(", ")}</span> : dash },
+    { key: "grn", title: tab === "shipped" ? "ГРН партии" : "ГРН", wrap: true, width: 128, maxWidth: 200, value: (line) => line.grns.join(", "), render: (line) => {
+      if (!line.grns.length) return dash;
+      const printable = canWarehouse && line.stage === "accepted" && !line.shipment;
+      return <span className="intake-grn">{line.grns.map((grn) => <span className="intake-grn-line" key={grn}><span className="goods-grn">{grn}</span>
+        {printable && <button type="button" className="link-button intake-grn-print" title="Печать этикетки ГРН" aria-label={`Печать этикетки ${grn}`}
+          disabled={Boolean(label?.busy)} aria-busy={label?.busy && label.grn === grn} onClick={() => void printLabel(grn)}>Печать</button>}</span>)}</span>;
+    } },
+    { key: "received", title: "Дата приёмки", width: 96, value: (line) => line.act?.received_at ?? "", render: (line) => line.act ? formatDay(line.act.received_at) : dash },
+    { key: "shipment", title: "Отправка", width: 130, maxWidth: 160, value: (line) => line.shipment ? `${line.shipment.number} ${line.shipment.status}` : "",
+      render: (line) => line.shipment ? <span title={line.shipment.status}>{line.shipment.number}</span> : dash },
+    { key: "track", title: "Трек", wrap: true, minWidth: 84, maxWidth: 180, value: (line) => trackText(line.shipment, line), render: (line) => {
+      const text = trackText(line.shipment, line);
+      const action = tab === "packed" ? trackAction(line) : null;
+      return action ? <span className="intake-track-cell">{text && <span>{text}</span>}{action}</span> : text ? <span>{text}</span> : dash;
+    } },
+    { key: "shippedAt", title: "Дата отгрузки", width: 104, value: (line) => line.shipment?.shipped_at ?? "",
+      render: (line) => line.shipment?.shipped_at ? formatDay(line.shipment.shipped_at) : dash },
+    { key: "docs", title: "PL/DN", hint: DOCS_HINT, wrap: true, maxWidth: 200, value: (line) => line.shipment ? [line.shipment.pl_number, line.shipment.dn_number].filter(Boolean).join(" · ") : "",
+      render: (line) => !line.shipment ? dash : line.shipment.pl_number || line.shipment.dn_number
+        ? <span title={DOCS_HINT}>{[line.shipment.pl_number, line.shipment.dn_number].filter(Boolean).join(" · ")}</span> : <span className="muted">не сформированы</span> },
+    { key: "upd", title: "УПД", wrap: true, maxWidth: 180, value: updText, render: (line) => {
+      const text = updText(line);
+      const href = line.shipment ? updState(line.shipment).href : cardOf(line)?.upd_url ?? "";
+      return !text ? dash : href ? <a href={href} target="_blank" rel="noreferrer">{text}</a> : <span>{text}</span>;
+    } },
+    ...DELIVERY_COLUMNS.map((key): DataColumn<IntakeLine> => ({ key, title: DELIVERY_TITLES[key],
+      value: (line) => deliveryOf(line).map((data) => deliveryText(line, key, data)).join("; "),
       wrap: true, minWidth: key === "address" || key === "warehouseNote" ? 120 : 84, maxWidth: key === "address" || key === "warehouseNote" ? 220 : 160,
-      render: (row) => deliveryCell(row, key),
-    })),
-    { key: "track", title: "Трек", wrap: true, minWidth: 84, maxWidth: 140, value: (row) => shownShips(row).map((shipment) => contactText(row, shipment.track_number)).filter(Boolean).join(", "),
-      render: (row) => trackCell(row, tab === "packed" || tab === "all") },
-    ...(["pl", "dn", "upd", "boxes"] as const).map((kind): DataColumn<IntakeLine> => ({
-      key: kind, title: { pl: "PL", dn: "DN", upd: "УПД", boxes: "Короба" }[kind], wrap: true,
-      width: kind === "pl" ? 108 : kind === "dn" ? 112 : 96, maxWidth: kind === "upd" ? 120 : 132,
-      value: (row) => docsShips(row).map((shipment) => kind === "upd" ? updState(shipment).text
-        : kind === "boxes" ? (shipment.pl_number ? "Короба" : "не сформированы")
-        : (kind === "pl" ? shipment.pl_number : shipment.dn_number) || "не сформирован").join(", "),
-      render: (row) => docsCell(row, kind),
-    })),
-    { key: "ship", title: "Отгрузка", value: (row) => readyShips(row).length, render: (row) => {
-      if (tab === "all" && row.shipment && canDispatch) return <button type="button" className="secondary small"
-        aria-label={`Отправка ${row.shipment.number}`} onClick={() => setOpened({ kind: "ship", project: row.project })}>Отправка…</button>;
-      if (row.positionStage !== "to_ship" || !row.kbActions || !canDispatch || !readyShips(row).length) return dash;
-      return <button type="button" className="primary small intake-print" title={`Готово к отгрузке: ${piecesOf(row).to_ship}`} aria-label={`Отгрузить ${who(row)}`}
-        onClick={() => setOpened({ kind: "ship", project: row.project })}>Отгрузить</button>;
-    } },
-    { key: "shippedAt", title: "Дата отгрузки", width: 104, value: (row) => row.shipment?.shipped_at ?? "",
-      render: (row) => row.shipment?.shipped_at ? formatDay(row.shipment.shipped_at) : dash },
-    { key: "sent", title: "Отгружено", value: (row) => num(row.sent), numeric: true, render: sentCell },
-    { key: "received", title: "Дата приёмки", value: (row) => (row.act ?? row.receipt)?.received_at ?? "", render: (row) => (row.act ?? row.receipt) ? formatDay((row.act ?? row.receipt)!.received_at) : dash },
-    { key: "grn", title: "ГРН", wrap: true, width: 128, maxWidth: 132, value: (row) => grnGroups(row).map((group) => group.grns.join(", ")).join("; "), render: (row) => {
-      const groups = grnGroups(row);
-      if (!groups.some((group) => group.id || group.grns.length)) return dash;
-      const printable = canWarehouse && (row.act || num(row.accepted) > 0 || num(row.packed) > 0 || num(row.sent) > 0);
-      return <span className="intake-grn">{groups.map((group, index) => <span className="intake-delivery-line" key={group.id}
-        data-shipment={group.id || undefined} title={group.number || undefined}>
-        {groups.length > 1 && <small className="muted intake-shipment-index">{index + 1}</small>}
-        <span className="intake-grn">{group.grns.length ? group.grns.map((grn) => printable
-          ? <button key={grn} type="button" className="link-button goods-grn intake-grn-link" title="Печать этикетки" aria-label={`Печать этикетки ${grn}`}
-            disabled={Boolean(label?.busy)} aria-busy={label?.busy && label.grn === grn} onClick={() => void printLabel({ ...row, grn })}>{grn}</button>
-          : <span className="goods-grn" key={grn}>{grn}</span>) : dash}</span>
-      </span>)}</span>;
-    } },
-    // Задания — по умолчанию в подсказке «Можно принять» (колонку можно включить в «Колонках»): на 16" таблица без прокрутки вбок.
-    { key: "tasks", title: "Задания", hidden: true, value: (row) => row.tasks.map((task) => task.number).join(", "),
-      render: (row) => row.tasks.length ? <span className="intake-clip intake-stage muted" title={tasksText(row)}>{row.tasks.map((task) => task.number).join(", ")}</span> : dash },
+      render: (line) => deliveryCell(line, key) })),
+    { key: "action", title: ACTION_TITLE[tab] ?? "Действие", value: (line) => line.stage === "accepted" ? line.packNow || (line.shipment ? line.quantity : 0) : line.stage === "ready" ? line.quantity : "", render: actionCell },
   ];
-  const primaryColumns = tab === "all" ? [...POSITION_COLUMNS, "remaining", "packed", "ship", "track", "boxes"] : TAB_COLUMNS[tab];
-  const visibleColumns = [...primaryColumns, ...DELIVERY_COLUMNS, ...(!primaryColumns.includes("track") ? ["track"] : [])]
-    .flatMap((key) => columns.filter((column) => column.key === key)).map((column) => ({ ...column, hidden: column.hidden || !primaryColumns.includes(column.key) }));
+  // Без права на действие колонка действия была бы из одних прочерков — её нет («Можно принять» показывает число).
+  const actionless = (tab === "production" && !canWarehouse) || (["accepted", "to_ship"].includes(tab) && !canDispatch);
+  const shown = TAB_COLUMNS[tab].shown.filter((key) => key !== "action" || !actionless);
+  const { more } = TAB_COLUMNS[tab];
+  const visibleColumns = ["project", ...shown, ...more].flatMap((key) => columns.filter((column) => column.key === key))
+    .map((column) => ({ ...column, hidden: column.key === "project" || !shown.includes(column.key) }));
 
   const groupLabel = (project: string, groupRows: IntakeLine[]) => {
-    const first = head[project];
-    const title = [project, first?.customer].filter(Boolean).join(" · ");
-    const ready = [...new Map(groupRows.filter((row) => !row.act && num(row.remaining) > 0).map((row) => [kbKey(row), row])).values()];
-    const total = round2(ready.reduce((sum, row) => sum + num(row.remaining), 0));
+    const title = [project, head[project]?.customer].filter(Boolean).join(" · ");
+    // «Принять всё» — только в «Готово» (готовое) и «Все» (всё, что можно принять); КБ — один раз.
+    const bulk = tab === "ready" || tab === "all" ? [...new Map(groupRows.filter((line) => tab === "ready" ? line.stage === "ready" : num(line.kb.remaining) > 0)
+      .map((line) => [kbKey(line.kb), line.kb])).values()] : [];
+    const quantity = (row: IntakeRow) => tab === "ready" ? piecesOf(row).ready : num(row.remaining);
+    const total = round2(bulk.reduce((sum, row) => sum + quantity(row), 0));
     return <span className="ship-position-group"><span className="ship-position-group-title">{title}</span>
-      {tab === "accepted" && <button type="button" className="secondary small" onClick={(event) => { event.stopPropagation(); setProjectData(project); }}>
-        Данные отправки</button>}
-      {canWarehouse && (tab === "ready" || tab === "production" || tab === "all") && ready.length > 1 && <button type="button" className="primary small" onClick={(event) => { event.stopPropagation(); setIntake(ready.map(source)); }}>
-        Принять всё: {ready.length} КБ · {total} шт</button>}
-      </span>;
+      {tab === "accepted" && <button type="button" className="secondary small" title={canManage ? undefined : "Данные вносит менеджер; здесь — только просмотр"}
+        onClick={(event) => { event.stopPropagation(); setProjectData(project); }}>Данные отправки</button>}
+      {tab === "packed" && canDispatch && <button type="button" className="secondary small" title="Короба, упаковочный лист (PL), отгрузочная ведомость (DN) и этикетки"
+        onClick={(event) => { event.stopPropagation(); setOpened({ kind: "pack", project }); }}>Короба и PL/DN</button>}
+      {canWarehouse && bulk.length > 1 && <button type="button" className="primary small" onClick={(event) => { event.stopPropagation(); accept(bulk, quantity); }}>
+        Принять всё: {bulk.length} КБ · {formatNumber(total)} шт</button>}
+    </span>;
   };
 
   const projectRows = (project: string) => rows.filter((row) => row.project === project);
@@ -436,29 +330,25 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     {notice && <div className="success-banner" role="status">{notice}</div>}
     {!loaded ? <div className="empty">Загрузка…</div> : <>
       <div className="seg-tabs" role="tablist" aria-label="Шаг">{TABS.map(([key, text]) =>
-        <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? "on" : undefined} onClick={() => changeTab(key)}>
+        <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? "on" : undefined} onClick={() => changeTab(key)}
+          title="Число — КБ в шаге; во «Все» КБ считается один раз">
           {text}<span className="page-count"> {board.counts[key]}</span></button>)}</div>
-      <p className="muted" title="Части одной КБ могут находиться на разных этапах; во «Все» КБ считается один раз. Поиск и фильтры таблицы не меняют счётчики.">{COUNTER_SCOPE}{shipments.length >= 200 ? " · Загружены последние 200 отправок" : ""}</p>
-      <DataTable key={tab} label="Приёмка с производства" storageKey={`production-intake:positions-v2:${tab}`} rows={shown} columns={visibleColumns} rowKey={lineKey}
-        groupBy={(row) => row.project} groupLabel={groupLabel} exportName="Приёмка с производства"
-        searchPlaceholder="Проект, КБ, наименование или задание"
-        rowClassName={(row) => row.act ? "intake-act-row" : tab === "all" && !DISPATCH_STAGES.some(([stage]) => hasWork(stage, row, piecesOf(row))) ? "ship-line-off" : ""}
-        emptyText={allRows.length ? EMPTY[tab] : EMPTY.all} />
+      <DataTable key={tab} label="Приёмка с производства" storageKey={`production-intake:v3:${tab}`} rows={lines} columns={visibleColumns} rowKey={(line) => line.id}
+        groupBy={(line) => line.project} groupLabel={groupLabel} exportName="Приёмка с производства"
+        searchPlaceholder="Проект, КБ, наименование, ГРН или задание"
+        rowClassName={(line) => tab === "all" && !(line.stage && hasWork(line.stage, line.kb, piecesOf(line.kb))) ? "ship-line-off" : ""}
+        emptyText={board.rows.length ? EMPTY[tab] : EMPTY.all} />
       {label && <div className="intake-print-status"><strong>Этикетка {label.grn}</strong><PrintOutcome result={label.result} error={label.error} /></div>}
     </>}
-    {intake && <IntakeWindow rows={intake} close={() => setIntake(null)} onDone={accepted} />}
+    {accepting && <IntakeWindow rows={accepting.rows} quantities={accepting.quantities} close={() => setAccepting(null)} onDone={accepted} />}
     {opened?.kind === "pack" && <PackWindow project={opened.project} rows={projectRows(opened.project)} shipments={projectShips(opened.project)} rights={rights} reload={reload} close={() => setOpened(null)} />}
     {opened?.kind === "ship" && <ShipWindow project={opened.project} shipments={projectShips(opened.project)} rights={rights} reload={reload} close={() => setOpened(null)} />}
-    {opened?.kind === "docs" && (() => {
-      const shipment = shipments.find((item) => item.id === opened.id);
-      return shipment ? <ShipmentDocsWindow key={shipment.id} shipment={shipment} rights={rights} reload={reload} close={() => setOpened(null)} /> : null;
-    })()}
-    {opened?.kind === "track" && <TrackWindow title={who(opened.row)} shipments={trackShips(opened.row)} reload={reload} close={() => setOpened(null)} />}
-    {opened?.kind === "noupd" && <NoUpdWindow shipment={opened.shipment} mutate={(key, operation, message) => mutateBoxes(key, operation, typeof message === "string" ? message : "Готово")} close={() => setOpened(null)} />}
+    {opened?.kind === "track" && <TrackWindow title={opened.title} shipments={[shipments.find((shipment) => shipment.id === opened.shipment.id) ?? opened.shipment]} reload={reload} close={() => setOpened(null)} />}
+    {opened?.kind === "noupd" && <NoUpdWindow shipment={opened.shipment} mutate={(key, operation, message) => mutate(key, operation, typeof message === "string" ? message : "Готово")} close={() => setOpened(null)} />}
     {header === "journal" && <JournalWindow shipments={shipments} close={() => setHeader(null)} />}
     {header === "good" && <RegisterGoodWindow reload={reload} close={() => setHeader(null)} />}
     {header === "request" && <CreateShipmentWindow reload={reload} close={() => setHeader(null)} />}
-    {card && <ShipmentDataWindow shipment={card} canEdit={canDispatch} canCorrectHistory={hasFullAccess(principal) && !principal.viewing} onSaved={reload} close={() => setCard(null)} />}
-    {projectData && <DispatchCard project={projectData} customer={head[projectData]?.customer} stage="accepted" canEdit={canDispatch} onSaved={() => void reload()} close={() => setProjectData(null)} />}
+    {/* Данные отправки проекта правит менеджер на своём экране; складу — только просмотр (аудит 06.11). */}
+    {projectData && <DispatchCard project={projectData} customer={head[projectData]?.customer} stage="accepted" canEdit={canManage} onSaved={() => void reload()} close={() => setProjectData(null)} />}
   </section>;
 }

@@ -122,9 +122,17 @@ export const readyForTrack = (shipment: DispatchShipment) =>
   shipment.ready_for_track ?? (shipment.missing_ship.length > 0 && shipment.missing_ship.every((gap) => gap === "трек-номер"));
 /** Трек нужен доставке ТК; самовывоз уезжает без него. */
 export { needsTrack } from "./carriers";
-/** Держит только УПД (и трек, который без УПД не вписать) — можно разрешить отгрузку без УПД по ПИН. */
+/** Самого УПД нет: тип не выбран, «Без УПД» или бумажная без номера и файла. ЭДО без номера — УПД есть, ждём номер (06.11). */
+export function updAbsent(shipment: Shipment) {
+  if (!shipment.upd_type || withoutUpd(shipment)) return true;
+  if (shipment.upd_type === "ЭДО") return false;
+  return !shipment.upd_number.trim() && !shipment.upd_url;
+}
+/** Держит только УПД, и его нет совсем (и трек, который без УПД не вписать) — можно разрешить отгрузку без УПД по ПИН.
+ *  Решает сервер (`no_upd_offered`); без этого поля (старый ответ) — по словам `missing_ship` и самому УПД. */
 export function onlyUpdBlocks(shipment: DispatchShipment) {
-  if (!SHIPPABLE.includes(shipment.status) || !picked(shipment) || readyToShip(shipment) || shipment.no_upd_approved_by) return false;
+  if (shipment.no_upd_offered !== undefined) return shipment.no_upd_offered && !shipment.no_upd_approved_by;
+  if (!SHIPPABLE.includes(shipment.status) || !picked(shipment) || readyToShip(shipment) || shipment.no_upd_approved_by || !updAbsent(shipment)) return false;
   const gaps = shipment.missing_ship;
   return gaps.some((gap) => UPD_GAPS.includes(gap)) && gaps.every((gap) => UPD_GAPS.includes(gap) || gap === "трек-номер");
 }
@@ -233,7 +241,7 @@ export function ShipmentCard({ shipment, rights, busy, mutate, openData }: {
       {shipment.pl_number && got && <>{canPrintDocs && <><button type="button" className="secondary" onClick={() => void print("pl")}>Печать PL</button><button type="button" className="secondary" disabled={dnGaps.length > 0} title={dnGaps.length ? `DN печатается, когда внесены данные. Не хватает: ${dnGaps.join(", ")}` : undefined} onClick={() => void print("dn")}>Печать DN</button></>}<button type="button" className="secondary" onClick={() => void printLabels()}>Печать этикеток</button></>}
       {canEdit && got && (active || (shipment.pl_number && shipment.status === "Отгружена")) && !layout && <button type="button" className="secondary" disabled={disabled} onClick={() => setLayout(true)}>{shipment.pl_number ? "Перевыпустить" : "Сформировать отгрузочные"}</button>}
       {canEdit && open && <button type="button" className="secondary" disabled={disabled} onClick={openData}>Данные отправки</button>}
-      {canEdit && open && !withoutUpd(shipment) && <label className="secondary file-button">Загрузить УПД<input type="file" accept=".pdf,image/*" aria-label={`Загрузить УПД ${shipment.number}`} hidden onChange={(event) => { uploadUpd(event.target.files?.[0]); event.target.value = ""; }} /></label>}
+      {canManage && open && !withoutUpd(shipment) && <label className="secondary file-button">Загрузить УПД<input type="file" accept=".pdf,image/*" aria-label={`Загрузить УПД ${shipment.number}`} hidden onChange={(event) => { uploadUpd(event.target.files?.[0]); event.target.value = ""; }} /></label>}
       <span className="ship-actions-end">
         {canUnship && shipped && rollback === null && <button type="button" className="danger small" disabled={disabled} onClick={() => setRollback("")}>Откатить отгрузку</button>}
         {canManage && active && <button type="button" className="danger small" disabled={disabled} onClick={() => { if (window.confirm(`Отменить заявку ${shipment.number}? Набранное вернётся на склад.`)) void action("cancel", "Заявка отменена, набранное вернулось на склад"); }}>Отменить заявку</button>}
@@ -245,14 +253,15 @@ export function ShipmentCard({ shipment, rights, busy, mutate, openData }: {
       <button type="button" className="secondary" onClick={() => setRollback(null)}>Не откатывать</button>
     </div>}
     {layout && <BoxesEditor shipment={shipment} busy={busy} mutate={mutate} onDone={() => setLayout(false)} />}
-    {canEdit && open && <div className="ship-docs">
+    {/* УПД, получатель и адрес вносит менеджер (Ульяна); склад видит их только для чтения — трек вписывает «Трек…» в строке. */}
+    {canManage && open && <div className="ship-docs">
       <label>Тип УПД<select aria-label={`Тип УПД ${shipment.number}`} value={documents.upd_type} onChange={(event) => setDocuments({ ...documents, upd_type: event.target.value })}><option value="">{`из карточки проекта${shipment.inherited.includes("upd_type") && shipment.upd_type ? `: ${updLabel(shipment.upd_type)}` : ""}`}</option>{UPD_TYPES.map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
       <label>№ УПД<input value={documents.upd_number} onChange={(event) => setDocuments({ ...documents, upd_number: event.target.value })} /></label>
       <label>Дата УПД<input type="date" value={documents.upd_date} onChange={(event) => setDocuments({ ...documents, upd_date: event.target.value })} /></label>
       <label>Трек-номер<input aria-label={`Трек-номер ${shipment.number}`} disabled={!trackOpen} title={trackOpen ? undefined : "Трек вносится, когда есть УПД и ТК"} value={documents.track_number} onChange={(event) => setDocuments({ ...documents, track_number: event.target.value })} /></label>
       <button type="button" className="secondary" disabled={disabled} onClick={() => void mutate(`docs:${shipment.id}`, () => shippingApi.documents(shipment.id, { version: shipment.version, ...documents, upd_url: shipment.upd_url, upd_type: documents.upd_type || null, upd_date: documents.upd_date || null }), "Данные УПД и доставки сохранены")}>Сохранить документы</button>
     </div>}
-    {canEdit && open && <details className="ship-more"><summary>Получатель и адрес этой отправки</summary><ShipmentHead shipment={shipment} busy={busy} mutate={mutate} /></details>}
+    {canManage && open && <details className="ship-more"><summary>Получатель и адрес этой отправки</summary><ShipmentHead shipment={shipment} busy={busy} mutate={mutate} /></details>}
     {approving && <NoUpdWindow shipment={shipment} close={() => setApproving(false)} mutate={mutate} />}
   </article>;
 }
