@@ -13,7 +13,6 @@ from app.modules.production.autoplan import (
     SetupKey,
     batches,
     changeover_seconds,
-    equipment_units,
     inventory_prefix,
     operation_keys,
     plan,
@@ -82,7 +81,6 @@ def by_operation(result):
 
 def test_inventory_prefix_groups_units_of_one_machine():
     assert inventory_prefix("ОБ.027.X") == "ОБ.027" == inventory_prefix("ОБ.027.2") == inventory_prefix("OБ.027")
-    assert equipment_units(["ОБ.027.1", "ОБ.027.2", "ОБ.027.2", "ОБ.048", "без номера"]) == {"ОБ.027": 2, "ОБ.048": 1}
 
 
 def test_same_applicator_and_terminal_is_one_family_crimp_height_is_the_adjustment():

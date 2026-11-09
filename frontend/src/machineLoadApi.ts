@@ -31,6 +31,8 @@ export interface MachineLoadDay {
 
 export interface MachineLoadRow {
   machine: string;
+  /** ID модели оборудования (миграция 0171); null — номер не сопоставлен однозначно. */
+  model_id?: string | null;
   label: string;
   units: number;
   /** Станок есть в БД.ОБ (иначе считается одним). */

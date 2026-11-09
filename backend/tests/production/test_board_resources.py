@@ -1,18 +1,21 @@
+from uuid import UUID, uuid4
+
 import pytest
 from sqlalchemy import select
 
 from app.main import app
 from app.modules.production.infrastructure import SqlAlchemyProductionUnitOfWork
-from app.modules.production.resource_assignment_infrastructure import ResourceAllocationRow, SqlAlchemyProductionResources
+from app.modules.production.resource_assignment_infrastructure import ResourceAllocationMachineRow, ResourceAllocationRow, SqlAlchemyProductionResources
 from app.modules.production.resource_infrastructure import ResourceGenerationRow
-from app.modules.references.equipment import PhysicalEquipment
 from app.modules.production.resource_claims import ResourceConflict
-from app.workflows.production_resource_context import SqlAlchemyProductionResourceContext
+from app.workflows.production_resource_context import MachineUnit, SqlAlchemyProductionResourceContext
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.identity import Actor
 from tests.production.test_production_board import (
     ANNA, assign, board, client, future_items, issue_route, launch, reissue, tasks_of,
 )
+
+UNIT, MODEL = str(uuid4()), uuid4()  # a БД.ОБ unit by record id (0172) and its model
 
 
 def preview(http, items):
@@ -81,12 +84,12 @@ def test_future_assignment_passes_explicit_binding_in_same_transaction(client, m
     issue_route('КБ1')
     [future] = board(http)['future']
     items = future_items(future, 2)
-    items[0]['machine_bindings'] = [{'etk_position': 2, 'machine_id': 'ОБ.027.2'}]
+    items[0]['machine_bindings'] = [{'etk_position': 2, 'machine_id': UNIT}]
     calls = resources(monkeypatch, reject=reject)
     response = assign(http, ANNA, items)
     assert response.status_code == (409 if reject else 200), response.text
     [call] = [call for call in calls if call[0] == 'assign']
-    assert call[4][0].etk_position == 2 and call[4][0].machine_id == 'ОБ.027.2'
+    assert call[4][0].etk_position == 2 and call[4][0].machine_id == UNIT
     assert call[1].operation(call[2]).position == 2
     assert bool(tasks_of(http)) is not reject
 
@@ -97,7 +100,7 @@ def test_disabled_runtime_does_not_silently_drop_board_binding(client):
     [future] = board(http)['future']
     items = future_items(future, 2)
     assert preview(http, items).json()['items'][0]['resources']['enabled'] is False
-    items[0]['machine_bindings'] = [{'etk_position': 2, 'machine_id': 'ОБ.027.2'}]
+    items[0]['machine_bindings'] = [{'etk_position': 2, 'machine_id': UNIT}]
     assert assign(http, ANNA, items).status_code == 422
     assert tasks_of(http) == {}
 
@@ -147,7 +150,7 @@ def test_board_uses_real_sql_resource_adapter_for_future_task(client, monkeypatc
 
     class Catalog(SqlAlchemyProductionResourceContext):
         def catalog(self):
-            return (PhysicalEquipment('ОБ.027.2', 'ОБ.027.2', 'Пресс', 'Модель', 'ЦАР'),)
+            return (MachineUnit(UUID(UNIT), 'ОБ.027.2', 'Пресс', 'Модель', 'ЦАР', MODEL),)
 
     monkeypatch.setattr(app.state, 'production_uow_factory', lambda: SqlAlchemyProductionUnitOfWork(
         sessions, lambda session: SqlAlchemyProductionResources(session, Catalog(session)),
@@ -156,12 +159,14 @@ def test_board_uses_real_sql_resource_adapter_for_future_task(client, monkeypatc
     assert response.status_code == 200, response.text
     choice = response.json()['items'][0]['resources']
     assert choice['blocked_reason'] is None
-    assert choice['requirements'][0]['machines'][0]['id'] == 'ОБ.027.2'
+    assert choice['requirements'][0]['machines'][0]['id'] == UNIT
+    assert choice['requirements'][0]['machines'][0]['inventory_number'] == 'ОБ.027.2'
     assert assign(http, ANNA, items).status_code == 409
     assert tasks_of(http) == {}
-    items[0]['machine_bindings'] = [{'etk_position': 2, 'machine_id': 'ОБ.027.2'}]
+    items[0]['machine_bindings'] = [{'etk_position': 2, 'machine_id': UNIT}]
     response = assign(http, ANNA, items)
     assert response.status_code == 200, response.text
     with sessions() as session:
         [allocation] = session.scalars(select(ResourceAllocationRow)).all()
-        assert allocation.machines == [{'etk_position': 2, 'machine_id': 'ОБ.027.2'}]
+        [machine] = session.scalars(select(ResourceAllocationMachineRow)).all()
+        assert (machine.allocation_id, machine.etk_position, machine.machine_id) == (allocation.id, 2, UUID(UNIT))

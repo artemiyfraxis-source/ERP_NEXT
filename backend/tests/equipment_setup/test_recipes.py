@@ -1,15 +1,17 @@
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
 from app.modules.equipment_setup.recipes import ManualRecipeVersion, RecipeField, SetupTrialMeasurement
 
+UNIT, OTHER = UUID("00000000-0000-4000-8000-000000000272"), UUID("00000000-0000-4000-8000-000000000273")  # БД.ОБ units
+
 
 def recipe(**changes):
-    value = ManualRecipeVersion(uuid4(), 1, "ОБ.027.2", "Ручная настройка", (RecipeField("Диаметр", "2", "мм"),), (RecipeField("Значение с панели", "14"),), "Записано с панели", uuid4(), datetime.now(UTC))
+    value = ManualRecipeVersion(uuid4(), 1, UNIT, "Ручная настройка", (RecipeField("Диаметр", "2", "мм"),), (RecipeField("Значение с панели", "14"),), "Записано с панели", uuid4(), datetime.now(UTC))
     return replace(value, **changes)
 
 

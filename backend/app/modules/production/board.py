@@ -10,9 +10,11 @@
 создаётся — авторевизии ЭТК сразу сделали бы его устаревшим. ПЗ создаётся при первом назначении из выданной в этот момент
 ревизии и закрепляет её (techcard_revision), дальше задание по новым ревизиям не перестраивается.
 
-Группа оборудования операции (настоящей или будущей): (1) первое «Оборудование» с инвентарным номером ОБ в оснастке
-операции ЭТК (card.tooling — тот же станок, что ключ наладки автоплана и загрузка станков); (2) иначе «Машина» БД.ОП по
-коду карточки операции; (3) иначе категория карточки операции из библиотеки карточек, а нет её — название этапа.
+Группа оборудования операции (настоящей или будущей): (1) станок первой строки «Оборудование» оснастки операции ЭТК
+(card.tooling — модель оборудования по ID, тот же станок, что ключ наладки автоплана и загрузка станков); (2) иначе
+модель «Машины» БД.ОП по коду карточки операции — по связи ячейки с моделью (equipment_operation_links), не по тексту;
+(3) иначе категория карточки операции из библиотеки карточек, а нет её — название этапа. Ключ группы станка — ID модели,
+подпись — «ОБ.027 <наименование модели сейчас>».
 У задания по ПФ — первое, что нашлось среди его операций ЭТК по порядку ПФ.
 
 Групповое назначение — одной транзакцией: недостающие задания запускаются тем же путём, что «Создать задание»
@@ -60,6 +62,7 @@ from .domain import (
     add_work_seconds,
 )
 from .launchable import ReadyCard, launch_operations, launch_remainders, operation_code, route_from_document, stage_name
+from .equipment_catalog import EquipmentCatalog
 from .machine_load import _machine
 from .scheduling import upstream_ids
 from .resource_assignments import MachineBinding
@@ -201,31 +204,15 @@ def _text(value: object) -> str:
     return " ".join(str(value if value is not None else "").split())
 
 
-def operation_machines(records: Sequence[Mapping[str, str]]) -> dict[str, str]:
-    """«Машина» БД.ОП по коду операции (opNumber / «Номер»; первая строка кода выигрывает)."""
-    result: dict[str, str] = {}
-    for fields in records:
-        code = _text(fields.get("opNumber") or fields.get("Номер"))
-        machine = _text(fields.get("Машина"))
-        if code and machine and code not in result:
-            result[code] = machine
-    return result
-
-
-def _machine_label(value: str) -> str:
-    """«EW-05F+M/Автомат мерной резки проводов» → «EW-05F+M Автомат мерной резки проводов»; «/Автомат …» → «Автомат …»."""
-    model, _, name = value.partition("/")
-    return " ".join(part for part in (_text(model), _text(name)) if part) or _text(value)
-
-
 def equipment_of(
     task: ProductionTask,
     document: Mapping[str, Any] | None,
-    machines: Mapping[str, str],
+    machines: EquipmentCatalog,
     categories: Mapping[str, str],
 ) -> dict[UUID, Equipment]:
     """Группа оборудования каждой операции задания по выданной ЭТК. Операция ЭТК, код которой разошёлся с техкартой,
-    станка ЭТК не даёт (как у автоплана и загрузки станков) — дальше «Машина» БД.ОП и категория по коду."""
+    станка ЭТК не даёт (как у автоплана и загрузки станков) — дальше «Машина» БД.ОП (по связи с моделью) и категория
+    по коду. machines — каталог станков БД.ОБ со связями «Машины» БД.ОП (equipment_catalog.load_catalog)."""
     route = route_from_document(document) if isinstance(document, Mapping) else ()
     built = [item if isinstance(item, Mapping) else {} for item in (document or {}).get("operations") or []] \
         if isinstance(document, Mapping) else []
@@ -238,21 +225,20 @@ def equipment_of(
 
 def _group(
     parts: Sequence[EtkOperation], route: Sequence[Any], built: Sequence[Mapping[str, Any]],
-    machines: Mapping[str, str], categories: Mapping[str, str],
+    machines: EquipmentCatalog, categories: Mapping[str, str],
 ) -> Equipment:
     for part in parts:
         index = part.position - 1
         step = route[index] if 0 <= index < len(route) else None
         if step is None or step.code != part.code or index >= len(built):
             continue
-        machine, label = _machine(built[index])
-        if machine:
-            return Equipment(machine, label or machine, True)
+        machine = _machine(built[index], machines)
+        if machine is not None:
+            return Equipment(machine.key, machine.label, True)
     for part in parts:
-        machine = machines.get(_text(part.code))
-        if machine:
-            label = _machine_label(machine)
-            return Equipment(f"machine:{label.casefold()}", label)
+        machine = machines.operation_machine(part.code)
+        if machine is not None:
+            return Equipment(machine.key, machine.label)
     first = parts[0]
     label = _text(categories.get(_text(first.code))) or stage_name(first.stage) or operation_code(first.code) or "Прочее"
     return Equipment(f"category:{label.casefold()}", label)

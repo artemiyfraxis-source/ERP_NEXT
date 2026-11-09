@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
-import { failureText, referencesApi, type CrimpCodes, type TechOperationRecord } from "./api";
+import { failureText, referencesApi, type CrimpCodes, type EquipmentLinksReport, type EquipmentModelInfo, type EquipmentRole, type TechOperationRecord } from "./api";
 import { PageWindow } from "./PageWindow";
 import { CrimpLinks } from "./CrimpLinks";
 import { DataTable, type DataColumn } from "./DataTable";
 import {
   CODE_KEY, CRIMP_TYPES, INV_KEY, MATRIX_TYPE, applicatorKindOf, codeOf, crimpTypeOfCode, NAME_KEYS, TARGETS_KEY, TOOL_KEY, crimpRecord, groupModels,
-  inventoryRange, invOf, nameOf, operationsOfModel, pick, placeOf, typeOf,
+  ROLE_LABELS, inventoryRange, invOf, nameOf, operationsOfModel, pick, placeOf, servedBy, servedUnits, typeOf,
   type EquipmentModel,
 } from "./equipmentModel";
 import "./equipmentPanel.css";
 import { headerLabel, valueLabel } from "./referenceLabels";
+import { EquipmentUnlinked, ServesEditor } from "./EquipmentLinks";
 
 /** БД.ОБ: the list is one row per model (owner 12.10.2026: «дубли одного и того же свернуть»), a row opens the machine
     card in a window over the list (the pick lives in `?equipment=`) — instances with «Ещё такой же», the БД.ОП operations
@@ -99,6 +100,10 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
   const [openId, setOpenId] = useState(() => focusId || new URLSearchParams(window.location.search).get("equipment") || "");
   const [busy, setBusy] = useState(false);
   const [codes, setCodes] = useState<CrimpCodes | null>(null);
+  // Roles / counts of the models and the «Без привязки» report come from the server (links by id, migration 0171).
+  const [infos, setInfos] = useState<EquipmentModelInfo[]>([]);
+  const [report, setReport] = useState<EquipmentLinksReport | null>(null);
+  const [view, setView] = useState<"all" | EquipmentRole | "unlinked">("all");
   // The picked machine stays in the address, so a reload reopens its card (same as «Проекты» → `?project=`).
   const select = (id: string) => {
     setOpenId(id);
@@ -115,6 +120,13 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     referencesApi.crimpCodes().then((result) => { if (live) setCodes(result); }).catch(() => { if (live) setCodes(null); });
     return () => { live = false; };
   }, [records]);
+  useEffect(() => {
+    let live = true;
+    referencesApi.equipmentModels().then((result) => { if (live) setInfos(result?.models ?? []); }).catch(() => { if (live) setInfos([]); });
+    referencesApi.equipmentLinksReport().then((result) => { if (live) setReport(result?.operations ? result : null); }).catch(() => { if (live) setReport(null); });
+    return () => { live = false; };
+  }, [records]);
+  const infoById = useMemo(() => new Map(infos.map((info) => [info.id, info])), [infos]);
 
   const models = useMemo(() => groupModels(records).sort((a, b) => Number(!a.name) - Number(!b.name)), [records]);
   const types = useMemo(() => {
@@ -176,6 +188,26 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
             <button type="button" className="eq-close" aria-label="Закрыть карточку" title="Закрыть (Esc)" onClick={() => select("")}>×</button>
           </div>
         </header>
+        <div className="tr-block"><h4>Вид</h4>
+          <div className="eq-role">
+            {canEdit && model.id
+              ? <select aria-label="Вид оборудования" value={model.role} disabled={busy}
+                onChange={(event) => void guarded(() => referencesApi.setEquipmentRole(model.id, event.target.value as EquipmentRole), "Вид записан")}>
+                <option value="operational">{ROLE_LABELS.operational}</option>
+                <option value="supporting">{ROLE_LABELS.supporting}</option>
+              </select>
+              : <b>{ROLE_LABELS[model.role]}</b>}
+            {model.id && infoById.get(model.id)?.role_confirmed === false && <span className="tone-warn eq-unconfirmed">не подтверждён</span>}
+            {canEdit && model.id && infoById.get(model.id)?.role_confirmed === false && <button type="button" className="secondary small" disabled={busy}
+              onClick={() => void guarded(() => referencesApi.setEquipmentRole(model.id, model.role), "Вид подтверждён")}>Подтвердить</button>}
+          </div>
+          {model.role === "supporting" && <p className="eq-hint">Обеспечивающее оборудование не бывает машиной операции — оно обслуживает машины.</p>}
+        </div>
+        {model.role === "supporting" && <ServesEditor model={model} records={records} canEdit={canEdit} busy={busy}
+          save={(unit, ids) => guarded(() => referencesApi.setEquipmentServes(unit.id, ids), `${invOf(unit) || "Экземпляр"}: «Обслуживает» записано`)} />}
+        {model.role === "operational" && model.items.some((item) => servedBy(item, records).length > 0) && <div className="tr-block"><h4>Обслуживают</h4>
+          <div className="tr-chips">{[...new Map(model.items.flatMap((item) => servedBy(item, records)).map((unit) => [unit.id, unit])).values()].map((unit) =>
+            <button key={unit.id} type="button" className="eq-op eq-chip-btn" onClick={() => select(unit.id)}><span className="tnum">{invOf(unit)}</span> {nameOf(unit)}</button>)}</div></div>}
         {canEdit && passport.length > 0 && <div className="tr-block"><h4>Модель{open.items.length > 1 && <span>правка — на все экземпляры</span>}</h4>
           <dl className="op-fields">{passport.map(([label, key]) => <div key={key}><dt>{label}</dt><dd className="pre-line">
             <InlineValue label={label} value={pick(last.fields, key)} display={key === "Тип" ? valueLabel(key, pick(last.fields, key)) : undefined} editable
@@ -195,7 +227,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
           {linked.length ? <ul className="eq-ops">{linked.map((op) => <li key={op.id}>
             <span><b className="tnum">{opNumber(op)}</b>{opName(op) && <> — {opName(op)}</>}</span></li>)}</ul>
             : <div className="empty">{operations.length ? "Операций с этой моделью нет." : "БД.ОП не загружена."}</div>}
-          <p className="eq-hint">Привязка — в карточке операции: «Машина», «Инструмент», «Апликаторы / модули».</p>
+          <p className="eq-hint">Привязка — в таблице операций (ячейка «Машина») и в карточке операции; связь держится за моделью, а не за названием.</p>
         </div>
 
         {open.type !== MATRIX_TYPE && matricesOf(open).length > 0 && <div className="tr-block"><h4>Матрицы к этому инструменту <span>{matricesOf(open).length}</span></h4>
@@ -217,12 +249,20 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     { key: "count", title: "Единиц", numeric: true, value: (model) => model.items.length, render: (model) => model.items.length > 1 ? `${model.items.length} шт.` : "1 шт." },
     { key: "type", title: "Тип", value: (model) => model.type, filter: true },
     { key: "code", title: "Код", value: (model) => codeOf(model), render: (model) => <span className="tnum">{codeOf(model) || "—"}</span> },
-    { key: "kind", title: "Вид", value: (model) => applicatorKindOf(codeOf(model)), filter: true },
+    { key: "role", title: "Вид", value: (model) => ROLE_LABELS[model.role], filter: true },
+    { key: "kind", title: "Вид аппликатора", value: (model) => applicatorKindOf(codeOf(model)), filter: true },
     { key: "article", title: "Артикул", value: (model) => model.article },
     { key: "maker", title: "Производитель", value: (model) => model.maker },
     { key: "place", title: "Расположение", value: (model) => model.places.map((item) => valueLabel("Расположение", item)).join(", "), filter: true },
     { key: "ops", title: "Операций", numeric: true, value: (model) => opsOf(model).length, hint: "Сколько операций БД.ОП привязано к этой модели" },
   ];
+  const shown = view === "operational" || view === "supporting" ? models.filter((model) => model.role === view) : models;
+  const roleCount = (role: EquipmentRole) => models.filter((model) => model.role === role).length;
+  const unlinkedCount = report ? report.counts.operations_unresolved + report.counts.tools_unresolved + report.counts.templates_unresolved
+    + report.counts.models_without_units + report.counts.models_units_disagree + report.counts.roles_unconfirmed : 0;
+  const tabs: Array<["all" | EquipmentRole | "unlinked", string, number]> = [["all", "Все", models.length],
+    ["operational", ROLE_LABELS.operational, roleCount("operational")], ["supporting", ROLE_LABELS.supporting, roleCount("supporting")],
+    ["unlinked", "Без привязки", unlinkedCount]];
   const presets = types.map(([name]) => ({ label: name, test: (model: EquipmentModel) => model.type === name }));
   const missing = codes?.missing ?? [];
   return <div className="eq-split">
@@ -233,8 +273,14 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
           <span className="tnum">{item.code}</span>{canEdit && <button type="button" className="eq-x" aria-label={`Создать запись для кода ${item.code}`}
             onClick={() => onCreate({ Тип: crimpTypeOfCode(item.code), [CODE_KEY]: item.code })}>＋</button>}</span>)}</div>
       </details>}
-      <DataTable
-        rows={models}
+      <div className="seg-tabs eq-views" role="tablist" aria-label="Вид оборудования">
+        {tabs.map(([id, label, count]) => <button key={id} type="button" role="tab" aria-selected={view === id} className={view === id ? "on" : undefined}
+          onClick={() => setView(id)}>{label} <span className="muted">{count}</span></button>)}
+      </div>
+      {view === "unlinked" ? <EquipmentUnlinked report={report} canEdit={canEdit} busy={busy} records={records}
+        confirm={(info) => guarded(() => referencesApi.setEquipmentRole(info.id, info.role), `${info.display || info.name}: вид подтверждён`)}
+        openModel={(info) => { const unit = info.unit_ids[0]; if (unit) { setView("all"); select(unit); } }} /> : <DataTable
+        rows={shown}
         columns={columns}
         rowKey={(model) => model.key}
         storageKey="db:equipment-models"
@@ -248,7 +294,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
         rowTitle={(model) => `Открыть: ${model.name || invOf(model.items[0])}`}
         toolbar={toolbar}
         emptyText={records.length ? "Ничего не найдено." : "Записей нет."}
-      />
+      />}
     </div>
     {panel}
   </div>;

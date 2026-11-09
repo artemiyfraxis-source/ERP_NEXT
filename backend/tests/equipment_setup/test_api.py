@@ -8,7 +8,7 @@ import pytest
 
 from app.modules.equipment_setup.api import router
 from app.modules.equipment_setup.application import IssuedSetupOperation, SetupMachine, SetupOperationUnavailable, SetupResourceConflict
-from tests.equipment_setup.test_application import env, principal
+from tests.equipment_setup.test_application import U2, U3, env, principal
 from tests.equipment_setup.test_recipe_application import Recipes
 
 
@@ -37,7 +37,7 @@ def payload(env):
 def test_assign_and_replay_http_contract(client, env):
     response = client.post("/api/production/equipment-setup/tasks", json=payload(env))
     assert response.status_code == 200, response.text
-    assert response.json()["machine_id"] == env[4].machine_id
+    assert response.json()["machine_id"] == str(env[4].machine_id)
     again = client.post("/api/production/equipment-setup/tasks", json=payload(env))
     assert again.json() == response.json()
     assert len(env[0].tasks.items) == 1
@@ -45,7 +45,7 @@ def test_assign_and_replay_http_contract(client, env):
 
 def test_client_cannot_supply_actor_site_or_eligibility(client, env):
     data = payload(env)
-    data.update(actor_id=str(env[2].actor.id), site="ЦАР", eligible_machine_ids=[env[4].machine_id])
+    data.update(actor_id=str(env[2].actor.id), site="ЦАР", eligible_machine_ids=[str(env[4].machine_id)])
     assert client.post("/api/production/equipment-setup/tasks", json=data).status_code == 422
     assert not env[0].tasks.items
 
@@ -84,7 +84,7 @@ def test_transition_uses_session_actor_and_version(client, env):
 
 def test_recipe_publish_is_immutable_and_scoped(client, env):
     endpoint = f"/api/production/equipment-setup/recipes/{uuid4()}/versions"
-    data = {"expected_version": 0, "machine_id": "ОБ.027.2", "title": "Настройка",
+    data = {"expected_version": 0, "machine_id": str(U2), "title": "Настройка",
         "panel_settings": [{"label": "Панель", "value": "12"}], "source": "Ручная запись"}
     response = client.post(endpoint, json=data)
     assert response.status_code == 200, response.text
@@ -128,8 +128,8 @@ def test_catalog_reads_are_bounded_minimal_and_current_site_scoped(client, env):
     base = "/api/production/equipment-setup"
     assert client.get(base + "/machines", params={"limit": 201}).status_code == 422
     machines = client.get(base + "/machines").json()["items"]
-    assert machines == [{"id": "ОБ.027.2", "name": "ОБ.027.2", "model": "", "site": "ЦАР"}]
-    params = {"machine_id": "ОБ.027.2"}
+    assert machines == [{"id": str(U2), "name": "ОБ.027.2", "model": "", "site": "ЦАР", "inventory_number": "ОБ.027.2"}]
+    params = {"machine_id": str(U2)}
     executors = client.get(base + "/executors", params=params).json()["items"]
     assert {item["id"] for item in executors} == {str(env[1].actor.id), str(env[2].actor.id)}
     assert all(set(item) == {"id", "name", "site"} for item in executors)
@@ -146,7 +146,7 @@ def test_assignment_context_requires_exact_existing_issued_reference(client, env
     params = jsonable_encoder(asdict(env[4].operation))
     result = client.get(endpoint, params=params)
     assert result.status_code == 200, result.text
-    assert result.json()["items"][0]["id"] == env[4].machine_id
+    assert result.json()["items"][0]["id"] == str(env[4].machine_id)
     params["card_revision"] += 1
     assert client.get(endpoint, params=params).status_code == 404
     params = jsonable_encoder(asdict(env[4].operation))
@@ -161,8 +161,8 @@ CONTEXT = "/api/production/equipment-setup/assignment-context"
 def unfixed_site(env):
     """Issued operation with no executor and no handed_to: the task fixes no site, the chosen machine will."""
     uow, _, _, _, command = env
-    uow.context.machines["ОБ.027.3"] = SetupMachine("ОБ.027.3", "ЖУК")
-    uow.context.operations[command.operation] = IssuedSetupOperation(command.operation, "", ("ОБ.027.2", "ОБ.027.3"))
+    uow.context.machines[U3] = SetupMachine(U3, "ЖУК", "ОБ.027.3")
+    uow.context.operations[command.operation] = IssuedSetupOperation(command.operation, "", (U2, U3))
     return jsonable_encoder(asdict(command.operation))
 
 
@@ -170,15 +170,15 @@ def test_operation_without_executor_lists_own_site_machines_and_assigns_on_chose
     params = unfixed_site(env)
     response = client.get(CONTEXT, params=params)
     assert response.status_code == 200, response.text
-    assert [item["id"] for item in response.json()["items"]] == ["ОБ.027.2"]
+    assert [item["id"] for item in response.json()["items"]] == [str(U2)]
     client.app.state.test_principal = principal(env[1], full_access=True)
-    assert [item["id"] for item in client.get(CONTEXT, params=params).json()["items"]] == ["ОБ.027.2", "ОБ.027.3"]
+    assert [item["id"] for item in client.get(CONTEXT, params=params).json()["items"]] == [str(U2), str(U3)]
     client.app.state.test_principal = principal(env[1])
-    other = dict(payload(env), machine_id="ОБ.027.3", idempotency_key="other-site")
+    other = dict(payload(env), machine_id=str(U3), idempotency_key="other-site")
     assert client.post("/api/production/equipment-setup/tasks", json=other).status_code == 403
     response = client.post("/api/production/equipment-setup/tasks", json=payload(env))
     assert response.status_code == 200, response.text
-    assert response.json()["machine_id"] == "ОБ.027.2"
+    assert response.json()["machine_id"] == str(U2)
 
 
 def test_operation_without_any_site_names_what_to_do(client, env):
@@ -207,10 +207,10 @@ def test_unavailable_operation_reason_reaches_the_screen_as_is(client, env, mess
 def test_recipe_version_and_trial_reads_follow_machine_and_task_rights(client, env):
     base = "/api/production/equipment-setup"
     recipe_id = uuid4()
-    data = {"expected_version": 0, "machine_id": "ОБ.027.2", "title": "Настройка",
+    data = {"expected_version": 0, "machine_id": str(U2), "title": "Настройка",
         "panel_settings": [{"label": "Панель", "value": "12"}], "source": "https://example.test/plain-text-only"}
     recipe = client.post(f"{base}/recipes/{recipe_id}/versions", json=data).json()
-    assert client.get(base + "/recipes", params={"machine_id": "ОБ.027.2"}).json()["items"] == [recipe]
+    assert client.get(base + "/recipes", params={"machine_id": str(U2)}).json()["items"] == [recipe]
     assert client.get(f"{base}/recipes/{recipe_id}/versions/1").json() == recipe
     assert client.get(f"{base}/recipes/{recipe_id}/versions/2").status_code == 404
     task = client.post(base + "/tasks", json=payload(env)).json()
@@ -220,7 +220,7 @@ def test_recipe_version_and_trial_reads_follow_machine_and_task_rights(client, e
     assert client.get(f"{base}/tasks/{task['id']}/trials").status_code == 403
 
 
-@pytest.mark.parametrize("endpoint", ["/machines", "/executors?machine_id=ОБ.027.2", "/recipes?machine_id=ОБ.027.2"])
+@pytest.mark.parametrize("endpoint", ["/machines", f"/executors?machine_id={U2}", f"/recipes?machine_id={U2}"])
 def test_service_identity_cannot_read_setup_catalog(client, env, endpoint):
     client.app.state.test_principal = replace(principal(env[1]), service=True)
     assert client.get("/api/production/equipment-setup" + endpoint).status_code == 403
@@ -244,3 +244,10 @@ def test_setup_resource_port_conflict_returns_409_without_saving_task(client, en
     assert response.json()["detail"] == "Станок занят производством"
     assert not env[0].tasks.items
     assert not env[0].audit.items
+
+
+def test_machine_is_named_by_unit_id_not_inventory_number(client, env):
+    data = dict(payload(env), machine_id="ОБ.027.2", idempotency_key="by-number")
+    assert client.post("/api/production/equipment-setup/tasks", json=data).status_code == 422
+    assert client.get("/api/production/equipment-setup/recipes", params={"machine_id": "ОБ.027.2"}).status_code == 422
+    assert not env[0].tasks.items

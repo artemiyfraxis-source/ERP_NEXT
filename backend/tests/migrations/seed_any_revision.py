@@ -57,8 +57,11 @@ def seed(engine: Engine, rows: int = ROWS) -> dict[str, int]:
     inserted: dict[str, int] = {}
     with engine.begin() as connection:
         checks = _check_values(connection, metadata)
+        inventory_era = _inventory_era(metadata)
         for table in _fill_order(metadata):
             if table.name == "alembic_version" or _has_rows(connection, table):
+                continue
+            if inventory_era and table.name in _INVENTORY_ERA_TABLES:
                 continue
             parents = _parent_values(connection, table)
             lots = _lot_ids(connection, metadata) if "lot_id" in table.c and not table.c.lot_id.foreign_keys else []
@@ -69,6 +72,21 @@ def seed(engine: Engine, rows: int = ROWS) -> dict[str, int]:
             connection.execute(table.insert(), values)
             inserted[table.name] = len(values)
     return inserted
+
+
+# 0170–0171 named a setup machine by its inventory number; 0172 converts only a number of exactly one БД.ОБ unit and
+# stops otherwise. The seeder makes no БД.ОБ units, so at those revisions the machine-keyed setup tables stay empty.
+_INVENTORY_ERA_TABLES = frozenset({"equipment_setup_recipe_versions", "equipment_setup_tasks",
+                                   "equipment_setup_trial_measurements", "equipment_setup_transitions"})
+
+
+def _inventory_era(metadata: MetaData) -> bool:
+    tasks = metadata.tables.get("equipment_setup_tasks")
+    if tasks is None or "machine_id" not in tasks.c:
+        return False
+    kind = tasks.c.machine_id.type
+    # A Uuid column reflects as UUID on PostgreSQL and CHAR(32) on SQLite; 0170 made it VARCHAR(128).
+    return isinstance(kind, sqltypes.String) and getattr(kind, "length", None) != 32
 
 
 def _fill_order(metadata: MetaData) -> list[Table]:
@@ -217,6 +235,9 @@ _SHAPED_VALUES: dict[tuple[str, str], Any] = {
     # Exact resource reservations have positive windows; setup transitions follow version 1 (0170).
     ("production_resource_reservations", "finish"): lambda i: datetime(2026, 9, 1, 10, tzinfo=timezone.utc) + timedelta(days=i),
     ("equipment_setup_transitions", "version"): lambda i: i + 2,
+    # A seeded claim holds a person: a machine is a БД.ОБ unit (0172), which the seeder doesn't make.
+    **{(table, column): value for table in ("production_resource_reservations", "production_active_resources")
+       for column, value in (("resource_kind", lambda i: "person"), ("resource_key", lambda i: str(uuid.uuid4())))},
     # A full source snapshot must contain a nonempty array (0168); never real source data.
     ("requests_calc_compositions", "rows"): lambda i: [{
         "source_row": 2, "name": f"Synthetic component {i}", "item_type": "Провод", "unit": "м",

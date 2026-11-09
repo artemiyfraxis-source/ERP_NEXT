@@ -10,11 +10,17 @@ from .resource_claims import ResourceConflict, ResourceKey, ResourceKind
 @dataclass(frozen=True)
 class MachineBinding:
     etk_position: int
-    machine_id: str
+    machine_id: str  # canonical UUID of the БД.ОБ unit (tech_operation_records.id), never an inventory number
 
     def __post_init__(self):
         if type(self.etk_position) is not int or self.etk_position <= 0:
             raise ResourceConflict("Нужен номер операции ЭТК")
+        if not isinstance(self.machine_id, (str, UUID)):
+            raise ResourceConflict("Нужен UUID единицы оборудования БД.ОБ")
+        try:
+            object.__setattr__(self, "machine_id", str(UUID(str(self.machine_id).strip())))
+        except ValueError:
+            raise ResourceConflict("Нужен UUID единицы оборудования БД.ОБ") from None
         try:
             ResourceKey(ResourceKind.MACHINE, self.machine_id)
         except ValueError as error:

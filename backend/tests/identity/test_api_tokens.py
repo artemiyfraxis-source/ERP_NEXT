@@ -390,6 +390,8 @@ TOKEN_REFUSED_IN_ENDPOINT = {
     ("POST", "/api/references/tech-operations/columns/remove"),
     # … and which columns everyone sees (22.10.2026).
     ("PUT", "/api/references/column-views/{view}"),
+    # … and the role of an equipment model (05.11.2026): the owner confirms «операционное» / «обеспечивающее».
+    ("PUT", "/api/references/equipment-models/{model_id}/role"),
 }
 
 
@@ -430,6 +432,8 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
         ("GET", "/api/references/column-views"),
         ("GET", "/api/references/coax-dia"),
         ("GET", "/api/references/coverings"),
+        ("GET", "/api/references/equipment-links/report"),
+        ("GET", "/api/references/equipment-models"),
         ("GET", "/api/references/import/{table}/file/fields"),
         ("GET", "/api/references/import/{table}/schema"),
         ("POST", "/api/references/import/{table}/file/export"),
@@ -456,6 +460,8 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
         ("PUT", "/api/references/cables/{record_id}/hookup"),
         ("PUT", "/api/references/cables/{record_id}/kind"),
         ("PUT", "/api/references/coverings/{record_id}/group"),
+        ("PUT", "/api/references/tech-operations/{record_id}/equipment-model"),
+        ("PUT", "/api/references/tech-operations/{record_id}/serves"),
         ("PUT", "/api/references/tech-operations/{record_id}/tab"),
         ("PUT", "/api/references/tech-operations/{record_id}/ter-kind"),
         ("PUT", "/api/references/wire-gauges/{gauge_id}"),
