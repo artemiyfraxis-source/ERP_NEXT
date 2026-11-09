@@ -23,6 +23,8 @@ export function setupOperationChoices(tasks: ProductionTask[]): SetupOperationCh
 
 export function EquipmentSetupPage({ principal }: { principal?: Principal }) {
   const [tasks, setTasks] = useState<SetupTask[]>([]), [machines, setMachines] = useState<SetupMachine[]>([]), [production, setProduction] = useState<ProductionTask[]>([]);
+  // Станок задания хранится по ID экземпляра БД.ОБ (миграция 0172); показываем его инвентарный номер.
+  const machineLabel = (id: string) => machines.find(item => item.id === id)?.inventory_number || id;
   const [viewer, setViewer] = useState<SetupViewer | null>(null), [loaded, setLoaded] = useState(false), [error, setError] = useState(""), [contextError, setContextError] = useState("");
   const [more, setMore] = useState(false), [busy, setBusy] = useState(false), [create, setCreate] = useState(false), [selected, setSelected] = useState<SetupTask | null>(null);
   const [productionCursor, setProductionCursor] = useState<string | null>(null), [productionBusy, setProductionBusy] = useState(false);
@@ -59,7 +61,7 @@ export function EquipmentSetupPage({ principal }: { principal?: Principal }) {
     {contextError && <p className="warning-inline" role="status">{contextError}</p>}
     {!loaded ? <p className="empty">Загрузка заданий наладки…</p> : !error && <section className="panel">
       {!tasks.length ? <p className="empty">Нет доступных заданий наладки. Мастер может назначить выданную операцию.</p> : <DataTable rows={tasks} rowKey={task => task.id} storageKey="equipment-setup" personalKey="equipment-setup" label="Поиск по станку или операции" onRowClick={setSelected} rowTitle={() => "Открыть наладку"} columns={[
-        { key: "machine", title: "Станок", value: task => task.machine_id, render: task => <strong>{task.machine_id}</strong> },
+        { key: "machine", title: "Станок", value: task => machineLabel(task.machine_id), render: task => <strong>{machineLabel(task.machine_id)}</strong> },
         { key: "operation", title: "Проект · операция · ревизия", value: operationLabel, grow: true, wrap: true },
         { key: "window", title: "Окно наладки", value: task => `${formatMoment(task.planned_start)} — ${formatMoment(task.planned_finish)}` },
         { key: "status", title: "Статус", value: task => statuses[task.status], render: task => <StatusChip tone={tones[task.status]}>{statuses[task.status]}</StatusChip>, filter: true },
@@ -99,7 +101,7 @@ function SetupDetail({ task, viewer, machine, label, changed, close }: { task: S
     catch (value) { setError(failureText(value, "Не удалось изменить статус")); } finally { setBusy(false); }
   }
   return <PageWindow label="Задание наладки" close={() => { if (!busy) close(); }} width={1160}><div className="panel equipment-setup">
-    <div className="page-head"><h2>{task.machine_id} · {machine?.name || "Наладка оборудования"}</h2><button className="secondary" disabled={busy} onClick={close}>Закрыть</button></div>
+    <div className="page-head"><h2>{machine?.inventory_number || task.machine_id} · {machine?.name || "Наладка оборудования"}</h2><button className="secondary" disabled={busy} onClick={close}>Закрыть</button></div>
     <p className="setup-operation">{label}</p>
     <div className="setup-detail-meta"><StatusChip tone={tones[task.status]}>{statuses[task.status]}</StatusChip><span>{formatMoment(task.planned_start)} — {formatMoment(task.planned_finish)}</span><span>{people.find(person => person.id === task.technician_id)?.name || (loaded ? "Исполнитель недоступен в текущем списке" : "Загрузка исполнителя…")}</span></div>
     {task.status === "Blocked" && <p className="warning-inline">{task.blocked_reason} · {task.blocked_machine_available ? "Станок освобождён" : "Станок остаётся занят"}. Наладчик освобождён.</p>}

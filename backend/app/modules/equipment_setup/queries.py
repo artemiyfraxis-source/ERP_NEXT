@@ -10,10 +10,11 @@ from .application import SITE_UNKNOWN, SITES, SetupOperationUnavailable, SetupPe
 
 @dataclass(frozen=True)
 class MachineChoice:
-    id: str
+    id: UUID  # the БД.ОБ unit
     name: str
     model: str
     site: str
+    inventory_number: str = ""
 
 
 @dataclass(frozen=True)

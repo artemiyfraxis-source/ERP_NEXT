@@ -3,7 +3,7 @@
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -12,7 +12,7 @@ from app.modules.equipment_setup.application import (
     SetupAction, SetupCommandConflict, SetupMachine, SetupOperationUnavailable, SetupPermissionError, SetupPerson,
     assign_setup_task, change_setup_task,
 )
-from app.modules.equipment_setup.domain import IssuedOperationRef, RecipeVersionRef, SetupStatus, SetupValidationError
+from app.modules.equipment_setup.domain import IssuedOperationRef, RecipeVersionRef, SetupStatus, SetupTask, SetupValidationError
 from app.shared.http_auth import Principal
 from app.shared.identity import Actor
 
@@ -82,7 +82,8 @@ class Context:
 
     def machine_choices(self, *, site, eligible_ids=None, limit, offset):
         from app.modules.equipment_setup.queries import MachineChoice
-        return tuple(MachineChoice(item.id, item.id, "", item.site) for item in sorted(self.machines.values(), key=lambda item: item.id)
+        return tuple(MachineChoice(item.id, item.inventory_number, "", item.site, item.inventory_number)
+            for item in sorted(self.machines.values(), key=lambda item: item.inventory_number)
             if item.site in {"ЦАР", "ЖУК"} and (site is None or item.site == site)
             and (eligible_ids is None or item.id in eligible_ids))[offset:offset + limit]
 
@@ -159,6 +160,10 @@ def principal(person, *, full_access=False, **changes):
     return Principal(**values)
 
 
+# БД.ОБ units by record id (0172): the inventory numbers ОБ.027.1/2/3 are only their display copies.
+U1, U2, U3 = (UUID(f"00000000-0000-4000-8000-00000000027{index}") for index in (1, 2, 3))
+
+
 @pytest.fixture
 def env():
     uow = Uow()
@@ -169,10 +174,10 @@ def env():
         uow.context.people[person.actor.id] = person
     operation = IssuedOperationRef(uuid4(), 3, uuid4(), uuid4(), 4)
     recipe = RecipeVersionRef(uuid4(), 2)
-    uow.context.operations[operation] = IssuedSetupOperation(operation, "ЦАР", ("ОБ.027.2",))
-    uow.context.machines["ОБ.027.2"] = SetupMachine("ОБ.027.2", "ЦАР")
-    uow.context.recipes.add((recipe, "ОБ.027.2"))
-    command = AssignSetupCommand("assign-1", 0, operation, "ОБ.027.2", technician.actor.id,
+    uow.context.operations[operation] = IssuedSetupOperation(operation, "ЦАР", (U2,))
+    uow.context.machines[U2] = SetupMachine(U2, "ЦАР", "ОБ.027.2")
+    uow.context.recipes.add((recipe, U2))
+    command = AssignSetupCommand("assign-1", 0, operation, U2, technician.actor.id,
                                  recipe, NOW, NOW + timedelta(hours=1))
     return uow, manager, technician, outsider, command
 
@@ -241,11 +246,11 @@ def test_exact_server_context_required(env, part):
         uow.context.operations.clear()
     elif part in {"revision", "position"}:
         reference = replace(command.operation, **({"card_revision": 2} if part == "revision" else {"etk_position": 5}))
-        uow.context.operations[command.operation] = IssuedSetupOperation(reference, "ЦАР", ("ОБ.027.2",))
+        uow.context.operations[command.operation] = IssuedSetupOperation(reference, "ЦАР", (U2,))
     elif part == "machine":
         uow.context.machines.clear()
     elif part == "machine_identity":
-        uow.context.machines[command.machine_id] = SetupMachine("ОБ.027.1", "ЦАР")
+        uow.context.machines[command.machine_id] = SetupMachine(U1, "ЦАР", "ОБ.027.1")
     elif part == "technician":
         uow.context.people[technician.actor.id] = replace(technician, active=False)
     else:
@@ -259,7 +264,7 @@ def test_exact_server_context_required(env, part):
 def test_cross_site_or_unknown_source_rejected_even_for_admin(env, part):
     uow, manager, technician, _, command = env
     if part.endswith("operation"):
-        uow.context.operations[command.operation] = IssuedSetupOperation(command.operation, "Неизвестно" if part.startswith("unknown") else "ЖУК", ("ОБ.027.2",))
+        uow.context.operations[command.operation] = IssuedSetupOperation(command.operation, "Неизвестно" if part.startswith("unknown") else "ЖУК", (U2,))
     elif part.endswith("machine"):
         uow.context.machines[command.machine_id] = SetupMachine(command.machine_id, "" if part.startswith("unknown") else "ЖУК")
     else:
@@ -271,7 +276,7 @@ def test_cross_site_or_unknown_source_rejected_even_for_admin(env, part):
 
 def test_operation_without_fixed_site_takes_the_chosen_machine_site(env):
     uow, _, technician, _, command = env
-    uow.context.operations[command.operation] = IssuedSetupOperation(command.operation, "", ("ОБ.027.2",))
+    uow.context.operations[command.operation] = IssuedSetupOperation(command.operation, "", (U2,))
     assert assign(env).technician_id == technician.actor.id
     uow.context.machines[command.machine_id] = SetupMachine(command.machine_id, "")
     with pytest.raises(SetupOperationUnavailable, match="^Площадка не определена — назначьте исполнителя или выберите станок$"):
@@ -391,7 +396,7 @@ def test_resume_reacquires_released_reservation_and_conflict_rolls_back(env):
 
 def test_same_site_machine_not_eligible_for_issued_operation_rejected(env):
     command = env[4]
-    env[0].context.operations[command.operation] = IssuedSetupOperation(command.operation, "ЦАР", ("ОБ.027.3",))
+    env[0].context.operations[command.operation] = IssuedSetupOperation(command.operation, "ЦАР", (U3,))
     with pytest.raises(SetupValidationError, match="не подходит"):
         assign(env)
 
@@ -546,3 +551,19 @@ def test_missing_task_is_rejected_without_events(env):
         change_setup_task(ChangeSetupCommand("missing", 1, uuid4(), SetupAction.START), uow,
                           principal=principal(technician), now=NOW)
     assert effects(uow) == (0, 0, 0, 0, 0, 0, 0)
+
+
+def test_supporting_equipment_is_never_set_up_as_a_machine(env):
+    uow, _, _, _, command = env
+    uow.context.machines[U2] = SetupMachine(U2, "ЦАР", "ОБ.027.2", operational=False)
+    before = effects(uow)
+    with pytest.raises(SetupValidationError, match="Обеспечивающее оборудование"):
+        assign(env)
+    assert effects(uow) == before
+
+
+def test_inventory_number_is_not_a_machine_identity():
+    with pytest.raises(SetupValidationError, match="UUID"):
+        SetupTask.create(operation=IssuedOperationRef(uuid4(), 1, uuid4(), uuid4(), 1), machine_id="ОБ.027.2",
+            technician_id=uuid4(), recipe=RecipeVersionRef(uuid4(), 1), planned_start=NOW,
+            planned_finish=NOW + timedelta(hours=1), now=NOW)

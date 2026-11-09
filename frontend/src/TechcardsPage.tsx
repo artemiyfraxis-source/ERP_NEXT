@@ -92,7 +92,7 @@ const cycleSeconds = (value: number) => value.toLocaleString("ru-RU", { minimumF
 
 /** Варианты оборудования для колонки БД.ОП: модели БД.ОБ того типа, что идёт в эту колонку, плюс стоящее значение. */
 function equipmentChoices(equipment: TechOperationRecord[], column: string) {
-  const bases = [...new Map(groupModels(equipment).filter((model) => model.base && operationField(model.type) === column)
+  const bases = [...new Map(groupModels(equipment).filter((model) => model.base && model.role !== "supporting" && operationField(model.type) === column)
     .map((model) => [model.base, model])).values()].sort((a, b) => a.base.localeCompare(b.base, "ru"));
   return (entry: OperationEntry): DataCellOption[] => {
     const current = (entry.record?.fields[column] ?? "").trim();

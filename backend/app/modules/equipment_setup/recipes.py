@@ -36,7 +36,7 @@ def fields(values: tuple[RecipeField, ...]) -> None:
 class ManualRecipeVersion:
     recipe_id: UUID
     version: int
-    machine_id: str
+    machine_id: UUID  # the БД.ОБ unit (tech_operation_records.id)
     title: str
     geometry: tuple[RecipeField, ...]
     panel_settings: tuple[RecipeField, ...]
@@ -47,8 +47,9 @@ class ManualRecipeVersion:
     def __post_init__(self):
         _uuid(self.recipe_id, "Рецепт")
         _uuid(self.created_by, "Автор")
+        _uuid(self.machine_id, "Физический станок")
         _integer(self.version, "Версия рецепта")
-        for key, maximum in (("machine_id", 128), ("title", 200), ("source", 2000)):
+        for key, maximum in (("title", 200), ("source", 2000)):
             value = _required(getattr(self, key), key)
             if len(value) > maximum:
                 raise SetupValidationError("Слишком длинное поле рецепта")

@@ -8,10 +8,17 @@ from app.modules.production.resource_claims import ResourceClaim, ResourceKey, R
 
 
 NOW = datetime(2026, 11, 3, 8, tzinfo=UTC)
+UNIT = str(uuid4())  # a БД.ОБ unit id
+
+
+def test_machine_key_is_a_unit_uuid_not_an_inventory_number():
+    with pytest.raises(ValueError, match="UUID единицы оборудования"):
+        ResourceKey(ResourceKind.MACHINE, "ОБ.027.2")
+    assert str(ResourceKey(ResourceKind.MACHINE, UNIT).unit_id) == UNIT
 
 
 def claim(**changes):
-    result = ResourceClaim(ResourceKey(ResourceKind.MACHINE, "ОБ.027.2"), ResourceOwner("setup", uuid4()), ResourceWindow(NOW, NOW + timedelta(hours=1)))
+    result = ResourceClaim(ResourceKey(ResourceKind.MACHINE, UNIT), ResourceOwner("setup", uuid4()), ResourceWindow(NOW, NOW + timedelta(hours=1)))
     return replace(result, **changes)
 
 
@@ -29,7 +36,7 @@ def test_active_claim_never_expires_by_planned_finish():
 
 def test_other_machine_or_same_owner_not_conflicting():
     left = claim()
-    assert not left.conflicts(claim(resource=ResourceKey(ResourceKind.MACHINE, "ОБ.027.3")))
+    assert not left.conflicts(claim(resource=ResourceKey(ResourceKind.MACHINE, str(uuid4()))))
     assert not left.conflicts(claim(owner=left.owner))
 
 

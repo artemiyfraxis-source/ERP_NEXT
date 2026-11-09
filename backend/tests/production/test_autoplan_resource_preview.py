@@ -1,4 +1,5 @@
 from dataclasses import replace
+from uuid import UUID
 
 from sqlalchemy import select
 
@@ -38,7 +39,8 @@ def test_future_preview_exposes_exact_choices_without_creating_task_or_claims(cl
     requirements = machine["resources"]["requirements"]
     assert len(requirements) == 1
     assert requirements[0]["etk_position"] == 1
-    assert [item["id"] for item in requirements[0]["machines"]] == ["ОБ.027.3"]
+    assert [item["inventory_number"] for item in requirements[0]["machines"]] == ["ОБ.027.3"]
+    assert all(str(UUID(item["id"])) == item["id"] for item in requirements[0]["machines"])  # the unit's record id
     assert result["new_tasks"][0]["techcard_revision"] == card.revision
     unresolved = next(item for item in result["proposals"] if not item["resources"]["requirements"])
     assert unresolved["resources"]["blocked_reason"]  # Missing tooling is not confirmed manual work.

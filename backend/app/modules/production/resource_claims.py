@@ -31,13 +31,20 @@ class ResourceKey:
             raise ValueError("Неизвестный вид ресурса")
         if not isinstance(self.key, str) or not self.key or self.key != self.key.strip() or len(self.key) > 128:
             raise ValueError("Нужен точный ключ ресурса")
-        if self.kind is ResourceKind.PERSON:
-            try:
-                person = UUID(self.key)
-            except (ValueError, AttributeError) as error:
-                raise ValueError("Нужен UUID сотрудника") from error
-            if not person.int or str(person) != self.key:
-                raise ValueError("Нужен канонический UUID сотрудника")
+        # A person is its identity user, a machine its БД.ОБ unit (tech_operation_records.id; owner 05.11.2026:
+        # «связка не через название, а через идентификатор») — never an inventory number, which can be renumbered.
+        label = "сотрудника" if self.kind is ResourceKind.PERSON else "единицы оборудования БД.ОБ"
+        try:
+            identifier = UUID(self.key)
+        except (ValueError, AttributeError) as error:
+            raise ValueError(f"Нужен UUID {label}") from error
+        if not identifier.int or str(identifier) != self.key:
+            raise ValueError(f"Нужен канонический UUID {label}")
+
+    @property
+    def unit_id(self) -> UUID | None:
+        """The БД.ОБ unit of a machine resource."""
+        return UUID(self.key) if self.kind is ResourceKind.MACHINE else None
 
 
 @dataclass(frozen=True)

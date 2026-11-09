@@ -6,10 +6,9 @@ from app.modules.equipment_setup.application import IssuedSetupOperation, SetupM
 from app.modules.equipment_setup.recipe_infrastructure import SqlAlchemyRecipes
 from app.modules.equipment_setup.queries import ExecutorChoice, MachineChoice
 from app.modules.identity.infrastructure import IdentityUserRow
-from app.modules.references.domain import TechOperationTab
-from app.modules.references.equipment import physical_equipment
-from app.modules.references.infrastructure import SqlAlchemyTechOperationRepository, TechOperationRecordRow
 from app.shared.identity import Actor
+
+from .production_resource_context import machine_units
 
 
 class SqlAlchemySetupContext:
@@ -31,11 +30,11 @@ class SqlAlchemySetupContext:
         machine = next((item for item in machines if item.id == machine_id), None)
         if machine is None or machine.site not in {"ЦАР", "ЖУК"}:
             return None
-        return SetupMachine(machine.id, machine.site)
+        return SetupMachine(machine.id, machine.site, machine.inventory_number, machine.operational)
 
     def _machines(self):
-        rows = self.session.scalars(select(TechOperationRecordRow).where(TechOperationRecordRow.tab == TechOperationTab.EQUIPMENT.value))
-        return physical_equipment(SqlAlchemyTechOperationRepository._domain(row) for row in rows)
+        """БД.ОБ units by record id (owner 05.11.2026): an inventory number is only their display copy."""
+        return machine_units(self.session)
 
     def machine_ids_for_site(self, site):
         if site not in {"ЦАР", "ЖУК"}:
@@ -43,10 +42,10 @@ class SqlAlchemySetupContext:
         return tuple(machine.id for machine in self._machines() if machine.site == site)
 
     def machine_choices(self, *, site, eligible_ids=None, limit, offset):
-        machines = (item for item in self._machines() if item.site in {"ЦАР", "ЖУК"}
+        machines = (item for item in self._machines() if item.site in {"ЦАР", "ЖУК"} and item.operational
             and (site is None or item.site == site) and (eligible_ids is None or item.id in eligible_ids))
-        return tuple(MachineChoice(item.id, item.name, item.model, item.site)
-            for item in sorted(machines, key=lambda item: item.id)[offset:offset + limit])
+        return tuple(MachineChoice(item.id, item.name, item.model, item.site, item.inventory_number)
+            for item in sorted(machines, key=lambda item: (item.inventory_number, str(item.id)))[offset:offset + limit])
 
     def executor_choices(self, *, site, own_id=None, limit, offset):
         if site not in {"ЦАР", "ЖУК"}:

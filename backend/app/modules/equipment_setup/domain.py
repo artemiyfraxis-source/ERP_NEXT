@@ -106,7 +106,7 @@ class SetupTask:
     id: UUID
     version: int
     operation: IssuedOperationRef
-    machine_id: str  # PhysicalEquipment.id: full canonical inventory identity, e.g. ОБ.027.2
+    machine_id: UUID  # the БД.ОБ unit (tech_operation_records.id), never its inventory number
     technician_id: UUID
     recipe: RecipeVersionRef
     planned_start: datetime
@@ -121,7 +121,7 @@ class SetupTask:
         _uuid(self.id, "Задание наладки")
         _uuid(self.technician_id, "Наладчик")
         _integer(self.version, "Версия задания", minimum=0)
-        object.__setattr__(self, "machine_id", _required(self.machine_id, "Физический станок"))
+        _uuid(self.machine_id, "Физический станок")
         if not isinstance(self.operation, IssuedOperationRef) or not isinstance(self.recipe, RecipeVersionRef):
             raise SetupValidationError("Нужны ссылки на выданную операцию ЭТК и версию рецепта")
         if not isinstance(self.status, SetupStatus):
@@ -139,7 +139,7 @@ class SetupTask:
 
     @classmethod
     def create(
-        cls, *, operation: IssuedOperationRef, machine_id: str, technician_id: UUID,
+        cls, *, operation: IssuedOperationRef, machine_id: UUID, technician_id: UUID,
         recipe: RecipeVersionRef, planned_start: datetime, planned_finish: datetime, now: datetime,
     ) -> SetupTask:
         return cls(

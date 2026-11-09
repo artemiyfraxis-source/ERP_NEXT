@@ -212,7 +212,7 @@ def test_a_batch_reads_the_references_once(factory):
     seen = _count(engine)
     refs = load_refs(make)
     loaded = len(seen)
-    assert 0 < loaded <= 15
+    assert 0 < loaded <= 20, loaded  # + the equipment models and the linked template rows (0171)
     configs = [_config() for _ in range(25)]
     results = [with_technology(config, refs=refs) for config in configs]
     assert len(seen) == loaded  # 25 cards, no further query

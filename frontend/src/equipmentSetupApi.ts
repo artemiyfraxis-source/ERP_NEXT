@@ -1,7 +1,7 @@
 import { api, type ProductionTask } from "./api";
 
 export interface SetupOperation { card_id: string; card_revision: number; production_task_id: string; production_operation_id: string; etk_position: number }
-export interface SetupMachine { id: string; name: string; model: string; site: string }
+export interface SetupMachine { id: string; name: string; model: string; site: string; inventory_number?: string; equipment_model_id?: string | null; family?: string }
 export interface SetupExecutor { id: string; name: string; site: string }
 export interface SetupViewer { actor_id: string; site: string; can_assign: boolean; writable: boolean }
 export type SetupStatus = "New" | "InProgress" | "Blocked" | "Ready" | "Cancelled";

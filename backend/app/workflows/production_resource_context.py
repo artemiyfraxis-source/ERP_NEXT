@@ -1,4 +1,15 @@
-"""Exact issued ETK and physical-catalog resolution for production and setup commands."""
+"""Exact issued ETK and physical-catalog resolution for production and setup commands.
+
+A machine is a БД.ОБ unit, named by its record id (owner 05.11.2026: «связка не через название, а через
+идентификатор»; assignments link to the physical unit). An ETK operation needs a MODEL of equipment: the tooling row's
+`equipment_model_id`; an ETK built before that field names its machine only by an inventory number, which counts only
+when its family («ОБ.027») is the units of exactly one model — otherwise the ETK is rebuilt. A unit is eligible when
+its model is the operation's one and the model is «операционное»: «обеспечивающее» equipment (compressor, chiller…)
+is never the machine of an operation.
+"""
+
+from dataclasses import dataclass
+from uuid import UUID
 
 from sqlalchemy import select
 
@@ -12,9 +23,45 @@ from app.modules.production.resource_assignment_infrastructure import ResourceAl
 from app.shared.clock import MOSCOW
 from app.modules.references.domain import TechOperationTab
 from app.modules.references.equipment import physical_equipment
-from app.modules.references.infrastructure import SqlAlchemyTechOperationRepository, TechOperationRecordRow
+from app.modules.references.infrastructure import EquipmentModelRow, SqlAlchemyTechOperationRepository, TechOperationRecordRow
 from app.modules.techcards.infrastructure import ProjectTechcardRow, TechcardRevisionRow
 from app.modules.techcards.project_cards import TechcardStatus
+
+
+SUPPORTING = "supporting"
+REBUILD = "пересоберите ЭТК"
+
+
+@dataclass(frozen=True)
+class MachineUnit:
+    """A numbered physical БД.ОБ unit: its record id is the identity, the inventory number only a display copy."""
+
+    id: UUID
+    inventory_number: str
+    name: str
+    model: str  # the unit's article
+    site: str  # ЦАР | ЖУК | "" (unknown)
+    model_id: UUID | None
+    role: str = "operational"
+
+    @property
+    def operational(self) -> bool:
+        return self.role != SUPPORTING
+
+
+def machine_units(session) -> tuple[MachineUnit, ...]:
+    """The numbered units of БД.ОБ (no calculation rows «.X» / «(R)», no model counts), by inventory number."""
+    rows = session.execute(select(TechOperationRecordRow, EquipmentModelRow.role).outerjoin(
+        EquipmentModelRow, EquipmentModelRow.id == TechOperationRecordRow.equipment_model_id,
+    ).where(TechOperationRecordRow.tab == TechOperationTab.EQUIPMENT.value))
+    units = []
+    for row, role in rows:
+        found = physical_equipment((SqlAlchemyTechOperationRepository._domain(row),))
+        if found:
+            item = found[0]
+            units.append(MachineUnit(row.id, item.inventory_number, item.name, item.model, item.site,
+                                     row.equipment_model_id, role or "operational"))
+    return tuple(sorted(units, key=lambda unit: (unit.inventory_number, str(unit.id))))
 
 
 class SqlAlchemyProductionResourceContext:
@@ -22,14 +69,44 @@ class SqlAlchemyProductionResourceContext:
         self.session = session
 
     def catalog(self):
-        rows = self.session.scalars(select(TechOperationRecordRow).where(
-            TechOperationRecordRow.tab == TechOperationTab.EQUIPMENT.value,
-        ))
-        return physical_equipment(SqlAlchemyTechOperationRepository._domain(row) for row in rows)
+        cached = getattr(self, "_units", None)
+        if cached is None:
+            cached = self._units = machine_units(self.session)
+        return cached
 
     @staticmethod
-    def matches(machine, family, site):
-        return machine.site == site and inventory_prefix(machine.id) == family
+    def matches(machine, model, site):
+        return machine.site == site and machine.model_id == model and machine.operational
+
+    @staticmethod
+    def family_label(model, catalog):
+        """The inventory families of a model's units («ОБ.027»), for display only."""
+        return ", ".join(sorted({inventory_prefix(unit.inventory_number) for unit in catalog if unit.model_id == model} - {""}))
+
+    @staticmethod
+    def _tool_model(tool, catalog):
+        """The model a tooling row of the ETK needs; None for «обеспечивающее» equipment (not the machine)."""
+        raw = tool.get("equipment_model_id")
+        if raw not in (None, ""):
+            try:
+                model = UUID(str(raw))
+            except ValueError:
+                raise ResourceConflict(f"Некорректная модель оборудования в ЭТК — {REBUILD}") from None
+            roles = {unit.role for unit in catalog if unit.model_id == model}
+            if not roles:
+                raise ResourceConflict(f"Модели оборудования из ЭТК нет среди единиц БД.ОБ — {REBUILD}")
+            return None if roles == {SUPPORTING} else model
+        family = inventory_prefix(tool.get("inventory_number"))
+        if not family:
+            raise ResourceConflict("У оборудования ЭТК не указан инвентарный номер")
+        models = {unit.model_id: unit.role for unit in catalog
+                  if unit.model_id is not None and inventory_prefix(unit.inventory_number) == family}
+        if not models:
+            raise ResourceConflict(f"Оборудования {family} из ЭТК нет среди единиц БД.ОБ")
+        if len(models) > 1:
+            raise ResourceConflict(f"ЭТК собрана без модели оборудования, а {family} — несколько моделей БД.ОБ: {REBUILD}")
+        model, role = next(iter(models.items()))
+        return None if role == SUPPORTING else model
 
     def _document(self, task):
         if task.techcard_id is None or task.techcard_revision is None:
@@ -63,19 +140,18 @@ class SqlAlchemyProductionResourceContext:
             tooling = card.get("tooling") if isinstance(card, dict) else None
             if not isinstance(tooling, list):
                 raise ResourceConflict("Оборудование операции не определено; ручная работа не предполагается")
-            families = set()
+            models = set()
             for tool in tooling:
                 if not isinstance(tool, dict):
                     raise ResourceConflict("Некорректная строка оборудования ЭТК")
                 if str(tool.get("section", "")).strip() != "Оборудование":
                     continue
-                family = inventory_prefix(tool.get("inventory_number"))
-                if not family:
-                    raise ResourceConflict("У оборудования ЭТК не указан инвентарный номер")
-                families.add(family)
-            if len(families) > 1:
+                model = self._tool_model(tool, self.catalog())
+                if model is not None:
+                    models.add(model)
+            if len(models) > 1:
                 raise ResourceConflict("У одной операции ЭТК несколько типов станков; назначение требует уточнения")
-            result[part.position] = next(iter(families), None)
+            result[part.position] = next(iter(models), None)
         return result
 
     def _fixed_site(self, task, operator_ids):
@@ -104,15 +180,19 @@ class SqlAlchemyProductionResourceContext:
 
     def validate(self, task, allocation):
         operation = task.operation(allocation.operation_id)
-        requirements = {position: family for position, family in self.requirements(task, operation).items() if family}
+        requirements = {position: model for position, model in self.requirements(task, operation).items() if model}
         selected = {item.etk_position: item.machine_id for item in allocation.machines}
         if selected.keys() != requirements.keys():
             raise ResourceConflict("Явно выберите физический станок каждой машинной операции ЭТК")
-        machines = {item.id: item for item in self.catalog()}
+        machines = {str(item.id): item for item in self.catalog()}
         site = self.site(task, allocation.operator_ids, {machines[item].site for item in selected.values() if item in machines})
         for position, identifier in selected.items():
             machine = machines.get(identifier)
-            if machine is None or machine.site != site or inventory_prefix(identifier) != requirements[position]:
+            if machine is None:
+                raise ResourceConflict("Единица оборудования не найдена в БД.ОБ")
+            if not machine.operational:
+                raise ResourceConflict("Обеспечивающее оборудование не бывает станком операции")
+            if machine.site != site or machine.model_id != requirements[position]:
                 raise ResourceConflict("Станок не соответствует операции ЭТК или площадке")
 
     def _task(self, task_id):
@@ -134,14 +214,14 @@ class SqlAlchemyProductionResourceContext:
             requirements = self.requirements(task, operation)
             if reference.etk_position not in requirements:
                 return None
-            family = requirements[reference.etk_position]
-            if not family:
+            model = requirements[reference.etk_position]
+            if not model:
                 raise SetupOperationUnavailable("В ЭТК нет оборудования для операции")
             site = self._fixed_site(task, operation.operator_ids)
         except ValueError as error:  # ResourceConflict and route/ETK validation: the operation exists, say why
             raise SetupOperationUnavailable(str(error)) from error
         eligible = tuple(item.id for item in self.catalog()
-            if (item.site == site if site else item.site in SITES) and inventory_prefix(item.id) == family)
+            if (item.site == site if site else item.site in SITES) and self.matches(item, model, item.site))
         return IssuedSetupOperation(operation=reference, site=site, eligible_machine_ids=eligible)
 
     def assert_legacy_available(self, resource, window, *, excluding=()):
@@ -185,15 +265,16 @@ class SqlAlchemyProductionResourceContext:
                             raise ResourceConflict("Сотрудник занят прежним производственным назначением")
                         continue
                     try:
-                        families = set(self.requirements(task, operation).values()) - {None}
+                        models = set(self.requirements(task, operation).values()) - {None}
                     except ResourceConflict:
                         raise ResourceConflict("Есть производственная работа с неуточнённым оборудованием; сначала уточните её")
-                    if inventory_prefix(resource.key) in families:
+                    unit = next((item for item in self.catalog() if str(item.id) == resource.key), None)
+                    if unit is not None and unit.model_id in models:
                         raise ResourceConflict("Тип станка занят прежним назначением без конкретного экземпляра")
 
     def assert_legacy_setup_available(self, task):
         window = ResourceWindow(task.planned_start, task.planned_finish)
-        self.assert_legacy_available(ResourceKey(ResourceKind.MACHINE, task.machine_id), window)
+        self.assert_legacy_available(ResourceKey(ResourceKind.MACHINE, str(task.machine_id)), window)
         self.assert_legacy_available(ResourceKey(ResourceKind.PERSON, str(task.technician_id)), window)
 
 

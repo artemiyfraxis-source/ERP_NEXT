@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from dataclasses import replace
-from uuid import uuid4
+from uuid import UUID, uuid4
 from types import SimpleNamespace
 
 import pytest
@@ -13,6 +13,8 @@ from app.modules.equipment_setup.infrastructure import SetupCommandRow, SetupTas
 from app.modules.equipment_setup.recipe_infrastructure import RecipeVersionRow, SqlAlchemyRecipes
 from app.modules.equipment_setup.recipes import ManualRecipeVersion, RecipeField
 from app.shared.persistence import AuditEventRow, OutboxMessageRow
+
+UNIT, OTHER = UUID("00000000-0000-4000-8000-000000000272"), UUID("00000000-0000-4000-8000-000000000273")  # БД.ОБ units
 
 
 NOW = datetime(2026, 11, 3, 8, tzinfo=UTC)
@@ -28,7 +30,7 @@ def engine():
 
 
 def task(session):
-    recipe = ManualRecipeVersion(uuid4(), 1, "ОБ.027.2", "Рецепт", (), (RecipeField("Поле", "12"),), "Панель", uuid4(), NOW)
+    recipe = ManualRecipeVersion(uuid4(), 1, UNIT, "Рецепт", (), (RecipeField("Поле", "12"),), "Панель", uuid4(), NOW)
     SqlAlchemyRecipes(session).append(recipe, expected_version=0)
     return SetupTask.create(operation=IssuedOperationRef(uuid4(), 1, uuid4(), uuid4(), 1), machine_id=recipe.machine_id,
         technician_id=uuid4(), recipe=RecipeVersionRef(recipe.recipe_id, 1), planned_start=NOW,
@@ -70,14 +72,14 @@ def test_task_list_filters_before_stable_pagination(engine):
         first = task(session)
         later = replace(task(session), technician_id=first.technician_id,
             created_at=NOW + timedelta(minutes=1), updated_at=NOW + timedelta(minutes=1))
-        other = replace(task(session), machine_id="ОБ.027.3")
+        other = replace(task(session), machine_id=OTHER)
         for value in (first, later, other):
             store.save(value, expected_version=0)
         session.commit()
         session.expire_all()
         assert store.list(technician_id=first.technician_id, limit=1) == (later,)
         assert store.list(technician_id=first.technician_id, limit=1, offset=1) == (first,)
-        assert store.list(machine_ids=("ОБ.027.3",)) == (other,)
+        assert store.list(machine_ids=(OTHER,)) == (other,)
         assert store.list(machine_ids=()) == ()
         assert store.list(technician_id=uuid4()) == ()
 

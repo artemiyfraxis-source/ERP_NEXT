@@ -1135,7 +1135,10 @@ class _TechTarget(_Target):
                                                 cable_kind=kind.value if kind else None, ter_kind=ter_kind)
         except ReferenceValidationError as error:
             raise RowRefused(str(error)) from error
-        self.uow.tech_operations.save(record)
+        try:  # the equipment links refuse before writing (a supporting unit as the machine of an operation)
+            self.uow.tech_operations.save(record)
+        except ReferenceValidationError as error:
+            raise RowRefused(str(error)) from error
         self.created |= forms
 
     def update(self, key, changes):
@@ -1164,7 +1167,10 @@ class _TechTarget(_Target):
                                             self.uow.cable_structure.gauges())
                 except ReferenceValidationError as error:
                     raise RowRefused(str(error)) from error
-        self.uow.tech_operations.save(updated)
+        try:
+            self.uow.tech_operations.save(updated)
+        except ReferenceValidationError as error:
+            raise RowRefused(str(error)) from error
         if wire is not None:
             self.uow.cable_structure.save_hookup(wire, self.now)
         if self.table.cables:  # the mark's cells go to its other colours

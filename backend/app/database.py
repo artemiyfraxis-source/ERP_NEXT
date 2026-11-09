@@ -55,6 +55,7 @@ EQUIPMENT_RESOURCE_TABLES = frozenset({
     "equipment_setup_commands", "equipment_setup_transitions", "production_resource_reservations",
     "production_active_resources", "production_resource_generation", "production_resource_allocations",
     "production_resource_allocation_members", "production_resource_group_runs", "production_resource_session_members",
+    "production_resource_allocation_machines",  # 0172
 })
 
 
@@ -70,7 +71,7 @@ def check_equipment_schema(engine: Engine, *, enabled: bool) -> None:
     with engine.connect() as connection:
         present = set(inspect(connection).get_table_names()) & EQUIPMENT_RESOURCE_TABLES
         if enabled and present != EQUIPMENT_RESOURCE_TABLES:
-            raise RuntimeError("Equipment resources require migration 0170: missing " + ", ".join(sorted(EQUIPMENT_RESOURCE_TABLES - present)))
+            raise RuntimeError("Equipment resources require migration 0170 (and 0172): missing " + ", ".join(sorted(EQUIPMENT_RESOURCE_TABLES - present)))
         generation = connection.execute(text("SELECT id, version FROM production_resource_generation")).all() if "production_resource_generation" in present else []
         if enabled and (len(generation) != 1 or generation[0][0] != 1 or generation[0][1] < 0):
             raise RuntimeError("Equipment resource generation singleton is missing or invalid")

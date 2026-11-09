@@ -29,6 +29,9 @@ from .crimps import change_target, change_terminal, crimp_codes, crimp_overview
 from .equipment import EXTRA_KEYS, next_instance_inventory, next_model_inventory, next_row_number
 from .application import LinkStockCommand, link_stock_article, stock_links
 from .application import (
+    equipment_links_report, equipment_models, set_equipment_model, set_equipment_role, set_equipment_serves,
+)
+from .application import (
     CableCatalog, duplicate_equipment, SaveGaugeCommand, SaveHookupCommand, cable_catalog, coax_dia_rows, delete_gauge,
     import_coax_cards, import_coax_names, save_gauge, save_hookup,
 )
@@ -242,6 +245,8 @@ def tech_operations(
         records = uow.tech_operations.list(tab=tab_family(tab) if family and tab is not None else tab, query=q, limit=limit)
         metadata = uow.tech_operations.metadata()
         own = custom_columns(tab, uow) if tab is not None else []
+        # БД.ОБ / БД.ОП: the ids the row is linked by (model, role, tool, «Обслуживает»; the models of the cells)
+        extras = uow.equipment.record_extras(records) if hasattr(uow, "equipment") else {}
     if tab == TechOperationTab.COAX:  # an own column removed from the table 25.10.2026 («Дата цены») is no column
         own = [name for name in own if name not in COAX_DROPPED_COLUMNS]
     if tab in CABLE_TABS:  # nor one removed from a cable base (`CABLE_DROPPED`)
@@ -269,6 +274,8 @@ def tech_operations(
             "fields": normalize_terminal_fields(item.fields) if item.tab in TERMINAL_TABS else item.fields,
             # «Терминалы»: the contact card by protocol v5.2, read from the record as the generator reads it.
             **({"card": terminal_card(item.fields)} if item.tab in TERMINAL_TABS else {}),
+            **({"equipment_model_id": str(item.equipment_model_id)} if item.equipment_model_id else {}),
+            **extras.get(item.id, {}),
         } for item in records],
     }
 
@@ -381,7 +388,8 @@ def _record_json(item) -> dict:
     return {"id": str(item.id), "tab": item.tab.value, "display_text": item.display_text,
             "source_sheet": item.source_sheet, "fields": item.fields,
             **({"cable_kind": item.cable_kind} if item.cable_kind else {}),
-            **({"ter_kind": item.ter_kind, "ter_rule": ter_kind_of(item.fields)} if item.ter_kind else {})}
+            **({"ter_kind": item.ter_kind, "ter_rule": ter_kind_of(item.fields)} if item.ter_kind else {}),
+            **({"equipment_model_id": str(item.equipment_model_id)} if item.equipment_model_id else {})}
 
 
 def _run_edit(operation):
@@ -1038,3 +1046,69 @@ def crimp_remove_target(
 ) -> dict:
     items = _run_edit(lambda: change_target(record_id, payload.model_dump(), add=False, actor=principal.actor, now=now, uow=uow_factory()))
     return {"targets": items}
+
+
+# --- Equipment identity (owner 05.11.2026: «связка должна быть не через название, а через идентификатор») ---
+
+class ServesPayload(BaseModel):
+    unit_ids: list[UUID] = Field(default_factory=list, max_length=500)
+
+
+class RolePayload(BaseModel):
+    role: Literal["operational", "supporting"]
+
+
+class UnitModelPayload(BaseModel):
+    model_id: UUID | None = None  # None — a model of its own
+
+
+@router.get("/equipment-models")
+def equipment_model_list(
+    _principal: Annotated[Principal, Depends(references_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    """БД.ОБ as models: id, name / article / maker, role («operational» — does operations, «supporting» — serves
+    machines, never the machine of an operation), its units and how many operations link to it."""
+    return {"models": equipment_models(uow_factory())}
+
+
+@router.get("/equipment-links/report")
+def equipment_link_report(
+    _principal: Annotated[Principal, Depends(references_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    """What is not linked by id and why (read-only): БД.ОП cells, «Для инструмента», card templates, models."""
+    return equipment_links_report(uow_factory())
+
+
+@router.put("/equipment-models/{model_id}/role", dependencies=[Depends(refuse_api_tokens("Токен API не подтверждает роль оборудования."))])
+def equipment_model_role(
+    model_id: UUID, payload: RolePayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    return _run_edit(lambda: set_equipment_role(model_id, payload.role, principal.actor, now, uow_factory()))
+
+
+@router.put("/tech-operations/{record_id}/serves")
+def equipment_serves(
+    record_id: UUID, payload: ServesPayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    """«Обслуживает» of a supporting unit: the whole list of units it serves."""
+    return {"serves_unit_ids": _run_edit(lambda: set_equipment_serves(
+        record_id, payload.unit_ids, principal.actor, now, uow_factory()))}
+
+
+@router.put("/tech-operations/{record_id}/equipment-model")
+def equipment_unit_model(
+    record_id: UUID, payload: UnitModelPayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    return {"equipment_model_id": _run_edit(lambda: set_equipment_model(
+        record_id, payload.model_id, principal.actor, now, uow_factory()))}

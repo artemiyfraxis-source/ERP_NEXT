@@ -11,7 +11,6 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 
-from app.modules.references.domain import TechOperationTab
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal
 from app.shared.project_number import normalize_project_number
@@ -30,11 +29,11 @@ from .board import (
     card_key,
     equipment_of,
     future_tasks,
-    operation_machines,
     record_board_output,
     unlaunched_cards,
 )
 from .domain import ProductionStatus, ProductionTask
+from .equipment_catalog import EquipmentCatalog, load_catalog
 from .machine_load import conflict_text, conflicts, operation_occupancies
 from .machine_load_api import _snapshot
 
@@ -120,13 +119,9 @@ def _equipment(item: Equipment) -> dict:
     return {"key": item.key, "label": item.label, "limited": item.limited}
 
 
-def _references(factory: Callable[[], Any] | None) -> dict[str, str]:
-    """«Машина» БД.ОП по коду операции."""
-    if factory is None:
-        return {}
-    with factory() as references:
-        records = references.tech_operations.list(tab=TechOperationTab.OPERATION, query="", limit=100_000)
-    return operation_machines([record.fields for record in records])
+def _references(factory: Callable[[], Any] | None) -> EquipmentCatalog:
+    """Станки БД.ОБ по ID модели и модель «Машины» БД.ОП по коду операции (по связи ячейки)."""
+    return load_catalog(factory, operations=True)
 
 
 def _categories(factory: Callable[[], Any] | None, codes: set[str]) -> dict[str, str]:

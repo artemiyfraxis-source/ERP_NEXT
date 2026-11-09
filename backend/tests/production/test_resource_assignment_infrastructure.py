@@ -21,6 +21,10 @@ from tests.production.test_execution_persistence import execution_setup
 from app.workflows.stage_cascade import cascade_uow_factory
 
 
+# БД.ОБ units by id (0172): an allocation names the physical unit, never its inventory number.
+M2, M3 = str(uuid4()), str(uuid4())
+
+
 class Resolver:
     def validate(self, task, allocation):
         pass
@@ -42,7 +46,7 @@ def setup():
 
 def assign(factory, master, task, people, now):
     return assign_production(AssignProductionCommand(task.id, task.version, task.operations[0].id,
-        tuple(people), now, master, now, machine_bindings=(MachineBinding(1, "ОБ.027.2"),)), factory())[0]
+        tuple(people), now, master, now, machine_bindings=(MachineBinding(1, M2),)), factory())[0]
 
 
 def begin(factory, operator, task, now):
@@ -78,7 +82,7 @@ def test_last_crew_member_releases_machine_not_first(setup):
     two = begin(factory, second, task, now)
     cancel_work(SessionCommand(one.id, operator, now + timedelta(minutes=1)), factory())
     with sessions() as session:
-        assert session.get(ActiveResourceRow, ("machine", "ОБ.027.2")) is not None
+        assert session.get(ActiveResourceRow, ("machine", M2)) is not None
         assert session.get(ActiveResourceRow, ("person", str(operator.id))) is None
     cancel_work(SessionCommand(two.id, second, now + timedelta(minutes=2)), factory())
     with sessions() as session:
@@ -105,10 +109,10 @@ def test_machine_change_during_active_execution_rolls_back(setup):
         current = uow.production.get(task.id)
     with pytest.raises(ResourceConflict, match="завершите"):
         assign_production(AssignProductionCommand(current.id, current.version, current.operations[0].id,
-            (operator.id,), now, master, now, machine_bindings=(MachineBinding(1, "ОБ.027.3"),)), factory())
+            (operator.id,), now, master, now, machine_bindings=(MachineBinding(1, M3),)), factory())
     with factory() as uow:
         assert uow.production.get(task.id).version == current.version
-        assert uow.session.get(ActiveResourceRow, ("machine", "ОБ.027.2")) is not None
+        assert uow.session.get(ActiveResourceRow, ("machine", M2)) is not None
 
 
 @pytest.mark.parametrize("manual", [False, True])
@@ -161,7 +165,7 @@ def test_start_conflict_rolls_back_session_task_and_audit(setup):
     with sessions() as session:
         claims = SqlAlchemyResourceClaims(session)
         owner = ResourceOwner("setup", uuid4())
-        machine = ResourceKey(ResourceKind.MACHINE, "ОБ.027.2")
+        machine = ResourceKey(ResourceKind.MACHINE, M2)
         claims.replace_plan(owner, (machine,), ResourceWindow(later, later + timedelta(hours=1)))
         claims.activate(owner, owner.id, (machine,), later)
         session.commit()
@@ -187,7 +191,7 @@ def test_separate_allocations_on_same_operation_are_not_inferred_as_crew(setup):
         with factory() as uow:
             for identifier in (operator.id, second_id):
                 uow.resources.configure(task, PhysicalAllocation(task.id, task.operations[0].id, (identifier,),
-                    (MachineBinding(1, "ОБ.027.2"),)))
+                    (MachineBinding(1, M2),)))
             uow.commit()
     with sessions() as session:
         assert list(session.scalars(select(ResourceAllocationRow))) == []
@@ -202,12 +206,12 @@ def test_actual_output_survives_conflicting_best_effort_reflow(setup, monkeypatc
     task = assign(factory, master, task, [operator.id], now)
     task = assign_production(AssignProductionCommand(task.id, task.version, task.operations[1].id,
         (operator.id,), now + timedelta(hours=1), master, now,
-        machine_bindings=(MachineBinding(2, "ОБ.027.3"),)), factory())[0]
+        machine_bindings=(MachineBinding(2, M3),)), factory())[0]
     work = begin(factory, operator, task, now)
     later = now + timedelta(hours=5)
     with sessions() as session:
         claims = SqlAlchemyResourceClaims(session)
-        claims.replace_plan(ResourceOwner("setup", uuid4()), (ResourceKey(ResourceKind.MACHINE, "ОБ.027.3"),),
+        claims.replace_plan(ResourceOwner("setup", uuid4()), (ResourceKey(ResourceKind.MACHINE, M3),),
             ResourceWindow(later.replace(tzinfo=MOSCOW), (later + timedelta(hours=1)).replace(tzinfo=MOSCOW)))
         session.commit()
     with factory() as uow:

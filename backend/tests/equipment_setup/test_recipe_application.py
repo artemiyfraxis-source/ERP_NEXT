@@ -9,7 +9,7 @@ from app.modules.equipment_setup.application import ConcurrentSetupUpdate, Setup
 from app.modules.equipment_setup.domain import SetupValidationError
 from app.modules.equipment_setup.recipe_application import PublishRecipeCommand, RecordTrialCommand, publish_recipe, record_trial
 from app.modules.equipment_setup.recipes import RecipeField
-from tests.equipment_setup.test_application import NOW, assign, change, env, principal
+from tests.equipment_setup.test_application import NOW, U2, assign, change, env, principal
 
 
 class Recipes:
@@ -48,7 +48,7 @@ def recipe_env(env):
 
 
 def publish_command():
-    return PublishRecipeCommand(uuid4(), 0, "ОБ.027.2", "Ручная настройка", (), (RecipeField("Панель", "12"),), "Записано с панели")
+    return PublishRecipeCommand(uuid4(), 0, U2, "Ручная настройка", (), (RecipeField("Панель", "12"),), "Записано с панели")
 
 
 def test_publish_immutable_version_and_repeat_without_side_effects(recipe_env):

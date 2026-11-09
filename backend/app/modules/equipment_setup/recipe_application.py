@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent
 
-from .application import ConcurrentSetupUpdate, SetupPermissionError, _actor, _authorize, _site
+from .application import NOT_A_MACHINE, ConcurrentSetupUpdate, SetupPermissionError, _actor, _authorize, _site
 from .domain import SetupStatus, SetupValidationError
 from .recipes import ManualRecipeVersion, RecipeField, SetupTrialMeasurement
 
@@ -16,7 +16,7 @@ from .recipes import ManualRecipeVersion, RecipeField, SetupTrialMeasurement
 class PublishRecipeCommand:
     recipe_id: UUID
     expected_version: int
-    machine_id: str
+    machine_id: UUID
     title: str
     geometry: tuple[RecipeField, ...]
     panel_settings: tuple[RecipeField, ...]
@@ -45,6 +45,8 @@ def publish_recipe(command, uow, *, principal, now: datetime) -> ManualRecipeVer
         machine = uow.context.machine(command.machine_id)
         if machine is None or machine.id != command.machine_id or machine.site not in {"ЦАР", "ЖУК"}:
             raise SetupValidationError("Физический станок с известной площадкой не найден")
+        if not machine.operational:
+            raise SetupValidationError(NOT_A_MACHINE)
         if not (principal.full_access or (person.site_master and person.site == machine.site)):
             raise SetupPermissionError("Публиковать рецепт может мастер площадки станка или администратор")
         recipe = ManualRecipeVersion(command.recipe_id, command.expected_version + 1, command.machine_id,
@@ -57,7 +59,8 @@ def publish_recipe(command, uow, *, principal, now: datetime) -> ManualRecipeVer
             return existing
         uow.recipes.append(recipe, expected_version=command.expected_version)
         uow.audit.add(AuditEvent(uuid4(), recipe.recipe_id, "equipment_setup.recipe_published", person.actor, now,
-            {"version": str(recipe.version), "machine_id": recipe.machine_id, "source": recipe.source}))
+            {"version": str(recipe.version), "machine_id": str(recipe.machine_id),
+             "inventory_number": machine.inventory_number, "source": recipe.source}))
         uow.commit()
         return recipe
 

@@ -15,7 +15,7 @@ from tests.shipping.test_pack_decision_migration import _config
 def migrated(tmp_path, monkeypatch):
     monkeypatch.delenv("ERP_DATABASE_URL", raising=False)
     path = tmp_path / "runtime.db"
-    command.upgrade(_config(path), "0170_equipment_setup_resources")
+    command.upgrade(_config(path), "0172_resource_unit_ids")  # 0170 tables, machines by unit id
     return f"sqlite+pysqlite:///{path.as_posix()}"
 
 
