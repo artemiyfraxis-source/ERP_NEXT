@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 18c9080e-85fd-4574-a846-0e4e1270987e
-  modified: 2026-10-14T14:35:04.898Z
+  modified: 2026-10-26T08:01:18.299Z
 ---
 
 Owner 14.10.2026: coax data (cables, connectors, specs, supplier articles) is taken from the suppliers' sites —
@@ -55,6 +55,15 @@ gsm-repiteri.ru, «Амел», kroks.ru, vegatel.ru («оттуда кстати
   23.10: RUICHI rows got the maker frequency (12 shop values overwritten), КСВ = АМЭЛ reference; top-up of 222 rows,
   backup erp_2026-10-23_201705.dump. Own rows without any КСВ source left: UHF 55, F 30, Fakra 14, SMA 10 (angled female),
   FME 7, СР-50 7, QMA 6, mini-UHF 5, CRC9/TS9 4, MHF1 3.
+
+- 26.10 the 22–23.10 AMEL reference was WRONG for 182 КСВ / 80 частота cells: the cable was not matched (RG-402U / RG402 /
+  SF141 not recognised), so «по серии и виду» took the worst of the whole group — SMA female on RG-402 got ≤1,41 from flexible-cable
+  SMA-K* while AMEL's own semi-rigid SMA-KB3 is ≤1,30. Owner: «проверил только по одному типу и сразу присвоил всем — очень плохо».
+  Rule now: an AMEL analog = same series + same вид (вилка/розетка, прямая/угловая, кабельная/фланцевая) + SAME cable or its true
+  construction equivalent (RG-402 = UT141 = SF141 = SR141 = РК50-3-28/29; RG-405 = UT086 = SF085; EZ47 = UT047; NOT RG-141, NOT
+  RG-8X = RG-8). No such AMEL part → the cell stays empty; never another cable's value. Rewritten on prod 26.10 (backup
+  erp_2026-10-26_110045.dump, docs/data «КОАКС — КСВ референс по кабелю 26.10…»): 65 КСВ fixed, 117 withdrawn (5D/8D/10D-FB, 75-Ом
+  RG-6/59, SMA on RG-213 …), 26 частота fixed, 54 withdrawn.
 
 **How to apply:** coax cables come only from АМЭЛ / Kroks / gsm-repiteri; a new cable from elsewhere is an exception
 to flag, not to add silently. Enrich from these first; fill only empty cells, write to prod per [[prod-reference-write]].

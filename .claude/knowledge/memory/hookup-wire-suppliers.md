@@ -15,7 +15,8 @@ Owner 19.10.2026: «основа это снабкабель паритет» �
   ПуГВнг(А)-LS. One page per series with an «интерактивный прайс» (row per size × colour, price = оптовая при 1000 м с
   НДС, no articles) and «макс. наружный диаметр» + maker + ТУ in the description. Pages fetch fine with curl.
 - Паритет sells only НВМ from that list: one article per colour, price per km with VAT.
-- Not sold by either: UL-series, силиконовый, МНВ-4, НВМ ≥ 1,0 — those keep other suppliers.
+- Not sold by either: UL-series, МНВ-4, НВМ ≥ 1,0 — those keep other suppliers. CORRECTION 26.10: Паритет does sell silicone «ПарСил МПРТ-180» (0,25–6 мм², 107 articles); Снабкабель also has МС 26-13, МПО, МЛТП, БПВЛ, МПО 33-11 (not yet in БД.ПРОВ).
+- 26.10 fill: +293 rows (ПВАМ two-colour etc., ПуГВ/ПГВА 25–95, ПуГВнг(А)-LS 1х25/35, НВ-4/НВ-3 1000 В as «… 1000 В» marks); journal docs/data «Монтажные провода — Снабкабель и Паритет 26.10.csv/.log».
 - Strands: Чувашкабель catalogue PDF (chuvashcable.ru, tables are images) covers МГТФ, МГШВ, МК 26-13; no maker gives
   strand counts for НВ-4, ПВАМ, ПГВА, ПуГВ, МС.
 - Owner 19.10: colours «каждый цвет новой строчкой и текстом». The 19.10 session (bff4771a, #597) built it as a list

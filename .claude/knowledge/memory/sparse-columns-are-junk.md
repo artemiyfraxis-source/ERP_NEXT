@@ -17,6 +17,11 @@ structured field are removed too, after copying whatever the structured field la
 Column order («своя инфа в своём месте»): идентификация → конструкция → электрика → механика и условия → поставка →
 служебное; the owner's custom columns go into their group, not appended at the end.
 
+Owner 25.10 (БД.КОАКС picker, unchecked Пол/Исполнение/Полярность/Монтаж/Дата цены/Примечание/Источник данных):
+«всё, что без галочки, удаляй — не нужны; только проверь всё». A list keeps exactly its «Только нужные» columns; the rest are
+deleted from the table/picker/schema (data stays in JSON, the record card still shows it, writes to existing rows and
+«Источник данных» provenance keep working). This overrides the supply-column exception for what he unchecked.
+
 **Why:** 23.10 the owner reviewed the «Колонки» pickers of БД.ПРОВ (coax 42 columns, 8 shown; multi 32; монтажные 31) and
 БД.КОАКС: «если что-то заполняется на 3 % — это мусор для БД: либо выносим в другую БД, либо удаляем столбец»; «сделай
 сортировку нормальную, чтобы своя инфа в своём месте».
