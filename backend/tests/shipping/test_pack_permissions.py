@@ -107,37 +107,103 @@ def test_legacy_flag_does_not_bypass_cap_but_manager_shipment_grants_what_it_pic
     }).status_code in {404, 405}
 
 
-def test_manager_request_ahead_of_production_needs_no_limit(shipping_api):
-    client = shipping_api
-    queued = _good(client, accepted="")
+def manager_request(client, good, quantity):
     response = client.post("/api/shipping/shipments", json={
-        "customer": "Заказчик", "receiver": "Получатель", "lines": [{"good_id": queued["id"], "quantity": "10"}],
+        "customer": "Заказчик", "receiver": "Получатель", "lines": [{"good_id": good["id"], "quantity": quantity}],
     })
     assert response.status_code == 200, response.text
-    assert response.json()["shipment"]["status"] == "Новая"
-    assert permission_view(client)["version"] == 0 and permission_events() == []
+    return response.json()["shipment"]
 
 
-def test_manager_request_beyond_stock_grants_only_what_is_in_stock(shipping_api):
-    client = shipping_api
-    good = _good(client, accepted="6")
-    response = client.post("/api/shipping/shipments", json={
-        "customer": "Заказчик", "receiver": "Получатель", "lines": [{"good_id": good["id"], "quantity": "10"}],
-    })
+def accept(client, quantity):
+    fresh = client.get("/api/shipping/goods").json()["goods"][0]
+    response = client.post(f"/api/shipping/goods/{fresh['id']}/accept", json={"version": fresh["version"], "quantity": quantity})
     assert response.status_code == 200, response.text
-    assert response.json()["shipment"]["lines"][0]["picked"] == "6"
-    view = permission_view(client)
-    assert (view["quantity"], view["remaining"]) == ("6", "0")
 
 
-def test_limit_is_checked_against_what_is_picked_not_what_is_ordered(shipping_api):
-    """Кладовщик набирает заявку на 10, на складе 2 и лимит 2 — набор 2 проходит; лимит сверх набранного не нужен."""
+def pick(client, shipment):
+    return client.post(f"/api/shipping/shipments/{shipment['id']}/pick", json={"version": shipment["version"]})
+
+
+def cancel(client, shipment_id):
+    current = next(item for item in client.get("/api/shipping/shipments").json()["shipments"] if item["id"] == shipment_id)
+    response = client.post(f"/api/shipping/shipments/{shipment_id}/cancel", json={"version": current["version"]})
+    assert response.status_code == 200, response.text
+    return response.json()["shipment"]
+
+
+def test_manager_request_ahead_of_production_lets_the_warehouse_pack_it_later(shipping_api):
+    """29.10.2026: заявка менеджера — решение упаковывать. Заведена вперёд производства — лимит КБ поднят на её
+    количество сразу, кладовщик набирает её по мере сдачи цехом без отдельного разрешения; сверх заявки — нет."""
     from tests.shipping.test_pack_decision_no_upd import STOREKEEPER, _as
     client = shipping_api
     queued = _good(client, accepted="")
-    made = client.post("/api/shipping/shipments", json={
-        "customer": "Заказчик", "receiver": "Получатель", "lines": [{"good_id": queued["id"], "quantity": "10"}],
-    }).json()["shipment"]
+    made = manager_request(client, queued, "10")
+    assert made["status"] == "Новая"
+    view = permission_view(client)
+    assert (view["quantity"], view["remaining"], view["version"]) == ("10", "10", 1)
+    (event,) = permission_events()
+    assert (event["before"], event["quantity"], event["shipment_id"]) == ("0", "10", made["id"])
+
+    _as(STOREKEEPER)
+    accept(client, "6")
+    first = pick(client, made)
+    assert first.status_code == 200, first.text
+    assert first.json()["shipment"]["lines"][0]["picked"] == "6"
+    accept(client, "5")
+    second = pick(client, first.json()["shipment"])
+    assert second.status_code == 200, second.text
+    assert second.json()["shipment"]["lines"][0]["picked"] == "10"  # не больше заявки
+    assert pack(client, queued, "1").status_code == 422  # остаток ГП 1, лимит выбран — сверх заявки нельзя
+    assert permission_view(client)["remaining"] == "0"
+
+
+def test_manager_request_beyond_stock_reserves_its_whole_quantity(shipping_api):
+    client = shipping_api
+    good = _good(client, accepted="6")
+    made = manager_request(client, good, "10")
+    assert made["lines"][0]["picked"] == "6"
+    view = permission_view(client)
+    assert (view["quantity"], view["consumed"], view["remaining"]) == ("10", "6", "4")
+
+
+def test_cancel_gives_back_what_the_request_raised_and_never_used(shipping_api):
+    client = shipping_api
+    good = _good(client, accepted="6")
+    assert grant(client, "4").status_code == 200
+    made = manager_request(client, good, "10")  # набрано 6, лимит 4 → 10
+    assert permission_view(client)["quantity"] == "10"
+    cancel(client, made["id"])  # набранное вернулось на склад — поднятые 6 не использованы
+    view = permission_view(client)
+    assert (view["quantity"], view["consumed"], view["remaining"]) == ("4", "0", "4")
+    assert [(event["before"], event["quantity"]) for event in permission_events()] == [("0", "4"), ("4", "10"), ("10", "4")]
+
+
+def test_two_open_requests_both_fit_and_cancelling_one_keeps_the_other(shipping_api):
+    client = shipping_api
+    queued = _good(client, accepted="")
+    first = manager_request(client, queued, "5")
+    manager_request(client, queued, "3")
+    assert permission_view(client)["quantity"] == "8"
+    cancel(client, first["id"])
+    assert permission_view(client)["quantity"] == "3"
+
+
+def test_limit_is_checked_against_what_is_picked_not_what_is_ordered(shipping_api):
+    """Заявка без решения менеджера (не менеджерская) на 10, на складе 2 и лимит 2 — набор 2 проходит; лимит сверх
+    набираемого не нужен."""
+    from uuid import UUID
+    from app.modules.shipping.application import CreateShipmentCommand, RequestedGood, create_shipment
+    from tests.shipping.test_pack_decision_no_upd import ADMIN, STOREKEEPER, _as
+    client = shipping_api
+    queued = _good(client, accepted="")
+    created = create_shipment(CreateShipmentCommand(
+        customer="Заказчик", receiver="Получатель", shipping_point="", contact="", phone="", terms=None, carrier="",
+        deadline=None, upd_type=None, upd_number="", upd_date=None, upd_url="", note="",
+        lines=(RequestedGood(UUID(queued["id"]), Decimal("10")),), actor=ADMIN.actor, now=NOW,
+    ), app.state.shipping_uow_factory())
+    made = {"id": str(created.id), "version": created.version}
+    assert permission_view(client)["version"] == 0
     assert grant(client, "2").status_code == 200
     fresh = client.get("/api/shipping/goods").json()["goods"][0]
     _as(STOREKEEPER)

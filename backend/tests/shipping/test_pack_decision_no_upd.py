@@ -261,7 +261,7 @@ def test_decision_can_be_withdrawn_before_anything_is_picked_and_then_picking_st
     _as(STOREKEEPER)
     pick = client.post(f"/api/shipping/shipments/{made['id']}/pick", json={"version": made["version"]})
 
-    # A request ahead of production picks nothing, so it grants nothing; the explicit unused cap can be withdrawn.
+    # The request fits the explicit cap, so it raises nothing; the explicit unused cap can be withdrawn.
     assert made["status"] == "Новая" and card["pack_decided"] is False
     assert withdrawn.status_code == 200 and withdrawn.json()["permissions"][0]["quantity"] == "0"
     assert pick.status_code == 422 and "разреш" in pick.json()["detail"]
