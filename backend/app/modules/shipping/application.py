@@ -201,7 +201,8 @@ class CreateShipmentCommand:
     now: datetime
     no_docs: bool = False
     # Отправку заводит менеджер («Отгрузка» на правку): его отправка — само решение упаковывать (договорено 29.10.2026):
-    # набирая, она поднимает лимит упаковки КБ до набранного (запись в журнал, как у явного разрешения).
+    # при заведении она поднимает лимит упаковки КБ на своё количество (`_raise_for_request`), так что склад набирает
+    # её и позже, когда цех сдаст, без отдельного разрешения; отмена отдаёт поднятое и не использованное.
     grant_pack: bool = False
 
 
@@ -500,12 +501,15 @@ def _create_shipment(
     if shipment.upd_url:
         _notify_upd(shipment, command.now, uow)
     _remember_addressees(shipment, command, uow)
+    raised = _raise_for_request(shipment, command.actor, command.now, uow) if command.grant_pack else []
     _audit(shipment.id, "shipping.created", command.actor, command.now, {
         "number": shipment.number, "inherited": sorted(address.inherited), **(details or {}),
+        # Насколько отправка менеджера подняла лимиты упаковки [[проект, КБ, штук]] — отмена отдаёт неиспользованное.
+        **({"pack_raised": raised} if raised else {}),
     }, uow)
     # Shipment.gs shipRequestCreate_: набор сразу при заведении, затем PL/DN → «Упакована»;
-    # noDocs → остаётся «Собрана». Цех ещё ничего не сдал — заявка «Новая» и ждёт (лимит упаковки ей не нужен).
-    shipment, taken = _pick(shipment, command.actor, command.now, uow, grant=command.grant_pack)
+    # noDocs → остаётся «Собрана». Цех ещё ничего не сдал — заявка «Новая» и ждёт.
+    shipment, taken = _pick(shipment, command.actor, command.now, uow)
     if taken and not command.no_docs:
         shipment = _pack(shipment, command.actor, command.now, uow)
     return shipment
@@ -615,6 +619,78 @@ def _record_pack_permissions(
     return True
 
 
+ACTIVE_SHIPMENT_STATUSES = frozenset({ShipmentStatus.NEW, ShipmentStatus.ASSEMBLED, ShipmentStatus.PACKED})
+
+
+def _consumed(uow: UnitOfWork, project: str, item_index: str) -> Decimal:
+    """Израсходовано лимита КБ: упаковано, включая отгруженное (`FinishedGood.shipped`)."""
+    return sum((good.shipped for good in uow.goods.for_project(project) if good.item_index == item_index), Decimal("0"))
+
+
+def _promised(uow: UnitOfWork, project: str, item_index: str, *, exclude: UUID) -> Decimal:
+    """Обещано другими активными отправками КБ и ещё не набрано (их недобранное «Заказано»)."""
+    key = normalize_project_number(project)
+    return sum((
+        line.shortage
+        for other in uow.shipments.for_project(project)
+        if other.id != exclude and other.status in ACTIVE_SHIPMENT_STATUSES
+        for line in other.lines
+        if normalize_project_number(line.project) == key and line.item_index == item_index
+    ), Decimal("0"))
+
+
+def _raise_for_request(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork) -> list[list[str]]:
+    """Отправка менеджера — решение упаковывать (29.10.2026): лимит КБ поднимается до «израсходовано + обещано другими
+    активными отправками + количество этой отправки», не ниже прежнего. Журнал и уведомление — как у явного разрешения.
+    Возвращает, на сколько поднят каждый лимит: [[проект, КБ, штук]] — для отмены."""
+    need: dict[tuple[str, str], Decimal] = {}
+    for line in shipment.lines:
+        key = (normalize_project_number(line.project), line.item_index)
+        need[key] = need.get(key, Decimal("0")) + line.shortage
+    uow.lock_projects([line.project for line in shipment.lines])
+    grants: dict[str, list[tuple[PackPermission, PackPermission]]] = {}
+    raised: list[list[str]] = []
+    for (project, item_index), amount in need.items():
+        if amount <= 0:
+            continue
+        consumed = _consumed(uow, project, item_index)
+        target = consumed + _promised(uow, project, item_index, exclude=shipment.id) + amount
+        current = uow.pack_permissions.get(project, item_index) or PackPermission(project, item_index, quantity=consumed)
+        if current.version and current.quantity >= target:
+            continue
+        updated = current.change(max(target, current.quantity), consumed, actor.name, now)
+        if updated is current:
+            continue
+        grants.setdefault(project, []).append((current, updated))
+        raised.append([project, item_index, _plain(updated.quantity - current.quantity)])
+    for project, changes in grants.items():
+        _record_pack_permissions(project, changes, actor, now, uow, shipment=shipment)
+    return raised
+
+
+def _return_raised(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork) -> None:
+    """Отмена отправки менеджера отдаёт поднятое ею и не использованное: лимит КБ — минус её прибавка, но не ниже
+    «израсходовано после возврата набранного + обещано другими активными отправками». Зовётся до возврата на склад."""
+    raised = (uow.shipments.created_details(shipment.id) or {}).get("pack_raised") or []
+    back: dict[tuple[str, str], Decimal] = {}
+    for line in shipment.lines:
+        key = (normalize_project_number(line.project), line.item_index)
+        back[key] = back.get(key, Decimal("0")) + line.picked
+    grants: dict[str, list[tuple[PackPermission, PackPermission]]] = {}
+    for project, item_index, amount in raised:
+        current = uow.pack_permissions.get(project, item_index)
+        if current is None:
+            continue
+        consumed = max(_consumed(uow, project, item_index) - back.get((project, item_index), Decimal("0")), Decimal("0"))
+        floor = consumed + _promised(uow, project, item_index, exclude=shipment.id)
+        target = max(current.quantity - Decimal(amount), floor)
+        if target >= current.quantity:
+            continue
+        grants.setdefault(project, []).append((current, current.change(target, consumed, actor.name, now)))
+    for project, changes in grants.items():
+        _record_pack_permissions(project, changes, actor, now, uow, shipment=shipment)
+
+
 def _unset_fields(command: CreateShipmentCommand) -> frozenset[str]:
     """Поля адресата, не заданные в заявке: они и дальше идут за карточкой проекта."""
     own = {
@@ -624,12 +700,10 @@ def _unset_fields(command: CreateShipmentCommand) -> frozenset[str]:
     return frozenset(key for key, value in own.items() if not (value.strip() if isinstance(value, str) else value))
 
 
-def _pick(
-    shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork, *, grant: bool = False,
-) -> tuple[Shipment, dict[UUID, Decimal]]:
+def _pick(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork) -> tuple[Shipment, dict[UUID, Decimal]]:
     """Набор недобранного из склада ГП. Лимит упаковки КБ проверяется только по тому, что набирается сейчас
-    (min(остаток ГП, недобрано)): заявка вперёд производства ничего не набирает и лимита не требует. Набор сверх
-    лимита — отказ; с `grant` (отправка менеджера) лимит КБ поднимается до набираемого — с записью в журнал."""
+    (min(остаток ГП, недобрано)): заявка вперёд производства ничего не набирает и лимита не требует; набор сверх
+    лимита — отказ. Отправка менеджера поднимает лимит при заведении (`_raise_for_request`), не здесь."""
     uow.lock_projects([line.project for line in shipment.lines])
     goods = {line.finished_good_id: uow.goods.get(line.finished_good_id) for line in shipment.lines}
     if any(good is None for good in goods.values()):
@@ -646,28 +720,18 @@ def _pick(
     for good_id, key in keys.items():
         picking[key] = picking.get(key, Decimal("0")) + taking[good_id]
     budgets: dict[tuple[str, str], Decimal] = {}
-    grants: dict[str, list[tuple[PackPermission, PackPermission]]] = {}
     for key, amount in picking.items():
         budgets[key] = Decimal("0")
         if amount <= 0:
             continue
         good = next(typed[good_id] for good_id, item in keys.items() if item == key)
         permission = uow.pack_permissions.get(good.project, good.item_index)
-        consumed = sum((item.shipped for item in uow.goods.for_project(good.project)
-                        if item.item_index == good.item_index), Decimal("0"))
-        budgets[key] = permission.remaining(consumed) if permission else Decimal("0")
-        if amount <= budgets[key]:
-            continue
-        if not grant:
+        budgets[key] = permission.remaining(_consumed(uow, good.project, good.item_index)) if permission else Decimal("0")
+        if amount > budgets[key]:
             raise ShippingValidationError(
                 f"{good.item_index}: к упаковке разрешено ещё {format(budgets[key].normalize(), 'f')} {good.unit}; "
                 "уменьшите количество или измените разрешение",
             )
-        current = permission or PackPermission(key[0], good.item_index, quantity=consumed)
-        grants.setdefault(key[0], []).append((current, current.change(consumed + amount, consumed, actor.name, now)))
-        budgets[key] = amount
-    for project, changes in grants.items():
-        _record_pack_permissions(project, changes, actor, now, uow, shipment=shipment)
     available = {}
     for good_id, key in keys.items():
         available[good_id] = min(taking[good_id], budgets[key])
@@ -1278,6 +1342,7 @@ def cancel_shipment(command: ShipmentCommand, uow: UnitOfWork) -> Shipment:
     with uow:
         shipment = _packing_shipment(command.shipment_id, command.expected_version, uow)
         updated, released = shipment.cancel()
+        _return_raised(shipment, command.actor, command.now, uow)
         for good_id, quantity in released.items():
             good = uow.goods.get(good_id)
             if good is None:
