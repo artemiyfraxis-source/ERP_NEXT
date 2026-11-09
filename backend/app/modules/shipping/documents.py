@@ -247,7 +247,7 @@ def build_delivery_note(
     packed, boxes = _prepare(shipment)
     rows = tuple(FormRow(
         part=_part(item, item.item_index, _projects(shipment)), name=item.name, quantity=_qty(item.quantity), unit=item.unit or "шт",
-        pl=shipment.pl_number,
+        pl=shipment.pl_number, batch=item.grn,
         boxes=_places([box.place for box in boxes if any(entry.item_index == item.item_index for entry in box.items)]),
     ) for item in packed)
     # Получатель, отличный от заказчика, — в адресе доставки: ТК везёт ему.

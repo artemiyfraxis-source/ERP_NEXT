@@ -26,17 +26,17 @@ from app.workflows.shipping_packing import known_pack_items, pack_item_details
 from .application import (
     AttachCardUpdCommand, AttachUpdCommand, attach_upd_file, store_card_upd_file, UPD_FILE_URL_PREFIX, upd_file_url,
     ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand, EditHeadCommand, HistoryCorrectionCommand,
-    LayOutCommand, PackDecisionCommand, PackPermissionChange, SetPackPermissionsCommand, set_pack_permissions, PackProjectCommand, ProjectShipCommand, ProjectShipLine, QueueProjectCommand, RegisterGoodCommand,
+    LayOutCommand, PickCommand, PackPermissionChange, SetPackPermissionsCommand, set_pack_permissions, PackProjectCommand, ProjectShipCommand, ProjectShipLine, QueueProjectCommand, RegisterGoodCommand,
     RequestedGood, RollbackShippedCommand, SetProjectAddresseeCommand, SetRequestedCommand, ShipmentCommand,
     ShippingPermissionError, UnitOfWork, UnpickCommand, UpdUpload, UpdateDocumentsCommand, cancel_shipment,
     close_shipment, correct_shipment_history, create_shipment, drop_project, edit_shipment_head, lay_out_shipment, mark_shipped, pack_project,
     pack_shipment, pick_shipment, queue_project, register_good, rollback_shipped, set_project_addressee, set_requested,
-    set_pack_decision, ship_project, unpick_line, update_documents,
+    ship_project, unpick_line, update_documents,
 )
 from .documents import build_box_labels, build_delivery_note, build_packing_lists, storekeeper_signature
 from .domain import (
     ADDRESSEE_REQUISITE_FIELDS, DeliveryTerms, FinishedGood, PackPermission, ProjectAddressee, ProjectAssembly, Shipment,
-    ShippingValidationError, UpdType, shipping_gaps, total_gross,
+    ShippingValidationError, UpdType, no_upd_offered, shipping_gap_codes, shipping_gaps, total_gross,
 )
 
 
@@ -92,6 +92,8 @@ class PackPermissionsPayload(BaseModel):
 class ShipmentLinePayload(BaseModel):
     good_id: UUID
     quantity: Quantity
+    # ГРН акта приёмки, из которого набрать; пусто — акты КБ по FIFO.
+    grn: str = Field(default="", max_length=32)
 
 
 class ShipmentPayload(BaseModel):
@@ -143,14 +145,6 @@ class AddresseePayload(BaseModel):
     upd_date: date | None = None
 
 
-class PackDecisionPayload(BaseModel):
-    """«Упаковывать» в карточке проекта: `version` — версия карточки (0 — карточки ещё нет)."""
-
-    project: str = Field(min_length=1, max_length=255)
-    version: int = Field(ge=0)
-    decided: bool
-
-
 class ApproveNoUpdPayload(BaseModel):
     version: int = Field(ge=1)
     approver_id: UUID
@@ -168,6 +162,11 @@ class VersionPayload(BaseModel):
 
 class UnpickPayload(VersionPayload):
     line_id: UUID
+
+
+class PickPayload(VersionPayload):
+    """Строка → ГРН акта, из которого её набрать; неприсланные строки — акты КБ по FIFO."""
+    grns: dict[UUID, Annotated[str, Field(max_length=32)]] = Field(default_factory=dict, max_length=500)
 
 
 class DocumentsPayload(VersionPayload):
@@ -249,6 +248,7 @@ class ProjectShipLinePayload(BaseModel):
     good_id: UUID
     version: int = Field(ge=1)
     quantity: Quantity
+    grn: str = Field(default="", max_length=32)
 
 
 class ProjectShipAddresseePayload(BaseModel):
@@ -322,10 +322,12 @@ def _addressee_result(addressee: ProjectAddressee) -> dict:
         "plan_date": addressee.plan_date.isoformat() if addressee.plan_date else None, "note": addressee.note,
         "upd_url": addressee.upd_url, "upd_file_name": "",
         "upd_number": addressee.upd_number, "upd_date": addressee.upd_date.isoformat() if addressee.upd_date else None,
-        # Решение «упаковывать» (0162): без него кладовщик не упаковывает.
+        # Флаг «упаковывать» по проекту (0162) — история: упаковку разрешает лимит по КБ (0169), ERP флаг не ставит.
         "pack_decided": addressee.pack_decided, "pack_decided_by": addressee.pack_decided_by,
         "pack_decided_at": addressee.pack_decided_at.isoformat() if addressee.pack_decided_at else None,
+        # Чего не хватает в данных отправки — те же правила, что у отправки: слова и коды (`GAP_*` в domain.py).
         "dispatch_gaps": list(addressee.dispatch_gaps()),
+        "dispatch_gap_codes": list(addressee.dispatch_gap_codes()),
     }
 
 
@@ -372,6 +374,11 @@ def _shipment_result(shipment: Shipment) -> dict:
         # для «Отгрузить». Один список на сервере (`shipping_gaps`), экраны его только показывают.
         "missing_data": list(shipping_gaps(shipment, with_track=False)),
         "missing_ship": list(shipping_gaps(shipment)),
+        # Те же пробелы кодами (`GAP_*`): «upd_number» — УПД есть, нет лишь №; «upd_type» / «upd_file» /
+        # «no_upd_approval» — самого УПД нет. `no_upd_offered` — предлагать ли «Без УПД…» по PIN (только второе).
+        "missing_data_codes": list(shipping_gap_codes(shipment, with_track=False)),
+        "missing_ship_codes": list(shipping_gap_codes(shipment)),
+        "no_upd_offered": no_upd_offered(shipment),
         # «Можно вписать трек» (Упакована + УПД + ТК) и «На отгрузку» (всё, трек тоже): то же правило, что у гейтов.
         "ready_for_track": shipment.ready_for_track, "ready_to_ship": shipment.ready_to_ship,
         "no_upd_approved_by": shipment.no_upd_approved_by,
@@ -386,7 +393,10 @@ def _shipment_result(shipment: Shipment) -> dict:
             "project": line.project, "item_index": line.item_index, "article": line.article,
             "name": line.name, "requested": _number(line.requested),
             "picked": _number(line.picked), "shortage": _number(line.shortage),
-            "unit": line.unit, "grn": line.grn,
+            # `grn` — первый ГРН (совместимость), `grns` — все ГРН строки, `lots` — сколько штук из какого акта (0173).
+            "unit": line.unit, "grn": line.grns[0] if line.grns else None, "grns": list(line.grns),
+            "lots": [{"grn": lot.grn, "quantity": _number(lot.quantity), "act_id": str(lot.act_id) if lot.act_id else None}
+                     for lot in line.lots],
         } for line in shipment.lines],
     }
 
@@ -501,20 +511,10 @@ def pack_project_goods(
 ) -> dict:
     shipment = _run(lambda: pack_project(PackProjectCommand(
         project=payload.project,
-        lines=tuple(RequestedGood(good_id=line.good_id, quantity=line.quantity) for line in payload.lines),
+        lines=tuple(RequestedGood(good_id=line.good_id, quantity=line.quantity, grn=line.grn) for line in payload.lines),
         actor=principal.actor, now=now,
     ), uow_factory()))
     return {"shipment": _shipment_result(shipment)}
-
-
-@router.post("/project-pack-decision")
-def project_pack_decision(
-    payload: PackDecisionPayload,
-    principal: Annotated[Principal, Depends(shipping_manager_principal)],
-    now: Annotated[datetime, Depends(moscow_now)],
-    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
-) -> dict:
-    raise HTTPException(status_code=422, detail="Разрешите упаковку явно по КБ и количеству")
 
 
 def _pack_permissions_result(project: str, uow_factory) -> dict:
@@ -584,7 +584,7 @@ def ship_project_goods(
         )
     result = _run(lambda: ship_project(ProjectShipCommand(
         idempotency_key=idempotency_key, project=payload.project,
-        lines=tuple(ProjectShipLine(good_id=line.good_id, version=line.version, quantity=line.quantity) for line in payload.lines),
+        lines=tuple(ProjectShipLine(good_id=line.good_id, version=line.version, quantity=line.quantity, grn=line.grn) for line in payload.lines),
         addressee_version=payload.addressee_version, addressee_fields=fields,
         deadline=payload.documents.deadline, upd_number=payload.documents.upd_number, upd_date=payload.documents.upd_date,
         upd_file=upload, ship=payload.ship, as_manager=section_allowed(principal, ("shipping",), "edit"),
@@ -633,8 +633,8 @@ def add_shipment(
 ) -> dict:
     data = payload.model_dump(exclude={"lines"})
     shipment = _run(lambda: create_shipment(CreateShipmentCommand(
-        **data, lines=tuple(RequestedGood(good_id=line.good_id, quantity=line.quantity) for line in payload.lines),
-        actor=principal.actor, now=now, decide_pack=True,
+        **data, lines=tuple(RequestedGood(good_id=line.good_id, quantity=line.quantity, grn=line.grn) for line in payload.lines),
+        actor=principal.actor, now=now, grant_pack=True,
     ), uow_factory()))
     return {"shipment": _shipment_result(shipment)}
 
@@ -644,8 +644,10 @@ def _command(shipment_id: UUID, payload: VersionPayload, principal: Principal, n
 
 
 @router.post("/shipments/{shipment_id}/pick")
-def pick(shipment_id: UUID, payload: VersionPayload, principal: Annotated[Principal, Depends(shipping_warehouse_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)]) -> dict:
-    shipment = _run(lambda: pick_shipment(_command(shipment_id, payload, principal, now), uow_factory()))
+def pick(shipment_id: UUID, payload: PickPayload, principal: Annotated[Principal, Depends(shipping_warehouse_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)]) -> dict:
+    shipment = _run(lambda: pick_shipment(PickCommand(
+        shipment_id=shipment_id, expected_version=payload.version, actor=principal.actor, now=now, grns=dict(payload.grns),
+    ), uow_factory()))
     return {"shipment": _shipment_result(shipment)}
 
 

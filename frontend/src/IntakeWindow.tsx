@@ -12,11 +12,14 @@ const num = (value: string | number | null | undefined) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 const round2 = (value: number) => Math.round(value * 100) / 100;
-const keyOf = (row: IntakeRow) => `${row.project}\u0000${row.item_index}`;
+export const keyOf = (row: Pick<IntakeRow, "project" | "item_index">) => `${row.project}\u0000${row.item_index}`;
 export const leftOf = (row: IntakeRow) => round2(Math.max(num(row.needed) - num(row.accepted), 0));
 
-export function IntakeWindow({ rows, close, onDone }: { rows: IntakeRow[]; close: () => void; onDone: (pieces: number) => Promise<void> | void }) {
-  const [qty, setQty] = useState<Record<string, string>>(() => Object.fromEntries(rows.map((row) => [keyOf(row), row.remaining])));
+/** `quantities` — сколько предложить по умолчанию (штуки строки, с которой открыли окно); предел — всё, что можно принять по КБ. */
+export function IntakeWindow({ rows, quantities, close, onDone }: {
+  rows: IntakeRow[]; quantities?: Record<string, number>; close: () => void; onDone: (pieces: number) => Promise<void> | void;
+}) {
+  const [qty, setQty] = useState<Record<string, string>>(() => Object.fromEntries(rows.map((row) => [keyOf(row), quantities?.[keyOf(row)] !== undefined ? String(quantities[keyOf(row)]) : row.remaining])));
   const [places, setPlaces] = useState<Record<string, string>>({});
   const [day, setDay] = useState(() => isoDay(new Date()));
   const [problems, setProblems] = useState<Record<string, string>>({});

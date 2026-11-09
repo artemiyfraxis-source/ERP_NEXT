@@ -9,7 +9,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 
-from app.modules.shipping.domain import ProjectAddressee, Shipment, ShipmentLine, UpdType
+from app.modules.shipping.domain import DeliveryTerms, ProjectAddressee, Shipment, ShipmentLine, UpdType
 from app.modules.shipping.infrastructure import SqlAlchemyShippingUnitOfWork
 from app.shared.persistence import OutboxMessageRow
 from tests.workflows.test_finished_goods_register import _accept, flow_api  # noqa: F401 — fixture
@@ -41,15 +41,16 @@ def test_accept_with_an_empty_card_tells_every_project_manager_once_per_batch(fl
     notice = notices[0]
     assert notice["recipient_audiences"] == "project_manager" and notice["recipient_user_ids"] == ""
     assert notice["body"].startswith(
-        "Приняли на склад КБ КБ1, КБ2 проекта 708К.4, а данных отправки нет: получатель, адрес доставки, телефон, "
-        "вариант УПД. Заполните в „Приёмке с производства“ → „Данные отправки“."
+        "Приняли на склад КБ КБ1, КБ2 проекта 708К.4, а данных отправки нет: условия доставки, получатель, "
+        "телефон получателя, адрес доставки, тип УПД. Заполните в „Приёмке с производства“ → „Данные отправки“."
     )
     assert "?section=intake" in notice["body"] and notice["type"] == "ship"
 
 
 def test_full_card_sends_nothing(flow_api):
     client, sessions = flow_api
-    _card(sessions, receiver="ООО Заказчик", shipping_point="Москва", phone="+7 900", upd_type=UpdType.EDO)
+    _card(sessions, receiver="ООО Заказчик", shipping_point="Москва", phone="+7 900", terms=DeliveryTerms.CARRIER,
+          carrier="ПЭК", upd_type=UpdType.EDO, upd_number="77")
 
     assert _accept(client, [(PROJECT, "КБ1", "5")]).status_code == 200
     assert _notices(sessions) == []
@@ -57,7 +58,8 @@ def test_full_card_sends_nothing(flow_api):
 
 def test_paper_without_file_is_listed_and_goes_to_the_shipment_manager(flow_api):
     client, sessions = flow_api
-    _card(sessions, receiver="ООО Заказчик", shipping_point="Москва", phone="+7 900", upd_type=UpdType.PAPER)
+    _card(sessions, receiver="ООО Заказчик", shipping_point="Москва", phone="+7 900", terms=DeliveryTerms.CARRIER,
+          carrier="ПЭК", upd_type=UpdType.PAPER, upd_number="77")
     with SqlAlchemyShippingUnitOfWork(sessions) as uow:
         good = uow.goods.by_key(PROJECT, "КБ1")
         uow.shipments.add(Shipment.create(
@@ -74,7 +76,7 @@ def test_paper_without_file_is_listed_and_goes_to_the_shipment_manager(flow_api)
     assert response.status_code == 200, response.text
     assert len(notices) == 1
     assert notices[0]["recipient_user_ids"] == str(MANAGER) and notices[0]["recipient_audiences"] == ""
-    assert "данных отправки нет: файл бумажной УПД." in notices[0]["body"]
+    assert "данных отправки нет: файл УПД." in notices[0]["body"]
 
 
 def _good_id(sessions) -> str:

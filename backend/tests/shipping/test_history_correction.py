@@ -20,7 +20,7 @@ from tests.identity.test_view_as import view_api, _login, _view, _csrf, ADMIN2_I
 from app.modules.identity.middleware import VIEW_ONLY_DETAIL
 
 from app.modules.shipping.domain import (
-    ADDRESSEE_CARD_FIELDS, BoxItem, MoveContext, ProjectAddressee, ShipmentBox, ShipmentStatus, ShippingValidationError, UpdType,
+    ADDRESSEE_CARD_FIELDS, BoxItem, LineLot, MoveContext, ProjectAddressee, ShipmentBox, ShipmentStatus, ShippingValidationError, UpdType,
 )
 from tests.shipping.test_domain import good, shipment
 
@@ -78,7 +78,7 @@ def database(tmp_path):
     now = datetime(2026, 9, 22, 9)
     item = good().accept(Decimal("10"), now.date(), "ГП.26.0000001").take(Decimal("10")).dispatch(Decimal("10"))
     before = historical(item=item)
-    before = replace(before, lines=(replace(before.lines[0], picked=Decimal("10"), grn=item.grn),),
+    before = replace(before, lines=(replace(before.lines[0], picked=Decimal("10"), grn=item.grn, lots=(LineLot(item.grn, Decimal("10")),)),),
                      shipped_at=now.date(), packed_at=now.date(), pl_number="PL-1", dn_number="DN-1",
                      boxes=(ShipmentBox(place=1, gross="1,5", items=(BoxItem(item.item_index, Decimal("10")),)),))
     with SqlAlchemyShippingUnitOfWork(sessions) as uow:

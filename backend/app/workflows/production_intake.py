@@ -94,8 +94,8 @@ class IntakeRow:
     tasks: tuple[TaskShare, ...] = ()
     acts: tuple[AcceptanceAct, ...] = ()
     project_stage: str = ""  # низший этап по всем КБ проекта, отгруженные включены
-    # Менеджер решил «упаковывать» (карточка проекта в Отгрузке, 0162): без этого склад не упаковывает.
-    pack_decided: bool = False
+    # Упаковывать можно: лимит упаковки КБ (0169) ещё не выбран (`pack_permission_remaining` > 0).
+    pack_allowed: bool = False
     pack_permission_quantity: Decimal = ZERO
     pack_permission_remaining: Decimal = ZERO
     pack_permission_version: int = 0
@@ -154,8 +154,6 @@ class IntakeFacts:
     boxes: tuple[BoxFact, ...] = ()
     inspected: Collection[UUID] = frozenset()
     worked: Collection[UUID] = frozenset()
-    # Проекты (как записаны в карточке Отгрузки) с решением «упаковывать».
-    pack_decided: Collection[str] = frozenset()
     pack_permissions: Mapping[tuple[str, str], PackPermission] = field(default_factory=dict)
 
 
@@ -257,7 +255,7 @@ def intake_rows(facts: IntakeFacts) -> list[IntakeRow]:
                 needed=needed, launched=kb.run if kb else ZERO, delivered=kb.delivered if kb else ZERO,
                 accepted=good.accepted if good else ZERO, packed=good.shipped if good else ZERO, sent=sent,
                 good=good, tasks=kb.tasks if kb else (), project_stage=stage.status,
-                pack_decided=pack_remaining > 0,
+                pack_allowed=pack_remaining > 0,
                 pack_permission_quantity=permission.quantity if permission else consumed,
                 pack_permission_remaining=pack_remaining,
                 pack_permission_version=permission.version if permission else 0,

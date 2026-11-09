@@ -8,11 +8,11 @@ from collections.abc import Sequence
 from datetime import date, datetime
 from decimal import Decimal
 from hashlib import sha256
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import (
-    Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, Uuid, and_, func, or_,
-    select, text,
+    Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid,
+    and_, delete, func, or_, select, text,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
 
@@ -24,8 +24,8 @@ from app.shared.project_number import normalize_project_number
 from app.shared.advisory_lock import lock_key
 from .domain import (
     ADDRESSEE_PLAN_FIELDS, ADDRESSEE_REQUISITE_FIELDS, AcceptanceAct, BoxItem, DeliveryTerms, FinishedGood, GoodMove, GoodsState, MOVE_ROUTES, MoveContext,
-    MoveKind, PackPermission, ProjectAddressee, Shipment, ShipmentBox, ShipmentLine, ShipmentStatus, ShippingValidationError, StoredFile, UpdType,
-    acceptance_act, balance_moves, roll_back_acts,
+    LineLot, MoveKind, PackPermission, ProjectAddressee, Shipment, ShipmentBox, ShipmentLine, ShipmentStatus, ShippingValidationError, StoredFile,
+    UpdType, acceptance_act, balance_moves, roll_back_acts,
 )
 
 
@@ -254,6 +254,29 @@ class FinishedGoodsActRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ShipmentLineLotRow(Base):
+    """Партия строки отправки (0173): сколько штук строки взято из акта приёмки ГП. Σ штук строки = набрано
+    (`SqlAlchemyShipmentRepository.add` пишет их вместе со строкой, `app.db_integrity` сверяет); `act_id` пуст, только
+    когда у КБ нет актов (штуки под ГРН КБ). Возврат на склад и отмена удаляют партии — штуки снова свободны в своём акте."""
+
+    __tablename__ = "shipment_line_lots"
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="ck_shipment_line_lots_quantity"),
+        UniqueConstraint("line_id", "grn", name="uq_shipment_line_lots_line_grn"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    line_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("shipment_lines.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    act_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("finished_goods_acts.id", ondelete="RESTRICT"), nullable=True, index=True,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    grn: Mapped[str] = mapped_column(String(32), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+
+
 class ProjectAddresseeRow(Base):
     """Project card's shipping defaults; a shipment copies them at creation."""
 
@@ -434,8 +457,25 @@ class SqlAlchemyFinishedGoodsRepository:
 
 class SqlAlchemyShipmentRepository:
     def __init__(self, session: Session): self.session = session
+    def _lots(self, line_ids: list[UUID]) -> dict[UUID, tuple[LineLot, ...]]:
+        found: dict[UUID, list[LineLot]] = {}
+        if line_ids:
+            for lot in self.session.scalars(select(ShipmentLineLotRow).where(
+                ShipmentLineLotRow.line_id.in_(line_ids),
+            ).order_by(ShipmentLineLotRow.line_id, ShipmentLineLotRow.position)):
+                found.setdefault(lot.line_id, []).append(LineLot(lot.grn, Decimal(lot.quantity), lot.act_id))
+        return {line_id: tuple(items) for line_id, items in found.items()}
+    def taken_from_acts(self, act_ids) -> dict[UUID, Decimal]:
+        """Σ штук, взятых строками отправок из каждого акта (набрано, упаковано, уехало — пока строку не вернули)."""
+        ids = list(act_ids)
+        if not ids:
+            return {}
+        return {act_id: Decimal(total or 0) for act_id, total in self.session.execute(select(
+            ShipmentLineLotRow.act_id, func.sum(ShipmentLineLotRow.quantity),
+        ).where(ShipmentLineLotRow.act_id.in_(ids)).group_by(ShipmentLineLotRow.act_id))}
     def _domain(self, row: ShipmentRow) -> Shipment:
-        lines = self.session.scalars(select(ShipmentLineRow).where(ShipmentLineRow.shipment_id == row.id).order_by(ShipmentLineRow.position))
+        lines = list(self.session.scalars(select(ShipmentLineRow).where(ShipmentLineRow.shipment_id == row.id).order_by(ShipmentLineRow.position)))
+        lots = self._lots([line.id for line in lines])
         return Shipment(
             id=row.id, number=row.number, version=row.version, created_at=row.created_at,
             status=ShipmentStatus(row.status), customer=row.customer, receiver=row.receiver,
@@ -454,7 +494,7 @@ class SqlAlchemyShipmentRepository:
             lines=tuple(ShipmentLine(
                 id=line.id, finished_good_id=line.finished_good_id, project=line.project,
                 item_index=line.item_index, article=line.article, name=line.name,
-                requested=line.requested, picked=line.picked, unit=line.unit, grn=line.grn,
+                requested=line.requested, picked=line.picked, unit=line.unit, grn=line.grn, lots=lots.get(line.id, ()),
             ) for line in lines),
         )
     def get(self, shipment_id: UUID) -> Shipment | None:
@@ -535,13 +575,17 @@ class SqlAlchemyShipmentRepository:
         row.inherited_fields = ",".join(sorted(shipment.inherited))
         note_written_version(self.session, row)
         existing = {line.id: line for line in self.session.scalars(select(ShipmentLineRow).where(ShipmentLineRow.shipment_id == shipment.id))}
+        held = self._lots(list(existing))
         for position, line in enumerate(shipment.lines):
             stored = existing.pop(line.id, None)
             if stored is None:
                 stored = ShipmentLineRow(id=line.id, shipment_id=shipment.id); self.session.add(stored)
+            picked_before = Decimal(stored.picked) if stored.picked is not None else None
             stored.position = position
             for key in ("finished_good_id", "project", "item_index", "article", "name", "requested", "picked", "unit", "grn"):
                 setattr(stored, key, getattr(line, key))
+            if line.lots != held.get(line.id, ()) or picked_before != line.picked:
+                self._write_lots(line)
         boxes = {box.place: box for box in self.session.scalars(select(ShipmentBoxRow).where(ShipmentBoxRow.shipment_id == shipment.id))}
         for box in shipment.boxes:
             stored_box = boxes.pop(box.place, None)
@@ -554,6 +598,18 @@ class SqlAlchemyShipmentRepository:
             )
         for stale in boxes.values():
             self.session.delete(stale)
+    def _write_lots(self, line: ShipmentLine) -> None:
+        """Партии строки заново, когда они или набранное изменились: Σ штук партий должна равняться набранному."""
+        if sum((lot.quantity for lot in line.lots), Decimal("0")) != line.picked:
+            raise ShippingValidationError(
+                f"{line.item_index}: партии ГРН ({', '.join(line.grns) or 'нет'}) не сходятся с набранным"
+            )
+        self.session.flush()
+        self.session.execute(delete(ShipmentLineLotRow).where(ShipmentLineLotRow.line_id == line.id))
+        for position, lot in enumerate(line.lots):
+            self.session.add(ShipmentLineLotRow(
+                id=uuid4(), line_id=line.id, act_id=lot.act_id, position=position, grn=lot.grn, quantity=lot.quantity,
+            ))
 
 
 class PackPermissionRow(Base):

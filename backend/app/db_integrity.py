@@ -86,12 +86,16 @@ _COUNT_LABELS = {
     "fk_not_validated": "внешние ключи без проверки (NOT VALID)",
     "finished_goods_acts_mismatch":
         "КБ, где штуки актов приёмки ГП не равны ходам «принято» без отгруженного до ERP",
+    "shipment_line_lots_mismatch": "строки отправок, где штуки партий ГРН не равны набранному",
 }
 
 # Акты приёмки ГП (0128) сверяются с журналом ГП.
 GOODS = "finished_goods"
 GOOD_MOVES = "finished_goods_moves"
 GOOD_ACTS = "finished_goods_acts"
+# Партии строк отправок (0173): Σ штук партий строки = её набранному.
+SHIPMENT_LINES = "shipment_lines"
+LINE_LOTS = "shipment_line_lots"
 _SUM_LABELS = {
     "stock_total": "сумма остатков по партиям (ПРИХОД − СПИСАНО)",
     "reserved_total": "сумма РЕЗЕРВА по партиям",
@@ -219,6 +223,12 @@ def _invariants(connection: Connection, schema: _Schema) -> tuple[dict[str, int]
         due = f"({accepted} - g.{q('before_erp')})"
         counts["finished_goods_acts_mismatch"] = int(scalar(
             f"SELECT count(*) FROM {q(GOODS)} g WHERE abs({acts} - CASE WHEN {due} > 0 THEN {due} ELSE 0 END) > {_EPS}"
+        ))
+
+    if schema.has(SHIPMENT_LINES, "id", "picked") and schema.has(LINE_LOTS, "line_id", "quantity"):
+        lots = f"COALESCE((SELECT sum(p.{q('quantity')}) FROM {q(LINE_LOTS)} p WHERE p.{q('line_id')} = l.{q('id')}), 0)"
+        counts["shipment_line_lots_mismatch"] = int(scalar(
+            f"SELECT count(*) FROM {q(SHIPMENT_LINES)} l WHERE abs(l.{q('picked')} - {lots}) > {_EPS}"
         ))
 
     orphans = _foreign_key_orphans(connection, schema)
