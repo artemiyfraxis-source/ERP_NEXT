@@ -16,6 +16,7 @@ from sqlalchemy.schema import CreateSchema, DropSchema
 from app.modules.production.resource_claims import ResourceConflict, ResourceKey, ResourceKind, ResourceOwner, ResourceWindow
 from app.modules.production.resource_infrastructure import ActiveResourceRow, ResourceGenerationRow, ResourceReservationRow, SqlAlchemyResourceClaims
 from app.modules.references.infrastructure import EquipmentModelRow, TechOperationRecordRow
+from app.modules.techcards.infrastructure import RefreshRequestRow
 
 UNIT, MODEL = uuid4(), uuid4()  # the БД.ОБ unit a machine claim names by FK (0172)
 
@@ -40,7 +41,8 @@ def engine():
         with admin.begin() as connection:
             connection.execute(CreateSchema(schema))
         created = True
-        for row in (EquipmentModelRow, TechOperationRecordRow, ResourceGenerationRow, ResourceReservationRow, ActiveResourceRow):
+        # A БД.ОБ write queues an ETK check (etk_refresh, before_flush) — its queue table must exist too.
+        for row in (RefreshRequestRow, EquipmentModelRow, TechOperationRecordRow, ResourceGenerationRow, ResourceReservationRow, ActiveResourceRow):
             row.__table__.create(result)
         with Session(result) as session:
             session.add(ResourceGenerationRow(id=1, version=0))
