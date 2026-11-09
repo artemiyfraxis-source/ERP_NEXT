@@ -21,7 +21,7 @@ export function ShipWindow({ project, shipments, rights, reload, close }: {
     <section className="panel intake-window intake-ship">
       <header className="page-head"><h2>Отгрузка · {project}</h2><button type="button" className="secondary small" onClick={close}>Закрыть</button></header>
       <Banners error={error} notice={notice} />
-      {dataShipment && <ShipmentDataWindow key={dataShipment.id} shipment={dataShipment} close={() => setDataFor(null)} onSaved={reload} />}
+      {dataShipment && <ShipmentDataWindow key={dataShipment.id} shipment={dataShipment} canEdit={rights.canManage} close={() => setDataFor(null)} onSaved={reload} />}
       {sorted.length === 0 && <div className="empty">Отправок по проекту нет — сначала упакуйте принятое.</div>}
       {sorted.map((shipment) => <ShipmentCard key={`${shipment.id}:${shipment.version}`} shipment={shipment} rights={rights} busy={busy} mutate={mutate} openData={() => setDataFor(shipment.id)} />)}
     </section>

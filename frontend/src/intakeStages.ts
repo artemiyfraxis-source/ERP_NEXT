@@ -26,6 +26,8 @@ export const packable = (row: IntakeRow) => round2(Math.max(num(row.accepted) - 
 /** Упаковывать можно после решения менеджера «упаковывать» (владелец 29.10). */
 export const permittedPack = (row: IntakeRow) => Math.min(packable(row), Math.max(0, num(row.pack_permission_remaining)));
 export const canPack = (row: IntakeRow) => permittedPack(row) > 0;
+/** Решение «упаковывать» по КБ: новое имя поля `pack_allowed`, старое — `pack_decided`. */
+export const packAllowed = (row: IntakeRow) => Boolean(row.pack_allowed ?? row.pack_decided);
 
 export type Pieces = Record<DispatchStage, number>;
 const zero = (): Pieces => ({ waiting: 0, production: 0, ready: 0, accepted: 0, packed: 0, to_ship: 0, shipped: 0 });
@@ -57,31 +59,9 @@ export function stagePieces(row: IntakeRow, shipments: DispatchShipment[]): Piec
   return pieces;
 }
 
-/** КБ, которые уехали целиком (сервер их из приёмки убрал), — строкой из отправок за последние `SHIPPED_DAYS` дней. */
-export function shippedOnlyRows(rows: IntakeRow[], shipments: DispatchShipment[], now = new Date()): IntakeRow[] {
-  const since = new Date(now); since.setDate(since.getDate() - SHIPPED_DAYS);
-  const from = since.toISOString().slice(0, 10);
-  const known = new Set(rows.map(kbKey));
-  const extra = new Map<string, IntakeRow>();
-  for (const shipment of shipments) {
-    if (!SHIPPED.includes(shipment.status) || String(shipment.shipped_at ?? "") < from) continue;
-    for (const line of shipment.lines) {
-      const key = kbKey(line);
-      if (known.has(key) || !(num(line.picked) > 0)) continue;
-      const row = extra.get(key) ?? {
-        project: line.project, customer: shipment.customer, deadline: null, item_index: line.item_index, name: line.name, unit: line.unit,
-        stage: "Отгружено", project_stage: "Отгружено", pack_decided: false, needed: "0", launched: "0", delivered: "0", accepted: "0",
-        packed: "0", sent: "0", remaining: "0", good_id: null, good_version: null, grn: line.grn ?? null, location: "", tasks: [], acts: [],
-      };
-      const add = (field: "needed" | "accepted" | "packed" | "sent", value: string) => String(round2(num(row[field]) + num(value)));
-      extra.set(key, { ...row, needed: add("needed", line.requested), accepted: add("accepted", line.picked), packed: add("packed", line.picked), sent: add("sent", line.picked) });
-    }
-  }
-  return [...extra.values()];
-}
-
 export type Tab = DispatchStage | "all";
 
+/** Подпись счётчиков — осталась только у «Данных отправок» (на «Приёмке с производства» убрана 06.11). */
 export const COUNTER_SCOPE = "Счётчики: КБ · Отгружено за 30 дней · Все — включая загруженную историю";
 
 export function recentShipment(shipment: DispatchShipment, now = new Date()): boolean {
@@ -99,7 +79,7 @@ export function dispatchBoard(intake: IntakeRow[] = [], shipments: DispatchShipm
     if (known.has(key)) continue;
     const row = rowsByKey.get(key) ?? {
       project: line.project, item_index: line.item_index, name: line.name, unit: line.unit, customer: shipment.customer,
-      deadline: null, stage: "Принято складом", project_stage: "Принято складом", pack_decided: false,
+      deadline: null, stage: "Принято складом", project_stage: "Принято складом", pack_allowed: false,
       needed: "0", launched: "0", delivered: "0", accepted: "0", packed: "0", sent: "0", remaining: "0",
       good_id: null, good_version: null, grn: line.grn ?? null, location: "", tasks: [], acts: [],
     };
@@ -124,12 +104,22 @@ export function dispatchBoard(intake: IntakeRow[] = [], shipments: DispatchShipm
   return { rows, pieces, counts, inTab };
 }
 
-/** Есть ли у кладовщика работа в шаге: принять, упаковать (после решения), вписать трек, отгрузить. */
+/** Есть ли у кладовщика работа в шаге: принять готовое, упаковать (с разрешением), вписать трек, отгрузить.
+ *  Принять досрочно из «В производстве» можно (владелец 29.10: предупреждать, не запрещать), но это не работа по умолчанию. */
 export function hasWork(tab: DispatchStage, row: IntakeRow, pieces: Pieces): boolean {
   if (tab === "ready") return pieces.ready > 0;
-  // В ожидании и в производстве принимать есть что, когда можно принять больше, чем сдал цех («всё, что в работе», 28.10).
-  if (tab === "waiting" || tab === "production") return pieces[tab] > 0 && num(row.remaining) > pieces.ready;
+  if (tab === "production") return pieces.production > 0 && num(row.remaining) > pieces.ready;
   if (tab === "accepted") return canPack(row);
   if (tab === "packed" || tab === "to_ship") return pieces[tab] > 0;
   return false;
+}
+
+/** Вкладка по умолчанию: первая, где у кладовщика есть настоящее действие (Готово → Принято → Упаковано → На отгрузку);
+ *  без него — первая непустая, «В ожидании» — последней; пусто везде — «Все». */
+export const WORK_ORDER: DispatchStage[] = ["ready", "accepted", "packed", "to_ship"];
+const SHOW_ORDER: DispatchStage[] = [...WORK_ORDER, "production", "shipped", "waiting"];
+export function defaultTab(rows: IntakeRow[], pieces: (row: IntakeRow) => Pieces, warehouse: boolean): Tab {
+  if (warehouse) for (const stage of WORK_ORDER) if (rows.some((row) => hasWork(stage, row, pieces(row)))) return stage;
+  for (const stage of SHOW_ORDER) if (rows.some((row) => pieces(row)[stage] > 0)) return stage;
+  return "all";
 }

@@ -283,9 +283,16 @@ def test_project_dispatch_gaps_require_address_only_for_delivery(terms, carrier,
     from app.modules.shipping.domain import ProjectAddressee
 
     card = ProjectAddressee(project="591К.3", receiver="Получатель", phone="1", terms=terms,
-                            carrier=carrier, upd_type=UpdType.EDO)
+                            carrier=carrier, upd_type=UpdType.EDO, upd_number="УПД-1")
 
-    assert card.dispatch_gaps() == (("адрес доставки",) if address_required else ())
+    assert ("адрес доставки" in card.dispatch_gaps()) is address_required
+    # Те же правила у отправки с теми же данными (одна функция правил, 06.11.2026).
+    made = Shipment.create(
+        number="ОТГ-1", created_at=datetime(2026, 11, 6, 9), customer="", receiver="Получатель", shipping_point="",
+        contact="", phone="1", terms=terms, carrier=carrier, upd_type=UpdType.EDO, deadline=None, upd_number="УПД-1",
+        upd_date=None, upd_url="", manager="М", note="", lines=(ShipmentLine.create(good(), Decimal("1")),),
+    )
+    assert shipping_gaps(made, with_track=False) == card.dispatch_gaps()
 
 
 def test_effective_address_own_non_empty_wins_and_empty_inherits_project_card():

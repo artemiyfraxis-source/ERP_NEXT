@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { failureText, shippingApi, type Principal, type ProjectAddressee, type ProjectForecast, type Shipment } from "./api";
+import { failureText, shippingApi, type Principal, type ProjectAddressee, type ProjectForecast, type Shipment, type UpdType } from "./api";
 import "./shipping.css";
 import { loadPersonalViews, savePersonalView } from "./personalViews";
 import { intakeApi, type IntakeRow } from "./productionIntakeApi";
@@ -14,7 +14,7 @@ import { openShippingForms } from "./shippingPrint";
 import { DISPATCH_STAGES, stageLabel, type DispatchStage } from "./dispatchStage";
 import { DispatchCard } from "./DispatchCard";
 import { canAct, hasFullAccess } from "./navigation";
-import { COUNTER_SCOPE, dispatchBoard, kbKey, num, recentShipment, type Tab } from "./intakeStages";
+import { dispatchBoard, kbKey, num, recentShipment, type Tab } from "./intakeStages";
 import { dataRows, type DataRow } from "./dispatchPositionRows";
 export { dataRows, type DataRow } from "./dispatchPositionRows";
 
@@ -55,8 +55,23 @@ export function updText(shipment: Shipment): string {
   return [...parts, shipment.upd_url ? "файл" : "без файла"].join(" · ");
 }
 
+/** УПД до «Готово» не требуется (владелец 29.10): на ранних этапах слова сервера про УПД не считаются «не хватает». */
+const EARLY: Array<DispatchStage | null> = ["waiting", "production"];
+export function stageGaps(stage: DispatchStage | null, gaps: string[] | undefined): string[] | undefined {
+  return gaps && EARLY.includes(stage) ? gaps.filter((gap) => !/упд/i.test(gap)) : gaps;
+}
+
+/** ГРН партий строки: несколько партий — через запятую (`grns` сервера, иначе одна `grn`; у остатка — партии актов приёмки). */
+export function grnText(row: DataRow, source?: IntakeRow): string {
+  const line = row.shipment?.lines.find((item) => `${row.shipment!.id}:${item.id}` === row.id) as ({ grns?: string[] | null } & Shipment["lines"][number]) | undefined;
+  const list = line?.grns?.length ? line.grns : line?.grn ? [line.grn] : row.shipment ? [] : [...new Set((source?.acts ?? []).map((act) => act.grn).filter(Boolean))];
+  return list.length ? list.join(", ") : row.grn;
+}
+
+type UpdSource = { upd_type: UpdType | string | null; upd_number?: string | null; upd_url?: string | null };
+
 /** `link` — файл ссылкой; в карточке-кнопке ссылки нет (кнопка внутри кнопки), файл откроется в окне отправки. */
-function UpdCell({ shipment, link = true }: { shipment: Shipment | null; link?: boolean }) {
+function UpdCell({ shipment, link = true }: { shipment: UpdSource | null | undefined; link?: boolean }) {
   if (!shipment) return <span className="muted">—</span>;
   if (shipment.upd_type === "БЕЗ УПД") return <span className="muted">Без УПД</span>;
   const type = updLabel(shipment.upd_type);
@@ -114,13 +129,13 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
   const documentCell = (shipment: Shipment | null, document: "pl" | "dn") => {
     const number = document === "pl" ? shipment?.pl_number : shipment?.dn_number;
     const label = document === "pl" ? "Упаковочный лист" : "Отгрузочная ведомость";
-    if (!shipment) return <span className="muted">Нет отправки</span>;
+    if (!shipment) return <span className="muted">—</span>;
     if (!number) return <span className="muted">Не оформлен{document === "dn" ? "а" : ""}</span>;
     const blocked = document === "dn" && ACTIVE.includes(shipment.status) && shipment.missing_data.length > 0;
-    return <span className="ship-position-document" title={blocked ? `Не хватает: ${shipment.missing_data.join(", ")}` : number}>
+    return <span className="ship-position-document" title={blocked ? `Не хватает: ${shipment.missing_data.join(", ")}` : `${label} ${number}`}>
       {canPrint ? <button type="button" className="link-button ship-pl" disabled={blocked}
-        aria-label={`Печать ${document === "pl" ? "PL" : "DN"} ${number}`} onClick={(event) => { event.stopPropagation(); void printDocument(shipment, document); }}>{label}</button>
-        : <span className="muted">{label}</span>}
+        aria-label={`Печать ${document === "pl" ? "PL" : "DN"} ${number}`} onClick={(event) => { event.stopPropagation(); void printDocument(shipment, document); }}>{number}</button>
+        : <span className="muted">{number}</span>}
       {blocked && <span className="muted">Не хватает данных</span>}
     </span>;
   };
@@ -149,7 +164,9 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
 
   const allRows = useMemo(() => dataRows(shipments, intake), [shipments, intake]);
   const board = useMemo(() => dispatchBoard(intake, shipments), [intake, shipments]);
-  const gapsOf = (row: DataRow) => row.shipment ? dataGaps(row.shipment) : cards?.[row.project]?.dispatch_gaps;
+  const gapsOf = (row: DataRow) => row.shipment ? dataGaps(row.shipment) : stageGaps(row.stage, cards?.[row.project]?.dispatch_gaps);
+  const intakeByKb = useMemo(() => new Map((intake ?? []).map((item) => [kbKey(item), item])), [intake]);
+  const sourceOf = (row: DataRow) => intakeByKb.get(kbKey(row));
   const rows = allRows.filter((row) => (tab === "all" || (row.stage === tab && board.inTab(row, tab) && (tab !== "shipped" || Boolean(row.shipment && recentShipment(row.shipment))))) && (!onlyGaps || (row.shipment ? dataGaps(row.shipment).length > 0
     : gapsOf(row) === undefined || Boolean(gapsOf(row)?.length) || (deciding(row) && !intake.some((item) => kbKey(item) === kbKey(row) && num(item.pack_permission_remaining) > 0)))));
   const current = open?.id.startsWith("project:") ? null : shipments.find((shipment) => shipment.id === open?.id) ?? null;
@@ -161,17 +178,13 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     if (!row.shipment) {
       const gaps = gapsOf(row);
       return <span className={gaps === undefined ? "muted" : gaps.length ? "tone-warn" : "muted"}>
-        {gaps === undefined ? "Данные проекта не загружены" : gaps.length ? `Не заполнено: ${gaps.join(", ")}` : "Данные получателя и УПД заполнены"}</span>;
+        {gaps === undefined ? "Данные проекта не загружены" : gaps.length ? `Не заполнено: ${gaps.join(", ")}` : EARLY.includes(row.stage) ? "Адрес, получатель и телефон заполнены" : "Данные получателя и УПД заполнены"}</span>;
     }
     return ACTIVE.includes(row.shipment.status) ? <Readiness source={row.shipment} gaps={dataGaps(row.shipment)} />
       : <span className="muted">{SENT.includes(row.shipment.status) ? sentNote(row.shipment) || "—" : "—"}</span>;
   };
   const forecastOf = (row: DataRow) => readiness(projectNames(row), forecasts, row.shipment?.deadline ?? null, row.shipment?.status ?? "Новая");
-  const dueCell = (row: DataRow) => <>
-    {row.shipment && <span className="muted ship-due">{formatDate(row.shipment.deadline) || "—"}</span>}
-    <ReadyForecast forecast={forecastOf(row)} />
-  </>;
-  const card = (row: DataRow) => <div className="data-card">
+    const card = (row: DataRow) => <div className="data-card">
     <button type="button" className="data-card-main" onClick={() => openRow(row)} aria-label={`Открыть: ${row.shipment?.number ?? row.project}`}>
     <span className="data-card-head">
       {projectCell(row)}
@@ -184,26 +197,53 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     <span className="data-card-upd">{documentCell(row.shipment, "pl")}{documentCell(row.shipment, "dn")}</span>
     {row.shipment && <span className="data-card-upd"><span className="muted">УПД</span><UpdCell shipment={row.shipment} /></span>}
   </div>;
-  const columns: DataColumn<DataRow>[] = [
-    { key: "project", title: "Проект", value: (row) => row.project, hidden: true },
-    { key: "kb", title: "КБ", value: (row) => row.item_index, width: 56, maxWidth: 72 },
-    { key: "name", title: "Наименование", value: (row) => row.name, grow: true, minWidth: 160, wrap: true,
+  const qty = (row: DataRow) => row.quantity > 0 || row.shipment ? `${formatNumber(row.quantity)}${NBSP}${row.unit}` : "—";
+  const deadlineOf = (row: DataRow) => row.shipment?.deadline ?? sourceOf(row)?.deadline ?? "";
+  const stateCell = (row: DataRow) => <span className="ship-position-shipment"><span>{row.shipment?.status ?? "Не создана"}</span>{row.shipment && <span className="muted ship-sub">{row.shipment.number}</span>}</span>;
+  const ALL: Record<string, DataColumn<DataRow>> = {
+    project: { key: "project", title: "Проект", value: (row) => row.project, hidden: true },
+    kb: { key: "kb", title: "КБ", value: (row) => row.item_index, width: 56, maxWidth: 72 },
+    name: { key: "name", title: "Наименование", value: (row) => row.name, grow: true, minWidth: 160, wrap: true,
       render: (row) => <span className="ship-position-name" title={row.name}>{row.name}</span> },
-    { key: "quantity", title: "Количество", value: (row) => row.quantity, numeric: true, width: 88, render: (row) => row.quantity > 0 || row.shipment ? `${formatNumber(row.quantity)}${NBSP}${row.unit}` : "—" },
-    { key: "status", title: "Этап позиции", value: (row) => rowStageLabel(row), filter: true, width: 112,
+    quantity: { key: "quantity", title: "Количество", value: (row) => row.quantity, numeric: true, width: 88, render: qty },
+    ordered: { key: "ordered", title: "Заказано", value: (row) => num(sourceOf(row)?.needed) || row.quantity, numeric: true, width: 88,
+      render: (row) => `${formatNumber(num(sourceOf(row)?.needed) || row.quantity)}${NBSP}${row.unit}` },
+    launched: { key: "launched", title: "Запущено", value: (row) => num(sourceOf(row)?.launched), numeric: true, width: 88,
+      render: (row) => `${formatNumber(num(sourceOf(row)?.launched))}${NBSP}${row.unit}` },
+    rest: { key: "rest", title: "Остаток", hint: "Ещё не принято склада", value: (row) => num(sourceOf(row)?.remaining), numeric: true, width: 88,
+      render: (row) => `${formatNumber(num(sourceOf(row)?.remaining))}${NBSP}${row.unit}` },
+    term: { key: "term", title: "Срок", value: deadlineOf, width: 112, wrap: true,
+      render: (row) => <><span className="muted ship-due">{formatDate(deadlineOf(row)) || "—"}</span><ReadyForecast forecast={readiness(projectNames(row), forecasts, deadlineOf(row) || null, row.shipment?.status ?? "Новая")} /></> },
+    status: { key: "status", title: "Этап позиции", value: (row) => rowStageLabel(row), filter: true, width: 112,
       render: (row) => <span title={row.ownStage}><StatusChip tone={row.stage ? STAGE_TONE[row.stage] : "neutral"}>{rowStageLabel(row)}</StatusChip></span> },
-    { key: "grn", title: "ГРН", value: (row) => row.grn, width: 128, render: (row) => <span className="ship-position-grn">{row.grn || "—"}</span> },
-    { key: "shipmentStatus", title: "Статус отправки", value: (row) => row.shipment?.status ?? "Не создана", width: 130, wrap: true, maxWidth: 160,
-      render: (row) => <span className="ship-position-shipment"><span>{row.shipment?.status ?? "Не создана"}</span>{row.shipment && <span className="muted ship-sub">{row.shipment.number}</span>}</span> },
-    { key: "shippedAt", title: "Дата отгрузки", value: (row) => row.shipment?.shipped_at ?? "", width: 104, render: (row) => formatDate(row.shipment?.shipped_at) || "—" },
-    { key: "pl", title: "PL", hint: "Упаковочный лист", value: (row) => row.shipment?.pl_number ?? "", width: 108, wrap: true, maxWidth: 132, render: (row) => documentCell(row.shipment, "pl") },
-    { key: "dn", title: "DN", hint: "Отгрузочная ведомость", value: (row) => row.shipment?.dn_number ?? "", width: 112, wrap: true, maxWidth: 132, render: (row) => documentCell(row.shipment, "dn") },
-    { key: "upd", title: "УПД", value: (row) => row.shipment ? updText(row.shipment) : "", filter: true, width: 96, wrap: true, maxWidth: 120, render: (row) => <UpdCell shipment={row.shipment} /> },
-    { key: "customer", title: "Заказчик", value: (row) => row.customer, filter: true, hidden: true },
-    { key: "gaps", title: "Данные", value: (row) => gapsOf(row)?.join(", ") || (row.shipment ? sentNote(row.shipment) : ""), hint: "Что внесено и чего не хватает; итог считает сервер", wrap: true, maxWidth: 520,
+    grn: { key: "grn", title: "ГРН партии", value: (row) => grnText(row, sourceOf(row)), width: 128, wrap: true, maxWidth: 200,
+      render: (row) => <span className="ship-position-grn">{grnText(row, sourceOf(row)) || "—"}</span> },
+    shipmentStatus: { key: "shipmentStatus", title: "Статус отправки", value: (row) => row.shipment?.status ?? "Не создана", width: 130, wrap: true, maxWidth: 160, render: stateCell },
+    carrier: { key: "carrier", title: "ТК", hint: "Транспортная компания", value: (row) => row.shipment?.carrier ?? "", width: 96, wrap: true, maxWidth: 140,
+      render: (row) => row.shipment?.carrier || "—" },
+    track: { key: "track", title: "Трек", hint: "Трек-номер ТК", value: (row) => row.shipment?.track_number ?? "", width: 120, wrap: true, maxWidth: 160,
+      render: (row) => row.shipment?.track_number || "—" },
+    shippedAt: { key: "shippedAt", title: "Дата отгрузки", value: (row) => row.shipment?.shipped_at ?? "", width: 104, render: (row) => formatDate(row.shipment?.shipped_at) || "—" },
+    pl: { key: "pl", title: "PL", hint: "Упаковочный лист", value: (row) => row.shipment?.pl_number ?? "", width: 108, wrap: true, maxWidth: 132, render: (row) => documentCell(row.shipment, "pl") },
+    dn: { key: "dn", title: "DN", hint: "Отгрузочная ведомость", value: (row) => row.shipment?.dn_number ?? "", width: 112, wrap: true, maxWidth: 132, render: (row) => documentCell(row.shipment, "dn") },
+    upd: { key: "upd", title: "УПД", value: (row) => row.shipment ? updText(row.shipment) : "", filter: true, width: 96, wrap: true, maxWidth: 120,
+      render: (row) => <UpdCell shipment={row.shipment ?? cards?.[row.project]} /> },
+    customer: { key: "customer", title: "Заказчик", value: (row) => row.customer, filter: true, hidden: true },
+    gaps: { key: "gaps", title: "Данные", value: (row) => gapsOf(row)?.join(", ") || (row.shipment ? sentNote(row.shipment) : ""), hint: "Что внесено и чего не хватает; итог считает сервер", wrap: true, maxWidth: 520,
       hidden: true, render: dataCell },
-    { key: "deadline", title: "Плановая дата", hidden: true, value: (row) => row.shipment?.deadline ?? "", render: dueCell },
-  ];
+  };
+  // Столбцы по этапу, как на «Приёмке с производства»; «Все» — полный набор, там же «Этап позиции».
+  const COLUMNS: Record<Tab, string[]> = {
+    waiting: ["kb", "name", "ordered", "term"],
+    production: ["kb", "name", "ordered", "launched", "rest", "term"],
+    ready: ["kb", "name", "quantity", "grn", "upd", "shipmentStatus"],
+    accepted: ["kb", "name", "quantity", "grn", "upd", "shipmentStatus"],
+    packed: ["kb", "name", "quantity", "grn", "shipmentStatus", "carrier", "track", "pl", "dn", "upd"],
+    to_ship: ["kb", "name", "quantity", "grn", "shipmentStatus", "carrier", "track", "pl", "dn", "upd"],
+    shipped: ["kb", "name", "quantity", "grn", "shipmentStatus", "shippedAt", "carrier", "track", "pl", "dn", "upd"],
+    all: ["kb", "name", "quantity", "status", "grn", "shipmentStatus", "shippedAt", "pl", "dn", "upd", "term"],
+  };
+  const columns = ["project", ...COLUMNS[tab], "customer", "gaps"].map((key) => ALL[key]);
   const groupLabel = (name: string, groupRows: DataRow[]) => {
     const source = groupRows.find(deciding) ?? groupRows.find((row) => !row.shipment) ?? groupRows[0];
     const decision = groupRows.find(deciding);
@@ -224,8 +264,8 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     {!loaded ? <div className="empty">Загрузка…</div>
       : <><div className="seg-tabs" role="group" aria-label="Быстрый отбор">{[...DISPATCH_STAGES, ["all", "Все"] as const].map(([key, text]) =>
         <button type="button" key={key} className={tab === key ? "on" : undefined} aria-pressed={tab === key} onClick={() => setTab(key)}>{text} · {board.counts[key]}</button>)}</div>
-      <p className="muted" title="Части одной КБ могут находиться на разных этапах; во «Все» КБ считается один раз. Поиск и фильтры таблицы не меняют счётчики.">{COUNTER_SCOPE}{shipments.length >= 200 ? " · Загружены последние 200 отправок" : ""}</p>
-      <DataTable label="Данные отправок" storageKey={STORAGE_KEY} rows={rows} columns={columns} rowKey={(row) => row.id}
+      {shipments.length >= 200 && <p className="muted">Загружены последние 200 отправок</p>}
+      <DataTable key={tab} label="Данные отправок" storageKey={`${STORAGE_KEY}:${tab}`} rows={rows} columns={columns} rowKey={(row) => row.id}
         groupBy={(row) => row.project} groupLabel={groupLabel} groupCards
         onRowClick={openRow} exportName="Данные отправок" searchPlaceholder="Проект, КБ, наименование, ГРН или № отправки"
         searchText={(row) => [row.shipment?.number, row.name, row.grn, row.item_index]}

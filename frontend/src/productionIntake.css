@@ -42,11 +42,16 @@
 .intake-grn-link { font: inherit; padding: 0; }
 .intake-grn-link:focus-visible, .intake-doc-action:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .intake-print { padding: 1px 8px; line-height: 1.4; }
+/* «Принять досрочно» — штуки ещё в производстве: предупреждение, а не запрет (владелец 29.10). */
+.intake-early { padding: 1px 8px; line-height: 1.4; border-color: var(--tone-warn); color: var(--tone-warn); white-space: nowrap; }
+.intake-early:focus-visible, .intake-grn-print:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.intake-grn-line { display: inline-flex; align-items: center; gap: 8px; line-height: 1.4; }
+.intake-grn-print { font: inherit; font-size: 12px; line-height: 1.4; padding: 0; min-height: 0; }
 .intake-window .intake-window-table td { vertical-align: top; }
 .intake-window .ship-row-error { display: block; white-space: normal; }
 .intake-window-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 12px; }
 @media (pointer: coarse) {
-  .intake-take-btn, .intake-print { min-height: 40px; }
+  .intake-take-btn, .intake-print, .intake-early, .intake-grn-print { min-height: 40px; }
   .intake-window input { min-height: 40px; }
 }
 .intake-window .intake-name { max-width: 240px; }

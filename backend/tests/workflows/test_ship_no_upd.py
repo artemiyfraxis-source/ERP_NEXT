@@ -144,10 +144,12 @@ def test_right_pin_lets_the_shipment_go_without_a_upd(env):
     shipped = client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": body["version"]})
 
     assert shipment["missing_ship"] == ["разрешение на отгрузку без УПД"] and shipment["ready_to_ship"] is False
+    assert (shipment["missing_ship_codes"], shipment["no_upd_offered"]) == (["no_upd_approval"], True)
     assert refused.status_code == 422
     assert approved.status_code == 200, approved.text
     assert (body["no_upd_approved_by"], body["no_upd_approved_at"]) == ("Зингер", "2026-10-29T10:00:00")
     assert (body["missing_ship"], body["ready_to_ship"]) == ([], True)
+    assert (body["missing_ship_codes"], body["no_upd_offered"]) == ([], False)
     assert shipped.status_code == 200, shipped.text
     # Уехала без УПД — «Отгружена», не «Закрыта», пока УПД не внесут.
     assert (shipped.json()["shipment"]["status"], shipped.json()["closed"]) == ("Отгружена", False)

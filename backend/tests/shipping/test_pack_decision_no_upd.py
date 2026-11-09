@@ -119,6 +119,45 @@ def test_ready_flags_follow_the_track_and_the_permit():
     assert tracked.mark_shipped(DAY).ready_to_ship is False
 
 
+def test_edo_without_number_is_a_number_gap_and_no_upd_is_not_offered():
+    """Владелец 06.11.2026: ЭДО без № — не хватает № (вписать), а не УПД; «Без УПД…» — только когда УПД нет."""
+    from app.modules.shipping.domain import no_upd_offered, shipping_gap_codes
+    edo = _packed(UpdType.EDO, terms=DeliveryTerms.PICKUP, upd_number="")
+    paper_with_file = replace(_packed(UpdType.PAPER, terms=DeliveryTerms.PICKUP, upd_number=" - "), upd_url="/api/shipping/files/1")
+
+    assert shipping_gap_codes(edo) == ("upd_number",) and edo.ready_to_ship is False
+    assert no_upd_offered(edo) is False and no_upd_offered(paper_with_file) is False
+    with pytest.raises(ShippingValidationError, match="не хватает только его № — впишите № УПД"):
+        edo.approve_no_upd("Зингер", NOW)
+    with pytest.raises(ShippingValidationError, match="разрешение «без УПД» не нужно"):
+        _packed(UpdType.EDO, terms=DeliveryTerms.PICKUP).approve_no_upd("Зингер", NOW)
+
+
+@pytest.mark.parametrize("upd_type, own, code", [
+    (None, {}, "upd_type"),
+    (UpdType.NONE, {}, "no_upd_approval"),
+    (UpdType.PAPER, {}, "upd_file"),
+])
+def test_absent_upd_is_offered_no_upd_approval(upd_type, own, code):
+    from app.modules.shipping.domain import no_upd_offered, shipping_gap_codes
+    packed = _packed(upd_type, terms=DeliveryTerms.PICKUP, **own)
+
+    assert code in shipping_gap_codes(packed) and no_upd_offered(packed) is True
+    approved = packed.approve_no_upd("Зингер", NOW)
+    assert shipping_gap_codes(approved) == () and no_upd_offered(approved) is False
+
+
+@pytest.mark.parametrize("blank", ["-", "—", "  ", " – "])
+def test_dash_counts_as_empty_on_a_shipment(blank):
+    from app.modules.shipping.domain import shipping_gaps
+    packed = replace(_packed(), receiver=blank, phone=blank, carrier=blank, shipping_point=blank, upd_number=blank)
+
+    assert shipping_gaps(packed, with_track=False) == ("получатель", "телефон получателя", "перевозчик", "адрес доставки", "№ УПД")
+    assert shipping_gaps(replace(packed, track_number=blank))[-1] == "трек-номер"
+    with pytest.raises(ShippingValidationError, match="№ УПД"):
+        replace(packed, status=ShipmentStatus.SHIPPED, shipped_at=DAY, upd_url="/api/shipping/files/1").close()
+
+
 def test_the_permit_is_for_one_shipment_and_a_rollback_clears_it():
     approved = _packed(UpdType.NONE, terms=DeliveryTerms.PICKUP).approve_no_upd("Касаточкин", NOW)
     with pytest.raises(ShippingValidationError, match="уже разрешил Касаточкин"):
@@ -134,16 +173,14 @@ def test_the_permit_is_for_one_shipment_and_a_rollback_clears_it():
     assert (back.no_upd_approved_by, back.no_upd_approved_at, back.ready_to_ship) == ("", None, False)
 
 
-def test_card_pack_decision_and_upd_fields():
+def test_card_upd_fields_and_legacy_pack_flag_is_history_only():
     card = ProjectAddressee.empty(PROJECT)
-    decided = card.decide_pack(True, "Ульяна", NOW)
-    numbered = decided.edit({"upd_number": " 125 ", "upd_date": "2026-10-29"})
+    numbered = card.edit({"upd_number": " 125 ", "upd_date": "2026-10-29"})
 
-    assert (decided.pack_decided, decided.pack_decided_by, decided.pack_decided_at) == (True, "Ульяна", NOW)
-    assert decided.decide_pack(True, "Другой", NOW) is decided
-    assert card.decide_pack(False, "Ульяна", NOW) is card
-    assert decided.decide_pack(False, "Ульяна", NOW).pack_decided_by == ""
-    assert (numbered.upd_number, numbered.upd_date) == ("125", date(2026, 10, 29)) and numbered.differs(decided)
+    # Флаг 0162 только читается из старых строк; ставить его больше нечем (лимиты упаковки по КБ, 0169).
+    assert not hasattr(card, "decide_pack") and card.pack_decided is False
+    assert ProjectAddressee(project=PROJECT, pack_decided_by="Ульяна", pack_decided_at=NOW).pack_decided is True
+    assert (numbered.upd_number, numbered.upd_date) == ("125", date(2026, 10, 29)) and numbered.differs(card)
     with pytest.raises(ShippingValidationError, match="Дата УПД"):
         card.edit({"upd_date": "29.10.2026"})
 
@@ -224,7 +261,7 @@ def test_decision_can_be_withdrawn_before_anything_is_picked_and_then_picking_st
     _as(STOREKEEPER)
     pick = client.post(f"/api/shipping/shipments/{made['id']}/pick", json={"version": made["version"]})
 
-    # Shipment creation never grants permission; the explicit unused cap can be withdrawn.
+    # The request fits the explicit cap, so it raises nothing; the explicit unused cap can be withdrawn.
     assert made["status"] == "Новая" and card["pack_decided"] is False
     assert withdrawn.status_code == 200 and withdrawn.json()["permissions"][0]["quantity"] == "0"
     assert pick.status_code == 422 and "разреш" in pick.json()["detail"]
