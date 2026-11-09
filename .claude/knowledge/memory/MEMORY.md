@@ -33,8 +33,11 @@
 - [Coax pin type](coax-pin-type.md) — angled = «пайка внутри корпуса», never crimp; 2.92/3.5 = «цанга»; seller «обжимной» is the shield, not the pin
 - [Coax VSWR acceptance](coax-vswr-acceptance.md) — owner 22.10: assembly VSWR judged by the limit its connectors allow (Γ1+Γ2), not a generic ≤1,3
 - [Sparse columns are junk](sparse-columns-are-junk.md) — owner 23.10: a БД column filled ≤ ~5 % is removed (or moved out); fixed group order of columns
+- [Reference lists, one look](reference-lists-one-look.md) — owner 25.10: every «База данных» tab = one layout (blocks per group like «Оболочки», size→name order)
+- [Cable standard by type](cable-standard-by-type.md) — owner 25.10: cable «Стандарт» = general construction standard of its type (MIL-DTL-17/xxx, JIS C 3501, ГОСТ 11326), not maker docs, no fire standards
 - [Coax data sources](coax-data-sources.md) — gsm-repiteri / Амел / kroks / vegatel for coax specs and supplier articles; resellers = «Поставщик»
 - [ETK by semi-finished](etk-by-semifinished.md) — 13.10 owner+Vasily: one ETK document per ПФ; fitter's task = a ПФ document; configure in the ETK left list
+- [Applicator code kinds](applicator-code-kinds.md) — owner 29.10: БД.ТЕР M/A/S codes are all applicators (M ОТП pre-stripped, A automats, S unstripped), never matrices/tools
 - [Applicators by series](applicators-by-series.md) — owner 16.10: all A* applicators of a series on every contact; S/M stay per wire range
 - [Connector 3D only on card](connector-3d-only-on-card.md) — 3D connector picture only on the catalog series card; ETK sketches: top view + mounting side; ПФ/scheme pictures: real top view, wire exit to the harness, never a box
 - [Maker docs from Russia](maker-docs-from-russia.md) — te.com/molex/mouser 403 by geo; Web Archive in browser, JST guide, chipdip/eicom mirrors, KiCad/LCSC for pin 1
@@ -42,13 +45,19 @@
 - [713К.4 agreed deviations](713k4-accepted-deviations.md) — НВ4 0,5 on SYM-001T-P0.6 and unused НШВ ferrules are owner-agreed; don't flag
 - [One article, one row](one-article-one-row.md) — owner 19.10: each supplier article its own row, cheapest seller; coax card = VNA + connectors from БД.КОАКС
 - [Connector gender names](connector-gender-names.md) — вилка = штыри, розетка = гнёзда во всех сериях; слово берётся из contacts (owner 17.10)
-- [БД.ПРОВ split](prov-kind-split-plan.md) — DONE 21.10 #620: cable_kind per row, own columns per kind; монтажные = row per colour (Марка+Цвет)
+- [БД.ПРОВ split](prov-kind-split-plan.md) — DONE 30.10 #776 (0165): lugs + cable kinds are own bases `lug`/`cab_coax`/`cab_multi`/`cab_lan`, монтажные = `prov`; readers use TERMINAL_TABS / CABLE_TABS
 - [RV tech-doc base](rv-td-base.md) — ГОСТ РВ ТД base rev 1 + СТО (Claude Doc), built in ERP by PR #614/#622/#624 (td_issues auto-issued in background, print kit); 3.1102→ГОСТ Р 3.102-2024, no «КТК» in ЕСТД; 22.10 СТО ред. 2 + clause-level norms, 112 templates audited (#643), equipment/code facts
 - [Витя's hybrid is permanent](vitya-hybrid-stage-options.md) — #627/#641 22.10: stage options cut out (no flags); labels via DB queue + print agent on warehouse PC; presets 58×30/58×40/100×50
 - [Hook-up wire suppliers](hookup-wire-suppliers.md) — Снабкабель + Паритет base for монтажные провода; what each sells, price quirks; монтажные = row per colour
 - [Warehouse scanner on USB](warehouse-scanner-usb.md) — Pantum BM2300W by USB at the warehouse PC, agent scans via WIA, never ask for an IP
 - [Warehouse PC SSH](warehouse-pc-ssh.md) — I can SSH into the warehouse PC via the erp-server jump and fix the agent myself; hosts and recipe in the private brain
+- [УПД via OpenAI](upd-recognizer-openai.md) — owner 26.10: УПД scans → OpenAI GPT API (swappable, local-model fallback); needs proxy, card, key in server env; not started
 - [УПД scan learning](upd-scan-learning.md) — review Алексей's scans vs accepted lots, turn misses into parser rules; per-supplier corrections planned
 - [Owner can't open artifacts](owner-cant-open-artifacts.md) — no Claude Docs/artifacts for him: docs as Markdown in repo docs/ + GitHub link
 - [Verify Витя's requests](vitya-requests-verify.md) — check each of Витя's edits against code and prod usage before building; risky ones to the owner first
 - [ГОСТ Р 72182 series](gost-72182-series.md) — 23.10 «Соединения без пайки» parts .2/.3/.4/.6/.7/.9 downloaded outside git (ERP-norms), verified maps; open: СТО fixes, US_WELD/IDC templates, ETK pictures
+- [FAKRA 708К.](fakra-708k.md) — Rosenberger FAKRA/HFM parts and maker specs found 25.10; tooling undecided; calc errors
+- [Receiving now vs later](receiving-now-vs-later.md) — now: Склад → Внести позиции by УПД scan; later: Алексей scans УПД in Приёмка, matched to Витя's paid lines
+- [DB tab = own table](db-tab-is-own-table.md) — owner 28–29.10: every «База данных» tab is its own STORAGE table (not a kind flag in a shared one), own columns, «+ Столбец», «Удалить»
+- [Scanner on any PC](scanner-any-pc.md) — owner 28.10: one shared «Сканировать» everywhere, routed to the browser's own PC agent, install guide if absent; never tied to one PC
+- [Flexible stages while testing](flexible-stages-while-testing.md) — owner 29.10: stage marks and per-KB quantities warn, never block; tighten later

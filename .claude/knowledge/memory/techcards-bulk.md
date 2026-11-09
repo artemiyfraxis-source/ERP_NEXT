@@ -5,6 +5,7 @@ metadata:
   type: project
 ---
 
+- Owner 25.10.2026: ТК are needed for every non-shipped КБ — packed («Упаковано»), ХОЛД and СТОП included; only «Отгружено» is skipped (overrides the 29.09 «skip ХОЛД»).
 - Owner 29.09.2026: generate ТК for every loaded project to review and edit; skip shipped and ХОЛД. `python -m app.workflows.techcards_all supplymap|generate [--dry-run] [--project №]`.
 - Owner 30.09.2026: all projects wiped once (migration `0078_wipe_projects_once`, SQLite copy `<db>.before-projects-wipe.bak`, mark `projects_wiped`); the owner creates projects himself in ERP («Создать проект из расчёта») or asks for one via chat. Nothing loads projects or runs ТК steps automatically (update-local, load-real-data, server `base`). On request: `scripts/load-project.ps1 <№>` / `deploy/load-real-data.sh projects <№>` → `scripts/projects_import.py load` (kitset, registry, journal, shop-sheet sync, both ТК steps with `only=` that project; a project already in ERP is left alone). Stock and kitting (lot reserves) and КД survive the wipe.
 - SUPPLYMAP issued ТК live in «ERP — Производство» sheet «Техкарты» (route rows, file link in КОММЕНТАРИЙ); `supplymap` turns each into an ISSUED ETK (no operation cards, stages also in `build_config.ops` for `route_from_document`). ERP-issued ETKs are never overwritten.

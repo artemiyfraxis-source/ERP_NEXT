@@ -22,3 +22,4 @@ metadata:
 - Back to VS Code (2026-10-02): the owner wants a planning orchestrator that hands out tasks. Local main session = orchestrator (`CLAUDE.md` «Orchestrator mode», skill `orchestrate`, agents `erp-planner` / `erp-worker` / `erp-verifier`). Owner's Claude account is used only from his PC through a proxy — cloud sessions don't replace the local one.
 
 Why: the owner runs production and has no time for agent questions. How to apply: act, log the decision, report the result in 2–5 Russian lines. Hub: [[erp-next-hub]].
+- Owner 25.10.2026: no need to warn Витя in the chat before releasing the owner's PRs («витю предупреждать не нужно»). Merge chains: never put `git push --delete` of a head branch in the same `&&`/`;` line as a guarded merge — a failed guard + `;` deleted the branch and closed PR #690 unmerged (recreated as #694).

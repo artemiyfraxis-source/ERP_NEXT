@@ -47,3 +47,4 @@ leaving a gutted directory.
   overwrote its body (restored from the GraphQL `userContentEdits` history). Before every merge/commit/push in the main
   checkout run `git branch --show-current`; push with an explicit `git push origin <branch>`; check a PR's
   `headRefName` before editing, readying or watching it. Better: orchestrate from my own worktree, not the main checkout.
+- 26.10.2026: a fill agent overwrote the owner's generator draft v10 (708К.5) with --force — drafts are per user and I use the owner's login, so the owner's own form edits land in the same slot. Before any --force write, read the current draft version/updated_at and compare with the version the tool itself wrote; if newer — stop and ask, and always save a copy first.
