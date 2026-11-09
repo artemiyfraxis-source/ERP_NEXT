@@ -134,8 +134,9 @@ def test_delivery_note_sums_each_kb_over_boxes_with_project_card_requisites(ship
         "shipping_address": "Получатель, Москва", "hours": "9-18", "contact": "Иванов", "phone": "+7 900 000-00-00",
         "carrier": "СДЭК", "track": "", "tk_note": "",
         "rows": [
-            _row("КБ1 A-КБ1", "Жгут КБ1", "10", pl="PL591К.3-1", boxes="BXN 1, 2"),
-            _row("КБ2 A-КБ2", "Жгут КБ2", "5", pl="PL591К.3-1", boxes="BXN 1"),
+            # ГРН партий строки (0173) идут и в данные DN; форма 04.1 их не печатает.
+            _row("КБ1 A-КБ1", "Жгут КБ1", "10", batch="ГП.26.0000001", pl="PL591К.3-1", boxes="BXN 1, 2"),
+            _row("КБ2 A-КБ2", "Жгут КБ2", "5", batch="ГП.26.0000002", pl="PL591К.3-1", boxes="BXN 1"),
         ],
         "upd_edo": True, "upd_paper": False, "paper_box": "BXN 1", "note": "",
         # Брутто второго короба не взвешено — общий вес пустой, дописать от руки.

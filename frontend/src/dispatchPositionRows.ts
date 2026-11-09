@@ -18,7 +18,9 @@ export function dataRows(shipments: Shipment[], intake: IntakeRow[] = []): DataR
     const ownStage = source?.stage || source?.project_stage || "Принято складом";
     return { id: `${shipment.id}:${line.id}`, kind: "shipment" as const, project: line.project,
       customer: shipment.customer || shipment.receiver, shipment, stage: num(line.picked) > 0 ? shipmentDispatchStage(shipment, "Принято складом") : null,
-      item_index: line.item_index, name: line.name, quantity: num(line.picked), unit: line.unit, grn: line.grn || "", ownStage };
+      item_index: line.item_index, name: line.name, quantity: num(line.picked), unit: line.unit,
+      // ГРН актов, из которых набрана строка (0173), через запятую; старый ответ — один `grn`.
+      grn: (line.grns?.length ? line.grns.join(", ") : line.grn) || "", ownStage };
   }));
   for (const source of intake) {
     const pieces = stagePieces(source, []);

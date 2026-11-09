@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from decimal import Decimal
 from hashlib import sha256
@@ -23,7 +23,7 @@ from app.shared.notifications import (
 )
 
 from .domain import (
-    HISTORY_CORRECTION_LIMITS, PACK_NOT_DECIDED, AcceptanceAct, DeliveryTerms, FinishedGood, GoodMove, MoveContext, PackPermission, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
+    HISTORY_CORRECTION_LIMITS, PACK_NOT_DECIDED, AcceptanceAct, ActStock, DeliveryTerms, GoodLots, FinishedGood, GoodMove, MoveContext, PackPermission, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
     ShipmentStatus, ShippingValidationError, StoredFile, UpdType, check_boxes, effective_address, packed_by_index,
     plan_project_queue,
 )
@@ -66,6 +66,7 @@ class ShipmentRepository(Protocol):
     def open_for_project(self, project: str) -> Sequence[Shipment]: ...
     def created_details(self, shipment_id: UUID) -> dict | None: ...
     def packers(self, shipment_id: UUID) -> list[tuple[UUID, str]]: ...
+    def taken_from_acts(self, act_ids: Sequence[UUID]) -> dict[UUID, Decimal]: ...
 
 
 class ProjectAddresseeRepository(Protocol):
@@ -177,6 +178,8 @@ class AcceptGoodCommand:
 class RequestedGood:
     good_id: UUID
     quantity: Decimal
+    # ГРН акта приёмки, из которого набрать (выбран явно); пусто — акты КБ по FIFO.
+    grn: str = ""
 
 
 @dataclass(frozen=True)
@@ -226,6 +229,12 @@ class ShipmentCommand:
 @dataclass(frozen=True)
 class UnpickCommand(ShipmentCommand):
     line_id: UUID
+
+
+@dataclass(frozen=True)
+class PickCommand(ShipmentCommand):
+    """«Набрать»: строка → ГРН акта, из которого её набрать (выбран явно); остальные строки — акты КБ по FIFO."""
+    grns: dict[UUID, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -505,7 +514,9 @@ def _create_shipment(
     }, uow)
     # Shipment.gs shipRequestCreate_: набор сразу при заведении, затем PL/DN → «Упакована»;
     # noDocs → остаётся «Собрана». Цех ещё ничего не сдал — заявка «Новая» и ждёт.
-    shipment, taken = _pick(shipment, command.actor, command.now, uow)
+    shipment, taken = _pick(
+        shipment, command.actor, command.now, uow, {line.good_id: line.grn for line in command.lines},
+    )
     if taken and not command.no_docs:
         shipment = _pack(shipment, command.actor, command.now, uow)
     return shipment
@@ -695,7 +706,38 @@ def _unset_fields(command: CreateShipmentCommand) -> frozenset[str]:
     return frozenset(key for key, value in own.items() if not (value.strip() if isinstance(value, str) else value))
 
 
-def _pick(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork) -> tuple[Shipment, dict[UUID, Decimal]]:
+def _good_lots(goods: dict[UUID, FinishedGood], chosen: dict[UUID, str], uow: UnitOfWork) -> dict[UUID, GoodLots]:
+    """Свободные штуки актов приёмки каждой КБ (владелец 06.11.2026): акт за вычетом откатов в производство и взятого
+    строками отправок; порядок FIFO — дата акта, затем номер. Остаток сверх актов — на первый ГРН КБ. ГРН, выбранный
+    явно (`chosen`: КБ → ГРН), оставляет только свой акт."""
+    acts = uow.goods.acts(list(goods))
+    taken = uow.shipments.taken_from_acts([act.id for items in acts.values() for act in items])
+    stock: dict[UUID, GoodLots] = {}
+    for good_id, good in goods.items():
+        ordered = sorted(acts.get(good_id, ()), key=lambda act: (act.received_at, act.created_at, act.grn))
+        entries = tuple(
+            ActStock(act.id, act.grn, max(act.net - taken.get(act.id, Decimal("0")), Decimal("0"))) for act in ordered
+        )
+        first = next((entry for entry in entries if entry.grn == good.grn), entries[0] if entries else None)
+        fallback = first or ActStock(None, good.grn or "", Decimal("0"))
+        wanted = str(chosen.get(good_id) or "").strip()
+        if wanted:
+            entry = next((entry for entry in entries if entry.grn.casefold() == wanted.casefold()), None)
+            if entry is None:
+                raise ShippingValidationError(f"{good.item_index}: ГРН {wanted} — не акт приёмки этой КБ")
+            if entry.free <= 0:
+                raise ShippingValidationError(f"{good.item_index}: по ГРН {wanted} свободных штук нет")
+            stock[good_id] = GoodLots(acts=(entry,), fallback=entry)
+        else:
+            stock[good_id] = GoodLots(acts=entries, fallback=fallback)
+    return stock
+
+
+def _pick(
+    shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork, chosen: dict[UUID, str] | None = None,
+) -> tuple[Shipment, dict[UUID, Decimal]]:
+    """`chosen` — КБ → ГРН акта, выбранный явно: набор этой КБ — только из него и не больше его свободных штук."""
+    chosen = {good_id: grn for good_id, grn in (chosen or {}).items() if str(grn or "").strip()}
     uow.lock_projects([line.project for line in shipment.lines])
     _require_pack_decision(shipment, uow)
     goods = {line.finished_good_id: uow.goods.get(line.finished_good_id) for line in shipment.lines}
@@ -723,15 +765,20 @@ def _pick(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork) -> t
         requested = sum((line.shortage for line in shipment.lines if line.finished_good_id == good_id), Decimal("0"))
         available[good_id] = min(good.remaining, budgets[key], requested)
         budgets[key] -= available[good_id]
-    updated, taken = shipment.pick(
-        available,
-        {good_id: good.grn or "" for good_id, good in typed.items()},
-    )
+    stock = _good_lots(typed, chosen, uow)
+    for good_id in chosen:
+        if good_id in stock:
+            available[good_id] = min(available[good_id], stock[good_id].fallback.free)
+    updated, taken = shipment.pick(available, dict(stock))
     for good_id, quantity in taken.items():
         uow.goods.add(typed[good_id].take(quantity), _context(actor, now, shipment_id=shipment.id))
     if taken:
         uow.shipments.add(updated)
-        _audit(shipment.id, "shipping.picked", actor, now, {str(key): str(value) for key, value in taken.items()}, uow)
+        _audit(shipment.id, "shipping.picked", actor, now, {
+            **{str(key): str(value) for key, value in taken.items()},
+            "lots": {str(line.id): {lot.grn: _plain(lot.quantity) for lot in line.lots}
+                     for line in updated.lines if line.finished_good_id in taken},
+        }, uow)
     return updated, taken
 
 
@@ -840,7 +887,13 @@ def edit_shipment_head(command: EditHeadCommand, uow: UnitOfWork) -> Shipment:
 def pick_shipment(command: ShipmentCommand, uow: UnitOfWork) -> Shipment:
     with uow:
         shipment = _packing_shipment(command.shipment_id, command.expected_version, uow)
-        updated, taken = _pick(shipment, command.actor, command.now, uow)
+        grns = getattr(command, "grns", None) or {}
+        lines = {line.id: line.finished_good_id for line in shipment.lines}
+        if set(grns) - set(lines):
+            raise ShippingValidationError("Позиция отгрузки не найдена")
+        updated, taken = _pick(
+            shipment, command.actor, command.now, uow, {lines[line_id]: grn for line_id, grn in grns.items()},
+        )
         if taken:
             uow.commit()
         return updated
@@ -1168,6 +1221,7 @@ class ProjectShipLine:
     good_id: UUID
     version: int
     quantity: Decimal
+    grn: str = ""
 
 
 @dataclass(frozen=True)
@@ -1220,7 +1274,9 @@ def project_ship_fingerprint(command: ProjectShipCommand) -> str:
     """Отпечаток тела запроса: тот же ключ с другим телом — отказ, а не чужой результат."""
     body = {
         "actor": str(command.actor.id), "project": str(command.project or "").strip(),
-        "lines": [[str(line.good_id), line.version, format(Decimal(line.quantity).normalize(), "f")] for line in command.lines],
+        # ГРН — только когда выбран явно: отпечатки прежних запросов не меняются.
+        "lines": [[str(line.good_id), line.version, format(Decimal(line.quantity).normalize(), "f"),
+                   *([line.grn.strip()] if line.grn.strip() else [])] for line in command.lines],
         "addressee_version": command.addressee_version,
         "addressee": {key: command.addressee_fields[key] for key in sorted(command.addressee_fields)},
         "deadline": command.deadline.isoformat() if command.deadline else None,
@@ -1280,7 +1336,7 @@ def ship_project(command: ProjectShipCommand, uow: UnitOfWork) -> ProjectShipRes
                 raise ShippingValidationError(f"{good.item_index}: количество должно быть больше нуля")
             if quantity > good.remaining:
                 raise ConcurrentShippingUpdate(f"{good.item_index}: на складе ГП только {format(good.remaining.normalize(), 'f')} {good.unit}")
-            requested.append(RequestedGood(good_id=good.id, quantity=quantity))
+            requested.append(RequestedGood(good_id=good.id, quantity=quantity, grn=line.grn))
         current = uow.addressees.get(project) or ProjectAddressee.empty(project)
         if current.version != command.addressee_version:
             raise ConcurrentShippingUpdate("Адресат проекта изменился после загрузки формы")

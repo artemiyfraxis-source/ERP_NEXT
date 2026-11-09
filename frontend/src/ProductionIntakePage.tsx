@@ -159,7 +159,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const cardOf = (row: IntakeRow) => addresseeByProject.get(row.project.trim().toUpperCase());
   const shownShips = (row: IntakeRow & { shipment?: DispatchShipment }) => row.shipment ? [row.shipment] : [];
   const grnGroups = (row: IntakeLine) => {
-    return [{ id: row.shipment?.id ?? "", number: row.shipment?.number ?? "", grns: row.grn ? [row.grn] : [] }];
+    return [{ id: row.shipment?.id ?? "", number: row.shipment?.number ?? "", grns: row.grn ? row.grn.split(", ") : [] }];
   };
   const deliveryOf = (row: IntakeLine) => {
     const ships = shownShips(row);

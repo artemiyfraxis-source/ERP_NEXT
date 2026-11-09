@@ -1643,7 +1643,10 @@ export interface ShipmentLine {
   picked: string;
   shortage: string;
   unit: string;
+  /** Первый ГРН строки; все ГРН партий — `grns`, штуки по актам — `lots` (0173). */
   grn: string | null;
+  grns?: string[];
+  lots?: { grn: string; quantity: string; act_id: string | null }[];
 }
 
 export interface Shipment {

@@ -650,6 +650,59 @@ def plan_project_queue(assemblies: tuple[ProjectAssembly, ...] | list[ProjectAss
 
 
 @dataclass(frozen=True)
+class LineLot:
+    """Сколько штук строки отправки взято из одного акта приёмки ГП (0173): ГРН акта и его id. `act_id` пуст, когда у
+    КБ нет ни одного акта (принято до актов) — тогда штуки идут под ГРН самой КБ."""
+
+    grn: str
+    quantity: Decimal
+    act_id: UUID | None = None
+
+
+@dataclass(frozen=True)
+class ActStock:
+    """Свободные штуки акта приёмки ГП: принято актом (за вычетом откатов в производство) минус взятое строками
+    отправок. Свободное не уходит ниже нуля."""
+
+    act_id: UUID | None
+    grn: str
+    free: Decimal
+
+
+@dataclass(frozen=True)
+class GoodLots:
+    """Из каких актов КБ набирать (владелец 06.11.2026): `acts` — по порядку FIFO (дата акта, номер), `fallback` —
+    первый ГРН КБ: на него ложится то, что акты не покрывают (принятое до актов, расхождение журнала)."""
+
+    acts: tuple[ActStock, ...]
+    fallback: ActStock
+
+    def take(self, quantity: Decimal) -> tuple[tuple[LineLot, ...], GoodLots]:
+        left = Decimal(quantity)
+        lots: list[LineLot] = []
+        acts = []
+        for act in self.acts:
+            take = min(left, max(act.free, Decimal("0")))
+            if take > 0:
+                lots.append(LineLot(act.grn, take, act.act_id))
+                left -= take
+                act = replace(act, free=act.free - take)
+            acts.append(act)
+        if left > 0:
+            lots.append(LineLot(self.fallback.grn, left, self.fallback.act_id))
+        return merge_lots((), tuple(lots)), replace(self, acts=tuple(acts))
+
+
+def merge_lots(current: tuple[LineLot, ...], added: tuple[LineLot, ...]) -> tuple[LineLot, ...]:
+    """Партии строки после добора: тот же ГРН складывается, новые — в конец."""
+    merged: dict[str, LineLot] = {lot.grn: lot for lot in current}
+    for lot in added:
+        held = merged.get(lot.grn)
+        merged[lot.grn] = replace(held, quantity=held.quantity + lot.quantity) if held else lot
+    return tuple(merged.values())
+
+
+@dataclass(frozen=True)
 class ShipmentLine:
     id: UUID
     finished_good_id: UUID
@@ -660,7 +713,16 @@ class ShipmentLine:
     requested: Decimal
     picked: Decimal
     unit: str
+    # Первый ГРН партий строки (совместимость: экраны и печать до 0173 читали один ГРН).
     grn: str | None = None
+    # Из каких актов приёмки ГП набрана строка (0173): Σ штук = `picked`; пусто, пока ничего не набрано.
+    lots: tuple[LineLot, ...] = ()
+
+    @property
+    def grns(self) -> tuple[str, ...]:
+        """ГРН строки — по партиям, без пустых и повторов; до 0173-партий — один записанный ГРН."""
+        found = tuple(dict.fromkeys(lot.grn for lot in self.lots if lot.grn))
+        return found or ((self.grn,) if self.grn and not self.lots else ())
 
     @classmethod
     def create(cls, good: FinishedGood, quantity: Decimal) -> ShipmentLine:
@@ -748,7 +810,11 @@ class Shipment:
             manager_id=manager_id, inherited=frozenset(inherited) & frozenset(ADDRESSEE_CARD_FIELDS),
         )
 
-    def pick(self, available: dict[UUID, Decimal], grns: dict[UUID, str]) -> tuple[Shipment, dict[UUID, Decimal]]:
+    def pick(
+        self, available: dict[UUID, Decimal], stock: dict[UUID, GoodLots | str],
+    ) -> tuple[Shipment, dict[UUID, Decimal]]:
+        """Набор: каждой строке — сколько есть, штуки берутся из актов КБ по FIFO (`GoodLots.take`). Голая строка
+        вместо `GoodLots` — один ГРН КБ без актов (тесты домена, КБ до актов)."""
         if self.status in {ShipmentStatus.PACKED, ShipmentStatus.SHIPPED, ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
             raise ShippingValidationError("В текущем статусе набор недоступен")
         taken: dict[UUID, Decimal] = {}
@@ -756,9 +822,16 @@ class Shipment:
         for line in self.lines:
             amount = min(line.shortage, max(available.get(line.finished_good_id, Decimal("0")), Decimal("0")))
             available[line.finished_good_id] = available.get(line.finished_good_id, Decimal("0")) - amount
-            if amount > 0:
-                taken[line.finished_good_id] = taken.get(line.finished_good_id, Decimal("0")) + amount
-            updated.append(replace(line, picked=line.picked + amount, grn=grns.get(line.finished_good_id) or line.grn))
+            if amount <= 0:
+                updated.append(line)
+                continue
+            taken[line.finished_good_id] = taken.get(line.finished_good_id, Decimal("0")) + amount
+            source = stock.get(line.finished_good_id)
+            if not isinstance(source, GoodLots):
+                source = GoodLots(acts=(), fallback=ActStock(None, str(source or ""), Decimal("0")))
+            added, stock[line.finished_good_id] = source.take(amount)
+            lots = merge_lots(line.lots, added)
+            updated.append(replace(line, picked=line.picked + amount, lots=lots, grn=lots[0].grn or None))
         if not taken:
             return self, {}
         return replace(self, lines=tuple(updated), status=ShipmentStatus.ASSEMBLED, version=self.version + 1), taken
@@ -773,7 +846,7 @@ class Shipment:
                 if line.picked <= 0:
                     raise ShippingValidationError("По позиции ничего не набрано")
                 released = (line.finished_good_id, line.picked)
-                updated.append(replace(line, picked=Decimal("0"), grn=None))
+                updated.append(replace(line, picked=Decimal("0"), grn=None, lots=()))
             else:
                 updated.append(line)
         if released is None:
@@ -983,7 +1056,7 @@ class Shipment:
         for line in self.lines:
             if line.picked > 0:
                 released[line.finished_good_id] = released.get(line.finished_good_id, Decimal("0")) + line.picked
-            lines.append(replace(line, picked=Decimal("0"), grn=None))
+            lines.append(replace(line, picked=Decimal("0"), grn=None, lots=()))
         return replace(self, status=ShipmentStatus.CANCELLED, lines=tuple(lines), version=self.version + 1), released
 
 
@@ -1084,6 +1157,7 @@ class PackedItem:
     article: str
     name: str
     unit: str
+    # ГРН актов, из которых набрана КБ (0173), через запятую — «Номер этикетки» PL.
     grn: str
 
 
@@ -1091,16 +1165,19 @@ def packed_by_index(lines: tuple[ShipmentLine, ...] | list[ShipmentLine]) -> lis
     """`shipPackedByIndex_`: набранное по КБ, две строки одной КБ складываются, порядок — как в отправке."""
     order: list[str] = []
     by: dict[str, PackedItem] = {}
+    grns: dict[str, list[str]] = {}
     for line in lines:
         if not line.picked > 0:
             continue
         current = by.get(line.item_index)
+        known = grns.setdefault(line.item_index, [])
+        known.extend(grn for grn in line.grns if grn not in known)
         if current is None:
             order.append(line.item_index)
-            by[line.item_index] = PackedItem(line.item_index, _round2(line.picked), line.article, line.name, line.unit or "шт", line.grn or "")
+            by[line.item_index] = PackedItem(line.item_index, _round2(line.picked), line.article, line.name, line.unit or "шт", "")
         else:
             by[line.item_index] = replace(current, quantity=_round2(current.quantity + line.picked))
-    return [by[key] for key in order]
+    return [replace(by[key], grn=", ".join(grns[key])) for key in order]
 
 
 _WEIGHT = re.compile(r"^\d+(,\d+)?$")

@@ -63,6 +63,8 @@ def seed(engine: Engine, rows: int = ROWS) -> dict[str, int]:
             parents = _parent_values(connection, table)
             lots = _lot_ids(connection, metadata) if "lot_id" in table.c and not table.c.lot_id.foreign_keys else []
             count = 1 if table.name in _SINGLE_ROW_TABLES else min(rows, _ROW_CAPS.get(table.name, rows))
+            if not count:
+                continue
             values = [_row(table, index, parents, lots, checks, engine.dialect.name) for index in range(count)]
             connection.execute(table.insert(), values)
             inserted[table.name] = len(values)
@@ -175,6 +177,9 @@ _COUPLED_VALUES: dict[tuple[str, str], Any] = {
     ("identity_documents", "scope_value"): "",
     ("fulfillment_lines", "absent_by"): None,
     ("finished_goods", "before_erp"): Decimal(0),
+    # Σ партий ГРН строки отправки = её набранному (0173): column-by-column fill can't line a lot up with its line, so
+    # seeded lines pick nothing and `shipment_line_lots` stays empty (_ROW_CAPS).
+    ("shipment_lines", "picked"): Decimal(0),
     # A VSWR verdict without a norm (the seeder leaves norm_vswr_max empty) is a manual one (0142_production_vswr).
     ("production_vswr_measurements", "verdict_manual"): True,
     # A scan job's recognition answer exists only once it is done; the seeder's job is pending (0145_warehouse_scan_jobs).
@@ -233,7 +238,7 @@ _SHAPED_VALUES: dict[tuple[str, str], Any] = {
 }
 # Shaped values win over a CHECK's first `IN (…)` value; a table with a UNIQUE of shaped pairs gets no more rows than
 # there are pairs.
-_ROW_CAPS = {"warehouse_label_templates": len(_LABEL_TEMPLATE_KINDS) * len(_LABEL_FORMATS)}
+_ROW_CAPS = {"warehouse_label_templates": len(_LABEL_TEMPLATE_KINDS) * len(_LABEL_FORMATS), "shipment_line_lots": 0}
 # One row per installation (CHECK `id = 1`): seeded with a single row (the label print agent's heartbeat, 0141, too).
 _SINGLE_ROW_TABLES = frozenset({"warehouse_label_settings", "warehouse_label_agent", "warehouse_upd_llm_settings"})
 
