@@ -118,9 +118,28 @@ def _counts(bind) -> dict[str, int]:
     return {name: bind.execute(sa.text(f'SELECT count(*) FROM "{name}"')).scalar_one() for name in COUNTED}
 
 
-def _sqlite_recreate(table: str, change) -> None:
-    with op.batch_alter_table(table, recreate="always") as batch:
+def _sqlite_recreate(table: str, change, copy_from: sa.Table | None = None) -> None:
+    with op.batch_alter_table(table, recreate="always", copy_from=copy_from) as batch:
         change(batch)
+
+
+def _allocations(machines: bool | None) -> sa.Table:
+    """production_resource_allocations exactly as 0170 made it (machines: True NOT NULL, None nullable, False none):
+    SQLite recreates a table from this definition, so its foreign keys and indexes keep 0170's order and names."""
+    metadata = sa.MetaData()
+    for parent in ("production_tasks", "production_operations"):
+        sa.Table(parent, metadata, sa.Column("id", sa.Uuid(), primary_key=True))
+    columns = [sa.Column("machines", sa.JSON(), nullable=not machines)] if machines is not False else []
+    return sa.Table(
+        ALLOCATIONS, metadata,
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("task_id", sa.Uuid(), sa.ForeignKey("production_tasks.id", ondelete="RESTRICT"), nullable=False),
+        sa.Column("operation_id", sa.Uuid(), sa.ForeignKey("production_operations.id", ondelete="RESTRICT"), nullable=False),
+        sa.Column("crew", sa.Boolean(), nullable=False),
+        *columns,
+        sa.Index(f"ix_{ALLOCATIONS}_task_id", "task_id"),
+        sa.Index(f"ix_{ALLOCATIONS}_operation_id", "operation_id"),
+    )
 
 
 def upgrade() -> None:
@@ -236,7 +255,7 @@ def upgrade() -> None:
     if postgres:
         op.drop_column(ALLOCATIONS, "machines")
     else:
-        _sqlite_recreate(ALLOCATIONS, lambda batch: batch.drop_column("machines"))
+        _sqlite_recreate(ALLOCATIONS, lambda batch: batch.drop_column("machines"), copy_from=_allocations(True))
 
     after = _counts(bind)
     if after != before:
@@ -295,7 +314,8 @@ def downgrade() -> None:
     if postgres:
         op.alter_column(ALLOCATIONS, "machines", existing_type=sa.JSON(), nullable=False)
     else:
-        _sqlite_recreate(ALLOCATIONS, lambda batch: batch.alter_column("machines", existing_type=sa.JSON(), nullable=False))
+        _sqlite_recreate(ALLOCATIONS, lambda batch: batch.alter_column("machines", existing_type=sa.JSON(), nullable=False),
+                         copy_from=_allocations(None))
     op.drop_table(ALLOCATION_MACHINES)
 
     # 2. Machine claims: the key back to the inventory number.
