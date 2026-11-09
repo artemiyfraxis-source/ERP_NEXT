@@ -17,7 +17,7 @@ from sqlalchemy import create_engine
 from app.db_integrity import take_snapshot
 
 BACKEND = Path(__file__).resolve().parents[2]
-BEFORE = "0170_equipment_setup_resources"
+BEFORE = "0172_resource_unit_ids"
 AFTER = "0173_shipment_line_lots"
 
 

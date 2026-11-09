@@ -31,7 +31,7 @@ import sqlalchemy as sa
 
 
 revision: str = "0173_shipment_line_lots"
-down_revision: str | None = "0170_equipment_setup_resources"
+down_revision: str | None = "0172_resource_unit_ids"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
