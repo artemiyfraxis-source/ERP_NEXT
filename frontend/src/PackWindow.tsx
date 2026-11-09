@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, shippingApi, type Shipment } from "./api";
 import { isoDay } from "./Gantt";
-import { canPack, kbKey, num, packable, permittedPack, round2 } from "./intakeStages";
+import { canPack, kbKey, num, packAllowed, packable, permittedPack, round2 } from "./intakeStages";
 import { PageWindow } from "./PageWindow";
 import { intakeApi, type DispatchShipment, type IntakeRow } from "./productionIntakeApi";
 import { Banners, ShipmentCard, useMutate, type CardRights, type Mutate } from "./ShipmentCard";
@@ -9,7 +9,8 @@ import { ShipmentDataWindow } from "./ShipmentData";
 
 /* Окно «Упаковано» (владелец 29.10.2026, по аналогии с приёмкой — число в колонке открывает окно): принятое проекта —
    КБ и сколько упаковать; упаковывать можно только после решения менеджера «упаковывать». Ниже — отправки проекта на
-   упаковке: короба и PL/DN («Сформировать», «Перевыпустить»), печать PL/DN и этикеток коробов, «Вернуть на склад». */
+   упаковке: короба и PL/DN («Сформировать», «Перевыпустить»), печать PL/DN и этикеток коробов, «Вернуть на склад» — их в
+   строках таблицы нет (06.11). Данные отправки (адрес, получатель, ТК, УПД) правит менеджер; складу — только просмотр. */
 
 export function PackWindow({ project, rows, shipments, rights, reload, close }: {
   project: string; rows: IntakeRow[]; shipments: DispatchShipment[]; rights: CardRights;
@@ -26,7 +27,7 @@ export function PackWindow({ project, rows, shipments, rights, reload, close }: 
     <section className="panel intake-window intake-pack">
       <header className="page-head"><h2>Упаковка · {project}</h2><button type="button" className="secondary small" onClick={close}>Закрыть</button></header>
       <Banners error={error} notice={notice} />
-      {dataShipment && <ShipmentDataWindow key={dataShipment.id} shipment={dataShipment} close={() => setDataFor(null)} onSaved={reload} />}
+      {dataShipment && <ShipmentDataWindow key={dataShipment.id} shipment={dataShipment} canEdit={rights.canManage} close={() => setDataFor(null)} onSaved={reload} />}
       {candidates.length > 0
         ? <PackForm project={project} candidates={candidates} rights={rights} busy={busy} mutate={mutate} reload={reload} />
         : <div className="empty">Принятого и не упакованного по проекту нет.</div>}
@@ -100,7 +101,7 @@ function PackForm({ project, candidates, rights, busy, mutate, reload }: { proje
               <td className="num">{allowed
                 ? <input className={tooMuch ? "ship-qty invalid" : "ship-qty"} aria-label={`Сколько упаковать ${row.item_index}`} type="number" min="0" max={permittedPack(row)} step="any" value={qty[key] ?? ""}
                   onChange={(event) => { setQty({ ...qty, [key]: event.target.value }); setMarked({ ...marked, [key]: num(event.target.value) > 0 }); }} />
-                : <span className="muted" title="Упаковать можно после решения менеджера «упаковывать»">{row.pack_decided ? "—" : "ждёт решения менеджера"}</span>}</td>
+                : <span className="muted" title="Упаковать можно после решения менеджера «упаковывать»">{packAllowed(row) ? "—" : "ждёт решения менеджера"}</span>}</td>
             </tr>;
           })}</tbody>
         </table>

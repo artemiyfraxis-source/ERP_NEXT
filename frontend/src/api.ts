@@ -1643,7 +1643,10 @@ export interface ShipmentLine {
   picked: string;
   shortage: string;
   unit: string;
+  /** ГРН первой партии строки (прежнее поле). */
   grn: string | null;
+  /** Все ГРН партий, из которых набрана строка; первая = `grn`. Старый сервер их не присылает. */
+  grns?: string[] | null;
 }
 
 export interface Shipment {
@@ -4085,10 +4088,6 @@ export const shippingApi = {
   packPermissions: (project: string) => api<{ project: string; permissions: PackPermission[] }>(`/api/shipping/project-pack-permissions?project=${encodeURIComponent(project)}`),
   savePackPermissions: (project: string, lines: { item_index: string; quantity: string; version: number }[]) => api<{ project: string; permissions: PackPermission[] }>("/api/shipping/project-pack-permissions", {
     method: "POST", body: JSON.stringify({ project, lines }),
-  }),
-  /** Legacy project decision; retained for older API consumers. */
-  packDecision: (project: string, version: number, decided: boolean) => api<{ addressee: ProjectAddressee }>("/api/shipping/project-pack-decision", {
-    method: "POST", body: JSON.stringify({ project, version, decided }),
   }),
   /** Кто уполномочен разрешить отгрузку без УПД. */
   noUpdApprovers: async () => (await api<{ approvers: NoUpdApprover[] }>("/api/shipping/no-upd-approvers")).approvers,

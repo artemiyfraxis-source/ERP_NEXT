@@ -18,7 +18,9 @@ export interface IntakeRow {
   stage: string;
   /** Этап проекта: Новый → В работе → Готово → ОТК → ОТК пройден → Принято складом → Упаковано → Отгружено. */
   project_stage: string;
-  /** Менеджер решила «упаковывать» (владелец 29.10): без этого склад принятое не упаковывает. */
+  /** Есть разрешение упаковывать эту КБ (владелец 29.10): без него склад принятое не упаковывает. */
+  pack_allowed?: boolean;
+  /** Прежнее имя `pack_allowed` — старый сервер присылает его. */
   pack_decided?: boolean;
   pack_permission_quantity?: string;
   pack_permission_remaining?: string;
@@ -46,6 +48,12 @@ export type DispatchShipment = Shipment & {
   ready_to_ship?: boolean;
   no_upd_approved_by?: string | null;
   no_upd_approved_at?: string | null;
+  /** Коды пробелов (сервер, 06.11): terms, receiver, phone, carrier, shipping_point, upd_type, no_upd_approval, upd_file,
+   *  upd_number, track_number; слова — в `missing_data` / `missing_ship`. */
+  missing_data_codes?: string[];
+  missing_ship_codes?: string[];
+  /** Предлагать «Без УПД…» (разрешение по ПИН): держит только УПД, и его нет совсем; ЭДО без номера — нет. */
+  no_upd_offered?: boolean;
 };
 
 export interface NoUpdApprover { id: string; name: string }

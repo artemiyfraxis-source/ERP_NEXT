@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dispatchBoard, kbKey, shippedOnlyRows, stagePieces } from "./intakeStages";
+import { dispatchBoard, kbKey, stagePieces } from "./intakeStages";
 import { dataRows } from "./ShipmentDataPage";
 import type { DispatchShipment, IntakeRow } from "./productionIntakeApi";
 import type { Shipment } from "./api";
@@ -27,7 +27,6 @@ describe("общие счётчики КБ", () => {
     const shipments = [...partial, ...Array.from({ length: 22 }, (_, i) => `И-${i}`)].map((p, i) => ship(`s${i}`, p));
     shipments.push(ship("repeat1", "И-0"), ship("repeat2", "П-2"), ship("repeat3", "П-2"), ship("repeat4", "И-1"),
       ship("packed", "У-1", "Упакована", null, "100"), ship("orphan", "У-2", "Упакована", null, "38"));
-    expect([...intake, ...shippedOnlyRows(intake, shipments, now)]).toHaveLength(125);
     expect(dataRows(shipments as unknown as Shipment[], intake)).toHaveLength(135);
     const board = dispatchBoard(intake, shipments, now);
     expect(board.counts).toEqual({ waiting: 77, production: 17, ready: 0, accepted: 8, packed: 2, to_ship: 0, shipped: 27, all: 126 });
@@ -51,6 +50,6 @@ describe("общие счётчики КБ", () => {
     const shipments = [ship("active", "п", "Собрана", null, "4"), ship("cancel", " П ", "Отменена", null, "100"), ship("empty", "Другой", "Новая", null, "0")];
     const board = dispatchBoard([], shipments, now);
     expect(board.counts).toEqual({ waiting: 0, production: 0, ready: 0, accepted: 1, packed: 0, to_ship: 0, shipped: 0, all: 2 });
-    expect(board.rows[0]).toMatchObject({ needed: "0", accepted: "4", packed: "4", sent: "0", remaining: "0", good_id: null, pack_decided: false });
+    expect(board.rows[0]).toMatchObject({ needed: "0", accepted: "4", packed: "4", sent: "0", remaining: "0", good_id: null, pack_allowed: false });
   });
 });
