@@ -41,6 +41,20 @@ SQLAlchemy/Alembic backend, React/TypeScript (Vite) frontend, PostgreSQL in prod
 - **One coherent slice per PR.** A worker commit does not end an authorized batch; main continues through integration
   and verification. Release authority remains the user's task scope, not a grant from a skill.
 
+## Claude ⇄ Codex (tag team)
+- Roles (owner, 11.11.2026): Claude ($20 plan) directs — decisions, briefs, reading diffs, commits, releases;
+  Codex CLI ($200 plan) does the volume — searches, implementation, tests, first-pass review. Routing and exact
+  `codex exec` commands: `orchestrate` skill «Budget routing».
+- One rule source: this `CLAUDE.md`; Codex enters via `AGENTS.md`, which points here (a reference, not a symlink:
+  `core.symlinks=false`, and Витя's and cloud clones must get the same files).
+- One skill base: `.claude/skills/`; `.agents/skills/<name>/SKILL.md` holds only a thin Codex wrapper pointing to it.
+- Hand-off: call the other agent non-interactively — `codex exec` from Claude (PowerShell tool, never Git Bash;
+  isolation flags in `orchestrate`), `claude -p "<task>"` from Codex — or leave the item in a local, gitignored
+  `TASKS.md` for the other session.
+- Cross-review: after a feature or a hard refactor the author runs the `cross-review` skill, so the other agent
+  reviews `git diff` for bugs, invariants, security and architecture. It adds to, never replaces, `npm run check`
+  and `erp-verifier`.
+
 ## Project memory
 `.claude/knowledge/memory/` (in git; `MEMORY.md` is the index — read only the relevant note). `autoMemoryDirectory`
 in the gitignored `.claude/settings.local.json` points there; set it on a new machine. Save only what the repo doesn't say.
