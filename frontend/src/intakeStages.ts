@@ -1,5 +1,6 @@
 import { DISPATCH_STAGES, projectDispatchStage, shipmentDispatchStage, type DispatchStage } from "./dispatchStage";
 import type { DispatchShipment, IntakeRow } from "./productionIntakeApi";
+import { isoDay } from "./Gantt";
 
 /* Шаги КБ на «Приёмке с производства» (владелец 29.10.2026): штуки одной КБ могут быть сразу в нескольких шагах —
    часть в производстве, часть принята, часть упакована, — и строка КБ видна в каждой вкладке, где у неё есть штуки. */
@@ -67,7 +68,8 @@ export const COUNTER_SCOPE = "Счётчики: КБ · Отгружено за 
 export function recentShipment(shipment: DispatchShipment, now = new Date()): boolean {
   const since = new Date(now); since.setDate(since.getDate() - SHIPPED_DAYS);
   const day = String(shipment.shipped_at ?? "").slice(0, 10);
-  return SHIPPED.includes(shipment.status) && day >= since.toISOString().slice(0, 10) && day <= now.toISOString().slice(0, 10);
+  // Local calendar days (Moscow in the shop): toISOString() is UTC and dropped today's shipments 00:00–03:00.
+  return SHIPPED.includes(shipment.status) && day >= isoDay(since) && day <= isoDay(now);
 }
 
 /** Общая единица счёта — КБ. Отправки дополняют отсутствующие КБ, но не заменяют серверные остатки приёмки. */
