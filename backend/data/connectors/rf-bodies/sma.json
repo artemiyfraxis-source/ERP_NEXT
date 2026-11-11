@@ -1,0 +1,96 @@
+{
+  "series": "SMA",
+  "title": "SMA",
+  "standard": [
+    {
+      "doc": "MIL-STD-348B",
+      "fig": "310-1 / 310-2",
+      "url": "https://landandmaritimeapps.dla.mil/Downloads/MilSpec/Docs/MIL-STD-348/std348.pdf"
+    },
+    {
+      "doc": "IEC 61169-15",
+      "fig": "Интерфейс серии SMA",
+      "url": "https://webstore.iec.ch/en/publication/62310"
+    }
+  ],
+  "bodies": [
+    {
+      "id": "sma-132114",
+      "title": "Вилка прямая под обжим, RG-174 / RG-316",
+      "gender": "male",
+      "angle": 0,
+      "pin_type": "пайка",
+      "shield_type": "обжим",
+      "cables": ["RG-174", "RG-316"],
+      "src": "Amphenol RF 132114, SMA Straight Crimp Plug, карточка производителя: Contact Termination Solder; Termination Style Cable - Crimp; RG-174 / RG-316. https://www.amphenolrf.com/en-us/part/132114/644/",
+      "segments": [],
+      "note": "Amphenol RF 132114. В чертеже указан шестигранник 8,00 мм; номинальный ключ SMA 5/16 дюйма — 7,94 мм, пересчитано из дюймов. Полный профиль гайки, корпуса, изолятора, контакта, втулки и уплотнения относительно REF не восстановлен: неизвестные сегменты не показаны.",
+      "sources": [
+        {
+          "title": "Amphenol RF 132114, чертёж A, лист 2 из 2",
+          "url": "https://www.amphenolrf.com/en-us/assets/file/4065789553/"
+        },
+        {
+          "title": "Amphenol RF 132114, кабели и заделка контакта",
+          "url": "https://www.amphenolrf.com/en-us/part/132114/644/"
+        }
+      ],
+      "interface": {
+        "depth": {
+          "min": 0.38,
+          "max": 1.14,
+          "src": "MIL-STD-348B, fig. 310-1, E: уступ штыря → REF; 0.015…0.045 дюйма × 25,4, округление по таблице MIL; пересчитано из дюймов."
+        },
+        "thread": {
+          "value": "1/4-36 UNS-2B",
+          "src": "MIL-STD-348B, fig. 310-1: внутренняя резьба гайки .250-36 UNS-2B; обозначение резьбы сохранено, номинальный диаметр 6,35 мм, шаг 25,4/36 мм; пересчитано из дюймов."
+        },
+        "hex": {
+          "value": 8.0,
+          "src": "Amphenol RF 132114, чертёж A, лист 2 из 2: 8.00 HEX, исходный размер в мм. MIL-STD-348B fig. 310-1 допускает .309….315 дюйма; пересчитано из дюймов: 7,85…8,00 мм."
+        },
+        "ref_plane": {
+          "value": 0.0,
+          "src": "MIL-STD-348B, fig. 310-1: REF PLANE MECHANICAL AND ELECTRICAL; начало координат X=0 выбрано в плоскости REF."
+        }
+      }
+    },
+    {
+      "id": "sma-132117",
+      "title": "Розетка прямая под обжим, RG-174 / RG-316",
+      "gender": "female",
+      "angle": 0,
+      "pin_type": "пайка",
+      "shield_type": "обжим",
+      "cables": ["RG-174", "RG-316"],
+      "src": "Amphenol RF 132117, SMA Straight Crimp Jack, карточка производителя: Contact Termination Solder; Termination Style Cable - Crimp; RG-174 / RG-316. https://www.amphenolrf.com/en-us/part/132117/605/",
+      "segments": [],
+      "note": "Amphenol RF 132117. Полный профиль корпуса, изолятора, контакта и обжимной втулки относительно REF не восстановлен: неизвестные сегменты не показаны. Размер под ключ не подтверждён и не указан.",
+      "sources": [
+        {
+          "title": "Amphenol RF 132117, чертёж производителя",
+          "url": "https://www.amphenolrf.com/en-us/assets/file/4065786200/"
+        },
+        {
+          "title": "Amphenol RF 132117, кабели и заделка контакта",
+          "url": "https://www.amphenolrf.com/en-us/part/132117/605/"
+        }
+      ],
+      "interface": {
+        "depth": {
+          "min": 1.88,
+          "max": 2.23,
+          "src": "MIL-STD-348B, fig. 310-2: торец корпуса → REF (H 1,88…1,98 мм) → гнездо (G 0,00…0,25 мм), H+G=1,88…2,23 мм; исходные H .074….078 и G .000….010 дюйма, округление по таблице MIL; пересчитано из дюймов."
+        },
+        "thread": {
+          "value": "1/4-36 UNS-2A",
+          "src": "MIL-STD-348B, fig. 310-2: наружная резьба .250-36 UNS-2A; обозначение резьбы сохранено, номинальный диаметр 6,35 мм, шаг 25,4/36 мм; пересчитано из дюймов."
+        },
+        "ref_plane": {
+          "value": 0.0,
+          "src": "MIL-STD-348B, fig. 310-2: REF PLANE MECHANICAL AND ELECTRICAL; начало координат X=0 выбрано в плоскости REF."
+        }
+      }
+    }
+  ]
+}

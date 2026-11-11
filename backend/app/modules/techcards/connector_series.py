@@ -24,6 +24,7 @@ from .connector_catalog_data import (
     AUTO, BTB, CATALOG_SERIES, IFACE, JST_PDF, LUGS, PLUG, POWER, RF, ROUND, SIDE, SIDE_SMT, TOP, TOP_SMT, WTB, WTW,
 )
 from .connector_housings import CATALOG_SAMPLES, FAMILIES, gender_title, housing_of, normalize_article
+from .rf_bodies import load_rf_bodies
 
 
 def _counts(first: int, last: int, *extra: int) -> tuple[int, ...]:
@@ -432,8 +433,23 @@ def connector_series(
     for series_id, title, maker, category, pic, keys, note in _LOOSE:
         if series_id not in ids:
             result.append(_bare(series_id, title, maker, category, terminals=terminals_for(keys, records), pic=pic, note=note))
+    rf_bodies = load_rf_bodies()
     for series_id, title, category, bases in _RF:
-        result.append(_bare(series_id, title, "", category, catalog=_rf_catalog(bases, coax), pic="dc-barrel"))
+        spec = rf_bodies.get(bases[0])
+        series = _bare(series_id, title, "", category, catalog=_rf_catalog(bases, coax), pic="dc-barrel")
+        series.update(bodies=[], body_count=0, standard=[])
+        if spec:
+            series.update(bodies=spec["bodies"], body_count=len(spec["bodies"]), standard=spec["standard"],
+                          maker=" / ".join(doc["doc"] for doc in spec["standard"]), sample=None)
+            series["sources"] = [{"title": f"{doc['doc']}, {doc['fig']}", "url": doc["url"]}
+                                 for doc in spec["standard"]]
+            for body in spec["bodies"]:
+                for source in body.get("sources", []):
+                    if source not in series["sources"]:
+                        series["sources"].append(source)
+            series["datasheet"] = spec["standard"][0]["url"]
+            series["note"] = "Показаны документированные корпуса; полный модельный ряд и отсутствующие размеры не подтверждены."
+        result.append(series)
     return sorted(result, key=_order)
 
 

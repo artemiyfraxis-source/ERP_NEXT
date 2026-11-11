@@ -127,6 +127,8 @@ def test_connector_series_api(project_techcards_api):
     families = project_techcards_api.get("/api/techcards/connector-families").json()
 
     assert body["match"]["series"] == "jst-ph" and body["match"]["article"] == "PHR-4"
+    sma = next(item for item in body["series"] if item["id"] == "rf-sma")
+    assert sma["body_count"] == 2 and {item["gender"] for item in sma["bodies"]} == {"male", "female"}
     assert len(body["series"]) == families["series_count"]
     assert project_techcards_api.get("/api/techcards/connector-series").json()["match"] is None
 
@@ -190,6 +192,22 @@ def test_coax_articles_fill_the_rf_series_by_type():
     assert [c["article"] for c in series["rf-qma"]["catalog"]] == ["QMA-KPD7"]
     assert series["rf-fakra"]["category"] == "Автомобильные" and len(series["rf-fakra"]["catalog"]) == 1
     assert series["rf-bnc"]["catalog"] == [] and series["rf-bnc"]["housing_count"] == 0
+
+
+def test_only_sma_has_documented_rf_bodies():
+    series = _series()
+    sma = series["rf-sma"]
+    assert sma["body_count"] == len(sma["bodies"]) == 2
+    assert sma["maker"] == "MIL-STD-348B / IEC 61169-15"
+    assert [doc["doc"] for doc in sma["standard"]] == ["MIL-STD-348B", "IEC 61169-15"]
+    assert len(sma["sources"]) == 6 and all(source["url"] for source in sma["sources"])
+    assert sma["sample"] is None  # No unrelated DC barrel picture for a documented RF body.
+    assert sma["variants"] == [] and sma["housing_count"] == 0
+    others = [item for item in series.values() if item["id"].startswith("rf-") and item["id"] != "rf-sma"]
+    # _RF also includes Fakra in «Автомобильные»: 18 other entries, 17 in «ВЧ».
+    assert len(others) == 18 and sum(item["category"] == "ВЧ" for item in others) == 17
+    assert all(item["body_count"] == 0 and item["bodies"] == [] for item in others)
+    assert all(item["standard"] == [] and item["sources"] == [] and item["maker"] == "" for item in others)
 
 
 def test_millimetre_series_and_smp_take_their_stock_articles():
