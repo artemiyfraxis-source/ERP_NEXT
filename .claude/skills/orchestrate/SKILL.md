@@ -50,7 +50,8 @@ send reading-heavy and writing-heavy work to Codex CLI (installed globally, Chat
   The sandbox limits only shell commands; the `--disable`/`mcp_servers.*` flags strip account connectors,
   plugins, sub-agents and MCP servers (verified 11.11: none left but web search). The four servers named are
   the user-config ones on 11.11; plugin servers (e.g. `cua_repl`) go with `--disable plugins`. Once per session
-  run `codex mcp list`: any other enabled server gets its own `-c mcp_servers.<name>.enabled=false`. Read only the `-o` file.
+  list the `[mcp_servers.<name>]` tables in `~/.codex/config.toml`: only those get `-c mcp_servers.<name>.enabled=false`.
+  A plugin server named that way makes `codex exec` exit 1 («invalid transport»). Read only the `-o` file.
 - Editing worker: main creates the worktree from the recorded base (`git worktree add <path> -b <branch> <SHA>`,
   then `node scripts/setup-env.mjs` in it) and runs the call with `-s workspace-write -C "<worktree>"`. Writes
   outside the worktree are denied (verified), except `%TEMP%`, which stays writable.

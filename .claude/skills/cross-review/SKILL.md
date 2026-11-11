@@ -43,7 +43,7 @@ No findings → say "no findings" and list what you checked. Answer in Russian.
   ```
   `-s read-only` limits only shell commands; the `--disable`/`mcp_servers.*` flags remove the account
   connectors, plugins, sub-agents and MCP servers that could act outside it. The `mcp_servers.*` list must
-  cover every server `codex mcp list` shows as enabled (see `orchestrate` «Budget routing»). Model: `gpt-6-astra` instead of
+  cover every `[mcp_servers.<name>]` table in `~/.codex/config.toml` and nothing else (see `orchestrate` «Budget routing»). Model: `gpt-6-astra` instead of
   `gpt-6.1-sol` when the change touches migrations, stock, money or auth. Read only `review.out.md`.
 - **From Codex CLI (reviewer = Claude):** write `<scratch>\no-hooks.json` = `{"disableAllHooks": true}` (project
   SessionStart hooks would otherwise install deps and copy DBs), then
