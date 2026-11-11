@@ -422,5 +422,5 @@ def line_answer(line: UpdLine) -> dict:
         "quantity": number_text(line.quantity), "unit": line.unit,
         "invoice_quantity": number_text(line.invoice_quantity), "invoice_unit": line.invoice_unit,
         "packs": number_text(line.packs), "pack": line.pack, "pack_kind": line.pack_kind,
-        "supplier_code": line.supplier_code, "source": line.source,
+        "supplier_code": line.supplier_code, "source": line.source, "number": line.number,
     }

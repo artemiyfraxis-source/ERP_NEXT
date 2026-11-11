@@ -1,15 +1,81 @@
 // @ts-ignore — типы node в проекте не подключены, снимок артикулов читается напрямую из backend/tests
 import { readFileSync } from "node:fs";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
-  applyHints, withTrailingBlank, applyReceiptPaste, applyScan, buildAccept, canAccept, editCell, emptyHeader, emptyLine, fillEmpty,
+  applyHints, applyLearning, deactivateLearning, withTrailingBlank, applyReceiptPaste, applyScan, buildAccept, canAccept, editCell, emptyHeader, emptyLine, fillEmpty,
   headerChanged, headerFields, headerFromReceipt, isBlankLine, lineFromLot, lineSummary, lineTitle, mergeHeader, normalizeMaker, receiptLine,
   splitArticleCell, splitArticleMaker, type ReceiptLine,
 } from "./warehouseReceiptLogic";
-import type { WarehouseReceipt } from "./api";
+import type { WarehouseReceipt, WarehouseReceiptScan, WarehouseReceiptRule } from "./api";
 
 declare const process: { cwd(): string };
 const filled = (patch: Partial<ReceiptLine>): ReceiptLine => ({ ...emptyLine(), ...patch });
+
+const learned: WarehouseReceiptRule = { rule_id: "r", rule_version: 1, supplier_key: "inn:7707083893", active: true,
+  article: "CORRECT", manufacturer: "Maker", stock_unit: "шт", pack_size: "100", quantity_basis: "packs",
+  convert_quantity: true, quantity: "200", warning: "" };
+const sourceScan: WarehouseReceiptScan = {
+  scan_file: "/api/stock/receipts/files/00000000-0000-0000-0000-000000000001", note: "",
+  recognised: { supplier: "Поставщик", inn: "7707083893", upd_number: "1", upd_date: "", invoice_number: "", invoice_date: "" },
+  lines: [{ article: "RAW", name: "Контакт", quantity: "200", unit: "шт", file_id: "00000000-0000-0000-0000-000000000001",
+    source_line_key: "line:1", supplier_code: "S-1", invoice_quantity: "2", invoice_unit: "упак",
+    original: { article: "RAW", name: "Контакт", quantity: "200", unit: "шт", invoice_quantity: "2", invoice_unit: "упак" },
+    learning: learned }],
+};
+
+it("keeps source evidence and retry UUID, applies a reviewed conversion only once, never opts into learning", () => {
+  const result = applyScan(emptyHeader(), [emptyLine()], sourceScan);
+  const line = result.lines[0];
+  expect(result.header.supplier_inn).toBe("7707083893");
+  expect(line).toMatchObject({ article: "CORRECT", quantity: "200", ruleApplied: true, learning: { action: "none" } });
+  expect(line.original?.invoice_quantity).toBe("2");
+  const twice = applyLearning(line, learned);
+  expect(twice.quantity).toBe("200");
+  expect(twice.acceptance_id).toBe(line.acceptance_id);
+  const request = buildAccept(twice, result.header, "1A1", 1, false);
+  expect(request).toMatchObject({ acceptance_id: line.acceptance_id, learning: { file_id: sourceScan.lines[0].file_id, source_line_key: "line:1", action: "none" } });
+  expect(headerFields(result.header, sourceScan.scan_file).supplier_inn).toBe("7707083893");
+  expect(applyHints(line, { info: { manufacturer: "catalog", source: "catalog", series: "", name: "", item_type: "" }, places: [] }).manufacturer).toBe("Maker");
+});
+
+it("clears a deactivated suggestion while preserving operator edits and original partial quantities", () => {
+  const line = applyScan(emptyHeader(), [emptyLine()], sourceScan).lines[0];
+  const changed = editCell(line, "quantity", "50");
+  const stale = applyLearning(changed, { ...learned, active: false, rule_version: 2 });
+  expect(stale).toMatchObject({ article: "RAW", quantity: "50", ruleApplied: false });
+  const deactivated = deactivateLearning(line);
+  expect(deactivated).toMatchObject({ article: "RAW", learning: { action: "deactivate" } });
+  expect(applyLearning(changed, null)).toMatchObject({ article: "RAW", quantity: "50", ruleApplied: false });
+});
+
+it("does not apply another supplier's cached rule or change a raw receiving proposal", () => {
+  const before = JSON.stringify(sourceScan);
+  const result = applyScan({ ...emptyHeader(), supplier: "Другой", supplier_inn: "7736050003" }, [], sourceScan);
+  expect(result.lines[0].article).toBe("RAW");
+  expect(result.lines[0].ruleApplied).toBeFalsy();
+  expect(JSON.stringify(sourceScan)).toBe(before);
+});
+
+it("keeps ambiguous packs unchanged when the supplier rule requests manual review", () => {
+  const scan = { ...sourceScan, lines: [{ ...sourceScan.lines[0], quantity: "2", unit: "упак",
+    learning: { ...learned, quantity: null, warning: "Единица УПД отличается от складской — укажите пересчёт количества" } }] };
+  const line = applyScan(emptyHeader(), [], scan).lines[0];
+  expect(line).toMatchObject({ article: "RAW", quantity: "2", unit: "упак", ruleApplied: false });
+  expect(line.rule?.warning).toBeTruthy();
+});
+
+it("keeps scan acceptance available on warehouse browsers without crypto.randomUUID", () => {
+  vi.stubGlobal("crypto", { getRandomValues: crypto.getRandomValues.bind(crypto) });
+  try {
+    const first = applyScan(emptyHeader(), [], sourceScan).lines[0];
+    const second = applyScan(emptyHeader(), [], sourceScan).lines[0];
+    expect(first.acceptance_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(second.acceptance_id).not.toBe(first.acceptance_id);
+    expect(buildAccept(first, emptyHeader(), "1F4", 1, false).acceptance_id).toBe(first.acceptance_id);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
 
 const LEGACY = [
   "Контрагент\t№ УПД\tДата УПД\tНомер счета\tДата счета\tарт ПОСТАВЩИКА\tСЕРИЯ\tприход\tЕд. изм",

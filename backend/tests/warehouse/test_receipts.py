@@ -424,10 +424,12 @@ def test_scan_takes_header_and_lines_of_the_upd_purchasing_already_holds(stand):
     assert body["recognised"]["supplier"] == "ООО \"Ромашка Электро\""
     assert body["recognised"]["upd_date"] == "2026-10-21"
     assert body["recognised"]["invoice_number"] == "СЧ-45"
-    assert body["lines"] == [
+    assert [{key: row[key] for key in ("article", "name", "quantity", "unit", "upd_name")} for row in body["lines"]] == [
         {"article": "CON-001", "name": "Разъём 0", "quantity": "10", "unit": "шт", "upd_name": "Разъём 0"},
         {"article": "CON-002", "name": "Разъём 1", "quantity": "2.5", "unit": "шт", "upd_name": "Разъём 1"},
     ]
+    assert all(row["original"]["learning_eligible"] is False for row in body["lines"])
+    assert all(row["source_line_key"].startswith("registry:") for row in body["lines"])
 
 
 OCR_ROWS = (Path(__file__).parent / "fixtures" / "upd-1788-ocr-rows.txt").read_text(encoding="utf-8")
@@ -527,7 +529,7 @@ def test_scan_merge_glues_stored_sheets_into_one_pdf(stand, monkeypatch):
     job = response.json()
     assert (job["status"], job["recognising"]) == ("done", False), "the sheets' readings combined at once"
     body = job["result"]
-    assert set(body) == {"scan_file", "recognised", "lines", "note"} and body["scan_file"] == job["scan_file"]
+    assert set(body) == {"scan_file", "recognised", "source_supplier", "lines", "note"} and body["scan_file"] == job["scan_file"]
     assert body["scan_file"] not in (first["scan_file"], second["scan_file"])
     served = client.get(body["scan_file"])
     assert served.headers["content-type"] == "application/pdf"
