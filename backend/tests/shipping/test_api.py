@@ -708,3 +708,15 @@ def test_other_project_card_is_not_used_and_bad_terms_are_rejected(shipping_api)
     assert made.status_code == 200
     assert made.json()["shipment"]["shipping_point"] == ""  # адрес чужого проекта не подставляется
     assert bad.status_code == 422
+
+
+def test_shipment_search_target_bypasses_list_limit_and_keeps_read_permission(shipping_api):
+    client = shipping_api
+    shipment = _shipment_for_comment(client)
+    response = client.get("/api/shipping/shipments", params={"shipment": shipment["id"], "limit": 1})
+    assert response.status_code == 200, response.text
+    assert [row["id"] for row in response.json()["shipments"]] == [shipment["id"]]
+    assert client.get("/api/shipping/shipments?shipment=99999999-0000-0000-0000-000000000099").status_code == 404
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(name="Монтажник", department="Цех"), email="other@example.test", roles=frozenset({"operator"}), permissions={})
+    assert client.get("/api/shipping/shipments", params={"shipment": shipment["id"]}).status_code == 403

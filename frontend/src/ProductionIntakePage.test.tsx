@@ -491,3 +491,34 @@ describe("Приёмка с производства: свои колонки и
     expect(await screen.findByRole("dialog", { name: "Журнал отгрузок" })).toBeInTheDocument();
   });
 });
+
+
+it("a shipment search link opens the journal filtered by shipment number", async () => {
+  shipments = [packedShipment, { ...packedShipment, id: "s2", number: "ОТГ-20261029-02" }];
+  window.history.replaceState({}, "", `/?section=intake&tab=journal&q=${encodeURIComponent(packedShipment.number)}`);
+  render(<ProductionIntakePage principal={viewer} />);
+  const journal = await screen.findByRole("dialog", { name: "Журнал отгрузок" });
+  expect((await within(journal).findAllByText(packedShipment.number)).length).toBeGreaterThan(0);
+  expect(within(journal).queryByText("ОТГ-20261029-02")).toBeNull();
+});
+
+it("a finished goods search link seeds the intake list on the all tab", async () => {
+  window.history.replaceState({}, "", "/?section=intake&tab=all&q=600К.1");
+  render(<ProductionIntakePage principal={viewer} />);
+  expect(await screen.findByText("Шлейф")).toBeInTheDocument();
+  expect(screen.queryByText("Жгут")).toBeNull();
+});
+
+
+it("loads a linked older shipment outside the journal list, including cancelled empty ones", async () => {
+  window.history.replaceState({}, "", "/?section=intake&tab=journal&shipment=old&q=ОТГ-СТАРАЯ");
+  const old = { ...packedShipment, id: "old", number: "ОТГ-СТАРАЯ", status: "Отменена", lines: [] };
+  const baseFetch = vi.mocked(globalThis.fetch).getMockImplementation()!;
+  vi.stubGlobal("fetch", vi.fn((input, init) => String(input).includes("?shipment=old")
+    ? Promise.resolve(json({ shipments: [old] })) : baseFetch(input, init)));
+  render(<ProductionIntakePage principal={viewer} />);
+  const journal = await screen.findByRole("dialog", { name: "Журнал отгрузок" });
+  expect(await within(journal).findByText("ОТГ-СТАРАЯ")).toBeInTheDocument();
+  expect(within(journal).getByText("Отменена")).toBeInTheDocument();
+  expect(within(journal).getByText(/В отгрузке нет позиций/)).toBeInTheDocument();
+});

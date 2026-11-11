@@ -35,9 +35,9 @@ function boxTotals(shipment: Shipment) {
   return { weight: gross > 0 ? String(gross).replace(".", ",") : shipment.weight, dims: dims.join("; ") };
 }
 
-/** Отменённые заявки в журнал не идут: груз по ним не двигался. */
-export function journalRows(shipments: Shipment[]): JournalRow[] {
-  return shipments.filter((shipment) => JOURNAL_STATUS.includes(shipment.status))
+/** Отменённые заявки видны только по прямой ссылке из поиска. */
+export function journalRows(shipments: Shipment[], selectedId = ""): JournalRow[] {
+  return shipments.filter((shipment) => (selectedId ? shipment.id === selectedId : JOURNAL_STATUS.includes(shipment.status)))
     .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0))
     .flatMap((shipment) => {
       const totals = boxTotals(shipment);
@@ -70,11 +70,12 @@ function useDocLink() {
   return { error, link };
 }
 
-export function JournalWindow({ shipments, close }: { shipments: Shipment[]; close: () => void }) {
-  const rows = useMemo(() => journalRows(shipments), [shipments]);
+export function JournalWindow({ shipments, close, initialQuery = "", selectedShipment }: { shipments: Shipment[]; close: () => void; initialQuery?: string; selectedShipment?: Shipment }) {
+  const rows = useMemo(() => journalRows(shipments, selectedShipment?.id), [shipments, selectedShipment]);
   const { error, link: docLink } = useDocLink();
   const day = (value: string | null | undefined) => value ? formatDate(value) : "";
   const columns: DataColumn<JournalRow>[] = [
+    { key: "shipment", title: "Отгрузка", value: (row) => row.shipment.number },
     { key: "date", title: "Дата", value: (row) => row.date, render: (row) => formatDate(row.date) },
     { key: "grn", title: "ГРН", value: (row) => row.line.grn ?? "" },
     { key: "project", title: "Проект", value: (row) => row.line.project, render: (row) => <strong>{row.line.project}</strong> },
@@ -108,8 +109,10 @@ export function JournalWindow({ shipments, close }: { shipments: Shipment[]; clo
     <section className="panel intake-journal">
       <header className="page-head"><h2>Журнал отгрузок</h2><button type="button" className="secondary small" onClick={close}>Закрыть</button></header>
       {error && <div className="error-banner" role="alert">{error}</div>}
+      {selectedShipment && <p><strong>{selectedShipment.number}</strong> · <ShipStatus status={selectedShipment.status} />
+        {!selectedShipment.lines.length && <span className="muted"> · В отгрузке нет позиций.</span>}</p>}
       <DataTable label="Журнал отгрузок" storageKey="shipping-journal" rows={rows} columns={columns} rowKey={(row) => row.key}
-        exportName="Журнал отгрузок" searchPlaceholder="Проект, КБ, наименование, ГРН, PL, DN или трек"
+        initialQuery={initialQuery} exportName="Журнал отгрузок" searchPlaceholder="Проект, КБ, наименование, ГРН, PL, DN или трек"
         presets={[{ label: "Не уехали", test: (row) => !SHIPPED.includes(row.shipment.status) }, { label: "Отгружены", test: (row) => SHIPPED.includes(row.shipment.status) },
           { label: "Частичные", test: (row) => row.partial }]}
         emptyText="В журнале пусто — строки появятся, когда упакуете принятое." />

@@ -9,7 +9,7 @@ import type { Tone } from "./statusTone";
 import { actShares, dataRows } from "./dispatchPositionRows";
 import { defaultTab, dispatchBoard, hasWork, kbKey, num, ofProject, permittedPack, recentShipment, round2, SHIPPED_DAYS, stagePieces, type Tab } from "./intakeStages";
 import { isPickup, termsText } from "./carriers";
-import { canAct, canSee, hasFullAccess } from "./navigation";
+import { canAct, canSee, hasFullAccess, urlParam } from "./navigation";
 import { intakeApi, type DispatchShipment, type IntakeAct, type IntakeRow } from "./productionIntakeApi";
 import { IntakeWindow, keyOf, leftOf } from "./IntakeWindow";
 import { PrintOutcome, type PrintResult } from "./LabelPrint";
@@ -108,6 +108,10 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       const [intakeResult, shipmentResult, addresseeResult] = await Promise.all([intakeApi.rows(), intakeApi.shipments(), shippingApi.addressees()]);
       const loadedRows = intakeResult.rows ?? [];
       const loadedShipments = shipmentResult.shipments ?? [];
+      const linkedShipment = urlParam("shipment");
+      if (linkedShipment && !loadedShipments.some((shipment) => shipment.id === linkedShipment)) {
+        loadedShipments.push(...(await intakeApi.shipments(linkedShipment)).shipments);
+      }
       setRows(loadedRows); setShipments(loadedShipments); setError("");
       setAddressees(addresseeResult.addressees ?? []);
       if (!tabChosen.current) {
@@ -335,7 +339,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
           {text}<span className="page-count"> {board.counts[key]}</span></button>)}</div>
       <DataTable key={tab} label="Приёмка с производства" storageKey={`production-intake:v3:${tab}`} rows={lines} columns={visibleColumns} rowKey={(line) => line.id}
         groupBy={(line) => line.project} groupLabel={groupLabel} exportName="Приёмка с производства"
-        searchPlaceholder="Проект, КБ, наименование, ГРН или задание"
+        initialQuery={urlParam("q")} searchPlaceholder="Проект, КБ, наименование, ГРН или задание"
         rowClassName={(line) => tab === "all" && !(line.stage && hasWork(line.stage, line.kb, piecesOf(line.kb))) ? "ship-line-off" : ""}
         emptyText={board.rows.length ? EMPTY[tab] : EMPTY.all} />
       {label && <div className="intake-print-status"><strong>Этикетка {label.grn}</strong><PrintOutcome result={label.result} error={label.error} /></div>}
@@ -345,7 +349,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     {opened?.kind === "ship" && <ShipWindow project={opened.project} shipments={projectShips(opened.project)} rights={rights} reload={reload} close={() => setOpened(null)} />}
     {opened?.kind === "track" && <TrackWindow title={opened.title} shipments={[shipments.find((shipment) => shipment.id === opened.shipment.id) ?? opened.shipment]} reload={reload} close={() => setOpened(null)} />}
     {opened?.kind === "noupd" && <NoUpdWindow shipment={opened.shipment} mutate={(key, operation, message) => mutate(key, operation, typeof message === "string" ? message : "Готово")} close={() => setOpened(null)} />}
-    {header === "journal" && <JournalWindow shipments={shipments} close={() => setHeader(null)} />}
+    {header === "journal" && <JournalWindow shipments={shipments} selectedShipment={shipments.find((shipment) => shipment.id === urlParam("shipment"))} initialQuery={urlParam("q")} close={() => setHeader(null)} />}
     {header === "good" && <RegisterGoodWindow reload={reload} close={() => setHeader(null)} />}
     {header === "request" && <CreateShipmentWindow reload={reload} close={() => setHeader(null)} />}
     {/* Данные отправки проекта правит менеджер на своём экране; складу — только просмотр (аудит 06.11). */}

@@ -1,13 +1,14 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { CommandPalette, SearchEntry } from "./CommandPalette";
+import { CommandPalette, SearchEntry, type SearchResult } from "./CommandPalette";
+import { REFERENCE_TAB_GROUPS, referenceTabKey } from "./referenceTabs";
 import type { Principal } from "./api";
 
 function json(body: unknown) {
   return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 }
 
-const RESULTS = [
+const RESULTS: SearchResult[] = [
   { group: "Строки закупки", title: "SM-0042 · Резистор 10 кОм", subtitle: "591К.3 · ООО Ромашка", section: "procurement", params: { tab: "sheet", q: "SM-0042" } },
   { group: "Склад", title: "FRX.26.0000003-П2", subtitle: "Резистор · 1F4 · 10 шт", section: "stock", params: { q: "FRX.26.0000003-П2" } },
 ];
@@ -17,7 +18,7 @@ function person(permissions: Principal["permissions"], level = "operator"): Prin
 }
 
 const searches: string[] = [];
-function serve(results = RESULTS) {
+function serve(results: SearchResult[] = RESULTS) {
   searches.length = 0;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
@@ -195,4 +196,56 @@ it("section words find the menu section once something is typed, and an empty fi
   fireEvent.keyDown(document.body, { key: "k", code: "KeyK", ctrlKey: true });
   fireEvent.change(await screen.findByRole("combobox"), { target: { value: "оборудование" } });
   expect(titles()).toEqual(expect.arrayContaining(["Склад → Оборудование", "База данных → Оборудование"]));
+});
+
+
+it("every reference tab is offered from the screen registry and opens with Enter", async () => {
+  serve([]);
+  render(<CommandPalette principal={person({}, "admin")} />);
+  for (const tab of REFERENCE_TAB_GROUPS.flatMap((group) => group.tabs)) {
+    press({ key: "k", code: "KeyK", ctrlKey: true });
+    const input = await screen.findByRole("combobox");
+    fireEvent.change(input, { target: { value: tab.label } });
+    const option = screen.getByText(`База данных → ${tab.label}`).closest('[role="option"]')!;
+    fireEvent.mouseMove(option);
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(new URLSearchParams(window.location.search).get("tab")).toBe(tab.id);
+  }
+});
+
+it.each(["erpref", "erptctpl"] as const)("reference jumps respect the individual %s key", async (permission) => {
+  serve([]);
+  await mount(person({ [permission]: "view" }));
+  press({ key: "k", code: "KeyK", ctrlKey: true });
+  fireEvent.change(await screen.findByRole("combobox"), { target: { value: "База данных" } });
+  for (const tab of REFERENCE_TAB_GROUPS.flatMap((group) => group.tabs)) {
+    expect(Boolean(screen.queryByText(`База данных → ${tab.label}`))).toBe(referenceTabKey(tab.id) === permission);
+  }
+});
+
+it.each([
+  ["Отгрузки", "Отгрузка → ОТГ-9", "intake", { tab: "journal", q: "ОТГ-9" }],
+  ["Задания цеха", "Задания цеха → ПЗ-9", "production", { task: "task-9" }],
+  ["Техкарты", "Техкарты → 591К.3", "techcards", { project: "591К.3", card: "card-9" }],
+  ["Оборудование", "База данных → Оборудование", "references", { tab: "ob", equipment: "unit-9" }],
+] as const)("renders %s with its place and navigates there", async (group, subtitle, section, params) => {
+  serve([{ group, title: "Найденная запись", subtitle, section, params }]);
+  await mount(person({}, "admin"));
+  press({ key: "k", code: "KeyK", ctrlKey: true });
+  fireEvent.change(await screen.findByRole("combobox"), { target: { value: "запись" } });
+  expect(await screen.findByRole("group", { name: group })).toHaveTextContent(subtitle);
+  fireEvent.click(screen.getByText("Найденная запись"));
+  const actual = new URLSearchParams(window.location.search);
+  expect(actual.get("section")).toBe(section);
+  for (const [key, value] of Object.entries(params)) expect(actual.get(key)).toBe(value);
+});
+
+
+it("searches the same capability-gated sections as the sidebar", async () => {
+  serve([]);
+  render(<CommandPalette principal={person({})} capabilities={{ equipmentSetup: true }} />);
+  press({ key: "k", code: "KeyK", ctrlKey: true });
+  fireEvent.change(await screen.findByRole("combobox"), { target: { value: "Наладка оборудования" } });
+  fireEvent.click(screen.getByText("Наладка оборудования"));
+  expect(new URLSearchParams(window.location.search).get("section")).toBe("equipmentsetup");
 });

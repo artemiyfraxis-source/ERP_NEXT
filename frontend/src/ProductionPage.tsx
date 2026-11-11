@@ -20,7 +20,7 @@ import {
   type ProductionTask,
   type ProductionWorkSession,
 } from "./api";
-import { canAct, canSee, hasFullAccess, openPlace } from "./navigation";
+import { canAct, canSee, hasFullAccess, openPlace, urlParam } from "./navigation";
 import { EtkSheet } from "./ProjectEtk";
 import { etkCardsChangedNote, etkCardsNote } from "./etkCardSource";
 import type { MarkSerialRange } from "./markSerial";
@@ -61,7 +61,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [skills, setSkills] = useState<ProductionSkill[]>([]);
   const [absences, setAbsences] = useState<ProductionAbsence[]>([]);
   const [shift, setShift] = useState<ProductionShift | null>(null);
-  const [selectedTaskId, setSelectedTaskId] = useState("");
+  const [selectedTaskId, setSelectedTaskId] = useState(() => mine ? "" : urlParam("task"));
   const [selectedOperationId, setSelectedOperationId] = useState("");
   const [week, setWeek] = useState(0);
   // Сотрудник: планировщик выбирает монтажника и видит его очередь и коробки как он сам. Мастер его площадки и полный
@@ -86,6 +86,11 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
           : canOverview ? productionApi.operators() : Promise.resolve({ operators: [] }),
         mine ? productionApi.execution(viewAs) : Promise.resolve(null),
       ]);
+      const linkedTask = mine ? "" : urlParam("task");
+      if (linkedTask && !taskResult.tasks.some((task) => task.id === linkedTask)) {
+        const selected = await productionApi.list(linkedTask);
+        taskResult.tasks = [...taskResult.tasks, ...selected.tasks];
+      }
       setTasks(taskResult.tasks);
       setActFor((taskResult as { can_act?: boolean }).can_act ? viewAs : null);
       setOperators(operatorResult.operators);

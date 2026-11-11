@@ -380,7 +380,7 @@ export function App() {
           </button>
         </div>
       </aside>
-      <CommandPalette principal={principal} />
+      <CommandPalette principal={principal} capabilities={{ equipmentSetup: setupAvailable }} />
       <main className="workspace main">
         <ViewAsBanner principal={principal} onExit={exitViewAs} />
         {shellError && <div className="shell-error error-banner" role="alert">{shellError}</div>}
@@ -406,7 +406,7 @@ export function App() {
         {activeSection === "issues" && <FulfillmentPage principal={principal} mode="pick" />}
         {activeSection === "handout" && <FulfillmentPage principal={principal} mode="give" />}
         {activeSection === "prodplan" && <ProductionPlanPage principal={principal} openProjectCard={visibleNav.some(({ id }) => id === "projects") ? openProjectCard : undefined} />}
-        {activeSection === "production" && <ProductionPage principal={principal} />}
+        {activeSection === "production" && <ProductionPage key={visit} principal={principal} />}
         {activeSection === "equipmentsetup" && (setupAvailable
           ? <Suspense fallback={<p className="empty">Загрузка наладки…</p>}><EquipmentSetupPage principal={principal} /></Suspense>
           : <section className="page"><h1>Наладка оборудования</h1>
@@ -420,7 +420,7 @@ export function App() {
         {activeSection === "references" && <ReferencesPage key={visit} principal={principal} />}
         {activeSection === "notifications" && <NotificationsPage />}
         {activeSection === "operations" && <OperationsPage />}
-        {activeSection === "staff" && <StaffPage openCard={openCard} openUserId={place.user} />}
+        {activeSection === "staff" && <StaffPage key={visit} openCard={openCard} openUserId={place.user} />}
         {activeSection === "card" && <EmployeeCardPage
           key={place.user ?? "own"}
           principal={principal}
