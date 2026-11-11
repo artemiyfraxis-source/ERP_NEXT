@@ -1,5 +1,6 @@
 - [ERP_NEXT hub](erp-next-hub.md) — START HERE: map of every note below (Obsidian graph root)
 - [Owner working rules](owner-working-rules.md) — Russian replies, no questions, merge/deploy permissions, one server update per batch of parallel PRs, batch access asks
+- [Claude directs Codex](claude-directs-codex.md) — owner 11.11: Claude $20 orchestrates, Codex CLI $200 searches/codes/tests/reviews via `codex exec`; Codex never commits
 - [Owner request queue](owner-request-queue.md) — owner piles requests mid-turn: numbered visible queue, dispatch each via orchestrator at once
 - [Owner goals 05.10](owner-goals-1005.md) — goal 1: minimal chain закупка→приёмка→выдача; goal 2: debug production; receiving answers
 - [Live data protocol](live-data-protocol.md) — no migration to prod without backup → rehearsal on a copy → row-count/integrity check; update.sh + rehearse.sh do it since 05.10
@@ -37,7 +38,7 @@
 - [Cable standard by type](cable-standard-by-type.md) — owner 25.10: cable «Стандарт» = general construction standard of its type (MIL-DTL-17/xxx, JIS C 3501, ГОСТ 11326), not maker docs, no fire standards
 - [Coax data sources](coax-data-sources.md) — gsm-repiteri / Амел / kroks / vegatel for coax specs and supplier articles; resellers = «Поставщик»
 - [ETK by semi-finished](etk-by-semifinished.md) — 13.10 owner+Vasily: one ETK document per ПФ; fitter's task = a ПФ document; configure in the ETK left list
-- [Applicator code kinds](applicator-code-kinds.md) — owner 29.10: БД.ТЕР M/A/S codes are all applicators (M ОТП pre-stripped, A automats, S unstripped), never matrices/tools
+- [Applicator code kinds](applicator-code-kinds.md) — owner 29.10: БД.ТЕР M/A/S codes are all applicators (M ОТП pre-stripped, A automats, S unstripped), never matrices/tools; 11.11: never invent applicators, owner mass-edits them from 12.11
 - [Applicators by series](applicators-by-series.md) — owner 16.10: all A* applicators of a series on every contact; S/M stay per wire range
 - [Connector 3D only on card](connector-3d-only-on-card.md) — 3D connector picture only on the catalog series card; ETK sketches: top view + mounting side; ПФ/scheme pictures: real top view, wire exit to the harness, never a box
 - [Maker docs from Russia](maker-docs-from-russia.md) — te.com/molex/mouser 403 by geo; Web Archive in browser, JST guide, chipdip/eicom mirrors, KiCad/LCSC for pin 1
