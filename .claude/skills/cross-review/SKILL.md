@@ -35,7 +35,7 @@ No findings → say "no findings" and list what you checked. Answer in Russian.
 ```
 
 - From Claude Code (reviewer = Codex), Bash tool:
-  `codex exec -m gpt-6.1-sol -c model_reasoning_effort="high" -s read-only -C "<repo root>" -o "<scratch>/review.out.md" - < "<scratch>/review-prompt.md"`
+  `codex exec -m <gpt-6.1-sol | gpt-6-astra for migrations, stock, money, auth> -c model_reasoning_effort="high" -s read-only -C "<repo root>" -o "<scratch>/review.out.md" - < "<scratch>/review-prompt.md"`
   (Bash `run_in_background`; read only `review.out.md`)
 - From Codex CLI (reviewer = Claude):
   `claude -p --permission-mode plan --allowedTools "Bash(git diff:*) Bash(git status:*) Bash(git log:*) Read Grep Glob" < "<scratch>/review-prompt.md"`

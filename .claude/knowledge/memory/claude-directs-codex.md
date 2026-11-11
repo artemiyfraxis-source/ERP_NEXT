@@ -5,14 +5,16 @@ metadata:
   node_type: memory
   type: user
   originSessionId: 3299b8a4-260f-413b-822c-c78a05c76e54
-  modified: 2026-11-11T19:31:26.493Z
+  modified: 2026-11-11T19:35:58.534Z
 ---
 
 Owner's subscriptions since 11.11.2026: Claude $20 (tight quota), OpenAI Codex $200 (large quota). «Ты будешь управлять им»:
 Claude main is the orchestrator, Codex CLI the workhorse.
 
 - Codex CLI 0.167.1 installed globally via npm (`codex` on PATH), logged in with ChatGPT; shares `~/.codex` with the
-  Codex desktop app (default model there gpt-5.6-sol/high; workers pass `-m gpt-6.1-sol` explicitly).
+  Codex desktop app (its default stays gpt-5.6-sol/high). Owner 11.11: «свой подход к каждой задаче» — every
+  `codex exec` picks model+effort from the per-task table in `orchestrate` «Budget routing» (luna / terra / sol / astra,
+  low…max, never ultra); one model for everything is wrong.
 - `codex exec -s workspace-write -C <dir>` works from Claude's Bash tool on this PC (Windows elevated sandbox), ~30 s for a trivial task.
 - Codex can't commit in a git worktree (main `.git` is outside its writable root) — main reviews and commits.
 

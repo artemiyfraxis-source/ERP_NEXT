@@ -18,12 +18,31 @@ send reading-heavy and writing-heavy work to Codex CLI (installed globally, Chat
 - **Codex does:** wide code searches and first-pass plans (read-only), implementation and affected tests in a
   task worktree, the independent pre-ship review, long log and test-output digging.
 - Claude subagents (`erp-planner`/`erp-worker`/`erp-verifier`) only when Codex is down or out of quota — say so.
-- Read-only call (search, plan draft, review):
-  `codex exec -m gpt-6.1-sol -c model_reasoning_effort="medium" -s read-only -C "<repo>" -o "<scratch>/<task>.out.md" - < "<scratch>/<task>.brief.md"`
+- Pick model and effort per task from this table (owner authorized it 11.11.2026). Models come from `~/.codex/models_cache.json`:
+  `gpt-6-astra` is the frontier model (272k ctx), `gpt-6.1-sol` the workhorse (500k ctx), `gpt-6.1-terra` the balanced
+  model for straightforward work (500k ctx), `gpt-6-luna` the fast one for easy tasks. Older generations (`gpt-6-sol`, `gpt-5.6-*`) only
+  when a current one is unavailable.
+
+  | Task | Model | Effort | Sandbox |
+  |---|---|---|---|
+  | Grep-style lookup, «where is X», list usages | `gpt-6-luna` | low | read-only |
+  | Log / CI output / test-failure digest, lint and format fixes | `gpt-6-luna` | medium | read-only / workspace-write |
+  | Wide code reading across modules, impact map, plan draft | `gpt-6.1-sol` | medium | read-only |
+  | Domain plan: status machine, new module, stock/money flow | `gpt-6-astra` | high | read-only |
+  | UI copy, wiring, tests mirroring existing ones, mechanical renames | `gpt-6.1-terra` | medium | workspace-write |
+  | Ordinary feature or fix in one module + its tests | `gpt-6.1-sol` | medium | workspace-write |
+  | Feature across modules, refactor, screen change (with shots) | `gpt-6.1-sol` | high | workspace-write |
+  | Alembic migration, stock/money quantities, generators, data importers | `gpt-6-astra` | xhigh | workspace-write |
+  | Hard bug (`diagnosing-bugs`) | `gpt-6.1-sol` high → `gpt-6-astra` xhigh if it survives | | workspace-write |
+  | Bug that survived astra xhigh | `gpt-6-astra` | max | workspace-write |
+  | Pre-ship review, ordinary slice | `gpt-6.1-sol` | high | read-only |
+  | Pre-ship review: migration, stock, money, auth | `gpt-6-astra` | high | read-only |
+
+  Never `ultra`: it delegates on its own, and workers must not delegate recursively. Put the chosen model/effort
+  in the dispatch record. A task spanning two rows takes the stronger one.
+- Read-only call: `codex exec -m <model> -c model_reasoning_effort="<effort>" -s read-only -C "<repo>" -o "<scratch>/<task>.out.md" - < "<scratch>/<task>.brief.md"`
 - Editing worker: main creates the worktree from the recorded base (`git worktree add <path> -b <branch> <SHA>`,
-  then `node scripts/setup-env.mjs` in it), then
-  `codex exec -m gpt-6.1-sol -c model_reasoning_effort="high" -s workspace-write -C "<worktree>" -o "<scratch>/<task>.out.md" - < "<scratch>/<task>.brief.md"`
-  Effort: `high` by default, `xhigh` for migrations, stock, money and generators; `medium` for copy and wiring.
+  then `node scripts/setup-env.mjs` in it), then the same call with `-s workspace-write -C "<worktree>"`.
 - Codex never commits, pushes or merges: the sandbox can't write the main `.git`, and commits carry the owner's
   identity. Main reads the worker's diff and test evidence, then commits in the worktree.
 - Run every `codex exec` in the background (Bash `run_in_background`) and wait for the exit notice; never poll.
@@ -38,10 +57,8 @@ send reading-heavy and writing-heavy work to Codex CLI (installed globally, Chat
 - Keep root settings and the user's selected model unchanged. Default to inheritance. Task-specific
   model/effort overrides require user authorization; use only identifiers exposed by the current runtime.
   Claude names do not imply a universal Opus-to-Astra translation or account entitlement.
-- When authorized and available, an illustrative bounded Codex route is `gpt-6.1-sol` / medium for
-  ordinary code; `gpt-6-astra` or a capable inherited model / high for stock, money, generators,
-  migrations and domain planning; `gpt-6-luna` / high for narrow repeatable searches or log checks.
-  Use high for complex review; xhigh/max only for demonstrated need. These are choices, not every-job defaults.
+- Codex model/effort per task: the table in «Budget routing» (owner-authorized). Inside a Codex-led session
+  (`erp-orchestrate`) the same table applies to its spawned workers.
 - An explicit override needs a self-contained brief and `fork_turns: "none"`; full-history forks inherit
   their parent model/effort. If an override is unavailable, preserve a supported selection and report it.
 
