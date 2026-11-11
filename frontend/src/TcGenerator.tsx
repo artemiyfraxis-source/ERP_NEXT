@@ -34,6 +34,9 @@ import {
   coaxFromFields,
   coaxRecordFields,
   emptyState,
+  emptyRework,
+  reworkTemplateFits,
+  type ReworkState,
   initState,
   makeGen,
   onCoaxConnChange,
@@ -130,14 +133,14 @@ import { PinoutTable } from "./PinoutTable";
 import { WrapTable } from "./WrapTable";
 import { applyEnd, pinConns, pinRows, pinSummary, spliceLines } from "./tcGenPinTable";
 import { useTerminalPairs } from "./useTerminalPairs";
-import { MARK_KIND_DEFAULT, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
+import { MARK_KIND_DEFAULT, markIsTube, markSpecs, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
 
 /** library — карточки библиотеки операций целиком (код, сторона, нормы) для «Ручной сборки». */
 type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia" | "markMats" | "cableRecords" | "lugRecords"> & { library: LibraryCard[] };
 
 const EMPTY_REFS: Refs = { templates: [], ops: [], terRecords: [], coaxRecords: [], wireDia: null, coaxCableDia: null, markMats: [], cableRecords: [], lugRecords: [], library: [] };
 const COAX_VSWR_OPTIONS = [["all", "Каждое изделие"], ["sample", "Выборочно"], ["none", "Не проверять"]] as const;
-const TABS: Array<[Tab, string]> = [["inter", "Межплатная"], ["complex", "Сложная сборка"], ["coax", "КОАКС"], ["manual", "Ручная сборка"]];
+const TABS: Array<[Tab, string]> = [["inter", "Межплатная"], ["complex", "Сложная сборка"], ["coax", "КОАКС"], ["manual", "Ручная сборка"], ["rework", "Доработка давальческого изделия"]];
 const WRAP_KINDS: Array<[WrapKind, string]> = [
   ["tape", "Лента поверх — последней операцией"], ["braid", "Оплётка — до обжима контактов"], ["under", "Лента под оплётку — слоем ниже"],
 ];
@@ -402,6 +405,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const ops = useMemo(() => gen.getActiveOps(), [gen]);
   const config = useMemo(() => gen.buildConfig(), [gen]);
   const manualTab = S.tab === "manual";
+  const reworkTab = S.tab === "rework";
+  const rework = S.rework || emptyRework();
+  const setRework = (patch: Partial<ReworkState>) => update((current) => ({ ...current, rework: { ...(current.rework || emptyRework()), ...patch } }));
   const partQty = Number((config as Record<string, unknown>).partQty) || 1;
   const manualCfg = useMemo(() => manualConfig(manual, config), [manual, config]);
 
@@ -809,9 +815,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
 
   /** Конфигурация «Создать» из проверенной формы: распиновка, снимок формы, ручная схема. */
   function typicalConfig(cfg: Record<string, unknown>): Record<string, unknown> {
-    const pinout = pinoutRecord(gen, S);
+    const pinout = reworkTab ? null : pinoutRecord(gen, S);
     // Снимок формы: пересборка открывает карту с прошлыми настройками (genBuildState.ts); движок ЭТК его не читает.
     const withPinout = { ...(pinout ? { ...cfg, pinout } : cfg), [GEN_STATE_KEY]: genSnapshot(components, S, terEdits, coaxAdd) };
+    if (reworkTab) return withPinout;
     return routeOverride ? { ...withPinout, route: routePayload(routeOverride) } : withPinout;
   }
 
@@ -819,7 +826,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const { cfg, error, warnings } = gen.validate();
     if (error) { setStatus({ text: error, error: true }); return null; }
     // Ручная схема уходит как build_config.route; без неё сервер выводит схему сам.
-    const problem = routeOverride ? routeProblem(routeOverride, routeOps, finalName) : null;
+    const problem = !reworkTab && routeOverride ? routeProblem(routeOverride, routeOps, finalName) : null;
     if (routeOverride && problem) { setRouteError(`Схема полуфабрикатов: ${problem}`); return null; }
     setRouteError("");
     if (warnings.length && !window.confirm("⚠ Предупреждения:\n\n" + warnings.join("\n") + "\n\nВсё равно создать техкарты?")) {
@@ -839,7 +846,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const previewConfig = useMemo(() => {
     if (!buildPreview || manualTab) return null;
     const { cfg, error } = gen.validate();
-    if (error || (routeOverride && routeProblem(routeOverride, routeOps, finalName))) return null;
+    if (error || (!reworkTab && routeOverride && routeProblem(routeOverride, routeOps, finalName))) return null;
     return typicalConfig(cfg);
   }, [buildPreview, manualTab, gen, routeOverride, routeOps, finalName, components, terEdits, coaxAdd]); // eslint-disable-line react-hooks/exhaustive-deps
   const pf = useBuildPreview(previewConfig, buildPreview);
@@ -875,7 +882,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
 
   /** pinoutSeen — «Создать всё равно» в вопросе о непроверенной распиновке. */
   async function generate(pinoutSeen = false) {
-    if (!manualTab && !pinoutSeen && pinOpenEnds.length) { setPinAsk(true); return; }
+    if (!manualTab && !reworkTab && !pinoutSeen && pinOpenEnds.length) { setPinAsk(true); return; }
     setPinAsk(false);
     const payload = manualTab ? manualPayload() : typicalPayload();
     if (!payload) return;
@@ -1103,15 +1110,16 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   function opItem(spec: OpSpec, number: number) {
     const row = gen.opRow(spec);
     const code = cards.byId.get(row.templateId)?.code || "";
+    const groups = reworkTab ? cards.groups.map(([label, items]): [string, CardOption[]] => [label, items.filter((item) => reworkTemplateFits(spec.type, item.code))]).filter(([, items]) => items.length) : cards.groups;
     const setTime = (key: "tPrep" | "tOp" | "tMachine", value: string) => setS((current) => ({ ...current, times: { ...current.times, [spec.opKey]: { ...row.times, [key]: value } } }));
     return <div className={row.templateId ? "op-row" : "op-row is-off"} key={spec.opKey}>
       <span className="op-num">{number}</span>
       <div className="op-name"><span className="op-title">{spec.label}</span>{code && <small className="op-code">{code}</small>}</div>
       <div className="op-card">
-        <CardSelect label={`Карточка: ${spec.label}`} value={row.templateId} groups={cards.groups} byId={cards.byId} warn={!row.templateId}
+        <CardSelect label={`Карточка: ${spec.label}`} value={row.templateId} groups={groups} byId={cards.byId} warn={!row.templateId}
           onChange={(id) => update((current) => ({ ...current, selectedTemplates: { ...current.selectedTemplates, [spec.opKey]: id }, manualTemplates: current.manualTemplates.includes(spec.opKey) ? current.manualTemplates : [...current.manualTemplates, spec.opKey] }))} />
         {row.matched ? <CheckMark title={`Нормы из БД.ОП: ${row.matched.opName}${row.matched.opNumber ? ` · ${row.matched.opNumber}` : ""}`} />
-          : <small className="op-nodb">{row.templateId ? "нет в БД.ОП — время вручную" : "без карточки не войдёт в ТК"}</small>}
+          : <small className="op-nodb">{row.templateId ? "нет в БД.ОП — время вручную" : reworkTab ? "выберите карточку" : "без карточки не войдёт в ТК"}</small>}
       </div>
       {OP_TIMES.map(([key, , aria]) => <UnitInput key={key} unit="сек" type="number" min={0} placeholder="0" aria-label={`${aria}: ${spec.label}`}
         value={row.times[key]} onChange={(event) => setTime(key, event.target.value)} />)}
@@ -1157,7 +1165,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const marks = gen.markComps_();
   const wireMarkList = gen.wireMarkList_();
   const kdMarks = S.markRows.filter((row) => row.text.trim() || row.target.trim());
-  const typical = S.tab !== "coax" && !manualTab;
+  const typical = S.tab !== "coax" && !manualTab && !reworkTab;
   const epsA = gen.endpointsOnSide_("A"), epsB = gen.endpointsOnSide_("B");
   const sidesFull = !epsA.length || !epsB.length;
   // «Жил» видно всегда: кабель без записи в БД.ПРОВ и без «4x0,5» в названии иначе нельзя сделать многожильным.
@@ -1177,7 +1185,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const opsCount = manualTab ? manual.ops.length : ops.length;
   const summary = `${opsCount} ${plural(opsCount, "операция", "операции", "операций")} · партия ${partQty} шт`;
 
-  const sheet = <section className={manualTab ? "gsec full" : "gsec gen-sheet"} aria-label="Данные из листа">
+  const sheet = <section className={manualTab || reworkTab ? "gsec full" : "gsec gen-sheet"} aria-label="Данные из листа">
     <div className="gsec-head"><h3>Данные из листа</h3>
       <span className="gsec-meta">{Object.entries(assemblyInfo).filter(([, value]) => value !== "").map(([key, value]) => <span className="kv" key={key}>{key} <b>{value}</b></span>)}</span>
       {kitEdit && !kitAdding && <button type="button" className="btn-link" onClick={() => { setKitAdding(true); setKitNote({ text: "", error: false }); }}>+ Комплектующее</button>}</div>
@@ -1676,10 +1684,43 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     </section>
   </>;
 
+  const reworkSection = <section className="gsec full" aria-label="Доработка давальческого изделия">
+    <div className="gsec-head"><h3>Доработка давальческого изделия</h3></div>
+    <div className="opt-grid">
+      <Field label="Входное изделие, м" className="span-all"><select name="rework-input" autoComplete="off" value={rework.compId} onChange={(event) => setRework({ compId: event.target.value })}>
+        <option value="">Выберите из состава</option>
+        {components.map((c) => <option key={c.id} value={c.id}>{c.art || c.name}{c.art && c.name && c.art !== c.name ? ` — ${c.name}` : ""}</option>)}
+      </select></Field>
+      <Field label="Длина реза"><UnitInput unit="мм" name="rework-length" autoComplete="off" inputMode="decimal" value={rework.length} onChange={(event) => setRework({ length: event.target.value })} /></Field>
+      <Field label="Готовых изделий"><UnitInput unit="шт" name="rework-quantity" autoComplete="off" inputMode="numeric" value={rework.quantity} onChange={(event) => setRework({ quantity: event.target.value })} /></Field>
+      <Field label="Обработка концов" className="span2"><select name="rework-treatment" autoComplete="off" value={rework.treatment} onChange={(event) => setRework({ treatment: event.target.value as ReworkState["treatment"] })}>
+        <option value="none">Без обработки</option><option value="strip">Зачистка</option><option value="tin">Зачистка и лужение</option>
+      </select></Field>
+      {rework.treatment !== "none" && <>
+        <div className="gfield span-all"><span className="gfield-label">Обрабатываемые концы</span>
+          <Seg label="Обрабатываемые концы" value={rework.ends} options={[["A", "Один конец · А"], ["B", "Один конец · В"], ["AB", "Оба конца"]]} onChange={(ends) => setRework({ ends })} /></div>
+        <Field label="Длина зачистки"><UnitInput unit="мм" name="rework-strip" autoComplete="off" inputMode="decimal" value={rework.stripLen} onChange={(event) => setRework({ stripLen: event.target.value })} /></Field>
+      </>}
+    </div>
+    {Number(rework.length.replace(",", ".")) > 0 && Number(rework.quantity.replace(",", ".")) > 0 &&
+      <p className="gsec-meta">Расход входного изделия: {formatNumber(Number(rework.length.replace(",", ".")) * Number(rework.quantity.replace(",", ".")) / 1000, { digits: 4 })} м</p>}
+    <MarkTable enabled={rework.mark} onEnabled={(mark) => setRework({ mark })} hint="" rows={rework.markRows} onChange={(markRows) => setRework({ markRows })}
+      targets={["Изделие"]} kitMarks={gen.markComps_()} comps={components} mats={D.markMats || []} />
+    {rework.mark && <div className="opt-grid">{rework.markRows.map((row, index) => {
+      const material = markSpecs([{ ...row, target: "Изделие" }], components)[0]?.name || row.material;
+      // The shared table recognizes tube names; an opaque kit article needs its own length control.
+      return !markIsTube(row.material) && markIsTube(material) ? <Field key={index} label={`Длина трубки ${index + 1}`}>
+        <UnitInput unit="мм" name={`rework-mark-length-${index}`} autoComplete="off" inputMode="decimal" value={row.len || ""}
+          onChange={(event) => setRework({ markRows: rework.markRows.map((mark, i) => i === index ? { ...mark, len: event.target.value } : mark) })} />
+      </Field> : null;
+    })}</div>}
+  </section>;
+
   return <div className="tcgen" {...draft.bind}>
     <div className="seg-tabs gen-modes" role="tablist" aria-label="Вид сборки">{TABS.map(([tab, label]) =>
       <button key={tab} type="button" role="tab" aria-selected={S.tab === tab} className={S.tab === tab ? "on" : ""}
-        onClick={() => { setRouteError(""); update((current) => switchGenTab(current, tab)); }}>{label}</button>)}</div>
+        onClick={() => { setRouteError(""); update((current) => ({ ...switchGenTab(current, tab),
+          ...(tab === "rework" && !current.rework ? { rework: { ...emptyRework(), quantity: String(partQty) } } : {}) })); }}>{label}</button>)}</div>
 
     {status.text && status.error && <div className="error-banner gen-error" role="alert" ref={errorBanner}>{status.text}</div>}
     {pinAsk && <PinoutAsk ends={pinOpenEnds} onCancel={() => setPinAsk(false)} onCreate={() => void generate(true)}
@@ -1690,6 +1731,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         {sheet}
         {typical && typicalSections}
         {S.tab === "coax" && coaxSections}
+        {reworkTab && reworkSection}
         {manualTab && <AssemblyDrafts project={card.project} itemIndex={card.item_index} items={drafts.items} error={drafts.error}
           openId={draftId} builtId={builtId} onOpen={openDraft} onUploaded={() => void reloadDrafts()}
           onChanged={(changed) => setDrafts((current) => ({ ...current, items: current.items.map((item) => (item.id === changed.id ? changed : item)) }))} />}
@@ -1716,13 +1758,13 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
                 {!ops.length && <div className="gempty">{S.tab === "coax" ? "Выберите разъём — появятся операции" : "Добавьте кабель — появятся операции"}</div>}
                 {ops.map((spec, i) => opItem(spec, i + 1))}
               </div>
-              <RouteEditor key="typical" ops={routeOps} finalName={finalName} quantity={docMinutes?.quantity ?? 1} value={routeOverride}
+              {reworkTab ? <GenPfScheme preview={pf} /> : <RouteEditor key="typical" ops={routeOps} finalName={finalName} quantity={docMinutes?.quantity ?? 1} value={routeOverride}
                 onChange={(route) => { setRouteError(""); setRouteEdit({ route, sig: routeSig }); }} error={routeError}
                 notice={routeStale ? "Операции изменились — схема собрана заново, ручные правки не применены." : ""}
                 skipped={ops.filter((spec) => !routeSpecs.includes(spec)).map((spec) => ops.indexOf(spec) + 1)}
                 renderOp={(position) => { const spec = routeSpecs[position - 1]; return spec ? opItem(spec, ops.indexOf(spec) + 1) : null; }}
                 onMove={reorder} orderChanged={orderChanged} onResetOrder={resetOrder} art={routeArt}
-                preview={pfScheme} {...(S.tab === "complex" ? { blockView: true, derive: deriveGenerated } : {})} />
+                preview={pfScheme} {...(S.tab === "complex" ? { blockView: true, derive: deriveGenerated } : {})} />}
             </>}
         </div>
         <GeneratorDraftNote draft={draft} />
