@@ -45,14 +45,50 @@ const MQS: ConnectorSeries = {
   sample: { ...housing(2), article: "" },
 };
 
-function mockApi() {
+// Keep the API fixture local: the Docker web stage does not include RF backend data.
+const smaSpec = {
+  title: "SMA",
+  standard: [{ doc: "MIL-STD-348B", fig: "310-1 / 310-2",
+    url: "https://landandmaritimeapps.dla.mil/Downloads/MilSpec/Docs/MIL-STD-348/std348.pdf" }],
+  bodies: [
+    { id: "sma-132114", title: "Вилка прямая под обжим, RG-174 / RG-316", gender: "male", angle: 0,
+      pin_type: "пайка", shield_type: "обжим", cables: ["RG-174", "RG-316"], src: "Amphenol RF 132114", segments: [],
+      sources: [{ title: "Amphenol RF 132114, чертёж A, лист 2 из 2", url: "https://www.amphenolrf.com/en-us/assets/file/4065789553/" }],
+      interface: {
+        depth: { min: .38, max: 1.14, src: "MIL-STD-348B, fig. 310-1, E: уступ штыря → REF" },
+        thread: { value: "1/4-36 UNS-2B", src: "MIL-STD-348B, fig. 310-1" },
+        hex: { value: 8, src: "Amphenol RF 132114, чертёж A, лист 2 из 2: 8.00 HEX" },
+        ref_plane: { value: 0, src: "MIL-STD-348B, fig. 310-1: REF" },
+      } },
+    { id: "sma-132117", title: "Розетка прямая под обжим, RG-174 / RG-316", gender: "female", angle: 0,
+      pin_type: "пайка", shield_type: "обжим", cables: ["RG-174", "RG-316"], src: "Amphenol RF 132117", segments: [],
+      sources: [{ title: "Amphenol RF 132117, чертёж производителя", url: "https://www.amphenolrf.com/en-us/assets/file/4065786200/" }],
+      interface: {
+        depth: { min: 1.88, max: 2.23, src: "MIL-STD-348B, fig. 310-2: H+G" },
+        thread: { value: "1/4-36 UNS-2A", src: "MIL-STD-348B, fig. 310-2" },
+        ref_plane: { value: 0, src: "MIL-STD-348B, fig. 310-2: REF" },
+      } },
+  ],
+};
+
+const SMA: ConnectorSeries = {
+  ...MQS, id: "rf-sma", category: "ВЧ", maker: "MIL-STD-348B / IEC 61169-15", terminals: [], sample: null,
+  ...smaSpec, body_count: smaSpec.bodies.length,
+  sources: smaSpec.standard.map((doc) => ({ title: `${doc.doc}, ${doc.fig}`, url: doc.url })),
+  note: "Показаны документированные корпуса; полный модельный ряд и отсутствующие размеры не подтверждены.",
+};
+const MCX: ConnectorSeries = {
+  ...SMA, id: "rf-mcx", title: "MCX", maker: "", bodies: [], body_count: 0, standard: [], sources: [], note: "",
+};
+
+function mockApi(series = [GH, MINIFIT, MQS]) {
   const paths: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     paths.push(path);
-    const body = path === "/api/techcards/connector-series" ? { series: [GH, MINIFIT, MQS], match: null }
-      : path === "/api/techcards/connector-series?article=GHR-03V-S" ? { series: [GH, MINIFIT, MQS], match: { series: "jst-gh", article: "GHR-03V-S", housing: gh(3) } }
-        : path.startsWith("/api/techcards/connector-series?article=") ? { series: [GH, MINIFIT, MQS], match: null }
+    const body = path === "/api/techcards/connector-series" ? { series, match: null }
+      : path === "/api/techcards/connector-series?article=GHR-03V-S" ? { series, match: { series: "jst-gh", article: "GHR-03V-S", housing: gh(3) } }
+        : path.startsWith("/api/techcards/connector-series?article=") ? { series, match: null }
           : null;
     if (!body) throw new Error(`Unexpected request: ${path}`);
     return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -68,6 +104,67 @@ const seriesRow = async (title: string) => (await screen.findByText(title, { sel
 const cellOf = (row: HTMLElement, header: string) => row.querySelectorAll("td")[listHeads().findIndex((head) => head.textContent === header)];
 
 describe("ConnectorGallery — разъёмы по сериям", () => {
+  it("shows documented SMA bodies, dimensions and sources without an empty section drawing", async () => {
+    mockApi([SMA, MCX]);
+    render(<ConnectorGallery />);
+    const row = await seriesRow("SMA");
+    expect(cellOf(row, "Состояние")).toHaveTextContent("по MIL-STD-348B");
+    expect(cellOf(row, "Корпусов")).toHaveTextContent(/^2$/);
+    expect(screen.getByText("2 серий · 2 корпусов")).toBeInTheDocument();
+    fireEvent.click(row);
+    const view = document.querySelector(".conn-series-view") as HTMLElement;
+    expect(within(view).getByText("по MIL-STD-348B")).toHaveClass("order-chip");
+    expect(within(view).queryByText("корпуса не добавлены")).toBeNull();
+    const table = within(within(view).getByRole("region", { name: "Корпуса SMA" })).getByRole("table");
+    expect(within(table).getAllByRole("columnheader").map((head) => head.textContent?.replace(/[↑↓↕]/g, "").trim()))
+      .toEqual(["Исполнение", "Вилка / розетка", "Тип контакта", "Тип экрана", "Кабели", "Заглубление", "Резьба", "Ключ", "Источник"]);
+    for (const [index, body] of smaSpec.bodies.entries()) {
+      const bodyRow = within(table).getByText(body.title).closest("tr")!;
+      const cells = within(bodyRow).getAllByRole("cell");
+      expect(cells.slice(0, 8).map((cell) => cell.textContent)).toEqual([
+        body.title, index === 0 ? "вилка (штыри)" : "розетка (гнёзда)", "пайка", "обжим", "RG-174 / RG-316",
+        index === 0 ? "0,38…1,14 мм" : "1,88…2,23 мм", body.interface.thread.value, index === 0 ? "8 мм" : "—",
+      ]);
+      expect(within(bodyRow).getByText(index === 0 ? "0,38…1,14 мм" : "1,88…2,23 мм"))
+        .toHaveAttribute("title", body.interface.depth.src);
+      for (const source of body.sources) expect(within(bodyRow).getByRole("link", { name: source.title }))
+        .toHaveAttribute("href", source.url);
+    }
+    expect(within(view).queryByRole("img", { name: /^Разрез:/ })).toBeNull();
+    expect(view.querySelector(".conn-housing")).toBeNull();
+  });
+
+  it("keeps MCX without bodies in the missing-body filter and warning state", async () => {
+    mockApi([SMA, MCX]);
+    render(<ConnectorGallery />);
+    await seriesRow("MCX");
+    fireEvent.click(screen.getByRole("button", { name: /^Корпуса не добавлены · 1/ }));
+    expect(screen.queryByText("SMA", { selector: "td.key strong" })).toBeNull();
+    const row = rowOf("MCX");
+    expect(cellOf(row, "Состояние")).toHaveTextContent("корпуса не добавлены");
+    fireEvent.click(row);
+    const view = document.querySelector(".conn-series-view") as HTMLElement;
+    expect(within(view).getByText("корпуса не добавлены")).toHaveClass("tone-warn");
+    expect(within(view).queryByRole("region", { name: "Корпуса MCX" })).toBeNull();
+  });
+
+  it("draws a documented section when segments are present, using the sourced REF coordinate", async () => {
+    // Synthetic geometry exercises rendering, not SMA dimensions.
+    const body = { ...SMA.bodies![0], segments: [
+      { part: "body" as const, x_from: 0, x_to: 10, r_in: 1, r_out: 3, src: "Тест" },
+      { part: "contact" as const, x_from: 1, x_to: 9, r_in: 0, r_out: .5, src: "Тест" },
+    ], interface: { ...SMA.bodies![0].interface, ref_plane: { value: 2, src: "Тест" } } };
+    mockApi([{ ...SMA, bodies: [body], body_count: 1 }]);
+    render(<ConnectorGallery />);
+    fireEvent.click(await seriesRow("SMA"));
+    const section = screen.getByRole("img", { name: `Разрез: ${body.title}` });
+    expect(section.querySelector('[data-contact="pin"]')).not.toBeNull();
+    expect(section).toHaveTextContent("заглубление 0,38…1,14 мм");
+    expect(section).toHaveTextContent("REF");
+    const dimension = section.querySelector('[data-part="contact-depth"] line');
+    expect(Number(dimension?.getAttribute("x1"))).toBeGreaterThan(40);
+  });
+
   it("lists series, not housings, with their contact range and check state", async () => {
     mockApi();
     render(<ConnectorGallery />);

@@ -20,8 +20,8 @@ export interface RfBodyRecord {
   segments: readonly RfBodySegment[];
   interface: {
     depth?: RfContactDepth | null;
-    thread?: string | null;
-    hex?: number | string | null;
+    thread?: string | { value: string; src: unknown } | null;
+    hex?: number | string | { value: number | string; src: unknown } | null;
     /** Axial REF coordinate in mm; a named plane uses the drawing origin (x = 0). */
     ref_plane?: number | string | null;
   };
