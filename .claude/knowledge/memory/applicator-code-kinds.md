@@ -5,13 +5,18 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: e96d7f67-f2ac-41a7-8dd4-ce6a1fc046a6
-  modified: 2026-10-29T13:53:12.359Z
+  modified: 2026-11-11T19:47:47.901Z
 ---
 
 Owner 29.10.2026: «У нас три типа аппликаторов: M — ОТП формат, обжимает только зачищенные заранее провода; A — для
 автоматов; S — для обжима не зачищенных проводов». The old note in `references/equipment.py` («S — hand tool,
 M — matrix, A — applicator») was wrong; on 29.10 only A1–A20 were created as «Аппликаторы» (ОБ.106–ОБ.126) and the
 «＋» on a missing code sent M → «Матрицы», S → «Обжимной инструмент» (PR #750) — both corrected.
+
+Owner 11.11.2026: «этого аппликатора нет у нас, только 3 типа аппликаторов, об этом я говорил» — a session was about to
+write a new applicator «ОБ.126» for JST SQS-A03GF-P-P to prod; stopped. Never invent applicator records or codes for
+contacts that have none; from 12.11.2026 the owner does mass applicator edits himself — no applicator writes by agents
+until he says otherwise.
 
 **Why:** the owner counted his applicators and found M/S missing from «Аппликаторы».
 **How to apply:** every M/A/S code of БД.ТЕР «Аппликатор» is one record of type «Аппликаторы» with the code in «Код в базе

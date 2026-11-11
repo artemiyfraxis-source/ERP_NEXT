@@ -42,11 +42,14 @@ No findings → say "no findings" and list what you checked. Answer in Russian.
   $null | codex exec --disable apps --disable plugins --disable multi_agent --disable computer_use --disable browser_use --disable in_app_browser --disable image_generation -c mcp_servers.github.enabled=false -c mcp_servers.obsidian.enabled=false -c mcp_servers.node_repl.enabled=false -c mcp_servers.chrome-devtools.enabled=false -m gpt-6.1-sol -c 'model_reasoning_effort="high"' -s read-only -C "<repo>" -o "<scratch>\review.out.md" "Read the task brief at <scratch>\review.brief.md and follow it." *> "<scratch>\review.log"
   ```
   `-s read-only` limits only shell commands; the `--disable`/`mcp_servers.*` flags remove the account
-  connectors, plugins, sub-agents and MCP servers that could act outside it. Model: `gpt-6-astra` instead of
+  connectors, plugins, sub-agents and MCP servers that could act outside it. The `mcp_servers.*` list must
+  cover every server `codex mcp list` shows as enabled (see `orchestrate` «Budget routing»). Model: `gpt-6-astra` instead of
   `gpt-6.1-sol` when the change touches migrations, stock, money or auth. Read only `review.out.md`.
-- **From Codex CLI (reviewer = Claude):**
-  `claude -p --permission-mode plan --allowedTools "Bash(git diff:*) Bash(git status:*) Bash(git log:*) Read Grep Glob" "Read the task brief at <scratch>\review.brief.md and follow it."`
-  (PowerShell has no `<` redirection; passing the brief by path also keeps Cyrillic intact.)
+- **From Codex CLI (reviewer = Claude):** write `<scratch>\no-hooks.json` = `{"disableAllHooks": true}` (project
+  SessionStart hooks would otherwise install deps and copy DBs), then
+  `claude -p "Read the task brief at <scratch>\review.brief.md and follow it." --permission-mode plan --strict-mcp-config --settings "<scratch>\no-hooks.json" --allowedTools "Bash(git diff:*) Bash(git status:*) Bash(git log:*) Read Grep Glob"`
+  The prompt goes first: `--allowedTools` is variadic and would swallow it. `--strict-mcp-config` without
+  `--mcp-config` loads no MCP servers. PowerShell has no `<` redirection; the brief by path keeps Cyrillic intact.
 
 Reviewer CLI missing → `npm install -g @openai/codex` / `npm install -g @anthropic-ai/claude-code`, or fall back to the local
 `code-reviewer` role in `.claude/skills/requesting-code-review/` and say that the review was not cross-agent.

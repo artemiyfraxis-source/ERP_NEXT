@@ -48,7 +48,9 @@ send reading-heavy and writing-heavy work to Codex CLI (installed globally, Chat
   $null | codex exec --disable apps --disable plugins --disable multi_agent --disable computer_use --disable browser_use --disable in_app_browser --disable image_generation -c mcp_servers.github.enabled=false -c mcp_servers.obsidian.enabled=false -c mcp_servers.node_repl.enabled=false -c mcp_servers.chrome-devtools.enabled=false -m <model> -c 'model_reasoning_effort="<effort>"' -s <sandbox> -C "<repo or worktree>" -o "<scratch>\<task>.out.md" "Read the task brief at <scratch>\<task>.brief.md and follow it." *> "<scratch>\<task>.log"
   ```
   The sandbox limits only shell commands; the `--disable`/`mcp_servers.*` flags strip account connectors,
-  plugins, sub-agents and MCP servers (verified: none left but web search). Read only the `-o` file.
+  plugins, sub-agents and MCP servers (verified 11.11: none left but web search). The four servers named are
+  the user-config ones on 11.11; plugin servers (e.g. `cua_repl`) go with `--disable plugins`. Once per session
+  run `codex mcp list`: any other enabled server gets its own `-c mcp_servers.<name>.enabled=false`. Read only the `-o` file.
 - Editing worker: main creates the worktree from the recorded base (`git worktree add <path> -b <branch> <SHA>`,
   then `node scripts/setup-env.mjs` in it) and runs the call with `-s workspace-write -C "<worktree>"`. Writes
   outside the worktree are denied (verified), except `%TEMP%`, which stays writable.
