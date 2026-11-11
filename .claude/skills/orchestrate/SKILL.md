@@ -37,16 +37,25 @@ send reading-heavy and writing-heavy work to Codex CLI (installed globally, Chat
   | Bug that survived astra xhigh | `gpt-6-astra` | max | workspace-write |
   | Pre-ship review, ordinary slice | `gpt-6.1-sol` | high | read-only |
   | Pre-ship review: migration, stock, money, auth | `gpt-6-astra` | high | read-only |
+  | Verifier: `erp-verifier` role, runs `npm run check` on the integrated worktree | `gpt-6.1-sol` | medium | workspace-write |
 
   Never `ultra`: it delegates on its own, and workers must not delegate recursively. Put the chosen model/effort
   in the dispatch record. A task spanning two rows takes the stronger one.
-- Read-only call: `codex exec -m <model> -c model_reasoning_effort="<effort>" -s read-only -C "<repo>" -o "<scratch>/<task>.out.md" - < "<scratch>/<task>.brief.md"`
+- Call from the **PowerShell tool** with `run_in_background` — never Git Bash: under its environment Codex's
+  Windows sandbox can't start a shell (error 740, verified 11.11.2026). Brief in `<scratch>\<task>.brief.md`
+  (self-contained — Codex sees none of this chat — and in English), passed by path:
+  ```powershell
+  $null | codex exec --disable apps --disable plugins --disable multi_agent --disable computer_use --disable browser_use --disable in_app_browser --disable image_generation -c mcp_servers.github.enabled=false -c mcp_servers.obsidian.enabled=false -c mcp_servers.node_repl.enabled=false -c mcp_servers.chrome-devtools.enabled=false -m <model> -c 'model_reasoning_effort="<effort>"' -s <sandbox> -C "<repo or worktree>" -o "<scratch>\<task>.out.md" "Read the task brief at <scratch>\<task>.brief.md and follow it." *> "<scratch>\<task>.log"
+  ```
+  The sandbox limits only shell commands; the `--disable`/`mcp_servers.*` flags strip account connectors,
+  plugins, sub-agents and MCP servers (verified: none left but web search). Read only the `-o` file.
 - Editing worker: main creates the worktree from the recorded base (`git worktree add <path> -b <branch> <SHA>`,
-  then `node scripts/setup-env.mjs` in it), then the same call with `-s workspace-write -C "<worktree>"`.
-- Codex never commits, pushes or merges: the sandbox can't write the main `.git`, and commits carry the owner's
-  identity. Main reads the worker's diff and test evidence, then commits in the worktree.
-- Run every `codex exec` in the background (Bash `run_in_background`) and wait for the exit notice; never poll.
-  Read only the `-o` file, not the full log. Briefs are self-contained (Codex sees none of this chat) and in English.
+  then `node scripts/setup-env.mjs` in it) and runs the call with `-s workspace-write -C "<worktree>"`. Writes
+  outside the worktree are denied (verified), except `%TEMP%`, which stays writable.
+- Codex never commits, pushes or merges — the brief says so and commits carry the owner's identity. Main reads
+  the worker's diff and test evidence, then commits in the worktree.
+- Main never grades its own integration: the verifier is a fresh Codex run with the `erp-verifier` card
+  (`.claude/agents/erp-verifier.md`) pasted into the brief; the pre-ship review is another fresh run (`cross-review`).
 - Several workers in parallel are fine (Codex quota is large); the limits are file ownership and main's own
   context spent reading diffs.
 
@@ -96,8 +105,8 @@ send reading-heavy and writing-heavy work to Codex CLI (installed globally, Chat
 
 ## 4. Gate and ship
 - Workers run affected tests before any authorized worker commit. Main obtains an independent code
-  review (a fresh read-only Codex run of the `cross-review` brief) and a verifier verdict (main runs
-  `npm run check` in the background and reads the tail; `erp-verifier` as fallback) on the final integrated
+  review (a fresh read-only Codex run of the `cross-review` brief) and a verifier verdict (a fresh Codex run
+  with the `erp-verifier` card; the Claude `erp-verifier` subagent as fallback) on the final integrated
   content before claiming done or shipping.
   Every failed or unrun required gate blocks PASS, completion claims and shipping, including when an
   environment issue is established. Report its evidence and the unverified gate as a blocker; there is

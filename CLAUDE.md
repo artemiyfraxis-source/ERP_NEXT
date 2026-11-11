@@ -48,8 +48,9 @@ SQLAlchemy/Alembic backend, React/TypeScript (Vite) frontend, PostgreSQL in prod
 - One rule source: this `CLAUDE.md`; Codex enters via `AGENTS.md`, which points here (a reference, not a symlink:
   `core.symlinks=false`, and Витя's and cloud clones must get the same files).
 - One skill base: `.claude/skills/`; `.agents/skills/<name>/SKILL.md` holds only a thin Codex wrapper pointing to it.
-- Hand-off: call the other agent non-interactively — `codex exec --sandbox read-only "<task>"` from Claude,
-  `claude -p "<task>"` from Codex — or leave the item in a local, gitignored `TASKS.md` for the other session.
+- Hand-off: call the other agent non-interactively — `codex exec` from Claude (PowerShell tool, never Git Bash;
+  isolation flags in `orchestrate`), `claude -p "<task>"` from Codex — or leave the item in a local, gitignored
+  `TASKS.md` for the other session.
 - Cross-review: after a feature or a hard refactor the author runs the `cross-review` skill, so the other agent
   reviews `git diff` for bugs, invariants, security and architecture. It adds to, never replaces, `npm run check`
   and `erp-verifier`.
