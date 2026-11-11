@@ -3856,7 +3856,7 @@ export const productionApi = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  list: () => api<{ tasks: ProductionTask[]; next_cursor: string | null }>("/api/production/tasks"),
+  list: (task = "") => api<{ tasks: ProductionTask[]; next_cursor: string | null }>(`/api/production/tasks${task ? `?task=${encodeURIComponent(task)}` : ""}`),
   /** can_act — смотрящий может работать за выбранного сотрудника (сервер проверяет то же при каждом действии). */
   mine: (operatorId = "") => api<{ tasks: ProductionTask[]; can_act?: boolean }>(`/api/production/my${operatorId ? `?operator_id=${operatorId}` : ""}`),
   operators: () => api<{ operators: ProductionOperator[]; viewer_site?: string }>("/api/production/operators"),

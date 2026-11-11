@@ -619,8 +619,16 @@ def shipments(
     _principal: Annotated[Principal, Depends(shipping_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
     limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    shipment: UUID | None = None,
 ) -> dict:
-    with uow_factory() as uow: rows = uow.shipments.list(limit)
+    with uow_factory() as uow:
+        if shipment is not None:
+            selected = uow.shipments.get(shipment)
+            if selected is None:
+                raise HTTPException(status_code=404, detail="Отгрузка не найдена")
+            rows = [selected]
+        else:
+            rows = uow.shipments.list(limit)
     return {"shipments": [_shipment_result(shipment) for shipment in rows]}
 
 

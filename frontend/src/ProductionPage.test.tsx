@@ -1499,3 +1499,25 @@ it("says when the card got a newer revision than the task was launched with", ()
     .toBe("Ревизия 1 не найдена — показана текущая ЭТК");
   expect(etkRevisionNotice(undefined)).toBe("");
 });
+
+
+it("opens a task from the global search link", async () => {
+  window.history.replaceState({}, "", `/?section=production&task=${task.id}`);
+  masterFetch(() => null, [task]);
+  try {
+    render(<ProductionPage principal={principal} />);
+    expect(await screen.findByRole("button", { name: /Экран мастера/ })).toBeInTheDocument();
+    expect(screen.getAllByText(task.number, { exact: false }).length).toBeGreaterThan(0);
+  } finally { window.history.replaceState({}, "", "/"); }
+});
+
+
+it("opens an older task outside the first page of planning", async () => {
+  window.history.replaceState({}, "", `/?section=production&task=${task.id}`);
+  const fetcher = masterFetch((path) => path.includes("?task=") ? json({ tasks: [task], next_cursor: null }) : null, []);
+  try {
+    render(<ProductionPage principal={principal} />);
+    expect(await screen.findByRole("button", { name: /Экран мастера/ })).toBeInTheDocument();
+    expect(fetcher).toHaveBeenCalledWith(expect.stringContaining(`?task=${task.id}`), expect.anything());
+  } finally { window.history.replaceState({}, "", "/"); }
+});

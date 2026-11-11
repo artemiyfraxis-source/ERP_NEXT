@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { urlParam } from "./navigation";
 import { CrimpCell } from "./CrimpCell";
 import { cellFailure } from "./CustomColumn";
 import { DataTable, type DataColumn } from "./DataTable";
@@ -249,7 +250,7 @@ const seriesSearch = (item: ConnectorSeries) => [
 export function ConnectorGallery({ canEdit = false }: { canEdit?: boolean }) {
   const [series, setSeries] = useState<ConnectorSeries[] | null>(null);
   const [error, setError] = useState("");
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(() => urlParam("series") || null);
   const [match, setMatch] = useState<ConnectorSeriesMatch | null>(null);
   const [unknown, setUnknown] = useState<{ article: string; housing: ConnectorFamily["housing"] | null } | null>(null);
 

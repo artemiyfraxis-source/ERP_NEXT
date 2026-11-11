@@ -78,7 +78,7 @@ export const intakeApi = {
   printLabel: (grn: string, copies = 1) =>
     api<PrintResult>(`/api/shipping/intake/${encodeURIComponent(grn)}/label`, { method: "POST", body: JSON.stringify({ copies }) }),
   dispatch: (project: string) => api<{ addressee: DispatchData | null }>(`/api/shipping/project-addressee?project=${encodeURIComponent(project)}`),
-  shipments: () => api<{ shipments: DispatchShipment[] }>("/api/shipping/shipments"),
+  shipments: (shipment = "") => api<{ shipments: DispatchShipment[] }>(`/api/shipping/shipments${shipment ? `?shipment=${encodeURIComponent(shipment)}` : ""}`),
   /** Кто может разрешить отгрузку без УПД (Артемий, Зингер, Касаточкин). */
   noUpdApprovers: () => api<{ approvers: NoUpdApprover[] }>("/api/shipping/no-upd-approvers").then((result) => result.approvers ?? []),
   /** Разрешение на одну отправку: ПИН уполномоченного. Отказы — словами сервера: 403 неверный ПИН / не уполномочен /

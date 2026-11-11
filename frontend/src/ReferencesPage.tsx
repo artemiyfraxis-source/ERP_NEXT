@@ -19,8 +19,9 @@ import { NO_SERIES, makerOrder, seriesCaption, sortBySeries, terminalGroups } fr
 import { COAX_CARD_ONLY, CoaxConnectors } from "./CoaxConnectors";
 import { StockLinksJournal } from "./StockLinksJournal";
 import { ReferenceRoundtrip } from "./ReferenceRoundtrip";
+import { REFERENCE_TAB_GROUPS, referenceTabKey, type CableTab, type DbTab, type MapTab, type TabDef } from "./referenceTabs";
 import {
-  MATERIAL_TABS, isMaterialTab, materialCounts, materialRows, type MaterialTab,
+  isMaterialTab, materialCounts, materialRows, type MaterialTab,
 } from "./materialSections";
 import { operationCardCount } from "./TechcardsPage";
 import { cleanHeader, fieldTitle, headerKey, headerLabel, terFieldHint, valueLabel } from "./referenceLabels";
@@ -47,54 +48,10 @@ import { LUG_SORT_HINT, lugFamily, lugRows, mergeLugColumns } from "./lugList";
    Every tab is the shared DataTable — search, column filters, sort, column chooser, Excel — so the shop's
    references read like one database. Project techcards (ЭТК) stay with the projects. */
 
-type MapTab = "suppliers" | "countries";
-type CableTab = "cab_coax" | "cab_wire" | "cab_multi" | "cab_lan";
-export type DbTab = "templates" | "connectors" | "gauges" | "cov" | "lug" | TechOperationTab | MapTab | CableTab | MaterialTab;
-type TabDef = { id: DbTab; label: string; base?: string };
+export type { DbTab } from "./referenceTabs";
 
 const EMPTY_MAPS: ReferenceMaps = { suppliers: [], countries: [], gost_awg: [] };
-// Owner 04.10.2026 («сортировка тут вообще не корректная»): groups by what the shop picks from — operations and
-// equipment, what goes on a wire end, the wires and cables themselves, materials, the purchase maps.
-const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
-  // Owner 29.09.2026: «операции… лучше на карточки», «с оборудованием то же самое». БД.ОП lives inside «Операции»
-  // (one card per code, template sheet + the БД.ОП row); БД.ОБ is its own card tab.
-  { title: "Техкарты", tabs: [
-    { id: "templates", label: "Операции" },
-    { id: "ob", label: "Оборудование", base: "ob" },
-  ] },
-  { title: "Разъёмы и контакты", tabs: [
-    { id: "connectors", label: "Разъёмы" },
-    { id: "coax", label: "Коаксиальные разъёмы", base: "coax" },
-    { id: "ter", label: "Терминалы", base: "ter" },
-    // Owner 26.10.2026: «тип наконечник, а не терминал… в другую БД — наконечники»: строки БД.ТЕР со списком «lug».
-    { id: "lug", label: "Наконечники" },
-    // Owner 15.10.2026: «Материалы» расформированы — уплотнители, заглушки, гильзы и втулки идут на концы проводов.
-  ] },
-  // Owner 04.10.2026: «объединить провода и кабели и коаксиальные … три вкладки»; 10.10.2026: сечения — отдельной
-  // таблицей, у монтажных жила из неё, многожильные — в отдельную вкладку. БД.ПРОВ, the coax D1·D2·D3 table and the coax
-  // cards are joined by the server (references/cables.py, cable_structure.py). «Сечения AWG ↔ мм²» is the size table
-  // the монтажные wires reference (owner 12.10.2026: it sits in «Соответствия»); «Ø изоляции по маркам» is no tab any
-  // more — the generator reads it from the монтажные провода (GET /api/references/wire-dia).
-  { title: "Кабели и провода", tabs: [
-    { id: "cab_coax", label: "Коаксиальные кабели" },
-    { id: "cab_wire", label: "Монтажные провода" },
-    { id: "cab_multi", label: "Многожильные кабели" },
-    // 25.10.2026 (владелец): «интернетные вынести вообще в другую вкладку — новая вкладка, новая БД», «ETHERNET».
-    { id: "cab_lan", label: "Кабели Ethernet" },
-  ] },
-  // БД.МАТ is a working base in SUPPLYMAP (PortalRef.gs REF_BASES_ tiles, filled from purchases), not import.
-  // Owner 12.10.2026: оболочки (ТУТ, ТТК, оплётки, гофра) — отдельной таблицей из строк БД.МАТ, с разбором и сортировкой;
-  // 15.10.2026: вкладку «Материалы» расформировать — каждая строка БД.МАТ в одной вкладке по назначению (materialSections.ts).
-  { title: "Материалы", tabs: [
-    { id: "cov", label: "Оболочки" },
-    { id: "mat_use", label: MATERIAL_TABS.mat_use.label },
-  ] },
-  { title: "Соответствия", tabs: [
-    { id: "suppliers", label: "Домен → поставщик" },
-    { id: "countries", label: "Изготовитель → страна" },
-    { id: "gauges", label: "Сечения AWG ↔ мм²" },
-  ] },
-];
+const GROUPS = REFERENCE_TAB_GROUPS;
 const CABLE_TABS: Record<CableTab, CableKind> = { cab_coax: "coax", cab_wire: "wire", cab_multi: "multi", cab_lan: "lan" };
 // Keys of the tabs these replaced (saved tab, `initialTab`): «Провода и кабели» → монтажные, «Коаксиальные кабели:
 // D1 · D2 · D3» → коаксиальные кабели; «Материалы» (15.10.2026) → «Оболочки», куда ушла бóльшая часть строк.
@@ -220,7 +177,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   const canTemplates = hasAccess(principal.permissions, "erptctpl");
   const canRefs = hasAccess(principal.permissions, "erpref");
   const groups = useMemo(() => GROUPS
-    .map((group) => ({ ...group, tabs: group.tabs.filter((tab) => tab.id === "templates" || tab.id === "connectors" ? canTemplates : canRefs) }))
+    .map((group) => ({ ...group, tabs: group.tabs.filter((tab) => referenceTabKey(tab.id) === "erptctpl" ? canTemplates : canRefs) }))
     .filter((group) => group.tabs.length > 0), [canTemplates, canRefs]);
   const allowed = groups.flatMap((group) => group.tabs.map((tab) => tab.id));
   const [tab, setTab] = useState<DbTab>(() => {

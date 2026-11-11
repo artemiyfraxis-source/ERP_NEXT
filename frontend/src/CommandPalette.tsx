@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { api, type Principal } from "./api";
-import { hasNavAccess, NAV, openPlace, type Section } from "./navigation";
+import { canSee, hasNavAccess, NAV, openPlace, type Section, type NavCapabilities } from "./navigation";
+import { REFERENCE_TAB_GROUPS, referenceTabKey } from "./referenceTabs";
 
 /** Глобальный поиск: Ctrl+K или «/» вне поля ввода. Результаты приходят из /api/search уже
  *  отфильтрованными по правам; «Команды» — переходы по разделам, открытым этому человеку. */
@@ -8,7 +9,7 @@ export type SearchResult = { group: string; title: string; subtitle: string; sec
 type SearchPayload = { query: string; results: SearchResult[]; ms: number };
 
 // `search`: offered only once something is typed (the short list on an empty field stays the daily jumps).
-type Command = { label: string; section: Section; params?: Record<string, string>; words?: string; search?: boolean };
+type Command = { label: string; section: Section; params?: Record<string, string>; words?: string; search?: boolean; permission?: string };
 
 // Order = order in the list.
 const COMMANDS: Command[] = [
@@ -32,20 +33,7 @@ const COMMANDS: Command[] = [
   // Экран «Отгрузка» убран (владелец 29.10): отправки и журнал — на «Приёмке с производства».
   { label: "Отправки", section: "intake", params: { tab: "packed" }, words: "отгрузка упаковка места накладная трек перевозчик", search: true },
   { label: "Журнал отгрузки", section: "intake", params: { tab: "journal" }, words: "журнал движения готовой продукции", search: true },
-  // «База данных»: каждая вкладка — отдельным переходом (ключи вкладок читает ReferencesPage из `&tab=`).
-  { label: "База данных → Операции", section: "references", params: { tab: "templates" }, words: "шаблоны техкарт карточки операций", search: true },
-  { label: "База данных → Оборудование", section: "references", params: { tab: "ob" }, words: "станки инструмент аппликаторы", search: true },
-  { label: "База данных → Разъёмы", section: "references", params: { tab: "connectors" }, words: "серии каталог разъёмов", search: true },
-  { label: "База данных → Коаксиальные разъёмы", section: "references", params: { tab: "coax" }, words: "sma bnc", search: true },
-  { label: "База данных → Терминалы", section: "references", params: { tab: "ter" }, words: "контакты обжим", search: true },
-  { label: "База данных → Наконечники", section: "references", params: { tab: "lug" }, words: "кольцевые вилочные гильзы", search: true },
-  { label: "База данных → Коаксиальные кабели", section: "references", params: { tab: "cab_coax" }, words: "rg провода", search: true },
-  { label: "База данных → Монтажные провода", section: "references", params: { tab: "cab_wire" }, words: "мс пв", search: true },
-  { label: "База данных → Многожильные кабели", section: "references", params: { tab: "cab_multi" }, search: true },
-  { label: "База данных → Кабели Ethernet", section: "references", params: { tab: "cab_lan" }, words: "витая пара lan", search: true },
-  { label: "База данных → Оболочки", section: "references", params: { tab: "cov" }, words: "тут ттк оплётка гофра кембрик лента", search: true },
-  { label: "База данных → Расходники", section: "references", params: { tab: "mat_use" }, words: "припой флюс материалы", search: true },
-  { label: "База данных → Соответствия", section: "references", params: { tab: "suppliers" }, words: "домен поставщик страна изготовитель сечения awg", search: true },
+
 ];
 
 // What else a person types to find a menu section (the section's own label and subtitle are searched as well).
@@ -70,7 +58,11 @@ function allCommands(): Command[] {
   const fromMenu: Command[] = NAV.filter((item) => item.id !== "card" && !taken.has(item.id)).map((item) => ({
     label: item.label, section: item.id, words: `${item.sub ?? ""} ${SECTION_WORDS[item.id] ?? ""}`, search: true,
   }));
-  return [...COMMANDS, ...fromMenu];
+  const fromReferences: Command[] = REFERENCE_TAB_GROUPS.flatMap((group) => group.tabs.map((tab) => ({
+    label: `База данных → ${tab.label}`, section: "references", params: { tab: tab.id },
+    words: `${group.title} ${tab.words ?? ""}`, search: true, permission: referenceTabKey(tab.id),
+  })));
+  return [...COMMANDS, ...fromReferences, ...fromMenu];
 }
 
 // A GRN as the label prints it: «PPM.26.0000001», with a package «FRX.26.0000003-П2».
@@ -106,7 +98,7 @@ function typing(target: EventTarget | null): boolean {
 
 type Entry = { key: string; group: string; title: string; subtitle: string; go: () => void };
 
-export function CommandPalette({ principal }: { principal: Principal }) {
+export function CommandPalette({ principal, capabilities = {} }: { principal: Principal; capabilities?: NavCapabilities }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -178,20 +170,20 @@ export function CommandPalette({ principal }: { principal: Principal }) {
       key: `r${index}`, group: result.group, title: result.title, subtitle: result.subtitle, go: finish(result.section, result.params),
     }));
     // A typed or scanned GRN opens the warehouse on that lot even before (or without) the server's answer.
-    const sees = (section: Section) => NAV.some((item) => item.id === section && hasNavAccess(principal, item));
+    const sees = (section: Section) => NAV.some((item) => item.id === section && hasNavAccess(principal, item, capabilities));
     if (GRN_LIKE.test(text) && sees("stock") && !list.some((entry) => entry.group === "Склад")) {
       list.unshift({ key: "grn", group: "Склад", title: text.toUpperCase(), subtitle: "Открыть склад с этой партией", go: finish("stock", { q: text }) });
     }
     const words = fold(text).split(/\s+/).filter(Boolean);
     for (const command of allCommands()) {
-      if (!sees(command.section) || (command.search && !words.length)) continue;
+      if (!sees(command.section) || (command.permission && !canSee(principal, command.permission)) || (command.search && !words.length)) continue;
       const haystack = fold(`${command.label} ${command.words ?? ""}`);
       if (words.every((word) => haystack.includes(word))) {
         list.push({ key: `c${command.label}`, group: COMMAND_GROUP, title: command.label, subtitle: "Перейти", go: finish(command.section, command.params) });
       }
     }
     return list;
-  }, [results, query, principal]);
+  }, [results, query, principal, capabilities]);
 
   // Выбор встаёт на первую строку при новом ответе или тексте — при рендере, а не эффектом: эффект после показа ответа
   // мог сбросить уже нажатую стрелку.
@@ -234,7 +226,7 @@ export function CommandPalette({ principal }: { principal: Principal }) {
         <div className="palette-list" id="palette-list" role="listbox" aria-label="Результаты">
           {groups.map((group) => (
             <div key={group} role="group" aria-label={group}>
-              <div className="palette-group">{group}</div>
+              <div className="command-palette-group">{group}</div>
               {entries.map((entry, index) => entry.group === group && (
                 <div
                   key={entry.key} id={`palette-${entry.key}`} role="option" aria-selected={index === active}

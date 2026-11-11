@@ -981,3 +981,17 @@ def test_retired_box_handoff_keeps_auth_and_never_opens_a_unit_of_work(productio
             assert "Приёмка с производства" in response.json()["detail"]
     finally:
         app.dependency_overrides.pop(production_uow_factory, None)
+
+
+def test_task_search_target_reads_one_task_independently_of_list_pagination(production_api):
+    client, _operator_id = production_api
+    first = launch_from_card(client, "search-first", "591K.3", "КБ1", 10, [("OP-01", "Разделка", 60, 120)]).json()["task"]
+    launch_from_card(client, "search-second", "600K.1", "КБ2", 5, [("OP-01", "Разделка", 60, 120)])
+    response = client.get("/api/production/tasks", params={"task": first["id"], "limit": 1})
+    assert response.status_code == 200, response.text
+    assert [task["id"] for task in response.json()["tasks"]] == [first["id"]]
+    assert response.json()["next_cursor"] is None
+    assert client.get("/api/production/tasks?task=99999999-0000-0000-0000-000000000099").status_code == 404
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(name="Другой", department="Цех"), email="other@example.test", roles=frozenset({"operator"}), permissions={"myops": "view"})
+    assert client.get("/api/production/tasks", params={"task": first["id"]}).status_code == 403

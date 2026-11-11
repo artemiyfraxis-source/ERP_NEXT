@@ -551,11 +551,18 @@ def tasks(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
     after: UUID | None = None,
+    task: UUID | None = None,
 ) -> dict:
     with uow_factory() as uow:
         if after is not None and uow.production.get(after) is None:
             raise HTTPException(status_code=404, detail="Курсор задания не найден")
-        rows = list(uow.production.list(limit + 1, after))
+        if task is not None:
+            selected = uow.production.get(task)
+            if selected is None:
+                raise HTTPException(status_code=404, detail="Задание не найдено")
+            rows = [selected]
+        else:
+            rows = list(uow.production.list(limit + 1, after))
         page = rows[:limit]
         facts = _facts(uow, page)
         totals = uow.deliveries.totals(task.id for task in page) if hasattr(uow, "deliveries") else {}
