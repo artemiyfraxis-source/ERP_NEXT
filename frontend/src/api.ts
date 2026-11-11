@@ -2256,6 +2256,20 @@ export interface ConnectorSeries {
   terminals: ConnectorTerminal[];
   wire: { awg_thin?: number; awg_thick?: number; mm2_min?: number; mm2_max?: number } | null;
   housing_count: number;
+  /** Документированные корпуса ВЧ-серии и стандарт её интерфейса. */
+  body_count?: number;
+  bodies?: Array<{
+    id: string; title: string; gender: string; angle: number; pin_type: string; shield_type: string;
+    cables: string[]; src: string; note?: string; sources?: Array<{ title: string; url: string }>;
+    segments: import("./rfBodySection").RfBodySegment[];
+    interface: {
+      depth?: import("./rfBodySection").RfContactDepth | null;
+      thread?: { value: string; src: string } | null;
+      hex?: { value: number; src: string } | null;
+      ref_plane?: { value: number; src: string } | null;
+    };
+  }>;
+  standard?: Array<{ doc: string; fig: string; url: string }>;
   counts: number[];
   pitch: number | null;
   color: string | null;

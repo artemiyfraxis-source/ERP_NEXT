@@ -10,6 +10,7 @@ import { connectorFace, connectorFaceUnits, connectorPicture, connectorSummary, 
 import { connectorModel } from "./connectorModel";
 import { connectorTopView } from "./connectorTopView";
 import { SortHint } from "./refSort";
+import { rfBodySection } from "./rfBodySection";
 
 /* «База данных → Разъёмы» по сериям (владелец, 10.10.2026: «идти по сериям: серия GHR, внутри все доступные разъёмы
    и их модели»). Список серий → серия: все корпуса по каталогу производителя (модель + вид со стороны проводов),
@@ -17,6 +18,42 @@ import { SortHint } from "./refSort";
    серию и подсвечивает корпус. */
 
 const comma = (value: number | null | undefined) => (value == null ? "" : String(value).replace(".", ","));
+const housingCount = (series: ConnectorSeries) => series.housing_count + (series.bodies?.length ?? 0);
+
+type RfBody = NonNullable<ConnectorSeries["bodies"]>[number];
+const bodyGender = (body: RfBody) => body.gender === "male" ? "вилка (штыри)" : body.gender === "female" ? "розетка (гнёзда)" : "";
+const bodyDepth = (body: RfBody) => {
+  const depth = body.interface.depth;
+  if (depth?.min != null && depth.max != null) return `${comma(depth.min)}${depth.min === depth.max ? "" : `…${comma(depth.max)}`} мм`;
+  if (depth?.min != null) return `не менее ${comma(depth.min)} мм`;
+  if (depth?.max != null) return `не более ${comma(depth.max)} мм`;
+  return "";
+};
+const BODY_COLUMNS: DataColumn<RfBody>[] = [
+  { key: "title", title: "Исполнение", value: (body) => body.title, wrap: true, minWidth: 180, maxWidth: 270,
+    render: (body) => <b title={body.note}>{body.title}</b> },
+  { key: "gender", title: "Вилка / розетка", value: bodyGender },
+  { key: "pin", title: "Тип контакта", value: (body) => body.pin_type },
+  { key: "shield", title: "Тип экрана", value: (body) => body.shield_type },
+  { key: "cables", title: "Кабели", value: (body) => body.cables.join(" / "), wrap: true, maxWidth: 160 },
+  { key: "depth", title: "Заглубление", value: bodyDepth, numeric: true,
+    render: (body) => <span title={String(body.interface.depth?.src ?? "")}>{bodyDepth(body) || blank}</span> },
+  { key: "thread", title: "Резьба", value: (body) => body.interface.thread?.value ?? "",
+    render: (body) => body.interface.thread ? <span title={body.interface.thread.src}>{body.interface.thread.value}</span> : blank },
+  { key: "hex", title: "Ключ", numeric: true, value: (body) => body.interface.hex?.value ?? "",
+    render: (body) => body.interface.hex ? <span title={body.interface.hex.src}>{comma(body.interface.hex.value)} мм</span> : blank },
+  { key: "sources", title: "Источник", value: (body) => (body.sources ?? []).map((source) => source.title).join(" · "),
+    wrap: true, maxWidth: 220, render: (body) => body.sources?.length ? body.sources.map((source, index) =>
+      <span key={source.url}>{index > 0 && " · "}<a href={source.url} target="_blank" rel="noreferrer">{source.title}</a></span>) : blank },
+];
+
+function RfSection({ body }: { body: RfBody }) {
+  const section = rfBodySection({ ...body, interface: { ...body.interface, ref_plane: body.interface.ref_plane?.value } });
+  return section && <div className="conn-housing">
+    <b>{body.title}</b>
+    <Svg box={{ w: 640, h: section.height, body: section.body }} label={`Разрез: ${body.title}`} />
+  </div>;
+}
 
 /** Числа контактов коротко: 2–15; 1–16, 20; 8–34, чётные. */
 export function countsText(counts: number[]): string {
@@ -158,15 +195,17 @@ function SeriesView({ series, match, onBack, canEdit, onSaved }: {
     <div className="conn-series-head">
       <button type="button" className="secondary small" onClick={onBack}>← Все серии</button>
       <h2>{series.title}</h2>
-      <span className="muted">{[series.category, series.maker, series.pitch ? `шаг ${comma(series.pitch)} мм` : "", range ? `${range} конт.` : "", series.housing_count ? `${series.housing_count} корп.` : ""].filter(Boolean).join(" · ")}</span>
+      <span className="muted">{[series.category, series.maker, series.pitch ? `шаг ${comma(series.pitch)} мм` : "", range ? `${range} конт.` : "", housingCount(series) ? `${housingCount(series)} корп.` : ""].filter(Boolean).join(" · ")}</span>
       {!series.sources?.length && series.datasheet && <a href={series.datasheet} target="_blank" rel="noreferrer">Чертёж производителя (PDF)</a>}
     </div>
     {series.sources && series.sources.length > 0 && <div className="conn-sources">
-      <span className="muted">{series.sources.length > 1 ? "Документы производителя:" : "Документ производителя:"}</span>
+      <span className="muted">{series.bodies?.length ? "Документы серии:" : series.sources.length > 1 ? "Документы производителя:" : "Документ производителя:"}</span>
       {series.sources.map((source) => <a key={source.url} href={source.url} target="_blank" rel="noreferrer">{source.title}</a>)}
     </div>}
     <div className="conn-facts">
-      {series.housing_count === 0
+      {series.bodies?.length
+        ? <span className={`order-chip ${seriesState(series).tone}`}>{seriesState(series).text}</span>
+        : series.housing_count === 0
         ? <span className="order-chip tone-warn" title="Каталога корпусов серии в ERP нет — показаны только данные из баз «Терминалы» и «Коакс»">корпуса не добавлены</span>
         : <>
           {series.checked
@@ -181,6 +220,12 @@ function SeriesView({ series, match, onBack, canEdit, onSaved }: {
         ? <span className="muted">вид со стороны проводов, контакт 1 — красная метка{mated ? ", штырь — металл, гнездо — окно с кольцом" : ""}{series.note ? ` · ${series.note}` : ""}</span>
         : series.note && <span className="muted">{series.note}</span>}
     </div>
+    {Boolean(series.bodies?.length) && <section className="conn-variant">
+      <h3>Корпуса <span className="muted">{series.bodies!.length}</span></h3>
+      <DataTable label={`Корпуса ${series.title}`} rows={series.bodies!} columns={BODY_COLUMNS} rowKey={(body) => body.id}
+        storageKey="db:conn-rf-bodies" exportName={`Корпуса ${series.title}`} hideSearch compactBelow={30} />
+      {series.bodies!.map((body) => <RfSection key={body.id} body={body} />)}
+    </section>}
     {match?.series === series.id && !match.article && <div className="warning-inline">
       Такого корпуса нет в {series.range_checked ? "каталоге серии" : "известных ERP"} — ниже он нарисован по правилу серии.
       <div className="conn-grid"><HousingCard item={{ article: match.housing.art || "", n: match.housing.n || 0, housing: match.housing, headers: [] }} hit /></div>
@@ -209,6 +254,7 @@ function SeriesView({ series, match, onBack, canEdit, onSaved }: {
 
 /** Состояние серии одной строкой: чего в ней не хватает, иначе — по чьему каталогу ряд корпусов. */
 export function seriesState(series: ConnectorSeries): { text: string; tone: string } {
+  if (series.bodies?.length) return { text: series.standard?.[0]?.doc ? `по ${series.standard[0].doc}` : "корпуса добавлены", tone: "tone-neutral" };
   if (series.housing_count === 0) return { text: "корпуса не добавлены", tone: "tone-warn" };
   if (!series.checked) return { text: "нумерация не сверена", tone: "conn-warn" };
   if (!series.range_checked) return { text: "диапазон не сверен", tone: "tone-warn" };
@@ -224,7 +270,7 @@ const SERIES_COLUMNS: DataColumn<ConnectorSeries>[] = [
   { key: "maker", title: "Производитель", value: (item) => item.maker },
   { key: "pitch", title: "Шаг, мм", numeric: true, value: (item) => item.pitch ?? "", render: (item) => item.pitch == null ? blank : comma(item.pitch) },
   { key: "counts", title: "Контактов", wrap: true, maxWidth: 200, value: (item) => countsText(item.counts), render: (item) => countsText(item.counts) || blank },
-  { key: "housings", title: "Корпусов", numeric: true, value: (item) => item.housing_count || "", render: (item) => item.housing_count || blank },
+  { key: "housings", title: "Корпусов", numeric: true, value: (item) => housingCount(item) || "", render: (item) => housingCount(item) || blank },
   { key: "terminals", title: "Терминалов", numeric: true, value: (item) => item.terminals.length || "", render: (item) => item.terminals.length || blank },
   { key: "catalog", title: "Артикулов", numeric: true, hidden: true, value: (item) => item.catalog.length || "", render: (item) => item.catalog.length || blank },
   { key: "wire", title: "Провод", value: (item) => item.wire ? wireText(item.wire) : "", render: (item) => item.wire ? wireText(item.wire) : blank },
@@ -233,7 +279,7 @@ const SERIES_COLUMNS: DataColumn<ConnectorSeries>[] = [
 ];
 // Быстрые отборы — чего не хватает серии (как «Без Ø» у кабелей); чип без строк не показывается.
 const SERIES_PRESETS = [
-  { label: "Корпуса не добавлены", test: (item: ConnectorSeries) => item.housing_count === 0 },
+  { label: "Корпуса не добавлены", test: (item: ConnectorSeries) => housingCount(item) === 0 },
   { label: "Нумерация не сверена", test: (item: ConnectorSeries) => item.housing_count > 0 && !item.checked },
   { label: "Диапазон не сверен", test: (item: ConnectorSeries) => item.housing_count > 0 && item.checked && !item.range_checked },
 ];
@@ -272,7 +318,8 @@ export function ConnectorGallery({ canEdit = false }: { canEdit?: boolean }) {
   if (series === null) return <div className="empty">Загрузка…</div>;
   const open = series.find((item) => item.id === openId) ?? null;
   // A housing listed in two series (Mini-Fit Plus contacts go into Mini-Fit Jr. housings) is counted once.
-  const housings = new Set(series.flatMap((item) => item.variants.flatMap((variant) => variant.housings.map((h) => h.article)))).size;
+  const housings = new Set(series.flatMap((item) => item.variants.flatMap((variant) => variant.housings.map((h) => h.article)))).size
+    + series.reduce((total, item) => total + (item.bodies?.length ?? 0), 0);
   return <div className="conn-base">
     {error && <div className="error-banner" role="alert">{error}</div>}
     {unknown && (unknown.housing
