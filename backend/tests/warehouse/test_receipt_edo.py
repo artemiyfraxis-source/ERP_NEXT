@@ -44,6 +44,9 @@ def test_an_edo_upd_gives_header_and_lines_without_ocr(stand):  # noqa: F811
         ("Разъём тестовый РТ-2, 2 контакта", "100", "шт"), ("Провод монтажный тестовый 0,5 мм2", "250.5", "м"),
     ]
     assert body["lines"][0]["supplier_code"] == "RT-2@TEST"
+    assert body["lines"][0]["original"]["invoice_quantity"] == "100"
+    assert body["lines"][0]["source_line_key"].startswith("line:1:")
+    assert body["lines"][0]["file_id"] == body["scan_file"].rsplit("/", 1)[-1]
 
 
 def test_the_xml_is_kept_as_it_came_under_its_own_type(stand):  # noqa: F811

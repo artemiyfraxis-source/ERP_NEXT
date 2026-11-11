@@ -615,8 +615,14 @@ class ReceiptHeader:
     # «К платёжно-расчётному документу № … от …» (owner 26.10.2026) — the payment, not the invoice.
     prd_number: str = ""
     prd_date: date | None = None
+    supplier_inn: str = ""
 
     def checked(self) -> ReceiptHeader:
+        from app.shared.inn import OWN_INNS, inn_valid
+
+        inn = str(self.supplier_inn or "").strip()
+        if inn and (not inn_valid(inn) or inn in OWN_INNS):
+            raise WarehouseValidationError("ИНН поставщика не прошёл проверку")
         warehouse = str(self.warehouse or "").strip()
         if not warehouse:
             raise WarehouseValidationError("Выберите склад прихода")
@@ -630,7 +636,7 @@ class ReceiptHeader:
                 )
         if texts["scan_file"] and not _SCAN_FILE.fullmatch(texts["scan_file"]):
             raise WarehouseValidationError("Скан УПД — ссылка на файл, загруженный в приход")
-        return replace(self, warehouse=warehouse, invoice_date=self.invoice_date, upd_date=self.upd_date, **texts)
+        return replace(self, warehouse=warehouse, supplier_inn=inn, invoice_date=self.invoice_date, upd_date=self.upd_date, **texts)
 
 
 @dataclass(frozen=True)
@@ -654,6 +660,7 @@ class WarehouseReceipt:
     updated_at: datetime
     prd_number: str = ""
     prd_date: date | None = None
+    supplier_inn: str = ""
 
     @classmethod
     def create(cls, header: ReceiptHeader, *, now: datetime, created_by: str) -> WarehouseReceipt:
@@ -663,7 +670,7 @@ class WarehouseReceipt:
             invoice_number=header.invoice_number, invoice_date=header.invoice_date, upd_number=header.upd_number,
             upd_date=header.upd_date, purpose=header.purpose, scan_file=header.scan_file, created_at=now,
             created_by=str(created_by or "").strip(), updated_at=now, prd_number=header.prd_number,
-            prd_date=header.prd_date,
+            prd_date=header.prd_date, supplier_inn=header.supplier_inn,
         )
 
     def edited(self, header: ReceiptHeader, *, now: datetime, has_lots: bool) -> WarehouseReceipt:
@@ -677,5 +684,5 @@ class WarehouseReceipt:
             self, version=self.version + 1, warehouse=header.warehouse, supplier=header.supplier,
             invoice_number=header.invoice_number, invoice_date=header.invoice_date, upd_number=header.upd_number,
             upd_date=header.upd_date, purpose=header.purpose, scan_file=header.scan_file, updated_at=now,
-            prd_number=header.prd_number, prd_date=header.prd_date,
+            prd_number=header.prd_number, prd_date=header.prd_date, supplier_inn=header.supplier_inn,
         )

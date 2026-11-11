@@ -23,11 +23,12 @@ from uuid import UUID
 from fastapi import Request
 
 from app.shared.file_types import sniffed_type
+from app.shared.inn import OWN_INNS, inn_valid
 from app.workflows.edo_receipt import EdoDelivery
 from app.workflows.seller_inn import seller_inn
 from app.workflows.stock_receipt import known_articles, upd_document
 
-from . import receipt_llm
+from . import receipt_learning, receipt_llm
 from .application import UnitOfWork
 from .domain import RECEIPT_SCAN_PATH
 from .receipt_scan import NO_TEXT, RecognisedUpd, parse_upd_text
@@ -87,10 +88,19 @@ def scan_answer(sources: ScanSources, link: str, reading: ScanReading) -> dict:
     found, note = reading.found, reading.note
     inn = seller_inn(sources.purchasing, found.inn, found.supplier)
     found = replace(found, inn=inn.inn)
+    source_supplier = {"supplier": found.supplier, "inn": found.inn}
     lines: list[dict] = []
     document = upd_document(
         sources.purchasing, number=found.upd_number, day=found.upd_date, inn=found.inn, seller=found.supplier,
     ) if found.upd_number else None
+    # The legacy registry lookup also permits a near date. That is not supplier identity for learning.
+    same_supplier = document is not None and (
+        bool(found.inn and found.inn == document["inn"])
+        or bool(not found.inn and receipt_learning.item_key(found.supplier)
+                and receipt_learning.item_key(found.supplier) == receipt_learning.item_key(document["supplier"]))
+    )
+    if document is not None and found.inn and document["inn"] and found.inn != document["inn"]:
+        document = None
     if document is not None:
         basis = parse_upd_text(document["basis"])
         found = RecognisedUpd(
@@ -102,19 +112,41 @@ def scan_answer(sources: ScanSources, link: str, reading: ScanReading) -> dict:
             invoice_date=found.invoice_date or basis.invoice_date,
             prd_number=found.prd_number, prd_date=found.prd_date,
         )
-        lines =[{**line, "upd_name": line.get("name", "")} for line in document["lines"]]
+        # The registry may contain human corrections. Only an unambiguous printed-name match carries raw evidence.
+        raw_names: dict[str, list[tuple[int, dict]]] = {}
+        for index, raw in enumerate(reading.lines, 1):
+            raw_names.setdefault(receipt_learning.item_key(raw.name), []).append((index, line_answer(raw)))
+        names = [receipt_learning.item_key(line.get("name", "")) for line in document["lines"]]
+        for index, line in enumerate(document["lines"], 1):
+            key = names[index - 1]
+            matches = raw_names.get(key, [])
+            matched = same_supplier and len(matches) == 1 and names.count(key) == 1
+            original = matches[0][1] if matched else {**line, "learning_eligible": False}
+            lines.append({**line, "upd_name": line.get("name", ""), "original": original,
+                          "source_line_key": f"line:{matches[0][0]}" if matched else f"registry:{index}"})
         note = "Найден УПД в документах закупки — шапка и строки взяты из него"
     if not lines and reading.lines:
         read = snap_articles(list(reading.lines), known_articles(sources.warehouse, sources.purchasing,
                                                                   sources.references))
-        lines = [line_answer(line) for line in read]
+        lines = [{**line_answer(line), "original": line_answer(raw)} for line, raw in zip(read, reading.lines)]
         read_note = OCR_LINES.format(count=len(lines))
         note = f"Шапка не распознана — заполните вручную. {read_note}" if note == NO_TEXT else note or read_note
     if document is None:
         for remark in (reading.warning, inn.remark):
             if remark:
                 note = f"{note}. {remark}" if note else remark
-    return {"scan_file": link, "recognised": recognised_dict(found), "lines": lines, "note": note}
+    return _learning_answer(sources, {"scan_file": link, "recognised": recognised_dict(found), "lines": lines,
+                                      "source_supplier": source_supplier, "note": note})
+
+
+def _learning_answer(sources: ScanSources, answer: dict) -> dict:
+    answer = receipt_learning.with_provenance(answer)
+    inn = str(answer.get("source_supplier", answer["recognised"]).get("inn") or "")
+    if sources.warehouse is not None and inn_valid(inn) and inn not in OWN_INNS:
+        with sources.warehouse() as uow:
+            for row in answer["lines"]:
+                row["learning"] = receipt_learning.rule_suggestion(uow.session, f"inn:{inn}", row["original"])
+    return answer
 
 
 def edo_answer(sources: ScanSources, link: str, delivery: EdoDelivery,
@@ -139,9 +171,12 @@ def edo_answer(sources: ScanSources, link: str, delivery: EdoDelivery,
         fields = [{} for _ in delivery.items]
     rows = [line_from_item(item.name, item.code, item.unit, item.okei, item.quantity, **extra)
             for item, extra in zip(delivery.items, fields)]
-    rows = snap_articles(rows, known_articles(sources.warehouse, sources.purchasing, sources.references))
-    return {"scan_file": link, "recognised": recognised_dict(found), "lines": [line_answer(row) for row in rows],
-            "note": delivery.note}
+    snapped = snap_articles(rows, known_articles(sources.warehouse, sources.purchasing, sources.references))
+    return _learning_answer(sources, {
+        "scan_file": link, "recognised": recognised_dict(found),
+        "lines": [{**line_answer(row), "original": line_answer(raw)} for row, raw in zip(snapped, rows)],
+        "note": delivery.note,
+    })
 
 
 def llm_config(uow_factory: Callable[[], UnitOfWork]) -> receipt_llm.LlmConfig:

@@ -33,7 +33,7 @@ def test_the_real_scan_gives_six_lines_with_their_articles_tape_in_pieces():
         "item_type": "", "manufacturer": "",  # tesseract rows: no model, our name is the printed one
         "quantity": "300", "unit": "м", "invoice_quantity": "3", "invoice_unit": "шт",  # as invoiced: 3 rolls «шт»
         "packs": "3", "pack": "100 м", "pack_kind": "рул.",
-        "supplier_code": "00-00042353", "source": "скан УПД",
+        "supplier_code": "00-00042353", "source": "скан УПД", "number": "1",
     }
     assert [line.supplier_code for line in lines] == [
         "00-00042353", "00-00042352", "00-00042427", "00-00024027", "00-00026162", "00-00026163"]
