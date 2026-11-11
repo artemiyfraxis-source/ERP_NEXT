@@ -10,6 +10,27 @@ substantial independent work only when it saves context and fits the runtime's a
 Do not create a second state store or a native agent-config framework. Global rules remain in
 `~/.claude/CLAUDE.md`; brain access is through Obsidian MCP only, never a duplicate Codex brain.
 
+## Budget routing — Claude directs, Codex does the volume (owner, 11.11.2026)
+Claude runs on a $20 plan, Codex on a $200 plan. Spend Claude tokens on decisions, briefs and judging diffs;
+send reading-heavy and writing-heavy work to Codex CLI (installed globally, ChatGPT login shared with Codex desktop).
+- **Claude main keeps:** the owner's conversation, domain decisions, the queue, briefs, reading the integrated diff
+  (always line by line for migrations, stock and money), commits, PRs, merges and releases.
+- **Codex does:** wide code searches and first-pass plans (read-only), implementation and affected tests in a
+  task worktree, the independent pre-ship review, long log and test-output digging.
+- Claude subagents (`erp-planner`/`erp-worker`/`erp-verifier`) only when Codex is down or out of quota — say so.
+- Read-only call (search, plan draft, review):
+  `codex exec -m gpt-6.1-sol -c model_reasoning_effort="medium" -s read-only -C "<repo>" -o "<scratch>/<task>.out.md" - < "<scratch>/<task>.brief.md"`
+- Editing worker: main creates the worktree from the recorded base (`git worktree add <path> -b <branch> <SHA>`,
+  then `node scripts/setup-env.mjs` in it), then
+  `codex exec -m gpt-6.1-sol -c model_reasoning_effort="high" -s workspace-write -C "<worktree>" -o "<scratch>/<task>.out.md" - < "<scratch>/<task>.brief.md"`
+  Effort: `high` by default, `xhigh` for migrations, stock, money and generators; `medium` for copy and wiring.
+- Codex never commits, pushes or merges: the sandbox can't write the main `.git`, and commits carry the owner's
+  identity. Main reads the worker's diff and test evidence, then commits in the worktree.
+- Run every `codex exec` in the background (Bash `run_in_background`) and wait for the exit notice; never poll.
+  Read only the `-o` file, not the full log. Briefs are self-contained (Codex sees none of this chat) and in English.
+- Several workers in parallel are fine (Codex quota is large); the limits are file ownership and main's own
+  context spent reading diffs.
+
 ## Runtime and model policy
 - Claude uses the existing role cards in `.claude/agents/` with their YAML tool/model/isolation defaults.
   Codex uses `.agents/skills/erp-orchestrate/SKILL.md` and passes the role body and the task brief as
@@ -29,7 +50,7 @@ Do not create a second state store or a native agent-config framework. Global ru
   task branch from the agreed base. Main records the exact base SHA; never let setup choose or move it.
   Follow `.claude/team/RULES.md`: claim a draft PR before substantive application edits when publishing
   is within the authorized scope; otherwise report that publishing is needed before starting those edits.
-- Call `erp-planner` with the owner's request and known constraints. Review its plan: combine tasks
+- Get a plan draft from a read-only Codex call (or `erp-planner` as fallback) with the owner's request and known constraints. Review its plan: combine tasks
   sharing files or serialize them; one migration at a time, and schema-dependent work waits.
 - Tell the owner the plan in 3–6 lines (Russian), then go on without waiting. Ask only when a choice
   changes what the owner gets and neither the ERP's code nor the rules settle it.
@@ -58,7 +79,9 @@ Do not create a second state store or a native agent-config framework. Global ru
 
 ## 4. Gate and ship
 - Workers run affected tests before any authorized worker commit. Main obtains an independent code
-  review and `erp-verifier` verdict on the final integrated content before claiming done or shipping.
+  review (a fresh read-only Codex run of the `cross-review` brief) and a verifier verdict (main runs
+  `npm run check` in the background and reads the tail; `erp-verifier` as fallback) on the final integrated
+  content before claiming done or shipping.
   Every failed or unrun required gate blocks PASS, completion claims and shipping, including when an
   environment issue is established. Report its evidence and the unverified gate as a blocker; there is
   no environment or drift exemption. Verifier reports only and never fixes.

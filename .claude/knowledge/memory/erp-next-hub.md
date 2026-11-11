@@ -2,7 +2,10 @@
 name: erp-next-hub
 description: Map of ERP_NEXT project knowledge — start here; links every note in this folder and the brain-side entry note
 metadata:
+  node_type: memory
   type: reference
+  originSessionId: 3299b8a4-260f-413b-822c-c78a05c76e54
+  modified: 2026-11-11T19:31:36.738Z
 ---
 
 ERP_NEXT = FastAPI + React successor of SUPPLYMAP (Google Apps Script, legacy since 05.10.2026) for a cable-assembly
@@ -10,7 +13,7 @@ plant. Owner: Артемий. Project knowledge lives in this folder, mounted in
 `projects/erp_next`; the brain-side entry note is [[erp-next-project]] (it links back here; layers explained in brain
 note [[memory-topology]]). Every note here is one node of the graph; `MEMORY.md` is the one-line index.
 
-- Owner: how he wants agents to work → [[owner-working-rules]] · mid-turn request queue → [[owner-request-queue]] ·
+- Owner: how he wants agents to work → [[owner-working-rules]] · Claude directs Codex → [[claude-directs-codex]] · mid-turn request queue → [[owner-request-queue]] ·
   goals of 05.10 → [[owner-goals-1005]] · usage-limit resume → [[resume-at-limit-reset]]
 - Data safety: [[live-data-protocol]] · writing reference values to prod → [[prod-reference-write]] ·
   maker's document beats shop values → [[maker-docs-over-shop-values]]

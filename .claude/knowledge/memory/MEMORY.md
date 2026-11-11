@@ -1,5 +1,6 @@
 - [ERP_NEXT hub](erp-next-hub.md) — START HERE: map of every note below (Obsidian graph root)
 - [Owner working rules](owner-working-rules.md) — Russian replies, no questions, merge/deploy permissions, one server update per batch of parallel PRs, batch access asks
+- [Claude directs Codex](claude-directs-codex.md) — owner 11.11: Claude $20 orchestrates, Codex CLI $200 searches/codes/tests/reviews via `codex exec`; Codex never commits
 - [Owner request queue](owner-request-queue.md) — owner piles requests mid-turn: numbered visible queue, dispatch each via orchestrator at once
 - [Owner goals 05.10](owner-goals-1005.md) — goal 1: minimal chain закупка→приёмка→выдача; goal 2: debug production; receiving answers
 - [Live data protocol](live-data-protocol.md) — no migration to prod without backup → rehearsal on a copy → row-count/integrity check; update.sh + rehearse.sh do it since 05.10
