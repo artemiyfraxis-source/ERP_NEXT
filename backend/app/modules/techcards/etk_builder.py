@@ -15,7 +15,7 @@ from .domain.pf_split import generator_split, same_split
 from .domain.route import (
     Block, Route, RouteError, RouteOp, chain_route, derive_route, parse_route, route_json, route_levels, route_totals,
 )
-from .etk_marking import apply_marking, mark_length
+from .etk_marking import apply_marking, mark_length, mark_kind, TUBE_KINDS
 from .operation_cards import OperationCardTemplate
 from .project_cards import CUSTOM_OP
 
@@ -720,6 +720,13 @@ def _components(
     """`manual` — «Ручная сборка» (25.10): cut tubes go to the kit in metres, tape names its material; the generator's
     own ETKs stay as they were."""
     quantity = _part_quantity(config)
+    if config.get("mode") == "rework" and op.get("type") == "cutWire":
+        incoming = config["rework"]["input"]
+        metres = _decimal(config["rework"]["cutLength"]) * quantity / 1000
+        return [{"art": incoming["art"], "name": incoming["name"],
+                 "norm": _format(metres, max(4, -metres.as_tuple().exponent)), "unit": "М."}]
+    if config.get("mode") == "rework" and op.get("type") == "insMark":
+        return _mark_materials(_mark_items(op), quantity)
     if _splice_method(op):
         # Sleeves of the splices — by the method, whatever the card (PRS_COPPER of the band crimp lists no parts).
         return [{"art": row["art"], "name": row["name"], "norm": _format(row["count"] * quantity), "unit": "Шт."}
@@ -1005,6 +1012,11 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
     wires = _wires(op, config)
     quantity = _part_quantity(config)
     operation_minutes = _decimal(op.get("tOp")) / 60
+    if config.get("mode") == "rework":
+        linear = linear_seconds(op.get("linearTiming"), _decimal(config["rework"]["cutLength"]) / 1000) if operation_type == "cutWire" else None
+        minutes = linear / 60 if linear is not None else operation_minutes
+        units = sum((_decimal(mark.get("qty")) for mark in _mark_items(op)), Decimal(0)) if operation_type == "insMark" else Decimal(1)
+        return [{"name": result_name, "norm": _format(minutes * units * quantity, 2)}]
     if (operation_type in {"cutWire", "cutWireStrip", "cutWireCrimp"} or kind) and wires:
         units = lambda wire: _number(wire.get("qty"), Decimal(1)) * (_number(wire.get("cores"), Decimal(1)) if kind else 1)
         if kind in {"ins", "sdr"} or (kind == "prs" and op.get("side") == "B"):
@@ -1937,6 +1949,18 @@ def _typed_operation(
     if label and operation["card"] is not None and operation["type"].startswith("coax"):
         # FAKRA/HFM (генератор 25.10): у каждой операции своё название («Обжим центрального контакта (А)»), а не общее имя карты.
         operation["card"]["name"] = label
+    if config.get("mode") == "rework":
+        operation["title"] = label
+        if operation["card"] is not None:
+            operation["card"]["name"] = label
+        if op.get("type") in {"stripCable", "tin"}:
+            length = str(config["rework"]["stripLength"])
+            action = "Зачистить" if op["type"] == "stripCable" else "Облудить зачищенный"
+            instruction = {"kind": "Операция", "text": f"{action} конец {_side_label(op)}: длина зачистки {length} мм. "
+                           "В этой операции обрабатывать только указанный конец.", "tolerance": ""}
+            if operation["card"] is not None:
+                operation["card"]["steps"] = [{**step, "number": str(index)} for index, step in enumerate(
+                    [instruction, *operation["card"]["steps"]], start=1)]
     if op.get("type") == "insMark" and _kd_marks(_mark_items(op)):
         # Маркировка по КД: ход операции, дефекты, оборудование и время — по видам меток (etk_marking).
         apply_marking(operation, op, _mark_items(op), _part_quantity(config), warnings)
@@ -2032,6 +2056,8 @@ def _list(value: object) -> list[Any]:
 def _chain_results(config: Mapping[str, Any]) -> list[str]:
     """The product name every generator operation hands on, replaying build_etk's previous_result chain (along the
     generator's own ПФ scheme when it drew one)."""
+    if config.get("mode") == "rework":
+        return [link.result for link in _generator_chain(_list(config.get("ops")), config, [])]
     scheme = _scheme_chain([op for op in _list(config.get("ops")) if isinstance(op, Mapping)], config)
     if scheme is not None:
         return [link.result for link in scheme]
@@ -2134,6 +2160,8 @@ def generator_tab(config: Mapping[str, Any] | None) -> str:
     сборка» writes: a big-assembly flag, splices, sealing, a folded core, a connector label."""
     if not isinstance(config, Mapping) or not config:
         return ""
+    if config.get("mode") == "rework":
+        return "rework"
     if config.get("mode") == MANUAL_MODE:
         return MANUAL_MODE
     tab = str(config.get("tab") or "").strip()
@@ -2197,6 +2225,8 @@ def _route(
         if failed is not None and warnings is not None:
             warnings.append(f"{failed} — схема генератора не подошла к операциям ЭТК, "
                             + ("ПФ разбиты по правилу генератора" if route else "ПФ — по операции"))
+    if route is None and config.get("mode") == "rework":
+        route = _replace(chain_route(ops, final_name), manual=False, generated=True)
     route = route or derive_route(ops, final_name)
     return route_json(route, route_totals(route, {op.position: op.minutes for op in ops}, quantity))
 
@@ -2215,6 +2245,9 @@ def propose_route(document: Mapping[str, Any] | None) -> dict[str, Any] | None:
     config = document.get("build_config") if isinstance(document.get("build_config"), Mapping) else {}
     route: Route | None = None
     rule = "generator"
+    if generator_tab(config) == "rework":
+        rule = "blocks"
+        route = _replace(chain_route(ops, final_name), manual=False, generated=True)
     if generator_tab(config) == MANUAL_MODE:
         rule = "blocks"
         try:
@@ -2845,6 +2878,17 @@ def _generator_chain(
     last chain-advancing one handed on; TUT pieces cut aside come in as a second input of the operation that puts them
     on. `codes` — the operation cards' codes (a cut — `CUT_…` — takes no semi-finished product). A config whose ПФ
     scheme the generator drew itself goes along the scheme (`_scheme_chain`)."""
+    if config.get("mode") == "rework":
+        links = []
+        previous = ""
+        count = _format(_part_quantity(config))
+        for index, op in enumerate(operations):
+            last = index == len(operations) - 1
+            result = str(config.get("assemblyName") or "Доработанное изделие") if last else f"Изделие после «{op['label']}»"
+            links.append(_ChainLink(previous, result, result, last,
+                                    [_row(previous, count)] if previous else [], [_row(result, count)]))
+            previous = result
+        return links
     scheme = _scheme_chain(operations, config, codes)
     if scheme is not None:
         return scheme
@@ -2924,6 +2968,105 @@ def fill_generator_chain(document: Mapping[str, Any] | None) -> Mapping[str, Any
     return {**document, "operations": filled} if changed else document
 
 
+def _rework_config(config: Mapping[str, Any], cards: Sequence[OperationCardTemplate]) -> dict[str, Any]:
+    """Validate the explicit rework contract and derive its physical quantities from the incoming product."""
+    def fail(message: str) -> None:
+        raise ValueError(f"Доработка давальческого изделия: {message}")
+
+    def positive(value: object, label: str) -> Decimal:
+        text = str(value).strip().replace(",", ".")
+        if not isinstance(value, (int, float, Decimal)) and not re.fullmatch(r"\d+(?:\.\d+)?", text):
+            fail(f"{label} — требуется положительное число")
+        amount = _decimal(text)
+        if not amount.is_finite() or amount <= 0:
+            fail(f"{label} — требуется положительное число")
+        return amount
+
+    rework = config.get("rework")
+    if not isinstance(rework, Mapping):
+        fail("не заданы параметры")
+    incoming = rework.get("input")
+    if not isinstance(incoming, Mapping) or not incoming.get("id") or not (incoming.get("art") or incoming.get("name")) or incoming.get("unit") != "М.":
+        fail("выберите входное изделие в метрах")
+    incoming = {"id": str(incoming["id"]), "art": str(incoming.get("art") or ""),
+                "name": str(incoming.get("name") or incoming.get("art") or ""), "unit": "М."}
+    if config.get("route"):
+        fail("операции доработки должны передавать одно изделие последовательно")
+    length = positive(rework.get("cutLength"), "длина реза")
+    quantity = positive(config.get("partQty"), "количество изделий")
+    if quantity != quantity.to_integral_value() or quantity > 9007199254740991:
+        fail("количество изделий должно быть целым")
+    ends, treatment = rework.get("ends"), rework.get("treatment")
+    if not isinstance(ends, str) or not isinstance(treatment, str) or ends not in {"A", "B", "AB"} or treatment not in {"none", "strip", "tin"}:
+        fail("неверная обработка концов")
+    sides = ["A", "B"] if ends == "AB" else [ends]
+    if treatment != "none":
+        strip = positive(rework.get("stripLength"), "длина зачистки")
+        if strip * len(sides) > length:
+            fail("зачистка выходит за длину реза")
+    if not isinstance(rework.get("mark"), bool):
+        fail("не задан выбор маркировки")
+    expected = [("cutWire", "reworkCut", "", "Резка давальческого изделия")]
+    if treatment != "none":
+        for side in sides:
+            letter = "А" if side == "A" else "В"
+            expected.append(("stripCable", f"reworkStrip{side}", side, f"Зачистка конца {letter}"))
+            if treatment == "tin":
+                expected.append(("tin", f"reworkTin{side}", side, f"Лужение конца {letter}"))
+    if rework["mark"]:
+        expected.append(("insMark", "reworkMark", "", "Маркировка изделия"))
+    ops = config.get("ops")
+    if not isinstance(ops, list) or len(ops) != len(expected):
+        fail("операции не соответствуют выбранной обработке")
+    by_id = {card.source_id: card for card in cards}
+    allowed_codes = {"cutWire": {"CUT_WIRE_hand", "CUT_WIRE_auto"}, "stripCable": {"STRIP_WIRE", "STRIP_CABLE", "STRIP_CABLE_sheld"},
+                     "tin": {"SDR_tin"}, "insMark": {"INS_MARK"}}
+    enriched = next((wire for wire in _wires({}, config) if (wire.get("art") or wire.get("name")) == (incoming["art"] or incoming["name"])), {})
+    wires = [{**{key: enriched[key] for key in ("outerDiameter", "conductorDiameter") if key in enriched},
+              "art": incoming["art"], "name": incoming["name"], "qty": 1, "length": rework["cutLength"]}]
+    normalized = []
+    for raw, (kind, key, side, label) in zip(ops, expected):
+        if not isinstance(raw, Mapping) or (raw.get("type"), raw.get("opKey"), raw.get("side", "")) != (kind, key, side):
+            fail("операции не соответствуют выбранной обработке")
+        card = by_id.get(str(raw.get("templateId") or ""))
+        if card is None:
+            fail(f"не выбрана карточка: {label}")
+        if card.code not in allowed_codes[kind]:
+            fail(f"карточка не соответствует операции: {label}")
+        # Keep reference enrichment and times; discard unrelated manufacturing/consumption parameters.
+        op = {k: deepcopy(v) for k, v in raw.items() if k in {
+            "type", "opKey", "templateId", "opNum", "tPrep", "tOp", "tMachine", "linearTiming", "equipment",
+            EQUIPMENT_ID, EQUIPMENT_TOOLS, "markKit",
+        }}
+        op["label"] = label
+        if side:
+            op["side"] = side
+        if kind == "stripCable":
+            op.update(tutCount=1, strip={"a": side == "A", "b": side == "B",
+                                       "lenA": rework["stripLength"] if side == "A" else "",
+                                       "lenB": rework["stripLength"] if side == "B" else ""})
+        if kind == "tin":
+            op["units"] = 1
+        if kind == "insMark":
+            marks = raw.get("marks")
+            if not isinstance(marks, list) or not marks:
+                fail("заполните маркировку")
+            for mark in marks:
+                if not isinstance(mark, Mapping) or not str(mark.get("text") or "").strip() or not str(mark.get("art") or "").strip():
+                    fail("заполните надпись и материал маркировки")
+                positive(mark.get("qty"), "количество меток")
+                if mark_kind(str(mark.get("name") or mark.get("art") or "")) in TUBE_KINDS:
+                    positive(mark.get("lengthMm"), "длина трубки")
+            op["marks"] = deepcopy(marks)
+        normalized.append(op)
+    # Other generator modes may have left their connection/sketch settings in an imported config.
+    base = {key: deepcopy(value) for key, value in config.items() if key not in {
+        "coax", "connections", "pinout", "bigAssembly", "wireSources", "twist", "spl", "seal", "cap", "hs", "wrap",
+    }}
+    return {**base, "tab": "rework", "rework": {**deepcopy(dict(rework)), "input": incoming}, "ops": normalized, "wires": wires, "strip": {},
+            "tin": {"stripLen": str(rework.get("stripLength") or "")}}
+
+
 def build_etk(
     config: Mapping[str, Any], cards: Sequence[OperationCardTemplate], *,
     operation_library_commit: str = "",
@@ -2931,6 +3074,8 @@ def build_etk(
 ) -> dict[str, Any]:
     """Return an immutable document snapshot suitable for ProjectTechcard.rebuild. `operation_library_commit` — only a
     provenance label in `source` (documents built from the SUPPLYMAP library carry its commit); empty — none."""
+    if config.get("mode") == "rework":
+        config = _rework_config(config, cards)
     if config.get("mode") == MANUAL_MODE:
         return _build_manual(config, cards, operation_library_commit=operation_library_commit,
                              technology_source=technology_source)

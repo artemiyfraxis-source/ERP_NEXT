@@ -101,6 +101,7 @@ export function restoreFromSnapshot(components: Comp[], seed: GenState, snap: Ge
   const posList = (list: number[] | null) => (list === null ? null : list.map(posOf).filter((pos) => pos >= 0));
   S = {
     ...S, wires, nextWireIdx, endpoints, nextEndpointId,
+    ...(S.rework ? { rework: { ...S.rework, compId: keep(S.rework.compId) } } : {}),
     branches: S.branches?.filter((b) => live(b.main) && live(b.extra)),
     splices: S.splices?.map((sp) => ({ ...sp, ends: sp.ends.filter((e) => live(e.idx)) })).filter((sp) => sp.ends.length),
     tails: S.tails?.filter((e) => live(e.idx)),
