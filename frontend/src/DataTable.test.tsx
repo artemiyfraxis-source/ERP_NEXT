@@ -23,6 +23,20 @@ function names() {
 
 afterEach(() => { cleanup(); window.localStorage.clear(); vi.restoreAllMocks(); });
 
+it("exports opted-in hidden columns with filtered rows while ordinary hidden columns stay omitted", async () => {
+  let blob: Blob | null = null;
+  vi.spyOn(URL, "createObjectURL").mockImplementation((value) => { blob = value as Blob; return "blob:x"; });
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+  render(<DataTable rows={rows} columns={columns.map((column) => column.key === "supplier" ? { ...column, hidden: true, export: true } : column)}
+    rowKey={(row) => row.id} exportName="test" pageSize={1} />);
+  expect(screen.queryByRole("columnheader", { name: "Поставщик" })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Кабель-Торг" } });
+  fireEvent.click(screen.getByRole("button", { name: "Excel" }));
+  const text = new TextDecoder("utf-16le").decode(await blob!.arrayBuffer());
+  expect(text).toBe("Наименование\tПоставщик\tКол-во\r\nПровод МГТФ 0,12\tКабель-Торг\t2\r\nРазъём Molex\tКабель-Торг\t100\r\n");
+});
+
 it.each([false, true])("group labels receive searched and filtered rows, cards=%s", (cards) => {
   const groupLabel = vi.fn((name: string, _group: Row[], filtered: Row[]) => `${name}: ${filtered.length}`);
   render(<DataTable rows={rows} columns={columns} rowKey={(row) => row.id} groupBy={(row) => row.supplier} groupLabel={groupLabel}

@@ -203,6 +203,7 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     grn: { key: "grn", title: "ГРН партии", value: (row) => grnText(row, sourceOf(row)), width: 128, wrap: true, maxWidth: 200,
       render: (row) => <span className="ship-position-grn">{grnText(row, sourceOf(row)) || "—"}</span> },
     shipmentStatus: { key: "shipmentStatus", title: "Статус отправки", value: (row) => row.shipment?.status ?? "Не создана", width: 130, wrap: true, maxWidth: 160, render: stateCell },
+    shipment: { key: "shipment", title: "Отправка", value: (row) => row.shipment?.number ?? "", export: true },
     carrier: { key: "carrier", title: "ТК", hint: "Транспортная компания", value: (row) => row.shipment?.carrier ?? "", width: 96, wrap: true, maxWidth: 140,
       render: (row) => row.shipment?.carrier || "—" },
     track: { key: "track", title: "Трек", hint: "Трек-номер ТК", value: (row) => row.shipment?.track_number ?? "", width: 120, wrap: true, maxWidth: 160,
@@ -237,7 +238,7 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     if (source.shipment) {
       const position = positions.get(`${name}\u0001${source.shipment.id}`)!;
       return <ShipmentGroupHeader project={name} customer={source.customer} shipment={source.shipment} {...position}
-        quantity={groupRows.reduce((sum, row) => sum + row.quantity, 0)} onError={setError}
+        quantity={filteredRows.filter((row) => row.project === name && row.shipment?.id === source.shipment!.id).reduce((sum, row) => sum + row.quantity, 0)} onError={setError}
         onOpenProject={() => setOpen({ id: `project:${name}`, row: source })} onOpenShipment={() => openRow(source)}>
         <ReadyForecast forecast={forecastOf(source)} />
       </ShipmentGroupHeader>;

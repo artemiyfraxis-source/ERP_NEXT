@@ -90,6 +90,25 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
   });
 
   const acceptedCard = { project: "780К.1", version: 7, pack_decided: false, dispatch_gaps: ["телефон", "вариант УПД"] };
+  it("shipment totals and Excel use all filtered lines beyond the rendered page", async () => {
+    stub([{ ...shippedNoFile, shipped_at: "2026-11-01", lines: Array.from({ length: 201 }, (_, index) => ({
+      ...base.lines[0], id: `line${index}`, item_index: `КБ${index}`, name: index === 200 ? "Особый" : "Жгут", picked: "1",
+    })) }]);
+    let blob: Blob | null = null;
+    vi.spyOn(URL, "createObjectURL").mockImplementation((value) => { blob = value as Blob; return "blob:x"; });
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    render(<ShipmentDataPage principal={principal} />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Отгружено/ }));
+    expect(document.querySelector(".ship-shipment-group")).toHaveTextContent("201 шт");
+    expect(document.querySelectorAll("td[data-label='КБ']")).toHaveLength(200);
+    fireEvent.click(screen.getByRole("button", { name: "Excel" }));
+    const text = new TextDecoder("utf-16le").decode(await blob!.arrayBuffer());
+    expect(text.split("\r\n")[0]).toContain("Отправка");
+    expect(text.split(shippedNoFile.number)).toHaveLength(202);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Особый" } });
+    expect(document.querySelector(".ship-shipment-group")).toHaveTextContent("1 шт");
+  });
   function projectStub(card = acceptedCard, status = 200, stage = "Принято складом", capQuantity = "0") {
     stub([]);
     const fallback = vi.mocked(fetch).getMockImplementation()!;

@@ -279,7 +279,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
           disabled={Boolean(label?.busy)} aria-busy={label?.busy && label.grn === grn} onClick={() => void printLabel(grn)}>Печать</button>}</span>)}</span>;
     } },
     { key: "received", title: "Дата приёмки", width: 96, value: (line) => line.act?.received_at ?? "", render: (line) => line.act ? formatDay(line.act.received_at) : dash },
-    { key: "shipment", title: "Отправка", width: 130, maxWidth: 160, value: (line) => line.shipment ? `${line.shipment.number} ${line.shipment.status}` : "",
+    { key: "shipment", title: "Отправка", export: true, width: 130, maxWidth: 160, value: (line) => line.shipment ? `${line.shipment.number} ${line.shipment.status}` : "",
       render: (line) => line.shipment ? <span title={line.shipment.status}>{line.shipment.number}</span> : dash },
     { key: "track", title: "Трек", wrap: true, minWidth: 84, maxWidth: 180, value: (line) => trackText(line.shipment, line), render: (line) => {
       const text = trackText(line.shipment, line);
@@ -316,7 +316,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     if (shipment) {
       const position = positions.get(`${project}\u0001${shipment.id}`)!;
       return <ShipmentGroupHeader project={project} customer={head[project]?.customer || shipment.customer} shipment={shipment} {...position}
-        quantity={groupRows.reduce((sum, line) => sum + line.quantity, 0)} onError={setError} onOpenShipment={() => setShipmentData(shipment.id)}>
+        quantity={filteredRows.filter((line) => line.project === project && line.shipment?.id === shipment.id).reduce((sum, line) => sum + line.quantity, 0)} onError={setError} onOpenShipment={() => setShipmentData(shipment.id)}>
         {tab === "packed" && canDispatch && <button type="button" className="secondary small"
           onClick={(event) => { event.stopPropagation(); setOpened({ kind: "pack", project }); }}>Короба и PL/DN</button>}
       </ShipmentGroupHeader>;

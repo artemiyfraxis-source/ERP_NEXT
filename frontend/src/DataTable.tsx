@@ -31,6 +31,8 @@ export interface DataColumn<T> {
   numeric?: boolean;
   /** Колонка скрыта, пока пользователь её не включит. */
   hidden?: boolean;
+  /** Колонка попадает в Excel, даже когда скрыта (остальные — как видны). */
+  export?: boolean;
   /** Длинный текст с переносом. */
   wrap?: boolean;
   /** Ширина колонки (px) — чтобы несколько таблиц одной страницы шли колонка в колонку. */
@@ -699,7 +701,7 @@ export function DataTable<T>({
   }
 
   function download() {
-    const blob = new Blob([utf16Bytes(tableText(filtered, visible))], { type: "text/tab-separated-values" });
+    const blob = new Blob([utf16Bytes(tableText(filtered, arranged.filter((column) => column.export || visible.includes(column))))], { type: "text/tab-separated-values" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;

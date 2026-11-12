@@ -1,6 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProductionIntakePage } from "./ProductionIntakePage";
+import { ShipmentCard } from "./ShipmentCard";
+import type { DispatchShipment } from "./productionIntakeApi";
 import { capturePrintFrames } from "./testPrintFrames";
 import { setRightsPrincipal } from "./rights";
 import { forgetPersonalViews } from "./personalViews";
@@ -88,6 +90,23 @@ const rowButtons = (text = "Жгут") => bodyRows(text).flatMap((tr) => [...tr.
 const cell = (tr: Element, label: string) => (tr.querySelector(`td[data-label="${label}"]`)?.textContent ?? "").replace(/ /g, " ");
 const writes = () => calls.filter((call) => call.method !== "GET");
 
+it.each(["Новая", "Собрана", "Упакована", "Отгружена", "Закрыта", "Отменена"])("shipment head editing follows status %s; documents retain their rules", (status) => {
+  const shipment = { ...packedShipment, status, receiver: "Иванов", phone: "+7 123", contact: "Контакт", note: "Позвонить", deadline: "2026-11-12" } as DispatchShipment;
+  render(<ShipmentCard shipment={shipment} rights={{ canManage: true, canWarehouse: true, canEdit: true, canUnship: false }}
+    busy="" mutate={vi.fn()} openData={vi.fn()} />);
+  const details = screen.getByText("Получатель и адрес этой отправки").closest("details")!;
+  const active = ["Новая", "Собрана", "Упакована"].includes(status);
+  expect(details.querySelectorAll("input").length > 0).toBe(active);
+  if (!active) {
+    expect(details).toHaveTextContent("Иванов");
+    expect(details).toHaveTextContent("+7 123");
+    expect(details).toHaveTextContent("Контакт");
+    expect(details).toHaveTextContent("Позвонить");
+    expect(details).toHaveTextContent("12.11.2026");
+  }
+  expect(Boolean(screen.queryByRole("button", { name: "Сохранить документы" }))).toBe(!["Закрыта", "Отменена"].includes(status));
+});
+
 it("две отгрузки проекта имеют отдельные заголовки, суммы и данные получателей", async () => {
   intakeRows = [];
   shipments = [
@@ -114,6 +133,26 @@ it("две отгрузки проекта имеют отдельные заг�
   fireEvent.change(screen.getByRole("searchbox"), { target: { value: "ОТГ-2" } });
   expect(document.querySelectorAll(".ship-shipment-group")).toHaveLength(1);
   expect(screen.getByText("Отгрузка 1 из 1")).toBeInTheDocument();
+});
+
+it("shipment totals and Excel include lines beyond the first 200 rendered rows and follow search", async () => {
+  intakeRows = [];
+  shipments = [{ ...packedShipment, status: "Отгружена", shipped_at: "2026-11-08",
+    lines: Array.from({ length: 201 }, (_, index) => shipmentLine({ id: `l${index}`, item_index: `КБ${index}`, name: index === 200 ? "Особый" : "Жгут", picked: "1" })) }];
+  let blob: Blob | null = null;
+  vi.spyOn(URL, "createObjectURL").mockImplementation((value) => { blob = value as Blob; return "blob:x"; });
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+  render(<ProductionIntakePage principal={principal} />);
+  fireEvent.click(await screen.findByRole("tab", { name: /^Отгружено/ }));
+  expect(document.querySelector(".ship-shipment-group")).toHaveTextContent("201 шт");
+  expect(document.querySelectorAll("td[data-label='КБ']")).toHaveLength(200);
+  fireEvent.click(screen.getByRole("button", { name: "Excel" }));
+  const text = new TextDecoder("utf-16le").decode(await blob!.arrayBuffer());
+  expect(text.split("\r\n")[0]).toContain("Отправка");
+  expect(text.split(packedShipment.number)).toHaveLength(202);
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Особый" } });
+  expect(document.querySelector(".ship-shipment-group")).toHaveTextContent("1 шт");
 });
 
 it.each([false, true])("исчерпанное разрешение: количества видны, право менеджера=%s", async (manager) => {

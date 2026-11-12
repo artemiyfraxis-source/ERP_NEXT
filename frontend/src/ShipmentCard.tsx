@@ -260,7 +260,12 @@ export function ShipmentCard({ shipment, rights, busy, mutate, openData }: {
       <label>Трек-номер<input aria-label={`Трек-номер ${shipment.number}`} disabled={!trackOpen} title={trackOpen ? undefined : "Трек вносится, когда есть УПД и ТК"} value={documents.track_number} onChange={(event) => setDocuments({ ...documents, track_number: event.target.value })} /></label>
       <button type="button" className="secondary" disabled={disabled} onClick={() => void mutate(`docs:${shipment.id}`, () => shippingApi.documents(shipment.id, { version: shipment.version, ...documents, upd_url: shipment.upd_url, upd_type: documents.upd_type || null, upd_date: documents.upd_date || null }), "Данные УПД и доставки сохранены")}>Сохранить документы</button>
     </div>}
-    {canEdit && open && <details className="ship-more"><summary>Получатель и адрес этой отправки</summary><ShipmentHead shipment={shipment} busy={busy} mutate={mutate} /></details>}
+    <details className="ship-more"><summary>Получатель и адрес этой отправки</summary>
+      {canEdit && active
+        ? <ShipmentHead shipment={shipment} busy={busy} mutate={mutate} />
+        : <dl className="ship-form">{[...HEAD_FIELDS, ["carrier", "ТК"], ["terms", "Условия"], ["deadline", "Срок отгрузки"], ["note", "Комментарий"]].map(([key, title]) =>
+          <div key={key} className={key === "shipping_point" || key === "note" ? "ship-span2" : undefined}><dt>{title}</dt><dd>{key === "deadline" ? formatDate(shipment.deadline) || "—" : key === "terms" ? termsText(shipment.terms) || "—" : String(shipment[key as keyof Shipment] || "—")}</dd></div>)}</dl>}
+    </details>
     {approving && <NoUpdWindow shipment={shipment} close={() => setApproving(false)} mutate={mutate} />}
   </article>;
 }
