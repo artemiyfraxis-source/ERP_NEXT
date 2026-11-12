@@ -563,10 +563,10 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     render(<ShipmentDataPage principal={principal} />);
     fireEvent.click(await screen.findByRole("button", { name: "Все · 1" }));
     await screen.findByText(draft.number);
-    const draftRow = view === "cards" ? screen.getByRole("button", { name: `Открыть: ${draft.number}` }) : screen.getByText(draft.number).closest("tr")!.nextElementSibling!;
+    const draftRow = view === "cards" ? screen.getByRole("button", { name: `Открыть: ${draft.number}` }) : screen.getByText(draft.number).closest("tr")!.nextElementSibling as HTMLElement;
     expect(within(draftRow).getByText("Не набрано", { selector: ".status-chip" })).toBeInTheDocument();
     expect(within(draftRow).queryByText("Отменена")).not.toBeInTheDocument();
-    const cancelledRow = view === "cards" ? screen.getByRole("button", { name: `Открыть: ${cancelled.number}` }) : screen.getByText(cancelled.number).closest("tr")!.nextElementSibling!;
+    const cancelledRow = view === "cards" ? screen.getByRole("button", { name: `Открыть: ${cancelled.number}` }) : screen.getByText(cancelled.number).closest("tr")!.nextElementSibling as HTMLElement;
     expect(within(cancelledRow).getByText("Отменена", { selector: ".status-chip" })).toBeInTheDocument();
     expect(within(cancelledRow).queryByText("Не набрано")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Принято · 0" })).toBeInTheDocument();
