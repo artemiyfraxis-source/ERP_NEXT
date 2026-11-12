@@ -4,8 +4,8 @@ Numbering, as found in the БД.ОБ data (216 sheet rows, 12.10.2026):
 - `<prefix>.<NNN>` is a model (3 digits, «ОБ.044»); several units of one model are `<prefix>.<NNN>.<k>` («ОБ.070.1…8»);
   the legacy rows «ОБ.79.1», «ОБ.81» are written without padding and count as the same numbers (79, 81);
   «.X» is a resale marker («ОБ.070.X», «(R)») and takes no part in counting.
-- Equipment, «Оборудование (ПР)» and «Инструмент» share one `ОБ.` sequence; «Матрицы» are mostly `ОСН.NNN`
-  (26 of 33, the rest are the КВТ die sets `ОБ.069.k`). The prefix of a type is the one most of its rows use.
+- Applicators use their existing M/S/A terminal-base code, never an automatic number. Measuring instruments
+  use their own `СИ.` sequence; other new models use `ОБ.`. Existing `ОСН.` numbers remain readable.
 
 Crimp tools: БД.ТЕР «Аппликатор» holds applicator codes («S10/M10/M19/M49/A8»; owner 29.10.2026: all three are applicators —
 M: ОТП format, pre-stripped wires only; A: for automatic machines; S: crimps unstripped wires);
@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import re
-from collections import Counter
 from dataclasses import dataclass
 from typing import Iterable, Mapping
 
@@ -34,15 +33,19 @@ TARGETS_KEY = "Обжимает (серии разъёмов)"  # JSON list of {
 EXTRA_KEYS = (CODE_KEY, TOOL_KEY, TARGETS_KEY)
 CRIMP_TOOL_TYPE = "Обжимной инструмент"
 MATRIX_TYPE = "Матрицы"
+APPLICATOR_TYPE = "Аппликаторы"
+MEASURING_TYPE = "Средства измерений"
 DEFAULT_PREFIX = "ОБ."
+MEASURING_PREFIX = "СИ."
 
 _INV = re.compile(r"^\s*([A-Za-zА-Яа-яЁё]+)\.\s*(\d+)(?:\.(\d+|[A-Za-zА-Яа-яЁё]))?\s*$")
 _CODE = re.compile(r"^[A-Z]\d{1,3}$")
+_APPLICATOR_INV = re.compile(r"^\s*([AMSams])(\d{1,3})(?:\.(\d+))?\s*$")
 
 
 @dataclass(frozen=True)
 class Inventory:
-    prefix: str  # «ОБ.»
+    prefix: str  # «ОБ.» / «СИ.» / applicator letter («M»)
     base: int  # 70
     base_text: str  # «070» as written
     suffix: str  # «» | «8» | «X»
@@ -56,6 +59,9 @@ class Inventory:
 
 
 def parse_inventory(value: str) -> Inventory | None:
+    code = _APPLICATOR_INV.fullmatch(str(value or ""))
+    if code:
+        return Inventory(code[1].upper(), int(code[2]), code[2], code[3] or "")
     match = _INV.match(str(value or ""))
     if not match:
         return None
@@ -85,7 +91,7 @@ def type_of(fields: Mapping[str, str]) -> str:
 
 @dataclass(frozen=True)
 class PhysicalEquipment:
-    id: str  # full inventory identity; reference-row UUIDs change on mirror replacement
+    id: str  # number key of this pure selector; persistent links use the reference-row UUID (0171/0172)
     inventory_number: str
     name: str
     model: str  # the actual row's article, not its inventory-number family
@@ -124,19 +130,19 @@ def physical_equipment(records: Iterable[TechOperationRecord]) -> tuple[Physical
 
 
 def prefix_for_type(equipment_type: str, existing: Iterable[Mapping[str, str]]) -> str:
-    counts = Counter(
-        parsed.prefix for fields in existing
-        if type_of(fields) == equipment_type and (parsed := parse_inventory(field(fields, INV_KEY)))
-    )
-    return counts.most_common(1)[0][0] if counts else DEFAULT_PREFIX
+    if equipment_type == APPLICATOR_TYPE:
+        return ""
+    return MEASURING_PREFIX if equipment_type == MEASURING_TYPE else DEFAULT_PREFIX
 
 
 def next_model_inventory(equipment_type: str, existing: Iterable[Mapping[str, str]]) -> str:
     """The next free model number of the type's prefix: one above the highest model already used under it."""
     rows = list(existing)
     prefix = prefix_for_type(equipment_type, rows)
+    if not prefix:
+        return ""  # Only the owner can supply an applicator code.
     used = [parsed.base for fields in rows
-            if (parsed := parse_inventory(field(fields, INV_KEY))) and parsed.prefix == prefix]
+            if (parsed := parse_inventory(field(fields, INV_KEY, "inventoryNumber"))) and parsed.prefix == prefix]
     return f"{prefix}{max(used, default=0) + 1:03d}"
 
 
@@ -146,8 +152,10 @@ def next_instance_inventory(source_inventory: str, existing: Iterable[Mapping[st
     source = parse_inventory(source_inventory)
     if source is None:
         raise ReferenceValidationError("У записи нет инв. номера вида ОБ.070 — номер экземпляра не определить")
+    if source.prefix in {"A", "M", "S"}:
+        raise ReferenceValidationError("Для нового аппликатора укажите его код в базе терминалов")
     taken = [parsed.instance for fields in existing
-             if (parsed := parse_inventory(field(fields, INV_KEY))) and parsed.prefix == source.prefix
+             if (parsed := parse_inventory(field(fields, INV_KEY, "inventoryNumber"))) and parsed.prefix == source.prefix
              and parsed.base == source.base]
     return f"{source.prefix}{source.base_text}.{max([1, *taken]) + 1}"
 
@@ -169,40 +177,62 @@ def normalize_code(value: str) -> str:
     return code
 
 
-def prepare_equipment(
+def prepare_inventory(
     fields: dict[str, str], others: list[tuple[object, Mapping[str, str]]], *, self_id: object = None,
     creating: bool, previous: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    """Checks and fills an equipment record before it is saved. `others` — every БД.ОБ record as (id, fields).
-    Raises ReferenceValidationError (422) or DuplicateInventoryError (409)."""
+    """Shared numbering/code checks for form saves and bulk imports, before any persistence changes."""
     result = dict(fields)
     siblings = [item for item in others if item[0] != self_id]
     old = previous or {}
-    # An old sheet row may lack a name; it is only refused when it is saved nameless after having had one (or new).
-    if not name_of(result) and (creating or name_of(old)):
-        raise ReferenceValidationError("Наименование обязательно — без него запись не сохранить")
-    inv = field(result, INV_KEY)
-    if not inv and creating:
-        inv = next_model_inventory(type_of(result), [item[1] for item in siblings])
+    kind = type_of(result)
+    code = normalize_code(result.get(CODE_KEY, ""))
+    inv = field(result, INV_KEY, "inventoryNumber")
+    # Preserve legacy numbers on ordinary saves; a repeated import cannot undo an already coded number.
+    if kind == APPLICATOR_TYPE and (
+        creating or type_of(dict(old)) != APPLICATOR_TYPE or inv_key(code) != inv_key(field(old, CODE_KEY))
+        or (code and field(old, INV_KEY, "inventoryNumber") == code)
+    ):
+        if not code:
+            raise ReferenceValidationError("Укажите код аппликатора в базе терминалов — это его инв. номер")
+        if not re.fullmatch(r"[AMS]\d{1,3}", code):
+            raise ReferenceValidationError("Код аппликатора — M, S или A и номер, например M10, S3 или A1")
+        inv = code
+    elif not inv and creating:
+        inv = next_model_inventory(kind, [item[1] for item in siblings])
     if inv:
         result[INV_KEY] = inv
-        if (creating or inv_key(inv) != inv_key(field(old, INV_KEY))) and any(inv_key(field(item[1], INV_KEY)) == inv_key(inv) for item in siblings):
+        if (creating or inv_key(inv) != inv_key(field(old, INV_KEY, "inventoryNumber"))) and any(
+            inv_key(field(item[1], INV_KEY, "inventoryNumber")) == inv_key(inv) for item in siblings
+        ):
             raise DuplicateInventoryError(f"Инв. номер {inv} уже есть в справочнике — возьмите другой")
-    if creating and not field(result, ROW_KEY):
-        result[ROW_KEY] = next_row_number([item[1] for item in siblings])
-    if creating and not field(result, BASE_KEY):
-        result[BASE_KEY] = base_value(result)
-    code = normalize_code(result.get(CODE_KEY, ""))
     if code:
         result[CODE_KEY] = code
-        owner = next((field(item[1], INV_KEY) or name_of(item[1]) for item in siblings
-                      if field(item[1], CODE_KEY).upper() == code), None)
+        owner = next((field(item[1], INV_KEY, "inventoryNumber") or name_of(item[1]) for item in siblings
+                      if inv_key(field(item[1], CODE_KEY)) == inv_key(code)), None)
         if owner is not None:
             raise DuplicateInventoryError(f"Код {code} уже у записи {owner} — у каждого инструмента свой код")
     elif CODE_KEY in result:
         result[CODE_KEY] = ""
+    return result
+
+
+def prepare_equipment(
+    fields: dict[str, str], others: list[tuple[object, Mapping[str, str]]], *, self_id: object = None,
+    creating: bool, previous: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Checks and fills a form record; legacy import rows may only have their display name."""
+    # An old sheet row may lack a name; only reject when it had one before (or is new).
+    if not name_of(fields) and (creating or name_of(previous or {})):
+        raise ReferenceValidationError("Наименование обязательно — без него запись не сохранить")
+    result = prepare_inventory(fields, others, self_id=self_id, creating=creating, previous=previous)
+    siblings = [item for item in others if item[0] != self_id]
+    if creating and not field(result, ROW_KEY):
+        result[ROW_KEY] = next_row_number([item[1] for item in siblings])
+    if creating and not field(result, BASE_KEY):
+        result[BASE_KEY] = base_value(result)
     tool = field(result, TOOL_KEY)
-    if tool and not any(inv_key(field(item[1], INV_KEY)) == inv_key(tool) for item in siblings):
+    if tool and not any(inv_key(field(item[1], INV_KEY, "inventoryNumber")) == inv_key(tool) for item in siblings):
         raise ReferenceValidationError(f"Инструмент {tool} не найден среди оборудования")
     return result
 

@@ -218,6 +218,16 @@ def _tooling(card: object) -> str:
                    if part) for tool in tooling or [] if isinstance(tool, Mapping))
 
 
+def _tool_inventories(card: object) -> dict[tuple[str, ...], list[str]]:
+    tooling = card.get("tooling") if isinstance(card, Mapping) else None
+    numbers: dict[tuple[str, ...], list[str]] = {}
+    for tool in tooling or []:
+        if isinstance(tool, Mapping):
+            key = tuple(_text(tool.get(field)) for field in ("section", "name", "parameters"))
+            numbers.setdefault(key, []).append(_text(tool.get("inventory_number")))
+    return numbers
+
+
 def _field_depth(op: Mapping[str, Any]) -> str:
     fields = op.get("fields") if isinstance(op.get("fields"), Mapping) else {}
     end = fields.get("coaxEnd") if isinstance(fields.get("coaxEnd"), Mapping) else {}
@@ -276,6 +286,15 @@ def document_diff(old: Mapping[str, Any] | None, new: Mapping[str, Any] | None) 
             left, right = read(op_old), read(op_new)
             if left != right:
                 changes.append({"operation_key": key, "label": label, "field": field, "old": left, "new": right})
+        old_numbers = _tool_inventories(op_old.get("card"))
+        new_numbers = _tool_inventories(op_new.get("card"))
+        for tool, numbers in old_numbers.items():
+            # Match the same tool (and occurrence), keeping empty slots: older documents did not store
+            # inventory numbers. Merely enriching them must never issue a revision after deployment.
+            for left, right in zip(numbers, new_numbers.get(tool, [])):
+                if left and right and left != right:
+                    changes.append({"operation_key": key, "label": label, "field": "Инв. номер",
+                                    "old": left, "new": right})
     left, right = _route_text(old or {}), _route_text(new or {})
     if left != right:
         changes.append({"operation_key": "", "label": "Схема ПФ", "field": "Схема ПФ", "old": left, "new": right})

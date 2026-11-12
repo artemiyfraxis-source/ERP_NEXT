@@ -8,8 +8,9 @@ export const MATRIX_TYPE = "Матрицы";
 // «Аппликаторы» (owner 29.10.2026): every БД.ТЕР «Аппликатор» code is an applicator of one of three kinds —
 // M: ОТП format, pre-stripped wires only; A: for automatic machines; S: crimps unstripped wires.
 export const APPLICATOR_TYPE = "Аппликаторы";
+export const MEASURING_TYPE = "Средства измерений";
 export const CRIMP_TYPES = [CRIMP_TOOL_TYPE, MATRIX_TYPE, APPLICATOR_TYPE];
-/** The record type a crimp code of БД.ТЕР belongs to: «A8» → applicator, «M10» → matrix, «S10» → hand tool. */
+/** All three M/S/A code kinds of БД.ТЕР belong to applicators. */
 export const crimpTypeOfCode = (_code: string) => APPLICATOR_TYPE;
 const APPLICATOR_KINDS: Record<string, string> = { M: "ОТП", A: "Автомат", S: "С зачисткой" };
 /** The applicator kind by the code's letter, as in the old terminal sheet («Пневма Автомат» / «ОТР» / «С зачисткой»): «M10» → «ОТП»; no code — empty. */
@@ -37,7 +38,8 @@ export const typeOf = (record: TechOperationRecord) => {
 };
 export const nameOf = (record: TechOperationRecord) => pick(record.fields, ...NAME_KEYS, "baseValue");
 export const baseOf = (record: TechOperationRecord) => pick(record.fields, "Для базы", "baseValue");
-export const invOf = (record: TechOperationRecord) => pick(record.fields, INV_KEY);
+export const invOf = (record: TechOperationRecord) => typeOf(record) === APPLICATOR_TYPE
+  ? pick(record.fields, CODE_KEY).replace(/\s+/g, "").toUpperCase() : pick(record.fields, INV_KEY);
 export const articleOf = (record: TechOperationRecord) => pick(record.fields, "Артикул");
 export const makerOf = (record: TechOperationRecord) => pick(record.fields, "Производитель").replace(/^-+$/, "");
 export const placeOf = (record: TechOperationRecord) => pick(record.fields, "Расположение");
@@ -45,6 +47,8 @@ export const norm = (value: string) => value.trim().toLocaleLowerCase("ru-RU").r
 
 export interface Inventory { prefix: string; base: number; baseText: string; suffix: string }
 export function parseInventory(value: string): Inventory | null {
+  const code = /^\s*([AMSams])(\d{1,3})(?:\.(\d+))?\s*$/.exec(value);
+  if (code) return { prefix: code[1].toUpperCase(), base: Number(code[2]), baseText: code[2], suffix: code[3] ?? "" };
   const match = /^\s*([A-Za-zА-Яа-яЁё]+)\.\s*(\d+)(?:\.(\d+|[A-Za-zА-Яа-яЁё]))?\s*$/.exec(value);
   return match ? { prefix: `${match[1].toUpperCase()}.`, base: Number(match[2]), baseText: match[2], suffix: (match[3] ?? "").toUpperCase() } : null;
 }

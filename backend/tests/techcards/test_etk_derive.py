@@ -143,6 +143,47 @@ def test_diff_lists_a_changed_result_text():
     assert document_diff(old, deepcopy(old)) == []
 
 
+@pytest.mark.parametrize(("old_number", "new_number", "changed"), [
+    ("ОБ.106", "M10", True),
+    (None, "M10", False),
+    ("M10", "M10", False),
+    ("", "M10", False),
+    ("ОБ.106", "", False),
+    ("ОБ.106", None, False),
+])
+def test_diff_tool_inventory_requires_two_nonempty_numbers(old_number, new_number, changed):
+    tool = {"section": "Оборудование", "name": "Аппликатор", "parameters": ""}
+    old_tool, new_tool = dict(tool), dict(tool)
+    if old_number is not None:
+        old_tool["inventory_number"] = old_number
+    if new_number is not None:
+        new_tool["inventory_number"] = new_number
+    old = {"operations": [{"code": "PRESS", "card": {"tooling": [old_tool]}}]}
+    new = {"operations": [{"code": "PRESS", "card": {"tooling": [new_tool]}}]}
+
+    changes = document_diff(old, new)
+
+    assert bool(changes) == changed
+    if changed:
+        assert [(item["field"], item["old"], item["new"]) for item in changes] == [
+            ("Инв. номер", old_number, new_number)]
+    assert old["operations"][0]["card"]["tooling"] == [old_tool]
+
+
+def test_diff_tool_inventory_does_not_pair_different_tools_or_skip_empty_slots():
+    first = {"section": "Оборудование", "name": "Аппликатор"}
+    second = {**first, "inventory_number": "M10"}
+    added = {"section": "Инструмент", "name": "Матрица", "inventory_number": "ОБ.200"}
+    old = {"operations": [{"code": "PRESS", "card": {"tooling": [first, second]}}]}
+    new = {"operations": [{"code": "PRESS", "card": {"tooling": [
+        added, {**first, "inventory_number": "M11"}, dict(second)]}}]}
+
+    assert [item["field"] for item in document_diff(old, new)] == ["Инструмент"]
+    new["operations"][0]["card"]["tooling"][-1]["inventory_number"] = "M12"
+    assert [(item["old"], item["new"]) for item in document_diff(old, new)
+            if item["field"] == "Инв. номер"] == [("M10", "M12")]
+
+
 def _housing_depths(depth: str) -> dict[str, Any]:
     config = deepcopy(CONFIG_COAX)
     config["coax"]["sideB"]["contactDepth"] = depth

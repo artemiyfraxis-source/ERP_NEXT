@@ -4,7 +4,7 @@ import { PageWindow } from "./PageWindow";
 import { CrimpLinks } from "./CrimpLinks";
 import { DataTable, type DataColumn } from "./DataTable";
 import {
-  CODE_KEY, CRIMP_TYPES, INV_KEY, MATRIX_TYPE, applicatorKindOf, codeOf, crimpTypeOfCode, NAME_KEYS, TARGETS_KEY, TOOL_KEY, crimpRecord, groupModels,
+  APPLICATOR_TYPE, CODE_KEY, CRIMP_TYPES, INV_KEY, MATRIX_TYPE, applicatorKindOf, codeOf, crimpTypeOfCode, NAME_KEYS, TARGETS_KEY, TOOL_KEY, crimpRecord, groupModels,
   ROLE_LABELS, inventoryRange, invOf, nameOf, operationsOfModel, pick, placeOf, servedBy, servedUnits, typeOf,
   type EquipmentModel,
 } from "./equipmentModel";
@@ -172,7 +172,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
       guarded(() => referencesApi.editRecord(item.id, [{ field: key, old: item.fields[key] ?? "", value }]), `${invOf(item) || "Экземпляр"}: записано`);
     const passport = PASSPORT.map(([label, keys]) => [label, keys.find((key) => key in last.fields)] as const)
       .filter((entry): entry is readonly [string, string] => Boolean(entry[1]));
-    const unitCell = (item: TechOperationRecord, key: string, label: string, shown?: string) => key in item.fields
+    const unitCell = (item: TechOperationRecord, key: string, label: string, shown?: string) => key in item.fields || (key === CODE_KEY && typeOf(item) === APPLICATOR_TYPE)
       ? <InlineValue label={`${label} ${invOf(item)}`} value={pick(item.fields, key)} display={shown} editable={canEdit} onSave={(next) => saveUnit(item)(key, next)} />
       : (shown || "—");
 
@@ -183,7 +183,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
         <header className="eq-head">
           <div className="eq-title"><b>{open.name || "—"}</b>{subtitle && <span className="muted">{subtitle}</span>}</div>
           <div className="eq-head-act">
-            {canEdit && invOf(last) && <button className="secondary small" disabled={busy}
+            {canEdit && open.type !== APPLICATOR_TYPE && invOf(last) && <button className="secondary small" disabled={busy}
               onClick={() => void guarded(async () => { const copy = await referencesApi.duplicateRecord(last.id); select(copy.id); }, "Добавлен ещё один экземпляр")}>Ещё такой же</button>}
             <button type="button" className="eq-close" aria-label="Закрыть карточку" title="Закрыть (Esc)" onClick={() => select("")}>×</button>
           </div>
@@ -217,7 +217,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
         <div className="tr-block"><h4>Экземпляры <span>{open.items.length}</span></h4>
           <table className="eq-table"><thead><tr><th>Инв. №</th><th className="num">№</th><th>Расположение</th>{withCodes && <th>Код терминалов</th>}</tr></thead>
             <tbody>{open.items.map((item) => <tr key={item.id}>
-              <td className="tnum"><b>{unitCell(item, INV_KEY, "Инв. №", invOf(item))}</b></td><td className="tnum num">{unitCell(item, "№", "№")}</td>
+              <td className="tnum"><b>{typeOf(item) === APPLICATOR_TYPE ? invOf(item) || "—" : unitCell(item, INV_KEY, "Инв. №", invOf(item))}</b></td><td className="tnum num">{unitCell(item, "№", "№")}</td>
               <td>{unitCell(item, "Расположение", "Расположение", valueLabel("Расположение", placeOf(item)))}</td>
               {withCodes && <td className="tnum">{unitCell(item, CODE_KEY, "Код терминалов")}</td>}
             </tr>)}</tbody></table>

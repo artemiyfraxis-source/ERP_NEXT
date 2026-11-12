@@ -160,6 +160,44 @@ def test_a_rerun_is_a_no_op(base):
     assert [item.revision for item in _revisions(base)] == [1, 2]
 
 
+@pytest.mark.parametrize(("old_number", "revised"), [("ОБ.106", True), (None, False), ("M10", False)])
+def test_tool_inventory_change_revises_only_documents_with_an_existing_number(base, monkeypatch, old_number, revised):
+    document = _derive(base)
+    operation = next(op for op in document["operations"] if (op.get("card") or {}).get("tooling"))
+    key = operation_key(operation)
+    tool = operation["card"]["tooling"][0]
+    if old_number is None:
+        tool.pop("inventory_number", None)
+    else:
+        tool["inventory_number"] = old_number
+    _store(base, document)
+    original = deepcopy(document)
+    real_derive = etk_derive.derive
+
+    def renumbered(*args, **kwargs):
+        regenerated, conflicts = real_derive(*args, **kwargs)
+        target = next(op for op in regenerated["operations"] if operation_key(op) == key)
+        target["card"]["tooling"][0]["inventory_number"] = "M10"
+        return regenerated, conflicts
+
+    monkeypatch.setattr(etk_derive, "derive", renumbered)
+    report = run_refresh(base, now=T1, everything=True)
+
+    assert report.count("revised") == int(revised), report.text()
+    assert report.count("unchanged") == int(not revised), report.text()
+    revisions = _revisions(base)
+    assert [item.revision for item in revisions] == ([1, 2] if revised else [1])
+    assert revisions[0].document == original
+    if revised:
+        changes = revisions[-1].diff["changes"]
+        assert [(item["field"], item["old"], item["new"]) for item in changes] == [
+            ("Инв. номер", "ОБ.106", "M10")]
+        assert "Инв. номер" in revisions[-1].reason and revisions[-1].source == "auto"
+    else:
+        assert _row(base).document == original
+    assert run_refresh(base, now=T1, everything=True).count("revised", "refreshed") == 0
+
+
 def test_several_edits_in_one_batch_make_one_revision(base):
     _store(base, _derive(base))
     _settle(base)
