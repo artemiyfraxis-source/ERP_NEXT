@@ -77,6 +77,20 @@ def test_applicator_code_edits_keep_inventory_in_sync(references_api):
     missing = references_api.patch(url, json={"edits": [{"field": "Код в базе терминалов", "old": "M11", "value": ""}]})
     assert missing.status_code == 422
 
+def test_changing_a_tool_into_an_applicator_requires_its_code(references_api):
+    item = _create(references_api, **{"Тип": "Инструмент", "Наменование": "Бывший инструмент"}).json()
+    url = f"{BASE}/{item['id']}"
+    for code in ("", "X1"):
+        edits = [{"field": "Тип", "old": "Инструмент", "value": "Аппликаторы"}]
+        if code:
+            edits.append({"field": "Код в базе терминалов", "old": "", "value": code})
+        response = references_api.patch(url, json={"edits": edits})
+        assert response.status_code == 422, (code, response.text)
+    ok = references_api.patch(url, json={"edits": [{"field": "Тип", "old": "Инструмент", "value": "Аппликаторы"},
+                                                   {"field": "Код в базе терминалов", "old": "", "value": "S7"}]})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["fields"]["Инв. номер"] == "S7"
+
 
 def test_measuring_instruments_have_a_separate_sequence(references_api):
     existing = rows(("ОБ.197", "Аппликаторы"), ("СИ.002", "Средства измерений"), ("A999", "Аппликаторы"))

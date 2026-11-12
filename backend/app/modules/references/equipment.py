@@ -190,7 +190,7 @@ def prepare_inventory(
     inv = field(result, INV_KEY, "inventoryNumber")
     # Preserve legacy numbers on ordinary saves; a repeated import cannot undo an already coded number.
     if kind == APPLICATOR_TYPE and (
-        creating or inv_key(code) != inv_key(field(old, CODE_KEY))
+        creating or type_of(dict(old)) != APPLICATOR_TYPE or inv_key(code) != inv_key(field(old, CODE_KEY))
         or (code and field(old, INV_KEY, "inventoryNumber") == code)
     ):
         if not code:
