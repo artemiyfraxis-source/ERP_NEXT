@@ -115,6 +115,7 @@ from app.modules.requests.domain import (
     spreadsheet_id_from_url,
     unit_for_type,
 )
+from app.modules.requests.google_drive import drive_file_id
 from app.modules.shipping.application import (
     DropProjectCommand,
     QueueProjectCommand,
@@ -368,6 +369,19 @@ def load_kitset(
     with techcards_uow() as uow:
         current = uow.kitsets.get(data.project)
         if current is not None:
+            if not number and current.calc_source.strip():
+                current_id = drive_file_id(current.calc_source)
+                incoming_id = drive_file_id(data.calc_source)
+                same_calc = (
+                    current_id == incoming_id if current_id and incoming_id
+                    else current.calc_source.strip() == data.calc_source.strip()
+                )
+                if not same_calc:
+                    raise KitsetValidationError(
+                        f"В расчёте указан № {current.project}, но проект {current.project} уже заведён "
+                        "из другого расчёта. Впишите № нового проекта в поле «№ проекта» "
+                        f"или откройте {current.project} и обновите его из расчёта."
+                    )
             data = replace(data, project=current.project)
         kitset = write_from_calc(data, current, who=command.actor.name, now=command.now)
         uow.kitsets.save(kitset)
