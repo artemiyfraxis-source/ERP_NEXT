@@ -1,12 +1,12 @@
 ---
 name: module-procurement
-description: Requests, purchase sheet and receiving — second go-live wave 05–09.10; «Заявки» is a list only
+description: "Requests, supplier purchase orders, receipt stages and stored documents"
 metadata:
   type: project
 ---
 
-- «Заявки» — list only (PR #64); a request is created from a project calc (PR #79) → [[module-projects]].
-- Purchase sheet aligned with SUPPLYMAP (PR-11, PR-12, mass actions). Receiving: manufacturer, country, documents.
-- Invoice recognition only for PDFs with a text layer; UPD file ≤ 20 MB → [[supplymap-parity]].
-- Receiving closes the purchase line: timer `sync_receipt_stages` (port of `syncPurchaseStatusFromWaitlist_`) moves В пути → Карантин → Готово, forward only (2026-09-30). UPD/quality scans stored in DB (`receiving_files`, 0073), not Drive.
-- Receiving puts stock into [[module-warehouse]]. Decisions: [[runlog-decisions]]. Hub: [[erp-next-hub]].
+- «Заявки» is a list; requests originate from a project calc → [[module-projects]].
+- Purchasing groups lines by supplier, invoice/payment belong to the PO → [[supplymap-parity]].
+- Invoice text-layer parsing and УПД scans are separate paths; УПД model recognition → [[upd-recognizer-openai]]. УПД limit: 20 MB.
+- Receiving stores manufacturer, country and documents; `sync_receipt_stages` advances «В пути» → «Карантин» → «Готово» only forward. Files live in `receiving_files`, not Drive.
+- Receiving redesign is on hold; current intake → [[receiving-now-vs-later]]. Stock destination: [[module-warehouse]]. Decisions: `docs/migration/RUNLOG.md`. Hub: [[erp-next-hub]].
