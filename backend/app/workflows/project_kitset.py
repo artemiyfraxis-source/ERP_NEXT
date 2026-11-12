@@ -1481,11 +1481,12 @@ def delete_kitset(
         lines = kitset.lines
         uow.kitsets.delete(kitset.project)
         canon = project_key(kitset.project)
-        cards = revisions = 0
+        cards = revisions = td_issues = 0
         for name in {card.project for card in uow.techcards.list() if project_key(card.project) == canon}:
             dropped = uow.techcards.delete_project(name)
             cards += dropped[0]
             revisions += dropped[1]
+            td_issues += dropped[2]
         _audit(uow, kitset.project, "techcards.kitset_deleted", actor, now, {
             "lines": str(lines), "cards": str(cards),
         })
@@ -1521,7 +1522,7 @@ def delete_kitset(
             tails_error = f"Журнал, задания, запросы на комплектацию и заявки проекта не удалены: {error}"
     return {
         "project": kitset.project, "deleted": lines, "erp": erp,
-        "cards": {"cards": cards, "revisions": revisions}, "gp": gp,
+        "cards": {"cards": cards, "revisions": revisions, "td_issues": td_issues}, "gp": gp,
         "journal": journal, "tails": tails, "tails_error": tails_error,
     }
 
