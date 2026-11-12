@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.modules.fulfillment.domain import FulfillmentLine, FulfillmentRequest, LotSnapshot
 from app.modules.techcards.kitset_calc import calc_project_number, parse_calc_sheets
 from app.modules.techcards.kitsets import (
     KitComponent,
@@ -22,7 +23,7 @@ from app.modules.techcards.kitsets import (
     supply_lines,
     write_from_calc,
 )
-from app.workflows.project_kitset import generator_bom
+from app.workflows.project_kitset import generator_bom, supply_kitting
 from tests.techcards.calc_sheets import calc_sheets, grid
 from app.modules.techcards import kitsets
 
@@ -324,8 +325,8 @@ def test_supply_short_is_need_less_free_stock_open_purchases_and_kits():
     assert (wire.need, wire.ordered, wire.short) == (Decimal("15.75"), Decimal("20"), Decimal("0"))
 
 
-def test_supply_counts_stock_without_grn_once_less_what_kits_issued_off_book():
-    """«Есть на складе, без ГРН» covers the need like a lot does; a kit line issued «есть, не заведено» takes those
+def test_supply_counts_stock_without_grn_once_less_what_kits_marked_off_book():
+    """«Есть на складе, без ГРН» covers the need like a lot does; a kit line marked «есть, не заведено» takes those
     same unbooked goods, so it uses the «без ГРН» up instead of being counted next to it."""
     kitset = write_from_calc(parse(calc_sheets(), "708К.4"), None, who="Т", now=NOW)
     rows = [SupplyRow("43030-0007", "Закупка", "В работе", open_quantity=Decimal("18"))]
@@ -339,18 +340,54 @@ def test_supply_counts_stock_without_grn_once_less_what_kits_issued_off_book():
     )
     assert (molex.off_book, molex.short) == (Decimal("5"), Decimal("15"))  # matched by the spec name
 
-    issued = [
-        SupplyStock("43030-0007", "Контакт", Decimal("8"), off_book=True),  # «есть, не заведено», issued
+    in_kits = [
+        SupplyStock("43030-0007", "Контакт", Decimal("8"), off_book=True),  # «есть, не заведено», not issued yet
         SupplyStock("43030-0007", "Контакт", Decimal("3")),  # reserved on a lot
     ]
-    kitted = {line.article: line for line in supply_lines(kitset, rows, kitted=issued, off_book=lotless)}
+    kitted = {line.article: line for line in supply_lines(kitset, rows, kitted=in_kits, off_book=lotless)}
     contact = kitted["43030-0007"]
     assert (contact.kitted, contact.off_book, contact.short) == (Decimal("11"), Decimal("4"), Decimal("0"))
-    # need 32: 18 bought + 11 kitted + 4 still unbooked on the shelf = 33 — the 8 issued off-book count once
+    assert contact.issued == 0
+    # need 32: 18 bought + 11 kitted + 4 still unbooked on the shelf = 33 — the 8 marked off-book count once
 
     more = [SupplyStock("43030-0007", "Контакт", Decimal("20"), off_book=True)]
     over = {line.article: line for line in supply_lines(kitset, rows, kitted=more, off_book=lotless)}["43030-0007"]
     assert (over.kitted, over.off_book) == (Decimal("20"), Decimal("0"))  # never below zero
+
+
+def _supply_kit_request():
+    return FulfillmentRequest.create(
+        number="К-1", source_idempotency_key="supply-test", source_fingerprint="supply-test",
+        requester="Кладовщик", purpose="708К.4 · КБ1 · Жгут", deadline=NOW.date(), created_at=NOW,
+        lines=(FulfillmentLine.create(article="КД-1", name="Провод", unit="м", requirement=Decimal("100")),),
+    )
+
+
+@pytest.mark.parametrize("state", ["снята отметка", "нет на складе", "отменена", "другой проект"])
+def test_supply_kitting_does_not_cover_inactive_or_other_project_marks(state):
+    request = _supply_kit_request()
+    line_id = request.lines[0].id
+    request = request.mark_off_book(line_id)
+    if state == "снята отметка":
+        request = request.clear_off_book(line_id)
+    elif state == "нет на складе":
+        request = request.mark_absent(line_id, by="Кладовщик", at=NOW)
+    elif state == "отменена":
+        request = request.cancel()
+    else:
+        request = replace(request, purpose="709К.1 · КБ1 · Жгут")
+    assert supply_kitting("708К.4", [request]) == []
+
+
+def test_supply_kitting_keeps_good_returns_out_of_lot_coverage():
+    request = _supply_kit_request()
+    bound, remainder = request.lines[0].bind(
+        LotSnapshot(uuid4(), "ЦАР", "FRX.26.0000001", "", "1F4"), Decimal("100"),
+    )
+    assert remainder is None
+    returned = bound.mark_issued().settle_return(Decimal("30"), Decimal("0"), Decimal("0"))
+    (item,) = supply_kitting("708К.4", [replace(request, lines=(returned,))])
+    assert (item.quantity, item.issued, item.off_book) == (Decimal("70"), Decimal("70"), False)
 
 
 def test_sort_kitsets_like_portal():
