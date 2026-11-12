@@ -28,7 +28,7 @@ Describe 'Invoke-ScanPollOnce' {
         Mock Invoke-ScannerScan { @{ Bytes = [byte[]](1, 2, 3); Ext = 'pdf'; Mime = 'application/pdf' } }
         Mock Send-ScanFile {}
         Invoke-ScanPollOnce -Base 'http://x' -AuthToken 't' -ScannerAddress '10.0.0.5' | Should Be 'done'
-        Assert-MockCalled Send-ScanFile -Times 1 -Exactly -Scope It -ParameterFilter { $Url -like '*/scan/agent/jobs/s1/result' -and $ContentType -eq 'application/pdf' }
+        Assert-MockCalled Send-ScanFile -Times 1 -Exactly -Scope It -ParameterFilter { $Url -like '*/scan/agent/jobs/s1/result' -and $ContentType -eq 'application/pdf' -and $FileName -eq 'capture.pdf' }
     }
     It 'ошибка сканера -> result {error}, цикл не падает' {
         Mock Invoke-ErpApi -ParameterFilter { $Url -like '*/claim' } { [pscustomobject]@{ job = [pscustomobject]@{ id = 's2' } } }
@@ -114,5 +114,135 @@ Describe 'Invoke-ScannerScan: строгий выбор' {
         Mock Invoke-EsclScan { @{ Ext = 'pdf' } }
         (Invoke-ScannerScan -Address '10.0.0.5' -Device '10.0.0.5').Ext | Should Be 'pdf'
         Assert-MockCalled Invoke-EsclScan -Times 1 -Exactly -Scope It -ParameterFilter { $Address -eq '10.0.0.5' }
+    }
+}
+
+Describe 'PDF assembly' {
+    It 'embeds RGB JPEG pages with physical dimensions and valid byte offsets' {
+        Add-Type -AssemblyName System.Drawing
+        $bitmap = New-Object Drawing.Bitmap(300, 600)
+        $ms = New-Object IO.MemoryStream
+        try {
+            $bitmap.Save($ms, [Drawing.Imaging.ImageFormat]::Bmp)
+            $page = ConvertTo-ScanPage -Bytes $ms.ToArray()
+        } finally { $bitmap.Dispose(); $ms.Dispose() }
+        $page.Width | Should Be 300
+        $page.Height | Should Be 600
+        $page.Bytes[0] | Should Be 255
+        $page.Bytes[1] | Should Be 216
+        foreach ($count in @(1, 2)) {
+            $pages = @($page)
+            if ($count -eq 2) { $pages += $page }
+            $pdf = New-ScanPdf -Pages $pages
+            ($pdf -is [byte[]]) | Should Be $true
+            $text = [Text.Encoding]::GetEncoding(28591).GetString($pdf)
+            $text.StartsWith('%PDF-1.4') | Should Be $true
+            $text.Contains("/Count $count ") | Should Be $true
+            $text.Contains('/MediaBox [0 0 72 144]') | Should Be $true
+            ([regex]::Matches($text, '/Filter /DCTDecode')).Count | Should Be $count
+            $jpeg = [Text.Encoding]::GetEncoding(28591).GetString($page.Bytes)
+            $text.Contains($jpeg) | Should Be $true
+            $start = [int][regex]::Match($text, 'startxref\n(\d+)').Groups[1].Value
+            $text.Substring($start, 4) | Should Be 'xref'
+            $entries = [regex]::Matches($text, '(?m)^(\d{10}) 00000 n ')
+            $entries.Count | Should Be (2 + 3 * $count)
+            for ($i = 0; $i -lt $entries.Count; $i++) {
+                $offset = [int]$entries[$i].Groups[1].Value
+                $text.Substring($offset).StartsWith("$($i + 1) 0 obj`n") | Should Be $true
+            }
+        }
+    }
+    It 'uses invariant PDF numbers under Russian locale' {
+        $old = [Threading.Thread]::CurrentThread.CurrentCulture
+        try {
+            [Threading.Thread]::CurrentThread.CurrentCulture = 'ru-RU'
+            $pdf = New-ScanPdf -Pages @(@{ Bytes = [byte[]](1); Width = 301; Height = 601 })
+            [Text.Encoding]::ASCII.GetString($pdf).Contains('/MediaBox [0 0 72.24 144.24]') | Should Be $true
+        } finally { [Threading.Thread]::CurrentThread.CurrentCulture = $old }
+    }
+}
+
+Describe 'PDF fallback' {
+    It 'logs the cause and returns the scanned JPEG without rescanning' {
+        Mock New-ScanPdf { throw 'pdf failure' }
+        Mock Write-Log {}
+        $result = ConvertTo-ScanDocument -Pages @(@{ Bytes = [byte[]](1, 2) })
+        $result.Ext | Should Be 'jpg'
+        $result.Mime | Should Be 'image/jpeg'
+        ($result.Bytes -join ',') | Should Be '1,2'
+        Assert-MockCalled Write-Log -Times 1 -Scope It -ParameterFilter { $Message -like '*pdf failure*' }
+    }
+    It 'does not silently lose additional pages if PDF assembly fails' {
+        Mock New-ScanPdf { throw 'pdf failure' }
+        Mock Write-Log {}
+        { ConvertTo-ScanDocument -Pages @(@{ Bytes = [byte[]](1) }, @{ Bytes = [byte[]](2) }) } | Should Throw
+    }
+}
+
+Describe 'WIA feeder acquisition' {
+    # Fake the COM property collections and Transfer; exercise the real acquisition loop.
+    function New-FakeWiaScanner {
+        param([bool]$Feeder, [int]$ErrorCode = -2145320957)
+        $script:transfers = 0
+        $script:scanError = $ErrorCode
+        $props = @{ '3087' = @{ Value = [int]$Feeder }; '3088' = @{ Value = 0 } }
+        $props | Add-Member ScriptMethod Item { param($key) $this[$key] } -Force
+        $itemProps = @{ '6146' = @{ Value = 2 }; '6147' = @{ Value = 300 }; '6148' = @{ Value = 300 } }
+        $itemProps | Add-Member ScriptMethod Item { param($key) $this[$key] } -Force
+        $item = [pscustomobject]@{ Properties = $itemProps }
+        $item | Add-Member ScriptMethod Transfer {
+            param($format)
+            $script:transfers++
+            if ($script:transfers -gt 2) { throw (New-Object Runtime.InteropServices.COMException('wia error', $script:scanError)) }
+            [pscustomobject]@{ FileData = @{ BinaryData = [byte[]]@($script:transfers) } }
+        }
+        $items = [pscustomobject]@{ ScanItem = $item }
+        $items | Add-Member ScriptMethod Item { param($index) $this.ScanItem }
+        $scanner = [pscustomobject]@{ Properties = $props; Items = $items }
+        $info = [pscustomobject]@{ Scanner = $scanner }
+        $info | Add-Member ScriptMethod Connect { $this.Scanner }
+        return $info
+    }
+    It 'reads a flatbed only once' {
+        $script:fakeInfo = New-FakeWiaScanner -Feeder $false
+        Mock New-Object -ParameterFilter { $ComObject -eq 'WIA.DeviceManager' } { @{ DeviceInfos = @() } }
+        Mock Select-WiaDevice { $script:fakeInfo }
+        Mock ConvertTo-ScanPage { @{ Bytes = $Bytes; Width = 300; Height = 600 } }
+        $result = Invoke-WiaScan
+        $script:transfers | Should Be 1
+        $result.Mime | Should Be 'application/pdf'
+    }
+    It 'reads all feeder sheets and ends only on paper empty' {
+        $script:fakeInfo = New-FakeWiaScanner -Feeder $true
+        Mock New-Object -ParameterFilter { $ComObject -eq 'WIA.DeviceManager' } { @{ DeviceInfos = @() } }
+        Mock Select-WiaDevice { $script:fakeInfo }
+        Mock ConvertTo-ScanPage { @{ Bytes = $Bytes; Width = 300; Height = 600 } }
+        $result = Invoke-WiaScan
+        $script:transfers | Should Be 3
+        [Text.Encoding]::ASCII.GetString($result.Bytes).Contains('/Count 2 ') | Should Be $true
+        $script:fakeInfo.Scanner.Properties.Item('3088').Value | Should Be 0
+        $script:fakeInfo.Scanner.Properties.Item('3087').Value = 0
+        $script:transfers = 0
+        $next = Invoke-WiaScan
+        $script:transfers | Should Be 1
+        [Text.Encoding]::ASCII.GetString($next.Bytes).Contains('/Count 1 ') | Should Be $true
+    }
+    It 'propagates a jam after pages instead of uploading a partial document' {
+        $script:fakeInfo = New-FakeWiaScanner -Feeder $true -ErrorCode -2145320958
+        Mock New-Object -ParameterFilter { $ComObject -eq 'WIA.DeviceManager' } { @{ DeviceInfos = @() } }
+        Mock Select-WiaDevice { $script:fakeInfo }
+        Mock ConvertTo-ScanPage { @{ Bytes = $Bytes; Width = 300; Height = 600 } }
+        { Invoke-WiaScan } | Should Throw
+        $script:fakeInfo.Scanner.Properties.Item('3088').Value | Should Be 0
+    }
+}
+
+Describe 'JPEG-only eSCL scanner' {
+    It 'wraps the JPEG as PDF' {
+        Mock Invoke-EsclScan { @{ Bytes = [byte[]](1); Mime = 'image/jpeg'; Ext = 'jpg' } }
+        Mock ConvertTo-ScanPage { @{ Bytes = [byte[]](1); Width = 300; Height = 600 } }
+        $result = Invoke-ScannerScan -Address '10.0.0.5'
+        $result.Mime | Should Be 'application/pdf'
+        $result.Ext | Should Be 'pdf'
     }
 }

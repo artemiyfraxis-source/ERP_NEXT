@@ -28,7 +28,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.5.1'
+$script:AgentVersion = '2.6.0'
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
 
@@ -703,39 +703,135 @@ function Select-WiaDevice {
     return $null
 }
 
-# USB-сканер через WIA: выбранное устройство (без выбора — только единственное), JPEG.
+# Normalize WIA driver output (including Pantum BMP) to JPEG quality 80.
+function ConvertTo-ScanPage {
+    param([byte[]]$Bytes)
+    Add-Type -AssemblyName System.Drawing
+    $inputStream = New-Object IO.MemoryStream(,$Bytes)
+    $src = $rgb = $graphics = $outputStream = $ep = $null
+    try {
+        $src = [Drawing.Image]::FromStream($inputStream)
+        $rgb = New-Object Drawing.Bitmap($src.Width, $src.Height, [Drawing.Imaging.PixelFormat]::Format24bppRgb)
+        $graphics = [Drawing.Graphics]::FromImage($rgb)
+        $graphics.DrawImage($src, 0, 0, $src.Width, $src.Height)
+        $codec = [Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
+        $ep = New-Object Drawing.Imaging.EncoderParameters 1
+        $ep.Param[0] = New-Object Drawing.Imaging.EncoderParameter ([Drawing.Imaging.Encoder]::Quality, [long]80)
+        $outputStream = New-Object IO.MemoryStream
+        $rgb.Save($outputStream, $codec, $ep)
+        return @{ Bytes = $outputStream.ToArray(); Width = $src.Width; Height = $src.Height }
+    } finally {
+        foreach ($resource in @($graphics, $rgb, $src, $outputStream, $ep, $inputStream)) {
+            if ($null -ne $resource) { $resource.Dispose() }
+        }
+    }
+}
+
+# Minimal PDF writer: one JPEG XObject per page; offsets and lengths are byte counts.
+function New-ScanPdf {
+    param([object[]]$Pages, [double]$DpiX = 300, [double]$DpiY = 300)
+    if (-not $Pages.Count -or $DpiX -le 0 -or $DpiY -le 0) { throw 'Нет страниц или неверное разрешение скана' }
+    $stream = New-Object IO.MemoryStream
+    $offsets = New-Object 'Collections.Generic.List[long]'
+    $ascii = [Text.Encoding]::ASCII
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    $write = { param([string]$text) $data = $ascii.GetBytes($text); $stream.Write($data, 0, $data.Length) }
+    $object = { param([string]$text) $offsets.Add($stream.Position); & $write "$($offsets.Count) 0 obj`n$text`nendobj`n" }
+    try {
+        & $write "%PDF-1.4`n"
+        & $object '<< /Type /Catalog /Pages 2 0 R >>'
+        $kids = for ($i = 0; $i -lt $Pages.Count; $i++) { "$((3 + 3 * $i)) 0 R" }
+        & $object "<< /Type /Pages /Count $($Pages.Count) /Kids [ $($kids -join ' ') ] >>"
+        foreach ($page in $Pages) {
+            if ($page.Width -le 0 -or $page.Height -le 0 -or -not $page.Bytes.Length) { throw 'Пустая страница скана' }
+            $pageId = $offsets.Count + 1
+            $width = ([double]$page.Width * 72 / $DpiX).ToString('0.####', $culture)
+            $height = ([double]$page.Height * 72 / $DpiY).ToString('0.####', $culture)
+            & $object "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 $width $height] /Resources << /XObject << /Im0 $($pageId + 1) 0 R >> >> /Contents $($pageId + 2) 0 R >>"
+            $offsets.Add($stream.Position)
+            & $write "$($offsets.Count) 0 obj`n<< /Type /XObject /Subtype /Image /Width $($page.Width) /Height $($page.Height) /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length $($page.Bytes.Length) >>`nstream`n"
+            $stream.Write($page.Bytes, 0, $page.Bytes.Length)
+            & $write "`nendstream`nendobj`n"
+            $commands = "q $width 0 0 $height 0 0 cm /Im0 Do Q`n"
+            & $object "<< /Length $($ascii.GetByteCount($commands)) >>`nstream`n$($commands)endstream"
+        }
+        $xref = $stream.Position
+        & $write "xref`n0 $($offsets.Count + 1)`n0000000000 65535 f `n"
+        foreach ($offset in $offsets) { & $write ($offset.ToString('0000000000', $culture) + " 00000 n `n") }
+        & $write "trailer`n<< /Size $($offsets.Count + 1) /Root 1 0 R >>`nstartxref`n$xref`n%%EOF`n"
+        return ,$stream.ToArray()
+    } finally { $stream.Dispose() }
+}
+
+function ConvertTo-ScanDocument {
+    param([object[]]$Pages, [double]$DpiX = 300, [double]$DpiY = 300)
+    try {
+        $pdf = New-ScanPdf -Pages $Pages -DpiX $DpiX -DpiY $DpiY
+        return @{ Bytes = $pdf; Ext = 'pdf'; Mime = 'application/pdf' }
+    } catch {
+        Write-Log "Скан: создание PDF не удалось: $($_.Exception.Message)"
+        # One upload per job: do not silently discard additional sheets on failure.
+        if ($Pages.Count -ne 1) { throw 'Не удалось создать многостраничный PDF; повторите сканирование' }
+        Write-Log 'Скан: отправляю единственную страницу в JPEG'
+        return @{ Bytes = $Pages[0].Bytes; Ext = 'jpg'; Mime = 'image/jpeg' }
+    }
+}
+
 function Invoke-WiaScan {
     param([string]$Device)
     $dm = New-Object -ComObject WIA.DeviceManager
     $info = Select-WiaDevice -DeviceInfos $dm.DeviceInfos -Device $Device
     if (-not $info) { throw 'Выбранный сканер WIA не найден — проверьте подключение и выберите сканер в ERP' }
-    $item = $info.Connect().Items.Item(1)
-    foreach ($p in @(@(6146, 2), @(6147, 300), @(6148, 300))) {
-        try { $item.Properties.Item([string]$p[0]).Value = $p[1] } catch {}
-    }
-    $WiaJpeg = '{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}'
-    $img = $item.Transfer($WiaJpeg)
-    # The Pantum driver ignores the asked format and hands an uncompressed BMP (9–26 MB, over the server's 21 MB).
-    # WIA.ImageProcess «Convert» fails from PowerShell (FormatID cast), so the BMP is re-encoded by System.Drawing.
-    if ($img.FormatID -eq $WiaJpeg) { return @{ Bytes = [byte[]]$img.FileData.BinaryData; Ext = 'jpg'; Mime = 'image/jpeg' } }
-    $bmp = Join-Path $env:TEMP ('fraxis-scan-' + [Guid]::NewGuid().ToString('N') + '.bmp')
-    $img.SaveFile($bmp)
-    Add-Type -AssemblyName System.Drawing
-    $src = [Drawing.Image]::FromFile($bmp)
+    $scanner = $info.Connect()
+    $feeder = $false
+    $originalSource = $null
     try {
-        $codec = [Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
-        $ep = New-Object Drawing.Imaging.EncoderParameters 1
-        $ep.Param[0] = New-Object Drawing.Imaging.EncoderParameter ([Drawing.Imaging.Encoder]::Quality, [long]80)
-        $ms = New-Object IO.MemoryStream
-        $src.Save($ms, $codec, $ep)
-        return @{ Bytes = $ms.ToArray(); Ext = 'jpg'; Mime = 'image/jpeg' }
-    } finally { $src.Dispose(); Remove-Item $bmp -Force -ErrorAction SilentlyContinue }
+        $originalSource = [int]$scanner.Properties.Item('3088').Value
+        if (([int]$scanner.Properties.Item('3087').Value -band 1) -ne 0) {
+            $scanner.Properties.Item('3088').Value = 1
+        }
+        $feeder = (([int]$scanner.Properties.Item('3088').Value -band 1) -ne 0)
+    } catch { Write-Log "Скан: источник WIA по умолчанию: $($_.Exception.Message)" }
+    try {
+        $item = $scanner.Items.Item(1)
+        foreach ($p in @(@(6146, 2), @(6147, 300), @(6148, 300))) {
+            try { $item.Properties.Item([string]$p[0]).Value = $p[1] } catch {}
+        }
+        $dpiX = $dpiY = 300
+        try { $dpiX = [double]$item.Properties.Item('6147').Value; $dpiY = [double]$item.Properties.Item('6148').Value } catch {}
+        $pages = New-Object 'Collections.Generic.List[object]'
+        do {
+            try { $img = $item.Transfer('{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}') }
+            catch {
+                $cause = $_.Exception
+                while ($cause) {
+                    # WIA_ERROR_PAPER_EMPTY is normal only after a feeder page was read.
+                    if ($feeder -and $pages.Count -gt 0 -and $cause.HResult -eq -2145320957) { break }
+                    $cause = $cause.InnerException
+                }
+                if ($cause) { break }
+                throw
+            }
+            $pages.Add((ConvertTo-ScanPage -Bytes ([byte[]]$img.FileData.BinaryData)))
+        } while ($feeder)
+        return ConvertTo-ScanDocument -Pages $pages.ToArray() -DpiX $dpiX -DpiY $dpiY
+    } finally {
+        if ($null -ne $originalSource) {
+            try { $scanner.Properties.Item('3088').Value = $originalSource }
+            catch { Write-Log "Скан: не удалось восстановить источник WIA: $($_.Exception.Message)" }
+        }
+    }
 }
 
-# Скан выбранным способом. Вынесено в функцию, чтобы тесты подменяли её.
 function Invoke-ScannerScan {
     param([string]$Address, [string]$Device)
-    if ($Address -and ((-not $Device) -or $Device -eq $Address)) { return Invoke-EsclScan -Address $Address }
+    if ($Address -and ((-not $Device) -or $Device -eq $Address)) {
+        $scan = Invoke-EsclScan -Address $Address
+        if ($scan.Mime -eq 'image/jpeg') {
+            return ConvertTo-ScanDocument -Pages @((ConvertTo-ScanPage -Bytes $scan.Bytes))
+        }
+        return $scan
+    }
     return Invoke-WiaScan -Device $Device
 }
 
