@@ -4,16 +4,17 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, production_quality_principal
 from app.shared.stored_files import file_response
+from app.workflows.vna_capture_instrument import capture_source
 
 from . import vna_jobs
 from .scan_jobs import DONE, cancel_job, create_job, get_job
-from .scan_jobs_api import UowFactory, _queue
+from .scan_jobs_api import UowFactory, _client_ip, _queue
 
 router = APIRouter(prefix="/api/stock/vna/jobs", tags=["warehouse"])
 Person = Annotated[Principal, Depends(production_quality_principal)]
@@ -21,8 +22,10 @@ Now = Annotated[datetime, Depends(moscow_now)]
 
 
 class StartInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    instrument_id: UUID
     agent_id: str = Field(default="", max_length=80)
-    source: Literal["s2vna", "arinst"] = "s2vna"
+    source: Literal["s2vna", "arinst"] | None = None
 
 
 def _owned(uow_factory, job_id, principal, now):
@@ -35,22 +38,35 @@ def _owned(uow_factory, job_id, principal, now):
 def _view(job):
     return {"id": str(job.id), "status": job.status, "error": job.error,
             "vna": {"name": job.vna_name}, "source": job.source,
+            "instrument_id": str(job.instrument_id) if job.instrument_id else None,
+            "capture_settings": job.capture_settings,
             "file_name": job.capture_file_name or "vna.s1p"}
 
 
 @router.post("")
-def start(principal: Person, now: Now, uow_factory: UowFactory, payload: StartInput | None = None):
-    choices = vna_jobs.agents(uow_factory(), now)
+def start(request: Request, principal: Person, now: Now, uow_factory: UowFactory, payload: StartInput):
+    try:
+        source = capture_source(uow_factory(), payload.instrument_id)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    if payload.source is not None and payload.source != source:
+        raise HTTPException(422, "Источник не соответствует программе выбранного СИ")
+    browser_ip = _client_ip(request)
+    all_agents = vna_jobs.agents(uow_factory(), now, browser_ip=browser_ip)
+    if payload.agent_id and any(pc["id"] == payload.agent_id and source not in pc["vna_sources"] for pc in all_agents):
+        raise HTTPException(422, "Выбранный источник ВАЦ недоступен на этом ПК")
+    choices = [pc for pc in all_agents if source in pc["vna_sources"]]
     if not choices:
         return {"status": "no_agent"}
-    chosen = next((pc for pc in choices if pc["id"] == (payload.agent_id if payload else "")), None)
+    chosen = next((pc for pc in choices if pc["id"] == payload.agent_id), None) if payload.agent_id else (
+        choices[0] if len(choices) == 1 else None)
+    if payload.agent_id and chosen is None:
+        raise HTTPException(422, "Выбранный ПК недоступен этому браузеру — повторите поиск ВАЦ")
     if chosen is None:
         return {"status": "choose", "agents": choices}
-    source = payload.source if payload else "s2vna"
-    if source not in chosen["vna_sources"]:
-        raise HTTPException(422, "Выбранный источник ВАЦ недоступен на этом ПК")
     job = create_job(uow_factory(), requested_by=str(principal.actor.id), now=now,
                      target=chosen["id"], kind="vna", source=source,
+                     instrument_id=payload.instrument_id,
                      vna_name=chosen["vna"]["name"] if source == "s2vna" else "Arinst VNA-DL")
     return {**_view(job), "agent": chosen}
 

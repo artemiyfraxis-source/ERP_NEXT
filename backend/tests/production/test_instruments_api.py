@@ -54,7 +54,7 @@ def test_pending_registration_and_listing_preserve_null_evidence(production_api,
     instrument = result.json()["instrument"]
     assert instrument == {**BASE, **dict.fromkeys(EVIDENCE), "status": PENDING, "id": instrument["id"], "version": 1,
                           "kind": "Средство измерений", "parent_id": None, "serial_number": "", "manufacturer": "",
-                          "doc_designation": "", "quantity": 1, "storage_location": "", "warehouse_grn": "", "warehouse_writeoff_id": None, "files": []}
+                          "doc_designation": "", "quantity": 1, "storage_location": "", "warehouse_grn": "", "warehouse_writeoff_id": None, "vna_app": "", "files": []}
     assert client.get("/api/production/instruments").json()["instruments"] == [instrument]
     duplicate = client.post("/api/production/instruments", json={**BASE, "status": PENDING})
     assert duplicate.status_code == 422 and "уже есть" in duplicate.json()["detail"]
@@ -101,6 +101,25 @@ def create(client, number="СИ.001", **extra):
     result = client.post("/api/production/instruments", json={**BASE, "inventory_number": number, "status": PENDING, **extra})
     assert result.status_code == 200, result.text
     return result.json()["instrument"]
+
+
+def test_vna_app_is_editable_and_returned_by_registry(production_api):
+    client, _ = production_api
+    _as({"quality": "edit", "production": "view"})
+    item = create(client, vna_app="S2VNA")
+    assert item["vna_app"] == "S2VNA"
+    response = client.patch(f"/api/production/instruments/{item['id']}", json={"version": 1, "vna_app": "Arinst VL"})
+    assert response.status_code == 200, response.text
+    assert response.json()["instrument"]["vna_app"] == "Arinst VL"
+    assert client.get("/api/production/instruments").json()["instruments"][0]["vna_app"] == "Arinst VL"
+    bad = client.patch(f"/api/production/instruments/{item['id']}", json={"version": 2, "vna_app": "unknown"})
+    assert bad.status_code == 422
+    bad = client.patch(f"/api/production/instruments/{item['id']}", json={"version": 2, "vna_app": None})
+    assert bad.status_code == 422
+    accessory = client.post("/api/production/instruments", json={**BASE, "inventory_number": "СИ.002",
+        "parent_id": item["id"], "kind": "Принадлежность", "vna_app": "S2VNA"})
+    assert accessory.status_code == 422
+    assert "только для средства измерений" in accessory.json()["detail"]
 
 
 def test_patch_verification_renumbering_and_version_conflict(production_api):

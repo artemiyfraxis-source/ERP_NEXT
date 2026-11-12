@@ -149,6 +149,9 @@ def _row(table: Table, index: int, parents: dict[str, list[Any]], lots: list[Any
         if _database_assigns(table, column, dialect):
             continue
         name = column.name
+        if table.name == "warehouse_scan_jobs" and name == "capture_settings":
+            # Reflection forgets JSON(none_as_null=True); omission keeps SQL NULL on scan rows.
+            continue
         if (table.name, name) in _OVER_CHECK:
             row[name] = _OVER_CHECK[(table.name, name)]
             continue
@@ -204,6 +207,7 @@ _COUPLED_VALUES: dict[tuple[str, str], Any] = {
     ("warehouse_scan_jobs", "result"): "",
     ("warehouse_scan_jobs", "kind"): "scan",
     ("warehouse_scan_jobs", "vna_name"): "",
+    ("warehouse_scan_jobs", "capture_file_name"): "",
     # «Who» goes with «when» (0162_pack_decision_no_upd): a seeded card is not decided, a shipment has no no-УПД permit.
     ("shipping_project_addressees", "pack_decided_by"): "",
     ("shipping_project_addressees", "pack_decided_at"): None,
@@ -221,6 +225,7 @@ _COUPLED_VALUES: dict[tuple[str, str], Any] = {
 # 0115), and a БД.ТЕР row is always in a list (0155_ter_lug_kind).
 _OVER_CHECK: dict[tuple[str, str], Any] = {
     ("tech_operation_records", "ter_kind"): "contact",
+    ("warehouse_scan_jobs", "instrument_id"): None,
     # Before 0167 arbitrary statuses were allowed; ACTIVE now needs all evidence despite nullable-date CHECKs.
     ("production_instruments", "status"): "Действует",
     ("production_instruments", "kind"): "Средство измерений",

@@ -282,6 +282,7 @@ class RegisterInstrumentPayload(BaseModel):
     quantity: int = Field(default=1, ge=1, le=2_147_483_647, strict=True)
     storage_location: str = Field(default="", max_length=255)
     warehouse_grn: str = Field(default="", max_length=32)
+    vna_app: Literal["", "S2VNA", "Arinst VL"] = ""
 
 
 class UpdateInstrumentPayload(BaseModel):
@@ -302,6 +303,7 @@ class UpdateInstrumentPayload(BaseModel):
     quantity: int | None = Field(default=None, ge=1, le=2_147_483_647, strict=True)
     storage_location: str | None = Field(default=None, max_length=255)
     warehouse_grn: str | None = Field(default=None, max_length=32)
+    vna_app: Literal["", "S2VNA", "Arinst VL"] | None = None
 
 
 class InstrumentFilePayload(BaseModel):
@@ -1394,6 +1396,7 @@ def instrument_result(item, files=()) -> dict:
         "doc_designation": item.doc_designation, "quantity": item.quantity,
         "storage_location": item.storage_location, "warehouse_grn": item.warehouse_grn,
         "warehouse_writeoff_id": str(item.warehouse_writeoff_id) if item.warehouse_writeoff_id else None,
+        "vna_app": item.vna_app,
         "verification_number": item.verification_number,
         "verified_at": item.verified_at.isoformat() if item.verified_at is not None else None,
         "verification_due": item.verification_due.isoformat() if item.verification_due is not None else None,

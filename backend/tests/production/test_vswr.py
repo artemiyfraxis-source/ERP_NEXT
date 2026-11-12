@@ -84,6 +84,22 @@ def test_explicit_band_overrides_the_norm_band_and_empty_band_is_refused(setup):
         _record(setup, 1, [(1000, 1.1), (5000, 1.6)], norm={"status": "ok", "vswrMax": 1.3})
 
 
+def test_partial_capture_warns_and_records_only_the_actual_band_while_manual_upload_still_requires_coverage(setup):
+    norm = {**NORM, "source": "customer"}
+    points = [(1500, 1.1), (2500, 1.2)]
+    with pytest.raises(ProductionValidationError, match="не покрывает"):
+        _record(setup, 1, points, norm=norm)
+    measured = _record(setup, 1, points, norm=norm, capture_settings={"s_parameter": "S11"}, capture_verified=True)
+    assert measured.verdict is VswrVerdict.PASS
+    assert (measured.band_from_mhz, measured.band_to_mhz) == (Decimal("1500"), Decimal("2500"))
+    assert measured.norm["bandMhz"] == [1000, 3000]
+    assert measured.file_meta["capture_warnings"] == ["Диапазон ВАЦ не покрывает норму"]
+    assert latest_vswr(measured.serial_id, setup[0]()).file_meta == measured.file_meta
+    with pytest.raises(ProductionValidationError):
+        _record(setup, 2, [(4000, 1.1), (5000, 1.2)], norm=norm,
+                capture_settings={"s_parameter": "S11"}, capture_verified=True)
+
+
 def test_undefined_norm_needs_a_manual_verdict_with_reason(setup):
     points = [(1000, 1.1), (2000, 1.5)]
     band = dict(band_from_mhz=Decimal("1000"), band_to_mhz=Decimal("2000"))

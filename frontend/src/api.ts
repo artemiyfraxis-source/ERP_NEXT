@@ -1440,7 +1440,7 @@ export interface VswrMeasurement {
   measured_at: string;
   file_name: string;
   points: number;
-  file_meta: unknown;
+  file_meta: { capture_settings?: VnaCaptureSettings; capture_warnings?: string[]; [key: string]: unknown };
   trace?: VswrTracePoint[];
 }
 export interface VswrNorm {
@@ -1493,6 +1493,8 @@ export interface VswrUploadPayload {
   instrument_id: string;
   file_name: string;
   file_base64: string;
+  capture_settings?: VnaCaptureSettings;
+  capture_job_id?: string;
   band_from_mhz?: number | null;
   band_to_mhz?: number | null;
   verdict?: "pass" | "fail";
@@ -1554,6 +1556,7 @@ export interface ProductionInstrument {
   name: string;
   instrument_type: string;
   kind: InstrumentKind;
+  vna_app?: "" | "S2VNA" | "Arinst VL" | null;
   parent_id: string | null;
   serial_number: string;
   manufacturer: string;
@@ -3929,14 +3932,31 @@ export interface BoardAssignResult {
 }
 
 export type VnaSource = "s2vna" | "arinst";
+export interface VnaCaptureSettings {
+  points?: number;
+  start_hz?: number;
+  stop_hz?: number;
+  if_bandwidth_hz?: number;
+  averaging_enabled?: boolean;
+  averaging_factor?: number;
+  smoothing_enabled?: boolean;
+  smoothing_aperture_percent?: number;
+  correction_enabled?: boolean;
+  correction_status?: string;
+  s_parameter?: "S11" | "S22";
+  frequency_step_hz?: number;
+  unavailable?: string[];
+}
 export interface VnaAgent { id: string; pc: string; version: string; vna: { name: string; ready: boolean; reason?: "" | "s2vna_not_running" | "device_not_connected" | "probe_failed" } | null; vna_sources?: VnaSource[] }
 export interface VnaCaptureJob {
   id: string; status: WarehouseScanJobStatus; error: string; vna: { name: string }; source: VnaSource; file_name: string; agent?: VnaAgent;
+  instrument_id: string;
+  capture_settings: VnaCaptureSettings | null;
 }
 export type VnaCaptureStart = VnaCaptureJob | { status: "choose"; agents: VnaAgent[] } | { status: "no_agent" };
 const VNA_JOBS = "/api/stock/vna/jobs";
 export const vnaCaptureApi = {
-  start: (agentId = "", source: VnaSource = "s2vna") => api<VnaCaptureStart>(VNA_JOBS, { method: "POST", body: JSON.stringify({ agent_id: agentId, source }) }),
+  start: (instrumentId: string, agentId = "") => api<VnaCaptureStart>(VNA_JOBS, { method: "POST", body: JSON.stringify({ instrument_id: instrumentId, agent_id: agentId }) }),
   status: (id: string, signal?: AbortSignal) => api<VnaCaptureJob>(`${VNA_JOBS}/${encodeURIComponent(id)}`, { signal }),
   file: (id: string, signal?: AbortSignal) => api<Blob>(`${VNA_JOBS}/${encodeURIComponent(id)}/file`, { blob: true, signal }),
   cancel: (id: string) => api<VnaCaptureJob>(`${VNA_JOBS}/${encodeURIComponent(id)}`, { method: "DELETE" }),

@@ -214,6 +214,8 @@ class RecordVswrCommand:
     band_to_mhz: Decimal | None = None
     verdict: VswrVerdict | None = None  # ручной вердикт — только когда нормы нет
     reason: str = ""
+    capture_settings: dict | None = None
+    capture_verified: bool = False
 
 
 def _norm_snapshot(norm: Mapping[str, Any]) -> dict:
@@ -252,7 +254,20 @@ def record_vswr(command: RecordVswrCommand, uow: QualityUnitOfWork) -> VswrMeasu
         band = (command.band_from_mhz, command.band_to_mhz)
     low, high = validate_band(*band)
     points = parse_vna_file(content, file_name)
-    if customer is not None:
+    capture_warnings = []
+    if command.capture_verified:
+        # Testing rule: keep the captured evidence, warn about missing norm coverage,
+        # and record only the frequency band actually measured. Never invent missing points.
+        expected = norm_band(norm) or (low, high)
+        try:
+            require_coverage(points, *expected)
+        except ProductionValidationError:
+            capture_warnings.append("Диапазон ВАЦ не покрывает норму")
+        frequencies = [frequency for frequency, _vswr in points]
+        low = max(low, Decimal(str(min(frequencies) / 1e6)))
+        high = min(high, Decimal(str(max(frequencies) / 1e6)))
+        low, high = validate_band(low, high)
+    elif customer is not None:
         require_coverage(points, low, high)
     peak = peak_index(points, low, high)
     peak_hz, peak_vswr = points[peak]
@@ -291,7 +306,9 @@ def record_vswr(command: RecordVswrCommand, uow: QualityUnitOfWork) -> VswrMeasu
             verdict=verdict, verdict_manual=manual, verdict_reason=reason,
             inspector_id=command.actor.id, inspector_name=command.actor.name,
             measured_at=command.now, file_name=file_name, points=len(points),
-            file_meta=vna_header(content), trace=trace,
+            file_meta={**vna_header(content), **({"capture_settings": command.capture_settings}
+                                              if command.capture_settings is not None else {}),
+                       **({"capture_warnings": capture_warnings} if capture_warnings else {})}, trace=trace,
             serial_number=serial.serial_number,
         )
         uow.vswr.add(measurement, content)

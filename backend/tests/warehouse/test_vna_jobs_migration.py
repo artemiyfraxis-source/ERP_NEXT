@@ -17,6 +17,8 @@ def test_upgrade_preserves_scans_and_holds_vna_payload_invariants(tmp_path, monk
     assert ScriptDirectory.from_config(config).get_revision("0176_vna_capture_jobs").down_revision == "0175_instrument_kinds_files"
     command.upgrade(config, "0175_instrument_kinds_files")
     with sqlite3.connect(database) as db:
+        db.execute("INSERT INTO production_instruments(id,version,inventory_number,name,instrument_type,status) "
+                   "VALUES ('instrument',1,'СИ.001','Planar','ВАЦ','Поверка не подтверждена')")
         db.execute("INSERT INTO warehouse_scan_agents(machine_id, first_seen, last_seen) VALUES ('pc', '2026-11-12', '2026-11-12')")
         db.execute("INSERT INTO warehouse_scan_jobs(id,status,requested_by,created_at,target_machine_id,target_scanner) "
                    "VALUES ('old','pending','Operator','2026-11-12','pc','scanner')")
@@ -28,6 +30,11 @@ def test_upgrade_preserves_scans_and_holds_vna_payload_invariants(tmp_path, monk
         assert after == before
         assert db.execute("SELECT kind,capture_content,vna_name FROM warehouse_scan_jobs").fetchone() == ("scan", None, "")
         assert db.execute("SELECT source,capture_file_name FROM warehouse_scan_jobs").fetchone() == ("s2vna", "")
+        assert db.execute("SELECT instrument_id,capture_settings FROM warehouse_scan_jobs").fetchone() == (None, None)
+        assert db.execute("SELECT inventory_number,vna_app FROM production_instruments").fetchall() == [("СИ.001", "")]
+        db.execute("UPDATE production_instruments SET vna_app='S2VNA'")
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+            db.execute("UPDATE production_instruments SET vna_app='unknown'")
         db.execute("INSERT INTO warehouse_agent_vna(machine_id,name,ready,reported_at) VALUES ('pc','S2VNA',0,'2026-11-12')")
         assert db.execute("SELECT reason FROM warehouse_agent_vna WHERE machine_id='pc'").fetchone() == ("",)
         with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
@@ -43,6 +50,7 @@ def test_upgrade_preserves_scans_and_holds_vna_payload_invariants(tmp_path, monk
     command.downgrade(config, "0175_instrument_kinds_files")
     with sqlite3.connect(database) as db:
         assert db.execute("SELECT id,status,requested_by,created_at,target_machine_id,target_scanner FROM warehouse_scan_jobs").fetchall() == before
+        assert db.execute("SELECT inventory_number FROM production_instruments").fetchall() == [("СИ.001",)]
     command.upgrade(config, "0176_vna_capture_jobs")
     with sqlite3.connect(database) as db:
         db.execute("UPDATE warehouse_scan_jobs SET kind='vna',target_scanner=NULL")

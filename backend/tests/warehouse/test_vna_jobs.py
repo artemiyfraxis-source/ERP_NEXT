@@ -1,6 +1,7 @@
 """VNA transport only; all agents are HTTP mocks, no instrument is contacted."""
 
 from datetime import timedelta
+import json
 from uuid import UUID
 
 import pytest
@@ -8,6 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
 from app.main import app
+from app.modules.production.infrastructure import ProductionInstrumentRow
 from app.modules.warehouse.scan_jobs import ScanJobRow, VNA_FILE_LIMIT
 from tests.identity.test_api_tokens import _bearer, _csrf, _issue, _login, tokens_api  # noqa: F401
 
@@ -16,6 +18,8 @@ CLAIM = "/api/stock/scan/agent/claim"
 HEARTBEAT = "/api/stock/scan/agent/heartbeat"
 NAME = "Planar, S50180, 26030095, 26.2.2/2"
 TRACE = f"! S2VNA {NAME} 2026-11-12T10:00:00Z S11\n# Hz S RI R 50\n100000000 0.1 0\n200000000 0.2 0\n".encode()
+S2_INSTRUMENT = "11111111-1111-1111-1111-111111111111"
+ARINST_INSTRUMENT = "22222222-2222-2222-2222-222222222222"
 
 
 @pytest.fixture()
@@ -23,11 +27,18 @@ def capture(tokens_api):  # noqa: F811
     sessions, clock = tokens_api
     admin = _login("admin")
     agent = _bearer(_issue(admin, scopes=("scan:upload",))["token"])
+    with sessions() as session:
+        for id, vna_app in ((S2_INSTRUMENT, "S2VNA"), (ARINST_INSTRUMENT, "Arinst VL")):
+            session.add(ProductionInstrumentRow(id=UUID(id), version=1, inventory_number=id[:8],
+                name=vna_app, instrument_type="ВАЦ", kind="Средство измерений", status="Действует",
+                verification_number="test", verified_at=clock.now - timedelta(days=1),
+                verification_due=clock.now + timedelta(days=30), vna_app=vna_app))
+        session.commit()
     return admin, agent, clock, sessions
 
 
-def heartbeat(agent, machine="pc-1", vna=True, capability=None, sources=None):
-    payload = {"machine_id": machine, "pc_name": machine.upper(), "version": "2.4.0", "scanners": []}
+def heartbeat(agent, machine="pc-1", vna=True, capability=None, sources=None, lan_ip=""):
+    payload = {"machine_id": machine, "pc_name": machine.upper(), "version": "2.4.0", "scanners": [], "lan_ip": lan_ip}
     if vna:
         payload["vna"] = capability if capability is not None else {"name": NAME, "ready": True}
     if sources is not None:
@@ -37,7 +48,8 @@ def heartbeat(agent, machine="pc-1", vna=True, capability=None, sources=None):
 
 
 def start(admin, machine="pc-1", source="s2vna"):
-    response = admin.post(JOBS, json={"agent_id": machine, "source": source}, headers=_csrf(admin))
+    response = admin.post(JOBS, json={"agent_id": machine,
+        "instrument_id": ARINST_INSTRUMENT if source == "arinst" else S2_INSTRUMENT}, headers=_csrf(admin))
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -51,9 +63,11 @@ def claim(agent, machine="pc-1", kinds=None):
     return response.json()["job"]
 
 
-def result(agent, job, content=TRACE, machine="pc-1", name="trace.s1p"):
+def result(agent, job, content=TRACE, machine="pc-1", name="trace.s1p", settings=None):
     return TestClient(app).post(f"/api/stock/scan/agent/jobs/{job}/result",
-        files={"file": (name, content, "application/octet-stream")}, headers={**agent, "X-Agent-Machine-Id": machine})
+        files={"file": (name, content, "application/octet-stream")},
+        data={"capture_settings": json.dumps(settings)} if settings is not None else None,
+        headers={**agent, "X-Agent-Machine-Id": machine})
 
 
 def test_capture_requires_explicit_pc_and_old_agents_never_claim_it(capture):
@@ -80,8 +94,10 @@ def test_heartbeat_readiness_reason_survives_the_pc_list_and_can_be_cleared(capt
     admin, agent, _, _ = capture
     capability = {"name": "S2VNA", "ready": ready, "reason": reason}
     heartbeat(agent, capability=capability)
+    heartbeat(agent, "pc-2", capability=capability)
     assert start(admin, "")["agents"][0]["vna"] == capability
     heartbeat(agent)  # Compatibility with clients that do not send a reason; clear stale reason.
+    heartbeat(agent, "pc-2")
     assert start(admin, "")["agents"][0]["vna"] == {"name": NAME, "ready": True, "reason": ""}
 
 
@@ -206,11 +222,11 @@ def test_database_rejects_cross_kind_payload_and_done_without_content(capture):
             session.commit()
 
 
-@pytest.mark.parametrize("source", ["unknown", "ARINST", "", None, 1])
+@pytest.mark.parametrize("source", ["unknown", "ARINST", "", 1])
 def test_start_validates_source(capture, source):
     admin, agent, _, _ = capture
     heartbeat(agent, sources=["s2vna", "arinst"])
-    response = admin.post(JOBS, json={"agent_id": "pc-1", "source": source}, headers=_csrf(admin))
+    response = admin.post(JOBS, json={"agent_id": "pc-1", "source": source, "instrument_id": S2_INSTRUMENT}, headers=_csrf(admin))
     assert response.status_code == 422
 
 
@@ -218,7 +234,8 @@ def test_start_validates_source(capture, source):
 def test_start_rejects_source_unavailable_on_selected_pc(capture, sources, vna, requested):
     admin, agent, _, _ = capture
     heartbeat(agent, vna=vna, sources=sources)
-    response = admin.post(JOBS, json={"agent_id": "pc-1", "source": requested}, headers=_csrf(admin))
+    response = admin.post(JOBS, json={"agent_id": "pc-1",
+        "instrument_id": ARINST_INSTRUMENT if requested == "arinst" else S2_INSTRUMENT}, headers=_csrf(admin))
     assert response.status_code == 422
     assert "недоступен" in response.json()["detail"]
 
@@ -226,21 +243,24 @@ def test_start_rejects_source_unavailable_on_selected_pc(capture, sources, vna, 
 def test_both_sources_survive_heartbeat_and_arinst_removal(capture):
     admin, agent, _, _ = capture
     heartbeat(agent, sources=["s2vna", "arinst"])
+    heartbeat(agent, "pc-2", sources=["s2vna", "arinst"])
     pc = start(admin, "")["agents"][0]
     assert pc["vna_sources"] == ["s2vna", "arinst"]
     assert pc["vna"]["name"] == NAME
     heartbeat(agent)  # Older clients still advertise S2VNA only, removing stale Arinst.
+    heartbeat(agent, "pc-2")
     assert start(admin, "")["agents"][0]["vna_sources"] == ["s2vna"]
     assert start(admin)["source"] == "s2vna"
 
 
-def test_existing_start_client_defaults_to_s2vna(capture):
+def test_start_requires_instrument_and_derives_source(capture):
     admin, agent, _, _ = capture
     heartbeat(agent)
     response = admin.post(JOBS, json={"agent_id": "pc-1"}, headers=_csrf(admin))
-    assert response.status_code == 200
-    job = response.json()
+    assert response.status_code == 422
+    job = start(admin)
     assert job["source"] == "s2vna"
+    assert job["instrument_id"] == S2_INSTRUMENT
     assert claim(agent, kinds=["vna"])["id"] == job["id"]
 
 
@@ -257,9 +277,9 @@ def test_heartbeat_rejects_invalid_source_list(capture, sources, vna):
 def test_arinst_capture_keeps_bytes_filename_and_source_without_s2vna_header(capture, extension):
     admin, agent, _, sessions = capture
     heartbeat(agent, vna=False, sources=["arinst"])
-    pc = start(admin, "")["agents"][0]
+    job = start(admin, "", source="arinst")
+    pc = job["agent"]
     assert pc["vna_sources"] == ["arinst"] and pc["vna"] is None
-    job = start(admin, source="arinst")
     assert job["source"] == "arinst" and job["vna"]["name"] == "Arinst VNA-DL"
     claimed = claim(agent, kinds=["scan", "vna"])
     assert claimed["id"] == job["id"] and claimed["source"] == "arinst"
@@ -295,3 +315,85 @@ def test_database_rejects_unknown_source(capture):
         session.get(ScanJobRow, UUID(job)).source = "unknown"
         with pytest.raises(IntegrityError):
             session.commit()
+
+
+def test_local_source_match_routes_automatically_but_never_to_a_remote_pc(capture):
+    admin, agent, _, sessions = capture
+    heartbeat(agent)
+    heartbeat(agent, "remote")
+    with sessions() as session:
+        from app.modules.warehouse.scan_agents import ScanAgentRow
+        session.get(ScanAgentRow, "remote").ip_seen = "192.0.2.10"
+        session.commit()
+    assert start(admin, "")["agent"]["id"] == "pc-1"
+    rejected = admin.post(JOBS, json={"instrument_id": S2_INSTRUMENT, "agent_id": "remote"}, headers=_csrf(admin))
+    assert rejected.status_code == 422
+    with sessions() as session:
+        session.get(ScanAgentRow, "pc-1").ip_seen = "192.0.2.11"
+        session.commit()
+    assert start(admin, "")["status"] == "no_agent"
+    assert start(admin, "remote")["status"] == "no_agent"
+    # LAN address is also reported by the PC agent.
+    heartbeat(agent, lan_ip="testclient")
+    with sessions() as session:
+        session.get(ScanAgentRow, "pc-1").ip_seen = "192.0.2.11"
+        session.commit()
+    assert start(admin, "")["agent"]["id"] == "pc-1"
+
+
+def test_source_filter_removes_unrelated_agents_from_ambiguity(capture):
+    admin, agent, _, _ = capture
+    heartbeat(agent)
+    heartbeat(agent, "arinst-pc", vna=False, sources=["arinst"])
+    assert start(admin, "")["agent"]["id"] == "pc-1"
+    assert start(admin, "", "arinst")["agent"]["id"] == "arinst-pc"
+
+
+@pytest.mark.parametrize("changes", [{"status": "Не используется"}, {"status": "Поверка не подтверждена",
+    "verification_number": None, "verified_at": None, "verification_due": None}, {"vna_app": ""}])
+def test_start_rejects_inactive_or_unconfigured_instrument(capture, changes):
+    admin, agent, _, sessions = capture
+    heartbeat(agent)
+    with sessions() as session:
+        row = session.get(ProductionInstrumentRow, UUID(S2_INSTRUMENT))
+        for key, value in changes.items():
+            setattr(row, key, value)
+        session.commit()
+    response = admin.post(JOBS, json={"instrument_id": S2_INSTRUMENT}, headers=_csrf(admin))
+    assert response.status_code == 422
+
+
+def test_start_rejects_missing_instrument_and_conflicting_source(capture):
+    admin, agent, _, _ = capture
+    heartbeat(agent, sources=["s2vna", "arinst"])
+    for body in ({"instrument_id": "33333333-3333-3333-3333-333333333333"},
+                 {"instrument_id": S2_INSTRUMENT, "source": "arinst"}):
+        assert admin.post(JOBS, json=body, headers=_csrf(admin)).status_code == 422
+
+
+def test_capture_settings_survive_the_result_and_status_without_blocking_warnings(capture):
+    admin, agent, _, sessions = capture
+    heartbeat(agent)
+    job = start(admin)["id"]
+    claim(agent, kinds=["vna"])
+    settings = {"points": 2, "start_hz": 100000000, "stop_hz": 200000000, "frequency_step_hz": 100000000,
+        "if_bandwidth_hz": 1000, "averaging_enabled": True, "averaging_factor": 8,
+        "smoothing_enabled": True, "smoothing_aperture_percent": 1.5,
+        "correction_enabled": False, "correction_status": "C?", "s_parameter": "S11"}
+    assert result(agent, job, settings=settings).status_code == 200
+    assert admin.get(f"{JOBS}/{job}").json()["capture_settings"] == settings
+    with sessions() as session:
+        row = session.get(ScanJobRow, UUID(job))
+        assert row.capture_settings == settings and str(row.instrument_id) == S2_INSTRUMENT
+    assert admin.get(f"{JOBS}/{job}/file").content == TRACE
+
+
+@pytest.mark.parametrize("settings", [{"points": 1}, {"smoothing_enabled": "false"},
+    {"if_bandwidth_hz": float("inf")}, {"s_parameter": "S22"}, {"unknown": 1}])
+def test_invalid_capture_settings_fail_the_job(capture, settings):
+    admin, agent, _, _ = capture
+    heartbeat(agent)
+    job = start(admin)["id"]
+    claim(agent, kinds=["vna"])
+    assert result(agent, job, settings=settings).status_code == 422
+    assert admin.get(f"{JOBS}/{job}").json()["status"] == "failed"

@@ -12,12 +12,22 @@ function New-TestVna {
     $service | Add-Member ScriptMethod CHANnel { param($index) $this.ChannelValue }
     $calc = [pscustomobject]@{
         Parameters = @{ 1 = [pscustomobject]@{ DEFine = 'S21' }; 2 = [pscustomobject]@{ DEFine = 'S11' } }
-        SELected = [pscustomobject]@{ DATA = [pscustomobject]@{ SDATa = [double[]](0.1, -0.2, 0.25, 0.5) } }
+        SELected = [pscustomobject]@{
+            DATA = [pscustomobject]@{ SDATa = [double[]](0.1, -0.2, 0.25, 0.5) }
+            SMOothing = [pscustomobject]@{ STATe = $true; APERture = 1.5 }
+            CORRection = [pscustomobject]@{ STATus = 'C?' }
+        }
     }
     $calc | Add-Member ScriptMethod PARameter { param($index) $this.Parameters[$index] }
     $scpi = [pscustomobject]@{
         SERVice = $service; Calculation = $calc
-        SenseValue = [pscustomobject]@{ FREQuency = [pscustomobject]@{ DATA = [double[]](100000000, 200000000) } }
+        SenseValue = [pscustomobject]@{
+            FREQuency = [pscustomobject]@{ DATA = [double[]](100000000, 200000000); STARt = 100000000; STOP = 200000000 }
+            SWEep = [pscustomobject]@{ POINts = 2 }
+            BANDwidth = [pscustomobject]@{ RESolution = 1000 }
+            AVERage = [pscustomobject]@{ STATe = $true; COUNt = 4 }
+            CORRection = [pscustomobject]@{ STATe = $true }
+        }
     }
     $scpi | Add-Member ScriptMethod CALCulate { param($index) if ($index -ne 1) { throw 'wrong channel' }; $this.Calculation }
     $scpi | Add-Member ScriptMethod SENSe { param($index) $this.SenseValue }
@@ -52,6 +62,55 @@ Describe 'ВАЦ: чтение COM и Touchstone' {
     It 'S22 тоже даёт однопортовый Touchstone' {
         $script:vna.SCPI.Calculation.Parameters[2].DEFine = 'S22'
         [Text.Encoding]::UTF8.GetString((Invoke-VnaCapture).Bytes) | Should Match ' S22\r?\n# Hz S RI R 50'
+    }
+    It 'читает все подтверждённые настройки, не изменяя состояние COM' {
+        $before = [Management.Automation.PSSerializer]::Serialize($script:vna, 10)
+        $settings = (Invoke-VnaCapture).CaptureSettings
+        $settings.points | Should Be 2
+        $settings.start_hz | Should Be 100000000
+        $settings.stop_hz | Should Be 200000000
+        $settings.if_bandwidth_hz | Should Be 1000
+        $settings.averaging_enabled | Should Be $true
+        $settings.averaging_factor | Should Be 4
+        $settings.smoothing_enabled | Should Be $true
+        $settings.smoothing_aperture_percent | Should Be 1.5
+        $settings.correction_enabled | Should Be $true
+        $settings.correction_status | Should Be 'C?'
+        $settings.s_parameter | Should Be 'S11'
+        $settings.frequency_step_hz | Should Be 100000000
+        $settings.unavailable | Should Be $null
+        ([Management.Automation.PSSerializer]::Serialize($script:vna, 10)) | Should Be $before
+    }
+    It 'неизвестный статус и ошибка необязательного getter не мешают снять трассу' {
+        $script:vna.SCPI.Calculation.SELected.CORRection.STATus = 'undocumented'
+        $script:vna.SCPI.SenseValue.BANDwidth | Add-Member ScriptProperty RESolution { throw 'COM getter unavailable' } -Force
+        $capture = Invoke-VnaCapture
+        $capture.Bytes.Length | Should BeGreaterThan 0
+        $capture.CaptureSettings.Contains('if_bandwidth_hz') | Should Be $false
+        $capture.CaptureSettings.Contains('correction_status') | Should Be $false
+        ($capture.CaptureSettings.unavailable -join ',') | Should Match 'if_bandwidth_hz'
+        ($capture.CaptureSettings.unavailable -join ',') | Should Match 'correction_status'
+        $capture.CaptureSettings.smoothing_enabled | Should Be $true
+    }
+    It 'отсутствующая настройка не превращается в выключенное усреднение' {
+        $script:vna.SCPI.SenseValue.AVERage = $null
+        $settings = (Invoke-VnaCapture).CaptureSettings
+        $settings.Contains('averaging_enabled') | Should Be $false
+        ($settings.unavailable -join ',') | Should Match 'averaging_enabled'
+    }
+    It 'передаёт выключенные настройки и экстраполяцию без отказа' {
+        $script:vna.SCPI.SenseValue.AVERage.STATe = $false
+        $script:vna.SCPI.SenseValue.CORRection.STATe = $false
+        $script:vna.SCPI.Calculation.SELected.CORRection.STATus = 'C!'
+        $settings = (Invoke-VnaCapture).CaptureSettings
+        $settings.averaging_enabled | Should Be $false
+        $settings.correction_enabled | Should Be $false
+        $settings.correction_status | Should Be 'C!'
+    }
+    It 'максимальный шаг берётся по сетке частот, включая нелинейную' {
+        $script:vna.SCPI.SenseValue.FREQuency.DATA = [double[]](100000000, 110000000, 200000000)
+        $script:vna.SCPI.Calculation.SELected.DATA.SDATa = [double[]](0.1, 0, 0.2, 0, 0.3, 0)
+        (Invoke-VnaCapture).CaptureSettings.frequency_step_hz | Should Be 90000000
     }
     It 'S21 в выбранной трассе запрещён даже если первая трасса S11' {
         $script:vna.SCPI.Calculation.Parameters[1].DEFine = 'S11'
@@ -141,7 +200,7 @@ Describe 'ВАЦ: отчёт без запуска S2VNA' {
         Mock Invoke-ErpApi { [pscustomobject]@{ ok = $true } }
         Send-Heartbeat -Base 'http://test' -AuthToken 'mock-token'
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
-            $Body.vna.name -match '26030095' -and $Body.vna.ready -and $Body.vna.reason -eq '' -and $Body.version -eq '2.4.0' -and ($Body.vna_sources -join ',') -eq 's2vna'
+            $Body.vna.name -match '26030095' -and $Body.vna.ready -and $Body.vna.reason -eq '' -and $Body.version -eq '2.5.0' -and ($Body.vna_sources -join ',') -eq 's2vna'
         }
     }
     It 'heartbeat передаёт причину неготовности' {
@@ -210,6 +269,13 @@ Describe 'ВАЦ: общая очередь' {
         Assert-MockCalled Send-ScanFile -Times 1 -Exactly -Scope It -ParameterFilter { $FileName -like '*.s1p' -and $MachineId -eq 'pc-1' }
         Assert-MockCalled Invoke-ScannerScan -Times 0 -Exactly -Scope It
     }
+    It 'настройки передаются вместе с файлом в том же задании' {
+        Mock Invoke-VnaCapture { @{ Bytes = [byte[]](1, 2); Ext = 's1p'; Mime = 'application/octet-stream'; CaptureSettings = @{ smoothing_enabled = $true; correction_status = 'C?' } } }
+        Invoke-ScanPollOnce -Base 'http://test' -AuthToken 'mock-token' | Should Be 'done'
+        Assert-MockCalled Send-ScanFile -Times 1 -Exactly -Scope It -ParameterFilter {
+            $CaptureSettings.smoothing_enabled -eq $true -and $CaptureSettings.correction_status -eq 'C?'
+        }
+    }
     It 'ошибка ВАЦ возвращается в то же задание' {
         Mock Invoke-VnaCapture { throw 'ВАЦ не готов' }
         Invoke-ScanPollOnce -Base 'http://test' -AuthToken 'mock-token' | Should Be 'error'
@@ -222,6 +288,25 @@ Describe 'ВАЦ: общая очередь' {
         Assert-MockCalled Send-ScanFile -Times 1 -Exactly -Scope It -ParameterFilter { $FileName -eq 'замер.s2p' -and $MachineId -eq 'pc-1' }
         Assert-MockCalled Invoke-VnaCapture -Times 0 -Exactly -Scope It
         Assert-MockCalled Invoke-ScannerScan -Times 0 -Exactly -Scope It
+    }
+}
+
+Describe 'ВАЦ: JSON настроек рядом с бинарным файлом' {
+    It 'multipart сохраняет байты и содержит отдельное поле capture_settings' {
+        [byte[]]$body = New-MultipartBody -Boundary 'test-boundary' -FieldName 'file' -FileName 'trace.s1p' -ContentType 'application/octet-stream' -Bytes ([byte[]](0, 255, 13, 10)) -CaptureSettings @{ points = 201; smoothing_enabled = $true }
+        $text = [Text.Encoding]::UTF8.GetString($body)
+        $text | Should Match 'name="file"; filename="trace.s1p"'
+        $text | Should Match 'name="capture_settings"'
+        $text | Should Match '"points":201'
+        $text | Should Match '"smoothing_enabled":true'
+        $text | Should Match 'test-boundary--\r\n$'
+        $fileStart = $text.IndexOf("`r`n`r`n") + 4
+        # Headers are ASCII, so this is also the byte offset.
+        ($body[$fileStart..($fileStart + 3)] -join ',') | Should Be '0,255,13,10'
+    }
+    It 'скан и Arinst без настроек не получают JSON поля' {
+        $body = New-MultipartBody -Boundary 'test-boundary' -FieldName 'file' -FileName 'scan.jpg' -ContentType 'image/jpeg' -Bytes ([byte[]](1, 2))
+        [Text.Encoding]::UTF8.GetString($body) | Should Not Match 'capture_settings'
     }
 }
 

@@ -1,7 +1,7 @@
 """VNA transport on the shared PC-agent queue; VSWR interpretation stays in production.
 
 The capability is an extension of the existing agent identity, not a second registry.
-Like strict scanner routing, require an explicit live PC choice: NAT is not device identity.
+Browser-address matches route automatically only when unique; shared addresses need a PC choice.
 """
 
 from datetime import datetime
@@ -48,7 +48,7 @@ def heartbeat(uow, machine_id: str, vna: dict | None, now: datetime, sources: li
         uow.commit()
 
 
-def agents(uow, now: datetime) -> list[dict]:
+def agents(uow, now: datetime, *, source: str | None = None, browser_ip: str | None = None) -> list[dict]:
     with uow:
         rows = _session(uow).execute(select(ScanAgentRow, AgentVnaRow).join(AgentVnaRow).where(
             ScanAgentRow.legacy.is_(False), ScanAgentRow.last_seen >= now - LIVE_FOR,
@@ -56,10 +56,13 @@ def agents(uow, now: datetime) -> list[dict]:
         ).order_by(ScanAgentRow.pc_name, ScanAgentRow.machine_id))
         return [{"id": pc.machine_id, "pc": pc.pc_name or pc.machine_id, "version": pc.version,
                  "vna": {"name": vna.name, "ready": vna.ready, "reason": vna.reason} if "s2vna" in vna.sources else None,
-                 "vna_sources": vna.sources} for pc, vna in rows]
+                 "vna_sources": vna.sources} for pc, vna in rows
+                if (source is None or source in vna.sources)
+                and (browser_ip is None or (browser_ip and browser_ip in (pc.ip_seen, pc.ip_lan)))]
 
 
-def complete(uow, job_id: UUID, content: bytes, file_name: str, now: datetime, machine_id: str) -> None:
+def complete(uow, job_id: UUID, content: bytes, file_name: str, now: datetime, machine_id: str,
+             capture_settings: dict | None = None) -> None:
     if not content or len(content) > VNA_FILE_LIMIT:
         raise ValueError("Файл ВАЦ пуст или больше 2 МиБ")
     file_name = re.split(r"[/\\]", file_name)[-1]
@@ -70,6 +73,8 @@ def complete(uow, job_id: UUID, content: bytes, file_name: str, now: datetime, m
         job = open_for_result(session, job_id, now)
         if job.kind != "vna" or job.target_machine_id != machine_id:
             raise ScanJobClosed("Задание ВАЦ выдано другому ПК")
+        if job.source != "s2vna" and capture_settings is not None:
+            raise ValueError("Настройки измерения доступны только для S2VNA")
         if job.source == "arinst":
             if not file_name.lower().endswith((".s1p", ".s2p")):
                 raise ValueError("Arinst должен передать файл .s1p или .s2p")
@@ -86,11 +91,14 @@ def complete(uow, job_id: UUID, content: bytes, file_name: str, now: datetime, m
             if not match:
                 raise ValueError("В файле ВАЦ нет сведений S2VNA о приборе и трассе S11/S22")
             name = match[1]
+            if capture_settings and capture_settings.get("s_parameter", match[2]) != match[2]:
+                raise ValueError("Параметр настроек не совпадает с трассой S2VNA")
         done = session.execute(update(ScanJobRow).where(
             ScanJobRow.id == job_id, ScanJobRow.status == CLAIMED,
             ScanJobRow.kind == "vna", ScanJobRow.target_machine_id == machine_id,
         ).values(status=DONE, finished_at=now, capture_content=content, vna_name=name,
-                 capture_file_name=file_name if job.source == "arinst" else "vna.s1p", error=""))
+                 capture_file_name=file_name if job.source == "arinst" else "vna.s1p",
+                 capture_settings=capture_settings, error=""))
         if done.rowcount != 1:
             raise _closed(session, job_id)
         uow.commit()

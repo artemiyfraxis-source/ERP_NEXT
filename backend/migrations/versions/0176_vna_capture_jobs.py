@@ -14,18 +14,25 @@ CHECKS = {
     "ck_warehouse_scan_jobs_done_file": "status <> 'done' OR (kind = 'scan' AND file_id IS NOT NULL) OR (kind = 'vna' AND capture_content IS NOT NULL)",
     "ck_warehouse_scan_jobs_kind": "kind IN ('scan', 'vna')",
     "ck_warehouse_scan_jobs_source": "source IN ('s2vna', 'arinst')",
-    "ck_warehouse_scan_jobs_kind_payload": "(kind = 'scan' AND capture_content IS NULL AND vna_name = '' AND capture_file_name = '' AND source = 's2vna') OR (kind = 'vna' AND file_id IS NULL AND result = '' AND target_machine_id IS NOT NULL AND target_machine_id <> '' AND target_scanner IS NULL)",
+    "ck_warehouse_scan_jobs_kind_payload": "(kind = 'scan' AND capture_content IS NULL AND capture_settings IS NULL AND instrument_id IS NULL AND vna_name = '' AND capture_file_name = '' AND source = 's2vna') OR (kind = 'vna' AND file_id IS NULL AND result = '' AND target_machine_id IS NOT NULL AND target_machine_id <> '' AND target_scanner IS NULL)",
     "ck_warehouse_scan_jobs_capture_size": "capture_content IS NULL OR (status = 'done' AND length(capture_content) BETWEEN 1 AND 2097152)",
 }
 
 
 def upgrade():
+    with op.batch_alter_table("production_instruments") as batch:
+        batch.add_column(sa.Column("vna_app", sa.String(16), nullable=False, server_default=""))
+        batch.create_check_constraint("ck_production_instruments_vna_app", "vna_app IN ('', 'S2VNA', 'Arinst VL')")
+        batch.create_check_constraint("ck_production_instruments_vna_measuring", "vna_app = '' OR kind = 'Средство измерений'")
     with op.batch_alter_table(TABLE) as batch:
         batch.add_column(sa.Column("kind", sa.String(8), nullable=False, server_default="scan"))
         batch.add_column(sa.Column("capture_content", sa.LargeBinary(), nullable=True))
         batch.add_column(sa.Column("vna_name", sa.String(500), nullable=False, server_default=""))
         batch.add_column(sa.Column("source", sa.String(8), nullable=False, server_default="s2vna"))
         batch.add_column(sa.Column("capture_file_name", sa.String(255), nullable=False, server_default=""))
+        batch.add_column(sa.Column("instrument_id", sa.Uuid(), nullable=True))
+        batch.create_foreign_key("fk_warehouse_scan_jobs_instrument", "production_instruments", ["instrument_id"], ["id"], ondelete="RESTRICT")
+        batch.add_column(sa.Column("capture_settings", sa.JSON(none_as_null=True), nullable=True))
         batch.drop_constraint("ck_warehouse_scan_jobs_done_file", type_="check")
         for name, expression in CHECKS.items():
             batch.create_check_constraint(name, expression)
@@ -50,6 +57,13 @@ def downgrade():
         batch.drop_column("vna_name")
         batch.drop_column("source")
         batch.drop_column("capture_file_name")
+        batch.drop_constraint("fk_warehouse_scan_jobs_instrument", type_="foreignkey")
+        batch.drop_column("instrument_id")
+        batch.drop_column("capture_settings")
         batch.drop_column("capture_content")
         batch.drop_column("kind")
         batch.create_check_constraint("ck_warehouse_scan_jobs_done_file", "status <> 'done' OR file_id IS NOT NULL")
+    with op.batch_alter_table("production_instruments") as batch:
+        batch.drop_constraint("ck_production_instruments_vna_app", type_="check")
+        batch.drop_constraint("ck_production_instruments_vna_measuring", type_="check")
+        batch.drop_column("vna_app")

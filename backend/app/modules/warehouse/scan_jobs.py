@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, LargeBinary, String, Text, Uuid, and_, case, delete, or_, select, update
+from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, Index, LargeBinary, String, Text, Uuid, and_, case, delete, or_, select, update
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.shared.advisory_lock import advisory_lock, lock_key
@@ -59,7 +59,7 @@ class ScanJobRow(Base):
                         "(kind = 'vna' AND capture_content IS NOT NULL)", name="ck_warehouse_scan_jobs_done_file"),
         CheckConstraint("kind IN ('scan', 'vna')", name="ck_warehouse_scan_jobs_kind"),
         CheckConstraint("source IN ('s2vna', 'arinst')", name="ck_warehouse_scan_jobs_source"),
-        CheckConstraint("(kind = 'scan' AND capture_content IS NULL AND vna_name = '' AND capture_file_name = '' AND source = 's2vna') OR "
+        CheckConstraint("(kind = 'scan' AND capture_content IS NULL AND capture_settings IS NULL AND instrument_id IS NULL AND vna_name = '' AND capture_file_name = '' AND source = 's2vna') OR "
                         "(kind = 'vna' AND file_id IS NULL AND result = '' AND target_machine_id IS NOT NULL "
                         "AND target_machine_id <> '' AND target_scanner IS NULL)", name="ck_warehouse_scan_jobs_kind_payload"),
         CheckConstraint("capture_content IS NULL OR (status = 'done' AND length(capture_content) BETWEEN 1 AND 2097152)",
@@ -108,6 +108,8 @@ class ScanJobRow(Base):
     vna_name: Mapped[str] = mapped_column(String(500), nullable=False, default="", server_default="")
     source: Mapped[str] = mapped_column(String(8), nullable=False, default="s2vna", server_default="s2vna")
     capture_file_name: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    instrument_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("production_instruments.id", ondelete="RESTRICT"), nullable=True)
+    capture_settings: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
 
 
 @dataclass(frozen=True)
@@ -123,6 +125,8 @@ class ScanJob:
     target_machine_id: str | None = None
     source: str = "s2vna"
     capture_file_name: str = ""
+    instrument_id: UUID | None = None
+    capture_settings: dict | None = None
 
 
 class ScanJobClosed(Exception):
@@ -140,7 +144,8 @@ def _session(uow) -> Session:
 def _job(row: ScanJobRow) -> ScanJob:
     return ScanJob(id=row.id, status=row.status, error=row.error or "", file_id=row.file_id, result=row.result or "",
                    requested_by=row.requested_by, kind=row.kind, vna_name=row.vna_name,
-                   target_machine_id=row.target_machine_id, source=row.source, capture_file_name=row.capture_file_name)
+                   target_machine_id=row.target_machine_id, source=row.source, capture_file_name=row.capture_file_name,
+                   instrument_id=row.instrument_id, capture_settings=row.capture_settings)
 
 
 def _expire(session: Session, now: datetime) -> None:
@@ -163,7 +168,8 @@ def _read(session: Session, job_id: UUID) -> ScanJob:
 
 
 def create_job(uow, *, requested_by: str, now: datetime, target: str | None = None,
-               scanner: str | None = None, kind: str = "scan", vna_name: str = "", source: str = "s2vna") -> ScanJob:
+               scanner: str | None = None, kind: str = "scan", vna_name: str = "", source: str = "s2vna",
+               instrument_id: UUID | None = None) -> ScanJob:
     """Create a pending job. Only a full `target` / `scanner` pair can be claimed; incomplete legacy rows expire."""
     if source not in ("s2vna", "arinst"):
         raise ValueError("Неизвестный источник ВАЦ")
@@ -172,7 +178,7 @@ def create_job(uow, *, requested_by: str, now: datetime, target: str | None = No
         session = _session(uow)
         row = ScanJobRow(id=uuid4(), status=PENDING, requested_by=requested_by[:255] or "—", created_at=now,
                          target_machine_id=target, target_scanner=scanner if target else None, error="", result="",
-                         kind=kind, vna_name=vna_name, source=source)
+                         kind=kind, vna_name=vna_name, source=source, instrument_id=instrument_id)
         session.add(row)
         uow.commit()
     return _job(row)

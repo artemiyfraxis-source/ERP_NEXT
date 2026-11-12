@@ -50,10 +50,11 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Security
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from app.shared.clock import moscow_now
+from app.shared.vna_capture import CaptureSettings
 from app.shared.http_auth import TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, require_section, warehouse_edit_principal
 from app.workflows.edo_receipt import EdoRejected, file_kind, is_edo_upload, read_delivery
 
@@ -397,9 +398,14 @@ async def _vna_result(job: ScanJob, request: Request, now: datetime, uow_factory
         else:
             name, data = upload
             try:
+                settings_part = multipart_file(content_type, bytes(body), field="capture_settings")
+                settings = (CaptureSettings.model_validate_json(settings_part[1]).model_dump(exclude_none=True)
+                            if settings_part else None)
                 await run_in_threadpool(lambda: _queue(lambda: vna_jobs.complete(
-                    uow_factory(), job.id, data, name, now, machine_id)))
+                    uow_factory(), job.id, data, name, now, machine_id, settings)))
                 return {"ok": True, "id": str(job.id), "status": DONE}
+            except ValidationError:
+                error = "Некорректные настройки измерения ВАЦ"
             except ValueError as invalid:
                 error = str(invalid)
         await run_in_threadpool(lambda: _queue(lambda: fail_job(uow_factory(), job.id, error=error, now=now)))
