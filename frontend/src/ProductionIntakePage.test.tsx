@@ -181,6 +181,23 @@ it.each(["В ожидании", "В производстве", "Готово", "
   expect(await dialog.findByLabelText("Получатель")).toBeEnabled();
 });
 
+it.each([
+  ["Новый", "В ожидании", false], ["В работе", "В производстве", false], ["ОТК", "Готово", true],
+])("%s: подсветка УПД зависит от этапа строки", async (stage, tab, required) => {
+  intakeRows = [row({ stage, project_stage: stage, accepted: "0", delivered: "0", remaining: "40", tasks: [] })];
+  addressees = [{ ...dispatchCard, upd_type: null }];
+  render(<ProductionIntakePage principal={principal} />);
+  fireEvent.click(await screen.findByRole("tab", { name: new RegExp(`^${tab}`) }));
+  const edit = await screen.findByRole("button", { name: "Изменить данные отправки 591К.3" });
+  const group = edit.closest<HTMLElement>(".ship-position-group")!;
+  const upd = within(group).getByText(/^УПД:/);
+  if (required) expect(within(upd).getByText("не заполнено")).toHaveClass("tone-warn");
+  else {
+    expect(upd).toHaveTextContent("УПД: —");
+    expect(upd.querySelector(".tone-warn")).toBeNull();
+  }
+});
+
 it("у отгруженной отправки нет ручного закрытия; склад редактирует документы", async () => {
   intakeRows = [];
   shipments = [{ ...packedShipment, status: "Отгружена", shipped_at: "2026-11-08", missing_data: ["файл УПД"] }];

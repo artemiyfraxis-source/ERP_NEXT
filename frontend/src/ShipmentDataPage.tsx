@@ -15,8 +15,8 @@ import { DISPATCH_STAGES, stageLabel, type DispatchStage } from "./dispatchStage
 import { DispatchCard } from "./DispatchCard";
 import { canAct, hasFullAccess } from "./navigation";
 import { dispatchBoard, kbKey, num, recentShipment, type Tab } from "./intakeStages";
-import { dataRows, type DataRow } from "./dispatchPositionRows";
-import { orderShipmentRows, shipmentGroupKey, shipmentPositions, ShipmentGroupHeader, UpdCell } from "./ShipmentGroupHeader";
+import { actShares, dataRows, type DataRow } from "./dispatchPositionRows";
+import { orderShipmentRows, ProjectShippingData, shipmentGroupKey, shipmentPositions, ShipmentGroupHeader, UpdCell } from "./ShipmentGroupHeader";
 export { dataRows, type DataRow } from "./dispatchPositionRows";
 
 /* «Данные отправок» (владелец 28.10.2026, раздел «Менеджмент»): менеджер (Ульяна Ладутько) вносит данные для
@@ -62,10 +62,11 @@ export function stageGaps(stage: DispatchStage | null, gaps: string[] | undefine
   return gaps && EARLY.includes(stage) ? gaps.filter((gap) => !/упд/i.test(gap)) : gaps;
 }
 
-/** ГРН партий строки: несколько партий — через запятую (`grns` сервера, иначе одна `grn`; у остатка — партии актов приёмки). */
-export function grnText(row: DataRow, source?: IntakeRow): string {
+/** ГРН партий строки: несколько партий — через запятую (`grns` сервера, иначе одна `grn`). У остатка на складе — только
+ *  партии, где ещё что-то лежит (`actShares`): ГРН уже уехавшей партии сюда не попадает (владелец 12.11). */
+export function grnText(row: DataRow, source?: IntakeRow, shipments: Shipment[] = []): string {
   const line = row.shipment?.lines.find((item) => `${row.shipment!.id}:${item.id}` === row.id) as ({ grns?: string[] | null } & Shipment["lines"][number]) | undefined;
-  const list = line?.grns?.length ? line.grns : line?.grn ? [line.grn] : row.shipment ? [] : [...new Set((source?.acts ?? []).map((act) => act.grn).filter(Boolean))];
+  const list = line?.grns?.length ? line.grns : line?.grn ? [line.grn] : row.shipment ? [] : [...new Set((source ? actShares(source, shipments) : []).map((share) => share.grn).filter(Boolean))];
   return list.length ? list.join(", ") : row.grn;
 }
 
@@ -200,8 +201,8 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
       render: (row) => <><span className="muted ship-due">{formatDate(deadlineOf(row)) || "—"}</span><ReadyForecast forecast={readiness(projectNames(row), forecasts, deadlineOf(row) || null, row.shipment?.status ?? "Новая")} /></> },
     status: { key: "status", title: "Этап позиции", value: (row) => rowStageLabel(row), filter: true, width: 112,
       render: (row) => <span title={row.ownStage}><StatusChip tone={row.stage ? STAGE_TONE[row.stage] : "neutral"}>{rowStageLabel(row)}</StatusChip></span> },
-    grn: { key: "grn", title: "ГРН партии", value: (row) => grnText(row, sourceOf(row)), width: 128, wrap: true, maxWidth: 200,
-      render: (row) => <span className="ship-position-grn">{grnText(row, sourceOf(row)) || "—"}</span> },
+    grn: { key: "grn", title: "ГРН партии", value: (row) => grnText(row, sourceOf(row), shipments), width: 128, wrap: true, maxWidth: 200,
+      render: (row) => <span className="ship-position-grn">{grnText(row, sourceOf(row), shipments) || "—"}</span> },
     shipmentStatus: { key: "shipmentStatus", title: "Статус отправки", value: (row) => row.shipment?.status ?? "Не создана", width: 130, wrap: true, maxWidth: 160, render: stateCell },
     shipment: { key: "shipment", title: "Отправка", value: (row) => row.shipment?.number ?? "", export: true },
     carrier: { key: "carrier", title: "ТК", hint: "Транспортная компания", value: (row) => row.shipment?.carrier ?? "", width: 96, wrap: true, maxWidth: 140,
@@ -245,7 +246,10 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     }
     return <span className="ship-position-group">
       <button type="button" className="link-button ship-position-group-title" onClick={(event) => { event.stopPropagation(); setOpen({ id: `project:${name}`, row: source }); }}><strong>{name}</strong>{source.customer && ` · ${source.customer}`}</button>
-      {!source.shipment && <span className="ship-position-group-data">{dataCell(source)}</span>}
+      {/* Данные проекта — открыто, пустое подсвечено (владелец 12.11), как в «Приёмке с производства». */}
+      {cards?.[name] ? <ProjectShippingData data={cards[name]} updRequired={!EARLY.includes(source.stage)} /> : <span className="ship-position-group-data">{dataCell(source)}</span>}
+      {canEdit && <button type="button" className="secondary small" aria-label={`Изменить данные отправки ${name}`}
+        onClick={(event) => { event.stopPropagation(); setOpen({ id: `project:${name}`, row: source }); }}>Изменить</button>}
       <ReadyForecast forecast={forecastOf(source)} />
       {decision && decisionCell(decision)}
     </span>;
