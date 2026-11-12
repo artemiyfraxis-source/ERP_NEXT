@@ -12,7 +12,7 @@ import {
   type TechcardRevision,
   failureText,
 } from "./api";
-import { ETK_CONNECTION_COLUMNS, ETK_NOT_SET, etkConnectionRows, etkContactSpecs, etkDrawHarness, etkDrawTubeCut, etkFigure, etkParams, type EtkParams, type EtkTopologyData } from "./etkDraw";
+import { ETK_CONNECTION_COLUMNS, ETK_TUBE_COLUMNS, ETK_NOT_SET, etkDocumentConnectionRows, etkPhysicalConfig, etkTubePlacementRows, etkContactSpecs, etkDrawHarness, etkDrawTubeCut, etkFigure, etkParams, type EtkParams, type EtkTopologyData } from "./etkDraw";
 import { etkMarkLabelsPage, etkPrintPages } from "./etkPrint";
 import { hasMarkSerial, markSerialSpan, markSerialTemplate, type MarkSerialRange } from "./markSerial";
 import { etkPartSource, etkRouteOf, etkSemiSource, etkSourceLines, formatMinutes, type EtkPfGroup } from "./etkRoute";
@@ -29,11 +29,10 @@ import { SAFETY_HEAD, TcCardEditForm, type EditContext } from "./TcCardEditForm"
 import { hasFullAccess } from "./navigation";
 import { EtkFold, EtkFoldScope, useEtkFold } from "./etkFold";
 import { EtkHarnessE4, wireMapModel } from "./EtkHarnessE4";
-import { etkLinkScheme } from "./etkLinkScheme";
+import { etkLinkScheme, EtkLinkSchemeView, type EtkLinkScheme } from "./etkLinkScheme";
 import { changesByOperation, changeValue, revisionActor, revisionChanges } from "./etkRevisions";
 import { PageWindow } from "./PageWindow";
 import { TdIssuesPanel } from "./TdIssuesPanel";
-import { LinkSchemeView, type LinkScheme } from "./PinoutLinks";
 import { EtkPfList } from "./EtkPfList";
 import { ETK_TO_TEMPLATE_CONFIRM, etkCardSourceNote } from "./etkCardSource";
 
@@ -104,11 +103,26 @@ function topology(document: ProjectTechcard["document"]): EtkTopology | null {
     Есть распиновка генератора или таблица соединений (`scheme`, владелец 14.10: «не подтянулась новая версия») — схема
     связей Э4, та же, что в генераторе: таблицы разъёмов с каждым проводом и линии между контактами; прежние объёмные
     разъёмы и плоская таблица соединений её не повторяют. */
-function HarnessView({ value, list, connections, raw, task, scheme }: {
+function HarnessView({ value, list, connections, raw, task, scheme, document }: {
   value: EtkTopology | null; list: EtkOperation[]; connections: string[][]; raw?: unknown; task?: { project: string; index: string; taskId?: string };
-  scheme?: LinkScheme | null;
+  scheme?: EtkLinkScheme | null; document?: unknown;
 }) {
-  const links = scheme ? <div className="etk-link-scheme"><LinkSchemeView scheme={scheme} titled={false} /></div> : null;
+  const links = scheme ? <div className="etk-link-scheme"><EtkLinkSchemeView scheme={scheme} titled={false} /></div> : null;
+  if (etkPhysicalConfig(document)) {
+    const tubes = etkTubePlacementRows(document);
+    return <EtkFold block="schema" className="etk-schema" summary="Схема связей и таблица соединений">
+      {links}
+      <h3>Таблица соединений</h3>
+      {connections.length ? <div className="table-wrap"><table className="etk-result-table etk-links" style={{ width: "100%", minWidth: 0 }} aria-label="Таблица соединений">
+        <thead><tr>{ETK_CONNECTION_COLUMNS.map((column, i) => <th key={i} scope="col">{column}</th>)}</tr></thead>
+        <tbody>{connections.map((row) => <tr key={row[0]}>{row.map((cell, i) => <td key={i} className={i === 0 || i === 3 || i === 5 ? "num" : undefined}>{cell}</td>)}</tr>)}</tbody>
+      </table></div> : <p className="empty">Соединения не заданы.</p>}
+      {tubes.length > 0 && <><h3>Размещение трубок</h3><div className="table-wrap"><table className="etk-result-table" style={{ width: "100%", minWidth: 0, tableLayout: "fixed", overflowWrap: "anywhere" }} aria-label="Размещение трубок">
+        <thead><tr>{ETK_TUBE_COLUMNS.map((column, i) => <th key={column} scope="col" style={{ width: [20, 8, 8, 28, 12, 24][i] + "%", textAlign: i === 1 || i === 2 ? "right" : "left", whiteSpace: "normal" }}>{column}</th>)}</tr></thead>
+        <tbody>{tubes.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j} className={j === 1 || j === 2 ? "num" : undefined}>{cell}</td>)}</tr>)}</tbody>
+      </table></div></>}
+    </EtkFold>;
+  }
   if (task && links) {
     return <EtkFold block="schema" className="etk-schema" lazy summary="Схема Э4">
       <EtkHarnessE4 project={task.project} index={task.index} taskId={task.taskId} model={null} fallback={links} />
@@ -751,7 +765,7 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
     {card.review_note && <div className="warning-inline etk-review" role="status"><strong>Нужна проверка технолога:</strong> {card.review_note}</div>}
     {warnings(card.document).length > 0 && <details className="etk-warnings"><summary>Предупреждения сборки · {warnings(card.document).length}</summary>
       {warnings(card.document).map((warning) => <div key={warning}>{warning}</div>)}</details>}
-    <HarnessView value={topology(card.document)} list={list} connections={etkConnectionRows(card.document?.connections)}
+    <HarnessView value={topology(card.document)} list={list} connections={etkDocumentConnectionRows(card.document)} document={card.document}
       raw={card.document?.connections} scheme={linkScheme} task={task ? { project: card.project, index: card.item_index, taskId } : undefined} />
     <EtkView key={card.id} card={card} canEdit={canEdit} canTemplate={principal.permissions.erptctpl === "edit"} focus={focus} task={task} sketches={sketches} onSketches={loadSketches} sketchUrl={source.url} onSaved={(updated) => {
       onChange(updated);

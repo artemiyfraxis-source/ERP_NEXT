@@ -3,10 +3,11 @@ import { createRoot } from "react-dom/client";
 import { wireColorKnown } from "./connectorArt";
 import { coreColor, SHIELD_COLOR } from "./pinoutCheck";
 import { setCustomColors } from "./wireColors";
-import { drawnWire, LinkSchemeSvg, schemeLayout, type LinkScheme, type SchemeAnchor, type SchemeConnector, type SchemeSide, type SchemeWire } from "./PinoutLinks";
+import { drawnWire, LinkSchemeSvg, LinkSchemeView, schemeLayout, type LinkScheme, type SchemeAnchor, type SchemeConnector, type SchemeSide, type SchemeWire } from "./PinoutLinks";
 import { pinCountFromArt } from "./terminalPick";
 import { parseCorePins_ } from "./tcGenLogic";
 import { planTwist } from "./twistGroups";
+import { etkPhysicalConfig, etkPhysicalEndLabel, etkPhysicalSegmentLabel, etkTubePlacementRows, etkTubeTargetLabel } from "./etkDraw";
 
 /*
  * Схема связей ЭТК (владелец 14.10: «не подтянулась новая версия» — в выданной ЭТК та же схема Э4, что в генераторе):
@@ -21,6 +22,8 @@ const obj = (value: unknown): Obj => (value && typeof value === "object" && !Arr
 const list = (value: unknown): Obj[] => (Array.isArray(value) ? value.filter((item) => item && typeof item === "object" && !Array.isArray(item)) as Obj[] : []);
 const text = (value: unknown) => (value == null ? "" : String(value).trim());
 const int = (value: unknown) => { const n = Math.round(Number(value)); return Number.isFinite(n) ? n : 0; };
+
+export type EtkLinkScheme = LinkScheme & { physical?: { connections: Obj[]; tubes: Obj[]; config: Obj } };
 
 /** Сторона по ключу разъёма «А1» / «В2» (и латиницей). */
 function sideOf(key: string): SchemeSide | null {
@@ -166,16 +169,183 @@ function fromConnections(document: Obj, config: Obj): LinkScheme | null {
   return { connectors, wires, splices: [], twists: [] };
 }
 
+/** Physical segments are authoritative: never reconstruct them by walking the legacy pinout. */
+function fromPhysical(document: Obj, config: Obj): EtkLinkScheme | null {
+  const connections = list(config.physicalConnections);
+  if (!connections.length) return null;
+  const pins = connections.flatMap((link) => [obj(link.from), obj(link.to)]).filter((end) => end.kind === "pin");
+  const ids = [...new Set(pins.map((end) => text(end.epId)))];
+  const connectors: SchemeConnector[] = ids.map((id, index) => {
+    const ends = pins.filter((end) => text(end.epId) === id), end = ends[0];
+    const op = list(config.ops).find((item) => text(item.epId) === id), ep = obj(op?.ep);
+    const key = text(op?.epKey) || text(end.label) || `XS${index + 1}`;
+    const side = text(op?.side) === "B" || (!op && text(obj(end.end).side) === "B") ? "B" : "A";
+    const conn = text(end.conn), housing = housingOf(document, conn, side);
+    return { id, key, side, conn, pins: Math.max(housing.n, ...ends.map((end) => int(end.pin))), series: housing.title,
+      designation: text(end.label) || key, terminal: text(op?.type) === "solderConn" ? "пайка" : text(ep.termArt) };
+  });
+  const spliceEnds = connections.flatMap((link) => [obj(link.from), obj(link.to)]).filter((end) => end.kind === "splice");
+  const splices = [...new Set(spliceEnds.map((end) => text(end.spliceId)))].map((id) => ({
+    id, label: text(spliceEnds.find((end) => text(end.spliceId) === id)?.label) || "Сросток",
+  }));
+  const anchor = (end: Obj): SchemeAnchor => end.kind === "pin" ? { kind: "pin", epId: text(end.epId), pin: int(end.pin) }
+    : end.kind === "splice" ? { kind: "splice", id: text(end.spliceId) } : { kind: "tail" };
+  const wires: SchemeWire[] = connections.map((link) => {
+    const cable = list(config.wires).find((item) => item.idx === link.idx);
+    const colors = Array.isArray(cable?.coreColors) ? cable.coreColors : [];
+    const own = coreColor(text(colors[int(link.unit)]) || undefined), from = obj(link.from), to = obj(link.to);
+    const at: Record<string, number | null> = {};
+    [from, to].filter((end) => end.kind === "pin").forEach((end) => { at[text(end.epId)] = int(end.pin); });
+    return { key: `${int(link.idx)}.${int(link.unit)}`, num: etkPhysicalSegmentLabel(link), name: text(link.wire),
+      color: link.shield ? SHIELD_COLOR : own?.hex ?? wireColorKnown(text(link.wire)), stripe: own?.stripe ?? null,
+      length: Number(cable?.length) || 0, shield: link.shield === true, at, a: [anchor(from)], b: [anchor(to)] };
+  });
+  return { connectors, wires, splices, twists: [], physical: { connections, tubes: list(config.tubePlacements), config } };
+}
+
 /** Схема связей документа ЭТК; данных нет (старая ЭТК, ручная сборка, КОАКС) — null. */
-export function etkLinkScheme(document: unknown): LinkScheme | null {
+export function etkLinkScheme(document: unknown): EtkLinkScheme | null {
   const doc = obj(document), config = obj(doc.build_config);
   setCustomColors(config.colorHex as Record<string, string> | undefined);
   try {
+    if (etkPhysicalConfig(doc)) return fromPhysical(doc, config);
     const scheme = fromPinout(doc, config) ?? fromConnections(doc, config);
     return scheme && scheme.connectors.length ? scheme : null;
   } catch {
     return null;
   }
+}
+
+type PhysicalNode = { id: string; end: Obj; column: number; x: number; y: number; rows: string[]; desired: number[] };
+
+function wrapPhysicalLabel(value: string, width: number): string[] {
+  const rows: string[] = [];
+  const words = value.split(/\s+/).flatMap((word) => word.length > width ? word.match(new RegExp(`.{1,${width}}`, "g")) ?? [] : [word]);
+  words.forEach((word) => {
+    const last = rows.length - 1;
+    if (last >= 0 && rows[last].length + word.length + 1 <= width) rows[last] += ` ${word}`;
+    else rows.push(word);
+  });
+  return rows;
+}
+
+function physicalCurve(from: PhysicalNode, to: PhysicalNode, offset = 0) {
+  const sameColumn = from.x === to.x, bend = sameColumn ? (from.column === 2 ? -95 : 95) : (to.x - from.x) / 2;
+  const c1 = from.x + bend, c2 = sameColumn ? to.x + bend : to.x - bend;
+  return {
+    d: `M${from.x},${from.y} C${c1},${from.y + offset} ${c2},${to.y + offset} ${to.x},${to.y}`,
+    labelX: sameColumn ? from.x + bend * .75 : (from.x + to.x) / 2,
+    at: (t: number) => {
+      const u = 1 - t;
+      const x = u ** 3 * from.x + 3 * u ** 2 * t * c1 + 3 * u * t ** 2 * c2 + t ** 3 * to.x;
+      const y = u ** 3 * from.y + 3 * u ** 2 * t * (from.y + offset) + 3 * u * t ** 2 * (to.y + offset) + t ** 3 * to.y;
+      const dx = 3 * u ** 2 * (c1 - from.x) + 6 * u * t * (c2 - c1) + 3 * t ** 2 * (to.x - c2);
+      const dy = 6 * u * t * (to.y - from.y) + 3 * (u ** 2 - t ** 2) * offset;
+      return { x, y, angle: Math.atan2(dy, dx) * 180 / Math.PI };
+    },
+  };
+}
+
+/** Pins are identified by endpoint AND pin; splice nodes are shared across every physical segment. */
+function PhysicalSchemeSvg({ scheme }: { scheme: EtkLinkScheme }) {
+  const physical = scheme.physical!;
+  const { config, connections } = physical;
+  const nodes = new Map<string, PhysicalNode>();
+  const idOf = (end: Obj) => end.kind === "pin" ? `pin:${text(end.epId)}:${int(end.pin)}`
+    : end.kind === "splice" ? `splice:${text(end.spliceId)}`
+      : `${text(end.kind)}:${text(obj(end.end).idx)}.${text(obj(end.end).unit)}.${text(obj(end.end).side)}`;
+  connections.forEach((link, i) => [obj(link.from), obj(link.to)].forEach((end) => {
+    const id = idOf(end), existing = nodes.get(id);
+    if (existing) { existing.desired.push(45 + i * 52); return; }
+    const connector = scheme.connectors.find((item) => item.id === text(end.epId));
+    const side = connector?.side ?? text(obj(end.end).side);
+    const column = end.kind === "splice" ? 1 : side === "B" ? 2 : 0;
+    const label = `${etkPhysicalEndLabel(end, config)}${end.kind === "pin" ? ` · конт. ${text(end.pin)}` : ""}`;
+    nodes.set(id, { id, end, column, x: [185, 408, 631][column], y: 0, rows: wrapPhysicalLabel(label, column === 1 ? 22 : 26), desired: [45 + i * 52] });
+  }));
+  for (const column of [0, 1, 2]) {
+    let bottom = 20;
+    [...nodes.values()].filter((node) => node.column === column)
+      .sort((a, b) => a.desired[0] - b.desired[0]).forEach((node) => {
+        node.y = Math.max(bottom + 25, node.desired.reduce((a, b) => a + b, 0) / node.desired.length);
+        bottom = node.y + Math.max(28, node.rows.length * 12);
+      });
+  }
+  const parallel = new Map<string, number>();
+  const curves = connections.map((link) => {
+    const from = nodes.get(idOf(obj(link.from)))!, to = nodes.get(idOf(obj(link.to)))!;
+    const pair = [from.id, to.id].sort().join("|"), lane = parallel.get(pair) ?? 0;
+    parallel.set(pair, lane + 1);
+    return physicalCurve(from, to, lane * 22);
+  });
+  const graphHeight = Math.max(100, ...[...nodes.values()].map((node) => node.y + node.rows.length * 12 + 28))
+    + Math.max(0, ...parallel.values()) * 22;
+  const tubes = etkTubePlacementRows({ build_config: config }).map((row) => wrapPhysicalLabel(
+    `${row[0]} · ${row[1]} мм × ${row[2]} · ${row[3]} · ${row[4]}${row[5] ? ` · Надеть через: ${row[5]}` : ""}`, 108));
+  const tubeHeight = tubes.reduce((height, rows) => height + rows.length * 14 + 14, 0);
+  return <svg xmlns="http://www.w3.org/2000/svg" viewBox={`0 0 816 ${graphHeight + tubeHeight}`} role="img"
+    aria-label="Физические соединения: контакты разъёмов, сростки, свободные концы и наконечники" style={{ display: "block", width: "100%", maxWidth: 1024, height: "auto" }}>
+    {connections.map((link, i) => {
+      const wire = scheme.wires[i];
+      const { d, labelX, at } = curves[i], labelY = at(.5).y - 8;
+      return <g key={wire.key} data-segment={wire.key} data-from={idOf(obj(link.from))} data-to={idOf(obj(link.to))}>
+        <path d={d} stroke="#3b4652" strokeWidth="4.5" fill="none" />
+        <path d={d} stroke={wire.color || "#6b7c86"} strokeWidth="2.5" fill="none" strokeDasharray={wire.shield ? "6 3" : undefined} />
+        {wire.stripe && <path d={d} stroke={wire.stripe} strokeWidth="2.5" fill="none" strokeDasharray="4 4" />}
+        <text x={labelX} y={labelY} textAnchor="middle" className="pin-links-label">{wire.num}{wire.shield ? " · экран" : ""}</text>
+        <title>{`${wire.num} · ${wire.name} · ${etkPhysicalEndLabel(obj(link.from), config)} → ${etkPhysicalEndLabel(obj(link.to), config)}`}</title>
+      </g>;
+    })}
+    {physical.tubes.map((tube, index) => {
+      const target = obj(tube.target), end = obj(target.end);
+      let at: { x: number; y: number; angle: number } | undefined;
+      if (target.kind === "splice") {
+        const node = nodes.get(`splice:${text(target.spliceId)}`);
+        if (node) at = { x: node.x, y: node.y, angle: 0 };
+      } else {
+        const linkIndex = connections.findIndex((item) => item.idx === end.idx && item.unit === end.unit);
+        if (linkIndex >= 0) {
+          const t = target.kind === "cup" ? .06 : .2;
+          at = curves[linkIndex].at(end.side === "B" ? 1 - t : t);
+        }
+      }
+      return at && <g key={index} data-tube-target={text(target.kind)} data-tube-phase={text(tube.phase)}>
+        <rect x={at.x - 14} y={at.y - 7} width="28" height="14" rx="3" transform={`rotate(${at.angle} ${at.x} ${at.y})`}
+          fill="#3b4652" fillOpacity=".8" stroke="#17272b" />
+        <text x={at.x} y={at.y - 12} textAnchor="middle" className="pin-links-label">Т{index + 1}</text>
+        <title>{etkTubeTargetLabel(target, config)}</title>
+      </g>;
+    })}
+    {[...nodes.values()].map((node) => <g key={node.id} data-kind={text(node.end.kind)} data-node={node.id}>
+      {node.end.kind === "lug" ? <><circle cx={node.x} cy={node.y} r="7" fill="#fff" stroke="#3b4652" strokeWidth="2" /><circle cx={node.x} cy={node.y} r="3" fill="#fff" stroke="#3b4652" /></>
+        : <circle cx={node.x} cy={node.y} r={node.end.kind === "splice" ? 5 : 4} fill={node.end.kind === "free" ? "#fff" : "#3b4652"} stroke="#3b4652" strokeWidth="1.5" />}
+      <text x={node.column === 0 ? 12 : node.column === 2 ? 646 : node.x} y={node.column === 1 ? node.y + 19 : node.y - (node.rows.length - 1) * 6}
+        textAnchor={node.column === 1 ? "middle" : "start"} className="pin-links-cell" fontSize="11">
+        {node.rows.map((row, i) => <tspan key={i} x={node.column === 0 ? 12 : node.column === 2 ? 646 : node.x} dy={i ? 12 : 0}>{row}</tspan>)}
+      </text>
+    </g>)}
+    {(() => {
+      let y = graphHeight;
+      return tubes.map((rows, i) => {
+        const top = y; y += rows.length * 14 + 14;
+        return <g key={i} data-tube-placement={text(physical.tubes[i].id)}>
+          <rect x="12" y={top - 9} width="20" height="10" rx="3" fill="#3b4652" />
+          <text x="40" y={top} fontSize="11" className="pin-links-cell">{rows.map((row, k) => <tspan key={k} x="40" dy={k ? 14 : 0}>{k ? row : `Т${i + 1} · ${row}`}</tspan>)}</text>
+        </g>;
+      });
+    })()}
+  </svg>;
+}
+
+/** Versioned topology uses the same diagram on screen and in print, including connectorless branches. */
+export function EtkLinkSchemeView({ scheme, titled = true }: { scheme: EtkLinkScheme; titled?: boolean }) {
+  if (!scheme.physical) return <LinkSchemeView scheme={scheme} titled={titled} />;
+  return <div className="pin-links" role="group" aria-label="Схема связей">
+    <div className="pin-links-head">{titled && <span className="pin-links-title">Схема связей</span>}
+      <span className="muted">{scheme.wires.length} уч. · сростков {scheme.splices.length}</span>
+    </div>
+    <PhysicalSchemeSvg scheme={scheme} />
+  </div>;
 }
 
 /** Ширина поля схемы на листе А4 (узкие колонки, без уменьшения шрифта). */
@@ -200,12 +370,12 @@ const PRINT_CSS = [
 ].join("\n");
 
 /** Схема связей для печати ЭТК: SVG той же схемы, что на экране, со своими цветами для бумаги. */
-export function etkLinkSchemeMarkup(scheme: LinkScheme): string {
+export function etkLinkSchemeMarkup(scheme: EtkLinkScheme): string {
   if (typeof document === "undefined") return "";
   const host = document.createElement("div");
   const root = createRoot(host);
   try {
-    flushSync(() => root.render(<LinkSchemeSvg scheme={scheme} layout={schemeLayout(scheme, PRINT_ROOM)} />));
+    flushSync(() => root.render(scheme.physical ? <PhysicalSchemeSvg scheme={scheme} /> : <LinkSchemeSvg scheme={scheme} layout={schemeLayout(scheme, PRINT_ROOM)} />));
     const svg = host.innerHTML;
     return svg ? `<div class="etk-print-scheme"><style>${PRINT_CSS}</style>${svg}</div>` : "";
   } finally {

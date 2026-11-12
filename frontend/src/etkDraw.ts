@@ -771,6 +771,87 @@ export function etkConnectionRows(value: unknown): string[][] {
   });
 }
 
+/** A versioned export is authoritative, including an intentionally empty connection list. */
+export function etkPhysicalConfig(document: unknown): Row | null {
+  const config = obj(obj(document).build_config);
+  return config.topologyVersion === 1 ? config : null;
+}
+
+export function etkMaterialLabel(value: unknown): string {
+  const material = obj(value);
+  return [...new Set([str(material.art), str(material.name)].filter(Boolean))].join(" · ");
+}
+
+/** Human labels never stringify the physical end reference or expose endpoint UUIDs. */
+export function etkPhysicalEndLabel(value: unknown, config: Row = {}): string {
+  const end = obj(value);
+  switch (end.kind) {
+    case "pin": {
+      const op = list(config.ops).find((op) => op.epId === end.epId);
+      const pins = list(config.physicalConnections).flatMap((link) => [obj(link.from), obj(link.to)])
+        .filter((at) => at.kind === "pin");
+      const ordinal = [...new Set(pins.map((at) => at.epId))].indexOf(end.epId);
+      const designation = str(end.label) || str(op?.epKey) || (ordinal >= 0 ? `XS${ordinal + 1}` : "");
+      return ["Контакт разъёма", designation, str(end.conn)].filter(Boolean).join(" · ");
+    }
+    case "splice": return ["Сросток", str(end.label) || etkSpliceLabel(end.spliceId, config)].filter(Boolean).join(" · ");
+    case "free": return "Свободный конец";
+    case "lug": return ["Наконечник", etkMaterialLabel(end.material)].filter(Boolean).join(" · ");
+    default: return "Не задано";
+  }
+}
+
+function etkSpliceLabel(id: unknown, config: Row): string {
+  const ends = list(config.physicalConnections).flatMap((link) => [obj(link.from), obj(link.to)]);
+  return str(ends.find((end) => end.kind === "splice" && end.spliceId === id)?.label) || "Без обозначения";
+}
+
+/** Stable wire index and unit identify a segment independently of list order. */
+export function etkPhysicalSegmentLabel(value: unknown): string {
+  const end = obj(value);
+  const idx = Number(end.idx), unit = Number(end.unit);
+  return Number.isInteger(idx) && idx >= 0 && Number.isInteger(unit) && unit >= 0
+    ? `${idx + 1}.${unit + 1}` : "Не задано";
+}
+
+export function etkPhysicalRefLabel(value: unknown, config: Row): string {
+  const end = obj(value), side = end.side === "B" ? "В" : "А";
+  const segment = list(config.physicalConnections).find((link) => link.idx === end.idx && link.unit === end.unit);
+  const at = segment && obj(end.side === "B" ? segment.to : segment.from);
+  return `Участок ${etkPhysicalSegmentLabel(end)}, конец ${side}${at ? ` · ${etkPhysicalEndLabel(at, config)}${at.kind === "pin" ? `, конт. ${str(at.pin)}` : ""}` : ""}`;
+}
+
+export function etkDocumentConnectionRows(document: unknown): string[][] {
+  const config = etkPhysicalConfig(document);
+  if (!config) return etkConnectionRows(obj(document).connections);
+  return list(config.physicalConnections).map((link) => {
+    const from = obj(link.from), to = obj(link.to);
+    return [etkPhysicalSegmentLabel(link), `${link.shield ? "Экран · " : ""}${str(link.wire)}`,
+      etkPhysicalEndLabel(from, config), from.kind === "pin" ? str(from.pin) : "",
+      etkPhysicalEndLabel(to, config), to.kind === "pin" ? str(to.pin) : ""];
+  });
+}
+
+export const ETK_TUBE_COLUMNS = ["Материал", "Длина, мм", "Кол-во, шт.", "Размещение", "Когда надеть", "Через какой конец"];
+
+export function etkTubeTargetLabel(value: unknown, config: Row): string {
+  const target = obj(value);
+  if (target.kind === "splice") return `На сросток · ${etkSpliceLabel(target.spliceId, config)}`;
+  if (target.kind === "branch" || target.kind === "cup") {
+    return `${target.kind === "cup" ? "На чашку" : "На ветвь"} · ${etkPhysicalRefLabel(target.end, config)}`;
+  }
+  return "Не задано";
+}
+
+export function etkTubePlacementRows(document: unknown): string[][] {
+  const config = etkPhysicalConfig(document);
+  if (!config) return [];
+  return list(config.tubePlacements).map((tube) => [etkMaterialLabel(tube.material),
+    str(tube.lengthMm).replace(".", ","), str(tube.count), etkTubeTargetLabel(tube.target, config),
+    tube.phase === "preload" ? "До соединения" : tube.phase === "afterJoin" ? "После соединения" : "Не задано",
+    tube.preloadEnd ? etkPhysicalRefLabel(tube.preloadEnd, config) : ""]);
+}
+
 /** Свивка: пары двумя синусоидами в их цветах, шаг — размером (etkDrawTwist_). */
 export function etkDrawTwist(operation: Row): string {
   const t = obj(obj(operation.fields).twist);
