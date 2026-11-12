@@ -1,6 +1,9 @@
-"""Port: the part-number key of procurement (`document_match.code_key`) for modules that match articles too
-(purchasing nomenclature and requests for quotes) — a module reaches another one only through app/workflows."""
+"""Procurement article keys exposed through the workflow boundary.
 
-from app.modules.procurement.document_match import code_key
+code_key remains the historical storage key (nomenclature, UPD and price history).
+comparison_code_key is an explicit opt-in for matching; never persist its output.
+"""
 
-__all__ = ["code_key"]
+from app.modules.procurement.document_match import code_key, comparison_code_key
+
+__all__ = ["code_key", "comparison_code_key"]
