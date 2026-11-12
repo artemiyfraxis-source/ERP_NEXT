@@ -28,7 +28,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.5.0'
+$script:AgentVersion = '2.5.1'
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
 
@@ -508,7 +508,7 @@ function Start-AgentLoop {
     $nextBeat = Get-Date
     Write-Log "Агент $($script:AgentVersion) запущен: сервер $Base, принтер '$PrinterName'$(if ($DryRun) { ', DRY RUN' }), сканер: $(if ($ScannerAddress) { $ScannerAddress } else { 'USB (WIA), автопоиск' })"
     while ($true) {
-        if (-not $Once -and (Get-Date) -ge $nextBeat) {
+        if ((Get-Date) -ge $nextBeat) {
             try { Send-Heartbeat -Base $Base -AuthToken $AuthToken -PrinterName $PrinterName -ScannerAddress $ScannerAddress }
             catch { Write-Log "Отчёт серверу не ушёл: $($_.Exception.Message)" }
             $nextBeat = (Get-Date).AddSeconds($script:HeartbeatEverySec)

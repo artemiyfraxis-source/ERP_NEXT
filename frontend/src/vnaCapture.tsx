@@ -2,12 +2,15 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError, failureText, vnaCaptureApi, warehouseApi, type ProductionInstrument, type VnaAgent, type VnaCaptureSettings, type VswrNorm } from "./api";
 import { formatNumber } from "./format";
 import { PageWindow } from "./PageWindow";
+import { useCurrentUserId } from "./rights";
 
 const PC_STORAGE = "erp.vna.pc";
 type RememberedPc = Pick<VnaAgent, "id" | "pc">;
-function rememberedPc(): RememberedPc | null {
+function rememberedPc(userId: string | null): RememberedPc | null {
   try {
-    const value = JSON.parse(localStorage.getItem(PC_STORAGE) ?? "null");
+    localStorage.removeItem(PC_STORAGE);
+    if (!userId) return null;
+    const value = JSON.parse(localStorage.getItem(`${PC_STORAGE}:${userId}`) ?? "null");
     return value && typeof value.id === "string" && value.id && value.id.length <= 80
       && typeof value.pc === "string" && value.pc ? { id: value.id, pc: value.pc } : null;
   } catch { return null; } // Storage may be unavailable in private/managed browsers.
@@ -69,11 +72,18 @@ export function VnaSettings({ settings, norm, warnings = [] }: { settings: VnaCa
   </section>;
 }
 
-export function VnaCapture({ instruments, onFile, onBusy, disabled = false, children }: {
+type VnaCaptureProps = {
   instruments: ProductionInstrument[];
   onFile: (file: File, instrumentId: string, settings: VnaCaptureSettings | null, jobId: string) => void;
   onBusy: (busy: boolean) => void; disabled?: boolean; children?: ReactNode;
-}) {
+};
+
+export function VnaCapture(props: VnaCaptureProps) {
+  const userId = useCurrentUserId();
+  return <UserVnaCapture key={userId ?? ""} {...props} userId={userId} />;
+}
+
+function UserVnaCapture({ instruments, onFile, onBusy, disabled = false, children, userId }: VnaCaptureProps & { userId: string | null }) {
   const configured = instruments.filter((item) => item.kind === "Средство измерений" && item.status === "Действует" && item.vna_app);
   const [opened, setOpened] = useState(false);
   const [instrumentId, setInstrumentId] = useState("");
@@ -81,7 +91,7 @@ export function VnaCapture({ instruments, onFile, onBusy, disabled = false, chil
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [agents, setAgents] = useState<VnaAgent[] | null>(null);
-  const [remembered, setRemembered] = useState(rememberedPc);
+  const [remembered, setRemembered] = useState(() => rememberedPc(userId));
   const [agentId, setAgentId] = useState("");
   const [pc, setPc] = useState("");
   const [guide, setGuide] = useState(false);
@@ -129,7 +139,7 @@ export function VnaCapture({ instruments, onFile, onBusy, disabled = false, chil
       if (answer.agent) {
         const selected = { id: answer.agent.id, pc: answer.agent.pc };
         setRemembered(selected); setAgentId(selected.id);
-        try { localStorage.setItem(PC_STORAGE, JSON.stringify(selected)); }
+        try { if (userId) localStorage.setItem(`${PC_STORAGE}:${userId}`, JSON.stringify(selected)); }
         catch { /* Keep the confirmed choice for this mounted window when storage is unavailable. */ }
       }
       const deadline = Date.now() + 240_000;

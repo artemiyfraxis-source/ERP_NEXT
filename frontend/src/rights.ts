@@ -16,6 +16,10 @@ export function setRightsPrincipal(principal: Principal | null) {
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 const snapshot = () => current;
 
+export function useCurrentUserId(): string | null {
+  return useSyncExternalStore(subscribe, snapshot, snapshot)?.user.id ?? null;
+}
+
 /** Может ли вошедший действовать в разделе (по умолчанию «edit»): суперадмин/админ — всегда. */
 export function useCanAct(section: string): boolean {
   const principal = useSyncExternalStore(subscribe, snapshot, snapshot);

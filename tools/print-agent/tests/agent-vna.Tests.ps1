@@ -200,7 +200,7 @@ Describe 'ВАЦ: отчёт без запуска S2VNA' {
         Mock Invoke-ErpApi { [pscustomobject]@{ ok = $true } }
         Send-Heartbeat -Base 'http://test' -AuthToken 'mock-token'
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
-            $Body.vna.name -match '26030095' -and $Body.vna.ready -and $Body.vna.reason -eq '' -and $Body.version -eq '2.5.0' -and ($Body.vna_sources -join ',') -eq 's2vna'
+            $Body.vna.name -match '26030095' -and $Body.vna.ready -and $Body.vna.reason -eq '' -and $Body.version -eq '2.5.1' -and ($Body.vna_sources -join ',') -eq 's2vna'
         }
     }
     It 'heartbeat передаёт причину неготовности' {
@@ -432,5 +432,39 @@ Describe 'Arinst: настройки и heartbeat' {
         Mock Invoke-ErpApi { [pscustomobject]@{ ok = $true } }
         Send-Heartbeat -Base 'http://test' -AuthToken 'mock-token'
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { ($Body.vna_sources -join ',') -eq 's2vna,arinst' -and $Body.vna.name -eq 'S2VNA' }
+    }
+}
+
+
+Describe 'VNA: first -Once run with a legacy token' {
+    It 'binds the token by heartbeat before claiming and uploading a VNA job' {
+        $script:legacyMachine = ''
+        Mock Get-MachineId { 'pc-legacy' }
+        Mock Get-AgentScanners { @() }
+        Mock Get-LanIp { '127.0.0.1' }
+        Mock Get-VnaCapability { @{ name = 'S2VNA'; ready = $true } }
+        Mock Test-ArinstInstalled { $false }
+        Mock Invoke-AgentUpdate {}
+        Mock Invoke-ErpApi {
+            if ($AuthToken -ne 'legacy-token') { throw 'wrong token' }
+            if ($Url -like '*/heartbeat') {
+                $script:legacyMachine = $Body.machine_id
+                return [pscustomobject]@{}
+            }
+            if ($Url -like '*/claim') {
+                if (-not $script:legacyMachine -or $Body.machine_id -ne $script:legacyMachine) { throw '403: legacy token is not bound' }
+                return [pscustomobject]@{ job = [pscustomobject]@{ id = 'legacy-vna'; kind = 'vna'; source = 's2vna' } }
+            }
+            throw 'unexpected API call'
+        }
+        Mock Invoke-VnaCapture { @{ Bytes = [byte[]](1, 2); Ext = 's1p'; Mime = 'application/octet-stream' } }
+        Mock Send-ScanFile {}
+        Mock Invoke-ScannerScan { throw 'must not scan' }
+        Mock Start-Sleep { throw 'Once must not sleep' }
+        Start-AgentLoop -Base 'http://test' -AuthToken 'legacy-token' -PrinterName '' -Once
+        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Url -like '*/heartbeat' -and $Body.machine_id -eq 'pc-legacy' }
+        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Url -like '*/claim' -and $Body.kinds -contains 'vna' }
+        Assert-MockCalled Send-ScanFile -Times 1 -Exactly -Scope It -ParameterFilter { $Url -like '*/jobs/legacy-vna/result' -and $MachineId -eq 'pc-legacy' -and $AuthToken -eq 'legacy-token' }
+        Assert-MockCalled Invoke-ScannerScan -Times 0 -Exactly -Scope It
     }
 }
