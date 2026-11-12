@@ -954,7 +954,11 @@ export function makeGen(D: GenData, S: GenState) {
   const firstCrimpEndpoint_ = (side: Side) => endpointsOnSide_(side).find((e) => e.method === "crimp") || null;
   const epPer_ = (ep: Endpoint | null) => (isComplex_() ? Math.max(2, parseInt(String(ep?.perTerm ?? ""), 10) || 2) : 2);
   /** Контакты разъёма с двойным обжимом, где сейчас действительно два провода (один терминал на двоих). */
-  const epDoublePins_ = (ep: Endpoint | null) => doubledPinsOf_(ep);
+  function epDoublePins_(ep: Endpoint | null): number[] {
+    if (!topologyOn_() || !ep?.doublePins?.length) return doubledPinsOf_(ep);
+    const pins = Object.fromEntries(activeWires_().map((w) => [w.idx, physicalPinsAt_(ep, w).map((p) => p.pin).join(", ")]));
+    return doubledPinsOf_({ doublePins: ep.doublePins, pins });
+  }
 
   /** Длина зачистки обжимного конца (владелец 14.10: «под каждый разъём длину зачистки; если записана — из БД»): введённая у
    *  разъёма (`stripLen`) главнее длины терминала из БД.ТЕР; нет ни той ни другой — «—». */
@@ -3269,6 +3273,15 @@ export function makeGen(D: GenData, S: GenState) {
   const xDesig_ = (ep: Endpoint) => (ep.label || "").trim() || `X${[...endpointsOnSide_("A"), ...endpointsOnSide_("B")].findIndex((e) => e.id === ep.id) + 1}`;
   /** Конец жилы для метки: «X1.1» (разъём и контакт), «С2» (сросток); свободный конец и не заданный — причина, метки нет. */
   function wireMarkEnd_(w: WireEntry, k: number, side: Side): { text: string } | { why: string } {
+    if (topologyOn_()) {
+      const at = physicalAt_({ idx: w.idx, unit: k, side });
+      if (at.kind === "splice") return { text: at.label };
+      if (at.kind === "pin") {
+        const ep = epById_(at.epId);
+        if (ep) return { text: `${xDesig_(ep)}.${at.pin}` };
+      }
+      return { why: `свободный конец ${sideRu_(side)}` };
+    }
     const join = endJoined(S, w.idx, k, side);
     if (join === "tail") return { why: `свободный конец ${sideRu_(side)}` };
     if (join === "splice") { const sp = (S.splices || []).find((x) => x.ends.some((e) => e.idx === w.idx && e.unit === k && e.side === side)); return { text: sp ? spliceName(S, sp) : "С?" }; }

@@ -16,6 +16,54 @@ function view(S: GenState) {
 }
 
 describe("physical pinout editing", () => {
+  it("exports two separate terminals after moving one wire out of a double-crimped pin", () => {
+    const base = harness663();
+    const S: GenState = { ...base, wires: base.wires.filter((w) => w.idx === W.xs1r || w.idx === W.xs1b),
+      endpoints: base.endpoints.filter((ep) => ep.id === "a1").map((ep) => ({ ...ep,
+        pins: { [W.xs1r]: "1", [W.xs1b]: "1" }, doublePins: [1] })), splices: [], tails: [], topology: { version: 1 } };
+    expect(makeGen(D663, S).epDoublePins_(S.endpoints[0])).toEqual([1]);
+    const moved = assignPhysicalPin(D663, S, end(W.xs1b, 0, "A"), "a1", 2);
+    expect(moved.endpoints[0].pins).toEqual(S.endpoints[0].pins);
+    const gen = makeGen(D663, moved);
+    expect(gen.epDoublePins_(moved.endpoints[0])).toEqual([]);
+    const ops = gen.buildConfig().ops as Array<{ type: string; epId?: string; ep?: { doublePins?: number[] }; physicalEnds?: unknown[] }>;
+    const crimp = ops.find((o) => o.type === "prsTerm" && o.epId === "a1")!;
+    // The server uses one terminal per physical end when no double pins are exported.
+    expect(crimp.physicalEnds).toEqual([end(W.xs1r, 0, "A"), end(W.xs1b, 0, "A")]);
+    expect(crimp.physicalEnds).toHaveLength(2);
+    expect(crimp.ep).not.toHaveProperty("doublePins");
+  });
+
+  it("recognizes an allowed double crimp from both physical jumper ends without legacy pins", () => {
+    const moved = assignPhysicalPin(D663, jumper(), end(0, 0, "B"), "a1", 1);
+    expect(makeGen(D663, moved).epDoublePins_(moved.endpoints[0])).toEqual([]);
+    const S = { ...moved, endpoints: moved.endpoints.map((ep) => ep.id === "a1" ? { ...ep, doublePins: [1, 1, 2] } : ep) };
+    expect(S.endpoints[0].pins).toEqual({});
+    expect(makeGen(D663, S).epDoublePins_(S.endpoints[0])).toEqual([1]);
+  });
+
+  it("prints swapped physical pin numbers in both directions", () => {
+    let S = assignPhysicalPin(D663, harness663(), end(W.xs1r, 0, "A"), "a1", 2);
+    S = assignPhysicalPin(D663, S, end(W.xs1b, 0, "A"), "a1", 1);
+    S = { ...S, wireMarks: { enabled: true, mat: "ТУТ 3/1мм белая", len: "12", dist: "25" } };
+    const gen = makeGen(D663, S);
+    const rows = gen.wireMarkList_().rows.filter((r) => r.idx === W.xs1r || r.idx === W.xs1b);
+    const texts = ["XS1.2 to С1", "С1 to XS1.2", "XS1.1 to С2", "С2 to XS1.1"];
+    expect(rows.flatMap((r) => [r.textA, r.textB])).toEqual(texts);
+    const ops = gen.buildConfig().ops as Array<{ opKey: string; markTexts?: string[] }>;
+    expect(ops.find((o) => o.opKey === "cutWireMark")?.markTexts).toEqual(expect.arrayContaining(texts));
+  });
+
+  it("prints both ends of a same-connector jumper", () => {
+    const S = { ...jumper(), wireMarks: { enabled: true, mat: "ТУТ 3/1мм белая", len: "12", dist: "25" } };
+    const gen = makeGen(D663, S);
+    const texts = ["XS1.1 to XS1.2", "XS1.2 to XS1.1"];
+    expect(gen.wireMarkList_().rows.flatMap((r) => [r.textA, r.textB])).toEqual(texts);
+    expect(gen.wireMarkList_().skipped).toEqual([]);
+    const ops = gen.buildConfig().ops as Array<{ opKey: string; markTexts?: string[] }>;
+    expect(ops.find((o) => o.opKey === "cutWireMark")?.markTexts).toEqual(texts);
+  });
+
   it.each(["cut", "inner", "outer"] as const)("keeps a jumper's own length and existing cut lengths in shared %s mode", (measureMode) => {
     const before: GenState = { ...harness663(), advancedLength: false, drawingLength: 300, sharedLengthText: "300", measureMode };
     const oldWires = makeGen(D663, before).buildConfig().wires as Array<{ length: number }>;
