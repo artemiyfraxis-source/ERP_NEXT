@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   productionApi,
   type ProductionInstrument,
@@ -8,6 +8,7 @@ import {
   type VswrSerialRow,
   type VswrTaskListItem,
   type VswrTaskOverview,
+  type VnaCaptureSettings,
 } from "./api";
 import { useCanPrint } from "./rights";
 import { printCoaxPassport } from "./coaxPassportPrint";
@@ -16,6 +17,7 @@ import { formatDate, formatNumber } from "./format";
 import { PageWindow } from "./PageWindow";
 import { StatusChip } from "./StatusChip";
 import { VswrChart } from "./VswrChart";
+import { VnaCapture, VnaSettings } from "./vnaCapture";
 
 /* «Замеры КСВН» в «ОТК» (T4): задание коаксиальной сборки → таблица изделий с последним замером. Замер грузится файлом
    ВАЦ (.s1p / .csv / .txt) в окне; норму сервер берёт из ЭТК задания, а когда её там нет — вердикт и причину пишет
@@ -207,6 +209,11 @@ function VswrUploadWindow({ task, norm, row, instruments, close, onSaved, canRej
   const active = instruments.filter((item) => item.kind === "Средство измерений" && item.status === "Действует");
   const [instrumentId, setInstrumentId] = useState(active[0]?.id ?? "");
   const [file, setFile] = useState<File | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [capturing, setCapturing] = useState(false);
+  const [capturedInstrument, setCapturedInstrument] = useState(false);
+  const [captureSettings, setCaptureSettings] = useState<VnaCaptureSettings | null>(null);
+  const [captureJobId, setCaptureJobId] = useState("");
   const [bandFrom, setBandFrom] = useState(norm.band_mhz?.[0] != null ? String(norm.band_mhz[0]) : "");
   const [bandTo, setBandTo] = useState(norm.band_mhz?.[1] != null ? String(norm.band_mhz[1]) : "");
   const [verdict, setVerdict] = useState("");
@@ -214,17 +221,21 @@ function VswrUploadWindow({ task, norm, row, instruments, close, onSaved, canRej
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<VswrMeasurement | null>(null);
+  const savedCaptureSettings = result?.file_meta?.capture_settings ?? captureSettings;
+  const savedCaptureWarnings = result?.file_meta?.capture_warnings ?? [];
   const problems = uploadProblems({ instrumentId, file, bandFrom, bandTo, norm, verdict, reason });
   const undefinedNorm = norm.status !== "ok";
   const customer = norm.status === "ok" && norm.source === "customer";
 
   async function submit() {
-    if (!file || busy || problems.length) return;
+    if (!file || busy || capturing || problems.length) return;
     setBusy(true);
     setError("");
     try {
       const saved = await productionApi.uploadVswr({
         task_id: task.id, position: row.position, instrument_id: instrumentId, file_name: file.name, file_base64: await readBase64(file),
+        ...(captureSettings ? { capture_settings: captureSettings } : {}),
+        ...(captureJobId ? { capture_job_id: captureJobId } : {}),
         band_from_mhz: parseMhz(bandFrom), band_to_mhz: parseMhz(bandTo),
         ...(undefinedNorm ? { verdict: verdict as "pass" | "fail", reason: reason.trim() } : {}),
       });
@@ -244,14 +255,25 @@ function VswrUploadWindow({ task, norm, row, instruments, close, onSaved, canRej
       <p className={`vswr-norm${undefinedNorm ? " is-undefined" : ""}`}>{normLine(norm)}</p>
       <div className="form-grid">
         <label className="half">Прибор (средство измерения)
-          <select value={instrumentId} onChange={(event) => setInstrumentId(event.target.value)}>
-            {!active.length && <option value="">Нет действующих СИ</option>}
+          <select value={instrumentId} disabled={busy || capturing || capturedInstrument} onChange={(event) => setInstrumentId(event.target.value)}>
+            <option value="">{active.length ? "— выберите прибор —" : "Нет действующих СИ"}</option>
             {active.map((item) => <option key={item.id} value={item.id}>{item.inventory_number} · {item.name} · поверка до {formatDate(item.verification_due)}</option>)}
           </select>
         </label>
-        <label className="half">Файл замера
-          <input type="file" accept={FILE_ACCEPT} aria-label="Файл замера" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
-        </label>
+        <div className="half">
+          <label htmlFor="vswr-measurement-file">Файл замера</label>
+          <input ref={fileInput} id="vswr-measurement-file" type="file" hidden accept={FILE_ACCEPT} aria-label="Файл замера"
+            disabled={busy || capturing} onChange={(event) => {
+              setFile(event.target.files?.[0] ?? null); setCapturedInstrument(false); setCaptureSettings(null); setCaptureJobId("");
+            }} />
+          <VnaCapture instruments={active} disabled={busy} onBusy={setCapturing} onFile={(captured, selectedId, settings, jobId) => {
+            if (fileInput.current) fileInput.current.value = "";
+            setFile(captured); setInstrumentId(selectedId); setCapturedInstrument(true); setCaptureSettings(settings); setCaptureJobId(jobId); setError("");
+          }}>
+            <button type="button" className="secondary small" disabled={busy || capturing} onClick={() => fileInput.current?.click()}>Выбрать файл…</button>
+          </VnaCapture>
+          {file && <small role="status">Выбран файл: {file.name}</small>}
+        </div>
         {/* Норма заказчика: полоса — её, вердикт сервер выносит только по её точкам. */}
         <label>Полоса от, МГц<input inputMode="decimal" value={bandFrom} readOnly={customer} title={customer ? "Полоса нормы заказчика" : undefined} onChange={(event) => setBandFrom(event.target.value)} /></label>
         <label>Полоса до, МГц<input inputMode="decimal" value={bandTo} readOnly={customer} title={customer ? "Полоса нормы заказчика" : undefined} onChange={(event) => setBandTo(event.target.value)} /></label>
@@ -264,13 +286,16 @@ function VswrUploadWindow({ task, norm, row, instruments, close, onSaved, canRej
           <label className="wide">Причина вердикта<textarea value={reason} onChange={(event) => setReason(event.target.value)} /></label>
         </>}
       </div>
+      {captureSettings && <VnaSettings settings={captureSettings} norm={norm} />}
       {problems.length > 0 && <small className="danger-text vswr-problems">{problems.join(". ")}.</small>}
       <div className="form-actions">
         <button className="secondary small" onClick={close}>Отмена</button>
-        <button className="primary small" disabled={busy || problems.length > 0} onClick={() => void submit()}>{busy ? "Загрузка…" : "Загрузить замер"}</button>
+        <button className="primary small" disabled={busy || capturing || problems.length > 0} onClick={() => void submit()}>{busy ? "Загрузка…" : "Загрузить замер"}</button>
       </div>
     </>}
     {result && <>
+      {savedCaptureSettings ? <VnaSettings settings={savedCaptureSettings} norm={norm} warnings={savedCaptureWarnings} />
+        : savedCaptureWarnings.map((warning) => <p key={warning} className="warning-inline" role="status">{warning}</p>)}
       <p className="vswr-result">
         {verdictChip(result)} Макс. КСВН <b>{num(result.max_vswr)}</b> на {num(result.max_vswr_mhz, 1)} МГц · попытка {result.attempt}
         {result.norm_vswr_max !== null && <> · норма ≤ {num(result.norm_vswr_max)}</>}

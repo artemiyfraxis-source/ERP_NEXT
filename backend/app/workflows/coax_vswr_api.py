@@ -56,7 +56,9 @@ from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, production_overview_principal, production_quality_principal
 from app.shared.stored_files import file_response
+from app.shared.vna_capture import CaptureSettings
 from app.workflows.techcard_build import enrich_coax_vswr_norm, load_coax_refs
+from app.workflows.vna_capture_instrument import capture_evidence
 
 router = APIRouter(prefix="/api/production/vswr", tags=["production"])
 
@@ -81,6 +83,8 @@ class RecordVswrPayload(BaseModel):
     band_to_mhz: Decimal | None = None
     verdict: VswrVerdict | None = None  # ручной — только когда нормы в ЭТК нет
     reason: str = Field(default="", max_length=1000)
+    capture_settings: CaptureSettings | None = None
+    capture_job_id: UUID | None = None
 
 
 # --- Норма и ЭТК задания -----------------------------------------------------------------------------------------------
@@ -365,11 +369,17 @@ def upload_measurement(
     document, etk, current = _task_etk(techcards_factory, task)
     norm = (task_norm(document, current, etk["current_revision"], CoaxRefs(refs_factory), now) if etk["techcard_id"]
             else undefined_norm(NO_ETK_REASON))
+    settings = payload.capture_settings.model_dump(exclude_none=True) if payload.capture_settings else None
+    verified = False
+    if payload.capture_job_id is not None:
+        settings, verified = _guard(lambda: capture_evidence(
+            uow_factory(), payload.capture_job_id, payload.instrument_id, principal.actor.id, content))
     measurement = _guard(lambda: record_vswr(RecordVswrCommand(
         task_id=task.id, position=payload.position, instrument_id=payload.instrument_id,
         file_name=payload.file_name, content=content, norm=norm, actor=principal.actor, now=now,
         band_from_mhz=payload.band_from_mhz, band_to_mhz=payload.band_to_mhz,
         verdict=payload.verdict, reason=payload.reason,
+        capture_settings=settings, capture_verified=verified,
     ), uow_factory()))
     return {"measurement": _measurement_result(measurement, trace=True), "position": payload.position}
 

@@ -28,7 +28,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.2.0'
+$script:AgentVersion = '2.5.1'
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
 
@@ -49,12 +49,13 @@ function Write-Log {
 
 function Read-AgentConfig {
     param([string]$Path)
-    $cfg = @{ server = ''; token = ''; printer = ''; scanner = '' }
+    $cfg = @{ server = ''; token = ''; printer = ''; scanner = ''; arinstFolders = $null }
     if ($Path -and (Test-Path $Path)) {
         $raw = Get-Content -Raw -Encoding UTF8 $Path | ConvertFrom-Json
         if ($raw.server) { $cfg.server = [string]$raw.server }
         if ($raw.printer) { $cfg.printer = [string]$raw.printer }
         if ($raw.scanner) { $cfg.scanner = [string]$raw.scanner }
+        if ($null -ne $raw.arinstFolders) { $cfg.arinstFolders = @($raw.arinstFolders) }
         if ($raw.tokenProtected) {
             # DPAPI: расшифровывается только тем пользователем Windows, который ставил агент
             $sec = ConvertTo-SecureString -String $raw.tokenProtected
@@ -137,12 +138,14 @@ function Send-RawToPrinter {
 }
 
 function Invoke-ErpApi {
-    param([string]$Url, [hashtable]$Body, [string]$AuthToken)
-    $json = $Body | ConvertTo-Json -Compress
+    param([string]$Url, [hashtable]$Body, [string]$AuthToken, [string]$MachineId)
+    $json = $Body | ConvertTo-Json -Compress -Depth 5
     $bytes = [Text.Encoding]::UTF8.GetBytes($json)
+    $headers = @{ Authorization = "Bearer $AuthToken" }
+    if ($MachineId) { $headers['X-Agent-Machine-Id'] = $MachineId }
     Invoke-RestMethod -Method Post -Uri $Url -Body $bytes `
         -ContentType 'application/json; charset=utf-8' `
-        -Headers @{ Authorization = "Bearer $AuthToken" } -TimeoutSec 20
+        -Headers $headers -TimeoutSec 20
 }
 
 function Send-JobResult {
@@ -226,6 +229,229 @@ function Get-AgentScanners {
     if ($ScannerAddress) { @{ id = $ScannerAddress; name = "Сканер по сети $ScannerAddress (eSCL)" } }
 }
 
+# ProgID lookup never activates S2VNA. These boundaries are mocked in the tests.
+function Test-VnaRegistered { return $null -ne [Type]::GetTypeFromProgID('S2VNA.Application') }
+function Get-VnaApplication {
+    param([switch]$RunningOnly)
+    if ($RunningOnly) { return [Runtime.InteropServices.Marshal]::GetActiveObject('S2VNA.Application') }
+    return New-Object -ComObject 'S2VNA.Application'
+}
+function Release-VnaApplication {
+    param($Application)
+    if ($null -ne $Application -and [Runtime.InteropServices.Marshal]::IsComObject($Application)) {
+        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($Application)
+    }
+}
+function Get-CachedVnaName {
+    $path = Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($ConfigPath))) 'vna-idn.txt'
+    try {
+        if (Test-Path -LiteralPath $path) {
+            $name = [IO.File]::ReadAllText($path, [Text.Encoding]::UTF8).Trim()
+            if ($name -and $name.Length -le 500 -and $name -notmatch '[\r\n]') { return $name }
+        }
+    } catch {
+        Write-Log "ВАЦ: не удалось прочитать сохранённое имя прибора: $($_.Exception.Message)"
+    }
+    return 'S2VNA'
+}
+function Save-VnaName {
+    param([string]$Name)
+    try {
+        $dir = Split-Path -Parent ([IO.Path]::GetFullPath($ConfigPath))
+        [void][IO.Directory]::CreateDirectory($dir)
+        [IO.File]::WriteAllText((Join-Path $dir 'vna-idn.txt'), $Name, [Text.Encoding]::UTF8)
+    } catch {
+        # A local state error must not discard a valid captured trace.
+        Write-Log "ВАЦ: не удалось сохранить имя прибора: $($_.Exception.Message)"
+    }
+}
+function Get-VnaCapability {
+    if (-not (Test-VnaRegistered)) { return $null }
+    $name = Get-CachedVnaName
+    # S2VNA does not register in the Running Object Table. Heartbeat never touches COM.
+    if (-not (Get-Process -Name S2VNA -ErrorAction SilentlyContinue)) {
+        return @{ name = $name; ready = $false; reason = 's2vna_not_running' }
+    }
+    try {
+        $devices = @(Get-PnpDevice -PresentOnly -ErrorAction Stop | Where-Object {
+            $_.InstanceId -match '^USB\\VID_2226&' -and $_.Status -eq 'OK'
+        })
+    } catch {
+        Write-Log "ВАЦ: не удалось проверить подключение USB: $($_.Exception.Message)"
+        return @{ name = $name; ready = $false; reason = 'probe_failed' }
+    }
+    if (-not $devices.Count) { return @{ name = $name; ready = $false; reason = 'device_not_connected' } }
+    return @{ name = $name; ready = $true; reason = '' }
+}
+
+function Test-ArinstInstalled {
+    if (-not $env:APPDATA) { return $false }
+    return @(Get-ChildItem -Path (Join-Path $env:APPDATA 'ArinstVL*\ArinstVL.exe') -File -ErrorAction SilentlyContinue).Count -gt 0
+}
+
+function Get-ArinstFolders {
+    $cfg = Read-AgentConfig -Path $ConfigPath
+    if ($null -ne $cfg.arinstFolders) { return $cfg.arinstFolders }
+    $profilePath = [Environment]::GetFolderPath('UserProfile')
+    if (-not $profilePath) { $profilePath = $env:USERPROFILE }
+    if (-not $profilePath) { throw 'Не удалось определить папки пользователя — задайте arinstFolders в настройках агента' }
+    $documents = [Environment]::GetFolderPath('MyDocuments')
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    if (-not $documents) { $documents = Join-Path $profilePath 'Documents' }
+    if (-not $desktop) { $desktop = Join-Path $profilePath 'Desktop' }
+    return @($documents, $desktop, (Join-Path $profilePath 'Downloads'))
+}
+
+function Invoke-ArinstCapture {
+    $now = [DateTime]::UtcNow
+    try {
+        $files = @(foreach ($folder in (Get-ArinstFolders)) {
+            if (-not $folder -or -not (Test-Path -LiteralPath $folder -PathType Container)) { continue }
+            # One child level only. Do not follow junctions into unrelated trees.
+            $dirs = @($folder) + @(Get-ChildItem -LiteralPath $folder -Directory -ErrorAction Stop |
+                Where-Object { -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } |
+                ForEach-Object { $_.FullName })
+            foreach ($dir in $dirs) {
+                Get-ChildItem -LiteralPath $dir -File -ErrorAction Stop | Where-Object {
+                    $_.Extension -in @('.s1p', '.s2p') -and
+                    -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -and
+                    $_.LastWriteTimeUtc -ge $now.AddMinutes(-15) -and $_.LastWriteTimeUtc -le $now
+                }
+            }
+        })
+    } catch {
+        Write-Log "Arinst: ошибка поиска сохранённой трассы: $($_.Exception.Message)"
+        throw 'Не удалось найти файл Arinst — проверьте arinstFolders и доступ к папкам в настройках агента'
+    }
+    $file = $files | Sort-Object -Property @{ Expression = 'LastWriteTimeUtc'; Descending = $true }, FullName | Select-Object -First 1
+    if (-not $file) { throw 'Сохраните трассу в Arinst Virtual Lab (.s1p) и повторите — свежих файлов за 15 минут нет' }
+    # Bound the read even if the file grows after enumeration; deny writes while taking this snapshot.
+    $stream = $null
+    try {
+        $stream = [IO.File]::Open($file.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        if ($stream.Length -gt 2MB) { throw 'Файл ВАЦ больше 2 МиБ' }
+        [byte[]]$bytes = New-Object byte[] ([int]$stream.Length)
+        $offset = 0
+        while ($offset -lt $bytes.Length) {
+            $read = $stream.Read($bytes, $offset, $bytes.Length - $offset)
+            if ($read -eq 0) { throw 'Не удалось прочитать файл ВАЦ — сохраните трассу повторно' }
+            $offset += $read
+        }
+        return @{ Bytes = $bytes; FileName = $file.Name; Ext = $file.Extension.TrimStart('.'); Mime = 'application/octet-stream'; Name = 'Arinst VNA-DL' }
+    } catch {
+        if ($_.Exception.Message -match '^(Файл ВАЦ|Не удалось прочитать)') { throw }
+        throw 'Не удалось прочитать файл ВАЦ — проверьте доступ к сохранённой трассе Arinst'
+    } finally { if ($stream) { $stream.Dispose() } }
+}
+
+function Get-VnaSettings {
+    param($Scpi, $Calculation)
+    # S2VNA manual part 2: COM getters, pp. 1123-1125, 1420-1424,
+    # 1696, 1700, 1703, 1970, 2015, 2017, 2079. Never write these properties.
+    $readers = [ordered]@{
+        points = { $Scpi.SENSe(1).SWEep.POINts }
+        start_hz = { $Scpi.SENSe(1).FREQuency.STARt }
+        stop_hz = { $Scpi.SENSe(1).FREQuency.STOP }
+        if_bandwidth_hz = { $Scpi.SENSe(1).BANDwidth.RESolution }
+        averaging_enabled = { $Scpi.SENSe(1).AVERage.STATe }
+        averaging_factor = { $Scpi.SENSe(1).AVERage.COUNt }
+        smoothing_enabled = { $Calculation.SELected.SMOothing.STATe }
+        smoothing_aperture_percent = { $Calculation.SELected.SMOothing.APERture }
+        correction_enabled = { $Scpi.SENSe(1).CORRection.STATe }
+        correction_status = { $Calculation.SELected.CORRection.STATus }
+    }
+    $settings = [ordered]@{}
+    $unavailable = @()
+    foreach ($key in $readers.Keys) {
+        try {
+            $value = & $readers[$key]
+            if ($null -eq $value) { throw 'Property unavailable' }
+            if ($key -like '*_enabled') {
+                if ($value -isnot [bool] -and [string]$value -notin @('0', '1')) { throw 'Invalid Boolean' }
+                $value = [bool][int]$value
+            } elseif ($key -eq 'correction_status') {
+                $value = ([string]$value).Trim().ToUpperInvariant()
+                if ($value -notin @('NONE', 'COR', 'C?', 'C!', 'RC', 'RC?', 'RC!')) { throw 'Unknown correction status' }
+            } else {
+                $value = [double]$value
+                if ([double]::IsNaN($value) -or [double]::IsInfinity($value) -or $value -lt 0) { throw 'Invalid setting' }
+                if ($key -in @('points', 'averaging_factor')) {
+                    if ($value -lt 1 -or $value -ne [Math]::Truncate($value)) { throw 'Invalid count' }
+                    $value = [int]$value
+                }
+            }
+            $settings[$key] = $value
+        } catch {
+            # Optional metadata must never discard a captured trace or turn an unknown state into OFF.
+            $unavailable += $key
+        }
+    }
+    if ($unavailable.Count) { $settings['unavailable'] = @($unavailable) }
+    return $settings
+}
+
+function Get-VnaSnapshot {
+    param($Application)
+    $scpi = $Application.SCPI
+    # Channel 1, selected trace. SERVICE is read-only; PARameter(1) is not necessarily the selected trace.
+    $trace = [int]$scpi.SERVice.CHANnel(1).TRACe(1).ACTive
+    if ($trace -lt 1) { throw 'ВАЦ: активная трасса не определена' }
+    $calc = $scpi.CALCulate(1)
+    $parameter = ([string]$calc.PARameter($trace).DEFine).Trim().ToUpperInvariant()
+    if ($parameter -notin @('S11', 'S22')) { throw "Активная трасса — ${parameter}: выберите S11 или S22 в S2VNA" }
+    $settings = Get-VnaSettings -Scpi $scpi -Calculation $calc
+    $frequencies = @($scpi.SENSe(1).FREQuency.DATA)
+    $data = @($calc.SELected.DATA.SDATa)
+    $after = @($scpi.SENSe(1).FREQuency.DATA)
+    $settingsAfter = Get-VnaSettings -Scpi $scpi -Calculation $calc
+    if ([int]$scpi.SERVice.CHANnel(1).TRACe(1).ACTive -ne $trace -or
+        ([string]$calc.PARameter($trace).DEFine).Trim().ToUpperInvariant() -ne $parameter -or
+        ($frequencies -join '|') -ne ($after -join '|') -or
+        (ConvertTo-Json -InputObject $settings -Compress) -ne (ConvertTo-Json -InputObject $settingsAfter -Compress)) {
+        throw 'ВАЦ: настройки изменились во время чтения — повторите снятие трассы'
+    }
+    $settings['s_parameter'] = $parameter
+    return @{ Name = [string]$Application.Name; Parameter = $parameter; Frequencies = $frequencies; Data = $data; Settings = $settings }
+}
+
+function Invoke-VnaCapture {
+    $app = $null
+    try {
+        try { $app = Get-VnaApplication } catch { throw 'ВАЦ: не удалось подключиться к S2VNA — проверьте установку программы' }
+        if (-not $app.Ready) { throw 'ВАЦ не готов — подключите прибор и дождитесь готовности S2VNA' }
+        try { $trace = Get-VnaSnapshot -Application $app }
+        catch {
+            if ($_.Exception.Message -match '^(ВАЦ|Активная трасса)') { throw }
+            throw 'ВАЦ: не удалось прочитать трассу S2VNA — проверьте канал 1 и повторите'
+        }
+        $frequencies = @($trace.Frequencies); $data = @($trace.Data)
+        if ($frequencies.Count -lt 2 -or $data.Count -ne 2 * $frequencies.Count) { throw 'ВАЦ: число частот и точек трассы не совпадает' }
+        if ($frequencies.Count -gt 100000) { throw 'Файл ВАЦ больше 2 МиБ — уменьшите число точек в S2VNA' }
+        $culture = [Globalization.CultureInfo]::InvariantCulture
+        $text = New-Object Text.StringBuilder
+        $name = ([string]$trace.Name -replace '[\r\n]', ' ').Trim()
+        if (-not $name -or $name.Length -gt 500) { throw 'ВАЦ: не удалось прочитать имя прибора S2VNA' }
+        [void]$text.AppendLine("! S2VNA $name $([DateTime]::UtcNow.ToString('o', $culture)) $($trace.Parameter)")
+        [void]$text.AppendLine('# Hz S RI R 50')
+        $maxStep = 0.0
+        for ($i = 0; $i -lt $frequencies.Count; $i++) {
+            $values = @([double]$frequencies[$i], [double]$data[2 * $i], [double]$data[2 * $i + 1])
+            foreach ($value in $values) {
+                if ([double]::IsNaN($value) -or [double]::IsInfinity($value)) { throw 'ВАЦ: трасса содержит недопустимые числа' }
+            }
+            if ($values[0] -le 0) { throw 'ВАЦ: частота должна быть больше нуля' }
+            if ($i -gt 0) { $maxStep = [Math]::Max($maxStep, [Math]::Abs($values[0] - [double]$frequencies[$i - 1])) }
+            [void]$text.AppendLine(($values | ForEach-Object { $_.ToString('G17', $culture) }) -join ' ')
+            if ($text.Length -gt 2 * 1024 * 1024) { throw 'Файл ВАЦ больше 2 МиБ — уменьшите число точек в S2VNA' }
+        }
+        [byte[]]$bytes = [Text.Encoding]::UTF8.GetBytes($text.ToString())
+        if ($bytes.Length -gt 2 * 1024 * 1024) { throw 'Файл ВАЦ больше 2 МиБ' }
+        Save-VnaName -Name $name
+        $trace.Settings['frequency_step_hz'] = $maxStep
+        return @{ Bytes = $bytes; Ext = 's1p'; Mime = 'application/octet-stream'; Name = $name; CaptureSettings = $trace.Settings }
+    } finally { Release-VnaApplication $app }
+}
+
 # Скачать новую версию, сверить SHA-256 и текст, подменить себя и перезапустить задачу. $NoRestart - для тестов.
 # Возвращает $true, если файл заменён. Ошибки не бросает: агент продолжает работать на старой версии.
 function Invoke-AgentUpdate {
@@ -264,6 +490,11 @@ function Send-Heartbeat {
         machine_id = (Get-MachineId); pc_name = [string]$env:COMPUTERNAME; version = $script:AgentVersion
         lan_ip = (Get-LanIp); printer = [string]$PrinterName; scanners = $scanners
     }
+    $vna = Get-VnaCapability
+    if ($vna) { $body.vna = $vna }
+    $body.vna_sources = @()
+    if ($vna) { $body.vna_sources += 's2vna' }
+    if (Test-ArinstInstalled) { $body.vna_sources += 'arinst' }
     $reply = Invoke-ErpApi -Url "$Base/api/stock/scan/agent/heartbeat" -Body $body -AuthToken $AuthToken
     $names = ($scanners | ForEach-Object { $_.name }) -join '; '
     $line = "Отчёт серверу: сканеры: $(if ($names) { $names } else { 'не найдены' })"
@@ -277,7 +508,7 @@ function Start-AgentLoop {
     $nextBeat = Get-Date
     Write-Log "Агент $($script:AgentVersion) запущен: сервер $Base, принтер '$PrinterName'$(if ($DryRun) { ', DRY RUN' }), сканер: $(if ($ScannerAddress) { $ScannerAddress } else { 'USB (WIA), автопоиск' })"
     while ($true) {
-        if (-not $Once -and (Get-Date) -ge $nextBeat) {
+        if ((Get-Date) -ge $nextBeat) {
             try { Send-Heartbeat -Base $Base -AuthToken $AuthToken -PrinterName $PrinterName -ScannerAddress $ScannerAddress }
             catch { Write-Log "Отчёт серверу не ушёл: $($_.Exception.Message)" }
             $nextBeat = (Get-Date).AddSeconds($script:HeartbeatEverySec)
@@ -510,13 +741,18 @@ function Invoke-ScannerScan {
 
 # multipart/form-data байтами: тело бинарное, заголовки в UTF-8, CRLF.
 function New-MultipartBody {
-    param([string]$Boundary, [string]$FieldName, [string]$FileName, [string]$ContentType, [byte[]]$Bytes)
+    param([string]$Boundary, [string]$FieldName, [string]$FileName, [string]$ContentType, [byte[]]$Bytes, $CaptureSettings)
     $ms = New-Object IO.MemoryStream
     $utf8 = New-Object Text.UTF8Encoding($false)
     $head = "--$Boundary`r`nContent-Disposition: form-data; name=`"$FieldName`"; filename=`"$FileName`"`r`nContent-Type: $ContentType`r`n`r`n"
     $h = $utf8.GetBytes($head)
     $ms.Write($h, 0, $h.Length)
     $ms.Write($Bytes, 0, $Bytes.Length)
+    if ($null -ne $CaptureSettings) {
+        $json = ConvertTo-Json -InputObject $CaptureSettings -Depth 4 -Compress
+        $part = $utf8.GetBytes("`r`n--$Boundary`r`nContent-Disposition: form-data; name=`"capture_settings`"`r`nContent-Type: application/json; charset=utf-8`r`n`r`n$json")
+        $ms.Write($part, 0, $part.Length)
+    }
     $t = $utf8.GetBytes("`r`n--$Boundary--`r`n")
     $ms.Write($t, 0, $t.Length)
     # The comma keeps the byte[] whole: a bare `return` unrolls it into Object[] and the upload goes out as text (422).
@@ -524,19 +760,22 @@ function New-MultipartBody {
 }
 
 function Send-ScanFile {
-    param([string]$Url, [string]$AuthToken, [byte[]]$Bytes, [string]$FileName, [string]$ContentType)
+    param([string]$Url, [string]$AuthToken, [byte[]]$Bytes, [string]$FileName, [string]$ContentType, [string]$MachineId, $CaptureSettings)
     $boundary = 'frx' + [Guid]::NewGuid().ToString('N')
-    [byte[]]$body = New-MultipartBody -Boundary $boundary -FieldName 'file' -FileName $FileName -ContentType $ContentType -Bytes $Bytes
+    [byte[]]$body = New-MultipartBody -Boundary $boundary -FieldName 'file' -FileName $FileName -ContentType $ContentType -Bytes $Bytes -CaptureSettings $CaptureSettings
+    $headers = @{ Authorization = "Bearer $AuthToken" }
+    if ($MachineId) { $headers['X-Agent-Machine-Id'] = $MachineId }
     Invoke-RestMethod -Method Post -Uri $Url -Body $body -ContentType "multipart/form-data; boundary=$boundary" `
-        -Headers @{ Authorization = "Bearer $AuthToken" } -TimeoutSec 60 | Out-Null
+        -Headers $headers -TimeoutSec 60 | Out-Null
 }
 
 # Один опрос заданий сканирования: 'idle' / 'done' / 'error'. Исключения наружу не выходят.
 function Invoke-ScanPollOnce {
     param([string]$Base, [string]$AuthToken, [string]$ScannerAddress)
     $id = ''
+    $machineId = Get-MachineId
     try {
-        $claim = Invoke-ErpApi -Url "$Base/api/stock/scan/agent/claim" -Body @{ host = $env:COMPUTERNAME; machine_id = (Get-MachineId) } -AuthToken $AuthToken
+        $claim = Invoke-ErpApi -Url "$Base/api/stock/scan/agent/claim" -Body @{ host = $env:COMPUTERNAME; machine_id = $machineId; kinds = @('scan', 'vna') } -AuthToken $AuthToken
         $script:ScanClaimError = ''
         if (-not $claim.job) { return 'idle' }
         $id = [string]$claim.job.id
@@ -550,13 +789,18 @@ function Invoke-ScanPollOnce {
     Write-Log "Скан: задание $id, $how"
     $resultUrl = "$Base/api/stock/scan/agent/jobs/$id/result"
     try {
-        $scan = Invoke-ScannerScan -Address $ScannerAddress -Device $device
-        Send-ScanFile -Url $resultUrl -AuthToken $AuthToken -Bytes $scan.Bytes -FileName "scan.$($scan.Ext)" -ContentType $scan.Mime
+        $scan = if ($claim.job.kind -eq 'vna') {
+            if ($claim.job.source -eq 'arinst') { Invoke-ArinstCapture }
+            elseif (-not $claim.job.source -or $claim.job.source -eq 's2vna') { Invoke-VnaCapture }
+            else { throw 'Неизвестный источник ВАЦ — обновите агент ERP' }
+        } else { Invoke-ScannerScan -Address $ScannerAddress -Device $device }
+        $fileName = if ($scan.FileName) { $scan.FileName } else { "capture.$($scan.Ext)" }
+        Send-ScanFile -Url $resultUrl -AuthToken $AuthToken -Bytes $scan.Bytes -FileName $fileName -ContentType $scan.Mime -MachineId $machineId -CaptureSettings $scan.CaptureSettings
         Write-Log "Скан отправлен: задание $id, $($scan.Bytes.Length) байт, $($scan.Mime)"
     } catch {
         $err = $_.Exception.Message
         Write-Log "Скан: ошибка задания ${id}: $err"
-        try { Invoke-ErpApi -Url $resultUrl -Body @{ error = $err } -AuthToken $AuthToken | Out-Null }
+        try { Invoke-ErpApi -Url $resultUrl -Body @{ error = $err } -AuthToken $AuthToken -MachineId $machineId | Out-Null }
         catch { Write-Log "Скан: не удалось сообщить об ошибке: $($_.Exception.Message)" }
         return 'error'
     }

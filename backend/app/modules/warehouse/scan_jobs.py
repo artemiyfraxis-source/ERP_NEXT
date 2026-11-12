@@ -18,13 +18,14 @@ finished jobs older than 30 days are purged on claim (their files stay: the deli
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, Text, Uuid, and_, delete, or_, select, update
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Index, LargeBinary, String, Text, Uuid, and_, case, delete, false, or_, select, text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.shared.advisory_lock import advisory_lock, lock_key
@@ -40,6 +41,86 @@ SCANNER_MAX = 300
 NO_ANSWER = "Сканер не ответил — проверьте агент на ПК склада"
 CANCELLED = "Отменено"
 NO_REASON = "Агент сканирования не прислал скан и не сказал почему"
+VNA_NO_ANSWER = "ВАЦ не ответил — проверьте агент на выбранном ПК"
+VNA_FILE_LIMIT = 2 * 1024 * 1024
+
+
+class AgentTokenRow(Base):
+    """One credential per PC. Enrollment binds immediately; legacy tokens use first-heartbeat TOFU.
+
+    TOFU trusts the first authenticated heartbeat, so legacy credentials must be kept private.
+    A binding is never updated or transferred by heartbeat, claim or result.
+    """
+
+    __tablename__ = "warehouse_agent_tokens"
+    __table_args__ = (
+        CheckConstraint("trim(machine_id) <> ''", name="ck_warehouse_agent_tokens_machine"),
+        Index("uq_warehouse_agent_tokens_machine", "machine_id", unique=True,
+              sqlite_where=text("retired = 0"), postgresql_where=text("retired = false")),
+    )
+
+    token_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("identity_api_tokens.id", ondelete="CASCADE"), primary_key=True)
+    machine_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    retired: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
+
+
+class AgentMachineRefused(Exception):
+    """The authenticated token cannot act for the supplied PC (403)."""
+
+
+def _agent_machine_id(machine_id: str) -> str:
+    machine_id = " ".join(machine_id.split())
+    if not machine_id or len(machine_id) > 80 or machine_id.startswith("legacy:"):
+        raise AgentMachineRefused("Нужен идентификатор ПК, привязанный к токену агента")
+    return machine_id
+
+
+def agent_machine(uow, token_id: UUID, machine_id: str, *, bind: bool = False) -> str:
+    machine_id = _agent_machine_id(machine_id)
+    with uow:
+        session = _session(uow)
+        lock = advisory_lock(session.get_bind(), lock_key("warehouse-agent-enroll", machine_id)) if bind else nullcontext()
+        with lock:
+            row = session.get(AgentTokenRow, token_id)
+            if row is None and bind:
+                try:
+                    # PK/UNIQUE arbitrate simultaneous first heartbeats for either token or PC.
+                    with session.begin_nested():
+                        session.add(AgentTokenRow(token_id=token_id, machine_id=machine_id))
+                        session.flush()
+                except IntegrityError:
+                    row = session.get(AgentTokenRow, token_id)
+                    if row is None:
+                        raise AgentMachineRefused("Этот ПК уже привязан к другому токену агента") from None
+                else:
+                    row = session.get(AgentTokenRow, token_id)
+            if row is None:
+                raise AgentMachineRefused("Сначала отправьте сведения агента о ПК")
+            if row.retired or row.machine_id != machine_id:
+                raise AgentMachineRefused("Токен агента отозван или привязан к другому ПК")
+            uow.commit()
+            return row.machine_id
+
+
+def enroll_agent(uow, token_id: UUID, machine_id: str, revoke: Callable[[UUID], None]) -> None:
+    """Only the redeemed install workflow may replace a PC's credential.
+
+    Revoke before replacement; keep old bindings so even an in-flight old heartbeat cannot use TOFU again.
+    If replacement fails, the old token stays revoked and a fresh authorized install can recover the PC.
+    """
+    machine_id = _agent_machine_id(machine_id)
+    with uow:
+        session = _session(uow)
+        with advisory_lock(session.get_bind(), lock_key("warehouse-agent-enroll", machine_id)):
+            old = session.scalar(select(AgentTokenRow).where(
+                AgentTokenRow.machine_id == machine_id, AgentTokenRow.retired.is_(False)).with_for_update())
+            if old is not None:
+                revoke(old.token_id)
+                old.retired = True
+                session.flush()
+            session.add(AgentTokenRow(token_id=token_id, machine_id=machine_id))
+            uow.commit()
+
 
 PENDING, CLAIMED, DONE, FAILED = "pending", "claimed", "done", "failed"
 OPEN_STATUSES = (PENDING, CLAIMED)
@@ -53,7 +134,15 @@ class ScanJobRow(Base):
     __table_args__ = (
         CheckConstraint("status IN ('pending', 'claimed', 'done', 'failed')", name="ck_warehouse_scan_jobs_status"),
         CheckConstraint("file_id IS NULL OR status = 'done'", name="ck_warehouse_scan_jobs_file_only_done"),
-        CheckConstraint("status <> 'done' OR file_id IS NOT NULL", name="ck_warehouse_scan_jobs_done_file"),
+        CheckConstraint("status <> 'done' OR (kind = 'scan' AND file_id IS NOT NULL) OR "
+                        "(kind = 'vna' AND capture_content IS NOT NULL)", name="ck_warehouse_scan_jobs_done_file"),
+        CheckConstraint("kind IN ('scan', 'vna')", name="ck_warehouse_scan_jobs_kind"),
+        CheckConstraint("source IN ('s2vna', 'arinst')", name="ck_warehouse_scan_jobs_source"),
+        CheckConstraint("(kind = 'scan' AND capture_content IS NULL AND capture_settings IS NULL AND instrument_id IS NULL AND vna_name = '' AND capture_file_name = '' AND source = 's2vna') OR "
+                        "(kind = 'vna' AND file_id IS NULL AND result = '' AND target_machine_id IS NOT NULL "
+                        "AND target_machine_id <> '' AND target_scanner IS NULL)", name="ck_warehouse_scan_jobs_kind_payload"),
+        CheckConstraint("capture_content IS NULL OR (status = 'done' AND length(capture_content) BETWEEN 1 AND 2097152)",
+                        name="ck_warehouse_scan_jobs_capture_size"),
         CheckConstraint("claimed_at IS NULL OR status <> 'pending'", name="ck_warehouse_scan_jobs_pending_unclaimed"),
         CheckConstraint(
             "(status <> 'claimed' AND status <> 'done') OR claimed_at IS NOT NULL",
@@ -93,6 +182,14 @@ class ScanJobRow(Base):
     target_scanner: Mapped[str | None] = mapped_column(String(SCANNER_MAX), nullable=True)
     error: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     result: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    kind: Mapped[str] = mapped_column(String(8), nullable=False, default="scan", server_default="scan")
+    capture_content: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
+    vna_name: Mapped[str] = mapped_column(String(500), nullable=False, default="", server_default="")
+    source: Mapped[str] = mapped_column(String(8), nullable=False, default="s2vna", server_default="s2vna")
+    capture_file_name: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    # Production owns instrument identity; the capture workflow validates it before enqueueing.
+    instrument_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    capture_settings: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
 
 
 @dataclass(frozen=True)
@@ -103,6 +200,13 @@ class ScanJob:
     file_id: UUID | None
     result: str  # the recognition answer as JSON text, '' — not made yet (or the job is not done)
     requested_by: str
+    kind: str = "scan"
+    vna_name: str = ""
+    target_machine_id: str | None = None
+    source: str = "s2vna"
+    capture_file_name: str = ""
+    instrument_id: UUID | None = None
+    capture_settings: dict | None = None
 
 
 class ScanJobClosed(Exception):
@@ -119,7 +223,9 @@ def _session(uow) -> Session:
 
 def _job(row: ScanJobRow) -> ScanJob:
     return ScanJob(id=row.id, status=row.status, error=row.error or "", file_id=row.file_id, result=row.result or "",
-                   requested_by=row.requested_by)
+                   requested_by=row.requested_by, kind=row.kind, vna_name=row.vna_name,
+                   target_machine_id=row.target_machine_id, source=row.source, capture_file_name=row.capture_file_name,
+                   instrument_id=row.instrument_id, capture_settings=row.capture_settings)
 
 
 def _expire(session: Session, now: datetime) -> None:
@@ -129,7 +235,7 @@ def _expire(session: Session, now: datetime) -> None:
             and_(ScanJobRow.status == PENDING, ScanJobRow.created_at < now - PENDING_TIMEOUT),
             and_(ScanJobRow.status == CLAIMED, ScanJobRow.claimed_at < now - CLAIMED_TIMEOUT),
         ))
-        .values(status=FAILED, finished_at=now, error=NO_ANSWER)
+        .values(status=FAILED, finished_at=now, error=case((ScanJobRow.kind == "vna", VNA_NO_ANSWER), else_=NO_ANSWER))
         .execution_options(synchronize_session=False)
     )
 
@@ -142,13 +248,17 @@ def _read(session: Session, job_id: UUID) -> ScanJob:
 
 
 def create_job(uow, *, requested_by: str, now: datetime, target: str | None = None,
-               scanner: str | None = None) -> ScanJob:
+               scanner: str | None = None, kind: str = "scan", vna_name: str = "", source: str = "s2vna",
+               instrument_id: UUID | None = None) -> ScanJob:
     """Create a pending job. Only a full `target` / `scanner` pair can be claimed; incomplete legacy rows expire."""
+    if source not in ("s2vna", "arinst"):
+        raise ValueError("Неизвестный источник ВАЦ")
     scanner = (scanner or "").strip()[:SCANNER_MAX] or None
     with uow:
         session = _session(uow)
         row = ScanJobRow(id=uuid4(), status=PENDING, requested_by=requested_by[:255] or "—", created_at=now,
-                         target_machine_id=target, target_scanner=scanner if target else None, error="", result="")
+                         target_machine_id=target, target_scanner=scanner if target else None, error="", result="",
+                         kind=kind, vna_name=vna_name, source=source, instrument_id=instrument_id)
         session.add(row)
         uow.commit()
     return _job(row)
@@ -194,9 +304,11 @@ def cancel_job(uow, job_id: UUID, *, now: datetime) -> ScanJob:
 class Claimed:
     id: UUID
     target_scanner: str | None  # the scanner the person chose; claims now require a nonempty scanner
+    kind: str = "scan"
+    source: str = "s2vna"
 
 
-def claim(uow, *, now: datetime, machine_id: str | None = None) -> Claimed | None:
+def claim(uow, *, now: datetime, machine_id: str | None = None, vna: bool = False) -> Claimed | None:
     """Claim the oldest complete PC/scanner pair targeted to this agent. Incomplete pre-strict jobs expire normally;
     no agent, including an old one without an id, may scan them. Finished jobs past KEEP_FINISHED go."""
     with uow:
@@ -206,12 +318,14 @@ def claim(uow, *, now: datetime, machine_id: str | None = None) -> Claimed | Non
             ScanJobRow.status.in_(FINISHED_STATUSES), ScanJobRow.finished_at < now - KEEP_FINISHED,
         ))
         claimed = None
-        mine = and_(ScanJobRow.target_machine_id.is_not(None), ScanJobRow.target_machine_id != "",
-                    ScanJobRow.target_scanner.is_not(None), ScanJobRow.target_scanner != "",
+        supported = and_(ScanJobRow.kind == "scan", ScanJobRow.target_scanner.is_not(None), ScanJobRow.target_scanner != "")
+        if vna:
+            supported = or_(supported, ScanJobRow.kind == "vna")
+        mine = and_(ScanJobRow.target_machine_id.is_not(None), ScanJobRow.target_machine_id != "", supported,
                     ScanJobRow.target_machine_id == machine_id)
         for _attempt in range(5):  # another agent may take the same row between the read and the write
             candidate = session.execute(
-                select(ScanJobRow.id, ScanJobRow.target_scanner).where(ScanJobRow.status == PENDING, mine)
+                select(ScanJobRow.id, ScanJobRow.target_scanner, ScanJobRow.kind, ScanJobRow.source).where(ScanJobRow.status == PENDING, mine)
                 .order_by(ScanJobRow.created_at, ScanJobRow.id).limit(1)
                 .with_for_update(skip_locked=True)
             ).first()
@@ -223,7 +337,7 @@ def claim(uow, *, now: datetime, machine_id: str | None = None) -> Claimed | Non
                 .execution_options(synchronize_session=False)
             )
             if taken.rowcount == 1:
-                claimed = Claimed(candidate.id, candidate.target_scanner)
+                claimed = Claimed(candidate.id, candidate.target_scanner, candidate.kind, candidate.source)
                 break
         uow.commit()
     return claimed

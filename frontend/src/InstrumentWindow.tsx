@@ -16,6 +16,7 @@ function initialDraft(instrument: ProductionInstrument | null, kind: InstrumentK
   return {
     inventory_number: instrument?.inventory_number ?? "", name: instrument?.name ?? "", instrument_type: instrument?.instrument_type ?? "",
     kind: instrument?.kind ?? kind, parent_id: instrument?.parent_id ?? parentId,
+    vna_app: instrument?.vna_app ?? "",
     serial_number: instrument?.serial_number ?? "", manufacturer: instrument?.manufacturer ?? "", doc_designation: instrument?.doc_designation ?? "",
     quantity: Number(instrument?.quantity ?? 1), storage_location: instrument?.storage_location ?? "ОТК", warehouse_grn: instrument?.warehouse_grn ?? "",
     verification_number: instrument?.verification_number ?? null, verified_at: instrument?.verified_at?.slice(0, 10) ?? null,
@@ -59,6 +60,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
   const fileInput = useRef<HTMLInputElement>(null);
   const dirty = JSON.stringify(draft) !== JSON.stringify(baseline);
   const accessory = draft.kind === "Принадлежность";
+  const showVnaApp = !accessory && (Boolean(draft.vna_app) || /ВАЦ|VNA|векторн.*анализ|анализ.*(?:векторн|цеп)/i.test(`${draft.instrument_type} ${draft.name}`));
   const parents = instruments.filter((item) => item.kind === "Средство измерений" && item.id !== record?.id && !isDescendant(item, record?.id, instruments));
 
   useEffect(() => {
@@ -166,6 +168,9 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
           <section><h3>Прибор</h3><div className="form-grid">
             {text("inventory_number", "Инв. №", true)}{text("name", "Наименование", true)}{text("instrument_type", "Тип", !accessory)}
             <label>Вид<input name="kind" readOnly value={draft.kind} /></label>
+            {showVnaApp && <label>Программа ВАЦ<select name="vna_app" value={draft.vna_app ?? ""} onChange={(event) => field("vna_app", event.target.value as InstrumentInput["vna_app"])}>
+              <option value="">Не указана</option><option>S2VNA</option><option>Arinst VL</option>
+            </select></label>}
             {text("doc_designation", "Обозначение для документов")}{text("serial_number", "Зав. №")}{text("manufacturer", "Изготовитель")}
             <label>Количество, шт<input name="quantity" type="number" min="1" step="1" required disabled={record?.kind === "Средство измерений" || Boolean(record?.warehouse_writeoff_id)} value={draft.quantity} onChange={(event) => field("quantity", event.target.value)} /></label>
             <label>В составе прибора<select name="parent_id" required={accessory} value={draft.parent_id ?? ""} onChange={(event) => field("parent_id", event.target.value || null)}>

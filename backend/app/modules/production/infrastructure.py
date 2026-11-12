@@ -607,6 +607,8 @@ class ProductionInstrumentRow(Base):
         CheckConstraint('quantity >= 1', name='ck_production_instruments_quantity'),
         CheckConstraint("kind <> 'Средство измерений' OR quantity = 1", name='ck_production_instruments_measuring_quantity'),
         CheckConstraint("kind <> 'Принадлежность' OR (parent_id IS NOT NULL AND verification_number IS NULL AND verified_at IS NULL AND verification_due IS NULL AND status IN ('Действует', 'Не используется'))", name='ck_production_instruments_accessory'),
+        CheckConstraint("vna_app IN ('', 'S2VNA', 'Arinst VL')", name="ck_production_instruments_vna_app"),
+        CheckConstraint("vna_app = '' OR kind = 'Средство измерений'", name="ck_production_instruments_vna_measuring"),
     )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     version: Mapped[int] = mapped_column(Integer(), nullable=False)
@@ -622,6 +624,7 @@ class ProductionInstrumentRow(Base):
     storage_location: Mapped[str] = mapped_column(String(255), nullable=False, server_default="")
     warehouse_grn: Mapped[str] = mapped_column(String(32), nullable=False, server_default="")
     warehouse_writeoff_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    vna_app: Mapped[str] = mapped_column(String(16), nullable=False, default="", server_default="")
     verification_number: Mapped[str | None] = mapped_column(String(255), nullable=True)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     verification_due: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
@@ -1840,6 +1843,7 @@ class SqlAlchemyInstrumentRepository:
             serial_number=row.serial_number, manufacturer=row.manufacturer, doc_designation=row.doc_designation,
             quantity=row.quantity, storage_location=row.storage_location, warehouse_grn=row.warehouse_grn,
             warehouse_writeoff_id=row.warehouse_writeoff_id,
+            vna_app=row.vna_app,
         )
 
     def lock_tree(self) -> None:
@@ -1873,6 +1877,7 @@ class SqlAlchemyInstrumentRepository:
             "verification_number", "verified_at", "verification_due",
             "parent_id", "serial_number", "manufacturer", "doc_designation", "quantity", "storage_location", "warehouse_grn",
             "warehouse_writeoff_id",
+            "vna_app",
         )}
         values.update(status=instrument.status.value, kind=instrument.kind.value)
         if instrument.version == 1:

@@ -122,6 +122,27 @@ it("PATCHes only changed fields with the record version and retains the returned
   expect(onChanged).toHaveBeenCalled();
 });
 
+it("edits the VNA application on an analyzer and sends it with the record version", async () => {
+  const { requests } = setup(); open();
+  expect(screen.getByLabelText("Программа ВАЦ")).toHaveValue("");
+  fill("Программа ВАЦ", "S2VNA"); save();
+  await screen.findByText("Запись сохранена");
+  expect(writes(requests)[0].body).toEqual({ version: 7, vna_app: "S2VNA" });
+  expect(screen.getByLabelText("Программа ВАЦ")).toHaveValue("S2VNA");
+});
+
+it("keeps a configured application editable even if the instrument was renamed", () => {
+  setup([{ ...instrument, name: "Прибор", instrument_type: "Прибор", vna_app: "Arinst VL" }]); open();
+  expect(screen.getByLabelText("Программа ВАЦ")).toHaveValue("Arinst VL");
+});
+
+it("hides VNA configuration for ordinary SI and accessories", () => {
+  setup([{ ...instrument, name: "Мультиметр", instrument_type: "Мультиметр" }, accessory]); open();
+  expect(screen.queryByLabelText("Программа ВАЦ")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Закрыть" })); open(accessory.inventory_number);
+  expect(screen.queryByLabelText("Программа ВАЦ")).not.toBeInTheDocument();
+});
+
 it("keeps edits on 409, blocks another save, and explicitly reloads the latest version", async () => {
   const { requests } = setup([instrument], ({ method }) => method === "PATCH" ? json({ detail: "Version mismatch" }, 409) : null);
   open(); fill("Наименование", "Мой анализатор"); save();

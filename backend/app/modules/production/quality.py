@@ -99,6 +99,7 @@ class RegisterInstrumentCommand:
     storage_location: str = ""
     warehouse_grn: str = ""
     warehouse_writeoff_id: UUID | None = None
+    vna_app: str = ""
 
 
 @dataclass(frozen=True)
@@ -165,6 +166,10 @@ def _validated_instrument(item: MeasurementInstrument, repository: InstrumentRep
         raise ProductionValidationError("Для СИ обязательны номер, наименование и тип")
     if not isinstance(item.kind, InstrumentKind) or not isinstance(item.status, InstrumentStatus):
         raise ProductionValidationError("Недопустимый вид или статус СИ")
+    if item.vna_app not in ("", "S2VNA", "Arinst VL"):
+        raise ProductionValidationError("Недопустимая программа ВАЦ")
+    if item.vna_app and item.kind is not InstrumentKind.MEASURING:
+        raise ProductionValidationError("Программу ВАЦ можно указать только для средства измерений")
     if type(item.quantity) is not int or not 1 <= item.quantity <= 2_147_483_647:
         raise ProductionValidationError("Количество должно быть целым положительным числом")
     if item.kind is InstrumentKind.MEASURING and item.quantity != 1:

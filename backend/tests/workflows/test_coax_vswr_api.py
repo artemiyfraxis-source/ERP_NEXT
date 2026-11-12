@@ -2,6 +2,7 @@
 
 import base64
 from datetime import datetime
+import pytest
 from uuid import UUID, uuid4
 
 from app.main import app
@@ -84,6 +85,73 @@ def _setup(client, norm=NORM):
     _as({"quality": "edit", "production": "edit"})
     card = _card({"coaxVswrNorm": norm} if norm is not None else None)
     return card, _launch(client, card), _instrument(client)
+
+
+def test_capture_settings_are_kept_in_existing_measurement_metadata(production_api):
+    client, _ = production_api
+    _, task, instrument = _setup(client)
+    settings = {"points": 4, "smoothing_enabled": True, "correction_enabled": False,
+                "correction_status": "C?", "s_parameter": "S11", "unavailable": ["averaging_factor"]}
+    response = client.post("/api/production/vswr", json=_body(task, instrument, GOOD, capture_settings=settings))
+    assert response.status_code == 200, response.text
+    measurement = response.json()["measurement"]
+    assert measurement["file_meta"]["capture_settings"] == settings
+    serials = client.get(f"/api/production/vswr/tasks/{task['id']}").json()["serials"]
+    assert serials[0]["latest"]["file_meta"]["capture_settings"] == settings
+
+
+def _capture_job(instrument, content, **changes):
+    from app.modules.warehouse.scan_agents import ScanAgentRow
+    from app.modules.warehouse.scan_jobs import ScanJobRow
+
+    job_id = uuid4()
+    with app.state.production_uow_factory() as uow:
+        uow.session.add(ScanAgentRow(machine_id="capture-pc", first_seen=NOW, last_seen=NOW, legacy=False))
+        uow.session.flush()
+        values = dict(id=job_id, status="done", kind="vna", source="s2vna", requested_by=str(MASTER_ID),
+            created_at=NOW, claimed_at=NOW, finished_at=NOW, target_machine_id="capture-pc",
+            instrument_id=UUID(instrument["id"]), capture_content=content,
+            capture_settings={"smoothing_enabled": True, "s_parameter": "S11"})
+        values.update(changes)
+        uow.session.add(ScanJobRow(**values))
+        uow.commit()
+    return str(job_id)
+
+
+def test_client_settings_cannot_bypass_customer_coverage_but_verified_capture_can(production_api):
+    client, _ = production_api
+    _, task, instrument = _setup(client, {**NORM, "source": "customer"})
+    content = _csv([(1500, 1.1), (2500, 1.2)])
+    for settings in ({}, {"s_parameter": "S11"}):
+        response = client.post("/api/production/vswr", json=_body(task, instrument, content, capture_settings=settings))
+        assert response.status_code == 422 and "не покрывает" in response.json()["detail"]
+    job_id = _capture_job(instrument, content)
+    response = client.post("/api/production/vswr", json=_body(task, instrument, content,
+        capture_job_id=job_id, capture_settings={"smoothing_enabled": False}))
+    assert response.status_code == 200, response.text
+    measurement = response.json()["measurement"]
+    assert measurement["band_mhz"] == [1500, 2500]
+    assert measurement["file_meta"]["capture_warnings"] == ["Диапазон ВАЦ не покрывает норму"]
+    assert measurement["file_meta"]["capture_settings"]["smoothing_enabled"] is True
+
+
+@pytest.mark.parametrize("case", ["missing", "owner", "instrument", "bytes", "pending"])
+def test_capture_job_linkage_is_checked_before_upload(production_api, case):
+    client, _ = production_api
+    _, task, instrument = _setup(client)
+    changes = {}
+    if case == "owner":
+        changes["requested_by"] = str(uuid4())
+    if case == "instrument":
+        changes["instrument_id"] = None
+    if case == "bytes":
+        changes["capture_content"] = BAD
+    if case == "pending":
+        changes.update(status="pending", claimed_at=None, finished_at=None, capture_content=None)
+    job_id = str(uuid4()) if case == "missing" else _capture_job(instrument, GOOD, **changes)
+    response = client.post("/api/production/vswr", json=_body(task, instrument, GOOD, capture_job_id=job_id))
+    assert response.status_code == 422
+    assert "завершённому заданию ВАЦ" in response.json()["detail"]
 
 
 def test_unverified_instrument_cannot_record_vswr(production_api):  # noqa: F811
