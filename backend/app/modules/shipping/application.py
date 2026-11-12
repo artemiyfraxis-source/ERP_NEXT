@@ -1091,7 +1091,7 @@ def _attach_upd(
     uow.shipments.add(updated)
     _audit(shipment.id, "shipping.upd_attached", actor, now, {"file_id": str(stored.id), "name": name}, uow)
     _notify_documents(shipment, updated, now, uow)
-    return updated
+    return _close_if_complete(updated, actor, now, uow)
 
 
 def correct_shipment_history(command: HistoryCorrectionCommand, uow: UnitOfWork) -> Shipment:
@@ -1113,6 +1113,7 @@ def correct_shipment_history(command: HistoryCorrectionCommand, uow: UnitOfWork)
                 details[f"{prefix}_{key}"] = getattr(item, key)
         uow.shipments.add(updated)
         _audit(shipment.id, "shipping.history_corrected", command.actor, command.now, details, uow)
+        updated = _close_if_complete(updated, command.actor, command.now, uow)
         uow.commit()
         return updated
 
@@ -1131,6 +1132,7 @@ def update_documents(command: UpdateDocumentsCommand, uow: UnitOfWork) -> Shipme
         uow.shipments.add(updated)
         _audit(shipment.id, "shipping.documents_updated", command.actor, command.now, {}, uow)
         _notify_documents(shipment, updated, command.now, uow)
+        updated = _close_if_complete(updated, command.actor, command.now, uow)
         uow.commit()
         return updated
 
@@ -1142,6 +1144,18 @@ def mark_shipped(command: ShipmentCommand, uow: UnitOfWork) -> ShippedResult:
         result = _mark_shipped(shipment, command.actor, command.now, uow)
         uow.commit()
         return result
+
+
+def _close_if_complete(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork) -> Shipment:
+    if shipment.status != ShipmentStatus.SHIPPED:
+        return shipment
+    try:
+        closed = shipment.close()
+    except ShippingValidationError:
+        return shipment
+    uow.shipments.add(closed)
+    _audit(shipment.id, "shipping.closed", actor, now, {"auto": True}, uow)
+    return closed
 
 
 def _mark_shipped(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork) -> ShippedResult:
@@ -1157,15 +1171,13 @@ def _mark_shipped(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWo
             raise ShippingValidationError("Позиция готовой продукции больше не существует")
         uow.goods.add(good.dispatch(quantity), _context(actor, now, shipment_id=shipment.id))
     _audit(shipment.id, "shipping.shipped", actor, now, {}, uow)
+    updated = _close_if_complete(updated, actor, now, uow)
     why = ""
-    try:
-        closed = updated.close()
-    except ShippingValidationError as error:
-        why = str(error)
-    else:
-        updated = closed
-        uow.shipments.add(updated)
-        _audit(shipment.id, "shipping.closed", actor, now, {"auto": True}, uow)
+    if updated.status == ShipmentStatus.SHIPPED:
+        try:
+            updated.close()
+        except ShippingValidationError as error:
+            why = str(error)
     return ShippedResult(shipment=updated, why=why)
 
 
