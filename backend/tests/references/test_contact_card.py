@@ -215,3 +215,25 @@ def test_jst_reel_suffix_n_finds_the_same_contact():
     assert matching_terminal_records((other, card), "SYM-001T-P0.6(N)") == (card,)
     assert matching_terminal_records((other, card), "SYM-001T-P0.6 (n)") == (card,)
     assert matching_terminal_records((other, card), "SYM-001T-P0.6N") == ()
+
+
+@pytest.mark.parametrize("article", ["JST SYM-001T-P0.6(N)", "jst SYM-001T-P0.6 (n)"])
+def test_jst_prefixed_reel_suffix_finds_either_article_without_replacing_an_existing_match(article):
+    card = TerminalRecord(article="SYM-001T-P0.6")
+    assert matching_terminal_records((card,), article) == (card,)
+    bag = replace(card, article="REEL-1", article_bag="SYM-001T-P0.6")
+    assert matching_terminal_records((bag,), article) == (bag,)
+    for existing in (
+        replace(card, article=article),
+        replace(card, article="SYM-001T-P0.6(N)"),
+        replace(card, article="OTHER", article_bag="SYM-001T-P0.6(N)"),
+        replace(card, article="JST SYM-001T-P0.6"),  # the pre-existing suffix lookup still wins
+    ):
+        assert matching_terminal_records((card, existing), article) == (existing,)
+
+
+@pytest.mark.parametrize("article", [
+    "Molex SYM-001T-P0.6(N)", "JST SYM-001T-P0.6-N", "JST SYM-001T-P0.6N", "JST SYM-001T-P0.6A(N)",
+])
+def test_jst_prefixed_reel_alias_does_not_extend_to_unsupported_suffixes_or_other_makers(article):
+    assert matching_terminal_records((TerminalRecord(article="SYM-001T-P0.6"),), article) == ()

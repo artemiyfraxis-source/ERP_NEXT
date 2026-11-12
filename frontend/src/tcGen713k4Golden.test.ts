@@ -22,6 +22,14 @@ function rebuilt() {
   return makeGen(data, stuck ? { ...ensureSeparateLengths(S), selectedTemplates: stuck } : ensureSeparateLengths(S));
 }
 
+it("keeps the complete existing matched config byte-identical", async () => {
+  // Captured from the unmodified generator at 0782917b; includes every config field, not only the displayed ops.
+  const bytes = new TextEncoder().encode(JSON.stringify(rebuilt().buildConfig()));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  expect(Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(""))
+    .toBe("0ab67d2d5120368d399ff7a3785d042b58863265823042a66f6b8f556b954834");
+});
+
 it("the prod snapshot carries no hand-set operation order and no hand-picked cards", () => {
   expect(snap.S.opOrder ?? []).toEqual([]);
   expect(snap.S.manualTemplates ?? []).toEqual([]);

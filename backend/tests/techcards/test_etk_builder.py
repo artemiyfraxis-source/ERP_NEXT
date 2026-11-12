@@ -95,6 +95,38 @@ def test_720_etk_resolves_terminal_norms_from_current_supplymap_database():
     assert not [warning for warning in document["warnings"] if "нормы терминала" in warning]
 
 
+@pytest.mark.parametrize("exact_row", [False, True])
+@pytest.mark.parametrize("article", ["SYM-001T-P0.6(N)", "JST SYM-001T-P0.6(N)"])
+def test_jst_sym_reel_suffix_enriches_the_22_awg_etk_norm_without_changing_the_article(exact_row, article):
+    base = TerminalRecord(
+        article="SYM-001T-P0.6", applicator="S12", strip="3",
+        awg_from="28", awg_to="22", crimp_height="24 AWG: 0,80–0,90; 22 AWG: 0,90–1,00",
+        pull_force_min="24 AWG: 29,4; 22 AWG: 34,3",
+    )
+    records = [base]
+    if exact_row:
+        records.append(replace(base, article=article, crimp_height="22 AWG: 0,91–0,99"))
+    config = {"ops": [{
+        "type": "prsTerm", "opNum": "PRS_TERMINAL_auto", "side": "A",
+        "ep": {"termArt": article, "termName": "Контакт SM"},
+        "wires": [{"art": "UL1007 22 AWG", "qty": 1, "length": 100}],
+    }]}
+    original = deepcopy(config)
+    enriched = enrich_terminal_norms(config, records)
+    norm = enriched["ops"][0]["terminalNorm"]
+    assert norm["crimpHeight"] == ("0,91–0,99" if exact_row else "0,90–1,00")
+    assert norm["pullForce"] == "34,3"
+    assert norm["bySection"][0]["found"] is True
+    assert norm["bySection"][0]["strip"] == "3"
+    assert enriched["ops"][0]["ep"]["termArt"] == article
+    document = build_etk(enriched, CARDS)
+    assert document["operations"][0]["fields"]["crimpHeight"] == norm["crimpHeight"]
+    assert document["operations"][0]["fields"]["pullForce"] == "34,3"
+    assert not [warning for warning in document["warnings"] if "нормы терминала" in warning]
+    assert config == original
+    assert enrich_terminal_norms(enriched, records) == enriched
+
+
 def test_current_cut_and_crimp_fixture_includes_control_tolerances_and_materials():
     config = enrich_terminal_norms(kit("720К.1.2-КБ1")["config"], terminal_records())
     document = build_etk(config, CARDS)
