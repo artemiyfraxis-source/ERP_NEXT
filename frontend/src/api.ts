@@ -1534,16 +1534,50 @@ export interface CableAssemblyPassport {
   inspected_at: string | null;
 }
 
+export type InstrumentKind = "Средство измерений" | "Принадлежность";
+export type InstrumentStatus = "Действует" | "Не используется" | "Поверка не подтверждена";
+export type InstrumentFileKind = "Паспорт" | "Свидетельство о поверке" | "Руководство" | "Прочее";
+
+export interface InstrumentFile {
+  id: string;
+  kind: InstrumentFileKind;
+  file_name: string;
+  size: number;
+  uploaded_at: string;
+  uploaded_by_name: string;
+}
+
 export interface ProductionInstrument {
   id: string;
   version: number;
   inventory_number: string;
   name: string;
   instrument_type: string;
+  kind: InstrumentKind;
+  parent_id: string | null;
+  serial_number: string;
+  manufacturer: string;
+  doc_designation: string;
+  quantity: string | number;
+  storage_location: string;
+  warehouse_grn: string;
   verification_number: string | null;
   verified_at: string | null;
   verification_due: string | null;
-  status: string;
+  status: InstrumentStatus;
+  files: InstrumentFile[];
+}
+
+export type InstrumentInput = Omit<ProductionInstrument, "id" | "version" | "files">;
+export interface InstrumentFromStockInput {
+  parent_id: string;
+  lot_id: string;
+  lot_version: number;
+  quantity: number;
+  inventory_number?: string;
+  name?: string;
+  doc_designation?: string;
+  storage_location?: string;
 }
 
 export interface ProductionQcRejection {
@@ -4063,10 +4097,22 @@ export const productionApi = {
     api(`/api/production/qc/rejections/${inspectionId}/decide`, {
       method: "POST", body: JSON.stringify({ disposition, act_reference: actReference }),
     }),
-  registerInstrument: (payload: Omit<ProductionInstrument, "id" | "version" | "status"> & { status?: "Действует" | "Поверка не подтверждена" }) =>
+  nextInstrumentNumber: () => api<{ inventory_number: string }>("/api/production/instruments/next-number"),
+  registerInstrument: (payload: InstrumentInput) =>
     api<{ instrument: ProductionInstrument }>("/api/production/instruments", {
       method: "POST", body: JSON.stringify(payload),
     }),
+  updateInstrument: (id: string, payload: Partial<InstrumentInput> & { version: number }) =>
+    api<{ instrument: ProductionInstrument }>(`/api/production/instruments/${encodeURIComponent(id)}`, {
+      method: "PATCH", body: JSON.stringify(payload),
+    }),
+  uploadInstrumentFile: (id: string, payload: { kind: InstrumentFileKind; file_name: string; content_base64: string }) =>
+    api(`/api/production/instruments/${encodeURIComponent(id)}/files`, { method: "POST", body: JSON.stringify(payload) }),
+  instrumentFileUrl: (id: string, fileId: string) => `/api/production/instruments/${encodeURIComponent(id)}/files/${encodeURIComponent(fileId)}`,
+  deleteInstrumentFile: (id: string, fileId: string) =>
+    api(`/api/production/instruments/${encodeURIComponent(id)}/files/${encodeURIComponent(fileId)}`, { method: "DELETE" }),
+  instrumentFromStock: (payload: InstrumentFromStockInput) =>
+    api<{ instrument: ProductionInstrument }>("/api/production/instruments/from-stock", { method: "POST", body: JSON.stringify(payload) }),
   inspectBox: (boxId: string, payload: { version: number; accepted: number; rejected: number; defect_character: string; defect_description: string; instrument_ids: string[] }) =>
     api<{ box: ProductionBox; inspection_id: string; defect_number: string | null; serials: Array<{ serial_number: string; status: string }> }>(`/api/production/boxes/${boxId}/qc`, {
       method: "POST", body: JSON.stringify(payload),

@@ -204,7 +204,7 @@ function VswrUploadWindow({ task, norm, row, instruments, close, onSaved, canRej
   canReject: boolean;
   onReject: (request: VswrRejectRequest) => void;
 }) {
-  const active = instruments.filter((item) => item.status === "Действует");
+  const active = instruments.filter((item) => item.kind === "Средство измерений" && item.status === "Действует");
   const [instrumentId, setInstrumentId] = useState(active[0]?.id ?? "");
   const [file, setFile] = useState<File | null>(null);
   const [bandFrom, setBandFrom] = useState(norm.band_mhz?.[0] != null ? String(norm.band_mhz[0]) : "");
