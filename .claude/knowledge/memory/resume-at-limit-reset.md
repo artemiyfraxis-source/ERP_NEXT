@@ -1,19 +1,16 @@
 ---
 name: resume-at-limit-reset
-description: "When workers hit the session usage limit, immediately schedule a wake-up at the reset time and resume them then"
+description: "Persist interrupted Codex worker state and schedule a real resume after the reported reset"
 metadata:
   node_type: memory
   type: feedback
   originSessionId: 8677a0f6-6abc-4b3c-ac40-0726d25e18d0
-  modified: 2026-10-05T04:23:21.798Z
+  modified: 2026-11-12T12:00:00.000Z
 ---
 
-When agents fail with «You've hit your session limit · resets HH:MM», schedule a one-shot CronCreate at that reset
-time (a minute after) with a prompt that resumes every interrupted worker (SendMessage to each agent id with
-«resume, finish, commit, report») and continues the orchestration. Never just wait for the owner.
-
-**Why:** 05.10 the limit hit at ~00:30 (reset 02:10); nothing was scheduled, the work sat idle until the 06:00
-release prompt — owner: «очень плохо, что ты не начал в 2:10, мы просто потеряли время».
-
-**How to apply:** the moment the first «session limit» failure arrives, read the reset time from it and create the
-cron before replying. The session must stay open (CronCreate is session-only). Related: [[owner-working-rules]].
+- On a Codex worker limit, record its reset time, process/resume ID, worktree/branch/base SHA, dirty files and next action in root gitignored `TASKS.md`.
+- Main schedules a one-shot wake-up just after the reported reset using an available scheduler; record its real identifier. If unavailable, report that automatic resume is not scheduled.
+- At reset, inspect worker process state, current branch, dirty files and `git reflog`; resume the existing Codex worker or restart it with the handoff in its assigned worktree. Preserve unfinished edits; main owns commits.
+- Never remove another session's worktree. Keep worker ports distinct and follow [[parallel-sessions-worktrees]].
+- Claude subagent resume mechanics are fallback only when Codex is unavailable; use the runtime's actual resume tool and verify it restarted.
+Why: waiting for the owner after the reset wastes production time. Related: [[owner-working-rules]].

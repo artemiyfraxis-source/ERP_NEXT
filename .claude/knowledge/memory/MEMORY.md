@@ -1,64 +1,68 @@
-- [ERP_NEXT hub](erp-next-hub.md) — START HERE: map of every note below (Obsidian graph root)
-- [Owner working rules](owner-working-rules.md) — Russian replies, no questions, merge/deploy permissions, one server update per batch of parallel PRs, batch access asks
-- [Claude directs Codex](claude-directs-codex.md) — owner 11.11: Claude $20 orchestrates, Codex CLI $200 searches/codes/tests/reviews via `codex exec`; Codex never commits
-- [Owner request queue](owner-request-queue.md) — owner piles requests mid-turn: numbered visible queue, dispatch each via orchestrator at once
-- [Owner goals 05.10](owner-goals-1005.md) — goal 1: minimal chain закупка→приёмка→выдача; goal 2: debug production; receiving answers
-- [Live data protocol](live-data-protocol.md) — no migration to prod without backup → rehearsal on a copy → row-count/integrity check; update.sh + rehearse.sh do it since 05.10
-- [Records retention](records-retention.md) — owner 26.10: УПД/счета 3 years, техкарты/документация 5 years in the DB; backups only a week (7 daily, no weekly/monthly)
-- [Vasily code permission](vasily-code-permission.md) — TECHMAP-GRAPHER code may be ported/copied with attribution (author OK via owner, 06.10)
-- [Screens rules](erp-screens-rules.md) — every UI change: skill erp-screens + design-critique, demo run-demo.sh + shoot.mjs
-- [Edit in windows](edit-in-windows.md) — every record card / edit form opens as a modal PageWindow, never a side panel
-- [Production server](erp-server.md) — shop Ubuntu PC, Docker deploy, update-server.yml release, backups (+ off-server copy), LAN + Tailscale
-- [Prod screen check](prod-screen-check.md) — I HAVE the owner's prod web login (~/.claude/secrets/erp-server.env): check released screens on prod myself, no local tabs, never ask for a login
-- [Staff and sites](staff-and-sites.md) — ЦАР/ЖУК fitters, masters, full-access roles, PIN
-- [SUPPLYMAP legacy diffs](supplymap-parity.md) — SUPPLYMAP retired 05.10; deliberate ERP differences, box numbers, out of scope
-- Modules: [projects](module-projects.md) · [techcards](module-techcards.md) · [reference DB](module-reference-db.md) · [warehouse](module-warehouse.md) · [fulfillment](module-fulfillment.md) · [production](module-production.md) · [shipping](module-shipping.md) · [procurement](module-procurement.md)
-- [Google wiring](google-wiring.md) — read-only, being left; service account, KD folder, key location
-- [Deferred by owner](deferred-by-owner.md) — traceability, boxes/defects section
-- [Agent decisions to review](runlog-decisions.md) — «решено агентом — проверить» from RUNLOG, tagged by module
-- [Cloud threads setup](cloud-threads-setup.md) — cwd above three repos, no repo hooks/plugins, manual drift report
-- [Merge gotchas](erp-merge-gotchas.md) — CRLF conflicts, shallow SUPPLYMAP, Python 3.12, parallel merges
-- [Local demo](erp-local-demo.md) — local preview vs seeded demo, ports, Remote Control Auto-mode limits (old ERP_NEXT-demo folder gone)
-- [Gate red without failures](gate-red-without-failures.md) — pytest-current symlink exit 1 (fixed by conftest basetemp); `&&` chain stops at the first red stage
-- [Windows Python CRLF](windows-python-crlf.md) — Python text-mode writes CRLF into the LF-only repo; use newline=""
-- [Techcards per project](techcards-bulk.md) — projects wiped 30.09 (migration 0078); owner creates them, one project from Google only on request
-- [Parallel sessions and worktrees](parallel-sessions-worktrees.md) — never remove a worktree or commit on a branch another session owns; reflog check, drive-letter case, own ports per worker
-- [Worktree symlink removal](worktree-symlink-removal.md) — worker worktrees link main node_modules + .venv: rmdir the links before removing a worktree
-- [Resume at limit reset](resume-at-limit-reset.md) — on «session limit» schedule a cron at the reset time and resume workers
-- [Repo public for CI](repo-public-ci.md) — owner made ERP_NEXT public 10.10 after Actions billing block; keep secrets/vuln write-ups out
-- [Crimp contacts protocol](crimp-contacts-protocol.md) — owner's old v5.2 terminal DB rules: keep REEL+BAG in one row, null-spec, N units; ERP keeps Molex hyphens; field gaps vs TerminalRecord
-- [Prod reference write](prod-reference-write.md) — owner wants DB fills written straight to prod: ssh + import_rows by natural key, old="" guard, backup-now
-- [ETK auto revisions](etk-auto-revisions.md) — since 19.10 reference/builder changes issue new ETK revisions automatically (ETK_AUTO_REVISION=1 on prod); no «Пересобрать»
-- [Coax contact depth](coax-contact-depth.md) — заглубление = body face → contact by tracing lines; SMA male E 0,38…1,14, female 1,88…2,23 by MIL-STD-348B (owner 24.10: MIL beats maker sheets); mm only
-- [U.FL is not MHF1](ufl-not-mhf.md) — owner 20.10: Hirose U.FL ≠ I-PEX MHF1/IPEX; never merge across series even with one supplier code
-- [Coax pin type](coax-pin-type.md) — angled = «пайка внутри корпуса», never crimp; 2.92/3.5 = «цанга»; seller «обжимной» is the shield, not the pin
-- [Coax VSWR acceptance](coax-vswr-acceptance.md) — owner 22.10: assembly VSWR judged by the limit its connectors allow (Γ1+Γ2), not a generic ≤1,3
-- [Sparse columns are junk](sparse-columns-are-junk.md) — owner 23.10: a БД column filled ≤ ~5 % is removed (or moved out); fixed group order of columns
-- [Reference lists, one look](reference-lists-one-look.md) — owner 25.10: every «База данных» tab = one layout (blocks per group like «Оболочки», size→name order)
-- [Cable standard by type](cable-standard-by-type.md) — owner 25.10: cable «Стандарт» = general construction standard of its type (MIL-DTL-17/xxx, JIS C 3501, ГОСТ 11326), not maker docs, no fire standards
-- [Coax data sources](coax-data-sources.md) — gsm-repiteri / Амел / kroks / vegatel for coax specs and supplier articles; resellers = «Поставщик»
-- [ETK by semi-finished](etk-by-semifinished.md) — 13.10 owner+Vasily: one ETK document per ПФ; fitter's task = a ПФ document; configure in the ETK left list
-- [Applicator code kinds](applicator-code-kinds.md) — owner 29.10: БД.ТЕР M/A/S codes are all applicators (M ОТП pre-stripped, A automats, S unstripped), never matrices/tools; 11.11: never invent applicators, owner mass-edits them from 12.11
-- [Applicators by series](applicators-by-series.md) — owner 16.10: all A* applicators of a series on every contact; S/M stay per wire range
-- [Connector 3D only on card](connector-3d-only-on-card.md) — 3D connector picture only on the catalog series card; ETK sketches: top view + mounting side; ПФ/scheme pictures: real top view, wire exit to the harness, never a box
-- [Maker docs from Russia](maker-docs-from-russia.md) — te.com/molex/mouser 403 by geo; Web Archive in browser, JST guide, chipdip/eicom mirrors, KiCad/LCSC for pin 1
-- [Maker docs over shop values](maker-docs-over-shop-values.md) — owner 17.10: the maker's document beats shop values; overwrite, keep the old one in the journal
-- [713К.4 agreed deviations](713k4-accepted-deviations.md) — НВ4 0,5 on SYM-001T-P0.6 and unused НШВ ferrules are owner-agreed; don't flag
-- [One article, one row](one-article-one-row.md) — owner 19.10: each supplier article its own row, cheapest seller; coax card = VNA + connectors from БД.КОАКС
-- [Connector gender names](connector-gender-names.md) — вилка = штыри, розетка = гнёзда во всех сериях; слово берётся из contacts (owner 17.10)
-- [БД.ПРОВ split](prov-kind-split-plan.md) — DONE 30.10 #776 (0165): lugs + cable kinds are own bases `lug`/`cab_coax`/`cab_multi`/`cab_lan`, монтажные = `prov`; readers use TERMINAL_TABS / CABLE_TABS
-- [RV tech-doc base](rv-td-base.md) — ГОСТ РВ ТД base rev 1 + СТО (Claude Doc), built in ERP by PR #614/#622/#624 (td_issues auto-issued in background, print kit); 3.1102→ГОСТ Р 3.102-2024, no «КТК» in ЕСТД; 22.10 СТО ред. 2 + clause-level norms, 112 templates audited (#643), equipment/code facts
-- [Витя's hybrid is permanent](vitya-hybrid-stage-options.md) — #627/#641 22.10: stage options cut out (no flags); labels via DB queue + print agent on warehouse PC; presets 58×30/58×40/100×50
-- [Hook-up wire suppliers](hookup-wire-suppliers.md) — Снабкабель + Паритет base for монтажные провода; what each sells, price quirks; монтажные = row per colour
-- [Warehouse scanner on USB](warehouse-scanner-usb.md) — Pantum BM2300W by USB at the warehouse PC, agent scans via WIA, never ask for an IP
-- [Warehouse PC SSH](warehouse-pc-ssh.md) — I can SSH into the warehouse PC via the erp-server jump and fix the agent myself; hosts and recipe in the private brain
-- [УПД via OpenAI](upd-recognizer-openai.md) — owner 26.10: УПД scans → OpenAI GPT API (swappable, local-model fallback); needs proxy, card, key in server env; not started
-- [УПД scan learning](upd-scan-learning.md) — review Алексей's scans vs accepted lots, turn misses into parser rules; per-supplier corrections planned
-- [Owner can't open artifacts](owner-cant-open-artifacts.md) — no Claude Docs/artifacts for him: docs as Markdown in repo docs/ + GitHub link
-- [Verify Витя's requests](vitya-requests-verify.md) — check each of Витя's edits against code and prod usage before building; risky ones to the owner first
-- [ГОСТ Р 72182 series](gost-72182-series.md) — 23.10 «Соединения без пайки» parts .2/.3/.4/.6/.7/.9 downloaded outside git (ERP-norms), verified maps; open: СТО fixes, US_WELD/IDC templates, ETK pictures
-- [FAKRA 708К.](fakra-708k.md) — Rosenberger FAKRA/HFM parts and maker specs found 25.10; tooling undecided; calc errors
-- [Receiving now vs later](receiving-now-vs-later.md) — now: Склад → Внести позиции by УПД scan; later: Алексей scans УПД in Приёмка, matched to Витя's paid lines
-- [DB tab = own table](db-tab-is-own-table.md) — owner 28–29.10: every «База данных» tab is its own STORAGE table (not a kind flag in a shared one), own columns, «+ Столбец», «Удалить»
-- [Scanner on any PC](scanner-any-pc.md) — owner 28.10: one shared «Сканировать» everywhere, routed to the browser's own PC agent, install guide if absent; never tied to one PC
-- [Flexible stages while testing](flexible-stages-while-testing.md) — owner 29.10: stage marks and per-KB quantities warn, never block; tighten later
+- [ERP hub](erp-next-hub.md) — Index and module graph
+- [Owner rules](owner-working-rules.md) — Standing authority, routing, batch releases
+- [Claude directs Codex](claude-directs-codex.md) — Codex searches, codes, tests, reviews
+- [Request queue](owner-request-queue.md) — Visible queue; dispatch ready items
+- [Owner goals](owner-goals-1005.md) — Order-to-issue flow; receiving on hold
+- [Live data](live-data-protocol.md) — Rehearsal mechanics; binding rule in RULES.md
+- [Retention](records-retention.md) — Documents 3/5 years; backups 7 daily
+- [Vasily's code](vasily-code-permission.md) — Porting allowed with attribution
+- [Screens](erp-screens-rules.md) — Required skills and screenshot workflow
+- [Edit windows](edit-in-windows.md) — Cards/forms use modal PageWindow
+- [Server](erp-server.md) — Shop host, SSH, backups; release via RULES.md
+- [Prod checks](prod-screen-check.md) — Use saved web login; check released screens
+- [Staff/sites](staff-and-sites.md) — Roles, ЦАР/ЖУК and PIN
+- [Legacy diffs](supplymap-parity.md) — Deliberate differences and box ranges
+- Modules: [projects](module-projects.md) · [techcards](module-techcards.md)
+- Modules: [references](module-reference-db.md) · [warehouse](module-warehouse.md)
+- Modules: [fulfillment](module-fulfillment.md) · [production](module-production.md)
+- Modules: [shipping](module-shipping.md) · [procurement](module-procurement.md)
+- [Google access](google-wiring.md) — Calc reader; project КД on Drive
+- [Deferred](deferred-by-owner.md) — Traceability, boxes/defects section
+- [Cloud threads](cloud-threads-setup.md) — Parent cwd; manual hook; local-only MCP
+- [Merge gotchas](erp-merge-gotchas.md) — CRLF, Python, conflict checks
+- [Local demo](erp-local-demo.md) — Preview, seeded demo and ports
+- [False-red gate](gate-red-without-failures.md) — Pytest temp link; shell chain stops
+- [Python LF](windows-python-crlf.md) — Use newline="" for repo writes
+- [Project techcards](techcards-bulk.md) — On-request generate/refresh, shipped scope
+- [Worktrees](parallel-sessions-worktrees.md) — Codex ownership, base, ports, reflog
+- [Worktree cleanup](worktree-symlink-removal.md) — Junction trap and safe removal
+- [Limit reset](resume-at-limit-reset.md) — Persist worker state; schedule resume
+- [Public repo](repo-public-ci.md) — Keep secrets and private findings out
+- [Contacts](crimp-contacts-protocol.md) — REEL+BAG, null-spec, Molex hyphens
+- [Prod DB fills](prod-reference-write.md) — Natural keys, backup, journal overwrites
+- [ETK revisions](etk-auto-revisions.md) — Automatic rebuilds after reference changes
+- [Contact depth](coax-contact-depth.md) — Trace dimensions; mm; MIL precedence
+- [U.FL vs MHF1](ufl-not-mhf.md) — Never merge distinct connector series
+- [Coax pins](coax-pin-type.md) — Angled soldering; collets vs shield crimp
+- [Coax VSWR](coax-vswr-acceptance.md) — Assembly limit from connector Γ1+Γ2
+- [Sparse columns](sparse-columns-are-junk.md) — Remove ~5%-filled columns; group order
+- [DB layouts](reference-lists-one-look.md) — Shared blocks; size before name
+- [Cable standard](cable-standard-by-type.md) — Construction norm, not maker/fire docs
+- [Coax sources](coax-data-sources.md) — Supplier rules, URLs; research log in docs
+- [ETK per ПФ](etk-by-semifinished.md) — One document per semi-finished item
+- [Applicator codes](applicator-code-kinds.md) — M/A/S; agents never write them
+- [Series tools](applicators-by-series.md) — All A* per series; S/M by wire range
+- [Connector art](connector-3d-only-on-card.md) — 3D on card; real top views in ETK
+- [Maker docs](maker-docs-from-russia.md) — Archive/mirrors for blocked sources
+- [Maker precedence](maker-docs-over-shop-values.md) — Overwrite shop values; journal old
+- [713К.4 deviations](713k4-accepted-deviations.md) — Agreed contact/wire and ferrule choices
+- [Supplier articles](one-article-one-row.md) — One row per article; cheapest seller
+- [Connector gender](connector-gender-names.md) — Name follows contact gender
+- [Wire/cable split](prov-kind-split-plan.md) — Own bases; grouped readers
+- [Tech-doc base](rv-td-base.md) — СТО, norms, templates and equipment facts
+- [Hybrid labels](vitya-hybrid-stage-options.md) — DB queue and print agent; no stage flags
+- [Wire suppliers](hookup-wire-suppliers.md) — Снабкабель/Паритет; row per colour
+- [USB scanner](warehouse-scanner-usb.md) — Pantum/WIA; model API with OCR fallback
+- [Warehouse SSH](warehouse-pc-ssh.md) — Agent repair via server jump; private recipe
+- [УПД model](upd-recognizer-openai.md) — Implemented API reader; settings, OCR fallback
+- [Scan learning](upd-scan-learning.md) — Compare accepted lots; supplier corrections planned
+- [Owner docs](owner-cant-open-artifacts.md) — Repo Markdown and GitHub links
+- [Peer requests](vitya-requests-verify.md) — Verify code and usage before implementing
+- [ГОСТ 72182](gost-72182-series.md) — Series map, local files, pending prod checks
+- [FAKRA 708К.](fakra-708k.md) — Parts and specs; tooling and calc questions
+- [Receiving](receiving-now-vs-later.md) — Warehouse intake now; «Приёмка» later
+- [DB storage](db-tab-is-own-table.md) — Each tab owns its table and columns
+- [Scan on any PC](scanner-any-pc.md) — Route through browser PC's agent
+- [Stage warnings](flexible-stages-while-testing.md) — Stage/КБ quantities warn while testing
+- [Warehouse shipping](shipping-warehouse-sees-all.md) — Inline edits; group shipments; auto-close
+- [Copied calc №](calc-copy-wrong-number.md) — Explicit number; rename; NOT VALID checks

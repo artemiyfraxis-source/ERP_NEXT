@@ -22,8 +22,8 @@ What works:
   datacenters), molex.com hangs. Never merge those branches.
 - StealthSurf: the PC's VPN server is in Moscow (37.18.14.201) — that's why geo-blocks hit; the StealthSurf MCP answers
   401 on every tool call (rechecked 17.10 evening; token needs reissuing by the owner) — with it, a foreign
-  location/routing rule would fix direct access. Provider detail: brain note [[stealthsurf-provider]].
+  location/routing rule would fix direct access. Provider detail: brain note `stealthsurf-provider`.
 
 Doesn't work: r.jina.ai (451), Google Translate proxy, device.report, alldatasheet.
 
-Journal: docs/data «БД.ТЕР — где брать спецификации без регистрации 17.10.md». Related: [[crimp-contacts-protocol]], [[prod-reference-write]], [[coax-data-sources]], [[maker-docs-over-shop-values]]; URL shapes per maker: brain note [[datasheet-url-patterns]].
+Journal: docs/data «БД.ТЕР — где брать спецификации без регистрации 17.10.md». Related: [[crimp-contacts-protocol]], [[prod-reference-write]], [[coax-data-sources]], [[maker-docs-over-shop-values]]; URL shapes per maker: brain note `datasheet-url-patterns`.

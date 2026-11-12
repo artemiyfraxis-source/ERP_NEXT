@@ -12,7 +12,7 @@ Owner, 05.10.2026 evening:
 - **Goal 1 (main):** a minimal, working, convenient chain «закупка → приёмка → выдача». Fewer actions, nothing blocks good stock. Optional data stays optional.
 - **Goal 2:** debug production end to end: techcards → planning → how tasks arrive to fitters («Мои задания») → how work in them proceeds.
 
-Receiving decisions (answers to the receiving redesign questions):
+The following receiving decisions apply to «Приёмка», currently on hold per [[receiving-now-vs-later]]; they do not replace today's «Склад → Внести позиции» path:
 1. ВК act stays one per position (line), not per delivery.
 2. Недовоз: the delivered qty goes to stock at once, the remainder becomes the `-Д` backorder with the buyer's confirmation.
 3. Fact quantity is entered only on a discrepancy. Empty means «как в УПД».

@@ -23,11 +23,10 @@ GitHub plan can't protect it — so `main` changes only through a merged PR with
 
 ## Releasing (both developers)
 1. PR ready (see the end of this file), CI `check` green, rebased on fresh `main`.
-2. Tell the other one in the chat: «выпускаю #N». Don't release while the other one's release is under way.
-3. `gh pr merge <N> --merge --delete-branch`.
-4. `gh workflow run update-server.yml` — the server backs up the DB, takes `main`, checks health within ~2–5 min.
+2. Don't release while another `update-server.yml` run is in progress (check `gh run list --workflow update-server.yml`); then `gh pr merge <N> --merge --delete-branch`.
+3. `gh workflow run update-server.yml` — the server backs up the DB, takes `main`, checks health within ~2–5 min.
    Without it the release goes out by itself at 02:00 / 06:00 MSK.
-5. Check the screen you changed on https://erp-server.tail811f20.ts.net; if it broke, say so in the chat at once — the owner rolls back.
+4. Check the screen you changed on https://erp-server.tail811f20.ts.net; if it broke, say so in the chat at once — the owner rolls back.
 Direct push to `main`, `deploy/push.ps1` and ssh to the server stay the owner's (`guard-danger.mjs` enforces it for
 other identities).
 
