@@ -984,6 +984,11 @@ export function makeGen(D: GenData, S: GenState) {
         if (normNoMfr.length >= 3) found = records.find((r) => articles(r).some((a) => normalizeArt_(a) === normNoMfr));
       }
     }
+    if (!found && /\(\s*n\s*\)\s*$/i.test(art)) {
+      // JST documents (N) on this contact as a reel quantity change only: https://www.jst.com/resources/faq/
+      const base = normalizeArt_(String(art).trim().replace(/^JST\s+/i, "").replace(/\(\s*n\s*\)\s*$/i, ""));
+      if (base === "sym001tp06") found = records.find((r) => articles(r).some((a) => normalizeArt_(a) === base));
+    }
     return found || null;
   }
 

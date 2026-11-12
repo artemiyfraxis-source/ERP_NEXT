@@ -765,6 +765,42 @@ it("finds a terminal by its BAG article too, spelled any way (protocol v5.2, own
   expect(gen.findTerRecord_("39000040")).toBeNull();
 });
 
+describe("JST SYM reel quantity suffix", () => {
+  const base = terFromFields("base", { terArticle: "SYM-001T-P0.6", terStep: "2.50", terStrip: "3", terApplicator: "S12" });
+  const lookup = (records = [base]) => {
+    const D = { ...data(interboard), terRecords: records };
+    return makeGen(D, initState(D)).findTerRecord_;
+  };
+
+  it.each(["SYM-001T-P0.6(N)", "SYM-001T-P0.6 (n)", "JST SYM-001T-P0.6(N)"])("resolves %s to its documented base contact", (article) => {
+    expect(lookup()(article)).toBe(base);
+  });
+
+  it.each(["SYM-001T-P0.6(N)", "SYM 001T P0.6N", "JST SYM-001T-P0.6(N)"])("keeps the existing match for %s ahead of the base fallback", (article) => {
+    const exact = { ...base, id: "exact", article: "SYM-001T-P0.6(N)", strip: "4" };
+    expect(lookup([base, exact])(article)).toBe(exact);
+  });
+
+  it("uses either article of the same REEL/BAG row without changing its spelling", () => {
+    const bag = { ...base, article: "REEL-1", articleBag: "SYM-001T-P0.6" };
+    expect(lookup([bag])("SYM-001T-P0.6(N)")).toBe(bag);
+    const exactBag = { ...base, id: "bag", article: "REEL-2", articleBag: "SYM-001T-P0.6(N)" };
+    expect(lookup([base, exactBag])("SYM-001T-P0.6(N)")).toBe(exactBag);
+    expect(bag.articleBag).toBe("SYM-001T-P0.6");
+  });
+
+  it.each(["SYM-001T-P0.6N", "SYM-001T-P0.6-N", "SYM-001T-P0.6A(N)", "MOLEX SYM-001T-P0.6(N)"])("does not invent an alias for %s", (article) => {
+    expect(lookup()(article)).toBeNull();
+  });
+
+  it("leaves other makers' and undocumented JST contact suffixes alone", () => {
+    const foreign = { ...base, article: "39000038" };
+    const otherJst = { ...base, article: "SHF-001T-0.8BS" };
+    expect(lookup([foreign, otherJst])("39000038(N)")).toBeNull();
+    expect(lookup([foreign, otherJst])("SHF-001T-0.8BS(N)")).toBeNull();
+  });
+});
+
 it("зачистка под лужение по умолчанию — 5 мм (владелец 12.10.2026)", () => {
   expect(emptyState().tin.stripLen).toBe("5");
 });
