@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -18,7 +18,7 @@ from app.workflows.project_kitset import closed_kb_keys
 from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.clock import MOSCOW, moscow_now
 from app.shared.identity import Actor
-from app.shared.stored_files import file_response
+from app.shared.stored_files import decode_upload, file_response
 from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal, production_quality_principal, production_view_principal, production_view_work_principal, section_allowed, shipping_warehouse_principal
 
 from .application import (
@@ -88,7 +88,7 @@ from .execution import (
     start_work,
     submit_work,
 )
-from .traceability import TAKEABLE_BOX, BoxStatus, DefectDisposition, DefectRecord, InstrumentStatus, MaterialInput, ProductionBox, ProductionOutput, WorkSession
+from .traceability import TAKEABLE_BOX, BoxStatus, DefectDisposition, DefectRecord, InstrumentFileKind, InstrumentKind, InstrumentStatus, MaterialInput, ProductionBox, ProductionOutput, WorkSession
 from .worklog import SUMMARY_KEYS, WorkTimeEntry, percent, time_fact
 from .resource_assignments import MachineBinding
 from .resource_claims import ResourceConflict
@@ -96,6 +96,12 @@ from .quality import (
     DecideQcRejectionCommand,
     InspectBoxCommand,
     RegisterInstrumentCommand,
+    UpdateInstrumentCommand,
+    attach_instrument_file,
+    delete_instrument_file,
+    next_instrument_number,
+    update_instrument,
+    MAX_INSTRUMENT_FILE_SIZE,
     decide_qc_rejection,
     inspect_box,
     register_instrument,
@@ -263,11 +269,46 @@ class DecideDefectPayload(BoxVersionPayload):
 class RegisterInstrumentPayload(BaseModel):
     inventory_number: str = Field(min_length=1, max_length=128)
     name: str = Field(min_length=1, max_length=255)
-    instrument_type: str = Field(min_length=1, max_length=255)
+    instrument_type: str = Field(default="", max_length=255)
     verification_number: str | None = Field(default=None, min_length=1, max_length=255)
     verified_at: datetime | None = None
     verification_due: datetime | None = None
-    status: Literal[InstrumentStatus.ACTIVE, InstrumentStatus.UNVERIFIED] = InstrumentStatus.ACTIVE
+    status: InstrumentStatus = InstrumentStatus.ACTIVE
+    kind: InstrumentKind = InstrumentKind.MEASURING
+    parent_id: UUID | None = None
+    serial_number: str = Field(default="", max_length=128)
+    manufacturer: str = Field(default="", max_length=255)
+    doc_designation: str = ""
+    quantity: int = Field(default=1, ge=1, le=2_147_483_647, strict=True)
+    storage_location: str = Field(default="", max_length=255)
+    warehouse_grn: str = Field(default="", max_length=32)
+
+
+class UpdateInstrumentPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    version: int = Field(ge=1)
+    inventory_number: str | None = Field(default=None, min_length=1, max_length=128)
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    instrument_type: str | None = Field(default=None, max_length=255)
+    verification_number: str | None = Field(default=None, min_length=1, max_length=255)
+    verified_at: datetime | None = None
+    verification_due: datetime | None = None
+    status: InstrumentStatus | None = None
+    kind: InstrumentKind | None = None
+    parent_id: UUID | None = None
+    serial_number: str | None = Field(default=None, max_length=128)
+    manufacturer: str | None = Field(default=None, max_length=255)
+    doc_designation: str | None = None
+    quantity: int | None = Field(default=None, ge=1, le=2_147_483_647, strict=True)
+    storage_location: str | None = Field(default=None, max_length=255)
+    warehouse_grn: str | None = Field(default=None, max_length=32)
+
+
+class InstrumentFilePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: InstrumentFileKind
+    file_name: str = Field(min_length=1, max_length=255)
+    content_base64: str = Field(max_length=4 * ((MAX_INSTRUMENT_FILE_SIZE + 2) // 3))
 
 
 class InspectBoxPayload(BoxVersionPayload):
@@ -1338,6 +1379,28 @@ def decide_execution_defect(
     return {"defect": _defect_result(defect), "decision_id": str(decision.id)}
 
 
+def instrument_file_result(item) -> dict:
+    return {"id": str(item.id), "kind": item.kind.value, "file_name": item.file_name, "size": item.size,
+            "uploaded_at": item.uploaded_at.isoformat(), "uploaded_by_name": item.uploaded_by_name}
+
+
+def instrument_result(item, files=()) -> dict:
+    return {
+        "id": str(item.id), "version": item.version,
+        "inventory_number": item.inventory_number, "name": item.name,
+        "instrument_type": item.instrument_type, "kind": item.kind.value,
+        "parent_id": str(item.parent_id) if item.parent_id else None,
+        "serial_number": item.serial_number, "manufacturer": item.manufacturer,
+        "doc_designation": item.doc_designation, "quantity": item.quantity,
+        "storage_location": item.storage_location, "warehouse_grn": item.warehouse_grn,
+        "warehouse_writeoff_id": str(item.warehouse_writeoff_id) if item.warehouse_writeoff_id else None,
+        "verification_number": item.verification_number,
+        "verified_at": item.verified_at.isoformat() if item.verified_at is not None else None,
+        "verification_due": item.verification_due.isoformat() if item.verification_due is not None else None,
+        "status": item.status.value, "files": [instrument_file_result(file) for file in files],
+    }
+
+
 @router.get("/instruments")
 def instruments(
     _principal: Annotated[Principal, Depends(production_overview_principal)],
@@ -1345,15 +1408,19 @@ def instruments(
 ) -> dict:
     with uow_factory() as uow:
         rows = uow.instruments.list()
-    return {"instruments": [{
-        "id": str(item.id), "version": item.version,
-        "inventory_number": item.inventory_number, "name": item.name,
-        "instrument_type": item.instrument_type,
-        "verification_number": item.verification_number,
-        "verified_at": item.verified_at.isoformat() if item.verified_at is not None else None,
-        "verification_due": item.verification_due.isoformat() if item.verification_due is not None else None,
-        "status": item.status.value,
-    } for item in rows]}
+        files = {}
+        for file in uow.instrument_files.list():
+            files.setdefault(file.instrument_id, []).append(file)
+        return {"instruments": [instrument_result(item, files.get(item.id, ())) for item in rows]}
+
+
+@router.get("/instruments/next-number")
+def next_number(
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    with uow_factory() as uow:
+        return {"inventory_number": next_instrument_number(uow.instruments)}
 
 
 @router.post("/instruments")
@@ -1366,15 +1433,65 @@ def create_instrument(
     item = _execution(lambda: register_instrument(RegisterInstrumentCommand(
         **payload.model_dump(), actor=principal.actor, now=now,
     ), uow_factory()))
-    return {"instrument": {
-        "id": str(item.id), "version": item.version,
-        "inventory_number": item.inventory_number, "name": item.name,
-        "instrument_type": item.instrument_type,
-        "verification_number": item.verification_number,
-        "verified_at": item.verified_at.isoformat() if item.verified_at is not None else None,
-        "verification_due": item.verification_due.isoformat() if item.verification_due is not None else None,
-        "status": item.status.value,
-    }}
+    return {"instrument": instrument_result(item)}
+
+
+@router.patch("/instruments/{instrument_id}")
+def edit_instrument(
+    instrument_id: UUID,
+    payload: UpdateInstrumentPayload,
+    principal: Annotated[Principal, Depends(production_quality_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    item = _execution(lambda: update_instrument(UpdateInstrumentCommand(
+        instrument_id=instrument_id, expected_version=payload.version,
+        changes=payload.model_dump(exclude_unset=True, exclude={"version"}), actor=principal.actor, now=now,
+    ), uow_factory()))
+    with uow_factory() as uow:
+        files = [file for file in uow.instrument_files.list() if file.instrument_id == item.id]
+    return {"instrument": instrument_result(item, files)}
+
+
+@router.post("/instruments/{instrument_id}/files")
+def upload_instrument_file(
+    instrument_id: UUID,
+    payload: InstrumentFilePayload,
+    principal: Annotated[Principal, Depends(production_quality_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    content = decode_upload(payload.content_base64, "Повреждён файл СИ")
+    item = _execution(lambda: attach_instrument_file(
+        instrument_id, payload.kind, payload.file_name, content, principal.actor, now, uow_factory(),
+    ))
+    return {"file": instrument_file_result(item)}
+
+
+@router.get("/instruments/{instrument_id}/files/{file_id}")
+def serve_instrument_file(
+    instrument_id: UUID,
+    file_id: UUID,
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> Response:
+    with uow_factory() as uow:
+        item = uow.instrument_files.get(instrument_id, file_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="Документ СИ не найден")
+        return file_response(item.content, item.file_name)
+
+
+@router.delete("/instruments/{instrument_id}/files/{file_id}", status_code=204)
+def remove_instrument_file(
+    instrument_id: UUID,
+    file_id: UUID,
+    principal: Annotated[Principal, Depends(production_quality_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> Response:
+    _execution(lambda: delete_instrument_file(instrument_id, file_id, principal.actor, now, uow_factory()))
+    return Response(status_code=204)
 
 
 @router.post("/boxes/{box_id}/qc")

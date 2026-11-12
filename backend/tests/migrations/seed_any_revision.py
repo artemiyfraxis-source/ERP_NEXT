@@ -221,6 +221,8 @@ _OVER_CHECK: dict[tuple[str, str], Any] = {
     ("tech_operation_records", "ter_kind"): "contact",
     # Before 0167 arbitrary statuses were allowed; ACTIVE now needs all evidence despite nullable-date CHECKs.
     ("production_instruments", "status"): "Действует",
+    ("production_instruments", "kind"): "Средство измерений",
+    ("production_instruments", "quantity"): 1,
     ("production_instruments", "verification_number"): "TEST-PV",
     ("production_instruments", "verified_at"): datetime(2026, 9, 1, tzinfo=timezone.utc),
     ("production_instruments", "verification_due"): datetime(2027, 9, 1, tzinfo=timezone.utc),

@@ -445,3 +445,37 @@ def test_passport_of_a_unit_outside_the_sample_refers_to_the_batch_sample(produc
     assert sample["units"][1]["verdict"] is None
     assert sampled["vswr_sample"] is None and sampled["checks"][0]["verdict"] == "pass"  # замерено — как раньше
     assert waiting["vswr_sample"] is None  # в выборке, но ещё не замерено — ссылки на выборку нет
+
+
+def test_accessory_cannot_record_vswr_or_accept_qc(production_api):
+    from decimal import Decimal
+    from app.modules.production.traceability import ProductionBox, format_box_number
+
+    client, operator_id = production_api
+    _card_, task, parent = _setup(client)
+    response = client.post("/api/production/instruments", json={
+        "inventory_number": "СИ.002", "name": "Переходник", "instrument_type": "Переходник",
+        "kind": "Принадлежность", "parent_id": parent["id"],
+    })
+    assert response.status_code == 200, response.text
+    accessory = response.json()["instrument"]
+    with app.state.production_uow_factory() as uow:
+        serials_before = uow.serials.list_for_task(UUID(task["id"]))
+        production = uow.production.get(UUID(task["id"]))
+        box = ProductionBox.create(
+            task_id=production.id, operation_id=production.final_operation.id, item=production.item,
+            operation_position=production.final_operation.position, operator_id=operator_id, created_at=NOW,
+        ).add_output(Decimal(1)).close(format_box_number(1), "Оператор", NOW)
+        uow.boxes.save(box)
+        uow.commit()
+    vswr = client.post("/api/production/vswr", json=_body(task, accessory, GOOD))
+    qc = client.post(f"/api/production/boxes/{box.id}/qc", json={
+        "version": box.version, "accepted": 1, "rejected": 0, "instrument_ids": [accessory["id"]],
+    })
+    for refused in (vswr, qc):
+        assert refused.status_code == 422, refused.text
+        assert "принадлежность, не средство измерений" in refused.json()["detail"]
+    with app.state.production_uow_factory() as uow:
+        assert uow.qc.by_box(box.id) is None
+        assert uow.serials.list_for_task(UUID(task["id"])) == serials_before
+    assert client.get(f"/api/production/vswr/tasks/{task['id']}/serials/1").json()["measurements"] == []
