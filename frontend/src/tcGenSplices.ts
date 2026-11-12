@@ -34,7 +34,7 @@ function release(S: GenState, end: WireEnd): GenState {
 
 /** Конец в сростке или хвосте не стоит на контакте разъёма своей стороны. */
 function clearPins(S: GenState, end: WireEnd): GenState {
-  return { ...S, endpoints: S.endpoints.map((ep) => {
+  return { ...S, ...(S.topology ? { topology: { ...S.topology, ends: (S.topology.ends || []).filter((e) => !same(e.end, end)) } } : {}), endpoints: S.endpoints.map((ep) => {
     if (ep.side !== end.side) return ep;
     const list = parseCorePins_(ep.pins?.[end.idx]);
     if (list[end.unit] == null) return ep;
@@ -49,6 +49,7 @@ function clearPins(S: GenState, end: WireEnd): GenState {
 /** Сторона с одним разъёмом: провод, все концы которого здесь в сростках и хвостах, на разъём не идёт (у стороны с
  *  несколькими разъёмами провод идёт только туда, где у него контакт, — syncRoutes). */
 function routeSingle(D: GenData, S: GenState, idx: number, side: Side): GenState {
+  if (S.topology) return S;
   const eps = S.endpoints.filter((ep) => ep.side === side);
   if (eps.length !== 1) return S;
   const gen = makeGen(D, S);
@@ -103,6 +104,10 @@ export function setTail(D: GenData, S: GenState, end: WireEnd): GenState {
 
 /** Конец провода снова ждёт контакта разъёма (из сростка или хвоста). */
 export function leaveJoin(D: GenData, S: GenState, end: WireEnd): GenState {
+  if (S.tab === "complex" && S.topology) {
+    const next = clearPins(release(S, end), end);
+    return syncSpl(D, next);
+  }
   if (!endJoined(S, end.idx, end.unit, end.side)) return S;
   return syncSpl(D, routeSingle(D, release(S, end), end.idx, end.side));
 }
@@ -124,7 +129,8 @@ export type LinkWire = { unit: PinUnit; a: LinkAnchor[]; b: LinkAnchor[] };
  *  хвост или «не задан»). Провод без единого контакта и сростка — не рисуется. */
 export function linkWires(ends: PinoutEnd[], units: PinUnit[], S: Pick<GenState, "splices" | "tails">): LinkWire[] {
   const sideAnchors = (u: PinUnit, side: Side): LinkAnchor[] => {
-    const pins = ends.filter((e) => e.side === side && u.at[e.id] != null).map((e): LinkAnchor => ({ kind: "pin", epId: e.id, pin: u.at[e.id]! }));
+    const pins: LinkAnchor[] = u.endPins ? u.endPins.filter((p) => p.end.side === side).map((p) => ({ kind: "pin", epId: p.epId, pin: p.pin }))
+      : ends.filter((e) => e.side === side && u.at[e.id] != null).map((e): LinkAnchor => ({ kind: "pin", epId: e.id, pin: u.at[e.id]! }));
     if (pins.length) return pins;
     const end = { idx: u.idx, unit: u.unit, side };
     const sp = spliceOf(S, end);

@@ -250,6 +250,29 @@ export type Branch = { main: number; extra: number; mode: "splice" | "double"; f
 
 /** Конец провода: жила `unit` строки «Кабели» `idx` на стороне `side` (tcGenSplices.ts). */
 export type WireEnd = { idx: number; unit: number; side: Side };
+/** Optional physical topology. A/B identify the two ends of a segment, independently of connector.side.
+ * Materials are either a BOM reference or an explicit additional material; never an automatic substitute. */
+export type TopologyMaterial = { compId: string } | { art: string; name: string };
+export type EndAttachment = { kind: "pin"; epId: string; pin: number } | { kind: "free" }
+  | { kind: "lug"; material: TopologyMaterial; crimp: LugCrimp; strip: string; lPlus?: string; lMinus?: string };
+export type PhysicalEnd = { end: WireEnd; at: EndAttachment };
+export type TubePlacement = {
+  id: string; material: TopologyMaterial; lengthMm: number; count: number;
+  target: { kind: "branch" | "cup"; end: WireEnd } | { kind: "splice"; spliceId: string };
+  /** preload: slide on before closing the access end, then position and shrink after joining.
+   * afterJoin: install and shrink on the completed joint. A splice preload requires preloadEnd. */
+  phase: "preload" | "afterJoin"; preloadEnd?: WireEnd;
+};
+export type PhysicalTopology = { version: 1; ends?: PhysicalEnd[]; tubes?: TubePlacement[] };
+export type PhysicalConnectionEnd = { end: WireEnd } & (
+  { kind: "pin"; epId: string; pin: number; conn: string; label: string }
+  | { kind: "splice"; spliceId: string; label: string }
+  | { kind: "free" }
+  | { kind: "lug"; material: { art: string; name: string }; crimp: LugCrimp }
+);
+export type PhysicalConnection = { idx: number; unit: number; wire: string; from: PhysicalConnectionEnd; to: PhysicalConnectionEnd; shield?: true };
+export const wireEndKey = (e: WireEnd) => `${e.idx}.${e.unit}.${e.side}`;
+export const sameWireEnd = (a: WireEnd, b: WireEnd) => wireEndKey(a) === wireEndKey(b);
 /** Сросток (обжимная гильза, владелец 13.10): концы проводов, соединённые в одной точке, — провод 0,5 с разъёма и три
  *  провода 0,2 к разъёмам и в хвост. Концы в сростке не идут на контакты разъёмов своей стороны. */
 export type Splice = { id: string; ends: WireEnd[];
@@ -265,6 +288,8 @@ export function endJoined(S: Pick<GenState, "splices" | "tails">, idx: number, u
 }
 
 export type GenState = {
+  /** Opt-in compiler contract, v1. Omitted on legacy drafts/configs. */
+  topology?: PhysicalTopology;
   rework?: ReworkState;
   tab: Tab;
   wires: WireEntry[];
@@ -423,6 +448,9 @@ export function withCoaxVswrFromConfig(S: GenState, config: unknown): GenState {
 }
 
 export type OpSpec = {
+  /** Physical-topology dependencies refer to opKey, never to a mutable operation position. */
+  dependsOn?: string[]; physicalEnds?: WireEnd[]; tubePlacement?: string; spliceIds?: string[];
+  endMaterial?: { art: string; name: string };
   type: string; opKey: string; label: string; side?: Side; ord?: number; epId?: string; crimpEpId?: string; crimpEpIdB?: string;
   tmplHint?: string; cat?: string; termArt?: string; firstTerm?: boolean; wireIdxs?: number[];
   /** Карта, которую операция хочет по правилу, когда tmplHint — замена за её отсутствием (CUT_WIRE+2crimp → +1crimp). */
@@ -875,6 +903,52 @@ export function makeGen(D: GenData, S: GenState) {
   const isComplex_ = () => S.tab === "complex";
   const activeWires_ = () => S.wires.filter((w) => w.compId);
   const epById_ = (id: string) => S.endpoints.find((e) => e.id === id) || null;
+  const topologyOn_ = () => isComplex_() && !!S.topology;
+  const physicalOverride_ = (end: WireEnd) => topologyOn_() ? S.topology?.ends?.find((x) => sameWireEnd(x.end, end))?.at : undefined;
+  function topologyMaterial_(ref: TopologyMaterial): { art: string; name: string } {
+    if (!("compId" in ref)) return { art: ref.art, name: ref.name };
+    const comp = getCompById(ref.compId);
+    return { art: comp?.art || comp?.name || "", name: comp?.name || comp?.art || "" };
+  }
+  /** Resolves one physical end without walking through a splice. */
+  function physicalAt_(end: WireEnd): PhysicalConnectionEnd {
+    const own = physicalOverride_(end);
+    if (own?.kind === "lug") return { end, kind: "lug", material: topologyMaterial_(own.material), crimp: own.crimp };
+    if (own?.kind === "free") return { end, kind: "free" };
+    const splice = (S.splices || []).find((s) => s.ends.some((e) => sameWireEnd(e, end)));
+    if (splice) return { end, kind: "splice", spliceId: splice.id, label: spliceName(S, splice) };
+    if (!own && topologyOn_()) {
+      const row = tailLugPlan_().find((r) => r.lug && r.ends.some((e) => sameWireEnd(e, end)));
+      if (row?.lug) return { end, kind: "lug", material: { art: lugArt(row.lug), name: lugComp_(row.lug)?.name || `Наконечник ${row.lug.type}` }, crimp: lugCrimpOf(row.lug.type) || "lug" };
+    }
+    const ep = own?.kind === "pin" ? epById_(own.epId)
+      : endJoined(S, end.idx, end.unit, end.side) ? null
+        : endpointsOnSide_(end.side).find((e) => parseCorePins_(e.pins?.[end.idx])[end.unit] != null);
+    const pin = own?.kind === "pin" ? own.pin : ep ? parseCorePins_(ep.pins?.[end.idx])[end.unit] : null;
+    if (ep && pin != null) {
+      const comp = getCompById(ep.connId);
+      return { end, kind: "pin", epId: ep.id, pin, conn: comp?.art || comp?.name || "", label: ep.label || "" };
+    }
+    return { end, kind: "free" };
+  }
+  function physicalPinsAt_(ep: Endpoint, w: WireEntry): Array<{ end: WireEnd; pin: number }> {
+    const result: Array<{ end: WireEnd; pin: number }> = [];
+    for (let unit = 0; unit < unitCount_(w) + shieldCount_(w); unit++) {
+      for (const side of ["A", "B"] as const) {
+        const at = physicalAt_({ idx: w.idx, unit, side });
+        if (at.kind === "pin" && at.epId === ep.id) result.push({ end: at.end, pin: at.pin });
+      }
+    }
+    return result;
+  }
+  function physicalConnections_(): PhysicalConnection[] {
+    return activeWires_().flatMap((w) => Array.from({ length: unitCount_(w) + shieldCount_(w) }, (_, unit) => {
+      const comp = getCompById(w.compId);
+      return { idx: w.idx, unit, wire: comp?.art || comp?.name || "",
+        from: physicalAt_({ idx: w.idx, unit, side: "A" }), to: physicalAt_({ idx: w.idx, unit, side: "B" }),
+        ...(isShieldPos_(w, unit) ? { shield: true as const } : {}) };
+    }));
+  }
   const endpointsOnSide_ = (side: Side) => S.endpoints.filter((e) => e.side === side);
   const endpointOrdinal_ = (ep: Endpoint) => endpointsOnSide_(ep.side).indexOf(ep) + 1;
   const firstCrimpEndpoint_ = (side: Side) => endpointsOnSide_(side).find((e) => e.method === "crimp") || null;
@@ -915,6 +989,7 @@ export function makeGen(D: GenData, S: GenState) {
 
   function routedWireIdxs_(ep: Endpoint) {
     const allIdx = activeWires_().map((w) => w.idx);
+    if (topologyOn_()) return activeWires_().filter((w) => physicalPinsAt_(ep, w).length > 0).map((w) => w.idx);
     if (!isComplex_() || !ep.wireIdxs || !ep.wireIdxs.length) return allIdx.slice();
     const set = new Set(ep.wireIdxs);
     return allIdx.filter((i) => set.has(i));
@@ -926,6 +1001,12 @@ export function makeGen(D: GenData, S: GenState) {
    *  на двух разъёмах одной стороны — ветвь «Y». Перекрёст задаётся порядком: А «1-6», В «3, 1, 2, 4, 5, 6» → 1→3, 2→1,
    *  3→2… Жилы с контактом только на одном разъёме — без пары, предупреждение. */
   function connections_(): { list: Connection[]; warnings: string[] } {
+    if (topologyOn_()) {
+      const pinEnd = (at: Extract<PhysicalConnectionEnd, { kind: "pin" }>): ConnectionEnd =>
+        ({ end: endKey_(epById_(at.epId)!), conn: at.conn, label: at.label, pin: at.pin });
+      return { list: physicalConnections_().flatMap((c) => c.from.kind === "pin" && c.to.kind === "pin"
+        ? [{ wire: c.wire, from: pinEnd(c.from), to: pinEnd(c.to), ...(c.shield ? { shield: true as const } : {}) }] : []), warnings: [] };
+    }
     const list: Connection[] = [], warnings: string[] = [];
     const ordered = (["A", "B"] as Side[]).flatMap((side) => endpointsOnSide_(side));
     const end = (ep: Endpoint, pin: number): ConnectionEnd => {
@@ -1041,23 +1122,31 @@ export function makeGen(D: GenData, S: GenState) {
   /** Жил провода, которые приходят на разъём: по распиновке — сколько жил с контактом здесь (экран не в счёт);
    *  распиновки у разъёма нет — все жилы (кабелей × жил), как раньше. */
   function endUnits_(ep: Endpoint, w: WireEntry) {
+    if (topologyOn_()) return physicalPinsAt_(ep, w).filter((p) => !isShieldPos_(w, p.end.unit)).length;
     const pinned = corePinsOf_(ep, w.idx).filter((p, k) => p != null && !isShieldPos_(w, k)).length;
     return pinned || unitCount_(w);
   }
   /** Контакты экранов провода у разъёма (экран, заведённый на контакт, — ещё один терминал или ещё одна пайка). */
-  const shieldPinsAt_ = (ep: Endpoint, w: WireEntry) =>
-    corePinsOf_(ep, w.idx).flatMap((p, k) => (p != null && isShieldPos_(w, k) ? [p] : []));
+  const shieldPinsAt_ = (ep: Endpoint, w: WireEntry) => topologyOn_()
+    ? physicalPinsAt_(ep, w).filter((p) => isShieldPos_(w, p.end.unit)).map((p) => p.pin)
+    : corePinsOf_(ep, w.idx).flatMap((p, k) => (p != null && isShieldPos_(w, k) ? [p] : []));
   /** Концы кабелей в оболочке на стороне: разъёмы стороны, куда идут жилы кабеля (по порядку), экранирован ли он,
    *  незадействованные на этой стороне жилы (номера с 0) — когда распиновка задана на всех его разъёмах стороны — и
    *  экраны, заведённые на контакт (разъём и контакт). */
   function cableEnds_(side: Side) {
     return activeWires_().filter(isJacketedCable_).flatMap((w) => {
-      const eps = endpointsOnSide_(side).filter((ep) => routedWireIdxs_(ep).includes(w.idx));
+      const eps = topologyOn_() ? S.endpoints.filter((ep) => physicalPinsAt_(ep, w).some((p) => p.end.side === side))
+        : endpointsOnSide_(side).filter((ep) => routedWireIdxs_(ep).includes(w.idx));
       if (!eps.length) return [];
-      const lists = eps.map((ep) => corePinsOf_(ep, w.idx));
+      const lists = eps.map((ep) => topologyOn_() ? Array.from({ length: unitCount_(w) + shieldCount_(w) }, (_, unit) => {
+        const at = physicalAt_({ idx: w.idx, unit, side });
+        return at.kind === "pin" && at.epId === ep.id ? at.pin : null;
+      }) : corePinsOf_(ep, w.idx));
       const unused = lists.every((list) => list.some((p, k) => p != null && !isShieldPos_(w, k)))
-        ? Array.from({ length: unitCount_(w) }, (_, k) => k).filter((k) => lists.every((list) => list[k] == null)) : [];
-      const shieldPins = eps.flatMap((ep) => shieldPinsAt_(ep, w).map((pin) => ({ ep, pin })));
+        ? Array.from({ length: unitCount_(w) }, (_, k) => k).filter((k) => lists.every((list) => list[k] == null)
+          && (!topologyOn_() || (!physicalOverride_({ idx: w.idx, unit: k, side }) && !endJoined(S, w.idx, k, side)))) : [];
+      const shieldPins = eps.flatMap((ep) => (topologyOn_() ? physicalPinsAt_(ep, w).filter((p) => p.end.side === side && isShieldPos_(w, p.end.unit)).map((p) => p.pin)
+        : shieldPinsAt_(ep, w)).map((pin) => ({ ep, pin })));
       return [{ w, eps, screened: wireScreened_(w), unused, shields: shieldCount_(w), shieldPins }];
     });
   }
@@ -1204,6 +1293,8 @@ export function makeGen(D: GenData, S: GenState) {
   }
   const spliceEnds_ = () => spliceSizes_().reduce((s, n) => s + n, 0);
   function freeEnds_() {
+    if (topologyOn_()) return physicalConnections_().flatMap((c) => [c.from, c.to])
+      .filter((at) => at.kind === "free" && !physicalOverride_(at.end) && endpointsOnSide_(at.end.side).length > 0).length;
     const wires = activeWires_();
     const qty = (w: WireEntry) => Number(w.qty) || 1;
     let ends = wires.reduce((s, w) => s + qty(w), 0) * 2;
@@ -1232,7 +1323,7 @@ export function makeGen(D: GenData, S: GenState) {
   function tailEnds_(): WireEnd[] {
     if (!isComplex_()) return [];
     const alive = new Map(activeWires_().map((w) => [w.idx, unitCount_(w)]));
-    return (S.tails || []).filter((e) => (alive.get(e.idx) ?? 0) > e.unit);
+    return (S.tails || []).filter((e) => (alive.get(e.idx) ?? 0) > e.unit && !physicalOverride_(e));
   }
   /** Конец стороны В без разъёмов, который зачищает (и лудит) прежнее «Лужение свободных концов» / «Зачистка свободных
    *  концов» — его хвостовая обработка второй раз не трогает. */
@@ -1248,6 +1339,7 @@ export function makeGen(D: GenData, S: GenState) {
    *  конец — в сростке, лужение хвостов включено и карта есть в библиотеке. Хвост провода с разъёмом на другом конце —
    *  своими операциями, как раньше. */
   function tailAtCut_(e: WireEnd) {
+    if (physicalOverride_(e)) return false;
     if (!tailTinOn_() || !hasTemplateCode_(TAIL_CUT_CODE_)) return false;
     const w = activeWires_().find((x) => x.idx === e.idx);
     return !!w && wireCores_(w) <= 1 && endJoined(S, e.idx, e.unit, e.side === "A" ? "B" : "A") === "splice";
@@ -1381,6 +1473,7 @@ export function makeGen(D: GenData, S: GenState) {
         ops.push({ type: "prsTerm", opKey: `prsLug${tag[kind]}${i + 1}`, side: sides.has("A") ? "A" : "B",
           label: `Опрессовка ${LUG_CRIMP_NAMES[kind]} ${lugArt(lug)} — ${n} шт`, cat: "Опрессовка наконечников",
           ...(card ? { tmplHint: card } : {}), termArt: lugArt(lug),
+          ...(topologyOn_() ? { physicalEnds: mine.flatMap((r) => r.ends) } : {}),
           lugEnds: mine.map((r) => ({ idx: r.idx, units: r.ends.length })) });
       });
     });
@@ -1518,7 +1611,8 @@ export function makeGen(D: GenData, S: GenState) {
   /** Операции одной группы сростков (владелец 17.10, окончательно): пайка / опрессовка / сварка → надеть трубку на готовый
    *  сросток → усадка. `names` — «С1, С2» (пусто — сростки без точки на схеме), `n` — номер группы в ключах операций (0 —
    *  группа одна). Зачищает концы станок резки. */
-  function spliceGroupOps_(sizes: number[], names: string, n: number, sleeves: Array<{ comp: Comp; count: number }>): OpSpec[] {
+  const explicitSpliceTube_ = (id: string) => topologyOn_() && (S.topology?.tubes || []).some((t) => t.target.kind === "splice" && t.target.spliceId === id);
+  function spliceGroupOps_(sizes: number[], names: string, n: number, sleeves: Array<{ comp: Comp; count: number }>, spliceIds: string[] = []): OpSpec[] {
     const cnt = sizes.length;
     if (!cnt) return [];
     const suffix = n ? String(n) : "";
@@ -1533,14 +1627,23 @@ export function makeGen(D: GenData, S: GenState) {
     // Карты УЗ сварки (US_WELD) в библиотеке может не быть — подсказка остаётся, в названии видно, что карточку надо уточнить.
     const noCard = method === "ultrasonic" && !hasTemplateCode_(SPLICE_TMPL.ultrasonic) ? " (карточка — уточнить)" : "";
     ops.push({ type: "splice", opKey: "splice" + suffix, tmplHint: SPLICE_TMPL[method],
+      ...(topologyOn_() ? { spliceIds } : {}),
       cat: method === "solder" ? "Пайка" : method === "ultrasonic" ? "УЗ сварка" : "Опрессовка", units: cnt,
       sleeveItems: sleeves.map((x) => ({ art: x.comp.art || x.comp.name || "", name: x.comp.name || x.comp.art || "", count: x.count })),
       label: `Сростки${where}${how} — ${cnt} шт по ${wires} провода${used.length ? `: ${used.join(", ")}` : ""}${noCard}` });
-    if (tube) {
-      ops.push({ type: "insTut", opKey: "insSpl" + suffix, tmplHint: "INS_TUT", cat: "Монтаж", tutCount: cnt,
-        label: `Надеть трубку на ${cnt > 1 ? "сростки" : "сросток"}${where} — ${cnt} шт` });
-      ops.push({ type: "heatTut", opKey: "heatSpl" + suffix, tmplHint: "HEAT_TTK_short", cat: "Усадка", tutCount: cnt,
-        label: `Усадка трубки на сростках${where} — ${cnt} шт` });
+    const tubeCount = cnt - spliceIds.filter(explicitSpliceTube_).length;
+    const legacyIds = spliceIds.filter((id) => !explicitSpliceTube_(id));
+    const tubeWhere = topologyOn_() && tubeCount !== cnt ? ` ${legacyIds.map((id) => {
+      const sp = (S.splices || []).find((s) => s.id === id)!;
+      return spliceName(S, sp);
+    }).join(", ") || "остальные"}` : where;
+    if (tube && tubeCount > 0) {
+      ops.push({ type: "insTut", opKey: "insSpl" + suffix, tmplHint: "INS_TUT", cat: "Монтаж", tutCount: tubeCount,
+        ...(topologyOn_() ? { spliceIds: legacyIds } : {}),
+        label: `Надеть трубку на ${tubeCount > 1 ? "сростки" : "сросток"}${tubeWhere} — ${tubeCount} шт` });
+      ops.push({ type: "heatTut", opKey: "heatSpl" + suffix, tmplHint: "HEAT_TTK_short", cat: "Усадка", tutCount: tubeCount,
+        ...(topologyOn_() ? { spliceIds: legacyIds } : {}),
+        label: `Усадка трубки на сростках${tubeWhere} — ${tubeCount} шт` });
     }
     return ops;
   }
@@ -1553,6 +1656,8 @@ export function makeGen(D: GenData, S: GenState) {
   /** Можно ли обжать концы разъёма на автомате резки: "" — можно; "applicator" — у терминала в БД.ТЕР нет автоматического
    *  аппликатора (A…); "other" — пайка, нет терминала, групповой обжим, складывание, RJ, наконечник, кабель в оболочке. */
   function crimpCutEpBlock_(e: Endpoint): "" | "applicator" | "other" {
+    // A preload must remain possible before either physical end is closed; use separate crimp operations.
+    if (topologyOn_()) return "other";
     if (e.method !== "crimp" || !e.termId || e.double || epDoublePins_(e).length > 0 || (e.fold && isComplex_()) || isRjEndpoint_(e)) return "other";
     const t = getCompById(e.termId);
     if (!t || LUG_RE_.test(t.art || t.name || "")) return "other";
@@ -1578,6 +1683,10 @@ export function makeGen(D: GenData, S: GenState) {
   /** Разъём, где стоит конец жилы `k` провода на стороне: по распиновке; контакта нет — единственный разъём стороны, куда
    *  заведён провод (или первый, пока распиновки у провода нет нигде). Конец в сростке или хвосте («Сложная сборка») — null. */
   function unitEndpoint_(w: WireEntry, k: number, side: Side): Endpoint | null {
+    if (topologyOn_()) {
+      const at = physicalAt_({ idx: w.idx, unit: k, side });
+      return at.kind === "pin" ? epById_(at.epId) : null;
+    }
     if (isComplex_() && endJoined(S, w.idx, k, side)) return null;
     const eps = endpointsOnSide_(side).filter((e) => routedWireIdxs_(e).includes(w.idx));
     const pinned = eps.find((e) => corePinsOf_(e, w.idx)[k] != null);
@@ -1691,6 +1800,7 @@ export function makeGen(D: GenData, S: GenState) {
   }
   /** Чем уже занята трубка строки (рукав поверх разъёма, сростки, заделка концов, срез оболочки): "" — ничем. */
   function hsBusyOf_(c: Comp, onConnectors = true): string {
+    if (topologyOn_() && S.topology?.tubes?.some((t) => "compId" in t.material && t.material.compId === c.id)) return "уже в физической топологии";
     if (onConnectors && S.endpoints.some((e) => shrinkOf_(e)?.comp.id === c.id)) return "уже на разъёмах";
     if (spliceEnds_() && S.spl.tutMat === c.id) return "уже на сростках";
     if (capTube_()?.id === c.id) return "уже на заделке концов";
@@ -1729,6 +1839,20 @@ export function makeGen(D: GenData, S: GenState) {
     return ep ? getCompById(ep.termId) : null;
   }
   function getLengthAdjustment_(wIdx?: number) {
+    if (topologyOn_() && wIdx != null) {
+      const w = activeWires_().find((wire) => wire.idx === wIdx);
+      const totals = w ? Array.from({ length: unitCount_(w) }, (_, unit) => (["A", "B"] as const).reduce((sum, side) => {
+        if (S.measureMode === "cut") return sum;
+        const end = { idx: wIdx, unit, side }, at = physicalAt_(end), own = physicalOverride_(end);
+        const ep = at.kind === "pin" ? epById_(at.epId) : null;
+        const term = ep ? getCompById(ep.termId) : null;
+        const rec = own?.kind === "lug" ? own : term ? findTerRecord_(term.art) : at.kind === "lug" ? tailLugAt_(wIdx, side) : null;
+        const amount = parseLengthVal_((S.measureMode === "inner" ? rec?.lPlus : rec?.lMinus) || "");
+        return sum + (S.measureMode === "inner" ? amount : -amount) + (ep?.method === "solder" ? parseLengthVal_(ep.solderAllow || "") : 0);
+      }, 0)) : [0];
+      if (totals.some((n) => n !== totals[0])) throw new Error("Разные припуски концов в одной строке кабеля — разделите её на отдельные отрезки.");
+      return { total: totals[0] || 0, noData: false, parts: [] as string[] };
+    }
     const byWire = wIdx != null;
     const epA = byWire ? null : firstCrimpEndpoint_("A");
     const epB = byWire ? null : firstCrimpEndpoint_("B");
@@ -1779,7 +1903,9 @@ export function makeGen(D: GenData, S: GenState) {
 
   // ── Свивка / лужение ──
   const twistWireIndices_ = () => (S.twist.wires === null ? activeWires_().map((_, i) => i) : S.twist.wires.filter((i) => i < activeWires_().length));
-  const tinWireIndices_ = () => (S.tin.wires === null ? activeWires_().map((_, i) => i) : S.tin.wires.filter((i) => i < activeWires_().length));
+  const implicitFreeB_ = (w: WireEntry, unit: number) => !physicalOverride_({ idx: w.idx, unit, side: "B" }) && physicalAt_({ idx: w.idx, unit, side: "B" }).kind === "free";
+  const tinWireIndices_ = () => (S.tin.wires === null ? activeWires_().map((_, i) => i) : S.tin.wires.filter((i) => i < activeWires_().length))
+    .filter((i) => !topologyOn_() || Array.from({ length: unitCount_(activeWires_()[i]) }, (_, unit) => unit).some((unit) => implicitFreeB_(activeWires_()[i], unit)));
   /** Пары и группы свивки (twistGroups.ts): позиции кабелей, в группе два и больше. */
   const getTwistPairs = () => twistGroupsOf(S.twist.pairs, activeWires_().length);
   /** Проверка строк свивки «Пары и группы» — стоп и предупреждения (twistGroups.ts). */
@@ -2265,11 +2391,210 @@ export function makeGen(D: GenData, S: GenState) {
     return ops;
   }
 
+  function topologyProblems_(): string[] {
+    if (!S.topology) return [];
+    const problems: string[] = [];
+    if (!isComplex_() || S.topology.version !== 1) return ["Физическая топология версии 1 доступна только в сложной сборке."];
+    if (S.branches?.some((b) => b.mode === "splice")) problems.push("Для физической топологии задайте ответвления отдельными отрезками и узлами сростков.");
+    const validEnd = (e: WireEnd) => {
+      const w = activeWires_().find((wire) => wire.idx === e.idx);
+      return !!w && (e.side === "A" || e.side === "B") && Number.isInteger(e.unit) && e.unit >= 0 && e.unit < unitCount_(w) + shieldCount_(w);
+    };
+    const material = (ref: TopologyMaterial) => {
+      if (!topologyMaterial_(ref).art.trim()) problems.push("Материал топологии не найден или не указан.");
+    };
+    const occupied = new Set<string>();
+    for (const item of S.topology.ends || []) {
+      const key = wireEndKey(item.end);
+      if (!validEnd(item.end)) problems.push(`Конец ${key}: провод или жила не найдены.`);
+      if (occupied.has(key)) problems.push(`Конец ${key} задан дважды.`);
+      occupied.add(key);
+      if ((S.splices || []).some((sp) => sp.ends.some((e) => sameWireEnd(e, item.end)))) problems.push(`Конец ${key} одновременно в сростке и на отдельной заделке.`);
+      if (item.at.kind === "pin" && (!getCompById(epById_(item.at.epId)?.connId) || !Number.isInteger(item.at.pin) || item.at.pin < 1)) problems.push(`Конец ${key}: разъём или контакт не найдены.`);
+      if (item.at.kind === "lug") {
+        material(item.at.material);
+        if (!parseLengthVal_(item.at.strip) || !["ferrule", "lug", "tube"].includes(item.at.crimp)) problems.push(`Конец ${key}: укажите способ обжима и длину зачистки наконечника.`);
+      }
+    }
+    const joined = new Set<string>();
+    for (const w of activeWires_()) for (let unit = 0; unit < unitCount_(w) + shieldCount_(w); unit++) for (const side of ["A", "B"] as const) {
+      const end = { idx: w.idx, unit, side };
+      if (!physicalOverride_(end) && !endJoined(S, w.idx, unit, side)
+        && endpointsOnSide_(side).filter((ep) => parseCorePins_(ep.pins?.[w.idx])[unit] != null).length > 1) problems.push(`Конец ${wireEndKey(end)} назначен нескольким разъёмам — задайте отдельные отрезки.`);
+      const at = physicalAt_(end);
+      if (at.kind === "pin" && !getCompById(epById_(at.epId)?.connId)) problems.push(`Конец ${wireEndKey(end)}: разъём не найден в составе.`);
+    }
+    for (const sp of S.splices || []) {
+      if (sp.ends.length < 2 || !S.spl.enabled) problems.push(`Сросток ${spliceName(S, sp)}: нужны два конца и включённая операция соединения.`);
+      for (const end of sp.ends) {
+        const key = wireEndKey(end);
+        if (!validEnd(end) || joined.has(key)) problems.push(`Конец ${key}: неверный или повторный участник сростка.`);
+        joined.add(key);
+      }
+    }
+    const ids = new Set<string>();
+    for (const tube of S.topology.tubes || []) {
+      const target = tube.target;
+      if (!tube.id.trim() || ids.has(tube.id)) problems.push("У каждой трубки должен быть свой непустой идентификатор.");
+      ids.add(tube.id); material(tube.material);
+      if (!Number.isFinite(tube.lengthMm) || tube.lengthMm <= 0 || !Number.isInteger(tube.count) || tube.count <= 0) problems.push(`Трубка ${tube.id}: длина и количество должны быть положительными.`);
+      const sp = target.kind === "splice" ? (S.splices || []).find((s) => s.id === target.spliceId) : null;
+      if (tube.target.kind === "splice" ? !sp : !validEnd(tube.target.end)) problems.push(`Трубка ${tube.id}: место установки не найдено.`);
+      if (tube.target.kind === "cup") {
+        const at = physicalAt_(tube.target.end);
+        if (at.kind !== "pin" || epById_(at.epId)?.method !== "solder") problems.push(`Трубка ${tube.id}: чашка должна быть контактом паяльного разъёма.`);
+      }
+      if (tube.phase !== "preload" && tube.phase !== "afterJoin") problems.push(`Трубка ${tube.id}: фаза установки не задана.`);
+      if (tube.phase === "preload") {
+        const access = tube.preloadEnd || (tube.target.kind !== "splice" ? tube.target.end : null);
+        if (!access || !validEnd(access) || (sp && !sp.ends.some((e) => sameWireEnd(e, access)))) problems.push(`Трубка ${tube.id}: укажите конец для предварительного надевания.`);
+        if (access && tube.target.kind !== "splice" && (access.idx !== tube.target.end.idx || access.unit !== tube.target.end.unit)) problems.push(`Трубка ${tube.id}: конец надевания должен принадлежать тому же отрезку.`);
+      }
+    }
+    return problems;
+  }
+
+  /** Adds physical stages after the legacy graph has finished rebuilding its tube operations.
+   * Legacy operations retain their relative order. User ordering is a preference constrained by dependencies.
+   * The opt-in route uses one block per operation so a preload cannot hide behind a closed connector block. */
+  function topologyOps_(base: OpSpec[]): OpSpec[] {
+    // Cable preparation is keyed by physical side, not by the side of its connector card.
+    const kept = base.filter((o) => !/^(stripCable|stripCores|shield|idle)[AB]\d+$/.test(o.opKey));
+    const ops = kept.map((o, i) => ({ ...o, dependsOn: i ? [kept[i - 1].opKey] : [] }));
+    const dependencies = (op: OpSpec, keys: string[]) => { op.dependsOn = [...new Set([...(op.dependsOn || []), ...keys])]; };
+    const cuts = (end: WireEnd) => ops.filter((op) => /^cutWire/.test(op.type)
+      && (op.cutUnits ? op.cutUnits.some(([idx, unit]) => idx === end.idx && unit === end.unit) : op.wireIdxs?.includes(end.idx))).map((o) => o.opKey);
+    const lugOps: OpSpec[] = [];
+    for (const { end, at } of S.topology?.ends || []) {
+      if (at.kind !== "lug") continue;
+      const key = `end.${wireEndKey(end)}`, mat = topologyMaterial_(at.material);
+      const strip: OpSpec = { type: "stripCable", opKey: `${key}.strip`, tmplHint: "STRIP_WIRE", cat: "Разделка",
+        label: `Зачистка под наконечник ${mat.art} — конец ${sideRu_(end.side)}, ${at.strip} мм`, physicalEnds: [end],
+        wireIdxs: [end.idx], wireUnits: { [end.idx]: 1 },
+        tutCount: 1, strip: { a: end.side === "A", b: end.side === "B", lenA: end.side === "A" ? at.strip : "", lenB: end.side === "B" ? at.strip : "" }, dependsOn: cuts(end) };
+      lugOps.push(strip, { type: "prsTerm", opKey: `${key}.crimp`, tmplHint: lugCardCode_(at.crimp) || undefined, cat: "Опрессовка наконечников",
+        label: `Опрессовка наконечника ${mat.art} — конец ${sideRu_(end.side)}`, side: end.side, physicalEnds: [end], endMaterial: mat,
+        termArt: mat.art, lugEnds: [{ idx: end.idx, units: 1 }], dependsOn: [strip.opKey] });
+    }
+    ops.push(...lugOps.map((o) => ({ ...o, dependsOn: o.dependsOn || [] })));
+    const closures = (end: WireEnd) => {
+      const at = physicalAt_(end);
+      if (at.kind === "pin") return ops.filter((o) => o.epId === at.epId && ["prsTerm", "solderConn", "insTerm"].includes(o.type));
+      if (at.kind === "splice") return ops.filter((o) => o.type === "splice" && o.spliceIds?.includes(at.spliceId));
+      if (at.kind === "lug") return ops.filter((o) => o.type === "prsTerm" && o.physicalEnds?.some((e) => sameWireEnd(e, end)));
+      return [];
+    };
+    for (const w of activeWires_().filter(isJacketedCable_)) for (const side of ["A", "B"] as const) {
+      const ends = Array.from({ length: unitCount_(w) + shieldCount_(w) }, (_, unit): WireEnd => ({ idx: w.idx, unit, side }));
+      const connected = ends.filter((e) => physicalAt_(e).kind !== "free");
+      if (!connected.length) continue;
+      const eps = S.endpoints.filter((ep) => physicalPinsAt_(ep, w).some((p) => p.end.side === side));
+      const first = eps[0], key = `cable.${w.idx}.${side}`;
+      const jacket = first ? epJacketMm_(first, w) : w.jacket || JACKET_STRIP_MM_;
+      const cutKeys = [...new Set(ends.flatMap(cuts))];
+      const stripped = S.rotor && ops.some((o) => cutKeys.includes(o.opKey) && (side === "A" ? !!o.strip?.lenA : !!o.strip?.lenB));
+      const prep: OpSpec[] = [];
+      const common = { side, physicalEnds: connected, wireIdxs: [w.idx], dependsOn: cutKeys };
+      if (!stripped) prep.push({ ...common, type: "stripCable", opKey: `${key}.jacket`, cat: "Разделка",
+        tmplHint: stripCableTmpl_(getCompById(w.compId), wireScreened_(w)), tutCount: Math.max(1, Math.round(w.qty)),
+        label: `Разделка оболочки кабеля ${w.idx + 1}, конец ${sideRu_(side)} — ${jacket} мм`,
+        strip: { a: side === "A", b: side === "B", lenA: side === "A" ? jacket : "", lenB: side === "B" ? jacket : "" } });
+      if (wireScreened_(w)) prep.push({ ...common, type: "stripCable", opKey: `${key}.shield`, cat: "Разделка",
+        tmplHint: hasTemplateCode_(SHIELD_CODE_) ? SHIELD_CODE_ : "STRIP_CABLE_sheld", tutCount: shieldCount_(w),
+        label: `Подготовка экрана кабеля ${w.idx + 1}, конец ${sideRu_(side)}`, dependsOn: prep.length ? [prep[prep.length - 1].opKey] : cutKeys });
+      const unused = cableEnds_(side).find((c) => c.w.idx === w.idx)?.unused || [];
+      if (unused.length) prep.push({ ...common, type: "endCap", opKey: `${key}.idle`, cat: "Подготовка", tmplHint: "INS_END_CAP", tutCount: unused.length,
+        physicalEnds: unused.map((unit) => ({ idx: w.idx, unit, side })),
+        label: `Обрезка и изоляция незадействованных жил кабеля ${w.idx + 1}, конец ${sideRu_(side)} — ${unused.length} шт`,
+        dependsOn: prep.length ? [prep[prep.length - 1].opKey] : cutKeys });
+      for (const ep of eps) {
+        if (isRjEndpoint_(ep) || (ep.method === "crimp" && ep.otp)) continue;
+        const own = physicalPinsAt_(ep, w).filter((p) => p.end.side === side && !isShieldPos_(w, p.end.unit)).map((p) => p.end);
+        if (!own.length) continue;
+        const len = ep.method === "solder" ? ep.solderStrip.trim() || DEFAULT_LEN_MM_ : epStripLen_(ep);
+        prep.push({ ...common, type: "stripCable", opKey: `${key}.cores.${ep.id}`, cat: "Разделка", tmplHint: "STRIP_WIRE",
+          physicalEnds: own, tutCount: own.length, wireUnits: { [w.idx]: own.length },
+          label: `Зачистка жил кабеля ${w.idx + 1}, конец ${sideRu_(side)} — ${len} мм`,
+          strip: { a: side === "A", b: side === "B", lenA: side === "A" ? len : "", lenB: side === "B" ? len : "" },
+          dependsOn: prep.length ? [prep[prep.length - 1].opKey] : cutKeys });
+      }
+      // The cutting machine removes only the jacket; splice-bound cores need their own strip.
+      const spliceCores = connected.filter((end) => !isShieldPos_(w, end.unit) && physicalAt_(end).kind === "splice");
+      if (spliceCores.length) {
+        const len = spliceStripMm(S);
+        prep.push({ ...common, type: "stripCable", opKey: `${key}.cores.splice`, cat: "Разделка", tmplHint: "STRIP_WIRE",
+          physicalEnds: spliceCores, tutCount: spliceCores.length, wireUnits: { [w.idx]: spliceCores.length },
+          label: `Зачистка жил под сросток, кабель ${w.idx + 1}, конец ${sideRu_(side)} — ${len} мм`,
+          strip: { a: side === "A", b: side === "B", lenA: side === "A" ? len : "", lenB: side === "B" ? len : "" },
+          dependsOn: prep.length ? [prep[prep.length - 1].opKey] : cutKeys });
+      }
+      if (prep.length) {
+        const ready = prep[prep.length - 1].opKey;
+        connected.flatMap(closures).forEach((o) => dependencies(o, [ready]));
+        ops.filter((o) => o.opKey.startsWith("end.") && o.type === "stripCable" && o.physicalEnds?.some((e) => connected.some((c) => sameWireEnd(c, e))))
+          .forEach((o) => dependencies(o, [ready]));
+        ops.push(...prep.map((o) => ({ ...o, dependsOn: o.dependsOn || [] })));
+      }
+    }
+    for (const tube of S.topology?.tubes || []) {
+      const key = `tube.${tube.id}`, mat = topologyMaterial_(tube.material), len = String(tube.lengthMm);
+      const target = tube.target;
+      const targetEnds = target.kind === "splice" ? (S.splices || []).find((s) => s.id === target.spliceId)!.ends : [target.end];
+      const joinedEnds = target.kind === "branch" ? [target.end, { ...target.end, side: target.end.side === "A" ? "B" as const : "A" as const }] : targetEnds;
+      const targetOps = [...new Set(joinedEnds.flatMap(closures))];
+      const access = tube.preloadEnd || targetEnds[0];
+      const common = { tubePlacement: tube.id, physicalEnds: targetEnds, tutCount: tube.count };
+      const cut: OpSpec = { ...common, type: "cutTut", opKey: `${key}.cut`, tmplHint: "CUT_TUT_short", cat: "Резка",
+        label: `Резка трубки ${mat.art} — ${tube.count}×${len} мм`, tutArt: mat.art, tutName: mat.name,
+        tutSegs: [{ len, count: tube.count }], tutParts: [{ ...mat, len, count: tube.count }], dependsOn: [] };
+      ops.push({ ...cut, dependsOn: [] });
+      let ready = cut.opKey;
+      if (tube.phase === "preload") {
+        ready = `${key}.preload`;
+        const jacket = ops.filter((o) => o.opKey === `cable.${access.idx}.${access.side}.jacket` || o.opKey === `cable.${access.idx}.${access.side}.shield`);
+        ops.push({ ...common, type: "insTut", opKey: ready, tmplHint: "INS_TUT", cat: "Монтаж",
+          label: `Предварительно надеть трубку ${mat.art} — ${tube.count} шт`, physicalEnds: [access], dependsOn: [cut.opKey, ...cuts(access), ...jacket.map((o) => o.opKey)] });
+        // Both ends are still accessible at preload; this also protects jumpers and closed splice branches.
+        const other = { ...access, side: access.side === "A" ? "B" as const : "A" as const };
+        [...new Set([...closures(access), ...closures(other), ...targetOps])].forEach((o) => dependencies(o, [ready]));
+      }
+      const position: OpSpec = { ...common, type: "insTut", opKey: `${key}.position`, tmplHint: "INS_TUT", cat: "Монтаж",
+        label: `Установить трубку ${mat.art} на место — ${tube.count} шт`, dependsOn: [...new Set([ready, ...targetOps.map((o) => o.opKey), ...targetEnds.flatMap(cuts)])] };
+      const shrink: OpSpec = { ...common, type: "heatTut", opKey: `${key}.shrink`, tmplHint: "HEAT_TYT_short", cat: "Усадка",
+        label: `Усадка трубки ${mat.art} — ${tube.count} шт`, dependsOn: [position.opKey] };
+      ops.push({ ...position, dependsOn: position.dependsOn! }, { ...shrink, dependsOn: shrink.dependsOn! });
+      if (tube.target.kind === "cup") {
+        const at = physicalAt_(tube.target.end);
+        if (at.kind === "pin") ops.filter((o) => o.type === "insHousing" && o.epId === at.epId).forEach((o) => dependencies(o, [shrink.opKey]));
+      }
+    }
+    const pending = applyOpOrder(ops, S.opOrder || []), ordered: OpSpec[] = [], done = new Set<string>();
+    while (pending.length) {
+      const i = pending.findIndex((op) => (op.dependsOn || []).every((key) => done.has(key)));
+      if (i < 0) throw new Error("Невозможно упорядочить операции топологии: цикл или отсутствующая зависимость.");
+      const [op] = pending.splice(i, 1);
+      ordered.push(op); done.add(op.opKey);
+    }
+    // Explicit per-operation blocks keep all dependencies visible to the route consumer.
+    const pf = (key: string) => `pf-topology-${key}`;
+    const last = ordered.at(-1);
+    const edges: PfEdge[] = ordered.flatMap((o) => (o.dependsOn || []).map((key) => ({ from: pf(key), to: pf(o.opKey), items: [] })));
+    ordered.forEach((o) => { if (last && o !== last && !edges.some((e) => e.from === pf(o.opKey))) edges.push({ from: pf(o.opKey), to: pf(last.opKey), items: [] }); });
+    graph_ = { blocks: ordered.map((o) => ({ key: pf(o.opKey), name: o.label, ...(o === last ? { final: true } : {}),
+      ...(/^cut/.test(o.type) ? { kit: true } : {}) })), edges };
+    return ordered.map((o) => ({ ...o, pf: pf(o.opKey) }));
+  }
+
   // ── Маршрут межплатной / сложной сборки ──
   /** Операции в порядке генератора, а поверх — свой порядок технолога (S.opOrder). */
   function getActiveOps(): OpSpec[] {
     if (S.tab === "rework") return reworkOps_();
-    return applyOpOrder(autoOps(), S.opOrder || []);
+    if (S.topology) {
+      const problems = topologyProblems_();
+      if (problems.length) throw new Error(problems.join("\n"));
+    }
+    const ops = autoOps();
+    return topologyOn_() ? topologyOps_(ops) : applyOpOrder(ops, S.opOrder || []);
   }
   function reworkOps_(): OpSpec[] {
     const r = S.rework || emptyRework();
@@ -2450,7 +2775,12 @@ export function makeGen(D: GenData, S: GenState) {
       const routed = routedWireIdxs_(e);
       // ТУТ — на каждую жилу, что приходит на этот разъём (часть жил кабеля может идти на другой разъём стороны), и на
       // экран, припаянный к контакту.
-      const n = activeWires.filter((w) => routed.includes(w.idx)).reduce((s, w) => s + endUnits_(e, w) + shieldPinsAt_(e, w).length, 0);
+      const replaced = topologyOn_() ? (S.topology?.tubes || []).filter((t) => {
+        if (t.target.kind !== "cup") return false;
+        const at = physicalAt_(t.target.end);
+        return at.kind === "pin" && at.epId === e.id;
+      }).map((t) => wireEndKey((t.target as { end: WireEnd }).end)) : [];
+      const n = activeWires.filter((w) => routed.includes(w.idx)).reduce((s, w) => s + endUnits_(e, w) + shieldPinsAt_(e, w).length, 0) - new Set(replaced).size;
       if (!n) return;
       solderEnds += n;
       const len = (e.tutLen || "").trim();
@@ -2461,7 +2791,11 @@ export function makeGen(D: GenData, S: GenState) {
       // Тот же материал уходит и на рукава поверх разъёмов — на пайку остаётся то, что за вычетом их длины.
       const shrinkM = t ? S.endpoints.reduce((sum, e) => { const sh = shrinkOf_(e); return sh && sh.comp === t ? sum + (parseLengthVal_(sh.len) || 0) / 1000 : sum; }, 0)
         + jacketShrinkItems_().reduce((sum, js) => (js.comp === t ? sum + (parseLengthVal_(js.len) || 0) * js.count / 1000 : sum), 0) : 0;
-      const m = t ? Math.max(0, qtyNum(t) - shrinkM) : 0;
+      const placedM = topologyOn_() && t ? (S.topology?.tubes || []).reduce((sum, tube) => {
+        const mat = topologyMaterial_(tube.material);
+        return sum + (mat.art === (t.art || t.name) ? tube.lengthMm * tube.count / 1000 : 0);
+      }, 0) : 0;
+      const m = t ? Math.max(0, qtyNum(t) - shrinkM - placedM) : 0;
       if (m > 0) {
         const auto = String(Math.round(m * 1000 / solderEnds));
         tutByLen[auto] = (tutByLen[auto] || 0) + tutByLen[""];
@@ -2493,7 +2827,8 @@ export function makeGen(D: GenData, S: GenState) {
           const epA = unitEndpoint_(w, k, "A"), epB = unitEndpoint_(w, k, "B");
           const joins = isComplex_() ? { A: endJoined(S, w.idx, k, "A"), B: endJoined(S, w.idx, k, "B") } : undefined;
           const tail = joins ? (["A", "B"] as Side[]).find((side) => joins[side] === "tail" && tailAtCut_({ idx: w.idx, unit: k, side })) : undefined;
-          const key = `${epA?.id ?? joins?.A ?? ""}|${epB?.id ?? joins?.B ?? ""}${tail ? `|T${tail}` : ""}`;
+          const key = `${epA?.id ?? joins?.A ?? ""}|${epB?.id ?? joins?.B ?? ""}${tail ? `|T${tail}` : ""}`
+            + (topologyOn_() ? `|${physicalOverride_({ idx: w.idx, unit: k, side: "A" })?.kind || ""}/${physicalOverride_({ idx: w.idx, unit: k, side: "B" })?.kind || ""}` : "");
           const piece = own.get(key);
           if (piece) { piece.units++; piece.ks.push(k); }
           else {
@@ -2508,9 +2843,12 @@ export function makeGen(D: GenData, S: GenState) {
         const ends = piece.ends;
         if (splAtCut) (["A", "B"] as Side[]).forEach((side) => {
           const eps = endpointsOnSide_(side);
-          if (!eps.length || (ends ? !!ends[side] : eps.some((e) => routedWireIdxs_(e).includes(w.idx)))) return;
+          if (topologyOn_()) {
+            if (isJacketedCable_(w) || ends?.[side]) return;
+          } else if (!eps.length || (ends ? !!ends[side] : eps.some((e) => routedWireIdxs_(e).includes(w.idx)))) return;
           // Хвост станок зачищает под лужение (2–3 мм), только когда сам его и лудит; иначе хвост при резке не трогают.
           const join = piece.joins?.[side];
+          if (topologyOn_() && join !== "splice" && !(join === "tail" && piece.tail === side)) return;
           if (join === "tail" && piece.tail !== side) return;
           const len = join === "tail" ? tailLen : splLen;
           if (side === "A") a = len; else b = len;
@@ -2539,14 +2877,22 @@ export function makeGen(D: GenData, S: GenState) {
             len = epStripLen_(e);
           }
           if (len === null) return;
-          if (e.side === "A") a = len; else b = len;
+          if (topologyOn_() && ends) {
+            if (ends.A?.id === e.id) a = len;
+            if (ends.B?.id === e.id) b = len;
+          } else if (topologyOn_()) {
+            const pins = physicalPinsAt_(e, w);
+            if (pins.some((p) => p.end.side === "A")) a = len;
+            if (pins.some((p) => p.end.side === "B")) b = len;
+          } else if (e.side === "A") a = len; else b = len;
         });
         // Лужёный свободный конец зачищают под лужение: его длина главнее «Зачистки свободных концов» (тот блок — без
         // лужения); пустая длина свободной зачистки больше не прячет длину под лужение (719К.2 КБ1 «B ?», 04.10).
-        const tinned = !endpointsOnSide_("B").length && S.tin.enabled && tinIdx.includes(activeWires.indexOf(w));
+        const freeB = !topologyOn_() || piece.ks.every((unit) => implicitFreeB_(w, unit));
+        const tinned = freeB && !endpointsOnSide_("B").length && S.tin.enabled && tinIdx.includes(activeWires.indexOf(w));
         const freeLen = S.freeStrip.enabled ? (S.freeStrip.len || "").trim() : "";
         if (!b && tinned) b = (S.tin.stripLen || "").trim() || freeLen || "—";
-        if (!b && !endpointsOnSide_("B").length && S.freeStrip.enabled) b = freeLen || "—";
+        if (freeB && !b && !endpointsOnSide_("B").length && S.freeStrip.enabled) b = freeLen || "—";
         return { a, b };
       };
       // Партии резки с обжимом (владелец 16.10, 713К.4 КБ1): концы, которые станок обжимает, — по терминалу каждой стороны
@@ -2789,7 +3135,14 @@ export function makeGen(D: GenData, S: GenState) {
     // Хвосты под лужение: без стороны В вместе с «Лужением свободных концов» — одна операция, иначе своя после резки.
     const tailTin = tailTinEnds_();
     if (tinOn && tinLeft.length > 0) {
-      if (!tailTin.length) ops.push({ type: "tin", opKey: "tin", label: "Лужение", cat: "Лужение", ...(tinAtCut.size ? { wireIdxs: tinLeft } : {}) });
+      if (topologyOn_()) {
+        const ends = [...activeWires.filter((w) => tinLeft.includes(w.idx)).flatMap((w) => Array.from({ length: unitCount_(w) }, (_, unit) => unit)
+          .filter((unit) => implicitFreeB_(w, unit)).map((unit): WireEnd => ({ idx: w.idx, unit, side: "B" }))), ...tailTin];
+        const counts: Record<number, number> = {};
+        ends.forEach((e) => { counts[e.idx] = (counts[e.idx] || 0) + 1; });
+        ops.push({ type: "tin", opKey: "tin", label: "Лужение свободных концов", cat: "Лужение", tmplHint: "SDR_tin",
+          wireIdxs: Object.keys(counts).map(Number), wireUnits: counts, units: ends.length, physicalEnds: ends });
+      } else if (!tailTin.length) ops.push({ type: "tin", opKey: "tin", label: "Лужение", cat: "Лужение", ...(tinAtCut.size ? { wireIdxs: tinLeft } : {}) });
       else {
         const units = activeWires.filter((w) => tinLeft.includes(w.idx)).reduce((n, w) => n + unitCount_(w), 0) + tailTin.length;
         ops.push({ type: "tin", opKey: "tin", label: `Лужение свободных концов и хвостов — ${units} конц.`, cat: "Лужение",
@@ -3252,7 +3605,7 @@ export function makeGen(D: GenData, S: GenState) {
     sleeves.jacket.forEach((x) => tubes.push({ ...tubeOf(x.comp), len: x.len, count: x.count, to: FINAL }));
     sleeves.harness.forEach((x) => tubes.push({ ...tubeOf(x.comp), len: x.len, count: x.cnt, to: hsPf ? HS : FINAL }));
     const splTube = spliceTube_();
-    if (splTube) groups.forEach((g) => tubes.push({ ...tubeOf(splTube.comp), len: splTube.len, count: g.splices.length + g.rest, to: g.key }));
+    if (splTube) groups.forEach((g) => tubes.push({ ...tubeOf(splTube.comp), len: splTube.len, count: g.splices.filter((s) => !explicitSpliceTube_(s.id)).length + g.rest, to: g.key }));
     generic.filter((o) => o.opKey === "cutCap" || o.opKey === "cutTut").forEach((o) => (o.tutSegs || []).forEach((seg) => tubes.push({
       art: o.tutArt || "", name: o.tutName || o.tutArt || "", len: seg.len, count: seg.count, to: o.opKey === "cutCap" ? FINAL : blockOfEp(solderEp) })));
     const sources: OpSpec[] = cutOps.map((o) => ({ ...o, pf: `pf-${o.opKey}` }));
@@ -3362,7 +3715,7 @@ export function makeGen(D: GenData, S: GenState) {
       if (pairs) out.push({ type: "twist", opKey: `twistS${i + 1}`, cat: "Свивка", units: pairs, twistPairs: twistPairsAt.get(g.key) || [],
         label: `Свивка перед сростками${g.names ? ` ${g.names}` : ""} — ${pairs} ${pluralRu(pairs, "пара", "пары", "пар")}` });
       const groupSizes = g.splices.length ? g.splices.map((s) => Math.max(2, s.ends.length)) : sizes.slice(drawn.length);
-      out.push(...spliceGroupOps_(groupSizes, g.names, groups.length > 1 ? i + 1 : 0, groupSleeves_(g.splices.map((s) => s.id), g.rest)));
+      out.push(...spliceGroupOps_(groupSizes, g.names, groups.length > 1 ? i + 1 : 0, groupSleeves_(g.splices.map((s) => s.id), g.rest), g.splices.map((s) => s.id)));
       if (groups.length > 1) out.forEach((o) => { o.branch = g.names || "остальные"; });
       link(g.key, FINAL, g.name);
       // Сростки без точки на схеме: их провода — из всех партий резки.
@@ -3656,6 +4009,10 @@ export function makeGen(D: GenData, S: GenState) {
     };
   }
   function buildConfig(): Record<string, unknown> {
+    if (S.topology) {
+      const problems = topologyProblems_();
+      if (problems.length) throw new Error(problems.join("\n"));
+    }
     if (S.tab === "rework") return reworkConfig_();
     if (S.tab === "coax") return buildConfigCoax_();
     const sideB = endpointsOnSide_("B").length > 0;
@@ -3666,10 +4023,11 @@ export function makeGen(D: GenData, S: GenState) {
     const shared = sharedLength();
     const wires = activeWires.map((w) => {
       const comp = getCompById(w.compId);
-      const own = S.advancedLength ? (w.length || 0) : 0;
+      const own = S.advancedLength ? (w.length || 0) : topologyOn_() ? S.drawingLength : 0;
       const len = own > 0 ? Math.round((own + getLengthAdjustment_(w.idx).total) * 100) / 100 : shared;
       return {
         name: comp ? comp.name : "", art: comp ? comp.art : "", qty: w.qty || 1, length: len,
+        ...(topologyOn_() ? { idx: w.idx } : {}),
         ...(wireCores_(w) > 1 && !allRjEndpoints_() ? { cores: wireCores_(w) } : {}),
         ...(coreColors_(w).some(Boolean) ? { coreColors: coreColors_(w) } : {}),
       };
@@ -3699,7 +4057,8 @@ export function makeGen(D: GenData, S: GenState) {
         if (wireCores_(w) <= 1) return { ...rest, qty: here };
         return here % qty === 0 ? { ...rest, cores: here / qty } : { ...rest, qty: 1, cores: here };
       };
-      const corePins = (w: WireEntry) => corePinsOf_(ep, w.idx).filter((p, k): p is number => p != null && !isShieldPos_(w, k)).join(", ");
+      const corePins = (w: WireEntry) => topologyOn_() ? physicalPinsAt_(ep, w).filter((p) => !isShieldPos_(w, p.end.unit)).map((p) => p.pin).join(", ")
+        : corePinsOf_(ep, w.idx).filter((p, k): p is number => p != null && !isShieldPos_(w, k)).join(", ");
       // Экран на контакте разъёма — отдельной строкой «Экран <кабель>»: ему тоже нужен терминал (или пайка) и место в ЭТК.
       const shields = entries.flatMap((x) => {
         const pins = shieldPinsAt_(ep, x.w);
@@ -3745,11 +4104,21 @@ export function makeGen(D: GenData, S: GenState) {
         tPrep: row.times.tPrep, tOp: row.times.tOp, tMachine: row.times.tMachine,
         // Сложная сборка: своё название операции («Надеть ТТК X2 «I3» — ТТК 8/2») — в блоке схемы ПФ ЭТК вместо имени карты.
         ...(route && spec.label ? { label: spec.label } : {}),
+        ...(topologyOn_() ? { dependsOn: spec.dependsOn || [], ...(spec.physicalEnds ? { physicalEnds: spec.physicalEnds } : {}),
+          ...(spec.tubePlacement ? { tubePlacement: spec.tubePlacement } : {}), ...(spec.spliceIds ? { spliceIds: spec.spliceIds } : {}) } : {}),
       };
       if (spec.wireIdxs) {
         const set = new Set(spec.wireIdxs);
         // Партия берёт из строки «Кабели» только свои жилы (провод ×2: одна жила — к SYM, другая — к SHF).
-        const own = (w: WireEntry, wire: Record<string, unknown>) => (spec.wireUnits?.[w.idx] !== undefined ? { ...wire, qty: spec.wireUnits[w.idx] } : wire);
+        const own = (w: WireEntry, wire: Record<string, unknown>) => {
+          if (spec.wireUnits?.[w.idx] === undefined) return wire;
+          // Physical preparation counts individual cores, not whole multi-core cables.
+          if (topologyOn_() && spec.physicalEnds) {
+            const { cores: _cores, ...unit } = wire;
+            return { ...unit, qty: spec.wireUnits[w.idx] };
+          }
+          return { ...wire, qty: spec.wireUnits[w.idx] };
+        };
         op.wires = activeWires.map((w, pos) => ({ w, pos })).filter((x) => set.has(x.w.idx)).map((x) => own(x.w, wires[x.pos]));
         if (spec.strip) op.strip = spec.strip;
       }
@@ -3783,14 +4152,14 @@ export function makeGen(D: GenData, S: GenState) {
         op.sleeves = spec.sleeveItems
           ?? spliceSleeves_().items.map((x) => ({ art: x.comp.art || x.comp.name || "", name: x.comp.name || x.comp.art || "", count: x.count }));
       }
-      if (spec.opKey === "stripTail" || spec.opKey.startsWith("stripLug")) op.strip = spec.strip;
+      if (spec.opKey === "stripTail" || spec.opKey.startsWith("stripLug") || (spec.physicalEnds && spec.strip)) op.strip = spec.strip;
       // Опрессовка наконечников хвостов: провод — строкой на каждый со своим числом концов (= наконечников), наконечник —
       // как терминал конца (etk_builder: комплектующие, нормы и аппликатор из справочника по артикулу).
       if (spec.lugEnds) {
         const lug = lugByArt(lugRecs_(), spec.termArt || "");
         const comp = lug ? lugComp_(lug) : null;
         op.side = spec.side;
-        op.ep = { connArt: "", connName: "", termArt: spec.termArt || "", termName: comp?.name || (lug ? `Наконечник ${lug.type}` : ""),
+        op.ep = { connArt: "", connName: "", termArt: spec.termArt || "", termName: spec.endMaterial?.name || comp?.name || (lug ? `Наконечник ${lug.type}` : ""),
           sdrTmpl: null, double: false, perTerm: 2, fold: false, label: "свободные концы" };
         op.wires = spec.lugEnds.flatMap((x) => {
           const pos = activeWires.findIndex((w) => w.idx === x.idx);
@@ -3829,6 +4198,10 @@ export function makeGen(D: GenData, S: GenState) {
       if (spec.epId) {
         const ep = epById_(spec.epId)!;
         op.side = spec.side; op.firstTerm = !!spec.firstTerm; op.ep = epSnap(ep);
+        if (topologyOn_()) {
+          op.epId = ep.id;
+          op.physicalEnds = activeWires.flatMap((w) => physicalPinsAt_(ep, w).map((p) => p.end));
+        }
         const det = routedDetail_(ep);
         op.wires = det.wires; op.wireSources = det.sources;
         if (det.pins.some(Boolean)) op.pins = det.pins;
@@ -3851,6 +4224,8 @@ export function makeGen(D: GenData, S: GenState) {
     return {
       tab: S.tab, assemblyIndex: findKey(/индекс/i), assemblyName: findKey(/наименование/i), partQty: partQtyFromInfo_(),
       bigAssembly, wires, twist, tin, strip, ops, ...(links.length ? { connections: links } : {}),
+      ...(topologyOn_() ? { topologyVersion: 1, physicalConnections: physicalConnections_() } : {}),
+      ...(topologyOn_() && S.topology?.tubes ? { tubePlacements: S.topology.tubes.map((t) => ({ ...t, material: topologyMaterial_(t.material) })) } : {}),
       ...(route ? { route } : {}),
       ...(S.opOrder?.length ? { opOrder: S.opOrder } : {}),
       ...usedColorHex_(wires),
@@ -3913,12 +4288,19 @@ export function makeGen(D: GenData, S: GenState) {
     return line(twistDiaMissing_(), WIRE_DIA_MISSING_).concat(line(twistDiaOld_(), WIRE_DIA_OLD_));
   }
   function validate() {
-    const cfg = buildConfig();
+    const problems = topologyProblems_();
+    if (problems.length) return { cfg: {} as Record<string, unknown>, error: problems.join("\n"), warnings: [] as string[] };
+    let cfg: Record<string, unknown>;
+    try { cfg = buildConfig(); } catch (e) {
+      if (!S.topology) throw e;
+      return { cfg: {} as Record<string, unknown>, error: e instanceof Error ? e.message : String(e), warnings: [] as string[] };
+    }
     if (S.tab === "rework") return { cfg, error: reworkProblem_(), warnings: [] as string[] };
     // «Норма заказчика (КД)» коакса, которую не прочитать, — стоп до остальных проверок (сервер тоже ответит 422).
     const custProblem = S.tab === "coax" && S.coax.sideB && S.coax.vswrMode !== "none" ? coaxVswrCustProblem(S.coax.vswrCust) : "";
     if (custProblem) return { cfg, error: custProblem, warnings: [] as string[] };
     const ops = (cfg.ops as Array<{ templateId: string; type: string }>).filter((o) => o.templateId);
+    if (topologyOn_() && ops.length !== (cfg.ops as unknown[]).length) return { cfg, error: "Для всех операций физической топологии должны быть выбраны шаблоны.", warnings: [] as string[] };
     if (!ops.length) return { cfg, error: "Выберите шаблон хотя бы для одной операции.", warnings: [] as string[] };
     const twistCheck = twistProblems_();
     if (twistCheck.error) return { cfg, error: twistCheck.error, warnings: [] };
@@ -3931,6 +4313,7 @@ export function makeGen(D: GenData, S: GenState) {
   }
 
   return {
+    physicalAt_, physicalPinsAt_, physicalConnections_, topologyProblems_,
     getCompById, bomLists, wireComps_, wireCores_, isJacketedCable_, activeWires_, routedWireIdxs_, connections_, endpointsOnSide_,
     cableRecOf_, isUlMulticore_, wireScreened_, unitCount_, coreColors_, corePinsOf_, endUnits_, cableEnds_, shieldCount_, isShieldPos_, shieldPinsAt_,
     endpointOrdinal_, epPer_, epDoublePins_, epStripLen_, findTerRecord_, isComplex_, lugTypes_, tailLugType_, tailLugPlan_, crimpCutSides_, crimpCutSideNote_, crimpCutEnabled_, crimpCutSideSelected_, batchWires_,

@@ -5,7 +5,7 @@
  * Состояние формы то же (контакты разъёмов `pins`, `splices`, `tails`) — таблица лишь второй способ править его,
  * черновики и собранные карты открываются как раньше. Логика правок — pinoutCheck.ts и tcGenSplices.ts.
  */
-import { unassignPin, type PinoutEnd, type PinUnit } from "./pinoutCheck";
+import { assignPhysicalPin, unassignPin, type PinoutEnd, type PinUnit } from "./pinoutCheck";
 import { assignPinJoined, joinSplice, leaveJoin, setTail, spliceLabel } from "./tcGenSplices";
 import { endJoined, type GenData, type GenState, type Side, type WireEnd } from "./tcGenLogic";
 
@@ -38,7 +38,7 @@ const sameEnd = (a: WireEnd, b: WireEnd) => a.idx === b.idx && a.unit === b.unit
 export function pinConns(ends: PinoutEnd[], S: Pick<GenState, "endpoints">, counts: Record<string, number | null | undefined>): PinConn[] {
   return ends.map((end) => {
     const ep = S.endpoints.find((e) => e.id === end.id);
-    const used = Math.max(0, ...end.wires.flatMap((w) => w.cores.filter((p): p is number => p != null)));
+    const used = Math.max(0, ...end.wires.flatMap((w) => w.pins));
     return { id: end.id, key: end.key, side: end.side, designation: (ep?.label || "").trim(), conn: end.conn, count: counts[end.id] || used };
   });
 }
@@ -46,7 +46,7 @@ export function pinConns(ends: PinoutEnd[], S: Pick<GenState, "endpoints">, coun
 export const connName = (c: Pick<PinConn, "key" | "designation">) => c.designation || c.key;
 
 /** Строки таблицы — все жилы (экраны не берём: их контакт по желанию). */
-export function pinRows(conns: PinConn[], units: PinUnit[], S: Pick<GenState, "splices" | "tails">, pinoutEnds: PinoutEnd[]): PinRow[] {
+export function pinRows(conns: PinConn[], units: PinUnit[], S: Pick<GenState, "splices" | "tails" | "topology">, pinoutEnds: PinoutEnd[]): PinRow[] {
   const seen = new Set<number>();
   const dupBy = new Map<string, number[]>(pinoutEnds.map((e) => [e.id, e.dups]));
   return units.filter((u) => !u.shield).map((u): PinRow => {
@@ -56,17 +56,20 @@ export function pinRows(conns: PinConn[], units: PinUnit[], S: Pick<GenState, "s
     const problems: string[] = [];
     (["A", "B"] as const).forEach((side) => {
       const sideConns = conns.filter((c) => c.side === side);
-      const pins = sideConns.filter((c) => u.at[c.id] != null);
+      const pins = u.endPins ? u.endPins.filter((p) => p.end.side === side).flatMap((p) => {
+        const conn = conns.find((c) => c.id === p.epId);
+        return conn ? [{ conn, pin: p.pin }] : [];
+      }) : sideConns.filter((c) => u.at[c.id] != null).map((conn) => ({ conn, pin: u.at[conn.id]! }));
       const end: WireEnd = { idx: u.idx, unit: u.unit, side };
       const spliceId = (S.splices || []).find((sp) => sp.ends.some((e) => sameEnd(e, end)))?.id;
       const joined = endJoined(S, u.idx, u.unit, side);
       let cell: PinCell;
       if (pins.length) {
         const [head, ...rest] = pins;
-        cell = { side, value: `pin:${head.id}:${u.at[head.id]}`, extra: rest.map((c) => `${connName(c)}·${u.at[c.id]}`), text: `${connName(head)}·${u.at[head.id]}` };
-        pins.forEach((c) => { if ((dupBy.get(c.id) || []).includes(u.at[c.id]!)) problems.push(`Контакт ${u.at[c.id]} разъёма ${connName(c)} занят и другим проводом`); });
+        cell = { side, value: `pin:${head.conn.id}:${head.pin}`, extra: rest.map((p) => `${connName(p.conn)}·${p.pin}`), text: `${connName(head.conn)}·${head.pin}` };
+        pins.forEach(({ conn, pin }) => { if ((dupBy.get(conn.id) || []).includes(pin)) problems.push(`Контакт ${pin} разъёма ${connName(conn)} занят и другим проводом`); });
       } else if (spliceId) cell = { side, value: `sp:${spliceId}`, extra: [], text: spliceLabel(S, spliceId) };
-      else if (joined === "tail") cell = { side, value: "tail", extra: [], text: "хвост" };
+      else if (joined === "tail" || S.topology?.ends?.some((e) => sameEnd(e.end, end) && e.at.kind === "free")) cell = { side, value: "tail", extra: [], text: "хвост" };
       else {
         cell = { side, value: "", extra: [], text: "—" };
         // Сторона с разъёмами ждёт контакта; сторона без разъёмов — свободный конец, это не ошибка.
@@ -83,7 +86,11 @@ export function pinRows(conns: PinConn[], units: PinUnit[], S: Pick<GenState, "s
 /** Занятые контакты разъёма: контакт → номера жил (для подсказки «занят: № 3» в списке). */
 export function occupiedPins(conn: PinConn, units: PinUnit[]): Map<number, string[]> {
   const map = new Map<number, string[]>();
-  units.filter((u) => !u.shield && u.at[conn.id] != null).forEach((u) => map.set(u.at[conn.id]!, [...(map.get(u.at[conn.id]!) || []), u.num]));
+  units.filter((u) => !u.shield).forEach((u) => {
+    const pins = u.endPins ? u.endPins.filter((p) => p.epId === conn.id).map((p) => p.pin)
+      : u.at[conn.id] != null ? [u.at[conn.id]!] : [];
+    pins.forEach((pin) => map.set(pin, [...(map.get(pin) || []), u.num]));
+  });
   return map;
 }
 
@@ -98,6 +105,17 @@ export function firstFreePin(conn: PinConn, units: PinUnit[], doubled = false): 
 /** Поставить конец жилы туда, что выбрано в таблице; всё прежнее у этого конца (контакт, сросток, хвост) снимается. */
 export function applyEnd(D: GenData, S: GenState, conns: PinConn[], units: PinUnit[], row: Pick<PinRow, "idx" | "unit">, side: Side, value: EndValue): GenState {
   const end: WireEnd = { idx: row.idx, unit: row.unit, side };
+  if (S.tab === "complex" && S.topology) {
+    if (value === "") return leaveJoin(D, S, end);
+    if (value === "tail") return setTail(D, S, end);
+    if (value === "new") return joinSplice(D, S, end, "new");
+    if (value.startsWith("sp:")) return joinSplice(D, S, end, value.slice(3));
+    const [, epId, pinText] = value.split(":");
+    const conn = conns.find((c) => c.id === epId);
+    if (!conn) return S;
+    const pin = pinText === "auto" ? firstFreePin(conn, units) : Number(pinText);
+    return pin ? assignPhysicalPin(D, S, end, epId, pin) : S;
+  }
   const unit = units.find((u) => u.idx === row.idx && u.unit === row.unit);
   const sideConns = conns.filter((c) => c.side === side);
   // Контакты этой жилы на разъёмах стороны, кроме выбранного, снимаются: конец стоит в одном месте.
@@ -121,7 +139,8 @@ export function spliceLines(S: Pick<GenState, "splices">, units: PinUnit[], conn
     const ends = sp.ends.map((end) => {
       const u = units.find((x) => x.idx === end.idx && x.unit === end.unit);
       const other = (["A", "B"] as const).filter((s) => s !== end.side)[0];
-      const to = u ? conns.filter((c) => c.side === other && u.at[c.id] != null).map((c) => `${connName(c)}·${u.at[c.id]}`) : [];
+      const to = u?.endPins ? u.endPins.filter((p) => p.end.side === other).map((p) => `${connName(conns.find((c) => c.id === p.epId) || { key: "", designation: "" })}·${p.pin}`)
+        : u ? conns.filter((c) => c.side === other && u.at[c.id] != null).map((c) => `${connName(c)}·${u.at[c.id]}`) : [];
       return { end, num: u?.num ?? "?", text: `${u?.name || "провод"}${u?.colorName ? ` · ${u.colorName}` : ""}`, where: to.length ? `→ ${to.join(", ")}` : "" };
     });
     return { id: sp.id, label: spliceLabel(S, sp.id), name: sp.name ?? "", ends, problem: sp.ends.length < 2 ? "В сростке меньше двух концов" : "" };
