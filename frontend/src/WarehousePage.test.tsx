@@ -836,7 +836,8 @@ it("↑/↓ in «Колонки» move a column one step; the order is remembere
 
   fireEvent.click(chooser.getByRole("button", { name: "Ниже: Тип" }));
   expect(headerNames()).toEqual(["ГРН", "Тип", "Свободно", "Резерв", "Партий", "Места", "Артикул номенклатуры", "Наименование", "Склад"]);
-  // Four steps: past the name and the two hidden articles of the maker and the supplier.
+  // Five steps: past purpose, the name and the two hidden articles of the maker and the supplier.
+  fireEvent.click(chooser.getByRole("button", { name: "Выше: Склад" }));
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Склад" }));
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Склад" }));
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Склад" }));
@@ -844,7 +845,7 @@ it("↑/↓ in «Колонки» move a column one step; the order is remembere
   expect(headerNames()).toEqual(["ГРН", "Тип", "Свободно", "Резерв", "Партий", "Места", "Склад", "Артикул номенклатуры", "Наименование"]);
   // The list of the chooser follows the table, with the name in its place.
   expect(chooser.getAllByRole("listitem").map((item) => item.textContent?.replace(/[↑↓]/g, ""))).toEqual(["ГРН", "Тип", "Свободно", "Резерв", "Остаток", "Партий", "Места", "Склад", "Артикул номенклатуры",
-    "Артикул производителя", "Артикул поставщика", "Наименование", "Производитель", "Наим. по УПД", "Наим. по счёту", "№ счёта", "Дата счёта", "№ УПД", "Дата УПД", "№ ПРД", "Дата ПРД", "Файл УПД"]);
+    "Артикул производителя", "Артикул поставщика", "Наименование", "Назначение", "Производитель", "Наим. по УПД", "Наим. по счёту", "№ счёта", "Дата счёта", "№ УПД", "Дата УПД", "№ ПРД", "Дата ПРД", "Файл УПД"]);
   unmount();
 
   render(<WarehousePage />);
@@ -899,6 +900,7 @@ it("«По умолчанию» puts the order and the shown columns back", asyn
   await screen.findByText("GHR-04V-S");
   const chooser = openChooser();
   fireEvent.click(chooser.getByLabelText("Тип"));
+  fireEvent.click(chooser.getByRole("button", { name: "Выше: Склад" }));
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Склад" }));
   expect(headerNames()).toEqual(["ГРН", "Свободно", "Резерв", "Партий", "Места", "Артикул номенклатуры", "Склад", "Наименование"]);
 

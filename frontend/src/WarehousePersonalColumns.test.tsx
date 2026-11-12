@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, expect, it, vi } from "vitest";
 import { WarehousePage } from "./WarehousePage";
 import { DataTable } from "./DataTable";
-import { agreeing } from "./WarehouseColumns";
+import { agreeing, readLayout } from "./WarehouseColumns";
 import { forgetPersonalViews } from "./personalViews";
 import type { WarehouseLot } from "./api";
 
@@ -69,6 +69,23 @@ it("a position shows the value its lots agree on, else «N разн.» with ever
     text: "2 разн.", title: "У партий разные значения:\nAmphenol\nRosenberger", many: true,
   });
   expect(agreeing(["", "  "])).toEqual({ text: "", many: false });
+  expect(agreeing(["Проект А", "Проект Б"])).toEqual({ text: "2 разн.", title: "У партий разные значения:\nПроект А\nПроект Б", many: true });
+});
+
+it("offers purpose hidden by default and preserves that default for older layouts", async () => {
+  const layout = readLayout("grouped", { order: ["name", "warehouse"], hidden: [] });
+  expect(layout.order.indexOf("purpose")).toBe(layout.order.indexOf("name") + 1);
+  expect(layout.hidden).toContain("purpose");
+  mockServer([lot, { ...other, purpose: "Иванов" }]);
+  render(<WarehousePage />);
+  await screen.findAllByText("SMA-KWE-RG402");
+  const chooser = openChooser();
+  expect(chooser.getByLabelText("Назначение")).not.toBeChecked();
+  expect(headerNames()).not.toContain("Назначение");
+  fireEvent.click(chooser.getByLabelText("Назначение"));
+  expect(headerNames()).toContain("Назначение");
+  expect(within(row("OLD.26.0000069")).getByText("Склад")).toBeInTheDocument();
+  expect(within(row("OLD.26.0000070")).getByText("Иванов")).toBeInTheDocument();
 });
 
 it("the positions table offers the maker and the documents in «Колонки», off until switched on", async () => {
