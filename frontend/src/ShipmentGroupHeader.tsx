@@ -34,8 +34,14 @@ export function shipmentPositions(rows: GroupRow[]): Map<string, { index: number
   return positions;
 }
 
+/** Прочерк («-», «—», «.», «_») — то же, что пусто, как у сервера (`filled`, владелец 06.11). */
+const PLACEHOLDER = /^[\s\-‐-―−_.]*$/;
+
 export function ShippingValue({ label, value }: { label: string; value?: string | null }) {
-  return <span className="ship-group-field">{label}: {value?.trim() || <span className="tone-warn">не заполнено</span>}</span>;
+  const text = value && !PLACEHOLDER.test(value) ? value.trim() : "";
+  // «самовывоз» в получателе/телефоне/адресе — не данные: способ доставки уже сказан отдельно.
+  if (text.toLowerCase() === "самовывоз" && label !== "ТК" && label !== "Способ доставки") return null;
+  return <span className="ship-group-field">{label}: {text || <span className="tone-warn">не заполнено</span>}</span>;
 }
 
 type UpdSource = Pick<ProjectAddressee, "upd_type"> & Partial<Pick<ProjectAddressee, "upd_number" | "upd_url">>;
