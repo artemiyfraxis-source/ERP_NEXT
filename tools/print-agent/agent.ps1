@@ -28,7 +28,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.3.1'
+$script:AgentVersion = '2.4.0'
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
 
@@ -49,12 +49,13 @@ function Write-Log {
 
 function Read-AgentConfig {
     param([string]$Path)
-    $cfg = @{ server = ''; token = ''; printer = ''; scanner = '' }
+    $cfg = @{ server = ''; token = ''; printer = ''; scanner = ''; arinstFolders = $null }
     if ($Path -and (Test-Path $Path)) {
         $raw = Get-Content -Raw -Encoding UTF8 $Path | ConvertFrom-Json
         if ($raw.server) { $cfg.server = [string]$raw.server }
         if ($raw.printer) { $cfg.printer = [string]$raw.printer }
         if ($raw.scanner) { $cfg.scanner = [string]$raw.scanner }
+        if ($null -ne $raw.arinstFolders) { $cfg.arinstFolders = @($raw.arinstFolders) }
         if ($raw.tokenProtected) {
             # DPAPI: расшифровывается только тем пользователем Windows, который ставил агент
             $sec = ConvertTo-SecureString -String $raw.tokenProtected
@@ -283,6 +284,66 @@ function Get-VnaCapability {
     return @{ name = $name; ready = $true; reason = '' }
 }
 
+function Test-ArinstInstalled {
+    if (-not $env:APPDATA) { return $false }
+    return @(Get-ChildItem -Path (Join-Path $env:APPDATA 'ArinstVL*\ArinstVL.exe') -File -ErrorAction SilentlyContinue).Count -gt 0
+}
+
+function Get-ArinstFolders {
+    $cfg = Read-AgentConfig -Path $ConfigPath
+    if ($null -ne $cfg.arinstFolders) { return $cfg.arinstFolders }
+    $profilePath = [Environment]::GetFolderPath('UserProfile')
+    if (-not $profilePath) { $profilePath = $env:USERPROFILE }
+    if (-not $profilePath) { throw 'Не удалось определить папки пользователя — задайте arinstFolders в настройках агента' }
+    $documents = [Environment]::GetFolderPath('MyDocuments')
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    if (-not $documents) { $documents = Join-Path $profilePath 'Documents' }
+    if (-not $desktop) { $desktop = Join-Path $profilePath 'Desktop' }
+    return @($documents, $desktop, (Join-Path $profilePath 'Downloads'))
+}
+
+function Invoke-ArinstCapture {
+    $now = [DateTime]::UtcNow
+    try {
+        $files = @(foreach ($folder in (Get-ArinstFolders)) {
+            if (-not $folder -or -not (Test-Path -LiteralPath $folder -PathType Container)) { continue }
+            # One child level only. Do not follow junctions into unrelated trees.
+            $dirs = @($folder) + @(Get-ChildItem -LiteralPath $folder -Directory -ErrorAction Stop |
+                Where-Object { -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } |
+                ForEach-Object { $_.FullName })
+            foreach ($dir in $dirs) {
+                Get-ChildItem -LiteralPath $dir -File -ErrorAction Stop | Where-Object {
+                    $_.Extension -in @('.s1p', '.s2p') -and
+                    -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -and
+                    $_.LastWriteTimeUtc -ge $now.AddMinutes(-15) -and $_.LastWriteTimeUtc -le $now
+                }
+            }
+        })
+    } catch {
+        Write-Log "Arinst: ошибка поиска сохранённой трассы: $($_.Exception.Message)"
+        throw 'Не удалось найти файл Arinst — проверьте arinstFolders и доступ к папкам в настройках агента'
+    }
+    $file = $files | Sort-Object -Property @{ Expression = 'LastWriteTimeUtc'; Descending = $true }, FullName | Select-Object -First 1
+    if (-not $file) { throw 'Сохраните трассу в Arinst Virtual Lab (.s1p) и повторите — свежих файлов за 15 минут нет' }
+    # Bound the read even if the file grows after enumeration; deny writes while taking this snapshot.
+    $stream = $null
+    try {
+        $stream = [IO.File]::Open($file.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        if ($stream.Length -gt 2MB) { throw 'Файл ВАЦ больше 2 МиБ' }
+        [byte[]]$bytes = New-Object byte[] ([int]$stream.Length)
+        $offset = 0
+        while ($offset -lt $bytes.Length) {
+            $read = $stream.Read($bytes, $offset, $bytes.Length - $offset)
+            if ($read -eq 0) { throw 'Не удалось прочитать файл ВАЦ — сохраните трассу повторно' }
+            $offset += $read
+        }
+        return @{ Bytes = $bytes; FileName = $file.Name; Ext = $file.Extension.TrimStart('.'); Mime = 'application/octet-stream'; Name = 'Arinst VNA-DL' }
+    } catch {
+        if ($_.Exception.Message -match '^(Файл ВАЦ|Не удалось прочитать)') { throw }
+        throw 'Не удалось прочитать файл ВАЦ — проверьте доступ к сохранённой трассе Arinst'
+    } finally { if ($stream) { $stream.Dispose() } }
+}
+
 function Get-VnaSnapshot {
     param($Application)
     $scpi = $Application.SCPI
@@ -378,6 +439,9 @@ function Send-Heartbeat {
     }
     $vna = Get-VnaCapability
     if ($vna) { $body.vna = $vna }
+    $body.vna_sources = @()
+    if ($vna) { $body.vna_sources += 's2vna' }
+    if (Test-ArinstInstalled) { $body.vna_sources += 'arinst' }
     $reply = Invoke-ErpApi -Url "$Base/api/stock/scan/agent/heartbeat" -Body $body -AuthToken $AuthToken
     $names = ($scanners | ForEach-Object { $_.name }) -join '; '
     $line = "Отчёт серверу: сканеры: $(if ($names) { $names } else { 'не найдены' })"
@@ -667,8 +731,13 @@ function Invoke-ScanPollOnce {
     Write-Log "Скан: задание $id, $how"
     $resultUrl = "$Base/api/stock/scan/agent/jobs/$id/result"
     try {
-        $scan = if ($claim.job.kind -eq 'vna') { Invoke-VnaCapture } else { Invoke-ScannerScan -Address $ScannerAddress -Device $device }
-        Send-ScanFile -Url $resultUrl -AuthToken $AuthToken -Bytes $scan.Bytes -FileName "capture.$($scan.Ext)" -ContentType $scan.Mime -MachineId $machineId
+        $scan = if ($claim.job.kind -eq 'vna') {
+            if ($claim.job.source -eq 'arinst') { Invoke-ArinstCapture }
+            elseif (-not $claim.job.source -or $claim.job.source -eq 's2vna') { Invoke-VnaCapture }
+            else { throw 'Неизвестный источник ВАЦ — обновите агент ERP' }
+        } else { Invoke-ScannerScan -Address $ScannerAddress -Device $device }
+        $fileName = if ($scan.FileName) { $scan.FileName } else { "capture.$($scan.Ext)" }
+        Send-ScanFile -Url $resultUrl -AuthToken $AuthToken -Bytes $scan.Bytes -FileName $fileName -ContentType $scan.Mime -MachineId $machineId
         Write-Log "Скан отправлен: задание $id, $($scan.Bytes.Length) байт, $($scan.Mime)"
     } catch {
         $err = $_.Exception.Message

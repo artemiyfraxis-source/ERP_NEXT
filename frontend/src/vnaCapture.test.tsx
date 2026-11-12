@@ -10,7 +10,7 @@ const instruments = [
   { id: "planar", inventory_number: "СИ-2", name: "Planar S50180", kind: "Средство измерений", status: "Действует", serial_number: "26030095" },
 ] as ProductionInstrument[];
 const agent = { id: "pc", pc: "ПК ОТК", version: "2.3.1", vna: { name, ready: true } };
-const pending: VnaCaptureJob = { id: "job", status: "pending", error: "", vna: { name }, file_name: "vna.s1p", agent };
+const pending: VnaCaptureJob = { id: "job", status: "pending", error: "", vna: { name }, source: "s2vna", file_name: "vna.s1p", agent };
 const trace = `! S2VNA ${name} 2026-11-12T10:00:00.1234567Z S11\n# Hz S RI R 50\n100000000 0.1 0\n200000000 0.2 0\n`;
 const overview = {
   task: { id: "task", number: "ПЗ-1", name: "Сборка", item: "КС", quantity: 1 },
@@ -89,7 +89,7 @@ it("uses the agent IDN when a legacy file has no identity and the job name is em
   const onFile = vi.fn();
   render(<VnaCapture onFile={onFile} onBusy={() => {}} />);
   fireEvent.click(screen.getByRole("button", { name: "Снять с ВАЦ" }));
-  await waitFor(() => expect(onFile).toHaveBeenCalledWith(expect.any(File), name));
+  await waitFor(() => expect(onFile).toHaveBeenCalledWith(expect.any(File), name, "s2vna"));
 });
 
 it("uses the captured file's IDN instead of the previously cached instrument", async () => {
@@ -99,7 +99,7 @@ it("uses the captured file's IDN instead of the previously cached instrument", a
   const onFile = vi.fn();
   render(<VnaCapture onFile={onFile} onBusy={() => {}} />);
   fireEvent.click(screen.getByRole("button", { name: "Снять с ВАЦ" }));
-  await waitFor(() => expect(onFile).toHaveBeenCalledWith(expect.any(File), currentName));
+  await waitFor(() => expect(onFile).toHaveBeenCalledWith(expect.any(File), currentName, "s2vna"));
 });
 
 it.each([
@@ -111,7 +111,7 @@ it.each([
   vi.mocked(vnaCaptureApi.start).mockResolvedValue({ status: "choose", agents: [{ ...agent, vna: { name, ready, reason } }] });
   render(<VnaCapture onFile={() => {}} onBusy={() => {}} />);
   fireEvent.click(screen.getByRole("button", { name: "Снять с ВАЦ" }));
-  expect(await screen.findByRole("option", { name: `${agent.pc} · ${name} · ${label}` })).toBeInTheDocument();
+  expect(await screen.findByRole("option", { name: `${agent.pc} · Planar S50180 (S2VNA) · ${label}` })).toBeInTheDocument();
 });
 
 it("requires the operator's instrument choice after a capture with an unknown serial", async () => {
@@ -137,10 +137,10 @@ it("requires explicit PC selection and then sends that agent id", async () => {
   vi.mocked(vnaCaptureApi.start).mockResolvedValueOnce({ status: "choose", agents: [agent] });
   render(<VnaCapture onFile={() => {}} onBusy={() => {}} />);
   fireEvent.click(screen.getByRole("button", { name: "Снять с ВАЦ" }));
-  fireEvent.change(await screen.findByLabelText("ПК с ВАЦ"), { target: { value: "pc" } });
+  fireEvent.change(await screen.findByLabelText("ПК и источник ВАЦ"), { target: { value: "s2vna:pc" } });
   expect(vnaCaptureApi.start).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole("button", { name: "Снять на выбранном ПК" }));
-  await waitFor(() => expect(vnaCaptureApi.start).toHaveBeenLastCalledWith("pc"));
+  await waitFor(() => expect(vnaCaptureApi.start).toHaveBeenLastCalledWith("pc", "s2vna"));
 });
 
 it("offers the install guide if no VNA agent is present", async () => {
@@ -170,4 +170,52 @@ it("hides capture together with upload when the user cannot upload", async () =>
   expect(await screen.findByText("КС-1")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Снять с ВАЦ" })).not.toBeInTheDocument();
   expect(within(screen.getByRole("table")).queryByRole("button", { name: "Загрузить замер" })).not.toBeInTheDocument();
+});
+
+it("offers both sources on one PC and submits the selected Arinst source", async () => {
+  vi.mocked(vnaCaptureApi.start).mockResolvedValueOnce({ status: "choose", agents: [{ ...agent, vna_sources: ["s2vna", "arinst"] }] });
+  render(<VnaCapture onFile={() => {}} onBusy={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Снять с ВАЦ" }));
+  const select = await screen.findByLabelText("ПК и источник ВАЦ");
+  expect(screen.getByRole("option", { name: `${agent.pc} · Planar S50180 (S2VNA) · готов` })).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: `${agent.pc} · Arinst — последний файл` })).toBeInTheDocument();
+  expect(select).toHaveValue("");
+  fireEvent.change(select, { target: { value: "arinst:pc" } });
+  fireEvent.click(screen.getByRole("button", { name: "Снять на выбранном ПК" }));
+  await waitFor(() => expect(vnaCaptureApi.start).toHaveBeenLastCalledWith("pc", "arinst"));
+});
+
+it("offers an Arinst-only PC without inventing a Planar source", async () => {
+  vi.mocked(vnaCaptureApi.start).mockResolvedValue({ status: "choose", agents: [{ ...agent, vna: null, vna_sources: ["arinst"] }] });
+  render(<VnaCapture onFile={() => {}} onBusy={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Снять с ВАЦ" }));
+  expect(await screen.findByRole("option", { name: `${agent.pc} · Arinst — последний файл` })).toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: /Planar/ })).not.toBeInTheDocument();
+});
+
+it("preselects only a single active Arinst measuring instrument by name or manufacturer", () => {
+  const renamed = { ...instruments[0], name: "ВАЦ VNA-DL", manufacturer: "ARINST" };
+  expect(instrumentForVna("", instruments, "arinst")).toBe("arinst");
+  expect(instrumentForVna("", [renamed], "arinst")).toBe("arinst");
+  expect(instrumentForVna("", [{ ...renamed, status: "Не используется" }], "arinst")).toBe("");
+  expect(instrumentForVna("", [{ ...renamed, kind: "Принадлежность" }], "arinst")).toBe("");
+  expect(instrumentForVna("", [instruments[1]], "arinst")).toBe("");
+  expect(instrumentForVna("", [renamed, { ...instruments[0], id: "second" }], "arinst")).toBe("");
+});
+
+it("passes the original Arinst s2p through upload and preselects its instrument", async () => {
+  const job = { ...pending, source: "arinst" as const, vna: { name: "Arinst VNA-DL" }, file_name: "кабель.s2p" };
+  vi.mocked(vnaCaptureApi.start).mockResolvedValue(job);
+  vi.mocked(vnaCaptureApi.status).mockResolvedValue({ ...job, status: "done" });
+  const arinstTrace = "! Arinst Virtual Lab\n# MHz S RI R 50\n100 0.1 0 0 0 0 0 0 0\n";
+  vi.mocked(vnaCaptureApi.file).mockResolvedValue(new Blob([arinstTrace]));
+  await open();
+  fireEvent.click(screen.getByRole("button", { name: "Снять с ВАЦ" }));
+  await screen.findByText("Выбран файл: кабель.s2p", {}, { timeout: 3000 });
+  expect(screen.getByLabelText("Прибор (средство измерения)")).toHaveValue("arinst");
+  await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Загрузить замер" })).toBeEnabled());
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Загрузить замер" }));
+  await waitFor(() => expect(productionApi.uploadVswr).toHaveBeenCalledWith(expect.objectContaining({
+    instrument_id: "arinst", file_name: "кабель.s2p", file_base64: btoa(arinstTrace),
+  })));
 });

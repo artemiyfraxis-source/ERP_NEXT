@@ -58,7 +58,8 @@ class ScanJobRow(Base):
         CheckConstraint("status <> 'done' OR (kind = 'scan' AND file_id IS NOT NULL) OR "
                         "(kind = 'vna' AND capture_content IS NOT NULL)", name="ck_warehouse_scan_jobs_done_file"),
         CheckConstraint("kind IN ('scan', 'vna')", name="ck_warehouse_scan_jobs_kind"),
-        CheckConstraint("(kind = 'scan' AND capture_content IS NULL AND vna_name = '') OR "
+        CheckConstraint("source IN ('s2vna', 'arinst')", name="ck_warehouse_scan_jobs_source"),
+        CheckConstraint("(kind = 'scan' AND capture_content IS NULL AND vna_name = '' AND capture_file_name = '' AND source = 's2vna') OR "
                         "(kind = 'vna' AND file_id IS NULL AND result = '' AND target_machine_id IS NOT NULL "
                         "AND target_machine_id <> '' AND target_scanner IS NULL)", name="ck_warehouse_scan_jobs_kind_payload"),
         CheckConstraint("capture_content IS NULL OR (status = 'done' AND length(capture_content) BETWEEN 1 AND 2097152)",
@@ -105,6 +106,8 @@ class ScanJobRow(Base):
     kind: Mapped[str] = mapped_column(String(8), nullable=False, default="scan", server_default="scan")
     capture_content: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
     vna_name: Mapped[str] = mapped_column(String(500), nullable=False, default="", server_default="")
+    source: Mapped[str] = mapped_column(String(8), nullable=False, default="s2vna", server_default="s2vna")
+    capture_file_name: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
 
 
 @dataclass(frozen=True)
@@ -118,6 +121,8 @@ class ScanJob:
     kind: str = "scan"
     vna_name: str = ""
     target_machine_id: str | None = None
+    source: str = "s2vna"
+    capture_file_name: str = ""
 
 
 class ScanJobClosed(Exception):
@@ -135,7 +140,7 @@ def _session(uow) -> Session:
 def _job(row: ScanJobRow) -> ScanJob:
     return ScanJob(id=row.id, status=row.status, error=row.error or "", file_id=row.file_id, result=row.result or "",
                    requested_by=row.requested_by, kind=row.kind, vna_name=row.vna_name,
-                   target_machine_id=row.target_machine_id)
+                   target_machine_id=row.target_machine_id, source=row.source, capture_file_name=row.capture_file_name)
 
 
 def _expire(session: Session, now: datetime) -> None:
@@ -158,14 +163,16 @@ def _read(session: Session, job_id: UUID) -> ScanJob:
 
 
 def create_job(uow, *, requested_by: str, now: datetime, target: str | None = None,
-               scanner: str | None = None, kind: str = "scan", vna_name: str = "") -> ScanJob:
+               scanner: str | None = None, kind: str = "scan", vna_name: str = "", source: str = "s2vna") -> ScanJob:
     """Create a pending job. Only a full `target` / `scanner` pair can be claimed; incomplete legacy rows expire."""
+    if source not in ("s2vna", "arinst"):
+        raise ValueError("Неизвестный источник ВАЦ")
     scanner = (scanner or "").strip()[:SCANNER_MAX] or None
     with uow:
         session = _session(uow)
         row = ScanJobRow(id=uuid4(), status=PENDING, requested_by=requested_by[:255] or "—", created_at=now,
                          target_machine_id=target, target_scanner=scanner if target else None, error="", result="",
-                         kind=kind, vna_name=vna_name)
+                         kind=kind, vna_name=vna_name, source=source)
         session.add(row)
         uow.commit()
     return _job(row)
@@ -212,6 +219,7 @@ class Claimed:
     id: UUID
     target_scanner: str | None  # the scanner the person chose; claims now require a nonempty scanner
     kind: str = "scan"
+    source: str = "s2vna"
 
 
 def claim(uow, *, now: datetime, machine_id: str | None = None, vna: bool = False) -> Claimed | None:
@@ -231,7 +239,7 @@ def claim(uow, *, now: datetime, machine_id: str | None = None, vna: bool = Fals
                     ScanJobRow.target_machine_id == machine_id)
         for _attempt in range(5):  # another agent may take the same row between the read and the write
             candidate = session.execute(
-                select(ScanJobRow.id, ScanJobRow.target_scanner, ScanJobRow.kind).where(ScanJobRow.status == PENDING, mine)
+                select(ScanJobRow.id, ScanJobRow.target_scanner, ScanJobRow.kind, ScanJobRow.source).where(ScanJobRow.status == PENDING, mine)
                 .order_by(ScanJobRow.created_at, ScanJobRow.id).limit(1)
                 .with_for_update(skip_locked=True)
             ).first()
@@ -243,7 +251,7 @@ def claim(uow, *, now: datetime, machine_id: str | None = None, vna: bool = Fals
                 .execution_options(synchronize_session=False)
             )
             if taken.rowcount == 1:
-                claimed = Claimed(candidate.id, candidate.target_scanner, candidate.kind)
+                claimed = Claimed(candidate.id, candidate.target_scanner, candidate.kind, candidate.source)
                 break
         uow.commit()
     return claimed

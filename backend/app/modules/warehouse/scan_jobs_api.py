@@ -290,6 +290,7 @@ class AgentHeartbeatInput(BaseModel):
     lan_ip: str = Field(default="", max_length=64)
     scanners: list[Scanner] = Field(default_factory=list, max_length=20)
     vna: VnaCapability | None = None
+    vna_sources: list[Literal["s2vna", "arinst"]] | None = Field(default=None, max_length=2)
 
 
 @router.post("/scan/agent/claim")
@@ -305,7 +306,7 @@ def scan_agent_claim(
                                    now=now)
     job = claim(uow_factory(), now=now, machine_id=machine_id, vna="vna" in who.kinds)
     return {"job": {"id": str(job.id), "target_scanner": job.target_scanner,
-                    **({"kind": job.kind} if who.kinds else {})} if job else None}
+                    **({"kind": job.kind, "source": job.source} if who.kinds else {})} if job else None}
 
 
 @router.post("/scan/agent/heartbeat")
@@ -322,7 +323,7 @@ def scan_agent_heartbeat(
             ip_seen=_client_ip(request), ip_lan=payload.lan_ip,
             scanners=[item.model_dump() for item in payload.scanners], now=now)
         vna_jobs.heartbeat(uow_factory(), payload.machine_id.strip(),
-                           payload.vna.model_dump() if payload.vna else None, now)
+                           payload.vna.model_dump() if payload.vna else None, now, payload.vna_sources)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     return {"ok": True, "update": update_for(payload.version)}

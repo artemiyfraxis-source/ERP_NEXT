@@ -1,7 +1,7 @@
 """Capture transport endpoints, protected by the same quality permission as VSWR uploads."""
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -22,6 +22,7 @@ Now = Annotated[datetime, Depends(moscow_now)]
 
 class StartInput(BaseModel):
     agent_id: str = Field(default="", max_length=80)
+    source: Literal["s2vna", "arinst"] = "s2vna"
 
 
 def _owned(uow_factory, job_id, principal, now):
@@ -33,7 +34,8 @@ def _owned(uow_factory, job_id, principal, now):
 
 def _view(job):
     return {"id": str(job.id), "status": job.status, "error": job.error,
-            "vna": {"name": job.vna_name}, "file_name": "vna.s1p"}
+            "vna": {"name": job.vna_name}, "source": job.source,
+            "file_name": job.capture_file_name or "vna.s1p"}
 
 
 @router.post("")
@@ -44,8 +46,12 @@ def start(principal: Person, now: Now, uow_factory: UowFactory, payload: StartIn
     chosen = next((pc for pc in choices if pc["id"] == (payload.agent_id if payload else "")), None)
     if chosen is None:
         return {"status": "choose", "agents": choices}
+    source = payload.source if payload else "s2vna"
+    if source not in chosen["vna_sources"]:
+        raise HTTPException(422, "Выбранный источник ВАЦ недоступен на этом ПК")
     job = create_job(uow_factory(), requested_by=str(principal.actor.id), now=now,
-                     target=chosen["id"], kind="vna", vna_name=chosen["vna"]["name"])
+                     target=chosen["id"], kind="vna", source=source,
+                     vna_name=chosen["vna"]["name"] if source == "s2vna" else "Arinst VNA-DL")
     return {**_view(job), "agent": chosen}
 
 
@@ -65,4 +71,4 @@ def file(job_id: UUID, principal: Person, now: Now, uow_factory: UowFactory):
     job = _owned(uow_factory, job_id, principal, now)
     if job.status != DONE:
         raise HTTPException(409, "Файл ВАЦ ещё не получен")
-    return file_response(vna_jobs.content(uow_factory(), job.id), "vna.s1p", download=True)
+    return file_response(vna_jobs.content(uow_factory(), job.id), job.capture_file_name or "vna.s1p", download=True)

@@ -3928,14 +3928,15 @@ export interface BoardAssignResult {
   warnings: string[];
 }
 
-export interface VnaAgent { id: string; pc: string; version: string; vna: { name: string; ready: boolean; reason?: "" | "s2vna_not_running" | "device_not_connected" | "probe_failed" } }
+export type VnaSource = "s2vna" | "arinst";
+export interface VnaAgent { id: string; pc: string; version: string; vna: { name: string; ready: boolean; reason?: "" | "s2vna_not_running" | "device_not_connected" | "probe_failed" } | null; vna_sources?: VnaSource[] }
 export interface VnaCaptureJob {
-  id: string; status: WarehouseScanJobStatus; error: string; vna: { name: string }; file_name: string; agent?: VnaAgent;
+  id: string; status: WarehouseScanJobStatus; error: string; vna: { name: string }; source: VnaSource; file_name: string; agent?: VnaAgent;
 }
 export type VnaCaptureStart = VnaCaptureJob | { status: "choose"; agents: VnaAgent[] } | { status: "no_agent" };
 const VNA_JOBS = "/api/stock/vna/jobs";
 export const vnaCaptureApi = {
-  start: (agentId = "") => api<VnaCaptureStart>(VNA_JOBS, { method: "POST", body: JSON.stringify({ agent_id: agentId }) }),
+  start: (agentId = "", source: VnaSource = "s2vna") => api<VnaCaptureStart>(VNA_JOBS, { method: "POST", body: JSON.stringify({ agent_id: agentId, source }) }),
   status: (id: string, signal?: AbortSignal) => api<VnaCaptureJob>(`${VNA_JOBS}/${encodeURIComponent(id)}`, { signal }),
   file: (id: string, signal?: AbortSignal) => api<Blob>(`${VNA_JOBS}/${encodeURIComponent(id)}/file`, { blob: true, signal }),
   cancel: (id: string) => api<VnaCaptureJob>(`${VNA_JOBS}/${encodeURIComponent(id)}`, { method: "DELETE" }),

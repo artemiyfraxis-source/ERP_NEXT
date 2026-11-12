@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ApiError, failureText, vnaCaptureApi, warehouseApi, type ProductionInstrument, type VnaAgent } from "./api";
+import { ApiError, failureText, vnaCaptureApi, warehouseApi, type ProductionInstrument, type VnaAgent, type VnaSource } from "./api";
 
 /** Capture provenance wins over the previous instrument cached in the heartbeat. */
 export function vnaNameFromHeader(text: string, fallback: string): string {
@@ -8,14 +8,19 @@ export function vnaNameFromHeader(text: string, fallback: string): string {
 }
 
 function readiness(vna: VnaAgent["vna"]): string {
-  if (vna.ready) return "готов";
-  if (vna.reason === "s2vna_not_running") return "S2VNA не запущена";
-  if (vna.reason === "device_not_connected") return "прибор не подключён";
+  if (vna?.ready) return "готов";
+  if (vna?.reason === "s2vna_not_running") return "S2VNA не запущена";
+  if (vna?.reason === "device_not_connected") return "прибор не подключён";
   return "готовность не подтверждена";
 }
 
-/** S2VNA's IDN: vendor, model, serial, software. Ambiguous/unknown serials require a human choice. */
-export function instrumentForVna(name: string, instruments: ProductionInstrument[]): string {
+/** S2VNA matches its IDN serial; saved Arinst files can identify only a unique active Arinst instrument. */
+export function instrumentForVna(name: string, instruments: ProductionInstrument[], source: VnaSource = "s2vna"): string {
+  if (source === "arinst") {
+    const matches = instruments.filter((item) => item.kind === "Средство измерений" && item.status === "Действует"
+      && /arinst/i.test(`${item.name} ${item.manufacturer ?? ""}`));
+    return matches.length === 1 ? matches[0].id : "";
+  }
   const serial = name.split(",")[2]?.trim();
   if (!serial) return "";
   const matches = instruments.filter((item) => item.kind === "Средство измерений" && item.status === "Действует" && item.serial_number.trim() === serial);
@@ -32,12 +37,13 @@ function pause(signal: AbortSignal): Promise<void> {
 }
 
 export function VnaCapture({ onFile, onBusy, disabled = false, children }: {
-  onFile: (file: File, name: string) => void; onBusy: (busy: boolean) => void; disabled?: boolean; children?: ReactNode;
+  onFile: (file: File, name: string, source: VnaSource) => void; onBusy: (busy: boolean) => void; disabled?: boolean; children?: ReactNode;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [agents, setAgents] = useState<VnaAgent[] | null>(null);
   const [agentId, setAgentId] = useState("");
+  const [source, setSource] = useState<VnaSource>("s2vna");
   const [pc, setPc] = useState("");
   const [guide, setGuide] = useState(false);
   const [command, setCommand] = useState("");
@@ -45,6 +51,8 @@ export function VnaCapture({ onFile, onBusy, disabled = false, children }: {
   const run = useRef<AbortController | null>(null);
   const jobId = useRef("");
   const mounted = useRef(true);
+  const options = (agents ?? []).flatMap((agent) => (agent.vna_sources ?? (agent.vna ? ["s2vna" as const] : []))
+    .map((source) => ({ ...agent, source, key: `${source}:${agent.id}` })));
 
   useEffect(() => { mounted.current = true; return () => {
     mounted.current = false;
@@ -61,7 +69,7 @@ export function VnaCapture({ onFile, onBusy, disabled = false, children }: {
     setBusy(true); setError(""); setGuide(false); setAgents(null);
     try {
       // Let create settle even after unmount, so a created job can be cancelled by id.
-      const answer = await vnaCaptureApi.start(chosen);
+      const answer = await vnaCaptureApi.start(chosen, source);
       if (signal.aborted) {
         if ("id" in answer) await vnaCaptureApi.cancel(answer.id);
         return;
@@ -83,7 +91,7 @@ export function VnaCapture({ onFile, onBusy, disabled = false, children }: {
             reader.readAsText(blob);
           });
           if (!signal.aborted) onFile(new File([blob], job.file_name, { type: "application/octet-stream" }),
-            vnaNameFromHeader(text, job.vna.name || answer.agent?.vna.name || ""));
+            job.source === "arinst" ? job.vna.name : vnaNameFromHeader(text, job.vna.name || answer.agent?.vna?.name || ""), job.source);
           return;
         }
         if (Date.now() >= deadline) throw new Error("ВАЦ не ответил — проверьте агент на выбранном ПК");
@@ -117,20 +125,24 @@ export function VnaCapture({ onFile, onBusy, disabled = false, children }: {
     <div className="form-actions">
       {children}
       <button type="button" className="secondary small" disabled={disabled || busy} onClick={() => void begin()}>Снять с ВАЦ</button>
-      {pc && !busy && <button type="button" className="link-button" disabled={disabled} onClick={() => { setPc(""); setAgentId(""); void begin(""); }}>Сменить ПК</button>}
+      {pc && !busy && <button type="button" className="link-button" disabled={disabled} onClick={() => { setPc(""); setAgentId(""); void begin(""); }}>Сменить ПК / источник</button>}
     </div>
     {busy && <p role="status">ВАЦ: снимаю трассу…{pc ? ` · ${pc}` : ""}</p>}
     {error && <p className="error-banner" role="alert">{error}</p>}
     {agents && <div>
-      <label>ПК с ВАЦ<select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
-        <option value="">— выберите свой ПК —</option>
-        {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.pc} · {agent.vna.name} · {readiness(agent.vna)}</option>)}
+      <label>ПК и источник ВАЦ<select name="vna-source" value={agentId ? `${source}:${agentId}` : ""} onChange={(event) => {
+        const selected = options.find((option) => option.key === event.target.value);
+        setAgentId(selected?.id ?? ""); setSource(selected?.source ?? "s2vna");
+      }}>
+        <option value="">— выберите ПК и источник —</option>
+        {options.map((option) => <option key={option.key} value={option.key}>{option.pc} · {option.source === "arinst"
+          ? "Arinst — последний файл" : `Planar S50180 (S2VNA) · ${readiness(option.vna)}`}</option>)}
       </select></label>
       <button type="button" className="secondary small" disabled={!agentId || disabled || busy} onClick={() => void begin()}>Снять на выбранном ПК</button>
       <button type="button" className="link-button" onClick={() => { setAgents(null); setGuide(true); }}>Моего ПК нет</button>
     </div>}
     {guide && <div className="scan-agent">
-      <p>Агент с ВАЦ не найден. Установите S2VNA и агент ERP на этот ПК.</p>
+      <p>Агент с ВАЦ не найден. Установите S2VNA или Arinst Virtual Lab и агент ERP на этот ПК.</p>
       <p>Команду установки выдаёт администратор ERP. Выполните её в PowerShell на этом ПК.</p>
       {command && <code className="scan-agent-cmd">{command}</code>}
       <div className="form-actions">

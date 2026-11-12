@@ -81,6 +81,7 @@ Describe 'ВАЦ: чтение COM и Touchstone' {
 Describe 'ВАЦ: отчёт без запуска S2VNA' {
     BeforeEach {
         Mock Test-VnaRegistered { $true }
+        Mock Test-ArinstInstalled { $false }
         Mock Get-VnaApplication { throw 'heartbeat must not use COM' }
         Mock Get-Process { [pscustomobject]@{ ProcessName = 'S2VNA' } } -ParameterFilter { $Name -eq 'S2VNA' }
         Mock Get-PnpDevice { [pscustomobject]@{ InstanceId = 'USB\VID_2226&PID_0001\123'; Status = 'OK' } }
@@ -140,7 +141,7 @@ Describe 'ВАЦ: отчёт без запуска S2VNA' {
         Mock Invoke-ErpApi { [pscustomobject]@{ ok = $true } }
         Send-Heartbeat -Base 'http://test' -AuthToken 'mock-token'
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
-            $Body.vna.name -match '26030095' -and $Body.vna.ready -and $Body.vna.reason -eq '' -and $Body.version -eq '2.3.1'
+            $Body.vna.name -match '26030095' -and $Body.vna.ready -and $Body.vna.reason -eq '' -and $Body.version -eq '2.4.0' -and ($Body.vna_sources -join ',') -eq 's2vna'
         }
     }
     It 'heartbeat передаёт причину неготовности' {
@@ -213,5 +214,138 @@ Describe 'ВАЦ: общая очередь' {
         Mock Invoke-VnaCapture { throw 'ВАЦ не готов' }
         Invoke-ScanPollOnce -Base 'http://test' -AuthToken 'mock-token' | Should Be 'error'
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Url -like '*/result' -and $Body.error -eq 'ВАЦ не готов' -and $MachineId -eq 'pc-1' }
+    }
+    It 'Arinst отправляет исходное имя и не обращается к COM или сканеру' {
+        Mock Invoke-ErpApi { [pscustomobject]@{ job = [pscustomobject]@{ id = 'v1'; kind = 'vna'; source = 'arinst' } } }
+        Mock Invoke-ArinstCapture { @{ Bytes = [byte[]](1, 2); FileName = 'замер.s2p'; Ext = 's2p'; Mime = 'application/octet-stream' } }
+        Invoke-ScanPollOnce -Base 'http://test' -AuthToken 'mock-token' | Should Be 'done'
+        Assert-MockCalled Send-ScanFile -Times 1 -Exactly -Scope It -ParameterFilter { $FileName -eq 'замер.s2p' -and $MachineId -eq 'pc-1' }
+        Assert-MockCalled Invoke-VnaCapture -Times 0 -Exactly -Scope It
+        Assert-MockCalled Invoke-ScannerScan -Times 0 -Exactly -Scope It
+    }
+}
+
+Describe 'Arinst: последний сохранённый Touchstone' {
+    BeforeEach {
+        $script:arinstDir = Join-Path $tmp ([guid]::NewGuid().ToString())
+        [void][IO.Directory]::CreateDirectory($script:arinstDir)
+        Mock Get-ArinstFolders { @($script:arinstDir) }
+        Mock Get-VnaApplication { throw 'must not touch COM' }
+    }
+    It 'выбирает самый новый s1p или s2p и сохраняет исходный файл' {
+        $old = Join-Path $script:arinstDir 'old.s1p'
+        $new = Join-Path $script:arinstDir 'замер.s2p'
+        [IO.File]::WriteAllText($old, 'old')
+        [IO.File]::SetLastWriteTimeUtc($old, [DateTime]::UtcNow.AddMinutes(-2))
+        [IO.File]::WriteAllBytes($new, [byte[]](1, 2, 3))
+        [IO.File]::WriteAllText((Join-Path $script:arinstDir 'ignore.txt'), 'newest but not Touchstone')
+        $capture = Invoke-ArinstCapture
+        $capture.FileName | Should Be 'замер.s2p'
+        ($capture.Bytes -join ',') | Should Be '1,2,3'
+        ([IO.File]::ReadAllBytes($new) -join ',') | Should Be '1,2,3'
+        Test-Path -LiteralPath $old | Should Be $true
+        Assert-MockCalled Get-VnaApplication -Times 0 -Exactly -Scope It
+    }
+    It 'принимает файл внутри 15 минут и игнорирует более старый и будущий' {
+        foreach ($pair in @(@('fresh.s1p', -899), @('old.s1p', -901), @('future.s1p', 60))) {
+            $path = Join-Path $script:arinstDir $pair[0]
+            [IO.File]::WriteAllText($path, 'trace')
+            [IO.File]::SetLastWriteTimeUtc($path, [DateTime]::UtcNow.AddSeconds($pair[1]))
+        }
+        (Invoke-ArinstCapture).FileName | Should Be 'fresh.s1p'
+    }
+    It 'смотрит один уровень вложенности, но не глубже' {
+        $child = Join-Path $script:arinstDir 'child'
+        $deep = Join-Path $child 'deep'
+        [void][IO.Directory]::CreateDirectory($deep)
+        [IO.File]::WriteAllText((Join-Path $child 'child.s1p'), 'child')
+        [IO.File]::WriteAllText((Join-Path $deep 'deep.s1p'), 'deep')
+        (Invoke-ArinstCapture).FileName | Should Be 'child.s1p'
+    }
+    It 'без свежих файлов возвращает инструкцию сохранения' {
+        { Invoke-ArinstCapture } | Should Throw 'Сохраните трассу в Arinst Virtual Lab (.s1p) и повторите — свежих файлов за 15 минут нет'
+    }
+    It 'не берёт файл старше 15 минут' {
+        $path = Join-Path $script:arinstDir 'old.s1p'
+        [IO.File]::WriteAllText($path, 'old')
+        [IO.File]::SetLastWriteTimeUtc($path, [DateTime]::UtcNow.AddMinutes(-16))
+        { Invoke-ArinstCapture } | Should Throw 'свежих файлов за 15 минут нет'
+    }
+    It 'самый новый файл больше 2 МиБ даёт ошибку без подмены старым' {
+        [IO.File]::WriteAllText((Join-Path $script:arinstDir 'small.s1p'), 'small')
+        [IO.File]::SetLastWriteTimeUtc((Join-Path $script:arinstDir 'small.s1p'), [DateTime]::UtcNow.AddMinutes(-1))
+        [IO.File]::WriteAllBytes((Join-Path $script:arinstDir 'big.s1p'), (New-Object byte[] (2MB + 1)))
+        { Invoke-ArinstCapture } | Should Throw 'Файл ВАЦ больше 2 МиБ'
+    }
+    It 'ровно 2 МиБ допустимы' {
+        [IO.File]::WriteAllBytes((Join-Path $script:arinstDir 'limit.S1P'), (New-Object byte[] 2MB))
+        (Invoke-ArinstCapture).Bytes.Length | Should Be 2MB
+    }
+    It 'несуществующий каталог не мешает чтению остальных' {
+        Mock Get-ArinstFolders { @((Join-Path $script:arinstDir 'missing'), $script:arinstDir) }
+        [IO.File]::WriteAllText((Join-Path $script:arinstDir 'trace.s1p'), 'trace')
+        (Invoke-ArinstCapture).FileName | Should Be 'trace.s1p'
+    }
+    It 'ошибка доступа к папке объясняется по-русски и журналируется' {
+        Mock Get-ChildItem { throw 'Access denied' }
+        Mock Write-Log {}
+        { Invoke-ArinstCapture } | Should Throw 'Не удалось найти файл Arinst — проверьте arinstFolders и доступ к папкам в настройках агента'
+        Assert-MockCalled Write-Log -Times 1 -Exactly -Scope It -ParameterFilter { $Message -like '*Access denied*' }
+    }
+}
+
+Describe 'Arinst: настройки и heartbeat' {
+    It 'читает список каталогов из config.json и ищет по нему' {
+        $script:ConfigPath = Join-Path $tmp 'arinst-config.json'
+        $folder1 = Join-Path $tmp 'watch1'
+        $folder2 = Join-Path $tmp 'watch2'
+        [void][IO.Directory]::CreateDirectory($folder1)
+        [void][IO.Directory]::CreateDirectory($folder2)
+        [IO.File]::WriteAllText($script:ConfigPath, (@{ arinstFolders = @($folder1, $folder2) } | ConvertTo-Json))
+        ((Get-ArinstFolders) -join ',') | Should Be "$folder1,$folder2"
+        [IO.File]::WriteAllText((Join-Path $folder2 'configured.s1p'), 'trace')
+        (Invoke-ArinstCapture).FileName | Should Be 'configured.s1p'
+    }
+    It 'без настройки использует Документы, Рабочий стол и Загрузки' {
+        $script:ConfigPath = Join-Path $tmp 'absent-config.json'
+        $folders = @(Get-ArinstFolders)
+        $folders.Count | Should Be 3
+        ($folders[0] -in @([Environment]::GetFolderPath('MyDocuments'), (Join-Path $env:USERPROFILE 'Documents'))) | Should Be $true
+        ($folders[1] -in @([Environment]::GetFolderPath('Desktop'), (Join-Path $env:USERPROFILE 'Desktop'))) | Should Be $true
+        $folders[2] | Should Be (Join-Path $env:USERPROFILE 'Downloads')
+    }
+    It 'пустой список настроек не включает каталоги по умолчанию' {
+        $script:ConfigPath = Join-Path $tmp 'empty-config.json'
+        [IO.File]::WriteAllText($script:ConfigPath, '{"arinstFolders":[]}')
+        @(Get-ArinstFolders).Count | Should Be 0
+    }
+    It 'обнаруживает установленный ArinstVL по файлу exe в APPDATA' {
+        Mock Get-ChildItem { [pscustomobject]@{ Name = 'ArinstVL.exe' } } -ParameterFilter { $Path -eq (Join-Path $env:APPDATA 'ArinstVL*\ArinstVL.exe') -and $File }
+        Test-ArinstInstalled | Should Be $true
+        Assert-MockCalled Get-ChildItem -Times 1 -Exactly -Scope It
+    }
+    It 'не объявляет Arinst без установленного exe' {
+        Mock Get-ChildItem { @() } -ParameterFilter { $Path -eq (Join-Path $env:APPDATA 'ArinstVL*\ArinstVL.exe') -and $File }
+        Test-ArinstInstalled | Should Be $false
+    }
+    It 'heartbeat с одним Arinst не добавляет S2VNA' {
+        Mock Test-ArinstInstalled { $true }
+        Mock Get-VnaCapability { $null }
+        Mock Get-MachineId { 'pc-1' }
+        Mock Get-LanIp { '' }
+        Mock Get-AgentScanners { @() }
+        Mock Invoke-ErpApi { [pscustomobject]@{ ok = $true } }
+        Send-Heartbeat -Base 'http://test' -AuthToken 'mock-token'
+        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { ($Body.vna_sources -join ',') -eq 'arinst' -and -not $Body.vna }
+    }
+    It 'heartbeat может объявить оба источника' {
+        Mock Test-ArinstInstalled { $true }
+        Mock Get-VnaCapability { @{ name = 'S2VNA'; ready = $false } }
+        Mock Get-MachineId { 'pc-1' }
+        Mock Get-LanIp { '' }
+        Mock Get-AgentScanners { @() }
+        Mock Invoke-ErpApi { [pscustomobject]@{ ok = $true } }
+        Send-Heartbeat -Base 'http://test' -AuthToken 'mock-token'
+        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { ($Body.vna_sources -join ',') -eq 's2vna,arinst' -and $Body.vna.name -eq 'S2VNA' }
     }
 }

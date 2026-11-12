@@ -256,9 +256,9 @@ function VswrUploadWindow({ task, norm, row, instruments, close, onSaved, canRej
           <label htmlFor="vswr-measurement-file">Файл замера</label>
           <input ref={fileInput} id="vswr-measurement-file" type="file" hidden accept={FILE_ACCEPT} aria-label="Файл замера"
             disabled={busy || capturing} onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
-          <VnaCapture disabled={busy} onBusy={setCapturing} onFile={(captured, name) => {
+          <VnaCapture disabled={busy} onBusy={setCapturing} onFile={(captured, name, source) => {
             if (fileInput.current) fileInput.current.value = "";
-            setFile(captured); setInstrumentId(instrumentForVna(name, active)); setError("");
+            setFile(captured); setInstrumentId(instrumentForVna(name, active, source)); setError("");
           }}>
             <button type="button" className="secondary small" disabled={busy || capturing} onClick={() => fileInput.current?.click()}>Выбрать файл…</button>
           </VnaCapture>

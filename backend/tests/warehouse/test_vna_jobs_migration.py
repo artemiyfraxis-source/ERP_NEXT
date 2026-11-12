@@ -27,10 +27,15 @@ def test_upgrade_preserves_scans_and_holds_vna_payload_invariants(tmp_path, monk
         after = db.execute("SELECT id,status,requested_by,created_at,target_machine_id,target_scanner FROM warehouse_scan_jobs").fetchall()
         assert after == before
         assert db.execute("SELECT kind,capture_content,vna_name FROM warehouse_scan_jobs").fetchone() == ("scan", None, "")
+        assert db.execute("SELECT source,capture_file_name FROM warehouse_scan_jobs").fetchone() == ("s2vna", "")
         db.execute("INSERT INTO warehouse_agent_vna(machine_id,name,ready,reported_at) VALUES ('pc','S2VNA',0,'2026-11-12')")
         assert db.execute("SELECT reason FROM warehouse_agent_vna WHERE machine_id='pc'").fetchone() == ("",)
         with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
             db.execute("UPDATE warehouse_scan_jobs SET kind='other'")
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+            db.execute("UPDATE warehouse_scan_jobs SET source='unknown'")
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+            db.execute("UPDATE warehouse_scan_jobs SET source='arinst'")
         with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
             db.execute("UPDATE warehouse_scan_jobs SET capture_content=x'01'")
         with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):

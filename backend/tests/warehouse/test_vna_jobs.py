@@ -26,16 +26,18 @@ def capture(tokens_api):  # noqa: F811
     return admin, agent, clock, sessions
 
 
-def heartbeat(agent, machine="pc-1", vna=True, capability=None):
-    payload = {"machine_id": machine, "pc_name": machine.upper(), "version": "2.3.1", "scanners": []}
+def heartbeat(agent, machine="pc-1", vna=True, capability=None, sources=None):
+    payload = {"machine_id": machine, "pc_name": machine.upper(), "version": "2.4.0", "scanners": []}
     if vna:
         payload["vna"] = capability if capability is not None else {"name": NAME, "ready": True}
+    if sources is not None:
+        payload["vna_sources"] = sources
     response = TestClient(app).post(HEARTBEAT, json=payload, headers=agent)
     assert response.status_code == 200, response.text
 
 
-def start(admin, machine="pc-1"):
-    response = admin.post(JOBS, json={"agent_id": machine}, headers=_csrf(admin))
+def start(admin, machine="pc-1", source="s2vna"):
+    response = admin.post(JOBS, json={"agent_id": machine, "source": source}, headers=_csrf(admin))
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -200,5 +202,96 @@ def test_database_rejects_cross_kind_payload_and_done_without_content(capture):
         row = session.get(ScanJobRow, UUID(job))
         row.status = "done"
         row.finished_at = row.claimed_at
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+
+@pytest.mark.parametrize("source", ["unknown", "ARINST", "", None, 1])
+def test_start_validates_source(capture, source):
+    admin, agent, _, _ = capture
+    heartbeat(agent, sources=["s2vna", "arinst"])
+    response = admin.post(JOBS, json={"agent_id": "pc-1", "source": source}, headers=_csrf(admin))
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("sources,vna,requested", [(["arinst"], False, "s2vna"), (["s2vna"], True, "arinst")])
+def test_start_rejects_source_unavailable_on_selected_pc(capture, sources, vna, requested):
+    admin, agent, _, _ = capture
+    heartbeat(agent, vna=vna, sources=sources)
+    response = admin.post(JOBS, json={"agent_id": "pc-1", "source": requested}, headers=_csrf(admin))
+    assert response.status_code == 422
+    assert "недоступен" in response.json()["detail"]
+
+
+def test_both_sources_survive_heartbeat_and_arinst_removal(capture):
+    admin, agent, _, _ = capture
+    heartbeat(agent, sources=["s2vna", "arinst"])
+    pc = start(admin, "")["agents"][0]
+    assert pc["vna_sources"] == ["s2vna", "arinst"]
+    assert pc["vna"]["name"] == NAME
+    heartbeat(agent)  # Older clients still advertise S2VNA only, removing stale Arinst.
+    assert start(admin, "")["agents"][0]["vna_sources"] == ["s2vna"]
+    assert start(admin)["source"] == "s2vna"
+
+
+def test_existing_start_client_defaults_to_s2vna(capture):
+    admin, agent, _, _ = capture
+    heartbeat(agent)
+    response = admin.post(JOBS, json={"agent_id": "pc-1"}, headers=_csrf(admin))
+    assert response.status_code == 200
+    job = response.json()
+    assert job["source"] == "s2vna"
+    assert claim(agent, kinds=["vna"])["id"] == job["id"]
+
+
+@pytest.mark.parametrize("sources,vna", [(["other"], False), (["s2vna"], False), ([], True)])
+def test_heartbeat_rejects_invalid_source_list(capture, sources, vna):
+    _, agent, _, _ = capture
+    payload = {"machine_id": "pc-1", "vna_sources": sources}
+    if vna:
+        payload["vna"] = {"name": NAME, "ready": True}
+    assert TestClient(app).post(HEARTBEAT, json=payload, headers=agent).status_code == 422
+
+
+@pytest.mark.parametrize("extension", ["s1p", "s2p", "S2P"])
+def test_arinst_capture_keeps_bytes_filename_and_source_without_s2vna_header(capture, extension):
+    admin, agent, _, sessions = capture
+    heartbeat(agent, vna=False, sources=["arinst"])
+    pc = start(admin, "")["agents"][0]
+    assert pc["vna_sources"] == ["arinst"] and pc["vna"] is None
+    job = start(admin, source="arinst")
+    assert job["source"] == "arinst" and job["vna"]["name"] == "Arinst VNA-DL"
+    claimed = claim(agent, kinds=["scan", "vna"])
+    assert claimed["id"] == job["id"] and claimed["source"] == "arinst"
+    content = b"! Arinst Virtual Lab\r\n# MHz S RI R 50\r\n100 0.1 0 0 0 0 0 0 0\r\n"
+    filename = f"Кабель 001.{extension}"
+    assert result(agent, job["id"], content, name=filename).status_code == 200
+    view = admin.get(f"{JOBS}/{job['id']}").json()
+    assert view["file_name"] == filename and view["source"] == "arinst"
+    file = admin.get(f"{JOBS}/{job['id']}/file")
+    assert file.content == content and "attachment" in file.headers["content-disposition"]
+    with sessions() as session:
+        row = session.get(ScanJobRow, UUID(job["id"]))
+        assert row.source == "arinst" and row.capture_file_name == filename
+        assert row.file_id is None and row.result == ""
+
+
+@pytest.mark.parametrize("content,filename", [(b"", "x.s1p"), (TRACE, "x.pdf"), (b"x" * (VNA_FILE_LIMIT + 1), "x.s2p")],
+                         ids=["empty", "extension", "file-limit"])
+def test_arinst_invalid_file_fails_job(capture, content, filename):
+    admin, agent, _, _ = capture
+    heartbeat(agent, vna=False, sources=["arinst"])
+    job = start(admin, source="arinst")["id"]
+    claim(agent, kinds=["vna"])
+    assert result(agent, job, content, name=filename).status_code == 422
+    assert admin.get(f"{JOBS}/{job}").json()["status"] == "failed"
+
+
+def test_database_rejects_unknown_source(capture):
+    admin, agent, _, sessions = capture
+    heartbeat(agent)
+    job = start(admin)["id"]
+    with sessions() as session:
+        session.get(ScanJobRow, UUID(job)).source = "unknown"
         with pytest.raises(IntegrityError):
             session.commit()
