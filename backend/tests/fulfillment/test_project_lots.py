@@ -1,6 +1,7 @@
 """«Запросы на комплектацию» (owner 05.10.2026): one or several ГРН for one item across every КБ of the project,
 «есть, но не заведено», techcard reserves taken over by the kit of the same project + КБ."""
 
+from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 from uuid import uuid4
@@ -14,12 +15,18 @@ from sqlalchemy.pool import StaticPool
 from app.main import app
 from app.modules.fulfillment.domain import KitReserve
 from app.modules.fulfillment.infrastructure import SqlAlchemyFulfillmentUnitOfWork
+from app.modules.procurement.domain import ProcurementStatus, StockCover
+from app.modules.procurement.infrastructure import SqlAlchemyProcurementUnitOfWork
+from app.modules.requests.infrastructure import SqlAlchemyUnitOfWork
+from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
+from app.modules.techcards.kitsets import manual_kitset
 from app.modules.warehouse.domain import StockLot
 from app.modules.warehouse.infrastructure import WriteOffEntryRow
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import AuditEventRow, create_schema
 from tests.factories import Actor
+from tests.workflows.test_project_supply import _line, _request
 
 
 NOW = datetime(2026, 10, 5, 12, 0)
@@ -90,6 +97,83 @@ def bind_lots(client, project: str, versions: dict, **body):
 
 def item_lines(request: dict) -> list[dict]:
     return [line for line in request["lines"] if line["article"] == "КД-1"]
+
+
+@pytest.mark.parametrize("issued", [False, True], ids=["в комплектации", "выдано"])
+@pytest.mark.parametrize("cover_quantity", ["0", "75", "100", "125"])
+def test_supply_counts_partial_off_book_once_and_does_not_order_it_again(api, monkeypatch, issued, cover_quantity):
+    client, factory = api
+    sessions = factory().session_factory
+    monkeypatch.setattr(app.state, "techcards_uow_factory", lambda: SqlAlchemyTechcardsUnitOfWork(sessions), raising=False)
+    monkeypatch.setattr(app.state, "uow_factory", lambda: SqlAlchemyUnitOfWork(sessions), raising=False)
+    monkeypatch.setattr(app.state, "procurement_uow_factory", lambda: SqlAlchemyProcurementUnitOfWork(sessions), raising=False)
+    monkeypatch.setitem(app.dependency_overrides, authenticated_principal, lambda: Principal(
+        actor=Actor(name="Кладовщик", department="Склад"), email="receiver@example.test",
+        roles=frozenset({"receiver"}),
+        permissions={"fulfillment": "edit", "handout": "edit", "projects": "edit", "newrequest": "edit"},
+    ))
+    kitset = manual_kitset(project="728К.2", customer="З", who="Т", now=NOW, assemblies=[
+        {"index": "КБ2", "run": "1", "components": [
+            {"art": "КД-1", "name": "Разъём", "type": "Комплектующие", "per": "270"},
+        ]},
+    ])
+    with app.state.techcards_uow_factory() as uow:
+        uow.kitsets.save(kitset)
+        uow.commit()
+    if Decimal(cover_quantity) > 0:
+        source = _request("Разъём", cover_quantity, article="КД-1", project="728К.2")
+        procurement = replace(_line(source, cover_quantity, ProcurementStatus.DONE), stock_covered=Decimal(cover_quantity))
+        with app.state.procurement_uow_factory() as uow:
+            uow.procurement.add(procurement)
+            uow.stock_covers.add(StockCover(
+                id=uuid4(), line_id=procurement.id, legacy_id=procurement.legacy_id, project_reference="728К.2",
+                lot_id=None, warehouse="", grn="", package="", storage_location="", unit="шт",
+                quantity=Decimal(cover_quantity), created_at=NOW, created_by="Закупщик",
+            ))
+            uow.commit()
+
+    lot = stock("FRX.26.0000001", "170")
+    put_lots(factory, lot)
+    request = create(client, "728К.2 · КБ2 · Жгут", ("КД-1", "Разъём", "270"))
+    marked = bind_lots(client, "728К.2", {request["id"]: request["version"]},
+                       off_book=True, off_book_quantity="100")
+    assert marked.status_code == 200, marked.text
+    request = fetch(client, request["id"])
+    assert [(line["requirement"], line["off_book"]) for line in request["lines"]] == [("100", True), ("170", False)]
+    bound = bind_lots(client, "728К.2", {request["id"]: request["version"]}, lot_ids=[str(lot.id)])
+    assert bound.status_code == 200, bound.text
+    if issued:
+        request = fetch(client, request["id"])
+        ready = client.post(f"/api/issues/{request['id']}/ready", json={
+            "version": request["version"], "handout_location": "Полка 1",
+        })
+        assert ready.status_code == 200, ready.text
+        request = ready.json()["request"]
+        handed = client.post(f"/api/issues/{request['id']}/issue", json={"version": request["version"]})
+        assert handed.status_code == 200, handed.text
+
+    response = client.get("/api/techcards/kitsets/728К.2/supply")
+    assert response.status_code == 200, response.text
+    (line,) = response.json()["lines"]
+    assert (line["need"], line["free"], line["kitted"], line["ordered"], line["short"]) == ("270", "0", "270", "0", "0")
+    assert Decimal(line["off_book"]) == max(Decimal(cover_quantity) - Decimal("100"), Decimal("0"))
+    assert line["state_label"] == ("Выдано в производство" if issued else "В комплектации")
+    if not issued:
+        assert "выдано 0, к выдаче 270 из 270" in line["state_hint"]
+    if cover_quantity == "0":
+        assert line["stage"] == "со склада"
+
+    for articles in ([], ["КД-1"]):
+        ordered = client.post("/api/techcards/kitsets/728К.2/order-missing", json={
+            "articles": articles, "deadline": "2026-10-20",
+        })
+        assert ordered.status_code == 200, ordered.text
+        assert ordered.json()["created"] == []
+        assert ordered.json()["skipped"] == [
+            {"art": "КД-1", "kind": "уже в комплектации", "reason": "уже в комплектации: 270"},
+        ]
+    with app.state.uow_factory() as uow:
+        assert uow.requests.for_project("728К.2") == []
 
 
 def test_two_lots_go_to_three_kb_in_natural_order_fifo_by_grn_with_a_split_and_a_short(api):

@@ -115,6 +115,7 @@ from app.modules.requests.domain import (
     spreadsheet_id_from_url,
     unit_for_type,
 )
+from app.modules.requests.google_drive import drive_file_id
 from app.modules.shipping.application import (
     DropProjectCommand,
     QueueProjectCommand,
@@ -368,6 +369,19 @@ def load_kitset(
     with techcards_uow() as uow:
         current = uow.kitsets.get(data.project)
         if current is not None:
+            if not number and current.calc_source.strip():
+                current_id = drive_file_id(current.calc_source)
+                incoming_id = drive_file_id(data.calc_source)
+                same_calc = (
+                    current_id == incoming_id if current_id and incoming_id
+                    else current.calc_source.strip() == data.calc_source.strip()
+                )
+                if not same_calc:
+                    raise KitsetValidationError(
+                        f"В расчёте указан № {current.project}, но проект {current.project} уже заведён "
+                        "из другого расчёта. Впишите № нового проекта в поле «№ проекта» "
+                        f"или откройте {current.project} и обновите его из расчёта."
+                    )
             data = replace(data, project=current.project)
         kitset = write_from_calc(data, current, who=command.actor.name, now=command.now)
         uow.kitsets.save(kitset)
@@ -1099,8 +1113,9 @@ def _free_stock(lots: list, held: dict) -> list[SupplyStock]:
 
 
 def supply_kitting(project: str, requests: Iterable[FulfillmentRequest]) -> list[SupplyStock]:
-    """Already in the project's kits: reserved on a lot or issued (less what came back good) — that need is covered
-    and leaves the shelf, so it is counted here and not as free stock."""
+    """Already in the project's kits: reserved on a lot, issued (less what came back good), or marked «есть, не заведено».
+    An off-book line covers its whole requirement before and after issue; a partial mark splits off the remainder.
+    `issued` stays the net quantity actually handed out, separate from coverage. Covered stock is not free stock."""
     canon = normalize_project_number(project)
     kitted = []
     for request in requests:
@@ -1108,7 +1123,7 @@ def supply_kitting(project: str, requests: Iterable[FulfillmentRequest]) -> list
             continue
         for line in request.lines:
             issued = max(line.issued - line.returned_good, Decimal("0"))
-            quantity = line.reserved + issued
+            quantity = line.requirement if line.off_book else line.reserved + issued
             if quantity > 0:
                 kitted.append(SupplyStock(
                     article=line.article, name=line.name, quantity=quantity, off_book=line.off_book, issued=issued,
@@ -1466,11 +1481,12 @@ def delete_kitset(
         lines = kitset.lines
         uow.kitsets.delete(kitset.project)
         canon = project_key(kitset.project)
-        cards = revisions = 0
+        cards = revisions = td_issues = 0
         for name in {card.project for card in uow.techcards.list() if project_key(card.project) == canon}:
             dropped = uow.techcards.delete_project(name)
             cards += dropped[0]
             revisions += dropped[1]
+            td_issues += dropped[2]
         _audit(uow, kitset.project, "techcards.kitset_deleted", actor, now, {
             "lines": str(lines), "cards": str(cards),
         })
@@ -1506,7 +1522,7 @@ def delete_kitset(
             tails_error = f"Журнал, задания, запросы на комплектацию и заявки проекта не удалены: {error}"
     return {
         "project": kitset.project, "deleted": lines, "erp": erp,
-        "cards": {"cards": cards, "revisions": revisions}, "gp": gp,
+        "cards": {"cards": cards, "revisions": revisions, "td_issues": td_issues}, "gp": gp,
         "journal": journal, "tails": tails, "tails_error": tails_error,
     }
 

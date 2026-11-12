@@ -459,6 +459,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
             history={admin || !readOnly}
             readOnly={readOnly}
             canLink={canEditReferences}
+            purposeText={purposeText}
           />)}</tbody>
         </table>
       </div>}
@@ -756,7 +757,7 @@ function itemMark(name: string, itemName: string | undefined, title: string) {
 }
 
 /** One article (all its lots) of the grouped table, cell by cell in the order of the visible columns. */
-function articleCell(key: ColumnKey, item: WarehouseArticle, open: boolean, toggle: () => void, pinned: boolean, briefs: Record<string, ItemBrief> = {}) {
+function articleCell(key: ColumnKey, item: WarehouseArticle, open: boolean, toggle: () => void, pinned: boolean, briefs: Record<string, ItemBrief>, purposeText: (value: string) => string) {
   switch (key) {
     case "name": {
       const name = distinct(item.lots, "name") || item.article || "Без наименования";
@@ -790,6 +791,7 @@ function articleCell(key: ColumnKey, item: WarehouseArticle, open: boolean, togg
     case "maker": return agreeCell(key, item.lots.map((lot) => lot.manufacturer ?? ""), pinned);
     case "maker_article": return agreeCell(key, item.lots.map((lot) => lot.maker_article ?? ""), pinned);
     case "supplier_article": return agreeCell(key, item.lots.map((lot) => lot.supplier_article ?? ""), pinned);
+    case "purpose": return agreeCell(key, item.lots.map((lot) => purposeText(lot.purpose)), pinned);
     case "upd_name": return agreeCell(key, item.lots.map((lot) => lot.upd_name ?? ""), pinned);
     case "invoice_name": return agreeCell(key, item.lots.map((lot) => lot.invoice_name ?? ""), pinned);
     case "invoice_number": return agreeCell(key, item.lots.map((lot) => lot.receipt?.invoice_number ?? ""), pinned);
@@ -838,7 +840,7 @@ function grnCell(key: ColumnKey, lots: WarehouseLot[], pinned: boolean) {
   </td>;
 }
 
-function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled, mutate, onMove, history, readOnly, canLink }: {
+function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled, mutate, onMove, history, readOnly, canLink, purposeText }: {
   group: WarehouseGroup;
   columns: ColumnKey[];
   pinned: ColumnKey;
@@ -851,6 +853,7 @@ function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled
   history: boolean;
   readOnly: boolean;
   canLink: boolean;
+  purposeText: (value: string) => string;
 }) {
   const lotItems = useContext(LotItems);
   return <>
@@ -859,7 +862,7 @@ function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled
       const open = expanded.has(item.key);
       return <Fragment key={item.key}>
         <tr className={open ? "stock-article-row open" : "stock-article-row"} title="Партии карточками" onClick={() => toggle(item.key)}>
-          {columns.map((key) => articleCell(key, item, open, () => toggle(item.key), key === pinned, lotItems.items))}
+          {columns.map((key) => articleCell(key, item, open, () => toggle(item.key), key === pinned, lotItems.items, purposeText))}
         </tr>
         {open && <tr className="stock-cards-row"><td colSpan={columns.length}><div className="lot-cards">
           {item.lots.map((lot) => <LotCard key={`${lot.id}:${lot.version}`} lot={lot} busy={busy === lot.id} disabled={disabled} mutate={mutate} onMove={onMove} history={history} readOnly={readOnly} canLink={canLink} />)}

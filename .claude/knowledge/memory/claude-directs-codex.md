@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: user
   originSessionId: 3299b8a4-260f-413b-822c-c78a05c76e54
-  modified: 2026-11-11T19:44:05.887Z
+  modified: 2026-11-12T08:17:03.868Z
 ---
 
 Owner's subscriptions since 11.11.2026: Claude $20 (tight quota), OpenAI Codex $200 (large quota). «Ты будешь управлять им»:
@@ -23,6 +23,11 @@ Claude main is the orchestrator, Codex CLI the workhorse.
   `-c mcp_servers.<name>.enabled=false`). `--ignore-user-config` does NOT help: the connectors come from the account and the shell breaks.
 - `workspace-write` denies writes outside the workdir but allows `%TEMP%`. Pass the brief by path
   («Read the task brief at … and follow it»), `$null |` as stdin. Codex never commits — main reviews and commits.
+
+- 12.11.2026 owner screenshot «чет пипец»: 4 parallel Codex workers each ran `npm run test:backend`
+  (`scripts/run-backend-tests.mjs` uses pytest `-n auto` → 42 python processes per run) → 95 % CPU, ~27 GB of 31 GB.
+  Limit: ≤ 3 editing workers, affected tests only with `-n 4`, one full gate at a time (verifier only). Owner worried
+  about speed: model time dominates, 4 parallel full suites were not faster (shared cores + RAM paging).
 
 **Why:** Claude tokens are the scarce resource; spending them on file reading and code writing burns the 5-hour window.
 **How to apply:** follow `orchestrate` skill «Budget routing» and `cross-review`; Claude subagents only as a fallback

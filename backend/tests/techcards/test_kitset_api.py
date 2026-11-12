@@ -3,10 +3,11 @@ import base64
 from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
+from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -21,9 +22,11 @@ from app.modules.techcards import kitsets
 from app.modules.warehouse.domain import StockLot
 from app.shared.clock import moscow_now, moscow_today
 from app.shared.http_auth import Principal, authenticated_principal
-from app.shared.persistence import create_schema
+from app.shared.persistence import Base, create_schema
+from app.workflows import project_kitset as flow
+from app.modules.techcards import kitset_api as api
 from tests.factories import Actor
-from tests.techcards.calc_sheets import FakeSheets
+from tests.techcards.calc_sheets import FakeSheets, calc_sheets
 
 
 STATE = (
@@ -117,6 +120,99 @@ def test_a_second_send_creates_nothing_and_the_state_lists_the_sent_kb(kitset_ap
 
 def _load(client, **extra):
     return client.post("/api/techcards/kitsets/load", json={"url": CALC, **extra})
+
+
+@pytest.mark.parametrize("number", ["", "   "])
+def test_implicit_project_number_refuses_another_calculation_without_side_effects(kitset_api, monkeypatch, number):
+    client, _lot = kitset_api
+    assert _load(client, deadline="2026-10-20").status_code == 200
+    before_card = client.get("/api/techcards/kitsets/708К.4").json()
+
+    def snapshot():
+        with app.state.techcards_uow_factory() as uow:
+            return {
+                table.name: uow.session.execute(select(table).order_by(*table.primary_key.columns)).all()
+                for table in Base.metadata.sorted_tables
+            }
+
+    before = snapshot()
+    effects = []
+    for module, name in (
+        (flow, "register_project"), (flow, "queue_project"), (flow, "set_project_addressee"),
+        (flow, "add_plan_event"), (api.reserve_flow, "resync_project"),
+        (api, "_project_requests"),
+    ):
+        effect = Mock()
+        monkeypatch.setattr(module, name, effect)
+        effects.append(effect)
+    enqueue = Mock()
+    monkeypatch.setattr(api, "_name_queue", lambda request: enqueue)
+    effects.append(enqueue)
+    app.state.kitset_sheets_reader = FakeSheets(calc_sheets(customer="Другой заказчик"))
+
+    refused = _load(
+        client, url="https://docs.google.com/spreadsheets/d/copied-calc_id/edit", number=number,
+        deadline="2026-11-20", ship={"contact": "Другой получатель"},
+        requests={"purpose": "Проект 708К.4", "delivery_point": "ЦАР", "procurement_deadline": "2026-11-10"},
+    )
+
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["detail"] == (
+        "В расчёте указан № 708К.4, но проект 708К.4 уже заведён из другого расчёта. "
+        "Впишите № нового проекта в поле «№ проекта» или откройте 708К.4 и обновите его из расчёта."
+    )
+    assert snapshot() == before
+    assert client.get("/api/techcards/kitsets/708К.4").json() == before_card
+    for effect in effects:
+        effect.assert_not_called()
+
+
+@pytest.mark.parametrize(("source", "number"), [
+    (CALC, ""),
+    ("https://docs.google.com/spreadsheets/d/1AbC-calc_id/edit?usp=sharing#gid=123", ""),
+    ("https://drive.google.com/open?id=1AbC-calc_id", ""),
+    ("", ""),
+    ("https://docs.google.com/spreadsheets/d/old-calc_id/edit", "708К.4"),
+])
+def test_same_calculation_or_explicit_number_refreshes_the_project(kitset_api, source, number):
+    client, _lot = kitset_api
+    assert _load(client).status_code == 200
+    with app.state.techcards_uow_factory() as uow:
+        card = uow.kitsets.get("708К.4")
+        uow.kitsets.save(replace(card, calc_source=source, version=card.version + 1))
+        uow.commit()
+    app.state.kitset_sheets_reader = FakeSheets(calc_sheets(customer="Новый заказчик"))
+
+    refreshed = _load(client, number=number)
+
+    assert refreshed.status_code == 200, refreshed.text
+    with app.state.techcards_uow_factory() as uow:
+        updated = uow.kitsets.get("708К.4")
+    assert (updated.customer, updated.calc_source, updated.version) == ("Новый заказчик", CALC, card.version + 2)
+
+
+@pytest.mark.parametrize(("source", "incoming", "allowed"), [
+    (" legacy-calc ", "legacy-calc", True),
+    ("legacy-calc", "another-calc", False),
+    ("legacy-calc", CALC, False),
+    (CALC, "legacy-calc", False),
+])
+def test_calculation_comparison_falls_back_to_stripped_urls(kitset_api, source, incoming, allowed):
+    client, _lot = kitset_api
+    assert _load(client).status_code == 200
+    with app.state.techcards_uow_factory() as uow:
+        card = uow.kitsets.get("708К.4")
+        uow.kitsets.save(replace(card, calc_source=source, version=card.version + 1))
+        uow.commit()
+    data = replace(flow.read_calc_by_link(CALC, FakeSheets), calc_source=incoming)
+    command = flow.LoadKitsetCommand(
+        data=data, number="", deadline=None, ship={}, actor=_principal({})().actor, now=datetime(2026, 9, 29, 10),
+    )
+    if allowed:
+        assert flow.load_kitset(command, app.state.techcards_uow_factory, None, None).project == card.project
+    else:
+        with pytest.raises(kitsets.KitsetValidationError, match="уже заведён из другого расчёта"):
+            flow.load_kitset(command, app.state.techcards_uow_factory, None, None)
 
 
 def test_project_from_calculation_registers_plan_queue_and_addressee(kitset_api):
