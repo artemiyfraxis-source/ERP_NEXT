@@ -11,4 +11,4 @@ metadata:
 - After a conflicted merge, list every unmerged file (`git diff --name-only --diff-filter=U`) and `git grep -nE '^(<<<<<<<|=======|>>>>>>>)( |$)'` before `git add -A`: `npm run check` does not read `deploy/*.sh` or `.ps1`, so markers there ship green (#118 broke `deploy/load-real-data.sh`, #120 fixed it). `bash -n deploy/*.sh` catches it.
 - `WarehousePage.test.tsx` «warns instead of printing when nothing is waiting to be put away» can miss its `role="alert"` under full-gate load (2026-09-30, passed alone and on a rerun of `npm test`); rerun before chasing it.
 Hub: [[erp-next-hub]].
-- Agent worktrees link `backend/.venv` and `frontend/node_modules` to the main checkout: removing one by hand → [[worktree-symlink-removal]].
+- Worktree cleanup: [[worktree-symlink-removal]].

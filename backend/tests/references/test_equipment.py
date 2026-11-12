@@ -1,6 +1,7 @@
 """БД.ОБ: inventory numbers, «Ещё такой же», refusals, junk rows of the loader, «что обжимает» tokens and links."""
 
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,10 @@ from app.modules.references.equipment import (
     add_code, has_code, next_instance_inventory, next_model_inventory, next_row_number, parse_inventory,
     physical_equipment, remove_code, tokens,
 )
+from app.modules.references.importers import import_rows
 from app.modules.references.technology import parse_mirror_rows, sheet_snapshot_records
+from app.shared.bulk_import import ImportRowIn
+from tests.factories import Actor
 from tests.references.test_api import references_api  # noqa: F401  (fixture)
 
 BASE = "/api/references/tech-operations"
@@ -36,9 +40,67 @@ def test_next_model_number_is_one_above_the_highest_of_the_prefix():
                     ("ОСН.026", "Матрицы"), ("ОСН.001", "Матрицы"), ("ОБ.069.7", "Матрицы"))
     assert next_model_inventory("Оборудование", existing) == "ОБ.105"
     assert next_model_inventory("Инструмент", existing) == "ОБ.105"  # one ОБ. sequence for equipment and tools
-    assert next_model_inventory("Матрицы", existing) == "ОСН.027"  # most matrices are ОСН.
+    assert next_model_inventory("Матрицы", existing) == "ОБ.105"  # legacy ОСН. remains readable, new numbers use ОБ.
     assert next_model_inventory("Оборудование", []) == "ОБ.001"
     assert next_model_inventory("Обжимной инструмент", existing) == "ОБ.105"
+
+
+@pytest.mark.parametrize("code", ["A1", "M10", "S3"])
+def test_applicator_inventory_is_its_code(references_api, code):
+    created = _create(references_api, **{"Тип": "Аппликаторы", "Наменование": "Аппликатор",
+                                        "Инв. номер": "ОБ.106", "Код в базе терминалов": f" {code.lower()} "})
+    assert created.status_code == 201, created.text
+    assert created.json()["fields"]["Инв. номер"] == code
+    assert created.json()["fields"]["Код в базе терминалов"] == code
+    assert parse_inventory(code).prefix == code[0]
+    assert parse_inventory(code).base == int(code[1:])
+    assert references_api.post(f"{BASE}/{created.json()['id']}/duplicate").status_code == 422
+    assert references_api.get(f"{BASE}/equipment-number", params={"type": "Аппликаторы"}).json()["inventory"] == ""
+
+
+def test_applicators_need_a_real_code_and_reject_collisions(references_api):
+    for code in ("", "X1", "A1/M2"):
+        response = _create(references_api, **{"Тип": "Аппликаторы", "Наменование": "Аппликатор", "Код в базе терминалов": code})
+        assert response.status_code == 422
+        assert "код" in response.json()["detail"].lower()
+    assert _create(references_api, **{"Тип": "Инструмент", "Наменование": "Занятый номер", "Инв. номер": "A1"}).status_code == 201
+    collision = _create(references_api, **{"Тип": "Аппликаторы", "Наменование": "Аппликатор", "Код в базе терминалов": "A1"})
+    assert collision.status_code == 409
+
+
+def test_applicator_code_edits_keep_inventory_in_sync(references_api):
+    item = _create(references_api, **{"Тип": "Аппликаторы", "Наменование": "Аппликатор", "Код в базе терминалов": "M10"}).json()
+    url = f"{BASE}/{item['id']}"
+    changed = references_api.patch(url, json={"edits": [{"field": "Код в базе терминалов", "old": "M10", "value": "M11"}]})
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["fields"]["Инв. номер"] == "M11"
+    missing = references_api.patch(url, json={"edits": [{"field": "Код в базе терминалов", "old": "M11", "value": ""}]})
+    assert missing.status_code == 422
+
+def test_changing_a_tool_into_an_applicator_requires_its_code(references_api):
+    item = _create(references_api, **{"Тип": "Инструмент", "Наменование": "Бывший инструмент"}).json()
+    url = f"{BASE}/{item['id']}"
+    for code in ("", "X1"):
+        edits = [{"field": "Тип", "old": "Инструмент", "value": "Аппликаторы"}]
+        if code:
+            edits.append({"field": "Код в базе терминалов", "old": "", "value": code})
+        response = references_api.patch(url, json={"edits": edits})
+        assert response.status_code == 422, (code, response.text)
+    ok = references_api.patch(url, json={"edits": [{"field": "Тип", "old": "Инструмент", "value": "Аппликаторы"},
+                                                   {"field": "Код в базе терминалов", "old": "", "value": "S7"}]})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["fields"]["Инв. номер"] == "S7"
+
+
+def test_measuring_instruments_have_a_separate_sequence(references_api):
+    existing = rows(("ОБ.197", "Аппликаторы"), ("СИ.002", "Средства измерений"), ("A999", "Аппликаторы"))
+    assert next_model_inventory("Средства измерений", existing) == "СИ.003"
+    assert next_model_inventory("Оборудование", existing) == "ОБ.198"  # do not reuse occupied legacy numbers
+    assert next_model_inventory("Аппликаторы", existing) == ""
+    first = _create(references_api, **{"Тип": "Средства измерений", "Наменование": "Штангенциркуль"}).json()
+    assert first["fields"]["Инв. номер"] == "СИ.001"
+    assert references_api.post(f"{BASE}/{first['id']}/duplicate").json()["fields"]["Инв. номер"] == "СИ.001.2"
+    assert _create(references_api, **{"Тип": "Средства измерений", "Наменование": "Микрометр"}).json()["fields"]["Инв. номер"] == "СИ.002"
 
 
 def test_next_instance_number_keeps_existing_records():
@@ -53,6 +115,91 @@ def test_next_instance_number_keeps_existing_records():
 
 def test_next_row_number():
     assert next_row_number([{"№": "5"}, {"№": "17"}, {"№": ""}]) == "18" and next_row_number([]) == "1"
+
+
+def test_number_generation_counts_inventory_aliases():
+    existing = [{"Инв. номер": " ", "inventoryNumber": number}
+                for number in ("ОБ.94.1", "ОБ.94.3", "СИ.095.1")]
+    assert next_model_inventory("Оборудование", existing) == "ОБ.095"
+    assert next_model_inventory("Средства измерений", existing) == "СИ.096"
+    assert next_instance_inventory("ОБ.94.1", existing) == "ОБ.94.4"
+
+
+@pytest.mark.parametrize("kind, number", [
+    ("Оборудование", "ОБ.94.1"), ("Средства измерений", "ОБ.94.1"), ("Средства измерений", "СИ.094.1"),
+])
+@pytest.mark.parametrize("canonical", [{}, {"Инв. номер": " "}])
+def test_repository_save_keeps_inventory_and_type_aliases(references_api, kind, number, canonical):
+    factory = references_api.app.state.references_uow_factory
+    record = TechOperationRecord.create(
+        tab=TechOperationTab.EQUIPMENT, display_text="Прибор", search_text="", source_sheet="БД.ОБ", sort_key="1",
+        fields={"Тип": " ", "obType": kind, "inventoryNumber": number, **canonical},
+    )
+    with factory() as uow:
+        uow.tech_operations.save(record)
+        uow.commit()
+    with factory() as uow:
+        stored = uow.tech_operations.get(record.id)
+        assert stored.fields["Инв. номер"] == stored.fields["inventoryNumber"] == number
+        assert stored.fields["obType"] == kind
+        uow.tech_operations.save(replace(stored, fields={**stored.fields, "Расположение": "ЖУК"}))
+        uow.commit()
+    with factory() as uow:
+        assert uow.tech_operations.get(record.id).fields["Инв. номер"] == number
+
+
+@pytest.mark.parametrize("kind, number", [("Оборудование", "ОБ.94.1"), ("Средства измерений", "ОБ.94.1")])
+def test_bulk_import_keeps_aliased_inventory_on_create_and_update(references_api, kind, number):
+    factory = references_api.app.state.references_uow_factory
+    now = datetime(2026, 11, 12, 12)
+    record = TechOperationRecord.create(
+        tab=TechOperationTab.EQUIPMENT, display_text="Прибор", search_text="", source_sheet="БД.ОБ", sort_key="1",
+        fields={"Тип": " ", "obType": "Инструмент", "Инв. номер": " ", "inventoryNumber": number, "Расположение": "ЦАР"},
+    )
+    with factory() as uow:
+        uow.tech_operations.replace((record,), schema_version=14, source_updated_at=None, imported_at=now)
+        uow.commit()
+    rows = [
+        ImportRowIn(fields={"baseValue": "Прибор", "obType": kind, "Расположение": "ЖУК"}),
+        ImportRowIn(fields={"baseValue": "Другой прибор", "obType": kind, "inventoryNumber": "ОБ.95.1"}),
+    ]
+    actor = Actor(name="Тест", department="ОГТ")
+    preview = import_rows("ob", factory(), rows, actor, now, dry_run=True)
+    assert preview.refused == []
+    with factory() as uow:
+        assert uow.tech_operations.get(record.id).fields == record.fields
+    applied = import_rows("ob", factory(), rows, actor, now, dry_run=False)
+    assert applied.refused == []
+    assert len(applied.created) == len(applied.updated) == 1
+    with factory() as uow:
+        stored = uow.tech_operations.get(record.id)
+        assert stored.fields["Инв. номер"] == stored.fields["inventoryNumber"] == number
+        assert stored.fields["obType"] == kind and stored.fields["Расположение"] == "ЖУК"
+        [created] = [row for row in uow.tech_operations.list(tab=TechOperationTab.EQUIPMENT, query="", limit=10)
+                     if row.id != record.id]
+        assert created.fields["Инв. номер"] == created.fields["inventoryNumber"] == "ОБ.95.1"
+        assert created.fields["obType"] == kind
+
+
+@pytest.mark.parametrize("code", ["", "M10"])
+def test_saving_legacy_applicator_does_not_renumber_it_or_require_a_new_code(references_api, code):
+    factory = references_api.app.state.references_uow_factory
+    record = TechOperationRecord.create(
+        tab=TechOperationTab.EQUIPMENT, display_text="Аппликатор", search_text="", source_sheet="БД.ОБ", sort_key="1",
+        fields={"Тип": " ", "obType": "Аппликаторы", "inventoryNumber": "ОБ.106", "Код в базе терминалов": code},
+    )
+    with factory() as uow:
+        uow.tech_operations.replace((record,), schema_version=14, source_updated_at=None,
+                                    imported_at=datetime(2026, 11, 12, 12))
+        uow.commit()
+    with factory() as uow:
+        stored = uow.tech_operations.get(record.id)
+        uow.tech_operations.save(replace(stored, fields={**stored.fields, "Расположение": "ЖУК"}))
+        uow.commit()
+    with factory() as uow:
+        fields = uow.tech_operations.get(record.id).fields
+        assert fields["Инв. номер"] == fields["inventoryNumber"] == "ОБ.106"
+        assert fields["Код в базе терминалов"] == code
 
 
 # --- physical equipment catalog ---

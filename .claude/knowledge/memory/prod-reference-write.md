@@ -31,4 +31,4 @@ Working path (used for БД.КОАКС L1–L3, 49 rows):
   always pass `&limit=5000` (22.10 a БД.КОАКС fill covered only the first 200 of 610 rows; topped up 23.10).
 
 **Why:** no prod API token exists for `refs:write`; the xlsx round-trip is keyed by ID and breaks on prod.
-**How to apply:** same recipe for терминалы and провода fills; still never overwrite filled cells without the owner. [[live-data-protocol]] [[module-reference-db]]
+**How to apply:** same recipe for терминалы and провода fills. Overwrites: maker document beats shop values with the old value journaled ([[maker-docs-over-shop-values]]); agents never write applicators ([[applicator-code-kinds]]). [[live-data-protocol]] [[module-reference-db]]

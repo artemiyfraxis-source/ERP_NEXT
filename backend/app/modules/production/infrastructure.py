@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone
 from decimal import Decimal
 import json
 from typing import Sequence
@@ -19,7 +19,7 @@ from app.modules.fulfillment.infrastructure import FulfillmentLineRow, Fulfillme
 from app.modules.shipping.infrastructure import FinishedGoodRow, SqlAlchemyFinishedGoodsRepository
 from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository
 
-from .application import Absence, DuplicateLaunch, Operator
+from .application import Absence, ConcurrentProductionUpdate, DuplicateLaunch, Operator
 from .domain import DEFAULT_SHIFT, MARKS_ISSUED_EVENT, MARKS_RELEASED_EVENT, RESTORED_EVENT, EtkOperation, FlowMode, MarkEvent, OperationInput, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift
 from .plan import (
     KIT_STAGES, PLAN_BLOCKERS, PLAN_KINDS, PLAN_STAGE_AUTO, PROJECT_TERMINALS, PlanEvent, PlanProjectSnapshot,
@@ -49,6 +49,9 @@ from .traceability import (
     MaterialInput,
     MaterialSource,
     InstrumentStatus,
+    InstrumentKind,
+    InstrumentFile,
+    InstrumentFileKind,
     MeasurementInstrument,
     ProductionBox,
     ProductionOutput,
@@ -595,21 +598,51 @@ class ProductionSerialRow(Base):
 class ProductionInstrumentRow(Base):
     __tablename__ = "production_instruments"
     __table_args__ = (
-        CheckConstraint("status IN ('Действует', 'Не используется', 'Поверка не подтверждена')", name="ck_production_instruments_status"),
-        CheckConstraint("status <> 'Действует' OR (verification_number IS NOT NULL AND length(trim(verification_number)) > 0 AND verified_at IS NOT NULL AND verification_due IS NOT NULL)", name="ck_production_instruments_active_verification"),
-        CheckConstraint("status <> 'Поверка не подтверждена' OR (verification_number IS NULL AND verified_at IS NULL AND verification_due IS NULL)", name="ck_production_instruments_unverified"),
-        CheckConstraint("verified_at IS NULL OR verification_due IS NULL OR verification_due >= verified_at", name="ck_production_instruments_verification_dates"),
+        CheckConstraint("status IN ('Действует', 'Не используется', 'Поверка не подтверждена')", name='ck_production_instruments_status'),
+        CheckConstraint("kind <> 'Средство измерений' OR status <> 'Действует' OR (verification_number IS NOT NULL AND length(trim(verification_number)) > 0 AND verified_at IS NOT NULL AND verification_due IS NOT NULL)", name='ck_production_instruments_active_verification'),
+        CheckConstraint("status <> 'Поверка не подтверждена' OR (verification_number IS NULL AND verified_at IS NULL AND verification_due IS NULL)", name='ck_production_instruments_unverified'),
+        CheckConstraint('verified_at IS NULL OR verification_due IS NULL OR verification_due >= verified_at', name='ck_production_instruments_verification_dates'),
+        CheckConstraint("kind IN ('Средство измерений', 'Принадлежность')", name='ck_production_instruments_kind'),
+        CheckConstraint('parent_id IS NULL OR parent_id <> id', name='ck_production_instruments_parent'),
+        CheckConstraint('quantity >= 1', name='ck_production_instruments_quantity'),
+        CheckConstraint("kind <> 'Средство измерений' OR quantity = 1", name='ck_production_instruments_measuring_quantity'),
+        CheckConstraint("kind <> 'Принадлежность' OR (parent_id IS NOT NULL AND verification_number IS NULL AND verified_at IS NULL AND verification_due IS NULL AND status IN ('Действует', 'Не используется'))", name='ck_production_instruments_accessory'),
     )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     version: Mapped[int] = mapped_column(Integer(), nullable=False)
     inventory_number: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     instrument_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, server_default="Средство измерений")
+    parent_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_instruments.id", name="fk_production_instruments_parent", ondelete="RESTRICT"), nullable=True)
+    serial_number: Mapped[str] = mapped_column(String(128), nullable=False, server_default="")
+    manufacturer: Mapped[str] = mapped_column(String(255), nullable=False, server_default="")
+    doc_designation: Mapped[str] = mapped_column(Text(), nullable=False, server_default="")
+    quantity: Mapped[int] = mapped_column(Integer(), nullable=False, server_default="1")
+    storage_location: Mapped[str] = mapped_column(String(255), nullable=False, server_default="")
+    warehouse_grn: Mapped[str] = mapped_column(String(32), nullable=False, server_default="")
+    warehouse_writeoff_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     verification_number: Mapped[str | None] = mapped_column(String(255), nullable=True)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     verification_due: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+
+class ProductionInstrumentFileRow(Base):
+    __tablename__ = "production_instrument_files"
+    __table_args__ = (
+        CheckConstraint("kind IN ('Паспорт', 'Свидетельство о поверке', 'Руководство', 'Прочее')", name="ck_production_instrument_files_kind"),
+        CheckConstraint("length(trim(file_name)) > 0", name="ck_production_instrument_files_name"),
+        CheckConstraint("length(content) BETWEEN 1 AND 20971520", name="ck_production_instrument_files_size"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    instrument_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_instruments.id", ondelete="RESTRICT"), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    content: Mapped[bytes] = mapped_column(LargeBinary(), nullable=False, deferred=True)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    uploaded_by: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("identity_users.id", ondelete="RESTRICT"), nullable=False)
 
 
 class ProductionQcInspectionRow(Base):
@@ -1803,8 +1836,22 @@ class SqlAlchemyInstrumentRepository:
             name=row.name, instrument_type=row.instrument_type,
             verification_number=row.verification_number,
             verified_at=row.verified_at, verification_due=row.verification_due,
-            status=InstrumentStatus(row.status),
+            status=InstrumentStatus(row.status), kind=InstrumentKind(row.kind), parent_id=row.parent_id,
+            serial_number=row.serial_number, manufacturer=row.manufacturer, doc_designation=row.doc_designation,
+            quantity=row.quantity, storage_location=row.storage_location, warehouse_grn=row.warehouse_grn,
+            warehouse_writeoff_id=row.warehouse_writeoff_id,
         )
+
+    def lock_tree(self) -> None:
+        # Serialize reparenting and kind changes, including concurrent A->B / B->A edits.
+        if self.session.get_bind().dialect.name == "sqlite":
+            connection = self.session.connection()
+            # SQLite ignores FOR UPDATE. Reuse an existing write transaction (stock/resources)
+            # or acquire its writer lock before the first instrument-tree read.
+            if not connection.connection.driver_connection.in_transaction:
+                connection.exec_driver_sql("BEGIN IMMEDIATE")
+        self.session.scalars(select(ProductionInstrumentRow).order_by(ProductionInstrumentRow.id)
+                             .with_for_update().execution_options(populate_existing=True)).all()
 
     def get(self, instrument_id: UUID) -> MeasurementInstrument | None:
         row = self.session.get(ProductionInstrumentRow, instrument_id)
@@ -1821,16 +1868,65 @@ class SqlAlchemyInstrumentRepository:
         return self._domain(row) if row is not None else None
 
     def save(self, instrument: MeasurementInstrument) -> None:
-        row = self.session.get(ProductionInstrumentRow, instrument.id)
-        if row is None:
-            row = ProductionInstrumentRow(id=instrument.id)
-            self.session.add(row)
-        for field in (
+        values = {field: getattr(instrument, field) for field in (
             "version", "inventory_number", "name", "instrument_type",
             "verification_number", "verified_at", "verification_due",
-        ):
-            setattr(row, field, getattr(instrument, field))
-        row.status = instrument.status.value
+            "parent_id", "serial_number", "manufacturer", "doc_designation", "quantity", "storage_location", "warehouse_grn",
+            "warehouse_writeoff_id",
+        )}
+        values.update(status=instrument.status.value, kind=instrument.kind.value)
+        if instrument.version == 1:
+            self.session.add(ProductionInstrumentRow(id=instrument.id, **values))
+        else:
+            changed = self.session.execute(update(ProductionInstrumentRow).where(
+                ProductionInstrumentRow.id == instrument.id,
+                ProductionInstrumentRow.version == instrument.version - 1,
+            ).values(**values))
+            if changed.rowcount != 1:
+                raise ConcurrentProductionUpdate("СИ изменилось после загрузки формы")
+
+
+class SqlAlchemyInstrumentFileRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def _query(self):
+        return select(ProductionInstrumentFileRow, func.length(ProductionInstrumentFileRow.content), IdentityUserRow.name).join(
+            IdentityUserRow, IdentityUserRow.id == ProductionInstrumentFileRow.uploaded_by,
+        )
+
+    @staticmethod
+    def _domain(result, *, content=False) -> InstrumentFile:
+        row, size, name = result
+        uploaded_at = row.uploaded_at
+        if uploaded_at.tzinfo is None:
+            uploaded_at = uploaded_at.replace(tzinfo=timezone.utc)
+        return InstrumentFile(id=row.id, instrument_id=row.instrument_id, kind=InstrumentFileKind(row.kind),
+                              file_name=row.file_name, size=size, uploaded_at=uploaded_at,
+                              uploaded_by=row.uploaded_by, uploaded_by_name=name,
+                              content=row.content if content else None)
+
+    def list(self) -> list[InstrumentFile]:
+        return [self._domain(row) for row in self.session.execute(self._query().order_by(
+            ProductionInstrumentFileRow.uploaded_at, ProductionInstrumentFileRow.id,
+        ))]
+
+    def get(self, instrument_id: UUID, file_id: UUID) -> InstrumentFile | None:
+        result = self.session.execute(self._query().where(
+            ProductionInstrumentFileRow.id == file_id, ProductionInstrumentFileRow.instrument_id == instrument_id,
+        )).first()
+        return self._domain(result, content=True) if result is not None else None
+
+    def add(self, file: InstrumentFile) -> None:
+        self.session.add(ProductionInstrumentFileRow(
+            id=file.id, instrument_id=file.instrument_id, kind=file.kind.value, file_name=file.file_name,
+            content=file.content, uploaded_at=file.uploaded_at, uploaded_by=file.uploaded_by,
+        ))
+
+    def delete(self, instrument_id: UUID, file_id: UUID) -> bool:
+        return self.session.execute(delete(ProductionInstrumentFileRow).where(
+            ProductionInstrumentFileRow.id == file_id, ProductionInstrumentFileRow.instrument_id == instrument_id,
+        )).rowcount == 1
 
 
 class SqlAlchemySerialRepository:
@@ -2136,6 +2232,7 @@ class SqlAlchemyProductionUnitOfWork:
         self.finished_goods_receipts = SqlAlchemyFinishedGoodsReceiptRepository(self.session)
         self.defects = SqlAlchemyDefectRepository(self.session)
         self.instruments = SqlAlchemyInstrumentRepository(self.session)
+        self.instrument_files = SqlAlchemyInstrumentFileRepository(self.session)
         self.serials = SqlAlchemySerialRepository(self.session)
         self.deliveries = SqlAlchemyDeliveryRepository(self.session)
         self.qc = SqlAlchemyQcRepository(self.session)

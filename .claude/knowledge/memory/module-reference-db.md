@@ -14,4 +14,4 @@ metadata:
   (`edited_in_erp`, survives mirror reload). Storage unchanged (`prov`, `kab_coax`), no migration. Old keys
   `prov`/`kab_coax` open the new tabs.
 - One-off mirror dump tabs removed from the UI; rows stay in the DB because the ETK generator and the warehouse read them.
-- Used by [[module-techcards]] and [[module-warehouse]]. Decisions: [[runlog-decisions]]. Hub: [[erp-next-hub]].
+- Used by [[module-techcards]] and [[module-warehouse]]. Decisions: `docs/migration/RUNLOG.md`. Hub: [[erp-next-hub]].

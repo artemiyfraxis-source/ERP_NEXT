@@ -8,7 +8,7 @@ metadata:
   modified: 2026-10-23T10:21:35.737Z
 ---
 
-Owner 23.10.2026: the «Поставка» scan button uses the Pantum BM2300W connected by **USB** to the warehouse PC — no network/eSCL. The print agent (`tools/print-agent`, PR #654) is installed WITHOUT `-Scanner`, so it scans through WIA (Pantum driver with WIA must be installed); the result is a JPEG, recognised on the server by tesseract. The eSCL code path stays only as an unused option.
+Owner 23.10.2026: the «Поставка» scan button uses the Pantum BM2300W connected by **USB** to the warehouse PC — no network/eSCL. The print agent (`tools/print-agent`, PR #654) is installed WITHOUT `-Scanner`, so it scans through WIA (Pantum driver with WIA must be installed); the result is a JPEG, recognised on the server by the model API, with tesseract as fallback → [[upd-recognizer-openai]]. The eSCL code path stays only as an unused option.
 
 **Why:** owner corrected the setup instructions («зачем IP, мы же договорились — только USB»).
-**How to apply:** never ask for the printer IP; troubleshooting starts with the Pantum driver / WIA device list on the warehouse PC and `agent.ps1 -TestScan`. Related: [[module-warehouse]], [[erp-server]].
+**How to apply:** never ask for the printer IP; troubleshooting starts with the Pantum driver / WIA device list on the warehouse PC and `agent.ps1 -TestScan`. New scan actions use the browser PC agent → [[scanner-any-pc]]. Related: [[module-warehouse]], [[erp-server]].

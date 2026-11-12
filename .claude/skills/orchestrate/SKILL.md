@@ -126,8 +126,9 @@ send reading-heavy and writing-heavy work to Codex CLI (installed globally, Chat
   live data, Postgres or UI checks remain unproven. Follow the applicable CI gate before any merge.
 - Decisions the workers and the planner took go into `docs/migration/RUNLOG.md` («решено агентом —
   проверить»), one entry for the batch.
-- Main completes `.github/pull_request_template.md` and the batch RUNLOG evidence. Publishing, merging
-  to main and deploying require authority in the user's task; this skill grants none. Respect the team
+- Main completes `.github/pull_request_template.md` and the batch RUNLOG evidence. Owner sessions have
+  standing authority to merge their own PRs after green CI `check` and deploy (memory `owner-working-rules`);
+  Витя's sessions follow `.claude/team/RULES.md`. Respect the team
   release coordination contract and never message another person without authorization.
 - Continue an authorized batch through integration and verification; a worker commit is not a stop
   condition. Base later tasks on integrated prerequisites; do not assume a main merge is authorized.

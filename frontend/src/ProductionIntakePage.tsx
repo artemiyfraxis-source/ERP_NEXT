@@ -328,7 +328,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     const quantity = (row: IntakeRow) => tab === "ready" ? piecesOf(row).ready : num(row.remaining);
     const total = round2(bulk.reduce((sum, row) => sum + quantity(row), 0));
     return <span className="ship-position-group"><span className="ship-position-group-title">{title}</span>
-      <ProjectShippingData data={cardOf(groupRows[0])} />
+      <ProjectShippingData data={cardOf(groupRows[0])} updRequired={!["waiting", "production"].includes(groupRows[0].stage ?? "")} />
       <button type="button" className="secondary small" aria-label={`Изменить данные отправки ${project}`}
         onClick={(event) => { event.stopPropagation(); setProjectData(project); }}>Изменить</button>
       {canWarehouse && bulk.length > 1 && <button type="button" className="primary small" onClick={(event) => { event.stopPropagation(); accept(bulk, quantity); }}>

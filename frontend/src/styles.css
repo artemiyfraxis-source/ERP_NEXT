@@ -764,6 +764,38 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .traceability-search, .instrument-registry { margin: 16px 0; padding: 18px; }
 /* Реестр СИ: форма открывается над таблицей, панель уже даёт отступ — своих не добавляем. */
 .panel.instrument-registry > .data-table { padding: 0; }
+.instrument-registry .instrument-legend { margin: 0 0 8px; color: var(--muted-foreground); font-size: 12px; }
+.instrument-registry .status-chip { white-space: normal; }
+.instrument-registry .instrument-name { display: block; overflow-wrap: anywhere; }
+.instrument-registry .instrument-name small { white-space: nowrap; font-weight: 400; }
+.instrument-registry .instrument-due { display: inline-flex; flex-direction: column; font-variant-numeric: tabular-nums; }
+.instrument-registry .is-overdue { color: var(--tone-danger); }
+.instrument-registry .is-soon { color: var(--tone-warn); }
+.instrument-registry .grid td:first-child { font-weight: 500; font-variant-numeric: tabular-nums slashed-zero; }
+.instrument-window { padding: 16px; margin: 0; min-width: 0; }
+.instrument-window > .page-head { justify-content: space-between; }
+.instrument-window .instrument-verification-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.instrument-window h3 { margin: 16px 0 8px; font-size: 15px; font-weight: 500; }
+.instrument-window h4 { margin: 8px 0; font-size: 13px; font-weight: 500; }
+.instrument-window .instrument-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.instrument-window .form-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 0; gap: 8px; }
+.instrument-window .form-grid label { min-width: 0; }
+.instrument-window .form-grid input, .instrument-window .form-grid select { width: 100%; min-width: 0; }
+.instrument-window input[type="number"], .instrument-window input[type="date"], .instrument-file span { font-variant-numeric: tabular-nums; }
+.instrument-window input[type="number"] { text-align: right; }
+.instrument-window .instrument-upload, .instrument-window .instrument-stock-search { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.instrument-window .instrument-file-group { border-top: 1px solid var(--border); padding: 8px 0; }
+.instrument-window .instrument-file { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 4px 0; }
+.instrument-window .instrument-file a { overflow-wrap: anywhere; min-width: 0; }
+.instrument-window .instrument-file a { color: var(--primary); }
+.instrument-window .instrument-file span { color: var(--muted-foreground); font-size: 12px; }
+.instrument-window .instrument-lot-selected > td { background: var(--accent); }
+@media (max-width: 1599px) {
+  .instrument-window .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+  .instrument-window .form-grid { grid-template-columns: minmax(0, 1fr); }
+}
 /* Пустая очередь и пустой брак — одной строкой, а не высокой плашкой посреди страницы. */
 .box-review > .empty { padding: 2px 0 4px !important; text-align: left; font-size: 13px; }
 .instrument-registry .form-grid { padding: 0 0 4px; }

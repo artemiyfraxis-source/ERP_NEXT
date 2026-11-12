@@ -1,50 +1,19 @@
 ---
 name: parallel-sessions-worktrees
-description: "Several Claude sessions share the ERP_NEXT main checkout and .claude/worktrees — never remove a worktree or commit on a branch you didn't create"
+description: "Codex worker worktrees: ownership, explicit base, ports, reflog and safe cleanup"
 metadata:
   node_type: memory
   type: feedback
   originSessionId: be43bccf-ce4c-4562-96ff-e0fbf3ca21a2
-  modified: 2026-10-23T10:20:56.651Z
+  modified: 2026-11-12T12:00:00.000Z
 ---
 
-On 2026-10-04 two orchestrator sessions ran at once on the owner's PC (erp-next-5b and erp-next-e7). e7 saw a
-worker worktree with no commits yet, took it for orphaned and ran `git worktree remove --force` + `branch -d` on it —
-the worker lost its in-progress work. e7 then redid the same screen and committed onto 5b's branch in the shared main
-checkout, which produced a 9-file conflict and two competing `0080` designs.
-
-**Why:** worktrees and the main checkout's current branch are shared state between sessions; a worktree with no
-commits is normal for a worker mid-task. On Windows `worktree remove --force` often fails half-way (permission denied),
-leaving a gutted directory.
-
-**How to apply:**
-- Before removing a worktree or deleting a branch, run `ListAgents` and remove only worktrees your own session's
-  workers created (names from your own Agent results). Locked worktrees (`claude agent … (pid)`) are live — never force.
-- Don't commit on a branch another session checked out; branch off instead. If a peer's commits show up on your
-  branch, abort, `SendMessage` the peer, and rebuild on a new branch — don't `reset --hard` shared history.
-- Unsure whose a worktree/branch is → ask the owning session via `SendMessage` (ListAgents) before touching it.
-- An owner's screenshot of another session's report with no text is context, not an assignment to take that work over.
-- Tell workers to commit a WIP early so a lost worktree doesn't lose everything.
-- Before rebasing/releasing the main checkout's branch, check `git reflog` for fresh merges: a live peer session may be
-  orchestrating on it (17.10: batch-1017b was rebased under erp-next-23). Release from a separate branch + worktree.
-- `erp-worker` / `isolation: "worktree"` can refuse to start when the session cwd's drive letter case (`c:` vs `C:`)
-  differs from git's path. Workaround: `git worktree add ../erp-<task>` + junctions, run a general-purpose agent there;
-  unlink the junctions before removing that worktree ([[worktree-symlink-removal]]).
-- Workers that start the app need their own ports (14.10: three workers collided on 8021/8031/8047) — give each
-  `ERP_API_PORT` / `ERP_WEB_PORT` in the brief (defaults 8021/5176 belong to the owner's preview, [[erp-local-demo]]).
-- `isolation: "worktree"` branches from the HEAD of the session's CURRENT cwd (`worktree.baseRef: "head"`). After a
-  `cd` into a worker worktree the cwd can stay there, and new workers then silently start from that worker's branch
-  (22.10: the label-presets worker got the ТД branch instead of `stage-out-1022` and redid the label template). In
-  every brief, name the base explicitly: `git checkout -B <topic> <base-branch>` as the worker's first step.
-- A claim sent to the sessions `ListAgents` shows is not enough. On 23.10 another owner session (not in the list) built
-  and released the same feature, scan-to-ERP #654 with migration 0145, while this session built it a second time; the
-  duplicate was dropped. Right before dispatching workers, and again before integrating, run `git fetch` +
-  `git log origin/main -15` + `gh pr list`. Look for the topic's words and the migration number.
-- Related: [[erp-merge-gotchas]], [[owner-working-rules]].
-- 24.10: a peer session switched the shared main checkout to its branch right after I created mine; my merges landed on
-  its branch (shipped inside its PR #681), later ones on local `main`, and a plain `git push` went straight to
-  `origin/main` with no PR. I also took the URL `gh pr create` printed for my draft — it was the peer's #681 — and
-  overwrote its body (restored from the GraphQL `userContentEdits` history). Before every merge/commit/push in the main
-  checkout run `git branch --show-current`; push with an explicit `git push origin <branch>`; check a PR's
-  `headRefName` before editing, readying or watching it. Better: orchestrate from my own worktree, not the main checkout.
-- 26.10.2026: a fill agent overwrote the owner's generator draft v10 (708К.5) with --force — drafts are per user and I use the owner's login, so the owner's own form edits land in the same slot. Before any --force write, read the current draft version/updated_at and compare with the version the tool itself wrote; if newer — stop and ask, and always save a copy first.
+- Main creates a task-owned worktree per Codex worker from an explicit verified base SHA; assign absolute cwd, branch, exclusive files and ports. Setup never changes Git history.
+- Before dispatch/integration, check open PRs and fresh `origin/main` for duplicate work. Before commit/merge/push, recheck branch, worktree ownership and recent `git reflog`; another session may be active outside the agent list. Confirm PR `headRefName` before editing it.
+- Never remove another session's worktree/branch, force removal, or commit onto its branch. Unknown ownership is a blocker; preserve its work and coordinate with the owning session.
+- Main owns commits and integration; Codex workers never commit/push/merge. Preserve uncommitted changes and record handoff state in root gitignored `TASKS.md`.
+- Workers starting apps get distinct `ERP_API_PORT` / `ERP_WEB_PORT`; preview defaults belong to the owner → [[erp-local-demo]].
+- Worktree cleanup and junction safety have one home → [[worktree-symlink-removal]].
+- Claude subagent worktrees are fallback only when Codex is unavailable; main still creates/verifies the exact base/cwd and exclusive ownership. Normalize Windows drive-letter case if isolation rejects a path.
+- Before overwriting a shared generator draft, compare current version/updated_at with your last write and save a copy. A newer draft requires the owner's decision.
+Related: [[erp-merge-gotchas]], [[owner-working-rules]].

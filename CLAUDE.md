@@ -27,7 +27,7 @@ SQLAlchemy/Alembic backend, React/TypeScript (Vite) frontend, PostgreSQL in prod
 - Local preview and venv — see RULES.md «Testing»; schema only via Alembic.
 
 ## How to work — decide yourself, don't ask
-- **Plan first** (`orchestrate` skill → `erp-planner`) for a new module, a status machine, money/stock quantities, or
+- **Plan first** (`orchestrate`: read-only Codex plan; `erp-planner` only as fallback) for a new module, a status machine, money/stock quantities, or
   a change across 3+ files. Small fixes: act directly.
 - **Orchestrator (local VS Code / Desktop):** `.claude/skills/orchestrate/SKILL.md` is the shared workflow and model
   policy; Codex enters through `.agents/skills/erp-orchestrate/SKILL.md`. Main keeps decisions and the task queue,
@@ -60,18 +60,14 @@ SQLAlchemy/Alembic backend, React/TypeScript (Vite) frontend, PostgreSQL in prod
 in the gitignored `.claude/settings.local.json` points there; set it on a new machine. Save only what the repo doesn't say.
 
 ## Cloud sessions and project threads
-- `.claude/hooks/cloud-siblings.mjs` (SessionStart when `CLAUDE_CODE_REMOTE=true`) clones the sibling repos and prints
-  the owner's global rules; in claude.ai project threads (cwd = parent dir of the repos, this repo's settings and hooks
-  don't apply) run `node ERP_NEXT/.claude/hooks/cloud-siblings.mjs` by hand. Obsidian MCP and brain sync are local-only.
-- The SUPPLYMAP → ERP migration conveyor (`/migrate-next`, `/migrate-cloud`) is finished (BACKLOG empty, 06.10.2026);
-  `docs/migration/RUNLOG.md` stays the log of orchestrated batches.
+- Setup and limitations: `.claude/knowledge/memory/cloud-threads-setup.md`.
 
 ## Two developers — owner + Витя (05.10.2026)
 @.claude/team/RULES.md
 
 That file is the only shared contract; the rest of this `CLAUDE.md` is the owner's way of working and doesn't bind
 Витя. Owner sessions keep Витя's `vitya/*` branches and `.claude/team/vitya/` out of orchestration and cleanups.
-Releases (push to `main`, tags, deploys) happen only when the owner asks.
+Owner sessions merge their own PRs once CI `check` is green, run `gh workflow run update-server.yml` once per parallel batch (first check `gh run list --workflow update-server.yml` for an active release), then verify the changed screen on prod.
 
 ## Hard don'ts
 - No GAS tooling here (no clasp, no `deploy.ps1`). Never write to the live warehouse (SUPPLYMAP Склад: ЦАР / ЖУК /

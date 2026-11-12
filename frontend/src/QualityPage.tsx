@@ -10,11 +10,10 @@ import {
   type ProductionQcRejection,
   type ProductionTask,
 } from "./api";
-import { DataTable, type DataColumn } from "./DataTable";
+import { InstrumentRegistry } from "./InstrumentRegistry";
 import { formatDay } from "./format";
 import { canAct } from "./navigation";
 import { isFinal } from "./productionGraph";
-import { StatusChip } from "./StatusChip";
 import { BoxName, boxMatches } from "./BoxLabel";
 import { VswrSection, type VswrRejectRequest } from "./VswrSection";
 
@@ -102,7 +101,7 @@ export function QualityPage({ principal }: { principal: Principal }) {
       <QcRejectionReview rejections={qcRejections} busy={Boolean(busy)} mutate={mutate} />
       <DefectReview defects={defects} operators={operators} busy={Boolean(busy)} mutate={mutate} />
     </div>}
-    {loaded && canQuality && <InstrumentRegistry instruments={instruments} busy={Boolean(busy)} mutate={mutate} />}
+    {loaded && canQuality && <InstrumentRegistry instruments={instruments} onChanged={reload} />}
     {loaded && !canQuality && !canEdit && <div className="empty">ОТК открыт вам только на просмотр.</div>}
   </section>;
 }
@@ -210,7 +209,7 @@ function QualityPanel({ boxes, tasks, instruments, busy, mutate, prefill }: {
         <label>Годные ОТК<input aria-label={`Годные ОТК ${box.number}`} type="number" min="0" step="1" value={draft.accepted} onChange={(event) => update(box, { accepted: event.target.value })} /></label>
         <label>Брак ОТК<input aria-label={`Брак ОТК ${box.number}`} type="number" min="0" step="1" value={draft.rejected} onChange={(event) => update(box, { rejected: event.target.value })} /></label>
         {Number(draft.rejected) > 0 && <><label>Характер<input value={draft.character} onChange={(event) => update(box, { character: event.target.value })} /></label><label>Описание<textarea value={draft.description} onChange={(event) => update(box, { description: event.target.value })} /></label></>}
-        <label>Средства измерения<select multiple aria-label={`Средства измерения ${box.number}`} value={draft.instrumentIds} onChange={(event) => update(box, { instrumentIds: Array.from(event.target.selectedOptions, (option) => option.value) })}>{instruments.filter((item) => item.status === "Действует").map((item) => <option key={item.id} value={item.id}>{item.inventory_number} · {item.name} · до {formatDay(item.verification_due)}</option>)}</select></label>
+        <label>Средства измерения<select multiple aria-label={`Средства измерения ${box.number}`} value={draft.instrumentIds} onChange={(event) => update(box, { instrumentIds: Array.from(event.target.selectedOptions, (option) => option.value) })}>{instruments.filter((item) => item.kind === "Средство измерений" && item.status === "Действует").map((item) => <option key={item.id} value={item.id}>{item.inventory_number} · {item.name} · до {formatDay(item.verification_due)}</option>)}</select></label>
         {!totalMatches && <small className="danger-text">Сумма должна быть {box.available}.</small>}
         <button className="primary small" disabled={busy || !totalMatches || (Number(draft.rejected) > 0 && (!draft.character.trim() || !draft.description.trim()))} onClick={() => void mutate(`qc:${box.id}`, () => productionApi.inspectBox(box.id, {
           version: box.version, accepted: Number(draft.accepted), rejected: Number(draft.rejected),
@@ -228,60 +227,5 @@ function QualityPanel({ boxes, tasks, instruments, busy, mutate, prefill }: {
           : <button className="link-button" onClick={() => setReturning((current) => ({ ...current, [box.id]: true }))}>Вернуть…</button>)}
       </div>;
     })}</div>
-  </div>;
-}
-
-const BLANK_INSTRUMENT = { inventory_number: "", name: "", instrument_type: "", verification_number: "", verified_at: "", verification_due: "" };
-
-const INSTRUMENT_COLUMNS: DataColumn<ProductionInstrument>[] = [
-  { key: "inventory_number", title: "Инв. №", value: (item) => item.inventory_number },
-  { key: "name", title: "Наименование", value: (item) => item.name },
-  { key: "instrument_type", title: "Тип", value: (item) => item.instrument_type, filter: true },
-  { key: "verification_number", title: "№ поверки", value: (item) => item.verification_number },
-  { key: "verified_at", title: "Поверено", value: (item) => item.verified_at, render: (item) => formatDay(item.verified_at) || "—" },
-  { key: "verification_due", title: "Поверка до", value: (item) => item.verification_due, render: (item) => formatDay(item.verification_due) || "—" },
-  { key: "status", title: "Статус", value: (item) => item.status, filter: true, render: (item) => <StatusChip status={item.status} /> },
-];
-
-// Реестр средств измерения: форма появляется только по «+ Добавить СИ», список — плотной таблицей.
-function InstrumentRegistry({ instruments, busy, mutate }: {
-  instruments: ProductionInstrument[];
-  busy: boolean;
-  mutate: Mutate;
-}) {
-  const [show, setShow] = useState(false);
-  const [draft, setDraft] = useState(BLANK_INSTRUMENT);
-  const [unverified, setUnverified] = useState(false);
-  const incomplete = !draft.inventory_number.trim() || !draft.name.trim() || !draft.instrument_type.trim() ||
-    (!unverified && (!draft.verification_number.trim() || !draft.verified_at || !draft.verification_due));
-  const text = (field: "inventory_number" | "name" | "instrument_type" | "verification_number", title: string, half = false) =>
-    <label className={half ? "half" : undefined}>{title}<input name={field} autoComplete="off" value={draft[field]} onChange={(event) => setDraft({ ...draft, [field]: event.target.value })} /></label>;
-  return <div className="panel instrument-registry">
-    <div className="manual-stock-head"><h2>Средства измерения</h2><button className="secondary small" aria-expanded={show} onClick={() => setShow((value) => !value)}>+ Добавить СИ</button></div>
-    {show && <div className="instrument-form">
-      <div className="form-grid">
-        {text("inventory_number", "Инв. №")}
-        {text("name", "Наименование", true)}
-        {text("instrument_type", "Тип")}
-        <label>Сведения о поверке<select name="verification_status" value={unverified ? "unverified" : "verified"} onChange={(event) => setUnverified(event.target.value === "unverified")}>
-          <option value="verified">Поверка подтверждена</option><option value="unverified">Поверка не подтверждена</option>
-        </select></label>
-        {!unverified && <>{text("verification_number", "№ поверки", true)}
-        <label>Поверено<input type="datetime-local" value={draft.verified_at} onChange={(event) => setDraft({ ...draft, verified_at: event.target.value })} /></label>
-        <label>Поверка до<input type="datetime-local" value={draft.verification_due} onChange={(event) => setDraft({ ...draft, verification_due: event.target.value })} /></label></>}
-      </div>
-      <div className="form-actions">
-        <button className="secondary small" onClick={() => { setShow(false); setDraft(BLANK_INSTRUMENT); setUnverified(false); }}>Отмена</button>
-        <button className="primary small" disabled={busy || incomplete} onClick={() => void mutate("instrument:new", async () => {
-          const result = await productionApi.registerInstrument(unverified ? { ...draft, status: "Поверка не подтверждена", verification_number: null, verified_at: null, verification_due: null } : draft);
-          setDraft(BLANK_INSTRUMENT);
-          setUnverified(false);
-          setShow(false);
-          return result;
-        })}>Сохранить СИ</button>
-      </div>
-    </div>}
-    <DataTable label="Средства измерения" storageKey="quality-instruments" rows={instruments} columns={INSTRUMENT_COLUMNS} rowKey={(item) => item.id}
-      exportName="Средства измерения" emptyText="Средств измерения нет — добавьте первое кнопкой «+ Добавить СИ»." />
   </div>;
 }

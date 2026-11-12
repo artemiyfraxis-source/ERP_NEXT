@@ -73,7 +73,7 @@ from .modules.purchasing import api_settings as purchasing_settings_api
 from .modules.purchasing import api_suppliers as purchasing_suppliers_api
 from .workflows import finished_goods_api
 from .workflows import production_intake_api
-from .workflows import coax_vswr_api
+from .workflows import coax_vswr_api, instrument_from_stock
 from .workflows import receiving_by_upd_api
 from .workflows import shipping_upd_scan_api
 from .workflows import scan_agent_install
@@ -105,7 +105,7 @@ app.state.tls_exception_hosts = tls_exception_hosts()
 app.add_middleware(
     RequestBodyLimitMiddleware,
     max_bytes=1_048_576,
-    path_limits={"/api/techcards/kitsets": 30 * 1_048_576, "/api/production/vswr": 4 * 1_048_576, "/api/shipping/upd-files": 30 * 1_048_576,
+    path_limits={"/api/techcards/kitsets": 30 * 1_048_576, "/api/production/vswr": 4 * 1_048_576, "/api/production/instruments": 30 * 1_048_576, "/api/shipping/upd-files": 30 * 1_048_576,
                  "/api/procurement/invoice-files": 30 * 1_048_576, "/api/receiving/files": 30 * 1_048_576, "/api/stock/receipts/scan": 21 * 1_048_576,
                  "/api/stock/scan/agent/jobs": 21 * 1_048_576,
                  "/api/techcards/assembly/drawings": 30 * 1_048_576, "/api/techcards/std-figures": 18 * 1_048_576, "/api/purchasing/upd/import-edo": 30 * 1_048_576,
@@ -173,6 +173,7 @@ for _purchasing in (purchasing_settings_api, purchasing_suppliers_api, purchasin
 app.include_router(finished_goods_api.router)
 app.include_router(production_intake_api.router)
 app.include_router(coax_vswr_api.router)
+app.include_router(instrument_from_stock.router)
 
 _equipment_enabled = equipment_setup_enabled()
 if database_url := os.getenv("ERP_DATABASE_URL"):

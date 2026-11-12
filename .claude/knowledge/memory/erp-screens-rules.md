@@ -1,27 +1,12 @@
 ---
 name: erp-screens-rules
-description: Why every ERP_NEXT screen change goes through the erp-screens skill + design-critique, and where the demo/screenshot tooling lives
+description: "Mandatory ERP screen workflow, Russian labels, shared layout and screenshots"
 metadata:
   type: feedback
 ---
 
-- 2026-09-30 the owner: «дизайн шакальный во многих местах… в чем причина, скиллов не хватает?», «каждый раздел править тяжко», «зачем делать, мб подключим что-то».
-- Cause found: each thread invented its own look; no shared rules; English type ids (`cutWireStrip`, «БЕЗ КОДА») leaked into
-  the master screen; planning actions had no visible period; ETK block order drifted from Google; no committed demo seed or
-  screenshot script in main (seed lived on branch `claude/project-thread-gd6e8g`).
-- Fix: skill `.claude/skills/erp-screens` (production-specific rules, mandatory via CLAUDE.md) + vendored Anthropic
-  `design-critique` (knowledge-work-plugins, Apache-2.0) for generic critique; `frontend-design` narrowed
-  (it pushes "distinctive" aesthetics, wrong for a dense ERP). Plugins were not enabled in project settings: that is an
-  owner-only click, and the owner (30.09) does not want extra plugins burning limits; a repo skill costs one description line until loaded.
-- Tooling: `scripts/demo/run-demo.sh` (Linux demo on 8021, seeded via `seed_demo.py`), `scripts/demo/shoot.mjs`
-  (27" + tablet PNGs and a lint for English ids / raw codes / stuck loading / sideways scroll).
-
-- 2026-09-30 (later) the owner: «не тяни дизайн из гугла … придерживайся общего стиля … можно лучше» — Google is the
-  reference for behaviour and block order only, never for the look. Also «под операцией хотелось бы видеть ее код»:
-  the operation-card code is allowed as a grey second line under the Russian name (ETK route list), never instead of it.
-- ETK «Типовые дефекты» pictures: shared library `frontend/src/etkDefectArt.ts` (82 «Норма | Брак» scenes, picked at
-  render time by defect name + operation code; the owner found one icon for all defects unreadable). New wording → a
-  rule there.
-
-Why: the owner judges by Google SUPPLYMAP and wants better, not worse; he should not have to correct each section.
-How to apply: load `erp-screens` before any UI change. Hub: [[erp-next-hub]] · [[owner-working-rules]] · [[module-techcards]] · [[module-production]].
+- Load `.claude/skills/erp-screens` before every UI change, then use `design-critique` on after-shots. Follow the ERP's shared style, dense tables and fixed ETK block order.
+- Russian labels, visible planning dates/periods; no raw type IDs (`cutWireStrip`, «БЕЗ КОДА») as names. Operation-card code may be a grey second line below the Russian operation name.
+- Before/after tooling: `scripts/demo/run-demo.sh`, `scripts/demo/shoot.mjs` (27-inch/tablet PNGs and checks for raw IDs, stuck loading, horizontal scroll).
+- ETK defect art: `frontend/src/etkDefectArt.ts`, picked by defect name and operation code; new wording needs a matching rule.
+Why: shared rules prevent each thread inventing its own screen. Hub: [[erp-next-hub]] · [[owner-working-rules]] · [[module-techcards]] · [[module-production]].

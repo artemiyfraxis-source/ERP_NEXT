@@ -123,6 +123,7 @@ class WriteOffCommand:
     actor: Actor
     now: datetime
     entry_date: date | None = None  # ДАТА строки СПИСАНИЯ (Writeoff.html), None — сегодня
+    writeoff_id: UUID = field(default_factory=uuid4)
 
 
 @dataclass(frozen=True)
@@ -134,6 +135,7 @@ class ReturnWriteOffCommand:
     reason: str
     actor: Actor
     now: datetime
+    instrument_writeoff_id: UUID | None = None  # Internal workflow capability; never accepted by the stock API.
 
 
 @dataclass(frozen=True)
@@ -1004,6 +1006,8 @@ def _versioned(lot_id: UUID, expected_version: int, uow: UnitOfWork) -> StockLot
 
 
 WRITEOFF_DEFAULT_REASON = "Выдача"
+INSTRUMENT_WRITEOFF_PREFIX = "Принадлежности СИ"
+INSTRUMENT_RETURN_MESSAGE = "Это принадлежность СИ — верните её через Качество → Средства измерения"
 
 
 def write_off(command: WriteOffCommand, uow: UnitOfWork) -> StockLot:
@@ -1016,7 +1020,7 @@ def write_off(command: WriteOffCommand, uow: UnitOfWork) -> StockLot:
         current = _versioned(command.lot_id, command.expected_version, uow)
         updated = current.write_off(command.quantity)
         uow.warehouse.add(updated)
-        uow.writeoffs.add(WriteOffEntry.for_lot(
+        uow.writeoffs.add(replace(WriteOffEntry.for_lot(
             updated, kind="writeoff", quantity=command.quantity, reason=reason, purpose=purpose,
             author=command.actor.name, actor_id=command.actor.id, actor_name=command.actor.name,
             occurred_at=(
@@ -1025,7 +1029,7 @@ def write_off(command: WriteOffCommand, uow: UnitOfWork) -> StockLot:
                 else command.now
             ),
             remaining_after=updated.balance,
-        ))
+        ), id=command.writeoff_id))
         uow.audit.add(
             AuditEvent(
                 id=uuid4(), aggregate_id=updated.id, event_type="warehouse.written_off",
@@ -1057,6 +1061,27 @@ def return_writeoff(command: ReturnWriteOffCommand, uow: UnitOfWork) -> StockLot
     reason = return_reason(command.reason)
     with uow:
         current = _versioned(command.lot_id, command.expected_version, uow)
+        entries = uow.writeoffs.for_lot(current.id)
+        protected = {entry.id: entry for entry in entries if entry.posted and entry.kind == "writeoff"
+                     and (entry.purpose.startswith(INSTRUMENT_WRITEOFF_PREFIX) or entry.reason.startswith(INSTRUMENT_WRITEOFF_PREFIX))}
+        return_key = None
+        if command.instrument_writeoff_id is not None:
+            original = protected.get(command.instrument_writeoff_id)
+            if original is None or command.quantity != original.quantity:
+                raise WarehouseValidationError("Не найдено исходное списание принадлежности СИ")
+            return_key = f"instrument-return:{original.id}"
+            if any(entry.source_key == return_key for entry in entries):
+                raise WarehouseValidationError("Принадлежность СИ уже возвращена на склад")
+            source = original.purpose
+        else:
+            return_keys = {f"instrument-return:{key}" for key in protected}
+            returned = sum((entry.quantity for entry in entries if entry.posted and entry.kind == "return"
+                            and (entry.purpose.startswith(INSTRUMENT_WRITEOFF_PREFIX)
+                                 or entry.source_key in return_keys)), Decimal(0))
+            outstanding = max(Decimal(0), sum((entry.quantity for entry in protected.values()), Decimal(0)) - returned)
+            if (source.startswith(INSTRUMENT_WRITEOFF_PREFIX) or str(command.reason or "").strip().startswith(INSTRUMENT_WRITEOFF_PREFIX)
+                    or (outstanding > 0 and command.quantity > current.written_off - outstanding)):
+                raise WarehouseValidationError(INSTRUMENT_RETURN_MESSAGE)
         if command.quantity > 0 and command.quantity > current.written_off:
             label = current.grn + (f" (пакет {current.package})" if current.package else "")
             unit = f" {current.unit}" if current.unit else ""
@@ -1070,13 +1095,14 @@ def return_writeoff(command: ReturnWriteOffCommand, uow: UnitOfWork) -> StockLot
         uow.writeoffs.add(WriteOffEntry.for_lot(
             updated, kind="return", quantity=command.quantity, reason=reason, purpose=source,
             author=command.actor.name, actor_id=command.actor.id, actor_name=command.actor.name,
-            occurred_at=command.now, remaining_after=updated.balance,
+            occurred_at=command.now, remaining_after=updated.balance, source_key=return_key,
         ))
         uow.audit.add(
             AuditEvent(
                 id=uuid4(), aggregate_id=updated.id, event_type="warehouse.writeoff_returned",
                 actor=command.actor, occurred_at=command.now,
-                details={"quantity": str(command.quantity), "reason": reason, "purpose": source},
+                details={"quantity": str(command.quantity), "reason": reason, "purpose": source,
+                         **({"instrument_writeoff_id": str(command.instrument_writeoff_id)} if command.instrument_writeoff_id else {})},
             )
         )
         uow.commit()
@@ -1570,6 +1596,9 @@ def _undoable(lot: StockLot, actor: Actor, now: datetime, uow: UnitOfWork) -> Au
             f"Последнее по партии — «{event_text(event.event_type, event.details)}»: отменить можно только списание, "
             "возврат или перемещение, сделанные в ERP."
         )
+    if (event.details.get("instrument_writeoff_id")
+            or any(str(event.details.get(key) or "").startswith(INSTRUMENT_WRITEOFF_PREFIX) for key in ("purpose", "reason"))):
+        raise WarehouseValidationError(INSTRUMENT_RETURN_MESSAGE)
     # A kitting issue (and other journal rows) has no audit event on the lot: it must not hide behind the last one.
     later = [
         entry for entry in uow.writeoffs.for_lot(lot.id)

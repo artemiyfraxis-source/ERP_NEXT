@@ -199,6 +199,18 @@ class InstrumentStatus(str, Enum):
     UNVERIFIED = "Поверка не подтверждена"
 
 
+class InstrumentKind(str, Enum):
+    MEASURING = "Средство измерений"
+    ACCESSORY = "Принадлежность"
+
+
+class InstrumentFileKind(str, Enum):
+    PASSPORT = "Паспорт"
+    VERIFICATION = "Свидетельство о поверке"
+    MANUAL = "Руководство"
+    OTHER = "Прочее"
+
+
 def _quantity(value: Decimal, label: str, *, allow_zero: bool = False) -> Decimal:
     quantity = Decimal(value)
     if not quantity.is_finite() or quantity < 0 or (not allow_zero and quantity == 0):
@@ -766,8 +778,19 @@ class MeasurementInstrument:
     verified_at: datetime | None
     verification_due: datetime | None
     status: InstrumentStatus
+    kind: InstrumentKind = InstrumentKind.MEASURING
+    parent_id: UUID | None = None
+    serial_number: str = ""
+    manufacturer: str = ""
+    doc_designation: str = ""
+    quantity: int = 1
+    storage_location: str = ""
+    warehouse_grn: str = ""
+    warehouse_writeoff_id: UUID | None = None
 
     def validate_for(self, moment: datetime) -> None:
+        if self.kind is InstrumentKind.ACCESSORY:
+            raise ProductionValidationError(f"{self.inventory_number} — принадлежность, не средство измерений")
         if self.status is InstrumentStatus.UNVERIFIED:
             raise ProductionValidationError(f"Поверка СИ {self.inventory_number} не подтверждена")
         if self.status is not InstrumentStatus.ACTIVE:
@@ -781,6 +804,19 @@ class MeasurementInstrument:
             due = due.replace(tzinfo=None)
         if due < moment:
             raise ProductionValidationError(f"Поверка СИ {self.inventory_number} истекла")
+
+
+@dataclass(frozen=True)
+class InstrumentFile:
+    id: UUID
+    instrument_id: UUID
+    kind: InstrumentFileKind
+    file_name: str
+    size: int
+    uploaded_at: datetime
+    uploaded_by: UUID
+    uploaded_by_name: str
+    content: bytes | None = None
 
 
 @dataclass(frozen=True)
