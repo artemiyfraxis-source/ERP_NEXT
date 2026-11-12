@@ -9,6 +9,7 @@ export const MATRIX_TYPE = "Матрицы";
 // M: ОТП format, pre-stripped wires only; A: for automatic machines; S: crimps unstripped wires.
 export const APPLICATOR_TYPE = "Аппликаторы";
 export const MEASURING_TYPE = "Средства измерений";
+export const SUPPORTING_TYPE = "Обеспечивающее оборудование";
 export const CRIMP_TYPES = [CRIMP_TOOL_TYPE, MATRIX_TYPE, APPLICATOR_TYPE];
 /** All three M/S/A code kinds of БД.ТЕР belong to applicators. */
 export const crimpTypeOfCode = (_code: string) => APPLICATOR_TYPE;
@@ -119,6 +120,7 @@ export const OP_LINK_COLUMNS = ["Машина", "Инструмент", "Апл�
 /** The operations of a model: by the ids of their cells (`equipment_links`); only a list the server did not tag
     (no operation carries `equipment_links`) falls back to the «Для базы» text. */
 export function operationsOfModel(model: EquipmentModel, operations: TechOperationRecord[]): TechOperationRecord[] {
+  if (model.role === "supporting") return [];
   if (model.id && operations.some((op) => op.equipment_links)) {
     return operations.filter((op) => op.equipment_links?.some((link) => link.model_id === model.id));
   }

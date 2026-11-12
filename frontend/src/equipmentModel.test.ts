@@ -63,6 +63,17 @@ describe("equipment model", () => {
 });
 
 describe("equipment identity", () => {
+  it("keeps supporting classification and role without requiring or returning operation links", () => {
+    const [model] = groupModels([{ ...unit("s", { Тип: "Обеспечивающее оборудование", "Инв. номер": "ОБ.200", "Для базы": "Компрессор" }),
+      equipment_model_id: "m", equipment_role: "supporting" }]);
+    expect(model.type).toBe("Обеспечивающее оборудование");
+    expect(model.role).toBe("supporting");
+    expect(invOf(model.items[0])).toBe("ОБ.200");
+    expect(operationsOfModel(model, [])).toEqual([]);
+    expect(operationsOfModel(model, [unit("o", { Машина: "Компрессор" })])).toEqual([]);
+    expect(operationsOfModel(model, [{ ...unit("o", {}), equipment_links: [{ column: "Машина", position: 0, model_id: "m" }] }])).toEqual([]);
+  });
+
   it("groups by equipment_model_id, not by name + article + maker; the role comes from the units", () => {
     const models = groupModels([
       { ...unit("a", { "Наменование": "Стрипер", "Инв. номер": "ОБ.100.1" }), equipment_model_id: "m1", equipment_role: "operational" },

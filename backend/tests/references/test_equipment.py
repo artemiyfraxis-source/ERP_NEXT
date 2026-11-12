@@ -103,6 +103,19 @@ def test_measuring_instruments_have_a_separate_sequence(references_api):
     assert _create(references_api, **{"Тип": "Средства измерений", "Наменование": "Микрометр"}).json()["fields"]["Инв. номер"] == "СИ.002"
 
 
+def test_supporting_equipment_keeps_ob_prefix_and_is_not_a_machine(references_api):
+    existing = rows(("ОБ.200", "Обеспечивающее оборудование"), ("СИ.999", "Средства измерений"))
+    assert next_model_inventory("Обеспечивающее оборудование", existing) == "ОБ.201"
+    item = _create(references_api, **{"Тип": "Обеспечивающее оборудование", "Наменование": "Компрессор",
+                                    "Инв. номер": "ОБ.200"})
+    assert item.status_code == 201, item.text
+    assert item.json()["fields"]["Инв. номер"] == "ОБ.200"
+    assert references_api.get(f"{BASE}/equipment-number", params={"type": "Обеспечивающее оборудование"}).json()["inventory"] == "ОБ.201"
+    record = TechOperationRecord.create(tab=TechOperationTab.EQUIPMENT,
+        fields=item.json()["fields"], display_text="Компрессор", source_sheet="БД.ОБ", search_text="Компрессор", sort_key="ОБ.200")
+    assert physical_equipment([record]) == ()
+
+
 def test_next_instance_number_keeps_existing_records():
     existing = rows(*[(f"ОБ.070.{k}", "Оборудование") for k in range(1, 9)], ("ОБ.070.X", "Оборудование"),
                     ("ОБ.044", "Оборудование"), ("ОБ.79.1", "Оборудование"), ("ОБ.79.9", "Оборудование"))

@@ -35,6 +35,7 @@ CRIMP_TOOL_TYPE = "Обжимной инструмент"
 MATRIX_TYPE = "Матрицы"
 APPLICATOR_TYPE = "Аппликаторы"
 MEASURING_TYPE = "Средства измерений"
+SUPPORTING_TYPE = "Обеспечивающее оборудование"
 DEFAULT_PREFIX = "ОБ."
 MEASURING_PREFIX = "СИ."
 

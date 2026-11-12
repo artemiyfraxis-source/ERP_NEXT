@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine, delete, event, select
+from sqlalchemy import create_engine, delete, event, inspect, select
 from sqlalchemy.orm import Session
 
 from app.modules.identity.infrastructure import IdentityUserRow
@@ -52,9 +52,10 @@ def unit(number, code="", kind="Аппликаторы", **extra):
 
 
 def snapshot(engine):
+    existing = set(inspect(engine).get_table_names())  # metadata may hold tables other test modules registered
     with engine.connect() as connection:
         return {table.name: [dict(row) for row in connection.execute(select(table)).mappings()]
-                for table in Base.metadata.sorted_tables}
+                for table in Base.metadata.sorted_tables if table.name in existing}
 
 
 def seed(engine):
