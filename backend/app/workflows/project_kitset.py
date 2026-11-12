@@ -1113,8 +1113,9 @@ def _free_stock(lots: list, held: dict) -> list[SupplyStock]:
 
 
 def supply_kitting(project: str, requests: Iterable[FulfillmentRequest]) -> list[SupplyStock]:
-    """Already in the project's kits: reserved on a lot or issued (less what came back good) — that need is covered
-    and leaves the shelf, so it is counted here and not as free stock."""
+    """Already in the project's kits: reserved on a lot, issued (less what came back good), or marked «есть, не заведено».
+    An off-book line covers its whole requirement before and after issue; a partial mark splits off the remainder.
+    `issued` stays the net quantity actually handed out, separate from coverage. Covered stock is not free stock."""
     canon = normalize_project_number(project)
     kitted = []
     for request in requests:
@@ -1122,7 +1123,7 @@ def supply_kitting(project: str, requests: Iterable[FulfillmentRequest]) -> list
             continue
         for line in request.lines:
             issued = max(line.issued - line.returned_good, Decimal("0"))
-            quantity = line.reserved + issued
+            quantity = line.requirement if line.off_book else line.reserved + issued
             if quantity > 0:
                 kitted.append(SupplyStock(
                     article=line.article, name=line.name, quantity=quantity, off_book=line.off_book, issued=issued,

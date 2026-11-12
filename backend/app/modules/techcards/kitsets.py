@@ -460,14 +460,14 @@ class SupplyRow:
 @dataclass(frozen=True)
 class SupplyStock:
     """A quantity of the item the project already has: a free warehouse lot, the project's kit lines, or what its
-    procurement marked «Есть на складе, без ГРН». `off_book` — a kit line issued «есть, не заведено» (no lot): it
+    procurement marked «Есть на складе, без ГРН». `off_book` — a kit line marked «есть, не заведено» (no lot): it
     takes from that same unbooked stock, so it uses up the procurement's «без ГРН» instead of adding to it."""
 
     article: str
     name: str
     quantity: Decimal
     off_book: bool = False
-    issued: Decimal = Decimal("0")  # a kit line: of `quantity`, issued (less what came back good) — the rest is reserved
+    issued: Decimal = Decimal("0")  # of `quantity`, issued (less what came back good); the rest awaits handout
 
 
 @dataclass(frozen=True)
@@ -483,10 +483,10 @@ class SupplyLine:
     item_type: str = ""  # of the first spec line with this article: the unit follows it (шт / м)
     ordered: Decimal = Decimal("0")  # «В закупке»: open requests and procurement lines of the project
     free: Decimal = Decimal("0")  # «Свободно»: free stock (with the project's own reserves) under this item
-    kitted: Decimal = Decimal("0")  # reserved or issued to the project's kits
+    kitted: Decimal = Decimal("0")  # reserved, issued or marked off-book in the project's kits
     issued: Decimal = Decimal("0")  # of `kitted`, already issued from the warehouse (less what came back good)
     # «Без ГРН»: procurement covered it «Есть на складе, без ГРН» — on the shelf, in no lot, reserved nowhere; less
-    # what the project's kits already issued «есть, не заведено» (the same unbooked goods, never counted twice).
+    # what the project's kits marked «есть, не заведено» (the same unbooked goods, never counted twice).
     off_book: Decimal = Decimal("0")
     link: str = ""  # the first supplier link of the position in the spec
     # Where the shown «Наименование» comes from (`app.workflows.item_names`): ref | stock | spec | site | "" (unknown),
@@ -521,7 +521,7 @@ def supply_state(line: SupplyLine) -> SupplyState:
     - «Не хватает N» — need − free − without ГРН − in procurement − in the kits is still above zero (the checkbox);
     - «Выдано в производство» — the project's kits already issued the whole need from the warehouse (owner 17.10.2026:
       «почему пишется в комплектации, если оно уже выдано»);
-    - «В комплектации» — the project's kits hold the whole need, part of it still reserved on the shelf;
+    - «В комплектации» — the project's kits cover the whole need, part of it still awaiting handout;
     - «В закупке» — an ERP procurement line of the position is still open;
     - «Принято на склад» — procurement brought it and receiving accepted it;
     - «Куплено вне системы» — only purchase requests, none handed to procurement («В закупку» never pressed);
@@ -548,7 +548,7 @@ def supply_state(line: SupplyLine) -> SupplyState:
     if line.kitted >= line.need:
         return SupplyState(
             "kitting", "В комплектации", "ok",
-            f"По комплектации проекта: выдано {n(line.issued)}, в резерве {n(line.kitted - line.issued)} из {n(line.need)}"
+            f"По комплектации проекта: выдано {n(line.issued)}, к выдаче {n(line.kitted - line.issued)} из {n(line.need)}"
             f" · {numbers}",
         )
     procurement = [row for row in line.rows if row.where in _PROCUREMENT_PLACES]
@@ -604,11 +604,11 @@ def supply_lines(
     item actually used, so purchases under either article count for the position. A row without an article counts
     by its name. Each row, lot and kit line counts for one position only. `off_book` — procurement covers «Есть на
     складе, без ГРН» (no lot holds them, so they are in no `stock`): they count for the position less the kit lines
-    issued «есть, не заведено» of it; bound to a ГРН, a cover leaves them and is counted with its lot instead.
+    marked «есть, не заведено» of it; bound to a ГРН, a cover leaves them and is counted with its lot instead.
     `absent` — kit lines the storekeeper marked «нет на складе» (owner 12.10.2026): the shelf does not have what the
     books show, so «Свободно» of the position drops by them (never below zero) and the need shows as «Не хватает».
     Stage = the LATEST row of the position (one bought, another still requested → it is on its way);
-    no rows → «со склада» if the spec has a ГРН or the line is already kitted (reserved/issued), else «не заведено».
+    no rows → «со склада» if the spec has a ГРН or the line is already kitted (reserved/issued/off-book), else «не заведено».
     """
     lines: dict[str, dict[str, Any]] = {}
     for assembly in kitset.assemblies:
