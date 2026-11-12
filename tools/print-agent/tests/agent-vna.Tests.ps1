@@ -200,7 +200,7 @@ Describe 'ВАЦ: отчёт без запуска S2VNA' {
         Mock Invoke-ErpApi { [pscustomobject]@{ ok = $true } }
         Send-Heartbeat -Base 'http://test' -AuthToken 'mock-token'
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
-            $Body.vna.name -match '26030095' -and $Body.vna.ready -and $Body.vna.reason -eq '' -and $Body.version -eq '2.5.1' -and ($Body.vna_sources -join ',') -eq 's2vna'
+            $Body.vna.name -match '26030095' -and $Body.vna.ready -and $Body.vna.reason -eq '' -and $Body.version -eq '2.6.0' -and ($Body.vna_sources -join ',') -eq 's2vna'
         }
     }
     It 'heartbeat передаёт причину неготовности' {
