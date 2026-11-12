@@ -36,9 +36,53 @@ def test_next_model_number_is_one_above_the_highest_of_the_prefix():
                     ("ОСН.026", "Матрицы"), ("ОСН.001", "Матрицы"), ("ОБ.069.7", "Матрицы"))
     assert next_model_inventory("Оборудование", existing) == "ОБ.105"
     assert next_model_inventory("Инструмент", existing) == "ОБ.105"  # one ОБ. sequence for equipment and tools
-    assert next_model_inventory("Матрицы", existing) == "ОСН.027"  # most matrices are ОСН.
+    assert next_model_inventory("Матрицы", existing) == "ОБ.105"  # legacy ОСН. remains readable, new numbers use ОБ.
     assert next_model_inventory("Оборудование", []) == "ОБ.001"
     assert next_model_inventory("Обжимной инструмент", existing) == "ОБ.105"
+
+
+@pytest.mark.parametrize("code", ["A1", "M10", "S3"])
+def test_applicator_inventory_is_its_code(references_api, code):
+    created = _create(references_api, **{"Тип": "Аппликаторы", "Наменование": "Аппликатор",
+                                        "Инв. номер": "ОБ.106", "Код в базе терминалов": f" {code.lower()} "})
+    assert created.status_code == 201, created.text
+    assert created.json()["fields"]["Инв. номер"] == code
+    assert created.json()["fields"]["Код в базе терминалов"] == code
+    assert parse_inventory(code).prefix == code[0]
+    assert parse_inventory(code).base == int(code[1:])
+    assert references_api.post(f"{BASE}/{created.json()['id']}/duplicate").status_code == 422
+    assert references_api.get(f"{BASE}/equipment-number", params={"type": "Аппликаторы"}).json()["inventory"] == ""
+
+
+def test_applicators_need_a_real_code_and_reject_collisions(references_api):
+    for code in ("", "X1", "A1/M2"):
+        response = _create(references_api, **{"Тип": "Аппликаторы", "Наменование": "Аппликатор", "Код в базе терминалов": code})
+        assert response.status_code == 422
+        assert "код" in response.json()["detail"].lower()
+    assert _create(references_api, **{"Тип": "Инструмент", "Наменование": "Занятый номер", "Инв. номер": "A1"}).status_code == 201
+    collision = _create(references_api, **{"Тип": "Аппликаторы", "Наменование": "Аппликатор", "Код в базе терминалов": "A1"})
+    assert collision.status_code == 409
+
+
+def test_applicator_code_edits_keep_inventory_in_sync(references_api):
+    item = _create(references_api, **{"Тип": "Аппликаторы", "Наменование": "Аппликатор", "Код в базе терминалов": "M10"}).json()
+    url = f"{BASE}/{item['id']}"
+    changed = references_api.patch(url, json={"edits": [{"field": "Код в базе терминалов", "old": "M10", "value": "M11"}]})
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["fields"]["Инв. номер"] == "M11"
+    missing = references_api.patch(url, json={"edits": [{"field": "Код в базе терминалов", "old": "M11", "value": ""}]})
+    assert missing.status_code == 422
+
+
+def test_measuring_instruments_have_a_separate_sequence(references_api):
+    existing = rows(("ОБ.197", "Аппликаторы"), ("СИ.002", "Средства измерений"), ("A999", "Аппликаторы"))
+    assert next_model_inventory("Средства измерений", existing) == "СИ.003"
+    assert next_model_inventory("Оборудование", existing) == "ОБ.198"  # do not reuse occupied legacy numbers
+    assert next_model_inventory("Аппликаторы", existing) == ""
+    first = _create(references_api, **{"Тип": "Средства измерений", "Наменование": "Штангенциркуль", "Инв. номер": "ОБ.001"}).json()
+    assert first["fields"]["Инв. номер"] == "СИ.001"
+    assert references_api.post(f"{BASE}/{first['id']}/duplicate").json()["fields"]["Инв. номер"] == "СИ.001.2"
+    assert _create(references_api, **{"Тип": "Средства измерений", "Наменование": "Микрометр"}).json()["fields"]["Инв. номер"] == "СИ.002"
 
 
 def test_next_instance_number_keeps_existing_records():

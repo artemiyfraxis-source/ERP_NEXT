@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 from typing import Sequence
@@ -23,7 +24,7 @@ from .cable_structure import (
 from .search_text import search_rows, search_words
 from .domain import (
     EDITABLE_TABS, TERMINAL_TABS, ReferenceEntry, ReferenceKind, StockArticle, StockLinkChange, StockLinkEntry,
-    StockLinkEvent, TechOperationRecord, TechOperationTab, family_root,
+    StockLinkEvent, TechOperationRecord, TechOperationTab, ReferenceValidationError, family_root,
 )
 
 
@@ -321,6 +322,19 @@ class SqlAlchemyTechOperationRepository:
         from . import equipment_identity as identity
         row = self.session.get(TechOperationRecordRow, record.id)
         before = None if row is None else (dict(row.fields or {}), row.display_text)
+        if record.tab == TechOperationTab.EQUIPMENT:
+            from .equipment import DuplicateInventoryError, prepare_inventory
+            others = [(item.id, item.fields) for item in self.session.scalars(
+                select(TechOperationRecordRow).where(TechOperationRecordRow.tab == record.tab.value))]
+            try:
+                fields = prepare_inventory(dict(record.fields), others, self_id=record.id,
+                    creating=row is None, previous=before[0] if before else None)
+            except DuplicateInventoryError as error:
+                # Bulk import reports refusals per row; form commands already return their own 409.
+                raise ReferenceValidationError(str(error)) from error
+            if fields != record.fields:
+                search = " ".join(f"{record.display_text} {' '.join(fields.values())}".casefold().split())
+                record = replace(record, fields=fields, normalized_search=search)
         if record.tab == TechOperationTab.OPERATION:  # refused before anything is written
             identity.check_operation_cells(self.session, record.fields, before[0] if before else None)
         if row is None: row = TechOperationRecordRow(id=record.id)

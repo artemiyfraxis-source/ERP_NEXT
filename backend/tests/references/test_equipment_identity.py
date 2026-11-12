@@ -104,6 +104,24 @@ def test_snapshot_twice_keeps_ids_models_and_links(references_api):
     assert units["ОБ.060"]["equipment_role"] == "supporting" and units["ОБ.044"]["equipment_role"] == "operational"
 
 
+def test_saving_legacy_applicator_uses_code_without_changing_unit_model_or_links(references_api):
+    applicator = _unit("ОБ.106", "Аппликатор", "A", kind="Аппликаторы")
+    applicator["fields"]["Код в базе терминалов"] = "M10"
+    matrix = _unit("ОСН.001", "Матрица", "M", kind="Матрицы", tool="ОБ.106")
+    _snapshot(references_api, [applicator, matrix], [_operation("PRESS", "ОБ.106")])
+    before = _rows(references_api, "ob")
+    links = _links(references_api)
+    edited = references_api.patch(f"{BASE}/{before['ОБ.106']['id']}", json={"edits": [
+        {"field": "Код в базе терминалов", "old": "M10", "value": "M11"}]})
+    assert edited.status_code == 200, edited.text
+    after = _rows(references_api, "ob")
+    assert after["M11"]["id"] == before["ОБ.106"]["id"]
+    assert after["M11"]["equipment_model_id"] == before["ОБ.106"]["equipment_model_id"]
+    assert after["ОСН.001"]["tool_unit_id"] == after["M11"]["id"]
+    assert after["ОСН.001"]["fields"]["Для инструмента"] == "M11"
+    assert _links(references_api) == links
+
+
 def test_ambiguous_and_unmatched_cells_are_not_guessed_and_are_in_the_report(references_api):
     _snapshot(references_api)
     report = references_api.get("/api/references/equipment-links/report").json()
@@ -207,6 +225,66 @@ def test_import_rows_and_the_xlsx_round_trip_keep_ids_and_links(references_api):
     assert {key: item["id"] for key, item in final.items()} == {key: item["id"] for key, item in after.items()}
     assert {item["fields"]["Расположение"] for item in final.values()} == {"ЖУК"}
     assert _links(references_api) == links
+
+
+def test_bulk_import_numbering_dry_run_apply_and_refusals(references_api):
+    ordinary = _unit("ОБ.009", "Станок", "P")
+    ordinary["fields"]["Код в базе терминалов"] = ""  # the existing БД.ОБ import column
+    _snapshot(references_api, [ordinary,
+        _unit("СИ.004", "Микрометр", "MIC", kind="Средства измерений")], [])
+    before = _rows(references_api, "ob")
+    rows = [
+        {"baseValue": "APP/Аппликатор", "Тип": "Аппликаторы", "Код в базе терминалов": " m 10 ", "Инв. номер": "ОБ.106"},
+        {"baseValue": "SI/Измеритель", "Тип": "Средства измерений", "Инв. номер": "ОБ.107"},
+        {"baseValue": "SI2/Измеритель", "obType": "Средства измерений"},
+        {"baseValue": "NEW/Станок", "Тип": "Оборудование"},
+        {"baseValue": "EMPTY/Аппликатор", "Тип": "Аппликаторы"},
+        {"baseValue": "BAD/Аппликатор", "Тип": "Аппликаторы", "Код в базе терминалов": "X1"},
+        {"baseValue": "DUP/Аппликатор", "Тип": "Аппликаторы", "Код в базе терминалов": "M10"},
+        {"baseValue": "DUPINV/Инструмент", "Тип": "Инструмент", "Инв. номер": "ОБ.009"},
+        {"baseValue": "LAST/Станок", "Тип": "Оборудование"},
+    ]
+    reports = []
+    for dry_run in (1, 0):
+        response = references_api.post(f"/api/references/import/ob?dry_run={dry_run}", json={"rows": [{"fields": row} for row in rows]})
+        assert response.status_code == 200, response.text
+        reports.append(response.json())
+        assert len(reports[-1]["created"]) == 5 and len(reports[-1]["refused"]) == 4
+        assert "Укажите код аппликатора" in str(reports[-1]["refused"])
+        if dry_run:
+            assert _rows(references_api, "ob") == before
+    assert reports[0]["created"] == reports[1]["created"] and reports[0]["refused"] == reports[1]["refused"]
+    after = _rows(references_api, "ob")
+    assert set(after) == {"ОБ.009", "СИ.004", "M10", "СИ.005", "СИ.006", "ОБ.010", "ОБ.011"}
+    assert after["M10"]["fields"]["Код в базе терминалов"] == "M10"
+    found = references_api.get(BASE, params={"tab": "ob", "query": "M10"}).json()["records"]
+    assert any(item["id"] == after["M10"]["id"] for item in found)
+    repeated = references_api.post("/api/references/import/ob?dry_run=0", json={"rows": [{"fields": row} for row in rows]})
+    assert repeated.status_code == 200, repeated.text
+    assert _rows(references_api, "ob") == after
+
+
+def test_bulk_applicator_edit_preserves_links_and_refuses_invalid_updates(references_api):
+    applicator = _unit("M10", "Аппликатор", "APP", kind="Аппликаторы")
+    applicator["fields"]["Код в базе терминалов"] = "M10"
+    _snapshot(references_api, [applicator, _unit("ОСН.001", "Матрица", "MAT", kind="Матрицы", tool="M10")],
+        [_operation("PRESS", "M10")])
+    before, links = _rows(references_api, "ob"), _links(references_api)
+    response = references_api.post("/api/references/import/ob?dry_run=0", json={"rows": [{"fields": {
+        "baseValue": "APP/Аппликатор", "Код в базе терминалов": "S3"}}]})
+    assert response.status_code == 200, response.text
+    after = _rows(references_api, "ob")
+    assert after["S3"]["id"] == before["M10"]["id"]
+    assert after["S3"]["equipment_model_id"] == before["M10"]["equipment_model_id"]
+    assert after["ОСН.001"]["tool_unit_id"] == after["S3"]["id"]
+    assert after["ОСН.001"]["fields"]["Для инструмента"] == "S3"
+    assert _links(references_api) == links
+    for code in ("", "X1"):
+        refused = references_api.post("/api/references/import/ob?dry_run=0", json={"rows": [{"fields": {
+            "baseValue": "APP/Аппликатор", "Код в базе терминалов": code}}]})
+        assert refused.status_code == 200, refused.text
+        assert len(refused.json()["refused"]) == 1
+        assert _rows(references_api, "ob") == after
 
 
 def test_another_unit_joins_the_model_and_supporting_equipment_serves_units(references_api):

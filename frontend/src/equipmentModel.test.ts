@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TechOperationRecord } from "./api";
-import { applicatorTokens, groupModels, servedBy, servedUnits, inventoryOrder, inventoryRange, operationField, operationsOfModel, parseInventory, typeOf } from "./equipmentModel";
+import { applicatorTokens, groupModels, servedBy, servedUnits, inventoryOrder, inventoryRange, invOf, operationField, operationsOfModel, parseInventory, typeOf } from "./equipmentModel";
 
 const unit = (id: string, fields: Record<string, string>): TechOperationRecord =>
   ({ id, tab: "ob", display_text: "", source_sheet: "", fields } as TechOperationRecord);
@@ -12,6 +12,15 @@ describe("equipment model", () => {
     expect(parseInventory("ОСН.001")).toMatchObject({ prefix: "ОСН.", suffix: "" });
     expect(parseInventory("станок")).toBeNull();
     expect(["ОБ.79.10", "ОБ.79.9", "ОБ.79.1"].sort(inventoryOrder)).toEqual(["ОБ.79.1", "ОБ.79.9", "ОБ.79.10"]);
+  });
+
+  it("reads and sorts applicator codes and measuring instruments without inventing numbers", () => {
+    expect(parseInventory("M10")).toEqual({ prefix: "M", base: 10, baseText: "10", suffix: "" });
+    expect(parseInventory("СИ.001.2")).toEqual({ prefix: "СИ.", base: 1, baseText: "001", suffix: "2" });
+    expect(["M10", "M2", "A1", "S3"].sort(inventoryOrder)).toEqual(["A1", "M2", "M10", "S3"]);
+    expect(parseInventory("Q1")).toBeNull();
+    expect(invOf(unit("a", { Тип: "Аппликаторы", "Инв. номер": "ОБ.106", "Код в базе терминалов": " m10 " }))).toBe("M10");
+    expect(invOf(unit("b", { Тип: "Аппликаторы", "Инв. номер": "ОБ.126" }))).toBe("");
   });
 
   it("shows a run of units as a range", () => {
