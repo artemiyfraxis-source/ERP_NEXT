@@ -1,6 +1,6 @@
 """Rights-filtered global search with at most eight results per group.
 
-New SQL groups match all words before LIMIT; specialized legacy ranking reads bounded candidate pages.
+New SQL groups match all words before LIMIT; specialized legacy ranking streams a bounded candidate set.
 A result names its place and carries the section and query parameters that the destination consumes.
 """
 
@@ -40,6 +40,7 @@ from app.shared.http_auth import Principal, authenticated_principal, section_all
 router = APIRouter(prefix="/api/search", tags=["search"])
 
 PER_GROUP = 8
+MAX_CANDIDATES = 2000
 MAX_QUERY = 120
 # A GRN: letters, year, serial, optional package — «PPM.26.0000001», «FRX.26.0000003-П2».
 GRN_LIKE = re.compile(r"^[a-zа-яё]{2,6}\.\d{2}\.\d{3,}(?:[-\s]\S{1,6})?$", re.IGNORECASE)
@@ -128,17 +129,13 @@ def _scan(session: Session, columns: list[Any], patterns: list[str], match_colum
             statement = statement.where(narrow)
     if order is not None:
         statement = statement.order_by(order)
-    # Older groups apply specialized ranking in Python. Fetch bounded pages, never a whole matching table.
+    # Older groups rank in Python. Cap total work and stream one query without repeated sorting/skipping.
     if words is not None:
         yield from session.execute(statement)
     else:
-        offset = 0
-        while True:
-            rows = session.execute(statement.limit(64).offset(offset)).all()
-            yield from rows
-            if len(rows) < 64:
-                break
-            offset += len(rows)
+        with session.execute(statement.limit(MAX_CANDIDATES).execution_options(yield_per=64)) as result:
+            for rows in result.partitions():
+                yield from rows
 
 
 def _text(*parts: object) -> str:

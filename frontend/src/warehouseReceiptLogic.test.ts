@@ -22,6 +22,8 @@ const sourceScan: WarehouseReceiptScan = {
     original: { article: "RAW", name: "Контакт", quantity: "200", unit: "шт", invoice_quantity: "2", invoice_unit: "упак" },
     learning: learned }],
 };
+const packScan: WarehouseReceiptScan = { ...sourceScan, lines: [{ ...sourceScan.lines[0], quantity: "2", unit: "упак",
+  original: { ...sourceScan.lines[0].original!, quantity: "2", unit: "упак" } }] };
 
 it("keeps source evidence and retry UUID, applies a reviewed conversion only once, never opts into learning", () => {
   const result = applyScan(emptyHeader(), [emptyLine()], sourceScan);
@@ -46,6 +48,45 @@ it("clears a deactivated suggestion while preserving operator edits and original
   const deactivated = deactivateLearning(line);
   expect(deactivated).toMatchObject({ article: "RAW", learning: { action: "deactivate" } });
   expect(applyLearning(changed, null)).toMatchObject({ article: "RAW", quantity: "50", ruleApplied: false });
+});
+
+it.each([
+  ["quantity", "50", { quantity: "50", unit: "шт" }],
+  ["unit", "м", { quantity: "200", unit: "м" }],
+] as const)("preserves the whole edited pair when %s changes and the rule is removed", (key, value, pair) => {
+  const line = applyScan(emptyHeader(), [], packScan).lines[0];
+  const changed = editCell(line, key, value);
+  for (const cleared of [deactivateLearning(changed), applyLearning(changed, null),
+    applyLearning(changed, { ...learned, active: false, rule_version: 2 })]) {
+    expect(cleared).toMatchObject({ ...pair, article: "RAW", manufacturer: "", ruleApplied: false });
+    expect(buildAccept(cleared, emptyHeader(), "1A1", 0, false)).toMatchObject(pair);
+  }
+});
+
+it("restores an untouched quantity and unit together while retaining independent text edits", () => {
+  const line = applyScan(emptyHeader(), [], packScan).lines[0];
+  const changed = editCell(editCell(line, "article", "MANUAL"), "manufacturer", "Ручной");
+  for (const cleared of [deactivateLearning(changed), applyLearning(changed, null),
+    applyLearning(changed, { ...learned, active: false, rule_version: 2 })]) {
+    expect(cleared).toMatchObject({ quantity: "2", unit: "упак", article: "MANUAL", manufacturer: "Ручной", ruleApplied: false });
+  }
+});
+
+it.each([
+  ["quantity", "50", { quantity: "50", unit: "шт" }],
+  ["unit", "м", { quantity: "200", unit: "м" }],
+] as const)("keeps the storekeeper's pair through active rule replacement after editing %s", (key, value, pair) => {
+  const line = editCell(applyScan(emptyHeader(), [], packScan).lines[0], key, value);
+  const replaced = applyLearning(line, { ...learned, rule_version: 2, article: "NEW", stock_unit: "компл", quantity: "20" });
+  expect(replaced).toMatchObject({ ...pair, article: "NEW", ruleApplied: true });
+  expect(deactivateLearning(replaced)).toMatchObject({ ...pair, article: "RAW", ruleApplied: false });
+});
+
+it("replaces an untouched rule's whole pair and restores the original pair on deactivation", () => {
+  const line = applyScan(emptyHeader(), [], packScan).lines[0];
+  const replaced = applyLearning(line, { ...learned, rule_version: 2, stock_unit: "компл", quantity: "20" });
+  expect(replaced).toMatchObject({ quantity: "20", unit: "компл", ruleApplied: true });
+  expect(deactivateLearning(replaced)).toMatchObject({ quantity: "2", unit: "упак", ruleApplied: false });
 });
 
 it("does not apply another supplier's cached rule or change a raw receiving proposal", () => {

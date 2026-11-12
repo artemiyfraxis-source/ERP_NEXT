@@ -4,6 +4,8 @@
 from decimal import Decimal
 from uuid import uuid4
 
+from sqlalchemy import event
+
 from app.main import app
 from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.production.infrastructure import ProductionTaskRow
@@ -12,8 +14,9 @@ from app.modules.shipping.infrastructure import FinishedGoodRow, ShipmentLineRow
 from app.modules.purchasing.infrastructure import InvoiceRow, UpdDocumentRow
 from app.modules.techcards.infrastructure import ProjectTechcardRow
 from app.shared.http_auth import Principal, authenticated_principal
+from app.workflows import search_api
 from tests.factories import Actor
-from tests.workflows.test_search_api import NOW, URL, env, fill, groups, titles  # noqa: F401 — env is the fixture
+from tests.workflows.test_search_api import NOW, URL, env, fill, groups, lot, titles  # noqa: F401 — env is the fixture
 
 
 def record(tab, text, *, cable_kind=None, ter_kind=None, fields=None):
@@ -252,6 +255,38 @@ def test_new_sql_groups_limit_after_matching_all_words_and_escape_wildcards(env)
     assert len(hits) == 8
     assert all("Нужная_100%" in hit["title"] for hit in hits)
     assert results(client, "Нет_100%", "Задания цеха") == []
+
+
+def test_stock_search_bounds_selects_and_ranked_candidates_for_a_common_word(env, monkeypatch):
+    client, seed = env
+    seed(*(lot(f"FRX.26.{i:07d}", "Контакт общий") for i in range(2300)))
+    as_person({"warehouse": "view"})
+    with app.state.purchasing_uow_factory() as uow:
+        engine = uow.session.get_bind()
+    statements = []
+    ranked_candidates = 0
+    matches_words = search_api.matches_words
+
+    def count_selects(_connection, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    def count_candidates(candidate, query):
+        nonlocal ranked_candidates
+        ranked_candidates += 1
+        return matches_words(candidate, query)
+
+    monkeypatch.setattr(search_api, "matches_words", count_candidates)
+    event.listen(engine, "before_cursor_execute", count_selects)
+    try:
+        response = client.get(URL, params={"q": "Контакт"})
+    finally:
+        event.remove(engine, "before_cursor_execute", count_selects)
+
+    assert response.status_code == 200, response.text
+    assert titles(response, "Склад") == [f"FRX.26.{i:07d}" for i in range(8)]
+    assert len(statements) == 1
+    assert ranked_candidates == search_api.MAX_CANDIDATES
 
 
 def test_connector_catalog_search_opens_the_series_and_respects_tab_access(env):

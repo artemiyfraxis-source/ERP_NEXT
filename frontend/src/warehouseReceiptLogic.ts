@@ -292,6 +292,7 @@ export function applyScan(header: ReceiptHeader, lines: ReceiptLine[], scan: War
 /** A server suggestion always uses invoice evidence, never the quantity already shown in the grid. */
 export function applyLearning(line: ReceiptLine, rule: WarehouseReceiptRule | null): ReceiptLine {
   if (!line.learning || line.accepted) return line;
+  const keepPair = learningPairEdited(line);
   line = restoreLearning(line);
   const next: ReceiptLine = { ...line, rule, ruleApplied: false, learning: {
     ...line.learning!, action: "none", rule_id: rule?.rule_id, rule_version: rule?.rule_version,
@@ -300,20 +301,30 @@ export function applyLearning(line: ReceiptLine, rule: WarehouseReceiptRule | nu
   } };
   if (!rule?.active || rule.warning) return next;
   return { ...next, beforeRule: { article: line.article, manufacturer: line.manufacturer, unit: line.unit, quantity: line.quantity },
-    article: rule.article, manufacturer: rule.manufacturer, unit: rule.stock_unit,
-    quantity: rule.quantity ?? line.quantity, ruleApplied: true,
+    article: rule.article, manufacturer: rule.manufacturer, unit: keepPair ? line.unit : rule.stock_unit,
+    quantity: keepPair ? line.quantity : (rule.quantity ?? line.quantity), ruleApplied: true,
     model: line.model.filter((key) => key !== "manufacturer"),
     auto: line.auto.filter((key) => !["article", "manufacturer", "unit", "quantity"].includes(key)),
   };
 }
 
+/** Once either half is edited, the quantity and its unit belong to the storekeeper together. */
+function learningPairEdited(line: ReceiptLine): boolean {
+  return Boolean(line.ruleApplied && line.rule && line.beforeRule
+    && (line.unit !== line.rule.stock_unit || line.quantity !== (line.rule.quantity ?? line.beforeRule.quantity)));
+}
+
 /** Clear only values the prior suggestion supplied; preserve later storekeeper edits. */
 function restoreLearning(line: ReceiptLine): ReceiptLine {
   if (!line.ruleApplied || !line.rule || !line.beforeRule) return line;
-  const supplied = { article: line.rule.article, manufacturer: line.rule.manufacturer, unit: line.rule.stock_unit,
-    quantity: line.rule.quantity ?? line.beforeRule.quantity };
-  const values = Object.fromEntries((Object.keys(supplied) as Array<keyof typeof supplied>)
-    .filter((key) => line[key] === supplied[key]).map((key) => [key, line.beforeRule![key]]));
+  const values: Partial<ReceiptLine> = {};
+  for (const key of ["article", "manufacturer"] as const) {
+    if (line[key] === line.rule[key]) values[key] = line.beforeRule[key];
+  }
+  if (!learningPairEdited(line)) {
+    values.unit = line.beforeRule.unit;
+    values.quantity = line.beforeRule.quantity;
+  }
   return { ...line, ...values, ruleApplied: false, beforeRule: undefined };
 }
 
