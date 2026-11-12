@@ -47,14 +47,14 @@ export type ColumnLayouts = Record<TableKind, ColumnLayout>;
 // the same order with «Партий» left out. Since 22.10 the quantity read first is «Свободно» (balance minus reserve): the
 // raw «Остаток» is optional (it stays in the tooltip of «Свободно» and in the group header).
 const DEFAULT_ORDER: Record<TableKind, ColumnKey[]> = {
-  grouped: ["type", "grn", "available", "reserved", "balance", "lots", "place", "series", "article", ...ARTICLE_COLUMNS, "name", "warehouse", "maker", ...DOCUMENT_COLUMNS],
+  grouped: ["type", "grn", "available", "reserved", "balance", "lots", "place", "series", "article", ...ARTICLE_COLUMNS, "name", "purpose", "warehouse", "maker", ...DOCUMENT_COLUMNS],
   flat: ["type", "grn", "available", "reserved", "balance", "place", "series", "article", ...ARTICLE_COLUMNS, "name", "purpose", "warehouse", "maker", ...DOCUMENT_COLUMNS],
 };
-// «Назначение» (the project a lot is kept for) is the least needed column of the lot table; «Остаток» is off in both
+// «Назначение» (the project a lot is kept for) is optional in both tables; «Остаток» is off in both
 // tables: «Свободно» + «Резерв» already say it, and reading the raw balance misleads (owner, 22.10). «Производитель» and
 // the documents are there for whoever switches them on in «Колонки» (owner 26.10).
 const DEFAULT_HIDDEN: Record<TableKind, ColumnKey[]> = {
-  grouped: ["balance", "maker", ...ARTICLE_COLUMNS, ...DOCUMENT_COLUMNS],
+  grouped: ["balance", "purpose", "maker", ...ARTICLE_COLUMNS, ...DOCUMENT_COLUMNS],
   flat: ["balance", "purpose", "maker", ...ARTICLE_COLUMNS, ...DOCUMENT_COLUMNS],
 };
 
