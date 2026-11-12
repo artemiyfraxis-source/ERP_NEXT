@@ -122,5 +122,22 @@ export function restoreFromSnapshot(components: Comp[], seed: GenState, snap: Ge
   };
   const note = added.length || removed.length
     ? `Состав изменился: добавлено ${added.length}, убрано ${removed.length} — проверьте` : "";
+  if (snap.S.topology) {
+    const material = (ref: import("./tcGenLogic").TopologyMaterial) => "compId" in ref ? { compId: keep(ref.compId) } : { ...ref };
+    const valid = (end: import("./tcGenLogic").WireEnd) => wires.some((w) => w.idx === end.idx);
+    S = { ...S, topology: { ...snap.S.topology,
+      ...(snap.S.topology.ends ? { ends: snap.S.topology.ends.filter((e) => valid(e.end)).map((e) => ({ ...e,
+        at: e.at.kind === "lug" ? { ...e.at, material: material(e.at.material) } : e.at })) } : {}),
+      ...(snap.S.topology.tubes ? { tubes: snap.S.topology.tubes.filter((t) => {
+        const target = t.target;
+        return (target.kind === "splice" ? S.splices?.some((s) => s.id === target.spliceId) : valid(target.end)) && (!t.preloadEnd || valid(t.preloadEnd));
+      })
+        .map((t) => ({ ...t, material: material(t.material) })) } : {}),
+    } };
+  } else if (S.topology) {
+    // A new seed must never opt an old draft into the physical compiler.
+    const { topology: _topology, ...legacy } = S;
+    S = legacy;
+  }
   return { S, terEdits: snap.terEdits, coaxAdd: snap.coaxAdd, note };
 }

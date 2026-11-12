@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+import hashlib
 import re
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -133,6 +134,8 @@ def _term_count(op: Mapping[str, Any], config: Mapping[str, Any]) -> int:
         int(_number(wire.get("qty"), Decimal(1)) * _number(wire.get("cores"), Decimal(1)))
         for wire in _wires(op, config)
     )
+    if config.get("topologyVersion") == 1 and isinstance(op.get("physicalEnds"), list):
+        count = len({(end["idx"], end["unit"], end["side"]) for end in op["physicalEnds"]})
     endpoint = _endpoint(op)
     if endpoint.get("double"):
         per_terminal = max(2, int(_number(endpoint.get("perTerm"), Decimal(2))))
@@ -732,6 +735,9 @@ def _components(
         return [{"art": row["art"], "name": row["name"], "norm": _format(row["count"] * quantity), "unit": "Шт."}
                 for row in _splice_parts(op)]
     operation_type = str(op.get("type") or "")
+    if config.get("topologyVersion") == 1 and op.get("tubePlacement") and operation_type != "cutTut":
+        # A placement moves the pieces its cut already issued, even with a custom operation card.
+        return []
     # Опрессовка центрального контакта (владелец 19.10) идёт картой опрессовки коакса, пока своей нет: её вход —
     # разъём своей стороны, какой бы картой она ни шла.
     own_material = manual and operation_type == "insWrap" and not op.get("wrapCut") and bool(op.get("wrapArt") or op.get("wrapName"))
@@ -1139,8 +1145,24 @@ def _pins(value: object) -> list[int]:
     return result
 
 
-def _connection_end(value: object) -> dict[str, Any] | None:
+def _connection_end(value: object, *, physical: bool = False) -> dict[str, Any] | None:
     if not isinstance(value, Mapping):
+        return None
+    if physical:
+        end = value.get("end")
+        if not isinstance(end, Mapping) or any(type(end.get(key)) is not int or end[key] < 0 for key in ("idx", "unit")) or end.get("side") not in {"A", "B"}:
+            return None
+        result = {"end": {key: end[key] for key in ("idx", "unit", "side")}, "kind": value.get("kind")}
+        if value.get("kind") == "free":
+            return result
+        if value.get("kind") == "splice" and value.get("spliceId"):
+            return {**result, "spliceId": str(value["spliceId"]), "label": str(value.get("label") or "")}
+        if value.get("kind") == "pin" and value.get("epId") and type(value.get("pin")) is int and value["pin"] > 0:
+            return {**result, "epId": str(value["epId"]), "pin": value["pin"],
+                    "conn": str(value.get("conn") or ""), "label": str(value.get("label") or "")}
+        material = value.get("material")
+        if value.get("kind") == "lug" and isinstance(material, Mapping) and (material.get("art") or material.get("name")) and value.get("crimp") in {"ferrule", "lug", "tube"}:
+            return {**result, "material": {key: str(material.get(key) or "") for key in ("art", "name")}, "crimp": value["crimp"]}
         return None
     try:
         pin = int(value.get("pin"))
@@ -1154,6 +1176,28 @@ def _connection_end(value: object) -> dict[str, Any] | None:
 
 def _connections(config: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Wire-by-wire links «end·pin → end·pin» the generator pairs from both ends' pin lists (list order = pairing)."""
+    if config.get("topologyVersion") == 1:
+        raw = config.get("physicalConnections")
+        if not isinstance(raw, list):
+            raise ValueError("Не заданы физические соединения сложной сборки")
+        result = []
+        seen: set[tuple[int, int]] = set()
+        for item in raw:
+            if not isinstance(item, Mapping):
+                raise ValueError("Некорректный физический отрезок сложной сборки")
+            start = _connection_end(item.get("from"), physical=True)
+            finish = _connection_end(item.get("to"), physical=True)
+            if (not start or not finish or any(type(item.get(key)) is not int or item[key] < 0 for key in ("idx", "unit"))
+                    or start["end"] != {"idx": item["idx"], "unit": item["unit"], "side": "A"}
+                    or finish["end"] != {"idx": item["idx"], "unit": item["unit"], "side": "B"}):
+                raise ValueError("Некорректные концы физического отрезка сложной сборки")
+            identity = (item["idx"], item["unit"])
+            if identity in seen:
+                raise ValueError("Физический отрезок сложной сборки указан повторно")
+            seen.add(identity)
+            result.append({"idx": item["idx"], "unit": item["unit"], "wire": str(item.get("wire") or ""),
+                           "from": start, "to": finish, **({"shield": True} if item.get("shield") is True else {})})
+        return result
     raw = config.get("connections")
     result: list[dict[str, Any]] = []
     for item in raw if isinstance(raw, list) else []:
@@ -1167,13 +1211,16 @@ def _connections(config: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 def _links(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Per mounting operation: own pin → the other end of the same wire, for the sketch legend."""
-    key = str(op.get("epKey") or "")
+    physical = config.get("topologyVersion") == 1
+    key = str(op.get("epId" if physical else "epKey") or "")
     if not key or not _kind(op):
         return []
     links: list[dict[str, Any]] = []
     for item in _connections(config):
         for own, peer, direction in (("from", "to", "to"), ("to", "from", "from")):
-            if item[own]["end"] == key:
+            own_end = item[own]
+            matches = own_end.get("kind") == "pin" and own_end.get("epId") == key if physical else own_end["end"] == key
+            if matches:
                 links.append({"pin": item[own]["pin"], "wire": item["wire"], "dir": direction, "peer": item[peer]})
     return links
 
@@ -1878,6 +1925,8 @@ def _wire_data(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, An
 
 def _typed_fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
     fields = _fields(op, config)
+    if config.get("topologyVersion") == 1:
+        fields.update({key: deepcopy(op[key]) for key in ("physicalEnds", "tubePlacement", "spliceIds", "epId") if key in op})
     if op.get("type") == "cutWireCrimp":
         fields["cutCrimp"] = True
         if fields.get("applicator"):
@@ -1916,6 +1965,21 @@ def _typed_connector(op: Mapping[str, Any], fallback: object) -> str:
     return suffix or str(op.get("side") or fallback)
 
 
+def _physical_connector(op: Mapping[str, Any]) -> str:
+    """The persisted ETK key includes connector text. Give topology operations a stable, non-positional ID."""
+    ends = op.get("physicalEnds") or []
+    if ends:
+        label = "; ".join(f"провод {end['idx'] + 1}, жила {end['unit'] + 1}, конец {'А' if end['side'] == 'A' else 'В'}"
+                          for end in sorted(ends, key=lambda end: (end["idx"], end["unit"], end["side"]))[:2])
+        if len(ends) > 2:
+            label += f"; всего концов: {len(ends)}"
+    else:
+        label = _typed_connector(op, "операция")
+    # Distinguishes e.g. preload and positioning on the same ends without showing internal opKey codes.
+    identity = hashlib.sha256(op["opKey"].encode("utf-8")).hexdigest()[:16]
+    return f"{label} · № {identity}"
+
+
 def _typed_operation(
     op: Mapping[str, Any], config: Mapping[str, Any], *, position: int, code: str,
     card: OperationCardTemplate | None, cards_by_code: Mapping[str, OperationCardTemplate],
@@ -1946,6 +2010,12 @@ def _typed_operation(
         "fields": fields,
     }
     label = str(op.get("label") or "").strip()
+    if config.get("topologyVersion") == 1:
+        operation.update({"opKey": op["opKey"], "dependsOn": deepcopy(op.get("dependsOn", []))})
+        if label:
+            operation["title"] = label
+            if operation["card"] is not None:
+                operation["card"]["name"] = label
     if label and operation["card"] is not None and operation["type"].startswith("coax"):
         # FAKRA/HFM (генератор 25.10): у каждой операции своё название («Обжим центрального контакта (А)»), а не общее имя карты.
         operation["card"]["name"] = label
@@ -1972,7 +2042,52 @@ def _times(op: Mapping[str, Any]) -> dict[str, str]:
             "machine_seconds": str(op.get("tMachine") or "")}
 
 
+def _physical_topology(config: Mapping[str, Any]) -> dict[str, Any]:
+    """One edge per physical segment; connectors and splices share nodes, loose ends never do."""
+    nodes: dict[str, dict[str, Any]] = {}
+    edges: list[dict[str, Any]] = []
+    wires = {wire.get("idx"): wire for wire in config.get("wires") or [] if isinstance(wire, Mapping)}
+
+    def node(end: Mapping[str, Any]) -> str:
+        kind = end["kind"]
+        point = end["end"]
+        identity = end["epId"] if kind == "pin" else end["spliceId"] if kind == "splice" else f"{point['idx']}.{point['unit']}.{point['side']}"
+        key = f"{kind}:{identity}"
+        if key not in nodes:
+            label = (end.get("label") or end.get("conn") or end.get("epId")) if kind == "pin" else (
+                end.get("label") or f"Сросток {end['spliceId']}") if kind == "splice" else (
+                end["material"]["art"] or end["material"]["name"]) if kind == "lug" else "Свободный конец"
+            nodes[key] = {"id": key, "conn": label, "side": "", "depth": 0, "kind": kind}
+        return key
+
+    for segment in _connections(config):
+        edges.append({"from": node(segment["from"]), "to": node(segment["to"]), "wires": [segment["wire"]],
+                      "count": 1, "length": float(_decimal(wires.get(segment["idx"], {}).get("length"))),
+                      "idx": segment["idx"], "unit": segment["unit"],
+                      **({"shield": True} if segment.get("shield") else {})})
+    # Layout depth is undirected: physical A/B are not connector sides, and jumpers can form loops.
+    neighbours: dict[str, list[str]] = defaultdict(list)
+    for edge in edges:
+        neighbours[edge["from"]].append(edge["to"])
+        neighbours[edge["to"]].append(edge["from"])
+    seen: set[str] = set()
+    for root in nodes:
+        if root in seen:
+            continue
+        seen.add(root)
+        pending = [root]
+        for current in pending:
+            for peer in neighbours[current]:
+                if peer not in seen:
+                    seen.add(peer)
+                    nodes[peer]["depth"] = nodes[current]["depth"] + 1
+                    pending.append(peer)
+    return {"nodes": list(nodes.values()), "edges": edges}
+
+
 def _topology(config: Mapping[str, Any]) -> dict[str, Any]:
+    if config.get("topologyVersion") == 1:
+        return _physical_topology(config)
     nodes: list[dict[str, Any]] = []
     by_id: dict[str, dict[str, Any]] = {}
     edges: dict[tuple[str, str], dict[str, Any]] = {}
@@ -2228,7 +2343,23 @@ def _route(
     if route is None and config.get("mode") == "rework":
         route = _replace(chain_route(ops, final_name), manual=False, generated=True)
     route = route or derive_route(ops, final_name)
-    return route_json(route, route_totals(route, {op.position: op.minutes for op in ops}, quantity))
+    totals = route_totals(route, {op.position: op.minutes for op in ops}, quantity)
+    if config.get("topologyVersion") == 1 and route.generated and all(edge.per_unit == 1 for edge in route.edges):
+        # These edges encode precedence, not repeated material inputs. Shared ancestors ran only once.
+        parents: dict[str, list[str]] = defaultdict(list)
+        for edge in route.edges:
+            parents[edge.target].append(edge.source)
+        for block in route.blocks:
+            upstream = {block.key}
+            pending = [block.key]
+            for key in pending:
+                for parent in parents[key]:
+                    if parent not in upstream:
+                        upstream.add(parent)
+                        pending.append(parent)
+            totals[block.key] = _replace(totals[block.key], rolled_minutes=sum(
+                (totals[key].unit_minutes for key in upstream), Decimal(0)))
+    return route_json(route, totals)
 
 
 def propose_route(document: Mapping[str, Any] | None) -> dict[str, Any] | None:
@@ -2853,6 +2984,11 @@ def _scheme_chain(
                     source = by_key[edge.source]
                     where = f"ПФ {labels[source.key]}"
                     items = [item for item in edge.item.split("; ") if item.strip()] if source.kit else []
+                    if config.get("topologyVersion") == 1 and source.kit and not items:
+                        cut = operations[source.ops[-1] - 1]
+                        semis.extend({**row, "norm": _format(_decimal(row["norm"]) * edge.per_unit), "source": where}
+                                     for row in _kit_rows(cut, config, names[source.key]))
+                        continue
                     if not items:
                         semis.append({**_row(names[source.key], _format(edge.per_unit * quantity)), "source": where})
                     for item in items:
@@ -3067,6 +3203,53 @@ def _rework_config(config: Mapping[str, Any], cards: Sequence[OperationCardTempl
             "tin": {"stripLen": str(rework.get("stripLength") or "")}}
 
 
+def _ordered_physical_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Stable dependency order, with positional route references moved alongside their operations."""
+    result = deepcopy(dict(config))
+    raw = result.get("ops")
+    if not isinstance(raw, list) or any(not isinstance(op, Mapping) for op in raw):
+        raise ValueError("Не заданы операции сложной сборки")
+    by_key: dict[str, int] = {}
+    for position, op in enumerate(raw, start=1):
+        key = op.get("opKey")
+        if not isinstance(key, str) or not key.strip() or key in by_key:
+            raise ValueError("Операции сложной сборки должны иметь уникальные ключи")
+        by_key[key] = position
+    for op in raw:
+        dependencies = op.get("dependsOn", [])
+        if not isinstance(dependencies, list) or any(not isinstance(key, str) or key not in by_key for key in dependencies):
+            raise ValueError(f"Операция {op['opKey']}: отсутствующая зависимость сложной сборки")
+    pending = list(raw)
+    ordered: list[Mapping[str, Any]] = []
+    done: set[str] = set()
+    while pending:
+        ready = next((index for index, op in enumerate(pending) if all(key in done for key in op.get("dependsOn", []))), None)
+        if ready is None:
+            raise ValueError("Невозможно упорядочить операции сложной сборки: цикл зависимостей")
+        op = pending.pop(ready)
+        ordered.append(op)
+        done.add(op["opKey"])
+    result["ops"] = ordered
+    positions = {by_key[op["opKey"]]: index for index, op in enumerate(ordered, start=1)}
+    route = result.get("route")
+    if isinstance(route, Mapping):
+        for block in route.get("blocks") or []:
+            if isinstance(block, dict) and isinstance(block.get("ops"), list):
+                block["ops"] = sorted(positions.get(pos, pos) for pos in block["ops"])
+    elif ordered:
+        # The contract may omit a drawn route. Keep dependencies in the ПФ graph as well as the list.
+        last = ordered[-1]["opKey"]
+        edges = [{"from": key, "to": op["opKey"]} for op in ordered for key in dict.fromkeys(op.get("dependsOn", []))]
+        sources = {edge["from"] for edge in edges}
+        edges.extend({"from": op["opKey"], "to": last} for op in ordered[:-1] if op["opKey"] not in sources)
+        result["route"] = {"source": SCHEME_SOURCE, "blocks": [
+            {"key": op["opKey"], "ops": [index], "name": str(op.get("label") or ""),
+             **({"final": True} if op["opKey"] == last else {}),
+             **({"kit": True} if op.get("type") in CUT_TYPES | TUT_CUT_TYPES else {})}
+            for index, op in enumerate(ordered, start=1)], "edges": edges}
+    return result
+
+
 def build_etk(
     config: Mapping[str, Any], cards: Sequence[OperationCardTemplate], *,
     operation_library_commit: str = "",
@@ -3079,6 +3262,8 @@ def build_etk(
     if config.get("mode") == MANUAL_MODE:
         return _build_manual(config, cards, operation_library_commit=operation_library_commit,
                              technology_source=technology_source)
+    if config.get("topologyVersion") == 1:
+        config = _ordered_physical_config(config)
     raw_operations = config.get("ops")
     if not isinstance(raw_operations, list):
         raise ValueError("Нет операций для сборки")
@@ -3101,7 +3286,8 @@ def build_etk(
         built.append(_typed_operation(
             op, config, position=index, code=code, card=card, cards_by_code=cards_by_code,
             previous=link.previous, result=link.result, single=link.single, is_last=link.is_last,
-            semis=link.semis, connector=_typed_connector(op, index), warnings=warnings, result_rows=link.rows,
+            semis=link.semis, connector=_physical_connector(op) if config.get("topologyVersion") == 1 else _typed_connector(op, index),
+            warnings=warnings, result_rows=link.rows,
         ))
     _distinct_typed_keys(built)
 

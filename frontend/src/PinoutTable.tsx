@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { plural, type PinUnit } from "./pinoutCheck";
 import { connName, firstFreePin, occupiedPins, type EndValue, type PinConn, type PinRow, type SpliceLine } from "./tcGenPinTable";
-import type { Side, WireEnd } from "./tcGenLogic";
+import { sameWireEnd, type Side, type WireEnd, type TopologyMaterial, type TubePlacement } from "./tcGenLogic";
 import "./pinTable.css";
 
 /* «Распиновка и сростки» (владелец 25.10): одна таблица — строка на жилу, в ней оба конца. Конец выбирается в поле:
@@ -21,7 +21,7 @@ export type SleeveControl = {
   onChange: (spliceId: string, compId: string) => void;
 };
 
-export function PinoutTable({ summary, rows, conns, units, splices, spliceIds, sleeve, methodControl, onEnd, onLength, onLabel, onSplit, onRemoveSplice, onRenameSplice }: {
+export function PinoutTable({ summary, rows, conns, units, splices, spliceIds, sleeve, methodControl, endDetails, connectorActions, onJumper, onEnd, onLength, onLabel, onSplit, onRemoveSplice, onRenameSplice }: {
   summary: string;
   rows: PinRow[];
   conns: PinConn[];
@@ -31,6 +31,9 @@ export function PinoutTable({ summary, rows, conns, units, splices, spliceIds, s
   spliceIds: Array<{ id: string; label: string }>;
   sleeve: SleeveControl | null;
   methodControl: ReactNode;
+  endDetails?: (row: PinRow, side: Side) => ReactNode;
+  connectorActions?: (id: string) => ReactNode;
+  onJumper?: (row: PinRow) => void;
   onEnd: (row: PinRow, side: Side, value: EndValue) => void;
   onLength: (idx: number, mm: number) => void;
   /** Обозначение разъёма по чертежу («XS1»). */
@@ -42,11 +45,11 @@ export function PinoutTable({ summary, rows, conns, units, splices, spliceIds, s
 }) {
   const select = (row: PinRow, side: Side) => {
     const cell = row.cells[side];
-    const sideConns = conns.filter((c) => c.side === side);
+    const sideConns = onJumper ? conns : conns.filter((c) => c.side === side);
     const label = `Конец ${sideRu(side)} провода № ${row.num}`;
-    return <div className="pt-end">
+    return <div className="pt-end" style={cell.value === "lug" ? { flexDirection: "column", alignItems: "stretch" } : undefined}>
       <select aria-label={label} value={cell.value} className={cell.value === "" && sideConns.length ? "is-open" : undefined}
-        onChange={(event) => onEnd(row, side, event.target.value)}>
+        onChange={(event) => event.target.value === "jumper" ? onJumper?.(row) : onEnd(row, side, event.target.value)}>
         <option value="">{sideConns.length ? "— не задан —" : "— свободный —"}</option>
         {sideConns.map((c) => {
           const busy = occupiedPins(c, units);
@@ -66,6 +69,8 @@ export function PinoutTable({ summary, rows, conns, units, splices, spliceIds, s
           <option value="new">+ Новый сросток</option>
         </optgroup>
         <option value="tail">Свободный конец</option>
+        {endDetails && <option value="lug">Наконечник</option>}
+        {onJumper && side === "B" && <option value="jumper">Перемычка в одном разъёме</option>}
       </select>
       {cell.extra.length > 0 && <small className="pt-extra" title="Ответвление: провод идёт ещё и на этот контакт">+ {cell.extra.join(", ")}</small>}
     </div>;
@@ -75,11 +80,12 @@ export function PinoutTable({ summary, rows, conns, units, splices, spliceIds, s
       <span className="pt-summary" role="status" aria-live="polite">{summary}</span>
     </div>
     <div className="pt-conns" role="group" aria-label="Разъёмы по чертежу">
-      {conns.map((c) => <label className="pt-conn" key={c.id}>
+      {conns.map((c) => <div className="pt-conn" key={c.id} id={`pinout-table-${c.id}`}>
         <b className="ep-badge">{c.key}</b>
         <input aria-label={`Обозначение разъёма ${c.key}`} autoComplete="off" spellCheck={false} value={c.designation} placeholder="XS1, XP1…" onChange={(event) => onLabel(c.id, event.target.value)} />
         <span className="pt-conn-art" title={c.conn}>{c.conn || "разъём не выбран"}</span>
-      </label>)}
+        {connectorActions?.(c.id)}
+      </div>)}
     </div>
     <div className="pt-scroll">
       <table className="pt-table">
@@ -88,13 +94,18 @@ export function PinoutTable({ summary, rows, conns, units, splices, spliceIds, s
           {rows.map((row) => [
             <tr key={row.key} className={`${row.first ? "pt-first" : ""}${row.problems.length ? " has-problem" : ""}`}>
               <td className="pt-num">{row.num}</td>
-              <td className="pt-wire"><div className="pt-wire-in"><Swatch color={row.color} stripe={row.stripe} /><span className="pt-wire-name" title={`${row.name}${row.colorName ? ` · ${row.colorName}` : ""}`}>{row.name || "провод"}{row.colorName && <small>{row.colorName}</small>}</span></div></td>
+              <td className="pt-wire"><div className="pt-wire-in"><Swatch color={row.color} stripe={row.stripe} /><span className="pt-wire-name" title={`${row.name}${row.colorName ? ` · ${row.colorName}` : ""}`}>{row.name || "провод"}{row.colorName && <small>{row.colorName}</small>}</span></div>
+                {row.cells.A.value.startsWith("pin:") && row.cells.B.value.startsWith("pin:") && row.cells.A.value.split(":")[1] === row.cells.B.value.split(":")[1] && <small className="tone-info">Перемычка в одном разъёме</small>}
+              </td>
               <td className="pt-len">{row.first
                 ? <input type="number" min={0} inputMode="numeric" autoComplete="off" aria-label={`Длина провода № ${row.num}`} value={row.length || ""} placeholder="—" onChange={(event) => onLength(row.idx, Number(event.target.value) || 0)} />
                 : <span className="pt-same" title="Длина общая для жил одного кабеля">″</span>}</td>
               <td>{select(row, "A")}</td>
               <td>{select(row, "B")}</td>
             </tr>,
+            (row.cells.A.value === "lug" || row.cells.B.value === "lug") && <tr key={`${row.key}-lugs`}><td colSpan={5}>
+              {endDetails?.(row, "A")}{endDetails?.(row, "B")}
+            </td></tr>,
             row.problems.length > 0 && <tr key={`${row.key}!`} className="pt-note"><td /><td colSpan={4}>{row.problems.map((text) => <span className="tone-danger" key={text}>{text}</span>)}</td></tr>,
           ])}
         </tbody>
@@ -120,4 +131,70 @@ export function PinoutTable({ summary, rows, conns, units, splices, spliceIds, s
       </div>)}
     </div>
   </div>;
+}
+
+export type MaterialOption = { label: string; material: TopologyMaterial };
+const materialKey = (m: TopologyMaterial) => "compId" in m ? `kit:${m.compId}` : `art:${m.art}`;
+
+/** Both catalog materials and kit rows retain their identity in the C1 contract. */
+export function TopologyMaterialSelect({ label, value, options, onChange }: {
+  label: string; value: TopologyMaterial; options: MaterialOption[]; onChange: (value: TopologyMaterial) => void;
+}) {
+  const key = materialKey(value);
+  const choices = [...new Map(options.map((o) => [materialKey(o.material), o])).values()];
+  const listed = choices.some((o) => materialKey(o.material) === key);
+  return <div className="gfield">
+    <select aria-label={label} style={{ minHeight: 40 }} value={listed ? key : "article"}
+      onChange={(event) => onChange(choices.find((o) => materialKey(o.material) === event.target.value)?.material ?? { art: "", name: "" })}>
+      {choices.map((o) => <option key={materialKey(o.material)} value={materialKey(o.material)}>{o.label}</option>)}
+      <option value="article">Указать артикул</option>
+    </select>
+    {!listed && <>
+      <input style={{ minHeight: 40 }} aria-label={`${label}: артикул`} placeholder="Артикул" value={"art" in value ? value.art : ""}
+        onChange={(event) => onChange({ art: event.target.value, name: "name" in value ? value.name : "" })} />
+      <input style={{ minHeight: 40 }} aria-label={`${label}: название`} placeholder="Название" value={"name" in value ? value.name : ""}
+        onChange={(event) => onChange({ art: "art" in value ? value.art : "", name: event.target.value })} />
+    </>}
+  </div>;
+}
+
+type TubeTarget = { label: string; target: TubePlacement["target"]; ends: WireEnd[] };
+const targetKey = (t: TubePlacement["target"]) => t.kind === "splice" ? `splice:${t.spliceId}` : `${t.kind}:${t.end.idx}:${t.end.unit}:${t.end.side}`;
+const endKey = (e: WireEnd) => `${e.idx}:${e.unit}:${e.side}`;
+
+export function TopologyTubes({ tubes, materials, targets, endLabel, onChange, onAdd }: {
+  tubes: TubePlacement[]; materials: MaterialOption[]; targets: TubeTarget[];
+  endLabel: (end: WireEnd) => string; onChange: (tubes: TubePlacement[]) => void; onAdd: () => void;
+}) {
+  const patch = (id: string, change: Partial<TubePlacement>) => onChange(tubes.map((t) => t.id === id ? { ...t, ...change } : t));
+  return <section className="gsec full" aria-label="Трубки по месту установки">
+    <div className="gsec-head"><h3>Трубки по месту установки</h3>
+      <button type="button" className="secondary small" style={{ minHeight: 40 }} disabled={!targets.length} onClick={onAdd}>Добавить трубку</button></div>
+    {!tubes.length && <p className="pt-none">Добавьте трубку на ветвь, сросток или паяльную чашку.</p>}
+    {tubes.map((tube, i) => {
+      const target = targets.find((t) => targetKey(t.target) === targetKey(tube.target));
+      const access = tube.preloadEnd ?? (tube.target.kind !== "splice" ? tube.target.end : undefined);
+      return <div key={tube.id} className="form-grid" role="group" aria-label={`Трубка ${i + 1}`}>
+        <div className="gfield"><span>Материал</span><TopologyMaterialSelect label={`Материал трубки ${i + 1}`} value={tube.material} options={materials} onChange={(material) => patch(tube.id, { material })} /></div>
+        <label className="gfield"><span>Длина, мм</span><input style={{ minHeight: 40 }} aria-label={`Длина трубки ${i + 1}, мм`} type="number" min={0.01} step="any" value={tube.lengthMm || ""} onChange={(e) => patch(tube.id, { lengthMm: Number(e.target.value) })} /></label>
+        <label className="gfield"><span>Количество</span><input style={{ minHeight: 40 }} aria-label={`Количество трубок ${i + 1}`} type="number" min={1} step={1} value={tube.count || ""} onChange={(e) => patch(tube.id, { count: Number(e.target.value) })} /></label>
+        <label className="gfield"><span>Место установки</span><select style={{ minHeight: 40 }} aria-label={`Место трубки ${i + 1}`} value={targetKey(tube.target)} onChange={(e) => {
+          const picked = targets.find((t) => targetKey(t.target) === e.target.value);
+          if (picked) patch(tube.id, { target: picked.target, preloadEnd: tube.phase === "preload" ? picked.ends[0] : undefined });
+        }}>
+          {!target && <option value={targetKey(tube.target)}>Место удалено — выберите заново</option>}
+          {targets.map((t) => <option key={targetKey(t.target)} value={targetKey(t.target)}>{t.label}</option>)}
+        </select></label>
+        <label className="gfield"><span>Порядок установки</span><select style={{ minHeight: 40 }} aria-label={`Порядок установки трубки ${i + 1}`} value={tube.phase} onChange={(e) => {
+          const phase = e.target.value as TubePlacement["phase"];
+          patch(tube.id, { phase, preloadEnd: phase === "preload" ? target?.ends[0] : undefined });
+        }}><option value="preload">Надеть до соединения</option><option value="afterJoin">После соединения</option></select></label>
+        {tube.phase === "preload" && <label className="gfield"><span>Конец для надевания</span><select style={{ minHeight: 40 }} aria-label={`Конец надевания трубки ${i + 1}`} value={access ? endKey(access) : ""} onChange={(e) => patch(tube.id, { preloadEnd: target?.ends.find((end) => endKey(end) === e.target.value) })}>
+          {(!access || !target?.ends.some((end) => sameWireEnd(end, access))) && <option value={access ? endKey(access) : ""}>Выберите конец</option>}
+          {(target?.ends || []).map((end) => <option key={endKey(end)} value={endKey(end)}>{endLabel(end)}</option>)}
+        </select></label>}
+        <button type="button" className="btn-link" style={{ minHeight: 40 }} aria-label={`Удалить трубку ${i + 1}`} onClick={() => onChange(tubes.filter((t) => t.id !== tube.id))}>Удалить трубку</button>
+      </div>;
+    })}
+  </section>;
 }

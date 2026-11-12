@@ -99,7 +99,8 @@ def test_all_seams_collisions_and_quantities(db):
     assert Decimal(arrival[0]["right"]["quantity"]) == 8
     for seam in ("_supply_match", "_supply_key", "procurement code_key"):
         assert changes[seam]
-    assert any(row["before"] is None and row["after"]["family"] == "molex-picoblade" for row in changes["housing_of"])
+    # Since M2 housing_of recognises 0510210400 itself: the report has no PicoBlade housing delta left.
+    assert not any(row["before"] is None and row["after"]["family"] == "molex-picoblade" for row in changes["housing_of"])
     collision = result["canonical_collisions"][0]
     assert collision["key"] == "510210400"
     assert collision["articles"] == ["0510210400", "51021-0400"]

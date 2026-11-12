@@ -321,8 +321,16 @@ def matching_terminal_records(
     words = str(article or "").strip().split()
     without_manufacturer = _normalized_article(" ".join(words[1:])) if len(words) > 1 else ""
     if len(without_manufacturer) >= 3:
-        return tuple(item for item in records if any(_normalized_article(value) == without_manufacturer
-                                                     for value in articles(item)))
+        matches = tuple(item for item in records if any(_normalized_article(value) == without_manufacturer
+                                                        for value in articles(item)))
+        if matches:
+            return matches
+    # Complete the documented SYM reel alias for a JST-prefixed article only after every existing path misses.
+    # https://www.jst.com/resources/faq/ — (N) on SYM-001T-P0.6 changes the reel quantity, not the contact.
+    if words and words[0].casefold() == "jst" and re.search(r"\(\s*n\s*\)\s*$", article, re.IGNORECASE):
+        base = _normalized_article(re.sub(r"\(\s*n\s*\)\s*$", "", " ".join(words[1:]), flags=re.IGNORECASE))
+        if base == "sym001tp06":
+            return tuple(item for item in records if any(_normalized_article(value) == base for value in articles(item)))
     return ()
 
 

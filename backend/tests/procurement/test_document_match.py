@@ -2,6 +2,8 @@
 
 from decimal import Decimal
 
+import pytest
+
 from app.modules.procurement.document_items import DocumentItem, parse_document_text
 from app.modules.procurement.document_match import OrderLineCandidate, code_key, match_document_items
 from tests.procurement.test_document_items import ELITAN_INVOICE, KP_NET
@@ -88,3 +90,99 @@ def test_a_few_shared_words_are_a_weak_match():
     items = [DocumentItem(name="Гнездо питания DC-005 на плату")]
 
     assert result(items, [line("a", "Разъём питания DC")]) == ([("a", 0, "weak")], [], [])
+
+
+@pytest.mark.parametrize("spelling", ["0510210400", "051 021 0400", "051021–0400"])
+@pytest.mark.parametrize("in_name", [False, True])
+def test_molex_comparison_matches_article_column_and_name_tokens(spelling, in_name):
+    item = DocumentItem(name=f"Корпус {spelling}" if in_name else "Корпус", article="" if in_name else spelling)
+    assert result([item], [line("a", "Разъём", article="51021-0400")]) == ([("a", 0, "article")], [], [])
+
+
+def test_explicit_molex_maker_confirms_other_numeric_articles():
+    items = [DocumentItem(name="Molex", article="0901430010")]
+    assert result(items, [line("a", "Molex", article="90143-0010")]) == ([("a", 0, "article")], [], [])
+
+
+@pytest.mark.parametrize("item_name, order_name", [("Molex", "Корпус"), ("Корпус", "Molex")])
+@pytest.mark.parametrize("item_article, order_article", [("0901430010", "90143-0010"), ("90143-0010", "0901430010")])
+def test_one_sided_molex_identity_confirms_numeric_equivalence(item_name, order_name, item_article, order_article):
+    items = [DocumentItem(name=item_name, article=item_article)]
+    assert result(items, [line("a", order_name, article=order_article)]) == ([("a", 0, "article")], [], [])
+
+
+@pytest.mark.parametrize("article, name", [
+    ("0012345678", "Корпус"), ("0510210400-LF", "Корпус"),
+    ("051021/0400", "Корпус"), ("051021.0400", "Корпус"),
+    ("0510210400", "JST"), ("0510210400", "Molex JST"), ("0510210400", "RUICHI"),
+])
+def test_unknown_suffix_punctuation_and_conflicting_makers_do_not_fold(article, name):
+    target = "12345678" if article == "0012345678" else "51021-0400"
+    order_name = "Корпус" if article == "0012345678" else "Molex"
+    assert result([DocumentItem(name=name, article=article)], [line("a", order_name, article=target)]) == ([], [0], ["a"])
+
+
+def test_canonical_collisions_are_not_distinct_article_matches():
+    items = [DocumentItem(name="Позиция", article="0510210400")]
+    lines = [line("a", "Первая", article="51021-0400"), line("b", "Вторая", article="0510210400")]
+    assert result(items, lines) == ([], [0], ["a", "b"])
+
+
+@pytest.mark.parametrize("item_name, order_name", [("AMP", "TE"), ("TE AMP", "TE AMP")])
+def test_maker_labels_preserve_legacy_exact_te_matching(item_name, order_name):
+    items = [DocumentItem(name=item_name, article="174047-2")]
+    assert result(items, [line("a", order_name, article="174047-2")]) == ([("a", 0, "article")], [], [])
+
+
+@pytest.mark.parametrize("maker", ["JST", "RUICHI"])
+def test_other_maker_on_unpadded_side_vetoes_new_equivalence(maker):
+    items = [DocumentItem(name="Корпус", article="0510210400")]
+    assert result(items, [line("a", maker, article="51021-0400")]) == ([], [0], ["a"])
+
+
+@pytest.mark.parametrize("item_name, order_name", [("Molex", "Корпус"), ("Корпус", "Molex")])
+def test_one_sided_maker_label_preserves_exact_unknown_family_article(item_name, order_name):
+    items = [DocumentItem(name=item_name, article="0901430010")]
+    assert result(items, [line("a", order_name, article="0901430010")]) == ([("a", 0, "article")], [], [])
+
+
+@pytest.mark.parametrize("item_name", ["Неизвестная позиция", "Molex"])
+def test_mixed_maker_evidence_does_not_make_a_duplicate_article_unique(item_name):
+    items = [DocumentItem(name=item_name, article="0901430010")]
+    lines = [line("a", "Molex", article="0901430010"), line("b", "Корпус", article="0901430010")]
+    matches, _, _ = result(items, lines)
+    assert all(confidence != "article" for _, _, confidence in matches)
+
+
+@pytest.mark.parametrize("item_article", ["0901430010", "90143-0010"])
+@pytest.mark.parametrize("item_name, first_name", [("Molex", "Корпус"), ("Неизвестная позиция", "Molex")])
+def test_confirmed_molex_aliases_remain_ambiguous_across_order_rows(item_article, item_name, first_name):
+    items = [DocumentItem(name=item_name, article=item_article)]
+    lines = [line("a", first_name, article="0901430010"), line("b", "Корпус", article="90143-0010")]
+    matches, _, _ = result(items, lines)
+    assert all(confidence != "article" for _, _, confidence in matches)
+
+
+@pytest.mark.parametrize("malformed", ["51021/0400", "51021.0400", "51021_0400"])
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("order_name", ["Другое", "Позиция"])
+def test_new_molex_equivalence_requires_numeric_identity_on_both_sides(malformed, reverse, order_name):
+    item_article, order_article = (malformed, "0510210400") if reverse else ("0510210400", malformed)
+    # A decimal-looking item article is not an is_code token; identical names
+    # still receive the legacy name-only match, never an article match.
+    expected = ([("a", 0, "name")], [], []) if malformed == "51021.0400" and reverse and order_name == "Позиция" else ([], [0], ["a"])
+    assert result([DocumentItem(name="Позиция", article=item_article)], [
+        line("a", order_name, article=order_article),
+    ]) == expected
+
+
+@pytest.mark.parametrize("article", ["51021/0400", "51021.0400", "51021_0400"])
+@pytest.mark.parametrize("prefix", ["", "0"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_legacy_punctuation_equivalence_still_works(article, prefix, reverse):
+    item_article, order_article = prefix + article, prefix + "51021-0400"
+    if reverse:
+        item_article, order_article = order_article, item_article
+    assert result([DocumentItem(name="Позиция", article=item_article)], [
+        line("a", "Другое", article=order_article),
+    ]) == ([("a", 0, "article")], [], [])

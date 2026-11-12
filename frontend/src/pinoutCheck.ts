@@ -7,7 +7,7 @@
  */
 import { wireColorKnown } from "./connectorArt";
 import { PALETTE, canonicalColor, customHex, setCustomColors, splitPair } from "./wireColors";
-import { doubledPinsOf_, endJoined, formatCorePins_, makeGen, NO_WIRES, parseCorePins_, parsePinList_, sideRu_, updateWire, type Branch, type Connection, type Endpoint, type Gen, type GenData, type GenState, type Side } from "./tcGenLogic";
+import { doubledPinsOf_, endJoined, formatCorePins_, makeGen, NO_WIRES, parseCorePins_, parsePinList_, sameWireEnd, sideRu_, updateWire, type Branch, type Connection, type Endpoint, type Gen, type GenData, type GenState, type Side, type WireEnd } from "./tcGenLogic";
 
 /** Цвет жилы по названию палитры: одноцветная или двухцветная («бело-синий» — основной белый, полоса синяя). */
 export function coreColor(text: string | undefined): { name: string; baseName: string; hex: string; stripe: string | null } | null {
@@ -132,6 +132,7 @@ const legacyRouting = (gen: Gen, side: Side) => !sidePinned(gen, side) && gen.en
 
 /** Провода разъёма: у разъёма стороны с несколькими — те, у кого тут контакт (старое сохранение без контактов — по `wireIdxs`). */
 export function pinRouted(gen: Gen, S: GenState, ep: Endpoint): number[] {
+  if (S.tab === "complex" && S.topology) return gen.routedWireIdxs_(ep);
   if (!multiSide(gen, S, ep.side)) return gen.routedWireIdxs_(ep);
   if (legacyRouting(gen, ep.side)) return gen.routedWireIdxs_(ep);
   return gen.activeWires_().filter((w) => hasPin(ep, w.idx)).map((w) => w.idx);
@@ -140,7 +141,7 @@ export function pinRouted(gen: Gen, S: GenState, ep: Endpoint): number[] {
 /** Генератор читает `routedWireIdxs_` из `wireIdxs`: на стороне с несколькими разъёмами держим их равными тому, у кого
  *  где контакт. Пока на стороне нет ни одного контакта, раздача не трогается (старое сохранение, свежая форма). */
 export function syncRoutes(D: GenData, S: GenState): GenState {
-  if (S.tab !== "complex") return S;
+  if (S.tab !== "complex" || S.topology) return S;
   const gen = makeGen(D, S);
   const all = gen.activeWires_().map((w) => w.idx);
   let changed = false;
@@ -189,6 +190,15 @@ export function pinoutEnds(gen: Gen, S: GenState): PinoutEnd[] {
     const multi = multiSide(gen, S, ep.side);
     const wires = active.filter((w) => routed.has(w.idx)).map((w): PinoutWire => {
       const name = compName(gen, w.compId);
+      if (S.tab === "complex" && S.topology) {
+        const physical = gen.physicalPinsAt_(ep, w);
+        const cores: Array<number | null> = [];
+        physical.forEach(({ end, pin }) => { if (cores[end.unit] == null) cores[end.unit] = pin; });
+        const pins = physical.map((p) => p.pin);
+        return { idx: w.idx, name, qty: physical.filter((p) => !gen.isShieldPos_(w, p.end.unit)).length,
+          text: pins.join(", "), pins, cores, color: wireColorKnown(name), cable: gen.wireCores_(w) > 1,
+          shields: gen.shieldCount_(w), shieldPins: gen.shieldPinsAt_(ep, w) };
+      }
       const text = ep.pins?.[w.idx] || "";
       const cores = parseCorePins_(text);
       const pinned = cores.filter((p, k) => p != null && !gen.isShieldPos_(w, k)).length;
@@ -197,7 +207,7 @@ export function pinoutEnds(gen: Gen, S: GenState): PinoutEnd[] {
       return { idx: w.idx, name, qty, text, pins: parsePinList_(text), cores, color: wireColorKnown(name), cable,
         shields: gen.shieldCount_(w), shieldPins: gen.shieldPinsAt_(ep, w) };
     });
-    if (!wires.length && !multi) return [];
+    if (!wires.length && !multi && !S.topology) return [];
     const key = endKey(gen, ep);
     const own = links.filter((l) => l.from.end === key || l.to.end === key);
     const count: Record<number, number> = {};
@@ -328,6 +338,8 @@ export type PinUnit = {
   length: number;
   /** Разъём (id) → контакт этого провода; null — провод заведён в разъём, контакт не задан. */
   at: Record<string, number | null>;
+  /** Physical contacts retain both ends when a segment returns to the same connector. */
+  endPins?: Array<{ end: WireEnd; epId: string; pin: number }>;
   /** Экран (дренаж) экранированного кабеля: на контакт — по желанию, без контакта его скручивают и изолируют. */
   shield?: boolean;
   /** Цепь жилы («GND», «CAN_H») как набрана; "" или нет — не задана. */
@@ -367,16 +379,22 @@ export function pinUnits(gen: Gen, S: GenState): PinUnit[] {
     };
     // Как набрано (с пробелами по краям — поле ввода показывает ровно это); подписи и чертёж берут без них.
     const net = (k: number) => w.nets?.[k] || "";
+    const physical = (k: number): Pick<PinUnit, "endPins"> => S.tab === "complex" && S.topology ? {
+      endPins: (["A", "B"] as const).flatMap((side) => {
+        const at = gen.physicalAt_({ idx: w.idx, unit: k, side });
+        return at.kind === "pin" ? [{ end: at.end, epId: at.epId, pin: at.pin }] : [];
+      }),
+    } : {};
     const cores = Array.from({ length: qty }, (_, k): PinUnit => {
       const own = coreColor(colors[k]);
       return { key: `${w.idx}.${k}`, idx: w.idx, unit: k, num: qty > 1 ? `${pos + 1}.${k + 1}` : `${pos + 1}`, compId: w.compId, name,
         color: own ? own.hex : wireColorKnown(name), stripe: own?.stripe ?? null, colorName: own?.name ?? "", baseName: own?.baseName ?? null, length,
-        at: atOf(k, false), shield: false, net: net(k) };
+        at: atOf(k, false), ...physical(k), shield: false, net: net(k) };
     });
     // Экраны — после жил: «1.Э» (у кабеля ×N — «1.Э2»).
     const screens = Array.from({ length: shields }, (_, c): PinUnit => ({
       key: `${w.idx}.${qty + c}`, idx: w.idx, unit: qty + c, num: `${pos + 1}.Э${shields > 1 ? c + 1 : ""}`, compId: w.compId, name: `экран ${name}`.trim(),
-      color: SHIELD_COLOR, stripe: null, colorName: "", baseName: null, length, at: atOf(qty + c, true), shield: true, net: net(qty + c),
+      color: SHIELD_COLOR, stripe: null, colorName: "", baseName: null, length, at: atOf(qty + c, true), ...physical(qty + c), shield: true, net: net(qty + c),
     }));
     return [...cores, ...screens];
   });
@@ -384,6 +402,44 @@ export function pinUnits(gen: Gen, S: GenState): PinUnit[] {
 
 /** Контакты жил по проводам разъёма: idx → [контакт жилы 0, жилы 1, …], null — жила сюда не идёт. */
 type Lists = Record<number, Array<number | null>>;
+
+/** Assign a physical segment end; connector.side does not select the segment end. */
+export function assignPhysicalPin(D: GenData, S: GenState, end: WireEnd, epId: string, pin: number): GenState {
+  const gen = makeGen(D, S);
+  const wire = gen.activeWires_().find((w) => w.idx === end.idx);
+  if (S.tab !== "complex" || !S.endpoints.some((e) => e.id === epId) || !Number.isInteger(pin) || pin <= 0
+    || !wire || !Number.isInteger(end.unit) || end.unit < 0 || end.unit >= gen.unitCount_(wire) + gen.shieldCount_(wire)
+    || (end.side !== "A" && end.side !== "B")) return S;
+  const next: GenState = { ...S, topology: { ...S.topology, version: 1,
+    ends: [...(S.topology?.ends || []).filter((e) => !sameWireEnd(e.end, end)), { end, at: { kind: "pin", epId, pin } }] },
+    splices: (S.splices || []).map((sp) => ({ ...sp, ends: sp.ends.filter((e) => !sameWireEnd(e, end)) })).filter((sp) => sp.ends.length),
+    tails: (S.tails || []).filter((e) => !sameWireEnd(e, end)) };
+  if (!(S.splices || []).some((sp) => sp.ends.length >= 2)) return next;
+  const sizes = [...(next.branches || []).filter((b) => b.mode === "splice").map(() => 2),
+    ...(next.splices || []).filter((sp) => sp.ends.length >= 2).map((sp) => sp.ends.length)];
+  return { ...next, spl: sizes.length ? { ...next.spl, enabled: true, count: String(sizes.length), wires: sizes.join(",") }
+    : { ...next.spl, enabled: false } };
+}
+
+/** A jumper is a real single-core segment with independently addressable A/B ends. */
+export function addJumper(D: GenData, S: GenState, from: { epId: string; pin: number }, to: { epId: string; pin: number }, wire: { compId: string; length: number }): GenState {
+  const gen = makeGen(D, S);
+  if (S.tab !== "complex" || !Number.isFinite(wire.length) || wire.length <= 0
+    || !gen.wireComps_().some((c) => c.id === wire.compId)
+    || ![from, to].every((at) => Number.isInteger(at.pin) && at.pin > 0 && S.endpoints.some((e) => e.id === at.epId))
+    || (from.epId === to.epId && from.pin === to.pin)) return S;
+  const idx = Math.max(S.nextWireIdx, ...S.wires.map((w) => w.idx + 1));
+  // The new segment has its own drawing length. Preserve the prior cut lengths when leaving
+  // shared-length mode, including the change from legacy side allowances to physical ends.
+  const physical = makeGen(D, { ...S, topology: S.topology || { version: 1 } });
+  const shared = !S.advancedLength ? gen.sharedLength() : 0;
+  const wires = S.advancedLength ? S.wires : S.wires.map((w) => ({ ...w,
+    length: S.topology && S.drawingLength > 0 ? S.drawingLength
+      : shared > 0 ? shared - physical.getLengthAdjustment_(w.idx).total : 0 }));
+  let next: GenState = { ...S, advancedLength: true, wires: [...wires, { idx, ...wire, qty: 1, cores: 1 }], nextWireIdx: idx + 1 };
+  next = assignPhysicalPin(D, next, { idx, unit: 0, side: "A" }, from.epId, from.pin);
+  return assignPhysicalPin(D, next, { idx, unit: 0, side: "B" }, to.epId, to.pin);
+}
 
 const writePins = (lists: Lists) => {
   const pins: Record<number, string> = {};

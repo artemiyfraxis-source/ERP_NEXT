@@ -7,12 +7,15 @@ import math
 import re
 from typing import Any, Mapping
 
+from app.shared.article_key import article_key, is_molex_article
+
 from .connector_catalog_data import CATALOG_FAMILIES, CATALOG_FAMILY_SAMPLES, MINIFIT_CAV
 
 
 IVORY = "#efe6cf"
 BLACK = "#2b2b2b"
 ALIASES = {"LP-12": "LP-12-C02PE"}
+_MAKER_PREFIX = re.compile(r"^(MOLEX|JST|HIROSE|JAE|TE(?:\s+CONNECTIVITY)?|CONNFLY|AMASS|AMP)\s+", re.I)
 # Analogue -> original the housing is drawn from (TcHousing.gs HOUSING_ALIAS_RULES_): BL2018P-nn is an analogue of
 # the JST SMP-nnV-BC plug. Applied after ALIASES and before family detection, on the normalised article.
 ALIAS_RULES: tuple[tuple[str, str], ...] = ((r"^BL2018P-0*(\d+)", r"SMP-0\1V-BC"),)
@@ -692,7 +695,7 @@ def mating_pairs() -> list[dict[str, Any]]:
 
 def normalize_article(value: object) -> str:
     article = str(value or "").strip().upper()
-    article = re.sub(r"^(MOLEX|JST|HIROSE|JAE|TE(?:\s+CONNECTIVITY)?|CONNFLY|AMASS|AMP)\s+", "", article)
+    article = _MAKER_PREFIX.sub("", article)
     return re.sub(r"\s+", "", article)
 
 
@@ -724,7 +727,32 @@ def housing_of(article: object) -> dict[str, Any] | None:
     for pattern, replacement in ALIAS_RULES:
         if re.search(pattern, normalized):
             normalized = normalize_article(re.sub(pattern, replacement, normalized, count=1))
+    layout = _housing_candidate(article, normalized, alias)
+    if layout is not None:
+        return layout
+    # Preserve all existing structured matches and their geometry. Only a confirmed
+    # numeric Molex article gets a second candidate, and only against Molex families.
+    maker = _MAKER_PREFIX.match(str(article or "").strip())
+    manufacturer = maker[1] if maker else ""
+    candidate = article_key(normalized, manufacturer=manufacturer)
+    if candidate.isascii() and candidate.isdigit() and is_molex_article(normalized, manufacturer=manufacturer):
+        # KK 396's structured family starts with 09, even though its comparison
+        # key starts with 9. Keep that structural zero available to the matcher.
+        for spelling in (candidate, "0" + candidate):
+            if spelling == normalized:
+                continue
+            layout = _housing_candidate(article, spelling, alias, molex_only=True)
+            if layout is not None:
+                return layout
+    return None
+
+
+def _housing_candidate(
+    article: object, normalized: str, alias: str | None, *, molex_only: bool = False,
+) -> dict[str, Any] | None:
     for family in FAMILIES:
+        if molex_only and not family["id"].startswith("molex-"):
+            continue
         match = re.search(family["pattern"], normalized, flags=re.I)
         if not match:
             continue

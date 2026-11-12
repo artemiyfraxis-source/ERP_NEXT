@@ -1,5 +1,28 @@
 from app.modules.techcards.connector_housings import MATING_PAIRS, attach_housings, housing_grid, housing_of, mating_pairs
 
+import pytest
+
+
+@pytest.mark.parametrize("article, structured", [
+    ("0510210400", "51021-0400"), ("051 021 0400", "51021-0400"),
+    ("Molex 0510210400", "51021-0400"), ("0511102051", "51110-2051"),
+    ("0430250400", "43025-0400"), ("039012080", "39-01-2080"),
+    ("009508051", "09-50-8051"), ("000009508051", "09-50-8051"),
+    ("9508051", "09-50-8051"),
+])
+def test_molex_candidate_keeps_the_housing_and_original_article(article, structured):
+    expected = housing_of(structured)
+    actual = housing_of(article)
+    assert expected is not None
+    assert actual == {**expected, "art": article}
+
+
+@pytest.mark.parametrize("article", [
+    "0012345678", "0510210400-LF", "051021/0400", "051021.0400", "JST 0510210400",
+])
+def test_molex_candidate_requires_confirmed_numeric_identity(article):
+    assert housing_of(article) is None
+
 
 def test_current_supplymap_connector_families_resolve_wire_side_layouts():
     gh = housing_of("JST GHR-04V-S")
