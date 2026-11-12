@@ -1,5 +1,5 @@
 import { CRIMP_COLUMN_TITLE } from "./CrimpCell";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ReferencesPage } from "./ReferencesPage";
 import type { Principal } from "./api";
@@ -23,7 +23,7 @@ function json(body: unknown) {
   });
 }
 
-afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); window.history.replaceState({}, "", "/"); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); window.localStorage.clear(); window.history.replaceState({}, "", "/"); });
 
 /** Правка ячейки как в листе: щелчок, Enter, ввод, Enter. */
 function typeInCell(cell: HTMLElement, value: string) {
@@ -247,6 +247,7 @@ it("shows no D1–D3 at the connectors (they are the cable's) and keeps them out
     const path = String(input);
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
     if (path === "/api/references/bases") return json({ bases: [] });
+    if (path === "/api/references/cables") return json({ columns: [], counts: { coax: 0, wire: 0, multi: 0, lan: 0 }, rows: [], gauges: [] });
     if (path.startsWith("/api/references/tech-operations?tab=kab_coax")) return json({
       metadata: null, columns: ["Кабель", "D1", "D2", "D3"],
       records: [{ id: "k", tab: "kab_coax", display_text: "RG58", source_sheet: "", fields: { Кабель: "RG58", D1: "1", D2: "2,95", D3: "3,5" } }],

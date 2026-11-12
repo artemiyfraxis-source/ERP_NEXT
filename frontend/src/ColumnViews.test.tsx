@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ColumnViewsProvider } from "./ColumnViews";
 import { useColumnRemoval } from "./CustomColumn";
@@ -27,29 +27,34 @@ const SHARED: SharedColumn[] = [
 beforeEach(() => { window.localStorage.clear(); });
 afterEach(() => { cleanup(); window.localStorage.clear(); vi.restoreAllMocks(); });
 
-function mount(views: Record<string, SharedColumn[]>, canEdit: boolean) {
+async function mount(views: Record<string, SharedColumn[]>, canEdit: boolean) {
   vi.spyOn(referencesApi, "columnViews").mockResolvedValue({ views, can_edit: canEdit });
-  return render(<ColumnViewsProvider><DataTable rows={rows} columns={columns} rowKey={(row) => row.id} storageKey="t" sharedKey="t" label="Кабели" /></ColumnViewsProvider>);
+  // Flush the provider response before inspecting defaults or changing the layout.
+  let result!: ReturnType<typeof render>;
+  await act(async () => {
+    result = render(<ColumnViewsProvider><DataTable rows={rows} columns={columns} rowKey={(row) => row.id} storageKey="t" sharedKey="t" label="Кабели" /></ColumnViewsProvider>);
+  });
+  return result;
 }
 
 const headers = () => screen.getAllByRole("columnheader").map((header) => header.textContent?.replace(/[↑↓▲▼]/g, "").trim()).filter(Boolean);
 
 describe("общий набор столбцов", () => {
   it("shows only the shared columns in the shared order to everyone", async () => {
-    mount({ t: SHARED }, false);
+    await mount({ t: SHARED }, false);
 
     await waitFor(() => expect(headers()).toEqual(["Марка", "Статус", "Кол-во"]));
   });
 
   it("opens with the table's own columns while no shared set exists", async () => {
-    mount({}, true);
+    await mount({}, true);
 
     await waitFor(() => expect(referencesApi.columnViews).toHaveBeenCalled());
     expect(headers()).toEqual(["Марка", "Поставщик", "Кол-во"]);
   });
 
   it("«Показать все» shows every column, «Только нужные» goes back to the shared set, the first column stays", async () => {
-    mount({ t: SHARED }, false);
+    await mount({ t: SHARED }, false);
     await waitFor(() => expect(headers()).toEqual(["Марка", "Статус", "Кол-во"]));
 
     fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
@@ -63,7 +68,7 @@ describe("общий набор столбцов", () => {
   });
 
   it("without a shared set «Только нужные» returns the table's default columns", async () => {
-    mount({}, false);
+    await mount({}, false);
     fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
     fireEvent.click(screen.getByRole("button", { name: "Показать все" }));
     expect(headers()).toHaveLength(4);
@@ -75,7 +80,7 @@ describe("общий набор столбцов", () => {
 
   it("offers «Сохранить для всех» only to those who edit, and sends the order and what is shown", async () => {
     const save = vi.spyOn(referencesApi, "saveColumnView").mockImplementation(async (view, saved) => ({ view, columns: saved }));
-    mount({}, true);
+    await mount({}, true);
     await waitFor(() => expect(screen.queryByRole("button", { name: "Колонки" })).not.toBeNull());
     fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Поставщик" }));
@@ -95,7 +100,7 @@ describe("общий набор столбцов", () => {
   });
 
   it("a viewer without edit rights has no «Сохранить для всех»", async () => {
-    mount({ t: SHARED }, false);
+    await mount({ t: SHARED }, false);
     await waitFor(() => expect(headers()).toEqual(["Марка", "Статус", "Кол-во"]));
 
     fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
@@ -106,13 +111,13 @@ describe("общий набор столбцов", () => {
   it("a new shared set replaces a personal layout once; the same set keeps the personal one", async () => {
     const sig = SHARED.map((item) => `${item.key}:${item.visible ? 1 : 0}`).join("|");
     window.localStorage.setItem("erp-table:t", JSON.stringify({ hidden: ["status", "qty"], known: ["name", "supplier", "qty", "status"], sharedSig: sig }));
-    const kept = mount({ t: SHARED }, false);
+    const kept = await mount({ t: SHARED }, false);
     await waitFor(() => expect(referencesApi.columnViews).toHaveBeenCalled());
     await waitFor(() => expect(headers()).toEqual(["Марка", "Поставщик"]));
     kept.unmount();
 
     window.localStorage.setItem("erp-table:t", JSON.stringify({ hidden: ["status", "qty"], known: ["name", "supplier", "qty", "status"], sharedSig: "old" }));
-    mount({ t: SHARED }, false);
+    await mount({ t: SHARED }, false);
 
     await waitFor(() => expect(headers()).toEqual(["Марка", "Статус", "Кол-во"]));
     // Rendering the shared columns and persisting their signature settle in separate effects.
@@ -120,7 +125,7 @@ describe("общий набор столбцов", () => {
   });
 
   it("the list is ordered by dragging a row", async () => {
-    mount({}, true);
+    await mount({}, true);
     fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
     const items = screen.getAllByRole("listitem");
     const grip = items[2].querySelector(".column-grip") as HTMLElement;
