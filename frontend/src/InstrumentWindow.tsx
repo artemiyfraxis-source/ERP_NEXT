@@ -167,7 +167,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
             {text("inventory_number", "Инв. №", true)}{text("name", "Наименование", true)}{text("instrument_type", "Тип", !accessory)}
             <label>Вид<input name="kind" readOnly value={draft.kind} /></label>
             {text("doc_designation", "Обозначение для документов")}{text("serial_number", "Зав. №")}{text("manufacturer", "Изготовитель")}
-            <label>Количество, шт<input name="quantity" type="number" min="0.001" step="any" required value={draft.quantity} onChange={(event) => field("quantity", event.target.value)} /></label>
+            <label>Количество, шт<input name="quantity" type="number" min="1" step="1" required disabled={record?.kind === "Средство измерений" || Boolean(record?.warehouse_writeoff_id)} value={draft.quantity} onChange={(event) => field("quantity", event.target.value)} /></label>
             <label>В составе прибора<select name="parent_id" required={accessory} value={draft.parent_id ?? ""} onChange={(event) => field("parent_id", event.target.value || null)}>
               <option value="">Самостоятельный прибор</option>{parents.map((item) => <option value={item.id} key={item.id}>{item.inventory_number} · {item.name}</option>)}
             </select></label>
@@ -314,7 +314,7 @@ function InstrumentStockWindow({ parent, close, onChanged }: { parent: Productio
       {selected && <form onSubmit={(event) => void transfer(event)}><h3>{selected.grn} · {selected.name}</h3>
         <p>Остаток: {formatNumber(selected.balance)} {selected.unit} · Доступно: {formatNumber(selected.available)} {selected.unit}</p>
         <fieldset disabled={busy || unknownResult} className="instrument-fields"><div className="form-grid">
-          <label>Количество со склада<input name="stock_quantity" type="number" min="0.001" step="any" max={selected.available} required value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
+          <label>Количество со склада<input name="stock_quantity" type="number" min="1" step="1" max={Math.floor(Number(selected.available))} required value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
           <label>Инв. № принадлежности<input name="stock_inventory_number" autoComplete="off" value={number} onChange={(event) => setNumber(event.target.value)} /></label>
           <label>Наименование принадлежности<input name="stock_name" autoComplete="off" value={name} onChange={(event) => setName(event.target.value)} /></label>
           <label>Обозначение для документов<input name="stock_doc_designation" autoComplete="off" value={designation} onChange={(event) => setDesignation(event.target.value)} /></label>

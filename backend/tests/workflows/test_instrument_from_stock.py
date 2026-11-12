@@ -225,3 +225,20 @@ def test_warehouse_http_return_flag_and_undo_cannot_bypass_workflow(production_a
         assert "Это принадлежность СИ" in response.json()["detail"]
         assert snapshot(sessions, lot.id) == before
         assert client.get("/api/production/instruments").json() == records
+
+
+def test_stock_linked_accessory_quantity_kind_and_grn_change_only_through_return(production_api):
+    client, _ = production_api
+    parent, lot, sessions = setup(client)
+    response = client.post(URL, json={"parent_id": parent["id"], "lot_id": str(lot.id), "lot_version": lot.version, "quantity": 3})
+    assert response.status_code == 200, response.text
+    item = response.json()["instrument"]
+    before = snapshot(sessions, lot.id)
+    for change in ({"quantity": 7}, {"kind": "Средство измерений"}, {"warehouse_grn": "OLD.26.0000001"}):
+        response = client.patch(f"/api/production/instruments/{item['id']}", json={"version": item["version"], **change})
+        assert response.status_code == 422, (change, response.text)
+        assert "возвратом на склад" in response.json()["detail"]
+    same = client.patch(f"/api/production/instruments/{item['id']}", json={"version": item["version"], "quantity": 3, "storage_location": "ОТК, шкаф 2"})
+    assert same.status_code == 200, same.text
+    assert same.json()["instrument"]["quantity"] == 3
+    assert snapshot(sessions, lot.id)[0] == before[0]

@@ -241,6 +241,11 @@ def update_instrument(command: UpdateInstrumentCommand, uow: QualityUnitOfWork) 
             raise ConcurrentProductionUpdate("СИ изменилось после загрузки формы")
         if command.changes.keys() - INSTRUMENT_EDITABLE:
             raise ProductionValidationError("Недопустимые поля СИ")
+        if current.warehouse_writeoff_id is not None and any(
+                key in command.changes and command.changes[key] != getattr(current, key)
+                for key in ("quantity", "kind", "warehouse_grn")):
+            raise ProductionValidationError(
+                "Количество, вид и ГРН принадлежности со склада меняются только возвратом на склад")
         item = replace(current, **command.changes, version=current.version + 1)
         if (current.status is InstrumentStatus.UNVERIFIED and "status" not in command.changes
                 and item.kind is InstrumentKind.MEASURING and item.verification_number
