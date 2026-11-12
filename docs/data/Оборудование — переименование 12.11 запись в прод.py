@@ -133,7 +133,7 @@ DATA = r'''inv;type;current_name;article;current_maker;final_name;final_maker;ro
 ОБ.058;Оборудование;Устройство нижнего подогрева печатных плат;946C;Uyue;Подогреватель печатных плат нижний;UYUE;операционное;подтверждено;"Руководство UYUE 946C на зеркале продавца подтверждает нагревательную платформу; назначение для плат сохранено по инвентарю без добавления мощности, которая различается у продавцов.";https://probots.co.in/technical_data/UYUE%20946C%20-%20User%20Manual.pdf
 ОБ.044;Оборудование;Источник питания постоянного тока;APS3010H;Wanptek;Источник питания постоянного тока;WANPTEK;обеспечивающее;подтверждено;"Руководство WANPTEK WPS/APS содержит точный APS3010H. Текущее название корректно и сохранено без дополнительных характеристик. Проверка изделий этим экземпляром не установлена; роль обеспечивающая по исходной ведомости.";https://zbotic.in/wp-content/uploads/2025/07/Wanptek_DC_Power_Supply_Manual.pdf
 ОБ.101;Оборудование;Маркиратор проводов флажковый;ZCUT-RT430;Yuanhan;Автомат печати и наклейки флажковых этикеток на провод;Yuanhan;операционное;подтверждено;"Точный ZCUT-RT430 найден на официальном сайте Kunshan Yuanhan: real-time printing half-fold labeling machine для проводов; ZCUT — обозначение линейки, не отдельный изготовитель.";https://www.yuanhanequip.com/product/real-time-printing-labeling-machine-rt430.html
-ОБ.102;Оборудование;Маркиратор проводов трубчатый;ZCUT-RT660;Yuanhan;Автомат печати и наклейки этикеток на провод с обёртыванием;Yuanhan;операционное;подтверждено;"Точный ZCUT-RT660 найден на китайском сайте Yuanhan: печать и круговое наклеивание этикеток на кабель. Это не изготовление трубчатых маркеров; скорректировано назначение.";https://www.ksyuanhan.com/product/zcut-rt660shishijuantiebiaoqianji.html
+ОБ.102;Оборудование;Маркиратор проводов трубчатый;ZCUT-RT660;Yuanhan;Маркиратор проводов трубчатый;Yuanhan;операционное;подтверждено;"Точный ZCUT-RT660 найден на китайском сайте Yuanhan: печать и круговое наклеивание этикеток на кабель. Это не изготовление трубчатых маркеров; скорректировано назначение.";https://www.ksyuanhan.com/product/zcut-rt660shishijuantiebiaoqianji.html
 ОБ.014;Оборудование;Станок точильно-шлифовальный;ЗТШМ-150;Зубр;Станок точильно-шлифовальный;ЗУБР;обеспечивающее;подтверждено;"ЗТШМ-150 присутствует в каталоге изготовителя ЗУБР на зеркале дилера как точило для заточки инструмента. Текущее название корректно и сохранено; заточка инструмента обеспечивает производство.";https://zubr.nt-rt.ru/images/showcase/katalog_zubr.pdf
 ОБ.090;Оборудование;Домкрат гидравлический с низким подхватом;;КВТ;Домкрат гидравлический с низким подхватом;КВТ;обеспечивающее;только нормализация;"Артикул отсутствует; сохранены название и производитель из исходной инвентарной записи без предположения о модели. Роль определена по указанному назначению.";
 ОБ.031;Оборудование;Пресс пневматический для опрессовки втулочных наконечников;ПКП-10К КВТ;КВТ;Пресс-клещи пневматические для опрессовки втулочных наконечников;КВТ;операционное;подтверждено;Паспорт КВТ ПКП-10к подтверждает пневматические пресс-клещи для серийной опрессовки НШВИ/НШВ. Написание «КВТ» в исходном артикуле не исправляется этим пакетом.;https://cdn.vseinstrumenti.ru/instruction/nomenclaturecontent/202202/10618538.pdf/press-kleschej-kvt-85397-2193460.pdf
@@ -209,19 +209,27 @@ def process(uow, dry):
             == {u.id for u in selected},
             f'{r["inv"]}: CSV не покрывает все единицы модели',
         )
-        require(model.role in (role_of(r["current_name"], r["type"]), target_role),
-                f'{r["inv"]}: роль уже изменена')
-        if target_role == "supporting":
-            require(not any(s.scalars(select(EquipmentOperationLinkRow).where(
-                EquipmentOperationLinkRow.model_id == mid)))
-                and not any(s.scalars(select(EquipmentTemplateToolRow).where(
-                    EquipmentTemplateToolRow.model_id == mid))),
-                f'{r["inv"]}: обеспечивающая модель связана с операциями/картами')
-        else:
-            require(not any(s.scalars(select(EquipmentUnitLinkRow).where(
-                EquipmentUnitLinkRow.unit_id.in_([u.id for u in selected]),
-                EquipmentUnitLinkRow.kind == "serves"))),
-                f'{r["inv"]}: операционная модель имеет «Обслуживает»')
+        if model.role_confirmed and model.role != target_role:
+            # The owner already set this model's role by hand: keep his choice, rename only.
+            print(f'   ОСТАВЛЕНО: {r["inv"]} роль {model.role} подтверждена ранее (CSV предлагал {target_role})')
+            target_role = model.role
+            r["role"] = next(k for k, v in ROLES.items() if v == model.role)
+        # An unconfirmed role is the 0171 default and may be replaced; a confirmed one was kept above.
+        # Existing links decide over the CSV role: a model used in operations stays operational,
+        # a model that «Обслуживает» other units stays supporting; the rename still goes through.
+        linked_ops = any(s.scalars(select(EquipmentOperationLinkRow).where(
+            EquipmentOperationLinkRow.model_id == mid))) or any(s.scalars(select(EquipmentTemplateToolRow).where(
+                EquipmentTemplateToolRow.model_id == mid)))
+        serves = any(s.scalars(select(EquipmentUnitLinkRow).where(
+            EquipmentUnitLinkRow.unit_id.in_([u.id for u in selected]),
+            EquipmentUnitLinkRow.kind == "serves")))
+        require(not (linked_ops and serves), f'{r["inv"]}: модель и в операциях, и «Обслуживает»')
+        if target_role == "supporting" and linked_ops:
+            print(f'   ОСТАВЛЕНО: {r["inv"]} в операциях/картах — роль operational (CSV предлагал supporting)')
+            target_role, r["role"] = "operational", "операционное"
+        elif target_role == "operational" and serves:
+            print(f'   ОСТАВЛЕНО: {r["inv"]} «Обслуживает» — роль supporting (CSV предлагал operational)')
+            target_role, r["role"] = "supporting", "обеспечивающее"
         require(model.article == r["article"], f'{r["inv"]}: артикул модели изменён')
         require(
             model.name in (("", r["current_name"], r["final_name"])
