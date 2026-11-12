@@ -220,5 +220,3 @@ def format_report(report: Report, *, applied: bool = False) -> str:
     lines.append("Таблица | Просмотрено строк | Изменено строк" + ("" if applied else " (будет)") + " | Замен вхождений")
     lines.extend(f"{name} | {counts.scanned} | {counts.changed} | {counts.occurrences}" for name, counts in report.tables.items())
     return "\n".join(lines)
-
-
