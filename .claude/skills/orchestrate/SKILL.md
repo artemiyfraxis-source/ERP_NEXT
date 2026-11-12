@@ -61,8 +61,9 @@ send reading-heavy and writing-heavy work to Codex CLI (installed globally, Chat
   (`.claude/agents/erp-verifier.md`) pasted into the brief; the pre-ship review is another fresh run (`cross-review`).
 - **The PC is the limit, not the Codex quota** (owner 12.11.2026: four parallel workers each ran the backend
   suite — `-n auto` = 21 pytest workers × 2 processes on 20 threads — and took 95 % CPU and ~27 GB RAM).
-  At most **2 editing workers** at once. Workers run only the affected test files, single-process:
-  `backend\.venv\Scripts\python -m pytest tests/<files> -q -n 0` and `npx vitest run <files>`; every worker brief
+  At most **3 editing workers** at once (model time dominates; tests are short bursts). Workers run only the
+  affected test files with 4 processes: `backend\.venv\Scripts\python -m pytest tests/<files> -q -n 4` (`-n 0` for
+  one or two files) and `npx vitest run <files>`; every worker brief
   forbids `npm run check`, `npm run test:backend` and `-n auto`. The full gate runs **one at a time**, only in
   the verifier; read-only runs (search, review, plan) don't count toward the limit.
 

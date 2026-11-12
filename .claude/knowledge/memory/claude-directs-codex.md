@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: user
   originSessionId: 3299b8a4-260f-413b-822c-c78a05c76e54
-  modified: 2026-11-12T08:11:34.089Z
+  modified: 2026-11-12T08:17:03.868Z
 ---
 
 Owner's subscriptions since 11.11.2026: Claude $20 (tight quota), OpenAI Codex $200 (large quota). «Ты будешь управлять им»:
@@ -26,7 +26,8 @@ Claude main is the orchestrator, Codex CLI the workhorse.
 
 - 12.11.2026 owner screenshot «чет пипец»: 4 parallel Codex workers each ran `npm run test:backend`
   (`scripts/run-backend-tests.mjs` uses pytest `-n auto` → 42 python processes per run) → 95 % CPU, ~27 GB of 31 GB.
-  Limit: ≤ 2 editing workers, affected tests only with `-n 0`, one full gate at a time (verifier only).
+  Limit: ≤ 3 editing workers, affected tests only with `-n 4`, one full gate at a time (verifier only). Owner worried
+  about speed: model time dominates, 4 parallel full suites were not faster (shared cores + RAM paging).
 
 **Why:** Claude tokens are the scarce resource; spending them on file reading and code writing burns the 5-hour window.
 **How to apply:** follow `orchestrate` skill «Budget routing» and `cross-review`; Claude subagents only as a fallback
