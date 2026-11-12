@@ -75,6 +75,9 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: "./src/test/setup.ts",
+    // Bound concurrent jsdom/generator memory and CPU use while keeping per-file isolation.
+    pool: "threads",
+    maxWorkers: 4,
     // Тяжёлые экраны (сетки на 100+ строк, производство) в полном параллельном прогоне не укладываются в 5 с.
     testTimeout: 15_000,
   },
