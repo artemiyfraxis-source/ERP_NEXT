@@ -18,7 +18,7 @@ from .harness_infrastructure import (
 )
 from .kitset_infrastructure import SqlAlchemyKitsetRepository
 from .std_figures_infrastructure import SqlAlchemyStdFigureRepository
-from .td_issues_infrastructure import SqlAlchemyTdIssueRepository
+from .td_issues_infrastructure import SqlAlchemyTdIssueRepository, TdIssueRow
 from .project_cards import OperationSketch, ProjectTechcard, TechcardRevision, TechcardStatus
 from .operation_cards import OperationCardTemplate, OperationRecordEdit, parse_operation_template
 from .template_sheets import TemplateDraft
@@ -295,18 +295,21 @@ class SqlAlchemyTechcardRepository:
             )
         )
 
-    def delete_project(self, project: str) -> tuple[int, int]:
-        """`erpProdDropCards_`: the project's cards go together with their revisions. → (cards, revisions)."""
+    def delete_project(self, project: str) -> tuple[int, int, int]:
+        """Delete owned children before their cards. Return (cards, revisions, td_issues)."""
         lock_project_run(self.session, project)
         ids = list(self.session.scalars(select(ProjectTechcardRow.id).where(ProjectTechcardRow.project == project)))
         if not ids:
-            return 0, 0
+            return 0, 0, 0
+        td_issues = self.session.execute(
+            delete(TdIssueRow).where(TdIssueRow.project_card_id.in_(ids))
+        ).rowcount or 0
         self.session.execute(delete(OperationSketchRow).where(OperationSketchRow.project_card_id.in_(ids)))
         revisions = self.session.execute(
             delete(TechcardRevisionRow).where(TechcardRevisionRow.project_card_id.in_(ids))
         ).rowcount or 0
         cards = self.session.execute(delete(ProjectTechcardRow).where(ProjectTechcardRow.id.in_(ids))).rowcount or 0
-        return cards, revisions
+        return cards, revisions, td_issues
 
     def revisions(self, card_id: UUID) -> list[TechcardRevision]:
         rows = self.session.scalars(
