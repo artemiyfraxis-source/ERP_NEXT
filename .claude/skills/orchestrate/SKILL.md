@@ -59,8 +59,12 @@ send reading-heavy and writing-heavy work to Codex CLI (installed globally, Chat
   the worker's diff and test evidence, then commits in the worktree.
 - Main never grades its own integration: the verifier is a fresh Codex run with the `erp-verifier` card
   (`.claude/agents/erp-verifier.md`) pasted into the brief; the pre-ship review is another fresh run (`cross-review`).
-- Several workers in parallel are fine (Codex quota is large); the limits are file ownership and main's own
-  context spent reading diffs.
+- **The PC is the limit, not the Codex quota** (owner 12.11.2026: four parallel workers each ran the backend
+  suite — `-n auto` = 21 pytest workers × 2 processes on 20 threads — and took 95 % CPU and ~27 GB RAM).
+  At most **2 editing workers** at once. Workers run only the affected test files, single-process:
+  `backend\.venv\Scripts\python -m pytest tests/<files> -q -n 0` and `npx vitest run <files>`; every worker brief
+  forbids `npm run check`, `npm run test:backend` and `-n auto`. The full gate runs **one at a time**, only in
+  the verifier; read-only runs (search, review, plan) don't count toward the limit.
 
 ## Runtime and model policy
 - Claude uses the existing role cards in `.claude/agents/` with their YAML tool/model/isolation defaults.
