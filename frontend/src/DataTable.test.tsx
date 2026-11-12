@@ -23,6 +23,37 @@ function names() {
 
 afterEach(() => { cleanup(); window.localStorage.clear(); vi.restoreAllMocks(); });
 
+it("exports opted-in hidden columns with filtered rows while ordinary hidden columns stay omitted", async () => {
+  let blob: Blob | null = null;
+  vi.spyOn(URL, "createObjectURL").mockImplementation((value) => { blob = value as Blob; return "blob:x"; });
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+  render(<DataTable rows={rows} columns={columns.map((column) => column.key === "supplier" ? { ...column, hidden: true, export: true } : column)}
+    rowKey={(row) => row.id} exportName="test" pageSize={1} />);
+  expect(screen.queryByRole("columnheader", { name: "Поставщик" })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Кабель-Торг" } });
+  fireEvent.click(screen.getByRole("button", { name: "Excel" }));
+  const text = new TextDecoder("utf-16le").decode(await blob!.arrayBuffer());
+  expect(text).toBe("Наименование\tПоставщик\tКол-во\r\nПровод МГТФ 0,12\tКабель-Торг\t2\r\nРазъём Molex\tКабель-Торг\t100\r\n");
+});
+
+it.each([false, true])("group labels receive searched and filtered rows, cards=%s", (cards) => {
+  const groupLabel = vi.fn((name: string, _group: Row[], filtered: Row[]) => `${name}: ${filtered.length}`);
+  render(<DataTable rows={rows} columns={columns} rowKey={(row) => row.id} groupBy={(row) => row.supplier} groupLabel={groupLabel}
+    groupCards cards={cards ? (row) => <span>{row.name}</span> : undefined} />);
+  expect(groupLabel.mock.calls.every(([, , filtered]) => filtered.length === 3)).toBe(true);
+  groupLabel.mockClear();
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Molex" } });
+  expect(groupLabel).toHaveBeenCalled();
+  expect(groupLabel.mock.calls.every(([, , filtered]) => filtered.length === 1 && filtered[0].id === "3")).toBe(true);
+  groupLabel.mockClear();
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
+  fireEvent.click(screen.getByRole("button", { name: "Фильтры" }));
+  groupLabel.mockClear();
+  fireEvent.change(screen.getByRole("combobox", { name: "Фильтр: Поставщик" }), { target: { value: "Чип и Дип" } });
+  expect(groupLabel.mock.calls.every(([, , filtered]) => filtered.length === 1 && filtered[0].id === "1")).toBe(true);
+});
+
 it("keeps grouped cards flat unless groupCards explicitly opts in, with independent header controls", () => {
   const opened = vi.fn();
   const props = { rows, columns, rowKey: (row: Row) => row.id, groupBy: (row: Row) => row.supplier,

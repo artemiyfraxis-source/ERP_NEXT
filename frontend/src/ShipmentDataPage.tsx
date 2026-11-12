@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { failureText, shippingApi, type Principal, type ProjectAddressee, type ProjectForecast, type Shipment, type UpdType } from "./api";
+import { failureText, shippingApi, type Principal, type ProjectAddressee, type ProjectForecast, type Shipment } from "./api";
 import "./shipping.css";
 import { loadPersonalViews, savePersonalView } from "./personalViews";
 import { intakeApi, type IntakeRow } from "./productionIntakeApi";
@@ -16,6 +16,7 @@ import { DispatchCard } from "./DispatchCard";
 import { canAct, hasFullAccess } from "./navigation";
 import { dispatchBoard, kbKey, num, recentShipment, type Tab } from "./intakeStages";
 import { dataRows, type DataRow } from "./dispatchPositionRows";
+import { orderShipmentRows, shipmentGroupKey, shipmentPositions, ShipmentGroupHeader, UpdCell } from "./ShipmentGroupHeader";
 export { dataRows, type DataRow } from "./dispatchPositionRows";
 
 /* «Данные отправок» (владелец 28.10.2026, раздел «Менеджмент»): менеджер (Ульяна Ладутько) вносит данные для
@@ -26,7 +27,7 @@ export { dataRows, type DataRow } from "./dispatchPositionRows";
 
 const ACTIVE = ["Новая", "Собрана", "Упакована"];
 const SENT = ["Отгружена", "Закрыта"];
-const STORAGE_KEY = "shipment-data-positions-v2";
+const STORAGE_KEY = "shipment-data-positions-v3";
 /** Личный вид списка («Таблица» / «Карточки») — на сервере у каждого свой (personalViews.ts), копия в браузере. */
 const VIEW_KEY = "shipment-data.view";
 type ListView = "table" | "cards";
@@ -66,22 +67,6 @@ export function grnText(row: DataRow, source?: IntakeRow): string {
   const line = row.shipment?.lines.find((item) => `${row.shipment!.id}:${item.id}` === row.id) as ({ grns?: string[] | null } & Shipment["lines"][number]) | undefined;
   const list = line?.grns?.length ? line.grns : line?.grn ? [line.grn] : row.shipment ? [] : [...new Set((source?.acts ?? []).map((act) => act.grn).filter(Boolean))];
   return list.length ? list.join(", ") : row.grn;
-}
-
-type UpdSource = { upd_type: UpdType | string | null; upd_number?: string | null; upd_url?: string | null };
-
-/** `link` — файл ссылкой; в карточке-кнопке ссылки нет (кнопка внутри кнопки), файл откроется в окне отправки. */
-function UpdCell({ shipment, link = true }: { shipment: UpdSource | null | undefined; link?: boolean }) {
-  if (!shipment) return <span className="muted">—</span>;
-  if (shipment.upd_type === "БЕЗ УПД") return <span className="muted">Без УПД</span>;
-  const type = updLabel(shipment.upd_type);
-  return <span className="ship-upd-cell">
-    <span className={type ? undefined : "muted"}>{type || "тип не выбран"}</span>
-    {shipment.upd_number ? <strong>№ {shipment.upd_number}</strong> : <span className="tone-warn">нет №</span>}
-    {shipment.upd_url && !link ? <span>файл</span> : shipment.upd_url
-      ? <a href={shipment.upd_url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>файл</a>
-      : <span className="tone-warn">без файла</span>}
-  </span>;
 }
 
 const rowStageLabel = (row: DataRow) => row.stage === null && row.shipment?.status !== "Отменена" ? "Не набрано" : stageLabel(row.stage);
@@ -142,7 +127,6 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
   const projectCell = (row: DataRow) => <span className="ship-data-project">
     <strong>{row.item_index} · {row.name}</strong>
     <span>{row.quantity > 0 || row.shipment ? `${formatNumber(row.quantity)}${NBSP}${row.unit}` : "—"} · {row.grn || "ГРН не присвоен"}</span>
-    {row.shipment && <span className="muted ship-sub">{row.shipment.number}<span className="ship-sub">{row.shipment.status}</span></span>}
   </span>;
 
   const reload = async () => {
@@ -167,8 +151,8 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
   const gapsOf = (row: DataRow) => row.shipment ? dataGaps(row.shipment) : stageGaps(row.stage, cards?.[row.project]?.dispatch_gaps);
   const intakeByKb = useMemo(() => new Map((intake ?? []).map((item) => [kbKey(item), item])), [intake]);
   const sourceOf = (row: DataRow) => intakeByKb.get(kbKey(row));
-  const rows = allRows.filter((row) => (tab === "all" || (row.stage === tab && board.inTab(row, tab) && (tab !== "shipped" || Boolean(row.shipment && recentShipment(row.shipment))))) && (!onlyGaps || (row.shipment ? dataGaps(row.shipment).length > 0
-    : gapsOf(row) === undefined || Boolean(gapsOf(row)?.length) || (deciding(row) && !intake.some((item) => kbKey(item) === kbKey(row) && num(item.pack_permission_remaining) > 0)))));
+  const rows = orderShipmentRows(allRows.filter((row) => (tab === "all" || (row.stage === tab && board.inTab(row, tab) && (tab !== "shipped" || Boolean(row.shipment && recentShipment(row.shipment))))) && (!onlyGaps || (row.shipment ? dataGaps(row.shipment).length > 0
+    : gapsOf(row) === undefined || Boolean(gapsOf(row)?.length) || (deciding(row) && !intake.some((item) => kbKey(item) === kbKey(row) && num(item.pack_permission_remaining) > 0))))));
   const current = open?.id.startsWith("project:") ? null : shipments.find((shipment) => shipment.id === open?.id) ?? null;
   const project = open?.id.startsWith("project:") ? open.row : null;
   const openRow = (row: DataRow) => setOpen({ id: row.shipment?.id ?? `project:${row.project}`, row });
@@ -219,6 +203,7 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     grn: { key: "grn", title: "ГРН партии", value: (row) => grnText(row, sourceOf(row)), width: 128, wrap: true, maxWidth: 200,
       render: (row) => <span className="ship-position-grn">{grnText(row, sourceOf(row)) || "—"}</span> },
     shipmentStatus: { key: "shipmentStatus", title: "Статус отправки", value: (row) => row.shipment?.status ?? "Не создана", width: 130, wrap: true, maxWidth: 160, render: stateCell },
+    shipment: { key: "shipment", title: "Отправка", value: (row) => row.shipment?.number ?? "", export: true },
     carrier: { key: "carrier", title: "ТК", hint: "Транспортная компания", value: (row) => row.shipment?.carrier ?? "", width: 96, wrap: true, maxWidth: 140,
       render: (row) => row.shipment?.carrier || "—" },
     track: { key: "track", title: "Трек", hint: "Трек-номер ТК", value: (row) => row.shipment?.track_number ?? "", width: 120, wrap: true, maxWidth: 160,
@@ -238,20 +223,29 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     production: ["kb", "name", "ordered", "launched", "rest", "term"],
     ready: ["kb", "name", "quantity", "grn", "upd", "shipmentStatus"],
     accepted: ["kb", "name", "quantity", "grn", "upd", "shipmentStatus"],
-    packed: ["kb", "name", "quantity", "grn", "shipmentStatus", "carrier", "track", "pl", "dn", "upd"],
-    to_ship: ["kb", "name", "quantity", "grn", "shipmentStatus", "carrier", "track", "pl", "dn", "upd"],
-    shipped: ["kb", "name", "quantity", "grn", "shipmentStatus", "shippedAt", "carrier", "track", "pl", "dn", "upd"],
-    all: ["kb", "name", "quantity", "status", "grn", "shipmentStatus", "shippedAt", "pl", "dn", "upd", "term"],
+    packed: ["kb", "name", "quantity", "grn"],
+    to_ship: ["kb", "name", "quantity", "grn"],
+    shipped: ["kb", "name", "quantity", "grn"],
+    all: ["kb", "name", "quantity", "status", "grn", "term"],
   };
-  const columns = ["project", ...COLUMNS[tab], "customer", "gaps"].map((key) => ALL[key]);
-  const groupLabel = (name: string, groupRows: DataRow[]) => {
+  const columns = [...COLUMNS[tab], ...Object.keys(ALL).filter((key) => !COLUMNS[tab].includes(key))]
+    .map((key) => ({ ...ALL[key], hidden: !COLUMNS[tab].includes(key) }));
+  const groupLabel = (_key: string, groupRows: DataRow[], filteredRows: DataRow[]) => {
+    const positions = shipmentPositions(filteredRows);
+    const name = groupRows[0].project;
     const source = groupRows.find(deciding) ?? groupRows.find((row) => !row.shipment) ?? groupRows[0];
     const decision = groupRows.find(deciding);
-    const shipmentRows = [...new Map(groupRows.filter((row) => row.shipment).map((row) => [row.shipment!.id, row])).values()];
+    if (source.shipment) {
+      const position = positions.get(`${name}\u0001${source.shipment.id}`)!;
+      return <ShipmentGroupHeader project={name} customer={source.customer} shipment={source.shipment} {...position}
+        quantity={filteredRows.filter((row) => row.project === name && row.shipment?.id === source.shipment!.id).reduce((sum, row) => sum + row.quantity, 0)} onError={setError}
+        onOpenProject={() => setOpen({ id: `project:${name}`, row: source })} onOpenShipment={() => openRow(source)}>
+        <ReadyForecast forecast={forecastOf(source)} />
+      </ShipmentGroupHeader>;
+    }
     return <span className="ship-position-group">
       <button type="button" className="link-button ship-position-group-title" onClick={(event) => { event.stopPropagation(); setOpen({ id: `project:${name}`, row: source }); }}><strong>{name}</strong>{source.customer && ` · ${source.customer}`}</button>
       {!source.shipment && <span className="ship-position-group-data">{dataCell(source)}</span>}
-      {shipmentRows.map((row) => <span className="ship-position-group-data" key={row.shipment!.id} title={row.shipment!.number}>{dataCell(row)}</span>)}
       <ReadyForecast forecast={forecastOf(source)} />
       {decision && decisionCell(decision)}
     </span>;
@@ -266,7 +260,7 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
         <button type="button" key={key} className={tab === key ? "on" : undefined} aria-pressed={tab === key} onClick={() => setTab(key)}>{text} · {board.counts[key]}</button>)}</div>
       {shipments.length >= 200 && <p className="muted">Загружены последние 200 отправок</p>}
       <DataTable key={tab} label="Данные отправок" storageKey={`${STORAGE_KEY}:${tab}`} rows={rows} columns={columns} rowKey={(row) => row.id}
-        groupBy={(row) => row.project} groupLabel={groupLabel} groupCards
+        groupBy={shipmentGroupKey} groupLabel={groupLabel} groupSort groupCards
         onRowClick={openRow} exportName="Данные отправок" searchPlaceholder="Проект, КБ, наименование, ГРН или № отправки"
         searchText={(row) => [row.shipment?.number, row.name, row.grn, row.item_index]}
         cards={view === "cards" ? card : undefined}

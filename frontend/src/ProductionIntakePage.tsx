@@ -20,6 +20,9 @@ import { CreateShipmentWindow, JournalWindow, RegisterGoodWindow } from "./Shipm
 import { updState } from "./ShipmentDocs";
 import { ShipWindow } from "./ShipWindow";
 import { TrackWindow } from "./TrackWindow";
+import { PackingPermissionWindow } from "./PackingPermissionWindow";
+import { ShipmentDataWindow } from "./ShipmentData";
+import { orderShipmentRows, shipmentGroupKey, shipmentPositions, ShipmentGroupHeader, ProjectShippingData } from "./ShipmentGroupHeader";
 import "./productionIntake.css";
 import "./shipping.css";
 
@@ -28,7 +31,7 @@ import "./shipping.css";
    каждом. У каждой вкладки свои колонки и одно своё действие (06.11), и кнопка называет штуки своей строки:
    «В производстве» — «Принять досрочно» (предупреждение, не запрет), «Готово» — «Принять», «Принято» — строка на акт
    приёмки с ГРН и «Упаковать», «Упаковано» — «Трек…» (или «Без УПД…», когда УПД нет совсем), «На отгрузку» — «Отгрузить».
-   Короба, PL/DN и этикетки — в окне упаковки и отгрузки. Данные отправки склад видит только для чтения. */
+   Короба, PL/DN и этикетки — в окне упаковки и отгрузки. Данные отправки вносят менеджер и склад. */
 
 const TABS: ReadonlyArray<readonly [Tab, string]> = [...DISPATCH_STAGES, ["all", "Все"]];
 /** Старые ссылки `?section=shipping&tab=…` и вкладки бывшей «Отгрузки» ведут в свои шаги. */
@@ -37,18 +40,18 @@ const DELIVERY_COLUMNS = ["receiver", "delivery", "carrier", "address", "phone",
 type DeliveryField = typeof DELIVERY_COLUMNS[number];
 const DELIVERY_TITLES: Record<DeliveryField, string> = { receiver: "Получатель", delivery: "Способ доставки", carrier: "Перевозчик", address: "Адрес", phone: "Телефон", warehouseNote: "Комментарий для склада" };
 const STAGE_TONE: Record<DispatchStage, Tone> = { waiting: "neutral", production: "info", ready: "info", accepted: "warning", packed: "warning", to_ship: "info", shipped: "success" };
-/** Колонки вкладки: `shown` — видны сразу, `more` — в «Колонках» (данные отправки — только для чтения). «Проект» — скрытая
+/** Колонки вкладки: `shown` — видны сразу, `more` — в «Колонках» (общие данные отправки — в заголовке). «Проект» — скрытая
  *  колонка поиска и группировки. Владелец 29.10: «зачем лишняя инфа, кнопки 2»; аудит 06.11 — колонки снова свои. */
 const TAB_COLUMNS: Record<Tab, { shown: string[]; more: string[] }> = {
   waiting: { shown: ["kb", "name", "needed"], more: [...DELIVERY_COLUMNS, "upd"] },
   production: { shown: ["kb", "name", "needed", "launched", "left", "tasks", "action"], more: [...DELIVERY_COLUMNS, "upd"] },
   ready: { shown: ["kb", "name", "needed", "tasks", "action"], more: ["launched", "left", ...DELIVERY_COLUMNS, "upd"] },
   accepted: { shown: ["kb", "name", "grn", "received", "quantity", "action"], more: ["needed", "shipment", "upd", ...DELIVERY_COLUMNS] },
-  packed: { shown: ["kb", "name", "shipment", "quantity", "track"], more: ["grn", "docs", "upd", ...DELIVERY_COLUMNS] },
-  to_ship: { shown: ["kb", "name", "shipment", "quantity", "track", "action"], more: ["grn", "docs", "upd", ...DELIVERY_COLUMNS] },
-  shipped: { shown: ["kb", "name", "shipment", "quantity", "track", "shippedAt", "grn"], more: ["docs", "upd", ...DELIVERY_COLUMNS] },
-  all: { shown: ["kb", "name", "stage", "quantity", "needed", "launched", "left", "grn", "received", "shipment", "track", "shippedAt", "action"],
-    more: ["tasks", "docs", "upd", ...DELIVERY_COLUMNS] },
+  packed: { shown: ["kb", "name", "quantity", "grn", "action"], more: ["shipment", "track", "shippedAt", "docs", "upd", ...DELIVERY_COLUMNS] },
+  to_ship: { shown: ["kb", "name", "quantity", "grn", "action"], more: ["shipment", "track", "shippedAt", "docs", "upd", ...DELIVERY_COLUMNS] },
+  shipped: { shown: ["kb", "name", "quantity", "grn"], more: ["shipment", "track", "shippedAt", "docs", "upd", ...DELIVERY_COLUMNS] },
+  all: { shown: ["kb", "name", "stage", "quantity", "needed", "launched", "left", "grn", "received", "action"],
+    more: ["shipment", "track", "shippedAt", "tasks", "docs", "upd", ...DELIVERY_COLUMNS] },
 };
 const ACTION_TITLE: Partial<Record<Tab, string>> = { production: "Принять досрочно", ready: "Можно принять", accepted: "Упаковать", to_ship: "Отгрузка", all: "Действие" };
 const QUANTITY_TITLE: Partial<Record<Tab, string>> = { packed: "Упаковано", to_ship: "Упаковано", shipped: "Отгружено" };
@@ -102,6 +105,8 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const [header, setHeader] = useState<"journal" | "good" | "request" | null>(fromUrl.current.journal ? "journal" : null);
   const [label, setLabel] = useState<{ grn: string; result: PrintResult | null; error: string; busy: boolean } | null>(null);
   const [projectData, setProjectData] = useState<string | null>(null);
+  const [permissionProject, setPermissionProject] = useState<string | null>(null);
+  const [shipmentData, setShipmentData] = useState<string | null>(null);
 
   async function reload() {
     try {
@@ -129,7 +134,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const piecesOf = (row: IntakeRow) => board.pieces.get(kbKey(row)) ?? stagePieces(row, shipments);
   const lines = useMemo(() => {
     const byKb = new Map(board.rows.map((row) => [kbKey(row), row]));
-    return dataRows(shipments, rows)
+    return orderShipmentRows(dataRows(shipments, rows)
       .filter((position) => tab === "all" || position.stage === tab && (tab !== "shipped" || Boolean(position.shipment && recentShipment(position.shipment))))
       .flatMap((position): IntakeLine[] => {
         const kb = byKb.get(kbKey(position))!;
@@ -143,7 +148,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
           allowed = round2(allowed - packNow);
           return { ...base, id: `${position.id}:${share.act?.grn ?? index}`, quantity: share.quantity, act: share.act ?? undefined, grns: share.grn ? [share.grn] : [], packNow };
         });
-      });
+      }));
   }, [board, rows, shipments, tab]);
   const head = useMemo(() => {
     const byProject: Record<string, IntakeRow> = {};
@@ -153,7 +158,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const addresseeByProject = useMemo(() => new Map(addressees.map((card) => [card.project.trim().toUpperCase(), card])), [addressees]);
   const cardOf = (row: Pick<IntakeRow, "project">) => addresseeByProject.get(row.project.trim().toUpperCase());
 
-  /* Данные отправки — только для чтения: строки отправки — свои, остальные — карточка проекта. */
+  /* Строки отправки показывают её данные, остальные — карточку проекта. */
   const deliveryOf = (line: IntakeLine): Array<ProjectAddressee | DispatchShipment> => line.shipment ? [line.shipment] : [cardOf(line)].filter((card): card is ProjectAddressee => Boolean(card));
   const contactText = (line: IntakeLine, value: string) => line.shipment && value.trim().toLowerCase() === "самовывоз" ? "" : value;
   const deliveryText = (line: IntakeLine, field: DeliveryField, data: ProjectAddressee | DispatchShipment): string => {
@@ -239,7 +244,11 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
         aria-label={`Упаковать ${who(line)}: ${line.quantity}`} onClick={() => setOpened({ kind: "pack", project: line.project })}>Упаковать · {formatNumber(line.quantity)}</button>;
       if (line.packNow > 0) return <button type="button" className="intake-take-btn" title={`Разрешено упаковать по КБ: ${permittedPack(line.kb)}`}
         aria-label={`Упаковать ${who(line)}: ${line.packNow}`} onClick={() => setOpened({ kind: "pack", project: line.project })}>Упаковать · {formatNumber(line.packNow)}</button>;
-      return <span className="tone-warn" title="Упаковать можно после разрешения менеджера «упаковывать»">Нужно разрешение</span>;
+      return <span className="intake-permission-cell"><span className="tone-warn">Нужно разрешение</span>
+        <small>разрешено {formatNumber(num(line.kb.pack_permission_quantity))} · упаковано {formatNumber(num(line.kb.packed))} · на складе {formatNumber(line.quantity)}</small>
+        {canManage && <button type="button" className="secondary small" aria-label={`Разрешить упаковку ${line.project} ${line.item_index}`}
+          onClick={() => setPermissionProject(line.project)}>Разрешить…</button>}
+      </span>;
     }
     if (line.stage === "packed") return trackAction(line) ?? dash;
     if (line.stage === "to_ship" && line.shipment && canDispatch && readyToShip(line.shipment)) return <button type="button" className="primary small intake-print"
@@ -270,7 +279,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
           disabled={Boolean(label?.busy)} aria-busy={label?.busy && label.grn === grn} onClick={() => void printLabel(grn)}>Печать</button>}</span>)}</span>;
     } },
     { key: "received", title: "Дата приёмки", width: 96, value: (line) => line.act?.received_at ?? "", render: (line) => line.act ? formatDay(line.act.received_at) : dash },
-    { key: "shipment", title: "Отправка", width: 130, maxWidth: 160, value: (line) => line.shipment ? `${line.shipment.number} ${line.shipment.status}` : "",
+    { key: "shipment", title: "Отправка", export: true, width: 130, maxWidth: 160, value: (line) => line.shipment ? `${line.shipment.number} ${line.shipment.status}` : "",
       render: (line) => line.shipment ? <span title={line.shipment.status}>{line.shipment.number}</span> : dash },
     { key: "track", title: "Трек", wrap: true, minWidth: 84, maxWidth: 180, value: (line) => trackText(line.shipment, line), render: (line) => {
       const text = trackText(line.shipment, line);
@@ -300,7 +309,18 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const visibleColumns = ["project", ...shown, ...more].flatMap((key) => columns.filter((column) => column.key === key))
     .map((column) => ({ ...column, hidden: column.key === "project" || !shown.includes(column.key) }));
 
-  const groupLabel = (project: string, groupRows: IntakeLine[]) => {
+  const groupLabel = (_key: string, groupRows: IntakeLine[], filteredRows: IntakeLine[]) => {
+    const positions = shipmentPositions(filteredRows);
+    const project = groupRows[0].project;
+    const shipment = groupRows[0].shipment;
+    if (shipment) {
+      const position = positions.get(`${project}\u0001${shipment.id}`)!;
+      return <ShipmentGroupHeader project={project} customer={head[project]?.customer || shipment.customer} shipment={shipment} {...position}
+        quantity={filteredRows.filter((line) => line.project === project && line.shipment?.id === shipment.id).reduce((sum, line) => sum + line.quantity, 0)} onError={setError} onOpenShipment={() => setShipmentData(shipment.id)}>
+        {tab === "packed" && canDispatch && <button type="button" className="secondary small"
+          onClick={(event) => { event.stopPropagation(); setOpened({ kind: "pack", project }); }}>Короба и PL/DN</button>}
+      </ShipmentGroupHeader>;
+    }
     const title = [project, head[project]?.customer].filter(Boolean).join(" · ");
     // «Принять всё» — только в «Готово» (готовое) и «Все» (всё, что можно принять); КБ — один раз.
     const bulk = tab === "ready" || tab === "all" ? [...new Map(groupRows.filter((line) => tab === "ready" ? line.stage === "ready" : num(line.kb.remaining) > 0)
@@ -308,10 +328,9 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     const quantity = (row: IntakeRow) => tab === "ready" ? piecesOf(row).ready : num(row.remaining);
     const total = round2(bulk.reduce((sum, row) => sum + quantity(row), 0));
     return <span className="ship-position-group"><span className="ship-position-group-title">{title}</span>
-      {tab === "accepted" && <button type="button" className="secondary small" title={canManage ? undefined : "Данные вносит менеджер; здесь — только просмотр"}
-        onClick={(event) => { event.stopPropagation(); setProjectData(project); }}>Данные отправки</button>}
-      {tab === "packed" && canDispatch && <button type="button" className="secondary small" title="Короба, упаковочный лист (PL), отгрузочная ведомость (DN) и этикетки"
-        onClick={(event) => { event.stopPropagation(); setOpened({ kind: "pack", project }); }}>Короба и PL/DN</button>}
+      <ProjectShippingData data={cardOf(groupRows[0])} />
+      <button type="button" className="secondary small" aria-label={`Изменить данные отправки ${project}`}
+        onClick={(event) => { event.stopPropagation(); setProjectData(project); }}>Изменить</button>
       {canWarehouse && bulk.length > 1 && <button type="button" className="primary small" onClick={(event) => { event.stopPropagation(); accept(bulk, quantity); }}>
         Принять всё: {bulk.length} КБ · {formatNumber(total)} шт</button>}
     </span>;
@@ -337,9 +356,9 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
         <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? "on" : undefined} onClick={() => changeTab(key)}
           title="Число — КБ в шаге; во «Все» КБ считается один раз">
           {text}<span className="page-count"> {board.counts[key]}</span></button>)}</div>
-      <DataTable key={tab} label="Приёмка с производства" storageKey={`production-intake:v3:${tab}`} rows={lines} columns={visibleColumns} rowKey={(line) => line.id}
-        groupBy={(line) => line.project} groupLabel={groupLabel} exportName="Приёмка с производства"
-        initialQuery={urlParam("q")} searchPlaceholder="Проект, КБ, наименование, ГРН или задание"
+      <DataTable key={tab} label="Приёмка с производства" storageKey={`production-intake:v4:${tab}`} rows={lines} columns={visibleColumns} rowKey={(line) => line.id}
+        groupBy={shipmentGroupKey} groupLabel={groupLabel} groupSort exportName="Приёмка с производства"
+        searchText={(line) => [line.shipment?.number]} initialQuery={urlParam("q")} searchPlaceholder="Проект, КБ, наименование, ГРН или задание"
         rowClassName={(line) => tab === "all" && !(line.stage && hasWork(line.stage, line.kb, piecesOf(line.kb))) ? "ship-line-off" : ""}
         emptyText={board.rows.length ? EMPTY[tab] : EMPTY.all} />
       {label && <div className="intake-print-status"><strong>Этикетка {label.grn}</strong><PrintOutcome result={label.result} error={label.error} /></div>}
@@ -352,7 +371,10 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     {header === "journal" && <JournalWindow shipments={shipments} selectedShipment={shipments.find((shipment) => shipment.id === urlParam("shipment"))} initialQuery={urlParam("q")} close={() => setHeader(null)} />}
     {header === "good" && <RegisterGoodWindow reload={reload} close={() => setHeader(null)} />}
     {header === "request" && <CreateShipmentWindow reload={reload} close={() => setHeader(null)} />}
-    {/* Данные отправки проекта правит менеджер на своём экране; складу — только просмотр (аудит 06.11). */}
-    {projectData && <DispatchCard project={projectData} customer={head[projectData]?.customer} stage="accepted" canEdit={canManage} onSaved={() => void reload()} close={() => setProjectData(null)} />}
+    {permissionProject && <PackingPermissionWindow project={permissionProject} editable={canManage} close={() => setPermissionProject(null)} saved={reload} />}
+    {shipmentData && shipments.find((shipment) => shipment.id === shipmentData) && <ShipmentDataWindow
+      key={shipmentData} shipment={shipments.find((shipment) => shipment.id === shipmentData)!} canEdit={canDispatch}
+      close={() => setShipmentData(null)} onSaved={reload} />}
+    {projectData && <DispatchCard project={projectData} customer={head[projectData]?.customer} stage={tab === "all" ? undefined : tab} canEdit={canDispatch} onSaved={() => void reload()} close={() => setProjectData(null)} />}
   </section>;
 }

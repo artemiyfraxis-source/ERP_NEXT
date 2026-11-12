@@ -15,7 +15,7 @@ import { StatusChip as SharedChip } from "./StatusChip";
 import "./shipping.css";
 
 /* Карточка отправки (владелец 29.10.2026: всё на «Приёмке с производства», экран «Отгрузка» убран) — открывается в
-   окнах «Упаковано» и «Отгружено». Набор, PL/DN и короба, этикетки, УПД и трек, «Отгрузить», «Закрыть», откат.
+   окнах «Упаковано» и «Отгружено». Набор, PL/DN и короба, этикетки, УПД и трек, «Отгрузить», откат.
    Отгрузить — когда упакована и есть УПД, ТК и трек (`ready_to_ship` сервера); без УПД — по ПИН уполномоченного. */
 
 /** Сообщение после действия: строка — успех, `{ warning }` — сделано не всё (показывается как ошибка). */
@@ -165,7 +165,7 @@ export function useShipmentPrint(shipment: Shipment) {
 
 export interface CardRights { canManage: boolean; canWarehouse: boolean; canEdit: boolean; canUnship: boolean }
 
-/** Отправка целиком: строки, набор и возврат, PL/DN и короба, этикетки, УПД и трек, отгрузка, закрытие, откат. */
+/** Отправка целиком: строки, набор и возврат, PL/DN и короба, этикетки, УПД и трек, отгрузка, откат. */
 export function ShipmentCard({ shipment, rights, busy, mutate, openData }: {
   shipment: DispatchShipment; rights: CardRights; busy: string; mutate: Mutate; openData: () => void;
 }) {
@@ -175,7 +175,7 @@ export function ShipmentCard({ shipment, rights, busy, mutate, openData }: {
   const [layout, setLayout] = useState(false);
   const [rollback, setRollback] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
-  const action = (name: "pick" | "pack" | "ship" | "close" | "cancel", message: string | ((result: unknown) => string)) => mutate(`${name}:${shipment.id}`, () => shippingApi.action(shipment.id, name, shipment.version), message);
+  const action = (name: "pick" | "pack" | "ship" | "cancel", message: string | ((result: unknown) => string)) => mutate(`${name}:${shipment.id}`, () => shippingApi.action(shipment.id, name, shipment.version), message);
   const got = shipment.lines.some((line) => num(line.picked) > 0);
   const open = !["Закрыта", "Отменена"].includes(shipment.status);
   const shipped = ["Отгружена", "Закрыта"].includes(shipment.status);
@@ -236,12 +236,11 @@ export function ShipmentCard({ shipment, rights, busy, mutate, openData }: {
       {canWarehouse && got && SHIPPABLE.includes(shipment.status) && <button type="button" className="primary" disabled={disabled || !canShip}
         title={canShip ? undefined : `Отгрузить можно, когда упаковано и есть УПД, ТК и трек. Не хватает: ${shipGaps.join(", ") || "данных"}`} onClick={ship}>Отгрузить</button>}
       {canWarehouse && onlyUpdBlocks(shipment) && <button type="button" className="secondary" disabled={disabled} onClick={() => setApproving(true)}>Разрешить без УПД</button>}
-      {canWarehouse && shipment.status === "Отгружена" && <button type="button" className="primary" disabled={disabled} onClick={() => void action("close", `Отгрузка закрыта: ${shipment.number}`)}>Закрыть</button>}
       {canWarehouse && shipment.status === "Новая" && <button type="button" className="secondary" disabled={disabled} onClick={() => void action("pick", "Заявка набрана из доступного остатка")}>Набрать со склада</button>}
       {shipment.pl_number && got && <>{canPrintDocs && <><button type="button" className="secondary" onClick={() => void print("pl")}>Печать PL</button><button type="button" className="secondary" disabled={dnGaps.length > 0} title={dnGaps.length ? `DN печатается, когда внесены данные. Не хватает: ${dnGaps.join(", ")}` : undefined} onClick={() => void print("dn")}>Печать DN</button></>}<button type="button" className="secondary" onClick={() => void printLabels()}>Печать этикеток</button></>}
       {canEdit && got && (active || (shipment.pl_number && shipment.status === "Отгружена")) && !layout && <button type="button" className="secondary" disabled={disabled} onClick={() => setLayout(true)}>{shipment.pl_number ? "Перевыпустить" : "Сформировать отгрузочные"}</button>}
       {canEdit && open && <button type="button" className="secondary" disabled={disabled} onClick={openData}>Данные отправки</button>}
-      {canManage && open && !withoutUpd(shipment) && <label className="secondary file-button">Загрузить УПД<input type="file" accept=".pdf,image/*" aria-label={`Загрузить УПД ${shipment.number}`} hidden onChange={(event) => { uploadUpd(event.target.files?.[0]); event.target.value = ""; }} /></label>}
+      {canEdit && open && !withoutUpd(shipment) && <label className="secondary file-button">Загрузить УПД<input type="file" accept=".pdf,image/*" aria-label={`Загрузить УПД ${shipment.number}`} hidden onChange={(event) => { uploadUpd(event.target.files?.[0]); event.target.value = ""; }} /></label>}
       <span className="ship-actions-end">
         {canUnship && shipped && rollback === null && <button type="button" className="danger small" disabled={disabled} onClick={() => setRollback("")}>Откатить отгрузку</button>}
         {canManage && active && <button type="button" className="danger small" disabled={disabled} onClick={() => { if (window.confirm(`Отменить заявку ${shipment.number}? Набранное вернётся на склад.`)) void action("cancel", "Заявка отменена, набранное вернулось на склад"); }}>Отменить заявку</button>}
@@ -253,15 +252,20 @@ export function ShipmentCard({ shipment, rights, busy, mutate, openData }: {
       <button type="button" className="secondary" onClick={() => setRollback(null)}>Не откатывать</button>
     </div>}
     {layout && <BoxesEditor shipment={shipment} busy={busy} mutate={mutate} onDone={() => setLayout(false)} />}
-    {/* УПД, получатель и адрес вносит менеджер (Ульяна); склад видит их только для чтения — трек вписывает «Трек…» в строке. */}
-    {canManage && open && <div className="ship-docs">
+    {/* УПД, получателя и адрес вносят менеджер и склад; трек доступен также через «Трек…» в строке. */}
+    {canEdit && open && <div className="ship-docs">
       <label>Тип УПД<select aria-label={`Тип УПД ${shipment.number}`} value={documents.upd_type} onChange={(event) => setDocuments({ ...documents, upd_type: event.target.value })}><option value="">{`из карточки проекта${shipment.inherited.includes("upd_type") && shipment.upd_type ? `: ${updLabel(shipment.upd_type)}` : ""}`}</option>{UPD_TYPES.map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
       <label>№ УПД<input value={documents.upd_number} onChange={(event) => setDocuments({ ...documents, upd_number: event.target.value })} /></label>
       <label>Дата УПД<input type="date" value={documents.upd_date} onChange={(event) => setDocuments({ ...documents, upd_date: event.target.value })} /></label>
       <label>Трек-номер<input aria-label={`Трек-номер ${shipment.number}`} disabled={!trackOpen} title={trackOpen ? undefined : "Трек вносится, когда есть УПД и ТК"} value={documents.track_number} onChange={(event) => setDocuments({ ...documents, track_number: event.target.value })} /></label>
       <button type="button" className="secondary" disabled={disabled} onClick={() => void mutate(`docs:${shipment.id}`, () => shippingApi.documents(shipment.id, { version: shipment.version, ...documents, upd_url: shipment.upd_url, upd_type: documents.upd_type || null, upd_date: documents.upd_date || null }), "Данные УПД и доставки сохранены")}>Сохранить документы</button>
     </div>}
-    {canManage && open && <details className="ship-more"><summary>Получатель и адрес этой отправки</summary><ShipmentHead shipment={shipment} busy={busy} mutate={mutate} /></details>}
+    <details className="ship-more"><summary>Получатель и адрес этой отправки</summary>
+      {canEdit && active
+        ? <ShipmentHead shipment={shipment} busy={busy} mutate={mutate} />
+        : <dl className="ship-form">{[...HEAD_FIELDS, ["carrier", "ТК"], ["terms", "Условия"], ["deadline", "Срок отгрузки"], ["note", "Комментарий"]].map(([key, title]) =>
+          <div key={key} className={key === "shipping_point" || key === "note" ? "ship-span2" : undefined}><dt>{title}</dt><dd>{key === "deadline" ? formatDate(shipment.deadline) || "—" : key === "terms" ? termsText(shipment.terms) || "—" : String(shipment[key as keyof Shipment] || "—")}</dd></div>)}</dl>}
+    </details>
     {approving && <NoUpdWindow shipment={shipment} close={() => setApproving(false)} mutate={mutate} />}
   </article>;
 }

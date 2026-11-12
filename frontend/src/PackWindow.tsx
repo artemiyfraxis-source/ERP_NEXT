@@ -10,7 +10,7 @@ import { ShipmentDataWindow } from "./ShipmentData";
 /* Окно «Упаковано» (владелец 29.10.2026, по аналогии с приёмкой — число в колонке открывает окно): принятое проекта —
    КБ и сколько упаковать; упаковывать можно только после решения менеджера «упаковывать». Ниже — отправки проекта на
    упаковке: короба и PL/DN («Сформировать», «Перевыпустить»), печать PL/DN и этикеток коробов, «Вернуть на склад» — их в
-   строках таблицы нет (06.11). Данные отправки (адрес, получатель, ТК, УПД) правит менеджер; складу — только просмотр. */
+   строках таблицы нет (06.11). Данные отправки (адрес, получатель, ТК, УПД) вносят менеджер и склад. */
 
 export function PackWindow({ project, rows, shipments, rights, reload, close }: {
   project: string; rows: IntakeRow[]; shipments: DispatchShipment[]; rights: CardRights;
@@ -27,7 +27,7 @@ export function PackWindow({ project, rows, shipments, rights, reload, close }: 
     <section className="panel intake-window intake-pack">
       <header className="page-head"><h2>Упаковка · {project}</h2><button type="button" className="secondary small" onClick={close}>Закрыть</button></header>
       <Banners error={error} notice={notice} />
-      {dataShipment && <ShipmentDataWindow key={dataShipment.id} shipment={dataShipment} canEdit={rights.canManage} close={() => setDataFor(null)} onSaved={reload} />}
+      {dataShipment && <ShipmentDataWindow key={dataShipment.id} shipment={dataShipment} canEdit={rights.canManage || rights.canWarehouse} close={() => setDataFor(null)} onSaved={reload} />}
       {candidates.length > 0
         ? <PackForm project={project} candidates={candidates} rights={rights} busy={busy} mutate={mutate} reload={reload} />
         : <div className="empty">Принятого и не упакованного по проекту нет.</div>}

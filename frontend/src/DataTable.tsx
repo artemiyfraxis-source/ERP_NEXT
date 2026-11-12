@@ -31,6 +31,8 @@ export interface DataColumn<T> {
   numeric?: boolean;
   /** Колонка скрыта, пока пользователь её не включит. */
   hidden?: boolean;
+  /** Колонка попадает в Excel, даже когда скрыта (остальные — как видны). */
+  export?: boolean;
   /** Длинный текст с переносом. */
   wrap?: boolean;
   /** Ширина колонки (px) — чтобы несколько таблиц одной страницы шли колонка в колонку. */
@@ -114,7 +116,8 @@ export interface DataTableProps<T> {
   allLast?: boolean;
   groupBy?: (row: T) => string;
   /** Подпись заголовка группы (по умолчанию — её имя); например, заказ и поставщик. */
-  groupLabel?: (name: string, rows: T[]) => ReactNode;
+  /** Третий аргумент — все строки после поиска и фильтров, до разбиения на страницы. */
+  groupLabel?: (name: string, rows: T[], filteredRows: T[]) => ReactNode;
   /** Opt in to project/group headers above cards; existing card consumers keep their flat layout. */
   groupCards?: boolean;
   /** Заголовок группы сворачивает её строки (по умолчанию группы всегда раскрыты). */
@@ -698,7 +701,7 @@ export function DataTable<T>({
   }
 
   function download() {
-    const blob = new Blob([utf16Bytes(tableText(filtered, visible))], { type: "text/tab-separated-values" });
+    const blob = new Blob([utf16Bytes(tableText(filtered, arranged.filter((column) => column.export || visible.includes(column))))], { type: "text/tab-separated-values" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -1593,7 +1596,7 @@ export function DataTable<T>({
         {groups.map(([name, groupRows], index) => {
           const startAt = rowsBefore;
           rowsBefore += groupRows.length;
-          const title = (groupLabel ? groupLabel(name, groupRows) : name) || "—";
+          const title = (groupLabel ? groupLabel(name, groupRows, filtered) : name) || "—";
           const folded = isFolded(name);
           const picked = selectable ? groupRows.filter((row) => selected.has(rowKey(row))).length : 0;
           const caption = <>{title} <span className="page-count">{blockTotals.get(name) ?? groupRows.length}</span>{picked > 0 && <span className="group-picked">выбрано {picked}</span>}</>;
@@ -1662,7 +1665,7 @@ export function DataTable<T>({
         {filtered.length > shown.length && <LoadMore token={shown.length} onMore={() => setLimit((current) => current + pageSize)} />}
       </> : cards ? <>
         {shown.length ? groupCards && grouping ? groups.map(([name, groupRows]) => <div className="dt-card-group" key={name}>
-          <div className="dt-card-group-title">{groupLabel ? groupLabel(name, groupRows) : name} <span className="page-count">{groupRows.length}</span></div>
+          <div className="dt-card-group-title">{groupLabel ? groupLabel(name, groupRows, filtered) : name} <span className="page-count">{groupRows.length}</span></div>
           <div className="dt-card-grid">{groupRows.map((row) => <Fragment key={rowKey(row)}>{cards(row)}</Fragment>)}</div>
         </div>) : <div className="dt-card-grid">{shown.map((row) => <Fragment key={rowKey(row)}>{cards(row)}</Fragment>)}</div>
           : <div className="empty">{loading ? "Загрузка…" : emptyText}</div>}
@@ -1691,7 +1694,7 @@ export function DataTable<T>({
                       })()}
                       {(() => {
                         const picked = selectable ? groupRows.filter((row) => selected.has(rowKey(row))).length : 0;
-                        const title = <><strong>{(groupLabel ? groupLabel(name, groupRows) : name) || "—"}</strong> · {groupRows.length}{picked > 0 && <span className="group-picked"> · выбрано {picked}</span>}</>;
+                        const title = <><strong>{(groupLabel ? groupLabel(name, groupRows, filtered) : name) || "—"}</strong> · {groupRows.length}{picked > 0 && <span className="group-picked"> · выбрано {picked}</span>}</>;
                         return collapsibleGroups
                           ? <button type="button" aria-expanded={!isFolded(name)} onClick={() => toggleCollapsed(name)} style={{ all: "unset", cursor: "pointer" }}>{isFolded(name) ? "▸" : "▾"} {title}</button>
                           : title;

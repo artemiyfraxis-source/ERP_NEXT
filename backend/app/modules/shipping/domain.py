@@ -872,9 +872,9 @@ class Shipment:
             upd_date=upd_date, upd_url=str(upd_url or "").strip(),
             track_number=str(track_number or "").strip(), inherited=inherited,
         )._followed(card)
-        if self.status == ShipmentStatus.SHIPPED and edited.track_number != self.track_number:
+        if self.status == ShipmentStatus.SHIPPED and filled(self.track_number) and edited.track_number != self.track_number:
             raise ShippingValidationError("Трек отгруженной отправки меняют через исправление истории")
-        if edited.track_number and edited.track_number != self.track_number:
+        if self.status != ShipmentStatus.SHIPPED and edited.track_number and edited.track_number != self.track_number:
             _check_track(edited)
         return replace(edited, version=self.version + 1)
 
