@@ -59,7 +59,7 @@ export function UpdCell({ shipment, link = true }: { shipment?: UpdSource | null
   </span>;
 }
 
-export function ProjectShippingData({ data }: { data?: ProjectAddressee }) {
+export function ProjectShippingData({ data, updRequired = true }: { data?: ProjectAddressee; updRequired?: boolean }) {
   const pickup = isPickup(data?.carrier ?? "") || data?.terms === "САМОВЫВОЗ";
   return <>
     <ShippingValue label="Получатель" value={data?.receiver} />
@@ -67,7 +67,7 @@ export function ProjectShippingData({ data }: { data?: ProjectAddressee }) {
     {pickup ? <span>Самовывоз</span> : <ShippingValue label="Адрес" value={data?.shipping_point} />}
     <ShippingValue label="Способ доставки" value={pickup ? "Самовывоз" : termsText(data?.terms)} />
     {!pickup && <ShippingValue label="ТК" value={data?.carrier} />}
-    <span className="ship-group-field">УПД: <UpdCell shipment={data} /></span>
+    <span className="ship-group-field">УПД: {updRequired ? <UpdCell shipment={data} /> : <span className="muted">{updLabel(data?.upd_type) || "—"}</span>}</span>
   </>;
 }
 
