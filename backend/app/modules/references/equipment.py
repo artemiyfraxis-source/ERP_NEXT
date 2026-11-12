@@ -142,7 +142,7 @@ def next_model_inventory(equipment_type: str, existing: Iterable[Mapping[str, st
     if not prefix:
         return ""  # Only the owner can supply an applicator code.
     used = [parsed.base for fields in rows
-            if (parsed := parse_inventory(field(fields, INV_KEY))) and parsed.prefix == prefix]
+            if (parsed := parse_inventory(field(fields, INV_KEY, "inventoryNumber"))) and parsed.prefix == prefix]
     return f"{prefix}{max(used, default=0) + 1:03d}"
 
 
@@ -155,7 +155,7 @@ def next_instance_inventory(source_inventory: str, existing: Iterable[Mapping[st
     if source.prefix in {"A", "M", "S"}:
         raise ReferenceValidationError("Для нового аппликатора укажите его код в базе терминалов")
     taken = [parsed.instance for fields in existing
-             if (parsed := parse_inventory(field(fields, INV_KEY))) and parsed.prefix == source.prefix
+             if (parsed := parse_inventory(field(fields, INV_KEY, "inventoryNumber"))) and parsed.prefix == source.prefix
              and parsed.base == source.base]
     return f"{source.prefix}{source.base_text}.{max([1, *taken]) + 1}"
 
@@ -187,29 +187,28 @@ def prepare_inventory(
     old = previous or {}
     kind = type_of(result)
     code = normalize_code(result.get(CODE_KEY, ""))
-    inv = field(result, INV_KEY)
-    if kind == APPLICATOR_TYPE:
+    inv = field(result, INV_KEY, "inventoryNumber")
+    # Preserve legacy numbers on ordinary saves; a repeated import cannot undo an already coded number.
+    if kind == APPLICATOR_TYPE and (
+        creating or inv_key(code) != inv_key(field(old, CODE_KEY))
+        or (code and field(old, INV_KEY, "inventoryNumber") == code)
+    ):
         if not code:
             raise ReferenceValidationError("Укажите код аппликатора в базе терминалов — это его инв. номер")
         if not re.fullmatch(r"[AMS]\d{1,3}", code):
             raise ReferenceValidationError("Код аппликатора — M, S или A и номер, например M10, S3 или A1")
         inv = code
-    elif kind == MEASURING_TYPE and (
-        not (parsed := parse_inventory(inv)) or parsed.prefix != MEASURING_PREFIX
-    ):
-        previous_inv = field(old, INV_KEY)
-        previous_parsed = parse_inventory(previous_inv)
-        inv = (previous_inv if previous_parsed and previous_parsed.prefix == MEASURING_PREFIX
-               else next_model_inventory(kind, [item[1] for item in siblings]))
     elif not inv and creating:
-        inv = next_model_inventory(type_of(result), [item[1] for item in siblings])
+        inv = next_model_inventory(kind, [item[1] for item in siblings])
     if inv:
         result[INV_KEY] = inv
-        if (creating or inv_key(inv) != inv_key(field(old, INV_KEY))) and any(inv_key(field(item[1], INV_KEY)) == inv_key(inv) for item in siblings):
+        if (creating or inv_key(inv) != inv_key(field(old, INV_KEY, "inventoryNumber"))) and any(
+            inv_key(field(item[1], INV_KEY, "inventoryNumber")) == inv_key(inv) for item in siblings
+        ):
             raise DuplicateInventoryError(f"Инв. номер {inv} уже есть в справочнике — возьмите другой")
     if code:
         result[CODE_KEY] = code
-        owner = next((field(item[1], INV_KEY) or name_of(item[1]) for item in siblings
+        owner = next((field(item[1], INV_KEY, "inventoryNumber") or name_of(item[1]) for item in siblings
                       if inv_key(field(item[1], CODE_KEY)) == inv_key(code)), None)
         if owner is not None:
             raise DuplicateInventoryError(f"Код {code} уже у записи {owner} — у каждого инструмента свой код")
@@ -233,7 +232,7 @@ def prepare_equipment(
     if creating and not field(result, BASE_KEY):
         result[BASE_KEY] = base_value(result)
     tool = field(result, TOOL_KEY)
-    if tool and not any(inv_key(field(item[1], INV_KEY)) == inv_key(tool) for item in siblings):
+    if tool and not any(inv_key(field(item[1], INV_KEY, "inventoryNumber")) == inv_key(tool) for item in siblings):
         raise ReferenceValidationError(f"Инструмент {tool} не найден среди оборудования")
     return result
 

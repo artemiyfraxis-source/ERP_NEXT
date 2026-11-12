@@ -255,7 +255,7 @@ def test_bulk_import_numbering_dry_run_apply_and_refusals(references_api):
             assert _rows(references_api, "ob") == before
     assert reports[0]["created"] == reports[1]["created"] and reports[0]["refused"] == reports[1]["refused"]
     after = _rows(references_api, "ob")
-    assert set(after) == {"ОБ.009", "СИ.004", "M10", "СИ.005", "СИ.006", "ОБ.010", "ОБ.011"}
+    assert set(after) == {"ОБ.009", "СИ.004", "M10", "ОБ.107", "СИ.005", "ОБ.108", "ОБ.109"}
     assert after["M10"]["fields"]["Код в базе терминалов"] == "M10"
     found = references_api.get(BASE, params={"tab": "ob", "query": "M10"}).json()["records"]
     assert any(item["id"] == after["M10"]["id"] for item in found)

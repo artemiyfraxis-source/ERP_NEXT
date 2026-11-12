@@ -1,6 +1,7 @@
 """БД.ОБ: inventory numbers, «Ещё такой же», refusals, junk rows of the loader, «что обжимает» tokens and links."""
 
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,10 @@ from app.modules.references.equipment import (
     add_code, has_code, next_instance_inventory, next_model_inventory, next_row_number, parse_inventory,
     physical_equipment, remove_code, tokens,
 )
+from app.modules.references.importers import import_rows
 from app.modules.references.technology import parse_mirror_rows, sheet_snapshot_records
+from app.shared.bulk_import import ImportRowIn
+from tests.factories import Actor
 from tests.references.test_api import references_api  # noqa: F401  (fixture)
 
 BASE = "/api/references/tech-operations"
@@ -79,7 +83,7 @@ def test_measuring_instruments_have_a_separate_sequence(references_api):
     assert next_model_inventory("Средства измерений", existing) == "СИ.003"
     assert next_model_inventory("Оборудование", existing) == "ОБ.198"  # do not reuse occupied legacy numbers
     assert next_model_inventory("Аппликаторы", existing) == ""
-    first = _create(references_api, **{"Тип": "Средства измерений", "Наменование": "Штангенциркуль", "Инв. номер": "ОБ.001"}).json()
+    first = _create(references_api, **{"Тип": "Средства измерений", "Наменование": "Штангенциркуль"}).json()
     assert first["fields"]["Инв. номер"] == "СИ.001"
     assert references_api.post(f"{BASE}/{first['id']}/duplicate").json()["fields"]["Инв. номер"] == "СИ.001.2"
     assert _create(references_api, **{"Тип": "Средства измерений", "Наменование": "Микрометр"}).json()["fields"]["Инв. номер"] == "СИ.002"
@@ -97,6 +101,91 @@ def test_next_instance_number_keeps_existing_records():
 
 def test_next_row_number():
     assert next_row_number([{"№": "5"}, {"№": "17"}, {"№": ""}]) == "18" and next_row_number([]) == "1"
+
+
+def test_number_generation_counts_inventory_aliases():
+    existing = [{"Инв. номер": " ", "inventoryNumber": number}
+                for number in ("ОБ.94.1", "ОБ.94.3", "СИ.095.1")]
+    assert next_model_inventory("Оборудование", existing) == "ОБ.095"
+    assert next_model_inventory("Средства измерений", existing) == "СИ.096"
+    assert next_instance_inventory("ОБ.94.1", existing) == "ОБ.94.4"
+
+
+@pytest.mark.parametrize("kind, number", [
+    ("Оборудование", "ОБ.94.1"), ("Средства измерений", "ОБ.94.1"), ("Средства измерений", "СИ.094.1"),
+])
+@pytest.mark.parametrize("canonical", [{}, {"Инв. номер": " "}])
+def test_repository_save_keeps_inventory_and_type_aliases(references_api, kind, number, canonical):
+    factory = references_api.app.state.references_uow_factory
+    record = TechOperationRecord.create(
+        tab=TechOperationTab.EQUIPMENT, display_text="Прибор", search_text="", source_sheet="БД.ОБ", sort_key="1",
+        fields={"Тип": " ", "obType": kind, "inventoryNumber": number, **canonical},
+    )
+    with factory() as uow:
+        uow.tech_operations.save(record)
+        uow.commit()
+    with factory() as uow:
+        stored = uow.tech_operations.get(record.id)
+        assert stored.fields["Инв. номер"] == stored.fields["inventoryNumber"] == number
+        assert stored.fields["obType"] == kind
+        uow.tech_operations.save(replace(stored, fields={**stored.fields, "Расположение": "ЖУК"}))
+        uow.commit()
+    with factory() as uow:
+        assert uow.tech_operations.get(record.id).fields["Инв. номер"] == number
+
+
+@pytest.mark.parametrize("kind, number", [("Оборудование", "ОБ.94.1"), ("Средства измерений", "ОБ.94.1")])
+def test_bulk_import_keeps_aliased_inventory_on_create_and_update(references_api, kind, number):
+    factory = references_api.app.state.references_uow_factory
+    now = datetime(2026, 11, 12, 12)
+    record = TechOperationRecord.create(
+        tab=TechOperationTab.EQUIPMENT, display_text="Прибор", search_text="", source_sheet="БД.ОБ", sort_key="1",
+        fields={"Тип": " ", "obType": "Инструмент", "Инв. номер": " ", "inventoryNumber": number, "Расположение": "ЦАР"},
+    )
+    with factory() as uow:
+        uow.tech_operations.replace((record,), schema_version=14, source_updated_at=None, imported_at=now)
+        uow.commit()
+    rows = [
+        ImportRowIn(fields={"baseValue": "Прибор", "obType": kind, "Расположение": "ЖУК"}),
+        ImportRowIn(fields={"baseValue": "Другой прибор", "obType": kind, "inventoryNumber": "ОБ.95.1"}),
+    ]
+    actor = Actor(name="Тест", department="ОГТ")
+    preview = import_rows("ob", factory(), rows, actor, now, dry_run=True)
+    assert preview.refused == []
+    with factory() as uow:
+        assert uow.tech_operations.get(record.id).fields == record.fields
+    applied = import_rows("ob", factory(), rows, actor, now, dry_run=False)
+    assert applied.refused == []
+    assert len(applied.created) == len(applied.updated) == 1
+    with factory() as uow:
+        stored = uow.tech_operations.get(record.id)
+        assert stored.fields["Инв. номер"] == stored.fields["inventoryNumber"] == number
+        assert stored.fields["obType"] == kind and stored.fields["Расположение"] == "ЖУК"
+        [created] = [row for row in uow.tech_operations.list(tab=TechOperationTab.EQUIPMENT, query="", limit=10)
+                     if row.id != record.id]
+        assert created.fields["Инв. номер"] == created.fields["inventoryNumber"] == "ОБ.95.1"
+        assert created.fields["obType"] == kind
+
+
+@pytest.mark.parametrize("code", ["", "M10"])
+def test_saving_legacy_applicator_does_not_renumber_it_or_require_a_new_code(references_api, code):
+    factory = references_api.app.state.references_uow_factory
+    record = TechOperationRecord.create(
+        tab=TechOperationTab.EQUIPMENT, display_text="Аппликатор", search_text="", source_sheet="БД.ОБ", sort_key="1",
+        fields={"Тип": " ", "obType": "Аппликаторы", "inventoryNumber": "ОБ.106", "Код в базе терминалов": code},
+    )
+    with factory() as uow:
+        uow.tech_operations.replace((record,), schema_version=14, source_updated_at=None,
+                                    imported_at=datetime(2026, 11, 12, 12))
+        uow.commit()
+    with factory() as uow:
+        stored = uow.tech_operations.get(record.id)
+        uow.tech_operations.save(replace(stored, fields={**stored.fields, "Расположение": "ЖУК"}))
+        uow.commit()
+    with factory() as uow:
+        fields = uow.tech_operations.get(record.id).fields
+        assert fields["Инв. номер"] == fields["inventoryNumber"] == "ОБ.106"
+        assert fields["Код в базе терминалов"] == code
 
 
 # --- physical equipment catalog ---
