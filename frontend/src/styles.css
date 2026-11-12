@@ -765,10 +765,19 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 /* Реестр СИ: форма открывается над таблицей, панель уже даёт отступ — своих не добавляем. */
 .panel.instrument-registry > .data-table { padding: 0; }
 .instrument-registry .instrument-legend { margin: 0 0 8px; color: var(--muted-foreground); font-size: 12px; }
-.instrument-registry .status-chip { white-space: normal; }
-.instrument-registry .instrument-name { display: block; overflow-wrap: anywhere; }
-.instrument-registry .instrument-name small { white-space: nowrap; font-weight: 400; }
-.instrument-registry .instrument-due { display: inline-flex; flex-direction: column; font-variant-numeric: tabular-nums; }
+.instrument-registry .data-table { padding: 0; }
+.instrument-registry .data-table table.grid.wide { table-layout: fixed; width: 100%; min-width: 1160px; }
+.instrument-registry .data-table tbody td { height: 32px; padding-top: 4px; padding-bottom: 4px; vertical-align: middle; }
+.instrument-registry .data-table .sort-head { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.instrument-registry .instrument-cell, .instrument-registry .instrument-name, .instrument-registry .instrument-due { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.instrument-registry .status-chip { display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.instrument-registry .instrument-cell small { display: inline; white-space: nowrap; font-weight: 400; }
+.instrument-registry .instrument-due { font-variant-numeric: tabular-nums; }
+.instrument-registry .seg-tabs.instrument-views { margin-bottom: 8px; }
+@media (pointer: coarse) {
+  .instrument-registry .instrument-views button { min-height: 40px; }
+  .instrument-registry .data-table tbody td { height: 40px; }
+}
 .instrument-registry .is-overdue { color: var(--tone-danger); }
 .instrument-registry .is-soon { color: var(--tone-warn); }
 .instrument-registry .grid td:first-child { font-weight: 500; font-variant-numeric: tabular-nums slashed-zero; }
