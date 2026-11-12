@@ -1,7 +1,8 @@
 """Which row of the supplier's document prices which line of the order (owner, 05.10: «Вставить КП / счёт»).
 
-A part number decides first: SHR-02V-S-B, 510471000 match only exactly, after spaces, dashes, dots and case are
-dropped (and Cyrillic look-alikes read as Latin: «С» typed for «C»). A part number counts only when one line of the
+A part number decides first: SHR-02V-S-B, 510471000 match after spaces, dashes, dots and case are
+dropped (and Cyrillic look-alikes read as Latin: «С» typed for «C»). Confirmed numeric Molex articles also compare
+without leading zeros. Stored keys retain the historical spelling rules. A part number counts only when one line of the
 order carries it. Then the name words, then the quantity as the tie-breaker. Each line takes at most one row and each
 row prices at most one line. Confidence: «article» (part number), «name» (most words agree), «weak» (some words) —
 the buyer checks the weak ones before applying.
@@ -14,6 +15,9 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
+
+from app.shared.article_key import article_key, is_molex_article
+from app.shared.article_maker import normalize_maker
 
 from .document_items import DocumentItem, is_code
 from .kp import normalize_name
@@ -42,26 +46,70 @@ def code_key(value: str | None) -> str:
     return re.sub(r"[\s\-‐‑‒–—_./\\]", "", str(value or "")).upper().translate(_HOMOGLYPHS)
 
 
+def comparison_code_key(value: str | None, *, manufacturer: str = "", catalog_molex: bool = False) -> str:
+    """Comparison only; writers must keep using code_key for historical storage keys.
+
+    Apply the identity policy before the legacy punctuation fold: a slash, dot or suffix
+    must not turn an unknown article into evidence of a numeric Molex family.
+    """
+    return code_key(article_key(value, manufacturer=manufacturer, catalog_molex=catalog_molex))
+
+
+def _molex_code_key(value: str | None, *, manufacturer: str) -> str:
+    """Only numeric Molex evidence may establish a new, non-legacy match."""
+    candidate = article_key(value, manufacturer=manufacturer)
+    if candidate.isascii() and candidate.isdigit() and is_molex_article(value, manufacturer=manufacturer):
+        return candidate
+    return ""
+
+
 def _words(text: str | None) -> list[str]:
     return [word for word in _SPLIT.split(str(text or "")) if word]
 
 
-def _codes(text: str | None) -> set[str]:
-    return {code_key(word) for word in _words(text) if is_code(word)}
+def _manufacturer(*texts: str | None) -> str:
+    """Use a standalone maker label in the row, never a substring of a part number."""
+    makers = {
+        "TE" if maker == "AMP" else maker
+        for text in texts for word in _words(text)
+        if (maker := normalize_maker(word)) in {
+            "MOLEX", "JST", "HIROSE", "JAE", "TE", "CONNFLY", "AMASS", "AMP",
+            "RUICHI", "SCONDAR", "WEIPU", "CNLINKO", "SAMTEC", "ROSENBERGER",
+        }
+    }
+    return next(iter(makers)) if len(makers) == 1 else ("CONFLICT" if makers else "")
 
 
-def _item_keys(item: DocumentItem) -> set[str]:
+def _codes(text: str | None, manufacturer: str = "", *, molex_only: bool = False) -> set[str]:
+    key = _molex_code_key if molex_only else comparison_code_key
+    return {key(word, manufacturer=manufacturer) for word in _words(text) if is_code(word)} - {""}
+
+
+def _item_keys(item: DocumentItem, manufacturer: str = "", *, molex_only: bool = False) -> set[str]:
     """Part numbers of the row, with neighbouring words joined («SHR 02V-S-B» is one number split by a space)."""
     words = _words(item.name)
-    keys = _codes(item.name) | _codes(item.article)
+    key = _molex_code_key if molex_only else comparison_code_key
+    keys = _codes(item.name, manufacturer, molex_only=molex_only) | _codes(item.article, manufacturer, molex_only=molex_only)
     if item.article:
-        keys.add(code_key(item.article))
+        keys.add(key(item.article, manufacturer=manufacturer))
     for size in (2, 3):
         for start in range(len(words) - size + 1):
-            joined = code_key("".join(words[start:start + size]))
+            joined = key(" ".join(words[start:start + size]), manufacturer=manufacturer)
             if len(joined) >= 5 and any(char.isdigit() for char in joined):
                 keys.add(joined)
     return {key for key in keys if key}
+
+
+def _line_keys(line: OrderLineCandidate, manufacturer: str, *, molex_only: bool = False) -> set[str]:
+    codes = set()
+    key = _molex_code_key if molex_only else comparison_code_key
+    article = key(line.article, manufacturer=manufacturer)
+    if len(article) >= 3:
+        codes.add(article)
+    codes |= _codes(line.article, manufacturer, molex_only=molex_only)
+    for name in line.names:
+        codes |= _codes(name, manufacturer, molex_only=molex_only)
+    return codes
 
 
 def _name_words(text: str | None) -> set[str]:
@@ -87,26 +135,52 @@ def match_document_items(
     items: Sequence[DocumentItem], lines: Sequence[OrderLineCandidate],
 ) -> tuple[list[DocumentMatch], list[int], list[str]]:
     """Matches (line key, item index, confidence), the item indexes left over, the line keys left over."""
+    line_makers = {line.key: _manufacturer(line.article, *line.names) for line in lines}
     line_codes = {}
-    for line in lines:
-        codes = set()
-        article = code_key(line.article)
-        if len(article) >= 3:
-            codes.add(article)
-        codes |= _codes(line.article)
-        for name in line.names:
-            codes |= _codes(name)
-        line_codes[line.key] = codes
-    counts = Counter(code for codes in line_codes.values() for code in codes)
-    distinct = {key: {code for code in codes if counts[code] == 1} for key, codes in line_codes.items()}
+    molex_codes = {}
+    distinct = {}
+    # Use the same policy on both sides of a pair and on its uniqueness counts.
+    # OTHER preserves legacy matching; "" infers known families; MOLEX uses a maker label.
+    for manufacturer in ("OTHER", "", "MOLEX"):
+        by_line = {line.key: _line_keys(line, manufacturer) for line in lines}
+        counts = Counter(code for codes in by_line.values() for code in codes)
+        line_codes[manufacturer] = by_line
+        molex_codes[manufacturer] = {
+            line.key: _line_keys(line, manufacturer, molex_only=True) for line in lines
+        }
+        distinct[manufacturer] = {
+            key: {code for code in codes if counts[code] == 1} for key, codes in by_line.items()
+        }
+    confirmed_codes = {
+        code for line in lines if line_makers[line.key] == "MOLEX"
+        for code in line_codes["MOLEX"][line.key]
+    }
 
     pairs: list[tuple[float, int, int, str]] = []
     for item_index, item in enumerate(items):
-        keys = _item_keys(item)
-        own_codes = _codes(item.name) | _codes(item.article)
+        maker = _manufacturer(item.article, item.name)
+        item_keys = {policy: _item_keys(item, policy) for policy in line_codes}
+        item_molex_codes = {policy: _item_keys(item, policy, molex_only=True) for policy in line_codes}
+        own_codes = {policy: _codes(item.name, policy) | _codes(item.article, policy) for policy in line_codes}
+        # An explicitly Molex order row also establishes identity for its document
+        # counterpart. Count every compatible spelling before selecting any row.
+        confirmed = maker == "MOLEX" or bool(item_keys["MOLEX"] & confirmed_codes)
         for line_index, line in enumerate(lines):
+            line_maker = line_makers[line.key]
+            if any(label and label != "MOLEX" for label in (maker, line_maker)):
+                policy = "OTHER"
+            else:
+                policy = "MOLEX" if confirmed or line_maker == "MOLEX" else ""
+            # Legacy punctuation matches remain valid. A newly equal key must have
+            # numeric Molex evidence on BOTH sides; a slash/dot cannot supply it.
+            legacy_shared = item_keys["OTHER"] & line_codes["OTHER"][line.key]
+            molex_shared = item_molex_codes[policy] & molex_codes[policy][line.key]
+            if not molex_shared:
+                policy = "OTHER"
+            keys = item_keys[policy]
+            codes = line_codes[policy][line.key]
             name = _name_score(item, line)
-            if distinct[line.key] & keys:
+            if distinct[policy][line.key] & keys & (legacy_shared | molex_shared):
                 tier, confidence = 3, "article"
             elif name >= 0.6:
                 tier, confidence = 2, "name"
@@ -114,7 +188,7 @@ def match_document_items(
                 tier, confidence = 1, "weak"
             else:
                 continue
-            if tier < 3 and own_codes and line_codes[line.key] and not (line_codes[line.key] & keys):
+            if tier < 3 and own_codes[policy] and codes and not (legacy_shared | molex_shared):
                 # Both carry part numbers and none agree: «Разъём XH-2P» is not «Разъём XH-3P», whatever the words.
                 continue
             same_quantity = (
