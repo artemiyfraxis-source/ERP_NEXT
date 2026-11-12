@@ -95,8 +95,9 @@ import {
   type WrapKind,
   type CableJacketShrink,
   type WireEntry,
+  sameWireEnd, type EndAttachment, type PhysicalTopology, type TubePlacement,
 } from "./tcGenLogic";
-import { lugArt, lugRecordsOf, type LugRec } from "./tcGenLugs";
+import { lugArt, lugRecordsOf, lugCrimpOf, type LugRec } from "./tcGenLugs";
 import { RouteEditor } from "./RouteEditor";
 import { GenPfScheme, previewSummary, useBuildPreview, type BuildPreview } from "./GenPfScheme";
 import { schemeArt } from "./routeCards";
@@ -122,16 +123,16 @@ import type { SchemeInfo } from "./PinoutLinks";
 import { GenDrawingPreview } from "./GenDrawingPreview";
 import { planTwist } from "./twistGroups";
 import {
-  addBranch, autoFillPinout, confirmPinout, freeSide, pinFitWarnings, pinoutEnds, pinoutRecord, pinRouted, pinUnits, recolorWire, removeBranch, restorePinout, routingWarnings,
+  addBranch, assignPhysicalPin, autoFillPinout, confirmPinout, freeSide, pinFitWarnings, pinoutEnds, pinoutRecord, pinRouted, pinUnits, recolorWire, removeBranch, restorePinout, routingWarnings,
   rememberColor, setBranchMode, setCableCoreColors, setCoreColor, setCoreNet, swapPins, syncRoutes, unassignPin, doublePin, undoublePin,
 } from "./pinoutCheck";
 import { setCustomColors } from "./wireColors";
 import { GEN_STATE_KEY, genSnapshot, restoreFromSnapshot, snapshotFromConfig } from "./genBuildState";
 import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
 import { assignPinJoined, joinSplice, leaveJoin, renameSplice, setTail } from "./tcGenSplices";
-import { PinoutTable } from "./PinoutTable";
+import { PinoutTable, TopologyMaterialSelect, TopologyTubes, type MaterialOption } from "./PinoutTable";
 import { WrapTable } from "./WrapTable";
-import { applyEnd, pinConns, pinRows, pinSummary, spliceLines } from "./tcGenPinTable";
+import { applyEnd, firstFreePin, pinConns, pinRows, pinSummary, spliceLines } from "./tcGenPinTable";
 import { useTerminalPairs } from "./useTerminalPairs";
 import { MARK_KIND_DEFAULT, markIsTube, markSpecs, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
 
@@ -249,6 +250,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
 }) {
   const [refs, setRefs] = useState<Refs | null>(null);
   const [S, setS] = useState<GenState>(emptyState);
+  const [complexTopology, setComplexTopology] = useState<PhysicalTopology | undefined>(undefined);
   const [status, setStatus] = useState<{ text: string; error: boolean }>({ text: "", error: false });
   const [grapher, setGrapher] = useState<{ data: GrapherImportResult; pick: number } | null>(null);
   const [terEdits, setTerEdits] = useState<Record<string, Record<string, string>>>({});
@@ -262,7 +264,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const [pinFocus, setPinFocus] = useState("");
   useEffect(() => {
     if (!pinFocus) return;
-    const panel = document.getElementById(`pinout-${pinFocus}`);
+    const panel = document.getElementById(`pinout-${pinFocus}`) ?? document.getElementById(`pinout-table-${pinFocus}`);
     panel?.scrollIntoView?.({ block: "center" });
     panel?.querySelector("input")?.focus({ preventScroll: true });
     setPinFocus("");
@@ -299,15 +301,29 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   // Свои цвета жил карты (S.colorHex) нужны всем рисовальщикам по названию: схема, чертёж, ЭТК.
   setCustomColors(S.colorHex);
   const gen = useMemo(() => makeGen(D, S), [D, S]);
+  const compiled = useMemo(() => {
+    const problems = gen.topologyProblems_();
+    try {
+      if (problems.length) throw new Error(problems.join("\n"));
+      return { ops: gen.getActiveOps(), config: gen.buildConfig(), cut: gen.cutLengthInfo(), problems };
+    } catch (reason) {
+      if (!S.topology) throw reason;
+      return { ops: [] as OpSpec[], config: {} as Record<string, unknown>,
+        cut: { sharedLength: 0, tone: "none" as const, formula: "", value: "" },
+        problems: problems.length ? problems : [reason instanceof Error ? reason.message : "Не удалось рассчитать сборку"] };
+    }
+  }, [gen, S.topology]);
+  const topologyProblems = compiled.problems;
+  const topologyInvalid = topologyProblems.length > 0;
 
   // «Ручная сборка»: свой список операций живёт отдельно от формы кабелей — переключение вкладок его не теряет.
   // Режим запоминается за КБ: карта, собранная вручную, открывается на этой вкладке со своим списком и схемой.
   const [manual, setManual] = useState<ManualState>(emptyManual);
   const savedManual = (card.document?.build_config as { mode?: unknown } | undefined)?.mode === MANUAL_MODE;
   // Черновик формы (владелец 10.10): переключение вкладок карточки и КБ размонтирует генератор — введённое не теряется.
-  const draftValue = useMemo(() => ({ S, manual, terEdits, coaxAdd }), [S, manual, terEdits, coaxAdd]);
+  const draftValue = useMemo(() => ({ S, manual, terEdits, coaxAdd, complexTopology }), [S, manual, terEdits, coaxAdd, complexTopology]);
   const draft = useGeneratorDraft({ user: userId, project: card.project, index: card.item_index, document: card.document, value: draftValue,
-    apply: (value) => { setS(value.S); setManual(value.manual); setTerEdits(value.terEdits); setCoaxAdd(value.coaxAdd); } });
+    apply: (value) => { setS(value.S); setManual(value.manual); setTerEdits(value.terEdits); setCoaxAdd(value.coaxAdd); setComplexTopology(value.complexTopology); } });
 
   // «Черновики с чертежей» по позиции: список читается один раз за карту и после загрузки/сборки; открытый черновик
   // (draftId) уходит в сборку, собранный (builtId) ждёт «Что поправили и почему».
@@ -390,7 +406,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const fromBuild = withCoaxVswrFromConfig(restored ? switchGenTab(seeded, "manual") : back ? back.S : fromPinout(restorePinout(D, seeded, card.document?.build_config)),
       card.document?.build_config);
     // Несохранённый черновик поверх текущей сборки возвращается вместо засева.
-    const form = draft.open({ S: fromBuild, manual: restored ?? emptyManual(), terEdits: back?.terEdits ?? {}, coaxAdd: back?.coaxAdd ?? {} });
+    const form = draft.open({ S: fromBuild, manual: restored ?? emptyManual(), terEdits: back?.terEdits ?? {}, coaxAdd: back?.coaxAdd ?? {}, complexTopology: undefined });
+    setComplexTopology(form.complexTopology);
     setManual(form.manual); setS(ensureSeparateLengths(form.S)); setTerEdits(form.terEdits); setCoaxAdd(form.coaxAdd);
     setStatus({ text: back?.note || "", error: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -398,12 +415,13 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
 
   // renderOpsCard: шаблон, показанный первым, запоминается (selectedTemplates) и дальше не пересчитывается.
   useEffect(() => {
+    if (topologyInvalid) return;
     const next = gen.stickTemplates();
     if (next) setS((current) => ({ ...current, selectedTemplates: next }));
-  }, [gen]);
+  }, [gen, topologyInvalid]);
 
-  const ops = useMemo(() => gen.getActiveOps(), [gen]);
-  const config = useMemo(() => gen.buildConfig(), [gen]);
+  const ops = compiled.ops;
+  const config = compiled.config;
   const manualTab = S.tab === "manual";
   const reworkTab = S.tab === "rework";
   const rework = S.rework || emptyRework();
@@ -568,7 +586,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const routeStale = routeOps.length > 0 && (routeEdit ? !!routeEdit.route && routeEdit.sig !== routeSig : !!savedRoute && !savedFits);
 
   // «Выше/Ниже» в схеме: свой порядок операций (S.opOrder, по opKey — шаблоны и времена операций остаются при них).
-  const autoKeys = useMemo(() => (S.opOrder.length ? makeGen(D, { ...S, opOrder: [] }).getActiveOps().map((spec) => spec.opKey) : null), [D, S]);
+  const autoKeys = useMemo(() => (!topologyInvalid && S.opOrder.length ? makeGen(D, { ...S, opOrder: [] }).getActiveOps().map((spec) => spec.opKey) : null), [D, S, topologyInvalid]);
   const orderChanged = !!autoKeys && autoKeys.join("|") !== ops.map((spec) => spec.opKey).join("|");
   function reorder(order: number[], route: Route | null) {
     const moved = order.map((position) => routeOps[position - 1].key);
@@ -612,7 +630,32 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   // Любая правка формы перерисовывает карточку операций (refresh → renderOpsCard): ручные времена сбрасываются
   // к БД.ОП. Правка самих времён — setTime, она карточку не перерисовывает.
   const update = (patch: Partial<GenState> | ((current: GenState) => GenState)) =>
-    setS((current) => ({ ...ensureSeparateLengths(typeof patch === "function" ? patch(current) : { ...current, ...patch }), times: {} }));
+    setS((current) => {
+      let next = ensureSeparateLengths(typeof patch === "function" ? patch(current) : { ...current, ...patch });
+      if (next.topology) {
+        const g = makeGen(D, next);
+        const live = new Map(next.wires.map((w) => [w.idx, g.unitCount_(w) + g.shieldCount_(w)]));
+        const valid = (end: WireEnd) => end.unit >= 0 && end.unit < (live.get(end.idx) ?? 0);
+        const splices = (next.splices || []).map((sp) => ({ ...sp, ends: sp.ends.filter(valid) })).filter((sp) => sp.ends.length);
+        const sizes = splices.filter((sp) => sp.ends.length >= 2).map((sp) => sp.ends.length);
+        next = { ...next, splices, tails: (next.tails || []).filter(valid),
+          ...((next.splices || []).some((sp) => sp.ends.length >= 2) ? { spl: sizes.length ? { ...next.spl, enabled: true, count: String(sizes.length), wires: sizes.join(",") } : { ...next.spl, enabled: false } } : {}),
+          topology: { ...next.topology, ends: next.topology.ends?.filter((e) => valid(e.end)),
+            tubes: next.topology.tubes?.filter((t) => { const target = t.target; return target.kind === "splice" ? splices.some((sp) => sp.id === target.spliceId) : valid(target.end); })
+              .map((t) => t.preloadEnd && !valid(t.preloadEnd) ? { ...t, preloadEnd: undefined } : t) } };
+      }
+      return { ...next, times: {} };
+    });
+  function switchMode(tab: Tab) {
+    if (S.tab === "complex") setComplexTopology(S.topology);
+    setRouteError("");
+    update((current) => {
+      const next = { ...current };
+      delete next.topology;
+      return { ...switchGenTab(next, tab), ...(tab === "complex" && (current.topology || complexTopology) ? { topology: current.topology || complexTopology } : {}),
+        ...(tab === "rework" && !current.rework ? { rework: { ...emptyRework(), quantity: String(partQty) } } : {}) };
+    });
+  }
 
   // «Маркировка по КД»: материал по умолчанию — бирка из состава (её строка набора и спишется).
   const [markDrawing, setMarkDrawing] = useState<{ busy: boolean; note: string }>({ busy: false, note: "" });
@@ -690,7 +733,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     if (!plan.warnings.length) update(() => plan.state);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pinAutoKey, pinCountsKey]);
-  const cut = gen.cutLengthInfo();
+  const cut = compiled.cut;
   const lMinusGaps = useMemo(() => lMinusMissing(gen, S), [gen, S]);
   const hasB = gen.endpointsOnSide_("B").length > 0;
   const crimpSides = gen.crimpCutSides_();
@@ -698,7 +741,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   // Одну сторону автомат обжать может, другую — нет: почему другая остаётся ручной.
   const crimpSideNote = crimpSides.length === 1 ? gen.crimpCutSideNote_(crimpSides[0] === "A" ? "B" : "A") : "";
   // Партии обжима при резке (владелец 16.10): какие терминалы станок обжимает и сколько концов; одна партия — без строки.
-  const crimpBatches = gen.crimpCutEnabled_() && gen.getActiveOps().filter((o) => o.type === "cutWireCrimp").length > 1 ? gen.crimpCutBatchLines_() : [];
+  const crimpBatches = gen.crimpCutEnabled_() && ops.filter((o) => o.type === "cutWireCrimp").length > 1 ? gen.crimpCutBatchLines_() : [];
   const note = gen.twistNote();
   const diaMissing = gen.twistDiaMissing_();
   const diaOld = gen.twistDiaOld_();
@@ -865,7 +908,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       const restored = manualFromConfig(await assemblyApi.fromGenerator({ ...typical, ops }));
       if (!restored) throw new Error("Сборку не удалось открыть в ручной сборке");
       setManual(restored); setDraftId(""); setBuiltId(""); setRouteError(""); setOrigin(typical);
-      update((current) => switchGenTab(current, "manual"));
+      switchMode("manual");
       setStatus({ text: "", error: false });
     } catch (reason) {
       setStatus({ text: reason instanceof Error ? reason.message : "Сборку не удалось открыть в ручной сборке", error: true });
@@ -876,7 +919,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const restored = manualFromConfig(draft.draft_config);
     if (!restored) { setStatus({ text: "Черновик не открыт: в нём нет ручной сборки.", error: true }); return; }
     setManual(restored); setDraftId(draft.id); setBuiltId(""); setRouteError(""); setOrigin(null);
-    update((current) => switchGenTab(current, "manual"));
+    switchMode("manual");
     setStatus({ text: "", error: false });
   }
 
@@ -1060,7 +1103,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         {line.shieldIdle > 0 && <span>экран{line.shieldIdle > 1 ? ` ×${line.shieldIdle}` : ""} — скрутить и изолировать</span>}
         {line.idle.length > 0 && <span className="tone-warn">не задействованы {line.idle.join(", ")} — обрезать и изолировать</span>}
       </div>)}
-      {pinEnd && <PinoutEditor end={pinEnd} open={!!pinOpen[ep.id]} onOpen={(open) => setPinOpen((current) => ({ ...current, [ep.id]: open }))}
+      {!complex && pinEnd && <PinoutEditor end={pinEnd} open={!!pinOpen[ep.id]} onOpen={(open) => setPinOpen((current) => ({ ...current, [ep.id]: open }))}
         onConfirm={() => { setS((current) => confirmPinout(D, current, ep.id)); setPinOpen((current) => ({ ...current, [ep.id]: false })); }}
         onPins={(wireIdx, value) => {
           const pins = { ...(ep.pins || {}) };
@@ -1158,8 +1201,40 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     .filter((end) => !(S.splices || []).some((sp) => sp.ends.some((e) => e.idx === end.idx && e.unit === end.unit && e.side === end.side))) : [];
   // «Распиновка и сростки» (владелец 25.10): таблица жил — оба конца в одной строке.
   const ptConns = complex ? pinConns(pinEnds, S, pinCounts) : [];
-  const ptRows = complex ? pinRows(ptConns, pinUnitList, S, pinEnds).map((row) => ({ ...row, length: Number(S.wires.find((w) => w.idx === row.idx)?.length) || 0 })) : [];
+  const ptRows = complex ? pinRows(ptConns, pinUnitList, S, pinEnds).map((row) => {
+    const lugs = (["A", "B"] as const).filter((side) => gen.physicalAt_({ idx: row.idx, unit: row.unit, side }).kind === "lug");
+    return { ...row, length: Number(S.wires.find((w) => w.idx === row.idx)?.length) || 0,
+      cells: { ...row.cells, ...Object.fromEntries(lugs.map((side) => [side, { ...row.cells[side], value: "lug", text: "Наконечник" }])) },
+      problems: row.problems.filter((text) => !(lugs.length && text === "Провод никуда не идёт") && !lugs.some((side) => text.startsWith(`Конец ${sideRu_(side)} не задан`))) };
+  }) : [];
   const ptSplices = complex ? spliceLines(S, pinUnitList, ptConns) : [];
+  // Topology is opt-in: opening a legacy draft does not migrate its physical assignments.
+  const withTopology = (current: GenState): GenState => current.topology ? current : { ...current, topology: { version: 1 } };
+  const changeTopology = (patch: Partial<PhysicalTopology>) => update((current) => ({ ...current, topology: { ...current.topology, version: 1, ...patch } }));
+  const setAttachment = (end: WireEnd, at: EndAttachment) => update((current) => {
+    const cleared = leaveJoin(D, withTopology(current), end);
+    return { ...cleared, topology: { ...cleared.topology, version: 1, ends: [...(cleared.topology?.ends || []).filter((e) => !sameWireEnd(e.end, end)), { end, at }] } };
+  });
+  const lugMaterials: MaterialOption[] = [
+    ...components.filter((c) => /наконеч|ншв|нки|нви|нкв|ншп/i.test(`${c.type} ${c.art} ${c.name}`) || (D.lugRecords || []).some((r) => lugArt(r) === c.art))
+      .map((c) => ({ label: `${c.art || c.name} · из состава`, material: { compId: c.id } })),
+    ...(D.lugRecords || []).map((r) => ({ label: `${lugArt(r)} · ${r.type} · БД`, material: { art: lugArt(r), name: r.type } })),
+  ];
+  const tubeMaterials: MaterialOption[] = [
+    ...gen.shrinkCandidates_().map((c) => ({ label: `${c.art || c.name} · из состава`, material: { compId: c.id } })),
+    ...(D.markMats || []).filter((m) => /^(тут|ттк)$/i.test(m.group)).map((m) => ({ label: `${m.name} · БД`, material: { art: m.name, name: m.name } })),
+  ];
+  const tubeTargets: Parameters<typeof TopologyTubes>[0]["targets"] = complex ? [
+    ...pinUnitList.filter((u) => !u.shield).flatMap((u) => (["A", "B"] as const).flatMap((side) => {
+      const end = { idx: u.idx, unit: u.unit, side };
+      const ends = (["A", "B"] as const).map((s) => ({ ...end, side: s }));
+      const at = gen.physicalAt_(end);
+      const branch = { label: `Ветвь · ${spliceEndText(end)}`, target: { kind: "branch" as const, end }, ends };
+      return at.kind === "pin" && S.endpoints.find((ep) => ep.id === at.epId)?.method === "solder"
+        ? [branch, { label: `Чашка · ${spliceEndText(end)}`, target: { kind: "cup" as const, end }, ends }] : [branch];
+    })),
+    ...ptSplices.map((sp) => ({ label: `Сросток ${sp.label}`, target: { kind: "splice" as const, spliceId: sp.id }, ends: sp.ends.map((e) => e.end) })),
+  ] : [];
   const hsComps = S.hs.rows.map((row) => ({ row, comp: gen.hsComp_(row.compId), skip: gen.hsRowSkip_(row) }));
   const hsOptions = gen.hsTubeOptions_();
   const marks = gen.markComps_();
@@ -1535,12 +1610,50 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     {complex && ptRows.length > 0 && <section className="gsec full ep-pintable" aria-label="Распиновка и сростки">
       <div className="gsec-head"><h3>Распиновка и сростки</h3><PinoutChip ends={pinEnds} /></div>
       <PinoutTable summary={pinSummary(ptRows, S)} rows={ptRows} conns={ptConns} units={pinUnitList} splices={ptSplices}
+        connectorActions={(id) => {
+          const end = pinEnds.find((e) => e.id === id)!;
+          return end.checked ? <small className="tone-ok" style={{ fontSize: 12 }} title={end.summary}>Проверена</small>
+            : <button type="button" className="btn-link" style={{ minHeight: 40 }} title={end.summary} aria-label={`Подтвердить распиновку ${end.key}`} onClick={() => setS((current) => confirmPinout(D, current, id))}>Подтвердить</button>;
+        }}
+        onJumper={(row) => {
+          const at = (["A", "B"] as const).map((side) => gen.physicalAt_({ idx: row.idx, unit: row.unit, side })).find((a) => a.kind === "pin");
+          if (!at || at.kind !== "pin") { setStatus({ text: "Для перемычки сначала выберите первый контакт разъёма в таблице.", error: true }); return; }
+          const conn = ptConns.find((c) => c.id === at.epId);
+          const pin = conn && firstFreePin(conn, pinUnitList);
+          if (!pin) { setStatus({ text: "В разъёме нет свободного контакта для перемычки.", error: true }); return; }
+          update((current) => assignPhysicalPin(D, current, { ...at.end, side: at.end.side === "A" ? "B" : "A" }, at.epId, pin));
+        }}
+        endDetails={(row, side) => {
+          const end = { idx: row.idx, unit: row.unit, side };
+          const own = S.topology?.ends?.find((e) => sameWireEnd(e.end, end))?.at;
+          if (own?.kind !== "lug") return null;
+          const label = `Наконечник № ${row.num}, конец ${sideRu_(side)}`;
+          return <div className="form-grid" style={{ padding: "8px 0" }} role="group" aria-label={label}>
+            <b className="wide">{label}</b>
+            <TopologyMaterialSelect label={`Материал: ${label}`} value={own.material} options={lugMaterials} onChange={(material) => {
+              const art = "art" in material ? material.art : components.find((c) => c.id === material.compId)?.art || "";
+              const rec = (D.lugRecords || []).find((r) => lugArt(r) === art);
+              setAttachment(end, { ...own, material, crimp: lugCrimpOf(rec?.type || art) || own.crimp, strip: rec?.strip || own.strip, lPlus: rec?.lPlus ?? own.lPlus, lMinus: rec?.lMinus ?? own.lMinus });
+            }} />
+            <label className="gfield"><span>Обжим</span><select style={{ minHeight: 40 }} aria-label={`Обжим: ${label}`} value={own.crimp} onChange={(e) => setAttachment(end, { ...own, crimp: e.target.value as typeof own.crimp })}>
+              <option value="ferrule">Обжим втулочного наконечника</option><option value="lug">Обжим наконечника</option><option value="tube">Обжим трубчатого наконечника</option>
+            </select></label>
+            {([["strip", "Зачистка"], ["lPlus", "L+"], ["lMinus", "L−"]] as const).map(([key, name]) => <label className="gfield" key={key}><span>{name}, мм</span><input style={{ minHeight: 40 }} inputMode="decimal" aria-label={`${name}: ${label}`} value={own[key] ?? ""} onChange={(e) => setAttachment(end, { ...own, [key]: e.target.value })} /></label>)}
+          </div>;
+        }}
         spliceIds={ptSplices.map((line) => ({ id: line.id, label: line.label }))}
         methodControl={<Seg<SpliceMethod> label="Способ сростка" value={splMethod} options={SPLICE_METHODS} onChange={(method) => update((current) => setSplMethod(current, method))} />}
         sleeve={splMethod === "sleeve" && sleeveComps.length ? { options: sleeveComps.map((c) => ({ id: c.id, label: c.art || c.name })),
           valueOf: (id) => S.spl.sleeves?.[id] ?? gen.spliceSleeveOf_(id)?.id ?? "",
           onChange: (id, compId) => update((current) => ({ ...current, spl: { ...current.spl, sleeves: { ...(current.spl.sleeves || {}), [id]: compId } } })) } : null}
         onEnd={(row, side, value) => update((current) => {
+          if (value === "lug") {
+            const end = { idx: row.idx, unit: row.unit, side };
+            const cleared = leaveJoin(D, withTopology(current), end);
+            return { ...cleared, topology: { ...cleared.topology, version: 1, ends: [...(cleared.topology?.ends || []), { end, at: { kind: "lug", material: { art: "", name: "" }, crimp: "lug", strip: "" } }] } };
+          }
+          const epId = value.startsWith("pin:") ? value.split(":")[1] : "";
+          if (epId && current.endpoints.find((ep) => ep.id === epId)?.side !== side) current = withTopology(current);
           const g = makeGen(D, current);
           const ends = pinoutEnds(g, current);
           return applyEnd(D, current, pinConns(ends, current, pinCounts), pinUnits(g, current), row, side, value);
@@ -1551,9 +1664,19 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         onRenameSplice={(id, name) => update((current) => renameSplice(current, id, name))}
         onRemoveSplice={(id) => update((current) => (current.splices || []).find((sp) => sp.id === id)?.ends.reduce((acc, end) => leaveJoin(D, acc, end), current) ?? current)} />
     </section>}
+    {complex && <TopologyTubes tubes={S.topology?.tubes || []} materials={tubeMaterials} targets={tubeTargets} endLabel={spliceEndText}
+      onChange={(tubes) => changeTopology({ tubes })} onAdd={() => {
+        const tubes = S.topology?.tubes || [];
+        const target = tubeTargets[0];
+        if (!target) return;
+        let number = tubes.length + 1;
+        while (tubes.some((t) => t.id === `tube${number}`)) number++;
+        const tube: TubePlacement = { id: `tube${number}`, material: tubeMaterials[0]?.material ?? { art: "", name: "" }, lengthMm: 0, count: 1, target: target.target, phase: "preload", preloadEnd: target.ends[0] };
+        changeTopology({ tubes: [...tubes, tube] });
+      }} />}
     {(pinEnds.length > 0 || links.list.length > 0 || links.warnings.length > 0) && <section className="gsec full ep-links" aria-label="Соединения по распиновке">
       <div className="gsec-head"><h3>Соединения по распиновке</h3><PinoutChip ends={pinEnds} />
-        <button type="button" className="secondary small" disabled={drawBusy || (!links.list.length && !(S.splices || []).length)}
+        <button type="button" className="secondary small" disabled={topologyInvalid || drawBusy || (!links.list.length && !(S.splices || []).length)}
           title={links.list.length ? "Чертёж жгута позиции по разъёмам, проводам и распиновке формы" : "Сначала задайте контакты проводов на разъёмах"}
           onClick={() => void buildDrawing()}>{drawBusy ? "Строю чертёж…" : drawingExists ? "Обновить чертёж" : "Построить чертёж"}</button></div>
       {drawNote && <div className={drawNote.error ? "error-banner gen-drawing-note" : "gen-drawing-note"} role={drawNote.error ? "alert" : "status"}>
@@ -1719,10 +1842,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   return <div className="tcgen" {...draft.bind}>
     <div className="seg-tabs gen-modes" role="tablist" aria-label="Вид сборки">{TABS.map(([tab, label]) =>
       <button key={tab} type="button" role="tab" aria-selected={S.tab === tab} className={S.tab === tab ? "on" : ""}
-        onClick={() => { setRouteError(""); update((current) => ({ ...switchGenTab(current, tab),
-          ...(tab === "rework" && !current.rework ? { rework: { ...emptyRework(), quantity: String(partQty) } } : {}) })); }}>{label}</button>)}</div>
+        onClick={() => switchMode(tab)}>{label}</button>)}</div>
 
     {status.text && status.error && <div className="error-banner gen-error" role="alert" ref={errorBanner}>{status.text}</div>}
+    {topologyInvalid && <div className="error-banner" role="alert">{topologyProblems.map((text) => <div key={text}>{(S.topology?.tubes || []).reduce((message, tube, i) => message.replace(`Трубка ${tube.id}`, `Трубка ${i + 1}`), text)}</div>)}</div>}
     {pinAsk && <PinoutAsk ends={pinOpenEnds} onCancel={() => setPinAsk(false)} onCreate={() => void generate(true)}
       onCheck={(id) => { setPinAsk(false); setPinOpen((current) => ({ ...current, [id]: true })); setPinFocus(id); }} />}
 
