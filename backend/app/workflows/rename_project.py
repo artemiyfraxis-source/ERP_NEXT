@@ -357,6 +357,31 @@ def _labels(session: Session, metadata: MetaData, changes: list[RowChange], old:
     return result
 
 
+def _relax_grandfathered_checks(session: Session, tables: set[str]) -> list[tuple[str, str, str]]:
+    """PostgreSQL keeps legacy rows under `NOT VALID` checks (e.g. a stage «КБ набрана» from before the stage
+    ladder in production_plan_events), but re-checks any row it writes, so moving such a row to NEW fails. Drop
+    only the checks that are already NOT VALID on the touched tables, inside this transaction; `_restore_checks`
+    puts back the identical definition (still NOT VALID) before commit. Validated checks stay in force."""
+    if session.get_bind().dialect.name != "postgresql" or not tables:
+        return []
+    rows = session.execute(text(
+        "SELECT c.conrelid::regclass::text, c.conname, pg_get_constraintdef(c.oid) FROM pg_constraint c "
+        "WHERE c.contype = 'c' AND NOT c.convalidated AND c.conrelid::regclass::text = ANY(:tables)"
+    ), {"tables": sorted(tables)}).all()
+    quote = session.get_bind().dialect.identifier_preparer.quote
+    for table, name, _definition in rows:
+        session.execute(text(f"ALTER TABLE {quote(table)} DROP CONSTRAINT {quote(name)}"))
+    return [(table, name, definition) for table, name, definition in rows]
+
+
+def _restore_checks(session: Session, relaxed: list[tuple[str, str, str]]) -> None:
+    quote = session.get_bind().dialect.identifier_preparer.quote
+    for table, name, definition in relaxed:
+        # pg_get_constraintdef already ends with «NOT VALID» for a check that was not validated.
+        suffix = "" if definition.rstrip().upper().endswith("NOT VALID") else " NOT VALID"
+        session.execute(text(f"ALTER TABLE {quote(table)} ADD CONSTRAINT {quote(name)} {definition}{suffix}"))
+
+
 def rename_project(engine: Engine, old: str, new: str, *, apply: bool = False,
                    now: datetime | None = None) -> RenameReport:
     old, new = old.strip(), new.strip()
@@ -382,6 +407,7 @@ def rename_project(engine: Engine, old: str, new: str, *, apply: bool = False,
         counts["audit_events (insert)"] = 1
         counts["production_plan_events (insert)"] = 1
         if apply:
+            relaxed = _relax_grandfathered_checks(session, {change.table.name for change in changes})
             for change in changes:
                 table, before = change.table, change.before
                 where = [column == before[column.name] for column in table.primary_key.columns]
@@ -394,6 +420,7 @@ def rename_project(engine: Engine, old: str, new: str, *, apply: bool = False,
                     affected = session.execute(update(table).where(and_(*where)).values(**change.values)).rowcount
                 if affected != 1:
                     raise RenameRefused(f"Concurrent edit: {table.name}")
+            _restore_checks(session, relaxed)
             actor = Actor(id=uuid4(), name="администратор (CLI)", department="")
             message = f"проект переименован {old} → {new}"
             SqlAlchemyAuditRepository(session).add(AuditEvent(
