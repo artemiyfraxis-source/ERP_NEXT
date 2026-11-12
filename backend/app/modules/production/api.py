@@ -269,7 +269,7 @@ class DecideDefectPayload(BoxVersionPayload):
 class RegisterInstrumentPayload(BaseModel):
     inventory_number: str = Field(min_length=1, max_length=128)
     name: str = Field(min_length=1, max_length=255)
-    instrument_type: str = Field(min_length=1, max_length=255)
+    instrument_type: str = Field(default="", max_length=255)
     verification_number: str | None = Field(default=None, min_length=1, max_length=255)
     verified_at: datetime | None = None
     verification_due: datetime | None = None
@@ -289,7 +289,7 @@ class UpdateInstrumentPayload(BaseModel):
     version: int = Field(ge=1)
     inventory_number: str | None = Field(default=None, min_length=1, max_length=128)
     name: str | None = Field(default=None, min_length=1, max_length=255)
-    instrument_type: str | None = Field(default=None, min_length=1, max_length=255)
+    instrument_type: str | None = Field(default=None, max_length=255)
     verification_number: str | None = Field(default=None, min_length=1, max_length=255)
     verified_at: datetime | None = None
     verification_due: datetime | None = None
@@ -1393,6 +1393,7 @@ def instrument_result(item, files=()) -> dict:
         "serial_number": item.serial_number, "manufacturer": item.manufacturer,
         "doc_designation": item.doc_designation, "quantity": item.quantity,
         "storage_location": item.storage_location, "warehouse_grn": item.warehouse_grn,
+        "warehouse_writeoff_id": str(item.warehouse_writeoff_id) if item.warehouse_writeoff_id else None,
         "verification_number": item.verification_number,
         "verified_at": item.verified_at.isoformat() if item.verified_at is not None else None,
         "verification_due": item.verification_due.isoformat() if item.verification_due is not None else None,

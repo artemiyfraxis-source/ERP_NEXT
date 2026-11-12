@@ -123,8 +123,8 @@ def test_v2_upgrade_four_existing_rows_and_clean_downgrade(tmp_path, monkeypatch
     with sqlite3.connect(path) as connection:
         actual = connection.execute(f"SELECT {', '.join(COLUMNS)} FROM {TABLE} ORDER BY inventory_number").fetchall()
         assert actual == sorted(rows, key=lambda row: row[2])
-        assert connection.execute(f"SELECT kind, parent_id, quantity, serial_number, manufacturer, doc_designation, storage_location, warehouse_grn FROM {TABLE}").fetchall() == [
-            ("Средство измерений", None, 1, "", "", "", "", "")
+        assert connection.execute(f"SELECT kind, parent_id, quantity, serial_number, manufacturer, doc_designation, storage_location, warehouse_grn, warehouse_writeoff_id FROM {TABLE}").fetchall() == [
+            ("Средство измерений", None, 1, "", "", "", "", "", None)
         ] * 4
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert "ix_production_instrument_files_instrument_id" in {row[1] for row in connection.execute("PRAGMA index_list(production_instrument_files)")}
@@ -204,3 +204,29 @@ def test_v2_upgrade_seeded_references_survive_table_rebuild(tmp_path, monkeypatc
         for table in RELATED:
             columns = ', '.join(COLUMNS) if table == TABLE else '*'
             assert connection.execute(f"SELECT {columns} FROM {table} ORDER BY 1").fetchall() == before[table]
+
+
+@pytest.mark.parametrize("column,value", [
+    ("serial_number", "SN-123"), ("serial_number", " "), ("manufacturer", "Завод"),
+    ("doc_designation", "ВАЦ"), ("storage_location", "ОТК"), ("warehouse_grn", "ГРН-1"),
+    ("quantity", 2), ("parent_id", "parent"), ("warehouse_writeoff_id", "1234567890abcdef1234567890abcdef"),
+])
+def test_v2_downgrade_refuses_metadata_without_dropping_it(tmp_path, monkeypatch, column, value):
+    monkeypatch.delenv("ERP_DATABASE_URL", raising=False)
+    path = tmp_path / "metadata.db"
+    config = _config(path)
+    command.upgrade(config, V2)
+    parent, child = _row(), _row()
+    with sqlite3.connect(path) as connection:
+        connection.executemany(INSERT, [parent, child])
+        if column == "quantity":
+            # Exercise the loss guard independently of the measuring quantity constraint.
+            connection.execute("PRAGMA ignore_check_constraints=ON")
+        connection.execute(f"UPDATE {TABLE} SET {column} = ? WHERE id = ?", (parent[0] if column == "parent_id" else value, child[0]))
+        before = connection.execute(f"SELECT * FROM {TABLE} ORDER BY id").fetchall()
+    with pytest.raises(RuntimeError, match="сохранены дополнительные сведения или связи СИ"):
+        command.downgrade(config, V2_PARENT)
+    with sqlite3.connect(path) as connection:
+        assert connection.execute(f"SELECT * FROM {TABLE} ORDER BY id").fetchall() == before
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (V2,)
+        assert connection.execute("SELECT count(*) FROM production_instrument_files").fetchone() == (0,)

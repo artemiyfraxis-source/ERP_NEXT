@@ -621,6 +621,7 @@ class ProductionInstrumentRow(Base):
     quantity: Mapped[int] = mapped_column(Integer(), nullable=False, server_default="1")
     storage_location: Mapped[str] = mapped_column(String(255), nullable=False, server_default="")
     warehouse_grn: Mapped[str] = mapped_column(String(32), nullable=False, server_default="")
+    warehouse_writeoff_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     verification_number: Mapped[str | None] = mapped_column(String(255), nullable=True)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     verification_due: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
@@ -1838,6 +1839,7 @@ class SqlAlchemyInstrumentRepository:
             status=InstrumentStatus(row.status), kind=InstrumentKind(row.kind), parent_id=row.parent_id,
             serial_number=row.serial_number, manufacturer=row.manufacturer, doc_designation=row.doc_designation,
             quantity=row.quantity, storage_location=row.storage_location, warehouse_grn=row.warehouse_grn,
+            warehouse_writeoff_id=row.warehouse_writeoff_id,
         )
 
     def lock_tree(self) -> None:
@@ -1870,6 +1872,7 @@ class SqlAlchemyInstrumentRepository:
             "version", "inventory_number", "name", "instrument_type",
             "verification_number", "verified_at", "verification_due",
             "parent_id", "serial_number", "manufacturer", "doc_designation", "quantity", "storage_location", "warehouse_grn",
+            "warehouse_writeoff_id",
         )}
         values.update(status=instrument.status.value, kind=instrument.kind.value)
         if instrument.version == 1:

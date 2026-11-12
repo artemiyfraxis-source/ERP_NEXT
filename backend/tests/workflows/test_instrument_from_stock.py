@@ -5,9 +5,10 @@ import pytest
 from sqlalchemy import select
 
 from app.main import app
+from app.modules.production.application import ConcurrentProductionUpdate
 from app.modules.production.domain import ProductionValidationError
 from app.modules.warehouse.application import ReturnWriteOffCommand, return_writeoff
-from app.modules.warehouse.domain import StockLot
+from app.modules.warehouse.domain import StockLot, WarehouseValidationError
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork
 from app.shared.persistence import AuditEventRow
 from tests.factories import Actor
@@ -37,7 +38,7 @@ def snapshot(sessions, lot_id):
                 [(row.event_type, row.details) for row in uow.session.scalars(select(AuditEventRow).order_by(AuditEventRow.id))])
 
 
-def test_from_stock_commits_both_sides_and_existing_return_remains_available(production_api):
+def test_from_stock_and_return_commit_both_sides_and_block_warehouse_undo(production_api):
     client, _ = production_api
     parent, lot, sessions = setup(client)
     result = client.post(URL, json={"parent_id": parent["id"], "lot_id": str(lot.id), "lot_version": lot.version, "quantity": 3})
@@ -50,13 +51,33 @@ def test_from_stock_commits_both_sides_and_existing_return_remains_available(pro
     updated, entries, events = snapshot(sessions, lot.id)
     assert updated.balance == Decimal(7) and updated.version == result.json()["lot_version"]
     assert len(entries) == 1 and entries[0].quantity == Decimal(3)
+    assert item["warehouse_writeoff_id"] == str(entries[0].id)
     assert entries[0].purpose == entries[0].reason == "Принадлежности СИ СИ.001"
     assert sorted(name for name, _ in events) == ["production.instrument_registered", "production.instrument_registered", "warehouse.written_off"]
-    returned = return_writeoff(ReturnWriteOffCommand(
-        lot_id=lot.id, expected_version=updated.version, quantity=Decimal(3), source=entries[0].purpose,
-        reason="Возврат принадлежности", actor=Actor(id=MASTER_ID, name="ОТК", department="ОТК"), now=NOW,
-    ), SqlAlchemyWarehouseUnitOfWork(sessions))
-    assert returned.balance == Decimal(10)
+    for source in (entries[0].purpose, "Другое назначение"):
+        with pytest.raises(WarehouseValidationError, match="Это принадлежность СИ"):
+            return_writeoff(ReturnWriteOffCommand(
+                lot_id=lot.id, expected_version=updated.version, quantity=Decimal(3), source=source,
+                reason="Возврат принадлежности", actor=Actor(id=MASTER_ID, name="ОТК", department="ОТК"), now=NOW,
+            ), SqlAlchemyWarehouseUnitOfWork(sessions))
+    response = client.post(f"/api/production/instruments/{item['id']}/return-to-stock", json={"version": item["version"]})
+    assert response.status_code == 200, response.text
+    returned = response.json()["instrument"]
+    assert returned == {**item, "version": item["version"] + 1, "status": "Не используется"}
+    final, journal, events = snapshot(sessions, lot.id)
+    assert final.balance == Decimal(10) and final.version == updated.version + 1
+    assert journal[0] in entries or journal[1] in entries
+    returns = [entry for entry in journal if entry.kind == "return"]
+    assert len(returns) == 1 and returns[0].quantity == Decimal(3)
+    assert returns[0].source_key == f"instrument-return:{item['warehouse_writeoff_id']}"
+    assert sorted(name for name, _ in events) == sorted([
+        "production.instrument_registered", "production.instrument_registered", "warehouse.written_off",
+        "warehouse.writeoff_returned", "production.instrument_returned_to_stock",
+    ])
+    before = snapshot(sessions, lot.id)
+    repeated = client.post(f"/api/production/instruments/{item['id']}/return-to-stock", json={"version": returned["version"]})
+    assert repeated.status_code == 422 and "уже возвращена" in repeated.json()["detail"]
+    assert snapshot(sessions, lot.id) == before
 
 
 @pytest.mark.parametrize("case,status", [("version", 409), ("balance", 422), ("parent", 422), ("duplicate", 422), ("fraction", 422), ("negative", 422), ("accessory_parent", 422)])
@@ -110,3 +131,97 @@ def test_from_stock_accepts_overrides_and_requires_quality_edit(production_api):
     assert response.status_code == 200, response.text
     item = response.json()["instrument"]
     assert all(item[key] == body[key] for key in ("inventory_number", "name", "doc_designation", "storage_location"))
+
+
+@pytest.mark.parametrize("case,status", [("version", 409), ("manual", 422), ("missing", 404), ("forbidden", 403)])
+def test_return_failure_leaves_both_sides_unchanged(production_api, case, status):
+    client, _ = production_api
+    parent, lot, sessions = setup(client)
+    item = client.post(URL, json={"parent_id": parent["id"], "lot_id": str(lot.id), "lot_version": lot.version, "quantity": 2}).json()["instrument"]
+    version = item["version"]
+    if case == "version": version += 1
+    if case == "manual": item = create(client, "СИ.003", kind="Принадлежность", status="Действует", parent_id=parent["id"])
+    if case == "missing": item = {**item, "id": str(uuid4())}
+    before = snapshot(sessions, lot.id)
+    records = client.get("/api/production/instruments").json()
+    if case == "forbidden": _as({"production": "edit", "warehouse": "edit"})
+    response = client.post(f"/api/production/instruments/{item['id']}/return-to-stock", json={"version": version})
+    assert response.status_code == status, response.text
+    assert snapshot(sessions, lot.id) == before
+    assert client.get("/api/production/instruments").json() == records
+
+
+@pytest.mark.parametrize("error,status", [(ProductionValidationError, 422), (ConcurrentProductionUpdate, 409)])
+def test_return_final_failure_rolls_back_stock_journal_and_audit(production_api, monkeypatch, error, status):
+    from app.modules.production.infrastructure import SqlAlchemyInstrumentRepository
+
+    client, _ = production_api
+    parent, lot, sessions = setup(client)
+    item = client.post(URL, json={"parent_id": parent["id"], "lot_id": str(lot.id), "lot_version": lot.version, "quantity": 2}).json()["instrument"]
+    before = snapshot(sessions, lot.id)
+    records = client.get("/api/production/instruments").json()
+    original = SqlAlchemyInstrumentRepository.save
+    def fail_after_save(repository, instrument):
+        original(repository, instrument)
+        repository.session.flush()
+        raise error("Ошибка записи СИ")
+    monkeypatch.setattr(SqlAlchemyInstrumentRepository, "save", fail_after_save)
+    response = client.post(f"/api/production/instruments/{item['id']}/return-to-stock", json={"version": item["version"]})
+    assert response.status_code == status, response.text
+    assert snapshot(sessions, lot.id) == before
+    assert client.get("/api/production/instruments").json() == records
+
+
+def test_each_accessory_returns_its_original_writeoff_once_even_after_reactivation(production_api):
+    client, _ = production_api
+    parent, lot, sessions = setup(client)
+    items = []
+    version = lot.version
+    for quantity in (2, 3):
+        response = client.post(URL, json={"parent_id": parent["id"], "lot_id": str(lot.id), "lot_version": version, "quantity": quantity})
+        assert response.status_code == 200, response.text
+        items.append(response.json()["instrument"])
+        version = response.json()["lot_version"]
+    assert items[0]["warehouse_writeoff_id"] != items[1]["warehouse_writeoff_id"]
+    for item in reversed(items):
+        response = client.post(f"/api/production/instruments/{item['id']}/return-to-stock", json={"version": item["version"]})
+        assert response.status_code == 200, response.text
+    assert snapshot(sessions, lot.id)[0].balance == Decimal(10)
+    item = items[0]
+    reactivated = client.patch(f"/api/production/instruments/{item['id']}", json={"version": 2, "status": "Действует"}).json()["instrument"]
+    before = snapshot(sessions, lot.id)
+    response = client.post(f"/api/production/instruments/{item['id']}/return-to-stock", json={"version": reactivated["version"]})
+    assert response.status_code == 422
+    assert snapshot(sessions, lot.id) == before
+
+
+def test_warehouse_http_return_flag_and_undo_cannot_bypass_workflow(production_api, monkeypatch):
+    client, _ = production_api
+    parent, lot, sessions = setup(client)
+    monkeypatch.setattr(app.state, "warehouse_uow_factory", lambda: SqlAlchemyWarehouseUnitOfWork(sessions), raising=False)
+    _as({"quality": "edit", "production": "view", "warehouse": "edit"})
+    item = client.post(URL, json={"parent_id": parent["id"], "lot_id": str(lot.id), "lot_version": lot.version, "quantity": 2}).json()["instrument"]
+    written = snapshot(sessions, lot.id)[0]
+    before = snapshot(sessions, lot.id)
+    response = client.post(f"/api/stock/batches/{lot.id}/return", json={
+        "version": written.version, "quantity": "2", "source": "Другое назначение",
+        "instrument_writeoff_id": item["warehouse_writeoff_id"],
+    })
+    assert response.status_code == 422, response.text
+    assert "Это принадлежность СИ" in response.json()["detail"]
+    assert snapshot(sessions, lot.id) == before
+    for returned in (False, True):
+        if returned:
+            response = client.post(f"/api/production/instruments/{item['id']}/return-to-stock", json={"version": item["version"]})
+            assert response.status_code == 200, response.text
+        before = snapshot(sessions, lot.id)
+        records = client.get("/api/production/instruments").json()
+        preview = client.get(f"/api/stock/batches/{lot.id}/undo")
+        assert preview.status_code == 200, preview.text
+        assert preview.json()["undo"] is None
+        assert "Это принадлежность СИ" in preview.json()["reason"]
+        response = client.post(f"/api/stock/batches/{lot.id}/undo", json={"version": before[0].version})
+        assert response.status_code == 422, response.text
+        assert "Это принадлежность СИ" in response.json()["detail"]
+        assert snapshot(sessions, lot.id) == before
+        assert client.get("/api/production/instruments").json() == records

@@ -98,6 +98,7 @@ class RegisterInstrumentCommand:
     quantity: int = 1
     storage_location: str = ""
     warehouse_grn: str = ""
+    warehouse_writeoff_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -138,7 +139,7 @@ def _audit(aggregate_id: UUID, event_type: str, actor: Actor, now: datetime, det
     ))
 
 
-INSTRUMENT_EDITABLE = frozenset(field.name for field in fields(MeasurementInstrument)) - {"id", "version"}
+INSTRUMENT_EDITABLE = frozenset(field.name for field in fields(MeasurementInstrument)) - {"id", "version", "warehouse_writeoff_id"}
 MAX_INSTRUMENT_FILE_SIZE = 20 * 1024 * 1024
 
 
@@ -157,6 +158,8 @@ def _validated_instrument(item: MeasurementInstrument, repository: InstrumentRep
         if not isinstance(value, str) or (key in limits and len(value.strip()) > limits[key]):
             raise ProductionValidationError("Некорректное текстовое поле СИ")
         cleaned[key] = value.strip()
+    if item.kind is InstrumentKind.ACCESSORY and not cleaned["instrument_type"]:
+        cleaned["instrument_type"] = "Принадлежность"
     item = replace(item, **cleaned)
     if not all((item.inventory_number, item.name, item.instrument_type)):
         raise ProductionValidationError("Для СИ обязательны номер, наименование и тип")
@@ -213,7 +216,7 @@ def register_instrument(command: RegisterInstrumentCommand, uow: QualityUnitOfWo
         uow.instruments.lock_tree()
         if command.kind is InstrumentKind.MEASURING and command.status is InstrumentStatus.INACTIVE:
             raise ProductionValidationError("Недопустимый статус регистрации СИ")
-        item = MeasurementInstrument(id=uuid4(), version=1, **{
+        item = MeasurementInstrument(id=uuid4(), version=1, warehouse_writeoff_id=command.warehouse_writeoff_id, **{
             name: getattr(command, name) for name in INSTRUMENT_EDITABLE
         })
         item = _validated_instrument(item, uow.instruments)
@@ -222,6 +225,7 @@ def register_instrument(command: RegisterInstrumentCommand, uow: QualityUnitOfWo
             "inventory_number": item.inventory_number, "kind": item.kind.value,
             "parent_id": str(item.parent_id) if item.parent_id else None,
             "quantity": item.quantity, "warehouse_grn": item.warehouse_grn,
+            "warehouse_writeoff_id": str(item.warehouse_writeoff_id) if item.warehouse_writeoff_id else None,
         }, uow)
         uow.commit()
         return item

@@ -25,13 +25,14 @@ CHECKS = {
     "ck_production_instruments_measuring_quantity": "kind <> 'Средство измерений' OR quantity = 1",
     "ck_production_instruments_accessory": "kind <> 'Принадлежность' OR (parent_id IS NOT NULL AND verification_number IS NULL AND verified_at IS NULL AND verification_due IS NULL AND status IN ('Действует', 'Не используется'))",
 }
-NEW_COLUMNS = ("kind", "parent_id", "serial_number", "manufacturer", "doc_designation", "quantity", "storage_location", "warehouse_grn")
+NEW_COLUMNS = ("kind", "parent_id", "serial_number", "manufacturer", "doc_designation", "quantity", "storage_location", "warehouse_grn", "warehouse_writeoff_id")
 
 
 def upgrade():
     with op.batch_alter_table(TABLE) as batch:
         batch.add_column(sa.Column("kind", sa.String(32), nullable=False, server_default="Средство измерений"))
         batch.add_column(sa.Column("parent_id", sa.Uuid(), nullable=True))
+        batch.add_column(sa.Column("warehouse_writeoff_id", sa.Uuid(), nullable=True))
         batch.create_foreign_key("fk_production_instruments_parent", TABLE, ["parent_id"], ["id"], ondelete="RESTRICT")
         for name, length in (("serial_number", 128), ("manufacturer", 255), ("storage_location", 255), ("warehouse_grn", 32)):
             batch.add_column(sa.Column(name, sa.String(length), nullable=False, server_default=""))
@@ -66,6 +67,14 @@ def downgrade():
         raise RuntimeError("Нельзя отменить миграцию: сохранены документы СИ.")
     if op.get_bind().execute(sa.text(f"SELECT count(*) FROM {TABLE} WHERE kind = 'Принадлежность'")).scalar():
         raise RuntimeError("Нельзя отменить миграцию: зарегистрированы принадлежности СИ.")
+    metadata = " OR ".join(f"{name} <> ''" for name in (
+        "serial_number", "manufacturer", "doc_designation", "storage_location", "warehouse_grn",
+    ))
+    if op.get_bind().execute(sa.text(
+        f"SELECT count(*) FROM {TABLE} WHERE {metadata} OR quantity <> 1 "
+        "OR parent_id IS NOT NULL OR warehouse_writeoff_id IS NOT NULL"
+    )).scalar():
+        raise RuntimeError("Нельзя отменить миграцию: сохранены дополнительные сведения или связи СИ.")
     op.drop_table("production_instrument_files")
     with op.batch_alter_table(TABLE) as batch:
         for name in CHECKS:

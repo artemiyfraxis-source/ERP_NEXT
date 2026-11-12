@@ -16,6 +16,27 @@ EVIDENCE = {"verification_number": "TEST-PV", "verified_at": "2026-09-01T00:00:0
 PENDING = "Поверка не подтверждена"
 
 
+@pytest.mark.parametrize("instrument_type", [None, "", "   "])
+def test_blank_accessory_type_defaults_but_measuring_type_is_required(production_api, instrument_type):
+    client, _ = production_api
+    _as({"quality": "edit", "production": "view"})
+    parent = create(client)
+    body = {"inventory_number": "СИ.099", "name": "Переходник", "kind": "Принадлежность", "parent_id": parent["id"]}
+    if instrument_type is not None:
+        body["instrument_type"] = instrument_type
+    response = client.post("/api/production/instruments", json=body)
+    assert response.status_code == 200, response.text
+    accessory = response.json()["instrument"]
+    assert accessory["instrument_type"] == "Принадлежность"
+    assert accessory["warehouse_writeoff_id"] is None
+    edited = client.patch(f"/api/production/instruments/{accessory['id']}", json={"version": 1, "instrument_type": " "})
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["instrument"]["instrument_type"] == "Принадлежность"
+    body.update(kind="Средство измерений", status=PENDING, inventory_number="СИ.100", parent_id=None)
+    assert client.post("/api/production/instruments", json=body).status_code == 422
+    assert client.patch(f"/api/production/instruments/{parent['id']}", json={"version": parent["version"], "instrument_type": ""}).status_code == 422
+
+
 def _as(permissions):
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(id=MASTER_ID, name="Контролёр", department="ОТК"),
@@ -33,7 +54,7 @@ def test_pending_registration_and_listing_preserve_null_evidence(production_api,
     instrument = result.json()["instrument"]
     assert instrument == {**BASE, **dict.fromkeys(EVIDENCE), "status": PENDING, "id": instrument["id"], "version": 1,
                           "kind": "Средство измерений", "parent_id": None, "serial_number": "", "manufacturer": "",
-                          "doc_designation": "", "quantity": 1, "storage_location": "", "warehouse_grn": "", "files": []}
+                          "doc_designation": "", "quantity": 1, "storage_location": "", "warehouse_grn": "", "warehouse_writeoff_id": None, "files": []}
     assert client.get("/api/production/instruments").json()["instruments"] == [instrument]
     duplicate = client.post("/api/production/instruments", json={**BASE, "status": PENDING})
     assert duplicate.status_code == 422 and "уже есть" in duplicate.json()["detail"]

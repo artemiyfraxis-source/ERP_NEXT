@@ -171,10 +171,49 @@ it("creates an accessory with the parent preset and no verification fields", asy
   expect(screen.getByLabelText("Вид")).toHaveValue("Принадлежность");
   expect(screen.getByLabelText("В составе прибора")).toHaveValue(instrument.id);
   expect(screen.queryByLabelText("Поверка до")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Тип")).not.toBeRequired();
+  expect(screen.getByLabelText("Тип")).toHaveValue("");
   fill("Наименование", "Переходник"); save();
   await waitFor(() => expect(writes(requests)).toHaveLength(1));
-  expect(writes(requests)[0].body).toMatchObject({ parent_id: instrument.id, kind: "Принадлежность", storage_location: "ОТК", verification_number: null, verified_at: null, verification_due: null });
+  expect(writes(requests)[0].body).toMatchObject({ parent_id: instrument.id, kind: "Принадлежность", instrument_type: "Принадлежность", storage_location: "ОТК", verification_number: null, verified_at: null, verification_due: null });
 });
+
+it("returns a stock accessory only after confirmation and sends its current version", async () => {
+  const stockAccessory = { ...accessory, warehouse_writeoff_id: "writeoff" };
+  const { requests, onChanged } = setup([instrument, stockAccessory], ({ path }) => path.endsWith("/return-to-stock")
+    ? json({ instrument: { ...stockAccessory, version: stockAccessory.version + 1, status: "Не используется" } }) : null);
+  open(stockAccessory.inventory_number);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  fireEvent.click(screen.getByRole("button", { name: "Вернуть на склад" }));
+  expect(writes(requests)).toHaveLength(0);
+  confirm.mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Вернуть на склад" }));
+  await screen.findByText("Принадлежность возвращена на склад");
+  expect(writes(requests)).toEqual([{ method: "POST", path: `${base}/${stockAccessory.id}/return-to-stock`, body: { version: stockAccessory.version } }]);
+  expect(screen.getByLabelText("Количество, шт")).toHaveValue(Number(stockAccessory.quantity));
+  expect(screen.getByLabelText("Статус")).toHaveValue("Не используется");
+  expect(screen.queryByRole("button", { name: "Вернуть на склад" })).not.toBeInTheDocument();
+  expect(onChanged).toHaveBeenCalled();
+});
+
+it("blocks stock return on conflict and preserves the unsaved draft", async () => {
+  const stockAccessory = { ...accessory, warehouse_writeoff_id: "writeoff" };
+  const { requests } = setup([instrument, stockAccessory], ({ path }) => path.endsWith("/return-to-stock") ? json({ detail: "Конфликт" }, 409) : null);
+  open(stockAccessory.inventory_number); fill("Наименование", "Мои изменения");
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Вернуть на склад" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Запись изменил другой пользователь — обновите");
+  expect(screen.getByLabelText("Наименование")).toHaveValue("Мои изменения");
+  expect(screen.getByRole("button", { name: "Вернуть на склад" })).toBeDisabled();
+  expect(writes(requests)).toHaveLength(1);
+});
+
+it.each([accessory, { ...accessory, warehouse_writeoff_id: "writeoff", status: "Не используется" as const }, instrument])(
+  "hides return-to-stock when the record is ineligible: $kind / $status", (item) => {
+    setup([item]); open(item.inventory_number);
+    expect(screen.queryByRole("button", { name: "Вернуть на склад" })).not.toBeInTheDocument();
+  },
+);
 
 it("uploads a passport as base64, displays its link and metadata, and deletes only after confirmation", async () => {
   const { requests } = setup([unverified]); open(unverified.inventory_number);

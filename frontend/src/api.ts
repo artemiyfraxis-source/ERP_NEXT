@@ -1561,6 +1561,7 @@ export interface ProductionInstrument {
   quantity: string | number;
   storage_location: string;
   warehouse_grn: string;
+  warehouse_writeoff_id?: string | null;
   verification_number: string | null;
   verified_at: string | null;
   verification_due: string | null;
@@ -1568,7 +1569,7 @@ export interface ProductionInstrument {
   files: InstrumentFile[];
 }
 
-export type InstrumentInput = Omit<ProductionInstrument, "id" | "version" | "files">;
+export type InstrumentInput = Omit<ProductionInstrument, "id" | "version" | "files" | "warehouse_writeoff_id">;
 export interface InstrumentFromStockInput {
   parent_id: string;
   lot_id: string;
@@ -4113,6 +4114,10 @@ export const productionApi = {
     api(`/api/production/instruments/${encodeURIComponent(id)}/files/${encodeURIComponent(fileId)}`, { method: "DELETE" }),
   instrumentFromStock: (payload: InstrumentFromStockInput) =>
     api<{ instrument: ProductionInstrument }>("/api/production/instruments/from-stock", { method: "POST", body: JSON.stringify(payload) }),
+  returnInstrumentToStock: (id: string, version: number) =>
+    api<{ instrument: ProductionInstrument }>(`/api/production/instruments/${encodeURIComponent(id)}/return-to-stock`, {
+      method: "POST", body: JSON.stringify({ version }),
+    }),
   inspectBox: (boxId: string, payload: { version: number; accepted: number; rejected: number; defect_character: string; defect_description: string; instrument_ids: string[] }) =>
     api<{ box: ProductionBox; inspection_id: string; defect_number: string | null; serials: Array<{ serial_number: string; status: string }> }>(`/api/production/boxes/${boxId}/qc`, {
       method: "POST", body: JSON.stringify(payload),

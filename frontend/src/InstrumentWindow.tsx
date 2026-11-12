@@ -112,6 +112,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
     event.preventDefault();
     const quantity = Number(draft.quantity);
     const payload: InstrumentInput = { ...draft, quantity, name: draft.name.trim(), inventory_number: draft.inventory_number.trim() };
+    if (accessory && !payload.instrument_type.trim()) payload.instrument_type = "Принадлежность";
     if (accessory || payload.status === "Поверка не подтверждена") {
       payload.verification_number = null; payload.verified_at = null; payload.verification_due = null;
     }
@@ -185,6 +186,15 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
           </section>}
           <section><h3>Хранение</h3><div className="form-grid">{text("storage_location", "Место хранения")}{text("warehouse_grn", "ГРН")}</div></section>
           <div className="form-actions"><button className="primary small" type="submit" disabled={numberLoading || conflict}>{busy ? "Сохранение…" : "Сохранить"}</button>
+            {record?.kind === "Принадлежность" && record.warehouse_writeoff_id && record.status === "Действует" &&
+              <button type="button" className="secondary" disabled={conflict} onClick={() => {
+                if (!window.confirm("Вернуть принадлежность на склад и отметить «Не используется»?")) return;
+                if (dirty && !window.confirm("Несохранённые изменения будут потеряны. Продолжить?")) return;
+                void run(async () => {
+                  const result = await productionApi.returnInstrumentToStock(record.id, record.version);
+                  accept(result.instrument); setNotice("Принадлежность возвращена на склад"); await onChanged();
+                });
+              }}>Вернуть на склад</button>}
             {record && record.status !== "Не используется" && <button type="button" className="danger small" disabled={conflict} onClick={() => {
               if (!window.confirm("Списать прибор / отметить «Не используется»?")) return;
               if (dirty && !window.confirm("Несохранённые изменения будут потеряны. Продолжить?")) return;

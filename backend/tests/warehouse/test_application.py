@@ -93,6 +93,9 @@ class Audit:
     def add(self, item):
         self.items.append(item)
 
+    def for_lot(self, lot_id):
+        return [item for item in self.items if item.lot_id == lot_id]
+
 
 class Outbox:
     def __init__(self, message):
@@ -549,6 +552,31 @@ def test_writeoff_return_of_everything_written_off_is_allowed():
     returned = _return(uow, written, "4")
 
     assert (returned.written_off, returned.balance) == (Decimal("0"), Decimal("10"))
+
+
+@pytest.mark.parametrize("purpose,reason", [
+    ("Принадлежности СИ СИ.001", "Выдача"), ("ОТК", "Принадлежности СИ СИ.001"),
+])
+@pytest.mark.parametrize("source", ["Принадлежности СИ СИ.001", "Подменённое назначение"])
+def test_instrument_writeoff_cannot_be_returned_from_warehouse(purpose, reason, source):
+    uow = Uow(message())
+    lot = dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), uow)
+    written = _write_off(uow, lot, purpose, reason)
+    before = (uow.commits, list(uow.writeoffs.items), list(uow.audit.items))
+    with pytest.raises(WarehouseValidationError, match="Это принадлежность СИ — верните её через Качество → Средства измерения"):
+        _return(uow, written, "1", source=source)
+    assert uow.warehouse.get(lot.id) == written
+    assert (uow.commits, uow.writeoffs.items, uow.audit.items) == before
+
+
+def test_ordinary_returns_on_a_mixed_lot_cannot_consume_accessory_stock():
+    uow = Uow(message())
+    ordinary = _written_lot(uow)
+    written = _write_off(uow, ordinary, "Принадлежности СИ СИ.001", "Выдача")
+    returned = _return(uow, written, "4")
+    assert returned.written_off == Decimal(2)
+    with pytest.raises(WarehouseValidationError, match="Это принадлежность СИ"):
+        _return(uow, returned, "1")
 
 
 @pytest.mark.parametrize(("quantity", "source", "error"), [

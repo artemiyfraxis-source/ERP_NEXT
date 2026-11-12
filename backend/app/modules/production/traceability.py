@@ -786,6 +786,7 @@ class MeasurementInstrument:
     quantity: int = 1
     storage_location: str = ""
     warehouse_grn: str = ""
+    warehouse_writeoff_id: UUID | None = None
 
     def validate_for(self, moment: datetime) -> None:
         if self.kind is InstrumentKind.ACCESSORY:
