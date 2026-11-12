@@ -7,7 +7,7 @@ import type { EtkRoute, ProjectTechcard, TechcardRevision } from "./api";
 import { etkLinkScheme, etkLinkSchemeMarkup } from "./etkLinkScheme";
 import { pinCoreColor, withCoreColors } from "./etkCoreColors";
 import {
-  ETK_CONNECTION_COLUMNS, etkConnectionRows, etkContactSpecs, etkDrawHarness, etkFigure, etkParams, type EtkParam,
+  ETK_CONNECTION_COLUMNS, ETK_TUBE_COLUMNS, etkDocumentConnectionRows, etkPhysicalConfig, etkTubePlacementRows, etkContactSpecs, etkDrawHarness, etkFigure, etkParams, type EtkParam,
   type EtkTopologyData,
 } from "./etkDraw";
 import { ETK_TOOLING_SECTIONS, etkOperationName, etkToleranceLines, parseDefects, solderMode, toolingSections } from "./etkOperation";
@@ -168,9 +168,11 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
   const operations = withCoreColors(rows(document.operations), document);
   const linkScheme = etkLinkScheme(card.document);
   const linkSvg = linkScheme ? etkLinkSchemeMarkup(linkScheme) : "";
+  const physical = etkPhysicalConfig(document);
   // Схема связей перечисляет каждый провод в таблицах разъёмов — прежние схема жгута и таблица соединений её не повторяют.
-  const harness = linkSvg ? "" : etkDrawHarness(document.topology as EtkTopologyData | undefined, harnessPinsOf(operations));
-  const connections = linkSvg ? [] : etkConnectionRows(document.connections);
+  const harness = linkSvg || physical ? "" : etkDrawHarness(document.topology as EtkTopologyData | undefined, harnessPinsOf(operations));
+  const connections = linkSvg && !physical ? [] : etkDocumentConnectionRows(document);
+  const tubes = etkTubePlacementRows(document);
   const route = etkRouteOf(card.document);
   const batch = Number(String(object(document.kit).part_quantity ?? "").replace(",", ".")) || 1;
   const cover: PrintPage = {
@@ -183,6 +185,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
       ...(linkSvg ? [{ heading: "Схема связей" }, { figure: linkSvg }] as PrintBlock[] : []),
       ...(harness ? [{ heading: "Схема жгута" }, { figure: harness }] as PrintBlock[] : []),
       ...(connections.length ? [{ heading: "Таблица соединений" }, { table: { columns: ETK_CONNECTION_COLUMNS, rows: connections } }] as PrintBlock[] : []),
+      ...(tubes.length ? [{ heading: "Размещение трубок" }, { table: { columns: ETK_TUBE_COLUMNS, rows: tubes } }] as PrintBlock[] : []),
       { heading: "Маршрут" },
       { table: {
         columns: ["№", "Код", "Операция", "Разъём / сторона", "Время операции, с", "Подгот., с"],
