@@ -5202,7 +5202,7 @@ a.button-link { display: inline-block; text-decoration: none; text-align: center
 .vswr-chart svg { display: block; width: 100%; height: auto; max-height: 340px; }
 .vswr-problems { display: block; padding: 0 20px; }
 .vswr-result { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 14px; }
-.vswr-upload .form-grid { padding: 0 0 8px; }
+.vswr-upload .form-grid { padding: 0 0 8px; align-items: start; }
 /* Контроль КСВН коакса: сегменты режима и «1 из N» в одну строку (владелец 22.10). */
 .tcgen .gvswr { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
 .tcgen .gvswr-every { display: inline-flex; align-items: center; gap: 6px; color: var(--foreground); font-size: 12.5px; font-weight: 600; }

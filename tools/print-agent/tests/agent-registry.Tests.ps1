@@ -55,6 +55,7 @@ Describe 'Get-AgentScanners' {
 }
 
 Describe 'Send-Heartbeat' {
+    BeforeEach { Mock Get-VnaCapability { $null } }
     It 'шлёт номер ПК, имя, версию, адрес и сканеры' {
         Mock Get-MachineId { 'guid-1' }
         Mock Get-LanIp { '192.168.1.20' }

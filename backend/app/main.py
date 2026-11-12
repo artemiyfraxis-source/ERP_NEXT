@@ -30,6 +30,7 @@ from .modules.warehouse import labels_api as warehouse_labels_api
 from .modules.warehouse import receipt_llm_api as warehouse_receipt_llm_api
 from .modules.warehouse import receipts_api as warehouse_receipts_api
 from .modules.warehouse import scan_jobs_api as warehouse_scan_jobs_api
+from .modules.warehouse import vna_jobs_api as warehouse_vna_jobs_api
 from .modules.fulfillment import api as fulfillment_api
 from .modules.production import api as production_api
 from .modules.production import plan_api as production_plan_api
@@ -137,6 +138,7 @@ app.include_router(warehouse_labels_api.router)
 app.include_router(warehouse_receipt_llm_api.router)  # before /receipts/{receipt_id}
 app.include_router(warehouse_receipts_api.router)
 app.include_router(warehouse_scan_jobs_api.router)
+app.include_router(warehouse_vna_jobs_api.router)
 app.include_router(scan_agent_install.router)
 app.include_router(fulfillment_api.router)
 app.include_router(production_api.router)

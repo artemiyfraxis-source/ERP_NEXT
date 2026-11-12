@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   productionApi,
   type ProductionInstrument,
@@ -16,6 +16,7 @@ import { formatDate, formatNumber } from "./format";
 import { PageWindow } from "./PageWindow";
 import { StatusChip } from "./StatusChip";
 import { VswrChart } from "./VswrChart";
+import { VnaCapture, instrumentForVna } from "./vnaCapture";
 
 /* «Замеры КСВН» в «ОТК» (T4): задание коаксиальной сборки → таблица изделий с последним замером. Замер грузится файлом
    ВАЦ (.s1p / .csv / .txt) в окне; норму сервер берёт из ЭТК задания, а когда её там нет — вердикт и причину пишет
@@ -207,6 +208,8 @@ function VswrUploadWindow({ task, norm, row, instruments, close, onSaved, canRej
   const active = instruments.filter((item) => item.kind === "Средство измерений" && item.status === "Действует");
   const [instrumentId, setInstrumentId] = useState(active[0]?.id ?? "");
   const [file, setFile] = useState<File | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [capturing, setCapturing] = useState(false);
   const [bandFrom, setBandFrom] = useState(norm.band_mhz?.[0] != null ? String(norm.band_mhz[0]) : "");
   const [bandTo, setBandTo] = useState(norm.band_mhz?.[1] != null ? String(norm.band_mhz[1]) : "");
   const [verdict, setVerdict] = useState("");
@@ -219,7 +222,7 @@ function VswrUploadWindow({ task, norm, row, instruments, close, onSaved, canRej
   const customer = norm.status === "ok" && norm.source === "customer";
 
   async function submit() {
-    if (!file || busy || problems.length) return;
+    if (!file || busy || capturing || problems.length) return;
     setBusy(true);
     setError("");
     try {
@@ -245,13 +248,22 @@ function VswrUploadWindow({ task, norm, row, instruments, close, onSaved, canRej
       <div className="form-grid">
         <label className="half">Прибор (средство измерения)
           <select value={instrumentId} onChange={(event) => setInstrumentId(event.target.value)}>
-            {!active.length && <option value="">Нет действующих СИ</option>}
+            <option value="">{active.length ? "— выберите прибор —" : "Нет действующих СИ"}</option>
             {active.map((item) => <option key={item.id} value={item.id}>{item.inventory_number} · {item.name} · поверка до {formatDate(item.verification_due)}</option>)}
           </select>
         </label>
-        <label className="half">Файл замера
-          <input type="file" accept={FILE_ACCEPT} aria-label="Файл замера" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
-        </label>
+        <div className="half">
+          <label htmlFor="vswr-measurement-file">Файл замера</label>
+          <input ref={fileInput} id="vswr-measurement-file" type="file" hidden accept={FILE_ACCEPT} aria-label="Файл замера"
+            disabled={busy || capturing} onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+          <VnaCapture disabled={busy} onBusy={setCapturing} onFile={(captured, name) => {
+            if (fileInput.current) fileInput.current.value = "";
+            setFile(captured); setInstrumentId(instrumentForVna(name, active)); setError("");
+          }}>
+            <button type="button" className="secondary small" disabled={busy || capturing} onClick={() => fileInput.current?.click()}>Выбрать файл…</button>
+          </VnaCapture>
+          {file && <small role="status">Выбран файл: {file.name}</small>}
+        </div>
         {/* Норма заказчика: полоса — её, вердикт сервер выносит только по её точкам. */}
         <label>Полоса от, МГц<input inputMode="decimal" value={bandFrom} readOnly={customer} title={customer ? "Полоса нормы заказчика" : undefined} onChange={(event) => setBandFrom(event.target.value)} /></label>
         <label>Полоса до, МГц<input inputMode="decimal" value={bandTo} readOnly={customer} title={customer ? "Полоса нормы заказчика" : undefined} onChange={(event) => setBandTo(event.target.value)} /></label>
@@ -267,7 +279,7 @@ function VswrUploadWindow({ task, norm, row, instruments, close, onSaved, canRej
       {problems.length > 0 && <small className="danger-text vswr-problems">{problems.join(". ")}.</small>}
       <div className="form-actions">
         <button className="secondary small" onClick={close}>Отмена</button>
-        <button className="primary small" disabled={busy || problems.length > 0} onClick={() => void submit()}>{busy ? "Загрузка…" : "Загрузить замер"}</button>
+        <button className="primary small" disabled={busy || capturing || problems.length > 0} onClick={() => void submit()}>{busy ? "Загрузка…" : "Загрузить замер"}</button>
       </div>
     </>}
     {result && <>

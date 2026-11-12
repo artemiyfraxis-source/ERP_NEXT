@@ -265,12 +265,12 @@ def test_the_strict_release_manifest_and_heartbeat_use_the_same_served_script(st
     admin, agent, _clock, _sessions = stand
     served = admin.get("/api/stock/scan/agent/files/agent.ps1").content
     manifest = admin.get("/api/stock/scan/agent/manifest").json()
-    assert manifest["version"] == "2.2.0"
+    assert manifest["version"] == "2.3.0"
     assert manifest["sha256"] == hashlib.sha256(served).hexdigest()
     update = _beat(agent, "m-old", version="2.1.0")["update"]
-    assert update["version"] == "2.2.0" and update["sha256"] == manifest["sha256"]
+    assert update["version"] == "2.3.0" and update["sha256"] == manifest["sha256"]
     assert _press(admin, "m-old")["status"] == "choose", "update offered is not update installed"
-    assert _beat(agent, "m-old", version="2.2.0")["update"] is None
+    assert _beat(agent, "m-old", version="2.3.0")["update"] is None
     assert _press(admin, "m-old")["status"] == "pending"
 
 

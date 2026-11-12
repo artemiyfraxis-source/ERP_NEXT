@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, Text, Uuid, and_, delete, or_, select, update
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, LargeBinary, String, Text, Uuid, and_, case, delete, or_, select, update
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.shared.advisory_lock import advisory_lock, lock_key
@@ -40,6 +40,8 @@ SCANNER_MAX = 300
 NO_ANSWER = "Сканер не ответил — проверьте агент на ПК склада"
 CANCELLED = "Отменено"
 NO_REASON = "Агент сканирования не прислал скан и не сказал почему"
+VNA_NO_ANSWER = "ВАЦ не ответил — проверьте агент на выбранном ПК"
+VNA_FILE_LIMIT = 2 * 1024 * 1024
 
 PENDING, CLAIMED, DONE, FAILED = "pending", "claimed", "done", "failed"
 OPEN_STATUSES = (PENDING, CLAIMED)
@@ -53,7 +55,14 @@ class ScanJobRow(Base):
     __table_args__ = (
         CheckConstraint("status IN ('pending', 'claimed', 'done', 'failed')", name="ck_warehouse_scan_jobs_status"),
         CheckConstraint("file_id IS NULL OR status = 'done'", name="ck_warehouse_scan_jobs_file_only_done"),
-        CheckConstraint("status <> 'done' OR file_id IS NOT NULL", name="ck_warehouse_scan_jobs_done_file"),
+        CheckConstraint("status <> 'done' OR (kind = 'scan' AND file_id IS NOT NULL) OR "
+                        "(kind = 'vna' AND capture_content IS NOT NULL)", name="ck_warehouse_scan_jobs_done_file"),
+        CheckConstraint("kind IN ('scan', 'vna')", name="ck_warehouse_scan_jobs_kind"),
+        CheckConstraint("(kind = 'scan' AND capture_content IS NULL AND vna_name = '') OR "
+                        "(kind = 'vna' AND file_id IS NULL AND result = '' AND target_machine_id IS NOT NULL "
+                        "AND target_machine_id <> '' AND target_scanner IS NULL)", name="ck_warehouse_scan_jobs_kind_payload"),
+        CheckConstraint("capture_content IS NULL OR (status = 'done' AND length(capture_content) BETWEEN 1 AND 2097152)",
+                        name="ck_warehouse_scan_jobs_capture_size"),
         CheckConstraint("claimed_at IS NULL OR status <> 'pending'", name="ck_warehouse_scan_jobs_pending_unclaimed"),
         CheckConstraint(
             "(status <> 'claimed' AND status <> 'done') OR claimed_at IS NOT NULL",
@@ -93,6 +102,9 @@ class ScanJobRow(Base):
     target_scanner: Mapped[str | None] = mapped_column(String(SCANNER_MAX), nullable=True)
     error: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     result: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    kind: Mapped[str] = mapped_column(String(8), nullable=False, default="scan", server_default="scan")
+    capture_content: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
+    vna_name: Mapped[str] = mapped_column(String(500), nullable=False, default="", server_default="")
 
 
 @dataclass(frozen=True)
@@ -103,6 +115,9 @@ class ScanJob:
     file_id: UUID | None
     result: str  # the recognition answer as JSON text, '' — not made yet (or the job is not done)
     requested_by: str
+    kind: str = "scan"
+    vna_name: str = ""
+    target_machine_id: str | None = None
 
 
 class ScanJobClosed(Exception):
@@ -119,7 +134,8 @@ def _session(uow) -> Session:
 
 def _job(row: ScanJobRow) -> ScanJob:
     return ScanJob(id=row.id, status=row.status, error=row.error or "", file_id=row.file_id, result=row.result or "",
-                   requested_by=row.requested_by)
+                   requested_by=row.requested_by, kind=row.kind, vna_name=row.vna_name,
+                   target_machine_id=row.target_machine_id)
 
 
 def _expire(session: Session, now: datetime) -> None:
@@ -129,7 +145,7 @@ def _expire(session: Session, now: datetime) -> None:
             and_(ScanJobRow.status == PENDING, ScanJobRow.created_at < now - PENDING_TIMEOUT),
             and_(ScanJobRow.status == CLAIMED, ScanJobRow.claimed_at < now - CLAIMED_TIMEOUT),
         ))
-        .values(status=FAILED, finished_at=now, error=NO_ANSWER)
+        .values(status=FAILED, finished_at=now, error=case((ScanJobRow.kind == "vna", VNA_NO_ANSWER), else_=NO_ANSWER))
         .execution_options(synchronize_session=False)
     )
 
@@ -142,13 +158,14 @@ def _read(session: Session, job_id: UUID) -> ScanJob:
 
 
 def create_job(uow, *, requested_by: str, now: datetime, target: str | None = None,
-               scanner: str | None = None) -> ScanJob:
+               scanner: str | None = None, kind: str = "scan", vna_name: str = "") -> ScanJob:
     """Create a pending job. Only a full `target` / `scanner` pair can be claimed; incomplete legacy rows expire."""
     scanner = (scanner or "").strip()[:SCANNER_MAX] or None
     with uow:
         session = _session(uow)
         row = ScanJobRow(id=uuid4(), status=PENDING, requested_by=requested_by[:255] or "—", created_at=now,
-                         target_machine_id=target, target_scanner=scanner if target else None, error="", result="")
+                         target_machine_id=target, target_scanner=scanner if target else None, error="", result="",
+                         kind=kind, vna_name=vna_name)
         session.add(row)
         uow.commit()
     return _job(row)
@@ -194,9 +211,10 @@ def cancel_job(uow, job_id: UUID, *, now: datetime) -> ScanJob:
 class Claimed:
     id: UUID
     target_scanner: str | None  # the scanner the person chose; claims now require a nonempty scanner
+    kind: str = "scan"
 
 
-def claim(uow, *, now: datetime, machine_id: str | None = None) -> Claimed | None:
+def claim(uow, *, now: datetime, machine_id: str | None = None, vna: bool = False) -> Claimed | None:
     """Claim the oldest complete PC/scanner pair targeted to this agent. Incomplete pre-strict jobs expire normally;
     no agent, including an old one without an id, may scan them. Finished jobs past KEEP_FINISHED go."""
     with uow:
@@ -206,12 +224,14 @@ def claim(uow, *, now: datetime, machine_id: str | None = None) -> Claimed | Non
             ScanJobRow.status.in_(FINISHED_STATUSES), ScanJobRow.finished_at < now - KEEP_FINISHED,
         ))
         claimed = None
-        mine = and_(ScanJobRow.target_machine_id.is_not(None), ScanJobRow.target_machine_id != "",
-                    ScanJobRow.target_scanner.is_not(None), ScanJobRow.target_scanner != "",
+        supported = and_(ScanJobRow.kind == "scan", ScanJobRow.target_scanner.is_not(None), ScanJobRow.target_scanner != "")
+        if vna:
+            supported = or_(supported, ScanJobRow.kind == "vna")
+        mine = and_(ScanJobRow.target_machine_id.is_not(None), ScanJobRow.target_machine_id != "", supported,
                     ScanJobRow.target_machine_id == machine_id)
         for _attempt in range(5):  # another agent may take the same row between the read and the write
             candidate = session.execute(
-                select(ScanJobRow.id, ScanJobRow.target_scanner).where(ScanJobRow.status == PENDING, mine)
+                select(ScanJobRow.id, ScanJobRow.target_scanner, ScanJobRow.kind).where(ScanJobRow.status == PENDING, mine)
                 .order_by(ScanJobRow.created_at, ScanJobRow.id).limit(1)
                 .with_for_update(skip_locked=True)
             ).first()
@@ -223,7 +243,7 @@ def claim(uow, *, now: datetime, machine_id: str | None = None) -> Claimed | Non
                 .execution_options(synchronize_session=False)
             )
             if taken.rowcount == 1:
-                claimed = Claimed(candidate.id, candidate.target_scanner)
+                claimed = Claimed(candidate.id, candidate.target_scanner, candidate.kind)
                 break
         uow.commit()
     return claimed

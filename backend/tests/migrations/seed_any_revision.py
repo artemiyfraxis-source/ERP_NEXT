@@ -202,6 +202,8 @@ _COUPLED_VALUES: dict[tuple[str, str], Any] = {
     ("production_vswr_measurements", "verdict_manual"): True,
     # A scan job's recognition answer exists only once it is done; the seeder's job is pending (0145_warehouse_scan_jobs).
     ("warehouse_scan_jobs", "result"): "",
+    ("warehouse_scan_jobs", "kind"): "scan",
+    ("warehouse_scan_jobs", "vna_name"): "",
     # «Who» goes with «when» (0162_pack_decision_no_upd): a seeded card is not decided, a shipment has no no-УПД permit.
     ("shipping_project_addressees", "pack_decided_by"): "",
     ("shipping_project_addressees", "pack_decided_at"): None,
