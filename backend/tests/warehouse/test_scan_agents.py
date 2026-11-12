@@ -49,7 +49,7 @@ def _press(admin, agent_id=None, scanner=SCANNER["id"]):
 def test_invalid_explicit_choice_never_queues_on_another_scanner(stand, agent_id, scanner):
     admin, agent, _clock, _sessions = stand
     _beat(agent, "m-1")
-    _beat(agent, "m-2", scanners=(SECOND,))
+    _beat(_bearer(_issue(admin, scopes=("scan:upload",))["token"]), "m-2", scanners=(SECOND,))
     assert _press(admin, agent_id, scanner)["status"] == "choose"
     assert _claimed(agent, "m-1") is None
     assert _claimed(agent, "m-2") is None
@@ -59,7 +59,7 @@ def test_offline_or_pre_strict_agent_never_receives_a_new_scan(stand):
     admin, agent, clock, _sessions = stand
     _beat(agent, "m-1")
     clock.now += scan_agents.LIVE_FOR + timedelta(seconds=1)
-    _beat(agent, "m-2")
+    _beat(_bearer(_issue(admin, scopes=("scan:upload",))["token"]), "m-2")
     assert _press(admin, "m-1")["status"] == "choose"
     _beat(agent, "m-1", version="2.1.0")
     assert _press(admin, "m-1")["status"] == "choose"
@@ -128,16 +128,16 @@ def test_nobody_alive_is_no_agent_and_a_pc_without_a_scanner_is_named(stand):
     assert _press(admin) == {"status": "no_agent", "idle": []}
     _beat(agent, "m-1", pc="BUHGALTER", scanners=())
     assert _press(admin) == {"status": "no_agent", "idle": ["BUHGALTER"]}
-    _beat(agent, "m-2", pc="SKLAD")
+    _beat(_bearer(_issue(admin, scopes=("scan:upload",))["token"]), "m-2", pc="SKLAD")
     clock.now += scan_agents.LIVE_FOR + timedelta(seconds=1)
     answer = _press(admin)
     assert answer["status"] == "choose" and answer["agents"][0]["live"] is False, "offline devices remain visible"
 
 
 def test_addresses_and_legacy_preferences_never_replace_an_explicit_pair(stand):
-    _admin, agent, clock, sessions = stand
+    admin, agent, clock, sessions = stand
     _beat(agent, "m-1", pc="SKLAD", lan="192.168.1.20")
-    _beat(agent, "m-2", pc="OFFICE", lan="192.168.1.30")
+    _beat(_bearer(_issue(admin, scopes=("scan:upload",))["token"]), "m-2", pc="OFFICE", lan="192.168.1.30")
     with sessions() as session:  # as Caddy sees them: different public addresses, the LAN ones as reported
         session.get(scan_agents.ScanAgentRow, "m-1").ip_seen = "203.0.113.5"
         session.get(scan_agents.ScanAgentRow, "m-2").ip_seen = "203.0.113.5"
@@ -165,7 +165,7 @@ def test_addresses_and_legacy_preferences_never_replace_an_explicit_pair(stand):
 def test_a_job_is_made_for_the_chosen_agent_and_only_that_agent_claims_it(stand):
     admin, agent, _clock, _sessions = stand
     _beat(agent, "m-1", pc="SKLAD")
-    _beat(agent, "m-2", pc="OFFICE")
+    _beat(_bearer(_issue(admin, scopes=("scan:upload",))["token"]), "m-2", pc="OFFICE")
     picked = _press(admin)
     assert picked["status"] == "choose" and {a["id"] for a in picked["agents"]} == {"m-1", "m-2"}
     assert picked["agents"][0]["scanners"] == [SCANNER] and picked["agents"][0]["pc"] == "OFFICE"
@@ -220,6 +220,12 @@ def test_the_install_token_is_issued_by_whoever_may_scan_and_spent_once(stand):
     assert first.status_code == 200, first.text
     token = first.json()["token"]
     assert token.startswith("erp_") and first.json()["server"] == "https://testserver"
+    # Enrollment is already bound: neither heartbeat nor a VNA claim may pick another PC.
+    assert TestClient(app).post(BEAT, json={"machine_id": "other"}, headers=_bearer(token)).status_code == 403
+    assert TestClient(app).post(CLAIM, json={"machine_id": "other", "kinds": ["vna"]}, headers=_bearer(token)).status_code == 403
+    from app.modules.warehouse.scan_jobs import AgentTokenRow
+    with sessions() as session:
+        assert session.query(AgentTokenRow).one().machine_id == "m-9"
     # The enrolled token works as the agent's: it reports and claims, and the admin's token list shows it.
     assert TestClient(app).post(BEAT, json={"machine_id": "m-9", "scanners": []}, headers=_bearer(token)).status_code == 200
     listed = admin.get("/api/auth/api-tokens").json()["tokens"]
@@ -265,12 +271,12 @@ def test_the_strict_release_manifest_and_heartbeat_use_the_same_served_script(st
     admin, agent, _clock, _sessions = stand
     served = admin.get("/api/stock/scan/agent/files/agent.ps1").content
     manifest = admin.get("/api/stock/scan/agent/manifest").json()
-    assert manifest["version"] == "2.3.0"
+    assert manifest["version"] == "2.5.0"
     assert manifest["sha256"] == hashlib.sha256(served).hexdigest()
     update = _beat(agent, "m-old", version="2.1.0")["update"]
-    assert update["version"] == "2.3.0" and update["sha256"] == manifest["sha256"]
+    assert update["version"] == "2.5.0" and update["sha256"] == manifest["sha256"]
     assert _press(admin, "m-old")["status"] == "choose", "update offered is not update installed"
-    assert _beat(agent, "m-old", version="2.3.0")["update"] is None
+    assert _beat(agent, "m-old", version="2.5.0")["update"] is None
     assert _press(admin, "m-old")["status"] == "pending"
 
 
@@ -350,7 +356,7 @@ def test_the_agents_list_carries_each_pcs_scanners(stand):
     admin, agent, clock, _sessions = stand
     _beat(agent, "m-1", pc="SKLAD", scanners=(SCANNER, SECOND), version="2.1.0")
     clock.now += scan_agents.LIVE_FOR + timedelta(seconds=1)
-    _beat(agent, "m-2", pc="OFFICE", scanners=({"name": "Сканер без id"},))
+    _beat(_bearer(_issue(admin, scopes=("scan:upload",))["token"]), "m-2", pc="OFFICE", scanners=({"name": "Сканер без id"},))
     _claimed(agent, host="OLD")  # an old agent: it cannot be targeted, so it is not listed
     agents = admin.get("/api/stock/scan/agents").json()["agents"]
     assert [(a["id"], a["pc"], a["live"], a["scanners"]) for a in agents] == [
@@ -380,9 +386,9 @@ def test_a_job_for_the_chosen_scanner_hands_it_to_the_agent(stand):
 
 
 def test_the_chosen_scanner_wins_over_the_browsers_address(stand):
-    _admin, agent, clock, sessions = stand
+    admin, agent, clock, sessions = stand
     _beat(agent, "m-1", pc="SKLAD", lan="192.168.1.20")
-    _beat(agent, "m-2", pc="OFFICE", lan="192.168.1.30", scanners=(SECOND,))
+    _beat(_bearer(_issue(admin, scopes=("scan:upload",))["token"]), "m-2", pc="OFFICE", lan="192.168.1.30", scanners=(SECOND,))
 
     def route(remembered="", scanner=""):
         return scan_agents.route(_uow(sessions), browser_ip="192.168.1.20", remembered=remembered, now=clock.now,

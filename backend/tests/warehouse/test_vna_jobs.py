@@ -74,7 +74,9 @@ def test_capture_requires_explicit_pc_and_old_agents_never_claim_it(capture):
     admin, agent, _, _ = capture
     assert start(admin)["status"] == "no_agent"
     heartbeat(agent)
-    heartbeat(agent, "pc-2")
+    assert start(admin, "")["status"] == "choose"
+    other = _bearer(_issue(admin, scopes=("scan:upload",))["token"])
+    heartbeat(other, "pc-2")
     choices = start(admin, "")
     assert choices["status"] == "choose"
     assert len(choices["agents"]) == 2
@@ -82,8 +84,8 @@ def test_capture_requires_explicit_pc_and_old_agents_never_claim_it(capture):
     job = start(admin)
     assert job["agent"]["id"] == "pc-1"
     assert claim(agent) is None
-    assert claim(agent, "pc-2", ["vna"]) is None
-    assert claim(agent, "", ["vna"]) is None
+    assert claim(other, "pc-2", ["vna"]) is None
+    assert TestClient(app).post(CLAIM, json={"kinds": ["vna"]}, headers=agent).status_code == 403
     assert claim(agent, kinds=["vna"])["id"] == job["id"]
     assert claim(agent, kinds=["vna"]) is None
 
@@ -94,10 +96,11 @@ def test_heartbeat_readiness_reason_survives_the_pc_list_and_can_be_cleared(capt
     admin, agent, _, _ = capture
     capability = {"name": "S2VNA", "ready": ready, "reason": reason}
     heartbeat(agent, capability=capability)
-    heartbeat(agent, "pc-2", capability=capability)
+    other = _bearer(_issue(admin, scopes=("scan:upload",))["token"])
+    heartbeat(other, "pc-2", capability=capability)
     assert start(admin, "")["agents"][0]["vna"] == capability
     heartbeat(agent)  # Compatibility with clients that do not send a reason; clear stale reason.
-    heartbeat(agent, "pc-2")
+    heartbeat(other, "pc-2")
     assert start(admin, "")["agents"][0]["vna"] == {"name": NAME, "ready": True, "reason": ""}
 
 
@@ -243,12 +246,13 @@ def test_start_rejects_source_unavailable_on_selected_pc(capture, sources, vna, 
 def test_both_sources_survive_heartbeat_and_arinst_removal(capture):
     admin, agent, _, _ = capture
     heartbeat(agent, sources=["s2vna", "arinst"])
-    heartbeat(agent, "pc-2", sources=["s2vna", "arinst"])
+    other = _bearer(_issue(admin, scopes=("scan:upload",))["token"])
+    heartbeat(other, "pc-2", sources=["s2vna", "arinst"])
     pc = start(admin, "")["agents"][0]
     assert pc["vna_sources"] == ["s2vna", "arinst"]
     assert pc["vna"]["name"] == NAME
     heartbeat(agent)  # Older clients still advertise S2VNA only, removing stale Arinst.
-    heartbeat(agent, "pc-2")
+    heartbeat(other, "pc-2")
     assert start(admin, "")["agents"][0]["vna_sources"] == ["s2vna"]
     assert start(admin)["source"] == "s2vna"
 
@@ -277,7 +281,7 @@ def test_heartbeat_rejects_invalid_source_list(capture, sources, vna):
 def test_arinst_capture_keeps_bytes_filename_and_source_without_s2vna_header(capture, extension):
     admin, agent, _, sessions = capture
     heartbeat(agent, vna=False, sources=["arinst"])
-    job = start(admin, "", source="arinst")
+    job = start(admin, source="arinst")
     pc = job["agent"]
     assert pc["vna_sources"] == ["arinst"] and pc["vna"] is None
     assert job["source"] == "arinst" and job["vna"]["name"] == "Arinst VNA-DL"
@@ -317,36 +321,33 @@ def test_database_rejects_unknown_source(capture):
             session.commit()
 
 
-def test_local_source_match_routes_automatically_but_never_to_a_remote_pc(capture):
+def test_ip_only_orders_candidates_and_never_selects_even_one_pc(capture):
     admin, agent, _, sessions = capture
     heartbeat(agent)
-    heartbeat(agent, "remote")
+    assert start(admin, "")["status"] == "choose"
+    other = _bearer(_issue(admin, scopes=("scan:upload",))["token"])
+    heartbeat(other, "aaa-remote")
     with sessions() as session:
         from app.modules.warehouse.scan_agents import ScanAgentRow
-        session.get(ScanAgentRow, "remote").ip_seen = "192.0.2.10"
+        session.get(ScanAgentRow, "aaa-remote").ip_seen = "192.0.2.10"
         session.commit()
-    assert start(admin, "")["agent"]["id"] == "pc-1"
-    rejected = admin.post(JOBS, json={"instrument_id": S2_INSTRUMENT, "agent_id": "remote"}, headers=_csrf(admin))
-    assert rejected.status_code == 422
+    choices = start(admin, "")
+    assert [pc["id"] for pc in choices["agents"]] == ["pc-1", "aaa-remote"]
+    assert start(admin, "aaa-remote")["agent"]["id"] == "aaa-remote"
     with sessions() as session:
         session.get(ScanAgentRow, "pc-1").ip_seen = "192.0.2.11"
         session.commit()
-    assert start(admin, "")["status"] == "no_agent"
-    assert start(admin, "remote")["status"] == "no_agent"
-    # LAN address is also reported by the PC agent.
-    heartbeat(agent, lan_ip="testclient")
-    with sessions() as session:
-        session.get(ScanAgentRow, "pc-1").ip_seen = "192.0.2.11"
-        session.commit()
-    assert start(admin, "")["agent"]["id"] == "pc-1"
+    assert start(admin, "")["status"] == "choose"
+    assert start(admin, "pc-1")["agent"]["id"] == "pc-1"
 
 
-def test_source_filter_removes_unrelated_agents_from_ambiguity(capture):
+def test_source_filter_still_requires_explicit_selection(capture):
     admin, agent, _, _ = capture
     heartbeat(agent)
-    heartbeat(agent, "arinst-pc", vna=False, sources=["arinst"])
-    assert start(admin, "")["agent"]["id"] == "pc-1"
-    assert start(admin, "", "arinst")["agent"]["id"] == "arinst-pc"
+    other = _bearer(_issue(admin, scopes=("scan:upload",))["token"])
+    heartbeat(other, "arinst-pc", vna=False, sources=["arinst"])
+    assert [pc["id"] for pc in start(admin, "")["agents"]] == ["pc-1"]
+    assert [pc["id"] for pc in start(admin, "", "arinst")["agents"]] == ["arinst-pc"]
 
 
 @pytest.mark.parametrize("changes", [{"status": "Не используется"}, {"status": "Поверка не подтверждена",
@@ -397,3 +398,86 @@ def test_invalid_capture_settings_fail_the_job(capture, settings):
     claim(agent, kinds=["vna"])
     assert result(agent, job, settings=settings).status_code == 422
     assert admin.get(f"{JOBS}/{job}").json()["status"] == "failed"
+
+
+@pytest.mark.parametrize("operation", ["heartbeat", "claim", "file", "error"])
+def test_vna_rejects_another_bound_token_without_mutating_the_job(capture, operation):
+    admin, agent, _, sessions = capture
+    heartbeat(agent)
+    other = _bearer(_issue(admin, scopes=("scan:upload",))["token"])
+    heartbeat(other, "pc-2")
+    job = start(admin)["id"]
+    if operation in ("file", "error"):
+        claim(agent, kinds=["vna"])
+    client = TestClient(app)
+    if operation == "heartbeat":
+        response = client.post(HEARTBEAT, json={"machine_id": "pc-1", "vna": {"name": "wrong", "ready": False}}, headers=other)
+    elif operation == "claim":
+        response = client.post(CLAIM, json={"machine_id": "pc-1", "kinds": ["vna"]}, headers=other)
+    elif operation == "file":
+        response = result(other, job)
+    else:
+        response = client.post(f"/api/stock/scan/agent/jobs/{job}/result", json={"error": "wrong"},
+                               headers={**other, "X-Agent-Machine-Id": "pc-1"})
+    assert response.status_code == 403
+    assert admin.get(f"{JOBS}/{job}").json()["status"] == ("claimed" if operation in ("file", "error") else "pending")
+    # Even an honest header for the other token cannot submit a job targeted to this PC.
+    assert result(other, job, machine="pc-2").status_code == 403
+    from app.modules.warehouse.vna_jobs import AgentVnaRow
+    with sessions() as session:
+        assert session.get(AgentVnaRow, "pc-1").name == NAME
+
+
+def test_legacy_token_binds_only_on_first_heartbeat_and_cannot_rebind(capture):
+    admin, agent, _, sessions = capture
+    client = TestClient(app)
+    assert client.post(CLAIM, json={"machine_id": "pc-1", "kinds": ["vna"]}, headers=agent).status_code == 403
+    heartbeat(agent)
+    heartbeat(agent)  # Idempotent heartbeat for the same binding.
+    assert client.post(HEARTBEAT, json={"machine_id": "pc-2"}, headers=agent).status_code == 403
+    other = _bearer(_issue(admin, scopes=("scan:upload",))["token"])
+    assert client.post(HEARTBEAT, json={"machine_id": "pc-1"}, headers=other).status_code == 403
+    job = start(admin)["id"]
+    claim(agent, kinds=["vna"])
+    assert result(other, job).status_code == 403  # A result never establishes a legacy binding.
+    from app.modules.warehouse.scan_jobs import AgentTokenRow
+    with sessions() as session:
+        assert [row.machine_id for row in session.query(AgentTokenRow)] == ["pc-1"]
+    assert result(agent, job).status_code == 200
+
+
+def test_preference_is_per_user_and_new_browser_still_confirms_it(capture):
+    from app.modules.identity.infrastructure import IdentityUserRow
+    from tests.identity.test_api_tokens import OPERATOR_ID
+
+    admin, agent, _, sessions = capture
+    heartbeat(agent)
+    assert start(admin, "")["preferred_agent_id"] == ""
+    job = start(admin)["id"]
+    assert claim(agent, kinds=["vna"])["id"] == job
+    assert result(agent, job).status_code == 200
+    assert admin.get(f"{JOBS}/{job}/file").content == TRACE
+    assert start(admin)["agent"]["id"] == "pc-1"  # A remembered browser sends its explicit PC again.
+    choices = start(_login("admin"), "")
+    assert choices["status"] == "choose" and choices["preferred_agent_id"] == "pc-1"
+    with sessions() as session:
+        session.get(IdentityUserRow, OPERATOR_ID).access_level = "admin"
+        session.commit()
+    other_user = _login("operator")
+    assert start(other_user, "")["preferred_agent_id"] == ""
+    for suffix in ("", "/file"):
+        assert other_user.get(f"{JOBS}/{job}{suffix}").status_code == 404
+    assert other_user.delete(f"{JOBS}/{job}", headers=_csrf(other_user)).status_code == 404
+
+
+def test_offline_remembered_pc_never_falls_back_to_another_candidate(capture):
+    admin, agent, clock, _ = capture
+    heartbeat(agent)
+    start(admin)
+    clock.now += timedelta(minutes=4)
+    other = _bearer(_issue(admin, scopes=("scan:upload",))["token"])
+    heartbeat(other, "pc-2")
+    answer = start(admin)
+    assert answer["status"] == "choose"
+    assert [pc["id"] for pc in answer["agents"]] == ["pc-2"]
+    assert claim(other, "pc-2", ["vna"]) is None

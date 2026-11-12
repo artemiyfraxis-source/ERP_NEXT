@@ -3953,7 +3953,7 @@ export interface VnaCaptureJob {
   instrument_id: string;
   capture_settings: VnaCaptureSettings | null;
 }
-export type VnaCaptureStart = VnaCaptureJob | { status: "choose"; agents: VnaAgent[] } | { status: "no_agent" };
+export type VnaCaptureStart = VnaCaptureJob | { status: "choose"; agents: VnaAgent[]; preferred_agent_id?: string } | { status: "no_agent" };
 const VNA_JOBS = "/api/stock/vna/jobs";
 export const vnaCaptureApi = {
   start: (instrumentId: string, agentId = "") => api<VnaCaptureStart>(VNA_JOBS, { method: "POST", body: JSON.stringify({ instrument_id: instrumentId, agent_id: agentId }) }),

@@ -70,8 +70,10 @@ from .scan_jobs import (
     FAILED,
     SCANNER_MAX,
     VNA_FILE_LIMIT,
+    AgentMachineRefused,
     ScanJob,
     ScanJobClosed,
+    agent_machine,
     cancel_job,
     claim,
     create_job,
@@ -125,6 +127,8 @@ def _queue(operation):
         raise HTTPException(status_code=404, detail=error.args[0]) from error
     except ScanJobClosed as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    except AgentMachineRefused as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
 
 
 def _recognise_later(background: BackgroundTasks, uow_factory, sources: ScanSources, job: ScanJob,
@@ -303,7 +307,10 @@ def scan_agent_claim(
     payload: AgentClaimInput | None = None,
 ) -> dict:
     who = payload or AgentClaimInput()
-    machine_id = scan_agents.touch(uow_factory(), machine_id=who.machine_id, host=who.host, ip_seen=_client_ip(request),
+    machine_id = who.machine_id
+    if "vna" in who.kinds:
+        machine_id = _queue(lambda: agent_machine(uow_factory(), _agent.actor.id, machine_id))
+    machine_id = scan_agents.touch(uow_factory(), machine_id=machine_id, host=who.host, ip_seen=_client_ip(request),
                                    now=now)
     job = claim(uow_factory(), now=now, machine_id=machine_id, vna="vna" in who.kinds)
     return {"job": {"id": str(job.id), "target_scanner": job.target_scanner,
@@ -318,12 +325,14 @@ def scan_agent_heartbeat(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: UowFactory,
 ) -> dict:
+    # Shared heartbeat: protect the registry even when a caller omits VNA capabilities.
+    machine_id = _queue(lambda: agent_machine(uow_factory(), _agent.actor.id, payload.machine_id, bind=True))
     try:
         scan_agents.heartbeat(
-            uow_factory(), machine_id=payload.machine_id, pc_name=payload.pc_name, version=payload.version,
+            uow_factory(), machine_id=machine_id, pc_name=payload.pc_name, version=payload.version,
             ip_seen=_client_ip(request), ip_lan=payload.lan_ip,
             scanners=[item.model_dump() for item in payload.scanners], now=now)
-        vna_jobs.heartbeat(uow_factory(), payload.machine_id.strip(),
+        vna_jobs.heartbeat(uow_factory(), machine_id,
                            payload.vna.model_dump() if payload.vna else None, now, payload.vna_sources)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
@@ -351,7 +360,9 @@ async def scan_agent_result(
 ) -> dict:
     job = await run_in_threadpool(lambda: _queue(lambda: get_job(uow_factory(), job_id, now=now)))
     if job.kind == "vna":
-        return await _vna_result(job, request, now, uow_factory)
+        machine_id = await run_in_threadpool(lambda: _queue(lambda: agent_machine(
+            uow_factory(), _agent.actor.id, request.headers.get("x-agent-machine-id", ""))))
+        return await _vna_result(job, request, now, uow_factory, machine_id)
     content_type = request.headers.get("content-type", "")
     body = await request.body()
     if "multipart/form-data" in content_type.lower():
@@ -377,8 +388,7 @@ async def scan_agent_result(
     return {"ok": True, "id": str(job_id), "status": FAILED}
 
 
-async def _vna_result(job: ScanJob, request: Request, now: datetime, uow_factory) -> dict:
-    machine_id = request.headers.get("x-agent-machine-id", "")
+async def _vna_result(job: ScanJob, request: Request, now: datetime, uow_factory, machine_id: str) -> dict:
     if not machine_id or machine_id != job.target_machine_id:
         raise HTTPException(403, "Задание ВАЦ выдано другому ПК")
     if job.status != "claimed":

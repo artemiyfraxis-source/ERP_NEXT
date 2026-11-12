@@ -1,14 +1,15 @@
 """VNA transport on the shared PC-agent queue; VSWR interpretation stays in production.
 
 The capability is an extension of the existing agent identity, not a second registry.
-Browser-address matches route automatically only when unique; shared addresses need a PC choice.
+Browser-address matches only order choices; a capture always requires an explicitly selected PC.
 """
 
 from datetime import datetime
 import re
 from uuid import UUID
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, delete, select, update
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Uuid, delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.shared.persistence import Base
@@ -26,6 +27,32 @@ class AgentVnaRow(Base):
     reason: Mapped[str] = mapped_column(String(32), nullable=False, default="", server_default="")
     reported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     sources: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=lambda: ["s2vna"], server_default='["s2vna"]')
+
+
+class VnaPreferenceRow(Base):
+    __tablename__ = "warehouse_vna_preferences"
+
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("identity_users.id", ondelete="CASCADE"), primary_key=True)
+    machine_id: Mapped[str] = mapped_column(String(80), ForeignKey("warehouse_scan_agents.machine_id", ondelete="CASCADE"), nullable=False)
+
+
+def preferred_machine(uow, user_id: UUID, machine_id: str | None = None) -> str:
+    """The user's explicit choice is a suggestion on a new browser, never routing authority."""
+    with uow:
+        session = _session(uow)
+        if machine_id is not None:
+            if session.get(VnaPreferenceRow, user_id) is None:
+                try:
+                    with session.begin_nested():
+                        session.add(VnaPreferenceRow(user_id=user_id, machine_id=machine_id))
+                        session.flush()
+                except IntegrityError:
+                    if session.get(VnaPreferenceRow, user_id) is None:
+                        raise
+            session.execute(update(VnaPreferenceRow).where(VnaPreferenceRow.user_id == user_id).values(machine_id=machine_id))
+            uow.commit()
+        row = session.get(VnaPreferenceRow, user_id)
+        return row.machine_id if row else ""
 
 
 def heartbeat(uow, machine_id: str, vna: dict | None, now: datetime, sources: list[str] | None = None) -> None:
@@ -50,15 +77,15 @@ def heartbeat(uow, machine_id: str, vna: dict | None, now: datetime, sources: li
 
 def agents(uow, now: datetime, *, source: str | None = None, browser_ip: str | None = None) -> list[dict]:
     with uow:
-        rows = _session(uow).execute(select(ScanAgentRow, AgentVnaRow).join(AgentVnaRow).where(
+        rows = list(_session(uow).execute(select(ScanAgentRow, AgentVnaRow).join(AgentVnaRow).where(
             ScanAgentRow.legacy.is_(False), ScanAgentRow.last_seen >= now - LIVE_FOR,
             AgentVnaRow.reported_at >= now - LIVE_FOR,
-        ).order_by(ScanAgentRow.pc_name, ScanAgentRow.machine_id))
+        ).order_by(ScanAgentRow.pc_name, ScanAgentRow.machine_id)))
+        rows.sort(key=lambda pair: not (browser_ip and browser_ip in (pair[0].ip_seen, pair[0].ip_lan)))
         return [{"id": pc.machine_id, "pc": pc.pc_name or pc.machine_id, "version": pc.version,
                  "vna": {"name": vna.name, "ready": vna.ready, "reason": vna.reason} if "s2vna" in vna.sources else None,
                  "vna_sources": vna.sources} for pc, vna in rows
-                if (source is None or source in vna.sources)
-                and (browser_ip is None or (browser_ip and browser_ip in (pc.ip_seen, pc.ip_lan)))]
+                if source is None or source in vna.sources]
 
 
 def complete(uow, job_id: UUID, content: bytes, file_name: str, now: datetime, machine_id: str,

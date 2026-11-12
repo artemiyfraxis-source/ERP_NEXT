@@ -58,12 +58,11 @@ def start(request: Request, principal: Person, now: Now, uow_factory: UowFactory
     choices = [pc for pc in all_agents if source in pc["vna_sources"]]
     if not choices:
         return {"status": "no_agent"}
-    chosen = next((pc for pc in choices if pc["id"] == payload.agent_id), None) if payload.agent_id else (
-        choices[0] if len(choices) == 1 else None)
-    if payload.agent_id and chosen is None:
-        raise HTTPException(422, "Выбранный ПК недоступен этому браузеру — повторите поиск ВАЦ")
+    chosen = next((pc for pc in choices if pc["id"] == payload.agent_id), None)
     if chosen is None:
-        return {"status": "choose", "agents": choices}
+        return {"status": "choose", "agents": choices,
+                "preferred_agent_id": vna_jobs.preferred_machine(uow_factory(), principal.actor.id)}
+    vna_jobs.preferred_machine(uow_factory(), principal.actor.id, chosen["id"])
     job = create_job(uow_factory(), requested_by=str(principal.actor.id), now=now,
                      target=chosen["id"], kind="vna", source=source,
                      instrument_id=payload.instrument_id,

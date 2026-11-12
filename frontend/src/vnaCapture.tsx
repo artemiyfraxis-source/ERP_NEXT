@@ -3,6 +3,16 @@ import { ApiError, failureText, vnaCaptureApi, warehouseApi, type ProductionInst
 import { formatNumber } from "./format";
 import { PageWindow } from "./PageWindow";
 
+const PC_STORAGE = "erp.vna.pc";
+type RememberedPc = Pick<VnaAgent, "id" | "pc">;
+function rememberedPc(): RememberedPc | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(PC_STORAGE) ?? "null");
+    return value && typeof value.id === "string" && value.id && value.id.length <= 80
+      && typeof value.pc === "string" && value.pc ? { id: value.id, pc: value.pc } : null;
+  } catch { return null; } // Storage may be unavailable in private/managed browsers.
+}
+
 function readiness(vna: VnaAgent["vna"]): string {
   if (vna?.ready) return "готов";
   if (vna?.reason === "s2vna_not_running") return "S2VNA не запущена";
@@ -71,6 +81,7 @@ export function VnaCapture({ instruments, onFile, onBusy, disabled = false, chil
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [agents, setAgents] = useState<VnaAgent[] | null>(null);
+  const [remembered, setRemembered] = useState(rememberedPc);
   const [agentId, setAgentId] = useState("");
   const [pc, setPc] = useState("");
   const [guide, setGuide] = useState(false);
@@ -107,10 +118,20 @@ export function VnaCapture({ instruments, onFile, onBusy, disabled = false, chil
         if ("id" in answer) await vnaCaptureApi.cancel(answer.id);
         return;
       }
-      if (answer.status === "choose") { setAgentId(""); setAgents(answer.agents); return; }
-      if (answer.status === "no_agent") { setAgentId(""); setGuide(true); return; }
+      if (answer.status === "choose") {
+        // A server preference only preselects the picker; this browser still asks for confirmation.
+        setAgentId(answer.agents.some((agent) => agent.id === answer.preferred_agent_id) ? answer.preferred_agent_id! : "");
+        setPc(""); setAgents(answer.agents); return;
+      }
+      if (answer.status === "no_agent") { setAgentId(""); setPc(""); setGuide(true); return; }
       jobId.current = answer.id;
       setPc(answer.agent?.pc ?? "");
+      if (answer.agent) {
+        const selected = { id: answer.agent.id, pc: answer.agent.pc };
+        setRemembered(selected); setAgentId(selected.id);
+        try { localStorage.setItem(PC_STORAGE, JSON.stringify(selected)); }
+        catch { /* Keep the confirmed choice for this mounted window when storage is unavailable. */ }
+      }
       const deadline = Date.now() + 240_000;
       let job = answer;
       while (!signal.aborted) {
@@ -154,22 +175,25 @@ export function VnaCapture({ instruments, onFile, onBusy, disabled = false, chil
     <div className="form-actions">
       {children}
       <button type="button" className="secondary small" disabled={disabled || busy} onClick={() => {
-        setInstrumentId(""); setAgentId(""); setAgents(null); setError(""); setGuide(false); setPc(""); setOpened(true);
+        setInstrumentId(""); setAgentId(remembered?.id ?? ""); setAgents(null); setError(""); setGuide(false); setPc(remembered?.pc ?? ""); setOpened(true);
       }}>Снять с ВАЦ</button>
     </div>
     {opened && <PageWindow label="Снять с ВАЦ" width={680} close={close}><div className="panel">
       <h2>Снять с ВАЦ</h2>
       {configured.length ? <label>Средство измерений<select name="vna_instrument_id" value={instrumentId} disabled={busy} onChange={(event) => {
-        setInstrumentId(event.target.value); setAgentId(""); setAgents(null); setError(""); setGuide(false); setPc("");
+        setInstrumentId(event.target.value); setAgentId(remembered?.id ?? ""); setAgents(null); setError(""); setGuide(false); setPc(remembered?.pc ?? "");
       }}>
         <option value="">— выберите прибор —</option>
         {configured.map((item) => <option key={item.id} value={item.id}>{item.inventory_number} · {item.name} — {item.vna_app}</option>)}
       </select></label> : <p className="empty">Нет действующих СИ с программой ВАЦ. Укажите «Программу ВАЦ» в карточке прибора.</p>}
-      {busy && <p role="status">ВАЦ: снимаю трассу…{pc ? ` · ${pc}` : ""}</p>}
+      {pc && <div className="form-actions"><span>ПК: {pc}</span>
+        <button type="button" className="secondary small" disabled={busy || disabled || !instrument} onClick={() => void begin("")}>Сменить ПК</button>
+      </div>}
+      {busy && <p role="status">ВАЦ: снимаю трассу…</p>}
       {error && <p className="error-banner" role="alert">{error}</p>}
       {agents && <label>ПК с ВАЦ<select name="vna_agent_id" value={agentId} disabled={busy} onChange={(event) => setAgentId(event.target.value)}>
         <option value="">— выберите ПК —</option>
-        {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.pc}{instrument?.vna_app === "S2VNA" ? ` · ${readiness(agent.vna)}` : ""}</option>)}
+        {agents.map((agent) => <option key={agent.id} value={agent.id}>ПК: {agent.pc}{instrument?.vna_app === "S2VNA" ? ` · ${readiness(agent.vna)}` : ""}</option>)}
       </select></label>}
       {guide && <div className="scan-agent">
         <p>{instrument?.vna_app === "S2VNA" ? "ВАЦ не найден на этом ПК: запустите S2VNA и подключите прибор"

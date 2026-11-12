@@ -20,6 +20,19 @@ CHECKS = {
 
 
 def upgrade():
+    # No backfill from IP or token names: legacy credentials bind at their first heartbeat (TOFU).
+    op.create_table("warehouse_agent_tokens",
+        sa.Column("token_id", sa.Uuid(), sa.ForeignKey("identity_api_tokens.id", ondelete="CASCADE"), primary_key=True),
+        sa.Column("machine_id", sa.String(80), nullable=False),
+        sa.Column("retired", sa.Boolean(), nullable=False, server_default=sa.false()),
+        sa.CheckConstraint("trim(machine_id) <> ''", name="ck_warehouse_agent_tokens_machine"),
+    )
+    op.create_index("uq_warehouse_agent_tokens_machine", "warehouse_agent_tokens", ["machine_id"], unique=True,
+                    sqlite_where=sa.text("retired = 0"), postgresql_where=sa.text("retired = false"))
+    op.create_table("warehouse_vna_preferences",
+        sa.Column("user_id", sa.Uuid(), sa.ForeignKey("identity_users.id", ondelete="CASCADE"), primary_key=True),
+        sa.Column("machine_id", sa.String(80), sa.ForeignKey("warehouse_scan_agents.machine_id", ondelete="CASCADE"), nullable=False),
+    )
     with op.batch_alter_table("production_instruments") as batch:
         batch.add_column(sa.Column("vna_app", sa.String(16), nullable=False, server_default=""))
         batch.create_check_constraint("ck_production_instruments_vna_app", "vna_app IN ('', 'S2VNA', 'Arinst VL')")
@@ -51,6 +64,8 @@ def downgrade():
     if op.get_bind().execute(sa.text("SELECT 1 FROM warehouse_scan_jobs WHERE kind = 'vna' LIMIT 1")).first():
         raise RuntimeError("VNA jobs exist; preserve their evidence before downgrading")
     op.drop_table("warehouse_agent_vna")
+    op.drop_table("warehouse_vna_preferences")
+    op.drop_table("warehouse_agent_tokens")
     with op.batch_alter_table(TABLE) as batch:
         for name in CHECKS:
             batch.drop_constraint(name, type_="check")

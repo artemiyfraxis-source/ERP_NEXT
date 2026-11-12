@@ -10,7 +10,9 @@ one-line PowerShell command); on the new PC the command downloads `install.ps1` 
   (no login: the same files lie in the public repository) — the installer, the agent and its `{version, sha256}`.
 
 It lives in workflows because it joins two modules: the warehouse owns the registry and the install tokens, identity
-issues the API token."""
+issues the API token. Enrollment binds that token to the submitted PC before returning its secret. An authorized
+reinstall revokes the previous credential for the same PC; heartbeat never replaces it. Legacy API tokens without
+a binding are trusted on their first authenticated heartbeat (TOFU), and cannot subsequently change PCs."""
 
 from __future__ import annotations
 
@@ -23,9 +25,10 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.modules.identity.api import identity_uow_factory
-from app.modules.identity.application import IdentityValidationError, issue_api_token
+from app.modules.identity.application import IdentityValidationError, issue_api_token, revoke_api_token
 from app.modules.warehouse import agent_release, scan_agents
 from app.modules.warehouse.api import warehouse_uow_factory
+from app.modules.warehouse.scan_jobs import AgentMachineRefused, enroll_agent
 from app.shared.clock import moscow_now
 from app.modules.warehouse.scan_jobs_api import scan_edit_principal
 from app.shared.http_auth import Principal
@@ -87,11 +90,18 @@ def enroll(payload: EnrollInput, request: Request, now: Now, warehouse_factory: 
     except scan_agents.InstallRefused as error:
         raise HTTPException(status_code=403, detail=str(error)) from error
     pc = " ".join(payload.pc_name.split()) or payload.machine_id[:12]
+    actor = Actor(id=created_by, name=created_by_name, department="")
     try:
         issued = issue_api_token(f"Агент ПК {pc}"[:128], AGENT_SCOPES, AGENT_TOKEN_DAYS,
-                                 Actor(id=created_by, name=created_by_name, department=""), now, identity_factory())
+                                 actor, now, identity_factory())
     except IdentityValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+    try:
+        # Bind before returning the secret: no first-heartbeat choice for newly installed agents.
+        enroll_agent(warehouse_factory(), issued.token.id, payload.machine_id,
+                     lambda token_id: revoke_api_token(token_id, actor, now, identity_factory()))
+    except AgentMachineRefused as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
     return {"token": issued.secret, "server": _base(request)}
 
 

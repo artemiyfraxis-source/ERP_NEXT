@@ -18,13 +18,14 @@ finished jobs older than 30 days are purged on claim (their files stay: the deli
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, Index, LargeBinary, String, Text, Uuid, and_, case, delete, or_, select, update
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Index, LargeBinary, String, Text, Uuid, and_, case, delete, false, or_, select, text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.shared.advisory_lock import advisory_lock, lock_key
@@ -42,6 +43,84 @@ CANCELLED = "Отменено"
 NO_REASON = "Агент сканирования не прислал скан и не сказал почему"
 VNA_NO_ANSWER = "ВАЦ не ответил — проверьте агент на выбранном ПК"
 VNA_FILE_LIMIT = 2 * 1024 * 1024
+
+
+class AgentTokenRow(Base):
+    """One credential per PC. Enrollment binds immediately; legacy tokens use first-heartbeat TOFU.
+
+    TOFU trusts the first authenticated heartbeat, so legacy credentials must be kept private.
+    A binding is never updated or transferred by heartbeat, claim or result.
+    """
+
+    __tablename__ = "warehouse_agent_tokens"
+    __table_args__ = (
+        CheckConstraint("trim(machine_id) <> ''", name="ck_warehouse_agent_tokens_machine"),
+        Index("uq_warehouse_agent_tokens_machine", "machine_id", unique=True,
+              sqlite_where=text("retired = 0"), postgresql_where=text("retired = false")),
+    )
+
+    token_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("identity_api_tokens.id", ondelete="CASCADE"), primary_key=True)
+    machine_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    retired: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
+
+
+class AgentMachineRefused(Exception):
+    """The authenticated token cannot act for the supplied PC (403)."""
+
+
+def _agent_machine_id(machine_id: str) -> str:
+    machine_id = " ".join(machine_id.split())
+    if not machine_id or len(machine_id) > 80 or machine_id.startswith("legacy:"):
+        raise AgentMachineRefused("Нужен идентификатор ПК, привязанный к токену агента")
+    return machine_id
+
+
+def agent_machine(uow, token_id: UUID, machine_id: str, *, bind: bool = False) -> str:
+    machine_id = _agent_machine_id(machine_id)
+    with uow:
+        session = _session(uow)
+        lock = advisory_lock(session.get_bind(), lock_key("warehouse-agent-enroll", machine_id)) if bind else nullcontext()
+        with lock:
+            row = session.get(AgentTokenRow, token_id)
+            if row is None and bind:
+                try:
+                    # PK/UNIQUE arbitrate simultaneous first heartbeats for either token or PC.
+                    with session.begin_nested():
+                        session.add(AgentTokenRow(token_id=token_id, machine_id=machine_id))
+                        session.flush()
+                except IntegrityError:
+                    row = session.get(AgentTokenRow, token_id)
+                    if row is None:
+                        raise AgentMachineRefused("Этот ПК уже привязан к другому токену агента") from None
+                else:
+                    row = session.get(AgentTokenRow, token_id)
+            if row is None:
+                raise AgentMachineRefused("Сначала отправьте сведения агента о ПК")
+            if row.retired or row.machine_id != machine_id:
+                raise AgentMachineRefused("Токен агента отозван или привязан к другому ПК")
+            uow.commit()
+            return row.machine_id
+
+
+def enroll_agent(uow, token_id: UUID, machine_id: str, revoke: Callable[[UUID], None]) -> None:
+    """Only the redeemed install workflow may replace a PC's credential.
+
+    Revoke before replacement; keep old bindings so even an in-flight old heartbeat cannot use TOFU again.
+    If replacement fails, the old token stays revoked and a fresh authorized install can recover the PC.
+    """
+    machine_id = _agent_machine_id(machine_id)
+    with uow:
+        session = _session(uow)
+        with advisory_lock(session.get_bind(), lock_key("warehouse-agent-enroll", machine_id)):
+            old = session.scalar(select(AgentTokenRow).where(
+                AgentTokenRow.machine_id == machine_id, AgentTokenRow.retired.is_(False)).with_for_update())
+            if old is not None:
+                revoke(old.token_id)
+                old.retired = True
+                session.flush()
+            session.add(AgentTokenRow(token_id=token_id, machine_id=machine_id))
+            uow.commit()
+
 
 PENDING, CLAIMED, DONE, FAILED = "pending", "claimed", "done", "failed"
 OPEN_STATUSES = (PENDING, CLAIMED)
