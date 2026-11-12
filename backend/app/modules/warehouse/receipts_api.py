@@ -31,6 +31,7 @@ from app.workflows.stock_receipt import expected_in_receiving
 
 from .api import StockItemInput, _result, receipt_brief, warehouse_uow_factory
 from .application import ManualStockItem, UnitOfWork
+from . import receipt_learning
 from .domain import (
     UPD_NAME_LIMIT,
     ReceiptConflict,
@@ -59,6 +60,7 @@ class ReceiptPayload(BaseModel):
 
     warehouse: str = Field(default="", max_length=64)
     supplier: str = Field(default="", max_length=1024)
+    supplier_inn: str = Field(default="", max_length=12)
     invoice_number: str = Field(default="", max_length=1024)
     invoice_date: str | None = Field(default=None, max_length=64)
     upd_number: str = Field(default="", max_length=1024)
@@ -74,11 +76,32 @@ class ReceiptPayload(BaseModel):
             invoice_date=receipt_date(self.invoice_date, "Дата счёта"), upd_number=self.upd_number,
             upd_date=receipt_date(self.upd_date, "Дата УПД"), purpose=self.purpose, scan_file=self.scan_file,
             prd_number=self.prd_number, prd_date=receipt_date(self.prd_date, "Дата ПРД"),
+            supplier_inn=self.supplier_inn,
         )
 
 
 class ReceiptUpdatePayload(ReceiptPayload):
     version: int = Field(ge=1)
+
+
+class LearningPayload(BaseModel):
+    file_id: UUID
+    source_line_key: str = Field(min_length=1, max_length=128)
+    action: str = Field(default="none", max_length=16)
+    confirm_supplier_name: bool = False
+    pack_size: str = Field(default="", max_length=32)
+    quantity_basis: str = Field(default="base", max_length=8)
+    convert_quantity: bool = False
+    rule_id: UUID | None = None
+    rule_version: int | None = Field(default=None, ge=1)
+
+
+class LearningPreviewPayload(BaseModel):
+    file_id: UUID
+    source_line_key: str = Field(min_length=1, max_length=128)
+    supplier: str = Field(default="", max_length=255)
+    supplier_inn: str = Field(default="", max_length=12)
+    confirm_supplier_name: bool = False
 
 
 class AcceptPayload(StockItemInput):
@@ -87,6 +110,8 @@ class AcceptPayload(StockItemInput):
     labels: int = Field(default=1)
     confirm_expected: bool = False
     upd_name: str = Field(default="", max_length=UPD_NAME_LIMIT)  # the item row as the УПД prints it
+    acceptance_id: UUID | None = None
+    learning: LearningPayload | None = None
 
     def manual_item(self, warehouse: str = "") -> ManualStockItem:
         return replace(super().manual_item(warehouse), upd_name=self.upd_name)
@@ -96,6 +121,7 @@ def receipt_dict(receipt: WarehouseReceipt, lots_count: int) -> dict:
     return {
         **receipt_brief(receipt),
         "version": receipt.version,
+        "supplier_inn": receipt.supplier_inn,
         "warehouse": receipt.warehouse,
         "purpose": receipt.purpose,
         "scan_file": receipt.scan_file,
@@ -165,6 +191,15 @@ def receipt(
     return {"receipt": receipt_dict(found, len(lots)), "lots": [_lot(lot, found) for lot in lots]}
 
 
+@router.post("/receipts/learning-preview")
+def learning_preview(
+    payload: LearningPreviewPayload,
+    _principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    uow_factory: UowFactory,
+) -> dict:
+    return _checked(lambda: receipt_learning.preview(uow_factory(), **payload.model_dump()))
+
+
 @router.put("/receipts/{receipt_id}")
 def edit_receipt(
     receipt_id: UUID,
@@ -207,6 +242,8 @@ def accept_line(
         AcceptLineCommand(
             receipt_id=receipt_id, item=payload.manual_item(), labels=payload.labels,
             confirm_expected=payload.confirm_expected, actor=principal.actor, now=now,
+            acceptance_id=payload.acceptance_id,
+            learning=receipt_learning.LearningChoice(**payload.learning.model_dump()) if payload.learning else None,
         ),
         uow_factory(),
         expected,

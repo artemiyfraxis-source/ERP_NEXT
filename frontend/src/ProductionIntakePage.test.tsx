@@ -1,7 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProductionIntakePage } from "./ProductionIntakePage";
-import { isoDay } from "./Gantt";
 import { capturePrintFrames } from "./testPrintFrames";
 import { setRightsPrincipal } from "./rights";
 import { forgetPersonalViews } from "./personalViews";
@@ -78,8 +77,8 @@ function stub() {
     return json({});
   }));
 }
-beforeEach(() => { window.localStorage.clear(); forgetPersonalViews(); intakeRows = ROWS; shipments = []; addressees = []; approvals = []; setRightsPrincipal(null); stub(); });
-afterEach(() => { cleanup(); setRightsPrincipal(null); vi.restoreAllMocks(); vi.unstubAllGlobals(); window.history.replaceState({}, "", "/"); });
+beforeEach(() => { vi.useFakeTimers({ now: new Date(2026, 10, 9, 12), toFake: ["Date"] }); window.localStorage.clear(); forgetPersonalViews(); intakeRows = ROWS; shipments = []; addressees = []; approvals = []; setRightsPrincipal(null); stub(); });
+afterEach(() => { cleanup(); setRightsPrincipal(null); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); window.history.replaceState({}, "", "/"); });
 
 const tab = (name: RegExp) => screen.getByRole("tab", { name });
 const count = (name: RegExp) => tab(name).querySelector(".page-count")?.textContent?.trim();
@@ -90,7 +89,7 @@ const cell = (tr: Element, label: string) => (tr.querySelector(`td[data-label="$
 const writes = () => calls.filter((call) => call.method !== "GET");
 
 describe("Приёмка с производства: свои колонки и одно действие у каждой вкладки (аудит 06.11)", () => {
-  const today = isoDay(new Date());
+  const today = "2026-11-09";
   // 20 не принято: 6 сдано цехом («Готово»), 14 ещё в работе; принято 20, набрано 10 — 10 на складе; 4 упаковано, 3 к отгрузке, 3 уехало.
   const multi = () => row({ needed: "40", delivered: "26", accepted: "20", packed: "10", sent: "3", remaining: "20", pack_decided: true, pack_permission_remaining: "10000", acts: [] });
   const ready = { ...packedShipment, id: "s2", number: "ОТГ-20261029-02", ready_to_ship: true, ready_for_track: true, track_number: "TRK-1", missing_ship: [], missing_data: [], lines: [shipmentLine({ id: "l2", picked: "3", requested: "3" })] };
@@ -490,4 +489,35 @@ describe("Приёмка с производства: свои колонки и
     render(<ProductionIntakePage principal={viewer} />);
     expect(await screen.findByRole("dialog", { name: "Журнал отгрузок" })).toBeInTheDocument();
   });
+});
+
+
+it("a shipment search link opens the journal filtered by shipment number", async () => {
+  shipments = [packedShipment, { ...packedShipment, id: "s2", number: "ОТГ-20261029-02" }];
+  window.history.replaceState({}, "", `/?section=intake&tab=journal&q=${encodeURIComponent(packedShipment.number)}`);
+  render(<ProductionIntakePage principal={viewer} />);
+  const journal = await screen.findByRole("dialog", { name: "Журнал отгрузок" });
+  expect((await within(journal).findAllByText(packedShipment.number)).length).toBeGreaterThan(0);
+  expect(within(journal).queryByText("ОТГ-20261029-02")).toBeNull();
+});
+
+it("a finished goods search link seeds the intake list on the all tab", async () => {
+  window.history.replaceState({}, "", "/?section=intake&tab=all&q=600К.1");
+  render(<ProductionIntakePage principal={viewer} />);
+  expect(await screen.findByText("Шлейф")).toBeInTheDocument();
+  expect(screen.queryByText("Жгут")).toBeNull();
+});
+
+
+it("loads a linked older shipment outside the journal list, including cancelled empty ones", async () => {
+  window.history.replaceState({}, "", "/?section=intake&tab=journal&shipment=old&q=ОТГ-СТАРАЯ");
+  const old = { ...packedShipment, id: "old", number: "ОТГ-СТАРАЯ", status: "Отменена", lines: [] };
+  const baseFetch = vi.mocked(globalThis.fetch).getMockImplementation()!;
+  vi.stubGlobal("fetch", vi.fn((input, init) => String(input).includes("?shipment=old")
+    ? Promise.resolve(json({ shipments: [old] })) : baseFetch(input, init)));
+  render(<ProductionIntakePage principal={viewer} />);
+  const journal = await screen.findByRole("dialog", { name: "Журнал отгрузок" });
+  expect(await within(journal).findByText("ОТГ-СТАРАЯ")).toBeInTheDocument();
+  expect(within(journal).getByText("Отменена")).toBeInTheDocument();
+  expect(within(journal).getByText(/В отгрузке нет позиций/)).toBeInTheDocument();
 });

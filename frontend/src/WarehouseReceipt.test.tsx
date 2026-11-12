@@ -62,6 +62,78 @@ async function openSupply() {
 const cellOf = (label: string, row = 1) => screen.getByLabelText(`${label}, строка ${row}`) as HTMLInputElement;
 const type = (label: string, value: string, row = 1) => fireEvent.change(cellOf(label, row), { target: { value } });
 
+it("scan correction learning is opt-in and sends explicit packaging and a stable acceptance UUID", async () => {
+  const calls = mockApi({
+    "POST /api/stock/receipts/scan": () => json({ id: "scan", status: "done", result: {
+      scan_file: "/api/stock/receipts/files/00000000-0000-0000-0000-000000000001", note: "",
+      recognised: { supplier: "Поставщик", inn: "7707083893" },
+      lines: [{ article: "RAW", name: "Контакт", quantity: "200", unit: "шт", file_id: "00000000-0000-0000-0000-000000000001",
+        source_line_key: "line:1", invoice_quantity: "2", invoice_unit: "упак",
+        original: { article: "RAW", name: "Контакт", quantity: "200", unit: "шт", invoice_quantity: "2", invoice_unit: "упак" } }],
+    } }),
+  });
+  await openSupply();
+  fireEvent.change(screen.getByLabelText("Файл УПД"), { target: { files: [new File(["x"], "upd.pdf", { type: "application/pdf" })] } });
+  const remember = await screen.findByLabelText("Запомнить для этого поставщика, строка 1");
+  expect(remember).not.toBeChecked();
+  expect(screen.getByLabelText("ИНН поставщика")).toHaveValue("7707083893");
+  type("Артикул", "CORRECT");
+  type("Кол-во", "50");
+  fireEvent.click(remember);
+  fireEvent.change(screen.getByLabelText("Основа количества, строка 1"), { target: { value: "packs" } });
+  expect(screen.getByLabelText("Размер упаковки, строка 1")).toHaveValue("");
+  fireEvent.change(screen.getByLabelText("Размер упаковки, строка 1"), { target: { value: "100" } });
+  fireEvent.click(screen.getByRole("button", { name: "Принять строку 1" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "Принять позицию" }));
+  fireEvent.change(dialog.getByLabelText("Место хранения"), { target: { value: "1F4" } });
+  fireEvent.click(dialog.getByRole("button", { name: "Принять" }));
+  await screen.findByText(/Принято · ГРН/);
+  const request = calls.find((call) => call.path.endsWith("/accept"))!.body!;
+  expect(request).toMatchObject({ article: "CORRECT", quantity: "50", acceptance_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    learning: { action: "remember", quantity_basis: "packs", pack_size: "100", convert_quantity: true, source_line_key: "line:1" } });
+});
+
+it("a stale rule conflict cannot be overridden by the receiving confirmation button", async () => {
+  mockApi({ "POST /api/stock/receipts/r1/accept": () => json({ detail: "Правило поставщика изменено — проверьте строку заново" }, 409) });
+  await openSupply();
+  type("Артикул", "A");
+  type("Кол-во", "2");
+  fireEvent.click(screen.getByRole("button", { name: "Принять строку 1" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "Принять позицию" }));
+  fireEvent.change(dialog.getByLabelText("Место хранения"), { target: { value: "1F4" } });
+  fireEvent.click(dialog.getByRole("button", { name: "Принять" }));
+  await dialog.findByText("Правило поставщика изменено — проверьте строку заново");
+  expect(dialog.queryByRole("button", { name: "Всё равно принять" })).toBeNull();
+});
+
+it("a supplier without INN needs explicit name confirmation before applying a rule", async () => {
+  const calls = mockApi({
+    "POST /api/stock/receipts/scan": () => json({ id: "scan", status: "done", result: {
+      scan_file: "/api/stock/receipts/files/file", note: "", recognised: { supplier: "Поставщик", inn: "" },
+      lines: [{ article: "RAW", name: "Контакт", quantity: "2", unit: "шт", file_id: "file", source_line_key: "line:1",
+        original: { article: "RAW", name: "Контакт", quantity: "2", unit: "шт", invoice_quantity: "2", invoice_unit: "шт" } }],
+    } }),
+    "POST /api/stock/receipts/learning-preview": () => json({ learning: {
+      rule_id: "rule", rule_version: 1, supplier_key: "name:поставщик", active: true, article: "CORRECT",
+      manufacturer: "", stock_unit: "шт", pack_size: "", quantity_basis: "base", quantity: null, warning: "",
+    } }),
+  });
+  await openSupply();
+  fireEvent.change(screen.getByLabelText("Файл УПД"), { target: { files: [new File(["x"], "upd.pdf", { type: "application/pdf" })] } });
+  const check = await screen.findByRole("button", { name: "Проверить правило" });
+  expect(check).toBeDisabled();
+  fireEvent.click(screen.getByLabelText("Подтвердить поставщика по названию, строка 1"));
+  fireEvent.click(check);
+  await screen.findByText("Применено правило поставщика");
+  expect(cellOf("Артикул")).toHaveValue("CORRECT");
+  expect(calls.find((call) => call.path.endsWith("learning-preview"))!.body).toMatchObject({ confirm_supplier_name: true, supplier_inn: "" });
+  expect(screen.getByLabelText("Запомнить для этого поставщика, строка 1")).not.toBeChecked();
+  fireEvent.click(screen.getByLabelText("Подтвердить поставщика по названию, строка 1"));
+  expect(check).toBeDisabled();
+  expect(cellOf("Артикул")).toHaveValue("RAW");
+  expect(screen.queryByText("Применено правило поставщика")).not.toBeInTheDocument();
+});
+
 it("«XHP-4@JST» in Артикул: split on leaving the cell or at once when pasted, the lookup asks for the bare article", async () => {
   const calls = mockApi();
   await openSupply();
@@ -167,7 +239,7 @@ it("sends the supply header before the first acceptance and the labels count wit
   const posts = calls.filter((call) => call.method === "POST").map((call) => call.path);
   expect(posts).toEqual(["/api/stock/receipts", "/api/stock/receipts/r1/accept"]);
   expect(calls.find((call) => call.path === "/api/stock/receipts" && call.method === "POST")!.body).toEqual({
-    warehouse: "ЦАР", supplier: "ООО Ромашка", invoice_number: "", invoice_date: "2026-10-02", upd_number: "", upd_date: null, prd_number: "", prd_date: null, purpose: "Склад",
+    warehouse: "ЦАР", supplier: "ООО Ромашка", supplier_inn: "", invoice_number: "", invoice_date: "2026-10-02", upd_number: "", upd_date: null, prd_number: "", prd_date: null, purpose: "Склад",
   });
   expect(calls.find((call) => call.path.endsWith("/accept"))!.body).toMatchObject({
     article: "GHR-04V-S", quantity: "10", unit: "шт", purpose: "Склад", storage_location: "1F4", labels: 3, confirm_expected: false,
@@ -205,7 +277,7 @@ it("a 409 «ожидается в Приёмке» shows the reason and accepts 
     "GET /api/stock/article-info": () => json({ info: null, places: ["1F4", "2A3"], expected: { order_number: "17", supplier: "ООО" } }),
     "POST /api/stock/receipts/r1/accept": (call) => {
       attempts += 1;
-      if (!call.body?.confirm_expected) return json({ detail: "Артикул ждут в Приёмке по заказу № 17" }, 409);
+      if (!call.body?.confirm_expected) return json({ detail: "Позиция ожидается в Приёмке: заказ 17. Принять здесь всё равно?" }, 409);
       return json({ lot, label_job_id: null, label_error: "Принтер не отвечает" });
     },
   });
@@ -220,7 +292,7 @@ it("a 409 «ожидается в Приёмке» shows the reason and accepts 
   expect(dialog.getByLabelText("Место хранения")).toHaveValue("2A3");
   fireEvent.click(dialog.getByRole("button", { name: "Принять" }));
 
-  expect(await dialog.findByText("Артикул ждут в Приёмке по заказу № 17")).toBeInTheDocument();
+  expect(await dialog.findByText("Позиция ожидается в Приёмке: заказ 17. Принять здесь всё равно?")).toBeInTheDocument();
   expect(screen.queryByText(/Принято · ГРН/)).toBeNull();
   fireEvent.click(dialog.getByRole("button", { name: "Всё равно принять" }));
 

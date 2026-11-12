@@ -456,6 +456,7 @@ export interface WarehouseReceiptRef {
 export interface WarehouseReceiptFields {
   warehouse: string;
   supplier: string;
+  supplier_inn?: string;
   invoice_number: string;
   invoice_date: string | null;
   upd_number: string;
@@ -475,6 +476,8 @@ export interface WarehouseReceipt extends WarehouseReceiptRef, Omit<WarehouseRec
 }
 
 export interface WarehouseReceiptAccept {
+  acceptance_id?: string;
+  learning?: WarehouseReceiptLearningChoice;
   article: string;
   quantity: string;
   unit: string;
@@ -494,6 +497,47 @@ export interface WarehouseReceiptAccept {
   /** «Артикул производителя» / «Артикул поставщика» of the УПД line (editable later in the lot card) */
   maker_article: string;
   supplier_article: string;
+}
+
+export interface WarehouseReceiptLearningChoice {
+  convert_quantity: boolean;
+  file_id: string;
+  source_line_key: string;
+  action: "none" | "remember" | "deactivate";
+  confirm_supplier_name: boolean;
+  pack_size: string;
+  quantity_basis: "packs" | "base";
+  rule_id?: string;
+  rule_version?: number;
+}
+
+export interface WarehouseReceiptRule {
+  convert_quantity?: boolean;
+  rule_id: string;
+  rule_version: number;
+  supplier_key: string;
+  active: boolean;
+  article: string;
+  manufacturer: string;
+  stock_unit: string;
+  pack_size: string;
+  quantity_basis: "packs" | "base";
+  quantity: string | null;
+  warning: string;
+}
+
+export interface WarehouseReceiptOriginal {
+  learning_eligible?: boolean;
+  article: string;
+  manufacturer?: string | null;
+  name: string;
+  upd_name?: string | null;
+  quantity: string;
+  unit: string;
+  invoice_quantity?: string | null;
+  invoice_unit?: string | null;
+  supplier_code?: string | null;
+  number?: string;
 }
 
 export type WarehouseScanJobStatus = "pending" | "claimed" | "done" | "failed";
@@ -557,6 +601,10 @@ export interface WarehouseReceiptScan {
     packs?: string | null; pack?: string | null; pack_kind?: string | null; supplier_code?: string | null; source?: string | null;
     /** as invoiced, before the pack («3» «рул») — «Принять по УПД» compares an order written in that unit */
     invoice_quantity?: string | null; invoice_unit?: string | null;
+    file_id?: string;
+    source_line_key?: string;
+    original?: WarehouseReceiptOriginal;
+    learning?: WarehouseReceiptRule | null;
   }>;
   note: string;
 }
@@ -2256,6 +2304,20 @@ export interface ConnectorSeries {
   terminals: ConnectorTerminal[];
   wire: { awg_thin?: number; awg_thick?: number; mm2_min?: number; mm2_max?: number } | null;
   housing_count: number;
+  /** Документированные корпуса ВЧ-серии и стандарт её интерфейса. */
+  body_count?: number;
+  bodies?: Array<{
+    id: string; title: string; gender: string; angle: number; pin_type: string; shield_type: string;
+    cables: string[]; src: string; note?: string; sources?: Array<{ title: string; url: string }>;
+    segments: import("./rfBodySection").RfBodySegment[];
+    interface: {
+      depth?: import("./rfBodySection").RfContactDepth | null;
+      thread?: { value: string; src: string } | null;
+      hex?: { value: number; src: string } | null;
+      ref_plane?: { value: number; src: string } | null;
+    };
+  }>;
+  standard?: Array<{ doc: string; fig: string; url: string }>;
   counts: number[];
   pitch: number | null;
   color: string | null;
@@ -3856,7 +3918,7 @@ export const productionApi = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  list: () => api<{ tasks: ProductionTask[]; next_cursor: string | null }>("/api/production/tasks"),
+  list: (task = "") => api<{ tasks: ProductionTask[]; next_cursor: string | null }>(`/api/production/tasks${task ? `?task=${encodeURIComponent(task)}` : ""}`),
   /** can_act — смотрящий может работать за выбранного сотрудника (сервер проверяет то же при каждом действии). */
   mine: (operatorId = "") => api<{ tasks: ProductionTask[]; can_act?: boolean }>(`/api/production/my${operatorId ? `?operator_id=${operatorId}` : ""}`),
   operators: () => api<{ operators: ProductionOperator[]; viewer_site?: string }>("/api/production/operators"),

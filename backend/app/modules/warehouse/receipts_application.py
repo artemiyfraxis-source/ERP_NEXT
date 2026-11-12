@@ -21,7 +21,7 @@ from app.shared.events import AuditEvent
 from app.shared.file_types import sniffed_type
 from app.shared.identity import Actor
 
-from . import scan_jobs
+from . import receipt_learning, scan_jobs
 from .application import ManualStockItem, UnitOfWork, manual_lot, place_manual_lots, receipt_audit
 from .domain import (
     RECEIPT_SCAN_PATH,
@@ -127,6 +127,8 @@ class AcceptLineCommand:
     confirm_expected: bool
     actor: Actor
     now: datetime
+    acceptance_id: UUID | None = None
+    learning: receipt_learning.LearningChoice | None = None
 
 
 @dataclass(frozen=True)
@@ -160,7 +162,19 @@ def accept_receipt_line(
     «Приёмка» is ExpectedInReceiving (409) until the storekeeper confirms it."""
     if not 1 <= command.labels <= COPIES_MAX:
         raise WarehouseValidationError(f"Этикеток — от 1 до {COPIES_MAX}")
+    if (command.acceptance_id is None) != (command.learning is None):
+        raise WarehouseValidationError("Для строки УПД нужны номер приёмки и исходная строка")
     with uow:
+        if command.acceptance_id is not None:
+            receipt_learning.lock_acceptance(uow.session, command.receipt_id)
+            previous = receipt_learning.previous_acceptance(uow.session, command)
+            if previous is not None:
+                result = previous.accepted
+                return AcceptedLine(
+                    receipt=uow.receipts.get(previous.receipt_id), lot=uow.warehouse.get(previous.lot_id),
+                    label_job_id=UUID(result["label_job_id"]) if result["label_job_id"] else None,
+                    label_error=result["label_error"],
+                )
         receipt = uow.receipts.get(command.receipt_id)
         if receipt is None:
             raise KeyError("Приход не найден")
@@ -175,6 +189,8 @@ def accept_receipt_line(
                 raise ExpectedInReceiving(expected_text(found))
         [placed] = place_manual_lots(uow, [(0, draft)], command.actor, command.now, receipt)
         job_id, label_error = _queue_labels(uow, placed.lot, command.labels, command.actor, command.now)
+        if command.learning is not None:
+            receipt_learning.confirm_line(uow.session, command, receipt, placed.lot, job_id, label_error)
         uow.commit()
     return AcceptedLine(receipt=receipt, lot=placed.lot, label_job_id=job_id, label_error=label_error)
 

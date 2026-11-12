@@ -69,7 +69,18 @@ export const REF_TUBE_ = "bd-mat:";
 
 export type Side = "A" | "B";
 /** manual — «Ручная сборка» (manualAssembly.ts): свой список операций, формы кабелей и разъёмов не участвуют. */
-export type Tab = "inter" | "complex" | "coax" | "manual";
+export type Tab = "inter" | "complex" | "coax" | "manual" | "rework";
+export type ReworkState = {
+  compId: string; length: string; quantity: string; ends: "A" | "B" | "AB";
+  treatment: "none" | "strip" | "tin"; stripLen: string; mark: boolean; markRows: MarkRow[];
+};
+export const emptyRework = (): ReworkState => ({
+  compId: "", length: "", quantity: "", ends: "A", treatment: "none", stripLen: "", mark: false, markRows: [],
+});
+export function reworkTemplateFits(type: string, code: string): boolean {
+  const codes: Record<string, string[]> = { cutWire: ["CUT_WIRE_hand", "CUT_WIRE_auto"], stripCable: ["STRIP_WIRE", "STRIP_CABLE", "STRIP_CABLE_sheld"], tin: ["SDR_tin"], insMark: ["INS_MARK"] };
+  return (codes[type] || []).includes(code);
+}
 export type Endpoint = {
   id: string; side: Side; connId: string; method: "crimp" | "solder"; methodAuto: boolean;
   sdrTmpl: string | null; termId: string; wireIdxs: number[]; otp: boolean; double: boolean;
@@ -254,6 +265,7 @@ export function endJoined(S: Pick<GenState, "splices" | "tails">, idx: number, u
 }
 
 export type GenState = {
+  rework?: ReworkState;
   tab: Tab;
   wires: WireEntry[];
   nextWireIdx: number;
@@ -2256,7 +2268,54 @@ export function makeGen(D: GenData, S: GenState) {
   // ── Маршрут межплатной / сложной сборки ──
   /** Операции в порядке генератора, а поверх — свой порядок технолога (S.opOrder). */
   function getActiveOps(): OpSpec[] {
+    if (S.tab === "rework") return reworkOps_();
     return applyOpOrder(autoOps(), S.opOrder || []);
+  }
+  function reworkOps_(): OpSpec[] {
+    const r = S.rework || emptyRework();
+    const ops: OpSpec[] = [{ type: "cutWire", opKey: "reworkCut", label: "Резка давальческого изделия", tmplHint: "CUT_WIRE_hand" }];
+    const sides: Side[] = r.ends === "AB" ? ["A", "B"] : [r.ends];
+    if (r.treatment !== "none") for (const side of sides) {
+      ops.push({ type: "stripCable", opKey: `reworkStrip${side}`, side, label: `Зачистка конца ${sideRu_(side)}`, tmplHint: "STRIP_WIRE",
+        strip: { a: side === "A", b: side === "B", lenA: side === "A" ? r.stripLen : "", lenB: side === "B" ? r.stripLen : "" } });
+      if (r.treatment === "tin") ops.push({ type: "tin", opKey: `reworkTin${side}`, side, label: `Лужение конца ${sideRu_(side)}`, tmplHint: "SDR_tin", units: 1 });
+    }
+    if (r.mark) ops.push({ type: "insMark", opKey: "reworkMark", label: "Маркировка изделия", tmplHint: "INS_MARK", marks: markSpecs(r.markRows, D.components) });
+    return ops;
+  }
+  function reworkConfig_(): Record<string, unknown> {
+    const r = S.rework || emptyRework();
+    const comp = D.components.find((c) => c.id === r.compId);
+    const number = (value: string) => Number(value.trim().replace(",", "."));
+    const input = { id: comp?.id || "", art: comp?.art || "", name: comp?.name || "", unit: "М." };
+    return {
+      mode: "rework", tab: "rework", assemblyIndex: findKey(/индекс/i), assemblyName: findKey(/наименование/i), partQty: number(r.quantity),
+      rework: { input, cutLength: number(r.length), ends: r.ends, treatment: r.treatment, stripLength: r.stripLen, mark: r.mark },
+      wires: [{ art: input.art, name: input.name, qty: 1, length: number(r.length) }],
+      ops: reworkOps_().map((spec) => {
+        const row = opRow(spec);
+        return { type: spec.type, opKey: spec.opKey, label: spec.label, templateId: row.templateId, opNum: row.matched?.opNumber || "",
+          tPrep: row.times.tPrep, tOp: row.times.tOp, tMachine: row.times.tMachine,
+          ...(spec.side ? { side: spec.side } : {}), ...(spec.strip ? { strip: spec.strip, tutCount: 1 } : {}),
+          ...(spec.units ? { units: spec.units } : {}), ...(spec.marks ? { marks: spec.marks } : {}) };
+      }),
+    };
+  }
+  function reworkProblem_(): string {
+    const r = S.rework || emptyRework();
+    const positive = (value: string) => /^\d+(?:[.,]\d+)?$/.test(value.trim()) && Number.isFinite(Number(value.replace(",", "."))) && Number(value.replace(",", ".")) > 0;
+    if (!D.components.some((c) => c.id === r.compId && (c.art || c.name))) return "Выберите входное давальческое изделие из состава.";
+    if (!positive(r.length)) return "Укажите положительную длину реза в миллиметрах.";
+    if (!positive(r.quantity) || !Number.isSafeInteger(Number(r.quantity.replace(",", ".")))) return "Укажите целое положительное количество готовых изделий.";
+    if (!["A", "B", "AB"].includes(r.ends) || !["none", "strip", "tin"].includes(r.treatment)) return "Выберите обработку концов.";
+    if (r.treatment !== "none" && (!positive(r.stripLen) || Number(r.stripLen.replace(",", ".")) * (r.ends === "AB" ? 2 : 1) > Number(r.length.replace(",", ".")))) return "Укажите длину зачистки в пределах длины реза.";
+    if (r.mark && (!r.markRows.length || r.markRows.some((m) => {
+      const material = markSpecs([m], D.components)[0]?.name || m.material;
+      return !m.text.trim() || !m.material.trim() || !positive(m.qty) || (markIsTube(material) && !positive(m.len || ""));
+    }))) return "Заполните надпись, материал, количество и длину трубки для каждой метки.";
+    if (reworkOps_().some((spec) => !D.templates.some((t) => t.id === templateIdFor(spec)))) return "Выберите карточку для каждой операции доработки.";
+    if (reworkOps_().some((spec) => !reworkTemplateFits(spec.type, D.templates.find((t) => t.id === templateIdFor(spec))!.title.split("|")[0].trim()))) return "Карточка не соответствует выбранной операции доработки.";
+    return "";
   }
   const tubeKind_ = (c: Comp) => (isGlueSleeve_(c) ? "ТТК" : "ТУТ");
   /** Трубки, которые надеваются на кабель до обжима и пайки (владелец 15.10: «даже до обжимки она одевается, потому что с
@@ -3597,6 +3656,7 @@ export function makeGen(D: GenData, S: GenState) {
     };
   }
   function buildConfig(): Record<string, unknown> {
+    if (S.tab === "rework") return reworkConfig_();
     if (S.tab === "coax") return buildConfigCoax_();
     const sideB = endpointsOnSide_("B").length > 0;
     const epA = firstCrimpEndpoint_("A"), epB = sideB ? firstCrimpEndpoint_("B") : null;
@@ -3854,6 +3914,7 @@ export function makeGen(D: GenData, S: GenState) {
   }
   function validate() {
     const cfg = buildConfig();
+    if (S.tab === "rework") return { cfg, error: reworkProblem_(), warnings: [] as string[] };
     // «Норма заказчика (КД)» коакса, которую не прочитать, — стоп до остальных проверок (сервер тоже ответит 422).
     const custProblem = S.tab === "coax" && S.coax.sideB && S.coax.vswrMode !== "none" ? coaxVswrCustProblem(S.coax.vswrCust) : "";
     if (custProblem) return { cfg, error: custProblem, warnings: [] as string[] };

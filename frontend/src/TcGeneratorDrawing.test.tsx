@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 // «Построить чертёж» грузит редактор жгута лениво: в холодном прогоне первая сборка дольше 5 с (12.10.2026).
@@ -52,7 +52,11 @@ beforeEach(() => {
     throw new Error(`Unexpected request: ${method} ${path}`);
   });
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  cleanup();
+  window.localStorage.clear();
+  vi.restoreAllMocks();
+});
 
 async function mountPinned(onOpenDrawing = vi.fn()) {
   render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kit} onOpenDrawing={onOpenDrawing} />);

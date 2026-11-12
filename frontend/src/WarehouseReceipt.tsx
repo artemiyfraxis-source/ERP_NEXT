@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
-import { ApiError, receivingApi, warehouseApi, type WarehouseLot, type WarehouseReceipt as ReceiptDoc, type WarehouseReceiptScan, type WarehouseScanJob } from "./api";
+import { api, ApiError, receivingApi, warehouseApi, type WarehouseLot, type WarehouseReceipt as ReceiptDoc, type WarehouseReceiptScan, type WarehouseScanJob, type WarehouseReceiptRule } from "./api";
 import { labelsApi } from "./LabelPrint";
 import { PageWindow } from "./PageWindow";
 import { UpdDeliveryWindow, pluralLines, type UpdDelivery } from "./ReceivingDelivery";
@@ -9,7 +9,7 @@ import { useCanScan } from "./rights";
 import { SuggestInput } from "./SuggestInput";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 import {
-  GRID_COLUMNS, LABELS_MAX, RECEIPT_LIMIT, applyHints, applyReceiptPaste, applyScan, buildAccept, canAccept, editCell,
+  GRID_COLUMNS, LABELS_MAX, RECEIPT_LIMIT, applyHints, applyLearning, deactivateLearning, applyReceiptPaste, applyScan, buildAccept, canAccept, editCell,
   DEFAULT_PURPOSE, emptyHeader, emptyLine, fillEmpty, headerChanged, headerFields, headerFromReceipt, isBlankLine, lineFromLot, lineSummary,
   lineTitle, mergeHeader, shortDate, splitArticleCell, withTrailingBlank,
   type HeaderKey, type LineKey, type ReceiptHeader, type ReceiptLine,
@@ -54,7 +54,7 @@ function AcceptDialog({ line, warehouse, onClose, onAccept }: {
       onClose();
     } catch (reason) {
       const text = reason instanceof Error ? reason.message : "Не удалось принять позицию";
-      if (reason instanceof ApiError && reason.status === 409) { setConflict(text); setError(""); } else { setConflict(""); setError(text); }
+      if (reason instanceof ApiError && reason.status === 409 && text.startsWith("Позиция ожидается в Приёмке:")) { setConflict(text); setError(""); } else { setConflict(""); setError(text); }
     } finally {
       setBusy(false);
     }
@@ -121,6 +121,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
   const scanAgent = useScanAgent(warehouseApi.startScanJob);
   const canScan = useCanScan();
   const [accepting, setAccepting] = useState<number | null>(null);
+  const [checkingRules, setCheckingRules] = useState<Set<string>>(() => new Set());
   // The scanned УПД matches lines awaited in «Приёмка»: they are accepted there (ВК, ГРН, закрытие заказа), not here.
   const [expected, setExpected] = useState<{ delivery: UpdDelivery; text: string } | null>(null);
   const [inReceiving, setInReceiving] = useState<UpdDelivery | null>(null);
@@ -171,9 +172,51 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
     return root.current?.querySelector<HTMLElement>(`[data-cell="${row}:${key}"]`) ?? null;
   }
 
-  const setHead = (key: HeaderKey, value: string) => setHeader((current) => ({ ...current, [key]: value }));
+  const setHead = (key: HeaderKey, value: string) => {
+    setHeader((current) => ({ ...current, [key]: value, ...(key === "supplier" ? { supplier_inn: "" } : {}) }));
+    if (key === "supplier" || key === "supplier_inn") {
+      setLines((current) => current.map((line) => {
+        if (!line.learning || line.accepted) return line;
+        const restored = applyLearning(line, null);
+        return { ...restored, learning: {
+          ...restored.learning!, confirm_supplier_name: false,
+        } };
+      }));
+    }
+  };
   const patchLine = (row: number, change: (line: ReceiptLine) => ReceiptLine) =>
     setLines((current) => withTrailingBlank(current.map((line, index) => (index === row ? change(line) : line))));
+
+  async function checkRule(row: number) {
+    const line = lines[row];
+    if (!line.learning || !line.acceptance_id || checkingRules.has(line.acceptance_id)) return;
+    const id = line.acceptance_id;
+    setCheckingRules((current) => new Set(current).add(id));
+    const currentHeader = headerRef.current;
+    patchLine(row, (current) => ({ ...current, error: "" }));
+    try {
+      const result = await api<{ learning: WarehouseReceiptRule | null }>("/api/stock/receipts/learning-preview", {
+        method: "POST", body: JSON.stringify({
+          file_id: line.learning.file_id, source_line_key: line.learning.source_line_key,
+          supplier: currentHeader.supplier, supplier_inn: currentHeader.supplier_inn,
+          confirm_supplier_name: line.learning.confirm_supplier_name,
+        }),
+      });
+      // A late response must not replace edits or apply a rule after the supplier changed.
+      if (headerRef.current !== currentHeader) return;
+      patchLine(row, (current) => current.acceptance_id === line.acceptance_id
+        && current.article === line.article && current.quantity === line.quantity
+        && current.unit === line.unit && current.manufacturer === line.manufacturer
+        && current.learning === line.learning
+        ? { ...applyLearning(current, result.learning), error: result.learning ? "" : "Правило поставщика не найдено" }
+        : current);
+    } catch (reason) {
+      patchLine(row, (current) => current.acceptance_id === id
+        ? { ...current, error: reason instanceof Error ? reason.message : "Не удалось проверить правило" } : current);
+    } finally {
+      setCheckingRules((current) => { const next = new Set(current); next.delete(id); return next; });
+    }
+  }
 
   /** Article lookup: a known lot at once, the catalog after 250 ms. Fills EMPTY cells only. */
   function lookup(row: number, article: string) {
@@ -561,7 +604,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
           {headerField("upd_number", "№ УПД")}
           {headerField("upd_date", "Дата УПД", "date")}
           {headerField("purpose", "Назначение")}
-          <div className="wr-scan">
+          <div className="wr-scan" style={{ flexWrap: "wrap", minWidth: 0 }}>
             {canScan && (scanPages.length > 0 ? (
               <>
                 <button type="button" className="secondary" disabled={scanning} onClick={() => void scanFromScanner()}>+ Страница</button>
@@ -574,6 +617,12 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
             <input ref={fileInput} type="file" hidden multiple aria-label="Файл УПД" accept=".pdf,.xml,.zip,image/*,application/xml,text/xml,application/zip" {...(phone ? { capture: "environment" as const } : {})}
               onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) void scan(files); }} />
           </div>
+        </div>
+        <div className="wr-scan-status">
+          <label className="inline-select" style={{ flexDirection: "row" }}>ИНН поставщика
+            <input name="supplier_inn" aria-label="ИНН поставщика" inputMode="numeric" autoComplete="off" spellCheck={false}
+              maxLength={12} style={{ width: 150 }} value={header.supplier_inn} onChange={(event) => setHead("supplier_inn", event.target.value)} />
+          </label>
         </div>
         <ScanDeviceLine />
         {scanAgent.dialogs(() => void scanFromScanner())}
@@ -621,13 +670,57 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
                         {done
                           ? <span className="wr-accepted">✓ Принято</span>
                           : !isBlankLine(line) && <>
-                            <button type="button" className="rg-link wr-accept-btn" disabled={!canAccept(line) || accepting !== null} aria-label={`Принять строку ${row + 1}`}
+                            <button type="button" className="rg-link wr-accept-btn" disabled={!canAccept(line) || accepting !== null || checkingRules.has(line.acceptance_id ?? "")} aria-label={`Принять строку ${row + 1}`}
                               onClick={() => setAccepting(row)}>Принять</button>
                             <button type="button" className="rg-link" aria-label={`Убрать строку ${row + 1}`}
                               onClick={() => setLines((current) => withTrailingBlank(current.filter((_, index) => index !== row)))}>Убрать</button>
                           </>}
                       </td>
                     </tr>
+                    {!done && line.learning && <tr className="wr-note-row"><td colSpan={colSpan}>
+                      <div className="wr-sub" aria-live="polite" style={{ whiteSpace: "normal" }}>
+                        <span style={{ fontVariantNumeric: "tabular-nums" }}>По УПД: {line.original?.invoice_quantity || "не прочитано"} {line.original?.invoice_unit}</span>
+                        {line.ruleApplied && <span className="tone-info">Применено правило поставщика</span>}
+                        {line.rule?.warning && <span className="warning-inline">{line.rule.warning}</span>}
+                        {line.learning.action === "deactivate" && <span>Правило будет отключено при приёмке</span>}
+                        <button type="button" className="rg-link" style={{ minHeight: 40 }} disabled={accepting !== null || checkingRules.has(line.acceptance_id ?? "") || (!header.supplier_inn && !line.learning.confirm_supplier_name)}
+                          onClick={() => void checkRule(row)}>{checkingRules.has(line.acceptance_id ?? "") ? "Проверяем…" : "Проверить правило"}</button>
+                        {line.rule?.active && line.learning.action !== "deactivate" && <button type="button" className="rg-link" style={{ minHeight: 40 }} disabled={accepting !== null}
+                          onClick={() => patchLine(row, deactivateLearning)}>Отключить правило</button>}
+                        <label className="inline-select" style={{ flexDirection: "row", minHeight: 40 }}><input type="checkbox" name={`remember_${row}`} style={{ width: 20, height: 20, margin: 0, padding: 0 }} aria-label={`Запомнить для этого поставщика, строка ${row + 1}`} disabled={accepting !== null || line.original?.learning_eligible === false}
+                          checked={line.learning.action === "remember"} onChange={(event) => patchLine(row, (current) => ({ ...current,
+                            learning: { ...current.learning!, action: event.target.checked ? "remember" : "none" } }))} />
+                          Запомнить для этого поставщика{line.rule ? " (заменить правило)" : ""}</label>
+                        {!header.supplier_inn && <label className="inline-select" style={{ flexDirection: "row", minHeight: 40, overflowWrap: "anywhere" }}><input type="checkbox" name={`confirm_supplier_${row}`} style={{ width: 20, height: 20, margin: 0, padding: 0 }} aria-label={`Подтвердить поставщика по названию, строка ${row + 1}`} disabled={accepting !== null}
+                          checked={line.learning.confirm_supplier_name} onChange={(event) => {
+                            const confirmed = event.target.checked;
+                            patchLine(row, (current) => {
+                              const restored = confirmed ? current : applyLearning(current, null);
+                              return { ...restored, learning: { ...restored.learning!, confirm_supplier_name: confirmed } };
+                            });
+                          }} />
+                          Подтверждаю поставщика по названию «{header.supplier || "не указан"}»</label>}
+                        {line.learning.action === "remember" && <>
+                          <label className="inline-select" style={{ flexDirection: "row" }}>Количество в УПД<select name={`quantity_basis_${row}`} aria-label={`Основа количества, строка ${row + 1}`} disabled={accepting !== null}
+                            style={{ width: 180, background: "var(--card)", color: "var(--foreground)", border: "1px solid var(--border)" }}
+                            value={line.learning.convert_quantity ? line.learning.quantity_basis : "unchanged"}
+                            onChange={(event) => patchLine(row, (current) => ({ ...current, learning: { ...current.learning!,
+                              quantity_basis: event.target.value === "packs" ? "packs" : "base",
+                              convert_quantity: event.target.value !== "unchanged",
+                              pack_size: event.target.value === "unchanged" ? "" : current.learning!.pack_size,
+                            } }))}>
+                            <option value="unchanged">Не менять количество</option><option value="packs">Упаковки</option><option value="base">Единицы склада</option>
+                          </select></label>
+                          {line.learning.convert_quantity && <label className="inline-select" style={{ flexDirection: "row" }}>В упаковке, {line.unit || "шт"}
+                            <input aria-label={`Размер упаковки, строка ${row + 1}`} inputMode="decimal" disabled={accepting !== null}
+                              name={`pack_size_${row}`} autoComplete="off" style={{ width: 100, background: "var(--card)", border: "1px solid var(--border)", textAlign: "right", fontVariantNumeric: "tabular-nums" }}
+                              placeholder={line.learning.quantity_basis === "packs" ? "Обязательно" : "Необязательно"} value={line.learning.pack_size} onChange={(event) => patchLine(row, (current) => ({ ...current,
+                                learning: { ...current.learning!, pack_size: event.target.value } }))} />
+                          </label>}
+                        </>}
+                      </div>
+                      {line.error && <p className="error-banner" role="alert">{line.error}</p>}
+                    </td></tr>}
                     {done && <tr className="wr-done-row"><td colSpan={colSpan}>
                       <span className="wr-sub">
                         <span className="wr-accepted">Принято · ГРН {done.grn} · место {done.place || "не указано"}{done.labels ? ` · этикеток ${done.labels}` : ""}</span>

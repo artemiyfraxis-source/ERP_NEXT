@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DataTable, columnClass, compareCells, matchesWords, moveKey, orderColumns, readSaved, searchHint, tableText, type DataColumn } from "./DataTable";
 
@@ -21,7 +21,7 @@ function names() {
   return screen.getAllByRole("row").slice(1).map((row) => within(row).queryAllByRole("cell").map((cell) => cell.textContent).join("|"));
 }
 
-afterEach(() => { window.localStorage.clear(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); window.localStorage.clear(); vi.restoreAllMocks(); });
 
 it("keeps grouped cards flat unless groupCards explicitly opts in, with independent header controls", () => {
   const opened = vi.fn();

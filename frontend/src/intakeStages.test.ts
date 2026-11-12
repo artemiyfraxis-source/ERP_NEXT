@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dispatchBoard, kbKey, stagePieces } from "./intakeStages";
+import { dispatchBoard, kbKey, recentShipment, stagePieces } from "./intakeStages";
 import { dataRows } from "./ShipmentDataPage";
 import type { DispatchShipment, IntakeRow } from "./productionIntakeApi";
 import type { Shipment } from "./api";
@@ -51,5 +51,15 @@ describe("общие счётчики КБ", () => {
     const board = dispatchBoard([], shipments, now);
     expect(board.counts).toEqual({ waiting: 0, production: 0, ready: 0, accepted: 1, packed: 0, to_ship: 0, shipped: 0, all: 2 });
     expect(board.rows[0]).toMatchObject({ needed: "0", accepted: "4", packed: "4", sent: "0", remaining: "0", good_id: null, pack_allowed: false });
+  });
+});
+
+describe("«Отгружено за 30 дней» — по московским суткам", () => {
+  const shipped = (day: string) => ({ status: "Отгружена", shipped_at: `${day}T00:20:00+03:00` }) as unknown as DispatchShipment;
+  it("отправка, уехавшая сегодня ночью, видна сразу после полуночи (UTC ещё вчера)", () => {
+    const now = new Date(2026, 10, 11, 0, 30);
+    expect(recentShipment(shipped("2026-11-11"), now)).toBe(true);
+    expect(recentShipment(shipped("2026-10-12"), now)).toBe(true);
+    expect(recentShipment(shipped("2026-10-11"), now)).toBe(false);
   });
 });

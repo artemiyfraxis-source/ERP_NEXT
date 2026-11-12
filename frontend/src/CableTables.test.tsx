@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { ReferencesPage } from "./ReferencesPage";
 import { HookupWireTable, parseTempRange } from "./CableStructure";
@@ -343,7 +343,8 @@ it("lists coax cables like a catalogue: series groups in order, base mark before
   const lmr: CableRow = { id: "w-lmr", kind: "coax", auto_kind: "coax", reason: "тип «коаксиальный»", manual: false, cable: "LMR-195",
     record: wire("w-lmr", { "Марка": "LMR-195" }), dia: null, dia_hint: null };
   mockApi([], [lmr, ...ROWS]);
-  plainRender(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+  // Settle initial fetches and table effects before testing a single user click.
+  await act(async () => { plainRender(<ReferencesPage principal={admin} initialTab="cab_coax" />); });
   // a block per family (25.10): its heading folds the block; owner 26.10: the groups start folded
   const rg = await screen.findByRole("button", { name: /^RG58 2$/ });
   // owner 19.10: a group per mark family (RG58 = RG-58 and its A/U); single-row families of a head with no mate go to «Прочие», last
@@ -353,7 +354,7 @@ it("lists coax cables like a catalogue: series groups in order, base mark before
   expect(screen.queryByText("RG-58 A/U")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Развернуть все" }));
   const marks = screen.getAllByRole("row").map((line) => line.querySelector("td.key")?.textContent).filter(Boolean);
-  expect(marks).toEqual(["RG-58 A/U", "RG58", "LMR-195", "RG316"]); // owner 25.10: by outer diameter, a row without one (the D-row RG58) last in its group
+  expect(marks).toEqual(["RG-58 A/U", "RG58", "LMR-195", "RG316"]); // owner 25.10: rows without diameter last in their group
   expect(rg).toHaveAttribute("aria-expanded", "true");
   fireEvent.click(rg);
   expect(rg).toHaveAttribute("aria-expanded", "false");

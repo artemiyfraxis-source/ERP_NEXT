@@ -9,7 +9,7 @@ from uuid import UUID
 from datetime import date, datetime
 
 from sqlalchemy import (
-    JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text,
+    CHAR, JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text,
     UniqueConstraint, Uuid, delete, func, or_, select, update,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
@@ -44,6 +44,7 @@ class WarehouseReceiptRow(Base):
     warehouse: Mapped[str] = mapped_column(String(8), nullable=False)
     supplier: Mapped[str] = mapped_column(String(RECEIPT_TEXT_LIMITS["supplier"]), nullable=False, default="",
                                           server_default="")
+    supplier_inn: Mapped[str] = mapped_column(String(12), nullable=False, default="", server_default="")
     invoice_number: Mapped[str] = mapped_column(String(RECEIPT_TEXT_LIMITS["invoice_number"]), nullable=False,
                                                 default="", server_default="")
     invoice_date: Mapped[date | None] = mapped_column(Date)
@@ -78,6 +79,60 @@ class WarehouseReceiptFileRow(Base):
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # What the file was read as (scan_reading JSON, 0150); '' — not read yet.
     recognition: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+
+
+class SupplierItemRuleRow(Base):
+    __tablename__ = "warehouse_supplier_item_rules"
+    __table_args__ = (
+        UniqueConstraint("supplier_key", "supplier_code_key", "name_hash", name="uq_supplier_item_rule_key"),
+        CheckConstraint("pack_size IS NULL OR pack_size > 0", name="ck_supplier_item_rule_pack"),
+        CheckConstraint("supplier_code_key <> '' OR name_key <> ''", name="ck_supplier_item_rule_item"),
+        CheckConstraint("supplier_key <> ''", name="ck_supplier_item_rule_supplier"),
+        CheckConstraint("quantity_basis IN ('base', 'packs')", name="ck_supplier_item_rule_basis"),
+        CheckConstraint("quantity_basis <> 'packs' OR pack_size IS NOT NULL", name="ck_supplier_item_rule_packs"),
+        CheckConstraint("version >= 1", name="ck_supplier_item_rule_version"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    supplier_key: Mapped[str] = mapped_column(String(260))
+    supplier_code_key: Mapped[str] = mapped_column(String(255))
+    name_key: Mapped[str] = mapped_column(String(2000))
+    name_hash: Mapped[str] = mapped_column(CHAR(64), nullable=False)
+    article: Mapped[str] = mapped_column(String(255))
+    manufacturer: Mapped[str] = mapped_column(String(255))
+    stock_unit: Mapped[str] = mapped_column(String(16))
+    pack_size: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    quantity_basis: Mapped[str] = mapped_column(String(8))
+    version: Mapped[int] = mapped_column(Integer)
+    active: Mapped[bool] = mapped_column(Boolean)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[str] = mapped_column(String(255))
+    updated_by: Mapped[str] = mapped_column(String(255))
+
+
+class ReceiptLineConfirmationRow(Base):
+    __tablename__ = "warehouse_receipt_line_confirmations"
+    __table_args__ = (
+        UniqueConstraint("acceptance_id", name="uq_receipt_confirmation_acceptance"),
+        UniqueConstraint("lot_id", name="uq_receipt_confirmation_lot"),
+        Index("ix_receipt_confirmation_source", "file_id", "source_line_key"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    acceptance_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True))
+    file_id: Mapped[UUID] = mapped_column(ForeignKey("warehouse_receipt_files.id", ondelete="RESTRICT"))
+    receipt_id: Mapped[UUID] = mapped_column(ForeignKey("warehouse_receipts.id", ondelete="RESTRICT"))
+    lot_id: Mapped[UUID] = mapped_column(ForeignKey("warehouse_lots.id", ondelete="RESTRICT"))
+    rule_id: Mapped[UUID | None] = mapped_column(ForeignKey("warehouse_supplier_item_rules.id", ondelete="RESTRICT"))
+    source_line_key: Mapped[str] = mapped_column(String(128))
+    rule_version: Mapped[int | None] = mapped_column(Integer)
+    supplier_key: Mapped[str] = mapped_column(String(260))
+    original: Mapped[dict] = mapped_column(JSON)
+    accepted: Mapped[dict] = mapped_column(JSON)
+    learned: Mapped[bool] = mapped_column(Boolean)
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    confirmed_by: Mapped[str] = mapped_column(String(255))
 
 
 _RECEIPT_FIELDS = tuple(column.name for column in WarehouseReceiptRow.__table__.columns)

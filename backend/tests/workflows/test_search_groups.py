@@ -4,16 +4,19 @@
 from decimal import Decimal
 from uuid import uuid4
 
+from sqlalchemy import event
+
 from app.main import app
 from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.production.infrastructure import ProductionTaskRow
-from app.modules.references.infrastructure import TechOperationRecordRow
+from app.modules.references.infrastructure import EquipmentModelRow, ReferenceEntryRow, TechOperationRecordRow, WireGaugeRow
 from app.modules.shipping.infrastructure import FinishedGoodRow, ShipmentLineRow, ShipmentRow
 from app.modules.purchasing.infrastructure import InvoiceRow, UpdDocumentRow
 from app.modules.techcards.infrastructure import ProjectTechcardRow
 from app.shared.http_auth import Principal, authenticated_principal
+from app.workflows import search_api
 from tests.factories import Actor
-from tests.workflows.test_search_api import NOW, URL, env, fill, groups, titles  # noqa: F401 — env is the fixture
+from tests.workflows.test_search_api import NOW, URL, env, fill, groups, lot, titles  # noqa: F401 — env is the fixture
 
 
 def record(tab, text, *, cable_kind=None, ter_kind=None, fields=None):
@@ -106,7 +109,9 @@ def test_shipments_by_number_customer_track_and_project_of_a_line(env):
         hit = results(client, query, "Отгрузки")
         assert [item["title"] for item in hit] == ["ОТГ-26-0007 · АО Заказчик"], query
     hit = results(client, "ОТГ-26-0007", "Отгрузки")[0]
-    assert (hit["section"], hit["params"]) == ("shipping", {"tab": "shipments"}) and "Собрана" in hit["subtitle"]
+    assert hit["section"] == "intake" and hit["params"]["tab"] == "journal"
+    assert hit["params"]["q"] == "ОТГ-26-0007" and "shipment" in hit["params"]
+    assert "Собрана" in hit["subtitle"]
     as_person({"shipping_goods": "view"})
     assert results(client, "ОТГ-26-0007", "Отгрузки") != []
     as_person({"warehouse": "view", "procurement": "view"})
@@ -122,7 +127,7 @@ def test_finished_goods_open_the_warehouse_list_or_the_shipping_screen(env):
     assert (hit["section"], hit["params"]) == ("stock", {"view": "goods", "q": "591К.3"})
     as_person({"shipping_goods": "view"})
     hit = results(client, "CB-77", "Готовая продукция")[0]
-    assert (hit["section"], hit["params"]) == ("shipping", {"tab": "stock"})
+    assert (hit["section"], hit["params"]) == ("intake", {"tab": "all", "q": "591К.3"})
     as_person({"warehouse": "view"})
     assert "Готовая продукция" not in groups(client.get(URL, params={"q": "CB-77"}))
 
@@ -133,9 +138,10 @@ def test_techcards_and_production_tasks(env):
     as_person({"techcards": "view", "production": "view"})
     card = results(client, "591К.3 жгут", "Техкарты")[0]
     assert card["title"] == "591К.3 · КБ 2 · Жгут сигнальный" and "ред. 3" in card["subtitle"]
-    assert (card["section"], card["params"]) == ("techcards", {"project": "591К.3"})
+    assert card["section"] == "techcards" and card["params"]["project"] == "591К.3"
+    assert set(card["params"]) == {"project", "card"}
     task = results(client, "ПЗ-26-0042", "Задания цеха")[0]
-    assert task["section"] == "production" and task["params"] == {} and "591К.3" in task["subtitle"]
+    assert task["section"] == "production" and set(task["params"]) == {"task"} and "591К.3" in task["subtitle"]
     as_person({"techcards": "view"})
     assert "Задания цеха" not in groups(client.get(URL, params={"q": "ПЗ-26-0042"}))
     as_person({"production": "view"})
@@ -198,3 +204,116 @@ def test_kit_requests_by_number_project_and_an_article_of_a_line_open_their_scre
     assert {item["section"] for item in results(client, "713К.4", "Комплектация и выдача")} == {"handout"}
     as_person({"warehouse": "view"})
     assert "Комплектация и выдача" not in groups(client.get(URL, params={"q": "НШВ"}))
+
+
+def test_equipment_matches_model_and_unit_natural_keys_and_opens_the_unit(env):
+    client, seed = env
+    model = fill(EquipmentModelRow, name="Пресс Штиль", article="P-778", maker="Завод")
+    unit = record("ob", "ОБ.070.2 · Инв. 5544", fields={"Инв. номер": "5544"})
+    unit.equipment_model_id = model.id
+    seed(model, unit)
+    as_person({"erpref": "view"})
+    for query in ("ШТИЛЬ", "P-778", "5544", "штиль 5544", "завод"):
+        hits = results(client, query, "Оборудование")
+        assert len(hits) == 1, query
+        assert hits[0]["params"] == {"tab": "ob", "equipment": str(unit.id)}
+        assert hits[0]["subtitle"].startswith("База данных → Оборудование")
+    as_person({"erptctpl": "view", "warehouse": "view"})
+    assert results(client, "5544", "Оборудование") == []
+
+
+def test_correspondence_tabs_and_gauges_are_searchable_by_content(env):
+    client, seed = env
+    seed(fill(ReferenceEntryRow, kind="supplier", key="example.test", normalized_key="example.test", value="Поставка", position=1),
+         fill(ReferenceEntryRow, kind="country", key="Завод", normalized_key="завод", value="Россия", position=1),
+         fill(WireGaugeRow, awg="22", section_mm2=Decimal("0.35")))
+    as_person({"erpref": "view"})
+    for query, tab in (("поставка", "suppliers"), ("РОССИЯ", "countries"), ("22", "gauges")):
+        assert any(hit["params"]["tab"] == tab for hit in results(client, query, "База данных"))
+    as_person({"erptctpl": "view"})
+    assert results(client, "поставка", "База данных") == []
+    assert all(hit["params"]["tab"] != "gauges" for hit in results(client, "22", "База данных"))
+
+
+def test_shipments_match_words_across_different_lines_without_duplicates(env):
+    client, seed = env
+    shipment = fill(ShipmentRow, number="ОТГ-9", status="Собрана", created_at=NOW)
+    good = fill(FinishedGoodRow, project="Проект-А", item_index="1", accepted=Decimal(2), shipped=Decimal(0))
+    seed(shipment, good,
+         fill(ShipmentLineRow, shipment_id=shipment.id, finished_good_id=good.id, position=1, project="Проект-А"),
+         fill(ShipmentLineRow, shipment_id=shipment.id, finished_good_id=good.id, position=2, project="Проект-Б"))
+    as_person({"shipping": "view"})
+    assert len(results(client, "Проект-А Проект-Б", "Отгрузки")) == 1
+
+
+def test_new_sql_groups_limit_after_matching_all_words_and_escape_wildcards(env):
+    client, seed = env
+    seed(*(fill(ProductionTaskRow, number=f"ПЗ-{i}", project="Общий", name="Другая" if i < 20 else "Нужная_100%",
+                quantity=1, created_at=NOW, source_idempotency_key=uuid4().hex) for i in range(40)))
+    as_person({"production": "view"})
+    hits = results(client, "ОБЩИЙ Нужная_100%", "Задания цеха")
+    assert len(hits) == 8
+    assert all("Нужная_100%" in hit["title"] for hit in hits)
+    assert results(client, "Нет_100%", "Задания цеха") == []
+
+
+def test_stock_search_bounds_selects_and_ranked_candidates_for_a_common_word(env, monkeypatch):
+    client, seed = env
+    seed(*(lot(f"FRX.26.{i:07d}", "Контакт общий") for i in range(2300)))
+    as_person({"warehouse": "view"})
+    with app.state.purchasing_uow_factory() as uow:
+        engine = uow.session.get_bind()
+    statements = []
+    ranked_candidates = 0
+    matches_words = search_api.matches_words
+
+    def count_selects(_connection, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    def count_candidates(candidate, query):
+        nonlocal ranked_candidates
+        ranked_candidates += 1
+        return matches_words(candidate, query)
+
+    monkeypatch.setattr(search_api, "matches_words", count_candidates)
+    event.listen(engine, "before_cursor_execute", count_selects)
+    try:
+        response = client.get(URL, params={"q": "Контакт"})
+    finally:
+        event.remove(engine, "before_cursor_execute", count_selects)
+
+    assert response.status_code == 200, response.text
+    assert titles(response, "Склад") == [f"FRX.26.{i:07d}" for i in range(8)]
+    assert len(statements) == 1
+    assert ranked_candidates == search_api.MAX_CANDIDATES
+
+
+def test_connector_catalog_search_opens_the_series_and_respects_tab_access(env):
+    client, seed = env
+    as_person({"erptctpl": "view"})
+    hit = results(client, "GHR-04V-S", "База данных")[0]
+    assert hit["params"] == {"tab": "connectors", "series": "jst-gh"}
+    assert hit["subtitle"] == "База данных → Разъёмы"
+    as_person({"erpref": "view"})
+    assert results(client, "GHR-04V-S", "База данных") == []
+
+
+def test_sql_fold_preserves_punctuation_and_numeric_decimal_commas(env):
+    client, seed = env
+    seed(fill(IdentityUserRow, login="comma", email="comma@example.test", name="Иванов, Пётр", role="operator",
+              department="Цех", job_title="Монтажник 0,35", active=True))
+    as_person({}, role="admin")
+    assert len(results(client, "Иванов,", "Сотрудники")) == 1
+    assert len(results(client, "0.35", "Сотрудники")) == 1
+
+
+def test_postgresql_search_compiles_without_sqlite_functions():
+    from types import SimpleNamespace
+    from sqlalchemy.dialects import postgresql
+    from app.workflows.search_api import _contains
+    session = SimpleNamespace(get_bind=lambda: SimpleNamespace(dialect=SimpleNamespace(name="postgresql")))
+    expression = _contains([IdentityUserRow.name], ["иванов,"], session)
+    sql = str(expression.compile(dialect=postgresql.dialect()))
+    assert "ILIKE" in sql and "regexp_replace" in sql
+    assert "erp_search_fold" not in sql and "erp_casefold" not in sql

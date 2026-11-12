@@ -2,6 +2,7 @@
 import { appendParsedRows, applyGridPaste, dateToIso, hasHeaderRow, parseTsv, type PasteField } from "./gridPaste";
 import type {
   WarehouseArticleHints, WarehouseLot, WarehouseReceipt, WarehouseReceiptAccept, WarehouseReceiptFields, WarehouseReceiptScan,
+  WarehouseReceiptLearningChoice, WarehouseReceiptOriginal, WarehouseReceiptRule,
 } from "./api";
 
 /** The server takes at most this many rows in one supply. */
@@ -13,6 +14,7 @@ export const DEFAULT_PURPOSE = "Склад";
 export type ReceiptHeader = {
   warehouse: string;
   supplier: string;
+  supplier_inn: string;
   invoice_number: string;
   invoice_date: string;
   upd_number: string;
@@ -23,7 +25,7 @@ export type ReceiptHeader = {
   purpose: string;
 };
 export type HeaderKey = keyof ReceiptHeader;
-const HEADER_KEYS: HeaderKey[] = ["supplier", "invoice_number", "invoice_date", "upd_number", "upd_date", "prd_number", "prd_date"];
+const HEADER_KEYS: HeaderKey[] = ["supplier", "supplier_inn", "invoice_number", "invoice_date", "upd_number", "upd_date", "prd_number", "prd_date"];
 
 export type LineKey =
   | "article" | "quantity" | "unit" | "item_type" | "manufacturer" | "series" | "name" | "purpose"
@@ -44,6 +46,12 @@ export type AcceptedInfo = {
 export const MODEL_KEYS: LineKey[] = ["name", "item_type", "manufacturer"];
 
 export type ReceiptLine = Record<LineKey, string> & {
+  acceptance_id?: string;
+  original?: WarehouseReceiptOriginal;
+  learning?: WarehouseReceiptLearningChoice;
+  rule?: WarehouseReceiptRule | null;
+  ruleApplied?: boolean;
+  beforeRule?: Pick<ReceiptLine, "article" | "manufacturer" | "unit" | "quantity">;
   /** cells filled by the article lookup and not touched since — shown muted */
   auto: LineKey[];
   /** cells filled from the УПД scan (our name, type, maker) that the article lookup may still replace — shown muted */
@@ -113,7 +121,7 @@ const MESSAGES = {
 };
 
 export function emptyHeader(): ReceiptHeader {
-  return { warehouse: "ЦАР", supplier: "", invoice_number: "", invoice_date: "", upd_number: "", upd_date: "", prd_number: "", prd_date: "", purpose: "" };
+  return { warehouse: "ЦАР", supplier: "", supplier_inn: "", invoice_number: "", invoice_date: "", upd_number: "", upd_date: "", prd_number: "", prd_date: "", purpose: "" };
 }
 
 export function emptyLine(): ReceiptLine {
@@ -228,10 +236,21 @@ export function text(value: unknown): string {
   return String(value ?? "").trim();
 }
 
+function acceptanceId(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  // Warehouse Chrome 70 has getRandomValues, but no randomUUID (also absent on HTTP origins).
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 15) | 64;
+  bytes[8] = (bytes[8] & 63) | 128;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export function applyScan(header: ReceiptHeader, lines: ReceiptLine[], scan: WarehouseReceiptScan): { header: ReceiptHeader; lines: ReceiptLine[]; added: number } {
   const found = scan.recognised ?? ({} as Partial<WarehouseReceiptScan["recognised"]>);
   const nextHeader = mergeHeader(header, {
     supplier: text(found.supplier),
+    supplier_inn: !header.supplier.trim() || header.supplier.trim() === text(found.supplier) ? text(found.inn) : "",
     invoice_number: text(found.invoice_number),
     invoice_date: dateToIso(text(found.invoice_date)),
     upd_number: text(found.upd_number),
@@ -256,9 +275,63 @@ export function applyScan(header: ReceiptHeader, lines: ReceiptLine[], scan: War
       model: MODEL_KEYS.filter((key) => line[key].trim()),
     });
     // The article read off the УПД is the maker's (split from an «@maker» like the cell), the «Код товара» the seller's.
-    return { ...marked, maker_article: text(scanned.article) ? marked.article : "", supplier_article: text(scanned.supplier_code) };
+    let result: ReceiptLine = { ...marked, maker_article: text(scanned.article) ? marked.article : "", supplier_article: text(scanned.supplier_code) };
+    if (scanned.file_id && scanned.source_line_key && scanned.original) {
+      result = {
+        ...result, original: scanned.original, acceptance_id: acceptanceId(),
+        learning: { file_id: scanned.file_id, source_line_key: scanned.source_line_key, action: "none",
+          confirm_supplier_name: false, pack_size: "", quantity_basis: "base", convert_quantity: false },
+      };
+      if (scanned.learning?.supplier_key === `inn:${nextHeader.supplier_inn}`) result = applyLearning(result, scanned.learning);
+    }
+    return result;
   });
   return { header: nextHeader, lines: split, added: result.filled };
+}
+
+/** A server suggestion always uses invoice evidence, never the quantity already shown in the grid. */
+export function applyLearning(line: ReceiptLine, rule: WarehouseReceiptRule | null): ReceiptLine {
+  if (!line.learning || line.accepted) return line;
+  const keepPair = learningPairEdited(line);
+  line = restoreLearning(line);
+  const next: ReceiptLine = { ...line, rule, ruleApplied: false, learning: {
+    ...line.learning!, action: "none", rule_id: rule?.rule_id, rule_version: rule?.rule_version,
+    pack_size: rule?.pack_size ?? "", quantity_basis: rule?.quantity_basis ?? "base",
+    convert_quantity: rule?.convert_quantity ?? Boolean(rule?.pack_size),
+  } };
+  if (!rule?.active || rule.warning) return next;
+  return { ...next, beforeRule: { article: line.article, manufacturer: line.manufacturer, unit: line.unit, quantity: line.quantity },
+    article: rule.article, manufacturer: rule.manufacturer, unit: keepPair ? line.unit : rule.stock_unit,
+    quantity: keepPair ? line.quantity : (rule.quantity ?? line.quantity), ruleApplied: true,
+    model: line.model.filter((key) => key !== "manufacturer"),
+    auto: line.auto.filter((key) => !["article", "manufacturer", "unit", "quantity"].includes(key)),
+  };
+}
+
+/** Once either half is edited, the quantity and its unit belong to the storekeeper together. */
+function learningPairEdited(line: ReceiptLine): boolean {
+  return Boolean(line.ruleApplied && line.rule && line.beforeRule
+    && (line.unit !== line.rule.stock_unit || line.quantity !== (line.rule.quantity ?? line.beforeRule.quantity)));
+}
+
+/** Clear only values the prior suggestion supplied; preserve later storekeeper edits. */
+function restoreLearning(line: ReceiptLine): ReceiptLine {
+  if (!line.ruleApplied || !line.rule || !line.beforeRule) return line;
+  const values: Partial<ReceiptLine> = {};
+  for (const key of ["article", "manufacturer"] as const) {
+    if (line[key] === line.rule[key]) values[key] = line.beforeRule[key];
+  }
+  if (!learningPairEdited(line)) {
+    values.unit = line.beforeRule.unit;
+    values.quantity = line.beforeRule.quantity;
+  }
+  return { ...line, ...values, ruleApplied: false, beforeRule: undefined };
+}
+
+export function deactivateLearning(line: ReceiptLine): ReceiptLine {
+  if (!line.learning || !line.rule || !line.original) return line;
+  return { ...restoreLearning(line), ruleApplied: false,
+    learning: { ...line.learning, action: "deactivate" } };
 }
 
 /** «3 рул. × 100 м · скан УПД, артикул из партии склада · код поставщика 00-42»: how a scanned line came. */
@@ -282,6 +355,7 @@ export function headerFields(header: ReceiptHeader, scanFile: string): Warehouse
   return {
     warehouse: header.warehouse,
     supplier: header.supplier.trim(),
+    supplier_inn: header.supplier_inn.trim(),
     invoice_number: header.invoice_number.trim(),
     invoice_date: header.invoice_date || null,
     upd_number: header.upd_number.trim(),
@@ -304,6 +378,7 @@ export function headerChanged(saved: WarehouseReceipt, header: ReceiptHeader, sc
 
 export function buildAccept(line: ReceiptLine, header: ReceiptHeader, place: string, labels: number, confirmExpected: boolean): WarehouseReceiptAccept {
   return {
+    ...(line.learning ? { acceptance_id: line.acceptance_id, learning: line.learning } : {}),
     article: line.article.trim(),
     quantity: line.quantity.trim().replace(",", "."),
     unit: line.unit.trim() || "шт",
@@ -454,7 +529,7 @@ export function lineFromLot(lot: WarehouseLot): ReceiptLine {
 
 export function headerFromReceipt(receipt: WarehouseReceipt): ReceiptHeader {
   return {
-    warehouse: receipt.warehouse, supplier: text(receipt.supplier), invoice_number: text(receipt.invoice_number),
+    warehouse: receipt.warehouse, supplier: text(receipt.supplier), supplier_inn: text(receipt.supplier_inn), invoice_number: text(receipt.invoice_number),
     invoice_date: text(receipt.invoice_date), upd_number: text(receipt.upd_number), upd_date: text(receipt.upd_date),
     prd_number: text(receipt.prd_number), prd_date: text(receipt.prd_date), purpose: text(receipt.purpose),
   };
