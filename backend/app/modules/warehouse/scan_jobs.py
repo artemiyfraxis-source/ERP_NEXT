@@ -187,7 +187,8 @@ class ScanJobRow(Base):
     vna_name: Mapped[str] = mapped_column(String(500), nullable=False, default="", server_default="")
     source: Mapped[str] = mapped_column(String(8), nullable=False, default="s2vna", server_default="s2vna")
     capture_file_name: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
-    instrument_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("production_instruments.id", ondelete="RESTRICT"), nullable=True)
+    # Production owns instrument identity; the capture workflow validates it before enqueueing.
+    instrument_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     capture_settings: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
 
 

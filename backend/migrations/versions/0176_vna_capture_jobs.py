@@ -44,7 +44,6 @@ def upgrade():
         batch.add_column(sa.Column("source", sa.String(8), nullable=False, server_default="s2vna"))
         batch.add_column(sa.Column("capture_file_name", sa.String(255), nullable=False, server_default=""))
         batch.add_column(sa.Column("instrument_id", sa.Uuid(), nullable=True))
-        batch.create_foreign_key("fk_warehouse_scan_jobs_instrument", "production_instruments", ["instrument_id"], ["id"], ondelete="RESTRICT")
         batch.add_column(sa.Column("capture_settings", sa.JSON(none_as_null=True), nullable=True))
         batch.drop_constraint("ck_warehouse_scan_jobs_done_file", type_="check")
         for name, expression in CHECKS.items():
@@ -72,7 +71,6 @@ def downgrade():
         batch.drop_column("vna_name")
         batch.drop_column("source")
         batch.drop_column("capture_file_name")
-        batch.drop_constraint("fk_warehouse_scan_jobs_instrument", type_="foreignkey")
         batch.drop_column("instrument_id")
         batch.drop_column("capture_settings")
         batch.drop_column("capture_content")
