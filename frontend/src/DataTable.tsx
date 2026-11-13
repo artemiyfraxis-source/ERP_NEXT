@@ -635,7 +635,13 @@ export function DataTable<T>({
   // the user's flips start over whenever that changes.
   const narrowed = Boolean(query.trim() || activePreset || Object.values(filters).some((value) => value.trim()));
   const foldAll = Boolean(collapsibleGroups && foldedByDefault && !narrowed);
-  useEffect(() => setFlipped(new Set()), [foldAll]);
+  // Reset only on a real change of foldAll: the mount run must not undo a flip made right after the first render.
+  const shownFoldAll = useRef(foldAll);
+  useEffect(() => {
+    if (shownFoldAll.current === foldAll) return;
+    shownFoldAll.current = foldAll;
+    setFlipped(new Set());
+  }, [foldAll]);
   const isFolded = (name: string) => Boolean(collapsibleGroups) && foldAll !== flipped.has(name);
 
   // Blocks put only the rows near the screen in the page (below), so they show the whole list — no pages, nothing cut.
