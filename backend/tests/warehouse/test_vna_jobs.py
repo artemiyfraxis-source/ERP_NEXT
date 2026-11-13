@@ -470,13 +470,17 @@ def test_arinst_preference_is_per_user_and_follows_user_to_another_browser(captu
     assert choices["status"] == "choose" and choices["preferred_agent_id"] == "pc-2"
 
 
-def test_same_instrument_moves_to_another_pc_without_browser_pairing(capture):
+def test_same_instrument_moves_only_after_explicit_admin_transfer(capture):
     admin, agent, clock, _ = capture
     heartbeat(agent)
     start(admin)
     clock.now += timedelta(minutes=4)
     other = _bearer(_issue(admin, scopes=("scan:upload",))["token"])
     heartbeat(other, "pc-2")
+    assert start(admin)["status"] == "no_agent"
+    response = admin.post(f"{JOBS}/transfer", json={"instrument_id": S2_INSTRUMENT, "serial": "26030095", "owner_id": "pc-1", "agent_id": "pc-2"},
+                          headers=_csrf(admin))
+    assert response.status_code == 200
     answer = start(admin)
     assert answer["agent"]["id"] == "pc-2"
     assert claim(other, "pc-2", ["vna"])["id"] == answer["id"]

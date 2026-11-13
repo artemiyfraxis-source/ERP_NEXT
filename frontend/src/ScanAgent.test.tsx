@@ -68,7 +68,7 @@ it("offline and pre-strict PCs show a reason and cannot be selected", async () =
   render(<><ScanDeviceLine /><Harness start={start} /></>);
   expect(await screen.findByText(/ПК не на связи/)).toBeTruthy();
   expect(screen.getByTestId("scan-device").textContent).not.toContain("этот ПК"); fireEvent.click(screen.getByText("Сканировать"));
-  expect(await screen.findByText("Нет сканеров в сети")).toBeTruthy(); expect(start).not.toHaveBeenCalled();
+  expect(await screen.findByText("Сканер Epson · СКЛАД не в сети")).toBeTruthy(); expect(start).not.toHaveBeenCalled();
 });
 it("refreshes on picker open and before start; a disappeared scanner is never started", async () => {
   const listing = vi.mocked(warehouseApi.scanAgents); render(<ScanDeviceLine />);
@@ -77,7 +77,7 @@ it("refreshes on picker open and before start; a disappeared scanner is never st
   fireEvent.click(screen.getByText("Сменить сканер")); expect(await screen.findByText("Epson · СКЛАД")).toBeTruthy();
   expect(screen.queryByText("Pantum · СКЛАД")).toBeNull(); fireEvent.click(screen.getByText("Epson · СКЛАД"));
   listing.mockResolvedValue({ agents: [] }); const start = vi.fn(); render(<Harness start={start} />);
-  fireEvent.click(screen.getByText("Сканировать")); expect(await screen.findByRole("dialog", { name: "Установка сканера" })).toBeTruthy();
+  fireEvent.click(screen.getByText("Сканировать")); expect(await screen.findByRole("dialog", { name: "Выбор сканера" })).toBeTruthy();
   expect(start).not.toHaveBeenCalled(); expect(listing).toHaveBeenCalledTimes(4);
 });
 it("a failed list explains the failure and never starts even a stored choice", async () => {
@@ -259,6 +259,48 @@ it("automatically uses the sole online scanner and remembers it for this user", 
   expect(screen.getByTestId("scan-device")).toHaveTextContent("Canon · ОФИС");
   expect(JSON.parse(localStorage.getItem("erp.scanDevice:scanner-user")!)).toEqual({ agent_id: "m-2", scanner_id: "s-9" });
   await waitFor(() => expect(saved).toContainEqual(["scan.device", { agent_id: "m-2", scanner_id: "s-9" }]));
+});
+
+it.each([false, true])("keeps an offline saved scanner until the user selects its replacement (server names: %s)", async (withHistory) => {
+  bindUser("scanner-user");
+  const choice = { agent_id: "m-1", scanner_id: "s-2" };
+  account(choice);
+  const offline = { ...choice, name: "Epson", pc: "СКЛАД" };
+  vi.mocked(warehouseApi.scanAgents).mockResolvedValue({ agents: [AGENTS[1]], offline_devices: withHistory ? [offline] : [] });
+  const start = vi.fn(async () => ({ id: "explicit", status: "pending" as const }));
+  render(<Harness start={start} />);
+  fireEvent.click(screen.getByText("Сканировать"));
+  expect(await screen.findByRole("dialog", { name: "Выбор сканера" })).toBeTruthy();
+  expect(screen.getByRole("status")).toHaveTextContent(withHistory ? "Сканер Epson · СКЛАД не в сети" : "Выбранный сканер не в сети");
+  expect(start).not.toHaveBeenCalled();
+  expect(saved).toEqual([]);
+  expect(await loadScanDevice()).toEqual(choice);
+  expect(localStorage.getItem("erp.scanDevice:scanner-user")).toBeNull();
+  fireEvent.click(screen.getByText("Canon · ОФИС"));
+  await waitFor(() => expect(start).toHaveBeenCalledExactlyOnceWith("m-2", "s-9"));
+  await waitFor(() => expect(saved).toEqual([["scan.device", { agent_id: "m-2", scanner_id: "s-9" }]]));
+});
+
+it("does not overwrite an existing online choice during an ordinary scan", async () => {
+  account({ agent_id: "m-2", scanner_id: "s-9" });
+  vi.mocked(warehouseApi.scanAgents).mockResolvedValue({ agents: [AGENTS[1]] });
+  const start = vi.fn(async () => ({ id: "saved", status: "pending" as const }));
+  render(<Harness start={start} />);
+  fireEvent.click(screen.getByText("Сканировать"));
+  await waitFor(() => expect(start).toHaveBeenCalledExactlyOnceWith("m-2", "s-9"));
+  expect(saved).toEqual([]);
+});
+
+it("does not treat failed preference loading without a cache as no saved choice", async () => {
+  vi.mocked(identityApi.uiSettings).mockRejectedValue(new Error("Нет связи"));
+  vi.mocked(warehouseApi.scanAgents).mockResolvedValue({ agents: [AGENTS[1]] });
+  const start = vi.fn();
+  render(<Harness start={start} />);
+  fireEvent.click(screen.getByText("Сканировать"));
+  expect(await screen.findByRole("dialog", { name: "Выбор сканера" })).toBeTruthy();
+  expect(screen.getByRole("status")).toHaveTextContent("Не удалось загрузить сохранённый выбор — выберите сканер");
+  expect(start).not.toHaveBeenCalled();
+  expect(saved).toEqual([]);
 });
 
 

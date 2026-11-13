@@ -121,7 +121,8 @@ def scan_agent_list(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: UowFactory,
 ) -> dict:
-    return {"agents": devices.scanner_agents(uow_factory(), now)}
+    return {"agents": devices.scanner_agents(uow_factory(), now),
+            "offline_devices": devices.offline_scanners(uow_factory(), now)}
 
 
 @router.post("/receipts/scan-jobs")

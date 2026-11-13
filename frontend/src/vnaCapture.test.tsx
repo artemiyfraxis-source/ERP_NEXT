@@ -73,6 +73,42 @@ it("requires an instrument from the configured active SI list before routing", (
   expect(screen.getByRole("option", { name: "СИ.002 · Planar S50180 — S2VNA" })).toBeInTheDocument();
 });
 
+it("offers the admin an explicit transfer without starting another capture", async () => {
+  const target = { ...agent, id: "new-pc", pc: "ЛАБОРАТОРИЯ" };
+  vi.mocked(vnaCaptureApi.start).mockResolvedValue({ status: "no_agent", message: "ВАЦ № 26030095 закреплён за ПК ОТК",
+    transfer: { serial: "26030095", owner_id: "old-pc", agents: [target] } });
+  const move = vi.spyOn(vnaCaptureApi, "transfer").mockResolvedValue({ status: "transferred" });
+  render(<VnaCapture instruments={instruments} onFile={vi.fn()} onBusy={vi.fn()} />);
+  chooseInstrument();
+  const button = await screen.findByRole("button", { name: "Перенести ВАЦ № 26030095 на ПК ЛАБОРАТОРИЯ" });
+  expect(move).not.toHaveBeenCalled();
+  fireEvent.click(button);
+  expect(await screen.findByText("ВАЦ № 26030095 перенесён на ПК ЛАБОРАТОРИЯ")).toBeInTheDocument();
+  expect(move).toHaveBeenCalledExactlyOnceWith("planar", "26030095", "old-pc", "new-pc");
+  expect(vnaCaptureApi.start).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("does not offer transfer when the server grants no admin action", async () => {
+  vi.mocked(vnaCaptureApi.start).mockResolvedValue({ status: "no_agent", message: "ВАЦ закреплён за другим ПК", transfer: null });
+  render(<VnaCapture instruments={instruments} onFile={vi.fn()} onBusy={vi.fn()} />);
+  chooseInstrument();
+  await screen.findByText("ВАЦ закреплён за другим ПК");
+  expect(screen.queryByRole("button", { name: /Перенести ВАЦ/ })).not.toBeInTheDocument();
+});
+
+it("keeps a failed transfer visible and never claims success", async () => {
+  vi.mocked(vnaCaptureApi.start).mockResolvedValue({ status: "no_agent", message: "Конфликт ВАЦ",
+    transfer: { serial: "26030095", owner_id: "old-pc", agents: [agent] } });
+  vi.spyOn(vnaCaptureApi, "transfer").mockRejectedValue(new Error("Привязка ВАЦ уже изменилась"));
+  render(<VnaCapture instruments={instruments} onFile={vi.fn()} onBusy={vi.fn()} />);
+  chooseInstrument();
+  fireEvent.click(await screen.findByRole("button", { name: /Перенести ВАЦ/ }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Привязка ВАЦ уже изменилась");
+  expect(screen.queryByText(/перенесён на ПК/)).not.toBeInTheDocument();
+  expect(vnaCaptureApi.start).toHaveBeenCalledTimes(1);
+});
+
 it("captures into the upload path with the chosen instrument and read-only settings", async () => {
   await open(); chooseInstrument();
   expect(await screen.findByText(/ВАЦ: снимаю трассу/)).toBeInTheDocument();
