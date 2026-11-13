@@ -223,12 +223,12 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
             </tr>)}</tbody></table>
         </div>
 
-        <div className="tr-block"><h4>Операции <span>{linked.length}</span></h4>
+        {model.role !== "supporting" && <div className="tr-block"><h4>Операции <span>{linked.length}</span></h4>
           {linked.length ? <ul className="eq-ops">{linked.map((op) => <li key={op.id}>
             <span><b className="tnum">{opNumber(op)}</b>{opName(op) && <> — {opName(op)}</>}</span></li>)}</ul>
             : <div className="empty">{operations.length ? "Операций с этой моделью нет." : "БД.ОП не загружена."}</div>}
           <p className="eq-hint">Привязка — в таблице операций (ячейка «Машина») и в карточке операции; связь держится за моделью, а не за названием.</p>
-        </div>
+        </div>}
 
         {open.type !== MATRIX_TYPE && matricesOf(open).length > 0 && <div className="tr-block"><h4>Матрицы к этому инструменту <span>{matricesOf(open).length}</span></h4>
           <div className="tr-chips">{matricesOf(open).map((matrix) => <button key={matrix.id} type="button" className="eq-op eq-chip-btn" onClick={() => select(matrix.id)}>

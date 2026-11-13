@@ -339,3 +339,11 @@ def test_two_mirror_loads_in_a_row_keep_every_id_and_link():
     assert len([key for key in ids if key[0] == "ob"]) == 184 and len(models) == 140
     assert len(links) == 77  # every «Машина» of the mirror names exactly one model
     assert second == first
+
+
+def test_explicit_supporting_type_makes_a_new_model_supporting():
+    from app.modules.references.equipment_identity import OPERATIONAL, SUPPORTING, role_of
+
+    assert role_of("Насос вакуумный", "Обеспечивающее оборудование") == SUPPORTING
+    assert role_of("Насос вакуумный", "Оборудование") == OPERATIONAL
+    assert role_of("Компрессор воздушный", "Оборудование") == SUPPORTING

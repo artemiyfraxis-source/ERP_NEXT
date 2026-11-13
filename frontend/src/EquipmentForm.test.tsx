@@ -35,6 +35,23 @@ it("offers measuring instruments and follows its separate number when switching 
   expect(proposal).toHaveBeenCalledWith("Средства измерений");
 });
 
+it("offers supporting equipment with the shared ОБ number sequence", async () => {
+  const proposal = vi.spyOn(referencesApi, "equipmentNumber").mockResolvedValue({ inventory: "ОБ.204", row: "204" });
+  render(<Form />);
+  fireEvent.change(screen.getByRole("combobox", { name: "Тип" }), { target: { value: "Обеспечивающее оборудование" } });
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Инв. номер" })).toHaveValue("ОБ.204"));
+  expect(proposal).toHaveBeenCalledWith("Обеспечивающее оборудование");
+  expect(screen.queryByRole("textbox", { name: "Код в базе терминалов" })).not.toBeInTheDocument();
+});
+
+it("keeps the inventory number when editing reclassified supporting equipment", () => {
+  const proposal = vi.spyOn(referencesApi, "equipmentNumber");
+  render(<Form isNew={false} initial={{ Тип: "Обеспечивающее оборудование", "Инв. номер": "ОБ.200" }} />);
+  expect(screen.getByRole("combobox", { name: "Тип" })).toHaveValue("Обеспечивающее оборудование");
+  expect(screen.getByRole("textbox", { name: "Инв. номер" })).toHaveValue("ОБ.200");
+  expect(proposal).not.toHaveBeenCalled();
+});
+
 it("ignores an old proposal after switching to applicators", async () => {
   let resolve!: (value: { inventory: string; row: string }) => void;
   vi.spyOn(referencesApi, "equipmentNumber").mockReturnValue(new Promise((done) => { resolve = done; }));

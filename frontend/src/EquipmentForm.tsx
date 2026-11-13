@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { referencesApi, type TechOperationRecord } from "./api";
 import { headerLabel, valueLabel } from "./referenceLabels";
 import {
-  APPLICATOR_TYPE, CODE_KEY, CRIMP_TOOL_TYPE, CRIMP_TYPES, INV_KEY, MATRIX_TYPE, MEASURING_TYPE, TARGETS_KEY, TOOL_KEY, invOf, makerOf, nameOf, placeOf, typeOf,
+  APPLICATOR_TYPE, CODE_KEY, CRIMP_TOOL_TYPE, CRIMP_TYPES, INV_KEY, MATRIX_TYPE, MEASURING_TYPE, SUPPORTING_TYPE, TARGETS_KEY, TOOL_KEY, invOf, makerOf, nameOf, placeOf, typeOf,
 } from "./equipmentModel";
 
 /** «Новая запись» / «Правка» in БД.ОБ (owner 12.10.2026: «очень сложно… чтобы быстро»): the six things a person knows
@@ -21,7 +21,7 @@ export function EquipmentForm({ values, isNew, records, onChange }: {
   onChange: (values: Record<string, string>) => void;
 }) {
   const types = useMemo(() => {
-    const found = new Set<string>(["Оборудование", "Инструмент", MATRIX_TYPE, CRIMP_TOOL_TYPE, APPLICATOR_TYPE, MEASURING_TYPE]);
+    const found = new Set<string>(["Оборудование", SUPPORTING_TYPE, "Инструмент", MATRIX_TYPE, CRIMP_TOOL_TYPE, APPLICATOR_TYPE, MEASURING_TYPE]);
     records.forEach((record) => { const type = typeOf(record); if (type !== "Без типа") found.add(type); });
     if (values["Тип"]) found.add(values["Тип"]);
     return [...found];

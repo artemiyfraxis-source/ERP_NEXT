@@ -32,7 +32,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .domain import ReferenceValidationError
-from .equipment import ARTICLE_KEY, BASE_KEY, INV_KEY, TOOL_KEY, field, inv_key, name_of, parse_inventory, type_of
+from .equipment import ARTICLE_KEY, BASE_KEY, INV_KEY, SUPPORTING_TYPE, TOOL_KEY, field, inv_key, name_of, parse_inventory, type_of
 from .infrastructure import (
     EQUIPMENT_ROLES, OP_LINK_COLUMNS, EquipmentModelRow, EquipmentOperationLinkRow, EquipmentTemplateToolRow,
     EquipmentUnitLinkRow, TechOperationRecordRow,
@@ -82,6 +82,8 @@ def model_key(name: str, article: str, maker: str) -> str | None:
 
 
 def role_of(name: str, kind: str) -> str:
+    if (kind or "").strip() == SUPPORTING_TYPE:  # the explicit type wins over name keywords
+        return SUPPORTING
     return SUPPORTING if SUPPORTING_WORDS.search(name or "") or SUPPORTING_WORDS.search(kind or "") else OPERATIONAL
 
 
