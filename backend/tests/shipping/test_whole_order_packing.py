@@ -10,7 +10,7 @@ from app.main import app
 from app.modules.shipping.domain import MoveContext
 from app.modules.techcards.kitset_infrastructure import SqlAlchemyKitsetRepository
 from tests.shipping.test_api import shipping_api  # noqa: F401
-from tests.shipping.test_pack_decision_no_upd import PROJECT, STOREKEEPER, _as, _good
+from tests.shipping.test_pack_decision_no_upd import ADMIN, PROJECT, STOREKEEPER, _as, _good
 from tests.shipping.test_pack_permissions import NOW, accept, grant, manager_request, pack, permission_events, permission_view, pick
 from tests.workflows.test_production_intake import _kitset
 
@@ -139,6 +139,43 @@ def test_live_kb_without_order_quantity_prevents_auto_permission(shipping_api):
         uow.commit()
     _as(STOREKEEPER)
     assert pack(shipping_api, first, "1").status_code == 422
+
+
+@pytest.mark.parametrize("restore_path", ["command", "rollback"])
+def test_restoring_legacy_task_revokes_whole_order_packing(shipping_api, restore_path):
+    from app.modules.production.application import SetProductionCancelledCommand, set_production_cancelled
+    from app.modules.production.infrastructure import SqlAlchemyProductionRepository, SqlAlchemyProductionUnitOfWork
+    from tests.workflows.test_production_intake import _task
+
+    first = _good(shipping_api, accepted="40")
+    cancelled = _task(PROJECT, "КБ2", 5, number="ПЗ-RESTORE").set_cancelled(True)
+    with app.state.shipping_uow_factory() as uow:
+        sessions = uow.session_factory
+        SqlAlchemyProductionRepository(uow.session).add(cancelled)
+        uow.commit()
+    _as(STOREKEEPER)
+    assert pack(shipping_api, first, "1").status_code == 200
+
+    if restore_path == "command":
+        set_production_cancelled(SetProductionCancelledCommand(
+            cancelled.id, cancelled.version, False, STOREKEEPER.actor, NOW,
+        ), SqlAlchemyProductionUnitOfWork(sessions))
+    else:
+        from datetime import timedelta
+        from app.modules.production.domain import ProductionStatus
+        from app.workflows.test_rollback import Plan, Scope, execute
+
+        with sessions() as session:
+            execute(session, Plan(
+                tasks={cancelled.id}, task_status={cancelled.id: ProductionStatus.RUNNING.value},
+                lines=["Восстановить задание"],
+            ), Scope(NOW, NOW + timedelta(hours=1), frozenset({STOREKEEPER.actor.id}), STOREKEEPER.actor.name), NOW)
+            session.commit()
+    assert pack(shipping_api, first, "1").status_code == 422
+    _as(ADMIN)
+    assert grant(shipping_api, "2").status_code == 200
+    _as(STOREKEEPER)
+    assert pack(shipping_api, first, "1").status_code == 200
 
 
 def test_pick_keeps_acceptance_correction_seen_when_stock_is_locked(shipping_api, monkeypatch):

@@ -17,6 +17,7 @@ from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.fulfillment.domain import FulfillmentStatus
 from app.modules.fulfillment.infrastructure import FulfillmentLineRow, FulfillmentRequestRow
 from app.modules.shipping.infrastructure import FinishedGoodRow, SqlAlchemyFinishedGoodsRepository
+from app.shared.advisory_lock import lock_project_run
 from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository
 
 from .application import Absence, ConcurrentProductionUpdate, DuplicateLaunch, Operator
@@ -856,6 +857,12 @@ class SqlAlchemyProductionRepository:
     def lock(self, task_id: UUID) -> None:
         """Строка задания под замок до конца транзакции и свежие значения: факты двух монтажников по одному
         заданию идут по очереди (PostgreSQL; SQLite и так пишет по одному)."""
+        # Match add()/delete(): waiting for a project while holding its task row would deadlock
+        # against a cancellation/restoration that already holds the project and needs that row.
+        with self.session.no_autoflush:
+            row = self.session.get(ProductionTaskRow, task_id)
+            if row is not None:
+                lock_project_run(self.session, normalize_project_number(row.project))
         self.session.scalar(
             select(ProductionTaskRow).where(ProductionTaskRow.id == task_id)
             .with_for_update().execution_options(populate_existing=True)
@@ -887,9 +894,17 @@ class SqlAlchemyProductionRepository:
         }
 
     def add(self, task: ProductionTask, launch_seq: int | None = None) -> None:
+        # Creation, cancellation and restoration change the catalog used by whole-order packing.
+        # Take its transaction lock before any resource or task write; a move affects both orders.
+        with self.session.no_autoflush:
+            row = self.session.get(ProductionTaskRow, task.id)
+            projects = {normalize_project_number(task.project)}
+            if row is not None:
+                projects.add(normalize_project_number(row.project))
+            for project in sorted(projects):
+                lock_project_run(self.session, project)
         if self.resources is not None:
             self.resources.record_task(task)
-        row = self.session.get(ProductionTaskRow, task.id)
         if row is None:
             # Номер запуска пишется только при создании задания; потом он не меняется.
             row = ProductionTaskRow(id=task.id, launch_seq=launch_seq)
@@ -1026,9 +1041,13 @@ class SqlAlchemyProductionRepository:
         ]
 
     def delete(self, task_id: UUID) -> None:
+        """Delete an unworked task and its route under the same project lock as packing."""
+        with self.session.no_autoflush:
+            row = self.session.get(ProductionTaskRow, task_id)
+            if row is not None:
+                lock_project_run(self.session, normalize_project_number(row.project))
         if self.resources is not None:
             self.resources.remove_task(task_id)
-        """Задание без следа работы (см. `worked`) уходит с долями, операциями и своими серийными номерами."""
         operations = select(ProductionOperationRow.id).where(ProductionOperationRow.task_id == task_id)
         self.session.execute(delete(ProductionOperationInputRow).where(ProductionOperationInputRow.operation_id.in_(operations)))
         self.session.execute(delete(ProductionOperationOperatorRow).where(ProductionOperationOperatorRow.operation_id.in_(operations)))
