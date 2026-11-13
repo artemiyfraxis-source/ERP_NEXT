@@ -61,8 +61,8 @@ function setup(rows: ProductionInstrument[] = [instrument], handle?: (request: R
     throw new Error(`Unexpected request: ${request.method} ${request.path}`);
   });
   const onChanged = vi.fn(async () => {});
-  render(<InstrumentRegistry instruments={rows} onChanged={onChanged} />);
-  return { requests, onChanged };
+  const rendered = render(<InstrumentRegistry instruments={rows} onChanged={onChanged} />);
+  return { requests, onChanged, ...rendered };
 }
 
 function open(number = instrument.inventory_number) { fireEvent.click(screen.getByText(number)); }
@@ -73,14 +73,112 @@ afterEach(() => { vi.restoreAllMocks(); localStorage.clear(); });
 
 it("keeps accessories and calibration kits below their parent with indentation and accessory quantity", () => {
   setup([accessory, kit, instrument]);
+  fireEvent.click(screen.getByRole("button", { name: "По приборам" }));
   const rows = screen.getAllByRole("row").slice(1);
-  expect(rows.map((row) => within(row).getByText(/СИ\.00/).textContent)).toEqual(["СИ.001", "СИ.002", "СИ.003"]);
+  expect(inventoryOrder()).toEqual(["СИ.001", "СИ.002", "СИ.003"]);
   expect(within(rows[1]).getByText(/Переходник/)).toHaveStyle({ paddingLeft: "16px" });
   expect(within(rows[1]).getByText(/2 шт/)).toBeInTheDocument();
   expect(within(rows[2]).getByText(/Набор калибровки/)).toHaveStyle({ paddingLeft: "16px" });
   fireEvent.change(screen.getByLabelText("Найти средство измерений"), { target: { value: "Набор" } });
   expect(screen.getByText(/Набор калибровки/)).toBeInTheDocument();
   expect(screen.queryByText("СИ.002")).not.toBeInTheDocument();
+});
+
+function inventoryOrder() {
+  return screen.getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell")[0].textContent);
+}
+
+it("defaults to a flat list with alphabetic prefixes and natural inventory numbers", () => {
+  setup([
+    { ...instrument, id: "hundred", inventory_number: "СИ.100" },
+    { ...instrument, id: "ten", inventory_number: "СИ.010" },
+    { ...instrument, id: "equipment", inventory_number: "ОБ.040" },
+    accessory,
+  ]);
+  expect(screen.getByRole("button", { name: "Списком" })).toHaveAttribute("aria-pressed", "true");
+  expect(inventoryOrder()).toEqual(["ОБ.040", "СИ.002", "СИ.010", "СИ.100"]);
+  expect(screen.getByText(/Переходник/, { selector: ".instrument-name" })).toHaveStyle({ paddingLeft: "0px" });
+  fireEvent.click(screen.getByRole("button", { name: "Инв. №" }));
+  expect(inventoryOrder()).toEqual(["ОБ.040", "СИ.002", "СИ.010", "СИ.100"]);
+  expect(screen.getByRole("columnheader", { name: /Инв/ })).toHaveAttribute("aria-sort", "ascending");
+  fireEvent.click(screen.getByRole("button", { name: /Инв. №/ }));
+  expect(inventoryOrder()).toEqual(["СИ.100", "СИ.010", "СИ.002", "ОБ.040"]);
+});
+
+it("compares unpadded inventory numbers numerically without mutating the input", () => {
+  const records = ["СИ.100", "СИ.10", "СИ.2"].map((number) => ({ ...instrument, id: number, inventory_number: number }));
+  setup(records);
+  expect(inventoryOrder()).toEqual(["СИ.2", "СИ.10", "СИ.100"]);
+  expect(records.map((item) => item.inventory_number)).toEqual(["СИ.100", "СИ.10", "СИ.2"]);
+});
+
+const sortRows: ProductionInstrument[] = [
+  { ...instrument, id: "a", inventory_number: "СИ.001", name: "Якорь", doc_designation: "Я", kind: "Средство измерений", serial_number: "9", verification_due: "2027-01-01", status: "Не используется", storage_location: "Ячейка" },
+  { ...instrument, id: "b", inventory_number: "СИ.002", name: "Анализатор", doc_designation: "А", kind: "Принадлежность", serial_number: "2", verification_due: "2026-01-01", status: "Действует", storage_location: "Архив", files: [{ id: "f", kind: "Паспорт", file_name: "f.pdf", size: 1, uploaded_at: "2026-01-01", uploaded_by_name: "Иванов" }] },
+];
+
+it.each(["Наименование", "Обозн.", "Вид", "Зав. №", "Поверка до", "Статус", "Место", "Файлы"])(
+  "sorts the flat list by %s in both directions and clears sorting", (title) => {
+    setup(sortRows);
+    const ascending = title === "Файлы" ? ["СИ.001", "СИ.002"] : ["СИ.002", "СИ.001"];
+    const header = screen.getByRole("columnheader", { name: title });
+    fireEvent.click(within(header).getByRole("button"));
+    expect(inventoryOrder()).toEqual(ascending);
+    expect(header).toHaveAttribute("aria-sort", "ascending");
+    fireEvent.click(within(header).getByRole("button"));
+    expect(inventoryOrder()).toEqual([...ascending].reverse());
+    expect(header).toHaveAttribute("aria-sort", "descending");
+    fireEvent.click(within(header).getByRole("button"));
+    expect(inventoryOrder()).toEqual(["СИ.001", "СИ.002"]);
+    expect(header).toHaveAttribute("aria-sort", "none");
+  },
+);
+
+it("shows and sorts the direct parent by its stable id, leaving top-level and orphan parent cells empty", () => {
+  const other = { ...instrument, id: "other", inventory_number: "СИ.010", name: "Другой прибор" };
+  setup([instrument, accessory, other, { ...kit, parent_id: other.id }, { ...unverified, parent_id: "missing" }]);
+  const rows = screen.getAllByRole("row").slice(1);
+  const parentCells = rows.map((row) => within(row).getAllByRole("cell")[2]);
+  expect(parentCells.map((cell) => cell.textContent)).toEqual(["", "СИ.001 · Анализатор цепей", "СИ.010 · Другой прибор", "", ""]);
+  expect(parentCells[1].firstElementChild).toHaveAttribute("title", "СИ.001 · Анализатор цепей");
+  fireEvent.click(screen.getByRole("button", { name: "Прибор" }));
+  expect(inventoryOrder().slice(0, 2)).toEqual(["СИ.002", "СИ.003"]);
+});
+
+it("sorts parents and siblings in tree mode without separating descendants", () => {
+  const other = { ...instrument, id: "other", inventory_number: "СИ.010", name: "Анализатор А" };
+  setup([instrument, accessory, other, { ...kit, inventory_number: "СИ.020" }]);
+  fireEvent.click(screen.getByRole("button", { name: "По приборам" }));
+  expect(inventoryOrder()).toEqual(["СИ.001", "СИ.002", "СИ.020", "СИ.010"]);
+  fireEvent.click(screen.getByRole("button", { name: "Наименование" }));
+  expect(inventoryOrder()).toEqual(["СИ.010", "СИ.001", "СИ.020", "СИ.002"]);
+  fireEvent.click(screen.getByRole("button", { name: /Наименование/ }));
+  expect(inventoryOrder()).toEqual(["СИ.001", "СИ.002", "СИ.020", "СИ.010"]);
+  fireEvent.click(screen.getByRole("button", { name: "Списком" }));
+  expect(inventoryOrder()).toEqual(["СИ.002", "СИ.020", "СИ.001", "СИ.010"]);
+});
+
+it("remembers the view and restores saved sorting in tree mode", () => {
+  const { unmount } = setup([instrument, accessory, kit]);
+  fireEvent.click(screen.getByRole("button", { name: "По приборам" }));
+  fireEvent.click(screen.getByRole("button", { name: "Наименование" }));
+  unmount();
+  setup([instrument, accessory, kit]);
+  expect(screen.getByRole("button", { name: "По приборам" })).toHaveAttribute("aria-pressed", "true");
+  expect(inventoryOrder()).toEqual(["СИ.001", "СИ.003", "СИ.002"]);
+  expect(screen.getByRole("columnheader", { name: /Наименование/ })).toHaveAttribute("aria-sort", "ascending");
+  fireEvent.click(screen.getByRole("button", { name: "Списком" }));
+  expect(localStorage.getItem("quality-instruments-view")).toBe("list");
+});
+
+it("keeps the registry usable when browser storage is blocked", () => {
+  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Blocked"); });
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("Blocked"); });
+  setup([accessory, instrument]);
+  expect(screen.getByRole("button", { name: "Списком" })).toHaveAttribute("aria-pressed", "true");
+  fireEvent.click(screen.getByRole("button", { name: "По приборам" }));
+  expect(screen.getByRole("button", { name: "По приборам" })).toHaveAttribute("aria-pressed", "true");
+  expect(inventoryOrder()).toEqual(["СИ.001", "СИ.002"]);
 });
 
 it("marks overdue and near-due verification dates, and uses the existing pending-verification tone", () => {
