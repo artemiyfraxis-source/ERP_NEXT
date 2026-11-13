@@ -728,6 +728,7 @@ class SqlAlchemyProductionRepository:
     def __init__(self, session: Session, resources=None):
         self.session = session
         self.resources = resources
+        self._project_lock_scope = None
 
     def _domain(self, row: ProductionTaskRow) -> ProductionTask:
         operation_rows = list(self.session.scalars(
@@ -854,15 +855,56 @@ class SqlAlchemyProductionRepository:
         ).order_by(ProductionTaskRow.created_at, ProductionTaskRow.id))
         return [self._domain(row) for row in rows]
 
+    def lock_projects(
+        self, task_ids: Sequence[UUID] = (), *, projects: Sequence[str] = (), planned_since: datetime | None = None,
+    ) -> None:
+        """Take every run lock before task locks/writes, in Shipping's normalized project-name order.
+
+        PostgreSQL transaction advisory locks are reentrant: add/lock/delete can safely take them again.
+        Reflow callers include all potentially shifted work before locking their initial task.
+        """
+        self._lock_projects(task_ids, projects=projects, planned_since=planned_since, pin_scope=True)
+
+    def _lock_projects(
+        self, task_ids: Sequence[UUID] = (), *, projects: Sequence[str] = (),
+        planned_since: datetime | None = None, pin_scope: bool = False,
+    ) -> None:
+        with self.session.no_autoflush:
+            requested = {normalize_project_number(project) for project in projects}
+            scope = ProductionTaskRow.id.in_(task_ids)
+            if planned_since is not None:
+                planned = select(ProductionOperationRow.task_id).join(
+                    ProductionOperationOperatorRow, ProductionOperationOperatorRow.operation_id == ProductionOperationRow.id,
+                ).where(ProductionOperationOperatorRow.planned_finish >= planned_since)
+                scope = or_(scope, and_(
+                    ProductionTaskRow.id.in_(planned),
+                    ProductionTaskRow.status == ProductionStatus.RUNNING.value,
+                    ProductionTaskRow.handed_to == "",
+                ))
+            if task_ids or planned_since is not None:
+                requested.update(normalize_project_number(project) for project in self.session.scalars(
+                    select(ProductionTaskRow.project).where(scope),
+                ))
+            transaction = self.session.get_transaction() or self.session.begin()
+            pinned = self._project_lock_scope
+            if pinned is not None and pinned[0] is transaction:
+                # A concurrent assignment/move may enlarge a reflow after discovery. Never acquire
+                # its new project behind locks/writes already held: abort this transaction instead.
+                if not requested <= pinned[1]:
+                    raise ConcurrentProductionUpdate("Состав проектов плана изменился — обновите и повторите")
+            for project in sorted(requested):
+                lock_project_run(self.session, project)
+            if pin_scope and (pinned is None or pinned[0] is not transaction):
+                # This bounds discovery, not a lock cache; calls still reacquire reentrantly so a
+                # savepoint rollback cannot leave a falsely remembered advisory lock.
+                self._project_lock_scope = (self.session.get_transaction(), requested)
+
     def lock(self, task_id: UUID) -> None:
         """Строка задания под замок до конца транзакции и свежие значения: факты двух монтажников по одному
         заданию идут по очереди (PostgreSQL; SQLite и так пишет по одному)."""
         # Match add()/delete(): waiting for a project while holding its task row would deadlock
         # against a cancellation/restoration that already holds the project and needs that row.
-        with self.session.no_autoflush:
-            row = self.session.get(ProductionTaskRow, task_id)
-            if row is not None:
-                lock_project_run(self.session, normalize_project_number(row.project))
+        self._lock_projects((task_id,))
         self.session.scalar(
             select(ProductionTaskRow).where(ProductionTaskRow.id == task_id)
             .with_for_update().execution_options(populate_existing=True)
@@ -897,12 +939,8 @@ class SqlAlchemyProductionRepository:
         # Creation, cancellation and restoration change the catalog used by whole-order packing.
         # Take its transaction lock before any resource or task write; a move affects both orders.
         with self.session.no_autoflush:
+            self._lock_projects((task.id,), projects=(task.project,))
             row = self.session.get(ProductionTaskRow, task.id)
-            projects = {normalize_project_number(task.project)}
-            if row is not None:
-                projects.add(normalize_project_number(row.project))
-            for project in sorted(projects):
-                lock_project_run(self.session, project)
         if self.resources is not None:
             self.resources.record_task(task)
         if row is None:
@@ -1042,10 +1080,7 @@ class SqlAlchemyProductionRepository:
 
     def delete(self, task_id: UUID) -> None:
         """Delete an unworked task and its route under the same project lock as packing."""
-        with self.session.no_autoflush:
-            row = self.session.get(ProductionTaskRow, task_id)
-            if row is not None:
-                lock_project_run(self.session, normalize_project_number(row.project))
+        self._lock_projects((task_id,))
         if self.resources is not None:
             self.resources.remove_task(task_id)
         operations = select(ProductionOperationRow.id).where(ProductionOperationRow.task_id == task_id)

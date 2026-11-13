@@ -325,6 +325,7 @@ def execute(session: Session, plan: Plan, window: Window, now: datetime, resourc
     if resources is not None:
         resources.acquire()
     repository = SqlAlchemyProductionRepository(session, resources)
+    repository.lock_projects(tuple(plan.delete_tasks.keys() | plan.clear_operations.keys()))
     for task_id in plan.delete_tasks:
         session.execute(delete(ProductionPlanBaselineLineRow).where(ProductionPlanBaselineLineRow.task_id == task_id))
         repository.delete(task_id)
