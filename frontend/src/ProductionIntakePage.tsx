@@ -10,7 +10,7 @@ import { actShares, dataRows } from "./dispatchPositionRows";
 import { defaultTab, dispatchBoard, hasWork, kbKey, num, ofProject, permittedPack, recentShipment, round2, SHIPPED_DAYS, stagePieces, type Tab } from "./intakeStages";
 import { isPickup, termsText } from "./carriers";
 import { canAct, canSee, hasFullAccess, urlParam } from "./navigation";
-import { intakeApi, type DispatchShipment, type IntakeAct, type IntakeRow } from "./productionIntakeApi";
+import { intakeApi, type DispatchShipment, type IntakeAct, type IntakeRow as ApiIntakeRow } from "./productionIntakeApi";
 import { IntakeWindow, keyOf, leftOf } from "./IntakeWindow";
 import { PrintOutcome, type PrintResult } from "./LabelPrint";
 import { PackWindow } from "./PackWindow";
@@ -21,8 +21,8 @@ import { updState } from "./ShipmentDocs";
 import { ShipWindow } from "./ShipWindow";
 import { TrackWindow } from "./TrackWindow";
 import { PackingPermissionWindow } from "./PackingPermissionWindow";
-import { ShipmentDataWindow } from "./ShipmentData";
-import { orderShipmentRows, shipmentGroupKey, shipmentPositions, ShipmentGroupHeader, ProjectShippingData } from "./ShipmentGroupHeader";
+import { ShipmentDataWindow, updLabel } from "./ShipmentData";
+import { orderShipmentRows, shipmentGroupKey, shipmentPositions, ShipmentGroupHeader, UpdCell } from "./ShipmentGroupHeader";
 import "./productionIntake.css";
 import "./shipping.css";
 
@@ -61,6 +61,17 @@ const EMPTY: Record<Tab, string> = {
   to_ship: "Готового к отгрузке нет — нужны УПД, ТК и трек.", shipped: `Отгруженного за ${SHIPPED_DAYS} дней нет — история в «Журнале».`, all: "Нет КБ в работе",
 };
 const DOCS_HINT = "PL — упаковочный лист, DN — отгрузочная ведомость; печать — в окне упаковки и отгрузки";
+type IntakeRow = ApiIntakeRow & { pack_auto_allowed?: boolean };
+const SHIPPING_HEADERS = ["Проект · Заказчик", "Получатель", "Телефон", "Адрес", "Способ доставки", "ТК", "УПД", "", "Позиций"];
+const AUTO_PACK_LABEL = "Весь заказ принят — разрешение не нужно";
+
+function shippingValue(label: string, value?: string) {
+  const text = value?.trim() ?? "";
+  const pickupPlaceholder = text.toLowerCase() === "самовывоз" && label !== "ТК" && label !== "Способ доставки";
+  const filled = text && !/^[\s\-‐-―−_.]*$/.test(text) && !/^(?:не заполнено|не указан[оа]?)$/i.test(text) && !pickupPlaceholder;
+  return <span className={`intake-shipping-cell${filled ? "" : " tone-warn"}`} role="group" aria-label={label} data-label={label}
+    title={filled ? text : `${label}: не заполнено`}>{filled ? text : "не заполнено"}</span>;
+}
 
 /** Строка таблицы: часть КБ в одном шаге — строка отправки, акт приёмки (остаток по ГРН) или остаток шага. */
 interface IntakeLine {
@@ -242,8 +253,12 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       if (!canDispatch) return dash;
       if (line.shipment) return <button type="button" className="intake-take-btn" title={`Набрано в ${line.shipment.number}: короба и PL/DN — в окне упаковки`}
         aria-label={`Упаковать ${who(line)}: ${line.quantity}`} onClick={() => setOpened({ kind: "pack", project: line.project })}>Упаковать · {formatNumber(line.quantity)}</button>;
-      if (line.packNow > 0) return <button type="button" className="intake-take-btn" title={`Разрешено упаковать по КБ: ${permittedPack(line.kb)}`}
-        aria-label={`Упаковать ${who(line)}: ${line.packNow}`} onClick={() => setOpened({ kind: "pack", project: line.project })}>Упаковать · {formatNumber(line.packNow)}</button>;
+      if (line.packNow > 0) return <span className="intake-permission-cell">
+        {line.kb.pack_auto_allowed && <span className="tone-ok intake-auto-permission">{AUTO_PACK_LABEL}</span>}
+        <button type="button" className="intake-take-btn" title={`Разрешено упаковать по КБ: ${permittedPack(line.kb)}`}
+          aria-label={`Упаковать ${who(line)}: ${line.packNow}`} onClick={() => setOpened({ kind: "pack", project: line.project })}>Упаковать · {formatNumber(line.packNow)}</button>
+      </span>;
+      if (line.kb.pack_auto_allowed) return <span className="tone-ok intake-auto-permission">{AUTO_PACK_LABEL}</span>;
       return <span className="intake-permission-cell"><span className="tone-warn">Нужно разрешение</span>
         <small>разрешено {formatNumber(num(line.kb.pack_permission_quantity))} · упаковано {formatNumber(num(line.kb.packed))} · на складе {formatNumber(line.quantity)}</small>
         {canManage && <button type="button" className="secondary small" aria-label={`Разрешить упаковку ${line.project} ${line.item_index}`}
@@ -260,7 +275,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     { key: "project", title: "Проект", value: (line) => line.project, hidden: true },
     { key: "kb", title: "КБ", width: 56, maxWidth: 72, value: (line) => line.item_index, render: (line) => <span className="intake-kb">{line.item_index}</span> },
     // Строка — одна линия (владелец 15.10): длинное наименование обрезается «…», целиком — в подсказке.
-    { key: "name", title: "Наименование", grow: true, minWidth: 160, wrap: true, value: (line) => line.name, render: (line) => <span className="ship-position-name" title={line.name}>{line.name}</span> },
+    { key: "name", title: "Наименование", minWidth: 160, maxWidth: 360, wrap: true, value: (line) => line.name, render: (line) => <span className="ship-position-name" title={line.name}>{line.name}</span> },
     { key: "stage", title: "Этап", width: 112, value: (line) => line.stage ? stageLabel(line.stage) : line.shipment?.status === "Отменена" ? "Отменена" : "Не набрано",
       render: (line) => <StatusChip tone={line.stage ? STAGE_TONE[line.stage] : "neutral"}>{line.stage ? stageLabel(line.stage) : line.shipment?.status === "Отменена" ? "Отменена" : "Не набрано"}</StatusChip> },
     { key: "quantity", title: QUANTITY_TITLE[tab] ?? "Количество", width: 88, numeric: true, value: (line) => line.quantity,
@@ -321,16 +336,32 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
           onClick={(event) => { event.stopPropagation(); setOpened({ kind: "pack", project }); }}>Короба и PL/DN</button>}
       </ShipmentGroupHeader>;
     }
-    const title = [project, head[project]?.customer].filter(Boolean).join(" · ");
+    const data = cardOf(groupRows[0]);
+    const pickup = isPickup(data?.carrier ?? "") || data?.terms === "САМОВЫВОЗ";
+    const firstProject = filteredRows.find((line) => !line.shipment)?.project;
     // «Принять всё» — только в «Готово» (готовое) и «Все» (всё, что можно принять); КБ — один раз.
     const bulk = tab === "ready" || tab === "all" ? [...new Map(groupRows.filter((line) => tab === "ready" ? line.stage === "ready" : num(line.kb.remaining) > 0)
       .map((line) => [kbKey(line.kb), line.kb])).values()] : [];
     const quantity = (row: IntakeRow) => tab === "ready" ? piecesOf(row).ready : num(row.remaining);
     const total = round2(bulk.reduce((sum, row) => sum + quantity(row), 0));
-    return <span className="ship-position-group"><span className="ship-position-group-title">{title}</span>
-      <ProjectShippingData data={cardOf(groupRows[0])} updRequired={!["waiting", "production"].includes(groupRows[0].stage ?? "")} />
-      <button type="button" className="secondary small" aria-label={`Изменить данные отправки ${project}`}
-        onClick={(event) => { event.stopPropagation(); setProjectData(project); }}>Изменить</button>
+    return <span className="intake-shipping-group">
+      {project === firstProject && <span className="intake-shipping-grid intake-shipping-head" aria-hidden="true">
+        {SHIPPING_HEADERS.map((label, index) => <span key={index}>{label}</span>)}
+      </span>}
+      <span className="intake-shipping-grid" role="group" aria-label={`Данные отправки ${project}`}>
+        <span className="intake-shipping-project" data-label="Проект · Заказчик"><strong>{project}</strong>
+          <span title={head[project]?.customer}>{head[project]?.customer || "—"}</span></span>
+        {shippingValue("Получатель", data?.receiver)}
+        {shippingValue("Телефон", data?.phone)}
+        {pickup ? <span className="muted" data-label="Адрес">—</span> : shippingValue("Адрес", data?.shipping_point)}
+        {shippingValue("Способ доставки", pickup ? "Самовывоз" : termsText(data?.terms))}
+        {pickup ? <span className="muted" data-label="ТК">—</span> : shippingValue("ТК", data?.carrier)}
+        <span className="intake-shipping-upd" data-label="УПД">{!["waiting", "production"].includes(groupRows[0].stage ?? "")
+          ? <UpdCell shipment={data} /> : <span className="muted">{updLabel(data?.upd_type) || "—"}</span>}</span>
+        <button type="button" className="secondary small" aria-label={`Изменить данные отправки ${project}`}
+          onClick={(event) => { event.stopPropagation(); setProjectData(project); }}>Изменить</button>
+        <span className="intake-shipping-count" data-label="Позиций">{groupRows.length}</span>
+      </span>
       {canWarehouse && bulk.length > 1 && <button type="button" className="primary small" onClick={(event) => { event.stopPropagation(); accept(bulk, quantity); }}>
         Принять всё: {bulk.length} КБ · {formatNumber(total)} шт</button>}
     </span>;

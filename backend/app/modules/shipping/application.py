@@ -25,7 +25,7 @@ from app.shared.notifications import (
 from .domain import (
     HISTORY_CORRECTION_LIMITS, AcceptanceAct, ActStock, DeliveryTerms, GoodLots, FinishedGood, GoodMove, MoveContext, PackPermission, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
     ShipmentStatus, ShippingValidationError, StoredFile, UpdType, check_boxes, effective_address, packed_by_index,
-    plan_project_queue,
+    plan_project_queue, whole_order_accepted,
 )
 
 
@@ -103,6 +103,7 @@ class UnitOfWork(Protocol):
     def __exit__(self, exc_type, exc, traceback): ...
     def commit(self) -> None: ...
     def lock_projects(self, projects: Sequence[str]) -> None: ...
+    def packing_order(self, project: str) -> dict[str, Decimal]: ...
 
 
 @dataclass(frozen=True)
@@ -331,6 +332,7 @@ def _packing_shipment(shipment_id: UUID, version: int, uow: UnitOfWork) -> Shipm
 
 def register_good(command: RegisterGoodCommand, uow: UnitOfWork) -> FinishedGood:
     with uow:
+        uow.lock_projects([command.project])
         if uow.goods.by_key(command.project.strip(), command.item_index.strip()) is not None:
             raise ShippingValidationError("Такая КБ проекта уже есть в готовой продукции")
         good = FinishedGood.create(
@@ -353,6 +355,7 @@ def queue_project(command: QueueProjectCommand, uow: UnitOfWork) -> QueueProject
     if not project:
         raise ShippingValidationError("Не указан проект")
     with uow:
+        uow.lock_projects([project])
         plan = plan_project_queue(command.assemblies, list(uow.goods.by_project(project)))
         for assembly in plan.add:
             good = FinishedGood.create(
@@ -379,6 +382,7 @@ def drop_project(command: DropProjectCommand, uow: UnitOfWork) -> DropProjectRes
     if not project:
         return DropProjectResult(deleted=0, kept=0)
     with uow:
+        uow.lock_projects([project])
         goods = list(uow.goods.by_project(project))
         ids = [good.id for good in goods]
         referenced = uow.goods.in_shipments(ids) | uow.goods.in_journal(ids)
@@ -638,6 +642,20 @@ def _consumed(uow: UnitOfWork, project: str, item_index: str) -> Decimal:
     return sum((good.shipped for good in uow.goods.for_project(project) if good.item_index == item_index), Decimal("0"))
 
 
+def _packing_limits(uow: UnitOfWork, project: str) -> dict[str, Decimal]:
+    resolver = getattr(uow, "packing_order", None)
+    planned = resolver(project) if resolver else {}
+    goods = uow.goods.for_project(project)
+    complete = whole_order_accepted(goods, planned)
+    limits = {}
+    for index in {good.item_index for good in goods}:
+        accepted = sum((good.accepted for good in goods if good.item_index == index), Decimal("0"))
+        consumed = sum((good.shipped for good in goods if good.item_index == index), Decimal("0"))
+        permission = uow.pack_permissions.get(project, index) or PackPermission(project, index)
+        limits[index] = max(permission.effective_quantity(accepted, consumed, complete) - consumed, Decimal("0"))
+    return limits
+
+
 def _promised(uow: UnitOfWork, project: str, item_index: str, *, exclude: UUID) -> Decimal:
     """Обещано другими активными отправками КБ и ещё не набрано (их недобранное «Заказано»)."""
     key = normalize_project_number(project)
@@ -748,6 +766,12 @@ def _pick(
     набор этой КБ — только из него и не больше его свободных штук (лимит сверяется с этим же количеством)."""
     chosen = {good_id: grn for good_id, grn in (chosen or {}).items() if str(grn or "").strip()}
     uow.lock_projects([line.project for line in shipment.lines])
+    # Lock and refresh stock before taking immutable goods/lot snapshots; a correction may have
+    # committed while we were waiting. Reusing the discovery snapshot could undo that correction.
+    project_limits = {
+        project: _packing_limits(uow, project)
+        for project in sorted({normalize_project_number(line.project) for line in shipment.lines})
+    }
     goods = {line.finished_good_id: uow.goods.get(line.finished_good_id) for line in shipment.lines}
     if any(good is None for good in goods.values()):
         raise ShippingValidationError("Позиция готовой продукции больше не существует")
@@ -772,8 +796,7 @@ def _pick(
         if amount <= 0:
             continue
         good = next(typed[good_id] for good_id, item in keys.items() if item == key)
-        permission = uow.pack_permissions.get(good.project, good.item_index)
-        budgets[key] = permission.remaining(_consumed(uow, good.project, good.item_index)) if permission else Decimal("0")
+        budgets[key] = project_limits[key[0]].get(key[1], Decimal("0"))
         if amount > budgets[key]:
             raise ShippingValidationError(
                 f"{good.item_index}: к упаковке разрешено ещё {format(budgets[key].normalize(), 'f')} {good.unit}; "
@@ -1215,6 +1238,7 @@ def pack_project(command: PackProjectCommand, uow: UnitOfWork) -> Shipment:
     project = str(command.project or "").strip()
     with uow:
         uow.lock_projects([project])
+        limits = _packing_limits(uow, project)
         goods = {good.id: good for good in uow.goods.for_project(project)}
         addressee = uow.addressees.get(project)
         if not goods:
@@ -1225,10 +1249,7 @@ def pack_project(command: PackProjectCommand, uow: UnitOfWork) -> Shipment:
             if requested.good_id not in goods:
                 raise ShippingValidationError("Позиция не относится к проекту")
             good = goods[requested.good_id]
-            permission = uow.pack_permissions.get(project, good.item_index)
-            consumed = sum((item.shipped for item in uow.goods.for_project(project)
-                            if item.item_index == good.item_index), Decimal("0"))
-            allowed = permission.remaining(consumed) if permission else Decimal("0")
+            allowed = limits.get(good.item_index, Decimal("0"))
             if requested.quantity <= 0 or requested.quantity > min(good.remaining, allowed):
                 raise ShippingValidationError(f"{good.item_index}: количество превышает остаток или разрешение упаковки")
         customer = next(iter(goods.values())).customer

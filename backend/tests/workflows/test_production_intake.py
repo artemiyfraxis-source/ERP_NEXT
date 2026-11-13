@@ -250,6 +250,31 @@ def _good(item: str, ordered: int, *, accepted: int = 0, sent: int = 0) -> Finis
     return replace(good, accepted=Decimal(accepted), shipped=Decimal(sent), sent=Decimal(sent))
 
 
+@pytest.mark.parametrize("second_accepted", [0, 4, 5])
+def test_auto_packing_checks_every_order_kb_before_filtering_rows(second_accepted):
+    facts = IntakeFacts(
+        projects=(PlanProjectSnapshot(project="720К.1"),),
+        kitsets=(_kitset("720К.1", ("КБ1", 10), ("КБ2", 5)),),
+        goods=(_good("КБ1", 10, accepted=10, sent=3), _good("КБ2", 5, accepted=second_accepted)),
+    )
+    rows = {row.item_index: row for row in intake_rows(facts)}
+    first = rows["КБ1"]
+    assert first.pack_auto_allowed is (second_accepted == 5)
+    assert first.pack_permission_remaining == (7 if second_accepted == 5 else 0)
+    assert first.pack_permission_quantity == (10 if second_accepted == 5 else 3)
+
+
+def test_already_sent_kb_counts_toward_whole_order_acceptance():
+    facts = IntakeFacts(
+        projects=(PlanProjectSnapshot(project="720К.1"),),
+        kitsets=(_kitset("720К.1", ("КБ1", 10), ("КБ2", 5)),),
+        goods=(_good("КБ1", 10, accepted=10), _good("КБ2", 5, accepted=5, sent=5)),
+    )
+    [row] = intake_rows(facts)
+    assert row.item_index == "КБ1" and row.pack_auto_allowed
+    assert row.pack_permission_remaining == 10
+
+
 def test_remaining_is_up_to_the_order_for_a_kb_in_work_even_when_the_shop_delivered_less():
     kb = KbProduction(
         key="720К.1|КБ1", project="720К.1", item_index="КБ1", name="Жгут", run=Decimal(10), delivered=Decimal(4),

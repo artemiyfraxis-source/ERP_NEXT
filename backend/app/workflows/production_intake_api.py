@@ -46,6 +46,7 @@ def list_intake(
         "pack_permission_quantity": _number(row.pack_permission_quantity),
         "pack_permission_remaining": _number(row.pack_permission_remaining),
         "pack_permission_version": row.pack_permission_version,
+        "pack_auto_allowed": row.pack_auto_allowed,
         "needed": _number(row.needed), "launched": _number(row.launched), "delivered": _number(row.delivered),
         "accepted": _number(row.accepted), "packed": _number(row.packed), "sent": _number(row.sent),
         "remaining": _number(row.remaining),

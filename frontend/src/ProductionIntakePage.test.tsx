@@ -155,6 +155,49 @@ it("shipment totals and Excel include lines beyond the first 200 rendered rows a
   expect(document.querySelector(".ship-shipment-group")).toHaveTextContent("1 шт");
 });
 
+it("данные проектов выстроены в одинаковые колонки, пустые значения заметны, адрес доступен целиком", async () => {
+  const address = "Москва, улица Орджоникидзе, дом 11, строение 13, склад готовой продукции";
+  intakeRows = [row({}), row({ project: "600К.1", name: "Шлейф" })];
+  addressees = [{ ...dispatchCard, terms: "ДОСТАВКА ТК", shipping_point: address, phone: "", carrier: "СДЭК" }];
+  render(<ProductionIntakePage principal={principal} />);
+  fireEvent.click(await screen.findByRole("tab", { name: /^Принято/ }));
+  const groups = [...document.querySelectorAll('.intake-shipping-grid[aria-label]')];
+  expect(groups).toHaveLength(2);
+  const fields = ["Проект · Заказчик", "Получатель", "Телефон", "Адрес", "Способ доставки", "ТК", "УПД", "Позиций"];
+  for (const group of groups) expect([...group.querySelectorAll("[data-label]")].map((node) => node.getAttribute("data-label"))).toEqual(fields);
+  expect(groups[0].querySelector('[data-label="Телефон"]')).toHaveClass("tone-warn");
+  expect(groups[0].querySelector('[data-label="Телефон"]')).toHaveTextContent("не заполнено");
+  expect(groups[0].querySelector('[data-label="Адрес"]')).toHaveAttribute("title", address);
+  expect(document.querySelectorAll(".intake-shipping-head")).toHaveLength(1);
+  fireEvent.click(within(groups[0] as HTMLElement).getByRole("button", { name: "Изменить данные отправки 591К.3" }));
+  expect(await screen.findByRole("dialog")).toBeInTheDocument();
+});
+
+it.each([".", "_", "--", "—–−", "самовывоз"])("заполнитель %s не считается телефоном получателя", async (phone) => {
+  intakeRows = [row({})];
+  addressees = [{ ...dispatchCard, phone }];
+  render(<ProductionIntakePage principal={principal} />);
+  fireEvent.click(await screen.findByRole("tab", { name: /^Принято/ }));
+  const cell = screen.getByRole("group", { name: "Телефон" });
+  expect(cell).toHaveClass("tone-warn");
+  expect(cell).toHaveTextContent("не заполнено");
+});
+
+it.each([false, true])("весь заказ принят: упаковка без разрешения, право менеджера=%s", async (manager) => {
+  intakeRows = [row({ needed: "40", accepted: "40", packed: "10", sent: "10", remaining: "0", tasks: [],
+    pack_auto_allowed: true, pack_allowed: true, pack_permission_quantity: "40", pack_permission_remaining: "30" })];
+  render(<ProductionIntakePage principal={manager ? admin : principal} />);
+  fireEvent.click(await screen.findByRole("tab", { name: /^Принято/ }));
+  expect(screen.getByText("Весь заказ принят — разрешение не нужно")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Упаковать 591К.3 КБ1: 30" })).toBeEnabled();
+  expect(screen.queryByText("Нужно разрешение")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Разрешить упаковку/ })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Упаковать 591К.3 КБ1: 30" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByRole("checkbox", { name: "Упаковать КБ1" })).toBeEnabled();
+  expect(within(dialog).getByRole("spinbutton", { name: "Сколько упаковать КБ1" })).toHaveAttribute("max", "30");
+});
+
 it.each([false, true])("исчерпанное разрешение: количества видны, право менеджера=%s", async (manager) => {
   intakeRows = [row({ needed: "2500", accepted: "2500", packed: "1743", sent: "1743", remaining: "0", tasks: [], pack_permission_quantity: "1743", pack_permission_remaining: "0" })];
   render(<ProductionIntakePage principal={manager ? admin : principal} />);
@@ -189,11 +232,11 @@ it.each([
   render(<ProductionIntakePage principal={principal} />);
   fireEvent.click(await screen.findByRole("tab", { name: new RegExp(`^${tab}`) }));
   const edit = await screen.findByRole("button", { name: "Изменить данные отправки 591К.3" });
-  const group = edit.closest<HTMLElement>(".ship-position-group")!;
-  const upd = within(group).getByText(/^УПД:/);
+  const group = edit.closest<HTMLElement>(".intake-shipping-group")!;
+  const upd = group.querySelector<HTMLElement>('[data-label="УПД"]')!;
   if (required) expect(within(upd).getByText("не заполнено")).toHaveClass("tone-warn");
   else {
-    expect(upd).toHaveTextContent("УПД: —");
+    expect(upd).toHaveTextContent("—");
     expect(upd.querySelector(".tone-warn")).toBeNull();
   }
 });
@@ -587,7 +630,7 @@ describe("Приёмка с производства: свои колонки и
     intakeRows = [...ROWS, row({ item_index: "КБ3", name: "Жгут принятый", accepted: "10", remaining: "0", acts: [act("ГП.26.0000031", "10")] })];
     render(<ProductionIntakePage principal={viewer} />);
     await screen.findByText("Кабель");
-    expect(screen.getByText(/^591К\.3 · Заказчик/)).toBeInTheDocument();
+    expect(screen.getByText("591К.3").closest(".intake-shipping-project")).toHaveTextContent("Заказчик");
     expect(screen.queryByRole("button", { name: /^Принять/ })).not.toBeInTheDocument();
     fireEvent.click(tab(/^Принято/));
     await screen.findByText("Жгут принятый");
