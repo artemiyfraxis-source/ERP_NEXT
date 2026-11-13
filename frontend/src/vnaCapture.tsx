@@ -114,7 +114,7 @@ function UserVnaCapture({ instruments, onFile, onBusy, disabled = false, childre
     setOpened(false);
   }
 
-  async function begin(chosen = agentId) {
+  async function begin(chosen = agents ? agentId : "", chooseDevice = false) {
     if (run.current || disabled || !instrument) return;
     const selectedId = instrument.id;
     const controller = new AbortController();
@@ -123,20 +123,20 @@ function UserVnaCapture({ instruments, onFile, onBusy, disabled = false, childre
     setBusy(true); setError(""); setGuide(false); setAgents(null);
     try {
       // Let create settle even after close so a newly created job can still be cancelled by id.
-      const answer = await vnaCaptureApi.start(selectedId, chosen);
+      const answer = await vnaCaptureApi.start(selectedId, instrument.vna_app === "Arinst VL" ? chosen : "", chooseDevice);
       if (signal.aborted) {
         if ("id" in answer) await vnaCaptureApi.cancel(answer.id);
         return;
       }
       if (answer.status === "choose") {
-        // A server preference only preselects the picker; this browser still asks for confirmation.
+        // Only ambiguous devices need a picker; the server routes a known instrument directly.
         setAgentId(answer.agents.some((agent) => agent.id === answer.preferred_agent_id) ? answer.preferred_agent_id! : "");
         setPc(""); setAgents(answer.agents); return;
       }
-      if (answer.status === "no_agent") { setAgentId(""); setPc(""); setGuide(true); return; }
+      if (answer.status === "no_agent") { setAgentId(""); setPc(""); setError(answer.message ?? "ВАЦ не в сети"); setGuide(true); return; }
       jobId.current = answer.id;
       setPc(answer.agent?.pc ?? "");
-      if (answer.agent) {
+      if (answer.agent && instrument.vna_app === "Arinst VL") {
         const selected = { id: answer.agent.id, pc: answer.agent.pc };
         setRemembered(selected); setAgentId(selected.id);
         try { if (userId) localStorage.setItem(`${PC_STORAGE}:${userId}`, JSON.stringify(selected)); }
@@ -184,38 +184,37 @@ function UserVnaCapture({ instruments, onFile, onBusy, disabled = false, childre
   return <div className="vna-capture">
     <div className="form-actions">
       {children}
-      <button type="button" className="secondary small" disabled={disabled || busy} onClick={() => {
-        setInstrumentId(""); setAgentId(remembered?.id ?? ""); setAgents(null); setError(""); setGuide(false); setPc(remembered?.pc ?? ""); setOpened(true);
+      <button type="button" className="secondary" disabled={disabled || busy} onClick={() => {
+        setInstrumentId(""); setAgentId(""); setAgents(null); setError(""); setGuide(false); setPc(""); setOpened(true);
       }}>Снять с ВАЦ</button>
     </div>
     {opened && <PageWindow label="Снять с ВАЦ" width={680} close={close}><div className="panel">
       <h2>Снять с ВАЦ</h2>
       {configured.length ? <label>Средство измерений<select name="vna_instrument_id" value={instrumentId} disabled={busy} onChange={(event) => {
-        setInstrumentId(event.target.value); setAgentId(remembered?.id ?? ""); setAgents(null); setError(""); setGuide(false); setPc(remembered?.pc ?? "");
+        const arinst = configured.find((item) => item.id === event.target.value)?.vna_app === "Arinst VL";
+        setInstrumentId(event.target.value); setAgentId(arinst ? remembered?.id ?? "" : ""); setAgents(null); setError(""); setGuide(false); setPc(arinst ? remembered?.pc ?? "" : "");
       }}>
         <option value="">— выберите прибор —</option>
         {configured.map((item) => <option key={item.id} value={item.id}>{item.inventory_number} · {item.name} — {item.vna_app}</option>)}
       </select></label> : <p className="empty">Нет действующих СИ с программой ВАЦ. Укажите «Программу ВАЦ» в карточке прибора.</p>}
       {pc && <div className="form-actions"><span>ПК: {pc}</span>
-        <button type="button" className="secondary small" disabled={busy || disabled || !instrument} onClick={() => void begin("")}>Сменить ПК</button>
+        {instrument?.vna_app === "Arinst VL" && <button type="button" className="secondary" disabled={busy || disabled} onClick={() => void begin("", true)}>Сменить устройство</button>}
       </div>}
       {busy && <p role="status">ВАЦ: снимаю трассу…</p>}
       {error && <p className="error-banner" role="alert">{error}</p>}
-      {agents && <label>ПК с ВАЦ<select name="vna_agent_id" value={agentId} disabled={busy} onChange={(event) => setAgentId(event.target.value)}>
-        <option value="">— выберите ПК —</option>
-        {agents.map((agent) => <option key={agent.id} value={agent.id}>ПК: {agent.pc}{instrument?.vna_app === "S2VNA" ? ` · ${readiness(agent.vna)}` : ""}</option>)}
+      {agents && <label>Устройство ВАЦ<select name="vna_agent_id" value={agentId} disabled={busy} onChange={(event) => setAgentId(event.target.value)}>
+        <option value="">— выберите устройство —</option>
+        {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.vna?.name || "Arinst VNA-DL"} · {agent.pc}{instrument?.vna_app === "S2VNA" ? ` · ${readiness(agent.vna)}` : ""}</option>)}
       </select></label>}
       {guide && <div className="scan-agent">
-        <p>{instrument?.vna_app === "S2VNA" ? "ВАЦ не найден на этом ПК: запустите S2VNA и подключите прибор"
-          : "ВАЦ не найден на этом ПК: установите агент ERP и Arinst Virtual Lab, сохраните трассу .s1p и повторите"}</p>
-        <p>Команду установки выдаёт администратор ERP. Выполните её в PowerShell на этом ПК.</p>
+        <p>Попросите администратора проверить агент на ПК с прибором. Команду установки выполните в PowerShell на ПК с ВАЦ.</p>
         {command && <code className="scan-agent-cmd">{command}</code>}
-        <button type="button" className="secondary small" disabled={installing} onClick={() => void install()}>{installing ? "Готовим команду…" : "Получить команду установки"}</button>
+        <button type="button" className="secondary" disabled={installing} onClick={() => void install()}>{installing ? "Готовим команду…" : "Получить команду установки"}</button>
       </div>}
       <div className="form-actions">
-        <button type="button" className="secondary small" onClick={close}>{busy ? "Отменить снятие" : "Отмена"}</button>
-        <button type="button" className="primary small" disabled={!instrument || disabled || busy || Boolean(agents && !agentId)} onClick={() => void begin()}>
-          {guide ? "Проверить" : agents ? "Снять на выбранном ПК" : "Снять трассу"}
+        <button type="button" className="secondary" onClick={close}>{busy ? "Отменить снятие" : "Отмена"}</button>
+        <button type="button" className="primary" disabled={!instrument || disabled || busy || Boolean(agents && !agentId)} onClick={() => void begin()}>
+          {guide ? "Проверить" : "Снять трассу"}
         </button>
       </div>
     </div></PageWindow>}

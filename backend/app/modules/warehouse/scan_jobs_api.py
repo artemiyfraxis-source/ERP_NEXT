@@ -1,45 +1,12 @@
-"""«Отсканировать УПД» — HTTP contract (owner 23.10.2026; the queue itself — `scan_jobs.py`, the reading —
-`scan_recognition.py`).
+"""Shared scan transport and authenticated device heartbeats.
 
-The screens of whoever may scan documents (owner 28.10.2026: «Сканировать документы в базу может ограниченное количество
-операторов» — the matrix section `scan` «Сканирование документов» on edit, `scan_edit_principal`; was warehouse edit):
-- `GET /api/stock/scan/agents` → `{agents: [{id, pc, version, live, last_seen, scanners: [{id, name}]}]}` — the PCs
-  with an agent and the scanners each reports, for the person's own scanner choice (live ones first);
-- `POST /api/stock/receipts/scan-jobs` (body `{agent_id?, target_scanner?}` — the agent this browser remembered or the
-  person chose, and the scanner chosen on it: its `id`, or its `name` when the id is empty) → `{id, status}` — a
-  pending job for the agent of the PC the browser sits at (`scan_agents.route`: the chosen scanner's agent when it is
-  live and still reports it, else by address, by the remembered id), or
-  `{status: "choose", agents: [{id, pc, scanners, version}]}` (scanners — names) — pick one and press again with its
-  `agent_id`, or `{status: "no_agent", idle: [PC…]}` — no PC with an agent and a scanner is alive (the screen shows the
-  install guide);
-- `GET /api/stock/receipts/scan-jobs/{id}` → `{id, status, error, result, recognising, scan_file}`; `result` — the
-  answer `{scan_file, recognised, lines, note}` (`scan_recognition.scan_answer`) once it is made, else null;
-  `recognising` — the scan is in, its answer is being made in the background (a model reads 8–100 s, never inside
-  this GET: a poll that finds nothing running restarts it as a background task). A job pending over 120 s or claimed
-  over 180 s reads (and stays) failed «Сканер не ответил — проверьте агент на ПК склада».
-- `DELETE /api/stock/receipts/scan-jobs/{id}` → `{id, status}` — an open job becomes failed «Отменено», a finished
-  one is answered as it is.
-- `POST /api/stock/receipts/scan` (multipart `file`: PDF, JPG, PNG ≤ 20 MB, «Файл…») → the job view: the file is
-  stored with a job that is done from the start, its answer is made in the background; the screen polls the job.
-  An ЭДО УПД (Diadoc XML or a ZIP of them, owner 26.10.2026) is kept as it came and read exactly — the job view comes
-  with `result` already in; not a УПД / счёт-фактура — 422 «Это не УПД в формате ФНС — …».
-- `POST /api/stock/receipts/scan-merge` `{files: [2..20 scan links]}` («+ Страница») → the job view of ONE merged PDF;
-  its answer combines the readings kept with the sheets — made at once when every sheet is read, else in the
-  background.
-
-The agent of the warehouse PC calls with `Authorization: Bearer <API token with the scope scan:upload>` (one token
-may carry `labels:print` and `scan:upload` together); a person's session is refused (403):
-- `POST /api/stock/scan/agent/claim` `{host, machine_id?}` → `{job: {id, target_scanner} | null}` — the oldest pending
-  job targeted to this agent (or untargeted) becomes claimed; an old agent without `machine_id` takes untargeted jobs
-  only; `target_scanner` — the WIA DeviceID (or name) to scan with, null — the agent's first scanner;
-- `POST /api/stock/scan/agent/heartbeat` `{machine_id, pc_name, version, lan_ip, scanners: [{id, name}]}` (at start,
-  then every ~2 min) → `{ok, update: {version, sha256, size, path} | null}` — the registry row of the PC; `update` — a
-  newer agent.ps1 to download (hash-checked by the agent);
-- `POST /api/stock/scan/agent/jobs/{id}/result` — multipart field `file` (PDF / JPG / PNG ≤ 20 MB) → the file is
-  stored, the job done; or JSON `{"error": "…"}` → the job failed with that reason. Answer `{ok: true, id, status}`;
-  404 — no such job, 409 — its result is already in or it was never handed out (a retry: drop the job), 422 — no file
-  or a file ERP does not keep (the job is failed with that reason). Recognition runs after the answer, so the agent
-  never waits for it; the screen's poll waits for it instead and the answer is stored once."""
+Scan creation accepts an explicit device owner/scanner pair, or automatically chooses
+one online scanner. Device presence comes only from heartbeats; browser addresses do
+not route jobs. Scanner preferences are stored by the shared UI in personal settings.
+Device jobs expose status and cancellation only to their requester. Agent tokens are
+machine-bound for heartbeat, claim and result, including scan-only requests.
+Receipt uploads, recognition and merge retain their existing transport.
+"""
 
 from __future__ import annotations
 
@@ -58,7 +25,7 @@ from app.shared.vna_capture import CaptureSettings
 from app.shared.http_auth import TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, require_section, warehouse_edit_principal
 from app.workflows.edo_receipt import EdoRejected, file_kind, is_edo_upload, read_delivery
 
-from . import scan_agents, vna_jobs
+from . import devices, scan_agents, vna_jobs
 from .agent_release import update_for
 from .api import warehouse_uow_factory
 from .application import UnitOfWork
@@ -154,7 +121,7 @@ def scan_agent_list(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: UowFactory,
 ) -> dict:
-    return {"agents": scan_agents.agent_list(uow_factory(), now=now)}
+    return {"agents": devices.scanner_agents(uow_factory(), now)}
 
 
 @router.post("/receipts/scan-jobs")
@@ -166,15 +133,26 @@ def new_scan_job(
     payload: ScanStartInput | None = None,
 ) -> dict:
     wish = payload or ScanStartInput()
-    routing = scan_agents.route(uow_factory(), browser_ip=_client_ip(request), remembered=wish.agent_id, now=now,
-                                scanner=wish.target_scanner)
-    if routing.kind == scan_agents.CHOOSE:
-        return {"status": "choose", "agents": [agent.view() for agent in routing.agents]}
-    if routing.kind == scan_agents.NO_AGENT:
-        return {"status": "no_agent", "idle": routing.idle}
-    target = routing.agent_id if routing.kind == scan_agents.AGENT else None
-    return _brief(create_job(uow_factory(), requested_by=principal.actor.name, now=now, target=target,
-                             scanner=routing.scanner))
+    agents = devices.scanner_agents(uow_factory(), now)
+    choices = [(pc, scanner) for pc in agents for scanner in pc["scanners"]]
+    if not choices:
+        return {"status": "no_agent", "idle": [],
+                "message": "Нет сканеров в сети. Попросите администратора проверить агент на ПК со сканером."}
+    selected = next(((pc, scanner) for pc, scanner in choices
+                     if pc["id"] == wish.agent_id and scanner["id"] == wish.target_scanner), None)
+    if selected is None and wish.agent_id and wish.target_scanner:
+        by_name = [(pc, scanner) for pc, scanner in choices
+                   if pc["id"] == wish.agent_id and scanner["name"] == wish.target_scanner]
+        if len(by_name) == 1:
+            selected = by_name[0]
+    if not wish.agent_id and not wish.target_scanner and len(choices) == 1:
+        selected = choices[0]
+    if selected is None:
+        return {"status": "choose", "agents": agents}
+    pc, scanner = selected
+    return {**_brief(create_job(uow_factory(), requested_by=principal.actor.name, requester_id=principal.actor.id, now=now,
+                               target=pc["id"], scanner=scanner["id"])),
+            "device": {"agent_id": pc["id"], "scanner_id": scanner["id"], "name": scanner["name"], "pc": pc["pc"]}}
 
 
 @router.get("/receipts/scan-jobs/{job_id}")
@@ -187,7 +165,7 @@ def scan_job(
     uow_factory: UowFactory,
 ) -> dict:
     job = _queue(lambda: get_job(uow_factory(), job_id, now=now))
-    if job.kind != "scan":
+    if job.kind != "scan" or (job.target_machine_id and job.requester_id != _principal.actor.id):
         raise HTTPException(404, "Задание сканирования не найдено")
     _recognise_later(background, uow_factory, scan_sources(request, uow_factory), job)
     return job_view(job)
@@ -200,7 +178,8 @@ def cancel_scan_job(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: UowFactory,
 ) -> dict:
-    if _queue(lambda: get_job(uow_factory(), job_id, now=now)).kind != "scan":
+    job = _queue(lambda: get_job(uow_factory(), job_id, now=now))
+    if job.kind != "scan" or (job.target_machine_id and job.requester_id != _principal.actor.id):
         raise HTTPException(404, "Задание сканирования не найдено")
     return _brief(_queue(lambda: cancel_job(uow_factory(), job_id, now=now)))
 
@@ -274,7 +253,7 @@ async def merge_receipt_scans(
 class AgentClaimInput(BaseModel):
     host: str = Field(default="", max_length=128)
     machine_id: str = Field(default="", max_length=scan_agents.MACHINE_ID_MAX)
-    kinds: list[str] = Field(default_factory=list, max_length=2)
+    kinds: list[Literal["scan", "vna"]] = Field(default_factory=list, max_length=2)
 
 
 class Scanner(BaseModel):
@@ -307,9 +286,7 @@ def scan_agent_claim(
     payload: AgentClaimInput | None = None,
 ) -> dict:
     who = payload or AgentClaimInput()
-    machine_id = who.machine_id
-    if "vna" in who.kinds:
-        machine_id = _queue(lambda: agent_machine(uow_factory(), _agent.actor.id, machine_id))
+    machine_id = _queue(lambda: agent_machine(uow_factory(), _agent.actor.id, who.machine_id))
     machine_id = scan_agents.touch(uow_factory(), machine_id=machine_id, host=who.host, ip_seen=_client_ip(request),
                                    now=now)
     job = claim(uow_factory(), now=now, machine_id=machine_id, vna="vna" in who.kinds)
@@ -334,6 +311,8 @@ def scan_agent_heartbeat(
             scanners=[item.model_dump() for item in payload.scanners], now=now)
         vna_jobs.heartbeat(uow_factory(), machine_id,
                            payload.vna.model_dump() if payload.vna else None, now, payload.vna_sources)
+        devices.heartbeat(uow_factory(), machine_id, [item.model_dump() for item in payload.scanners],
+                          payload.vna.model_dump() if payload.vna else None, payload.vna_sources, now)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     return {"ok": True, "update": update_for(payload.version)}
@@ -359,9 +338,11 @@ async def scan_agent_result(
     uow_factory: UowFactory,
 ) -> dict:
     job = await run_in_threadpool(lambda: _queue(lambda: get_job(uow_factory(), job_id, now=now)))
+    machine_id = await run_in_threadpool(lambda: _queue(lambda: agent_machine(
+        uow_factory(), _agent.actor.id, request.headers.get("x-agent-machine-id", ""))))
+    if job.target_machine_id != machine_id:
+        raise HTTPException(403, "Задание выдано другому ПК")
     if job.kind == "vna":
-        machine_id = await run_in_threadpool(lambda: _queue(lambda: agent_machine(
-            uow_factory(), _agent.actor.id, request.headers.get("x-agent-machine-id", ""))))
         return await _vna_result(job, request, now, uow_factory, machine_id)
     content_type = request.headers.get("content-type", "")
     body = await request.body()

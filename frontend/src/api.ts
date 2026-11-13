@@ -3953,10 +3953,10 @@ export interface VnaCaptureJob {
   instrument_id: string;
   capture_settings: VnaCaptureSettings | null;
 }
-export type VnaCaptureStart = VnaCaptureJob | { status: "choose"; agents: VnaAgent[]; preferred_agent_id?: string } | { status: "no_agent" };
+export type VnaCaptureStart = VnaCaptureJob | { status: "choose"; agents: VnaAgent[]; preferred_agent_id?: string } | { status: "no_agent"; message?: string };
 const VNA_JOBS = "/api/stock/vna/jobs";
 export const vnaCaptureApi = {
-  start: (instrumentId: string, agentId = "") => api<VnaCaptureStart>(VNA_JOBS, { method: "POST", body: JSON.stringify({ instrument_id: instrumentId, agent_id: agentId }) }),
+  start: (instrumentId: string, agentId = "", chooseDevice = false) => api<VnaCaptureStart>(VNA_JOBS, { method: "POST", body: JSON.stringify({ instrument_id: instrumentId, agent_id: agentId, choose_device: chooseDevice }) }),
   status: (id: string, signal?: AbortSignal) => api<VnaCaptureJob>(`${VNA_JOBS}/${encodeURIComponent(id)}`, { signal }),
   file: (id: string, signal?: AbortSignal) => api<Blob>(`${VNA_JOBS}/${encodeURIComponent(id)}/file`, { blob: true, signal }),
   cancel: (id: string) => api<VnaCaptureJob>(`${VNA_JOBS}/${encodeURIComponent(id)}`, { method: "DELETE" }),

@@ -30,7 +30,7 @@ def capture(tokens_api):  # noqa: F811
     with sessions() as session:
         for id, vna_app in ((S2_INSTRUMENT, "S2VNA"), (ARINST_INSTRUMENT, "Arinst VL")):
             session.add(ProductionInstrumentRow(id=UUID(id), version=1, inventory_number=id[:8],
-                name=vna_app, instrument_type="ВАЦ", kind="Средство измерений", status="Действует",
+                name=vna_app, instrument_type="ВАЦ", kind="Средство измерений", status="Действует", serial_number="26030095",
                 verification_number="test", verified_at=clock.now - timedelta(days=1),
                 verification_due=clock.now + timedelta(days=30), vna_app=vna_app))
         session.commit()
@@ -70,19 +70,14 @@ def result(agent, job, content=TRACE, machine="pc-1", name="trace.s1p", settings
         headers={**agent, "X-Agent-Machine-Id": machine})
 
 
-def test_capture_requires_explicit_pc_and_old_agents_never_claim_it(capture):
+def test_capture_routes_by_serial_and_old_agents_never_claim_it(capture):
     admin, agent, _, _ = capture
     assert start(admin)["status"] == "no_agent"
     heartbeat(agent)
-    assert start(admin, "")["status"] == "choose"
-    other = _bearer(_issue(admin, scopes=("scan:upload",))["token"])
-    heartbeat(other, "pc-2")
-    choices = start(admin, "")
-    assert choices["status"] == "choose"
-    assert len(choices["agents"]) == 2
-    assert choices["agents"][0]["vna"]["name"] == NAME
-    job = start(admin)
+    job = start(admin, "")
     assert job["agent"]["id"] == "pc-1"
+    other = _bearer(_issue(admin, scopes=("scan:upload",))["token"])
+    heartbeat(other, "pc-2", capability={"name": NAME.replace("26030095", "99999999"), "ready": True})
     assert claim(agent) is None
     assert claim(other, "pc-2", ["vna"]) is None
     assert TestClient(app).post(CLAIM, json={"kinds": ["vna"]}, headers=agent).status_code == 403
@@ -92,16 +87,12 @@ def test_capture_requires_explicit_pc_and_old_agents_never_claim_it(capture):
 
 @pytest.mark.parametrize("ready,reason", [(True, ""), (False, "s2vna_not_running"),
     (False, "device_not_connected"), (False, "probe_failed")])
-def test_heartbeat_readiness_reason_survives_the_pc_list_and_can_be_cleared(capture, ready, reason):
+def test_heartbeat_readiness_controls_device_presence(capture, ready, reason):
     admin, agent, _, _ = capture
-    capability = {"name": "S2VNA", "ready": ready, "reason": reason}
-    heartbeat(agent, capability=capability)
-    other = _bearer(_issue(admin, scopes=("scan:upload",))["token"])
-    heartbeat(other, "pc-2", capability=capability)
-    assert start(admin, "")["agents"][0]["vna"] == capability
-    heartbeat(agent)  # Compatibility with clients that do not send a reason; clear stale reason.
-    heartbeat(other, "pc-2")
-    assert start(admin, "")["agents"][0]["vna"] == {"name": NAME, "ready": True, "reason": ""}
+    heartbeat(agent, capability={"name": NAME, "ready": ready, "reason": reason})
+    assert start(admin, "")["status"] == ("pending" if ready else "no_agent")
+    heartbeat(agent)
+    assert start(admin, "")["agent"]["vna"] == {"name": NAME, "ready": True, "reason": ""}
 
 
 def test_status_file_and_retry_keep_exact_trace_and_actual_instrument(capture):
@@ -113,10 +104,10 @@ def test_status_file_and_retry_keep_exact_trace_and_actual_instrument(capture):
     assert claim(agent, kinds=["vna"])["kind"] == "vna"
     assert admin.get(f"{JOBS}/{job}").json()["status"] == "claimed"
     assert result(agent, job, machine="pc-2").status_code == 403
-    actual = TRACE.replace(b"26030095", b"99999999")
+    actual = TRACE.replace(b"26.2.2/2", b"26.3.0/1")
     assert result(agent, job, actual).json()["status"] == "done"
     view = admin.get(f"{JOBS}/{job}").json()
-    assert view["vna"]["name"] == NAME.replace("26030095", "99999999")
+    assert view["vna"]["name"] == NAME.replace("26.2.2/2", "26.3.0/1")
     file = admin.get(f"{JOBS}/{job}/file")
     assert file.content == actual
     assert "attachment" in file.headers["content-disposition"]
@@ -125,6 +116,26 @@ def test_status_file_and_retry_keep_exact_trace_and_actual_instrument(capture):
     with sessions() as session:
         row = session.get(ScanJobRow, UUID(job))
         assert row.file_id is None and row.result == ""  # No receipt OCR is scheduled.
+
+
+@pytest.mark.parametrize("actual_serial", ["99999999", ""])
+def test_capture_rejects_a_swapped_or_unidentified_instrument(capture, actual_serial):
+    admin, agent, _, sessions = capture
+    heartbeat(agent)
+    job = start(admin)["id"]
+    claim(agent, kinds=["vna"])
+    # Neither a refreshed inventory nor an edited registry may change this job's identity.
+    heartbeat(agent, capability={"name": NAME.replace("26030095", "99999999"), "ready": True})
+    with sessions() as session:
+        session.get(ProductionInstrumentRow, UUID(S2_INSTRUMENT)).serial_number = "99999999"
+        session.commit()
+    response = result(agent, job, TRACE.replace(b"26030095", actual_serial.encode()))
+    assert response.status_code == 422
+    assert "Серийный номер" in response.json()["detail"]
+    assert admin.get(f"{JOBS}/{job}").json()["status"] == "failed"
+    assert admin.get(f"{JOBS}/{job}/file").status_code == 409
+    with sessions() as session:
+        assert session.get(ScanJobRow, UUID(job)).capture_content is None
 
 
 @pytest.mark.parametrize("content,name", [(b"", "x.s1p"), (TRACE, "x.pdf"), (b"garbage", "x.s1p"),
@@ -239,21 +250,17 @@ def test_start_rejects_source_unavailable_on_selected_pc(capture, sources, vna, 
     heartbeat(agent, vna=vna, sources=sources)
     response = admin.post(JOBS, json={"agent_id": "pc-1",
         "instrument_id": ARINST_INSTRUMENT if requested == "arinst" else S2_INSTRUMENT}, headers=_csrf(admin))
-    assert response.status_code == 422
-    assert "недоступен" in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.json()["status"] == "no_agent"
 
 
 def test_both_sources_survive_heartbeat_and_arinst_removal(capture):
     admin, agent, _, _ = capture
     heartbeat(agent, sources=["s2vna", "arinst"])
-    other = _bearer(_issue(admin, scopes=("scan:upload",))["token"])
-    heartbeat(other, "pc-2", sources=["s2vna", "arinst"])
-    pc = start(admin, "")["agents"][0]
-    assert pc["vna_sources"] == ["s2vna", "arinst"]
-    assert pc["vna"]["name"] == NAME
-    heartbeat(agent)  # Older clients still advertise S2VNA only, removing stale Arinst.
-    heartbeat(other, "pc-2")
-    assert start(admin, "")["agents"][0]["vna_sources"] == ["s2vna"]
+    assert start(admin, "", "arinst")["source"] == "arinst"
+    assert start(admin, "")["vna"]["name"] == NAME
+    heartbeat(agent)
+    assert start(admin, "", "arinst")["status"] == "no_agent"
     assert start(admin)["source"] == "s2vna"
 
 
@@ -321,33 +328,27 @@ def test_database_rejects_unknown_source(capture):
             session.commit()
 
 
-def test_ip_only_orders_candidates_and_never_selects_even_one_pc(capture):
+def test_serial_routes_from_different_client_address_and_ignores_pc_preference(capture):
     admin, agent, _, sessions = capture
     heartbeat(agent)
-    assert start(admin, "")["status"] == "choose"
     other = _bearer(_issue(admin, scopes=("scan:upload",))["token"])
-    heartbeat(other, "aaa-remote")
+    heartbeat(other, "aaa-local", capability={"name": NAME.replace("26030095", "99999999"), "ready": True})
+    from app.modules.warehouse.scan_agents import ScanAgentRow
     with sessions() as session:
-        from app.modules.warehouse.scan_agents import ScanAgentRow
-        session.get(ScanAgentRow, "aaa-remote").ip_seen = "192.0.2.10"
+        session.get(ScanAgentRow, "pc-1").ip_seen = "192.0.2.10"
+        session.get(ScanAgentRow, "pc-1").ip_lan = "192.0.2.10"
         session.commit()
-    choices = start(admin, "")
-    assert [pc["id"] for pc in choices["agents"]] == ["pc-1", "aaa-remote"]
-    assert start(admin, "aaa-remote")["agent"]["id"] == "aaa-remote"
-    with sessions() as session:
-        session.get(ScanAgentRow, "pc-1").ip_seen = "192.0.2.11"
-        session.commit()
-    assert start(admin, "")["status"] == "choose"
-    assert start(admin, "pc-1")["agent"]["id"] == "pc-1"
+    assert start(admin, "aaa-local")["agent"]["id"] == "pc-1"
+    assert start(admin, "")["agent"]["id"] == "pc-1"
 
 
-def test_source_filter_still_requires_explicit_selection(capture):
+def test_source_filter_automatically_selects_each_device_owner(capture):
     admin, agent, _, _ = capture
     heartbeat(agent)
     other = _bearer(_issue(admin, scopes=("scan:upload",))["token"])
     heartbeat(other, "arinst-pc", vna=False, sources=["arinst"])
-    assert [pc["id"] for pc in start(admin, "")["agents"]] == ["pc-1"]
-    assert [pc["id"] for pc in start(admin, "", "arinst")["agents"]] == ["arinst-pc"]
+    assert start(admin, "")["agent"]["id"] == "pc-1"
+    assert start(admin, "", "arinst")["agent"]["id"] == "arinst-pc"
 
 
 @pytest.mark.parametrize("changes", [{"status": "Не используется"}, {"status": "Поверка не подтверждена",
@@ -405,7 +406,7 @@ def test_vna_rejects_another_bound_token_without_mutating_the_job(capture, opera
     admin, agent, _, sessions = capture
     heartbeat(agent)
     other = _bearer(_issue(admin, scopes=("scan:upload",))["token"])
-    heartbeat(other, "pc-2")
+    heartbeat(other, "pc-2", vna=False, sources=["arinst"])
     job = start(admin)["id"]
     if operation in ("file", "error"):
         claim(agent, kinds=["vna"])
@@ -446,31 +447,30 @@ def test_legacy_token_binds_only_on_first_heartbeat_and_cannot_rebind(capture):
     assert result(agent, job).status_code == 200
 
 
-def test_preference_is_per_user_and_new_browser_still_confirms_it(capture):
+def test_arinst_preference_is_per_user_and_follows_user_to_another_browser(capture):
     from app.modules.identity.infrastructure import IdentityUserRow
     from tests.identity.test_api_tokens import OPERATOR_ID
-
     admin, agent, _, sessions = capture
-    heartbeat(agent)
-    assert start(admin, "")["preferred_agent_id"] == ""
-    job = start(admin)["id"]
-    assert claim(agent, kinds=["vna"])["id"] == job
-    assert result(agent, job).status_code == 200
-    assert admin.get(f"{JOBS}/{job}/file").content == TRACE
-    assert start(admin)["agent"]["id"] == "pc-1"  # A remembered browser sends its explicit PC again.
-    choices = start(_login("admin"), "")
-    assert choices["status"] == "choose" and choices["preferred_agent_id"] == "pc-1"
+    heartbeat(agent, vna=False, sources=["arinst"])
+    other = _bearer(_issue(admin, scopes=("scan:upload",))["token"])
+    heartbeat(other, "pc-2", vna=False, sources=["arinst"])
+    assert start(admin, "", "arinst")["status"] == "choose"
+    job = start(admin, "pc-2", "arinst")
+    assert job["agent"]["id"] == "pc-2"
+    assert start(_login("admin"), "", "arinst")["agent"]["id"] == "pc-2"
     with sessions() as session:
         session.get(IdentityUserRow, OPERATOR_ID).access_level = "admin"
         session.commit()
     other_user = _login("operator")
-    assert start(other_user, "")["preferred_agent_id"] == ""
+    assert start(other_user, "", "arinst")["preferred_agent_id"] == ""
     for suffix in ("", "/file"):
-        assert other_user.get(f"{JOBS}/{job}{suffix}").status_code == 404
-    assert other_user.delete(f"{JOBS}/{job}", headers=_csrf(other_user)).status_code == 404
+        assert other_user.get(f"{JOBS}/{job['id']}{suffix}").status_code == 404
+    assert other_user.delete(f"{JOBS}/{job['id']}", headers=_csrf(other_user)).status_code == 404
+    choices = admin.post(JOBS, json={"instrument_id": ARINST_INSTRUMENT, "choose_device": True}, headers=_csrf(admin)).json()
+    assert choices["status"] == "choose" and choices["preferred_agent_id"] == "pc-2"
 
 
-def test_offline_remembered_pc_never_falls_back_to_another_candidate(capture):
+def test_same_instrument_moves_to_another_pc_without_browser_pairing(capture):
     admin, agent, clock, _ = capture
     heartbeat(agent)
     start(admin)
@@ -478,6 +478,5 @@ def test_offline_remembered_pc_never_falls_back_to_another_candidate(capture):
     other = _bearer(_issue(admin, scopes=("scan:upload",))["token"])
     heartbeat(other, "pc-2")
     answer = start(admin)
-    assert answer["status"] == "choose"
-    assert [pc["id"] for pc in answer["agents"]] == ["pc-2"]
-    assert claim(other, "pc-2", ["vna"]) is None
+    assert answer["agent"]["id"] == "pc-2"
+    assert claim(other, "pc-2", ["vna"])["id"] == answer["id"]

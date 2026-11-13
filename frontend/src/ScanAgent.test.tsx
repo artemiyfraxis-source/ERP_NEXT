@@ -42,16 +42,16 @@ it("legacy remembered PC cannot start a scan without explicit scanner choice", a
 it("choice stores both ids, shows the actual PC and scanner, then starts only that pair", async () => {
   const start = vi.fn(async () => ({ id: "j1", status: "pending" as const })); const onJob = vi.fn();
   render(<><ScanDeviceLine /><Harness start={start} onJob={onJob} /></>);
-  fireEvent.click(screen.getByText("Сканировать")); fireEvent.click(await screen.findByText("СКЛАД · Epson"));
+  fireEvent.click(screen.getByText("Сканировать")); fireEvent.click(await screen.findByText("Epson · СКЛАД"));
   await waitFor(() => expect(onJob).toHaveBeenCalledWith("j1"));
   expect(start).toHaveBeenCalledExactlyOnceWith("m-1", "s-2");
   await waitFor(() => expect(saved).toEqual([["scan.device", { agent_id: "m-1", scanner_id: "s-2" }]]));
-  expect(screen.getByTestId("scan-device").textContent).toContain("СКЛАД · Epson");
+  expect(screen.getByTestId("scan-device").textContent).toContain("Epson · СКЛАД");
 });
 it("reset clears the legacy remote PC; the next scan asks for a scanner", async () => {
   account({ agent_id: "m-2", scanner_id: "s-9" }); window.localStorage.setItem("erp.scanAgent", "m-2");
   const start = vi.fn(); render(<><ScanDeviceLine /><Harness start={start} /></>);
-  await screen.findByText("ОФИС · Canon"); fireEvent.click(screen.getByText("Сменить сканер"));
+  await screen.findByText("Canon · ОФИС"); fireEvent.click(screen.getByText("Сменить сканер"));
   fireEvent.click(await screen.findByText("Сбросить выбор"));
   expect(rememberedScanAgent()).toBe(""); expect(window.localStorage.getItem("erp.scanDevice")).toBeNull();
   fireEvent.click(screen.getByText("Сканировать"));
@@ -68,19 +68,17 @@ it("offline and pre-strict PCs show a reason and cannot be selected", async () =
   render(<><ScanDeviceLine /><Harness start={start} /></>);
   expect(await screen.findByText(/ПК не на связи/)).toBeTruthy();
   expect(screen.getByTestId("scan-device").textContent).not.toContain("этот ПК"); fireEvent.click(screen.getByText("Сканировать"));
-  expect(await screen.findByRole("button", { name: /СКЛАД · Epson/ })).toBeDisabled();
-  expect(screen.getByRole("button", { name: /ОФИС · Canon/ })).toBeDisabled();
-  expect(screen.getByText(/Ожидается обновление агента на ОФИС/)).toBeTruthy(); expect(start).not.toHaveBeenCalled();
+  expect(await screen.findByText("Нет сканеров в сети")).toBeTruthy(); expect(start).not.toHaveBeenCalled();
 });
 it("refreshes on picker open and before start; a disappeared scanner is never started", async () => {
   const listing = vi.mocked(warehouseApi.scanAgents); render(<ScanDeviceLine />);
   await waitFor(() => expect(listing).toHaveBeenCalledTimes(1));
   listing.mockResolvedValue({ agents: [{ ...AGENTS[0], scanners: [AGENTS[0].scanners[1]] }] });
-  fireEvent.click(screen.getByText("Сменить сканер")); expect(await screen.findByText("СКЛАД · Epson")).toBeTruthy();
-  expect(screen.queryByText("СКЛАД · Pantum")).toBeNull(); fireEvent.click(screen.getByText("СКЛАД · Epson"));
-  listing.mockResolvedValue({ agents: [AGENTS[1]] }); const start = vi.fn(); render(<Harness start={start} />);
-  fireEvent.click(screen.getByText("Сканировать")); expect(await screen.findByRole("dialog", { name: "Выбор сканера" })).toBeTruthy();
-  expect(start).not.toHaveBeenCalled(); expect(listing).toHaveBeenCalledTimes(3);
+  fireEvent.click(screen.getByText("Сменить сканер")); expect(await screen.findByText("Epson · СКЛАД")).toBeTruthy();
+  expect(screen.queryByText("Pantum · СКЛАД")).toBeNull(); fireEvent.click(screen.getByText("Epson · СКЛАД"));
+  listing.mockResolvedValue({ agents: [] }); const start = vi.fn(); render(<Harness start={start} />);
+  fireEvent.click(screen.getByText("Сканировать")); expect(await screen.findByRole("dialog", { name: "Установка сканера" })).toBeTruthy();
+  expect(start).not.toHaveBeenCalled(); expect(listing).toHaveBeenCalledTimes(4);
 });
 it("a failed list explains the failure and never starts even a stored choice", async () => {
   account({ agent_id: "m-1", scanner_id: "s-2" }); vi.mocked(warehouseApi.scanAgents).mockRejectedValue(new Error("Нет связи с ERP"));
@@ -90,7 +88,7 @@ it("a failed list explains the failure and never starts even a stored choice", a
 it("server invalidation reopens choice and preserves scanner ids on the next request", async () => {
   account({ agent_id: "m-1", scanner_id: "s-1" });
   const start = vi.fn().mockResolvedValueOnce({ status: "choose", agents: AGENTS }).mockResolvedValueOnce({ id: "j2", status: "pending" });
-  render(<Harness start={start} />); fireEvent.click(screen.getByText("Сканировать")); fireEvent.click(await screen.findByText("ОФИС · Canon"));
+  render(<Harness start={start} />); fireEvent.click(screen.getByText("Сканировать")); fireEvent.click(await screen.findByText("Canon · ОФИС"));
   await waitFor(() => expect(start).toHaveBeenLastCalledWith("m-2", "s-9"));
 });
 it("no scanner opens installation; missing permission points to an administrator", async () => {
@@ -145,7 +143,7 @@ it("server no_agent opens the guide, copies the command and rechecks on Пров
 it("the explicit scanner chooser can open installation for a new PC", async () => {
   vi.spyOn(warehouseApi, "scanAgentInstallToken").mockResolvedValue({ command: "test-command", expires_at: "", valid_minutes: 60 });
   render(<Harness start={vi.fn()} />); fireEvent.click(screen.getByText("Сканировать"));
-  fireEvent.click(await screen.findByText("Установить на этом ПК")); expect(await screen.findByRole("dialog", { name: "Установка сканера" })).toBeTruthy();
+  fireEvent.click(await screen.findByText("Установить агент на ПК со сканером")); expect(await screen.findByRole("dialog", { name: "Установка сканера" })).toBeTruthy();
 });
 
 it("a different account never reuses a loaded scanner or an unscoped local copy", async () => {
@@ -220,11 +218,11 @@ it("an old job response cannot reach B or block B's scan while A's request is st
 
 it("a kept screen clears A's picker and reloads B's own selection on auth change", async () => {
   bindUser("a"); account({ agent_id: "m-1", scanner_id: "s-2" });
-  render(<ScanDeviceLine />); await screen.findByText("СКЛАД · Epson");
+  render(<ScanDeviceLine />); await screen.findByText("Epson · СКЛАД");
   fireEvent.click(screen.getByText("Сменить сканер")); await screen.findByRole("dialog", { name: "Выбор сканера" });
   account({ agent_id: "m-2", scanner_id: "s-9" }); act(() => { bindUser(null); bindUser("b"); });
   expect(screen.queryByRole("dialog")).toBeNull();
-  await screen.findByText("ОФИС · Canon"); expect(screen.getByTestId("scan-device")).not.toHaveTextContent("СКЛАД · Epson");
+  await screen.findByText("Canon · ОФИС"); expect(screen.getByTestId("scan-device")).not.toHaveTextContent("Epson · СКЛАД");
 });
 
 it("suspends scanner reads, choices and commands while the auth cookie changes", async () => {
@@ -247,4 +245,30 @@ it("a saved begin callback from A cannot start a new scan after B has signed in"
   expect(warehouseApi.scanAgents).not.toHaveBeenCalled(); expect(start).not.toHaveBeenCalled();
   await act(async () => { expect(await result.current.begin()).toEqual({ id: "b-job", status: "pending" }); });
   expect(start).toHaveBeenCalledExactlyOnceWith("m-2", "s-9");
+});
+
+
+it("automatically uses the sole online scanner and remembers it for this user", async () => {
+  bindUser("scanner-user");
+  vi.mocked(warehouseApi.scanAgents).mockResolvedValue({ agents: [AGENTS[1]] });
+  const start = vi.fn(async () => ({ id: "auto", status: "pending" as const }));
+  render(<><ScanDeviceLine /><Harness start={start} /></>);
+  fireEvent.click(screen.getByText("Сканировать"));
+  await waitFor(() => expect(start).toHaveBeenCalledExactlyOnceWith("m-2", "s-9"));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByTestId("scan-device")).toHaveTextContent("Canon · ОФИС");
+  expect(JSON.parse(localStorage.getItem("erp.scanDevice:scanner-user")!)).toEqual({ agent_id: "m-2", scanner_id: "s-9" });
+  await waitFor(() => expect(saved).toContainEqual(["scan.device", { agent_id: "m-2", scanner_id: "s-9" }]));
+});
+
+
+it("shows a scanner connected after the window opened when it is automatically selected", async () => {
+  vi.mocked(warehouseApi.scanAgents).mockResolvedValue({ agents: [] });
+  const start = vi.fn(async () => ({ id: "late", status: "pending" as const }));
+  render(<><ScanDeviceLine /><Harness start={start} /></>);
+  await waitFor(() => expect(warehouseApi.scanAgents).toHaveBeenCalledTimes(1));
+  vi.mocked(warehouseApi.scanAgents).mockResolvedValue({ agents: [AGENTS[1]] });
+  fireEvent.click(screen.getByText("Сканировать"));
+  await waitFor(() => expect(start).toHaveBeenCalledWith("m-2", "s-9"));
+  await waitFor(() => expect(screen.getByTestId("scan-device")).toHaveTextContent("Canon · ОФИС"));
 });

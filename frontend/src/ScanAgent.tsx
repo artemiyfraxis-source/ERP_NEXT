@@ -128,14 +128,20 @@ export function useScanAgent(start: (agentId?: string, targetScanner?: string) =
     if (started !== deviceEpoch || deviceUser === null || busy.current === started) return null;
     busy.current = started;
     try {
-      const chosen = await loadScanDevice();
+      let chosen = await loadScanDevice();
       if (started !== deviceEpoch) return null;
       const agents = await warehouseApi.scanAgents().then((answer) => answer.agents, () => null);
       if (started !== deviceEpoch) return null;
-      const { agent, scanner, missing } = resolveScanDevice(chosen, agents);
       const changed = device?.agent_id !== chosen?.agent_id || device?.scanner_id !== chosen?.scanner_id;
+      const online = agents?.filter((item) => !unavailable(item)) ?? [];
+      const choices = online.flatMap((agent) => agent.scanners.map((scanner) => ({ agent_id: agent.id, scanner_id: scannerId(scanner) })));
+      if (!changed && choices.length === 1) {
+        chosen = choices[0];
+        setScanDevice(chosen, started);
+      }
+      const { agent, scanner, missing } = resolveScanDevice(chosen, agents);
       if (changed || !agents || !chosen || missing || !agent || !scanner || unavailable(agent)) {
-        setView(agents && !agents.some((item) => item.scanners.length)
+        setView(agents && !choices.length
           ? { kind: "guide", idle: agents.map((item) => item.pc), epoch: started }
           : { kind: "choose", agents, epoch: started });
         return null;
@@ -190,18 +196,18 @@ export function ScanDeviceLine() {
     void loadScanDevice();
     void refresh();
     return () => { request.current++; };
-  }, [canScan, session]);
+  }, [canScan, session, chosen?.agent_id, chosen?.scanner_id]);
 
   if (!canScan) return null;
   const { agent, scanner, missing } = resolveScanDevice(chosen, agents);
-  const text = !chosen ? "не выбран" : agent && scanner ? `${agent.pc} · ${scannerName(scanner)}`
+  const text = !chosen ? "не выбран" : agent && scanner ? `${scannerName(scanner)} · ${agent.pc}`
     : loading ? "Проверяем выбранный сканер…" : "Выбранный сканер не найден";
   const reason = agent ? unavailable(agent) : "";
   const warning = chosen && !loading ? !agents ? "Список ПК недоступен — проверьте связь с ERP"
     : missing ? "Выберите доступный сканер" : reason : "";
   return (
     <div className="scan-device" data-testid="scan-device">
-      <span aria-live="polite">ПК · сканер: <b>{text}</b></span>
+      <span aria-live="polite">Сканер: <b>{text}</b></span>
       <button type="button" className="link-button" disabled={deviceUser === null} onClick={() => { setPicking(session); void refresh(); }}>Сменить сканер</button>
       {warning ? <span className="warning-inline">{warning}</span> : null}
       {picking === session ? <ScanDevicePicker agents={agents} loading={loading} chosen={chosen} close={() => setPicking(null)}
@@ -229,15 +235,15 @@ function ScanDevicePicker({ agents, loading = false, chosen, close, pick, instal
               return (
                 <button key={`${agent.id}/${scannerId(scanner)}`} type="button" className={current ? "primary" : "secondary"}
                   aria-pressed={current} disabled={Boolean(unavailable(agent))} onClick={() => pick({ agent_id: agent.id, scanner_id: scannerId(scanner) })}>
-                  {agent.pc} · {scannerName(scanner)}
+                  {scannerName(scanner)} · {agent.pc}
                   {unavailable(agent) ? <span> — {unavailable(agent)}</span> : null}
                 </button>
               );
             }))}
         </div>
         <p className="scan-agent-actions">
-          {install ? <button type="button" className="secondary small" onClick={install}>Установить на этом ПК</button> : null}
-          <button type="button" className="secondary small" onClick={close}>Отмена</button>
+          {install ? <button type="button" className="secondary" onClick={install}>Установить агент на ПК со сканером</button> : null}
+          <button type="button" className="secondary" onClick={close}>Отмена</button>
         </p>
       </div>
     </PageWindow>
@@ -279,7 +285,8 @@ function ScanAgentGuide({ idle, close, check }: { idle: string[]; close: () => v
   return (
     <PageWindow label="Установка сканера" close={close} width={720} dismissable>
       <div className="panel scan-agent">
-        <h2>Сканер не найден — установите агент на этот ПК</h2>
+        <h2>Нет сканеров в сети</h2>
+        <p>Попросите администратора проверить подключение сканера и агент на его ПК.</p>
         {idle.length ? <p className="muted">Агент работает на {idle.join(", ")}, но сканера там не видно.</p> : null}
         <ul className="scan-agent-points">
           <li>Устанавливается один раз, права администратора Windows не нужны.</li>
@@ -292,15 +299,15 @@ function ScanAgentGuide({ idle, close, check }: { idle: string[]; close: () => v
         ) : null}
         {state === "ready" ? (
           <>
-            <p>Откройте PowerShell на этом ПК и выполните команду (действует {minutes} мин, один раз):</p>
+            <p>Откройте PowerShell на ПК со сканером и выполните команду (действует {minutes} мин, один раз):</p>
             <code className="scan-agent-cmd" data-testid="scan-agent-command">{command}</code>
           </>
         ) : null}
         {error ? <p className="error-banner" role="alert">{error}</p> : null}
         <p className="scan-agent-actions">
-          {state === "ready" ? <button type="button" className="secondary small" onClick={() => void copy()}>{copied ? "Скопировано" : "Копировать"}</button> : null}
-          <button type="button" className="primary small" onClick={check}>Проверить</button>
-          <button type="button" className="secondary small" onClick={close}>Закрыть</button>
+          {state === "ready" ? <button type="button" className="secondary" onClick={() => void copy()}>{copied ? "Скопировано" : "Копировать"}</button> : null}
+          <button type="button" className="primary" onClick={check}>Проверить</button>
+          <button type="button" className="secondary" onClick={close}>Закрыть</button>
         </p>
       </div>
     </PageWindow>

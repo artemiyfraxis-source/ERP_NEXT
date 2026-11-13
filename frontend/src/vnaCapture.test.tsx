@@ -78,11 +78,11 @@ it("captures into the upload path with the chosen instrument and read-only setti
   expect(await screen.findByText(/ВАЦ: снимаю трассу/)).toBeInTheDocument();
   expect(uploadButton()).toBeDisabled();
   await screen.findByText("Выбран файл: vna.s1p", {}, { timeout: 3000 });
-  expect(vnaCaptureApi.start).toHaveBeenCalledWith("planar", "pc");
+  expect(vnaCaptureApi.start).toHaveBeenCalledWith("planar", "", false);
   expect(screen.getByLabelText("Прибор (средство измерения)")).toHaveValue("planar");
   expect(screen.getByLabelText("Прибор (средство измерения)")).toBeDisabled();
   expect(screen.getByRole("region", { name: "Настройки ВАЦ" })).toHaveTextContent("Точек: 101");
-  expect(screen.queryByLabelText("ПК с ВАЦ")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Устройство ВАЦ")).not.toBeInTheDocument();
   await waitFor(() => expect(uploadButton()).toBeEnabled());
   fireEvent.click(uploadButton());
   await waitFor(() => expect(productionApi.uploadVswr).toHaveBeenCalledWith(expect.objectContaining({
@@ -91,12 +91,13 @@ it("captures into the upload path with the chosen instrument and read-only setti
   expect(await screen.findByRole("img", { name: /График КСВН/ })).toBeInTheDocument();
 });
 
-it("keeps the chosen instrument even when the captured header has a different serial", async () => {
-  vi.mocked(vnaCaptureApi.start).mockResolvedValue({ ...pending, status: "done", vna: { name: "other" } });
-  vi.mocked(vnaCaptureApi.file).mockResolvedValue(new Blob([trace.replace("26030095", "unknown")]));
+it("shows an instrument mismatch without downloading or attaching the rejected capture", async () => {
+  const error = "Серийный номер ВАЦ в файле не совпадает с выбранным СИ. Проверьте подключённый прибор и повторите снятие.";
+  vi.mocked(vnaCaptureApi.status).mockResolvedValue({ ...pending, status: "failed", error });
   await open(); chooseInstrument();
-  await screen.findByText("Выбран файл: vna.s1p");
-  expect(screen.getByLabelText("Прибор (средство измерения)")).toHaveValue("planar");
+  expect(await screen.findByText(error, {}, { timeout: 3000 })).toBeInTheDocument();
+  expect(vnaCaptureApi.file).not.toHaveBeenCalled();
+  expect(screen.queryByText("Выбран файл: vna.s1p")).not.toBeInTheDocument();
 });
 
 it("clears captured settings and unlocks SI when choosing an ordinary file", async () => {
@@ -117,23 +118,23 @@ it.each([
 ] as const)("shows PC readiness only when routing asks for a choice (%s, %s)", async (ready, reason, label) => {
   vi.mocked(vnaCaptureApi.start).mockResolvedValue({ status: "choose", agents: [{ ...agent, vna: { name, ready, reason } }] });
   render(<VnaCapture instruments={instruments} onFile={() => {}} onBusy={() => {}} />); chooseInstrument();
-  expect(await screen.findByRole("option", { name: `ПК: ${agent.pc} · ${label}` })).toBeInTheDocument();
+  expect(await screen.findByRole("option", { name: `${name} · ${agent.pc} · ${label}` })).toBeInTheDocument();
 });
 
 it("asks only for PC on ambiguous routing and resubmits the same instrument", async () => {
   vi.mocked(vnaCaptureApi.start).mockResolvedValueOnce({ status: "choose", agents: [agent, { ...agent, id: "pc2", pc: "Второй ПК" }] });
-  render(<VnaCapture instruments={instruments} onFile={() => {}} onBusy={() => {}} />); chooseInstrument();
-  fireEvent.change(await screen.findByLabelText("ПК с ВАЦ"), { target: { value: "pc2" } });
+  render(<VnaCapture instruments={instruments} onFile={() => {}} onBusy={() => {}} />); chooseInstrument("arinst");
+  fireEvent.change(await screen.findByLabelText("Устройство ВАЦ"), { target: { value: "pc2" } });
   expect(screen.queryByLabelText("ПК и источник ВАЦ")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Снять на выбранном ПК" }));
-  await waitFor(() => expect(vnaCaptureApi.start).toHaveBeenLastCalledWith("planar", "pc2"));
+  fireEvent.click(screen.getByRole("button", { name: "Снять трассу" }));
+  await waitFor(() => expect(vnaCaptureApi.start).toHaveBeenLastCalledWith("arinst", "pc2", false));
 });
 
 it.each([
-  ["planar", "ВАЦ не найден на этом ПК: запустите S2VNA и подключите прибор"],
-  ["arinst", "ВАЦ не найден на этом ПК: установите агент ERP и Arinst Virtual Lab, сохраните трассу .s1p и повторите"],
+  ["planar", "ВАЦ СИ.002 не в сети: на ПК ОТК не запущена S2VNA или прибор не подключён (последний раз 12.11.2026 12:00)"],
+  ["arinst", "ВАЦ СИ.001 не в сети: запустите агент ERP на ПК с Arinst Virtual Lab"],
 ])("offers the source-specific install guide for %s", async (id, message) => {
-  vi.mocked(vnaCaptureApi.start).mockResolvedValue({ status: "no_agent" });
+  vi.mocked(vnaCaptureApi.start).mockResolvedValue({ status: "no_agent", message });
   vi.spyOn(warehouseApi, "scanAgentInstallToken").mockResolvedValue({ command: "test-install", valid_minutes: 60, expires_at: "2026-11-12T12:00:00" });
   render(<VnaCapture instruments={instruments} onFile={() => {}} onBusy={() => {}} />); chooseInstrument(id);
   expect(await screen.findByText(message)).toBeInTheDocument();
@@ -233,14 +234,14 @@ it("requires explicit PC selection on the first capture even for a single candid
   localStorage.clear();
   vi.mocked(vnaCaptureApi.start).mockResolvedValueOnce({ status: "choose", agents: [agent] });
   render(<VnaCapture instruments={instruments} onFile={() => {}} onBusy={() => {}} />);
-  chooseInstrument();
-  expect(await screen.findByLabelText("ПК с ВАЦ")).toHaveValue("");
-  expect(vnaCaptureApi.start).toHaveBeenCalledExactlyOnceWith("planar", "");
-  expect(screen.getByRole("button", { name: "Снять на выбранном ПК" })).toBeDisabled();
+  chooseInstrument("arinst");
+  expect(await screen.findByLabelText("Устройство ВАЦ")).toHaveValue("");
+  expect(vnaCaptureApi.start).toHaveBeenCalledExactlyOnceWith("arinst", "", false);
+  expect(screen.getByRole("button", { name: "Снять трассу" })).toBeDisabled();
   expect(localStorage.getItem("erp.vna.pc:user-a")).toBeNull();
-  fireEvent.change(screen.getByLabelText("ПК с ВАЦ"), { target: { value: "pc" } });
-  fireEvent.click(screen.getByRole("button", { name: "Снять на выбранном ПК" }));
-  await waitFor(() => expect(vnaCaptureApi.start).toHaveBeenLastCalledWith("planar", "pc"));
+  fireEvent.change(screen.getByLabelText("Устройство ВАЦ"), { target: { value: "pc" } });
+  fireEvent.click(screen.getByRole("button", { name: "Снять трассу" }));
+  await waitFor(() => expect(vnaCaptureApi.start).toHaveBeenLastCalledWith("arinst", "pc", false));
   expect(await screen.findByText("ПК: ПК ОТК")).toBeInTheDocument();
   expect(JSON.parse(localStorage.getItem("erp.vna.pc:user-a")!)).toEqual({ id: "pc", pc: "ПК ОТК" });
 });
@@ -249,9 +250,9 @@ it("asks a new browser to confirm the user's server preference", async () => {
   localStorage.clear();
   vi.mocked(vnaCaptureApi.start).mockResolvedValue({ status: "choose", agents: [agent], preferred_agent_id: "pc" });
   render(<VnaCapture instruments={instruments} onFile={() => {}} onBusy={() => {}} />);
-  chooseInstrument();
-  expect(await screen.findByLabelText("ПК с ВАЦ")).toHaveValue("pc");
-  expect(screen.getByRole("button", { name: "Снять на выбранном ПК" })).toBeEnabled();
+  chooseInstrument("arinst");
+  expect(await screen.findByLabelText("Устройство ВАЦ")).toHaveValue("pc");
+  expect(screen.getByRole("button", { name: "Снять трассу" })).toBeEnabled();
   expect(vnaCaptureApi.start).toHaveBeenCalledTimes(1);
   expect(localStorage.getItem("erp.vna.pc:user-a")).toBeNull();
 });
@@ -263,14 +264,14 @@ it("shows the remembered PC and lets the user explicitly change it before captur
     .mockResolvedValueOnce({ ...pending, agent: second });
   render(<VnaCapture instruments={instruments} onFile={() => {}} onBusy={() => {}} />);
   fireEvent.click(screen.getByRole("button", { name: "Снять с ВАЦ" }));
-  expect(screen.getByText("ПК: ПК ОТК")).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Средство измерений"), { target: { value: "planar" } });
-  fireEvent.click(screen.getByRole("button", { name: "Сменить ПК" }));
-  fireEvent.change(await screen.findByLabelText("ПК с ВАЦ"), { target: { value: "pc2" } });
-  expect(vnaCaptureApi.start).toHaveBeenCalledExactlyOnceWith("planar", "");
-  fireEvent.click(screen.getByRole("button", { name: "Снять на выбранном ПК" }));
+  expect(screen.queryByText("ПК: ПК ОТК")).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Средство измерений"), { target: { value: "arinst" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сменить устройство" }));
+  fireEvent.change(await screen.findByLabelText("Устройство ВАЦ"), { target: { value: "pc2" } });
+  expect(vnaCaptureApi.start).toHaveBeenCalledExactlyOnceWith("arinst", "", true);
+  fireEvent.click(screen.getByRole("button", { name: "Снять трассу" }));
   expect(await screen.findByText("ПК: Другой ПК")).toBeInTheDocument();
-  expect(vnaCaptureApi.start).toHaveBeenLastCalledWith("planar", "pc2");
+  expect(vnaCaptureApi.start).toHaveBeenLastCalledWith("arinst", "pc2", false);
   expect(JSON.parse(localStorage.getItem("erp.vna.pc:user-a")!)).toEqual({ id: "pc2", pc: "Другой ПК" });
 });
 
@@ -281,16 +282,16 @@ it("uses a confirmed PC after remounting without asking again", async () => {
     .mockResolvedValue({ ...pending, status: "done" });
   const onFile = vi.fn();
   const view = render(<VnaCapture instruments={instruments} onFile={onFile} onBusy={() => {}} />);
-  chooseInstrument();
-  fireEvent.change(await screen.findByLabelText("ПК с ВАЦ"), { target: { value: "pc" } });
-  fireEvent.click(screen.getByRole("button", { name: "Снять на выбранном ПК" }));
+  chooseInstrument("arinst");
+  fireEvent.change(await screen.findByLabelText("Устройство ВАЦ"), { target: { value: "pc" } });
+  fireEvent.click(screen.getByRole("button", { name: "Снять трассу" }));
   await waitFor(() => expect(onFile).toHaveBeenCalledTimes(1));
   view.unmount();
   render(<VnaCapture instruments={instruments} onFile={onFile} onBusy={() => {}} />);
-  chooseInstrument();
+  chooseInstrument("arinst");
   await waitFor(() => expect(onFile).toHaveBeenCalledTimes(2));
-  expect(vnaCaptureApi.start).toHaveBeenLastCalledWith("planar", "pc");
-  expect(screen.queryByLabelText("ПК с ВАЦ")).not.toBeInTheDocument();
+  expect(vnaCaptureApi.start).toHaveBeenLastCalledWith("arinst", "", false);
+  expect(screen.queryByLabelText("Устройство ВАЦ")).not.toBeInTheDocument();
 });
 
 it.each(["broken-json", "blocked-storage"])("still captures with explicit choice when storage is %s", async (mode) => {
@@ -304,19 +305,19 @@ it.each(["broken-json", "blocked-storage"])("still captures with explicit choice
     .mockResolvedValue({ ...pending, status: "done" });
   const onFile = vi.fn();
   render(<VnaCapture instruments={instruments} onFile={onFile} onBusy={() => {}} />);
-  chooseInstrument();
-  fireEvent.change(await screen.findByLabelText("ПК с ВАЦ"), { target: { value: "pc" } });
-  fireEvent.click(screen.getByRole("button", { name: "Снять на выбранном ПК" }));
+  chooseInstrument("arinst");
+  fireEvent.change(await screen.findByLabelText("Устройство ВАЦ"), { target: { value: "pc" } });
+  fireEvent.click(screen.getByRole("button", { name: "Снять трассу" }));
   await waitFor(() => expect(onFile).toHaveBeenCalledTimes(1));
 });
 
 it("asks again when the remembered PC is offline without silently choosing its replacement", async () => {
   vi.mocked(vnaCaptureApi.start).mockResolvedValue({ status: "choose", agents: [{ ...agent, id: "pc2" }], preferred_agent_id: "pc" });
   render(<VnaCapture instruments={instruments} onFile={() => {}} onBusy={() => {}} />);
-  chooseInstrument();
-  expect(await screen.findByLabelText("ПК с ВАЦ")).toHaveValue("");
-  expect(screen.getByRole("button", { name: "Снять на выбранном ПК" })).toBeDisabled();
-  expect(vnaCaptureApi.start).toHaveBeenCalledExactlyOnceWith("planar", "pc");
+  chooseInstrument("arinst");
+  expect(await screen.findByLabelText("Устройство ВАЦ")).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Снять трассу" })).toBeDisabled();
+  expect(vnaCaptureApi.start).toHaveBeenCalledExactlyOnceWith("arinst", "", false);
 });
 
 
@@ -325,18 +326,18 @@ it("isolates remembered PCs across users in the same browser and resets an open 
   vi.mocked(vnaCaptureApi.start).mockResolvedValue({ status: "choose", agents: [agent] });
   render(<VnaCapture instruments={instruments} onFile={() => {}} onBusy={() => {}} />);
   fireEvent.click(screen.getByRole("button", { name: "Снять с ВАЦ" }));
-  expect(screen.getByText("ПК: ПК ОТК")).toBeInTheDocument();
+  expect(screen.queryByText("ПК: ПК ОТК")).not.toBeInTheDocument();
   expect(localStorage.getItem("erp.vna.pc")).toBeNull();
   act(() => setRightsPrincipal(principal("user-b")));
   expect(screen.queryByRole("dialog", { name: "Снять с ВАЦ" })).not.toBeInTheDocument();
-  chooseInstrument();
-  expect(await screen.findByLabelText("ПК с ВАЦ")).toHaveValue("");
-  expect(vnaCaptureApi.start).toHaveBeenCalledExactlyOnceWith("planar", "");
-  expect(screen.getByRole("button", { name: "Снять на выбранном ПК" })).toBeDisabled();
+  chooseInstrument("arinst");
+  expect(await screen.findByLabelText("Устройство ВАЦ")).toHaveValue("");
+  expect(vnaCaptureApi.start).toHaveBeenCalledExactlyOnceWith("arinst", "", false);
+  expect(screen.getByRole("button", { name: "Снять трассу" })).toBeDisabled();
   expect(localStorage.getItem("erp.vna.pc:user-b")).toBeNull();
-  fireEvent.change(screen.getByLabelText("ПК с ВАЦ"), { target: { value: "pc" } });
+  fireEvent.change(screen.getByLabelText("Устройство ВАЦ"), { target: { value: "pc" } });
   vi.mocked(vnaCaptureApi.start).mockResolvedValue({ ...pending, status: "done" });
-  fireEvent.click(screen.getByRole("button", { name: "Снять на выбранном ПК" }));
+  fireEvent.click(screen.getByRole("button", { name: "Снять трассу" }));
   await waitFor(() => expect(localStorage.getItem("erp.vna.pc:user-b")).toBe(JSON.stringify({ id: "pc", pc: agent.pc })));
 });
 
@@ -358,9 +359,9 @@ it("ignores legacy storage even when it is the only remembered choice", async ()
   localStorage.setItem("erp.vna.pc", JSON.stringify({ id: agent.id, pc: agent.pc }));
   vi.mocked(vnaCaptureApi.start).mockResolvedValue({ status: "choose", agents: [agent] });
   render(<VnaCapture instruments={instruments} onFile={() => {}} onBusy={() => {}} />);
-  chooseInstrument();
-  expect(await screen.findByLabelText("ПК с ВАЦ")).toHaveValue("");
-  expect(vnaCaptureApi.start).toHaveBeenCalledExactlyOnceWith("planar", "");
+  chooseInstrument("arinst");
+  expect(await screen.findByLabelText("Устройство ВАЦ")).toHaveValue("");
+  expect(vnaCaptureApi.start).toHaveBeenCalledExactlyOnceWith("arinst", "", false);
   expect(localStorage.getItem("erp.vna.pc")).toBeNull();
 });
 
@@ -368,8 +369,19 @@ it("uses the server preference when routing returns a choice despite the local c
   const second = { ...agent, id: "pc2", pc: "Другой ПК" };
   vi.mocked(vnaCaptureApi.start).mockResolvedValue({ status: "choose", agents: [agent, second], preferred_agent_id: "pc2" });
   render(<VnaCapture instruments={instruments} onFile={() => {}} onBusy={() => {}} />);
+  chooseInstrument("arinst");
+  expect(await screen.findByLabelText("Устройство ВАЦ")).toHaveValue("pc2");
+  expect(vnaCaptureApi.start).toHaveBeenCalledExactlyOnceWith("arinst", "", false);
+  expect(screen.getByRole("button", { name: "Снять трассу" })).toBeEnabled();
+});
+
+
+it("routes Planar by the chosen instrument without a remembered PC", async () => {
+  vi.mocked(vnaCaptureApi.start).mockResolvedValue({ ...pending, status: "done" });
+  const onFile = vi.fn();
+  render(<VnaCapture instruments={instruments} onFile={onFile} onBusy={() => {}} />);
   chooseInstrument();
-  expect(await screen.findByLabelText("ПК с ВАЦ")).toHaveValue("pc2");
-  expect(vnaCaptureApi.start).toHaveBeenCalledExactlyOnceWith("planar", "pc");
-  expect(screen.getByRole("button", { name: "Снять на выбранном ПК" })).toBeEnabled();
+  await waitFor(() => expect(onFile).toHaveBeenCalledTimes(1));
+  expect(vnaCaptureApi.start).toHaveBeenCalledExactlyOnceWith("planar", "", false);
+  expect(screen.queryByLabelText("Устройство ВАЦ")).not.toBeInTheDocument();
 });
