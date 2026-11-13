@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from app.main import app
 from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.production.infrastructure import ProductionInstrumentRow
+from app.modules.warehouse import devices, scan_agents, vna_jobs
 from app.modules.warehouse.devices import DeviceRow, VnaBindingRow
 from app.modules.warehouse.scan_jobs import ScanJobClosed, create_job
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork
@@ -21,6 +22,28 @@ from tests.warehouse.test_vna_jobs import (  # noqa: F401
 )
 
 SCAN = "/api/stock/receipts/scan-jobs"
+
+
+def test_domain_heartbeat_records_devices_and_an_empty_report_disconnects_them(capture):
+    _, _, clock, sessions = capture
+    uow = SqlAlchemyWarehouseUnitOfWork(sessions)
+    report = dict(machine_id="pc", pc_name="СКЛАД", version="2.7.0", ip_seen="", ip_lan="")
+    scan_agents.heartbeat(uow, **report, scanners=[{"id": "wia", "name": "Pantum"}],
+                          vna={"name": NAME, "ready": True}, vna_sources=["s2vna", "arinst"], now=clock.now)
+    with sessions() as session:
+        assert {(row.kind, row.device_id, row.present) for row in session.scalars(select(DeviceRow))} == {
+            ("scan", "wia", True), ("s2vna", "26030095", True), ("arinst", "arinst", True)}
+        assert session.get(VnaBindingRow, "26030095").machine_id == "pc"
+    assert vna_jobs.agents(uow, clock.now)[0]["vna_sources"] == ["s2vna", "arinst"]
+
+    clock.now += timedelta(minutes=1)
+    scan_agents.heartbeat(uow, **report, scanners=[], now=clock.now)
+    assert devices.scanner_agents(uow, clock.now) == []
+    assert vna_jobs.agents(uow, clock.now) == []
+    with sessions() as session:
+        rows = session.scalars(select(DeviceRow)).all()
+        assert len(rows) == 3 and all(not row.present for row in rows)
+        assert session.get(VnaBindingRow, "26030095").machine_id == "pc"
 
 
 def test_scanner_inventory_expires_even_while_its_agent_polls(capture):

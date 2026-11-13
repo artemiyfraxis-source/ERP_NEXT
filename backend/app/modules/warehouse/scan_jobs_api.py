@@ -309,11 +309,8 @@ def scan_agent_heartbeat(
         scan_agents.heartbeat(
             uow_factory(), machine_id=machine_id, pc_name=payload.pc_name, version=payload.version,
             ip_seen=_client_ip(request), ip_lan=payload.lan_ip,
-            scanners=[item.model_dump() for item in payload.scanners], now=now)
-        vna_jobs.heartbeat(uow_factory(), machine_id,
-                           payload.vna.model_dump() if payload.vna else None, now, payload.vna_sources)
-        devices.heartbeat(uow_factory(), machine_id, [item.model_dump() for item in payload.scanners],
-                          payload.vna.model_dump() if payload.vna else None, payload.vna_sources, now)
+            scanners=[item.model_dump() for item in payload.scanners], now=now,
+            vna=payload.vna.model_dump() if payload.vna else None, vna_sources=payload.vna_sources)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     return {"ok": True, "update": update_for(payload.version)}

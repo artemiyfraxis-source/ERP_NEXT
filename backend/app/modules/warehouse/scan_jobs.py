@@ -167,7 +167,8 @@ class ScanJobRow(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     requested_by: Mapped[str] = mapped_column(String(255), nullable=False)
-    requester_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("identity_users.id", ondelete="SET NULL"), nullable=True)
+    # Identity belongs to another module; authorization compares this stable ID after loading the job by PK.
+    requester_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

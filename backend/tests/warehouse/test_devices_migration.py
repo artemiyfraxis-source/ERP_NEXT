@@ -7,6 +7,27 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 import pytest
+import sqlalchemy as sa
+
+from app.modules.warehouse.devices import DeviceRow, VnaBindingRow
+from app.modules.warehouse.infrastructure import WarehouseReceiptFileRow
+from app.modules.warehouse.scan_agents import ScanAgentRow
+from app.modules.warehouse.scan_jobs import ScanJobRow
+
+
+@pytest.mark.parametrize("dialect", ["sqlite", "postgresql"])
+def test_device_queue_ddl_does_not_require_identity_tables(dialect):
+    metadata = sa.MetaData()
+    for model in (ScanAgentRow, WarehouseReceiptFileRow, ScanJobRow, DeviceRow, VnaBindingRow):
+        model.__table__.to_metadata(metadata)
+    engine = sa.create_mock_engine(f"{dialect}://", lambda sql, *args, **kwargs: sql.compile(dialect=engine.dialect))
+    metadata.create_all(engine)
+    assert not metadata.tables["warehouse_scan_jobs"].c.requester_id.foreign_keys
+
+
+def _schema(database):
+    with sqlite3.connect(database) as db:
+        return db.execute("SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name").fetchall()
 
 
 def test_device_migration_closes_old_jobs_and_enforces_device_keys(tmp_path, monkeypatch):
@@ -17,6 +38,7 @@ def test_device_migration_closes_old_jobs_and_enforces_device_keys(tmp_path, mon
     assert ScriptDirectory.from_config(config).get_current_head() == "0177_agent_devices"
     assert ScriptDirectory.from_config(config).get_revision("0177_agent_devices").down_revision == "0176_vna_capture_jobs"
     command.upgrade(config, "0176_vna_capture_jobs")
+    old_schema = _schema(database)
     with sqlite3.connect(database) as db:
         db.execute("INSERT INTO warehouse_scan_agents(machine_id,first_seen,last_seen) VALUES ('pc','2026-11-12','2026-11-12')")
         for kind in ("scan", "vna"):
@@ -40,6 +62,7 @@ def test_device_migration_closes_old_jobs_and_enforces_device_keys(tmp_path, mon
     with sqlite3.connect(database) as db:
         db.execute("PRAGMA foreign_keys=ON")
         columns = [column[1] for column in db.execute("PRAGMA table_info(warehouse_scan_jobs)")]
+        assert all(fk[3] != "requester_id" for fk in db.execute("PRAGMA foreign_key_list(warehouse_scan_jobs)"))
         rows = {row[0]: row for row in db.execute("SELECT * FROM warehouse_scan_jobs")}
         assert rows.keys() == before.keys()
         for key, row in rows.items():
@@ -65,6 +88,7 @@ def test_device_migration_closes_old_jobs_and_enforces_device_keys(tmp_path, mon
             with pytest.raises(sqlite3.IntegrityError):
                 db.execute("INSERT INTO warehouse_vna_bindings VALUES (?,?)", row)
     command.downgrade(config, "0176_vna_capture_jobs")
+    assert _schema(database) == old_schema
     with sqlite3.connect(database) as db:
         assert {row[0]: row for row in db.execute("SELECT * FROM warehouse_scan_jobs")} == {
             key: row[:-1] for key, row in rows.items()}

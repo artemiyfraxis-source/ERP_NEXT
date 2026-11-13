@@ -157,8 +157,11 @@ def strict_scanner_version(version: str) -> bool:
 
 
 def heartbeat(uow, *, machine_id: str, pc_name: str, version: str, ip_seen: str, ip_lan: str, scanners: list,
-              now: datetime) -> None:
-    """The agent's report (start, then every ~2 min): created on the first one, rewritten after."""
+              now: datetime, vna: dict | None = None, vna_sources: list[str] | None = None) -> None:
+    """Record the PC and its complete device report (start, then every ~2 min)."""
+    # These registries refer to ScanAgentRow; load them after this module's models are defined.
+    from . import devices, vna_jobs
+
     machine_id = _clean(machine_id, MACHINE_ID_MAX)
     if not machine_id or machine_id.startswith(LEGACY_PREFIX):
         raise ValueError("Нужен machine_id агента")
@@ -179,6 +182,8 @@ def heartbeat(uow, *, machine_id: str, pc_name: str, version: str, ip_seen: str,
             for key, value in values.items():
                 setattr(row, key, value)
         uow.commit()
+    vna_jobs.heartbeat(uow, machine_id, vna, now, vna_sources)
+    devices.heartbeat(uow, machine_id, cleaned, vna, vna_sources, now)
 
 
 def touch(uow, *, machine_id: str | None, host: str, ip_seen: str, now: datetime) -> str | None:

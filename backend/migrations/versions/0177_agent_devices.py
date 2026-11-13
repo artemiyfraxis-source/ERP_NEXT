@@ -11,9 +11,8 @@ DESTRUCTIVE = False
 
 
 def upgrade():
-    with op.batch_alter_table("warehouse_scan_jobs") as batch:
-        batch.add_column(sa.Column("requester_id", sa.Uuid(), nullable=True))
-        batch.create_foreign_key("fk_warehouse_scan_jobs_requester", "identity_users", ["requester_id"], ["id"], ondelete="SET NULL")
+    # Cross-module identities are stored as UUIDs, without a dependency on identity's tables.
+    op.add_column("warehouse_scan_jobs", sa.Column("requester_id", sa.Uuid(), nullable=True))
     # Old jobs have no provable requester. Close them before any agent can claim/upload them.
     op.execute(sa.text("UPDATE warehouse_scan_jobs SET status = 'failed', finished_at = CURRENT_TIMESTAMP, "
                       "error = :reason WHERE requester_id IS NULL AND status IN ('pending', 'claimed')")
@@ -39,6 +38,5 @@ def upgrade():
 def downgrade():
     op.drop_table("warehouse_vna_bindings")
     op.drop_table("warehouse_agent_devices")
-    with op.batch_alter_table("warehouse_scan_jobs") as batch:
-        batch.drop_constraint("fk_warehouse_scan_jobs_requester", type_="foreignkey")
-        batch.drop_column("requester_id")
+    # No constraint references this column; preserve the old table definition without a batch rebuild.
+    op.drop_column("warehouse_scan_jobs", "requester_id")
