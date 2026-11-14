@@ -1573,6 +1573,31 @@ export interface ProductionInstrument {
 }
 
 export type InstrumentInput = Omit<ProductionInstrument, "id" | "version" | "files" | "warehouse_writeoff_id">;
+export interface RfInterface {
+  series: string;
+  body: string;
+  center: string;
+  impedance_ohm: number | null;
+  f_max_ghz: number | null;
+  f_confirmed: boolean;
+  f_source: string;
+}
+export interface InstrumentRfDetails {
+  version: number;
+  interfaces: RfInterface[];
+  role: string;
+  confirmed: boolean;
+  source: string;
+  f_min_ghz: number | null;
+  max_points: number | null;
+  kit_definition: string;
+}
+export const rfInterfacesApi = {
+  get: (id: string) => api<{ rf: InstrumentRfDetails }>(`/api/production/instruments/${encodeURIComponent(id)}/rf-interfaces`),
+  save: (id: string, rf: InstrumentRfDetails) => api<{ rf: InstrumentRfDetails }>(`/api/production/instruments/${encodeURIComponent(id)}/rf-interfaces`, {
+    method: "PUT", body: JSON.stringify(rf),
+  }),
+};
 export interface InstrumentFromStockInput {
   parent_id: string;
   lot_id: string;

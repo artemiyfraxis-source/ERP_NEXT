@@ -40,6 +40,7 @@ function setup(rows: ProductionInstrument[] = [instrument], handle?: (request: R
     const custom = handle?.(request);
     if (custom) return custom;
     if (request.path === `${base}/next-number`) return json({ inventory_number: "СИ.006" });
+    if (request.path.endsWith("/rf-interfaces")) return json({ rf: { version: 0, interfaces: [], role: "unknown", confirmed: false, source: "", f_min_ghz: null, max_points: null, kit_definition: "" } });
     if (request.path === base && request.method === "GET") return json({ instruments: records });
     if (request.path.startsWith("/api/stock")) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
     if (request.path === `${base}/from-stock`) return json({ instrument: accessory });
