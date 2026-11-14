@@ -169,7 +169,7 @@ def _unit_plan(session: Session, entries: list[MappingEntry], supporting: bool, 
     if supporting:
         supporting_ids = set(session.scalars(select(EquipmentModelRow.id).where(EquipmentModelRow.role == "supporting")))
         for unit in units:
-            if unit.id not in explicit_ids and unit.equipment_model_id in supporting_ids and type_of(unit.fields) == "Оборудование":
+            if unit.id not in explicit_ids and unit.equipment_model_id in supporting_ids and type_of(unit.fields) in ("Оборудование", "Оборудование (ПР)"):
                 change_type(unit, SUPPORTING_TYPE)
     audit_counts.changed = len(audit_events)
     return units, field_updates, audit_events

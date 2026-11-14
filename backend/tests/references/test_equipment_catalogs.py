@@ -56,7 +56,7 @@ def cutover_db(tmp_path, monkeypatch):
                            " record_id, record_tab, record_text, changes, actor_id, actor_name)"
                            " VALUES (?, '2026-11-12', 'linked', ?, 'ЦАР', 'ГРН', '1', 'A', 'Имя', ?, 'ob', 'История', '[]', ?, 'Автор')",
                            (uuid4().hex, uuid4().hex, ids[0].hex, uuid4().hex))
-    command.upgrade(config, "0176_vna_capture_jobs")
+    command.upgrade(config, "0177_agent_devices")
     return path, config, ids
 
 
@@ -115,7 +115,7 @@ def test_untouched_cutover_downgrade_and_reupgrade_keep_every_relation(cutover_d
     engine = create_engine(f"sqlite:///{path}")
     try:
         before = evidence(engine)
-        command.downgrade(config, "0177_equipment_catalogs")
+        command.downgrade(config, "0178_equipment_catalogs")
         with sqlite3.connect(path) as connection:
             assert connection.execute("SELECT count(*) FROM equipment_units").fetchone()[0] == 0
             assert connection.execute("SELECT count(*) FROM tech_operation_records WHERE tab='ob'").fetchone()[0] == len(ids)
@@ -154,7 +154,7 @@ def test_cutover_downgrade_refuses_changed_live_data_without_any_mutation(cutove
             session.commit()
         before = evidence(engine)
         with pytest.raises(RuntimeError, match="cannot restore a stale archive"):
-            command.downgrade(config, "0177_equipment_catalogs")
+            command.downgrade(config, "0178_equipment_catalogs")
         assert evidence(engine) == before
     finally:
         engine.dispose()
@@ -162,8 +162,8 @@ def test_cutover_downgrade_refuses_changed_live_data_without_any_mutation(cutove
 
 def test_additive_schema_can_be_removed_before_cutover(cutover_db):
     path, config, _ = cutover_db
-    command.upgrade(config, "0177_equipment_catalogs")
-    command.downgrade(config, "0176_vna_capture_jobs")
+    command.upgrade(config, "0178_equipment_catalogs")
+    command.downgrade(config, "0177_agent_devices")
     with sqlite3.connect(path) as connection:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert not ({"equipment_units", "equipment_instrument_bindings", *CATALOG_TABLES.values()} & tables)
@@ -180,6 +180,69 @@ def test_unknown_type_blocks_before_any_copy(cutover_db):
     assert ids[0].hex in str(error.value) or str(ids[0]) in str(error.value)
     with sqlite3.connect(path) as connection:
         assert connection.execute("SELECT count(*) FROM equipment_units").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("kind", ["Оборудование", "Оборудование (ПР)", ""])
+def test_reviewed_instruments_block_cutover_on_type_drift(cutover_db, kind):
+    path, config, _ = cutover_db
+    identifiers = (UUID("932092f1-c555-492e-82a4-1ae98a3d6654"), UUID("74ecb453-ddcf-482f-bf36-88e7f2b44aba"))
+    with sqlite3.connect(path) as connection:
+        for index, identifier in enumerate(identifiers):
+            temporary = _unit(connection, f"СИ.{900 + index}")
+            connection.execute("UPDATE tech_operation_records SET id=?, fields=? WHERE id=?", (
+                identifier.hex, json.dumps({"Тип": kind, "obType": "Средства измерений", "Инв. номер": f"СИ.{900 + index}"}), temporary.hex))
+    with pytest.raises(RuntimeError, match="Перенос оборудования остановлен: средства измерений") as error:
+        command.upgrade(config, "head")
+    message = str(error.value)
+    for index, identifier in enumerate(identifiers):
+        assert identifier.hex in message or str(identifier) in message
+        assert f"СИ.{900 + index}" in message
+    assert f"Тип={kind!r}" in message and "Средства измерений" in message
+    with sqlite3.connect(path) as connection:
+        for table in ("equipment_units", *CATALOG_TABLES.values()):
+            assert connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+
+
+def test_all_reviewed_instruments_keep_their_approved_catalog(cutover_db):
+    from alembic.script import ScriptDirectory
+
+    path, config, _ = cutover_db
+    migration = ScriptDirectory.from_config(config).get_revision("0179_equipment_catalogs_cutover").module
+    expected = migration.EXPECTED_INSTRUMENT_CATALOGS
+    assert len(expected) == 15 and set(expected.values()) == {"Средства измерений"}
+    with sqlite3.connect(path) as connection:
+        for index, (identifier, kind) in enumerate(expected.items()):
+            temporary = _unit(connection, f"СИ.{900 + index}")
+            connection.execute("UPDATE tech_operation_records SET id=?, fields=? WHERE id=?", (
+                identifier.hex, json.dumps({"Тип": kind, "Инв. номер": f"СИ.{900 + index}"}), temporary.hex))
+    command.upgrade(config, "head")
+    with sqlite3.connect(path) as connection:
+        catalogs = dict(connection.execute("SELECT id, catalog FROM equipment_units"))
+        assert all(catalogs[identifier.hex] == "ob_measuring" for identifier in expected)
+
+
+def test_migrated_legacy_machine_stays_selectable_and_resolvable(cutover_db):
+    from app.modules.production.equipment_catalog import build_catalog
+    from app.modules.references.equipment import physical_equipment
+
+    path, config, ids = cutover_db
+    command.upgrade(config, "head")
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with Session(engine) as session:
+            unit = SqlAlchemyTechOperationRepository(session).get(ids[7])
+            assert unit.tab == TechOperationTab.EQUIPMENT
+            assert unit.fields["Тип"] == "Оборудование (ПР)"
+            assert physical_equipment([unit])[0].inventory_number == "ОБ.008"
+            catalog = build_catalog([unit], SqlAlchemyEquipmentRepository(session).models())
+            counts, labels = catalog.site_units()
+            assert counts[("", str(unit.equipment_model_id))] == 1
+            assert ("", str(unit.equipment_model_id)) in labels
+            machine = catalog.machine({"section": "Оборудование", "inventory_number": "ОБ.008",
+                                       "equipment_model_id": str(unit.equipment_model_id)})
+            assert machine is not None and machine.key == str(unit.equipment_model_id)
+    finally:
+        engine.dispose()
 
 
 def test_union_order_limit_move_identity_and_database_ownership(cutover_db):
@@ -331,22 +394,48 @@ def test_import_does_not_copy_another_catalogs_columns(references_api):
     assert own.status_code == 201, own.text
 
 
+@pytest.mark.parametrize("name_key, alias", [("Наменование", "Наименование"), ("Наименование", "Наменование")])
+@pytest.mark.parametrize("blank_present", [False, True])
+def test_unrelated_edit_with_untouched_blank_alias_preserves_name(references_api, name_key, alias, blank_present):
+    fields = {"Тип": "Оборудование", name_key: "Станок", "Артикул": "A1"}
+    if blank_present:
+        fields[alias] = ""
+    base = "/api/references/tech-operations"
+    created = references_api.post(base, json={"tab": "ob", "fields": fields})
+    assert created.status_code == 201, created.text
+    before = created.json()
+    response = references_api.patch(f"{base}/{before['id']}", json={"edits": [
+        {"field": alias, "old": "", "value": ""},
+        {"field": "Артикул", "old": "A1", "value": "A2"},
+    ]})
+    assert response.status_code == 200, response.text
+    saved = response.json()
+    assert saved["fields"][name_key] == "Станок" and saved["fields"]["Артикул"] == "A2"
+    assert saved["equipment_model_id"] == before["equipment_model_id"]
+    # An actual deletion of the populated name remains invalid.
+    cleared = references_api.patch(f"{base}/{before['id']}", json={"edits": [
+        {"field": name_key, "old": "Станок", "value": ""},
+    ]})
+    assert cleared.status_code == 422, cleared.text
+
+
+@pytest.mark.parametrize("name_key, alias", [("Наменование", "Наименование"), ("Наименование", "Наменование")])
 @pytest.mark.parametrize("via_import", [False, True])
 @pytest.mark.parametrize("both_aliases", [False, True])
-def test_single_name_alias_edit_synchronizes_existing_aliases(references_api, via_import, both_aliases):
-    fields = {"Тип": "Оборудование", "Наменование": "Станок"}
+def test_single_name_alias_edit_synchronizes_existing_aliases(references_api, via_import, both_aliases, name_key, alias):
+    fields = {"Тип": "Оборудование", name_key: "Станок"}
     if both_aliases:
-        fields["Наименование"] = "Станок"
+        fields[alias] = "Станок"
     response = references_api.post("/api/references/tech-operations", json={"tab": "ob", "fields": fields})
     assert response.status_code == 201, response.text
     identifier = response.json()["id"]
     if via_import:
         response = references_api.post("/api/references/import/ob?dry_run=0", json={"rows": [{"fields": {
-            "equipmentKey": "id:" + identifier, "Наименование": "Станок новый"}}]})
+            "equipmentKey": "id:" + identifier, alias: "Станок новый"}}]})
         assert response.status_code == 200 and len(response.json()["updated"]) == 1, response.text
     else:
         response = references_api.patch("/api/references/tech-operations/" + identifier, json={"edits": [
-            {"field": "Наименование", "old": "Станок" if both_aliases else "", "value": "Станок новый"}]})
+            {"field": alias, "old": "Станок" if both_aliases else "", "value": "Станок новый"}]})
         assert response.status_code == 200, response.text
     saved = references_api.get("/api/references/tech-operations?tab=ob").json()["records"][0]
     assert saved["fields"]["Наменование"] == saved["fields"]["Наименование"] == "Станок новый"

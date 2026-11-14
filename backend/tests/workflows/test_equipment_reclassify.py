@@ -201,7 +201,8 @@ def test_nonstandard_source_spelling_aborts_before_forcing_the_unit_number(engin
 
 def test_rule_changes_only_supporting_equipment_type_preserving_numbers_and_roles(engine):
     with Session(engine) as session, session.begin():
-        items = [unit(session, "ОБ.200", kind="Оборудование"), unit(session, "ОБ.201", kind="Оборудование"),
+        # ОБ.201 keeps the legacy type «Оборудование (ПР)»: still a machine, so the supporting rule applies to it too.
+        items = [unit(session, "ОБ.200", kind="Оборудование"), unit(session, "ОБ.201", kind="Оборудование (ПР)"),
                  unit(session, "ОБ.202", kind="Инструмент"), unit(session, "ОБ.203", kind="Оборудование")]
         session.add_all(items)
         session.flush()

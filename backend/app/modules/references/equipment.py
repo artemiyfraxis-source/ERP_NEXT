@@ -137,7 +137,7 @@ def physical_equipment(records: Iterable[TechOperationRecord]) -> tuple[Physical
         if record.tab != TechOperationTab.EQUIPMENT:
             continue
         fields = {" ".join(str(key).split()).casefold(): value for key, value in record.fields.items()}
-        if field(fields, "тип", "obtype").casefold() not in {"оборудование"}:
+        if field(fields, "тип", "obtype").casefold() not in {"оборудование", "оборудование (пр)"}:
             continue
         number = inv_key(field(fields, "инв. номер", "inventorynumber")).upper().replace("OБ", "ОБ")
         parsed = parse_inventory(number)
@@ -223,7 +223,9 @@ def normalize_equipment_fields(fields: Mapping[str, str]) -> dict[str, str]:
 def sync_name_edits(previous: Mapping[str, str], fields: Mapping[str, str], changed: Iterable[str]) -> dict[str, str]:
     """One explicitly edited alias updates the stored pair; conflicting inputs stay errors."""
     result = dict(fields)
-    aliases = set(changed) & set(NAME_KEYS)
+    # Old forms may submit an absent/empty alias unchanged alongside an unrelated edit.
+    # Such a blank is not a request to clear the populated name in the other alias.
+    aliases = {key for key in set(changed) & set(NAME_KEYS) if field(previous, key) or field(result, key)}
     if len(aliases) == 1:
         if len({field(previous, key) for key in NAME_KEYS if field(previous, key)}) > 1:
             raise ReferenceValidationError("Наименование и Наменование содержат разные значения")

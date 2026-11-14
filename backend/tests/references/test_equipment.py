@@ -230,8 +230,7 @@ def test_physical_catalog_keeps_actual_instances_and_models_from_reference_mirro
     sheet = parse_mirror_rows(source.read_text(encoding="utf-8"))
     records = [TechOperationRecord.create(
         tab=TechOperationTab.EQUIPMENT, display_text=str(index), search_text="", source_sheet="БД.ОБ",
-        sort_key=str(index), fields={key: ("Оборудование" if key == "Тип" and value == "Оборудование (ПР)" else value)
-                                    for key, value in zip(sheet[1], row)},
+        sort_key=str(index), fields=dict(zip(sheet[1], row)),
     ) for index, row in enumerate(sheet[2:])]
     catalog = {item.inventory_number: item for item in physical_equipment(records)}
     assert len(catalog) == 130

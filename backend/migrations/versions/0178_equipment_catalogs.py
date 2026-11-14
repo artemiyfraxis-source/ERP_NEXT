@@ -1,10 +1,10 @@
-"""Add six independently owned equipment catalogs; the legacy source remains authoritative until 0178."""
+"""Add six independently owned equipment catalogs; the legacy source remains authoritative until 0179."""
 
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0177_equipment_catalogs"
-down_revision = "0176_vna_capture_jobs"
+revision = "0178_equipment_catalogs"
+down_revision = "0177_agent_devices"
 branch_labels = depends_on = None
 DESTRUCTIVE = False
 

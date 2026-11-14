@@ -24,7 +24,7 @@ from app.modules.references.domain import EQUIPMENT_TABS, TechOperationTab
 
 SUPPORTING = "supporting"
 # Типы БД.ОБ, что показываются станками в загрузке и без работы (ручной инструмент, матрицы — нет).
-MACHINE_TYPES = frozenset({"оборудование"})
+MACHINE_TYPES = frozenset({"оборудование", "оборудование (пр)"})
 MACHINE_COLUMN = "Машина"
 _INVENTORY = re.compile(r"([ОO]Б)\s*\.\s*(\d+)", re.IGNORECASE)
 _UNIT = re.compile(r"^ОБ\.(\d+)(?:\.(\d+|[A-ZА-Я]))?$")

@@ -33,7 +33,7 @@ from .domain import BASE_COLUMNS, CUSTOM_COLUMN_TABS, EDITABLE_TABS, MAX_COLUMN_
 from .domain import StockArticle, StockLinkChange, StockLinkEntry, StockLinkEvent
 from .lugs import ter_kind_of
 from .equipment import (
-    BASE_KEY, CODE_KEY, EXTRA_KEYS, INV_KEY, ROW_KEY, base_value as fields_base, field, next_instance_inventory,
+    BASE_KEY, CODE_KEY, EXTRA_KEYS, INV_KEY, NAME_KEYS, ROW_KEY, base_value as fields_base, field, next_instance_inventory,
     prepare_equipment, normalize_equipment_fields, sync_name_edits, updated_display,
 )
 from .technology import (
@@ -314,7 +314,7 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
             own_columns = [*custom_columns(record.tab, uow),
                            *(CABLE_WRITABLE[record.cable_kind] if record.tab in CABLE_TABS else ())]
         known = (edit.field in record.fields or edit.field in stored or edit.field in (own_columns or ())
-                 or (record.tab in EQUIPMENT_TABS and edit.field in (*EXTRA_KEYS, *CATALOG_COLUMNS[record.tab.value]))
+                 or (record.tab in EQUIPMENT_TABS and edit.field in (*NAME_KEYS, *EXTRA_KEYS, *CATALOG_COLUMNS[record.tab.value]))
                  or (record.tab == TechOperationTab.COAX and edit.field in _coax_card_columns()))
         if not known:
             refused.append(f"{edit.field}: поля нет в записи")

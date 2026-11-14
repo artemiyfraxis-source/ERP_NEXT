@@ -92,6 +92,32 @@ it("hides the previous catalog while the next catalog is loading", async () => {
   expect(await screen.findByRole("columnheader", { name: "Заводской номер" })).toBeInTheDocument();
 });
 
+it.each(["Наменование", "Наименование"])("preserves a name stored only under %s when another field changes", async (nameKey) => {
+  const alias = nameKey === "Наменование" ? "Наименование" : "Наменование";
+  const record = { id: "machine", tab: "ob", display_text: "Станок", source_sheet: "", fields: {
+    "Тип": "Оборудование", [nameKey]: "Станок", "Инв. номер": "ОБ.001", "Артикул": "A1",
+  } };
+  const writes: unknown[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "PATCH") { writes.push(JSON.parse(String(init.body))); return json(record); }
+    if (path.includes("tech-operations?")) {
+      const params = new URL(path, "http://localhost").searchParams;
+      return json({ metadata: null, columns: ["Инв. номер", alias, "Артикул"],
+        records: params.get("tab") === "ob" ? [record] : [] });
+    }
+    if (path.endsWith("/maps")) return json({ suppliers: [], countries: [], gost_awg: [] });
+    return json({ bases: [], rows: [], models: [], codes: [], missing: [], owners: {} });
+  });
+  render(<ReferencesPage principal={principal} initialTab="ob" />);
+  fireEvent.click(await screen.findByText("ОБ.001"));
+  fireEvent.click(screen.getByRole("button", { name: "Править запись" }));
+  expect(screen.getByLabelText("Наименование")).toHaveValue("Станок");
+  fireEvent.change(screen.getByLabelText("Артикул"), { target: { value: "A2" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить запись" }));
+  await waitFor(() => expect(writes).toEqual([{ edits: [{ field: "Артикул", old: "A1", value: "A2" }] }]));
+});
+
 it("edits a linked matrix from another catalog, including its historical name field", async () => {
   const tool = { id: "tool", tab: "ob_tools", display_text: "Пресс", source_sheet: "", fields: {
     "Тип": "Инструмент", "Подтип": "Обжимной инструмент", "Наменование": "Пресс", "Инв. номер": "ОБ.1",

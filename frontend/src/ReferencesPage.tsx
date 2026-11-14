@@ -399,8 +399,9 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
         const original = (isEquipmentTab(techTab) ? equipmentFamily : tech.records).find((record) => record.id === editing.id);
         if (!original) throw new Error("Запись не найдена — обновите каталог");
         const edits = Object.entries(editing.values)
-          .filter(([field, value]) => original && original.fields[field] !== value)
-          .map(([field, value]) => ({ field, old: original?.fields[field] ?? "", value }));
+          // Empty form defaults (including a missing name alias) are not user edits.
+          .filter(([field, value]) => (original.fields[field] ?? "") !== value)
+          .map(([field, value]) => ({ field, old: original.fields[field] ?? "", value }));
         if (edits.length) await referencesApi.editRecord(editing.id, edits);
         // «Перенести в …»: строка в «Терминалы» / «Наконечники» (поля не меняются)
         if (editing.moveTo && editing.moveTo !== techTab) {

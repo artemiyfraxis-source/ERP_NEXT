@@ -5,13 +5,13 @@ instrument verification facts are inferred. The retained archive is not a rollba
 """
 
 from collections import Counter
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0178_equipment_catalogs_cutover"
-down_revision = "0177_equipment_catalogs"
+revision = "0179_equipment_catalogs_cutover"
+down_revision = "0178_equipment_catalogs"
 branch_labels = depends_on = None
 DESTRUCTIVE = False
 
@@ -23,6 +23,20 @@ CATALOGS = {
 TYPES = {"Оборудование": "ob", "Оборудование (ПР)": "ob", "Средства измерений": "ob_measuring",
          "Обеспечивающее оборудование": "ob_support", "Аппликаторы": "ob_applicators",
          "Матрицы": "ob_dies", "Инструмент": "ob_tools", "Обжимной инструмент": "ob_tools"}
+# Reviewed instruments reclassified on production on 2026-11-13. Missing rows are valid
+# in fresh/test databases; a present UUID must retain its approved catalog before cutover.
+EXPECTED_INSTRUMENT_CATALOGS = {
+    UUID(identifier): "Средства измерений" for identifier in (
+        "932092f1-c555-492e-82a4-1ae98a3d6654", "3fbbb1f8-043e-4855-86c9-be13b9fd96fd",
+        "d3bead43-97ec-429b-9ba0-2cc5f3fd1c4d", "49ad3c60-7fa4-4cee-ac8d-5dd848c5f4a1",
+        "c439928e-ace5-4c57-880a-24bd20af3909", "e50e4f2e-2524-44a3-b418-96d4631c5ac0",
+        "3bb97644-ff2e-49be-9d5e-7d029ba5dfa7", "3057f129-94ca-4e59-aab8-08f8f133ade3",
+        "588bc43b-5948-44a3-a0ec-4fefbb64e9aa", "895c352b-4c63-47f8-94b5-499291d658b9",
+        "66351616-bcd7-4c7a-bcbc-890a66e7d85d", "81d24a96-4ea8-4691-b753-01562c4f729d",
+        "e8f99601-d902-4a8c-b467-14cea9338923", "1158cad4-4956-4e74-8804-3d25c68dd874",
+        "74ecb453-ddcf-482f-bf36-88e7f2b44aba",
+    )
+}
 RELATIONS = {
     "equipment_unit_links": ("unit_id", "target_id"),
     "equipment_setup_recipe_versions": ("machine_id",), "equipment_setup_tasks": ("machine_id",),
@@ -65,6 +79,18 @@ def upgrade():
     models = sa.Table("equipment_models", metadata, autoload_with=bind)
     roles = {row.id: row.role if row.role_confirmed else "" for row in bind.execute(sa.select(models))}
     rows = list(bind.execute(sa.select(source).where(source.c.tab == "ob")).mappings())
+    reviewed_errors = []
+    for row in rows:
+        expected = EXPECTED_INSTRUMENT_CATALOGS.get(UUID(str(row["id"])))
+        fields = row["fields"] or {}
+        kind = str(fields.get("Тип") or "").strip()
+        if expected is not None and kind != expected:
+            reviewed_errors.append(f"{row['id']} / {fields.get('Инв. номер') or fields.get('inventoryNumber') or ''}: "
+                                   f"Тип={kind!r}, ожидается {expected!r}")
+    if reviewed_errors:
+        raise RuntimeError("Перенос оборудования остановлен: средства измерений, проверенные 13.11.2026, "
+                           "сменили тип — верните «Средства измерений» или согласуйте новый список: "
+                           + "; ".join(reviewed_errors))
     manifest, errors = {}, []
     for row in rows:
         fields = row["fields"] or {}
@@ -146,7 +172,7 @@ def upgrade():
             normalized.append(item)
         assert sorted(map(repr, sorted((dict(x) for x in before[name]), key=repr))) == sorted(map(repr, sorted(normalized, key=repr))), name
     _freeze(bind)
-    print(f"0178: equipment manifest {dict(Counter(tab for tab, _, _ in manifest.values()))}; "
+    print(f"0179: equipment manifest {dict(Counter(tab for tab, _, _ in manifest.values()))}; "
           f"{len(seen)} UUIDs and all relation sets preserved; legacy rows frozen")
 
 
