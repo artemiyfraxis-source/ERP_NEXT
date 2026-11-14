@@ -35,7 +35,8 @@ def test_device_migration_closes_old_jobs_and_enforces_device_keys(tmp_path, mon
     database = tmp_path / "devices.db"
     config = Config(str(Path(__file__).parents[2] / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database.as_posix()}")
-    assert ScriptDirectory.from_config(config).get_current_head() == "0177_agent_devices"
+    script = ScriptDirectory.from_config(config)
+    assert "0177_agent_devices" in {revision.revision for revision in script.walk_revisions()}  # later heads may follow
     assert ScriptDirectory.from_config(config).get_revision("0177_agent_devices").down_revision == "0176_vna_capture_jobs"
     command.upgrade(config, "0176_vna_capture_jobs")
     old_schema = _schema(database)

@@ -183,7 +183,7 @@ it("keeps the registry usable when browser storage is blocked", () => {
 });
 
 it("marks overdue and near-due verification dates, and uses the existing pending-verification tone", () => {
-  setup([{ ...instrument, verification_due: "2000-01-01" }, unverified, { ...kit, verification_due: new Date().toISOString().slice(0, 10) }]);
+  setup([{ ...instrument, verification_due: "2000-01-01" }, unverified, { ...kit, verification_due: new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10) }]);
   expect(screen.getByText("Просрочена").parentElement).toHaveClass("is-overdue");
   expect(screen.getByText("До 30 дней").parentElement).toHaveClass("is-soon");
   expect(screen.getByText("Поверка не подтверждена", { selector: ".status-chip" })).toHaveAttribute("data-tone", "warning");
