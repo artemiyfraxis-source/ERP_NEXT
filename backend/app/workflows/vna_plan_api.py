@@ -44,18 +44,25 @@ def _dut_interfaces(coax, rows):
     return tuple(result), problems
 
 
+def _unverified(item, now) -> str | None:
+    """Why a measuring instrument may not be used for acceptance now (None — it may)."""
+    if item.kind.value != "Средство измерений":
+        return None
+    try:
+        item.validate_for(now)
+    except ProductionValidationError as error:
+        return str(error)
+    return None
+
+
 def _available(item, registry, now):
+    # Verification does not decide availability (owner: warn, don't block while testing); the plan is qualified instead.
     seen = set()
     current = item
     while current is not None:
         if current.id in seen or current.status.value == "Не используется":
             return False
         seen.add(current.id)
-        if current.id == item.id and current.kind.value == "Средство измерений":
-            try:
-                current.validate_for(now)
-            except ProductionValidationError:
-                return False
         if current.parent_id is None:
             return True
         current = registry.get(current.parent_id)
@@ -121,6 +128,23 @@ def vna_plan(task_id: UUID, operation_id: UUID, instrument_id: UUID,
         chains = dict(status="blocked", problems=problems or ["Не задана полоса нормы"], method=None,
                       calibration_connections=[], measurement_connections=[], calibration_plane=[], automatic_acceptance=False)
     status = "blocked" if profile["status"] == "blocked" or chains["status"] == "blocked" else chains["status"]
+    # The selected analyser is checked on its own, not through accessory availability: a VNA moved to «Принадлежность»
+    # or not confirmed as a VNA blocks the plan; one without valid verification may still be planned but never for acceptance.
+    selected = registry[instrument_id]
+    if selected.kind.value != "Средство измерений" or rf.role != "vna" or not rf.confirmed:
+        chains = {**chains, "problems": [*chains.get("problems", []),
+                  f"{selected.inventory_number} не подтверждён в реестре как ВАЦ (средство измерений с разъёмами портов)"]}
+        status = "blocked"
+    else:
+        calibration = [item for key, item in registry.items()
+                       if details.get(key, RfDetails()).role in ("auto_calibration", "solt_kit") and _available(item, registry, now)]
+        notes = [f"{item.inventory_number} без действующей поверки: {reason}"
+                 for item in (selected, *calibration) if (reason := _unverified(item, now))]
+        if notes:
+            chains = {**chains, "problems": [*chains.get("problems", []), *notes,
+                      "Замер по такому плану не идёт в автоматическую приёмку"]}
+            if status == "ready":
+                status = "qualified"
     if chains.get("mode") == "one_port_reversal":
         profile = {**profile, "traces": ["S11"], "required_orientations": ["А", "Б"], "one_attempt": True}
     return dict(status=status, label={"ready": "План подготовлен", "blocked": "Нужны исходные данные", "qualified": "Требуется согласование метода"}[status],
