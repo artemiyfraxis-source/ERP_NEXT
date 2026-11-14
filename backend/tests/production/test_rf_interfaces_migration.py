@@ -9,8 +9,8 @@ from sqlalchemy import create_engine
 
 from tests.migrations.seed_any_revision import seed
 
-PARENT = "0176_vna_capture_jobs"
-REVISION = "0179_rf_interfaces"
+PARENT = "0177_agent_devices"
+REVISION = "0178_rf_interfaces"
 
 
 def test_migration_preserves_registry_jobs_and_measurements_and_enforces_constraints(tmp_path, monkeypatch):
