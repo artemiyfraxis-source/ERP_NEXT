@@ -40,7 +40,7 @@ from uuid import UUID
 from app.modules.references.equipment import (
     APPLICATOR_TYPE, CODE_KEY, DEFAULT_PREFIX, INV_KEY, field, inv_key, name_of, parse_inventory, type_of,
 )
-from app.modules.references.infrastructure import TechOperationRecordRow
+from app.modules.references.infrastructure import EquipmentRecordRow
 from app.workflows.equipment_inventory_rewrite import (
     InventoryChange, Report, Replacements, SkippedRow, _TOKEN,
     apply_patches, begin_transaction, format_report, plan_rewrites,
@@ -49,7 +49,7 @@ from app.workflows.equipment_inventory_rewrite import (
 _CODE = re.compile(r"[AMS]\d{1,3}")
 
 
-def _inventory_plan(units: list[TechOperationRecordRow], report: Report) -> None:
+def _inventory_plan(units: list[EquipmentRecordRow], report: Report) -> None:
     inventories: dict[str, set[UUID]] = defaultdict(set)
     codes: dict[str, set[UUID]] = defaultdict(set)
     for unit in units:
@@ -85,7 +85,7 @@ def run(engine: Engine, *, apply: bool = False) -> Report:
     with Session(engine, autoflush=False) as session:
         begin_transaction(session, apply=apply)
         report = Report()
-        units = list(session.scalars(select(TechOperationRecordRow).where(TechOperationRecordRow.tab == "ob")))
+        units = list(session.scalars(select(EquipmentRecordRow)))
         _inventory_plan(units, report)
         patches = plan_rewrites(
             session, Replacements(report.changes, units, family_suffixes=True), report,

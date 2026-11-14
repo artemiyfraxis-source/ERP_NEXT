@@ -1,22 +1,25 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { failureText, referencesApi, type CrimpCodes, type EquipmentLinksReport, type EquipmentModelInfo, type EquipmentRole, type TechOperationRecord } from "./api";
+import { EQUIPMENT_TABS, type EquipmentTab } from "./referenceTabs";
+import { filledIn, useColumnRemoval } from "./CustomColumn";
 import { PageWindow } from "./PageWindow";
 import { CrimpLinks } from "./CrimpLinks";
 import { DataTable, type DataColumn } from "./DataTable";
 import {
-  APPLICATOR_TYPE, CODE_KEY, CRIMP_TYPES, INV_KEY, MATRIX_TYPE, applicatorKindOf, codeOf, crimpTypeOfCode, NAME_KEYS, TARGETS_KEY, TOOL_KEY, crimpRecord, groupModels,
-  ROLE_LABELS, inventoryRange, invOf, nameOf, operationsOfModel, pick, placeOf, servedBy, servedUnits, typeOf,
+  APPLICATOR_TYPE, CODE_KEY, CRIMP_TOOL_TYPE, CRIMP_TYPES, INV_KEY, MATRIX_TYPE, applicatorKindOf, codeOf, crimpTypeOfCode, NAME_KEYS, TARGETS_KEY, TOOL_KEY, crimpRecord, groupModels,
+  ROLE_LABELS, instrumentFieldValue, inventoryRange, invOf, nameOf, operationsOfModel, parseTargets, pick, placeOf, servedBy, servedUnits, typeOf,
   type EquipmentModel,
 } from "./equipmentModel";
 import "./equipmentPanel.css";
 import { headerLabel, valueLabel } from "./referenceLabels";
 import { EquipmentUnlinked, ServesEditor } from "./EquipmentLinks";
+import { formatDay } from "./format";
 
 /** БД.ОБ: the list is one row per model (owner 12.10.2026: «дубли одного и того же свернуть»), a row opens the machine
     card in a window over the list (the pick lives in `?equipment=`) — instances with «Ещё такой же», the БД.ОП operations
     tied to the model, what a crimp tool or a matrix crimps, the economics. The raw 21-column row stays under «Прочее».
-    Owner 17.10.2026: every value is edited right in the card on a click, no «Править» form; a model value (name, article,
-    economy, «Прочее») is written to every unit of the model at once, a unit's own value (inv. №, №, place, code) — to that
+    Values can be edited in the card; the complete record form and per-unit deletion are also available; a model value (name, article,
+    economy, «Прочее») is written to every unit of the model, a unit's own value (inv. №, №, place, code) — to that
     unit. Operations are tied in the operation's card (БД.ОП «Машина» / «Инструмент» / «Апликаторы / модули»): here they
     are only listed. */
 
@@ -78,7 +81,11 @@ function FieldList({ items, save }: { items: Array<[string, string]>; save?: Sav
   }</dd></div>)}</dl>;
 }
 
-export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate, onChanged, onNotice, onError, focusId, toolbar, editor, onSelect, onCancelEdit }: {
+export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate, onChanged, onNotice, onError, focusId, toolbar, editor, onSelect, onCancelEdit, tab = "ob", ownColumns = [], familyRecords = records, fieldColumns = [] }: {
+  fieldColumns?: string[];
+  tab?: EquipmentTab;
+  ownColumns?: string[];
+  familyRecords?: TechOperationRecord[];
   records: TechOperationRecord[];
   operations: TechOperationRecord[];
   canEdit: boolean;
@@ -103,7 +110,10 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
   // Roles / counts of the models and the «Без привязки» report come from the server (links by id, migration 0171).
   const [infos, setInfos] = useState<EquipmentModelInfo[]>([]);
   const [report, setReport] = useState<EquipmentLinksReport | null>(null);
-  const [view, setView] = useState<"all" | EquipmentRole | "unlinked">("all");
+  const [reportError, setReportError] = useState("");
+  const [view, setView] = useState<"all" | "unlinked">("all");
+  const [deleteId, setDeleteId] = useState("");
+  const removal = useColumnRemoval(tab, canEdit, (name) => filledIn(records, name), () => onChanged());
   // The picked machine stays in the address, so a reload reopens its card (same as «Проекты» → `?project=`).
   const select = (id: string) => {
     setOpenId(id);
@@ -123,23 +133,17 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
   useEffect(() => {
     let live = true;
     referencesApi.equipmentModels().then((result) => { if (live) setInfos(result?.models ?? []); }).catch(() => { if (live) setInfos([]); });
-    referencesApi.equipmentLinksReport().then((result) => { if (live) setReport(result?.operations ? result : null); }).catch(() => { if (live) setReport(null); });
+    referencesApi.equipmentLinksReport().then((result) => { if (live) { setReport(result?.operations ? result : null); setReportError(""); } }).catch((reason) => { if (live) { setReport(null); setReportError(failureText(reason, "Не удалось загрузить связи оборудования")); } });
     return () => { live = false; };
   }, [records]);
   const infoById = useMemo(() => new Map(infos.map((info) => [info.id, info])), [infos]);
 
   const models = useMemo(() => groupModels(records).sort((a, b) => Number(!a.name) - Number(!b.name)), [records]);
-  const types = useMemo(() => {
-    const counts = new Map<string, number>();
-    records.forEach((record) => counts.set(typeOf(record), (counts.get(typeOf(record)) ?? 0) + 1));
-    CRIMP_TYPES.forEach((type) => { if (!counts.has(type)) counts.set(type, 0); });
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
-  }, [records]);
   // Matrices that name one of the model's inventory numbers in «Для инструмента».
-  const matricesOf = (model: EquipmentModel) => records.filter((record) => typeOf(record) === MATRIX_TYPE
+  const matricesOf = (model: EquipmentModel) => familyRecords.filter((record) => typeOf(record) === MATRIX_TYPE
     && model.items.some((item) => invOf(item) && pick(record.fields, TOOL_KEY) === invOf(item)));
   const opsOf = (model: EquipmentModel) => operationsOfModel(model, operations);
-  const open = openId ? models.find((model) => model.items.some((item) => item.id === openId)) : undefined;
+  const open = openId ? groupModels(familyRecords).find((model) => model.items.some((item) => item.id === openId)) : undefined;
   const openKey = open?.key;
   async function guarded(action: () => Promise<unknown>, done: string) {
     if (busy) return;
@@ -158,14 +162,18 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     const last = open.items[open.items.length - 1];
     const crimp = CRIMP_TYPES.includes(open.type) ? crimpRecord(open) : undefined;
     const economy = filled(last.fields, isEconomy);
-    const rest = filled(last.fields, (key) => !SHOWN_KEYS.has(key) && !isEconomy(key));
+    const rest = filled(last.fields, (key) => !SHOWN_KEYS.has(key) && !isEconomy(key)
+      && instrumentFieldValue(key, last.instrument_passport, Boolean(last.instrument_id)) === undefined);
     const place = open.places.map((item) => valueLabel("Расположение", item)).join(", ");
     const subtitle = [open.article, open.maker, open.type, place].filter(Boolean).join(" · ");
     // A model value goes to every unit that differs (each with its own old value); a unit's own value — to that unit.
     const saveModel: SaveValue = (key, value) => guarded(async () => {
       for (const item of model.items) {
         const old = item.fields[key] ?? "";
-        if (old.trim() !== value) await referencesApi.editRecord(item.id, [{ field: key, old, value }]);
+        if (old.trim() !== value) {
+          const keys = NAME_KEYS.includes(key) ? NAME_KEYS.filter((name) => name in item.fields) : [key];
+          await referencesApi.editRecord(item.id, keys.map((field) => ({ field, old: item.fields[field] ?? "", value })));
+        }
       }
     }, model.items.length > 1 ? `Записано на все экземпляры: ${model.items.length}` : "Записано");
     const saveUnit = (item: TechOperationRecord): SaveValue => (key, value) =>
@@ -188,6 +196,9 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
             <button type="button" className="eq-close" aria-label="Закрыть карточку" title="Закрыть (Esc)" onClick={() => select("")}>×</button>
           </div>
         </header>
+        {model.items.some((item) => item.tab === "ob_measuring") && <div className="tr-block"><h4>Реестр средств измерений</h4>{model.items.map((item) => <p key={item.id}><b className="tnum">{invOf(item)}</b> · {item.instrument_passport
+          ? `${item.instrument_passport.status} · заводской № ${item.instrument_passport.serial_number || "—"} · поверка ${item.instrument_passport.verification_number || "—"} · ${formatDay(item.instrument_passport.verified_at)} — ${formatDay(item.instrument_passport.verification_due)}`
+          : item.instrument_id ? "Связь требует проверки в реестре" : "Связь с реестром не установлена"}</p>)}</div>}
         <div className="tr-block"><h4>Вид</h4>
           <div className="eq-role">
             {canEdit && model.id
@@ -203,10 +214,10 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
           </div>
           {model.role === "supporting" && <p className="eq-hint">Обеспечивающее оборудование не бывает машиной операции — оно обслуживает машины.</p>}
         </div>
-        {model.role === "supporting" && <ServesEditor model={model} records={records} canEdit={canEdit} busy={busy}
+        {model.role === "supporting" && <ServesEditor model={model} records={familyRecords} canEdit={canEdit} busy={busy}
           save={(unit, ids) => guarded(() => referencesApi.setEquipmentServes(unit.id, ids), `${invOf(unit) || "Экземпляр"}: «Обслуживает» записано`)} />}
-        {model.role === "operational" && model.items.some((item) => servedBy(item, records).length > 0) && <div className="tr-block"><h4>Обслуживают</h4>
-          <div className="tr-chips">{[...new Map(model.items.flatMap((item) => servedBy(item, records)).map((unit) => [unit.id, unit])).values()].map((unit) =>
+        {model.role === "operational" && model.items.some((item) => servedBy(item, familyRecords).length > 0) && <div className="tr-block"><h4>Обслуживают</h4>
+          <div className="tr-chips">{[...new Map(model.items.flatMap((item) => servedBy(item, familyRecords)).map((unit) => [unit.id, unit])).values()].map((unit) =>
             <button key={unit.id} type="button" className="eq-op eq-chip-btn" onClick={() => select(unit.id)}><span className="tnum">{invOf(unit)}</span> {nameOf(unit)}</button>)}</div></div>}
         {canEdit && passport.length > 0 && <div className="tr-block"><h4>Модель{open.items.length > 1 && <span>правка — на все экземпляры</span>}</h4>
           <dl className="op-fields">{passport.map(([label, key]) => <div key={key}><dt>{label}</dt><dd className="pre-line">
@@ -215,11 +226,12 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
         {!canEdit && pick(last.fields, "Описание") && <p className="eq-line pre-line">{pick(last.fields, "Описание")}</p>}
 
         <div className="tr-block"><h4>Экземпляры <span>{open.items.length}</span></h4>
-          <table className="eq-table"><thead><tr><th>Инв. №</th><th className="num">№</th><th>Расположение</th>{withCodes && <th>Код терминалов</th>}</tr></thead>
+          <table className="eq-table"><thead><tr><th>Инв. №</th><th className="num">№</th><th>Расположение</th>{withCodes && <th>Код терминалов</th>}{canEdit && <th aria-label="Действия" />}</tr></thead>
             <tbody>{open.items.map((item) => <tr key={item.id}>
               <td className="tnum"><b>{typeOf(item) === APPLICATOR_TYPE ? invOf(item) || "—" : unitCell(item, INV_KEY, "Инв. №", invOf(item))}</b></td><td className="tnum num">{unitCell(item, "№", "№")}</td>
               <td>{unitCell(item, "Расположение", "Расположение", valueLabel("Расположение", placeOf(item)))}</td>
               {withCodes && <td className="tnum">{unitCell(item, CODE_KEY, "Код терминалов")}</td>}
+              {canEdit && <td><button type="button" className="secondary small" aria-label={`Удалить ${invOf(item) || "экземпляр"}`} disabled={busy} onClick={() => setDeleteId(item.id)}>Удалить</button></td>}
             </tr>)}</tbody></table>
         </div>
 
@@ -234,10 +246,11 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
           <div className="tr-chips">{matricesOf(open).map((matrix) => <button key={matrix.id} type="button" className="eq-op eq-chip-btn" onClick={() => select(matrix.id)}>
             <span className="tnum">{invOf(matrix)}</span> {nameOf(matrix)}</button>)}</div></div>}
 
-        {crimp && <CrimpLinks model={open} tool={crimp} siblings={records} canEdit={canEdit} onChanged={onChanged} onEditTool={onEdit} />}
+        {crimp && <CrimpLinks model={open} tool={crimp} siblings={familyRecords} canEdit={canEdit} onChanged={onChanged} onEditTool={onEdit} />}
 
         {economy.length > 0 && <div className="tr-block"><h4>Экономика</h4><EconomyList items={economy} save={canEdit ? saveModel : undefined} /></div>}
         {rest.length > 0 && <details className="tr-block eq-rest"><summary>Прочее <span className="muted">({rest.length})</span></summary><FieldList items={rest} save={canEdit ? saveModel : undefined} /></details>}
+        {canEdit && <div className="form-actions"><button type="button" className="secondary small" onClick={() => onEdit(model.items.find((item) => item.id === openId) ?? last)}>Править запись</button></div>}
       </article>
     </PageWindow>;
   }
@@ -245,9 +258,9 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
   const columns: DataColumn<EquipmentModel>[] = [
     { key: "inv", title: "Инв. номер", value: (model) => model.items.map(invOf).filter(Boolean).join(" "),
       render: (model) => <span className="tnum" title={model.items.map(invOf).join(", ")}>{inventoryRange(model.items.map(invOf)) || "—"}</span> },
-    { key: "name", title: "Наименование", value: (model) => model.name, grow: true },
+    { key: "name", title: "Наименование", value: (model) => model.name, grow: true, wrap: true, minWidth: 230, maxWidth: 360 },
     { key: "count", title: "Единиц", numeric: true, value: (model) => model.items.length, render: (model) => model.items.length > 1 ? `${model.items.length} шт.` : "1 шт." },
-    { key: "type", title: "Тип", value: (model) => model.type, filter: true },
+    { key: "type", title: "Подтип", value: (model) => pick(model.items[0].fields, "Подтип") || (model.type === CRIMP_TOOL_TYPE ? CRIMP_TOOL_TYPE : ""), filter: true },
     { key: "code", title: "Код", value: (model) => codeOf(model), render: (model) => <span className="tnum">{codeOf(model) || "—"}</span> },
     { key: "role", title: "Вид", value: (model) => ROLE_LABELS[model.role], filter: true },
     { key: "kind", title: "Вид аппликатора", value: (model) => applicatorKindOf(codeOf(model)), filter: true },
@@ -256,47 +269,61 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     { key: "place", title: "Расположение", value: (model) => model.places.map((item) => valueLabel("Расположение", item)).join(", "), filter: true },
     { key: "ops", title: "Операций", numeric: true, value: (model) => opsOf(model).length, hint: "Сколько операций БД.ОП привязано к этой модели" },
   ];
-  const shown = view === "operational" || view === "supporting" ? models.filter((model) => model.role === view) : models;
-  const roleCount = (role: EquipmentRole) => models.filter((model) => model.role === role).length;
   const unlinkedCount = report ? report.counts.operations_unresolved + report.counts.tools_unresolved + report.counts.templates_unresolved
     + report.counts.models_without_units + report.counts.models_units_disagree + report.counts.roles_unconfirmed : 0;
-  const tabs: Array<["all" | EquipmentRole | "unlinked", string, number]> = [["all", "Все", models.length],
-    ["operational", ROLE_LABELS.operational, roleCount("operational")], ["supporting", ROLE_LABELS.supporting, roleCount("supporting")],
-    ["unlinked", "Без привязки", unlinkedCount]];
-  const presets = types.map(([name]) => ({ label: name, test: (model: EquipmentModel) => model.type === name }));
+  const allowed = new Set(["inv", "name", "count", "article", "maker", "place",
+    ...(tab === "ob_applicators" ? ["kind"] : []), ...(tab === "ob" ? ["ops"] : []),
+    ...(tab === "ob_tools" ? ["type", "code"] : []), ...(tab === "ob_dies" ? ["code"] : [])]);
+  const visibleColumns = columns.filter((column) => allowed.has(column.key));
+  for (const field of [...new Set([...fieldColumns, ...ownColumns])].filter((name) => !["Инв. номер", "Наименование", "Наменование", "Артикул", "Производитель", "Расположение", "Подтип", "Код в базе терминалов"].includes(name))) visibleColumns.push({
+    key: field, title: field, hidden: ["Примечание", "Мощность, кВт", "Стоимость, руб."].includes(field), export: true,
+    value: (model) => [...new Set(model.items.map((item) => field === TARGETS_KEY
+      ? parseTargets(item.fields[field]).map((target) => target.label).join(", ")
+      : instrumentFieldValue(field, item.instrument_passport, Boolean(item.instrument_id)) ?? item.fields[field] ?? ""))].join(" · "),
+    remove: ownColumns.includes(field) ? removal.removeOf(field) : undefined,
+    edit: canEdit && field !== TARGETS_KEY ? { enabled: (model) => model.items.every((item) => instrumentFieldValue(field, item.instrument_passport, Boolean(item.instrument_id)) === undefined), value: (model) => model.items[0].fields[field] || "",
+      save: async (model, value) => { for (const item of model.items) await referencesApi.editRecord(item.id,
+        [{ field, old: item.fields[field] || "", value }]); onChanged(); } } : undefined,
+  });
   const missing = codes?.missing ?? [];
   return <div className="eq-split">
     <div className="eq-list">
-      {missing.length > 0 && <details className="eq-missing">
+      {tab === "ob_applicators" && missing.length > 0 && <details className="eq-missing">
         <summary>Коды обжима без записи <span className="muted">({missing.length})</span></summary>
         <div className="eq-missing-list">{missing.map((item) => <span key={item.code} className="tr-code eq-op" title={`Указан у ${item.count} контактов в БД.ТЕР`}>
           <span className="tnum">{item.code}</span>{canEdit && <button type="button" className="eq-x" aria-label={`Создать запись для кода ${item.code}`}
             onClick={() => onCreate({ Тип: crimpTypeOfCode(item.code), [CODE_KEY]: item.code })}>＋</button>}</span>)}</div>
       </details>}
-      <div className="seg-tabs eq-views" role="tablist" aria-label="Вид оборудования">
-        {tabs.map(([id, label, count]) => <button key={id} type="button" role="tab" aria-selected={view === id} className={view === id ? "on" : undefined}
-          onClick={() => setView(id)}>{label} <span className="muted">{count}</span></button>)}
+      <div className="form-actions"><span className="muted">{models.length} моделей · {records.length} шт.</span>
+        {tab === "ob" && <label className="check-inline"><input type="checkbox" checked={view === "unlinked"}
+          onChange={(event) => setView(event.target.checked ? "unlinked" : "all")} /> Без привязки ({unlinkedCount})</label>}
       </div>
-      {view === "unlinked" ? <EquipmentUnlinked report={report} canEdit={canEdit} busy={busy} records={records}
+      {view === "unlinked" && reportError && <div className="error-banner" role="alert">{reportError}</div>}
+      {view === "unlinked" ? <EquipmentUnlinked report={report} canEdit={canEdit} busy={busy} records={familyRecords}
         confirm={(info) => guarded(() => referencesApi.setEquipmentRole(info.id, info.role), `${info.display || info.name}: вид подтверждён`)}
         openModel={(info) => { const unit = info.unit_ids[0]; if (unit) { setView("all"); select(unit); } }} /> : <DataTable
-        rows={shown}
-        columns={columns}
+        rows={models}
+        columns={visibleColumns}
         rowKey={(model) => model.key}
-        storageKey="db:equipment-models"
-        label="Оборудование"
-        exportName="Оборудование"
+        storageKey={`db:${tab}:models`}
+        label={EQUIPMENT_TABS[tab]}
+        exportName={EQUIPMENT_TABS[tab]}
         searchPlaceholder="Поиск: инв. номер, название, артикул, производитель…"
-        presets={presets}
-        presetCountsFollowSearch
         onRowClick={(model) => select(model.items[0].id)}
         rowClassName={(model) => open && model.key === open.key ? "eq-selected" : ""}
         rowTitle={(model) => `Открыть: ${model.name || invOf(model.items[0])}`}
         toolbar={toolbar}
-        emptyText={records.length ? "Ничего не найдено." : "Записей нет."}
+        emptyText={records.length ? "Ничего не найдено." : canEdit ? "Записей нет — добавьте новую запись." : "Записей нет."}
       />}
     </div>
     {panel}
+    {removal.dialog}
+    {deleteId && <PageWindow label="Удалить экземпляр" width={460} close={() => setDeleteId("")}>
+      <div className="panel"><p>Удалить {invOf(familyRecords.find((item) => item.id === deleteId) ?? records.find((item) => item.id === deleteId)!)}? Связанный с заданиями или оснасткой экземпляр удалить нельзя.</p>
+        <div className="form-actions"><button type="button" className="primary" disabled={busy} onClick={() => void guarded(async () => {
+          await referencesApi.deleteEquipment(deleteId); setDeleteId(""); select("");
+        }, "Экземпляр удалён")}>Удалить</button><button type="button" className="secondary" onClick={() => setDeleteId("")}>Отмена</button></div></div>
+    </PageWindow>}
   </div>;
 }
 

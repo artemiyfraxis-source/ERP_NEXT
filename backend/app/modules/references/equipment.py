@@ -86,8 +86,34 @@ def name_of(fields: Mapping[str, str]) -> str:
     return field(fields, *NAME_KEYS)
 
 
+def display_name(fields: Mapping[str, str], name: str | None = None) -> str:
+    """The reviewed catalog label, using only stored passport facts."""
+    name = name_of(fields) if name is None else name
+    model = field(fields, "Модель", ARTICLE_KEY, "Обозначение")
+    if type_of(fields) == APPLICATOR_TYPE:
+        return name
+    display = name if not model or name.casefold().endswith(model.casefold()) else f"{name} {model}"
+    if type_of(fields) == MATRIX_TYPE:
+        tool = field(fields, TOOL_KEY)
+        if tool and tool not in display:
+            display += f" · {tool}"
+    return display
+
+
+def updated_display(record: TechOperationRecord, fields: Mapping[str, str], fallback: str) -> str:
+    """Keep approved names through edits/imports; unrelated edits never rename legacy labels."""
+    if record.display_text == display_name(record.fields):
+        return display_name(fields)
+    caption_fields = (*NAME_KEYS, TYPE_KEY, "obType", ARTICLE_KEY, "Модель", "Обозначение", BASE_KEY,
+                      "baseValue", CODE_KEY, TOOL_KEY, "Серия", "Совместимая серия")
+    if all(record.fields.get(key, "") == fields.get(key, "") for key in caption_fields):
+        return record.display_text
+    return fallback
+
+
 def type_of(fields: Mapping[str, str]) -> str:
-    return field(fields, TYPE_KEY, "obType")
+    kind = field(fields, TYPE_KEY, "obType")
+    return CRIMP_TOOL_TYPE if kind == "Инструмент" and field(fields, "Подтип") == CRIMP_TOOL_TYPE else kind
 
 
 @dataclass(frozen=True)
@@ -178,12 +204,46 @@ def normalize_code(value: str) -> str:
     return code
 
 
+def normalize_equipment_fields(fields: Mapping[str, str]) -> dict[str, str]:
+    """Normalize supported legacy import types; migrations keep the original payload untouched."""
+    result = dict(fields)
+    names = {field(result, key) for key in NAME_KEYS if field(result, key)}
+    if len(names) > 1:
+        raise ReferenceValidationError("Наименование и Наменование содержат разные значения")
+    kind = field(result, TYPE_KEY, "obType")
+    if kind in ("Оборудование (ПР)", CRIMP_TOOL_TYPE):
+        result[TYPE_KEY] = "Оборудование" if kind == "Оборудование (ПР)" else "Инструмент"
+        if "obType" in result:
+            result["obType"] = result[TYPE_KEY]
+        if kind == CRIMP_TOOL_TYPE:
+            result["Подтип"] = CRIMP_TOOL_TYPE
+    return result
+
+
+def sync_name_edits(previous: Mapping[str, str], fields: Mapping[str, str], changed: Iterable[str]) -> dict[str, str]:
+    """One explicitly edited alias updates the stored pair; conflicting inputs stay errors."""
+    result = dict(fields)
+    # Old forms may submit an absent/empty alias unchanged alongside an unrelated edit.
+    # Such a blank is not a request to clear the populated name in the other alias.
+    aliases = {key for key in set(changed) & set(NAME_KEYS) if field(previous, key) or field(result, key)}
+    if len(aliases) == 1:
+        if len({field(previous, key) for key in NAME_KEYS if field(previous, key)}) > 1:
+            raise ReferenceValidationError("Наименование и Наменование содержат разные значения")
+        value = result[next(iter(aliases))]
+        for key in NAME_KEYS:
+            if key in result:
+                result[key] = value
+    if len({field(result, key) for key in NAME_KEYS if field(result, key)}) > 1:
+        raise ReferenceValidationError("Наименование и Наменование содержат разные значения")
+    return result
+
+
 def prepare_inventory(
     fields: dict[str, str], others: list[tuple[object, Mapping[str, str]]], *, self_id: object = None,
     creating: bool, previous: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     """Shared numbering/code checks for form saves and bulk imports, before any persistence changes."""
-    result = dict(fields)
+    result = normalize_equipment_fields(fields)
     siblings = [item for item in others if item[0] != self_id]
     old = previous or {}
     kind = type_of(result)
@@ -223,6 +283,13 @@ def prepare_equipment(
     creating: bool, previous: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     """Checks and fills a form record; legacy import rows may only have their display name."""
+    names = {field(fields, key) for key in NAME_KEYS if field(fields, key)}
+    if len(names) > 1:
+        raise ReferenceValidationError("Наименование и Наменование содержат разные значения")
+    if type_of(fields) == CRIMP_TOOL_TYPE:
+        fields = {**fields, TYPE_KEY: "Инструмент", "Подтип": CRIMP_TOOL_TYPE}
+        if "obType" in fields:
+            fields["obType"] = "Инструмент"
     # An old sheet row may lack a name; only reject when it had one before (or is new).
     if not name_of(fields) and (creating or name_of(previous or {})):
         raise ReferenceValidationError("Наименование обязательно — без него запись не сохранить")

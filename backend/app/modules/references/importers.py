@@ -52,7 +52,8 @@ from typing import Any, Callable, Mapping, Sequence
 from uuid import UUID
 
 from app.shared.bulk_import import (
-    DUPLICATE_REASON, ImportRateLimiter, ImportReport as RowsReport, ImportRowIn, ImportTable, RowRefused, clean_value,
+    DUPLICATE_REASON, MAX_IMPORT_ROWS, ImportRateLimiter, ImportRefusal, ImportReport as RowsReport, ImportRowIn,
+    ImportTable, ImportTooLarge, RowRefused, clean_value,
     row_key, run_import,
 )
 from app.shared.events import AuditEvent
@@ -62,6 +63,9 @@ from .application import (
     UnitOfWork, _audit, _check_wire_row, _kind_rule, _same_wire_mark, _search_text, _sync_gost_awg, _wire_fields,
     cable_custom_columns, cable_overrides, custom_columns,
 )
+from .domain import EQUIPMENT_TABS
+from .equipment_catalogs import CATALOG_COLUMNS, CATALOG_TYPES
+from .equipment import EXTRA_KEYS, NAME_KEYS, sync_name_edits, updated_display
 from .lugs import ter_kind_of
 from .cable_structure import (
     AWG_FIELD, INSULATION_FIELD, MIRRORED_FIELDS, OUTER_FIELD, SECTION_FIELD, TEMP_MAX_FIELD, TEMP_MIN_FIELD,
@@ -941,12 +945,18 @@ TECH_TABLES: dict[str, _TechTable] = {
     "cab_lan": _cable_table(TechOperationTab.CAB_LAN, "Кабели Ethernet"),
     "mat": _TechTable(TechOperationTab.MATERIAL, "БД.МАТ — материалы", ("Наименование",),
                       lambda values: (("name", _folded(values[0])),)),
-    "ob": _TechTable(TechOperationTab.EQUIPMENT, "БД.ОБ — станки и оборудование", ("baseValue",),
-                     lambda values: (("base", _folded(values[0])),), virtual="baseValue"),
+    "ob": _TechTable(TechOperationTab.EQUIPMENT, "БД.ОБ — станки и оборудование", ("equipmentKey",),
+                     lambda values: (("unit", values[0]),), virtual="baseValue", family=EQUIPMENT_TABS),
 }
 
 
+for _tab in EQUIPMENT_TABS[1:]:
+    TECH_TABLES[_tab.value] = replace(TECH_TABLES["ob"], tab=_tab, label=CATALOG_TYPES[_tab.value])
+
+
 def _sheet_columns(table: _TechTable, records: Sequence[TechOperationRecord]) -> list[str]:
+    if table.tab in EQUIPMENT_TABS:
+        records = [record for record in records if record.tab == table.tab]
     if not table.sheet_columns:
         return list(BASE_COLUMNS[table.tab])
     keys = schema_keys(table.tab.value)
@@ -961,6 +971,10 @@ def _load_fields(spec: _TechTable, records: Sequence[TechOperationRecord], uow: 
     base for the БД.ПРОВ load, of the base for its own) and «Вид кабеля»; which of them a row may fill is its base's
     business (`_TechTarget`)."""
     fields = [*spec.schema_fields(), *_sheet_columns(spec, records)]
+    if spec.tab in EQUIPMENT_TABS:
+        fields += ["equipmentKey", "inventoryNumber", "Тип", "Наименование", "Наменование", *EXTRA_KEYS,
+                   *CATALOG_COLUMNS[spec.tab.value],
+                   *custom_columns(spec.tab, uow)]
     if spec.cables:
         fields += [*(cable_custom_columns(uow) if spec.family else custom_columns(spec.tab, uow)), KIND_FIELD]
     return list(dict.fromkeys(fields))
@@ -990,6 +1004,13 @@ class _TechTarget(_Target):
                 bag = str(record.fields.get("terArticleBag") or terminal_card_fields(record.fields).get("terArticleBag")
                           or "")
                 keyed += [(bag,)] if bag.strip() else []
+            if table.tab in EQUIPMENT_TABS:
+                keyed = [("id:" + str(record.id),)]
+                if record.mirror_key:
+                    keyed.append(("mirror:" + record.mirror_key,))
+                number = "".join(str(record.fields.get("Инв. номер") or "").split()).casefold()
+                if number:
+                    keyed.append(("inventory:" + number,))
             for key_values_of_row in keyed:
                 for form in (table.index_forms or table.forms)(key_values_of_row):
                     rows = self.index.setdefault(form, [])
@@ -1009,6 +1030,8 @@ class _TechTarget(_Target):
 
     def _current(self, record: TechOperationRecord) -> dict[str, str]:
         fields = dict(record.fields)
+        if self.table.tab in EQUIPMENT_TABS:
+            fields["equipmentKey"] = "id:" + str(record.id)
         if self.table.virtual:
             fields[self.table.virtual] = record.display_text
         if self.table.cables:
@@ -1118,6 +1141,17 @@ class _TechTarget(_Target):
         else:
             stored = {name: "" for name in self.columns}  # every column of the base, so the row is editable on screen
             stored.update(fields)
+        if self.table.tab in EQUIPMENT_TABS:
+            key = stored.pop("equipmentKey", "")
+            if not key.startswith("inventory:") or not key.removeprefix("inventory:").strip():
+                raise RowRefused("Не найден UUID или источник оборудования; новая запись требует инв. номер")
+            key_number = key.removeprefix("inventory:")
+            number = str(stored.get("Инв. номер") or stored.get("inventoryNumber") or stored.get("Код в базе терминалов") or "")
+            if number and "".join(number.split()).casefold() != key_number:
+                raise RowRefused("Ключ оборудования и инв. номер расходятся")
+            if not number:
+                stored["Инв. номер"] = key_number.upper()
+            stored["Тип"] = stored.get("Тип") or stored.get("obType") or CATALOG_TYPES[self.table.tab.value]
         stored = self._schema(stored, set(fields))
         tab = self.table.tab.value
         display = (schema_display_text(tab, stored) if self.table.sheet_columns else "") \
@@ -1152,9 +1186,17 @@ class _TechTarget(_Target):
             # an existing row: also the columns removed from its list 25.10.2026 (provenance, journals, prod scripts)
             if foreign := _foreign_cells(changes, (*self._columns_of(kind), *CABLE_WRITABLE[kind.value]), record.fields):
                 raise RowRefused(_foreign_reason(foreign, kind))
-        fields = self._schema({**record.fields, **changes}, set(changes))
+        fields = {**record.fields, **changes}
+        if self.table.tab in EQUIPMENT_TABS:
+            try:
+                fields = sync_name_edits(record.fields, fields, changes)
+            except ReferenceValidationError as error:
+                raise RowRefused(str(error)) from error
+        fields = self._schema(fields, set(changes))
         display = (schema_display_text(self.table.tab.value, fields) if self.table.sheet_columns else "") \
             or record.display_text
+        if self.table.tab in EQUIPMENT_TABS:
+            display = updated_display(record, fields, display)
         updated = replace(record, fields=fields, display_text=display, edited_in_erp=True)
         updated = replace(updated, normalized_search=_search_text(updated))
         wire = None
@@ -1411,9 +1453,34 @@ def import_rows(table: str, uow: UnitOfWork, rows: Sequence[ImportRowIn], actor:
     check_source(source)
     if table not in ROW_TABLES:
         raise unknown_table(table)
+    if len(rows) > MAX_IMPORT_ROWS:
+        raise ImportTooLarge(f"Строк за раз: не больше {MAX_IMPORT_ROWS}")
+    name_refusals, source_numbers = [], []
     with uow:
         if table in TECH_TABLES:
             spec = TECH_TABLES[table]
+            if spec.tab in EQUIPMENT_TABS:
+                keyed_rows = []
+                for number_in_file, row in enumerate(rows, start=1):
+                    fields = dict(row.fields)
+                    identity = fields.pop("unitId", None) or fields.pop("id", None)
+                    mirror = fields.pop("mirrorKey", None)
+                    number = "".join(str(fields.get("Инв. номер") or fields.get("inventoryNumber") or fields.get("Код в базе терминалов") or "").split()).casefold()
+                    fields["equipmentKey"] = ("id:" + str(identity) if identity else "mirror:" + str(mirror) if mirror
+                                              else str(fields.get("equipmentKey") or ("inventory:" + number if number else "")))
+                    # Validate the complete input before run_import removes unchanged cells. Otherwise
+                    # explicitly conflicting X/X -> X/Y would look like a valid one-alias edit.
+                    try:
+                        names = {spec.cell(key, fields[key]) for key in NAME_KEYS if key in fields}
+                    except (RowRefused, ValueError):
+                        names = set()  # the normal parser reports malformed cells with their original field
+                    if len(names - {None, ""}) > 1:
+                        name_refusals.append(ImportRefusal(key=fields["equipmentKey"] or f"#{number_in_file}",
+                            reason="Наименование и Наменование содержат разные значения"))
+                        continue
+                    keyed_rows.append(ImportRowIn(fields=fields, old=row.old))
+                    source_numbers.append(number_in_file)
+                rows = keyed_rows
             records = uow.tech_operations.list(tab=spec.tabs, query="", limit=100_000)
             import_table = _table(table, spec.key_fields, _load_fields(spec, records, uow), spec.cell, spec.optional_keys)
             target: _Target = _TechTarget(uow, source, spec, records, _key_values(import_table, rows), now)
@@ -1425,7 +1492,16 @@ def import_rows(table: str, uow: UnitOfWork, rows: Sequence[ImportRowIn], actor:
             rows, sizes = _gauge_rows(rows)
             import_table = _table(table, (GAUGE_KEY,), GAUGE_FIELDS, _gauge_value)
             target = _GaugeTarget(uow, source, sizes)
-        return run_import(import_table, rows, target, actor=actor, now=now, dry_run=dry_run, limiter=limiter)
+        report = run_import(import_table, rows, target, actor=actor, now=now, dry_run=dry_run, limiter=limiter)
+        if name_refusals:
+            # Keep diagnostics tied to the caller's row numbers after filtering invalid name pairs.
+            for refusal in report.refused:
+                if re.fullmatch(r"#\d+", refusal.key):
+                    index = int(refusal.key[1:]) - 1
+                    if 0 <= index < len(rows) and not rows[index].fields.get("equipmentKey"):
+                        refusal.key = f"#{source_numbers[index]}"
+            report.refused[:0] = name_refusals
+        return report
 
 
 def import_schema(table: str, uow: UnitOfWork) -> dict:
@@ -1442,6 +1518,9 @@ def import_schema(table: str, uow: UnitOfWork) -> dict:
             columns = [name for name in _sheet_columns(spec, records) if name not in schema] if spec.sheet_columns else []
             result = {"table": table, "label": spec.label, "key": list(spec.key_fields), "fields": schema + columns,
                       "schema_fields": schema if spec.sheet_columns else [], "sheet_columns": columns}
+            if spec.tab in EQUIPMENT_TABS:
+                result["fields"] = list(dict.fromkeys([*_load_fields(spec, records, uow), "unitId", "mirrorKey"]))
+                result["sheet_columns"] = list(CATALOG_COLUMNS[spec.tab.value])
             if spec.optional_keys:  # БД.ПРОВ: «Цвет» is the key of a монтажный wire only
                 result["optional_key"] = list(spec.optional_keys)
             if spec.cables and spec.family:  # each cable base its own columns; «Вид кабеля» chooses the base

@@ -1863,7 +1863,7 @@ export interface ReferenceBase {
 
 /** A base of «База данных» — its own table (migration 0165): «Наконечники» (lug) and each cable kind (prov = монтажные,
  *  cab_coax, cab_multi, cab_lan) too. */
-export type TechOperationTab = "ob" | "op" | "ter" | "lug" | "coax" | "prov" | "cab_coax" | "cab_multi" | "cab_lan" | "mat"
+export type TechOperationTab = "ob" | "ob_measuring" | "ob_support" | "ob_applicators" | "ob_dies" | "ob_tools" | "op" | "ter" | "lug" | "coax" | "prov" | "cab_coax" | "cab_multi" | "cab_lan" | "mat"
   | "kab_coax" | "kab_awg";
 
 /** «Кабели и провода»: the list a БД.ПРОВ row is in (backend `references/cables.py`). */
@@ -2079,6 +2079,8 @@ export interface TechOperationRecord {
   fields: Record<string, string>;
   /** БД.ОБ / БД.ОП — связи по id (миграция 0171): модель единицы, её вид, «Инструмент» и «Обслуживает»; ячейки БД.ОП → модели. */
   equipment_model_id?: string;
+  instrument_id?: string | null;
+  instrument_passport?: { serial_number: string; status: string; verification_number: string | null; verified_at: string | null; verification_due: string | null };
   equipment_role?: EquipmentRole | null;
   tool_unit_id?: string | null;
   serves_unit_ids?: string[];
@@ -4368,6 +4370,7 @@ export const referencesApi = {
     api<TechOperationRecord>("/api/references/tech-operations", { method: "POST", body: JSON.stringify({ tab, fields }) }),
   equipmentNumber: (type: string) =>
     api<{ inventory: string; row: string }>(`/api/references/tech-operations/equipment-number?${new URLSearchParams({ type })}`),
+  deleteEquipment: (id: string) => api<{ id: string }>(`/api/references/equipment/${id}`, { method: "DELETE" }),
   duplicateRecord: (id: string) =>
     api<TechOperationRecord>(`/api/references/tech-operations/${id}/duplicate`, { method: "POST" }),
   crimps: (id: string) => api<CrimpOverview>(`/api/references/tech-operations/${id}/crimps`),

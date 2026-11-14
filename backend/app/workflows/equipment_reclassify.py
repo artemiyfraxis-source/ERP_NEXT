@@ -27,7 +27,7 @@ from app.modules.production.traceability import MeasurementInstrument
 from app.modules.references.equipment import (
     INV_KEY, MEASURING_TYPE, SUPPORTING_TYPE, TYPE_KEY, field, inv_key, name_of, parse_inventory, type_of,
 )
-from app.modules.references.infrastructure import EquipmentModelRow, TechOperationRecordRow
+from app.modules.references.infrastructure import EquipmentModelRow, EquipmentRecordRow
 from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
@@ -112,7 +112,7 @@ def validate_mapping(mapping: object) -> tuple[list[MappingEntry], bool]:
 
 
 def _unit_plan(session: Session, entries: list[MappingEntry], supporting: bool, report: ReclassificationReport):
-    units = list(session.scalars(select(TechOperationRecordRow).where(TechOperationRecordRow.tab == "ob")))
+    units = list(session.scalars(select(EquipmentRecordRow)))
     inventories = defaultdict(list)
     for unit in units:
         inventories[inv_key(field(unit.fields, INV_KEY, "inventoryNumber"))].append(unit)
@@ -123,7 +123,7 @@ def _unit_plan(session: Session, entries: list[MappingEntry], supporting: bool, 
     completed = {(item.aggregate_id, item.details.get("from"), item.details.get("to"), item.details.get("type")) for item in history}
     audit_events = []
 
-    def change_type(unit: TechOperationRecordRow, kind: str | None) -> None:
+    def change_type(unit: EquipmentRecordRow, kind: str | None) -> None:
         if kind is None or type_of(unit.fields) == kind:
             return
         values = field_updates.setdefault(unit.id, {})
@@ -169,7 +169,7 @@ def _unit_plan(session: Session, entries: list[MappingEntry], supporting: bool, 
     if supporting:
         supporting_ids = set(session.scalars(select(EquipmentModelRow.id).where(EquipmentModelRow.role == "supporting")))
         for unit in units:
-            if unit.id not in explicit_ids and unit.equipment_model_id in supporting_ids and type_of(unit.fields) == "Оборудование":
+            if unit.id not in explicit_ids and unit.equipment_model_id in supporting_ids and type_of(unit.fields) in ("Оборудование", "Оборудование (ПР)"):
                 change_type(unit, SUPPORTING_TYPE)
     audit_counts.changed = len(audit_events)
     return units, field_updates, audit_events

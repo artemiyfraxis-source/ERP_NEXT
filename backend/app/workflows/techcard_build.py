@@ -18,6 +18,7 @@ The reference tables are read once per batch: `load_refs` → immutable `Refs`, 
 `refs_stamp(refs)` is the hash of exactly the data the enrichers read, for change detection."""
 
 from __future__ import annotations
+from app.modules.references.domain import EQUIPMENT_TABS
 
 from collections.abc import Callable
 from copy import deepcopy
@@ -131,7 +132,7 @@ def load_refs(references_factory: Callable[[], ReferencesUnitOfWork], *, coax: b
         # retired, owner 12.10.2026); the stored map only when the sizes table is empty.
         gost_awg = gauge_gost_awg(gauges) or gost_awg_map(uow.references.list())
         equipment = tuple((record.display_text, MappingProxyType(dict(record.fields))) for record in uow.tech_operations.list(
-            tab=TechOperationTab.EQUIPMENT, query="", limit=10_000,
+            tab=EQUIPMENT_TABS, query="", limit=10_000,
         ))
         operations = _rows(uow.tech_operations.list(tab=TechOperationTab.OPERATION, query="", limit=100_000))
         coax_rows = _rows(uow.tech_operations.list(tab=TechOperationTab.COAX, query="", limit=10_000)) if coax else ()

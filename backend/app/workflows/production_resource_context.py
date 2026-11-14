@@ -1,3 +1,4 @@
+from app.modules.references.domain import EQUIPMENT_TABS
 """Exact issued ETK and physical-catalog resolution for production and setup commands.
 
 A machine is a БД.ОБ unit, named by its record id (owner 05.11.2026: «связка не через название, а через
@@ -23,7 +24,7 @@ from app.modules.production.resource_assignment_infrastructure import ResourceAl
 from app.shared.clock import MOSCOW
 from app.modules.references.domain import TechOperationTab
 from app.modules.references.equipment import physical_equipment
-from app.modules.references.infrastructure import EquipmentModelRow, SqlAlchemyTechOperationRepository, TechOperationRecordRow
+from app.modules.references.infrastructure import EquipmentModelRow, SqlAlchemyTechOperationRepository, EquipmentRecordRow
 from app.modules.techcards.infrastructure import ProjectTechcardRow, TechcardRevisionRow
 from app.modules.techcards.project_cards import TechcardStatus
 
@@ -51,9 +52,9 @@ class MachineUnit:
 
 def machine_units(session) -> tuple[MachineUnit, ...]:
     """The numbered units of БД.ОБ (no calculation rows «.X» / «(R)», no model counts), by inventory number."""
-    rows = session.execute(select(TechOperationRecordRow, EquipmentModelRow.role).outerjoin(
-        EquipmentModelRow, EquipmentModelRow.id == TechOperationRecordRow.equipment_model_id,
-    ).where(TechOperationRecordRow.tab == TechOperationTab.EQUIPMENT.value))
+    rows = session.execute(select(EquipmentRecordRow, EquipmentModelRow.role).outerjoin(
+        EquipmentModelRow, EquipmentModelRow.id == EquipmentRecordRow.equipment_model_id,
+    ))
     units = []
     for row, role in rows:
         found = physical_equipment((SqlAlchemyTechOperationRepository._domain(row),))

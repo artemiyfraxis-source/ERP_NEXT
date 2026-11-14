@@ -14,6 +14,8 @@ only that row is skipped (a savepoint each). A dry run runs the same path and ro
 apply does."""
 
 from __future__ import annotations
+from .equipment_catalogs import CATALOG_TYPES, CATALOG_COLUMNS
+from .domain import EQUIPMENT_TABS
 
 import contextlib
 import hashlib
@@ -38,7 +40,7 @@ from .domain import (
     StaleRecordError, TechOperationRecord, TechOperationTab, merge_country_pairs, normalized_cable_key,
     normalized_manufacturer_key, normalized_supplier_key,
 )
-from .equipment import EXTRA_KEYS, TARGETS_KEY
+from .equipment import EXTRA_KEYS, NAME_KEYS, TARGETS_KEY, name_of
 from .importers import _MapTarget, cable_list_columns
 from .lugs import lug_columns
 from .technology import OPERATION_TD_KEYS, schema_columns, schema_keys
@@ -159,11 +161,14 @@ class _TechTable:
                                      for name in names) - set(self.own_columns)
         if self.tab == TechOperationTab.LUG:  # «Наконечники»: the owner's columns of the base after the lug columns
             self.own_columns = tuple(custom_columns(self.tab, uow))
+        if self.tab in EQUIPMENT_TABS:
+            self.own_columns = (*CATALOG_COLUMNS[self.tab.value], *custom_columns(self.tab, uow))
         extra = self._extra_values(uow, records) if self.extras else {}
         return [
             Item(str(record.id), record.display_text.strip(" /") or str(record.id),
                  fingerprint(record.display_text, record.fields, *([extra.get(str(record.id), {})] if self.extras else [])),
-                 {**record.fields, **extra.get(str(record.id), {})})
+                 {**record.fields, **extra.get(str(record.id), {}),
+                  **({"Наименование": name_of(record.fields)} if self.tab in EQUIPMENT_TABS else {})})
             for record in records
         ]
 
@@ -175,14 +180,15 @@ class _TechTable:
         removed = CABLE_DROPPED[self.cable_kind] if self.cable_kind else             COAX_DROPPED_COLUMNS if self.tab == TechOperationTab.COAX else frozenset()
         keys = schema_keys(self.tab.value) | set(self.extras) | self.foreign | removed
         richest = sorted(items, key=lambda item: -sum(1 for name in item.values if name not in keys))
-        ordered: dict[str, None] = dict.fromkeys(self.own_columns if self.cable_kind else BASE_COLUMNS.get(self.tab, ()))
+        ordered: dict[str, None] = dict.fromkeys(self.own_columns if self.cable_kind or self.tab in EQUIPMENT_TABS else BASE_COLUMNS.get(self.tab, ()))
         for item in richest:
             ordered.update(dict.fromkeys(name for name in item.values if name not in keys))
         if not ordered:  # a snapshot without the sheet's columns: the schema keys are the fields
             for item in richest:
                 ordered.update(dict.fromkeys(name for name in item.values if name not in self.extras))
-        if self.tab == TechOperationTab.EQUIPMENT:
+        if self.tab in EQUIPMENT_TABS:
             ordered.update(dict.fromkeys(EXTRA_KEYS))
+            ordered.pop("Наменование", None)  # one editable name column; the legacy alias stays in storage
             ordered.pop(TARGETS_KEY, None)  # «что обжимает» is a list kept by the tool's card, not a cell
         if self.tab == TechOperationTab.COAX:
             for name in COAX_DIAMETERS:
@@ -209,7 +215,15 @@ class _TechTable:
             current = self._record(uow, item).fields
             own = {name: value for name, value in own.items() if current.get(name, "") != value}
         if own:
-            edits = tuple(FieldEdit(name, item.values.get(name, ""), value) for name, value in own.items())
+            current_values = item.values
+            if self.tab in EQUIPMENT_TABS:
+                current_values = self._record(uow, item).fields
+                if "Наименование" in own:
+                    aliases = {current_values[key].strip() for key in NAME_KEYS if current_values.get(key, "").strip()}
+                    if len(aliases) > 1:
+                        raise ReferenceValidationError("Наименование и Наменование содержат разные значения")
+                    own.update({key: own["Наименование"] for key in NAME_KEYS if key in current_values})
+            edits = tuple(FieldEdit(name, current_values.get(name, ""), value) for name, value in own.items())
             record, _updated = _edit_in(UUID(item.id), edits, now, uow)
             _audit("references.tech_record_edited", actor, now, {
                 "record_id": str(record.id), "tab": record.tab.value, "fields": list(own), "via": VIA,
@@ -395,7 +409,7 @@ CABLE_KINDS = {"coax": "Коаксиальные кабели", "wire": "Мон�
 
 def _tables() -> dict[str, Callable[[], _Table]]:
     return {
-        "ob": lambda: _TechTable(TechOperationTab.EQUIPMENT, "Оборудование"),
+        **{tab.value: (lambda tab=tab: _TechTable(tab, CATALOG_TYPES[tab.value])) for tab in EQUIPMENT_TABS},
         "op": lambda: _TechTable(TechOperationTab.OPERATION, "Операции (БД.ОП)"),
         "ter": lambda: _TechTable(TechOperationTab.TERMINAL, "Терминалы"),
         "lug": lambda: _TechTable(TechOperationTab.LUG, "Наконечники"),

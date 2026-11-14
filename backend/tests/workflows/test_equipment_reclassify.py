@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.production.infrastructure import ProductionInstrumentRow, SqlAlchemyInstrumentRepository
 from app.modules.references.equipment import MEASURING_TYPE, SUPPORTING_TYPE
-from app.modules.references.infrastructure import EquipmentModelRow, TechOperationRecordRow
+from app.modules.references.infrastructure import EquipmentModelRow, EquipmentRecordRow
 from app.workflows.equipment_reclassify import AUDIT_EVENT, format_report, main, run, validate_mapping
 from tests.workflows.test_applicator_inventory_fix import engine, seed, snapshot, unit  # noqa: F401
 
@@ -51,7 +51,7 @@ def test_invalid_mapping_is_rejected(value):
 ])
 def test_bad_catalog_mapping_aborts_without_writes(engine, numbers, entries, message):
     with Session(engine) as session, session.begin():
-        session.add_all(unit(number, kind="Оборудование") for number in numbers)
+        session.add_all(unit(session, number, kind="Оборудование") for number in numbers)
     before = snapshot(engine)
     with pytest.raises(ValueError, match=message):
         run(engine, entries, apply=True)
@@ -113,7 +113,7 @@ def test_shared_rewrite_and_registry_keep_uuids_and_frozen_documents_and_repeat_
         new = next(item for item in after["td_issues"] if item["id"] == old["id"])
         assert (old == new) == (old["status"] != "draft")
     with Session(engine) as session:
-        row = session.get(TechOperationRecordRow, ids["unit"])
+        row = session.get(EquipmentRecordRow, ids["unit"])
         assert row.fields["Тип"] == MEASURING_TYPE and row.fields["Инв. номер"] == "СИ.106"
         assert row.fields["Код в базе терминалов"] == " m 10 "  # only applicator repair changes its code
         assert row.mirror_key == ids["mirror"] and row.equipment_model_id == ids["model"]
@@ -130,28 +130,28 @@ def test_shared_rewrite_and_registry_keep_uuids_and_frozen_documents_and_repeat_
 
 def test_physical_units_are_mapped_separately_and_only_whole_tokens_change(engine):
     with Session(engine) as session, session.begin():
-        first = unit("ОБ.033.1", kind="Оборудование", **{"Описание": (
+        first = unit(session, "ОБ.033.1", kind="Оборудование", **{"Описание": (
             "ОБ.033.1, ОБ.033.2; ОБ.033.3; ОБ.033.10; xОБ.033.1; ОБ.033.1.X; ОБ.033.1.2; ОБ.033.1.")})
-        session.add_all([first, unit("ОБ.033.2", kind="Оборудование"), unit("ОБ.033.3", kind="Оборудование")])
+        session.add_all([first, unit(session, "ОБ.033.2", kind="Оборудование"), unit(session, "ОБ.033.3", kind="Оборудование")])
         first_id = first.id
     run(engine, [mapping("ОБ.033.1", "СИ.112"), mapping("ОБ.033.2", "СИ.113")], apply=True)
     with Session(engine) as session:
-        row = session.get(TechOperationRecordRow, first_id)
+        row = session.get(EquipmentRecordRow, first_id)
         assert row.fields["Описание"] == "СИ.112, СИ.113; ОБ.033.3; ОБ.033.10; xОБ.033.1; ОБ.033.1.X; ОБ.033.1.2; СИ.112."
-        assert {item.fields["Инв. номер"] for item in session.scalars(select(TechOperationRecordRow))} == {"СИ.112", "СИ.113", "ОБ.033.3"}
+        assert {item.fields["Инв. номер"] for item in session.scalars(select(EquipmentRecordRow))} == {"СИ.112", "СИ.113", "ОБ.033.3"}
 
 
 def test_parent_number_does_not_generate_unmapped_child_numbers(engine):
     with Session(engine) as session, session.begin():
-        session.add(unit("ОБ.033", kind="Оборудование", **{"Описание": "ОБ.033.1 и ОБ.033"}))
+        session.add(unit(session, "ОБ.033", kind="Оборудование", **{"Описание": "ОБ.033.1 и ОБ.033"}))
     run(engine, [mapping("ОБ.033", "СИ.112")], apply=True)
     with Session(engine) as session:
-        assert session.scalar(select(TechOperationRecordRow)).fields["Описание"] == "ОБ.033.1 и СИ.112"
+        assert session.scalar(select(EquipmentRecordRow)).fields["Описание"] == "ОБ.033.1 и СИ.112"
 
 
 def test_edited_unrelated_target_is_never_mistaken_for_a_completed_mapping(engine):
     with Session(engine) as session, session.begin():
-        unrelated = unit("СИ.106", kind=MEASURING_TYPE)
+        unrelated = unit(session, "СИ.106", kind=MEASURING_TYPE)
         unrelated.edited_in_erp = True
         session.add_all([unrelated, instrument("ОБ.040")])
     before = snapshot(engine)
@@ -162,13 +162,13 @@ def test_edited_unrelated_target_is_never_mistaken_for_a_completed_mapping(engin
 
 def test_audit_does_not_authorize_a_different_target_uuid(engine):
     with Session(engine) as session, session.begin():
-        session.add(unit("ОБ.040", kind="Оборудование"))
+        session.add(unit(session, "ОБ.040", kind="Оборудование"))
     entries = [mapping("ОБ.040", "СИ.106")]
     run(engine, entries, apply=True)
     with Session(engine) as session, session.begin():
-        original = session.scalar(select(TechOperationRecordRow))
+        original = session.scalar(select(EquipmentRecordRow))
         original.fields = {**original.fields, "Инв. номер": "СИ.999"}
-        other = unit("СИ.106", kind=MEASURING_TYPE)
+        other = unit(session, "СИ.106", kind=MEASURING_TYPE)
         other.edited_in_erp = True
         session.add(other)
     before = snapshot(engine)
@@ -179,7 +179,7 @@ def test_audit_does_not_authorize_a_different_target_uuid(engine):
 
 def test_registry_drift_after_atomic_apply_is_rejected(engine):
     with Session(engine) as session, session.begin():
-        session.add_all([unit("ОБ.040", kind="Оборудование"), instrument("ОБ.040")])
+        session.add_all([unit(session, "ОБ.040", kind="Оборудование"), instrument("ОБ.040")])
     entries = [mapping("ОБ.040", "СИ.106")]
     run(engine, entries, apply=True)
     with Session(engine) as session, session.begin():
@@ -192,7 +192,7 @@ def test_registry_drift_after_atomic_apply_is_rejected(engine):
 
 def test_nonstandard_source_spelling_aborts_before_forcing_the_unit_number(engine):
     with Session(engine) as session, session.begin():
-        session.add(unit("ОБ. 040", kind="Оборудование", **{"Описание": "Прибор ОБ. 040"}))
+        session.add(unit(session, "ОБ. 040", kind="Оборудование", **{"Описание": "Прибор ОБ. 040"}))
     before = snapshot(engine)
     with pytest.raises(ValueError, match="нестандартно"):
         run(engine, [mapping("ОБ.040", "СИ.106")], apply=True)
@@ -201,8 +201,9 @@ def test_nonstandard_source_spelling_aborts_before_forcing_the_unit_number(engin
 
 def test_rule_changes_only_supporting_equipment_type_preserving_numbers_and_roles(engine):
     with Session(engine) as session, session.begin():
-        items = [unit("ОБ.200", kind="Оборудование"), unit("ОБ.201", kind="Оборудование"),
-                 unit("ОБ.202", kind="Инструмент"), unit("ОБ.203", kind="Оборудование")]
+        # ОБ.201 keeps the legacy type «Оборудование (ПР)»: still a machine, so the supporting rule applies to it too.
+        items = [unit(session, "ОБ.200", kind="Оборудование"), unit(session, "ОБ.201", kind="Оборудование (ПР)"),
+                 unit(session, "ОБ.202", kind="Инструмент"), unit(session, "ОБ.203", kind="Оборудование")]
         session.add_all(items)
         session.flush()
         for item in items[:3]:
@@ -214,7 +215,7 @@ def test_rule_changes_only_supporting_equipment_type_preserving_numbers_and_role
     after = snapshot(engine)
     assert before["equipment_models"] == after["equipment_models"]
     with Session(engine) as session:
-        types = {row.fields["Инв. номер"]: row.fields["Тип"] for row in session.scalars(select(TechOperationRecordRow))}
+        types = {row.fields["Инв. номер"]: row.fields["Тип"] for row in session.scalars(select(EquipmentRecordRow))}
     assert types == {"ОБ.200": SUPPORTING_TYPE, "ОБ.201": SUPPORTING_TYPE, "ОБ.202": "Инструмент", "ОБ.203": "Оборудование"}
     assert not run(engine, rules, apply=True).type_changes
     assert snapshot(engine) == after
@@ -222,7 +223,7 @@ def test_rule_changes_only_supporting_equipment_type_preserving_numbers_and_role
 
 def test_type_only_entry_and_explicit_mapping_take_precedence_over_role_rule(engine):
     with Session(engine) as session, session.begin():
-        row = unit("ОБ.040", kind="Оборудование")
+        row = unit(session, "ОБ.040", kind="Оборудование")
         session.add(row)
         session.flush()
         session.get(EquipmentModelRow, row.equipment_model_id).role = "supporting"
@@ -237,12 +238,12 @@ def test_type_only_entry_and_explicit_mapping_take_precedence_over_role_rule(eng
 
 def test_inventory_and_type_aliases_stay_consistent(engine):
     with Session(engine) as session, session.begin():
-        row = unit("ОБ.040", kind="Оборудование")
+        row = unit(session, "ОБ.040", kind="Оборудование")
         row.fields = {"inventoryNumber": "ОБ.040", "obType": "Оборудование", "Наменование": "Прибор"}
         session.add(row)
     run(engine, [mapping("ОБ.040", "СИ.106")], apply=True)
     with Session(engine) as session:
-        fields = session.scalar(select(TechOperationRecordRow)).fields
+        fields = session.scalar(select(EquipmentRecordRow)).fields
     assert fields["Инв. номер"] == fields["inventoryNumber"] == "СИ.106"
     assert fields["Тип"] == fields["obType"] == MEASURING_TYPE
 
@@ -250,7 +251,7 @@ def test_inventory_and_type_aliases_stay_consistent(engine):
 @pytest.mark.parametrize("allow", [False, True])
 def test_existing_registry_number_requires_explicit_allow_list(engine, allow):
     with Session(engine) as session, session.begin():
-        session.add_all([unit("ОБ.105", kind="Оборудование"), instrument("СИ.001")])
+        session.add_all([unit(session, "ОБ.105", kind="Оборудование"), instrument("СИ.001")])
     before = snapshot(engine)
     entries = [mapping("ОБ.105", "СИ.001", registry_existing=allow)]
     if not allow:
@@ -265,7 +266,7 @@ def test_existing_registry_number_requires_explicit_allow_list(engine, allow):
 
 def test_allow_list_never_merges_two_registry_rows(engine):
     with Session(engine) as session, session.begin():
-        session.add_all([unit("ОБ.105", kind="Оборудование"), instrument("ОБ.105"), instrument("СИ.001")])
+        session.add_all([unit(session, "ОБ.105", kind="Оборудование"), instrument("ОБ.105"), instrument("СИ.001")])
     before = snapshot(engine)
     with pytest.raises(ValueError, match="оба номера"):
         run(engine, [mapping("ОБ.105", "СИ.001", registry_existing=True)], apply=True)

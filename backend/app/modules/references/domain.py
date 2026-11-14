@@ -53,6 +53,11 @@ class TechOperationTab(str, Enum):
     The lugs and the cable kinds were lists inside БД.ТЕР / БД.ПРОВ (a `ter_kind` / `cable_kind` flag, migrations 0131,
     0150, 0155); since migration 0165 each is a tab of its own."""
     EQUIPMENT = "ob"
+    MEASURING = "ob_measuring"
+    SUPPORTING = "ob_support"
+    APPLICATORS = "ob_applicators"
+    DIES = "ob_dies"
+    TOOLS = "ob_tools"
     OPERATION = "op"
     TERMINAL = "ter"  # «Терминалы»: the crimp contacts of connector housings
     LUG = "lug"  # «Наконечники»: НШВ / НКИ / РПИ… (lugs.py)
@@ -70,6 +75,8 @@ class TechOperationTab(str, Enum):
 # cable bases. A mirror reload replaces a family as a whole and routes each sheet row to its base (`application.
 # replace_snapshot_detailed`); a row moved or edited in ERP is known by (family, mirror key) whatever base it is in.
 TERMINAL_TABS = (TechOperationTab.TERMINAL, TechOperationTab.LUG)
+EQUIPMENT_TABS = (TechOperationTab.EQUIPMENT, TechOperationTab.MEASURING, TechOperationTab.SUPPORTING,
+                  TechOperationTab.APPLICATORS, TechOperationTab.DIES, TechOperationTab.TOOLS)
 CABLE_TABS = (TechOperationTab.CAB_COAX, TechOperationTab.WIRE, TechOperationTab.CAB_MULTI, TechOperationTab.CAB_LAN)
 # The cable kind (`cables.CableKind`, the API's «список кабелей») ↔ its base; the БД.ТЕР kind (contact / lug) ↔ its base.
 CABLE_TAB_BY_KIND: dict[str, TechOperationTab] = dict(zip(("coax", "wire", "multi", "lan"), CABLE_TABS))
@@ -80,13 +87,15 @@ TER_KIND_BY_TAB: dict[TechOperationTab, str] = {tab: kind for kind, tab in TER_T
 
 def tab_family(tab: TechOperationTab) -> tuple[TechOperationTab, ...]:
     """The bases of the mirror sheet `tab` belongs to (itself alone for a base of its own sheet)."""
-    return TERMINAL_TABS if tab in TERMINAL_TABS else CABLE_TABS if tab in CABLE_TABS else (tab,)
+    return (EQUIPMENT_TABS if tab in EQUIPMENT_TABS else TERMINAL_TABS if tab in TERMINAL_TABS
+            else CABLE_TABS if tab in CABLE_TABS else (tab,))
 
 
 def family_root(tab: TechOperationTab) -> TechOperationTab:
     """The sheet base of a family: «ter» for «Наконечники», «prov» for a cable base; else the tab itself. The schema of
     the sheet (`technology._TECH_SCHEMA`, `BASE_COLUMNS`) is the root's."""
-    return TechOperationTab.TERMINAL if tab in TERMINAL_TABS else TechOperationTab.WIRE if tab in CABLE_TABS else tab
+    return (TechOperationTab.EQUIPMENT if tab in EQUIPMENT_TABS else TechOperationTab.TERMINAL if tab in TERMINAL_TABS
+            else TechOperationTab.WIRE if tab in CABLE_TABS else tab)
 
 
 def cable_tab(kind: object) -> TechOperationTab:
@@ -703,7 +712,7 @@ BASE_COLUMNS.update({tab: _PROV_COLUMNS for tab in CABLE_TABS})
 # БД.МАТ, БД.КОАКС, «Терминалы», «Наконечники» (28.10.2026) and БД.ОП (14.10.2026, «Операции» shows them beside the
 # code). БД.ОБ has none: its list is one row per model.
 CUSTOM_COLUMN_TABS = (*CABLE_TABS, TechOperationTab.MATERIAL, TechOperationTab.COAX, *TERMINAL_TABS,
-                      TechOperationTab.OPERATION)
+                      TechOperationTab.OPERATION, *EQUIPMENT_TABS)
 MAX_COLUMN_NAME = 60
 
 

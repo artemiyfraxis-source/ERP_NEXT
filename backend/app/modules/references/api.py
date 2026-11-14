@@ -1,3 +1,5 @@
+from .equipment_catalogs import CATALOG_COLUMNS
+from .domain import EQUIPMENT_TABS
 """HTTP contract for editable maps and the technology catalog."""
 
 from collections.abc import Callable
@@ -12,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.shared.clock import moscow_now
 from app.workflows.stock_article import read_stock_article
+from app.workflows.equipment_instruments import instrument_passports
 from app.shared.http_auth import (
     Principal, references_edit_principal, references_import_principal, references_maps_edit_principal,
     references_maps_view_principal, references_view_principal, refuse_api_tokens,
@@ -206,6 +209,8 @@ def _sheet_columns(tab: TechOperationTab | None, records: Sequence[TechOperation
     """Known sheet schema first (so an empty tab still has a create form). ОБ/ОП/ТЕР/КОАКС: the sheet's own columns
     kept by the import, without the schema values derived from them; a snapshot without them shows the schema keys. A
     cable base: its own columns (`CABLE_COLUMNS`)."""
+    if tab in EQUIPMENT_TABS:
+        return list(CATALOG_COLUMNS[tab.value])
     if tab in CABLE_TABS:
         return list(CABLE_COLUMNS[CABLE_KIND_BY_TAB[tab]])
     if tab in BASE_COLUMNS:
@@ -218,7 +223,7 @@ def _sheet_columns(tab: TechOperationTab | None, records: Sequence[TechOperation
     if tab == TechOperationTab.COAX:  # D1–D3 are the cable's («Коаксиальные кабели»), not a connector column; the
         # columns dropped 23.10 and 25.10.2026 (`COAX_DROPPED_COLUMNS`) neither — their values stay in the records
         sheet = [key for key in sheet if not is_coax_cable_column(key) and key not in COAX_DROPPED_COLUMNS]
-    if tab == TechOperationTab.EQUIPMENT:  # the fields ERP adds to the sheet's columns (code, tool, links)
+    if tab in EQUIPMENT_TABS:  # the fields ERP adds to the sheet's columns (code, tool, links)
         sheet += [key for key in EXTRA_KEYS if key not in sheet]
     return sheet or list(richest.fields)
 
@@ -247,6 +252,9 @@ def tech_operations(
         own = custom_columns(tab, uow) if tab is not None else []
         # БД.ОБ / БД.ОП: the ids the row is linked by (model, role, tool, «Обслуживает»; the models of the cells)
         extras = uow.equipment.record_extras(records) if hasattr(uow, "equipment") else {}
+        if getattr(uow, "session", None) is not None:
+            for unit_id, passport in instrument_passports(uow.session, [r.id for r in records if r.tab in EQUIPMENT_TABS]).items():
+                extras.setdefault(unit_id, {})["instrument_passport"] = passport
     if tab == TechOperationTab.COAX:  # an own column removed from the table 25.10.2026 («Дата цены») is no column
         own = [name for name in own if name not in COAX_DROPPED_COLUMNS]
     if tab in CABLE_TABS:  # nor one removed from a cable base (`CABLE_DROPPED`)
@@ -378,7 +386,7 @@ _BASE_TILES = {
     "tk_templates": ("🧩", "шаблоны техкарт · только просмотр"),
 }
 _BASE_TABS = {
-    "op": (TechOperationTab.OPERATION,), "ob": (TechOperationTab.EQUIPMENT,), "ter": TERMINAL_TABS,
+    "op": (TechOperationTab.OPERATION,), "ob": EQUIPMENT_TABS, "ter": TERMINAL_TABS,
     "coax": (TechOperationTab.COAX,), "prov": CABLE_TABS, "mat": (TechOperationTab.MATERIAL,),
     "spr_kab": (TechOperationTab.KAB_COAX, TechOperationTab.KAB_AWG),
 }
@@ -974,7 +982,7 @@ def equipment_number(
 ) -> dict:
     """The number a new record of this type gets if «Инв. номер» is left empty, and its row number."""
     with uow_factory() as uow:
-        rows = [item.fields for item in uow.tech_operations.list(tab=TechOperationTab.EQUIPMENT, query="", limit=10_000)]
+        rows = [item.fields for item in uow.tech_operations.list(tab=EQUIPMENT_TABS, query="", limit=10_000)]
     return {"inventory": next_model_inventory(type.strip(), rows), "row": next_row_number(rows)}
 
 
@@ -986,6 +994,21 @@ def duplicate_tech_record(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
 ) -> dict:
     return _record_json(_run_edit(lambda: duplicate_equipment(record_id, principal.actor, now, uow_factory())))
+
+
+@router.delete("/equipment/{record_id}", dependencies=[Depends(refuse_api_tokens("Токен API не удаляет оборудование."))])
+def delete_equipment_record(
+    record_id: UUID,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    from .application import delete_equipment
+    try:
+        record = _run_edit(lambda: delete_equipment(record_id, principal.actor, now, uow_factory()))
+    except IntegrityError as error:
+        raise HTTPException(status_code=409, detail="Экземпляр связан с заданиями, рецептами или ресурсами") from error
+    return {"id": str(record.id)}
 
 
 @router.get("/tech-operations/crimp-codes")

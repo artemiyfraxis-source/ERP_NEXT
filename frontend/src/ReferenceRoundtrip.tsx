@@ -14,6 +14,11 @@ import { fieldTitle } from "./referenceLabels";
 const TARGETS: Record<string, { table: string; kind?: string }> = {
   templates: { table: "op" },
   ob: { table: "ob" },
+  ob_measuring: { table: "ob_measuring" },
+  ob_support: { table: "ob_support" },
+  ob_applicators: { table: "ob_applicators" },
+  ob_dies: { table: "ob_dies" },
+  ob_tools: { table: "ob_tools" },
   coax: { table: "coax" },
   // Каждая база — своя таблица (миграция 0165): «Терминалы» (ter), «Наконечники» (lug), виды кабелей (cab_*; монтажные — prov).
   ter: { table: "ter" },
