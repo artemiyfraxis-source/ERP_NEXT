@@ -344,24 +344,28 @@ def test_a_view_only_receiving_is_refused_every_route(stand):  # noqa: F811
         assert client.request(method, path, json={}).status_code == 403, (method, path)
 
 
-def test_the_receiving_edit_right_starts_a_scanner_job_on_the_warehouse_queue(stand):  # noqa: F811
+@pytest.mark.parametrize("scanner_count", [1, 2])
+def test_the_receiving_edit_right_starts_a_scanner_job_on_the_warehouse_queue(stand, scanner_count):  # noqa: F811
     client, sessions = stand
     _as("edit")
     refused = client.post("/api/receiving/upd/scan-jobs")
     assert refused.json()["status"] == "no_agent", "no agent alive: the screen shows the install guide"
     scan_agents.heartbeat(app.state.warehouse_uow_factory(), machine_id="receiving-pc", pc_name="TEST",
                           version="2.2.0", ip_seen="testclient", ip_lan="",
-                          scanners=[{"id": "receiving-scanner", "name": "Тестовый сканер"}], now=NOW)
-    choice = client.post("/api/receiving/upd/scan-jobs")
-    assert choice.status_code == 200 and choice.json()["status"] == "choose", choice.text
-    with sessions() as session:
-        assert session.scalars(select(ScanJobRow)).first() is None, "no job before selecting the full pair"
-
-    started = client.post("/api/receiving/upd/scan-jobs", json={"agent_id": "receiving-pc", "target_scanner": "receiving-scanner"})
+                          scanners=[{"id": "receiving-scanner", "name": "Тестовый сканер"},
+                                    {"id": "receiving-other", "name": "Другой сканер"}][:scanner_count], now=NOW)
+    started = client.post("/api/receiving/upd/scan-jobs")
+    if scanner_count == 2:
+        assert started.status_code == 200 and started.json()["status"] == "choose", started.text
+        with sessions() as session:
+            assert session.scalars(select(ScanJobRow)).first() is None, "multiple scanners need an explicit choice"
+        started = client.post("/api/receiving/upd/scan-jobs", json={"agent_id": "receiving-pc", "target_scanner": "receiving-scanner"})
     assert started.status_code == 200 and started.json()["status"] == "pending", started.text
     with sessions() as session:
         job = session.get(ScanJobRow, UUID(started.json()["id"]))
         assert (job.target_machine_id, job.target_scanner) == ("receiving-pc", "receiving-scanner")
+        assert job.requester_id is not None
+        assert len(session.scalars(select(ScanJobRow)).all()) == 1
     polled = client.get(f"/api/receiving/upd/scan-jobs/{started.json()['id']}").json()
     assert polled["status"] == "pending" and polled["result"] is None
     assert client.delete(f"/api/receiving/upd/scan-jobs/{started.json()['id']}").json()["status"] == "failed"

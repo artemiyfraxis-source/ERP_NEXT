@@ -167,6 +167,8 @@ class ScanJobRow(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     requested_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Identity belongs to another module; authorization compares this stable ID after loading the job by PK.
+    requester_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -200,6 +202,7 @@ class ScanJob:
     file_id: UUID | None
     result: str  # the recognition answer as JSON text, '' — not made yet (or the job is not done)
     requested_by: str
+    requester_id: UUID | None = None
     kind: str = "scan"
     vna_name: str = ""
     target_machine_id: str | None = None
@@ -223,7 +226,7 @@ def _session(uow) -> Session:
 
 def _job(row: ScanJobRow) -> ScanJob:
     return ScanJob(id=row.id, status=row.status, error=row.error or "", file_id=row.file_id, result=row.result or "",
-                   requested_by=row.requested_by, kind=row.kind, vna_name=row.vna_name,
+                   requested_by=row.requested_by, requester_id=row.requester_id, kind=row.kind, vna_name=row.vna_name,
                    target_machine_id=row.target_machine_id, source=row.source, capture_file_name=row.capture_file_name,
                    instrument_id=row.instrument_id, capture_settings=row.capture_settings)
 
@@ -249,16 +252,26 @@ def _read(session: Session, job_id: UUID) -> ScanJob:
 
 def create_job(uow, *, requested_by: str, now: datetime, target: str | None = None,
                scanner: str | None = None, kind: str = "scan", vna_name: str = "", source: str = "s2vna",
-               instrument_id: UUID | None = None) -> ScanJob:
+               instrument_id: UUID | None = None, requester_id: UUID | None = None,
+               expected_vna_serial: str | None = None) -> ScanJob:
     """Create a pending job. Only a full `target` / `scanner` pair can be claimed; incomplete legacy rows expire."""
     if source not in ("s2vna", "arinst"):
         raise ValueError("Неизвестный источник ВАЦ")
     scanner = (scanner or "").strip()[:SCANNER_MAX] or None
     with uow:
         session = _session(uow)
+        if expected_vna_serial is not None:
+            from .devices import VnaBindingRow
+
+            # Serialize enqueue with transfer and recheck the owner after routing's earlier read.
+            owned = session.execute(update(VnaBindingRow).where(
+                VnaBindingRow.serial == expected_vna_serial, VnaBindingRow.machine_id == target)
+                .values(machine_id=target))
+            if owned.rowcount != 1:
+                raise ScanJobClosed("Привязка ВАЦ изменилась — проверьте прибор ещё раз")
         row = ScanJobRow(id=uuid4(), status=PENDING, requested_by=requested_by[:255] or "—", created_at=now,
                          target_machine_id=target, target_scanner=scanner if target else None, error="", result="",
-                         kind=kind, vna_name=vna_name, source=source, instrument_id=instrument_id)
+                         kind=kind, vna_name=vna_name, source=source, instrument_id=instrument_id, requester_id=requester_id)
         session.add(row)
         uow.commit()
     return _job(row)

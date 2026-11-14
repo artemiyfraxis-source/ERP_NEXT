@@ -9,6 +9,10 @@ from app.modules.warehouse.scan_jobs import DONE, ScanJobRow
 
 
 def capture_source(uow, instrument_id: UUID) -> str:
+    return capture_instrument(uow, instrument_id)["source"]
+
+
+def capture_instrument(uow, instrument_id: UUID) -> dict[str, str]:
     with uow:
         item = SqlAlchemyInstrumentRepository(uow.session).get(instrument_id)
         if item is None:
@@ -18,7 +22,7 @@ def capture_source(uow, instrument_id: UUID) -> str:
         source = {"S2VNA": "s2vna", "Arinst VL": "arinst"}.get(item.vna_app)
         if source is None:
             raise ValueError("У выбранного СИ не указана программа ВАЦ")
-        return source
+        return {"source": source, "serial": (item.serial_number or "").strip(), "number": item.inventory_number}
 
 
 def capture_evidence(uow, job_id: UUID, instrument_id: UUID, actor_id: UUID, content: bytes) -> tuple[dict | None, bool]:

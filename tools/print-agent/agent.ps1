@@ -28,7 +28,8 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.6.0'
+$script:AgentVersion = '2.7.0'
+$script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
 
@@ -233,7 +234,11 @@ function Get-AgentScanners {
 function Test-VnaRegistered { return $null -ne [Type]::GetTypeFromProgID('S2VNA.Application') }
 function Get-VnaApplication {
     param([switch]$RunningOnly)
-    if ($RunningOnly) { return [Runtime.InteropServices.Marshal]::GetActiveObject('S2VNA.Application') }
+    # S2VNA does not publish itself in ROT. Its COM class attaches to the existing application.
+    # Check here as well as in the capability probe: heartbeat must not activate a stopped program.
+    if ($RunningOnly -and -not (Get-Process -Name S2VNA -ErrorAction SilentlyContinue)) {
+        throw 'S2VNA не запущена'
+    }
     return New-Object -ComObject 'S2VNA.Application'
 }
 function Release-VnaApplication {
@@ -268,7 +273,7 @@ function Save-VnaName {
 function Get-VnaCapability {
     if (-not (Test-VnaRegistered)) { return $null }
     $name = Get-CachedVnaName
-    # S2VNA does not register in the Running Object Table. Heartbeat never touches COM.
+    # Heartbeat attaches only while S2VNA is running; it never intentionally starts the application.
     if (-not (Get-Process -Name S2VNA -ErrorAction SilentlyContinue)) {
         return @{ name = $name; ready = $false; reason = 's2vna_not_running' }
     }
@@ -281,6 +286,22 @@ function Get-VnaCapability {
         return @{ name = $name; ready = $false; reason = 'probe_failed' }
     }
     if (-not $devices.Count) { return @{ name = $name; ready = $false; reason = 'device_not_connected' } }
+    $now = Get-Date
+    if ($now -ge $script:VnaIdnNextProbe) {
+        # Throttle failed attaches too; COM must not be probed every 2 minutes.
+        $script:VnaIdnNextProbe = $now.AddMinutes(10)
+        $application = $null
+        try {
+            $application = Get-VnaApplication -RunningOnly
+            $idn = ([string]$application.Name).Trim()
+            if ($idn.Length -le 500 -and $idn -notmatch '[\r\n]' -and $idn -match '^[^,]+,[^,]+,\s*[^,\s][^,]*,[^,]+$') {
+                Save-VnaName -Name $idn
+                $name = $idn
+            }
+        } catch {
+            Write-Log "ВАЦ: имя работающего прибора пока не прочитано, используется сохранённое: $($_.Exception.Message)"
+        } finally { Release-VnaApplication $application }
+    }
     return @{ name = $name; ready = $true; reason = '' }
 }
 

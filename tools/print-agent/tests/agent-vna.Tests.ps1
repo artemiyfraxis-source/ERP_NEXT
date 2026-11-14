@@ -141,7 +141,9 @@ Describe 'ВАЦ: отчёт без запуска S2VNA' {
     BeforeEach {
         Mock Test-VnaRegistered { $true }
         Mock Test-ArinstInstalled { $false }
-        Mock Get-VnaApplication { throw 'heartbeat must not use COM' }
+        $script:VnaIdnNextProbe = [datetime]::MinValue
+        Mock Get-VnaApplication { [pscustomobject]@{ Name = 'Planar, S50180, 26030095, 26.2.2/2' } }
+        Mock Save-VnaName {}
         Mock Get-Process { [pscustomobject]@{ ProcessName = 'S2VNA' } } -ParameterFilter { $Name -eq 'S2VNA' }
         Mock Get-PnpDevice { [pscustomobject]@{ InstanceId = 'USB\VID_2226&PID_0001\123'; Status = 'OK' } }
         Mock Get-CachedVnaName { 'Planar, S50180, 26030095, 26.2.2/2' }
@@ -151,12 +153,12 @@ Describe 'ВАЦ: отчёт без запуска S2VNA' {
         Get-VnaCapability | Should Be $null
         Assert-MockCalled Get-VnaApplication -Times 0 -Exactly -Scope It
     }
-    It 'процесс и подключённый Planar готовы даже без Running Object Table' {
+    It 'читает IDN только у уже запущенной программы' {
         $capability = Get-VnaCapability
         $capability.name | Should Match '26030095'
         $capability.ready | Should Be $true
         $capability.reason | Should Be ''
-        Assert-MockCalled Get-VnaApplication -Times 0 -Exactly -Scope It
+        Assert-MockCalled Get-VnaApplication -Times 1 -Exactly -Scope It -ParameterFilter { $RunningOnly }
         Assert-MockCalled Get-Process -Times 1 -Exactly -Scope It -ParameterFilter { $Name -eq 'S2VNA' }
         Assert-MockCalled Get-PnpDevice -Times 1 -Exactly -Scope It -ParameterFilter { $PresentOnly }
     }
@@ -189,9 +191,26 @@ Describe 'ВАЦ: отчёт без запуска S2VNA' {
     }
     It 'до первого замера имя S2VNA не мешает готовности' {
         Mock Get-CachedVnaName { 'S2VNA' }
+        Mock Get-VnaApplication { throw 'ROT unavailable' }
         $capability = Get-VnaCapability
         $capability.name | Should Be 'S2VNA'
         $capability.ready | Should Be $true
+    }
+    It 'обновляет IDN не чаще десяти минут и сохраняет результат' {
+        Get-VnaCapability | Out-Null
+        Get-VnaCapability | Out-Null
+        Assert-MockCalled Get-VnaApplication -Times 1 -Exactly -Scope It -ParameterFilter { $RunningOnly }
+        Assert-MockCalled Save-VnaName -Times 1 -Exactly -Scope It -ParameterFilter { $Name -match '26030095' }
+        $script:VnaIdnNextProbe = (Get-Date).AddSeconds(-1)
+        Get-VnaCapability | Out-Null
+        Assert-MockCalled Get-VnaApplication -Times 2 -Exactly -Scope It -ParameterFilter { $RunningOnly }
+    }
+    It 'ошибка подключения сохраняет кэш и также ограничивает частоту' {
+        Mock Get-VnaApplication { throw 'ROT unavailable' }
+        (Get-VnaCapability).name | Should Match '26030095'
+        (Get-VnaCapability).name | Should Match '26030095'
+        Assert-MockCalled Get-VnaApplication -Times 1 -Exactly -Scope It -ParameterFilter { $RunningOnly }
+        Assert-MockCalled Save-VnaName -Times 0 -Exactly -Scope It
     }
     It 'heartbeat содержит имя и готовность ВАЦ' {
         Mock Get-MachineId { 'pc-1' }
@@ -200,7 +219,7 @@ Describe 'ВАЦ: отчёт без запуска S2VNA' {
         Mock Invoke-ErpApi { [pscustomobject]@{ ok = $true } }
         Send-Heartbeat -Base 'http://test' -AuthToken 'mock-token'
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
-            $Body.vna.name -match '26030095' -and $Body.vna.ready -and $Body.vna.reason -eq '' -and $Body.version -eq '2.6.0' -and ($Body.vna_sources -join ',') -eq 's2vna'
+            $Body.vna.name -match '26030095' -and $Body.vna.ready -and $Body.vna.reason -eq '' -and $Body.version -eq '2.7.0' -and ($Body.vna_sources -join ',') -eq 's2vna'
         }
     }
     It 'heartbeat передаёт причину неготовности' {
