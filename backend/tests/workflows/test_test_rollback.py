@@ -5,7 +5,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -290,6 +290,70 @@ def test_task_status_changed_by_the_tester_goes_back_from_the_audit(shop):
     assert code == 0, text
     assert "«Отменено» → снова «Запущено»" in text
     assert shop.rows(ProductionTaskRow)[0].status == "Запущено"
+
+
+@pytest.mark.parametrize("restore", [False, True])
+def test_status_rollback_locks_project_then_task_before_writes(shop, monkeypatch, restore):
+    from app.workflows import test_rollback
+
+    task = shop.rows(ProductionTaskRow)[0]
+    if restore:
+        task = set_production_cancelled(SetProductionCancelledCommand(
+            task.id, task.version, True, MASTER, at(9, 30),
+        ), shop.factory())
+    set_production_cancelled(SetProductionCancelledCommand(
+        task.id, task.version, not restore, OWNER, at(10, 30),
+    ), shop.factory())
+    calls = []
+    monkeypatch.setattr(test_rollback, "lock_project_run", lambda session, project: calls.append(project))
+    locked_tasks = []
+
+    @event.listens_for(shop.engine, "before_execute")
+    def check_lock_order(connection, clause, multiparams, params, execution_options):
+        if getattr(clause, "_for_update_arg", None) is not None:
+            assert calls == ["180К.11"]
+            locked_tasks.append(True)
+        if getattr(clause, "is_dml", False):
+            assert calls == ["180К.11"]
+            assert locked_tasks
+
+    text, code = shop.rollback(apply=False, employee=None)
+    assert code == 0, text
+    assert calls == [] and locked_tasks == []
+
+    text, code = shop.rollback(apply=True, employee=None)
+    assert code == 0, text
+    assert calls == ["180К.11"] and locked_tasks
+    assert shop.rows(ProductionTaskRow)[0].status == ("Отменено" if restore else "Запущено")
+
+
+def test_rollback_takes_all_project_locks_in_order_before_task_locks(shop, monkeypatch):
+    from app.modules.production.infrastructure import SqlAlchemyProductionRepository
+    from app.workflows import test_rollback
+    from tests.workflows.test_production_intake import _task
+
+    other = _task("179K.1", "КБ1", 10, number="ПЗ-OTHER")
+    with shop.sessions() as session:
+        SqlAlchemyProductionRepository(session).add(other)
+        session.commit()
+    calls = []
+    monkeypatch.setattr(test_rollback, "lock_project_run", lambda session, project: calls.append(project))
+
+    @event.listens_for(shop.engine, "before_execute")
+    def check_all_projects_locked(connection, clause, multiparams, params, execution_options):
+        if getattr(clause, "_for_update_arg", None) is not None or getattr(clause, "is_dml", False):
+            assert calls == ["179К.1", "180К.11"]
+
+    with shop.sessions() as session:
+        scope = make_scope(session, since=SINCE, until=UNTIL, actor="owner@example.test", employee=None)
+        plan = test_rollback.Plan(tasks={shop.task.id, other.id}, lines=["Откат"])
+        before = {row.id: row.version for row in session.scalars(select(ProductionTaskRow))}
+        test_rollback.execute(session, plan, scope, at(18))
+        session.commit()
+        assert {row.id: row.version for row in session.scalars(select(ProductionTaskRow))} == {
+            task_id: version + 1 for task_id, version in before.items()
+        }
+    assert calls == ["179К.1", "180К.11"]
 
 
 def test_a_status_changed_again_by_someone_else_is_not_reverted(shop):

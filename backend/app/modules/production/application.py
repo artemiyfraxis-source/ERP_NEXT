@@ -123,6 +123,9 @@ class ProductionRepository(Protocol):
     def with_status(self, status: ProductionStatus) -> Sequence[ProductionTask]: ...
     def planned(self, since: datetime) -> Sequence[ProductionTask]: ...
     def lock(self, task_id: UUID) -> None: ...
+    def lock_projects(
+        self, task_ids: Sequence[UUID] = (), *, projects: Sequence[str] = (), planned_since: datetime | None = None,
+    ) -> None: ...
     def reserve_number(self) -> str: ...
     def last_launch_seqs(self, techcard_ids: Sequence[UUID]) -> dict[UUID, int]: ...
     def add(self, task: ProductionTask, launch_seq: int | None = None) -> None: ...
@@ -328,6 +331,7 @@ def launch_task(command: LaunchProductionCommand, uow: UnitOfWork) -> tuple[Prod
         if seen is None:
             seen = uow.production.last_launch_seqs((command.techcard_id,)).get(command.techcard_id, 0)
         launch_seq = seen + 1
+    uow.production.lock_projects(projects=(command.project,))
     task = ProductionTask.create(
         number=uow.production.reserve_number(),
         source_idempotency_key=key,
@@ -575,6 +579,11 @@ def _live_tasks(uow: UnitOfWork, now: datetime) -> dict[UUID, ProductionTask]:
     return {item.id: localize(item, now) for item in uow.production.planned(now - PLAN_HORIZON)}
 
 
+def lock_reflow_projects(uow, task_ids: Sequence[UUID], now: datetime, *, projects: Sequence[str] = ()) -> None:
+    """Lock the whole potential reflow scope before the caller locks a task or writes work."""
+    uow.production.lock_projects(task_ids, projects=projects, planned_since=now - PLAN_HORIZON)
+
+
 def _moment(value: datetime) -> str:
     return f"{value:%d.%m %H:%M}"
 
@@ -592,6 +601,8 @@ def _save_moves(
     by_task: dict[UUID, list[Move]] = {}
     for move in moves.values():
         by_task.setdefault(move.task.id, []).append(move)
+    affected = touched | by_task.keys()
+    uow.production.lock_projects(tuple(affected), projects=tuple(tasks[task_id].project for task_id in affected))
     names = {item.id: item.name for item in uow.operators.list()}
     lines: list[str] = []
     for task_id, items in by_task.items():
@@ -627,6 +638,7 @@ def assign_share(command: AssignShareCommand, uow: UnitOfWork) -> tuple[Producti
     других долей этой операции (dispatch.split_shares), их окна укорачиваются."""
     with uow:
         # Факт монтажника по этому заданию (application.record_fact) и мастер пишут по очереди.
+        lock_reflow_projects(uow, (command.task_id,), command.now)
         uow.production.lock(command.task_id)
         loaded = _task(command.task_id, command.expected_version, uow)
         if loaded.status is ProductionStatus.DONE:
@@ -840,6 +852,7 @@ def record_fact(
     total — всеми): сдал свои штуки — «закончил», окно кончается сейчас; не всё — конец по оставшимся штукам.
     Работа после доли сдвигается или подтягивается (dispatch.reflow). Вызывается внутри транзакции исполнения:
     план правится в точке сохранения — если не вышло, выработка всё равно сохраняется, план остаётся прежним."""
+    lock_reflow_projects(uow, (task_id,), now)
     stored = uow.production.get(task_id)
     if stored is None or stored.status is not ProductionStatus.RUNNING or stored.handed_to:
         return

@@ -38,6 +38,41 @@ def at(hour: int, minute: int = 0) -> datetime:
     return datetime(2026, 9, 22, hour, minute)
 
 
+@pytest.mark.parametrize("with_resources", [False, True])
+def test_rollback_locks_all_projects_before_deleting_or_clearing_tasks(shop, monkeypatch, with_resources):
+    from app.modules.production.infrastructure import SqlAlchemyProductionRepository
+    from app.workflows.autoplan_rollback import Plan, Window, execute
+    from tests.production.test_persistence import _watch_batch_locks
+    from tests.workflows.test_production_intake import _task
+
+    task_b = _task("592К.1", "КБ1", 10, number="ПЗ-B")
+    task_a = _task("591К.3", "КБ1", 10, number="ПЗ-A")
+    with shop.sessions() as session:
+        repository = SqlAlchemyProductionRepository(session)
+        for task in (task_b, task_a):
+            repository.add(task)
+        session.commit()
+    calls = _watch_batch_locks(monkeypatch, shop.sessions.kw["bind"], ["591К.3", "592К.1"])
+    plan = Plan(delete_tasks={task_b.id: task_b.number}, clear_operations={task_a.id: {task_a.operations[0].id}})
+
+    class Resources:
+        def acquire(self):
+            assert calls == []  # Keep the shared resource-generation lock before project locks.
+
+        def remove_task(self, task_id):
+            assert calls[:2] == ["591К.3", "592К.1"]
+
+        def record_task(self, task):
+            assert calls[:2] == ["591К.3", "592К.1"]
+
+    with shop.sessions() as session:
+        execute(session, plan, Window(SINCE, UNTIL), at(12), Resources() if with_resources else None)
+        session.commit()
+        assert session.get(ProductionTaskRow, task_b.id) is None
+        assert session.get(ProductionTaskRow, task_a.id).version == task_a.version + 1
+    assert calls[:2] == ["591К.3", "592К.1"]
+
+
 SINCE = at(8, 30).replace(tzinfo=MOSCOW)
 UNTIL = at(12).replace(tzinfo=MOSCOW)
 

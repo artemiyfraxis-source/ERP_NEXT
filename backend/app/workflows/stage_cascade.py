@@ -443,6 +443,7 @@ def apply_stage_change(
         return change_stage(command, uow), StageCascade(note=BACK_NOTE if plan.direction in (STAGE_BACK, STAGE_AUTO) else "")
     project = normalize_project_number(command.project)
     with uow:
+        uow.production.lock_projects(projects=(project,))
         sequence = uow.plan_events.last_sequence(project)
         if command.expected_sequence is not None and sequence != command.expected_sequence:
             raise StageChangeConflict(CASCADE_CONFLICT)

@@ -28,6 +28,7 @@ class ProductionRepo:
         self.seqs = {}
 
     def get(self, task_id): return self.items.get(task_id)
+    def lock_projects(self, task_ids=(), *, projects=(), planned_since=None): pass
     def by_idempotency_key(self, key): return next((item for item in self.items.values() if item.source_idempotency_key == key), None)
     def list(self, limit=200, after_id=None): return list(self.items.values())[:limit]
     def reserve_number(self):
