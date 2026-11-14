@@ -54,8 +54,10 @@ drop_all() {
 }
 trap 'drop_all; rm -rf "$work"' EXIT
 alembic() { (cd "$repo/backend" && ERP_DATABASE_URL="$DRILL_URL_BASE/erp" python -m alembic "$@"); }
-schema() {  # db → its schema, without comments and the per-dump \restrict keys
-  pg_dump --schema-only --no-owner --no-privileges -d "$1" | grep -v -E '^(--|\\(un)?restrict|$)'
+schema() {  # db → its schema, without comments, the per-dump \restrict keys and per-database pg_attver column options
+  # (PostgreSQL 16.15 pg_dump prints `ALTER … SET (pg_attver=<n>)` with a number unique to each database — 13.11.2026)
+  pg_dump --schema-only --no-owner --no-privileges -d "$1" \
+    | grep -v -E '^(--|\\(un)?restrict|$)|^ALTER TABLE ONLY [^ ]+ ALTER COLUMN [^ ]+ SET \(pg_attver=[0-9]+\);$'
 }
 same_schema() {  # file db — prints the difference when there is one
   schema "$2" > "$work/schema-now.sql"
