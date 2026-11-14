@@ -1,0 +1,1819 @@
+[
+  {
+    "project": "708К.",
+    "kb": "КБ1",
+    "config": {
+      "ops": [
+        {
+          "tOp": "3.50",
+          "side": "",
+          "type": "coaxCut",
+          "label": "Резка кабеля",
+          "opKey": "coaxCut",
+          "opNum": "CUT_COAX_auto",
+          "tPrep": "180",
+          "units": 1,
+          "tMachine": "3.50",
+          "templateId": "cut-coax-auto-резка",
+          "linearTiming": {
+            "toolOps": "1",
+            "rollSpeed": "3",
+            "toolSeconds": "0,5"
+          },
+          "equipmentTools": [
+            {
+              "name": "EW-05F+M | Автомат резки и зачистки многожильного кабеля с промежуточной зачисткой",
+              "tool": "EW-05F+M | Автомат мерной резки проводов",
+              "position": 3,
+              "inventory": "ОБ.015",
+              "inventory_number": "ОБ.015",
+              "equipment_model_id": "3b64e7ec-fd8d-407b-b41a-761ef11e5922"
+            }
+          ]
+        },
+        {
+          "tOp": "4.00",
+          "side": "",
+          "type": "coaxCutTut",
+          "label": "Печать меток и резка ТУТ под маркировку ×3",
+          "opKey": "coaxCutTut",
+          "opNum": "PRINT_MARK_TUBE",
+          "tPrep": "600",
+          "units": 3,
+          "tMachine": "2.00",
+          "templateId": "ins-mark-tube-auto-печать-и-резка-маркировочной-трубки",
+          "equipmentTools": [
+            {
+              "name": "ZCUT-RT660 | Маркиратор проводов трубчатый",
+              "tool": "ZCUT-RT660 | Маркиратор проводов трубчатый",
+              "position": 3,
+              "inventory": "ОБ.102",
+              "inventory_number": "ОБ.102",
+              "equipment_model_id": "2d2d11f6-df45-4b0a-a430-405f8ab71f37"
+            }
+          ]
+        },
+        {
+          "tOp": "3.00",
+          "side": "",
+          "type": "coaxInsTut",
+          "label": "Монтаж ТУТ под маркировку ×3",
+          "opKey": "coaxInsTut",
+          "opNum": "INS_TUT",
+          "tPrep": "120",
+          "units": 3,
+          "tMachine": "0.00",
+          "templateId": "ins-tut-монтаж"
+        },
+        {
+          "tOp": "3.00",
+          "side": "A",
+          "type": "coaxInsSleeve",
+          "label": "Надеть крышку, уплотнитель и гильзу (А)",
+          "opKey": "coaxInsSleeveA",
+          "opNum": "INS_SLEEVE_coax",
+          "parts": [
+            {
+              "art": "59K14B-1M4/50",
+              "qty": 1,
+              "name": "59K14B-1M4/50"
+            },
+            {
+              "art": "59Z163-000/51",
+              "qty": 1,
+              "name": "59Z163-000/51"
+            }
+          ],
+          "tPrep": "0",
+          "units": 1,
+          "tMachine": "0.00",
+          "noTooling": true,
+          "templateId": "ins-sleeve-coax-монтаж"
+        },
+        {
+          "tOp": "10.00",
+          "side": "A",
+          "type": "coaxStrip",
+          "label": "Разделка коаксиала (А)",
+          "opKey": "coaxSideStripA",
+          "opNum": "STRIP_COAX_auto",
+          "tPrep": "600",
+          "units": 1,
+          "tMachine": "4.00",
+          "noTooling": true,
+          "templateId": "strip-coax-auto-разделка-a",
+          "equipmentTools": [
+            {
+              "name": "EW-1165 | Станок зачистки коаксиального кабеля",
+              "tool": "EW-1165 | Машина для снятия изоляции с коаксиальных кабелей",
+              "position": 2,
+              "inventory": "ОБ.010",
+              "inventory_number": "ОБ.010",
+              "equipment_model_id": "fbd0d77c-c12d-4af3-9281-b9b30c20981c"
+            }
+          ]
+        },
+        {
+          "tOp": "8.00",
+          "side": "A",
+          "type": "coaxPinCrimp",
+          "label": "Обжим центрального контакта (А)",
+          "opKey": "coaxPinCrimpA",
+          "opNum": "PRS_SLEEVE_coax",
+          "parts": [
+            {
+              "art": "59K13o-1M4A4",
+              "qty": 1,
+              "name": "59K13o-1M4A4"
+            }
+          ],
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "2.00",
+          "noTooling": true,
+          "templateId": "prs-sleeve-coax-опрессовка",
+          "equipmentTools": [
+            {
+              "name": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "tool": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "position": 0,
+              "inventory": "ОБ.006.1",
+              "inventory_number": "ОБ.006.1",
+              "equipment_model_id": "62111d5e-17a7-4139-8396-7ac74a253531"
+            }
+          ]
+        },
+        {
+          "tOp": "10.00",
+          "side": "A",
+          "type": "coaxHousing",
+          "label": "Вставка во вставку до щелчка, контроль заглубления контакта 0,18 мм (А)",
+          "opKey": "coaxInsertA",
+          "opNum": "INS_housing_COAX",
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "0.00",
+          "noTooling": true,
+          "templateId": "ins-housing-coax-монтаж-корпуса-a"
+        },
+        {
+          "tOp": "8.00",
+          "side": "A",
+          "type": "coaxShield",
+          "label": "Обжим гильзы экрана (А)",
+          "opKey": "coaxShieldA",
+          "opNum": "PRS_SLEEVE_coax",
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "2.00",
+          "noTooling": true,
+          "templateId": "prs-sleeve-coax-опрессовка",
+          "equipmentTools": [
+            {
+              "name": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "tool": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "position": 0,
+              "inventory": "ОБ.006.1",
+              "inventory_number": "ОБ.006.1",
+              "equipment_model_id": "62111d5e-17a7-4139-8396-7ac74a253531"
+            }
+          ]
+        },
+        {
+          "tOp": "10.00",
+          "side": "A",
+          "type": "coaxHousing",
+          "label": "Установка в корпус до щелчка (А)",
+          "opKey": "coaxBodyA",
+          "opNum": "INS_housing_COAX",
+          "parts": [
+            {
+              "art": "59Z163-003-Z",
+              "qty": 1,
+              "name": "59Z163-003-Z"
+            }
+          ],
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "0.00",
+          "noTooling": true,
+          "templateId": "ins-housing-coax-монтаж-корпуса-a"
+        },
+        {
+          "tOp": "15.00",
+          "side": "A",
+          "type": "coaxCapScrew",
+          "label": "Уплотнитель и крышка (А)",
+          "opKey": "coaxSealCapA",
+          "opNum": "INS_CAP",
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "0.00",
+          "noTooling": true,
+          "templateId": "ins-cap-монтаж"
+        },
+        {
+          "tOp": "3.00",
+          "side": "B",
+          "type": "coaxInsSleeve",
+          "label": "Надеть гильзу (В)",
+          "opKey": "coaxInsSleeveB",
+          "opNum": "INS_SLEEVE_coax",
+          "tPrep": "0",
+          "units": 1,
+          "tMachine": "0.00",
+          "noTooling": true,
+          "templateId": "ins-sleeve-coax-монтаж"
+        },
+        {
+          "tOp": "10.00",
+          "side": "B",
+          "type": "coaxStrip",
+          "label": "Разделка коаксиала (В)",
+          "opKey": "coaxSideStripB",
+          "opNum": "STRIP_COAX_auto",
+          "tPrep": "600",
+          "units": 1,
+          "tMachine": "4.00",
+          "noTooling": true,
+          "templateId": "strip-coax-auto-разделка-b",
+          "equipmentTools": [
+            {
+              "name": "EW-1165 | Станок зачистки коаксиального кабеля",
+              "tool": "EW-1165 | Машина для снятия изоляции с коаксиальных кабелей",
+              "position": 2,
+              "inventory": "ОБ.010",
+              "inventory_number": "ОБ.010",
+              "equipment_model_id": "fbd0d77c-c12d-4af3-9281-b9b30c20981c"
+            }
+          ]
+        },
+        {
+          "tOp": "8.00",
+          "side": "B",
+          "type": "coaxPinCrimp",
+          "label": "Обжим центрального контакта (В)",
+          "opKey": "coaxPinCrimpB",
+          "opNum": "PRS_SLEEVE_coax",
+          "parts": [
+            {
+              "art": "59K25H-1M4A4",
+              "qty": 1,
+              "name": "59K25H-1M4A4"
+            }
+          ],
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "2.00",
+          "noTooling": true,
+          "templateId": "prs-sleeve-coax-опрессовка",
+          "equipmentTools": [
+            {
+              "name": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "tool": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "position": 0,
+              "inventory": "ОБ.006.1",
+              "inventory_number": "ОБ.006.1",
+              "equipment_model_id": "62111d5e-17a7-4139-8396-7ac74a253531"
+            }
+          ]
+        },
+        {
+          "tOp": "10.00",
+          "side": "B",
+          "type": "coaxHousing",
+          "label": "Вставка в корпус, контроль пина в окне (В)",
+          "opKey": "coaxInsertB",
+          "opNum": "INS_housing_COAX",
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "0.00",
+          "noTooling": true,
+          "templateId": "ins-housing-coax-монтаж-корпуса-b"
+        },
+        {
+          "tOp": "8.00",
+          "side": "B",
+          "type": "coaxShield",
+          "label": "Обжим гильзы экрана (В)",
+          "opKey": "coaxShieldB",
+          "opNum": "PRS_SLEEVE_coax",
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "2.00",
+          "noTooling": true,
+          "templateId": "prs-sleeve-coax-опрессовка",
+          "equipmentTools": [
+            {
+              "name": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "tool": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "position": 0,
+              "inventory": "ОБ.006.1",
+              "inventory_number": "ОБ.006.1",
+              "equipment_model_id": "62111d5e-17a7-4139-8396-7ac74a253531"
+            }
+          ]
+        },
+        {
+          "tOp": "",
+          "side": "B",
+          "type": "coaxCapCrimp",
+          "label": "Запрессовать крышку (В)",
+          "opKey": "coaxCapCrimpB",
+          "opNum": "",
+          "tPrep": "",
+          "units": 1,
+          "tMachine": "",
+          "noTooling": true,
+          "templateId": "prs-cap-опрессовка-крышки-коакс",
+          "equipmentTools": [
+            {
+              "name": "WL-IDC | Пресс пневматический для опрессовки разъемов",
+              "tool": "WL-IDC | Пресс пневматический для опрессовки разъемов",
+              "position": 0,
+              "inventory": "ОБ.004",
+              "inventory_number": "ОБ.004",
+              "equipment_model_id": "caef8ee0-64b8-406d-8d57-e3882510c5be"
+            },
+            {
+              "name": "SR-350A | Тестер кабельных жгутов четырёхпроводный",
+              "tool": "SR-350A | Тестер кабельных жгутов",
+              "position": 1,
+              "inventory": "ОБ.040",
+              "inventory_number": "ОБ.040",
+              "equipment_model_id": "bade609b-43fb-4a70-865b-c718a47ec873"
+            }
+          ]
+        },
+        {
+          "tOp": "10.00",
+          "side": "B",
+          "type": "coaxHousing",
+          "label": "Корпус и вторичная фиксация (В)",
+          "opKey": "coaxBodyB",
+          "opNum": "INS_housing_COAX",
+          "parts": [
+            {
+              "art": "59Z006-T00-Z",
+              "qty": 1,
+              "name": "59Z006-T00-Z"
+            }
+          ],
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "0.00",
+          "noTooling": true,
+          "templateId": "ins-housing-coax-монтаж-корпуса-b"
+        },
+        {
+          "tOp": "9.00",
+          "side": "",
+          "type": "coaxHeat",
+          "label": "Усадка ТУТ под маркировку ×3",
+          "opKey": "coaxHeat",
+          "opNum": "HEAT_TYT_short",
+          "tPrep": "120",
+          "units": 3,
+          "tMachine": "5.00",
+          "templateId": "heat-tyt-short-усадка",
+          "equipmentTools": [
+            {
+              "name": "8620DX-Pro(R) | Станция паяльная термовоздушная",
+              "tool": "8620DX-Pro(R) | Станция паяльная термовоздушная",
+              "position": 1,
+              "inventory": "ОБ.070.X",
+              "inventory_number": "ОБ.070.X",
+              "equipment_model_id": "318e317d-1c01-4504-b5c2-e120c774cbbf"
+            }
+          ]
+        },
+        {
+          "tOp": "",
+          "side": "",
+          "type": "coaxVswr",
+          "label": "Контроль КСВН",
+          "opKey": "coaxVswr",
+          "opNum": "",
+          "tPrep": "",
+          "units": 1,
+          "tMachine": "",
+          "templateId": "ctrl-vswr-coax-контроль-ксвн",
+          "vswrControl": {
+            "mode": "all",
+            "every": null
+          }
+        }
+      ],
+      "tab": "coax",
+      "coax": {
+        "sideA": {
+          "d1": "0,81",
+          "d2": "2,1",
+          "l1": "3",
+          "l2": "4,6",
+          "l3": "9,7",
+          "mfr": "Rosenberger",
+          "kind": "straight",
+          "type": "FAKRA-female (тип Z)",
+          "wire": "RTK 031",
+          "lPlus": "",
+          "parts": [
+            {
+              "art": "59K13o-1M4A4",
+              "qty": 1,
+              "name": "59K13o-1M4A4",
+              "role": "main"
+            },
+            {
+              "art": "59Z163-003-Z",
+              "qty": 1,
+              "name": "59Z163-003-Z",
+              "role": "housing"
+            },
+            {
+              "art": "59K14B-1M4/50",
+              "qty": 1,
+              "name": "59K14B-1M4/50",
+              "role": "seal"
+            },
+            {
+              "art": "59Z163-000/51",
+              "qty": 1,
+              "name": "59Z163-000/51",
+              "role": "cap"
+            }
+          ],
+          "lMinus": "",
+          "shield": "обжим",
+          "article": "59K13o-1M4A4",
+          "pinType": "обжим",
+          "program": "",
+          "connName": "59K13o-1M4A4",
+          "crimpHex": "4,3",
+          "contactDepth": "0,18…0,68"
+        },
+        "sideB": {
+          "d1": "0,81",
+          "d2": "2,1",
+          "l1": "1,7",
+          "l2": "6,4",
+          "l3": "11,6",
+          "mfr": "Rosenberger",
+          "kind": "angled",
+          "type": "FAKRA-female R/A (тип Z)",
+          "wire": "RTK 031",
+          "lPlus": "",
+          "parts": [
+            {
+              "art": "59K25H-1M4A4",
+              "qty": 1,
+              "name": "59K25H-1M4A4",
+              "role": "main"
+            },
+            {
+              "art": "59Z006-T00-Z",
+              "qty": 1,
+              "name": "59Z006-T00-Z",
+              "role": "housing"
+            }
+          ],
+          "lMinus": "",
+          "shield": "обжим",
+          "article": "59K25H-1M4A4",
+          "pinType": "обжим",
+          "program": "",
+          "connName": "59K25H-1M4A4",
+          "crimpHex": "4,3"
+        },
+        "tutArt": "ТУТ 4/2мм, прозрачная",
+        "tutName": "ТУТ (HF)-4/2 прозр КВТ- Трубка термоусадочная ТУТ (HF)-4/2 прозр (КВТ) купить - цена, фото, характеристики - Доставка по Москве и РФ",
+        "cableArt": "RTK 031",
+        "vswrNorm": {
+          "ends": [
+            {
+              "side": "A",
+              "vswr": 1.07,
+              "maxGhz": 6.0,
+              "article": "59K13o-1M4A4",
+              "vswrText": "≤1,07 (0–1 ГГц); ≤1,09 (0–3 ГГц); ≤1,22 (0–6 ГГц)"
+            },
+            {
+              "side": "B",
+              "vswr": 1.11,
+              "maxGhz": 6.0,
+              "article": "59K25H-1M4A4",
+              "vswrText": "≤1,11 (0–1 ГГц); ≤1,13 (0–3 ГГц); ≤1,33 (0–6 ГГц)"
+            }
+          ],
+          "cable": {
+            "name": "RTK 031",
+            "lossDbM": null
+          },
+          "s21Db": null,
+          "reason": "",
+          "status": "ok",
+          "bandMhz": [
+            1.0,
+            6000.0
+          ],
+          "control": {
+            "mode": "all",
+            "every": null
+          },
+          "lengthM": 4.8,
+          "vswrMax": 1.19
+        },
+        "cableName": "RTK 031",
+        "sleeveArt": "",
+        "tutLength": 60,
+        "shieldType": "обжим",
+        "sleeveName": "",
+        "cableLength": 4800,
+        "vswrControl": {
+          "mode": "all",
+          "every": null
+        }
+      },
+      "mode": "coax",
+      "partQty": 15,
+      "assemblyName": "Кабельная сборка 122664/AA  120907/AA Camera 14 → Splitter B C6",
+      "assemblyIndex": "КБ1"
+    }
+  },
+  {
+    "project": "708К.",
+    "kb": "КБ3",
+    "config": {
+      "ops": [
+        {
+          "tOp": "3.50",
+          "side": "",
+          "type": "coaxCut",
+          "label": "Резка кабеля ×4",
+          "opKey": "coaxCut",
+          "opNum": "CUT_COAX_auto",
+          "tPrep": "180",
+          "units": 4,
+          "tMachine": "3.50",
+          "templateId": "cut-coax-auto-резка",
+          "linearTiming": {
+            "toolOps": "1",
+            "rollSpeed": "3",
+            "toolSeconds": "0,5"
+          },
+          "equipmentTools": [
+            {
+              "name": "EW-05F+M | Автомат резки и зачистки многожильного кабеля с промежуточной зачисткой",
+              "tool": "EW-05F+M | Автомат мерной резки проводов",
+              "position": 3,
+              "inventory": "ОБ.015",
+              "inventory_number": "ОБ.015",
+              "equipment_model_id": "3b64e7ec-fd8d-407b-b41a-761ef11e5922"
+            }
+          ]
+        },
+        {
+          "tOp": "4.00",
+          "side": "",
+          "type": "coaxCutTut",
+          "label": "Печать меток и резка ТУТ под маркировку ×3",
+          "opKey": "coaxCutTut",
+          "opNum": "PRINT_MARK_TUBE",
+          "tPrep": "600",
+          "units": 3,
+          "tMachine": "2.00",
+          "templateId": "ins-mark-tube-auto-печать-и-резка-маркировочной-трубки",
+          "equipmentTools": [
+            {
+              "name": "ZCUT-RT660 | Маркиратор проводов трубчатый",
+              "tool": "ZCUT-RT660 | Маркиратор проводов трубчатый",
+              "position": 3,
+              "inventory": "ОБ.102",
+              "inventory_number": "ОБ.102",
+              "equipment_model_id": "2d2d11f6-df45-4b0a-a430-405f8ab71f37"
+            }
+          ]
+        },
+        {
+          "tOp": "3.00",
+          "side": "",
+          "type": "coaxInsTut",
+          "label": "Монтаж ТУТ под маркировку ×3",
+          "opKey": "coaxInsTut",
+          "opNum": "INS_TUT",
+          "tPrep": "120",
+          "units": 3,
+          "tMachine": "0.00",
+          "templateId": "ins-tut-монтаж"
+        },
+        {
+          "tOp": "3.00",
+          "side": "A",
+          "type": "coaxInsSleeve",
+          "label": "Надеть опорные гильзы ×4 (А)",
+          "opKey": "coaxInsSleeveA",
+          "opNum": "INS_SLEEVE_coax",
+          "tPrep": "0",
+          "units": 4,
+          "tMachine": "0.00",
+          "noTooling": true,
+          "templateId": "ins-sleeve-coax-монтаж"
+        },
+        {
+          "tOp": "10.00",
+          "side": "A",
+          "type": "coaxStrip",
+          "label": "Разделка коаксиала ×4 (А)",
+          "opKey": "coaxSideStripA",
+          "opNum": "STRIP_COAX_auto",
+          "tPrep": "600",
+          "units": 4,
+          "tMachine": "4.00",
+          "noTooling": true,
+          "templateId": "strip-coax-auto-разделка-a",
+          "equipmentTools": [
+            {
+              "name": "EW-1165 | Станок зачистки коаксиального кабеля",
+              "tool": "EW-1165 | Машина для снятия изоляции с коаксиальных кабелей",
+              "position": 2,
+              "inventory": "ОБ.010",
+              "inventory_number": "ОБ.010",
+              "equipment_model_id": "fbd0d77c-c12d-4af3-9281-b9b30c20981c"
+            }
+          ]
+        },
+        {
+          "tOp": "8.00",
+          "side": "A",
+          "type": "coaxPinCrimp",
+          "label": "Обжим центрального контакта ×4 (А)",
+          "opKey": "coaxPinCrimpA",
+          "opNum": "PRS_SLEEVE_coax",
+          "parts": [
+            {
+              "art": "AMK11D-1M4Z5-Z",
+              "qty": 1,
+              "name": "AMK11D-1M4Z5-Z"
+            }
+          ],
+          "tPrep": "120",
+          "units": 4,
+          "tMachine": "2.00",
+          "noTooling": true,
+          "templateId": "prs-sleeve-coax-опрессовка",
+          "equipmentTools": [
+            {
+              "name": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "tool": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "position": 0,
+              "inventory": "ОБ.006.1",
+              "inventory_number": "ОБ.006.1",
+              "equipment_model_id": "62111d5e-17a7-4139-8396-7ac74a253531"
+            }
+          ]
+        },
+        {
+          "tOp": "10.00",
+          "side": "A",
+          "type": "coaxHousing",
+          "label": "Вставка контактов в корпус до щелчка ×4 (А)",
+          "opKey": "coaxInsertA",
+          "opNum": "INS_housing_COAX",
+          "tPrep": "120",
+          "units": 4,
+          "tMachine": "0.00",
+          "noTooling": true,
+          "templateId": "ins-housing-coax-монтаж-корпуса-a"
+        },
+        {
+          "tOp": "8.00",
+          "side": "A",
+          "type": "coaxShield",
+          "label": "Обжим гильзы экрана ×4 (А)",
+          "opKey": "coaxShieldA",
+          "opNum": "PRS_SLEEVE_coax",
+          "tPrep": "120",
+          "units": 4,
+          "tMachine": "2.00",
+          "noTooling": true,
+          "templateId": "prs-sleeve-coax-опрессовка",
+          "equipmentTools": [
+            {
+              "name": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "tool": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "position": 0,
+              "inventory": "ОБ.006.1",
+              "inventory_number": "ОБ.006.1",
+              "equipment_model_id": "62111d5e-17a7-4139-8396-7ac74a253531"
+            }
+          ]
+        },
+        {
+          "tOp": "10.00",
+          "side": "A",
+          "type": "coaxHousing",
+          "label": "Вторичная фиксация и CPA (А)",
+          "opKey": "coaxBodyA",
+          "opNum": "INS_housing_COAX",
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "0.00",
+          "noTooling": true,
+          "templateId": "ins-housing-coax-монтаж-корпуса-a"
+        },
+        {
+          "tOp": "3.00",
+          "side": "B",
+          "type": "coaxInsSleeve",
+          "label": "Надеть опорные гильзы ×4 (В)",
+          "opKey": "coaxInsSleeveB",
+          "opNum": "INS_SLEEVE_coax",
+          "tPrep": "0",
+          "units": 4,
+          "tMachine": "0.00",
+          "noTooling": true,
+          "templateId": "ins-sleeve-coax-монтаж"
+        },
+        {
+          "tOp": "10.00",
+          "side": "B",
+          "type": "coaxStrip",
+          "label": "Разделка коаксиала ×4 (В)",
+          "opKey": "coaxSideStripB",
+          "opNum": "STRIP_COAX_auto",
+          "tPrep": "600",
+          "units": 4,
+          "tMachine": "4.00",
+          "noTooling": true,
+          "templateId": "strip-coax-auto-разделка-b",
+          "equipmentTools": [
+            {
+              "name": "EW-1165 | Станок зачистки коаксиального кабеля",
+              "tool": "EW-1165 | Машина для снятия изоляции с коаксиальных кабелей",
+              "position": 2,
+              "inventory": "ОБ.010",
+              "inventory_number": "ОБ.010",
+              "equipment_model_id": "fbd0d77c-c12d-4af3-9281-b9b30c20981c"
+            }
+          ]
+        },
+        {
+          "tOp": "8.00",
+          "side": "B",
+          "type": "coaxPinCrimp",
+          "label": "Обжим центрального контакта ×4 (В)",
+          "opKey": "coaxPinCrimpB",
+          "opNum": "PRS_SLEEVE_coax",
+          "parts": [
+            {
+              "art": "AMK11D-1M4Z5-Z",
+              "qty": 1,
+              "name": "AMK11D-1M4Z5-Z"
+            }
+          ],
+          "tPrep": "120",
+          "units": 4,
+          "tMachine": "2.00",
+          "noTooling": true,
+          "templateId": "prs-sleeve-coax-опрессовка",
+          "equipmentTools": [
+            {
+              "name": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "tool": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "position": 0,
+              "inventory": "ОБ.006.1",
+              "inventory_number": "ОБ.006.1",
+              "equipment_model_id": "62111d5e-17a7-4139-8396-7ac74a253531"
+            }
+          ]
+        },
+        {
+          "tOp": "10.00",
+          "side": "B",
+          "type": "coaxHousing",
+          "label": "Вставка контактов в корпус до щелчка ×4 (В)",
+          "opKey": "coaxInsertB",
+          "opNum": "INS_housing_COAX",
+          "tPrep": "120",
+          "units": 4,
+          "tMachine": "0.00",
+          "noTooling": true,
+          "templateId": "ins-housing-coax-монтаж-корпуса-b"
+        },
+        {
+          "tOp": "8.00",
+          "side": "B",
+          "type": "coaxShield",
+          "label": "Обжим гильзы экрана ×4 (В)",
+          "opKey": "coaxShieldB",
+          "opNum": "PRS_SLEEVE_coax",
+          "tPrep": "120",
+          "units": 4,
+          "tMachine": "2.00",
+          "noTooling": true,
+          "templateId": "prs-sleeve-coax-опрессовка",
+          "equipmentTools": [
+            {
+              "name": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "tool": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "position": 0,
+              "inventory": "ОБ.006.1",
+              "inventory_number": "ОБ.006.1",
+              "equipment_model_id": "62111d5e-17a7-4139-8396-7ac74a253531"
+            }
+          ]
+        },
+        {
+          "tOp": "10.00",
+          "side": "B",
+          "type": "coaxHousing",
+          "label": "Вторичная фиксация и CPA (В)",
+          "opKey": "coaxBodyB",
+          "opNum": "INS_housing_COAX",
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "0.00",
+          "noTooling": true,
+          "templateId": "ins-housing-coax-монтаж-корпуса-b"
+        },
+        {
+          "tOp": "9.00",
+          "side": "",
+          "type": "coaxHeat",
+          "label": "Усадка ТУТ под маркировку ×3",
+          "opKey": "coaxHeat",
+          "opNum": "HEAT_TYT_short",
+          "tPrep": "120",
+          "units": 3,
+          "tMachine": "5.00",
+          "templateId": "heat-tyt-short-усадка",
+          "equipmentTools": [
+            {
+              "name": "8620DX-Pro(R) | Станция паяльная термовоздушная",
+              "tool": "8620DX-Pro(R) | Станция паяльная термовоздушная",
+              "position": 1,
+              "inventory": "ОБ.070.X",
+              "inventory_number": "ОБ.070.X",
+              "equipment_model_id": "318e317d-1c01-4504-b5c2-e120c774cbbf"
+            }
+          ]
+        },
+        {
+          "tOp": "",
+          "side": "",
+          "type": "coaxVswr",
+          "label": "Контроль КСВН",
+          "opKey": "coaxVswr",
+          "opNum": "",
+          "tPrep": "",
+          "units": 1,
+          "tMachine": "",
+          "templateId": "ctrl-vswr-coax-контроль-ксвн",
+          "vswrControl": {
+            "mode": "all",
+            "every": null
+          }
+        }
+      ],
+      "tab": "coax",
+      "coax": {
+        "sideA": {
+          "d1": "0,81",
+          "d2": "2,1",
+          "l1": "",
+          "l2": "",
+          "l3": "",
+          "mfr": "Rosenberger",
+          "kind": "hfm",
+          "type": "HFM-female (тип Z)",
+          "wire": "RTK 031",
+          "lPlus": "",
+          "parts": [
+            {
+              "art": "AMK11D-1M4Z5-Z",
+              "qty": 1,
+              "name": "AMK11D-1M4Z5-Z",
+              "role": "main"
+            }
+          ],
+          "lMinus": "",
+          "shield": "обжим",
+          "article": "AMK11D-1M4Z5-Z",
+          "pinType": "обжим",
+          "program": "",
+          "connName": "AMK11D-1M4Z5-Z",
+          "contactDepth": "0,90…1,20"
+        },
+        "sideB": {
+          "d1": "0,81",
+          "d2": "2,1",
+          "l1": "",
+          "l2": "",
+          "l3": "",
+          "mfr": "Rosenberger",
+          "kind": "hfm",
+          "type": "HFM-female (тип Z)",
+          "wire": "RTK 031",
+          "lPlus": "",
+          "parts": [
+            {
+              "art": "AMK11D-1M4Z5-Z",
+              "qty": 1,
+              "name": "AMK11D-1M4Z5-Z",
+              "role": "main"
+            }
+          ],
+          "lMinus": "",
+          "shield": "обжим",
+          "article": "AMK11D-1M4Z5-Z",
+          "pinType": "обжим",
+          "program": "",
+          "connName": "AMK11D-1M4Z5-Z",
+          "contactDepth": "0,90…1,20"
+        },
+        "cables": 4,
+        "tutArt": "ТУТ 4/2мм, прозрачная",
+        "tutName": "ТУТ (HF)-4/2 прозр КВТ- Трубка термоусадочная ТУТ (HF)-4/2 прозр (КВТ) купить - цена, фото, характеристики - Доставка по Москве и РФ",
+        "cableArt": "RTK 031",
+        "vswrNorm": {
+          "ends": [
+            {
+              "side": "A",
+              "vswr": 1.12,
+              "maxGhz": 15.0,
+              "article": "AMK11D-1M4Z5-Z",
+              "vswrText": "≤1,12 (0–3 ГГц); ≤1,22 (3–6 ГГц); ≤1,43 (6–12 ГГц); ≤1,67 (12–15 ГГц)"
+            },
+            {
+              "side": "B",
+              "vswr": 1.12,
+              "maxGhz": 15.0,
+              "article": "AMK11D-1M4Z5-Z",
+              "vswrText": "≤1,12 (0–3 ГГц); ≤1,22 (3–6 ГГц); ≤1,43 (6–12 ГГц); ≤1,67 (12–15 ГГц)"
+            }
+          ],
+          "cable": {
+            "name": "RTK 031",
+            "lossDbM": null
+          },
+          "s21Db": null,
+          "reason": "",
+          "status": "ok",
+          "bandMhz": [
+            1.0,
+            15000.0
+          ],
+          "control": {
+            "mode": "all",
+            "every": null
+          },
+          "lengthM": 1.25,
+          "vswrMax": 1.26
+        },
+        "cableName": "RTK 031",
+        "sleeveArt": "",
+        "tutLength": 60,
+        "shieldType": "обжим",
+        "sleeveName": "",
+        "cableLength": 1250,
+        "vswrControl": {
+          "mode": "all",
+          "every": null
+        }
+      },
+      "mode": "coax",
+      "partQty": 15,
+      "assemblyName": "Кабельная сборка 122666/AA  120961/AA Splitter A V1-4 → HPC A V1-4",
+      "assemblyIndex": "КБ3"
+    }
+  },
+  {
+    "project": "708К.",
+    "kb": "КБ11",
+    "config": {
+      "ops": [
+        {
+          "tOp": "10.50",
+          "side": "",
+          "type": "coaxCut",
+          "opKey": "coaxCutStrip",
+          "opNum": "CUT_COAX+2strip",
+          "tPrep": "1200",
+          "units": 1,
+          "machine": {
+            "name": "Автомат резки и зачистки коаксиального кабеля",
+            "model": "BZW-886+Q2",
+            "inventory": "ОБ.094",
+            "equipment_model_id": "72bd7949-5bd9-4cfa-8114-edb7f669a430"
+          },
+          "tMachine": "10.50",
+          "stripSides": [
+            "A",
+            "B"
+          ],
+          "templateId": "cut-coax-2strip-резка-с-разделкой",
+          "linearTiming": {
+            "toolOps": "3",
+            "rollSpeed": "3",
+            "toolSeconds": "4,0"
+          },
+          "equipmentTools": [
+            {
+              "name": "BZW-886+Q2 | Автомат резки и зачистки коаксиального кабеля — кабель Ø до 5,5 мм",
+              "tool": "BZW-886+Q2 | Станок резки провода с роторной зачисткой мал. — кабель Ø до 5,5 мм",
+              "position": 4,
+              "inventory": "ОБ.094",
+              "inventory_number": "ОБ.094",
+              "equipment_model_id": "72bd7949-5bd9-4cfa-8114-edb7f669a430"
+            },
+            {
+              "name": "BZW-50X | Автомат резки и роторной зачистки кабеля до 50 мм² — кабель Ø свыше 5,5 мм",
+              "tool": "BZW-50X | Станок резки провода с роторной зачисткой больш. — кабель Ø свыше 5,5 мм",
+              "position": 5,
+              "inventory": "ОБ.095",
+              "inventory_number": "ОБ.095",
+              "equipment_model_id": "a4feed2a-c297-4134-9b96-fc1a1022142f"
+            }
+          ]
+        },
+        {
+          "tOp": "1.00",
+          "side": "",
+          "type": "coaxCutTut",
+          "opKey": "coaxCutTut",
+          "opNum": "CUT_TUT_short",
+          "tPrep": "300",
+          "units": 2,
+          "tMachine": "1.00",
+          "templateId": "cut-tut-short-резка",
+          "linearTiming": {
+            "toolOps": "1",
+            "rollSpeed": "3",
+            "toolSeconds": "0,5"
+          },
+          "equipmentTools": [
+            {
+              "name": "Автомат мерной резки гофрированных и термоусаживаемых трубок",
+              "tool": "Автомат мерной резки гофрированных и термоусаживаемых трубок",
+              "position": 3,
+              "inventory": "ОБ.018",
+              "inventory_number": "ОБ.018",
+              "equipment_model_id": "ca5c4991-bc75-4e36-998a-012d325064c8"
+            }
+          ]
+        },
+        {
+          "tOp": "8.00",
+          "side": "A",
+          "type": "coaxPinCrimp",
+          "opKey": "coaxPinCrimpA",
+          "opNum": "PRS_SLEEVE_coax",
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "2.00",
+          "templateId": "prs-sleeve-coax-опрессовка",
+          "equipmentTools": [
+            {
+              "name": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "tool": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "position": 0,
+              "inventory": "ОБ.006.1",
+              "inventory_number": "ОБ.006.1",
+              "equipment_model_id": "62111d5e-17a7-4139-8396-7ac74a253531"
+            }
+          ]
+        },
+        {
+          "tOp": "25.00",
+          "side": "B",
+          "type": "coaxPin",
+          "opKey": "coaxPinB",
+          "opNum": "SDR_COAX_pin",
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "3.00",
+          "templateId": "sdr-coax-pin-пайка-b",
+          "equipmentTools": [
+            {
+              "name": "T21(R) | Станция паяльная",
+              "tool": "T21(R) | Станция паяльная",
+              "position": 3,
+              "inventory": "ОБ.071.X",
+              "inventory_number": "ОБ.071.X",
+              "equipment_model_id": "47b63e05-8092-4900-8713-6d50d8f38f0e"
+            }
+          ]
+        },
+        {
+          "tOp": "3.00",
+          "side": "",
+          "type": "coaxInsTut",
+          "opKey": "coaxInsTut",
+          "opNum": "INS_TUT",
+          "tPrep": "120",
+          "units": 2,
+          "tMachine": "0.00",
+          "templateId": "ins-tut-монтаж"
+        },
+        {
+          "tOp": "3.00",
+          "side": "",
+          "type": "coaxInsSleeve",
+          "opKey": "coaxInsSleeve",
+          "opNum": "INS_SLEEVE_coax",
+          "tPrep": "0",
+          "units": 2,
+          "tMachine": "0.00",
+          "templateId": "ins-sleeve-coax-монтаж"
+        },
+        {
+          "tOp": "10.00",
+          "side": "A",
+          "type": "coaxHousing",
+          "opKey": "coaxHousingA",
+          "opNum": "INS_housing_COAX",
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "0.00",
+          "templateId": "ins-housing-coax-монтаж-корпуса-a"
+        },
+        {
+          "tOp": "10.00",
+          "side": "B",
+          "type": "coaxHousing",
+          "opKey": "coaxHousingB",
+          "opNum": "INS_housing_COAX",
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "0.00",
+          "templateId": "ins-housing-coax-монтаж-корпуса-b"
+        },
+        {
+          "tOp": "8.00",
+          "side": "",
+          "type": "coaxShield",
+          "opKey": "coaxShield",
+          "opNum": "PRS_SLEEVE_coax",
+          "tPrep": "120",
+          "units": 2,
+          "tMachine": "2.00",
+          "templateId": "prs-sleeve-coax-опрессовка",
+          "equipmentTools": [
+            {
+              "name": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "tool": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "position": 0,
+              "inventory": "ОБ.006.1",
+              "inventory_number": "ОБ.006.1",
+              "equipment_model_id": "62111d5e-17a7-4139-8396-7ac74a253531"
+            }
+          ]
+        },
+        {
+          "tOp": "9.00",
+          "side": "",
+          "type": "coaxHeat",
+          "opKey": "coaxHeat",
+          "opNum": "HEAT_TYT_short",
+          "tPrep": "120",
+          "units": 2,
+          "tMachine": "5.00",
+          "templateId": "heat-tyt-short-усадка",
+          "equipmentTools": [
+            {
+              "name": "8620DX-Pro(R) | Станция паяльная термовоздушная",
+              "tool": "8620DX-Pro(R) | Станция паяльная термовоздушная",
+              "position": 1,
+              "inventory": "ОБ.070.X",
+              "inventory_number": "ОБ.070.X",
+              "equipment_model_id": "318e317d-1c01-4504-b5c2-e120c774cbbf"
+            }
+          ]
+        },
+        {
+          "tOp": "",
+          "side": "",
+          "type": "coaxVswr",
+          "opKey": "coaxVswr",
+          "opNum": "",
+          "tPrep": "",
+          "units": 1,
+          "tMachine": "",
+          "templateId": "ctrl-vswr-coax-контроль-ксвн",
+          "vswrControl": {
+            "mode": "all",
+            "every": null
+          }
+        }
+      ],
+      "tab": "coax",
+      "coax": {
+        "sideA": {
+          "d1": "0,46",
+          "d2": "1,52",
+          "d3": "1,8",
+          "l1": "2,84",
+          "l2": "4,21",
+          "l3": "8,41",
+          "mfr": "Molex",
+          "type": "FAKRA-male (тип Z)",
+          "wire": "LMR-100",
+          "lPlus": "",
+          "lMinus": "",
+          "shield": "обжим",
+          "article": "73403-6270",
+          "pinType": "обжим",
+          "program": "",
+          "connName": "73403-6270",
+          "crimpHex": "3,25"
+        },
+        "sideB": {
+          "d1": "0,46",
+          "d2": "1,52",
+          "d3": "1,8",
+          "l1": "2,8",
+          "l2": "8,6",
+          "l3": "15,5",
+          "mfr": "Amphenol RF",
+          "type": "SMA-female bulkhead",
+          "wire": "LMR-100",
+          "lPlus": "",
+          "lMinus": "",
+          "shield": "обжим",
+          "article": "901-9610-3",
+          "pinType": "пайка",
+          "program": "",
+          "connName": "901-9610-3",
+          "crimpHex": "3,25",
+          "contactDepth": "1,88…2,23"
+        },
+        "tutArt": "ТУТ 4/2мм, прозрачная",
+        "tutName": "ТУТ (HF)-4/2 прозр КВТ- Трубка термоусадочная ТУТ (HF)-4/2 прозр (КВТ) купить - цена, фото, характеристики - Доставка по Москве и РФ",
+        "cableArt": "LMR-100",
+        "vswrNorm": {
+          "ends": [
+            {
+              "side": "A",
+              "vswr": null,
+              "maxGhz": 6.0,
+              "article": "73403-6270",
+              "vswrText": ""
+            },
+            {
+              "side": "B",
+              "vswr": null,
+              "maxGhz": 12.4,
+              "article": "901-9610-3",
+              "vswrText": ""
+            }
+          ],
+          "cable": {
+            "name": "LMR-100",
+            "lossDbM": null
+          },
+          "s21Db": null,
+          "reason": "у 73403-6270, 901-9610-3 нет КСВ в БД.КОАКС",
+          "status": "undefined",
+          "bandMhz": [
+            1.0,
+            6000.0
+          ],
+          "control": {
+            "mode": "all",
+            "every": null
+          },
+          "lengthM": 2.25,
+          "vswrMax": null
+        },
+        "cableName": "Компания Крокс. Разработка, производство и продажа антенн для беспроводной связи стандартов 3G, 4G(LTE), 5G, GSM, WiFi.",
+        "sleeveArt": "",
+        "tutLength": 20,
+        "shieldType": "обжим",
+        "sleeveName": "",
+        "cableLength": 2250,
+        "vswrControl": {
+          "mode": "all",
+          "every": null
+        }
+      },
+      "mode": "coax",
+      "partQty": 15,
+      "assemblyName": "Кабельная сборка 121537/AA  121538AA TBOX 5G1-1 (LTE_1)",
+      "assemblyIndex": "КБ11"
+    }
+  },
+  {
+    "project": "708К.",
+    "kb": "КБ28",
+    "config": {
+      "ops": [
+        {
+          "tOp": "3.50",
+          "side": "",
+          "type": "coaxCut",
+          "label": "Резка кабеля",
+          "opKey": "coaxCut",
+          "opNum": "CUT_COAX_auto",
+          "tPrep": "180",
+          "units": 1,
+          "tMachine": "3.50",
+          "templateId": "cut-coax-auto-резка",
+          "linearTiming": {
+            "toolOps": "1",
+            "rollSpeed": "3",
+            "toolSeconds": "0,5"
+          },
+          "equipmentTools": [
+            {
+              "name": "EW-05F+M | Автомат резки и зачистки многожильного кабеля с промежуточной зачисткой",
+              "tool": "EW-05F+M | Автомат мерной резки проводов",
+              "position": 3,
+              "inventory": "ОБ.015",
+              "inventory_number": "ОБ.015",
+              "equipment_model_id": "3b64e7ec-fd8d-407b-b41a-761ef11e5922"
+            }
+          ]
+        },
+        {
+          "tOp": "4.00",
+          "side": "",
+          "type": "coaxCutTut",
+          "label": "Печать меток и резка ТУТ под маркировку ×3",
+          "opKey": "coaxCutTut",
+          "opNum": "PRINT_MARK_TUBE",
+          "tPrep": "600",
+          "units": 3,
+          "tMachine": "2.00",
+          "templateId": "ins-mark-tube-auto-печать-и-резка-маркировочной-трубки",
+          "equipmentTools": [
+            {
+              "name": "ZCUT-RT660 | Маркиратор проводов трубчатый",
+              "tool": "ZCUT-RT660 | Маркиратор проводов трубчатый",
+              "position": 3,
+              "inventory": "ОБ.102",
+              "inventory_number": "ОБ.102",
+              "equipment_model_id": "2d2d11f6-df45-4b0a-a430-405f8ab71f37"
+            }
+          ]
+        },
+        {
+          "tOp": "3.00",
+          "side": "",
+          "type": "coaxInsTut",
+          "label": "Монтаж ТУТ под маркировку ×3",
+          "opKey": "coaxInsTut",
+          "opNum": "INS_TUT",
+          "tPrep": "120",
+          "units": 3,
+          "tMachine": "0.00",
+          "templateId": "ins-tut-монтаж"
+        },
+        {
+          "tOp": "3.00",
+          "side": "A",
+          "type": "coaxInsSleeve",
+          "label": "Надеть ТТК, гильзу и шайбу (А)",
+          "opKey": "coaxInsSleeveA",
+          "opNum": "INS_SLEEVE_coax",
+          "parts": [
+            {
+              "art": "ТТК 6/2мм, черная",
+              "qty": 0.06,
+              "name": "Трубка 59695 ТТК(3:1) 6/2 термоусаживаемая с клеем чёрная L=1м (КВТ Калуга)",
+              "unit": "М."
+            }
+          ],
+          "tPrep": "0",
+          "units": 1,
+          "tMachine": "0.00",
+          "noTooling": true,
+          "templateId": "ins-sleeve-coax-монтаж"
+        },
+        {
+          "tOp": "10.00",
+          "side": "A",
+          "type": "coaxStrip",
+          "label": "Разделка коаксиала (А)",
+          "opKey": "coaxSideStripA",
+          "opNum": "STRIP_COAX_auto",
+          "tPrep": "600",
+          "units": 1,
+          "tMachine": "4.00",
+          "noTooling": true,
+          "templateId": "strip-coax-auto-разделка-a",
+          "equipmentTools": [
+            {
+              "name": "EW-1165 | Станок зачистки коаксиального кабеля",
+              "tool": "EW-1165 | Машина для снятия изоляции с коаксиальных кабелей",
+              "position": 2,
+              "inventory": "ОБ.010",
+              "inventory_number": "ОБ.010",
+              "equipment_model_id": "fbd0d77c-c12d-4af3-9281-b9b30c20981c"
+            }
+          ]
+        },
+        {
+          "tOp": "25.00",
+          "side": "A",
+          "type": "coaxPin",
+          "label": "Пайка жилы в центральный контакт (А)",
+          "opKey": "coaxPinA",
+          "opNum": "SDR_COAX_pin",
+          "parts": [
+            {
+              "art": "2FA1-NZSP-C30E2",
+              "qty": 1,
+              "name": "2FA1-NZSP-C30E2"
+            }
+          ],
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "3.00",
+          "noTooling": true,
+          "templateId": "sdr-coax-pin-пайка-a",
+          "equipmentTools": [
+            {
+              "name": "T21(R) | Станция паяльная",
+              "tool": "T21(R) | Станция паяльная",
+              "position": 3,
+              "inventory": "ОБ.071.X",
+              "inventory_number": "ОБ.071.X",
+              "equipment_model_id": "47b63e05-8092-4900-8713-6d50d8f38f0e"
+            }
+          ]
+        },
+        {
+          "tOp": "10.00",
+          "side": "A",
+          "type": "coaxHousing",
+          "label": "Вставка контакта в корпус (А)",
+          "opKey": "coaxInsertA",
+          "opNum": "INS_housing_COAX",
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "0.00",
+          "noTooling": true,
+          "templateId": "ins-housing-coax-монтаж-корпуса-a"
+        },
+        {
+          "tOp": "8.00",
+          "side": "A",
+          "type": "coaxShield",
+          "label": "Обжим гильзы экрана (А)",
+          "opKey": "coaxShieldA",
+          "opNum": "PRS_SLEEVE_coax",
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "2.00",
+          "noTooling": true,
+          "templateId": "prs-sleeve-coax-опрессовка",
+          "equipmentTools": [
+            {
+              "name": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "tool": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "position": 0,
+              "inventory": "ОБ.006.1",
+              "inventory_number": "ОБ.006.1",
+              "equipment_model_id": "62111d5e-17a7-4139-8396-7ac74a253531"
+            }
+          ]
+        },
+        {
+          "tOp": "15.00",
+          "side": "A",
+          "type": "coaxHeat",
+          "label": "Усадка ТТК на гильзе (А)",
+          "opKey": "coaxHeatTtkA",
+          "opNum": "HEAT_TTK_short",
+          "tPrep": "600",
+          "units": 1,
+          "tMachine": "10.00",
+          "templateId": "heat-ttk-short-усадка",
+          "equipmentTools": [
+            {
+              "name": "8620DX-Pro(R) | Станция паяльная термовоздушная",
+              "tool": "8620DX-Pro(R) | Станция паяльная термовоздушная",
+              "position": 1,
+              "inventory": "ОБ.070.X",
+              "inventory_number": "ОБ.070.X",
+              "equipment_model_id": "318e317d-1c01-4504-b5c2-e120c774cbbf"
+            }
+          ]
+        },
+        {
+          "tOp": "3.00",
+          "side": "B",
+          "type": "coaxInsSleeve",
+          "label": "Надеть крышку, уплотнитель и гильзу (В)",
+          "opKey": "coaxInsSleeveB",
+          "opNum": "INS_SLEEVE_coax",
+          "parts": [
+            {
+              "art": "59K14B-1M4/50",
+              "qty": 1,
+              "name": "59K14B-1M4/50"
+            },
+            {
+              "art": "59Z163-000/51",
+              "qty": 1,
+              "name": "59Z163-000/51"
+            }
+          ],
+          "tPrep": "0",
+          "units": 1,
+          "tMachine": "0.00",
+          "noTooling": true,
+          "templateId": "ins-sleeve-coax-монтаж"
+        },
+        {
+          "tOp": "10.00",
+          "side": "B",
+          "type": "coaxStrip",
+          "label": "Разделка коаксиала (В)",
+          "opKey": "coaxSideStripB",
+          "opNum": "STRIP_COAX_auto",
+          "tPrep": "600",
+          "units": 1,
+          "tMachine": "4.00",
+          "noTooling": true,
+          "templateId": "strip-coax-auto-разделка-b",
+          "equipmentTools": [
+            {
+              "name": "EW-1165 | Станок зачистки коаксиального кабеля",
+              "tool": "EW-1165 | Машина для снятия изоляции с коаксиальных кабелей",
+              "position": 2,
+              "inventory": "ОБ.010",
+              "inventory_number": "ОБ.010",
+              "equipment_model_id": "fbd0d77c-c12d-4af3-9281-b9b30c20981c"
+            }
+          ]
+        },
+        {
+          "tOp": "8.00",
+          "side": "B",
+          "type": "coaxPinCrimp",
+          "label": "Обжим центрального контакта (В)",
+          "opKey": "coaxPinCrimpB",
+          "opNum": "PRS_SLEEVE_coax",
+          "parts": [
+            {
+              "art": "59K13o-1M4A4",
+              "qty": 1,
+              "name": "59K13o-1M4A4"
+            }
+          ],
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "2.00",
+          "noTooling": true,
+          "templateId": "prs-sleeve-coax-опрессовка",
+          "equipmentTools": [
+            {
+              "name": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "tool": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "position": 0,
+              "inventory": "ОБ.006.1",
+              "inventory_number": "ОБ.006.1",
+              "equipment_model_id": "62111d5e-17a7-4139-8396-7ac74a253531"
+            }
+          ]
+        },
+        {
+          "tOp": "10.00",
+          "side": "B",
+          "type": "coaxHousing",
+          "label": "Вставка во вставку до щелчка, контроль заглубления контакта 0,18 мм (В)",
+          "opKey": "coaxInsertB",
+          "opNum": "INS_housing_COAX",
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "0.00",
+          "noTooling": true,
+          "templateId": "ins-housing-coax-монтаж-корпуса-b"
+        },
+        {
+          "tOp": "8.00",
+          "side": "B",
+          "type": "coaxShield",
+          "label": "Обжим гильзы экрана (В)",
+          "opKey": "coaxShieldB",
+          "opNum": "PRS_SLEEVE_coax",
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "2.00",
+          "noTooling": true,
+          "templateId": "prs-sleeve-coax-опрессовка",
+          "equipmentTools": [
+            {
+              "name": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "tool": "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников",
+              "position": 0,
+              "inventory": "ОБ.006.1",
+              "inventory_number": "ОБ.006.1",
+              "equipment_model_id": "62111d5e-17a7-4139-8396-7ac74a253531"
+            }
+          ]
+        },
+        {
+          "tOp": "10.00",
+          "side": "B",
+          "type": "coaxHousing",
+          "label": "Установка в корпус до щелчка (В)",
+          "opKey": "coaxBodyB",
+          "opNum": "INS_housing_COAX",
+          "parts": [
+            {
+              "art": "59Z163-003-Z",
+              "qty": 1,
+              "name": "59Z163-003-Z"
+            }
+          ],
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "0.00",
+          "noTooling": true,
+          "templateId": "ins-housing-coax-монтаж-корпуса-b"
+        },
+        {
+          "tOp": "15.00",
+          "side": "B",
+          "type": "coaxCapScrew",
+          "label": "Уплотнитель и крышка (В)",
+          "opKey": "coaxSealCapB",
+          "opNum": "INS_CAP",
+          "tPrep": "120",
+          "units": 1,
+          "tMachine": "0.00",
+          "noTooling": true,
+          "templateId": "ins-cap-монтаж"
+        },
+        {
+          "tOp": "9.00",
+          "side": "",
+          "type": "coaxHeat",
+          "label": "Усадка ТУТ под маркировку ×3",
+          "opKey": "coaxHeat",
+          "opNum": "HEAT_TYT_short",
+          "tPrep": "120",
+          "units": 3,
+          "tMachine": "5.00",
+          "templateId": "heat-tyt-short-усадка",
+          "equipmentTools": [
+            {
+              "name": "8620DX-Pro(R) | Станция паяльная термовоздушная",
+              "tool": "8620DX-Pro(R) | Станция паяльная термовоздушная",
+              "position": 1,
+              "inventory": "ОБ.070.X",
+              "inventory_number": "ОБ.070.X",
+              "equipment_model_id": "318e317d-1c01-4504-b5c2-e120c774cbbf"
+            }
+          ]
+        },
+        {
+          "tOp": "",
+          "side": "",
+          "type": "coaxVswr",
+          "label": "Контроль КСВН",
+          "opKey": "coaxVswr",
+          "opNum": "",
+          "tPrep": "",
+          "units": 1,
+          "tMachine": "",
+          "templateId": "ctrl-vswr-coax-контроль-ксвн",
+          "vswrControl": {
+            "mode": "all",
+            "every": null
+          }
+        }
+      ],
+      "tab": "coax",
+      "coax": {
+        "sideA": {
+          "d1": "0,81",
+          "d2": "2,1",
+          "l1": "2,7",
+          "l2": "8,5",
+          "l3": "13,9",
+          "mfr": "Amphenol RF",
+          "kind": "bulkhead",
+          "type": "FAKRA-male bulkhead (тип Z)",
+          "wire": "RTK 031",
+          "lPlus": "",
+          "parts": [
+            {
+              "art": "2FA1-NZSP-C30E2",
+              "qty": 1,
+              "name": "2FA1-NZSP-C30E2",
+              "role": "main"
+            }
+          ],
+          "lMinus": "",
+          "shield": "обжим",
+          "article": "2FA1-NZSP-C30E2",
+          "pinType": "пайка",
+          "program": "",
+          "connName": "2FA1-NZSP-C30E2",
+          "crimpHex": "4,52"
+        },
+        "sideB": {
+          "d1": "0,81",
+          "d2": "2,1",
+          "l1": "3",
+          "l2": "4,6",
+          "l3": "9,7",
+          "mfr": "Rosenberger",
+          "kind": "straight",
+          "type": "FAKRA-female (тип Z)",
+          "wire": "RTK 031",
+          "lPlus": "",
+          "parts": [
+            {
+              "art": "59K13o-1M4A4",
+              "qty": 1,
+              "name": "59K13o-1M4A4",
+              "role": "main"
+            },
+            {
+              "art": "59Z163-003-Z",
+              "qty": 1,
+              "name": "59Z163-003-Z",
+              "role": "housing"
+            },
+            {
+              "art": "59K14B-1M4/50",
+              "qty": 1,
+              "name": "59K14B-1M4/50",
+              "role": "seal"
+            },
+            {
+              "art": "59Z163-000/51",
+              "qty": 1,
+              "name": "59Z163-000/51",
+              "role": "cap"
+            }
+          ],
+          "lMinus": "",
+          "shield": "обжим",
+          "article": "59K13o-1M4A4",
+          "pinType": "обжим",
+          "program": "",
+          "connName": "59K13o-1M4A4",
+          "crimpHex": "4,3",
+          "contactDepth": "0,18…0,68"
+        },
+        "tutArt": "ТУТ 4/2мм, прозрачная",
+        "tutName": "ТУТ (HF)-4/2 прозр КВТ- Трубка термоусадочная ТУТ (HF)-4/2 прозр (КВТ) купить - цена, фото, характеристики - Доставка по Москве и РФ",
+        "cableArt": "RTK 031",
+        "vswrNorm": {
+          "ends": [
+            {
+              "side": "A",
+              "vswr": 1.23,
+              "maxGhz": 6.0,
+              "article": "2FA1-NZSP-C30E2",
+              "vswrText": "≤1,23"
+            },
+            {
+              "side": "B",
+              "vswr": 1.07,
+              "maxGhz": 6.0,
+              "article": "59K13o-1M4A4",
+              "vswrText": "≤1,07 (0–1 ГГц); ≤1,09 (0–3 ГГц); ≤1,22 (0–6 ГГц)"
+            }
+          ],
+          "cable": {
+            "name": "RTK 031",
+            "lossDbM": null
+          },
+          "s21Db": null,
+          "reason": "",
+          "status": "ok",
+          "bandMhz": [
+            1.0,
+            6000.0
+          ],
+          "control": {
+            "mode": "all",
+            "every": null
+          },
+          "lengthM": 10.05,
+          "vswrMax": 1.32
+        },
+        "cableName": "RTK 031",
+        "sleeveArt": "",
+        "tutLength": 60,
+        "shieldType": "обжим",
+        "sleeveName": "",
+        "cableLength": 10050,
+        "vswrControl": {
+          "mode": "all",
+          "every": null
+        }
+      },
+      "mode": "coax",
+      "partQty": 15,
+      "assemblyName": "Кабельная сборка 122663/AA  120898/AA Camera 3 → Splitter A C3",
+      "assemblyIndex": "КБ28"
+    }
+  }
+]
