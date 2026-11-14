@@ -75,6 +75,8 @@ from .modules.purchasing import api_suppliers as purchasing_suppliers_api
 from .workflows import finished_goods_api
 from .workflows import production_intake_api
 from .workflows import coax_vswr_api, instrument_from_stock
+from .modules.production import rf_interfaces_api
+from .workflows import vna_plan_api
 from .workflows import receiving_by_upd_api
 from .workflows import shipping_upd_scan_api
 from .workflows import scan_agent_install
@@ -175,6 +177,8 @@ for _purchasing in (purchasing_settings_api, purchasing_suppliers_api, purchasin
 app.include_router(finished_goods_api.router)
 app.include_router(production_intake_api.router)
 app.include_router(coax_vswr_api.router)
+app.include_router(rf_interfaces_api.router)
+app.include_router(vna_plan_api.router)
 app.include_router(instrument_from_stock.router)
 
 _equipment_enabled = equipment_setup_enabled()
