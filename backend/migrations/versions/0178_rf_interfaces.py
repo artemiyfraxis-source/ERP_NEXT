@@ -3,8 +3,8 @@
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0179_rf_interfaces"
-down_revision = "0176_vna_capture_jobs"
+revision = "0178_rf_interfaces"
+down_revision = "0177_agent_devices"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False
