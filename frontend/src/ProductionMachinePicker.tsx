@@ -14,7 +14,8 @@ export function ProductionMachinePicker({ selectionKey, resources, taskId, opera
   const [chosen, setChosen] = useState<{ key: string; values: Record<number, string> }>({ key: "", values: {} });
   const notify = useRef(onChange); notify.current = onChange;
   const operators = JSON.stringify(operatorIds);
-  useEffect(() => { setChosen({ key: selectionKey, values: {} }); }, [selectionKey]);
+  // Reset only when the key really changes: a late mount effect must not wipe a choice made right after render.
+  useEffect(() => { setChosen((old) => old.key === selectionKey ? old : { key: selectionKey, values: {} }); }, [selectionKey]);
   useEffect(() => {
     if (resources !== undefined || !taskId || !operationId) return;
     let active = true;
