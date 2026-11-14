@@ -197,3 +197,21 @@ def test_owner_confirmed_acm_fill_keeps_unknown_band_explicit(production_api):
     rf = client.get(_rf_url(item)).json()["rf"]
     assert rf["confirmed"] and rf["f_min_ghz"] is None
     assert all(p["series"] == "3.5mm" and p["body"] == "розетка" and not p["f_confirmed"] for p in rf["interfaces"])
+
+def test_selected_analyser_is_checked_on_its_own(production_api, monkeypatch):
+    client, _ = production_api
+    params = _plan_setup(client, monkeypatch)
+    vna = next(i for i in client.get("/api/production/instruments").json()["instruments"] if i["id"] == params["instrument_id"])
+    expired = client.patch(f"/api/production/instruments/{vna['id']}", json={
+        "version": vna["version"], "verified_at": "2025-01-01T00:00:00", "verification_due": "2025-06-01T00:00:00"})
+    assert expired.status_code == 200, expired.text
+    plan = client.get("/api/production/vna-plan", params=params).json()
+    assert plan["status"] == "qualified" and not plan["automatic_acceptance"]
+    assert any("поверки" in problem for problem in plan["chains"]["problems"])
+    rf = client.get(_rf_url(vna)).json()
+    rf_payload = {key: value for key, value in rf.items() if key != "version"}
+    changed = client.put(_rf_url(vna), json={**rf_payload, "role": "adapter", "max_points": None, "version": rf.get("version")})
+    if changed.status_code == 200:
+        plan = client.get("/api/production/vna-plan", params=params).json()
+        assert plan["status"] == "blocked" and not plan["automatic_acceptance"]
+        assert any("как ВАЦ" in problem for problem in plan["chains"]["problems"])
