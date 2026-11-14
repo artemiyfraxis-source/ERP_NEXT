@@ -25,6 +25,6 @@ def test_soldering_cards_say_240_and_no_range():
 
 def test_shrink_cards_say_150():
     shrink = {code: cells for code, cells in _cards() if code.startswith("HEAT_")}
-    assert sorted(shrink) == ["HEAT_TTK_long", "HEAT_TTK_short", "HEAT_TYT_long", "HEAT_TYT_short"]
+    assert sorted(shrink) == ["HEAT_FAKRA_BH_TTK", "HEAT_TTK_long", "HEAT_TTK_short", "HEAT_TYT_long", "HEAT_TYT_short"]
     for code, cells in shrink.items():
         assert "150 °C" in cells and "160 °C" not in cells, code

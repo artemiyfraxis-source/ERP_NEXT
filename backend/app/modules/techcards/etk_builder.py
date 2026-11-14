@@ -1840,6 +1840,9 @@ def _resolve_card(
     cards_by_code: Mapping[str, OperationCardTemplate] | None = None,
     equipment: Mapping[int, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    # Dedicated FAKRA/HFM cards carry stage-specific maker dimensions. The generic
+    # connector depth/HEX cannot describe both contact insertion and housing closure.
+    maker_dimensions = bool(re.match(r"^(?:INS|STRIP|PRS|SDR|HEAT)_(?:FAKRA_(?:ST|RA|BH)|HFM)(?:_|$)", card.code))
     def substitute(value: object) -> str:
         text = str(value or "")
         for token, replacement in replacements.items():
@@ -1873,10 +1876,10 @@ def _resolve_card(
             text = _COLLET_PIN.sub("центральный контакт (цанговый, без пайки)", text)
         if fields.get("compression") and step.kind == "Контроль" and "hex" in text.casefold():
             text = f"{text.rstrip()} Компрессионный разъём: компрессионный инструмент, матрица HEX не применяется."
-        if isinstance(fields.get("crimpHex"), list) and step.kind == "Контроль" and "hex" in text.casefold():
+        if not maker_dimensions and isinstance(fields.get("crimpHex"), list) and step.kind == "Контроль" and "hex" in text.casefold():
             # Обжим втулки экрана: размер HEX по разъёму и кабелю из БД.КОАКС, нет — явно «не задан».
             text = f"{text.rstrip()} Размер: {_hex_phrase(fields['crimpHex'])}."
-        if fields.get("contactDepth") and step.kind == "Контроль" and not depth_checked:
+        if not maker_dimensions and fields.get("contactDepth") and step.kind == "Контроль" and not depth_checked:
             # Монтаж корпуса: заглубление контакта от торца корпуса из БД.КОАКС (владелец 19.10) — в первый шаг контроля.
             text = f"{text.rstrip()} Проверить заглубление контакта от торца корпуса: {_depth_phrase(fields['contactDepth'])}."
             depth_checked = True
@@ -1895,7 +1898,7 @@ def _resolve_card(
             program = str(fields["applicator"])
             applicator_set = True
         name = substitute(tool.name)
-        if isinstance(fields.get("crimpHex"), list) and tool.section == "Матрицы":
+        if not maker_dimensions and isinstance(fields.get("crimpHex"), list) and tool.section == "Матрицы":
             name = f"{name.rstrip()} — {_hex_phrase(fields['crimpHex'])}"
         tooling.append(_linked_tool(tool, {
             "section": tool.section, "number": tool.number, "name": name,
