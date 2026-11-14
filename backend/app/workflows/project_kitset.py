@@ -1672,6 +1672,8 @@ def purge_project_tails(
         )
         tails.deleted.extend(TailEntry(TAIL_JOURNAL, _journal_label(event)) for event in events)
         with production_uow() as uow:
+            if apply:
+                uow.production.lock_projects(projects=(canon,))
             tasks = sorted((task for task in _pages(lambda after: uow.production.list(limit=500, after_id=after))
                             if normalize_project_number(task.project) == canon), key=lambda task: task.number)
             worked = uow.production.worked([task.id for task in tasks]) if tasks else set()

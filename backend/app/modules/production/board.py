@@ -48,6 +48,7 @@ from .application import (
     _progress,
     _skills,
     launch_task,
+    lock_reflow_projects,
     place_share,
 )
 from .autoplan import NEW_TASK_PREFIX
@@ -369,7 +370,12 @@ def assign_board(
         resources = getattr(uow, "resources", None)
         if resources is None and any(item.machine_bindings is not None for item in items):
             raise ProductionValidationError("Назначение оборудования ещё не подключено")
-        for task_id in sorted({item.task_id for item in items if item.task_id is not None}, key=str):
+        task_ids = sorted({item.task_id for item in items if item.task_id is not None}, key=str)
+        future_ids = {item.techcard_id for item in items if item.task_id is None}
+        lock_reflow_projects(uow, task_ids, now, projects=tuple(
+            card.project for card in ready if card.techcard_id in future_ids
+        ))
+        for task_id in task_ids:
             uow.production.lock(task_id)
         # Номера запусков КБ — до чтения заданий: запуск, прошедший после этого чтения, займёт тот же номер, и наш
         # запуск упрётся в уникальность (techcard_id, launch_seq), а не создаст второе задание по КБ.
@@ -545,6 +551,9 @@ def record_board_output(
     """Задание по КБ и ввод готовых этапа — одной транзакцией: не прошёл ввод (не хватает входов, больше тиража) —
     задание тоже не создаётся."""
     with uow:
+        lock_reflow_projects(uow, (), command.now, projects=tuple(
+            card.project for card in ready if card.techcard_id == command.techcard_id
+        ))
         seen = uow.production.last_launch_seqs([command.techcard_id])
         stored = tuple(uow.production.with_status(ProductionStatus.RUNNING))
         open_cards = {card.techcard_id: card for card in unlaunched_cards(uow, stored, ready, cards)}

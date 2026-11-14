@@ -101,11 +101,11 @@ def _snapshot(sessions) -> dict:
 
 @pytest.mark.parametrize("endpoint", ["project-ship", "project-pack"])
 @pytest.mark.parametrize("stored_project,requested_project", [("780К", "780К.1"), ("780К.1", "780K")])
-def test_packing_accepts_canonical_project_alias_only_with_explicit_cap(env, endpoint, stored_project, requested_project):
+def test_incomplete_order_accepts_canonical_project_alias_only_with_explicit_cap(env, endpoint, stored_project, requested_project):
     client, sessions = env
     good = client.post("/api/shipping/goods", json={
         "project": stored_project, "item_index": "КБ1", "customer": "Заказчик", "name": "Жгут",
-        "ordered": "15", "unit": "шт",
+        "ordered": "16", "unit": "шт",
     }).json()["good"]
     good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "15"}).json()["good"]
     body = {"project": requested_project, "lines": [{"good_id": good["id"], "quantity": "15"}]}
@@ -118,7 +118,7 @@ def test_packing_accepts_canonical_project_alias_only_with_explicit_cap(env, end
 
     _as(STOREKEEPER)
     before = _snapshot(sessions)
-    assert pack().status_code == 422  # Canonical equality never grants an implicit allowance.
+    assert pack().status_code == 422  # Canonical equality alone cannot complete an order.
     assert _snapshot(sessions) == before
     _as(MANAGER)
     granted = client.post("/api/shipping/project-pack-permissions", json={

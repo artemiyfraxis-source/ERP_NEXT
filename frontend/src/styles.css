@@ -1616,6 +1616,22 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .data-table tr.group-row td { background: var(--accent); font-size: 12px; }
 .data-table tr.group-row strong { display: inline; }
 .data-table tr.group-row input[type="checkbox"] { width: auto; display: inline-block; margin: 0 8px 0 2px; padding: 0; vertical-align: middle; }
+/* Intake project headings share one grid, independently of the KB columns below. */
+.intake-page .data-table tr.group-row > td:has(.intake-shipping-group) { font-size: 0; }
+.intake-page .data-table tr.group-row > td > strong:has(.intake-shipping-group) { display: block; }
+.intake-shipping-group { display: block; width: 0; min-width: 100%; white-space: normal; }
+.intake-shipping-grid { display: grid; grid-template-columns: minmax(152px, 1.3fr) minmax(96px, 1fr) minmax(112px, 1fr) minmax(120px, 1.4fr) minmax(84px, .8fr) minmax(64px, .6fr) minmax(128px, 1fr) 80px 48px; align-items: start; gap: 8px; padding: 8px 0; font-size: 13px; font-weight: 400; }
+.intake-shipping-grid > * { min-width: 0; }
+.intake-shipping-head { padding-top: 4px; padding-bottom: 4px; color: var(--muted-foreground); font-size: 12px; border-bottom: 1px solid var(--border); }
+.intake-shipping-project { display: flex; flex-direction: column; gap: 4px; }
+.intake-shipping-project strong { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.intake-shipping-cell, .intake-shipping-project > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.intake-shipping-upd .ship-upd-cell { display: flex; flex-wrap: wrap; gap: 4px 8px; white-space: normal; overflow-wrap: anywhere; }
+.intake-shipping-count, .intake-shipping-head > :last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.intake-page .intake-auto-permission { display: block; max-width: 240px; white-space: normal; font-size: 12px; }
+.intake-page td[data-label="Дата приёмки"] { font-variant-numeric: tabular-nums; }
+.intake-shipping-grid button:focus-visible, .intake-shipping-grid a:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+@media (pointer: coarse) { .intake-shipping-grid button, .intake-shipping-grid a, .intake-page .intake-take-btn { min-height: 40px; } }
 .data-table tr.group-row .group-picked { color: var(--primary); font-weight: 600; }
 .data-table .calendar-chips { margin-bottom: 0; }
 /* «База данных»: группы списка — блоками (DataTable `blocks`, владелец 25.10.2026, как «Оболочки»): заголовок группы со

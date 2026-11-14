@@ -71,10 +71,12 @@ from app.modules.production.infrastructure import (
 from app.modules.production.launchable import stage_name
 from app.modules.production.plan import PLAN_KINDS
 from app.modules.production.traceability import BoxStatus, WorkStatus
+from app.shared.advisory_lock import lock_project_run
 from app.shared.clock import MOSCOW, moscow_now
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 from app.shared.persistence import AuditEventRow, SqlAlchemyAuditRepository
+from app.shared.project_number import normalize_project_number
 
 EVENT_TYPE = "test_rollback"
 
@@ -750,6 +752,16 @@ def _bump(session: Session, task_ids: Iterable[UUID], status: dict[UUID, str]) -
 
 def execute(session: Session, plan: Plan, scope: Scope, now: datetime) -> None:
     """Откат по собранному плану в открытой транзакции сессии; фиксирует вызывающий."""
+    # Status restoration bypasses the repository but changes the whole-order packing catalog.
+    # Lock every project before task rows or writes, matching production's project -> task order.
+    with session.no_autoflush:
+        projects = session.scalars(select(ProductionTaskRow.project).where(ProductionTaskRow.id.in_(plan.tasks)))
+        for project in sorted({normalize_project_number(project) for project in projects}):
+            lock_project_run(session, project)
+        session.scalars(
+            select(ProductionTaskRow).where(ProductionTaskRow.id.in_(plan.tasks))
+            .order_by(ProductionTaskRow.id).with_for_update().execution_options(populate_existing=True)
+        ).all()
     if plan.decision_ids:
         session.execute(delete(ProductionDefectDecisionRow).where(ProductionDefectDecisionRow.id.in_(plan.decision_ids)))
     if plan.defect_ids:
