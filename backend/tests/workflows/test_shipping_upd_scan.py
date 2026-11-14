@@ -64,22 +64,26 @@ def _get(client, shipment):
     return next(item for item in client.get("/api/shipping/shipments").json()["shipments"] if item["id"] == shipment["id"])
 
 
-def test_the_manager_with_the_shipping_right_scans_but_a_storekeeper_only_and_a_viewer_are_refused(desk):
+@pytest.mark.parametrize("scanner_count", [1, 2])
+def test_the_manager_with_the_shipping_right_scans_but_a_storekeeper_only_and_a_viewer_are_refused(desk, scanner_count):
     client, sessions = desk
     shipment = _new_shipment(client)
     scan_agents.heartbeat(app.state.warehouse_uow_factory(), machine_id="shipping-pc", pc_name="TEST",
                           version="2.2.0", ip_seen="testclient", ip_lan="",
-                          scanners=[{"id": "shipping-scanner", "name": "Тестовый сканер"}], now=NOW)
-    choice = client.post(_url(shipment, "jobs"))
-    assert choice.status_code == 200 and choice.json()["status"] == "choose", choice.text
-    with sessions() as session:
-        assert session.scalars(select(ScanJobRow)).first() is None, "no job before selecting the full pair"
-
-    started = client.post(_url(shipment, "jobs"), json={"agent_id": "shipping-pc", "target_scanner": "shipping-scanner"})
+                          scanners=[{"id": "shipping-scanner", "name": "Тестовый сканер"},
+                                    {"id": "shipping-other", "name": "Другой сканер"}][:scanner_count], now=NOW)
+    started = client.post(_url(shipment, "jobs"))
+    if scanner_count == 2:
+        assert started.status_code == 200 and started.json()["status"] == "choose", started.text
+        with sessions() as session:
+            assert session.scalars(select(ScanJobRow)).first() is None, "multiple scanners need an explicit choice"
+        started = client.post(_url(shipment, "jobs"), json={"agent_id": "shipping-pc", "target_scanner": "shipping-scanner"})
     assert started.status_code == 200 and started.json()["status"] == "pending", started.text
     with sessions() as session:
         job = session.get(ScanJobRow, UUID(started.json()["id"]))
         assert (job.target_machine_id, job.target_scanner) == ("shipping-pc", "shipping-scanner")
+        assert job.requester_id is not None
+        assert len(session.scalars(select(ScanJobRow)).all()) == 1
     polled = client.get(_url(shipment, f"jobs/{started.json()['id']}")).json()
     assert polled["status"] == "pending" and polled["result"] is None
     assert client.delete(_url(shipment, f"jobs/{started.json()['id']}")).json()["status"] == "failed"

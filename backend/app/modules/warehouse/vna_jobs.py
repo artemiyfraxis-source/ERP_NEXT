@@ -1,7 +1,7 @@
 """VNA transport on the shared PC-agent queue; VSWR interpretation stays in production.
 
 The capability is an extension of the existing agent identity, not a second registry.
-Browser-address matches only order choices; a capture always requires an explicitly selected PC.
+Capture routing uses the device inventory and the registry instrument's serial number.
 """
 
 from datetime import datetime
@@ -14,6 +14,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.shared.persistence import Base
 
+from .devices import idn_serial
 from .scan_agents import LIVE_FOR, ScanAgentRow
 from .scan_jobs import CLAIMED, DONE, VNA_FILE_LIMIT, ScanJobClosed, ScanJobRow, _closed, _session, open_for_result
 
@@ -75,13 +76,12 @@ def heartbeat(uow, machine_id: str, vna: dict | None, now: datetime, sources: li
         uow.commit()
 
 
-def agents(uow, now: datetime, *, source: str | None = None, browser_ip: str | None = None) -> list[dict]:
+def agents(uow, now: datetime, *, source: str | None = None) -> list[dict]:
     with uow:
         rows = list(_session(uow).execute(select(ScanAgentRow, AgentVnaRow).join(AgentVnaRow).where(
             ScanAgentRow.legacy.is_(False), ScanAgentRow.last_seen >= now - LIVE_FOR,
             AgentVnaRow.reported_at >= now - LIVE_FOR,
         ).order_by(ScanAgentRow.pc_name, ScanAgentRow.machine_id)))
-        rows.sort(key=lambda pair: not (browser_ip and browser_ip in (pair[0].ip_seen, pair[0].ip_lan)))
         return [{"id": pc.machine_id, "pc": pc.pc_name or pc.machine_id, "version": pc.version,
                  "vna": {"name": vna.name, "ready": vna.ready, "reason": vna.reason} if "s2vna" in vna.sources else None,
                  "vna_sources": vna.sources} for pc, vna in rows
@@ -118,6 +118,11 @@ def complete(uow, job_id: UUID, content: bytes, file_name: str, now: datetime, m
             if not match:
                 raise ValueError("В файле ВАЦ нет сведений S2VNA о приборе и трассе S11/S22")
             name = match[1]
+            # The cached device can change between heartbeat and capture. Keep the
+            # enqueue identity authoritative even if the registry is edited meanwhile.
+            expected_serial = idn_serial(job.vna_name)
+            if not expected_serial or idn_serial(name) != expected_serial:
+                raise ValueError("Серийный номер ВАЦ в файле не совпадает с выбранным СИ. Проверьте подключённый прибор и повторите снятие.")
             if capture_settings and capture_settings.get("s_parameter", match[2]) != match[2]:
                 raise ValueError("Параметр настроек не совпадает с трассой S2VNA")
         done = session.execute(update(ScanJobRow).where(

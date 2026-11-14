@@ -3651,7 +3651,7 @@ export const warehouseApi = {
   startScanJob: (agentId?: string, targetScanner?: string) =>
     api<WarehouseScanStart>("/api/stock/receipts/scan-jobs", { method: "POST", body: JSON.stringify({ agent_id: agentId ?? "", ...(targetScanner ? { target_scanner: targetScanner } : {}) }) }),
   /** ПК с агентом и их сканеры: из них человек выбирает свой («Сменить сканер»). */
-  scanAgents: () => api<{ agents: ScanAgentInfo[] }>("/api/stock/scan/agents"),
+  scanAgents: () => api<{ agents: ScanAgentInfo[]; offline_devices?: OfflineScanner[] }>("/api/stock/scan/agents"),
   /** Администратор: одноразовая команда установки агента на новый ПК (живёт час). */
   scanAgentInstallToken: () =>
     api<{ command: string; expires_at: string; valid_minutes: number }>("/api/stock/scan/agent/install-token", { method: "POST" }),
@@ -3947,16 +3947,19 @@ export interface VnaCaptureSettings {
   frequency_step_hz?: number;
   unavailable?: string[];
 }
+export interface OfflineScanner { agent_id: string; scanner_id: string; name: string; pc: string }
 export interface VnaAgent { id: string; pc: string; version: string; vna: { name: string; ready: boolean; reason?: "" | "s2vna_not_running" | "device_not_connected" | "probe_failed" } | null; vna_sources?: VnaSource[] }
+export interface VnaTransfer { serial: string; owner_id: string; agents: VnaAgent[] }
 export interface VnaCaptureJob {
   id: string; status: WarehouseScanJobStatus; error: string; vna: { name: string }; source: VnaSource; file_name: string; agent?: VnaAgent;
   instrument_id: string;
   capture_settings: VnaCaptureSettings | null;
 }
-export type VnaCaptureStart = VnaCaptureJob | { status: "choose"; agents: VnaAgent[]; preferred_agent_id?: string } | { status: "no_agent" };
+export type VnaCaptureStart = VnaCaptureJob | { status: "choose"; agents: VnaAgent[]; preferred_agent_id?: string } | { status: "no_agent"; message?: string; transfer?: VnaTransfer | null };
 const VNA_JOBS = "/api/stock/vna/jobs";
 export const vnaCaptureApi = {
-  start: (instrumentId: string, agentId = "") => api<VnaCaptureStart>(VNA_JOBS, { method: "POST", body: JSON.stringify({ instrument_id: instrumentId, agent_id: agentId }) }),
+  transfer: (instrumentId: string, serial: string, ownerId: string, agentId: string) => api<{ status: "transferred" }>(`${VNA_JOBS}/transfer`, { method: "POST", body: JSON.stringify({ instrument_id: instrumentId, serial, owner_id: ownerId, agent_id: agentId }) }),
+  start: (instrumentId: string, agentId = "", chooseDevice = false) => api<VnaCaptureStart>(VNA_JOBS, { method: "POST", body: JSON.stringify({ instrument_id: instrumentId, agent_id: agentId, choose_device: chooseDevice }) }),
   status: (id: string, signal?: AbortSignal) => api<VnaCaptureJob>(`${VNA_JOBS}/${encodeURIComponent(id)}`, { signal }),
   file: (id: string, signal?: AbortSignal) => api<Blob>(`${VNA_JOBS}/${encodeURIComponent(id)}/file`, { blob: true, signal }),
   cancel: (id: string) => api<VnaCaptureJob>(`${VNA_JOBS}/${encodeURIComponent(id)}`, { method: "DELETE" }),
