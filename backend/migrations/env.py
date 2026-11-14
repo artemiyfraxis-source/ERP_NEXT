@@ -13,6 +13,7 @@ from app.modules.receiving import infrastructure as _receiving  # noqa: F401
 from app.modules.warehouse import infrastructure as _warehouse  # noqa: F401
 from app.modules.fulfillment import infrastructure as _fulfillment  # noqa: F401
 from app.modules.production import infrastructure as _production  # noqa: F401
+from app.modules.production import rf_infrastructure as _production_rf  # noqa: F401
 from app.modules.production import downtime_infrastructure as _production_downtime  # noqa: F401
 from app.modules.production import resource_infrastructure as _production_resources  # noqa: F401
 from app.modules.production import resource_assignment_infrastructure as _production_allocations  # noqa: F401

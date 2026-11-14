@@ -797,6 +797,8 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .instrument-window .instrument-file { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 4px 0; }
 .instrument-window .instrument-file a { overflow-wrap: anywhere; min-width: 0; }
 .instrument-window .instrument-file a { color: var(--primary); }
+.instrument-rf p { overflow-wrap: anywhere; }
+@media (pointer: coarse) { .instrument-rf button { min-height: 40px; } }
 .instrument-window .instrument-file span { color: var(--muted-foreground); font-size: 12px; }
 .instrument-window .instrument-lot-selected > td { background: var(--accent); }
 @media (max-width: 1599px) {

@@ -6,6 +6,7 @@ import {
 import { DataTable, type DataColumn } from "./DataTable";
 import { formatDay, formatNumber } from "./format";
 import { PageWindow } from "./PageWindow";
+import { InstrumentRfInterfaces } from "./InstrumentRfInterfaces";
 
 const fileKinds: InstrumentFileKind[] = ["Паспорт", "Свидетельство о поверке", "Руководство", "Прочее"];
 const conflictText = "Запись изменил другой пользователь — обновите";
@@ -49,6 +50,8 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
   const [baseline, setBaseline] = useState(draft);
   const [numberLoading, setNumberLoading] = useState(!instrument);
   const [busy, setBusy] = useState(false);
+  const [rfDirty, setRfDirty] = useState(false);
+  const [rfBusy, setRfBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [conflict, setConflict] = useState(false);
@@ -58,7 +61,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
   const [numberAttempt, setNumberAttempt] = useState(0);
   const verificationInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(baseline);
+  const dirty = rfDirty || JSON.stringify(draft) !== JSON.stringify(baseline);
   const accessory = draft.kind === "Принадлежность";
   const showVnaApp = !accessory && (Boolean(draft.vna_app) || /ВАЦ|VNA|векторн.*анализ|анализ.*(?:векторн|цеп)/i.test(`${draft.instrument_type} ${draft.name}`));
   const parents = instruments.filter((item) => item.kind === "Средство измерений" && item.id !== record?.id && !isDescendant(item, record?.id, instruments));
@@ -87,7 +90,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
   }, [dirty]);
 
   function requestClose() {
-    if (!busy && (!dirty || window.confirm("Закрыть без сохранения изменений?"))) close();
+    if (!busy && !rfBusy && (!dirty || window.confirm("Закрыть без сохранения изменений?"))) close();
   }
   const field = <K extends keyof InstrumentInput>(key: K, value: InstrumentInput[K]) => setDraft((current) => ({ ...current, [key]: value }));
   const text = (key: "inventory_number" | "name" | "instrument_type" | "serial_number" | "manufacturer" | "doc_designation" | "storage_location" | "warehouse_grn", label: string, required = false) =>
@@ -149,7 +152,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
   return <PageWindow label={record ? `Средство измерений: ${record.name}` : `Добавить: ${kind.toLocaleLowerCase("ru")}`} width={1120} close={requestClose}>
     <div className="panel instrument-window" aria-busy={busy}>
       <header className="page-head"><h2>{record ? `${record.inventory_number} · ${record.name}` : `Новое: ${kind.toLocaleLowerCase("ru")}`}</h2>
-        <button type="button" className="secondary small" disabled={busy} onClick={requestClose}>Закрыть</button></header>
+        <button type="button" className="secondary small" disabled={busy || rfBusy} onClick={requestClose}>Закрыть</button></header>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner" role="status">{notice}</div>}
       {conflict && <button className="secondary small" disabled={busy} onClick={() => {
@@ -164,7 +167,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
       {numberLoading && <div className="empty">Получение инвентарного номера…</div>}
       {!record && error && !draft.inventory_number && !numberLoading && <button className="secondary small" onClick={() => setNumberAttempt((value) => value + 1)}>Повторить получение номера</button>}
       <form onSubmit={(event) => void save(event)}>
-        <fieldset disabled={busy} className="instrument-fields">
+        <fieldset disabled={busy || rfBusy} className="instrument-fields">
           <section><h3>Прибор</h3><div className="form-grid">
             {text("inventory_number", "Инв. №", true)}{text("name", "Наименование", true)}{text("instrument_type", "Тип", !accessory)}
             <label>Вид<input name="kind" readOnly value={draft.kind} /></label>
@@ -208,6 +211,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
           </div>
         </fieldset>
       </form>
+      <InstrumentRfInterfaces instrumentId={record?.id} locked={busy} onDirty={setRfDirty} onBusy={setRfBusy} />
       <section className="instrument-files"><h3>Файлы</h3>
         {record ? <>
           <div className="instrument-upload"><label>Вид файла<select disabled={busy} value={fileKind} onChange={(event) => setFileKind(event.target.value as InstrumentFileKind)}>{fileKinds.map((value) => <option key={value}>{value}</option>)}</select></label>
