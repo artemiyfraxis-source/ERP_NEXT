@@ -28,14 +28,14 @@ from dataclasses import dataclass, field as dc_field
 from typing import Iterable, Mapping, Sequence
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
-from .domain import ReferenceValidationError
+from .domain import EQUIPMENT_TABS, ReferenceValidationError
 from .equipment import ARTICLE_KEY, BASE_KEY, INV_KEY, SUPPORTING_TYPE, TOOL_KEY, field, inv_key, name_of, parse_inventory, type_of
 from .infrastructure import (
     EQUIPMENT_ROLES, OP_LINK_COLUMNS, EquipmentModelRow, EquipmentOperationLinkRow, EquipmentTemplateToolRow,
-    EquipmentUnitLinkRow, TechOperationRecordRow,
+    EquipmentUnitLinkRow, TechOperationRecordRow, EquipmentRecordRow, EquipmentUnitRow, EquipmentInstrumentBindingRow,
 )
 from .technology import repoint_calc_unit
 
@@ -118,30 +118,42 @@ def _search(display_text: str, fields: Mapping[str, str]) -> str:
 
 @dataclass
 class _State:
-    units: list[TechOperationRecordRow]
+    units: list[EquipmentRecordRow]
     models: dict[UUID, EquipmentModelRow]
-    by_model: dict[UUID, list[TechOperationRecordRow]] = dc_field(default_factory=dict)
+    by_model: dict[UUID, list[EquipmentRecordRow]] = dc_field(default_factory=dict)
     texts: dict[str, set[UUID]] = dc_field(default_factory=dict)
-    inventories: dict[str, list[TechOperationRecordRow]] = dc_field(default_factory=dict)
+    inventories: dict[str, list[EquipmentRecordRow]] = dc_field(default_factory=dict)
     families: dict[tuple[str, int], set[UUID]] = dc_field(default_factory=dict)
 
     @classmethod
     def load(cls, session: Session) -> _State:
-        units = list(session.scalars(select(TechOperationRecordRow).where(TechOperationRecordRow.tab == OB)))
-        models = {model.id: model for model in session.scalars(select(EquipmentModelRow))}
+        units = list(session.scalars(select(EquipmentRecordRow)))
+        # A frozen legacy row retains its model FK after the final live unit is deleted.
+        # Keep that historical model out of live matching/reports, but retain real orphans
+        # and models still referenced by operations or templates for diagnostics.
+        archived = select(TechOperationRecordRow.equipment_model_id).where(
+            TechOperationRecordRow.tab == OB, TechOperationRecordRow.equipment_model_id.is_not(None))
+        visible = or_(
+            EquipmentModelRow.id.not_in(archived),
+            EquipmentModelRow.id.in_(select(EquipmentUnitRow.model_id)),
+            EquipmentModelRow.id.in_(select(EquipmentOperationLinkRow.model_id)),
+            EquipmentModelRow.id.in_(select(EquipmentTemplateToolRow.model_id).where(
+                EquipmentTemplateToolRow.model_id.is_not(None))),
+        )
+        models = {model.id: model for model in session.scalars(select(EquipmentModelRow).where(visible))}
         state = cls(units, models)
         state.index()
         return state
 
     def index(self) -> None:
-        by_model: dict[UUID, list[TechOperationRecordRow]] = defaultdict(list)
+        by_model: dict[UUID, list[EquipmentRecordRow]] = defaultdict(list)
         for unit in self.units:
             if unit.equipment_model_id is not None:
                 by_model[unit.equipment_model_id].append(unit)
         self.by_model = {key: sorted(items, key=lambda unit: inventory_order(field(unit.fields or {}, INV_KEY)))
                          for key, items in by_model.items()}
         texts: dict[str, set[UUID]] = defaultdict(set)
-        inventories: dict[str, list[TechOperationRecordRow]] = defaultdict(list)
+        inventories: dict[str, list[EquipmentRecordRow]] = defaultdict(list)
         families: dict[tuple[str, int], set[UUID]] = defaultdict(set)
         for unit in self.units:
             fields = unit.fields or {}
@@ -343,22 +355,21 @@ def linked_units(session: Session, ids: Iterable[UUID]) -> list[str]:
     gone = set(ids)
     if not gone:
         return []
-    units = {unit.id: unit for unit in session.scalars(select(TechOperationRecordRow).where(
-        TechOperationRecordRow.id.in_(gone), TechOperationRecordRow.tab == OB))}
+    units = {unit.id: unit for unit in session.scalars(select(EquipmentRecordRow).where(EquipmentRecordRow.id.in_(gone)))}
     if not units:
         return []
     reasons: dict[UUID, list[str]] = defaultdict(list)
     for link in session.scalars(select(EquipmentUnitLinkRow).where(EquipmentUnitLinkRow.target_id.in_(units))):
         if link.unit_id in gone:
             continue
-        source = session.get(TechOperationRecordRow, link.unit_id)
+        source = session.get(EquipmentRecordRow, link.unit_id)
         number = field(source.fields or {}, INV_KEY) if source is not None else str(link.unit_id)
         reasons[link.target_id].append(
             f"{number} — «Для инструмента»" if link.kind == TOOL else f"{number} — «Обслуживает»")
     models = {unit.equipment_model_id for unit in units.values() if unit.equipment_model_id is not None}
     for model_id in models:
-        left = session.scalar(select(func.count()).select_from(TechOperationRecordRow).where(
-            TechOperationRecordRow.equipment_model_id == model_id, TechOperationRecordRow.id.not_in(gone))) or 0
+        left = session.scalar(select(func.count()).select_from(EquipmentRecordRow).where(
+            EquipmentRecordRow.equipment_model_id == model_id, EquipmentRecordRow.id.not_in(gone))) or 0
         if left:
             continue
         operations = [operation for operation in session.scalars(
@@ -400,11 +411,12 @@ def prune_models(session: Session) -> int:
     """Models with no unit, no operation and no card template are dropped; one operations still link to stays
     (the report lists it)."""
     session.flush()
-    used = select(TechOperationRecordRow.equipment_model_id).where(TechOperationRecordRow.equipment_model_id.is_not(None))
+    used = select(EquipmentUnitRow.model_id)
+    archived = select(TechOperationRecordRow.equipment_model_id).where(TechOperationRecordRow.equipment_model_id.is_not(None))
     linked = select(EquipmentOperationLinkRow.model_id)
     templates = select(EquipmentTemplateToolRow.model_id).where(EquipmentTemplateToolRow.model_id.is_not(None))
     empty = list(session.scalars(select(EquipmentModelRow).where(
-        EquipmentModelRow.id.not_in(used), EquipmentModelRow.id.not_in(linked), EquipmentModelRow.id.not_in(templates))))
+        EquipmentModelRow.id.not_in(used), EquipmentModelRow.id.not_in(archived), EquipmentModelRow.id.not_in(linked), EquipmentModelRow.id.not_in(templates))))
     for model in empty:
         session.delete(model)
     return len(empty)
@@ -435,7 +447,7 @@ def after_save(session: Session, row: TechOperationRecordRow, before: Mapping[st
                   if before is None or str(before.get(column) or "") != str(fields.get(column) or "")}
         if edited:
             reconcile(session, operation_ids={row.id}, units=False, explicit_cells=edited)
-    elif row.tab == OB:
+    elif row.tab in {tab.value for tab in EQUIPMENT_TABS}:
         if before is None or before_display != row.display_text or any(
                 str(before.get(key) or "") != str(fields.get(key) or "") for key in _IDENTITY_KEYS):
             tool_edited = before is None or str(before.get(TOOL_KEY) or "") != str(fields.get(TOOL_KEY) or "")
@@ -479,13 +491,15 @@ class SqlAlchemyEquipmentRepository:
     def record_extras(self, records: Sequence) -> dict[UUID, dict]:
         """What a list row of БД.ОБ / БД.ОП carries besides its cells: the model (id, role) of a unit with its tool and
         the units it serves; the models a БД.ОП row's cells link to."""
-        units = [item.id for item in records if item.tab.value == OB]
+        units = [item.id for item in records if item.tab in EQUIPMENT_TABS]
         operations = [item.id for item in records if item.tab.value == OP]
         extras: dict[UUID, dict] = {}
         if units:
-            roles = dict(self.session.execute(select(TechOperationRecordRow.id, EquipmentModelRow.role).join(
-                EquipmentModelRow, EquipmentModelRow.id == TechOperationRecordRow.equipment_model_id).where(
-                TechOperationRecordRow.id.in_(units))).all())
+            bindings = {row.unit_id: str(row.instrument_id) for row in self.session.scalars(
+                select(EquipmentInstrumentBindingRow).where(EquipmentInstrumentBindingRow.unit_id.in_(units)))}
+            roles = dict(self.session.execute(select(EquipmentRecordRow.id, EquipmentModelRow.role).join(
+                EquipmentModelRow, EquipmentModelRow.id == EquipmentRecordRow.equipment_model_id).where(
+                EquipmentRecordRow.id.in_(units))).all())
             links: dict[UUID, dict] = defaultdict(lambda: {"tool_unit_id": None, "serves_unit_ids": []})
             for link in self.session.scalars(select(EquipmentUnitLinkRow).where(EquipmentUnitLinkRow.unit_id.in_(units))):
                 if link.kind == TOOL:
@@ -493,8 +507,8 @@ class SqlAlchemyEquipmentRepository:
                 else:
                     links[link.unit_id]["serves_unit_ids"].append(str(link.target_id))
             for item in records:
-                if item.tab.value == OB:
-                    extras[item.id] = {"equipment_role": roles.get(item.id), **links[item.id]}
+                if item.tab in EQUIPMENT_TABS:
+                    extras[item.id] = {"equipment_role": roles.get(item.id), "instrument_id": bindings.get(item.id), **links[item.id]}
         if operations:
             by_operation: dict[UUID, list[dict]] = defaultdict(list)
             for link in self.session.scalars(select(EquipmentOperationLinkRow).where(
@@ -508,8 +522,8 @@ class SqlAlchemyEquipmentRepository:
         return extras
 
     def _unit(self, unit_id: UUID) -> TechOperationRecordRow:
-        unit = self.session.get(TechOperationRecordRow, unit_id)
-        if unit is None or unit.tab != OB:
+        unit = self.session.get(EquipmentRecordRow, unit_id)
+        if unit is None or unit.tab not in {tab.value for tab in EQUIPMENT_TABS}:
             raise LookupError("Оборудование не найдено")
         return unit
 
@@ -537,8 +551,8 @@ class SqlAlchemyEquipmentRepository:
         model = self.session.get(EquipmentModelRow, model_id)
         if model is None:
             raise LookupError("Модель оборудования не найдена")
-        units = [unit.id for unit in self.session.scalars(select(TechOperationRecordRow).where(
-            TechOperationRecordRow.equipment_model_id == model_id))]
+        units = [unit.id for unit in self.session.scalars(select(EquipmentRecordRow).where(
+            EquipmentRecordRow.equipment_model_id == model_id))]
         if role == SUPPORTING:
             operations = self.session.scalar(select(func.count()).select_from(EquipmentOperationLinkRow).where(
                 EquipmentOperationLinkRow.model_id == model_id)) or 0
@@ -552,6 +566,13 @@ class SqlAlchemyEquipmentRepository:
                 EquipmentUnitLinkRow.unit_id.in_(units), EquipmentUnitLinkRow.kind == SERVES)):
             raise ReferenceValidationError("У модели есть «Обслуживает» — сначала снимите эти связи")
         model.role, model.role_confirmed = role, True
+        self.session.flush()
+        from .infrastructure import SqlAlchemyTechOperationRepository
+        repository = SqlAlchemyTechOperationRepository(self.session)
+        for unit_id in units:
+            unit = self._unit(unit_id)
+            unit.edited_in_erp = True
+            repository._put(repository._domain(unit), row=unit)
         self.session.flush()
         state = _State.load(self.session)
         return _model_json(state, model, 0)
@@ -570,7 +591,11 @@ class SqlAlchemyEquipmentRepository:
             if model is None:
                 raise LookupError("Модель оборудования не найдена")
         unit.equipment_model_id = model.id
+        self.session.get(EquipmentUnitRow, unit_id).model_id = model.id
         unit.edited_in_erp = True
+        from .infrastructure import SqlAlchemyTechOperationRepository
+        repository = SqlAlchemyTechOperationRepository(self.session)
+        repository._put(repository._domain(unit), row=unit)
         prune_models(self.session)
         return str(model.id)
 

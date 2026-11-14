@@ -2,28 +2,30 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { referencesApi, type TechOperationRecord } from "./api";
 import { headerLabel, valueLabel } from "./referenceLabels";
 import {
-  APPLICATOR_TYPE, CODE_KEY, CRIMP_TOOL_TYPE, CRIMP_TYPES, INV_KEY, MATRIX_TYPE, MEASURING_TYPE, SUPPORTING_TYPE, TARGETS_KEY, TOOL_KEY, invOf, makerOf, nameOf, placeOf, typeOf,
+  APPLICATOR_TYPE, CODE_KEY, CRIMP_TOOL_TYPE, CRIMP_TYPES, INV_KEY, MATRIX_TYPE, MEASURING_TYPE, SUPPORTING_TYPE, TARGETS_KEY, TOOL_KEY, instrumentFieldValue, invOf, makerOf, nameOf, placeOf, typeOf,
 } from "./equipmentModel";
 
 /** «Новая запись» / «Правка» in БД.ОБ (owner 12.10.2026: «очень сложно… чтобы быстро»): the six things a person knows
     about a machine come first — the type, name, article, maker, place and the inventory number the server proposes;
     the rest (cost, power, link…) waits under «Остальные поля». */
 
-const FIRST = ["Тип", "Наменование", "Артикул", "Производитель", "Расположение", INV_KEY];
+const FIRST = ["Тип", "Наменование", "Наименование", "Подтип", "Артикул", "Производитель", "Расположение", INV_KEY];
 // Computed by the server or by the sheet's formulas — not typed.
 const HIDDEN = new Set(["№", "Для базы", "baseValue", "obType", "Полное наименование ", "Полное наименование"]);
 const FORMULA_LIKE = new Set(["Стоимость 1 сек. эксплуатации без НДС"]);
 
-export function EquipmentForm({ values, isNew, records, onChange }: {
+export function EquipmentForm({ values, isNew, records, onChange, instrumentPassport, instrumentBound = false }: {
+  instrumentPassport?: TechOperationRecord["instrument_passport"];
+  instrumentBound?: boolean;
   values: Record<string, string>;
   isNew: boolean;
   records: TechOperationRecord[];
   onChange: (values: Record<string, string>) => void;
 }) {
   const types = useMemo(() => {
-    const found = new Set<string>(["Оборудование", SUPPORTING_TYPE, "Инструмент", MATRIX_TYPE, CRIMP_TOOL_TYPE, APPLICATOR_TYPE, MEASURING_TYPE]);
-    records.forEach((record) => { const type = typeOf(record); if (type !== "Без типа") found.add(type); });
-    if (values["Тип"]) found.add(values["Тип"]);
+    const found = new Set<string>(["Оборудование", SUPPORTING_TYPE, "Инструмент", MATRIX_TYPE, APPLICATOR_TYPE, MEASURING_TYPE]);
+
+    if (values["Тип"] && values["Тип"] !== CRIMP_TOOL_TYPE) found.add(values["Тип"]);
     return [...found];
   }, [records, values]);
   const places = useMemo(() => [...new Set([...records.map(placeOf), values["Расположение"] ?? ""].filter(Boolean).map((place) => valueLabel("Расположение", place)))], [records, values]);
@@ -33,7 +35,7 @@ export function EquipmentForm({ values, isNew, records, onChange }: {
   const latestValues = useRef(values);
   latestValues.current = values;
   const [proposal, setProposal] = useState("");
-  const type = values["Тип"] ?? "";
+  const type = values["Тип"] === CRIMP_TOOL_TYPE ? "Инструмент" : values["Тип"] ?? "";
   const applicator = type === APPLICATOR_TYPE;
   const code = (values[CODE_KEY] ?? "").replace(/\s+/g, "").toUpperCase();
 
@@ -59,20 +61,21 @@ export function EquipmentForm({ values, isNew, records, onChange }: {
   const set = (key: string, value: string) => onChange({ ...values, [key]: value });
   const rest = Object.keys(values).filter((key) => !FIRST.includes(key) && !HIDDEN.has(key) && !FORMULA_LIKE.has(key)
     && key !== CODE_KEY && key !== TOOL_KEY && key !== TARGETS_KEY);
-  const crimpType = CRIMP_TYPES.includes(type);
+  const crimpType = CRIMP_TYPES.includes(type) || (type === "Инструмент" && values["Подтип"] === CRIMP_TOOL_TYPE);
 
   return <div className="eq-form">
     <div className="form-grid">
       <label><small>Тип</small>
-        <select aria-label="Тип" value={type} onChange={(event) => {
+        <select aria-label="Тип" value={type} disabled={instrumentBound || Boolean(instrumentPassport)} onChange={(event) => {
           if (isNew) touchedInv.current = false;
           onChange({ ...values, "Тип": event.target.value, ...(isNew ? { [INV_KEY]: "" } : {}) });
         }}>
           {!type && <option value="">— выберите —</option>}
           {types.map((item) => <option key={item} value={item}>{item}</option>)}
         </select></label>
+      {type === "Инструмент" && <label><small>Подтип</small><select aria-label="Подтип" value={values["Подтип"] || (values["Тип"] === CRIMP_TOOL_TYPE ? CRIMP_TOOL_TYPE : "")} onChange={(event) => onChange({ ...values, Тип: "Инструмент", Подтип: event.target.value })}><option value="">— не указан —</option><option value={CRIMP_TOOL_TYPE}>{CRIMP_TOOL_TYPE}</option></select></label>}
       <label className="half"><small>Наименование</small>
-        <input aria-label="Наименование" value={values["Наменование"] ?? ""} autoFocus onChange={(event) => set("Наменование", event.target.value)} /></label>
+        <input aria-label="Наименование" value={values["Наименование"] || values["Наменование"] || ""} autoFocus onChange={(event) => onChange({ ...values, Наименование: event.target.value, ...("Наменование" in values ? { Наменование: event.target.value } : {}) })} /></label>
       <label><small>Артикул</small><input aria-label="Артикул" value={values["Артикул"] ?? ""} onChange={(event) => set("Артикул", event.target.value)} /></label>
       <label><small>Производитель</small>
         <input aria-label="Производитель" list="eq-makers" value={values["Производитель"] ?? ""} onChange={(event) => set("Производитель", event.target.value)} />
@@ -94,10 +97,12 @@ export function EquipmentForm({ values, isNew, records, onChange }: {
           {tools.map((tool) => <option key={tool.id} value={invOf(tool)}>{invOf(tool)} · {nameOf(tool)}</option>)}
         </select></label>}
     </div>
+    {instrumentPassport && <p className="eq-hint">Заводской номер и данные поверки меняются в реестре средств измерений.</p>}
     {rest.length > 0 && <details className="eq-rest">
       <summary>Остальные поля <span className="muted">({rest.length})</span></summary>
       <div className="form-grid">{rest.map((key) => <label key={key}><small>{headerLabel(key)}</small>
-        <input aria-label={`Поле ${key}`} value={values[key] ?? ""} onChange={(event) => set(key, event.target.value)} /></label>)}</div>
+        <input aria-label={`Поле ${key}`} readOnly={instrumentFieldValue(key, instrumentPassport, instrumentBound) !== undefined}
+          value={instrumentFieldValue(key, instrumentPassport, instrumentBound) ?? values[key] ?? ""} onChange={(event) => set(key, event.target.value)} /></label>)}</div>
     </details>}
   </div>;
 }

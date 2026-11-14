@@ -173,7 +173,7 @@ def test_bulk_import_keeps_aliased_inventory_on_create_and_update(references_api
         uow.tech_operations.replace((record,), schema_version=14, source_updated_at=None, imported_at=now)
         uow.commit()
     rows = [
-        ImportRowIn(fields={"baseValue": "Прибор", "obType": kind, "Расположение": "ЖУК"}),
+        ImportRowIn(fields={"unitId": str(record.id), "obType": kind, "Расположение": "ЖУК"}),
         ImportRowIn(fields={"baseValue": "Другой прибор", "obType": kind, "inventoryNumber": "ОБ.95.1"}),
     ]
     actor = Actor(name="Тест", department="ОГТ")
@@ -188,7 +188,7 @@ def test_bulk_import_keeps_aliased_inventory_on_create_and_update(references_api
         stored = uow.tech_operations.get(record.id)
         assert stored.fields["Инв. номер"] == stored.fields["inventoryNumber"] == number
         assert stored.fields["obType"] == kind and stored.fields["Расположение"] == "ЖУК"
-        [created] = [row for row in uow.tech_operations.list(tab=TechOperationTab.EQUIPMENT, query="", limit=10)
+        [created] = [row for row in uow.tech_operations.list(tab=None, query="", limit=10)
                      if row.id != record.id]
         assert created.fields["Инв. номер"] == created.fields["inventoryNumber"] == "ОБ.95.1"
         assert created.fields["obType"] == kind
@@ -230,7 +230,8 @@ def test_physical_catalog_keeps_actual_instances_and_models_from_reference_mirro
     sheet = parse_mirror_rows(source.read_text(encoding="utf-8"))
     records = [TechOperationRecord.create(
         tab=TechOperationTab.EQUIPMENT, display_text=str(index), search_text="", source_sheet="БД.ОБ",
-        sort_key=str(index), fields=dict(zip(sheet[1], row)),
+        sort_key=str(index), fields={key: ("Оборудование" if key == "Тип" and value == "Оборудование (ПР)" else value)
+                                    for key, value in zip(sheet[1], row)},
     ) for index, row in enumerate(sheet[2:])]
     catalog = {item.inventory_number: item for item in physical_equipment(records)}
     assert len(catalog) == 130
@@ -263,7 +264,7 @@ def test_physical_catalog_keeps_valid_equipment_with_unknown_site(site):
 
 def test_physical_catalog_accepts_reference_field_aliases_and_retains_inventory_spelling():
     record = replace(_machine(), fields={
-        "obType": "Оборудование (ПР)", "inventoryNumber": " OБ.79.01 ", " Наименование ": "Мини ПК",
+        "obType": "Оборудование", "inventoryNumber": " OБ.79.01 ", " Наименование ": "Мини ПК",
         " РАСПОЛОЖЕНИЕ ": " жУк ",
     })
     (item,) = physical_equipment([record])

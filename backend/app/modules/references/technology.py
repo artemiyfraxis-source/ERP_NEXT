@@ -766,6 +766,8 @@ TER_CARD_KEYS = ("terGender", *(field.key for field in _TER_CARD))
 # Fields the import derives from the sheet besides the DB_SCHEMA ones (БД.ТЕР AWG/мм² ranges, the contact card).
 _DERIVED_KEYS = {"ter": ("awgFrom", "awgTo", "mm2From", "mm2To", *TER_CARD_KEYS)}
 _DERIVED_KEYS["lug"] = _DERIVED_KEYS["ter"]
+for _catalog in ("ob_measuring", "ob_support", "ob_applicators", "ob_dies", "ob_tools"):
+    _TECH_SCHEMA[_catalog] = _TECH_SCHEMA["ob"]
 
 _FEMALE = re.compile(r"^(female|socket|receptacle|гнезд|мама)|\(socket\)|\(гнездо\)")
 _MALE = re.compile(r"^(male|pin|tab|plug|штыр|папа)|\(pin\)|\(tab\)|\(штырь\)")

@@ -222,3 +222,13 @@ def test_range_is_destructive_only_when_every_migration_declares_it(tmp_path):
     before["revision"] = "0002_b"
     _write(tmp_path, "0003_c.py", 'revision = "0003_c"\ndown_revision = "0002_b"\nDESTRUCTIVE: bool = True\n')
     assert compare(before, after, tmp_path) == []
+
+
+def test_equipment_catalog_ownership_detects_lost_payload(database):
+    command.upgrade(_config(database), "head")
+    before = _snapshot(database)
+    assert before["counts"]["equipment_catalog_ownership"] == 0
+    _execute(database, "DELETE FROM equipment_machines WHERE id IN (SELECT id FROM equipment_machines LIMIT 1)")
+    after = _snapshot(database)
+    assert after["counts"]["equipment_catalog_ownership"] == 1
+    assert after["tables"]["tech_operation_records"] == before["tables"]["tech_operation_records"]

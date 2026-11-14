@@ -15,7 +15,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.modules.references.equipment import INV_KEY, field, inv_key
-from app.modules.references.infrastructure import EquipmentModelRow, EquipmentTemplateToolRow, TechOperationRecordRow
+from app.modules.references.infrastructure import EquipmentModelRow, EquipmentTemplateToolRow, TechOperationRecordRow, EquipmentRecordRow, EQUIPMENT_ROWS, SqlAlchemyTechOperationRepository
 from app.modules.techcards.assembly_drafts_infrastructure import AssemblyDraftRow
 from app.modules.techcards.generator_drafts_infrastructure import GeneratorDraftRow
 from app.modules.techcards.infrastructure import (
@@ -63,6 +63,7 @@ class Report:
 _TOKEN = re.compile(r"(?<![\w.])(?:[A-ZА-ЯЁ]+\.\d+(?:\.\d+)?|[AMS]\d{1,3}(?:\.\d+)?)(?!\w|\.\w)", re.IGNORECASE)
 LIVE_COLUMNS = (
     (TechOperationRecordRow, ("fields", "display_text", "sort_key", "normalized_search")),
+    *((model, ("fields", "display_text", "sort_key", "normalized_search")) for model in EQUIPMENT_ROWS.values()),
     (EquipmentModelRow, ("name", "article", "maker")),
     (EquipmentTemplateToolRow, ("tool_name", "inventory_number")),
     (OperationCardTemplateRow, ("document", "edited", "raw_rows", "title", "name", "description")),
@@ -139,12 +140,14 @@ def plan_rewrites(
     for model, columns in LIVE_COLUMNS:
         counts = report.tables[model.__tablename__] = TableCount()
         for row in session.scalars(select(model)):
+            if isinstance(row, TechOperationRecordRow) and row.tab == "ob":
+                continue
             counts.scanned += 1
             if isinstance(row, TdIssueRow) and row.status != "draft":
                 continue
             if isinstance(row, AssemblyDraftRow) and row.status != "draft":
                 continue
-            if isinstance(row, TechOperationRecordRow) and row.id in skipped_ids:
+            if isinstance(row, (TechOperationRecordRow, EquipmentRecordRow)) and row.id in skipped_ids:
                 continue
             issued = isinstance(row, ProjectTechcardRow) and row.status == TechcardStatus.ISSUED.value
             values, occurrences, issued_document_changed = {}, 0, False
@@ -166,11 +169,11 @@ def plan_rewrites(
                     report.issued_documents_to_refresh += 1
                 else:
                     report.issued_documents_without_inputs.append(row.id)
-            if isinstance(row, TechOperationRecordRow) and row.id in field_updates:
+            if isinstance(row, (TechOperationRecordRow, EquipmentRecordRow)) and row.id in field_updates:
                 values["fields"] = {**values.get("fields", row.fields), **field_updates[row.id]}
             if not values:
                 continue
-            if isinstance(row, TechOperationRecordRow):
+            if isinstance(row, (TechOperationRecordRow, EquipmentRecordRow)):
                 fields = values.get("fields", row.fields)
                 display = values.get("display_text", row.display_text)
                 values["normalized_search"] = " ".join(f"{display} {' '.join(str(v) for v in fields.values())}".casefold().split())
@@ -202,9 +205,16 @@ def begin_transaction(session: Session, *, apply: bool, extra_tables: tuple[str,
 
 
 def apply_patches(patches: list[tuple[Any, dict[str, Any]]]) -> None:
+    from dataclasses import replace
+    from sqlalchemy.orm import object_session
     for row, values in patches:
-        for column, value in values.items():
-            setattr(row, column, value)
+        if isinstance(row, EquipmentRecordRow):
+            session = object_session(row)
+            repository = SqlAlchemyTechOperationRepository(session)
+            repository._put(replace(repository._domain(row), **values), row=row)
+        else:
+            for column, value in values.items():
+                setattr(row, column, value)
 
 
 def format_report(report: Report, *, applied: bool = False) -> str:

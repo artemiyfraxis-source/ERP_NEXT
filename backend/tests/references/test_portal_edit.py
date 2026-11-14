@@ -25,7 +25,7 @@ def _seed_record(client, tab="prov", fields=None):
         "schema_version": 14,
         "records": [{"tab": tab, "display_text": "МГТФ", "source_sheet": "БД.ПРОВ", "fields": fields}],
     }).status_code == 200
-    return client.get("/api/references/tech-operations", params={"tab": tab}).json()["records"][0]
+    return client.get("/api/references/tech-operations", params={"tab": tab, "family": tab == "ob"}).json()["records"][0]
 
 
 def test_portal_bases_list_marks_view_only(references_api):
@@ -144,11 +144,11 @@ def test_sheet_columns_edit_moves_the_schema_value_and_columns_hide_schema_keys(
 def test_created_row_gets_schema_values_from_sheet_columns(references_api):
     _seed_record(references_api, tab="ob", fields={"obType": "Инструмент", "Тип": "Инструмент", "Для базы": "A/Б"})
     response = references_api.post("/api/references/tech-operations", json={
-        "tab": "ob", "fields": {"Тип": "Станок", "Наменование": "Автомат", "Для базы": "EW-05F/Автомат"},
+        "tab": "ob", "fields": {"Тип": "Оборудование", "Наменование": "Автомат", "Для базы": "EW-05F/Автомат"},
     })
 
     assert response.status_code in (200, 201)
-    assert response.json()["fields"]["obType"] == "Станок"
+    assert response.json()["fields"]["obType"] == "Оборудование"
     assert response.json()["display_text"] == "EW-05F/Автомат"
 
 

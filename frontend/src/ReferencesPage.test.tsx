@@ -291,13 +291,13 @@ it("shows БД.ОБ as cards by type with every column and the БД.ОП operati
 
   render(<ReferencesPage principal={admin} initialTab="ob" />);
   expect(await screen.findByText("ОБ.015")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Все · 2" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Инструмент · 1" })).toBeInTheDocument();
+  expect(screen.getAllByText("2 моделей · 2 шт.").length).toBeGreaterThan(0);
+  expect(screen.getByRole("button", { name: "Инструмент" })).toBeInTheDocument();
   // «Операций» — число операций БД.ОП, что ссылаются на единицу.
   await waitFor(() => expect(within(screen.getByText("ОБ.015").closest("tr") as HTMLElement).getAllByRole("cell").map((cell) => cell.textContent)).toContain("1"));
 
   fireEvent.click(screen.getByText("ОБ.015"));
-  expect(screen.getByText("900 000,00")).toBeInTheDocument();
+  expect(within(screen.getByRole("dialog", { name: "Карточка оборудования" })).getByText("900 000,00")).toBeInTheDocument();
   expect(screen.getByText("CUT_WIRE_auto")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /^Наименование: Автомат мерной резки — править/ })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Ещё такой же" })).toBeInTheDocument();
@@ -318,7 +318,7 @@ it("shows the terminal-code column in the instances table of a crimp tool only",
 
   render(<ReferencesPage principal={admin} initialTab="ob" />);
   fireEvent.click(await screen.findByText("ОБ.101"));
-  expect(await screen.findByRole("columnheader", { name: "Код терминалов" })).toBeInTheDocument();
+  expect(within(screen.getByRole("dialog", { name: "Карточка оборудования" })).getByRole("columnheader", { name: "Код терминалов" })).toBeInTheDocument();
 });
 
 it("БД-1: terminals show Russian headers and «гнездо/штырь» instead of the sheet's English words", async () => {
@@ -502,7 +502,7 @@ it("БД.ОБ: a click on a value edits it in the card — a model value goes to
   render(<ReferencesPage principal={admin} initialTab="ob" />);
   fireEvent.click(await screen.findByText("Станция паяльная"));
   const card = screen.getByRole("dialog", { name: "Карточка оборудования" });
-  expect(within(card).queryByRole("button", { name: /^Править/ })).toBeNull(); // no separate edit form
+  expect(within(card).getByRole("button", { name: "Править запись" })).toBeInTheDocument(); // no separate edit form
   expect(within(card).getByText("HEAT_TYT_short")).toBeInTheDocument();
   expect(within(card).queryByLabelText("Найти операцию")).toBeNull(); // tied in the operation's card
   expect(within(card).queryByRole("button", { name: /Отвязать/ })).toBeNull();
@@ -538,9 +538,9 @@ it("«Аппликаторы» is a tab of its own; «＋» at an A-code of «К
     throw new Error(`Unexpected request: ${path}`);
   });
   window.history.replaceState({}, "", "/");
-  render(<ReferencesPage principal={admin} initialTab="ob" />);
-  expect(await screen.findByRole("button", { name: /^Аппликаторы · 0/ })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Создать запись для кода A8" }));
+  render(<ReferencesPage principal={admin} initialTab="ob_applicators" />);
+  expect(await screen.findByRole("button", { name: /^Аппликаторы$/ })).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: "Создать запись для кода A8" }));
   expect(await screen.findByLabelText("Тип")).toHaveValue("Аппликаторы");
   expect(screen.getByLabelText("Код в базе терминалов")).toHaveValue("A8");
   window.history.replaceState({}, "", "/");
@@ -559,9 +559,9 @@ it("an M-code and an S-code are applicators too (owner 29.10: M — ОТП, A �
     throw new Error(`Unexpected request: ${path}`);
   });
   window.history.replaceState({}, "", "/");
-  render(<ReferencesPage principal={admin} initialTab="ob" />);
-  expect(await screen.findByRole("button", { name: /^Аппликаторы · 0/ })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Создать запись для кода M10" }));
+  render(<ReferencesPage principal={admin} initialTab="ob_applicators" />);
+  expect(await screen.findByRole("button", { name: /^Аппликаторы$/ })).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: "Создать запись для кода M10" }));
   expect(await screen.findByLabelText("Тип")).toHaveValue("Аппликаторы");
   expect(screen.getByLabelText("Код в базе терминалов")).toHaveValue("M10");
   window.history.replaceState({}, "", "/");

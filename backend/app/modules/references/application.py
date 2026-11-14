@@ -1,6 +1,8 @@
 """Transactional replacement of reference maps and technology snapshots."""
 
 from __future__ import annotations
+from .equipment_catalogs import CATALOG_COLUMNS, CATALOG_TYPES, equipment_tab
+from .domain import EQUIPMENT_TABS
 
 import hashlib
 import re
@@ -32,7 +34,7 @@ from .domain import StockArticle, StockLinkChange, StockLinkEntry, StockLinkEven
 from .lugs import ter_kind_of
 from .equipment import (
     BASE_KEY, CODE_KEY, EXTRA_KEYS, INV_KEY, ROW_KEY, base_value as fields_base, field, next_instance_inventory,
-    prepare_equipment,
+    prepare_equipment, normalize_equipment_fields, sync_name_edits, updated_display,
 )
 from .technology import (
     COAX_CABLE_DIAMETERS_REASON, TECH_SNAPSHOT_SCHEMA_VERSION, is_coax_cable_column, operation_grade_problem, schema_columns,
@@ -202,7 +204,8 @@ def replace_snapshot_detailed(command: ReplaceSnapshotCommand, uow: UnitOfWork) 
         # A БД.ТЕР sheet row goes to «Наконечники» or «Терминалы» by the rule (`lugs.ter_kind_of`).
         built = {index: TechOperationRecord.create(
             tab=item.tab, display_text=item.display_text, search_text=item.search_text,
-            source_sheet=item.source_sheet, sort_key=item.sort_key, fields=item.fields, mirror_key=key,
+            source_sheet=item.source_sheet, sort_key=item.sort_key,
+            fields=normalize_equipment_fields(item.fields) if item.tab in EQUIPMENT_TABS else item.fields, mirror_key=key,
             ter_kind=ter_kind_of(item.fields) if item.tab == TechOperationTab.TERMINAL else None,
         ) for index, (item, key) in enumerate(keyed) if item.tab not in CABLE_TABS}
         # A БД.ПРОВ sheet row takes its cable base by the rule over the D-table this load leaves (`resolve_kind`, the
@@ -311,7 +314,7 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
             own_columns = [*custom_columns(record.tab, uow),
                            *(CABLE_WRITABLE[record.cable_kind] if record.tab in CABLE_TABS else ())]
         known = (edit.field in record.fields or edit.field in stored or edit.field in (own_columns or ())
-                 or (record.tab == TechOperationTab.EQUIPMENT and edit.field in EXTRA_KEYS)
+                 or (record.tab in EQUIPMENT_TABS and edit.field in (*EXTRA_KEYS, *CATALOG_COLUMNS[record.tab.value]))
                  or (record.tab == TechOperationTab.COAX and edit.field in _coax_card_columns()))
         if not known:
             refused.append(f"{edit.field}: поля нет в записи")
@@ -332,9 +335,10 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
         fields[edit.field] = value
     if refused:
         raise StaleRecordError("Не записано ничего — отклонено полей: " + str(len(refused)) + "; " + "; ".join(refused))
-    if record.tab == TechOperationTab.EQUIPMENT:
+    if record.tab in EQUIPMENT_TABS:
         others = [item for item in _equipment_rows(uow)]
         before_base = fields_base(record.fields)
+        fields = sync_name_edits(record.fields, fields, (edit.field for edit in edits))
         fields = prepare_equipment(fields, others, self_id=record.id, creating=False, previous=record.fields)
         if before_base == record.fields.get(BASE_KEY, "") and fields_base(fields) != fields.get(BASE_KEY):
             fields[BASE_KEY] = fields_base(fields)
@@ -353,7 +357,10 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
         _check_operation_code(record, fields, uow)
         _check_operation_grade(fields)
     display = schema_display_text(record.tab.value, fields) or display
-    updated = replace(record, fields=fields, display_text=display, edited_in_erp=True)
+    if record.tab in EQUIPMENT_TABS:
+        display = updated_display(record, fields, display)
+    updated = replace(record, fields=fields, display_text=display, edited_in_erp=True,
+                      tab=equipment_tab(fields) if record.tab in EQUIPMENT_TABS else record.tab)
     updated = replace(updated, normalized_search=_search_text(updated))
     if record.cable_kind == CableKind.WIRE.value and edited & {MARK_FIELD, WIRE_COLOR_FIELD}:
         _check_wire_row(updated.fields, uow, record.id)
@@ -446,6 +453,7 @@ def edit_record(command: EditRecordCommand, uow: UnitOfWork) -> TechOperationRec
     with uow:
         record, updated = _edit_in(command.record_id, command.edits, command.now, uow)
         _same_article(updated, command.edits, command.now, uow)
+        updated = uow.tech_operations.get(updated.id) or updated
         _audit("references.tech_record_edited", command.actor, command.now, {
             "record_id": str(record.id), "tab": record.tab.value,
             "fields": [edit.field for edit in command.edits],
@@ -498,6 +506,8 @@ def _taken_names(tab: TechOperationTab, records: Sequence[TechOperationRecord], 
     """Every name the tab already uses as a column or a schema value (folded), the owner's own columns included."""
     base = CABLE_WRITABLE[CABLE_KIND_BY_TAB[tab]] if tab in CABLE_TABS else BASE_COLUMNS.get(tab, ())
     names = set(base) | set(schema_keys(tab.value)) | set(stored_schema_keys(tab.value))
+    if tab in EQUIPMENT_TABS:
+        names |= set(CATALOG_COLUMNS[tab.value])
     names |= {name for record in records for name in record.fields} | set(custom_columns(tab, uow))
     if tab == TechOperationTab.COAX:
         from .importers import TECH_TABLES
@@ -554,7 +564,7 @@ def add_column(command: ColumnCommand, uow: UnitOfWork) -> int:
                                            "остаются в записях и видны в карточке записи")
         if _folded(name) in _taken_names(tab, records, uow):
             raise ReferenceValidationError(f"Столбец «{name}» уже есть в таблице")
-        if not records:
+        if not records and tab not in EQUIPMENT_TABS:
             raise ReferenceValidationError("В таблице нет записей — столбцу негде жить")
         for record in records:
             uow.tech_operations.save(replace(record, fields={**record.fields, name: ""}, edited_in_erp=True))
@@ -694,7 +704,7 @@ def coverings_catalog(uow: UnitOfWork) -> dict:
 
 
 def _equipment_rows(uow: UnitOfWork) -> list[tuple[object, dict[str, str]]]:
-    return [(item.id, item.fields) for item in uow.tech_operations.list(tab=TechOperationTab.EQUIPMENT, query="", limit=10_000)]
+    return [(item.id, item.fields) for item in uow.tech_operations.list(tab=EQUIPMENT_TABS, query="", limit=10_000)]
 
 
 # --- БД.ОП: «Номер» is the operation code, the key that joins the row to its card template (БД.ТК) ---
@@ -767,7 +777,10 @@ def _create_in(tab: TechOperationTab, fields: dict[str, str], uow: UnitOfWork,
     goes to `tab` (`cable_kind` / `ter_kind` — the list API before migration 0165 — name another base of its family);
     a cable base's row takes the columns of that base."""
     tab = family_member(tab, cable_kind, ter_kind)
-    if tab == TechOperationTab.EQUIPMENT:
+    if tab in EQUIPMENT_TABS:
+        if not (fields.get("Тип") or fields.get("obType")):
+            fields = {**fields, "Тип": CATALOG_TYPES[tab.value]}
+        tab = equipment_tab(fields)
         # Number, row and code are checked and given under this same transaction as the save.
         fields = prepare_equipment(fields, _equipment_rows(uow), creating=True)
     if tab == TechOperationTab.COAX and any(is_coax_cable_column(key) and value for key, value in fields.items()):
@@ -794,7 +807,7 @@ def _create_in(tab: TechOperationTab, fields: dict[str, str], uow: UnitOfWork,
         edited_in_erp=True,
     )
     uow.tech_operations.save(record)
-    return record
+    return uow.tech_operations.get(record.id) or record
 
 
 def _kind_rule(uow: UnitOfWork, diameters: Sequence[TechOperationRecord] | None = None):
@@ -989,7 +1002,7 @@ def duplicate_equipment(record_id: UUID, actor: Actor, now: datetime, uow: UnitO
         source = uow.tech_operations.get(record_id)
         if source is None:
             raise LookupError("Запись справочника не найдена")
-        if source.tab != TechOperationTab.EQUIPMENT:
+        if source.tab not in EQUIPMENT_TABS:
             raise ReferenceValidationError("Копировать можно только оборудование")
         rows = _equipment_rows(uow)
         fields = {key: value for key, value in source.fields.items() if key not in (CODE_KEY, ROW_KEY)}
@@ -1160,13 +1173,20 @@ def save_gauge(command: SaveGaugeCommand, uow: UnitOfWork) -> WireGauge:
     return gauge
 
 
-def delete_record(record_id: UUID, actor: Actor, now: datetime, uow: UnitOfWork, reason: str = "") -> TechOperationRecord:
+def delete_equipment(record_id: UUID, actor: Actor, now: datetime, uow: UnitOfWork) -> TechOperationRecord:
+    return delete_record(record_id, actor, now, uow, equipment_only=True)
+
+
+def delete_record(record_id: UUID, actor: Actor, now: datetime, uow: UnitOfWork, reason: str = "",
+                  *, equipment_only: bool = False) -> TechOperationRecord:
     """Удаляет строку таблицы «Базы данных» (владелец 20.10.2026: слитые дубли БД.КОАКС не должны висеть на экране).
     Всё в одной транзакции: строка уходит, а в журнал пишется `references.record_deleted` с её полной старой записью —
     по нему строку можно восстановить. Ссылки по имени (партии, комплекты, техкарты) здесь не проверяются — это дело
     вызывающего: он решает, можно ли удалять."""
     with uow:
         record = _editable(record_id, uow)
+        if equipment_only and record.tab not in EQUIPMENT_TABS:
+            raise ReferenceValidationError("Запись не относится к оборудованию")
         uow.tech_operations.delete(record_id)
         _audit("references.record_deleted", actor, now, {
             "record_id": str(record.id), "tab": record.tab.value, "display_text": record.display_text,

@@ -2,12 +2,13 @@
 
 import json
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
 
 from app.modules.references.domain import TechOperationRecord, TechOperationTab
+from app.modules.references.infrastructure import EquipmentMachineRow
 from app.modules.references.technology import sheet_snapshot_records
 from app.workflows.equipment_cleanup import build_plan, format_plan, main, run
 from tests.factories import Actor
@@ -33,6 +34,13 @@ def _equipment(client, inv, article, name, kind="Оборудование"):
     response = client.post(BASE, json={"tab": "ob", "fields": {
         "Тип": kind, "Инв. номер": inv, "Артикул": article, "Наменование": name}})
     assert response.status_code == 201
+    if kind == "Оборудование (ПР)":
+        # Current input normalizes this retired type. Seed its historical stored representation
+        # explicitly so the cleanup still exercises legacy rows retained by the cutover.
+        with client.app.state.references_uow_factory() as uow:
+            row = uow.session.get(EquipmentMachineRow, UUID(response.json()["id"]))
+            row.fields = {**row.fields, "Тип": kind, "obType": kind}
+            uow.commit()
 
 
 def _operation(client, number, **cells):

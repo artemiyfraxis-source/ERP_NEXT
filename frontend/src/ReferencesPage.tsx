@@ -3,7 +3,7 @@ import { DataTable, SearchSeedContext, type DataColumn, type DataPreset } from "
 import { hasAccess, urlParam } from "./navigation";
 import { EquipmentCards } from "./EquipmentCards";
 import { EquipmentForm } from "./EquipmentForm";
-import { applicatorTokens } from "./equipmentModel";
+import { applicatorTokens, groupModels } from "./equipmentModel";
 import { TechcardsPage } from "./TechcardsPage";
 import { ConnectorGallery } from "./ConnectorGallery";
 import { CrimpCell, CRIMP_COLUMN_TITLE, crimpText } from "./CrimpCell";
@@ -19,7 +19,7 @@ import { NO_SERIES, makerOrder, seriesCaption, sortBySeries, terminalGroups } fr
 import { COAX_CARD_ONLY, CoaxConnectors } from "./CoaxConnectors";
 import { StockLinksJournal } from "./StockLinksJournal";
 import { ReferenceRoundtrip } from "./ReferenceRoundtrip";
-import { REFERENCE_TAB_GROUPS, referenceTabKey, type CableTab, type DbTab, type MapTab, type TabDef } from "./referenceTabs";
+import { EQUIPMENT_TYPES, isEquipmentTab, REFERENCE_TAB_GROUPS, referenceTabKey, type CableTab, type DbTab, type MapTab, type TabDef } from "./referenceTabs";
 import {
   isMaterialTab, materialCounts, materialRows, type MaterialTab,
 } from "./materialSections";
@@ -200,6 +200,9 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   const [mapsFailed, setMapsFailed] = useState(false);
   const [tech, setTech] = useState<TechOperationResult>({ metadata: null, records: [] });
   const [cableDia, setCableDia] = useState<CableDia>({});
+  const [equipmentFamily, setEquipmentFamily] = useState<TechOperationRecord[]>([]);
+  const [equipmentReady, setEquipmentReady] = useState(false);
+  const techRequest = useRef(0);
   const [obOps, setObOps] = useState<TechOperationRecord[]>([]);
   // БД.ТЕР «Аппликатор»: code → the БД.ОБ record that owns it (a link to its card); the card to open after the jump.
   const [toolOwners, setToolOwners] = useState<Record<string, string>>({});
@@ -235,6 +238,8 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   const terLike = lugTab || contactTab;
   // Ключ загруженной базы.
   const techKey = techTab ?? "";
+  const activeTechTab = useRef(techTab);
+  activeTechTab.current = techTab;
   const cableKind = isCableTab(tab) ? CABLE_TABS[tab] : null;
   const viewOnly = VIEW_ONLY_TABS.includes(tab);
   // ID-3: the `erpref` section decides (PortalRef.gs portalSectionEditGuard_), not the role.
@@ -251,6 +256,8 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   }
 
   async function loadTech(next: TechOperationTab) {
+    if (activeTechTab.current !== next) return;
+    const request = ++techRequest.current;
     setError("");
     try {
       // БД.КОАКС: the cables' D1–D3 are asked at once with the rows, not after them.
@@ -261,12 +268,20 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
         referencesApi.techOperations(next, "", 5000),
         next === "ter" ? techcardsApi.connectorSeries().then((result) => result.series, () => [] as ConnectorSeries[]) : Promise.resolve(null),
       ]);
+      if (request !== techRequest.current || activeTechTab.current !== next) return;
       setTech(records);
       if (series) setTerSeries(series);
       if (next === "ter" || next === "lug") {
         void referencesApi.crimpCodes().then((result) => setToolOwners(result.owners)).catch(() => setToolOwners({}));
       }
-      if (next === "ob") {
+      if (isEquipmentTab(next)) {
+        const family = await referencesApi.techOperations("ob", "", 5000, true);
+        if (request !== techRequest.current || activeTechTab.current !== next) return;
+        setEquipmentFamily(family.records);
+        setEquipmentReady(true);
+        const focus = focusTool || urlParam("equipment");
+        const target = family.records.find((record) => record.id === focus);
+        if (target && isEquipmentTab(target.tab) && target.tab !== next) setTab(target.tab);
         void referencesApi.techOperations("op", "", 5000).then((ops) => setObOps(ops.records)).catch(() => setObOps([]));
       }
       if (next === "mat") void loadMaterialIndex();
@@ -275,10 +290,11 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
         setCableDia(Object.fromEntries(cables.records.map((record) => [cableKey(Object.values(record.fields)[0] ?? ""), record.fields])));
       }
     } catch (reason) {
+      if (request !== techRequest.current || activeTechTab.current !== next) return;
       setTech({ metadata: null, records: [] });
       setError(reason instanceof Error ? reason.message : "Не удалось загрузить базу техопераций");
     } finally {
-      setTechReady(next);
+      if (request === techRequest.current && activeTechTab.current === next) setTechReady(next);
     }
   }
 
@@ -340,7 +356,11 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     if ((cableKind || tab === "gauges" || tab === "coax") && cables === null) void loadCables();
   }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function count(def: TabDef): number | null {
+  function count(def: TabDef): number | string | null {
+    if (isEquipmentTab(def.id)) {
+      const rows = equipmentFamily.filter((record) => record.tab === def.id);
+      return equipmentReady ? `${groupModels(rows).length} моделей · ${rows.length} шт.` : null;
+    }
     // no number until the maps came: «0» while loading read as an empty map
     if (isMapTab(def.id)) return canRefs && savedMaps !== "" ? maps[def.id].length : null;
     if (def.id === "templates") return opCount;
@@ -376,7 +396,8 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
       if (editing.id === null) {
         await referencesApi.createRecord(techTab, editing.values);
       } else {
-        const original = tech.records.find((record) => record.id === editing.id);
+        const original = (isEquipmentTab(techTab) ? equipmentFamily : tech.records).find((record) => record.id === editing.id);
+        if (!original) throw new Error("Запись не найдена — обновите каталог");
         const edits = Object.entries(editing.values)
           .filter(([field, value]) => original && original.fields[field] !== value)
           .map(([field, value]) => ({ field, old: original?.fields[field] ?? "", value }));
@@ -423,7 +444,9 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   // Edit form: the sheet's columns only (the server moves the schema values derived from them); on БД.КОАКС without
   // the cable's Ø — they are edited in «Коаксиальные кабели» — but with the cells removed from the table 25.10.2026
   // the row has (пол, исполнение, примечание, источник…: no column, still the row's own and editable).
-  const editValues = (record: TechOperationRecord) => Object.fromEntries([...fieldColumns, ...(coaxTab ? COAX_CARD_ONLY : [])]
+  const editValues = (record: TechOperationRecord) => isEquipmentTab(record.tab)
+    ? { ...Object.fromEntries(fieldColumns.map((field) => [field, ""])), ...record.fields, Тип: record.fields["Тип"] || record.fields.obType || EQUIPMENT_TYPES[record.tab] }
+    : Object.fromEntries([...fieldColumns, ...(coaxTab ? COAX_CARD_ONLY : [])]
     .filter((key, index, all) => all.indexOf(key) === index && key in record.fields && !(coaxTab && CABLE_DIAMETERS.includes(key)))
     .map((key) => [key, record.fields[key]]));
   // «Материалы» по назначению: столбцы, пустые во всей вкладке (у стяжек — «Размер до», «Коэф. усадки»…), скрыты по
@@ -539,7 +562,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   const terminal = contactTab && terminalId ? tech.records.find((record) => record.id === terminalId) as TerminalRow | undefined : undefined;
   function startCreate(preset: Record<string, string> = {}) {
     const blank = Object.fromEntries(fieldColumns.map((key) => [key, ""]));
-    setEditing({ id: null, values: techTab === "ob" ? { ...blank, Тип: "Оборудование", ...preset } : blank });
+    setEditing({ id: null, values: isEquipmentTab(techTab) ? { ...blank, Тип: EQUIPMENT_TYPES[techTab], ...preset } : blank });
     window.scrollTo?.({ top: 0, behavior: "smooth" });
   }
   function startEdit(record: TechOperationRecord) {
@@ -547,7 +570,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     window.scrollTo?.({ top: 0, behavior: "smooth" });
   }
   const current = groups.flatMap((group) => group.tabs).find((def) => def.id === tab);
-  const editingRecord = editing?.id ? tech.records.find((record) => record.id === editing.id) : null;
+  const editingRecord = editing?.id ? (isEquipmentTab(techTab) ? equipmentFamily : tech.records).find((record) => record.id === editing.id) : null;
 
   return <SearchSeedContext.Provider value={seed}><section className="page references-page">
     <header className="page-head"><h1>База данных</h1>{!stockLog && current && count(current) !== null && <span className="page-count">{count(current)}</span>}
@@ -562,7 +585,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
         <div className="db-tab-row">{group.tabs.map((def) => {
           const n = count(def);
           const active = tab === def.id && !stockLog;
-          return <button key={def.id} type="button" className={active ? "db-tab active" : "db-tab"} aria-pressed={active} onClick={() => { setTab(def.id); setStockLog(false); }}>
+          return <button key={def.id} type="button" className={active ? "db-tab active" : "db-tab"} aria-pressed={active} onClick={() => { setFocusTool(""); const url = new URL(window.location.href); url.searchParams.delete("equipment"); window.history.replaceState(window.history.state, "", url); setTab(def.id); setStockLog(false); }}>
             {def.label}{n !== null && <span className="db-tab-count" aria-hidden="true">{n}</span>}
           </button>;
         })}</div>
@@ -597,7 +620,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     })()}
 
     {techTab && <>
-      {canEdit && editing && techTab !== "ob" && <PageWindow label={editing.id === null ? "Новая запись" : "Правка записи"} width={860} close={() => setEditing(null)}><div className="panel db-edit">
+      {canEdit && editing && !isEquipmentTab(techTab) && <PageWindow label={editing.id === null ? "Новая запись" : "Правка записи"} width={860} close={() => setEditing(null)}><div className="panel db-edit">
         <div className="manual-stock-head"><h2>{editing.id === null ? "Новая запись" : `Правка: ${(editingRecord?.display_text ?? "").replace(/^[\s/]+|[\s/]+$/g, "")}`}</h2></div>
         <RowForm values={editing.values} hint={terLike ? terFieldHint : undefined} onChange={(values) => setEditing({ ...editing, values })} />
         {terLike && techTab && editing.id !== null && editing.moveTo && <MoveSelect
@@ -608,13 +631,18 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
           <StockLinksJournal recordId={editing.id} fieldTitle={fieldTitle} />
         </div>}
       </div></PageWindow>}
-      {techTab === "ob" ? <EquipmentCards
+      {techReady !== techKey ? <div className="empty" role="status">Загрузка…</div> : isEquipmentTab(techTab) ? <EquipmentCards
+        key={techTab}
+        tab={techTab}
+        ownColumns={ownColumns}
+        fieldColumns={fieldColumns}
+        familyRecords={equipmentFamily}
         records={tech.records}
         operations={obOps}
         canEdit={canEdit}
         onEdit={startEdit}
         onCreate={startCreate}
-        onChanged={() => void loadTech("ob")}
+        onChanged={() => { void loadTech(techTab); loadBases(); }}
         onNotice={(message) => { setError(""); setNotice(message); }}
         onError={(message) => { setNotice(""); setError(message); }}
         focusId={focusTool}
@@ -622,10 +650,10 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
         onCancelEdit={() => setEditing(null)}
         editor={canEdit && editing ? <>
           <div className="manual-stock-head"><h2>{editing.id === null ? "Новая запись" : `Правка: ${(editingRecord?.display_text ?? "").replace(/^[\s/]+|[\s/]+$/g, "")}`}</h2></div>
-          <EquipmentForm values={editing.values} isNew={editing.id === null} records={tech.records} onChange={(values) => setEditing({ ...editing, values })} />
+          <EquipmentForm values={editing.values} isNew={editing.id === null} instrumentPassport={editingRecord?.instrument_passport} instrumentBound={Boolean(editingRecord?.instrument_id)} records={equipmentFamily} onChange={(values) => setEditing({ ...editing, values })} />
           <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary" onClick={() => setEditing(null)}>Отмена</button></div>
         </> : undefined}
-        toolbar={canEdit && !editing ? <button type="button" className="primary small" disabled={!fieldColumns.length} onClick={() => startCreate()}>+ Новая запись</button> : undefined}
+        toolbar={canEdit && !editing ? <><AddColumnButton tab={techTab} onAdded={() => loadTech(techTab)} /><button type="button" className="primary small" onClick={() => startCreate()}>+ Новая запись</button></> : undefined}
       // БД.КОАКС is ordered by its cable's Ø from «Кабели и провода»: it waits for them, the rows do not jump a second later
       /> : techReady !== techKey || (matTab && !coverIds) || (coaxTab && cables === null) ? <div className="empty">Загрузка…</div> : coaxTab ? <CoaxConnectors
         records={tech.records}

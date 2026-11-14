@@ -20,11 +20,11 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from app.modules.references.domain import TechOperationTab
+from app.modules.references.domain import EQUIPMENT_TABS, TechOperationTab
 
 SUPPORTING = "supporting"
 # Типы БД.ОБ, что показываются станками в загрузке и без работы (ручной инструмент, матрицы — нет).
-MACHINE_TYPES = frozenset({"оборудование", "оборудование (пр)"})
+MACHINE_TYPES = frozenset({"оборудование"})
 MACHINE_COLUMN = "Машина"
 _INVENTORY = re.compile(r"([ОO]Б)\s*\.\s*(\d+)", re.IGNORECASE)
 _UNIT = re.compile(r"^ОБ\.(\d+)(?:\.(\d+|[A-ZА-Я]))?$")
@@ -67,7 +67,7 @@ class Unit:
     number: str  # «ОБ.027.1»
     prefix: str  # «ОБ.027»
     site: str  # ЦАР | ЖУК | ""
-    machine_type: bool  # Тип «Оборудование» / «Оборудование (ПР)»
+    machine_type: bool  # Тип «Оборудование»
     physical: bool  # не расчётная «.X» / «(R)»
     name: str
 
@@ -243,7 +243,7 @@ def load_catalog(factory: Callable[[], Any] | None, *, operations: bool = False)
     if factory is None:
         return EMPTY
     with factory() as references:
-        units = references.tech_operations.list(tab=TechOperationTab.EQUIPMENT, query="", limit=100_000)
+        units = references.tech_operations.list(tab=EQUIPMENT_TABS, query="", limit=100_000)
         equipment = getattr(references, "equipment", None)
         models = equipment.models() if equipment is not None else []
         links: dict[str, str] = {}

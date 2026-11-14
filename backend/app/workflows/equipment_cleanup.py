@@ -31,6 +31,7 @@ from app.modules.references.application import UnitOfWork, _audit, _search_text
 from app.modules.references.domain import TechOperationRecord, TechOperationTab
 from app.modules.references.equipment import CODE_KEY, INV_KEY, TOOL_KEY, inv_key
 from app.modules.references.equipment import field as pick
+from app.modules.references.domain import EQUIPMENT_TABS
 from app.modules.references.technology import RETIRED_EQUIPMENT_TYPES, repoint_calc_unit, retired_unit
 from app.shared.clock import moscow_now
 from app.shared.identity import Actor
@@ -166,7 +167,7 @@ def _edited(record: TechOperationRecord, fields: dict[str, str]) -> TechOperatio
 
 def run(uow: UnitOfWork, actor: Actor, now: datetime, *, apply: bool) -> Plan:
     with uow:
-        equipment = list(uow.tech_operations.list(tab=TechOperationTab.EQUIPMENT, query="", limit=100_000))
+        equipment = list(uow.tech_operations.list(tab=EQUIPMENT_TABS, query="", limit=100_000))
         operations = list(uow.tech_operations.list(tab=TechOperationTab.OPERATION, query="", limit=100_000))
         stock_links = {item.id: len(uow.stock_links.list(record_id=item.id, limit=10_000))
                        for item in equipment if _is_retired(item)}

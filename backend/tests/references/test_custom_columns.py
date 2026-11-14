@@ -90,7 +90,7 @@ def test_a_bad_name_is_refused_and_nothing_is_written(references_api):
     assert len(_events("references.column_added")) == 1
 
 
-def test_a_schema_key_and_a_tab_without_own_columns_are_refused(references_api):
+def test_schema_keys_are_refused_and_equipment_columns_are_independent(references_api):
     _seed(references_api, tab="coax", fields=[{"coaxArticle": "SMA-1", "Артикул": "SMA-1"}])
     _seed(references_api, tab="ob", fields=[{"Тип": "Инструмент", "Инв. номер": "ОБ.001", "Наменование": "Кримпер"}])
 
@@ -99,7 +99,8 @@ def test_a_schema_key_and_a_tab_without_own_columns_are_refused(references_api):
     unknown_tab = references_api.post(COLUMNS, json={"tab": "zzz", "name": "Полка"})
 
     assert schema_key.status_code == 422 and "уже есть" in schema_key.json()["detail"]
-    assert equipment.status_code == 422 and "не добавляются" in equipment.json()["detail"]
+    assert equipment.status_code == 201
+    assert "Полка" not in references_api.get("/api/references/tech-operations", params={"tab": "ob_tools"}).json()["custom_columns"]
     assert unknown_tab.status_code == 422
 
 

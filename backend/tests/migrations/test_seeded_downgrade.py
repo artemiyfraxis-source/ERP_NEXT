@@ -12,6 +12,29 @@ from tests.migrations.seed_any_revision import seed
 from tests.shipping.test_pack_decision_migration import _config
 
 
+def test_schema_evidence_ignores_fk_order_but_detects_changed_delete_policy(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'constraints.db'}")
+    try:
+        def create_child(reverse=False, policy="RESTRICT"):
+            constraints = [f"CONSTRAINT fk_first FOREIGN KEY (first_id) REFERENCES parent (id) ON DELETE {policy}",
+                           "CONSTRAINT fk_second FOREIGN KEY (second_id) REFERENCES parent (id) ON DELETE SET NULL"]
+            with engine.begin() as connection:
+                connection.exec_driver_sql("DROP TABLE IF EXISTS child")
+                connection.exec_driver_sql("CREATE TABLE child (first_id INTEGER, second_id INTEGER, "
+                                           + ", ".join(reversed(constraints) if reverse else constraints) + ")")
+
+        with engine.begin() as connection:
+            connection.exec_driver_sql("CREATE TABLE parent (id INTEGER PRIMARY KEY)")
+        create_child()
+        before = contract.evidence(engine)
+        create_child(reverse=True)
+        assert contract.evidence(engine) == before
+        create_child(policy="CASCADE")
+        assert contract.evidence(engine) != before
+    finally:
+        engine.dispose()
+
+
 @pytest.fixture(scope="module")
 def seeded_head(tmp_path_factory):
     path = tmp_path_factory.mktemp("downgrade-contract") / "seeded.db"

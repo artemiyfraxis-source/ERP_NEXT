@@ -25,7 +25,7 @@ from app.modules.procurement.document_match import code_key
 from app.modules.procurement.infrastructure import ProcurementLineRow
 from app.modules.purchasing.infrastructure import ItemRow, UpdLineRow
 from app.modules.receiving.infrastructure import ReceivingLineRow
-from app.modules.references.infrastructure import TechOperationRecordRow
+from app.modules.references.infrastructure import _record_union
 from app.modules.requests.infrastructure import RequestRow
 from app.modules.techcards.connector_housings import housing_of
 from app.modules.techcards.etk_parts import kit_article, use_article
@@ -181,7 +181,7 @@ def _load(session: Session) -> tuple[list[_Entry], dict[str, dict]]:
             quantity=str(row["quantity"]) if row["quantity"] is not None else "",
             stored_column="purchasing_upd_lines.article_key", stored_key=row["article_key"],
         ))
-    for row in _rows(session, TechOperationRecordRow):
+    for row in session.execute(select(_record_union())).mappings():
         fields = row["fields"]
         # Contacts/housings use these explicit catalogue fields, not free-text maker mentions.
         maker = fields.get("terManufacturer") or fields.get("Производитель") or ""

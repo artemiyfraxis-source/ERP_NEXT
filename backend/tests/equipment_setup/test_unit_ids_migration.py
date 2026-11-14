@@ -24,7 +24,7 @@ NOW = "2026-11-05 09:00:00.000000"
 def test_schema_matches_models(tmp_path, monkeypatch):
     monkeypatch.delenv("ERP_DATABASE_URL", raising=False)
     path = tmp_path / "schema.db"
-    command.upgrade(_config(path), AFTER)
+    command.upgrade(_config(path), "head")
     engine = create_engine(f"sqlite+pysqlite:///{path.as_posix()}")
     try:
         inspector = inspect(engine)
