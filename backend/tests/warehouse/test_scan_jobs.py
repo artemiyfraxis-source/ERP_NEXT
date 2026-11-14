@@ -66,7 +66,8 @@ def queue(tokens_api, monkeypatch):  # noqa: F811
     monkeypatch.setattr(receipt_ocr, "ocr_text", lambda content, kind: "")  # no real OCR unless a test asks for it
     admin = _login("admin")
     agent = _bearer(_issue(admin, scopes=("labels:print", "scan:upload"), name="Агент склада")["token"])
-    _STAND.update(sessions=sessions, clock=clock)
+    agent["X-Agent-Machine-Id"] = "test-scan-pc"
+    _STAND.update(sessions=sessions, clock=clock, agent=agent)
     return admin, agent, clock, sessions
 
 
@@ -86,16 +87,12 @@ def old_agent_alive(sessions, clock, host: str = "SKLAD") -> None:
 
 
 def _new_job(admin: TestClient) -> str:
-    # Queue fixtures exercise endpoint behavior on a strict-capable, explicitly selected scanner.
-    with _STAND["sessions"]() as session:
-        row = session.get(ScanAgentRow, "test-scan-pc")
-        if row is None:
-            row = ScanAgentRow(machine_id="test-scan-pc", pc_name="TEST", first_seen=_STAND["clock"].now)
-            session.add(row)
-        row.last_seen = _STAND["clock"].now
-        row.version = "2.2.0"
-        row.scanners = json.dumps([{"id": "test-scanner", "name": "Тестовый сканер"}])
-        session.commit()
+    # Production routing sees devices only after an authenticated heartbeat.
+    response = TestClient(app).post("/api/stock/scan/agent/heartbeat", json={
+        "machine_id": "test-scan-pc", "pc_name": "TEST", "version": "2.6.0",
+        "scanners": [{"id": "test-scanner", "name": "Тестовый сканер"}],
+    }, headers=_STAND["agent"])
+    assert response.status_code == 200, response.text
     response = admin.post(JOBS, json={"agent_id": "test-scan-pc", "target_scanner": "test-scanner"}, headers=_csrf(admin))
     assert response.status_code == 200, response.text
     body = response.json()
@@ -268,18 +265,19 @@ def test_pre_strict_jobs_without_the_full_pair_never_scan_and_expire_normally(qu
     old_id = uuid4()
     with sessions() as session:
         session.add(ScanJobRow(id=old_id, status="pending", requested_by="Тест", created_at=clock.now - timedelta(seconds=1),
-                              target_machine_id="test-scan-pc" if targeted_pc else None, target_scanner=None))
+                              target_machine_id="test-scan-pc" if targeted_pc else None, target_scanner=None,
+                              requester_id=session.get(ScanJobRow, UUID(strict_job)).requester_id))
         session.commit()
     service = TestClient(app)
     for body in ({"host": "OLD"}, {"machine_id": "another-pc"}):
-        assert service.post(CLAIM, json=body, headers=agent).json()["job"] is None
+        assert service.post(CLAIM, json=body, headers=agent).status_code == 403
     assert _claim(agent) == strict_job, "the complete pair still goes only to its PC"
     assert _claim(agent) is None, "the correct PC must not take an old first-scanner job either"
     assert _job(admin, str(old_id))["status"] == "pending", "no bulk mutation or premature failure"
     clock.now += PENDING_TIMEOUT - timedelta(seconds=2)
     assert _job(admin, str(old_id))["status"] == "pending"
     clock.now += timedelta(seconds=2)
-    assert service.post(CLAIM, json={"host": "OLD"}, headers=agent).json()["job"] is None
+    assert service.post(CLAIM, json={"host": "OLD"}, headers=agent).status_code == 403
     assert _job(admin, str(old_id))["status"] == "failed"
     assert _job(admin, str(old_id))["error"] == NO_ANSWER
 
@@ -367,7 +365,10 @@ def test_only_the_agent_takes_jobs_and_only_a_person_queues_them(queue):
     assert service.post(_result(job_id), json={"error": "x"}, headers=labels_only).status_code == 403
     scan_only = _bearer(_issue(admin, scopes=("scan:upload",), name="Только скан")["token"])
     assert service.post("/api/stock/labels/agent/claim", json={}, headers=scan_only).status_code == 403
-    assert service.post(CLAIM, json={"machine_id": "test-scan-pc"}, headers=scan_only).json()["job"]["id"] == job_id
+    assert service.post(CLAIM, json={"machine_id": "test-scan-pc"}, headers=scan_only).status_code == 403
+    assert service.post("/api/stock/scan/agent/heartbeat", json={"machine_id": "scan-only-pc"}, headers=scan_only).status_code == 200
+    assert service.post(CLAIM, json={"machine_id": "scan-only-pc"}, headers=scan_only).json()["job"] is None
+    assert _claim(agent) == job_id
 
     assert service.post(JOBS, headers=agent).status_code == 403
     assert service.get(f"{JOBS}/{job_id}", headers=agent).status_code == 403

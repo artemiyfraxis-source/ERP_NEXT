@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
@@ -73,6 +74,10 @@ class PackPermission:
 
     def remaining(self, consumed: Decimal) -> Decimal:
         return max(self.quantity - consumed, Decimal("0"))
+
+    def effective_quantity(self, accepted: Decimal, consumed: Decimal, whole_order: bool) -> Decimal:
+        """Automatic allowance is accepted stock; stored permissions remain explicit and versioned."""
+        return accepted if whole_order else max(self.quantity, consumed)
 
     def change(self, quantity: Decimal, consumed: Decimal, actor: str, now: datetime) -> PackPermission:
         quantity = Decimal(quantity)
@@ -201,6 +206,18 @@ class FinishedGood:
 # В производстве → Принято складом → Упаковано → Отгружено. Остаток по состояниям хранят счётчики строки ГП
 # (accepted — принято всего, shipped — упаковано всего, sent — отгружено всего), каждое их изменение пишет ход
 # в журнал `finished_goods_moves` в той же транзакции (SqlAlchemyFinishedGoodsRepository.add).
+
+
+def whole_order_accepted(goods: Sequence[FinishedGood], planned: Mapping[str, Decimal]) -> bool:
+    """Every ordered KB must have a known positive run and enough accepted goods (including sent)."""
+    accepted: dict[str, Decimal] = {}
+    for good in goods:
+        key = good.item_index.strip().upper()
+        accepted[key] = accepted.get(key, Decimal("0")) + good.accepted
+    return bool(planned) and all(
+        quantity.is_finite() and quantity > 0 and accepted.get(index, Decimal("0")) >= quantity
+        for index, quantity in planned.items()
+    )
 
 
 class GoodsState(str, Enum):

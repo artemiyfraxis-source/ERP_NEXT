@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ApiError, failureText, warehouseApi, type ScanAgentInfo, type ScanAgentScanner, type WarehouseScanJob, type WarehouseScanStart } from "./api";
+import { ApiError, failureText, warehouseApi, type OfflineScanner, type ScanAgentInfo, type ScanAgentScanner, type WarehouseScanJob, type WarehouseScanStart } from "./api";
 import { PageWindow } from "./PageWindow";
 import { loadPersonalViews, resetPersonalView, savePersonalView } from "./personalViews";
 import { useCanScan } from "./rights";
@@ -114,7 +114,16 @@ function unavailable(agent: ScanAgentInfo): string {
   return "";
 }
 
-type View = { kind: "guide"; idle: string[]; epoch: number } | { kind: "choose"; agents: ScanAgentInfo[] | null; epoch: number } | null;
+function offlineMessage(chosen: ScanDevice | null, agents: ScanAgentInfo[] | null, offline: OfflineScanner[] = []): string {
+  if (!chosen || !agents) return "";
+  const { agent, scanner, missing } = resolveScanDevice(chosen, agents);
+  if (!missing && agent && !unavailable(agent)) return "";
+  const previous = offline.find((item) => item.agent_id === chosen.agent_id && item.scanner_id === chosen.scanner_id);
+  const label = previous ? `${previous.name} · ${previous.pc}` : agent && scanner ? `${scannerName(scanner)} · ${agent.pc}` : "Выбранный сканер";
+  return `${previous || (agent && scanner) ? "Сканер " : ""}${label} не в сети`;
+}
+
+type View = { kind: "guide"; idle: string[]; epoch: number } | { kind: "choose"; agents: ScanAgentInfo[] | null; epoch: number; message?: string } | null;
 
 /** `start` — запрос задания у сервера (ПК и сканер из учётки). `begin()` отдаёт задание или null: тогда открыто окно
  *  установки / выбора, а `dialogs(retry)` рисует его; после выбора и по «Проверить» вызывается `retry` — снова «Сканировать». */
@@ -128,16 +137,25 @@ export function useScanAgent(start: (agentId?: string, targetScanner?: string) =
     if (started !== deviceEpoch || deviceUser === null || busy.current === started) return null;
     busy.current = started;
     try {
-      const chosen = await loadScanDevice();
+      let chosen = await loadScanDevice();
       if (started !== deviceEpoch) return null;
-      const agents = await warehouseApi.scanAgents().then((answer) => answer.agents, () => null);
+      const inventory = await warehouseApi.scanAgents().catch(() => null);
+      const agents = inventory?.agents ?? null;
       if (started !== deviceEpoch) return null;
-      const { agent, scanner, missing } = resolveScanDevice(chosen, agents);
       const changed = device?.agent_id !== chosen?.agent_id || device?.scanner_id !== chosen?.scanner_id;
+      const online = agents?.filter((item) => !unavailable(item)) ?? [];
+      const choices = online.flatMap((agent) => agent.scanners.map((scanner) => ({ agent_id: agent.id, scanner_id: scannerId(scanner) })));
+      if (!changed && !chosen && deviceLoaded && choices.length === 1) {
+        chosen = choices[0];
+        setScanDevice(chosen, started);
+      }
+      const { agent, scanner, missing } = resolveScanDevice(chosen, agents);
       if (changed || !agents || !chosen || missing || !agent || !scanner || unavailable(agent)) {
-        setView(agents && !agents.some((item) => item.scanners.length)
+        setView(agents && !choices.length && !chosen
           ? { kind: "guide", idle: agents.map((item) => item.pc), epoch: started }
-          : { kind: "choose", agents, epoch: started });
+          : { kind: "choose", agents, epoch: started, message: !deviceLoaded && !chosen
+            ? "Не удалось загрузить сохранённый выбор — выберите сканер"
+            : offlineMessage(chosen, agents, inventory?.offline_devices) });
         return null;
       }
       const answer = await start(agent.id, scannerId(scanner));
@@ -155,7 +173,7 @@ export function useScanAgent(start: (agentId?: string, targetScanner?: string) =
     const done = (again: boolean) => { if (view.epoch !== deviceEpoch) return; setView(null); if (again) retry(); };
     return view.kind === "guide"
       ? <ScanAgentGuide idle={view.idle} close={() => done(false)} check={() => done(true)} />
-      : <ScanDevicePicker agents={view.agents} chosen={device} close={() => done(false)}
+      : <ScanDevicePicker agents={view.agents} chosen={device} message={view.message} close={() => done(false)}
           pick={(next) => { setScanDevice(next, view.epoch); done(Boolean(next)); }}
           install={() => { if (view.epoch === deviceEpoch) setView({ kind: "guide", idle: [], epoch: view.epoch }); }} />;
   }
@@ -172,6 +190,7 @@ export function ScanDeviceLine() {
   const canScan = useCanScan();
   const { device: chosen, epoch: session } = useSyncExternalStore(subscribeDevice, deviceSnapshot, deviceSnapshot);
   const [agents, setAgents] = useState<ScanAgentInfo[] | null>(null);
+  const [offline, setOffline] = useState<OfflineScanner[]>([]);
   const [picking, setPicking] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const request = useRef(0);
@@ -181,8 +200,10 @@ export function ScanDeviceLine() {
     const started = deviceEpoch;
     const current = ++request.current;
     setLoading(true);
-    const fresh = await warehouseApi.scanAgents().then((answer) => answer.agents, () => null);
-    if (current === request.current && started === deviceEpoch) { setAgents(fresh); setLoading(false); }
+    const fresh = await warehouseApi.scanAgents().catch(() => null);
+    if (current === request.current && started === deviceEpoch) {
+      setAgents(fresh?.agents ?? null); setOffline(fresh?.offline_devices ?? []); setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -190,34 +211,35 @@ export function ScanDeviceLine() {
     void loadScanDevice();
     void refresh();
     return () => { request.current++; };
-  }, [canScan, session]);
+  }, [canScan, session, chosen?.agent_id, chosen?.scanner_id]);
 
   if (!canScan) return null;
   const { agent, scanner, missing } = resolveScanDevice(chosen, agents);
-  const text = !chosen ? "не выбран" : agent && scanner ? `${agent.pc} · ${scannerName(scanner)}`
+  const text = !chosen ? "не выбран" : agent && scanner ? `${scannerName(scanner)} · ${agent.pc}`
     : loading ? "Проверяем выбранный сканер…" : "Выбранный сканер не найден";
   const reason = agent ? unavailable(agent) : "";
   const warning = chosen && !loading ? !agents ? "Список ПК недоступен — проверьте связь с ERP"
-    : missing ? "Выберите доступный сканер" : reason : "";
+    : missing ? offlineMessage(chosen, agents, offline) : reason : "";
   return (
     <div className="scan-device" data-testid="scan-device">
-      <span aria-live="polite">ПК · сканер: <b>{text}</b></span>
+      <span aria-live="polite">Сканер: <b>{text}</b></span>
       <button type="button" className="link-button" disabled={deviceUser === null} onClick={() => { setPicking(session); void refresh(); }}>Сменить сканер</button>
       {warning ? <span className="warning-inline">{warning}</span> : null}
-      {picking === session ? <ScanDevicePicker agents={agents} loading={loading} chosen={chosen} close={() => setPicking(null)}
+      {picking === session ? <ScanDevicePicker agents={agents} loading={loading} chosen={chosen} message={offlineMessage(chosen, agents, offline)} close={() => setPicking(null)}
         pick={(next) => { setScanDevice(next, session); setPicking(null); }} /> : null}
     </div>
   );
 }
 
-function ScanDevicePicker({ agents, loading = false, chosen, close, pick, install }: {
+function ScanDevicePicker({ agents, loading = false, chosen, close, pick, install, message }: {
   agents: ScanAgentInfo[] | null; loading?: boolean; chosen: ScanDevice | null; close: () => void; pick: (next: ScanDevice | null) => void;
-  install?: () => void;
+  install?: () => void; message?: string;
 }) {
   return (
     <PageWindow label="Выбор сканера" close={close} width={560} dismissable>
       <div className="panel scan-agent">
         <h2>Каким сканером сканировать</h2>
+        {message && <p className="warning-inline" role="status">{message}</p>}
         <div className="scan-agent-list">
           <button type="button" className="secondary" onClick={() => pick(null)}>Сбросить выбор</button>
           {loading ? <p className="empty" role="status">Загрузка…</p> : agents === null ? <p className="error-banner" role="alert">Список ПК недоступен — проверьте связь с ERP</p> : null}
@@ -229,15 +251,15 @@ function ScanDevicePicker({ agents, loading = false, chosen, close, pick, instal
               return (
                 <button key={`${agent.id}/${scannerId(scanner)}`} type="button" className={current ? "primary" : "secondary"}
                   aria-pressed={current} disabled={Boolean(unavailable(agent))} onClick={() => pick({ agent_id: agent.id, scanner_id: scannerId(scanner) })}>
-                  {agent.pc} · {scannerName(scanner)}
+                  {scannerName(scanner)} · {agent.pc}
                   {unavailable(agent) ? <span> — {unavailable(agent)}</span> : null}
                 </button>
               );
             }))}
         </div>
         <p className="scan-agent-actions">
-          {install ? <button type="button" className="secondary small" onClick={install}>Установить на этом ПК</button> : null}
-          <button type="button" className="secondary small" onClick={close}>Отмена</button>
+          {install ? <button type="button" className="secondary" onClick={install}>Установить агент на ПК со сканером</button> : null}
+          <button type="button" className="secondary" onClick={close}>Отмена</button>
         </p>
       </div>
     </PageWindow>
@@ -279,7 +301,8 @@ function ScanAgentGuide({ idle, close, check }: { idle: string[]; close: () => v
   return (
     <PageWindow label="Установка сканера" close={close} width={720} dismissable>
       <div className="panel scan-agent">
-        <h2>Сканер не найден — установите агент на этот ПК</h2>
+        <h2>Нет сканеров в сети</h2>
+        <p>Попросите администратора проверить подключение сканера и агент на его ПК.</p>
         {idle.length ? <p className="muted">Агент работает на {idle.join(", ")}, но сканера там не видно.</p> : null}
         <ul className="scan-agent-points">
           <li>Устанавливается один раз, права администратора Windows не нужны.</li>
@@ -292,15 +315,15 @@ function ScanAgentGuide({ idle, close, check }: { idle: string[]; close: () => v
         ) : null}
         {state === "ready" ? (
           <>
-            <p>Откройте PowerShell на этом ПК и выполните команду (действует {minutes} мин, один раз):</p>
+            <p>Откройте PowerShell на ПК со сканером и выполните команду (действует {minutes} мин, один раз):</p>
             <code className="scan-agent-cmd" data-testid="scan-agent-command">{command}</code>
           </>
         ) : null}
         {error ? <p className="error-banner" role="alert">{error}</p> : null}
         <p className="scan-agent-actions">
-          {state === "ready" ? <button type="button" className="secondary small" onClick={() => void copy()}>{copied ? "Скопировано" : "Копировать"}</button> : null}
-          <button type="button" className="primary small" onClick={check}>Проверить</button>
-          <button type="button" className="secondary small" onClick={close}>Закрыть</button>
+          {state === "ready" ? <button type="button" className="secondary" onClick={() => void copy()}>{copied ? "Скопировано" : "Копировать"}</button> : null}
+          <button type="button" className="primary" onClick={check}>Проверить</button>
+          <button type="button" className="secondary" onClick={close}>Закрыть</button>
         </p>
       </div>
     </PageWindow>

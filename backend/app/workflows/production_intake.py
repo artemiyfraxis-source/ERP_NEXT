@@ -46,7 +46,7 @@ from app.modules.production.plan import (
     summarize_kit_marks,
 )
 from app.modules.production.traceability import BoxStatus
-from app.modules.shipping.domain import AcceptanceAct, FinishedGood, PackPermission
+from app.modules.shipping.domain import AcceptanceAct, FinishedGood, PackPermission, whole_order_accepted
 from app.modules.shipping.infrastructure import PackPermissionRow, SqlAlchemyPackPermissionRepository, SqlAlchemyFinishedGoodsRepository
 from app.modules.techcards.infrastructure import ProjectTechcardRow
 from app.modules.techcards.kitset_infrastructure import SqlAlchemyKitsetRepository
@@ -56,6 +56,7 @@ from app.modules.techcards.project_cards import TechcardStatus
 from .finished_goods import KbProduction, TaskShare, read_delivered
 from .production_plan import issued_runs, kit_stage_facts, project_kits
 from .project_registry import CLOSED_PROJECT_STATUS
+from .production_intake_packing import order_quantities
 
 ZERO = Decimal("0")
 LIVE_TASKS = (ProductionStatus.RUNNING.value, ProductionStatus.DONE.value)
@@ -99,6 +100,7 @@ class IntakeRow:
     pack_permission_quantity: Decimal = ZERO
     pack_permission_remaining: Decimal = ZERO
     pack_permission_version: int = 0
+    pack_auto_allowed: bool = False
 
     @property
     def remaining(self) -> Decimal:
@@ -223,6 +225,9 @@ def intake_rows(facts: IntakeFacts) -> list[IntakeRow]:
         ]))
         if not indexes:
             continue
+        project_goods = goods_by_project.get(canon, [])
+        planned = order_quantities(project_goods, kitset.assemblies if kitset else (), indexes)
+        auto_allowed = whole_order_accepted(project_goods, planned)
         stage = project_stage(snapshot.project, indexes, stage_facts, "", marks)
         stages = {kit.item_index: kit.status for kit in stage.kits}
         project_journal = journal.get(canon)
@@ -241,7 +246,9 @@ def intake_rows(facts: IntakeFacts) -> list[IntakeRow]:
             sent = good.sent if good else ZERO
             permission = facts.pack_permissions.get((canon, item_index))
             consumed = consumed_by_key.get((canon, item_index), ZERO)
-            pack_remaining = permission.remaining(consumed) if permission else ZERO
+            accepted = sum((item.accepted for item in project_goods if item.item_index == item_index), ZERO)
+            effective = (permission or PackPermission(canon, item_index)).effective_quantity(accepted, consumed, auto_allowed)
+            pack_remaining = max(effective - consumed, ZERO)
             # Всё заказанное уехало — КБ ушла из приёмки; КБ без известного тиража остаётся (решено агентом 14.10).
             if needed > 0 and sent >= needed:
                 continue
@@ -256,9 +263,10 @@ def intake_rows(facts: IntakeFacts) -> list[IntakeRow]:
                 accepted=good.accepted if good else ZERO, packed=good.shipped if good else ZERO, sent=sent,
                 good=good, tasks=kb.tasks if kb else (), project_stage=stage.status,
                 pack_allowed=pack_remaining > 0,
-                pack_permission_quantity=permission.quantity if permission else consumed,
+                pack_permission_quantity=effective,
                 pack_permission_remaining=pack_remaining,
                 pack_permission_version=permission.version if permission else 0,
+                pack_auto_allowed=auto_allowed,
                 acts=tuple(act for act in facts.acts.get(good.id, ()) if act.net > 0) if good else (),
             ))
     return sorted(rows, key=lambda row: (

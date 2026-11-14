@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ApiError, failureText, vnaCaptureApi, warehouseApi, type ProductionInstrument, type VnaAgent, type VnaCaptureSettings, type VswrNorm } from "./api";
+import { ApiError, failureText, vnaCaptureApi, warehouseApi, type ProductionInstrument, type VnaAgent, type VnaCaptureSettings, type VnaTransfer, type VswrNorm } from "./api";
 import { formatNumber } from "./format";
 import { PageWindow } from "./PageWindow";
 import { useCurrentUserId } from "./rights";
@@ -90,6 +90,9 @@ function UserVnaCapture({ instruments, onFile, onBusy, disabled = false, childre
   const instrument = configured.find((item) => item.id === instrumentId);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [transfer, setTransfer] = useState<VnaTransfer | null>(null);
+  const [transferring, setTransferring] = useState(false);
+  const [notice, setNotice] = useState("");
   const [agents, setAgents] = useState<VnaAgent[] | null>(null);
   const [remembered, setRemembered] = useState(() => rememberedPc(userId));
   const [agentId, setAgentId] = useState("");
@@ -100,6 +103,7 @@ function UserVnaCapture({ instruments, onFile, onBusy, disabled = false, childre
   const run = useRef<AbortController | null>(null);
   const jobId = useRef("");
   const mounted = useRef(true);
+  const viewEpoch = useRef(0);
 
   useEffect(() => { mounted.current = true; return () => {
     mounted.current = false;
@@ -109,34 +113,38 @@ function UserVnaCapture({ instruments, onFile, onBusy, disabled = false, childre
   useEffect(() => { onBusy(busy); return () => onBusy(false); }, [busy, onBusy]);
 
   function close() {
+    viewEpoch.current++;
     run.current?.abort();
     if (jobId.current) void vnaCaptureApi.cancel(jobId.current).catch(() => { /* Server expiry remains authoritative. */ });
     setOpened(false);
   }
 
-  async function begin(chosen = agentId) {
-    if (run.current || disabled || !instrument) return;
+  async function begin(chosen = agents ? agentId : "", chooseDevice = false) {
+    if (run.current || disabled || transferring || !instrument) return;
     const selectedId = instrument.id;
     const controller = new AbortController();
     run.current = controller;
     const { signal } = controller;
-    setBusy(true); setError(""); setGuide(false); setAgents(null);
+    setBusy(true); setError(""); setGuide(false); setAgents(null); setTransfer(null); setNotice("");
     try {
       // Let create settle even after close so a newly created job can still be cancelled by id.
-      const answer = await vnaCaptureApi.start(selectedId, chosen);
+      const answer = await vnaCaptureApi.start(selectedId, instrument.vna_app === "Arinst VL" ? chosen : "", chooseDevice);
       if (signal.aborted) {
         if ("id" in answer) await vnaCaptureApi.cancel(answer.id);
         return;
       }
       if (answer.status === "choose") {
-        // A server preference only preselects the picker; this browser still asks for confirmation.
+        // Only ambiguous devices need a picker; the server routes a known instrument directly.
         setAgentId(answer.agents.some((agent) => agent.id === answer.preferred_agent_id) ? answer.preferred_agent_id! : "");
         setPc(""); setAgents(answer.agents); return;
       }
-      if (answer.status === "no_agent") { setAgentId(""); setPc(""); setGuide(true); return; }
+      if (answer.status === "no_agent") {
+        setAgentId(""); setPc(""); setError(answer.message ?? "ВАЦ не в сети");
+        setTransfer(answer.transfer ?? null); setGuide(!answer.transfer); return;
+      }
       jobId.current = answer.id;
       setPc(answer.agent?.pc ?? "");
-      if (answer.agent) {
+      if (answer.agent && instrument.vna_app === "Arinst VL") {
         const selected = { id: answer.agent.id, pc: answer.agent.pc };
         setRemembered(selected); setAgentId(selected.id);
         try { if (userId) localStorage.setItem(`${PC_STORAGE}:${userId}`, JSON.stringify(selected)); }
@@ -172,6 +180,21 @@ function UserVnaCapture({ instruments, onFile, onBusy, disabled = false, childre
     }
   }
 
+  async function moveDevice(target: VnaAgent) {
+    if (!instrument || !transfer || transferring) return;
+    const epoch = viewEpoch.current;
+    setTransferring(true); setNotice("");
+    try {
+      await vnaCaptureApi.transfer(instrument.id, transfer.serial, transfer.owner_id, target.id);
+      if (mounted.current && epoch === viewEpoch.current) {
+        setNotice(`ВАЦ № ${transfer.serial} перенесён на ПК ${target.pc}`);
+        setTransfer(null); setError(""); setPc(target.pc); setGuide(false);
+      }
+    } catch (reason) {
+      if (mounted.current && epoch === viewEpoch.current) setError(failureText(reason, "Не удалось перенести ВАЦ"));
+    } finally { if (mounted.current) setTransferring(false); }
+  }
+
   async function install() {
     setInstalling(true); setError("");
     try { const issued = await warehouseApi.scanAgentInstallToken(); if (mounted.current) setCommand(issued.command); }
@@ -184,38 +207,43 @@ function UserVnaCapture({ instruments, onFile, onBusy, disabled = false, childre
   return <div className="vna-capture">
     <div className="form-actions">
       {children}
-      <button type="button" className="secondary small" disabled={disabled || busy} onClick={() => {
-        setInstrumentId(""); setAgentId(remembered?.id ?? ""); setAgents(null); setError(""); setGuide(false); setPc(remembered?.pc ?? ""); setOpened(true);
+      <button type="button" className="secondary" disabled={disabled || busy} onClick={() => {
+        setInstrumentId(""); setAgentId(""); setAgents(null); setError(""); setGuide(false); setPc(""); setTransfer(null); setNotice(""); setOpened(true);
       }}>Снять с ВАЦ</button>
     </div>
     {opened && <PageWindow label="Снять с ВАЦ" width={680} close={close}><div className="panel">
       <h2>Снять с ВАЦ</h2>
-      {configured.length ? <label>Средство измерений<select name="vna_instrument_id" value={instrumentId} disabled={busy} onChange={(event) => {
-        setInstrumentId(event.target.value); setAgentId(remembered?.id ?? ""); setAgents(null); setError(""); setGuide(false); setPc(remembered?.pc ?? "");
+      {configured.length ? <label>Средство измерений<select name="vna_instrument_id" value={instrumentId} disabled={busy || transferring} onChange={(event) => {
+        const arinst = configured.find((item) => item.id === event.target.value)?.vna_app === "Arinst VL";
+        setInstrumentId(event.target.value); setAgentId(arinst ? remembered?.id ?? "" : ""); setAgents(null); setError(""); setGuide(false); setPc(arinst ? remembered?.pc ?? "" : ""); setTransfer(null); setNotice("");
       }}>
         <option value="">— выберите прибор —</option>
         {configured.map((item) => <option key={item.id} value={item.id}>{item.inventory_number} · {item.name} — {item.vna_app}</option>)}
       </select></label> : <p className="empty">Нет действующих СИ с программой ВАЦ. Укажите «Программу ВАЦ» в карточке прибора.</p>}
       {pc && <div className="form-actions"><span>ПК: {pc}</span>
-        <button type="button" className="secondary small" disabled={busy || disabled || !instrument} onClick={() => void begin("")}>Сменить ПК</button>
+        {instrument?.vna_app === "Arinst VL" && <button type="button" className="secondary" disabled={busy || disabled} onClick={() => void begin("", true)}>Сменить устройство</button>}
       </div>}
       {busy && <p role="status">ВАЦ: снимаю трассу…</p>}
       {error && <p className="error-banner" role="alert">{error}</p>}
-      {agents && <label>ПК с ВАЦ<select name="vna_agent_id" value={agentId} disabled={busy} onChange={(event) => setAgentId(event.target.value)}>
-        <option value="">— выберите ПК —</option>
-        {agents.map((agent) => <option key={agent.id} value={agent.id}>ПК: {agent.pc}{instrument?.vna_app === "S2VNA" ? ` · ${readiness(agent.vna)}` : ""}</option>)}
+      {notice && <p className="success-banner" role="status">{notice}</p>}
+      {transfer && <div className="form-actions">{transfer.agents.map((target) =>
+        <button type="button" className="secondary" key={target.id} disabled={busy || disabled || transferring} onClick={() => void moveDevice(target)}>
+          {transferring ? "Переносим ВАЦ…" : `Перенести ВАЦ № ${transfer.serial} на ПК ${target.pc}`}
+        </button>)}
+      </div>}
+      {agents && <label>Устройство ВАЦ<select name="vna_agent_id" value={agentId} disabled={busy} onChange={(event) => setAgentId(event.target.value)}>
+        <option value="">— выберите устройство —</option>
+        {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.vna?.name || "Arinst VNA-DL"} · {agent.pc}{instrument?.vna_app === "S2VNA" ? ` · ${readiness(agent.vna)}` : ""}</option>)}
       </select></label>}
       {guide && <div className="scan-agent">
-        <p>{instrument?.vna_app === "S2VNA" ? "ВАЦ не найден на этом ПК: запустите S2VNA и подключите прибор"
-          : "ВАЦ не найден на этом ПК: установите агент ERP и Arinst Virtual Lab, сохраните трассу .s1p и повторите"}</p>
-        <p>Команду установки выдаёт администратор ERP. Выполните её в PowerShell на этом ПК.</p>
+        <p>Попросите администратора проверить агент на ПК с прибором. Команду установки выполните в PowerShell на ПК с ВАЦ.</p>
         {command && <code className="scan-agent-cmd">{command}</code>}
-        <button type="button" className="secondary small" disabled={installing} onClick={() => void install()}>{installing ? "Готовим команду…" : "Получить команду установки"}</button>
+        <button type="button" className="secondary" disabled={installing} onClick={() => void install()}>{installing ? "Готовим команду…" : "Получить команду установки"}</button>
       </div>}
       <div className="form-actions">
-        <button type="button" className="secondary small" onClick={close}>{busy ? "Отменить снятие" : "Отмена"}</button>
-        <button type="button" className="primary small" disabled={!instrument || disabled || busy || Boolean(agents && !agentId)} onClick={() => void begin()}>
-          {guide ? "Проверить" : agents ? "Снять на выбранном ПК" : "Снять трассу"}
+        <button type="button" className="secondary" onClick={close}>{busy ? "Отменить снятие" : "Отмена"}</button>
+        <button type="button" className="primary" disabled={!instrument || disabled || busy || transferring || Boolean(agents && !agentId)} onClick={() => void begin()}>
+          {guide ? "Проверить" : "Снять трассу"}
         </button>
       </div>
     </div></PageWindow>}

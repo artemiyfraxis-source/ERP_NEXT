@@ -467,7 +467,11 @@ def apply_autoplan(
     with uow:
         if choices and getattr(uow, "resources", None) is None:
             raise ProductionValidationError("Назначение оборудования ещё не подключено")
-        for task_id in sorted({item[0] for item in command.items}, key=str):
+        task_ids = sorted({item[0] for item in command.items}, key=str)
+        uow.production.lock_projects(task_ids, projects=tuple(
+            card.project for card in ready if _in_project(command.plan, card.project)
+        ))
+        for task_id in task_ids:
             uow.production.lock(task_id)
         # Номера запусков КБ — до расчёта: «Создать задание», прошедшее после этого чтения, займёт тот же номер, и
         # запуск автоплана упрётся в уникальность, а не создаст второе задание по КБ.

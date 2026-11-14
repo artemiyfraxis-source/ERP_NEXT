@@ -1,0 +1,1211 @@
+[
+    {
+        "article":  "SB-311",
+        "title":  "Переходник SB-311 SMA-male - BNC-male",
+        "side_a":  {
+                       "series":  "SMA",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "BNC",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "body_material":  "металл",
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  150,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-sb-311-sma-male-bnc-male",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-sb-311-sma-male-bnc-male)",
+        "notes":  null
+    },
+    {
+        "article":  "SB-312",
+        "title":  "Переходник SB-312 SMA-male - BNC-female",
+        "side_a":  {
+                       "series":  "SMA",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "BNC",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "body_material":  "металл",
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  120,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-sb-312-sma-male-bnc-female",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-sb-312-sma-male-bnc-female)",
+        "notes":  null
+    },
+    {
+        "article":  "SB-321",
+        "title":  "Переходник SB-321 SMA-female - BNC-male",
+        "side_a":  {
+                       "series":  "SMA",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "BNC",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "body_material":  "металл",
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  150,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-sb-321-sma-female-bnc-male",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-sb-321-sma-female-bnc-male)",
+        "notes":  null
+    },
+    {
+        "article":  "SB-322",
+        "title":  "Переходник SB-322 SMA-female - BNC-female",
+        "side_a":  {
+                       "series":  "SMA",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "BNC",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "body_material":  "металл",
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  150,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-sb-322-sma-female-bnc-female",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-sb-322-sma-female-bnc-female)",
+        "notes":  null
+    },
+    {
+        "article":  "ST-311",
+        "title":  "Переходник ST-311 SMA-male - TNC-male",
+        "side_a":  {
+                       "series":  "SMA",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "TNC",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  null,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  null,
+        "materials_plating":  null,
+        "price_rub":  200,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/adapters-tnc/perehodnik-st-311-sma-male-tnc-male",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/adapters-tnc/perehodnik-st-311-sma-male-tnc-male)",
+        "notes":  "Карточка подтверждает разъемы, но не содержит численных электрических характеристик."
+    },
+    {
+        "article":  "ST-312",
+        "title":  "Переходник ST-312 SMA-male - TNC-female",
+        "side_a":  {
+                       "series":  "SMA",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "TNC",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "body_material":  "металл",
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  150,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-st-312-sma-male-tnc-female",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-st-312-sma-male-tnc-female)",
+        "notes":  null
+    },
+    {
+        "article":  "ST-321",
+        "title":  "Переходник ST-321 SMA-female - TNC-male",
+        "side_a":  {
+                       "series":  "SMA",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "TNC",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "body_plating":  "никель",
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  150,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-st-321-sma-female-tnc-male-vch-perehodnik-sma-rozetka-tnc-vilka",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-st-321-sma-female-tnc-male-vch-perehodnik-sma-rozetka-tnc-vilka)",
+        "notes":  null
+    },
+    {
+        "article":  "ST-322",
+        "title":  "Переходник ST-322 SMA-female - TNC-female",
+        "side_a":  {
+                       "series":  "SMA",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "TNC",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  150,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/adapters-tnc/perehodnik-st-322-sma-female-tnc-female",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/adapters-tnc/perehodnik-st-322-sma-female-tnc-female)",
+        "notes":  null
+    },
+    {
+        "article":  "TB-312",
+        "title":  "Переходник TB-312 TNC-male - BNC-female",
+        "side_a":  {
+                       "series":  "TNC",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "BNC",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "body_material":  "металл",
+                                  "body_plating":  "никель",
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  210,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-tb-312-tnc-male-bnc-female",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-tb-312-tnc-male-bnc-female)",
+        "notes":  null
+    },
+    {
+        "article":  "TB-321",
+        "title":  "Переходник TB-321 TNC-female - BNC-male",
+        "side_a":  {
+                       "series":  "TNC",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "BNC",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  200,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/adapters-tnc/perehodnik-tb-321-tnc-female-bnc-male",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/adapters-tnc/perehodnik-tb-321-tnc-female-bnc-male)",
+        "notes":  "Упомянутые в описании 4 ГГц для BNC и 11 ГГц для TNC относятся к сериям разъемов; отдельный предел частоты переходника не заявлен."
+    },
+    {
+        "article":  "TB-322",
+        "title":  "Переходник TB-322 TNC-female - BNC-female (ВЧ переходник TNC розетка - BNC розетка)",
+        "side_a":  {
+                       "series":  "TNC",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "BNC",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  null,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  null,
+        "price_rub":  190,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/adapters-tnc/perehodnik-tb-322-tnc-female-bnc-female",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/adapters-tnc/perehodnik-tb-322-tnc-female-bnc-female)",
+        "notes":  null
+    },
+    {
+        "article":  "SN-311",
+        "title":  "Переходник SN-311 SMA-male — N-male",
+        "side_a":  {
+                       "series":  "SMA",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "N",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "body_plating":  "никель",
+                                  "center_contact_plating":  "золото",
+                                  "dielectric":  "тефлон"
+                              },
+        "price_rub":  200,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perekhodnik_sn-311_n-male-sma-male",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perekhodnik_sn-311_n-male-sma-male)",
+        "notes":  null
+    },
+    {
+        "article":  "SN-312",
+        "title":  "Переходник SN-312 SMA-male — N-female",
+        "side_a":  {
+                       "series":  "SMA",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "N",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  11,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "body_plating":  "никель",
+                                  "center_contact_plating":  "золото",
+                                  "dielectric":  "тефлон"
+                              },
+        "price_rub":  200,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perekhodnik_sn-312_n-male-sma-male",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perekhodnik_sn-312_n-male-sma-male)",
+        "notes":  "В описании собственно переходника частота ограничена 11 ГГц по N-разъему. Текст URL ошибочно содержит n-male-sma-male; заголовок, описание и таблица подтверждают SMA-male — N-female."
+    },
+    {
+        "article":  "SN-321",
+        "title":  "Переходник SN-321 SMA-female — N-male",
+        "side_a":  {
+                       "series":  "SMA",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "N",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "body_plating":  "никель",
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  200,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perekhodnik_sn-321_n-male-sma-female",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perekhodnik_sn-321_n-male-sma-female)",
+        "notes":  "18 ГГц и 11 ГГц приведены как общие характеристики серий SMA и N; отдельная частотная спецификация переходника отсутствует."
+    },
+    {
+        "article":  "SN-322",
+        "title":  "Переходник SN-322 SMA-female - N-female",
+        "side_a":  {
+                       "series":  "SMA",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "N",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "body_plating":  "никель",
+                                  "center_contact_plating":  "золото",
+                                  "dielectric":  "тефлон"
+                              },
+        "price_rub":  200,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-sn-322-sma-female-n-female",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-sn-322-sma-female-n-female)",
+        "notes":  null
+    },
+    {
+        "article":  "S-A311",
+        "title":  "Переходник S-A311 RP-SMA-male - SMA-male",
+        "side_a":  {
+                       "series":  "RP-SMA",
+                       "body_gender":  "вилка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  true
+                   },
+        "side_b":  {
+                       "series":  "SMA",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  100,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-s-a311-sma-rp-male-sma-male",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-s-a311-sma-rp-male-sma-male)",
+        "notes":  "18 ГГц в описании относится к серии SMA, а не к спецификации этого переходника. У RP-SMA-male корпус вилочный, центральный контакт гнездовой."
+    },
+    {
+        "article":  "S-A321",
+        "title":  "Переходник S-A321 RP-SMA-female - SMA-male",
+        "side_a":  {
+                       "series":  "RP-SMA",
+                       "body_gender":  "розетка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  true
+                   },
+        "side_b":  {
+                       "series":  "SMA",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  69,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-s-a321-sma-rp-female-sma-male-vch-perehodnik-sma-rozetka-revers-sma-vilka",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-s-a321-sma-rp-female-sma-male-vch-perehodnik-sma-rozetka-revers-sma-vilka)",
+        "notes":  "18 ГГц в описании относится к серии SMA. У RP-SMA-female корпус розеточный, центральный контакт штыревой."
+    },
+    {
+        "article":  "S-A322",
+        "title":  "Переходник S-A322 RP-SMA-female - SMA-female",
+        "side_a":  {
+                       "series":  "RP-SMA",
+                       "body_gender":  "розетка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  true
+                   },
+        "side_b":  {
+                       "series":  "SMA",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  60,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-s-a322-sma-rp-female-sma-female-vch-perehodnik-sma-rozetka-revers-sma-rozetka",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-s-a322-sma-rp-female-sma-female-vch-perehodnik-sma-rozetka-revers-sma-rozetka)",
+        "notes":  "18 ГГц в описании относится к серии SMA. Складское имя подтверждено по корпусам; центральные контакты двух сторон различаются."
+    },
+    {
+        "article":  "S-AA311",
+        "title":  "Переходник S-AA311 RP-SMA-male - RP-SMA-male",
+        "side_a":  {
+                       "series":  "RP-SMA",
+                       "body_gender":  "вилка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  true
+                   },
+        "side_b":  {
+                       "series":  "RP-SMA",
+                       "body_gender":  "вилка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  true
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  100,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-s-aa311-sma-rp-male-sma-rp-male",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-s-aa311-sma-rp-male-sma-rp-male)",
+        "notes":  "Оба корпуса вилочные; оба центральных контакта гнездовые."
+    },
+    {
+        "article":  "S-AA312",
+        "title":  "Переходник S-AA312 RP-SMA-male - RP-SMA-female, прямой",
+        "side_a":  {
+                       "series":  "RP-SMA",
+                       "body_gender":  "вилка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  true
+                   },
+        "side_b":  {
+                       "series":  "RP-SMA",
+                       "body_gender":  "розетка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  true
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  90,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/adapters-rp-sma/perehodnik-s-aa312-rp-sma-male-rp-sma-female-pryamoy",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/adapters-rp-sma/perehodnik-s-aa312-rp-sma-male-rp-sma-female-pryamoy)",
+        "notes":  "Расхождение со складским вариантом RP-SMA male — SMA female: источник однозначно указывает RP-SMA на обеих сторонах. RP-SMA male — RP-SMA female подтверждено."
+    },
+    {
+        "article":  "S-AA322",
+        "title":  "Переходник S-AA322 RP-SMA-female - RP-SMA-female",
+        "side_a":  {
+                       "series":  "RP-SMA",
+                       "body_gender":  "розетка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  true
+                   },
+        "side_b":  {
+                       "series":  "RP-SMA",
+                       "body_gender":  "розетка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  true
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  {
+                                  "value_db":  1,
+                                  "approximate":  true,
+                                  "frequency_ghz":  null
+                              },
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  75,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-s-aa322-rp-sma-female-rp-sma-female",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-s-aa322-rp-sma-female-rp-sma-female)",
+        "notes":  "Продавец приводит приблизительные потери около 1 дБ без частоты и без гарантированного максимума. Оба корпуса розеточные; оба центральных контакта штыревые."
+    },
+    {
+        "article":  "BN-312",
+        "title":  "Переходник BN-312 BNC-male - N-female",
+        "side_a":  {
+                       "series":  "BNC",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "N",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "body_material":  "металл",
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  240,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-bn-312-bnc-male-n-female",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-bn-312-bnc-male-n-female)",
+        "notes":  null
+    },
+    {
+        "article":  "BN-321",
+        "title":  "Переходник BN-321 BNC-female - N-male",
+        "side_a":  {
+                       "series":  "BNC",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "N",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "body_material":  "металл",
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  240,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-bn-321-bnc-female-n-male",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-bn-321-bnc-female-n-male)",
+        "notes":  null
+    },
+    {
+        "article":  "BN-322",
+        "title":  "Переходник BN-322 BNC-female — N-female",
+        "side_a":  {
+                       "series":  "N",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "BNC",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "body_material":  "металл",
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  240,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-nb-322-n-female-bnc-female",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-nb-322-n-female-bnc-female)",
+        "notes":  "В заголовке BN-322, в описании и URL NB-322. Обе стороны female подтверждены. Порядок side_a/side_b сохранен по таблице источника: N, затем BNC."
+    },
+    {
+        "article":  "TN-311",
+        "title":  "Переходник TN-311 TNC-male - N-male",
+        "side_a":  {
+                       "series":  "TNC",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "N",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  null,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  null,
+        "materials_plating":  null,
+        "price_rub":  390,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/adapters-tnc/perehodnik-tn-311-tnc-male-n-male",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/adapters-tnc/perehodnik-tn-311-tnc-male-n-male)",
+        "notes":  "Заголовок и русское описание указывают male — male. Английская строка N-jack to TNC-jack описывает соединяемые гнезда и не использована для определения пола переходника."
+    },
+    {
+        "article":  "TN-312",
+        "title":  "Переходник TN-312 TNC-male - N-female",
+        "side_a":  {
+                       "series":  "TNC",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "N",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "center_contact_material":  "медь",
+                                  "body_plating":  "никель",
+                                  "dielectric":  "тефлон"
+                              },
+        "price_rub":  240,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-tn-312-tnc-male-n-female",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-tn-312-tnc-male-n-female)",
+        "notes":  "Для центрального контакта указана медь; позолота не заявлена."
+    },
+    {
+        "article":  "TN-321",
+        "title":  "Переходник TN-321 TNC-female - N-male",
+        "side_a":  {
+                       "series":  "TNC",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "N",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "body_plating":  "никель",
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  240,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-tn-321-tnc-female-n-male",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-tn-321-tnc-female-n-male)",
+        "notes":  null
+    },
+    {
+        "article":  "TN-322",
+        "title":  "Переходник TN-322 TNC-female - N-female",
+        "side_a":  {
+                       "series":  "TNC",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "N",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  null,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  null,
+        "materials_plating":  null,
+        "price_rub":  240,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/adapters-tnc/perehodnik-tn-322-tnc-female-n-female",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/adapters-tnc/perehodnik-tn-322-tnc-female-n-female)",
+        "notes":  null
+    },
+    {
+        "article":  "T-311",
+        "title":  "Переходник T-311 TNC-male - TNC-male (ВЧ переходник TNC вилка - TNC вилка)",
+        "side_a":  {
+                       "series":  "TNC",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "TNC",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  null,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  null,
+        "price_rub":  200,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/adapters-tnc/perehodnik-t-311-tnc-male-tnc-male",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/adapters-tnc/perehodnik-t-311-tnc-male-tnc-male)",
+        "notes":  null
+    },
+    {
+        "article":  "S-311",
+        "title":  "Переходник S-311 SMA-male - SMA-male",
+        "side_a":  {
+                       "series":  "SMA",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "SMA",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  18,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "body_material":  "металл",
+                                  "body_plating":  "никель",
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  90,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-s-311-sma-male-sma-male",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-s-311-sma-male-sma-male)",
+        "notes":  "До 18 ГГц заявлено в описании характеристик самого S-311."
+    },
+    {
+        "article":  "S-312",
+        "title":  "Переходник S-312 SMA-male - SMA-female, прямой",
+        "side_a":  {
+                       "series":  "SMA",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "SMA",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  90,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki-sma/perehodnik-s-312-sma-male-sma-female-pryamoy",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki-sma/perehodnik-s-312-sma-male-sma-female-pryamoy)",
+        "notes":  "18 ГГц указано в справочном описании серии SMA; отдельного частотного предела S-312 нет."
+    },
+    {
+        "article":  "S-322",
+        "title":  "Переходник S-322 SMA-female - SMA-female",
+        "side_a":  {
+                       "series":  "SMA",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "SMA",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "body_plating":  "никель",
+                                  "center_contact_plating":  "золото",
+                                  "dielectric":  "тефлон"
+                              },
+        "price_rub":  50,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-s-322-sma-female-sma-female",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-s-322-sma-female-sma-female)",
+        "notes":  "Использована обычная карточка S-322; у продавца также существует отдельный вариант S-322 с гайкой за 100 руб."
+    },
+    {
+        "article":  "N-311",
+        "title":  "Переходник N-311 N-male — N-male",
+        "side_a":  {
+                       "series":  "N",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "N",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  11,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "body_plating":  "никель",
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  200,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-n-tip-male-male",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-n-tip-male-male)",
+        "notes":  "В таблице характеристик указан диапазон 0–11 ГГц."
+    },
+    {
+        "article":  "N-322",
+        "title":  "Переходник N-322 N-female — N-female",
+        "side_a":  {
+                       "series":  "N",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "N",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  11,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "body_material":  "металл",
+                                  "body_plating":  "никель",
+                                  "center_contact_plating":  "золото",
+                                  "dielectric":  "тефлон"
+                              },
+        "price_rub":  200,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-n-tip-female-female",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-n-tip-female-female)",
+        "notes":  "Работа адаптера до 11 ГГц прямо заявлена в описании."
+    },
+    {
+        "article":  "F-311",
+        "title":  "Переходник F-311 F-male — F-male",
+        "side_a":  {
+                       "series":  "F",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "F",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  75,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  null,
+        "price_rub":  100,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-f-311-f-male-f-male",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-f-311-f-male-f-male)",
+        "notes":  null
+    },
+    {
+        "article":  "F-322",
+        "title":  "Переходник F-322 F-female - F-female",
+        "side_a":  {
+                       "series":  "F",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "F",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  75,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  null,
+        "price_rub":  45,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki-f-tipa-na-cable-75-om/perehodnik-f-322-f-female-f-female",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki-f-tipa-na-cable-75-om/perehodnik-f-322-f-female-f-female)",
+        "notes":  null
+    },
+    {
+        "article":  "B-311",
+        "title":  "Переходник B-311 BNC-male - BNC-male",
+        "side_a":  {
+                       "series":  "BNC",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "BNC",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  75,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  null,
+        "materials_plating":  null,
+        "price_rub":  60,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-b-311-bnc-male-bnc-male",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-b-311-bnc-male-bnc-male)",
+        "notes":  "Продавец прямо указывает 75 Ом; значение 50 Ом из карточки B-322 сюда не переносилось."
+    },
+    {
+        "article":  "B-312",
+        "title":  "Переходник B-312 BNC-male - BNC-female (прямой)",
+        "side_a":  {
+                       "series":  "BNC",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "BNC",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  null,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  null,
+        "price_rub":  150,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki-bnc/perehodnik-b-312-bnc-male-bnc-female-pryamoy",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki-bnc/perehodnik-b-312-bnc-male-bnc-female-pryamoy)",
+        "notes":  "В описании также указан код B312. Волновое сопротивление не заявлено."
+    },
+    {
+        "article":  "B-322",
+        "title":  "Переходник B-322 BNC-female - BNC-female",
+        "side_a":  {
+                       "series":  "BNC",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "BNC",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  50,
+        "freq_max_ghz":  null,
+        "vswr_max":  null,
+        "insertion_loss_db":  null,
+        "body":  "прямой",
+        "materials_plating":  {
+                                  "center_contact_plating":  "золото"
+                              },
+        "price_rub":  50,
+        "source_url":  "https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-b-322-bnc-female-bnc-female",
+        "source_citation":  "[Карточка продавца](https://gsm-repiteri.ru/prodazha/perehodniki/perehodnik-b-322-bnc-female-bnc-female)",
+        "notes":  "50 Ом указано непосредственно в таблице этой карточки."
+    },
+    {
+        "article":  "ADP1A-35M-35F",
+        "title":  "Переход коаксиальный ADP1A-35M-35F",
+        "side_a":  {
+                       "series":  "3,5 мм",
+                       "body_gender":  "вилка",
+                       "center_contact":  "штырь",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "3,5 мм",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  null,
+        "freq_max_ghz":  32,
+        "vswr_max":  [
+                         {
+                             "from_ghz":  0,
+                             "to_ghz":  20,
+                             "vswr":  1.06
+                         },
+                         {
+                             "from_ghz":  20,
+                             "to_ghz":  26.5,
+                             "vswr":  1.1
+                         },
+                         {
+                             "from_ghz":  26.5,
+                             "to_ghz":  32,
+                             "vswr":  1.15
+                         }
+                     ],
+        "insertion_loss_db":  {
+                                  "max_db":  0.2,
+                                  "from_ghz":  0,
+                                  "to_ghz":  32
+                              },
+        "body":  null,
+        "materials_plating":  {
+                                  "outer_conductor_material":  "нержавеющая сталь",
+                                  "center_conductor_material":  "бериллиевая бронза",
+                                  "center_conductor_plating":  "износостойкое золото",
+                                  "dielectric_support_material":  "полиэфиримид"
+                              },
+        "price_rub":  null,
+        "source_url":  "https://planarchel.ru/catalog/analizatory_tsepey_vektornye/aksessuary_dlya_analizatorov_tsepey/perekhody_koaksialnye/perekhod-koaksialnyy-adp1a-35m-35f/",
+        "source_citation":  "[Карточка производителя](https://planarchel.ru/catalog/analizatory_tsepey_vektornye/aksessuary_dlya_analizatorov_tsepey/perekhody_koaksialnye/perekhod-koaksialnyy-adp1a-35m-35f/)",
+        "notes":  "Обозначение РНДМ.468562.017. Цена в собственной карточке — по запросу. Импеданс численно не указан. Материалы взяты из [руководства ADP1A](https://planarchel.ru/upload/uf/c70/8hlgfcachftzizo7soya2jcblo4k0046/operating_manual_junction_adp1a_series_rus.pdf), распространяющегося на эту модель. Есть расхождение: [каталог производителя 2026](https://planarchel.ru/upload/iblock/be2/qz6xpuhi6m0p0d1f2yl27q4efefl1yvl/Компоненты_СВЧ_тракта_НПК_ТАИР_Каталог_2026.pdf) дает КСВН 1,10 до 20 ГГц и 1,15 от 20 до 32 ГГц. В vswr_max сохранены значения собственной карточки."
+    },
+    {
+        "article":  "ADP1A-35F-35F",
+        "title":  "Переход коаксиальный ADP1A-35F-35F",
+        "side_a":  {
+                       "series":  "3,5 мм",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "side_b":  {
+                       "series":  "3,5 мм",
+                       "body_gender":  "розетка",
+                       "center_contact":  "гнездо",
+                       "reverse_polarity":  false
+                   },
+        "impedance_ohm":  null,
+        "freq_max_ghz":  32,
+        "vswr_max":  [
+                         {
+                             "from_ghz":  0,
+                             "to_ghz":  20,
+                             "vswr":  1.06
+                         },
+                         {
+                             "from_ghz":  20,
+                             "to_ghz":  26.5,
+                             "vswr":  1.1
+                         },
+                         {
+                             "from_ghz":  26.5,
+                             "to_ghz":  32,
+                             "vswr":  1.15
+                         }
+                     ],
+        "insertion_loss_db":  {
+                                  "max_db":  0.2,
+                                  "from_ghz":  0,
+                                  "to_ghz":  32
+                              },
+        "body":  null,
+        "materials_plating":  {
+                                  "outer_conductor_material":  "нержавеющая сталь",
+                                  "center_conductor_material":  "бериллиевая бронза",
+                                  "center_conductor_plating":  "износостойкое золото",
+                                  "dielectric_support_material":  "полиэфиримид"
+                              },
+        "price_rub":  null,
+        "source_url":  "https://planarchel.ru/catalog/analizatory_tsepey_vektornye/aksessuary_dlya_analizatorov_tsepey/perekhody_koaksialnye/perekhod-koaksialnyy-adp1a-35f-35f/",
+        "source_citation":  "[Карточка производителя](https://planarchel.ru/catalog/analizatory_tsepey_vektornye/aksessuary_dlya_analizatorov_tsepey/perekhody_koaksialnye/perekhod-koaksialnyy-adp1a-35f-35f/)",
+        "notes":  "Обозначение РНДМ.468562.014. Цена в собственной карточке — по запросу. Импеданс численно не указан. Материалы взяты из [руководства ADP1A](https://planarchel.ru/upload/uf/c70/8hlgfcachftzizo7soya2jcblo4k0046/operating_manual_junction_adp1a_series_rus.pdf), распространяющегося на эту модель. Есть расхождение: [каталог производителя 2026](https://planarchel.ru/upload/iblock/be2/qz6xpuhi6m0p0d1f2yl27q4efefl1yvl/Компоненты_СВЧ_тракта_НПК_ТАИР_Каталог_2026.pdf) дает КСВН 1,10 до 20 ГГц и 1,15 от 20 до 32 ГГц. В vswr_max сохранены значения собственной карточки."
+    }
+]

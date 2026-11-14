@@ -21,7 +21,7 @@ from app.shared.persistence import (
     check_read_version, note_written_version, track_read_versions,
 )
 from app.shared.project_number import normalize_project_number
-from app.shared.advisory_lock import lock_key
+from app.shared.advisory_lock import lock_key, lock_project_run
 from .domain import (
     ADDRESSEE_PLAN_FIELDS, ADDRESSEE_REQUISITE_FIELDS, AcceptanceAct, BoxItem, DeliveryTerms, FinishedGood, GoodMove, GoodsState, MOVE_ROUTES, MoveContext,
     LineLot, MoveKind, PackPermission, ProjectAddressee, Shipment, ShipmentBox, ShipmentLine, ShipmentStatus, ShippingValidationError, StoredFile,
@@ -746,6 +746,10 @@ class SqlAlchemyUpdFileRepository:
 
 
 class SqlAlchemyShippingUnitOfWork:
+    def packing_order(self, project: str) -> dict[str, Decimal]:
+        from app.workflows.production_intake_packing import read_packing_order
+        return read_packing_order(self, project)
+
     def __init__(self, session_factory: sessionmaker[Session]):
         self.session_factory = session_factory; self.session: Session | None = None; self.committed = False
     def __enter__(self):
@@ -760,7 +764,7 @@ class SqlAlchemyShippingUnitOfWork:
         self.outbox = SqlAlchemyOutboxRepository(self.session)
         return self
     def lock_projects(self, projects: Sequence[str]) -> None:
-        """Serialize cap edits and packing consumption, including the first missing permission row."""
+        """Serialize order/cap edits and packing, including missing kitset and permission rows."""
         if self.session is None:
             raise RuntimeError("Unit of Work has not been entered")
         requested = {normalize_project_number(project) for project in projects}
@@ -773,7 +777,10 @@ class SqlAlchemyShippingUnitOfWork:
             if not connection.connection.driver_connection.in_transaction:
                 connection.exec_driver_sql("BEGIN IMMEDIATE")
         elif connection.dialect.name == "postgresql":
-            for project in sorted({normalize_project_number(project) for project in projects}):
+            # Catalog writers use the run lock too; take all of them before permission/stock locks.
+            for project in sorted(requested):
+                lock_project_run(self.session, project)
+            for project in sorted(requested):
                 self.session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {
                     "key": lock_key("shipping-pack-permission", project),
                 })

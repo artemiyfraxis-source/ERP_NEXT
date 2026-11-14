@@ -14,7 +14,7 @@ from app.shared.identity import Actor
 from app.modules.fulfillment.domain import FulfillmentStatus
 from app.modules.shipping.domain import AcceptanceAct, FinishedGood, MoveContext
 
-from .application import CalendarRepository, ConcurrentProductionUpdate, OperatorRepository, ProductionRepository, SkillRepository, record_fact, release_fact
+from .application import CalendarRepository, ConcurrentProductionUpdate, OperatorRepository, ProductionRepository, SkillRepository, lock_reflow_projects, record_fact, release_fact
 from .domain import ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, operation_duration_seconds
 from .launchable import stage_name
 from .traceability import (
@@ -379,6 +379,7 @@ def _input_boxes(numbers: Sequence[str], item: str, previous_position: int | tup
 
 def start_work(command: StartWorkCommand, uow: ExecutionUnitOfWork) -> WorkSession:
     with uow:
+        lock_reflow_projects(uow, (command.task_id,), command.now)
         worker = _worker(command)
         replayed = _replayed(command, WorkEvent.START, uow)
         if replayed is not None:
@@ -495,6 +496,7 @@ def cancel_work(command: SessionCommand, uow: ExecutionUnitOfWork) -> WorkSessio
             return replayed
         session = _session(command, uow)
         # prodWorkToggle_ drop: входные коробки при начале не резервируются, отменять нечего.
+        uow.production.lock_projects((session.task_id,))
         cancelled = session.cancel()
         uow.work.save(cancelled)
         task, operation = _session_task(session, uow)
@@ -524,6 +526,7 @@ def submit_work(command: SubmitWorkCommand, uow: ExecutionUnitOfWork) -> tuple[W
                 raise ConcurrentProductionUpdate("Сдача по этому ключу не найдена — обновите страницу")
             return replayed, box, output, uow.defects.active_for_outputs((output.id,))
         session = _session(command, uow)
+        lock_reflow_projects(uow, (session.task_id,), command.now)
         task, operation = _task_operation(session.task_id, session.operation_id, worker, uow)
         good = Decimal(command.good_quantity)
         defect = Decimal(command.defect_quantity)
@@ -763,6 +766,7 @@ def record_manual_output(command: ManualOutputCommand, uow: ExecutionUnitOfWork)
 def enter_manual_output(command: ManualOutputCommand, uow: ExecutionUnitOfWork) -> tuple[ProductionBox, ProductionOutput, tuple[ProductionBox, ...], tuple[str, ...]]:
     """Ввод готовых внутри открытой единицы работы, без коммита: тот же путь для «Уже сделано» по заданию и по КБ
     без задания на доске мастера (задание создаётся там же, одной транзакцией — board.record_board_output)."""
+    lock_reflow_projects(uow, (command.task_id,), command.now)
     task = uow.production.get(command.task_id)
     if task is None:
         raise KeyError(f"Production task not found: {command.task_id}")
