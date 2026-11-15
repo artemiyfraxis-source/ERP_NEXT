@@ -359,7 +359,8 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   function count(def: TabDef): number | string | null {
     if (isEquipmentTab(def.id)) {
       const rows = equipmentFamily.filter((record) => record.tab === def.id);
-      return equipmentReady ? `${groupModels(rows).length} моделей · ${rows.length} шт.` : null;
+      // until an equipment tab loads the family, the chip shows the summary's unit count, not nothing
+      return equipmentReady ? `${groupModels(rows).length} моделей · ${rows.length} шт.` : bases.tabs?.[def.id] ?? null;
     }
     // no number until the maps came: «0» while loading read as an empty map
     if (isMapTab(def.id)) return canRefs && savedMaps !== "" ? maps[def.id].length : null;

@@ -48,6 +48,11 @@ COUNTED = (*RELATIONS, "equipment_models", "equipment_operation_links", "equipme
 NAMING = {"fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s"}
 
 
+def _retarget(key, old_table, new_table):
+    """A convention name (SQLite batch, unnamed FK) follows the new target; explicit names stay."""
+    return key[:-len(old_table)] + new_table if key.endswith(f"_{old_table}") else key
+
+
 def _freeze(bind):
     if bind.dialect.name == "sqlite":
         for action, condition in (("INSERT", "NEW.tab = 'ob'"), ("UPDATE", "OLD.tab = 'ob' OR NEW.tab = 'ob'"),
@@ -122,12 +127,13 @@ def upgrade():
                     continue
                 key = fk["name"] or f"fk_{name}_{fk['constrained_columns'][0]}_tech_operation_records"
                 batch.drop_constraint(key, type_="foreignkey")
-                batch.create_foreign_key(key, "equipment_units", fk["constrained_columns"], ["id"],
-                    ondelete=fk.get("options", {}).get("ondelete"), deferrable=True, initially="DEFERRED")
+                # Plain FK like every other one: env.py makes all FKs DEFERRABLE INITIALLY DEFERRED on PostgreSQL.
+                batch.create_foreign_key(_retarget(key, "tech_operation_records", "equipment_units"),
+                    "equipment_units", fk["constrained_columns"], ["id"], ondelete=fk.get("options", {}).get("ondelete"))
     with op.batch_alter_table("reference_stock_links") as batch:
         batch.add_column(sa.Column("equipment_unit_id", sa.Uuid(), nullable=True))
         batch.create_foreign_key("fk_reference_stock_links_equipment_unit", "equipment_units", ["equipment_unit_id"],
-                                ["id"], ondelete="SET NULL", deferrable=True, initially="DEFERRED")
+                                ["id"], ondelete="SET NULL")
         batch.create_check_constraint("ck_reference_stock_links_one_target", "record_id IS NULL OR equipment_unit_id IS NULL")
         batch.drop_constraint("ck_reference_stock_links_tab", type_="check")
         tabs = ("ob", "op", "ter", "lug", "coax", "prov", "cab_coax", "cab_multi", "cab_lan", "mat",
@@ -214,8 +220,9 @@ def downgrade():
                     continue
                 key = fk["name"] or f"fk_{name}_{fk['constrained_columns'][0]}_equipment_units"
                 batch.drop_constraint(key, type_="foreignkey")
-                batch.create_foreign_key(key, "tech_operation_records", fk["constrained_columns"], ["id"],
-                    ondelete=fk.get("options", {}).get("ondelete"), deferrable=True, initially="DEFERRED")
+                batch.create_foreign_key(_retarget(key, "equipment_units", "tech_operation_records"),
+                    "tech_operation_records", fk["constrained_columns"], ["id"],
+                    ondelete=fk.get("options", {}).get("ondelete"))
     journal = sa.Table("reference_stock_links", metadata, autoload_with=bind)
     bind.execute(journal.update().where(journal.c.equipment_unit_id.is_not(None)).values(
         record_id=journal.c.equipment_unit_id, equipment_unit_id=None))
