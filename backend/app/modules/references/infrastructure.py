@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
+import re
 from typing import Sequence
 from uuid import UUID, uuid4
 
@@ -28,6 +29,7 @@ from .domain import (
     StockLinkEvent, TechOperationRecord, TechOperationTab, ReferenceValidationError, family_root,
 )
 from .equipment_catalogs import CATALOG_TABLES, equipment_tab
+from .equipment import INV_KEY, field as equipment_field
 
 
 class ReferenceEntryRow(Base):
@@ -395,6 +397,25 @@ class SqlAlchemyTechOperationRepository:
         by_tab = (rows.c.tab,) if tab is None else ()
         statement = statement.order_by(*by_tab, rows.c.sort_key, rows.c.id)
         words = search_words(query)
+        # Without a tab and a query the SQL limit stays (no full in-memory read); a query already scans every row.
+        includes_equipment = bool(words) if tab is None else (
+            tab in EQUIPMENT_TABS if isinstance(tab, TechOperationTab) else any(item in EQUIPMENT_TABS for item in tab))
+        if includes_equipment:
+            def order(row):
+                if row.tab in CATALOG_TABLES:
+                    number = equipment_field(row.fields, INV_KEY, "inventoryNumber") or row.display_text
+                    parts = re.split(r"(\d+)", "".join(number.split()).casefold())
+                    key = tuple((1, int(part)) if part.isdecimal() else (0, part) for part in parts)
+                else:
+                    key = ((0, row.sort_key),)
+                return (row.tab if tab is None else "", key, row.id)
+
+            # Old mirror positions/names are not inventory order. Sort the whole live union before limiting,
+            # including when a query spans catalogs; non-equipment tabs keep their stored ordering.
+            ordered = sorted(self.session.execute(statement), key=order)
+            found = search_rows(ordered, lambda row: (row.display_text, *(row.fields or {}).values()),
+                                words, limit, extra=lambda row: (row.normalized_search,)) if words else ordered[:limit]
+            return [self._domain(row) for row in found]
         if not words:
             return [self._domain(row) for row in self.session.execute(statement.limit(limit))]
         found = search_rows(self.session.execute(statement), lambda row: (row.display_text, *(row.fields or {}).values()),

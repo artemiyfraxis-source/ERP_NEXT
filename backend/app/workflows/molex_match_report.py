@@ -370,6 +370,8 @@ def format_report(result: dict) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Сравнить ключи Molex без изменения базы.")
     parser.add_argument("--json", action="store_true", help="Показать отчёт в JSON")
     args = parser.parse_args(argv)

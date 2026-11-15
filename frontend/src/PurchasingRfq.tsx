@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { failureText } from "./api";
 import { formatDay } from "./format";
 import {
@@ -66,6 +66,7 @@ export function RfqCard({ rfq, active, onOpen }: { rfq: RfqSummary; active: bool
 export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {}) {
   // `?rfq=<id>[&letters=1|&invoices=1]` (CONTRACTS.md): the request to open and the panel to open with it.
   const [link] = useState(rfqLinkState);
+  const initialPick = useRef(link.rfq || undefined);
   const [rfqs, setRfqs] = useState<RfqSummary[] | null>(null);
   const [selected, setSelected] = useState(link.rfq);
   // The panel to open once with a request: from the link, or the letters right after «Создать запрос».
@@ -89,6 +90,9 @@ export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {})
       }
       if (scope === null && !readOnly) setScope(wanted);
       setRfqs(next);
+      // Consume the URL selection once: a later scope reload must preserve the user's newer choice.
+      pick ??= initialPick.current;
+      initialPick.current = undefined;
       // A request asked for by id (the address, a new one) opens in its own list.
       const wantedRfq = pick ? next.find((rfq) => rfq.id === pick) : undefined;
       if (wantedRfq) setView(archivedRfq(wantedRfq) ? "archive" : "work");
@@ -99,7 +103,7 @@ export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {})
     }
   }, [readOnly, scope]);
 
-  useEffect(() => { void reload(link.rfq || undefined); }, [reload, link.rfq]);
+  useEffect(() => { void reload(); }, [reload]);
   useEffect(() => { if (selected && panelFor?.id !== selected) syncRfqUrl(selected); }, [selected, panelFor]);
   useEffect(() => { syncRfqList(view); }, [view]);
   const shown = (rfqs ?? []).filter((rfq) => archivedRfq(rfq) === (view === "archive"));

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PurchasingRfq } from "./PurchasingRfq";
 
@@ -224,14 +224,17 @@ it("the pasted text fills the form with the pack recalculated, lists the rest an
 it("opens the request named in the address and keeps the address on the request chosen", async () => {
   window.history.replaceState({}, "", "/?section=procurement&tab=rfq&rfq=r2");
   const asked: string[] = [];
+  const list = { rfqs: [
+    { id: "r1", number: "КП-2610-001", title: "Разъёмы", created_at: "2026-10-01T10:00:00", closed_at: null, mine: true, lines: 1, suppliers: 2, sent: 2, quotes: 2, decided: 0 },
+    { id: "r2", number: "КП-2610-002", title: "Кабель", created_at: "2026-10-02T10:00:00", closed_at: null, mine: true, lines: 1, suppliers: 2, sent: 2, quotes: 2, decided: 0 },
+  ] };
+  let finishReload!: (response: Response) => void;
+  const pendingReload = new Promise<Response>((resolve) => { finishReload = resolve; });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     asked.push(path);
     if (path === "/api/purchasing/rfqs?scope=mine") {
-      return json({ rfqs: [
-        { id: "r1", number: "КП-2610-001", title: "Разъёмы", created_at: "2026-10-01T10:00:00", closed_at: null, mine: true, lines: 1, suppliers: 2, sent: 2, quotes: 2, decided: 0 },
-        { id: "r2", number: "КП-2610-002", title: "Кабель", created_at: "2026-10-02T10:00:00", closed_at: null, mine: true, lines: 1, suppliers: 2, sent: 2, quotes: 2, decided: 0 },
-      ] });
+      return asked.filter((request) => request === path).length === 1 ? json(list) : pendingReload;
     }
     if (path === "/api/purchasing/rfqs/directory") return json({ suppliers: [] });
     if (path === "/api/purchasing/rfqs/r1") return json(matrix);
@@ -241,8 +244,12 @@ it("opens the request named in the address and keeps the address on the request 
   render(<PurchasingRfq />);
   expect(await screen.findByRole("heading", { name: "КП-2610-002 · Кабель" })).toBeInTheDocument();
   expect(asked).not.toContain("/api/purchasing/rfqs/r1");
+  await waitFor(() => expect(asked.filter((path) => path === "/api/purchasing/rfqs?scope=mine")).toHaveLength(2));
   fireEvent.click(screen.getByRole("button", { name: /КП-2610-001/ }));
   expect(await screen.findByRole("heading", { name: "КП-2610-001 · Разъёмы" })).toBeInTheDocument();
+  // Finish the automatic scope reload after the user's choice; it must not reopen the URL's original request.
+  await act(async () => { finishReload(json(list)); await pendingReload; });
+  expect(screen.getByRole("heading", { name: "КП-2610-001 · Разъёмы" })).toBeInTheDocument();
   await waitFor(() => expect(window.location.search).toBe("?section=procurement&tab=rfq&rfq=r1"));
   window.history.replaceState({}, "", "/");
 });
