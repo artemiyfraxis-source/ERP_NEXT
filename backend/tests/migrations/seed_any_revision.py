@@ -263,6 +263,14 @@ _OVER_CHECK: dict[tuple[str, str], Any] = {
     ("production_instruments", "verification_number"): "TEST-PV",
     ("production_instruments", "verified_at"): datetime(2026, 9, 1, tzinfo=timezone.utc),
     ("production_instruments", "verification_due"): datetime(2027, 9, 1, tzinfo=timezone.utc),
+    # 0178_rf_interfaces: an unconfirmed «unknown» row needs no kit, points or source; interfaces stay unconfirmed.
+    ("production_rf_details", "role"): "unknown",
+    ("production_rf_details", "confirmed"): False,
+    ("production_rf_details", "kit_definition"): "",
+    ("production_rf_details", "max_points"): None,
+    ("production_rf_details", "f_min_ghz"): None,
+    ("production_rf_interfaces", "position"): 1,
+    ("production_rf_interfaces", "f_confirmed"): False,
 }
 # Values a CHECK shapes beyond `IN (…)`: an internal project number is «ВП-…» (0135_internal_projects), unique; the
 # label printer settings are bounded ranges and a numeric `dpi IN (203, 300)` (0138_warehouse_labels).

@@ -10,8 +10,8 @@ from uuid import UUID, uuid4
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0179_equipment_catalogs_cutover"
-down_revision = "0178_equipment_catalogs"
+revision = "0180_equipment_catalogs_cutover"
+down_revision = "0179_equipment_catalogs"
 branch_labels = depends_on = None
 DESTRUCTIVE = False
 

@@ -12,6 +12,7 @@ COPY frontend/ ./
 # import them. test/architecture.test.mjs fails when a new import is not copied here.
 COPY backend/data/harness-library/ /src/backend/data/harness-library/
 COPY backend/data/etk-marking.json /src/backend/data/etk-marking.json
+COPY backend/data/techcard-library-erp.json /src/backend/data/techcard-library-erp.json
 COPY backend/tests/techcards/harness_generated_sample.json /src/backend/tests/techcards/harness_generated_sample.json
 COPY backend/tests/techcards/harness_generated_tails_sample.json /src/backend/tests/techcards/harness_generated_tails_sample.json
 COPY backend/tests/techcards/generator_713k4_config.json /src/backend/tests/techcards/generator_713k4_config.json

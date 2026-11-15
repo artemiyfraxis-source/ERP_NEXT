@@ -56,7 +56,7 @@ def cutover_db(tmp_path, monkeypatch):
                            " record_id, record_tab, record_text, changes, actor_id, actor_name)"
                            " VALUES (?, '2026-11-12', 'linked', ?, 'ЦАР', 'ГРН', '1', 'A', 'Имя', ?, 'ob', 'История', '[]', ?, 'Автор')",
                            (uuid4().hex, uuid4().hex, ids[0].hex, uuid4().hex))
-    command.upgrade(config, "0177_agent_devices")
+    command.upgrade(config, "0178_rf_interfaces")
     return path, config, ids
 
 
@@ -115,7 +115,7 @@ def test_untouched_cutover_downgrade_and_reupgrade_keep_every_relation(cutover_d
     engine = create_engine(f"sqlite:///{path}")
     try:
         before = evidence(engine)
-        command.downgrade(config, "0178_equipment_catalogs")
+        command.downgrade(config, "0179_equipment_catalogs")
         with sqlite3.connect(path) as connection:
             assert connection.execute("SELECT count(*) FROM equipment_units").fetchone()[0] == 0
             assert connection.execute("SELECT count(*) FROM tech_operation_records WHERE tab='ob'").fetchone()[0] == len(ids)
@@ -154,7 +154,7 @@ def test_cutover_downgrade_refuses_changed_live_data_without_any_mutation(cutove
             session.commit()
         before = evidence(engine)
         with pytest.raises(RuntimeError, match="cannot restore a stale archive"):
-            command.downgrade(config, "0178_equipment_catalogs")
+            command.downgrade(config, "0179_equipment_catalogs")
         assert evidence(engine) == before
     finally:
         engine.dispose()
@@ -162,8 +162,8 @@ def test_cutover_downgrade_refuses_changed_live_data_without_any_mutation(cutove
 
 def test_additive_schema_can_be_removed_before_cutover(cutover_db):
     path, config, _ = cutover_db
-    command.upgrade(config, "0178_equipment_catalogs")
-    command.downgrade(config, "0177_agent_devices")
+    command.upgrade(config, "0179_equipment_catalogs")
+    command.downgrade(config, "0178_rf_interfaces")
     with sqlite3.connect(path) as connection:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert not ({"equipment_units", "equipment_instrument_bindings", *CATALOG_TABLES.values()} & tables)
@@ -207,7 +207,7 @@ def test_all_reviewed_instruments_keep_their_approved_catalog(cutover_db):
     from alembic.script import ScriptDirectory
 
     path, config, _ = cutover_db
-    migration = ScriptDirectory.from_config(config).get_revision("0179_equipment_catalogs_cutover").module
+    migration = ScriptDirectory.from_config(config).get_revision("0180_equipment_catalogs_cutover").module
     expected = migration.EXPECTED_INSTRUMENT_CATALOGS
     assert len(expected) == 15 and set(expected.values()) == {"Средства измерений"}
     with sqlite3.connect(path) as connection:
