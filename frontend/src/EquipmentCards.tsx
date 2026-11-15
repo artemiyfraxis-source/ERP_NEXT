@@ -37,6 +37,19 @@ const PASSPORT: Array<[string, string[]]> = [["Наименование", NAME_K
 
 type SaveValue = (key: string, value: string) => Promise<void>;
 
+function CrimpCell({ parts }: { parts: ReturnType<typeof crimpLines> }) {
+  const [expanded, setExpanded] = useState(false);
+  return <div className="eq-crimp-list" translate="no">
+    {(expanded ? parts : parts.slice(0, 6)).map((part, index) => <span key={index}>
+      {index > 0 && ", "}<span title={part.doubtful ? "связь под вопросом в БД.ТЕР" : undefined}>{part.text}</span>
+    </span>)}
+    {parts.length > 6 && <> <button type="button" className="link-button eq-crimp-toggle" aria-expanded={expanded}
+      onClick={(event) => { event.stopPropagation(); setExpanded((value) => !value); }}>
+      {expanded ? "свернуть" : `ещё ${parts.length - 6}`}
+    </button></>}
+  </div>;
+}
+
 /** A value edited in place: a click turns it into a field; Enter or leaving the field writes it, Esc puts it back. */
 export function InlineValue({ label, value, display, editable, multiline, onSave }: {
   label: string; value: string; display?: ReactNode; editable: boolean; multiline?: boolean; onSave: (value: string) => Promise<void>;
@@ -277,22 +290,21 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     { key: "code", title: "Код", value: (model) => codeOf(model), render: (model) => <span className="tnum">{codeOf(model) || "—"}</span> },
     { key: "role", title: "Вид", value: (model) => ROLE_LABELS[model.role], filter: true },
     { key: "kind", title: "Вид аппликатора", value: (model) => applicatorKindOf(codeOf(model)), filter: true },
-    { key: "article", title: tab === "ob_applicators" ? "Артикул аппликатора" : "Артикул", value: (model) => model.article },
+    { key: "article", title: "Артикул", value: (model) => model.article },
     { key: "maker", title: "Производитель", value: (model) => model.maker },
     { key: "place", title: "Расположение", value: (model) => model.places.map((item) => valueLabel("Расположение", item)).join(", "), filter: true },
     { key: "ops", title: "Операций", numeric: true, value: (model) => opsOf(model).length, hint: "Сколько операций БД.ОП привязано к этой модели" },
-    { key: TARGETS_KEY, title: "Обжимает (серии · артикулы контактов)", wrap: true, minWidth: 230, maxWidth: "clamp(280px, 18vw, 420px)",
-      value: (model) => (targetsByModel.get(model.key) ?? []).map((line) => line.map((part) => part.text).join("")).join("\n"),
+    { key: TARGETS_KEY, title: "Обжимает (артикулы контактов)", wrap: true, minWidth: 230,
+      value: (model) => (targetsByModel.get(model.key) ?? []).map((part) => part.text).join(", "),
       render: (model) => {
         const lines = targetsByModel.get(model.key) ?? [];
-        return lines.length ? <div translate="no" style={{ overflowWrap: "anywhere" }}>{lines.map((line, index) => <div key={index}>{line.map((part, partIndex) =>
-          <span key={partIndex} title={part.doubtful ? "связь под вопросом в БД.ТЕР" : undefined}>{part.text}</span>)}</div>)}</div>
+        return lines.length ? <CrimpCell key={model.key} parts={lines} />
           : targetsError ? "Не загружено" : !targets ? "Загрузка…" : "—";
       } },
   ];
   const unlinkedCount = report ? report.counts.operations_unresolved + report.counts.tools_unresolved + report.counts.templates_unresolved
     + report.counts.models_without_units + report.counts.models_units_disagree + report.counts.roles_unconfirmed : 0;
-  const allowed = new Set(["inv", "name", "count", "article", "maker", "place",
+  const allowed = new Set(["inv", "name", "count", "maker", "place", ...(tab === "ob_applicators" ? [] : ["article"]),
     ...(withTargets ? [TARGETS_KEY] : []),
     ...(tab === "ob_applicators" ? ["kind"] : []), ...(tab === "ob" ? ["ops"] : []),
     ...(tab === "ob_tools" ? ["type", "code"] : []), ...(tab === "ob_dies" ? ["code"] : [])]);

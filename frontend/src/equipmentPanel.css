@@ -24,3 +24,11 @@
 .eq-serves-list li:nth-child(even) { background: var(--accent); }
 .eq-unlinked-wrap { display: grid; gap: 12px; }
 .eq-unlinked-wrap .eq-table { width: 100%; }
+
+.eq-crimp-list { overflow-wrap: anywhere; }
+.eq-crimp-list .eq-crimp-toggle { color: var(--foreground); white-space: nowrap; touch-action: manipulation; text-decoration: underline; text-underline-offset: 2px; }
+.eq-crimp-list .eq-crimp-toggle:hover { text-decoration-thickness: 2px; }
+.eq-crimp-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+@media (pointer: coarse) {
+  .data-table .eq-crimp-list .eq-crimp-toggle { min-width: 40px; min-height: 40px; }
+}
