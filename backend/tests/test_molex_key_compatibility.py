@@ -128,18 +128,22 @@ def test_newly_resolved_identity_can_enrich_an_unconverted_component_name(frozen
     assert card.document == document == saved
 
 
-def test_report_cli_remains_read_only_on_sqlite(report_db):
+@pytest.mark.parametrize("args", [[], ["--json"]])
+def test_report_cli_remains_read_only_on_sqlite(report_db, args):
     engine, path, _, _ = report_db
     with Session(engine) as session:
         before = snapshot(session)
-    environment = {**os.environ, "ERP_DATABASE_URL": f"sqlite:///{path.as_posix()}"}
+    environment = {**os.environ, "ERP_DATABASE_URL": f"sqlite:///{path.as_posix()}", "PYTHONIOENCODING": "cp1251"}
     result = subprocess.run(
-        [sys.executable, "-m", "app.workflows.molex_match_report", "--json"],
+        [sys.executable, "-m", "app.workflows.molex_match_report", *args],
         env=environment, capture_output=True, text=True, encoding="utf-8", check=True,
     )
-    report = json.loads(result.stdout)
-    assert report["read_only"] is True
-    # The fixture's padded PicoBlade now resolves directly, so no housing delta remains.
-    assert report["changes"]["housing_of"] == []
+    if args:
+        report = json.loads(result.stdout)
+        assert report["read_only"] is True
+        # The fixture's padded PicoBlade now resolves directly, so no housing delta remains.
+        assert report["changes"]["housing_of"] == []
+    else:
+        assert "Сравнение артикулов Molex — только чтение" in result.stdout
     with Session(engine) as session:
         assert snapshot(session) == before

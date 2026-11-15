@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.modules.references.domain import EQUIPMENT_TABS, TechOperationRecord, TechOperationTab
-from app.modules.references.equipment_catalogs import CATALOG_TABLES
+from app.modules.references.equipment_catalogs import CATALOG_TABLES, CATALOG_TYPES
 from app.modules.references.equipment_identity import SqlAlchemyEquipmentRepository
 from app.modules.references.infrastructure import EquipmentUnitRow, SqlAlchemyTechOperationRepository
 from tests.equipment_setup.test_unit_ids_migration import _unit, _setup_rows
@@ -243,6 +243,32 @@ def test_migrated_legacy_machine_stays_selectable_and_resolvable(cutover_db):
             assert machine is not None and machine.key == str(unit.equipment_model_id)
     finally:
         engine.dispose()
+
+
+@pytest.mark.parametrize("tab, kind", CATALOG_TYPES.items())
+def test_equipment_catalogs_order_by_current_number_before_limit_and_search(references_api, tab, kind):
+    factory = references_api.app.state.references_uow_factory
+    prefix = "СИ." if tab == "ob_measuring" else "M" if tab == "ob_applicators" else "ОБ."
+    suffixes = ("1", "2", "9", "10", "70", "71", "103", "104") if tab == "ob_applicators" else (
+        "001", "2", "009", "010", "070.2", "070.10", "103", "104")
+    numbers = [prefix + number for number in suffixes]
+    with factory() as uow:
+        for index, number in enumerate(reversed(numbers)):
+            uow.tech_operations.save(TechOperationRecord.create(
+                tab=TechOperationTab(tab), display_text=f"Прибор {index}", search_text="Прибор", source_sheet="",
+                sort_key=f"{index:03}", fields={"Тип": kind, "Наименование": "Прибор", "Инв. номер": number,
+                                              **({"Код в базе терминалов": number} if tab == "ob_applicators" else {})},
+            ))
+        uow.commit()
+    with factory() as uow:
+        for selected in (TechOperationTab(tab), EQUIPMENT_TABS, None):
+            for query in ("", "Прибор", "Прибор 0"):
+                if selected is None and not query:
+                    continue  # the unfiltered list of every tab keeps the SQL order and limit (no full read)
+                found = uow.tech_operations.list(tab=selected, query=query, limit=100)
+                expected = [numbers[-1]] if query == "Прибор 0" else numbers
+                assert [row.fields["Инв. номер"] for row in found] == expected
+                assert uow.tech_operations.list(tab=selected, query=query, limit=3) == found[:3]
 
 
 def test_union_order_limit_move_identity_and_database_ownership(cutover_db):
