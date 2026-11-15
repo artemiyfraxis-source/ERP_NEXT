@@ -53,7 +53,8 @@ class TechOperationRepository(Protocol):
     def get(self, record_id: UUID) -> TechOperationRecord | None: ...
     def save(self, record: TechOperationRecord) -> None: ...
     def delete(self, record_id: UUID) -> None: ...
-    def replace(self, records: tuple[TechOperationRecord, ...], *, schema_version: int, source_updated_at: datetime | None, imported_at: datetime, keep_tabs: tuple[TechOperationTab, ...] = (), preserve_erp_edits: bool = False) -> dict[str, int]: ...
+    def deleted_mirror_records(self, records: tuple[TechOperationRecord, ...]) -> tuple[TechOperationRecord, ...]: ...
+    def replace(self, records: tuple[TechOperationRecord, ...], *, schema_version: int, source_updated_at: datetime | None, imported_at: datetime, keep_tabs: tuple[TechOperationTab, ...] = (), preserve_erp_edits: bool = False, keep_mirror_keys: frozenset[tuple[TechOperationTab, str]] = frozenset()) -> dict[str, int]: ...
     def metadata(self) -> dict | None: ...
 
 
@@ -190,6 +191,19 @@ def replace_snapshot(command: ReplaceSnapshotCommand, uow: UnitOfWork) -> int:
 
 def replace_snapshot_detailed(command: ReplaceSnapshotCommand, uow: UnitOfWork) -> tuple[int, dict[str, int]]:
     """(records written, {tab: mirror records skipped because they were edited in ERP})."""
+    result = replace_snapshot_report(command, uow)
+    return result.record_count, result.skipped_edited
+
+
+@dataclass(frozen=True)
+class SnapshotReplaceResult:
+    record_count: int
+    skipped_edited: dict[str, int]
+    skipped_deleted: tuple[TechOperationRecord, ...]
+
+
+def replace_snapshot_report(command: ReplaceSnapshotCommand, uow: UnitOfWork, *, dry_run: bool = False) -> SnapshotReplaceResult:
+    """Build and match the same snapshot for a preview or a transactional replacement."""
     if command.schema_version != TECH_SNAPSHOT_SCHEMA_VERSION:
         raise ReferenceValidationError(
             f"Ожидается схема БД.Технология v{TECH_SNAPSHOT_SCHEMA_VERSION}"
@@ -226,17 +240,24 @@ def replace_snapshot_detailed(command: ReplaceSnapshotCommand, uow: UnitOfWork) 
                 ) for fields in variants)
         records = tuple(record for index in range(len(keyed))
                         for record in (built[index] if isinstance(built[index], tuple) else (built[index],)))
+        deleted = uow.tech_operations.deleted_mirror_records(records) if command.preserve_erp_edits else ()
+        deleted_ids = {record.id for record in deleted}
+        records = tuple(record for record in records if record.id not in deleted_ids)
+        if dry_run:
+            return SnapshotReplaceResult(len(records), {}, deleted)
         skipped = uow.tech_operations.replace(
             records, keep_tabs=keep_tabs, schema_version=command.schema_version,
             source_updated_at=command.source_updated_at, imported_at=command.now,
             preserve_erp_edits=command.preserve_erp_edits,
+            keep_mirror_keys=frozenset((family_root(record.tab), record.mirror_key) for record in deleted if record.mirror_key),
         ) or {}
         details = {"schema_version": command.schema_version, "records": len(records)}
         if command.preserve_erp_edits:
             details["skipped_edited_in_erp"] = sum(skipped.values())
+            details["skipped_deleted_in_erp"] = len(deleted)
         _audit("references.tech_snapshot_replaced", command.actor, command.now, details, uow)
         uow.commit()
-    return len(records), skipped
+    return SnapshotReplaceResult(len(records), skipped, deleted)
 
 
 @dataclass(frozen=True)

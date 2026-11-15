@@ -16,7 +16,7 @@ from sqlalchemy import event
 from sqlalchemy.orm import Mapped, Session, declared_attr, mapped_column, sessionmaker
 from sqlalchemy.ext.declarative import AbstractConcreteBase
 
-from app.shared.persistence import Base, SqlAlchemyAuditRepository
+from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository
 
 from .cable_structure import (
     ALIAS_KINDS, LAYERS, PARAMS, CoaxAlias, CoaxAttenuation, CoaxCard, CoaxConnector, CoaxLayer, CoaxMarker, CoaxNames,
@@ -372,6 +372,9 @@ def _match_stable(records, rows):
     return result
 
 
+_TAB_VALUES = frozenset(tab.value for tab in TechOperationTab)
+
+
 class SqlAlchemyTechOperationRepository:
     def __init__(self, session: Session): self.session = session
 
@@ -430,6 +433,45 @@ class SqlAlchemyTechOperationRepository:
         self._delete_row(row)
         self.session.flush()
         identity.prune_models(self.session)
+
+    def deleted_mirror_records(self, records):
+        """Deletion audit survives physical deletion and the equipment catalog cutover.
+
+        Stable rows compete with live rows using the loader's matching precedence. Repeated
+        deletions of the same source row are one tombstone; an explicitly restored live row wins.
+        Ordinary rows use source identity, which survives edits and moves between family tabs.
+        """
+        def identity_key(row):
+            tab = TechOperationTab(row.tab)
+            return (family_root(tab), row.mirror_key,
+                    "" if row.mirror_key else _natural_key(tab.value, row.fields) or str(row.id))
+
+        mirrors, history = set(), {}
+        for details in self.session.scalars(select(AuditEventRow.details).where(
+                AuditEventRow.event_type == "references.record_deleted").order_by(
+                    AuditEventRow.occurred_at, AuditEventRow.id)):
+            # Other deletions share the event type (e.g. marks without "tab"): not reference records, skip them.
+            if not isinstance(details, dict) or details.get("tab") not in _TAB_VALUES:
+                continue
+            tab = TechOperationTab(details["tab"])
+            if tab.value in _STABLE_TABS:
+                row = TechOperationRecord(
+                    id=UUID(details["record_id"]), tab=tab, display_text=details["display_text"],
+                    normalized_search="", source_sheet=details["source_sheet"], sort_key=details["sort_key"],
+                    fields=details["fields"], mirror_key=details.get("mirror_key", ""),
+                )
+                history[identity_key(row)] = row
+            elif key := details.get("mirror_key"):
+                mirrors.add((family_root(tab), key))
+        live_records = _record_union()
+        live = list(self.session.execute(select(live_records).where(live_records.c.tab.in_(_STABLE_TABS))))
+        for row in live:
+            history.pop(identity_key(row), None)
+        dead_ids = {row.id for row in history.values()} - {row.id for row in live}
+        matched = _match_stable(records, [*history.values(), *live])
+        return tuple(record for index, record in enumerate(records)
+                     if (index in matched and matched[index].id in dead_ids) or
+                     (record.tab.value not in _STABLE_TABS and (family_root(record.tab), record.mirror_key) in mirrors))
 
     def _put(self, record, *, row=None):
         from . import equipment_identity as identity
@@ -497,13 +539,17 @@ class SqlAlchemyTechOperationRepository:
         if row.tab in _STABLE_TABS:
             identity.after_save(self.session, row, before[0] if before else None, before[1] if before else "")
 
-    def replace(self, records, *, schema_version, source_updated_at, imported_at, keep_tabs=(), preserve_erp_edits=False):
+    def replace(self, records, *, schema_version, source_updated_at, imported_at, keep_tabs=(), preserve_erp_edits=False,
+                keep_mirror_keys=frozenset()):
         from . import equipment_identity as identity
         rows = [*self.session.scalars(select(TechOperationRecordRow).where(TechOperationRecordRow.tab != "ob")),
                 *self.session.scalars(select(EquipmentRecordRow))]
         matched = _match_stable(records, [row for row in rows if row.tab in _STABLE_TABS])
+        # One mirror row may generate several wire colours. A source tombstone blocks regeneration,
+        # but existing siblings must survive even if they have never been edited in ERP.
         protected = {row.id for row in rows if TechOperationTab(row.tab) in keep_tabs or
-                     (preserve_erp_edits and row.edited_in_erp)}
+                     (preserve_erp_edits and row.edited_in_erp) or
+                     (family_root(TechOperationTab(row.tab)), row.mirror_key) in keep_mirror_keys}
         protected_keys = {(family_root(TechOperationTab(row.tab)), row.mirror_key) for row in rows
                           if row.id in protected and row.mirror_key}
         skipped, wanted = {}, []
