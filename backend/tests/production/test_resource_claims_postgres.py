@@ -15,10 +15,14 @@ from sqlalchemy.schema import CreateSchema, DropSchema
 
 from app.modules.production.resource_claims import ResourceConflict, ResourceKey, ResourceKind, ResourceOwner, ResourceWindow
 from app.modules.production.resource_infrastructure import ActiveResourceRow, ResourceGenerationRow, ResourceReservationRow, SqlAlchemyResourceClaims
-from app.modules.references.infrastructure import EquipmentModelRow, TechOperationRecordRow
+from app.shared.persistence import Base
+from app.modules.references.infrastructure import (
+    EquipmentApplicatorRow, EquipmentDieRow, EquipmentMachineRow, EquipmentMeasuringRow, EquipmentModelRow,
+    EquipmentSupportRow, EquipmentToolRow, EquipmentUnitRow, TechOperationRecordRow,
+)
 from app.modules.techcards.infrastructure import RefreshRequestRow
 
-UNIT, MODEL = uuid4(), uuid4()  # the БД.ОБ unit a machine claim names by FK (0172)
+UNIT, MODEL = uuid4(), uuid4()  # the equipment unit a machine claim names by FK (0172, equipment_units since 0180)
 
 
 @pytest.fixture
@@ -42,13 +46,17 @@ def engine():
             connection.execute(CreateSchema(schema))
         created = True
         # A БД.ОБ write queues an ETK check (etk_refresh, before_flush) — its queue table must exist too.
-        for row in (RefreshRequestRow, EquipmentModelRow, TechOperationRecordRow, ResourceGenerationRow, ResourceReservationRow, ActiveResourceRow):
-            row.__table__.create(result)
+        # equipment_units and the six catalogs reference each other (deferred FKs added by ALTER): create them together.
+        rows = (RefreshRequestRow, EquipmentModelRow, EquipmentUnitRow, EquipmentMachineRow, EquipmentMeasuringRow,
+                EquipmentSupportRow, EquipmentApplicatorRow, EquipmentDieRow, EquipmentToolRow, TechOperationRecordRow,
+                ResourceGenerationRow, ResourceReservationRow, ActiveResourceRow)
+        Base.metadata.create_all(result, tables=[row.__table__ for row in rows])
         with Session(result) as session:
             session.add(ResourceGenerationRow(id=1, version=0))
             session.add(EquipmentModelRow(id=MODEL, name="Автомат резки"))
             session.flush()
-            session.add(TechOperationRecordRow(id=UNIT, tab="ob", display_text="ОБ.027.2", normalized_search="",
+            session.add(EquipmentUnitRow(id=UNIT, model_id=MODEL, catalog="ob", ob_id=UNIT))
+            session.add(EquipmentMachineRow(id=UNIT, tab="ob", display_text="ОБ.027.2", normalized_search="",
                 source_sheet="БД.ОБ", sort_key="1", fields={"Инв. номер": "ОБ.027.2"}, mirror_key="", edited_in_erp=False,
                 equipment_model_id=MODEL))
             session.commit()
