@@ -65,6 +65,33 @@ def crimp_codes(uow: UnitOfWork) -> dict:
     return {"owners": owners, "missing": missing}
 
 
+def crimp_targets(uow: UnitOfWork) -> dict:
+    """Index contact series/articles for all codes in one terminal read, preserving uncertainty."""
+    linked: dict[str, dict[tuple[str, str], dict[str, bool]]] = {}
+    with uow:
+        for item in _terminals(uow):
+            fields = item.fields
+            matches: dict[str, bool] = {}
+            for token in tokens(applicator_value(fields)):
+                matches[token.code] = matches.get(token.code, True) and token.doubtful
+            if not matches:
+                continue
+            series = field(fields, "terSeries", "Series")
+            maker = field(fields, "terManufacturer", "Производитель")
+            article = field(fields, "terArticle", "Артикул контакта (REEL)", "Артикул\nконтакта (REEL)")
+            for code, doubtful in matches.items():
+                articles = linked.setdefault(code, {}).setdefault((series, maker), {})
+                # A confirmed duplicate wins; another uncertain article stays uncertain.
+                articles[article] = articles.get(article, True) and doubtful
+    return {"by_code": {code: [
+        {"series": series, "maker": maker, "articles": sorted(article for article in articles
+                                                          if article and articles[article] == doubtful),
+         "doubtful": doubtful}
+        for (series, maker), articles in sorted(groups.items())
+        for doubtful in (False, True) if doubtful in articles.values()
+    ] for code, groups in sorted(linked.items())}}
+
+
 def _save(uow: UnitOfWork, record: TechOperationRecord, fields: dict[str, str], event: str, actor: Actor,
           now: datetime, details: dict) -> TechOperationRecord:
     updated = replace(record, fields=fields, edited_in_erp=True)

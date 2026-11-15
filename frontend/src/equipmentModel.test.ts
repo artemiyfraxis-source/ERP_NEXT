@@ -1,9 +1,28 @@
 import { describe, expect, it } from "vitest";
 import type { TechOperationRecord } from "./api";
-import { applicatorTokens, groupModels, servedBy, servedUnits, inventoryOrder, inventoryRange, invOf, operationField, operationsOfModel, parseInventory, typeOf } from "./equipmentModel";
+import { applicatorTokens, crimpLines, groupModels, servedBy, servedUnits, inventoryOrder, inventoryRange, invOf, operationField, operationsOfModel, parseInventory, typeOf } from "./equipmentModel";
 
 const unit = (id: string, fields: Record<string, string>): TechOperationRecord =>
   ({ id, tab: "ob", display_text: "", source_sheet: "", fields } as TechOperationRecord);
+
+it("combines codes of all units while retaining uncertainty of distinct articles", () => {
+  const [model] = groupModels([
+    unit("one", { Наменование: "Пресс", "Инв. номер": "ОБ.001.1", "Код в базе терминалов": "s1" }),
+    unit("two", { Наменование: "Пресс", "Инв. номер": "ОБ.001.2", "Код в базе терминалов": "S2" }),
+  ]);
+  expect(crimpLines(model, {
+    S1: [{ series: "XHP", maker: "JST", articles: ["T1", "T2"], doubtful: true }],
+    S2: [{ series: "XHP", maker: "JST", articles: ["T1"], doubtful: false }],
+  })).toEqual([[{ text: "XHP: ", doubtful: false }, { text: "T1", doubtful: false }, { text: ", T2?", doubtful: true }]]);
+});
+
+it("shows an article without a series, and a doubtful series without an article", () => {
+  const [model] = groupModels([unit("one", { Наменование: "Пресс", "Код в базе терминалов": "S1" })]);
+  expect(crimpLines(model, { S1: [
+    { series: "", maker: "", articles: ["T1"], doubtful: false },
+    { series: "XHP", maker: "JST", articles: [], doubtful: true },
+  ] })).toEqual([[{ text: "T1", doubtful: false }], [{ text: "XHP?", doubtful: true }]]);
+});
 
 describe("equipment model", () => {
   it("reads models, units and the legacy numbers", () => {

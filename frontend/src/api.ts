@@ -4410,6 +4410,7 @@ export const referencesApi = {
   setEquipmentUnitModel: (unitId: string, modelId: string | null) =>
     api<{ equipment_model_id: string }>(`/api/references/tech-operations/${unitId}/equipment-model`, { method: "PUT", body: JSON.stringify({ model_id: modelId }) }),
   crimpCodes: () => visitRead<CrimpCodes>("/api/references/tech-operations/crimp-codes"),
+  crimpTargets: () => visitRead<CrimpTargets>("/api/references/tech-operations/crimp-targets"),
   crimpTerminal: (toolId: string, terminalId: string, add: boolean) =>
     api<CrimpTerminal>(`/api/references/tech-operations/${toolId}/crimps/terminals/${terminalId}`, { method: add ? "POST" : "DELETE" }),
   crimpTarget: (toolId: string, target: CrimpTarget, add: boolean) =>
@@ -4427,6 +4428,8 @@ export interface CrimpTerminal {
 export interface CrimpTarget { kind: string; key: string; label: string }
 export interface CrimpOverview { code: string; terminals: CrimpTerminal[]; targets: CrimpTarget[] }
 export interface CrimpCodes { owners: Record<string, string>; missing: Array<{ code: string; count: number }> }
+export interface CrimpSeries { series: string; maker: string; articles: string[]; doubtful: boolean }
+export interface CrimpTargets { by_code: Record<string, CrimpSeries[]> }
 
 export interface TerminalResolution {
   applicator: string;

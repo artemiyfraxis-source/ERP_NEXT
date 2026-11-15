@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
-import { failureText, referencesApi, type CrimpCodes, type EquipmentLinksReport, type EquipmentModelInfo, type EquipmentRole, type TechOperationRecord } from "./api";
+import { failureText, referencesApi, type CrimpCodes, type CrimpTargets, type EquipmentLinksReport, type EquipmentModelInfo, type EquipmentRole, type TechOperationRecord } from "./api";
 import { EQUIPMENT_TABS, type EquipmentTab } from "./referenceTabs";
 import { filledIn, useColumnRemoval } from "./CustomColumn";
 import { PageWindow } from "./PageWindow";
@@ -7,7 +7,7 @@ import { CrimpLinks } from "./CrimpLinks";
 import { DataTable, type DataColumn } from "./DataTable";
 import {
   APPLICATOR_TYPE, CODE_KEY, CRIMP_TOOL_TYPE, CRIMP_TYPES, INV_KEY, MATRIX_TYPE, applicatorKindOf, codeOf, crimpTypeOfCode, NAME_KEYS, TARGETS_KEY, TOOL_KEY, crimpRecord, groupModels,
-  ROLE_LABELS, instrumentFieldValue, inventoryRange, invOf, nameOf, operationsOfModel, parseTargets, pick, placeOf, servedBy, servedUnits, typeOf,
+  ROLE_LABELS, crimpLines, instrumentFieldValue, inventoryRange, invOf, nameOf, operationsOfModel, pick, placeOf, servedBy, servedUnits, typeOf,
   type EquipmentModel,
 } from "./equipmentModel";
 import "./equipmentPanel.css";
@@ -107,6 +107,19 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
   const [openId, setOpenId] = useState(() => focusId || new URLSearchParams(window.location.search).get("equipment") || "");
   const [busy, setBusy] = useState(false);
   const [codes, setCodes] = useState<CrimpCodes | null>(null);
+  const [targets, setTargets] = useState<CrimpTargets | null>(null);
+  const [targetsError, setTargetsError] = useState("");
+  const withTargets = ["ob_applicators", "ob_dies", "ob_tools"].includes(tab);
+  useEffect(() => {
+    if (!withTargets) return;
+    let live = true;
+    setTargets(null); setTargetsError("");
+    referencesApi.crimpTargets().then((result) => { if (live) setTargets(result); }).catch((reason) => {
+      if (live) setTargetsError(failureText(reason, "Не удалось загрузить связи обжима"));
+    });
+    return () => { live = false; };
+  }, [records, withTargets]);
+  const targetsByModel = useMemo(() => new Map(groupModels(records).map((model) => [model.key, crimpLines(model, targets?.by_code ?? {})])), [records, targets]);
   // Roles / counts of the models and the «Без привязки» report come from the server (links by id, migration 0171).
   const [infos, setInfos] = useState<EquipmentModelInfo[]>([]);
   const [report, setReport] = useState<EquipmentLinksReport | null>(null);
@@ -264,22 +277,29 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     { key: "code", title: "Код", value: (model) => codeOf(model), render: (model) => <span className="tnum">{codeOf(model) || "—"}</span> },
     { key: "role", title: "Вид", value: (model) => ROLE_LABELS[model.role], filter: true },
     { key: "kind", title: "Вид аппликатора", value: (model) => applicatorKindOf(codeOf(model)), filter: true },
-    { key: "article", title: "Артикул", value: (model) => model.article },
+    { key: "article", title: tab === "ob_applicators" ? "Артикул аппликатора" : "Артикул", value: (model) => model.article },
     { key: "maker", title: "Производитель", value: (model) => model.maker },
     { key: "place", title: "Расположение", value: (model) => model.places.map((item) => valueLabel("Расположение", item)).join(", "), filter: true },
     { key: "ops", title: "Операций", numeric: true, value: (model) => opsOf(model).length, hint: "Сколько операций БД.ОП привязано к этой модели" },
+    { key: TARGETS_KEY, title: "Обжимает (серии · артикулы контактов)", wrap: true, minWidth: 230, maxWidth: "clamp(280px, 18vw, 420px)",
+      value: (model) => (targetsByModel.get(model.key) ?? []).map((line) => line.map((part) => part.text).join("")).join("\n"),
+      render: (model) => {
+        const lines = targetsByModel.get(model.key) ?? [];
+        return lines.length ? <div translate="no" style={{ overflowWrap: "anywhere" }}>{lines.map((line, index) => <div key={index}>{line.map((part, partIndex) =>
+          <span key={partIndex} title={part.doubtful ? "связь под вопросом в БД.ТЕР" : undefined}>{part.text}</span>)}</div>)}</div>
+          : targetsError ? "Не загружено" : !targets ? "Загрузка…" : "—";
+      } },
   ];
   const unlinkedCount = report ? report.counts.operations_unresolved + report.counts.tools_unresolved + report.counts.templates_unresolved
     + report.counts.models_without_units + report.counts.models_units_disagree + report.counts.roles_unconfirmed : 0;
   const allowed = new Set(["inv", "name", "count", "article", "maker", "place",
+    ...(withTargets ? [TARGETS_KEY] : []),
     ...(tab === "ob_applicators" ? ["kind"] : []), ...(tab === "ob" ? ["ops"] : []),
     ...(tab === "ob_tools" ? ["type", "code"] : []), ...(tab === "ob_dies" ? ["code"] : [])]);
   const visibleColumns = columns.filter((column) => allowed.has(column.key));
-  for (const field of [...new Set([...fieldColumns, ...ownColumns])].filter((name) => !["Инв. номер", "Наименование", "Наменование", "Артикул", "Производитель", "Расположение", "Подтип", "Код в базе терминалов"].includes(name))) visibleColumns.push({
+  for (const field of [...new Set([...fieldColumns, ...ownColumns])].filter((name) => !["Инв. номер", "Наименование", "Наменование", "Артикул", "Производитель", "Расположение", "Подтип", "Код в базе терминалов", TARGETS_KEY].includes(name))) visibleColumns.push({
     key: field, title: field, hidden: ["Примечание", "Мощность, кВт", "Стоимость, руб."].includes(field), export: true,
-    value: (model) => [...new Set(model.items.map((item) => field === TARGETS_KEY
-      ? parseTargets(item.fields[field]).map((target) => target.label).join(", ")
-      : instrumentFieldValue(field, item.instrument_passport, Boolean(item.instrument_id)) ?? item.fields[field] ?? ""))].join(" · "),
+    value: (model) => [...new Set(model.items.map((item) => instrumentFieldValue(field, item.instrument_passport, Boolean(item.instrument_id)) ?? item.fields[field] ?? ""))].join(" · "),
     remove: ownColumns.includes(field) ? removal.removeOf(field) : undefined,
     edit: canEdit && field !== TARGETS_KEY ? { enabled: (model) => model.items.every((item) => instrumentFieldValue(field, item.instrument_passport, Boolean(item.instrument_id)) === undefined), value: (model) => model.items[0].fields[field] || "",
       save: async (model, value) => { for (const item of model.items) await referencesApi.editRecord(item.id,
@@ -288,6 +308,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
   const missing = codes?.missing ?? [];
   return <div className="eq-split">
     <div className="eq-list">
+      {withTargets && targetsError && <div className="error-banner" role="alert">{targetsError}</div>}
       {tab === "ob_applicators" && missing.length > 0 && <details className="eq-missing">
         <summary>Коды обжима без записи <span className="muted">({missing.length})</span></summary>
         <div className="eq-missing-list">{missing.map((item) => <span key={item.code} className="tr-code eq-op" title={`Указан у ${item.count} контактов в БД.ТЕР`}>

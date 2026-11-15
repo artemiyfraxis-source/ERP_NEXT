@@ -1,4 +1,4 @@
-import type { EquipmentRole, TechOperationRecord } from "./api";
+import type { CrimpSeries, EquipmentRole, TechOperationRecord } from "./api";
 import { formatDay } from "./format";
 
 export function instrumentFieldValue(key: string, passport: TechOperationRecord["instrument_passport"], bound = false): string | undefined {
@@ -155,6 +155,42 @@ export function parseTargets(value: string): Array<{ kind: string; key: string; 
     const items = JSON.parse(value || "[]") as Array<Record<string, string>>;
     return Array.isArray(items) ? items.filter((item) => item?.key).map((item) => ({ kind: item.kind ?? "", key: item.key, label: item.label ?? item.key })) : [];
   } catch { return []; }
+}
+
+/** One display/export line per series/maker. Confirmed duplicates win without confirming other articles. */
+export function crimpLines(model: EquipmentModel, byCode: Record<string, CrimpSeries[]>) {
+  const groups = new Map<string, { series: string; maker: string; articles: Map<string, boolean>; doubtful: boolean }>();
+  const normalized = (text: string) => text.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+  for (const item of model.items) {
+    for (const link of byCode[pick(item.fields, CODE_KEY).toUpperCase()] ?? []) {
+      const key = JSON.stringify([link.series, link.maker]);
+      const group = groups.get(key) ?? { series: link.series, maker: link.maker, articles: new Map<string, boolean>(), doubtful: true };
+      group.doubtful &&= link.doubtful;
+      for (const article of link.articles) group.articles.set(article, (group.articles.get(article) ?? true) && link.doubtful);
+      groups.set(key, group);
+    }
+  }
+  const covered = new Set<string>();
+  const lines = [...groups.values()].map((group) => {
+    for (const series of [group.series, ...group.series.split(/[,;]/)].map((value) => value.trim()).filter(Boolean)) {
+      covered.add(normalized(series));
+      covered.add(normalized([group.maker, series].filter(Boolean).join(" ")));
+    }
+    const articles = [...group.articles].sort(([a], [b]) => a.localeCompare(b));
+    return [
+      ...(group.series ? [{ text: group.series + (articles.length ? ": " : group.doubtful ? "?" : ""), doubtful: !articles.length && group.doubtful }] : []),
+      ...articles.map(([article, doubtful], index) => ({ text: `${index ? ", " : ""}${article}${doubtful ? "?" : ""}`, doubtful })),
+    ];
+  });
+  const manual = new Set<string>();
+  for (const item of model.items) for (const target of parseTargets(item.fields[TARGETS_KEY])) {
+    const label = target.label.trim() || target.key;
+    const key = normalized(label);
+    if (manual.has(key) || (target.kind === "series" && covered.has(key))) continue;
+    manual.add(key);
+    lines.push([{ text: label, doubtful: false }]);
+  }
+  return lines.filter((line) => line.length);
 }
 
 /** Tokens of a БД.ТЕР «Аппликатор» cell: a code is a whole token (S1 is not S10); a word like «возможно» makes the
