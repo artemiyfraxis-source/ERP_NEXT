@@ -15,7 +15,8 @@ exporter builds them — `sheet_snapshot_records` → `import_supplymap_snapshot
 Everything goes through one `replace_snapshot` transaction: the loaded tabs are replaced whole, a tab whose file is
 absent (only СПР.КАБ may be) stays as it is. Records edited or created in ERP (`edited_in_erp`) are never overwritten
 or deleted (as in SUPPLYMAP, where the base sheet is the single source and portal edits persist); the report counts
-the mirror rows skipped because of that. The snapshot's source date is the mirror's latest `pulledAt`
+the mirror rows skipped because of that. The deletion audit also prevents restoring rows deleted in ERP;
+both dry-run and apply list the skipped deleted source rows. The snapshot's source date is the mirror's latest `pulledAt`
 (`_meta.json`). Exit code: 0 — done; 2 — a file is missing, unreadable or not a valid table, or ERP_DATABASE_URL is
 not set.
 
@@ -42,8 +43,8 @@ from uuid import UUID
 
 from app.shared.identity import Actor
 
-from .application import ReplaceSnapshotCommand, TechRecordInput, UnitOfWork, replace_snapshot_detailed
-from .domain import ReferenceValidationError, TechOperationTab, tab_family
+from .application import ReplaceSnapshotCommand, TechRecordInput, UnitOfWork, replace_snapshot_report
+from .domain import ReferenceValidationError, TechOperationTab, family_root, tab_family
 from .wire_makers import split_fields
 from .technology import (
     TER_CARD_KEYS, KAB_TABLES, SHEET_TABLES, SPR_KAB_SHEET, TECH_SHEETS, TECH_SNAPSHOT_SCHEMA_VERSION, import_sheet_table,
@@ -72,6 +73,7 @@ class MirrorLoadResult:
     written: bool
     source_updated_at: datetime | None = None
     skipped_edited: dict[str, int] | None = None  # tab → mirror rows not applied because edited in ERP
+    skipped_deleted: dict[str, list[str]] | None = None  # sheet family → deleted mirror row labels
 
 
 BUNDLED_MIRROR = Path(__file__).resolve().parents[3] / "data" / "reference-mirror"
@@ -206,21 +208,25 @@ def load_mirror(source: Path, uow: UnitOfWork, *, dry_run: bool, now: datetime) 
                    for tab in tables}
     counts = {tab: len(records) for tab, records in tables.items()}
     source_updated_at = mirror.source_updated_at or (metadata["source_updated_at"] if metadata else None)
-    skipped: dict[str, int] = {}
-    if not dry_run:
-        try:
-            _count, skipped = replace_snapshot_detailed(ReplaceSnapshotCommand(
-                schema_version=TECH_SNAPSHOT_SCHEMA_VERSION,
-                source_updated_at=source_updated_at,
-                records=tuple(record for records in tables.values() for record in records),
-                actor=ACTOR, now=now,
-                declared_tabs=tuple(TechOperationTab(tab) for tab in tables),
-                keep_other_tabs=True, preserve_erp_edits=True,
-            ), uow)
-        except ReferenceValidationError as error:
-            raise MirrorLoadError(str(error)) from error
+    try:
+        result = replace_snapshot_report(ReplaceSnapshotCommand(
+            schema_version=TECH_SNAPSHOT_SCHEMA_VERSION,
+            source_updated_at=source_updated_at,
+            records=tuple(record for records in tables.values() for record in records),
+            actor=ACTOR, now=now,
+            declared_tabs=tuple(TechOperationTab(tab) for tab in tables),
+            keep_other_tabs=True, preserve_erp_edits=True,
+        ), uow, dry_run=dry_run)
+    except ReferenceValidationError as error:
+        raise MirrorLoadError(str(error)) from error
+    deleted: dict[str, list[str]] = {}
+    deleted_sources = {(family_root(record.tab).value, record.mirror_key): record.display_text
+                       for record in result.skipped_deleted}
+    for (tab, _key), label in deleted_sources.items():
+        deleted.setdefault(tab, []).append(label)
     return MirrorLoadResult(counts=counts, current=current, written=not dry_run, source_updated_at=source_updated_at,
-                            skipped_edited={tab: skipped.get(tab, 0) for tab in tables})
+                            skipped_edited={tab: result.skipped_edited.get(tab, 0) for tab in tables},
+                            skipped_deleted=deleted)
 
 
 def format_report(result: MirrorLoadResult) -> str:
@@ -232,6 +238,8 @@ def format_report(result: MirrorLoadResult) -> str:
                      + (f", пропущено (правлено в ERP): {result.skipped_edited[tab]}" if result.skipped_edited and result.written else ""))
     if result.skipped_edited and result.written:
         lines.append(f"  всего пропущено, правлено в ERP: {sum(result.skipped_edited.values())}")
+    for tab, labels in (result.skipped_deleted or {}).items():
+        lines.extend(f"  {TAB_LABELS[tab]}: {label} — удалено в ERP — пропущено" for label in labels)
     return "\n".join(lines)
 
 
