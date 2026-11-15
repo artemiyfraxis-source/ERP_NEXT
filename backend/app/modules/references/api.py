@@ -28,7 +28,7 @@ from .application import (
 )
 from .application import MoveRecordCommand, family_member, move_record
 from .lugs import lug_columns, ter_kind_of
-from .crimps import change_target, change_terminal, crimp_codes, crimp_overview
+from .crimps import change_target, change_terminal, crimp_codes, crimp_overview, crimp_targets
 from .equipment import EXTRA_KEYS, next_instance_inventory, next_model_inventory, next_row_number
 from .application import LinkStockCommand, link_stock_article, stock_links
 from .application import (
@@ -1017,6 +1017,14 @@ def crimp_code_list(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
 ) -> dict:
     return _run_edit(lambda: crimp_codes(uow_factory()))
+
+
+@router.get("/tech-operations/crimp-targets")
+def crimp_target_list(
+    _principal: Annotated[Principal, Depends(references_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    return _run_edit(lambda: crimp_targets(uow_factory()))
 
 
 @router.get("/tech-operations/{record_id}/crimps")
