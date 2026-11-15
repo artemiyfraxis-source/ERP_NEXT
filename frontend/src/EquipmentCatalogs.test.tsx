@@ -142,7 +142,7 @@ it("edits a linked matrix from another catalog, including its historical name fi
   });
   render(<ReferencesPage principal={principal} initialTab="ob_tools" />);
   expect(await screen.findByRole("columnheader", { name: "Код" })).toBeInTheDocument();
-  expect(screen.getByRole("columnheader", { name: "Обжимает (серии разъёмов)" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "Обжимает (серии · артикулы контактов)" })).toBeInTheDocument();
   expect(screen.getByText("M8")).toBeInTheDocument();
   expect(screen.getByText("JST ZH")).toBeInTheDocument();
   fireEvent.click(await screen.findByText("ОБ.1"));
