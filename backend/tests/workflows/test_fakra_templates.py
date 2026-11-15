@@ -14,10 +14,10 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.modules.references.application import CreateRecordCommand, create_record
-from app.modules.references.domain import TechOperationTab
+from app.modules.references.domain import TechOperationRecord, TechOperationTab
 from app.modules.references.infrastructure import (
     EquipmentModelRow, EquipmentOperationLinkRow, EquipmentTemplateToolRow, SqlAlchemyReferencesUnitOfWork,
-    TechOperationRecordRow,
+    SqlAlchemyTechOperationRepository, TechOperationRecordRow,
 )
 from app.modules.techcards.application import SeedErpTemplatesCommand, seed_erp_templates
 from app.modules.techcards.etk_builder import _resolve_card
@@ -192,10 +192,11 @@ def _unit(sessions, inventory="ОБ.010", role="operational"):
         model = EquipmentModelRow(id=uuid4(), name="Стриппер", article="EW-1165", maker="", role=role)
         session.add(model)
         session.flush()
-        row = TechOperationRecordRow(id=uuid4(), tab="ob", display_text="EW-1165/Стриппер", normalized_search="stripper",
-                                    source_sheet="", sort_key="1", fields={"Инв. номер": inventory,
-                                    "Для базы": "EW-1165/Стриппер"}, equipment_model_id=model.id)
-        session.add(row)
+        # A live unit lives in a БД.ОБ catalog (0180); tech_operation_records tab='ob' rows are frozen history.
+        SqlAlchemyTechOperationRepository(session)._put(TechOperationRecord(
+            id=uuid4(), tab=TechOperationTab.EQUIPMENT, display_text="EW-1165/Стриппер", normalized_search="stripper",
+            source_sheet="", sort_key="1", fields={"Тип": "Оборудование", "Инв. номер": inventory, "Для базы": "EW-1165/Стриппер"},
+            equipment_model_id=model.id))
         session.commit()
         return model.id
 

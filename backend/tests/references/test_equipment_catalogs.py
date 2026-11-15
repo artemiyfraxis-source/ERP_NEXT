@@ -495,3 +495,52 @@ def test_deleted_live_unit_does_not_leave_archive_only_models_in_live_reports(cu
         session.flush()
         assert str(model_id) in {model["id"] for model in equipment.report()["models_without_units"]}
     engine.dispose()
+
+def test_cutover_keeps_operation_machine_links_and_fakra_inventory_resolves_to_the_linked_model(cutover_db):
+    """БД.ОП «Машина» links to the models of ОБ.010 / ОБ.071.1 / ОБ.070.1 (FAKRA 708К., applied 15.11) survive 0180
+    row for row, and the live catalogs resolve each inventory number to that very model."""
+    import importlib.util
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    path, config, ids = cutover_db
+    numbers = {"ОБ.010": "STRIP_FAKRA_ST", "ОБ.071.1": "SDR_FAKRA_BH_PIN", "ОБ.070.1": "HEAT_FAKRA_BH_TTK"}
+    expected = {}
+    with sqlite3.connect(path) as connection:
+        for position, (number, code) in enumerate(numbers.items()):
+            unit = _unit(connection, number)
+            model = connection.execute("SELECT equipment_model_id FROM tech_operation_records WHERE id=?",
+                                       (unit.hex,)).fetchone()[0]
+            operation = uuid4()
+            connection.execute(
+                "INSERT INTO tech_operation_records (id, tab, display_text, normalized_search, source_sheet, sort_key, fields)"
+                " VALUES (?, 'op', ?, '', 'БД.ОП', ?, ?)",
+                (operation.hex, code, code, json.dumps({"opNumber": code, "Машина": "Автомат резки"}, ensure_ascii=False)))
+            connection.execute("INSERT INTO equipment_operation_links VALUES (?, 'Машина', 0, ?)", (operation.hex, model))
+            connection.execute("INSERT INTO equipment_template_tools VALUES (?, 0, 'Станок', ?, 1, ?)",
+                               (f"FAKRA-{position}", number, model))
+            expected[number] = (unit.hex, model)
+        links = sorted(connection.execute("SELECT * FROM equipment_operation_links").fetchall(), key=repr)
+        tools = sorted(connection.execute("SELECT * FROM equipment_template_tools").fetchall(), key=repr)
+        models = sorted(connection.execute("SELECT * FROM equipment_models").fetchall(), key=repr)
+    command.upgrade(config, "head")
+    with sqlite3.connect(path) as connection:
+        assert sorted(connection.execute("SELECT * FROM equipment_operation_links").fetchall(), key=repr) == links
+        assert sorted(connection.execute("SELECT * FROM equipment_template_tools").fetchall(), key=repr) == tools
+        assert sorted(connection.execute("SELECT * FROM equipment_models").fetchall(), key=repr) == models
+        for unit, model in expected.values():
+            assert connection.execute("SELECT model_id, catalog FROM equipment_units WHERE id=?", (unit,)).fetchone() == (model, "ob")
+            assert connection.execute("SELECT equipment_model_id FROM equipment_machines WHERE id=?", (unit,)).fetchone()[0] == model
+
+    folder = Path(__file__).resolve().parents[3] / "docs/data/operation-templates-fakra-1114"
+    spec = importlib.util.spec_from_file_location("fakra_apply_cutover", folder / "apply_templates.py")
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with Session(engine) as session:
+            for number, (unit, model) in expected.items():
+                found = script._inventory(SimpleNamespace(session=session), number)
+                assert (found.id.hex, found.equipment_model_id.hex) == (unit, model)
+    finally:
+        engine.dispose()
