@@ -12,16 +12,31 @@ it("combines codes of all units while retaining uncertainty of distinct articles
   ]);
   expect(crimpLines(model, {
     S1: [{ series: "XHP", maker: "JST", articles: ["T1", "T2"], doubtful: true }],
-    S2: [{ series: "XHP", maker: "JST", articles: ["T1"], doubtful: false }],
-  })).toEqual([[{ text: "XHP: ", doubtful: false }, { text: "T1", doubtful: false }, { text: ", T2?", doubtful: true }]]);
+    S2: [{ series: "Other", maker: "Other", articles: ["T10", "T1"], doubtful: false }],
+  })).toEqual([{ text: "T1", doubtful: false }, { text: "T2?", doubtful: true }, { text: "T10", doubtful: false }]);
 });
 
-it("shows an article without a series, and a doubtful series without an article", () => {
+it("shows only articles when some linked series have no articles", () => {
   const [model] = groupModels([unit("one", { Наменование: "Пресс", "Код в базе терминалов": "S1" })]);
   expect(crimpLines(model, { S1: [
     { series: "", maker: "", articles: ["T1"], doubtful: false },
     { series: "XHP", maker: "JST", articles: [], doubtful: true },
-  ] })).toEqual([[{ text: "T1", doubtful: false }], [{ text: "XHP?", doubtful: true }]]);
+  ] })).toEqual([{ text: "T1", doubtful: false }]);
+});
+
+it("falls back to linked series and deduplicated manual labels when articles are absent", () => {
+  const [model] = groupModels([unit("one", { Наменование: "Пресс", "Код в базе терминалов": "S1",
+    "Обжимает (серии разъёмов)": JSON.stringify([
+      { kind: "series", key: "xhp", label: "JST XHP" },
+      { kind: "series", key: "other", label: "Other" },
+      { kind: "series", key: "other", label: "Other" },
+    ]),
+  })]);
+  expect(crimpLines(model, { S1: [
+    { series: "XHP", maker: "JST", articles: [], doubtful: true },
+    { series: "ZH", maker: "JST", articles: [" "], doubtful: true },
+    { series: "ZH", maker: "JST", articles: [], doubtful: false },
+  ] })).toEqual([{ text: "XHP?", doubtful: true }, { text: "ZH", doubtful: false }, { text: "Other", doubtful: false }]);
 });
 
 describe("equipment model", () => {

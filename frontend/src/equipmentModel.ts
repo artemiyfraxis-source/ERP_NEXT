@@ -157,40 +157,38 @@ export function parseTargets(value: string): Array<{ kind: string; key: string; 
   } catch { return []; }
 }
 
-/** One display/export line per series/maker. Confirmed duplicates win without confirming other articles. */
+/** Contact articles across all linked series; series/manual labels only when there are no articles. */
 export function crimpLines(model: EquipmentModel, byCode: Record<string, CrimpSeries[]>) {
-  const groups = new Map<string, { series: string; maker: string; articles: Map<string, boolean>; doubtful: boolean }>();
+  const articles = new Map<string, boolean>();
+  const series = new Map<string, boolean>();
+  const covered = new Set<string>();
   const normalized = (text: string) => text.trim().replace(/\s+/g, " ").toLocaleLowerCase();
   for (const item of model.items) {
     for (const link of byCode[pick(item.fields, CODE_KEY).toUpperCase()] ?? []) {
-      const key = JSON.stringify([link.series, link.maker]);
-      const group = groups.get(key) ?? { series: link.series, maker: link.maker, articles: new Map<string, boolean>(), doubtful: true };
-      group.doubtful &&= link.doubtful;
-      for (const article of link.articles) group.articles.set(article, (group.articles.get(article) ?? true) && link.doubtful);
-      groups.set(key, group);
+      for (const raw of link.articles) {
+        const article = raw.trim();
+        if (article) articles.set(article, (articles.get(article) ?? true) && link.doubtful);
+      }
+      const label = link.series.trim();
+      if (label) series.set(label, (series.get(label) ?? true) && link.doubtful);
+      for (const name of [label, ...label.split(/[,;]/)].map((value) => value.trim()).filter(Boolean)) {
+        covered.add(normalized(name));
+        covered.add(normalized([link.maker, name].filter(Boolean).join(" ")));
+      }
     }
   }
-  const covered = new Set<string>();
-  const lines = [...groups.values()].map((group) => {
-    for (const series of [group.series, ...group.series.split(/[,;]/)].map((value) => value.trim()).filter(Boolean)) {
-      covered.add(normalized(series));
-      covered.add(normalized([group.maker, series].filter(Boolean).join(" ")));
-    }
-    const articles = [...group.articles].sort(([a], [b]) => a.localeCompare(b));
-    return [
-      ...(group.series ? [{ text: group.series + (articles.length ? ": " : group.doubtful ? "?" : ""), doubtful: !articles.length && group.doubtful }] : []),
-      ...articles.map(([article, doubtful], index) => ({ text: `${index ? ", " : ""}${article}${doubtful ? "?" : ""}`, doubtful })),
-    ];
-  });
+  const parts = (entries: Map<string, boolean>) => [...entries].map(([text, doubtful]) => ({ text: text + (doubtful ? "?" : ""), doubtful }));
+  if (articles.size) return parts(new Map([...articles].sort(([a], [b]) => a.localeCompare(b, "ru", { numeric: true }))));
+  const lines = parts(series);
   const manual = new Set<string>();
   for (const item of model.items) for (const target of parseTargets(item.fields[TARGETS_KEY])) {
     const label = target.label.trim() || target.key;
     const key = normalized(label);
     if (manual.has(key) || (target.kind === "series" && covered.has(key))) continue;
     manual.add(key);
-    lines.push([{ text: label, doubtful: false }]);
+    lines.push({ text: label, doubtful: false });
   }
-  return lines.filter((line) => line.length);
+  return lines;
 }
 
 /** Tokens of a БД.ТЕР «Аппликатор» cell: a code is a whole token (S1 is not S10); a word like «возможно» makes the

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { referencesApi, type TechOperationRecord } from "./api";
+import { referencesApi, type CrimpSeries, type TechOperationRecord } from "./api";
 import { EquipmentCards } from "./EquipmentCards";
 import { TARGETS_KEY } from "./equipmentModel";
 import type { EquipmentTab } from "./referenceTabs";
@@ -43,11 +43,11 @@ it("keeps automatic additional units for measuring instruments", async () => {
   await waitFor(() => expect(referencesApi.crimpCodes).toHaveBeenCalled());
 });
 
-function capabilities(tab: EquipmentTab, code = "A14", fail = false, fieldColumns: string[] = [TARGETS_KEY]) {
+function capabilities(tab: EquipmentTab, code = "A14", fail = false, fieldColumns: string[] = [TARGETS_KEY], links?: CrimpSeries[]) {
   vi.spyOn(referencesApi, "crimpCodes").mockResolvedValue({ owners: {}, missing: [] });
   vi.spyOn(referencesApi, "equipmentModels").mockResolvedValue({ models: [] });
   vi.spyOn(referencesApi, "equipmentLinksReport").mockRejectedValue(new Error("unavailable"));
-  vi.mocked(referencesApi.crimpTargets).mockResolvedValue({ by_code: { A14: [
+  vi.mocked(referencesApi.crimpTargets).mockResolvedValue({ by_code: { A14: links ?? [
     { series: "SHR, SHD", maker: "JST", articles: ["SSH-003GA-P0.2"], doubtful: false },
     { series: "SHR, SHD", maker: "JST", articles: ["SSH-004"], doubtful: true },
   ] } });
@@ -68,33 +68,73 @@ function capabilities(tab: EquipmentTab, code = "A14", fail = false, fieldColumn
     onEdit={vi.fn()} onCreate={vi.fn()} onChanged={vi.fn()} onNotice={vi.fn()} onError={vi.fn()} />);
 }
 
-it.each(["ob_applicators", "ob_dies", "ob_tools"] as const)("shows linked contacts and deduplicated manual series on %s", async (tab) => {
+it.each(["ob_applicators", "ob_dies", "ob_tools"] as const)("shows only linked contact articles on %s", async (tab) => {
   capabilities(tab);
   const contact = await screen.findByText("SSH-003GA-P0.2");
   const cell = contact.closest("td")!;
-  expect(cell).toHaveTextContent("SHR, SHD: SSH-003GA-P0.2, SSH-004?GHRSH");
+  expect(cell).toHaveTextContent("SSH-003GA-P0.2, SSH-004?");
   expect(within(cell).getByTitle("связь под вопросом в БД.ТЕР")).toHaveTextContent("SSH-004?");
-  expect(within(cell).getAllByText("GHR")).toHaveLength(1);
+  expect(within(cell).queryByText("GHR")).not.toBeInTheDocument();
   expect(within(cell).queryByText("JST SHR, SHD")).not.toBeInTheDocument();
   expect(within(cell).queryByText("JST SHR")).not.toBeInTheDocument();
   expect(within(cell).queryByText("SHD")).not.toBeInTheDocument();
-  expect(within(cell).getByText("SH")).toBeInTheDocument();
-  expect(screen.getAllByRole("columnheader", { name: /Обжимает/ })).toHaveLength(1);
-  expect(screen.getByRole("columnheader", { name: tab === "ob_applicators" ? /^Артикул аппликатора$/ : /^Артикул$/ })).toBeInTheDocument();
+  expect(within(cell).queryByText("SH")).not.toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "Обжимает (артикулы контактов)" })).toBeInTheDocument();
+  if (tab === "ob_applicators") {
+    expect(screen.queryByRole("columnheader", { name: /Артикул/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+    expect(screen.queryByRole("checkbox", { name: /^Артикул/ })).not.toBeInTheDocument();
+  } else expect(screen.getByRole("columnheader", { name: /^Артикул$/ })).toBeInTheDocument();
 });
 
-it("exports the displayed contacts, uncertainty markers and manual series", async () => {
+it("exports the full contact list including collapsed articles and uncertainty markers", async () => {
   let blob: Blob | null = null;
   vi.spyOn(URL, "createObjectURL").mockImplementation((value) => { blob = value as Blob; return "blob:x"; });
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
-  capabilities("ob_applicators");
-  await screen.findByText("SSH-003GA-P0.2");
+  capabilities("ob_applicators", "A14", false, [TARGETS_KEY], [
+    { series: "SHR", maker: "JST", articles: ["T10", "T1", "T2", "T3", "T4", "T5", "T6"], doubtful: true },
+    { series: "SHD", maker: "JST", articles: ["T1"], doubtful: false },
+  ]);
+  await screen.findByText("T1");
+  expect(screen.queryByText("T10?")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Excel" }));
   const text = new TextDecoder("utf-16le").decode(await blob!.arrayBuffer());
-  expect(text).toContain("Обжимает (серии · артикулы контактов)");
-  expect(text).toContain("SHR, SHD: SSH-003GA-P0.2, SSH-004? GHR");
+  expect(text).toContain("Обжимает (артикулы контактов)");
+  expect(text).toContain("T1, T2?, T3?, T4?, T5?, T6?, T10?");
   expect(text).not.toContain("JST SHR, SHD");
+  expect(text).not.toContain("ещё");
+  expect(text).not.toContain("свернуть");
+  expect(text).not.toContain("APLMK");
+});
+
+it("expands and collapses articles in place without opening the card", async () => {
+  capabilities("ob_applicators", "A14", false, [TARGETS_KEY], [
+    { series: "SHR", maker: "JST", articles: Array.from({ length: 8 }, (_, index) => `T${index + 1}`), doubtful: false },
+  ]);
+  const more = await screen.findByRole("button", { name: "ещё 2" });
+  expect(more).toHaveAttribute("aria-expanded", "false");
+  more.focus();
+  expect(more).toHaveFocus();
+  expect(screen.queryByText("T7")).not.toBeInTheDocument();
+  fireEvent.click(more);
+  expect(screen.getByText("T7")).toBeInTheDocument();
+  expect(screen.getByText("T8")).toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  const less = screen.getByRole("button", { name: "свернуть" });
+  expect(less).toHaveAttribute("aria-expanded", "true");
+  fireEvent.click(less);
+  expect(screen.queryByText("T7")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "ещё 2" })).toHaveFocus();
+});
+
+it("shows all six articles without an expansion button", async () => {
+  capabilities("ob_applicators", "A14", false, [TARGETS_KEY], [
+    { series: "SHR", maker: "JST", articles: ["T6", "T5", "T4", "T3", "T2", "T1"], doubtful: false },
+  ]);
+  const last = await screen.findByText("T6");
+  expect(last.closest("td")).toHaveTextContent("T1, T2, T3, T4, T5, T6");
+  expect(screen.queryByRole("button", { name: /ещё \d/ })).not.toBeInTheDocument();
 });
 
 it("retains manual targets for a tool without a code", async () => {
