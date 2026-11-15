@@ -23,7 +23,7 @@ class RecipeVersionRow(Base):
     recipe_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     version: Mapped[int] = mapped_column(Integer, primary_key=True)
     # The БД.ОБ unit (0172): renumbering it keeps the recipe, a unit with recipes can't be deleted.
-    machine_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("tech_operation_records.id", ondelete="RESTRICT",
+    machine_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("equipment_units.id", ondelete="RESTRICT",
                                                               name="fk_setup_recipe_unit"), nullable=False)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     geometry: Mapped[list] = mapped_column(JSON, nullable=False)

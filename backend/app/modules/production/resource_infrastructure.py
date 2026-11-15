@@ -18,7 +18,7 @@ from .resource_claims import ResourceConflict, ResourceKey, ResourceKind, Resour
 
 # A machine resource is a БД.ОБ unit (0172): its key is the unit's canonical UUID and `machine_id` the same unit as a
 # foreign key, so a held or planned unit can't be deleted and renumbering it changes nothing here.
-UNIT_TABLE = "tech_operation_records.id"
+UNIT_TABLE = "equipment_units.id"
 MACHINE_UNIT_CHECK = ("(resource_kind = 'machine' AND machine_id IS NOT NULL)"
                       " OR (resource_kind <> 'machine' AND machine_id IS NULL)")
 

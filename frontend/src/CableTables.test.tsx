@@ -125,7 +125,8 @@ it("groups the tabs by what the shop picks from and shows a count on every chip"
     tabs: [...group.querySelectorAll("button")].map((button) => button.firstChild?.textContent),
   }));
   expect(groups).toEqual([
-    { title: "Техкарты", tabs: ["Операции", "Оборудование"] },
+    // БД.ОБ split into six own catalogs (PR #844)
+    { title: "Техкарты", tabs: ["Операции", "Оборудование", "Средства измерений", "Обеспечивающее", "Аппликаторы", "Матрицы", "Инструмент"] },
     // owner 26.10.2026: «Наконечники» — свой список БД.ТЕР сразу за «Терминалами»
     { title: "Разъёмы и контакты", tabs: ["Разъёмы", "Коаксиальные разъёмы", "Терминалы", "Наконечники"] },
     { title: "Кабели и провода", tabs: ["Коаксиальные кабели", "Монтажные провода", "Многожильные кабели", "Кабели Ethernet"] },

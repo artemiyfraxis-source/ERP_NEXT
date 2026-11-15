@@ -28,7 +28,7 @@ from app.modules.references.domain import TechOperationTab
 from app.modules.references.equipment import INV_KEY, field, inv_key
 from app.modules.references.equipment_identity import unit_base
 from app.modules.references.infrastructure import (
-    EquipmentModelRow, EquipmentOperationLinkRow, EquipmentTemplateToolRow, TechOperationRecordRow,
+    EquipmentModelRow, EquipmentOperationLinkRow, EquipmentRecordRow, EquipmentTemplateToolRow,
 )
 from app.modules.references.technology import schema_columns, sync_schema_fields
 from app.modules.techcards.application import ERP_TEMPLATE_AUTHOR, create_operation_templates_in, new_operation
@@ -141,8 +141,9 @@ def _save_fields(uow, row, changes):
 
 
 def _inventory(uow, number):
-    units = [row for row in uow.session.scalars(select(TechOperationRecordRow).where(
-        TechOperationRecordRow.tab == "ob")) if inv_key(field(row.fields, INV_KEY, "inventoryNumber")) == inv_key(number)]
+    # Live units only: the six БД.ОБ catalogs (0180). Frozen tech_operation_records tab='ob' rows are history.
+    units = [row for row in uow.session.scalars(select(EquipmentRecordRow))
+             if inv_key(field(row.fields, INV_KEY, "inventoryNumber")) == inv_key(number)]
     if len(units) != 1:
         raise ValueError(f"Инв. номер {number}: нужно ровно одно оборудование, найдено {len(units)}")
     unit = units[0]

@@ -4,12 +4,13 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
+from app.shared.persistence import create_schema
 
 from app.modules.equipment_setup.application import IssuedSetupOperation, SetupOperationUnavailable
 from app.modules.equipment_setup.domain import IssuedOperationRef
 from app.modules.identity.infrastructure import IdentityUserRow
-from app.modules.references.domain import TechOperationTab
-from app.modules.references.infrastructure import EquipmentModelRow, TechOperationRecordRow
+from app.modules.references.domain import TechOperationTab, TechOperationRecord
+from app.modules.references.infrastructure import EquipmentModelRow, EquipmentRecordRow, SqlAlchemyTechOperationRepository
 from app.modules.techcards.infrastructure import RefreshRequestRow
 from app.modules.production.resource_claims import ResourceConflict
 from app.workflows.equipment_setup_context import SqlAlchemySetupContext
@@ -27,7 +28,7 @@ CATALOG = (MachineUnit(U2, "ОБ.027.2", "Автомат резки", "EW", "Ц�
 
 def _record(db, number, site, **fields):
     identifier = uuid4()
-    db.add(TechOperationRecordRow(id=identifier, tab=TechOperationTab.EQUIPMENT.value, display_text="Станок",
+    SqlAlchemyTechOperationRepository(db)._put(TechOperationRecord(id=identifier, tab=TechOperationTab.EQUIPMENT, display_text="Станок",
         normalized_search="станок", source_sheet="test", sort_key=number, fields={"Тип": "Оборудование",
         "Инв. номер": number, "Наименование": "Станок", "Расположение": site, **fields}))
     db.flush()
@@ -37,8 +38,7 @@ def _record(db, number, site, **fields):
 @pytest.fixture
 def db():
     engine = create_engine("sqlite://")
-    for row in (IdentityUserRow, EquipmentModelRow, TechOperationRecordRow, RefreshRequestRow):
-        row.__table__.create(engine)
+    create_schema(engine)
     with Session(engine) as session:
         yield session
     engine.dispose()
@@ -235,7 +235,7 @@ def test_unknown_model_or_family_is_a_conflict_not_manual_work(db):
 
 def test_catalog_reads_the_model_and_role_of_each_unit(db):
     unit = _record(db, "ОБ.060.1", "ЦАР", **{"Наименование": "Компрессор"})
-    row = db.get(TechOperationRecordRow, unit)
+    row = db.get(EquipmentRecordRow, unit)
     db.get(EquipmentModelRow, row.equipment_model_id).role = "supporting"
     db.flush()
     [found] = SqlAlchemyProductionResourceContext(db).catalog()

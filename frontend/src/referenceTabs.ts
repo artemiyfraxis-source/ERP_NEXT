@@ -4,6 +4,16 @@ import { MATERIAL_TABS, type MaterialTab } from "./materialSections";
 /* The tabs of «База данных», one list: the screen (ReferencesPage) draws its tab rows from it and «Поиск по ERP» offers
    each tab as a jump. A light module of its own, so the search does not pull in the whole screen. */
 
+export const EQUIPMENT_TABS = {
+  ob: "Оборудование", ob_measuring: "Средства измерений", ob_support: "Обеспечивающее",
+  ob_applicators: "Аппликаторы", ob_dies: "Матрицы", ob_tools: "Инструмент",
+} as const;
+export type EquipmentTab = keyof typeof EQUIPMENT_TABS;
+export function isEquipmentTab(tab: string | null): tab is EquipmentTab {
+  return tab !== null && Object.hasOwn(EQUIPMENT_TABS, tab);
+}
+export const EQUIPMENT_TYPES: Record<EquipmentTab, string> = { ...EQUIPMENT_TABS, ob_support: "Обеспечивающее оборудование" };
+
 export type MapTab = "suppliers" | "countries";
 export type CableTab = "cab_coax" | "cab_wire" | "cab_multi" | "cab_lan";
 export type DbTab = "templates" | "connectors" | "gauges" | "cov" | "lug" | TechOperationTab | MapTab | CableTab | MaterialTab;
@@ -16,7 +26,7 @@ export const REFERENCE_TAB_GROUPS: ReadonlyArray<{ title: string; tabs: TabDef[]
   // (one card per code, template sheet + the БД.ОП row); БД.ОБ is its own card tab.
   { title: "Техкарты", tabs: [
     { id: "templates", label: "Операции", words: "шаблоны техкарт карточки операций" },
-    { id: "ob", label: "Оборудование", base: "ob", words: "станки инструмент аппликаторы" },
+    ...Object.entries(EQUIPMENT_TABS).map(([id, label]) => ({ id: id as EquipmentTab, label, base: id })),
   ] },
   { title: "Разъёмы и контакты", tabs: [
     { id: "connectors", label: "Разъёмы", words: "серии каталог разъёмов" },

@@ -59,7 +59,7 @@ def test_device_migration_closes_old_jobs_and_enforces_device_keys(tmp_path, mon
         db.execute("INSERT INTO warehouse_scan_jobs(id,status,requested_by,created_at) "
                    "VALUES ('untargeted-pending','pending','Operator','2026-11-12')")
         before = {row[0]: row for row in db.execute("SELECT * FROM warehouse_scan_jobs")}
-    command.upgrade(config, "head")
+    command.upgrade(config, "0177_agent_devices")
     with sqlite3.connect(database) as db:
         db.execute("PRAGMA foreign_keys=ON")
         columns = [column[1] for column in db.execute("PRAGMA table_info(warehouse_scan_jobs)")]

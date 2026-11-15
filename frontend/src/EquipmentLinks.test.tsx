@@ -22,7 +22,7 @@ const emptyReport = {
 
 function equipmentApi(calls: Call[], report: unknown = emptyReport) {
   const unit = (id: string, inv: string, name: string, model: string, role: string, extra: Record<string, unknown> = {}) => ({
-    id, tab: "ob", display_text: name, source_sheet: "БД.ОБ", equipment_model_id: model, equipment_role: role,
+    id, tab: role === "supporting" ? "ob_support" : "ob", display_text: name, source_sheet: "БД.ОБ", equipment_model_id: model, equipment_role: role,
     fields: { "Тип": "Оборудование", "Инв. номер": inv, "Наменование": name }, ...extra,
   });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -36,7 +36,8 @@ function equipmentApi(calls: Call[], report: unknown = emptyReport) {
     }
     if (path === "/api/references/equipment-links/report") return json(report);
     if (path.includes("tab=ob")) {
-      return json({ metadata: null, records: [unit("u1", "ОБ.010", "Станок", "m1", "operational"), unit("c1", "ОБ.200", "Компрессор", "m2", "supporting", { serves_unit_ids: ["u1"] })] });
+      const records = [unit("u1", "ОБ.010", "Станок", "m1", "operational"), unit("c1", "ОБ.200", "Компрессор", "m2", "supporting", { serves_unit_ids: ["u1"] })];
+      return json({ metadata: null, records: path.includes("family=true") ? records : records.filter((row) => row.tab === new URL(path, "http://localhost").searchParams.get("tab")) });
     }
     if (path.includes("tab=op")) {
       return json({ metadata: null, records: [{ id: "o1", tab: "op", display_text: "o", source_sheet: "БД.ОП",
@@ -58,9 +59,9 @@ it("БД.ОБ: the card shows the kind, a supporting unit lists what it serves, 
   expect(within(card).getByText("Обслуживают")).toBeInTheDocument();
   fireEvent.click(within(card).getByRole("button", { name: "Закрыть карточку" }));
 
-  fireEvent.click(screen.getByRole("tab", { name: /Обеспечивающее/ }));
-  expect(screen.queryByText("ОБ.010")).toBeNull();
-  fireEvent.click(screen.getByText("ОБ.200"));
+  fireEvent.click(screen.getByRole("button", { name: /^Обеспечивающее$/ }));
+  await waitFor(() => expect(screen.queryByText("ОБ.010")).toBeNull());
+  fireEvent.click(await screen.findByText("ОБ.200"));
   card = screen.getByRole("dialog", { name: "Карточка оборудования" });
   expect(await within(card).findByText("не подтверждён")).toBeInTheDocument();
   expect(within(card).getByRole("heading", { name: "Обслуживает" })).toBeInTheDocument();
@@ -76,7 +77,8 @@ it("БД.ОБ: the kind and «Обслуживает» are written by id", async
   await waitFor(() => expect(calls).toContainEqual({ path: "/api/references/equipment-models/m1/role", method: "PUT", body: { role: "supporting" } }));
   fireEvent.click(within(screen.getByRole("dialog", { name: "Карточка оборудования" })).getByRole("button", { name: "Закрыть карточку" }));
 
-  fireEvent.click(screen.getByText("ОБ.200"));
+  fireEvent.click(screen.getByRole("button", { name: /^Обеспечивающее$/ }));
+  fireEvent.click(await screen.findByText("ОБ.200"));
   const card = screen.getByRole("dialog", { name: "Карточка оборудования" });
   fireEvent.click(within(card).getByRole("button", { name: "Выбрать машины" }));
   fireEvent.click(within(card).getByRole("checkbox")); // the one machine, already picked: off
@@ -93,8 +95,8 @@ it("БД.ОБ: «Без привязки» lists the unresolved cells and the un
     roles_unconfirmed: [modelInfo("m2", "supporting", false, { name: "Компрессор", display: "Компрессор", unit_ids: ["c1"], inventory_numbers: ["ОБ.200"] })],
   });
   render(<ReferencesPage principal={admin} initialTab="ob" />);
-  const tab = await screen.findByRole("tab", { name: /Без привязки/ });
-  await waitFor(() => expect(tab).toHaveTextContent("2"));
+  const tab = await screen.findByRole("checkbox", { name: /Без привязки/ });
+  await waitFor(() => expect(tab.parentElement).toHaveTextContent("2"));
   fireEvent.click(tab);
   expect(screen.getByText("Неведомый станок")).toBeInTheDocument();
   expect(screen.getByText("нет такой модели")).toBeInTheDocument();

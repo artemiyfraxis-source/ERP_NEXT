@@ -6,7 +6,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import MetaData, create_engine, select, text
-from sqlalchemy.schema import CreateIndex, CreateTable
+from sqlalchemy.schema import AddConstraint, CreateColumn, CreateIndex
 
 
 GUARDED_REVISION = "0169_shipping_pack_permissions"
@@ -20,7 +20,11 @@ def evidence(engine):
         metadata.reflect(bind=connection)
         return {
             table.name: (
-                str(CreateTable(table).compile(dialect=engine.dialect)),
+                # Reflection/batch rebuilds may reorder equivalent foreign keys. Compare every
+                # column and constraint, preserving column order but ignoring constraint order.
+                (tuple(str(CreateColumn(column).compile(dialect=engine.dialect)) for column in table.columns),
+                 tuple(sorted(str(AddConstraint(constraint).compile(dialect=engine.dialect))
+                              for constraint in table.constraints))),
                 sorted(str(CreateIndex(index).compile(dialect=engine.dialect)) for index in table.indexes),
                 sorted(repr(tuple(row)) for row in connection.execute(select(table))),
             )

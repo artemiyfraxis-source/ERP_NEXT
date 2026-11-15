@@ -58,10 +58,20 @@ def seed(engine: Engine, rows: int = ROWS) -> dict[str, int]:
     with engine.begin() as connection:
         checks = _check_values(connection, metadata)
         inventory_era = _inventory_era(metadata)
+        catalogs = {"equipment_units", "equipment_machines", "equipment_measuring_units", "equipment_support_units",
+                    "equipment_applicators", "equipment_dies", "equipment_tools", "equipment_instrument_bindings"}
+        units = metadata.tables.get("equipment_units")
+        links = metadata.tables.get("equipment_unit_links")
+        cutover = units is not None and links is not None and any(
+            fk.referred_table.name == "equipment_units" for fk in links.foreign_key_constraints)
         for table in _fill_order(metadata):
             if table.name == "alembic_version" or _has_rows(connection, table):
                 continue
             if inventory_era and table.name in _INVENTORY_ERA_TABLES:
+                continue
+            if table.name in catalogs:
+                if table.name == "equipment_units" and cutover:
+                    _seed_catalog_units(connection, metadata, rows, inserted)
                 continue
             parents = _parent_values(connection, table)
             lots = _lot_ids(connection, metadata) if "lot_id" in table.c and not table.c.lot_id.foreign_keys else []
@@ -69,9 +79,28 @@ def seed(engine: Engine, rows: int = ROWS) -> dict[str, int]:
             if not count:
                 continue
             values = [_row(table, index, parents, lots, checks, engine.dialect.name) for index in range(count)]
+            if table.name == "tech_operation_records" and units is not None and not cutover:
+                # At additive 0177 all equipment still lives here; the cutover must have valid source units.
+                for index, value in enumerate(values):
+                    value.update(tab="ob", equipment_model_id=parents["equipment_model_id"][index % len(parents["equipment_model_id"] )],
+                                 fields={"Тип": "Оборудование", "Наименование": "Тестовый станок", "Инв. номер": f"ОБ.{index + 1:03}"})
             connection.execute(table.insert(), values)
             inserted[table.name] = len(values)
     return inserted
+
+
+def _seed_catalog_units(connection, metadata, rows, inserted):
+    """Seed a valid reciprocal identity/payload pair; instrument bindings require explicit review."""
+    models = list(connection.scalars(select(metadata.tables["equipment_models"].c.id)))
+    units, machines = metadata.tables["equipment_units"], metadata.tables["equipment_machines"]
+    for index in range(rows):
+        identifier = uuid.uuid4() if connection.dialect.name == "postgresql" else uuid.uuid4().hex
+        model = models[index % len(models)]
+        connection.execute(units.insert().values(id=identifier, model_id=model, catalog="ob", ob_id=identifier))
+        connection.execute(machines.insert().values(id=identifier, equipment_model_id=model, tab="ob",
+            display_text="Тестовый станок", normalized_search="тестовый станок", source_sheet="", sort_key=str(index),
+            fields={"Тип": "Оборудование", "Наименование": "Тестовый станок", "Инв. номер": f"ОБ.{index + 1:03}"}))
+    inserted[units.name] = inserted[machines.name] = rows
 
 
 # 0170–0171 named a setup machine by its inventory number; 0172 converts only a number of exactly one БД.ОБ unit and
@@ -96,7 +125,8 @@ def _fill_order(metadata: MetaData) -> list[Table]:
         (lots, table) for table in metadata.tables.values()
         if lots is not None and table is not lots and "lot_id" in table.c and not table.c.lot_id.foreign_keys
     ]
-    return sort_tables(metadata.tables.values(), extra_dependencies=extra)
+    return sort_tables(metadata.tables.values(), extra_dependencies=extra, skip_fn=lambda fk:
+        fk.parent.table.name == "equipment_units" and fk.column.table.name != "equipment_models")
 
 
 def _has_rows(connection: Connection, table: Table) -> bool:

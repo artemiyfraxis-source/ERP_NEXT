@@ -92,6 +92,27 @@ def _prov(client: TestClient) -> dict[str, dict]:
     return {record["id"]: record["fields"] for record in records}
 
 
+@pytest.mark.parametrize("canonical", [False, True], ids=["legacy-name", "both-aliases"])
+def test_equipment_export_has_one_name_and_edit_updates_legacy_aliases(references_api, canonical):
+    fields = {"Тип": "Оборудование", "Наменование": "Станок", "Инв. номер": "ОБ.901"}
+    if canonical:
+        fields["Наименование"] = "Станок"
+    created = references_api.post("/api/references/tech-operations", json={"tab": "ob", "fields": fields})
+    assert created.status_code == 201, created.text
+    content = _download(references_api, "ob")
+    rows = _rows(content)
+    assert "Наменование" not in rows[0]
+    assert rows[1][_column(rows, "Наименование")] == "Станок"
+    unchanged = _upload(references_api, content, dry_run=0, table="ob").json()
+    assert unchanged["unchanged"] == 1 and not unchanged["errors"], unchanged
+    changed = _edited(content, lambda data: data[1].__setitem__(_column(data, "Наименование"), "Станок новый"))
+    result = _upload(references_api, changed, dry_run=0, table="ob").json()
+    assert len(result["updated"]) == 1 and not result["errors"], result
+    saved = references_api.get("/api/references/tech-operations?tab=ob").json()["records"][0]
+    assert saved["id"] == created.json()["id"]
+    assert saved["fields"]["Наименование"] == saved["fields"]["Наменование"] == "Станок новый"
+
+
 def test_the_downloaded_file_carries_id_version_every_field_and_the_screen_titles(references_api):
     records = _seed(references_api)
     rows = _rows(_download(references_api, titles={"Цвет": "Цвет изоляции"}))

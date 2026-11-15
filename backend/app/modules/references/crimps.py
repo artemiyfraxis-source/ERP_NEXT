@@ -3,6 +3,7 @@
 `edited_in_erp`, so a mirror reload keeps them."""
 
 from __future__ import annotations
+from .domain import EQUIPMENT_TABS
 
 from dataclasses import replace
 from datetime import datetime
@@ -20,7 +21,7 @@ from .equipment import (
 
 def _tool(uow: UnitOfWork, tool_id: UUID) -> TechOperationRecord:
     tool = uow.tech_operations.get(tool_id)
-    if tool is None or tool.tab != TechOperationTab.EQUIPMENT:
+    if tool is None or tool.tab not in EQUIPMENT_TABS:
         raise LookupError("Инструмент не найден")
     return tool
 

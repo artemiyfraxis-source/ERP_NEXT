@@ -17,7 +17,7 @@ from app.modules.references.equipment_identity import LinkedEquipmentError
 from app.modules.references.equipment_links_report import format_report
 from app.modules.references.infrastructure import (
     EquipmentModelRow, EquipmentOperationLinkRow, EquipmentUnitLinkRow, SqlAlchemyReferencesUnitOfWork,
-    TechOperationRecordRow,
+    TechOperationRecordRow, EquipmentRecordRow,
 )
 from app.modules.references.load_mirror import ACTOR, default_source, load_mirror
 from app.shared import bulk_import
@@ -72,7 +72,7 @@ def _snapshot(client, units=UNITS, operations=OPERATIONS):
 
 def _rows(client, tab):
     return {item["fields"].get("Инв. номер") or item["fields"]["opNumber"]: item
-            for item in client.get(BASE, params={"tab": tab, "limit": 5000}).json()["records"]}
+            for item in client.get(BASE, params={"tab": tab, "limit": 5000, "family": tab == "ob"}).json()["records"]}
 
 
 def _links(client):
@@ -204,7 +204,7 @@ def test_import_rows_and_the_xlsx_round_trip_keep_ids_and_links(references_api):
     units, links = _rows(references_api, "ob"), _links(references_api)
 
     imported = references_api.post("/api/references/import/ob?dry_run=0", json={"rows": [
-        {"fields": {"baseValue": "APS/Блок питания", "Расположение": "ЦАР"}},
+        {"fields": {"unitId": units["ОБ.044"]["id"], "Расположение": "ЦАР"}},
         {"fields": {"baseValue": "N9/Новый станок", "Тип": "Оборудование", "Наменование": "Новый станок",
                     "Артикул": "N9", "Инв. номер": "ОБ.099"}},
     ]})
@@ -223,7 +223,8 @@ def test_import_rows_and_the_xlsx_round_trip_keep_ids_and_links(references_api):
     assert _upload(references_api, _edited(content, edit), dry_run=0, table="ob").status_code == 200
     final = _rows(references_api, "ob")
     assert {key: item["id"] for key, item in final.items()} == {key: item["id"] for key, item in after.items()}
-    assert {item["fields"]["Расположение"] for item in final.values()} == {"ЖУК"}
+    assert {item["fields"]["Расположение"] for item in final.values() if item["tab"] == "ob"} == {"ЖУК"}
+    assert final["ОСН.001"]["fields"]["Расположение"] == ""  # separate catalog export
     assert _links(references_api) == links
 
 
@@ -234,15 +235,15 @@ def test_bulk_import_numbering_dry_run_apply_and_refusals(references_api):
         _unit("СИ.004", "Микрометр", "MIC", kind="Средства измерений")], [])
     before = _rows(references_api, "ob")
     rows = [
-        {"baseValue": "APP/Аппликатор", "Тип": "Аппликаторы", "Код в базе терминалов": " m 10 ", "Инв. номер": "ОБ.106"},
+        {"baseValue": "APP/Аппликатор", "Тип": "Аппликаторы", "Код в базе терминалов": "M10"},
         {"baseValue": "SI/Измеритель", "Тип": "Средства измерений", "Инв. номер": "ОБ.107"},
-        {"baseValue": "SI2/Измеритель", "obType": "Средства измерений"},
-        {"baseValue": "NEW/Станок", "Тип": "Оборудование"},
-        {"baseValue": "EMPTY/Аппликатор", "Тип": "Аппликаторы"},
+        {"baseValue": "SI2/Измеритель", "obType": "Средства измерений", "Инв. номер": "СИ.005"},
+        {"baseValue": "NEW/Станок", "Тип": "Оборудование", "Инв. номер": "ОБ.108"},
+        {"baseValue": "EMPTY/Аппликатор", "Тип": "Аппликаторы", "Инв. номер": "ОБ.110"},
         {"baseValue": "BAD/Аппликатор", "Тип": "Аппликаторы", "Код в базе терминалов": "X1"},
-        {"baseValue": "DUP/Аппликатор", "Тип": "Аппликаторы", "Код в базе терминалов": "M10"},
-        {"baseValue": "DUPINV/Инструмент", "Тип": "Инструмент", "Инв. номер": "ОБ.009"},
-        {"baseValue": "LAST/Станок", "Тип": "Оборудование"},
+        {"baseValue": "NO-ID/Инструмент", "Тип": "Инструмент"},
+        {"unitId": "00000000-0000-0000-0000-000000000001", "Тип": "Инструмент"},
+        {"baseValue": "LAST/Станок", "Тип": "Оборудование", "Инв. номер": "ОБ.109"},
     ]
     reports = []
     for dry_run in (1, 0):
@@ -257,7 +258,7 @@ def test_bulk_import_numbering_dry_run_apply_and_refusals(references_api):
     after = _rows(references_api, "ob")
     assert set(after) == {"ОБ.009", "СИ.004", "M10", "ОБ.107", "СИ.005", "ОБ.108", "ОБ.109"}
     assert after["M10"]["fields"]["Код в базе терминалов"] == "M10"
-    found = references_api.get(BASE, params={"tab": "ob", "query": "M10"}).json()["records"]
+    found = references_api.get(BASE, params={"tab": "ob", "family": True, "query": "M10"}).json()["records"]
     assert any(item["id"] == after["M10"]["id"] for item in found)
     repeated = references_api.post("/api/references/import/ob?dry_run=0", json={"rows": [{"fields": row} for row in rows]})
     assert repeated.status_code == 200, repeated.text
@@ -271,8 +272,9 @@ def test_bulk_applicator_edit_preserves_links_and_refuses_invalid_updates(refere
         [_operation("PRESS", "M10")])
     before, links = _rows(references_api, "ob"), _links(references_api)
     response = references_api.post("/api/references/import/ob?dry_run=0", json={"rows": [{"fields": {
-        "baseValue": "APP/Аппликатор", "Код в базе терминалов": "S3"}}]})
+        "unitId": before["M10"]["id"], "Код в базе терминалов": "S3"}}]})
     assert response.status_code == 200, response.text
+    assert not response.json()["refused"] and len(response.json()["updated"]) == 1, response.text
     after = _rows(references_api, "ob")
     assert after["S3"]["id"] == before["M10"]["id"]
     assert after["S3"]["equipment_model_id"] == before["M10"]["equipment_model_id"]
@@ -281,7 +283,7 @@ def test_bulk_applicator_edit_preserves_links_and_refuses_invalid_updates(refere
     assert _links(references_api) == links
     for code in ("", "X1"):
         refused = references_api.post("/api/references/import/ob?dry_run=0", json={"rows": [{"fields": {
-            "baseValue": "APP/Аппликатор", "Код в базе терминалов": code}}]})
+            "unitId": before["M10"]["id"], "Код в базе терминалов": code}}]})
         assert refused.status_code == 200, refused.text
         assert len(refused.json()["refused"]) == 1
         assert _rows(references_api, "ob") == after
@@ -316,7 +318,8 @@ def test_another_unit_joins_the_model_and_supporting_equipment_serves_units(refe
 def _mirror_state(sessions):
     with sessions() as session:
         ids = {(row.tab, row.mirror_key): row.id for row in session.scalars(
-            select(TechOperationRecordRow).where(TechOperationRecordRow.tab.in_(("ob", "op"))))}
+            select(TechOperationRecordRow).where(TechOperationRecordRow.tab == "op"))}
+        ids.update({("ob", row.mirror_key): row.id for row in session.scalars(select(EquipmentRecordRow))})
         links = {(link.operation_id, link.op_column, link.position, link.model_id)
                  for link in session.scalars(select(EquipmentOperationLinkRow))}
         models = {row.id for row in session.scalars(select(EquipmentModelRow))}

@@ -1,4 +1,13 @@
 import type { EquipmentRole, TechOperationRecord } from "./api";
+import { formatDay } from "./format";
+
+export function instrumentFieldValue(key: string, passport: TechOperationRecord["instrument_passport"], bound = false): string | undefined {
+  if (!bound && !passport) return undefined;
+  if (["Заводской номер", "Серийный номер"].includes(key)) return passport?.serial_number || "—";
+  if (key === "Поверка") return passport ? passport.verification_number || passport.status : "Связь требует проверки";
+  if (key === "Дата поверки") return passport ? formatDay(passport.verified_at) : "—";
+  return undefined;
+}
 
 /** БД.ОБ as models: units of one machine («ОБ.070.1…8») are one row of the list and one card (owner 12.10.2026).
     Backend twin of the numbering: `references/equipment.py`. */
@@ -23,9 +32,6 @@ export const TOOL_KEY = "Для инструмента";
 export const TARGETS_KEY = "Обжимает (серии разъёмов)";
 export const INV_KEY = "Инв. номер";
 
-// «Оборудование (ПР)» is a Google-era leftover: it is plain «Оборудование» on screen even before the data is cleaned.
-const TYPE_ALIASES: Record<string, string> = { "Оборудование (ПР)": "Оборудование" };
-
 export const pick = (fields: Record<string, string>, ...keys: string[]) => {
   for (const key of keys) {
     const value = String(fields[key] ?? "").trim();
@@ -35,7 +41,7 @@ export const pick = (fields: Record<string, string>, ...keys: string[]) => {
 };
 export const typeOf = (record: TechOperationRecord) => {
   const type = pick(record.fields, "Тип", "obType") || "Без типа";
-  return TYPE_ALIASES[type] ?? type;
+  return type === "Инструмент" && pick(record.fields, "Подтип") === CRIMP_TOOL_TYPE ? CRIMP_TOOL_TYPE : type;
 };
 export const nameOf = (record: TechOperationRecord) => pick(record.fields, ...NAME_KEYS, "baseValue");
 export const baseOf = (record: TechOperationRecord) => pick(record.fields, "Для базы", "baseValue");

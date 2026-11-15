@@ -10,9 +10,10 @@ from sqlalchemy.orm import Session
 
 from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.production.resource_infrastructure import ActiveResourceRow, ResourceReservationRow
+from app.modules.references.domain import TechOperationRecord, TechOperationTab
 from app.modules.references.infrastructure import (
     EquipmentModelRow, EquipmentOperationLinkRow, EquipmentTemplateToolRow, EquipmentUnitLinkRow,
-    SqlAlchemyTechOperationRepository, TechOperationRecordRow,
+    SqlAlchemyTechOperationRepository, TechOperationRecordRow, EquipmentRecordRow,
 )
 from app.modules.techcards.assembly_drafts_infrastructure import AssemblyDraftRow
 from app.modules.techcards.generator_drafts_infrastructure import GeneratorDraftRow
@@ -43,12 +44,14 @@ def engine(tmp_path):
     engine.dispose()
 
 
-def unit(number, code="", kind="Аппликаторы", **extra):
-    return TechOperationRecordRow(id=uuid4(), tab="ob", display_text=f"Аппликатор {number}",
+def unit(session, number, code="", kind="Аппликаторы", **extra):
+    return SqlAlchemyTechOperationRepository(session)._put(TechOperationRecord(
+        id=uuid4(), tab=TechOperationTab.EQUIPMENT, display_text=f"Аппликатор {number}",
         source_sheet="БД.ОБ", sort_key=number, normalized_search=f"аппликатор {number.lower()}",
         mirror_key=uuid4().hex, edited_in_erp=False,
         fields={"Тип": kind, "Инв. номер": number, "Код в базе терминалов": code,
-                "Наменование": f"Оснастка {number}", **extra})
+                "Наменование": f"Оснастка {number}", **extra}))
+
 
 
 def snapshot(engine):
@@ -61,9 +64,9 @@ def snapshot(engine):
 def seed(engine):
     ids = {}
     with Session(engine) as session, session.begin():
-        applicator = unit("ОБ.106", " m 10 ")
-        matrix = unit("ОСН.001", kind="Матрицы", **{"Для инструмента": "ОБ.106"})
-        ordinary = unit("ОБ.107", kind="Оборудование")
+        applicator = unit(session, "ОБ.106", " m 10 ")
+        matrix = unit(session, "ОСН.001", kind="Матрицы", **{"Для инструмента": "ОБ.106"})
+        ordinary = unit(session, "ОБ.107", kind="Оборудование")
         session.add_all([applicator, matrix, ordinary])
         session.flush()
         ids.update(unit=applicator.id, matrix=matrix.id, ordinary=ordinary.id, model=applicator.equipment_model_id,
@@ -141,10 +144,12 @@ def test_dry_run_is_read_only_and_reports_every_live_table(engine):
     assert writes == []
     assert snapshot(engine) == before
     assert [(change.before, change.after) for change in report.changes] == [("ОБ.106", "M10")]
-    assert report.tables["tech_operation_records"].scanned == 4
-    assert report.tables["tech_operation_records"].changed == 3
+    assert report.tables["tech_operation_records"].scanned == 1
+    assert report.tables["tech_operation_records"].changed == 1
+    assert report.tables["equipment_applicators"].changed == 1
+    assert report.tables["equipment_dies"].changed == 1
     assert report.tables["td_issues"].scanned == 4 and report.tables["td_issues"].changed == 1
-    assert all(count.changed > 0 and count.occurrences > 0 for count in report.tables.values())
+    assert all(count.occurrences > 0 for count in report.tables.values() if count.changed)
     assert "ОБ.106 → M10" in format_report(report)
     assert report.issued_documents_to_refresh == 1
     assert "Выданных ЭТК для автоматического обновления: 1" in format_report(report)
@@ -161,12 +166,12 @@ def test_apply_updates_live_copies_preserves_uuid_links_and_history_and_is_idemp
                   "production_resource_reservations", "production_active_resources"):
         assert after[table] == before[table]
     with Session(engine) as session:
-        app = session.get(TechOperationRecordRow, ids["unit"])
+        app = session.get(EquipmentRecordRow, ids["unit"])
         assert app.fields["Инв. номер"] == app.fields["Код в базе терминалов"] == "M10"
         assert app.equipment_model_id == ids["model"] and app.mirror_key == ids["mirror"] and app.edited_in_erp
         assert "об.106" not in app.normalized_search and "m10" in app.normalized_search
-        assert session.get(TechOperationRecordRow, ids["matrix"]).fields["Для инструмента"] == "M10"
-        assert session.get(TechOperationRecordRow, ids["ordinary"]).fields["Инв. номер"] == "ОБ.107"
+        assert session.get(EquipmentRecordRow, ids["matrix"]).fields["Для инструмента"] == "M10"
+        assert session.get(EquipmentRecordRow, ids["ordinary"]).fields["Инв. номер"] == "ОБ.107"
         op = session.get(TechOperationRecordRow, ids["operation"])
         assert op.fields["Машина"] == "M10" and op.fields["Инструмент"] == "ОБ.107"
         assert op.fields["Апликаторы / модули"] == "M10.2; ОБ.1060; xОБ.106; ОБ.106.X; ОБ.106.2.3"
@@ -290,9 +295,9 @@ def test_apply_rolls_back_every_table_on_a_late_write_failure(engine):
 
 def test_missing_invalid_colliding_and_ambiguous_codes_are_skipped(engine):
     with Session(engine) as session, session.begin():
-        session.add_all([unit("ОБ.126"), unit("ОБ.127", "X1"), unit("ОБ.128", "S3"), unit("ОБ.129", " s 3 "),
-            unit("ОБ.130", "A1"), unit("A1", kind="Инструмент"), unit("ОБ.131", "M2"),
-            unit("ОБ.131", kind="Оборудование"), unit("ОБ.132", "M3")])
+        session.add_all([unit(session, "ОБ.126"), unit(session, "ОБ.127", "X1"), unit(session, "ОБ.128", "S3"), unit(session, "ОБ.129", " s 3 "),
+            unit(session, "ОБ.130", "A1"), unit(session, "A1", kind="Инструмент"), unit(session, "ОБ.131", "M2"),
+            unit(session, "ОБ.131", kind="Оборудование"), unit(session, "ОБ.132", "M3")])
     before = snapshot(engine)["tech_operation_records"]
     report = run(engine, apply=True)
     assert [(item.before, item.after) for item in report.changes] == [("ОБ.132", "M3")]
@@ -306,11 +311,11 @@ def test_missing_invalid_colliding_and_ambiguous_codes_are_skipped(engine):
 
 def test_suffix_references_respect_actual_non_applicator_and_skipped_rows(engine):
     with Session(engine) as session, session.begin():
-        session.add_all([unit("ОБ.106", "A1"), unit("ОБ.106.1", "M2"), unit("ОБ.106.2", kind="Оборудование"),
-                        unit("ОБ.106.3"), unit("ОБ.107", "S1", **{"Описание": "ОБ.106/ОБ.106.1/ОБ.106.2/ОБ.106.3/ОБ.106.4"})])
+        session.add_all([unit(session, "ОБ.106", "A1"), unit(session, "ОБ.106.1", "M2"), unit(session, "ОБ.106.2", kind="Оборудование"),
+                        unit(session, "ОБ.106.3"), unit(session, "ОБ.107", "S1", **{"Описание": "ОБ.106/ОБ.106.1/ОБ.106.2/ОБ.106.3/ОБ.106.4"})])
     run(engine, apply=True)
     with Session(engine) as session:
-        rows = {row.fields["Инв. номер"]: row for row in session.scalars(select(TechOperationRecordRow))}
+        rows = {row.fields["Инв. номер"]: row for row in session.scalars(select(EquipmentRecordRow))}
         assert set(rows) == {"A1", "M2", "ОБ.106.2", "ОБ.106.3", "S1"}
         assert rows["S1"].fields["Описание"] == "A1/M2/ОБ.106.2/ОБ.106.3/A1.4"
 
@@ -318,13 +323,13 @@ def test_suffix_references_respect_actual_non_applicator_and_skipped_rows(engine
 def test_normal_mirror_reload_preserves_correction_and_uuids(engine):
     ids = seed(engine)
     with Session(engine) as session:
-        source = [SqlAlchemyTechOperationRepository._domain(row) for row in session.scalars(select(TechOperationRecordRow))]
+        source = [SqlAlchemyTechOperationRepository._domain(row) for row in [*session.scalars(select(TechOperationRecordRow)), *session.scalars(select(EquipmentRecordRow))]]
     run(engine, apply=True)
     with Session(engine) as session, session.begin():
         repo = SqlAlchemyTechOperationRepository(session)
         repo.replace(tuple(source), schema_version=14, source_updated_at=None, imported_at=NOW, preserve_erp_edits=True)
     with Session(engine) as session:
-        row = session.get(TechOperationRecordRow, ids["unit"])
+        row = session.get(EquipmentRecordRow, ids["unit"])
         assert row.fields["Инв. номер"] == "M10" and row.equipment_model_id == ids["model"] and row.mirror_key == ids["mirror"]
         assert session.get(EquipmentUnitLinkRow, (ids["matrix"], "tool", ids["unit"])) is not None
 

@@ -58,7 +58,7 @@ class SetupTaskRow(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     technician_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
     # The БД.ОБ unit (0172): renumbering it keeps the task, a unit with setup tasks can't be deleted.
-    machine_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("tech_operation_records.id", ondelete="RESTRICT",
+    machine_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("equipment_units.id", ondelete="RESTRICT",
                                                               name="fk_setup_task_unit"), nullable=False, index=True)
     recipe_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     recipe_version: Mapped[int] = mapped_column(Integer, nullable=False)

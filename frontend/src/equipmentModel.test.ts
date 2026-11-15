@@ -30,8 +30,8 @@ describe("equipment model", () => {
     expect(inventoryRange(["ОБ.100.1", "ОБ.101"])).toBe("ОБ.100.1, ОБ.101");
   });
 
-  it("groups units of one name + article + maker; a nameless unit stays alone; ПР counts as Оборудование", () => {
-    const same = { "Наменование": "Стрипер", "Артикул": "BZW-D2.0S", "Производитель": "Bozwang", "Тип": "Оборудование (ПР)" };
+  it("groups units of one name + article + maker; a nameless unit stays alone", () => {
+    const same = { "Наменование": "Стрипер", "Артикул": "BZW-D2.0S", "Производитель": "Bozwang", "Тип": "Оборудование" };
     const models = groupModels([
       unit("a", { ...same, "Инв. номер": "ОБ.100.2" }), unit("b", { ...same, "Инв. номер": "ОБ.100.1" }),
       unit("c", { "Наменование": "Стрипер", "Артикул": "OTHER", "Инв. номер": "ОБ.101" }),

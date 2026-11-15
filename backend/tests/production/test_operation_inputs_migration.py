@@ -76,6 +76,15 @@ def test_backfill_reproduces_the_position_chain_and_downgrade_drops_the_graph(tm
     }
     assert stage_keys == {None}
 
+    command.downgrade(config, BEFORE)
+    with sqlite3.connect(database_path) as connection:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(production_operations)")}
+        positions = sorted(row[0] for row in connection.execute("SELECT position FROM production_operations"))
+    assert "production_operation_inputs" not in tables
+    assert "stage_key" not in columns
+    assert positions == [1, 1, 2, 2, 3, 5, 9]
+
     # Текущий код читает перенесённый граф: финал — последняя операция, входы — предыдущий номер. Код знает и колонки
     # поздних миграций (0089: план задания) — читаем на голове цепочки.
     command.upgrade(config, "head")
@@ -90,12 +99,3 @@ def test_backfill_reproduces_the_position_chain_and_downgrade_drops_the_graph(tm
     assert task.final_operation.id == UUID(chain[3])
     assert gapped.final_operation.id == UUID(gap[9])
     assert single  # одна операция — без входов, рёбер нет
-
-    command.downgrade(config, BEFORE)
-    with sqlite3.connect(database_path) as connection:
-        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        columns = {row[1] for row in connection.execute("PRAGMA table_info(production_operations)")}
-        positions = sorted(row[0] for row in connection.execute("SELECT position FROM production_operations"))
-    assert "production_operation_inputs" not in tables
-    assert "stage_key" not in columns
-    assert positions == [1, 1, 2, 2, 3, 5, 9]

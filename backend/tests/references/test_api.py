@@ -159,7 +159,7 @@ def test_replaces_and_searches_versioned_technology_snapshot(references_api):
                 "tab": "ob",
                 "display_text": "Кримпер",
                 "source_sheet": "БД.ОБ",
-                "fields": {"code": "ОБ-02"},
+                "fields": {"code": "ОБ-02", "Тип": "Оборудование"},
             },
         ],
     })

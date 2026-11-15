@@ -9,7 +9,7 @@ from sqlalchemy import event
 from app.main import app
 from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.production.infrastructure import ProductionTaskRow
-from app.modules.references.infrastructure import EquipmentModelRow, ReferenceEntryRow, TechOperationRecordRow, WireGaugeRow
+from app.modules.references.infrastructure import EquipmentModelRow, EquipmentMachineRow, EquipmentUnitRow, ReferenceEntryRow, TechOperationRecordRow, WireGaugeRow
 from app.modules.shipping.infrastructure import FinishedGoodRow, ShipmentLineRow, ShipmentRow
 from app.modules.purchasing.infrastructure import InvoiceRow, UpdDocumentRow
 from app.modules.techcards.infrastructure import ProjectTechcardRow
@@ -27,7 +27,16 @@ def record(tab, text, *, cable_kind=None, ter_kind=None, fields=None):
                 normalized_search=text.casefold(), sort_key=text, fields=fields or {}, mirror_key="")
 
 
+def seed_equipment(seed, text, *, model=None, fields=None):
+    model = model or fill(EquipmentModelRow, name=text, article="", maker="")
+    unit = fill(EquipmentMachineRow, tab="ob", display_text=text, normalized_search=text.casefold(),
+                sort_key=text, fields=fields or {}, mirror_key="", equipment_model_id=model.id)
+    seed(model, unit, EquipmentUnitRow(id=unit.id, model_id=model.id, catalog="ob", ob_id=unit.id))
+    return unit
+
+
 def seed_world(seed):
+    seed_equipment(seed, "Пресс 0436-press")
     shipment = fill(ShipmentRow, number="ОТГ-26-0007", status="Собрана", customer="АО Заказчик", receiver="Цех 5",
                     created_at=NOW, version=1, track_number="TRK-991")
     good = fill(FinishedGoodRow, project="591К.3", item_index="2", customer="АО Заказчик", article="CB-77",
@@ -35,7 +44,7 @@ def seed_world(seed):
     seed(
         record("ter", "Контакт 0436-440", ter_kind="contact"), record("ter", "Наконечник 0436-lug", ter_kind="lug"),
         record("coax", "Разъём SMA 0436-sma"), record("prov", "Провод МС 0436-мс", cable_kind="wire"),
-        record("prov", "Кабель 0436-rg", cable_kind="coax"), record("ob", "Пресс 0436-press"),
+        record("prov", "Кабель 0436-rg", cable_kind="coax"),
         record("op", "Опрессовка 0436-crimp"),
         record("mat", "Припой 0436-solder", fields={"Группа": "припой/флюс"}),
         record("mat", "Стяжка 0436-tie", fields={"Группа": "стяжка"}),
@@ -209,9 +218,7 @@ def test_kit_requests_by_number_project_and_an_article_of_a_line_open_their_scre
 def test_equipment_matches_model_and_unit_natural_keys_and_opens_the_unit(env):
     client, seed = env
     model = fill(EquipmentModelRow, name="Пресс Штиль", article="P-778", maker="Завод")
-    unit = record("ob", "ОБ.070.2 · Инв. 5544", fields={"Инв. номер": "5544"})
-    unit.equipment_model_id = model.id
-    seed(model, unit)
+    unit = seed_equipment(seed, "ОБ.070.2 · Инв. 5544", model=model, fields={"Инв. номер": "5544"})
     as_person({"erpref": "view"})
     for query in ("ШТИЛЬ", "P-778", "5544", "штиль 5544", "завод"):
         hits = results(client, query, "Оборудование")

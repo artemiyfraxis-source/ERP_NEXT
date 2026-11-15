@@ -9,11 +9,12 @@ from typing import Sequence
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
-    Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, Uuid,
-    delete, false as sa_false, func, select, text,
+    Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, Uuid,
+    delete, false as sa_false, func, select, text, union_all,
 )
 from sqlalchemy import event
-from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.orm import Mapped, Session, declared_attr, mapped_column, sessionmaker
+from sqlalchemy.ext.declarative import AbstractConcreteBase
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
 
@@ -23,9 +24,10 @@ from .cable_structure import (
 )
 from .search_text import search_rows, search_words
 from .domain import (
-    EDITABLE_TABS, TERMINAL_TABS, ReferenceEntry, ReferenceKind, StockArticle, StockLinkChange, StockLinkEntry,
+    EDITABLE_TABS, EQUIPMENT_TABS, TERMINAL_TABS, ReferenceEntry, ReferenceKind, StockArticle, StockLinkChange, StockLinkEntry,
     StockLinkEvent, TechOperationRecord, TechOperationTab, ReferenceValidationError, family_root,
 )
+from .equipment_catalogs import CATALOG_TABLES, equipment_tab
 
 
 class ReferenceEntryRow(Base):
@@ -80,7 +82,7 @@ def terminal_card_checks(dialect: str) -> dict[str, str]:
 TER_CARD_OTHER = "tab NOT IN (" + ", ".join(f"'{tab.value}'" for tab in TERMINAL_TABS) + ")"
 # Every record is in a known base, «ter» first (migration 0165 holds a literal copy; a new tab widens it in a migration).
 TAB_CHECK = "tab IN (" + ", ".join(f"'{tab.value}'" for tab in sorted(
-    TechOperationTab, key=lambda tab: (tab != TechOperationTab.TERMINAL, list(TechOperationTab).index(tab)))) + ")"
+    (tab for tab in TechOperationTab if tab not in EQUIPMENT_TABS[1:]), key=lambda tab: (tab != TechOperationTab.TERMINAL, list(TechOperationTab).index(tab)))) + ")"
 
 
 # --- Equipment identity (owner 05.11.2026: «связка должна быть не через название, а через идентификатор»; 0171) ---
@@ -106,6 +108,98 @@ class EquipmentModelRow(Base):
     role: Mapped[str] = mapped_column(String(16), nullable=False, default="operational", server_default="operational")
     # False — the role was given by default (or by a word of the name), the owner has not confirmed it (the report).
     role_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa_false())
+
+
+class EquipmentUnitRow(Base):
+    """Stable physical identity. Deferred reciprocal FKs enforce exactly one owning catalog at COMMIT."""
+    __tablename__ = "equipment_units"
+    __table_args__ = (
+        UniqueConstraint("id", "catalog", "model_id", name="uq_equipment_units_owner"),
+        CheckConstraint(" OR ".join(
+            "(" + " AND ".join([f"catalog = '{tab}'", f"{tab}_id IS NOT NULL", f"{tab}_id = id",
+                                *(f"{other}_id IS NULL" for other in CATALOG_TABLES if other != tab)]) + ")"
+            for tab in CATALOG_TABLES), name="ck_equipment_units_one_owner"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    model_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("equipment_models.id", ondelete="RESTRICT"), nullable=False)
+    catalog: Mapped[str] = mapped_column(String(16), nullable=False)
+    ob_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("equipment_machines.id", name="fk_equipment_units_ob", use_alter=True, deferrable=True, initially="DEFERRED"))
+    ob_measuring_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("equipment_measuring_units.id", name="fk_equipment_units_ob_measuring", use_alter=True, deferrable=True, initially="DEFERRED"))
+    ob_support_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("equipment_support_units.id", name="fk_equipment_units_ob_support", use_alter=True, deferrable=True, initially="DEFERRED"))
+    ob_applicators_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("equipment_applicators.id", name="fk_equipment_units_ob_applicators", use_alter=True, deferrable=True, initially="DEFERRED"))
+    ob_dies_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("equipment_dies.id", name="fk_equipment_units_ob_dies", use_alter=True, deferrable=True, initially="DEFERRED"))
+    ob_tools_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("equipment_tools.id", name="fk_equipment_units_ob_tools", use_alter=True, deferrable=True, initially="DEFERRED"))
+
+
+class EquipmentRecordRow(AbstractConcreteBase, Base):
+    """Mapped UNION ALL reader; writes use the concrete owning catalog class."""
+    strict_attrs = True
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    tab: Mapped[str] = mapped_column(String(16), nullable=False)
+    equipment_model_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    display_text: Mapped[str] = mapped_column(String(2000), nullable=False)
+    normalized_search: Mapped[str] = mapped_column(Text, nullable=False)
+    source_sheet: Mapped[str] = mapped_column(String(255), nullable=False)
+    sort_key: Mapped[str] = mapped_column(String(2000), nullable=False)
+    fields: Mapped[dict] = mapped_column(JSON, nullable=False)
+    mirror_key: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
+    edited_in_erp: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa_false())
+
+    @declared_attr.directive
+    def __table_args__(cls):
+        if not hasattr(cls, "__tablename__"):
+            return ()
+        tab = cls.__mapper_args__["polymorphic_identity"]
+        return (
+            CheckConstraint(f"tab = '{tab}'", name=f"ck_{cls.__tablename__}_catalog"),
+            ForeignKeyConstraint(["id", "tab", "equipment_model_id"],
+                                 ["equipment_units.id", "equipment_units.catalog", "equipment_units.model_id"],
+                                 name=f"fk_{cls.__tablename__}_owner", deferrable=True, initially="DEFERRED"),
+            Index(f"ix_{cls.__tablename__}_sort", "sort_key", "id"),
+            Index(f"ix_{cls.__tablename__}_model", "equipment_model_id"),
+        )
+
+
+class EquipmentMachineRow(EquipmentRecordRow):
+    __tablename__ = "equipment_machines"
+    __mapper_args__ = {"polymorphic_identity": "ob", "concrete": True, "exclude_properties": ["type"]}
+
+
+class EquipmentMeasuringRow(EquipmentRecordRow):
+    __tablename__ = "equipment_measuring_units"
+    __mapper_args__ = {"polymorphic_identity": "ob_measuring", "concrete": True, "exclude_properties": ["type"]}
+
+
+class EquipmentSupportRow(EquipmentRecordRow):
+    __tablename__ = "equipment_support_units"
+    __mapper_args__ = {"polymorphic_identity": "ob_support", "concrete": True, "exclude_properties": ["type"]}
+
+
+class EquipmentApplicatorRow(EquipmentRecordRow):
+    __tablename__ = "equipment_applicators"
+    __mapper_args__ = {"polymorphic_identity": "ob_applicators", "concrete": True, "exclude_properties": ["type"]}
+
+
+class EquipmentDieRow(EquipmentRecordRow):
+    __tablename__ = "equipment_dies"
+    __mapper_args__ = {"polymorphic_identity": "ob_dies", "concrete": True, "exclude_properties": ["type"]}
+
+
+class EquipmentToolRow(EquipmentRecordRow):
+    __tablename__ = "equipment_tools"
+    __mapper_args__ = {"polymorphic_identity": "ob_tools", "concrete": True, "exclude_properties": ["type"]}
+
+
+EQUIPMENT_ROWS = dict(zip(CATALOG_TABLES, (EquipmentMachineRow, EquipmentMeasuringRow, EquipmentSupportRow,
+                                        EquipmentApplicatorRow, EquipmentDieRow, EquipmentToolRow)))
+Base.registry.configure()
+
+
+class EquipmentInstrumentBindingRow(Base):
+    """A passport link, never verification evidence; unresolved instruments remain unbound."""
+    __tablename__ = "equipment_instrument_bindings"
+    unit_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("equipment_units.id", ondelete="RESTRICT"), primary_key=True)
+    instrument_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("production_instruments.id", ondelete="RESTRICT"), unique=True, nullable=False)
 
 
 class TechOperationRecordRow(Base):
@@ -161,10 +255,10 @@ class EquipmentUnitLinkRow(Base):
               sqlite_where=text("kind = 'tool'"), postgresql_where=text("kind = 'tool'")),
     )
     unit_id: Mapped[UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("tech_operation_records.id", ondelete="CASCADE"), primary_key=True)
+        Uuid(as_uuid=True), ForeignKey("equipment_units.id", ondelete="CASCADE"), primary_key=True)
     kind: Mapped[str] = mapped_column(String(16), primary_key=True)
     target_id: Mapped[UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("tech_operation_records.id", ondelete="RESTRICT"), primary_key=True)
+        Uuid(as_uuid=True), ForeignKey("equipment_units.id", ondelete="RESTRICT"), primary_key=True)
 
 
 class EquipmentTemplateToolRow(Base):
@@ -229,191 +323,229 @@ class SqlAlchemyReferenceRepository:
         ) for entry in entries)
 
 
-_STABLE_TABS = (TechOperationTab.EQUIPMENT.value, TechOperationTab.OPERATION.value)  # rows that keep their ids on a reload
+_STABLE_TABS = (*CATALOG_TABLES, TechOperationTab.OPERATION.value)
+_RECORD_COLUMNS = ("id", "tab", "display_text", "normalized_search", "source_sheet", "sort_key", "fields",
+                   "mirror_key", "edited_in_erp", "equipment_model_id")
 
 
-def _write_row(row: TechOperationRecordRow, record: TechOperationRecord, edited_in_erp: bool) -> None:
-    row.tab = record.tab.value; row.display_text = record.display_text
-    row.normalized_search = record.normalized_search; row.source_sheet = record.source_sheet
-    row.sort_key = record.sort_key; row.fields = dict(record.fields)
-    row.mirror_key = record.mirror_key; row.edited_in_erp = edited_in_erp
+def _write_row(row, record: TechOperationRecord, edited_in_erp: bool) -> None:
+    for name in _RECORD_COLUMNS:
+        if name not in ("id", "equipment_model_id"):
+            setattr(row, name, record.tab.value if name == "tab" else getattr(record, name))
+    row.edited_in_erp = edited_in_erp
+
+
+def _record_union():
+    sources = [select(*(getattr(TechOperationRecordRow, name) for name in _RECORD_COLUMNS))
+               .where(TechOperationRecordRow.tab != "ob")]
+    sources.extend(select(*(getattr(row, name) for name in _RECORD_COLUMNS)) for row in EQUIPMENT_ROWS.values())
+    return union_all(*sources).subquery("live_reference_records")
 
 
 def _natural_key(tab: str, fields: dict) -> str:
-    """A unit's inventory number, an operation's «Номер» — the second way a reloaded record finds its row."""
-    if tab == TechOperationTab.EQUIPMENT.value:
-        return "".join(str(fields.get("Инв. номер") or "").split()).casefold()
-    return str(fields.get("opNumber") or "").strip().casefold()
+    key = "Инв. номер" if tab in CATALOG_TABLES else "opNumber"
+    return "".join(str(fields.get(key) or "").split()).casefold()
 
 
-def _match_stable(records: Sequence[TechOperationRecord], rows: list[TechOperationRecordRow]) -> dict[int, TechOperationRecordRow]:
-    """{index of a БД.ОБ / БД.ОП record: the stored row it is}: by the mirror row identity (`mirror_key`), then a unit
-    by its inventory number and an operation by its «Номер» when exactly one record and one row share it."""
+def _match_stable(records, rows):
+    """Match UUID, then unambiguous provenance, then unambiguous inventory across the entire family."""
     free = {row.id: row for row in rows}
-    by_key: dict[tuple[str, str], list[TechOperationRecordRow]] = {}
-    for row in rows:
-        if row.mirror_key:
-            by_key.setdefault((row.tab, row.mirror_key), []).append(row)
-    result: dict[int, TechOperationRecordRow] = {}
+    result = {}
     for index, record in enumerate(records):
-        if record.tab.value in _STABLE_TABS and record.mirror_key:
-            row = next((item for item in by_key.get((record.tab.value, record.mirror_key), []) if item.id in free), None)
-            if row is not None:
-                result[index] = free.pop(row.id)
-    for tab in _STABLE_TABS:
-        given: dict[str, list[int]] = {}
+        if record.tab.value in _STABLE_TABS and record.id in free:
+            result[index] = free.pop(record.id)
+    for key_of in (lambda r: r.mirror_key, lambda r: _natural_key(getattr(r.tab, "value", r.tab), r.fields)):
+        given, stored = {}, {}
         for index, record in enumerate(records):
-            if record.tab.value == tab and index not in result and (key := _natural_key(tab, record.fields)):
-                given.setdefault(key, []).append(index)
-        stored: dict[str, list[TechOperationRecordRow]] = {}
+            if index not in result and record.tab.value in _STABLE_TABS and (key := key_of(record)):
+                given.setdefault((family_root(record.tab).value, key), []).append(index)
         for row in free.values():
-            if row.tab == tab and (key := _natural_key(tab, row.fields or {})):
-                stored.setdefault(key, []).append(row)
+            if key := key_of(row):
+                stored.setdefault((family_root(TechOperationTab(row.tab)).value, key), []).append(row)
         for key, indexes in given.items():
-            if len(indexes) == 1 and len(stored.get(key, [])) == 1:
-                result[indexes[0]] = free.pop(stored[key][0].id)
+            candidates = stored.get(key, [])
+            if key[0] == "ob" and candidates and (len(indexes) != 1 or len(candidates) != 1):
+                raise ReferenceValidationError("Неоднозначная идентичность оборудования " + str(key[1]) +
+                                               ": " + ", ".join(str(row.id) for row in candidates))
+            if len(indexes) == len(candidates) == 1:
+                result[indexes[0]] = free.pop(candidates[0].id)
     return result
 
 
 class SqlAlchemyTechOperationRepository:
     def __init__(self, session: Session): self.session = session
+
     @staticmethod
-    def _domain(row: TechOperationRecordRow) -> TechOperationRecord:
-        return TechOperationRecord(row.id, TechOperationTab(row.tab), row.display_text, row.normalized_search, row.source_sheet, row.sort_key, row.fields, row.mirror_key, row.edited_in_erp, row.equipment_model_id)
-    def list(self, *, tab: TechOperationTab | Sequence[TechOperationTab] | None, query: str, limit: int) -> list[TechOperationRecord]:
-        """The records of one tab, of several (a family: `domain.TERMINAL_TABS`, `CABLE_TABS`) or of every tab (None)."""
-        statement = select(TechOperationRecordRow)
-        if isinstance(tab, TechOperationTab): statement = statement.where(TechOperationRecordRow.tab == tab.value)
-        elif tab is not None: statement = statement.where(TechOperationRecordRow.tab.in_([item.value for item in tab]))
-        # A family keeps the order of its sheet across its bases (as one tab before migration 0165): the readers that
-        # take the first match of an article (names, ETK, a scanned article) find the same record as before.
-        by_tab = (TechOperationRecordRow.tab,) if tab is None or isinstance(tab, TechOperationTab) else ()
-        statement = statement.order_by(*by_tab, TechOperationRecordRow.sort_key, TechOperationRecordRow.id)
+    def _domain(row) -> TechOperationRecord:
+        return TechOperationRecord(row.id, TechOperationTab(row.tab), row.display_text, row.normalized_search,
+                                   row.source_sheet, row.sort_key, row.fields, row.mirror_key, row.edited_in_erp,
+                                   row.equipment_model_id)
+
+    def list(self, *, tab: TechOperationTab | Sequence[TechOperationTab] | None, query: str, limit: int):
+        """One global UNION ordering and limit, including search; no archived equipment is visible."""
+        rows = _record_union()
+        statement = select(rows)
+        if isinstance(tab, TechOperationTab):
+            statement = statement.where(rows.c.tab == tab.value)
+        elif tab is not None:
+            statement = statement.where(rows.c.tab.in_([item.value for item in tab]))
+        by_tab = (rows.c.tab,) if tab is None else ()
+        statement = statement.order_by(*by_tab, rows.c.sort_key, rows.c.id)
         words = search_words(query)
         if not words:
-            return [self._domain(row) for row in self.session.scalars(statement.limit(limit))]
-        # Поиск по правилам таблиц на экране (search_text.py): «rg 58» находит «RG-58», «MГТФ 0.35» — «МГТФ 0,35». Ключ
-        # не хранится (normalized_search в строках прода — прежнего вида), поэтому слова сверяются здесь: по имени, полям
-        # записи и normalized_search — в нём и поисковый текст импорта (синонимы листа), которого нет в полях.
-        rows = search_rows(self.session.scalars(statement), lambda row: (row.display_text, *(row.fields or {}).values()),
-                           words, limit, extra=lambda row: (row.normalized_search,))
-        return [self._domain(row) for row in rows]
-    def counts(self) -> dict[TechOperationTab, int]:
-        rows = self.session.execute(select(TechOperationRecordRow.tab, func.count()).group_by(TechOperationRecordRow.tab))
-        return {TechOperationTab(tab): count for tab, count in rows}
-    def get(self, record_id: UUID) -> TechOperationRecord | None:
+            return [self._domain(row) for row in self.session.execute(statement.limit(limit))]
+        found = search_rows(self.session.execute(statement), lambda row: (row.display_text, *(row.fields or {}).values()),
+                            words, limit, extra=lambda row: (row.normalized_search,))
+        return [self._domain(row) for row in found]
+
+    def counts(self):
+        rows = _record_union()
+        return {TechOperationTab(tab): count for tab, count in self.session.execute(
+            select(rows.c.tab, func.count()).group_by(rows.c.tab))}
+
+    def _row(self, record_id):
+        unit = self.session.get(EquipmentUnitRow, record_id)
+        if unit is not None:
+            return self.session.get(EQUIPMENT_ROWS[unit.catalog], record_id)
         row = self.session.get(TechOperationRecordRow, record_id)
+        return row if row is not None and row.tab != "ob" else None
+
+    def get(self, record_id):
+        row = self._row(record_id)
         return None if row is None else self._domain(row)
-    def delete(self, record_id: UUID) -> None:
-        """A БД.ОБ unit another unit links to, or the last unit of a model operations link to, is refused
-        (`equipment_identity.LinkedEquipmentError`); the record's own links go with it."""
+
+    def _delete_row(self, row):
+        self.session.delete(row)
+        if row.tab in CATALOG_TABLES:
+            self.session.delete(self.session.get(EquipmentUnitRow, row.id))
+
+    def delete(self, record_id):
         from . import equipment_identity as identity
-        row = self.session.get(TechOperationRecordRow, record_id)
-        if row is None: return
+        row = self._row(record_id)
+        if row is None:
+            return
         if row.tab in _STABLE_TABS:
             identity.check_deletable(self.session, {row.id})
             identity.forget(self.session, {row.id})
-        self.session.delete(row)
-        if row.tab == TechOperationTab.EQUIPMENT.value:
-            identity.prune_models(self.session)
-    def save(self, record: TechOperationRecord) -> None:
-        """A БД.ОБ unit keeps its model (a new one gets the model of its name + article + maker); the links of a
-        БД.ОБ / БД.ОП record follow its cells (`equipment_identity.after_save`)."""
+        self._delete_row(row)
+        self.session.flush()
+        identity.prune_models(self.session)
+
+    def _put(self, record, *, row=None):
         from . import equipment_identity as identity
-        row = self.session.get(TechOperationRecordRow, record.id)
+        if record.tab in EQUIPMENT_TABS:
+            # A storage move keeps both UUIDs and all relations. Fields are not renamed by this path.
+            tab = equipment_tab(record.fields)
+            binding = self.session.get(EquipmentInstrumentBindingRow, record.id)
+            if binding is not None:
+                if tab != TechOperationTab.MEASURING:
+                    raise ReferenceValidationError("Сначала снимите связь с реестром средств измерений")
+                if row is not None and any(record.fields.get(key) != row.fields.get(key)
+                                           for key in ("Заводской номер", "Серийный номер", "Поверка", "Дата поверки")):
+                    raise ReferenceValidationError("Паспортные данные связанного СИ меняются в реестре средств измерений")
+            if row is not None and row.tab not in CATALOG_TABLES:
+                raise ReferenceValidationError("Нельзя превращать запись другой базы в оборудование")
+            model_id = (row.equipment_model_id if row is not None else record.equipment_model_id)
+            if model_id is None:
+                model_id = identity.ModelAssigner(self.session).model_for(record.fields)
+            model = self.session.get(EquipmentModelRow, model_id)
+            tab = equipment_tab(record.fields, role=model.role if model and model.role_confirmed else "")
+            unit = self.session.get(EquipmentUnitRow, record.id)
+            if unit is None:
+                unit = EquipmentUnitRow(id=record.id, model_id=model_id, catalog=tab.value)
+                self.session.add(unit)
+            if row is not None and row.tab != tab.value:
+                self.session.delete(row)
+                self.session.flush()
+                row = None
+            unit.catalog, unit.model_id = tab.value, model_id
+            for catalog in CATALOG_TABLES:
+                setattr(unit, f"{catalog}_id", record.id if catalog == tab.value else None)
+            if row is None:
+                row = EQUIPMENT_ROWS[tab.value](id=record.id)
+                self.session.add(row)
+            row.equipment_model_id = model_id
+            record = replace(record, tab=tab, equipment_model_id=model_id)
+        else:
+            if row is not None and row.tab in CATALOG_TABLES:
+                raise ReferenceValidationError("Нельзя превращать оборудование в запись другой базы")
+            if row is None:
+                row = TechOperationRecordRow(id=record.id)
+                self.session.add(row)
+            row.equipment_model_id = None
+        _write_row(row, record, record.edited_in_erp)
+        return row
+
+    def save(self, record):
+        from . import equipment_identity as identity
+        row = self._row(record.id)
         before = None if row is None else (dict(row.fields or {}), row.display_text)
-        if record.tab == TechOperationTab.EQUIPMENT:
+        if record.tab in EQUIPMENT_TABS:
             from .equipment import DuplicateInventoryError, prepare_inventory
-            others = [(item.id, item.fields) for item in self.session.scalars(
-                select(TechOperationRecordRow).where(TechOperationRecordRow.tab == record.tab.value))]
+            others = [(item.id, item.fields) for item in self.session.scalars(select(EquipmentRecordRow))]
             try:
-                fields = prepare_inventory(dict(record.fields), others, self_id=record.id,
-                    creating=row is None, previous=before[0] if before else None)
+                fields = prepare_inventory(dict(record.fields), others, self_id=record.id, creating=row is None,
+                                           previous=before[0] if before else None)
             except DuplicateInventoryError as error:
-                # Bulk import reports refusals per row; form commands already return their own 409.
                 raise ReferenceValidationError(str(error)) from error
             if fields != record.fields:
                 search = " ".join(f"{record.display_text} {' '.join(fields.values())}".casefold().split())
                 record = replace(record, fields=fields, normalized_search=search)
-        if record.tab == TechOperationTab.OPERATION:  # refused before anything is written
+        if record.tab == TechOperationTab.OPERATION:
             identity.check_operation_cells(self.session, record.fields, before[0] if before else None)
-        if row is None: row = TechOperationRecordRow(id=record.id)
-        _write_row(row, record, record.edited_in_erp)
-        if record.tab != TechOperationTab.EQUIPMENT:
-            row.equipment_model_id = None
-        elif record.equipment_model_id is not None:
-            row.equipment_model_id = record.equipment_model_id
-        elif row.equipment_model_id is None:
-            with self.session.no_autoflush:
-                row.equipment_model_id = identity.ModelAssigner(self.session).model_for(row.fields)
-        if before is None: self.session.add(row)
+        row = self._put(record, row=row)
         if row.tab in _STABLE_TABS:
             identity.after_save(self.session, row, before[0] if before else None, before[1] if before else "")
-    def replace(self, records: tuple[TechOperationRecord, ...], *, schema_version: int, source_updated_at: datetime | None, imported_at: datetime, keep_tabs: tuple[TechOperationTab, ...] = (), preserve_erp_edits: bool = False) -> dict[str, int]:
-        """Replaces the records of every tab not in `keep_tabs`. With `preserve_erp_edits` the rows edited/created in
-        ERP stay untouched and a mirror record whose `mirror_key` belongs to an edited row is not inserted again — the
-        row is known by its sheet family and key (`family_root`), so a row moved to another base of the family
-        («Терминалы» → «Наконечники», a cable kind) and edited is not inserted again in the base the rule gives;
-        returns {sheet tab (`family_root`): skipped mirror records}.
-        БД.ОБ / БД.ОП rows keep their ids (owner 05.11.2026: links go by id): a record matched to a stored row
-        (`_match_stable`) is written into it; only the rest are deleted — never a unit something links to — and
-        inserted anew; then the links follow the cells (`equipment_identity.reconcile`)."""
+
+    def replace(self, records, *, schema_version, source_updated_at, imported_at, keep_tabs=(), preserve_erp_edits=False):
         from . import equipment_identity as identity
-        skipped: dict[str, int] = {}
-        conditions = []
-        if keep_tabs: conditions.append(TechOperationRecordRow.tab.not_in([tab.value for tab in keep_tabs]))
-        if preserve_erp_edits:
-            conditions.append(TechOperationRecordRow.edited_in_erp.is_(False))
-            protected = {(family_root(TechOperationTab(row.tab)), row.mirror_key) for row in self.session.execute(
-                select(TechOperationRecordRow.tab, TechOperationRecordRow.mirror_key).where(TechOperationRecordRow.edited_in_erp.is_(True), TechOperationRecordRow.mirror_key != ""))}
-            kept = []
-            for record in records:
-                if (family_root(record.tab), record.mirror_key) in protected:
-                    sheet = family_root(record.tab).value  # counted by the mirror sheet the row came from
-                    skipped[sheet] = skipped.get(sheet, 0) + 1
-                else:
-                    kept.append(record)
-            records = tuple(kept)
-        stored = list(self.session.scalars(select(TechOperationRecordRow).where(
-            TechOperationRecordRow.tab.in_(_STABLE_TABS), *conditions)))
-        matched = _match_stable(records, stored)
-        kept_ids = {row.id for row in matched.values()}
-        gone = [row.id for row in stored if row.id not in kept_ids]
-        identity.check_deletable(self.session, gone, reload=True)
-        identity.forget(self.session, gone)
-        statement = delete(TechOperationRecordRow).where(*conditions) if conditions else delete(TechOperationRecordRow)
-        if kept_ids: statement = statement.where(TechOperationRecordRow.id.not_in(kept_ids))
-        self.session.execute(statement)
-        assigner = identity.ModelAssigner(self.session)
-        fresh = []
+        rows = [*self.session.scalars(select(TechOperationRecordRow).where(TechOperationRecordRow.tab != "ob")),
+                *self.session.scalars(select(EquipmentRecordRow))]
+        matched = _match_stable(records, [row for row in rows if row.tab in _STABLE_TABS])
+        protected = {row.id for row in rows if TechOperationTab(row.tab) in keep_tabs or
+                     (preserve_erp_edits and row.edited_in_erp)}
+        protected_keys = {(family_root(TechOperationTab(row.tab)), row.mirror_key) for row in rows
+                          if row.id in protected and row.mirror_key}
+        skipped, wanted = {}, []
         for index, record in enumerate(records):
             row = matched.get(index)
-            if row is None:
-                row = TechOperationRecordRow(id=record.id)
-                fresh.append(row)
-            _write_row(row, record, False)
-            if row.tab != TechOperationTab.EQUIPMENT.value:
-                row.equipment_model_id = None
-            elif row.equipment_model_id is None:
-                with self.session.no_autoflush:
-                    row.equipment_model_id = assigner.model_for(row.fields)
-        self.session.add_all(fresh)
+            if ((row is not None and row.id in protected) or
+                    (preserve_erp_edits and (family_root(record.tab), record.mirror_key) in protected_keys)):
+                key = family_root(record.tab).value
+                skipped[key] = skipped.get(key, 0) + 1
+                continue
+            if record.tab in keep_tabs:
+                continue
+            wanted.append((record, row))
+        retained = protected | {row.id for _, row in wanted if row is not None}
+        gone = {row.id for row in rows if row.id not in retained}
+        identity.check_deletable(self.session, gone, reload=True)
+        identity.forget(self.session, gone)
+        for row in rows:
+            if row.id in gone:
+                self._delete_row(row)
+        self.session.flush()
+        for record, row in wanted:
+            if row is not None:
+                record = replace(record, id=row.id, equipment_model_id=row.equipment_model_id)
+            self._put(replace(record, edited_in_erp=False), row=row)
         self.session.flush()
         identity.reconcile(self.session, reload=True)
         identity.prune_models(self.session)
         meta = self.session.get(TechOperationSnapshotRow, "current")
-        if meta is None: meta = TechOperationSnapshotRow(name="current"); self.session.add(meta)
-        meta.schema_version = schema_version; meta.source_updated_at = source_updated_at
-        meta.imported_at = imported_at
-        meta.record_count = len(records)
+        if meta is None:
+            meta = TechOperationSnapshotRow(name="current", record_count=0)
+            self.session.add(meta)
+        meta.schema_version, meta.source_updated_at, meta.imported_at = schema_version, source_updated_at, imported_at
+        meta.record_count = sum(self.counts().values())
         self.session.flush()
-        if keep_tabs or preserve_erp_edits:  # rows this snapshot did not touch still count
-            meta.record_count = self.session.scalar(select(func.count()).select_from(TechOperationRecordRow)) or 0
         return skipped
-    def metadata(self) -> dict | None:
+
+    def metadata(self):
         row = self.session.get(TechOperationSnapshotRow, "current")
         if row is None: return None
-        return {"schema_version": row.schema_version, "source_updated_at": row.source_updated_at, "imported_at": row.imported_at, "record_count": row.record_count}
+        return {"schema_version": row.schema_version, "source_updated_at": row.source_updated_at,
+                "imported_at": row.imported_at, "record_count": row.record_count}
 
 
 # --- structured cable reference (cable_structure.py; migration 0089) ---
@@ -795,6 +927,7 @@ class ReferenceStockLinkRow(Base):
     __tablename__ = "reference_stock_links"
     __table_args__ = (
         CheckConstraint("event IN ('linked', 'created', 'updated')", name="ck_reference_stock_links_event"),
+        CheckConstraint("record_id IS NULL OR equipment_unit_id IS NULL", name="ck_reference_stock_links_one_target"),
         CheckConstraint(STOCK_LINK_TAB_CHECK, name="ck_reference_stock_links_tab"),
         CheckConstraint("length(trim(grn)) > 0", name="ck_reference_stock_links_grn"),
         CheckConstraint("length(trim(record_text)) > 0", name="ck_reference_stock_links_record_text"),
@@ -819,6 +952,9 @@ class ReferenceStockLinkRow(Base):
         ForeignKey("tech_operation_records.id", ondelete="SET NULL", name="fk_reference_stock_links_record_id"),
         nullable=True)
     record_tab: Mapped[str] = mapped_column(String(16), nullable=False)
+    equipment_unit_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("equipment_units.id", ondelete="SET NULL", name="fk_reference_stock_links_equipment_unit"),
+        nullable=True)
     record_text: Mapped[str] = mapped_column(String(2000), nullable=False)
     changes: Mapped[list] = mapped_column(JSON, nullable=False)
     actor_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
@@ -833,7 +969,9 @@ class SqlAlchemyStockLinkRepository:
         self.session.add(ReferenceStockLinkRow(
             id=entry.id, occurred_at=entry.occurred_at, event=entry.event.value, lot_id=article.lot_id,
             warehouse=article.warehouse, grn=article.grn, package=article.package, article=article.article,
-            name=article.name, record_id=entry.record_id, record_tab=entry.record_tab.value,
+            name=article.name, record_id=None if entry.record_tab in EQUIPMENT_TABS else entry.record_id,
+            equipment_unit_id=entry.record_id if entry.record_tab in EQUIPMENT_TABS else None,
+            record_tab=entry.record_tab.value,
             record_text=entry.record_text,
             changes=[{"field": change.field, "old": change.old, "new": change.new} for change in entry.changes],
             actor_id=entry.actor_id, actor_name=entry.actor_name,
@@ -842,7 +980,9 @@ class SqlAlchemyStockLinkRepository:
     def list(self, *, record_id: UUID | None = None, lot_id: UUID | None = None, limit: int = 500) -> list[StockLinkEntry]:
         """Newest first."""
         statement = select(ReferenceStockLinkRow)
-        if record_id is not None: statement = statement.where(ReferenceStockLinkRow.record_id == record_id)
+        if record_id is not None:
+            statement = statement.where((ReferenceStockLinkRow.record_id == record_id) |
+                                        (ReferenceStockLinkRow.equipment_unit_id == record_id))
         if lot_id is not None: statement = statement.where(ReferenceStockLinkRow.lot_id == lot_id)
         rows = self.session.scalars(statement.order_by(
             ReferenceStockLinkRow.occurred_at.desc(), ReferenceStockLinkRow.id.desc()).limit(limit))
@@ -850,7 +990,7 @@ class SqlAlchemyStockLinkRepository:
             id=row.id, occurred_at=row.occurred_at, event=StockLinkEvent(row.event),
             article=StockArticle(lot_id=row.lot_id, warehouse=row.warehouse, grn=row.grn, package=row.package,
                                  article=row.article, name=row.name),
-            record_id=row.record_id, record_tab=TechOperationTab(row.record_tab), record_text=row.record_text,
+            record_id=row.record_id or row.equipment_unit_id, record_tab=TechOperationTab(row.record_tab), record_text=row.record_text,
             changes=tuple(StockLinkChange(str(item.get("field", "")), str(item.get("old", "")), str(item.get("new", "")))
                           for item in row.changes or []),
             actor_id=row.actor_id, actor_name=row.actor_name,

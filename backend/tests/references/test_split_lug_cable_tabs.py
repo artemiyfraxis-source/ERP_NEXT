@@ -149,12 +149,13 @@ def test_the_migration_holds_literal_copies_of_the_checks():
     text = MIGRATION.read_text(encoding="utf-8")
     flat = re.sub(r'"\s*"', "", text)  # a literal split over two lines
 
-    assert TAB_CHECK in flat and STOCK_LINK_TAB_CHECK in flat
+    old_stock_check = "record_tab IN ('cab_coax', 'cab_lan', 'cab_multi', 'coax', 'lug', 'mat', 'ob', 'op', 'prov', 'ter')"
+    assert TAB_CHECK in flat and old_stock_check in flat
     module = {}
     exec(compile(text, str(MIGRATION), "exec"), module)
     for dialect in ("sqlite", "postgresql"):
         assert module["_card_checks"](dialect, module["CARD_OTHER_NEW"]) == terminal_card_checks(dialect)
-    assert set(module["KNOWN_TABS"]) == {tab.value for tab in TechOperationTab}
+    assert set(module["KNOWN_TABS"]) == {"ter", "lug", "ob", "op", "coax", "prov", "cab_coax", "cab_multi", "cab_lan", "mat", "kab_coax", "kab_awg"}
 
 
 def test_each_kind_is_its_own_base_and_a_family_groups_a_sheet():

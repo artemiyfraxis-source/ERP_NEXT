@@ -23,7 +23,7 @@ from app.modules.references.domain import (
 )
 from app.modules.references.importers import IMPORT_TABLES
 from app.modules.references.infrastructure import (
-    ReferenceEntryRow, SqlAlchemyReferencesUnitOfWork, TechOperationRecordRow, WireGaugeRow,
+    ReferenceEntryRow, SqlAlchemyReferencesUnitOfWork, TechOperationRecordRow, EquipmentRecordRow, WireGaugeRow,
 )
 from app.modules.references.technology import sync_schema_fields
 from app.shared import bulk_import
@@ -77,7 +77,7 @@ def _seed(sessions) -> None:
             _record(TechOperationTab.MATERIAL, "ТУТнг 4/2 черная", {
                 **{name: "" for name in BASE_COLUMNS[TechOperationTab.MATERIAL]}, "Наименование": "ТУТнг 4/2 черная",
                 "Цвет": "черный"}),
-            _record(TechOperationTab.EQUIPMENT, "T21/Станция паяльная", {"obType": "Инструмент"}),
+            _record(TechOperationTab.EQUIPMENT, "T21/Станция паяльная", {"obType": "Инструмент", "Инв. номер": "ОБ.001"}),
             _record(TechOperationTab.EQUIPMENT, "8620DX/Фен", {"obType": "Инструмент"}, "1"),
             _record(TechOperationTab.EQUIPMENT, "8620DX/Фен", {"obType": "Инструмент"}, "2"),
         ):
@@ -92,7 +92,7 @@ def _dump(sessions) -> dict:
     with sessions() as session:
         return {
             "records": sorted((row.tab, row.display_text, json.dumps(row.fields, ensure_ascii=False, sort_keys=True),
-                               row.edited_in_erp) for row in session.scalars(select(TechOperationRecordRow))),
+                               row.edited_in_erp) for row in [*session.scalars(select(TechOperationRecordRow)), *session.scalars(select(EquipmentRecordRow))]),
             "entries": sorted((row.kind, row.key, row.value, row.position) for row in session.scalars(select(ReferenceEntryRow))),
             "gauges": sorted((row.awg or "", str(row.section_mm2), str(row.conductor_d_mm))
                              for row in session.scalars(select(WireGaugeRow))),
@@ -132,9 +132,9 @@ CASES = [
     ("mat", {"Наименование": "ТУТнг 6/3 черная", "Цвет": "черный"},
      {"Наименование": "тутнг 4/2  черная", "Цвет": "чёрный"}, "тутнг 4/2  черная", ("Цвет", "черный", "чёрный"),
      {"Наименование": "Стяжка", "Цвет": ["белый"]}, "ожидается текст или число"),
-    ("ob", {"baseValue": "EW-50A/Автомат", "obType": "Станок"},
-     {"baseValue": "t21/станция паяльная", "obType": "Станция"}, "t21/станция паяльная",
-     ("obType", "Инструмент", "Станция"), {"baseValue": "8620DX/Фен", "obType": "Фен"}, "несколько строк"),
+    ("ob", {"baseValue": "EW-50A/Автомат", "obType": "Оборудование", "Инв. номер": "ОБ.099"},
+     {"Инв. номер": "ОБ.001", "obType": "Средства измерений"}, "inventory:об.001",
+     ("obType", "Инструмент", "Средства измерений"), {"baseValue": "8620DX/Фен"}, "не заполнен ключ"),
     ("suppliers", {"key": "https://www.terraelectronica.ru/catalog", "value": "ООО «Терраэлектроника»"},
      {"key": "chipdip.ru", "value": "АО «ЧИП и ДИП»"}, "chipdip.ru", ("value", 'АО "ЧИП И ДИП"', "АО «ЧИП и ДИП»"),
      {"key": "kroks.ru", "value": ""}, "Значение справочника обязательно"),

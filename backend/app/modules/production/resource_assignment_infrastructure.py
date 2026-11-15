@@ -33,7 +33,7 @@ class ResourceAllocationMachineRow(Base):
     __table_args__ = (CheckConstraint("etk_position > 0", name="ck_resource_allocation_machine_position"),)
     allocation_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("production_resource_allocations.id", ondelete="RESTRICT"), primary_key=True)
     etk_position: Mapped[int] = mapped_column(Integer, primary_key=True)
-    machine_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("tech_operation_records.id", ondelete="RESTRICT"), nullable=False, index=True)
+    machine_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("equipment_units.id", ondelete="RESTRICT"), nullable=False, index=True)
 
 
 class ResourceAllocationMemberRow(Base):

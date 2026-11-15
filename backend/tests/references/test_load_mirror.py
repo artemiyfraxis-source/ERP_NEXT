@@ -300,7 +300,7 @@ def test_load_replaces_every_mirrored_base_in_one_snapshot_and_is_repeatable(tmp
     assert rows(uow, TechOperationTab.TERMINAL) == ["Molex | 43020, 43640 | Micro-Fit 3.0"]
     assert rows(uow, TechOperationTab.LUG) == ["КВТ | НВИ 1.5 | НВИ"]
     assert rows(uow, TechOperationTab.OPERATION) == ["Резка | CUT_WIRE_auto"]
-    assert rows(uow, TechOperationTab.EQUIPMENT) == ["DT-8920/Дифманометр"]
+    assert rows(uow, TechOperationTab.TOOLS) == ["DT-8920/Дифманометр"]
     assert rows(uow, TechOperationTab.COAX) == ["BNC-male | RG58"]
     assert rows(uow, TechOperationTab.WIRE) == ["UL1061"] and rows(uow, TechOperationTab.CAB_COAX) == ["RG316"]
     assert rows(uow, TechOperationTab.MATERIAL) == ["ТУТ 4/2"]
@@ -318,7 +318,7 @@ def test_default_source_is_the_snapshot_bundled_with_the_repo(monkeypatch, tmp_p
     assert source == Path(__file__).resolve().parents[2] / "data" / "reference-mirror"
     snapshot = read_mirror(source)
     # the mirror's sheets: БД.ТЕР and БД.ПРОВ come whole, each row goes to its base on the load
-    assert set(snapshot.tables) == {tab.value for tab in TechOperationTab} - {"lug", "cab_coax", "cab_multi", "cab_lan"}
+    assert set(snapshot.tables) == {tab.value for tab in TechOperationTab} - {"lug", "cab_coax", "cab_multi", "cab_lan", "ob_measuring", "ob_support", "ob_applicators", "ob_dies", "ob_tools"}
     assert all(snapshot.tables.values()), "every tab of the bundled snapshot has records"
     assert snapshot.source_updated_at == datetime(2026, 9, 29, 9, 23, tzinfo=timezone.utc)
 

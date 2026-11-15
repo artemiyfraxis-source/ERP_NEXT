@@ -23,7 +23,8 @@ from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.procurement.infrastructure import ProcurementLineRow
 from app.modules.production.infrastructure import ProductionTaskRow
 from app.modules.references.coverings import classify as classify_covering
-from app.modules.references.infrastructure import CoaxCableRow, EquipmentModelRow, HookupWireRow, ReferenceEntryRow, TechOperationRecordRow, WireGaugeRow
+from app.modules.references.infrastructure import _record_union
+from app.modules.references.infrastructure import CoaxCableRow, EquipmentModelRow, HookupWireRow, ReferenceEntryRow, TechOperationRecordRow, EquipmentRecordRow, WireGaugeRow
 from app.modules.shipping.infrastructure import FinishedGoodRow, ShipmentLineRow, ShipmentRow
 from app.modules.techcards.infrastructure import OperationCardTemplateRow, ProjectTechcardRow
 from app.modules.techcards.connector_series import connector_series
@@ -273,7 +274,14 @@ _PLAIN_TABS = {"op": ("templates", "Операции", "erptctpl"), "ob": ("ob",
                "lug": ("lug", "Наконечники", "erpref"), "cab_coax": ("cab_coax", "Коаксиальные кабели", "erpref"),
                "prov": ("cab_wire", "Монтажные провода", "erpref"), "cab_multi": ("cab_multi", "Многожильные кабели", "erpref"),
                "cab_lan": ("cab_lan", "Кабели Ethernet", "erpref")}
-_DB_STORED_TABS = ("op", "ob", "coax", "ter", "lug", "prov", "cab_coax", "cab_multi", "cab_lan", "mat")
+_PLAIN_TABS.update({
+    "ob_measuring": ("ob_measuring", "Средства измерений", "erpref"),
+    "ob_support": ("ob_support", "Обеспечивающее", "erpref"),
+    "ob_applicators": ("ob_applicators", "Аппликаторы", "erpref"),
+    "ob_dies": ("ob_dies", "Матрицы", "erpref"),
+    "ob_tools": ("ob_tools", "Инструмент", "erpref"),
+})
+_DB_STORED_TABS = ("op", "ob", "ob_measuring", "ob_support", "ob_applicators", "ob_dies", "ob_tools", "coax", "ter", "lug", "prov", "cab_coax", "cab_multi", "cab_lan", "mat")
 _SOLDER_GROUP = "припой/флюс"
 
 
@@ -289,7 +297,7 @@ def _db_place(tab: str, fields: dict) -> tuple[str, str, str] | None:
 
 
 def _database(session: Session, words: list[str], patterns: list[str], keys: set[str]) -> list[dict]:
-    row = TechOperationRecordRow
+    row = _record_union().c
     stored = [tab for tab in _DB_STORED_TABS if tab != "op" or "erptctpl" in keys]
     if "erpref" not in keys:
         stored = [tab for tab in stored if tab == "op"]
@@ -354,14 +362,14 @@ def _reference_cards(session: Session, words: list[str], keys: set[str]) -> list
 
 
 def _equipment(session: Session, words: list[str]) -> list[dict]:
-    model, unit = EquipmentModelRow, TechOperationRecordRow
-    columns = [unit.id, unit.display_text, model.name, model.article, model.maker]
+    model, unit = EquipmentModelRow, EquipmentRecordRow
+    columns = [unit.id, unit.tab, unit.display_text, model.name, model.article, model.maker]
     statement = (select(*columns).join(model, unit.equipment_model_id == model.id)
-                 .where(unit.tab == "ob", _contains([unit.display_text, unit.normalized_search, model.name, model.article, model.maker], words, session))
+                 .where(_contains([unit.display_text, unit.normalized_search, model.name, model.article, model.maker], words, session))
                  .order_by(model.name, unit.sort_key, unit.id).limit(PER_GROUP))
-    return [_result(G_EQUIPMENT, _dot(name, article, text), _dot("База данных → Оборудование", maker),
-                    "references", tab="ob", equipment=str(unit_id))
-            for unit_id, text, name, article, maker in session.execute(statement)]
+    return [_result(G_EQUIPMENT, _dot(name, article, text), _dot(f"База данных → {_PLAIN_TABS[tab][1]}", maker),
+                    "references", tab=tab, equipment=str(unit_id))
+            for unit_id, tab, text, name, article, maker in session.execute(statement)]
 
 
 def _shipments(session: Session, words: list[str], patterns: list[str]) -> list[dict]:

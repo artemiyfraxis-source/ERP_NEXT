@@ -9,7 +9,9 @@ from app.modules.equipment_setup.domain import IssuedOperationRef, RecipeVersion
 from app.modules.equipment_setup.application import SetupResourceConflict
 from app.modules.production.resource_claims import ResourceConflict, ResourceKey, ResourceKind, ResourceOwner, ResourceWindow
 from app.modules.production.resource_infrastructure import ActiveResourceRow, ResourceGenerationRow, ResourceReservationRow, SqlAlchemyResourceClaims
-from app.modules.references.infrastructure import EquipmentModelRow, TechOperationRecordRow  # the units machine claims name
+from app.modules.references.infrastructure import SqlAlchemyTechOperationRepository
+from app.modules.references.domain import TechOperationRecord, TechOperationTab
+from app.shared.persistence import create_schema
 from app.workflows.equipment_setup_resources import SetupResourceReservations
 
 
@@ -20,8 +22,7 @@ UNIT = uuid4()  # the БД.ОБ unit (tech_operation_records.id)
 @pytest.fixture
 def db():
     engine = create_engine("sqlite://")
-    for row in (EquipmentModelRow, TechOperationRecordRow, ResourceGenerationRow, ResourceReservationRow, ActiveResourceRow):
-        row.__table__.create(engine)
+    create_schema(engine)
     with Session(engine) as session:
         session.add(ResourceGenerationRow(id=1, version=0))
         session.commit()
@@ -105,20 +106,20 @@ def test_renumbering_the_unit_keeps_its_claims_and_recipes():
     """Owner 05.11.2026: the link is the unit's id — a new inventory number changes nothing that points at it."""
     from app.modules.equipment_setup.recipe_infrastructure import RecipeVersionRow, SqlAlchemyRecipes
     from app.modules.equipment_setup.recipes import ManualRecipeVersion, RecipeField
-    from app.modules.references.infrastructure import EquipmentModelRow, TechOperationRecordRow
+    from app.modules.references.infrastructure import SqlAlchemyTechOperationRepository
+    from app.modules.references.domain import TechOperationRecord, TechOperationTab
+    from app.shared.persistence import create_schema
     from app.modules.techcards.infrastructure import RefreshRequestRow  # a БД.ОБ edit queues an ETK refresh
     from app.workflows.equipment_setup_context import SqlAlchemySetupContext
 
     engine = create_engine("sqlite://")
-    for row in (ResourceGenerationRow, ResourceReservationRow, ActiveResourceRow, EquipmentModelRow, TechOperationRecordRow,
-                RecipeVersionRow, RefreshRequestRow):
-        row.__table__.create(engine)
+    create_schema(engine)
     try:
         with Session(engine) as db:
             db.add(ResourceGenerationRow(id=1, version=0))
-            unit = TechOperationRecordRow(id=UNIT, tab="ob", display_text="Автомат", normalized_search="", source_sheet="БД.ОБ",
+            unit = SqlAlchemyTechOperationRepository(db)._put(TechOperationRecord(id=UNIT, tab=TechOperationTab.EQUIPMENT, display_text="Автомат", normalized_search="", source_sheet="БД.ОБ",
                 sort_key="1", fields={"Тип": "Оборудование", "Инв. номер": "ОБ.027.2", "Наименование": "Автомат резки",
-                                      "Расположение": "ЦАР"})
+                                      "Расположение": "ЦАР"}))
             db.add(unit)
             db.commit()
             recipes = SqlAlchemyRecipes(db)

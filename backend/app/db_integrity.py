@@ -78,6 +78,7 @@ RESERVE_HOLDERS = (
 )
 
 _COUNT_LABELS = {
+    "equipment_catalog_ownership": "единицы оборудования без единственного каталога-владельца",
     "lots_reserved_over_balance": "партии с РЕЗЕРВОМ больше остатка (ПРИХОД − СПИСАНО)",
     "lots_over_reserved":
         "партии, где держатели резерва (комплектация, техкарты, «Со склада») держат больше РЕЗЕРВА партии",
@@ -230,6 +231,20 @@ def _invariants(connection: Connection, schema: _Schema) -> tuple[dict[str, int]
         counts["shipment_line_lots_mismatch"] = int(scalar(
             f"SELECT count(*) FROM {q(SHIPMENT_LINES)} l WHERE abs(l.{q('picked')} - {lots}) > {_EPS}"
         ))
+
+    catalogs = {"ob": "equipment_machines", "ob_measuring": "equipment_measuring_units",
+                "ob_support": "equipment_support_units", "ob_applicators": "equipment_applicators",
+                "ob_dies": "equipment_dies", "ob_tools": "equipment_tools"}
+    if schema.has("equipment_units", "id", "catalog", "model_id") and all(schema.has(t, "id") for t in catalogs.values()):
+        union = " UNION ALL ".join(f"SELECT id, equipment_model_id, '{tab}' AS catalog FROM {q(table)}"
+                                   for tab, table in catalogs.items())
+        counts["equipment_catalog_ownership"] = int(scalar(
+            "SELECT count(*) FROM equipment_units u WHERE "
+            f"(SELECT count(*) FROM ({union}) d WHERE d.id = u.id) <> 1 OR "
+            f"(SELECT count(*) FROM ({union}) d WHERE d.id = u.id AND d.catalog = u.catalog "
+            "AND d.equipment_model_id = u.model_id) <> 1"))
+        details["equipment_catalogs"] = {tab: _count(connection, schema, table) for tab, table in catalogs.items()}
+        details["equipment_archived_units"] = int(scalar("SELECT count(*) FROM tech_operation_records WHERE tab = 'ob'"))
 
     orphans = _foreign_key_orphans(connection, schema)
     counts.update(orphans)
