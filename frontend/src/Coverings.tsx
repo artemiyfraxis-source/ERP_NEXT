@@ -34,17 +34,29 @@ const SHRINK_FIELDS = ["Температура усадки от, °C", "Тем�
 const SHRINK_LABELS = ["От, °C", "До, °C", "Вид значения", "По характеристикам, °C", "Источник (ссылка)", "Документ", "Страница", "Точная цитата"];
 const SHRINK_KINDS = ["рекомендуемая", "диапазон", "минимальная", "оптимальная"];
 export function shrinkTemperatureText(value?: ShrinkTemperature): string {
+  if (value?.needs_review) {
+    const low = value.raw_fields?.[SHRINK_FIELDS[0]] ?? "";
+    const high = value.raw_fields?.[SHRINK_FIELDS[1]] ?? "";
+    return low || high ? low === high ? low : `${low}…${high}` : "";
+  }
   if (!value || (value.lower_c === null && value.upper_c === null)) return "";
   if (value.lower_c === null) return `≤${mm(value.upper_c)}`;
-  if (value.upper_c === null) return `≥${mm(value.lower_c)}`;
+  if (value.upper_c === null) return value.kind ? `≥${mm(value.lower_c)}` : `${mm(value.lower_c)}…`;
   return value.lower_c === value.upper_c ? mm(value.lower_c) : `${mm(value.lower_c)}…${mm(value.upper_c)}`;
 }
 function shrinkTemperatureHint(value?: ShrinkTemperature): string {
   if (!value) return "";
+  if (value.needs_review) return ["Проверить", value.validation_error,
+    ...Object.entries(value.raw_fields ?? {}).map(([field, text]) => `${field}: ${text}`)].filter(Boolean).join("\n");
   return [value.kind, value.characteristic_c !== null ? `По характеристикам: ${mm(value.characteristic_c)} °C` : "",
     value.document, value.page ? `Страница: ${value.page}` : "", value.quote, value.source_url].filter(Boolean).join("\n");
 }
 function ShrinkTemperatureDetails({ value }: { value?: ShrinkTemperature }) {
+  if (value?.needs_review) return <div className="reference-fields cable-card">
+    <p className="tone-warn">Проверить: {value.validation_error}</p>
+    {Object.entries(value.raw_fields ?? {}).filter(([, text]) => text).map(([field, text]) =>
+      <span key={field} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}><small>{field}</small>{text}</span>)}
+  </div>;
   if (!value || !shrinkTemperatureText(value)) return <p className="muted">Температура усадки не задана</p>;
   return <div className="reference-fields cable-card">
     <span><small>Температура усадки, °C · {value.kind}</small>{shrinkTemperatureText(value)}</span>
@@ -88,8 +100,9 @@ function coveringColumns(raw: RawEdit, tab: CoveringTab = "cov"): DataColumn<Cov
     { key: "density", title: "Плотность", value: (row) => row.density, render: (row) => orDash(row.density) },
     { key: "temp", title: tab === "heat_shrink" ? "Рабочая температура, °C" : "Температура, °C", value: (row) => tempText(row.temp_min_c, row.temp_max_c), render: (row) => orDash(tempText(row.temp_min_c, row.temp_max_c)) },
     { key: "shrinkTemp", title: "Температура усадки, °C", numeric: true, value: (row) => shrinkTemperatureText(row.shrink_temperature),
-      render: (row) => shrinkTemperatureText(row.shrink_temperature)
-        ? <span title={shrinkTemperatureHint(row.shrink_temperature)}>{shrinkTemperatureText(row.shrink_temperature)}</span> : dash },
+      render: (row) => row.shrink_temperature?.needs_review || shrinkTemperatureText(row.shrink_temperature)
+        ? <span title={shrinkTemperatureHint(row.shrink_temperature)}>{shrinkTemperatureText(row.shrink_temperature)}
+          {row.shrink_temperature?.needs_review && <small className="tone-warn">{shrinkTemperatureText(row.shrink_temperature) ? " · " : ""}<span>Проверить</span></small>}</span> : dash },
     { key: "color", title: "Цвет", value: (row) => row.color, render: (row) => orDash(row.color), edit: raw("Цвет") },
     { key: "maker", title: "Производитель", value: (row) => row.maker, render: (row) => clip(row.maker), edit: raw("Производитель") },
     {
@@ -294,9 +307,10 @@ export function CoveringsTable({ tab = "cov", revision = 0, canEdit, onCount, on
 
   const raw: RawEdit = (field) => canEdit ? fieldCellEdit<CoveringRow>(field, (row) => records.get(row.id)) : undefined;
   const relevantKeys = new Set(GROUPS_BY_TAB[tab].flatMap((group) => groupKeys(group, data.rows, tab)));
+  const removedColumns = new Set((catalog.removed_columns ?? []).map((title) =>
+    tab === "heat_shrink" && title === "Температура, °C" ? "Рабочая температура, °C" : title));
   const parsedColumns = coveringColumns(raw, tab)
-    .filter((column) => relevantKeys.has(column.key) && !(catalog.removed_columns ?? []).includes(column.title)
-      && !(column.key === "temp" && (catalog.removed_columns ?? []).includes("Температура, °C"))
+    .filter((column) => relevantKeys.has(column.key) && !removedColumns.has(column.title)
       && (!catalog.columns || !RAW_FIELDS[column.key] || RAW_FIELDS[column.key].every((field) => fields.includes(field))))
     .map((column) => ({ ...column, remove: column.key === "name" ? undefined
       : removal.removeOf(DERIVED_KEYS.has(column.key) ? column.title : RAW_FIELDS[column.key][0]) }));
@@ -386,10 +400,11 @@ export function CoveringsTable({ tab = "cov", revision = 0, canEdit, onCount, on
             return <label key={field} className={index === 4 ? "wide" : undefined} style={index === 7 ? { gridColumn: "1 / -1" } : undefined}>
               <small>{SHRINK_LABELS[index]}</small>
               {index === 2 ? <select name={field} aria-label={field} value={value} onChange={(event) => update(event.target.value)}>
+                {value && !SHRINK_KINDS.includes(value) && <option value={value}>{value} — проверить</option>}
                 <option value="">Не задан</option>{SHRINK_KINDS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
               </select> : index === 7 ? <textarea name={field} aria-label={field} autoComplete="off" rows={3} value={value} onChange={(event) => update(event.target.value)} />
-                : <input name={field} aria-label={field} autoComplete="off" type={index === 4 ? "url" : "text"}
-                  inputMode={[0, 1, 3].includes(index) ? "decimal" : undefined} value={value} onChange={(event) => update(event.target.value)} />}
+                : <input name={field} aria-label={field} autoComplete="off" type="text"
+                  inputMode={index === 4 ? "url" : [0, 1, 3].includes(index) ? "decimal" : undefined} value={value} onChange={(event) => update(event.target.value)} />}
             </label>;
           })}</div>
         </>}

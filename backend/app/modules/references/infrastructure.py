@@ -601,7 +601,8 @@ class SqlAlchemyTechOperationRepository:
         return row
 
     def _put_material(self, record, row):
-        record = prepare_material(record, current_tab=row.tab if row is not None else None)
+        record = prepare_material(record, current_tab=row.tab if row is not None else None,
+                                  previous=row.fields if row is not None else None)
         model = MATERIAL_ROWS.get(record.tab.value, TechOperationRecordRow)
         moved = row is not None and row.tab != record.tab.value
         target = model(id=record.id) if row is None or moved else row

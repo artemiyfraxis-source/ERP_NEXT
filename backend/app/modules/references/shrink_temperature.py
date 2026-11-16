@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Mapping
 from urllib.parse import urlsplit
 
@@ -62,8 +62,6 @@ def read(fields: Mapping[str, str]) -> ShrinkTemperature:
     has_value = low is not None or high is not None
     if result.kind and result.kind not in KINDS:
         raise ValueError("Вид температуры усадки: выберите рекомендуемую, диапазон, минимальную или оптимальную")
-    if has_value and not result.kind:
-        raise ValueError("Укажите вид температуры усадки")
     if not has_value and (result.kind or result.characteristic_c is not None):
         raise ValueError("Укажите хотя бы одну границу температуры усадки")
     if low is not None and high is not None and low > high:
@@ -79,3 +77,13 @@ def read(fields: Mapping[str, str]) -> ShrinkTemperature:
         if not valid:
             raise ValueError("Источник температуры усадки: нужна ссылка http:// или https://")
     return result
+
+
+def read_stored(fields: Mapping[str, str]) -> dict:
+    """Keep legacy payloads readable, with the original cells available for repair."""
+    try:
+        return asdict(read(fields))
+    except ValueError as error:
+        return {**asdict(ShrinkTemperature()), "needs_review": True,
+                "validation_error": str(error),
+                "raw_fields": {key: fields[key] for key in COLUMNS if key in fields}}

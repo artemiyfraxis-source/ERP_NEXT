@@ -2056,6 +2056,9 @@ export function withConnectors(result: CablesResult): CablesResult {
 export type CoveringTab = "heat_shrink" | "cov";
 export type CoveringGroup = "tut" | "ttk" | "cambric" | "corrugated" | "braid" | "tape" | "other";
 export interface ShrinkTemperature {
+  needs_review?: boolean;
+  validation_error?: string;
+  raw_fields?: Record<string, string>;
   lower_c: number | null;
   upper_c: number | null;
   kind: "" | "рекомендуемая" | "диапазон" | "минимальная" | "оптимальная";
