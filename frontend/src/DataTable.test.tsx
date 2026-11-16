@@ -924,6 +924,69 @@ describe("groups as blocks (owner 25.10.2026: «визуал БД один», к
     expect(readSaved("blocks-test")).toMatchObject({ foldedBlocks: [], foldedSections: [] });
   });
 
+  it.each(["block", "section"])("refreshes paste and arrow targets when a %s folds after selecting a cell", async (mode) => {
+    const save = vi.fn(async () => undefined);
+    const tail = { ...parts[0], id: "tail", name: "Другой провод", series: "Другое" };
+    show({ rows: [...parts, tail], columns: partColumns(save), blockSection: (name) => name === "НВ-4" ? "Провода НВ" : undefined });
+    const cell = (id: string) => document.querySelector<HTMLElement>(`td[data-row="${id}"][data-col="maker"]`)!;
+    fireEvent.click(cell("b"));
+    fireEvent.click(screen.getByRole("button", { name: mode === "block" ? "НВ-4 2" : "Провода НВ 2" }));
+    await act(async () => { fireEvent.paste(cell("b"), { clipboardData: { getData: () => "Первый\nВторой" } }); });
+    expect(save.mock.calls).toEqual([[parts[1], "Первый"], [tail, "Второй"]]);
+    fireEvent.keyDown(cell("b"), { key: "ArrowDown" });
+    expect(cell("tail")).toHaveClass("dt-active");
+    fireEvent.keyDown(cell("tail"), { key: "ArrowUp" });
+    expect(cell("b")).toHaveClass("dt-active");
+    fireEvent.click(screen.getByRole("button", { name: mode === "block" ? "НВ-4 2" : "Провода НВ 2" }));
+    save.mockClear();
+    await act(async () => { fireEvent.paste(cell("b"), { clipboardData: { getData: () => "Первый\nВторой" } }); });
+    expect(save.mock.calls).toEqual([[parts[1], "Первый"], [parts[2], "Второй"]]);
+  });
+
+  it.each(["block", "section"])("excludes a folded %s from Shift-selection and the bulk action", async (mode) => {
+    const run = vi.fn();
+    const tail = { ...parts[0], id: "tail", name: "Другой провод", series: "Другое" };
+    show({ rows: [...parts, tail], bulkActions: [{ label: "Действие", run }],
+      blockSection: (name) => name === "НВ-4" ? "Провода НВ" : undefined });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Выбрать b" }));
+    fireEvent.click(screen.getByRole("button", { name: mode === "block" ? "НВ-4 2" : "Провода НВ 2" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Выбрать tail" }), { shiftKey: true });
+    expect(screen.getByRole("toolbar")).toHaveTextContent("Выбрано: 2");
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Действие" })); });
+    expect(run).toHaveBeenCalledWith([parts[1], tail]);
+  });
+
+  it("excludes previously selected folded rows from bulk actions", async () => {
+    const run = vi.fn();
+    show({ bulkActions: [{ label: "Действие", run }] });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Выбрать a" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Выбрать c" }));
+    fireEvent.click(screen.getByRole("button", { name: /^НВ-4 2/ }));
+    expect(screen.getByRole("toolbar")).toHaveTextContent("Выбрано: 1");
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Действие" })); });
+    expect(run).toHaveBeenCalledWith([parts[0]]);
+  });
+
+  it.each(["block", "section"])("moves a folded %s's active cell to the first visible editable cell and restores Tab entry", (mode) => {
+    const save = vi.fn(async () => undefined);
+    show({ columns: partColumns(save).map((column) => column.edit
+      ? { ...column, edit: { ...column.edit, enabled: (row) => row.id !== "a" } } : column),
+      blockSection: (name) => name === "НВ-4" ? "Провода НВ" : undefined });
+    const cell = (id: string) => document.querySelector<HTMLElement>(`td[data-row="${id}"][data-col="maker"]`)!;
+    fireEvent.click(cell("c"));
+    expect(cell("c")).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: mode === "block" ? "НВ-4 2" : "Провода НВ 2" }));
+    expect(cell("b")).toHaveClass("dt-active");
+    expect(cell("b")).toHaveFocus();
+    expect(document.querySelectorAll('td[tabindex="0"]')).toHaveLength(1);
+    expect(cell("b")).toHaveAttribute("tabindex", "0");
+    fireEvent.click(screen.getByRole("button", { name: "МГТФ 2" }));
+    expect(document.querySelectorAll("td.dt-active")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Развернуть все" }));
+    expect(document.querySelectorAll('td[tabindex="0"]')).toHaveLength(1);
+    expect(cell("b")).toHaveAttribute("tabindex", "0");
+  });
+
   it("skips folded sections when moving between editable blocks or pasting multiple rows", async () => {
     const save = vi.fn(async () => undefined);
     const tail = { ...parts[0], id: "tail", name: "Другой провод", series: "Другое" };

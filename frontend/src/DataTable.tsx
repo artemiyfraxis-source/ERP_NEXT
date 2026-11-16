@@ -673,8 +673,22 @@ export function DataTable<T>({
   // Without IntersectionObserver (an old browser, tests) the list goes in pages as before.
   const windowed = blocks && typeof IntersectionObserver !== "undefined";
   const shown = windowed ? filtered : filtered.slice(0, limit);
+  const groups: Array<[string, T[]]> = [];
+  if (grouping) {
+    const byName = new Map<string, T[]>();
+    for (const row of shown) {
+      const name = grouping(row);
+      if (!byName.has(name)) { byName.set(name, []); groups.push([name, byName.get(name)!]); }
+      byName.get(name)!.push(row);
+    }
+    // The header's sort with `groupSort` orders the rows inside every group (`filtered`); the groups stay where they are.
+  } else groups.push(["", shown]);
+  // Editing, navigation and selection share the screen's row order, excluding folded blocks and sections.
+  const lines = groups.flatMap(([name, groupRows]) => isFolded(name) || (blocks && isSectionFolded(blockSection?.(name))) ? [] : groupRows);
+  const lineKeys = new Set(lines.map(rowKey));
+  const linesSig = JSON.stringify([...lineKeys]);
   const keys = new Set(rows.map(rowKey));
-  const selectedRows = rows.filter((row) => selected.has(rowKey(row)));
+  const selectedRows = rows.filter((row) => lineKeys.has(rowKey(row)) && selected.has(rowKey(row)));
   // Выбор переживает перезагрузку данных только для строк, которые остались.
   useEffect(() => {
     setSelected((current) => {
@@ -694,17 +708,17 @@ export function DataTable<T>({
   // Shift+щелчок по флажку отмечает (или снимает) все строки от прошлого щелчка до этого, как в таблицах.
   const anchor = useRef<string | null>(null);
   function toggleRow(key: string, checked: boolean, shift: boolean) {
-    const sequence = shown.map(rowKey);
+    const sequence = lines.map(rowKey);
     const from = anchor.current;
     setSelected((current) => selectRange(sequence, current, from, key, checked, shift));
     anchor.current = key;
   }
 
-  const allShownSelected = shown.length > 0 && shown.every((row) => selected.has(rowKey(row)));
+  const allShownSelected = lines.length > 0 && lines.every((row) => selected.has(rowKey(row)));
   function toggleAll(checked: boolean) {
     setSelected((current) => {
       const next = new Set(current);
-      for (const row of shown) {
+      for (const row of lines) {
         if (checked) next.add(rowKey(row)); else next.delete(rowKey(row));
       }
       return next;
@@ -715,6 +729,7 @@ export function DataTable<T>({
     setSelected((current) => {
       const next = new Set(current);
       for (const row of groupRows) {
+        if (!lineKeys.has(rowKey(row))) continue;
         if (checked) next.add(rowKey(row)); else next.delete(rowKey(row));
       }
       return next;
@@ -822,16 +837,6 @@ export function DataTable<T>({
   const filterOptions = useMemo(() => new Map(columns.filter((column) => column.filter).map((column) =>
     [column.key, [...new Set(rows.map((row) => String(column.value(row) ?? "")))].sort((a, b) => compareCells(a, b))] as const)), [rows, columns]);
 
-  const groups: Array<[string, T[]]> = [];
-  if (grouping) {
-    const byName = new Map<string, T[]>();
-    for (const row of shown) {
-      const name = grouping(row);
-      if (!byName.has(name)) { byName.set(name, []); groups.push([name, byName.get(name)!]); }
-      byName.get(name)!.push(row);
-    }
-    // The header's sort with `groupSort` orders the rows inside every group (`filtered`); the groups stay where they are.
-  } else groups.push(["", shown]);
   // A block's count is of all its rows that passed the search, filters and chip (a long list shows them in pages).
   const blockTotals = new Map<string, number>();
   if (blocks && grouping) for (const row of filtered) blockTotals.set(grouping(row), (blockTotals.get(grouping(row)) ?? 0) + 1);
@@ -1006,7 +1011,6 @@ export function DataTable<T>({
   });
 
   // --- Cells edited in place ---
-  const lines = groups.flatMap(([name, groupRows]) => isFolded(name) || (blocks && isSectionFolded(blockSection?.(name))) ? [] : groupRows);
   const byKey = new Map(rows.map((row) => [rowKey(row), row]));
   const editable = (column: DataColumn<T> | undefined, row: T | undefined): column is DataColumn<T> & { edit: DataCellEdit<T> } =>
     Boolean(column?.edit && row && rowHas(row, column.key) && (column.edit.enabled?.(row) ?? true));
@@ -1028,13 +1032,22 @@ export function DataTable<T>({
   const keyed = useRef(false);
   const hasEditing = visible.some((column) => column.edit);
   // The grid is one Tab stop: the active cell, or the first editable one.
-  const entry: CellRef | null = active ?? (() => {
+  const activeRow = active && lineKeys.has(active.row) ? byKey.get(active.row) : undefined;
+  const entry: CellRef | null = active && editable(visible.find((column) => column.key === active.col), activeRow) ? active : (() => {
     for (const row of lines) {
       const column = visible.find((item) => editable(item, row));
       if (column) return { row: rowKey(row), col: column.key };
     }
     return null;
   })();
+  // Folding the active row must leave one reachable cell; an editor/range cannot stay on an unmounted cell.
+  useEffect(() => {
+    if (active && !sameCell(active, entry)) {
+      setActive(entry);
+      setRangeFrom(null);
+      setEditing(null);
+    }
+  }, [active, entry]);
 
   function step(cell: CellRef, where: Step): CellRef | null {
     const r = lines.findIndex((row) => rowKey(row) === cell.row);
@@ -1422,7 +1435,7 @@ export function DataTable<T>({
   const propsVersion = useRef(0);
   if (rowProps.some((value, index) => value !== lastRowProps.current[index])) { lastRowProps.current = rowProps; propsVersion.current += 1; }
   const rowToken = [propsVersion.current, identity(selected), identity(active), identity(editing), rangeFrom, expanded,
-    entry ? `${entry.row}:${entry.col}` : "", visibleSig, widthsSig, sized, filler, hasEditing].join("|");
+    entry ? `${entry.row}:${entry.col}` : "", linesSig, visibleSig, widthsSig, sized, filler, hasEditing].join("|");
   /** A block table's column widths (the fixed layout): dragged, set by the screen, levelled; `grow` and the filler take the rest. */
   function colsOf(heads: DataColumn<T>[]) {
     const widthOf = (column: DataColumn<T>) => widths[column.key] ? `${widths[column.key] + CELL_PAD}px`
