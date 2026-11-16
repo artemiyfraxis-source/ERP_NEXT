@@ -66,7 +66,7 @@ function setup(rows: ProductionInstrument[] = [instrument], handle?: (request: R
   return { requests, onChanged, ...rendered };
 }
 
-function open(number = instrument.inventory_number) { fireEvent.click(screen.getByText(number)); }
+function open(number = instrument.inventory_number) { fireEvent.click(screen.getByText(number, { selector: "td.key .instrument-cell" })); }
 function fill(label: string, value: string) { fireEvent.change(screen.getByLabelText(label), { target: { value } }); }
 const save = () => fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
 const writes = (requests: Request[]) => requests.filter((request) => request.method !== "GET");
@@ -121,6 +121,10 @@ const sortRows: ProductionInstrument[] = [
 it.each(["Наименование", "Обозн.", "Вид", "Зав. №", "Поверка до", "Статус", "Место", "Файлы"])(
   "sorts the flat list by %s in both directions and clears sorting", (title) => {
     setup(sortRows);
+    if (title === "Обозн.") {
+      fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+      fireEvent.click(screen.getByRole("checkbox", { name: "Обозн." }));
+    }
     const ascending = title === "Файлы" ? ["СИ.001", "СИ.002"] : ["СИ.002", "СИ.001"];
     const header = screen.getByRole("columnheader", { name: title });
     fireEvent.click(within(header).getByRole("button"));
@@ -140,7 +144,7 @@ it("shows and sorts the direct parent by its stable id, leaving top-level and or
   setup([instrument, accessory, other, { ...kit, parent_id: other.id }, { ...unverified, parent_id: "missing" }]);
   const rows = screen.getAllByRole("row").slice(1);
   const parentCells = rows.map((row) => within(row).getAllByRole("cell")[2]);
-  expect(parentCells.map((cell) => cell.textContent)).toEqual(["", "СИ.001 · Анализатор цепей", "СИ.010 · Другой прибор", "", ""]);
+  expect(parentCells.map((cell) => cell.textContent)).toEqual(["—", "СИ.001", "СИ.010", "—", "—"]);
   expect(parentCells[1].firstElementChild).toHaveAttribute("title", "СИ.001 · Анализатор цепей");
   fireEvent.click(screen.getByRole("button", { name: "Прибор" }));
   expect(inventoryOrder().slice(0, 2)).toEqual(["СИ.002", "СИ.003"]);
@@ -182,11 +186,28 @@ it("keeps the registry usable when browser storage is blocked", () => {
   expect(inventoryOrder()).toEqual(["СИ.001", "СИ.002"]);
 });
 
+it("replaces the previous column layout with compact defaults while preserving tree view", () => {
+  localStorage.setItem("quality-instruments-view", "tree");
+  localStorage.setItem("erp-table:quality-instruments-v2", JSON.stringify({
+    hidden: [], known: ["inventory_number", "name", "parentLabel", "doc_designation", "kind", "serial_number", "verification_due", "status", "storage_location", "files"],
+    widths: { name: 80, status: 300, storage_location: 300 },
+  }));
+  setup([instrument, accessory]);
+  expect(screen.getByRole("button", { name: "По приборам" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.queryByRole("columnheader", { name: "Обозн." })).not.toBeInTheDocument();
+  expect(screen.queryByRole("columnheader", { name: "Прибор" })).not.toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "Статус" })).toHaveStyle({ width: "144px" });
+  fireEvent.click(screen.getByRole("button", { name: "Списком" }));
+  expect(screen.queryByRole("columnheader", { name: "Обозн." })).not.toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "Прибор" })).toBeInTheDocument();
+});
+
 it("marks overdue and near-due verification dates, and uses the existing pending-verification tone", () => {
   setup([{ ...instrument, verification_due: "2000-01-01" }, unverified, { ...kit, verification_due: new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10) }]);
   expect(screen.getByText("Просрочена").parentElement).toHaveClass("is-overdue");
   expect(screen.getByText("До 30 дней").parentElement).toHaveClass("is-soon");
-  expect(screen.getByText("Поверка не подтверждена", { selector: ".status-chip" })).toHaveAttribute("data-tone", "warning");
+  expect(screen.getByText("Не подтверждена", { selector: ".status-chip" })).toHaveAttribute("data-tone", "warning");
+  expect(screen.getByText("Не подтверждена", { selector: ".status-chip" })).toHaveAttribute("title", "Поверка не подтверждена");
 });
 
 it("prefills a new SI number and registers an unverified instrument without fabricated verification", async () => {
@@ -354,7 +375,57 @@ it("uploads a passport as base64, displays its link and metadata, and deletes on
 
 it("shows passport presence and file counts in the registry", () => {
   setup([{ ...instrument, files: [{ id: "p", kind: "Паспорт", file_name: "паспорт.pdf", size: 12, uploaded_at: "2026-11-12", uploaded_by_name: "Иванов" }] }]);
-  expect(screen.getByText("1 · Паспорт")).toBeInTheDocument();
+  expect(screen.getByText("1 · паспорт")).toBeInTheDocument();
+});
+
+it("hides the parent column in tree view and restores it in list view", () => {
+  setup([instrument, accessory]);
+  expect(screen.getByRole("columnheader", { name: "Прибор" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "По приборам" }));
+  expect(screen.queryByRole("columnheader", { name: "Прибор" })).not.toBeInTheDocument();
+  expect(screen.getByText("Переходник", { exact: false, selector: ".instrument-name" })).toHaveStyle({ paddingLeft: "16px" });
+  fireEvent.click(screen.getByRole("button", { name: "Списком" }));
+  expect(screen.getByRole("columnheader", { name: "Прибор" })).toBeInTheDocument();
+});
+
+it("keeps full kind and status values in filters while showing compact labels", () => {
+  setup([instrument, accessory, unverified]);
+  expect(screen.getByText("Принадл.")).toHaveAttribute("title", "Принадлежность");
+  fireEvent.click(screen.getByRole("button", { name: "Фильтры" }));
+  const kind = screen.getByRole("combobox", { name: "Фильтр: Вид" });
+  expect(within(kind).getByRole("option", { name: "Средство измерений" })).toBeInTheDocument();
+  expect(within(kind).getByRole("option", { name: "Принадлежность" })).toBeInTheDocument();
+  fireEvent.change(screen.getByRole("combobox", { name: "Фильтр: Статус" }), { target: { value: "Поверка не подтверждена" } });
+  expect(inventoryOrder()).toEqual([unverified.inventory_number]);
+});
+
+it("hides designation by default but exports it with full kind and status labels", async () => {
+  let blob: Blob | null = null;
+  vi.spyOn(URL, "createObjectURL").mockImplementation((value) => { blob = value as Blob; return "blob:instruments"; });
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+  setup([unverified]);
+  expect(screen.queryByRole("columnheader", { name: "Обозн." })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Excel" }));
+  const text = new TextDecoder("utf-16le").decode(await blob!.arrayBuffer());
+  expect(text).toContain("Обозн.");
+  expect(text).toContain("ВАЦ-01");
+  expect(text).toContain("Средство измерений");
+  expect(text).toContain("Поверка не подтверждена");
+  fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+  expect(screen.getByRole("checkbox", { name: "Обозн." })).not.toBeChecked();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Обозн." }));
+  expect(screen.getByRole("columnheader", { name: "Обозн." })).toBeInTheDocument();
+});
+
+it("shows an em dash for no files and the count with passport presence", () => {
+  setup([instrument, { ...accessory, files: [
+    { id: "p", kind: "Паспорт", file_name: "паспорт.pdf", size: 12, uploaded_at: "2026-11-12", uploaded_by_name: "Иванов" },
+    { id: "s", kind: "Прочее", file_name: "схема.pdf", size: 12, uploaded_at: "2026-11-12", uploaded_by_name: "Иванов" },
+  ] }]);
+  const rows = screen.getAllByRole("row").slice(1);
+  expect(rows[0].querySelector('td[data-label="Файлы"]')).toHaveTextContent("—");
+  expect(rows[1].querySelector('td[data-label="Файлы"]')).toHaveTextContent("2 · паспорт");
 });
 
 it("writes off an instrument only after confirmation using its version", async () => {

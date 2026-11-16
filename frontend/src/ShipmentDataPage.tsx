@@ -16,7 +16,8 @@ import { DispatchCard } from "./DispatchCard";
 import { canAct, hasFullAccess } from "./navigation";
 import { dispatchBoard, kbKey, num, recentShipment, type Tab } from "./intakeStages";
 import { actShares, dataRows, type DataRow } from "./dispatchPositionRows";
-import { orderShipmentRows, ProjectShippingData, shipmentGroupKey, shipmentPositions, ShipmentGroupHeader, UpdCell } from "./ShipmentGroupHeader";
+import { orderShipmentRows, ProjectShippingData, shipmentGroupKey, UpdCell } from "./ShipmentGroupHeader";
+import { ShipmentTable } from "./ShipmentTable";
 export { dataRows, type DataRow } from "./dispatchPositionRows";
 
 /* «Данные отправок» (владелец 28.10.2026, раздел «Менеджмент»): менеджер (Ульяна Ладутько) вносит данные для
@@ -231,19 +232,10 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
   };
   const columns = [...COLUMNS[tab], ...Object.keys(ALL).filter((key) => !COLUMNS[tab].includes(key))]
     .map((key) => ({ ...ALL[key], hidden: !COLUMNS[tab].includes(key) }));
-  const groupLabel = (_key: string, groupRows: DataRow[], filteredRows: DataRow[]) => {
-    const positions = shipmentPositions(filteredRows);
+  const groupLabel = (_key: string, groupRows: DataRow[]) => {
     const name = groupRows[0].project;
     const source = groupRows.find(deciding) ?? groupRows.find((row) => !row.shipment) ?? groupRows[0];
     const decision = groupRows.find(deciding);
-    if (source.shipment) {
-      const position = positions.get(`${name}\u0001${source.shipment.id}`)!;
-      return <ShipmentGroupHeader project={name} customer={source.customer} shipment={source.shipment} {...position}
-        quantity={filteredRows.filter((row) => row.project === name && row.shipment?.id === source.shipment!.id).reduce((sum, row) => sum + row.quantity, 0)} onError={setError}
-        onOpenProject={() => setOpen({ id: `project:${name}`, row: source })} onOpenShipment={() => openRow(source)}>
-        <ReadyForecast forecast={forecastOf(source)} />
-      </ShipmentGroupHeader>;
-    }
     return <span className="ship-position-group">
       <button type="button" className="link-button ship-position-group-title" onClick={(event) => { event.stopPropagation(); setOpen({ id: `project:${name}`, row: source }); }}><strong>{name}</strong>{source.customer && ` · ${source.customer}`}</button>
       {/* Данные проекта — открыто, пустое подсвечено (владелец 12.11), как в «Приёмке с производства». */}
@@ -263,7 +255,17 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
       : <><div className="seg-tabs" role="group" aria-label="Быстрый отбор">{[...DISPATCH_STAGES, ["all", "Все"] as const].map(([key, text]) =>
         <button type="button" key={key} className={tab === key ? "on" : undefined} aria-pressed={tab === key} onClick={() => setTab(key)}>{text} · {board.counts[key]}</button>)}</div>
       {shipments.length >= 200 && <p className="muted">Загружены последние 200 отправок</p>}
-      <DataTable key={tab} label="Данные отправок" storageKey={`${STORAGE_KEY}:${tab}`} rows={rows} columns={columns} rowKey={(row) => row.id}
+      {(rows.some((row) => row.shipment) || ["packed", "to_ship", "shipped"].includes(tab)) && <ShipmentTable key={`shipments:${tab}`}
+        label="Данные отправок" storageKey={`shipment-data:shipments:v1:${tab}`}
+        shipments={rows.flatMap((row) => row.shipment ? [row.shipment] : [])} onError={setError}
+        onOpenShipment={(shipment) => openRow(rows.find((row) => row.shipment?.id === shipment.id)!)}
+        onOpenProject={(project, shipment) => { const source = allRows.find((row) => row.project === project && row.shipment?.id === shipment.id)!; setOpen({ id: `project:${project}`, row: source }); }}
+        positions={rows.filter((row) => row.shipment)} positionColumns={columns} positionKey={(row) => row.id}
+        positionShipment={(row) => row.shipment!}
+        positionLine={(row) => row.shipment?.lines.find((line) => row.id === `${row.shipment!.id}:${line.id}`)}
+        renderOperations={(shipment) => { const row = rows.find((item) => item.shipment?.id === shipment.id)!; return <>{dataCell(row)}<ReadyForecast forecast={readiness([...new Set(shipment.lines.map((line) => line.project))], forecasts, shipment.deadline, shipment.status)} /></>; }}
+        emptyText="В этом разделе пусто — другие этапы под чипами выше." />}
+      {(rows.some((row) => !row.shipment) || !["packed", "to_ship", "shipped"].includes(tab) && !rows.length) && <DataTable key={tab} label="Данные отправок" storageKey={`${STORAGE_KEY}:${tab}`} rows={rows.filter((row) => !row.shipment)} columns={columns} rowKey={(row) => row.id}
         groupBy={shipmentGroupKey} groupLabel={groupLabel} groupSort groupCards
         onRowClick={openRow} exportName="Данные отправок" searchPlaceholder="Проект, КБ, наименование, ГРН или № отправки"
         searchText={(row) => [row.shipment?.number, row.name, row.grn, row.item_index]}
@@ -271,7 +273,7 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
         toolbar={<><span className="view-switch" role="group" aria-label="Вид списка">
           {VIEWS.map(([key, label]) => <button type="button" key={key} className="secondary small" aria-pressed={view === key} onClick={() => chooseView(key)}>{label}</button>)}
         </span></>}
-        emptyText="В этом разделе пусто — другие этапы под чипами выше." /></>}
+        emptyText="В этом разделе пусто — другие этапы под чипами выше." />}</>}
     {current && <ShipmentDataWindow key={current.id} shipment={current} stage={open?.row.stage} canEdit={canEdit} canCorrectHistory={hasFullAccess(principal) && !principal.viewing} close={() => setOpen(null)} onSaved={reload} />}
     {project && <DispatchCard key={project.id} project={project.project} customer={project.customer} stage={project.stage ?? undefined} canEdit={canEdit} close={() => setOpen(null)} onSaved={() => void reload()} />}
   </section>;
