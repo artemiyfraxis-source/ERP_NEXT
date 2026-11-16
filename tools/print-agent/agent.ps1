@@ -29,10 +29,11 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.8.2'
+$script:AgentVersion = '2.8.4'
 $script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
+$script:HeartbeatDevices = $null
 $script:VnaControlInitialized = $false
 $script:VnaWorker = $null
 
@@ -513,35 +514,50 @@ function Invoke-AgentUpdate {
 
 # Отчёт серверу: кто я (номер, имя ПК), версия, сканеры, адрес в сети. Ответ может содержать update - новую версию.
 function Send-Heartbeat {
-    param([string]$Base, [string]$AuthToken, [string]$PrinterName, [string]$ScannerAddress)
-    $scanners = @(Get-AgentScanners -ScannerAddress $ScannerAddress)
+    param([string]$Base, [string]$AuthToken, [string]$PrinterName, [string]$ScannerAddress, [switch]$Lightweight)
+    $devices = $script:HeartbeatDevices
+    if (-not $Lightweight) {
+        $devices = @{
+            scanners = @(Get-AgentScanners -ScannerAddress $ScannerAddress); printer = [string]$PrinterName
+            lan_ip = (Get-LanIp); arinst = (Test-ArinstInstalled)
+        }
+        $script:HeartbeatDevices = $devices
+    }
+    # A restarted parent may already own a session before its first full discovery.
+    if (-not $devices) { $devices = @{ scanners = @(); printer = [string]$PrinterName; lan_ip = ''; arinst = $false } }
+    $scanners = $devices.scanners
     $body = @{
         machine_id = (Get-MachineId); pc_name = [string]$env:COMPUTERNAME; version = $script:AgentVersion
-        lan_ip = (Get-LanIp); printer = [string]$PrinterName; scanners = $scanners
+        lan_ip = $devices.lan_ip; printer = $devices.printer; scanners = $scanners
     }
-    $vna = if ($script:VnaControlInitialized) {
+    $vna = if ($script:VnaControlInitialized -or $Lightweight) {
         $observed = Get-VnaObservation
         if ($observed) { @{ name = $observed.name; ready = [bool]$observed.ready } }
     } else { Get-VnaCapability }
     if ($vna) { $body.vna = $vna }
-    if ($script:VnaControlInitialized -and $observed) {
+    if (($script:VnaControlInitialized -or $Lightweight) -and $observed) {
         $control = Get-VnaControlCapability $observed
         if ($control) { $body.vna_control = $control }
     }
+    # Recovery still needs a live protocol report when the instrument observation is unavailable.
+    # Empty methods allow no new calibration; readiness and serial are never inferred.
+    if ($Lightweight -and -not $body.vna_control) { $body.vna_control = @{ version = 1; methods = @() } }
     $body.vna_sources = @()
     if ($vna) { $body.vna_sources += 's2vna' }
-    if (Test-ArinstInstalled) { $body.vna_sources += 'arinst' }
+    if ($devices.arinst) { $body.vna_sources += 'arinst' }
     $reply = Invoke-ErpApi -Url "$Base/api/stock/scan/agent/heartbeat" -Body $body -AuthToken $AuthToken
     $names = ($scanners | ForEach-Object { $_.name }) -join '; '
     $line = "Отчёт серверу: сканеры: $(if ($names) { $names } else { 'не найдены' })"
     if ($line -ne $script:LastHeartbeatLine) { Write-Log $line; $script:LastHeartbeatLine = $line }
-    if ($reply -and $reply.update) { [void](Invoke-AgentUpdate -Base $Base -Update $reply.update) }
+    if (-not $Lightweight -and $reply -and $reply.update) { [void](Invoke-AgentUpdate -Base $Base -Update $reply.update) }
 }
 
 function Start-AgentLoop {
     param([string]$Base, [string]$AuthToken, [string]$PrinterName, [switch]$DryRun, [switch]$Once, [string]$ScannerAddress)
     $delay = 3
     $nextBeat = Get-Date
+    $lastBeat = $nextBeat
+    $lastBeatWasLightweight = $false
     Initialize-VnaControl
     $controlDelay = 0
     Write-Log "Агент $($script:AgentVersion) запущен: сервер $Base, принтер '$PrinterName'$(if ($DryRun) { ', DRY RUN' }), сканер: $(if ($ScannerAddress) { $ScannerAddress } else { 'USB (WIA), автопоиск' })"
@@ -554,12 +570,16 @@ function Start-AgentLoop {
             $nextBeat = Get-Date; $script:VnaFirstObservationReported = $true
         }
         # Winspool and scanner discovery can block without a timeout. Keep them out of
-        # the control path so cancellation checks and the worker deadline stay reachable.
-        $controlActive = $script:VnaWorker -and $script:VnaWorker.command
-        if (-not $controlActive -and (Get-Date) -ge $nextBeat) {
-            try { Send-Heartbeat -Base $Base -AuthToken $AuthToken -PrinterName $PrinterName -ScannerAddress $ScannerAddress }
+        # the control path, including gaps between commands while the session still needs restoration.
+        $owner = Read-VnaJson (Join-Path (Get-VnaControlRoot) 'owner.json')
+        $controlActive = ($script:VnaWorker -and $script:VnaWorker.command) -or ($owner -and -not $owner.restored)
+        $beatEvery = if ($controlActive) { [Math]::Min(60, $script:HeartbeatEverySec) } else { $script:HeartbeatEverySec }
+        if ($controlActive -and $nextBeat -gt $lastBeat.AddSeconds($beatEvery)) { $nextBeat = $lastBeat.AddSeconds($beatEvery) }
+        if ((Get-Date) -ge $nextBeat -or ($lastBeatWasLightweight -and -not $controlActive)) {
+            try { Send-Heartbeat -Base $Base -AuthToken $AuthToken -PrinterName $PrinterName -ScannerAddress $ScannerAddress -Lightweight:$controlActive }
             catch { Write-Log "Отчёт серверу не ушёл: $($_.Exception.Message)" }
-            $nextBeat = (Get-Date).AddSeconds($script:HeartbeatEverySec)
+            $lastBeat = Get-Date; $lastBeatWasLightweight = [bool]$controlActive
+            $nextBeat = $lastBeat.AddSeconds($beatEvery)
         }
         $state = 'error'
         try {
@@ -579,7 +599,7 @@ function Start-AgentLoop {
         if ($Once) { return }
         if ($scanState -eq 'error' -or $controlError) { $controlDelay = [Math]::Min(30, [Math]::Max(3, $controlDelay * 2)) } else { $controlDelay = 0 }
         $pause = if ($controlDelay) { 1000 * $controlDelay } elseif ($script:VnaWorker -and $script:VnaWorker.command) { 500 } elseif ($script:VnaPollAfterMs -eq 500) { 500 } else { 3000 }
-        # While a control command runs, only bounded network calls precede this wait.
+        # While a control command runs or the session needs restoration, only bounded network calls precede this wait.
         # Even under backoff, service the worker watchdog every 500 ms.
         for ($elapsed = 0; $elapsed -lt $pause; $elapsed += 500) {
             Start-Sleep -Milliseconds 500
