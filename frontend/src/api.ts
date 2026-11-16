@@ -1903,7 +1903,7 @@ export interface ReferenceBase {
 
 /** A base of «База данных» — its own table (migration 0165): «Наконечники» (lug) and each cable kind (prov = монтажные,
  *  cab_coax, cab_multi, cab_lan) too. */
-export type TechOperationTab = "ob" | "ob_measuring" | "ob_support" | "ob_applicators" | "ob_dies" | "ob_tools" | "op" | "ter" | "lug" | "coax" | "prov" | "cab_coax" | "cab_multi" | "cab_lan" | "mat"
+export type TechOperationTab = "ob" | "ob_measuring" | "ob_support" | "ob_applicators" | "ob_dies" | "ob_tools" | "op" | "ter" | "lug" | "coax" | "prov" | "cab_coax" | "cab_multi" | "cab_lan" | "mat" | "heat_shrink" | "cov"
   | "kab_coax" | "kab_awg";
 
 /** «Кабели и провода»: the list a БД.ПРОВ row is in (backend `references/cables.py`). */
@@ -2052,7 +2052,8 @@ export function withConnectors(result: CablesResult): CablesResult {
   return { ...result, rows: result.rows.map((row) => row.connector_ids ? { ...row, connectors: row.connector_ids.map(of) } : row) };
 }
 
-/** «Оболочки»: БД.МАТ rows that cover a harness, grouped and parsed by the server (`coverings.py`). */
+/** Independent material catalogs, grouped and parsed by the server. */
+export type CoveringTab = "heat_shrink" | "cov";
 export type CoveringGroup = "tut" | "ttk" | "cambric" | "corrugated" | "braid" | "tape" | "other";
 export interface CoveringRow {
   id: string;
@@ -2061,6 +2062,8 @@ export interface CoveringRow {
   /** «вручную» — the override cell; otherwise how the classifier decided. */
   group_source: string;
   auto_group: CoveringGroup | null;
+  classification_status?: "classified" | "unknown";
+  material_group?: string;
   datasheet: string;
   unit: string;
   before_mm: number | null;
@@ -2117,6 +2120,8 @@ export interface TechOperationRecord {
   ter_kind?: TerKind;
   ter_rule?: TerKind;
   fields: Record<string, string>;
+  material_group?: string;
+  classification_status?: "classified" | "unknown";
   /** БД.ОБ / БД.ОП — связи по id (миграция 0171): модель единицы, её вид, «Инструмент» и «Обслуживает»; ячейки БД.ОП → модели. */
   equipment_model_id?: string;
   instrument_id?: string | null;
@@ -2168,6 +2173,7 @@ export interface TechOperationResult {
   };
   columns?: string[];
   custom_columns?: string[];
+  removed_columns?: string[];
   records: TechOperationRecord[];
 }
 
@@ -4362,7 +4368,7 @@ export const referencesApi = {
   // The lists of «База данных» are visit reads (`visitRead`): one download per visit, fresh after a write.
   bases: () => visitRead<BasesResult>("/api/references/bases"),
   cables: () => visitRead("/api/references/cables", () => api<CablesResult>("/api/references/cables").then(withConnectors)),
-  coverings: () => visitRead<CoveringsResult>("/api/references/coverings"),
+  coverings: (tab: CoveringTab = "cov") => visitRead<CoveringsResult>(`/api/references/coverings?${new URLSearchParams({ tab })}`),
   setCoveringGroup: (recordId: string, group: string) =>
     api<TechOperationRecord>(`/api/references/coverings/${recordId}/group`, { method: "PUT", body: JSON.stringify({ group }) }),
   moveCable: (recordId: string, kind: CableKind) =>
@@ -4415,6 +4421,7 @@ export const referencesApi = {
   /** Новая строка в базе `tab` (для кабеля — `cableTab(kind)`). */
   createRecord: (tab: TechOperationTab, fields: Record<string, string>) =>
     api<TechOperationRecord>("/api/references/tech-operations", { method: "POST", body: JSON.stringify({ tab, fields }) }),
+  deleteRecord: (id: string) => api<{ id: string }>(`/api/references/tech-operations/${id}`, { method: "DELETE" }),
   equipmentNumber: (type: string) =>
     api<{ inventory: string; row: string }>(`/api/references/tech-operations/equipment-number?${new URLSearchParams({ type })}`),
   deleteEquipment: (id: string) => api<{ id: string }>(`/api/references/equipment/${id}`, { method: "DELETE" }),

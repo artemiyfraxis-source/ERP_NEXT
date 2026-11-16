@@ -123,23 +123,31 @@ def derive_route(ops: Sequence[RouteOp], final_name: str = "") -> Route:
     edges: list[Edge] = []
     heads: list[str] = []   # products not yet taken by a later operation
     tut: list[str] = []     # TUT pieces waiting for insTut / endCap
+    labels: list[str] = []
     for op in ops:
         key = f"b{op.position}"
         final = op.position == last
         blocks.append(Block(key, (final_name or op.name) if final else op.name, (op.position,), final))
+        if op.key == "coaxPrintLabel":
+            labels.append(key)
+            continue
         if op.type in TUT_CUTS:
             tut.append(key)
             continue
         if op.type in SOURCE_TYPES or op.code.upper().startswith("CUT_"):
             heads.append(key)
             continue
-        inputs = heads + (tut if op.type in TUT_TAKERS else [])
-        if op.type in TUT_TAKERS:
+        takes_labels = op.key == "coaxInsLabel"
+        takes_tubes = op.type in TUT_TAKERS and not takes_labels
+        inputs = heads + (tut if takes_tubes else []) + (labels if takes_labels else [])
+        if takes_tubes:
             tut = []
+        if takes_labels:
+            labels = []
         edges.extend(Edge(item, key) for item in inputs)
         heads = [key]
     final_key = f"b{last}"
-    edges.extend(Edge(item, final_key) for item in heads + tut if item != final_key)
+    edges.extend(Edge(item, final_key) for item in heads + tut + labels if item != final_key)
     route = _ordered(blocks, edges, manual=False)
     validate_route(route, [op.position for op in ops])
     return route

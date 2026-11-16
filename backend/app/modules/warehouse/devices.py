@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, String, or_, select, update
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -38,6 +38,47 @@ class VnaBindingRow(Base):
 
     serial: Mapped[str] = mapped_column(String(300), primary_key=True)
     machine_id: Mapped[str] = mapped_column(String(80), ForeignKey("warehouse_scan_agents.machine_id"), nullable=False)
+
+
+class VnaControlRow(Base):
+    """Separate opt-in protocol; capture capability never implies permission to write."""
+
+    __tablename__ = "warehouse_vna_control"
+    __table_args__ = (CheckConstraint("version >= 1", name="ck_vna_control_version"),)
+    machine_id: Mapped[str] = mapped_column(String(80), ForeignKey("warehouse_scan_agents.machine_id", ondelete="CASCADE"), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    methods: Mapped[list] = mapped_column(JSON, nullable=False)
+    reported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+def control_heartbeat(uow, machine_id: str, capability: dict | None, now: datetime) -> None:
+    with uow:
+        session = _session(uow)
+        row = session.get(VnaControlRow, machine_id)
+        if capability is None:
+            if row is not None:
+                session.delete(row)
+        else:
+            if row is None:
+                row = VnaControlRow(machine_id=machine_id)
+                session.add(row)
+            row.version, row.methods, row.reported_at = capability["version"], capability["methods"], now
+        uow.commit()
+
+
+def control_capability(session, machine_id: str, now: datetime) -> list[str]:
+    pc, control = session.get(ScanAgentRow, machine_id), session.get(VnaControlRow, machine_id)
+    reported = control.reported_at if control else None
+    if reported is not None and reported.tzinfo is None:
+        reported = reported.replace(tzinfo=now.tzinfo)  # SQLite drops timezone information.
+    try:
+        installed = tuple(int(p) for p in pc.version.split(".")) if pc else ()
+    except ValueError:
+        installed = ()
+    if (not pc or pc.legacy or len(installed) != 3 or installed <= (2, 7, 0) or not control
+            or control.version != 1 or reported < now - LIVE_FOR):
+        raise ScanJobClosed("Агент не поддерживает актуальный протокол vna_control версии 1")
+    return control.methods
 
 
 def idn_serial(name: str) -> str:

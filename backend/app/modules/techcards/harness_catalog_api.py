@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Response
 from pydantic import BaseModel, Field
 
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork, coax_dia_rows
-from app.modules.references.domain import CABLE_TABS, TERMINAL_TABS, TechOperationTab
+from app.modules.references.domain import CABLE_TABS, TERMINAL_TABS, MATERIAL_TABS, TechOperationTab
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, projects_edit_principal, projects_view_principal
 from app.shared.stored_files import decode_upload, file_response
@@ -36,7 +36,7 @@ router = APIRouter(prefix="/api/techcards", tags=["Редактор жгута"]
 RECORD_LIMIT = 100_000
 # A catalog table of a mirror sheet reads the whole family (migration 0165): «ter» — contacts and lugs, «prov» — the
 # hook-up wires and the three cable bases.
-_TABLE_TABS = {"ter": TERMINAL_TABS, "prov": CABLE_TABS}
+_TABLE_TABS = {"ter": TERMINAL_TABS, "prov": CABLE_TABS, "mat": MATERIAL_TABS}
 
 
 @router.get("/harness-catalog", dependencies=[Depends(projects_view_principal)])

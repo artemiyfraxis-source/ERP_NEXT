@@ -15,7 +15,7 @@ apply does."""
 
 from __future__ import annotations
 from .equipment_catalogs import CATALOG_TYPES, CATALOG_COLUMNS
-from .domain import EQUIPMENT_TABS
+from .domain import EQUIPMENT_TABS, MATERIAL_TABS, MATERIAL_CATALOG_TABS
 
 import contextlib
 import hashlib
@@ -30,7 +30,7 @@ from app.shared.identity import Actor
 
 from .application import (
     custom_columns, FieldEdit, SaveGaugeCommand, SaveHookupCommand, SetCoaxDiametersCommand, UnitOfWork, _audit, _clean_new_fields,
-    _create_in, _edit_in, save_gauge_in, save_hookup_in, set_coax_diameters_in,
+    _create_in, _edit_in, save_gauge_in, save_hookup_in, set_coax_diameters_in, removed_columns, material_columns,
 )
 from .cable_structure import parse_hookup, shown
 from .cables import DIAMETERS, cable_mark, cable_rows, diameter_index
@@ -117,6 +117,7 @@ class _TechTable:
             self.titles = self.extras
         self.own_columns: tuple[str, ...] = ()  # a cable base: its columns, read in `items`
         self.foreign: frozenset[str] = frozenset()  # a cable base: the columns of the other cable bases only
+        self.removed: set[str] = set()
 
     def _extra_values(self, uow: UnitOfWork, records: Sequence[TechOperationRecord]) -> dict[str, dict[str, str]]:
         """The extra columns of every БД.ПРОВ row, read in the open `uow` (the cable catalogue's own join)."""
@@ -139,7 +140,8 @@ class _TechTable:
 
     def _records(self, uow: UnitOfWork) -> list[TechOperationRecord]:
         """The base's rows only (an ID of another base's row is «not found»)."""
-        return list(uow.tech_operations.list(tab=self.tab, query="", limit=100_000))
+        return list(uow.tech_operations.list(tab=MATERIAL_TABS if self.tab == TechOperationTab.MATERIAL else self.tab,
+                                            query="", limit=100_000))
 
     def kind_ids(self, uow: UnitOfWork, kind: str) -> set[str] | None:
         """The ids of one list of the tab («Оболочки» of БД.МАТ), read in `uow` (not open)."""
@@ -154,6 +156,9 @@ class _TechTable:
 
     def items(self, uow: UnitOfWork) -> list[Item]:
         records = self._records(uow)
+        self.removed = removed_columns(self.tab, uow)
+        if self.tab in MATERIAL_CATALOG_TABS:
+            self.own_columns = tuple(material_columns(self.tab, uow))
         if self.cable_kind:
             columns = {kind: cable_list_columns(uow, kind) for kind in CABLE_KIND_VALUES}
             self.own_columns = columns[self.cable_kind]
@@ -178,9 +183,12 @@ class _TechTable:
         # the columns removed from a cable list / БД.КОАКС (23.10, 25.10.2026) are no column of the file: the row keeps
         # their values, the file neither shows nor writes them
         removed = CABLE_DROPPED[self.cable_kind] if self.cable_kind else             COAX_DROPPED_COLUMNS if self.tab == TechOperationTab.COAX else frozenset()
+        removed = set(removed) | self.removed
         keys = schema_keys(self.tab.value) | set(self.extras) | self.foreign | removed
         richest = sorted(items, key=lambda item: -sum(1 for name in item.values if name not in keys))
-        ordered: dict[str, None] = dict.fromkeys(self.own_columns if self.cable_kind or self.tab in EQUIPMENT_TABS else BASE_COLUMNS.get(self.tab, ()))
+        ordered: dict[str, None] = dict.fromkeys(self.own_columns if self.cable_kind or self.tab in (*EQUIPMENT_TABS, *MATERIAL_CATALOG_TABS) else BASE_COLUMNS.get(self.tab, ()))
+        for name in removed:
+            ordered.pop(name, None)
         for item in richest:
             ordered.update(dict.fromkeys(name for name in item.values if name not in keys))
         if not ordered:  # a snapshot without the sheet's columns: the schema keys are the fields
@@ -416,6 +424,8 @@ def _tables() -> dict[str, Callable[[], _Table]]:
         "coax": lambda: _TechTable(TechOperationTab.COAX, "Коаксиальные разъёмы"),
         **{tab.value: (lambda tab=tab: _TechTable(tab, CABLE_KINDS[CABLE_KIND_BY_TAB[tab]])) for tab in CABLE_TABS},
         "mat": lambda: _TechTable(TechOperationTab.MATERIAL, "Материалы", {"cov": "Оболочки"}),
+        "heat_shrink": lambda: _TechTable(TechOperationTab.HEAT_SHRINK, "Термоусадка"),
+        "cov": lambda: _TechTable(TechOperationTab.COVERING, "Оболочки"),
         "wire-gauges": _GaugeTable,
         "suppliers": lambda: _MapTable(ReferenceKind.SUPPLIER, "Домен → поставщик", "Домен или ссылка", "Поставщик",
                                        normalized_supplier_key),

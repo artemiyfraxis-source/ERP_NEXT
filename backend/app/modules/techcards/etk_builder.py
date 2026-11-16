@@ -582,6 +582,8 @@ def _coax_result_name(op: Mapping[str, Any], config: Mapping[str, Any], done: Se
     coax = _coax(config)
     cable = str(coax.get("cableArt") or coax.get("cableName") or "").strip()
     tut = str(coax.get("tutArt") or coax.get("tutName") or "").strip()
+    if operation_type == "coaxCutTut" and op.get("markMaterial") == "tape":
+        return f"Напечатанные этикетки: {int(_coax_units(op))} шт."
     if operation_type == "coaxCutTut":
         count = int(_coax_units(op))
         length = _format(coax.get("tutLength"))
@@ -608,8 +610,10 @@ def _coax_result_name(op: Mapping[str, Any], config: Mapping[str, Any], done: Se
             sides["cap_crimp"].add(end)
         elif kind == "coaxCapScrew":
             sides["cap_screw"].add(end)
-        elif kind == "coaxVswr":
+        elif kind in {"coaxVswr", "coaxConnColor"}:
             flags.add(kind)
+        elif kind == "coaxInsTut" and step.get("markMaterial") == "tape":
+            flags.add("coaxLabel")
         elif kind in {"coaxInsTut", "coaxInsSleeve", "coaxShield", "coaxHeat"}:
             clamp = len(_list(step.get("clampSides"))) if kind == "coaxInsSleeve" else 0
             clamp_put_on += clamp
@@ -668,6 +672,11 @@ def _coax_result_name(op: Mapping[str, Any], config: Mapping[str, Any], done: Se
         if tube_on or shrunk:
             facts.append(("ТУТ усажены" if many else "ТУТ усажена") if shrunk else
                          ("ТУТ надеты, не усажены" if many else "ТУТ надета, не усажена"))
+    if "coaxLabel" in flags:
+        facts.append("этикетки наклеены на заданные места")
+    if "coaxConnColor" in flags:
+        color = coax.get("connColor") or {}
+        facts.append(f"цветовая маркировка разъёмов: {color.get('color', '')} ({color.get('code', '')})")
     if "coaxVswr" in flags:
         control = vswr_control(coax.get("vswrControl"))
         facts.append(f"КСВН проверен выборочно (1 из {control['every']})" if control and control["mode"] == "sample"
@@ -838,11 +847,15 @@ def _coax_components(op: Mapping[str, Any], config: Mapping[str, Any], *, manual
         # FAKRA/HFM (генератор 25.10): детали комплекта конца, что берёт операция, — списком в самой операции.
         return [{"art": str(item["art"]).strip(), "name": str(item.get("name") or ""),
                  "norm": _format(_decimal(item.get("qty")) * quantity), "unit": str(item.get("unit") or "Шт.")} for item in parts]
+    if operation_type == "coaxConnColor":
+        return []  # The marker is tooling; no consumption norm is specified by the BOM.
     if operation_type == "coaxCut":
         cables = max(_decimal(coax.get("cables")), Decimal(1))  # HFM: четыре одинаковых кабеля на сборку
         return row("cableArt", "cableName", _decimal(coax.get("cableLength")) * quantity * cables / 1000, "М.")
     if operation_type == "coaxCutTut":
-        if manual and _decimal(coax.get("tutLength")) > 0:
+        if op.get("markMaterial") == "tape":
+            return []  # Missing label stock must never consume protective tubing.
+        if (manual or op.get("protective")) and _decimal(coax.get("tutLength")) > 0:
             return row("tutArt", "tutName", units * _decimal(coax.get("tutLength")) / 1000 * quantity, "М.")
         return row("tutArt", "tutName", units * quantity, "Шт.")
     if operation_type == "coaxInsSleeve":
@@ -1043,6 +1056,8 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
         # резка кабеля и ТУТ «Погонной» карты — по узлам станка от своей длины.
         coax = _coax(config)
         length = {"coaxCut": coax.get("cableLength"), "coaxCutTut": coax.get("tutLength")}.get(operation_type)
+        if op.get("markMaterial") == "tape":
+            length = None
         linear = linear_seconds(op.get("linearTiming"), _decimal(length) / 1000) if length is not None else None
         piece = linear / 60 if linear is not None else operation_minutes
         if operation_type == "coaxVswr":
@@ -1299,12 +1314,16 @@ def coax_sketch_fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict
     putting on / shrinking TUT and sleeves — the part and how many per item (`coaxParts`). Cut and strip keep theirs."""
     operation_type = str(op.get("type") or "")
     coax = _coax(config)
+    if operation_type == "coaxHeat" and op.get("protective"):
+        return {"coaxProtectiveHeat": True}
     if operation_type in COAX_END_TYPES:
         end = _coax_end(op, config)
         return {"coaxEnd": {**_coax_strip_sizes(config, "B" if op.get("side") == "B" else "A"),
                             "side": _side_label(op), "pinType": str(end.get("pinType") or ""),
                             "shield": coax_end_shield(end)}}
     if operation_type == "coaxCutTut":
+        if op.get("markMaterial") == "tape":
+            return {}
         length = _format(coax.get("tutLength"))
         return {"lengthKd": f"{length}мм"} if length != "0" else {}
     parts = {
@@ -1313,7 +1332,7 @@ def coax_sketch_fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict
         "coaxInsSleeve": ("sleeve", coax.get("sleeveArt") or coax.get("sleeveName"), ""),
         "coaxShield": ("sleeve", coax.get("sleeveArt") or coax.get("sleeveName"), ""),
     }.get(operation_type)
-    if not parts:
+    if not parts or op.get("markMaterial") == "tape":
         return {}
     kind, name, length = parts
     length_text = _format(length) if length else "0"
@@ -1560,11 +1579,29 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
     if operation_type == "coaxCut" and isinstance(op.get("stripSides"), list):
         # Резка с разделкой на роторном станке (владелец 14.10): размеры разделки обоих концов — в эскиз операции;
         # голый конец без разъёма размеров не имеет.
-        fields["coax"] = _coax_strip_sizes(config, "A")
+        if "A" in op["stripSides"]:
+            fields["coax"] = _coax_strip_sizes(config, "A")
         if "B" in op["stripSides"]:
             side_b = _coax_strip_sizes(config, "B")
             if side_b["connector"]:
                 fields["coaxB"] = side_b
+    if operation_type == "coaxCut" and _coax(config).get("fakraCutStrip"):
+        fields["coaxStripSides"] = op.get("stripSides", [])
+        for key, side_key in (("coax", "sideA"), ("coaxB", "sideB")):
+            end = _coax(config).get(side_key) or {}
+            if key in fields and end.get("kind") in {"straight", "angled"}:
+                fields[key]["dimensionOrder"] = "XYZ"
+    if operation_type == "coaxCut" and _coax(config).get("lengthBasis") == "finished":
+        fields.update({"finishedLength": _coax(config).get("finishedLength"), "lPlusA": _coax(config).get("lPlusA"),
+                       "lPlusB": _coax(config).get("lPlusB"), "cutTolerance": "0…+5 мм", "drawingTolerance": "0…+10 мм"})
+    if op.get("marks") and operation_type.startswith("coax"):
+        fields["coaxMarks"] = deepcopy(op["marks"])
+    if operation_type == "coaxInsSleeve" and _coax(config).get("fakraCutStrip"):
+        end = _coax_end(op, config)
+        if end.get("kind") in {"straight", "angled"}:
+            fields["coaxFakraPrep"] = end["kind"]
+    if op.get("connColor"):
+        fields["connColor"] = deepcopy(op["connColor"])
     fields.update(coax_sketch_fields(op, config))
     if operation_type == "coaxShield":
         hexes = coax_crimp_hex(config)
@@ -1858,8 +1895,28 @@ def _resolve_card(
     parts_fields = fields.get("coaxParts") if isinstance(fields.get("coaxParts"), Mapping) else {}
     for step in card.steps:
         text = substitute(step.text)
+        strip_sides = fields.get("coaxStripSides")
+        if isinstance(strip_sides, list) and len(strip_sides) == 1:
+            side = "А" if strip_sides[0] == "A" else "В"
+            text = text.replace("С ДВУХ СТОРОН", f"ТОЛЬКО СО СТОРОНЫ {side}")
+            text = text.replace("для сторон А и Б", f"для стороны {side}")
+            text = text.replace("на обоих концах", f"на стороне {side}")
+            text = text.replace("ступени обеих сторон", f"ступени стороны {side}")
         if parts_fields.get("clampSides"):
             text = _clamp_put_on_text(text, len(parts_fields["clampSides"]), int(parts_fields.get("count") or 0))
+        if fields.get("coaxFakraPrep"):
+            text = text.replace("неразделанный кабель", "кабель с разделанным концом")
+            text = text.replace("до разделки", "после разделки при резке")
+            if fields["coaxFakraPrep"] == "straight":
+                if text.startswith("Надеть обжимную гильзу"):
+                    text = "Надеть на кабель последовательно крышку 59Z163-000/51, уплотнитель 59K14B-1M4/50, гильзу экрана; сохранить ориентацию деталей."
+                elif "Порядок предварительного надевания" in text:
+                    text = "Проверить порядок: крышка, уплотнитель, гильза. Детали проходят свободно, оболочка и разделанный конец не повреждены. Окончательная герметизация выполняется отдельной операцией."
+        if fields.get("coaxProtectiveHeat"):
+            if text.startswith("Надвинуть ТУТ"):
+                text = "Убедиться, что прозрачная ТУТ закрывает этикетку на её месте по КД, не ближе 100 мм от разъёма. Не сдвигать этикетку при усадке."
+            elif "ТУТ после усадки" in text:
+                text = "ВИЗУАЛЬНЫЙ КОНТРОЛЬ: прозрачная ТУТ плотно облегает этикетку и кабель, без складок и пузырей; надпись читаема, не повреждена нагревом; места меток соответствуют КД."
         tolerance = substitute(step.tolerance)
         if step.kind == "Контроль" and tolerance in {"", "-", "—"}:
             lowered = text.casefold()
@@ -1983,6 +2040,36 @@ def _physical_connector(op: Mapping[str, Any]) -> str:
     return f"{label} · № {identity}"
 
 
+def _coax_recipe_steps(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[str]:
+    """Only explicit new coax settings add instructions; old snapshots remain unchanged."""
+    if not str(op.get("type") or "").startswith("coax"):
+        return []
+    coax = _coax(config)
+    steps: list[str] = []
+    if op.get("type") == "coaxCut" and coax.get("lengthBasis") == "finished":
+        steps.append(f"Длина готового изделия L = {_format(coax.get('finishedLength'))} мм (допуск 0…+10 мм); "
+                     f"припуск А = {_format(coax.get('lPlusA'))} мм, припуск В = {_format(coax.get('lPlusB'))} мм. "
+                     f"Длина реза = {_format(coax.get('cableLength'))} мм; допуск реза 0…+5 мм.")
+    if op.get("type") == "coaxCut" and op.get("stripSides") and coax.get("fakraCutStrip"):
+        steps.append("Разделать при резке только стороны: " + ", ".join("А" if sd == "A" else "В" for sd in op["stripSides"]) + ". Размеры X/Y/Z — по каждой стороне в эскизе.")
+    if op.get("protective") and op.get("type") == "coaxInsTut":
+        steps.append("Надеть прозрачные отрезки ТУТ на кабель и сдвинуть к середине до монтажа деталей концов.")
+    for mark in _list(op.get("marks")):
+        if not isinstance(mark, Mapping):
+            continue
+        place = "середина кабеля" if mark.get("place") == "middle" else "от разъёма " + ("А" if mark.get("place") == "A" else "В")
+        action = "Напечатать" if op.get("type") == "coaxCutTut" else "Наклеить"
+        steps.append(f"{action} метку «{mark.get('text', '')}»: {place}, не ближе {_format(mark.get('minMm', 100))} мм от разъёма.")
+    if op.get("markPhase") == "install" and coax.get("markProtect"):
+        steps.append("Сдвинуть прозрачную ТУТ поверх наклеенных этикеток; усадить в заключительной операции.")
+    color = op.get("connColor")
+    if isinstance(color, Mapping) and color.get("method") != "none":
+        method = {"paint": "маркером-краской", "laser": "лазерной гравировкой", "tape": "цветной лентой"}.get(str(color.get("method")), "")
+        steps.append(f"Маркировать разъёмы {method}: {color.get('color', '')} ({color.get('code', '')}), "
+                     f"{int(_coax_units(op))} шт. на изделие. Материал: {color.get('art') or 'по КД'}.")
+    return steps
+
+
 def _typed_operation(
     op: Mapping[str, Any], config: Mapping[str, Any], *, position: int, code: str,
     card: OperationCardTemplate | None, cards_by_code: Mapping[str, OperationCardTemplate],
@@ -1995,6 +2082,8 @@ def _typed_operation(
     `result_rows` — its result rows when the chain set them (a ПФ of the generator's scheme)."""
     wire_data = _wire_data(op, config)
     fields = _typed_fields(op, config)
+    if op.get("markMaterial") == "tape" and op.get("markPhase") == "print" and not op.get("parts"):
+        warnings.append(f"Операция {position}: не задан материал для печати этикеток.")
     terminal_warning = _terminal_warning(op, position, code)
     if terminal_warning:
         warnings.append(terminal_warning)
@@ -2022,6 +2111,13 @@ def _typed_operation(
     if label and operation["card"] is not None and operation["type"].startswith("coax"):
         # FAKRA/HFM (генератор 25.10): у каждой операции своё название («Обжим центрального контакта (А)»), а не общее имя карты.
         operation["card"]["name"] = label
+    if operation["card"] is not None:
+        extra = _coax_recipe_steps(op, config)
+        if extra:
+            operation["card"]["steps"] = [{"number": str(i), "kind": "Операция", "text": text, "tolerance": ""}
+                                          for i, text in enumerate(extra, start=1)] + operation["card"]["steps"]
+            for i, step in enumerate(operation["card"]["steps"], start=1):
+                step["number"] = str(i)
     if config.get("mode") == "rework":
         operation["title"] = label
         if operation["card"] is not None:
@@ -2414,7 +2510,7 @@ GENERATOR_TYPES = frozenset({
     "cutWire", "cutWireStrip", "cutWireCrimp", "cutTut", "insTut", "heatTut", "endCap", "foldCore", "stripCable",
     "twist", "tin", "insMark", "seal", "insWrap", "prsTerm", "insTerm", "solderConn", "splice", "insHousing",
     "coaxCut", "coaxCutTut", "coaxStrip", "coaxPin", "coaxPinCrimp", "coaxShield", "coaxSolderShield", "coaxInsSleeve", "coaxInsTut",
-    "coaxHeat", "coaxHousing", "coaxCapCrimp", "coaxCapScrew", "coaxVswr",
+    "coaxHeat", "coaxHousing", "coaxCapCrimp", "coaxCapScrew", "coaxConnColor", "coaxVswr",
 })
 
 
@@ -2837,7 +2933,7 @@ TUT_CUT_TYPES = frozenset({"cutTut", "coaxCutTut"})
 # operation not listed (older configs, coax) takes every tube cut so far, as before.
 TUT_TAKES: dict[str, tuple[str, ...]] = {
     "insSpl": ("cutSpl",), "insSleeves": ("cutShr", "cutJs", "cutHs"), "onMark": ("cutMark",), "endCap": ("cutCap",),
-    "insTut": ("cutTut",),
+    "insTut": ("cutTut",), "coaxProtectIns": ("coaxProtectCut",), "coaxInsLabel": ("coaxPrintLabel",),
 }
 
 
@@ -2944,6 +3040,10 @@ def _scheme_chain(
 ) -> list[_ChainLink] | None:
     """The chain along the ПФ scheme the generator drew (see SCHEME_SOURCE); None — no such scheme, or it does not fit
     the operations (the linear chain then, and the build falls back with its warning)."""
+    # A saved FAKRA stage split groups independent blanks in one kit. Its cards still follow
+    # the recipe's individual cable / label / tube outputs, not the kit's positional list.
+    if _coax(config).get("fakraCutStrip"):
+        return None
     raw = config.get("route")
     if not isinstance(raw, Mapping) or raw.get("source") != SCHEME_SOURCE or not operations:
         return None
@@ -3042,6 +3142,7 @@ def _generator_chain(
         if op.get("type") in TUT_CUT_TYPES:
             tut_cuts.append({"name": result, "norm": _tut_pieces(op, config), "key": str(op.get("opKey") or "")})
         auxiliary = None
+        taken = []
         if op.get("type") in {"insTut", "endCap", "coaxInsTut"}:
             consumer = str(op.get("opKey") or "")
             taken = [item for item in tut_cuts if _takes_tut(consumer, item["key"])]
@@ -3053,6 +3154,9 @@ def _generator_chain(
         elif tut_on_wires and _kind(op):
             tut_on, tut_on_wires = True, False
         semis = [] if code.startswith("CUT_") else _semis_rows(op, config, previous_result, previous_norm, auxiliary, tut_on)
+        if op.get("opKey") in {"coaxProtectIns", "coaxInsLabel"}:
+            semis = ([_row(previous_result, previous_norm)] if previous_result else []) + [
+                _row(item["name"], _format(item["norm"])) for item in taken]
         is_last = index == len(operations)
         links.append(_ChainLink(previous_result, result, _single_name(config, result, is_last), is_last, semis))
         if _advances_chain(op):
@@ -3260,6 +3364,20 @@ def build_etk(
 ) -> dict[str, Any]:
     """Return an immutable document snapshot suitable for ProjectTechcard.rebuild. `operation_library_commit` — only a
     provenance label in `source` (documents built from the SUPPLYMAP library carry its commit); empty — none."""
+    if _coax(config).get("lengthBasis") == "finished":
+        coax = dict(_coax(config))
+        values = []
+        for key in ("finishedLength", "lPlusA", "lPlusB"):
+            raw = coax.get(key)
+            try:
+                value = Decimal(str(raw).strip().replace(",", "."))
+            except (InvalidOperation, ValueError):
+                raise ValueError("Для длины готового изделия задайте L и припуски L+ сторон А и В") from None
+            if not value.is_finite() or value < 0 or (key == "finishedLength" and value == 0):
+                raise ValueError("Длина L должна быть положительной, припуски L+ — неотрицательными")
+            values.append(value)
+        coax["cableLength"] = float(sum(values))
+        config = {**config, "coax": coax}
     if config.get("mode") == "rework":
         config = _rework_config(config, cards)
     if config.get("mode") == MANUAL_MODE:

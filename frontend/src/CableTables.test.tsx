@@ -82,11 +82,11 @@ function mockApi(calls: Call[] = [], rows: CableRow[] = ROWS) {
     calls.push({ path, method, body: init?.body ? JSON.parse(String(init.body)) : null });
     if (path === "/api/references/maps") return json({ suppliers: [{ key: "склад", value: "Склад" }], countries: [], gost_awg: [], can_edit: { suppliers: true, gost_awg: true } });
     if (path === "/api/references/bases") return json({
-      bases: [], tabs: { ob: 192, ter: 528, coax: 181, kab_awg: 22, mat: 115, kab_coax: 30, prov: 52, cab_coax: 47, cab_multi: 9, cab_lan: 0 },
+      bases: [], tabs: { ob: 192, ter: 528, coax: 181, kab_awg: 22, mat: 0, heat_shrink: 2, cov: 0, kab_coax: 30, prov: 52, cab_coax: 47, cab_multi: 9, cab_lan: 0 },
       cables: { coax: 47, wire: 52, multi: 9 }, gauges: 24,
     });
     if (path === "/api/references/cables") return json({ columns: [...COLUMNS, "Цвета", "Поставщик"], counts: { coax: 3, wire: 3, multi: 1 }, rows, gauges: GAUGES });
-    if (path === "/api/references/coverings") return json({ counts: {}, titles: {}, rows: [] });
+    if (path.startsWith("/api/references/coverings?")) return json({ counts: {}, titles: {}, rows: [] });
     if (path.endsWith("/hookup")) return json({ hookup: rows[4].hookup_suggestion, record: rows[4].record });
     if (path.startsWith("/api/references/wire-gauges")) return json(GAUGES[0]);
     if (path === "/api/references/cables/diameters") return json(dia("d-new", "x", "", "", ""));
@@ -130,8 +130,8 @@ it("groups the tabs by what the shop picks from and shows a count on every chip"
     // owner 26.10.2026: «Наконечники» — свой список БД.ТЕР сразу за «Терминалами»
     { title: "Разъёмы и контакты", tabs: ["Разъёмы", "Коаксиальные разъёмы", "Терминалы", "Наконечники"] },
     { title: "Кабели и провода", tabs: ["Коаксиальные кабели", "Монтажные провода", "Многожильные кабели", "Кабели Ethernet"] },
-    // owner 15.10.2026: «Материалы» расформированы; the old key opens «Оболочки»
-    { title: "Материалы", tabs: ["Оболочки", "Расходники"] },
+    // Heat shrink owns its catalog; the other coverings and consumables remain separate.
+    { title: "Материалы", tabs: ["Термоусадка", "Оболочки", "Расходники"] },
     { title: "Соответствия", tabs: ["Домен → поставщик", "Изготовитель → страна", "Сечения AWG ↔ мм²"] },
   ]);
   const chip = (name: string) => within(nav).getByRole("button", { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) });
@@ -140,6 +140,7 @@ it("groups the tabs by what the shop picks from and shows a count on every chip"
     ["Оборудование операционное", "192"], ["Разъёмы", "2"], ["Коаксиальные разъёмы", "181"], ["Терминалы", "528"],
     ["Коаксиальные кабели", "47"], ["Монтажные провода", "52"], ["Сечения AWG ↔ мм²", "24"], ["Многожильные кабели", "9"],
     ["Домен → поставщик", "1"], ["Изготовитель → страна", "0"],
+    ["Термоусадка", "2"], ["Оболочки", "0"], ["Расходники", "0"],
   ];
   for (const [name, n] of expected) await waitFor(() => expect(chip(name).querySelector(".db-tab-count")).toHaveTextContent(new RegExp(`^${n}$`)));
   expect(screen.queryByText("СПР.КАБ")).toBeNull();
@@ -340,20 +341,18 @@ describe("coax column order (owner 23.10: «сделай сортировку н
   });
 });
 
-it("lists coax cables like a catalogue: series groups in order, base mark before its variants, groups start folded and collapse", async () => {
+it("lists coax cables like a catalogue: series groups in order, base mark before its variants, groups start open and collapse", async () => {
   const lmr: CableRow = { id: "w-lmr", kind: "coax", auto_kind: "coax", reason: "тип «коаксиальный»", manual: false, cable: "LMR-195",
     record: wire("w-lmr", { "Марка": "LMR-195" }), dia: null, dia_hint: null };
   mockApi([], [lmr, ...ROWS]);
   // Settle initial fetches and table effects before testing a single user click.
   await act(async () => { plainRender(<ReferencesPage principal={admin} initialTab="cab_coax" />); });
-  // a block per family (25.10): its heading folds the block; owner 26.10: the groups start folded
+  // A block per family; its heading folds the block, which starts open.
   const rg = await screen.findByRole("button", { name: /^RG58 2$/ });
   // owner 19.10: a group per mark family (RG58 = RG-58 and its A/U); single-row families of a head with no mate go to «Прочие», last
   const lmrGroup = screen.getByRole("button", { name: /^Прочие 2$/ });
   expect(rg.compareDocumentPosition(lmrGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(rg).toHaveAttribute("aria-expanded", "false");
-  expect(screen.queryByText("RG-58 A/U")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Развернуть все" }));
+  expect(rg).toHaveAttribute("aria-expanded", "true");
   const marks = screen.getAllByRole("row").map((line) => line.querySelector("td.key")?.textContent).filter(Boolean);
   expect(marks).toEqual(["RG-58 A/U", "RG58", "LMR-195", "RG316"]); // owner 25.10: rows without diameter last in their group
   expect(rg).toHaveAttribute("aria-expanded", "true");

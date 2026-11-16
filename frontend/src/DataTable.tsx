@@ -1,4 +1,4 @@
-import { createContext, Fragment, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent, type WheelEvent as ReactWheelEvent } from "react";
+import { createContext, Fragment, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { selectRange } from "./bulk";
 import { EMPTY, displayCell, formatNumber } from "./format";
 import { matchesSearch, searchRows } from "./searchText";
@@ -105,6 +105,8 @@ export interface DataTableProps<T> {
   /** Ключ общего набора столбцов (сервер, один на всех): «Сохранить для всех» в «Колонках» пишет его, «Только нужные»
       возвращает к нему. Первая колонка — опознаватель записи (Марка, Артикул) — всегда видна. Без `ColumnViewsProvider` — нет. */
   sharedKey?: string;
+  /** Legacy raw-field keys mapped to the parsed columns of a split catalog; new saves use the current keys. */
+  sharedColumnAliases?: Record<string, readonly string[]>;
   label?: string;
   presets?: DataPreset<T>[];
   /** Чип, открытый по умолчанию (пока пользователь не выбрал другой чип; «Все» не запоминается). */
@@ -122,8 +124,8 @@ export interface DataTableProps<T> {
   groupCards?: boolean;
   /** Заголовок группы сворачивает её строки (по умолчанию группы всегда раскрыты). */
   collapsibleGroups?: boolean;
-  /** Группы открываются свёрнутыми (длинные справочники: заголовки групп, строки по клику); поиск, фильтр колонки
-      или чип раскрывают все группы, пока они стоят. */
+  /** Группы обычной таблицы открываются свёрнутыми; поиск, фильтр колонки или чип раскрывают их.
+      В режиме blocks начальное состояние всегда раскрыто, затем запоминается выбор пользователя. */
   foldedByDefault?: boolean;
   bulkActions?: DataBulkAction<T>[];
   /** Раскрытая строка: форма, карточка, история. */
@@ -183,6 +185,8 @@ export interface DataTableProps<T> {
 type Sort = { key: string; direction: 1 | -1 } | null;
 
 export interface Saved {
+  foldedBlocks?: string[];
+  foldedSections?: string[];
   hidden?: string[];
   /** Колонки, которые таблица уже видела при сохранении (владелец 19.10: «почему пропал частотный диапазон»): колонка не
       из этого списка — новая, она показывается или прячется по своему умолчанию, а не по старому `hidden`. */
@@ -198,6 +202,9 @@ export interface Saved {
   /** Какой общий набор столбцов уже применён к этому виду: новый общий набор заменяет личные скрытие и порядок один раз. */
   sharedSig?: string;
 }
+
+type BlockFolds = { blocks: ReadonlySet<string>; sections: ReadonlySet<string> };
+const OPEN_BLOCKS: BlockFolds = { blocks: new Set(), sections: new Set() };
 
 /** `personalKey`: the next written layout is the base (just read from the server, or just reset), not a change. */
 const RESET_BASE = "\u0000reset";
@@ -263,6 +270,9 @@ function cleanSaved(raw: unknown): Saved {
   if (saved.hidden !== undefined && !Array.isArray(saved.hidden)) delete saved.hidden;
   if (saved.sharedSig !== undefined && typeof saved.sharedSig !== "string") delete saved.sharedSig;
   if (saved.known !== undefined && !(Array.isArray(saved.known) && saved.known.every((item) => typeof item === "string"))) delete saved.known;
+  for (const key of ["foldedBlocks", "foldedSections"] as const) {
+    if (saved[key] !== undefined) saved[key] = Array.isArray(saved[key]) ? saved[key].filter((item) => typeof item === "string") : [];
+  }
   return saved;
 }
 
@@ -419,6 +429,7 @@ export function DataTable<T>({
   storageKey,
   personalKey,
   sharedKey,
+  sharedColumnAliases,
   label = "Таблица",
   presets = [],
   defaultPreset = "",
@@ -462,6 +473,11 @@ export function DataTable<T>({
   const compact = rows.length < compactBelow;
   const searchSeed = useContext(SearchSeedContext);
   const saved = useMemo(() => readSaved(storageKey), [storageKey]);
+  const blockId = useId();
+  const savedFolds = useMemo<BlockFolds>(() => ({ blocks: new Set(saved.foldedBlocks), sections: new Set(saved.foldedSections) }), [saved]);
+  const [storedFolds, setStoredFolds] = useState({ key: storageKey, folds: savedFolds });
+  const persistentFolds = storedFolds.key === storageKey ? storedFolds.folds : savedFolds;
+  const [searchFolds, setSearchFolds] = useState({ scope: "", folds: OPEN_BLOCKS });
   // Groups the user flipped from the default (folded or open); the default is open, or folded with foldedByDefault
   // while nothing narrows the list.
   const [flipped, setFlipped] = useState<ReadonlySet<string>>(new Set());
@@ -484,7 +500,18 @@ export function DataTable<T>({
   // Общий набор столбцов: пока сервер его не отдал или его нет — всё как раньше. Новый набор (другая подпись) один раз
   // заменяет личные скрытие и порядок у каждого; дальше пользователь может подстроить под себя.
   const columnViews = useColumnViews();
-  const sharedView = sharedKey ? columnViews?.views[sharedKey] : undefined;
+  const rawSharedView = sharedKey ? columnViews?.views[sharedKey] : undefined;
+  const sharedView = useMemo(() => {
+    if (!rawSharedView || !sharedColumnAliases) return rawSharedView;
+    const resolved = new Map<string, { key: string; visible: boolean }>();
+    for (const column of rawSharedView) {
+      for (const key of sharedColumnAliases[column.key] ?? [column.key]) {
+        // A combined range stays hidden if either of its legacy endpoints was hidden.
+        resolved.set(key, { key, visible: column.visible && (resolved.get(key)?.visible ?? true) });
+      }
+    }
+    return [...resolved.values()];
+  }, [rawSharedView, sharedColumnAliases]);
   const sharedSig = sharedView ? sharedView.map((item) => `${item.key}:${item.visible ? 1 : 0}`).join("|") : "";
   const [seenSig, setSeenSig] = useState(saved.sharedSig ?? "");
   const lockedKey = sharedKey ? (columns.find((column) => !column.hidden) ?? columns[0])?.key : undefined;
@@ -579,6 +606,7 @@ export function DataTable<T>({
     const { order: _order, widths: _widths, titles: _titles, ...kept } = readSaved(storageKey);
     const next: Saved = {
     ...kept, hidden, ...(seenSig ? { sharedSig: seenSig } : {}), known: [...new Set([...(kept.known ?? []), ...columns.map((column) => column.key)])], sort, preset,
+    ...(blocks ? { foldedBlocks: [...persistentFolds.blocks], foldedSections: [...persistentFolds.sections] } : {}),
     ...(order ? { order } : {}),
     ...(Object.keys(widths).length ? { widths } : {}),
     ...(Object.keys(titles).length ? { titles } : {}),
@@ -590,7 +618,7 @@ export function DataTable<T>({
     if (text === personalBase.current) return;
     personalBase.current = null; // changed: from now on every change is sent (an identical one is not resent)
     savePersonalView(personalKey, next);
-  }, [storageKey, hidden, sort, preset, order, widths, titles, columns, seenSig, personalKey, personalReady, personalTick]);
+  }, [storageKey, hidden, sort, preset, order, widths, titles, columns, seenSig, personalKey, personalReady, personalTick, blocks, persistentFolds]);
 
   // The user's order and captions: everything below (headers, search hint, filters, Excel) reads these columns.
   const ordered = useMemo(() => orderColumns(columns, order), [columns, order]);
@@ -634,7 +662,15 @@ export function DataTable<T>({
   // A search, a column filter or a chip opens every group of a folded-by-default list (the rows found are seen at once);
   // the user's flips start over whenever that changes.
   const narrowed = Boolean(query.trim() || activePreset || Object.values(filters).some((value) => value.trim()));
-  const foldAll = Boolean(collapsibleGroups && foldedByDefault && !narrowed);
+  // Blocks start open, including screens that still pass the old foldedByDefault option.
+  const foldAll = Boolean(!blocks && collapsibleGroups && foldedByDefault && !narrowed);
+  const foldScope = JSON.stringify([storageKey, query, filters, preset]);
+  useEffect(() => { setSearchFolds({ scope: foldScope, folds: OPEN_BLOCKS }); }, [foldScope]);
+  const blockFolds = narrowed ? (searchFolds.scope === foldScope ? searchFolds.folds : OPEN_BLOCKS) : persistentFolds;
+  function changeBlockFolds(change: (current: BlockFolds) => BlockFolds) {
+    if (narrowed) setSearchFolds((current) => ({ scope: foldScope, folds: change(current.scope === foldScope ? current.folds : OPEN_BLOCKS) }));
+    else setStoredFolds((current) => ({ key: storageKey, folds: change(current.key === storageKey ? current.folds : savedFolds) }));
+  }
   // Reset only on a real change of foldAll: the mount run must not undo a flip made right after the first render.
   const shownFoldAll = useRef(foldAll);
   useEffect(() => {
@@ -642,14 +678,31 @@ export function DataTable<T>({
     shownFoldAll.current = foldAll;
     setFlipped(new Set());
   }, [foldAll]);
-  const isFolded = (name: string) => Boolean(collapsibleGroups) && foldAll !== flipped.has(name);
+  const isFolded = (name: string) => blocks ? blockFolds.blocks.has(name) : Boolean(collapsibleGroups) && foldAll !== flipped.has(name);
+  const isSectionFolded = (section: string | undefined) => section !== undefined && blockFolds.sections.has(section);
+  const blockBodyId = (name: string) => `${blockId}-block-${encodeURIComponent(name)}`;
+  const blockHeadingId = (name: string) => `${blockId}-heading-${encodeURIComponent(name)}`;
 
   // Blocks put only the rows near the screen in the page (below), so they show the whole list — no pages, nothing cut.
   // Without IntersectionObserver (an old browser, tests) the list goes in pages as before.
   const windowed = blocks && typeof IntersectionObserver !== "undefined";
   const shown = windowed ? filtered : filtered.slice(0, limit);
+  const groups: Array<[string, T[]]> = [];
+  if (grouping) {
+    const byName = new Map<string, T[]>();
+    for (const row of shown) {
+      const name = grouping(row);
+      if (!byName.has(name)) { byName.set(name, []); groups.push([name, byName.get(name)!]); }
+      byName.get(name)!.push(row);
+    }
+    // The header's sort with `groupSort` orders the rows inside every group (`filtered`); the groups stay where they are.
+  } else groups.push(["", shown]);
+  // Editing, navigation and selection share the screen's row order, excluding folded blocks and sections.
+  const lines = groups.flatMap(([name, groupRows]) => isFolded(name) || (blocks && isSectionFolded(blockSection?.(name))) ? [] : groupRows);
+  const lineKeys = new Set(lines.map(rowKey));
+  const linesSig = JSON.stringify([...lineKeys]);
   const keys = new Set(rows.map(rowKey));
-  const selectedRows = rows.filter((row) => selected.has(rowKey(row)));
+  const selectedRows = rows.filter((row) => lineKeys.has(rowKey(row)) && selected.has(rowKey(row)));
   // Выбор переживает перезагрузку данных только для строк, которые остались.
   useEffect(() => {
     setSelected((current) => {
@@ -669,17 +722,17 @@ export function DataTable<T>({
   // Shift+щелчок по флажку отмечает (или снимает) все строки от прошлого щелчка до этого, как в таблицах.
   const anchor = useRef<string | null>(null);
   function toggleRow(key: string, checked: boolean, shift: boolean) {
-    const sequence = shown.map(rowKey);
+    const sequence = lines.map(rowKey);
     const from = anchor.current;
     setSelected((current) => selectRange(sequence, current, from, key, checked, shift));
     anchor.current = key;
   }
 
-  const allShownSelected = shown.length > 0 && shown.every((row) => selected.has(rowKey(row)));
+  const allShownSelected = lines.length > 0 && lines.every((row) => selected.has(rowKey(row)));
   function toggleAll(checked: boolean) {
     setSelected((current) => {
       const next = new Set(current);
-      for (const row of shown) {
+      for (const row of lines) {
         if (checked) next.add(rowKey(row)); else next.delete(rowKey(row));
       }
       return next;
@@ -690,6 +743,7 @@ export function DataTable<T>({
     setSelected((current) => {
       const next = new Set(current);
       for (const row of groupRows) {
+        if (!lineKeys.has(rowKey(row))) continue;
         if (checked) next.add(rowKey(row)); else next.delete(rowKey(row));
       }
       return next;
@@ -797,16 +851,6 @@ export function DataTable<T>({
   const filterOptions = useMemo(() => new Map(columns.filter((column) => column.filter).map((column) =>
     [column.key, [...new Set(rows.map((row) => String(column.value(row) ?? "")))].sort((a, b) => compareCells(a, b))] as const)), [rows, columns]);
 
-  const groups: Array<[string, T[]]> = [];
-  if (grouping) {
-    const byName = new Map<string, T[]>();
-    for (const row of shown) {
-      const name = grouping(row);
-      if (!byName.has(name)) { byName.set(name, []); groups.push([name, byName.get(name)!]); }
-      byName.get(name)!.push(row);
-    }
-    // The header's sort with `groupSort` orders the rows inside every group (`filtered`); the groups stay where they are.
-  } else groups.push(["", shown]);
   // A block's count is of all its rows that passed the search, filters and chip (a long list shows them in pages).
   const blockTotals = new Map<string, number>();
   if (blocks && grouping) for (const row of filtered) blockTotals.set(grouping(row), (blockTotals.get(grouping(row)) ?? 0) + 1);
@@ -981,7 +1025,6 @@ export function DataTable<T>({
   });
 
   // --- Cells edited in place ---
-  const lines = groups.flatMap(([name, groupRows]) => isFolded(name) ? [] : groupRows);
   const byKey = new Map(rows.map((row) => [rowKey(row), row]));
   const editable = (column: DataColumn<T> | undefined, row: T | undefined): column is DataColumn<T> & { edit: DataCellEdit<T> } =>
     Boolean(column?.edit && row && rowHas(row, column.key) && (column.edit.enabled?.(row) ?? true));
@@ -1003,13 +1046,22 @@ export function DataTable<T>({
   const keyed = useRef(false);
   const hasEditing = visible.some((column) => column.edit);
   // The grid is one Tab stop: the active cell, or the first editable one.
-  const entry: CellRef | null = active ?? (() => {
+  const activeRow = active && lineKeys.has(active.row) ? byKey.get(active.row) : undefined;
+  const entry: CellRef | null = active && editable(visible.find((column) => column.key === active.col), activeRow) ? active : (() => {
     for (const row of lines) {
       const column = visible.find((item) => editable(item, row));
       if (column) return { row: rowKey(row), col: column.key };
     }
     return null;
   })();
+  // Folding the active row must leave one reachable cell; an editor/range cannot stay on an unmounted cell.
+  useEffect(() => {
+    if (active && !sameCell(active, entry)) {
+      setActive(entry);
+      setRangeFrom(null);
+      setEditing(null);
+    }
+  }, [active, entry]);
 
   function step(cell: CellRef, where: Step): CellRef | null {
     const r = lines.findIndex((row) => rowKey(row) === cell.row);
@@ -1371,6 +1423,14 @@ export function DataTable<T>({
     if (delta) bar.scrollLeft += delta;
   }
   function toggleCollapsed(name: string) {
+    if (blocks) {
+      changeBlockFolds((current) => {
+        const next = new Set(current.blocks);
+        if (!next.delete(name)) next.add(name);
+        return { ...current, blocks: next };
+      });
+      return;
+    }
     setFlipped((current) => {
       const next = new Set(current);
       if (!next.delete(name)) next.add(name);
@@ -1389,7 +1449,7 @@ export function DataTable<T>({
   const propsVersion = useRef(0);
   if (rowProps.some((value, index) => value !== lastRowProps.current[index])) { lastRowProps.current = rowProps; propsVersion.current += 1; }
   const rowToken = [propsVersion.current, identity(selected), identity(active), identity(editing), rangeFrom, expanded,
-    entry ? `${entry.row}:${entry.col}` : "", visibleSig, widthsSig, sized, filler, hasEditing].join("|");
+    entry ? `${entry.row}:${entry.col}` : "", linesSig, visibleSig, widthsSig, sized, filler, hasEditing].join("|");
   /** A block table's column widths (the fixed layout): dragged, set by the screen, levelled; `grow` and the filler take the rest. */
   function colsOf(heads: DataColumn<T>[]) {
     const widthOf = (column: DataColumn<T>) => widths[column.key] ? `${widths[column.key] + CELL_PAD}px`
@@ -1486,7 +1546,7 @@ export function DataTable<T>({
   return (
     <section ref={rootRef} className={[phoneCards ? "data-table dt-cards" : "data-table", blocks ? "dt-blocks" : ""].filter(Boolean).join(" ")} aria-label={label}
       onMouseOver={blocks ? cutTitle : undefined}>
-      {!compact && <div className="filters table-toolbar">
+      {(!compact || blocks) && <div className="filters table-toolbar">
         {!hideSearch && <form className="table-search" role="search" onSubmit={(event) => { event.preventDefault(); onSearch?.(query.trim()); }}>
           <input className="search" type="search" aria-label={searchLabel ?? `Поиск: ${label}`} placeholder={searchPlaceholder ?? searchHint(visible)} value={query} onChange={(event) => { setQuery(event.target.value); setLimit(pageSize); }} />
           {onSearch && <button type="submit" className="secondary small">{searchButton}</button>}
@@ -1498,12 +1558,24 @@ export function DataTable<T>({
         )}
         <div className="toolbar-end">
           {toolbar}
-          {collapsibleGroups && foldedByDefault && groups.length > 1 && (() => {
-            const allOpen = groups.every(([name]) => !isFolded(name));
-            const names = groups.map(([name]) => name);
+          {(blocks ? blockTotals.size > 1 : collapsibleGroups && foldedByDefault && groups.length > 1) && (() => {
+            const names = blocks ? [...blockTotals.keys()] : groups.map(([name]) => name);
+            const allOpen = names.every((name) => !isFolded(name) && (!blocks || !isSectionFolded(blockSection?.(name))));
             // «open all» / «fold all» as flips from the default of the moment (folded, or open while searching)
             return <button type="button" className="secondary small" aria-pressed={allOpen}
-              onClick={() => setFlipped(new Set(allOpen !== foldAll ? names : []))}>{allOpen ? "Свернуть все" : "Развернуть все"}</button>;
+              onClick={() => {
+                if (!blocks) { setFlipped(new Set(allOpen !== foldAll ? names : [])); return; }
+                changeBlockFolds((current) => {
+                  const next = new Set(current.blocks);
+                  const sections = new Set(current.sections);
+                  for (const name of names) {
+                    if (allOpen) next.add(name); else next.delete(name);
+                    const section = blockSection?.(name);
+                    if (section !== undefined) sections.delete(section);
+                  }
+                  return { blocks: next, sections };
+                });
+              }}>{allOpen ? "Свернуть все" : "Развернуть все"}</button>;
           })()}
           {blocks && hasEditing && <span className="dt-help" tabIndex={0} role="note" aria-label={`Правка в таблице: ${EDIT_HINT}`} data-hint={EDIT_HINT}>?</span>}
           <button type="button" className="secondary small" aria-expanded={choosingColumns} onClick={() => setChoosingColumns((current) => !current)}>Колонки</button>
@@ -1608,8 +1680,10 @@ export function DataTable<T>({
           const caption = <>{title} <span className="page-count">{blockTotals.get(name) ?? groupRows.length}</span>{picked > 0 && <span className="group-picked">выбрано {picked}</span>}</>;
           // A section over its blocks (ТУТ over the kinds of tube): its heading before its first block, with all their rows.
           const section = blockSection?.(name);
+          const sectionFolded = isSectionFolded(section);
+          const hidden = folded || sectionFolded;
           const opens = section !== undefined && (index === 0 || blockSection?.(groups[index - 1][0]) !== section);
-          const sectionTotal = opens ? groups.filter(([other]) => blockSection?.(other) === section).reduce((sum, [other, rows]) => sum + (blockTotals.get(other) ?? rows.length), 0) : 0;
+          const sectionTotal = opens ? [...blockTotals].filter(([other]) => blockSection?.(other) === section).reduce((sum, [, total]) => sum + total, 0) : 0;
           const Heading = section !== undefined ? "h3" : "h2";
           const heads = columnsOf(name);
           const wide = levelled?.wide.get(heads.map((column) => column.key).join(",")) ?? null;
@@ -1626,22 +1700,28 @@ export function DataTable<T>({
           // block (one piece) all its rows: the box on the screen is never an empty one; the other pieces of a long block
           // then come and go by their own observation (a whole long block at once would stall the scroll).
           if (windowed && near?.has(blockKey(name)) && !live.some(Boolean)) live[0] = true;
-          if (windowed && !folded && !live.some(Boolean)) {
+          if (windowed && !hidden && !live.some(Boolean)) {
             const tops: number[] = [];
             pieces.reduce((top, part) => { tops.push(top); return top + heightOf(part); }, 0);
             gaps.current.set(name, { keys: pieces.map((_, at) => keyOf(at)), tops, heights: pieces.map(heightOf) });
           }
-          const asGap = windowed && !folded && !live.some(Boolean);
+          const asGap = windowed && !hidden && !live.some(Boolean);
           const label = typeof title === "string" ? title : name;
           return <Fragment key={`block:${name}`}>
-            {opens && <h2 className="dt-block-title dt-section-title">{section} <span className="page-count">{sectionTotal}</span></h2>}
-            <Heading className={section !== undefined ? "dt-block-title dt-sub-title" : "dt-block-title"}>{collapsibleGroups
-              ? <button type="button" className="dt-block-fold" aria-expanded={!folded} onClick={() => toggleCollapsed(name)}><span aria-hidden="true">{folded ? "▸" : "▾"}</span> {caption}</button>
-              : caption}</Heading>
-            {asGap && <div className="dt-window-gap" data-window={name} aria-hidden="true"
-              style={{ height: headHeight.current + pieces.reduce((sum, part) => sum + heightOf(part), 0) }} />}
-            {!folded && !asGap && <div className={wide ? "table-wrap dt-scroll-x" : "table-wrap"} onWheel={wide ? sideWheel : undefined}
-              data-window={windowed ? name : undefined}>
+            {opens && <h2 className="dt-block-title dt-section-title"><button type="button" className="dt-block-fold" aria-expanded={!sectionFolded}
+              aria-controls={groups.filter(([other]) => blockSection?.(other) === section).flatMap(([other]) => [blockHeadingId(other), blockBodyId(other)]).join(" ")}
+              onClick={() => changeBlockFolds((current) => {
+                const sections = new Set(current.sections);
+                if (!sections.delete(section)) sections.add(section);
+                return { ...current, sections };
+              })}><span aria-hidden="true">{sectionFolded ? "▸" : "▾"}</span> {section} <span className="page-count">{sectionTotal}</span></button></h2>}
+            <Heading id={blockHeadingId(name)} hidden={sectionFolded} className={section !== undefined ? "dt-block-title dt-sub-title" : "dt-block-title"}>
+              <button type="button" className="dt-block-fold" aria-expanded={!folded} aria-controls={blockBodyId(name)} onClick={() => toggleCollapsed(name)}><span aria-hidden="true">{folded ? "▸" : "▾"}</span> {caption}</button>
+            </Heading>
+            <div id={blockBodyId(name)} hidden={hidden} className={asGap ? "dt-window-gap" : wide ? "table-wrap dt-scroll-x" : "table-wrap"} onWheel={wide ? sideWheel : undefined}
+              aria-hidden={asGap ? true : undefined} style={asGap ? { height: headHeight.current + pieces.reduce((sum, part) => sum + heightOf(part), 0) } : undefined}
+              data-window={windowed && !hidden ? name : undefined}>
+              {!hidden && !asGap && <>
               {/* A wide block moves sideways by its bar on top of its header: it sticks with the header and never covers
                   a row (owner 26.10.2026; it used to be pinned to the screen bottom, over the last row). */}
               {wide && <div className="dt-hscroll" aria-hidden="true" onScroll={sideScroll} ref={placeBar}>
@@ -1659,7 +1739,8 @@ export function DataTable<T>({
                     <tr><td colSpan={span - visible.length + heads.length} style={{ height: heightOf(part) }} /></tr>
                   </tbody>)}
               </table>
-            </div>}
+              </>}
+            </div>
           </Fragment>;
         })}
         {!shown.length && <div className="table-wrap">

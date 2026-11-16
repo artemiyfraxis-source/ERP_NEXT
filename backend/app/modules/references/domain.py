@@ -38,6 +38,7 @@ class ReferenceKind(str, Enum):
     # table without entries has no shared set: it opens with its own defaults. Only visibility and order live here —
     # the data of a hidden column stays in the records, so the generator and the warehouse read it as before.
     COLUMN_VIEW = "column_view"
+    REMOVED_COLUMN = "removed_column"  # A catalog column removed from its schema; its payload is retained.
 
 
 # The three maps of «Соответствия» / ГОСТ→AWG; a maps save never touches the other kinds.
@@ -67,6 +68,8 @@ class TechOperationTab(str, Enum):
     CAB_MULTI = "cab_multi"  # «Многожильные кабели»
     CAB_LAN = "cab_lan"  # «Кабели Ethernet»
     MATERIAL = "mat"
+    HEAT_SHRINK = "heat_shrink"
+    COVERING = "cov"
     KAB_COAX = "kab_coax"  # СПР.КАБ, верхняя таблица: коаксиал, D1–D3
     KAB_AWG = "kab_awg"  # СПР.КАБ, нижняя таблица: AWG → сечение, Ø жилы, Ø изоляции по маркам
 
@@ -78,6 +81,8 @@ TERMINAL_TABS = (TechOperationTab.TERMINAL, TechOperationTab.LUG)
 EQUIPMENT_TABS = (TechOperationTab.EQUIPMENT, TechOperationTab.MEASURING, TechOperationTab.SUPPORTING,
                   TechOperationTab.APPLICATORS, TechOperationTab.DIES, TechOperationTab.TOOLS)
 CABLE_TABS = (TechOperationTab.CAB_COAX, TechOperationTab.WIRE, TechOperationTab.CAB_MULTI, TechOperationTab.CAB_LAN)
+MATERIAL_TABS = (TechOperationTab.MATERIAL, TechOperationTab.HEAT_SHRINK, TechOperationTab.COVERING)
+MATERIAL_CATALOG_TABS = MATERIAL_TABS[1:]
 # The cable kind (`cables.CableKind`, the API's «список кабелей») ↔ its base; the БД.ТЕР kind (contact / lug) ↔ its base.
 CABLE_TAB_BY_KIND: dict[str, TechOperationTab] = dict(zip(("coax", "wire", "multi", "lan"), CABLE_TABS))
 CABLE_KIND_BY_TAB: dict[TechOperationTab, str] = {tab: kind for kind, tab in CABLE_TAB_BY_KIND.items()}
@@ -88,14 +93,14 @@ TER_KIND_BY_TAB: dict[TechOperationTab, str] = {tab: kind for kind, tab in TER_T
 def tab_family(tab: TechOperationTab) -> tuple[TechOperationTab, ...]:
     """The bases of the mirror sheet `tab` belongs to (itself alone for a base of its own sheet)."""
     return (EQUIPMENT_TABS if tab in EQUIPMENT_TABS else TERMINAL_TABS if tab in TERMINAL_TABS
-            else CABLE_TABS if tab in CABLE_TABS else (tab,))
+            else CABLE_TABS if tab in CABLE_TABS else MATERIAL_TABS if tab in MATERIAL_TABS else (tab,))
 
 
 def family_root(tab: TechOperationTab) -> TechOperationTab:
     """The sheet base of a family: «ter» for «Наконечники», «prov» for a cable base; else the tab itself. The schema of
     the sheet (`technology._TECH_SCHEMA`, `BASE_COLUMNS`) is the root's."""
     return (TechOperationTab.EQUIPMENT if tab in EQUIPMENT_TABS else TechOperationTab.TERMINAL if tab in TERMINAL_TABS
-            else TechOperationTab.WIRE if tab in CABLE_TABS else tab)
+            else TechOperationTab.WIRE if tab in CABLE_TABS else TechOperationTab.MATERIAL if tab in MATERIAL_TABS else tab)
 
 
 def cable_tab(kind: object) -> TechOperationTab:
@@ -422,6 +427,7 @@ _KEY_NORMALIZERS = {
     ReferenceKind.CABLE_KIND: normalized_cable_key,
     ReferenceKind.CUSTOM_COLUMN: lambda key: " ".join(str(key).casefold().split()),
     ReferenceKind.COLUMN_VIEW: lambda key: " ".join(str(key).casefold().split()),
+    ReferenceKind.REMOVED_COLUMN: lambda key: " ".join(str(key).casefold().split()),
 }
 
 
@@ -467,6 +473,8 @@ class TechOperationRecord:
     # БД.ОБ: the equipment model the unit belongs to (`equipment_models`, migration 0171); None elsewhere and on a
     # unit not saved yet (the repository gives it the model of its name + article + maker).
     equipment_model_id: UUID | None = None
+    material_group: str = ""
+    classification_status: str = ""
 
     # The cable kind (coax / wire / multi / lan) of a cable base's record and the БД.ТЕР kind (contact / lug) of a
     # «Терминалы» / «Наконечники» record — read from the tab (migration 0165 dropped the stored flags); None elsewhere.
@@ -500,10 +508,12 @@ class TechOperationRecord:
             tab = ter_tab(ter_kind)
         clean_fields = {str(key): str(value or "").strip() for key, value in fields.items() if str(key).strip()}
         search = " ".join(f"{display} {search_text or ''} {' '.join(clean_fields.values())}".casefold().split())
-        return cls(
+        record = cls(
             uuid4(), tab, display, search, str(source_sheet or "").strip(),
             str(sort_key or display).strip(), clean_fields, mirror_key, edited_in_erp,
         )
+        from .material_catalogs import prepare
+        return prepare(record)
 
 
 def validate_entries(entries: tuple[ReferenceEntry, ...]) -> None:
@@ -708,10 +718,14 @@ BASE_COLUMNS = {
 # Every cable base has the БД.ПРОВ sheet header as its base columns (the load of the sheet, the file); what a base shows
 # is its own `CABLE_COLUMNS[kind]`.
 BASE_COLUMNS.update({tab: _PROV_COLUMNS for tab in CABLE_TABS})
+BASE_COLUMNS[TechOperationTab.HEAT_SHRINK] = tuple(name for name in BASE_COLUMNS[TechOperationTab.MATERIAL]
+    if name not in ("Закупок", "Цена посл., ₽ без НДС"))
+BASE_COLUMNS[TechOperationTab.COVERING] = tuple(name for name in BASE_COLUMNS[TechOperationTab.HEAT_SHRINK]
+    if name not in ("Коэф. усадки", "Клеевой слой"))
 # Tabs whose table accepts the owner's own columns («+ Столбец»): every cable base (each its own, 20.10.2026),
 # БД.МАТ, БД.КОАКС, «Терминалы», «Наконечники» (28.10.2026) and БД.ОП (14.10.2026, «Операции» shows them beside the
 # code). БД.ОБ has none: its list is one row per model.
-CUSTOM_COLUMN_TABS = (*CABLE_TABS, TechOperationTab.MATERIAL, TechOperationTab.COAX, *TERMINAL_TABS,
+CUSTOM_COLUMN_TABS = (*CABLE_TABS, *MATERIAL_TABS, TechOperationTab.COAX, *TERMINAL_TABS,
                       TechOperationTab.OPERATION, *EQUIPMENT_TABS)
 MAX_COLUMN_NAME = 60
 
@@ -724,7 +738,7 @@ def custom_column_prefix(tab: TechOperationTab) -> str:
 
 
 # The tables a БД.Технология snapshot without them leaves as they are (a mirror reload of the sheet tables only).
-SHEET_TABLE_TABS = (*CABLE_TABS, TechOperationTab.MATERIAL, TechOperationTab.KAB_COAX, TechOperationTab.KAB_AWG)
+SHEET_TABLE_TABS = (*CABLE_TABS, *MATERIAL_TABS, TechOperationTab.KAB_COAX, TechOperationTab.KAB_AWG)
 
 
 def _clean_cell(value: str) -> str:

@@ -1644,9 +1644,15 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .data-table.dt-blocks > .dt-sub-title { margin: 4px 0 -4px; font-size: 14px; font-weight: 600; }
 .data-table.dt-blocks > .dt-section-title + .dt-sub-title { margin-top: -2px; }
 .data-table.dt-blocks > .dt-block-title .group-picked { margin-left: 10px; color: var(--primary); font-size: 13px; font-weight: 600; }
-.data-table.dt-blocks .dt-block-fold { all: unset; cursor: pointer; }
+.data-table.dt-blocks > [hidden] { display: none; }
+.data-table.dt-blocks .dt-block-fold { all: unset; box-sizing: border-box; display: block; width: 100%; min-height: 32px; padding: 4px 0; cursor: pointer; touch-action: manipulation; }
+.data-table.dt-blocks .dt-block-fold:hover { background: var(--accent); }
+.data-table.dt-blocks .dt-block-fold .page-count { font-variant-numeric: tabular-nums; }
 .data-table.dt-blocks .dt-block-fold:focus-visible { outline: var(--focus-ring); outline-offset: 2px; border-radius: 4px; }
 .data-table.dt-blocks .dt-block-fold > span[aria-hidden] { display: inline-block; width: 14px; color: var(--muted-foreground); }
+@media (pointer: coarse) {
+  .data-table.dt-blocks .dt-block-fold { min-height: 40px; }
+}
 /* No scroll box of its own: a block grows to its height and the page scrolls; its header sticks under the toolbar
    (`--dt-head-top`, DataTable). The columns fit the width (DataTable levels them from the data, `table-layout: fixed`),
    one line per row (26.10.2026: «8 строк на экран» — a long text is cut with «…», the whole on hover); only a list that
@@ -2071,6 +2077,22 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .gtable tbody tr:nth-child(even) td { background: var(--table-zebra); }
 .tcgen .gtable tbody tr:last-child td { border-bottom: 0; }
 .tcgen .gtable .num { text-align: right; font-variant-numeric: tabular-nums; }
+.tcgen .coax-cut-length { font-variant-numeric: tabular-nums; }
+.tcgen .coax-marks { table-layout: fixed; }
+.tcgen .coax-marks caption { padding: 4px 8px; text-align: left; color: var(--muted-foreground); }
+.tcgen .coax-marks th, .tcgen .coax-marks td { padding: 4px; }
+.tcgen .coax-marks th:first-child { width: 42%; }
+.tcgen .coax-marks th:nth-child(2) { width: 28%; }
+.tcgen .coax-marks th:last-child { width: 32px; }
+.tcgen .coax-marks input, .tcgen .coax-marks select, .tcgen .coax-marks textarea { width: 100%; min-width: 0; }
+.tcgen .coax-marks textarea { min-height: 32px; }
+.tcgen .coax-marks .btn-x { width: 28px; height: 32px; }
+@media (pointer: coarse) {
+  .tcgen .coax-marks th:last-child { width: 44px; }
+  .tcgen .coax-marks input, .tcgen .coax-marks select, .tcgen .coax-marks .btn-x { min-height: 40px; }
+  .tcgen .coax-marks .btn-x { width: 40px; }
+  .tcgen .coax-marks textarea { min-height: 40px; }
+}
 .tcgen .gtable-empty { color: var(--muted-foreground); text-align: center; }
 /* «Свободные концы» → «Наконечник»: строка на провод — наконечник выбирается в строке, «нет под сечение» — под выбором. */
 .tcgen .lug-plan select { width: 100%; min-width: 150px; }

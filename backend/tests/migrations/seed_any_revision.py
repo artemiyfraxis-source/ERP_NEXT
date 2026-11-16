@@ -35,6 +35,7 @@ _IN_LIST = re.compile(r"\bIN\s*\(|=\s*ANY\s*\(", re.IGNORECASE)
 # A one-value `source IN ('kaiten')` (0137) PostgreSQL keeps as `((source)::text = 'kaiten'::text)` — no IN, no ANY.
 _SINGLE_EQ = re.compile(r"^[\s(]*(\w+)\)?(?:::[\w ]+?)?\s*=\s*'[^']*'(?:::[\w ]+)?[\s)]*$")
 _CHECK_NULL_OR = re.compile(r"\s*\(*\s*(\w+)\s+IS\s+NULL\s*\)?\s+OR\b", re.IGNORECASE)
+_CHECK_NULL = re.compile(r"^[\s(]*(\w+)\s+IS\s+NULL[\s)]*$", re.IGNORECASE)
 # `(tab = 'prov' AND cable_kind IN (…)) OR (tab <> 'prov' AND cable_kind IS NULL)` (0131): the column stays empty on a
 # row of any other value of the first column (the seeder never picks the one value that needs it).
 _CHECK_NULL_BRANCH = re.compile(r"\bOR\b.*?<>.*?\bAND\s*\(?\s*(\w+)\s+IS\s+NULL", re.IGNORECASE | re.DOTALL)
@@ -141,7 +142,7 @@ def _check_values(connection: Connection, metadata: MetaData) -> dict[tuple[str,
     for table in metadata.tables.values():
         for check in inspector.get_check_constraints(table.name):
             text = str(check.get("sqltext", ""))
-            empty = _CHECK_NULL_OR.match(text) or _CHECK_NULL_BRANCH.search(text)
+            empty = _CHECK_NULL.match(text) or _CHECK_NULL_OR.match(text) or _CHECK_NULL_BRANCH.search(text)
             if empty and empty.group(1) in table.c and table.c[empty.group(1)].nullable:
                 found[(table.name, empty.group(1))] = None
                 continue
@@ -254,6 +255,9 @@ _COUPLED_VALUES: dict[tuple[str, str], Any] = {
 # the one value that needs them: a seeded tech record is `tab = 'ter'` (the first literal of the БД.ТЕР card CHECKs,
 # 0115), and a БД.ТЕР row is always in a list (0155_ter_lug_kind).
 _OVER_CHECK: dict[tuple[str, str], Any] = {
+    # A stock journal row has at most one target. Leave the newer alternatives empty;
+    # record_id is filled from its parent (or NULL where the historical CHECK requires it).
+    **{("reference_stock_links", name): None for name in ("equipment_unit_id", "heat_shrink_id", "covering_id")},
     ("tech_operation_records", "ter_kind"): "contact",
     ("warehouse_scan_jobs", "instrument_id"): None,
     # Before 0167 arbitrary statuses were allowed; ACTIVE now needs all evidence despite nullable-date CHECKs.
@@ -271,6 +275,24 @@ _OVER_CHECK: dict[tuple[str, str], Any] = {
     ("production_rf_details", "f_min_ghz"): None,
     ("production_rf_interfaces", "position"): 1,
     ("production_rf_interfaces", "f_confirmed"): False,
+    # 0181_vna_sessions: terminal rows hold no active instrument/command lease, even when parents repeat.
+    # Generic counters already start at 1, versions at 1, and binary content is nonempty and below the size cap.
+    ("production_vna_sessions", "state"): "recorded",
+    ("production_vna_commands", "status"): "done",
+    ("production_vna_commands", "claimed_at"): None,
+    # 0182_vswr_traces: preserve the legacy manual verdict without claiming a multi-trace evaluation.
+    ("production_vswr_measurements", "complete"): None,
+    ("production_vswr_measurements", "evidence_key"): None,
+    ("production_vswr_measurements", "port_mapping"): None,
+    ("production_vswr_measurements", "required_ends"): None,
+    ("production_vswr_measurements", "end_results"): None,
+    ("production_vswr_traces", "name"): "S11",
+    ("production_vswr_traces", "quantity"): "vswr",
+    ("production_vswr_traces", "points"): 2,
+    # Display frequencies are MHz; full-resolution scalar/complex evidence uses Hz (reflection coefficient 0).
+    ("production_vswr_traces", "trace"): [[1000.0, 1.0], [2000.0, 1.0]],
+    ("production_vswr_traces", "samples"): [[1e9, 1.0], [2e9, 1.0]],
+    ("production_vswr_traces", "complex_samples"): [[1e9, 0.0, 0.0], [2e9, 0.0, 0.0]],
 }
 # Values a CHECK shapes beyond `IN (…)`: an internal project number is «ВП-…» (0135_internal_projects), unique; the
 # label printer settings are bounded ranges and a numeric `dpi IN (203, 300)` (0138_warehouse_labels).

@@ -1,8 +1,9 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CoveringsTable, rangeText, tempText } from "./Coverings";
-import { referencesApi, type CoveringRow, type CoveringsResult } from "./api";
+import { referencesApi, type CoveringRow, type CoveringsResult, type CoveringTab, type TechOperationRecord } from "./api";
 import { blockLines, blockTables } from "./test/blocks";
+import { ColumnViewsProvider } from "./ColumnViews";
 
 /* «Оболочки» (owner 12.10.2026, 15.10.2026): a table per kind with its own fields in the owner's order (термоусадка,
    кембрик, гофра, оплётки, ленты), «Прочее» only when not empty, a manual move. Since 25.10.2026 one list in blocks, as
@@ -33,7 +34,17 @@ const DATA: CoveringsResult = {
   ],
 };
 
-afterEach(() => vi.restoreAllMocks());
+const tabOf = (item: CoveringRow): CoveringTab => item.group === "tut" || item.group === "ttk" ? "heat_shrink" : "cov";
+const rawRecord = (item: CoveringRow): TechOperationRecord => ({ id: item.id, tab: tabOf(item), display_text: item.name, source_sheet: "БД.МАТ", fields: { Наименование: item.name } });
+function mockCoverings(data = DATA) {
+  return vi.spyOn(referencesApi, "coverings").mockImplementation(async (tab = "cov") => ({
+    ...data, rows: data.rows.filter((item) => item.group === "other" || tabOf(item) === tab),
+  }));
+}
+beforeEach(() => {
+  vi.spyOn(referencesApi, "techOperations").mockImplementation(async (tab) => ({ metadata: null, records: DATA.rows.filter((item) => tabOf(item) === tab).map(rawRecord) }));
+});
+afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); });
 // The table of a block (a kind, or a sub-kind of ТУТ / ТТК) by its title.
 const section = (name: string) => blockTables().find((table) => table.getAttribute("aria-label") === name) ?? null;
 
@@ -44,18 +55,17 @@ it("formats ranges and temperatures the way the shop reads them", () => {
   expect(tempText(null, null)).toBe("");
 });
 
-it("shows every kind in the owner's order with its own columns; «Прочее» only when a row is there", async () => {
-  vi.spyOn(referencesApi, "coverings").mockResolvedValue(DATA);
+it("shows only non-shrink coverings with the shared block layout and their own columns", async () => {
+  mockCoverings();
   render(<CoveringsTable canEdit={false} />);
-  expect(await screen.findByText("ТУТнг 4/2 черная")).toBeInTheDocument();
-  expect(blockLines()).toEqual(["ТУТ — термоусадочная трубка · 2", "ТТК — термоусадочная трубка с клеем · 1", "Кембрик — трубка ПВХ · 1",
+  expect(await screen.findByText("Оплётка GTRPA-10")).toBeInTheDocument();
+  expect(screen.queryByText("ТУТнг 4/2 черная")).toBeNull();
+  expect(blockLines()).toEqual(["Кембрик — трубка ПВХ · 1",
     "Гофра · 1", "Оплётки · 1", "Ленты · 1"]);
   // one toolbar for the whole list (25.10): one search, one «Колонки», one «Excel»
   expect(screen.getAllByRole("button", { name: "Колонки" })).toHaveLength(1);
   expect(screen.getAllByRole("button", { name: "Excel" })).toHaveLength(1);
   const heads = (group: string) => within(section(group) as HTMLElement).getAllByRole("columnheader").map((head) => head.textContent);
-  expect(heads("ТУТ — термоусадочная трубка")).toEqual(expect.arrayContaining(["Ø до усадки, мм", "Ø после, мм", "Усадка"]));
-  expect(heads("ТТК — термоусадочная трубка с клеем")).toContain("Клей");
   expect(heads("Оплётки")).toEqual(expect.arrayContaining(["Ø номинал, мм", "Диапазон Ø, мм"]));
   expect(heads("Оплётки")).not.toContain("Ø до усадки, мм"); // a block shows only the fields of its kind
   expect(heads("Гофра")).toEqual(expect.arrayContaining(["Ø внутр., мм", "Ø наружн., мм", "Разрезная"]));
@@ -69,23 +79,23 @@ it("shows every kind in the owner's order with its own columns; «Прочее»
 });
 
 it("keeps the server's order inside a kind: size, then name", async () => {
-  vi.spyOn(referencesApi, "coverings").mockResolvedValue({
+  mockCoverings({
     ...DATA, rows: [
       row({ id: "a", name: "ТУТ 1,5/0,75 черная", series: "20-1506", before_mm: 1.5 }),
       row({ id: "b", name: "ТУТнг 2/1 черная", series: "ТУТнг-LS", before_mm: 2 }),
       row({ id: "c", name: "ТУТ(HF) 10/5 белая", series: "ТУТ(HF)", before_mm: 10 }),
     ],
   });
-  render(<CoveringsTable canEdit={false} />);
+  render(<CoveringsTable tab="heat_shrink" canEdit={false} />);
   await screen.findByText("ТУТнг 2/1 черная");
   const names = [...(section("ТУТ — термоусадочная трубка") as HTMLElement).querySelectorAll("tbody tr")].map((item) => item.querySelector("strong")?.textContent);
   expect(names).toEqual(["ТУТ 1,5/0,75 черная", "ТУТнг 2/1 черная", "ТУТ(HF) 10/5 белая"]);
 });
 
 it("searches across the groups", async () => {
-  vi.spyOn(referencesApi, "coverings").mockResolvedValue(DATA);
+  mockCoverings();
   render(<CoveringsTable canEdit={false} />);
-  await screen.findByText("ТУТнг 4/2 черная");
+  await screen.findByText("Оплётка GTRPA-10");
   fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по оболочкам" }), { target: { value: "gtrpa" } });
   expect(screen.getByText("Оплётка GTRPA-10")).toBeInTheDocument();
   expect(screen.queryByText("ТУТнг 4/2 черная")).toBeNull();
@@ -93,7 +103,7 @@ it("searches across the groups", async () => {
 });
 
 it("moves a row to another group by hand and back to «Авто»", async () => {
-  const load = vi.spyOn(referencesApi, "coverings").mockResolvedValue(DATA);
+  const load = mockCoverings();
   const save = vi.spyOn(referencesApi, "setCoveringGroup").mockResolvedValue({} as never);
   render(<CoveringsTable canEdit />);
   fireEvent.click(await screen.findByText("Гофра 8,5мм".replace("Гофра", "Трубка гофрированная")));
@@ -104,14 +114,14 @@ it("moves a row to another group by hand and back to «Авто»", async () => 
   await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
 });
 
-it("edits a БД.МАТ column right in the cell with the record's old value; a parsed-only value is not a column to edit", async () => {
-  const load = vi.spyOn(referencesApi, "coverings").mockResolvedValue(DATA);
+it("edits a heat-shrink column with its old value; parsed-only values are not editable fields", async () => {
+  const load = mockCoverings();
   vi.spyOn(referencesApi, "techOperations").mockResolvedValue({ metadata: null, records: [
-    { id: "t1", tab: "mat", display_text: "ТУТнг 4/2 черная", source_sheet: "БД.МАТ", fields: { Наименование: "ТУТнг 4/2 черная", Цвет: "черный", "Размер до, мм": "4" } },
-    { id: "t2", tab: "mat", display_text: "ТУТнг 12/6 черная", source_sheet: "БД.МАТ", fields: { Наименование: "ТУТнг 12/6 черная" } },
+    { id: "t1", tab: "heat_shrink", display_text: "ТУТнг 4/2 черная", source_sheet: "БД.МАТ", fields: { Наименование: "ТУТнг 4/2 черная", Цвет: "черный", "Размер до, мм": "4" } },
+    { id: "t2", tab: "heat_shrink", display_text: "ТУТнг 12/6 черная", source_sheet: "БД.МАТ", fields: { Наименование: "ТУТнг 12/6 черная" } },
   ] });
-  const edit = vi.spyOn(referencesApi, "editRecord").mockResolvedValue({ id: "t1", tab: "mat", display_text: "", source_sheet: "", fields: {} });
-  render(<CoveringsTable canEdit />);
+  const edit = vi.spyOn(referencesApi, "editRecord").mockResolvedValue({ id: "t1", tab: "heat_shrink", display_text: "", source_sheet: "", fields: {} });
+  render(<CoveringsTable tab="heat_shrink" canEdit />);
   await screen.findByText("ТУТнг 4/2 черная");
   const tut = section("ТУТ — термоусадочная трубка") as HTMLElement;
   const heads = within(tut).getAllByRole("columnheader").map((head) => head.textContent);
@@ -129,15 +139,15 @@ it("edits a БД.МАТ column right in the cell with the record's old value; a 
 });
 
 it("has «Без размера» and «Без производителя» chips over every group", async () => {
-  vi.spyOn(referencesApi, "coverings").mockResolvedValue({ ...DATA, rows: [...DATA.rows, row({ id: "t3", name: "ТУТ без размера" })] });
-  render(<CoveringsTable canEdit={false} />);
+  mockCoverings({ ...DATA, rows: [...DATA.rows, row({ id: "t3", name: "ТУТ без размера" })] });
+  render(<CoveringsTable tab="heat_shrink" canEdit={false} />);
   await screen.findByText("ТУТ без размера");
   fireEvent.click(screen.getByRole("button", { name: /^Без размера · 1/ }));
   expect(screen.queryByText("ТУТнг 4/2 черная")).toBeNull();
   expect(within(section("ТУТ — термоусадочная трубка") as HTMLElement).getByText("ТУТ без размера")).toBeInTheDocument();
   expect(blockLines()).toEqual(["ТУТ — термоусадочная трубка · 1"]);
   fireEvent.click(screen.getByRole("button", { name: /^Без производителя/ }));
-  expect(within(section("Оплётки") as HTMLElement).getByText("Оплётка GTRPA-10")).toBeInTheDocument();
+  expect(screen.getByText("ТУТнг 12/6 черная")).toBeInTheDocument();
 });
 
 it("splits ТУТ into a table per kind, in the server's order, and search hides the empty ones", async () => {
@@ -146,18 +156,161 @@ it("splits ТУТ into a table per kind, in the server's order, and search hides
     row({ id: "n1", name: "ТУТнг 4/2 черная", kind: "ng", before_mm: 4, after_mm: 2 }),
     row({ id: "r1", name: "ТУТ(3:1)нг-LS 6/2 черная", kind: "r3", before_mm: 6, after_mm: 2, ratio: "3:1" }),
   ];
-  vi.spyOn(referencesApi, "coverings").mockResolvedValue({
+  mockCoverings({
     ...DATA, counts: { ...DATA.counts, tut: 3, ttk: 0 }, rows,
     kinds: { tut: [{ id: "plain", title: "ТУТ — обычная (2:1)" }, { id: "ng", title: "ТУТнг — не распространяющая горение" }, { id: "r3", title: "ТУТ 3:1 и более" }] },
   });
-  render(<CoveringsTable canEdit={false} />);
+  render(<CoveringsTable tab="heat_shrink" canEdit={false} />);
   await screen.findByText("ТУТ 10/5 черная");
   // ТУТ is a section heading with all its rows; each kind — a block under it
   expect(screen.getByRole("heading", { level: 2, name: "ТУТ — термоусадочная трубка 3" })).toBeInTheDocument();
-  expect([...document.querySelectorAll(".dt-sub-title")].map((item) => item.textContent)).toEqual([
+  expect([...document.querySelectorAll(".dt-sub-title")].map((item) => item.textContent?.replace(/^[▸▾]\s*/, ""))).toEqual([
     "ТУТ — обычная (2:1) 1", "ТУТнг — не распространяющая горение 1", "ТУТ 3:1 и более 1"]);
   expect(within(section("ТУТнг — не распространяющая горение") as HTMLElement).getByText("ТУТнг 4/2 черная")).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Поиск по оболочкам"), { target: { value: "3:1" } });
+  fireEvent.change(screen.getByLabelText("Поиск по термоусадке"), { target: { value: "3:1" } });
   expect(document.querySelectorAll(".dt-sub-title")).toHaveLength(1);
   expect(screen.getByRole("heading", { level: 2, name: "ТУТ — термоусадочная трубка 1" })).toBeInTheDocument();
+});
+
+it("loads independent catalogs and schemas when switching tabs, with ТУТ and ТТК together", async () => {
+  const load = mockCoverings();
+  const view = render(<CoveringsTable tab="heat_shrink" canEdit={false} />);
+  await screen.findByText("ТУТнг 4/2 черная");
+  expect(screen.getByText("ТТК 6/2 черная")).toBeInTheDocument();
+  expect(screen.queryByText("Оплётка GTRPA-10")).toBeNull();
+  expect(load).toHaveBeenCalledWith("heat_shrink");
+  expect(referencesApi.techOperations).toHaveBeenCalledWith("heat_shrink", "", 5000);
+  view.rerender(<CoveringsTable tab="cov" canEdit={false} />);
+  await screen.findByText("Оплётка GTRPA-10");
+  expect(screen.queryByText("ТУТнг 4/2 черная")).toBeNull();
+  expect(referencesApi.techOperations).toHaveBeenCalledWith("cov", "", 5000);
+});
+
+it("keeps unresolved rows visible with an explicit warning and filter", async () => {
+  mockCoverings({ ...DATA, rows: [...DATA.rows, row({ id: "u", name: "Неопределённая трубка", group: "other", classification_status: "unknown" })] });
+  render(<CoveringsTable tab="heat_shrink" canEdit={false} />);
+  await screen.findByText("Неопределённая трубка");
+  expect(screen.getByText(/Требует уточнения раздела/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /^Уточнить раздел · 1/ }));
+  expect(screen.getByText("Неопределённая трубка")).toBeInTheDocument();
+  expect(screen.queryByText("ТУТнг 4/2 черная")).toBeNull();
+});
+
+it("creates a row in an empty heat-shrink table and can add its own columns", async () => {
+  mockCoverings({ ...DATA, rows: [] });
+  vi.mocked(referencesApi.techOperations).mockResolvedValue({ metadata: null, columns: ["Наименование", "Группа"], custom_columns: [], records: [] });
+  const create = vi.spyOn(referencesApi, "createRecord").mockResolvedValue({ id: "new", tab: "heat_shrink", display_text: "ТУТ 6/3", source_sheet: "", fields: {} });
+  const add = vi.spyOn(referencesApi, "addColumn").mockResolvedValue({ tab: "heat_shrink", name: "Полка", records: 0 });
+  render(<CoveringsTable tab="heat_shrink" canEdit />);
+  fireEvent.click(await screen.findByRole("button", { name: "+ Столбец" }));
+  fireEvent.change(screen.getByLabelText("Название столбца"), { target: { value: "Полка" } });
+  fireEvent.click(screen.getByRole("button", { name: "Добавить столбец" }));
+  await waitFor(() => expect(add).toHaveBeenCalledWith("heat_shrink", "Полка"));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Новый столбец" })).toBeNull());
+  fireEvent.click(screen.getByRole("button", { name: "+ Запись" }));
+  fireEvent.change(screen.getByLabelText("Поле Наименование"), { target: { value: "ТУТ 6/3" } });
+  fireEvent.change(screen.getByLabelText("Поле Группа"), { target: { value: "ТУТ" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить запись" }));
+  await waitFor(() => expect(create).toHaveBeenCalledWith("heat_shrink", { Наименование: "ТУТ 6/3", Группа: "ТУТ" }));
+});
+
+it("keeps fields removed from the list in the card and saves only changed values", async () => {
+  mockCoverings();
+  const original = { ...rawRecord(DATA.rows[0]), fields: { Наименование: DATA.rows[0].name, Цвет: "черный", "Старое поле": "сохранено" } };
+  vi.mocked(referencesApi.techOperations).mockResolvedValue({ metadata: null, columns: ["Наименование", "Цвет"], records: [original] });
+  const edit = vi.spyOn(referencesApi, "editRecord").mockResolvedValue(original);
+  render(<CoveringsTable tab="heat_shrink" canEdit />);
+  fireEvent.click(await screen.findByText(DATA.rows[0].name));
+  fireEvent.click(screen.getByRole("button", { name: "Править запись" }));
+  expect(screen.getByLabelText("Поле Старое поле")).toHaveValue("сохранено");
+  fireEvent.change(screen.getByLabelText("Поле Цвет"), { target: { value: "белый" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить запись" }));
+  await waitFor(() => expect(edit).toHaveBeenCalledWith("t1", [{ field: "Цвет", old: "черный", value: "белый" }]));
+});
+
+it("shows independent custom columns to viewers and removes one only from its own catalog", async () => {
+  mockCoverings();
+  const original = { ...rawRecord(DATA.rows[0]), fields: { Наименование: DATA.rows[0].name, Полка: "А-1" } };
+  vi.mocked(referencesApi.techOperations).mockResolvedValue({ metadata: null, columns: ["Наименование", "Полка"], custom_columns: ["Полка"], records: [original] });
+  const remove = vi.spyOn(referencesApi, "removeColumn").mockResolvedValue({ tab: "heat_shrink", name: "Полка", records: 1 });
+  const view = render(<CoveringsTable tab="heat_shrink" canEdit={false} />);
+  await screen.findByText("А-1");
+  expect(screen.queryByRole("button", { name: "+ Столбец" })).toBeNull();
+  view.rerender(<CoveringsTable tab="heat_shrink" canEdit />);
+  fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+  fireEvent.click(screen.getByRole("button", { name: "Удалить столбец: Полка" }));
+  expect(screen.getByText(/Значения останутся в карточках/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Удалить столбец" }));
+  await waitFor(() => expect(remove).toHaveBeenCalledWith("heat_shrink", "Полка"));
+});
+
+it("removes a computed column only from the active list while preserving its value in the card", async () => {
+  const tube = row({ ...DATA.rows[0], wall_mm: 0.5 });
+  mockCoverings({ ...DATA, rows: [tube] });
+  const original = rawRecord(tube);
+  let removed: string[] = [];
+  vi.mocked(referencesApi.techOperations).mockImplementation(async () => ({ metadata: null, columns: ["Наименование"], removed_columns: removed, records: [original] }));
+  const remove = vi.spyOn(referencesApi, "removeColumn").mockImplementation(async (tab, name) => {
+    removed = [name];
+    return { tab, name, records: 1 };
+  });
+  render(<CoveringsTable tab="heat_shrink" canEdit />);
+  await screen.findByText(tube.name);
+  expect(screen.getByRole("columnheader", { name: "Стенка, мм" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+  fireEvent.click(screen.getByRole("button", { name: "Удалить столбец: Стенка, мм" }));
+  fireEvent.click(screen.getByRole("button", { name: "Удалить столбец" }));
+  await waitFor(() => expect(remove).toHaveBeenCalledWith("heat_shrink", "Стенка, мм"));
+  await waitFor(() => expect(screen.queryByRole("columnheader", { name: "Стенка, мм" })).toBeNull());
+  fireEvent.click(screen.getByText(tube.name));
+  fireEvent.click(screen.getByRole("button", { name: "Править запись" }));
+  const card = screen.getByRole("dialog", { name: "Правка записи" });
+  expect(within(card).getByText("Стенка, мм")).toBeInTheDocument();
+  expect(within(card).getByText("0,5")).toBeInTheDocument();
+  expect(within(card).queryByLabelText("Поле Стенка, мм")).toBeNull();
+});
+
+it("requires confirmation before deleting a material record", async () => {
+  mockCoverings();
+  const remove = vi.spyOn(referencesApi, "deleteRecord").mockResolvedValue({ id: "g1" });
+  render(<CoveringsTable canEdit />);
+  fireEvent.click(await screen.findByText("Трубка гофрированная 8,5мм"));
+  fireEvent.click(screen.getByRole("button", { name: "Править запись" }));
+  fireEvent.click(screen.getByRole("button", { name: "Удалить запись" }));
+  expect(remove).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Подтвердить удаление" }));
+  await waitFor(() => expect(remove).toHaveBeenCalledWith("g1"));
+});
+
+it("applies migrated raw shared-view keys and saves only the active catalog's view", async () => {
+  mockCoverings();
+  vi.mocked(referencesApi.techOperations).mockImplementation(async (tab) => ({ metadata: null,
+    columns: ["Наименование", "Производитель", "Цвет", "Полка"], custom_columns: ["Полка"],
+    records: DATA.rows.filter((item) => tabOf(item) === tab).map((item) => ({ ...rawRecord(item), fields: { Наименование: item.name, Полка: "А-1" } })),
+  }));
+  vi.spyOn(referencesApi, "columnViews").mockResolvedValue({ can_edit: true, views: {
+    heat_shrink: [{ key: "Наименование", visible: true }, { key: "Цвет", visible: false }, { key: "Полка", visible: true }, { key: "Производитель", visible: true }],
+    cov: [{ key: "Наименование", visible: true }, { key: "Производитель", visible: false }, { key: "Цвет", visible: true }],
+  } });
+  const save = vi.spyOn(referencesApi, "saveColumnView").mockImplementation(async (view, columns) => ({ view, columns }));
+  const view = render(<ColumnViewsProvider><CoveringsTable key="heat_shrink" tab="heat_shrink" canEdit /></ColumnViewsProvider>);
+  const heads = (name: string) => within(section(name) as HTMLElement).getAllByRole("columnheader").map((head) => head.textContent);
+  await screen.findByText("ТУТнг 4/2 черная");
+  await waitFor(() => expect(heads(titles.tut)).toEqual(["Наименование", "Полка", "Производитель"]));
+  fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить для всех" }));
+  await waitFor(() => expect(save).toHaveBeenCalledWith("heat_shrink", expect.arrayContaining([{ key: "color", visible: false }, { key: "field:Полка", visible: true }])));
+  view.rerender(<ColumnViewsProvider><CoveringsTable key="cov" tab="cov" canEdit /></ColumnViewsProvider>);
+  await screen.findByText("Оплётка GTRPA-10");
+  await waitFor(() => expect(heads(titles.braid)).toContain("Цвет"));
+  expect(heads(titles.braid)).not.toContain("Производитель");
+  expect(save).toHaveBeenCalledTimes(1);
+});
+
+it("reports schema failure instead of silently disabling editing", async () => {
+  mockCoverings();
+  vi.mocked(referencesApi.techOperations).mockRejectedValue(new Error("Нет связи с ERP"));
+  render(<CoveringsTable tab="heat_shrink" canEdit />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Нет связи с ERP");
+  expect(screen.queryByRole("button", { name: "+ Запись" })).toBeNull();
 });

@@ -6,13 +6,57 @@ $installPath = Join-Path $here '..\install.ps1'
 $parseErrors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile((Resolve-Path $installPath).Path, [ref]$null, [ref]$parseErrors)
 $TaskName = 'Fraxis — печать этикеток'
-$functions = $ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in 'Get-AgentProcess', 'Stop-Agent' }, $true)
+$functions = $ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in 'Get-AgentProcess', 'Stop-Agent', 'Assert-AgentVnaIdle', 'Confirm-AgentStopped', 'Exit-AgentLifecycle' }, $true)
 foreach ($function in $functions) { . ([scriptblock]::Create($function.Extent.Text)) }
 
 Describe 'install.ps1' {
     It 'разбирается без ошибок и содержит Stop-Agent' {
         @($parseErrors).Count | Should Be 0
-        @($functions).Count | Should Be 2
+        @($functions).Count | Should Be 5
+    }
+}
+
+Describe 'Защита резервной копии ВАЦ при установке' {
+    BeforeEach { $script:Dir = Join-Path $TestDrive ([guid]::NewGuid().ToString()); [void][IO.Directory]::CreateDirectory((Join-Path $script:Dir 'vna-control')) }
+    It 'без сессии разрешает установку' { Assert-AgentVnaIdle }
+    It 'владеющая прибором сессия запрещает переустановку' {
+        [IO.File]::WriteAllText((Join-Path $script:Dir 'vna-control\owner.json'),'{}')
+        { Assert-AgentVnaIdle } | Should Throw 'незавершённая сессия'
+    }
+    It 'неизвестная COM-операция запрещает удаление резервной копии' {
+        [IO.File]::WriteAllText((Join-Path $script:Dir 'vna-control\quarantine.json'),'{}')
+        { Assert-AgentVnaIdle } | Should Throw 'восстановите'
+    }
+    It 'journal executing до появления owner запрещает удаление' {
+        $journalPath = Join-Path (Join-Path $script:Dir 'vna-control') ([guid]::NewGuid().ToString() + '.json')
+        [IO.File]::WriteAllText($journalPath,'{"state":"executing","acknowledged":false}')
+        { Assert-AgentVnaIdle } | Should Throw 'подтверждения ERP'
+    }
+    It 'готовая неподтверждённая квитанция сохраняется при переустановке' {
+        $journalPath = Join-Path (Join-Path $script:Dir 'vna-control') ([guid]::NewGuid().ToString() + '.json')
+        [IO.File]::WriteAllText($journalPath,'{"state":"completed","acknowledged":false}')
+        { Assert-AgentVnaIdle } | Should Throw 'подтверждения ERP'
+    }
+    It 'команда ещё до журнала запрещает удаление' {
+        $requestPath = Join-Path $script:Dir 'vna-control\worker-request.json'
+        [IO.File]::WriteAllText($requestPath,'{"command":{"command_id":"11111111-1111-1111-1111-111111111111"}}')
+        { Assert-AgentVnaIdle } | Should Throw 'команда исполнителя'
+    }
+    It 'таймаут остановки не разрешает изменение файлов' {
+        Mock Get-AgentProcess { @([pscustomobject]@{ ProcessId = 123 }) }
+        { Confirm-AgentStopped } | Should Throw 'Не удалось остановить'
+    }
+    It 'ошибка повторной проверки освобождает lifecycle mutex' {
+        Mock Get-AgentProcess { @() }
+        [IO.File]::WriteAllText((Join-Path $script:Dir 'vna-control\owner.json'),'{}')
+        $mutex = [pscustomobject]@{ Released = $false; Disposed = $false }
+        $mutex | Add-Member ScriptMethod ReleaseMutex { $this.Released = $true }
+        $mutex | Add-Member ScriptMethod Dispose { $this.Disposed = $true }
+        $script:InstallLifecycleMutex = $mutex
+        { Confirm-AgentStopped } | Should Throw 'незавершённая сессия'
+        $mutex.Released | Should Be $true
+        $mutex.Disposed | Should Be $true
+        $script:InstallLifecycleMutex | Should Be $null
     }
 }
 

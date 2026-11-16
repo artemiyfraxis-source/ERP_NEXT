@@ -1,0 +1,968 @@
+[
+  {
+    "kb": "КБ1",
+    "config": {
+      "mode": "coax",
+      "tab": "coax",
+      "assemblyIndex": "КБ1",
+      "assemblyName": "Кабельная сборка 122664/AA 120907/AA Camera 14 → Splitter B C6",
+      "partQty": 15,
+      "coax": {
+        "cableLength": 4855,
+        "lengthBasis": "finished",
+        "finishedLength": 4800,
+        "lPlusA": 30,
+        "lPlusB": 25,
+        "fakraCutStrip": true,
+        "markMaterial": "tape",
+        "markProtect": true,
+        "marks": [
+          {
+            "text": "120907/AA, дата, № монтажника",
+            "place": "middle",
+            "minMm": 100
+          },
+          {
+            "text": "Camera 14",
+            "place": "A",
+            "minMm": 100
+          },
+          {
+            "text": "Splitter B C6",
+            "place": "B",
+            "minMm": 100
+          }
+        ],
+        "connColor": {
+          "method": "paint",
+          "color": "оранжевый",
+          "code": "OG",
+          "art": "151437"
+        },
+        "tutLength": 60,
+        "tutArt": "ТУТ 4/2мм, прозрачная",
+        "tutName": "ТУТ 4/2мм, прозрачная",
+        "cableArt": "RTK 031",
+        "cableName": "RTK 031",
+        "sleeveArt": "",
+        "sleeveName": "",
+        "shieldType": "обжим",
+        "sideA": {
+          "article": "59K13o-1M4A4",
+          "connName": "59K13o-1M4A4",
+          "kind": "straight",
+          "parts": [
+            {
+              "art": "59K13o-1M4A4",
+              "name": "59K13o-1M4A4",
+              "qty": 1,
+              "role": "main"
+            },
+            {
+              "art": "59Z163-003-Z",
+              "name": "59Z163-003-Z",
+              "qty": 1,
+              "role": "housing"
+            },
+            {
+              "art": "59K14B-1M4/50",
+              "name": "59K14B-1M4/50",
+              "qty": 1,
+              "role": "seal"
+            },
+            {
+              "art": "59Z163-000/51",
+              "name": "59Z163-000/51",
+              "qty": 1,
+              "role": "cap"
+            }
+          ],
+          "type": "FAKRA-HF прямой",
+          "wire": "RTK 031",
+          "mfr": "",
+          "program": "",
+          "d1": "0,81",
+          "d2": "2,1",
+          "d3": "3,2",
+          "l1": "9,7",
+          "l2": "4,6",
+          "l3": "3,0",
+          "lPlus": "30",
+          "lMinus": "",
+          "pinType": "обжим",
+          "shield": "обжим"
+        },
+        "sideB": {
+          "article": "59K25H-1M4A4",
+          "connName": "59K25H-1M4A4",
+          "kind": "angled",
+          "parts": [
+            {
+              "art": "59K25H-1M4A4",
+              "name": "59K25H-1M4A4",
+              "qty": 1,
+              "role": "main"
+            },
+            {
+              "art": "59Z006-T00-Z",
+              "name": "59Z006-T00-Z",
+              "qty": 1,
+              "role": "housing"
+            }
+          ],
+          "type": "FAKRA-HF угловой",
+          "wire": "RTK 031",
+          "mfr": "",
+          "program": "",
+          "d1": "0,81",
+          "d2": "2,1",
+          "d3": "3,2",
+          "l1": "11,6",
+          "l2": "6,4",
+          "l3": "1,7",
+          "lPlus": "25",
+          "lMinus": "",
+          "pinType": "обжим",
+          "shield": "обжим"
+        },
+        "vswrControl": {
+          "mode": "all",
+          "every": null
+        }
+      },
+      "ops": [
+        {
+          "type": "coaxCut",
+          "opKey": "coaxFakraCutStrip",
+          "side": "",
+          "units": 1,
+          "templateId": "CUT_COAX+2strip",
+          "opNum": "",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "machine": {
+            "model": "BZW-886+Q2",
+            "inventory": "ОБ.094",
+            "name": "Станок резки провода с роторной зачисткой мал."
+          },
+          "stripSides": [
+            "A",
+            "B"
+          ],
+          "label": "Резка с разделкой (А и В)"
+        },
+        {
+          "type": "coaxCutTut",
+          "opKey": "coaxPrintLabel",
+          "side": "",
+          "units": 3,
+          "templateId": "PRINT_MARK_LABEL",
+          "opNum": "",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "marks": [
+            {
+              "text": "120907/AA, дата, № монтажника",
+              "place": "middle",
+              "minMm": 100
+            },
+            {
+              "text": "Camera 14",
+              "place": "A",
+              "minMm": 100
+            },
+            {
+              "text": "Splitter B C6",
+              "place": "B",
+              "minMm": 100
+            }
+          ],
+          "markMaterial": "tape",
+          "markPhase": "print",
+          "parts": [
+            {
+              "art": "Лента Vell VL-S641",
+              "name": "Лента Vell VL-S641",
+              "qty": 3
+            }
+          ],
+          "label": "Печать этикеток ×3"
+        },
+        {
+          "type": "coaxCutTut",
+          "opKey": "coaxProtectCut",
+          "side": "",
+          "units": 3,
+          "templateId": "CUT_TUT_short",
+          "opNum": "",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "protective": true,
+          "label": "Резка прозрачной ТУТ ×3"
+        },
+        {
+          "type": "coaxInsTut",
+          "opKey": "coaxProtectIns",
+          "side": "",
+          "units": 3,
+          "templateId": "INS_TUT",
+          "opNum": "",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "protective": true,
+          "label": "Надеть прозрачную ТУТ и сдвинуть к середине ×3"
+        },
+        {
+          "type": "coaxInsSleeve",
+          "opKey": "coaxInsSleeveA",
+          "side": "A",
+          "units": 1,
+          "templateId": "INS_FAKRA_ST_PREP",
+          "opNum": "INS_FAKRA_ST_PREP",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "parts": [
+            {
+              "art": "59K14B-1M4/50",
+              "name": "59K14B-1M4/50",
+              "qty": 1
+            },
+            {
+              "art": "59Z163-000/51",
+              "name": "59Z163-000/51",
+              "qty": 1
+            }
+          ],
+          "label": "Надеть крышку, уплотнитель и гильзу (А)"
+        },
+        {
+          "type": "coaxInsSleeve",
+          "opKey": "coaxInsSleeveB",
+          "side": "B",
+          "units": 1,
+          "templateId": "INS_FAKRA_RA_PREP",
+          "opNum": "INS_FAKRA_RA_PREP",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "label": "Надеть гильзу (В)"
+        },
+        {
+          "type": "coaxInsTut",
+          "opKey": "coaxInsLabel",
+          "side": "",
+          "units": 3,
+          "templateId": "INS_MARK_LABEL",
+          "opNum": "",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "marks": [
+            {
+              "text": "120907/AA, дата, № монтажника",
+              "place": "middle",
+              "minMm": 100
+            },
+            {
+              "text": "Camera 14",
+              "place": "A",
+              "minMm": 100
+            },
+            {
+              "text": "Splitter B C6",
+              "place": "B",
+              "minMm": 100
+            }
+          ],
+          "markMaterial": "tape",
+          "markPhase": "install",
+          "label": "Наклейка этикеток маркировки ×3"
+        },
+        {
+          "type": "coaxPinCrimp",
+          "opKey": "coaxPinCrimpA",
+          "side": "A",
+          "units": 1,
+          "templateId": "PRS_FAKRA_ST_PIN",
+          "opNum": "PRS_FAKRA_ST_PIN",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "parts": [
+            {
+              "art": "59K13o-1M4A4",
+              "name": "59K13o-1M4A4",
+              "qty": 1
+            }
+          ],
+          "label": "Обжим центрального контакта (А)"
+        },
+        {
+          "type": "coaxHousing",
+          "opKey": "coaxInsertA",
+          "side": "A",
+          "units": 1,
+          "templateId": "INS_FAKRA_ST_CONTACT",
+          "opNum": "INS_FAKRA_ST_CONTACT",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "label": "Вставка во вставку до щелчка, контроль заглубления контакта 0,18 мм (А)"
+        },
+        {
+          "type": "coaxShield",
+          "opKey": "coaxShieldA",
+          "side": "A",
+          "units": 1,
+          "templateId": "PRS_FAKRA_ST_SHIELD",
+          "opNum": "PRS_FAKRA_ST_SHIELD",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "label": "Обжим гильзы экрана (А)"
+        },
+        {
+          "type": "coaxHousing",
+          "opKey": "coaxBodyA",
+          "side": "A",
+          "units": 1,
+          "templateId": "INS_FAKRA_ST_HOUSING",
+          "opNum": "INS_FAKRA_ST_HOUSING",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "parts": [
+            {
+              "art": "59Z163-003-Z",
+              "name": "59Z163-003-Z",
+              "qty": 1
+            }
+          ],
+          "label": "Установка в корпус до щелчка (А)"
+        },
+        {
+          "type": "coaxCapScrew",
+          "opKey": "coaxSealCapA",
+          "side": "A",
+          "units": 1,
+          "templateId": "INS_FAKRA_ST_SEAL",
+          "opNum": "INS_FAKRA_ST_SEAL",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "noTooling": true,
+          "label": "Уплотнитель и крышка (А)"
+        },
+        {
+          "type": "coaxPinCrimp",
+          "opKey": "coaxPinCrimpB",
+          "side": "B",
+          "units": 1,
+          "templateId": "PRS_FAKRA_RA_PIN",
+          "opNum": "PRS_FAKRA_RA_PIN",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "parts": [
+            {
+              "art": "59K25H-1M4A4",
+              "name": "59K25H-1M4A4",
+              "qty": 1
+            }
+          ],
+          "label": "Обжим центрального контакта (В)"
+        },
+        {
+          "type": "coaxHousing",
+          "opKey": "coaxInsertB",
+          "side": "B",
+          "units": 1,
+          "templateId": "INS_FAKRA_RA_CONTACT",
+          "opNum": "INS_FAKRA_RA_CONTACT",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "label": "Вставка в корпус, контроль пина в окне (В)"
+        },
+        {
+          "type": "coaxShield",
+          "opKey": "coaxShieldB",
+          "side": "B",
+          "units": 1,
+          "templateId": "PRS_FAKRA_RA_SHIELD",
+          "opNum": "PRS_FAKRA_RA_SHIELD",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "label": "Обжим гильзы экрана (В)"
+        },
+        {
+          "type": "coaxCapCrimp",
+          "opKey": "coaxCapCrimpB",
+          "side": "B",
+          "units": 1,
+          "templateId": "PRS_FAKRA_RA_CAP",
+          "opNum": "PRS_FAKRA_RA_CAP",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "label": "Запрессовать крышку (В)"
+        },
+        {
+          "type": "coaxHousing",
+          "opKey": "coaxBodyB",
+          "side": "B",
+          "units": 1,
+          "templateId": "INS_FAKRA_RA_HOUSING",
+          "opNum": "INS_FAKRA_RA_HOUSING",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "parts": [
+            {
+              "art": "59Z006-T00-Z",
+              "name": "59Z006-T00-Z",
+              "qty": 1
+            }
+          ],
+          "label": "Корпус и вторичная фиксация (В)"
+        },
+        {
+          "type": "coaxHeat",
+          "opKey": "coaxHeat",
+          "side": "",
+          "units": 3,
+          "templateId": "HEAT_TYT_short",
+          "opNum": "",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "protective": true,
+          "label": "Усадка прозрачной ТУТ на этикетках ×3"
+        },
+        {
+          "type": "coaxConnColor",
+          "opKey": "coaxConnColor",
+          "side": "",
+          "units": 2,
+          "templateId": "MARK_CONN_PAINT",
+          "opNum": "",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "connColor": {
+            "method": "paint",
+            "color": "оранжевый",
+            "code": "OG",
+            "art": "151437"
+          },
+          "label": "Цветовая маркировка разъёмов — оранжевый (OG) ×2"
+        },
+        {
+          "type": "coaxVswr",
+          "opKey": "coaxVswr",
+          "side": "",
+          "units": 1,
+          "templateId": "CTRL_VSWR_coax",
+          "opNum": "",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "label": "Контроль КСВН",
+          "vswrControl": {
+            "mode": "all",
+            "every": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "kb": "КБ2",
+    "config": {
+      "mode": "coax",
+      "tab": "coax",
+      "assemblyIndex": "КБ2",
+      "assemblyName": "Кабельная сборка 122664/AA 120905/AA Camera 11 → Splitter B C3",
+      "partQty": 15,
+      "coax": {
+        "cableLength": 4855,
+        "lengthBasis": "finished",
+        "finishedLength": 4800,
+        "lPlusA": 30,
+        "lPlusB": 25,
+        "fakraCutStrip": true,
+        "markMaterial": "tape",
+        "markProtect": true,
+        "marks": [
+          {
+            "text": "120905/AA, дата, № монтажника",
+            "place": "middle",
+            "minMm": 100
+          },
+          {
+            "text": "Camera 11",
+            "place": "A",
+            "minMm": 100
+          },
+          {
+            "text": "Splitter B C3",
+            "place": "B",
+            "minMm": 100
+          }
+        ],
+        "connColor": {
+          "method": "paint",
+          "color": "розовый",
+          "code": "PK",
+          "art": "151986"
+        },
+        "tutLength": 60,
+        "tutArt": "ТУТ 4/2мм, прозрачная",
+        "tutName": "ТУТ 4/2мм, прозрачная",
+        "cableArt": "RTK 031",
+        "cableName": "RTK 031",
+        "sleeveArt": "",
+        "sleeveName": "",
+        "shieldType": "обжим",
+        "sideA": {
+          "article": "59K13o-1M4A4",
+          "connName": "59K13o-1M4A4",
+          "kind": "straight",
+          "parts": [
+            {
+              "art": "59K13o-1M4A4",
+              "name": "59K13o-1M4A4",
+              "qty": 1,
+              "role": "main"
+            },
+            {
+              "art": "59Z163-003-Z",
+              "name": "59Z163-003-Z",
+              "qty": 1,
+              "role": "housing"
+            },
+            {
+              "art": "59K14B-1M4/50",
+              "name": "59K14B-1M4/50",
+              "qty": 1,
+              "role": "seal"
+            },
+            {
+              "art": "59Z163-000/51",
+              "name": "59Z163-000/51",
+              "qty": 1,
+              "role": "cap"
+            }
+          ],
+          "type": "FAKRA-HF прямой",
+          "wire": "RTK 031",
+          "mfr": "",
+          "program": "",
+          "d1": "0,81",
+          "d2": "2,1",
+          "d3": "3,2",
+          "l1": "9,7",
+          "l2": "4,6",
+          "l3": "3,0",
+          "lPlus": "30",
+          "lMinus": "",
+          "pinType": "обжим",
+          "shield": "обжим"
+        },
+        "sideB": {
+          "article": "59K25H-1M4A4",
+          "connName": "59K25H-1M4A4",
+          "kind": "angled",
+          "parts": [
+            {
+              "art": "59K25H-1M4A4",
+              "name": "59K25H-1M4A4",
+              "qty": 1,
+              "role": "main"
+            },
+            {
+              "art": "59Z006-T00-Z",
+              "name": "59Z006-T00-Z",
+              "qty": 1,
+              "role": "housing"
+            }
+          ],
+          "type": "FAKRA-HF угловой",
+          "wire": "RTK 031",
+          "mfr": "",
+          "program": "",
+          "d1": "0,81",
+          "d2": "2,1",
+          "d3": "3,2",
+          "l1": "11,6",
+          "l2": "6,4",
+          "l3": "1,7",
+          "lPlus": "25",
+          "lMinus": "",
+          "pinType": "обжим",
+          "shield": "обжим"
+        },
+        "vswrControl": {
+          "mode": "all",
+          "every": null
+        }
+      },
+      "ops": [
+        {
+          "type": "coaxCut",
+          "opKey": "coaxFakraCutStrip",
+          "side": "",
+          "units": 1,
+          "templateId": "CUT_COAX+2strip",
+          "opNum": "",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "machine": {
+            "model": "BZW-886+Q2",
+            "inventory": "ОБ.094",
+            "name": "Станок резки провода с роторной зачисткой мал."
+          },
+          "stripSides": [
+            "A",
+            "B"
+          ],
+          "label": "Резка с разделкой (А и В)"
+        },
+        {
+          "type": "coaxCutTut",
+          "opKey": "coaxPrintLabel",
+          "side": "",
+          "units": 3,
+          "templateId": "PRINT_MARK_LABEL",
+          "opNum": "",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "marks": [
+            {
+              "text": "120905/AA, дата, № монтажника",
+              "place": "middle",
+              "minMm": 100
+            },
+            {
+              "text": "Camera 11",
+              "place": "A",
+              "minMm": 100
+            },
+            {
+              "text": "Splitter B C3",
+              "place": "B",
+              "minMm": 100
+            }
+          ],
+          "markMaterial": "tape",
+          "markPhase": "print",
+          "parts": [
+            {
+              "art": "Лента Vell VL-S641",
+              "name": "Лента Vell VL-S641",
+              "qty": 3
+            }
+          ],
+          "label": "Печать этикеток ×3"
+        },
+        {
+          "type": "coaxCutTut",
+          "opKey": "coaxProtectCut",
+          "side": "",
+          "units": 3,
+          "templateId": "CUT_TUT_short",
+          "opNum": "",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "protective": true,
+          "label": "Резка прозрачной ТУТ ×3"
+        },
+        {
+          "type": "coaxInsTut",
+          "opKey": "coaxProtectIns",
+          "side": "",
+          "units": 3,
+          "templateId": "INS_TUT",
+          "opNum": "",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "protective": true,
+          "label": "Надеть прозрачную ТУТ и сдвинуть к середине ×3"
+        },
+        {
+          "type": "coaxInsSleeve",
+          "opKey": "coaxInsSleeveA",
+          "side": "A",
+          "units": 1,
+          "templateId": "INS_FAKRA_ST_PREP",
+          "opNum": "INS_FAKRA_ST_PREP",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "parts": [
+            {
+              "art": "59K14B-1M4/50",
+              "name": "59K14B-1M4/50",
+              "qty": 1
+            },
+            {
+              "art": "59Z163-000/51",
+              "name": "59Z163-000/51",
+              "qty": 1
+            }
+          ],
+          "label": "Надеть крышку, уплотнитель и гильзу (А)"
+        },
+        {
+          "type": "coaxInsSleeve",
+          "opKey": "coaxInsSleeveB",
+          "side": "B",
+          "units": 1,
+          "templateId": "INS_FAKRA_RA_PREP",
+          "opNum": "INS_FAKRA_RA_PREP",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "label": "Надеть гильзу (В)"
+        },
+        {
+          "type": "coaxInsTut",
+          "opKey": "coaxInsLabel",
+          "side": "",
+          "units": 3,
+          "templateId": "INS_MARK_LABEL",
+          "opNum": "",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "marks": [
+            {
+              "text": "120905/AA, дата, № монтажника",
+              "place": "middle",
+              "minMm": 100
+            },
+            {
+              "text": "Camera 11",
+              "place": "A",
+              "minMm": 100
+            },
+            {
+              "text": "Splitter B C3",
+              "place": "B",
+              "minMm": 100
+            }
+          ],
+          "markMaterial": "tape",
+          "markPhase": "install",
+          "label": "Наклейка этикеток маркировки ×3"
+        },
+        {
+          "type": "coaxPinCrimp",
+          "opKey": "coaxPinCrimpA",
+          "side": "A",
+          "units": 1,
+          "templateId": "PRS_FAKRA_ST_PIN",
+          "opNum": "PRS_FAKRA_ST_PIN",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "parts": [
+            {
+              "art": "59K13o-1M4A4",
+              "name": "59K13o-1M4A4",
+              "qty": 1
+            }
+          ],
+          "label": "Обжим центрального контакта (А)"
+        },
+        {
+          "type": "coaxHousing",
+          "opKey": "coaxInsertA",
+          "side": "A",
+          "units": 1,
+          "templateId": "INS_FAKRA_ST_CONTACT",
+          "opNum": "INS_FAKRA_ST_CONTACT",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "label": "Вставка во вставку до щелчка, контроль заглубления контакта 0,18 мм (А)"
+        },
+        {
+          "type": "coaxShield",
+          "opKey": "coaxShieldA",
+          "side": "A",
+          "units": 1,
+          "templateId": "PRS_FAKRA_ST_SHIELD",
+          "opNum": "PRS_FAKRA_ST_SHIELD",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "label": "Обжим гильзы экрана (А)"
+        },
+        {
+          "type": "coaxHousing",
+          "opKey": "coaxBodyA",
+          "side": "A",
+          "units": 1,
+          "templateId": "INS_FAKRA_ST_HOUSING",
+          "opNum": "INS_FAKRA_ST_HOUSING",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "parts": [
+            {
+              "art": "59Z163-003-Z",
+              "name": "59Z163-003-Z",
+              "qty": 1
+            }
+          ],
+          "label": "Установка в корпус до щелчка (А)"
+        },
+        {
+          "type": "coaxCapScrew",
+          "opKey": "coaxSealCapA",
+          "side": "A",
+          "units": 1,
+          "templateId": "INS_FAKRA_ST_SEAL",
+          "opNum": "INS_FAKRA_ST_SEAL",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "noTooling": true,
+          "label": "Уплотнитель и крышка (А)"
+        },
+        {
+          "type": "coaxPinCrimp",
+          "opKey": "coaxPinCrimpB",
+          "side": "B",
+          "units": 1,
+          "templateId": "PRS_FAKRA_RA_PIN",
+          "opNum": "PRS_FAKRA_RA_PIN",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "parts": [
+            {
+              "art": "59K25H-1M4A4",
+              "name": "59K25H-1M4A4",
+              "qty": 1
+            }
+          ],
+          "label": "Обжим центрального контакта (В)"
+        },
+        {
+          "type": "coaxHousing",
+          "opKey": "coaxInsertB",
+          "side": "B",
+          "units": 1,
+          "templateId": "INS_FAKRA_RA_CONTACT",
+          "opNum": "INS_FAKRA_RA_CONTACT",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "label": "Вставка в корпус, контроль пина в окне (В)"
+        },
+        {
+          "type": "coaxShield",
+          "opKey": "coaxShieldB",
+          "side": "B",
+          "units": 1,
+          "templateId": "PRS_FAKRA_RA_SHIELD",
+          "opNum": "PRS_FAKRA_RA_SHIELD",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "label": "Обжим гильзы экрана (В)"
+        },
+        {
+          "type": "coaxCapCrimp",
+          "opKey": "coaxCapCrimpB",
+          "side": "B",
+          "units": 1,
+          "templateId": "PRS_FAKRA_RA_CAP",
+          "opNum": "PRS_FAKRA_RA_CAP",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "label": "Запрессовать крышку (В)"
+        },
+        {
+          "type": "coaxHousing",
+          "opKey": "coaxBodyB",
+          "side": "B",
+          "units": 1,
+          "templateId": "INS_FAKRA_RA_HOUSING",
+          "opNum": "INS_FAKRA_RA_HOUSING",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "parts": [
+            {
+              "art": "59Z006-T00-Z",
+              "name": "59Z006-T00-Z",
+              "qty": 1
+            }
+          ],
+          "label": "Корпус и вторичная фиксация (В)"
+        },
+        {
+          "type": "coaxHeat",
+          "opKey": "coaxHeat",
+          "side": "",
+          "units": 3,
+          "templateId": "HEAT_TYT_short",
+          "opNum": "",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "protective": true,
+          "label": "Усадка прозрачной ТУТ на этикетках ×3"
+        },
+        {
+          "type": "coaxConnColor",
+          "opKey": "coaxConnColor",
+          "side": "",
+          "units": 2,
+          "templateId": "MARK_CONN_PAINT",
+          "opNum": "",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "connColor": {
+            "method": "paint",
+            "color": "розовый",
+            "code": "PK",
+            "art": "151986"
+          },
+          "label": "Цветовая маркировка разъёмов — розовый (PK) ×2"
+        },
+        {
+          "type": "coaxVswr",
+          "opKey": "coaxVswr",
+          "side": "",
+          "units": 1,
+          "templateId": "CTRL_VSWR_coax",
+          "opNum": "",
+          "tPrep": "",
+          "tOp": "",
+          "tMachine": "",
+          "label": "Контроль КСВН",
+          "vswrControl": {
+            "mode": "all",
+            "every": null
+          }
+        }
+      ]
+    }
+  }
+]

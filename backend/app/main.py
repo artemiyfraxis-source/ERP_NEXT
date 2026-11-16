@@ -77,6 +77,7 @@ from .workflows import production_intake_api
 from .workflows import coax_vswr_api, instrument_from_stock
 from .modules.production import rf_interfaces_api
 from .workflows import vna_plan_api
+from .workflows import vna_measurement_api
 from .workflows import receiving_by_upd_api
 from .workflows import shipping_upd_scan_api
 from .workflows import scan_agent_install
@@ -179,6 +180,7 @@ app.include_router(production_intake_api.router)
 app.include_router(coax_vswr_api.router)
 app.include_router(rf_interfaces_api.router)
 app.include_router(vna_plan_api.router)
+app.include_router(vna_measurement_api.router)
 app.include_router(instrument_from_stock.router)
 
 _equipment_enabled = equipment_setup_enabled()

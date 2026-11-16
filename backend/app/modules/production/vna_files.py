@@ -2,7 +2,7 @@
 
 ОТК меряет коаксиальные сборки на ВАЦ (у владельца Arinst VNA-DL 1–8800 МГц, калибровочный набор SMA). Формат выгрузки
 Arinst пока неизвестен, поэтому разбор принимает то, что выгружают такие приборы:
-- Touchstone `.s1p` (и первая пара S11 из `.s2p`): строка опций `# Hz|kHz|MHz|GHz S RI|MA|DB R 50`, комментарии `!`,
+- Touchstone `.s1p` и все четыре S-параметра `.s2p`: строка опций `# Hz|kHz|MHz|GHz S RI|MA|DB R 50`, комментарии `!`,
   без строки опций — `# GHz S MA R 50` по стандарту;
 - CSV/TXT: разделитель `;`, `,`, табуляция или пробелы, десятичная запятая, необязательная строка заголовка.
   Единица частоты — из заголовка (Гц/кГц/МГц/ГГц, Hz/kHz/MHz/GHz) или по диапазону значений; столбец значения —
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 import re
+from dataclasses import dataclass
 from typing import Sequence
 
 from .domain import ProductionValidationError
@@ -25,6 +26,14 @@ VSWR_CEILING = 999.0
 MAX_POINTS = 200_000
 
 VswrPoint = tuple[float, float]
+
+
+@dataclass(frozen=True)
+class VnaTrace:
+    name: str
+    # Reflection: VSWR; transmission: linear magnitude. Frequencies are always Hz.
+    points: tuple[VswrPoint, ...]
+    complex_points: tuple[tuple[float, float, float], ...] = ()
 
 
 class VnaFileError(ProductionValidationError):
@@ -52,19 +61,40 @@ def vswr_from_gamma(gamma: float) -> float:
 
 
 def parse_vna_file(content: bytes, file_name: str = "") -> list[VswrPoint]:
-    """Точки (Гц, КСВН) из выгрузки ВАЦ, по возрастанию частоты."""
+    """Совместимый вид первой трассы отражения; запись попытки использует parse_vna_traces."""
+    return list(parse_vna_traces(content, file_name)[0].points)
+
+
+def parse_vna_traces(content: bytes, file_name: str = "") -> tuple[VnaTrace, ...]:
+    """Полные именованные трассы; комплексные значения Touchstone сохраняются без округления."""
     text = _decode(content)
     lines = text.splitlines()
     name = str(file_name or "").strip().lower()
     touchstone = re.search(r"\.s\d+p$", name) is not None or any(
         line.strip().startswith("#") and _is_option_line(line) for line in lines
     )
-    points = _touchstone(lines) if touchstone else _table(lines)
-    if len(points) < 2:
-        raise VnaFileError("В файле меньше двух точек измерения")
-    if len(points) > MAX_POINTS:
-        raise VnaFileError(f"В файле больше {MAX_POINTS} точек — это не выгрузка одного замера")
-    return sorted(points, key=lambda point: point[0])
+    suffix = re.search(r"\.s(\d+)p$", name)
+    ports = int(suffix.group(1)) if suffix else None
+    if ports not in (None, 1, 2):
+        raise VnaFileError("Поддерживаются только однопортовые и двухпортовые файлы Touchstone")
+    # S2VNA exports a selected reflection as .s1p and identifies it in the artifact header.
+    # This is a trace label, not a claim that calibration or capture provenance is verified.
+    header = re.fullmatch(r"! S2VNA (.{1,500}) \d{4}-\d{2}-\d{2}T\S+ (S11|S22)", lines[0]) if lines else None
+    single_name = header[2] if header else "S11"
+    traces = _touchstone(lines, ports, single_name) if touchstone else (VnaTrace("S11", tuple(_table(lines))),)
+    result = []
+    for trace in traces:
+        points = sorted(trace.points, key=lambda point: point[0])
+        if len(points) < 2:
+            raise VnaFileError("В файле меньше двух точек измерения")
+        if len(points) > MAX_POINTS:
+            raise VnaFileError(f"В файле больше {MAX_POINTS} точек — это не выгрузка одного замера")
+        if any(not math.isfinite(f) or f < 0 or not math.isfinite(v) for f, v in points):
+            raise VnaFileError("В файле некорректная частота или значение S-параметра")
+        if len({f for f, _ in points}) != len(points):
+            raise VnaFileError("В файле повторяются частоты — нужна одна развёртка")
+        result.append(VnaTrace(trace.name, tuple(points), tuple(sorted(trace.complex_points))))
+    return tuple(result)
 
 
 # Шапка выгрузки Arinst VNA-DL: «!Start (Hz):  1000000.000000», «!Points:  1000», «!Bandwidth (Hz):  1000».
@@ -134,17 +164,20 @@ def _is_option_line(line: str) -> bool:
     return any(token in _UNITS or token in ("s", "y", "z", "h", "g", "ri", "ma", "db", "r") for token in tokens)
 
 
-def _touchstone(lines: Sequence[str]) -> list[VswrPoint]:
+def _touchstone(lines: Sequence[str], ports: int | None, single_name: str = "S11") -> tuple[VnaTrace, ...]:
     unit, parameter, fmt = 1e9, "s", "ma"
     seen_options = False
-    points: list[VswrPoint] = []
+    samples: dict[str, list[tuple[float, float, float]]] = {}
+    pending: list[float] = []
     for number, raw in enumerate(lines, start=1):
         line = raw.split("!", 1)[0].strip()
         if not line:
             continue
         if line.startswith("#"):
             if seen_options:
-                continue  # Touchstone: действует первая строка опций
+                raise VnaFileError("В файле Touchstone повторная строка опций")
+            if samples or pending:
+                raise VnaFileError("Строка опций Touchstone должна предшествовать данным")
             seen_options = True
             tokens = line[1:].lower().split()
             index = 0
@@ -157,7 +190,10 @@ def _touchstone(lines: Sequence[str]) -> list[VswrPoint]:
                 elif token in ("ri", "ma", "db"):
                     fmt = token
                 elif token == "r":
-                    index += 1  # волновое сопротивление: КСВН от него не зависит
+                    index += 1
+                    resistance = _number(tokens[index], False) if index < len(tokens) else None
+                    if resistance is None or resistance <= 0:
+                        raise VnaFileError("В строке опций Touchstone неверное сопротивление")
                 else:
                     raise VnaFileError(f"Строка опций Touchstone не понята: «{raw.strip()}»")
                 index += 1
@@ -169,11 +205,45 @@ def _touchstone(lines: Sequence[str]) -> list[VswrPoint]:
         values = [_number(token, decimal_comma=False) for token in line.split()]
         if any(value is None for value in values):
             raise VnaFileError(f"Строка {number} файла Touchstone не числовая: «{raw.strip()[:60]}»")
-        if len(values) < 3:
-            continue  # продолжение строки многопортового файла (шумовые параметры и т.п.) — S11 в первой строке
-        frequency, first, second = values[0], values[1], values[2]
-        points.append((frequency * unit, vswr_from_gamma(_gamma(fmt, first, second))))
-    return points
+        if ports is None:
+            if len(values) not in (3, 9):
+                raise VnaFileError("Для перенесённых строк Touchstone укажите расширение .s1p или .s2p")
+            ports = 1 if len(values) == 3 else 2
+        names = (single_name,) if ports == 1 else ("S11", "S21", "S12", "S22")
+        width = 1 + 2 * len(names)
+        # A new record has one frequency plus pairs; continuations contain pairs only.
+        # Otherwise consecutive .s1p rows could be mistaken for synthetic S21/S12/S22.
+        if len(values) % 2 != (0 if pending else 1):
+            raise VnaFileError(f"Строка {number}: неверный перенос значений Touchstone")
+        pending.extend(values)
+        if len(pending) > width:
+            raise VnaFileError(f"Строка {number}: неверное число значений Touchstone")
+        if len(pending) < width:
+            continue
+        frequency = pending[0] * unit
+        for index, name in enumerate(names):
+            first, second = pending[1 + 2 * index:3 + 2 * index]
+            try:
+                if fmt == "ri":
+                    real, imag = first, second
+                else:
+                    magnitude = _gamma(fmt, first, second)
+                    if magnitude < 0:
+                        raise VnaFileError("В файле отрицательный модуль S-параметра")
+                    angle = math.radians(second)
+                    real, imag = magnitude * math.cos(angle), magnitude * math.sin(angle)
+            except (OverflowError, ValueError) as error:
+                raise VnaFileError("В файле некорректный модуль S-параметра") from error
+            samples.setdefault(name, []).append((frequency, real, imag))
+        pending = []
+    if pending:
+        raise VnaFileError("Неполная строка Touchstone — отсутствуют значения S-параметров")
+    if not samples:
+        raise VnaFileError("В файле меньше двух точек измерения")
+    return tuple(VnaTrace(name, tuple(
+        (f, vswr_from_gamma(math.hypot(re, im)) if name in ("S11", "S22") else math.hypot(re, im))
+        for f, re, im in values
+    ), tuple(values)) for name, values in samples.items())
 
 
 def _gamma(fmt: str, first: float, second: float) -> float:
