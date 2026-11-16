@@ -305,11 +305,13 @@ def sort_key(group: str, parsed: Parsed, name: str):
     return (kind, size is None, size or 0.0, _natural(name))
 
 
-def build(records: list[tuple[str, Mapping[str, Any]]]) -> dict[str, Any]:
+def build(records: list[tuple[str, Mapping[str, Any]]], *, groups: Mapping[str, str] | None = None) -> dict[str, Any]:
     """[(record id, fields)] → `{counts, rows}`; rows of the covering groups only, in group → size → name order."""
     rows: list[tuple[str, Parsed, dict[str, Any]]] = []
     for record_id, fields in records:
         group, source = classify(fields)
+        if groups is not None:
+            group = groups.get(record_id, OTHER)
         if group is None:
             continue
         parsed = parse(fields, group)

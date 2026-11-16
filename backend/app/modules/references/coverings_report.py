@@ -4,8 +4,8 @@
     ERP_DATABASE_URL=... python -m app.modules.references.coverings_report   (the live snapshot, read only)
 
 Prints the rows per group, the «Прочее» rows and, per row, what the screen takes from the name (the sheet columns do
-not hold it) and what is still empty. Sheet values are never changed: the parsing is done on read, the only stored
-field is the manual «Раздел оболочек»."""
+not hold it) and what is still empty. Sheet values are never changed. Live reads span the three material stores;
+this diagnostic also supports an unimported mirror, so it recomputes groups for its report."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 from .coverings import GROUP_ORDER, GROUP_TITLES, build
-from .domain import TechOperationTab
+from .domain import MATERIAL_TABS
 from .load_mirror import default_source, read_mirror
 
 WANTED = {"tut": ("before_mm", "after_mm", "ratio", "material", "temp_min_c", "color"),
@@ -33,7 +33,7 @@ def load_rows(source: Path | None) -> list[tuple[str, dict[str, str]]]:
         engine = build_engine(url)
         try:
             with build_references_uow_factory(engine)() as uow:
-                return [(str(item.id), dict(item.fields)) for item in uow.tech_operations.list(tab=TechOperationTab.MATERIAL, query="", limit=10_000)]
+                return [(str(item.id), dict(item.fields)) for item in uow.tech_operations.list(tab=MATERIAL_TABS, query="", limit=100_000)]
         finally:
             engine.dispose()
     records = read_mirror(source or default_source()).tables["mat"]

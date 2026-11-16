@@ -32,7 +32,7 @@ import re
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
-from app.modules.references.domain import CABLE_TABS, TERMINAL_TABS, TechOperationTab
+from app.modules.references.domain import CABLE_TABS, TERMINAL_TABS, MATERIAL_TABS, TechOperationTab
 from app.modules.techcards.connector_housings import housing_of
 from app.modules.techcards.etk_parts import kit_article
 from app.modules.techcards.kitset_names import clean_site_title
@@ -120,7 +120,7 @@ class ReferenceNames:
         }
         self._wires = tuple(self._wire(record.fields) for record in records if _tab(record) in _CABLE_VALUES)
         self._wires = tuple(wire for wire in self._wires if wire.mark)
-        self._materials = tuple(record.fields for record in records if _tab(record) == TechOperationTab.MATERIAL.value)
+        self._materials = tuple(record.fields for record in records if _tab(record) in {tab.value for tab in MATERIAL_TABS})
         self._covering_groups = {
             _field(fields, "Группа").casefold() for fields in self._materials if _field(fields, "Размер до, мм")
         } & _HEAT_SHRINK
@@ -309,7 +309,7 @@ def reference_records(references_uow) -> list[Any]:
     with references_uow() as uow:
         return [
             record
-            for tab in (TERMINAL_TABS, TechOperationTab.COAX, CABLE_TABS, TechOperationTab.MATERIAL)
+            for tab in (TERMINAL_TABS, TechOperationTab.COAX, CABLE_TABS, MATERIAL_TABS)
             for record in uow.tech_operations.list(tab=tab, query="", limit=10_000)
         ]
 

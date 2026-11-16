@@ -15,7 +15,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.modules.references.equipment import INV_KEY, field, inv_key
-from app.modules.references.infrastructure import EquipmentModelRow, EquipmentTemplateToolRow, TechOperationRecordRow, EquipmentRecordRow, EQUIPMENT_ROWS, SqlAlchemyTechOperationRepository
+from app.modules.references.infrastructure import EquipmentModelRow, EquipmentTemplateToolRow, TechOperationRecordRow, EquipmentRecordRow, EQUIPMENT_ROWS, MATERIAL_ROWS, SqlAlchemyTechOperationRepository
 from app.modules.techcards.assembly_drafts_infrastructure import AssemblyDraftRow
 from app.modules.techcards.generator_drafts_infrastructure import GeneratorDraftRow
 from app.modules.techcards.infrastructure import (
@@ -64,6 +64,7 @@ _TOKEN = re.compile(r"(?<![\w.])(?:[A-ZА-ЯЁ]+\.\d+(?:\.\d+)?|[AMS]\d{1,3}(?:\
 LIVE_COLUMNS = (
     (TechOperationRecordRow, ("fields", "display_text", "sort_key", "normalized_search")),
     *((model, ("fields", "display_text", "sort_key", "normalized_search")) for model in EQUIPMENT_ROWS.values()),
+    *((model, ("fields", "display_text", "sort_key", "normalized_search")) for model in MATERIAL_ROWS.values()),
     (EquipmentModelRow, ("name", "article", "maker")),
     (EquipmentTemplateToolRow, ("tool_name", "inventory_number")),
     (OperationCardTemplateRow, ("document", "edited", "raw_rows", "title", "name", "description")),
@@ -140,14 +141,14 @@ def plan_rewrites(
     for model, columns in LIVE_COLUMNS:
         counts = report.tables[model.__tablename__] = TableCount()
         for row in session.scalars(select(model)):
-            if isinstance(row, TechOperationRecordRow) and row.tab == "ob":
+            if isinstance(row, TechOperationRecordRow) and (row.tab == "ob" or row.material_archived):
                 continue
             counts.scanned += 1
             if isinstance(row, TdIssueRow) and row.status != "draft":
                 continue
             if isinstance(row, AssemblyDraftRow) and row.status != "draft":
                 continue
-            if isinstance(row, (TechOperationRecordRow, EquipmentRecordRow)) and row.id in skipped_ids:
+            if isinstance(row, (TechOperationRecordRow, EquipmentRecordRow, *MATERIAL_ROWS.values())) and row.id in skipped_ids:
                 continue
             issued = isinstance(row, ProjectTechcardRow) and row.status == TechcardStatus.ISSUED.value
             values, occurrences, issued_document_changed = {}, 0, False
@@ -169,11 +170,11 @@ def plan_rewrites(
                     report.issued_documents_to_refresh += 1
                 else:
                     report.issued_documents_without_inputs.append(row.id)
-            if isinstance(row, (TechOperationRecordRow, EquipmentRecordRow)) and row.id in field_updates:
+            if isinstance(row, (TechOperationRecordRow, EquipmentRecordRow, *MATERIAL_ROWS.values())) and row.id in field_updates:
                 values["fields"] = {**values.get("fields", row.fields), **field_updates[row.id]}
             if not values:
                 continue
-            if isinstance(row, (TechOperationRecordRow, EquipmentRecordRow)):
+            if isinstance(row, (TechOperationRecordRow, EquipmentRecordRow, *MATERIAL_ROWS.values())):
                 fields = values.get("fields", row.fields)
                 display = values.get("display_text", row.display_text)
                 values["normalized_search"] = " ".join(f"{display} {' '.join(str(v) for v in fields.values())}".casefold().split())

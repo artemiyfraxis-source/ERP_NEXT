@@ -67,6 +67,7 @@ REFERENCE_TABLES = frozenset({
     "coax_cable_aliases", "equipment_models", "equipment_template_tools",
     "equipment_machines", "equipment_measuring_units", "equipment_support_units",
     "equipment_applicators", "equipment_dies", "equipment_tools",
+    "heat_shrink_records", "covering_records",
 })
 TEMPLATE_TABLES = frozenset({"techcard_operation_templates", "techcard_operation_template_snapshots"})
 # Keys that only say WHICH record a row is (the equipment model of an «Оборудование» row and of the coax machine,

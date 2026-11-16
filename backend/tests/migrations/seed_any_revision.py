@@ -35,6 +35,7 @@ _IN_LIST = re.compile(r"\bIN\s*\(|=\s*ANY\s*\(", re.IGNORECASE)
 # A one-value `source IN ('kaiten')` (0137) PostgreSQL keeps as `((source)::text = 'kaiten'::text)` — no IN, no ANY.
 _SINGLE_EQ = re.compile(r"^[\s(]*(\w+)\)?(?:::[\w ]+?)?\s*=\s*'[^']*'(?:::[\w ]+)?[\s)]*$")
 _CHECK_NULL_OR = re.compile(r"\s*\(*\s*(\w+)\s+IS\s+NULL\s*\)?\s+OR\b", re.IGNORECASE)
+_CHECK_NULL = re.compile(r"^[\s(]*(\w+)\s+IS\s+NULL[\s)]*$", re.IGNORECASE)
 # `(tab = 'prov' AND cable_kind IN (…)) OR (tab <> 'prov' AND cable_kind IS NULL)` (0131): the column stays empty on a
 # row of any other value of the first column (the seeder never picks the one value that needs it).
 _CHECK_NULL_BRANCH = re.compile(r"\bOR\b.*?<>.*?\bAND\s*\(?\s*(\w+)\s+IS\s+NULL", re.IGNORECASE | re.DOTALL)
@@ -141,7 +142,7 @@ def _check_values(connection: Connection, metadata: MetaData) -> dict[tuple[str,
     for table in metadata.tables.values():
         for check in inspector.get_check_constraints(table.name):
             text = str(check.get("sqltext", ""))
-            empty = _CHECK_NULL_OR.match(text) or _CHECK_NULL_BRANCH.search(text)
+            empty = _CHECK_NULL.match(text) or _CHECK_NULL_OR.match(text) or _CHECK_NULL_BRANCH.search(text)
             if empty and empty.group(1) in table.c and table.c[empty.group(1)].nullable:
                 found[(table.name, empty.group(1))] = None
                 continue
@@ -254,6 +255,9 @@ _COUPLED_VALUES: dict[tuple[str, str], Any] = {
 # the one value that needs them: a seeded tech record is `tab = 'ter'` (the first literal of the БД.ТЕР card CHECKs,
 # 0115), and a БД.ТЕР row is always in a list (0155_ter_lug_kind).
 _OVER_CHECK: dict[tuple[str, str], Any] = {
+    # A stock journal row has at most one target. Leave the newer alternatives empty;
+    # record_id is filled from its parent (or NULL where the historical CHECK requires it).
+    **{("reference_stock_links", name): None for name in ("equipment_unit_id", "heat_shrink_id", "covering_id")},
     ("tech_operation_records", "ter_kind"): "contact",
     ("warehouse_scan_jobs", "instrument_id"): None,
     # Before 0167 arbitrary statuses were allowed; ACTIVE now needs all evidence despite nullable-date CHECKs.

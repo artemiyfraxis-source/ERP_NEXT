@@ -74,7 +74,7 @@ def test_imports_both_bases_and_exposes_schema(references_api):
     prov, mat = _rows(references_api, "prov"), _rows(references_api, "mat")
     assert len(prov["records"]) == 3 and len(mat["records"]) == 1
     assert prov["columns"][0] == "Марка" and mat["columns"][0] == "Наименование"
-    found = references_api.get("/api/references/tech-operations", params={"tab": "mat", "q": "тутнг"}).json()
+    found = references_api.get("/api/references/tech-operations", params={"tab": "mat", "family": "true", "q": "тутнг"}).json()
     assert found["records"][0]["fields"]["Ед. изм."] == "м"
 
 

@@ -52,7 +52,7 @@ function mockDb({ ter = TER, mat = MAT, terOwn = [] as string[], matOwn = [] as 
     const method = init?.method ?? "GET";
     calls.push({ path, method, body: init?.body ? JSON.parse(String(init.body)) : null });
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
-    if (path === "/api/references/bases") return json({ bases: [] });
+    if (path === "/api/references/bases") return json({ bases: [], tabs: { heat_shrink: 2, cov: 1 } });
     if (path === "/api/references/crimp-codes") return json({ owners: {}, codes: [], missing: [] });
     // Серии каталога разъёмов с их артикулами БД.ТЕР — по ним «Терминалы» группируются (артикул в базе без дефисов).
     if (path === "/api/techcards/connector-series") return json({ match: null, series: [
@@ -192,7 +192,8 @@ it("«Расходники» — only solders and fluxes (owner 17.10): other gr
 
   const nav = screen.getByRole("navigation", { name: "Вкладки базы данных" });
   const count = (name: string) => within(nav).getByRole("button", { name: new RegExp(`^${name}`) }).querySelector(".db-tab-count")?.textContent;
-  await waitFor(() => expect(count("Оболочки")).toBe("3"));
+  await waitFor(() => expect(count("Оболочки")).toBe("1"));
+  expect(count("Термоусадка")).toBe("2");
   expect(count("Расходники")).toBe("2");
   expect(within(nav).queryByRole("button", { name: /^Крепёж и тройники/ })).toBeNull();
 });
