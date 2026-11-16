@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { failureText, shippingApi, type FinishedGood, type Shipment } from "./api";
 import { CarrierSelect, termsFor, termsText } from "./carriers";
-import { DataTable, type DataColumn } from "./DataTable";
+import { type DataColumn } from "./DataTable";
 import { formatDate } from "./format";
 import { PageWindow } from "./PageWindow";
 import { useCanPrint } from "./rights";
 import { Banners, ShipStatus, useMutate } from "./ShipmentCard";
 import { UPD_TYPES, updLabel } from "./ShipmentData";
 import { openShippingForms } from "./shippingPrint";
+import { compareShipments, shipmentDay } from "./shipmentOrder";
+import { ShipmentTable } from "./ShipmentTable";
 
 /* Окна шапки «Приёмки с производства» (владелец 29.10.2026, экран «Отгрузка» убран): журнал отгрузок, КБ проекта в
    готовую продукцию вручную и заявка на отгрузку заранее. */
@@ -18,7 +20,7 @@ const num = (value: string | number | null | undefined) => {
 };
 const round2 = (value: number) => Math.round(value * 100) / 100;
 
-/* ---------- Журнал: строка на позицию отправки, как журнал «ОТГРУЗКИ» ---------- */
+/* Position rows remain the Excel representation; the journal itself lists shipments. */
 
 const JOURNAL_STATUS = ["Новая", "Собрана", "Упакована", "Отгружена", "Закрыта"];
 const SHIPPED = ["Отгружена", "Закрыта"];
@@ -38,14 +40,14 @@ function boxTotals(shipment: Shipment) {
 /** Отменённые заявки видны только по прямой ссылке из поиска. */
 export function journalRows(shipments: Shipment[], selectedId = ""): JournalRow[] {
   return shipments.filter((shipment) => (selectedId ? shipment.id === selectedId : JOURNAL_STATUS.includes(shipment.status)))
-    .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0))
+    .sort(compareShipments)
     .flatMap((shipment) => {
       const totals = boxTotals(shipment);
       return shipment.lines.map((line): JournalRow => {
         const ordered = num(line.requested);
         const gone = SHIPPED.includes(shipment.status);
         const shipped = gone ? num(line.picked) : "";
-        return { key: `${shipment.id}:${line.id}`, shipment, line, date: shipment.created_at.slice(0, 10), ordered, shipped,
+        return { key: `${shipment.id}:${line.id}`, shipment, line, date: shipmentDay(shipment), ordered, shipped,
           partial: gone && num(line.picked) < ordered, weight: totals.weight, dims: totals.dims };
       });
     });
@@ -73,6 +75,7 @@ function useDocLink() {
 export function JournalWindow({ shipments, close, initialQuery = "", selectedShipment }: { shipments: Shipment[]; close: () => void; initialQuery?: string; selectedShipment?: Shipment }) {
   const rows = useMemo(() => journalRows(shipments, selectedShipment?.id), [shipments, selectedShipment]);
   const { error, link: docLink } = useDocLink();
+  const [tableError, setTableError] = useState("");
   const day = (value: string | null | undefined) => value ? formatDate(value) : "";
   const columns: DataColumn<JournalRow>[] = [
     { key: "shipment", title: "Отгрузка", value: (row) => row.shipment.number },
@@ -108,13 +111,16 @@ export function JournalWindow({ shipments, close, initialQuery = "", selectedShi
   return <PageWindow label="Журнал отгрузок" close={close} width="min(1760px, 100%)" dismissable>
     <section className="panel intake-journal">
       <header className="page-head"><h2>Журнал отгрузок</h2><button type="button" className="secondary small" onClick={close}>Закрыть</button></header>
-      {error && <div className="error-banner" role="alert">{error}</div>}
-      {selectedShipment && <p><strong>{selectedShipment.number}</strong> · <ShipStatus status={selectedShipment.status} />
-        {!selectedShipment.lines.length && <span className="muted"> · В отгрузке нет позиций.</span>}</p>}
-      <DataTable label="Журнал отгрузок" storageKey="shipping-journal" rows={rows} columns={columns} rowKey={(row) => row.key}
-        initialQuery={initialQuery} exportName="Журнал отгрузок" searchPlaceholder="Проект, КБ, наименование, ГРН, PL, DN или трек"
-        presets={[{ label: "Не уехали", test: (row) => !SHIPPED.includes(row.shipment.status) }, { label: "Отгружены", test: (row) => SHIPPED.includes(row.shipment.status) },
-          { label: "Частичные", test: (row) => row.partial }]}
+      {(error || tableError) && <div className="error-banner" role="alert">{error || tableError}</div>}
+      {selectedShipment && !selectedShipment.lines.length && <p className="muted">В отгрузке нет позиций.</p>}
+      <ShipmentTable label="Журнал отгрузок" storageKey="shipping-journal:shipments:v1"
+        shipments={shipments.filter((shipment) => selectedShipment ? shipment.id === selectedShipment.id : JOURNAL_STATUS.includes(shipment.status))}
+        onError={setTableError} positions={rows} positionColumns={columns} positionKey={(row) => row.key}
+        positionShipment={(row) => row.shipment}
+        positionLine={(row) => row.line}
+        initialQuery={initialQuery}
+        presets={[{ label: "Не уехали", test: (shipment) => !SHIPPED.includes(shipment.status) }, { label: "Отгружены", test: (shipment) => SHIPPED.includes(shipment.status) },
+          { label: "Частичные", test: (shipment) => SHIPPED.includes(shipment.status) && shipment.lines.some((line) => num(line.picked) < num(line.requested)) }]}
         emptyText="В журнале пусто — строки появятся, когда упакуете принятое." />
     </section>
   </PageWindow>;

@@ -1,4 +1,5 @@
-from datetime import datetime
+from dataclasses import replace
+from datetime import date, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -720,3 +721,77 @@ def test_shipment_search_target_bypasses_list_limit_and_keeps_read_permission(sh
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Монтажник", department="Цех"), email="other@example.test", roles=frozenset({"operator"}), permissions={})
     assert client.get("/api/shipping/shipments", params={"shipment": shipment["id"]}).status_code == 403
+
+
+def _journal_shipments(client, specs):
+    """Create journal history without moving any more fixture stock."""
+    original = _shipment_for_comment(client)
+    ids = []
+    with app.state.shipping_uow_factory() as uow:
+        template = uow.shipments.get(UUID(original["id"]))
+        for index, fields in enumerate(specs, 1):
+            shipment_id = UUID(int=index)
+            uow.shipments.add(replace(template, id=shipment_id, number=f"JOURNAL-{index}", lines=(), boxes=(), **fields))
+            ids.append(str(shipment_id))
+        uow.commit()
+    return ids
+
+
+def test_shipment_journal_orders_effective_day_instead_of_creation_or_status(shipping_api):
+    from app.modules.shipping.domain import ShipmentStatus
+
+    ids = _journal_shipments(shipping_api, [
+        # A newly entered, backdated shipment must follow older actual shipments.
+        {"created_at": datetime(2026, 11, 15, 12), "shipped_at": date(2026, 11, 1),
+         "deadline": date(2026, 12, 1), "status": ShipmentStatus.CLOSED},
+        {"created_at": datetime(2026, 10, 1, 12), "shipped_at": date(2026, 11, 10),
+         "deadline": date(2026, 10, 15), "status": ShipmentStatus.SHIPPED},
+        # Planned date precedes creation fallback, independent of operational status.
+        {"created_at": datetime(2026, 9, 1, 12), "shipped_at": None,
+         "deadline": date(2026, 11, 20), "status": ShipmentStatus.NEW},
+        {"created_at": datetime(2026, 11, 12, 12), "shipped_at": None,
+         "deadline": None, "status": ShipmentStatus.ASSEMBLED},
+    ])
+    response = shipping_api.get("/api/shipping/shipments")
+    assert response.status_code == 200, response.text
+    assert [row["id"] for row in response.json()["shipments"][:4]] == [ids[2], ids[3], ids[1], ids[0]]
+
+
+def test_shipment_journal_breaks_day_ties_by_creation_then_id_descending(shipping_api):
+    ids = _journal_shipments(shipping_api, [
+        {"created_at": datetime(2026, 11, 1, 9), "shipped_at": date(2026, 11, 15)},
+        {"created_at": datetime(2026, 11, 1, 10), "shipped_at": date(2026, 11, 15)},
+        {"created_at": datetime(2026, 11, 1, 10), "shipped_at": date(2026, 11, 15)},
+    ])
+    response = shipping_api.get("/api/shipping/shipments", params={"limit": 2})
+    assert response.status_code == 200, response.text
+    assert [row["id"] for row in response.json()["shipments"]] == [ids[2], ids[1]]
+
+
+def test_shipment_journal_uses_creation_calendar_day_before_time_tiebreak(shipping_api):
+    ids = _journal_shipments(shipping_api, [
+        {"created_at": datetime(2026, 11, 15, 0, 15), "shipped_at": None, "deadline": None},
+        {"created_at": datetime(2026, 11, 14, 23, 59), "shipped_at": None, "deadline": None},
+        {"created_at": datetime(2026, 11, 1, 12), "shipped_at": None, "deadline": date(2026, 11, 15)},
+    ])
+    response = shipping_api.get("/api/shipping/shipments", params={"limit": 3})
+    assert response.status_code == 200, response.text
+    assert [row["id"] for row in response.json()["shipments"]] == [ids[0], ids[2], ids[1]]
+
+
+def test_shipment_journal_orders_before_default_200_limit_and_keeps_direct_lookup(shipping_api):
+    ids = _journal_shipments(shipping_api, [
+        # Created long ago, but the newest effective date must remain in the bounded result.
+        {"created_at": datetime(2026, 1, 1), "shipped_at": date(2026, 12, 31)},
+        *[{"created_at": datetime(2026, 11, 1) + timedelta(minutes=index),
+           "shipped_at": date(2026, 11, 1), "deadline": None} for index in range(205)],
+    ])
+    response = shipping_api.get("/api/shipping/shipments")
+    assert response.status_code == 200, response.text
+    rows = response.json()["shipments"]
+    assert len(rows) == 200
+    assert [row["id"] for row in rows] == [ids[0], *reversed(ids[7:])]
+    assert ids[1] not in {row["id"] for row in rows}
+    direct = shipping_api.get("/api/shipping/shipments", params={"shipment": ids[1], "limit": 1})
+    assert direct.status_code == 200, direct.text
+    assert [row["id"] for row in direct.json()["shipments"]] == [ids[1]]
