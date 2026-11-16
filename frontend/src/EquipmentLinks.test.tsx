@@ -59,7 +59,7 @@ it("БД.ОБ: the card shows the kind, a supporting unit lists what it serves, 
   expect(within(card).getByText("Обслуживают")).toBeInTheDocument();
   fireEvent.click(within(card).getByRole("button", { name: "Закрыть карточку" }));
 
-  fireEvent.click(screen.getByRole("button", { name: /^Обеспечивающее$/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Оборудование обеспечивающее$/ }));
   await waitFor(() => expect(screen.queryByText("ОБ.010")).toBeNull());
   fireEvent.click(await screen.findByText("ОБ.200"));
   card = screen.getByRole("dialog", { name: "Карточка оборудования" });
@@ -77,7 +77,7 @@ it("БД.ОБ: the kind and «Обслуживает» are written by id", async
   await waitFor(() => expect(calls).toContainEqual({ path: "/api/references/equipment-models/m1/role", method: "PUT", body: { role: "supporting" } }));
   fireEvent.click(within(screen.getByRole("dialog", { name: "Карточка оборудования" })).getByRole("button", { name: "Закрыть карточку" }));
 
-  fireEvent.click(screen.getByRole("button", { name: /^Обеспечивающее$/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Оборудование обеспечивающее$/ }));
   fireEvent.click(await screen.findByText("ОБ.200"));
   const card = screen.getByRole("dialog", { name: "Карточка оборудования" });
   fireEvent.click(within(card).getByRole("button", { name: "Выбрать машины" }));

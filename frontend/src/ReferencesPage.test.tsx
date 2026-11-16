@@ -101,7 +101,7 @@ it("shows the versioned technology snapshot as a table of its own columns", asyn
   // «Операции» is the erptctpl tab; БД.ОБ / БД.ПРОВ / БД.МАТ are working bases (owner: «с оборудованием то же самое»).
   expect(screen.queryByRole("button", { name: /^Операции/ })).toBeNull();
   // «Прочие кабели» are closed (20.10.2026); «Материалы» is dissolved into purpose tabs
-  for (const kept of [/^Оборудование/, /^Монтажные провода/, /^Оболочки/, /^Расходники/]) expect(screen.getByRole("button", { name: kept })).toBeInTheDocument();
+  for (const kept of [/^Оборудование операционное/, /^Монтажные провода/, /^Оболочки/, /^Расходники/]) expect(screen.getByRole("button", { name: kept })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /^Материалы/ })).toBeNull();
   expect(screen.queryByRole("button", { name: /^Провода и кабели/ })).toBeNull();
 });

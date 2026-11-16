@@ -5,14 +5,14 @@ import { MATERIAL_TABS, type MaterialTab } from "./materialSections";
    each tab as a jump. A light module of its own, so the search does not pull in the whole screen. */
 
 export const EQUIPMENT_TABS = {
-  ob: "Оборудование", ob_measuring: "Средства измерений", ob_support: "Обеспечивающее",
+  ob: "Оборудование операционное", ob_measuring: "Средства измерений", ob_support: "Оборудование обеспечивающее",
   ob_applicators: "Аппликаторы", ob_dies: "Матрицы", ob_tools: "Инструмент",
 } as const;
 export type EquipmentTab = keyof typeof EQUIPMENT_TABS;
 export function isEquipmentTab(tab: string | null): tab is EquipmentTab {
   return tab !== null && Object.hasOwn(EQUIPMENT_TABS, tab);
 }
-export const EQUIPMENT_TYPES: Record<EquipmentTab, string> = { ...EQUIPMENT_TABS, ob_support: "Обеспечивающее оборудование" };
+export const EQUIPMENT_TYPES: Record<EquipmentTab, string> = { ...EQUIPMENT_TABS, ob: "Оборудование", ob_support: "Обеспечивающее оборудование" };
 
 export type MapTab = "suppliers" | "countries";
 export type CableTab = "cab_coax" | "cab_wire" | "cab_multi" | "cab_lan";
