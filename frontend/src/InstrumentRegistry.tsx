@@ -58,6 +58,8 @@ const columns: DataColumn<InstrumentRow>[] = ([
     </span> },
   { key: "parentLabel", title: "Прибор", value: (item) => item.parentLabel, width: 88,
     render: (item) => item.parentNumber || "—" },
+  // Полное имя прибора — в Excel всегда (и в виде «По приборам», где колонки «Прибор» нет).
+  { key: "parentFull", title: "Прибор полностью", value: (item) => item.parentLabel, hidden: true, export: true },
   { key: "doc_designation", title: "Обозн.", hint: "Обозначение для документов", value: (item) => item.doc_designation, width: 96, hidden: true, export: true },
   { key: "kind", title: "Вид", value: (item) => item.kind, filter: true, width: 88,
     render: (item) => item.kind === "Средство измерений" ? "СИ" : "Принадл." },

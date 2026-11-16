@@ -59,7 +59,8 @@ export function QualityPage({ principal }: { principal: Principal }) {
         canEdit ? productionApi.operators() : Promise.resolve({ operators: [] as ProductionOperator[] }),
         canEdit ? productionApi.defects() : Promise.resolve({ defects: [] as ProductionDefect[] }),
         canEdit ? productionApi.qcRejections() : Promise.resolve({ rejections: [] as ProductionQcRejection[] }),
-        canQuality ? productionApi.vswrTasks() : Promise.resolve({ tasks: [] as VswrTaskListItem[] }),
+        // Замеры КСВН — отдельно: их сбой не должен опустошать очередь ОТК и реестр СИ.
+        canQuality ? productionApi.vswrTasks().catch(() => ({ tasks: [] as VswrTaskListItem[], failed: true })) : Promise.resolve({ tasks: [] as VswrTaskListItem[] }),
       ]);
       setTasks(taskResult.tasks);
       setBoxes(boxResult.boxes);
@@ -68,6 +69,7 @@ export function QualityPage({ principal }: { principal: Principal }) {
       setDefects(defectResult.defects);
       setQcRejections(qcRejectionResult.rejections);
       setVswrTasks(vswrResult.tasks);
+      if ("failed" in vswrResult) setError("Не удалось загрузить задания на коаксиальные сборки — замеры КСВН недоступны.");
       setVswrTaskId((current) => vswrResult.tasks.some((task) => task.id === current) ? current
         : (vswrResult.tasks.find((task) => boxResult.boxes.some((box) => box.task_id === task.id && inQcQueue(box, taskResult.tasks)))
           ?? vswrResult.tasks[0])?.id ?? "");
