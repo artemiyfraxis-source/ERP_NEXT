@@ -1,4 +1,5 @@
 import type { Comp, Endpoint, GenState, WireEntry } from "./tcGenLogic";
+import { restoreCoaxState } from "./tcGenLogic";
 
 /*
  * Снимок формы генератора в собранной карте (владелец 14.10: «когда пересобираю, прошлые настройки должны сохраняться,
@@ -40,13 +41,14 @@ export function snapshotFromConfig(config: unknown): GenSnapshot | null {
   };
 }
 
-/** Поля, которых нет в снимке старой версии формы, берутся из засева (как mergeSeed черновика). */
+/** Новые поля формы — из засева; отсутствующие настройки коакса сохраняют старый рецепт. */
 function overSeed(seed: GenState, saved: GenState): GenState {
   const out: Record<string, unknown> = { ...seed };
   for (const [key, value] of Object.entries(saved)) {
     const base = (seed as unknown as Record<string, unknown>)[key];
     out[key] = isPlain(base) && isPlain(value) ? { ...base, ...value } : value;
   }
+  out.coax = restoreCoaxState(seed.coax, saved.coax ?? {});
   return out as unknown as GenState;
 }
 
