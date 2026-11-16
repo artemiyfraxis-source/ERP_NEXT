@@ -4,6 +4,7 @@ $controlTmp = Join-Path ([IO.Path]::GetTempPath()) ('pa-control-' + [guid]::NewG
 [void][IO.Directory]::CreateDirectory($controlTmp)
 . (Join-Path $here '..\agent.ps1') -ConfigPath (Join-Path $controlTmp 'control-config.json') -LogPath (Join-Path $controlTmp 'agent.log')
 $script:realS2ManualDefinition = (Get-Command Get-S2ManualDefinition).ScriptBlock
+$script:realUpdateVnaWorker = (Get-Command Update-VnaWorker).ScriptBlock
 
 function New-ControlProfile {
     return [pscustomobject]@{ start_hz = 1e6; stop_hz = 2e6; points = 2; if_bandwidth_hz = 1000; power_dbm = 0
@@ -422,6 +423,83 @@ Describe 'Управление ВАЦ: Touchstone' {
     }
 }
 
+Describe 'Управление ВАЦ: основной цикл и блокирующие устройства' {
+    BeforeEach {
+        $script:ConfigPath = Join-Path $TestDrive ([guid]::NewGuid().ToString() + '\config.json')
+        $script:command = New-ControlEnvelope
+        $script:VnaWorker = $null
+        $script:VnaNextFence = [DateTime]::MinValue
+        Mock Initialize-VnaControl { $script:VnaControlInitialized = $true }
+        Mock Update-VnaWorker { & $script:realUpdateVnaWorker $Base $AuthToken }
+        Mock Get-VnaObservation { $null }
+        Mock Write-Log {}
+        Mock Send-Heartbeat {}
+        Mock Invoke-PollOnce { 'idle' }
+        Mock Invoke-ScanPollOnce { 'active' }
+        Mock Sync-VnaReceipts {}
+        Mock Start-VnaWorker {}
+        Mock Invoke-VnaSessionApi { New-ControlStatus $script:command }
+    }
+    AfterEach { $script:VnaWorker = $null; $script:VnaControlInitialized = $false }
+
+    It 'активная команда откладывает печать и heartbeat с поиском сканеров, сохраняя опрос управления' {
+        Mock Update-VnaWorker {}
+        $script:VnaWorker = @{ command = $script:command }
+        Start-AgentLoop 'http://test' 'token' -PrinterName 'TSC' -Once
+        Assert-MockCalled Invoke-PollOnce -Times 0 -Exactly -Scope It
+        Assert-MockCalled Send-Heartbeat -Times 0 -Exactly -Scope It
+        Assert-MockCalled Invoke-ScanPollOnce -Times 1 -Exactly -Scope It
+    }
+
+    It 'ожидающая зависающая печать не мешает watchdog остановить worker и записать uncertain' {
+        $entry = Get-VnaJournal $script:command; $entry.state = 'executing'
+        Write-VnaJson (Get-VnaCommandPath $script:command) $entry
+        $process = [pscustomobject]@{ HasExited = $false; Killed = $false; Waited = $false; Disposed = $false }
+        $process | Add-Member ScriptMethod Kill { $this.Killed = $true; $this.HasExited = $true }
+        $process | Add-Member ScriptMethod WaitForExit { param($timeout) $this.Waited = $true; return $true }
+        $process | Add-Member ScriptMethod Dispose { $this.Disposed = $true }
+        $script:VnaWorker = @{ process = $process; command = $script:command; started = [DateTime]::UtcNow }
+        # Fail fast at the blocking boundary instead of hanging the test runner inside Winspool.
+        Mock Invoke-PollOnce { throw 'Simulated hung print' }
+        Mock Send-Heartbeat { throw 'Simulated hung scanner discovery' }
+        Mock Invoke-VnaSessionApi { throw 'offline' }
+        $script:sleepCalls = 0
+        Mock Start-Sleep {
+            $script:sleepCalls++
+            if ($script:sleepCalls -gt 1) { throw 'End test loop' }
+            $script:VnaWorker.started = [DateTime]::UtcNow.AddSeconds(-121)
+        }
+        { Start-AgentLoop 'http://test' 'token' -PrinterName 'TSC' } | Should Throw 'End test loop'
+        Assert-MockCalled Invoke-PollOnce -Times 0 -Exactly -Scope It
+        Assert-MockCalled Send-Heartbeat -Times 0 -Exactly -Scope It
+        Assert-MockCalled Invoke-ScanPollOnce -Times 1 -Exactly -Scope It
+        $process.Killed | Should Be $true
+        $process.Waited | Should Be $true
+        $process.Disposed | Should Be $true
+        $script:VnaWorker | Should Be $null
+        $entry = Read-VnaJson (Get-VnaCommandPath $script:command)
+        $entry.state | Should Be 'uncertain'
+        $entry.payload.error | Should Match 'неизвестен'
+        (Test-Path (Join-Path (Get-VnaControlRoot) 'quarantine.json')) | Should Be $true
+    }
+
+    It 'без активной команды печать и отложенный heartbeat выполняются' {
+        Mock Update-VnaWorker {}
+        Start-AgentLoop 'http://test' 'token' -PrinterName 'TSC' -Once
+        Assert-MockCalled Invoke-PollOnce -Times 1 -Exactly -Scope It
+        Assert-MockCalled Send-Heartbeat -Times 1 -Exactly -Scope It
+    }
+
+    It 'после завершения команды печать и heartbeat возобновляются в том же цикле' {
+        $process = [pscustomobject]@{ HasExited = $true }
+        $process | Add-Member ScriptMethod Dispose {}
+        $script:VnaWorker = @{ process = $process; command = $script:command; started = [DateTime]::UtcNow }
+        Start-AgentLoop 'http://test' 'token' -PrinterName 'TSC' -Once
+        Assert-MockCalled Invoke-PollOnce -Times 1 -Exactly -Scope It
+        Assert-MockCalled Send-Heartbeat -Times 1 -Exactly -Scope It
+    }
+}
+
 Describe 'Управление ВАЦ: журнал, опрос, watchdog' {
     BeforeEach {
         $script:ConfigPath = Join-Path $TestDrive ([guid]::NewGuid().ToString() + '\config.json')
@@ -702,7 +780,7 @@ Describe 'Управление ВАЦ: журнал, опрос, watchdog' {
         Mock Invoke-ErpApi { @{} }
         Send-Heartbeat 'http://test' 'token'
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
-            $Body.version -eq '2.8.1' -and $Body.vna_control.version -eq 1 -and ($Body.vna_control.methods -join ',') -eq 'acm'
+            $Body.version -eq '2.8.2' -and $Body.vna_control.version -eq 1 -and ($Body.vna_control.methods -join ',') -eq 'acm'
         }
         Assert-MockCalled Get-VnaApplication -Times 0 -Exactly -Scope It
     }
