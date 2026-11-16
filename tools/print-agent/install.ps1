@@ -28,6 +28,55 @@ function Get-AgentProcess {
         Where-Object { $_.CommandLine -like '*FraxisPrintAgent*agent.ps1*' })
 }
 
+function Assert-AgentVnaIdle {
+    # Never erase the only original calibration backup or replace credentials under a live lease.
+    foreach ($name in @('owner.json','quarantine.json')) {
+        if (Test-Path -LiteralPath (Join-Path $Dir ('vna-control\' + $name))) {
+            throw 'На ПК сохранена незавершённая сессия ВАЦ. Завершите или восстановите её в ERP перед переустановкой или удалением агента.'
+        }
+    }
+    $pendingDir = Join-Path $Dir 'vna-control'
+    if (Test-Path -LiteralPath $pendingDir) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $pendingDir -Filter '*.json')) {
+            if ($file.BaseName -notmatch '^[a-f0-9-]{36}$') { continue }
+            $journal = [IO.File]::ReadAllText($file.FullName,[Text.Encoding]::UTF8) | ConvertFrom-Json
+            if (-not $journal.acknowledged) { throw 'На ПК есть команда ВАЦ без подтверждения ERP. Сначала восстановите сессию и дождитесь сверки журнала.' }
+        }
+        $requestFile = Join-Path $pendingDir 'worker-request.json'
+        if (Test-Path -LiteralPath $requestFile) {
+            $request = [IO.File]::ReadAllText($requestFile,[Text.Encoding]::UTF8) | ConvertFrom-Json
+            if ($request.command) {
+                $commandName = ([guid]::Parse($request.command.command_id)).ToString() + '.json'
+                $receiptPath = Join-Path (Join-Path $pendingDir 'acknowledged') $commandName
+                if (-not (Test-Path -LiteralPath $receiptPath)) { throw 'На ПК осталась команда исполнителя ВАЦ. Сначала восстановите сессию в ERP.' }
+            }
+        }
+    }
+}
+
+function Exit-AgentLifecycle {
+    if ($script:InstallLifecycleMutex) {
+        $script:InstallLifecycleMutex.ReleaseMutex()
+        $script:InstallLifecycleMutex.Dispose()
+        $script:InstallLifecycleMutex = $null
+    }
+}
+
+function Confirm-AgentStopped {
+    if (@(Get-AgentProcess).Count -gt 0) { throw 'Не удалось остановить агент и исполнителей ВАЦ. Файлы и настройки сохранены.' }
+    # The same lifecycle mutex is taken by the agent before starting any worker.
+    if (-not $script:InstallLifecycleMutex) {
+        $script:InstallLifecycleMutex = New-Object Threading.Mutex($false, 'Global\FraxisVnaParent')
+        $locked = $false
+        try { $locked = $script:InstallLifecycleMutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $locked = $true }
+        if (-not $locked) {
+            $script:InstallLifecycleMutex.Dispose(); $script:InstallLifecycleMutex = $null
+            throw 'Агент снова запущен. Файлы и настройки сохранены; повторите установку после завершения сессии.'
+        }
+    }
+    try { Assert-AgentVnaIdle } catch { Exit-AgentLifecycle; throw }
+}
+
 # Останавливает уже запущенный агент: задачу и сам процесс (Register-ScheduledTask -Force не трогает живой процесс,
 # он остался бы со старым токеном). Ждёт, пока процессы выйдут, не дольше $WaitSeconds. Возвращает $true, если что-то остановили.
 function Stop-Agent {
@@ -45,20 +94,35 @@ function Stop-Agent {
         Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
     }
     $deadline = (Get-Date).AddSeconds($WaitSeconds)
-    while ((Get-AgentProcess).Count -gt 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
+    while (@(Get-AgentProcess).Count -gt 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
     return $stopped
 }
 
 function Remove-Agent {
+    Assert-AgentVnaIdle
     Stop-Agent | Out-Null
-    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
-        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+    Confirm-AgentStopped
+    try {
+        if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+            Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+        }
+        if (Test-Path -LiteralPath $Dir) {
+            $target = [IO.Path]::GetFullPath($Dir)
+            $expected = [IO.Path]::GetFullPath((Join-Path $env:ProgramData 'FraxisPrintAgent'))
+            if (-not $target.Equals($expected,[StringComparison]::OrdinalIgnoreCase) -or
+                ((Get-Item -LiteralPath $target).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                throw 'Каталог агента перенаправлен или путь изменён; автоматическое удаление остановлено.'
+            }
+            Remove-Item -LiteralPath $target -Recurse -Force
+        }
+    } finally {
+        Exit-AgentLifecycle
     }
-    if (Test-Path $Dir) { Remove-Item $Dir -Recurse -Force }
     Write-Host 'Агент печати удалён: задача и папка убраны.'
 }
 
 if ($Uninstall) { Remove-Agent; return }
+Assert-AgentVnaIdle
 
 if (-not $Token -and -not $InstallToken) {
     throw 'Нужен -InstallToken (одноразовая команда из окна «Установить сканер» в ERP) или -Token (токен ERP со scopes labels:print и scan:upload).'
@@ -101,8 +165,11 @@ if ($Printer) {
 }
 
 # Переустановка: прежний агент (со старым токеном) останавливается до записи нового, иначе он продолжит работать.
+Assert-AgentVnaIdle
 if (Stop-Agent) { Write-Host 'Прежний агент остановлен' }
+Confirm-AgentStopped
 
+try {
 New-Item -ItemType Directory -Path $Dir -Force | Out-Null
 $agentTarget = Join-Path $Dir 'agent.ps1'
 if ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot 'agent.ps1'))) {
@@ -144,6 +211,7 @@ $settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New
     -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 $principal = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive -RunLevel Limited
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($trigger, $watch) -Settings $settings -Principal $principal -Force | Out-Null
+} finally { Exit-AgentLifecycle }
 Start-ScheduledTask -TaskName $TaskName
 
 Write-Host ''

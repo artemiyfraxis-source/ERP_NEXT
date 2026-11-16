@@ -19,7 +19,8 @@ param(
     [string]$Scanner,
     [switch]$DryRun,
     [switch]$Once,
-    [switch]$TestScan
+    [switch]$TestScan,
+    [string]$VnaWorkerRequest
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,10 +29,12 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.7.0'
+$script:AgentVersion = '2.8.0'
 $script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
+$script:VnaControlInitialized = $false
+$script:VnaWorker = $null
 
 function Write-Log {
     param([string]$Message)
@@ -478,6 +481,11 @@ function Invoke-VnaCapture {
 function Invoke-AgentUpdate {
     param([string]$Base, $Update, [string]$AgentPath = $PSCommandPath, [switch]$NoRestart)
     if (-not $Update -or -not $Update.version -or -not $Update.sha256 -or -not $AgentPath) { return $false }
+    if (($script:VnaWorker -and $script:VnaWorker.command) -or (Test-Path -LiteralPath (Join-Path (Get-VnaControlRoot) 'owner.json'))) {
+        Write-Log 'Обновление отложено: сессия ВАЦ ещё владеет прибором'
+        return $false
+    }
+    if ($script:VnaWorker) { Stop-VnaWorker $script:VnaWorker 'ВАЦ: проверка остановлена для обновления' }
     $tmp = $AgentPath + '.new'
     try {
         Write-Log "Обновление: на сервере версия $($Update.version), у агента $($script:AgentVersion)"
@@ -511,8 +519,15 @@ function Send-Heartbeat {
         machine_id = (Get-MachineId); pc_name = [string]$env:COMPUTERNAME; version = $script:AgentVersion
         lan_ip = (Get-LanIp); printer = [string]$PrinterName; scanners = $scanners
     }
-    $vna = Get-VnaCapability
+    $vna = if ($script:VnaControlInitialized) {
+        $observed = Get-VnaObservation
+        if ($observed) { @{ name = $observed.name; ready = [bool]$observed.ready } }
+    } else { Get-VnaCapability }
     if ($vna) { $body.vna = $vna }
+    if ($script:VnaControlInitialized -and $observed) {
+        $control = Get-VnaControlCapability $observed
+        if ($control) { $body.vna_control = $control }
+    }
     $body.vna_sources = @()
     if ($vna) { $body.vna_sources += 's2vna' }
     if (Test-ArinstInstalled) { $body.vna_sources += 'arinst' }
@@ -527,8 +542,17 @@ function Start-AgentLoop {
     param([string]$Base, [string]$AuthToken, [string]$PrinterName, [switch]$DryRun, [switch]$Once, [string]$ScannerAddress)
     $delay = 3
     $nextBeat = Get-Date
+    Initialize-VnaControl
+    $controlDelay = 0
     Write-Log "Агент $($script:AgentVersion) запущен: сервер $Base, принтер '$PrinterName'$(if ($DryRun) { ', DRY RUN' }), сканер: $(if ($ScannerAddress) { $ScannerAddress } else { 'USB (WIA), автопоиск' })"
     while ($true) {
+        $controlError = $false
+        try { Update-VnaWorker $Base $AuthToken }
+        catch { Write-Log "ВАЦ: связь/исполнитель: $($_.Exception.Message)"; $controlError = $true }
+        $freshObservation = Get-VnaObservation
+        if ($freshObservation -and $freshObservation.ready -and -not $script:VnaFirstObservationReported) {
+            $nextBeat = Get-Date; $script:VnaFirstObservationReported = $true
+        }
         if ((Get-Date) -ge $nextBeat) {
             try { Send-Heartbeat -Base $Base -AuthToken $AuthToken -PrinterName $PrinterName -ScannerAddress $ScannerAddress }
             catch { Write-Log "Отчёт серверу не ушёл: $($_.Exception.Message)" }
@@ -550,7 +574,15 @@ function Start-AgentLoop {
         $scanState = 'idle'
         try { $scanState = Invoke-ScanPollOnce -Base $Base -AuthToken $AuthToken -ScannerAddress $ScannerAddress } catch { Write-Log "Скан: ошибка $($_.Exception.Message)" }
         if ($Once) { return }
-        if ($state -eq 'idle' -and $scanState -ne 'done') { Start-Sleep -Seconds 3 }
+        if ($scanState -eq 'error' -or $controlError) { $controlDelay = [Math]::Min(30, [Math]::Max(3, $controlDelay * 2)) } else { $controlDelay = 0 }
+        $pause = if ($controlDelay) { 1000 * $controlDelay } elseif ($script:VnaWorker -and $script:VnaWorker.command) { 500 } elseif ($script:VnaPollAfterMs -eq 500) { 500 } else { 3000 }
+        # Poll/heartbeat never waits inside COM. Even under backoff, service the worker watchdog every 500 ms.
+        for ($elapsed = 0; $elapsed -lt $pause; $elapsed += 500) {
+            Start-Sleep -Milliseconds 500
+            if ($script:VnaWorker -and ([DateTime]::UtcNow - $script:VnaWorker.started).TotalSeconds -gt 120) {
+                Stop-VnaWorker $script:VnaWorker 'ВАЦ: превышено время выполнения; результат неизвестен'
+            }
+        }
     }
 }
 
@@ -892,9 +924,35 @@ function Invoke-ScanPollOnce {
     $id = ''
     $machineId = Get-MachineId
     try {
-        $claim = Invoke-ErpApi -Url "$Base/api/stock/scan/agent/claim" -Body @{ host = $env:COMPUTERNAME; machine_id = $machineId; kinds = @('scan', 'vna') } -AuthToken $AuthToken
+        $claimBody = @{ host = $env:COMPUTERNAME; machine_id = $machineId; kinds = @('scan', 'vna') }
+        if ($script:VnaControlInitialized -and -not $DryRun) {
+            $observation = Get-VnaObservation
+            if ($observation -and $observation.ready) {
+                $claimBody.kinds += 'vna_control'; $claimBody.observed_vna_serial = $observation.serial
+                if ((Test-Path -LiteralPath (Join-Path (Get-VnaControlRoot) 'owner.json')) -or
+                    ($script:VnaWorker -and $script:VnaWorker.command)) { $claimBody.kinds = @('vna_control') }
+            }
+        }
+        $claim = Invoke-ErpApi -Url "$Base/api/stock/scan/agent/claim" -Body $claimBody -AuthToken $AuthToken
+        $script:VnaPollAfterMs = $claim.poll_after_ms
         $script:ScanClaimError = ''
         if (-not $claim.job) { return 'idle' }
+        if ($claim.job.kind -eq 'vna_control') {
+            if ($DryRun) { throw 'ВАЦ: управление запрещено в пробном режиме' }
+            $command = $claim.job
+            [void][guid]::Parse($command.command_id); [void][guid]::Parse($command.session_id)
+            if ($command.protocol_version -ne 1 -or $command.id -cne $command.command_id) { throw 'ВАЦ: неподдерживаемый конверт команды' }
+            if ($script:VnaWorker -and $script:VnaWorker.command) {
+                if ($script:VnaWorker.command.command_id -cne $command.command_id) {
+                    Stop-VnaWorker $script:VnaWorker 'ВАЦ: команда заменена сервером; выполнение неизвестно'
+                } else { return 'active' }
+            }
+            $entry = Read-VnaJson (Get-VnaCommandPath $command)
+            if ($entry) { [void](Get-VnaJournal $command); Sync-VnaReceipts $Base $AuthToken; return 'active' }
+            if ($script:VnaWorker) { Stop-VnaWorker $script:VnaWorker 'ВАЦ: проверка прибора завершена' }
+            Start-VnaWorker $Base $AuthToken $command
+            return 'active'
+        }
         $id = [string]$claim.job.id
         $device = [string]$claim.job.target_scanner
     } catch {
@@ -906,6 +964,11 @@ function Invoke-ScanPollOnce {
     Write-Log "Скан: задание $id, $how"
     $resultUrl = "$Base/api/stock/scan/agent/jobs/$id/result"
     try {
+        if (($script:VnaWorker -and $script:VnaWorker.command) -or
+            ($script:VnaControlInitialized -and (Test-Path -LiteralPath (Join-Path (Get-VnaControlRoot) 'owner.json')))) {
+            # P2 can fall through to scanner jobs even with kinds=['vna_control'].
+            throw 'Сканирование отложено: ПК занят управляемой сессией ВАЦ; повторите после её завершения'
+        }
         $scan = if ($claim.job.kind -eq 'vna') {
             if ($claim.job.source -eq 'arinst') { Invoke-ArinstCapture }
             elseif (-not $claim.job.source -or $claim.job.source -eq 's2vna') { Invoke-VnaCapture }
@@ -949,8 +1012,732 @@ function Invoke-TestScan {
     }
 }
 
+# VNA control stays in this file: the existing release API ships one hashed script.
+function Get-VnaControlRoot {
+    $root = Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($ConfigPath))) 'vna-control'
+    [void][IO.Directory]::CreateDirectory($root)
+    return $root
+}
+function Write-VnaJson {
+    param([string]$Path, $Value)
+    $tmp = $Path + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+    $json = ConvertTo-Json -InputObject $Value -Depth 70 -Compress
+    $stream = [IO.File]::Open($tmp, 'CreateNew', 'Write', 'None')
+    try {
+        $bytes = [Text.Encoding]::UTF8.GetBytes($json)
+        $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true)
+    } finally { $stream.Dispose() }
+    if ([IO.File]::Exists($Path)) { [IO.File]::Replace($tmp, $Path, [NullString]::Value) }
+    else { [IO.File]::Move($tmp, $Path) }
+}
+function Read-VnaJson {
+    param([string]$Path)
+    if ([IO.File]::Exists($Path)) { return ([IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) | ConvertFrom-Json) }
+    return $null
+}
+function Get-VnaDigest {
+    param([string]$Text)
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($Text)))).Replace('-', '').ToLowerInvariant() }
+    finally { $hash.Dispose() }
+}
+function ConvertTo-VnaCanonical {
+    param($Value)
+    # Stable local fingerprints. Registry fingerprints are pinned in the commissioned manifest,
+    # rather than recomputed with PowerShell's different JSON number/Unicode serialization.
+    if ($null -eq $Value) { return 'null' }
+    if ($Value -is [Collections.IDictionary] -or $Value -is [pscustomobject]) {
+        $names = if ($Value -is [Collections.IDictionary]) { @($Value.Keys) } else { @($Value.PSObject.Properties.Name) }
+        $parts = foreach ($name in ($names | Sort-Object -CaseSensitive)) {
+            (ConvertTo-Json -InputObject ([string]$name) -Compress) + ':' + (ConvertTo-VnaCanonical $Value.$name)
+        }
+        return '{' + ($parts -join ',') + '}'
+    }
+    if ($Value -is [Collections.IEnumerable] -and $Value -isnot [string]) {
+        $parts = foreach ($item in $Value) { ConvertTo-VnaCanonical $item }
+        return '[' + ($parts -join ',') + ']'
+    }
+    return (ConvertTo-Json -InputObject $Value -Compress -Depth 5)
+}
+function Assert-VnaEqual {
+    param($Actual, $Expected, [string]$Label)
+    if ((ConvertTo-VnaCanonical $Actual) -cne (ConvertTo-VnaCanonical $Expected)) {
+        # COM numeric Variants may be integer or double for the same exact value.
+        if ($Actual -is [ValueType] -and $Expected -is [ValueType] -and
+            $Actual -isnot [bool] -and $Expected -isnot [bool] -and [double]$Actual -eq [double]$Expected) { return }
+        throw "ВАЦ: проверка чтением не совпала: $Label"
+    }
+}
+function Get-VnaSerial {
+    param($Application)
+    $parts = ([string]$Application.Name).Split(',')
+    if (-not $Application.Ready -or $parts.Count -ne 4 -or -not $parts[2].Trim()) { throw 'ВАЦ: прибор не готов или серийный номер не прочитан' }
+    return $parts[2].Trim()
+}
+function Test-VnaNormalToken {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    return -not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+function New-VnaDeviceMutex {
+    param([string]$Serial)
+    return New-Object Threading.Mutex($false, ('Global\FraxisVna-' + (Get-VnaDigest $Serial)))
+}
+function Invoke-S2Io {
+    param($Scpi, [string]$Path, [ValidateSet('get','set','call')][string]$Mode = 'get', $Value)
+    # Paths are fixed driver literals; no command envelope can supply a COM path.
+    $parts = $Path.Split('.'); $node = $Scpi
+    for ($i = 0; $i -lt $parts.Count; $i++) {
+        $part = $parts[$i]; $last = $i -eq $parts.Count - 1
+        if ($part -match '^([A-Za-z0-9]+)\(([0-9]+)(?:,([12]))?\)$') {
+            $member = $Matches[1]; $index = [int]$Matches[2]; $secondIndex = $Matches[3]
+            if ($last -and $Mode -eq 'set') {
+                $arguments = @($index); if ($secondIndex) { $arguments += [int]$secondIndex }; $arguments += ,$Value
+                $node.GetType().InvokeMember($member, [Reflection.BindingFlags]::SetProperty, $null, $node, $arguments) | Out-Null
+                return
+            }
+            $node = if ($secondIndex) { $node.$member($index, [int]$secondIndex) } else { $node.$member($index) }
+        } elseif (-not $last) { $node = $node.$part }
+        elseif ($Mode -eq 'set') { $node.$part = $Value; return }
+        elseif ($Mode -eq 'call') { $node.$part() | Out-Null; return }
+        else { return $node.$part }
+    }
+    return $node
+}
+function Set-S2Checked {
+    param($Scpi, [string]$Path, $Value)
+    Invoke-S2Io $Scpi $Path set $Value
+    Assert-VnaEqual (Invoke-S2Io $Scpi $Path) $Value $Path
+}
+function Set-S2Ports {
+    param($Scpi, [string]$Path, [int[]]$Ports)
+    # Never retry an acquisition after an arbitrary COM exception: it may have executed.
+    # The commissioned int[] Variant binding is used once. Ambiguous errors require recovery.
+    Invoke-S2Io $Scpi $Path set ([int[]]$Ports)
+}
+function Invoke-S2KitFile {
+    param($Scpi, [ValidateSet('STORe','LOAD')][string]$Direction, [int]$Slot, [string]$Path)
+    $target = $Scpi.MMEMory.$Direction
+    $target.GetType().InvokeMember('CKIT', [Reflection.BindingFlags]::SetProperty, $null, $target, @($Slot, $Path)) | Out-Null
+}
+function Get-S2ManualDefinition {
+    param($Scpi, $Kit, $Profile)
+    $prefix = 'SENSe(1).CORRection.COLLect.CKIT'
+    Set-S2Checked $Scpi "$prefix.SELect" ([int]$Kit.slot)
+    Assert-VnaEqual (Invoke-S2Io $Scpi "$prefix.LABel") $Kit.definition.label 'название набора SOLT'
+    $actualStandards = @()
+    foreach ($standard in @($Kit.definition.standards)) {
+        if ($standard.index -lt 1 -or $standard.index -gt 100 -or $standard.properties.TYPE -cnotin @('OPEN','SHORT','LOAD','THRU')) { throw 'ВАЦ: неверный манифест мер SOLT' }
+        $required = @('LABel','TYPE','FMINimum','FMAXimum','DELay','LOSS','Z0')
+        if ($standard.properties.TYPE -ceq 'OPEN') { $required += @('C0','C1','C2','C3') }
+        if ($standard.properties.TYPE -ceq 'SHORT') { $required += @('L0','L1','L2','L3') }
+        $values = [ordered]@{}
+        foreach ($property in $required) {
+            if ($null -eq $standard.properties.$property) { throw 'ВАЦ: неполное определение меры SOLT' }
+            $value = Invoke-S2Io $Scpi "$prefix.STAN($($standard.index)).$property"
+            Assert-VnaEqual $value $standard.properties.$property ('мера SOLT ' + $property)
+            $values[$property] = $value
+        }
+        if ($values.FMINimum -gt $Profile.start_hz -or $values.FMAXimum -lt $Profile.stop_hz -or $values.Z0 -ne 50) { throw 'ВАЦ: мера SOLT не покрывает профиль' }
+        $actualStandards += @{ index = [int]$standard.index; properties = $values }
+    }
+    if (-not $actualStandards.Count) { throw 'ВАЦ: манифест SOLT пуст' }
+    return @{ label = $Kit.definition.label; standards = $actualStandards }
+}
+function Get-S2TraceState {
+    param($Scpi)
+    $paths = @('FORMat','SMOothing.STATe','MATH.FUNCtion','CONVersion.STATe','FILTer.GATE.TIME.STATe',
+        'LIMit.DATA','LIMit.DISPlay.STATe','CORRection.STATus')
+    $state = [ordered]@{}
+    foreach ($path in $paths) { $state[$path] = Invoke-S2Io $Scpi ('CALCulate(1).SELected.' + $path) }
+    return $state
+}
+function Get-S2State {
+    param($Scpi)
+    $paths = @('SENSe(1).SWEep.TYPE','SENSe(1).SWEep.POINts','SENSe(1).FREQuency.STARt','SENSe(1).FREQuency.STOP',
+        'SENSe(1).BANDwidth.RESolution','SENSe(1).AVERage.STATe','SENSe(1).AVERage.COUNt',
+        'SENSe(1).CORRection.IMPedance.INPut.MAGNitude','SENSe(1).CORRection.STATe',
+        'SENSe(1).CORRection.COLLect.CKIT.SELect','SENSe(1).CORRection.COLLect.CKIT.LABel',
+        'SENSe(1).CORRection.TRIGger.FREE.STATe','INITiate(1).CONTinuous','TRIGger.SEQuence.SOURce',
+        'MMEMory.STORe.STYPe','CALCulate(1).FSIMulator.STATe','CALCulate(1).PARameter(1).COUNt')
+    foreach ($port in 1,2) {
+        foreach ($tail in 'COUPle','LEVel.IMMediate.AMPLitude','LEVel.SLOPe.STATe') { $paths += "SOURce(1).POWer.PORT($port).$tail" }
+    }
+    $values = [ordered]@{}
+    foreach ($path in $paths) { $values[$path] = Invoke-S2Io $Scpi $path }
+    $selected = [int](Invoke-S2Io $Scpi 'SERVice.CHANnel(1).TRACe(1).ACTive')
+    $count = [int]$values['CALCulate(1).PARameter(1).COUNt']
+    if ($count -lt 1 -or $count -gt 16 -or $selected -lt 1 -or $selected -gt $count) { throw 'ВАЦ: невозможно сохранить набор трасс' }
+    $traces = @()
+    try {
+        for ($traceIndex = 1; $traceIndex -le $count; $traceIndex++) {
+            $parameter = Invoke-S2Io $Scpi "CALCulate(1).PARameter($traceIndex).DEFine"
+            Invoke-S2Io $Scpi "CALCulate(1).PARameter($traceIndex).SELect" call
+            $traces += @{ parameter = $parameter; settings = (Get-S2TraceState $Scpi) }
+        }
+    } finally { Invoke-S2Io $Scpi "CALCulate(1).PARameter($selected).SELect" call }
+    return @{ values = $values; selected = $selected; traces = $traces }
+}
+function Get-S2ProfileWrites {
+    param($Profile)
+    $writes = [ordered]@{
+        'SENSe(1).SWEep.TYPE' = 'LIN'; 'SENSe(1).FREQuency.STARt' = $Profile.start_hz
+        'SENSe(1).FREQuency.STOP' = $Profile.stop_hz; 'SENSe(1).SWEep.POINts' = $Profile.points
+        'SENSe(1).BANDwidth.RESolution' = $Profile.if_bandwidth_hz; 'SENSe(1).AVERage.STATe' = $false
+        'SENSe(1).CORRection.IMPedance.INPut.MAGNitude' = 50; 'SOURce(1).POWer.PORT(1).COUPle' = $false
+    }
+    foreach ($port in 1,2) {
+        $writes["SOURce(1).POWer.PORT($port).LEVel.IMMediate.AMPLitude"] = $Profile.power_dbm
+        $writes["SOURce(1).POWer.PORT($port).LEVel.SLOPe.STATe"] = $false
+    }
+    $writes['CALCulate(1).PARameter(1).COUNt'] = @($Profile.traces).Count
+    $writes['CALCulate(1).FSIMulator.STATe'] = $false
+    return $writes
+}
+function Assert-S2Profile {
+    param($Scpi, $Profile, [switch]$Apply)
+    if ($Profile.sweep -cne 'LIN' -or $Profile.impedance_ohm -ne 50 -or $Profile.averaging -ne $false -or
+        $Profile.smoothing -ne $false -or $Profile.processing -cne 'off' -or $Profile.start_hz -le 0 -or
+        $Profile.stop_hz -le $Profile.start_hz -or $Profile.points -lt 2 -or $Profile.points -gt 200001 -or
+        $Profile.if_bandwidth_hz -lt 1 -or $Profile.if_bandwidth_hz -gt 1000 -or
+        $Profile.power_dbm -lt -30 -or $Profile.power_dbm -gt 0 -or
+        @($Profile.traces).Count -notin @(1,4) -or @($Profile.traces | Select-Object -Unique).Count -ne @($Profile.traces).Count -or
+        @($Profile.traces | Where-Object { $_ -cnotin @('S11','S21','S12','S22') }).Count) { throw 'ВАЦ: недопустимый профиль' }
+    foreach ($number in @($Profile.start_hz,$Profile.stop_hz,$Profile.points,$Profile.if_bandwidth_hz,$Profile.power_dbm,$Profile.vswr_limit)) {
+        if ([double]::IsNaN([double]$number) -or [double]::IsInfinity([double]$number)) { throw 'ВАЦ: недопустимое число профиля' }
+    }
+    if ($Apply) {
+        if ($Profile.points -gt (Invoke-S2Io $Scpi 'SERVice.SWEep.POINts') -or
+            $Profile.start_hz -lt (Invoke-S2Io $Scpi 'SERVice.SWEep.FREQuency.MINimum') -or
+            $Profile.stop_hz -gt (Invoke-S2Io $Scpi 'SERVice.SWEep.FREQuency.MAXimum')) { throw 'ВАЦ: профиль превышает возможности прибора' }
+        Invoke-S2Io $Scpi 'ABORt' call
+        Set-S2Checked $Scpi 'INITiate(1).CONTinuous' $false
+    }
+    $writes = Get-S2ProfileWrites $Profile
+    foreach ($path in $writes.Keys) {
+        if ($Apply) { Set-S2Checked $Scpi $path $writes[$path] }
+        else { Assert-VnaEqual (Invoke-S2Io $Scpi $path) $writes[$path] $path }
+    }
+    for ($traceIndex = 1; $traceIndex -le @($Profile.traces).Count; $traceIndex++) {
+        $parameter = [string]$Profile.traces[$traceIndex - 1]
+        $path = "CALCulate(1).PARameter($traceIndex).DEFine"
+        if ($Apply) { Set-S2Checked $Scpi $path $parameter } else { Assert-VnaEqual (Invoke-S2Io $Scpi $path) $parameter $path }
+        Invoke-S2Io $Scpi "CALCulate(1).PARameter($traceIndex).SELect" call
+        $format = if ($parameter -in @('S11','S22')) { 'SWR' } else { 'MLOG' }
+        $settings = [ordered]@{ FORMat = $format; 'SMOothing.STATe' = $false; 'MATH.FUNCtion' = 'OFF'
+            'CONVersion.STATe' = $false; 'FILTer.GATE.TIME.STATe' = $false
+            'LIMit.DATA' = @(1,1,$Profile.start_hz,$Profile.stop_hz,$Profile.vswr_limit,$Profile.vswr_limit); 'LIMit.DISPlay.STATe' = $true }
+        foreach ($tail in $settings.Keys) {
+            $path = 'CALCulate(1).SELected.' + $tail
+            if ($Apply) { Set-S2Checked $Scpi $path $settings[$tail] } else { Assert-VnaEqual (Invoke-S2Io $Scpi $path) $settings[$tail] $path }
+        }
+    }
+}
+function Get-S2Correction {
+    param($Scpi, $Traces)
+    $found = @{}; $count = [int](Invoke-S2Io $Scpi 'CALCulate(1).PARameter(1).COUNt')
+    for ($traceIndex = 1; $traceIndex -le $count; $traceIndex++) {
+        $parameter = [string](Invoke-S2Io $Scpi "CALCulate(1).PARameter($traceIndex).DEFine")
+        if ($parameter -in $Traces) {
+            if ($found.ContainsKey($parameter)) { throw 'ВАЦ: повторная трасса' }
+            Invoke-S2Io $Scpi "CALCulate(1).PARameter($traceIndex).SELect" call
+            $status = [string](Invoke-S2Io $Scpi 'CALCulate(1).SELected.CORRection.STATus')
+            if ($status -cne 'COR') { throw "ВАЦ: нет полной коррекции $parameter ($status)" }
+            $found[$parameter] = $status
+        }
+    }
+    if ($found.Count -ne @($Traces).Count) { throw 'ВАЦ: требуемые трассы отсутствуют' }
+    return $found
+}
+function ConvertFrom-S2AcmInfo {
+    param([string]$Info)
+    $fields = @($Info | ConvertFrom-Csv -Header (0..30 | ForEach-Object { "f$_" }))
+    if ($fields.Count -ne 1) { throw 'ВАЦ: неверный ответ АКМ' }
+    $row = $fields[0]
+    $numbers = @()
+    foreach ($field in @($row.f5, $row.f6)) {
+        if ($field -notmatch '^\s*([0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)\s*([kMG]?Hz)?\s*$') { throw 'ВАЦ: не прочитана полоса АКМ' }
+        $number = [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)
+        $scale = switch -CaseSensitive ($Matches[2]) { 'kHz' { 1e3 } 'MHz' { 1e6 } 'GHz' { 1e9 } default { 1 } }
+        $numbers += $number * $scale
+    }
+    if (-not $row.f0 -or -not $row.f1 -or $numbers[0] -ge $numbers[1]) { throw 'ВАЦ: не прочитаны сведения АКМ' }
+    return @{ model = $row.f0.Trim(); serial = $row.f1.Trim(); min_hz = $numbers[0]; max_hz = $numbers[1]; raw = $Info }
+}
+function Assert-S2Acm {
+    param($Scpi, [string]$Serial, [double]$StartHz, [double]$StopHz, $Definition)
+    $info = ConvertFrom-S2AcmInfo ([string](Invoke-S2Io $Scpi 'SENSe(1).CORRection.COLLect.ECAL.INFormation'))
+    if ($info.serial -cne $Serial -or $info.min_hz -gt $StartHz -or $info.max_hz -lt $StopHz -or $StartHz -ge $StopHz) { throw 'ВАЦ: серийный номер или полоса АКМ не соответствуют плану' }
+    if ($Definition) {
+        Assert-VnaEqual $info.model $Definition.model 'модель АКМ'
+        Assert-VnaEqual $info.serial $Definition.serial 'номер АКМ'
+        Assert-VnaEqual $info.min_hz $Definition.min_hz 'нижняя частота АКМ'
+        Assert-VnaEqual $info.max_hz $Definition.max_hz 'верхняя частота АКМ'
+        # Temperature is live telemetry, not a coefficient/characterization identity.
+        $live = @($info.raw | ConvertFrom-Csv -Header (0..30 | ForEach-Object { "f$_" }))[0]
+        foreach ($entry in $Definition.identity_fields.PSObject.Properties) {
+            if ($entry.Name -notmatch '^f(?:[0-9]|[12][0-9]|30)$' -or $entry.Name -eq 'f2') { throw 'ВАЦ: неверный манифест АКМ' }
+            Assert-VnaEqual ([string]$live.($entry.Name)).Trim() ([string]$entry.Value).Trim() ('АКМ ' + $entry.Name)
+        }
+        if (-not $Definition.identity_fields.f3 -or -not $Definition.identity_fields.f4 -or -not $Definition.identity_fields.f7) { throw 'ВАЦ: манифест не содержит характеризацию, дату и число точек АКМ' }
+    }
+    return $info
+}
+function ConvertTo-S2Artifact {
+    param($Frequencies, $Data, $Profile)
+    $frequenciesArray = @($Frequencies); $traces = @($Profile.traces)
+    if ($frequenciesArray.Count -ne $Profile.points) { throw 'ВАЦ: неполная сетка частот' }
+    $order = if ($traces.Count -eq 4) { @('S11','S21','S12','S22') } else { $traces }
+    foreach ($traceName in $order) { if (@($Data[$traceName]).Count -ne 2 * $frequenciesArray.Count) { throw 'ВАЦ: неполные комплексные данные' } }
+    $text = New-Object Text.StringBuilder
+    [void]$text.AppendLine('# Hz S RI R 50')
+    for ($i = 0; $i -lt $frequenciesArray.Count; $i++) {
+        $expected = [double]$Profile.start_hz + ($Profile.stop_hz - $Profile.start_hz) * $i / ($frequenciesArray.Count - 1)
+        $frequency = [double]$frequenciesArray[$i]
+        if ([Math]::Abs($frequency - $expected) -gt [Math]::Max(0.001, [Math]::Abs($expected) * 1e-10)) { throw 'ВАЦ: сетка частот не соответствует профилю' }
+        $values = @($frequency)
+        foreach ($traceName in $order) { $values += @($Data[$traceName][2*$i], $Data[$traceName][2*$i+1]) }
+        $row = foreach ($value in $values) {
+            if ([double]::IsNaN([double]$value) -or [double]::IsInfinity([double]$value)) { throw 'ВАЦ: недопустимое число в трассе' }
+            ([double]$value).ToString('G17', [Globalization.CultureInfo]::InvariantCulture)
+        }
+        [void]$text.AppendLine($row -join ' ')
+        if ($text.Length -gt 2MB) { throw 'ВАЦ: файл больше 2 МиБ' }
+    }
+    $bytes = [Text.Encoding]::UTF8.GetBytes($text.ToString())
+    $extension = if ($traces.Count -eq 4) { 's2p' } else { 's1p' }
+    return @{ file_name = "measurement.$extension"; content_base64 = [Convert]::ToBase64String($bytes); traces = $traces }
+}
+function Get-VnaManifest {
+    return Read-VnaJson (Join-Path (Get-VnaControlRoot) 'commissioned.json')
+}
+function Get-VnaControlCapability {
+    param($Observation)
+    if (-not $Observation -or -not $Observation.ready) { return $null }
+    $methods = @(); $manifest = Get-VnaManifest
+    if ($manifest -and $manifest.instrument_serial -ceq $Observation.serial -and $manifest.ordinary_state_verified -eq $true) {
+        foreach ($kit in @($manifest.kits)) {
+            if ($kit.method -ceq 'acm' -and $kit.registry_fingerprint -match '^[a-f0-9]{64}$' -and $kit.definition.serial) { $methods = @('acm'); break }
+        }
+    }
+    return @{ version = 1; methods = $methods }
+}
+function Invoke-VnaSessionApi {
+    param([string]$Base, [string]$AuthToken, [string]$Path, $Body, [string]$Method = 'Get')
+    $headers = @{ Authorization = "Bearer $AuthToken"; 'X-Agent-Machine-Id' = (Get-MachineId) }
+    $parameters = @{ Method = $Method; Uri = $Base + $Path; Headers = $headers; TimeoutSec = 10 }
+    if ($null -ne $Body) {
+        $parameters.ContentType = 'application/json; charset=utf-8'
+        $parameters.Body = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $Body -Depth 70 -Compress))
+    }
+    return Invoke-RestMethod @parameters
+}
+function Assert-VnaLease {
+    param($Command, $Status)
+    $receipt = @($Status.commands | Where-Object { $_.command_id -ceq $Command.command_id })
+    if (-not $Status.lease_held -or $Status.session_id -cne $Command.session_id -or
+        $Status.instrument_serial -cne $Command.instrument_serial -or $Status.instrument_id -cne $Command.instrument_id -or
+        $Status.version -ne $Command.expected_version -or $Status.step -ne $Command.expected_step -or
+        $receipt.Count -ne 1 -or $receipt[0].status -cne 'claimed' -or
+        $receipt[0].expected_version -ne $Command.expected_version -or $receipt[0].expected_step -ne $Command.expected_step -or
+        ($Status.state -in @('aborted','recorded','failed','recovery_required')) -or
+        ($Status.state -eq 'aborting' -and $Command.op -notin @('abort','restore'))) { throw 'ВАЦ: команда больше не владеет прибором или шагом сессии' }
+}
+function Get-VnaCommandPath {
+    param($Command)
+    $name = ([guid]::Parse($Command.command_id)).ToString() + '.json'
+    $root = Get-VnaControlRoot
+    $archive = Join-Path (Join-Path $root 'acknowledged') $name
+    if ([IO.File]::Exists($archive)) { return $archive }
+    return Join-Path $root $name
+}
+function New-VnaReceipt {
+    param($Command, $Result, [string]$ErrorText)
+    $payload = @{ session_id = $Command.session_id; expected_version = $Command.expected_version; expected_step = $Command.expected_step }
+    if ($ErrorText) { $payload.error = $ErrorText.Substring(0, [Math]::Min(2000, $ErrorText.Length)) } else { $payload.result = $Result }
+    return $payload
+}
+function Get-VnaJournal {
+    param($Command)
+    $path = Get-VnaCommandPath $Command
+    $hash = Get-VnaDigest (ConvertTo-VnaCanonical $Command)
+    $entry = Read-VnaJson $path
+    if ($entry) {
+        if ($entry.command_hash -cne $hash) { throw 'ВАЦ: содержимое повторной команды изменилось' }
+        if ($entry.state -in @('received','executing')) {
+            # The parent only consults an active worker after fencing it. On restart no COM is repeated.
+            if ($entry.state -ceq 'executing') {
+                Write-VnaJson (Join-Path (Get-VnaControlRoot) 'quarantine.json') @{
+                    session_id = $Command.session_id; serial = $Command.instrument_serial; created_at = [DateTime]::UtcNow.ToString('o') }
+            }
+            $entry.state = 'uncertain'; $entry.payload = New-VnaReceipt $Command $null 'ВАЦ: выполнение прервано; результат неизвестен, требуется восстановление'
+            Write-VnaJson $path $entry
+        }
+        return $entry
+    }
+    $entry = [pscustomobject]@{ command = $Command; command_hash = $hash; state = 'received'; received_at = [DateTime]::UtcNow.ToString('o')
+        executing_at = $null; completed_at = $null; acknowledged = $false; payload = $null }
+    Write-VnaJson $path $entry
+    return $entry
+}
+function Invoke-S2Command {
+    param($Application, $Command, $Status, [string]$OwnerPath)
+    $serial = Get-VnaSerial $Application
+    if ($serial -cne $Command.instrument_serial) { throw 'ВАЦ: серийный номер прибора не соответствует сессии' }
+    Assert-VnaLease $Command $Status
+    $quarantinePath = Join-Path (Get-VnaControlRoot) 'quarantine.json'
+    $quarantine = Read-VnaJson $quarantinePath
+    if ($quarantine) {
+        # Killing a COM client does not cancel an operation in S2VNA's separate process.
+        # Only an explicit abort after an operator restart of S2VNA may clear this fence.
+        $processes = @(Get-Process -Name S2VNA -ErrorAction Stop)
+        if ($Command.op -cne 'abort' -or $quarantine.serial -cne $serial -or
+            $quarantine.session_id -cne $Command.session_id -or $processes.Count -ne 1 -or
+            $processes[0].StartTime.ToUniversalTime() -le [DateTime]::Parse($quarantine.created_at).ToUniversalTime()) {
+            throw 'ВАЦ: прежняя COM-операция могла продолжиться; перезапустите S2VNA и выполните восстановление сессии в ERP'
+        }
+    }
+    $scpi = $Application.SCPI; $argsValue = $Command.args
+    $owner = Read-VnaJson $OwnerPath
+    if ($owner -and ($owner.session_id -cne $Command.session_id -or $owner.serial -cne $serial)) { throw 'ВАЦ: локальная копия принадлежит другой сессии; требуется сверка с ERP' }
+    if ($Command.op -ne 'prepare' -and -not $owner) { throw 'ВАЦ: исходное состояние не сохранено' }
+    $result = @{ serial = $serial }
+    $collect = 'SENSe(1).CORRection.COLLect'
+    switch -CaseSensitive ($Command.op) {
+        'prepare' {
+            if ($owner) { throw 'ВАЦ: исходное состояние этой сессии уже сохранено' }
+            $backupId = [guid]::NewGuid().ToString()
+            $root = Get-VnaControlRoot
+            $statePath = Join-Path $root ($backupId + '.sta')
+            $kitPath = Join-Path $root ($backupId + '.ckit')
+            $original = Get-S2State $scpi
+            foreach ($capabilityPath in @('SERVice.SWEep.POINts','SERVice.SWEep.FREQuency.MINimum','SERVice.SWEep.FREQuency.MAXimum')) {
+                $capacityValue = [double](Invoke-S2Io $scpi $capabilityPath)
+                if ([double]::IsNaN($capacityValue) -or [double]::IsInfinity($capacityValue) -or $capacityValue -le 0) { throw 'ВАЦ: возможности прибора не прочитаны' }
+            }
+            $slot = [int](Invoke-S2Io $scpi "$collect.CKIT.SELect")
+            $owner = [pscustomobject]@{ session_id = $Command.session_id; serial = $serial; backup_id = $backupId
+                state_path = $statePath; kit_path = $kitPath; slot = $slot; original = $original
+                state_hash = ''; kit_hash = ''; definition_hash = ''; calibration = $null; profile = $null; restored = $false }
+            # Reserve durable ownership before any state/kit store write, even if backup subsequently fails.
+            Write-VnaJson $OwnerPath $owner
+            Set-S2Checked $scpi 'MMEMory.STORe.STYPe' 'CDST'
+            Invoke-S2Io $scpi 'MMEMory.STORe.STATe' set $statePath
+            Invoke-S2KitFile $scpi STORe $slot $kitPath
+            foreach ($file in @($statePath,$kitPath)) { if (-not [IO.File]::Exists($file) -or (Get-Item -LiteralPath $file).Length -eq 0) { throw 'ВАЦ: резервная копия не записана' } }
+            $owner.state_hash = (Get-FileHash -LiteralPath $statePath -Algorithm SHA256).Hash
+            $owner.kit_hash = (Get-FileHash -LiteralPath $kitPath -Algorithm SHA256).Hash
+            Write-VnaJson $OwnerPath $owner
+            $result.ready = $true; $result.backup_id = $backupId; $result.state_saved = $true; $result.kit_assignments_saved = $true
+        }
+        'apply_profile' {
+            Assert-S2Profile $scpi $argsValue.profile -Apply
+            $owner.profile = $argsValue.profile; Write-VnaJson $OwnerPath $owner
+            $result.profile = $argsValue.profile
+        }
+        'begin_calibration' {
+            $manifest = Get-VnaManifest
+            if (-not $manifest -or $manifest.instrument_serial -cne $serial -or $manifest.ordinary_state_verified -ne $true) { throw 'ВАЦ: нет проверенного манифеста станции' }
+            $kits = @($manifest.kits | Where-Object { $_.kit_id -ceq $argsValue.kit_id -and $_.method -ceq $argsValue.method })
+            if ($kits.Count -ne 1 -or $kits[0].registry_fingerprint -cne $argsValue.kit_fingerprint) { throw 'ВАЦ: определение набора в ERP не соответствует манифесту станции' }
+            $kit = $kits[0]
+            if (-not $owner.profile) { throw 'ВАЦ: профиль ещё не применён' }
+            Assert-S2Profile $scpi $owner.profile
+            foreach ($standard in $argsValue.standards) {
+                $matches = @($kit.standards | Where-Object { (ConvertTo-VnaCanonical $_) -ceq (ConvertTo-VnaCanonical $standard) })
+                if ($matches.Count -ne 1) { throw 'ВАЦ: стандарт или перестановка портов отсутствуют в манифесте' }
+            }
+            $actualDefinition = $kit.definition
+            if ($argsValue.method -ceq 'acm') {
+                $definition = $Status.kit_definitions.($argsValue.kit_id)
+                [void](Assert-S2Acm $scpi $definition.serial_number $owner.profile.start_hz $owner.profile.stop_hz $kit.definition)
+            } elseif ($argsValue.method -cin @('solt1','solt2')) {
+                # The implementation is available for commissioning but never advertised as a station method yet.
+                # Refuse changing a kit that was not backed up during prepare.
+                if ([int]$kit.slot -ne [int]$owner.slot) { throw 'ВАЦ: набор SOLT должен быть выбран до начала сессии для резервирования' }
+                $actualDefinition = Get-S2ManualDefinition $scpi $kit $owner.profile
+                foreach ($standard in @($argsValue.standards)) {
+                    $mapping = @($kit.assignments | Where-Object { $_.kind -ceq $standard.kind -and $_.label -ceq $standard.label -and
+                        (ConvertTo-VnaCanonical @($_.ports)) -ceq (ConvertTo-VnaCanonical @($standard.ports)) })
+                    if ($mapping.Count -ne 1) { throw 'ВАЦ: назначение меры отсутствует в манифесте' }
+                    $item = $mapping[0]
+                    $definition = @($actualDefinition.standards | Where-Object { $_.index -eq $item.standard_index })
+                    if ($definition.Count -ne 1 -or $definition[0].properties.TYPE -cne $standard.kind -or $definition[0].properties.LABel -cne $standard.label) { throw 'ВАЦ: мера не соответствует назначению' }
+                    Set-S2Checked $scpi "$collect.CKIT.ORDer.SELect" ([int]$item.class_index)
+                    $indices = @($standard.ports) -join ','
+                    Set-S2Checked $scpi ("$collect.CKIT.ORDer." + $standard.kind + "($indices)") ([int]$item.standard_index)
+                }
+                Invoke-S2Io $scpi "$collect.CLEar" call
+                Set-S2Checked $scpi 'TRIGger.SEQuence.SOURce' 'INT'
+                Set-S2Checked $scpi 'SENSe(1).CORRection.TRIGger.FREE.STATe' $true
+                if ($argsValue.method -ceq 'solt1') { Invoke-S2Io $scpi "$collect.METHod.SOLT1" set 1 }
+                else { Set-S2Ports $scpi "$collect.METHod.SOLT2" @(1,2) }
+            } else {
+                throw 'ВАЦ: неизвестный способ калибровки'
+            }
+            $owner.definition_hash = Get-VnaDigest (ConvertTo-VnaCanonical $actualDefinition)
+            $owner.calibration = @{ method = $argsValue.method; kit_id = $argsValue.kit_id; standards = @($argsValue.standards); definition = $kit.definition; kit = $kit }
+            Write-VnaJson $OwnerPath $owner
+            $result.kit_fingerprint = $argsValue.kit_fingerprint; $result.definition_hash = $owner.definition_hash
+        }
+        'acm_calibrate' {
+            if (-not $owner.calibration -or $owner.calibration.method -cne 'acm') { throw 'ВАЦ: АКМ не проверен' }
+            $standard = @($owner.calibration.standards | Where-Object { $_.kind -ceq 'ACM' })
+            if ($standard.Count -ne 1) { throw 'ВАЦ: нет схемы подключения АКМ' }
+            Assert-VnaEqual @($argsValue.ports) @(1,2) 'порты прибора'
+            Assert-VnaEqual @($argsValue.kit_ports) @($standard[0].kit_ports) 'порты АКМ'
+            Assert-VnaEqual $argsValue.start_hz $owner.profile.start_hz 'полоса АКМ'
+            Assert-VnaEqual $argsValue.stop_hz $owner.profile.stop_hz 'полоса АКМ'
+            Assert-S2Profile $scpi $owner.profile
+            $info = Assert-S2Acm $scpi $argsValue.module_serial $argsValue.start_hz $argsValue.stop_hz $owner.calibration.definition
+            Set-S2Checked $scpi "$collect.ECAL.ORIentation.STATe" $true
+            # Auto orientation detects the physically connected permutation, which was checked against the plan.
+            Set-S2Ports $scpi "$collect.ECAL.SOLT2" @(1,2)
+            $result.acquired = $true; $result.module_serial = $info.serial; $result.module_min_hz = $info.min_hz; $result.module_max_hz = $info.max_hz
+        }
+        'measure_standard' {
+            if (-not $owner.calibration -or $owner.calibration.method -cnotin @('solt1','solt2')) { throw 'ВАЦ: ручная калибровка не начата' }
+            $standard = $argsValue.standard
+            $matching = @($owner.calibration.standards | Where-Object { (ConvertTo-VnaCanonical $_) -ceq (ConvertTo-VnaCanonical $standard) })
+            if ($matching.Count -ne 1 -or $standard.kind -cnotin @('OPEN','SHORT','LOAD','THRU')) { throw 'ВАЦ: мера не соответствует плану' }
+            Assert-S2Profile $scpi $owner.profile
+            $actualDefinition = Get-S2ManualDefinition $scpi $owner.calibration.kit $owner.profile
+            Assert-VnaEqual (Get-VnaDigest (ConvertTo-VnaCanonical $actualDefinition)) $owner.definition_hash 'определения перед получением меры'
+            Assert-VnaEqual (Invoke-S2Io $scpi 'TRIGger.SEQuence.SOURce') 'INT' 'триггер SOLT'
+            Assert-VnaEqual (Invoke-S2Io $scpi 'SENSe(1).CORRection.TRIGger.FREE.STATe') $true 'свободный триггер SOLT'
+            if ($standard.kind -ceq 'THRU') { Set-S2Ports $scpi "$collect.ACQuire.THRU" @($standard.ports) }
+            else {
+                if (@($standard.ports).Count -ne 1 -or $standard.ports[0] -notin @(1,2)) { throw 'ВАЦ: неверный порт меры' }
+                Invoke-S2Io $scpi ("$collect.ACQuire." + $standard.kind) set ([int]$standard.ports[0])
+            }
+            $result.acquired = $true
+        }
+        'save_calibration' {
+            if (-not $owner.calibration -or $argsValue.method -cne $owner.calibration.method) { throw 'ВАЦ: способ калибровки не соответствует сессии' }
+            Assert-S2Profile $scpi $owner.profile
+            Assert-VnaEqual @($argsValue.traces) @($owner.profile.traces) 'трассы калибровки'
+            if ($argsValue.method -cne 'acm') { Invoke-S2Io $scpi "$collect.SAVE" call }
+            $result.method = $argsValue.method; $result.correction = Get-S2Correction $scpi $argsValue.traces
+        }
+        'capture' {
+            Assert-VnaEqual $argsValue.profile $owner.profile 'сохранённый профиль'
+            Assert-S2Profile $scpi $argsValue.profile
+            [void](Get-S2Correction $scpi $argsValue.profile.traces)
+            Set-S2Checked $scpi 'INITiate(1).CONTinuous' $true
+            Set-S2Checked $scpi 'TRIGger.SEQuence.SOURce' 'BUS'
+            Invoke-S2Io $scpi 'TRIGger.SEQuence.SINGle' call
+            if ((Invoke-S2Io $scpi 'IEEE4882.OPC') -ne 1) { throw 'ВАЦ: развёртка не завершена' }
+            $frequencies = @(Invoke-S2Io $scpi 'SENSe(1).FREQuency.DATA')
+            $data = @{}
+            for ($traceIndex = 1; $traceIndex -le @($argsValue.profile.traces).Count; $traceIndex++) {
+                $parameter = [string](Invoke-S2Io $scpi "CALCulate(1).PARameter($traceIndex).DEFine")
+                $data[$parameter] = @(Invoke-S2Io $scpi "CALCulate(1).TRACe($traceIndex).DATA.SDATa")
+            }
+            Assert-S2Profile $scpi $argsValue.profile
+            Assert-VnaEqual @(Invoke-S2Io $scpi 'SENSe(1).FREQuency.DATA') $frequencies 'частоты после чтения'
+            $result.correction = Get-S2Correction $scpi $argsValue.profile.traces
+            $result.profile = $argsValue.profile; $result.artifacts = @((ConvertTo-S2Artifact $frequencies $data $argsValue.profile))
+        }
+        'abort' {
+            Invoke-S2Io $scpi 'ABORt' call
+            Set-S2Checked $scpi 'INITiate(1).CONTinuous' $false
+            Invoke-S2Io $scpi "$collect.CLEar" call
+            if ($quarantine) { Remove-Item -LiteralPath $quarantinePath -Force }
+            $result.stopped = $true; $result.calibration_cleared = $true
+        }
+        'restore' {
+            foreach ($pair in @(@($owner.state_path,$owner.state_hash),@($owner.kit_path,$owner.kit_hash))) {
+                if (-not $pair[1] -or -not [IO.File]::Exists($pair[0]) -or (Get-FileHash -LiteralPath $pair[0] -Algorithm SHA256).Hash -cne $pair[1]) { throw 'ВАЦ: резервная копия отсутствует или повреждена' }
+            }
+            Invoke-S2Io $scpi 'ABORt' call
+            Set-S2Checked $scpi 'INITiate(1).CONTinuous' $false
+            Invoke-S2KitFile $scpi LOAD ([int]$owner.slot) ([string]$owner.kit_path)
+            Invoke-S2Io $scpi 'MMEMory.LOAD.STATe' set $owner.state_path
+            # CDST contains the measurement/calibration; restore the store mode changed to create it.
+            Set-S2Checked $scpi 'MMEMory.STORe.STYPe' $owner.original.values.'MMEMory.STORe.STYPe'
+            Assert-VnaEqual (Get-S2State $scpi) $owner.original 'восстановленное состояние и назначения набора'
+            $verifyKitPath = $owner.kit_path + '.verify'
+            Invoke-S2KitFile $scpi STORe ([int]$owner.slot) $verifyKitPath
+            if ((Get-FileHash -LiteralPath $verifyKitPath -Algorithm SHA256).Hash -cne $owner.kit_hash) { throw 'ВАЦ: восстановленные определения набора не совпали' }
+            $owner.restored = $true; Write-VnaJson $OwnerPath $owner
+            $result.restored = $true
+        }
+        default { throw 'ВАЦ: неизвестная типовая операция' }
+    }
+    return $result
+}
+
+function Invoke-VnaWorker {
+    param([string]$RequestPath)
+    $request = Read-VnaJson $RequestPath
+    $application = $null; $mutex = $null; $locked = $false; $entry = $null
+    try {
+        if ($request.command) {
+            $entry = Get-VnaJournal $request.command
+            if ($entry.state -ne 'received') { return }
+        }
+        if (-not (Test-VnaNormalToken)) { throw 'ВАЦ: запустите агент без прав администратора Windows' }
+        if (-not (Test-VnaRegistered) -or -not (Get-Process -Name S2VNA -ErrorAction SilentlyContinue)) { throw 'ВАЦ: S2VNA не запущена' }
+        $application = Get-VnaApplication -RunningOnly
+        $serial = Get-VnaSerial $application
+        Write-VnaJson (Join-Path (Get-VnaControlRoot) 'observation.json') @{
+            serial = $serial; name = [string]$application.Name; ready = $true; observed_at = [DateTime]::UtcNow.ToString('o') }
+        if (-not $request.command) { return }
+        $command = $request.command
+        $mutex = New-VnaDeviceMutex $serial
+        try { $locked = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $locked = $true }
+        if (-not $locked) { throw 'ВАЦ: другой исполнитель ещё владеет прибором' }
+        $auth = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR((ConvertTo-SecureString $request.token_protected)))
+        $status = Invoke-VnaSessionApi $request.base $auth ("/api/stock/vna/sessions/" + $command.session_id)
+        Assert-VnaLease $command $status
+        # Persist before entering any mutating driver operation, including the state store.
+        $entry.state = 'executing'; $entry.executing_at = [DateTime]::UtcNow.ToString('o')
+        Write-VnaJson (Get-VnaCommandPath $command) $entry
+        $result = Invoke-S2Command $application $command $status (Join-Path (Get-VnaControlRoot) 'owner.json')
+        $entry.payload = New-VnaReceipt $command $result
+        $entry.state = 'completed'; $entry.completed_at = [DateTime]::UtcNow.ToString('o')
+        Write-VnaJson (Get-VnaCommandPath $command) $entry
+    } catch {
+        if ($entry) {
+            $entry.payload = New-VnaReceipt $request.command $null ('ВАЦ: ' + $_.Exception.Message)
+            $entry.state = 'completed'; $entry.completed_at = [DateTime]::UtcNow.ToString('o')
+            Write-VnaJson (Get-VnaCommandPath $request.command) $entry
+        } else {
+            Write-VnaJson (Join-Path (Get-VnaControlRoot) 'observation.json') @{
+                ready = $false; serial = ''; name = 'S2VNA'; registered = (Test-VnaRegistered); observed_at = [DateTime]::UtcNow.ToString('o') }
+        }
+    } finally {
+        if ($locked) { $mutex.ReleaseMutex() }
+        if ($mutex) { $mutex.Dispose() }
+        Release-VnaApplication $application
+    }
+}
+function Start-VnaWorker {
+    param([string]$Base, [string]$AuthToken, $Command)
+    $root = Get-VnaControlRoot
+    $path = Join-Path $root 'worker-request.json'
+    $request = @{ base = $Base; command = $Command; token_protected = (ConvertFrom-SecureString (ConvertTo-SecureString $AuthToken -AsPlainText -Force)) }
+    Write-VnaJson $path $request
+    $executable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $arguments = '-NoProfile -NonInteractive -Sta -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $PSCommandPath +
+        '" -ConfigPath "' + ([IO.Path]::GetFullPath($ConfigPath)) + '" -VnaWorkerRequest "' + $path + '"'
+    $process = Start-Process -FilePath $executable -ArgumentList $arguments -WindowStyle Hidden -PassThru
+    $script:VnaWorker = @{ process = $process; command = $Command; started = [DateTime]::UtcNow }
+}
+function Stop-VnaWorker {
+    param($Worker, [string]$Reason)
+    if (-not $Worker.process.HasExited) {
+        $Worker.process.Kill()
+        if (-not $Worker.process.WaitForExit(5000)) { throw 'ВАЦ: не удалось остановить прежнего исполнителя; восстановление запрещено' }
+    }
+    if ($Worker.command) {
+        $path = Get-VnaCommandPath $Worker.command; $entry = Read-VnaJson $path
+        if (-not $entry) { $entry = Get-VnaJournal $Worker.command }
+        # Cancellation can race completion. Preserve the exact finished receipt for reconciliation.
+        if ($entry.state -ne 'completed') {
+            if ($entry.state -in @('executing','uncertain')) {
+                Write-VnaJson (Join-Path (Get-VnaControlRoot) 'quarantine.json') @{
+                    session_id = $Worker.command.session_id; serial = $Worker.command.instrument_serial; created_at = [DateTime]::UtcNow.ToString('o') }
+            }
+            $entry.state = 'uncertain'; $entry.payload = New-VnaReceipt $Worker.command $null $Reason
+            Write-VnaJson $path $entry
+        }
+    }
+    $Worker.process.Dispose()
+    $script:VnaWorker = $null
+}
+function Initialize-VnaControl {
+    if (-not $script:VnaParentMutex) {
+        # One control parent per PC, including copies started with another config path/user session.
+        # Otherwise separate journals could replay the same claimed command after a device-mutex handoff.
+        $script:VnaParentMutex = New-Object Threading.Mutex($false, 'Global\FraxisVnaParent')
+        $acquired = $false
+        try { $acquired = $script:VnaParentMutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $acquired = $true }
+        if (-not $acquired) {
+            $script:VnaParentMutex.Dispose(); $script:VnaParentMutex = $null
+            throw 'ВАЦ: другой экземпляр агента уже управляет этим ПК'
+        }
+    }
+    # A parent crash must not leave an orphaned COM client racing the replacement agent.
+    $marker = '-VnaWorkerRequest "' + (Join-Path (Get-VnaControlRoot) 'worker-request.json') + '"'
+    foreach ($process in @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object {
+        $_.CommandLine -and $_.CommandLine.IndexOf($marker, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and $_.ProcessId -ne $PID
+    })) {
+        $handle = Get-Process -Id $process.ProcessId -ErrorAction Stop
+        $request = Read-VnaJson (Join-Path (Get-VnaControlRoot) 'worker-request.json')
+        Stop-VnaWorker @{ process = $handle; command = $request.command } 'ВАЦ: агент перезапущен; выполнение неизвестно'
+    }
+    $script:VnaControlInitialized = $true
+    $script:VnaNextProbe = [DateTime]::MinValue
+    $script:VnaNextFence = [DateTime]::MinValue
+    $script:VnaFirstObservationReported = $false
+}
+function Get-VnaObservation {
+    $observation = Read-VnaJson (Join-Path (Get-VnaControlRoot) 'observation.json')
+    if ($observation -and $observation.registered -eq $false) { return $null }
+    $maxAge = if ($script:VnaWorker -and $script:VnaWorker.command) { 120 } else { 10 }
+    if ($observation -and ([DateTime]::UtcNow - [DateTime]::Parse($observation.observed_at).ToUniversalTime()).TotalSeconds -le $maxAge) { return $observation }
+    return $null
+}
+function Sync-VnaReceipts {
+    param([string]$Base, [string]$AuthToken)
+    foreach ($file in @(Get-ChildItem -LiteralPath (Get-VnaControlRoot) -Filter '*.json')) {
+        if ($file.BaseName -notmatch '^[a-f0-9-]{36}$') { continue }
+        $entry = Read-VnaJson $file.FullName
+        if ($entry.acknowledged) { continue }
+        if ($script:VnaWorker -and $script:VnaWorker.command.command_id -ceq $entry.command.command_id) { continue }
+        if ($entry.state -in @('received','executing')) { $entry = Get-VnaJournal $entry.command }
+        if ($entry.state -notin @('completed','uncertain')) { continue }
+        try {
+            $null = Invoke-VnaSessionApi $Base $AuthToken ("/api/stock/vna/commands/" + $entry.command.command_id + '/result') $entry.payload Post
+        } catch {
+            $statusCode = 0
+            if ($_.Exception.Response) { $statusCode = [int]$_.Exception.Response.StatusCode }
+            if ($statusCode -notin @(403,404,409,422)) { throw }
+            $status = Invoke-VnaSessionApi $Base $AuthToken ("/api/stock/vna/sessions/" + $entry.command.session_id)
+            $remote = @($status.commands | Where-Object { $_.command_id -ceq $entry.command.command_id })
+            if ($remote.Count -ne 1 -or $remote[0].status -notin @('done','failed','cancelled','uncertain')) { throw }
+            # A rejected invalid payload is not marked accepted while the server still says claimed.
+        }
+        $entry.acknowledged = $true; Write-VnaJson $file.FullName $entry
+        $archive = Join-Path (Get-VnaControlRoot) 'acknowledged'; [void][IO.Directory]::CreateDirectory($archive)
+        [IO.File]::Move($file.FullName, (Join-Path $archive $file.Name))
+    }
+    $ownerPath = Join-Path (Get-VnaControlRoot) 'owner.json'; $owner = Read-VnaJson $ownerPath
+    if ($owner -and $owner.restored -and -not $script:VnaWorker) {
+        $status = Invoke-VnaSessionApi $Base $AuthToken ("/api/stock/vna/sessions/" + $owner.session_id)
+        if (-not $status.lease_held -and $status.state -in @('recorded','aborted','failed')) {
+            # Keep private backup files and journals for diagnostics; release only the local ownership marker.
+            Remove-Item -LiteralPath $ownerPath -Force
+        }
+    }
+}
+function Update-VnaWorker {
+    param([string]$Base, [string]$AuthToken)
+    if (-not $script:VnaControlInitialized) { Initialize-VnaControl }
+    $worker = $script:VnaWorker
+    if ($worker) {
+        if ($worker.process.HasExited) { $worker.process.Dispose(); $script:VnaWorker = $null }
+        elseif (([DateTime]::UtcNow - $worker.started).TotalSeconds -gt $(if ($worker.command) { 120 } else { 8 })) {
+            Stop-VnaWorker $worker 'ВАЦ: превышено время выполнения; результат неизвестен, требуется восстановление'
+        } elseif ($worker.command -and [DateTime]::UtcNow -ge $script:VnaNextFence) {
+            $script:VnaNextFence = [DateTime]::UtcNow.AddSeconds(2)
+            # Network failure is handled by the caller's backoff; the independent 120 s watchdog still bounds COM.
+            $status = Invoke-VnaSessionApi $Base $AuthToken ("/api/stock/vna/sessions/" + $worker.command.session_id)
+            try { Assert-VnaLease $worker.command $status }
+            catch { Stop-VnaWorker $worker 'ВАЦ: команда отменена сервером; прежний исполнитель остановлен' }
+        }
+    }
+    Sync-VnaReceipts $Base $AuthToken
+    if (-not $script:VnaWorker -and [DateTime]::UtcNow -ge $script:VnaNextProbe) {
+        $script:VnaNextProbe = [DateTime]::UtcNow.AddSeconds(3)
+        Start-VnaWorker $Base $AuthToken $null
+    }
+}
+
 # Точка входа; при dot-source (тесты) не запускается.
 if ($MyInvocation.InvocationName -ne '.') {
+    if ($VnaWorkerRequest) { Invoke-VnaWorker $VnaWorkerRequest; return }
     $cfg = Read-AgentConfig -Path $ConfigPath
     if ($Server) { $cfg.server = $Server }
     if ($Token) { $cfg.token = $Token }

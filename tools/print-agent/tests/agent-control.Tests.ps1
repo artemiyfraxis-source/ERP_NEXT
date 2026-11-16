@@ -1,0 +1,558 @@
+﻿# Pester 3.x compatible. Every device/COM boundary is mocked; never opens S2VNA.
+$here = Split-Path -Parent $MyInvocation.MyCommand.Path
+$controlTmp = Join-Path ([IO.Path]::GetTempPath()) ('pa-control-' + [guid]::NewGuid())
+[void][IO.Directory]::CreateDirectory($controlTmp)
+. (Join-Path $here '..\agent.ps1') -ConfigPath (Join-Path $controlTmp 'control-config.json') -LogPath (Join-Path $controlTmp 'agent.log')
+$script:realS2ManualDefinition = (Get-Command Get-S2ManualDefinition).ScriptBlock
+
+function New-ControlProfile {
+    return [pscustomobject]@{ start_hz = 1e6; stop_hz = 2e6; points = 2; if_bandwidth_hz = 1000; power_dbm = 0
+        impedance_ohm = 50; sweep = 'LIN'; smoothing = $false; averaging = $false; processing = 'off'
+        traces = @('S11','S21','S12','S22'); vswr_limit = 1.5 }
+}
+function New-ControlEnvelope {
+    param([string]$Op = 'prepare', $ArgsValue = @{})
+    $id = [guid]::NewGuid().ToString()
+    return [pscustomobject]@{ id = $id; command_id = $id; kind = 'vna_control'; protocol_version = 1
+        session_id = '11111111-1111-1111-1111-111111111111'; expected_version = 4; expected_step = 0
+        instrument_id = '22222222-2222-2222-2222-222222222222'; instrument_serial = '26030095'; op = $Op; args = $ArgsValue }
+}
+function New-ControlStatus {
+    param($Command)
+    return [pscustomobject]@{ session_id = $Command.session_id; state = 'preparing'; version = $Command.expected_version
+        step = $Command.expected_step; lease_held = $true; instrument_id = $Command.instrument_id; instrument_serial = $Command.instrument_serial
+        kit_definitions = @{ '33333333-3333-3333-3333-333333333333' = @{ serial_number = '26140008' } }
+        commands = @([pscustomobject]@{ command_id = $Command.command_id; status = 'claimed'; expected_version = $Command.expected_version; expected_step = $Command.expected_step }) }
+}
+function Invoke-ControlTest {
+    param([string]$Op, $ArgsValue = @{})
+    $command = New-ControlEnvelope $Op $ArgsValue
+    return Invoke-S2Command $script:controlApp $command (New-ControlStatus $command) (Join-Path (Get-VnaControlRoot) 'owner.json')
+}
+function Invoke-FakeS2Io {
+    param($Scpi, [string]$Path, [string]$Mode = 'get', $Value)
+    [void]$script:ioLog.Add("$Mode $Path")
+    if ($Mode -eq 'call' -and $Path -match '^CALCulate\(1\).PARameter\((\d+)\).SELect$') { $script:selected = [int]$Matches[1]; return }
+    if ($Path -eq 'SERVice.CHANnel(1).TRACe(1).ACTive') { return $script:selected }
+    if ($Path -like 'CALCulate(1).SELected.*') { $Path = $Path.Replace('SELected.', ('trace' + $script:selected + '.')) }
+    if ($Mode -eq 'set') {
+        if ($Path -eq $script:rejectPath) { return }
+        if ($Path -eq 'MMEMory.STORe.STATe') { [IO.File]::WriteAllText($Value,'original state'); return }
+        if ($Path -eq 'MMEMory.LOAD.STATe') {
+            $script:ioValues = $script:originalValues.Clone(); $script:selected = 2
+            return
+        }
+        $script:ioValues[$Path] = $Value; return
+    }
+    if ($Mode -eq 'call') { return }
+    if (-not $script:ioValues.ContainsKey($Path)) { throw "Missing fake COM getter: $Path" }
+    return $script:ioValues[$Path]
+}
+function Set-ControlManualKit {
+    $standards = @(); $definitions = @(); $assignments = @(); $index = 0
+    foreach ($kind in @('OPEN','SHORT','LOAD')) {
+        $index++
+        $standards += [pscustomobject]@{ kind = $kind; ports = @(1); label = $kind; kit_ports = @() }
+        $properties = @{ LABel = $kind; TYPE = $kind; FMINimum = 1e5; FMAXimum = 18e9; DELay = 0; LOSS = 0; Z0 = 50 }
+        foreach ($coefficient in $(if ($kind -eq 'OPEN') { @('C0','C1','C2','C3') } elseif ($kind -eq 'SHORT') { @('L0','L1','L2','L3') } else { @() })) { $properties[$coefficient] = 0 }
+        $definitions += [pscustomobject]@{ index = $index; properties = [pscustomobject]$properties }
+        $assignments += [pscustomobject]@{ kind = $kind; ports = @(1); label = $kind; class_index = 1; standard_index = $index }
+        foreach ($property in $properties.Keys) { $script:ioValues["SENSe(1).CORRection.COLLect.CKIT.STAN($index).$property"] = $properties[$property] }
+    }
+    $script:kit = [pscustomobject]@{ kit_id = '33333333-3333-3333-3333-333333333333'; method = 'solt1'; registry_fingerprint = ('a' * 64); slot = 28
+        standards = $standards; assignments = $assignments; definition = [pscustomobject]@{ label = '6650F27'; standards = $definitions } }
+    $script:manifest.kits = @($script:kit)
+    $script:beginArgs = @{ method = 'solt1'; kit_id = $script:kit.kit_id; kit_fingerprint = $script:kit.registry_fingerprint; orientation = 'А'; standards = $standards }
+}
+
+Describe 'Управление ВАЦ: типовые команды и COM' {
+    BeforeEach {
+        $script:ConfigPath = Join-Path $TestDrive ([guid]::NewGuid().ToString() + '\config.json')
+        $script:controlApp = [pscustomobject]@{ Ready = $true; Name = 'Planar, S50180, 26030095, 26.2.2/2'; SCPI = [pscustomobject]@{} }
+        $script:profile = New-ControlProfile
+        $script:ioLog = New-Object 'Collections.Generic.List[string]'
+        $script:ioValues = @{}; $script:selected = 2; $script:rejectPath = ''
+        $writes = Get-S2ProfileWrites $script:profile
+        foreach ($path in $writes.Keys) { $script:ioValues[$path] = $writes[$path] }
+        $extra = @{
+            'SENSe(1).AVERage.COUNt' = 3; 'SENSe(1).CORRection.STATe' = $true
+            'SENSe(1).CORRection.COLLect.CKIT.SELect' = 28; 'SENSe(1).CORRection.COLLect.CKIT.LABel' = '6650F27'
+            'SENSe(1).CORRection.TRIGger.FREE.STATe' = $false; 'SOURce(1).POWer.PORT(2).COUPle' = $false
+            'INITiate(1).CONTinuous' = $true; 'TRIGger.SEQuence.SOURce' = 'INT'; 'MMEMory.STORe.STYPe' = 'STAN'
+            'SERVice.SWEep.POINts' = 20001; 'SERVice.SWEep.FREQuency.MINimum' = 1e5; 'SERVice.SWEep.FREQuency.MAXimum' = 18e9
+            'IEEE4882.OPC' = 1; 'SENSe(1).FREQuency.DATA' = @(1e6,2e6)
+            'SENSe(1).CORRection.COLLect.ECAL.INFormation' = 'ACM2520.2,26140008,30,Factory,2026-01-01,100 kHz,20 GHz,1601,3.5mm -F-,3.5mm -F-'
+            'SENSe(1).CORRection.COLLect.ECAL.ORIentation.STATe' = $false
+        }
+        foreach ($path in $extra.Keys) { $script:ioValues[$path] = $extra[$path] }
+        $traceIndex = 0
+        foreach ($parameter in $script:profile.traces) {
+            $traceIndex++
+            $script:ioValues["CALCulate(1).PARameter($traceIndex).DEFine"] = $parameter
+            $settings = @{ FORMat = $(if ($parameter -in @('S11','S22')) { 'SWR' } else { 'MLOG' })
+                'SMOothing.STATe' = $false; 'MATH.FUNCtion' = 'OFF'; 'CONVersion.STATe' = $false
+                'FILTer.GATE.TIME.STATe' = $false; 'CORRection.STATus' = 'COR'
+                'LIMit.DATA' = @(1,1,1e6,2e6,1.5,1.5); 'LIMit.DISPlay.STATe' = $true }
+            foreach ($tail in $settings.Keys) { $script:ioValues["CALCulate(1).trace$traceIndex.$tail"] = $settings[$tail] }
+            $script:ioValues["CALCulate(1).TRACe($traceIndex).DATA.SDATa"] = @($traceIndex,0,$traceIndex,0)
+        }
+        $script:originalValues = $script:ioValues.Clone()
+        Mock Invoke-S2Io { $modeValue = if ($Mode) { $Mode } else { 'get' }; Invoke-FakeS2Io $Scpi $Path $modeValue $Value }
+        Mock Get-S2ManualDefinition { & $script:realS2ManualDefinition $Scpi $Kit $Profile }
+        Mock Invoke-S2KitFile {
+            if ($Direction -eq 'STORe') { [IO.File]::WriteAllText($Path,'original kit definitions and classes') }
+        }
+        $script:acmStandard = [pscustomobject]@{ kind = 'ACM'; ports = @(1,2); label = 'Подключите АКМ'; kit_ports = @(2,1) }
+        $script:kit = [pscustomobject]@{ kit_id = '33333333-3333-3333-3333-333333333333'; method = 'acm'; registry_fingerprint = ('a' * 64)
+            standards = @($script:acmStandard); definition = [pscustomobject]@{ model = 'ACM2520.2'; serial = '26140008'; min_hz = 1e5; max_hz = 20e9
+                identity_fields = [pscustomobject]@{ f3 = 'Factory'; f4 = '2026-01-01'; f7 = '1601'; f8 = '3.5mm -F-'; f9 = '3.5mm -F-' } } }
+        $script:manifest = [pscustomobject]@{ instrument_serial = '26030095'; ordinary_state_verified = $true; kits = @($script:kit) }
+        Mock Get-VnaManifest { $script:manifest }
+        $script:beginArgs = @{ method = 'acm'; kit_id = $script:kit.kit_id; kit_fingerprint = $script:kit.registry_fingerprint
+            orientation = 'both'; standards = @($script:acmStandard) }
+        Mock Get-VnaApplication { throw 'Tests must not open real COM' }
+    }
+    It 'неверный серийный номер запрещает даже резервирование' {
+        $script:controlApp.Name = 'Planar, S50180, other, 26.2'
+        { Invoke-ControlTest prepare } | Should Throw 'серийный номер'
+        $script:ioLog.Count | Should Be 0
+    }
+    It 'утраченная аренда запрещает записи' {
+        $command = New-ControlEnvelope; $status = New-ControlStatus $command; $status.lease_held = $false
+        { Invoke-S2Command $script:controlApp $command $status (Join-Path (Get-VnaControlRoot) 'owner.json') } | Should Throw 'не владеет'
+        $script:ioLog.Count | Should Be 0
+    }
+    It 'изменённый шаг запрещает записи' {
+        $command = New-ControlEnvelope; $status = New-ControlStatus $command; $status.step++
+        { Assert-VnaLease $command $status } | Should Throw 'не владеет'
+    }
+    It 'отменённая команда запрещает записи' {
+        $command = New-ControlEnvelope; $status = New-ControlStatus $command; $status.commands[0].status = 'cancelled'
+        { Assert-VnaLease $command $status } | Should Throw 'не владеет'
+    }
+    It 'резервирует CDST и набор до применения профиля' {
+        $result = Invoke-ControlTest prepare
+        $result.state_saved | Should Be $true
+        $result.kit_assignments_saved | Should Be $true
+        [guid]::Parse($result.backup_id) | Should Not Be ([guid]::Empty)
+        $owner = Read-VnaJson (Join-Path (Get-VnaControlRoot) 'owner.json')
+        (Test-Path $owner.state_path) | Should Be $true
+        $owner.state_hash | Should Match '^[A-F0-9]{64}$'
+        $script:selected | Should Be 2
+        $script:ioLog.IndexOf('set MMEMory.STORe.STYPe') | Should BeLessThan $script:ioLog.IndexOf('set MMEMory.STORe.STATe')
+        Assert-MockCalled Invoke-S2KitFile -Times 1 -Exactly -Scope It -ParameterFilter { $Direction -eq 'STORe' -and $Slot -eq 28 }
+    }
+    It 'не заменяет исходную копию повторным prepare' {
+        [void](Invoke-ControlTest prepare)
+        { Invoke-ControlTest prepare } | Should Throw 'уже сохранено'
+    }
+    It 'ошибка резервирования удерживает локальное владение' {
+        Mock Invoke-S2KitFile { throw 'disk full' }
+        { Invoke-ControlTest prepare } | Should Throw 'disk full'
+        (Test-Path (Join-Path (Get-VnaControlRoot) 'owner.json')) | Should Be $true
+    }
+    It 'профиль: остановка, параметры, трассы, отключение обработки, чтение' {
+        [void](Invoke-ControlTest prepare); $script:ioLog.Clear()
+        $result = Invoke-ControlTest apply_profile @{ profile = $script:profile }
+        $script:ioLog.IndexOf('call ABORt') | Should BeLessThan $script:ioLog.IndexOf('set INITiate(1).CONTinuous')
+        $script:ioLog.IndexOf('set INITiate(1).CONTinuous') | Should BeLessThan $script:ioLog.IndexOf('set SENSe(1).SWEep.TYPE')
+        $script:ioLog.IndexOf('set SOURce(1).POWer.PORT(1).COUPle') | Should BeLessThan $script:ioLog.IndexOf('set SOURce(1).POWer.PORT(1).LEVel.IMMediate.AMPLitude')
+        $script:ioValues['CALCulate(1).trace1.FORMat'] | Should Be 'SWR'
+        $script:ioValues['CALCulate(1).trace2.FORMat'] | Should Be 'MLOG'
+        foreach ($index in 1..4) {
+            $script:ioValues["CALCulate(1).trace$index.CONVersion.STATe"] | Should Be $false
+            $script:ioValues["CALCulate(1).trace$index.FILTer.GATE.TIME.STATe"] | Should Be $false
+        }
+        Assert-VnaEqual $result.profile $script:profile 'profile'
+    }
+    It 'отказ чтения параметра не выдаёт успех профиля' {
+        [void](Invoke-ControlTest prepare)
+        $script:rejectPath = 'SENSe(1).SWEep.POINts'; $script:profile.points = 5
+        { Invoke-ControlTest apply_profile @{ profile = $script:profile } } | Should Throw 'проверка чтением'
+    }
+    It 'профиль за пределом прибора запрещён до ABORt' {
+        [void](Invoke-ControlTest prepare); $script:ioLog.Clear(); $script:profile.stop_hz = 19e9
+        { Invoke-ControlTest apply_profile @{ profile = $script:profile } } | Should Throw 'возможности прибора'
+        ($script:ioLog -contains 'call ABORt') | Should Be $false
+    }
+    It 'NaN не отправляется прибору' {
+        $script:profile.start_hz = [double]::NaN
+        { Assert-S2Profile $script:controlApp.SCPI $script:profile -Apply } | Should Throw 'недопустимое число'
+        $script:ioLog.Count | Should Be 0
+    }
+    It 'манифест и АКМ проверяются до начала калибровки' {
+        [void](Invoke-ControlTest prepare); [void](Invoke-ControlTest apply_profile @{ profile = $script:profile })
+        $result = Invoke-ControlTest begin_calibration $script:beginArgs
+        $result.definition_hash | Should Match '^[a-f0-9]{64}$'
+        $result.kit_fingerprint | Should Be ('a' * 64)
+        ($script:ioLog -contains 'set SENSe(1).CORRection.COLLect.ECAL.SOLT2') | Should Be $false
+    }
+    It 'несовпадение определения ERP запрещает калибровку' {
+        [void](Invoke-ControlTest prepare); [void](Invoke-ControlTest apply_profile @{ profile = $script:profile })
+        $script:beginArgs.kit_fingerprint = 'b' * 64
+        { Invoke-ControlTest begin_calibration $script:beginArgs } | Should Throw 'манифесту'
+    }
+    It 'изменённые коэффициенты характеризации АКМ запрещают калибровку' {
+        $script:ioValues['SENSe(1).CORRection.COLLect.ECAL.INFormation'] = 'ACM2520.2,26140008,31,User,2026-01-01,100 kHz,20 GHz,1601'
+        { Assert-S2Acm $script:controlApp.SCPI '26140008' 1e6 2e6 $script:kit.definition } | Should Throw 'проверка чтением'
+    }
+    It 'температура АКМ может меняться' {
+        $script:ioValues['SENSe(1).CORRection.COLLect.ECAL.INFormation'] = $script:ioValues['SENSe(1).CORRection.COLLect.ECAL.INFormation'].Replace(',30,',',33,')
+        (Assert-S2Acm $script:controlApp.SCPI '26140008' 1e6 2e6 $script:kit.definition).serial | Should Be '26140008'
+    }
+    It 'неверный модуль АКМ запрещает получение' {
+        { Assert-S2Acm $script:controlApp.SCPI 'other' 1e6 2e6 $script:kit.definition } | Should Throw 'серийный номер или полоса'
+    }
+    It 'недостаточная полоса АКМ запрещает получение' {
+        { Assert-S2Acm $script:controlApp.SCPI '26140008' 1e6 21e9 $script:kit.definition } | Should Throw 'серийный номер или полоса'
+    }
+    It 'АКМ выполняется один раз после установки автоориентации' {
+        [void](Invoke-ControlTest prepare); [void](Invoke-ControlTest apply_profile @{ profile = $script:profile })
+        [void](Invoke-ControlTest begin_calibration $script:beginArgs); $script:ioLog.Clear()
+        $result = Invoke-ControlTest acm_calibrate @{ ports = @(1,2); kit_ports = @(2,1); module_serial = '26140008'; start_hz = 1e6; stop_hz = 2e6 }
+        $result.acquired | Should Be $true
+        $script:ioLog.IndexOf('set SENSe(1).CORRection.COLLect.ECAL.ORIentation.STATe') | Should BeLessThan $script:ioLog.IndexOf('set SENSe(1).CORRection.COLLect.ECAL.SOLT2')
+        @($script:ioLog | Where-Object { $_ -eq 'set SENSe(1).CORRection.COLLect.ECAL.SOLT2' }).Count | Should Be 1
+        Assert-VnaEqual $script:ioValues['SENSe(1).CORRection.COLLect.ECAL.SOLT2'] @(1,2) 'ports'
+    }
+    It 'несоответствие перестановки портов АКМ запрещено' {
+        [void](Invoke-ControlTest prepare); [void](Invoke-ControlTest apply_profile @{ profile = $script:profile })
+        [void](Invoke-ControlTest begin_calibration $script:beginArgs)
+        { Invoke-ControlTest acm_calibrate @{ ports = @(1,2); kit_ports = @(1,2); module_serial = '26140008'; start_hz = 1e6; stop_hz = 2e6 } } | Should Throw 'порты АКМ'
+    }
+    It 'сохранение АКМ проверяет COR всех трасс без SAVE и METHod.TYPE' {
+        [void](Invoke-ControlTest prepare); [void](Invoke-ControlTest apply_profile @{ profile = $script:profile })
+        [void](Invoke-ControlTest begin_calibration $script:beginArgs); $script:ioLog.Clear()
+        $result = Invoke-ControlTest save_calibration @{ method = 'acm'; traces = $script:profile.traces }
+        $result.correction.Count | Should Be 4
+        $result.method | Should Be 'acm'
+        ($script:ioLog -contains 'call SENSe(1).CORRection.COLLect.SAVE') | Should Be $false
+        @($script:ioLog | Where-Object { $_ -like '*METHod.TYPE*' }).Count | Should Be 0
+        foreach ($index in 1..4) { ($script:ioLog -contains "call CALCulate(1).PARameter($index).SELect") | Should Be $true }
+    }
+    It 'интерполяция C? не считается полной коррекцией' {
+        $script:ioValues['CALCulate(1).trace3.CORRection.STATus'] = 'C?'
+        { Get-S2Correction $script:controlApp.SCPI $script:profile.traces } | Should Throw 'нет полной коррекции'
+    }
+    It 'свежая развёртка: continuous BUS SINGLE OPC данные' {
+        [void](Invoke-ControlTest prepare); [void](Invoke-ControlTest apply_profile @{ profile = $script:profile }); $script:ioLog.Clear()
+        $result = Invoke-ControlTest capture @{ profile = $script:profile; orientation = 'both'; port_to_end = @{ '1' = 'А'; '2' = 'Б' } }
+        $script:ioLog.IndexOf('set INITiate(1).CONTinuous') | Should BeLessThan $script:ioLog.IndexOf('set TRIGger.SEQuence.SOURce')
+        $script:ioLog.IndexOf('set TRIGger.SEQuence.SOURce') | Should BeLessThan $script:ioLog.IndexOf('call TRIGger.SEQuence.SINGle')
+        $script:ioLog.IndexOf('call TRIGger.SEQuence.SINGle') | Should BeLessThan $script:ioLog.IndexOf('get IEEE4882.OPC')
+        $script:ioLog.IndexOf('get IEEE4882.OPC') | Should BeLessThan $script:ioLog.IndexOf('get SENSe(1).FREQuency.DATA')
+        $text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($result.artifacts[0].content_base64))
+        $text | Should Match '1000000 1 0 2 0 3 0 4 0'
+        $result.artifacts[0].file_name | Should Be 'measurement.s2p'
+        @($script:ioLog | Where-Object { $_ -like '*IMMediate' }).Count | Should Be 0
+    }
+    It 'неполная развёртка OPC запрещает экспорт' {
+        [void](Invoke-ControlTest prepare); [void](Invoke-ControlTest apply_profile @{ profile = $script:profile })
+        $script:ioValues['IEEE4882.OPC'] = 0
+        { Invoke-ControlTest capture @{ profile = $script:profile } } | Should Throw 'развёртка не завершена'
+    }
+    It 'abort останавливает и очищает незавершённую калибровку' {
+        [void](Invoke-ControlTest prepare); $script:ioLog.Clear()
+        $result = Invoke-ControlTest abort
+        $script:ioLog.IndexOf('call ABORt') | Should BeLessThan $script:ioLog.IndexOf('set INITiate(1).CONTinuous')
+        $script:ioLog.IndexOf('set INITiate(1).CONTinuous') | Should BeLessThan $script:ioLog.IndexOf('call SENSe(1).CORRection.COLLect.CLEar')
+        $result.stopped | Should Be $true
+        $result.calibration_cleared | Should Be $true
+    }
+    It 'restore восстанавливает исходный CDST, набор и проверяет чтением' {
+        [void](Invoke-ControlTest prepare); [void](Invoke-ControlTest apply_profile @{ profile = $script:profile })
+        (Invoke-ControlTest restore).restored | Should Be $true
+        (Read-VnaJson (Join-Path (Get-VnaControlRoot) 'owner.json')).restored | Should Be $true
+        Assert-MockCalled Invoke-S2KitFile -Times 1 -Exactly -Scope It -ParameterFilter { $Direction -eq 'LOAD' }
+    }
+    It 'restore с потерянной копией запрещён' {
+        [void](Invoke-ControlTest prepare)
+        $owner = Read-VnaJson (Join-Path (Get-VnaControlRoot) 'owner.json')
+        Remove-Item -LiteralPath $owner.state_path
+        { Invoke-ControlTest restore } | Should Throw 'отсутствует или повреждена'
+    }
+    It 'restore другой сессии запрещён до записи' {
+        [void](Invoke-ControlTest prepare); $script:ioLog.Clear()
+        $command = New-ControlEnvelope restore; $command.session_id = [guid]::NewGuid().ToString()
+        { Invoke-S2Command $script:controlApp $command (New-ControlStatus $command) (Join-Path (Get-VnaControlRoot) 'owner.json') } | Should Throw 'другой сессии'
+        $script:ioLog.Count | Should Be 0
+    }
+    It 'restore при несовпадении настроек не выдаёт успех' {
+        [void](Invoke-ControlTest prepare)
+        $script:originalValues['SENSe(1).AVERage.COUNt'] = 8
+        { Invoke-ControlTest restore } | Should Throw 'восстановленное состояние'
+    }
+    It 'после watchdog restore запрещён даже с завершившимся клиентом' {
+        [void](Invoke-ControlTest prepare); $script:ioLog.Clear()
+        Write-VnaJson (Join-Path (Get-VnaControlRoot) 'quarantine.json') @{
+            session_id = '11111111-1111-1111-1111-111111111111'; serial = '26030095'; created_at = [DateTime]::UtcNow.ToString('o') }
+        Mock Get-Process { [pscustomobject]@{ StartTime = [DateTime]::UtcNow.AddHours(-1) } }
+        { Invoke-ControlTest restore } | Should Throw 'могла продолжиться'
+        $script:ioLog.Count | Should Be 0
+    }
+    It 'после watchdog abort требует перезапуска S2VNA' {
+        [void](Invoke-ControlTest prepare)
+        Write-VnaJson (Join-Path (Get-VnaControlRoot) 'quarantine.json') @{
+            session_id = '11111111-1111-1111-1111-111111111111'; serial = '26030095'; created_at = [DateTime]::UtcNow.ToString('o') }
+        Mock Get-Process { [pscustomobject]@{ StartTime = [DateTime]::UtcNow.AddHours(-1) } }
+        { Invoke-ControlTest abort } | Should Throw 'перезапустите S2VNA'
+    }
+    It 'новый abort после перезапуска S2VNA снимает запрет' {
+        [void](Invoke-ControlTest prepare)
+        Write-VnaJson (Join-Path (Get-VnaControlRoot) 'quarantine.json') @{
+            session_id = '11111111-1111-1111-1111-111111111111'; serial = '26030095'; created_at = [DateTime]::UtcNow.AddMinutes(-1).ToString('o') }
+        Mock Get-Process { [pscustomobject]@{ StartTime = [DateTime]::UtcNow } }
+        (Invoke-ControlTest abort).stopped | Should Be $true
+        (Test-Path (Join-Path (Get-VnaControlRoot) 'quarantine.json')) | Should Be $false
+    }
+    It 'ручной SOLT выполняет две отдельные команды THRU с внутренним триггером' {
+        [void](Invoke-ControlTest prepare); [void](Invoke-ControlTest apply_profile @{ profile = $script:profile })
+        Mock Get-S2ManualDefinition { @{ verified = $true } }
+        $standards = @(
+            [pscustomobject]@{ kind = 'THRU'; ports = @(1,2); label = 'THRU'; kit_ports = @() },
+            [pscustomobject]@{ kind = 'THRU'; ports = @(2,1); label = 'THRU'; kit_ports = @() })
+        $ownerPath = Join-Path (Get-VnaControlRoot) 'owner.json'; $owner = Read-VnaJson $ownerPath
+        $owner.definition_hash = Get-VnaDigest (ConvertTo-VnaCanonical @{ verified = $true })
+        $owner.calibration = @{ method = 'solt2'; standards = $standards }; Write-VnaJson $ownerPath $owner
+        $script:ioValues['SENSe(1).CORRection.TRIGger.FREE.STATe'] = $true
+        (Invoke-ControlTest measure_standard @{ standard = $standards[0] }).acquired | Should Be $true
+        Assert-VnaEqual $script:ioValues['SENSe(1).CORRection.COLLect.ACQuire.THRU'] @(1,2) 'первое направление'
+        (Invoke-ControlTest measure_standard @{ standard = $standards[1] }).acquired | Should Be $true
+        Assert-VnaEqual $script:ioValues['SENSe(1).CORRection.COLLect.ACQuire.THRU'] @(2,1) 'второе направление'
+        @($script:ioLog | Where-Object { $_ -eq 'set SENSe(1).CORRection.COLLect.ACQuire.THRU' }).Count | Should Be 2
+    }
+    It 'ручной SOLT с BUS запрещён до блокирующего вызова' {
+        [void](Invoke-ControlTest prepare); [void](Invoke-ControlTest apply_profile @{ profile = $script:profile })
+        Mock Get-S2ManualDefinition { @{ verified = $true } }
+        $standard = [pscustomobject]@{ kind = 'OPEN'; ports = @(1); label = 'OPEN'; kit_ports = @() }
+        $ownerPath = Join-Path (Get-VnaControlRoot) 'owner.json'; $owner = Read-VnaJson $ownerPath
+        $owner.definition_hash = Get-VnaDigest (ConvertTo-VnaCanonical @{ verified = $true })
+        $owner.calibration = @{ method = 'solt1'; standards = @($standard) }; Write-VnaJson $ownerPath $owner
+        $script:ioValues['TRIGger.SEQuence.SOURce'] = 'BUS'
+        { Invoke-ControlTest measure_standard @{ standard = $standard } } | Should Throw 'триггер SOLT'
+        ($script:ioLog -contains 'set SENSe(1).CORRection.COLLect.ACQuire.OPEN') | Should Be $false
+    }
+    It 'ручной SAVE выполняется один раз и проверяет COR' {
+        [void](Invoke-ControlTest prepare); [void](Invoke-ControlTest apply_profile @{ profile = $script:profile })
+        $ownerPath = Join-Path (Get-VnaControlRoot) 'owner.json'; $owner = Read-VnaJson $ownerPath
+        $owner.calibration = @{ method = 'solt2' }; Write-VnaJson $ownerPath $owner
+        (Invoke-ControlTest save_calibration @{ method = 'solt2'; traces = $script:profile.traces }).correction.Count | Should Be 4
+        @($script:ioLog | Where-Object { $_ -eq 'call SENSe(1).CORRection.COLLect.SAVE' }).Count | Should Be 1
+    }
+    It 'ручной begin сверяет коэффициенты и назначения до CLEar и выбора SOLT1' {
+        [void](Invoke-ControlTest prepare); [void](Invoke-ControlTest apply_profile @{ profile = $script:profile }); Set-ControlManualKit
+        $script:ioLog.Clear()
+        $result = Invoke-ControlTest begin_calibration $script:beginArgs
+        $result.definition_hash | Should Match '^[a-f0-9]{64}$'
+        $script:ioLog.IndexOf('get SENSe(1).CORRection.COLLect.CKIT.STAN(1).C3') | Should BeLessThan $script:ioLog.IndexOf('call SENSe(1).CORRection.COLLect.CLEar')
+        $script:ioLog.IndexOf('call SENSe(1).CORRection.COLLect.CLEar') | Should BeLessThan $script:ioLog.IndexOf('set SENSe(1).CORRection.TRIGger.FREE.STATe')
+        $script:ioLog.IndexOf('set SENSe(1).CORRection.TRIGger.FREE.STATe') | Should BeLessThan $script:ioLog.IndexOf('set SENSe(1).CORRection.COLLect.METHod.SOLT1')
+        $script:ioValues['SENSe(1).CORRection.COLLect.METHod.SOLT1'] | Should Be 1
+    }
+    It 'несовпадение коэффициента ручной меры запрещает начало' {
+        [void](Invoke-ControlTest prepare); [void](Invoke-ControlTest apply_profile @{ profile = $script:profile }); Set-ControlManualKit
+        $script:ioValues['SENSe(1).CORRection.COLLect.CKIT.STAN(1).C0'] = 1; $script:ioLog.Clear()
+        { Invoke-ControlTest begin_calibration $script:beginArgs } | Should Throw 'мера SOLT C0'
+        ($script:ioLog -contains 'call SENSe(1).CORRection.COLLect.CLEar') | Should Be $false
+    }
+    It 'реальный COM адаптер обходит методы с индексами 3 и 4' {
+        # Bypass the mock only for this in-memory object; no COM class is instantiated.
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $here '..\agent.ps1'),[ref]$null,[ref]$null)
+        $definition = $ast.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-S2Io' },$true)
+        $adapter = [scriptblock]::Create($definition.Body.Extent.Text.Trim('{','}'))
+        $node = [pscustomobject]@{ Value = [pscustomobject]@{ DEFine = 'S22' } }
+        $node | Add-Member ScriptMethod PARameter { param($index) if ($index -ne 4) { throw 'index' }; $this.Value }
+        (& $adapter $node 'PARameter(4).DEFine') | Should Be 'S22'
+    }
+}
+
+Describe 'Управление ВАЦ: Touchstone' {
+    BeforeEach { $script:profile = New-ControlProfile; $script:data = @{ S11 = @(1,2,3,4); S21 = @(5,6,7,8); S12 = @(9,10,11,12); S22 = @(13,14,15,16) } }
+    It 'перестановка требуемых трасс не меняет порядок матрицы s2p' {
+        $script:profile.traces = @('S22','S12','S11','S21')
+        $artifact = ConvertTo-S2Artifact @(1e6,2e6) $script:data $script:profile
+        [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($artifact.content_base64)) | Should Match '1000000 1 2 5 6 9 10 13 14'
+    }
+    It 'одна трасса формирует s1p' {
+        $script:profile.traces = @('S11')
+        (ConvertTo-S2Artifact @(1e6,2e6) $script:data $script:profile).file_name | Should Be 'measurement.s1p'
+    }
+    It 'неполный массив отклоняется' {
+        $script:data.S22 = @(1,2)
+        { ConvertTo-S2Artifact @(1e6,2e6) $script:data $script:profile } | Should Throw 'неполные'
+    }
+    It 'частоты другого диапазона отклоняются' {
+        { ConvertTo-S2Artifact @(1e6,3e6) $script:data $script:profile } | Should Throw 'сетка частот'
+    }
+    It 'NaN в данных отклоняется' {
+        $script:data.S11[0] = [double]::NaN
+        { ConvertTo-S2Artifact @(1e6,2e6) $script:data $script:profile } | Should Throw 'недопустимое число'
+    }
+}
+
+Describe 'Управление ВАЦ: журнал, опрос, watchdog' {
+    BeforeEach {
+        $script:ConfigPath = Join-Path $TestDrive ([guid]::NewGuid().ToString() + '\config.json')
+        $script:VnaWorker = $null; $script:VnaControlInitialized = $false
+        $script:command = New-ControlEnvelope
+        Mock Invoke-VnaSessionApi { [pscustomobject]@{} }
+        Mock Get-VnaApplication { throw 'Tests must not open real COM' }
+    }
+    It 'после lost ack повторяется идентичная квитанция, а не операция' {
+        $entry = Get-VnaJournal $script:command
+        $entry.state = 'completed'; $entry.payload = New-VnaReceipt $script:command @{ serial = '26030095'; ready = $true }
+        Write-VnaJson (Get-VnaCommandPath $script:command) $entry
+        $script:posted = @()
+        Mock Invoke-VnaSessionApi { $script:posted += (ConvertTo-VnaCanonical $Body); if ($script:posted.Count -eq 1) { throw 'lost ack' } }
+        { Sync-VnaReceipts 'http://test' 'token' } | Should Throw 'lost ack'
+        Sync-VnaReceipts 'http://test' 'token'
+        $script:posted.Count | Should Be 2
+        $script:posted[0] | Should Be $script:posted[1]
+        (Get-VnaJournal $script:command).acknowledged | Should Be $true
+        (Split-Path -Leaf (Split-Path -Parent (Get-VnaCommandPath $script:command))) | Should Be 'acknowledged'
+    }
+    It 'executing после перезапуска становится uncertain' {
+        $entry = Get-VnaJournal $script:command; $entry.state = 'executing'; Write-VnaJson (Get-VnaCommandPath $script:command) $entry
+        $resumed = Get-VnaJournal $script:command
+        $resumed.state | Should Be 'uncertain'
+        $resumed.payload.error | Should Match 'неизвестен'
+        (Test-Path (Join-Path (Get-VnaControlRoot) 'quarantine.json')) | Should Be $true
+    }
+    It 'тот же id с другим аргументом отклоняется' {
+        [void](Get-VnaJournal $script:command); $script:command.op = 'abort'
+        { Get-VnaJournal $script:command } | Should Throw 'содержимое повторной команды'
+    }
+    It 'watchdog убивает и дожидается процесса до uncertain' {
+        $entry = Get-VnaJournal $script:command; $entry.state = 'executing'; Write-VnaJson (Get-VnaCommandPath $script:command) $entry
+        $process = [pscustomobject]@{ HasExited = $false; Killed = $false; Waited = $false; Disposed = $false }
+        $process | Add-Member ScriptMethod Kill { $this.Killed = $true; $this.HasExited = $true }
+        $process | Add-Member ScriptMethod WaitForExit { param($timeout) $this.Waited = $true; return $true }
+        $process | Add-Member ScriptMethod Dispose { $this.Disposed = $true }
+        Stop-VnaWorker @{ process = $process; command = $script:command } 'ВАЦ: watchdog, результат неизвестен'
+        $process.Killed | Should Be $true
+        $process.Waited | Should Be $true
+        (Get-VnaJournal $script:command).state | Should Be 'uncertain'
+    }
+    It 'неостановленный worker запрещает дальнейшее восстановление' {
+        $process = [pscustomobject]@{ HasExited = $false }
+        $process | Add-Member ScriptMethod Kill {}
+        $process | Add-Member ScriptMethod WaitForExit { param($timeout) return $false }
+        $script:VnaWorker = @{ process = $process; command = $script:command }
+        { Stop-VnaWorker $script:VnaWorker 'timeout' } | Should Throw 'восстановление запрещено'
+        ($null -ne $script:VnaWorker) | Should Be $true
+    }
+    It 'готовая квитанция не затирается отменой в гонке завершения' {
+        $entry = Get-VnaJournal $script:command; $entry.state = 'completed'; $entry.payload = New-VnaReceipt $script:command @{ serial = '26030095' }
+        Write-VnaJson (Get-VnaCommandPath $script:command) $entry
+        $process = [pscustomobject]@{ HasExited = $true }; $process | Add-Member ScriptMethod Dispose {}
+        Stop-VnaWorker @{ process = $process; command = $script:command } 'cancelled'
+        (Get-VnaJournal $script:command).state | Should Be 'completed'
+    }
+    It 'активная команда продолжает опрос без повторного запуска worker' {
+        $script:VnaControlInitialized = $true
+        $script:VnaWorker = @{ command = $script:command }
+        Mock Get-VnaObservation { @{ ready = $true; serial = '26030095' } }
+        Mock Get-MachineId { 'pc-1' }
+        Mock Invoke-ErpApi { @{ job = $script:command; poll_after_ms = 500 } }
+        Mock Start-VnaWorker { throw 'must not start twice' }
+        (Invoke-ScanPollOnce 'http://test' 'token') | Should Be 'active'
+        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Body.observed_vna_serial -eq '26030095' -and $Body.kinds -contains 'vna_control' }
+        Assert-MockCalled Start-VnaWorker -Times 0 -Exactly -Scope It
+    }
+    It 'обновление откладывается пока прибор принадлежит сессии' {
+        $script:VnaWorker = @{ command = $script:command }
+        Mock Invoke-WebRequest { throw 'must not download during session' }
+        (Invoke-AgentUpdate 'http://test' @{ version = '2.9.0'; sha256 = ('a' * 64) } -AgentPath (Join-Path $TestDrive 'agent.ps1') -NoRestart) | Should Be $false
+        Assert-MockCalled Invoke-WebRequest -Times 0 -Exactly -Scope It
+    }
+    It 'фоновая проверка прибора не мешает самообновлению' {
+        $script:VnaWorker = @{ command = $null }
+        Mock Stop-VnaWorker { $script:VnaWorker = $null }
+        Mock Invoke-WebRequest { throw 'download reached' }
+        [void](Invoke-AgentUpdate 'http://test' @{ version = '2.9.0'; sha256 = ('a' * 64); path = '/agent.ps1' } -AgentPath (Join-Path $TestDrive 'agent.ps1') -NoRestart)
+        Assert-MockCalled Stop-VnaWorker -Times 1 -Exactly -Scope It
+        Assert-MockCalled Invoke-WebRequest -Times 1 -Exactly -Scope It
+    }
+    It 'неожиданный скан получает ошибку занятости и не блокирует контроль' {
+        $script:VnaControlInitialized = $true; $script:VnaWorker = @{ command = $script:command }
+        Mock Get-VnaObservation { @{ ready = $true; serial = '26030095' } }
+        Mock Get-MachineId { 'pc-1' }
+        Mock Invoke-ErpApi {
+            if ($Url -like '*/claim') { return @{ job = @{ id = 'scan-1'; kind = 'scan' } } }
+        }
+        Mock Invoke-ScannerScan { throw 'must never scan' }
+        (Invoke-ScanPollOnce 'http://test' 'token') | Should Be 'error'
+        Assert-MockCalled Invoke-ScannerScan -Times 0 -Exactly -Scope It
+        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Url -like '*/jobs/scan-1/result' -and $Body.error -like '*занят*' }
+    }
+    It 'worker повторной завершённой команды не открывает COM' {
+        $entry = Get-VnaJournal $script:command; $entry.state = 'completed'; $entry.payload = New-VnaReceipt $script:command @{ serial = '26030095' }
+        Write-VnaJson (Get-VnaCommandPath $script:command) $entry
+        $requestPath = Join-Path (Get-VnaControlRoot) 'worker-request.json'; Write-VnaJson $requestPath @{ command = $script:command }
+        Invoke-VnaWorker $requestPath
+        Assert-MockCalled Get-VnaApplication -Times 0 -Exactly -Scope It
+    }
+    It 'worker сохраняет executing до COM и готовую квитанцию до ответа серверу' {
+        $script:command.instrument_serial = 'TEST-ONLY'
+        Mock Test-VnaNormalToken { $true }; Mock Test-VnaRegistered { $true }
+        Mock Get-Process { [pscustomobject]@{ ProcessName = 'S2VNA' } }
+        Mock Get-VnaApplication { [pscustomobject]@{ Ready = $true; Name = 'Planar, S50180, TEST-ONLY, 26.2' } }
+        Mock Release-VnaApplication {}
+        Mock New-VnaDeviceMutex {
+            $mutex = [pscustomobject]@{}
+            $mutex | Add-Member ScriptMethod WaitOne { param($timeout) return $true }
+            $mutex | Add-Member ScriptMethod ReleaseMutex {}
+            $mutex | Add-Member ScriptMethod Dispose {}
+            return $mutex
+        }
+        Mock Invoke-VnaSessionApi { New-ControlStatus $script:command }
+        Mock Invoke-S2Command {
+            (Read-VnaJson (Get-VnaCommandPath $Command)).state | Should Be 'executing'
+            return @{ serial = 'TEST-ONLY'; ready = $true }
+        }
+        $requestPath = Join-Path (Get-VnaControlRoot) 'worker-request.json'
+        Mock ConvertTo-SecureString {
+            $secret = New-Object Security.SecureString
+            foreach ($character in 'test-token'.ToCharArray()) { $secret.AppendChar($character) }
+            return $secret
+        }
+        $protected = 'mock-dpapi-test-token'
+        Write-VnaJson $requestPath @{ command = $script:command; base = 'http://test'; token_protected = $protected }
+        Invoke-VnaWorker $requestPath
+        $entry = Read-VnaJson (Get-VnaCommandPath $script:command)
+        $entry.state | Should Be 'completed'
+        $entry.payload.result.serial | Should Be 'TEST-ONLY'
+        Assert-MockCalled Invoke-S2Command -Times 1 -Exactly -Scope It
+    }
+    It 'манифест объявляет только ACM, даже если содержит SOLT' {
+        Mock Get-VnaManifest { @{ instrument_serial = '26030095'; ordinary_state_verified = $true; kits = @(
+            @{ method = 'acm'; registry_fingerprint = ('a' * 64); definition = @{ serial = '26140008' } }, @{ method = 'solt2' }) } }
+        $capability = Get-VnaControlCapability @{ ready = $true; serial = '26030095' }
+        $capability.version | Should Be 1
+        ($capability.methods -join ',') | Should Be 'acm'
+    }
+    It 'без манифеста методы не объявляются' {
+        Mock Get-VnaManifest { $null }
+        @((Get-VnaControlCapability @{ ready = $true; serial = '26030095' }).methods).Count | Should Be 0
+    }
+    It 'чужой прибор не получает ACM capability' {
+        Mock Get-VnaManifest { @{ instrument_serial = 'other'; ordinary_state_verified = $true } }
+        @((Get-VnaControlCapability @{ ready = $true; serial = '26030095' }).methods).Count | Should Be 0
+    }
+    It 'неготовый прибор не получает control capability' {
+        (Get-VnaControlCapability @{ ready = $false; serial = '26030095' }) | Should Be $null
+    }
+    It 'heartbeat объявляет протокол и методы без COM в основном цикле' {
+        $script:VnaControlInitialized = $true
+        Mock Get-VnaObservation { @{ ready = $true; serial = '26030095'; name = 'Planar, S50180, 26030095, 26.2' } }
+        Mock Get-VnaManifest { @{ instrument_serial = '26030095'; ordinary_state_verified = $true; kits = @(
+            @{ method = 'acm'; registry_fingerprint = ('a' * 64); definition = @{ serial = '26140008' } }) } }
+        Mock Get-AgentScanners { @() }; Mock Get-LanIp { '' }; Mock Get-MachineId { 'pc-1' }; Mock Test-ArinstInstalled { $false }
+        Mock Invoke-ErpApi { @{} }
+        Send-Heartbeat 'http://test' 'token'
+        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
+            $Body.version -eq '2.8.0' -and $Body.vna_control.version -eq 1 -and ($Body.vna_control.methods -join ',') -eq 'acm'
+        }
+        Assert-MockCalled Get-VnaApplication -Times 0 -Exactly -Scope It
+    }
+}
