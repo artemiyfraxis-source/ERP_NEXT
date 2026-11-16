@@ -1,0 +1,53 @@
+Артикул,Поле,Колонка,Было,Стало,Источник,Цитата
+НШВ 16-12,mm2From,От мм2,,16,https://kvt.su/prod/end-sleeves/nshv/,16
+НШВ 16-12,mm2To,До мм2,,16,https://kvt.su/prod/end-sleeves/nshv/,16
+НШВ 25-16,mm2From,От мм2,,25,https://kvt.su/prod/end-sleeves/nshv/,25
+НШВ 25-16,mm2To,До мм2,,25,https://kvt.su/prod/end-sleeves/nshv/,25
+НШВИ 0.25-8,mm2From,От мм2,"0,2","0,25",https://kvt.su/prod/end-sleeves/nshvi/,0.25
+НШВИ 0.25-8,mm2To,До мм2,"0,2","0,25",https://kvt.su/prod/end-sleeves/nshvi/,0.25
+НШВИ 1.0-8,mm2From,От мм2,"0,75",1,https://kvt.su/prod/end-sleeves/nshvi/,1.0
+НШВИ 1.0-8,mm2To,До мм2,"0,75",1,https://kvt.su/prod/end-sleeves/nshvi/,1.0
+НШВИ 1.0-12,mm2From,От мм2,"0,75",1,https://kvt.su/prod/end-sleeves/nshvi/,1.0
+НШВИ 1.0-12,mm2To,До мм2,"0,75",1,https://kvt.su/prod/end-sleeves/nshvi/,1.0
+ПМ 16-6,mm2From,От мм2,,16,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=2,16
+ПМ 16-6,mm2To,До мм2,,16,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=2,16
+ПМ 16-8,mm2From,От мм2,,16,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=2,16
+ПМ 16-8,mm2To,До мм2,,16,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=2,16
+ПМ 16-10,mm2From,От мм2,,16,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=2,16
+ПМ 16-10,mm2To,До мм2,,16,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=2,16
+ПМ 25-8,mm2From,От мм2,,25,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=2,25
+ПМ 25-8,mm2To,До мм2,,25,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=2,25
+ПМ 25-10,mm2From,От мм2,,25,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=3,25
+ПМ 25-10,mm2To,До мм2,,25,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=3,25
+ПМ 35-8,mm2From,От мм2,,35,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=3,35
+ПМ 35-8,mm2To,До мм2,,35,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=3,35
+ПМ 35-10,mm2From,От мм2,,35,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=3,35
+ПМ 35-10,mm2To,До мм2,,35,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=3,35
+ПМ 50-8,mm2From,От мм2,,50,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=3,50
+ПМ 50-8,mm2To,До мм2,,50,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=3,50
+ПМ 50-10,mm2From,От мм2,,50,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=3,50
+ПМ 50-10,mm2To,До мм2,,50,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=3,50
+ПМ 70-10,mm2From,От мм2,,70,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=3,70
+ПМ 70-10,mm2To,До мм2,,70,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=3,70
+ПМ 95-10,mm2From,От мм2,,95,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=3,95
+ПМ 95-10,mm2To,До мм2,,95,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=3,95
+ПМ 120-10,mm2From,От мм2,,120,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=3,120
+ПМ 120-10,mm2To,До мм2,,120,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=3,120
+ПМ 150-12,mm2From,От мм2,,150,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=3,150
+ПМ 150-12,mm2To,До мм2,,150,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=3,150
+ПМ 185-12,mm2From,От мм2,,185,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=3,185
+ПМ 185-12,mm2To,До мм2,,185,https://kvt.nt-rt.ru/images/manuals/pm.pdf#page=3,185
+РПИ-М 2.5 (4.8),mm2From,От мм2,"2,5","1,5",https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=14,1.5–2.5
+РПИ-М 2.5 (4.8),mm2To,До мм2,4,"2,5",https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=14,1.5–2.5
+РПИ-М 2.5 (6.3),mm2From,От мм2,"2,5","1,5",https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=14,1.5–2.5
+РПИ-М 2.5 (6.3),mm2To,До мм2,4,"2,5",https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=14,1.5–2.5
+"РПИ-М(н) 2,5-(6,3)",mm2From,От мм2,"2,5","1,5",https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=18,1.5–2.5
+"РПИ-М(н) 2,5-(6,3)",mm2To,До мм2,4,"2,5",https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=18,1.5–2.5
+FLVDDF1.25-187A-5,mm2From,От мм2,"0,35","0,25",https://www.jst.co.uk/downloads/series/eQUICK1_%2823-06-08%29.pdf,0.25 to 1.65
+FLVDDF1.25-187A-5,mm2To,До мм2,"1,5","1,65",https://www.jst.co.uk/downloads/series/eQUICK1_%2823-06-08%29.pdf,0.25 to 1.65
+FLVDDF1.25-187A-8,mm2From,От мм2,"0,35","0,25",https://www.jst.co.uk/downloads/series/eQUICK1_%2823-06-08%29.pdf,0.25 to 1.65
+FLVDDF1.25-187A-8,mm2To,До мм2,"1,5","1,65",https://www.jst.co.uk/downloads/series/eQUICK1_%2823-06-08%29.pdf,0.25 to 1.65
+FLVDDF1.25-250A,mm2From,От мм2,"0,35","0,25",https://www.jst.co.uk/downloads/series/eQUICK1_%2823-06-08%29.pdf,0.25 to 1.65
+FLVDDF1.25-250A,mm2To,До мм2,"1,5","1,65",https://www.jst.co.uk/downloads/series/eQUICK1_%2823-06-08%29.pdf,0.25 to 1.65
+60294-1,mm2From,От мм2,"0,35","0,32",https://www.te.com/en/product-60294-1.html,.32 – .82
+60294-1,mm2To,До мм2,"0,75","0,82",https://www.te.com/en/product-60294-1.html,.32 – .82
