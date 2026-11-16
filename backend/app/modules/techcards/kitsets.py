@@ -11,11 +11,11 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal, InvalidOperation
 import re
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from app.modules.requests.domain import unit_for_type
+from app.modules.requests.domain import normalize_unit, unit_for_type
 
 from .etk_parts import kit_article
 from .harness.schema import HARNESS_CONTENT_TYPE, HARNESS_UNLINKED_CONTENT_TYPE
@@ -120,12 +120,12 @@ class KitComponent:
 
     @property
     def unit(self) -> str:
-        """шт / м по типу — как в импорте из расчёта (`unit_for_type`)."""
-        return unit_for_type(self.type)
+        """Consumption unit, including named metre materials with a generic calc type."""
+        return unit_for_type(self.type, f"{self.article} {self.name}")
 
-    def batch(self, run: Decimal) -> Decimal:
+    def batch(self, run: Decimal, *, unit: str | None = None) -> Decimal:
         """«На партию»: расход × тираж, без запаса на брак, пока `SCRAP_APPLIED` выключен."""
-        return batch_quantity(self.per_unit, run, self.scrap_pct if SCRAP_APPLIED else Decimal("0"), self.unit)
+        return batch_quantity(self.per_unit, run, self.scrap_pct if SCRAP_APPLIED else Decimal("0"), unit or self.unit)
 
 
 @dataclass(frozen=True)
@@ -455,6 +455,7 @@ class SupplyRow:
     # What the row still brings to the project (a request not yet in procurement, the live procurement line not yet
     # accepted): «В закупке» of the position. Accepted goods are counted on the shelf or in the kit instead.
     open_quantity: Decimal = Decimal("0")
+    unit: str = ""
 
 
 @dataclass(frozen=True)
@@ -468,6 +469,7 @@ class SupplyStock:
     quantity: Decimal
     off_book: bool = False
     issued: Decimal = Decimal("0")  # of `quantity`, issued (less what came back good); the rest awaits handout
+    unit: str = ""
 
 
 @dataclass(frozen=True)
@@ -480,7 +482,7 @@ class SupplyLine:
     stage: str
     received: bool
     rows: tuple[SupplyRow, ...] = field(default_factory=tuple)
-    item_type: str = ""  # of the first spec line with this article: the unit follows it (шт / м)
+    item_type: str = ""  # of the first spec line with this article
     ordered: Decimal = Decimal("0")  # «В закупке»: open requests and procurement lines of the project
     free: Decimal = Decimal("0")  # «Свободно»: free stock (with the project's own reserves) under this item
     kitted: Decimal = Decimal("0")  # reserved, issued or marked off-book in the project's kits
@@ -493,6 +495,10 @@ class SupplyLine:
     # and the tooltip that says so (or why no name was found).
     name_source: str = ""
     name_hint: str = ""
+    unit: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "unit", unit_for_type(self.item_type, f"{self.article} {self.name}", unit=self.unit))
 
     @property
     def short(self) -> Decimal:
@@ -577,10 +583,12 @@ def _article_key(value: object) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip().casefold()
 
 
-def _supply_match(lines: dict[str, dict[str, Any]], article: object, name: object) -> str | None:
+def _supply_match(lines: dict[str, dict[str, Any]], article: object, name: object, unit: str = "") -> str | None:
     """The spec position an item belongs to. With an article: the КД article, then the article actually used
     (`kit_article`) — a description is never taken for an article. Without one (a manual request): its name
     against the position's article or name."""
+    if unit:
+        lines = {key: line for key, line in lines.items() if line["unit"] == normalize_unit(unit)}
     art = _article_key(article)
     if art:
         if art in lines:
@@ -597,6 +605,7 @@ def _supply_match(lines: dict[str, dict[str, Any]], article: object, name: objec
 def supply_lines(
     kitset: Kitset, rows: Iterable[SupplyRow], stock: Iterable[SupplyStock] = (),
     kitted: Iterable[SupplyStock] = (), off_book: Iterable[SupplyStock] = (), absent: Iterable[SupplyStock] = (),
+    *, reference_units: Mapping[str, str] | None = None,
 ) -> tuple[SupplyLine, ...]:
     """Positions of the spec against purchasing, keyed by the КД article (the one key calc and purchase share).
 
@@ -616,10 +625,17 @@ def supply_lines(
             key = _article_key(component.article)
             if not key:
                 continue
+            unit = component_unit(component, reference_units)
             line = lines.get(key)
+            if line is not None and line["unit"] != unit:
+                # Same article in different units in different КБ: never summed — its own position per unit, so one
+                # inconsistent row does not take the whole supply screen down.
+                key = f"{key}\x1f{unit}"
+                line = lines.get(key)
             if line is None:
                 line = lines[key] = {
                     "article": component.article, "name": component.name, "type": component.type, "kbs": [],
+                    "unit": unit,
                     "link": component.link.strip(),
                     "need": Decimal("0"), "grn": "", "rows": (), "used": set(), "names": set(),
                     "free": Decimal("0"), "kitted": Decimal("0"), "off_book": Decimal("0"),
@@ -634,16 +650,16 @@ def supply_lines(
                 line["link"] = component.link.strip()
             if assembly.index and assembly.index not in line["kbs"]:
                 line["kbs"].append(assembly.index)
-            line["need"] = (line["need"] + component.batch(assembly.run)).quantize(Decimal("0.01"))
+            line["need"] = (line["need"] + component.batch(assembly.run, unit=unit)).quantize(Decimal("0.01"))
             if component.lot and component.lot.grn and not line["grn"]:
                 line["grn"] = component.lot.grn
     for row in rows:
-        key = _supply_match(lines, row.article, row.name)
+        key = _supply_match(lines, row.article, row.name, row.unit)
         if key is not None:
             lines[key]["rows"] += (row,)
     for items, field_name in ((stock, "free"), (kitted, "kitted"), (off_book, "off_book"), (absent, "absent")):
         for item in items:
-            key = _supply_match(lines, item.article, item.name)
+            key = _supply_match(lines, item.article, item.name, item.unit)
             if key is not None and item.quantity > 0:
                 lines[key][field_name] += item.quantity
                 if field_name == "kitted" and item.off_book:
@@ -664,7 +680,7 @@ def supply_lines(
         result.append(SupplyLine(
             article=line["article"], name=line["name"], kbs=tuple(line["kbs"]), need=line["need"],
             grn=line["grn"], stage=stage, received=any(row.where == "Приёмка" and row.received for row in found),
-            rows=found, item_type=line["type"],
+            rows=found, item_type=line["type"], unit=line["unit"],
             ordered=sum((row.open_quantity for row in found), Decimal("0")),
             free=max(line["free"] - line["absent"], Decimal("0")), kitted=line["kitted"], issued=line["issued"],
             off_book=max(line["off_book"] - line["kitted_off_book"], Decimal("0")), link=line["link"],
@@ -681,6 +697,7 @@ class KitIssueItem:
     article: str
     need: Decimal
     lot: KitLot | None
+    unit: str
 
 
 @dataclass(frozen=True)
@@ -691,7 +708,16 @@ class KitIssueTask:
     waiting: tuple[str, ...]
 
 
-def issue_tasks(kitset: Kitset, available_lots: set[tuple[str, str]]) -> tuple[KitIssueTask, ...]:
+def component_unit(component: KitComponent, reference_units: Mapping[str, str] | None = None) -> str:
+    """Reference units are keyed by normalized material article; no purchase-pack conversion."""
+    article = kit_article(component.article, component.name)["art"]
+    reference = (reference_units or {}).get(_article_key(article), "")
+    return unit_for_type(component.type, f"{component.article} {component.name}", reference_unit=reference)
+
+
+def issue_tasks(
+    kitset: Kitset, available_lots: set[tuple[str, str]], *, reference_units: Mapping[str, str] | None = None,
+) -> tuple[KitIssueTask, ...]:
     """One fulfillment request per assembly with composition (owner 01.09.2026): the kit of one КБ goes to the
     shop without waiting for the rest. Name = the purchased name, else the КД article. A line without a lot,
     or with a lot no longer on the shelf, still goes and waits for delivery — a missing balance is «ждём
@@ -703,11 +729,12 @@ def issue_tasks(kitset: Kitset, available_lots: set[tuple[str, str]]) -> tuple[K
         items, waiting = [], []
         for component in assembly.components:
             name = component.name.strip() or component.article.strip()
-            need = component.batch(assembly.run)
+            unit = component_unit(component, reference_units)
+            need = component.batch(assembly.run, unit=unit)
             if not name or need <= 0:
                 continue
             lot = component.lot
-            items.append(KitIssueItem(name=name, article=component.article.strip(), need=need, lot=lot))
+            items.append(KitIssueItem(name=name, article=component.article.strip(), need=need, lot=lot, unit=unit))
             if lot is None:
                 waiting.append(f"{name}: ГРН не выбран ({_display(need)})")
             elif (lot.grn, lot.package) not in available_lots:
