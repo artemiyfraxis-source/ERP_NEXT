@@ -40,6 +40,7 @@ export type BatchRefs = {
 
 /** Состав сборки — ответ GET /api/techcards/kitsets/{project}/bom/{index}. */
 export type BatchBom = {
+  project?: string;
   index: string;
   name: string;
   run: string;
@@ -75,6 +76,7 @@ export function generatorData(refs: Refs, bom: BatchBom): GenData {
   return {
     ...refs,
     components,
+    projectNo: bom.project || "",
     assemblyInfo: { "Индекс": bom.index || "", "Наименование": bom.name || "", "Кол-во": bom.run || "" },
     partQty: Number(bom.part_qty) || 1,
     calcOps: bom.calc_ops || [],

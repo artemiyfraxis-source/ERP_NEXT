@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { autoConfig as seededConfig, generatorData, refsFromRecords, type BatchBom, type BatchRefs } from "./tcGenBatch";
+import { autoConfig as seededConfig, generatorData, refsFromRecords, runBatch, type BatchBom, type BatchRefs } from "./tcGenBatch";
 import { fakraEndsFromBom_, initState as seededState, makeGen, coaxCutLength, restoreCoaxState, type GenData, type GenState } from "./tcGenLogic";
 import batchAConfigs from "./__fixtures__/fakraBatchAConfigs.json";
 import freshConfigs from "./__fixtures__/fakra1116Configs.json";
@@ -529,6 +529,20 @@ function batchAData(b: BatchBom): GenData {
 }
 
 describe("coax batch A contract", () => {
+  it("passes each batch BOM's project to the same FRX seed as the form", () => {
+    const refs = { ...REFS, templates: [...REFS.templates, ...NEW_CODES.map((code) => T(code, code))],
+      coax: REFS.coax.map((row) => ({ ...row, "L+": "25" })) };
+    const items = ["708К.", "709К."].map((project) => ({ key: project, bom: {
+      ...KB1, project, name: `${KB1.name} 4800мм`, components: KB1.components.filter((c) => c.type !== "Др"),
+    } }));
+    const results = runBatch({ refs, items }).items;
+    results.forEach((result, i) => {
+      expect(result.error).toBe("");
+      const formData = { ...generatorData(refsFromRecords(refs), items[i].bom), projectNo: items[i].bom.project };
+      expect(result.config).toEqual(seededConfig(formData).config);
+      expect((result.config?.coax as any).marks[0].text).toBe(`FRX.${i ? "709К" : "708К"}.120907/AA.{№}`);
+    });
+  });
   it.each([KB3, KB28])("$index strips both ends at cut and uses exact end recipes", (bom) => {
     const data = batchAData(bom), state = seededState(data), gen = makeGen(data, state);
     const ops = gen.getActiveOps();

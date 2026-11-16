@@ -41,7 +41,7 @@ def test_machine_strips_both_ends_and_preserves_side_ownership(fixture):
         assert "MA_AMV003" in text and "после полной разделки" in text
     else:
         assert ops[0]["fields"]["coax"]["dimensionOrder"] == "Amphenol"
-        assert "Размер 1,0 мм не считать абсолютной длиной" in text and "13,9 мм" in text
+        assert "размер 1,0 мм — участок открытого диэлектрика" in text and "13,9 ±0,2 мм" in text
     assert not any(op["type"] == "coaxStrip" for op in ops)
     route = doc["route"]
     assert [block["name"] for block in route["blocks"]][:-1] == [
