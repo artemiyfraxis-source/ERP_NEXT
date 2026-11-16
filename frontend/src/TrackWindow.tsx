@@ -3,6 +3,8 @@ import { PageWindow } from "./PageWindow";
 import { intakeApi, type DispatchShipment } from "./productionIntakeApi";
 import { Banners, readyForTrack, ShipStatus, useMutate } from "./ShipmentCard";
 import { Readiness } from "./ShipmentData";
+import { compareShipments, shipmentDateKind, shipmentDay } from "./shipmentOrder";
+import { formatDay } from "./format";
 
 /* «Трек…» (владелец 29.10.2026): трек-номер ТК кладовщик вписывает, когда у упакованной отправки есть УПД и ТК —
    раньше сервер его не примет. Одна строка на отправку КБ. */
@@ -17,12 +19,13 @@ export function TrackWindow({ title, shipments, reload, close }: {
       <header className="page-head"><h2>Трек-номер · {title}</h2><button type="button" className="secondary small" onClick={close}>Закрыть</button></header>
       <Banners error={error} notice={notice} />
       {shipments.length === 0 && <div className="empty">Упакованных отправок с доставкой ТК нет.</div>}
-      {shipments.map((shipment) => {
+      {shipments.slice().sort(compareShipments).map((shipment) => {
         const ready = readyForTrack(shipment) || Boolean(shipment.track_number);
         const gaps = shipment.missing_ship.filter((gap) => gap !== "трек-номер");
         const value = tracks[shipment.id] ?? "";
         return <div key={shipment.id} className="intake-track-row" role="group" aria-label={`Трек ${shipment.number}`}>
           <div className="intake-track-head"><strong>{shipment.number}</strong><ShipStatus status={shipment.status} />
+            <span>{formatDay(shipmentDay(shipment))} · {shipmentDateKind(shipment)}</span>
             {shipment.carrier && <span className="muted">{shipment.carrier}</span>}
             <Readiness source={shipment} gaps={shipment.missing_ship} withTrack /></div>
           <div className="intake-window-actions">
