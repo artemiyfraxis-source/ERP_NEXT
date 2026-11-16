@@ -496,9 +496,12 @@ class SupplyLine:
     name_source: str = ""
     name_hint: str = ""
     unit: str = ""
+    key: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "unit", unit_for_type(self.item_type, f"{self.article} {self.name}", unit=self.unit))
+        if not self.key:
+            object.__setattr__(self, "key", self.article)
 
     @property
     def short(self) -> Decimal:
@@ -593,13 +596,14 @@ def _supply_match(lines: dict[str, dict[str, Any]], article: object, name: objec
     if art:
         if art in lines:
             return art
-        return next((key for key, line in lines.items() if art in line["used"]), None)
+        return next((key for key, line in lines.items() if art == _article_key(line["article"]) or art in line["used"]), None)
     label = _article_key(name)
     if not label:
         return None
     if label in lines:
         return label
-    return next((key for key, line in lines.items() if label in line["names"] or label in line["used"]), None)
+    return next((key for key, line in lines.items()
+                 if label == _article_key(line["article"]) or label in line["names"] or label in line["used"]), None)
 
 
 def supply_lines(
@@ -623,7 +627,7 @@ def supply_lines(
     for assembly in kitset.assemblies:
         for component in assembly.components:
             key = _article_key(component.article)
-            if not key:
+            if not key or is_printer_label_tape(component):
                 continue
             unit = component_unit(component, reference_units)
             line = lines.get(key)
@@ -666,6 +670,9 @@ def supply_lines(
                     lines[key]["kitted_off_book"] += item.quantity
                 if field_name == "kitted":
                     lines[key]["issued"] += min(item.issued, item.quantity)
+    article_units: dict[str, set[str]] = {}
+    for line in lines.values():
+        article_units.setdefault(_article_key(line["article"]), set()).add(line["unit"])
     result = []
     for line in lines.values():
         found = line["rows"]
@@ -679,6 +686,8 @@ def supply_lines(
             stage = "со склада" if line["grn"] or line["kitted"] > 0 else "не заведено"
         result.append(SupplyLine(
             article=line["article"], name=line["name"], kbs=tuple(line["kbs"]), need=line["need"],
+            key=(f"{_article_key(line['article'])}\x1f{line['unit']}"
+                 if len(article_units[_article_key(line["article"])]) > 1 else line["article"]),
             grn=line["grn"], stage=stage, received=any(row.where == "Приёмка" and row.received for row in found),
             rows=found, item_type=line["type"], unit=line["unit"],
             ordered=sum((row.open_quantity for row in found), Decimal("0")),
@@ -715,6 +724,12 @@ def component_unit(component: KitComponent, reference_units: Mapping[str, str] |
     return unit_for_type(component.type, f"{component.article} {component.name}", reference_unit=reference)
 
 
+def is_printer_label_tape(component: KitComponent) -> bool:
+    """Same rule as tcGenMarks.coaxMarkDefaults: printer labels, not ordinary mounting tapes."""
+    text = f"{component.type} {component.article} {component.name}"
+    return bool(re.search(r"лент", text, re.I) and re.search(r"vell|vl-s641|этикет|маркиров", text, re.I))
+
+
 def issue_tasks(
     kitset: Kitset, available_lots: set[tuple[str, str]], *, reference_units: Mapping[str, str] | None = None,
 ) -> tuple[KitIssueTask, ...]:
@@ -728,6 +743,8 @@ def issue_tasks(
             continue
         items, waiting = [], []
         for component in assembly.components:
+            if is_printer_label_tape(component):
+                continue
             name = component.name.strip() or component.article.strip()
             unit = component_unit(component, reference_units)
             need = component.batch(assembly.run, unit=unit)

@@ -253,6 +253,7 @@ def load(
     # «Обновить из расчёта»: a row dropped from the calculation gives its ГРН reserve back, a new run re-counts it.
     reserve_error = reserve_flow.resync_project(
         result.project, principal.actor, now, techcards_factory(request), fulfillment_factory(request),
+        reference_units=flow.material_units(flow.reference_records(references_factory(request))),
     )
     requests, requests_error = _project_requests(payload, request, principal, result.project, now)
     return {"res": {
@@ -429,6 +430,7 @@ def save_lines(
             edits.append(edit)
         updated, count = reserve_flow.save_rows(
             project, edits, principal.actor, now, techcards_factory(request), fulfillment_factory(request),
+            reference_units=flow.material_units(flow.reference_records(references_factory(request))),
         )
         return {"project": updated.project, "updated": count}
 
@@ -448,7 +450,7 @@ def supply(
         references_factory(request),
     )
     return {"project": kitset.project, "lines": [{
-        "art": line.article, "name": line.name, "name_source": line.name_source, "name_hint": line.name_hint,
+        "key": line.key, "art": line.article, "name": line.name, "name_source": line.name_source, "name_hint": line.name_hint,
         **_state_json(supply_state(line)),
         "kbs": list(line.kbs), "need": _number(line.need),
         "unit": line.unit,
@@ -466,7 +468,7 @@ def _state_json(state) -> dict[str, str]:
 
 
 class OrderMissingPayload(BaseModel):
-    """«Заказать недостающее»: выбранные позиции (артикул КД), пусто — все, где не хватает."""
+    """Selected supply keys (article + normalized unit when ambiguous); empty means every shortage."""
 
     articles: list[str] = Field(default_factory=list, max_length=500)
     deadline: date | None = None
@@ -559,7 +561,10 @@ def issue(
         kitset, payload.deadline, principal.actor, now, factory, references_uow=references_factory(request),
     ))
     # The kits took the КБ's ГРН reserves over; what a kit did not take goes back to the lot, never held twice.
-    reserve_error = reserve_flow.resync_project(kitset.project, principal.actor, now, techcards_factory(request), factory)
+    reserve_error = reserve_flow.resync_project(
+        kitset.project, principal.actor, now, techcards_factory(request), factory,
+        reference_units=flow.material_units(flow.reference_records(references_factory(request))),
+    )
     return {
         "created": result.created, "skipped": result.skipped, "already": result.already, "message": result.message,
         "reserve_error": reserve_error,
@@ -939,6 +944,7 @@ def remove_bom_component(
     """Убрать строку, добавленную технологом (строку расчёта убирают в расчёте); её резерв ГРН снимается."""
     kitset = _run(lambda: reserve_flow.remove_row(
         project, index, payload.art, principal.actor, now, techcards_factory(request), fulfillment_factory(request),
+        reference_units=flow.material_units(flow.reference_records(references_factory(request))),
     ))
     return {"bom": _bom(request, kitset, index)}
 

@@ -136,6 +136,7 @@ from app.modules.techcards.kitset_calc import PROJECT_SHEET, SPEC_SHEET, parse_c
 from app.modules.techcards.kitsets import (
     CalcKitset,
     KitAssembly,
+    KitComponent,
     KitDocument,
     Kitset,
     KitsetNotFound,
@@ -145,6 +146,7 @@ from app.modules.techcards.kitsets import (
     SupplyStock,
     component_unit,
     issue_tasks,
+    is_printer_label_tape,
     item_id,
     project_key,
     project_number_valid,
@@ -509,7 +511,12 @@ def create_kitset_requests(
 
     composition = composition_seed(command.project, command.url, extract)
     items, skipped, source_rows = [], [], []
+    consumables = 0
     for item in extract.items:
+        if is_printer_label_tape(KitComponent(article=item.name, type=item.item_type)):
+            skipped.append(f"{item.name} — расходник маркиратора, закупка по составу не требуется")
+            consumables += 1
+            continue
         quantity = parse_calc_number(item.quantity)
         if quantity is None or quantity <= 0:
             skipped.append(item.name)
@@ -522,6 +529,8 @@ def create_kitset_requests(
         ))
         source_rows.append(item.source_row)
     if not items:
+        if consumables == len(extract.items) and consumables:
+            return KitsetRequestsResult(skipped=tuple(skipped))
         raise RequestValidationError("В листе ЗКП нет позиций с количеством")
     drafts = build_import_drafts(CalcImport(
         project=command.project, purpose=command.purpose, delivery_point=command.delivery_point,
@@ -1220,7 +1229,7 @@ ORDER_ITEM_TYPE = "Комплектующие"
 
 @dataclass(frozen=True)
 class OrderMissingCommand:
-    """«Заказать недостающее»: `articles` — the picked spec positions (КД article), empty — every position short.
+    """«Заказать недостающее»: `articles` — picked supply keys (article + unit when ambiguous), empty — all short.
     `deadline` / `delivery_point` override the project's own (its deadline, the point of its latest request)."""
 
     project: str
@@ -1298,8 +1307,13 @@ def order_missing(
             f"Номер проекта «{kitset.project}» не в формате 591К.3 — заявку к нему не привязать"
         )
     lines, requests = project_supply(kitset, requests_uow, procurement_uow, fulfillment_uow, references_uow)
-    by_key = {_supply_key(line.article): line for line in lines}
+    by_key = {_supply_key(line.key): line for line in lines}
     wanted = [_supply_key(article) for article in command.articles if _supply_key(article)]
+    # Old clients send only an article: include every unit of that article, never an arbitrary last row.
+    wanted = [key for requested in wanted for key in (
+        [requested] if requested in by_key else
+        [key for key, line in by_key.items() if _supply_key(line.article) == requested] or [requested]
+    )]
     result = OrderMissingResult()
     picked: list[SupplyLine] = []
     for key in dict.fromkeys(wanted) if wanted else by_key:
@@ -1352,7 +1366,9 @@ def order_missing(
 
 
 def _supply_key(value: object) -> str:
-    return " ".join(str(value or "").split()).casefold()
+    article, separator, unit = str(value or "").partition("\x1f")
+    key = " ".join(article.split()).casefold()
+    return f"{key}\x1f{normalize_unit(unit)}" if separator else key
 
 
 # ── Отправить на комплектацию (portalIssueFromKitset) ────────────────────

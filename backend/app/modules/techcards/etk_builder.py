@@ -731,6 +731,20 @@ def _mark_rows(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[st
     } for item in _mark_items(op) if str(item.get("text") or "").strip() or str(item.get("target") or "").strip()]
 
 
+_MARK_SERIAL_TOKEN = re.compile(r"\{№(?::[1-6])?\}")
+
+
+def _coax_serial_mark_rows(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Expose serial labels once, at printing; installation reuses the same physical labels."""
+    material = "Лента Vell VL-S641, 18 мм" if op.get("markMaterial") == "tape" else "Термотрубка"
+    return [{
+        "target": "Кабель", "text": str(mark.get("text") or ""), "material": material,
+        "place": "середина кабеля" if mark.get("place") == "middle" else "у разъёма " + (
+            "А" if mark.get("place") == "A" else "В"),
+        "qty": "1", "batch": _format(_part_quantity(config)),
+    } for mark in _mark_items(op)]
+
+
 def _components(
     op: Mapping[str, Any], config: Mapping[str, Any], code: str, *, manual: bool = False,
 ) -> list[dict[str, str]]:
@@ -1659,6 +1673,10 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
                        "lPlusB": _coax(config).get("lPlusB"), "cutTolerance": "0…+5 мм", "drawingTolerance": "0…+10 мм"})
     if op.get("marks") and operation_type.startswith("coax"):
         fields["coaxMarks"] = deepcopy(op["marks"])
+        if operation_type == "coaxCutTut" and any(
+            _MARK_SERIAL_TOKEN.search(str(mark.get("text") or "")) for mark in _mark_items(op)
+        ):
+            fields["marks"] = _coax_serial_mark_rows(op, config)
     if operation_type == "coaxInsSleeve" and _coax(config).get("fakraCutStrip"):
         end = _coax_end(op, config)
         if end.get("kind") in {"straight", "angled"}:
@@ -2140,7 +2158,9 @@ def _coax_recipe_steps(op: Mapping[str, Any], config: Mapping[str, Any]) -> list
             continue
         place = "середина кабеля" if mark.get("place") == "middle" else "от разъёма " + ("А" if mark.get("place") == "A" else "В")
         action = "Напечатать" if op.get("type") == "coaxCutTut" else "Наклеить"
-        steps.append(f"{action} метку «{mark.get('text', '')}»: {place}, не ближе {_format(mark.get('minMm', 100))} мм от разъёма.")
+        label = ("по листу надписей задания" if _MARK_SERIAL_TOKEN.search(str(mark.get("text") or ""))
+                 else f"«{mark.get('text', '')}»")
+        steps.append(f"{action} метку {label}: {place}, не ближе {_format(mark.get('minMm', 100))} мм от разъёма.")
     if op.get("markPhase") == "install" and coax.get("markProtect"):
         steps.append("Сдвинуть прозрачную ТУТ поверх наклеенных этикеток; усадить в заключительной операции.")
     color = op.get("connColor")

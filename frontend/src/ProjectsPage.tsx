@@ -894,6 +894,8 @@ type Maybe = { items: FulfillmentCandidate[]; more: number };
 function SupplyTab({ project, canOrder, canSeeStock, deadline }: {
   project: string; canOrder: boolean; canSeeStock: boolean; deadline?: string | null;
 }) {
+  const lineKey = (line: SupplyLine) => line.key || line.art;
+  const choiceLabel = (line: SupplyLine) => lineKey(line) !== line.art ? `${line.art} (${line.unit})` : line.art;
   const [lines, setLines] = useState<SupplyLine[] | null>(null);
   const [error, setError] = useState("");
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -907,7 +909,7 @@ function SupplyTab({ project, canOrder, canSeeStock, deadline }: {
   }
   useEffect(() => { void load(); }, [project]);  // eslint-disable-line react-hooks/exhaustive-deps
   const wanted = (lines ?? []).filter((line) => Number(line.short) > 0);
-  const wantedKey = wanted.map((line) => `${line.art}\u0000${line.short}`).join("\u0001");
+  const wantedKey = wanted.map((line) => `${lineKey(line)}\u0000${line.short}`).join("\u0001");
   useEffect(() => {
     if (!canSeeStock || !wanted.length) { setMaybe(null); return; }
     let alive = true;
@@ -922,7 +924,7 @@ function SupplyTab({ project, canOrder, canSeeStock, deadline }: {
   if (!lines.length) return <div className="empty">В спецификации проекта нет позиций с артикулом.</div>;
   const isShort = (line: SupplyLine) => Number(line.short) > 0;
   const shortLines = lines.filter(isShort);
-  const chosen = shortLines.filter((line) => picked.has(line.art));
+  const chosen = shortLines.filter((line) => picked.has(lineKey(line)));
   const count = chosen.length || shortLines.length;
   const zeroDash = (value: string) => Number(value) ? value : "—";
   // «Готово · без ГРН»: партию к строке привязывает её закупщик — подсказка говорит, где.
@@ -950,7 +952,7 @@ function SupplyTab({ project, canOrder, canSeeStock, deadline }: {
     setOrdering(true);
     setResult(null);
     try {
-      const answer = await supplyApi.orderMissing(project, { articles: chosen.map((line) => line.art), deadline: until || undefined });
+      const answer = await supplyApi.orderMissing(project, { articles: chosen.map(lineKey), deadline: until || undefined });
       setResult({ text: answer.message, bad: false });
       setPicked(new Set());
       await load();
@@ -962,11 +964,11 @@ function SupplyTab({ project, canOrder, canSeeStock, deadline }: {
   }
 
   const columns: DataColumn<SupplyLine>[] = [
-    ...(canOrder ? [{ key: "pick", title: "Заказ", width: 56, value: (line: SupplyLine) => (picked.has(line.art) ? 1 : 0),
+    ...(canOrder ? [{ key: "pick", title: "Заказ", width: 56, value: (line: SupplyLine) => (picked.has(lineKey(line)) ? 1 : 0),
       render: (line: SupplyLine) => isShort(line)
-        ? <label className="sel-hit"><input type="checkbox" aria-label={`Заказать ${line.art}`} checked={picked.has(line.art)} onChange={(event) => toggle(line.art, event.target.checked)} /></label>
+        ? <label className="sel-hit"><input type="checkbox" aria-label={`Заказать ${choiceLabel(line)}`} checked={picked.has(lineKey(line))} onChange={(event) => toggle(lineKey(line), event.target.checked)} /></label>
         : null }] : []),
-    { key: "art", title: "Артикул КД", width: 170, wrap: true, value: (line) => line.art, render: (line) => <strong>{line.art}</strong> },
+    { key: "art", title: "Артикул КД", width: 170, wrap: true, value: (line) => line.art, render: (line) => <strong>{choiceLabel(line)}</strong> },
     // Источник имени — подсказкой (справочник / склад / спецификация / сайт); без имени — «—» и почему.
     { key: "name", title: "Наименование", width: 260, value: (line) => line.name, wrap: true,
       render: (line) => line.name
@@ -1020,7 +1022,7 @@ function SupplyTab({ project, canOrder, canSeeStock, deadline }: {
       rows={lines}
       columns={columns}
       rowClassName={(line) => { const toneName = candTone(line); return toneName ? `cand-row cand-${toneName}` : ""; }}
-      rowKey={(line) => line.art}
+      rowKey={lineKey}
       storageKey="kit-supply"
       label="Снабжение проекта"
       exportName={`Снабжение ${project}`}
