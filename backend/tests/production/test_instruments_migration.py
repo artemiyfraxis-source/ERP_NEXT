@@ -107,8 +107,8 @@ def test_upgrade_refuses_invalid_old_data_without_rewriting_it(tmp_path, monkeyp
 V2_PARENT = "0174_supplier_item_rules"
 V2 = "0175_instrument_kinds_files"
 
-SHARED_PARENT = "0183_material_catalogs_cutover"
-SHARED = "0184_shared_accessories"
+SHARED_PARENT = "0184_shipping_item_addressees"
+SHARED = "0185_shared_accessories"
 
 
 def _shared_snapshot(path):
