@@ -109,6 +109,7 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
   const [removedUrl, setRemovedUrl] = useState("");
   const fileShown = Boolean(shipment.upd_url) && shipment.upd_url !== removedUrl;
   const [note, setNote] = useState("");
+  const [deliveryNotice, setDeliveryNotice] = useState("");
   const [applying, setApplying] = useState(false);
   const [replacing, setReplacing] = useState<{ answer: WarehouseReceiptScan; typed: string } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -203,6 +204,8 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
     {canEdit && scan.agentDialogs()}
     <form className="panel ship-data" onSubmit={(event) => { event.preventDefault(); if (canEdit) void save(); }}>
       <h2>Данные отправки {shipment.number}</h2>
+      {shipment.delivery_snapshot_at && <p className="ship-data-sub">Доставка закреплена за этой отправкой</p>}
+      {shipment.delivery_snapshot_at && canEditHead && <p className="ship-data-sub">После изменения доставки перепечатайте этикетки и документы.</p>}
       <p className="ship-data-sub">{shipment.customer || shipment.receiver}{shipment.lines.length ? ` · ${[...new Set(shipment.lines.map((line) => line.project))].join(", ")}` : ""}
         {gaps.length > 0 && <span className="tone-warn"> · не хватает: {gaps.join(", ")}</span>}</p>
       {deciding && <div className="ship-block"><h3>Упаковка</h3>
@@ -258,7 +261,19 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
       {shipment.no_upd_approved_by && <p className="ship-no-upd">без УПД — разрешил {shipment.no_upd_approved_by}{shipment.no_upd_approved_at ? `, ${formatDate(String(shipment.no_upd_approved_at).slice(0, 10))}` : ""}</p>}
       </div>
       {error && <div className="error-banner" role="alert">{error}</div>}
+      {deliveryNotice && <p className="ship-data-sub" role="status">{deliveryNotice}</p>}
       <div className="ship-actions"><span className="ship-actions-end">
+        {canEditHead && <button type="button" className="secondary" disabled={saving || reading} onClick={async () => {
+          setSaving(true); setError(""); setDeliveryNotice("");
+          try {
+            const { shipment: refreshed } = await shippingApi.head(shipment.id, { version: shipment.version, refresh_delivery: true });
+            setShipment(refreshed); setReceiver(refreshed.receiver); setPhone(refreshed.phone); setPoint(refreshed.shipping_point);
+            setDelivery(refreshed.terms ?? ""); setCarrier(isPickup(refreshed.carrier) ? "" : refreshed.carrier); setUpdType(refreshed.upd_type ?? "");
+            setDeliveryNotice("Доставка обновлена. Перепечатайте этикетки и документы.");
+            await onSaved();
+          } catch (reason) { setError(failureText(reason, "Не удалось обновить доставку КБ")); }
+          finally { setSaving(false); }
+        }}>Взять данные КБ</button>}
         {grantedEdit && canCorrectHistory && historical && <button type="button" className="secondary" disabled={saving || reading} onClick={() => setCorrecting(true)}>Исправить историю</button>}
         {shipment.pl_number && canPrint && <button type="button" className="secondary" onClick={() => void printPl()}>Печать ПЛ · {shipment.pl_number}</button>}
         <button type="button" className="secondary" onClick={close}>Отмена</button>

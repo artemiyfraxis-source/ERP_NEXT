@@ -72,6 +72,80 @@ const save = () => fireEvent.click(screen.getByRole("button", { name: "Сохр�
 const writes = (requests: Request[]) => requests.filter((request) => request.method !== "GET");
 afterEach(() => { vi.restoreAllMocks(); localStorage.clear(); });
 
+const shared: ProductionInstrument = { ...accessory, id: "shared", inventory_number: "СИ.004", name: "Общий переходник", parent_id: null };
+
+it("marks shared accessories in the flat list without confusing missing parents with shared ones", () => {
+  setup([instrument, accessory, shared, { ...shared, id: "orphan", inventory_number: "СИ.007", parent_id: "missing" }]);
+  const row = screen.getByText(shared.inventory_number, { selector: "td.key .instrument-cell" }).closest("tr")!;
+  expect(within(row).getByText("общая")).toHaveAttribute("title", "общая");
+  const orphan = screen.getByText("СИ.007", { selector: "td.key .instrument-cell" }).closest("tr")!;
+  expect(within(orphan).queryByText("общая")).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Найти средство измерений"), { target: { value: "общая" } });
+  expect(inventoryOrder()).toEqual([shared.inventory_number]);
+});
+
+it("puts shared accessories in a separate searchable tree group and retains linked children", () => {
+  setup([shared, accessory, instrument, kit]);
+  fireEvent.click(screen.getByRole("button", { name: "По приборам" }));
+  const group = screen.getByRole("region", { name: "Общие принадлежности" });
+  expect(within(group).getByText(shared.inventory_number)).toBeInTheDocument();
+  expect(within(group).queryByText(instrument.inventory_number)).not.toBeInTheDocument();
+  const mainTable = screen.getByText(instrument.inventory_number, { selector: "td.key .instrument-cell" }).closest("table")!;
+  expect(within(mainTable).getByText(accessory.inventory_number)).toBeInTheDocument();
+  expect(within(mainTable).queryByText(shared.inventory_number)).not.toBeInTheDocument();
+  fireEvent.click(within(mainTable).getByRole("button", { name: "Наименование" }));
+  expect(within(mainTable).getAllByRole("row").slice(1).map(row => within(row).getAllByRole("cell")[0].textContent))
+    .toEqual([instrument.inventory_number, kit.inventory_number, accessory.inventory_number]);
+  fireEvent.change(screen.getByLabelText("Найти общую принадлежность"), { target: { value: "нет такого" } });
+  expect(within(group).getByText("Общие принадлежности не найдены.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Списком" }));
+  expect(screen.queryByRole("heading", { name: "Общие принадлежности" })).not.toBeInTheDocument();
+  expect(screen.getByText("общая")).toBeInTheDocument();
+});
+
+it("creates a shared accessory directly without any measuring instruments", async () => {
+  const { requests } = setup([]);
+  fireEvent.click(screen.getByRole("button", { name: "+ Общая принадлежность" }));
+  await waitFor(() => expect(screen.getByLabelText("Инв. №")).toHaveValue("СИ.006"));
+  expect(screen.getByLabelText("В составе прибора")).not.toBeRequired();
+  expect(screen.getByRole("option", { name: "Без прибора (общая)" })).toBeInTheDocument();
+  expect(screen.queryByLabelText("Поверка до")).not.toBeInTheDocument();
+  fill("Наименование", "Общий переходник"); save();
+  await waitFor(() => expect(writes(requests)).toHaveLength(1));
+  expect(writes(requests)[0]).toMatchObject({ method: "POST", body: {
+    parent_id: null, kind: "Принадлежность", instrument_type: "Принадлежность",
+    verification_number: null, verified_at: null, verification_due: null,
+  } });
+});
+
+it("keeps shared group sorting independent of instrument tree sorting", () => {
+  setup([instrument, accessory, { ...shared, name: "Ящик переходников" },
+    { ...shared, id: "another", inventory_number: "СИ.006", name: "Адаптер" }]);
+  fireEvent.click(screen.getByRole("button", { name: "По приборам" }));
+  const group = screen.getByRole("region", { name: "Общие принадлежности" });
+  const main = screen.getByRole("region", { name: "Средства измерения" });
+  const order = () => within(group).getAllByRole("row").slice(1).map(row => within(row).getAllByRole("cell")[0].textContent);
+  fireEvent.click(within(main).getByRole("button", { name: "Наименование" }));
+  expect(order()).toEqual(["СИ.004", "СИ.006"]);
+  expect(within(group).getByRole("columnheader", { name: "Наименование" })).toHaveAttribute("aria-sort", "none");
+  const header = within(group).getByRole("button", { name: "Наименование" });
+  fireEvent.click(header);
+  expect(order()).toEqual(["СИ.006", "СИ.004"]);
+  fireEvent.click(header); fireEvent.click(header);
+  expect(order()).toEqual(["СИ.004", "СИ.006"]);
+});
+
+it("detaches a parented accessory through an explicit null and can attach a shared one", async () => {
+  const { requests } = setup([instrument, accessory]); open(accessory.inventory_number);
+  fill("В составе прибора", ""); save();
+  await waitFor(() => expect(writes(requests)).toHaveLength(1));
+  expect(writes(requests)[0]).toMatchObject({ method: "PATCH", body: { version: accessory.version, parent_id: null } });
+  await screen.findByText("Запись сохранена");
+  fill("В составе прибора", instrument.id); save();
+  await waitFor(() => expect(writes(requests)).toHaveLength(2));
+  expect(writes(requests)[1]).toMatchObject({ method: "PATCH", body: { version: accessory.version + 1, parent_id: instrument.id } });
+});
+
 it("keeps accessories and calibration kits below their parent with indentation and accessory quantity", () => {
   setup([accessory, kit, instrument]);
   fireEvent.click(screen.getByRole("button", { name: "По приборам" }));

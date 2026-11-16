@@ -175,16 +175,43 @@ def test_invalid_patch_does_not_change_version_or_audit(production_api, changes)
         assert not uow.session.scalars(select(AuditEventRow).where(AuditEventRow.event_type == "production.instrument_updated")).all()
 
 
+@pytest.mark.parametrize("parented", [False, True])
 @pytest.mark.parametrize("changes", [
-    {"parent_id": None}, {"status": PENDING}, {"verification_number": "ПВ"},
+    {"status": PENDING}, {"verification_number": "ПВ"},
     {"verified_at": EVIDENCE["verified_at"]}, {"verification_due": EVIDENCE["verification_due"]}, {"quantity": 0},
 ])
-def test_accessory_registration_rejects_invalid_fields(production_api, changes):
+def test_accessory_registration_rejects_invalid_fields(production_api, changes, parented):
     client, _ = production_api
     _as({"quality": "edit", "production": "view"})
     parent = create(client)
-    response = client.post("/api/production/instruments", json={**BASE, "kind": "Принадлежность", "parent_id": parent["id"], **changes})
+    response = client.post("/api/production/instruments", json={**BASE, "inventory_number": "СИ.099",
+        "kind": "Принадлежность", "parent_id": parent["id"] if parented else None, **changes})
     assert response.status_code == 422, response.text
+
+
+@pytest.mark.parametrize("explicit_null", [False, True])
+def test_shared_accessory_creation_editing_and_reparenting(production_api, explicit_null):
+    client, _ = production_api
+    _as({"quality": "edit", "production": "view"})
+    parent = create(client, "СИ.002", name="Planar S50180")
+    response = client.post("/api/production/instruments", json={
+        "inventory_number": "СИ.099", "name": "Общая принадлежность", "kind": "Принадлежность",
+        "quantity": 3, **({"parent_id": None} if explicit_null else {}),
+    })
+    assert response.status_code == 200, response.text
+    item = response.json()["instrument"]
+    assert item["parent_id"] is None and item["status"] == "Действует"
+    assert item["instrument_type"] == "Принадлежность"
+    url = f"/api/production/instruments/{item['id']}"
+    for changes in ({"parent_id": parent["id"]}, {"parent_id": None}, {"name": "Общий переходник"}, {"status": "Не используется"}):
+        response = client.patch(url, json={"version": item["version"], **changes})
+        assert response.status_code == 200, response.text
+        saved = response.json()["instrument"]
+        assert saved["version"] == item["version"] + 1
+        assert saved["parent_id"] == changes.get("parent_id", item["parent_id"])
+        assert all(saved[key] is None for key in EVIDENCE)
+        item = saved
+    assert item in client.get("/api/production/instruments").json()["instruments"]
 
 
 def test_next_number_ignores_legacy_and_malformed_numbers_and_does_not_reuse_gaps(production_api):

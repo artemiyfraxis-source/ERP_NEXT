@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { failureText, shippingApi, type Principal, type ProjectAddressee } from "./api";
+import { DELIVERY_FIELDS, failureText, shippingApi, type DeliveryValues, type ItemAddressee, type Principal, type ProjectAddressee } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { DispatchCard } from "./DispatchCard";
+import { ItemDeliveryWindow } from "./ProjectData";
 import { DISPATCH_STAGES, stageLabel, type DispatchStage } from "./dispatchStage";
 import { formatDay, formatNumber, NBSP } from "./format";
 import { StatusChip } from "./StatusChip";
@@ -106,6 +107,8 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const [rows, setRows] = useState<IntakeRow[]>([]);
   const [shipments, setShipments] = useState<DispatchShipment[]>([]);
   const [addressees, setAddressees] = useState<ProjectAddressee[]>([]);
+  const [itemAddressees, setItemAddressees] = useState<Record<string, ItemAddressee[]>>({});
+  const [deliveryEdit, setDeliveryEdit] = useState<{ project: string; items: ItemAddressee[] } | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -124,6 +127,13 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     try {
       const [intakeResult, shipmentResult, addresseeResult] = await Promise.all([intakeApi.rows(), intakeApi.shipments(), shippingApi.addressees()]);
       const loadedRows = intakeResult.rows ?? [];
+      const projects = [...new Set(loadedRows.map((row) => row.project))];
+      const deliveries: Record<string, ItemAddressee[]> = {};
+      await Promise.all(Array.from({ length: Math.min(4, projects.length) }, async () => {
+        for (let project = projects.pop(); project !== undefined; project = projects.pop()) {
+          deliveries[project] = (await shippingApi.itemAddressees(project)).items ?? [];
+        }
+      }));
       const loadedShipments = shipmentResult.shipments ?? [];
       const linkedShipment = urlParam("shipment");
       if (linkedShipment && !loadedShipments.some((shipment) => shipment.id === linkedShipment)) {
@@ -131,6 +141,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       }
       setRows(loadedRows); setShipments(loadedShipments); setError("");
       setAddressees(addresseeResult.addressees ?? []);
+      setItemAddressees(deliveries);
       if (!tabChosen.current) {
         const board = dispatchBoard(loadedRows, loadedShipments);
         setTab(defaultTab(board.rows, (row) => board.pieces.get(kbKey(row))!, canWarehouse));
@@ -169,11 +180,14 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   }, [board]);
   const addresseeByProject = useMemo(() => new Map(addressees.map((card) => [card.project.trim().toUpperCase(), card])), [addressees]);
   const cardOf = (row: Pick<IntakeRow, "project">) => addresseeByProject.get(row.project.trim().toUpperCase());
+  const itemOf = (row: Pick<IntakeRow, "project" | "item_index">) => itemAddressees[row.project]?.find((item) => item.item_index === row.item_index);
 
   /* Строки отправки показывают её данные, остальные — карточку проекта. */
-  const deliveryOf = (line: IntakeLine): Array<ProjectAddressee | DispatchShipment> => line.shipment ? [line.shipment] : [cardOf(line)].filter((card): card is ProjectAddressee => Boolean(card));
+  type DeliverySource = DeliveryValues & { note?: string; tk_note?: string };
+  const deliveryOf = (line: IntakeLine): DeliverySource[] => line.shipment ? [line.shipment]
+    : itemOf(line) ? [{ ...itemOf(line)!.effective, note: cardOf(line)?.note }] : [];
   const contactText = (line: IntakeLine, value: string) => line.shipment && value.trim().toLowerCase() === "самовывоз" ? "" : value;
-  const deliveryText = (line: IntakeLine, field: DeliveryField, data: ProjectAddressee | DispatchShipment): string => {
+  const deliveryText = (line: IntakeLine, field: DeliveryField, data: DeliverySource): string => {
     if (field === "receiver") return [...new Set([data.receiver, data.contact].map((value) => contactText(line, value)).filter(Boolean))].join(" · ");
     if (field === "delivery") return isPickup(data.carrier) ? "Самовывоз" : termsText(data.terms);
     if (field === "carrier") return data.carrier;
@@ -190,7 +204,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   };
   const updText = (line: IntakeLine) => {
     if (line.shipment) return updState(line.shipment).text;
-    const card = cardOf(line);
+    const card = { ...cardOf(line), ...itemOf(line)?.effective };
     if (!card) return "";
     return card.upd_type === "БЕЗ УПД" ? "Без УПД" : card.upd_number ? `УПД № ${card.upd_number}` : "УПД не внесён";
   };
@@ -312,6 +326,26 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       const href = line.shipment ? updState(line.shipment).href : cardOf(line)?.upd_url ?? "";
       return !text ? dash : href ? <a href={href} target="_blank" rel="noreferrer">{text}</a> : <span>{text}</span>;
     } },
+    { key: "itemDelivery", title: "Доставка КБ", wrap: true, minWidth: 180, maxWidth: 280,
+      value: (line) => Object.values(itemOf(line)?.effective ?? {}).filter(Boolean).join(" · "),
+      render: (line) => {
+        const item = itemOf(line);
+        if (!item) return <span className="muted">Данные КБ не загружены</span>;
+        const data = item.effective;
+        const own = Object.keys(item.overrides).length > 0;
+        return <div className="item-delivery-cell">
+          <span>{[data.receiver, data.phone].filter(Boolean).join(" · ") || "Получатель не задан"}</span>
+          <span title={data.shipping_point}>{data.shipping_point || (data.terms === "САМОВЫВОЗ" ? "Самовывоз" : "Адрес не задан")}</span>
+          <span className="muted">{[data.contact, termsText(data.terms), data.carrier, updLabel(data.upd_type)].filter(Boolean).join(" · ")}</span>
+          <span className="item-delivery-actions"><span className="muted">{own ? "Доставка КБ" : "Как у проекта"}</span>
+            {canDispatch && <button type="button" className="secondary small" aria-label={`Доставка ${who(line)}`}
+              onClick={() => setDeliveryEdit({ project: line.project, items: [item] })}>Изменить</button>}
+            {canDispatch && own && <button type="button" className="secondary small" disabled={Boolean(busy)}
+              aria-label={`Как у проекта: ${who(line)}`} onClick={() => void mutate(`delivery:${line.id}`,
+                () => shippingApi.saveItemAddressee(line.project, { item_index: item.item_index, version: item.version, inherit: [...DELIVERY_FIELDS] }), "Доставка КБ сброшена к проекту")}>Как у проекта</button>}
+          </span>
+        </div>;
+      } },
     ...DELIVERY_COLUMNS.map((key): DataColumn<IntakeLine> => ({ key, title: DELIVERY_TITLES[key],
       value: (line) => deliveryOf(line).map((data) => deliveryText(line, key, data)).join("; "),
       wrap: true, minWidth: key === "address" || key === "warehouseNote" ? 120 : 84, maxWidth: key === "address" || key === "warehouseNote" ? 220 : 160,
@@ -321,6 +355,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   // Без права на действие колонка действия была бы из одних прочерков — её нет («Можно принять» показывает число).
   const actionless = (tab === "production" && !canWarehouse) || (["accepted", "to_ship"].includes(tab) && !canDispatch);
   const shown = TAB_COLUMNS[tab].shown.filter((key) => key !== "action" || !actionless);
+  shown.splice(shown.indexOf("name") + 1, 0, "itemDelivery");
   const { more } = TAB_COLUMNS[tab];
   const visibleColumns = ["project", ...shown, ...more].flatMap((key) => columns.filter((column) => column.key === key))
     .map((column) => ({ ...column, hidden: column.key === "project" || !shown.includes(column.key) }));
@@ -353,6 +388,8 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
           onClick={(event) => { event.stopPropagation(); setProjectData(project); }}>Изменить</button>
         <span className="intake-shipping-count" data-label="Позиций">{groupRows.length}</span>
       </span>
+      {canDispatch && Boolean(itemAddressees[project]?.length) && <button type="button" className="secondary small"
+        aria-label={`Всем КБ проекта ${project}`} onClick={(event) => { event.stopPropagation(); setDeliveryEdit({ project, items: itemAddressees[project] }); }}>Всем КБ проекта</button>}
       {canWarehouse && bulk.length > 1 && <button type="button" className="primary small" onClick={(event) => { event.stopPropagation(); accept(bulk, quantity); }}>
         Принять всё: {bulk.length} КБ · {formatNumber(total)} шт</button>}
     </span>;
@@ -395,7 +432,12 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
         </>; }}
         renderOperations={(shipment) => canDispatch && ["Новая", "Собрана", "Упакована"].includes(shipment.status)
           ? <ShipmentHead key={`${shipment.id}:${shipment.version}`} shipment={shipment} busy={busy} mutate={mutate} /> : null} />}
-      {(lines.some((line) => !line.shipment) || !["packed", "to_ship", "shipped"].includes(tab) && !lines.length) && <DataTable key={tab} label="Приёмка с производства" storageKey={`production-intake:v4:${tab}`} rows={lines.filter((line) => !line.shipment)} columns={visibleColumns} rowKey={(line) => line.id}
+      {(lines.some((line) => !line.shipment) || !["packed", "to_ship", "shipped"].includes(tab) && !lines.length) && <DataTable key={tab} label="Приёмка с производства" storageKey={`production-intake:v5:${tab}`} rows={lines.filter((line) => !line.shipment)} columns={visibleColumns} rowKey={(line) => line.id}
+        bulkActions={canDispatch ? [{ label: "Задать доставку выбранным КБ", disabled: (selected) => selected.some((line) => !itemOf(line)),
+          run: (selected) => {
+            if (new Set(selected.map((line) => line.project)).size !== 1) { setError("Для массовой доставки выберите КБ одного проекта."); return; }
+            setDeliveryEdit({ project: selected[0].project, items: [...new Map(selected.map((line) => [line.item_index, itemOf(line)!])).values()] });
+          } }] : []}
         groupBy={shipmentGroupKey} groupLabel={groupLabel} groupSort exportName="Приёмка с производства"
         searchText={(line) => [line.shipment?.number]} initialQuery={urlParam("q")} searchPlaceholder="Проект, КБ, наименование, ГРН или задание"
         rowClassName={(line) => tab === "all" && !(line.stage && hasWork(line.stage, line.kb, piecesOf(line.kb))) ? "ship-line-off" : ""}
@@ -415,5 +457,6 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       key={shipmentData} shipment={shipments.find((shipment) => shipment.id === shipmentData)!} canEdit={canDispatch}
       close={() => setShipmentData(null)} onSaved={reload} />}
     {projectData && <DispatchCard project={projectData} customer={head[projectData]?.customer} stage={tab === "all" ? undefined : tab} canEdit={canDispatch} onSaved={() => void reload()} close={() => setProjectData(null)} />}
+    {deliveryEdit && <ItemDeliveryWindow project={deliveryEdit.project} items={deliveryEdit.items} close={() => setDeliveryEdit(null)} onSaved={reload} />}
   </section>;
 }
