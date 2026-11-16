@@ -20,11 +20,11 @@ import binascii
 from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
-from typing import Annotated, Any, Mapping
+from typing import Annotated, Any, Literal, Mapping
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.modules.production.api import production_uow_factory, techcards_uow_factory
 from app.modules.production.domain import ProductionValidationError
@@ -33,10 +33,12 @@ from app.modules.production.vswr import (
     VSWR_FILE_LIMIT,
     RecordVswrCommand,
     VswrMeasurement,
+    VswrFileInput,
     VswrVerdict,
     list_vswr_for_serial,
     list_vswr_for_task,
     record_vswr,
+    required_ends,
     vswr_file,
 )
 from app.modules.production.autoplan_api import references_uow_factory
@@ -70,6 +72,16 @@ NO_REFS_REASON = "справочники коаксиальных разъёмо
 COMPUTED = "computed"
 
 
+class VswrFilePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    end: Literal["A", "B"] | None = None  # Required for .s1p; .s2p uses port_mapping instead.
+    file_name: str = Field(min_length=1, max_length=255)
+    file_base64: str = Field(min_length=1)
+    capture_settings: CaptureSettings | None = None
+    capture_job_id: UUID | None = None
+
+
 class RecordVswrPayload(BaseModel):
     # Нормы в теле нет и быть не может: extra="forbid" отвечает 422, если клиент её прислал.
     model_config = ConfigDict(extra="forbid")
@@ -77,14 +89,25 @@ class RecordVswrPayload(BaseModel):
     task_id: UUID
     position: int = Field(ge=1)
     instrument_id: UUID
-    file_name: str = Field(min_length=1, max_length=255)
-    file_base64: str = Field(min_length=1)
+    file_name: str | None = Field(default=None, min_length=1, max_length=255)
+    file_base64: str | None = Field(default=None, min_length=1)
+    files: list[VswrFilePayload] | None = Field(default=None, min_length=1, max_length=2)
     band_from_mhz: Decimal | None = None
     band_to_mhz: Decimal | None = None
     verdict: VswrVerdict | None = None  # ручной — только когда нормы в ЭТК нет
     reason: str = Field(default="", max_length=1000)
     capture_settings: CaptureSettings | None = None
     capture_job_id: UUID | None = None
+    port_mapping: dict[str, str] | None = None
+
+    @model_validator(mode="after")
+    def file_shape(self):
+        if self.files is not None:
+            if any(value is not None for value in (self.file_name, self.file_base64, self.capture_settings, self.capture_job_id)):
+                raise ValueError("Передайте либо один файл замера, либо список файлов по концам")
+        elif self.file_name is None or self.file_base64 is None:
+            raise ValueError("Приложите файл замера или файлы по концам сборки")
+        return self
 
 
 # --- Норма и ЭТК задания -----------------------------------------------------------------------------------------------
@@ -171,6 +194,14 @@ def task_norm(
     ревизии (`current`; None — задание и так на текущей) перекрывает закреплённую, когда её там нет или она другая.
     Справочная норма по комплектующим и факты сборки — из закреплённой ревизии."""
     norm = etk_norm(document, refs, now)
+    # Only an explicit norm requirement may narrow the pinned assembly's physical ends.
+    if "requiredEnds" not in norm:
+        config = document.get("build_config", {}) if isinstance(document, Mapping) else {}
+        coax = config.get("coax", {}) if isinstance(config, Mapping) else {}
+        ends = [end for end in ("A", "B") if isinstance(coax, Mapping)
+                and isinstance(coax.get(f"side{end}"), Mapping) and coax[f"side{end}"].get("article")]
+        if ends:
+            norm = {**norm, "requiredEnds": ends}
     wanted = document_customer(current) if current is not None else None
     if wanted is None or wanted == customer_of(norm):
         return norm
@@ -241,6 +272,19 @@ def _measurement_result(item: VswrMeasurement, *, trace: bool = False) -> dict[s
     }
     if trace:
         result["trace"] = [{"mhz": mhz, "vswr": vswr} for mhz, vswr in item.trace]
+    if item.complete is not None:
+        result.update(
+            port_mapping=item.port_mapping, required_ends=list(item.required_ends),
+            end_results=list(item.end_results), complete=item.complete,
+            traces=[{
+                "name": row.name, "quantity": row.quantity, "points": row.points,
+                **({"trace": [{"mhz": mhz, "value": value} for mhz, value in row.trace]} if trace else {}),
+            } for row in item.traces],
+            files=[{
+                "end": row.end, "file_name": row.file_name, "file_meta": row.file_meta,
+                "download_url": f"/api/production/vswr/measurements/{item.id}/files/{row.end}",
+            } for row in item.files],
+        )
     return result
 
 
@@ -269,6 +313,7 @@ def _norm_result(norm: Mapping[str, Any]) -> dict[str, Any]:
         "s21_db": norm.get("s21Db"), "length_m": norm.get("lengthM"),
         "source": norm.get("source"), "basis": norm.get("basis"),
         "components": _components_result(norm) if norm.get("source") == SOURCE_CUSTOMER else None,
+        "required_ends": list(required_ends(norm)),
     }
 
 
@@ -303,14 +348,27 @@ def _guard(operation):
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
-def _decode(payload: RecordVswrPayload) -> bytes:
+def _decode(payload: RecordVswrPayload | VswrFilePayload) -> bytes:
     try:
-        content = base64.b64decode(payload.file_base64, validate=True)
+        content = base64.b64decode(payload.file_base64 or "", validate=True)
     except (binascii.Error, ValueError) as error:
         raise HTTPException(status_code=422, detail="Файл замера передан не в base64") from error
     if len(content) > VSWR_FILE_LIMIT:
         raise HTTPException(status_code=422, detail="Файл замера больше 2 МБ")
     return content
+
+
+def _file_input(payload: RecordVswrPayload | VswrFilePayload, instrument_id: UUID, actor_id: UUID, uow_factory) -> VswrFileInput:
+    content = _decode(payload)
+    settings = payload.capture_settings.model_dump(exclude_none=True) if payload.capture_settings else None
+    verified = False
+    if payload.capture_job_id is not None:
+        settings, verified = _guard(lambda: capture_evidence(
+            uow_factory(), payload.capture_job_id, instrument_id, actor_id, content))
+    return VswrFileInput(
+        file_name=payload.file_name or "", content=content, end=getattr(payload, "end", None),
+        capture_settings=settings, capture_verified=verified, evidence_id=payload.capture_job_id,
+    )
 
 
 def _task(uow_factory, task_id: UUID):
@@ -364,22 +422,21 @@ def upload_measurement(
 ) -> dict:
     """Замер из файла ВАЦ. Норма — из закреплённой ревизии ЭТК задания (старая ЭТК — расчёт по справочникам; норма
     заказчика текущей ревизии перекрывает — `task_norm`); вердикт по ней сам, а без нормы — вручную."""
-    content = _decode(payload)
     task = _task(uow_factory, payload.task_id)
     document, etk, current = _task_etk(techcards_factory, task)
     norm = (task_norm(document, current, etk["current_revision"], CoaxRefs(refs_factory), now) if etk["techcard_id"]
             else undefined_norm(NO_ETK_REASON))
-    settings = payload.capture_settings.model_dump(exclude_none=True) if payload.capture_settings else None
-    verified = False
-    if payload.capture_job_id is not None:
-        settings, verified = _guard(lambda: capture_evidence(
-            uow_factory(), payload.capture_job_id, payload.instrument_id, principal.actor.id, content))
+    files = tuple(_file_input(file, payload.instrument_id, principal.actor.id, uow_factory) for file in payload.files or ())
+    legacy = None if files else _file_input(payload, payload.instrument_id, principal.actor.id, uow_factory)
     measurement = _guard(lambda: record_vswr(RecordVswrCommand(
         task_id=task.id, position=payload.position, instrument_id=payload.instrument_id,
-        file_name=payload.file_name, content=content, norm=norm, actor=principal.actor, now=now,
+        file_name=legacy.file_name if legacy else "", content=legacy.content if legacy else b"",
+        norm=norm, actor=principal.actor, now=now,
         band_from_mhz=payload.band_from_mhz, band_to_mhz=payload.band_to_mhz,
         verdict=payload.verdict, reason=payload.reason,
-        capture_settings=settings, capture_verified=verified,
+        capture_settings=legacy.capture_settings if legacy else None,
+        capture_verified=legacy.capture_verified if legacy else False, port_mapping=payload.port_mapping,
+        evidence_id=legacy.evidence_id if legacy else None, files=files,
     ), uow_factory()))
     return {"measurement": _measurement_result(measurement, trace=True), "position": payload.position}
 
@@ -522,6 +579,17 @@ def serial_measurements(
         "serial_number": serial.serial_number if serial else None,
         "measurements": [_measurement_result(item) for item in rows],
     }
+
+
+@router.get("/measurements/{measurement_id}/files/{end}")
+def measurement_end_file(
+    measurement_id: UUID, end: Literal["A", "B"],
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    uow_factory: Annotated[Callable[[], Any], Depends(production_uow_factory)],
+) -> Response:
+    """Исходный файл замера выбранного конца сборки."""
+    name, content = _guard(lambda: vswr_file(measurement_id, uow_factory(), end))
+    return file_response(content, name, download=True)
 
 
 @router.get("/measurements/{measurement_id}/file")

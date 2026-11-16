@@ -20,8 +20,9 @@ from app.modules.production.vswr import (
 )
 from tests.production.test_materials_finished_goods import stage_three_setup
 
-NORM = {"status": "ok", "reason": "", "vswrMax": 1.35, "bandMhz": [1000, 3000], "source": "ЭТК 591K.3.КБ1"}
-UNDEFINED = {"status": "undefined", "reason": "Паспортной нормы для этого класса нет", "vswrMax": None}
+# These legacy-path tests explicitly require one end; two-end acceptance is in test_vswr_traces.
+NORM = {"status": "ok", "reason": "", "vswrMax": 1.35, "bandMhz": [1000, 3000], "source": "ЭТК 591K.3.КБ1", "requiredEnds": ["A"]}
+UNDEFINED = {"status": "undefined", "reason": "Паспортной нормы для этого класса нет", "vswrMax": None, "requiredEnds": ["A"]}
 
 
 def _csv(points: list[tuple[float, float]]) -> bytes:
@@ -73,27 +74,28 @@ def test_verdict_is_automatic_against_the_etk_norm_within_its_band(setup):
     assert vswr_file(good.id, factory()) == ("sn1.csv", _csv([(900, 2.5), (1000, 1.10), (2400, 1.30), (3000, 1.20), (4000, 3.0)]))
 
 
-def test_explicit_band_overrides_the_norm_band_and_empty_band_is_refused(setup):
-    measured = _record(setup, 1, [(1000, 1.1), (5000, 1.6), (6000, 1.2)], band_from_mhz=Decimal("4000"), band_to_mhz=Decimal("6000"))
+def test_explicit_band_is_used_without_a_norm_band_and_empty_band_is_refused(setup):
+    norm = {k: v for k, v in NORM.items() if k != "bandMhz"}
+    measured = _record(setup, 1, [(1000, 1.1), (5000, 1.6), (6000, 1.2)], norm=norm, band_from_mhz=Decimal("4000"), band_to_mhz=Decimal("6000"))
     assert measured.max_vswr_mhz == Decimal("5000.000") and measured.verdict is VswrVerdict.FAIL
     with pytest.raises(ProductionValidationError, match="нет точек в полосе 7000–8000 МГц"):
-        _record(setup, 1, [(1000, 1.1), (5000, 1.6)], band_from_mhz=Decimal("7000"), band_to_mhz=Decimal("8000"))
+        _record(setup, 1, [(1000, 1.1), (5000, 1.6)], norm=norm, band_from_mhz=Decimal("7000"), band_to_mhz=Decimal("8000"))
     with pytest.raises(ProductionValidationError, match="меньше конца"):
-        _record(setup, 1, [(1000, 1.1), (5000, 1.6)], band_from_mhz=Decimal("3000"), band_to_mhz=Decimal("1000"))
+        _record(setup, 1, [(1000, 1.1), (5000, 1.6)], norm=norm, band_from_mhz=Decimal("3000"), band_to_mhz=Decimal("1000"))
     with pytest.raises(ProductionValidationError, match="полосу"):
         _record(setup, 1, [(1000, 1.1), (5000, 1.6)], norm={"status": "ok", "vswrMax": 1.3})
 
 
-def test_partial_capture_warns_and_records_only_the_actual_band_while_manual_upload_still_requires_coverage(setup):
+def test_partial_capture_keeps_the_required_band_and_cannot_pass(setup):
     norm = {**NORM, "source": "customer"}
     points = [(1500, 1.1), (2500, 1.2)]
-    with pytest.raises(ProductionValidationError, match="не покрывает"):
-        _record(setup, 1, points, norm=norm)
+    uploaded = _record(setup, 2, points, norm=norm)
+    assert uploaded.verdict is VswrVerdict.FAIL and not uploaded.complete
     measured = _record(setup, 1, points, norm=norm, capture_settings={"s_parameter": "S11"}, capture_verified=True)
-    assert measured.verdict is VswrVerdict.PASS
-    assert (measured.band_from_mhz, measured.band_to_mhz) == (Decimal("1500"), Decimal("2500"))
+    assert measured.verdict is VswrVerdict.FAIL and not measured.complete
+    assert (measured.band_from_mhz, measured.band_to_mhz) == (Decimal("1000"), Decimal("3000"))
     assert measured.norm["bandMhz"] == [1000, 3000]
-    assert measured.file_meta["capture_warnings"] == ["Диапазон ВАЦ не покрывает норму"]
+    assert "не покрывает" in measured.file_meta["capture_warnings"][0]
     assert latest_vswr(measured.serial_id, setup[0]()).file_meta == measured.file_meta
     with pytest.raises(ProductionValidationError):
         _record(setup, 2, [(4000, 1.1), (5000, 1.2)], norm=norm,
@@ -101,7 +103,7 @@ def test_partial_capture_warns_and_records_only_the_actual_band_while_manual_upl
 
 
 def test_undefined_norm_needs_a_manual_verdict_with_reason(setup):
-    points = [(1000, 1.1), (2000, 1.5)]
+    points = [(1000, 1.1), (3000, 1.5)]
     band = dict(band_from_mhz=Decimal("1000"), band_to_mhz=Decimal("2000"))
     with pytest.raises(ProductionValidationError, match="вручную"):
         _record(setup, 1, points, norm=UNDEFINED, **band)
@@ -116,8 +118,8 @@ def test_undefined_norm_needs_a_manual_verdict_with_reason(setup):
 
 def test_defined_norm_refuses_a_contradicting_manual_verdict(setup):
     with pytest.raises(ProductionValidationError, match="ставится по замеру"):
-        _record(setup, 1, [(1000, 1.1), (2000, 1.5)], verdict=VswrVerdict.PASS, reason="хочу")
-    same = _record(setup, 1, [(1000, 1.1), (2000, 1.5)], verdict=VswrVerdict.FAIL)
+        _record(setup, 1, [(1000, 1.1), (3000, 1.5)], verdict=VswrVerdict.PASS, reason="хочу")
+    same = _record(setup, 1, [(1000, 1.1), (3000, 1.5)], verdict=VswrVerdict.FAIL)
     assert same.verdict is VswrVerdict.FAIL and not same.verdict_manual
 
 
@@ -132,7 +134,7 @@ def test_expired_or_unverified_instrument_is_refused(setup, pending):
         status=InstrumentStatus.UNVERIFIED if pending else InstrumentStatus.ACTIVE,
     ), factory())
     with pytest.raises(ProductionValidationError, match="не подтверждена" if pending else "истекла"):
-        _record(setup, 1, [(1000, 1.1), (2000, 1.2)], instrument_id=old.id)
+        _record(setup, 1, [(1000, 1.1), (3000, 1.2)], instrument_id=old.id)
     assert list_vswr_for_task(task.id, factory()) == []
     with factory() as uow:
         assert uow.serials.list_for_task(task.id) == serials_before
@@ -142,15 +144,15 @@ def test_bad_file_size_position_and_garbage_are_refused(setup):
     with pytest.raises(ProductionValidationError, match="2 МБ"):
         _record(setup, 1, [(1000, 1.1)], content=b"1;1\n" * 600_000)
     with pytest.raises(ProductionValidationError, match="с 1 по 10"):
-        _record(setup, 11, [(1000, 1.1), (2000, 1.2)])
+        _record(setup, 11, [(1000, 1.1), (3000, 1.2)])
     with pytest.raises(ProductionValidationError, match="не похож на выгрузку ВАЦ"):
         _record(setup, 1, [], content="Просто текст".encode())
 
 
 def test_every_measurement_is_kept_and_the_latest_counts(setup):
     factory, *_rest = setup
-    first = _record(setup, 3, [(1000, 1.5), (2000, 1.2)])
-    second = _record(setup, 3, [(1000, 1.2), (2000, 1.25)])
+    first = _record(setup, 3, [(1000, 1.5), (3000, 1.2)])
+    second = _record(setup, 3, [(1000, 1.2), (3000, 1.25)])
     assert (first.attempt, second.attempt) == (1, 2)
     assert [item.id for item in list_vswr_for_serial(first.serial_id, factory())] == [first.id, second.id]
     assert latest_vswr(first.serial_id, factory()).verdict is VswrVerdict.PASS
@@ -175,10 +177,10 @@ def _qc_box(setup, quantity: int, accepted: int, rejected: int, sequence: int = 
 
 def test_serial_failed_on_vswr_lands_among_the_rejected(setup):
     factory, _master, _operator, task, _instrument, _now = setup
-    _record(setup, 1, [(1000, 1.1), (2000, 1.2)])
-    _record(setup, 7, [(1000, 1.1), (2000, 1.8)])  # не годно
-    _record(setup, 8, [(1000, 1.1), (2000, 1.9)])  # не годно, потом перемерено — годно
-    _record(setup, 8, [(1000, 1.1), (2000, 1.2)])
+    _record(setup, 1, [(1000, 1.1), (3000, 1.2)])
+    _record(setup, 7, [(1000, 1.1), (3000, 1.8)])  # не годно
+    _record(setup, 8, [(1000, 1.1), (3000, 1.9)])  # не годно, потом перемерено — годно
+    _record(setup, 8, [(1000, 1.1), (3000, 1.2)])
 
     _box, _inspection, serials = _qc_box(setup, quantity=5, accepted=4, rejected=1)
 
@@ -192,7 +194,7 @@ def test_serial_failed_on_vswr_lands_among_the_rejected(setup):
         free = [item.position for item in uow.serials.list_for_task(task.id) if item.current_box_id is None]
     assert free == [4, 5, 6, 9, 10]
     with pytest.raises(ProductionValidationError, match="уже прошло ОТК"):
-        _record(setup, 7, [(1000, 1.1), (2000, 1.2)])
+        _record(setup, 7, [(1000, 1.1), (3000, 1.2)])
 
 
 def test_without_measurements_qc_keeps_the_old_serial_order(setup):
@@ -204,7 +206,7 @@ def test_without_measurements_qc_keeps_the_old_serial_order(setup):
 
 def test_failed_serials_are_never_accepted_as_good(setup):
     for position in range(1, 11):
-        _record(setup, position, [(1000, 1.1), (2000, 1.2 if position <= 8 else 1.9)])
+        _record(setup, position, [(1000, 1.1), (3000, 1.2 if position <= 8 else 1.9)])
     with pytest.raises(ProductionValidationError, match="только в брак"):
         _qc_box(setup, quantity=10, accepted=9, rejected=1)
     _box, _inspection, serials = _qc_box(setup, quantity=10, accepted=8, rejected=2, sequence=2)
@@ -228,11 +230,13 @@ def test_real_arinst_export_is_recorded_with_sweep_parameters(setup):
     content = (Path(__file__).parent / "fixtures" / "arinst_vna_dl.s1p").read_bytes()
     measured = _record(
         setup, 1, [], content=content, file_name="arinst_1.s1p",
-        norm={"status": "ok", "vswrMax": 1.8, "bandMhz": [1, 3000]},
+        norm={"status": "ok", "vswrMax": 1.8, "bandMhz": [1, 3000], "requiredEnds": ["A"]},
     )
     assert measured.points == 1000 and measured.verdict is VswrVerdict.PASS
     assert measured.max_vswr == Decimal("1.7466") and abs(measured.max_vswr_mhz - Decimal("2274")) < 4
-    assert measured.file_meta == {"start_hz": 1e6, "stop_hz": 3e9, "points": 1000, "if_bandwidth_hz": 1000}
+    assert {key: value for key, value in measured.file_meta.items() if key != "evidence_signature"} == {
+        "start_hz": 1e6, "stop_hz": 3e9, "points": 1000, "if_bandwidth_hz": 1000,
+    }
     in_band = _record(setup, 2, [], content=content, file_name="arinst_1.s1p", norm=NORM)  # 1000–3000 МГц, норма 1,35
     assert in_band.verdict is VswrVerdict.FAIL
     factory, *_rest = setup
@@ -243,7 +247,7 @@ def test_long_sweep_trace_is_thinned_but_keeps_the_in_band_peak(setup):
     sweep = [(1 + index * 0.5, 1.05 + (index % 5) / 100) for index in range(4000)]  # 1…2000,5 МГц
     sweep[1500] = (sweep[1500][0], 1.33)  # 751 МГц — пик в полосе 500–1000
     sweep[3000] = (sweep[3000][0], 2.0)  # 1501 МГц — вне полосы
-    measured = _record(setup, 1, sweep, band_from_mhz=Decimal("500"), band_to_mhz=Decimal("1000"))
+    measured = _record(setup, 1, sweep, norm={**NORM, "bandMhz": [500, 1000]})
     assert measured.points == 4000 and len(measured.trace) <= TRACE_LIMIT
     assert measured.max_vswr == Decimal("1.3300") and measured.max_vswr_mhz == Decimal("751.000")
     assert (751.0, 1.33) in measured.trace and (1501.0, 2.0) in measured.trace
