@@ -65,18 +65,23 @@ export function deriveRoute(ops: RouteOp[]): Route {
   const edges: RouteEdge[] = [];
   let heads: string[] = [];
   let tut: string[] = [];
+  let labels: string[] = [];
   for (const op of ops) {
     const key = `b${op.position}`;
     blocks.push({ key, name: "", ops: [op.position], final: op.position === lastPosition, components: [] });
+    if (op.key === "coaxPrintLabel") { labels.push(key); continue; }
     if (TUT_CUTS.has(op.type)) { tut.push(key); continue; }
     if (SOURCE_TYPES.has(op.type) || op.code.toUpperCase().startsWith("CUT_")) { heads.push(key); continue; }
-    const inputs = heads.concat(TUT_TAKERS.has(op.type) ? tut : []);
-    if (TUT_TAKERS.has(op.type)) tut = [];
+    const takesLabels = op.key === "coaxInsLabel";
+    const takesTubes = TUT_TAKERS.has(op.type) && !takesLabels;
+    const inputs = heads.concat(takesTubes ? tut : [], takesLabels ? labels : []);
+    if (takesTubes) tut = [];
+    if (takesLabels) labels = [];
     inputs.forEach((from) => edges.push({ from, to: key, per_unit: 1 }));
     heads = [key];
   }
   const finalKey = `b${lastPosition}`;
-  heads.concat(tut).filter((key) => key !== finalKey).forEach((from) => edges.push({ from, to: finalKey, per_unit: 1 }));
+  heads.concat(tut, labels).filter((key) => key !== finalKey).forEach((from) => edges.push({ from, to: finalKey, per_unit: 1 }));
   return ordered({ blocks, edges });
 }
 
