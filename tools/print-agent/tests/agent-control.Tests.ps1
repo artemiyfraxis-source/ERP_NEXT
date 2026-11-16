@@ -5,6 +5,9 @@ $controlTmp = Join-Path ([IO.Path]::GetTempPath()) ('pa-control-' + [guid]::NewG
 . (Join-Path $here '..\agent.ps1') -ConfigPath (Join-Path $controlTmp 'control-config.json') -LogPath (Join-Path $controlTmp 'agent.log')
 $script:realS2ManualDefinition = (Get-Command Get-S2ManualDefinition).ScriptBlock
 $script:realUpdateVnaWorker = (Get-Command Update-VnaWorker).ScriptBlock
+$script:realScanPollOnce = (Get-Command Invoke-ScanPollOnce).ScriptBlock
+$script:realSendHeartbeat = (Get-Command Send-Heartbeat).ScriptBlock
+$script:realErpApi = (Get-Command Invoke-ErpApi).ScriptBlock
 
 function New-ControlProfile {
     return [pscustomobject]@{ start_hz = 1e6; stop_hz = 2e6; points = 2; if_bandwidth_hz = 1000; power_dbm = 0
@@ -428,6 +431,7 @@ Describe 'Управление ВАЦ: основной цикл и блокир
         $script:ConfigPath = Join-Path $TestDrive ([guid]::NewGuid().ToString() + '\config.json')
         $script:command = New-ControlEnvelope
         $script:VnaWorker = $null
+        $script:HeartbeatDevices = $null; $script:VnaFirstObservationReported = $false
         $script:VnaNextFence = [DateTime]::MinValue
         Mock Initialize-VnaControl { $script:VnaControlInitialized = $true }
         Mock Update-VnaWorker { & $script:realUpdateVnaWorker $Base $AuthToken }
@@ -442,12 +446,13 @@ Describe 'Управление ВАЦ: основной цикл и блокир
     }
     AfterEach { $script:VnaWorker = $null; $script:VnaControlInitialized = $false }
 
-    It 'активная команда откладывает печать и heartbeat с поиском сканеров, сохраняя опрос управления' {
+    It 'активная команда сохраняет лёгкий heartbeat и опрос управления без печати и поиска сканеров' {
         Mock Update-VnaWorker {}
         $script:VnaWorker = @{ command = $script:command }
         Start-AgentLoop 'http://test' 'token' -PrinterName 'TSC' -Once
         Assert-MockCalled Invoke-PollOnce -Times 0 -Exactly -Scope It
-        Assert-MockCalled Send-Heartbeat -Times 0 -Exactly -Scope It
+        Assert-MockCalled Send-Heartbeat -Times 0 -Exactly -Scope It -ParameterFilter { -not $Lightweight }
+        Assert-MockCalled Send-Heartbeat -Times 1 -Exactly -Scope It -ParameterFilter { $Lightweight }
         Assert-MockCalled Invoke-ScanPollOnce -Times 1 -Exactly -Scope It
     }
 
@@ -461,7 +466,7 @@ Describe 'Управление ВАЦ: основной цикл и блокир
         $script:VnaWorker = @{ process = $process; command = $script:command; started = [DateTime]::UtcNow }
         # Fail fast at the blocking boundary instead of hanging the test runner inside Winspool.
         Mock Invoke-PollOnce { throw 'Simulated hung print' }
-        Mock Send-Heartbeat { throw 'Simulated hung scanner discovery' }
+        Mock Send-Heartbeat { if (-not $Lightweight) { throw 'Simulated hung scanner discovery' } }
         Mock Invoke-VnaSessionApi { throw 'offline' }
         $script:sleepCalls = 0
         Mock Start-Sleep {
@@ -471,7 +476,8 @@ Describe 'Управление ВАЦ: основной цикл и блокир
         }
         { Start-AgentLoop 'http://test' 'token' -PrinterName 'TSC' } | Should Throw 'End test loop'
         Assert-MockCalled Invoke-PollOnce -Times 0 -Exactly -Scope It
-        Assert-MockCalled Send-Heartbeat -Times 0 -Exactly -Scope It
+        Assert-MockCalled Send-Heartbeat -Times 0 -Exactly -Scope It -ParameterFilter { -not $Lightweight }
+        Assert-MockCalled Send-Heartbeat -Times 1 -Exactly -Scope It -ParameterFilter { $Lightweight }
         Assert-MockCalled Invoke-ScanPollOnce -Times 1 -Exactly -Scope It
         $process.Killed | Should Be $true
         $process.Waited | Should Be $true
@@ -488,6 +494,158 @@ Describe 'Управление ВАЦ: основной цикл и блокир
         Start-AgentLoop 'http://test' 'token' -PrinterName 'TSC' -Once
         Assert-MockCalled Invoke-PollOnce -Times 1 -Exactly -Scope It
         Assert-MockCalled Send-Heartbeat -Times 1 -Exactly -Scope It
+    }
+
+    It 'между командами незавершённая сессия получает restore, минуя зависающую печать и поиск сканеров' {
+        Mock Update-VnaWorker {}
+        $script:command = New-ControlEnvelope restore
+        Write-VnaJson (Join-Path (Get-VnaControlRoot) 'owner.json') @{
+            session_id = $script:command.session_id; serial = $script:command.instrument_serial; restored = $false }
+        # The loop must reach control claiming and dispatch restore without entering either blocking call.
+        Mock Invoke-PollOnce { throw 'Simulated hung print' }
+        Mock Send-Heartbeat { if (-not $Lightweight) { throw 'Simulated hung scanner discovery' } }
+        Mock Get-MachineId { 'pc-1' }
+        Mock Invoke-ErpApi { @{ job = $script:command; poll_after_ms = 500 } }
+        Mock Invoke-ScanPollOnce { & $script:realScanPollOnce $Base $AuthToken $ScannerAddress }
+        Start-AgentLoop 'http://test' 'token' -PrinterName 'TSC' -Once
+        Assert-MockCalled Invoke-PollOnce -Times 0 -Exactly -Scope It
+        Assert-MockCalled Send-Heartbeat -Times 0 -Exactly -Scope It -ParameterFilter { -not $Lightweight }
+        Assert-MockCalled Send-Heartbeat -Times 1 -Exactly -Scope It -ParameterFilter { $Lightweight }
+        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
+            $Url -like '*/scan/agent/claim' -and ($Body.kinds -join ',') -ceq 'vna_control' }
+        Assert-MockCalled Start-VnaWorker -Times 1 -Exactly -Scope It -ParameterFilter {
+            $Command.op -ceq 'restore' -and $Command.command_id -ceq $script:command.command_id }
+    }
+
+    It 'после восстановления или освобождения сессии печать и heartbeat возобновляются: <Release>' -TestCases @(
+        @{ Release = 'restored' }, @{ Release = 'released' }
+    ) {
+        param($Release)
+        $script:ownerPath = Join-Path (Get-VnaControlRoot) 'owner.json'
+        Write-VnaJson $script:ownerPath @{ session_id = $script:command.session_id; restored = $false }
+        if ($Release -eq 'restored') {
+            Mock Update-VnaWorker {
+                $owner = Read-VnaJson $script:ownerPath; $owner.restored = $true
+                Write-VnaJson $script:ownerPath $owner
+            }
+        } else {
+            Mock Update-VnaWorker { Remove-Item -LiteralPath $script:ownerPath }
+        }
+        Start-AgentLoop 'http://test' 'token' -PrinterName 'TSC' -Once
+        Assert-MockCalled Invoke-PollOnce -Times 1 -Exactly -Scope It
+        Assert-MockCalled Send-Heartbeat -Times 1 -Exactly -Scope It
+    }
+
+    It 'лёгкий heartbeat сохраняет управление дольше трёх минут без обнаружения устройств: worker=<Worker>' -TestCases @(
+        @{ Worker = $true }, @{ Worker = $false }
+    ) {
+        param($Worker)
+        $script:loopNow = [datetime]'2026-11-16T12:00:00'; $script:loopStart = $script:loopNow
+        $script:holding = $false; $script:sleepCalls = 0; $script:discoveryCount = 0; $script:acmEnabled = $true
+        $script:beats = New-Object 'Collections.Generic.List[object]'
+        Mock Get-Date { $script:loopNow }
+        Mock Update-VnaWorker {}
+        Mock Send-Heartbeat { & $script:realSendHeartbeat $Base $AuthToken $PrinterName $ScannerAddress -Lightweight:$Lightweight }
+        Mock Get-MachineId { 'pc-1' }
+        Mock Get-VnaObservation { @{ ready = $true; serial = '26030095'; name = 'Planar, S50180, 26030095, 26.2' } }
+        Mock Get-VnaManifest {
+            if ($script:acmEnabled) { @{ instrument_serial = '26030095'; ordinary_state_verified = $true; kits = @(
+                @{ method = 'acm'; registry_fingerprint = ('a' * 64); definition = @{ serial = '26140008' } }) } }
+        }
+        Mock Get-AgentScanners {
+            if ($script:holding) { throw 'Simulated hung scanner discovery' }
+            $script:discoveryCount++
+            @{ id = "wia-$($script:discoveryCount)"; name = "Scanner $($script:discoveryCount)" }
+        }
+        Mock Get-LanIp { if ($script:holding) { throw 'Blocking network discovery' }; '192.168.1.20' }
+        Mock Test-ArinstInstalled { if ($script:holding) { throw 'Blocking file discovery' }; $true }
+        Mock Get-VnaCapability { throw 'Must not enter COM' }
+        Mock Get-VnaApplication { throw 'Must not enter COM' }
+        Mock Get-WiaScanners { throw 'Must not enter WIA' }
+        Mock Send-RawToPrinter { throw 'Must not enter Winspool' }
+        Mock Invoke-AgentUpdate {}
+        Mock Invoke-ErpApi {
+            if ($Url -notlike '*/heartbeat') { throw 'Unexpected API call' }
+            [void]$script:beats.Add(@{ at = $script:loopNow; body = $Body; light = $script:holding })
+            @{ update = @{ version = '9.9.9'; sha256 = 'test'; path = '/test' } }
+        }
+        Mock Invoke-PollOnce { if ($script:holding) { throw 'Simulated hung print' }; 'idle' }
+        Mock Invoke-ScanPollOnce { $script:VnaPollAfterMs = 500; 'active' }
+        Mock Start-Sleep {
+            $script:sleepCalls++
+            if ($script:sleepCalls -gt 5) { throw 'End test loop' }
+            if ($script:sleepCalls -eq 5) {
+                # Release before the next heartbeat is due: full discovery must resume immediately.
+                $script:loopNow = $script:loopNow.AddSeconds(10)
+                $script:holding = $false; $script:VnaWorker = $null
+                $path = Join-Path (Get-VnaControlRoot) 'owner.json'
+                if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path }
+            } else {
+                $script:loopNow = $script:loopNow.AddSeconds(60)
+                if ($script:sleepCalls -eq 2) { $script:acmEnabled = $false }
+            }
+        }
+        $script:VnaControlInitialized = $true
+        Send-Heartbeat 'http://test' 'token' -PrinterName 'Cached TSC'
+        $script:holding = $true
+        if ($Worker) { $script:VnaWorker = @{ command = $script:command; started = [DateTime]::UtcNow } }
+        else { Write-VnaJson (Join-Path (Get-VnaControlRoot) 'owner.json') @{ restored = $false; session_id = $script:command.session_id } }
+        { Start-AgentLoop 'http://test' 'token' -PrinterName 'TSC' } | Should Throw 'End test loop'
+        $light = @($script:beats | Where-Object { $_.light })
+        $light.Count | Should Be 5
+        ($light[-1].at - $light[0].at).TotalSeconds | Should BeGreaterThan 180
+        for ($i = 1; $i -lt $light.Count; $i++) { ($light[$i].at - $light[$i-1].at).TotalSeconds | Should Be 60 }
+        foreach ($beat in $light) {
+            $beat.body.scanners.Count | Should Be 1
+            $beat.body.scanners[0].id | Should Be 'wia-1'
+            $beat.body.printer | Should Be 'Cached TSC'
+            $beat.body.lan_ip | Should Be '192.168.1.20'
+            ($beat.body.vna_sources -join ',') | Should Be 's2vna,arinst'
+            $beat.body.vna.ready | Should Be $true
+            $beat.body.vna_control.version | Should Be 1
+            if (($beat.at - $script:loopStart).TotalSeconds -lt 120) { ($beat.body.vna_control.methods -join ',') | Should Be 'acm' }
+            else { @($beat.body.vna_control.methods).Count | Should Be 0 }
+        }
+        $script:beats.Count | Should Be 7
+        $script:beats[-1].body.scanners[0].id | Should Be 'wia-2'
+        $script:beats[-1].body.printer | Should Be 'TSC'
+        ($script:beats[-1].at - $light[-1].at).TotalSeconds | Should Be 10
+        Assert-MockCalled Get-AgentScanners -Times 2 -Exactly -Scope It
+        Assert-MockCalled Get-LanIp -Times 2 -Exactly -Scope It
+        Assert-MockCalled Test-ArinstInstalled -Times 2 -Exactly -Scope It
+        Assert-MockCalled Invoke-AgentUpdate -Times 2 -Exactly -Scope It
+        Assert-MockCalled Invoke-PollOnce -Times 1 -Exactly -Scope It
+        Assert-MockCalled Get-WiaScanners -Times 0 -Exactly -Scope It
+        Assert-MockCalled Send-RawToPrinter -Times 0 -Exactly -Scope It
+        Assert-MockCalled Get-VnaCapability -Times 0 -Exactly -Scope It
+        Assert-MockCalled Get-VnaApplication -Times 0 -Exactly -Scope It
+    }
+
+    It 'лёгкий heartbeat после перезапуска без кэша и наблюдения сохраняет протокол без объявления калибровки' {
+        Mock Send-Heartbeat { & $script:realSendHeartbeat $Base $AuthToken $PrinterName $ScannerAddress -Lightweight:$Lightweight }
+        Mock Get-AgentScanners { throw 'Must not discover scanners' }
+        Mock Get-LanIp { throw 'Must not discover network' }
+        Mock Test-ArinstInstalled { throw 'Must not discover files' }
+        Mock Get-VnaCapability { throw 'Must not enter COM' }
+        Mock Get-MachineId { 'pc-1' }
+        Mock Invoke-AgentUpdate {}
+        Mock Invoke-ErpApi { @{ update = @{ version = '9.9.9' } } }
+        Send-Heartbeat 'http://test' 'token' -PrinterName 'TSC' -Lightweight
+        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
+            $Body.vna_control.version -eq 1 -and @($Body.vna_control.methods).Count -eq 0 -and
+            @($Body.scanners).Count -eq 0 -and $Body.printer -eq 'TSC' -and -not $Body.vna
+        }
+        Assert-MockCalled Get-AgentScanners -Times 0 -Exactly -Scope It
+        Assert-MockCalled Get-LanIp -Times 0 -Exactly -Scope It
+        Assert-MockCalled Test-ArinstInstalled -Times 0 -Exactly -Scope It
+        Assert-MockCalled Get-VnaCapability -Times 0 -Exactly -Scope It
+        Assert-MockCalled Invoke-AgentUpdate -Times 0 -Exactly -Scope It
+    }
+
+    It 'HTTP heartbeat ограничен таймаутом' {
+        Mock Invoke-RestMethod { @{} }
+        & $script:realErpApi -Url 'http://test/api/stock/scan/agent/heartbeat' -Body @{} -AuthToken 'token'
+        Assert-MockCalled Invoke-RestMethod -Times 1 -Exactly -Scope It -ParameterFilter { $TimeoutSec -gt 0 -and $TimeoutSec -le 20 }
     }
 
     It 'после завершения команды печать и heartbeat возобновляются в том же цикле' {
@@ -780,7 +938,7 @@ Describe 'Управление ВАЦ: журнал, опрос, watchdog' {
         Mock Invoke-ErpApi { @{} }
         Send-Heartbeat 'http://test' 'token'
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
-            $Body.version -eq '2.8.2' -and $Body.vna_control.version -eq 1 -and ($Body.vna_control.methods -join ',') -eq 'acm'
+            $Body.version -eq '2.8.4' -and $Body.vna_control.version -eq 1 -and ($Body.vna_control.methods -join ',') -eq 'acm'
         }
         Assert-MockCalled Get-VnaApplication -Times 0 -Exactly -Scope It
     }
