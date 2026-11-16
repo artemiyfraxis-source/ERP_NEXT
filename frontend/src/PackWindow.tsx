@@ -48,15 +48,19 @@ function PackForm({ project, candidates, rights, busy, mutate, reload }: { proje
   const [problem, setProblem] = useState("");
   const [addresseeVersion, setAddresseeVersion] = useState<number | null>(null);
   const [destinations, setDestinations] = useState<ItemAddressee[]>([]);
+  const [deliveryReload, setDeliveryReload] = useState(0);
+  const [refreshingDelivery, setRefreshingDelivery] = useState(true);
   // Ключ повтора живёт до успеха: повтор после обрыва связи вернёт уже заведённую отправку, а не заведёт вторую.
   const packKey = useRef(crypto.randomUUID());
   useEffect(() => {
     let live = true;
+    setRefreshingDelivery(true); setAddresseeVersion(null); setProblem("");
     Promise.all([intakeApi.dispatch(project), shippingApi.itemAddressees(project)]).then(([result, delivery]) => {
       if (live) { setAddresseeVersion(result.addressee?.version ?? 0); setDestinations(delivery.items ?? []); }
-    }).catch((reason) => { if (live) setProblem(failureText(reason, "Не удалось загрузить доставку КБ. Откройте упаковку заново.")); });
+    }).catch((reason) => { if (live) setProblem(failureText(reason, "Не удалось обновить доставку КБ. Повторите обновление.")); })
+      .finally(() => { if (live) setRefreshingDelivery(false); });
     return () => { live = false; };
-  }, [project]);
+  }, [project, deliveryReload]);
   const chosen = candidates.filter((row) => canPack(row) && marked[kbKey(row)] && num(qty[kbKey(row)]) > 0);
   const total = round2(chosen.reduce((sum, row) => sum + num(qty[kbKey(row)]), 0));
   const groups = deliveryGroups(destinations.filter((item) => candidates.some((row) => row.item_index === item.item_index)));
@@ -123,6 +127,8 @@ function PackForm({ project, candidates, rights, busy, mutate, reload }: { proje
         {rights.canEdit && <div className="intake-window-actions">
           {rights.canManage && <label className="ship-inline">Отгрузить до<input aria-label={`Отгрузить до: проект ${project}`} type="date" min={isoDay(new Date())} value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>}
           {problem && <span className="tone-danger" role="alert">{problem}</span>}
+          <button type="button" className="secondary" disabled={Boolean(busy) || refreshingDelivery} onClick={() => setDeliveryReload((value) => value + 1)}>
+            {refreshingDelivery ? "Обновляем доставку…" : "Обновить доставку КБ"}</button>
           <button type="button" className="primary" disabled={!chosen.length || Boolean(busy) || addresseeVersion === null} onClick={pack}>
             {busy === `pack:${project}` ? "Упаковываем…" : `Упаковать · ${total} шт`}</button>
         </div>}

@@ -8,8 +8,11 @@ import pytest
 from sqlalchemy import select
 
 from app.main import app
+from app.modules.shipping import application
 from app.modules.shipping.domain import ADDRESSEE_CARD_FIELDS
-from app.modules.shipping.infrastructure import ItemAddresseeRow, ShipmentRow
+from app.modules.shipping.infrastructure import (
+    FinishedGoodMoveRow, ItemAddresseeRow, PackPermissionRow, ShipmentRow, ShippingSequenceRow,
+)
 from app.modules.techcards.kitset_infrastructure import KitsetRow
 from tests.shipping.test_project_ship import (
     env, PROJECT, STOREKEEPER, _as, _stock, _card, _body, _ship, _snapshot,
@@ -107,10 +110,11 @@ def test_snapshot_freezes_and_never_remembers_own_address_in_project(env):
     assert refresh.json()["shipment"]["shipping_point"] == "Проект"
 
 
-def test_legacy_follows_project_but_rejects_later_mixed_kb_pick(env):
+@pytest.mark.parametrize("action", ["pick", "pack", "boxes", "ship"])
+def test_legacy_follows_project_but_rejects_later_mixed_kb_mutations(env, action, monkeypatch):
     client, sessions = env
     first, second = _stock(client), _stock(client, "КБ2")
-    card = _card(client, receiver="Получатель", shipping_point="Проект")
+    card = _card(client, receiver="Получатель", shipping_point="Проект", upd_type="ЭДО", upd_number="УПД-1")
     response = client.post("/api/shipping/shipments", json={"no_docs": True,
         "lines": [{"good_id": good["id"], "quantity": "10"} for good in (first, second)]})
     shipment = response.json()["shipment"]
@@ -122,11 +126,44 @@ def test_legacy_follows_project_but_rejects_later_mixed_kb_pick(env):
     client.put("/api/shipping/project-addressee", json={"project": PROJECT, "version": card["version"], "phone": "Изменён"})
     current = client.get("/api/shipping/shipments").json()["shipments"][0]
     assert current["phone"] == "Изменён" and current["delivery_snapshot_at"] is None
-    save(client, fields={"shipping_point": "Разные маршруты"})
+    if action == "ship":
+        response = client.post(f"/api/shipping/shipments/{shipment['id']}/pack", json={"version": current["version"]})
+        assert response.status_code == 200, response.text
+        current = response.json()["shipment"]
+    assert save(client, fields={"shipping_point": "Разные маршруты"}).status_code == 200
     before = _snapshot(sessions)
-    result = client.post(f"/api/shipping/shipments/{shipment['id']}/pick", json={"version": current["version"]})
-    assert result.status_code == 422 and "КБ2" in result.text
+
+    def packing_state():
+        with sessions() as session:
+            return {
+                row_type.__tablename__: list(session.execute(select(row_type.__table__)).tuples())
+                for row_type in (PackPermissionRow, FinishedGoodMoveRow, ShippingSequenceRow)
+            }
+
+    validations = []
+    resolve = application._resolve_destinations
+
+    def validate_locked(lines, uow, *args, **kwargs):
+        assert PROJECT in uow._locked_projects
+        assert not uow.session.new and not uow.session.dirty
+        validations.append(True)
+        return resolve(lines, uow, *args, **kwargs)
+
+    monkeypatch.setattr(application, "_resolve_destinations", validate_locked)
+    before_packing = packing_state()
+    body = {"version": current["version"]}
+    if action == "boxes":
+        body["boxes"] = [{"kind": "Короб", "items": [
+            {"item_index": line["item_index"], "quantity": line["picked"]} for line in current["lines"]
+        ]}]
+    result = client.request("PUT" if action == "boxes" else "POST",
+                            f"/api/shipping/shipments/{shipment['id']}/{action}", json=body)
+    assert result.status_code == 422, result.text
+    assert "КБ1" in result.text and "КБ2" in result.text and "доставки" in result.text
+    assert validations == [True]
     assert _snapshot(sessions) == before
+    assert packing_state() == before_packing
+    assert client.get("/api/shipping/shipments").json()["shipments"][0] == current
 
 
 def test_snapshot_dn_does_not_restore_cleared_contact(env):

@@ -40,12 +40,15 @@ it("requires an explicit quantity, caps it by permission, and refreshes addresse
   expect(bodies[1].lines).toEqual([{ good_id: "g1", version: 2, quantity: "5" }]);
 });
 
-it("shows separate destinations and retains quantities when mixed selection is refused", async () => {
-  const fetcher = vi.fn(async (input) => new Response(JSON.stringify(String(input).includes("item-addressees") ? {
+it("refreshes a cached destination conflict and packs with the same quantities and selection", async () => {
+  let refreshed = false;
+  const fetcher = vi.fn(async (input, init) => new Response(JSON.stringify(String(input).includes("project-ship")
+    ? { shipment: { number: "ОТГ-ДЕМО", pl_number: "" } }
+    : String(input).includes("item-addressees") ? {
     items: ["КБ1", "КБ2"].map((item_index, index) => ({ item_index, effective: {
-      receiver: "Получатель", shipping_point: index ? "Тула" : "Москва", contact: "", phone: "123", terms: "ДОСТАВКА ТК", carrier: "СДЭК", upd_type: "ЭДО",
+      receiver: "Получатель", shipping_point: index && !refreshed ? "Тула" : "Москва", contact: "", phone: "123", terms: "ДОСТАВКА ТК", carrier: "СДЭК", upd_type: "ЭДО",
     } })),
-  } : { addressee: { version: 2 } })));
+  } : { addressee: { version: refreshed ? 3 : 2 } })));
   vi.stubGlobal("fetch", fetcher);
   render(<PackWindow project="П" rows={[row, { ...row, item_index: "КБ2", good_id: "g2" }]} shipments={[]} rights={rights} reload={vi.fn()} close={vi.fn()} />);
   await screen.findByText("Доставка 2 · КБ2");
@@ -56,4 +59,39 @@ it("shows separate destinations and retains quantities when mixed selection is r
   expect(screen.getByLabelText("Сколько упаковать КБ1")).toHaveValue(3);
   expect(screen.getByLabelText("Сколько упаковать КБ2")).toHaveValue(2);
   expect(fetcher.mock.calls.some(([url]) => String(url).includes("project-ship"))).toBe(false);
+  refreshed = true;
+  fireEvent.click(screen.getByRole("button", { name: "Обновить доставку КБ" }));
+  await screen.findByText("Доставка · КБ1, КБ2");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Сколько упаковать КБ1")).toHaveValue(3);
+  expect(screen.getByLabelText("Сколько упаковать КБ2")).toHaveValue(2);
+  expect(screen.getByLabelText("Упаковать КБ1")).toBeChecked();
+  expect(screen.getByLabelText("Упаковать КБ2")).toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: "Упаковать · 5 шт" }));
+  await screen.findByText("Упаковано: ОТГ-ДЕМО");
+  const [, init] = fetcher.mock.calls.find(([url]) => String(url).includes("project-ship"))!;
+  expect(JSON.parse(String(init.body))).toMatchObject({ addressee_version: 3, lines: [
+    { good_id: "g1", version: 2, quantity: "3" }, { good_id: "g2", version: 2, quantity: "2" },
+  ] });
+});
+
+it("allows retrying a failed delivery refresh without clearing quantities", async () => {
+  let fail = false;
+  vi.stubGlobal("fetch", vi.fn(async (input) => {
+    if (fail) throw new TypeError("Failed to fetch");
+    return new Response(JSON.stringify(String(input).includes("item-addressees") ? { items: [] } : { addressee: { version: 2 } }));
+  }));
+  render(<PackWindow project="П" rows={[row]} shipments={[]} rights={rights} reload={vi.fn()} close={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText("Сколько упаковать КБ1"), { target: { value: "3" } });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Упаковать · 3 шт" })).toBeEnabled());
+  fail = true;
+  fireEvent.click(screen.getByRole("button", { name: "Обновить доставку КБ" }));
+  await screen.findByRole("alert");
+  expect(screen.getByLabelText("Сколько упаковать КБ1")).toHaveValue(3);
+  expect(screen.getByRole("button", { name: "Упаковать · 3 шт" })).toBeDisabled();
+  fail = false;
+  fireEvent.click(screen.getByRole("button", { name: "Обновить доставку КБ" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Упаковать · 3 шт" })).toBeEnabled());
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Сколько упаковать КБ1")).toHaveValue(3);
 });

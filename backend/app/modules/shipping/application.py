@@ -334,11 +334,20 @@ def _shipment(shipment_id: UUID, version: int, uow: UnitOfWork) -> Shipment:
     return shipment
 
 
-def _packing_shipment(shipment_id: UUID, version: int, uow: UnitOfWork) -> Shipment:
+def _packing_shipment(
+    shipment_id: UUID, version: int, uow: UnitOfWork, *, validate_delivery: bool = False,
+) -> Shipment:
     shipment = _shipment(shipment_id, version, uow)
     uow.lock_projects([line.project for line in shipment.lines])
     # The discovery read may have preceded another packing transaction's commit.
-    return _shipment(shipment_id, version, uow)
+    shipment = _shipment(shipment_id, version, uow)
+    # Validate live legacy destinations before any picking, packing or dispatch mutation.
+    # Editing or returning a shipment must remain possible to resolve a conflict.
+    if validate_delivery and shipment.delivery_snapshot_at is None:
+        _resolve_destinations(shipment.lines, uow,
+                              {key: getattr(shipment, key) for key in ADDRESSEE_CARD_FIELDS if key not in shipment.inherited},
+                              shipment.customer)
+    return shipment
 
 
 def register_good(command: RegisterGoodCommand, uow: UnitOfWork) -> FinishedGood:
@@ -836,10 +845,6 @@ def _pick(
     набор этой КБ — только из него и не больше его свободных штук (лимит сверяется с этим же количеством)."""
     chosen = {good_id: grn for good_id, grn in (chosen or {}).items() if str(grn or "").strip()}
     uow.lock_projects([line.project for line in shipment.lines])
-    if shipment.delivery_snapshot_at is None:
-        _resolve_destinations(shipment.lines, uow,
-                              {key: getattr(shipment, key) for key in ADDRESSEE_CARD_FIELDS if key not in shipment.inherited},
-                              shipment.customer)
     # Lock and refresh stock before taking immutable goods/lot snapshots; a correction may have
     # committed while we were waiting. Reusing the discovery snapshot could undo that correction.
     project_limits = {
@@ -995,7 +1000,7 @@ def edit_shipment_head(command: EditHeadCommand, uow: UnitOfWork) -> Shipment:
 
 def pick_shipment(command: ShipmentCommand, uow: UnitOfWork) -> Shipment:
     with uow:
-        shipment = _packing_shipment(command.shipment_id, command.expected_version, uow)
+        shipment = _packing_shipment(command.shipment_id, command.expected_version, uow, validate_delivery=True)
         grns = getattr(command, "grns", None) or {}
         lines = {line.id: line.finished_good_id for line in shipment.lines}
         if set(grns) - set(lines):
@@ -1024,7 +1029,7 @@ def unpick_line(command: UnpickCommand, uow: UnitOfWork) -> Shipment:
 
 def pack_shipment(command: ShipmentCommand, uow: UnitOfWork) -> Shipment:
     with uow:
-        shipment = _shipment(command.shipment_id, command.expected_version, uow)
+        shipment = _packing_shipment(command.shipment_id, command.expected_version, uow, validate_delivery=True)
         updated = _pack(shipment, command.actor, command.now, uow)
         uow.commit()
         return updated
@@ -1235,7 +1240,7 @@ def update_documents(command: UpdateDocumentsCommand, uow: UnitOfWork) -> Shipme
 def mark_shipped(command: ShipmentCommand, uow: UnitOfWork) -> ShippedResult:
     """`shipShipped_`: одна кнопка склада — дата отгрузки и сразу «Закрыта», если для этого всё есть."""
     with uow:
-        shipment = _shipment(command.shipment_id, command.expected_version, uow)
+        shipment = _packing_shipment(command.shipment_id, command.expected_version, uow, validate_delivery=True)
         result = _mark_shipped(shipment, command.actor, command.now, uow)
         uow.commit()
         return result
@@ -1294,7 +1299,7 @@ def lay_out_shipment(command: LayOutCommand, uow: UnitOfWork) -> Shipment:
     Документов ещё нет — переход в «Упакована» с номерами PL/DN; есть — номера сохраняются.
     """
     with uow:
-        shipment = _shipment(command.shipment_id, command.expected_version, uow)
+        shipment = _packing_shipment(command.shipment_id, command.expected_version, uow, validate_delivery=True)
         boxes = check_boxes(packed_by_index(shipment.lines), list(command.boxes))
         updated = shipment.lay_out(boxes, command.tk_note)
         uow.shipments.add(updated)
