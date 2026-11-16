@@ -3,7 +3,7 @@
 from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
@@ -24,6 +24,7 @@ from app.workflows.shipping_storekeeper import storekeeper_ids
 from app.workflows.shipping_packing import known_pack_items, pack_item_details
 
 from .application import (
+    ItemAddresseeChange, set_item_addressees,
     AttachCardUpdCommand, AttachUpdCommand, attach_upd_file, store_card_upd_file, UPD_FILE_URL_PREFIX, upd_file_url,
     ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand, EditHeadCommand, HistoryCorrectionCommand,
     LayOutCommand, PickCommand, PackPermissionChange, SetPackPermissionsCommand, set_pack_permissions, PackProjectCommand, ProjectShipCommand, ProjectShipLine, QueueProjectCommand, RegisterGoodCommand,
@@ -35,6 +36,7 @@ from .application import (
 )
 from .documents import build_box_labels, build_delivery_note, build_packing_lists, storekeeper_signature
 from .domain import (
+    ADDRESSEE_CARD_FIELDS, ItemAddressee, item_delivery,
     ADDRESSEE_REQUISITE_FIELDS, DeliveryTerms, FinishedGood, PackPermission, ProjectAddressee, ProjectAssembly, Shipment,
     ShippingValidationError, UpdType, no_upd_offered, shipping_gap_codes, shipping_gaps, total_gross,
 )
@@ -145,6 +147,38 @@ class AddresseePayload(BaseModel):
     upd_date: date | None = None
 
 
+DeliveryField = Literal["receiver", "shipping_point", "contact", "phone", "terms", "carrier", "upd_type"]
+
+
+class ItemDeliveryFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    receiver: str | None = Field(default=None, max_length=512)
+    shipping_point: str | None = Field(default=None, max_length=5000)
+    contact: str | None = Field(default=None, max_length=255)
+    phone: str | None = Field(default=None, max_length=128)
+    terms: DeliveryTerms | None = None
+    carrier: str | None = Field(default=None, max_length=255)
+    upd_type: UpdType | None = None
+
+
+class ItemAddresseeLinePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    item_index: str = Field(min_length=1, max_length=255)
+    version: int = Field(ge=0)
+    fields: ItemDeliveryFields = Field(default_factory=ItemDeliveryFields)
+    inherit: list[DeliveryField] = Field(default_factory=list, max_length=7)
+
+
+class ItemAddresseePayload(ItemAddresseeLinePayload):
+    project: str = Field(min_length=1, max_length=255)
+
+
+class ItemAddresseesPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project: str = Field(min_length=1, max_length=255)
+    items: list[ItemAddresseeLinePayload] = Field(min_length=1, max_length=500)
+
+
 class ApproveNoUpdPayload(BaseModel):
     version: int = Field(ge=1)
     approver_id: UUID
@@ -178,7 +212,7 @@ class DocumentsPayload(VersionPayload):
 
 
 class HeadPayload(VersionPayload):
-    """Шапка отправки: приходят только правленые поля; пустое поле адресата — снова из карточки проекта."""
+    """Patch supplied fields, or explicitly refresh all delivery fields from current KB sources."""
     receiver: str | None = Field(default=None, max_length=512)
     shipping_point: str | None = Field(default=None, max_length=1000)
     contact: str | None = Field(default=None, max_length=255)
@@ -187,6 +221,7 @@ class HeadPayload(VersionPayload):
     carrier: str | None = Field(default=None, max_length=255)
     deadline: date | None = None
     note: str | None = Field(default=None, max_length=5000)
+    refresh_delivery: bool = False
 
 
 class RequestedPayload(VersionPayload):
@@ -357,6 +392,7 @@ def _shipment_result(shipment: Shipment) -> dict:
     return {
         "id": str(shipment.id), "number": shipment.number, "version": shipment.version,
         "created_at": shipment.created_at.isoformat(), "status": shipment.status.value,
+        "delivery_snapshot_at": shipment.delivery_snapshot_at.isoformat() if shipment.delivery_snapshot_at else None,
         "customer": shipment.customer, "receiver": shipment.receiver,
         "shipping_point": shipment.shipping_point, "contact": shipment.contact,
         "phone": shipment.phone, "terms": shipment.terms.value if shipment.terms else None, "carrier": shipment.carrier,
@@ -500,6 +536,63 @@ def project_addressees(
         for result, name in zip(results, names):
             result["project"] = name
     return {"addressees": results}
+
+
+def _item_addressees_result(project: str, uow_factory) -> dict:
+    with uow_factory() as uow:
+        project = normalize_project_number(project)
+        if not project:
+            raise ShippingValidationError("Проект обязателен")
+        card = uow.addressees.get(project)
+        stored = {item.item_index: item for item in uow.item_addressees.for_project(project)}
+        rows = []
+        for index, details in sorted(pack_item_details(uow, project).items()):
+            item = stored.get(index) or ItemAddressee(project, index)
+            values, provenance = item_delivery(card, item, details.get("customer", ""))
+            rows.append({
+                "project": project, "item_index": index, "name": details["name"], "version": item.version,
+                "overrides": {key: getattr(item, key) for key in ADDRESSEE_CARD_FIELDS if key in item.overridden},
+                "effective": values, "provenance": provenance,
+                "updated_by": item.updated_by, "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+            })
+        return {"project": project, "items": rows}
+
+
+@router.get("/item-addressees")
+def item_addressees(
+    _principal: Annotated[Principal, Depends(shipping_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+    project: Annotated[str, Query(min_length=1, max_length=255)],
+) -> dict:
+    return _run(lambda: _item_addressees_result(project, uow_factory))
+
+
+def _save_items(project, items, principal, now, uow_factory):
+    set_item_addressees(project, [ItemAddresseeChange(
+        item_index=item.item_index, version=item.version,
+        fields=item.fields.model_dump(exclude_unset=True), inherit=tuple(item.inherit),
+    ) for item in items], principal.actor, now, uow_factory(), known_pack_items)
+    return _item_addressees_result(project, uow_factory)
+
+
+@router.put("/item-addressee")
+def save_item_addressee(
+    payload: ItemAddresseePayload,
+    principal: Annotated[Principal, Depends(shipping_editor_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+) -> dict:
+    return _run(lambda: _save_items(payload.project, [payload], principal, now, uow_factory))
+
+
+@router.put("/item-addressees/bulk")
+def save_item_addressees(
+    payload: ItemAddresseesPayload,
+    principal: Annotated[Principal, Depends(shipping_editor_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+) -> dict:
+    return _run(lambda: _save_items(payload.project, payload.items, principal, now, uow_factory))
 
 
 @router.post("/project-pack")
@@ -686,9 +779,10 @@ def documents(shipment_id: UUID, payload: DocumentsPayload, principal: Annotated
 
 @router.put("/shipments/{shipment_id}/head")
 def head(shipment_id: UUID, payload: HeadPayload, principal: Annotated[Principal, Depends(shipping_editor_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)]) -> dict:
-    fields = {key: getattr(payload, key) for key in payload.model_fields_set if key != "version"}
+    fields = {key: getattr(payload, key) for key in payload.model_fields_set if key not in {"version", "refresh_delivery"}}
     shipment = _run(lambda: edit_shipment_head(EditHeadCommand(
         shipment_id=shipment_id, expected_version=payload.version, actor=principal.actor, now=now, fields=fields,
+        refresh_delivery=payload.refresh_delivery,
     ), uow_factory()))
     return {"shipment": _shipment_result(shipment)}
 

@@ -92,7 +92,7 @@ def test_without_upd_shipment_waits_for_the_permit_through_the_api(shipping_api)
     assert refused.status_code == 422
 
 
-def test_card_upd_type_without_upd_is_inherited_by_the_shipment(shipping_api):
+def test_card_upd_type_without_upd_is_snapshotted_by_the_shipment(shipping_api):
     client = shipping_api
     stocked = _stocked(client)
     card = client.put("/api/shipping/project-addressee", json={"project": PROJECT, "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "БЕЗ УПД"})
@@ -100,7 +100,7 @@ def test_card_upd_type_without_upd_is_inherited_by_the_shipment(shipping_api):
     made = client.post("/api/shipping/shipments", json={"lines": [{"good_id": stocked["id"], "quantity": "6"}]}).json()["shipment"]
 
     assert card.json()["addressee"]["upd_type"] == "БЕЗ УПД"
-    assert made["upd_type"] == "БЕЗ УПД" and "upd_type" in made["inherited"]
+    assert made["upd_type"] == "БЕЗ УПД" and made["inherited"] == [] and made["delivery_snapshot_at"]
 
 
 # ── План отгрузки в карточке проекта ────────────────────────────────────────────────────────────────────────────
