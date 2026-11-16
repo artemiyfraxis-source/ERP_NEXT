@@ -219,7 +219,7 @@ Describe 'ВАЦ: отчёт без запуска S2VNA' {
         Mock Invoke-ErpApi { [pscustomobject]@{ ok = $true } }
         Send-Heartbeat -Base 'http://test' -AuthToken 'mock-token'
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
-            $Body.vna.name -match '26030095' -and $Body.vna.ready -and $Body.vna.reason -eq '' -and $Body.version -eq '2.7.0' -and ($Body.vna_sources -join ',') -eq 's2vna'
+            $Body.vna.name -match '26030095' -and $Body.vna.ready -and $Body.vna.reason -eq '' -and $Body.version -eq '2.8.1' -and ($Body.vna_sources -join ',') -eq 's2vna'
         }
     }
     It 'heartbeat передаёт причину неготовности' {
@@ -480,6 +480,8 @@ Describe 'VNA: first -Once run with a legacy token' {
         Mock Send-ScanFile {}
         Mock Invoke-ScannerScan { throw 'must not scan' }
         Mock Start-Sleep { throw 'Once must not sleep' }
+        Mock Initialize-VnaControl {}
+        Mock Update-VnaWorker {}
         Start-AgentLoop -Base 'http://test' -AuthToken 'legacy-token' -PrinterName '' -Once
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Url -like '*/heartbeat' -and $Body.machine_id -eq 'pc-legacy' }
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Url -like '*/claim' -and $Body.kinds -contains 'vna' }

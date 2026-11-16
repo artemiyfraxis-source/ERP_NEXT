@@ -269,6 +269,10 @@ def create_job(uow, *, requested_by: str, now: datetime, target: str | None = No
                 .values(machine_id=target))
             if owned.rowcount != 1:
                 raise ScanJobClosed("Привязка ВАЦ изменилась — проверьте прибор ещё раз")
+        if kind == "vna":
+            from app.workflows.vna_measurement_api import refuse_session_capture
+
+            refuse_session_capture(session, instrument_id, expected_vna_serial or "", vna_name)
         row = ScanJobRow(id=uuid4(), status=PENDING, requested_by=requested_by[:255] or "—", created_at=now,
                          target_machine_id=target, target_scanner=scanner if target else None, error="", result="",
                          kind=kind, vna_name=vna_name, source=source, instrument_id=instrument_id, requester_id=requester_id)
@@ -321,9 +325,12 @@ class Claimed:
     source: str = "s2vna"
 
 
-def claim(uow, *, now: datetime, machine_id: str | None = None, vna: bool = False) -> Claimed | None:
+def claim(uow, *, now: datetime, machine_id: str | None = None, vna: bool = False, scan: bool = True) -> Claimed | None:
     """Claim the oldest complete PC/scanner pair targeted to this agent. Incomplete pre-strict jobs expire normally;
-    no agent, including an old one without an id, may scan them. Finished jobs past KEEP_FINISHED go."""
+    no agent, including an old one without an id, may scan them. Only requested kinds are eligible.
+    Finished jobs past KEEP_FINISHED go."""
+    if not scan and not vna:
+        return None
     with uow:
         session = _session(uow)
         _expire(session, now)
@@ -331,7 +338,8 @@ def claim(uow, *, now: datetime, machine_id: str | None = None, vna: bool = Fals
             ScanJobRow.status.in_(FINISHED_STATUSES), ScanJobRow.finished_at < now - KEEP_FINISHED,
         ))
         claimed = None
-        supported = and_(ScanJobRow.kind == "scan", ScanJobRow.target_scanner.is_not(None), ScanJobRow.target_scanner != "")
+        supported = (and_(ScanJobRow.kind == "scan", ScanJobRow.target_scanner.is_not(None), ScanJobRow.target_scanner != "")
+                     if scan else false())
         if vna:
             supported = or_(supported, ScanJobRow.kind == "vna")
         mine = and_(ScanJobRow.target_machine_id.is_not(None), ScanJobRow.target_machine_id != "", supported,
