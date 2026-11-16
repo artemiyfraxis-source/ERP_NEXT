@@ -195,7 +195,7 @@ it("section words find the menu section once something is typed, and an empty fi
   expect(window.location.search).toBe("?section=references&tab=lug");
   fireEvent.keyDown(document.body, { key: "k", code: "KeyK", ctrlKey: true });
   fireEvent.change(await screen.findByRole("combobox"), { target: { value: "оборудование" } });
-  expect(titles()).toEqual(expect.arrayContaining(["Склад → Оборудование", "База данных → Оборудование"]));
+  expect(titles()).toEqual(expect.arrayContaining(["Склад → Оборудование", "База данных → Оборудование операционное"]));
 });
 
 
@@ -227,7 +227,7 @@ it.each([
   ["Отгрузки", "Отгрузка → ОТГ-9", "intake", { tab: "journal", q: "ОТГ-9" }],
   ["Задания цеха", "Задания цеха → ПЗ-9", "production", { task: "task-9" }],
   ["Техкарты", "Техкарты → 591К.3", "techcards", { project: "591К.3", card: "card-9" }],
-  ["Оборудование", "База данных → Оборудование", "references", { tab: "ob", equipment: "unit-9" }],
+  ["Оборудование", "База данных → Оборудование операционное", "references", { tab: "ob", equipment: "unit-9" }],
 ] as const)("renders %s with its place and navigates there", async (group, subtitle, section, params) => {
   serve([{ group, title: "Найденная запись", subtitle, section, params }]);
   await mount(person({}, "admin"));
