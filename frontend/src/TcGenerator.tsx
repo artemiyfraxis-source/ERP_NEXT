@@ -43,6 +43,7 @@ import {
   opFromFields,
   opOrderFromConfig,
   parseDecimal_,
+  restoreCoaxState,
   sideRu_,
   switchGenTab,
   withCoaxVswrFromConfig,
@@ -132,6 +133,7 @@ import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
 import { assignPinJoined, joinSplice, leaveJoin, renameSplice, setTail } from "./tcGenSplices";
 import { PinoutTable, TopologyMaterialSelect, TopologyTubes, type MaterialOption } from "./PinoutTable";
 import { WrapTable } from "./WrapTable";
+import { CoaxLength, CoaxMarking } from "./GenCoaxSettings";
 import { applyEnd, firstFreePin, pinConns, pinRows, pinSummary, spliceLines } from "./tcGenPinTable";
 import { useTerminalPairs } from "./useTerminalPairs";
 import { MARK_KIND_DEFAULT, markIsTube, markSpecs, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
@@ -323,7 +325,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   // Черновик формы (владелец 10.10): переключение вкладок карточки и КБ размонтирует генератор — введённое не теряется.
   const draftValue = useMemo(() => ({ S, manual, terEdits, coaxAdd, complexTopology }), [S, manual, terEdits, coaxAdd, complexTopology]);
   const draft = useGeneratorDraft({ user: userId, project: card.project, index: card.item_index, document: card.document, value: draftValue,
-    apply: (value) => { setS(value.S); setManual(value.manual); setTerEdits(value.terEdits); setCoaxAdd(value.coaxAdd); setComplexTopology(value.complexTopology); } });
+    apply: (value) => { setS((current) => ({ ...value.S, coax: restoreCoaxState(current.coax, value.S.coax) })); setManual(value.manual); setTerEdits(value.terEdits); setCoaxAdd(value.coaxAdd); setComplexTopology(value.complexTopology); } });
 
   // «Черновики с чертежей» по позиции: список читается один раз за карту и после загрузки/сборки; открытый черновик
   // (draftId) уходит в сборку, собранный (builtId) ждёт «Что поправили и почему».
@@ -408,7 +410,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     // Несохранённый черновик поверх текущей сборки возвращается вместо засева.
     const form = draft.open({ S: fromBuild, manual: restored ?? emptyManual(), terEdits: back?.terEdits ?? {}, coaxAdd: back?.coaxAdd ?? {}, complexTopology: undefined });
     setComplexTopology(form.complexTopology);
-    setManual(form.manual); setS(ensureSeparateLengths(form.S)); setTerEdits(form.terEdits); setCoaxAdd(form.coaxAdd);
+    setManual(form.manual); setS(ensureSeparateLengths({ ...form.S, coax: restoreCoaxState(fromBuild.coax, form.S.coax) })); setTerEdits(form.terEdits); setCoaxAdd(form.coaxAdd);
     setStatus({ text: back?.note || "", error: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refs, card.id, kit]);
@@ -575,9 +577,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const raw = (card.document?.build_config as { route?: { source?: unknown } } | undefined)?.route;
     return savedManual || raw?.source === "generated" ? null : parseRoute(raw);
   }, [card.document, savedManual]);
-  // «Сложная сборка» (владелец 16.10): схема ПФ без правок — та, что построил генератор (build_config.route).
+  // Типовая схема ПФ, включая коакс, берётся из результата генератора (build_config.route).
   const generatedRoute = useMemo(() => {
-    const route = S.tab === "complex" ? parseRoute((config as { route?: unknown }).route) : null;
+    const route = S.tab === "complex" || S.tab === "coax" ? parseRoute((config as { route?: unknown }).route) : null;
     return route && !routeProblem(route, routeOps, finalName) ? route : null;
   }, [S.tab, config, routeOps, finalName]); // eslint-disable-line react-hooks/exhaustive-deps
   const deriveGenerated = useCallback((list: RouteOp[]) => generatedRoute ?? deriveRoute(list), [generatedRoute]);
@@ -1736,6 +1738,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
 
   // Экран: пока у А и В он одинаковый — один выбор; «разные для А и В» раскрывает второй (локально, в черновик не пишется).
   const shieldMerged = !S.coax.sideB || (!shieldSplit && gen.coaxShieldOf_("B") === gen.coaxShieldOf_("A"));
+  const fakraEnds = [S.coax.sideA, S.coax.sideB].some((end) => end?.kind === "straight" || end?.kind === "angled");
+  const setCoax = (patch: Partial<GenState["coax"]>) => update((current) => ({ ...current, coax: { ...current.coax, ...patch },
+    ...("len" in patch || "finishedLength" in patch ? { coaxLenFrom: undefined } : {}) }));
   const coaxSections = <>
     <section className="gsec" aria-label="Коакс-кабель">
       <div className="gsec-head"><h3>Коакс-кабель</h3>
@@ -1744,7 +1749,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       <div className="opt-grid">
         {S.coax.cables && S.coax.cables > 1 && <Field label="Кабелей" className="short"><input aria-label="Кабелей в сборке" type="number" min={1} value={S.coax.cables}
           onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, cables: Math.max(1, parseInt(event.target.value, 10) || 1) } }))} /></Field>}
-        <Field label="Длина по чертежу"><UnitInput unit="мм" aria-label="Длина коакс-кабеля" type="number" min={1} value={S.coax.len} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, len: event.target.value }, coaxLenFrom: undefined }))} /></Field>
+        <CoaxLength coax={S.coax} onChange={setCoax} />
         {shieldMerged
           ? <div className="gfield span2 shield-field"><span className="gfield-label"><span>Экран (обе стороны)</span>
               <button type="button" className="glink" onClick={() => setShieldSplit(true)}>разные для А и В</button></span>
@@ -1759,10 +1764,11 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
               <ShieldSelect label="Экран, сторона В" value={gen.coaxShieldOf_("B")}
                 onChange={(shieldB) => update((current) => ({ ...current, coax: { ...current.coax, shieldB } }))} /></div>}
           </>}
-        <div className="gfield span-all"><span className="gfield-label">Разделка</span>
+        {fakraEnds ? <div className="span-all"><Toggle checked={!!S.coax.fakraCutStrip} title="Резка с разделкой" onChange={(fakraCutStrip) => setCoax({ fakraCutStrip })} /></div>
+        : !gen.coaxFakra_() && <div className="gfield span-all"><span className="gfield-label">Разделка</span>
           <Seg label="Разделка" value={S.coax.stripMode} options={[["machine", "Резка с разделкой на станке"], ["separate", "Резка, затем разделка А и В"]]}
-            onChange={(stripMode) => update((current) => ({ ...current, coax: { ...current.coax, stripMode } }))} /></div>
-        {S.coax.stripMode !== "separate" && <div className="gfield span-all"><span className="gfield-label">Станок</span>
+            onChange={(stripMode) => update((current) => ({ ...current, coax: { ...current.coax, stripMode } }))} /></div>}
+        {(fakraEnds ? S.coax.fakraCutStrip : !gen.coaxFakra_() && S.coax.stripMode !== "separate") && <div className="gfield span-all"><span className="gfield-label">Станок</span>
           <Seg label="Станок" value={gen.coaxMachine_()} options={(["small", "big"] as const).map((key) => [key, COAX_MACHINES[key].label, COAX_MACHINES[key].hint] as const)}
             onChange={(machine) => update((current) => ({ ...current, coax: { ...current.coax, machine } }))} /></div>}
         {S.coax.sideB && <div className="gfield span-all"><span className="gfield-label">Контроль КСВН
@@ -1805,6 +1811,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       {S.coax.sideB ? coaxSideBlock("B")
         : <Toggle checked={S.coax.stripB} title="Зачистка стороны В" hint="голый конец кабеля" onChange={(on) => update((current) => ({ ...current, coax: { ...current.coax, stripB: on } }))} />}
     </section>
+    <CoaxMarking coax={S.coax} onChange={setCoax} components={components} labels={!!gen.coaxFakra_()} />
   </>;
 
   const reworkSection = <section className="gsec full" aria-label="Доработка давальческого изделия">
@@ -1887,7 +1894,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
                 skipped={ops.filter((spec) => !routeSpecs.includes(spec)).map((spec) => ops.indexOf(spec) + 1)}
                 renderOp={(position) => { const spec = routeSpecs[position - 1]; return spec ? opItem(spec, ops.indexOf(spec) + 1) : null; }}
                 onMove={reorder} orderChanged={orderChanged} onResetOrder={resetOrder} art={routeArt}
-                preview={pfScheme} {...(S.tab === "complex" ? { blockView: true, derive: deriveGenerated } : {})} />}
+                preview={pfScheme} {...(S.tab === "complex" || generatedRoute ? { blockView: true, derive: deriveGenerated } : {})} />}
             </>}
         </div>
         <GeneratorDraftNote draft={draft} />

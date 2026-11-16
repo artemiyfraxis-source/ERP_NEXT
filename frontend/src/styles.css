@@ -2071,6 +2071,22 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .gtable tbody tr:nth-child(even) td { background: var(--table-zebra); }
 .tcgen .gtable tbody tr:last-child td { border-bottom: 0; }
 .tcgen .gtable .num { text-align: right; font-variant-numeric: tabular-nums; }
+.tcgen .coax-cut-length { font-variant-numeric: tabular-nums; }
+.tcgen .coax-marks { table-layout: fixed; }
+.tcgen .coax-marks caption { padding: 4px 8px; text-align: left; color: var(--muted-foreground); }
+.tcgen .coax-marks th, .tcgen .coax-marks td { padding: 4px; }
+.tcgen .coax-marks th:first-child { width: 42%; }
+.tcgen .coax-marks th:nth-child(2) { width: 28%; }
+.tcgen .coax-marks th:last-child { width: 32px; }
+.tcgen .coax-marks input, .tcgen .coax-marks select, .tcgen .coax-marks textarea { width: 100%; min-width: 0; }
+.tcgen .coax-marks textarea { min-height: 32px; }
+.tcgen .coax-marks .btn-x { width: 28px; height: 32px; }
+@media (pointer: coarse) {
+  .tcgen .coax-marks th:last-child { width: 44px; }
+  .tcgen .coax-marks input, .tcgen .coax-marks select, .tcgen .coax-marks .btn-x { min-height: 40px; }
+  .tcgen .coax-marks .btn-x { width: 40px; }
+  .tcgen .coax-marks textarea { min-height: 40px; }
+}
 .tcgen .gtable-empty { color: var(--muted-foreground); text-align: center; }
 /* «Свободные концы» → «Наконечник»: строка на провод — наконечник выбирается в строке, «нет под сечение» — под выбором. */
 .tcgen .lug-plan select { width: 100%; min-width: 150px; }
