@@ -29,7 +29,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.8.1'
+$script:AgentVersion = '2.8.2'
 $script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
@@ -553,7 +553,10 @@ function Start-AgentLoop {
         if ($freshObservation -and $freshObservation.ready -and -not $script:VnaFirstObservationReported) {
             $nextBeat = Get-Date; $script:VnaFirstObservationReported = $true
         }
-        if ((Get-Date) -ge $nextBeat) {
+        # Winspool and scanner discovery can block without a timeout. Keep them out of
+        # the control path so cancellation checks and the worker deadline stay reachable.
+        $controlActive = $script:VnaWorker -and $script:VnaWorker.command
+        if (-not $controlActive -and (Get-Date) -ge $nextBeat) {
             try { Send-Heartbeat -Base $Base -AuthToken $AuthToken -PrinterName $PrinterName -ScannerAddress $ScannerAddress }
             catch { Write-Log "Отчёт серверу не ушёл: $($_.Exception.Message)" }
             $nextBeat = (Get-Date).AddSeconds($script:HeartbeatEverySec)
@@ -561,7 +564,7 @@ function Start-AgentLoop {
         $state = 'error'
         try {
             # Без принтера (ПК только со сканером) этикетки не опрашиваем.
-            $state = if ($PrinterName) { Invoke-PollOnce -Base $Base -AuthToken $AuthToken -PrinterName $PrinterName -DryRun:$DryRun } else { 'idle' }
+            $state = if ($PrinterName -and -not $controlActive) { Invoke-PollOnce -Base $Base -AuthToken $AuthToken -PrinterName $PrinterName -DryRun:$DryRun } else { 'idle' }
             $delay = 3
         } catch {
             Write-Log "Сеть/сервер: $($_.Exception.Message). Повтор через $delay с"
@@ -576,7 +579,8 @@ function Start-AgentLoop {
         if ($Once) { return }
         if ($scanState -eq 'error' -or $controlError) { $controlDelay = [Math]::Min(30, [Math]::Max(3, $controlDelay * 2)) } else { $controlDelay = 0 }
         $pause = if ($controlDelay) { 1000 * $controlDelay } elseif ($script:VnaWorker -and $script:VnaWorker.command) { 500 } elseif ($script:VnaPollAfterMs -eq 500) { 500 } else { 3000 }
-        # Poll/heartbeat never waits inside COM. Even under backoff, service the worker watchdog every 500 ms.
+        # While a control command runs, only bounded network calls precede this wait.
+        # Even under backoff, service the worker watchdog every 500 ms.
         for ($elapsed = 0; $elapsed -lt $pause; $elapsed += 500) {
             Start-Sleep -Milliseconds 500
             if ($script:VnaWorker -and ([DateTime]::UtcNow - $script:VnaWorker.started).TotalSeconds -gt 120) {
@@ -1763,7 +1767,7 @@ function Update-VnaWorker {
             Stop-VnaWorker $worker 'ВАЦ: превышено время выполнения; результат неизвестен, требуется восстановление'
         } elseif ($worker.command -and [DateTime]::UtcNow -ge $script:VnaNextFence) {
             $script:VnaNextFence = [DateTime]::UtcNow.AddSeconds(2)
-            # Network failure is handled by the caller's backoff; the independent 120 s watchdog still bounds COM.
+            # Network failure uses the caller's backoff, which also services the 120 s watchdog.
             $status = Invoke-VnaSessionApi $Base $AuthToken ("/api/stock/vna/sessions/" + $worker.command.session_id)
             try { Assert-VnaLease $worker.command $status }
             catch { Stop-VnaWorker $worker 'ВАЦ: команда отменена сервером; прежний исполнитель остановлен' }
