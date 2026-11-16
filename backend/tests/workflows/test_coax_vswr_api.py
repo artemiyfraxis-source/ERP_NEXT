@@ -30,9 +30,15 @@ def _csv(points):
     return "\n".join(lines).encode("utf-8")
 
 
-GOOD = _csv([(900, 2.5), (1000, 1.10), (2400, 1.30), (3000, 1.20)])
-BAD = _csv([(1000, 1.10), (1800, 1.42), (3000, 1.20)])
-WORSE = _csv([(1000, 1.10), (1800, 1.62), (3000, 1.20)])
+def _both(points):
+    return ("# MHz S RI R 50\n" + "\n".join(
+        f"{mhz} {(vswr-1)/(vswr+1)} 0 .8 0 .8 0 {(vswr-1)/(vswr+1)} 0" for mhz, vswr in points
+    )).encode()
+
+
+GOOD = _both([(900, 2.5), (1000, 1.10), (2400, 1.30), (3000, 1.20)])
+BAD = _both([(1000, 1.10), (1800, 1.42), (3000, 1.20)])
+WORSE = _both([(1000, 1.10), (1800, 1.62), (3000, 1.20)])
 
 
 def _as(permissions, name="Контролёр"):
@@ -100,13 +106,108 @@ def test_capture_settings_are_kept_in_existing_measurement_metadata(production_a
     assert serials[0]["latest"]["file_meta"]["capture_settings"] == settings
 
 
+def test_two_end_api_result_mapping_replay_and_passport(production_api):
+    client, _ = production_api
+    _, task, instrument = _setup(client)
+    content = b"# MHz S RI R 50\n1000 .05 0 .8 0 .8 0 .3 0\n3000 .05 0 .8 0 .8 0 .3 0"
+    payload = _body(task, instrument, content, name="both.s2p", port_mapping={"1": "B", "2": "A"})
+    response = client.post("/api/production/vswr", json=payload)
+    assert response.status_code == 200, response.text
+    measured = response.json()["measurement"]
+    assert measured["verdict"] == "fail" and measured["complete"]
+    assert measured["port_mapping"] == {"1": "B", "2": "A"}
+    assert [(r["end"], r["trace_name"], r["verdict"]) for r in measured["end_results"]] == [
+        ("A", "S22", "fail"), ("B", "S11", "pass"),
+    ]
+    assert {r["name"] for r in measured["traces"]} == {"S11", "S22", "S21", "S12"}
+    assert client.post("/api/production/vswr", json=payload).json()["measurement"] == measured
+    passport = client.get(f"/api/production/vswr/tasks/{task['id']}/serials/1/passport").json()
+    assert passport["checks"][0]["attempts"] == 1
+    assert passport["checks"][0]["measurement"] == measured
+
+
+def _end_file(end, vswr=1.2, **extra):
+    gamma = (vswr - 1) / (vswr + 1)
+    content = f"! Arinst VNA-DL\n# MHz S RI R 50\n1000 {gamma} 0\n3000 {gamma} 0\n".encode()
+    return {"end": end, "file_name": f"{end}.s1p", "file_base64": base64.b64encode(content).decode(), **extra}
+
+
+def _pair_body(task, instrument, files):
+    return {"task_id": task["id"], "position": 1, "instrument_id": instrument["id"], "files": files}
+
+
+@pytest.mark.parametrize("b_vswr,verdict", [(1.2, "pass"), (1.5, "fail")])
+def test_one_port_pair_api_preserves_both_files_and_replays_one_attempt(production_api, b_vswr, verdict):
+    client, _ = production_api
+    _, task, instrument = _setup(client)
+    files = [_end_file("A"), _end_file("B", b_vswr)]
+    payload = _pair_body(task, instrument, files)
+    response = client.post("/api/production/vswr", json=payload)
+    assert response.status_code == 200, response.text
+    measured = response.json()["measurement"]
+    assert measured["verdict"] == verdict and measured["complete"]
+    assert [(r["end"], r["trace_name"], r["verdict"]) for r in measured["end_results"]] == [
+        ("A", "A:S11", "pass"), ("B", "B:S11", verdict),
+    ]
+    assert [r["name"] for r in measured["traces"]] == ["A:S11", "B:S11"]
+    assert client.post("/api/production/vswr", json={**payload, "files": files[::-1]}).json()["measurement"] == measured
+    for uploaded, stored in zip(files, measured["files"]):
+        download = client.get(stored["download_url"])
+        assert download.status_code == 200 and download.content == base64.b64decode(uploaded["file_base64"])
+        assert uploaded["file_name"] in download.headers["content-disposition"]
+    passport = client.get(f"/api/production/vswr/tasks/{task['id']}/serials/1/passport").json()
+    assert passport["checks"][0]["measurement"] == measured and passport["checks"][0]["attempts"] == 1
+    # Old download remains usable and matches the file of the governing reflection end.
+    primary = client.get(f"/api/production/vswr/measurements/{measured['id']}/file")
+    expected = files[1] if verdict == "fail" else files[0]
+    assert primary.content == base64.b64decode(expected["file_base64"])
+    _as({"myops": "edit"})
+    assert client.get(measured["files"][0]["download_url"]).status_code == 403
+
+
+@pytest.mark.parametrize("case", ["duplicate", "mixed", "legacy_and_files", "missing_end", "three_files", "invalid_base64"])
+def test_invalid_one_port_sets_are_rejected_before_recording(production_api, case):
+    client, _ = production_api
+    _, task, instrument = _setup(client)
+    files = [_end_file("A"), _end_file("B")]
+    if case == "duplicate":
+        files[1]["end"] = "A"
+    elif case == "mixed":
+        files[0] = {"file_name": "both.s2p", "file_base64": base64.b64encode(GOOD).decode()}
+    elif case == "missing_end":
+        del files[1]["end"]
+    elif case == "three_files":
+        files.append(_end_file("A"))
+    elif case == "invalid_base64":
+        files[1]["file_base64"] = "not_base64"
+    payload = _pair_body(task, instrument, files)
+    if case == "legacy_and_files":
+        payload.update(file_name="also.csv", file_base64=base64.b64encode(GOOD).decode())
+    response = client.post("/api/production/vswr", json=payload)
+    assert response.status_code == 422, response.text
+    assert client.get(f"/api/production/vswr/tasks/{task['id']}/serials/1").json()["measurements"] == []
+
+
+def test_single_explicit_end_is_incomplete_and_missing_download_is_not_invented(production_api):
+    client, _ = production_api
+    _, task, instrument = _setup(client)
+    response = client.post("/api/production/vswr", json=_pair_body(task, instrument, [_end_file("B")]))
+    assert response.status_code == 200, response.text
+    measured = response.json()["measurement"]
+    assert measured["verdict"] == "fail" and not measured["complete"]
+    assert "Не измерен конец А" in measured["verdict_reason"]
+    assert client.get(f"/api/production/vswr/measurements/{measured['id']}/files/A").status_code == 404
+    assert client.get(f"/api/production/vswr/measurements/{measured['id']}/files/C").status_code == 422
+
+
 def _capture_job(instrument, content, **changes):
     from app.modules.warehouse.scan_agents import ScanAgentRow
     from app.modules.warehouse.scan_jobs import ScanJobRow
 
     job_id = uuid4()
     with app.state.production_uow_factory() as uow:
-        uow.session.add(ScanAgentRow(machine_id="capture-pc", first_seen=NOW, last_seen=NOW, legacy=False))
+        if uow.session.get(ScanAgentRow, "capture-pc") is None:
+            uow.session.add(ScanAgentRow(machine_id="capture-pc", first_seen=NOW, last_seen=NOW, legacy=False))
         uow.session.flush()
         values = dict(id=job_id, status="done", kind="vna", source="s2vna", requested_by=str(MASTER_ID),
             created_at=NOW, claimed_at=NOW, finished_at=NOW, target_machine_id="capture-pc",
@@ -118,20 +219,45 @@ def _capture_job(instrument, content, **changes):
     return str(job_id)
 
 
-def test_client_settings_cannot_bypass_customer_coverage_but_verified_capture_can(production_api):
+@pytest.mark.parametrize("case", ["valid", "same_capture", "foreign_owner"])
+def test_each_one_port_capture_is_independently_authorized_and_counted_once(production_api, case):
+    client, _ = production_api
+    _, task, instrument = _setup(client)
+    a, b = _end_file("A"), _end_file("B")
+    a["capture_job_id"] = _capture_job(instrument, base64.b64decode(a["file_base64"]))
+    b["capture_job_id"] = a["capture_job_id"] if case == "same_capture" else _capture_job(
+        instrument, base64.b64decode(b["file_base64"]), **({"requested_by": str(uuid4())} if case == "foreign_owner" else {}),
+    )
+    payload = _pair_body(task, instrument, [a, b])
+    response = client.post("/api/production/vswr", json=payload)
+    if case == "valid":
+        assert response.status_code == 200, response.text
+        measured = response.json()["measurement"]
+        assert measured["complete"] and measured["verdict"] == "pass"
+        assert [f["file_meta"]["evidence_id"] for f in measured["files"]] == [a["capture_job_id"], b["capture_job_id"]]
+        assert client.post("/api/production/vswr", json=payload).json()["measurement"] == measured
+    else:
+        assert response.status_code == 422
+        assert client.get(f"/api/production/vswr/tasks/{task['id']}/serials/1").json()["measurements"] == []
+
+
+def test_neither_client_settings_nor_verified_capture_bypass_customer_coverage(production_api):
     client, _ = production_api
     _, task, instrument = _setup(client, {**NORM, "source": "customer"})
     content = _csv([(1500, 1.1), (2500, 1.2)])
     for settings in ({}, {"s_parameter": "S11"}):
         response = client.post("/api/production/vswr", json=_body(task, instrument, content, capture_settings=settings))
-        assert response.status_code == 422 and "не покрывает" in response.json()["detail"]
+        assert response.status_code == 200
+        assert response.json()["measurement"]["verdict"] == "fail"
+        assert "не покрывает" in response.json()["measurement"]["verdict_reason"]
     job_id = _capture_job(instrument, content)
-    response = client.post("/api/production/vswr", json=_body(task, instrument, content,
+    response = client.post("/api/production/vswr", json=_body(task, instrument, content, position=2,
         capture_job_id=job_id, capture_settings={"smoothing_enabled": False}))
     assert response.status_code == 200, response.text
     measurement = response.json()["measurement"]
-    assert measurement["band_mhz"] == [1500, 2500]
-    assert measurement["file_meta"]["capture_warnings"] == ["Диапазон ВАЦ не покрывает норму"]
+    assert measurement["band_mhz"] == [1000, 3000]
+    assert measurement["verdict"] == "fail" and not measurement["complete"]
+    assert "не покрывает" in measurement["file_meta"]["capture_warnings"][0]
     assert measurement["file_meta"]["capture_settings"]["smoothing_enabled"] is True
 
 
@@ -286,7 +412,8 @@ def test_old_etk_with_a_coax_config_gets_a_computed_norm_and_an_automatic_verdic
     try:
         _card_, task, instrument = _old_coax_setup(client)
         band = {"band_from_mhz": 1000, "band_to_mhz": 3000}
-        good = client.post("/api/production/vswr", json=_body(task, instrument, GOOD, **band))
+        full = _both([(1, 1.1), (2400, 1.3), (6000, 1.2)])
+        good = client.post("/api/production/vswr", json=_body(task, instrument, full, **band))
         bad = client.post("/api/production/vswr", json=_body(task, instrument, WORSE, position=2, name="sn2.csv", **band))
         listed = client.get(f"/api/production/vswr/tasks/{task['id']}").json()
         passport = client.get(f"/api/production/vswr/tasks/{task['id']}/serials/1/passport").json()

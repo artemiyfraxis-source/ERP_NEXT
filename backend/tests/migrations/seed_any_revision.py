@@ -275,6 +275,24 @@ _OVER_CHECK: dict[tuple[str, str], Any] = {
     ("production_rf_details", "f_min_ghz"): None,
     ("production_rf_interfaces", "position"): 1,
     ("production_rf_interfaces", "f_confirmed"): False,
+    # 0181_vna_sessions: terminal rows hold no active instrument/command lease, even when parents repeat.
+    # Generic counters already start at 1, versions at 1, and binary content is nonempty and below the size cap.
+    ("production_vna_sessions", "state"): "recorded",
+    ("production_vna_commands", "status"): "done",
+    ("production_vna_commands", "claimed_at"): None,
+    # 0182_vswr_traces: preserve the legacy manual verdict without claiming a multi-trace evaluation.
+    ("production_vswr_measurements", "complete"): None,
+    ("production_vswr_measurements", "evidence_key"): None,
+    ("production_vswr_measurements", "port_mapping"): None,
+    ("production_vswr_measurements", "required_ends"): None,
+    ("production_vswr_measurements", "end_results"): None,
+    ("production_vswr_traces", "name"): "S11",
+    ("production_vswr_traces", "quantity"): "vswr",
+    ("production_vswr_traces", "points"): 2,
+    # Display frequencies are MHz; full-resolution scalar/complex evidence uses Hz (reflection coefficient 0).
+    ("production_vswr_traces", "trace"): [[1000.0, 1.0], [2000.0, 1.0]],
+    ("production_vswr_traces", "samples"): [[1e9, 1.0], [2e9, 1.0]],
+    ("production_vswr_traces", "complex_samples"): [[1e9, 0.0, 0.0], [2e9, 0.0, 0.0]],
 }
 # Values a CHECK shapes beyond `IN (…)`: an internal project number is «ВП-…» (0135_internal_projects), unique; the
 # label printer settings are bounded ranges and a numeric `dpi IN (203, 300)` (0138_warehouse_labels).

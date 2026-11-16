@@ -131,6 +131,10 @@ def test_cutover_downgrade_refuses_changed_live_data_without_any_mutation(cutove
     from tests.migrations.check_seeded_downgrade import evidence
 
     path, config, ids = cutover_db
+<<<<<<< HEAD
+=======
+    # Snapshot 0180 itself: later downgrades may legitimately change schema before its guard is reached.
+>>>>>>> origin/main
     command.upgrade(config, "0180_equipment_catalogs_cutover")
     engine = create_engine(f"sqlite:///{path}")
     try:

@@ -1,4 +1,4 @@
-"""0181 preserves complete material identity and historical links while changing ownership."""
+"""0183 preserves complete material identity and historical links while changing ownership."""
 
 import importlib.util
 import json
@@ -20,8 +20,8 @@ from tests.migrations.check_seeded_downgrade import evidence
 from tests.references.test_stock_links_migration import LOT, _insert
 from tests.shipping.test_pack_decision_migration import _config
 
-BEFORE = "0180_equipment_catalogs_cutover"
-AFTER = "0181_material_catalogs_cutover"
+BEFORE = "0182_vswr_traces"
+AFTER = "0183_material_catalogs_cutover"
 
 
 @pytest.fixture()
@@ -221,7 +221,7 @@ def test_lossy_downgrade_refuses_before_any_schema_or_data_change(material_db, c
     {"Наименование": "Неизвестно"},
 ])
 def test_frozen_migration_classifier_agrees_with_write_routing(fields):
-    path = Path(__file__).parents[2] / "migrations/versions/0181_material_catalogs_cutover.py"
+    path = Path(__file__).parents[2] / "migrations/versions/0183_material_catalogs_cutover.py"
     spec = importlib.util.spec_from_file_location("material_cutover", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

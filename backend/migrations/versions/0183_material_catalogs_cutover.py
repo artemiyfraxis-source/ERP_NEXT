@@ -11,8 +11,8 @@ from uuid import uuid4
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0181_material_catalogs_cutover"
-down_revision = "0180_equipment_catalogs_cutover"
+revision = "0183_material_catalogs_cutover"
+down_revision = "0182_vswr_traces"
 branch_labels = depends_on = None
 DESTRUCTIVE = False
 
@@ -173,7 +173,7 @@ def upgrade():
     if sorted(map(repr, map(dict, before_links))) != sorted(map(repr, after_links)):
         raise RuntimeError("Stock-link journal reconciliation failed")
     _freeze(bind)
-    print(f"0181: {dict(Counter(manifest.values()))}; remaining mat={len(rows) - len(manifest)}; "
+    print(f"0183: {dict(Counter(manifest.values()))}; remaining mat={len(rows) - len(manifest)}; "
           f"{len(manifest)} UUIDs/payloads copied, source retained/frozen; {len(before_links)} stock links preserved")
 
 
