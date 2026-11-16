@@ -8,6 +8,32 @@ from app.modules.production.domain import ProductionValidationError
 from app.modules.production.traceability import InstrumentKind, InstrumentStatus, MeasurementInstrument
 
 
+@pytest.mark.parametrize("status", [InstrumentStatus.ACTIVE, InstrumentStatus.INACTIVE])
+def test_shared_accessory_domain_validation_keeps_verification_forbidden(status):
+    from app.modules.production.quality import _validated_instrument
+
+    class Repository:
+        def list(self):
+            return []
+
+        def by_inventory_number(self, number):
+            return None
+
+    item = MeasurementInstrument(
+        id=uuid4(), version=1, inventory_number="СИ.099", name="Общая принадлежность", instrument_type="",
+        verification_number=None, verified_at=None, verification_due=None, status=status,
+        kind=InstrumentKind.ACCESSORY, parent_id=None,
+    )
+    validated = _validated_instrument(item, Repository())
+    assert validated.parent_id is None and validated.instrument_type == "Принадлежность"
+    for changes in (
+        {"verification_number": "ПВ"}, {"verified_at": datetime(2026, 1, 1)},
+        {"verification_due": datetime(2027, 1, 1)}, {"status": InstrumentStatus.UNVERIFIED},
+    ):
+        with pytest.raises(ProductionValidationError, match="Принадлежность не подлежит поверке"):
+            _validated_instrument(replace(item, **changes), Repository())
+
+
 @pytest.mark.parametrize("status", list(InstrumentStatus))
 def test_accessory_never_authorizes_measurement_even_with_forged_verification(status):
     now = datetime(2026, 11, 12, tzinfo=timezone.utc)

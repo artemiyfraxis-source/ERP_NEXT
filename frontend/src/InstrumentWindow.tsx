@@ -122,8 +122,8 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
       payload.verification_number = null; payload.verified_at = null; payload.verification_due = null;
     }
     if (!payload.inventory_number || !payload.name || !Number.isFinite(quantity) || quantity <= 0 ||
-      (accessory && !payload.parent_id) || (!accessory && !payload.instrument_type.trim())) {
-      setError("Заполните инвентарный номер, наименование, тип и количество; для принадлежности выберите прибор."); return;
+      (!accessory && !payload.instrument_type.trim())) {
+      setError("Заполните инвентарный номер, наименование, тип и количество."); return;
     }
     if (!accessory && payload.status === "Действует" && (!payload.verification_number?.trim() || !payload.verified_at || !payload.verification_due)) {
       setError("Укажите номер свидетельства и даты поверки."); return;
@@ -176,8 +176,8 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
             </select></label>}
             {text("doc_designation", "Обозначение для документов")}{text("serial_number", "Зав. №")}{text("manufacturer", "Изготовитель")}
             <label>Количество, шт<input name="quantity" type="number" min="1" step="1" required disabled={record?.kind === "Средство измерений" || Boolean(record?.warehouse_writeoff_id)} value={draft.quantity} onChange={(event) => field("quantity", event.target.value)} /></label>
-            <label>В составе прибора<select name="parent_id" required={accessory} value={draft.parent_id ?? ""} onChange={(event) => field("parent_id", event.target.value || null)}>
-              <option value="">Самостоятельный прибор</option>{parents.map((item) => <option value={item.id} key={item.id}>{item.inventory_number} · {item.name}</option>)}
+            <label>В составе прибора<select name="parent_id" value={draft.parent_id ?? ""} onChange={(event) => field("parent_id", event.target.value || null)}>
+              <option value="">{accessory ? "Без прибора (общая)" : "Самостоятельный прибор"}</option>{parents.map((item) => <option value={item.id} key={item.id}>{item.inventory_number} · {item.name}</option>)}
             </select></label>
             <label>Статус<select name="status" value={draft.status} onChange={(event) => field("status", event.target.value as InstrumentInput["status"])}>
               <option>Действует</option><option>Не используется</option>{!accessory && <option>Поверка не подтверждена</option>}

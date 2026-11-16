@@ -12,6 +12,7 @@ from app.modules.production.rf_infrastructure import RfRepository
 from app.modules.production.rf_interfaces import propose_details
 from app.workflows.coax_vswr_api import CoaxRefs
 from app.workflows.rf_interfaces_fill import fill
+from app.workflows.vna_plan_api import _available
 from tests.production.test_api import production_api  # noqa: F401
 from tests.production.test_instruments_api import create
 from tests.production.test_vna_planner import fixture, one_port_fixture
@@ -20,6 +21,32 @@ from tests.workflows.test_coax_vswr_api import NORM, _as, _card, _launch
 
 def _rf_url(item):
     return f"/api/production/instruments/{item['id']}/rf-interfaces"
+
+
+def test_shared_accessory_availability_ignores_inactive_planar(production_api):
+    from datetime import datetime
+    from app.modules.production.traceability import InstrumentStatus
+
+    client, _ = production_api
+    _as({"quality": "edit", "production": "view"})
+    planar = create(client, "СИ.002", name="Planar S50180")
+    linked = create(client, "СИ.098", kind="Принадлежность", parent_id=planar["id"], status="Действует")
+    shared = create(client, "СИ.099", kind="Принадлежность", parent_id=None, status="Действует")
+    response = client.patch(f"/api/production/instruments/{planar['id']}", json={"version": 1, "status": "Не используется"})
+    assert response.status_code == 200, response.text
+    with app.state.production_uow_factory() as uow:
+        registry = {item.id: item for item in uow.instruments.list()}
+    now = datetime(2026, 11, 16)
+    common = registry[UUID(shared["id"])]
+    child = registry[UUID(linked["id"])]
+    assert _available(common, registry, now)
+    assert not _available(replace(common, status=InstrumentStatus.INACTIVE), registry, now)
+    assert not _available(child, registry, now)
+    assert not _available(replace(child, parent_id=uuid4()), registry, now)
+    assert not _available(replace(child, parent_id=child.id), registry, now)
+    parent = registry[UUID(planar["id"])]
+    registry[parent.id] = replace(parent, status=InstrumentStatus.ACTIVE)
+    assert _available(child, registry, now)
 
 
 def _confirmed():
@@ -130,6 +157,27 @@ def test_plan_get_is_read_only_and_validates_task_operation(production_api, monk
         assert client.get("/api/production/vna-plan", params={**params, field: str(uuid4())}).status_code == 404
     _as({})
     assert client.get("/api/production/vna-plan", params=params).status_code == 403
+
+
+def test_other_vna_can_plan_with_shared_accessories_when_planar_is_inactive(production_api, monkeypatch):
+    client, _ = production_api
+    params = _plan_setup(client, monkeypatch)
+    other = create(client, "СИ.050", name="Другой ВАЦ", status="Действует", verification_number="ПВ-2026",
+                   verified_at="2026-01-01T00:00:00", verification_due="2027-01-01T00:00:00")
+    rf = client.get(f"/api/production/instruments/{params['instrument_id']}/rf-interfaces").json()["rf"]
+    response = client.put(_rf_url(other), json={**rf, "version": 0})
+    assert response.status_code == 200, response.text
+    response = client.patch(f"/api/production/instruments/{params['instrument_id']}", json={"version": 1, "status": "Не используется"})
+    assert response.status_code == 200, response.text
+    params["instrument_id"] = other["id"]
+    assert client.get("/api/production/vna-plan", params=params).json()["status"] == "blocked"
+    for item in client.get("/api/production/instruments").json()["instruments"]:
+        if item["kind"] == "Принадлежность":
+            response = client.patch(f"/api/production/instruments/{item['id']}", json={"version": item["version"], "parent_id": None})
+            assert response.status_code == 200, response.text
+    response = client.get("/api/production/vna-plan", params=params)
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "ready", response.json()
 
 
 def test_unknown_acm_and_missing_card_properties_never_claim_ready(production_api, monkeypatch):
