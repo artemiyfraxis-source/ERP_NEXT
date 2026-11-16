@@ -62,7 +62,7 @@ OPERATION_TYPE_NAMES: dict[str, str] = {
     "foldCore": "Загибка жил", "endCap": "Установка заглушек", "coaxCut": "Резка кабеля", "coaxCutTut": "Резка ТУТ",
     "coaxStrip": "Разделка коаксиала", "coaxShield": "Опрессовка втулки экрана", "coaxSolderShield": "Пайка экрана",
     "coaxPin": "Пайка центрального контакта", "coaxPinCrimp": "Опрессовка центрального контакта", "coaxCapCrimp": "Монтаж крышки (обжим)",
-    "coaxCapScrew": "Монтаж крышки (винт)", "coaxHousing": "Монтаж корпуса", "coaxInsSleeve": "Монтаж втулки экрана",
+    "coaxConnColor": "Цветовая маркировка разъёмов", "coaxCapScrew": "Монтаж крышки (винт)", "coaxHousing": "Монтаж корпуса", "coaxInsSleeve": "Монтаж втулки экрана",
     "coaxInsTut": "Монтаж ТУТ", "coaxHeat": "Усадка ТУТ",
     "coaxClampNut": "Надеть гайку и шайбу (уплотнитель)", "coaxClampBraid": "Оплётка по зажимному кольцу",
     "coaxVswr": "Контроль КСВН",

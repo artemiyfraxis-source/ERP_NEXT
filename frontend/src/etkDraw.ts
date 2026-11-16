@@ -242,7 +242,7 @@ export function etkDrawWires(operation: Row): string {
 export function etkDrawCoax(operation: Row): string {
   const f = obj(operation.fields);
   const a = obj(f.coax), b = obj(f.coaxB);
-  if (!Object.keys(a).length) return "";
+  if (!Object.keys(a).length) return Object.keys(b).length ? coaxSketch(b, "Сторона В") : "";
   if (!Object.keys(b).length) return coaxSketch(a, "");
   return coaxSketch(a, "Сторона А") + coaxSketch(b, "Сторона В");
 }
@@ -252,7 +252,11 @@ export function etkDrawCoax(operation: Row): string {
     диэлектрик до L3, оплётка заподлицо; только L1 — одна жила; только L3 (7/8″ по RFS) — кабель режется заподлицо, снята
     одна оболочка. */
 function coaxSketch(c: Row, caption: string): string {
-  const L = [num(c.l1), num(c.l2), num(c.l3)];
+  // Rosenberger X/Y/Z run from jacket to bare conductor; legacy L1/L2/L3 run the other way.
+  const xyz = c.dimensionOrder === "XYZ";
+  const keys = xyz ? ["l3", "l2", "l1"] : ["l1", "l2", "l3"];
+  const labels = xyz ? ["Z", "Y", "X"] : ["L1", "L2", "L3"];
+  const L = keys.map((key) => num(c[key]));
   const has = L.map((v) => v > 0);
   const present = [0, 1, 2].filter((i) => has[i]);
   const ordered = present.every((i, n) => n === 0 || L[i] > L[present[n - 1]]);
@@ -282,7 +286,7 @@ function coaxSketch(c: Row, caption: string): string {
   present.forEach((i, n) => {
     const y = cy - 30 - n * 24, x = X(L[i]), top = i === 0 ? 8 : i === 1 && !has[2] ? 28 : i === 1 ? 22 : has[1] ? 28 : 22;
     body += `<line x1="${x}" y1="${y - 4}" x2="${x}" y2="${cy - (i === 2 || present.length === 1 ? 18 : top / 2)}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
-      dim(x0, x, y, `L${i + 1} = ${mm(c[`l${i + 1}`])}`);
+      dim(x0, x, y, `${labels[i]} = ${mm(c[keys[i]])}`);
   });
   body += `<line x1="${x0}" y1="${cy - 30 - (present.length - 1) * 24 - 4}" x2="${x0}" y2="${cy + 20}" stroke="#9aa7ad" stroke-dasharray="3 3"/>`;
   const ds = ["d1", "d2", "d3"].filter((key) => c[key]).map((key) => `${key.toUpperCase()} = ${mm(c[key])}`);
@@ -480,8 +484,8 @@ function coaxPartsSketch(operation: Row): string {
 /** Эскиз операции коакса без разделки (её рисует etkDrawCoax): по виду операции и её данным. */
 export function etkDrawCoaxOp(operation: Row): string {
   const type = str(operation.type), f = obj(operation.fields);
-  if (type === "coaxCut" && !Object.keys(obj(f.coax)).length) return coaxCutSketch(operation);
-  if (type === "coaxCutTut") return coaxTutSketch(operation);
+  if (type === "coaxCut" && !Object.keys(obj(f.coax)).length && !Object.keys(obj(f.coaxB)).length) return coaxCutSketch(operation);
+  if (type === "coaxCutTut") return list(f.coaxMarks).length && !f.lengthKd ? "" : coaxTutSketch(operation);
   if (Object.keys(obj(f.coaxEnd)).length) return coaxEndSketch(operation);
   if (Object.keys(obj(f.coaxParts)).length) return coaxPartsSketch(operation);
   return "";
@@ -1060,7 +1064,7 @@ function sideItems(operation: Row, end: "A" | "B"): EtkParam[] {
   // Резка коаксиала с разделкой: у каждой стороны — под какой разъём и какие ступени L1–L3 (владелец 19.10).
   const coax = obj(f[key === "a" ? "coax" : "coaxB"]);
   if (str(operation.type) === "coaxCut" && Object.keys(coax).length) {
-    const steps = [1, 2, 3].filter((n) => str(coax[`l${n}`]).trim()).map((n) => `L${n} ${str(coax[`l${n}`]).trim()}`);
+    const steps = [1, 2, 3].filter((n) => str(coax[`l${n}`]).trim()).map((n) => `${coax.dimensionOrder === "XYZ" ? ["X", "Y", "Z"][n - 1] : `L${n}`} ${str(coax[`l${n}`]).trim()}`);
     out.push(["Разъём", [coaxKindTitle(coax), str(coax.connector).trim()].filter(Boolean).join(", ") || DASH],
       ["Разделка", steps.length ? `${steps.join(" · ")} мм` : DASH]);
   }
@@ -1086,7 +1090,11 @@ export function etkParams(operation: Row): EtkParams {
   // Партия резки — провода разной длины: каждая длина со своим числом штук «180 мм ×3, 200 мм ×1», а не первая.
   const lengths = etkCutLengths(f);
   if (lengths.length > 1) common.push(["Длина по КД", lengths.map(({ length, count }) => `${lengthText(length)} мм ×${lengthText(count)}`).join(", ")]);
-  else if (f.lengthKd) common.push(["Длина по КД", str(f.lengthKd)]);
+  else if (f.lengthKd) common.push([f.finishedLength != null ? "Длина реза" : "Длина по КД", str(f.lengthKd)]);
+  if (f.finishedLength != null) {
+    common.push(["Длина готового изделия L", `${str(f.finishedLength)} мм`], ["Припуск А", `${str(f.lPlusA)} мм`],
+      ["Припуск В", `${str(f.lPlusB)} мм`], ["Допуск готового изделия", str(f.drawingTolerance)]);
+  }
   if (f.cutTolerance) common.push(["Допуск реза", etkTolerance(f.cutTolerance)]);
   // Диаметры провода приходят из БД.ПРОВ при сборке ЭТК (techcard_build.enrich_wire_diameters); нет в базе — «—», не выдумываем.
   const wires = list(f.wires), isWire = wires.length > 0 || /^cutWire/.test(str(operation.type)) || etkCrimpEnds(f).length > 0;
