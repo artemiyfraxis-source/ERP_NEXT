@@ -1,6 +1,7 @@
 """Portal «Справочник» (SUPPLYMAP c61ce9d): per-row edit of technology bases, view-only СПР.КАБ/ТК."""
 
 from datetime import datetime
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -10,6 +11,9 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.main import app
+from app.modules.references.technology import (
+    parse_mirror_rows, sheet_column_name, sync_schema_fields, terminal_card, terminal_field_twins,
+)
 from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
@@ -70,6 +74,171 @@ def test_edit_is_atomic_and_rejects_stale_and_formulas(references_api):
     assert unknown.status_code == 409
     assert missing.status_code == 404
     assert current["fields"] == {"Марка": "МГТФ", "Сечение": "0,35"}
+
+
+@pytest.mark.parametrize("tab", ["ter", "lug"])
+@pytest.mark.parametrize("key,column,card_key,old,new", [
+    ("mm2From", "От мм2", "mm2_from", "0,35", "0,5"),
+    ("mm2To", "До мм²", "mm2_to", "1", "1,5"),
+    ("awgFrom", "От AWG", "awg_from", "28", "26"),
+    ("awgTo", "До AWG", "awg_to", "20", "18"),
+    ("terStrip", "Длина зачистки, мм", "strip", "3", "4"),
+    ("terArticleBag", "Артикул контакта (BAG)", "article_bag", "BAG-1", "BAG-2"),
+    ("terInsOdFrom", "Диаметр изоляции от, мм", "ins_od_from", "1", "1,5"),
+    ("terMaterial", "Материал контакта", "material", "Brass / Tin", "Copper / Tin"),
+])
+def test_terminal_key_and_column_edits_keep_twins_and_card_equal(references_api, tab, key, column, card_key, old, new):
+    record = _seed_record(references_api, tab=tab, fields={key: old, column: old})
+    url = f"/api/references/tech-operations/{record['id']}"
+    for name, before, after in ((key, old, new), (column, new, old), (key, old, "")):
+        response = references_api.patch(url, json={"edits": [{"field": name, "old": before, "value": after}]})
+        assert response.status_code == 200, response.text
+        updated = response.json()
+        assert updated["fields"][key] == updated["fields"][column] == after
+        assert terminal_card(updated["fields"])[card_key] == after
+    persisted = references_api.get("/api/references/tech-operations", params={"tab": tab}).json()["records"][0]
+    assert persisted["fields"][key] == persisted["fields"][column] == ""
+
+
+@pytest.mark.parametrize("tab", ["ter", "lug"])
+@pytest.mark.parametrize("stale", ["mm2From", "От мм2"])
+def test_terminal_stale_twin_refuses_the_whole_edit(references_api, tab, stale):
+    fields = {"mm2From": "0,35", "От мм2": "0,35", "Примечание": "до"}
+    record = _seed_record(references_api, tab=tab, fields=fields)
+    edits = [{"field": name, "old": "устарело" if name == stale else "0,35", "value": "0,5"}
+             for name in ("mm2From", "От мм2")]
+    edits.append({"field": "Примечание", "old": "до", "value": "после"})
+    response = references_api.patch(f"/api/references/tech-operations/{record['id']}", json={"edits": edits})
+    assert response.status_code == 409 and "уже поменяли" in response.json()["detail"]
+    current = references_api.get("/api/references/tech-operations", params={"tab": tab}).json()["records"][0]
+    assert current["fields"] == record["fields"]
+
+
+@pytest.mark.parametrize("tab", ["ter", "lug"])
+def test_terminal_edits_update_all_aliases_and_refuse_conflicting_values(references_api, tab):
+    record = _seed_record(references_api, tab=tab, fields={
+        "mm2From": "0,35", "От мм2": "0,35", "От мм²": "0,35",
+    })
+    url = f"/api/references/tech-operations/{record['id']}"
+    conflict = references_api.patch(url, json={"edits": [
+        {"field": "mm2From", "old": "0,35", "value": "0,5"},
+        {"field": "От мм²", "old": "0,35", "value": "0,75"},
+    ]})
+    assert conflict.status_code == 409
+    for name, before, after in (("mm2From", "0,35", "0,5"), ("От мм²", "0,5", "0,75")):
+        response = references_api.patch(url, json={"edits": [{"field": name, "old": before, "value": after}]})
+        assert response.status_code == 200, response.text
+        assert all(response.json()["fields"][field] == after for field in ("mm2From", "От мм2", "От мм²"))
+
+
+@pytest.mark.parametrize("tab", ["ter", "lug"])
+def test_terminal_legacy_row_accepts_a_missing_range_key(references_api, tab):
+    record = _seed_record(references_api, tab=tab, fields={"От мм2": "0,35"})
+    response = references_api.patch(f"/api/references/tech-operations/{record['id']}", json={
+        "edits": [{"field": "mm2From", "old": "", "value": "0,5"}],
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["fields"]["mm2From"] == response.json()["fields"]["От мм2"] == "0,5"
+
+
+def _mirror_terminal_fields(tab):
+    path = Path(__file__).resolve().parents[2] / "data" / "reference-mirror" / "БД.ТЕР.tsv"
+    header, *rows = parse_mirror_rows(path.read_text(encoding="utf-8"))
+    kind = "Обжимная клемма" if tab == "lug" else "Обжимной контакт"
+    row = next(row for row in rows if row and row[0] == kind)
+    fields = {sheet_column_name(name): row[index] if index < len(row) else "" for index, name in enumerate(header)}
+    return sync_schema_fields(tab, fields)
+
+
+@pytest.mark.parametrize("tab", ["ter", "lug"])
+def test_terminal_complete_mirror_header_has_only_equal_value_twins(references_api, tab):
+    # The entire real header includes independent technologist flags next to strip length.
+    record = _seed_record(references_api, tab=tab, fields=_mirror_terminal_fields(tab))
+    columns = {
+        "terManufacturer": "Производитель", "terComponent": "Product Name", "terSeries": "Series",
+        "terStep": "Шаг разьема", "terType": "Тип контакта", "terArticle": "Артикул контакта (REEL)",
+        "terArticleBag": "Артикул контакта (BAG)", "terApplicator": "Аппликатор",
+        "terStrip": "Длина зачистки, мм", "terLPlus": "L+", "terLMinus": "L-",
+        "terCrimpHeight": "Высота обжима проводника , мм", "terInsCrimpHeight": "Высота обжима изоляции, мм",
+        "terPullForceMin": "Усилие обрыва контакта, N", "awgFrom": "От AWG", "awgTo": "До AWG",
+        "mm2From": "От мм2", "mm2To": "До мм2", "terInsOdFrom": "Диаметр изоляции от, мм",
+        "terInsOdTo": "Диаметр изоляции до, мм", "terMaterial": "Материал контакта",
+        "terMaxCurrent": "Максисмальная сила тока, А",
+        "terDatasheet": "Ссылка на DATASHEET на сайте производителя",
+    }
+    groups = {key: (key, column) for key, column in columns.items()}
+    assert terminal_field_twins(record["fields"]) == groups
+    by_column = {name: twins for twins in groups.values() for name in twins}
+    current = record["fields"]
+    url = f"/api/references/tech-operations/{record['id']}"
+    for name in (name for name in current if name != "terGender"):
+        old = current[name]
+        key = by_column.get(name, (name,))[0]
+        value = {
+            "terInsOdFrom": "0,2" if old == "0,1" else "0,1",
+            "terInsOdTo": "100" if old == "99" else "99",
+            "terDatasheet": old + "/changed" if old else "https://example.test/changed",
+        }.get(key, (old + " changed").strip())
+        if key == "terType":
+            value = old + " changed" if old else "Обжимной контакт"
+        response = references_api.patch(url, json={"edits": [{"field": name, "old": old, "value": value}]})
+        assert response.status_code == 200, (name, response.text)
+        expected = {**current, **dict.fromkeys(by_column.get(name, (name,)), value)}
+        assert response.json()["fields"] == expected, name
+        current = expected
+    persisted = references_api.get("/api/references/tech-operations", params={"tab": tab}).json()["records"][0]
+    assert persisted["fields"] == current
+
+
+@pytest.mark.parametrize("tab", ["ter", "lug"])
+@pytest.mark.parametrize("strip", [None, "3"])
+def test_terminal_strip_flag_is_independent_even_without_a_length_column(references_api, tab, strip):
+    fields = {"С зачисткой": "FALSE"}
+    if strip is not None:
+        fields["terStrip"] = strip
+    record = _seed_record(references_api, tab=tab, fields=fields)
+    response = references_api.patch(f"/api/references/tech-operations/{record['id']}", json={
+        "edits": [{"field": "С зачисткой", "old": "FALSE", "value": "TRUE"}],
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["fields"] == {**record["fields"], "С зачисткой": "TRUE"}
+
+
+@pytest.mark.parametrize("tab", ["ter", "lug"])
+@pytest.mark.parametrize("key,column", [
+    ("connType", "Тип разъема"),
+    ("artISL", "Артикул (контакта ISL)"),
+    ("artSAG", "Артикул (контакт SAG)"),
+])
+def test_terminal_nonstored_keys_cannot_be_created_by_edits_or_twins(references_api, tab, key, column):
+    record = _seed_record(references_api, tab=tab, fields={column: "before"})
+    assert key not in record["fields"]
+    url = f"/api/references/tech-operations/{record['id']}"
+    refused = references_api.patch(url, json={"edits": [{"field": key, "old": "", "value": "after"}]})
+    assert refused.status_code == 409
+    edited = references_api.patch(url, json={"edits": [{"field": column, "old": "before", "value": "after"}]})
+    assert edited.status_code == 200, edited.text
+    assert key not in edited.json()["fields"]
+    persisted = references_api.get("/api/references/tech-operations", params={"tab": tab}).json()["records"][0]
+    assert key not in persisted["fields"]
+    assert persisted["fields"][column] == "after"
+
+
+@pytest.mark.parametrize("tab", ["ter", "lug"])
+@pytest.mark.parametrize("key,value", [
+    ("awgFrom", "28"), ("awgTo", "20"), ("mm2From", "0,35"), ("mm2To", "1,5"),
+    ("terGender", "Male"), ("terArticleBag", "BAG-1"), ("terInsCrimpHeight", "1,2"),
+    ("terInsOdFrom", "1"), ("terInsOdTo", "2"), ("terMaterial", "Copper / Tin"),
+    ("terMaxCurrent", "5"), ("terDatasheet", "https://example.test/datasheet"),
+])
+def test_terminal_missing_derived_keys_remain_editable(references_api, tab, key, value):
+    record = _seed_record(references_api, tab=tab, fields={"terArticle": "REEL-1"})
+    assert key not in record["fields"]
+    response = references_api.patch(f"/api/references/tech-operations/{record['id']}", json={
+        "edits": [{"field": key, "old": "", "value": value}],
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["fields"][key] == value
 
 
 def test_creates_row_needs_a_filled_field_and_rejects_view_only_bases(references_api):
