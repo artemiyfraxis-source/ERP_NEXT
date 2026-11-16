@@ -340,20 +340,18 @@ describe("coax column order (owner 23.10: «сделай сортировку н
   });
 });
 
-it("lists coax cables like a catalogue: series groups in order, base mark before its variants, groups start folded and collapse", async () => {
+it("lists coax cables like a catalogue: series groups in order, base mark before its variants, groups start open and collapse", async () => {
   const lmr: CableRow = { id: "w-lmr", kind: "coax", auto_kind: "coax", reason: "тип «коаксиальный»", manual: false, cable: "LMR-195",
     record: wire("w-lmr", { "Марка": "LMR-195" }), dia: null, dia_hint: null };
   mockApi([], [lmr, ...ROWS]);
   // Settle initial fetches and table effects before testing a single user click.
   await act(async () => { plainRender(<ReferencesPage principal={admin} initialTab="cab_coax" />); });
-  // a block per family (25.10): its heading folds the block; owner 26.10: the groups start folded
+  // A block per family; its heading folds the block, which starts open.
   const rg = await screen.findByRole("button", { name: /^RG58 2$/ });
   // owner 19.10: a group per mark family (RG58 = RG-58 and its A/U); single-row families of a head with no mate go to «Прочие», last
   const lmrGroup = screen.getByRole("button", { name: /^Прочие 2$/ });
   expect(rg.compareDocumentPosition(lmrGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(rg).toHaveAttribute("aria-expanded", "false");
-  expect(screen.queryByText("RG-58 A/U")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Развернуть все" }));
+  expect(rg).toHaveAttribute("aria-expanded", "true");
   const marks = screen.getAllByRole("row").map((line) => line.querySelector("td.key")?.textContent).filter(Boolean);
   expect(marks).toEqual(["RG-58 A/U", "RG58", "LMR-195", "RG316"]); // owner 25.10: rows without diameter last in their group
   expect(rg).toHaveAttribute("aria-expanded", "true");

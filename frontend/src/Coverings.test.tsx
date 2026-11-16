@@ -154,7 +154,7 @@ it("splits ТУТ into a table per kind, in the server's order, and search hides
   await screen.findByText("ТУТ 10/5 черная");
   // ТУТ is a section heading with all its rows; each kind — a block under it
   expect(screen.getByRole("heading", { level: 2, name: "ТУТ — термоусадочная трубка 3" })).toBeInTheDocument();
-  expect([...document.querySelectorAll(".dt-sub-title")].map((item) => item.textContent)).toEqual([
+  expect([...document.querySelectorAll(".dt-sub-title")].map((item) => item.textContent?.replace(/^[▸▾]\s*/, ""))).toEqual([
     "ТУТ — обычная (2:1) 1", "ТУТнг — не распространяющая горение 1", "ТУТ 3:1 и более 1"]);
   expect(within(section("ТУТнг — не распространяющая горение") as HTMLElement).getByText("ТУТнг 4/2 черная")).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Поиск по оболочкам"), { target: { value: "3:1" } });

@@ -1644,9 +1644,15 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .data-table.dt-blocks > .dt-sub-title { margin: 4px 0 -4px; font-size: 14px; font-weight: 600; }
 .data-table.dt-blocks > .dt-section-title + .dt-sub-title { margin-top: -2px; }
 .data-table.dt-blocks > .dt-block-title .group-picked { margin-left: 10px; color: var(--primary); font-size: 13px; font-weight: 600; }
-.data-table.dt-blocks .dt-block-fold { all: unset; cursor: pointer; }
+.data-table.dt-blocks > [hidden] { display: none; }
+.data-table.dt-blocks .dt-block-fold { all: unset; box-sizing: border-box; display: block; width: 100%; min-height: 32px; padding: 4px 0; cursor: pointer; touch-action: manipulation; }
+.data-table.dt-blocks .dt-block-fold:hover { background: var(--accent); }
+.data-table.dt-blocks .dt-block-fold .page-count { font-variant-numeric: tabular-nums; }
 .data-table.dt-blocks .dt-block-fold:focus-visible { outline: var(--focus-ring); outline-offset: 2px; border-radius: 4px; }
 .data-table.dt-blocks .dt-block-fold > span[aria-hidden] { display: inline-block; width: 14px; color: var(--muted-foreground); }
+@media (pointer: coarse) {
+  .data-table.dt-blocks .dt-block-fold { min-height: 40px; }
+}
 /* No scroll box of its own: a block grows to its height and the page scrolls; its header sticks under the toolbar
    (`--dt-head-top`, DataTable). The columns fit the width (DataTable levels them from the data, `table-layout: fixed`),
    one line per row (26.10.2026: «8 строк на экран» — a long text is cut with «…», the whole on hover); only a list that
