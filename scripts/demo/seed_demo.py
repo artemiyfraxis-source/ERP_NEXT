@@ -5,6 +5,7 @@
 
 Every step is wrapped: a failure is printed and the rest keeps going.
 """
+import base64
 import json
 import os
 import subprocess
@@ -704,9 +705,102 @@ def notifications():
         print(f"  notifications for {login}: {n}")
 
 
+@step("11. Quality screen fixtures")
+def quality_screen():
+    """Keep a queued coax box and a representative registry in the throw-away local demo."""
+    if not BASE.startswith(("http://127.0.0.1:", "http://localhost:")) or not DB_URL.startswith("sqlite"):
+        raise RuntimeError("Quality fixtures require a local SQLite demo instance")
+    qc, master, fitter, eng = S["lebedeva.qc"], S["ivanov.master"], S["smirnova.op"], S["orlova.eng"]
+    instruments = (qc.ok("GET", "/api/production/instruments") or {}).get("instruments", [])
+    existing = {item["inventory_number"]: item for item in instruments}
+    names = ["Planar S50180 — анализатор цепей векторный", "Arinst VNA-DL — анализатор цепей",
+             "Мультиметр цифровой Fluke 87V", "Мегаомметр цифровой Е6-32", "Измеритель сопротивления МИКО-21",
+             "Линейка металлическая измерительная 500 мм", "Микрометр гладкий МК 25", "Калибр-пробка контрольный",
+             "Динамометр электронный ДМЭ-100", "Штангенциркуль цифровой ШЦЦ-150"]
+    for index, name in enumerate(names, 2):
+        number = f"СИ.{index:03d}"
+        if number in existing:
+            continue
+        saved = qc.ok("POST", "/api/production/instruments", "quality_instruments", json={
+            "inventory_number": number, "name": name, "doc_designation": name,
+            "instrument_type": "ВАЦ" if index < 4 else "Измерительный прибор", "serial_number": f"2026-{index:04d}",
+            "verification_number": f"ПВ-2026/{index:04d}" if index < 8 else None,
+            "verified_at": D(-30) if index < 8 else None, "verification_due": D(330) if index < 8 else None,
+            "storage_location": "ОТК, ЦАР" if index % 2 == 0 else "ОТК, ЖУК",
+            "status": "Действует" if index < 8 else "Поверка не подтверждена"})
+        if saved:
+            existing[number] = saved["instrument"]
+    parent = existing.get("СИ.002")
+    if not parent:
+        return
+    for index, name in enumerate([
+            "Переход коаксиальный измерительный N (вилка) — SMA (розетка)",
+            "Набор калибровочных мер полного сопротивления SMA 50 Ом", "Кабель измерительный фазостабильный SMA–SMA"], 1):
+        number = f"ПР.{index:03d}"
+        if number not in existing:
+            saved = qc.ok("POST", "/api/production/instruments", "quality_accessories", json={
+                "inventory_number": number, "name": name, "doc_designation": name, "kind": "Принадлежность",
+                "parent_id": parent["id"], "quantity": index, "storage_location": "ОТК, ЦАР"})
+            if saved:
+                existing[number] = saved["instrument"]
+    if not parent.get("files"):
+        for kind, file_name in (("Паспорт", "Паспорт Planar.pdf"), ("Руководство", "Руководство Planar.pdf")):
+            qc.ok("POST", f"/api/production/instruments/{parent['id']}/files", "quality_files", json={
+                "kind": kind, "file_name": file_name,
+                "content_base64": base64.b64encode(b"%PDF-1.4\n% Local demo document\n%%EOF\n").decode()})
+    coax_tasks = (qc.ok("GET", "/api/production/vswr/tasks") or {}).get("tasks", [])
+    if coax_tasks:
+        return
+    card = eng.ok("POST", "/api/techcards/projects", "quality_techcards", json={
+        "project": "591К.3", "item_index": "КБ1", "product_name": "Кабельная сборка RG-316 SMA–SMA", "deadline": D(12)})
+    if not card:
+        return
+    document = {
+        "operations": [{"code": "CTRL_VSWR_coax", "type": "coaxVswr", "title": "Контроль КСВН", "side": ""}],
+        "build_config": {"ops": [{"type": "coaxVswr", "opNumber": "CTRL_VSWR_coax", "tOp": 60, "tPrep": 0}],
+                         "coax": {"cableLength": 500, "cableArt": "RG-316", "cableName": "RG-316",
+                                  "sideA": {"article": "SMA-J-1", "type": "SMA-male"},
+                                  "sideB": {"article": "SMA-P-2", "type": "SMA-female"}}},
+        "kit": {"part_quantity": "8"},
+        "coaxVswrNorm": {"status": "ok", "reason": "", "vswrMax": 1.35, "bandMhz": [1000, 3000],
+                         "source": "ЭТК 591К.3.КБ1"}}
+    built = eng.ok("PUT", f"/api/techcards/projects/{card['id']}/etk", json={"version": card["version"], "document": document})
+    if not built:
+        return
+    issued = eng.ok("POST", f"/api/techcards/projects/{card['id']}/issue", json={"version": built["version"]})
+    if not issued:
+        return
+    launched = master.ok("POST", "/api/production/tasks", "quality_tasks", json={"techcard_id": card["id"], "quantity": 8, "deadline": D(12)})
+    if not launched:
+        return
+    task = launched["task"]
+    operator = next(item for item in master.ok("GET", "/api/production/operators")["operators"] if item["name"] == "Смирнова Елена")
+    current_skills = (master.ok("GET", "/api/production/skills") or {}).get("skills", [])
+    skills = [{key: value for key, value in item.items() if key != "operator_id"} for item in current_skills
+              if item["operator_id"] == operator["id"] and item["operation_code"] != "CTRL_VSWR_coax"]
+    master.ok("PUT", f"/api/production/skills/{operator['id']}", json={"skills": [*skills,
+        {"operation_code": "CTRL_VSWR_coax", "allowed": True, "stars": 5, "coefficient": "1"}]})
+    schedule = master.ok("POST", f"/api/production/tasks/{task['id']}/schedule",
+                         json={"version": task["version"], "replan": False, "max_crew": 1})
+    if schedule:
+        master.ok("POST", f"/api/production/tasks/{task['id']}/schedule/apply", json={
+            "version": task["version"], "replan": False, "max_crew": 1,
+            "transfer_batch": schedule["variants"][0]["transfer_batch"]})
+    session = fitter.ok("POST", f"/api/production/tasks/{task['id']}/operations/{task['operations'][0]['id']}/work/start",
+                        json={"inputs": [], "materials": []})
+    if session:
+        fitter.ok("POST", f"/api/production/work/{session['session']['id']}/submit", "quality_queued_boxes",
+                  json={"good_quantity": "8", "defect_quantity": "0"})
+    for position, peak in ((1, "1,22"), (2, "1,42")):
+        content = f"Частота, МГц;КСВН\n1000;1,1\n1800;{peak}\n3000;1,2\n".encode("utf-8")
+        qc.ok("POST", "/api/production/vswr", "quality_measurements", json={
+            "task_id": task["id"], "position": position, "instrument_id": parent["id"],
+            "file_name": f"Изделие {position}.csv", "file_base64": base64.b64encode(content).decode()})
+
+
 def main():
     S["adm"] = Client()
-    for fn in (staff, requests_, handoff, procurement, rfq, receiving, stock, techcards, production, fulfillment, shipping, notifications):
+    for fn in (staff, requests_, handoff, procurement, rfq, receiving, stock, techcards, production, fulfillment, shipping, notifications, quality_screen):
         fn()
     print("\nCOUNTS:", json.dumps(COUNT, ensure_ascii=False))
     print(f"FAILURES ({len(FAILS)}):")
