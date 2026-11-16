@@ -607,7 +607,7 @@ class ProductionInstrumentRow(Base):
         CheckConstraint('parent_id IS NULL OR parent_id <> id', name='ck_production_instruments_parent'),
         CheckConstraint('quantity >= 1', name='ck_production_instruments_quantity'),
         CheckConstraint("kind <> 'Средство измерений' OR quantity = 1", name='ck_production_instruments_measuring_quantity'),
-        CheckConstraint("kind <> 'Принадлежность' OR (parent_id IS NOT NULL AND verification_number IS NULL AND verified_at IS NULL AND verification_due IS NULL AND status IN ('Действует', 'Не используется'))", name='ck_production_instruments_accessory'),
+        CheckConstraint("kind <> 'Принадлежность' OR (verification_number IS NULL AND verified_at IS NULL AND verification_due IS NULL AND status IN ('Действует', 'Не используется'))", name='ck_production_instruments_accessory'),
         CheckConstraint("vna_app IN ('', 'S2VNA', 'Arinst VL')", name="ck_production_instruments_vna_app"),
         CheckConstraint("vna_app = '' OR kind = 'Средство измерений'", name="ck_production_instruments_vna_measuring"),
     )

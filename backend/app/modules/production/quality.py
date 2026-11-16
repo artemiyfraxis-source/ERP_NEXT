@@ -176,8 +176,6 @@ def _validated_instrument(item: MeasurementInstrument, repository: InstrumentRep
         raise ProductionValidationError("Средство измерений учитывается поштучно: количество 1")
     evidence = (item.verification_number, item.verified_at, item.verification_due)
     if item.kind is InstrumentKind.ACCESSORY:
-        if item.parent_id is None:
-            raise ProductionValidationError("Для принадлежности укажите родительское СИ")
         if any(value is not None for value in evidence) or item.status is InstrumentStatus.UNVERIFIED:
             raise ProductionValidationError("Принадлежность не подлежит поверке")
         if any(child.parent_id == item.id for child in repository.list()):

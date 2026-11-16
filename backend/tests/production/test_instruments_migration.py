@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 
 from tests.migrations.seed_any_revision import seed
 
@@ -106,6 +106,86 @@ def test_upgrade_refuses_invalid_old_data_without_rewriting_it(tmp_path, monkeyp
 
 V2_PARENT = "0174_supplier_item_rules"
 V2 = "0175_instrument_kinds_files"
+
+SHARED_PARENT = "0184_shipping_item_addressees"
+SHARED = "0185_shared_accessories"
+
+
+def _shared_snapshot(path):
+    with sqlite3.connect(path) as connection:
+        tables = [row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('alembic_version', 'sqlite_sequence')"
+        )]
+        return {table: connection.execute(f'SELECT * FROM "{table}" ORDER BY 1').fetchall() for table in tables}
+
+
+def _instrument_constraints(path):
+    engine = create_engine(f"sqlite+pysqlite:///{path.as_posix()}")
+    try:
+        schema = inspect(engine)
+        return {
+            "checks": {item["name"]: item["sqltext"] for item in schema.get_check_constraints(TABLE)},
+            "foreign_keys": schema.get_foreign_keys(TABLE),
+            "indexes": schema.get_indexes(TABLE),
+            "unique": schema.get_unique_constraints(TABLE),
+        }
+    finally:
+        engine.dispose()
+
+
+def test_shared_upgrade_and_downgrade_preserve_all_rows_and_constraints(tmp_path, monkeypatch):
+    monkeypatch.delenv("ERP_DATABASE_URL", raising=False)
+    path = tmp_path / "shared.db"
+    config = _config(path)
+    command.upgrade(config, SHARED_PARENT)
+    engine = create_engine(f"sqlite+pysqlite:///{path.as_posix()}")
+    try:
+        seeded = seed(engine, rows=2)
+        assert seeded[TABLE] == 2 and seeded["production_instrument_files"] == 2
+    finally:
+        engine.dispose()
+    with sqlite3.connect(path) as connection:
+        parent_id = connection.execute(f"SELECT id FROM {TABLE} ORDER BY id LIMIT 1").fetchone()[0]
+        accessory = dict(zip(COLUMNS, _row(verification_number=None, verified_at=None, verification_due=None)))
+        accessory.update(kind="Принадлежность", parent_id=parent_id, quantity=4)
+        insert = f"INSERT INTO {TABLE} ({', '.join(accessory)}) VALUES ({', '.join('?' for _ in accessory)})"
+        connection.execute(insert, tuple(accessory.values()))
+    before_schema = _instrument_constraints(path)
+    before = _shared_snapshot(path)
+    command.upgrade(config, SHARED)
+    assert _shared_snapshot(path) == before
+    after_schema = _instrument_constraints(path)
+    assert after_schema["checks"].pop("ck_production_instruments_accessory") == before_schema["checks"]["ck_production_instruments_accessory"].replace("parent_id IS NOT NULL AND ", "")
+    assert after_schema == {**before_schema, "checks": {key: value for key, value in before_schema["checks"].items() if key != "ck_production_instruments_accessory"}}
+    with sqlite3.connect(path) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        shared = {**accessory, "id": uuid4().hex, "inventory_number": "ОБЩ.001", "parent_id": None}
+        inactive = {**shared, "id": uuid4().hex, "inventory_number": "ОБЩ.002", "status": "Не используется"}
+        connection.executemany(insert, [tuple(shared.values()), tuple(inactive.values())])
+        self_id = uuid4().hex
+        for changes in (
+            {"verification_number": "ПВ"}, {"verified_at": "2026-01-01"}, {"verification_due": "2027-01-01"},
+            {"status": "Поверка не подтверждена"}, {"status": "Неизвестный"}, {"quantity": 0},
+            {"parent_id": uuid4().hex}, {"parent_id": self_id, "id": self_id},
+        ):
+            bad = {**shared, "id": uuid4().hex, "inventory_number": uuid4().hex, **changes}
+            with pytest.raises(sqlite3.IntegrityError):
+                connection.execute(insert, tuple(bad.values()))
+    with_shared = _shared_snapshot(path)
+    with pytest.raises(RuntimeError, match="Нельзя отменить миграцию: есть общие принадлежности"):
+        command.downgrade(config, SHARED_PARENT)
+    assert _shared_snapshot(path) == with_shared
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (SHARED,)
+        connection.execute(f"DELETE FROM {TABLE} WHERE id IN (?, ?)", (shared["id"], inactive["id"]))
+    command.downgrade(config, SHARED_PARENT)
+    assert _shared_snapshot(path) == before
+    assert _instrument_constraints(path) == before_schema
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(insert, tuple(shared.values()))
 
 
 def test_v2_upgrade_four_existing_rows_and_clean_downgrade(tmp_path, monkeypatch):

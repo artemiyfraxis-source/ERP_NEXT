@@ -64,6 +64,7 @@ def _available(item, registry, now):
             return False
         seen.add(current.id)
         if current.parent_id is None:
+            # Shared accessories depend only on their own status; linked ones still inherit the parent chain.
             return True
         current = registry.get(current.parent_id)
         if current is None:
