@@ -34,6 +34,7 @@ import {
   type BasesResult,
   type CableKind,
   type CablesResult,
+  type CoveringTab,
   type ConnectorSeries,
   type Principal,
   type ReferenceMaps,
@@ -219,10 +220,9 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   const [techReady, setTechReady] = useState("");
   const [opCount, setOpCount] = useState<number | null>(null);
   const [connectorCount, setConnectorCount] = useState<number | null>(null);
-  const [coveringCount, setCoveringCount] = useState<number | null>(null);
-  // БД.МАТ split into tabs: the ids «Оболочки» holds (the server's classifier) and the counts per tab.
-  const [coverIds, setCoverIds] = useState<Set<string> | null>(null);
-  const [matCounts, setMatCounts] = useState<Record<MaterialTab | "cov", number> | null>(null);
+  const [coveringCounts, setCoveringCounts] = useState<Partial<Record<CoveringTab, number>>>({});
+  const [coveringRevision, setCoveringRevision] = useState(0);
+  const [matCounts, setMatCounts] = useState<Record<MaterialTab, number> | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -231,7 +231,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   const [editing, setEditing] = useState<{ id: string | null; values: Record<string, string>; moveTo?: TechOperationTab } | null>(null);
   const matTab = isMaterialTab(tab) ? tab : null;
   const techTab: TechOperationTab | null = matTab ? "mat"
-    : !isMapTab(tab) && !isCableTab(tab) && !isMaterialTab(tab) && tab !== "templates" && tab !== "connectors" && tab !== "gauges" && tab !== "cov" ? tab : null;
+    : !isMapTab(tab) && !isCableTab(tab) && !isMaterialTab(tab) && tab !== "templates" && tab !== "connectors" && tab !== "gauges" && tab !== "cov" && tab !== "heat_shrink" ? tab : null;
   // «Терминалы» и «Наконечники» — каждая своя база (миграция 0165): ter и lug.
   const lugTab = tab === "lug";
   const contactTab = tab === "ter";
@@ -298,16 +298,12 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     }
   }
 
-  /** «Оболочки» ids and the per-tab counts of БД.МАТ (a failed call leaves the tabs without numbers). */
+  /** Remaining purpose-tab counts; material catalog counts come from their storage tables. */
   async function loadMaterialIndex() {
     try {
-      const [covered, mat] = await Promise.all([referencesApi.coverings(), referencesApi.techOperations("mat", "", 5000)]);
-      const ids = new Set(covered.rows.map((row) => row.id));
-      setCoverIds(ids);
-      setCoveringCount(covered.rows.length);
-      setMatCounts(materialCounts(mat.records, ids));
+      const mat = await referencesApi.techOperations("mat", "", 5000);
+      setMatCounts(materialCounts(mat.records));
     } catch {
-      setCoverIds((current) => current ?? new Set());
       setMatCounts(null);
     }
   }
@@ -366,7 +362,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     if (isMapTab(def.id)) return canRefs && savedMaps !== "" ? maps[def.id].length : null;
     if (def.id === "templates") return opCount;
     if (def.id === "connectors") return connectorCount;
-    if (def.id === "cov") return coveringCount ?? matCounts?.cov ?? null;
+    if (def.id === "cov" || def.id === "heat_shrink") return coveringCounts[def.id] ?? bases.tabs?.[def.id] ?? null;
     if (isMaterialTab(def.id)) return matCounts?.[def.id] ?? null;
     // каждая база кабелей — своя таблица: число берётся из `tabs` (cab_coax, prov…), запасной путь — старые «cables»
     if (isCableTab(def.id)) return bases.tabs?.[cableTab(CABLE_TABS[def.id])] ?? (cables?.counts ?? bases.cables)?.[CABLE_TABS[def.id]] ?? null;
@@ -453,9 +449,9 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     .map((key) => [key, record.fields[key]]));
   // «Материалы» по назначению: столбцы, пустые во всей вкладке (у стяжек — «Размер до», «Коэф. усадки»…), скрыты по
   // умолчанию — они остаются в «Колонках».
-  const filledInTab = useMemo(() => new Set(matTab && coverIds ? materialRows(tech.records, coverIds, matTab)
+  const filledInTab = useMemo(() => new Set(matTab ? materialRows(tech.records, matTab)
     .flatMap((record) => Object.entries(record.fields).filter(([, value]) => String(value ?? "").trim()).map(([key]) => key)) : []),
-  [tech.records, matTab, coverIds]);
+  [tech.records, matTab]);
   const sheetColumns: DataColumn<TechOperationRecord>[] = [
     // Short cells (Ø, AWG, мм) stay narrow so a wide sheet like СПР.КАБ fits; long text wraps; numbers sort as numbers.
     ...fieldColumns.map((field, index): DataColumn<TechOperationRecord> => {
@@ -539,11 +535,11 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     : terGroups ? (record: TechOperationRecord) => terGroups.get(record.id)?.name ?? NO_SERIES
     : lugTab ? lugFamily : undefined;
   const techGroupLabel = terGroups || lugTab ? (name: string, rows: TechOperationRecord[]) => seriesCaption(name, rows as TerminalRow[]) : undefined;
-  const techRows = useMemo(() => techTab !== "mat" ? (terGroups ? sortBySeries(tech.records as TerminalRow[], terGroups, makerOrder(terSeries)) : lugTab ? lugRows(tech.records) : tech.records) : (matTab && coverIds ? materialRows(tech.records, coverIds, matTab) : []).sort((a, b) => {
+  const techRows = useMemo(() => techTab !== "mat" ? (terGroups ? sortBySeries(tech.records as TerminalRow[], terGroups, makerOrder(terSeries)) : lugTab ? lugRows(tech.records) : tech.records) : (matTab ? materialRows(tech.records, matTab) : []).sort((a, b) => {
     const ga = String(a.fields["Группа"] ?? "").trim();
     const gb = String(b.fields["Группа"] ?? "").trim();
     return Number(!ga) - Number(!gb) || natural(ga, gb) || natural(String(a.fields["Наименование"] ?? a.display_text), String(b.fields["Наименование"] ?? b.display_text));
-  }), [tech.records, techTab, lugTab, matTab, coverIds, terGroups, terSeries]);
+  }), [tech.records, techTab, lugTab, matTab, terGroups, terSeries]);
   // The default order of the list over its table (owner 25.10.2026: «размер, затем наименование» везде).
   const sortHint = contactTab ? "серия, затем сечение провода и артикул" : lugTab ? LUG_SORT_HINT : techTab === "mat" ? "группа, затем наименование" : "";
   const techPresets: DataPreset<TechOperationRecord>[] = presetFields
@@ -551,8 +547,8 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     .map(([label, field]) => ({ label, test: emptyIn(field) }))
     .filter((preset) => techRows.some(preset.test)); // пустой отбор — шум
   useEffect(() => {
-    if (techTab === "mat" && techReady === "mat" && coverIds) setMatCounts(materialCounts(tech.records, coverIds));
-  }, [tech.records, coverIds]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (techTab === "mat" && techReady === "mat") setMatCounts(materialCounts(tech.records));
+  }, [tech.records]); // eslint-disable-line react-hooks/exhaustive-deps
   function openTerminal(id: string) {
     setTerminalId(id);
     try {
@@ -577,7 +573,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   return <SearchSeedContext.Provider value={seed}><section className="page references-page">
     <header className="page-head"><h1>База данных</h1>{!stockLog && current && count(current) !== null && <span className="page-count">{count(current)}</span>}
       <div className="page-actions">
-        {!stockLog && <ReferenceRoundtrip tab={tab} principal={principal} onApplied={() => { if (techTab) void loadTech(techTab); if (cables !== null) void loadCables(); referencesApi.maps().then(applyMaps).catch(() => undefined); loadBases(); }} />}
+        {!stockLog && <ReferenceRoundtrip tab={tab} principal={principal} onApplied={() => { if (techTab) void loadTech(techTab); if (tab === "cov" || tab === "heat_shrink") { setCoveringRevision((value) => value + 1); setCoveringCounts({}); } if (cables !== null) void loadCables(); referencesApi.maps().then(applyMaps).catch(() => undefined); loadBases(); }} />}
         <button type="button" className={stockLog ? "secondary small active" : "secondary small"} aria-pressed={stockLog} onClick={() => setStockLog((value) => !value)}>Журнал «Склад → база»</button>
       </div>
     </header>
@@ -601,7 +597,9 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
 
     {tab === "templates" && <TechcardsPage principal={principal} view="templates" embedded />}
     {tab === "connectors" && <ConnectorGallery canEdit={canEdit} />}
-    {tab === "cov" && <CoveringsTable canEdit={canEdit} onCount={setCoveringCount} />}
+    {(tab === "cov" || tab === "heat_shrink") && <CoveringsTable key={tab} tab={tab} revision={coveringRevision} canEdit={canEdit}
+      onCount={(value) => setCoveringCounts((current) => ({ ...current, [tab]: value }))}
+      onChanged={() => { setCoveringCounts({}); loadBases(); void loadMaterialIndex(); }} />}
 
     {isMapTab(tab) && savedMaps === "" && !mapsFailed && <div className="empty">Загрузка…</div>}
     {isMapTab(tab) && (savedMaps !== "" || mapsFailed) && (() => {
@@ -657,7 +655,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
         </> : undefined}
         toolbar={canEdit && !editing ? <><AddColumnButton tab={techTab} onAdded={() => loadTech(techTab)} /><button type="button" className="primary small" onClick={() => startCreate()}>+ Новая запись</button></> : undefined}
       // БД.КОАКС is ordered by its cable's Ø from «Кабели и провода»: it waits for them, the rows do not jump a second later
-      /> : techReady !== techKey || (matTab && !coverIds) || (coaxTab && cables === null) ? <div className="empty">Загрузка…</div> : coaxTab ? <CoaxConnectors
+      /> : techReady !== techKey || (coaxTab && cables === null) ? <div className="empty">Загрузка…</div> : coaxTab ? <CoaxConnectors
         records={tech.records}
         wireDiameter={wireDiameter}
         canEdit={canEdit}

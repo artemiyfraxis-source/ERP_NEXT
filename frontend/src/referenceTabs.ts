@@ -52,7 +52,8 @@ export const REFERENCE_TAB_GROUPS: ReadonlyArray<{ title: string; tabs: TabDef[]
   // Owner 12.10.2026: оболочки (ТУТ, ТТК, оплётки, гофра) — отдельной таблицей из строк БД.МАТ, с разбором и сортировкой;
   // 15.10.2026: вкладку «Материалы» расформировать — каждая строка БД.МАТ в одной вкладке по назначению (materialSections.ts).
   { title: "Материалы", tabs: [
-    { id: "cov", label: "Оболочки", words: "тут ттк оплётка гофра кембрик лента" },
+    { id: "heat_shrink", label: "Термоусадка", base: "heat_shrink", words: "тут ттк термоусадочная трубка клеевая" },
+    { id: "cov", label: "Оболочки", base: "cov", words: "оплётка гофра кембрик лента" },
     { id: "mat_use", label: MATERIAL_TABS.mat_use.label, words: "припой флюс материалы" },
   ] },
   { title: "Соответствия", tabs: [

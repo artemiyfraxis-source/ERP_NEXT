@@ -61,9 +61,9 @@ from app.shared.identity import Actor
 
 from .application import (
     UnitOfWork, _audit, _check_wire_row, _kind_rule, _same_wire_mark, _search_text, _sync_gost_awg, _wire_fields,
-    cable_custom_columns, cable_overrides, custom_columns,
+    cable_custom_columns, cable_overrides, custom_columns, material_columns, removed_columns,
 )
-from .domain import EQUIPMENT_TABS
+from .domain import EQUIPMENT_TABS, MATERIAL_TABS, MATERIAL_CATALOG_TABS
 from .equipment_catalogs import CATALOG_COLUMNS, CATALOG_TYPES
 from .equipment import EXTRA_KEYS, NAME_KEYS, sync_name_edits, updated_display
 from .lugs import ter_kind_of
@@ -944,7 +944,11 @@ TECH_TABLES: dict[str, _TechTable] = {
     "cab_multi": _cable_table(TechOperationTab.CAB_MULTI, "Многожильные кабели"),
     "cab_lan": _cable_table(TechOperationTab.CAB_LAN, "Кабели Ethernet"),
     "mat": _TechTable(TechOperationTab.MATERIAL, "БД.МАТ — материалы", ("Наименование",),
-                      lambda values: (("name", _folded(values[0])),)),
+                      lambda values: (("name", _folded(values[0])),), family=MATERIAL_TABS),
+    "heat_shrink": _TechTable(TechOperationTab.HEAT_SHRINK, "Термоусадка", ("Наименование",),
+                      lambda values: (("name", _folded(values[0])),), family=MATERIAL_TABS),
+    "cov": _TechTable(TechOperationTab.COVERING, "Оболочки", ("Наименование",),
+                      lambda values: (("name", _folded(values[0])),), family=MATERIAL_TABS),
     "ob": _TechTable(TechOperationTab.EQUIPMENT, "БД.ОБ — станки и оборудование", ("equipmentKey",),
                      lambda values: (("unit", values[0]),), virtual="baseValue", family=EQUIPMENT_TABS),
 }
@@ -977,6 +981,12 @@ def _load_fields(spec: _TechTable, records: Sequence[TechOperationRecord], uow: 
                    *custom_columns(spec.tab, uow)]
     if spec.cables:
         fields += [*(cable_custom_columns(uow) if spec.family else custom_columns(spec.tab, uow)), KIND_FIELD]
+    if spec.tab in MATERIAL_TABS:
+        # A legacy БД.МАТ load can update a moved row, including its existing payload.
+        # A catalog's schema and new custom columns remain independent of its siblings.
+        tabs = MATERIAL_TABS if spec.tab == TechOperationTab.MATERIAL else (spec.tab,)
+        fields += [name for tab in tabs for name in custom_columns(tab, uow)]
+        fields += [name for record in records if record.tab in tabs for name in record.fields]
     return list(dict.fromkeys(fields))
 
 
@@ -1104,6 +1114,10 @@ class _TechTarget(_Target):
             fields[column] = fields["terGender"]
 
     def create(self, key, fields):
+        if self.table.tab in MATERIAL_CATALOG_TABS:
+            removed = removed_columns(self.table.tab, self.uow)
+            if any(name in removed and str(value or "").strip() for name, value in fields.items()):
+                raise RowRefused("Убранный столбец можно менять только в существующей записи")
         if key in self.ambiguous:
             colorless = self.table.optional_keys and not any(self.key_values[key][len(self.table.key_fields) - 1:])
             raise RowRefused(WIRE_COLOR_REASON if self.table.cables and colorless
@@ -1518,6 +1532,9 @@ def import_schema(table: str, uow: UnitOfWork) -> dict:
             columns = [name for name in _sheet_columns(spec, records) if name not in schema] if spec.sheet_columns else []
             result = {"table": table, "label": spec.label, "key": list(spec.key_fields), "fields": schema + columns,
                       "schema_fields": schema if spec.sheet_columns else [], "sheet_columns": columns}
+            if spec.tab in MATERIAL_TABS:
+                result["fields"] = (material_columns(spec.tab, uow) if spec.tab in MATERIAL_CATALOG_TABS
+                                    else _load_fields(spec, records, uow))
             if spec.tab in EQUIPMENT_TABS:
                 result["fields"] = list(dict.fromkeys([*_load_fields(spec, records, uow), "unitId", "mirrorKey"]))
                 result["sheet_columns"] = list(CATALOG_COLUMNS[spec.tab.value])

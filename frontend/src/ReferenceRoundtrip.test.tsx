@@ -108,13 +108,13 @@ it("previews the file in a window, then applies it on «Применить»", a
   expect(within(dialog).queryByRole("button", { name: /Применить/ })).toBeNull();
 });
 
-it("«Наконечники» и виды кабелей качают файл своей базы, монтажные — prov", async () => {
+it("exports each split tab from its own storage table", async () => {
   const seen: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     seen.push(String(input).split("?")[0]);
     return json({ fields: [], titles: {}, label: "x", rows: 0 });
   });
-  for (const [tab, table] of [["lug", "lug"], ["cab_coax", "cab_coax"], ["cab_multi", "cab_multi"], ["cab_lan", "cab_lan"], ["cab_wire", "prov"]] as const) {
+  for (const [tab, table] of [["heat_shrink", "heat_shrink"], ["cov", "cov"], ["lug", "lug"], ["cab_coax", "cab_coax"], ["cab_multi", "cab_multi"], ["cab_lan", "cab_lan"], ["cab_wire", "prov"]] as const) {
     const view = render(<ReferenceRoundtrip tab={tab} principal={principal({ erpref: "view" })} onApplied={() => undefined} />);
     fireEvent.click(screen.getByRole("button", { name: "Скачать для правки" }));
     await waitFor(() => expect(seen).toContain(`/api/references/import/${table}/file/fields`));

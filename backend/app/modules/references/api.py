@@ -1,5 +1,5 @@
 from .equipment_catalogs import CATALOG_COLUMNS
-from .domain import EQUIPMENT_TABS
+from .domain import EQUIPMENT_TABS, MATERIAL_TABS, MATERIAL_CATALOG_TABS
 """HTTP contract for editable maps and the technology catalog."""
 
 from collections.abc import Callable
@@ -23,7 +23,7 @@ from app.shared.http_auth import (
 from .application import (
     ColumnCommand, CreateRecordCommand, EditRecordCommand, FieldEdit, ReferencePair, ReplaceMapsCommand, ReplaceSnapshotCommand, TechRecordInput,
     SetCoaxDiametersCommand, SetCoveringGroupCommand, StaleRecordError, UnitOfWork, create_record, edit_record, list_cables,
-    SaveColumnViewCommand, ViewColumn, column_views, save_column_view,
+    SaveColumnViewCommand, ViewColumn, column_views, save_column_view, material_columns, removed_columns,
     replace_maps, replace_snapshot, add_column, custom_columns, remove_column, set_coax_diameters, set_covering_group, coverings_catalog,
 )
 from .application import MoveRecordCommand, family_member, move_record
@@ -250,6 +250,10 @@ def tech_operations(
         records = uow.tech_operations.list(tab=tab_family(tab) if family and tab is not None else tab, query=q, limit=limit)
         metadata = uow.tech_operations.metadata()
         own = custom_columns(tab, uow) if tab is not None else []
+        catalog_columns = material_columns(tab, uow) if tab in MATERIAL_CATALOG_TABS else None
+        removed = sorted(removed_columns(tab, uow)) if tab in MATERIAL_CATALOG_TABS else []
+        if catalog_columns is not None:
+            own = [name for name in own if name in catalog_columns]
         # БД.ОБ / БД.ОП: the ids the row is linked by (model, role, tool, «Обслуживает»; the models of the cells)
         extras = uow.equipment.record_extras(records) if hasattr(uow, "equipment") else {}
         if getattr(uow, "session", None) is not None:
@@ -263,7 +267,7 @@ def tech_operations(
     # «Наконечники» (owner 26.10.2026): only the columns lugs fill (`lugs.LUG_COLUMN_SLOTS`), then the owner's own columns
     # of «Наконечники» — every base has its own (owner 28.10.2026: «каждая вкладка в БД — отдельная таблица»).
     columns = ([*lug_columns(_sheet_columns(tab, shown)), *own] if tab == TechOperationTab.LUG
-               else _columns(tab, shown, own))
+               else catalog_columns if catalog_columns is not None else _columns(tab, shown, own))
     return {
         "metadata": None if metadata is None else {
             **metadata,
@@ -273,9 +277,12 @@ def tech_operations(
         # Known sheet schema first (so an empty tab still has a create form), else the first row's keys.
         "columns": columns,
         "custom_columns": own,
+        **({"removed_columns": removed} if tab in MATERIAL_CATALOG_TABS else {}),
         "records": [{
             "id": str(item.id), "tab": item.tab.value, "display_text": item.display_text,
             "source_sheet": item.source_sheet, **({"cable_kind": item.cable_kind} if item.cable_kind else {}),
+            **({"material_group": item.material_group, "classification_status": item.classification_status}
+               if item.tab in MATERIAL_TABS else {}),
             # «Терминалы» / «Наконечники»: the kind of the row's base and the one the rule gives (they differ after a
             # move by hand)
             **({"ter_kind": item.ter_kind, "ter_rule": ter_kind_of(item.fields)} if item.ter_kind else {}),
@@ -372,6 +379,7 @@ def import_supplymap_technology_snapshot(
 _BASE_LABELS = {
     "op": "БД.ОП — операции", "ob": "БД.ОБ — станки и оборудование", "ter": "БД.ТЕР — терминалы",
     "coax": "БД.КОАКС — коаксиал", "prov": "БД.ПРОВ — провода", "mat": "БД.МАТ — материалы",
+    "heat_shrink": "Термоусадка", "cov": "Оболочки",
     "spr_kab": "СПР.КАБ — сечения и диаметры кабеля", "tk_templates": "БД.ТК — шаблоны ТК",
 }
 # PortalRef.gs REF_BASES_: tile icon and the line under it.
@@ -382,12 +390,15 @@ _BASE_TILES = {
     "coax": ("📡", "разделка D/L · пин и экран"),
     "prov": ("🧵", "марки · сечения · диаметры"),
     "mat": ("🧪", "трубки · оплётки · стяжки"),
+    "heat_shrink": ("", "термоусадочные трубки · ТУТ · ТТК"),
+    "cov": ("", "оплётки · гофра · кембрик · ленты"),
     "spr_kab": ("📏", "Ø изоляции по AWG · слои коакса"),
     "tk_templates": ("🧩", "шаблоны техкарт · только просмотр"),
 }
 _BASE_TABS = {
     "op": (TechOperationTab.OPERATION,), "ob": EQUIPMENT_TABS, "ter": TERMINAL_TABS,
     "coax": (TechOperationTab.COAX,), "prov": CABLE_TABS, "mat": (TechOperationTab.MATERIAL,),
+    "heat_shrink": (TechOperationTab.HEAT_SHRINK,), "cov": (TechOperationTab.COVERING,),
     "spr_kab": (TechOperationTab.KAB_COAX, TechOperationTab.KAB_AWG),
 }
 
@@ -395,6 +406,8 @@ _BASE_TABS = {
 def _record_json(item) -> dict:
     return {"id": str(item.id), "tab": item.tab.value, "display_text": item.display_text,
             "source_sheet": item.source_sheet, "fields": item.fields,
+            **({"material_group": item.material_group, "classification_status": item.classification_status}
+               if item.tab in MATERIAL_TABS else {}),
             **({"cable_kind": item.cable_kind} if item.cable_kind else {}),
             **({"ter_kind": item.ter_kind, "ter_rule": ter_kind_of(item.fields)} if item.ter_kind else {}),
             **({"equipment_model_id": str(item.equipment_model_id)} if item.equipment_model_id else {})}
@@ -738,10 +751,10 @@ def save_cable_diameters(
 def coverings(
     _principal: Annotated[Principal, Depends(references_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+    tab: Literal["heat_shrink", "cov"] = "cov",
 ) -> dict:
-    """«Оболочки»: БД.МАТ rows that cover a harness, split into ТУТ / ТТК / Оплётки / Гофра / Прочее, parsed per group
-    and sorted by series, then Ø (`coverings.py`)."""
-    return coverings_catalog(uow_factory())
+    """One physical material catalog, parsed for its stored groups and ordered by size."""
+    return coverings_catalog(uow_factory(), TechOperationTab(tab))
 
 
 class CoveringGroupPayload(BaseModel):
@@ -1008,6 +1021,21 @@ def delete_equipment_record(
         record = _run_edit(lambda: delete_equipment(record_id, principal.actor, now, uow_factory()))
     except IntegrityError as error:
         raise HTTPException(status_code=409, detail="Экземпляр связан с заданиями, рецептами или ресурсами") from error
+    return {"id": str(record.id)}
+
+
+@router.delete("/tech-operations/{record_id}", dependencies=[Depends(refuse_api_tokens("Токен API не удаляет строки справочника."))])
+def delete_material_record(
+    record_id: UUID,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    from .application import delete_record
+    try:
+        record = _run_edit(lambda: delete_record(record_id, principal.actor, now, uow_factory(), catalog_only=True))
+    except IntegrityError as error:
+        raise HTTPException(status_code=409, detail="Запись связана с другими документами") from error
     return {"id": str(record.id)}
 
 

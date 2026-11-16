@@ -1,8 +1,6 @@
 import type { TechOperationRecord } from "./api";
 
-/* «Материалы» расформированы (owner 15.10.2026: «оболочки из материалов перенести и нормально отсортировать, остальное
-   расформировать»). A БД.МАТ row is shown in exactly one tab: «Оболочки» when the server's classifier calls it a
-   covering (`coverings.py`, its ids come with GET /coverings), else the tab its «Группа» names below.
+/* Heat-shrink and coverings have their own storage tables. Remaining БД.МАТ rows use the purpose tabs below.
    Owner 17.10.2026: only «Расходники» stay, and only solders and fluxes are in it («там должны быть только флюсы и
    припои»); «Крепёж и тройники», «Уплотнители и заглушки», «Гильзы и втулки» are gone. A row of any other group is not
    shown in a tab (it stays in the data — nothing is moved or rewritten; the tab is derived from the row's «Группа»). */
@@ -25,16 +23,16 @@ export function materialTab(fields: Record<string, string>): MaterialTab | null 
   return BY_GROUP[norm(fields[MATERIAL_GROUP_FIELD] ?? "")] ?? null;
 }
 
-/** Rows of one tab: the БД.МАТ rows minus the coverings, by «Группа». */
-export function materialRows(records: TechOperationRecord[], coverings: ReadonlySet<string>, tab: MaterialTab): TechOperationRecord[] {
-  return records.filter((record) => !coverings.has(record.id) && materialTab(record.fields) === tab);
+/** Purpose tabs read only the remaining material table. */
+export function materialRows(records: TechOperationRecord[], tab: MaterialTab): TechOperationRecord[] {
+  return records.filter((record) => record.tab === "mat" && materialTab(record.fields) === tab);
 }
 
-/** Counts on the tabs: a БД.МАТ row is counted once — in «Оболочки» (`cov`) or in its own tab, if it has one. */
-export function materialCounts(records: TechOperationRecord[], coverings: ReadonlySet<string>): Record<MaterialTab | "cov", number> {
-  const counts: Record<MaterialTab | "cov", number> = { cov: 0, mat_use: 0 };
+/** Physical covering catalog counts come from /bases, never a second client-side classification. */
+export function materialCounts(records: TechOperationRecord[]): Record<MaterialTab, number> {
+  const counts: Record<MaterialTab, number> = { mat_use: 0 };
   for (const record of records) {
-    const tab = coverings.has(record.id) ? "cov" : materialTab(record.fields);
+    const tab = record.tab === "mat" ? materialTab(record.fields) : null;
     if (tab) counts[tab] += 1;
   }
   return counts;

@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, Uuid,
-    delete, false as sa_false, func, select, text, union_all,
+    delete, false as sa_false, func, literal, select, text, union_all,
 )
 from sqlalchemy import event
 from sqlalchemy.orm import Mapped, Session, declared_attr, mapped_column, sessionmaker
@@ -25,11 +25,12 @@ from .cable_structure import (
 )
 from .search_text import search_rows, search_words
 from .domain import (
-    EDITABLE_TABS, EQUIPMENT_TABS, TERMINAL_TABS, ReferenceEntry, ReferenceKind, StockArticle, StockLinkChange, StockLinkEntry,
+    EDITABLE_TABS, EQUIPMENT_TABS, MATERIAL_TABS, TERMINAL_TABS, ReferenceEntry, ReferenceKind, StockArticle, StockLinkChange, StockLinkEntry,
     StockLinkEvent, TechOperationRecord, TechOperationTab, ReferenceValidationError, family_root,
 )
 from .equipment_catalogs import CATALOG_TABLES, equipment_tab
 from .equipment import INV_KEY, field as equipment_field
+from .material_catalogs import prepare as prepare_material
 
 
 class ReferenceEntryRow(Base):
@@ -84,7 +85,7 @@ def terminal_card_checks(dialect: str) -> dict[str, str]:
 TER_CARD_OTHER = "tab NOT IN (" + ", ".join(f"'{tab.value}'" for tab in TERMINAL_TABS) + ")"
 # Every record is in a known base, «ter» first (migration 0165 holds a literal copy; a new tab widens it in a migration).
 TAB_CHECK = "tab IN (" + ", ".join(f"'{tab.value}'" for tab in sorted(
-    (tab for tab in TechOperationTab if tab not in EQUIPMENT_TABS[1:]), key=lambda tab: (tab != TechOperationTab.TERMINAL, list(TechOperationTab).index(tab)))) + ")"
+    (tab for tab in TechOperationTab if tab not in (*EQUIPMENT_TABS[1:], *MATERIAL_TABS[1:])), key=lambda tab: (tab != TechOperationTab.TERMINAL, list(TechOperationTab).index(tab)))) + ")"
 
 
 # --- Equipment identity (owner 05.11.2026: «связка должна быть не через название, а через идентификатор»; 0171) ---
@@ -224,9 +225,53 @@ class TechOperationRecordRow(Base):
     fields: Mapped[dict] = mapped_column(JSON, nullable=False)
     mirror_key: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
     edited_in_erp: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa_false())
+    material_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa_false())
+    material_group: Mapped[str] = mapped_column(String(32), nullable=False, default="", server_default="")
+    classification_status: Mapped[str] = mapped_column(String(32), nullable=False, default="", server_default="")
     equipment_model_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("equipment_models.id", ondelete="RESTRICT", name="fk_tech_operation_records_equipment_model"),
         nullable=True)
+
+
+class _MaterialRecordRow(Base):
+    __abstract__ = True
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    tab: Mapped[str] = mapped_column(String(16), nullable=False)
+    display_text: Mapped[str] = mapped_column(String(2000), nullable=False)
+    normalized_search: Mapped[str] = mapped_column(Text, nullable=False)
+    source_sheet: Mapped[str] = mapped_column(String(255), nullable=False)
+    sort_key: Mapped[str] = mapped_column(String(2000), nullable=False)
+    fields: Mapped[dict] = mapped_column(JSON, nullable=False)
+    mirror_key: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
+    edited_in_erp: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa_false())
+    equipment_model_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    material_group: Mapped[str] = mapped_column(String(32), nullable=False, default="other", server_default="other")
+    classification_status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown", server_default="unknown")
+
+
+class HeatShrinkRecordRow(_MaterialRecordRow):
+    __tablename__ = "heat_shrink_records"
+    __table_args__ = (
+        CheckConstraint("tab = 'heat_shrink'", name="ck_heat_shrink_records_tab"),
+        CheckConstraint("equipment_model_id IS NULL", name="ck_heat_shrink_records_model"),
+        CheckConstraint("classification_status IN ('classified', 'unknown')", name="ck_heat_shrink_records_status"),
+        CheckConstraint("material_group IN ('tut', 'ttk', 'other')", name="ck_heat_shrink_records_group"),
+        Index("ix_heat_shrink_records_sort", "sort_key"),
+    )
+
+
+class CoveringRecordRow(_MaterialRecordRow):
+    __tablename__ = "covering_records"
+    __table_args__ = (
+        CheckConstraint("tab = 'cov'", name="ck_covering_records_tab"),
+        CheckConstraint("equipment_model_id IS NULL", name="ck_covering_records_model"),
+        CheckConstraint("classification_status IN ('classified', 'unknown')", name="ck_covering_records_status"),
+        CheckConstraint("material_group IN ('cambric', 'corrugated', 'braid', 'tape', 'other')", name="ck_covering_records_group"),
+        Index("ix_covering_records_sort", "sort_key"),
+    )
+
+
+MATERIAL_ROWS = {"heat_shrink": HeatShrinkRecordRow, "cov": CoveringRecordRow}
 
 
 class EquipmentOperationLinkRow(Base):
@@ -325,26 +370,29 @@ class SqlAlchemyReferenceRepository:
         ) for entry in entries)
 
 
-_STABLE_TABS = (*CATALOG_TABLES, TechOperationTab.OPERATION.value)
+_STABLE_TABS = (*CATALOG_TABLES, TechOperationTab.OPERATION.value, *(tab.value for tab in MATERIAL_TABS))
 _RECORD_COLUMNS = ("id", "tab", "display_text", "normalized_search", "source_sheet", "sort_key", "fields",
-                   "mirror_key", "edited_in_erp", "equipment_model_id")
+                   "mirror_key", "edited_in_erp", "equipment_model_id", "material_group", "classification_status")
 
 
 def _write_row(row, record: TechOperationRecord, edited_in_erp: bool) -> None:
     for name in _RECORD_COLUMNS:
-        if name not in ("id", "equipment_model_id"):
+        if name not in ("id", "equipment_model_id") and hasattr(type(row), name):
             setattr(row, name, record.tab.value if name == "tab" else getattr(record, name))
     row.edited_in_erp = edited_in_erp
 
 
 def _record_union():
     sources = [select(*(getattr(TechOperationRecordRow, name) for name in _RECORD_COLUMNS))
-               .where(TechOperationRecordRow.tab != "ob")]
-    sources.extend(select(*(getattr(row, name) for name in _RECORD_COLUMNS)) for row in EQUIPMENT_ROWS.values())
+               .where(TechOperationRecordRow.tab != "ob", TechOperationRecordRow.material_archived.is_(False))]
+    sources.extend(select(*(getattr(row, name, literal("").label(name)) for name in _RECORD_COLUMNS))
+                   for row in (*EQUIPMENT_ROWS.values(), *MATERIAL_ROWS.values()))
     return union_all(*sources).subquery("live_reference_records")
 
 
 def _natural_key(tab: str, fields: dict) -> str:
+    if tab in {item.value for item in MATERIAL_TABS}:
+        return ""  # Names and articles are not evidence that two material identities may be merged.
     key = "Инв. номер" if tab in CATALOG_TABLES else "opNumber"
     return "".join(str(fields.get(key) or "").split()).casefold()
 
@@ -384,10 +432,11 @@ class SqlAlchemyTechOperationRepository:
     def _domain(row) -> TechOperationRecord:
         return TechOperationRecord(row.id, TechOperationTab(row.tab), row.display_text, row.normalized_search,
                                    row.source_sheet, row.sort_key, row.fields, row.mirror_key, row.edited_in_erp,
-                                   row.equipment_model_id)
+                                   row.equipment_model_id, getattr(row, "material_group", ""),
+                                   getattr(row, "classification_status", ""))
 
     def list(self, *, tab: TechOperationTab | Sequence[TechOperationTab] | None, query: str, limit: int):
-        """One global UNION ordering and limit, including search; no archived equipment is visible."""
+        """One global UNION ordering and limit, excluding frozen equipment and material archives."""
         rows = _record_union()
         statement = select(rows)
         if isinstance(tab, TechOperationTab):
@@ -431,14 +480,24 @@ class SqlAlchemyTechOperationRepository:
         unit = self.session.get(EquipmentUnitRow, record_id)
         if unit is not None:
             return self.session.get(EQUIPMENT_ROWS[unit.catalog], record_id)
+        for model in MATERIAL_ROWS.values():
+            material = self.session.get(model, record_id)
+            if material is not None:
+                return material
         row = self.session.get(TechOperationRecordRow, record_id)
-        return row if row is not None and row.tab != "ob" else None
+        return row if row is not None and row.tab != "ob" and not row.material_archived else None
 
     def get(self, record_id):
         row = self._row(record_id)
         return None if row is None else self._domain(row)
 
     def _delete_row(self, row):
+        if row.tab in {tab.value for tab in MATERIAL_TABS}:
+            # SQLite test databases need not have FK enforcement; retain the journal either way.
+            target = {"heat_shrink": "heat_shrink_id", "cov": "covering_id"}.get(row.tab, "record_id")
+            for link in self.session.scalars(select(ReferenceStockLinkRow).where(
+                    getattr(ReferenceStockLinkRow, target) == row.id)):
+                setattr(link, target, None)
         self.session.delete(row)
         if row.tab in CATALOG_TABLES:
             self.session.delete(self.session.get(EquipmentUnitRow, row.id))
@@ -496,6 +555,8 @@ class SqlAlchemyTechOperationRepository:
 
     def _put(self, record, *, row=None):
         from . import equipment_identity as identity
+        if record.tab in MATERIAL_TABS:
+            return self._put_material(record, row)
         if record.tab in EQUIPMENT_TABS:
             # A storage move keeps both UUIDs and all relations. Fields are not renamed by this path.
             tab = equipment_tab(record.fields)
@@ -539,6 +600,33 @@ class SqlAlchemyTechOperationRepository:
         _write_row(row, record, record.edited_in_erp)
         return row
 
+    def _put_material(self, record, row):
+        record = prepare_material(record, current_tab=row.tab if row is not None else None)
+        model = MATERIAL_ROWS.get(record.tab.value, TechOperationRecordRow)
+        moved = row is not None and row.tab != record.tab.value
+        target = model(id=record.id) if row is None or moved else row
+        target.equipment_model_id = None
+        _write_row(target, record, record.edited_in_erp)
+        if row is None or moved:
+            self.session.add(target)
+        if moved:
+            # Insert the new target before retargeting the journal; only then freeze/delete the old owner.
+            self.session.flush()
+            old_key = {"heat_shrink": "heat_shrink_id", "cov": "covering_id"}.get(row.tab, "record_id")
+            new_key = {"heat_shrink": "heat_shrink_id", "cov": "covering_id"}.get(target.tab, "record_id")
+            for link in self.session.scalars(select(ReferenceStockLinkRow).where(
+                    getattr(ReferenceStockLinkRow, old_key) == row.id)):
+                setattr(link, old_key, None)
+                setattr(link, new_key, row.id)
+                link.record_tab = target.tab
+            self.session.flush()
+            if isinstance(row, TechOperationRecordRow):
+                row.material_archived = True
+            else:
+                self.session.delete(row)
+            self.session.flush()
+        return target
+
     def save(self, record):
         from . import equipment_identity as identity
         row = self._row(record.id)
@@ -563,8 +651,10 @@ class SqlAlchemyTechOperationRepository:
     def replace(self, records, *, schema_version, source_updated_at, imported_at, keep_tabs=(), preserve_erp_edits=False,
                 keep_mirror_keys=frozenset()):
         from . import equipment_identity as identity
-        rows = [*self.session.scalars(select(TechOperationRecordRow).where(TechOperationRecordRow.tab != "ob")),
-                *self.session.scalars(select(EquipmentRecordRow))]
+        rows = [*self.session.scalars(select(TechOperationRecordRow).where(
+                    TechOperationRecordRow.tab != "ob", TechOperationRecordRow.material_archived.is_(False))),
+                *self.session.scalars(select(EquipmentRecordRow)),
+                *(row for model in MATERIAL_ROWS.values() for row in self.session.scalars(select(model)))]
         matched = _match_stable(records, [row for row in rows if row.tab in _STABLE_TABS])
         # One mirror row may generate several wire colours. A source tombstone blocks regeneration,
         # but existing siblings must survive even if they have never been edited in ERP.
@@ -994,7 +1084,12 @@ class ReferenceStockLinkRow(Base):
     __tablename__ = "reference_stock_links"
     __table_args__ = (
         CheckConstraint("event IN ('linked', 'created', 'updated')", name="ck_reference_stock_links_event"),
-        CheckConstraint("record_id IS NULL OR equipment_unit_id IS NULL", name="ck_reference_stock_links_one_target"),
+        CheckConstraint("(CASE WHEN record_id IS NULL THEN 0 ELSE 1 END + "
+                        "CASE WHEN equipment_unit_id IS NULL THEN 0 ELSE 1 END + "
+                        "CASE WHEN heat_shrink_id IS NULL THEN 0 ELSE 1 END + "
+                        "CASE WHEN covering_id IS NULL THEN 0 ELSE 1 END) <= 1", name="ck_reference_stock_links_one_target"),
+        CheckConstraint("(heat_shrink_id IS NULL OR record_tab = 'heat_shrink') AND "
+                        "(covering_id IS NULL OR record_tab = 'cov')", name="ck_reference_stock_links_material_target"),
         CheckConstraint(STOCK_LINK_TAB_CHECK, name="ck_reference_stock_links_tab"),
         CheckConstraint("length(trim(grn)) > 0", name="ck_reference_stock_links_grn"),
         CheckConstraint("length(trim(record_text)) > 0", name="ck_reference_stock_links_record_text"),
@@ -1022,6 +1117,10 @@ class ReferenceStockLinkRow(Base):
     equipment_unit_id: Mapped[UUID | None] = mapped_column(
         Uuid, ForeignKey("equipment_units.id", ondelete="SET NULL", name="fk_reference_stock_links_equipment_unit"),
         nullable=True)
+    heat_shrink_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("heat_shrink_records.id", ondelete="SET NULL", name="fk_reference_stock_links_heat_shrink_id"), nullable=True)
+    covering_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("covering_records.id", ondelete="SET NULL", name="fk_reference_stock_links_covering_id"), nullable=True)
     record_text: Mapped[str] = mapped_column(String(2000), nullable=False)
     changes: Mapped[list] = mapped_column(JSON, nullable=False)
     actor_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
@@ -1036,8 +1135,10 @@ class SqlAlchemyStockLinkRepository:
         self.session.add(ReferenceStockLinkRow(
             id=entry.id, occurred_at=entry.occurred_at, event=entry.event.value, lot_id=article.lot_id,
             warehouse=article.warehouse, grn=article.grn, package=article.package, article=article.article,
-            name=article.name, record_id=None if entry.record_tab in EQUIPMENT_TABS else entry.record_id,
+            name=article.name, record_id=None if entry.record_tab in (*EQUIPMENT_TABS, *MATERIAL_TABS[1:]) else entry.record_id,
             equipment_unit_id=entry.record_id if entry.record_tab in EQUIPMENT_TABS else None,
+            heat_shrink_id=entry.record_id if entry.record_tab == TechOperationTab.HEAT_SHRINK else None,
+            covering_id=entry.record_id if entry.record_tab == TechOperationTab.COVERING else None,
             record_tab=entry.record_tab.value,
             record_text=entry.record_text,
             changes=[{"field": change.field, "old": change.old, "new": change.new} for change in entry.changes],
@@ -1049,7 +1150,9 @@ class SqlAlchemyStockLinkRepository:
         statement = select(ReferenceStockLinkRow)
         if record_id is not None:
             statement = statement.where((ReferenceStockLinkRow.record_id == record_id) |
-                                        (ReferenceStockLinkRow.equipment_unit_id == record_id))
+                                        (ReferenceStockLinkRow.equipment_unit_id == record_id) |
+                                        (ReferenceStockLinkRow.heat_shrink_id == record_id) |
+                                        (ReferenceStockLinkRow.covering_id == record_id))
         if lot_id is not None: statement = statement.where(ReferenceStockLinkRow.lot_id == lot_id)
         rows = self.session.scalars(statement.order_by(
             ReferenceStockLinkRow.occurred_at.desc(), ReferenceStockLinkRow.id.desc()).limit(limit))
@@ -1057,7 +1160,8 @@ class SqlAlchemyStockLinkRepository:
             id=row.id, occurred_at=row.occurred_at, event=StockLinkEvent(row.event),
             article=StockArticle(lot_id=row.lot_id, warehouse=row.warehouse, grn=row.grn, package=row.package,
                                  article=row.article, name=row.name),
-            record_id=row.record_id or row.equipment_unit_id, record_tab=TechOperationTab(row.record_tab), record_text=row.record_text,
+            record_id=row.record_id or row.equipment_unit_id or row.heat_shrink_id or row.covering_id,
+            record_tab=TechOperationTab(row.record_tab), record_text=row.record_text,
             changes=tuple(StockLinkChange(str(item.get("field", "")), str(item.get("old", "")), str(item.get("new", "")))
                           for item in row.changes or []),
             actor_id=row.actor_id, actor_name=row.actor_name,

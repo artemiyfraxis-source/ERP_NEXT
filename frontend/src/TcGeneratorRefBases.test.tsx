@@ -12,9 +12,12 @@ const CONTACT = { id: "t1", tab: "ter", ter_kind: "contact", fields: { terArticl
 const LUG = { id: "l1", tab: "lug", ter_kind: "lug", fields: { terComponent: "НШВИ", terArticle: "НШВИ 0.25-8", mm2From: "0,2", mm2To: "0,2" } };
 const HOOKUP = { id: "p1", tab: "prov", cable_kind: "wire", fields: { "Марка": "МГТФ 0,12", "Число жил": "1" } };
 const COAX = { id: "c1", tab: "cab_coax", cable_kind: "coax", fields: { "Марка": "RG-316", "Число жил": "1", "Экран": "оплётка" } };
+const SHRINK = { id: "s1", tab: "heat_shrink", fields: { Наименование: "ТУТ 4/2", Группа: "ТУТ", "Ед. изм.": "м" } };
+const CAMBRIC = { id: "m1", tab: "cov", fields: { Наименование: "Кембрик ПВХ 4", Группа: "кембрик", "Ед. изм.": "м" } };
 const BASES: Record<string, { family: string[]; records: unknown[] }> = {
   ter: { family: ["ter", "lug"], records: [CONTACT, LUG] },
   prov: { family: ["prov", "cab_coax", "cab_multi", "cab_lan"], records: [HOOKUP, COAX] },
+  mat: { family: ["mat", "heat_shrink", "cov"], records: [SHRINK, CAMBRIC] },
 };
 let asked: string[] = [];
 
@@ -42,9 +45,11 @@ it("lugs and a coax cable come from their own bases: contact/lug lookup, free-en
   const refs = await generatorRefs();
   expect(asked).toContain("/api/references/tech-operations?tab=ter&limit=5000&family=true");
   expect(asked).toContain("/api/references/tech-operations?tab=prov&limit=5000&family=true");
+  expect(asked).toContain("/api/references/tech-operations?tab=mat&limit=5000&family=true");
   // БД.ТЕР целиком: контакт ищется среди всех строк листа, наконечник — в «Свободных концах».
   expect(refs.terRecords.map((r) => r.article)).toEqual(["DF1B-2428SCFA", "НШВИ 0.25-8"]);
   expect((refs.lugRecords ?? []).map((r) => [r.article, r.type])).toEqual([["НШВИ 0.25-8", "НШВИ"]]);
   // БД.ПРОВ целиком: монтажный провод и коаксиальный кабель из своей базы, вид — из базы строки.
   expect((refs.cableRecords ?? []).map((r) => [r.mark, r.kind, r.screen])).toEqual([["МГТФ 0,12", "wire", ""], ["RG-316", "coax", "оплётка"]]);
+  expect(refs.markMats?.map((material) => material.name)).toEqual(expect.arrayContaining(["ТУТ 4/2", "Кембрик ПВХ 4"]));
 });

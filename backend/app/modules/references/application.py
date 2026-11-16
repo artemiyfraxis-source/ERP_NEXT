@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 from .equipment_catalogs import CATALOG_COLUMNS, CATALOG_TYPES, equipment_tab
-from .domain import EQUIPMENT_TABS
+from .domain import EQUIPMENT_TABS, MATERIAL_TABS, MATERIAL_CATALOG_TABS
+from .material_catalogs import DERIVED_COLUMN_TITLES, prepare as prepare_material
 
 import hashlib
 import re
@@ -335,6 +336,7 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
             own_columns = [*custom_columns(record.tab, uow),
                            *(CABLE_WRITABLE[record.cable_kind] if record.tab in CABLE_TABS else ())]
         known = (edit.field in record.fields or edit.field in stored or edit.field in (own_columns or ())
+                 or (record.tab in MATERIAL_TABS and edit.field in (*BASE_COLUMNS[TechOperationTab.MATERIAL], "Раздел оболочек"))
                  or (record.tab in EQUIPMENT_TABS and edit.field in (*NAME_KEYS, *EXTRA_KEYS, *CATALOG_COLUMNS[record.tab.value]))
                  or (record.tab == TechOperationTab.COAX and edit.field in _coax_card_columns()))
         if not known:
@@ -383,6 +385,7 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
     updated = replace(record, fields=fields, display_text=display, edited_in_erp=True,
                       tab=equipment_tab(fields) if record.tab in EQUIPMENT_TABS else record.tab)
     updated = replace(updated, normalized_search=_search_text(updated))
+    updated = prepare_material(updated)
     if record.cable_kind == CableKind.WIRE.value and edited & {MARK_FIELD, WIRE_COLOR_FIELD}:
         _check_wire_row(updated.fields, uow, record.id)
     uow.tech_operations.save(updated)
@@ -496,6 +499,20 @@ def custom_columns(tab: TechOperationTab, uow: UnitOfWork) -> list[str]:
     return list(dict.fromkeys(entry.value for entry in sorted(own, key=lambda entry: entry.position)))
 
 
+def removed_columns(tab: TechOperationTab, uow: UnitOfWork) -> set[str]:
+    if tab not in MATERIAL_CATALOG_TABS:
+        return set()
+    return {entry.value for entry in uow.references.list() if entry.kind == ReferenceKind.REMOVED_COLUMN
+            and entry.key.startswith(custom_column_prefix(tab))}
+
+
+def material_columns(tab: TechOperationTab, uow: UnitOfWork) -> list[str]:
+    """Independent catalog schema; omitted values remain editable on the record card."""
+    removed = removed_columns(tab, uow)
+    return list(dict.fromkeys(name for name in (*BASE_COLUMNS[tab], *custom_columns(tab, uow))
+                              if name not in removed))
+
+
 def cable_custom_columns(uow: UnitOfWork) -> list[str]:
     """The owner's columns of every cable base, each name once (a load of the БД.ПРОВ sheet takes any of them)."""
     return list(dict.fromkeys(name for tab in CABLE_TABS for name in custom_columns(tab, uow)))
@@ -529,6 +546,8 @@ def _taken_names(tab: TechOperationTab, records: Sequence[TechOperationRecord], 
     names = set(base) | set(schema_keys(tab.value)) | set(stored_schema_keys(tab.value))
     if tab in EQUIPMENT_TABS:
         names |= set(CATALOG_COLUMNS[tab.value])
+    if tab in MATERIAL_CATALOG_TABS:
+        names |= DERIVED_COLUMN_TITLES
     names |= {name for record in records for name in record.fields} | set(custom_columns(tab, uow))
     if tab == TechOperationTab.COAX:
         from .importers import TECH_TABLES
@@ -580,23 +599,31 @@ def add_column(command: ColumnCommand, uow: UnitOfWork) -> int:
     _clean_cell(name)  # a formula is not a name
     with uow:
         tab, records = _column_records(command, uow)
+        derived = next((title for title in DERIVED_COLUMN_TITLES if _folded(title) == _folded(name)), None) \
+            if tab in MATERIAL_CATALOG_TABS else None
+        if derived:
+            name = derived
         if _folded(name) in {_folded(item) for item in _dropped_columns(tab)}:
             raise ReferenceValidationError(f"Столбец «{name}» убран из таблицы (владелец 25.10.2026) — его значения "
                                            "остаются в записях и видны в карточке записи")
-        if _folded(name) in _taken_names(tab, records, uow):
+        removed = removed_columns(tab, uow)
+        if _folded(name) in _taken_names(tab, records, uow) and name not in removed:
             raise ReferenceValidationError(f"Столбец «{name}» уже есть в таблице")
-        if not records and tab not in EQUIPMENT_TABS:
+        if not records and tab not in (*EQUIPMENT_TABS, *MATERIAL_CATALOG_TABS):
             raise ReferenceValidationError("В таблице нет записей — столбцу негде жить")
         for record in records:
-            uow.tech_operations.save(replace(record, fields={**record.fields, name: ""}, edited_in_erp=True))
-        entries = list(uow.references.list())
+            if not derived and name not in record.fields:
+                uow.tech_operations.save(replace(record, fields={**record.fields, name: ""}, edited_in_erp=True))
+        entries = [entry for entry in uow.references.list() if not (
+            entry.kind == ReferenceKind.REMOVED_COLUMN and entry.key == custom_column_prefix(tab) + name)]
         position = max((entry.position for entry in entries if entry.kind == ReferenceKind.CUSTOM_COLUMN), default=-1) + 1
-        uow.references.replace((*entries, ReferenceEntry.create(
-            ReferenceKind.CUSTOM_COLUMN, custom_column_prefix(tab) + name, name, position)))
+        if not derived and name not in BASE_COLUMNS.get(tab, ()) and name not in custom_columns(tab, uow):
+            entries.append(ReferenceEntry.create(ReferenceKind.CUSTOM_COLUMN, custom_column_prefix(tab) + name, name, position))
+        uow.references.replace(tuple(entries))
         _audit("references.column_added", command.actor, command.now, {
-            "tab": tab.value, "column": name, "records": len(records)}, uow)
+            "tab": tab.value, "column": name, "records": 0 if derived else len(records)}, uow)
         uow.commit()
-    return len(records)
+    return 0 if derived else len(records)
 
 
 def remove_column(command: ColumnCommand, uow: UnitOfWork) -> int:
@@ -608,6 +635,21 @@ def remove_column(command: ColumnCommand, uow: UnitOfWork) -> int:
     _check_column_tab(command.tab)
     with uow:
         tab, records = _column_records(command, uow)
+        if tab in MATERIAL_CATALOG_TABS:
+            removable = [*material_columns(tab, uow), *(DERIVED_COLUMN_TITLES - removed_columns(tab, uow))]
+            name = next((item for item in removable if _folded(item) == _folded(command.name)), None)
+            if name is None:
+                raise ReferenceValidationError("Столбца нет в таблице")
+            if name == "Наименование":
+                raise ReferenceValidationError("Наименование записи удалять нельзя")
+            entries = list(uow.references.list())
+            entries.append(ReferenceEntry.create(ReferenceKind.REMOVED_COLUMN,
+                custom_column_prefix(tab) + name, name, len(entries)))
+            uow.references.replace(tuple(entries))
+            _audit("references.column_removed", command.actor, command.now,
+                   {"tab": tab.value, "column": name, "records": 0, "payload_retained": True}, uow)
+            uow.commit()
+            return 0
         name = next((item for item in custom_columns(tab, uow) if _folded(item) == _folded(command.name)), None)
         if name is None:
             raise ReferenceValidationError("Удалить можно только свой столбец")
@@ -705,11 +747,12 @@ def set_covering_group(command: SetCoveringGroupCommand, uow: UnitOfWork) -> Tec
         record = uow.tech_operations.get(command.record_id)
         if record is None:
             raise LookupError("Запись справочника не найдена")
-        if record.tab != TechOperationTab.MATERIAL:
+        if record.tab not in MATERIAL_TABS:
             raise ReferenceValidationError("Раздел оболочек есть только у материалов")
         fields = {**record.fields, OVERRIDE_FIELD: group}
         updated = replace(record, fields=fields, edited_in_erp=True)
         updated = replace(updated, normalized_search=_search_text(updated))
+        updated = prepare_material(updated)
         uow.tech_operations.save(updated)
         _audit("references.covering_group_set", command.actor, command.now,
                {"record_id": str(record.id), "group": group}, uow)
@@ -717,11 +760,22 @@ def set_covering_group(command: SetCoveringGroupCommand, uow: UnitOfWork) -> Tec
     return updated
 
 
-def coverings_catalog(uow: UnitOfWork) -> dict:
+def coverings_catalog(uow: UnitOfWork, tab: TechOperationTab = TechOperationTab.COVERING) -> dict:
     from .coverings import build
+    if tab not in MATERIAL_CATALOG_TABS:
+        raise ReferenceValidationError("Таблица: термоусадка или оболочки")
     with uow:
-        records = uow.tech_operations.list(tab=TechOperationTab.MATERIAL, query="", limit=10_000)
-    return build([(str(item.id), item.fields) for item in records])
+        records = uow.tech_operations.list(tab=tab, query="", limit=100_000)
+        columns = material_columns(tab, uow)
+        own = [name for name in custom_columns(tab, uow) if name in columns]
+        removed = sorted(removed_columns(tab, uow))
+    result = build([(str(item.id), item.fields) for item in records],
+                   groups={str(item.id): item.material_group or "other" for item in records})
+    status = {str(item.id): item.classification_status for item in records}
+    for row in result["rows"]:
+        row["classification_status"] = status[row["id"]]
+        row["material_group"] = row["group"]
+    return {**result, "columns": columns, "custom_columns": own, "removed_columns": removed}
 
 
 def _equipment_rows(uow: UnitOfWork) -> list[tuple[object, dict[str, str]]]:
@@ -990,7 +1044,8 @@ def link_stock_article(command: LinkStockCommand, uow: UnitOfWork) -> StockLinkR
         _check_edit_count(command.edits)
     with uow:
         record = _editable(command.record_id, uow)
-        if command.tab is not None and record.tab != command.tab:
+        if command.tab is not None and record.tab != command.tab and not (
+                command.tab == TechOperationTab.MATERIAL and record.tab in MATERIAL_TABS):
             raise ReferenceValidationError("Запись из другой базы")
         changes: tuple[StockLinkChange, ...] = ()
         if command.edits:
@@ -1199,7 +1254,7 @@ def delete_equipment(record_id: UUID, actor: Actor, now: datetime, uow: UnitOfWo
 
 
 def delete_record(record_id: UUID, actor: Actor, now: datetime, uow: UnitOfWork, reason: str = "",
-                  *, equipment_only: bool = False) -> TechOperationRecord:
+                  *, equipment_only: bool = False, catalog_only: bool = False) -> TechOperationRecord:
     """Удаляет строку таблицы «Базы данных» (владелец 20.10.2026: слитые дубли БД.КОАКС не должны висеть на экране).
     Всё в одной транзакции: строка уходит, а в журнал пишется `references.record_deleted` с её полной старой записью —
     по нему строку можно восстановить. Ссылки по имени (партии, комплекты, техкарты) здесь не проверяются — это дело
@@ -1208,6 +1263,8 @@ def delete_record(record_id: UUID, actor: Actor, now: datetime, uow: UnitOfWork,
         record = _editable(record_id, uow)
         if equipment_only and record.tab not in EQUIPMENT_TABS:
             raise ReferenceValidationError("Запись не относится к оборудованию")
+        if catalog_only and record.tab not in MATERIAL_CATALOG_TABS:
+            raise ReferenceValidationError("Удаление доступно в таблицах термоусадки и оболочек")
         uow.tech_operations.delete(record_id)
         _audit("references.record_deleted", actor, now, {
             "record_id": str(record.id), "tab": record.tab.value, "display_text": record.display_text,

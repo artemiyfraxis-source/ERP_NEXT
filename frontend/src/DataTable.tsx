@@ -105,6 +105,8 @@ export interface DataTableProps<T> {
   /** Ключ общего набора столбцов (сервер, один на всех): «Сохранить для всех» в «Колонках» пишет его, «Только нужные»
       возвращает к нему. Первая колонка — опознаватель записи (Марка, Артикул) — всегда видна. Без `ColumnViewsProvider` — нет. */
   sharedKey?: string;
+  /** Legacy raw-field keys mapped to the parsed columns of a split catalog; new saves use the current keys. */
+  sharedColumnAliases?: Record<string, readonly string[]>;
   label?: string;
   presets?: DataPreset<T>[];
   /** Чип, открытый по умолчанию (пока пользователь не выбрал другой чип; «Все» не запоминается). */
@@ -419,6 +421,7 @@ export function DataTable<T>({
   storageKey,
   personalKey,
   sharedKey,
+  sharedColumnAliases,
   label = "Таблица",
   presets = [],
   defaultPreset = "",
@@ -484,7 +487,18 @@ export function DataTable<T>({
   // Общий набор столбцов: пока сервер его не отдал или его нет — всё как раньше. Новый набор (другая подпись) один раз
   // заменяет личные скрытие и порядок у каждого; дальше пользователь может подстроить под себя.
   const columnViews = useColumnViews();
-  const sharedView = sharedKey ? columnViews?.views[sharedKey] : undefined;
+  const rawSharedView = sharedKey ? columnViews?.views[sharedKey] : undefined;
+  const sharedView = useMemo(() => {
+    if (!rawSharedView || !sharedColumnAliases) return rawSharedView;
+    const resolved = new Map<string, { key: string; visible: boolean }>();
+    for (const column of rawSharedView) {
+      for (const key of sharedColumnAliases[column.key] ?? [column.key]) {
+        // A combined range stays hidden if either of its legacy endpoints was hidden.
+        resolved.set(key, { key, visible: column.visible && (resolved.get(key)?.visible ?? true) });
+      }
+    }
+    return [...resolved.values()];
+  }, [rawSharedView, sharedColumnAliases]);
   const sharedSig = sharedView ? sharedView.map((item) => `${item.key}:${item.visible ? 1 : 0}`).join("|") : "";
   const [seenSig, setSeenSig] = useState(saved.sharedSig ?? "");
   const lockedKey = sharedKey ? (columns.find((column) => !column.hidden) ?? columns[0])?.key : undefined;
