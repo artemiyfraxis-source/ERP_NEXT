@@ -26,6 +26,7 @@ Inventory (column policies below are also the executable per-table inventory):
   a production-copy rehearsal must establish whether such grandfathered rows exist.
 * finished_goods, shipment_lines: project/key/article move. finished_goods_moves and
   shipping_pack_permissions: project_key moves; movement amounts and history text stay.
+  shipping_item_addressees: project_key moves with the КБ delivery overrides.
 * shipping_project_addressees, shipping_files: project moves; file bytes/names stay as history.
   shipping_sequences' hashed document:<sha256(project)> counters stay in their old namespace;
   future PL/DN numbers use NEW and a new namespace, existing PL/DN numbers stay document history.
@@ -117,6 +118,7 @@ POLICIES: dict[str, dict[str, str]] = {
     "shipment_lines": {"project": "p", "project_key": "k", "article": "c"},
     "finished_goods_moves": {"project_key": "k"},
     "shipping_pack_permissions": {"project_key": "k"},
+    "shipping_item_addressees": {"project_key": "k"},
     "shipping_project_addressees": {"project": "p"},
     "shipping_files": {"project": "p"},
     "fulfillment_requests": {"project_key": "k", "purpose": "c"},
