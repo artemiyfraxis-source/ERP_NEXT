@@ -9,8 +9,8 @@ from sqlalchemy import create_engine
 
 from tests.migrations.seed_any_revision import seed
 
-PARENT = "0180_equipment_catalogs_cutover"
-REVISION = "0181_vswr_traces"
+PARENT = "0181_vna_sessions"
+REVISION = "0182_vswr_traces"
 TABLE = "production_vswr_measurements"
 TRACES = "production_vswr_traces"
 FILES = "production_vswr_files"
