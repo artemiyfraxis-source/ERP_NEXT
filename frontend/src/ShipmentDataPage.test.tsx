@@ -301,15 +301,16 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^Отгружено/ }));
     const groups = shipmentRows();
     expect(groups).toHaveLength(2);
-    expect(groups[0]).toHaveTextContent("Отгрузка 1 из 2");
+    expect(groups[0]).toHaveTextContent("Отгрузка 2 из 2");
     expect(groups[0]).toHaveTextContent("ОТГ-2");
     expect(groups[0]).toHaveTextContent("250 шт");
     expect(groups[0]).toHaveTextContent("Иванов");
     expect(groups[0]).toHaveTextContent("+7 222");
     expect(groups[1]).toHaveTextContent("150 шт");
+    expect(groups[1]).toHaveTextContent("Отгрузка 1 из 2");
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "ОТГ-2" } });
     expect(shipmentRows()).toHaveLength(1);
-    expect(screen.getByText("Отгрузка 1 из 2")).toBeInTheDocument();
+    expect(screen.getByText("Отгрузка 2 из 2")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Данные отправки ОТГ-2" }));
     expect(await screen.findByRole("dialog", { name: "Данные отправки ОТГ-2" })).toBeInTheDocument();
   });

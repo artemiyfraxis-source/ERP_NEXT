@@ -51,6 +51,44 @@ it.each(["Жгут особый", "ГП-2", "Пломба-77", "Примечан
   expect(screen.queryByRole("button", { name: "Данные отправки ОТГ-1" })).not.toBeInTheDocument();
 });
 
+it("searches the displayed total weight independently of individual box weights", () => {
+  table([{ ...shipment, weight: "7.75", boxes: [
+    { ...shipment.boxes[0], gross: "3.25" },
+    { ...shipment.boxes[0], place: 2, gross: "4.50" },
+  ] }]);
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "7.75" } });
+  const row = screen.getByRole("button", { name: "Данные отправки ОТГ-1" }).closest("tr")!;
+  fireEvent.keyDown(row, { key: "Enter" });
+  expect(screen.getByText("7.75")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Excel по позициям" }));
+  const view = within(screen.getByRole("dialog", { name: "Отправки — по позициям" }));
+  expect(view.getByText("КБ1")).toBeInTheDocument();
+  expect(view.getByText("КБ2")).toBeInTheDocument();
+});
+
+it("numbers shipments chronologically per project independently of display order and filters", () => {
+  const oldest = { ...shipment, shipped_at: "2026-11-03", status: "Закрыта", lines: [shipment.lines[0]] };
+  const newest = { ...shipment, id: "s2", number: "ОТГ-2", shipped_at: "2026-11-08" };
+  table([newest, oldest, newest]);
+  const rows = () => screen.getAllByRole("row").filter((row) => row.getAttribute("aria-expanded") !== null);
+  const checkNewest = (row: HTMLElement) => {
+    expect(row).toHaveTextContent("100К.1: Отгрузка 2 из 2");
+    expect(row).toHaveTextContent("200К.1: Отгрузка 1 из 1");
+  };
+  expect(rows()).toHaveLength(2);
+  expect(rows()[0]).toHaveTextContent("ОТГ-2");
+  checkNewest(rows()[0]);
+  expect(rows()[1]).toHaveTextContent("Отгрузка 1 из 2");
+  fireEvent.click(screen.getByRole("button", { name: "Отправка" }));
+  expect(rows()[0]).toHaveTextContent("ОТГ-1");
+  checkNewest(rows()[1]);
+  fireEvent.change(screen.getByRole("combobox", { name: "Статус отправки" }), { target: { value: "Отгружена" } });
+  expect(rows()).toHaveLength(1);
+  checkNewest(rows()[0]);
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "ОТГ-2" } });
+  checkNewest(rows()[0]);
+});
+
 it("opening data does not expand the row and print links respect permissions", () => {
   setRightsPrincipal({ user: { id: "u", name: "Склад", email: "u@test", department: "Склад" }, roles: [], permissions: { shipping_goods: "view" } });
   const { open } = table();
@@ -92,6 +130,8 @@ it.each(["status", "preset"])("position export keeps the current shipment set: %
   fireEvent.click(screen.getByRole("button", { name: "Excel по позициям" }));
   const view = within(screen.getByRole("dialog", { name: "Отправки — по позициям" }));
   expect(view.getByText("КБ1")).toBeInTheDocument();
+  if (mode === "preset") expect(view.queryByText("КБ2")).not.toBeInTheDocument();
+  else expect(view.getByText("КБ2")).toBeInTheDocument();
   expect(view.queryByText("КБ3")).not.toBeInTheDocument();
 });
 

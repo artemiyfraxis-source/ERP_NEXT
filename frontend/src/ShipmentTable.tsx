@@ -18,7 +18,7 @@ const projectsOf = (shipment: Shipment) => [...new Set(shipment.lines.map((line)
 export function shipmentSearch(shipment: Shipment): string[] {
   return [shipment.number, shipment.status, shipment.customer, shipment.receiver, shipment.shipping_point, shipment.phone,
     shipment.contact, shipment.carrier, termsText(shipment.terms), shipment.track_number, shipment.upd_type ?? "", shipment.upd_number,
-    shipment.upd_url, shipment.pl_number, shipment.dn_number, shipment.note, shipment.tk_note, shipment.manager,
+    shipment.upd_url, shipment.pl_number, shipment.dn_number, shipment.note, shipment.tk_note, shipment.manager, shipment.weight,
     shipmentDay(shipment), formatDay(shipmentDay(shipment)), shipment.created_at, shipment.deadline ?? "", shipment.packed_at ?? "", shipment.shipped_at ?? "", shipment.upd_date ?? "",
     ...(shipment.missing_data ?? []), ...(shipment.missing_ship ?? []),
     ...shipment.lines.flatMap((line) => [line.project, line.item_index, line.article, line.name, line.requested, line.picked, line.shortage,
@@ -83,7 +83,7 @@ export function ShipmentTable<T>({ shipments, label, storageKey, onOpenShipment,
   const [preset, setPreset] = useState("");
   const sorted = [...new Map(shipments.map((shipment) => [shipment.id, shipment])).values()].sort(compareShipments);
   const projectShips = new Map<string, Shipment[]>();
-  for (const shipment of sorted) for (const project of projectsOf(shipment)) {
+  for (const shipment of [...sorted].reverse()) for (const project of projectsOf(shipment)) {
     const group = projectShips.get(project) ?? [];
     group.push(shipment); projectShips.set(project, group);
   }
@@ -129,8 +129,9 @@ export function ShipmentTable<T>({ shipments, label, storageKey, onOpenShipment,
     { key: "documents", title: "PL / DN", value: (shipment) => `${shipment.pl_number} ${shipment.dn_number}`, wrap: true, minWidth: 96, maxWidth: 132,
       render: (shipment) => cell(<>{document(shipment, "pl")}{document(shipment, "dn")}</>) },
   ];
+  const activePreset = presets?.find((item) => item.label === preset);
   const filtered = sorted.filter((shipment) => (!status || shipment.status === status)
-    && (!preset || presets?.find((item) => item.label === preset)?.test(shipment))
+    && (!preset || activePreset?.test(shipment))
     && matchesWords([...shipmentSearch(shipment), ...columns.map((column) => column.value(shipment))], query));
   const selectedIds = new Set(filtered.map((shipment) => shipment.id));
   return <div className="shipment-table">
@@ -150,7 +151,10 @@ export function ShipmentTable<T>({ shipments, label, storageKey, onOpenShipment,
       emptyText={emptyText} />
     {exportOpen && <PageWindow label={`${label} — по позициям`} close={() => setExportOpen(false)} width="min(1760px, 100%)" dismissable>
       <section className="panel"><header className="page-head"><h2>{label} — по позициям</h2><button type="button" className="secondary small" onClick={() => setExportOpen(false)}>Закрыть</button></header>
-        <DataTable label={`${label} — по позициям`} rows={positions.filter((row) => selectedIds.has(positionShipment(row).id))} columns={positionColumns} rowKey={positionKey}
+        <DataTable label={`${label} — по позициям`} rows={positions.filter((row) => {
+          const shipment = positionShipment(row), line = positionLine(row);
+          return selectedIds.has(shipment.id) && (!activePreset || activePreset.test({ ...shipment, lines: line ? [line] : [] }));
+        })} columns={positionColumns} rowKey={positionKey}
           initialQuery={query} searchText={(row) => { const line = positionLine(row); return shipmentSearch({ ...positionShipment(row), lines: line ? [line] : [] }); }}
           exportName={label} searchPlaceholder="Проект, КБ, наименование, ГРН или отправка" />
       </section>

@@ -120,13 +120,13 @@ it("две отгрузки проекта имеют отдельные стр�
   fireEvent.click(await screen.findByRole("tab", { name: /^Отгружено/ }));
   const groups = shipmentRows();
   expect(groups).toHaveLength(2);
-  expect(groups[0]).toHaveTextContent("Отгрузка 1 из 2");
+  expect(groups[0]).toHaveTextContent("Отгрузка 2 из 2");
   expect(groups[0]).toHaveTextContent("ОТГ-2");
   expect(groups[0]).toHaveTextContent("250 шт");
   expect(groups[0]).toHaveTextContent("08.11.2026");
   expect(groups[0]).toHaveTextContent("Иванов");
   expect(groups[0]).toHaveTextContent("+7 222");
-  expect(groups[1]).toHaveTextContent("Отгрузка 2 из 2");
+  expect(groups[1]).toHaveTextContent("Отгрузка 1 из 2");
   expect(groups[1]).toHaveTextContent("150 шт");
   expect(groups[1]).toHaveTextContent("03.11.2026");
   expect(groups[1]).toHaveTextContent("Петров");
@@ -137,7 +137,7 @@ it("две отгрузки проекта имеют отдельные стр�
   expect(screen.getByRole("columnheader", { name: /^Отправка/ })).toBeInTheDocument();
   fireEvent.change(screen.getByRole("searchbox"), { target: { value: "ОТГ-2" } });
   expect(shipmentRows()).toHaveLength(1);
-  expect(screen.getByText("Отгрузка 1 из 2")).toBeInTheDocument();
+  expect(screen.getByText("Отгрузка 2 из 2")).toBeInTheDocument();
 });
 
 it("shipment totals and Excel include lines beyond the first 200 rendered rows and follow search", async () => {
