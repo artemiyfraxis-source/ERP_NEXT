@@ -29,7 +29,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.8.0'
+$script:AgentVersion = '2.8.1'
 $script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
@@ -926,11 +926,13 @@ function Invoke-ScanPollOnce {
     try {
         $claimBody = @{ host = $env:COMPUTERNAME; machine_id = $machineId; kinds = @('scan', 'vna') }
         if ($script:VnaControlInitialized -and -not $DryRun) {
+            if ((Test-Path -LiteralPath (Join-Path (Get-VnaControlRoot) 'owner.json')) -or
+                (Test-Path -LiteralPath (Join-Path (Get-VnaControlRoot) 'quarantine.json')) -or
+                ($script:VnaWorker -and $script:VnaWorker.command)) { $claimBody.kinds = @('vna_control') }
             $observation = Get-VnaObservation
             if ($observation -and $observation.ready) {
-                $claimBody.kinds += 'vna_control'; $claimBody.observed_vna_serial = $observation.serial
-                if ((Test-Path -LiteralPath (Join-Path (Get-VnaControlRoot) 'owner.json')) -or
-                    ($script:VnaWorker -and $script:VnaWorker.command)) { $claimBody.kinds = @('vna_control') }
+                if ($claimBody.kinds -notcontains 'vna_control') { $claimBody.kinds += 'vna_control' }
+                $claimBody.observed_vna_serial = $observation.serial
             }
         }
         $claim = Invoke-ErpApi -Url "$Base/api/stock/scan/agent/claim" -Body $claimBody -AuthToken $AuthToken
@@ -1176,6 +1178,7 @@ function Get-S2State {
             $traces += @{ parameter = $parameter; settings = (Get-S2TraceState $Scpi) }
         }
     } finally { Invoke-S2Io $Scpi "CALCulate(1).PARameter($selected).SELect" call }
+    Assert-VnaEqual (Invoke-S2Io $Scpi 'SERVice.CHANnel(1).TRACe(1).ACTive') $selected 'выбранная трасса после чтения состояния'
     return @{ values = $values; selected = $selected; traces = $traces }
 }
 function Get-S2ProfileWrites {
@@ -1352,9 +1355,10 @@ function Get-VnaCommandPath {
     return Join-Path $root $name
 }
 function New-VnaReceipt {
-    param($Command, $Result, [string]$ErrorText)
+    param($Command, $Result, [string]$ErrorText, [Nullable[bool]]$BackupSaved = $null)
     $payload = @{ session_id = $Command.session_id; expected_version = $Command.expected_version; expected_step = $Command.expected_step }
     if ($ErrorText) { $payload.error = $ErrorText.Substring(0, [Math]::Min(2000, $ErrorText.Length)) } else { $payload.result = $Result }
+    if ($ErrorText -and $Command.op -ceq 'prepare' -and $null -ne $BackupSaved) { $payload.backup_saved = [bool]$BackupSaved }
     return $payload
 }
 function Get-VnaJournal {
@@ -1381,7 +1385,10 @@ function Get-VnaJournal {
     return $entry
 }
 function Invoke-S2Command {
-    param($Application, $Command, $Status, [string]$OwnerPath)
+    param($Application, $Command, $Status, [string]$OwnerPath, [hashtable]$Preparation)
+    # A pre-existing owner/fence means missing files do not prove an untouched instrument.
+    if ($Preparation -and ((Test-Path -LiteralPath $OwnerPath) -or
+        (Test-Path -LiteralPath (Join-Path (Get-VnaControlRoot) 'quarantine.json')))) { $Preparation.backup_saved = $null }
     $serial = Get-VnaSerial $Application
     if ($serial -cne $Command.instrument_serial) { throw 'ВАЦ: серийный номер прибора не соответствует сессии' }
     Assert-VnaLease $Command $Status
@@ -1410,7 +1417,10 @@ function Invoke-S2Command {
             $root = Get-VnaControlRoot
             $statePath = Join-Path $root ($backupId + '.sta')
             $kitPath = Join-Path $root ($backupId + '.ckit')
+            # Reading all traces temporarily selects them. A failed selection/restore is ambiguous.
+            if ($Preparation) { $Preparation.backup_saved = $null }
             $original = Get-S2State $scpi
+            if ($Preparation) { $Preparation.backup_saved = $false }
             foreach ($capabilityPath in @('SERVice.SWEep.POINts','SERVice.SWEep.FREQuency.MINimum','SERVice.SWEep.FREQuency.MAXimum')) {
                 $capacityValue = [double](Invoke-S2Io $scpi $capabilityPath)
                 if ([double]::IsNaN($capacityValue) -or [double]::IsInfinity($capacityValue) -or $capacityValue -le 0) { throw 'ВАЦ: возможности прибора не прочитаны' }
@@ -1418,14 +1428,19 @@ function Invoke-S2Command {
             $slot = [int](Invoke-S2Io $scpi "$collect.CKIT.SELect")
             $owner = [pscustomobject]@{ session_id = $Command.session_id; serial = $serial; backup_id = $backupId
                 state_path = $statePath; kit_path = $kitPath; slot = $slot; original = $original
-                state_hash = ''; kit_hash = ''; definition_hash = ''; calibration = $null; profile = $null; restored = $false }
+                state_hash = ''; kit_hash = ''; definition_hash = ''; calibration = $null; profile = $null; restored = $false
+                prepare_command_id = $Command.command_id }
             # Reserve durable ownership before any state/kit store write, even if backup subsequently fails.
             Write-VnaJson $OwnerPath $owner
+            if ($Preparation) { $Preparation.backup_saved = $null }
             Set-S2Checked $scpi 'MMEMory.STORe.STYPe' 'CDST'
             Invoke-S2Io $scpi 'MMEMory.STORe.STATe' set $statePath
+            if (-not [IO.File]::Exists($statePath) -or (Get-Item -LiteralPath $statePath).Length -eq 0) { throw 'ВАЦ: резервная копия состояния не записана' }
+            if ($Preparation) { $Preparation.backup_saved = $true }
+            $owner.state_hash = (Get-FileHash -LiteralPath $statePath -Algorithm SHA256).Hash
+            Write-VnaJson $OwnerPath $owner
             Invoke-S2KitFile $scpi STORe $slot $kitPath
             foreach ($file in @($statePath,$kitPath)) { if (-not [IO.File]::Exists($file) -or (Get-Item -LiteralPath $file).Length -eq 0) { throw 'ВАЦ: резервная копия не записана' } }
-            $owner.state_hash = (Get-FileHash -LiteralPath $statePath -Algorithm SHA256).Hash
             $owner.kit_hash = (Get-FileHash -LiteralPath $kitPath -Algorithm SHA256).Hash
             Write-VnaJson $OwnerPath $owner
             $result.ready = $true; $result.backup_id = $backupId; $result.state_saved = $true; $result.kit_assignments_saved = $true
@@ -1570,11 +1585,16 @@ function Invoke-S2Command {
 function Invoke-VnaWorker {
     param([string]$RequestPath)
     $request = Read-VnaJson $RequestPath
-    $application = $null; $mutex = $null; $locked = $false; $entry = $null
+    $application = $null; $mutex = $null; $locked = $false; $entry = $null; $preparation = $null
     try {
         if ($request.command) {
             $entry = Get-VnaJournal $request.command
             if ($entry.state -ne 'received') { return }
+            if ($request.command.op -ceq 'prepare') {
+                $preparation = @{ backup_saved = $null }
+                if (-not (Test-Path -LiteralPath (Join-Path (Get-VnaControlRoot) 'owner.json')) -and
+                    -not (Test-Path -LiteralPath (Join-Path (Get-VnaControlRoot) 'quarantine.json'))) { $preparation.backup_saved = $false }
+            }
         }
         if (-not (Test-VnaNormalToken)) { throw 'ВАЦ: запустите агент без прав администратора Windows' }
         if (-not (Test-VnaRegistered) -or -not (Get-Process -Name S2VNA -ErrorAction SilentlyContinue)) { throw 'ВАЦ: S2VNA не запущена' }
@@ -1584,22 +1604,28 @@ function Invoke-VnaWorker {
             serial = $serial; name = [string]$application.Name; ready = $true; observed_at = [DateTime]::UtcNow.ToString('o') }
         if (-not $request.command) { return }
         $command = $request.command
+        $beforeLockBackup = $preparation.backup_saved
+        if ($preparation) { $preparation.backup_saved = $null }
         $mutex = New-VnaDeviceMutex $serial
         try { $locked = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $locked = $true }
-        if (-not $locked) { throw 'ВАЦ: другой исполнитель ещё владеет прибором' }
+        if (-not $locked) {
+            if ($preparation) { $preparation.backup_saved = $null }
+            throw 'ВАЦ: другой исполнитель ещё владеет прибором'
+        }
+        if ($preparation) { $preparation.backup_saved = $beforeLockBackup }
         $auth = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR((ConvertTo-SecureString $request.token_protected)))
         $status = Invoke-VnaSessionApi $request.base $auth ("/api/stock/vna/sessions/" + $command.session_id)
         Assert-VnaLease $command $status
         # Persist before entering any mutating driver operation, including the state store.
         $entry.state = 'executing'; $entry.executing_at = [DateTime]::UtcNow.ToString('o')
         Write-VnaJson (Get-VnaCommandPath $command) $entry
-        $result = Invoke-S2Command $application $command $status (Join-Path (Get-VnaControlRoot) 'owner.json')
+        $result = Invoke-S2Command $application $command $status (Join-Path (Get-VnaControlRoot) 'owner.json') -Preparation $preparation
         $entry.payload = New-VnaReceipt $command $result
         $entry.state = 'completed'; $entry.completed_at = [DateTime]::UtcNow.ToString('o')
         Write-VnaJson (Get-VnaCommandPath $command) $entry
     } catch {
         if ($entry) {
-            $entry.payload = New-VnaReceipt $request.command $null ('ВАЦ: ' + $_.Exception.Message)
+            $entry.payload = New-VnaReceipt $request.command $null ('ВАЦ: ' + $_.Exception.Message) -BackupSaved $preparation.backup_saved
             $entry.state = 'completed'; $entry.completed_at = [DateTime]::UtcNow.ToString('o')
             Write-VnaJson (Get-VnaCommandPath $request.command) $entry
         } else {
@@ -1688,8 +1714,10 @@ function Sync-VnaReceipts {
         if ($script:VnaWorker -and $script:VnaWorker.command.command_id -ceq $entry.command.command_id) { continue }
         if ($entry.state -in @('received','executing')) { $entry = Get-VnaJournal $entry.command }
         if ($entry.state -notin @('completed','uncertain')) { continue }
+        $accepted = $false
         try {
             $null = Invoke-VnaSessionApi $Base $AuthToken ("/api/stock/vna/commands/" + $entry.command.command_id + '/result') $entry.payload Post
+            $accepted = $true
         } catch {
             $statusCode = 0
             if ($_.Exception.Response) { $statusCode = [int]$_.Exception.Response.StatusCode }
@@ -1699,14 +1727,27 @@ function Sync-VnaReceipts {
             if ($remote.Count -ne 1 -or $remote[0].status -notin @('done','failed','cancelled','uncertain')) { throw }
             # A rejected invalid payload is not marked accepted while the server still says claimed.
         }
+        $entry | Add-Member NoteProperty receipt_accepted $accepted -Force
         $entry.acknowledged = $true; Write-VnaJson $file.FullName $entry
         $archive = Join-Path (Get-VnaControlRoot) 'acknowledged'; [void][IO.Directory]::CreateDirectory($archive)
         [IO.File]::Move($file.FullName, (Join-Path $archive $file.Name))
     }
     $ownerPath = Join-Path (Get-VnaControlRoot) 'owner.json'; $owner = Read-VnaJson $ownerPath
-    if ($owner -and $owner.restored -and -not $script:VnaWorker) {
+    if ($owner -and -not $script:VnaWorker) {
+        $untouched = $false
+        if ($owner.prepare_command_id -and -not (Test-Path -LiteralPath (Join-Path (Get-VnaControlRoot) 'quarantine.json'))) {
+            $receipt = Read-VnaJson (Get-VnaCommandPath @{ command_id = $owner.prepare_command_id })
+            $untouched = $receipt -and $receipt.acknowledged -and $receipt.receipt_accepted -and $receipt.state -ceq 'completed' -and
+                $receipt.command.op -ceq 'prepare' -and $receipt.command.session_id -ceq $owner.session_id -and
+                $receipt.command.instrument_serial -ceq $owner.serial -and $receipt.payload.error -and
+                $receipt.payload.backup_saved -is [bool] -and $receipt.payload.backup_saved -eq $false
+        }
+        if (-not $owner.restored -and -not $untouched) { return }
         $status = Invoke-VnaSessionApi $Base $AuthToken ("/api/stock/vna/sessions/" + $owner.session_id)
-        if (-not $status.lease_held -and $status.state -in @('recorded','aborted','failed')) {
+        $prepareFailed = $untouched -and $status.state -ceq 'failed' -and
+            @($status.commands | Where-Object { $_.command_id -ceq $owner.prepare_command_id -and $_.status -ceq 'failed' }).Count -eq 1
+        if (-not $status.lease_held -and $status.session_id -ceq $owner.session_id -and $status.instrument_serial -ceq $owner.serial -and
+            (($owner.restored -and $status.state -in @('recorded','aborted','failed')) -or $prepareFailed)) {
             # Keep private backup files and journals for diagnostics; release only the local ownership marker.
             Remove-Item -LiteralPath $ownerPath -Force
         }

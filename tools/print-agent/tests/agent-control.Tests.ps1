@@ -151,6 +151,38 @@ Describe 'Управление ВАЦ: типовые команды и COM' {
         { Invoke-ControlTest prepare } | Should Throw 'disk full'
         (Test-Path (Join-Path (Get-VnaControlRoot) 'owner.json')) | Should Be $true
     }
+    It 'ошибка проверки возможностей до сохранения копии подтверждает отсутствие изменений' {
+        $preparation = @{ backup_saved = $false }
+        $command = New-ControlEnvelope; $script:ioValues['SERVice.SWEep.POINts'] = 0
+        { Invoke-S2Command $script:controlApp $command (New-ControlStatus $command) (Join-Path (Get-VnaControlRoot) 'owner.json') -Preparation $preparation } | Should Throw 'возможности прибора'
+        $preparation.backup_saved | Should Be $false
+    }
+    It 'ошибка после записи состояния подтверждает сохранённую копию' {
+        $preparation = @{ backup_saved = $false }; $command = New-ControlEnvelope
+        Mock Invoke-S2KitFile { throw 'kit backup failed' }
+        { Invoke-S2Command $script:controlApp $command (New-ControlStatus $command) (Join-Path (Get-VnaControlRoot) 'owner.json') -Preparation $preparation } | Should Throw 'kit backup failed'
+        $preparation.backup_saved | Should Be $true
+    }
+    It 'частичная запись состояния не подтверждает отсутствие изменений' {
+        $preparation = @{ backup_saved = $false }; $command = New-ControlEnvelope
+        Mock Invoke-S2Io {
+            if ($Path -eq 'MMEMory.STORe.STATe' -and $Mode -eq 'set') {
+                [IO.File]::WriteAllText($Value,'partial backup'); throw 'partial write'
+            }
+            $modeValue = if ($Mode) { $Mode } else { 'get' }; Invoke-FakeS2Io $Scpi $Path $modeValue $Value
+        }
+        { Invoke-S2Command $script:controlApp $command (New-ControlStatus $command) (Join-Path (Get-VnaControlRoot) 'owner.json') -Preparation $preparation } | Should Throw 'partial write'
+        $preparation.backup_saved | Should Be $null
+    }
+    It 'неподтверждённый возврат выбранной трассы не считается неизменённым прибором' {
+        $preparation = @{ backup_saved = $false }; $command = New-ControlEnvelope
+        Mock Invoke-S2Io {
+            if ($Path -eq 'CALCulate(1).PARameter(2).SELect' -and $Mode -eq 'call') { return }
+            $modeValue = if ($Mode) { $Mode } else { 'get' }; Invoke-FakeS2Io $Scpi $Path $modeValue $Value
+        }
+        { Invoke-S2Command $script:controlApp $command (New-ControlStatus $command) (Join-Path (Get-VnaControlRoot) 'owner.json') -Preparation $preparation } | Should Throw 'выбранная трасса после чтения'
+        $preparation.backup_saved | Should Be $null
+    }
     It 'профиль: остановка, параметры, трассы, отключение обработки, чтение' {
         [void](Invoke-ControlTest prepare); $script:ioLog.Clear()
         $result = Invoke-ControlTest apply_profile @{ profile = $script:profile }
@@ -416,6 +448,7 @@ Describe 'Управление ВАЦ: журнал, опрос, watchdog' {
         $resumed = Get-VnaJournal $script:command
         $resumed.state | Should Be 'uncertain'
         $resumed.payload.error | Should Match 'неизвестен'
+        @($resumed.payload.PSObject.Properties.Name) -contains 'backup_saved' | Should Be $false
         (Test-Path (Join-Path (Get-VnaControlRoot) 'quarantine.json')) | Should Be $true
     }
     It 'тот же id с другим аргументом отклоняется' {
@@ -432,6 +465,7 @@ Describe 'Управление ВАЦ: журнал, опрос, watchdog' {
         $process.Killed | Should Be $true
         $process.Waited | Should Be $true
         (Get-VnaJournal $script:command).state | Should Be 'uncertain'
+        @((Get-VnaJournal $script:command).payload.PSObject.Properties.Name) -contains 'backup_saved' | Should Be $false
     }
     It 'неостановленный worker запрещает дальнейшее восстановление' {
         $process = [pscustomobject]@{ HasExited = $false }
@@ -456,8 +490,113 @@ Describe 'Управление ВАЦ: журнал, опрос, watchdog' {
         Mock Invoke-ErpApi { @{ job = $script:command; poll_after_ms = 500 } }
         Mock Start-VnaWorker { throw 'must not start twice' }
         (Invoke-ScanPollOnce 'http://test' 'token') | Should Be 'active'
-        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Body.observed_vna_serial -eq '26030095' -and $Body.kinds -contains 'vna_control' }
+        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Body.observed_vna_serial -eq '26030095' -and ($Body.kinds -join ',') -ceq 'vna_control' }
         Assert-MockCalled Start-VnaWorker -Times 0 -Exactly -Scope It
+    }
+    It 'маркер <Marker> без свежего наблюдения всё равно опрашивает только управление' -TestCases @(@{ Marker = 'owner.json' },@{ Marker = 'quarantine.json' }) {
+        param($Marker)
+        $script:VnaControlInitialized = $true
+        Write-VnaJson (Join-Path (Get-VnaControlRoot) $Marker) @{ session_id = $script:command.session_id }
+        Mock Get-VnaObservation { $null }; Mock Get-MachineId { 'pc-1' }; Mock Invoke-ErpApi { @{ job = $null } }
+        (Invoke-ScanPollOnce 'http://test' 'token') | Should Be 'idle'
+        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { ($Body.kinds -join ',') -ceq 'vna_control' }
+    }
+    It 'квитанция ошибки подготовки сохраняет JSON boolean false' {
+        $receipt = New-VnaReceipt $script:command $null 'prepare failed' -BackupSaved $false
+        $decoded = ($receipt | ConvertTo-Json -Compress) | ConvertFrom-Json
+        ($decoded.backup_saved -is [bool]) | Should Be $true
+        $decoded.backup_saved | Should Be $false
+    }
+    It 'успех и ошибка другой операции не получают backup_saved' {
+        (New-VnaReceipt $script:command @{ serial = '26030095' } -BackupSaved $true).ContainsKey('backup_saved') | Should Be $false
+        $script:command.op = 'capture'
+        (New-VnaReceipt $script:command $null 'capture failed' -BackupSaved $true).ContainsKey('backup_saved') | Should Be $false
+    }
+    It 'потеря подтверждения ошибки prepare повторяет исходный backup_saved' {
+        $entry = Get-VnaJournal $script:command; $entry.state = 'completed'
+        $entry.payload = New-VnaReceipt $script:command $null 'prepare failed' -BackupSaved $false
+        Write-VnaJson (Get-VnaCommandPath $script:command) $entry
+        $script:posted = @()
+        Mock Invoke-VnaSessionApi { $script:posted += (ConvertTo-VnaCanonical $Body); if ($script:posted.Count -eq 1) { throw 'lost ack' } }
+        { Sync-VnaReceipts 'http://test' 'token' } | Should Throw 'lost ack'
+        Sync-VnaReceipts 'http://test' 'token'
+        $script:posted[0] | Should Be $script:posted[1]
+        $script:posted[1] | Should Match '"backup_saved":false'
+    }
+    It 'подтверждённый failed до записи копии освобождает локальный маркер' {
+        $entry = Get-VnaJournal $script:command; $entry.state = 'completed'
+        $entry.payload = New-VnaReceipt $script:command $null 'prepare failed' -BackupSaved $false
+        Write-VnaJson (Get-VnaCommandPath $script:command) $entry
+        $ownerPath = Join-Path (Get-VnaControlRoot) 'owner.json'
+        Write-VnaJson $ownerPath @{ session_id = $script:command.session_id; serial = $script:command.instrument_serial; prepare_command_id = $script:command.command_id; restored = $false }
+        Mock Invoke-VnaSessionApi {
+            if ($Method -eq 'Post') { return @{ ok = $true } }
+            $status = New-ControlStatus $script:command; $status.lease_held = $false; $status.state = 'failed'; $status.commands[0].status = 'failed'
+            return $status
+        }
+        Sync-VnaReceipts 'http://test' 'token'
+        (Test-Path $ownerPath) | Should Be $false
+        (Get-VnaJournal $script:command).payload.backup_saved | Should Be $false
+    }
+    It 'без подтверждения квитанции локальное владение сохраняется' {
+        $entry = Get-VnaJournal $script:command; $entry.state = 'completed'
+        $entry.payload = New-VnaReceipt $script:command $null 'prepare failed' -BackupSaved $false
+        Write-VnaJson (Get-VnaCommandPath $script:command) $entry
+        $ownerPath = Join-Path (Get-VnaControlRoot) 'owner.json'
+        Write-VnaJson $ownerPath @{ session_id = $script:command.session_id; serial = $script:command.instrument_serial; prepare_command_id = $script:command.command_id; restored = $false }
+        Mock Invoke-VnaSessionApi { throw 'lost ack' }
+        { Sync-VnaReceipts 'http://test' 'token' } | Should Throw 'lost ack'
+        (Test-Path $ownerPath) | Should Be $true
+    }
+    It 'prepare с сохранённой копией не освобождает владение по одному failed' {
+        $entry = Get-VnaJournal $script:command; $entry.state = 'completed'
+        $entry.payload = New-VnaReceipt $script:command $null 'prepare failed' -BackupSaved $true
+        Write-VnaJson (Get-VnaCommandPath $script:command) $entry
+        $ownerPath = Join-Path (Get-VnaControlRoot) 'owner.json'
+        Write-VnaJson $ownerPath @{ session_id = $script:command.session_id; serial = $script:command.instrument_serial; prepare_command_id = $script:command.command_id; restored = $false }
+        Mock Invoke-VnaSessionApi {
+            if ($Method -eq 'Post') { return @{ ok = $true } }
+            $status = New-ControlStatus $script:command; $status.lease_held = $false; $status.state = 'failed'; $status.commands[0].status = 'failed'
+            return $status
+        }
+        Sync-VnaReceipts 'http://test' 'token'
+        (Test-Path $ownerPath) | Should Be $true
+    }
+    It 'квитанция false сохраняет маркер при условии <Condition>' -TestCases @(@{ Condition = 'held' },@{ Condition = 'other_receipt' },@{ Condition = 'other_serial' }) {
+        param($Condition)
+        $script:reconcileCondition = $Condition
+        $entry = Get-VnaJournal $script:command; $entry.state = 'completed'
+        $entry.payload = New-VnaReceipt $script:command $null 'prepare failed' -BackupSaved $false
+        Write-VnaJson (Get-VnaCommandPath $script:command) $entry
+        $ownerPath = Join-Path (Get-VnaControlRoot) 'owner.json'
+        Write-VnaJson $ownerPath @{ session_id = $script:command.session_id; serial = $script:command.instrument_serial; prepare_command_id = $script:command.command_id; restored = $false }
+        Mock Invoke-VnaSessionApi {
+            if ($Method -eq 'Post') { return @{ ok = $true } }
+            $status = New-ControlStatus $script:command; $status.lease_held = $false; $status.state = 'failed'; $status.commands[0].status = 'failed'
+            if ($script:reconcileCondition -eq 'held') { $status.lease_held = $true }
+            if ($script:reconcileCondition -eq 'other_receipt') { $status.commands[0].command_id = [guid]::NewGuid().ToString() }
+            if ($script:reconcileCondition -eq 'other_serial') { $status.instrument_serial = 'other' }
+            return $status
+        }
+        Sync-VnaReceipts 'http://test' 'token'
+        (Test-Path $ownerPath) | Should Be $true
+    }
+    It 'worker сообщает false при отказе до первой операции прибора' {
+        Mock Test-VnaNormalToken { $false }
+        $requestPath = Join-Path (Get-VnaControlRoot) 'worker-request.json'; Write-VnaJson $requestPath @{ command = $script:command }
+        Invoke-VnaWorker $requestPath
+        $entry = Get-VnaJournal $script:command
+        $entry.state | Should Be 'completed'
+        ($entry.payload.backup_saved -is [bool]) | Should Be $true
+        $entry.payload.backup_saved | Should Be $false
+        Assert-MockCalled Get-VnaApplication -Times 0 -Exactly -Scope It
+    }
+    It 'worker не выводит false из существующего маркера без копии' {
+        Write-VnaJson (Join-Path (Get-VnaControlRoot) 'owner.json') @{ session_id = $script:command.session_id }
+        Mock Test-VnaNormalToken { $false }
+        $requestPath = Join-Path (Get-VnaControlRoot) 'worker-request.json'; Write-VnaJson $requestPath @{ command = $script:command }
+        Invoke-VnaWorker $requestPath
+        @((Get-VnaJournal $script:command).payload.PSObject.Properties.Name) -contains 'backup_saved' | Should Be $false
     }
     It 'обновление откладывается пока прибор принадлежит сессии' {
         $script:VnaWorker = @{ command = $script:command }
@@ -492,7 +631,9 @@ Describe 'Управление ВАЦ: журнал, опрос, watchdog' {
         Invoke-VnaWorker $requestPath
         Assert-MockCalled Get-VnaApplication -Times 0 -Exactly -Scope It
     }
-    It 'worker сохраняет executing до COM и готовую квитанцию до ответа серверу' {
+    It 'worker сохраняет executing до COM и квитанцию <Outcome>' -TestCases @(@{ Outcome = 'success' },@{ Outcome = 'after_backup' },@{ Outcome = 'unknown' }) {
+        param($Outcome)
+        $script:workerOutcome = $Outcome
         $script:command.instrument_serial = 'TEST-ONLY'
         Mock Test-VnaNormalToken { $true }; Mock Test-VnaRegistered { $true }
         Mock Get-Process { [pscustomobject]@{ ProcessName = 'S2VNA' } }
@@ -508,6 +649,8 @@ Describe 'Управление ВАЦ: журнал, опрос, watchdog' {
         Mock Invoke-VnaSessionApi { New-ControlStatus $script:command }
         Mock Invoke-S2Command {
             (Read-VnaJson (Get-VnaCommandPath $Command)).state | Should Be 'executing'
+            if ($script:workerOutcome -eq 'after_backup') { $Preparation.backup_saved = $true; throw 'kit backup failed' }
+            if ($script:workerOutcome -eq 'unknown') { $Preparation.backup_saved = $null; throw 'partial write' }
             return @{ serial = 'TEST-ONLY'; ready = $true }
         }
         $requestPath = Join-Path (Get-VnaControlRoot) 'worker-request.json'
@@ -521,7 +664,15 @@ Describe 'Управление ВАЦ: журнал, опрос, watchdog' {
         Invoke-VnaWorker $requestPath
         $entry = Read-VnaJson (Get-VnaCommandPath $script:command)
         $entry.state | Should Be 'completed'
-        $entry.payload.result.serial | Should Be 'TEST-ONLY'
+        if ($Outcome -eq 'success') {
+            $entry.payload.result.serial | Should Be 'TEST-ONLY'
+            @($entry.payload.PSObject.Properties.Name) -contains 'backup_saved' | Should Be $false
+        } elseif ($Outcome -eq 'after_backup') {
+            $entry.payload.backup_saved | Should Be $true
+            ($entry.payload.backup_saved -is [bool]) | Should Be $true
+        } else {
+            @($entry.payload.PSObject.Properties.Name) -contains 'backup_saved' | Should Be $false
+        }
         Assert-MockCalled Invoke-S2Command -Times 1 -Exactly -Scope It
     }
     It 'манифест объявляет только ACM, даже если содержит SOLT' {
@@ -551,7 +702,7 @@ Describe 'Управление ВАЦ: журнал, опрос, watchdog' {
         Mock Invoke-ErpApi { @{} }
         Send-Heartbeat 'http://test' 'token'
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
-            $Body.version -eq '2.8.0' -and $Body.vna_control.version -eq 1 -and ($Body.vna_control.methods -join ',') -eq 'acm'
+            $Body.version -eq '2.8.1' -and $Body.vna_control.version -eq 1 -and ($Body.vna_control.methods -join ',') -eq 'acm'
         }
         Assert-MockCalled Get-VnaApplication -Times 0 -Exactly -Scope It
     }
