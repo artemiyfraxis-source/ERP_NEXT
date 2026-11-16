@@ -2,11 +2,14 @@
 import { describe, expect, it } from "vitest";
 import { autoConfig as seededConfig, generatorData, refsFromRecords, type BatchBom, type BatchRefs } from "./tcGenBatch";
 import { fakraEndsFromBom_, initState as seededState, makeGen, coaxCutLength, restoreCoaxState, type GenData, type GenState } from "./tcGenLogic";
+import batchAConfigs from "./__fixtures__/fakraBatchAConfigs.json";
 import freshConfigs from "./__fixtures__/fakra1116Configs.json";
 import productionConfigs from "./__fixtures__/fakra708Configs.json";
 import erpLibrary from "../../backend/data/techcard-library-erp.json";
 
-import { coaxMarkDefaults, coaxMarksFromName } from "./tcGenMarks";
+import { COAX_COLORS, coaxMarkDefaults, coaxMarksFromName, sumCoaxMaterial } from "./tcGenMarks";
+import { expandMarkSerial, hasMarkSerial, markSerialList } from "./markSerial";
+import { coaxReseedPatch } from "./tcGenLogic";
 import { deriveRoute, type RouteOp } from "./routeLogic";
 import { genCards } from "./routeCards";
 
@@ -361,7 +364,7 @@ describe("FAKRA flow 16.11", () => {
     expect(cfg.coax.cableLength).toBe(4855);
     const expected = structuredClone(freshConfigs.find((item) => item.kb === kb)!.config) as any;
     expected.coax.finishedLengthFrom = "bom";
-    expected.ops.find((op: any) => op.opKey === "coaxPrintLabel").parts[0].unit = "М.";
+    delete expected.ops.find((op: any) => op.opKey === "coaxPrintLabel").parts;
     expect(cfg).toEqual(expected);
     expect(cfg.coax.marks).toEqual(coaxMarksFromName(kb === "КБ2" ? "120905/AA Camera 11 → Splitter B C3" : "120907/AA Camera 14 → Splitter B C6"));
     expect(cfg.coax.connColor).toMatchObject(kb === "КБ2" ? { color: "розовый", code: "PK" } : { color: "оранжевый", code: "OG" });
@@ -411,29 +414,17 @@ describe("FAKRA flow 16.11", () => {
     if (method === "none") expect(color).toBeUndefined();
     else expect(color?.tmplHint).toBe(`MARK_CONN_${method.toUpperCase()}`);
   });
-  it("article overrides colour words; conflicting articles require a choice", () => {
-    expect(coaxMarkDefaults([{ art: "151437", name: "Маркер-краска розовый" }]).connColor.code).toBe("OG");
+  it("conflicting colour words or articles require a choice", () => {
+    expect(coaxMarkDefaults([{ art: "151437", name: "Маркер-краска розовый" }]).conflict).toBe(true);
     const data = freshData();
     data.components.push({ ...c("Материал", "151986", 1), name: "Маркер-краска Brauberg" });
     const state = seededState(data);
     expect(state.coax.connColor?.color).toBe("");
     state.coax.finishedLengthFrom = "user";
-    expect(makeGen(data, state).validate().warnings.join("\n")).toMatch(/несколько цветов/);
+    expect(makeGen(data, state).validate().error).toMatch(/несколько цветов/);
     expect(coaxMarkDefaults([{ name: "Маркер-краска синий" }]).connColor.code).toBe("BU");
   });
-  it("КБ3 remains identical; КБ28 changes only straight-end stripping", () => {
-    for (const b of [KB3, KB28]) {
-      const data = generatorData(refsFromRecords(REFS), b);
-      const old = makeGen(data, initState(data)).buildConfig() as any;
-      const fresh = makeGen(data, seededState(data)).buildConfig() as any;
-      if (b === KB3) expect(fresh).toEqual(old);
-      else {
-        expect(fresh.ops[0].stripSides).toEqual(["B"]);
-        expect(fresh.ops.filter((op: any) => op.type === "coaxStrip").map((op: any) => op.side)).toEqual(["A"]);
-        expect(fresh.ops.slice(1)).toEqual(old.ops.slice(1).filter((op: any) => op.opKey !== "coaxSideStripB"));
-      }
-    }
-  });
+
 });
 
 
@@ -463,7 +454,7 @@ describe("FAKRA restoration and material validation", () => {
     }
     expect(makeGen(data, state).validate().warnings.join("\n")).not.toContain("L взята");
   });
-  it.each(["М.", "м", "рулон"])("keeps tape norm and source unit %s separate from the label count", (unit) => {
+  it.each(["М.", "м", "рулон"])("ignores BOM tape with unit %s and counts only printed labels", (unit) => {
     const data = freshData(), tape = data.components.find((c) => c.art.includes("Vell"))!;
     tape.qty = "0,18"; tape.unit = unit;
     const state = seededState(data);
@@ -471,8 +462,10 @@ describe("FAKRA restoration and material validation", () => {
     const result = makeGen(data, state).validate();
     expect(result.error).toBe("");
     expect((result.cfg.ops as any[]).find((op) => op.opKey === "coaxPrintLabel")).toMatchObject({
-      units: 3, parts: [{ qty: 0.18, unit }],
+      units: 3,
     });
+    expect((result.cfg.ops as any[]).find((op) => op.opKey === "coaxPrintLabel")).not.toHaveProperty("parts");
+    expect(result.warnings.join("\n")).toContain("Лента маркировки в составе не расходуется");
   });
   it.each(["fakra", "ordinary"])("blocks every enabled marking card on %s with cut-strip disabled", (family) => {
     for (const code of ["PRINT_MARK_LABEL", "INS_MARK_LABEL", "CUT_TUT_short", "INS_TUT", "HEAT_TYT_short", "MARK_CONN_PAINT", "MARK_CONN_LASER", "MARK_CONN_TAPE"]) {
@@ -492,15 +485,13 @@ describe("FAKRA restoration and material validation", () => {
       expect(makeGen(data, state).validate().error).toContain(code);
     }
   });
-  it("requires a known tape unit and positive norm instead of guessing pieces or metres", () => {
-    const data = freshData(), state = seededState(data), tape = data.components.find((c) => c.art.includes("Vell"))!;
+  it("prints tape labels without any BOM tape or consumption norm", () => {
+    const data = freshData(), state = seededState(data);
     state.coax.finishedLengthFrom = "user";
-    tape.art = "CUSTOM"; tape.name = "Лента для этикеток";
-    expect(makeGen(data, state).validate().error).toContain("единица измерения ленты");
-    data.markMats = [{ name: tape.name, group: "Ленты", unit: "м" }];
-    expect(makeGen(data, state).validate().error).toBe("");
-    tape.qty = "";
-    expect(makeGen(data, state).validate().error).toContain("норму расхода ленты");
+    data.components = data.components.filter((row) => !row.art.includes("Vell"));
+    const result = makeGen(data, state).validate();
+    expect(result.error).toBe("");
+    expect((result.cfg.ops as any[]).find((op) => op.opKey === "coaxPrintLabel")).not.toHaveProperty("parts");
   });
   it("restoration helper prevents a fresh seed from enabling new settings on a legacy snapshot", () => {
     const data = freshData(), seed = seededState(data), saved = initState(data);
@@ -508,10 +499,11 @@ describe("FAKRA restoration and material validation", () => {
     expect(makeGen(data, restored).buildConfig()).toEqual(makeGen(data, saved).buildConfig());
     expect(restoreCoaxState(seed.coax, seed.coax)).toEqual(seed.coax);
   });
-  it("blocks tape and clear protection when their material is absent", () => {
+  it("requires protective tube but not printer tape in the BOM", () => {
     const data = freshData(), seed = seededState(data);
+    seed.coax.finishedLengthFrom = "user";
     const withoutTape = { ...data, components: data.components.filter((c) => !c.art.includes("Vell")) };
-    expect(makeGen(withoutTape, seed).validate().error).toMatch(/нет ленты/);
+    expect(makeGen(withoutTape, seed).validate().error).toBe("");
     const withoutClear = { ...data, components: data.components.filter((c) => !c.name.includes("прозрач")) };
     expect(makeGen(withoutClear, seed).validate().error).toMatch(/нет прозрачной ТУТ/);
     const cfg = makeGen(withoutClear, seed).buildConfig() as any;
@@ -527,4 +519,125 @@ describe("FAKRA restoration and material validation", () => {
     const missing = { ...data, templates: data.templates.filter((t) => t.id !== "MARK_CONN_PAINT") };
     expect(makeGen(missing, { ...state, coax }).validate().error).toContain("MARK_CONN_PAINT");
   });
+});
+
+function batchAData(b: BatchBom): GenData {
+  const refs = { ...REFS, templates: [...REFS.templates, ...NEW_CODES.map((code) => T(code, code)),
+    ...erpLibrary.templates.filter((card) => card.title.startsWith("PRS_HFM_SUPPORT |"))],
+    coax: REFS.coax.map((row) => ({ ...row, "L+": "25" })) };
+  return { ...generatorData(refsFromRecords(refs), b), projectNo: "708К." };
+}
+
+describe("coax batch A contract", () => {
+  it.each([KB3, KB28])("$index strips both ends at cut and uses exact end recipes", (bom) => {
+    const data = batchAData(bom), state = seededState(data), gen = makeGen(data, state);
+    const ops = gen.getActiveOps();
+    expect(ops[0]).toMatchObject({ opKey: "coaxFakraCutStrip", stripSides: ["A", "B"], units: bom === KB3 ? 4 : 1 });
+    expect(ops.filter((op) => op.type === "coaxStrip")).toEqual([]);
+    const recipe = (side: "A" | "B") => ops.filter((op) => op.side === side).map((op) => [op.tmplHint, op.units ?? 1]);
+    if (bom === KB3) {
+      for (const side of ["A", "B"] as const) expect(recipe(side)).toEqual([
+        ["PRS_HFM_SUPPORT", 4], ["PRS_HFM_PIN", 4], ["INS_HFM_CONTACT", 4], ["PRS_HFM_SHIELD", 4], ["INS_HFM_HOUSING", 1],
+      ]);
+      expect(ops.map((op) => op.opKey)).toEqual(["coaxFakraCutStrip", "coaxCutTut", "coaxInsTut",
+        "coaxSupportCrimpA", "coaxPinCrimpA", "coaxInsertA", "coaxShieldA", "coaxBodyA",
+        "coaxSupportCrimpB", "coaxPinCrimpB", "coaxInsertB", "coaxShieldB", "coaxBodyB", "coaxHeat", "coaxVswr"]);
+    } else {
+      expect(recipe("A")).toEqual([["INS_FAKRA_BH_PREP", 1], ["SDR_FAKRA_BH_PIN", 1], ["INS_FAKRA_BH_CONTACT", 1], ["PRS_FAKRA_BH_SHIELD", 1], ["HEAT_FAKRA_BH_TTK", 1]]);
+      expect(recipe("B")).toEqual(DEDICATED_CODES.straight.filter((code) => code !== "STRIP_FAKRA_ST").map((code) => [code, 1]));
+      expect(ops.find((op) => op.opKey === "coaxInsSleeveA")?.parts).toContainEqual({ art: "ТТК 6/2мм, черная", name: "ТТК 6/2мм, черная", qty: 0.06, unit: "М." });
+    }
+    expect(gen.validate().error).toContain("подтвердите длину");
+    state.coax.finishedLengthFrom = "user";
+    expect(makeGen(data, state).validate().error).toBe("");
+    const cfg = makeGen(data, state).buildConfig() as any;
+    const routeOps: RouteOp[] = cfg.ops.map((op: any, index: number) => ({ position: index + 1, key: op.opKey, type: op.type, code: op.templateId, side: op.side, label: op.label, minutes: 0 }));
+    const blocks = genCards(deriveRoute(routeOps), routeOps).cards;
+    expect(blocks.find((block) => block.title === "Сторона А собрана")!.ops[0].key).toBe(bom === KB3 ? "coaxSupportCrimpA" : "coaxPinA");
+    expect(blocks.find((block) => block.title === "Сторона В собрана")!.ops[0].key).toBe(bom === KB3 ? "coaxSupportCrimpB" : "coaxPinCrimpB");
+  });
+
+  it("requires the dedicated support card instead of a generic sleeve card", () => {
+    const data = batchAData(KB3), state = seededState(data);
+    data.templates = data.templates.filter((card) => !card.title.startsWith("PRS_HFM_SUPPORT |"));
+    state.coax.finishedLengthFrom = "user";
+    expect(makeGen(data, state).validate().error).toContain("PRS_HFM_SUPPORT");
+  });
+
+  it("sums КБ4's two 0.09 m tube rows and two 1.5 marking rows", () => {
+    const b = { ...KB3, index: "КБ4", components: [c("Разъем", "AMK11D-1M4Z5-Z", 1), c("Разъем", "AMK11D-1M4Z5-Z", 1),
+      c("ТУТ", "ТУТ 4/2мм, прозрачная", "0,09"), c("ТУТ", "ТУТ 4/2мм, прозрачная", "0.09"),
+      c("Маркировка", "Маркировка", 1.5), c("Маркировка", "Маркировка", 1.5), c("Кабель", "RTK 031", 5)] };
+    const data = batchAData(b), state = seededState(data), before = JSON.stringify(data.components);
+    expect(state.coax.tutLen).toBe("60");
+    expect(makeGen(data, state).getActiveOps().find((op) => op.opKey === "coaxCutTut")?.units).toBe(3);
+    data.components.push(c("Материал", "Лента Vell VL-S641", 0.18));
+    expect(coaxReseedPatch(data, state).tutLen).toBe("60");
+    expect(JSON.stringify(data.components.slice(0, -1))).toBe(before);
+  });
+
+  it("sums identical TTK rows only in new recipes and keeps incompatible units separate", () => {
+    const data = batchAData({ ...KB28, components: [...KB28.components, c("ТТК", "ТТК 6/2мм, черная", "0,06")] });
+    const fresh = seededState(data);
+    const qty = (state: GenState) => makeGen(data, state).getActiveOps().find((op) => op.opKey === "coaxInsSleeveA")!.parts![0].qty;
+    expect(qty(fresh)).toBe(0.12);
+    expect(qty(initState(data))).toBe(0.06);
+    const rows = [{ art: "tube", qty: 0.09, unit: "М." }, { art: "tube", qty: 0.09, unit: "м" }, { art: "tube", qty: 3, unit: "шт" }, { art: "other", qty: 2, unit: "м" }];
+    expect(sumCoaxMaterial(rows, rows[0])!.qty).toBe(0.18);
+    expect(sumCoaxMaterial(rows, rows[2])!.qty).toBe(3);
+  });
+
+  it("seeds FRX with the customer PN, strips the project's trailing dot and expands existing item serials", () => {
+    const text = coaxMarksFromName("122664/AA 120907/AA Camera 14 → Splitter B", "708К.")[0].text;
+    expect(text).toBe("FRX.708К.120907/AA.{№}");
+    expect(hasMarkSerial(text)).toBe(true);
+    expect(expandMarkSerial(text, 7)).toBe("FRX.708К.120907/AA.7");
+    expect(markSerialList(text, { first: 1, last: 15 })).toHaveLength(15);
+    expect(seededState(batchAData(KB3)).coax.marks![0].text).toBe("FRX.708К.120961/AA.{№}");
+    expect(coaxMarksFromName(KB11.name, "708К.")[0].text).toBe("FRX.708К.121538AA.{№}");
+  });
+
+  it.each(COAX_COLORS)("recognises marker $code from ordinary and paint marker names", ({ code, color }) => {
+    for (const prefix of ["Маркер", "Маркер-краска"]) expect(coaxMarkDefaults([{ name: `${prefix} ${color}` }]).connColor).toMatchObject({ code, color, method: "paint" });
+  });
+  it("recognises blue aliases and both Brauberg articles and does not choose a conflicting colour", () => {
+    for (const name of ["Маркер голубой", "Маркер синий"]) expect(coaxMarkDefaults([{ name }]).connColor.code).toBe("BU");
+    expect(coaxMarkDefaults([{ art: "151437" }]).connColor.code).toBe("OG");
+    expect(coaxMarkDefaults([{ art: "151986" }]).connColor.code).toBe("PK");
+    expect(coaxMarkDefaults([{ name: "Маркер розовый Оранжевый" }])).toMatchObject({ conflict: true, connColor: { color: "", code: "", art: "" } });
+  });
+
+  it("reseed is an explicit patch and leaves unrelated form settings intact", () => {
+    const data = batchAData(KB3), state = seededState(data);
+    state.coax = { ...state.coax, vswrMode: "sample", vswrEvery: "13", machine: "big", pinA: "manual", lPlusA: "99" };
+    state.note = "Ручная правка"; state.times = { coaxPinCrimpA: { tmpl: "manual", tPrep: "9", tOp: "8", tMachine: "7" } };
+    const before = structuredClone(state), patch = coaxReseedPatch(data, state);
+    expect(state).toEqual(before);
+    expect(patch.lPlusA).toBe("25");
+    expect(patch).not.toHaveProperty("vswrMode"); expect(patch).not.toHaveProperty("machine"); expect(patch).not.toHaveProperty("sideA");
+    const result = { ...state, coax: { ...state.coax, ...patch } };
+    expect(result.times).toBe(state.times); expect(result.note).toBe(state.note);
+    expect(result.coax).toMatchObject({ machine: "big", vswrMode: "sample", vswrEvery: "13", pinA: "manual" });
+  });
+});
+
+it.each([KB3, KB28])("$index matches the shared batch A ETK fixture", (bom) => {
+  const data = batchAData(bom), state = seededState(data); state.coax.finishedLengthFrom = "user";
+  expect(makeGen(data, state).buildConfig()).toEqual(batchAConfigs.find((item) => item.kb === bom.index)!.config);
+});
+
+it("re-seeding HFM preserves B-before-A without placing support crimp after B assembly", () => {
+  const data = batchAData(KB3), saved = initState(data);
+  const old = makeGen(data, saved).getActiveOps();
+  saved.opOrder = [...old.filter((op) => !op.side && op.type !== "coaxHeat" && op.type !== "coaxVswr"),
+    ...old.filter((op) => op.side === "B"), ...old.filter((op) => op.side === "A"),
+    ...old.filter((op) => !op.side && (op.type === "coaxHeat" || op.type === "coaxVswr"))].map((op) => op.opKey);
+  const order = [...saved.opOrder];
+  const state = { ...saved, coax: { ...saved.coax, ...coaxReseedPatch(data, saved) } };
+  const ops = makeGen(data, state).getActiveOps();
+  expect(state.opOrder).toEqual(order);
+  expect(ops.filter((op) => op.side).map((op) => op.opKey)).toEqual([
+    "coaxSupportCrimpB", "coaxPinCrimpB", "coaxInsertB", "coaxShieldB", "coaxBodyB",
+    "coaxSupportCrimpA", "coaxPinCrimpA", "coaxInsertA", "coaxShieldA", "coaxBodyA",
+  ]);
 });

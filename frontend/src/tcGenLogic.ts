@@ -8,7 +8,7 @@
  * `POST /api/techcards/projects/{id}/build` (etk_builder.py читает ровно эти ключи).
  */
 import { matchCableRec } from "./cableMatch";
-import { coaxMarkDefaults, coaxMarksFromName, type CoaxMark, type ConnColor, markIsTube, markLabel, markSpecs, markTubeShrinks, markTubeSplit, type MarkMat, type MarkRow, type MarkSpec, type MarkTube } from "./tcGenMarks";
+import { coaxMarkDefaults, coaxMarksFromName, sumCoaxMaterial, type CoaxMark, type ConnColor, markIsTube, markLabel, markSpecs, markTubeShrinks, markTubeSplit, type MarkMat, type MarkRow, type MarkSpec, type MarkTube } from "./tcGenMarks";
 import { pickWireMarkTube, WIRE_MARK_DIST_MM, WIRE_MARK_LEN_MM, wireMarkKey, wireMarkRow, wireMarkTexts, type WireMarkCfg, type WireMarkRow, type WireMarkSkip } from "./tcGenWireMarks";
 import { twistGroupProblems, twistGroupsOf, type TwistRow } from "./twistGroups";
 import { pickTerminals, type TerminalPairs } from "./terminalPick";
@@ -43,6 +43,7 @@ export type CalcOp = { code: string; comp: string; n?: string; l?: string; req?:
 export type GenData = {
   components: Comp[];
   assemblyInfo: Record<string, string>;
+  projectNo?: string;
   partQty?: number;
   templates: Tmpl[];
   ops: OpRec[];
@@ -398,6 +399,24 @@ export function restoreCoaxState(seed: GenState["coax"], saved: Partial<GenState
     markMaterial: saved.markMaterial, markProtect: saved.markProtect, marks: saved.marks, connColor: saved.connColor };
 }
 
+/** Only the opt-in fields are replaced. Connector choices, tooling, times, route and VSWR stay with the saved form. */
+export function coaxReseedPatch(D: GenData, S: GenState): Partial<GenState["coax"]> {
+  const g = makeGen(D, S), defaults = coaxMarkDefaults(D.components);
+  const info = (pattern: RegExp) => String(Object.entries(D.assemblyInfo || {}).find(([key]) => pattern.test(key))?.[1] || "");
+  const marks = coaxMarksFromName(info(/наименование/i), D.projectNo || info(/проект/i));
+  const allowance = (end: CoaxSide) => end ? g.matchCoaxRec_(end.art, "", "")?.lPlus || "" : "0";
+  const cable = g.coaxBomCableComp_();
+  const nameLength = g.asmLenFromName_(), calcLength = cable ? g.calcCutLengths_([cable])[cable.id] : 0;
+  const finished = nameLength || calcLength || (cable ? Math.round(qtyNum(cable) * 1000 / g.coaxCables_()) : 0);
+  const tube = defaults.markMaterial === "tape" ? defaults.protect : sumCoaxMaterial(D.components, g.bomTut_() ?? undefined);
+  const tubeLength = tube ? qtyNum(tube) * 1000 / (marks.length || g.coaxFakraMarks_()) : 0;
+  return { fakraCutStrip: [S.coax.sideA, S.coax.sideB].some((end) => !!end?.kind),
+    lengthBasis: "finished", finishedLength: String(finished || ""), finishedLengthFrom: nameLength ? "name" : calcLength ? "calc" : "bom",
+    lPlusA: allowance(S.coax.sideA), lPlusB: allowance(S.coax.sideB), markMaterial: defaults.markMaterial,
+    markProtect: defaults.markProtect, marks, tutLen: tubeLength > 0 ? String(Math.round(tubeLength * 1e6) / 1e6) : "",
+    connColor: defaults.connColor };
+}
+
 /** Cut length is always derived from the finished length, never from the previous cut. */
 export function coaxCutLength(coax: GenState["coax"]): number | null {
   if (coax.lengthBasis !== "finished") return parseDecimal_(coax.len) || null;
@@ -671,7 +690,7 @@ const OP_TYPE_NAMES: Record<string, string> = {
   stripCable: "Разделка кабеля", foldCore: "Загибка жил", endCap: "Установка заглушек", coaxCut: "Резка кабеля",
   coaxCutTut: "Резка ТУТ", coaxStrip: "Разделка коаксиала", coaxShield: "Опрессовка втулки экрана",
   coaxSolderShield: "Пайка экрана", coaxPin: "Пайка центрального контакта", coaxPinCrimp: "Опрессовка центрального контакта", coaxCapCrimp: "Монтаж крышки (обжим)",
-  coaxConnColor: "Цветовая маркировка разъёмов", coaxCapScrew: "Монтаж крышки (винт)", coaxHousing: "Монтаж корпуса", coaxInsSleeve: "Монтаж втулки экрана",
+  coaxSupportCrimp: "Обжим опорной гильзы HFM", coaxConnColor: "Цветовая маркировка разъёмов", coaxCapScrew: "Монтаж крышки (винт)", coaxHousing: "Монтаж корпуса", coaxInsSleeve: "Монтаж втулки экрана",
   coaxInsTut: "Монтаж ТУТ", coaxHeat: "Усадка ТУТ",
 };
 export const opTypeName = (type: string) => OP_TYPE_NAMES[type] || "Операция";
@@ -720,6 +739,15 @@ export function applyOpOrder(ops: OpSpec[], order: string[]): OpSpec[] {
   const known = ops.filter((op) => rank.has(op.opKey)).sort((a, b) => rank.get(a.opKey)! - rank.get(b.opKey)!);
   let next = 0;
   const sorted = ops.map((op) => (rank.has(op.opKey) ? known[next++] : op));
+  // Re-seeding legacy HFM adds support crimping. Keep it with its end even when
+  // the technologist's saved route builds B before A; do not rewrite that order.
+  if (ops.some((op) => op.opKey === "coaxFakraCutStrip")) {
+    for (const support of ops.filter((op) => op.type === "coaxSupportCrimp" && !rank.has(op.opKey))) {
+      sorted.splice(sorted.indexOf(support), 1);
+      const at = sorted.findIndex((op) => op.side === support.side);
+      sorted.splice(at < 0 ? sorted.length : at, 0, support);
+    }
+  }
   const firstPrs = sorted.find((op) => op.firstTerm !== undefined);
   return sorted.map((op) => (op.firstTerm === undefined ? op : { ...op, firstTerm: op === firstPrs }));
 }
@@ -2194,7 +2222,10 @@ export function makeGen(D: GenData, S: GenState) {
     .map((c) => ({ art: c.art || c.name || "", name: c.name || "", qty: c.qty })));
   const isFakra_ = () => !!S.coax.sideA?.kind;
   const coaxCables_ = () => Math.max(1, Math.round(S.coax.cables || 1));
-  const coaxBomTtk_ = () => comps().find((x) => /ттк/i.test(`${x.type || ""} ${x.name || ""}`)) || null;
+  const coaxBomTtk_ = () => {
+    const first = comps().find((x) => /ттк/i.test(`${x.type || ""} ${x.name || ""}`));
+    return (S.coax.fakraCutStrip ? sumCoaxMaterial(comps(), first) : first) || null;
+  };
   /** Меток «Маркировка» в составе (под ТУТ); нет — по КД 3 на изделие, как в 122663 (владелец 25.10: «Маркировка ×3»). */
   const coaxFakraMarks_ = () => {
     if (S.coax.marks?.length) return S.coax.marks.length;
@@ -2301,7 +2332,7 @@ export function makeGen(D: GenData, S: GenState) {
     const part = (end: NonNullable<CoaxSide>, role: FakraPart["role"]) => (end.parts || []).filter((p) => p.role === role);
     const withParts = (list: FakraPart[]): Partial<OpSpec> => (list.length ? { parts: list.map((p) => ({ art: p.art, name: p.name, qty: p.qty })) } : {});
     const ops: OpSpec[] = [];
-    const machineSides = ends.filter(([, end]) => S.coax.fakraCutStrip && ["straight", "angled"].includes(end.kind || "")).map(([sd]) => sd);
+    const machineSides = ends.filter(([, end]) => S.coax.fakraCutStrip && !!end.kind).map(([sd]) => sd);
     const flow = machineSides.length === ends.length && machineSides.length > 0;
     const tape = S.coax.markMaterial === "tape";
     const tutOn = tape ? !!S.coax.markProtect : S.coax.tutEnabled && !!bomTut_();
@@ -2325,7 +2356,8 @@ export function makeGen(D: GenData, S: GenState) {
     }
     // Each end keeps its assembly block and component allocation; coaxSideStrip belongs to that end, not the cut-cable block.
     // The new straight recipe puts cap, seal and ferrule on the stripped cable in that order.
-    // HFM PREP only readies loose support sleeves; STRIP fits/crimps them after partial jacket removal (MA_AMV003).
+    // New HFM: full machine strip, then support-sleeve crimp (technologist override, 16.11).
+    // Saved recipes without fakraCutStrip retain PREP and partial STRIP unchanged.
     const prepLabel: Record<FakraKind, string> = { straight: "Подготовить гильзу, уплотнитель и крышку", angled: "Надеть гильзу",
       bulkhead: "Надеть ТТК, гильзу и шайбу", hfm: "Подготовить опорные гильзы" };
     const ttk = coaxBomTtk_();
@@ -2342,7 +2374,10 @@ export function makeGen(D: GenData, S: GenState) {
         const qty = (Number(String(ttk.qty).replace(",", ".")) || 0) / ttkEnds;
         onParts.push({ art: ttk.art || ttk.name, name: ttk.name || "", qty: Math.round(qty * 1e6) / 1e6, unit: "М." });
       }
-      ops.push({ type: "coaxInsSleeve", side: sideKey, opKey: "coaxInsSleeve" + sideKey, units: n, tmplHint: cards.prep,
+      if (S.coax.fakraCutStrip && end.kind === "hfm") {
+        ops.push({ type: "coaxSupportCrimp", side: sideKey, opKey: "coaxSupportCrimp" + sideKey, units: n,
+          tmplHint: "PRS_HFM_SUPPORT", label: `Обжим опорной гильзы HFM${x(n)} (${sd})` });
+      } else ops.push({ type: "coaxInsSleeve", side: sideKey, opKey: "coaxInsSleeve" + sideKey, units: n, tmplHint: cards.prep,
         label: `${flow && end.kind === "straight" ? "Надеть крышку, уплотнитель и гильзу" : prepLabel[end.kind!]}${x(n)} (${sd})`, ...(onParts.length ? { parts: onParts } : {}) });
       if (!machineSides.includes(sideKey)) ops.push({ type: "coaxStrip", side: sideKey, opKey: FAKRA_STRIP_KEY_ + sideKey, label: `Разделка коаксиала${x(n)} (${sd})`, units: n, tmplHint: cards.strip });
       if (end.kind === "bulkhead") {
@@ -2394,16 +2429,10 @@ export function makeGen(D: GenData, S: GenState) {
       label: `Цветовая маркировка разъёмов — ${color.color}${color.code ? ` (${color.code})` : ""} ×${count}`,
       tmplHint: { paint: "MARK_CONN_PAINT", laser: "MARK_CONN_LASER", tape: "MARK_CONN_TAPE" }[color.method] });
   }
-  function coaxTapeUnit_(tape: Comp): string {
-    const material = D.markMats?.find((row) => [tape.art, tape.name].some((name) => name.trim().toLowerCase() === row.name.trim().toLowerCase()));
-    // The legacy BOM omits units; the confirmed VL-S641 norm is metres per assembly.
-    return tape.unit?.trim() || material?.unit.trim() || (/vl-s641/i.test(`${tape.art} ${tape.name}`) ? "М." : "");
-  }
   function coaxLabelPrint_(): OpSpec {
-    const tape = coaxMarkDefaults(comps()).tape, marks = coaxFakraMarks_();
+    const marks = coaxFakraMarks_();
     return { type: "coaxCutTut", opKey: "coaxPrintLabel", label: `Печать этикеток${marks > 1 ? ` ×${marks}` : ""}`, units: marks,
-      tmplHint: "PRINT_MARK_LABEL", markMaterial: "tape", markPhase: "print", coaxMarks: S.coax.marks,
-      parts: tape && coaxTapeUnit_(tape) ? [{ art: tape.art || tape.name || "", name: tape.name || "", qty: qtyNum(tape), unit: coaxTapeUnit_(tape) }] : [] };
+      tmplHint: "PRINT_MARK_LABEL", markMaterial: "tape", markPhase: "print", coaxMarks: S.coax.marks };
   }
   function getActiveOpsCoax_(): OpSpec[] {
     if (isFakra_()) return getActiveOpsFakra_();
@@ -4414,6 +4443,8 @@ export function makeGen(D: GenData, S: GenState) {
         if (sd && sd.article && !sd.type) w.push("Сторона " + s + ": разъём «" + sd.article + "» не найден в БД.КОАКС — размеры/время не подтянутся.");
       });
       if (isFakra_()) w.push(...fakraWarnings_());
+      if (S.coax.markMaterial === "tape" && coaxMarkDefaults(comps()).tape)
+        w.push("Лента маркировки в составе не расходуется: это расходник маркиратора ZCUT-RT660 (ОБ.102).");
       if (coaxMarkDefaults(comps()).conflict && S.coax.connColor?.method !== "none" && !S.coax.connColor?.color)
         w.push("В составе несколько цветов маркер-краски — выберите цвет маркировки разъёмов.");
       if (S.coax.connColor?.method !== "none" && S.coax.connColor && !S.coax.connColor.color)
@@ -4429,12 +4460,13 @@ export function makeGen(D: GenData, S: GenState) {
   function validate() {
     const problems = topologyProblems_();
     if (problems.length) return { cfg: {} as Record<string, unknown>, error: problems.join("\n"), warnings: [] as string[] };
+    if (S.tab === "coax" && S.coax.connColor && S.coax.connColor.method !== "none" && !S.coax.connColor.color.trim()) {
+      return { cfg: {} as Record<string, unknown>, error: coaxMarkDefaults(comps()).conflict
+        ? "В составе несколько цветов маркера-краски — выберите цвет." : "Укажите цвет маркировки разъёмов.", warnings: [] as string[] };
+    }
     if (S.tab === "coax" && S.coax.markMaterial === "tape") {
       const defaults = coaxMarkDefaults(comps());
-      const materialProblem = !defaults.tape ? "В составе нет ленты для печати этикеток — укажите материал."
-        : !coaxTapeUnit_(defaults.tape) ? "Не указана единица измерения ленты — заполните материал маркировки в БД.МАТ."
-        : !(qtyNum(defaults.tape) > 0) || !Number.isFinite(qtyNum(defaults.tape)) ? "Укажите положительную норму расхода ленты в составе."
-        : S.coax.markProtect && !defaults.protect ? "В составе нет прозрачной ТУТ для защиты этикеток."
+      const materialProblem = S.coax.markProtect && !defaults.protect ? "В составе нет прозрачной ТУТ для защиты этикеток."
         : !S.coax.marks?.length || S.coax.marks.some((mark) => !mark.text.trim() || !["A", "B", "middle"].includes(mark.place) || !(mark.minMm >= 100))
           ? "Задайте надписи и места этикеток: не ближе 100 мм от разъёма." : "";
       if (materialProblem) return { cfg: {} as Record<string, unknown>, error: materialProblem, warnings: [] as string[] };
@@ -4615,21 +4647,9 @@ export function initState(D: GenData, base: GenState = emptyState()): GenState {
     S = onCoaxConnChange(D, S, "A");
     if (sideB) S = onCoaxConnChange(D, S, "B");
     if (fk) S = fakraSeed_(D, S);
-    if (fk && [sideA, sideB].some((e) => e && ["straight", "angled"].includes(e.kind || ""))) {
-      S = { ...S, coax: { ...S.coax, fakraCutStrip: true } };
-      if ([sideA, sideB].every((e) => e && ["straight", "angled"].includes(e.kind || ""))) {
-        const defaults = coaxMarkDefaults(D.components);
-        const marks = coaxMarksFromName(String(Object.entries(D.assemblyInfo || {}).find(([key]) => /наименование/i.test(key))?.[1] || ""));
-        const clearLength = defaults.protect && marks.length ? qtyNum(defaults.protect) * 1000 / marks.length : 0;
-        const allowance = (end: CoaxSide) => end ? g2.matchCoaxRec_(end.art, "", "")?.lPlus || "" : "0";
-        const cable = g2.coaxBomCableComp_();
-        const nameLength = g2.asmLenFromName_(), calcLength = cable ? g2.calcCutLengths_([cable])[cable.id] : 0;
-        const finished = nameLength || calcLength || (cable ? Math.round(qtyNum(cable) * 1000 / g2.coaxCables_()) : 0);
-        S = { ...S, coax: { ...S.coax, lengthBasis: "finished", finishedLength: String(finished || ""),
-          finishedLengthFrom: nameLength ? "name" : calcLength ? "calc" : "bom",
-          lPlusA: allowance(sideA), lPlusB: allowance(sideB), markMaterial: defaults.markMaterial, markProtect: defaults.markProtect,
-          marks, ...(defaults.markMaterial === "tape" && clearLength > 0 ? { tutLen: String(clearLength) } : {}) } };
-      }
+    if (fk) {
+      const patch = coaxReseedPatch(D, S);
+      S = { ...S, coax: { ...S.coax, ...patch, ...(patch.markMaterial !== "tape" ? { tutLen: S.coax.tutLen } : {}) } };
     }
     const color = coaxMarkDefaults(D.components).connColor;
     if (color.method !== "none") S = { ...S, coax: { ...S.coax, connColor: color } };
@@ -4785,7 +4805,7 @@ export function fakraSeed_(D: GenData, S: GenState): GenState {
     coax = { ...coax, [side === "A" ? "pinA" : "pinB"]: e.kind === "bulkhead" ? "пайка" : COAX_PIN_CRIMP, ...(side === "A" ? { shield: "обжим" } : { shieldB: "обжим" }),
       [side === "A" ? "coverA" : "coverB"]: "" };
   });
-  const tut = g.bomTut_();
+  const tut = sumCoaxMaterial(D.components, g.bomTut_() ?? undefined);
   const tutM = tut ? Number(String(tut.qty).replace(",", ".")) || 0 : 0;
   if (!coax.tutLen && tutM > 0) coax = { ...coax, tutLen: String(Math.round(tutM * 1000 / g.coaxFakraMarks_())) };
   return { ...S, coax };

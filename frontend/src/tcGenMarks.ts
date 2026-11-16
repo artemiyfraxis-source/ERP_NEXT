@@ -230,37 +230,56 @@ export function mergeMarkRows(current: MarkRow[], extra: MarkRow[]): MarkRow[] {
 export type CoaxMark = { text: string; place: "A" | "B" | "middle"; minMm: number };
 export type ConnColor = { method: "none" | "paint" | "laser" | "tape"; color: string; code: string; art: string };
 
+export const COAX_COLORS = [
+  { code: "WH", color: "белый", match: /бел/i },
+  { code: "BU", color: "голубой/синий", match: /голуб|син/i },
+  { code: "GN", color: "зелёный", match: /зел[её]н/i },
+  { code: "VT", color: "фиолетовый", match: /фиолет/i },
+  { code: "YE", color: "жёлтый", match: /ж[её]лт/i },
+  { code: "RD", color: "красный", match: /красн/i },
+  { code: "BK", color: "чёрный", match: /ч[её]рн/i },
+  { code: "OG", color: "оранжевый", match: /оранж/i },
+  { code: "PK", color: "розовый", match: /розов/i },
+] as const;
+
+/** Keep distinct materials and incompatible units separate; missing tube units historically mean metres. */
+export function sumCoaxMaterial<T extends { art?: string; name?: string; unit?: string; qty?: number | string }>(rows: T[], first: T | undefined): T | undefined {
+  if (!first) return undefined;
+  const key = (row: T) => (row.art || row.name || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const unit = (row: T) => {
+    const value = (row.unit || "м").trim().toLowerCase().replace(/\.$/, "");
+    return /^(м|m|метр|метры)$/.test(value) ? "m" : value;
+  };
+  const matching = rows.filter((row) => key(row) === key(first) && unit(row) === unit(first));
+  if (matching.length < 2) return first;
+  const qty = matching.reduce((total, row) => total + (Number(String(row.qty ?? 0).replace(",", ".")) || 0), 0);
+  return { ...first, qty: Math.round(qty * 1e9) / 1e9 };
+}
+
 /** The last assembly article identifies the cable, the first may identify the drawing. */
-export function coaxMarksFromName(name: string): CoaxMark[] {
-  const articles = [...name.matchAll(/\b\d+\/AA\b/gi)];
+export function coaxMarksFromName(name: string, project = ""): CoaxMark[] {
+  const articles = [...name.matchAll(/\b\d+(?:[/_])?AA\b/gi)];
   const article = articles.at(-1);
   if (!article) return [];
   const [from, to] = name.slice(article.index! + article[0].length).trim().split(/\s*→\s*/);
   return [
-    { text: `${article[0]}, дата, № монтажника`, place: "middle", minMm: 100 },
+    { text: project.trim() ? `FRX.${project.trim().replace(/\.+$/, "")}.${article[0]}.{№}` : `${article[0]}, дата, № монтажника`, place: "middle", minMm: 100 },
     ...(from ? [{ text: from, place: "A" as const, minMm: 100 }] : []),
     ...(to ? [{ text: to, place: "B" as const, minMm: 100 }] : []),
   ];
 }
 
-export function coaxMarkDefaults<T extends { type?: string; art?: string; name?: string }>(components: T[]) {
+export function coaxMarkDefaults<T extends { type?: string; art?: string; name?: string; unit?: string; qty?: number | string }>(components: T[]) {
   const text = (c: typeof components[number]) => `${c.type || ""} ${c.name || ""} ${c.art || ""}`;
   const tape = components.find((c) => /лент/i.test(text(c)) && /vell|vl-s641|этикет|маркиров/i.test(text(c)));
-  const protect = components.find((c) => /тут|термоусад/i.test(text(c)) && /прозр|clear/i.test(text(c)));
-  const colors: Array<[RegExp, string, string]> = [
-    [/оранж/i, "оранжевый", "OG"], [/розов/i, "розовый", "PK"], [/бел/i, "белый", "WH"],
-    [/ч[её]рн/i, "чёрный", "BK"], [/красн/i, "красный", "RD"], [/ж[её]лт/i, "жёлтый", "YE"],
-    [/зел[её]н/i, "зелёный", "GN"], [/син/i, "синий", "BU"], [/фиолет/i, "фиолетовый", "VT"],
-    [/сер/i, "серый", "GY"], [/коричнев/i, "коричневый", "BN"],
-  ];
-  const candidates = components.filter((c) => /маркер[\s-]*краска/i.test(text(c))).flatMap((c) => {
-    const known = /\b151437\b/.test(c.art || "") ? ["оранжевый", "OG"]
-      : /\b151986\b/.test(c.art || "") ? ["розовый", "PK"] : null;
-    const found = known ? [known] : colors.filter(([re]) => re.test(text(c))).map(([, color, code]) => [color, code]);
-    return (found.length ? found : [["", ""]]).map(([color, code]) => ({ method: "paint" as const, color, code, art: c.art || c.name || "" }));
+  const protect = sumCoaxMaterial(components, components.find((c) => /тут|термоусад/i.test(text(c)) && /прозр|clear/i.test(text(c))));
+  const candidates = components.filter((c) => /маркер/i.test(text(c)) || /\b151437\b|\b151986\b/.test(c.art || "")).flatMap((c) => {
+    const known = /\b151437\b/.test(c.art || "") ? "OG" : /\b151986\b/.test(c.art || "") ? "PK" : "";
+    const found = COAX_COLORS.filter(({ match, code }) => code === known || match.test(text(c)));
+    return (found.length ? found : [{ color: "", code: "" }]).map(({ color, code }) => ({ method: "paint" as const, color, code, art: c.art || c.name || "" }));
   });
   const conflict = new Set(candidates.map((c) => c.code).filter(Boolean)).size > 1;
   const connColor: ConnColor = conflict ? { method: "paint", color: "", code: "", art: "" }
-    : candidates[0] || { method: "none", color: "", code: "", art: "" };
+    : candidates.find((c) => c.code) || candidates[0] || { method: "none", color: "", code: "", art: "" };
   return { markMaterial: tape ? "tape" as const : "tube" as const, markProtect: !!protect, tape, protect, connColor, conflict };
 }

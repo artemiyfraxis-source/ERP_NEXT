@@ -36,8 +36,8 @@ def test_new_fakra_route_independent_preparations_and_label_inputs(fixture):
     assert len({op["result"][0]["name"] for op in ops[:3]}) == 3
     assert [op["result"][0]["norm"] for op in ops[:3]] == ["15", "45", "45"]
     assert _inputs(ops[0]) == {"RTK 031": ("72,825", "М.")}
-    # Frozen pre-fix payload has qty=3 and no unit; the corrected generator payload is covered below.
-    assert _inputs(ops[1]) == {"Лента Vell VL-S641": ("45", "Шт.")}
+    # Frozen payload keeps its parts, but label stock is a printer consumable.
+    assert _inputs(ops[1]) == {}
     assert _inputs(ops[2]) == {"ТУТ 4/2мм, прозрачная": ("2,7", "М.")}
     assert ops[3]["semis"][1]["name"] == ops[2]["result"][0]["name"]
     assert ops[3]["semis"][1]["norm"] == "45"
@@ -68,7 +68,7 @@ def test_new_fakra_route_independent_preparations_and_label_inputs(fixture):
     assert rebuilt["operations"] == ops  # saved stage kit must not make its blank operations sequential
 
 
-def test_label_tape_consumption_uses_bom_metres_while_output_counts_labels():
+def test_label_tape_is_a_printer_consumable_while_output_counts_labels():
     config = deepcopy(FRESH[0]["config"])
     printed = next(op for op in config["ops"] if op["opKey"] == "coaxPrintLabel")
     printed["parts"] = [{"art": "VL-S641", "name": "Лента Vell VL-S641", "qty": 0.18, "unit": "М."}]
@@ -76,7 +76,9 @@ def test_label_tape_consumption_uses_bom_metres_while_output_counts_labels():
     config["partQty"] = 15
     doc = build_etk(config, _fresh_cards(config))
     output = next(op for op in doc["operations"] if op["code"] == "PRINT_MARK_LABEL")
-    assert _inputs(output) == {"VL-S641": ("2,7", "М.")}
+    assert _inputs(output) == {}
+    assert any("Лента Vell VL-S641, 18 мм" in tool["name"] for tool in output["card"]["tooling"])
+    assert any("лента из состава не расходуется" in text for text in doc["warnings"])
     assert output["result"][0]["norm"] == "45"
     assert build_etk(config, _fresh_cards(config))["operations"] == doc["operations"]
 
@@ -127,7 +129,8 @@ def test_missing_label_material_cannot_consume_clear_tubing():
     config["ops"][1]["parts"] = []
     doc = build_etk(config, _fresh_cards(config))
     assert doc["operations"][1]["components"] == []
-    assert any("не задан материал для печати этикеток" in warning for warning in doc["warnings"])
+    assert not any("не задан материал для печати этикеток" in warning for warning in doc["warnings"])
+    assert any("Лента Vell VL-S641, 18 мм" in tool["name"] for tool in doc["operations"][1]["card"]["tooling"])
 
 
 @pytest.mark.parametrize("method,phrase", [("paint", "маркером-краской"), ("laser", "лазерной гравировкой"), ("tape", "цветной лентой")])

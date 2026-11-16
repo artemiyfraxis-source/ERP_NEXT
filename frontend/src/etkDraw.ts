@@ -252,6 +252,12 @@ export function etkDrawCoax(operation: Row): string {
     диэлектрик до L3, оплётка заподлицо; только L1 — одна жила; только L3 (7/8″ по RFS) — кабель режется заподлицо, снята
     одна оболочка. */
 function coaxSketch(c: Row, caption: string): string {
+  if (c.dimensionOrder === "HFM" || c.dimensionOrder === "Amphenol") {
+    const document = c.dimensionOrder === "HFM" ? "MA_AMV003" : "2FA1-NXSP-C30E2";
+    return `<div class="tr-none">${esc(coaxEndTitle(caption, c))}: полная разделка по базам ${document}. ` +
+      `Размеры из БД.КОАКС: L1 = ${esc(mm(c.l1))}, L2 = ${esc(mm(c.l2))}, L3 = ${esc(mm(c.l3))}. ` +
+      `Не трактовать как три длины от торца; контроль — по чертежу изготовителя и ходу операции.</div>`;
+  }
   // Rosenberger X/Y/Z run from jacket to bare conductor; legacy L1/L2/L3 run the other way.
   const xyz = c.dimensionOrder === "XYZ";
   const keys = xyz ? ["l3", "l2", "l1"] : ["l1", "l2", "l3"];
@@ -399,6 +405,13 @@ function coaxEndSketch(operation: Row): string {
   const g = coaxEndGeometry(end, x0, span), xPin = x0 + (g.x1 - x0) * 0.8;
   const crimp = type === "coaxPinCrimp" || /обжим/i.test(str(end.pinType));
   let body = caption(20, 18, sideCaption(end), "start", 600, CX.ink);
+  if (type === "coaxSupportCrimp") {
+    body += coaxEndBase(end, x0, span, cy) +
+      `<rect x="${g.x3 - 20}" y="${cy - 18}" width="60" height="36" rx="2" fill="${CX.metal}" stroke="${CX.metalEdge}"/>` +
+      caption(20, cy + 44, "Опорная гильза HFM: установить и обжать после полной разделки") +
+      caption(20, cy + 66, "11WS001_A · Положение по КД · Высота обжима — не задано");
+    return svg(640, cy + 78, body);
+  }
   if (type === "coaxPin" || type === "coaxPinCrimp") {
     body += coaxEndBase(end, x0, span, cy) + coaxPin(x0, xPin, cy, !crimp) +
       `<line x1="${xPin}" y1="${cy + 10}" x2="${xPin}" y2="${cy + 34}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +

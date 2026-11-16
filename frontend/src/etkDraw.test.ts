@@ -11,6 +11,21 @@ import type { ProjectTechcard } from "./api";
 const housing: EtkHousing = { title: "JST XH", art: "XHP-2", rows: 1, cols: 2, n: 2, kind: "grid", color: "#efe6cf", latch: "ramp", roof: { kind: "latch", at: "center", src: "JST eXH, Housing" },
   cavity: "square", labels: null, grid: [[1, 2]], round: null, conf: "medium", note: "", pitch: 2.5 };
 
+it("shows the HFM support sleeve on a stripped cable without a central contact or invented crimp dimensions", () => {
+  const html = etkFigure({ type: "coaxSupportCrimp", fields: { coaxEnd: { connector: "AMK11D-1M4Z5-Z", side: "А", cable: "RTK 031" } } });
+  expect(html).toContain("Опорная гильза HFM");
+  expect(html).toContain("11WS001_A");
+  expect(html).toContain("Высота обжима — не задано");
+  expect(html).not.toContain("Центральный контакт:");
+});
+
+it.each(["HFM", "Amphenol"])("keeps %s drawing bases explicit instead of reinterpreting lengths", (dimensionOrder) => {
+  const html = etkDrawCoax({ type: "coaxCut", fields: { coax: { connector: "test", l1: "2,7", l2: "1,0", l3: "8,5", dimensionOrder } } });
+  expect(html).toContain("полная разделка по базам");
+  expect(html).toContain("Не трактовать как три длины от торца");
+  expect(html).not.toContain("Размеров разделки нет");
+});
+
 describe("etkParams (шапка: Сторона А | Общие | Сторона В)", () => {
   const find = (items: ReadonlyArray<readonly [string, string, ...unknown[]]>) => Object.fromEntries(items.map(([label, value]) => [label, value]));
 
