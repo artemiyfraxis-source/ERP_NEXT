@@ -150,6 +150,7 @@ it.each(["2FA1-NZSP-C30E2", "AMK11D-1M4Z5-Z"])("does not offer stripping at cut 
 
 it("renders the generated five-block coax route with independent preparation operations", async () => {
   const { container, onBuild } = mount(); await ready();
+  fireEvent.click(screen.getByRole("button", { name: "Подтвердить L" }));
   const scheme = await screen.findByRole("region", { name: "Схема полуфабрикатов" });
   expect([...container.querySelectorAll(".rc-card .rc-title")].map((el) => el.textContent)).toEqual([
     "Заготовки", "Кабель с метками и деталями", "Сторона А собрана", "Сторона В собрана", "Готовый кабель",
@@ -204,22 +205,49 @@ it("restores a saved single-ended coax cut machine and stripping of the free end
   expect((makeGen(data, restored).buildConfig().ops as unknown[])[0]).toEqual((saved.ops as unknown[])[0]);
 });
 
-it("keeps the calc-length warning across reopening until L is edited", async () => {
+it.each(["confirm", "edit"])("blocks calculated L across reopening until %s", async (action) => {
   const calcKit = { ...kit, name: "Кабельная сборка 120907/AA Camera 14 → Splitter B C6",
     calc_ops: [{ code: "CUT_COAX_auto", comp: "RTK 031", n: "1", l: "4,855", req: "" }] };
-  const warning = "L взята из расчёта — сверьте с КД (длина готового изделия без запаса на разъёмы)";
+  const warning = "L взята из расчёта — подтвердите длину готового изделия по КД (без запаса на разъёмы)";
   const first = mount(card, calcKit); await ready();
   expect(screen.getAllByText(warning).length).toBeGreaterThan(0);
   expect(screen.getByLabelText("L по КД, мм")).toHaveValue("4855");
   expect(first.latest().coax.cableLength).toBe(4910);
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  pressBuild();
+  expect(first.onBuild).not.toHaveBeenCalled();
   const saved = first.latest();
   first.unmount(); localStorage.clear(); serverDraft = null;
   const second = mount({ ...card, document: { operations: [], build_config: saved } }, calcKit); await ready();
   expect(screen.getAllByText(warning).length).toBeGreaterThan(0);
-  change("L по КД, мм", "4800");
+  pressBuild();
+  expect(second.onBuild).not.toHaveBeenCalled();
+  if (action === "edit") change("L по КД, мм", "4800");
+  else fireEvent.click(screen.getByRole("button", { name: "Подтвердить L" }));
   expect(screen.queryByText(warning)).not.toBeInTheDocument();
-  expect(second.latest().coax).toMatchObject({ cableLength: 4855, finishedLength: 4800, finishedLengthFrom: "user" });
+  expect(screen.queryByRole("button", { name: "Подтвердить L" })).not.toBeInTheDocument();
+  const length = action === "edit" ? 4800 : 4855;
+  expect(screen.getByLabelText("L по КД, мм")).toHaveValue(String(length));
+  expect(second.latest().coax).toMatchObject({ cableLength: length + 55, finishedLength: length, finishedLengthFrom: "user" });
+  pressBuild();
+  await waitFor(() => expect(second.onBuild).toHaveBeenCalledOnce());
 });
+
+it.each([["винт", "винт"], ["обжим", "обжим"], ["винт", "обжим"], ["", "винт"]])(
+  "restores legacy angled covers %s/%s without losing operations", async (coverA, coverB) => {
+    const ordinaryKit = { ...kit, components: kit.components.filter((c) => c.type !== "Разъем")
+      .concat([{ id: "sma", art: "SMA-RA", name: "SMA угловой", type: "Соед", qty: 2, kd: "" }]) };
+    const ordinaryData = { ...data, components: ordinaryKit.components };
+    const seed = initState(ordinaryData);
+    const state = { ...seed, coax: genLogic.restoreCoaxState(seed.coax, {
+      len: "4800", sideA: { art: "SMA-RA", name: "SMA угловой" }, sideB: { art: "SMA-RA", name: "SMA угловой" },
+      pinA: "внутри корпуса", pinB: "внутри корпуса", coverA, coverB,
+    }) };
+    const saved = makeGen(ordinaryData, state).buildConfig();
+    const { latest } = mount({ ...card, document: { operations: [], build_config: saved } }, ordinaryKit); await ready();
+    expect(latest().ops).toEqual(saved.ops);
+  },
+);
 
 it("uses an explicit generated coax route in the preview instead of deriving a replacement", async () => {
   const route = {

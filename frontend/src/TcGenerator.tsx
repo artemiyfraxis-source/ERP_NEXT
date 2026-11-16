@@ -32,6 +32,7 @@ import {
   grapherLengthText,
   coaxDiaFromRecords,
   coaxFromFields,
+  coaxLengthProblem,
   coaxRecordFields,
   emptyState,
   emptyRework,
@@ -1740,8 +1741,11 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   // Экран: пока у А и В он одинаковый — один выбор; «разные для А и В» раскрывает второй (локально, в черновик не пишется).
   const shieldMerged = !S.coax.sideB || (!shieldSplit && gen.coaxShieldOf_("B") === gen.coaxShieldOf_("A"));
   const fakraEnds = [S.coax.sideA, S.coax.sideB].some((end) => end?.kind === "straight" || end?.kind === "angled");
-  const setCoax = (patch: Partial<GenState["coax"]>) => update((current) => ({ ...current, coax: { ...current.coax, ...patch },
-    ...("len" in patch || "finishedLength" in patch ? { coaxLenFrom: undefined } : {}) }));
+  const setCoax = (patch: Partial<GenState["coax"]>) => {
+    if (status.error && status.text === coaxLengthProblem(S.coax)) setStatus({ text: "", error: false });
+    update((current) => ({ ...current, coax: { ...current.coax, ...patch },
+      ...("len" in patch || "finishedLength" in patch ? { coaxLenFrom: undefined } : {}) }));
+  };
   const coaxSections = <>
     <section className="gsec" aria-label="Коакс-кабель">
       <div className="gsec-head"><h3>Коакс-кабель</h3>

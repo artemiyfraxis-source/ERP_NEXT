@@ -13,6 +13,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import app.database  # Register every table before the fixture creates the schema.
 from app.modules.references.application import CreateRecordCommand, create_record
 from app.modules.references.domain import TechOperationRecord, TechOperationTab
 from app.modules.references.infrastructure import (
@@ -306,8 +307,6 @@ def test_manual_equipment_cell_is_preserved_on_conflict(base):
 
 
 def test_cli_defaults_to_full_rollback_and_apply_commits_once(base, monkeypatch, capsys):
-    import app.database
-
     with base() as session:
         engine = session.get_bind()
     monkeypatch.setattr(app.database, "build_engine", lambda url: engine)

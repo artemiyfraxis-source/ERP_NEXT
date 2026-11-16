@@ -356,13 +356,13 @@ describe("FAKRA flow 16.11", () => {
     const data = freshData(kb), state = seededState(data), gen = makeGen(data, state);
     expect(state.coax).toMatchObject({ lengthBasis: "finished", finishedLength: "4800", lPlusA: "30", lPlusB: "25", markMaterial: "tape", markProtect: true });
     expect(coaxCutLength(state.coax)).toBe(4855);
-    expect(seededConfig(data).error).toBe("");
+    expect(seededConfig(data).error).toContain("подтвердите длину готового изделия");
     const cfg = gen.buildConfig() as any;
     expect(cfg.coax.cableLength).toBe(4855);
     const expected = structuredClone(freshConfigs.find((item) => item.kb === kb)!.config) as any;
     expected.coax.finishedLengthFrom = "bom";
     expected.ops.find((op: any) => op.opKey === "coaxPrintLabel").parts[0].unit = "М.";
-    expect(seededConfig(data).config).toEqual(expected);
+    expect(cfg).toEqual(expected);
     expect(cfg.coax.marks).toEqual(coaxMarksFromName(kb === "КБ2" ? "120905/AA Camera 11 → Splitter B C3" : "120907/AA Camera 14 → Splitter B C6"));
     expect(cfg.coax.connColor).toMatchObject(kb === "КБ2" ? { color: "розовый", code: "PK" } : { color: "оранжевый", code: "OG" });
     expect(cfg.ops.map((op: any) => op.opKey)).toEqual([
@@ -417,6 +417,7 @@ describe("FAKRA flow 16.11", () => {
     data.components.push({ ...c("Материал", "151986", 1), name: "Маркер-краска Brauberg" });
     const state = seededState(data);
     expect(state.coax.connColor?.color).toBe("");
+    state.coax.finishedLengthFrom = "user";
     expect(makeGen(data, state).validate().warnings.join("\n")).toMatch(/несколько цветов/);
     expect(coaxMarkDefaults([{ name: "Маркер-краска синий" }]).connColor.code).toBe("BU");
   });
@@ -445,18 +446,29 @@ describe("FAKRA restoration and material validation", () => {
     expect(state.coax).toMatchObject({ finishedLength: String(length), finishedLengthFrom: source });
     for (let i = 0; i < 2; i++) {
       const result = makeGen(data, state).validate();
-      expect(result.error).toBe("");
-      expect(result.cfg.coax).toMatchObject({ cableLength: length + 55, finishedLengthFrom: source });
-      expect(result.warnings.some((w) => w.includes("длина готового изделия без запаса на разъёмы"))).toBe(source !== "name");
+      if (source === "name") {
+        expect(result.error).toBe("");
+        expect(result.cfg.coax).toMatchObject({ cableLength: length + 55, finishedLengthFrom: source });
+      } else {
+        expect(result.error).toBe(`L взята из ${source === "calc" ? "расчёта" : "состава"} — подтвердите длину готового изделия по КД (без запаса на разъёмы)`);
+        expect(result.cfg).toEqual({});
+      }
       state.coax.len = String(length + 55);
     }
     state.coax.finishedLengthFrom = "user";
+    for (let i = 0; i < 2; i++) {
+      const result = makeGen(data, state).validate();
+      expect(result.error).toBe("");
+      expect(result.cfg.coax).toMatchObject({ cableLength: length + 55, finishedLength: length, finishedLengthFrom: "user" });
+    }
     expect(makeGen(data, state).validate().warnings.join("\n")).not.toContain("L взята");
   });
   it.each(["М.", "м", "рулон"])("keeps tape norm and source unit %s separate from the label count", (unit) => {
     const data = freshData(), tape = data.components.find((c) => c.art.includes("Vell"))!;
     tape.qty = "0,18"; tape.unit = unit;
-    const result = makeGen(data, seededState(data)).validate();
+    const state = seededState(data);
+    state.coax.finishedLengthFrom = "user";
+    const result = makeGen(data, state).validate();
     expect(result.error).toBe("");
     expect((result.cfg.ops as any[]).find((op) => op.opKey === "coaxPrintLabel")).toMatchObject({
       units: 3, parts: [{ qty: 0.18, unit }],
@@ -466,6 +478,7 @@ describe("FAKRA restoration and material validation", () => {
     for (const code of ["PRINT_MARK_LABEL", "INS_MARK_LABEL", "CUT_TUT_short", "INS_TUT", "HEAT_TYT_short", "MARK_CONN_PAINT", "MARK_CONN_LASER", "MARK_CONN_TAPE"]) {
       const data = freshData(), state = seededState(data);
       state.coax.fakraCutStrip = false;
+      state.coax.finishedLengthFrom = "user";
       if (family === "ordinary") {
         state.coax.sideA = { art: "SMA", name: "SMA" }; state.coax.sideB = { art: "SMA", name: "SMA" };
       }
@@ -481,6 +494,7 @@ describe("FAKRA restoration and material validation", () => {
   });
   it("requires a known tape unit and positive norm instead of guessing pieces or metres", () => {
     const data = freshData(), state = seededState(data), tape = data.components.find((c) => c.art.includes("Vell"))!;
+    state.coax.finishedLengthFrom = "user";
     tape.art = "CUSTOM"; tape.name = "Лента для этикеток";
     expect(makeGen(data, state).validate().error).toContain("единица измерения ленты");
     data.markMats = [{ name: tape.name, group: "Ленты", unit: "м" }];

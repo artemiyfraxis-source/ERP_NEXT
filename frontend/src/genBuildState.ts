@@ -56,12 +56,26 @@ export function restoreCoaxFromConfig(seed: GenState, config: unknown): GenState
       ...(saved.kind ? { kind: saved.kind as NonNullable<GenState["coax"]["sideA"]>["kind"] } : {}),
       ...(Array.isArray(saved.parts) ? { parts: saved.parts as NonNullable<GenState["coax"]["sideA"]>["parts"] } : {}) };
   };
+  const pinA = isPlain(raw.sideA) ? text(raw.sideA.pinType, seed.coax.pinA) : seed.coax.pinA;
+  const pinB = isPlain(raw.sideB) ? text(raw.sideB.pinType, seed.coax.pinB) : seed.coax.pinB;
+  const covers = { coverA: "", coverB: "" };
+  // Legacy generic covers were saved as counts, without an end. Allocate those counts
+  // to eligible angled ends in A/B order; dedicated FAKRA seal/cap ops are separate.
+  const available = (["A", "B"] as const).filter((end) =>
+    isPlain(raw[end === "A" ? "sideA" : "sideB"]) && (end === "A" ? pinA : pinB) === "внутри корпуса");
+  for (const op of ops) {
+    if (op.opKey !== "coaxCapScrew" && op.opKey !== "coaxCapCrimp") continue;
+    const count = Math.min(2, Math.max(0, Number(op.units ?? 1)));
+    for (let i = 0; i < count; i++) {
+      const end = available.shift();
+      if (end) covers[end === "A" ? "coverA" : "coverB"] = op.opKey === "coaxCapScrew" ? "винт" : "обжим";
+    }
+  }
   const saved: Partial<GenState["coax"]> = {
     len: text(raw.cableLength), tutLen: text(raw.tutLength, seed.coax.tutLen),
     tutEnabled: ops.some((op) => op.type === "coaxCutTut" && op.markMaterial !== "tape"),
     sideA: side("sideA"), sideB: side("sideB"),
-    pinA: isPlain(raw.sideA) ? text(raw.sideA.pinType, seed.coax.pinA) : seed.coax.pinA,
-    pinB: isPlain(raw.sideB) ? text(raw.sideB.pinType, seed.coax.pinB) : seed.coax.pinB,
+    pinA, pinB, ...covers,
     shield: text(raw.shieldType, seed.coax.shield),
     shieldB: isPlain(raw.sideB) ? text(raw.sideB.shield, seed.coax.shieldB) : seed.coax.shieldB,
     stripMode: ops.some((op) => op.type === "coaxCut" && Array.isArray(op.stripSides)) ? "machine" : "separate",

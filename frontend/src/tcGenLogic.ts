@@ -407,13 +407,14 @@ export function coaxCutLength(coax: GenState["coax"]): number | null {
 }
 
 export function coaxLengthProblem(coax: GenState["coax"]): string {
-  if (coax.lengthBasis !== "finished" || coaxCutLength(coax) !== null) return "";
+  if (coax.lengthBasis !== "finished") return "";
+  if (coaxCutLength(coax) !== null) return coaxLengthConfirmation(coax);
   return "Для длины готового изделия задайте L и припуски L+ сторон А и В (БД.КОАКС или вручную).";
 }
 
-export function coaxLengthWarning(coax: GenState["coax"]): string {
+export function coaxLengthConfirmation(coax: GenState["coax"]): string {
   if (coax.lengthBasis !== "finished" || !["calc", "bom"].includes(coax.finishedLengthFrom || "")) return "";
-  return `L взята из ${coax.finishedLengthFrom === "calc" ? "расчёта" : "состава"} — сверьте с КД (длина готового изделия без запаса на разъёмы)`;
+  return `L взята из ${coax.finishedLengthFrom === "calc" ? "расчёта" : "состава"} — подтвердите длину готового изделия по КД (без запаса на разъёмы)`;
 }
 
 export type CoaxVswrMode = "all" | "sample" | "none";
@@ -4408,7 +4409,6 @@ export function makeGen(D: GenData, S: GenState) {
     if (cfg.mode === "coax") {
       const cx = (cfg.coax || {}) as { cableLength?: unknown; sideA?: { article: string; type: string } | null; sideB?: { article: string; type: string } | null };
       if (!cx.cableLength) w.push("Не указана длина кабеля — норма резки будет пустой.");
-      else if (coaxLengthWarning(S.coax)) w.push(coaxLengthWarning(S.coax));
       else if (S.coax.lengthBasis !== "finished" && S.coaxLenFrom) w.push(`Длина кабеля взята из ${S.coaxLenFrom === "calc" ? "расчёта" : "состава"} (в наименовании сборки её нет) — сверьте с КД.`);
       ([["A", cx.sideA], ["B", cx.sideB]] as const).forEach(([s, sd]) => {
         if (sd && sd.article && !sd.type) w.push("Сторона " + s + ": разъём «" + sd.article + "» не найден в БД.КОАКС — размеры/время не подтянутся.");
