@@ -327,7 +327,7 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
     fields = dict(record.fields)
     display = record.display_text
     refused: list[str] = []
-    stored = schema_keys(record.tab.value) if record.tab in TERMINAL_TABS else stored_schema_keys(record.tab.value)
+    stored = stored_schema_keys(record.tab.value)
     own_columns: list[str] | None = None  # the owner's columns: a row that came from a mirror reload may lack one
     for edit in edits:
         if edit.field not in record.fields and own_columns is None:

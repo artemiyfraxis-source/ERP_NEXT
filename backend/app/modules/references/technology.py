@@ -685,11 +685,12 @@ _TECH_SCHEMA = {
         _SchemaField("terLPlus", ("l+", "l+ в мм", "l+(мм)", "l +"), store=True, pattern=r"^l\s*\+"),
         _SchemaField("terLMinus", ("l-", "l−", "l–", "l—", "l- в мм", "l-(мм)", "l −", "l -"), store=True,
                      pattern=r"^l\s*[-−–—]"),
-        _SchemaField("terStep", ("шаг разъема", "шаг разъёма", "шаг", "pitch", "step", "шаг ленты", "шаг контакта"),
+        _SchemaField("terStep", ("шаг разъема", "шаг разъёма", "шаг разьема", "шаг", "pitch", "step", "шаг ленты", "шаг контакта"),
                      store=True, pattern=r"^шаг"),
         _SchemaField("terApplicator", ("аппликатор", "applicator", "applikator"), store=True),
         _SchemaField("terStrip", ("длина зачистки", "длина зачистки, мм", "зачистка", "длина снятия изоляции",
-                                  "strip length", "strip"), store=True, pattern=r"зачист|strip"),
+                                  "strip length", "strip"), store=True,
+                     pattern=r"^(длина (зачистки|снятия изоляции)|strip length)\b"),
         _SchemaField("terCrimpHeight", ("высота обжима проводника , мм", "высота обжима проводника, мм",
                                         "высота обжима проводника", "crimp height conductor", "crimp height"), store=True),
         _SchemaField("terPullForceMin", ("усилие обрыва контакта, n", "усилие обрыва контакта n",
@@ -888,10 +889,10 @@ def schema_keys(tab: str) -> frozenset[str]:
 
 
 def stored_schema_keys(tab: str) -> frozenset[str]:
-    """Schema values a record of the tab stores (terLPlus, terLMinus…): editable even when the record lacks the key."""
+    """Stored schema and derived values: editable even when the record lacks the key."""
     if tab not in _TECH_SCHEMA:
         return frozenset()
-    return frozenset(field.key for field in _TECH_SCHEMA[tab][0] if field.store)
+    return frozenset(field.key for field in _TECH_SCHEMA[tab][0] if field.store) | frozenset(_DERIVED_KEYS.get(tab, ()))
 
 
 def schema_columns(tab: str, fields: Mapping[str, str]) -> dict[str, str]:
@@ -909,19 +910,20 @@ def schema_columns(tab: str, fields: Mapping[str, str]) -> dict[str, str]:
 
 
 def terminal_field_twins(fields: Mapping[str, str]) -> dict[str, tuple[str, ...]]:
-    """All present sheet aliases of each terminal key, using the import's resolvers.
+    """All present equal-value aliases of stored terminal keys, using the import's schema.
 
-    Resolve columns individually so a second alias is kept in sync too; terGender is
-    derived from the contact type, rather than an equal-value twin.
+    Fallback regexes locate import values but do not prove two fields are equal-value
+    aliases. terGender is derived from the contact type, rather than a twin.
     """
     groups: dict[str, list[str]] = {}
     keys = schema_keys("ter")
+    schema_fields = (*(field for field in _TECH_SCHEMA["ter"][0] if field.store), *_TER_CARD)
     for column in fields:
         if column in keys:
             continue
-        resolved = _resolve_schema(_TECH_SCHEMA["ter"][0], [column])
+        resolved = {field.key: 0 for field in schema_fields
+                    if _normalize_header(column) in field.aliases}
         resolved.update(_range_indexes([column]))
-        resolved.update(terminal_card_indexes([column]))
         for key, index in resolved.items():
             if index >= 0:
                 groups.setdefault(key, []).append(column)
