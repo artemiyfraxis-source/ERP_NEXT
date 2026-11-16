@@ -23,7 +23,7 @@ from app.shared.persistence import (
 from app.shared.project_number import normalize_project_number
 from app.shared.advisory_lock import lock_key, lock_project_run
 from .domain import (
-    ADDRESSEE_PLAN_FIELDS, ADDRESSEE_REQUISITE_FIELDS, AcceptanceAct, BoxItem, DeliveryTerms, FinishedGood, GoodMove, GoodsState, MOVE_ROUTES, MoveContext,
+    ADDRESSEE_CARD_FIELDS, ADDRESSEE_PLAN_FIELDS, ADDRESSEE_REQUISITE_FIELDS, AcceptanceAct, BoxItem, DeliveryTerms, FinishedGood, GoodMove, GoodsState, MOVE_ROUTES, MoveContext, ItemAddressee,
     LineLot, MoveKind, PackPermission, ProjectAddressee, Shipment, ShipmentBox, ShipmentLine, ShipmentStatus, ShippingValidationError, StoredFile,
     UpdType, acceptance_act, balance_moves, roll_back_acts,
 )
@@ -121,6 +121,7 @@ class ShipmentRow(Base):
     tk_note: Mapped[str] = mapped_column(Text(), nullable=False, default="")
     # Поля адресата из карточки проекта, через запятую (Shipment.inherited).
     inherited_fields: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    delivery_snapshot_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Разрешение «отгрузить без УПД» (0162): имя разрешившего и время; пусто — нет разрешения.
     no_upd_approved_by: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
     no_upd_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -487,6 +488,7 @@ class SqlAlchemyShipmentRepository:
             manager=row.manager, note=row.note, manager_id=row.manager_id, tk_note=row.tk_note or "",
             no_upd_approved_by=row.no_upd_approved_by or "", no_upd_approved_at=row.no_upd_approved_at,
             inherited=frozenset(filter(None, (row.inherited_fields or "").split(","))),
+            delivery_snapshot_at=row.delivery_snapshot_at,
             boxes=tuple(ShipmentBox(
                 place=box.place, kind=box.kind, dims=box.dims, net=box.net, gross=box.gross, seal=box.seal,
                 items=tuple(BoxItem(item["item_index"], Decimal(item["quantity"])) for item in json.loads(box.composition or "[]")),
@@ -574,7 +576,7 @@ class SqlAlchemyShipmentRepository:
             "number", "version", "created_at", "customer", "receiver", "shipping_point",
             "contact", "phone", "carrier", "deadline", "upd_number", "upd_date", "upd_url",
             "pl_number", "dn_number", "track_number", "packed_at", "shipped_at", "manager", "note",
-            "manager_id", "tk_note", "no_upd_approved_by", "no_upd_approved_at",
+            "manager_id", "tk_note", "no_upd_approved_by", "no_upd_approved_at", "delivery_snapshot_at",
         ):
             setattr(row, key, getattr(shipment, key))
         row.status = shipment.status.value; row.terms = shipment.terms.value if shipment.terms else None
@@ -661,6 +663,63 @@ class SqlAlchemyPackPermissionRepository:
             self.session.add(row)
         for field in ("quantity", "version", "updated_by", "updated_at"):
             setattr(row, field, getattr(permission, field))
+
+
+class ItemAddresseeRow(Base):
+    __tablename__ = "shipping_item_addressees"
+    __table_args__ = (
+        CheckConstraint("version >= 1", name="ck_shipping_item_addressees_version"),
+        CheckConstraint("project_key <> '' AND item_index <> ''", name="ck_shipping_item_addressees_key"),
+    )
+    project_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    item_index: Mapped[str] = mapped_column(String(255), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    receiver: Mapped[str] = mapped_column(String(512), nullable=False)
+    shipping_point: Mapped[str] = mapped_column(Text(), nullable=False)
+    contact: Mapped[str] = mapped_column(String(255), nullable=False)
+    phone: Mapped[str] = mapped_column(String(128), nullable=False)
+    terms: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    carrier: Mapped[str] = mapped_column(String(255), nullable=False)
+    upd_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    override_fields: Mapped[str] = mapped_column(String(255), nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+
+class SqlAlchemyItemAddresseeRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    @staticmethod
+    def _domain(row: ItemAddresseeRow) -> ItemAddressee:
+        return ItemAddressee(
+            project=row.project_key, item_index=row.item_index, version=row.version,
+            **{key: getattr(row, key) for key in ADDRESSEE_CARD_FIELDS if key not in {"terms", "upd_type"}},
+            terms=DeliveryTerms(row.terms) if row.terms else None, upd_type=UpdType(row.upd_type) if row.upd_type else None,
+            overridden=frozenset(filter(None, row.override_fields.split(","))),
+            updated_by=row.updated_by, updated_at=row.updated_at,
+        )
+
+    def get(self, project: str, item_index: str) -> ItemAddressee | None:
+        row = self.session.get(ItemAddresseeRow, (normalize_project_number(project), item_index))
+        return self._domain(row) if row else None
+
+    def for_project(self, project: str) -> list[ItemAddressee]:
+        return [self._domain(row) for row in self.session.scalars(select(ItemAddresseeRow).where(
+            ItemAddresseeRow.project_key == normalize_project_number(project),
+        ).order_by(ItemAddresseeRow.item_index))]
+
+    def add(self, item: ItemAddressee) -> None:
+        key = (normalize_project_number(item.project), item.item_index)
+        row = self.session.get(ItemAddresseeRow, key)
+        if row is None:
+            row = ItemAddresseeRow(project_key=key[0], item_index=key[1])
+            self.session.add(row)
+        for field in (*ADDRESSEE_CARD_FIELDS, "version", "updated_by", "updated_at"):
+            value = getattr(item, field)
+            setattr(row, field, value.value if isinstance(value, (DeliveryTerms, UpdType)) else value)
+        row.override_fields = ",".join(sorted(item.overridden))
 
 
 class SqlAlchemyProjectAddresseeRepository:
@@ -765,6 +824,7 @@ class SqlAlchemyShippingUnitOfWork:
         self.goods = SqlAlchemyFinishedGoodsRepository(self.session)
         self.shipments = SqlAlchemyShipmentRepository(self.session)
         self.addressees = SqlAlchemyProjectAddresseeRepository(self.session)
+        self.item_addressees = SqlAlchemyItemAddresseeRepository(self.session)
         self.pack_permissions = SqlAlchemyPackPermissionRepository(self.session)
         self.files = SqlAlchemyUpdFileRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)

@@ -55,6 +55,7 @@ let calls: Array<{ url: string; method: string; body: unknown }> = [];
 let intakeRows: unknown[] = ROWS;
 let shipments: unknown[] = [];
 let addressees: unknown[] = [];
+let itemDeliveries: unknown[] = [];
 /** Ответы сервера на «Разрешить без УПД» по очереди: [status, body]. */
 let approvals: Array<[number, unknown]> = [];
 
@@ -65,6 +66,7 @@ function stub() {
     calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
     if (url === "/api/shipping/intake") return json({ rows: intakeRows });
     if (url === "/api/shipping/shipments" && method === "GET") return json({ shipments });
+    if (url.startsWith("/api/shipping/item-addressees?")) return json({ items: itemDeliveries });
     if (url === "/api/shipping/project-addressees") return json({ addressees });
     if (url === "/api/shipping/finished-goods/accept") return json({ goods: [], replayed: false });
     if (url.startsWith("/api/shipping/intake/") && url.endsWith("/label")) return json({ status: "queued", reason: "В очереди принтера.", file: "j1", copies: 1, job_id: "j1" });
@@ -80,7 +82,7 @@ function stub() {
     return json({});
   }));
 }
-beforeEach(() => { vi.useFakeTimers({ now: new Date(2026, 10, 9, 12), toFake: ["Date"] }); window.localStorage.clear(); forgetPersonalViews(); intakeRows = ROWS; shipments = []; addressees = []; approvals = []; setRightsPrincipal(null); stub(); });
+beforeEach(() => { vi.useFakeTimers({ now: new Date(2026, 10, 9, 12), toFake: ["Date"] }); window.localStorage.clear(); forgetPersonalViews(); intakeRows = ROWS; shipments = []; addressees = []; itemDeliveries = []; approvals = []; setRightsPrincipal(null); stub(); });
 afterEach(() => { cleanup(); setRightsPrincipal(null); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); window.history.replaceState({}, "", "/"); });
 
 const tab = (name: RegExp) => screen.getByRole("tab", { name });
@@ -92,6 +94,45 @@ const rowButtons = (text = "Жгут") => [...bodyRows(text).flatMap((tr) => [..
   ...shipmentRows().flatMap((tr) => [...tr.querySelectorAll(".shipment-actions button[aria-label]")].map((button) => button.getAttribute("aria-label")!))];
 const cell = (tr: Element, label: string) => (tr.querySelector(`td[data-label="${label}"]`)?.textContent ?? "").replace(/ /g, " ");
 const writes = () => calls.filter((call) => call.method !== "GET");
+
+const kbDelivery = (item_index: string, version = 0) => ({
+  project: "591К.3", item_index, version, name: "Жгут", overrides: {}, updated_by: "", updated_at: null,
+  effective: { receiver: "Получатель КБ", shipping_point: "Адрес КБ", phone: "123", contact: "", terms: "ДОСТАВКА ТК", carrier: "СДЭК", upd_type: "ЭДО" },
+});
+
+it("warehouse can set delivery for the whole catalog including a KB before finished goods exist", async () => {
+  window.history.replaceState({}, "", "/?tab=accepted");
+  intakeRows = [row({ remaining: "0", accepted: "6", delivered: "6", acts: [] })];
+  itemDeliveries = [kbDelivery("КБ1", 2), kbDelivery("КБ2")];
+  render(<ProductionIntakePage principal={principal} />);
+  await screen.findByText("Адрес КБ");
+  fireEvent.click(screen.getByRole("button", { name: "Всем КБ проекта 591К.3" }));
+  await screen.findByText("Доставка · 591К.3 · 2 КБ");
+  fireEvent.change(screen.getByRole("textbox", { name: "Телефон" }), { target: { value: "456" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  await waitFor(() => expect(writes()).toEqual([expect.objectContaining({ url: "/api/shipping/item-addressees/bulk", body: {
+    project: "591К.3", items: [
+      { item_index: "КБ1", version: 2, fields: { phone: "456" }, inherit: [] },
+      { item_index: "КБ2", version: 0, fields: { phone: "456" }, inherit: [] },
+    ],
+  } })]));
+});
+
+it("selected receipt rows of the same KB produce one versioned delivery update", async () => {
+  window.history.replaceState({}, "", "/?tab=accepted");
+  intakeRows = [row({ remaining: "0", accepted: "6", delivered: "6", acts: [act("ГП.1", "2"), act("ГП.2", "4")] })];
+  itemDeliveries = [kbDelivery("КБ1", 2)];
+  render(<ProductionIntakePage principal={principal} />);
+  await screen.findAllByText("Адрес КБ");
+  for (const tr of bodyRows()) fireEvent.click(tr.querySelector('input[type="checkbox"]')!);
+  fireEvent.click(screen.getByRole("button", { name: "Задать доставку выбранным КБ" }));
+  await screen.findByText("Доставка · 591К.3 · КБ1");
+  fireEvent.change(screen.getByRole("textbox", { name: "Телефон" }), { target: { value: "" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  await waitFor(() => expect(writes()).toEqual([expect.objectContaining({ url: "/api/shipping/item-addressee", body: {
+    project: "591К.3", item_index: "КБ1", version: 2, fields: { phone: "" }, inherit: [],
+  } })]));
+});
 
 it.each(["Новая", "Собрана", "Упакована", "Отгружена", "Закрыта", "Отменена"])("shipment head editing follows status %s; documents retain their rules", (status) => {
   const shipment = { ...packedShipment, status, receiver: "Иванов", phone: "+7 123", contact: "Контакт", note: "Позвонить", deadline: "2026-11-12" } as DispatchShipment;
@@ -282,9 +323,9 @@ describe("Приёмка с производства: свои колонки и
     expect([/^В ожидании/, /^В производстве/, /^Готово/, /^Принято/, /^Упаковано/, /^На отгрузку/, /^Отгружено/, /^Все/].map(count))
       .toEqual(["0", "1", "1", "1", "1", "1", "1", "1"]);
     const expected: Array<[RegExp, string[], string[]]> = [
-      [/^В производстве/, ["КБ", "Наименование", "Заказано", "Запущено", "Остаток", "Задания", "Принять досрочно"], ["Принять досрочно 591К.3 КБ1: 14"]],
-      [/^Готово/, ["КБ", "Наименование", "Заказано", "Задания", "Можно принять"], ["Принять 591К.3 КБ1: 6"]],
-      [/^Принято/, ["КБ", "Наименование", "ГРН", "Дата приёмки", "Количество", "Упаковать"], ["Упаковать 591К.3 КБ1: 10"]],
+      [/^В производстве/, ["КБ", "Наименование", "Доставка КБ", "Заказано", "Запущено", "Остаток", "Задания", "Принять досрочно"], ["Принять досрочно 591К.3 КБ1: 14"]],
+      [/^Готово/, ["КБ", "Наименование", "Доставка КБ", "Заказано", "Задания", "Можно принять"], ["Принять 591К.3 КБ1: 6"]],
+      [/^Принято/, ["КБ", "Наименование", "Доставка КБ", "ГРН", "Дата приёмки", "Количество", "Упаковать"], ["Упаковать 591К.3 КБ1: 10"]],
       [/^Упаковано/, shipmentHeaders, ["Трек 591К.3 КБ1"]],
       [/^На отгрузку/, shipmentHeaders, ["Отгрузить 591К.3 КБ1"]],
       [/^Отгружено/, shipmentHeaders, []],
@@ -304,7 +345,7 @@ describe("Приёмка с производства: свои колонки и
     fireEvent.click(tab(/^В ожидании/));
     expect(await screen.findByText("В ожидании производства ничего нет.")).toBeInTheDocument();
     fireEvent.click(tab(/^Все/));
-    await waitFor(() => expect(headers()).toEqual([...shipmentHeaders, "КБ", "Наименование", "Этап", "Количество", "Заказано", "Запущено", "Остаток", "ГРН", "Дата приёмки",
+    await waitFor(() => expect(headers()).toEqual([...shipmentHeaders, "КБ", "Наименование", "Доставка КБ", "Этап", "Количество", "Заказано", "Запущено", "Остаток", "ГРН", "Дата приёмки",
       "Действие"]));
     expect(rowButtons().sort()).toEqual(["Принять досрочно 591К.3 КБ1: 14", "Принять 591К.3 КБ1: 6", "Упаковать 591К.3 КБ1: 10", "Трек 591К.3 КБ1", "Отгрузить 591К.3 КБ1"].sort());
     expect(screen.queryByText(/Счётчики:/)).not.toBeInTheDocument();
@@ -440,7 +481,7 @@ describe("Приёмка с производства: свои колонки и
     expect(screen.getAllByRole("tab").map((item) => item.textContent?.replace(/\s*\d+$/, ""))).toEqual(
       ["В ожидании", "В производстве", "Готово", "Принято", "Упаковано", "На отгрузку", "Отгружено", "Все"]);
     expect(tab(/^В ожидании/)).toHaveAttribute("aria-selected", "true");
-    expect(headers()).toEqual(["КБ", "Наименование", "Заказано"]);
+    expect(headers()).toEqual(["КБ", "Наименование", "Доставка КБ", "Заказано"]);
     expect(rowButtons()).toEqual([]);
   });
 

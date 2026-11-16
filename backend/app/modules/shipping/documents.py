@@ -254,8 +254,9 @@ def build_delivery_note(
     receiver = shipment.receiver if shipment.receiver and shipment.receiver != customer else ""
     project = (_projects(shipment) or (card.project if card else "",))[0]
     card = card or ProjectAddressee(project=project)
-    carrier, track = split_carrier(shipment.carrier or card.carrier, shipment.track_number)
-    terms = shipment.terms or card.terms
+    delivery = card if shipment.delivery_snapshot_at is None else ProjectAddressee(project=project)
+    carrier, track = split_carrier(shipment.carrier or delivery.carrier, shipment.track_number)
+    terms = shipment.terms or delivery.terms
     hours, note = split_hours(card.hours, shipment.note)
     return DeliveryNote(
         number=_number(shipment.dn_number),
@@ -266,8 +267,8 @@ def build_delivery_note(
         spec=card.spec.strip(), invoice=card.invoice,
         # Условий нет, но едет ТК — «Доставка ТК».
         terms=_TERMS_LABELS[terms] if terms else ("Доставка ТК" if carrier else ""),
-        shipping_address=", ".join(part for part in (receiver, shipment.shipping_point or card.shipping_point) if part),
-        hours=hours, contact=shipment.contact or card.contact, phone=shipment.phone or card.phone, carrier=carrier,
+        shipping_address=", ".join(part for part in (receiver, shipment.shipping_point or delivery.shipping_point) if part),
+        hours=hours, contact=shipment.contact or delivery.contact, phone=shipment.phone or delivery.phone, carrier=carrier,
         track=track, tk_note=shipment.tk_note, rows=rows,
         upd_edo=shipment.upd_type == UpdType.EDO, upd_paper=shipment.upd_type == UpdType.PAPER,
         # Бумажная УПД едет в первом коробе.

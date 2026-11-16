@@ -1,4 +1,4 @@
-import { api, type ProjectAddressee, type Shipment } from "./api";
+import { api, DELIVERY_FIELDS, type DeliveryValues, type ItemAddressee, type ProjectAddressee, type Shipment } from "./api";
 import type { PrintResult } from "./LabelPrint";
 
 /* «Приёмка с производства»: список всего, что в работе (GET /api/shipping/intake), приёмка кусками и данные отправки. */
@@ -57,6 +57,18 @@ export type DispatchShipment = Shipment & {
 };
 
 export interface NoUpdApprover { id: string; name: string }
+
+/** Use every delivery field, including explicit blanks, just as shipment validation does. */
+export function deliveryGroups(items: ItemAddressee[]): Array<{ delivery: DeliveryValues; items: string[] }> {
+  const groups = new Map<string, { delivery: DeliveryValues; items: string[] }>();
+  for (const item of items) {
+    const key = JSON.stringify(DELIVERY_FIELDS.map((field) => item.effective[field]));
+    const group = groups.get(key) ?? { delivery: item.effective, items: [] };
+    if (!group.items.includes(item.item_index)) group.items.push(item.item_index);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
 
 export type UpdType = "ЭДО" | "БУМАГА" | "БЕЗ УПД";
 

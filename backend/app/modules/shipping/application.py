@@ -23,6 +23,7 @@ from app.shared.notifications import (
 )
 
 from .domain import (
+    ADDRESSEE_CARD_FIELDS, ItemAddressee, item_delivery,
     HISTORY_CORRECTION_LIMITS, AcceptanceAct, ActStock, DeliveryTerms, GoodLots, FinishedGood, GoodMove, MoveContext, PackPermission, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
     ShipmentStatus, ShippingValidationError, StoredFile, UpdType, check_boxes, effective_address, packed_by_index,
     plan_project_queue, whole_order_accepted,
@@ -79,6 +80,12 @@ class AppendOnlyRepository(Protocol):
     def add(self, item) -> None: ...
 
 
+class ItemAddresseeRepository(Protocol):
+    def get(self, project: str, item_index: str) -> ItemAddressee | None: ...
+    def for_project(self, project: str) -> Sequence[ItemAddressee]: ...
+    def add(self, item: ItemAddressee) -> None: ...
+
+
 class PackPermissionRepository(Protocol):
     def get(self, project: str, item_index: str) -> PackPermission | None: ...
     def for_project(self, project: str) -> Sequence[PackPermission]: ...
@@ -96,6 +103,7 @@ class UnitOfWork(Protocol):
     goods: FinishedGoodsRepository
     shipments: ShipmentRepository
     addressees: ProjectAddresseeRepository
+    item_addressees: ItemAddresseeRepository
     pack_permissions: PackPermissionRepository
     audit: AppendOnlyRepository
     outbox: NotificationOutbox
@@ -185,7 +193,7 @@ class RequestedGood:
 
 @dataclass(frozen=True)
 class CreateShipmentCommand:
-    """Empty address fields inherit the project card (`shipAddrEff_`); see `create_shipment`."""
+    """Empty inputs resolve KB/project defaults once; new shipments keep that snapshot."""
 
     customer: str
     receiver: str
@@ -208,6 +216,8 @@ class CreateShipmentCommand:
     # при заведении она поднимает лимит упаковки КБ на своё количество (`_raise_for_request`), так что склад набирает
     # её и позже, когда цех сдаст, без отдельного разрешения; отмена отдаёт поднятое и не использованное.
     grant_pack: bool = False
+    # Project packing historically used the project number when no receiver/customer was known.
+    receiver_fallback: str = ""
 
 
 @dataclass(frozen=True)
@@ -266,8 +276,9 @@ class HistoryCorrectionCommand(ShipmentCommand):
 
 @dataclass(frozen=True)
 class EditHeadCommand(ShipmentCommand):
-    """Присланные поля шапки: значение — своё у отправки, пустое — снова из карточки проекта."""
+    """Patch shipment fields; only legacy shipments interpret blanks as inheritance."""
     fields: dict
+    refresh_delivery: bool = False
 
 
 @dataclass(frozen=True)
@@ -323,11 +334,20 @@ def _shipment(shipment_id: UUID, version: int, uow: UnitOfWork) -> Shipment:
     return shipment
 
 
-def _packing_shipment(shipment_id: UUID, version: int, uow: UnitOfWork) -> Shipment:
+def _packing_shipment(
+    shipment_id: UUID, version: int, uow: UnitOfWork, *, validate_delivery: bool = False,
+) -> Shipment:
     shipment = _shipment(shipment_id, version, uow)
     uow.lock_projects([line.project for line in shipment.lines])
     # The discovery read may have preceded another packing transaction's commit.
-    return _shipment(shipment_id, version, uow)
+    shipment = _shipment(shipment_id, version, uow)
+    # Validate live legacy destinations before any picking, packing or dispatch mutation.
+    # Editing or returning a shipment must remain possible to resolve a conflict.
+    if validate_delivery and shipment.delivery_snapshot_at is None:
+        _resolve_destinations(shipment.lines, uow,
+                              {key: getattr(shipment, key) for key in ADDRESSEE_CARD_FIELDS if key not in shipment.inherited},
+                              shipment.customer)
+    return shipment
 
 
 def register_good(command: RegisterGoodCommand, uow: UnitOfWork) -> FinishedGood:
@@ -461,6 +481,72 @@ def accept_into_stock(
     return updated
 
 
+@dataclass(frozen=True)
+class ItemAddresseeChange:
+    item_index: str
+    version: int
+    fields: dict
+    inherit: tuple[str, ...] = ()
+
+
+def set_item_addressees(project: str, changes: Sequence[ItemAddresseeChange], actor: Actor, now: datetime,
+                        uow: UnitOfWork, catalog: Callable) -> Sequence[ItemAddressee]:
+    project = normalize_project_number(project)
+    if not project or not changes or len({change.item_index for change in changes}) != len(changes):
+        raise ShippingValidationError("Укажите проект и КБ без повторов")
+    with uow:
+        uow.lock_projects([project])
+        known = catalog(uow, project)
+        pending = []
+        for change in changes:
+            if change.item_index not in known:
+                raise ShippingValidationError(f"КБ {change.item_index} не относится к проекту {project}")
+            current = uow.item_addressees.get(project, change.item_index) or ItemAddressee(project, change.item_index)
+            if change.version != current.version:
+                raise ConcurrentShippingUpdate(f"Доставка {change.item_index} изменилась после загрузки формы")
+            try:
+                edited = current.edit(change.fields, change.inherit)
+            except ValueError as error:
+                raise ShippingValidationError(str(error)) from error
+            pending.append((current, edited))
+        result = []
+        for current, edited in pending:
+            if edited != current:
+                edited = replace(edited, version=current.version + 1, updated_by=actor.name, updated_at=now)
+                uow.item_addressees.add(edited)
+                _audit(uuid5(NAMESPACE_URL, f"shipping-item-addressee:{project}:{edited.item_index}"),
+                       "shipping.item_addressee_set", actor, now,
+                       {"project": project, "item_index": edited.item_index, "version": edited.version,
+                        "overridden": sorted(edited.overridden)}, uow)
+            result.append(edited)
+        uow.commit()
+        return result
+
+
+def _resolve_destinations(lines, uow: UnitOfWork, own: dict | None = None, customer: str = "",
+                          cards: dict | None = None, receiver_fallback: str = "") -> dict:
+    """Resolve every requested KB before reserving numbers, permissions, or stock."""
+    resolved = []
+    sources = dict(cards or {})
+    items = {}
+    for line in lines:
+        key = normalize_project_number(line.project)
+        if key not in sources:
+            sources[key] = uow.addressees.get(line.project)
+        if key not in items:
+            items[key] = {item.item_index: item for item in uow.item_addressees.for_project(line.project)}
+        good = uow.goods.get(line.finished_good_id)
+        address, _ = item_delivery(sources[key], items[key].get(line.item_index),
+                                   customer or (good.customer if good else "") or receiver_fallback, own)
+        resolved.append(address)
+    if not resolved:
+        raise ShippingValidationError("Не выбрано ни одной позиции с количеством")
+    if any(address != resolved[0] for address in resolved[1:]):
+        names = ", ".join(dict.fromkeys(f"{line.project} / {line.item_index}" for line in lines))
+        raise ShippingValidationError(f"Разные данные доставки у КБ: {names}. Создайте отдельные отправки или задайте общий адрес отправки.")
+    return resolved[0]
+
+
 def create_shipment(command: CreateShipmentCommand, uow: UnitOfWork) -> Shipment:
     with uow:
         shipment = _create_shipment(command, uow)
@@ -477,26 +563,29 @@ def _create_shipment(
     found = [uow.goods.get(line.good_id) for line in command.lines]
     uow.lock_projects([good.project for good in found if good is not None])
     lines = []
-    customers: list[str] = []
     for requested in command.lines:
         good = uow.goods.get(requested.good_id)
         if good is None:
             raise KeyError(f"Finished good not found: {requested.good_id}")
         lines.append(ShipmentLine.create(good, requested.quantity))
-        customers.append(good.customer)
     if not lines:
         raise ShippingValidationError("Не выбрано ни одной позиции с количеством")
-    # The shipment's project is its first line's (`shipHeadEff_`).
+    values = _resolve_destinations(lines, uow,
+        {key: getattr(command, key) for key in ADDRESSEE_CARD_FIELDS}, command.customer,
+        receiver_fallback=command.receiver_fallback)
     card = uow.addressees.get(lines[0].project)
-    address = effective_address(
-        receiver=command.receiver, shipping_point=command.shipping_point, contact=command.contact,
-        phone=command.phone, terms=command.terms, carrier=command.carrier, upd_type=command.upd_type,
-        project=card,
-        customer_fallback=command.customer or next((name for name in customers if name), ""),
-    )
-    upd_number, upd_date = str(command.upd_number or "").strip(), command.upd_date
-    if not upd_number:
-        upd_number, upd_date = _card_upd_number(card, address.upd_type, uow) or (upd_number, upd_date)
+    # Document defaults must also agree across projects; never attach the first project's UPD silently.
+    documents = []
+    for project in dict.fromkeys(line.project for line in lines):
+        source = uow.addressees.get(project)
+        number, day = (str(command.upd_number or "").strip(), command.upd_date)
+        if not number:
+            number, day = _card_upd_number(source, values["upd_type"], uow) or (number, day)
+        documents.append((number, day, str(command.upd_url or "").strip() or _card_upd(source, values["upd_type"], uow)))
+    if any(document != documents[0] for document in documents[1:]):
+        raise ShippingValidationError("Разные УПД у КБ: " + ", ".join(f"{line.project} / {line.item_index}" for line in lines))
+    address = effective_address(**values, project=None)
+    upd_number, upd_date, upd_url = documents[0]
     shipment = Shipment.create(
         number=uow.shipments.reserve_number(command.now.date()), created_at=command.now,
         customer=command.customer, receiver=address.receiver, shipping_point=address.shipping_point,
@@ -505,15 +594,14 @@ def _create_shipment(
         # Срок и комментарий, не заданные в заявке, — из плана отгрузки карточки проекта (копия на момент заведения).
         deadline=command.deadline or (card.plan_date if card is not None else None),
         upd_number=upd_number, upd_date=upd_date,
-        upd_url=str(command.upd_url or "").strip() or _card_upd(card, address.upd_type, uow),
+        upd_url=upd_url,
         manager=command.actor.name, note=str(command.note or "").strip() or (card.note if card is not None else ""),
         lines=tuple(lines),
-        manager_id=command.actor.id, inherited=_unset_fields(command), id=shipment_id,
+        manager_id=command.actor.id, inherited=frozenset(), id=shipment_id, delivery_snapshot_at=command.now,
     )
     uow.shipments.add(shipment)
     if shipment.upd_url:
         _notify_upd(shipment, command.now, uow)
-    _remember_addressees(shipment, command, uow)
     raised = _raise_for_request(shipment, command.actor, command.now, uow) if command.grant_pack else []
     _audit(shipment.id, "shipping.created", command.actor, command.now, {
         "number": shipment.number, "inherited": sorted(address.inherited), **(details or {}),
@@ -720,15 +808,6 @@ def _return_raised(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfW
         _record_pack_permissions(project, changes, actor, now, uow, shipment=shipment)
 
 
-def _unset_fields(command: CreateShipmentCommand) -> frozenset[str]:
-    """Поля адресата, не заданные в заявке: они и дальше идут за карточкой проекта."""
-    own = {
-        "receiver": command.receiver, "shipping_point": command.shipping_point, "contact": command.contact,
-        "phone": command.phone, "terms": command.terms, "carrier": command.carrier, "upd_type": command.upd_type,
-    }
-    return frozenset(key for key, value in own.items() if not (value.strip() if isinstance(value, str) else value))
-
-
 def _good_lots(goods: dict[UUID, FinishedGood], chosen: dict[UUID, str], uow: UnitOfWork) -> dict[UUID, GoodLots]:
     """Свободные штуки актов приёмки каждой КБ (владелец 06.11.2026): акт за вычетом откатов в производство и взятого
     строками отправок; порядок FIFO — дата акта, затем номер. Остаток сверх актов — на первый ГРН КБ. ГРН, выбранный
@@ -835,21 +914,6 @@ def _addressee_id(project: str) -> UUID:
     return uuid5(NAMESPACE_URL, "erp-next:shipping:project-addressee:" + project)
 
 
-def _remember_addressees(shipment: Shipment, command: CreateShipmentCommand, uow: UnitOfWork) -> None:
-    """The typed point, contact and phone stay with each project of the shipment; empty never erases."""
-    for project in dict.fromkeys(line.project for line in shipment.lines):
-        current = uow.addressees.get(project) or ProjectAddressee.empty(project)
-        remembered = current.remember(shipping_point=command.shipping_point, contact=command.contact, phone=command.phone)
-        if remembered is current:
-            continue
-        uow.addressees.add(replace(
-            remembered, version=current.version + 1, updated_by=command.actor.name, updated_at=command.now,
-        ))
-        _audit(_addressee_id(project), "shipping.addressee_remembered", command.actor, command.now, {
-            "project": project, "shipment": shipment.number,
-        }, uow)
-
-
 def set_project_addressee(command: SetProjectAddresseeCommand, uow: UnitOfWork) -> ProjectAddressee:
     with uow:
         uow.lock_projects([command.project])
@@ -901,12 +965,25 @@ def _card(shipment: Shipment, uow: UnitOfWork) -> ProjectAddressee | None:
 
 def edit_shipment_head(command: EditHeadCommand, uow: UnitOfWork) -> Shipment:
     with uow:
-        shipment = _shipment(command.shipment_id, command.expected_version, uow)
-        updated = shipment.edit_head(command.fields, _card(shipment, uow))
+        shipment = _packing_shipment(command.shipment_id, command.expected_version, uow)
+        fields = command.fields
+        if command.refresh_delivery:
+            if fields:
+                raise ShippingValidationError("Обновление доставки КБ выполняется отдельно от правки полей")
+            fields = _resolve_destinations(shipment.lines, uow, customer=shipment.customer)
+            if shipment.status in {ShipmentStatus.SHIPPED, ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
+                raise ShippingValidationError("Обновить доставку можно только до отгрузки")
+            updated = replace(shipment, **fields, inherited=frozenset(), delivery_snapshot_at=command.now,
+                              version=shipment.version + 1)
+            if not updated.receiver:
+                raise ShippingValidationError("Получатель не может быть пустым")
+        else:
+            updated = shipment.edit_head(fields, _card(shipment, uow))
         if updated is shipment:
             return shipment
         uow.shipments.add(updated)
-        _audit(shipment.id, "shipping.head_edited", command.actor, command.now, {"fields": sorted(command.fields)}, uow)
+        _audit(shipment.id, "shipping.head_edited", command.actor, command.now,
+               {"fields": sorted(fields), "refresh_delivery": command.refresh_delivery}, uow)
         if updated.note != shipment.note:
             projects = ", ".join(dict.fromkeys(line.project for line in updated.lines))
             publish_notification(uow.outbox, notification_requested(
@@ -923,7 +1000,7 @@ def edit_shipment_head(command: EditHeadCommand, uow: UnitOfWork) -> Shipment:
 
 def pick_shipment(command: ShipmentCommand, uow: UnitOfWork) -> Shipment:
     with uow:
-        shipment = _packing_shipment(command.shipment_id, command.expected_version, uow)
+        shipment = _packing_shipment(command.shipment_id, command.expected_version, uow, validate_delivery=True)
         grns = getattr(command, "grns", None) or {}
         lines = {line.id: line.finished_good_id for line in shipment.lines}
         if set(grns) - set(lines):
@@ -952,7 +1029,7 @@ def unpick_line(command: UnpickCommand, uow: UnitOfWork) -> Shipment:
 
 def pack_shipment(command: ShipmentCommand, uow: UnitOfWork) -> Shipment:
     with uow:
-        shipment = _shipment(command.shipment_id, command.expected_version, uow)
+        shipment = _packing_shipment(command.shipment_id, command.expected_version, uow, validate_delivery=True)
         updated = _pack(shipment, command.actor, command.now, uow)
         uow.commit()
         return updated
@@ -1163,7 +1240,7 @@ def update_documents(command: UpdateDocumentsCommand, uow: UnitOfWork) -> Shipme
 def mark_shipped(command: ShipmentCommand, uow: UnitOfWork) -> ShippedResult:
     """`shipShipped_`: одна кнопка склада — дата отгрузки и сразу «Закрыта», если для этого всё есть."""
     with uow:
-        shipment = _shipment(command.shipment_id, command.expected_version, uow)
+        shipment = _packing_shipment(command.shipment_id, command.expected_version, uow, validate_delivery=True)
         result = _mark_shipped(shipment, command.actor, command.now, uow)
         uow.commit()
         return result
@@ -1222,7 +1299,7 @@ def lay_out_shipment(command: LayOutCommand, uow: UnitOfWork) -> Shipment:
     Документов ещё нет — переход в «Упакована» с номерами PL/DN; есть — номера сохраняются.
     """
     with uow:
-        shipment = _shipment(command.shipment_id, command.expected_version, uow)
+        shipment = _packing_shipment(command.shipment_id, command.expected_version, uow, validate_delivery=True)
         boxes = check_boxes(packed_by_index(shipment.lines), list(command.boxes))
         updated = shipment.lay_out(boxes, command.tk_note)
         uow.shipments.add(updated)
@@ -1240,7 +1317,6 @@ def pack_project(command: PackProjectCommand, uow: UnitOfWork) -> Shipment:
         uow.lock_projects([project])
         limits = _packing_limits(uow, project)
         goods = {good.id: good for good in uow.goods.for_project(project)}
-        addressee = uow.addressees.get(project)
         if not goods:
             raise ShippingValidationError(f"У проекта {project} нет строк готовой продукции.")
         if not command.lines or len({line.good_id for line in command.lines}) != len(command.lines):
@@ -1254,7 +1330,7 @@ def pack_project(command: PackProjectCommand, uow: UnitOfWork) -> Shipment:
                 raise ShippingValidationError(f"{good.item_index}: количество превышает остаток или разрешение упаковки")
         customer = next(iter(goods.values())).customer
         shipment = _create_shipment(CreateShipmentCommand(
-            customer=customer, receiver="" if (addressee is not None and addressee.receiver) or customer else project,
+            customer=customer, receiver="", receiver_fallback=project,
             shipping_point="", contact="", phone="",
             terms=None, carrier="", deadline=None, upd_type=None, upd_number="", upd_date=None, upd_url="",
             note="", lines=command.lines, actor=command.actor, now=command.now, no_docs=True,
@@ -1388,16 +1464,20 @@ def ship_project(command: ProjectShipCommand, uow: UnitOfWork) -> ProjectShipRes
         if current.version != command.addressee_version:
             raise ConcurrentShippingUpdate("Адресат проекта изменился после загрузки формы")
 
-        addressee = current
         if command.addressee_fields:
-            _, addressee = _set_project_addressee(SetProjectAddresseeCommand(
+            proposed = current.edit(command.addressee_fields)
+            _resolve_destinations(
+                [ShipmentLine.create(uow.goods.get(line.good_id), line.quantity) for line in requested], uow,
+                cards={normalize_project_number(project): proposed},
+            )
+            _set_project_addressee(SetProjectAddresseeCommand(
                 project=project, fields=command.addressee_fields, expected_version=command.addressee_version,
                 actor=command.actor, now=command.now,
             ), uow)
         customer = next((good.customer for good in uow.goods.for_project(project) if good.customer), "")
-        # Адресат не копируется, а наследуется: правка карточки дойдёт до отправки, пока она открыта.
+        # New consignments freeze the resolved KB/project destination at creation.
         shipment = _create_shipment(CreateShipmentCommand(
-            customer=customer, receiver="" if (addressee is not None and addressee.receiver) or customer else project,
+            customer=customer, receiver="", receiver_fallback=project,
             shipping_point="", contact="", phone="", terms=None, carrier="", upd_type=None,
             deadline=command.deadline if command.as_manager else None,
             upd_number=command.upd_number.strip() if command.as_manager else "",

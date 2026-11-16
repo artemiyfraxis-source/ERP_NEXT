@@ -323,7 +323,7 @@ const HEAD_FIELDS: Array<[keyof Shipment & string, string]> = [
   ["receiver", "Получатель"], ["shipping_point", "Адрес отгрузки"], ["contact", "Контактное лицо"], ["phone", "Телефон"],
 ];
 
-/** Шапка открытой отправки. Поле сохраняется при уходе из него; пустое поле адресата снова берётся из карточки проекта. */
+/** Fields save on blur. Only legacy shipments inherit cleared delivery fields from the project. */
 export function ShipmentHead({ shipment, busy, mutate }: {
   shipment: Shipment; busy: string;
   mutate: (key: string, operation: () => Promise<unknown>, message: string) => Promise<boolean>;
@@ -349,13 +349,23 @@ export function ShipmentHead({ shipment, busy, mutate }: {
     void mutate(`head:${shipment.id}:carrier`, () => shippingApi.head(shipment.id, { version: shipment.version, carrier, ...(terms && terms !== shipment.terms ? { terms } : {}) }), "Отправка сохранена");
   };
   const pickup = isPickup(shipment.carrier);
+  const snapshot = Boolean(shipment.delivery_snapshot_at);
   const mark = (key: string) => inherited(key) ? <small className="ship-inherited">из карточки проекта</small> : null;
+  const hint = (key: string) => snapshot
+    ? key === "receiver" ? "укажите получателя" : "пусто — оставить пустым"
+    : inherited(key) ? "" : "пусто — из карточки проекта";
   return <div className="ship-form">
-    {HEAD_FIELDS.filter(([key]) => !(pickup && key === "shipping_point")).map(([key, label]) => <label key={key} className={key === "shipping_point" ? "ship-span2" : undefined}><span>{label}{mark(key)}</span><input aria-label={`${label} ${shipment.number}`} disabled={Boolean(busy)} placeholder={inherited(key) ? "" : "пусто — из карточки проекта"} value={draft[key]} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} onBlur={() => save(key)} /></label>)}
+    {HEAD_FIELDS.filter(([key]) => !(pickup && key === "shipping_point")).map(([key, label]) => <label key={key} className={key === "shipping_point" ? "ship-span2" : undefined}><span>{label}{mark(key)}</span><input aria-label={`${label} ${shipment.number}`} disabled={Boolean(busy)} placeholder={hint(key)} value={draft[key]} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} onBlur={() => save(key)} /></label>)}
     <label><span>ТК{mark("carrier")}</span><CarrierSelect label={`ТК ${shipment.number}`} empty={inherited("carrier") ? "из карточки проекта" : "не выбрано"} disabled={Boolean(busy)} value={shipment.carrier} onChange={changeCarrier} /></label>
     <label><span>Условия{mark("terms")}</span><span className="ship-terms" aria-label={`Условия доставки ${shipment.number}`}>{termsText(shipment.terms) || "—"}</span></label>
     <label>Срок отгрузки<input type="date" aria-label={`Дедлайн ${shipment.number}`} disabled={Boolean(busy)} value={draft.deadline} onChange={(event) => setDraft({ ...draft, deadline: event.target.value })} onBlur={() => save("deadline")} /></label>
     <label className="ship-span2">Комментарий<AutoTextarea aria-label={`Комментарий ${shipment.number}`} disabled={Boolean(busy)} value={draft.note} onChange={(note) => setDraft({ ...draft, note })} onBlur={() => save("note")} /></label>
+    {snapshot && <div className="ship-span2">
+      <button type="button" className="secondary" disabled={Boolean(busy)} onClick={() => void mutate(
+        `head:${shipment.id}:refresh`, () => shippingApi.head(shipment.id, { version: shipment.version, refresh_delivery: true }),
+        "Доставка обновлена. Перепечатайте этикетки и документы.",
+      )}>Взять данные КБ</button>
+    </div>}
   </div>;
 }
 

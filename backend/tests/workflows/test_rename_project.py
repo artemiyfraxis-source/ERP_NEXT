@@ -19,7 +19,10 @@ from sqlalchemy.exc import IntegrityError
 from app.modules.fulfillment.application import HoldKitReserveCommand, hold_kit_reserve
 from app.modules.production.infrastructure import ProductionPlanProjectRow
 from app.modules.production.plan import PlanEvent
-from app.modules.shipping.application import CreateShipmentCommand, QueueProjectCommand, RequestedGood, create_shipment, queue_project
+from app.modules.shipping.application import (
+    CreateShipmentCommand, QueueProjectCommand, RequestedGood, SetProjectAddresseeCommand, create_shipment, queue_project,
+    set_project_addressee,
+)
 from app.modules.shipping.domain import ProjectAssembly
 from app.modules.techcards.kitsets import KitAssembly, Kitset
 from app.modules.techcards.project_cards import ProjectTechcard, TechcardRevision
@@ -83,6 +86,9 @@ def _seed(state, project=OLD):
         contact="", phone="", terms=None, carrier="", deadline=None, upd_type=None, upd_number="", upd_date=None,
         upd_url="", note="", lines=(RequestedGood(good_id=good.id, quantity=Decimal(1)),),
         actor=ACTOR, now=NOW), state.shipping_uow_factory())
+    # A shipment no longer writes its typed address into the project card (16.11.2026): the card is set explicitly.
+    set_project_addressee(SetProjectAddresseeCommand(project=project, fields={"shipping_point": "Москва"},
+        expected_version=None, actor=ACTOR, now=NOW), state.shipping_uow_factory())
     with state.fulfillment_uow_factory() as uow:
         reserve = hold_kit_reserve(HoldKitReserveCommand(project=project, item_index="КБ1",
             article=state.lot.article, lot_id=state.lot.id, quantity=Decimal(2), unit="шт",

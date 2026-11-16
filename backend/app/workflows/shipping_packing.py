@@ -14,8 +14,8 @@ def pack_item_details(uow, project: str) -> dict[str, dict[str, str]]:
     items = {}
     row = uow.session.scalar(select(KitsetRow).where(KitsetRow.project_key == normalize_project_number(project)))
     if row is not None:
-        items.update({str(item["index"]): {"name": str(item.get("name") or item["index"]), "unit": "шт"}
+        items.update({str(item["index"]): {"name": str(item.get("name") or item["index"]), "unit": "шт", "customer": row.customer}
                       for item in row.assemblies})
     for good in uow.goods.for_project(project):
-        items[good.item_index] = {"name": good.name, "unit": good.unit}
+        items[good.item_index] = {"name": good.name, "unit": good.unit, "customer": good.customer}
     return items
