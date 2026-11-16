@@ -1,0 +1,270 @@
+[
+  {
+    "kind": "straight",
+    "config": {
+      "coax": {
+        "fakraCutStrip": true,
+        "cableArt": "RTK 031",
+        "sideA": {
+          "kind": "straight",
+          "article": "59K13O-1M4A4",
+          "l1": "3,0",
+          "l2": "4,6",
+          "l3": "9,7"
+        }
+      }
+    },
+    "operation": {
+      "type": "coaxCut",
+      "stripSides": [
+        "A"
+      ],
+      "fields": {
+        "coax": {
+          "cable": "RTK 031",
+          "connector": "59K13O-1M4A4",
+          "d1": "",
+          "d2": "",
+          "d3": "",
+          "l1": "3,0",
+          "l2": "4,6",
+          "l3": "9,7",
+          "lPlus": "",
+          "lMinus": "",
+          "dimensionOrder": "XYZ",
+          "stripProgram": {
+            "source": "X = 9,7±0,2 мм · Y = 4,6±0,2 мм · Z = 3±0,2 мм",
+            "note": "От торца жилы: оболочка X+Z, оплётка Y+Z, диэлектрик Z. Допуски сумм — предельные; контролировать также исходные X/Y/Z. Отдельная ступень фольги не задана.",
+            "boundaries": [
+              {
+                "layer": "dielectric",
+                "label": "Диэлектрик / жила",
+                "value": "3",
+                "tolerance": "±0,2"
+              },
+              {
+                "layer": "braid",
+                "label": "Оплётка",
+                "value": "7,6",
+                "tolerance": "±0,4"
+              },
+              {
+                "layer": "jacket",
+                "label": "Оболочка",
+                "value": "12,7",
+                "tolerance": "±0,4"
+              }
+            ]
+          }
+        },
+        "coaxStripSides": [
+          "A"
+        ]
+      }
+    }
+  },
+  {
+    "kind": "angled",
+    "config": {
+      "coax": {
+        "fakraCutStrip": true,
+        "cableArt": "RTK 031",
+        "sideA": {
+          "kind": "angled",
+          "article": "59K25H-1M4A4",
+          "l1": "1,7",
+          "l2": "6,4",
+          "l3": "11,6"
+        }
+      }
+    },
+    "operation": {
+      "type": "coaxCut",
+      "stripSides": [
+        "A"
+      ],
+      "fields": {
+        "coax": {
+          "cable": "RTK 031",
+          "connector": "59K25H-1M4A4",
+          "d1": "",
+          "d2": "",
+          "d3": "",
+          "l1": "1,7",
+          "l2": "6,4",
+          "l3": "11,6",
+          "lPlus": "",
+          "lMinus": "",
+          "dimensionOrder": "XYZ",
+          "stripProgram": {
+            "source": "X = 11,6±0,2 мм · Y = 6,4±0,2 мм · Z = 1,7±0,2 мм",
+            "note": "От торца жилы: оболочка X+Z, оплётка Y+Z, диэлектрик Z. Допуски сумм — предельные; контролировать также исходные X/Y/Z. Отдельная ступень фольги не задана.",
+            "boundaries": [
+              {
+                "layer": "dielectric",
+                "label": "Диэлектрик / жила",
+                "value": "1,7",
+                "tolerance": "±0,2"
+              },
+              {
+                "layer": "braid",
+                "label": "Оплётка",
+                "value": "8,1",
+                "tolerance": "±0,4"
+              },
+              {
+                "layer": "jacket",
+                "label": "Оболочка",
+                "value": "13,3",
+                "tolerance": "±0,4"
+              }
+            ]
+          }
+        },
+        "coaxStripSides": [
+          "A"
+        ]
+      }
+    }
+  },
+  {
+    "kind": "hfm",
+    "config": {
+      "coax": {
+        "fakraCutStrip": true,
+        "cableArt": "RTK 031",
+        "sideA": {
+          "kind": "hfm",
+          "article": "AMK11D-1M4Z5-Z",
+          "l1": "13",
+          "l2": "5,55",
+          "l3": "2,1"
+        }
+      }
+    },
+    "operation": {
+      "type": "coaxCut",
+      "stripSides": [
+        "A"
+      ],
+      "fields": {
+        "coax": {
+          "cable": "RTK 031",
+          "connector": "AMK11D-1M4Z5-Z",
+          "d1": "",
+          "d2": "",
+          "d3": "",
+          "l1": "13",
+          "l2": "5,55",
+          "l3": "2,1",
+          "lPlus": "",
+          "lMinus": "",
+          "dimensionOrder": "HFM",
+          "stripProgram": {
+            "source": "MA_AMV003 c00, с.3–4, M4: R — край опорной втулки; v=7,85±0,2; y=5,55±0,2; w≤4,5; s=1,75±0,2; z=2,1±0,2 мм.",
+            "note": "Конечная геометрия от торца после подрезки: оболочка v+s; жила v−y; фольга v−w (показан номинальный предел); отогнутая оплётка v−y+z. Допуски сумм — предельные. Размер обрезки прямой оплётки до отворота не задан — подтвердить программу станка. Не использовать начальный размер a=13 мм как конечную разделку.",
+            "boundaries": [
+              {
+                "layer": "dielectric",
+                "label": "Диэлектрик / жила",
+                "value": "2,30",
+                "tolerance": "±0,4"
+              },
+              {
+                "layer": "foil",
+                "label": "Фольга",
+                "value": "3,35",
+                "tolerance": "минимум номинально"
+              },
+              {
+                "layer": "braid",
+                "label": "Отогнутая оплётка",
+                "value": "4,40",
+                "tolerance": "±0,6"
+              },
+              {
+                "layer": "jacket",
+                "label": "Оболочка",
+                "value": "9,60",
+                "tolerance": "±0,4"
+              }
+            ]
+          }
+        },
+        "coaxStripSides": [
+          "A"
+        ]
+      }
+    }
+  },
+  {
+    "kind": "bulkhead",
+    "config": {
+      "coax": {
+        "fakraCutStrip": true,
+        "cableArt": "RTK 031",
+        "sideA": {
+          "kind": "bulkhead",
+          "article": "2FA1-NZSP-C30E2",
+          "l1": "2,7",
+          "l2": "8,5",
+          "l3": "13,9"
+        }
+      }
+    },
+    "operation": {
+      "type": "coaxCut",
+      "stripSides": [
+        "A"
+      ],
+      "fields": {
+        "coax": {
+          "cable": "RTK 031",
+          "connector": "2FA1-NZSP-C30E2",
+          "d1": "",
+          "d2": "",
+          "d3": "",
+          "l1": "2,7",
+          "l2": "8,5",
+          "l3": "13,9",
+          "lPlus": "",
+          "lMinus": "",
+          "dimensionOrder": "Amphenol",
+          "stripProgram": {
+            "source": "2FA1-NXSP-C30E2 rev.B, лист 2: жила 2,7±0,1; открытый диэлектрик 1,0±0,1; до оплётки 8,5±0,2; до оболочки 13,9±0,2 мм.",
+            "note": "От торца жилы. Граница фольги: 2,7+1,0 = 3,7 мм, предельное ±0,2 мм. Фольгу сохранить внутри корпуса, оплётку — снаружи насечки.",
+            "boundaries": [
+              {
+                "layer": "dielectric",
+                "label": "Диэлектрик / жила",
+                "value": "2,7",
+                "tolerance": "±0,1"
+              },
+              {
+                "layer": "foil",
+                "label": "Фольга",
+                "value": "3,7",
+                "tolerance": "±0,2"
+              },
+              {
+                "layer": "braid",
+                "label": "Оплётка",
+                "value": "8,5",
+                "tolerance": "±0,2"
+              },
+              {
+                "layer": "jacket",
+                "label": "Оболочка",
+                "value": "13,9",
+                "tolerance": "±0,2"
+              }
+            ]
+          }
+        },
+        "coaxStripSides": [
+          "A"
+        ]
+      }
+    }
+  }
+]

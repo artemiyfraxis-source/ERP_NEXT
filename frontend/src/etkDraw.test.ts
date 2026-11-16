@@ -11,6 +11,21 @@ import type { ProjectTechcard } from "./api";
 const housing: EtkHousing = { title: "JST XH", art: "XHP-2", rows: 1, cols: 2, n: 2, kind: "grid", color: "#efe6cf", latch: "ramp", roof: { kind: "latch", at: "center", src: "JST eXH, Housing" },
   cavity: "square", labels: null, grid: [[1, 2]], round: null, conf: "medium", note: "", pitch: 2.5 };
 
+it("shows the HFM support sleeve on a stripped cable without a central contact or invented crimp dimensions", () => {
+  const html = etkFigure({ type: "coaxSupportCrimp", fields: { coaxEnd: { connector: "AMK11D-1M4Z5-Z", side: "А", cable: "RTK 031" } } });
+  expect(html).toContain("Опорная гильза HFM");
+  expect(html).toContain("11WS001_A");
+  expect(html).toContain("Высота обжима — не задано");
+  expect(html).not.toContain("Центральный контакт:");
+});
+
+it.each(["HFM", "Amphenol"])("keeps %s drawing bases explicit instead of reinterpreting lengths", (dimensionOrder) => {
+  const html = etkDrawCoax({ type: "coaxCut", fields: { coax: { connector: "test", l1: "2,7", l2: "1,0", l3: "8,5", dimensionOrder } } });
+  expect(html).toContain("полная разделка по базам");
+  expect(html).toContain("Не трактовать как три длины от торца");
+  expect(html).not.toContain("Размеров разделки нет");
+});
+
 describe("etkParams (шапка: Сторона А | Общие | Сторона В)", () => {
   const find = (items: ReadonlyArray<readonly [string, string, ...unknown[]]>) => Object.fromEntries(items.map(([label, value]) => [label, value]));
 
@@ -439,12 +454,35 @@ describe("cut of tubes (owner 16.10, 713К.4 КБ1: no picture)", () => {
 
 
 describe("FAKRA cut parameters and strip sketches", () => {
-  const end = { connector: "59K13O-1M4A4", cable: "RTK 031", l1: "9,7", l2: "4,6", l3: "3,0", dimensionOrder: "XYZ" };
-  it("draws Rosenberger X/Y/Z without changing stored dimensions", () => {
-    const drawing = etkDrawCoax({ type: "coaxCut", fields: { coax: end, coaxB: { ...end, l1: "11,6", l2: "6,4", l3: "1,7" } } });
+  const end = { connector: "59K13O-1M4A4", cable: "RTK 031", l1: "3,0", l2: "4,6", l3: "9,7", dimensionOrder: "XYZ" };
+  it("draws distances from the tip and preserves the raw X/Y/Z source", () => {
+    const operation = { type: "coaxCut", fields: { coax: end, coaxB: { ...end, l1: "1,7", l2: "6,4", l3: "11,6" } } };
+    const before = JSON.stringify(operation), drawing = etkDrawCoax(operation);
     expect(drawing).not.toContain("Размеров разделки нет");
     for (const label of ["Сторона А", "Сторона В", "X = 9,7", "Y = 4,6", "Z = 3,0", "X = 11,6"])
       expect(drawing).toContain(label);
+    for (const label of ["Оболочка = 12,7 ±0,4", "Оплётка = 7,6 ±0,4", "Диэлектрик / жила = 3 ±0,2",
+      "Оболочка = 13,3 ±0,4", "Оплётка = 8,1 ±0,4", "Диэлектрик / жила = 1,7 ±0,2"])
+      expect(drawing).toContain(label);
+    const params = JSON.stringify(etkParams(operation));
+    for (const value of ["12,7 ±0,4", "7,6 ±0,4", "13,3 ±0,4", "8,1 ±0,4", "X = 9,7", "X = 11,6"])
+      expect(params).toContain(value);
+    expect(JSON.stringify(operation)).toBe(before);
+  });
+  it("propagates explicit source tolerances and refuses incomplete or reversed raw dimensions", () => {
+    const drawing = etkDrawCoax({ fields: { coax: { ...end, l1: "3,0±0,1", l2: "4,6±0,3", l3: "9,7±0,2" } } });
+    expect(drawing).toContain("Оболочка = 12,7 ±0,3");
+    expect(drawing).toContain("Оплётка = 7,6 ±0,4");
+    for (const change of [{ l2: "" }, { l1: "9,7", l3: "3" }]) {
+      const missing = etkDrawCoax({ fields: { coax: { ...end, ...change } } });
+      expect(missing).toContain("Программа от торца не рассчитана");
+      expect(missing).not.toContain("<svg");
+    }
+  });
+  it("does not convert non-XYZ legacy rows", () => {
+    const drawing = etkDrawCoax({ fields: { coax: { ...end, dimensionOrder: undefined } } });
+    expect(drawing).toContain("L3 = 9,7 мм");
+    expect(drawing).not.toContain("12,7");
   });
   it("draws just B for a mixed pair", () => {
     const drawing = etkDrawCoax({ type: "coaxCut", fields: { coaxB: end } });

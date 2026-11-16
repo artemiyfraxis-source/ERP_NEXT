@@ -589,7 +589,7 @@ def _coax_result_name(op: Mapping[str, Any], config: Mapping[str, Any], done: Se
         length = _format(coax.get("tutLength"))
         return (f"Трубка {tut or 'ТУТ'} нарезана: {_count_text(count, 'отрезок', 'отрезка', 'отрезков')}"
                 + (f" по {length} мм" if length != "0" else ""))
-    sides: dict[str, set[str]] = {key: set() for key in ("strip", "pin", "housing", "shield_solder", "cap_crimp", "cap_screw")}
+    sides: dict[str, set[str]] = {key: set() for key in ("strip", "support", "pin", "housing", "shield_solder", "cap_crimp", "cap_screw")}
     clamp_put_on = 0
     flags: set[str] = set()
     many = True
@@ -600,6 +600,8 @@ def _coax_result_name(op: Mapping[str, Any], config: Mapping[str, Any], done: Se
             sides["strip"] |= {side for side in ("A", "B") if side in _list(step.get("stripSides"))}
         elif kind == "coaxStrip":
             sides["strip"].add(end)
+        elif kind == "coaxSupportCrimp":
+            sides["support"].add(end)
         elif kind in ("coaxPin", "coaxPinCrimp"):
             sides["pin"].add(end)
         elif kind == "coaxHousing":
@@ -654,6 +656,9 @@ def _coax_result_name(op: Mapping[str, Any], config: Mapping[str, Any], done: Se
             side = next(iter(sides["strip"]))
             head += f", конец {_side_label({'side': side})} разделан" + (f" под {named[side]}" if named[side] else "")
     facts: list[str] = []
+    if sides["support"]:
+        ends = " и ".join(_side_label({"side": side}) for side in ("A", "B") if side in sides["support"])
+        facts.append(f"опорные гильзы HFM обжаты ({ends})")
     if sides["shield_solder"]:
         facts.append("экран припаян к корпусам" if sides["shield_solder"] == both else "экран припаян к корпусу")
     if clamp_put_on and not sides["housing"]:
@@ -842,6 +847,8 @@ def _coax_components(op: Mapping[str, Any], config: Mapping[str, Any], *, manual
             return []
         return [{"art": art, "name": str(coax.get(name_key) or ""), "norm": _format(norm), "unit": unit}]
 
+    if operation_type == "coaxCutTut" and op.get("markMaterial") == "tape":
+        return []  # Label stock belongs to the printer, including old configs with explicit BOM parts.
     parts = [item for item in _list(op.get("parts")) if isinstance(item, Mapping) and str(item.get("art") or "").strip()]
     if parts:
         # FAKRA/HFM (генератор 25.10): детали комплекта конца, что берёт операция, — списком в самой операции.
@@ -1258,6 +1265,57 @@ def _coax_strip_sizes(config: Mapping[str, Any], side_name: str) -> dict[str, An
         key: side.get(key) or "" for key in ("d1", "d2", "d3", "l1", "l2", "l3", "lPlus", "lMinus")}}
 
 
+def _coax_strip_program(sizes: Mapping[str, Any], kind: str) -> dict[str, Any]:
+    """Distances from the conductor tip; keep the reference dimensions unmodified.
+
+    MA_59V059 / MA_59V065 store X/Y/Z in L3/L2/L1. Summed tolerances
+    are worst-case limits, not independent replacements for the source controls.
+    HFM describes final folded geometry, not an approved straight-braid cut.
+    """
+    def boundary(layer: str, label: str, value: str, tolerance: str) -> dict[str, str]:
+        return {"layer": layer, "label": label, "value": value, "tolerance": tolerance}
+
+    if kind in {"straight", "angled"}:
+        dimensions = []
+        for key in ("l3", "l2", "l1"):
+            match = re.fullmatch(r"\s*(\d+(?:[.,]\d+)?)\s*(?:±\s*(\d+(?:[.,]\d+)?))?\s*(?:мм)?\s*", str(sizes.get(key) or ""))
+            if not match:
+                return {"boundaries": [], "source": "X = L3; Y = L2; Z = L1 (БД.КОАКС)",
+                        "note": "Программа от торца не рассчитана: проверьте исходные X/Y/Z."}
+            dimensions.append((_decimal(match[1]), _decimal(match[2] or "0.2")))
+        (x, tx), (y, ty), (z, tz) = dimensions
+        source = " · ".join(f"{name} = {_format(value)}±{_format(tol)} мм" for name, (value, tol) in zip("XYZ", dimensions))
+        if not x > y > 0 or z <= 0:
+            return {"boundaries": [], "source": source,
+                    "note": "Программа от торца не рассчитана: требуется X > Y > 0, Z > 0; X = L3, Y = L2, Z = L1."}
+        return {"source": source, "note": "От торца жилы: оболочка X+Z, оплётка Y+Z, диэлектрик Z. "
+                "Допуски сумм — предельные; контролировать также исходные X/Y/Z. Отдельная ступень фольги не задана.",
+                "boundaries": [boundary("dielectric", "Диэлектрик / жила", _format(z), f"±{_format(tz)}"),
+                               boundary("braid", "Оплётка", _format(y + z), f"±{_format(ty + tz)}"),
+                               boundary("jacket", "Оболочка", _format(x + z), f"±{_format(tx + tz)}")]}
+    if kind == "bulkhead":
+        return {"source": "2FA1-NXSP-C30E2 rev.B, лист 2: жила 2,7±0,1; открытый диэлектрик 1,0±0,1; "
+                "до оплётки 8,5±0,2; до оболочки 13,9±0,2 мм.",
+                "note": "От торца жилы. Граница фольги: 2,7+1,0 = 3,7 мм, предельное ±0,2 мм. "
+                "Фольгу сохранить внутри корпуса, оплётку — снаружи насечки.",
+                "boundaries": [boundary("dielectric", "Диэлектрик / жила", "2,7", "±0,1"),
+                               boundary("foil", "Фольга", "3,7", "±0,2"),
+                               boundary("braid", "Оплётка", "8,5", "±0,2"),
+                               boundary("jacket", "Оболочка", "13,9", "±0,2")]}
+    if kind == "hfm":
+        return {"source": "MA_AMV003 c00, с.3–4, M4: R — край опорной втулки; v=7,85±0,2; y=5,55±0,2; "
+                "w≤4,5; s=1,75±0,2; z=2,1±0,2 мм.",
+                "note": "Конечная геометрия от торца после подрезки: оболочка v+s; жила v−y; фольга v−w "
+                "(показан номинальный предел); отогнутая оплётка v−y+z. Допуски сумм — предельные. "
+                "Размер обрезки прямой оплётки до отворота не задан — подтвердить программу станка. "
+                "Не использовать начальный размер a=13 мм как конечную разделку.",
+                "boundaries": [boundary("dielectric", "Диэлектрик / жила", "2,30", "±0,4"),
+                               boundary("foil", "Фольга", "3,35", "минимум номинально"),
+                               boundary("braid", "Отогнутая оплётка", "4,40", "±0,6"),
+                               boundary("jacket", "Оболочка", "9,60", "±0,4")]}
+    return {}
+
+
 _FEMALE = re.compile(r"(?<![a-z])female(?![a-z])", re.IGNORECASE)
 _MALE = re.compile(r"(?<![a-z])male(?![a-z])", re.IGNORECASE)
 
@@ -1305,7 +1363,7 @@ def with_coax_connectors(op: Mapping[str, Any], config: Mapping[str, Any]) -> Ma
     return {**op, "fields": patched} if patched != dict(fields) else op
 
 
-COAX_END_TYPES = frozenset({"coaxPin", "coaxPinCrimp", "coaxHousing", "coaxSolderShield", "coaxCapCrimp", "coaxCapScrew"})
+COAX_END_TYPES = frozenset({"coaxSupportCrimp", "coaxPin", "coaxPinCrimp", "coaxHousing", "coaxSolderShield", "coaxCapCrimp", "coaxCapScrew"})
 
 
 def coax_sketch_fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
@@ -1591,6 +1649,11 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
             end = _coax(config).get(side_key) or {}
             if key in fields and end.get("kind") in {"straight", "angled"}:
                 fields[key]["dimensionOrder"] = "XYZ"
+            elif key in fields and end.get("kind") in {"hfm", "bulkhead"}:
+                # These dimensions use the manufacturer's own bases, not three ascending distances from the tip.
+                fields[key]["dimensionOrder"] = "HFM" if end["kind"] == "hfm" else "Amphenol"
+            if key in fields and "dimensionOrder" in fields[key]:
+                fields[key]["stripProgram"] = _coax_strip_program(fields[key], end["kind"])
     if operation_type == "coaxCut" and _coax(config).get("lengthBasis") == "finished":
         fields.update({"finishedLength": _coax(config).get("finishedLength"), "lPlusA": _coax(config).get("lPlusA"),
                        "lPlusB": _coax(config).get("lPlusB"), "cutTolerance": "0…+5 мм", "drawingTolerance": "0…+10 мм"})
@@ -2051,7 +2114,25 @@ def _coax_recipe_steps(op: Mapping[str, Any], config: Mapping[str, Any]) -> list
                      f"припуск А = {_format(coax.get('lPlusA'))} мм, припуск В = {_format(coax.get('lPlusB'))} мм. "
                      f"Длина реза = {_format(coax.get('cableLength'))} мм; допуск реза 0…+5 мм.")
     if op.get("type") == "coaxCut" and op.get("stripSides") and coax.get("fakraCutStrip"):
-        steps.append("Разделать при резке только стороны: " + ", ".join("А" if sd == "A" else "В" for sd in op["stripSides"]) + ". Размеры X/Y/Z — по каждой стороне в эскизе.")
+        steps.append("Разделать при резке только стороны: " + ", ".join("А" if sd == "A" else "В" for sd in op["stripSides"])
+                     + ". Полная разделка; размеры от торца жилы — отдельно для каждой стороны.")
+        for side in op["stripSides"]:
+            end = coax.get(f"side{side}") or {}
+            label = "А" if side == "A" else "В"
+            program = _coax_strip_program(_coax_strip_sizes(config, side), str(end.get("kind") or ""))
+            if program:
+                values = "; ".join(f"{item['label'].lower()} {item['value']} {item['tolerance']} мм"
+                                   for item in program["boundaries"])
+                steps.append(f"Сторона {label}: от торца жилы — {values or 'размеры требуют проверки'}. "
+                             f"Источник: {program['source']} {program['note']}")
+            if end.get("kind") == "hfm":
+                steps.append(f"Сторона {label}, HFM: полностью разделать кабель по базам MA_AMV003; не повредить оплётку, "
+                             "диэлектрик и фольгу. Опорную гильзу установить и обжать отдельной следующей операцией "
+                             "после полной разделки — технологическое решение от 16.11.2026.")
+            elif end.get("kind") == "bulkhead":
+                steps.append(f"Сторона {label}, Amphenol 2FA1: размер 1,0 мм — участок открытого диэлектрика, "
+                             "не абсолютная длина от торца. "
+                             "ТТК, гильзу и изолирующий диск надеть после разделки в следующей операции.")
     if op.get("protective") and op.get("type") == "coaxInsTut":
         steps.append("Надеть прозрачные отрезки ТУТ на кабель и сдвинуть к середине до монтажа деталей концов.")
     for mark in _list(op.get("marks")):
@@ -2082,8 +2163,9 @@ def _typed_operation(
     `result_rows` — its result rows when the chain set them (a ПФ of the generator's scheme)."""
     wire_data = _wire_data(op, config)
     fields = _typed_fields(op, config)
-    if op.get("markMaterial") == "tape" and op.get("markPhase") == "print" and not op.get("parts"):
-        warnings.append(f"Операция {position}: не задан материал для печати этикеток.")
+    printer_labels = op.get("type") == "coaxCutTut" and op.get("markMaterial") == "tape"
+    if printer_labels and op.get("parts"):
+        warnings.append(f"Операция {position}: лента из состава не расходуется — это расходник маркиратора ZCUT-RT660 (ОБ.102).")
     terminal_warning = _terminal_warning(op, position, code)
     if terminal_warning:
         warnings.append(terminal_warning)
@@ -2112,6 +2194,15 @@ def _typed_operation(
         # FAKRA/HFM (генератор 25.10): у каждой операции своё название («Обжим центрального контакта (А)»), а не общее имя карты.
         operation["card"]["name"] = label
     if operation["card"] is not None:
+        if printer_labels:
+            tooling = operation["card"]["tooling"]
+            label_stock = next((tool for tool in tooling if tool["section"] == "Расходники"
+                                and re.search(r"лент|этикет", tool["name"], re.IGNORECASE)), None)
+            if label_stock is None:
+                label_stock = {"section": "Расходники", "number": str(1 + sum(tool["section"] == "Расходники" for tool in tooling)),
+                               "inventory_number": "", "program": "", "parameters": "", "norm": "не задано", "unit": ""}
+                tooling.append(label_stock)
+            label_stock["name"] = "Лента Vell VL-S641, 18 мм — расходник маркиратора ZCUT-RT660 (ОБ.102)"
         extra = _coax_recipe_steps(op, config)
         if extra:
             operation["card"]["steps"] = [{"number": str(i), "kind": "Операция", "text": text, "tolerance": ""}
@@ -2510,7 +2601,7 @@ GENERATOR_TYPES = frozenset({
     "cutWire", "cutWireStrip", "cutWireCrimp", "cutTut", "insTut", "heatTut", "endCap", "foldCore", "stripCable",
     "twist", "tin", "insMark", "seal", "insWrap", "prsTerm", "insTerm", "solderConn", "splice", "insHousing",
     "coaxCut", "coaxCutTut", "coaxStrip", "coaxPin", "coaxPinCrimp", "coaxShield", "coaxSolderShield", "coaxInsSleeve", "coaxInsTut",
-    "coaxHeat", "coaxHousing", "coaxCapCrimp", "coaxCapScrew", "coaxConnColor", "coaxVswr",
+    "coaxHeat", "coaxHousing", "coaxCapCrimp", "coaxCapScrew", "coaxConnColor", "coaxSupportCrimp", "coaxVswr",
 })
 
 
