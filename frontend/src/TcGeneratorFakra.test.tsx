@@ -141,11 +141,11 @@ it("uses paint marker articles only for paint and resolves them again when switc
   expect(latest().coax.connColor.art).toBe("");
 });
 
-it.each(["2FA1-NZSP-C30E2", "AMK11D-1M4Z5-Z"])("does not offer stripping at cut for an assembly with only %s ends", async (art) => {
+it.each(["2FA1-NZSP-C30E2", "AMK11D-1M4Z5-Z"])("offers full stripping at cut for an assembly with only %s ends", async (art) => {
   const special = { ...kit, components: kit.components.filter((c) => c.type !== "Разъем")
     .concat([{ id: "special", art, name: art, type: "Разъем", qty: 2, kd: "" }]) };
   mount(card, special); await ready();
-  expect(screen.queryByRole("switch", { name: "Резка с разделкой" })).not.toBeInTheDocument();
+  expect(screen.getByRole("switch", { name: "Резка с разделкой" })).toBeChecked();
 });
 
 it("renders the generated five-block coax route with independent preparation operations", async () => {
@@ -189,10 +189,11 @@ it("opens a saved legacy FAKRA config without a snapshot at its original cut len
   expect(latest().ops).toEqual(saved.ops);
 });
 
-it("passes the BOM tape norm and explicit unit through the generator form", async () => {
+it("keeps BOM tape out of print-operation consumption", async () => {
   const withUnit = { ...kit, components: kit.components.map((row) => row.id === "tape" ? { ...row, qty: "0,18", unit: "м" } : row) };
   const { latest } = mount(card, withUnit); await ready();
-  expect(latest().ops.find((op) => op.opKey === "coaxPrintLabel")).toMatchObject({ units: 3, parts: [{ qty: 0.18, unit: "м" }] });
+  expect(latest().ops.find((op) => op.opKey === "coaxPrintLabel")).toMatchObject({ units: 3 });
+  expect(latest().ops.find((op) => op.opKey === "coaxPrintLabel")).not.toHaveProperty("parts");
 });
 
 it("restores a saved single-ended coax cut machine and stripping of the free end", () => {
@@ -283,7 +284,7 @@ it("round-trips all new fields through a serialized snapshot and reopens the sam
   expect(screen.getByLabelText("Запас А, мм")).toHaveValue("31,5");
   expect(screen.getByLabelText("Надпись метки 1")).toHaveValue("Правка");
   expect(screen.getByLabelText("Цветовая маркировка разъёмов")).toHaveValue("tape");
-  expect(screen.getByLabelText("Название цвета")).toHaveValue("белый");
+  expect(screen.getByLabelText("Цвет")).toHaveValue("WH");
 });
 
 it("autosaves the new controls locally and restores the same state from the server on another computer", async () => {
@@ -312,4 +313,74 @@ it("opens an old local draft with its cut length and no new recipe defaults", as
   expect(screen.getByRole("switch", { name: "Резка с разделкой" })).not.toBeChecked();
   expect(latest().coax).not.toHaveProperty("marks");
   expect(latest().coax.cableLength).toBe(4777);
+});
+
+it("previews re-seeding a saved card, cancels without changes and applies only the proposed fields", async () => {
+  const seed = initState(data);
+  const state = { ...seed, note: "Ручное примечание", coax: { ...seed.coax, fakraCutStrip: false, lPlusA: "99", finishedLength: "5100",
+    vswrMode: "sample" as const, vswrEvery: "13", machine: "big" as const, marks: [{ text: "Старая метка", place: "middle" as const, minMm: 140 }] } };
+  const saved = { ...card, document: { operations: [], build_config: { mode: "coax", gen_state: genSnapshot(data.components, state, {}, {}) } } };
+  const { latest } = mount(saved); await ready();
+  const before = JSON.stringify(latest());
+  fireEvent.click(screen.getByRole("button", { name: "Заполнить по составу и КД" }));
+  const proposal = screen.getByRole("region", { name: "Заполнение по составу и КД" });
+  expect(within(proposal).getByRole("columnheader", { name: /Сейчас/ })).toBeInTheDocument();
+  expect(within(proposal).getByText(/FRX\.708К\.120907\/AA\.\{№\}/)).toBeInTheDocument();
+  expect(JSON.stringify(latest())).toBe(before);
+  fireEvent.click(within(proposal).getByRole("button", { name: "Отмена" }));
+  expect(JSON.stringify(latest())).toBe(before);
+  fireEvent.click(screen.getByRole("button", { name: "Заполнить по составу и КД" }));
+  fireEvent.click(screen.getByRole("button", { name: "Применить заполнение" }));
+  expect(latest().coax).toMatchObject({ fakraCutStrip: true, finishedLength: 4800, lPlusA: 30, lPlusB: 25, tutLength: 60,
+    vswrControl: { mode: "sample", every: 13 } });
+  expect(latest().coax.marks[0].text).toBe("FRX.708К.120907/AA.{№}");
+  expect(screen.getByRole("button", { name: "Подтвердить L" })).toBeInTheDocument();
+  expect(latest().ops[0].machine?.model).toBe("BZW-50X");
+  expect(screen.queryByRole("button", { name: "Применить заполнение" })).not.toBeInTheDocument();
+  expect(screen.getByText("{№} — номер сборки 1…N")).toBeInTheDocument();
+});
+
+it("offers every dictionary colour and requires an explicit conflict choice", async () => {
+  const conflictKit = { ...kit, components: kit.components.filter((row) => row.id !== "paint").concat([
+    { id: "white", type: "Др", art: "white-marker", name: "Маркер белый", qty: 1, kd: "" },
+    { id: "blue", type: "Др", art: "blue-marker", name: "Маркер голубой", qty: 1, kd: "" },
+  ]) };
+  const { latest, onBuild } = mount(card, conflictKit); await ready();
+  expect(screen.getByText("В составе несколько цветов маркера-краски — выберите цвет.")).toBeInTheDocument();
+  expect([...within(screen.getByLabelText("Цвет")).getAllByRole("option")].map((option) => (option as HTMLOptionElement).value))
+    .toEqual(["WH", "BU", "GN", "VT", "YE", "RD", "BK", "OG", "PK", "custom"]);
+  fireEvent.click(screen.getByRole("button", { name: "Подтвердить L" }));
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  pressBuild();
+  expect(onBuild).not.toHaveBeenCalled();
+  expect(screen.getByText("В составе несколько цветов маркера-краски — выберите цвет.", { selector: ".gen-error" })).toBeInTheDocument();
+  change("Цвет", "WH");
+  expect(latest().coax.connColor).toMatchObject({ color: "белый", code: "WH", art: "white-marker" });
+  expect(screen.queryByText("В составе несколько цветов маркера-краски — выберите цвет.")).not.toBeInTheDocument();
+  change("Цвет", "BU");
+  expect(latest().coax.connColor.art).toBe("blue-marker");
+});
+
+it.each(["all", "sample", "none"] as const)("restores saved form VSWR %s before an older build config", async (mode) => {
+  const state = initState(data); state.coax.vswrMode = mode; state.coax.vswrEvery = "17";
+  const saved = { ...card, document: { operations: [], build_config: { mode: "coax", coax: { vswrControl: { mode: mode === "none" ? "all" : "none" } },
+    gen_state: genSnapshot(data.components, state, {}, {}) } } };
+  const { latest } = mount(saved); await ready();
+  expect(latest().coax.vswrControl).toEqual({ mode, every: mode === "sample" ? 17 : null });
+});
+
+it.each(["all", "sample", "none"] as const)("keeps VSWR %s across local and server draft reopen", async (mode) => {
+  const first = mount(); await ready();
+  const group = screen.getByRole("radiogroup", { name: "Контроль КСВН" });
+  fireEvent.click(within(group).getByRole("radio", { name: mode === "all" ? "Каждое изделие" : mode === "sample" ? /Выборочно/ : "Не проверять" }));
+  // A second edit arms autosave even when the default VSWR mode was selected.
+  change("L по КД, мм", "5100");
+  const wanted = first.latest().coax.vswrControl;
+  first.unmount();
+  await waitFor(() => expect(serverDraft).not.toBeNull());
+  const second = mount(); await ready();
+  await waitFor(() => expect(second.latest().coax.vswrControl).toEqual(wanted));
+  second.unmount(); localStorage.clear();
+  const third = mount(); await ready();
+  await waitFor(() => expect(third.latest().coax.vswrControl).toEqual(wanted));
 });

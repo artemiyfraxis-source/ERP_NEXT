@@ -23,7 +23,7 @@ from app.modules.fulfillment.application import ConcurrentFulfillmentUpdate, fre
 from app.modules.fulfillment.domain import DuplicateKitRequest, FulfillmentValidationError
 from app.modules.production.domain import ProductionValidationError
 from app.modules.requests.application import CalcSheetError
-from app.modules.requests.domain import ValidationError as RequestValidationError, unit_for_type
+from app.modules.requests.domain import ValidationError as RequestValidationError
 from app.modules.warehouse.domain import WarehouseValidationError
 from app.modules.production.plan import (
     KIT_STAGES, PLAN_BLOCKERS, PROJECT_TERMINALS, TC_REVIEW_VALUES, normalize_project_number, project_markers,
@@ -47,6 +47,7 @@ from .kitsets import (
     KitsetNotFound,
     clean_folder_url,
     KitsetValidationError,
+    component_unit,
     document_json,
     document_kind,
     item_id,
@@ -252,6 +253,7 @@ def load(
     # «Обновить из расчёта»: a row dropped from the calculation gives its ГРН reserve back, a new run re-counts it.
     reserve_error = reserve_flow.resync_project(
         result.project, principal.actor, now, techcards_factory(request), fulfillment_factory(request),
+        reference_units=flow.material_units(flow.reference_records(references_factory(request))),
     )
     requests, requests_error = _project_requests(payload, request, principal, result.project, now)
     return {"res": {
@@ -329,6 +331,7 @@ def _card(request: Request, kitset: Kitset) -> dict:
     active = journal.blocker if journal is not None else None
     snapshot = next((item for item in facts.projects if normalize_project_number(item.project) == canon), None)
     reserves = reserve_flow.reserves_by_row(kitset.project, fulfillment_factory(request))
+    units = flow.material_units(flow.reference_records(references_factory(request)))
     with techcards_factory(request)() as uow:
         documents = uow.kitsets.documents(kitset.project)
     return {
@@ -358,7 +361,8 @@ def _card(request: Request, kitset: Kitset) -> dict:
             "components": [{
                 "art": component.article, "type": component.type, "name": component.name, "link": component.link,
                 "per": _number(component.per_unit), "scrap": _number(component.scrap_pct),
-                "batch": _number(component.batch(assembly.run)), "unit": unit_for_type(component.type),
+                "batch": _number(component.batch(assembly.run, unit=component_unit(component, units))),
+                "unit": component_unit(component, units),
                 "lot": None if component.lot is None else {
                     "lot_id": str(component.lot.lot_id) if component.lot.lot_id else None,
                     "warehouse": component.lot.warehouse, "grn": component.lot.grn,
@@ -426,6 +430,7 @@ def save_lines(
             edits.append(edit)
         updated, count = reserve_flow.save_rows(
             project, edits, principal.actor, now, techcards_factory(request), fulfillment_factory(request),
+            reference_units=flow.material_units(flow.reference_records(references_factory(request))),
         )
         return {"project": updated.project, "updated": count}
 
@@ -445,10 +450,10 @@ def supply(
         references_factory(request),
     )
     return {"project": kitset.project, "lines": [{
-        "art": line.article, "name": line.name, "name_source": line.name_source, "name_hint": line.name_hint,
+        "key": line.key, "art": line.article, "name": line.name, "name_source": line.name_source, "name_hint": line.name_hint,
         **_state_json(supply_state(line)),
         "kbs": list(line.kbs), "need": _number(line.need),
-        "unit": unit_for_type(line.item_type),
+        "unit": line.unit,
         "free": _number(line.free), "off_book": _number(line.off_book), "ordered": _number(line.ordered),
         "kitted": _number(line.kitted),
         "short": _number(line.short),
@@ -463,7 +468,7 @@ def _state_json(state) -> dict[str, str]:
 
 
 class OrderMissingPayload(BaseModel):
-    """«Заказать недостающее»: выбранные позиции (артикул КД), пусто — все, где не хватает."""
+    """Selected supply keys (article + normalized unit when ambiguous); empty means every shortage."""
 
     articles: list[str] = Field(default_factory=list, max_length=500)
     deadline: date | None = None
@@ -552,9 +557,14 @@ def issue(
     if factory is None:
         raise HTTPException(status_code=503, detail="База ERP не настроена")
     kitset = _kitset(request, project)
-    result = _run(lambda: flow.issue_from_kitset(kitset, payload.deadline, principal.actor, now, factory))
+    result = _run(lambda: flow.issue_from_kitset(
+        kitset, payload.deadline, principal.actor, now, factory, references_uow=references_factory(request),
+    ))
     # The kits took the КБ's ГРН reserves over; what a kit did not take goes back to the lot, never held twice.
-    reserve_error = reserve_flow.resync_project(kitset.project, principal.actor, now, techcards_factory(request), factory)
+    reserve_error = reserve_flow.resync_project(
+        kitset.project, principal.actor, now, techcards_factory(request), factory,
+        reference_units=flow.material_units(flow.reference_records(references_factory(request))),
+    )
     return {
         "created": result.created, "skipped": result.skipped, "already": result.already, "message": result.message,
         "reserve_error": reserve_error,
@@ -896,7 +906,9 @@ def _bom(request: Request, kitset: Kitset, index: str) -> dict:
         raise HTTPException(status_code=404, detail=f"В наборе «{kitset.project}» нет сборки {index}")
     return flow.generator_bom(kitset, assembly, flow.assembly_calc_ops(
         kitset, assembly, lambda: flow.calc_sheets_reader(request.app.state), techcards_factory(request),
-    ), flow.bom_names(kitset, references_factory(request), fulfillment_factory(request)))
+    ), flow.bom_names(kitset, references_factory(request), fulfillment_factory(request)),
+        reference_units=flow.material_units(flow.reference_records(references_factory(request))),
+    )
 
 
 @router.post("/{project}/bom/{index}/components")
@@ -932,6 +944,7 @@ def remove_bom_component(
     """Убрать строку, добавленную технологом (строку расчёта убирают в расчёте); её резерв ГРН снимается."""
     kitset = _run(lambda: reserve_flow.remove_row(
         project, index, payload.art, principal.actor, now, techcards_factory(request), fulfillment_factory(request),
+        reference_units=flow.material_units(flow.reference_records(references_factory(request))),
     ))
     return {"bom": _bom(request, kitset, index)}
 

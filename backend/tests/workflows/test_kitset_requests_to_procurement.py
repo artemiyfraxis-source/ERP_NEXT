@@ -7,6 +7,7 @@ they are created: «В работе» in «Заявки», one `procurement.requ
 
 from datetime import date, datetime
 
+import pytest
 from sqlalchemy import select
 
 from app.main import app
@@ -90,6 +91,21 @@ def test_calc_requests_of_a_new_project_land_unassigned_in_procurement(db):  # n
     assert (again.created, again.existing) == (0, 2)
     assert len(outbox(db.sessions)) == 2
     assert drain(db.procurement) == []
+
+
+@pytest.mark.parametrize("mounting", [False, True])
+def test_calc_printer_tape_is_warning_only_and_mounting_tape_is_ordered(db, monkeypatch, mounting):  # noqa: F811
+    rows = [ZPK[0], ["1", "Др", "Лента Vell VL-S641", "0,9", "", "", "", ""]]
+    if mounting:
+        rows.append(["2", "Др", "Лента монтажная 3M", "0,9", "", "", "", ""])
+    monkeypatch.setitem(globals(), "ZPK", rows)
+    result = kitset_requests(db)
+    assert result.created == int(mounting)
+    assert len(result.skipped) == 1 and "расходник маркиратора" in result.skipped[0]
+    with db.requests() as uow:
+        requests = uow.requests.recent(100)
+    assert [row.name for row in requests] == (["Лента монтажная 3M"] if mounting else [])
+    assert [line.calculated_name for line in drain(db.procurement)] == (["Лента монтажная 3M"] if mounting else [])
 
 
 def test_order_missing_lands_unassigned_in_procurement_and_never_twice(kitset_api):  # noqa: F811

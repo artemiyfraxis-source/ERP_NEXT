@@ -27,7 +27,9 @@ from app.modules.fulfillment.application import (
     kit_requested_kbs,
 )
 from app.modules.fulfillment.domain import KitReserve, item_index_key
-from app.modules.techcards.kitsets import Kitset, KitComponent, KitLot, KitsetNotFound
+from app.modules.techcards.kitsets import (
+    Kitset, KitComponent, KitLot, KitsetNotFound, component_unit, is_printer_label_tape,
+)
 from app.shared.identity import Actor
 
 _log = logging.getLogger(__name__)
@@ -52,18 +54,21 @@ def row_key(item_index: str, article: str) -> RowKey:
     return item_index_key(item_index), str(article or "").strip()
 
 
-def row_wants(kitset: Kitset | None) -> dict[RowKey, RowWant]:
+def row_wants(kitset: Kitset | None, reference_units: Mapping[str, str] | None = None) -> dict[RowKey, RowWant]:
     """What every spec row asks for: its ГРН and «на партию» (`batch`) in the row's unit. The first row of a key wins."""
     wants: dict[RowKey, RowWant] = {}
     if kitset is None:
         return wants
     for assembly in kitset.assemblies:
         for component in assembly.components:
+            if is_printer_label_tape(component):
+                continue
             key = row_key(assembly.index, component.article)
             if key[1] and key not in wants:
+                unit = component_unit(component, reference_units)
                 wants[key] = RowWant(
                     item_index=assembly.index, article=key[1], lot=component.lot,
-                    batch=component.batch(assembly.run), unit=component.unit,
+                    batch=component.batch(assembly.run, unit=unit), unit=unit,
                 )
     return wants
 
@@ -89,11 +94,12 @@ def sync_rows(
     *,
     versions: Mapping[RowKey, int] | None = None,
     strict: bool = True,
+    reference_units: Mapping[str, str] | None = None,
 ) -> list[str]:
     """Bring the reserves of `keys` in line with the rows of `kitset` (None — the project is gone: release).
     `keys` None — only the rows that hold a reserve now (no backfill). Each row in its own transaction.
     `strict` raises the first failure; otherwise the failures come back as text and the other rows go on."""
-    wants = row_wants(kitset)
+    wants = row_wants(kitset, reference_units)
     with fulfillment_uow() as uow:
         held = {row_key(reserve.item_index, reserve.article) for reserve in active_kit_reserves(uow, project)}
         # nothing held and nothing to hold → the row is left out
@@ -159,6 +165,7 @@ def save_rows(
     now: datetime,
     techcards_uow: Callable[[], Any],
     fulfillment_uow: Callable[[], Any] | None,
+    *, reference_units: Mapping[str, str] | None = None,
 ) -> tuple[Kitset, int]:
     """`portalKitsetSave` with the reserve: the edited rows' reserves first, then the kitset under its version. If the
     reserve or the save fails, the rows' reserves go back to what the stored kitset says, and the failure is raised."""
@@ -168,7 +175,7 @@ def save_rows(
         raise KitsetNotFound(f"Карточка набора «{project}» не найдена")
     updated, count = current.with_edits(edits, who=actor.name, now=now)
     keys, versions = _picked_versions(current, edits)
-    _store(current, updated, keys, versions, actor, now, techcards_uow, fulfillment_uow)
+    _store(current, updated, keys, versions, actor, now, techcards_uow, fulfillment_uow, reference_units=reference_units)
     return updated, count
 
 
@@ -204,6 +211,7 @@ def remove_row(
     now: datetime,
     techcards_uow: Callable[[], Any],
     fulfillment_uow: Callable[[], Any] | None,
+    *, reference_units: Mapping[str, str] | None = None,
 ) -> Kitset:
     """Убрать строку технолога; её резерв ГРН, если строку успели привязать, снимается."""
     with techcards_uow() as uow:
@@ -211,20 +219,23 @@ def remove_row(
     if current is None:
         raise KitsetNotFound(f"Карточка набора «{project}» не найдена")
     updated = current.without_component(index, article, who=actor.name, now=now)
-    _store(current, updated, [row_key(index, article)], {}, actor, now, techcards_uow, fulfillment_uow)
+    _store(current, updated, [row_key(index, article)], {}, actor, now, techcards_uow, fulfillment_uow,
+           reference_units=reference_units)
     return updated
 
 
 def _store(
     current: Kitset, updated: Kitset, keys: list[RowKey], versions: dict[RowKey, int], actor: Actor, now: datetime,
     techcards_uow: Callable[[], Any], fulfillment_uow: Callable[[], Any] | None,
+    *, reference_units: Mapping[str, str] | None = None,
 ) -> None:
     """The rows' reserves first, then the kitset under its version; on a failure the reserves go back to the stored
     kitset and the failure is raised."""
     project = current.project
     try:
         if fulfillment_uow is not None:
-            sync_rows(updated.project, updated, keys, actor, now, fulfillment_uow, versions=versions)
+            sync_rows(updated.project, updated, keys, actor, now, fulfillment_uow,
+                      versions=versions, reference_units=reference_units)
         with techcards_uow() as uow:
             fresh = uow.kitsets.get(project)
             if fresh is None:
@@ -235,19 +246,21 @@ def _store(
             uow.commit()
     except Exception:
         if fulfillment_uow is not None:
-            _restore(current.project, keys, actor, now, techcards_uow, fulfillment_uow)
+            _restore(current.project, keys, actor, now, techcards_uow, fulfillment_uow, reference_units=reference_units)
         raise
 
 
 def _restore(
     project: str, keys: list[RowKey], actor: Actor, now: datetime,
     techcards_uow: Callable[[], Any], fulfillment_uow: Callable[[], Any],
+    *, reference_units: Mapping[str, str] | None = None,
 ) -> None:
     """After a failed save: the rows' reserves follow the kitset as stored (gone — released)."""
     try:
         with techcards_uow() as uow:
             stored = uow.kitsets.get(project)
-        errors = sync_rows(project, stored, keys, actor, now, fulfillment_uow, strict=False)
+        errors = sync_rows(project, stored, keys, actor, now, fulfillment_uow,
+                           strict=False, reference_units=reference_units)
         if errors:
             _log.error("kit reserve restore %s: %s", project, "; ".join(errors))
     except Exception:  # noqa: BLE001 — the original failure is what the person sees
@@ -257,6 +270,7 @@ def _restore(
 def resync_project(
     project: str, actor: Actor, now: datetime,
     techcards_uow: Callable[[], Any], fulfillment_uow: Callable[[], Any] | None,
+    *, reference_units: Mapping[str, str] | None = None,
 ) -> str:
     """After «Обновить из расчёта» / «Отправить на комплектацию»: the rows holding a reserve follow the stored kitset —
     a dropped row releases, a changed run re-counts, a КБ with its kit request gives back what the kit did not take.
@@ -268,6 +282,7 @@ def resync_project(
             kitset = uow.kitsets.get(project)
         return "; ".join(sync_rows(
             kitset.project if kitset is not None else project, kitset, None, actor, now, fulfillment_uow, strict=False,
+            reference_units=reference_units,
         ))
     except Exception as error:  # noqa: BLE001
         _log.exception("kit reserve resync %s", project)

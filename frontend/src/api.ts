@@ -5161,6 +5161,8 @@ export interface KitsetLoadResult {
 }
 
 export interface KitsetSupplyLine {
+  /** Opaque supply selection key; absent on older servers. */
+  key?: string;
   art: string;
   name: string;
   /** Where the name comes from: ref — справочник ERP, spec — спецификация, stock — склад, site — сайт, "" — not found. */

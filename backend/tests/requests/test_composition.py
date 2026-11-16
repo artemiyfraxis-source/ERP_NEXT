@@ -124,14 +124,14 @@ def test_invalid_numeric_suffix_does_not_become_an_asserted_quantity():
     assert row["issues"] == ["quantity", "price", "price_with_vat"]
 
 
-def test_explicit_unit_does_not_change_legacy_import_unit():
+def test_explicit_unit_overrides_type_in_request_import():
     from app.modules.requests.domain import parse_zpk
     items = parse_zpk([
         ["Тип", "Обозначение", "На проект", "Без НДС", "Ед. изм."],
         ["Провод", "Провод TEST", "1", "10", "кг"],
         ["Неизвестный", "Component TEST", "1", "10", "кг"],
     ])
-    assert [item.unit for item in items] == ["м", "шт"]
+    assert [item.unit for item in items] == ["кг", "кг"]
     assert [item.source_unit for item in items] == ["кг", "кг"]
     row = seed().rows[0]
     assert row["unit_source"] == "derived_known" and row["unit"] == "м" and row["raw"]["unit"] == ""

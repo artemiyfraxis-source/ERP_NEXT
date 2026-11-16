@@ -515,7 +515,10 @@ def build_procurement_requested_snapshot(
 
 # ── Импорт позиций из расчёта (Imports.gs, Schema.gs `parseZpk_`) ──────────────────────────────
 
-ZPK_UNIT_BY_TYPE = {"Кабель": "м", "Провод": "м", "ТУТ": "м", "Шлейф": "м"}
+ZPK_UNIT_BY_TYPE = {
+    "Кабель": "м", "Провод": "м", "ТУТ": "м", "ТТК": "м", "Шлейф": "м",
+    "Оплётка": "м", "Оплетка": "м", "Лента": "м",
+}
 
 
 @dataclass(frozen=True)
@@ -531,7 +534,7 @@ class CalcItem:
     country: str
     unit: str
     source_row: int | None = None  # Physical sheet row, not an identity across source revisions.
-    source_unit: str = ""  # Explicit source cell; legacy `unit` remains type-derived for request import.
+    source_unit: str = ""  # Explicit source cell, preserved verbatim for provenance.
 
 
 @dataclass(frozen=True)
@@ -570,9 +573,26 @@ def _find_col(header: Sequence[object], needle: str) -> int:
     return -1
 
 
-def unit_for_type(item_type: str | None) -> str:
-    """`unitForType_`: cable-like types are measured in metres, everything else in pieces."""
-    return ZPK_UNIT_BY_TYPE.get(_text(item_type), "шт")
+def normalize_unit(unit: str | None) -> str:
+    """Normalize spelling only; packs, rolls and lengths are never converted."""
+    value = _text(unit).casefold().rstrip(".")
+    return {"м": "м", "m": "м", "метр": "м", "метры": "м", "шт": "шт", "штука": "шт"}.get(value, value)
+
+
+def unit_for_type(
+    item_type: str | None, name: str = "", *, unit: str | None = None, reference_unit: str | None = None,
+) -> str:
+    """Explicit consumption/reference units win; infer metres only for identifiable materials."""
+    explicit = normalize_unit(unit) or normalize_unit(reference_unit)
+    if explicit:
+        return explicit
+    kind = _text(item_type).casefold()
+    known = next((value for key, value in ZPK_UNIT_BY_TYPE.items() if key.casefold() == kind), None)
+    if known:
+        return known
+    if re.search(r"(?:^|\W)(?:ттк|тут|опл[её]тка|лента)(?:\W|$)|(?:^|\W)XS[-–‑ ]\d+(?:\W|$)", name, re.I):
+        return "м"
+    return "шт"
 
 
 CALC_ZPK_SHEET = "ЗКП"  # CONFIG.ZPK_SHEET — позиции расчёта
@@ -653,7 +673,7 @@ def parse_zpk(grid: Sequence[Sequence[object]]) -> list[CalcItem]:
                 price_with_vat=cell(row, "vat"),
                 link=cell(row, "link"),
                 country=cell(row, "country"),
-                unit=unit_for_type(item_type),
+                unit=unit_for_type(item_type, name, unit=cell(row, "unit")),
                 source_row=source_row,
                 source_unit=cell(row, "unit"),
             )
