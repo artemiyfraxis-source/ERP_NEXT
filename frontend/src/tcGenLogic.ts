@@ -409,7 +409,10 @@ export function coaxReseedPatch(D: GenData, S: GenState): Partial<GenState["coax
   const nameLength = g.asmLenFromName_(), calcLength = cable ? g.calcCutLengths_([cable])[cable.id] : 0;
   const finished = nameLength || calcLength || (cable ? Math.round(qtyNum(cable) * 1000 / g.coaxCables_()) : 0);
   const tube = defaults.markMaterial === "tape" ? defaults.protect : sumCoaxMaterial(D.components, g.bomTut_() ?? undefined);
-  const tubeLength = tube ? qtyNum(tube) * 1000 / (marks.length || g.coaxFakraMarks_()) : 0;
+  // A marking tube's piece length is the technologist's: an existing value stays (fresh seed and later reseed agree);
+  // only clear protective TUT over tape labels and an empty field are computed from the BOM metres.
+  const keepTube = defaults.markMaterial !== "tape" && parseDecimal_(S.coax.tutLen) > 0;
+  const tubeLength = keepTube ? parseDecimal_(S.coax.tutLen) : tube ? qtyNum(tube) * 1000 / (marks.length || g.coaxFakraMarks_()) : 0;
   return { fakraCutStrip: [S.coax.sideA, S.coax.sideB].some((end) => !!end?.kind),
     lengthBasis: "finished", finishedLength: String(finished || ""), finishedLengthFrom: nameLength ? "name" : calcLength ? "calc" : "bom",
     lPlusA: allowance(S.coax.sideA), lPlusB: allowance(S.coax.sideB), markMaterial: defaults.markMaterial,

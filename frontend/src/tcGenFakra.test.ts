@@ -655,3 +655,9 @@ it("re-seeding HFM preserves B-before-A without placing support crimp after B as
     "coaxSupportCrimpA", "coaxPinCrimpA", "coaxInsertA", "coaxShieldA", "coaxBodyA",
   ]);
 });
+
+it.each([KB3, KB28])("$index: a fresh seed and a later reseed agree on the marking-TUT length", (bom) => {
+  const data = batchAData(bom), seeded = initState(data);
+  const patch = coaxReseedPatch(data, seeded);
+  if (patch.tutLen) expect(seeded.coax.tutLen).toBe(patch.tutLen);
+});

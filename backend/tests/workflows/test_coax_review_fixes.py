@@ -152,3 +152,11 @@ def test_printer_tape_is_not_demand_but_mounting_tape_is(kitset_api, article, ki
     with app.state.fulfillment_uow_factory() as uow:
         (request,) = uow.fulfillment.for_project(card.project)
     assert [(row.name, row.requirement, row.unit) for row in request.lines] == [(mounting.article, Decimal("0.90"), "м")]
+
+
+def test_reserve_unit_match_folds_latin_metre_and_spellings():
+    from app.modules.fulfillment.application import same_unit
+
+    assert same_unit("м", "m") and same_unit("м.", "M") and same_unit("метр", "м")
+    assert same_unit("шт", "Шт.") and same_unit("штука", "шт")
+    assert not same_unit("м", "шт") and not same_unit("", "м")
