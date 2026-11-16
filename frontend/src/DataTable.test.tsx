@@ -704,7 +704,11 @@ describe("groups as blocks (owner 25.10.2026: «визуал БД один», к
     { key: "note", title: "Примечание", value: (row) => row.note },
   ];
   const tables = () => [...document.querySelectorAll<HTMLTableElement>(".data-table.dt-blocks > .table-wrap > table")];
-  const headings = () => [...document.querySelectorAll(".dt-block-title")].map((node) => node.textContent);
+  const headings = () => [...document.querySelectorAll(".dt-block-title")].map((node) => {
+    const copy = node.cloneNode(true) as HTMLElement;
+    copy.querySelectorAll("[aria-hidden]").forEach((icon) => icon.remove());
+    return copy.textContent?.trim();
+  });
   const marks = (table: HTMLTableElement) => [...table.querySelectorAll("tbody tr")].map((row) => row.querySelector("td")?.textContent);
   const show = (extra: Partial<Parameters<typeof DataTable<Part>>[0]> = {}) => render(<DataTable label="Провода" rows={parts} columns={partColumns()}
     rowKey={(row) => row.id} groupBy={(row) => row.series} blocks storageKey="blocks-test" exportName="Провода"
@@ -803,11 +807,141 @@ describe("groups as blocks (owner 25.10.2026: «визуал БД один», к
     render(<DataTable label="Сечения AWG ↔ мм²" rows={parts} columns={partColumns()} rowKey={(row) => row.id} blocks />);
     expect(headings()).toEqual(["Сечения AWG ↔ мм² 4"]);
     expect(tables()).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Свернуть все" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Сечения AWG ↔ мм² 4" }));
+    expect(tables()).toHaveLength(0);
+  });
+
+  it("starts open, toggles a block without opt-in, and keeps its count and accessible target", () => {
+    show({ collapsibleGroups: true, foldedByDefault: true });
+    const toggle = screen.getByRole("button", { name: "МГТФ 2" });
+    const target = document.getElementById(toggle.getAttribute("aria-controls")!);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(target).toBeVisible();
+    toggle.focus();
+    expect(toggle).toHaveFocus();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(target).toHaveAttribute("hidden");
+    expect(screen.queryByText("МГТФ 0,12")).toBeNull();
+    expect(tables().map(marks)).toEqual([["НВ-4 0,5", "НВ-4 0,2"]]);
+    fireEvent.click(toggle);
+    expect(target).not.toHaveAttribute("hidden");
+    expect(tables()).toHaveLength(2);
+  });
+
+  it("folds and unfolds all blocks with one toolbar control", () => {
+    show({ compactBelow: 10 }); // Block controls stay available even for a short list.
+    expect(screen.getAllByRole("button", { name: "Свернуть все" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Свернуть все" }));
+    expect(tables()).toHaveLength(0);
+    expect(headings()).toEqual(["МГТФ 2", "НВ-4 2"]);
+    fireEvent.click(screen.getByRole("button", { name: "Развернуть все" }));
+    expect(tables()).toHaveLength(2);
+  });
+
+  it("persists folds with column widths, isolates storage keys, and restores on remount", () => {
+    localStorage.setItem("erp-table:blocks-test", JSON.stringify({ widths: { name: 180 }, foldedBlocks: ["МГТФ"], foldedSections: [] }));
+    const view = show();
+    expect(tables().map(marks)).toEqual([["НВ-4 0,5", "НВ-4 0,2"]]);
+    fireEvent.click(screen.getByRole("button", { name: "НВ-4 2" }));
+    expect(readSaved("blocks-test")).toMatchObject({ widths: { name: 180 }, foldedBlocks: ["МГТФ", "НВ-4"] });
+    view.rerender(<DataTable label="Провода" rows={parts} columns={partColumns()} rowKey={(row) => row.id} groupBy={(row) => row.series} blocks storageKey="other-blocks" />);
+    expect(tables()).toHaveLength(2);
+    expect(readSaved("other-blocks").foldedBlocks).toEqual([]);
+    view.unmount();
+    show();
+    expect(tables()).toHaveLength(0);
+  });
+
+  it("folds every block even when the browser falls back to showing the list in pages", () => {
+    show({ pageSize: 2 });
+    expect(tables()).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Свернуть все" }));
+    expect(readSaved("blocks-test").foldedBlocks).toEqual(["МГТФ", "НВ-4"]);
+    expect(tables()).toHaveLength(0);
+  });
+
+  it.each(["search", "filter", "chip"])("temporarily opens matching blocks for a %s and preserves saved folds", (mode) => {
+    show({ columns: partColumns().map((column) => ({ ...column, filter: column.key === "maker" })) });
+    fireEvent.click(screen.getByRole("button", { name: "Свернуть все" }));
+    const saved = readSaved("blocks-test").foldedBlocks;
+    const narrow = (value: boolean) => {
+      if (mode === "search") fireEvent.change(screen.getByRole("searchbox"), { target: { value: value ? "НВ-4" : "" } });
+      else if (mode === "chip") fireEvent.click(screen.getByRole("button", { name: /^Без производителя/ }));
+      else {
+        if (!screen.queryByRole("combobox", { name: "Фильтр: Производитель" })) fireEvent.click(screen.getByRole("button", { name: /^Фильтры/ }));
+        fireEvent.change(screen.getByRole("combobox", { name: "Фильтр: Производитель" }), { target: { value: value ? "Спецкабель" : "" } });
+      }
+    };
+    narrow(true);
+    expect(tables().length).toBeGreaterThan(0);
+    expect(readSaved("blocks-test").foldedBlocks).toEqual(saved);
+    fireEvent.click(screen.getByRole("button", { name: mode === "search" ? "НВ-4 2" : "НВ-4 1" }));
+    expect(tables()).toHaveLength(0);
+    narrow(false);
+    expect(tables()).toHaveLength(0);
+    narrow(true);
+    expect(tables().length).toBeGreaterThan(0);
+    expect(readSaved("blocks-test").foldedBlocks).toEqual(saved);
+  });
+
+  it("folds a whole section, keeps child choices, restores it, and opens it for matching searches", () => {
+    const props = { blockSection: (name: string) => name === "НВ-4" ? "Провода НВ" : undefined };
+    let view = show(props);
+    fireEvent.click(screen.getByRole("button", { name: "НВ-4 2" }));
+    const section = screen.getByRole("button", { name: "Провода НВ 2" });
+    const controls = section.getAttribute("aria-controls")!.split(" ").map((id) => document.getElementById(id));
+    fireEvent.click(section);
+    expect(section).toHaveAttribute("aria-expanded", "false");
+    expect(controls.every((node) => node?.hasAttribute("hidden"))).toBe(true);
+    expect(screen.queryByRole("button", { name: "НВ-4 2" })).toBeNull();
+    view.unmount();
+    view = show(props);
+    expect(screen.getByRole("button", { name: "Провода НВ 2" })).toHaveAttribute("aria-expanded", "false");
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "НВ-4" } });
+    expect(screen.getByRole("button", { name: "Провода НВ 2" })).toHaveAttribute("aria-expanded", "true");
+    expect(tables()).toHaveLength(1);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
+    expect(screen.getByRole("button", { name: "Провода НВ 2" })).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Провода НВ 2" }));
+    expect(screen.getByRole("button", { name: "НВ-4 2" })).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Развернуть все" }));
+    expect(tables()).toHaveLength(2);
+  });
+
+  it("tolerates malformed saved folds and unavailable storage", () => {
+    localStorage.setItem("erp-table:blocks-test", JSON.stringify({ foldedBlocks: "wrong", foldedSections: [null, 7] }));
+    const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("disabled"); });
+    const set = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("full"); });
+    try {
+      show();
+      fireEvent.click(screen.getByRole("button", { name: "Свернуть все" }));
+      expect(tables()).toHaveLength(0);
+      fireEvent.click(screen.getByRole("button", { name: "Развернуть все" }));
+      expect(tables()).toHaveLength(2);
+    } finally { get.mockRestore(); set.mockRestore(); }
+    expect(readSaved("blocks-test")).toMatchObject({ foldedBlocks: [], foldedSections: [] });
+  });
+
+  it("skips folded sections when moving between editable blocks or pasting multiple rows", async () => {
+    const save = vi.fn(async () => undefined);
+    const tail = { ...parts[0], id: "tail", name: "Другой провод", series: "Другое" };
+    show({ rows: [...parts, tail], columns: partColumns(save), blockSection: (name) => name === "НВ-4" ? "Провода НВ" : undefined });
+    fireEvent.click(screen.getByRole("button", { name: "Провода НВ 2" }));
+    const lastFirst = tables()[0].querySelectorAll("tbody tr")[1].querySelectorAll("td")[2];
+    const next = tables()[1].querySelector("tbody tr")!.querySelectorAll("td")[2];
+    fireEvent.click(lastFirst);
+    fireEvent.keyDown(lastFirst, { key: "ArrowDown" });
+    expect(next).toHaveClass("dt-active");
+    fireEvent.click(lastFirst);
+    await act(async () => { fireEvent.paste(lastFirst, { clipboardData: { getData: () => "Первый\nВторой" } }); });
+    expect(save.mock.calls).toEqual([[parts[1], "Первый"], [tail, "Второй"]]);
   });
 });
 
 it("opens groups folded by default, a click opens one, a search opens them all", () => {
-  render(<DataTable rows={rows} columns={columns} rowKey={(row) => row.id} label="Склад" groupBy={(row) => row.supplier} blocks collapsibleGroups foldedByDefault />);
+  render(<DataTable rows={rows} columns={columns} rowKey={(row) => row.id} label="Склад" groupBy={(row) => row.supplier} collapsibleGroups foldedByDefault />);
   expect(screen.queryByText("Разъём Molex")).toBeNull();
   const fold = screen.getByRole("button", { name: /Кабель-Торг/ });
   expect(fold.getAttribute("aria-expanded")).toBe("false");
@@ -820,7 +954,7 @@ it("opens groups folded by default, a click opens one, a search opens them all",
 });
 
 it("opens and folds every group of a folded list at once", () => {
-  render(<DataTable rows={rows} columns={columns} rowKey={(row) => row.id} label="Склад" groupBy={(row) => row.supplier} blocks collapsibleGroups foldedByDefault />);
+  render(<DataTable rows={rows} columns={columns} rowKey={(row) => row.id} label="Склад" groupBy={(row) => row.supplier} collapsibleGroups foldedByDefault />);
   fireEvent.click(screen.getByRole("button", { name: "Развернуть все" }));
   expect(screen.getByText("Разъём JST XH")).toBeTruthy();
   expect(screen.getByText("Разъём Molex")).toBeTruthy();
