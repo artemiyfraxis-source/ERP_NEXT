@@ -501,7 +501,14 @@ class SqlAlchemyShipmentRepository:
         row = self.session.get(ShipmentRow, shipment_id)
         return self._domain(row) if row is not None else None
     def list(self, limit: int = 200) -> list[Shipment]:
-        rows = self.session.scalars(select(ShipmentRow).order_by(ShipmentRow.created_at.desc(), ShipmentRow.id.desc()).limit(limit))
+        # PostgreSQL stores an instant; SQLite keeps the Moscow wall time written by moscow_now.
+        created_at = ShipmentRow.created_at
+        if self.session.get_bind().dialect.name == "postgresql":
+            created_at = func.timezone("Europe/Moscow", created_at)
+        effective_day = func.coalesce(ShipmentRow.shipped_at, ShipmentRow.deadline, func.date(created_at))
+        rows = self.session.scalars(select(ShipmentRow).order_by(
+            effective_day.desc(), ShipmentRow.created_at.desc(), ShipmentRow.id.desc(),
+        ).limit(limit))
         return [self._domain(row) for row in rows]
     def for_project(self, project: str) -> list[Shipment]:
         """Отправки, где есть позиция проекта (точно по `normalize_project_number`, по индексу ключа позиций)."""

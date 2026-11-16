@@ -628,6 +628,7 @@ def shipments(
                 raise HTTPException(status_code=404, detail="Отгрузка не найдена")
             rows = [selected]
         else:
+            # Repository applies shipment-day ordering before the bounded journal selection.
             rows = uow.shipments.list(limit)
     return {"shipments": [_shipment_result(shipment) for shipment in rows]}
 

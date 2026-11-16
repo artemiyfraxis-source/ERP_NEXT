@@ -3,7 +3,8 @@ import { AutoTextarea } from "./AutoTextarea";
 import { failureText, shippingApi, type Shipment } from "./api";
 import { CarrierSelect, isPickup, needsTrack, termsFor, termsText } from "./carriers";
 import { readFile } from "./DispatchCard";
-import { formatDate } from "./format";
+import { formatDate, formatDay } from "./format";
+import { shipmentDateKind, shipmentDay } from "./shipmentOrder";
 import { isoDay } from "./Gantt";
 import { PageWindow } from "./PageWindow";
 import { daysUntil } from "./productionGraph";
@@ -208,6 +209,7 @@ export function ShipmentCard({ shipment, rights, busy, mutate, openData }: {
   return <article className={`ship-card${shipment.status === "Отменена" ? " cancelled" : ""}`} aria-label={`Отправка ${shipment.number}`}>
     <div className="ship-card-head">
       <strong>{shipment.number}</strong><ShipStatus status={shipment.status} />
+      <span>{formatDay(shipmentDay(shipment))} · {shipmentDateKind(shipment)}</span>
       <span>{shipment.shipping_point.trim() ? destination({ ...shipment, receiver: shipment.receiver || shipment.customer })
         : <><span className={["Новая", "Собрана"].includes(shipment.status) ? "muted" : "tone-danger"}>адрес не указан</span>{` · ${shipment.receiver || shipment.customer}`}</>}</span>
       {shipment.deadline && <span>срок <Due day={shipment.deadline} late={overdue(shipment)} since={shipment.created_at} /></span>}
@@ -322,7 +324,10 @@ const HEAD_FIELDS: Array<[keyof Shipment & string, string]> = [
 ];
 
 /** Шапка открытой отправки. Поле сохраняется при уходе из него; пустое поле адресата снова берётся из карточки проекта. */
-function ShipmentHead({ shipment, busy, mutate }: { shipment: Shipment; busy: string; mutate: Mutate }) {
+export function ShipmentHead({ shipment, busy, mutate }: {
+  shipment: Shipment; busy: string;
+  mutate: (key: string, operation: () => Promise<unknown>, message: string) => Promise<boolean>;
+}) {
   const initial = (): Record<string, string> => ({
     ...Object.fromEntries(HEAD_FIELDS.map(([key]) => [key, String(shipment[key] ?? "")])),
     deadline: shipment.deadline ?? "", note: shipment.note,
