@@ -908,6 +908,26 @@ def schema_columns(tab: str, fields: Mapping[str, str]) -> dict[str, str]:
     return {field.key: columns[resolved[field.key]] for field in schema_fields if field.store and resolved[field.key] >= 0}
 
 
+def terminal_field_twins(fields: Mapping[str, str]) -> dict[str, tuple[str, ...]]:
+    """All present sheet aliases of each terminal key, using the import's resolvers.
+
+    Resolve columns individually so a second alias is kept in sync too; terGender is
+    derived from the contact type, rather than an equal-value twin.
+    """
+    groups: dict[str, list[str]] = {}
+    keys = schema_keys("ter")
+    for column in fields:
+        if column in keys:
+            continue
+        resolved = _resolve_schema(_TECH_SCHEMA["ter"][0], [column])
+        resolved.update(_range_indexes([column]))
+        resolved.update(terminal_card_indexes([column]))
+        for key, index in resolved.items():
+            if index >= 0:
+                groups.setdefault(key, []).append(column)
+    return {key: (key, *columns) for key, columns in groups.items()}
+
+
 def sync_schema_fields(tab: str, fields: Mapping[str, str]) -> dict[str, str]:
     """Sheet columns → the schema values the generator reads (opName, terArticle…), as the import derives them.
     A record without sheet columns (imported before they were kept) is returned unchanged."""

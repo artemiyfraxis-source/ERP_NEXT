@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.main import app
+from app.modules.references.technology import terminal_card
 from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
@@ -70,6 +71,71 @@ def test_edit_is_atomic_and_rejects_stale_and_formulas(references_api):
     assert unknown.status_code == 409
     assert missing.status_code == 404
     assert current["fields"] == {"Марка": "МГТФ", "Сечение": "0,35"}
+
+
+@pytest.mark.parametrize("tab", ["ter", "lug"])
+@pytest.mark.parametrize("key,column,card_key,old,new", [
+    ("mm2From", "От мм2", "mm2_from", "0,35", "0,5"),
+    ("mm2To", "До мм²", "mm2_to", "1", "1,5"),
+    ("awgFrom", "От AWG", "awg_from", "28", "26"),
+    ("awgTo", "До AWG", "awg_to", "20", "18"),
+    ("terStrip", "Длина зачистки, мм", "strip", "3", "4"),
+    ("terArticleBag", "Артикул контакта (BAG)", "article_bag", "BAG-1", "BAG-2"),
+    ("terInsOdFrom", "Диаметр изоляции от, мм", "ins_od_from", "1", "1,5"),
+    ("terMaterial", "Материал контакта", "material", "Brass / Tin", "Copper / Tin"),
+])
+def test_terminal_key_and_column_edits_keep_twins_and_card_equal(references_api, tab, key, column, card_key, old, new):
+    record = _seed_record(references_api, tab=tab, fields={key: old, column: old})
+    url = f"/api/references/tech-operations/{record['id']}"
+    for name, before, after in ((key, old, new), (column, new, old), (key, old, "")):
+        response = references_api.patch(url, json={"edits": [{"field": name, "old": before, "value": after}]})
+        assert response.status_code == 200, response.text
+        updated = response.json()
+        assert updated["fields"][key] == updated["fields"][column] == after
+        assert terminal_card(updated["fields"])[card_key] == after
+    persisted = references_api.get("/api/references/tech-operations", params={"tab": tab}).json()["records"][0]
+    assert persisted["fields"][key] == persisted["fields"][column] == ""
+
+
+@pytest.mark.parametrize("tab", ["ter", "lug"])
+@pytest.mark.parametrize("stale", ["mm2From", "От мм2"])
+def test_terminal_stale_twin_refuses_the_whole_edit(references_api, tab, stale):
+    fields = {"mm2From": "0,35", "От мм2": "0,35", "Примечание": "до"}
+    record = _seed_record(references_api, tab=tab, fields=fields)
+    edits = [{"field": name, "old": "устарело" if name == stale else "0,35", "value": "0,5"}
+             for name in ("mm2From", "От мм2")]
+    edits.append({"field": "Примечание", "old": "до", "value": "после"})
+    response = references_api.patch(f"/api/references/tech-operations/{record['id']}", json={"edits": edits})
+    assert response.status_code == 409 and "уже поменяли" in response.json()["detail"]
+    current = references_api.get("/api/references/tech-operations", params={"tab": tab}).json()["records"][0]
+    assert current["fields"] == record["fields"]
+
+
+@pytest.mark.parametrize("tab", ["ter", "lug"])
+def test_terminal_edits_update_all_aliases_and_refuse_conflicting_values(references_api, tab):
+    record = _seed_record(references_api, tab=tab, fields={
+        "mm2From": "0,35", "От мм2": "0,35", "От мм²": "0,35",
+    })
+    url = f"/api/references/tech-operations/{record['id']}"
+    conflict = references_api.patch(url, json={"edits": [
+        {"field": "mm2From", "old": "0,35", "value": "0,5"},
+        {"field": "От мм²", "old": "0,35", "value": "0,75"},
+    ]})
+    assert conflict.status_code == 409
+    for name, before, after in (("mm2From", "0,35", "0,5"), ("От мм²", "0,5", "0,75")):
+        response = references_api.patch(url, json={"edits": [{"field": name, "old": before, "value": after}]})
+        assert response.status_code == 200, response.text
+        assert all(response.json()["fields"][field] == after for field in ("mm2From", "От мм2", "От мм²"))
+
+
+@pytest.mark.parametrize("tab", ["ter", "lug"])
+def test_terminal_legacy_row_accepts_a_missing_range_key(references_api, tab):
+    record = _seed_record(references_api, tab=tab, fields={"От мм2": "0,35"})
+    response = references_api.patch(f"/api/references/tech-operations/{record['id']}", json={
+        "edits": [{"field": "mm2From", "old": "", "value": "0,5"}],
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["fields"]["mm2From"] == response.json()["fields"]["От мм2"] == "0,5"
 
 
 def test_creates_row_needs_a_filled_field_and_rejects_view_only_bases(references_api):

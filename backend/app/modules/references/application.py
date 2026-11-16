@@ -39,7 +39,7 @@ from .equipment import (
 )
 from .technology import (
     COAX_CABLE_DIAMETERS_REASON, TECH_SNAPSHOT_SCHEMA_VERSION, is_coax_cable_column, operation_grade_problem, schema_columns,
-    schema_display_text, schema_keys, stored_schema_keys, sync_schema_fields, terminal_card_problems,
+    schema_display_text, schema_keys, stored_schema_keys, sync_schema_fields, terminal_card_problems, terminal_field_twins,
 )
 
 
@@ -327,7 +327,7 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
     fields = dict(record.fields)
     display = record.display_text
     refused: list[str] = []
-    stored = stored_schema_keys(record.tab.value)
+    stored = schema_keys(record.tab.value) if record.tab in TERMINAL_TABS else stored_schema_keys(record.tab.value)
     own_columns: list[str] | None = None  # the owner's columns: a row that came from a mirror reload may lack one
     for edit in edits:
         if edit.field not in record.fields and own_columns is None:
@@ -368,12 +368,23 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
     # A sheet column edit also moves the schema value the generator reads (Название → opName); a schema value edited
     # (the generator's «Записать в БД»: terLMinus) goes to its sheet column too, else the sync takes it back.
     edited = {edit.field for edit in edits}
+    twins_by_key = terminal_field_twins(fields) if record.tab in TERMINAL_TABS else {}
+    for twins in twins_by_key.values():
+        values = {fields[name] for name in twins if name in edited}
+        if len(values) > 1:
+            raise StaleRecordError("Не записано ничего — значения одного поля расходятся: " + ", ".join(twins))
+        if values:
+            value = next(iter(values))
+            fields.update(dict.fromkeys(twins, value))
     for key, column in schema_columns(record.tab.value, record.fields).items():
         if key in edited and column not in edited:
             fields[column] = fields[key]
     synced = sync_schema_fields(record.tab.value, fields)
     keys = schema_keys(record.tab.value)
     fields = {key: (fields[key] if key in keys and key in edited else value) for key, value in synced.items()}
+    for key, twins in twins_by_key.items():
+        if edited.intersection(twins):
+            fields.update(dict.fromkeys(twins, fields[key]))  # keep normalized card values equal too (material)
     fields = _without_empty_cable_columns(record.tab, fields)
     _check_terminal_card(record.tab, fields)
     if record.tab == TechOperationTab.OPERATION:
