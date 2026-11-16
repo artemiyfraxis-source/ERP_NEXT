@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { QualityPage } from "./QualityPage";
 import type { Principal, ProductionInstrument, ProductionOperation, ProductionTask } from "./api";
 
@@ -105,6 +105,7 @@ function qualityFetch(data: Data = {}, post: (path: string, body: unknown) => Re
   return requested;
 }
 
+beforeEach(() => { window.history.replaceState({}, "", "/?section=quality"); localStorage.clear(); });
 afterEach(() => { vi.restoreAllMocks(); });
 
 const headings = () => screen.queryAllByRole("heading", { level: 2 }).map((heading) => heading.textContent);
@@ -115,7 +116,9 @@ it("shows the QC inspector the queue and the instruments, not the master's rejec
 
   expect(await screen.findByRole("heading", { name: "Очередь ОТК" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "ОТК", level: 1 })).toBeInTheDocument();
-  expect(headings()).toEqual(["Очередь ОТК", "Замеры КСВН", "Средства измерения"]);
+  expect(headings()).toEqual(["Очередь ОТК"]);
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Очередь ОТК · 0", "Замеры КСВН", "Средства измерения"]);
+  expect(screen.queryByRole("tab", { name: /Брак/ })).not.toBeInTheDocument();
   expect(requested).not.toContain("/api/production/defects");
   expect(requested).not.toContain("/api/production/qc/rejections");
 });
@@ -205,17 +208,84 @@ it("accepts a box at QC against the registered instruments that are still valid"
   render(<QualityPage principal={qc} />);
 
   const picker = await screen.findByLabelText("Средства измерения 000003-4");
-  expect(within(picker).getAllByRole("option")).toHaveLength(1);
-  (within(picker).getByRole("option") as HTMLOptionElement).selected = true;
-  fireEvent.change(picker);
+  expect(within(picker).getAllByRole("button")).toHaveLength(1);
+  expect(within(picker).getByText("не выбраны")).toBeInTheDocument();
+  fireEvent.click(within(picker).getByRole("button", { name: "+ СИ" }));
+  const popup = screen.getByRole("dialog", { name: "Выбрать СИ · 000003-4" });
+  expect(within(popup).getAllByRole("checkbox")).toHaveLength(1);
+  const toggle = within(popup).getByRole("checkbox", { name: "СИ-014 Микрометр МК-25" });
+  expect(toggle).not.toBeChecked();
+  fireEvent.click(toggle);
+  expect(toggle).toBeChecked();
+  expect(within(picker).getByRole("button", { name: "Убрать СИ-014 Микрометр МК-25" })).toHaveAttribute("title", expect.stringContaining("поверка до 01.09.2027"));
+  expect(within(picker).queryByText("не выбраны")).not.toBeInTheDocument();
+  fireEvent.keyDown(toggle, { key: "Escape" });
   fireEvent.click(screen.getByRole("button", { name: "Принять ОТК" }));
 
   await waitFor(() => expect(payload).toMatchObject({ version: 1, accepted: 5, rejected: 0, instrument_ids: [micrometer.id] }));
 });
 
+it("removes a selected chip and restores the empty selection with focus on the add button", async () => {
+  localStorage.setItem("erp-quality-last-instruments", JSON.stringify([micrometer.id]));
+  qualityFetch({ boxes: [box("000003-4", 3, assembly)], instruments: [micrometer] });
+  render(<QualityPage principal={qc} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Убрать СИ-014 Микрометр МК-25" }));
+  expect(screen.queryByRole("button", { name: /^Убрать/ })).not.toBeInTheDocument();
+  expect(screen.getByText("не выбраны")).toBeInTheDocument();
+  const add = screen.getByRole("button", { name: "+ СИ" });
+  expect(add).toHaveFocus();
+  fireEvent.click(add);
+  expect(screen.getByRole("checkbox")).not.toBeChecked();
+  expect(screen.queryByRole("searchbox", { name: "Найти СИ" })).not.toBeInTheDocument();
+});
+
+it("searches more than eight active instruments, preserves selection across searches and returns focus on Escape", async () => {
+  const instruments = Array.from({ length: 9 }, (_, index) => ({ ...micrometer, id: `si-${index}`, inventory_number: `СИ.${index + 1}`, name: `Микрометр ${index + 1} · полное наименование` }));
+  qualityFetch({ boxes: [box("000003-4", 3, assembly)], instruments });
+  render(<QualityPage principal={qc} />);
+  const add = await screen.findByRole("button", { name: "+ СИ" });
+  fireEvent.click(add);
+  const search = screen.getByRole("searchbox", { name: "Найти СИ" });
+  expect(search).toHaveFocus();
+  expect(add).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getAllByRole("checkbox")).toHaveLength(9);
+  fireEvent.change(search, { target: { value: "микрометр 9" } });
+  expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+  fireEvent.click(screen.getByRole("checkbox"));
+  expect(screen.getByRole("button", { name: "Убрать СИ.9 Микрометр 9 · полное наименование" })).toHaveTextContent("СИ.9 Микрометр 9×");
+  fireEvent.change(search, { target: { value: "СИ.1" } });
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.change(search, { target: { value: "нет такого прибора" } });
+  expect(screen.getByText("СИ не найдены")).toBeInTheDocument();
+  fireEvent.keyDown(search, { key: "Escape" });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(add).toHaveFocus();
+  expect(add).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getAllByRole("button", { name: /^Убрать/ })).toHaveLength(2);
+  fireEvent.click(add);
+  expect(screen.getByRole("searchbox", { name: "Найти СИ" })).toHaveValue("");
+  expect(screen.getByRole("checkbox", { name: "СИ.9 Микрометр 9 · полное наименование" })).toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: "Закрыть выбор СИ" }));
+  expect(add).toHaveFocus();
+});
+
+it("dismisses the instrument popup on outside pointer or focus and offers an honest empty list", async () => {
+  qualityFetch({ boxes: [box("000003-4", 3, assembly)] });
+  render(<QualityPage principal={qc} />);
+  const add = await screen.findByRole("button", { name: "+ СИ" });
+  fireEvent.click(add);
+  expect(screen.getByText("Нет действующих СИ")).toBeInTheDocument();
+  fireEvent.pointerDown(document.body);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  fireEvent.click(add);
+  fireEvent.focusIn(screen.getByLabelText("Годные ОТК 000003-4"));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
 it("opens the instrument editor in a modal and lists verification dates without time", async () => {
   qualityFetch({ instruments: [micrometer] });
   render(<QualityPage principal={qc} />);
+  fireEvent.click(await screen.findByRole("tab", { name: "Средства измерения" }));
   const table = (await screen.findByRole("heading", { name: "Средства измерения" })).closest(".panel") as HTMLElement;
   expect(within(table).getByRole("columnheader", { name: /Поверка до/ })).toBeInTheDocument();
   expect(within(table).getByText("01.09.2027")).toBeInTheDocument();
@@ -260,17 +330,110 @@ it("says there is no reject to decide instead of leaving the master a blank page
   expect(screen.getByText(/Брака цеха на решение нет/)).toBeInTheDocument();
 });
 
-it("shows the administrator all four blocks of the section", async () => {
+it("shows the administrator all four tabs, with only the selected job visible", async () => {
   qualityFetch({ instruments: [micrometer], rejections: [rejection], defects: [defect] });
   render(<QualityPage principal={admin} />);
-  expect(await screen.findByRole("heading", { name: "Средства измерения" })).toBeInTheDocument();
-  expect(headings()).toEqual(["Очередь ОТК", "Замеры КСВН", "Брак ОТК", "Брак цеха", "Средства измерения"]);
+  expect(await screen.findByRole("heading", { name: "Очередь ОТК" })).toBeInTheDocument();
+  expect(screen.getAllByRole("tab")).toHaveLength(4);
+  fireEvent.click(screen.getByRole("tab", { name: "Брак · 2" }));
+  expect(headings()).toEqual(["Брак ОТК", "Брак цеха"]);
+  fireEvent.click(screen.getByRole("tab", { name: "Средства измерения" }));
+  expect(headings()).toEqual(["Средства измерения"]);
 });
 
 it("shows the load failure instead of a blank section", async () => {
   vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Нет связи с ERP"));
   render(<QualityPage principal={qc} />);
   expect(await screen.findByRole("alert")).toHaveTextContent("Нет связи с ERP");
+});
+
+it("keeps tab URLs, queue drafts and loaded data when switching jobs", async () => {
+  const requested = qualityFetch({ boxes: [box("000003-4", 3, assembly)], instruments: [micrometer] });
+  render(<QualityPage principal={qc} />);
+  fireEvent.change(await screen.findByLabelText("Брак ОТК 000003-4"), { target: { value: "1" } });
+  fireEvent.click(screen.getByRole("button", { name: "+ СИ" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "СИ-014 Микрометр МК-25" }));
+  fireEvent.keyDown(document, { key: "Escape" });
+  const before = [...requested];
+  fireEvent.click(screen.getByRole("tab", { name: "Средства измерения" }));
+  expect(new URL(window.location.href).searchParams.get("tab")).toBe("instruments");
+  expect(screen.queryByRole("heading", { name: "Очередь ОТК" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "Очередь ОТК · 1" }));
+  expect(screen.getByLabelText("Брак ОТК 000003-4")).toHaveValue(1);
+  expect(screen.getByRole("button", { name: "Убрать СИ-014 Микрометр МК-25" })).toBeInTheDocument();
+  expect(requested).toEqual(before);
+});
+
+it("falls back to the first permitted tab for a forbidden deep link", async () => {
+  window.history.replaceState({}, "", "/?section=quality&tab=instruments");
+  qualityFetch();
+  render(<QualityPage principal={master} />);
+  expect(await screen.findByRole("tab", { name: "Брак · 0", selected: true })).toBeInTheDocument();
+  expect(new URL(window.location.href).searchParams.get("tab")).toBe("rejects");
+});
+
+it("validates quantities before opening a rejection dialog, then sends its details", async () => {
+  let payload: unknown;
+  qualityFetch({ boxes: [box("000003-4", 3, assembly)] }, (path, body) => {
+    if (!path.endsWith("/qc")) return null;
+    payload = body; return json({ box: box("000003-4", 3, assembly) });
+  });
+  render(<QualityPage principal={qc} />);
+  fireEvent.change(await screen.findByLabelText("Брак ОТК 000003-4"), { target: { value: "1" } });
+  expect(screen.getByRole("button", { name: "Принять ОТК" })).toBeDisabled();
+  expect(screen.getByText("Сумма должна быть 5.")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Годные ОТК 000003-4"), { target: { value: "4" } });
+  fireEvent.click(screen.getByRole("button", { name: "Принять ОТК" }));
+  const dialog = screen.getByRole("dialog");
+  expect(within(dialog).getByRole("button", { name: "Принять ОТК" })).toBeDisabled();
+  fireEvent.change(within(dialog).getByLabelText("Характер"), { target: { value: "Обрыв" } });
+  fireEvent.change(within(dialog).getByLabelText("Описание"), { target: { value: "Нет контакта" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Принять ОТК" }));
+  await waitFor(() => expect(payload).toMatchObject({ accepted: 4, rejected: 1, defect_character: "Обрыв", defect_description: "Нет контакта" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+});
+
+it("remembers successfully accepted instruments and ignores inactive saved IDs", async () => {
+  localStorage.setItem("erp-quality-last-instruments", JSON.stringify([micrometer.id, unverifiedInstrument.id]));
+  qualityFetch({ boxes: [box("000003-4", 3, assembly)], instruments: [micrometer, unverifiedInstrument] }, (path) => path.endsWith("/qc") ? json({}) : null);
+  render(<QualityPage principal={qc} />);
+  expect(await screen.findByRole("button", { name: "Убрать СИ-014 Микрометр МК-25" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Принять ОТК" }));
+  await waitFor(() => expect(JSON.parse(localStorage.getItem("erp-quality-last-instruments")!)).toEqual([micrometer.id]));
+});
+
+it("accepts a box when browser storage is unavailable", async () => {
+  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Storage disabled"); });
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("Storage disabled"); });
+  let payload: unknown;
+  qualityFetch({ boxes: [box("000003-4", 3, assembly)], instruments: [micrometer] }, (path, body) => {
+    if (!path.endsWith("/qc")) return null;
+    payload = body; return json({});
+  });
+  render(<QualityPage principal={qc} />);
+  fireEvent.click(await screen.findByRole("button", { name: "+ СИ" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "СИ-014 Микрометр МК-25" }));
+  fireEvent.keyDown(document, { key: "Escape" });
+  fireEvent.click(screen.getByRole("button", { name: "Принять ОТК" }));
+  await waitFor(() => expect(payload).toMatchObject({ accepted: 5, rejected: 0, instrument_ids: [micrometer.id] }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Принять ОТК" })).toBeEnabled());
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("accepts without browser storage and keeps a failed rejection dialog open", async () => {
+  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Storage disabled"); });
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("Storage disabled"); });
+  qualityFetch({ boxes: [box("000003-4", 3, assembly)] }, (path) => path.endsWith("/qc") ? new Response(JSON.stringify({ detail: "Коробка изменена" }), { status: 400 }) : null);
+  render(<QualityPage principal={qc} />);
+  fireEvent.change(await screen.findByLabelText("Годные ОТК 000003-4"), { target: { value: "4" } });
+  fireEvent.change(screen.getByLabelText("Брак ОТК 000003-4"), { target: { value: "1" } });
+  fireEvent.click(screen.getByRole("button", { name: "Принять ОТК" }));
+  const dialog = screen.getByRole("dialog");
+  fireEvent.change(within(dialog).getByLabelText("Характер"), { target: { value: "Обрыв" } });
+  fireEvent.change(within(dialog).getByLabelText("Описание"), { target: { value: "Нет контакта" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Принять ОТК" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Коробка изменена");
+  expect(dialog).toBeInTheDocument();
 });
 
 // --- Замеры КСВН ------------------------------------------------------------------------------------------------------
@@ -300,6 +463,7 @@ const vna = { ...micrometer, name: "Анализатор цепей", instrument
 
 // Список заданий приходит отдельным запросом: ждём строку выбора, потом выбираем.
 async function pickTask() {
+  fireEvent.click(await screen.findByRole("tab", { name: "Замеры КСВН" }));
   const picker = await screen.findByLabelText("Задание");
   await within(picker).findByRole("option", { name: /ПЗ-0001/ });
   fireEvent.change(picker, { target: { value: branched.id } });
@@ -370,6 +534,7 @@ it("every unit: the norm line says so and every unit is required", async () => {
 it("the task picker lists only the coax tasks from the vswr endpoint, with the measured count", async () => {
   qualityFetch({ instruments: [vna], vswrTasks: [listed()] }); // /api/production/tasks has a task too, but it is not a coax one
   render(<QualityPage principal={qc} />);
+  fireEvent.click(await screen.findByRole("tab", { name: "Замеры КСВН" }));
   const picker = await screen.findByLabelText("Задание");
   await within(picker).findByRole("option", { name: /ПЗ-0001/ });
   const options = within(picker).getAllByRole("option").map((option) => option.textContent);
@@ -379,6 +544,7 @@ it("the task picker lists only the coax tasks from the vswr endpoint, with the m
 it("the task picker says there are no coax tasks when the list is empty", async () => {
   qualityFetch({ instruments: [vna], vswrTasks: [] });
   render(<QualityPage principal={qc} />);
+  fireEvent.click(await screen.findByRole("tab", { name: "Замеры КСВН" }));
   expect(await screen.findByText("Нет заданий на коаксиальные сборки")).toBeInTheDocument();
   expect(within(await screen.findByLabelText("Задание")).getAllByRole("option")).toHaveLength(1);
 });
@@ -463,10 +629,71 @@ it("leads a failed unit into the QC queue with the reject prefilled", async () =
   expect(screen.getByLabelText("Годные ОТК 000003-4")).toHaveValue(4);
   expect(screen.getByDisplayValue("КСВН выше нормы")).toBeInTheDocument();
   expect(screen.getByDisplayValue(/Изделие ПЗ-0001-01: макс\. КСВН 2,4 на/)).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Очередь ОТК · 1", selected: true })).toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: "Приёмка с браком · 000003-4" })).toBeInTheDocument();
 });
 
 it("offers no way into rejects for a failed unit when no box of the task waits in the queue", async () => {
   await openVswr(okNorm, measurement("fail"));
   await screen.findAllByText("Не годно");
   expect(screen.queryByRole("button", { name: "В брак ОТК" })).not.toBeInTheDocument();
+});
+
+it("links the queued box to its coax task, preferring it to the first task, without refetching on tab switches", async () => {
+  const requested = qualityFetch({ boxes: [box("000003-4", 3, assembly)],
+    vswrTasks: [listed({ id: "other", number: "ПЗ-0002" }), listed()],
+    get: (path) => path === vswrBase ? json({ ...overview(okNorm), required: { measured: 3, total: 10 } }) : null });
+  render(<QualityPage principal={qc} />);
+  const link = await screen.findByRole("button", { name: "замерено 3 из 10" });
+  expect(link).toHaveClass("tone-warn");
+  await waitFor(() => expect(requested).toContain(vswrBase));
+  const before = [...requested];
+  fireEvent.click(link);
+  expect(screen.getByRole("tab", { name: "Замеры КСВН", selected: true })).toBeInTheDocument();
+  expect(screen.getByLabelText("Задание")).toHaveValue(branched.id);
+  expect(new URL(window.location.href).searchParams.get("tab")).toBe("vswr");
+  fireEvent.click(screen.getByRole("tab", { name: "Очередь ОТК · 1" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Замеры КСВН" }));
+  expect(requested).toEqual(before);
+});
+
+it.each([
+  [{ mode: "all", every: null }, { measured: 10, total: 10 }, "замерено 10 из 10", "tone-ok"],
+  [{ mode: "none", every: null }, { measured: 0, total: 0 }, "не требуется", "tone-neutral"],
+])("shows the completed or unnecessary VSWR state of a queued coax task", async (control, required, label, tone) => {
+  qualityFetch({ boxes: [box("000003-4", 3, assembly)], vswrTasks: [listed({ control, required })],
+    get: (path) => path === vswrBase ? json({ ...overview(okNorm), control, required }) : null });
+  render(<QualityPage principal={qc} />);
+  expect(await screen.findByRole("button", { name: label as string })).toHaveClass(tone as string);
+});
+
+it("updates the queue measurement count after uploading a trace", async () => {
+  const saved = measurement("pass");
+  let uploaded = false;
+  qualityFetch({ boxes: [box("000003-4", 3, assembly)], instruments: [vna], vswrTasks: [listed()],
+    get: (path) => path === vswrBase ? json(overview(okNorm, uploaded ? saved : null)) : null }, (path) => {
+    if (path !== "/api/production/vswr") return null;
+    uploaded = true; return json({ measurement: saved, position: 1 });
+  });
+  render(<QualityPage principal={qc} />);
+  await pickTask();
+  fireEvent.click((await screen.findAllByRole("button", { name: "Загрузить замер" }))[0]);
+  const dialog = screen.getByRole("dialog");
+  fireEvent.change(within(dialog).getByLabelText("Файл замера"), { target: { files: [new File(["x"], "a.s1p")] } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Загрузить замер" }));
+  await within(dialog).findByRole("img", { name: /График КСВН/ });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Закрыть" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Очередь ОТК · 1" }));
+  expect(await screen.findByRole("button", { name: "замерено 1 из 10" })).toBeInTheDocument();
+});
+
+it("opens a deep-linked tab and follows keyboard and browser navigation", async () => {
+  window.history.replaceState({}, "", "/?section=quality&tab=instruments");
+  qualityFetch(); render(<QualityPage principal={admin} />);
+  expect(await screen.findByRole("tab", { name: "Средства измерения", selected: true })).toBeInTheDocument();
+  fireEvent.keyDown(screen.getByRole("tab", { name: "Средства измерения" }), { key: "Home" });
+  expect(screen.getByRole("tab", { name: "Очередь ОТК · 0" })).toHaveFocus();
+  window.history.replaceState({}, "", "/?section=quality&tab=rejects");
+  fireEvent.popState(window);
+  expect(screen.getByRole("tab", { name: "Брак · 0", selected: true })).toBeInTheDocument();
 });
