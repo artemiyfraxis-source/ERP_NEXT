@@ -117,6 +117,16 @@ class VnaSessionRepository:
         if (row.version, row.step) != (version, step):
             raise domain.SessionConflict("Сессия изменилась — обновите шаг")
 
+    def lock(self, row):
+        """Serialize claim, operator actions and recording before reading command state."""
+        locked = self.session.execute(update(VnaSessionRow).where(
+            VnaSessionRow.id == row.id, VnaSessionRow.version == row.version,
+            VnaSessionRow.step == row.step, VnaSessionRow.state == row.state,
+        ).values(updated_at=VnaSessionRow.updated_at).execution_options(synchronize_session=False))
+        if locked.rowcount != 1:
+            raise domain.SessionConflict("Сессия изменилась — обновите шаг")
+        self.session.refresh(row)
+
     def _change(self, row, now, **values):
         changed = self.session.execute(update(VnaSessionRow).where(
             VnaSessionRow.id == row.id, VnaSessionRow.version == row.version,
@@ -145,6 +155,7 @@ class VnaSessionRepository:
             self._enqueue(row, next_step["op"], next_step["args"], now)
 
     def act(self, row, action, version, step, now):
+        self.lock(row)
         self.expect(row, version, step)
         if action == "plan" and row.state == "draft":
             self._change(row, now, state="planned")
@@ -162,12 +173,20 @@ class VnaSessionRepository:
             raise domain.SessionConflict("Действие недоступно на текущем шаге")
 
     def _abort(self, row, now):
-        untouched = row.state in ("draft", "planned")
-        self._change(row, now, state="aborted" if untouched else "aborting", error="")
+        # act() holds the same row lock as claim(): pending cannot turn into claimed here.
+        prepare_unclaimed = row.step == 0 and row.state == "preparing" and self.session.scalar(
+            select(VnaCommandRow.id).where(
+                VnaCommandRow.session_id == row.id, VnaCommandRow.expected_version == row.version,
+                VnaCommandRow.op == "prepare", VnaCommandRow.status == "pending",
+                VnaCommandRow.claimed_at.is_(None),
+            )) is not None
+        # Review is reached only after the final restore receipt has been accepted.
+        local_abort = row.state in ("draft", "planned", "review") or prepare_unclaimed
+        self._change(row, now, state="aborted" if local_abort else "aborting", error="")
         self.session.execute(update(VnaCommandRow).where(
             VnaCommandRow.session_id == row.id, VnaCommandRow.status.in_(("pending", "claimed")),
         ).values(status="cancelled", finished_at=now))
-        if not untouched:
+        if not local_abort:
             self._enqueue(row, "abort", {}, now)
 
     def expire(self, now, *, machine_id=None, session_id=None):
@@ -195,11 +214,7 @@ class VnaSessionRepository:
         row = self.get(command.session_id)
         self.expect(row, command.expected_version, command.expected_step)
         # Serialize claim with abort/result using the same session row. Claim is not a new logical step.
-        locked = self.session.execute(update(VnaSessionRow).where(
-            VnaSessionRow.id == row.id, VnaSessionRow.version == row.version,
-        ).values(updated_at=row.updated_at))
-        if locked.rowcount != 1:
-            raise domain.SessionConflict("Сессия изменилась")
+        self.lock(row)
         self.session.execute(update(VnaCommandRow).where(
             VnaCommandRow.id == command.id, VnaCommandRow.status == "pending",
         ).values(status="claimed", claimed_at=now))

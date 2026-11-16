@@ -47,13 +47,15 @@ and serial for confirmation. No new local browser-pairing mechanism is introduce
 
 ## Operator API and snapshots
 
-All browser endpoints require the existing quality-edit permission and the session's operator identity.
+All browser endpoints require the existing quality-edit permission. Session control and original artifact
+downloads additionally require the session's operator identity; recording permits a QC editor, as does VSWR upload.
 
 | Endpoint | Body / behavior |
 |---|---|
 | `POST /api/production/vna-sessions` | `task_id`, `operation_id`, `instrument_id`, `product_position` (1-based), `agent_id`; optional `overrides`, `qualification_reason`. Returns a `draft` session. |
 | `GET /api/production/vna-sessions/{id}` | State/version/step, immutable snapshot, ordered steps, receipts and artifact references. Also runs the lazy command watchdog. |
 | `POST /api/production/vna-sessions/{id}/actions` | `action`, `expected_version`, `expected_step`. Actions: `plan`, `start`, `confirm`, `abort`, `recover`. |
+| `POST /api/production/vna-sessions/{id}/record` | Only `expected_version`. Records server-owned evidence and returns `measurement`, `position`, and `session`. |
 | `GET /api/production/vna-sessions/{id}/artifacts/{artifact_id}` | The original bytes, available to the owning operator. |
 
 Every override is `{field, value, reason}`. Allowed fields are `points`, `if_bandwidth_hz`, `power_dbm`.
@@ -81,14 +83,18 @@ rewrite coefficients automatically. P3 must perform these checks with the live m
 ```text
 draft -> planned -> preparing -> awaiting_standard <-> acquiring_standard
       -> saving_calibration -> awaiting_dut -> acquiring_dut -> review -> recorded
-any started active state -> aborting -> aborted
+started active state -> aborting -> aborted (unless prepare was never claimed)
+draft / planned / unclaimed prepare / review -> aborted (no agent commands)
 uncertain execution / device error -> recovery_required -> aborting -> aborted
 preparing -> failed (completed prepare error explicitly reports backup_saved:false)
 ```
 
 `failed` releases the lease without scheduling restore when a completed `prepare` error explicitly confirms
 that no backup was saved and no device work remains to undo. All other device errors retain the lease for
-recovery. Current operator actions cancel untouched drafts/plans directly to `aborted`.
+recovery. Operator abort cancels untouched drafts/plans, an unclaimed pending `prepare`, and restored `review`
+directly to `aborted`. The server locks the session before inspecting the prepare receipt, using the same lock
+as agent claim. A claimed prepare, or any claim history, retains the conservative stop/restore path even if its
+result has not arrived. A late claim or result cannot reopen a cancelled prepare.
 
 Both registry UUID and serial have partial unique indexes over nonterminal states. `review`, `aborting` and
 `recovery_required` retain the lease. Ordinary capture creation and session creation serialize through the
@@ -288,7 +294,8 @@ flag keep the conservative recovery behavior.
 After a crash in `executing`, the command is uncertain: never reacquire a standard, run ACM, `SAVE` or a capture
 blindly under the same ID. Report uncertainty/reconcile with ERP and use explicit recovery.
 
-Abort supersedes the active command and issues `abort`, followed by `restore`. Keep polling independently while
+Except for the local abort cases above, abort supersedes the active command and issues `abort`, followed by
+`restore`. Keep polling independently while
 an acquisition blocks. The executor must fence the old worker: confirm it has stopped before restoring or allowing
 a new writer. Never queue restoration behind an unbounded blocked COM call and claim completion. An unavailable
 device, a hung worker or failed restore keeps ERP in `recovery_required`. `recover` creates a fresh abort/restore
@@ -342,11 +349,29 @@ sweep uses BUS. These are separate operations.
 
 `VnaSessionRepository.completed(session_id)` exposes server-owned completed data for `review`/`recorded` sessions.
 Artifacts live in `production_vna_artifacts`, independent of warehouse queue retention, with references in that
-view. P4 must authorize the operator/product, parse all required traces/orientations, recheck the current norm and
-band, and store one atomic attempt. In the **same database transaction**, call
-`mark_recorded(session_id, expected_version=..., reference=<attempt ID>, now=...)`. This releases the lease and
-records the stable reference. The same recorded reference is idempotent; another reference or stale version is
-rejected. There is no public browser action that can mark a session recorded.
+view. The recording endpoint locks the session, resolves its task/position and instrument, verifies original
+artifact hashes against capture receipts, and composes `RecordVswrCommand` from stored bytes/settings. The browser
+cannot override content, calibration, instrument, product, norm or port mapping. Each durable artifact UUID is its
+`evidence_id`. Two-port `.s2p` and both one-port reversal orientations form one attempt;
+session port labels `А`/`Б` are translated to the VSWR model's `A`/`B`. Qualification restrictions remain in the
+capture metadata. A qualified plan cannot publish an automatic `pass`: recording returns HTTP 409 and retains
+the session in `review`, with no attempt or audit event committed. It can still record measured failures; it never
+turns an otherwise passing result into a fabricated failure. Successful acceptance needs a new confirmed plan
+and measurement. Separate transmission-only `.s1p` exports are rejected explicitly rather than dropping supporting
+evidence; the current two-port executor exports `.s2p`. Original files and receipts survive warehouse queue cleanup.
+
+Before first recording, the workflow calls `task_norm()` with freshly loaded ETK/reference data and compares it
+to the session norm, including current customer overrides. The session creation date is used only for the generated
+legacy-norm provenance label, so midnight alone does not invalidate evidence. A changed norm returns HTTP 409:
+`Норма КСВН изменилась после начала сессии — выполните повторный замер`. P4 still checks full-band coverage and all
+required ends; incomplete evidence cannot pass.
+
+The workflow calls `record_vswr(..., manage_transaction=False)` with its entered production UOW, then
+`mark_recorded(session_id, expected_version=..., reference=<attempt ID>, now=...)` and commits once. Attempt, files,
+traces, audit event, recorded reference and lease release roll back together. Existing upload callers retain the
+default transaction-owning behavior. A retry using the original review version (or the current recorded version)
+returns the exact recorded attempt without another audit event or applying a subsequently changed norm. Other
+stale versions are rejected. There is no browser action that marks recorded without persisting the attempt.
 
 Migration `0181_vna_sessions` follows `0180_equipment_catalogs_cutover`; it adds only new tables/indexes and refuses
 to downgrade populated session history. Production PostgreSQL migration rehearsal and real-device validation

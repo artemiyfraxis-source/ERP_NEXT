@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import datetime
+from hashlib import sha256
 from typing import Annotated, Callable, Literal
 from uuid import UUID
 
@@ -17,6 +18,7 @@ from app.modules.production.autoplan_api import references_uow_factory
 from app.modules.production.rf_infrastructure import RfRepository
 from app.modules.production.vna_session_infrastructure import VnaArtifactRow, VnaSessionRepository
 from app.modules.production.vna_sessions import TERMINAL, Override, SessionConflict, StrictModel, ordered_steps, resolved_profile
+from app.modules.production.vswr import RecordVswrCommand, VswrFileInput, VswrVerdict, record_vswr
 from app.modules.warehouse import devices, vna_jobs
 from app.modules.warehouse.scan_agents import ScanAgentRow
 from app.modules.warehouse.scan_jobs import ScanJobClosed, agent_machine
@@ -24,6 +26,7 @@ from app.modules.warehouse.scan_jobs_api import UowFactory, _queue, scan_agent_p
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, production_quality_principal
 from app.shared.stored_files import file_response
+from .coax_vswr_api import CoaxRefs, _measurement_result, _task_etk, task_norm
 from .vna_capture_instrument import capture_instrument
 from .vna_plan_api import vna_plan
 
@@ -60,6 +63,10 @@ class ActionInput(StrictModel):
     action: Literal["plan", "start", "confirm", "abort", "recover"]
     expected_version: int = Field(ge=1, strict=True)
     expected_step: int = Field(ge=0, strict=True)
+
+
+class RecordInput(StrictModel):
+    expected_version: int = Field(ge=1, strict=True)
 
 
 class CommandResultInput(StrictModel):
@@ -174,6 +181,113 @@ def session_action(session_id: UUID, payload: ActionInput, principal: Person, no
             view = repository.view(row)
             uow.commit()
             return view
+
+
+def _automatic_acceptance(snapshot):
+    plan = snapshot["plan"]
+    return plan["status"] == "ready" and plan["chains"]["automatic_acceptance"]
+
+
+def _session_files(repository, completed):
+    """Compose P4 inputs from durable capture receipts, including one-port reversal."""
+    commands = {command["id"]: command for command in completed["commands"]}
+    snapshot = completed["snapshot"]
+    files, mappings = [], []
+    for metadata in completed["artifacts"]:
+        artifact = repository.session.get(VnaArtifactRow, UUID(metadata["id"]))
+        command = commands[metadata["command_id"]]
+        if command["op"] != "capture" or command["status"] != "done":
+            raise ValueError("Файл сессии не подтверждён завершённым измерением")
+        content = bytes(artifact.content)
+        if sha256(content).hexdigest() != artifact.sha256:
+            raise ValueError("Контрольная сумма файла сессии не совпадает")
+        args, result = command["args"], command["result"]
+        receipt = next((item for item in result["artifacts"] if item["file_name"] == artifact.file_name), None)
+        if receipt is None or receipt["sha256"] != artifact.sha256:
+            raise ValueError("Файл сессии не совпадает с сохранённым ответом ВАЦ")
+        traces = receipt["traces"]
+        mapping = {port: {"А": "A", "Б": "B"}[end] for port, end in args["port_to_end"].items()}
+        mappings.append(mapping)
+        end = None
+        if artifact.file_name.endswith(".s1p"):
+            if len(traces) != 1 or traces[0] not in ("S11", "S22"):
+                raise ValueError("Однопортовый файл должен содержать отражение S11 или S22")
+            end = mapping.get("1" if traces[0] == "S11" else "2")
+            if end is None:
+                raise ValueError("Для трассы сессии не указан конец изделия")
+        elif set(mapping) != {"1", "2"}:
+            raise ValueError("Для двухпортового файла нужна привязка обоих портов")
+        settings = {
+            **result["profile"], "session_id": completed["id"], "instrument_serial": result["serial"],
+            "orientation": args["orientation"], "port_to_end": mapping, "traces": traces,
+            "correction": result["correction"], "correction_enabled": True, "correction_status": "COR",
+            "smoothing_enabled": result["profile"]["smoothing"],
+            "averaging_enabled": result["profile"]["averaging"],
+            "qualification_reason": snapshot["qualification_reason"],
+            "automatic_acceptance": _automatic_acceptance(snapshot),
+        }
+        if len(traces) == 1:
+            settings["s_parameter"] = traces[0]
+        files.append(VswrFileInput(file_name=artifact.file_name, content=content, end=end,
+                                  capture_settings=settings, capture_verified=True, evidence_id=artifact.id))
+    if not files:
+        raise ValueError("В завершённой сессии нет файлов измерения")
+    # A reversal has per-file ends; its two physical port-1 captures must not overwrite each other.
+    mapping = {"1": "A", "2": "B"} if snapshot["plan"]["chains"].get("mode") == "one_port_reversal" else mappings[0]
+    if snapshot["plan"]["chains"].get("mode") != "one_port_reversal" and any(item != mapping for item in mappings):
+        raise ValueError("Файлы сессии имеют разную привязку портов")
+    return tuple(files), mapping
+
+
+@router.post(PREFIX + "/{session_id}/record")
+def record_session(session_id: UUID, payload: RecordInput, principal: Person, now: Now, factory: Factory,
+                   techcards_factory: Annotated[Callable | None, Depends(techcards_uow_factory)],
+                   refs_factory: Annotated[Callable | None, Depends(references_uow_factory)]):
+    """QC may record a completed session; bytes and calibration claims never come from the browser."""
+    with _errors(), factory() as uow:
+        repository = VnaSessionRepository(uow.session)
+        row = repository.get(session_id)
+        repository.lock(row)
+        if row.state == "recorded":
+            # A lost response is retried with the review version; a refreshed client has the recorded version.
+            if payload.expected_version not in (row.version - 1, row.version):
+                raise SessionConflict("Сессия изменилась — обновите шаг")
+        else:
+            repository.expect(row, payload.expected_version, row.step)
+            completed = repository.completed(session_id)
+            task = uow.production.get(row.task_id)
+            if task is None:
+                raise KeyError("Задание не найдено")
+            document, etk, current = _task_etk(techcards_factory, task)
+            # The timestamp only labels computed legacy norms; retain its original date while reloading live refs.
+            norm = task_norm(document, current, etk["current_revision"], CoaxRefs(refs_factory), row.created_at)
+            if norm != row.snapshot["plan"]["profile"]["norm"]:
+                raise SessionConflict("Норма КСВН изменилась после начала сессии — выполните повторный замер")
+            instrument = uow.instruments.get(row.instrument_id)
+            if instrument is None or (instrument.serial_number or "").strip() != row.instrument_serial:
+                raise SessionConflict("Прибор сессии изменился — выполните повторный замер")
+            files, mapping = _session_files(repository, completed)
+            measurement = record_vswr(RecordVswrCommand(
+                task_id=row.task_id, position=row.product_position, instrument_id=row.instrument_id,
+                file_name="", content=b"", files=files, port_mapping=mapping, norm=norm,
+                actor=principal.actor, now=now,
+            ), uow, manage_transaction=False)
+            if measurement.verdict is VswrVerdict.PASS and not _automatic_acceptance(row.snapshot):
+                raise SessionConflict("Метод сессии не допускает автоматическую приёмку — "
+                                      "выполните повторный замер по подтверждённому плану")
+            repository.mark_recorded(session_id, expected_version=payload.expected_version,
+                                     reference=str(measurement.id), now=now)
+        # Return the persisted representation on both first recording and retry (including DB precision/timezone).
+        uow.session.flush()
+        serial = uow.serials.by_position(row.task_id, row.product_position)
+        measurement = next((item for item in uow.vswr.list_for_serial(serial.id)
+                            if str(item.id) == row.recorded_reference), None) if serial else None
+        if measurement is None:
+            raise SessionConflict("Записанная попытка сессии не найдена")
+        response = {"measurement": _measurement_result(measurement, trace=True), "position": row.product_position,
+                    "session": repository.view(row)}
+        uow.commit()
+        return response
 
 
 @router.get(PREFIX + "/{session_id}/artifacts/{artifact_id}")

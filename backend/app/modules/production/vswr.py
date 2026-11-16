@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -445,13 +446,16 @@ def _prepare_files(
     return tuple(parsed), tuple(sorted(files, key=lambda file: file.end)), sorted(signature, key=lambda entry: entry["ends"]), end_traces
 
 
-def record_vswr(command: RecordVswrCommand, uow: QualityUnitOfWork) -> VswrMeasurement:
+def record_vswr(
+    command: RecordVswrCommand, uow: QualityUnitOfWork, *, manage_transaction: bool = True,
+) -> VswrMeasurement:
+    """Record an attempt; workflows may supply an entered UOW and own the single commit."""
     mapping = _port_mapping(command.port_mapping)
     parsed, files, signature, end_traces = _prepare_files(command, mapping)
     # Order and filenames do not change evidence identity; assignment to ends/ports does.
     identities = [{"end": entry["assigned_end"], "source": entry["evidence_id"] or entry["content_sha256"]} for entry in signature]
     evidence_key = sha256(json.dumps({"files": identities, "mapping": mapping}, sort_keys=True).encode()).hexdigest()
-    with uow:
+    with uow if manage_transaction else nullcontext(uow):
         # Serialize serial creation, duplicate lookup and attempt numbering on PostgreSQL.
         uow.vswr.lock_task(command.task_id)
         task = uow.production.get(command.task_id)
@@ -523,7 +527,8 @@ def record_vswr(command: RecordVswrCommand, uow: QualityUnitOfWork) -> VswrMeasu
                 "verdict": verdict.value, "manual": manual, "file_name": file_name,
             },
         ))
-        uow.commit()
+        if manage_transaction:
+            uow.commit()
         return measurement
 
 
