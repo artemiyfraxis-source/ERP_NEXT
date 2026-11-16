@@ -8,7 +8,8 @@ Ownership of keys:
   * reference-owned, always overwritten: `terminalNorm` / `terminalNormB`, `markKit`, `linearTiming`, the coax ends'
     `crimpHex` / `contactDepth` / `d1`–`d3`, the assembly's `coax.vswrNorm` (no screen types them; the references are
     their only source); the operations' `equipmentTools` and a coax `machine`'s `equipment_model_id`, name and number
-    (`enrich_equipment`: the equipment models of БД.ОБ, migration 0171);
+    (`enrich_equipment`: the equipment models of БД.ОБ, migration 0171); `shrinkRequirements` (material temperature
+    and its evidence, including explicit missing/review states, independently of snapshot metadata);
   * wire `outerDiameter` / `conductorDiameter` — the one place where a person may also have typed a value. The
     reference answer wins when there is one (as before); where the references are silent, a value this enricher set
     earlier is dropped and a value it did not set (typed by hand, or from the generator) stays. Which values are its own
@@ -48,11 +49,13 @@ from app.modules.references.equipment import inv_key, parse_inventory
 from app.modules.references.equipment_identity import ref_key
 from app.modules.references.domain import CABLE_TABS, TERMINAL_TABS, TechOperationTab, cable_key, gost_awg_map, pick_wire_row
 from app.modules.references.wire_dia import outer_by_series
+from app.modules.references.shrink_temperature import read_stored as read_shrink_temperature
 from app.modules.references.technology import (
     TECH_SNAPSHOT_SCHEMA_VERSION, TerminalRecord, fold_wire_section, matching_terminal_records, resolve_terminal,
     terminal_record_for_section, wire_section,
 )
 from app.modules.techcards.etk_builder import vswr_control
+from app.modules.techcards.etk_heat_shrink import is_shrink, material_association, missing_requirement
 
 
 def _rows(records: Iterable[Any]) -> tuple[Mapping[str, Any], ...]:
@@ -65,8 +68,8 @@ def _plain(value: object) -> object:
 
 @dataclass(frozen=True)
 class Refs:
-    """Immutable snapshot of every reference table the enrichers read. `snapshot` is the БД.Технология stamp (None —
-    no current snapshot: only the wire Ø enrichment runs, the other tuples are empty)."""
+    """Immutable snapshot of every reference table the enrichers read. Wire, equipment identity and heat-shrink
+    references are available even without a current БД.Технология `snapshot`."""
     snapshot: Mapping[str, Any] | None
     terminal_rows: tuple[Mapping[str, Any], ...] = ()
     gost_awg: Mapping[str, int] = MappingProxyType({})
@@ -82,6 +85,7 @@ class Refs:
     # «Оборудование» шаблонов карт, связанные с моделью: из них ЭТК берёт `equipment_model_id` (enrich_equipment).
     equipment_models: tuple[Mapping[str, Any], ...] = ()
     template_tools: tuple[Mapping[str, Any], ...] = ()
+    heat_shrink_rows: tuple[Mapping[str, Any], ...] = ()
 
     @cached_property
     def terminal_records(self) -> tuple[TerminalRecord, ...]:
@@ -97,6 +101,7 @@ class Refs:
             "wire": self.wire_rows, "coax": self.coax_rows, "dia": self.dia_rows,
             "coax_cards": [_card_stamp(card) for card in self.coax_cards],
             "equipment_models": self.equipment_models, "template_tools": self.template_tools,
+            "heat_shrink": self.heat_shrink_rows,
         }
         for name, part in parts.items():
             digest.update(name.encode())
@@ -123,10 +128,12 @@ def load_refs(references_factory: Callable[[], ReferencesUnitOfWork], *, coax: b
         hookups = tuple(uow.cable_structure.hookups())
         wire_rows = _rows(uow.tech_operations.list(tab=CABLE_TABS, query="", limit=10_000))
         equipment_models, template_tools = _equipment_identity(uow)
+        heat_shrink_rows = tuple(MappingProxyType({**record.fields, "_reference_id": str(record.id)})
+                                for record in uow.tech_operations.list(tab=TechOperationTab.HEAT_SHRINK, query="", limit=10_000))
         if not metadata or metadata["schema_version"] != TECH_SNAPSHOT_SCHEMA_VERSION:
             # The wire Ø come from the cable bases, not from the snapshot: the ETK gets them even without it.
             return Refs(None, gauges=gauges, hookups=hookups, wire_rows=wire_rows,
-                        equipment_models=equipment_models, template_tools=template_tools)
+                        equipment_models=equipment_models, template_tools=template_tools, heat_shrink_rows=heat_shrink_rows)
         terminal = _rows(uow.tech_operations.list(tab=TERMINAL_TABS, query="", limit=10_000))
         # ГОСТ section → AWG from «Сечения AWG ↔ мм²» of the база монтажных проводов (the old СПР.КАБ AWG table is
         # retired, owner 12.10.2026); the stored map only when the sizes table is empty.
@@ -146,7 +153,7 @@ def load_refs(references_factory: Callable[[], ReferencesUnitOfWork], *, coax: b
         }),
         terminal_rows=terminal, gost_awg=MappingProxyType(dict(gost_awg)), equipment=equipment, operations=operations,
         gauges=gauges, hookups=hookups, wire_rows=wire_rows, coax_rows=coax_rows, dia_rows=dia_rows,
-        coax_cards=coax_cards, equipment_models=equipment_models, template_tools=template_tools,
+        coax_cards=coax_cards, equipment_models=equipment_models, template_tools=template_tools, heat_shrink_rows=heat_shrink_rows,
     )
 
 
@@ -185,7 +192,8 @@ def with_technology(
     refs: Refs | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """The config «Создать техкарты» builds from, with terminal norms from the references snapshot, and the
-    snapshot stamp for the ETK. Without a current snapshot only the wire Ø are filled and the stamp is None.
+    snapshot stamp for the ETK. Without a current snapshot wire Ø, equipment identity and material temperatures
+    are still enriched; the technology stamp is None.
     `refs` (from `load_refs`) is used as given — a batch loads it once; without it the references are read here."""
     if refs is None:
         if references_factory is None:
@@ -193,7 +201,8 @@ def with_technology(
         refs = load_refs(references_factory, coax=isinstance(config.get("coax"), Mapping))
     if refs.snapshot is None:
         enriched = enrich_wire_diameters(config, refs.hookups, refs.gauges, refs.wire_rows)
-        return enrich_equipment(enriched, refs.equipment_models, refs.template_tools), None
+        enriched = enrich_equipment(enriched, refs.equipment_models, refs.template_tools)
+        return enrich_shrink_temperatures(enriched, refs.heat_shrink_rows), None
     enriched = enrich_terminal_norms(config, refs.terminal_records, refs.gost_awg)
     enriched = enrich_marking(enriched, refs.equipment, refs.operations)
     enriched = enrich_linear_timing(enriched, refs.operations)
@@ -203,7 +212,51 @@ def with_technology(
     enriched = enrich_coax_diameters(enriched, refs.dia_rows)
     enriched = enrich_coax_vswr_norm(enriched, refs.coax_rows, refs.coax_cards, refs.wire_rows)
     enriched = enrich_equipment(enriched, refs.equipment_models, refs.template_tools)
+    enriched = enrich_shrink_temperatures(enriched, refs.heat_shrink_rows)
     return enriched, dict(refs.snapshot)
+
+
+def enrich_shrink_temperatures(config: Mapping[str, Any], rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """Exact article, or exact catalog name when no article is available. Ambiguity remains a review state."""
+    enriched = deepcopy(dict(config))
+    rows = tuple(rows)
+    def key(value: object) -> str:
+        return " ".join(str(value or "").casefold().split())
+
+    def resolve(material: Mapping[str, str]) -> dict[str, Any]:
+        article, name = key(material["article"]), key(material["name"])
+        found = [row for row in rows if article and article == key(row.get("Артикул"))]
+        if not found:
+            # Materials historically use their full catalog name in the article field. No series/size guessing.
+            found = [row for row in rows if (article and article == key(row.get("Наименование")))
+                     or (name and name == key(row.get("Наименование")) and (not article or not row.get("Артикул")))]
+        result = missing_requirement(material)
+        if not found:
+            return result
+        evidence = [read_shrink_temperature(row) for row in found]
+        if any(item.get("needs_review") for item in evidence) or any(item != evidence[0] for item in evidence[1:]):
+            return {**result, "status": "review", "reason": "Данные справочника требуют проверки или противоречат друг другу",
+                    "evidence": evidence}
+        temperature = evidence[0]
+        if temperature["lower_c"] is None and temperature["upper_c"] is None:
+            return {**result, "temperature": temperature}
+        if not temperature["kind"]:
+            return {**result, "status": "review", "reason": "Не задан вид температуры усадки", "temperature": temperature}
+        result.update(status="resolved", temperature=temperature, reason="")
+        if len(found) == 1 and found[0].get("_reference_id"):
+            result["reference_id"] = found[0]["_reference_id"]
+        return result
+
+    for op in enriched.get("ops") or []:
+        if not isinstance(op, dict):
+            continue
+        op.pop("shrinkRequirements", None)
+        materials = material_association(op, enriched)
+        if materials:
+            op["shrinkMaterials"] = [{"art": material["article"], "name": material["name"]} for material in materials]
+        if is_shrink(op):
+            op["shrinkRequirements"] = [resolve(material) for material in materials] or [missing_requirement()]
+    return enriched
 
 
 

@@ -17,6 +17,7 @@ from .domain.route import (
     Block, Route, RouteError, RouteOp, chain_route, derive_route, parse_route, route_json, route_levels, route_totals,
 )
 from .etk_marking import apply_marking, mark_length, mark_kind, TUBE_KINDS
+from .etk_heat_shrink import apply_requirements
 from .operation_cards import OperationCardTemplate
 from .project_cards import CUSTOM_OP
 
@@ -2244,6 +2245,7 @@ def _typed_operation(
     if op.get("type") == "insMark" and _kd_marks(_mark_items(op)):
         # Маркировка по КД: ход операции, дефекты, оборудование и время — по видам меток (etk_marking).
         apply_marking(operation, op, _mark_items(op), _part_quantity(config), warnings)
+    apply_requirements(operation, op, config)
     return operation
 
 

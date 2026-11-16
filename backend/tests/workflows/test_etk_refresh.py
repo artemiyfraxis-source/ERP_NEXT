@@ -279,6 +279,37 @@ def test_a_launched_task_keeps_the_revision_it_started_with(base):
     assert "0,9" in _depths(current.document)
 
 
+def test_shrink_reference_refresh_dry_run_and_pinned_revision(base):
+    from app.modules.references.shrink_temperature import LOWER, UPPER, KIND, DOCUMENT
+
+    def temperature(value):
+        with SqlAlchemyReferencesUnitOfWork(base) as uow:
+            record = uow.tech_operations.list(tab=TechOperationTab.HEAT_SHRINK, query="", limit=1)[0]
+            uow.tech_operations.save(replace(record, fields={**record.fields,
+                "Артикул": CONFIG["coax"]["tutArt"], "Наименование": CONFIG["coax"]["tutName"],
+                LOWER: value, UPPER: "125", KIND: "оптимальная", DOCUMENT: "Тестовый паспорт"}))
+            uow.commit()
+
+    def low(doc):
+        return next(op for op in doc["operations"] if op["type"] == "coaxHeat")["fields"]["shrinkRequirements"][0]["temperature"]["lower_c"]
+
+    temperature("85")
+    stored = _store(base, _derive(base))
+    _settle(base)
+    temperature("90")
+    assert "heat_shrink_records" in _pending(base)[0].payload["tables"]
+    preview = run_refresh(base, now=T1, dry_run=True)
+    assert preview.count("revised") == 1
+    assert _row(base).revision == 1 and low(_row(base).document) == 85
+    assert run_refresh(base, now=T1).count("revised") == 1
+    assert run_refresh(base, now=T1, everything=True).count("revised", "refreshed") == 0
+    with SqlAlchemyTechcardsUnitOfWork(base) as uow:
+        card = uow.techcards.get(stored.id)
+        pinned, info = pinned_card(uow, card, 1)
+        assert info["newer"] is True and low(pinned.document) == 85
+        assert low(card.document) == 90
+
+
 def test_a_draft_is_refreshed_in_place_without_a_revision(base):
     _store(base, _derive(base), issued=False)
     _settle(base)

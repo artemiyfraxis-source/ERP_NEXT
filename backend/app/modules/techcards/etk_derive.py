@@ -24,7 +24,7 @@ import inspect
 import json
 from typing import Any
 
-from . import etk_builder, etk_live, etk_marking, operation_cards, project_cards
+from . import etk_builder, etk_heat_shrink, etk_live, etk_marking, operation_cards, project_cards
 from .domain import pf_split, route as route_domain
 from .etk_builder import _route_ops, build_etk
 from .etk_live import VIEW_KEYS, stamp_templates
@@ -36,10 +36,11 @@ BUILD_FAILED = "build_failed"
 MISSING_OPERATION = "missing_operation"
 TEMPLATE_CHANGED = "template_changed"
 ROUTE_NOT_APPLIED = "route_not_applied"
+THERMAL_OVERRIDE = "thermal_override"
 NO_INPUTS_MESSAGE = "нет входных данных для пересборки"
 
 # The modules whose code decides what `build_etk` and `stamp_templates` give.
-_BUILDER_MODULES = (etk_builder, etk_live, etk_marking, operation_cards, project_cards, pf_split, route_domain)
+_BUILDER_MODULES = (etk_builder, etk_heat_shrink, etk_live, etk_marking, operation_cards, project_cards, pf_split, route_domain)
 
 
 def _canonical(value: Any) -> str:
@@ -133,6 +134,8 @@ def _apply_operations(document: dict[str, Any], edits: object, conflicts: list[d
             **{name: value for name, value in deepcopy(dict(edited)).items() if name not in VIEW_KEYS},
             "position": base.get("position"),
         }
+        if etk_heat_shrink.refresh_override(operations[index], base):
+            conflicts.append(_conflict(THERMAL_OVERRIDE, etk_heat_shrink.THERMAL_REVIEW, key))
     return {**document, "operations": operations}
 
 
@@ -214,7 +217,7 @@ def _steps(card: object) -> str:
 def _tooling(card: object) -> str:
     tooling = card.get("tooling") if isinstance(card, Mapping) else None
     return "\n".join(
-        " — ".join(part for part in (_text(tool.get("section")), _text(tool.get("name")), _text(tool.get("parameters")))
+        " — ".join(part for part in (_text(tool.get("section")), _text(tool.get("name")), _text(tool.get("program")), _text(tool.get("parameters")))
                    if part) for tool in tooling or [] if isinstance(tool, Mapping))
 
 
@@ -223,7 +226,7 @@ def _tool_inventories(card: object) -> dict[tuple[str, ...], list[str]]:
     numbers: dict[tuple[str, ...], list[str]] = {}
     for tool in tooling or []:
         if isinstance(tool, Mapping):
-            key = tuple(_text(tool.get(field)) for field in ("section", "name", "parameters"))
+            key = tuple(_text(tool.get(field)) for field in ("section", "name", "program", "parameters"))
             numbers.setdefault(key, []).append(_text(tool.get("inventory_number")))
     return numbers
 

@@ -2,9 +2,14 @@ import { expect, it } from "vitest";
 import { initState, makeGen, type GenData } from "./tcGenLogic";
 import {
   markLabel, markMaterialSource, markMatsFromRecords, markPlaceText, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness,
-  markSpecs, markTargets, mergeMarkRows, newMarkRow, productMarkRow,
+  markSpecs, markTargets, mergeMarkRows, newMarkRow, productMarkRow, markTubeShrinks,
 } from "./tcGenMarks";
 import { DSA, fullHarness } from "./tcGenRealHarness.fixture";
+
+it("does not shrink a PVC marking sleeve whose dimensions contain a slash", () => {
+  expect(markTubeShrinks("Кембрик ПВХ 4/2мм")).toBe(false);
+  expect(markTubeShrinks("Трубка термоусадочная ПВХ 4/2мм")).toBe(true);
+});
 
 const templates = [
   { id: "cut", title: "CUT_WIRE_auto | Резка", category: "Резка" },

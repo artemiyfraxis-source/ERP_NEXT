@@ -13,6 +13,9 @@ import { coaxReseedPatch } from "./tcGenLogic";
 import { deriveRoute, type RouteOp } from "./routeLogic";
 import { genCards } from "./routeCards";
 
+// Historical route/consumption fixtures predate the additive per-operation material association.
+const withoutShrinkMaterials = (config: unknown) => JSON.parse(JSON.stringify(config, (key, value) => key === "shrinkMaterials" ? undefined : value));
+
 // Historical assertions exercise a saved state with no new fields, not the new seed recipe.
 function initState(D: GenData): GenState {
   const state = seededState(D);
@@ -190,7 +193,7 @@ describe("production 708К. fixture preservation", () => {
   it("КБ11 generator bytes stay unchanged with dedicated cards in the library", async () => {
     const fixture = fixtures.find((item) => item.kb === "КБ11")!;
     const config = autoConfig(productionData(fixture)).config;
-    const bytes = new TextEncoder().encode(JSON.stringify(config));
+    const bytes = new TextEncoder().encode(JSON.stringify(withoutShrinkMaterials(config)));
     const digest = await crypto.subtle.digest("SHA-256", bytes);
     expect(Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(""))
       .toBe("73b3bcf31283d39f53241504c7c25bd1bdc870f20cac337ab2fda58894694ded");
@@ -365,7 +368,12 @@ describe("FAKRA flow 16.11", () => {
     const expected = structuredClone(freshConfigs.find((item) => item.kb === kb)!.config) as any;
     expected.coax.finishedLengthFrom = "bom";
     delete expected.ops.find((op: any) => op.opKey === "coaxPrintLabel").parts;
-    expect(cfg).toEqual(expected);
+    expect(withoutShrinkMaterials(cfg)).toEqual(expected);
+    for (const key of ["coaxProtectCut", "coaxProtectIns", "coaxHeat"]) {
+      expect(cfg.ops.find((op: any) => op.opKey === key).shrinkMaterials).toEqual([
+        { art: cfg.coax.tutArt, name: cfg.coax.tutName },
+      ]);
+    }
     expect(cfg.coax.marks).toEqual(coaxMarksFromName(kb === "КБ2" ? "120905/AA Camera 11 → Splitter B C3" : "120907/AA Camera 14 → Splitter B C6"));
     expect(cfg.coax.connColor).toMatchObject(kb === "КБ2" ? { color: "розовый", code: "PK" } : { color: "оранжевый", code: "OG" });
     expect(cfg.ops.map((op: any) => op.opKey)).toEqual([
@@ -637,7 +645,12 @@ describe("coax batch A contract", () => {
 
 it.each([KB3, KB28])("$index matches the shared batch A ETK fixture", (bom) => {
   const data = batchAData(bom), state = seededState(data); state.coax.finishedLengthFrom = "user";
-  expect(makeGen(data, state).buildConfig()).toEqual(batchAConfigs.find((item) => item.kb === bom.index)!.config);
+  const cfg = makeGen(data, state).buildConfig() as any;
+  expect(withoutShrinkMaterials(cfg)).toEqual(batchAConfigs.find((item) => item.kb === bom.index)!.config);
+  if (bom.index === "КБ28") expect(cfg.ops.find((op: any) => op.opKey === "coaxHeatTtkA").shrinkMaterials)
+    .toEqual([{ art: "ТТК 6/2мм, черная", name: "ТТК 6/2мм, черная" }]);
+  expect(cfg.ops.find((op: any) => op.opKey === "coaxHeat").shrinkMaterials)
+    .toEqual([{ art: cfg.coax.tutArt, name: cfg.coax.tutName }]);
 });
 
 it("re-seeding HFM preserves B-before-A without placing support crimp after B assembly", () => {

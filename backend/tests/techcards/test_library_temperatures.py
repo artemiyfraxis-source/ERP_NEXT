@@ -1,4 +1,4 @@
-"""Owner, 17.10.2026: «на пайке 240, на усадке везде 150» — the bundled cards carry no other temperature."""
+"""Soldering defaults stay unchanged; generic shrink cards require the exact material's temperature."""
 
 import json
 import re
@@ -23,8 +23,9 @@ def test_soldering_cards_say_240_and_no_range():
     assert any(cell == "240 °C" for code, cells in soldering if code == "SDR_tin" for cell in cells)
 
 
-def test_shrink_cards_say_150():
-    shrink = {code: cells for code, cells in _cards() if code.startswith("HEAT_")}
-    assert sorted(shrink) == ["HEAT_FAKRA_BH_TTK", "HEAT_TTK_long", "HEAT_TTK_short", "HEAT_TYT_long", "HEAT_TYT_short"]
+def test_shrink_cards_have_a_material_requirement_not_an_air_setpoint():
+    shrink = {code: cells for code, cells in _cards() if code.startswith(("HEAT_TYT_", "HEAT_TTK_"))}
+    assert sorted(shrink) == ["HEAT_TTK_long", "HEAT_TTK_short", "HEAT_TYT_long", "HEAT_TYT_short"]
     for code, cells in shrink.items():
-        assert "150 °C" in cells and "160 °C" not in cells, code
+        assert not any("150 °C" in cell for cell in cells), code
+        assert any("‹температура усадки материала›" in cell for cell in cells), code

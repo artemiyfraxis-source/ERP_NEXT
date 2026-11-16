@@ -1228,7 +1228,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   ];
   const tubeMaterials: MaterialOption[] = [
     ...gen.shrinkCandidates_().map((c) => ({ label: `${c.art || c.name} · из состава`, material: { compId: c.id } })),
-    ...(D.markMats || []).filter((m) => /^(тут|ттк)$/i.test(m.group)).map((m) => ({ label: `${m.name} · БД`, material: { art: m.name, name: m.name } })),
+    ...(D.markMats || []).filter((m) => /^(тут|ттк)$/i.test(m.group)).map((m) => ({ label: `${m.name} · БД`, material: { art: m.art || m.name, name: m.name } })),
   ];
   const tubeTargets: Parameters<typeof TopologyTubes>[0]["targets"] = complex ? [
     ...pinUnitList.filter((u) => !u.shield).flatMap((u) => (["A", "B"] as const).flatMap((side) => {

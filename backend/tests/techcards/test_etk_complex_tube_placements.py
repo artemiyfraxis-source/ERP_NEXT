@@ -71,7 +71,8 @@ def test_cup_shrink_follows_soldering_and_precedes_housing():
     assert order.index("tube.cup.preload") < order.index("join") < order.index("tube.cup.position")
     assert order.index("tube.cup.shrink") < order.index("housing")
     assert by_key(document, "tube.cup.position")["fields"] == {
-        "tubePlacement": "cup", "physicalEnds": [end()]}
+        "tubePlacement": "cup", "physicalEnds": [end()],
+        "shrinkMaterials": [{"article": "ТУТ-cup", "name": "Трубка cup"}]}
 
 
 @pytest.mark.parametrize("phase", ["preload", "afterJoin"])
@@ -95,6 +96,8 @@ def test_two_placements_take_only_their_own_tube_cut_even_when_both_are_ready():
     source["ops"].sort(key=lambda op: 0 if op["type"] == "cutTut" else 1)
     document = build(source)
     for identifier, other, count in (("branch", "splice", "6"), ("splice", "branch", "3")):
+        requirement = by_key(document, f"tube.{identifier}.shrink")["fields"]["shrinkRequirements"][0]
+        assert requirement["material"] == {"article": f"ТУТ-{identifier}", "name": f"Трубка {identifier}"}
         semis = by_key(document, f"tube.{identifier}.preload")["semis"]
         assert any(row["name"] == f"ТУТ-{identifier} — 25 мм" and row["norm"] == count for row in semis)
         assert not any(f"ТУТ-{other}" in row["name"] for row in semis)
