@@ -17,7 +17,7 @@ from app.workflows.stock_article import read_stock_article
 from app.workflows.equipment_instruments import instrument_passports
 from app.shared.http_auth import (
     Principal, references_edit_principal, references_import_principal, references_maps_edit_principal,
-    references_maps_view_principal, references_view_principal, refuse_api_tokens,
+    references_maps_view_principal, references_view_principal, refuse_api_tokens, require_section,
 )
 
 from .application import (
@@ -1027,7 +1027,8 @@ def delete_equipment_record(
 @router.delete("/tech-operations/{record_id}", dependencies=[Depends(refuse_api_tokens("Токен API не удаляет строки справочника."))])
 def delete_material_record(
     record_id: UUID,
-    principal: Annotated[Principal, Depends(references_edit_principal)],
+    principal: Annotated[Principal, Depends(require_section(
+        "erpref", "edit", detail="Раздел «Справочник» открыт вам только на просмотр."))],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
 ) -> dict:

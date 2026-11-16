@@ -82,11 +82,11 @@ function mockApi(calls: Call[] = [], rows: CableRow[] = ROWS) {
     calls.push({ path, method, body: init?.body ? JSON.parse(String(init.body)) : null });
     if (path === "/api/references/maps") return json({ suppliers: [{ key: "склад", value: "Склад" }], countries: [], gost_awg: [], can_edit: { suppliers: true, gost_awg: true } });
     if (path === "/api/references/bases") return json({
-      bases: [], tabs: { ob: 192, ter: 528, coax: 181, kab_awg: 22, mat: 115, kab_coax: 30, prov: 52, cab_coax: 47, cab_multi: 9, cab_lan: 0 },
+      bases: [], tabs: { ob: 192, ter: 528, coax: 181, kab_awg: 22, mat: 0, heat_shrink: 2, cov: 0, kab_coax: 30, prov: 52, cab_coax: 47, cab_multi: 9, cab_lan: 0 },
       cables: { coax: 47, wire: 52, multi: 9 }, gauges: 24,
     });
     if (path === "/api/references/cables") return json({ columns: [...COLUMNS, "Цвета", "Поставщик"], counts: { coax: 3, wire: 3, multi: 1 }, rows, gauges: GAUGES });
-    if (path === "/api/references/coverings") return json({ counts: {}, titles: {}, rows: [] });
+    if (path.startsWith("/api/references/coverings?")) return json({ counts: {}, titles: {}, rows: [] });
     if (path.endsWith("/hookup")) return json({ hookup: rows[4].hookup_suggestion, record: rows[4].record });
     if (path.startsWith("/api/references/wire-gauges")) return json(GAUGES[0]);
     if (path === "/api/references/cables/diameters") return json(dia("d-new", "x", "", "", ""));
@@ -130,8 +130,8 @@ it("groups the tabs by what the shop picks from and shows a count on every chip"
     // owner 26.10.2026: «Наконечники» — свой список БД.ТЕР сразу за «Терминалами»
     { title: "Разъёмы и контакты", tabs: ["Разъёмы", "Коаксиальные разъёмы", "Терминалы", "Наконечники"] },
     { title: "Кабели и провода", tabs: ["Коаксиальные кабели", "Монтажные провода", "Многожильные кабели", "Кабели Ethernet"] },
-    // owner 15.10.2026: «Материалы» расформированы; the old key opens «Оболочки»
-    { title: "Материалы", tabs: ["Оболочки", "Расходники"] },
+    // Heat shrink owns its catalog; the other coverings and consumables remain separate.
+    { title: "Материалы", tabs: ["Термоусадка", "Оболочки", "Расходники"] },
     { title: "Соответствия", tabs: ["Домен → поставщик", "Изготовитель → страна", "Сечения AWG ↔ мм²"] },
   ]);
   const chip = (name: string) => within(nav).getByRole("button", { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) });
@@ -140,6 +140,7 @@ it("groups the tabs by what the shop picks from and shows a count on every chip"
     ["Оборудование операционное", "192"], ["Разъёмы", "2"], ["Коаксиальные разъёмы", "181"], ["Терминалы", "528"],
     ["Коаксиальные кабели", "47"], ["Монтажные провода", "52"], ["Сечения AWG ↔ мм²", "24"], ["Многожильные кабели", "9"],
     ["Домен → поставщик", "1"], ["Изготовитель → страна", "0"],
+    ["Термоусадка", "2"], ["Оболочки", "0"], ["Расходники", "0"],
   ];
   for (const [name, n] of expected) await waitFor(() => expect(chip(name).querySelector(".db-tab-count")).toHaveTextContent(new RegExp(`^${n}$`)));
   expect(screen.queryByText("СПР.КАБ")).toBeNull();

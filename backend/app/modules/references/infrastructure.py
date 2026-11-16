@@ -1095,6 +1095,8 @@ class ReferenceStockLinkRow(Base):
         CheckConstraint("length(trim(record_text)) > 0", name="ck_reference_stock_links_record_text"),
         CheckConstraint("length(trim(actor_name)) > 0", name="ck_reference_stock_links_actor"),
         Index("ix_reference_stock_links_record_id", "record_id"),
+        Index("ix_reference_stock_links_heat_shrink_id", "heat_shrink_id"),
+        Index("ix_reference_stock_links_covering_id", "covering_id"),
         Index("ix_reference_stock_links_lot_id", "lot_id"),
         Index("ix_reference_stock_links_occurred_at", "occurred_at"),
     )

@@ -24,7 +24,7 @@ def _rows(payload: dict) -> list[ImportRowIn]:
 
 def _coverings(factory) -> dict[str, dict]:
     with factory() as uow:
-        records = uow.tech_operations.list(tab=TechOperationTab.MATERIAL, query="", limit=10_000)
+        records = uow.tech_operations.list(tab=TechOperationTab.COVERING, query="", limit=10_000)
     return {row["name"]: row for row in build([(str(item.id), dict(item.fields)) for item in records])["rows"]}
 
 

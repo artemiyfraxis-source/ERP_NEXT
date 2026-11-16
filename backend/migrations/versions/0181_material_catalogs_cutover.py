@@ -178,7 +178,66 @@ def upgrade():
 
 
 def downgrade():
-    # Forward-only is deliberate: a later move/edit/delete must never reactivate stale archive data.
-    # Restoring a coordinated pre-cutover backup remains possible without this unsafe fallback.
-    raise RuntimeError("0181 retains a frozen material archive. Use a reviewed forward repair or coordinated restore; "
-                       "automatic downgrade cannot safely restore current material ownership.")
+    """Restore an unchanged archive only, checking every loss condition before mutating anything.
+
+    Independent column/view metadata remains in reference_entries, as in 0180. It is valid
+    at the prior revision and retaining its UUIDs makes downgrade/re-upgrade lossless.
+    """
+    bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        bind.exec_driver_sql("LOCK TABLE tech_operation_records, reference_stock_links, "
+                             + ", ".join(TABLES.values()) + " IN ACCESS EXCLUSIVE MODE")
+    metadata = sa.MetaData()
+    source = sa.Table("tech_operation_records", metadata, autoload_with=bind)
+    archive = {row["id"]: row for row in bind.execute(
+        sa.select(source).where(source.c.material_archived.is_(True))).mappings()}
+    refusal = ("Material catalogs changed after cutover; cannot restore a stale archive. "
+               "Use a reviewed forward repair or coordinated restore.")
+    seen = set()
+    for tab, name in TABLES.items():
+        table = sa.Table(name, metadata, autoload_with=bind)
+        for row in bind.execute(sa.select(table)).mappings():
+            original = archive.get(row["id"])
+            if original is None or row["id"] in seen or original["tab"] != "mat":
+                raise RuntimeError(refusal)
+            expected = classify(original["fields"])
+            if (expected != (tab, row["material_group"], row["classification_status"])
+                    or row["tab"] != tab or any(row[key] != original[key] for key in PAYLOAD)):
+                raise RuntimeError(refusal)
+            seen.add(row["id"])
+    if seen != set(archive):
+        raise RuntimeError(refusal)
+    journal = sa.Table("reference_stock_links", metadata, autoload_with=bind)
+    for row in bind.execute(sa.select(journal).where(journal.c.record_tab.in_(TABLES))).mappings():
+        target = row["heat_shrink_id"] if row["record_tab"] == "heat_shrink" else row["covering_id"]
+        # A new catalog-only journal event without a target cannot recover its legacy tab.
+        if target not in archive or classify(archive[target]["fields"])[0] != row["record_tab"]:
+            raise RuntimeError(refusal)
+
+    for column in ("heat_shrink_id", "covering_id"):
+        bind.execute(journal.update().where(journal.c[column].is_not(None)).values(
+            record_id=journal.c[column], record_tab="mat", **{column: None}))
+    if bind.dialect.name == "postgresql":
+        # Flush deferred FK events before ALTER TABLE, as in 0180.
+        bind.exec_driver_sql("SET CONSTRAINTS ALL IMMEDIATE")
+    with op.batch_alter_table("reference_stock_links") as batch:
+        batch.drop_constraint("ck_reference_stock_links_material_target", type_="check")
+        batch.drop_constraint("ck_reference_stock_links_one_target", type_="check")
+        batch.drop_constraint("ck_reference_stock_links_tab", type_="check")
+        for column in ("heat_shrink_id", "covering_id"):
+            batch.drop_index(f"ix_reference_stock_links_{column}")
+            batch.drop_constraint(f"fk_reference_stock_links_{column}", type_="foreignkey")
+            batch.drop_column(column)
+        batch.create_check_constraint("ck_reference_stock_links_one_target", "record_id IS NULL OR equipment_unit_id IS NULL")
+        batch.create_check_constraint("ck_reference_stock_links_tab", _stock_tab_check(OLD_TABS))
+    for name in TABLES.values():
+        op.drop_table(name)
+    if bind.dialect.name == "sqlite":
+        for action in ("update", "delete"):
+            bind.exec_driver_sql(f"DROP TRIGGER freeze_legacy_material_{action}")
+    else:
+        bind.exec_driver_sql("DROP TRIGGER freeze_legacy_material ON tech_operation_records")
+        bind.exec_driver_sql("DROP FUNCTION freeze_legacy_material()")
+    # Native DROP COLUMN retains the equipment archive's freeze triggers on SQLite.
+    for column in ("classification_status", "material_group", "material_archived"):
+        op.drop_column("tech_operation_records", column)

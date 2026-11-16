@@ -16,6 +16,7 @@ from app.material_catalog_reconcile import snapshot, verify
 from app.modules.references.domain import TechOperationTab
 from app.modules.references.infrastructure import SqlAlchemyTechOperationRepository
 from app.modules.references.material_catalogs import route
+from tests.migrations.check_seeded_downgrade import evidence
 from tests.references.test_stock_links_migration import LOT, _insert
 from tests.shipping.test_pack_decision_migration import _config
 
@@ -55,13 +56,14 @@ def material_db(tmp_path, monkeypatch):
     engine = create_engine(f"sqlite+pysqlite:///{path.as_posix()}")
     with engine.connect() as connection:
         before = snapshot(connection)
+    before_state = evidence(engine)
     command.upgrade(config, AFTER)
-    yield path, config, ids, engine, before
+    yield path, config, ids, engine, before, before_state
     engine.dispose()
 
 
 def test_upgrade_reconciles_every_table_payload_link_and_independent_metadata(material_db):
-    path, _, ids, engine, before = material_db
+    path, _, ids, engine, before, _ = material_db
     with engine.connect() as connection:
         result = verify(connection, before)
     assert result["ok"], result
@@ -80,7 +82,7 @@ def test_upgrade_reconciles_every_table_payload_link_and_independent_metadata(ma
 
 
 def test_deleting_live_record_keeps_journal_and_cannot_resurrect_archive(material_db):
-    path, _, ids, engine, _ = material_db
+    path, _, ids, engine, _, _ = material_db
     with sqlite3.connect(path) as connection:
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("DELETE FROM heat_shrink_records WHERE id=?", (ids[0],))
@@ -95,7 +97,7 @@ def test_deleting_live_record_keeps_journal_and_cannot_resurrect_archive(materia
 
 
 def test_reconciliation_detects_payload_and_unrelated_stock_changes(material_db):
-    path, _, ids, engine, before = material_db
+    path, _, ids, engine, before, _ = material_db
     with sqlite3.connect(path) as connection:
         connection.execute("UPDATE heat_shrink_records SET fields='{}' WHERE id=?", (ids[0],))
         connection.execute("UPDATE warehouse_lots SET inbound=99 WHERE id=?", (LOT,))
@@ -107,7 +109,7 @@ def test_reconciliation_detects_payload_and_unrelated_stock_changes(material_db)
 
 
 def test_database_rejects_two_stock_targets_and_wrong_target_tab(material_db):
-    path, _, ids, _, _ = material_db
+    path, _, ids, _, _, _ = material_db
     with sqlite3.connect(path) as connection:
         for assignment in ("record_id='" + ids[0] + "'", "record_tab='cov'"):
             with pytest.raises(sqlite3.IntegrityError):
@@ -115,7 +117,7 @@ def test_database_rejects_two_stock_targets_and_wrong_target_tab(material_db):
 
 
 def test_editing_migrated_record_moves_live_target_with_foreign_keys_enforced(material_db):
-    path, _, ids, _, _ = material_db
+    path, _, ids, _, _, _ = material_db
     engine = create_engine(f"sqlite+pysqlite:///{path.as_posix()}")
     event.listen(engine, "connect", lambda connection, _: connection.execute("PRAGMA foreign_keys=ON"))
     try:
@@ -136,12 +138,74 @@ def test_editing_migrated_record_moves_live_target_with_foreign_keys_enforced(ma
         engine.dispose()
 
 
-def test_automatic_downgrade_cannot_restore_stale_archive(material_db):
-    _, config, _, engine, before = material_db
+def test_unchanged_cutover_restores_payloads_ids_stock_links_and_roundtrips(material_db):
+    path, config, _, engine, _, before_state = material_db
+    at_head = evidence(engine)
+    command.downgrade(config, BEFORE)
+    restored = evidence(engine)
+    # As with 0180, independent column/view metadata stays valid at the prior revision.
+    # Keep its UUIDs and values so a downgrade/re-upgrade never loses a user's layout.
+    assert restored == {**before_state, "reference_entries": at_head["reference_entries"]}
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        triggers = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='trigger'")}
+        assert {f"freeze_legacy_equipment_{action}" for action in ("insert", "update", "delete")} <= triggers
+        assert not any(name.startswith("freeze_legacy_material") for name in triggers)
+    command.upgrade(config, AFTER)
+    assert evidence(engine) == at_head
+
+
+def test_downgrade_keeps_changes_that_remain_representable_at_the_prior_revision(material_db):
+    path, config, ids, engine, _, _ = material_db
+    with sqlite3.connect(path) as connection:
+        connection.execute("UPDATE reference_entries SET value='[\"Своя колонка\"]' WHERE key='heat_shrink|test'")
+        connection.execute("UPDATE tech_operation_records SET display_text='Новый флюс' WHERE id=?", (ids[3],))
+        link = uuid4().hex
+        _insert(connection, link, record=None, tab="heat_shrink")
+        connection.execute("UPDATE reference_stock_links SET heat_shrink_id=? WHERE id=?", (ids[0], link))
+    before = evidence(engine)
+    command.downgrade(config, BEFORE)
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT record_id,record_tab FROM reference_stock_links WHERE id=?", (link,)).fetchone() == (
+            ids[0], "mat")
+        assert connection.execute("SELECT display_text FROM tech_operation_records WHERE id=?", (ids[3],)).fetchone() == (
+            "Новый флюс",)
+    command.upgrade(config, AFTER)
+    assert evidence(engine) == before
+
+
+@pytest.mark.parametrize("change", ["payload", "group", "status", "delete", "create", "move", "duplicate", "orphan_link"])
+def test_lossy_downgrade_refuses_before_any_schema_or_data_change(material_db, change):
+    path, config, ids, engine, _, _ = material_db
+    with sqlite3.connect(path) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        if change in ("payload", "group", "status"):
+            assignment = {"payload": "fields='{}'", "group": "material_group='ttk'",
+                          "status": "classification_status='unknown'"}[change]
+            connection.execute(f"UPDATE heat_shrink_records SET {assignment} WHERE id=?", (ids[0],))
+        elif change == "delete":
+            connection.execute("DELETE FROM heat_shrink_records WHERE id=?", (ids[0],))
+        elif change == "create":
+            connection.execute("INSERT INTO heat_shrink_records SELECT ?,tab,display_text,normalized_search,source_sheet,"
+                "sort_key,fields,mirror_key,edited_in_erp,equipment_model_id,material_group,classification_status "
+                "FROM heat_shrink_records WHERE id=?", (uuid4().hex, ids[0]))
+        elif change in ("move", "duplicate"):
+            connection.execute("INSERT INTO covering_records SELECT id,'cov',display_text,normalized_search,source_sheet,"
+                "sort_key,fields,mirror_key,edited_in_erp,equipment_model_id,'other',classification_status "
+                "FROM heat_shrink_records WHERE id=?", (ids[0],))
+            if change == "move":
+                connection.execute("UPDATE reference_stock_links SET covering_id=heat_shrink_id,heat_shrink_id=NULL,"
+                                   "record_tab='cov' WHERE heat_shrink_id=?", (ids[0],))
+                connection.execute("DELETE FROM heat_shrink_records WHERE id=?", (ids[0],))
+        else:
+            _insert(connection, uuid4().hex, record=None, tab="heat_shrink")
+        triggers = connection.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").fetchall()
+    before = evidence(engine)
     with pytest.raises(RuntimeError, match="forward repair"):
         command.downgrade(config, BEFORE)
-    with engine.connect() as connection:
-        assert verify(connection, before)["ok"]
+    assert evidence(engine) == before
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").fetchall() == triggers
 
 
 @pytest.mark.parametrize("fields", [
