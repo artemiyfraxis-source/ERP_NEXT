@@ -2055,6 +2055,19 @@ export function withConnectors(result: CablesResult): CablesResult {
 /** Independent material catalogs, grouped and parsed by the server. */
 export type CoveringTab = "heat_shrink" | "cov";
 export type CoveringGroup = "tut" | "ttk" | "cambric" | "corrugated" | "braid" | "tape" | "other";
+export interface ShrinkTemperature {
+  needs_review?: boolean;
+  validation_error?: string;
+  raw_fields?: Record<string, string>;
+  lower_c: number | null;
+  upper_c: number | null;
+  kind: "" | "рекомендуемая" | "диапазон" | "минимальная" | "оптимальная";
+  characteristic_c: number | null;
+  source_url: string;
+  document: string;
+  page: string;
+  quote: string;
+}
 export interface CoveringRow {
   id: string;
   name: string;
@@ -2084,6 +2097,7 @@ export interface CoveringRow {
   material_short: string;
   temp_min_c: number | null;
   temp_max_c: number | null;
+  shrink_temperature?: ShrinkTemperature;
   color: string;
   maker: string;
   series: string;

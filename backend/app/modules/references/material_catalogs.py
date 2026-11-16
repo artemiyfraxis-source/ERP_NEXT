@@ -10,7 +10,7 @@ from .coverings import GROUP_MAP, OVERRIDE_NAMES, OVERRIDE_FIELD, classify
 
 MATERIAL_TABLES = {"heat_shrink": "heat_shrink_records", "cov": "covering_records"}
 DERIVED_COLUMN_TITLES = frozenset({"Стенка, мм", "Разрезная", "Ø номинал, мм", "Диапазон Ø, мм", "Ширина, мм",
-                                    "Плотность", "Температура, °C"})
+                                    "Плотность", "Температура, °C", "Рабочая температура, °C", "Температура усадки, °C"})
 _SHRINK = re.compile(r"термоусад|\bтут(?:нг)?|heat[\s-]*shrink|(?<!\w)(?:с?ттк|нттк)\d*", re.I)
 _OTHER = (
     ("cambric", re.compile(r"кембрик", re.I)),
@@ -47,9 +47,22 @@ def route(fields: Mapping[str, str], current_tab: str = "mat") -> tuple[str, str
     return ("heat_shrink" if group in ("tut", "ttk") else "cov"), group, "classified"
 
 
-def prepare(record, *, current_tab: str | None = None):
-    from .domain import MATERIAL_TABS, TechOperationTab
+def column_identity(tab, name: str) -> str:
+    """The renamed operating column retains the same removal/restoration identity."""
+    if tab == "heat_shrink" and name == "Температура, °C":
+        return "Рабочая температура, °C"
+    return name
+
+
+def prepare(record, *, current_tab: str | None = None, previous: Mapping[str, str] | None = None):
+    from .domain import MATERIAL_TABS, ReferenceValidationError, TechOperationTab
+    from .shrink_temperature import COLUMNS, read
     if record.tab not in MATERIAL_TABS:
         return record
+    if previous is None or any(record.fields.get(key, "") != previous.get(key, "") for key in COLUMNS):
+        try:
+            read(record.fields)
+        except ValueError as error:
+            raise ReferenceValidationError(str(error)) from error
     tab, group, status = route(record.fields, current_tab or record.tab.value)
     return replace(record, tab=TechOperationTab(tab), material_group=group, classification_status=status)
