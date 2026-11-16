@@ -96,6 +96,18 @@ describe("ShipmentDataWindow read-only mode", () => {
     expect(onSaved).not.toHaveBeenCalled();
   });
 
+  it.each(["ЭДО", "БЕЗ УПД"] as const)("refreshes snapshot delivery and always asks for reprinting: %s", async (upd_type) => {
+    const saved = vi.fn();
+    const head = vi.spyOn(shippingApi, "head").mockResolvedValue({ shipment: { ...shipment, version: 5, receiver: "Новый получатель", shipping_point: "Тула", upd_type, delivery_snapshot_at: "2026-11-16T12:00:00" } });
+    render(<ShipmentDataWindow shipment={{ ...shipment, delivery_snapshot_at: "2026-11-02T09:00:00" }} canEdit close={vi.fn()} onSaved={saved} />);
+    expect(screen.getByText("Доставка закреплена за этой отправкой")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Взять данные КБ" }));
+    await screen.findByText("Доставка обновлена. Перепечатайте этикетки и документы.");
+    expect(head).toHaveBeenCalledWith("s1", { version: 4, refresh_delivery: true });
+    expect(screen.getByLabelText("Получатель")).toHaveValue("Новый получатель");
+    expect(saved).toHaveBeenCalled();
+  });
+
   const historical = { ...shipment, status: "Закрыта", shipped_at: "2026-10-25", track_number: "TRK-42" };
   function openCorrection() {
     fireEvent.click(screen.getByRole("button", { name: "Исправить историю" }));

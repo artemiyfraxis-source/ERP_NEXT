@@ -566,6 +566,56 @@ def _day(value: object, label: str = "Дата отгрузки по плану"
 
 
 @dataclass(frozen=True)
+class ItemAddressee:
+    """An explicit field mask distinguishes clearing a value from inheriting it."""
+
+    project: str
+    item_index: str
+    version: int = 0
+    receiver: str = ""
+    shipping_point: str = ""
+    contact: str = ""
+    phone: str = ""
+    terms: DeliveryTerms | None = None
+    carrier: str = ""
+    upd_type: UpdType | None = None
+    overridden: frozenset[str] = frozenset()
+    updated_by: str = ""
+    updated_at: datetime | None = None
+
+    def edit(self, fields: dict, inherit: Sequence[str]) -> ItemAddressee:
+        unknown = (set(fields) | set(inherit)) - set(ADDRESSEE_CARD_FIELDS)
+        if unknown or set(fields) & set(inherit):
+            raise ShippingValidationError("Поля доставки не должны повторяться или быть неизвестными")
+        parsed = ProjectAddressee(self.project).edit(fields)
+        values = {key: getattr(parsed, key) for key in fields}
+        for key in inherit:
+            values[key] = None if key in {"terms", "upd_type"} else ""
+        return replace(self, **values, overridden=frozenset((self.overridden | fields.keys()) - set(inherit)))
+
+
+def item_delivery(card: ProjectAddressee | None, item: ItemAddressee | None, customer: str = "",
+                  own: dict | None = None) -> tuple[dict, dict[str, str]]:
+    values, provenance = {}, {}
+    for key in ADDRESSEE_CARD_FIELDS:
+        value = (own or {}).get(key)
+        if isinstance(value, str) and not isinstance(value, Enum):
+            value = value.strip()
+        if value:
+            source = "shipment"
+        elif item is not None and key in item.overridden:
+            value, source = getattr(item, key), "item"
+        else:
+            value = getattr(card, key) if card else None
+            source = "project" if value else "empty"
+            if key == "receiver" and not value and customer:
+                value, source = customer, "customer"
+        values[key] = value if value is not None else (None if key in {"terms", "upd_type"} else "")
+        provenance[key] = source
+    return values, provenance
+
+
+@dataclass(frozen=True)
 class EffectiveAddress:
     receiver: str
     shipping_point: str
@@ -789,6 +839,7 @@ class Shipment:
     # снимает разрешение.
     no_upd_approved_by: str = ""
     no_upd_approved_at: datetime | None = None
+    delivery_snapshot_at: datetime | None = None
 
     @classmethod
     def create(
@@ -798,6 +849,7 @@ class Shipment:
         upd_date: date | None, upd_url: str, manager: str, note: str,
         lines: tuple[ShipmentLine, ...], manager_id: UUID | None = None,
         inherited: frozenset[str] = frozenset(), id: UUID | None = None,
+        delivery_snapshot_at: datetime | None = None,
     ) -> Shipment:
         """`id` задаёт вызывающий, когда отправку надо узнать повторно (ключ повтора «Отгрузить»)."""
         if not lines:
@@ -818,6 +870,7 @@ class Shipment:
             track_number="", packed_at=None, shipped_at=None,
             manager=_text(manager, "Менеджер"), note=str(note or "").strip(), lines=lines,
             manager_id=manager_id, inherited=frozenset(inherited) & frozenset(ADDRESSEE_CARD_FIELDS),
+            delivery_snapshot_at=delivery_snapshot_at,
         )
 
     def pick(
@@ -882,7 +935,7 @@ class Shipment:
         if self.status in {ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
             raise ShippingValidationError("Закрытую или отменённую отгрузку нельзя менять")
         inherited = self.inherited - {"upd_type"} if upd_type is not None else self.inherited | {"upd_type"}
-        if self.status == ShipmentStatus.SHIPPED and upd_type is None:
+        if (self.delivery_snapshot_at is not None or self.status == ShipmentStatus.SHIPPED) and upd_type is None:
             upd_type, inherited = self.upd_type, self.inherited
         edited = replace(
             self, upd_type=upd_type, upd_number=str(upd_number or "").strip(),
@@ -908,9 +961,11 @@ class Shipment:
         for key, value in fields.items():
             # Тип доставки — str-перечисление: `strip()` превратил бы его в голую строку (HTTP 500 при записи, 29.10).
             value = value.strip() if isinstance(value, str) and not isinstance(value, Enum) else value
-            if key in ADDRESSEE_CARD_FIELDS and value in (None, ""):
+            if key in ADDRESSEE_CARD_FIELDS and value in (None, "") and self.delivery_snapshot_at is None:
                 inherited.add(key)
                 continue
+            if key in ADDRESSEE_CARD_FIELDS and value is None and key not in {"terms", "upd_type"}:
+                value = ""
             inherited.discard(key)
             values[key] = value
         edited = replace(self, **values, inherited=frozenset(inherited))._followed(card)
@@ -926,7 +981,7 @@ class Shipment:
         return self if followed == self else replace(followed, version=self.version + 1)
 
     def _followed(self, card: ProjectAddressee | None) -> Shipment:
-        if self.status in {ShipmentStatus.SHIPPED, ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
+        if self.delivery_snapshot_at is not None or self.status in {ShipmentStatus.SHIPPED, ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
             return self
         values: dict[str, object] = {}
         for key in self.inherited:

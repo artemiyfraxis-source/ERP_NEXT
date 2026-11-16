@@ -9,6 +9,7 @@ const rights = { canEdit: true, canManage: false, canWarehouse: true, canUnship:
 it("requires an explicit quantity, caps it by permission, and refreshes addressee CAS without losing intent", async () => {
   let dispatches = 0, posts = 0;
   const fetcher = vi.fn(async (input, init) => {
+    if (String(input).includes("item-addressees")) return new Response(JSON.stringify({ items: [] }));
     if (String(input).includes("project-ship")) {
       posts++;
       return posts === 1 ? new Response(JSON.stringify({ detail: "Версия изменена" }), { status: 409 })
@@ -37,4 +38,22 @@ it("requires an explicit quantity, caps it by permission, and refreshes addresse
   const bodies = fetcher.mock.calls.filter(([url]) => String(url).includes("project-ship")).map(([, init]) => JSON.parse(String(init.body)));
   expect(bodies.map((body) => body.addressee_version)).toEqual([2, 3]);
   expect(bodies[1].lines).toEqual([{ good_id: "g1", version: 2, quantity: "5" }]);
+});
+
+it("shows separate destinations and retains quantities when mixed selection is refused", async () => {
+  const fetcher = vi.fn(async (input) => new Response(JSON.stringify(String(input).includes("item-addressees") ? {
+    items: ["КБ1", "КБ2"].map((item_index, index) => ({ item_index, effective: {
+      receiver: "Получатель", shipping_point: index ? "Тула" : "Москва", contact: "", phone: "123", terms: "ДОСТАВКА ТК", carrier: "СДЭК", upd_type: "ЭДО",
+    } })),
+  } : { addressee: { version: 2 } })));
+  vi.stubGlobal("fetch", fetcher);
+  render(<PackWindow project="П" rows={[row, { ...row, item_index: "КБ2", good_id: "g2" }]} shipments={[]} rights={rights} reload={vi.fn()} close={vi.fn()} />);
+  await screen.findByText("Доставка 2 · КБ2");
+  fireEvent.change(screen.getByLabelText("Сколько упаковать КБ1"), { target: { value: "3" } });
+  fireEvent.change(screen.getByLabelText("Сколько упаковать КБ2"), { target: { value: "2" } });
+  fireEvent.click(screen.getByRole("button", { name: "Упаковать · 5 шт" }));
+  expect(screen.getByRole("alert")).toHaveTextContent("разные данные доставки");
+  expect(screen.getByLabelText("Сколько упаковать КБ1")).toHaveValue(3);
+  expect(screen.getByLabelText("Сколько упаковать КБ2")).toHaveValue(2);
+  expect(fetcher.mock.calls.some(([url]) => String(url).includes("project-ship"))).toBe(false);
 });

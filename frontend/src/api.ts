@@ -1795,6 +1795,7 @@ export interface Shipment {
   lines: ShipmentLine[];
   /** Поля адресата, которые идут за карточкой проекта до отгрузки. */
   inherited: string[];
+  delivery_snapshot_at?: string | null;
   /** Чего не хватает для отгрузки, считает сервер (`shipping_gaps`): `missing_data` — что вносит менеджер (с этим
    *  печатается DN), `missing_ship` — то же и трек-номер ТК, без которого «Отгрузить» откажет. */
   missing_data: string[];
@@ -1859,6 +1860,20 @@ export interface ProjectAddressee {
   upd_number?: string;
   upd_date?: string | null;
 }
+
+export const DELIVERY_FIELDS = ["receiver", "shipping_point", "contact", "phone", "terms", "carrier", "upd_type"] as const;
+export type DeliveryField = typeof DELIVERY_FIELDS[number];
+export type DeliveryValues = Pick<ProjectAddressee, DeliveryField>;
+export interface ItemAddressee {
+  project: string; item_index: string; name: string; version: number;
+  overrides: Partial<DeliveryValues>; effective: DeliveryValues;
+  provenance: Record<DeliveryField, "item" | "project" | "customer" | "empty">;
+  updated_by: string; updated_at: string | null;
+}
+export interface ItemAddresseeChange {
+  item_index: string; version: number; fields?: Partial<DeliveryValues>; inherit?: DeliveryField[];
+}
+export interface ItemAddresseesResult { project: string; items: ItemAddressee[] }
 
 /** Кто может разрешить отгрузку без УПД (PIN вводится на экране кладовщика). */
 export interface NoUpdApprover { id: string; name: string }
@@ -4261,6 +4276,13 @@ export const shippingApi = {
   }),
   print: (shipmentId: string, document: "pl" | "dn") => api<{ forms: ShippingForm[] }>(`/api/shipping/shipments/${shipmentId}/print?document=${document}`),
   addressees: (projects?: string[]) => api<{ addressees: ProjectAddressee[] }>(`/api/shipping/project-addressees${projects?.length ? `?${new URLSearchParams(projects.map((project) => ["project", project]))}` : ""}`),
+  itemAddressees: (project: string) => api<ItemAddresseesResult>(`/api/shipping/item-addressees?project=${encodeURIComponent(project)}`),
+  saveItemAddressee: (project: string, item: ItemAddresseeChange) => api<ItemAddresseesResult>("/api/shipping/item-addressee", {
+    method: "PUT", body: JSON.stringify({ project, ...item }),
+  }),
+  saveItemAddressees: (project: string, items: ItemAddresseeChange[]) => api<ItemAddresseesResult>("/api/shipping/item-addressees/bulk", {
+    method: "PUT", body: JSON.stringify({ project, items }),
+  }),
   /** `portalShipUpdFile`: файл УПД к отправке; ссылка на него встаёт в отправку. */
   uploadUpd: (shipmentId: string, version: number, file: { name: string; type: string; base64: string }) => api<{ shipment: Shipment }>("/api/shipping/upd-files", {
     method: "POST", body: JSON.stringify({ shipment_id: shipmentId, version, file_name: file.name, content_type: file.type, content_base64: file.base64 }),

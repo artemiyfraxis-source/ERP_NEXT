@@ -538,7 +538,7 @@ def _queued_good(client, project="591К.3", item_index="КБ1"):
     return good
 
 
-def test_shipment_inherits_project_card_and_remembers_typed_contact(shipping_api):
+def test_shipment_snapshots_project_card_without_remembering_typed_contact(shipping_api):
     client = shipping_api
     good = _queued_good(client)
     card = client.put("/api/shipping/project-addressee", json={
@@ -563,12 +563,11 @@ def test_shipment_inherits_project_card_and_remembers_typed_contact(shipping_api
     assert shipment["terms"] == "ДОСТАВКА ТК"
     assert shipment["carrier"] == "ПЭК"
     assert shipment["upd_type"] == "ЭДО"
-    # The typed contact is remembered; nothing the manager left empty is erased.
-    assert stored["contact"] == "Петров"
+    # Shipment-only details never overwrite the project defaults.
+    assert stored["contact"] == "Иванов"
     assert stored["shipping_point"] == "Москва, склад 1"
     assert stored["upd_type"] == "БУМАГА"
-    # Only the typed contact changes the card; shipment creation cannot grant packing.
-    assert stored["version"] == 2 and stored["pack_decided"] is False and stored["pack_decided_by"] == ""
+    assert stored["version"] == 1 and stored["pack_decided"] is False and stored["pack_decided_by"] == ""
 
 
 
@@ -588,7 +587,7 @@ def test_head_edit_sets_delivery_terms_and_carrier(shipping_api):
     assert (body["terms"], body["carrier"], body["phone"]) == ("ДОСТАВКА ТК", "СДЭК", "8925")
     assert _shipment(client, shipment["id"])["terms"] == "ДОСТАВКА ТК"
 
-def test_open_shipment_follows_project_card_until_closed_and_head_edit_overrides(shipping_api):
+def test_legacy_open_shipment_follows_project_card_until_closed_and_head_edit_overrides(shipping_api):
     client = shipping_api
     good = _queued_good(client)
     card = client.put("/api/shipping/project-addressee", json={
@@ -598,9 +597,17 @@ def test_open_shipment_follows_project_card_until_closed_and_head_edit_overrides
     shipment = client.post("/api/shipping/shipments", json={
         "contact": "Петров", "lines": [{"good_id": good["id"], "quantity": "5"}],
     }).json()["shipment"]
+    # Simulate a historical row, which the additive migration leaves untouched.
+    from app.modules.shipping.infrastructure import ShipmentRow
+    with app.state.shipping_uow_factory() as uow:
+        row = uow.session.get(ShipmentRow, UUID(shipment["id"]))
+        row.delivery_snapshot_at = None
+        row.inherited_fields = "carrier,phone,receiver,shipping_point,terms,upd_type"
+        uow.commit()
+    shipment = _shipment(client, shipment["id"])
     assert shipment["inherited"] == ["carrier", "phone", "receiver", "shipping_point", "terms", "upd_type"]
     card = client.put("/api/shipping/project-addressee", json={
-        "project": "591К.3", "version": card["version"] + 1, "shipping_point": "Тула", "contact": "Сидоров",
+        "project": "591К.3", "version": card["version"], "shipping_point": "Тула", "contact": "Сидоров",
         "terms": "ДОСТАВКА ТК", "carrier": "ПЭК", "upd_type": "ЭДО", "receiver": "АО Получатель",
     }).json()["addressee"]
     followed = _shipment(client, shipment["id"])
@@ -652,7 +659,7 @@ def _shipment(client, shipment_id):
     return next(item for item in client.get("/api/shipping/shipments").json()["shipments"] if item["id"] == shipment_id)
 
 
-def test_first_shipment_without_card_takes_no_point_and_seeds_card(shipping_api):
+def test_first_shipment_without_card_does_not_seed_project_defaults(shipping_api):
     client = shipping_api
     good = _queued_good(client)
     lines = [{"good_id": good["id"], "quantity": "1"}]
@@ -674,7 +681,7 @@ def test_first_shipment_without_card_takes_no_point_and_seeds_card(shipping_api)
     assert (no_terms.json()["shipment"]["terms"], no_terms.json()["shipment"]["upd_type"]) == (None, "ЭДО")
     assert made.status_code == 200
     assert made.json()["shipment"]["receiver"] == "Заказчик"
-    assert (card["shipping_point"], card["phone"], card["contact"], card["version"]) == ("Москва", "+7 900", "", 2)
+    assert (card["shipping_point"], card["phone"], card["contact"], card["version"]) == ("", "", "", 0)
     assert card["terms"] is None
 
 

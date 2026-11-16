@@ -149,7 +149,7 @@ def test_packing_does_not_match_a_neighbor_project(env, endpoint):
     assert _snapshot(sessions) == before
 
 
-def test_manager_alias_uses_one_card_for_cas_copy_and_later_follow(env):
+def test_manager_alias_uses_one_card_for_cas_and_freezes_the_copy(env):
     client, sessions = env
     good = _stock(client)
     _decide(client)
@@ -183,7 +183,7 @@ def test_manager_alias_uses_one_card_for_cas_copy_and_later_follow(env):
         cards = list(session.scalars(select(ProjectAddresseeRow)))
         assert len(cards) == 1 and cards[0].project == alias
         stored = session.get(ShipmentRow, UUID(shipment["id"]))
-        assert stored.shipping_point == "Новый адрес"
+        assert stored.shipping_point == "Верный адрес" and stored.delivery_snapshot_at is not None
 
 
 def test_card_alias_creation_locks_before_read_and_rejects_stale_creation(env, monkeypatch):

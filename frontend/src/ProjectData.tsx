@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { failureText, shippingApi, type ProjectAddressee } from "./api";
+import { ApiError, DELIVERY_FIELDS, failureText, shippingApi, type DeliveryField, type DeliveryValues, type ItemAddressee, type ProjectAddressee } from "./api";
 import { PageWindow } from "./PageWindow";
 import { CARRIERS, PICKUP_CARRIER, isPickup } from "./carriers";
 import { UPD_TYPES } from "./ShipmentData";
@@ -57,7 +57,7 @@ export function ProjectDataWindow({ project, customer, stored, canManage, close,
   return <PageWindow label={`Данные отправки проекта ${project}`} width={760} close={close}>
     <form className="panel ship-data" onSubmit={(event) => { event.preventDefault(); void save(); }}>
       <h2>Данные отправки · {project}</h2>
-      <p className="ship-data-sub">{customer || "Заказчик не указан"} · новые отправки проекта берут эти данные</p>
+      <p className="ship-data-sub">{customer || "Заказчик не указан"} · доставка по умолчанию для КБ проекта</p>
       <div className="ship-form">
         <label>Тип доставки<select aria-label="Тип доставки" value={delivery} onChange={(event) => setDelivery(event.target.value)}>
           <option value="">не выбран</option><option value="САМОВЫВОЗ">Самовывоз</option><option value="ДОСТАВКА ТК">Доставка ТК</option></select></label>
@@ -84,6 +84,95 @@ export function ProjectDataWindow({ project, customer, stored, canManage, close,
         <button type="button" className="secondary" onClick={close}>Отмена</button>
         <button className="primary" disabled={saving}>{saving ? "Сохраняем…" : "Сохранить"}</button>
       </span></div>
+    </form>
+  </PageWindow>;
+}
+
+const DELIVERY_LABELS: Record<DeliveryField, string> = {
+  receiver: "Получатель", shipping_point: "Адрес доставки", contact: "Контактное лицо", phone: "Телефон",
+  terms: "Способ доставки", carrier: "Перевозчик", upd_type: "Тип УПД",
+};
+
+/** One project per atomic batch; receipt rows are deduplicated by catalog KB identity. */
+export function ItemDeliveryWindow({ project, items: initial, close, onSaved }: {
+  project: string; items: ItemAddressee[]; close: () => void; onSaved: () => Promise<void> | void;
+}) {
+  const [items, setItems] = useState(() => [...new Map(initial.map((item) => [item.item_index, item])).values()]);
+  const [draft, setDraft] = useState<Record<DeliveryField, string>>(() => Object.fromEntries(DELIVERY_FIELDS.map((key) => [
+    key, initial.every((item) => item.effective[key] === initial[0]?.effective[key]) ? initial[0]?.effective[key] ?? "" : "",
+  ])) as Record<DeliveryField, string>);
+  const [modes, setModes] = useState<Partial<Record<DeliveryField, "value" | "inherit">>>({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [conflict, setConflict] = useState(false);
+  const [refreshed, setRefreshed] = useState(false);
+  const single = items.length === 1;
+  const save = async (reset = false) => {
+    setSaving(true); setError("");
+    const fields = Object.fromEntries(DELIVERY_FIELDS.filter((key) => modes[key] === "value").map((key) => [
+      key, key === "terms" || key === "upd_type" ? draft[key] || null : draft[key].trim(),
+    ])) as Partial<DeliveryValues>;
+    const inherit = reset ? [...DELIVERY_FIELDS] : DELIVERY_FIELDS.filter((key) => modes[key] === "inherit");
+    const changes = items.map((item) => ({ item_index: item.item_index, version: item.version, fields: reset ? {} : fields, inherit }));
+    try {
+      if (single) await shippingApi.saveItemAddressee(project, changes[0]);
+      else await shippingApi.saveItemAddressees(project, changes);
+      await onSaved(); close();
+    } catch (reason) {
+      setError(failureText(reason, "Доставка КБ не сохранена"));
+      setConflict(reason instanceof ApiError && reason.status === 409);
+    } finally { setSaving(false); }
+  };
+  const refresh = async () => {
+    setSaving(true);
+    try {
+      const result = await shippingApi.itemAddressees(project);
+      const wanted = new Set(items.map((item) => item.item_index));
+      const current = result.items.filter((item) => wanted.has(item.item_index));
+      if (current.length !== items.length) throw new Error("Состав КБ изменился. Откройте доставку заново.");
+      setItems(current); setConflict(false); setRefreshed(true); setError("Данные обновлены. Проверьте значения и сохраните ещё раз; ваш ввод сохранён.");
+    } catch (reason) { setError(failureText(reason, "Не удалось обновить данные")); }
+    finally { setSaving(false); }
+  };
+  return <PageWindow label={`Доставка КБ · ${project}`} width={800} close={close}>
+    <form className="panel ship-data item-delivery-editor" onSubmit={(event) => { event.preventDefault(); void save(); }}>
+      <h2>Доставка · {project} · {single ? items[0].item_index : `${items.length} КБ`}</h2>
+      <p className="ship-data-sub">{items.map((item) => item.item_index).join(", ")}</p>
+      <div className="ship-form">
+        {DELIVERY_FIELDS.map((key) => {
+          const different = items.some((item) => item.effective[key] !== items[0].effective[key]);
+          const mode = modes[key];
+          const set = (value: string) => { setDraft({ ...draft, [key]: value }); setModes({ ...modes, [key]: "value" }); };
+          const choices = key === "terms" ? [["САМОВЫВОЗ", "Самовывоз"], ["ДОСТАВКА ТК", "Доставка ТК"]] : key === "upd_type" ? UPD_TYPES : null;
+          return <div key={key} className={key === "shipping_point" ? "ship-span2" : undefined}>
+            <label>{DELIVERY_LABELS[key]}
+              {choices ? <select name={key} autoComplete="off" aria-label={DELIVERY_LABELS[key]} disabled={saving || mode === "inherit"} value={draft[key]} onChange={(event) => set(event.target.value)}>
+                <option value="">{different && !mode ? "Разные значения" : "Не задано"}</option>
+                {choices.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select> : <input name={key} autoComplete="off" type={key === "phone" ? "tel" : "text"} aria-label={DELIVERY_LABELS[key]} disabled={saving || mode === "inherit"} value={draft[key]}
+                placeholder={different && !mode ? "Разные значения" : undefined} onChange={(event) => set(event.target.value)} />}
+            </label>
+            <select name={`${key}_mode`} autoComplete="off" className="item-delivery-mode" aria-label={`Применить: ${DELIVERY_LABELS[key]}`} disabled={saving}
+              value={mode ?? "keep"} onChange={(event) => {
+                const next = { ...modes };
+                if (event.target.value === "keep") delete next[key]; else next[key] = event.target.value as "value" | "inherit";
+                setModes(next);
+              }}>
+              <option value="keep">{single ? (key in items[0].overrides ? "Задано для КБ" : "Как у проекта") : "Не менять"}</option>
+              <option value="value">{single ? "Задать для КБ" : "Задать выбранным КБ"}</option>
+              {single && <option value="inherit">Как у проекта — сбросить</option>}
+            </select>
+            {refreshed && <span className="muted">Сейчас: {items.map((item) => item.effective[key] || "—").filter((v, i, all) => all.indexOf(v) === i).join("; ")}</span>}
+          </div>;
+        })}
+      </div>
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      <div className="ship-actions">
+        <button type="button" className="secondary" disabled={saving || conflict} onClick={() => void save(true)}>Как у проекта</button>
+        {conflict && <button type="button" className="secondary" disabled={saving} onClick={() => void refresh()}>Обновить данные</button>}
+        <span className="ship-actions-end"><button type="button" className="secondary" onClick={close}>Отмена</button>
+          <button className="primary" disabled={saving || conflict || !Object.keys(modes).length}>{saving ? "Сохраняем…" : "Сохранить"}</button></span>
+      </div>
     </form>
   </PageWindow>;
 }

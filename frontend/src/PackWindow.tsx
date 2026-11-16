@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { ApiError, shippingApi, type Shipment } from "./api";
+import { ApiError, failureText, shippingApi, type ItemAddressee, type Shipment } from "./api";
 import { isoDay } from "./Gantt";
 import { canPack, kbKey, num, packAllowed, packable, permittedPack, round2 } from "./intakeStages";
 import { PageWindow } from "./PageWindow";
 import { compareShipments } from "./shipmentOrder";
-import { intakeApi, type DispatchShipment, type IntakeRow } from "./productionIntakeApi";
+import { deliveryGroups, intakeApi, type DispatchShipment, type IntakeRow } from "./productionIntakeApi";
+import { termsText } from "./carriers";
 import { Banners, ShipmentCard, useMutate, type CardRights, type Mutate } from "./ShipmentCard";
 import { ShipmentDataWindow } from "./ShipmentData";
 
@@ -46,35 +47,41 @@ function PackForm({ project, candidates, rights, busy, mutate, reload }: { proje
   const [deadline, setDeadline] = useState("");
   const [problem, setProblem] = useState("");
   const [addresseeVersion, setAddresseeVersion] = useState<number | null>(null);
+  const [destinations, setDestinations] = useState<ItemAddressee[]>([]);
   // Ключ повтора живёт до успеха: повтор после обрыва связи вернёт уже заведённую отправку, а не заведёт вторую.
   const packKey = useRef(crypto.randomUUID());
   useEffect(() => {
     let live = true;
-    intakeApi.dispatch(project).then((result) => { if (live) setAddresseeVersion(result.addressee?.version ?? 0); })
-      .catch(() => { if (live) setAddresseeVersion(0); });
+    Promise.all([intakeApi.dispatch(project), shippingApi.itemAddressees(project)]).then(([result, delivery]) => {
+      if (live) { setAddresseeVersion(result.addressee?.version ?? 0); setDestinations(delivery.items ?? []); }
+    }).catch((reason) => { if (live) setProblem(failureText(reason, "Не удалось загрузить доставку КБ. Откройте упаковку заново.")); });
     return () => { live = false; };
   }, [project]);
   const chosen = candidates.filter((row) => canPack(row) && marked[kbKey(row)] && num(qty[kbKey(row)]) > 0);
   const total = round2(chosen.reduce((sum, row) => sum + num(qty[kbKey(row)]), 0));
+  const groups = deliveryGroups(destinations.filter((item) => candidates.some((row) => row.item_index === item.item_index)));
+  const chosenGroups = deliveryGroups(destinations.filter((item) => chosen.some((row) => row.item_index === item.item_index)));
 
   const pack = () => {
     setProblem("");
     if (!chosen.length) { setProblem("Отметьте КБ и укажите количество"); return; }
+    if (chosenGroups.length > 1) { setProblem("У выбранных КБ разные данные доставки. Упакуйте каждую группу отдельной отправкой; введённые количества сохранены."); return; }
     const over = chosen.find((row) => num(qty[kbKey(row)]) > permittedPack(row));
     if (over) { setProblem(`${over.item_index}: можно упаковать не больше ${permittedPack(over)}`); return; }
     const lines = chosen.map((row) => ({ good_id: String(row.good_id), version: row.good_version ?? 0, quantity: String(qty[kbKey(row)]).replace(",", ".") }));
     void mutate(`pack:${project}`, async () => {
-      // Адресат не копируется в отправку: пустые поля идут за карточкой проекта, пока отправка открыта.
+      // The server resolves all selected KBs and freezes the destination for this consignment.
       let result;
       try { result = await shippingApi.projectShip({
         project, addressee_version: addresseeVersion ?? 0, lines, ship: false,
         ...(rights.canManage ? { documents: { upd_number: "", upd_date: null, deadline: deadline || null } } : {}),
       }, packKey.current); } catch (reason) {
-        if (reason instanceof ApiError && reason.status === 409) {
-          setProblem("Остатки или разрешения изменились. Проверьте обновлённые данные; ваш ввод сохранён.");
+        if (reason instanceof ApiError && [409, 422].includes(reason.status)) {
+          setProblem("Проверьте обновлённые остатки, разрешения и доставку; ваш ввод сохранён.");
           setAddresseeVersion(null);
-          const [, refreshed] = await Promise.all([reload(), intakeApi.dispatch(project)]);
+          const [, refreshed, delivery] = await Promise.all([reload(), intakeApi.dispatch(project), shippingApi.itemAddressees(project)]);
           setAddresseeVersion(refreshed.addressee?.version ?? 0);
+          setDestinations(delivery.items ?? []);
         }
         throw reason;
       }
@@ -88,6 +95,13 @@ function PackForm({ project, candidates, rights, busy, mutate, reload }: { proje
   };
 
   return <>
+        {groups.length > 0 && <div className="item-delivery-groups" aria-label="Группы доставки">
+          {groups.map((group, index) => <div key={index}>
+            <strong>{groups.length > 1 ? `Доставка ${index + 1} · ` : "Доставка · "}{group.items.join(", ")}</strong>
+            <span>{[group.delivery.receiver, group.delivery.shipping_point, group.delivery.contact, group.delivery.phone,
+              termsText(group.delivery.terms), group.delivery.carrier, group.delivery.upd_type].filter(Boolean).join(" · ") || "Не задана"}</span>
+          </div>)}
+        </div>}
         <table className="grid compact intake-window-table">
           <thead><tr><th aria-label="Отметка" /><th>КБ</th><th className="grow">Наименование</th><th className="num">Принято</th><th className="num">Упаковано</th><th className="num">На складе не упаковано</th><th className="num">Разрешено ещё</th><th className="num">Упаковать, шт</th></tr></thead>
           <tbody>{candidates.map((row) => {

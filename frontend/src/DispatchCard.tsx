@@ -156,6 +156,7 @@ export function DispatchCard({ project, customer, canEdit, close, onSaved, stage
     <section className="panel dispatch-card">
       <header className="page-head"><h2>Данные отправки · {project}{customer ? ` · ${customer}` : ""}</h2>
         <button type="button" className="secondary small" onClick={close}>Закрыть</button></header>
+      <p className="muted">Доставка по умолчанию для КБ проекта</p>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {saved && <div className="success-banner" role="status">{saved}</div>}
       {!loaded ? <div className="empty">Загрузка…</div> : loadFailed ? <div className="empty">Закройте окно и откройте заново, чтобы загрузить данные.</div> : <>
