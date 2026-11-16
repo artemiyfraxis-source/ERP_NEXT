@@ -14,6 +14,8 @@ PAYLOAD_PATH = ROOT / "docs/data/operation-templates-fakra-1114/payload.json"
 SEED_PATH = ROOT / "backend/data/techcard-library-erp.json"
 PAYLOAD = json.loads(PAYLOAD_PATH.read_text(encoding="utf-8"))
 ITEMS = {item["code"]: item for item in PAYLOAD}
+FOLLOWUP = json.loads((ROOT / "docs/data/operation-templates-marking-1116/payload.json").read_text(encoding="utf-8"))
+ITEMS.update({item["code"]: item for item in FOLLOWUP if item["code"] in ITEMS})
 CARDS = {card.code: card for card in parse_operation_library(
     json.loads(SEED_PATH.read_text(encoding="utf-8"))["templates"]
 ) if card.code in ITEMS}
