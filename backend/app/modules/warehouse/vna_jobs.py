@@ -14,7 +14,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.shared.persistence import Base
 
-from .devices import idn_serial
+from .devices import DeviceRow, VnaBindingRow, control_capability, idn_serial
 from .scan_agents import LIVE_FOR, ScanAgentRow
 from .scan_jobs import CLAIMED, DONE, VNA_FILE_LIMIT, ScanJobClosed, ScanJobRow, _closed, _session, open_for_result
 
@@ -141,3 +141,32 @@ def content(uow, job_id: UUID) -> bytes:
         return _session(uow).scalar(select(ScanJobRow.capture_content).where(
             ScanJobRow.id == job_id, ScanJobRow.kind == "vna", ScanJobRow.status == DONE,
         )) or b""
+
+
+def control_station(session, serial: str, now: datetime, *, machine_id: str | None = None,
+                    methods: set[str] | None = None) -> str:
+    """Resolve/lock the registry's existing physical owner, never an arbitrary browser PC header."""
+    binding = session.get(VnaBindingRow, serial)
+    if binding is None or (machine_id is not None and binding.machine_id != machine_id):
+        raise ScanJobClosed("ВАЦ не закреплён за этим ПК")
+    owner = binding.machine_id
+    locked = session.execute(update(VnaBindingRow).where(
+        VnaBindingRow.serial == serial, VnaBindingRow.machine_id == owner).values(machine_id=owner))
+    if locked.rowcount != 1:
+        raise ScanJobClosed("Привязка ВАЦ изменилась")
+    device = session.scalar(select(DeviceRow).where(
+        DeviceRow.machine_id == owner, DeviceRow.kind == "s2vna", DeviceRow.device_id == serial,
+        DeviceRow.present.is_(True), DeviceRow.last_seen >= now - LIVE_FOR))
+    if device is None:
+        raise ScanJobClosed("Подключённый ВАЦ с нужным серийным номером не найден")
+    supported = control_capability(session, owner, now)
+    if methods and not methods.issubset(supported):
+        raise ScanJobClosed("Метод калибровки не подтверждён агентом на этом ПК")
+    return owner
+
+
+def refuse_open_capture(session, instrument_id: UUID, serial: str) -> None:
+    jobs = session.scalars(select(ScanJobRow).where(
+        ScanJobRow.kind == "vna", ScanJobRow.status.in_(("pending", "claimed"))))
+    if any(job.instrument_id == instrument_id or idn_serial(job.vna_name) == serial for job in jobs):
+        raise ScanJobClosed("Сначала завершите обычное снятие трассы с этого ВАЦ")

@@ -269,6 +269,10 @@ def create_job(uow, *, requested_by: str, now: datetime, target: str | None = No
                 .values(machine_id=target))
             if owned.rowcount != 1:
                 raise ScanJobClosed("Привязка ВАЦ изменилась — проверьте прибор ещё раз")
+        if kind == "vna":
+            from app.workflows.vna_measurement_api import refuse_session_capture
+
+            refuse_session_capture(session, instrument_id, expected_vna_serial or "", vna_name)
         row = ScanJobRow(id=uuid4(), status=PENDING, requested_by=requested_by[:255] or "—", created_at=now,
                          target_machine_id=target, target_scanner=scanner if target else None, error="", result="",
                          kind=kind, vna_name=vna_name, source=source, instrument_id=instrument_id, requester_id=requester_id)
