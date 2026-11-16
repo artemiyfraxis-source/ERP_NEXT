@@ -295,16 +295,18 @@ def scan_agent_claim(
     payload: AgentClaimInput | None = None,
 ) -> dict:
     who = payload or AgentClaimInput()
+    # Omitted kinds preserves old scan-only polling; an explicitly empty list requests no work.
+    kinds = set(who.kinds) if "kinds" in who.model_fields_set else {"scan"}
     machine_id = _queue(lambda: agent_machine(uow_factory(), _agent.actor.id, who.machine_id))
     machine_id = scan_agents.touch(uow_factory(), machine_id=machine_id, host=who.host, ip_seen=_client_ip(request),
                                    now=now)
-    if "vna_control" in who.kinds:
+    if "vna_control" in kinds:
         from app.workflows.vna_measurement_api import claim_session_command
 
         command = _queue(lambda: claim_session_command(uow_factory, machine_id, who.observed_vna_serial, now))
         if command:
             return {"job": command, "poll_after_ms": 500}
-    job = claim(uow_factory(), now=now, machine_id=machine_id, vna="vna" in who.kinds)
+    job = claim(uow_factory(), now=now, machine_id=machine_id, vna="vna" in kinds, scan="scan" in kinds)
     return {"job": {"id": str(job.id), "target_scanner": job.target_scanner,
                     **({"kind": job.kind, "source": job.source} if who.kinds else {})} if job else None}
 
