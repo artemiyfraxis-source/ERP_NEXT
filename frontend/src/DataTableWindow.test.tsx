@@ -42,7 +42,7 @@ it("puts only the pieces near the screen in the page and keeps the whole list (n
   // before the window reports: about the first two screens
   expect(bodyRows()).toBe(80);
   expect(screen.queryByRole("status")).toBeNull(); // no «load more» — the whole list is there
-  const headings = [...document.querySelectorAll(".dt-block-title")].map((node) => node.textContent);
+  const headings = screen.getAllByRole("heading", { level: 2 }).map((node) => node.textContent?.replace(/^[▸▾]\s*/, ""));
   expect(headings).toEqual(["МГТФ 60", "НВ-4 300"]);
 
   // the screen is at the top: only the first piece is near

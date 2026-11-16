@@ -436,3 +436,25 @@ describe("cut of tubes (owner 16.10, 713К.4 КБ1: no picture)", () => {
     expect(etkDrawTubeCut({ type: "cutTut", result: [{ name: "Оплётка нарезана: 2 шт по 120 мм" }] })).toBe("");
   });
 });
+
+
+describe("FAKRA cut parameters and strip sketches", () => {
+  const end = { connector: "59K13O-1M4A4", cable: "RTK 031", l1: "9,7", l2: "4,6", l3: "3,0", dimensionOrder: "XYZ" };
+  it("draws Rosenberger X/Y/Z without changing stored dimensions", () => {
+    const drawing = etkDrawCoax({ type: "coaxCut", fields: { coax: end, coaxB: { ...end, l1: "11,6", l2: "6,4", l3: "1,7" } } });
+    expect(drawing).not.toContain("Размеров разделки нет");
+    for (const label of ["Сторона А", "Сторона В", "X = 9,7", "Y = 4,6", "Z = 3,0", "X = 11,6"])
+      expect(drawing).toContain(label);
+  });
+  it("draws just B for a mixed pair", () => {
+    const drawing = etkDrawCoax({ type: "coaxCut", fields: { coaxB: end } });
+    expect(drawing).toContain("Сторона В");
+    expect(drawing).not.toContain("Сторона А");
+  });
+  it("keeps finished length, allowances and cut length distinct", () => {
+    const params = etkParams({ type: "coaxCut", fields: { finishedLength: 4800, lPlusA: 30, lPlusB: 25, lengthKd: "4855мм", cutTolerance: "0…+5 мм", drawingTolerance: "0…+10 мм" } });
+    expect(JSON.stringify(params)).toContain("Длина готового изделия L");
+    expect(JSON.stringify(params)).toContain("Длина реза");
+    expect(JSON.stringify(params)).toContain("4855мм");
+  });
+});

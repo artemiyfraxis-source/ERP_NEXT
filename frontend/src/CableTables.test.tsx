@@ -126,7 +126,7 @@ it("groups the tabs by what the shop picks from and shows a count on every chip"
   }));
   expect(groups).toEqual([
     // БД.ОБ split into six own catalogs (PR #844)
-    { title: "Техкарты", tabs: ["Операции", "Оборудование", "Средства измерений", "Обеспечивающее", "Аппликаторы", "Матрицы", "Инструмент"] },
+    { title: "Техкарты", tabs: ["Операции", "Оборудование операционное", "Средства измерений", "Оборудование обеспечивающее", "Аппликаторы", "Матрицы", "Инструмент"] },
     // owner 26.10.2026: «Наконечники» — свой список БД.ТЕР сразу за «Терминалами»
     { title: "Разъёмы и контакты", tabs: ["Разъёмы", "Коаксиальные разъёмы", "Терминалы", "Наконечники"] },
     { title: "Кабели и провода", tabs: ["Коаксиальные кабели", "Монтажные провода", "Многожильные кабели", "Кабели Ethernet"] },
@@ -137,7 +137,7 @@ it("groups the tabs by what the shop picks from and shows a count on every chip"
   const chip = (name: string) => within(nav).getByRole("button", { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) });
   const expected: Array<[string, string]> = [
     ["Операции", "3"], // CUT_WIRE_auto (A/B — one card), STRIP_WIRE, SDR_PCB from БД.ОП
-    ["Оборудование", "192"], ["Разъёмы", "2"], ["Коаксиальные разъёмы", "181"], ["Терминалы", "528"],
+    ["Оборудование операционное", "192"], ["Разъёмы", "2"], ["Коаксиальные разъёмы", "181"], ["Терминалы", "528"],
     ["Коаксиальные кабели", "47"], ["Монтажные провода", "52"], ["Сечения AWG ↔ мм²", "24"], ["Многожильные кабели", "9"],
     ["Домен → поставщик", "1"], ["Изготовитель → страна", "0"],
   ];
@@ -340,20 +340,18 @@ describe("coax column order (owner 23.10: «сделай сортировку н
   });
 });
 
-it("lists coax cables like a catalogue: series groups in order, base mark before its variants, groups start folded and collapse", async () => {
+it("lists coax cables like a catalogue: series groups in order, base mark before its variants, groups start open and collapse", async () => {
   const lmr: CableRow = { id: "w-lmr", kind: "coax", auto_kind: "coax", reason: "тип «коаксиальный»", manual: false, cable: "LMR-195",
     record: wire("w-lmr", { "Марка": "LMR-195" }), dia: null, dia_hint: null };
   mockApi([], [lmr, ...ROWS]);
   // Settle initial fetches and table effects before testing a single user click.
   await act(async () => { plainRender(<ReferencesPage principal={admin} initialTab="cab_coax" />); });
-  // a block per family (25.10): its heading folds the block; owner 26.10: the groups start folded
+  // A block per family; its heading folds the block, which starts open.
   const rg = await screen.findByRole("button", { name: /^RG58 2$/ });
   // owner 19.10: a group per mark family (RG58 = RG-58 and its A/U); single-row families of a head with no mate go to «Прочие», last
   const lmrGroup = screen.getByRole("button", { name: /^Прочие 2$/ });
   expect(rg.compareDocumentPosition(lmrGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(rg).toHaveAttribute("aria-expanded", "false");
-  expect(screen.queryByText("RG-58 A/U")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Развернуть все" }));
+  expect(rg).toHaveAttribute("aria-expanded", "true");
   const marks = screen.getAllByRole("row").map((line) => line.querySelector("td.key")?.textContent).filter(Boolean);
   expect(marks).toEqual(["RG-58 A/U", "RG58", "LMR-195", "RG316"]); // owner 25.10: rows without diameter last in their group
   expect(rg).toHaveAttribute("aria-expanded", "true");

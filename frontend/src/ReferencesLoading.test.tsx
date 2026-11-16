@@ -59,7 +59,7 @@ it("says «Загрузка…» while the operations and the maps are loading, 
   expect(screen.queryByText("Нет записей")).toBeNull();
   release();
   expect(await screen.findByText("Поставщик", { selector: "td" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /^Домен → поставщик/ })).toHaveTextContent("1");
+  expect(screen.getByRole("button", { name: /^Домен → поставщик/, pressed: true })).toHaveTextContent("1");
   fireEvent.click(screen.getByRole("button", { name: /^Операции/ }));
   expect(await screen.findByText("CUT_WIRE_auto")).toBeInTheDocument();
   expect(screen.queryByText("Загрузка…")).toBeNull();

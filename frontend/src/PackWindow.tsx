@@ -3,6 +3,7 @@ import { ApiError, shippingApi, type Shipment } from "./api";
 import { isoDay } from "./Gantt";
 import { canPack, kbKey, num, packAllowed, packable, permittedPack, round2 } from "./intakeStages";
 import { PageWindow } from "./PageWindow";
+import { compareShipments } from "./shipmentOrder";
 import { intakeApi, type DispatchShipment, type IntakeRow } from "./productionIntakeApi";
 import { Banners, ShipmentCard, useMutate, type CardRights, type Mutate } from "./ShipmentCard";
 import { ShipmentDataWindow } from "./ShipmentData";
@@ -19,7 +20,7 @@ export function PackWindow({ project, rows, shipments, rights, reload, close }: 
   const { busy, error, notice, mutate } = useMutate(reload);
   const [dataFor, setDataFor] = useState<string | null>(null);
   const candidates = rows.filter((row) => packable(row) > 0 && row.good_id);
-  const open = shipments.filter((shipment) => ["Новая", "Собрана", "Упакована"].includes(shipment.status));
+  const open = shipments.filter((shipment) => ["Новая", "Собрана", "Упакована"].includes(shipment.status)).sort(compareShipments);
   const dataShipment = shipments.find((shipment) => shipment.id === dataFor) ?? null;
   // После упаковки форма собирается заново по свежим остаткам.
 

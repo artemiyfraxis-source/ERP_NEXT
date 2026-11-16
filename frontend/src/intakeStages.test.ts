@@ -11,7 +11,7 @@ const row = (project: string, stage: string, accepted = 0, packed = 0) => ({
   good_id: "good", good_version: 1, tasks: [], acts: [],
 } as unknown as IntakeRow);
 const ship = (id: string, project: string, status = "Отгружена", date: string | null = "2026-10-25", picked = "10") => ({
-  id, number: id, customer: "Заказчик", status, shipped_at: date, ready_to_ship: false,
+  id, number: id, customer: "Заказчик", status, shipped_at: date, created_at: "2026-10-01T12:00:00", deadline: null, ready_to_ship: false,
   lines: [{ id: `${id}-line`, project, item_index: "КБ1", name: "Кабель", unit: "шт", picked, requested: "100", grn: null }],
 } as DispatchShipment);
 

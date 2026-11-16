@@ -212,8 +212,8 @@ export function linkGeometry(from: Rect, to: Rect, obstacles: readonly Rect[] = 
 /** Полуфабрикат генератора: нарезанные провода, нарезанные трубки, обжатые провода (до первой стороны), обжим
     стороны после сборки другой (`crimpedA` / `crimpedB`: резка, обжим А, сторона А, обжим В, сторона В — владелец
     14.10), собранные стороны А и В, готовое изделие. */
-export type GenStage = "wires" | "tubes" | "crimped" | "crimpedA" | "A" | "crimpedB" | "B" | "final";
-const STAGES: GenStage[] = ["wires", "tubes", "crimped", "crimpedA", "A", "crimpedB", "B", "final"];
+export type GenStage = "blanks" | "marked" | "wires" | "tubes" | "crimped" | "crimpedA" | "A" | "crimpedB" | "B" | "final";
+const STAGES: GenStage[] = ["blanks", "marked", "wires", "tubes", "crimped", "crimpedA", "A", "crimpedB", "B", "final"];
 /** Карточки обжатых проводов. */
 export const CRIMP_STAGES: ReadonlySet<GenStage> = new Set<GenStage>(["crimped", "crimpedA", "crimpedB"]);
 const WIRE_CUTS = new Set(["cutWire", "cutWireStrip", "cutWireCrimp", "coaxCut"]);
@@ -262,6 +262,10 @@ function cutStage(op: RouteOp): GenStage | null {
     изделие (лужение свободных концов в конце — тоже). Зеркало backend `techcards/domain/pf_split.py` `op_stages`. */
 export function opStages(ops: readonly RouteOp[]): Map<number, GenStage> {
   const sorted = [...ops].sort((a, b) => a.position - b.position);
+  if (ops.some((op) => op.key === "coaxFakraCutStrip")) {
+    return new Map(ops.map((op) => [op.position, WIRE_CUTS.has(op.type) || TUBE_CUTS.has(op.type) ? "blanks"
+      : op.type === "coaxInsSleeve" || op.type === "coaxInsTut" ? "marked" : op.side || "final"]));
+  }
   const assembly = (op: RouteOp) => !!op.side && !cutStage(op) && !wireEndPrep(op) && !CONTACT_SOLDERS.has(op.type);
   const owned = sideOwnedSides(sorted);
   const pins = new Set(sorted.filter((op) => CONTACT_SOLDERS.has(op.type) && op.side && !owned.has(op.side)
@@ -299,6 +303,8 @@ export type GenCard = {
 export type GenLink = { id: string; from: GenStage; to: GenStage; qty: number | null; edges: RouteEdge[] };
 
 function genTitle(stage: GenStage, final: boolean, ops: RouteOp[]): string {
+  if (stage === "blanks") return "Заготовки";
+  if (stage === "marked") return "Кабель с метками и деталями";
   if (stage === "wires") {
     if (ops.length && ops.every((op) => op.type === "coaxCut" || isCableStrip(op))) {
       const stripped = ops.some((op) => isCableStrip(op) || COAX_CUT_STRIP.test(op.code.toUpperCase()));
@@ -341,7 +347,7 @@ export function genCards(route: Route, ops: readonly RouteOp[]): { cards: GenCar
       .map((position) => byPosition.get(position)).filter((op): op is RouteOp => !!op);
     const final = stage === finalStage;
     return {
-      id: stage, kind: final ? "final" : stage === "wires" || stage === "tubes" || CRIMP_STAGES.has(stage) ? "semiFinished" : "assembly",
+      id: stage, kind: final ? "final" : stage === "blanks" || stage === "wires" || stage === "tubes" || CRIMP_STAGES.has(stage) ? "semiFinished" : "assembly",
       title: genTitle(stage, final, cardOps), blocks: blocks.map((block) => block.key), ops: cardOps, final,
     };
   });

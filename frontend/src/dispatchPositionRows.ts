@@ -2,6 +2,7 @@ import type { Shipment, ShipmentLine } from "./api";
 import { DISPATCH_STAGES, projectDispatchStage, shipmentDispatchStage, type DispatchStage } from "./dispatchStage";
 import { kbKey, num, packable, round2, sameKb, stagePieces } from "./intakeStages";
 import type { IntakeAct, IntakeRow } from "./productionIntakeApi";
+import { compareShipments } from "./shipmentOrder";
 
 export interface DataRow {
   id: string; kind: "shipment" | "project"; project: string; customer: string; shipment: Shipment | null;
@@ -9,8 +10,6 @@ export interface DataRow {
   /** Все ГРН строки: партии строки отправки (`grns`) или ГРН остатка КБ; `grn` — первый. */
   grns: string[];
 }
-
-const deadlineOf = (row: DataRow) => row.shipment?.deadline ?? "9999";
 
 /** ГРН партий строки отправки: новое поле `grns`, без него — прежний единственный `grn`. */
 export const lineGrns = (line: Pick<ShipmentLine, "grn"> & { grns?: string[] | null }) =>
@@ -83,7 +82,7 @@ export function dataRows(shipments: Shipment[], intake: IntakeRow[] = []): DataR
       grns: stage === "accepted" && receiptGrn ? [receiptGrn] : [], ownStage: source.stage || source.project_stage });
   }
   return rows.sort((a, b) => a.project.localeCompare(b.project, "ru", { numeric: true })
+    || (a.shipment && b.shipment ? compareShipments(a.shipment, b.shipment) : a.shipment ? -1 : b.shipment ? 1 : 0)
     || a.item_index.localeCompare(b.item_index, "ru", { numeric: true })
-    || deadlineOf(a).localeCompare(deadlineOf(b))
     || (a.shipment?.number ?? a.project).localeCompare(b.shipment?.number ?? b.project));
 }

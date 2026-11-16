@@ -1,0 +1,19 @@
+.shipment-table { min-width: 0; }
+.shipment-table > .data-table > .table-toolbar > .toolbar-end { width: 100%; margin-left: 0; }
+.shipment-table .shipment-search { flex: 1; }
+.shipment-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.shipment-cell small, .shipment-detail small { display: block; font-size: inherit; }
+.shipment-table td, .shipment-detail .num { font-variant-numeric: tabular-nums; }
+.shipment-table td.num .shipment-cell, .shipment-table td.align-right .shipment-cell { align-items: flex-end; }
+.shipment-cell .ship-upd-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.shipment-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.shipment-detail { display: grid; gap: 12px; min-width: 0; }
+.shipment-detail h3 { margin: 0; font-size: inherit; font-weight: 500; }
+.shipment-detail-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 0; }
+.shipment-detail-fields dt { color: var(--muted-foreground); }
+.shipment-detail-fields dd { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.shipment-detail .table-scroll { max-width: 100%; overflow-x: auto; }
+.shipment-table .link-button { text-align: start; overflow-wrap: anywhere; }
+@media (pointer: coarse) {
+  .shipment-table button, .shipment-table a { min-height: 40px; }
+}
