@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { CoveringsTable, rangeText, tempText } from "./Coverings";
-import { referencesApi, type CoveringRow, type CoveringsResult, type CoveringTab, type TechOperationRecord } from "./api";
+import { CoveringsTable, rangeText, shrinkTemperatureText, tempText } from "./Coverings";
+import { referencesApi, type CoveringRow, type CoveringsResult, type CoveringTab, type ShrinkTemperature, type TechOperationRecord } from "./api";
 import { blockLines, blockTables } from "./test/blocks";
 import { ColumnViewsProvider } from "./ColumnViews";
 
@@ -313,4 +313,64 @@ it("reports schema failure instead of silently disabling editing", async () => {
   render(<CoveringsTable tab="heat_shrink" canEdit />);
   expect(await screen.findByRole("alert")).toHaveTextContent("Нет связи с ERP");
   expect(screen.queryByRole("button", { name: "+ Запись" })).toBeNull();
+});
+
+const shrink: ShrinkTemperature = {
+  lower_c: 85, upper_c: 125, kind: "оптимальная", characteristic_c: 110,
+  source_url: "https://example.org/passport.pdf", document: "Паспорт ТУТ 2:1", page: "1–2",
+  quote: "Температура усадки: +110; оптимальная: 85–125 °C",
+};
+
+it("formats single, open and unknown recovery temperatures without using the operating range", () => {
+  expect(shrinkTemperatureText(shrink)).toBe("85…125");
+  expect(shrinkTemperatureText({ ...shrink, lower_c: 105, upper_c: null, kind: "минимальная" })).toBe("≥105");
+  expect(shrinkTemperatureText({ ...shrink, lower_c: null, upper_c: 120 })).toBe("≤120");
+  expect(shrinkTemperatureText({ ...shrink, lower_c: 120, upper_c: 120 })).toBe("120");
+  expect(shrinkTemperatureText({ ...shrink, lower_c: 90.5 })).toBe("90,5…125");
+  expect(shrinkTemperatureText({ ...shrink, lower_c: null, upper_c: null })).toBe("");
+  expect(shrinkTemperatureText()).toBe("");
+});
+
+it("shows one recovery column and lets viewers read both statements and provenance", async () => {
+  const tube = { ...DATA.rows[0], shrink_temperature: shrink };
+  mockCoverings({ ...DATA, rows: [tube] });
+  render(<CoveringsTable tab="heat_shrink" canEdit={false} />);
+  expect(await screen.findByRole("columnheader", { name: "Температура усадки, °C" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "Рабочая температура, °C" })).toBeInTheDocument();
+  expect(screen.getByText("85…125")).toHaveAttribute("title", expect.stringContaining("По характеристикам: 110 °C"));
+  expect(screen.getByText("−55 … +125")).toBeInTheDocument();
+  fireEvent.click(screen.getByText(tube.name));
+  expect(screen.getByText(shrink.quote)).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Открыть источник температуры усадки" })).toHaveAttribute("href", shrink.source_url);
+  expect(screen.queryByRole("button", { name: "Править запись" })).toBeNull();
+});
+
+it("edits recovery fields absent from a legacy payload with empty old-value guards", async () => {
+  mockCoverings({ ...DATA, rows: [DATA.rows[0]] });
+  const original = rawRecord(DATA.rows[0]);
+  vi.mocked(referencesApi.techOperations).mockResolvedValue({ metadata: null, columns: ["Наименование"], records: [original] });
+  const edit = vi.spyOn(referencesApi, "editRecord").mockResolvedValue(original);
+  render(<CoveringsTable tab="heat_shrink" canEdit />);
+  fireEvent.click(await screen.findByText(original.display_text));
+  fireEvent.click(screen.getByRole("button", { name: "Править запись" }));
+  fireEvent.change(screen.getByLabelText("Температура усадки от, °C"), { target: { value: "105" } });
+  fireEvent.change(screen.getByLabelText("Вид температуры усадки"), { target: { value: "минимальная" } });
+  fireEvent.change(screen.getByLabelText("Источник температуры усадки"), { target: { value: shrink.source_url } });
+  fireEvent.change(screen.getByLabelText("Цитата температуры усадки"), { target: { value: "Минимальная: 105 °C" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить запись" }));
+  await waitFor(() => expect(edit).toHaveBeenCalledWith(original.id, [
+    { field: "Температура усадки от, °C", old: "", value: "105" },
+    { field: "Вид температуры усадки", old: "", value: "минимальная" },
+    { field: "Источник температуры усадки", old: "", value: shrink.source_url },
+    { field: "Цитата температуры усадки", old: "", value: "Минимальная: 105 °C" },
+  ]));
+});
+
+it("keeps the new temperature and evidence out of the coverings table", async () => {
+  mockCoverings();
+  render(<CoveringsTable canEdit />);
+  await screen.findByText("Оплётка GTRPA-10");
+  expect(screen.queryByRole("columnheader", { name: "Температура усадки, °C" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "+ Запись" }));
+  expect(screen.queryByLabelText("Температура усадки от, °C")).toBeNull();
 });

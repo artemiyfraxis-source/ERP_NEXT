@@ -11,6 +11,7 @@ from typing import Iterable, Mapping
 from uuid import UUID, uuid4
 
 from .lugs import TER_KIND_REASON, TER_KIND_VALUES
+from .shrink_temperature import COLUMNS as SHRINK_TEMPERATURE_COLUMNS
 
 
 class ReferenceValidationError(ValueError):
@@ -722,6 +723,8 @@ BASE_COLUMNS[TechOperationTab.HEAT_SHRINK] = tuple(name for name in BASE_COLUMNS
     if name not in ("Закупок", "Цена посл., ₽ без НДС"))
 BASE_COLUMNS[TechOperationTab.COVERING] = tuple(name for name in BASE_COLUMNS[TechOperationTab.HEAT_SHRINK]
     if name not in ("Коэф. усадки", "Клеевой слой"))
+# Catalog properties live in the independent table's JSON payload, like its dimensions.
+BASE_COLUMNS[TechOperationTab.HEAT_SHRINK] += SHRINK_TEMPERATURE_COLUMNS
 # Tabs whose table accepts the owner's own columns («+ Столбец»): every cable base (each its own, 20.10.2026),
 # БД.МАТ, БД.КОАКС, «Терминалы», «Наконечники» (28.10.2026) and БД.ОП (14.10.2026, «Операции» shows them beside the
 # code). БД.ОБ has none: its list is one row per model.

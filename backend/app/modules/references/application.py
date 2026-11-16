@@ -336,7 +336,8 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
             own_columns = [*custom_columns(record.tab, uow),
                            *(CABLE_WRITABLE[record.cable_kind] if record.tab in CABLE_TABS else ())]
         known = (edit.field in record.fields or edit.field in stored or edit.field in (own_columns or ())
-                 or (record.tab in MATERIAL_TABS and edit.field in (*BASE_COLUMNS[TechOperationTab.MATERIAL], "Раздел оболочек"))
+                 or (record.tab in MATERIAL_TABS and edit.field in (*BASE_COLUMNS[TechOperationTab.MATERIAL],
+                                                                                *BASE_COLUMNS[record.tab], "Раздел оболочек"))
                  or (record.tab in EQUIPMENT_TABS and edit.field in (*NAME_KEYS, *EXTRA_KEYS, *CATALOG_COLUMNS[record.tab.value]))
                  or (record.tab == TechOperationTab.COAX and edit.field in _coax_card_columns()))
         if not known:
