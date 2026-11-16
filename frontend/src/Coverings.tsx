@@ -4,7 +4,7 @@ import { AddColumnButton, fieldCellEdit, filledIn, ownCellEdit, useColumnRemoval
 import { PageWindow } from "./PageWindow";
 import { fieldTitle } from "./referenceLabels";
 import { SortHint } from "./refSort";
-import { failureText, referencesApi, type CoveringGroup, type CoveringRow, type CoveringsResult, type CoveringTab, type TechOperationRecord, type TechOperationResult } from "./api";
+import { failureText, referencesApi, type CoveringGroup, type CoveringRow, type CoveringsResult, type CoveringTab, type ShrinkTemperature, type TechOperationRecord, type TechOperationResult } from "./api";
 
 /* Independent «Термоусадка» and «Оболочки» storage catalogs share the block layout and record editor.
    The server owns routing; unresolved rows remain visible in their current catalog. Parsed values are display-only
@@ -28,11 +28,50 @@ const dash = <span className="muted">—</span>;
 const orDash = (text: string): ReactNode => text ? text : dash;
 const clip = (text: string) => text ? <span className="cable-clip" title={text}>{text}</span> : dash;
 
+const SHRINK_FIELDS = ["Температура усадки от, °C", "Температура усадки до, °C", "Вид температуры усадки",
+  "Температура усадки по характеристикам, °C", "Источник температуры усадки", "Документ температуры усадки",
+  "Страница температуры усадки", "Цитата температуры усадки"];
+const SHRINK_LABELS = ["От, °C", "До, °C", "Вид значения", "По характеристикам, °C", "Источник (ссылка)", "Документ", "Страница", "Точная цитата"];
+const SHRINK_KINDS = ["рекомендуемая", "диапазон", "минимальная", "оптимальная"];
+export function shrinkTemperatureText(value?: ShrinkTemperature): string {
+  if (value?.needs_review) {
+    const low = value.raw_fields?.[SHRINK_FIELDS[0]] ?? "";
+    const high = value.raw_fields?.[SHRINK_FIELDS[1]] ?? "";
+    return low || high ? low === high ? low : `${low}…${high}` : "";
+  }
+  if (!value || (value.lower_c === null && value.upper_c === null)) return "";
+  if (value.lower_c === null) return `≤${mm(value.upper_c)}`;
+  if (value.upper_c === null) return value.kind ? `≥${mm(value.lower_c)}` : `${mm(value.lower_c)}…`;
+  return value.lower_c === value.upper_c ? mm(value.lower_c) : `${mm(value.lower_c)}…${mm(value.upper_c)}`;
+}
+function shrinkTemperatureHint(value?: ShrinkTemperature): string {
+  if (!value) return "";
+  if (value.needs_review) return ["Проверить", value.validation_error,
+    ...Object.entries(value.raw_fields ?? {}).map(([field, text]) => `${field}: ${text}`)].filter(Boolean).join("\n");
+  return [value.kind, value.characteristic_c !== null ? `По характеристикам: ${mm(value.characteristic_c)} °C` : "",
+    value.document, value.page ? `Страница: ${value.page}` : "", value.quote, value.source_url].filter(Boolean).join("\n");
+}
+function ShrinkTemperatureDetails({ value }: { value?: ShrinkTemperature }) {
+  if (value?.needs_review) return <div className="reference-fields cable-card">
+    <p className="tone-warn">Проверить: {value.validation_error}</p>
+    {Object.entries(value.raw_fields ?? {}).filter(([, text]) => text).map(([field, text]) =>
+      <span key={field} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}><small>{field}</small>{text}</span>)}
+  </div>;
+  if (!value || !shrinkTemperatureText(value)) return <p className="muted">Температура усадки не задана</p>;
+  return <div className="reference-fields cable-card">
+    <span><small>Температура усадки, °C · {value.kind}</small>{shrinkTemperatureText(value)}</span>
+    {value.characteristic_c !== null && <span><small>По характеристикам, °C</small>{mm(value.characteristic_c)}</span>}
+    {(value.document || value.page) && <span><small>Документ</small>{[value.document, value.page ? `стр. ${value.page}` : ""].filter(Boolean).join(" · ")}</span>}
+    {value.quote && <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}><small>Точная цитата</small>{value.quote}</span>}
+    {/^https?:\/\//i.test(value.source_url) && <a href={value.source_url} target="_blank" rel="noreferrer">Открыть источник температуры усадки</a>}
+  </div>;
+}
+
 type RawEdit = (field: string) => DataCellEdit<CoveringRow> | undefined;
 
 /** Все колонки оболочек — одна таблица в блоках (владелец 25.10.2026: «визуал БД один»); у каждого раздела — свои из них
     (`GROUP_KEYS`), в одном порядке для всех: размеры раздела, серия, материал, температура, цвет, производитель, ссылка. */
-function coveringColumns(raw: RawEdit): DataColumn<CoveringRow>[] {
+function coveringColumns(raw: RawEdit, tab: CoveringTab = "cov"): DataColumn<CoveringRow>[] {
   const number = (key: string, title: string, pick: (row: CoveringRow) => number | null, field?: string): DataColumn<CoveringRow> =>
     ({ key, title, numeric: true, value: (row) => pick(row), render: (row) => pick(row) === null ? dash : mm(pick(row)), edit: field ? raw(field) : undefined });
   return [
@@ -59,7 +98,11 @@ function coveringColumns(raw: RawEdit): DataColumn<CoveringRow>[] {
       render: (row) => row.material ? <span className="cable-clip" title={row.material}>{row.material_short && !row.material.toLocaleLowerCase("ru-RU").startsWith(row.material_short.toLocaleLowerCase("ru-RU")) ? `${row.material_short} · ${row.material}` : row.material}</span> : dash,
     },
     { key: "density", title: "Плотность", value: (row) => row.density, render: (row) => orDash(row.density) },
-    { key: "temp", title: "Температура, °C", value: (row) => tempText(row.temp_min_c, row.temp_max_c), render: (row) => orDash(tempText(row.temp_min_c, row.temp_max_c)) },
+    { key: "temp", title: tab === "heat_shrink" ? "Рабочая температура, °C" : "Температура, °C", value: (row) => tempText(row.temp_min_c, row.temp_max_c), render: (row) => orDash(tempText(row.temp_min_c, row.temp_max_c)) },
+    { key: "shrinkTemp", title: "Температура усадки, °C", numeric: true, value: (row) => shrinkTemperatureText(row.shrink_temperature),
+      render: (row) => row.shrink_temperature?.needs_review || shrinkTemperatureText(row.shrink_temperature)
+        ? <span title={shrinkTemperatureHint(row.shrink_temperature)}>{shrinkTemperatureText(row.shrink_temperature)}
+          {row.shrink_temperature?.needs_review && <small className="tone-warn">{shrinkTemperatureText(row.shrink_temperature) ? " · " : ""}<span>Проверить</span></small>}</span> : dash },
     { key: "color", title: "Цвет", value: (row) => row.color, render: (row) => orDash(row.color), edit: raw("Цвет") },
     { key: "maker", title: "Производитель", value: (row) => row.maker, render: (row) => clip(row.maker), edit: raw("Производитель") },
     {
@@ -81,8 +124,9 @@ const GROUP_KEYS: Record<CoveringGroup, string[]> = {
   other: ["name", ...COMMON],
 };
 const SPARSE: Record<string, (row: CoveringRow) => unknown> = { wall: (row) => row.wall_mm, density: (row) => row.density };
-export function groupKeys(group: CoveringGroup, rows: CoveringRow[]): string[] {
-  return GROUP_KEYS[group].filter((key) => !SPARSE[key] || rows.some((row) => row.group === group && SPARSE[key](row) !== null && SPARSE[key](row) !== ""));
+export function groupKeys(group: CoveringGroup, rows: CoveringRow[], tab: CoveringTab = "cov"): string[] {
+  return GROUP_KEYS[group].flatMap((key) => key === "temp" && tab === "heat_shrink" ? [key, "shrinkTemp"] : [key])
+    .filter((key) => !SPARSE[key] || rows.some((row) => row.group === group && SPARSE[key](row) !== null && SPARSE[key](row) !== ""));
 }
 
 const BEFORE = "Размер до, мм";
@@ -91,6 +135,7 @@ const RAW_FIELDS: Record<string, string[]> = {
   name: ["Наименование"], before: [BEFORE], after: [AFTER], ratio: ["Коэф. усадки"], adhesive: ["Клеевой слой"],
   dia: [BEFORE], inner: [BEFORE], outer: [AFTER], nominal: [BEFORE], range: [BEFORE, AFTER], width: [BEFORE],
   series: ["Серия"], material: ["Материал"], temp: ["Темп. от, °C", "Темп. до, °C"],
+  shrinkTemp: SHRINK_FIELDS,
   color: ["Цвет"], maker: ["Производитель"], datasheet: ["Ссылка на datasheet"],
 };
 const COVERING_LABELS: Record<CoveringTab, string> = { heat_shrink: "Термоусадка", cov: "Оболочки" };
@@ -98,7 +143,7 @@ const GROUPS_BY_TAB: Record<CoveringTab, CoveringGroup[]> = {
   heat_shrink: ["tut", "ttk", "other"], cov: ["cambric", "corrugated", "braid", "tape", "other"],
 };
 // These are display columns, not additional stored fields. Their removal must not remove source dimensions.
-const DERIVED_KEYS = new Set(["wall", "split", "nominal", "range", "width", "density", "temp"]);
+const DERIVED_KEYS = new Set(["wall", "split", "nominal", "range", "width", "density", "temp", "shrinkTemp"]);
 // «Без Ø» — строки, у которых размер не нашёлся ни в колонке, ни в названии (их генератор не подберёт по диаметру).
 const sizeOf: Record<CoveringGroup, (row: CoveringRow) => number | null> = {
   tut: (row) => row.before_mm, ttk: (row) => row.before_mm, cambric: (row) => row.before_mm, other: (row) => row.before_mm,
@@ -180,7 +225,7 @@ export function CoveringsTable({ tab = "cov", revision = 0, canEdit, onCount, on
   const fields = catalog.columns ?? [...new Set(catalog.records.flatMap((record) => Object.keys(record.fields)))];
   const ownColumns = catalog.custom_columns ?? [];
   const removal = useColumnRemoval(tab, canEdit, (name) => {
-    const derived = coveringColumns(() => undefined).find((column) => DERIVED_KEYS.has(column.key) && column.title === name);
+    const derived = coveringColumns(() => undefined, tab).find((column) => DERIVED_KEYS.has(column.key) && column.title === name);
     return derived ? (data?.rows ?? []).filter((row) => {
       const value = derived.value(row);
       return value !== null && value !== undefined && value !== "";
@@ -190,7 +235,7 @@ export function CoveringsTable({ tab = "cov", revision = 0, canEdit, onCount, on
   function startEdit(record: TechOperationRecord | null) {
     setEditError("");
     setEditing({ original: record, values: {
-      ...Object.fromEntries(["Наименование", ...fields].map((field) => [field, ""])),
+      ...Object.fromEntries(["Наименование", ...fields, ...(tab === "heat_shrink" ? SHRINK_FIELDS : [])].map((field) => [field, ""])),
       ...record?.fields,
     } });
   }
@@ -209,7 +254,8 @@ export function CoveringsTable({ tab = "cov", revision = 0, canEdit, onCount, on
         .map(([field, value]) => ({ field, old: original?.fields[field] ?? "", value }));
       const saved = original
         ? edits.length ? await referencesApi.editRecord(original.id, edits) : original
-        : await referencesApi.createRecord(tab, editing.values);
+        : await referencesApi.createRecord(tab, Object.fromEntries(Object.entries(editing.values)
+          .filter(([field, value]) => !SHRINK_FIELDS.includes(field) || value !== "")));
       setEditing(null);
       setNotice(saved.tab === tab ? "Запись сохранена" : `Запись перенесена в «${COVERING_LABELS[saved.tab as CoveringTab] ?? "Материалы"}»`);
       await changed();
@@ -260,9 +306,11 @@ export function CoveringsTable({ tab = "cov", revision = 0, canEdit, onCount, on
   if (!data) return <div className="empty">Загрузка…</div>;
 
   const raw: RawEdit = (field) => canEdit ? fieldCellEdit<CoveringRow>(field, (row) => records.get(row.id)) : undefined;
-  const relevantKeys = new Set(GROUPS_BY_TAB[tab].flatMap((group) => groupKeys(group, data.rows)));
-  const parsedColumns = coveringColumns(raw)
-    .filter((column) => relevantKeys.has(column.key) && !(catalog.removed_columns ?? []).includes(column.title)
+  const relevantKeys = new Set(GROUPS_BY_TAB[tab].flatMap((group) => groupKeys(group, data.rows, tab)));
+  const removedColumns = new Set((catalog.removed_columns ?? []).map((title) =>
+    tab === "heat_shrink" && title === "Температура, °C" ? "Рабочая температура, °C" : title));
+  const parsedColumns = coveringColumns(raw, tab)
+    .filter((column) => relevantKeys.has(column.key) && !removedColumns.has(column.title)
       && (!catalog.columns || !RAW_FIELDS[column.key] || RAW_FIELDS[column.key].every((field) => fields.includes(field))))
     .map((column) => ({ ...column, remove: column.key === "name" ? undefined
       : removal.removeOf(DERIVED_KEYS.has(column.key) ? column.title : RAW_FIELDS[column.key][0]) }));
@@ -287,7 +335,7 @@ export function CoveringsTable({ tab = "cov", revision = 0, canEdit, onCount, on
     return data.kinds?.[group as CoveringGroup]?.find((item) => item.id === kind)?.title ?? "Другие";
   };
   const editingParsed = data.rows.find((row) => row.id === editing?.original?.id);
-  const cardParameters = editingParsed ? coveringColumns(() => undefined).filter((column) => {
+  const cardParameters = editingParsed ? coveringColumns(() => undefined, tab).filter((column) => {
     if (!DERIVED_KEYS.has(column.key)) return false;
     const value = column.value(editingParsed);
     return value !== null && value !== undefined && value !== "";
@@ -305,7 +353,7 @@ export function CoveringsTable({ tab = "cov", revision = 0, canEdit, onCount, on
       groupLabel={(block) => groupOf(block) === "other" && tab === "heat_shrink" ? "Раздел не определён" : block.includes(":") ? kindTitle(block) : data.titles[groupOf(block)]}
       blocks
       blockSection={(block) => block.includes(":") ? data.titles[groupOf(block)] : undefined}
-      blockColumns={(block) => [...groupKeys(groupOf(block), data.rows), ...extraColumns.map((column) => column.key)]}
+      blockColumns={(block) => [...groupKeys(groupOf(block), data.rows, tab), ...extraColumns.map((column) => column.key)]}
       presets={presetsFor(data.rows)}
       onEdited={changed}
       storageKey={`db:${tab}:catalog-v1`}
@@ -317,9 +365,10 @@ export function CoveringsTable({ tab = "cov", revision = 0, canEdit, onCount, on
       searchText={(row) => [...coveringText(row), ...Object.values(records.get(row.id)?.fields ?? {})]}
       searchLabel={tab === "heat_shrink" ? "Поиск по термоусадке" : "Поиск по оболочкам"}
       searchPlaceholder="Наименование, серия, производитель, материал"
-      renderDetail={canEdit ? (row) => <>
-        <GroupChooser key={`${row.id}:${row.group_source}`} row={row} busy={busy} onChange={(value) => void move(row, value)} />
-        <button type="button" className="secondary small" disabled={busy || !records.has(row.id)} onClick={() => startEdit(records.get(row.id)!)}>Править запись</button>
+      renderDetail={canEdit || tab === "heat_shrink" ? (row) => <>
+        {tab === "heat_shrink" && <ShrinkTemperatureDetails value={row.shrink_temperature} />}
+        {canEdit && <><GroupChooser key={`${row.id}:${row.group_source}`} row={row} busy={busy} onChange={(value) => void move(row, value)} />
+          <button type="button" className="secondary small" disabled={busy || !records.has(row.id)} onClick={() => startEdit(records.get(row.id)!)}>Править запись</button></>}
       </> : undefined}
       emptyText="Ничего не найдено"
       toolbar={<><SortHint text={tab === "heat_shrink" ? "вид, размер, затем наименование" : "размер, затем наименование"} />{canEdit && <>
@@ -335,14 +384,30 @@ export function CoveringsTable({ tab = "cov", revision = 0, canEdit, onCount, on
         {editingParsed && cardParameters.length > 0 && <div className="reference-fields">{cardParameters.map((column) => <div key={column.key}>
           <small>{column.title}</small><div>{column.render ? column.render(editingParsed) : String(column.value(editingParsed))}</div>
         </div>)}</div>}
-        <div className="reference-fields db-form">{Object.entries(editing.values).map(([field, value]) => <label key={field}>
-          <small>{fieldTitle(field)}</small>
+        <div className="reference-fields db-form">{Object.entries(editing.values).filter(([field]) => !SHRINK_FIELDS.includes(field)).map(([field, value]) => <label key={field}>
+          <small>{tab === "heat_shrink" && field.startsWith("Темп.") ? field.replace("Темп.", "Рабочая температура") : fieldTitle(field)}</small>
           {field === "Раздел оболочек"
             ? <select name={field} aria-label={`Поле ${field}`} value={value} onChange={(event) => setEditing({ ...editing, values: { ...editing.values, [field]: event.target.value } })}>
               {CHOICES.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
             </select>
             : <input name={field} autoComplete="off" aria-label={`Поле ${field}`} value={value} onChange={(event) => setEditing({ ...editing, values: { ...editing.values, [field]: event.target.value } })} />}
         </label>)}</div>
+        {tab === "heat_shrink" && <>
+          <h3>Температура усадки, °C</h3>
+          <div className="cable-form">{SHRINK_FIELDS.map((field, index) => {
+            const value = editing.values[field] ?? "";
+            const update = (next: string) => setEditing({ ...editing, values: { ...editing.values, [field]: next } });
+            return <label key={field} className={index === 4 ? "wide" : undefined} style={index === 7 ? { gridColumn: "1 / -1" } : undefined}>
+              <small>{SHRINK_LABELS[index]}</small>
+              {index === 2 ? <select name={field} aria-label={field} value={value} onChange={(event) => update(event.target.value)}>
+                {value && !SHRINK_KINDS.includes(value) && <option value={value}>{value} — проверить</option>}
+                <option value="">Не задан</option>{SHRINK_KINDS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
+              </select> : index === 7 ? <textarea name={field} aria-label={field} autoComplete="off" rows={3} value={value} onChange={(event) => update(event.target.value)} />
+                : <input name={field} aria-label={field} autoComplete="off" type="text"
+                  inputMode={index === 4 ? "url" : [0, 1, 3].includes(index) ? "decimal" : undefined} value={value} onChange={(event) => update(event.target.value)} />}
+            </label>;
+          })}</div>
+        </>}
         <div className="form-actions">
           <button type="submit" className="primary" disabled={busy}>{busy ? "Сохраняю…" : "Сохранить запись"}</button>
           <button type="button" className="secondary" disabled={busy} onClick={closeEditor}>Отмена</button>

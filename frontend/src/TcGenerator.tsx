@@ -134,7 +134,8 @@ import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
 import { assignPinJoined, joinSplice, leaveJoin, renameSplice, setTail } from "./tcGenSplices";
 import { PinoutTable, TopologyMaterialSelect, TopologyTubes, type MaterialOption } from "./PinoutTable";
 import { WrapTable } from "./WrapTable";
-import { CoaxLength, CoaxMarking } from "./GenCoaxSettings";
+import { CoaxLength, CoaxMarking, CoaxReseed } from "./GenCoaxSettings";
+import { coaxReseedPatch } from "./tcGenLogic";
 import { applyEnd, firstFreePin, pinConns, pinRows, pinSummary, spliceLines } from "./tcGenPinTable";
 import { useTerminalPairs } from "./useTerminalPairs";
 import { MARK_KIND_DEFAULT, markIsTube, markSpecs, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
@@ -300,8 +301,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     "Индекс": kit?.index || "", "Наименование": kit?.name || "", "Кол-во": kit?.run || "",
   }), [kit]);
   const D: GenData = useMemo(() => ({
-    ...(refs || EMPTY_REFS), components, assemblyInfo, partQty: Number(kit?.part_qty) || 1, calcOps: kit?.calc_ops || [],
-  }), [refs, components, assemblyInfo, kit]);
+    ...(refs || EMPTY_REFS), components, assemblyInfo, projectNo: card.project, partQty: Number(kit?.part_qty) || 1, calcOps: kit?.calc_ops || [],
+  }), [refs, components, assemblyInfo, kit, card.project]);
   // Свои цвета жил карты (S.colorHex) нужны всем рисовальщикам по названию: схема, чертёж, ЭТК.
   setCustomColors(S.colorHex);
   const gen = useMemo(() => makeGen(D, S), [D, S]);
@@ -407,8 +408,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const oldSplMethod = splMethodFromConfig(card.document?.build_config);
     const fromPinout = (S0: GenState) => (oldSplMethod ? { ...S0, spl: { ...S0.spl, method: oldSplMethod } } : S0);
     // Контроль КСВН коакса — из build_config.coax.vswrControl; коакс-карта до настройки остаётся без режима.
-    const fromBuild = withCoaxVswrFromConfig(restored ? switchGenTab(seeded, "manual") : back ? back.S : restoreCoaxFromConfig(fromPinout(restorePinout(D, seeded, card.document?.build_config)), card.document?.build_config),
-      card.document?.build_config);
+    const fromBuild = back && snap?.S.coax?.vswrMode ? back.S
+      : withCoaxVswrFromConfig(restored ? switchGenTab(seeded, "manual") : back ? back.S : restoreCoaxFromConfig(fromPinout(restorePinout(D, seeded, card.document?.build_config)), card.document?.build_config),
+        card.document?.build_config);
     // Несохранённый черновик поверх текущей сборки возвращается вместо засева.
     const form = draft.open({ S: fromBuild, manual: restored ?? emptyManual(), terEdits: back?.terEdits ?? {}, coaxAdd: back?.coaxAdd ?? {}, complexTopology: undefined });
     setComplexTopology(form.complexTopology);
@@ -1740,13 +1742,17 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
 
   // Экран: пока у А и В он одинаковый — один выбор; «разные для А и В» раскрывает второй (локально, в черновик не пишется).
   const shieldMerged = !S.coax.sideB || (!shieldSplit && gen.coaxShieldOf_("B") === gen.coaxShieldOf_("A"));
-  const fakraEnds = [S.coax.sideA, S.coax.sideB].some((end) => end?.kind === "straight" || end?.kind === "angled");
+  const fakraEnds = [S.coax.sideA, S.coax.sideB].some((end) => !!end?.kind);
   const setCoax = (patch: Partial<GenState["coax"]>) => {
     if (status.error && status.text === coaxLengthProblem(S.coax)) setStatus({ text: "", error: false });
+    if (status.error && patch.connColor && (patch.connColor.method === "none" || patch.connColor.color.trim())
+      && (status.text === "В составе несколько цветов маркера-краски — выберите цвет." || status.text === "Укажите цвет маркировки разъёмов."))
+      setStatus({ text: "", error: false });
     update((current) => ({ ...current, coax: { ...current.coax, ...patch },
       ...("len" in patch || "finishedLength" in patch ? { coaxLenFrom: undefined } : {}) }));
   };
   const coaxSections = <>
+    <CoaxReseed key={card.id} coax={S.coax} onChange={setCoax} propose={() => coaxReseedPatch(D, S)} />
     <section className="gsec" aria-label="Коакс-кабель">
       <div className="gsec-head"><h3>Коакс-кабель</h3>
         <DrawingButton busy={drawBusy} exists={drawingExists} problem={configDrawingProblem(config)} onBuild={() => void buildDrawing(config)} /></div>

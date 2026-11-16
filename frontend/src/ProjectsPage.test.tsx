@@ -951,6 +951,41 @@ describe("ProjectsPage", () => {
     await waitFor(() => expect((screen.getByRole("button", { name: "Заказать недостающее (0)" }) as HTMLButtonElement).disabled).toBe(true));
   });
 
+  it("selects duplicate articles independently by unit and sends their supply keys", async () => {
+    const orders: unknown[] = [];
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4" && (init?.method || "GET") === "GET") return json({ ...card, deadline: "2026-10-20" });
+      if (url.endsWith("/supply")) return json({ project: "708К.4", lines: ["м", "шт"].map((unit) => ({
+        key: `ref-1\u001f${unit}`, art: "REF-1", name: "Материал", unit, need: "15", short: "15", free: "0",
+        ordered: "0", kitted: "0", grn: "", stage: "не заведено", rows: [], kbs: ["КБ1"],
+      })) });
+      if (url.endsWith("/order-missing")) {
+        orders.push(JSON.parse(String(init?.body)));
+        return json({ created: [], skipped: [], message: "Заявки созданы." });
+      }
+      return base(input, init);
+    });
+    render(<ProjectsPage principal={{ ...editor, permissions: { projects: "edit", newrequest: "edit" } }} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    fireEvent.click(await screen.findByRole("tab", { name: "Снабжение" }));
+    const metres = await screen.findByLabelText("Заказать REF-1 (м)");
+    const pieces = screen.getByLabelText("Заказать REF-1 (шт)");
+    fireEvent.click(metres);
+    expect(metres).toBeChecked();
+    expect(pieces).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Заказать недостающее (1)" }));
+    await screen.findByText("Заявки созданы.");
+    expect(orders).toEqual([{ articles: ["ref-1\u001fм"], deadline: "2026-10-20" }]);
+    await waitFor(() => expect(metres).not.toBeChecked());
+    fireEvent.click(metres);
+    fireEvent.click(pieces);
+    fireEvent.click(screen.getByRole("button", { name: "Заказать недостающее (2)" }));
+    await waitFor(() => expect(orders).toHaveLength(2));
+    expect(orders[1]).toEqual({ articles: ["ref-1\u001fм", "ref-1\u001fшт"], deadline: "2026-10-20" });
+  });
+
   it("counts stock without a ГРН in «Снабжение»: its own column, from stock, nothing to order", async () => {
     const base = vi.mocked(fetch).getMockImplementation()!;
     vi.mocked(fetch).mockImplementation(async (input, init) => {

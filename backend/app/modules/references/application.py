@@ -3,7 +3,7 @@
 from __future__ import annotations
 from .equipment_catalogs import CATALOG_COLUMNS, CATALOG_TYPES, equipment_tab
 from .domain import EQUIPMENT_TABS, MATERIAL_TABS, MATERIAL_CATALOG_TABS
-from .material_catalogs import DERIVED_COLUMN_TITLES, prepare as prepare_material
+from .material_catalogs import DERIVED_COLUMN_TITLES, column_identity, prepare as prepare_material
 
 import hashlib
 import re
@@ -336,7 +336,8 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
             own_columns = [*custom_columns(record.tab, uow),
                            *(CABLE_WRITABLE[record.cable_kind] if record.tab in CABLE_TABS else ())]
         known = (edit.field in record.fields or edit.field in stored or edit.field in (own_columns or ())
-                 or (record.tab in MATERIAL_TABS and edit.field in (*BASE_COLUMNS[TechOperationTab.MATERIAL], "Раздел оболочек"))
+                 or (record.tab in MATERIAL_TABS and edit.field in (*BASE_COLUMNS[TechOperationTab.MATERIAL],
+                                                                                *BASE_COLUMNS[record.tab], "Раздел оболочек"))
                  or (record.tab in EQUIPMENT_TABS and edit.field in (*NAME_KEYS, *EXTRA_KEYS, *CATALOG_COLUMNS[record.tab.value]))
                  or (record.tab == TechOperationTab.COAX and edit.field in _coax_card_columns()))
         if not known:
@@ -396,7 +397,7 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
     updated = replace(record, fields=fields, display_text=display, edited_in_erp=True,
                       tab=equipment_tab(fields) if record.tab in EQUIPMENT_TABS else record.tab)
     updated = replace(updated, normalized_search=_search_text(updated))
-    updated = prepare_material(updated)
+    updated = prepare_material(updated, previous=record.fields)
     if record.cable_kind == CableKind.WIRE.value and edited & {MARK_FIELD, WIRE_COLOR_FIELD}:
         _check_wire_row(updated.fields, uow, record.id)
     uow.tech_operations.save(updated)
@@ -513,7 +514,7 @@ def custom_columns(tab: TechOperationTab, uow: UnitOfWork) -> list[str]:
 def removed_columns(tab: TechOperationTab, uow: UnitOfWork) -> set[str]:
     if tab not in MATERIAL_CATALOG_TABS:
         return set()
-    return {entry.value for entry in uow.references.list() if entry.kind == ReferenceKind.REMOVED_COLUMN
+    return {column_identity(tab, entry.value) for entry in uow.references.list() if entry.kind == ReferenceKind.REMOVED_COLUMN
             and entry.key.startswith(custom_column_prefix(tab))}
 
 
@@ -613,7 +614,7 @@ def add_column(command: ColumnCommand, uow: UnitOfWork) -> int:
         derived = next((title for title in DERIVED_COLUMN_TITLES if _folded(title) == _folded(name)), None) \
             if tab in MATERIAL_CATALOG_TABS else None
         if derived:
-            name = derived
+            name = column_identity(tab, derived)
         if _folded(name) in {_folded(item) for item in _dropped_columns(tab)}:
             raise ReferenceValidationError(f"Столбец «{name}» убран из таблицы (владелец 25.10.2026) — его значения "
                                            "остаются в записях и видны в карточке записи")
@@ -626,7 +627,8 @@ def add_column(command: ColumnCommand, uow: UnitOfWork) -> int:
             if not derived and name not in record.fields:
                 uow.tech_operations.save(replace(record, fields={**record.fields, name: ""}, edited_in_erp=True))
         entries = [entry for entry in uow.references.list() if not (
-            entry.kind == ReferenceKind.REMOVED_COLUMN and entry.key == custom_column_prefix(tab) + name)]
+            entry.kind == ReferenceKind.REMOVED_COLUMN and entry.key.startswith(custom_column_prefix(tab))
+            and column_identity(tab, entry.value) == name)]
         position = max((entry.position for entry in entries if entry.kind == ReferenceKind.CUSTOM_COLUMN), default=-1) + 1
         if not derived and name not in BASE_COLUMNS.get(tab, ()) and name not in custom_columns(tab, uow):
             entries.append(ReferenceEntry.create(ReferenceKind.CUSTOM_COLUMN, custom_column_prefix(tab) + name, name, position))
@@ -647,8 +649,9 @@ def remove_column(command: ColumnCommand, uow: UnitOfWork) -> int:
     with uow:
         tab, records = _column_records(command, uow)
         if tab in MATERIAL_CATALOG_TABS:
-            removable = [*material_columns(tab, uow), *(DERIVED_COLUMN_TITLES - removed_columns(tab, uow))]
-            name = next((item for item in removable if _folded(item) == _folded(command.name)), None)
+            removable = {*material_columns(tab, uow), *(column_identity(tab, title) for title in DERIVED_COLUMN_TITLES)}
+            removable -= removed_columns(tab, uow)
+            name = next((item for item in removable if _folded(item) == _folded(column_identity(tab, command.name))), None)
             if name is None:
                 raise ReferenceValidationError("Столбца нет в таблице")
             if name == "Наименование":
@@ -763,7 +766,7 @@ def set_covering_group(command: SetCoveringGroupCommand, uow: UnitOfWork) -> Tec
         fields = {**record.fields, OVERRIDE_FIELD: group}
         updated = replace(record, fields=fields, edited_in_erp=True)
         updated = replace(updated, normalized_search=_search_text(updated))
-        updated = prepare_material(updated)
+        updated = prepare_material(updated, previous=record.fields)
         uow.tech_operations.save(updated)
         _audit("references.covering_group_set", command.actor, command.now,
                {"record_id": str(record.id), "group": group}, uow)

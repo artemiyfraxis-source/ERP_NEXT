@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { Field, Toggle, UnitInput } from "./GenControls";
 import { AutoTextarea } from "./AutoTextarea";
 import { coaxCutLength, coaxLengthProblem, coaxLengthConfirmation, type GenState } from "./tcGenLogic";
-import { coaxMarkDefaults, type CoaxMark, type ConnColor } from "./tcGenMarks";
+import { COAX_COLORS, coaxMarkDefaults, type CoaxMark, type ConnColor } from "./tcGenMarks";
+import { DataTable, type DataColumn } from "./DataTable";
 import { formatNumber } from "./format";
 
 type Coax = GenState["coax"];
@@ -37,6 +39,7 @@ export function CoaxMarking({ coax, onChange, components, labels }: Props & { co
   const setColor = (patch: Partial<ConnColor>) => onChange({ connColor: { ...color, ...patch } });
   const setMark = (index: number, patch: Partial<CoaxMark>) => onChange({ marks: marks.map((mark, i) => i === index ? { ...mark, ...patch } : mark) });
   const defaults = coaxMarkDefaults(components);
+  const knownColor = COAX_COLORS.some((item) => item.code === color.code);
   const markerArt = (code: string) => components.map((item) => coaxMarkDefaults([item]).connColor)
     .find((item) => item.method === "paint" && item.code === code)?.art ?? "";
   return <section className="gsec coax-marking full" aria-label="Маркировка коакс-кабеля">
@@ -48,6 +51,7 @@ export function CoaxMarking({ coax, onChange, components, labels }: Props & { co
         <option value="tape">Этикетка на ленте</option><option value="tube">Термоусадочная трубка</option>
       </select></Field>
     </div>
+    {coax.markMaterial === "tape" && <small className="gsec-meta">Лента Vell VL-S641, 18 мм · расходник маркиратора ZCUT-RT660 (ОБ.102)</small>}
     {coax.markMaterial === "tape" && <Toggle checked={!!coax.markProtect} title="Прозрачная ТУТ поверх этикеток" onChange={(markProtect) => onChange({ markProtect })} />}
     <div className="gtable-wrap is-full"><table className="gtable coax-marks">
       <caption>Метки коакс-кабеля</caption>
@@ -62,6 +66,7 @@ export function CoaxMarking({ coax, onChange, components, labels }: Props & { co
         <td><button type="button" className="secondary small btn-x" aria-label={`Удалить метку ${index + 1}`} onClick={() => onChange({ marks: marks.filter((_, i) => i !== index) })}>×</button></td>
       </tr>)}</tbody>
     </table></div>
+    <small className="gsec-meta">{"{№} — номер сборки 1…N"}</small>
     {!marks.length && <div className="gempty">Нет меток — добавьте надпись и место.</div>}
     <div><button type="button" className="secondary small" onClick={() => onChange({ marks: [...marks, { text: "", place: "middle", minMm: 100 }] })}>Добавить метку</button></div>
     </>}
@@ -74,20 +79,63 @@ export function CoaxMarking({ coax, onChange, components, labels }: Props & { co
         <option value="none">Нет</option><option value="paint">Маркер-краска</option><option value="laser">Лазерная гравировка</option><option value="tape">Цветная лента</option>
       </select></Field>
       {color.method !== "none" && <>
-        <Field label="Цвет" className="span2"><select name="coax-color-choice" autoComplete="off" value={color.code === "OG" || color.code === "PK" ? color.code : "custom"}
+        <Field label="Цвет" className="span2"><select name="coax-color-choice" autoComplete="off" value={knownColor ? color.code : "custom"}
           onChange={(event) => {
             const code = event.target.value;
             const art = color.method === "paint" ? markerArt(code) : "";
-            setColor(code === "custom" ? { color: "", code: "", art: "" } : { code, color: code === "OG" ? "оранжевый" : "розовый", art });
+            setColor(code === "custom" ? { color: "", code: "", art: "" } : { code, color: COAX_COLORS.find((item) => item.code === code)!.color, art });
           }}>
-          <option value="OG">Оранжевый (OG)</option><option value="PK">Розовый (PK)</option><option value="custom">Другой цвет</option>
+          {COAX_COLORS.map(({ code, color: name }) => <option key={code} value={code}>{name[0].toUpperCase() + name.slice(1)} ({code})</option>)}
+          <option value="custom">Другой</option>
         </select></Field>
-        {color.code !== "OG" && color.code !== "PK" && <>
+        {!knownColor && <>
           <Field label="Название цвета"><input name="coax-color-name" autoComplete="off" value={color.color} onChange={(event) => setColor({ color: event.target.value })} /></Field>
           <Field label="Код цвета"><input name="coax-color-code" autoComplete="off" value={color.code} onChange={(event) => setColor({ code: event.target.value })} /></Field>
         </>}
       </>}
     </div>
     {defaults.conflict && color.method !== "none" && !color.color && <div className="warning-inline" role="alert">В составе несколько цветов маркера-краски — выберите цвет.</div>}
+  </section>;
+}
+
+const RESEED_LABELS: Partial<Record<keyof Coax, string>> = {
+  fakraCutStrip: "Резка с разделкой", lengthBasis: "Длина по", finishedLength: "L по КД, мм",
+  finishedLengthFrom: "Источник длины", lPlusA: "Запас А, мм", lPlusB: "Запас В, мм",
+  markMaterial: "Материал меток", markProtect: "Прозрачная ТУТ поверх этикеток", marks: "Метки",
+  tutLen: "Длина отрезка ТУТ, мм", connColor: "Цветовая маркировка разъёмов",
+};
+const RESEED_VALUES: Record<string, string> = { finished: "готовому изделию", cut: "резке", name: "наименование сборки", calc: "расчёт — подтвердите L",
+  bom: "состав — подтвердите L", user: "подтверждено технологом", tube: "термоусадочная трубка", tape: "этикетка на ленте" };
+function reseedText(key: keyof Coax, value: unknown): string {
+  if (value === undefined || value === null || value === "") return "—";
+  if (typeof value === "boolean") return value ? "Да" : "Нет";
+  if (key === "marks") return (value as CoaxMark[]).map((mark) => `${mark.place === "middle" ? "Середина" : mark.place === "A" ? "А" : "В"}: ${mark.text} (≥ ${mark.minMm} мм)`).join("; ") || "—";
+  if (key === "connColor") {
+    const color = value as ConnColor;
+    return color.method === "none" ? "Нет" : `${{ paint: "Маркер-краска", laser: "Лазерная гравировка", tape: "Цветная лента" }[color.method]}: ${color.color || "выберите цвет"}${color.art ? `, ${color.art}` : ""}`;
+  }
+  return RESEED_VALUES[String(value)] || String(value);
+}
+type ReseedRow = { key: string; field: string; before: string; after: string };
+const RESEED_COLUMNS: DataColumn<ReseedRow>[] = [
+  { key: "field", title: "Поле", value: (row) => row.field },
+  { key: "before", title: "Сейчас", value: (row) => row.before, wrap: true, grow: true },
+  { key: "after", title: "После заполнения", value: (row) => row.after, wrap: true, grow: true },
+];
+
+export function CoaxReseed({ coax, onChange, propose }: Props & { propose: () => Partial<Coax> }) {
+  const [patch, setPatch] = useState<Partial<Coax> | null>(null);
+  const rows: ReseedRow[] = patch ? (Object.keys(patch) as Array<keyof Coax>)
+    .filter((key) => JSON.stringify(coax[key]) !== JSON.stringify(patch[key]))
+    .map((key) => ({ key, field: RESEED_LABELS[key] || "", before: reseedText(key, coax[key]), after: reseedText(key, patch[key]) })) : [];
+  return <section className="gsec full" aria-label="Заполнение по составу и КД">
+    <div className="gsec-head"><button type="button" className="secondary" onClick={() => setPatch(propose())}>Заполнить по составу и КД</button></div>
+    {patch && <>
+      {rows.length ? <DataTable columns={RESEED_COLUMNS} rows={rows} rowKey={(row) => row.key} /> : <p>Изменений нет.</p>}
+      <div className="actions">
+        <button type="button" className="primary" disabled={!rows.length} onClick={() => { onChange(patch); setPatch(null); }}>Применить заполнение</button>
+        <button type="button" className="secondary" onClick={() => setPatch(null)}>Отмена</button>
+      </div>
+    </>}
   </section>;
 }

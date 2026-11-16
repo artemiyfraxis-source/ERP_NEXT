@@ -405,10 +405,12 @@ class HoldKitReserveCommand:
 
 
 def same_unit(left: str | None, right: str | None) -> bool:
-    """«шт» ≡ «Шт.», «м» ≡ «м»: a spec row and a lot measured differently never reserve each other."""
+    """«шт» ≡ «Шт.», «м» ≡ «m» ≡ «метр»: a spec row and a lot measured differently never reserve each other (the same
+    spellings `requests.domain.normalize_unit` folds for the spec side)."""
 
     def key(value: str | None) -> str:
-        return str(value or "").strip().rstrip(".").casefold()
+        folded = str(value or "").strip().rstrip(".").casefold()
+        return {"m": "м", "метр": "м", "метры": "м", "штука": "шт", "pcs": "шт"}.get(folded, folded)
 
     return bool(key(left)) and key(left) == key(right)
 

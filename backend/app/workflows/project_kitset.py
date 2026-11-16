@@ -113,8 +113,9 @@ from app.modules.requests.domain import (
     parse_calc_number,
     project_reference_valid,
     spreadsheet_id_from_url,
-    unit_for_type,
+    normalize_unit,
 )
+from app.modules.references.domain import MATERIAL_TABS
 from app.modules.requests.google_drive import drive_file_id
 from app.modules.shipping.application import (
     DropProjectCommand,
@@ -135,6 +136,7 @@ from app.modules.techcards.kitset_calc import PROJECT_SHEET, SPEC_SHEET, parse_c
 from app.modules.techcards.kitsets import (
     CalcKitset,
     KitAssembly,
+    KitComponent,
     KitDocument,
     Kitset,
     KitsetNotFound,
@@ -142,7 +144,9 @@ from app.modules.techcards.kitsets import (
     SupplyLine,
     SupplyRow,
     SupplyStock,
+    component_unit,
     issue_tasks,
+    is_printer_label_tape,
     item_id,
     project_key,
     project_number_valid,
@@ -302,6 +306,7 @@ def bom_names(
 def generator_bom(
     kitset: Kitset, assembly: KitAssembly, calc_ops: list[dict[str, str]],
     names: tuple[ReferenceNames, StockNames] | None = None,
+    *, reference_units: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """`tcLoadBomFromKit`: состав сборки для генератора — из сохранённой карточки, с правками оператора.
     Аналог по КД → оригинал к применению (kitUseArt_), заменённый в расчёте провод → провод из «Наименования»
@@ -327,6 +332,7 @@ def generator_bom(
             "id": f"kit-{position}", "type": component.type, "name": name,
             **({"title": shown.name or name, "title_source": shown.source, "title_hint": shown.hint} if shown else {}),
             "art": use["art"], "kd": use["kd"], "qty": kit_number_payload(component.per_unit),
+            "unit": component_unit(component, reference_units),
             "scrap": kit_number_payload(component.scrap_pct / 100),
             **({"manual": True} if component.manual else {}),
         })
@@ -505,7 +511,12 @@ def create_kitset_requests(
 
     composition = composition_seed(command.project, command.url, extract)
     items, skipped, source_rows = [], [], []
+    consumables = 0
     for item in extract.items:
+        if is_printer_label_tape(KitComponent(article=item.name, type=item.item_type)):
+            skipped.append(f"{item.name} — расходник маркиратора, закупка по составу не требуется")
+            consumables += 1
+            continue
         quantity = parse_calc_number(item.quantity)
         if quantity is None or quantity <= 0:
             skipped.append(item.name)
@@ -518,6 +529,8 @@ def create_kitset_requests(
         ))
         source_rows.append(item.source_row)
     if not items:
+        if consumables == len(extract.items) and consumables:
+            return KitsetRequestsResult(skipped=tuple(skipped))
         raise RequestValidationError("В листе ЗКП нет позиций с количеством")
     drafts = build_import_drafts(CalcImport(
         project=command.project, purpose=command.purpose, delivery_point=command.delivery_point,
@@ -1033,7 +1046,7 @@ def supply_rows(
         live = request.status not in (RequestStatus.CANCELLED, RequestStatus.CLOSED) and request.id not in handed
         rows.append(SupplyRow(
             article=str(request.design_article or "").strip(), where="Запрос", status=request.status.value,
-            source_id=request.legacy_id or str(request.id), name=request.name,
+            source_id=request.legacy_id or str(request.id), name=request.name, unit=request.unit,
             open_quantity=request.quantity if live else Decimal("0"),
         ))
     for line in lines:
@@ -1049,7 +1062,7 @@ def supply_rows(
             where, status, received = "Закупка", f"{status} · без ГРН", False
         rows.append(SupplyRow(
             article=article, where=where, status=status, source_id=line.legacy_id or str(line.id),
-            received=received, name=line.calculated_name or (request.name if request else ""),
+            received=received, name=line.calculated_name or (request.name if request else ""), unit=line.calculated_unit,
             open_quantity=line.to_buy if live else Decimal("0"),
         ))
     return rows
@@ -1079,7 +1092,7 @@ def supply_off_book(
         request = by_request.get(line.source_request_id)
         result.append((line.id, SupplyStock(
             article=_line_article(line, request), name=line.calculated_name or (request.name if request else ""),
-            quantity=cover.quantity,
+            quantity=cover.quantity, unit=line.calculated_unit,
         )))
     return result
 
@@ -1108,7 +1121,7 @@ def _free_stock(lots: list, held: dict) -> list[SupplyStock]:
             continue
         # A lot accepted without an article carries its name there: then it is matched by name, like a manual request.
         article = "" if _same_text(lot.article, lot.name) else lot.article
-        stock.append(SupplyStock(article=article, name=lot.name, quantity=free))
+        stock.append(SupplyStock(article=article, name=lot.name, quantity=free, unit=lot.unit))
     return stock
 
 
@@ -1126,7 +1139,7 @@ def supply_kitting(project: str, requests: Iterable[FulfillmentRequest]) -> list
             quantity = line.requirement if line.off_book else line.reserved + issued
             if quantity > 0:
                 kitted.append(SupplyStock(
-                    article=line.article, name=line.name, quantity=quantity, off_book=line.off_book, issued=issued,
+                    article=line.article, name=line.name, quantity=quantity, off_book=line.off_book, issued=issued, unit=line.unit,
                 ))
     return kitted
 
@@ -1136,7 +1149,7 @@ def supply_absent(project: str, requests: Iterable[FulfillmentRequest]) -> list[
     book stock is not there for the project — `supply_lines` takes it off «Свободно» and the position becomes short."""
     canon = normalize_project_number(project)
     return [
-        SupplyStock(article=line.article, name=line.name, quantity=line.requirement)
+        SupplyStock(article=line.article, name=line.name, quantity=line.requirement, unit=line.unit)
         for request in requests
         if request.status is not FulfillmentStatus.CANCELLED and project_from_purpose(request.purpose) == canon
         for line in request.lines
@@ -1146,6 +1159,23 @@ def supply_absent(project: str, requests: Iterable[FulfillmentRequest]) -> list[
 
 def _same_text(left: object, right: object) -> bool:
     return " ".join(str(left or "").split()).casefold() == " ".join(str(right or "").split()).casefold()
+
+
+def material_units(records: Iterable[Any]) -> dict[str, str]:
+    """Only unambiguous material/reference units; a roll remains a roll, never metres."""
+    candidates: dict[str, set[str]] = {}
+    for record in records:
+        if record.tab not in MATERIAL_TABS:
+            continue
+        fields = record.fields
+        unit = normalize_unit(fields.get("Ед. изм."))
+        if not unit:
+            continue
+        for column in ("Артикул", "Наименование"):
+            key = _supply_key(fields.get(column))
+            if key:
+                candidates.setdefault(key, set()).add(unit)
+    return {key: next(iter(units)) for key, units in candidates.items() if len(units) == 1}
 
 
 def project_supply(
@@ -1175,11 +1205,13 @@ def project_supply(
     off_book = supply_off_book(kitset.project, requests, procurement, procurement_uow)
     rows = supply_rows(kitset.project, requests, procurement, lotless=[line_id for line_id, _item in off_book])
     lots, held = _stock_lots(kitset.project, fulfillment_uow)
+    records = reference_records(references_uow)
     lines = supply_lines(
         kitset, rows, _free_stock(lots, held), supply_kitting(kitset.project, kits),
         off_book=[item for _line_id, item in off_book], absent=supply_absent(kitset.project, kits),
+        reference_units=material_units(records),
     )
-    references = ReferenceNames(reference_records(references_uow))
+    references = ReferenceNames(records)
     stock_names = StockNames(lots)
     named = []
     for line in lines:
@@ -1197,7 +1229,7 @@ ORDER_ITEM_TYPE = "Комплектующие"
 
 @dataclass(frozen=True)
 class OrderMissingCommand:
-    """«Заказать недостающее»: `articles` — the picked spec positions (КД article), empty — every position short.
+    """«Заказать недостающее»: `articles` — picked supply keys (article + unit when ambiguous), empty — all short.
     `deadline` / `delivery_point` override the project's own (its deadline, the point of its latest request)."""
 
     project: str
@@ -1275,8 +1307,13 @@ def order_missing(
             f"Номер проекта «{kitset.project}» не в формате 591К.3 — заявку к нему не привязать"
         )
     lines, requests = project_supply(kitset, requests_uow, procurement_uow, fulfillment_uow, references_uow)
-    by_key = {_supply_key(line.article): line for line in lines}
+    by_key = {_supply_key(line.key): line for line in lines}
     wanted = [_supply_key(article) for article in command.articles if _supply_key(article)]
+    # Old clients send only an article: include every unit of that article, never an arbitrary last row.
+    wanted = [key for requested in wanted for key in (
+        [requested] if requested in by_key else
+        [key for key, line in by_key.items() if _supply_key(line.article) == requested] or [requested]
+    )]
     result = OrderMissingResult()
     picked: list[SupplyLine] = []
     for key in dict.fromkeys(wanted) if wanted else by_key:
@@ -1308,14 +1345,14 @@ def order_missing(
         item_type = line.item_type.strip() or ORDER_ITEM_TYPE
         drafts.append(RequestDraft(
             purpose=ORDER_PURPOSE, delivery_point=point, name=line.name.strip() or line.article,
-            item_type=item_type, quantity=line.short, unit=unit_for_type(item_type), quality_document="Нет",
+            item_type=item_type, quantity=line.short, unit=line.unit, quality_document="Нет",
             procurement_deadline=deadline, planned_date=deadline, project_reference=kitset.project,
             category=DEFAULT_CATEGORY, design_article=line.article,
             comment=f"{kitset.project} · {', '.join(line.kbs)}" if line.kbs else kitset.project,
         ))
     seen = sorted(f"{row.source_id}:{row.status}" for line in lines for row in line.rows)
     digest = hashlib.sha256(json.dumps(
-        [canon, seen, [(draft.design_article, str(draft.quantity)) for draft in drafts]], ensure_ascii=False,
+        [canon, seen, [(draft.design_article, str(draft.quantity), draft.unit) for draft in drafts]], ensure_ascii=False,
     ).encode()).hexdigest()[:32]
     created = create_requests(CreateRequestsCommand(
         creation_key=f"kitset-missing:{canon}:{digest}", drafts=tuple(drafts), actor=command.actor,
@@ -1329,7 +1366,9 @@ def order_missing(
 
 
 def _supply_key(value: object) -> str:
-    return " ".join(str(value or "").split()).casefold()
+    article, separator, unit = str(value or "").partition("\x1f")
+    key = " ".join(article.split()).casefold()
+    return f"{key}\x1f{normalize_unit(unit)}" if separator else key
 
 
 # ── Отправить на комплектацию (portalIssueFromKitset) ────────────────────
@@ -1380,6 +1419,7 @@ def kitset_issue_state(
 def issue_from_kitset(
     kitset: Kitset, deadline: date | None, actor: Actor, now: datetime,
     fulfillment_uow: Callable[[], FulfillmentUnitOfWork],
+    *, references_uow: Callable[[], Any] | None = None,
 ) -> IssueFromKitsetResult:
     """One request per assembly: lines with a picked lot are reserved right away (the lot binding splits the need
     when the lot holds less), the rest wait for delivery — the storekeeper binds them after acceptance."""
@@ -1408,7 +1448,7 @@ def issue_from_kitset(
                     lots[(lot.grn, lot.package)] = stock
     result = IssueFromKitsetResult()
     tasks = []
-    for task in issue_tasks(kitset, set(lots)):
+    for task in issue_tasks(kitset, set(lots), reference_units=material_units(reference_records(references_uow))):
         key = kit_key(task.purpose)
         sent = live.get(key[1]) if key is not None else None
         if sent is not None:
@@ -1425,17 +1465,21 @@ def issue_from_kitset(
         for item in task.items:
             stock = lots.get((item.lot.grn, item.lot.package)) if item.lot else None
             line = FulfillmentLine.create(
-                article=item.article, name=item.name, unit=stock.unit if stock is not None else "шт",
+                article=item.article, name=item.name, unit=item.unit,
                 requirement=item.need,
             )
             lines.append(line)
-            if stock is not None:
+            if stock is not None and normalize_unit(stock.unit) == normalize_unit(item.unit):
                 bindings.append((line.id, stock.id))
         request = create_fulfillment(CreateFulfillmentCommand(
             idempotency_key=f"kitset:{kitset.project}:{task.index}:{uuid4()}",
             purpose=task.purpose, deadline=deadline, lines=tuple(lines), actor=actor, now=now,
         ), fulfillment_uow())
         shortfall = list(task.waiting)
+        for item in task.items:
+            stock = lots.get((item.lot.grn, item.lot.package)) if item.lot else None
+            if stock is not None and normalize_unit(stock.unit) != normalize_unit(item.unit):
+                shortfall.append(f"{item.name}: единица ГРН {stock.grn} ({stock.unit}) не совпадает с потребностью ({item.unit})")
         for line_id, lot_id in bindings:
             try:
                 request = bind_lot(BindLotCommand(

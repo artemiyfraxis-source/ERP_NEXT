@@ -13,6 +13,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from .shrink_temperature import read_stored as read_shrink_temperature
+
 OVERRIDE_FIELD = "Раздел оболочек"
 
 TUT, TTK, CAMBRIC, CORRUGATED, BRAID, TAPE, OTHER = "tut", "ttk", "cambric", "corrugated", "braid", "tape", "other"
@@ -319,6 +321,7 @@ def build(records: list[tuple[str, Mapping[str, Any]]], *, groups: Mapping[str, 
         rows.append((group, parsed, {
             "id": record_id, "name": _text(fields, "Наименование"), "group": group, "group_source": source,
             "auto_group": auto, "datasheet": _text(fields, "Ссылка на datasheet"), "unit": _text(fields, "Ед. изм."),
+            "shrink_temperature": read_shrink_temperature(fields),
             **{key: value for key, value in parsed.__dict__.items()},
         }))
     rows.sort(key=lambda item: (GROUP_ORDER.index(item[0]),) + sort_key(item[0], item[1], item[2]["name"]))
