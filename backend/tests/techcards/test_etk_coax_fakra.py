@@ -1,5 +1,9 @@
 import json
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
+
+import pytest
 
 from app.modules.techcards.etk_builder import build_etk, with_coax_connectors
 from app.modules.techcards.operation_cards import parse_operation_library
@@ -7,6 +11,121 @@ from app.modules.techcards.operation_cards import parse_operation_library
 ROOT = Path(__file__).resolve().parents[2]
 CARDS = parse_operation_library(json.loads((ROOT / "data" / "techcard-library.json").read_text(encoding="utf-8"))["templates"])
 CARD = {card.code: card for card in CARDS}
+
+FRESH = json.loads((ROOT.parent / "frontend/src/__fixtures__/fakra1116Configs.json").read_text(encoding="utf-8"))
+ERP_CARDS = parse_operation_library(json.loads((ROOT / "data/techcard-library-erp.json").read_text(encoding="utf-8"))["templates"])
+
+
+def _fresh_cards(config):
+    # New card bodies are owned by T2. Declare their codes without importing that worker's diff.
+    by_code = {card.code: card for card in [*CARDS, *ERP_CARDS]}
+    return [replace(by_code.get(op["templateId"], CARD["INS_TUT"]), source_id=op["templateId"], code=op["templateId"])
+            for op in config["ops"]]
+
+
+@pytest.mark.parametrize("fixture", FRESH, ids=lambda item: item["kb"])
+def test_new_fakra_route_independent_preparations_and_label_inputs(fixture):
+    config = deepcopy(fixture["config"])
+    doc = build_etk(config, _fresh_cards(config))
+    ops = doc["operations"]
+    assert [block["name"] for block in doc["route"]["blocks"]][:-1] == [
+        "Заготовки", "Кабель с метками и деталями", "Сторона А собрана", "Сторона В собрана"]
+    assert len(doc["route"]["blocks"]) == 5
+    assert [position for block in doc["route"]["blocks"] for position in block["ops"]] == list(range(1, len(ops) + 1))
+    assert all(not op["semis"] for op in ops[:3])
+    assert len({op["result"][0]["name"] for op in ops[:3]}) == 3
+    assert [op["result"][0]["norm"] for op in ops[:3]] == ["15", "45", "45"]
+    assert _inputs(ops[0]) == {"RTK 031": ("72,825", "М.")}
+    assert _inputs(ops[1]) == {"Лента Vell VL-S641": ("45", "Шт.")}
+    assert _inputs(ops[2]) == {"ТУТ 4/2мм, прозрачная": ("2,7", "М.")}
+    assert ops[3]["semis"][1]["name"] == ops[2]["result"][0]["name"]
+    assert ops[3]["semis"][1]["norm"] == "45"
+    assert ops[6]["semis"][1]["name"] == ops[1]["result"][0]["name"]
+    assert ops[6]["semis"][1]["norm"] == "45"
+    texts = " ".join(step["text"] for step in ops[6]["card"]["steps"])
+    for mark in config["coax"]["marks"]:
+        assert mark["text"] in texts
+    assert "100 мм" in texts
+    assert "прозрачную ТУТ" in texts
+    heat = next(op for op in ops if op["type"] == "coaxHeat")
+    heat_text = " ".join(step["text"] for step in heat["card"]["steps"])
+    assert "этикетку" in heat_text
+    assert "зону соединения" not in heat_text
+    assert "нахлёст" not in heat_text
+    assert "coaxParts" not in heat["fields"]  # no misleading sleeve-over-connector sketch
+    prep = " ".join(step["text"] for op in ops if op["code"] in {"INS_FAKRA_ST_PREP", "INS_FAKRA_RA_PREP"}
+                    for step in op["card"]["steps"])
+    assert "крышку 59Z163-000/51, уплотнитель 59K14B-1M4/50, гильзу" in prep
+    assert "неразделанный кабель" not in prep
+    assert "до разделки" not in prep
+    assert "установить по отсутствующей" not in prep
+    color = next(op for op in ops if op["type"] == "coaxConnColor")
+    assert config["coax"]["connColor"]["color"] in color["card"]["steps"][0]["text"]
+    assert color["result"][0]["norm"] == "15"  # two connectors, still one product
+    config["route"] = doc["route"]
+    rebuilt = build_etk(config, _fresh_cards(config))
+    assert rebuilt["operations"] == ops  # saved stage kit must not make its blank operations sequential
+
+
+def test_finished_length_rebuild_is_idempotent_and_missing_allowance_blocks():
+    config = deepcopy(FRESH[0]["config"])
+    cards = _fresh_cards(config)
+    config["coax"]["cableLength"] = 4910  # stale cut must never be used as the finished basis
+    first = build_etk(config, cards)
+    assert first["build_config"]["coax"]["cableLength"] == 4855
+    assert build_etk(first["build_config"], cards) == first
+    fields = first["operations"][0]["fields"]
+    assert fields["finishedLength"] == 4800
+    assert (fields["lPlusA"], fields["lPlusB"], fields["cutTolerance"]) == (30, 25, "0…+5 мм")
+    assert fields["coax"]["l1"] == "9,7"
+    assert fields["coaxB"]["l1"] == "11,6"
+    del config["coax"]["lPlusB"]
+    with pytest.raises(ValueError, match="припуски"):
+        build_etk(config, cards)
+
+
+def test_mixed_end_cut_card_commands_only_machine_strippable_side():
+    config = deepcopy(FRESH[0]["config"])
+    config["ops"][0]["stripSides"] = ["B"]
+    config["ops"][0]["opKey"] = "coaxCutStrip"
+    config["coax"]["sideA"]["kind"] = "bulkhead"
+    cut = build_etk(config, _fresh_cards(config))["operations"][0]
+    text = " ".join(step["text"] for step in cut["card"]["steps"])
+    assert "ТОЛЬКО СО СТОРОНЫ В" in text
+    assert "С ДВУХ СТОРОН" not in text
+    assert "обеих сторон" not in text
+    assert "coax" not in cut["fields"]
+    assert cut["fields"]["coaxB"]["connector"] == "59K25H-1M4A4"
+
+
+def test_unprotected_labels_are_not_described_as_tubes():
+    config = deepcopy(FRESH[0]["config"])
+    config["coax"]["markProtect"] = False
+    config["ops"] = [op for op in config["ops"] if not op.get("protective")]
+    doc = build_etk(config, _fresh_cards(config))
+    install = next(op for op in doc["operations"] if op["code"] == "INS_MARK_LABEL")
+    assert "этикетки наклеены" in install["result"][0]["name"]
+    assert "ТУТ" not in install["result"][0]["name"]
+
+
+def test_missing_label_material_cannot_consume_clear_tubing():
+    config = deepcopy(FRESH[0]["config"])
+    config["ops"][1]["parts"] = []
+    doc = build_etk(config, _fresh_cards(config))
+    assert doc["operations"][1]["components"] == []
+    assert any("не задан материал для печати этикеток" in warning for warning in doc["warnings"])
+
+
+@pytest.mark.parametrize("method,phrase", [("paint", "маркером-краской"), ("laser", "лазерной гравировкой"), ("tape", "цветной лентой")])
+def test_colour_method_and_connector_quantity(method, phrase):
+    config = deepcopy(FRESH[0]["config"])
+    op = next(op for op in config["ops"] if op["type"] == "coaxConnColor")
+    op["connColor"]["method"] = method
+    op["templateId"] = "MARK_CONN_" + method.upper()
+    op["tOp"] = "60"
+    operation = next(op for op in build_etk(config, _fresh_cards(config))["operations"] if op["type"] == "coaxConnColor")
+    assert phrase in operation["card"]["steps"][0]["text"]
+    assert operation["time"][0]["norm"] == "30"  # 2 connectors * 15 products * 1 minute
 
 
 def _etk(ops: list[dict], **coax: object) -> list[dict]:

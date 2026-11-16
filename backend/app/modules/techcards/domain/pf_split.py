@@ -22,7 +22,8 @@ WIRES, TUBES, CRIMPED, SIDE_A, SIDE_B, FINAL = "wires", "tubes", "crimped", "A",
 # The hand crimp of a side, right before that side (owner 14.10: «резка, обжимка А, монтаж А, обжим Б, монтаж Б»);
 # CRIMPED — splices and the like without a side, before the first side.
 CRIMPED_A, CRIMPED_B = "crimpedA", "crimpedB"
-STAGES = (WIRES, TUBES, CRIMPED, CRIMPED_A, SIDE_A, CRIMPED_B, SIDE_B, FINAL)
+BLANKS, MARKED = "blanks", "marked"
+STAGES = (BLANKS, MARKED, WIRES, TUBES, CRIMPED, CRIMPED_A, SIDE_A, CRIMPED_B, SIDE_B, FINAL)
 CRIMP_STAGES = frozenset({CRIMPED, CRIMPED_A, CRIMPED_B})
 WIRE_CUTS = frozenset({"cutWire", "cutWireStrip", "cutWireCrimp", "coaxCut"})
 TUBE_CUTS = frozenset({"cutTut", "coaxCutTut"})
@@ -92,6 +93,9 @@ def op_stages(ops: Sequence[RouteOp]) -> dict[int, str]:
     splices in it, else it prepares the next crimp or side; a side operation — its side; an operation without a side
     (twisting, marking, wrapping) prepares the next crimp or side, and after the last side — the finished product."""
     ordered = sorted(ops, key=lambda op: op.position)
+    if any(op.key == "coaxFakraCutStrip" for op in ops):
+        return {op.position: BLANKS if op.type in WIRE_CUTS | TUBE_CUTS else
+                MARKED if op.type in {"coaxInsSleeve", "coaxInsTut"} else _side(op) or FINAL for op in ops}
 
     def assembly(op: RouteOp) -> bool:
         return bool(_side(op)) and not _cut_stage(op) and not _wire_end_prep(op) and op.type not in CONTACT_SOLDERS
@@ -130,6 +134,10 @@ def op_stages(ops: Sequence[RouteOp]) -> dict[int, str]:
 
 
 def _title(stage: str, ops: Sequence[RouteOp]) -> str:
+    if stage == BLANKS:
+        return "Заготовки"
+    if stage == MARKED:
+        return "Кабель с метками и деталями"
     if stage == WIRES:
         if ops and all(op.type == "coaxCut" or _cable_strip(op) for op in ops):
             stripped = any(_cable_strip(op) or _COAX_CUT_STRIP.match(op.code.upper()) for op in ops)
@@ -212,7 +220,7 @@ def generator_split(ops: Sequence[RouteOp], final_name: str = "", current: Route
     blocks = [
         Block(stage, (final_name or (last_op.name if last_op else "")) if stage == final_stage
               else _title(stage, [by_position[position] for position in members[stage] if position in by_position]),
-              tuple(members[stage]), stage == final_stage)
+              tuple(members[stage]), stage == final_stage, kit=stage == BLANKS)
         for stage in order
     ]
     edges = [Edge(start, end, per_unit) for (start, end), per_unit in links.items()]
