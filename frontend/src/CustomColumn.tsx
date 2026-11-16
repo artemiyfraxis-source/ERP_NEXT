@@ -78,7 +78,7 @@ export function AddColumnButton({ tab, onAdded }: { tab: TechOperationTab; onAdd
     `dialog` — окно подтверждения, его экран ставит рядом с таблицей. `filled(name)` — сколько записей с данными в столбце
     (окно называет число, сервер пишет значения в журнал). */
 export function useColumnRemoval(tab: TechOperationTab, canEdit: boolean, filled: (name: string) => number,
-  onRemoved: (name: string) => Promise<void> | void): { removeOf: (name: string) => (() => void) | undefined; dialog: ReactNode } {
+  onRemoved: (name: string) => Promise<void> | void, preserveValues = false): { removeOf: (name: string) => (() => void) | undefined; dialog: ReactNode } {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -99,11 +99,13 @@ export function useColumnRemoval(tab: TechOperationTab, canEdit: boolean, filled
     <div className="panel">
       <div className="manual-stock-head"><h2>Удалить столбец «{name}»?</h2></div>
       {error && <div className="error-banner" role="alert">{error}</div>}
-      {count > 0
+      {preserveValues
+        ? <p>Столбец уйдёт из списка и Excel. Значения останутся в карточках записей.</p>
+        : count > 0
         ? <p className="warning-inline">В столбце есть данные: записей — {count}. Он уйдёт из таблицы и из Excel, значения останутся в журнале.</p>
         : <p>Столбец пустой во всех записях — он уйдёт из таблицы и из выгрузки в Excel.</p>}
       <div className="form-actions">
-        <button type="button" className="primary danger" disabled={busy} onClick={() => void remove()}>{count > 0 ? `Удалить столбец и ${count} знач.` : "Удалить столбец"}</button>
+        <button type="button" className="primary danger" disabled={busy} onClick={() => void remove()}>{count > 0 && !preserveValues ? `Удалить столбец и ${count} знач.` : "Удалить столбец"}</button>
         <button type="button" className="secondary" disabled={busy} onClick={close}>Отмена</button>
       </div>
     </div>

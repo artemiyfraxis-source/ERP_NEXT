@@ -167,15 +167,18 @@ def test_groups_come_in_the_owner_order_and_non_coverings_are_left_out():
 def test_bundled_mirror_splits_into_the_four_groups_and_loses_nothing(uow, tmp_path):  # noqa: F811
     load_mirror(default_source(), uow, dry_run=False, now=NOW)
     with uow:
-        material = uow.tech_operations.list(tab=TechOperationTab.MATERIAL, query="", limit=10_000)
+        from app.modules.references.domain import MATERIAL_TABS
+        material = uow.tech_operations.list(tab=MATERIAL_TABS, query="", limit=10_000)
     result = coverings_catalog(uow)
+    shrink_result = coverings_catalog(uow, TechOperationTab.HEAT_SHRINK)
     counts = result["counts"]
-    assert counts["tut"] > 0 and counts["ttk"] > 0 and counts["braid"] > 0 and counts["corrugated"] > 0
+    assert counts["tut"] == counts["ttk"] == 0 and counts["braid"] > 0 and counts["corrugated"] > 0
+    assert shrink_result["counts"]["tut"] > 0 and shrink_result["counts"]["ttk"] > 0
     assert len(result["rows"]) == sum(counts.values())
     covering_groups = {"тут", "ттк", "оплётка", "оплетка", "плетёнка", "плетенка", "гофра", "лента", "кембрик"}
-    assert len(result["rows"]) == sum(1 for item in material if item.fields.get("Группа", "").casefold() in covering_groups)
+    assert len(result["rows"]) + len(shrink_result["rows"]) == sum(1 for item in material if item.fields.get("Группа", "").casefold() in covering_groups)
     # every shrink row of the mirror has a Ø and a ratio parsed
-    shrink = [item for item in result["rows"] if item["group"] in ("tut", "ttk")]
+    shrink = shrink_result["rows"]
     assert all(item["before_mm"] is not None for item in shrink)
 
 

@@ -197,7 +197,7 @@ def test_a_row_moved_by_hand_keeps_its_fields_and_a_new_row_goes_to_the_open_lis
     again = next(row for row in contacts["records"] if row["id"] == lug["id"])
     assert again["fields"] == lug["fields"]
     assert references_api.put(f"/api/references/tech-operations/{lug['id']}/ter-kind", json={"kind": "ring"}).status_code == 422
-    mat = references_api.get("/api/references/tech-operations", params={"tab": "mat"}).json()["records"][0]
+    mat = references_api.get("/api/references/tech-operations", params={"tab": "heat_shrink"}).json()["records"][0]
     assert references_api.put(f"/api/references/tech-operations/{mat['id']}/ter-kind", json={"kind": "lug"}).status_code == 422
 
     created = references_api.post("/api/references/tech-operations", json={

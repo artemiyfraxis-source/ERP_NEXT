@@ -22,7 +22,6 @@ from sqlalchemy.orm import Session
 from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.procurement.infrastructure import ProcurementLineRow
 from app.modules.production.infrastructure import ProductionTaskRow
-from app.modules.references.coverings import classify as classify_covering
 from app.modules.references.infrastructure import _record_union
 from app.modules.references.infrastructure import CoaxCableRow, EquipmentModelRow, HookupWireRow, ReferenceEntryRow, TechOperationRecordRow, EquipmentRecordRow, WireGaugeRow
 from app.modules.shipping.infrastructure import FinishedGoodRow, ShipmentLineRow, ShipmentRow
@@ -273,7 +272,8 @@ _PLAIN_TABS = {"op": ("templates", "Операции", "erptctpl"), "ob": ("ob",
                "coax": ("coax", "Коаксиальные разъёмы", "erpref"), "ter": ("ter", "Терминалы", "erpref"),
                "lug": ("lug", "Наконечники", "erpref"), "cab_coax": ("cab_coax", "Коаксиальные кабели", "erpref"),
                "prov": ("cab_wire", "Монтажные провода", "erpref"), "cab_multi": ("cab_multi", "Многожильные кабели", "erpref"),
-               "cab_lan": ("cab_lan", "Кабели Ethernet", "erpref")}
+               "cab_lan": ("cab_lan", "Кабели Ethernet", "erpref"),
+               "heat_shrink": ("heat_shrink", "Термоусадка", "erpref"), "cov": ("cov", "Оболочки", "erpref")}
 _PLAIN_TABS.update({
     "ob_measuring": ("ob_measuring", "Средства измерений", "erpref"),
     "ob_support": ("ob_support", "Оборудование обеспечивающее", "erpref"),
@@ -281,7 +281,7 @@ _PLAIN_TABS.update({
     "ob_dies": ("ob_dies", "Матрицы", "erpref"),
     "ob_tools": ("ob_tools", "Инструмент", "erpref"),
 })
-_DB_STORED_TABS = ("op", "ob", "ob_measuring", "ob_support", "ob_applicators", "ob_dies", "ob_tools", "coax", "ter", "lug", "prov", "cab_coax", "cab_multi", "cab_lan", "mat")
+_DB_STORED_TABS = ("op", "ob", "ob_measuring", "ob_support", "ob_applicators", "ob_dies", "ob_tools", "coax", "ter", "lug", "prov", "cab_coax", "cab_multi", "cab_lan", "mat", "heat_shrink", "cov")
 _SOLDER_GROUP = "припой/флюс"
 
 
@@ -289,8 +289,6 @@ def _db_place(tab: str, fields: dict) -> tuple[str, str, str] | None:
     if tab in _PLAIN_TABS:
         return _PLAIN_TABS[tab]
     if tab == "mat":
-        if classify_covering(fields)[0]:
-            return "cov", "Оболочки", "erpref"
         group = str((fields or {}).get("Группа", "")).strip().casefold().replace("ё", "е")
         return ("mat_use", "Расходники", "erpref") if group == _SOLDER_GROUP else None
     return None

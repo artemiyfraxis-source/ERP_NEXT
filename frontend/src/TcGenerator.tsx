@@ -194,7 +194,7 @@ async function readRefs(): Promise<Refs> {
     safe(referencesApi.techOperations("coax", "", 5000), noRecords),
     safe(referencesApi.wireDia(), { columns: [], series: [], records: [] }),
     safe(referencesApi.coaxDia(), noRecords),
-    safe(referencesApi.techOperations("mat", "", 5000), noRecords),
+    safe(referencesApi.techOperations("mat", "", 5000, true), noRecords),
     // БД.ПРОВ: число жил, цвета жил по порядку и экран кабеля — для распиновки и операций с оболочкой. Весь лист —
     // монтажные и базы кабелей (коаксиальные, многожильные, LAN); вид кабеля — `cable_kind` строки.
     safe(referencesApi.techOperations("prov", "", 5000, true), noRecords),

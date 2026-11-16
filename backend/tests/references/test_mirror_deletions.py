@@ -46,7 +46,7 @@ def test_reload_respects_deletions_in_every_equipment_catalog(tmp_path, uow, ses
         result = load_mirror(source, uow, dry_run=False, now=NOW)
         assert result.skipped_deleted == preview.skipped_deleted
         assert rows(uow, EQUIPMENT_TABS) == []
-        assert rows(uow, TechOperationTab.MATERIAL) == ["ТУТ 4/2"]
+        assert rows(uow, TechOperationTab.HEAT_SHRINK) == ["ТУТ 4/2"]
         assert sum(result.skipped_edited.values()) == 0
         with sessions() as session:
             assert session.scalar(select(func.count()).select_from(EquipmentUnitRow)) == 0
@@ -54,7 +54,7 @@ def test_reload_respects_deletions_in_every_equipment_catalog(tmp_path, uow, ses
 
 
 @pytest.mark.parametrize("tab,display,family", [
-    (TechOperationTab.MATERIAL, "ТУТ 4/2", "mat"),
+    (TechOperationTab.HEAT_SHRINK, "ТУТ 4/2", "mat"),
     (TechOperationTab.OPERATION, "Резка | CUT_WIRE_auto", "op"),
     (TechOperationTab.COAX, "BNC-male | RG58", "coax"),
     (TechOperationTab.TERMINAL, "Molex | 43020, 43640 | Micro-Fit 3.0", "ter"),
@@ -99,13 +99,13 @@ def test_natural_identity_still_blocks_a_deleted_row_when_source_provenance_chan
 def test_explicit_replacement_without_preservation_can_load_a_deleted_row(tmp_path, uow):
     source = mirror(tmp_path)
     load_mirror(source, uow, dry_run=False, now=NOW)
-    gone = _erp_record(uow, TechOperationTab.MATERIAL, "ТУТ 4/2")
+    gone = _erp_record(uow, TechOperationTab.HEAT_SHRINK, "ТУТ 4/2")
     delete_record(gone.id, ACTOR, NOW, uow)
     snapshot = read_mirror(source)
     replace_snapshot(ReplaceSnapshotCommand(
         14, None, tuple(item for records in snapshot.tables.values() for item in records), ACTOR, NOW,
     ), uow)
-    assert rows(uow, TechOperationTab.MATERIAL) == ["ТУТ 4/2"]
+    assert rows(uow, TechOperationTab.HEAT_SHRINK) == ["ТУТ 4/2"]
 
 
 def test_a_moved_and_renamed_row_stays_deleted_by_its_original_source_key(tmp_path, uow):
@@ -126,14 +126,14 @@ def test_deleting_one_source_duplicate_does_not_suppress_the_other(tmp_path, uow
     source = mirror(tmp_path, **{"БД.МАТ": FILES["БД.МАТ"] + "ТУТ 4/2\tТУТ\r\n"})
     load_mirror(source, uow, dry_run=False, now=NOW)
     with uow:
-        first, second = uow.tech_operations.list(tab=TechOperationTab.MATERIAL, query="", limit=10)
+        first, second = uow.tech_operations.list(tab=TechOperationTab.HEAT_SHRINK, query="", limit=10)
     assert first.mirror_key != second.mirror_key
     delete_record(first.id, ACTOR, NOW, uow)
 
     load_mirror(source, uow, dry_run=False, now=NOW)
 
-    assert rows(uow, TechOperationTab.MATERIAL) == ["ТУТ 4/2"]
-    assert _erp_record(uow, TechOperationTab.MATERIAL, "ТУТ 4/2").mirror_key == second.mirror_key
+    assert rows(uow, TechOperationTab.HEAT_SHRINK) == ["ТУТ 4/2"]
+    assert _erp_record(uow, TechOperationTab.HEAT_SHRINK, "ТУТ 4/2").mirror_key == second.mirror_key
 
 
 @pytest.mark.parametrize("edited_color", [False, True])

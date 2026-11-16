@@ -1,18 +1,15 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { DataTable, type CellValue, type DataCellEdit, type DataColumn, type DataPreset } from "./DataTable";
-import { fieldCellEdit } from "./CustomColumn";
+import { AddColumnButton, fieldCellEdit, filledIn, ownCellEdit, useColumnRemoval } from "./CustomColumn";
+import { PageWindow } from "./PageWindow";
+import { fieldTitle } from "./referenceLabels";
 import { SortHint } from "./refSort";
-import { failureText, referencesApi, type CoveringGroup, type CoveringRow, type CoveringsResult, type TechOperationRecord } from "./api";
+import { failureText, referencesApi, type CoveringGroup, type CoveringRow, type CoveringsResult, type CoveringTab, type TechOperationRecord, type TechOperationResult } from "./api";
 
-/* «База данных» → «Оболочки» (owner 12.10.2026, 15.10.2026): термоусадка без клея и с клеем, кембрик, гофра, оплётки,
-   ленты — each its own table with the fields of its kind, in a kind by size as a number, then by name (the server sorts,
-   `coverings.py`); the series is a column. «Прочее» shows only when a row is moved there. Nothing is deleted: a row moves between groups through
-   the «Раздел» cell, «Авто» returns it to the classifier. Cells that are a БД.МАТ column of the row (производитель, цвет,
-   материал, Ø до/после, усадка, ссылка) are edited in place through the record's own edit (old value checked); a value the
-   parser took from the name shows in the cell, the editor opens on the column itself (empty — fill it). */
+/* Independent «Термоусадка» and «Оболочки» storage catalogs share the block layout and record editor.
+   The server owns routing; unresolved rows remain visible in their current catalog. Parsed values are display-only
+   unless backed by an editable field, and removing a list column keeps the full payload in the record card. */
 
-// The owner's order (15.10.2026): термоусадка, кембрик, гофра, оплётки, ленты; «Прочее» — only when not empty.
-export const SHOWN: CoveringGroup[] = ["tut", "ttk", "cambric", "corrugated", "braid", "tape"];
 const CHOICES: Array<{ value: string; label: string }> = [
   { value: "", label: "Авто" }, { value: "ТУТ", label: "ТУТ" }, { value: "ТТК", label: "ТТК" }, { value: "Кембрик", label: "Кембрик" },
   { value: "Гофра", label: "Гофра" }, { value: "Оплётки", label: "Оплётки" }, { value: "Ленты", label: "Ленты" }, { value: "Прочее", label: "Прочее" },
@@ -42,7 +39,7 @@ function coveringColumns(raw: RawEdit): DataColumn<CoveringRow>[] {
     {
       key: "name", title: "Наименование",
       value: (row) => row.name,
-      render: (row) => <><strong>{row.name}</strong>{row.group_source === "вручную" && <small className="muted" title="Раздел задан вручную"> · вручную</small>}</>,
+      render: (row) => <><strong>{row.name}</strong>{row.group_source === "вручную" && <small className="muted" title="Раздел задан вручную"> · вручную</small>}{row.classification_status === "unknown" && <small className="tone-warn"> · Требует уточнения раздела</small>}</>,
     },
     number("before", "Ø до усадки, мм", (row) => row.before_mm, BEFORE),
     number("after", "Ø после, мм", (row) => row.after_mm, AFTER),
@@ -67,7 +64,7 @@ function coveringColumns(raw: RawEdit): DataColumn<CoveringRow>[] {
     { key: "maker", title: "Производитель", value: (row) => row.maker, render: (row) => clip(row.maker), edit: raw("Производитель") },
     {
       key: "datasheet", title: "Ссылка", value: (row) => row.datasheet, edit: raw("Ссылка на datasheet"),
-      render: (row) => row.datasheet ? <a href={row.datasheet} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>datasheet</a> : dash,
+      render: (row) => row.datasheet ? <a href={row.datasheet} target="_blank" rel="noreferrer" aria-label={`Открыть даташит: ${row.name}`} onClick={(event) => event.stopPropagation()}>открыть</a> : dash,
     },
   ];
 }
@@ -90,6 +87,18 @@ export function groupKeys(group: CoveringGroup, rows: CoveringRow[]): string[] {
 
 const BEFORE = "Размер до, мм";
 const AFTER = "Размер после, мм";
+const RAW_FIELDS: Record<string, string[]> = {
+  name: ["Наименование"], before: [BEFORE], after: [AFTER], ratio: ["Коэф. усадки"], adhesive: ["Клеевой слой"],
+  dia: [BEFORE], inner: [BEFORE], outer: [AFTER], nominal: [BEFORE], range: [BEFORE, AFTER], width: [BEFORE],
+  series: ["Серия"], material: ["Материал"], temp: ["Темп. от, °C", "Темп. до, °C"],
+  color: ["Цвет"], maker: ["Производитель"], datasheet: ["Ссылка на datasheet"],
+};
+const COVERING_LABELS: Record<CoveringTab, string> = { heat_shrink: "Термоусадка", cov: "Оболочки" };
+const GROUPS_BY_TAB: Record<CoveringTab, CoveringGroup[]> = {
+  heat_shrink: ["tut", "ttk", "other"], cov: ["cambric", "corrugated", "braid", "tape", "other"],
+};
+// These are display columns, not additional stored fields. Their removal must not remove source dimensions.
+const DERIVED_KEYS = new Set(["wall", "split", "nominal", "range", "width", "density", "temp"]);
 // «Без Ø» — строки, у которых размер не нашёлся ни в колонке, ни в названии (их генератор не подберёт по диаметру).
 const sizeOf: Record<CoveringGroup, (row: CoveringRow) => number | null> = {
   tut: (row) => row.before_mm, ttk: (row) => row.before_mm, cambric: (row) => row.before_mm, other: (row) => row.before_mm,
@@ -99,6 +108,7 @@ const sizeOf: Record<CoveringGroup, (row: CoveringRow) => number | null> = {
 const presetsFor = (rows: CoveringRow[]): DataPreset<CoveringRow>[] => ([
   { label: "Без размера", test: (row) => sizeOf[row.group](row) === null },
   { label: "Без производителя", test: (row) => !row.maker.trim() },
+  { label: "Уточнить раздел", test: (row) => row.classification_status === "unknown" },
 ] as DataPreset<CoveringRow>[]).filter((preset) => rows.some(preset.test));
 
 function GroupChooser({ row, busy, onChange }: { row: CoveringRow; busy: boolean; onChange: (group: string) => void }) {
@@ -121,35 +131,110 @@ function coveringText(row: CoveringRow): CellValue[] {
     : Array.isArray(value) ? value.map(cell) : value !== null && typeof value === "object" ? [] : [cell(value)]);
 }
 
-export function CoveringsTable({ canEdit, onCount }: { canEdit: boolean; onCount?: (count: number) => void }) {
+export function CoveringsTable({ tab = "cov", revision = 0, canEdit, onCount, onChanged }: {
+  tab?: CoveringTab; revision?: number; canEdit: boolean; onCount?: (count: number) => void; onChanged?: () => void;
+}) {
+  const label = COVERING_LABELS[tab];
   const [data, setData] = useState<CoveringsResult | null>(null);
-  // The БД.МАТ rows behind the coverings: a cell edit sends the column's old value as the record has it.
-  const [records, setRecords] = useState<Map<string, TechOperationRecord>>(new Map());
+  const [catalog, setCatalog] = useState<TechOperationResult>({ metadata: null, records: [] });
+  const records = useMemo(() => new Map(catalog.records.map((record) => [record.id, record])), [catalog]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [editing, setEditing] = useState<{ original: TechOperationRecord | null; values: Record<string, string> } | null>(null);
+  const [editError, setEditError] = useState("");
+  const [discard, setDiscard] = useState(false);
+  const [deleting, setDeleting] = useState<TechOperationRecord | null>(null);
+  const request = useRef(0);
+  const dirty = editing !== null && Object.entries(editing.values).some(([field, value]) => value !== (editing.original?.fields[field] ?? ""));
+
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   async function load() {
+    const current = ++request.current;
     try {
-      const [result, mat] = await Promise.all([
-        referencesApi.coverings(),
-        canEdit ? referencesApi.techOperations("mat", "", 5000).then((value) => value.records, () => [] as TechOperationRecord[]) : Promise.resolve([] as TechOperationRecord[]),
+      const [result, raw] = await Promise.all([
+        referencesApi.coverings(tab), referencesApi.techOperations(tab, "", 5000),
       ]);
+      if (current !== request.current) return;
       setData(result);
-      setRecords(new Map(mat.map((record) => [record.id, record])));
+      setCatalog(raw);
       onCount?.(result.rows.length);
       setError("");
     } catch (reason) {
-      setError(failureText(reason, "Не удалось загрузить оболочки"));
+      if (current === request.current) setError(failureText(reason, `Не удалось загрузить «${label}»`));
     }
   }
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); return () => { request.current += 1; }; }, [tab, revision]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function changed() {
+    onChanged?.();
+    await load();
+  }
+
+  const fields = catalog.columns ?? [...new Set(catalog.records.flatMap((record) => Object.keys(record.fields)))];
+  const ownColumns = catalog.custom_columns ?? [];
+  const removal = useColumnRemoval(tab, canEdit, (name) => {
+    const derived = coveringColumns(() => undefined).find((column) => DERIVED_KEYS.has(column.key) && column.title === name);
+    return derived ? (data?.rows ?? []).filter((row) => {
+      const value = derived.value(row);
+      return value !== null && value !== undefined && value !== "";
+    }).length : filledIn(catalog.records, name);
+  }, changed, true);
+
+  function startEdit(record: TechOperationRecord | null) {
+    setEditError("");
+    setEditing({ original: record, values: {
+      ...Object.fromEntries(["Наименование", ...fields].map((field) => [field, ""])),
+      ...record?.fields,
+    } });
+  }
+
+  function closeEditor() {
+    if (busy) return;
+    if (dirty) setDiscard(true); else setEditing(null);
+  }
+
+  async function saveRecord() {
+    if (!editing || busy) return;
+    setBusy(true); setEditError("");
+    try {
+      const original = editing.original;
+      const edits = Object.entries(editing.values).filter(([field, value]) => value !== (original?.fields[field] ?? ""))
+        .map(([field, value]) => ({ field, old: original?.fields[field] ?? "", value }));
+      const saved = original
+        ? edits.length ? await referencesApi.editRecord(original.id, edits) : original
+        : await referencesApi.createRecord(tab, editing.values);
+      setEditing(null);
+      setNotice(saved.tab === tab ? "Запись сохранена" : `Запись перенесена в «${COVERING_LABELS[saved.tab as CoveringTab] ?? "Материалы"}»`);
+      await changed();
+    } catch (reason) {
+      setEditError(failureText(reason, "Запись не сохранена"));
+    } finally { setBusy(false); }
+  }
+
+  async function deleteRecord() {
+    if (!deleting || busy) return;
+    setBusy(true); setEditError("");
+    try {
+      await referencesApi.deleteRecord(deleting.id);
+      setDeleting(null); setEditing(null); setNotice("Запись удалена");
+      await changed();
+    } catch (reason) { setEditError(failureText(reason, "Запись не удалена")); }
+    finally { setBusy(false); }
+  }
 
   async function move(row: CoveringRow, group: string) {
     if (busy) return;
     setBusy(true);
     try {
       await referencesApi.setCoveringGroup(row.id, group);
-      await load();
+      await changed();
     } catch (reason) {
       setError(failureText(reason, "Раздел не сохранён"));
     } finally {
@@ -161,7 +246,7 @@ export function CoveringsTable({ canEdit, onCount }: { canEdit: boolean; onCount
   // kind's heading; inside — the server's order (size, then name). An unknown sub-kind goes last in its kind.
   const order = useMemo(() => {
     if (!data) return { rows: [] as CoveringRow[], block: (_row: CoveringRow) => "" };
-    const groups: CoveringGroup[] = [...SHOWN, "other"];
+    const groups = GROUPS_BY_TAB[tab];
     const kindsOf = (group: CoveringGroup) => (data.kinds?.[group] ?? []).length > 1 ? data.kinds![group]! : [];
     const kindAt = (row: CoveringRow) => { const kinds = kindsOf(row.group); const at = kinds.findIndex((kind) => kind.id === row.kind); return at < 0 ? kinds.length : at; };
     const rows = data.rows.map((row, index) => ({ row, index }))
@@ -169,42 +254,112 @@ export function CoveringsTable({ canEdit, onCount }: { canEdit: boolean; onCount
       .map((item) => item.row);
     const block = (row: CoveringRow) => kindsOf(row.group).length ? `${row.group}:${row.kind ?? ""}` : row.group;
     return { rows, block };
-  }, [data]);
+  }, [data, tab]);
 
   if (error && !data) return <div className="error-banner" role="alert">{error}</div>;
   if (!data) return <div className="empty">Загрузка…</div>;
 
   const raw: RawEdit = (field) => canEdit ? fieldCellEdit<CoveringRow>(field, (row) => records.get(row.id)) : undefined;
+  const relevantKeys = new Set(GROUPS_BY_TAB[tab].flatMap((group) => groupKeys(group, data.rows)));
+  const parsedColumns = coveringColumns(raw)
+    .filter((column) => relevantKeys.has(column.key) && !(catalog.removed_columns ?? []).includes(column.title)
+      && (!catalog.columns || !RAW_FIELDS[column.key] || RAW_FIELDS[column.key].every((field) => fields.includes(field))))
+    .map((column) => ({ ...column, remove: column.key === "name" ? undefined
+      : removal.removeOf(DERIVED_KEYS.has(column.key) ? column.title : RAW_FIELDS[column.key][0]) }));
+  const parsedFields = new Set([...Object.values(RAW_FIELDS).flat(), "Группа", "Раздел оболочек"]);
+  const extraFields = fields.filter((field) => ownColumns.includes(field)
+    || (!parsedFields.has(field) && field !== "Источник данных"));
+  const extraColumns: DataColumn<CoveringRow>[] = extraFields.map((field) => ({
+    key: `field:${field}`, title: fieldTitle(field), value: (row) => records.get(row.id)?.fields[field] ?? "",
+    render: (row) => clip(records.get(row.id)?.fields[field] ?? ""),
+    hidden: !ownColumns.includes(field),
+    edit: canEdit ? ownCellEdit(field, (row: CoveringRow) => records.get(row.id)) : undefined,
+    remove: removal.removeOf(field),
+  }));
+  const sharedColumnAliases: Record<string, string[]> = {};
+  for (const column of parsedColumns) {
+    for (const field of RAW_FIELDS[column.key] ?? []) (sharedColumnAliases[field] ??= []).push(column.key);
+  }
+  for (const field of extraFields) sharedColumnAliases[field] = [`field:${field}`];
   const groupOf = (block: string) => block.split(":")[0] as CoveringGroup;
   const kindTitle = (block: string) => {
     const [group, kind] = block.split(":");
     return data.kinds?.[group as CoveringGroup]?.find((item) => item.id === kind)?.title ?? "Другие";
   };
+  const editingParsed = data.rows.find((row) => row.id === editing?.original?.id);
+  const cardParameters = editingParsed ? coveringColumns(() => undefined).filter((column) => {
+    if (!DERIVED_KEYS.has(column.key)) return false;
+    const value = column.value(editingParsed);
+    return value !== null && value !== undefined && value !== "";
+  }) : [];
   return <div className="coverings">
     {error && <div className="error-banner" role="alert">{error}</div>}
+    {notice && <div className="success-banner" role="status">{notice}</div>}
     <DataTable
-      label="Оболочки"
+      label={label}
       rows={order.rows}
-      columns={coveringColumns(raw)}
+      columns={[...parsedColumns, ...extraColumns]}
       rowKey={(row) => row.id}
       rowLabel={(row) => row.name}
       groupBy={order.block}
-      groupLabel={(block) => block.includes(":") ? kindTitle(block) : data.titles[groupOf(block)]}
+      groupLabel={(block) => groupOf(block) === "other" && tab === "heat_shrink" ? "Раздел не определён" : block.includes(":") ? kindTitle(block) : data.titles[groupOf(block)]}
       blocks
       blockSection={(block) => block.includes(":") ? data.titles[groupOf(block)] : undefined}
-      blockColumns={(block) => groupKeys(groupOf(block), data.rows)}
+      blockColumns={(block) => [...groupKeys(groupOf(block), data.rows), ...extraColumns.map((column) => column.key)]}
       presets={presetsFor(data.rows)}
-      onEdited={load}
-      storageKey="db:coverings:2510"
-      exportName="Оболочки"
+      onEdited={changed}
+      storageKey={`db:${tab}:catalog-v1`}
+      sharedKey={tab}
+      sharedColumnAliases={sharedColumnAliases}
+      exportName={label}
       // Поиск — по всем значениям строки (наименование, серия, производитель, материал, цвет, размеры, примечания), по
       // правилам searchText.ts: «тут 3.0» находит «ТУТ 3,0/1,5».
-      searchText={coveringText}
-      searchLabel="Поиск по оболочкам"
+      searchText={(row) => [...coveringText(row), ...Object.values(records.get(row.id)?.fields ?? {})]}
+      searchLabel={tab === "heat_shrink" ? "Поиск по термоусадке" : "Поиск по оболочкам"}
       searchPlaceholder="Наименование, серия, производитель, материал"
-      renderDetail={canEdit ? (row) => <GroupChooser key={`${row.id}:${row.group_source}`} row={row} busy={busy} onChange={(value) => void move(row, value)} /> : undefined}
+      renderDetail={canEdit ? (row) => <>
+        <GroupChooser key={`${row.id}:${row.group_source}`} row={row} busy={busy} onChange={(value) => void move(row, value)} />
+        <button type="button" className="secondary small" disabled={busy || !records.has(row.id)} onClick={() => startEdit(records.get(row.id)!)}>Править запись</button>
+      </> : undefined}
       emptyText="Ничего не найдено"
-      toolbar={<SortHint text="вид (в ТУТ и ТТК), размер, затем наименование" />}
+      toolbar={<><SortHint text={tab === "heat_shrink" ? "вид, размер, затем наименование" : "размер, затем наименование"} />{canEdit && <>
+        <AddColumnButton tab={tab} onAdded={changed} />
+        <button type="button" className="secondary small" onClick={() => startEdit(null)}>+ Запись</button>
+      </>}</>}
     />
+    {removal.dialog}
+    {editing && <PageWindow label={editing.original ? "Правка записи" : "Новая запись"} width={920} close={closeEditor}>
+      <form className="panel db-edit" onSubmit={(event) => { event.preventDefault(); void saveRecord(); }}>
+        <div className="manual-stock-head"><h2>{editing.original ? `Правка: ${editing.original.display_text}` : `Новая запись · ${label}`}</h2></div>
+        {editError && <div className="error-banner" role="alert">{editError}</div>}
+        {editingParsed && cardParameters.length > 0 && <div className="reference-fields">{cardParameters.map((column) => <div key={column.key}>
+          <small>{column.title}</small><div>{column.render ? column.render(editingParsed) : String(column.value(editingParsed))}</div>
+        </div>)}</div>}
+        <div className="reference-fields db-form">{Object.entries(editing.values).map(([field, value]) => <label key={field}>
+          <small>{fieldTitle(field)}</small>
+          {field === "Раздел оболочек"
+            ? <select name={field} aria-label={`Поле ${field}`} value={value} onChange={(event) => setEditing({ ...editing, values: { ...editing.values, [field]: event.target.value } })}>
+              {CHOICES.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+            </select>
+            : <input name={field} autoComplete="off" aria-label={`Поле ${field}`} value={value} onChange={(event) => setEditing({ ...editing, values: { ...editing.values, [field]: event.target.value } })} />}
+        </label>)}</div>
+        <div className="form-actions">
+          <button type="submit" className="primary" disabled={busy}>{busy ? "Сохраняю…" : "Сохранить запись"}</button>
+          <button type="button" className="secondary" disabled={busy} onClick={closeEditor}>Отмена</button>
+          {editing.original && <button type="button" className="secondary danger-link" disabled={busy} onClick={() => { setEditError(""); setDeleting(editing.original); }}>Удалить запись</button>}
+        </div>
+      </form>
+    </PageWindow>}
+    {discard && <PageWindow label="Несохранённые изменения" width={460} close={() => setDiscard(false)}><div className="panel">
+      <h2>Закрыть без сохранения?</h2><p>Изменения в карточке будут потеряны.</p>
+      <div className="form-actions"><button type="button" className="primary" onClick={() => { setDiscard(false); setEditing(null); }}>Закрыть без сохранения</button>
+        <button type="button" className="secondary" onClick={() => setDiscard(false)}>Продолжить правку</button></div>
+    </div></PageWindow>}
+    {deleting && <PageWindow label="Удалить запись" width={460} close={() => { if (!busy) setDeleting(null); }}><div className="panel">
+      <h2>Удалить запись?</h2><p>{deleting.display_text}</p>
+      {editError && <div className="error-banner" role="alert">{editError}</div>}
+      <div className="form-actions"><button type="button" className="primary danger" disabled={busy} onClick={() => void deleteRecord()}>Подтвердить удаление</button>
+        <button type="button" className="secondary" disabled={busy} onClick={() => setDeleting(null)}>Отмена</button></div>
+    </div></PageWindow>}
   </div>;
 }

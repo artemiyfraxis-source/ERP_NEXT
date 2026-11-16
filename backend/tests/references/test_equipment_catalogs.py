@@ -111,7 +111,7 @@ def test_untouched_cutover_downgrade_and_reupgrade_keep_every_relation(cutover_d
     from tests.migrations.check_seeded_downgrade import evidence
 
     path, config, ids = cutover_db
-    command.upgrade(config, "head")
+    command.upgrade(config, "0180_equipment_catalogs_cutover")
     engine = create_engine(f"sqlite:///{path}")
     try:
         before = evidence(engine)
@@ -120,7 +120,7 @@ def test_untouched_cutover_downgrade_and_reupgrade_keep_every_relation(cutover_d
             assert connection.execute("SELECT count(*) FROM equipment_units").fetchone()[0] == 0
             assert connection.execute("SELECT count(*) FROM tech_operation_records WHERE tab='ob'").fetchone()[0] == len(ids)
             assert connection.execute("SELECT record_id, record_text FROM reference_stock_links").fetchone() == (ids[0].hex, "История")
-        command.upgrade(config, "head")
+        command.upgrade(config, "0180_equipment_catalogs_cutover")
         assert evidence(engine) == before
     finally:
         engine.dispose()
@@ -135,16 +135,24 @@ def test_cutover_downgrade_refuses_changed_live_data_without_any_mutation(cutove
     command.upgrade(config, "0180_equipment_catalogs_cutover")
     engine = create_engine(f"sqlite:///{path}")
     try:
-        with Session(engine) as session:
-            repo = SqlAlchemyTechOperationRepository(session)
-            unit = repo.get(ids[7])
-            if change == "edit":
-                repo.save(replace(unit, fields={**unit.fields, "Наменование": "Новое имя"}))
-            elif change == "delete":
-                repo.delete(unit.id)
-            elif change == "insert":
-                repo.save(replace(unit, id=uuid4(), fields={**unit.fields, "Инв. номер": "ОБ.900"}))
-            else:
+        # This is the 0180 rollback guard, not the current application schema. Mutate its
+        # historical tables directly so later migrations cannot change what is exercised.
+        if change != "binding":
+            with sqlite3.connect(path) as connection:
+                connection.row_factory = sqlite3.Row
+                row = dict(connection.execute("SELECT * FROM equipment_machines WHERE id=?", (ids[7].hex,)).fetchone())
+                if change == "edit":
+                    fields = {**json.loads(row["fields"]), "Наменование": "Новое имя"}
+                    connection.execute("UPDATE equipment_machines SET fields=? WHERE id=?", (json.dumps(fields), ids[7].hex))
+                elif change == "delete":
+                    connection.execute("DELETE FROM equipment_machines WHERE id=?", (ids[7].hex,))
+                else:
+                    row["id"] = uuid4().hex
+                    row["fields"] = json.dumps({**json.loads(row["fields"]), "Инв. номер": "ОБ.900"})
+                    connection.execute("INSERT INTO equipment_machines (" + ",".join(row) + ") VALUES (" +
+                                       ",".join("?" for _ in row) + ")", tuple(row.values()))
+        else:
+            with Session(engine) as session:
                 from app.modules.production.infrastructure import ProductionInstrumentRow
                 from app.modules.references.infrastructure import EquipmentInstrumentBindingRow
 
@@ -152,7 +160,7 @@ def test_cutover_downgrade_refuses_changed_live_data_without_any_mutation(cutove
                     instrument_type="Вольтметр", kind="Средство измерений", status="Поверка не подтверждена")
                 session.add(instrument)
                 session.add(EquipmentInstrumentBindingRow(unit_id=ids[1], instrument_id=instrument.id))
-            session.commit()
+                session.commit()
         before = evidence(engine)
         with pytest.raises(RuntimeError, match="cannot restore a stale archive"):
             command.downgrade(config, "0179_equipment_catalogs")

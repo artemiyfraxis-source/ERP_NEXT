@@ -10,7 +10,7 @@ import { fieldTitle } from "./referenceLabels";
    под подписями этого экрана, скрытая «Версия». Загрузка сначала проверяется — окно показывает, что изменится, и только
    «Применить» записывает; строка, которую после скачивания поменяли, пропускается, удалить запись файлом нельзя. */
 
-/** Вкладка «Базы данных» → таблица сервера и её список (кабели по видам, оболочки из материалов). */
+/** Each material and cable tab exports its own storage table. */
 const TARGETS: Record<string, { table: string; kind?: string }> = {
   templates: { table: "op" },
   ob: { table: "ob" },
@@ -27,7 +27,8 @@ const TARGETS: Record<string, { table: string; kind?: string }> = {
   cab_wire: { table: "prov" },
   cab_multi: { table: "cab_multi" },
   cab_lan: { table: "cab_lan" },
-  cov: { table: "mat", kind: "cov" },
+  heat_shrink: { table: "heat_shrink" },
+  cov: { table: "cov" },
   mat: { table: "mat" },
   // «Материалы» расформированы (15.10.2026): вкладки по назначению выгружают всю БД.МАТ — файл тот же, строки по ID.
   mat_use: { table: "mat" },

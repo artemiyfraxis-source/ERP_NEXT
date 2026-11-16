@@ -33,7 +33,7 @@ function serve(hold: string[] = []) {
       if (path === "/api/techcards/connector-families") return json({ items: [], match: null, series_count: 0 });
       if (path === "/api/references/maps") return json({ suppliers: [{ key: "example.ru", value: "Поставщик" }], countries: [], gost_awg: [] });
       if (path === "/api/references/bases") return json({ bases: [] });
-      if (path === "/api/references/coverings") return json({ rows: [], titles: {}, kinds: {} });
+      if (path.startsWith("/api/references/coverings?")) return json({ rows: [], titles: {}, kinds: {} });
       if (path === "/api/references/column-views") return json({ views: {}, can_edit: false });
       if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: [] });
       throw new Error(`Unexpected request: ${path}`);
@@ -86,14 +86,14 @@ it("downloads each list once per visit: the tab counts, the tab and a switch bac
   expect(await screen.findByText("CUT_WIRE_auto")).toBeInTheDocument();
   await waitFor(() => expect(screen.getByRole("button", { name: /^Операции/ })).toHaveTextContent("1"));
   fireEvent.click(screen.getByRole("button", { name: /^Оболочки/ }));
-  await waitFor(() => expect(asked).toContain("GET /api/references/coverings"));
+  await waitFor(() => expect(asked).toContain("GET /api/references/coverings?tab=cov"));
   fireEvent.click(screen.getByRole("button", { name: /^Операции/ }));
   expect(await screen.findByText("CUT_WIRE_auto")).toBeInTheDocument();
   const counts = new Map<string, number>();
   for (const path of asked) counts.set(path, (counts.get(path) ?? 0) + 1);
   expect([...counts].filter(([, count]) => count > 1)).toEqual([]);
   for (const path of ["GET /api/techcards/templates", "GET /api/references/tech-operations?tab=op&limit=5000",
-    "GET /api/references/coverings", "GET /api/references/tech-operations?tab=mat&limit=5000"]) {
+    "GET /api/references/coverings?tab=cov", "GET /api/references/tech-operations?tab=mat&limit=5000"]) {
     expect(counts.get(path)).toBe(1);
   }
 });
