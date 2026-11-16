@@ -431,3 +431,140 @@ def test_acm_result_requires_matching_module_serial_and_full_band(env):
         payload["result"].update(change)
         assert send(env, command, payload).status_code == 422
     assert send(env, command).status_code == 200
+
+
+def failed_answer(command, **details):
+    payload = answer(command)
+    payload.pop("result")
+    return {**payload, "error": "Не удалось подготовить прибор", **details}
+
+
+def test_prepare_failure_before_backup_releases_lease_without_restore(env):
+    view = start(env)
+    command = poll(env).json()["job"]
+    payload = failed_answer(command, backup_saved=False)
+    response = send(env, command, payload)
+    assert response.status_code == 200, response.text
+    assert response.json()["state"] == "failed"
+    failed = get_view(env, view)
+    assert len(failed["commands"]) == 1 and failed["commands"][0]["status"] == "failed"
+    assert failed["commands"][0]["result"] == {"error": payload["error"], "backup_saved": False}
+    assert poll(env).json()["job"] is None
+    status = TestClient(app).get(f"/api/stock/vna/sessions/{view['id']}",
+                                headers={**env[1], "X-Agent-Machine-Id": "pc-1"}).json()
+    assert not status["lease_held"]
+    assert create(env).status_code == 200
+    assert send(env, command, payload).status_code == 200  # lost HTTP acknowledgement is idempotent
+    assert get_view(env, view) == failed
+    assert send(env, command, {**payload, "backup_saved": True}).status_code == 409
+    assert send(env, command, failed_answer(command)).status_code == 409
+
+
+@pytest.mark.parametrize("details", [{"backup_saved": True}, {}, {"backup_saved": None}])
+def test_prepare_failure_after_backup_or_without_certainty_retains_recovery(env, details):
+    view = start(env)
+    command = poll(env).json()["job"]
+    payload = failed_answer(command, **details)
+    assert send(env, command, payload).json()["state"] == "recovery_required"
+    assert create(env).status_code == 409
+    view = get_view(env, view)
+    assert action(env, view, "recover").status_code == 200
+    abort = poll(env).json()["job"]
+    assert abort["op"] == "abort" and send(env, abort).status_code == 200
+    restore = poll(env).json()["job"]
+    assert restore["op"] == "restore" and send(env, restore).status_code == 200
+    assert get_view(env, view)["state"] == "aborted"
+
+
+@pytest.mark.parametrize("value", [0, 1, "false", "true"])
+def test_backup_saved_requires_a_real_boolean(env, value):
+    view = start(env)
+    command = poll(env).json()["job"]
+    assert send(env, command, failed_answer(command, backup_saved=value)).status_code == 422
+    assert get_view(env, view)["state"] == "preparing"
+
+
+def test_backup_flag_cannot_release_later_operations_or_override_success(env):
+    start(env)
+    prepare = poll(env).json()["job"]
+    assert send(env, prepare, {**answer(prepare), "backup_saved": False}).status_code == 422
+    assert send(env, prepare).status_code == 200
+    apply = poll(env).json()["job"]
+    assert apply["op"] == "apply_profile"
+    assert send(env, apply, failed_answer(apply, backup_saved=False)).status_code == 422
+    assert create(env).status_code == 409
+    assert send(env, apply, failed_answer(apply)).json()["state"] == "recovery_required"
+
+
+@pytest.mark.parametrize("interruption", ["abort", "timeout"])
+def test_late_no_backup_receipt_cannot_bypass_abort_or_uncertain_timeout(env, interruption):
+    view = start(env)
+    command = poll(env).json()["job"]
+    if interruption == "abort":
+        assert action(env, view, "abort").status_code == 200
+    else:
+        env[2].now += timedelta(seconds=181)
+    assert send(env, command, failed_answer(command, backup_saved=False)).status_code == 409
+    assert get_view(env, view)["state"] == ("aborting" if interruption == "abort" else "recovery_required")
+
+
+def _queued_scan(env):
+    return scan_jobs.create_job(app.state.warehouse_uow_factory(), requested_by="operator", now=env[2].now,
+                                target="pc-1", scanner="test-scanner")
+
+
+def _poll_kinds(env, kinds):
+    return TestClient(app).post(CLAIM, json=dict(machine_id="pc-1", kinds=kinds, observed_vna_serial=SERIAL), headers=env[1])
+
+
+@pytest.mark.parametrize("ordinary_kind", ["scan", "vna"])
+def test_control_only_poll_does_not_claim_ordinary_jobs(env, ordinary_kind):
+    if ordinary_kind == "scan":
+        ordinary = _queued_scan(env)
+    else:
+        response = env[0].post(JOBS, json={"instrument_id": S2_INSTRUMENT}, headers=_csrf(env[0]))
+        assert response.status_code == 200
+        ordinary = scan_jobs.get_job(app.state.warehouse_uow_factory(), UUID(response.json()["id"]), now=env[2].now)
+    assert poll(env).json()["job"] is None
+    with env[3]() as session:
+        assert session.get(scan_jobs.ScanJobRow, ordinary.id).status == "pending"
+    assert _poll_kinds(env, [ordinary_kind]).json()["job"]["id"] == str(ordinary.id)
+
+
+@pytest.mark.parametrize("kinds", [[], ["vna"], ["vna_control"], ["vna", "vna_control"]])
+def test_explicit_kinds_without_scan_do_not_take_scans(env, kinds):
+    scan = _queued_scan(env)
+    assert _poll_kinds(env, kinds).json()["job"] is None
+    with env[3]() as session:
+        assert session.get(scan_jobs.ScanJobRow, scan.id).status == "pending"
+
+
+@pytest.mark.parametrize("kinds", [["scan"], ["vna"], ["scan", "vna"], []])
+def test_ordinary_polls_never_take_session_commands(env, kinds):
+    view = start(env)
+    assert _poll_kinds(env, kinds).json()["job"] is None
+    assert get_view(env, view)["commands"][0]["status"] == "pending"
+    assert poll(env).json()["job"]["op"] == "prepare"
+
+
+def test_mixed_poll_keeps_control_priority_and_only_requested_ordinary_fallback(env):
+    view = start(env)
+    scan = _queued_scan(env)
+    command = _poll_kinds(env, ["scan", "vna_control"]).json()["job"]
+    assert command["op"] == "prepare"
+    # Normal scan-only polling can take the requested ordinary work, never the current control command.
+    assert _poll_kinds(env, ["scan"]).json()["job"]["id"] == str(scan.id)
+    advance_until(env, view, "awaiting_standard")
+    next_scan = _queued_scan(env)
+    assert _poll_kinds(env, ["scan", "vna_control"]).json()["job"]["id"] == str(next_scan.id)
+
+
+@pytest.mark.parametrize("methods", [["acm"], []])
+def test_p3_heartbeat_capability_shape_is_persisted_without_reinterpretation(env, methods):
+    from app.modules.warehouse.devices import VnaControlRow, control_capability
+
+    control_heartbeat(env[1], methods=methods)
+    with env[3]() as session:
+        capability = session.get(VnaControlRow, "pc-1")
+        assert capability.version == 1 and capability.methods == methods
+        assert control_capability(session, "pc-1", env[2].now) == methods

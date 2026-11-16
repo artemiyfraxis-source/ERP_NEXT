@@ -208,13 +208,18 @@ class VnaSessionRepository:
             raise domain.SessionConflict("Команда уже закрыта")
         return self.command_view(command, row)
 
-    def complete(self, row, command_id, version, step, result, error, now):
+    def complete(self, row, command_id, version, step, result, error, now, *, backup_saved: bool | None = None):
         command = self.session.get(VnaCommandRow, command_id, populate_existing=True)
         if command is None or command.session_id != row.id:
             raise KeyError("Команда ВАЦ не найдена")
         if (command.expected_version, command.expected_step) != (version, step):
             raise domain.SessionConflict("Ответ относится к другой версии или шагу")
-        digest = domain.fingerprint(dict(result=result, error=error))
+        if backup_saved is not None and (type(backup_saved) is not bool or command.op != "prepare" or not error):
+            raise ValueError("Признак резервной копии допустим только для ошибки подготовки")
+        receipt = dict(result=result, error=error)
+        if backup_saved is not None:
+            receipt["backup_saved"] = backup_saved
+        digest = domain.fingerprint(receipt)  # Preserve the original digest for receipts without the new field.
         if command.status in ("done", "failed"):
             if command.result_hash != digest:
                 raise domain.SessionConflict("Повторный ответ отличается от сохранённого")
@@ -222,13 +227,18 @@ class VnaSessionRepository:
         if command.status != "claimed" or (row.state == "aborting" and command.op not in ("abort", "restore")):
             raise domain.SessionConflict("Команда не ожидает результат")
         self.expect(row, version, step)
+        state = row.state
         if error:
             saved, artifacts = {"error": error}, []
+            if backup_saved is not None:
+                saved["backup_saved"] = backup_saved
+            # Only a completed prepare failure explicitly preceding backup can release the physical lease.
+            # Missing information, timeouts, cancelled commands and later operations remain conservative.
+            state = "failed" if command.op == "prepare" and backup_saved is False else "recovery_required"
         else:
             saved, artifacts = domain.validate_result(command.op, command.args, row.instrument_serial, result)
         # CAS the session before writing a receipt/evidence. A competing abort rolls everything back.
-        self._change(row, now, state="recovery_required" if error else row.state,
-                     error=error or "")
+        self._change(row, now, state=state, error=error or "")
         command.status, command.finished_at = ("failed" if error else "done"), now
         command.result, command.result_hash = saved, digest
         self.session.flush()

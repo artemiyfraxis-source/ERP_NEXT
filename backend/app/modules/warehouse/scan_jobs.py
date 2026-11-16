@@ -325,9 +325,12 @@ class Claimed:
     source: str = "s2vna"
 
 
-def claim(uow, *, now: datetime, machine_id: str | None = None, vna: bool = False) -> Claimed | None:
+def claim(uow, *, now: datetime, machine_id: str | None = None, vna: bool = False, scan: bool = True) -> Claimed | None:
     """Claim the oldest complete PC/scanner pair targeted to this agent. Incomplete pre-strict jobs expire normally;
-    no agent, including an old one without an id, may scan them. Finished jobs past KEEP_FINISHED go."""
+    no agent, including an old one without an id, may scan them. Only requested kinds are eligible.
+    Finished jobs past KEEP_FINISHED go."""
+    if not scan and not vna:
+        return None
     with uow:
         session = _session(uow)
         _expire(session, now)
@@ -335,7 +338,8 @@ def claim(uow, *, now: datetime, machine_id: str | None = None, vna: bool = Fals
             ScanJobRow.status.in_(FINISHED_STATUSES), ScanJobRow.finished_at < now - KEEP_FINISHED,
         ))
         claimed = None
-        supported = and_(ScanJobRow.kind == "scan", ScanJobRow.target_scanner.is_not(None), ScanJobRow.target_scanner != "")
+        supported = (and_(ScanJobRow.kind == "scan", ScanJobRow.target_scanner.is_not(None), ScanJobRow.target_scanner != "")
+                     if scan else false())
         if vna:
             supported = or_(supported, ScanJobRow.kind == "vna")
         mine = and_(ScanJobRow.target_machine_id.is_not(None), ScanJobRow.target_machine_id != "", supported,

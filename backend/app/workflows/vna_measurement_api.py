@@ -68,11 +68,14 @@ class CommandResultInput(StrictModel):
     expected_step: int = Field(ge=0, strict=True)
     result: dict | None = None
     error: str = Field(default="", max_length=2000)
+    backup_saved: bool | None = Field(default=None, strict=True)
 
     @model_validator(mode="after")
     def one_answer(self):
         if (self.result is None) == (not bool(self.error.strip())):
             raise ValueError("Нужен результат либо непустая причина ошибки")
+        if self.backup_saved is not None and self.result is not None:
+            raise ValueError("Признак резервной копии допустим только для ошибки подготовки")
         return self
 
 
@@ -270,7 +273,7 @@ async def command_result(command_id: UUID, request: Request,
                 repository = VnaSessionRepository(uow.session)
                 row = repository.get(payload.session_id)
                 repository.complete(row, command_id, payload.expected_version, payload.expected_step,
-                                    payload.result, payload.error, now)
+                                    payload.result, payload.error, now, backup_saved=payload.backup_saved)
                 response = dict(ok=True, session_id=str(row.id), state=row.state, version=row.version, step=row.step)
                 uow.commit()
                 return response

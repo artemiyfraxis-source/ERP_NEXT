@@ -29,6 +29,8 @@ This is an example of the next agent contract, **not an assertion that agent 2.8
 requires an installed version greater than 2.7.0, protocol version exactly 1, fresh control heartbeat and a fresh,
 ready S2VNA device with the session serial. Omission of `vna_control` revokes the advertisement. Arinst and agents
 without this capability remain capture/file mode. Unsupported protocol versions cannot claim session commands.
+The server persists `vna_control.version` and `vna_control.methods` directly; the P3 heartbeat uses this same
+object shape, including an empty `methods` array when no calibration method is commissioned.
 
 `methods` lists only methods commissioned on that station. Main commissioned **two-port `acm`** on the real
 S50180 + ACM2520-111 on 16.11.2026; its verified calls are below. A driver implementing those calls may advertise
@@ -81,10 +83,12 @@ draft -> planned -> preparing -> awaiting_standard <-> acquiring_standard
       -> saving_calibration -> awaiting_dut -> acquiring_dut -> review -> recorded
 any started active state -> aborting -> aborted
 uncertain execution / device error -> recovery_required -> aborting -> aborted
+preparing -> failed (completed prepare error explicitly reports backup_saved:false)
 ```
 
-`failed` is also a terminal schema state reserved for a known failure before device mutation; ordinary device
-errors never use it. Current operator actions cancel untouched drafts/plans directly to `aborted`.
+`failed` releases the lease without scheduling restore when a completed `prepare` error explicitly confirms
+that no backup was saved and no device work remains to undo. All other device errors retain the lease for
+recovery. Current operator actions cancel untouched drafts/plans directly to `aborted`.
 
 Both registry UUID and serial have partial unique indexes over nonterminal states. `review`, `aborting` and
 `recovery_required` retain the lease. Ordinary capture creation and session creation serialize through the
@@ -129,6 +133,12 @@ Run heartbeat/polling separately from blocking COM execution. Extend the existin
   "observed_vna_serial": "26030095"
 }
 ```
+
+An explicit `kinds` list is exclusive: `["vna_control"]` returns only session commands, or `job:null` when none
+is available (including human connection waits). `["scan"]` and `["vna"]` return only their respective ordinary
+jobs and never session commands. Mixed lists prioritize control commands, then allow only the requested ordinary
+kinds. An explicit empty list requests no jobs; omitting `kinds` preserves legacy scan-only polling and its response
+shape. Agents holding a local session marker can therefore poll only `vna_control` during session work/recovery.
 
 Read `observed_vna_serial` from the connected instrument, not from the registry or a cached browser value. The
 server refuses a mismatch before handing out a command. **Read/compare it again immediately before every device
@@ -224,8 +234,29 @@ Send to `POST /api/stock/vna/commands/{command_id}/result` using the bound agent
 }
 ```
 
-Alternatively send `error` (nonblank, at most 2000 characters) with no result. Device errors retain the lease and
-require recovery. Do not claim successful restore when the backup is missing, the serial differs, or readback fails.
+Alternatively send `error` (nonblank, at most 2000 characters) with no result. A failed `prepare` may also include
+the top-level `backup_saved` boolean:
+
+```json
+{
+  "session_id": "<UUID>",
+  "expected_version": 4,
+  "expected_step": 0,
+  "error": "Preparation failed before saving a backup",
+  "backup_saved": false
+}
+```
+
+Use `false` only for a **known, completed failure before backup**, with no outstanding device operation or changed
+state requiring restoration. ERP marks the command failed and the session terminal `failed`, releases its lease,
+and schedules no abort/restore. Use `true` after backup: ERP retains the lease in `recovery_required`, and explicit
+recovery issues abort/restore. Omission or `null` means unknown and preserves that recovery behavior for existing
+agents. Never infer `false` merely from a missing backup after a crash, hung COM call, timeout or partial write.
+Only actual JSON booleans (or `null`, equivalent to omission) are accepted. A boolean flag is invalid on successful
+results or failures of later operations. Success still requires `backup_id`, `state_saved` and `kit_assignments_saved`.
+
+Other device errors retain the lease and require recovery. Do not claim successful restore when the backup is
+missing, the serial differs, or readback fails.
 HTTP 403 is identity/permission refusal, 404 a missing/inaccessible object, 409 a state/version/step/capability
 conflict, 422 an invalid payload/readback. An invalid result is not a completion; without a valid response the
 watchdog eventually requires recovery. On 409 refresh server state, never blindly rerun the operation.
@@ -236,6 +267,9 @@ Receipts and artifacts are committed with the session transition in one transact
 finished result/error returns success without advancing the state or duplicating evidence. A different payload
 under that ID is rejected. A result for an unclaimed, cancelled or uncertain command is rejected. A duplicate of
 an already accepted receipt may be acknowledged after cancellation, but cannot revive its command/session.
+`backup_saved`, when boolean, is persisted with the error and participates in receipt identity: adding, removing
+or changing it on retry conflicts. A late `backup_saved:false` receipt cannot release an already cancelled or
+uncertain command's lease.
 
 Before any first mutation, journal the complete original state (including calibration) and relevant kit/class
 assignments. Local backup paths are chosen by the agent and never transmitted as executable arguments. Persist:
@@ -245,6 +279,11 @@ assignments. Local backup paths are chosen by the agent and never transmitted as
 - The exact completed result/error payload until the server has acknowledged it; retry HTTP from the journal.
 - Backup UUID and its private local paths, original state/kit hashes, actual verified definition digest and
   restore outcome. Retain backups through successful restore and terminal-session reconciliation.
+
+P3 must journal the exact failed-prepare `backup_saved` value and retry it unchanged. After ERP acknowledges a
+known pre-backup failure, reconcile the terminal `failed` state and its receipt before clearing the local ownership
+marker; partial files/markers alone do not prove whether device work completed. Agents that do not yet send the
+flag keep the conservative recovery behavior.
 
 After a crash in `executing`, the command is uncertain: never reacquire a standard, run ACM, `SAVE` or a capture
 blindly under the same ID. Report uncertainty/reconcile with ERP and use explicit recovery.
