@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Mapped, Session, aliased, mapped_column, sessionmaker, validates
+from sqlalchemy.orm import Mapped, Session, aliased, mapped_column, relationship, sessionmaker, validates
 
 from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.fulfillment.domain import FulfillmentStatus
@@ -70,7 +70,7 @@ from .traceability import (
     next_box_code,
     operator_short_code,
 )
-from .vswr import VswrMeasurement, VswrVerdict
+from .vswr import VswrFile, VswrMeasurement, VswrTrace, VswrVerdict
 from .worklog import SUMMARY_KEYS, WorkEvent, WorkTimeEntry
 
 
@@ -673,6 +673,13 @@ class ProductionVswrMeasurementRow(Base):
     __tablename__ = "production_vswr_measurements"
     __table_args__ = (
         UniqueConstraint("serial_id", "attempt", name="uq_production_vswr_serial_attempt"),
+        UniqueConstraint("serial_id", "evidence_key", name="uq_production_vswr_serial_evidence"),
+        CheckConstraint("evidence_key IS NULL OR length(evidence_key) = 64", name="ck_production_vswr_evidence_key"),
+        CheckConstraint(
+            "complete IS NULL OR (evidence_key IS NOT NULL AND port_mapping IS NOT NULL"
+            " AND required_ends IS NOT NULL AND end_results IS NOT NULL)", name="ck_production_vswr_evaluation",
+        ),
+        CheckConstraint("complete IS NULL OR complete OR verdict = 'fail'", name="ck_production_vswr_complete"),
         CheckConstraint("attempt >= 1", name="ck_production_vswr_attempt"),
         CheckConstraint("band_from_mhz > 0 AND band_from_mhz < band_to_mhz", name="ck_production_vswr_band"),
         CheckConstraint("max_vswr >= 1", name="ck_production_vswr_max"),
@@ -682,7 +689,8 @@ class ProductionVswrMeasurementRow(Base):
         CheckConstraint("norm_vswr_max IS NULL OR norm_vswr_max >= 1", name="ck_production_vswr_norm"),
         CheckConstraint("verdict IN ('pass', 'fail')", name="ck_production_vswr_verdict"),
         CheckConstraint(
-            "verdict_manual OR (norm_vswr_max IS NOT NULL AND ((verdict = 'pass' AND max_vswr <= norm_vswr_max)"
+            "verdict_manual OR (complete IS FALSE AND verdict = 'fail') OR "
+            "(norm_vswr_max IS NOT NULL AND ((verdict = 'pass' AND max_vswr <= norm_vswr_max)"
             " OR (verdict = 'fail' AND max_vswr > norm_vswr_max)))",
             name="ck_production_vswr_auto_verdict",
         ),
@@ -712,6 +720,50 @@ class ProductionVswrMeasurementRow(Base):
     points: Mapped[int] = mapped_column(Integer(), nullable=False)
     file_meta: Mapped[dict] = mapped_column(JSON, nullable=False)
     trace: Mapped[list] = mapped_column(JSON, nullable=False)
+    evidence_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    port_mapping: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    required_ends: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    end_results: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    complete: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    traces: Mapped[list[ProductionVswrTraceRow]] = relationship(lazy="selectin", order_by="ProductionVswrTraceRow.name")
+    files: Mapped[list[ProductionVswrFileRow]] = relationship(lazy="selectin", order_by="ProductionVswrFileRow.end")
+
+
+class ProductionVswrTraceRow(Base):
+    __tablename__ = "production_vswr_traces"
+    __table_args__ = (
+        CheckConstraint("name IN ('S11', 'S22', 'S21', 'S12', 'A:S11', 'A:S22', 'B:S11', 'B:S22')", name="ck_production_vswr_trace_name"),
+        CheckConstraint("points >= 2", name="ck_production_vswr_trace_points"),
+        CheckConstraint(
+            "(name IN ('S11', 'S22', 'A:S11', 'A:S22', 'B:S11', 'B:S22') AND quantity = 'vswr') OR "
+            "(name IN ('S21', 'S12') AND quantity = 'magnitude')", name="ck_production_vswr_trace_quantity",
+        ),
+    )
+    measurement_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey(
+        "production_vswr_measurements.id", name="fk_production_vswr_trace_measurement", ondelete="RESTRICT",
+    ), primary_key=True)
+    name: Mapped[str] = mapped_column(String(8), primary_key=True)
+    quantity: Mapped[str] = mapped_column(String(16), nullable=False)
+    points: Mapped[int] = mapped_column(Integer, nullable=False)
+    trace: Mapped[list] = mapped_column(JSON, nullable=False)
+    samples: Mapped[list] = mapped_column(JSON, nullable=False, deferred=True)
+    complex_samples: Mapped[list] = mapped_column(JSON, nullable=False, deferred=True)
+
+
+class ProductionVswrFileRow(Base):
+    __tablename__ = "production_vswr_files"
+    __table_args__ = (
+        CheckConstraint("assembly_end IN ('A', 'B')", name="ck_production_vswr_file_end"),
+        CheckConstraint("length(trim(file_name)) > 0", name="ck_production_vswr_end_file_name"),
+        CheckConstraint("length(content) BETWEEN 1 AND 2097152", name="ck_production_vswr_end_file_size"),
+    )
+    measurement_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey(
+        "production_vswr_measurements.id", name="fk_production_vswr_file_measurement", ondelete="RESTRICT",
+    ), primary_key=True)
+    end: Mapped[str] = mapped_column("assembly_end", String(1), primary_key=True)
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    content: Mapped[bytes] = mapped_column(LargeBinary(), nullable=False, deferred=True)
+    file_meta: Mapped[dict] = mapped_column(JSON, nullable=False)
 
 
 class ProductionQcDecisionRow(Base):
@@ -2085,6 +2137,13 @@ class SqlAlchemyVswrRepository:
             file_name=row.file_name, points=row.points, file_meta=dict(row.file_meta or {}),
             trace=tuple((float(point[0]), float(point[1])) for point in row.trace or ()),
             serial_number=serial_number,
+            evidence_key=row.evidence_key, port_mapping=row.port_mapping,
+            required_ends=tuple(row.required_ends or ()), end_results=tuple(row.end_results or ()), complete=row.complete,
+            traces=tuple(VswrTrace(
+                name=item.name, quantity=item.quantity, points=item.points,
+                trace=tuple((float(p[0]), float(p[1])) for p in item.trace),
+            ) for item in row.traces),
+            files=tuple(VswrFile(item.end, item.file_name, dict(item.file_meta)) for item in row.files),
         )
 
     def _select(self):
@@ -2097,6 +2156,16 @@ class SqlAlchemyVswrRepository:
             ProductionVswrMeasurementRow.serial_id == serial_id,
         ))
         return int(current or 0) + 1
+
+    def lock_task(self, task_id: UUID) -> None:
+        self.session.execute(select(ProductionTaskRow.id).where(ProductionTaskRow.id == task_id).with_for_update()).all()
+
+    def by_evidence(self, serial_id: UUID, evidence_key: str) -> VswrMeasurement | None:
+        found = self.session.execute(self._select().where(
+            ProductionVswrMeasurementRow.serial_id == serial_id,
+            ProductionVswrMeasurementRow.evidence_key == evidence_key,
+        )).first()
+        return self._domain(*found) if found is not None else None
 
     def add(self, measurement: VswrMeasurement, content: bytes) -> None:
         self.session.add(ProductionVswrMeasurementRow(
@@ -2111,6 +2180,18 @@ class SqlAlchemyVswrRepository:
             file_name=measurement.file_name, content=content, points=measurement.points,
             file_meta=measurement.file_meta,
             trace=[list(point) for point in measurement.trace],
+            evidence_key=measurement.evidence_key, port_mapping=measurement.port_mapping,
+            required_ends=list(measurement.required_ends) if measurement.complete is not None else None,
+            end_results=list(measurement.end_results) if measurement.complete is not None else None,
+            complete=measurement.complete,
+            traces=[ProductionVswrTraceRow(
+                name=item.name, quantity=item.quantity, points=item.points,
+                trace=[list(point) for point in item.trace], samples=[list(point) for point in item.samples],
+                complex_samples=[list(point) for point in item.complex_samples],
+            ) for item in measurement.traces],
+            files=[ProductionVswrFileRow(
+                end=item.end, file_name=item.file_name, content=item.content, file_meta=item.file_meta,
+            ) for item in measurement.files],
         ))
 
     def list_for_task(self, task_id: UUID) -> list[VswrMeasurement]:
@@ -2145,7 +2226,12 @@ class SqlAlchemyVswrRepository:
                 latest[serial_id] = (attempt, verdict)
         return {serial_id: VswrVerdict(verdict) for serial_id, (_attempt, verdict) in latest.items()}
 
-    def file(self, measurement_id: UUID) -> tuple[str, bytes] | None:
+    def file(self, measurement_id: UUID, end: str | None = None) -> tuple[str, bytes] | None:
+        if end is not None:
+            found = self.session.execute(select(ProductionVswrFileRow.file_name, ProductionVswrFileRow.content).where(
+                ProductionVswrFileRow.measurement_id == measurement_id, ProductionVswrFileRow.end == end,
+            )).first()
+            return (found[0], bytes(found[1])) if found is not None else None
         found = self.session.execute(select(
             ProductionVswrMeasurementRow.file_name, ProductionVswrMeasurementRow.content,
         ).where(ProductionVswrMeasurementRow.id == measurement_id)).first()

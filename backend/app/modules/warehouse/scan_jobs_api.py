@@ -17,7 +17,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Security
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from app.shared.clock import moscow_now
@@ -254,7 +254,8 @@ async def merge_receipt_scans(
 class AgentClaimInput(BaseModel):
     host: str = Field(default="", max_length=128)
     machine_id: str = Field(default="", max_length=scan_agents.MACHINE_ID_MAX)
-    kinds: list[Literal["scan", "vna"]] = Field(default_factory=list, max_length=2)
+    kinds: list[Literal["scan", "vna", "vna_control"]] = Field(default_factory=list, max_length=3)
+    observed_vna_serial: str = Field(default="", max_length=300)
 
 
 class Scanner(BaseModel):
@@ -268,6 +269,12 @@ class VnaCapability(BaseModel):
     reason: Literal["", "s2vna_not_running", "device_not_connected", "probe_failed"] = ""
 
 
+class VnaControlCapability(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    version: int = Field(ge=1, le=100, strict=True)
+    methods: list[Literal["acm", "solt2", "solt1"]] = Field(default_factory=list, max_length=3)
+
+
 class AgentHeartbeatInput(BaseModel):
     machine_id: str = Field(min_length=1, max_length=scan_agents.MACHINE_ID_MAX)
     pc_name: str = Field(default="", max_length=128)
@@ -276,6 +283,7 @@ class AgentHeartbeatInput(BaseModel):
     scanners: list[Scanner] = Field(default_factory=list, max_length=20)
     vna: VnaCapability | None = None
     vna_sources: list[Literal["s2vna", "arinst"]] | None = Field(default=None, max_length=2)
+    vna_control: VnaControlCapability | None = None
 
 
 @router.post("/scan/agent/claim")
@@ -287,10 +295,18 @@ def scan_agent_claim(
     payload: AgentClaimInput | None = None,
 ) -> dict:
     who = payload or AgentClaimInput()
+    # Omitted kinds preserves old scan-only polling; an explicitly empty list requests no work.
+    kinds = set(who.kinds) if "kinds" in who.model_fields_set else {"scan"}
     machine_id = _queue(lambda: agent_machine(uow_factory(), _agent.actor.id, who.machine_id))
     machine_id = scan_agents.touch(uow_factory(), machine_id=machine_id, host=who.host, ip_seen=_client_ip(request),
                                    now=now)
-    job = claim(uow_factory(), now=now, machine_id=machine_id, vna="vna" in who.kinds)
+    if "vna_control" in kinds:
+        from app.workflows.vna_measurement_api import claim_session_command
+
+        command = _queue(lambda: claim_session_command(uow_factory, machine_id, who.observed_vna_serial, now))
+        if command:
+            return {"job": command, "poll_after_ms": 500}
+    job = claim(uow_factory(), now=now, machine_id=machine_id, vna="vna" in kinds, scan="scan" in kinds)
     return {"job": {"id": str(job.id), "target_scanner": job.target_scanner,
                     **({"kind": job.kind, "source": job.source} if who.kinds else {})} if job else None}
 
@@ -313,6 +329,8 @@ def scan_agent_heartbeat(
             vna=payload.vna.model_dump() if payload.vna else None, vna_sources=payload.vna_sources)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+    devices.control_heartbeat(uow_factory(), machine_id,
+                              payload.vna_control.model_dump() if payload.vna_control else None, now)
     return {"ok": True, "update": update_for(payload.version)}
 
 

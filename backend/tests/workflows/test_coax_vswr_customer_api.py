@@ -7,7 +7,7 @@ from app.main import app
 from app.modules.techcards.project_cards import TechcardRevision
 from tests.production.test_api import production_api  # noqa: F401
 from tests.workflows.test_coax_vswr_api import (
-    COAX_CONFIG, NORM, NOW, _as, _body, _card, _csv, _drop_refs, _instrument, _launch, _old_coax_setup,
+    COAX_CONFIG, NORM, NOW, _as, _body, _card, _both, _drop_refs, _instrument, _launch, _old_coax_setup,
 )
 
 CUSTOMER = {"vswrMax": 1.35, "fromMhz": 1000.0, "toMhz": 3000.0, "basis": "ТУ 16-505.123, п. 3.4"}
@@ -16,8 +16,8 @@ CUSTOMER_NORM = {**NORM, "vswrMax": 1.35, "bandMhz": [1000.0, 3000.0], "source":
                  "basis": CUSTOMER["basis"], "customer": CUSTOMER, "components": {**COMPONENTS, "vswrMax": 2.06,
                                                                                   "bandMhz": [1.0, 6000.0]}}
 # Пик 2,5 на 900 МГц — вне полосы нормы заказчика, внутри неё наибольший 1,30.
-SPIKE_OUTSIDE = _csv([(900, 2.5), (1000, 1.10), (2400, 1.30), (3000, 1.20)])
-SHORT = _csv([(1000, 1.10), (2000, 1.20)])
+SPIKE_OUTSIDE = _both([(900, 2.5), (1000, 1.10), (2400, 1.30), (3000, 1.20)])
+SHORT = _both([(1000, 1.10), (2000, 1.20)])
 
 
 def _issue_new_revision(card_id, document_patch: dict) -> None:
@@ -53,15 +53,17 @@ def test_verdict_uses_only_the_points_of_the_customer_band(production_api):  # n
     assert measurement["norm"]["source"] == "customer" and measurement["norm"]["components"]["vswrMax"] == 2.06
 
 
-def test_a_file_that_misses_the_customer_band_is_refused(production_api):  # noqa: F811
+def test_a_file_that_misses_the_customer_band_cannot_pass(production_api):  # noqa: F811
     client, _ = production_api
     _card_, task, instrument = _customer_setup(client)
 
     refused = client.post("/api/production/vswr", json=_body(task, instrument, SHORT))
 
-    assert refused.status_code == 422
-    assert refused.json()["detail"] == "Файл замера не покрывает полосу нормы заказчика 1000…3000 МГц"
-    assert client.get(f"/api/production/vswr/tasks/{task['id']}/serials/1").json()["measurements"] == []
+    assert refused.status_code == 200
+    measurement = refused.json()["measurement"]
+    assert measurement["verdict"] == "fail" and not measurement["complete"]
+    assert "не покрывает" in measurement["verdict_reason"]
+    assert len(client.get(f"/api/production/vswr/tasks/{task['id']}/serials/1").json()["measurements"]) == 1
 
 
 def test_overview_and_passport_show_the_customer_norm_and_the_components_for_reference(production_api):  # noqa: F811
@@ -86,7 +88,7 @@ def test_a_customer_norm_of_the_current_revision_overrides_the_pinned_one_for_ne
     coax = {"coax": {"sideA": {"article": "SMA-J-1"}, "sideB": {"article": "SMA-P-2"}}}
     card = _card({"coaxVswrNorm": NORM}, config=coax)  # закреплённая ревизия — норма по комплектующим 1,35
     task, instrument = _launch(client, card, key="vswr-override"), _instrument(client)
-    before = client.post("/api/production/vswr", json=_body(task, instrument, _csv([(1000, 1.1), (1800, 1.3), (3000, 1.2)])))
+    before = client.post("/api/production/vswr", json=_body(task, instrument, _both([(1000, 1.1), (1800, 1.3), (3000, 1.2)])))
     assert before.json()["measurement"]["verdict"] == "pass"
 
     # Технолог задал норму заказчика 1,25 в полосе 1000…3000 — она в текущей ревизии 2, задание закреплено на 1.
@@ -94,7 +96,7 @@ def test_a_customer_norm_of_the_current_revision_overrides_the_pinned_one_for_ne
     _issue_new_revision(card.id, {"coaxVswrNorm": stricter})
 
     after = client.post("/api/production/vswr", json=_body(
-        task, instrument, _csv([(1000, 1.1), (1800, 1.3), (3000, 1.2)]), position=2, name="sn2.csv"))
+        task, instrument, _both([(1000, 1.1), (1800, 1.3), (3000, 1.2)]), position=2, name="sn2.csv"))
     overview = client.get(f"/api/production/vswr/tasks/{task['id']}").json()
     listed = {row["id"]: row for row in client.get("/api/production/vswr/tasks").json()["tasks"]}
     passport = client.get(f"/api/production/vswr/tasks/{task['id']}/serials/3/passport").json()
