@@ -128,7 +128,7 @@ import {
   rememberColor, setBranchMode, setCableCoreColors, setCoreColor, setCoreNet, swapPins, syncRoutes, unassignPin, doublePin, undoublePin,
 } from "./pinoutCheck";
 import { setCustomColors } from "./wireColors";
-import { GEN_STATE_KEY, genSnapshot, restoreFromSnapshot, snapshotFromConfig } from "./genBuildState";
+import { GEN_STATE_KEY, genSnapshot, restoreFromSnapshot, restoreCoaxFromConfig, snapshotFromConfig } from "./genBuildState";
 import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
 import { assignPinJoined, joinSplice, leaveJoin, renameSplice, setTail } from "./tcGenSplices";
 import { PinoutTable, TopologyMaterialSelect, TopologyTubes, type MaterialOption } from "./PinoutTable";
@@ -292,6 +292,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const kitTitles = useMemo(() => new Map((kit?.components || []).map((item) => [item.id, { title: item.title || "", hint: item.title_hint || "" }])), [kit]);
   const components = useMemo<Comp[]>(() => (kit?.components || []).map((item) => ({
     id: item.id, type: item.type || "", name: item.name || "", art: item.art || "", ...(item.title ? { title: item.title } : {}), kd: item.kd || "", qty: item.qty,
+    ...("unit" in item && typeof item.unit === "string" ? { unit: item.unit } : {}),
   })), [kit]);
   // tcLoadBomFromKit: «Кол-во» — тираж сборки, партию генератор берёт отсюда.
   const assemblyInfo = useMemo<Record<string, string>>(() => ({
@@ -405,7 +406,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const oldSplMethod = splMethodFromConfig(card.document?.build_config);
     const fromPinout = (S0: GenState) => (oldSplMethod ? { ...S0, spl: { ...S0.spl, method: oldSplMethod } } : S0);
     // Контроль КСВН коакса — из build_config.coax.vswrControl; коакс-карта до настройки остаётся без режима.
-    const fromBuild = withCoaxVswrFromConfig(restored ? switchGenTab(seeded, "manual") : back ? back.S : fromPinout(restorePinout(D, seeded, card.document?.build_config)),
+    const fromBuild = withCoaxVswrFromConfig(restored ? switchGenTab(seeded, "manual") : back ? back.S : restoreCoaxFromConfig(fromPinout(restorePinout(D, seeded, card.document?.build_config)), card.document?.build_config),
       card.document?.build_config);
     // Несохранённый черновик поверх текущей сборки возвращается вместо засева.
     const form = draft.open({ S: fromBuild, manual: restored ?? emptyManual(), terEdits: back?.terEdits ?? {}, coaxAdd: back?.coaxAdd ?? {}, complexTopology: undefined });

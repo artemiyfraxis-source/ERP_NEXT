@@ -1,5 +1,5 @@
 import type { Comp, Endpoint, GenState, WireEntry } from "./tcGenLogic";
-import { restoreCoaxState } from "./tcGenLogic";
+import { COAX_MACHINES, restoreCoaxState, type CoaxMachineKey } from "./tcGenLogic";
 
 /*
  * Снимок формы генератора в собранной карте (владелец 14.10: «когда пересобираю, прошлые настройки должны сохраняться,
@@ -39,6 +39,47 @@ export function snapshotFromConfig(config: unknown): GenSnapshot | null {
     terEdits: isPlain(raw.terEdits) ? (raw.terEdits as GenSnapshot["terEdits"]) : {},
     coaxAdd: isPlain(raw.coaxAdd) ? (raw.coaxAdd as GenSnapshot["coaxAdd"]) : {},
   };
+}
+
+/** Cards predating form snapshots retain the saved cut length and recipe, not today's seed defaults. */
+export function restoreCoaxFromConfig(seed: GenState, config: unknown): GenState {
+  if (!isPlain(config) || config.mode !== "coax" || !isPlain(config.coax)) return seed;
+  const raw = config.coax;
+  const ops = Array.isArray(config.ops) ? config.ops.filter(isPlain) : [];
+  const cut = ops.find((op) => op.type === "coaxCut");
+  const cutMachine = isPlain(cut?.machine) ? cut.machine.model : undefined;
+  const text = (value: unknown, fallback = "") => value == null ? fallback : String(value);
+  const side = (key: "sideA" | "sideB"): GenState["coax"]["sideA"] => {
+    const saved = raw[key];
+    if (!isPlain(saved) || !saved.article) return null;
+    return { ...(seed.coax[key]?.art === saved.article ? seed.coax[key] : {}), art: String(saved.article), name: text(saved.connName),
+      ...(saved.kind ? { kind: saved.kind as NonNullable<GenState["coax"]["sideA"]>["kind"] } : {}),
+      ...(Array.isArray(saved.parts) ? { parts: saved.parts as NonNullable<GenState["coax"]["sideA"]>["parts"] } : {}) };
+  };
+  const saved: Partial<GenState["coax"]> = {
+    len: text(raw.cableLength), tutLen: text(raw.tutLength, seed.coax.tutLen),
+    tutEnabled: ops.some((op) => op.type === "coaxCutTut" && op.markMaterial !== "tape"),
+    sideA: side("sideA"), sideB: side("sideB"),
+    pinA: isPlain(raw.sideA) ? text(raw.sideA.pinType, seed.coax.pinA) : seed.coax.pinA,
+    pinB: isPlain(raw.sideB) ? text(raw.sideB.pinType, seed.coax.pinB) : seed.coax.pinB,
+    shield: text(raw.shieldType, seed.coax.shield),
+    shieldB: isPlain(raw.sideB) ? text(raw.sideB.shield, seed.coax.shieldB) : seed.coax.shieldB,
+    stripMode: ops.some((op) => op.type === "coaxCut" && Array.isArray(op.stripSides)) ? "machine" : "separate",
+    stripB: ops.some((op) => op.type === "coaxStrip" && op.side === "B") || (Array.isArray(cut?.stripSides) && cut.stripSides.includes("B")),
+    machine: (Object.keys(COAX_MACHINES) as CoaxMachineKey[]).find((key) => COAX_MACHINES[key].model === cutMachine) || "",
+    ...(typeof raw.cables === "number" ? { cables: raw.cables } : {}),
+    fakraCutStrip: raw.fakraCutStrip === true,
+    lengthBasis: raw.lengthBasis === "finished" || raw.lengthBasis === "cut" ? raw.lengthBasis : undefined,
+    finishedLength: raw.finishedLength == null ? undefined : text(raw.finishedLength),
+    finishedLengthFrom: ["name", "calc", "bom", "user"].includes(String(raw.finishedLengthFrom))
+      ? raw.finishedLengthFrom as GenState["coax"]["finishedLengthFrom"] : undefined,
+    lPlusA: raw.lPlusA == null ? undefined : text(raw.lPlusA), lPlusB: raw.lPlusB == null ? undefined : text(raw.lPlusB),
+    markMaterial: raw.markMaterial === "tape" || raw.markMaterial === "tube" ? raw.markMaterial : undefined,
+    markProtect: raw.markProtect === true,
+    marks: Array.isArray(raw.marks) ? raw.marks as GenState["coax"]["marks"] : undefined,
+    connColor: isPlain(raw.connColor) ? raw.connColor as GenState["coax"]["connColor"] : undefined,
+  };
+  return { ...seed, tab: "coax", coaxLenFrom: undefined, coax: restoreCoaxState(seed.coax, saved) };
 }
 
 /** Новые поля формы — из засева; отсутствующие настройки коакса сохраняют старый рецепт. */

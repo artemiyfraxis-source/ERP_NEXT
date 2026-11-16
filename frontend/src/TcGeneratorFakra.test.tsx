@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { TcGenerator } from "./TcGenerator";
 import type { KitsetBom, ProjectTechcard } from "./api";
-import { genSnapshot, restoreFromSnapshot, snapshotFromConfig } from "./genBuildState";
+import { genSnapshot, restoreFromSnapshot, restoreCoaxFromConfig, snapshotFromConfig } from "./genBuildState";
 import { initState, makeGen, coaxFromFields, type GenData } from "./tcGenLogic";
 import * as genLogic from "./tcGenLogic";
 import { buildMark, draftKey } from "./useGeneratorDraft";
@@ -85,7 +85,7 @@ it("binds finished/cut length, strip, marking and colour controls to the generat
   change("Запас А, мм", "31,5");
   expect(latest().coax.cableLength).toBe(4856.5);
   change("Запас В, мм", "");
-  expect(screen.getByRole("alert")).toHaveTextContent("задайте L и припуски");
+  expect(screen.getByText(/Для длины готового изделия задайте L и припуски/)).toHaveAttribute("role", "alert");
   change("Запас В, мм", "25");
   change("Длина по", "cut"); change("Длина коакс-кабеля", "4900");
   expect(latest().coax.cableLength).toBe(4900);
@@ -167,13 +167,58 @@ it("renders the generated five-block coax route with independent preparation ope
 it("restores legacy snapshots without enabling new coax defaults and preserves the recipe", () => {
   const seed = initState(data);
   const legacy = JSON.parse(JSON.stringify(seed));
-  for (const key of ["fakraCutStrip", "lengthBasis", "finishedLength", "lPlusA", "lPlusB", "markMaterial", "markProtect", "marks", "connColor"])
+  for (const key of ["fakraCutStrip", "lengthBasis", "finishedLength", "finishedLengthFrom", "lPlusA", "lPlusB", "markMaterial", "markProtect", "marks", "connColor"])
     delete legacy.coax[key];
   legacy.coax.len = "4800";
   const saved = genSnapshot(data.components, legacy, {}, {});
   const restored = restoreFromSnapshot(data.components, seed, saved).S;
   expect(JSON.parse(JSON.stringify(restored.coax))).toEqual(legacy.coax);
   expect(makeGen(data, restored).buildConfig()).toEqual(makeGen(data, legacy).buildConfig());
+});
+
+it("opens a saved legacy FAKRA config without a snapshot at its original cut length and recipe", async () => {
+  const legacy = initState(data);
+  legacy.coax = genLogic.restoreCoaxState(legacy.coax, { len: "4800", tutLen: "60", tutEnabled: true });
+  const saved = makeGen(data, legacy).buildConfig();
+  const { latest } = mount({ ...card, document: { operations: [], build_config: saved } }); await ready();
+  expect(screen.getByLabelText("Длина коакс-кабеля")).toHaveValue("4800");
+  expect(screen.getByRole("switch", { name: "Резка с разделкой" })).not.toBeChecked();
+  expect(latest().coax.cableLength).toBe(4800);
+  expect(latest().ops[0].opKey).toBe("coaxCut");
+  expect(latest().ops).toEqual(saved.ops);
+});
+
+it("passes the BOM tape norm and explicit unit through the generator form", async () => {
+  const withUnit = { ...kit, components: kit.components.map((row) => row.id === "tape" ? { ...row, qty: "0,18", unit: "м" } : row) };
+  const { latest } = mount(card, withUnit); await ready();
+  expect(latest().ops.find((op) => op.opKey === "coaxPrintLabel")).toMatchObject({ units: 3, parts: [{ qty: 0.18, unit: "м" }] });
+});
+
+it("restores a saved single-ended coax cut machine and stripping of the free end", () => {
+  const seed = initState(data);
+  const state = { ...seed, coax: genLogic.restoreCoaxState(seed.coax, { len: "4800", sideA: { art: "SMA", name: "SMA" },
+    sideB: null, stripB: true, stripMode: "machine", machine: "big" }) };
+  const saved = makeGen(data, state).buildConfig();
+  const restored = restoreCoaxFromConfig(seed, saved);
+  expect(restored.coax).toMatchObject({ stripB: true, machine: "big" });
+  expect((makeGen(data, restored).buildConfig().ops as unknown[])[0]).toEqual((saved.ops as unknown[])[0]);
+});
+
+it("keeps the calc-length warning across reopening until L is edited", async () => {
+  const calcKit = { ...kit, name: "Кабельная сборка 120907/AA Camera 14 → Splitter B C6",
+    calc_ops: [{ code: "CUT_COAX_auto", comp: "RTK 031", n: "1", l: "4,855", req: "" }] };
+  const warning = "L взята из расчёта — сверьте с КД (длина готового изделия без запаса на разъёмы)";
+  const first = mount(card, calcKit); await ready();
+  expect(screen.getAllByText(warning).length).toBeGreaterThan(0);
+  expect(screen.getByLabelText("L по КД, мм")).toHaveValue("4855");
+  expect(first.latest().coax.cableLength).toBe(4910);
+  const saved = first.latest();
+  first.unmount(); localStorage.clear(); serverDraft = null;
+  const second = mount({ ...card, document: { operations: [], build_config: saved } }, calcKit); await ready();
+  expect(screen.getAllByText(warning).length).toBeGreaterThan(0);
+  change("L по КД, мм", "4800");
+  expect(screen.queryByText(warning)).not.toBeInTheDocument();
+  expect(second.latest().coax).toMatchObject({ cableLength: 4855, finishedLength: 4800, finishedLengthFrom: "user" });
 });
 
 it("uses an explicit generated coax route in the preview instead of deriving a replacement", async () => {
@@ -229,7 +274,7 @@ it("autosaves the new controls locally and restores the same state from the serv
 
 it("opens an old local draft with its cut length and no new recipe defaults", async () => {
   const S = JSON.parse(JSON.stringify(initState(data)));
-  for (const key of ["fakraCutStrip", "lengthBasis", "finishedLength", "lPlusA", "lPlusB", "markMaterial", "markProtect", "marks", "connColor"]) delete S.coax[key];
+  for (const key of ["fakraCutStrip", "lengthBasis", "finishedLength", "finishedLengthFrom", "lPlusA", "lPlusB", "markMaterial", "markProtect", "marks", "connColor"]) delete S.coax[key];
   S.coax.len = "4777";
   localStorage.setItem(draftKey("fakra-user", kit.project, kit.index), JSON.stringify({ v: 1, rev: 1, savedAt: new Date().toISOString(), built: buildMark(null),
     value: { S, manual: { blocks: [], edges: [] }, terEdits: {}, coaxAdd: {} } }));

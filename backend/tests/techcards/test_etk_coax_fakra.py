@@ -36,6 +36,7 @@ def test_new_fakra_route_independent_preparations_and_label_inputs(fixture):
     assert len({op["result"][0]["name"] for op in ops[:3]}) == 3
     assert [op["result"][0]["norm"] for op in ops[:3]] == ["15", "45", "45"]
     assert _inputs(ops[0]) == {"RTK 031": ("72,825", "М.")}
+    # Frozen pre-fix payload has qty=3 and no unit; the corrected generator payload is covered below.
     assert _inputs(ops[1]) == {"Лента Vell VL-S641": ("45", "Шт.")}
     assert _inputs(ops[2]) == {"ТУТ 4/2мм, прозрачная": ("2,7", "М.")}
     assert ops[3]["semis"][1]["name"] == ops[2]["result"][0]["name"]
@@ -65,6 +66,19 @@ def test_new_fakra_route_independent_preparations_and_label_inputs(fixture):
     config["route"] = doc["route"]
     rebuilt = build_etk(config, _fresh_cards(config))
     assert rebuilt["operations"] == ops  # saved stage kit must not make its blank operations sequential
+
+
+def test_label_tape_consumption_uses_bom_metres_while_output_counts_labels():
+    config = deepcopy(FRESH[0]["config"])
+    printed = next(op for op in config["ops"] if op["opKey"] == "coaxPrintLabel")
+    printed["parts"] = [{"art": "VL-S641", "name": "Лента Vell VL-S641", "qty": 0.18, "unit": "М."}]
+    assert printed["units"] == 3
+    config["partQty"] = 15
+    doc = build_etk(config, _fresh_cards(config))
+    output = next(op for op in doc["operations"] if op["code"] == "PRINT_MARK_LABEL")
+    assert _inputs(output) == {"VL-S641": ("2,7", "М.")}
+    assert output["result"][0]["norm"] == "45"
+    assert build_etk(config, _fresh_cards(config))["operations"] == doc["operations"]
 
 
 def test_finished_length_rebuild_is_idempotent_and_missing_allowance_blocks():

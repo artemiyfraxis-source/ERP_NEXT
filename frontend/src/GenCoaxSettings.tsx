@@ -1,6 +1,6 @@
 import { Field, Toggle, UnitInput } from "./GenControls";
 import { AutoTextarea } from "./AutoTextarea";
-import { coaxCutLength, coaxLengthProblem, type GenState } from "./tcGenLogic";
+import { coaxCutLength, coaxLengthProblem, coaxLengthWarning, type GenState } from "./tcGenLogic";
 import { coaxMarkDefaults, type CoaxMark, type ConnColor } from "./tcGenMarks";
 import { formatNumber } from "./format";
 
@@ -17,13 +17,14 @@ export function CoaxLength({ coax, onChange }: Props) {
     </select></Field>
     {finished ? <>
       <Field label="L по КД, мм"><UnitInput unit="мм" name="coax-finished-length" autoComplete="off" inputMode="decimal" value={coax.finishedLength ?? ""}
-        onChange={(event) => onChange({ finishedLength: event.target.value })} /></Field>
+        onChange={(event) => onChange({ finishedLength: event.target.value, finishedLengthFrom: "user" })} /></Field>
       <Field label="Запас А, мм"><UnitInput unit="мм" name="coax-allowance-a" autoComplete="off" inputMode="decimal" value={coax.lPlusA ?? ""}
         onChange={(event) => onChange({ lPlusA: event.target.value })} /></Field>
       <Field label="Запас В, мм"><UnitInput unit="мм" name="coax-allowance-b" autoComplete="off" inputMode="decimal" value={coax.lPlusB ?? ""}
         onChange={(event) => onChange({ lPlusB: event.target.value })} /></Field>
       <output className="gsec-meta span-all coax-cut-length" aria-live="polite">Длина резки = L + А + В = {cut === null ? "—" : formatNumber(cut, { digits: 3 })} мм</output>
       {problem && <div className="warning-inline span-all" role="alert">{problem}</div>}
+      {coaxLengthWarning(coax) && <div className="warning-inline span-all" role="alert">{coaxLengthWarning(coax)}</div>}
     </> : <Field label="Длина резки, мм"><UnitInput unit="мм" aria-label="Длина коакс-кабеля" name="coax-cut-length" autoComplete="off" inputMode="decimal" value={coax.len}
       onChange={(event) => onChange({ len: event.target.value })} /></Field>}
   </>;
