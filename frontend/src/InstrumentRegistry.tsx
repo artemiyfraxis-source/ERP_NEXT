@@ -5,8 +5,9 @@ import { formatDay, formatNumber } from "./format";
 import { InstrumentWindow } from "./InstrumentWindow";
 import { StatusChip } from "./StatusChip";
 
-type InstrumentRow = ProductionInstrument & { depth: number; parentLabel: string };
-const tableKey = "quality-instruments-v2";
+type InstrumentRow = ProductionInstrument & { depth: number; parentLabel: string; parentNumber: string };
+// Reset the old column layout so its saved widths and visible designation cannot override the compact defaults.
+const tableKey = "quality-instruments-v3";
 const viewKey = "quality-instruments-view";
 type View = "list" | "tree";
 
@@ -49,22 +50,26 @@ function DueDate({ item }: { item: ProductionInstrument }) {
 }
 
 const columns: DataColumn<InstrumentRow>[] = ([
-  { key: "inventory_number", title: "Инв. №", value: (item) => item.inventory_number, width: 92 },
+  { key: "inventory_number", title: "Инв. №", value: (item) => item.inventory_number, width: 88 },
   { key: "name", title: "Наименование", value: (item) => item.name, grow: true, minWidth: 160,
     render: (item) => <span className="instrument-name" title={`${item.name}${item.kind === "Принадлежность" ? ` · ${formatNumber(item.quantity)} шт` : ""}`} style={{ paddingLeft: Math.min(item.depth, 8) * 16 }}>
       {item.depth > 0 && <span aria-hidden="true">↳ </span>}{item.name}
       {item.kind === "Принадлежность" && <small> · {formatNumber(item.quantity)} шт</small>}
     </span> },
-  { key: "parentLabel", title: "Прибор", value: (item) => item.parentLabel, width: 140,
-    render: (item) => item.parentLabel },
-  { key: "doc_designation", title: "Обозн.", hint: "Обозначение для документов", value: (item) => item.doc_designation, width: 96 },
-  { key: "kind", title: "Вид", value: (item) => item.kind, filter: true, width: 156 },
-  { key: "serial_number", title: "Зав. №", value: (item) => item.serial_number, width: 80 },
-  { key: "verification_due", title: "Поверка до", value: (item) => item.verification_due, render: (item) => <DueDate item={item} />, width: 104 },
-  { key: "status", title: "Статус", value: (item) => item.status, filter: true, width: 192,
-    render: (item) => <StatusChip status={item.status} title={item.status} /> },
-  { key: "storage_location", title: "Место", value: (item) => item.storage_location, filter: true, width: 104 },
-  { key: "files", title: "Файлы", value: (item) => `${item.files?.length ?? 0}${item.files?.some((file) => file.kind === "Паспорт") ? " · Паспорт" : ""}`, width: 72 },
+  { key: "parentLabel", title: "Прибор", value: (item) => item.parentLabel, width: 88,
+    render: (item) => item.parentNumber || "—" },
+  // Полное имя прибора — в Excel всегда (и в виде «По приборам», где колонки «Прибор» нет).
+  { key: "parentFull", title: "Прибор полностью", value: (item) => item.parentLabel, hidden: true, export: true },
+  { key: "doc_designation", title: "Обозн.", hint: "Обозначение для документов", value: (item) => item.doc_designation, width: 96, hidden: true, export: true },
+  { key: "kind", title: "Вид", value: (item) => item.kind, filter: true, width: 88,
+    render: (item) => item.kind === "Средство измерений" ? "СИ" : "Принадл." },
+  { key: "serial_number", title: "Зав. №", value: (item) => item.serial_number, width: 88 },
+  { key: "verification_due", title: "Поверка до", value: (item) => item.verification_due, render: (item) => <DueDate item={item} />, width: 132 },
+  { key: "status", title: "Статус", value: (item) => item.status, filter: true, width: 144,
+    render: (item) => <StatusChip status={item.status} title={item.status}>{item.status === "Поверка не подтверждена" ? "Не подтверждена" : item.status}</StatusChip> },
+  { key: "storage_location", title: "Место", value: (item) => item.storage_location, filter: true, width: 96 },
+  { key: "files", title: "Файлы", value: (item) => item.files?.length
+    ? `${item.files.length}${item.files.some((file) => file.kind === "Паспорт") ? " · паспорт" : ""}` : "—", width: 112 },
 ] satisfies DataColumn<InstrumentRow>[]).map((column: DataColumn<InstrumentRow>) => ({ ...column,
   render: (item: InstrumentRow) => <span className="instrument-cell" title={String(column.value(item) ?? "")}>
     {column.render ? column.render(item) : column.value(item) || "—"}
@@ -82,7 +87,7 @@ export function InstrumentRegistry({ instruments, onChanged }: {
     const column = view === "tree" && treeSort && columns.find((item) => item.key === treeSort.key);
     const items = instruments.map((item) => {
       const parent = item.parent_id ? byId.get(item.parent_id) : undefined;
-      return { ...item, depth: 0, parentLabel: parent ? `${parent.inventory_number} · ${parent.name}` : "" };
+      return { ...item, depth: 0, parentLabel: parent ? `${parent.inventory_number} · ${parent.name}` : "", parentNumber: parent?.inventory_number ?? "" };
     }).sort((a, b) => column && treeSort
       ? treeSort.direction * compareCells(column.value(a), column.value(b), column.numeric)
       : compareCells(a.inventory_number, b.inventory_number));
@@ -116,11 +121,12 @@ export function InstrumentRegistry({ instruments, onChanged }: {
     </div>
     <div className="instrument-legend">Поверка до: <span className="is-overdue">просрочена</span> · <span className="is-soon">осталось до 30 дней</span></div>
     <div onClickCapture={captureSort}>
-      <DataTable label="Средства измерения" storageKey={tableKey} rows={rows} columns={columns} groupSort={view === "tree"}
+      <DataTable label="Средства измерения" storageKey={tableKey} rows={rows}
+        columns={view === "tree" ? columns.filter((column) => column.key !== "parentLabel") : columns} groupSort={view === "tree"}
         rowKey={(item) => item.id} rowLabel={(item) => item.inventory_number || item.name}
         onRowClick={(item) => setWindow({ record: item, kind: item.kind, parentId: item.parent_id })}
         searchLabel="Найти средство измерений" searchPlaceholder="Инв. №, наименование, заводской №…"
-        searchText={(item) => [item.instrument_type, item.manufacturer, item.warehouse_grn]}
+        searchText={(item) => [item.instrument_type, item.manufacturer, item.warehouse_grn, item.parentLabel]}
         exportName="Средства измерения" emptyText="Средств измерения нет — добавьте первое кнопкой «+ Средство измерений»." />
     </div>
     {window && <InstrumentWindow key={window.record?.id ?? `new:${window.kind}:${window.parentId}`} instrument={window.record}

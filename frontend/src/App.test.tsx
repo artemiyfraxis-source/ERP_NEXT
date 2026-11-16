@@ -348,6 +348,7 @@ it("opens the ОТК section at the quality route for an edit grant on «ОТК�
     if (path === "/api/production/tasks") return json({ tasks: [], next_cursor: null });
     if (path === "/api/production/boxes") return json({ boxes: [] });
     if (path === "/api/production/instruments") return json({ instruments: [] });
+    if (path === "/api/production/vswr/tasks") return json({ tasks: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
 
@@ -355,7 +356,7 @@ it("opens the ОТК section at the quality route for an edit grant on «ОТК�
 
   expect(await screen.findByRole("heading", { name: "ОТК", level: 1 })).toBeInTheDocument();
   expect(await screen.findByText(/Коробок на проверку нет/)).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "Средства измерения" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Средства измерения" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "ОТК" })).toBeInTheDocument();
 });
 

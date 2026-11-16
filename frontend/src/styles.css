@@ -766,11 +766,11 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .panel.instrument-registry > .data-table { padding: 0; }
 .instrument-registry .instrument-legend { margin: 0 0 8px; color: var(--muted-foreground); font-size: 12px; }
 .instrument-registry .data-table { padding: 0; }
-.instrument-registry .data-table table.grid.wide { table-layout: fixed; width: 100%; min-width: 1160px; }
-.instrument-registry .data-table tbody td { height: 32px; padding-top: 4px; padding-bottom: 4px; vertical-align: middle; }
+.instrument-registry .data-table table.grid.wide { table-layout: fixed; width: 100%; min-width: 1000px; }
+.instrument-registry .data-table tbody td { height: 32px; padding-top: 4px; padding-bottom: 4px; vertical-align: middle; overflow: hidden; }
 .instrument-registry .data-table .sort-head { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.instrument-registry .instrument-cell, .instrument-registry .instrument-name, .instrument-registry .instrument-due { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.instrument-registry .status-chip { display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.instrument-registry .instrument-cell, .instrument-registry .instrument-name, .instrument-registry .instrument-due { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.instrument-registry .status-chip { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .instrument-registry .instrument-cell small { display: inline; white-space: nowrap; font-weight: 400; }
 .instrument-registry .instrument-due { font-variant-numeric: tabular-nums; }
 .instrument-registry .seg-tabs.instrument-views { margin-bottom: 8px; }
@@ -1644,9 +1644,15 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .data-table.dt-blocks > .dt-sub-title { margin: 4px 0 -4px; font-size: 14px; font-weight: 600; }
 .data-table.dt-blocks > .dt-section-title + .dt-sub-title { margin-top: -2px; }
 .data-table.dt-blocks > .dt-block-title .group-picked { margin-left: 10px; color: var(--primary); font-size: 13px; font-weight: 600; }
-.data-table.dt-blocks .dt-block-fold { all: unset; cursor: pointer; }
+.data-table.dt-blocks > [hidden] { display: none; }
+.data-table.dt-blocks .dt-block-fold { all: unset; box-sizing: border-box; display: block; width: 100%; min-height: 32px; padding: 4px 0; cursor: pointer; touch-action: manipulation; }
+.data-table.dt-blocks .dt-block-fold:hover { background: var(--accent); }
+.data-table.dt-blocks .dt-block-fold .page-count { font-variant-numeric: tabular-nums; }
 .data-table.dt-blocks .dt-block-fold:focus-visible { outline: var(--focus-ring); outline-offset: 2px; border-radius: 4px; }
 .data-table.dt-blocks .dt-block-fold > span[aria-hidden] { display: inline-block; width: 14px; color: var(--muted-foreground); }
+@media (pointer: coarse) {
+  .data-table.dt-blocks .dt-block-fold { min-height: 40px; }
+}
 /* No scroll box of its own: a block grows to its height and the page scrolls; its header sticks under the toolbar
    (`--dt-head-top`, DataTable). The columns fit the width (DataTable levels them from the data, `table-layout: fixed`),
    one line per row (26.10.2026: «8 строк на экран» — a long text is cut with «…», the whole on hover); only a list that
@@ -5240,6 +5246,60 @@ tr.order-row-late > td:first-child { box-shadow: inset 3px 0 0 var(--tone-danger
 .vswr-control { color: var(--muted-foreground); font-weight: 500; }
 .vswr-actions { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .vswr-actions .link-button { padding: 0; }
+
+/* ОТК: one row per box, with quantity entry and instrument toggles in place. */
+.quality-page > [role="tabpanel"] > .panel { margin-top: 0; }
+.quality-page > [role="tabpanel"][hidden] { display: none; }
+.quality-page .vswr-section > :is(.manual-stock-head, .vswr-head, .error-banner, .empty) { margin-left: 16px; margin-right: 16px; }
+.quality-page .vswr-section > .manual-stock-head { padding-top: 16px; }
+.qc-queue { table-layout: fixed; min-width: 1040px; }
+.qc-queue .qc-box-col { width: 160px; }
+.qc-queue .qc-item-col { width: 160px; }
+.qc-queue .qc-qty-col { width: 72px; }
+.qc-queue .qc-number-col { width: 80px; }
+.qc-queue .qc-vswr-col { width: 156px; }
+.qc-queue .qc-actions-col { width: 144px; }
+.qc-queue :is(th, td) { padding: 4px 8px; }
+.qc-queue td { vertical-align: top; }
+.qc-queue :is(.qc-item, .qc-item small) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qc-queue .box-name { overflow-wrap: anywhere; white-space: normal; }
+.qc-queue input { text-align: right; padding: 4px; min-height: var(--control-h-cell); font-variant-numeric: tabular-nums; }
+.qc-instruments { display: flex; align-items: center; gap: 4px; min-height: var(--control-h-cell); }
+.qc-selected { display: flex; flex: 1; gap: 4px; min-width: 0; }
+.qc-selected-many { flex-wrap: wrap; }
+.qc-instrument.secondary { display: inline-flex; align-items: center; gap: 4px; flex: 0 1 136px; min-width: 0; max-width: 136px; min-height: var(--control-h-cell); padding: 4px 8px; font-weight: 400; color: var(--foreground); border-color: var(--primary); background: var(--bg-teal-8); }
+.qc-instrument > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qc-instrument > span:last-child, .qc-instrument-add { flex-shrink: 0; }
+.qc-instrument-add { padding: 4px 8px; white-space: nowrap; }
+.qc-unselected { flex: 1; white-space: nowrap; }
+.qc-instrument-popup { position: fixed; z-index: 41; display: flex; flex-direction: column; gap: 8px; width: min(320px, calc(100vw - 16px)); max-height: calc(50vh - 16px); padding: 8px; background: var(--card); color: var(--foreground); border: 1px solid var(--border); border-radius: var(--control-radius); font-size: inherit; }
+.qc-instrument-popup-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.qc-instrument-popup-head button { min-width: 32px; }
+.qc-instrument-popup > input { flex-shrink: 0; width: 100%; }
+.qc-instrument-options { min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.qc-instrument-options label { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 4px; cursor: pointer; }
+.qc-instrument-options label:hover, .qc-instrument-options label:focus-within { background: var(--accent); }
+.qc-instrument-options input { flex-shrink: 0; width: 16px; height: 16px; margin: 0; }
+.qc-instrument-options label span { min-width: 0; overflow-wrap: anywhere; }
+.qc-instrument-popup :is(button, input):focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+.qc-vswr-link { display: inline-block; max-width: 100%; min-height: var(--control-h-cell); padding: 4px 8px; border: 1px solid currentColor; border-radius: var(--control-radius); white-space: normal; text-align: left; font-variant-numeric: tabular-nums; }
+.qc-vswr-link:hover { text-decoration: underline; background: var(--accent); }
+.qc-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.qc-actions > .small { padding: 4px 8px; white-space: nowrap; }
+.qc-actions .link-button { min-height: var(--control-h-cell); padding: 4px 8px; }
+.qc-actions small { white-space: normal; }
+.qc-dialog { padding: 16px; }
+.qc-dialog .form-grid { padding: 8px 0; }
+.qc-dialog .form-actions { margin-top: 16px; }
+.qc-dialog textarea { min-height: 96px; }
+.quality-tabs button:focus-visible, .qc-queue button:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+@media (pointer: coarse) {
+  .quality-tabs button, .qc-queue :is(button, input) { min-height: 40px; }
+  .qc-queue .qc-instrument { min-width: 40px; }
+  .qc-instrument-popup :is(button, label), .qc-instrument-popup > input { min-height: 40px; }
+  .qc-instrument-popup button { min-width: 40px; }
+  .qc-instrument-options input { width: 20px; height: 20px; }
+}
 a.button-link { display: inline-block; text-decoration: none; text-align: center; }
 .vswr-chart { margin: 8px 0 4px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
 .vswr-chart svg { display: block; width: 100%; height: auto; max-height: 340px; }

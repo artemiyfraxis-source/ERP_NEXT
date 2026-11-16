@@ -74,45 +74,48 @@ const verdictChip = (measurement: VswrMeasurement | null) => measurement
 
 export interface VswrRejectRequest { taskId: string; serialNumber: string; description: string }
 
-export function VswrSection({ instruments, canUpload, canReject, onReject }: {
+export function VswrSection({ instruments, choices, taskId, onTaskChange, onOverview, canUpload, canReject, onReject }: {
   instruments: ProductionInstrument[];
+  choices: VswrTaskListItem[];
+  taskId: string;
+  onTaskChange: (id: string) => void;
+  onOverview?: (overview: VswrTaskOverview) => void;
   canUpload: boolean;
   /** Есть ли у задания коробка в очереди ОТК — только тогда «Не годно» ведёт в брак. */
   canReject: (taskId: string) => boolean;
   onReject: (request: VswrRejectRequest) => void;
 }) {
   const canPrint = useCanPrint();
-  const [choices, setChoices] = useState<VswrTaskListItem[] | null>(null);
-  const [taskId, setTaskId] = useState("");
   const [overview, setOverview] = useState<VswrTaskOverview | null>(null);
+  const request = useRef(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [uploading, setUploading] = useState<VswrSerialRow | null>(null);
 
   async function load(id: string) {
-    if (!id) { setOverview(null); return; }
+    const stamp = ++request.current;
+    if (!id) { setOverview(null); setLoading(false); return; }
     setLoading(true);
     setError("");
     try {
-      setOverview(await productionApi.vswrTask(id));
+      const result = await productionApi.vswrTask(id);
+      if (stamp !== request.current) return;
+      setOverview(result);
+      onOverview?.(result);
     } catch (reason) {
+      if (stamp !== request.current) return;
       setOverview(null);
       setError(reason instanceof Error ? reason.message : "Не удалось загрузить замеры КСВН");
     } finally {
-      setLoading(false);
+      if (stamp === request.current) setLoading(false);
     }
   }
 
-  useEffect(() => { void load(taskId); }, [taskId]);
   useEffect(() => {
-    let alive = true;
-    productionApi.vswrTasks().then((result) => { if (alive) setChoices(result.tasks); }).catch((reason) => {
-      if (!alive) return;
-      setChoices([]);
-      setError(reason instanceof Error ? reason.message : "Не удалось загрузить задания на коаксиальные сборки");
-    });
-    return () => { alive = false; };
-  }, []);
+    setOverview(null); setUploading(null);
+    void load(taskId);
+    return () => { request.current += 1; };
+  }, [taskId]);
 
   async function openPassport(row: VswrSerialRow) {
     setError("");
@@ -151,17 +154,17 @@ export function VswrSection({ instruments, canUpload, canReject, onReject }: {
   return <div className="panel vswr-section">
     <div className="manual-stock-head"><h2>Замеры КСВН</h2>
       <label className="vswr-task-pick">Задание
-        <select value={taskId} onChange={(event) => setTaskId(event.target.value)}>
+        <select value={taskId} onChange={(event) => onTaskChange(event.target.value)}>
           <option value="">— выберите задание —</option>
-          {(choices ?? []).map((task) => <option key={task.id} value={task.id}>
+          {choices.map((task) => <option key={task.id} value={task.id}>
             {task.number} · {task.name || task.item} · {task.quantity} шт{task.control.mode === "none" ? "" : ` · замерено ${task.required.measured} из ${task.required.total}`}
           </option>)}
         </select>
       </label>
     </div>
     {error && <div className="error-banner" role="alert">{error}</div>}
-    {choices !== null && choices.length === 0 && !error && <div className="empty">Нет заданий на коаксиальные сборки</div>}
-    {!taskId && !(choices !== null && choices.length === 0) && <div className="empty">Выберите задание коаксиальной сборки — здесь появятся её изделия и замеры.</div>}
+    {choices.length === 0 && !error && <div className="empty">Нет заданий на коаксиальные сборки</div>}
+    {!taskId && choices.length > 0 && <div className="empty">Выберите задание коаксиальной сборки — здесь появятся её изделия и замеры.</div>}
     {taskId && loading && !overview && <div className="empty">Загрузка…</div>}
     {overview && <>
       <div className="vswr-head">

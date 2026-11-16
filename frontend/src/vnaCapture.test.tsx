@@ -47,7 +47,9 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); localStorage.clear(); act(() => setRightsPrincipal(null)); });
 
 async function open(canUpload = true) {
-  render(<VswrSection instruments={instruments} canUpload={canUpload} canReject={() => false} onReject={() => {}} />);
+  render(<VswrSection instruments={instruments} choices={[{ ...overview.task, item: "КС", status: "В работе",
+    norm: { status: "ok", vswr_max: 1.8, source: "customer" }, control: overview.control, required: overview.required }]}
+    taskId="task" onTaskChange={() => {}} canUpload={canUpload} canReject={() => false} onReject={() => {}} />);
   await screen.findByRole("option", { name: /ПЗ-1/ });
   fireEvent.change(screen.getByLabelText("Задание"), { target: { value: "task" } });
   if (canUpload) fireEvent.click(await screen.findByRole("button", { name: "Загрузить замер" }));

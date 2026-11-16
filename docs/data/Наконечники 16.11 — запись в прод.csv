@@ -1,0 +1,34 @@
+Артикул,Поле,Колонка,Было,Стало,Источник,Цитата
+РПИ-М 1.5 (2.8),terMaxCurrent,"Максисмальная сила тока, А",,10,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=14,10
+РПИ-М 1.5 (4.8),terMaxCurrent,"Максисмальная сила тока, А",,10,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=14,10
+РПИ-М 1.5 (6.3),terMaxCurrent,"Максисмальная сила тока, А",,10,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=14,10
+РПИ-М 2.5 (4.8),terMaxCurrent,"Максисмальная сила тока, А",,15,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=14,15
+РПИ-М 2.5 (4.8),terStrip,"Длина зачистки, мм",,5–6,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=5,5–6
+РПИ-М 2.5 (6.3),terMaxCurrent,"Максисмальная сила тока, А",,15,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=14,15
+РПИ-М 2.5 (6.3),terStrip,"Длина зачистки, мм",,5–6,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=5,5–6
+РПИ-М 6.0 (6.3),terMaxCurrent,"Максисмальная сила тока, А",,24,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=14,24
+РППИ-М 1.5 (2.8),terMaxCurrent,"Максисмальная сила тока, А",,10,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=15,10
+РППИ-М 1.5 (2.8),terStrip,"Длина зачистки, мм",,5–6,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=5,5–6
+РППИ-М 1.5 (4.8),terMaxCurrent,"Максисмальная сила тока, А",,10,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=15,10
+РППИ-М 1.5 (4.8),terStrip,"Длина зачистки, мм",,5–6,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=5,5–6
+РППИ-М 1.5 (6.3),terMaxCurrent,"Максисмальная сила тока, А",,10,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=15,10
+РППИ-М 1.5 (6.3),terStrip,"Длина зачистки, мм",,5–6,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=5,5–6
+РППИ-М 2.5 (6.3),terMaxCurrent,"Максисмальная сила тока, А",,15,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=15,15
+РППИ-М 2.5 (6.3),terStrip,"Длина зачистки, мм",,5–6,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=5,5–6
+РППИ-М 6.0 (6.3),terMaxCurrent,"Максисмальная сила тока, А",,24,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=15,24
+РППИ-М 6.0 (6.3),terStrip,"Длина зачистки, мм",,6–7,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=5,6–7
+РПИ-П 1.5 (6.3),terMaxCurrent,"Максисмальная сила тока, А",,10,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=14,10
+РПИ-П 1.5 (6.3),terStrip,"Длина зачистки, мм",,5–6,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=5,5–6
+РПИ-П 2.5 (6.3),terMaxCurrent,"Максисмальная сила тока, А",,15,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=14,15
+РПИ-П 2.5 (6.3),terStrip,"Длина зачистки, мм",,5–6,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=5,5–6
+РПИ-П 6.0 (6.3),terMaxCurrent,"Максисмальная сила тока, А",,24,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=14,24
+РПИ-П 6.0 (6.3),terStrip,"Длина зачистки, мм",,6–7,https://cdn.promelec.ru/upload/items/2022/06/22/Izolirovannye-nakonechniki-i-soediniteli-KVT.pdf#page=5,6–7
+FLVDDF1.25-187A-5,terDatasheet,Ссылка на DATASHEET на сайте производителя,https://www.jst-mfg.com/product/pdf/eng/eTAPE-ON.pdf,https://www.jst.co.uk/downloads/series/eQUICK1_%2823-06-08%29.pdf,https://www.jst.co.uk/downloads/series/eQUICK1_%2823-06-08%29.pdf,FLVDDF1.25-187A-5
+FLVDDF1.25-187A-8,terDatasheet,Ссылка на DATASHEET на сайте производителя,https://www.jst.fr/en/product/quick-disconnect-terminal-female-vinyl-insulated-with-funnel-entry-copper-sleeve-fully-insulated-with-copper_401,https://www.jst.co.uk/downloads/series/eQUICK1_%2823-06-08%29.pdf,https://www.jst.co.uk/downloads/series/eQUICK1_%2823-06-08%29.pdf,FLVDDF1.25-187A-8
+FLVDDF1.25-250A,terDatasheet,Ссылка на DATASHEET на сайте производителя,https://www.jst-mfg.com/product/pdf/eng/eTAPE-ON.pdf,https://www.jst.co.uk/downloads/series/eQUICK1_%2823-06-08%29.pdf,https://www.jst.co.uk/downloads/series/eQUICK1_%2823-06-08%29.pdf,FLVDDF1.25-250A
+60294-1,terDatasheet,Ссылка на DATASHEET на сайте производителя,,https://www.te.com/en/product-60294-1.html,https://www.te.com/en/product-60294-1.html,60294-1
+45 7373 8528-01,terMaterial,Материал контакта,латунь / олово-висмутовое покрытие,Латунь Л63 / Олово-висмутовое покрытие,https://zavod-kopir.ru/upload/iblock/9ae/9zz0v5pucawfkpgj9uqr11mlm2n9k69k.pdf#page=11,Лента Л63 ГОСТ 2208-2007 олово-висмут
+45 7373 8528-01,terDatasheet,Ссылка на DATASHEET на сайте производителя,https://akompany.ru/kabelnye-nakonechniki-klemmy-kontakty-razemy/45-7373-8528-01-nakonechnik-kolcevoy-4mm-sechenie-05-15mm2-ol,https://zavod-kopir.ru/upload/iblock/9ae/9zz0v5pucawfkpgj9uqr11mlm2n9k69k.pdf,https://zavod-kopir.ru/upload/iblock/9ae/9zz0v5pucawfkpgj9uqr11mlm2n9k69k.pdf#page=11,45 7373 8528-01
+19003-0129,terMaterial,Материал контакта,"Brass (C26000) / Tin, изоляция Nylon 94V0 / 94V2 (красная)","Латунь / Олово; изоляция Nylon (PA), 94V-0 (красная)",https://www.molex.com/en-us/products/part-detail/190030129,Material Metal Brass; Material Plating Mating Tin; Insulation Nylon (PA); Flammability 94V-0
+19003-0135,terMaterial,Материал контакта,"Brass (C26000) / Tin, изоляция Nylon 94V0 / 94V2","Латунь / Олово; изоляция Nylon (PA), 94V-0 (синяя)",https://www.molex.com/en-us/products/part-detail/190030135,Material Metal Brass; Material Plating Mating Tin; Insulation Nylon (PA); Flammability 94V-0
+FDFN5-250,terMaxCurrent,"Максисмальная сила тока, А",24,12 AWG: 20; 10 AWG: 24,https://edm.ksterminals.com/uploadfiles/131/edm/Electronic_Terminals_new/267/,A.W.G. AMP. 12 20 10 24

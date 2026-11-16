@@ -269,14 +269,14 @@ def _rfqs(session: Session, words: list[str], patterns: list[str]) -> list[dict]
 
 # «База данных»: the stored tab of a record -> (tab of the screen, its label, the access key of the tab). Every base is
 # its own tab (migration 0165: «Наконечники» and each cable kind too); a БД.МАТ row goes by what it is.
-_PLAIN_TABS = {"op": ("templates", "Операции", "erptctpl"), "ob": ("ob", "Оборудование", "erpref"),
+_PLAIN_TABS = {"op": ("templates", "Операции", "erptctpl"), "ob": ("ob", "Оборудование операционное", "erpref"),
                "coax": ("coax", "Коаксиальные разъёмы", "erpref"), "ter": ("ter", "Терминалы", "erpref"),
                "lug": ("lug", "Наконечники", "erpref"), "cab_coax": ("cab_coax", "Коаксиальные кабели", "erpref"),
                "prov": ("cab_wire", "Монтажные провода", "erpref"), "cab_multi": ("cab_multi", "Многожильные кабели", "erpref"),
                "cab_lan": ("cab_lan", "Кабели Ethernet", "erpref")}
 _PLAIN_TABS.update({
     "ob_measuring": ("ob_measuring", "Средства измерений", "erpref"),
-    "ob_support": ("ob_support", "Обеспечивающее", "erpref"),
+    "ob_support": ("ob_support", "Оборудование обеспечивающее", "erpref"),
     "ob_applicators": ("ob_applicators", "Аппликаторы", "erpref"),
     "ob_dies": ("ob_dies", "Матрицы", "erpref"),
     "ob_tools": ("ob_tools", "Инструмент", "erpref"),

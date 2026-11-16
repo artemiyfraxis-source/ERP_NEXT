@@ -23,18 +23,17 @@ const RECORDS = [
 
 afterEach(() => { window.localStorage.clear(); });
 
-/** The series open folded (owner 26.10.2026); the tests below look inside them. */
+/** The tests below inspect the rows of every series. */
 function unfolded(ui: ReactElement) {
-  const view = render(ui);
-  const all = screen.queryByRole("button", { name: "Развернуть все" });
-  if (all) fireEvent.click(all);
-  else document.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach((heading) => fireEvent.click(heading));
-  return view;
+  return render(ui);
 }
 
-it("opens with every series folded, like the cables; a heading opens its series (владелец 26.10)", () => {
+it("opens every series by default and toggles it from the heading", () => {
   render(<CoaxConnectors records={RECORDS} canEdit onEdit={() => undefined} />);
   const n = screen.getByRole("button", { name: /^N-male 2$/ });
+  expect(n).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getAllByText("RG-316").length).toBeGreaterThan(0);
+  fireEvent.click(n);
   expect(n).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByText("RG-316")).toBeNull();
   fireEvent.click(n);

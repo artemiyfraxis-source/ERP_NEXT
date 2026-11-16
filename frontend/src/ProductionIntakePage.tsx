@@ -15,14 +15,15 @@ import { IntakeWindow, keyOf, leftOf } from "./IntakeWindow";
 import { PrintOutcome, type PrintResult } from "./LabelPrint";
 import { PackWindow } from "./PackWindow";
 import { PrintSetupButton } from "./PrintSetupWindow";
-import { needsTrack, NoUpdWindow, onlyUpdBlocks, readyForTrack, readyToShip, type CardRights } from "./ShipmentCard";
+import { needsTrack, NoUpdWindow, onlyUpdBlocks, readyForTrack, readyToShip, ShipmentHead, type CardRights } from "./ShipmentCard";
 import { CreateShipmentWindow, JournalWindow, RegisterGoodWindow } from "./ShipmentJournal";
 import { updState } from "./ShipmentDocs";
 import { ShipWindow } from "./ShipWindow";
 import { TrackWindow } from "./TrackWindow";
 import { PackingPermissionWindow } from "./PackingPermissionWindow";
 import { ShipmentDataWindow, updLabel } from "./ShipmentData";
-import { orderShipmentRows, shipmentGroupKey, shipmentPositions, ShipmentGroupHeader, UpdCell } from "./ShipmentGroupHeader";
+import { orderShipmentRows, shipmentGroupKey, UpdCell } from "./ShipmentGroupHeader";
+import { ShipmentTable } from "./ShipmentTable";
 import "./productionIntake.css";
 import "./shipping.css";
 
@@ -325,17 +326,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     .map((column) => ({ ...column, hidden: column.key === "project" || !shown.includes(column.key) }));
 
   const groupLabel = (_key: string, groupRows: IntakeLine[], filteredRows: IntakeLine[]) => {
-    const positions = shipmentPositions(filteredRows);
     const project = groupRows[0].project;
-    const shipment = groupRows[0].shipment;
-    if (shipment) {
-      const position = positions.get(`${project}\u0001${shipment.id}`)!;
-      return <ShipmentGroupHeader project={project} customer={head[project]?.customer || shipment.customer} shipment={shipment} {...position}
-        quantity={filteredRows.filter((line) => line.project === project && line.shipment?.id === shipment.id).reduce((sum, line) => sum + line.quantity, 0)} onError={setError} onOpenShipment={() => setShipmentData(shipment.id)}>
-        {tab === "packed" && canDispatch && <button type="button" className="secondary small"
-          onClick={(event) => { event.stopPropagation(); setOpened({ kind: "pack", project }); }}>Короба и PL/DN</button>}
-      </ShipmentGroupHeader>;
-    }
     const data = cardOf(groupRows[0]);
     const pickup = isPickup(data?.carrier ?? "") || data?.terms === "САМОВЫВОЗ";
     const firstProject = filteredRows.find((line) => !line.shipment)?.project;
@@ -387,11 +378,28 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
         <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? "on" : undefined} onClick={() => changeTab(key)}
           title="Число — КБ в шаге; во «Все» КБ считается один раз">
           {text}<span className="page-count"> {board.counts[key]}</span></button>)}</div>
-      <DataTable key={tab} label="Приёмка с производства" storageKey={`production-intake:v4:${tab}`} rows={lines} columns={visibleColumns} rowKey={(line) => line.id}
+      {(lines.some((line) => line.shipment) || ["packed", "to_ship", "shipped"].includes(tab)) && <ShipmentTable key={`shipments:${tab}`}
+        label="Приёмка с производства" storageKey={`production-intake:shipments:v1:${tab}`}
+        shipments={lines.flatMap((line) => line.shipment ? [line.shipment] : [])} onError={setError}
+        onOpenShipment={(shipment) => setShipmentData(shipment.id)}
+        positions={lines.filter((line) => line.shipment)} positionColumns={visibleColumns} positionKey={(line) => line.id}
+        positionShipment={(line) => line.shipment!}
+        positionLine={(row) => row.shipment?.lines.find((line) => row.id === `${row.shipment!.id}:${line.id}`)}
+        initialQuery={urlParam("q")} emptyText={EMPTY[tab]}
+        actions={(shipment) => { const line = lines.find((item) => item.shipment?.id === shipment.id)!; return <>
+          {canDispatch && (line.stage === "packed" ? trackAction(line) : ["accepted", "to_ship"].includes(line.stage ?? "") ? actionCell(line) : null)}
+          {canDispatch && ["Новая", "Собрана", "Упакована"].includes(shipment.status) && <button type="button" className="secondary small"
+            onClick={() => setOpened({ kind: "pack", project: line.project })}>Короба и PL/DN</button>}
+          {canDispatch && ["Отгружена", "Закрыта"].includes(shipment.status) && <button type="button" className="secondary small"
+            onClick={() => setOpened({ kind: "ship", project: line.project })}>Действия</button>}
+        </>; }}
+        renderOperations={(shipment) => canDispatch && ["Новая", "Собрана", "Упакована"].includes(shipment.status)
+          ? <ShipmentHead key={`${shipment.id}:${shipment.version}`} shipment={shipment} busy={busy} mutate={mutate} /> : null} />}
+      {(lines.some((line) => !line.shipment) || !["packed", "to_ship", "shipped"].includes(tab) && !lines.length) && <DataTable key={tab} label="Приёмка с производства" storageKey={`production-intake:v4:${tab}`} rows={lines.filter((line) => !line.shipment)} columns={visibleColumns} rowKey={(line) => line.id}
         groupBy={shipmentGroupKey} groupLabel={groupLabel} groupSort exportName="Приёмка с производства"
         searchText={(line) => [line.shipment?.number]} initialQuery={urlParam("q")} searchPlaceholder="Проект, КБ, наименование, ГРН или задание"
         rowClassName={(line) => tab === "all" && !(line.stage && hasWork(line.stage, line.kb, piecesOf(line.kb))) ? "ship-line-off" : ""}
-        emptyText={board.rows.length ? EMPTY[tab] : EMPTY.all} />
+        emptyText={board.rows.length ? EMPTY[tab] : EMPTY.all} />}
       {label && <div className="intake-print-status"><strong>Этикетка {label.grn}</strong><PrintOutcome result={label.result} error={label.error} /></div>}
     </>}
     {accepting && <IntakeWindow rows={accepting.rows} quantities={accepting.quantities} close={() => setAccepting(null)} onDone={accepted} />}
