@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.modules.production.api import production_uow_factory
 from app.modules.production.infrastructure import SqlAlchemyInstrumentFileRepository, SqlAlchemyInstrumentRepository
+from app.modules.production.instrument_serials import article_of
 from app.modules.production.instrument_characterization import application, characterization, connector_line, impedance_warning
 from app.modules.production.instrument_passport import passport_pdf
 from app.modules.production.rf_infrastructure import RfRepository
@@ -78,6 +79,27 @@ def _characterization(session, instrument_id):
     return None
 
 
+def _next_control(measured_on):
+    """Same interval as the passport (CONTROL_INTERVAL_MONTHS), day clamped to the month's end."""
+    from calendar import monthrange
+    from datetime import date
+    from app.modules.production.instrument_public import CONTROL_INTERVAL_MONTHS
+    month = measured_on.month - 1 + CONTROL_INTERVAL_MONTHS
+    year, month = measured_on.year + month // 12, month % 12 + 1
+    return date(year, month, min(measured_on.day, monthrange(year, month)[1]))
+
+
+def type_line(name: str) -> str:
+    """The kind of item from its name: the leading Russian words before the first Latin/digit word
+    («Переход коаксиальный ADP1A-…» → «Переход коаксиальный»)."""
+    words = []
+    for word in name.split():
+        if any("a" <= ch.lower() <= "z" or ch.isdigit() for ch in word):
+            break
+        words.append(word)
+    return " ".join(words).strip(" ,–—-")
+
+
 def _content(item, session=None):
     rf = RfRepository(session).get(item.id) if session is not None else RfDetails()
     measured = _characterization(session, item.id) if session is not None else None
@@ -93,6 +115,10 @@ def _content(item, session=None):
         loss_line=steps.values_line if steps else "",
         range_line=steps.range_line if steps else "Не измерен",
         table=steps.table_lines() if steps else ("", "", ""),
+        table_long=steps.table_lines(long=True) if steps else ("", "", ""),
+        type_line=type_line(item.name), model_line=item.doc_designation or article_of(item) or "",
+        measured_on=measured.measured_on if measured else None,
+        next_control=_next_control(measured.measured_on) if measured else None,
         measurement_date=measured.measurement_date if measured else "",
         impedance_warning=impedance_warning(rf), card_url=public_passport_url(item.id),
     )

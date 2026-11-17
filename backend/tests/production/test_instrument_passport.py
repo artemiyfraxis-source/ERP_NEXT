@@ -136,6 +136,7 @@ def test_measured_labels_use_real_link_and_show_parameters_at_203_dpi(label_form
     data = instrument_content(item.inventory_number, item.name, item.serial_number, model=item.doc_designation,
         accessory=True, in_house_serial=True, connector_line=connector_line(item.name, item.serial_number, rf()),
         range_line=application(measured).range_line, table=application(measured).table_lines(),
+        table_long=application(measured).table_lines(long=True), measured_on=measured.measured_on,
         measurement_date=measured.measurement_date, impedance_warning=impedance_warning(rf(impedance)),
         card_url=public_passport_url(item.id, PublicSettings(public_base_url="https://erp.example.test",
             passport_secret=SecretStr("test-only-passport-key-do-not-deploy-123456789"))))
@@ -144,7 +145,7 @@ def test_measured_labels_use_real_link_and_show_parameters_at_203_dpi(label_form
     layout = render(default_template("instrument", label_format, "qr"), data, settings)
     assert not layout.overflow and layout.qr_module_dots >= 2
     joined = " ".join(layout.texts)
-    for value in (item.inventory_number, "ADP-ss-26-034", "Частотный диапазон 0–", "КСВН ≤", "дБ ≤", "16.11.26"):
+    for value in (item.inventory_number, "ADP-ss-26-034", "Частотный диапазон 0–", "КСВН ≤", "Потери, дБ ≤", "16.11.2026"):
         assert value in joined
     if impedance == 75:
         assert "75 Ом — не для 50 Ом тракта" in joined
