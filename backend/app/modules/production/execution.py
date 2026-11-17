@@ -428,6 +428,8 @@ def start_work(command: StartWorkCommand, uow: ExecutionUnitOfWork) -> WorkSessi
                 )
             inputs = tuple(WorkInput(box.id, box.available) for box in boxes)
         session = WorkSession.start(task.id, operation.id, worker.id, command.now)
+        if getattr(uow, "cutting", None) is not None:
+            uow.cutting.freeze(operation.id, command.now)
         uow.work.save(session)
         uow.work.add_inputs(session.id, inputs)
         uow.work.add_material_inputs(session.id, command.materials)

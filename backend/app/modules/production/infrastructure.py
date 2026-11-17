@@ -21,6 +21,7 @@ from app.shared.advisory_lock import lock_project_run
 from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository
 
 from .application import Absence, ConcurrentProductionUpdate, DuplicateLaunch, Operator
+from .cutting_infrastructure import SqlAlchemyCuttingRepository
 from .domain import DEFAULT_SHIFT, MARKS_ISSUED_EVENT, MARKS_RELEASED_EVENT, RESTORED_EVENT, EtkOperation, FlowMode, MarkEvent, OperationInput, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift
 from .plan import (
     KIT_STAGES, PLAN_BLOCKERS, PLAN_KINDS, PLAN_STAGE_AUTO, PROJECT_TERMINALS, PlanEvent, PlanProjectSnapshot,
@@ -168,6 +169,7 @@ class ProductionOperationRow(Base):
     __tablename__ = "production_operations"
     __table_args__ = (
         Index("ux_production_operation_position", "task_id", "position", unique=True),
+        Index("ux_production_operation_task_id", "task_id", "id", unique=True),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
@@ -1085,6 +1087,7 @@ class SqlAlchemyProductionRepository:
                 ))
         for stale in existing.values():
             self.session.delete(stale)
+        SqlAlchemyCuttingRepository(self.session).task_changed(task)
 
     def worked(self, task_ids) -> set[UUID]:
         """Задания со следом работы: короб, сессия, выработка, брак или «взял/закончил» в доле монтажника."""
@@ -1133,6 +1136,8 @@ class SqlAlchemyProductionRepository:
     def delete(self, task_id: UUID) -> None:
         """Delete an unworked task and its route under the same project lock as packing."""
         self._lock_projects((task_id,))
+        if SqlAlchemyCuttingRepository(self.session).preserve_task(task_id):
+            raise ProductionValidationError("Задание входит в историю резки — используйте отмену")
         if self.resources is not None:
             self.resources.remove_task(task_id)
         operations = select(ProductionOperationRow.id).where(ProductionOperationRow.task_id == task_id)
@@ -2362,6 +2367,7 @@ class SqlAlchemyProductionUnitOfWork:
                 self.session.close()
                 raise
         self.production = SqlAlchemyProductionRepository(self.session, self.resources)
+        self.cutting = SqlAlchemyCuttingRepository(self.session)
         self.operators = SqlAlchemyOperatorRepository(self.session)
         self.calendar = SqlAlchemyCalendarRepository(self.session)
         self.skills = SqlAlchemySkillRepository(self.session)

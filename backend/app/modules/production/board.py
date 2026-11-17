@@ -133,6 +133,8 @@ def launch_command(
         fulfillment_request_id=None, deadline=card.deadline, operations=launch_operations(card.route.steps, quantity),
         actor=actor, now=now, techcard_id=card.techcard_id,
         techcard_revision=card.revision if card.revision >= 1 else None, seen_launch_seq=seen_launch_seq,
+        cutting_document=card.document,
+        cutting_card_version=card.version,
     )
 
 
