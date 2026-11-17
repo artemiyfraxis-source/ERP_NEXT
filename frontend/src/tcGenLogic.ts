@@ -2534,7 +2534,11 @@ export function makeGen(D: GenData, S: GenState) {
     if (sideB && vswr?.mode !== "none") ops.push({ type: "coaxVswr", opKey: "coaxVswr", tmplHint: "CTRL_VSWR_coax",
       label: vswr?.mode === "sample" ? `Контроль КСВН — выборочно 1 из ${vswr.every}` : "Контроль КСВН", ...(vswr ? { vswrControl: vswr } : {}) });
     const cableWork = new Set(["coaxCut", "coaxStrip", "coaxPin", "coaxPinCrimp", "coaxInsSleeve", "coaxShield", "coaxSolderShield"]);
-    return cables > 1 ? ops.map((op) => cableWork.has(op.type) ? { ...op, units: (op.units || 1) * cables } : op) : ops;
+    return cables > 1 ? ops.map((op) => {
+      if (!cableWork.has(op.type)) return op;
+      const units = (op.units || 1) * cables;
+      return { ...op, units, ...(op.label ? { label: op.label.replace(/×\d+(?=\s*(?:\([АВAB]\))?$)/, `×${units}`) } : {}) };
+    }) : ops;
   }
 
   function topologyProblems_(): string[] {
@@ -4689,7 +4693,7 @@ export function initState(D: GenData, base: GenState = emptyState()): GenState {
       const cable = g2.coaxBomCableComp_();
       const fromCalc = cable ? g2.calcCutLengths_([cable])[cable.id] || 0 : 0;
       const fromBom = cable ? Math.round((Number(String(cable.qty).replace(",", ".")) || 0) * 1000) : 0;
-      const cables = fk ? makeGen(D, S).coaxCables_() : 1;
+      const cables = makeGen(D, S).coaxCables_();
       const mm = fromCalc || Math.round(fromBom / cables);
       if (mm > 0) S = { ...S, coax: { ...S.coax, len: String(mm) }, coaxLenFrom: fromCalc ? "calc" : "bom" };
     }

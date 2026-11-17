@@ -119,6 +119,53 @@ def test_one_channel_fakra_keeps_assembly_and_marking_quantities():
     assert all(op["result"][0]["norm"] == "15" for op in ops if op["type"] != "coaxCutTut")
 
 
+def test_legacy_hfm_generic_housing_card_groups_only_at_coax_body():
+    frozen = json.loads((ROOT / "frontend/src/__fixtures__/fakra708Configs.json").read_text(encoding="utf-8"))
+    fixture = next(item for item in frozen if item["config"]["coax"].get("cables") == 4)
+    config = deepcopy(fixture["config"])
+    # Historical template IDs can differ from today's library; keep their actual operation codes.
+    cards = [replace(CARDS[op["opNum"]], source_id=op["templateId"])
+             for op in config["ops"] if op.get("opNum") in CARDS]
+    doc = build_etk(config, cards)
+    for raw, op in zip(config["ops"], doc["operations"]):
+        if str(raw.get("opKey") or "").startswith("coaxBody"):
+            assert op["result"][0]["norm"] == "15"
+        if raw.get("opKey") == "coaxInsertA":
+            assert op["result"][0]["norm"] == "60"
+    assert build_etk(doc["build_config"], cards) == doc
+
+
+@pytest.mark.parametrize("last_type", ["coaxCut", "coaxSupportCrimp", "coaxPinCrimp", "coaxShield"])
+def test_multichannel_partial_route_still_outputs_cables(last_type):
+    fixture = deepcopy(FIXTURES[0])
+    operations = fixture["config"]["ops"]
+    last = next(i for i, op in enumerate(operations) if op["type"] == last_type)
+    fixture["config"]["ops"] = operations[:last + 1]
+    assert _build(fixture)["operations"][-1]["result"][0]["norm"] == "60"
+
+
+@pytest.mark.parametrize("side_count", [1, 2])
+@pytest.mark.parametrize("stale_marks", [False, True])
+def test_saved_generic_multichannel_tubes_count_connected_ends(side_count, stale_marks):
+    fixture = deepcopy(FIXTURES[0])
+    config = fixture["config"]
+    config["coax"]["sideA"] = {"article": "GEN-4", "channels": 4}
+    config["coax"]["sideB"] = {"article": "GEN-4"} if side_count == 2 else None
+    config["coax"].pop("markMaterial", None)
+    if not stale_marks:
+        config["coax"].pop("marks", None)
+    config["ops"] = [op for op in config["ops"] if op["type"] in {"coaxCut", "coaxCutTut", "coaxInsTut", "coaxHeat"}]
+    for op in config["ops"]:
+        op["units"] = side_count
+        op["tOp"] = "60"
+        op.pop("marks", None)
+    doc = _build(fixture)
+    tubes = [op for op in doc["operations"] if op["type"] != "coaxCut"]
+    assert all(op["time"][0]["norm"] == str(15 * 4 * side_count) for op in tubes)
+    assert tubes[0]["result"][0]["norm"] == str(15 * 4 * side_count)
+    assert _build({"config": doc["build_config"]}) == doc
+
+
 def test_assembly_label_is_not_multiplied_by_cable_count():
     fixture = deepcopy(FIXTURES[0])
     fixture["config"]["coax"]["marks"][0]["scope"] = "assembly"

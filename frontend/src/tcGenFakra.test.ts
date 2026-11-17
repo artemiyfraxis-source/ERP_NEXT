@@ -590,9 +590,21 @@ describe("multi-channel coax quantities", () => {
     const ops = makeGen(data, state).getActiveOps();
     for (const op of ops.filter((op) => ["coaxCut", "coaxStrip", "coaxPinCrimp"].includes(op.type))) expect(op.units).toBe(2);
     expect(ops.find((op) => op.type === "coaxInsSleeve")?.units).toBe(4);
+    expect(ops.find((op) => op.type === "coaxInsSleeve")?.label).toContain("×4");
     expect(ops.find((op) => op.type === "coaxShield")?.units).toBe(4);
+    expect(ops.find((op) => op.type === "coaxShield")?.label).toContain("×4");
     expect(ops.find((op) => op.type === "coaxCutTut")?.units).toBe(4);
     expect(ops.find((op) => op.type === "coaxHousing")?.units ?? 1).toBe(1);
+  });
+
+  it("divides generic connector cable metres by its channels when no length is named", () => {
+    const data = batchAData(KB3);
+    data.components = data.components.map((comp) => comp.type === "Разъем" ? { ...comp, art: "GEN-4", name: "GEN-4" } : comp);
+    data.coaxRecords = [{ ...data.coaxRecords[3], article: "GEN-4", connArticle: "GEN-4", channels: 4 }];
+    const state = seededState(data);
+    expect(state.coax.cables).toBe(4);
+    expect(state.coax.len).toBe("1250");
+    expect(makeGen(data, state).getActiveOps()[0].units).toBe(4);
   });
 });
 

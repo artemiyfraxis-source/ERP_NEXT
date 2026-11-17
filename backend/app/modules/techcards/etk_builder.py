@@ -530,8 +530,10 @@ def _coax_cables(config: Mapping[str, Any]) -> Decimal:
 def _coax_quantity_config(config: Mapping[str, Any]) -> Mapping[str, Any]:
     """Recount cable work when replaying a saved multi-channel recipe, without multiplying connector kits."""
     cables = _coax_cables(config)
-    if cables <= 1 or config.get("mode") != "coax":
+    if cables <= 1 or config.get("mode") != "coax" or not isinstance(config.get("ops"), list):
         return config
+    coax = _coax(config)
+    sides = [side for key in ("sideA", "sideB") if isinstance(side := coax.get(key), Mapping) and side]
     operations = []
     for raw in _list(config.get("ops")):
         if not isinstance(raw, Mapping):
@@ -548,16 +550,19 @@ def _coax_quantity_config(config: Mapping[str, Any]) -> Mapping[str, Any]:
         )):
             op["units"] = int(cables)
         if not end.get("kind") and kind in {"coaxInsSleeve", "coaxShield"}:
-            sides = [side for key in ("sideA", "sideB") if isinstance(side := _coax(config).get(key), Mapping)]
             # Generic recipes combine both ends in one sleeve operation; soldered shields have no sleeve.
             count = sum(coax_end_shield(side) not in {"пайка", "прижим"} for side in sides)
             if kind == "coaxInsSleeve":
                 count += len(_list(op.get("clampSides")))
             op["units"] = int(cables) * count
-        marks = _list(op.get("marks")) or _list(_coax(config).get("marks"))
-        if kind in {"coaxCutTut", "coaxInsTut", "coaxHeat"} and not op.get("side") and marks:
-            op["units"] = sum(1 if mark.get("scope") == "assembly" else int(cables)
-                              for mark in marks if isinstance(mark, Mapping))
+        marks = _list(op.get("marks")) or _list(coax.get("marks"))
+        if kind in {"coaxCutTut", "coaxInsTut", "coaxHeat"} and not op.get("side"):
+            if not any(side.get("kind") for side in sides) and coax.get("markMaterial") != "tape":
+                # Ordinary tubes go on connected ends, even if old label settings remain in the form.
+                op["units"] = len(sides) * int(cables)
+            elif marks:
+                op["units"] = sum(1 if mark.get("scope") == "assembly" else int(cables)
+                                  for mark in marks if isinstance(mark, Mapping))
         if _coax_units(op) != _coax_units(raw) and isinstance(op.get("label"), str):
             # Only the generated trailing multiplier, before an optional side suffix, is recounted.
             op["label"] = re.sub(r"×\d+(?=\s*(?:\([АВAB]\))?$)", f"×{_format(_coax_units(op))}", op["label"])
@@ -3333,9 +3338,11 @@ def _generator_chain(
         if str(op.get("type") or "").startswith("coax") and _coax_cables(config) > 1:
             # INS_HFM_CONTACT builds each metallic contact; only the common plastic housing groups cables.
             coax_grouped = coax_grouped or code == "INS_HFM_HOUSING" or (
-                op.get("type") == "coaxHousing" and not _coax_end(op, config).get("kind"))
+                op.get("type") == "coaxHousing" and (not _coax_end(op, config).get("kind") or (
+                    _coax_end(op, config).get("kind") == "hfm" and str(op.get("opKey") or "").startswith("coaxBody"))))
             if op.get("type") != "coaxCutTut":
-                count = _part_quantity(config) * (1 if coax_grouped or is_last else _coax_cables(config))
+                assembly = coax_grouped and op.get("type") != "coaxCut"
+                count = _part_quantity(config) * (1 if assembly else _coax_cables(config))
                 rows = [_row(_single_name(config, result, is_last), _format(count))]
         links.append(_ChainLink(previous_result, result, _single_name(config, result, is_last), is_last, semis, rows))
         if _advances_chain(op):
