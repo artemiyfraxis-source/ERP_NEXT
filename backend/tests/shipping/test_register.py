@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -284,3 +286,73 @@ def test_a_good_with_a_journal_outlives_its_project_card(register_api):
     client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "2"})
     dropped = client.post("/api/shipping/project-queue/drop", json={"project": "708К.4"})
     assert dropped.json() == {"deleted": 0, "kept": 1}
+
+
+def test_ship_without_data_needs_full_access_and_a_reason_and_audits_the_gaps(register_api):
+    client, sessions, _ = register_api
+    good = client.post("/api/shipping/goods", json={
+        "project": "708К.4", "item_index": "КБ1", "name": "Жгут", "ordered": "10",
+    }).json()["good"]
+    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "10"}).json()["good"]
+    permit_fixture_goods(client)
+    made = client.post("/api/shipping/shipments", json={
+        "receiver": "П", "shipping_point": "Москва", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО", "upd_number": "1",
+        "lines": [{"good_id": good["id"], "quantity": "5"}],
+    }).json()["shipment"]
+    url = f"/api/shipping/shipments/{made['id']}/ship"
+    normal = client.post(url, json={"version": made["version"]})
+    assert normal.status_code == 422 and "телефон получателя" in normal.json()["detail"]
+
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(name="Менеджер", department="Продажи"), email="pm@example.test", roles=frozenset({"commercial"}),
+        permissions={"shipping": "edit", "shipping_goods": "edit"},
+    )
+    denied = client.post(url, json={"version": made["version"], "missing_reason": "потом"})
+    assert denied.status_code == 403 and "руководитель" in denied.json()["detail"]
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=ADMIN, email="admin@example.test", roles=frozenset({"admin"}), permissions={},
+    )
+    blank = client.post(url, json={"version": made["version"], "missing_reason": "  "})
+    assert blank.status_code == 422
+    future = client.post(url, json={"version": made["version"], "missing_reason": "потом", "ship_date": "2026-12-31"})
+    assert future.status_code == 422
+
+    done = client.post(url, json={"version": made["version"], "missing_reason": "данные внесём после отпуска", "ship_date": "2026-10-11"})
+    assert done.status_code == 200, done.text
+    body = done.json()["shipment"]
+    assert body["status"] == "Отгружена" and body["shipped_at"] == "2026-10-11" and done.json()["closed"] is False
+    with sessions() as session:
+        events = {row[0]: row[1] for row in session.execute(text("SELECT event_type, details FROM audit_events"))}
+    assert "shipping.shipped" in events and "shipping.shipped_with_gaps" in events
+    details = events["shipping.shipped_with_gaps"]
+    details = json.loads(details) if isinstance(details, str) else details
+    assert details == {"gaps": ["телефон получателя"], "reason": "данные внесём после отпуска"}
+    _journal_matches_counters(sessions)
+
+
+def test_ship_without_data_also_records_the_no_upd_permit_on_the_actors_name(register_api):
+    client, sessions, _ = register_api
+    good = client.post("/api/shipping/goods", json={
+        "project": "708К.4", "item_index": "КБ1", "name": "Жгут", "ordered": "10",
+    }).json()["good"]
+    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "10"}).json()["good"]
+    permit_fixture_goods(client)
+    made = client.post("/api/shipping/shipments", json={
+        "receiver": "П", "shipping_point": "Москва", "terms": "САМОВЫВОЗ", "upd_type": "БЕЗ УПД",
+        "lines": [{"good_id": good["id"], "quantity": "5"}],
+    }).json()["shipment"]
+    url = f"/api/shipping/shipments/{made['id']}/ship"
+    # Без причины разрешения «без УПД» нет, и PIN-путь остаётся единственным.
+    assert client.post(url, json={"version": made["version"]}).status_code == 422
+    done = client.post(url, json={"version": made["version"], "missing_reason": "УПД и данные внесём потом"})
+    assert done.status_code == 200, done.text
+    body = done.json()["shipment"]
+    assert body["status"] == "Отгружена" and body["no_upd_approved_by"] == "Администратор"
+    with sessions() as session:
+        rows = list(session.execute(text("SELECT event_type, details FROM audit_events")))
+    kinds = [kind for kind, _ in rows]
+    assert "shipping.no_upd_approved" in kinds and "shipping.shipped_with_gaps" in kinds
+    approved = next(d for k, d in rows if k == "shipping.no_upd_approved")
+    approved = json.loads(approved) if isinstance(approved, str) else approved
+    assert approved == {"via": "shipped_with_gaps", "reason": "УПД и данные внесём потом"}
+    _journal_matches_counters(sessions)

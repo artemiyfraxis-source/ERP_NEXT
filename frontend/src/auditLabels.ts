@@ -145,6 +145,8 @@ const EVENT_NAMES: Record<string, string> = {
   "shipping.head_followed_project": "Отправка взяла данные проекта",
   "shipping.requested_changed": "Заказано изменено",
   "shipping.shipped": "Отгружено",
+  "shipping.shipped_with_gaps": "Отгружено без данных",
+  "shipping.no_upd_approved": "Разрешена отгрузка без УПД",
   "shipping.shipped_before_erp": "Отгружено до ERP",
   "shipping.closed": "Отправка закрыта",
   "shipping.cancelled": "Отправка отменена",

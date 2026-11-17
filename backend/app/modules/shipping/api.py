@@ -29,7 +29,7 @@ from .application import (
     ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand, EditHeadCommand, HistoryCorrectionCommand,
     LayOutCommand, PickCommand, PackPermissionChange, SetPackPermissionsCommand, set_pack_permissions, PackProjectCommand, ProjectShipCommand, ProjectShipLine, QueueProjectCommand, RegisterGoodCommand,
     RequestedGood, RollbackShippedCommand, SetProjectAddresseeCommand, SetRequestedCommand, ShipmentCommand,
-    ShippingPermissionError, UnitOfWork, UnpickCommand, UpdUpload, UpdateDocumentsCommand, cancel_shipment,
+    ShipCommand, ShippingPermissionError, UnitOfWork, UnpickCommand, UpdUpload, UpdateDocumentsCommand, cancel_shipment,
     close_shipment, correct_shipment_history, create_shipment, drop_project, edit_shipment_head, lay_out_shipment, mark_shipped, pack_project,
     pack_shipment, pick_shipment, queue_project, register_good, rollback_shipped, set_project_addressee, set_requested,
     ship_project, unpick_line, update_documents,
@@ -803,9 +803,19 @@ def history_correction(
     return {"shipment": _shipment_result(shipment)}
 
 
+class ShipPayload(VersionPayload):
+    """`missing_reason` — «Отгрузить без данных» (руководитель); `ship_date` — фактическая дата отгрузки."""
+    missing_reason: str | None = Field(default=None, max_length=2000)
+    ship_date: date | None = None
+
+
 @router.post("/shipments/{shipment_id}/ship")
-def ship(shipment_id: UUID, payload: VersionPayload, principal: Annotated[Principal, Depends(shipping_warehouse_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)]) -> dict:
-    result = _run(lambda: mark_shipped(_command(shipment_id, payload, principal, now), uow_factory()))
+def ship(shipment_id: UUID, payload: ShipPayload, principal: Annotated[Principal, Depends(shipping_warehouse_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)]) -> dict:
+    result = _run(lambda: mark_shipped(ShipCommand(
+        shipment_id=shipment_id, expected_version=payload.version, actor=principal.actor, now=now,
+        missing_reason=payload.missing_reason, ship_date=payload.ship_date,
+        allowed_missing=principal.full_access and not principal.service,
+    ), uow_factory()))
     return {"shipment": _shipment_result(result.shipment), "closed": result.shipment.status.value == "Закрыта", "why": result.why}
 
 

@@ -280,3 +280,34 @@ def test_batch_accept_stores_location_per_kb_and_keeps_the_shop_limit(flow_api):
     assert replay.json()["replayed"] is True
     assert other_place.status_code == 409
     assert plain.json()["goods"][0]["location"] == "Стеллаж 1" and plain.json()["goods"][0]["accepted"] == "15"
+
+
+# ── «Отгрузить без данных» (владелец 18.11.2026) ────────────────────────────────────────────────────────────────
+
+
+def _gappy(upd_type=UpdType.EDO):
+    item = good().accept(Decimal("10"), DAY, "ГП.26.0000001")
+    picked, _ = shipment(item, terms=DeliveryTerms.CARRIER, upd_type=upd_type, phone="")         .pick({item.id: item.remaining}, {item.id: item.grn or ""})
+    return picked.pack("PL591К.3-1", "DN591К.3-1", DAY)
+
+
+def test_allow_missing_ships_without_delivery_data_but_normal_ship_still_refuses():
+    packed = _gappy()
+    with pytest.raises(ShippingValidationError, match="телефон получателя"):
+        packed.mark_shipped(DAY)
+    shipped = packed.mark_shipped(DAY, allow_missing=True)
+    assert shipped.status.value == "Отгружена" and shipped.shipped_at == DAY
+    with pytest.raises(ShippingValidationError):
+        shipped.close()  # пробелы остаются — сама не закроется
+
+
+def test_allow_missing_keeps_the_no_upd_permit_and_the_picked_check():
+    # Домен сам разрешение не выдаёт: его записывает приложение (полный доступ + причина) до отгрузки.
+    for kind in (UpdType.NONE, None):
+        with pytest.raises(ShippingValidationError, match="Без УПД"):
+            _gappy(kind).mark_shipped(DAY, allow_missing=True)
+    approved = _gappy(UpdType.NONE).approve_no_upd("Касаточкин", datetime(2026, 9, 22, 10))
+    assert approved.mark_shipped(DAY, allow_missing=True).status.value == "Отгружена"
+    item = good().accept(Decimal("10"), DAY, "ГП.26.0000001")
+    with pytest.raises(ShippingValidationError, match="ни одна позиция не набрана"):
+        shipment(item, phone="").mark_shipped(DAY, allow_missing=True)
