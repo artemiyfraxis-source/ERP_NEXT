@@ -65,13 +65,17 @@ SAMPLE_INTAKE = intake_content(GrnLabelData(
 
 def sample_content(kind: str) -> LabelContent:
     if kind == "instrument":
-        return LabelContent("instrument", "СИ.034", {
-            "inventory_number": "СИ.034", "name": "SMA розетка – SMA розетка", "model": "S-322",
-            "serial_number": "№ ADP-ss-26-034", "verification_due": "Поверка до 17.11.2027",
-            "connector_line": "SMA розетка – SMA розетка", "parameters_line": "КСВН ≤ 1,05 · 0,01–18 ГГц",
-            "loss_line": "Потери ≤ 0,15 дБ", "measurement_date": "Замер 16.11.26",
-            "impedance_warning": "", "footer_line": "Поверка до 17.11.2027",
-        })
+        # The designer's sample: a measured adapter with every field of the identification card filled.
+        from datetime import date
+        from .labels.template import instrument_content
+        return instrument_content(
+            "СИ.034", "Переходник SMA female–SMA female S-322", "S-322.1", date(2027, 11, 17), model="S-322",
+            manufacturer="Gsm-repiteri", type_line="Переходник", model_line="S-322",
+            connector_line="SMA розетка – SMA розетка", range_line="Частотный диапазон 0–12 ГГц",
+            table=("до ГГц  1     3     6     12", "КСВН ≤  1,05  1,10  1,15  1,25", "дБ ≤    0,05  0,10  0,10  0,50"),
+            table_long=("Частота до, ГГц  1     3     6     12", "КСВН ≤           1,05  1,10  1,15  1,25",
+                        "Потери, дБ ≤     0,05  0,10  0,10  0,50"),
+            measured_on=date(2026, 11, 16), next_control=date(2027, 11, 16), measurement_date="Замер 16.11.26")
     return SAMPLE_INTAKE if kind == "intake" else lot_content(SAMPLE)
 
 

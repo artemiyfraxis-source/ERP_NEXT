@@ -45,7 +45,7 @@ def test_default_templates_always_render_cyrillic_inventory_qr_without_overflow(
     template = check_template(default_template("instrument", label_format, code_type), "instrument", label_format)
     layout = render(template, sample_content("instrument"), settings)
     assert "СИ.034" in layout.texts
-    assert "№ ADP-ss-26-034" in layout.texts
+    assert "Заводской № S-322.1" in layout.texts
     assert "Поверка до 17.11.2027" in layout.texts
     assert layout.qr_modules and layout.qr_module_dots >= 2
     assert not layout.overflow and not layout.skipped

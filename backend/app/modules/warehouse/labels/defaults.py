@@ -157,6 +157,56 @@ def _instrument(width: float, height: float) -> list[dict]:
     """
     large = width >= 90
     compact = height <= 30
+    if large:
+        return _instrument_wide(width, height)
+    return _instrument_narrow(width, height)
+
+
+def _instrument_narrow(width: float, height: float) -> list[dict]:
+    """58 × 30 / 58 × 40 — the GOST-style identification card squeezed into the shop's roll (owner 18.11): logo over the
+    QR on the left; number, kind, model, connectors, maker, serial and frequency range on the right; the measured limits
+    table with titles across the bottom; measurement date and next control in the last line. 300 dpi keeps 1 mm type."""
+    tall = height >= 40
+    k = 1.25 if tall else 1.0
+    side = 18.0 if tall else 14.0
+    logo_h = round(side * 82 / 292 + 0.05, 1)
+    elements = [{"id": "logo", "kind": "logo", "x_mm": MARGIN, "y_mm": MARGIN, "w_mm": side, "h_mm": logo_h, "align": "left"}]
+    qr_top = round(MARGIN + logo_h + 0.5, 1)
+    elements.append(_code("qr", "qr", MARGIN, qr_top, side, side))
+    x = MARGIN + side + 1.0
+    w = round(width - MARGIN - x, 1)
+    rows, bottom = _stack(x, MARGIN, w, [
+        (0, {"id": "inventory_number", "font_mm": round(3.2 * k, 1), "field": "inventory_number", "bold": True}),
+        (0.2, {"id": "type_line", "font_mm": round(1.0 * k, 1), "field": "type_line", "bold": True, "fit": "ellipsis"}),
+        (0.1, {"id": "model_line", "font_mm": round(1.8 * k, 1), "field": "model_line", "bold": True}),
+        (0.1, {"id": "connector_line", "font_mm": round(1.4 * k, 1), "field": "connector_line", "bold": True}),
+        (0.1, {"id": "manufacturer_line", "font_mm": round(1.1 * k, 1), "field": "manufacturer_line", "fit": "ellipsis"}),
+        (0.1, {"id": "serial_full", "font_mm": round(1.3 * k, 1), "field": "serial_full", "bold": True}),
+        (0.15, {"id": "range_line", "font_mm": round(1.2 * k, 1), "field": "range_line", "bold": True}),
+    ])
+    elements += rows
+    left = 2.0  # clear of the printer's unprintable left edge
+    table_top = round(max(qr_top + side, bottom) + 0.3, 1)
+    font_t = round(1.0 * k, 1)
+    side_w = round(15.0 * k, 1)  # dates on the right of the table rows
+    table_w = round(width - left - MARGIN - side_w - 0.5, 1)
+    table, _ = _stack(left, table_top, table_w, [
+        (0, {"id": "table_bands_long", "font_mm": font_t, "field": "table_bands_long", "mono": True, "fit": "ellipsis"}),
+        (0.1, {"id": "table_vswr_long", "font_mm": font_t, "field": "table_vswr_long", "mono": True, "fit": "ellipsis"}),
+        (0.1, {"id": "table_loss_long", "font_mm": font_t, "field": "table_loss_long", "mono": True, "fit": "ellipsis"}),
+    ])
+    elements += table
+    dates = []
+    for row, field in zip(table, ("date_short", "next_short", "footer_line")):
+        element = _text(field, round(width - MARGIN - side_w, 1), row["y_mm"], side_w, round(1.0 * k, 1), field=field)
+        element["align"] = "right"
+        dates.append(element)
+    elements += dates
+    return elements
+
+
+def _instrument_unused(width: float, height: float) -> list[dict]:
+    large, compact = width >= 90, height <= 30
     qr_side = 26.0 if large else (14.0 if compact else 18.0)
     logo_h = round(qr_side * 82 / 292 + 0.05, 1)  # the wordmark's proportions (292 × 82)
     elements = [{"id": "logo", "kind": "logo", "x_mm": MARGIN, "y_mm": MARGIN, "w_mm": qr_side, "h_mm": logo_h,
@@ -192,4 +242,47 @@ def _instrument(width: float, height: float) -> list[dict]:
         element["align"] = "right"
     elements += side
     elements += table
+    return elements
+
+
+def _instrument_wide(width: float, height: float) -> list[dict]:
+    """100 × 50: a full identification card (owner 18.11, after the GOST-style draft): «Учётный №» + number and the
+    wordmark; a rule; the kind, model, connectors, maker and serial with the QR on the right; the measured limits table
+    with full row titles between rules; measurement date and next control at the bottom."""
+    x0, right = 3.0, width - 3.0
+    logo_w = 27.0
+    elements = [
+        _text("caption_number", x0, 2.4, 40, 1.3, text="УЧЁТНЫЙ №"),
+        _text("inventory_number", x0, 5.0, 60, 5.0, field="inventory_number", bold=True),
+        {"id": "logo", "kind": "logo", "x_mm": round(right - logo_w, 1), "y_mm": 2.6, "w_mm": logo_w,
+         "h_mm": round(logo_w * 82 / 292 + 0.05, 1), "align": "right"},
+        {"id": "rule_top", "kind": "line", "x_mm": x0, "y_mm": 14.0, "w_mm": round(right - x0, 1), "h_mm": 0},
+    ]
+    qr_side = 19.0
+    text_w = round(right - qr_side - 2 - x0, 1)
+    rows, bottom = _stack(x0, 15.2, text_w, [
+        (0, {"id": "type_line", "font_mm": 1.5, "field": "type_line", "bold": True, "fit": "ellipsis"}),
+        (0.2, {"id": "model_line", "font_mm": 2.9, "field": "model_line", "bold": True}),
+        (0.2, {"id": "connector_line", "font_mm": 2.0, "field": "connector_line", "bold": True}),
+        (0.3, {"id": "manufacturer_line", "font_mm": 1.6, "field": "manufacturer_line", "fit": "ellipsis"}),
+        (0.2, {"id": "serial_full", "font_mm": 1.8, "field": "serial_full", "bold": True}),
+    ])
+    elements += rows
+    elements.append(_code("qr", "qr", round(right - qr_side, 1), 15.2, qr_side, qr_side))
+    top = round(max(bottom, 15.2 + qr_side) + 0.5, 1)
+    elements.append(_text("range_line", x0, top, round(right - x0, 1), 1.5, field="range_line", bold=True))
+    table_top = round(top + _height(1.5) + 0.2, 1)
+    table, table_bottom = _stack(x0, table_top, round(right - x0, 1), [
+        (0, {"id": "table_bands_long", "font_mm": 1.45, "field": "table_bands_long", "mono": True, "fit": "ellipsis"}),
+        (0.4, {"id": "table_vswr_long", "font_mm": 1.45, "field": "table_vswr_long", "mono": True, "fit": "ellipsis"}),
+        (0.1, {"id": "table_loss_long", "font_mm": 1.45, "field": "table_loss_long", "mono": True, "fit": "ellipsis"}),
+    ])
+    elements += table
+    rule_mid = round(table[0]["y_mm"] + table[0]["h_mm"] + 0.15, 2)
+    elements.append({"id": "rule_table", "kind": "line", "x_mm": x0, "y_mm": rule_mid, "w_mm": round(right - x0, 1), "h_mm": 0})
+    footer_y = round(table_bottom + 0.4, 1)
+    elements.append(_text("date_full", x0, footer_y, 45, 1.4, field="date_full"))
+    footer = _text("footer_line", 50, footer_y, round(right - 50, 1), 1.3, field="footer_line")
+    footer["align"] = "right"
+    elements.append(footer)
     return elements

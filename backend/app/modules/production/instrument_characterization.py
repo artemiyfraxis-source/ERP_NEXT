@@ -109,14 +109,16 @@ class Application:
     def range_line(self) -> str:
         return f"Частотный диапазон 0–{number(self.limit_ghz)} ГГц" if self.limit_ghz else "Не годен для 50 Ом тракта"
 
-    def table_lines(self) -> tuple[str, str, str]:
-        """Three monospace rows: the band edges, VSWR and loss upper bounds (round values) per band."""
+    def table_lines(self, long: bool = False) -> tuple[str, str, str]:
+        """Three monospace rows: the band edges, VSWR and loss upper bounds (round values) per band.
+        `long` — full row titles for the wide label («Частота до, ГГц», «Вносимые потери, дБ ≤»)."""
         bands = self.bands
         if not bands:
             return "", "", ""
         cells = [(number(step.stop_ghz), _vswr_text(step.vswr_round), _loss_text(step.loss_round)) for step in bands]
         width = max(len(text) for cell in cells for text in cell) + 2  # ≥ 2 spaces: the renderer keeps them
-        head, vswr, loss = "до ГГц", "КСВН ≤", "дБ ≤"
+        head, vswr, loss = (("Частота до, ГГц", "КСВН ≤", "Потери, дБ ≤") if long
+                            else ("до ГГц", "КСВН ≤", "дБ ≤"))
         label = max(len(head), len(vswr), len(loss)) + 2
         rows = [name.ljust(label) + "".join(cell[index].ljust(width) for cell in cells)
                 for index, name in enumerate((head, vswr, loss))]

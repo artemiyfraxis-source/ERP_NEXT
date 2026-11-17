@@ -73,11 +73,12 @@ def test_working_band_labels_fit_with_left_margin(label_format, dpi):
     band = working_band(summary())
     data = instrument_content("СИ.034", "Переходник", "ADP-ss-26-034", accessory=True,
         connector_line="SMA розетка – SMA розетка", parameters_line=band.band_line, loss_line=band.limits_line,
-        measurement_date="Замер 16.11.26", impedance_warning="75 Ом — не для 50 Ом тракта")
+        measurement_date="Замер 16.11.26", impedance_warning="75 Ом — не для 50 Ом тракта",
+        measured_on=date(2026, 11, 16), next_control=date(2027, 11, 16))
     width, height = FORMATS[label_format]
     template = default_template("instrument", label_format, "qr")
     assert all(e.x_mm >= 2 for e in template.elements if e.id.startswith("table_"))
     layout = render(template, data, PrintSettings(width_mm=width, height_mm=height, dpi=dpi))
     assert not layout.overflow
-    assert "Замер 16.11.26" in layout.texts
+    assert any("16.11.2026" in text for text in layout.texts)
     assert Image.open(BytesIO(label_png(layout))).size == (round(width * dpi / 25.4), round(height * dpi / 25.4))
