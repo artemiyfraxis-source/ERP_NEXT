@@ -35,6 +35,8 @@ const working: CuttingGroup = { ...group, version: 2, state: "frozen", session: 
 it("starts one group and renders a working timer with separate PF and blank quantities", async () => {
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ group: working, outputs: [] }));
   render(<CuttingGroupCard group={group} readOnly={false} renderInstruction={() => null} />);
+  expect(screen.getByRole("heading", { name: "Резка · 708К. · ПФ-1 Заготовки · 4 КБ" })).toBeTruthy();
+  expect(screen.getByText("РЗ-0001 · ЦАР")).toBeTruthy();
   expect(screen.getAllByRole("button", { name: "Начать" })).toHaveLength(1);
   expect(screen.getByRole("button", { name: "Начать" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Сдать" })).toBeDisabled();
@@ -118,6 +120,7 @@ it("produces 17 label rows per KB in member order, preserving serial presentatio
   expect(labels[17].item).toBe("КБ2");
   expect(cuttingLabelsTitle(labels).replaceAll("\u00a0", " ")).toBe("Этикетки: 68 видов, 180 шт.");
   const page = cuttingLabelsPage(group, labels);
+  expect(page.subtitle).toBe(`708К. · РЗ-0001 · ${cuttingLabelsTitle(labels)}`);
   expect(buildPrintDocumentHtml("Этикетки группы", [page])).toContain("FRX.708К.120900/AA.1");
   const withPadding = { ...group, rows: [{ ...group.rows[0], labels: [{ text: "КБ-{№:3}", qty: 2 }] }] };
   expect(cuttingLabels(withPadding, ranges)[0]).toMatchObject({ text: "КБ-001", quantity: 2 });

@@ -1,5 +1,6 @@
 """Transactional execution of one cutting job with separate outputs for its original PFs."""
 
+from copy import deepcopy
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -7,7 +8,7 @@ from sqlalchemy import select
 
 from app.modules.fulfillment.domain import FulfillmentStatus
 from .application import ConcurrentProductionUpdate, lock_reflow_projects, record_fact
-from .cutting import digest
+from .cutting import cutting_project_label, digest
 from .cutting_application import audit, check_access, describe_group, locked_group
 from .cutting_infrastructure import CuttingActionRow, CuttingOutputRow, CuttingWorkRow
 from .domain import ProductionStatus, ProductionValidationError
@@ -151,7 +152,7 @@ def _submit(group, members, work, session, payload, actor, worker, now, key, uow
 
 def _downtime(group, members, work, session, action, payload, actor, worker, now, key, uow):
     repository = SqlAlchemyDowntimeRepository(uow.session)
-    _, task, operation = next(row for row in members if row[2].id == session.operation_id)
+    member, task, operation = next(row for row in members if row[2].id == session.operation_id)
     if action == "downtime/start":
         if work.downtime_id or session.status is not WorkStatus.ACTIVE:
             raise ProductionValidationError("У группы уже открыт простой")
@@ -160,7 +161,8 @@ def _downtime(group, members, work, session, action, payload, actor, worker, now
         item = Downtime(id=uuid4(), task_id=task.id, operation_id=operation.id,
             operator_id=worker.id, operator_name=worker.name, reason=DowntimeReason(payload["reason"]),
             comment=payload.get("comment", ""), started_at=now, started_by_id=actor.id,
-            started_by_name=actor.name, project=group.project_key, task_number=group.number,
+            started_by_name=actor.name, project=cutting_project_label(task.project, member.row_snapshot.get("document")),
+            task_number=group.number,
             item="Группа резки", stage="Заготовки")
         repository.add(item)
         work.downtime_id = item.id
@@ -191,7 +193,10 @@ def execute_group(group_id, payload, action, key, actor, worker, now, uow, *, cu
         if replay:
             if replay.group_id != group_id or replay.operator_id != worker.id or replay.fingerprint != fingerprint:
                 raise ConcurrentProductionUpdate("Ключ повтора использован другим действием")
-            return replay.result
+            # Keep the recorded outcome, but display migrated numbers and the issued project spelling.
+            result = deepcopy(replay.result)
+            result["group"].update(number=initial.number, project=describe_group(initial, uow)["project"])
+            return result
         group = locked_group(group_id, payload["version"], uow, actor, now)
         if action == "start" and group.state == "open":
             if any(member.task_id not in (current_cards or {}) or current_cards[member.task_id][1] !=

@@ -48,11 +48,14 @@ def test_four_historical_kbs_preview_apply_and_rerun(production_api):
     tasks = [set_share(t, operator) for t in tasks]
     preview = client.post(URL, json={"project": "708К."})
     assert preview.status_code == 200, preview.text
+    assert {g["project"] for g in preview.json()["groups"]} == {"708К."}
     assert sorted(len(g["members"]) for g in preview.json()["groups"]) == [1, 1, 2]
     assert groups(client) == []
     applied = client.post(URL, json={"project": "708К.", "dry_run": False})
     assert applied.status_code == 200, applied.text
     assert len(applied.json()["created"]) == 3
+    assert {g["number"] for g in applied.json()["groups"]} == {"РЗ-0001", "РЗ-0002", "РЗ-0003"}
+    assert {g["project"] for g in applied.json()["groups"]} == {"708К."}
     common = next(g for g in groups(client) if len(g["rows"]) == 2)
     assert common["operator_ids"] == [str(operator)]
     assert common["assignment_consistent"] and common["planning_consistent"]

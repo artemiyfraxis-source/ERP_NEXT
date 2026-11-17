@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import select
 
 from app.main import app
-from app.modules.production.cutting import cutting_recipe
+from app.modules.production.cutting import cutting_recipe, digest
 from app.modules.production.domain import ProductionStatus
 from app.modules.production.cutting_infrastructure import CuttingGroupRow, CuttingMemberRow
 from app.modules.production.infrastructure import ProductionTaskRow
@@ -434,6 +434,8 @@ def test_708k_four_kbs_create_one_shared_and_two_distinct_groups(production_api)
     body = batch(client, cards, fingerprint=preview.json()["fingerprint"])
     assert len(body["created"]) == 4 and body["refused"] == []
     actual = groups(client)
+    assert {g["number"] for g in actual} == {"РЗ-0001", "РЗ-0002", "РЗ-0003"}
+    assert {g["project"] for g in actual} == {"708К."}
     assert sorted(len(g["rows"]) for g in actual) == [1, 1, 2]
     common = next(g for g in actual if len(g["rows"]) == 2)
     assert {r["item"] for r in common["rows"]} == {"КБ1", "КБ2"}
@@ -443,6 +445,64 @@ def test_708k_four_kbs_create_one_shared_and_two_distinct_groups(production_api)
     retry = batch(client, cards)
     assert retry["created"] == [] and len(retry["refused"]) == 4
     assert len(groups(client)) == 3
+
+
+@pytest.mark.parametrize("source", ["kit", "projectNo", "task"])
+def test_group_uses_issued_project_spelling_without_changing_recipe_identity(production_api, source):
+    client, operator = production_api
+    doc = document()
+    if source == "kit":
+        doc["kit"]["project"] = "708К."
+        doc["build_config"]["projectNo"] = "708К.1"
+    elif source == "projectNo":
+        doc["kit"]["project"] = " "
+        doc["build_config"]["projectNo"] = "708К."
+    expected, _ = recipe(doc)
+    assert expected.key == recipe(document())[0].key
+    batch(client, [issue("КБ1", doc)])
+    group = groups(client)[0]
+    with app.state.production_uow_factory() as uow:
+        stored = uow.cutting.get(UUID(group["id"]))
+        assert stored.project_key == "708К.1"
+        assert stored.recipe_key == expected.key
+        if source != "task":
+            # The issued display token survives normalized task metadata and later live-card edits.
+            member = uow.cutting.members(stored.id)[0]
+            uow.session.get(ProductionTaskRow, member.task_id).project = "708К.1"
+        uow.commit()
+    assert groups(client)[0]["project"] == "708К."
+    detail = client.get(f"/api/production/cutting-groups/{group['id']}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["group"]["project"] == "708К."
+    assigned = client.post(f"/api/production/cutting-groups/{group['id']}/assign", json={
+        "version": group["version"], "operator_ids": [str(operator)], "requested_start": NOW.isoformat()})
+    assert assigned.status_code == 200, assigned.text
+    mine = client.get("/api/production/my", params={"operator_id": str(operator)})
+    assert mine.status_code == 200, mine.text
+    assert mine.json()["cutting_groups"][0]["project"] == "708К."
+
+
+def test_group_numbers_are_global_and_joining_does_not_consume_a_number(production_api):
+    from app.modules.identity.infrastructure import IdentityUserRow
+    from app.modules.production.infrastructure import ProductionSequenceRow
+
+    client, _ = production_api
+    batch(client, [issue("КБ1")])
+    first = groups(client)[0]
+    batch(client, [issue("КБ2")])
+    assert groups(client)[0]["number"] == first["number"] == "РЗ-0001"
+    with app.state.production_uow_factory() as uow:
+        uow.session.get(IdentityUserRow, MASTER_ID).site = "ЖУК"
+        uow.commit()
+    batch(client, [issue("КБ3")])
+    assert groups(client)[0]["number"] == "РЗ-0002"
+    with app.state.production_uow_factory() as uow:
+        assert uow.session.get(ProductionSequenceRow, "cutting_group").value == 2
+        assert uow.session.get(ProductionSequenceRow, "task").value == 3
+        assert {row.idempotency_key for row in uow.cutting.list()} == {
+            "cutting:" + digest(task.source_idempotency_key)
+            for task in (uow.production.get(member.task_id) for row in uow.cutting.list()
+                         for member in uow.cutting.members(row.id)[:1])}
 
 
 def test_stale_row_rolls_back_its_whole_compatible_group_only(production_api):
