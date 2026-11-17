@@ -237,7 +237,7 @@ def test_a_refused_request_stops_the_whole_run(sessions):
     assert result.refused and not result.applied
     assert [plan.refused for plan in result.plans] == [
         "",
-        "последняя отмена сделана не переносом этапа (вручную или другим путём) — вернуть этой командой нельзя",
+        "последняя отмена сделана не переносом этапа ниже «Готово» (вручную или другим путём) — вернуть этой командой нельзя",
         "заявка не найдена",
     ]
     assert _get(sessions, good.id).status is FulfillmentStatus.CANCELLED
@@ -329,3 +329,6 @@ def test_replay_follows_binds_removals_cancels_and_earlier_reopens():
     assert reopen.from_cascade(reopen.last_cancel(trail).details)
     assert not reopen.from_cascade({"reason": "пропущено вручную: x"})  # no stage — not the cascade
     assert not reopen.from_cascade({"stage": "Готово", "reason": "ошибка"})
+    # A kit the 17.11 rule still cancels (a move to «Готово» or higher) is not revived by this command.
+    assert not reopen.from_cascade({"stage": "Готово", "reason": "пропущено вручную: В работе → Готово"})
+    assert not reopen.from_cascade({"stage": "ОТК", "reason": "пропущено вручную: Новый → ОТК"})  # ОТК is after «Готово»

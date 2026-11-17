@@ -258,7 +258,6 @@ def plan_cascade(project: str, plan: StagePlan, facts: CascadeFacts, reason: str
 
         close: list[CloseItem] = []
         keep: list[KeepItem] = []
-        at_work = target >= KIT_STAGES.index(WORK_STAGE)
         at_made = target >= KIT_STAGES.index(MADE_STAGE)
         for request in facts.requests:
             if request.status in _CLOSED_REQUESTS or not owns(project_from_purpose(request.purpose), kb_of(request.purpose)):

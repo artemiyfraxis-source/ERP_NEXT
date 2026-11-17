@@ -44,7 +44,9 @@ from app.modules.fulfillment.application import (
     free_for_project,
     kit_key,
     project_reserve_by_lot,
+    same_unit,
 )
+from app.modules.production.plan import KIT_STAGES
 from app.modules.fulfillment.domain import (
     FulfillmentKind,
     FulfillmentRequest,
@@ -163,8 +165,12 @@ def _uuid(value: Any) -> UUID | None:
 
 
 def from_cascade(details: dict) -> bool:
-    """The cancel came from a manual stage move (`stage_cascade._close`): a stage and «пропущено вручную…»."""
-    return bool(str(details.get("stage") or "").strip()) and str(details.get("reason") or "").startswith(CASCADE_REASON)
+    """The cancel came from a manual stage move (`stage_cascade._close`) to a stage BELOW «Готово» — exactly what the
+    17.11 rule no longer cancels. A kit the current rule still cancels (a move to «Готово» or higher) is not revived."""
+    stage = str(details.get("stage") or "").strip()
+    if stage not in KIT_STAGES or KIT_STAGES.index(stage) >= KIT_STAGES.index("Готово"):
+        return False
+    return str(details.get("reason") or "").startswith(CASCADE_REASON)
 
 
 def ordered(trail: list[TrailEvent]) -> list[TrailEvent]:
@@ -248,8 +254,11 @@ def reopen_in(
     if cancel is None:
         return _refuse(request, number, "в журнале нет записи об отмене — вернуть нельзя")
     if not from_cascade(cancel.details):
-        return _refuse(request, number, "последняя отмена сделана не переносом этапа (вручную или другим путём) — "
-                                        "вернуть этой командой нельзя")
+        return _refuse(request, number, "последняя отмена сделана не переносом этапа ниже «Готово» (вручную или "
+                                        "другим путём) — вернуть этой командой нельзя")
+    if not kb_of(request.purpose):
+        # `project_reserve_by_lot` without a КБ counts every КБ's reserve while `_reserve_for_kit` takes none.
+        return _refuse(request, number, "в назначении заявки нет КБ — вернуть этой командой нельзя")
     key = kit_key(request.purpose) if request.kind is FulfillmentKind.MAIN else None
     if key is not None:
         live = uow.fulfillment.live_kit_request(*key)
@@ -261,7 +270,7 @@ def reopen_in(
 
     wanted = bindings_before_cancel(trail)
     lines = {line.id: line for line in request.lines}
-    project, kb = project_of(request.purpose), kb_of(request.purpose) or None
+    project, kb = project_of(request.purpose), kb_of(request.purpose)
     bindings: dict[UUID, tuple[LotSnapshot, Decimal]] = {}
     bound: list[LinePlan] = []
     skipped: list[LinePlan] = []
@@ -285,6 +294,9 @@ def reopen_in(
         lot = lots.get(item.lot_id) or uow.warehouse.get(item.lot_id)
         if lot is None:
             skipped.append(replace(plan, reason="партии больше нет на складе"))
+            continue
+        if not same_unit(lot.unit, line.unit):
+            skipped.append(replace(plan, grn=lot.grn, reason=f"у партии теперь единица «{lot.unit}», у строки «{line.unit}»"))
             continue
         free = free_for_project(lot, project_reserve_by_lot(uow, [lot], project, kb))
         plan = replace(plan, grn=lot.grn, storage_location=lot.storage_location, available=free)
