@@ -191,6 +191,20 @@ Describe 'S2VNA offline lifecycle' {
         $connection.ProfileApplied | Should Be $false
         { Get-VnaSweep $connection } | Should Throw
     }
+    It 'applies profile scales and restores the operator scales without overwriting them' {
+        $connection = New-VnaConnection -OfflineDirectory $script:offline
+        $connection.Traces[0].PDIVision = 7.5
+        $original = $connection.Traces | ConvertTo-Json -Compress
+        $backup = Join-Path $script:offline 'operator-scales.sta'
+        Backup-VnaState $connection $backup
+        Set-VnaProfile $connection
+        Assert-VnaChartScales @(Get-VnaTraces $connection)
+        $connection.Traces[0].PDIVision | Should Be 0.1
+        $connection.Traces[1].PDIVision | Should Be 0.3
+        Restore-VnaState $connection $backup
+        ($connection.Traces | ConvertTo-Json -Compress) | Should Be $original
+        { Assert-VnaChartScales @(Get-VnaTraces $connection) } | Should Throw
+    }
     It 'refuses an uncorrected offline trace after calibration' {
         $connection = New-VnaConnection -OfflineDirectory $script:offline
         Set-VnaProfile $connection
@@ -221,5 +235,82 @@ Describe 'S2VNA offline lifecycle' {
         Release-VnaConnection $connection
         $connection.Released | Should Be $true
         { Get-VnaDeviceInfo $connection } | Should Throw
+    }
+}
+
+Describe 'S2VNA chart scale COM readbacks' {
+    BeforeEach {
+        $script:chartConnection = New-TestS2Connection
+        $script:chartValues = @{}
+        $script:chartSelected = 1
+        $script:ignoreScaleWrite = $false
+        foreach ($traceNumber in 1..4) {
+            $script:chartValues["DISPlay.WINDow(1).TRACe($traceNumber).Y.SCALe.PDIVision"] = 2.0
+            $script:chartValues["DISPlay.WINDow(1).TRACe($traceNumber).Y.SCALe.RLEVel"] = 5.0
+            $script:chartValues["DISPlay.WINDow(1).TRACe($traceNumber).Y.SCALe.RPOSition"] = 5
+        }
+        Mock Invoke-VnaComIo {
+            param($Connection,$Path,$Mode,$Value)
+            if ($Path -like '*COUNt') { return 4 }
+            if ($Path -match 'PARameter\(([1-4])\).DEFine$') { return @('S11','S21','S12','S22')[[int]$Matches[1] - 1] }
+            if ($Path -match 'PARameter\(([1-4])\).SELect$') { $script:chartSelected = [int]$Matches[1]; return }
+            if ($Path -like '*FORMat') { if ($script:chartSelected -in 1,4) { return 'SWR' }; return 'MLOG' }
+            if ($Path -like '*STATus') { return 'COR' }
+            if ($script:chartValues.ContainsKey($Path)) {
+                if ($Mode -eq 'set') {
+                    if (-not $script:ignoreScaleWrite) { $script:chartValues[$Path] = $Value }
+                    return
+                }
+                return $script:chartValues[$Path]
+            }
+            throw "Unexpected IO: $Path"
+        }
+    }
+    It 'writes and reads back all twelve commissioned scale properties' {
+        Set-VnaChartScales $script:chartConnection
+        $traces = @(Get-VnaTraces $script:chartConnection)
+        foreach ($trace in $traces) {
+            if ($trace.Parameter -in 'S11','S22') {
+                $trace.PDIVision | Should Be 0.1
+                $trace.RLEVel | Should Be 1.0
+                $trace.RPOSition | Should Be 0
+            } else {
+                $trace.PDIVision | Should Be 0.3
+                $trace.RLEVel | Should Be 0.0
+                $trace.RPOSition | Should Be 10
+            }
+        }
+        Assert-MockCalled Invoke-VnaComIo -Times 12 -Exactly -Scope It -ParameterFilter { $Mode -eq 'set' -and $Path -like 'DISPlay*' }
+        Assert-MockCalled Invoke-VnaComIo -Times 0 -Exactly -Scope It -ParameterFilter { $Mode -eq 'set' -and $Path -notlike 'DISPlay*' }
+    }
+    It 'refuses success when the instrument ignores a scale write' {
+        $script:ignoreScaleWrite = $true
+        { Set-VnaChartScales $script:chartConnection } | Should Throw 'шкала S11.PDIVision'
+    }
+    It 'rejects a missing scale readback' {
+        Set-VnaChartScales $script:chartConnection
+        $script:chartValues['DISPlay.WINDow(1).TRACe(4).Y.SCALe.RPOSition'] = $null
+        { Assert-VnaChartScales @(Get-VnaTraces $script:chartConnection) } | Should Throw
+    }
+}
+
+Describe 'S2VNA live correction loss before acquisition' {
+    It 'reads live COR before triggering despite a calibrated connection' {
+        Mock Assert-VnaDeviceReady { [pscustomobject]@{VnaSerial='TEST-VNA';AcmSerial='TEST-ACM'} }
+        Mock Assert-VnaProfile {}
+        Mock Invoke-VnaComIo {
+            param($Connection,$Path,$Mode,$Value)
+            if ($Path -like '*COUNt') { return 4 }
+            if ($Path -match 'PARameter\(([1-4])\).DEFine$') { return @('S11','S21','S12','S22')[[int]$Matches[1] - 1] }
+            if ($Path -like '*SELect') { $script:selectedParameter = $Path; return }
+            if ($Path -like '*STATus') {
+                if ($script:selectedParameter -like '*PARameter(3).*') { return 'C?' }
+                return 'COR'
+            }
+            throw "Unexpected IO: $Path"
+        }
+        { Get-VnaSweep (New-TestS2Connection) } | Should Throw 'выполните пункт 2'
+        Assert-MockCalled Invoke-VnaComIo -Times 4 -Exactly -Scope It -ParameterFilter { $Path -like '*CORRection.STATus' }
+        Assert-MockCalled Invoke-VnaComIo -Times 0 -Exactly -Scope It -ParameterFilter { $Path -like 'TRIGger*' -or $Path -like 'INITiate*' -or $Path -like '*SDATa' }
     }
 }

@@ -145,6 +145,47 @@ function Show-VnaDevice {
     Write-Host "Температура ВАЦ: $($Info.VnaTemperatures -join ' / ') °C; АКМ: $($Info.AcmTemperature) °C"
 }
 
+function Show-VnaInstrumentState {
+    param($Connection, $Calibration, [datetimeoffset]$Now = [datetimeoffset]::UtcNow)
+    $info = $null
+    try { $info = Get-VnaDeviceInfo $Connection; Show-VnaDevice $info }
+    catch { Write-Host "Не удалось прочитать сведения прибора и АКМ: $($_.Exception.Message)" }
+    $traces = @(Get-VnaTraces $Connection)
+    Write-Host "Трасс: $($traces.Count)"
+    foreach ($trace in $traces) {
+        $correction = if ($trace.Correction -ceq 'COR') { 'COR' } else { 'нет' }
+        Write-Host "Трасса $($trace.Index): $($trace.Parameter), $($trace.Format); шкала: деление=$($trace.PDIVision), уровень=$($trace.RLEVel), позиция=$($trace.RPOSition); коррекция: $correction"
+    }
+    try { Assert-VnaChartScales $traces; Write-Host 'Шкалы стандартные.' }
+    catch { Write-Host 'Шкалы не стандартные — пункт 6' }
+    try {
+        if (-not $Calibration) { throw 'В этом запуске калибровка не выполнялась.' }
+        $calTime = [datetimeoffset]::Parse($Calibration.Time, [Globalization.CultureInfo]::InvariantCulture)
+        Write-Host ('Возраст калибровки: {0:N1} мин (предел 240 мин); контроль LOAD: {1}' -f ($Now - $calTime).TotalMinutes, $Calibration.LoadCheck)
+        if (-not $Connection.Calibrated -or $Calibration.Result -ne 'pass') { throw 'Калибровка не завершена.' }
+        if ($calTime -gt $Now -or ($Now - $calTime).TotalHours -gt 4) { throw 'Калибровка старше 4 часов или часы изменены.' }
+        foreach ($identity in 'VnaSerial','AcmSerial') {
+            if (-not $info.$identity -or $info.$identity -cne $Calibration.$identity) { throw 'Прибор или АКМ сменился.' }
+        }
+        if (-not $info.Ready) { throw 'Прибор не готов.' }
+        foreach ($reading in @($info, $Calibration)) {
+            Assert-VnaTemperature $reading.VnaTemperature
+            Assert-VnaTemperature $reading.AcmTemperature
+            if (@($reading.VnaTemperatures).Count -ne 2) { throw 'Не прочитаны оба датчика температуры ВАЦ.' }
+            foreach ($temperature in $reading.VnaTemperatures) { Assert-VnaTemperature $temperature }
+        }
+        for ($sensorIndex = 0; $sensorIndex -lt 2; $sensorIndex++) {
+            if ([math]::Abs([double]$info.VnaTemperatures[$sensorIndex] - [double]$Calibration.VnaTemperatures[$sensorIndex]) -gt 5) { throw 'Температура ВАЦ изменилась более чем на 5 °C.' }
+        }
+        Assert-VnaProfile $Connection
+        $null = Assert-VnaCorrection $Connection
+        Write-Host 'Калибровка действует'
+    } catch {
+        Write-Host 'Калибровки нет — выполните пункт 2'
+        Write-Host $_.Exception.Message
+    }
+}
+
 function Restore-VnaOperatorState {
     param($Connection, $Backup)
     $serial = Assert-VnaInstrumentIdentity $Connection
@@ -228,10 +269,10 @@ function Start-VnaMeasure {
         }
         $running = $true
         while ($running) {
-            Write-Host "`n1 Проверить прибор и АКМ`n2 Калибровка АКМ`n3 Контроль нагрузкой`n4 Замер переходника`n5 Вернуть настройки оператора`n0 Выход"
+            Write-Host "`n1 Проверить прибор и АКМ`n2 Калибровка АКМ`n3 Контроль нагрузкой`n4 Замер переходника`n5 Вернуть настройки оператора`n6 Применить шкалы графиков`n0 Выход"
             try {
                 switch (Read-Host 'Выберите действие') {
-                    '1' { Show-VnaDevice (Get-VnaDeviceInfo $connection) }
+                    '1' { Show-VnaInstrumentState $connection $calibration }
                     '2' {
                         if (-not (Confirm-VnaAction 'Подключите АКМ к концам тракта портов 1 и 2. Начать калибровку?')) { break }
                         $calibration = $null
@@ -355,8 +396,19 @@ function Start-VnaMeasure {
                         $backup = $null
                         Write-Host 'Настройки оператора восстановлены. Для следующего замера нужна новая калибровка.'
                     }
+                    '6' {
+                        if (-not $backup) {
+                            $serial = Assert-VnaInstrumentIdentity $connection
+                            $backupPath = Join-Path $DataDirectory ('operator-' + [guid]::NewGuid().ToString() + '.sta')
+                            Backup-VnaState -Connection $connection -Path $backupPath
+                            $backup = [pscustomobject]@{ Path = $backupPath; VnaSerial = $serial }
+                            $backup | ConvertTo-Json | Set-Content -LiteralPath $backupPointer -Encoding UTF8
+                        }
+                        Set-VnaChartScales $connection
+                        Write-Host 'Шкалы графиков применены и проверены.'
+                    }
                     '0' { $running = $false }
-                    default { Write-Host 'Выберите пункт 0–5.' }
+                    default { Write-Host 'Выберите пункт 0–6.' }
                 }
             } catch { Write-Host $_.Exception.Message -ForegroundColor Red }
         }
