@@ -518,6 +518,53 @@ def _coax_units(op: Mapping[str, Any]) -> Decimal:
     return max(Decimal(1), _number(op.get("units"), Decimal(1)))
 
 
+def _coax_cables(config: Mapping[str, Any]) -> Decimal:
+    """Physical cables per assembly; saved recipes and connector reference data are both sources."""
+    coax = _coax(config)
+    counts = [_decimal(coax.get("cables"))]
+    counts.extend(_decimal(end.get("channels")) for key in ("sideA", "sideB")
+                  if isinstance(end := coax.get(key), Mapping))
+    return max([Decimal(1), *(value for value in counts if value.is_finite() and value > 0 and value == value.to_integral_value())])
+
+
+def _coax_quantity_config(config: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Recount cable work when replaying a saved multi-channel recipe, without multiplying connector kits."""
+    cables = _coax_cables(config)
+    if cables <= 1 or config.get("mode") != "coax":
+        return config
+    operations = []
+    for raw in _list(config.get("ops")):
+        if not isinstance(raw, Mapping):
+            operations.append(raw)
+            continue
+        op = dict(raw)
+        kind = str(op.get("type") or "")
+        end = _coax_end(op, config)
+        if kind == "coaxCut" or (not end.get("kind") and kind in {
+            "coaxStrip", "coaxPin", "coaxPinCrimp", "coaxSolderShield"
+        }) or (end.get("kind") == "hfm" and (
+            kind in {"coaxStrip", "coaxSupportCrimp", "coaxPin", "coaxPinCrimp", "coaxShield", "coaxInsSleeve"}
+            or str(op.get("opKey") or "").startswith("coaxInsert")
+        )):
+            op["units"] = int(cables)
+        if not end.get("kind") and kind in {"coaxInsSleeve", "coaxShield"}:
+            sides = [side for key in ("sideA", "sideB") if isinstance(side := _coax(config).get(key), Mapping)]
+            # Generic recipes combine both ends in one sleeve operation; soldered shields have no sleeve.
+            count = sum(coax_end_shield(side) not in {"пайка", "прижим"} for side in sides)
+            if kind == "coaxInsSleeve":
+                count += len(_list(op.get("clampSides")))
+            op["units"] = int(cables) * count
+        marks = _list(op.get("marks")) or _list(_coax(config).get("marks"))
+        if kind in {"coaxCutTut", "coaxInsTut", "coaxHeat"} and not op.get("side") and marks:
+            op["units"] = sum(1 if mark.get("scope") == "assembly" else int(cables)
+                              for mark in marks if isinstance(mark, Mapping))
+        if _coax_units(op) != _coax_units(raw) and isinstance(op.get("label"), str):
+            # Only the generated trailing multiplier, before an optional side suffix, is recounted.
+            op["label"] = re.sub(r"×\d+(?=\s*(?:\([АВAB]\))?$)", f"×{_format(_coax_units(op))}", op["label"])
+        operations.append(op)
+    return {**config, "coax": {**_coax(config), "cables": int(cables)}, "ops": operations}
+
+
 VSWR_SAMPLE_EVERY = 50
 
 
@@ -742,7 +789,8 @@ def _coax_serial_mark_rows(op: Mapping[str, Any], config: Mapping[str, Any]) -> 
         "target": "Кабель", "text": str(mark.get("text") or ""), "material": material,
         "place": "середина кабеля" if mark.get("place") == "middle" else "у разъёма " + (
             "А" if mark.get("place") == "A" else "В"),
-        "qty": "1", "batch": _format(_part_quantity(config)),
+        "qty": _format(1 if mark.get("scope") == "assembly" else _coax_cables(config)),
+        "batch": _format(_part_quantity(config) * (1 if mark.get("scope") == "assembly" else _coax_cables(config))),
     } for mark in _mark_items(op)]
 
 
@@ -872,7 +920,7 @@ def _coax_components(op: Mapping[str, Any], config: Mapping[str, Any], *, manual
     if operation_type == "coaxConnColor":
         return []  # The marker is tooling; no consumption norm is specified by the BOM.
     if operation_type == "coaxCut":
-        cables = max(_decimal(coax.get("cables")), Decimal(1))  # HFM: четыре одинаковых кабеля на сборку
+        cables = _coax_cables(config)
         return row("cableArt", "cableName", _decimal(coax.get("cableLength")) * quantity * cables / 1000, "М.")
     if operation_type == "coaxCutTut":
         if op.get("markMaterial") == "tape":
@@ -882,7 +930,7 @@ def _coax_components(op: Mapping[str, Any], config: Mapping[str, Any], *, manual
         return row("tutArt", "tutName", units * quantity, "Шт.")
     if operation_type == "coaxInsSleeve":
         # Втулка — только на обжимных сторонах; гайка, шайба и уплотнитель прижимной стороны входят в комплект разъёма.
-        crimped = units - len(op.get("clampSides") or [])
+        crimped = units - len(op.get("clampSides") or []) * _coax_cables(config)
         return row("sleeveArt", "sleeveName", crimped * quantity, "Шт.") if crimped > 0 else []
     if operation_type in ("coaxPin", "coaxPinCrimp"):
         side = coax.get("sideB" if op.get("side") == "B" else "sideA")
@@ -973,7 +1021,9 @@ def _result_rows(
         terminal = _cut_terminal(op) if kind or operation_type == "cutWireCrimp" else ""
         return [_row(_wire_result_name(wire, terminal, bool(op.get("tin"))), _per_wire(wire, quantity)) for wire in wires]
     norm = ""
-    if operation_type == "coaxCutTut":
+    if operation_type == "coaxCut":
+        norm = _format(_coax_cables(config) * quantity)
+    elif operation_type == "coaxCutTut":
         norm = _format(max(Decimal(1), _decimal(op.get("units"))) * quantity)
     elif operation_type in PIECE_TYPES or operation_type.startswith("coax") or (manual and operation_type in MANUAL_PIECE_TYPES):
         norm = _format(quantity)
@@ -1414,6 +1464,7 @@ def coax_sketch_fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict
         "kind": kind, "name": str(name or "").strip(), "count": int(_coax_units(op)),
         "cable": str(coax.get("cableArt") or coax.get("cableName") or ""), "length": "" if length_text == "0" else length_text,
         **({"clampSides": clamp} if clamp else {}),
+        **({"clampCount": len(clamp) * int(_coax_cables(config))} if clamp and _coax_cables(config) > 1 else {}),
     }}
 
 
@@ -1985,7 +2036,7 @@ def _resolve_card(
             text = text.replace("на обоих концах", f"на стороне {side}")
             text = text.replace("ступени обеих сторон", f"ступени стороны {side}")
         if parts_fields.get("clampSides"):
-            text = _clamp_put_on_text(text, len(parts_fields["clampSides"]), int(parts_fields.get("count") or 0))
+            text = _clamp_put_on_text(text, int(parts_fields.get("clampCount") or len(parts_fields["clampSides"])), int(parts_fields.get("count") or 0))
         if fields.get("coaxFakraPrep"):
             text = text.replace("неразделанный кабель", "кабель с разделанным концом")
             text = text.replace("до разделки", "после разделки при резке")
@@ -2128,6 +2179,12 @@ def _coax_recipe_steps(op: Mapping[str, Any], config: Mapping[str, Any]) -> list
         return []
     coax = _coax(config)
     steps: list[str] = []
+    if op.get("type") == "coaxCut" and (cables := _coax_cables(config)) > 1:
+        count = int(cables)
+        word = "кабель" if count % 10 == 1 and count % 100 != 11 else (
+            "кабеля" if count % 10 in {2, 3, 4} and count % 100 not in {12, 13, 14} else "кабелей")
+        quantity = _part_quantity(config)
+        steps.append(f"{count} {word} на сборку: {_format(quantity)} сборок × {count} = {_format(quantity * cables)} шт.")
     if op.get("type") == "coaxCut" and coax.get("lengthBasis") == "finished":
         steps.append(f"Длина готового изделия L = {_format(coax.get('finishedLength'))} мм (допуск 0…+10 мм); "
                      f"припуск А = {_format(coax.get('lPlusA'))} мм, припуск В = {_format(coax.get('lPlusB'))} мм. "
@@ -3155,7 +3212,7 @@ def _scheme_chain(
     the operations (the linear chain then, and the build falls back with its warning)."""
     # A saved FAKRA stage split groups independent blanks in one kit. Its cards still follow
     # the recipe's individual cable / label / tube outputs, not the kit's positional list.
-    if _coax(config).get("fakraCutStrip"):
+    if _coax(config).get("fakraCutStrip") or _coax_cables(config) > 1:
         return None
     raw = config.get("route")
     if not isinstance(raw, Mapping) or raw.get("source") != SCHEME_SOURCE or not operations:
@@ -3250,6 +3307,7 @@ def _generator_chain(
     chain: list[Mapping[str, Any]] = []
     tut_cuts: list[dict[str, Any]] = []
     tut_on_wires = False
+    coax_grouped = False
     for index, (op, code) in enumerate(zip(operations, codes), start=1):
         result = _result_name(op, config, previous_result, [*chain, op])
         if op.get("type") in TUT_CUT_TYPES:
@@ -3271,10 +3329,18 @@ def _generator_chain(
             semis = ([_row(previous_result, previous_norm)] if previous_result else []) + [
                 _row(item["name"], _format(item["norm"])) for item in taken]
         is_last = index == len(operations)
-        links.append(_ChainLink(previous_result, result, _single_name(config, result, is_last), is_last, semis))
+        rows = None
+        if str(op.get("type") or "").startswith("coax") and _coax_cables(config) > 1:
+            # INS_HFM_CONTACT builds each metallic contact; only the common plastic housing groups cables.
+            coax_grouped = coax_grouped or code == "INS_HFM_HOUSING" or (
+                op.get("type") == "coaxHousing" and not _coax_end(op, config).get("kind"))
+            if op.get("type") != "coaxCutTut":
+                count = _part_quantity(config) * (1 if coax_grouped or is_last else _coax_cables(config))
+                rows = [_row(_single_name(config, result, is_last), _format(count))]
+        links.append(_ChainLink(previous_result, result, _single_name(config, result, is_last), is_last, semis, rows))
         if _advances_chain(op):
             previous_result = result
-            previous_norm = _output_norm(op, config)
+            previous_norm = rows[0]["norm"] if rows else _output_norm(op, config)
             chain.append(op)
     return links
 
@@ -3477,6 +3543,7 @@ def build_etk(
 ) -> dict[str, Any]:
     """Return an immutable document snapshot suitable for ProjectTechcard.rebuild. `operation_library_commit` — only a
     provenance label in `source` (documents built from the SUPPLYMAP library carry its commit); empty — none."""
+    config = _coax_quantity_config(config)
     if _coax(config).get("lengthBasis") == "finished":
         coax = dict(_coax(config))
         values = []

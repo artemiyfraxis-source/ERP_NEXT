@@ -29,6 +29,8 @@ export type CoaxRec = {
   lPlus: string; lMinus: string; pinType: string; shieldType: string; connArticle: string;
   /** «Центральный контакт» карточки разъёма (слова поставщика): «цанговый» — контакт не паяется. */
   centerContact?: string;
+  /** Number of coax channels in the complete connector, from reference data. */
+  channels?: number;
 };
 export type OpRec = { opNumber: string; opName: string; tOp: string; tPrep: string; tMachine: string };
 export type Tmpl = { id: string; title: string; category: string };
@@ -412,7 +414,7 @@ export function coaxReseedPatch(D: GenData, S: GenState): Partial<GenState["coax
   // A marking tube's piece length is the technologist's: an existing value stays (fresh seed and later reseed agree);
   // only clear protective TUT over tape labels and an empty field are computed from the BOM metres.
   const keepTube = defaults.markMaterial !== "tape" && parseDecimal_(S.coax.tutLen) > 0;
-  const tubeLength = keepTube ? parseDecimal_(S.coax.tutLen) : tube ? qtyNum(tube) * 1000 / (marks.length || g.coaxFakraMarks_()) : 0;
+  const tubeLength = keepTube ? parseDecimal_(S.coax.tutLen) : tube ? qtyNum(tube) * 1000 / (marks.length || g.coaxFakraMarks_() / g.coaxCables_()) : 0;
   return { fakraCutStrip: [S.coax.sideA, S.coax.sideB].some((end) => !!end?.kind),
     lengthBasis: "finished", finishedLength: String(finished || ""), finishedLengthFrom: nameLength ? "name" : calcLength ? "calc" : "bom",
     lPlusA: allowance(S.coax.sideA), lPlusB: allowance(S.coax.sideB), markMaterial: defaults.markMaterial,
@@ -2227,16 +2229,17 @@ export function makeGen(D: GenData, S: GenState) {
     .filter((c) => /разъ[её]м|соед|conn/i.test(c.type || ""))
     .map((c) => ({ art: c.art || c.name || "", name: c.name || "", qty: c.qty })));
   const isFakra_ = () => !!S.coax.sideA?.kind;
-  const coaxCables_ = () => Math.max(1, Math.round(S.coax.cables || 1));
+  const coaxCables_ = () => Math.max(1, Math.round(S.coax.cables || 1),
+    ...(["A", "B"] as const).map((side) => coaxRecForSide_(side)?.channels || 1));
   const coaxBomTtk_ = () => {
     const first = comps().find((x) => /ттк/i.test(`${x.type || ""} ${x.name || ""}`));
     return (S.coax.fakraCutStrip ? sumCoaxMaterial(comps(), first) : first) || null;
   };
   /** Меток «Маркировка» в составе (под ТУТ); нет — по КД 3 на изделие, как в 122663 (владелец 25.10: «Маркировка ×3»). */
   const coaxFakraMarks_ = () => {
-    if (S.coax.marks?.length) return S.coax.marks.length;
+    if (S.coax.marks?.length) return S.coax.marks.reduce((n, mark) => n + (mark.scope === "assembly" ? 1 : coaxCables_()), 0);
     const n = comps().filter((x) => /маркировк/i.test(x.type || "")).reduce((sum, x) => sum + (Number(String(x.qty).replace(",", ".")) || 0), 0);
-    return n > 0 ? Math.round(n) : 3;
+    return (n > 0 ? Math.round(n) : 3) * coaxCables_();
   };
   function coaxCableDiaLookup_() {
     const t = (D.coaxCableDia && D.coaxCableDia.byCable) || {};
@@ -2452,7 +2455,8 @@ export function makeGen(D: GenData, S: GenState) {
     const x = (n: number) => (n > 1 ? ` ×${n}` : "");
     const tape = S.coax.markMaterial === "tape";
     const tutOn = tape ? !!S.coax.markProtect : S.coax.tutEnabled;
-    const marks = tape ? coaxFakraMarks_() : nSides;
+    const cables = coaxCables_();
+    const marks = tape ? coaxFakraMarks_() : nSides * cables;
     // Резка и разделка — до всего остального (владелец 14.10): либо резка с разделкой на роторном станке одной
     // операцией, либо резка, разделка А, разделка В; резка ТУТ — после них.
     const stripB = sideB || S.coax.stripB;
@@ -2529,7 +2533,8 @@ export function makeGen(D: GenData, S: GenState) {
     const vswr = coaxVswrControl_(S.coax);
     if (sideB && vswr?.mode !== "none") ops.push({ type: "coaxVswr", opKey: "coaxVswr", tmplHint: "CTRL_VSWR_coax",
       label: vswr?.mode === "sample" ? `Контроль КСВН — выборочно 1 из ${vswr.every}` : "Контроль КСВН", ...(vswr ? { vswrControl: vswr } : {}) });
-    return ops;
+    const cableWork = new Set(["coaxCut", "coaxStrip", "coaxPin", "coaxPinCrimp", "coaxInsSleeve", "coaxShield", "coaxSolderShield"]);
+    return cables > 1 ? ops.map((op) => cableWork.has(op.type) ? { ...op, units: (op.units || 1) * cables } : op) : ops;
   }
 
   function topologyProblems_(): string[] {
@@ -4104,6 +4109,7 @@ export function makeGen(D: GenData, S: GenState) {
     const fakra = (side: CoaxSide) => (side?.kind ? { kind: side.kind, parts: side.parts || [] } : {});
     const mkSide = (rec: CoaxRec | null, art: string, pinType: string, connName: string, shield: string, ext: object = {}) => (art ? {
       article: art, connName: connName || "", ...ext,
+      ...(rec?.channels ? { channels: rec.channels } : {}),
       type: rec ? rec.type : "", wire: rec ? rec.wire : "", mfr: rec ? rec.mfr : "", program: rec ? rec.program : "",
       ...coaxDia_(), l1: rec ? rec.l1 : "", l2: rec ? rec.l2 : "", l3: rec ? rec.l3 : "",
       lPlus: rec ? rec.lPlus : "", lMinus: rec ? rec.lMinus : "", pinType, shield,
@@ -4665,8 +4671,9 @@ export function initState(D: GenData, base: GenState = emptyState()): GenState {
     const fk = g.coaxFakra_();
     const sideA: CoaxSide = fk ? fk.ends[0] ?? null : cs[0] ? { art: cs[0].art, name: cs[0].name } : null;
     const sideB: CoaxSide = fk ? fk.ends[1] ?? null : cs.length >= 2 ? { art: cs[1].art, name: cs[1].name } : null;
-    S = { ...S, coax: { ...S.coax, sideA, sideB, tutEnabled: !!g.bomTut_(), stripB: false,
-      ...(fk && [sideA, sideB].some((e) => e?.kind === "hfm") ? { cables: 4 } : {}) } };
+    S = { ...S, coax: { ...S.coax, sideA, sideB, tutEnabled: !!g.bomTut_(), stripB: false } };
+    const cables = makeGen(D, S).coaxCables_();
+    if (cables > 1) S = { ...S, coax: { ...S.coax, cables } };
     const g2 = makeGen(D, S);
     if (!S.coax.len && g2.asmLenFromName_() > 0) {
       const lp = (s: CoaxSide) => {
@@ -4849,7 +4856,7 @@ export function fakraSeed_(D: GenData, S: GenState): GenState {
   });
   const tut = sumCoaxMaterial(D.components, g.bomTut_() ?? undefined);
   const tutM = tut ? Number(String(tut.qty).replace(",", ".")) || 0 : 0;
-  if (!coax.tutLen && tutM > 0) coax = { ...coax, tutLen: String(Math.round(tutM * 1000 / g.coaxFakraMarks_())) };
+  if (!coax.tutLen && tutM > 0) coax = { ...coax, tutLen: String(Math.round(tutM * 1000 / (g.coaxFakraMarks_() / g.coaxCables_()))) };
   return { ...S, coax };
 }
 export function onCoaxConnChange(D: GenData, S: GenState, side: Side): GenState {
@@ -5130,6 +5137,11 @@ export function terFromFields(id: string, f: Record<string, string>): TerRec {
     articleBag: f.terArticleBag || String(Object.entries(f).find(([name]) => /\(bag\)/i.test(name))?.[1] || "").trim() };
 }
 export function coaxFromFields(f: Record<string, string>): CoaxRec {
+  const explicit = Number(pick(f, "channels", "Количество каналов", "Число каналов", "Количество контактов"));
+  const text = [pick(f, "Наименование"), pick(f, "Примечание"), pick(f, "coaxType", "Тип/Серия", "type")].join(" ");
+  const stated = /(?:^|\s)(\d+)\s*(?:канал(?:а|ов)?|контакт(?:а|ов)?|[- ]?pin)(?![а-яёa-z])/i.exec(text);
+  const candidate = Number.isSafeInteger(explicit) && explicit > 0 ? explicit : Number(stated?.[1]);
+  const channels = Number.isSafeInteger(candidate) && candidate > 0 ? candidate : undefined;
   return {
     article: pick(f, "coaxArticle", "Артикул"), type: pick(f, "coaxType", "Тип/Серия", "type"), wire: pick(f, "coaxWire", "Провод", "wire"),
     mfr: pick(f, "coaxMfr", "Производитель", "mfr"), program: pick(f, "program", "Программа"),
@@ -5137,6 +5149,7 @@ export function coaxFromFields(f: Record<string, string>): CoaxRec {
     lPlus: pick(f, "lPlus", "L+"), lMinus: pick(f, "lMinus", "L-", "L−"), pinType: pick(f, "pinType", "Тип пина"),
     shieldType: pick(f, "shieldType", "Тип экрана"), connArticle: pick(f, "connArticle", "Артикул разъёма", "Артикул разъема"),
     centerContact: pick(f, "Центральный контакт"),
+    ...(channels ? { channels } : {}),
   };
 }
 /** Поля записи БД.КОАКС, которые создаёт «Добавить в БД.КОАКС» (addCoaxRecordToDb). */
@@ -5145,6 +5158,7 @@ export function coaxRecordFields(p: Omit<CoaxRec, "article">): Record<string, st
     coaxArticle: p.connArticle, coaxType: p.type, coaxWire: p.wire, coaxMfr: p.mfr, program: p.program,
     l1: p.l1, l2: p.l2, l3: p.l3, lPlus: p.lPlus, lMinus: p.lMinus,
     pinType: p.pinType, shieldType: p.shieldType, connArticle: p.connArticle,
+    ...(p.channels ? { channels: String(p.channels) } : {}),
   };
   return Object.fromEntries(Object.entries(fields).filter(([, v]) => String(v || "").trim()));
 }

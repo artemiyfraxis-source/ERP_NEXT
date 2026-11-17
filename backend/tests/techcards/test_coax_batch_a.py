@@ -70,6 +70,90 @@ def test_hfm_support_is_four_operations_per_end_with_no_invented_consumption_or_
     assert FIXTURES[0]["config"]["coax"]["marks"][0]["text"] == "FRX.708К.120961/AA.{№}"
 
 
+@pytest.mark.parametrize("channels", [2, 4, 6])
+def test_channel_counts_preserve_physical_cables_until_common_housing(channels):
+    fixture = deepcopy(FIXTURES[0])
+    config = fixture["config"]
+    # References alone must be sufficient; replay old operation units without multiplying kits.
+    config["coax"].pop("cables")
+    for side in ("sideA", "sideB"):
+        config["coax"][side]["channels"] = channels
+    for op in config["ops"]:
+        op["tOp"] = "60"
+    before = deepcopy(fixture)
+    doc = _build(fixture)
+    assert fixture == before
+    ops = doc["operations"]
+    assert ops[0]["result"][0]["norm"] == str(15 * channels)
+    assert ops[0]["time"][0]["norm"] == str(15 * channels)
+    text = " ".join(step["text"] for step in ops[0]["card"]["steps"])
+    if channels == 4:
+        assert text.count("4 кабеля на сборку: 15 сборок × 4 = 60 шт.") == 1
+    for side in ("A", "B"):
+        for code in ("PRS_HFM_SUPPORT", "PRS_HFM_PIN", "INS_HFM_CONTACT", "PRS_HFM_SHIELD"):
+            op = next(op for op in ops if op["code"] == code and op["side"] == side)
+            assert op["time"][0]["norm"] == str(15 * channels)
+            assert f"×{channels}" in op["card"]["name"]
+        housing = next(op for op in ops if op["code"] == "INS_HFM_HOUSING" and op["side"] == side)
+        assert housing["result"][0]["norm"] == "15"
+        assert housing["time"][0]["norm"] == "15"
+    first_housing = next(i for i, op in enumerate(ops) if op["code"] == "INS_HFM_HOUSING")
+    assert ops[first_housing]["semis"][0]["norm"] == str(15 * channels)
+    assert all(op["result"][0]["norm"] == "15" for op in ops[first_housing:] if op["type"] != "coaxCutTut")
+    pins = [op for op in ops if op["code"] == "PRS_HFM_PIN"]
+    assert [op["components"][0]["norm"] for op in pins] == ["15", "15"]  # complete connector kits
+    cut_tubes = next(op for op in ops if op["type"] == "coaxCutTut")
+    assert cut_tubes["result"][0]["norm"] == str(3 * channels * 15)
+    assert all(mark["qty"] == str(channels) and mark["batch"] == str(channels * 15)
+               for mark in cut_tubes["fields"]["marks"])
+    replay = {**fixture, "config": doc["build_config"]}
+    assert _build(replay) == doc
+
+
+def test_one_channel_fakra_keeps_assembly_and_marking_quantities():
+    ops = _build(FIXTURES[1])["operations"]
+    assert ops[0]["result"][0]["norm"] == "15"
+    text = " ".join(step["text"] for step in ops[0]["card"]["steps"])
+    assert "кабеля на сборку" not in text
+    assert next(op for op in ops if op["type"] == "coaxCutTut")["result"][0]["norm"] == "45"
+    assert all(op["result"][0]["norm"] == "15" for op in ops if op["type"] != "coaxCutTut")
+
+
+def test_assembly_label_is_not_multiplied_by_cable_count():
+    fixture = deepcopy(FIXTURES[0])
+    fixture["config"]["coax"]["marks"][0]["scope"] = "assembly"
+    for op in fixture["config"]["ops"]:
+        if op.get("marks"):
+            op["marks"][0]["scope"] = "assembly"
+    cut = next(op for op in _build(fixture)["operations"] if op["type"] == "coaxCutTut")
+    assert cut["result"][0]["norm"] == "135"  # (1 product label + 2 labels * 4 cables) * 15
+    assert [(mark["qty"], mark["batch"]) for mark in cut["fields"]["marks"]] == [("1", "15"), ("4", "60"), ("4", "60")]
+
+
+@pytest.mark.parametrize("clamped", [1, 2])
+def test_generic_multichannel_clamp_and_crimp_counts(clamped):
+    coax = {"cables": 4, "cableArt": "RTK 031", "cableLength": 1250, "sleeveArt": "Втулка",
+            "sideA": {"article": "GEN-4", "shield": "прижим"},
+            "sideB": {"article": "GEN-4", "shield": "прижим" if clamped == 2 else "обжим"}}
+    config = {"mode": "coax", "partQty": 15, "coax": coax, "ops": [
+        {"type": "coaxCut", "opKey": "coaxCut", "templateId": "CUT_COAX+2strip", "units": 1, "tOp": "60"},
+        {"type": "coaxInsSleeve", "opKey": "coaxInsSleeve", "templateId": "INS_SLEEVE_coax", "units": 2,
+         "clampSides": ["A", "B"][:clamped], "tOp": "60"},
+        {"type": "coaxHousing", "opKey": "coaxHousingA", "templateId": "INS_housing_COAX", "side": "A", "tOp": "60"},
+    ]}
+    doc = _build({"config": config})
+    cut, sleeve, housing = doc["operations"]
+    assert cut["result"][0]["norm"] == sleeve["semis"][0]["norm"] == "60"
+    assert sleeve["time"][0]["norm"] == "120"  # two ends * 4 cables * 15 assemblies
+    assert sleeve["fields"]["coaxParts"]["clampCount"] == clamped * 4
+    assert sleeve["components"] == ([] if clamped == 2 else [
+        {"art": "Втулка", "name": "", "norm": "60", "unit": "Шт."}])
+    if clamped == 2:
+        assert "обжимную гильзу" not in " ".join(step["text"] for step in sleeve["card"]["steps"])
+    assert housing["result"][0]["norm"] == "15"
+    assert housing["time"][0]["norm"] == "15"
+
+
 def test_amphenol_prep_after_strip_takes_ttk_once_in_metres():
     ops = _build(FIXTURES[1])["operations"]
     prep = next(op for op in ops if op["code"] == "INS_FAKRA_BH_PREP")
