@@ -1521,3 +1521,71 @@ it("opens an older task outside the first page of planning", async () => {
     expect(fetcher).toHaveBeenCalledWith(expect.stringContaining(`?task=${task.id}`), expect.anything());
   } finally { window.history.replaceState({}, "", "/"); }
 });
+
+
+function cutListTasks(): ProductionTask[] {
+  return [1, 2, 3].map((index) => ({
+    ...task, id: `cut-task-${index}`, number: `ПЗ-00${index}`, project: "708К.", item: `708К.КБ${index}`, name: `Кабельная сборка ${index}`,
+    operations: [{ ...task.operations[0], id: `cut-op-${index}`, position: 1, stage: "Заготовки", first: true,
+      operator_ids: [pfPrincipal.user.id], etk_ops: [{ position: 1, code: "CUT", stage: "Резка" }] }],
+  }));
+}
+
+function mockCutQueue(tasks: ProductionTask[], session: unknown = null) {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/production/my") return json({ tasks });
+    if (path === "/api/production/my/execution") return json({ session, boxes: [] });
+    if (path.endsWith("/inputs")) return json({ boxes: [], materials: [] });
+    if (path.endsWith("/etk")) return json({ card: { document: { operations: [] } }, focus: { positions: [1] } });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+}
+
+it("groups three PF assignments into one cutting list and restores their cards", async () => {
+  mockCutQueue(cutListTasks());
+  render(<ProductionPage principal={pfPrincipal} mine />);
+  const group = await screen.findByRole("region", { name: "Резка списком · 708К. · ПФ-1 Заготовки · 3 КБ" });
+  const rows = within(group).getAllByRole("row").filter((row) => within(row).queryAllByRole("cell").length > 0);
+  expect(rows).toHaveLength(3);
+  expect(within(group).getAllByRole("button", { name: "Начать" })).toHaveLength(3);
+  expect(within(group).getAllByRole("button", { name: "Инструкция" })).toHaveLength(3);
+  expect(within(rows[0]).getByText("КБ1")).toBeInTheDocument();
+  fireEvent.click(within(rows[1]).getByRole("button", { name: "Начать" }));
+  expect(await within(rows[1]).findByRole("button", { name: "Начать работу" })).toBeInTheDocument();
+  expect(within(rows[0]).queryByRole("button", { name: "Начать работу" })).not.toBeInTheDocument();
+  fireEvent.click(within(group).getByRole("button", { name: "карточками" }));
+  expect(within(group).queryByRole("table")).not.toBeInTheDocument();
+  expect(within(group).getAllByText("ПФ-1 · Заготовки")).toHaveLength(3);
+  fireEvent.click(within(group).getByRole("button", { name: "списком" }));
+  expect(within(group).getByRole("table")).toBeInTheDocument();
+});
+
+it("separates cutting lists by project, PF position, stage and planned day", async () => {
+  const tasks = cutListTasks();
+  const others = [
+    { ...tasks[0], id: "other-project", project: "709К.", item: "709К.КБ1" },
+    { ...tasks[0], id: "other-position", operations: [{ ...tasks[0].operations[0], position: 2 }] },
+    { ...tasks[0], id: "other-stage", operations: [{ ...tasks[0].operations[0], stage: "Сборка" }] },
+    { ...tasks[0], id: "other-day", operations: [{ ...tasks[0].operations[0], planned_start: "2026-09-23T09:00:00+03:00" }] },
+  ];
+  mockCutQueue([...tasks, ...others]);
+  render(<ProductionPage principal={pfPrincipal} mine />);
+  const group = await screen.findByRole("region", { name: "Резка списком · 708К. · ПФ-1 Заготовки · 3 КБ" });
+  expect(within(group).getAllByRole("row").filter((row) => within(row).queryAllByRole("cell").length > 0)).toHaveLength(3);
+  expect(screen.getAllByRole("region", { name: /Резка списком/ })).toHaveLength(1);
+  expect(screen.getByText("709К. · КБ1")).toBeInTheDocument();
+});
+
+it("keeps the running KB timer and disables starting other KB rows", async () => {
+  const tasks = cutListTasks();
+  mockCutQueue(tasks, { id: "cut-session", task_id: tasks[1].id, operation_id: tasks[1].operations[0].id,
+    operator_id: pfPrincipal.user.id, status: "В работе", started_at: new Date().toISOString(), pause_seconds: 0, pause_started_at: null, input_limit: null });
+  render(<ProductionPage principal={pfPrincipal} mine />);
+  const group = await screen.findByRole("region", { name: /Резка списком/ });
+  const running = within(group).getAllByRole("row").find((row) => within(row).queryByRole("button", { name: "Сдать…" }));
+  expect(running).toBeDefined();
+  expect(within(running!).getByText("КБ2")).toBeInTheDocument();
+  expect(within(running!).getByRole("status")).toHaveTextContent(/в работе с.*0:00/);
+  for (const button of within(group).getAllByRole("button", { name: "Начать" })) expect(button).toBeDisabled();
+});

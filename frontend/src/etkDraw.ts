@@ -237,14 +237,79 @@ export function etkDrawWires(operation: Row): string {
   return svg(W, yd + 14, body);
 }
 
-/** Разделка коаксиала: ступени от торца, L1–L3 из базы коакса (etkDrawCoax_). Резка с разделкой на станке разделывает
-    оба конца — эскиз каждой стороны со своей подписью (`fields.coaxB`). */
+/** Coax stripping: a cut shows one cable; a standalone stripping operation shows its end. */
 export function etkDrawCoax(operation: Row): string {
   const f = obj(operation.fields);
   const a = obj(f.coax), b = obj(f.coaxB);
+  if (operation.type === "coaxCut" && (Object.keys(a).length || Object.keys(b).length)) return coaxCutStripSketch(f);
   if (!Object.keys(a).length) return Object.keys(b).length ? coaxSketch(b, "Сторона В") : "";
   if (!Object.keys(b).length) return coaxSketch(a, "");
   return coaxSketch(a, "Сторона А") + coaxSketch(b, "Сторона В");
+}
+
+/** One cable, with both ends dimensioned from the conductor tip. Missing ends stay unstripped. */
+function coaxCutStripSketch(fields: Row): string {
+  const W = 640, edge = 32, span = 184, cy = 166;
+  let body = "", error = "";
+  (["coax", "coaxB"] as const).forEach((key, side) => {
+    const end = obj(fields[key]), mirror = side === 1, tip = mirror ? W - edge : edge;
+    const x = (distance: number) => tip + (mirror ? -distance : distance);
+    const to = W / 2;
+    const band = (layer: string, from: number, until: number, height: number, fill: string) =>
+      `<rect data-band="${layer}" x="${Math.min(x(from), x(until))}" y="${cy - height / 2}" width="${Math.abs(until - from)}" height="${height}" fill="${fill}" stroke="#8d9297"/>`;
+    if (!Object.keys(end).length) {
+      body += band("jacket", 0, Math.abs(to - tip), 36, "#222");
+      return;
+    }
+    const program = coaxStripProgram(end);
+    let bounds: Row[], layers: string[];
+    if (program) {
+      bounds = list(program.boundaries);
+      layers = ["conductor", ...bounds.slice(0, -1).map((b) => str(b.layer))];
+    } else if (end.dimensionOrder === "HFM" || end.dimensionOrder === "Amphenol") {
+      error += `<div class="tr-none">Сторона ${side ? "В" : "А"}: размеры от торца не заданы — согласовать разделку.</div>`;
+      return;
+    } else {
+      const present = [1, 2, 3].filter((n) => num(end[`l${n}`]) > 0);
+      bounds = present.map((n) => ({ value: str(end[`l${n}`]).replace(/\s*мм\s*$/, "") }));
+      const flush = present.length === 1 && present[0] === 3;
+      layers = flush ? ["braid"] : ["conductor", ...(present.includes(2) && present.includes(3) ? ["dielectric", "braid"] :
+        present.includes(2) ? ["braid"] : present.includes(3) ? ["dielectric"] : [])];
+      if (!flush && present[0] !== 1) bounds = [];
+    }
+    if (!bounds.length || layers.some((layer) => !["conductor", "dielectric", "foil", "braid"].includes(layer)) ||
+        bounds.some((b, i) => !(num(b.value) > (i ? num(bounds[i - 1].value) : 0)))) {
+      error += `<div class="tr-none">Сторона ${side ? "В" : "А"}: размеры от торца требуют проверки.</div>`;
+      return;
+    }
+    body += `<text data-coax-title x="${tip}" y="22" text-anchor="${mirror ? "end" : "start"}" font-size="14" font-weight="600">${esc(`${side ? "В" : "А"} — ${coaxEndNames(end).kind || end.connector || "разъём"}`)}</text>`;
+    const scale = span / num(bounds[bounds.length - 1].value);
+    const heights: Record<string, number> = { conductor: 8, dielectric: 22, foil: 24, braid: 28 };
+    const fills: Record<string, string> = { conductor: "#e08a2c", dielectric: "#fbfbf8", foil: "#c2c5b0", braid: "url(#etkBraid)" };
+    bounds.forEach((b, i) => {
+      const from = i ? num(bounds[i - 1].value) * scale : 0, until = num(b.value) * scale;
+      const layer = layers[i], y = cy - 30 - i * 26;
+      body += band(layer, from, until, heights[layer], fills[layer]) +
+        `<line x1="${x(until)}" y1="${y - 4}" x2="${x(until)}" y2="${cy - heights[layer] / 2}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
+        dim(Math.min(tip, x(until)), Math.max(tip, x(until)), y, "") +
+        `<text x="${tip + (mirror ? -4 : 4)}" y="${y - 6}" text-anchor="${mirror ? "end" : "start"}" font-size="13">${esc([b.value, b.tolerance].filter(Boolean).join(" "))}</text>`;
+    });
+    body += band("jacket", span, Math.abs(to - tip), 36, "#222") +
+      `<line x1="${tip}" y1="${cy - 34 - (bounds.length - 1) * 26}" x2="${tip}" y2="${cy + 20}" stroke="#9aa7ad" stroke-dasharray="3 3"/>`;
+  });
+  if (error) return error;
+  // The two jacket halves meet; the conventional break only shortens the long body on paper.
+  body += `<g data-part="break"><path d="M309,143 l-8,46 h30 l8,-46 z" fill="#fff"/>` +
+    `<path d="M309,143 l-8,46 M339,143 l-8,46" fill="none" stroke="#17272b" stroke-width="1.4"/></g>`;
+  const finished = str(fields.finishedLength).trim(), cut = str(fields.lengthKd).replace(/\s*мм\s*$/i, "").trim();
+  let y = cy + 54;
+  const lengthDimension = (text: string) => {
+    body += [edge, W - edge].map((x) => `<line x1="${x}" y1="${cy + 22}" x2="${x}" y2="${y + 5}" stroke="#9aa7ad" stroke-dasharray="3 3"/>`).join("") + dim(edge, W - edge, y, text);
+    y += 34;
+  };
+  if (finished) lengthDimension(`L = ${mm(finished)} (готовое изделие)`);
+  if (cut) lengthDimension(`Длина реза = ${mm(cut)}`);
+  return svg(W, y - 16, body);
 }
 
 /** Use the backend program, or convert raw XYZ fields in older ETK snapshots. */
@@ -1125,10 +1190,13 @@ function sideItems(operation: Row, end: "A" | "B"): EtkParam[] {
     out.push(["Разъём", [coaxKindTitle(coax), str(coax.connector).trim()].filter(Boolean).join(", ") || DASH]);
     if (program) {
       for (const b of list(program.boundaries)) out.push([`${str(b.label)} от торца`, `${str(b.value)} ${str(b.tolerance)} мм`]);
-      out.push(["Исходные размеры", str(program.source)], ["Контроль разделки", str(program.note)]);
+      if (!list(program.boundaries).length) out.push(["Разделка", "Размеры от торца требуют проверки"]);
+    } else if (coax.dimensionOrder === "HFM" || coax.dimensionOrder === "Amphenol") {
+      out.push(["Разделка", "Размеры от торца не заданы"]);
     } else {
-      const steps = [1, 2, 3].filter((n) => str(coax[`l${n}`]).trim()).map((n) => `L${n} ${str(coax[`l${n}`]).trim()}`);
-      out.push(["Разделка", steps.length ? `${steps.join(" · ")} мм` : DASH]);
+      for (const [n, label] of [[1, "Диэлектрик / жила"], [2, "Оплётка"], [3, "Оболочка"]] as const) {
+        if (str(coax[`l${n}`]).trim()) out.push([`${label} от торца`, mm(coax[`l${n}`])]);
+      }
     }
   }
   // Пайка: жало и температура — на стороне операции (по умолчанию ERP — помечено, технологу уточнить).
