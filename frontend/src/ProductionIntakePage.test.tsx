@@ -384,6 +384,21 @@ describe("Приёмка с производства: свои колонки и
     expect(bodyRows().map((tr) => [cell(tr, "ГРН"), cell(tr, "Количество")])).toEqual([["ГП.СТАРЫЙПечать", "10 шт"], ["ГП.НОВЫЙПечать", "10 шт"]]);
   });
 
+  it("строка отправки из нескольких КБ: «Упаковать» — штуки всей отправки, не первой КБ; «Короба и PL/DN» не дублирует её", async () => {
+    intakeRows = [
+      row({ needed: "20", accepted: "20", packed: "20", remaining: "0", pack_decided: true, pack_permission_remaining: "100", acts: [act("ГП.26.0000501", "20")] }),
+      row({ item_index: "КБ2", good_id: "g2", needed: "20", accepted: "20", packed: "20", remaining: "0", pack_decided: true, pack_permission_remaining: "100", acts: [act("ГП.26.0000502", "20")] }),
+    ];
+    shipments = [{ ...packedShipment, status: "Собрана", pl_number: "", dn_number: "", lines: [
+      shipmentLine({ picked: "20", requested: "20", grn: "ГП.26.0000501" }),
+      shipmentLine({ id: "l2", good_id: "g2", item_index: "КБ2", picked: "20", requested: "20", grn: "ГП.26.0000502" }),
+    ] }];
+    render(<ProductionIntakePage principal={principal} />);
+    expect(await screen.findByRole("button", { name: "Упаковать ОТГ-20261029-01: 40" })).toHaveTextContent("Упаковать · 40 шт");
+    expect(screen.queryByRole("button", { name: /Упаковать.*: 20$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Короба и PL/DN" })).not.toBeInTheDocument();
+  });
+
   it("набранное в отправку и остаток на складе — каждый со своими штуками, без «Упаковать · 20» на обоих", async () => {
     intakeRows = [row({ needed: "20", accepted: "20", packed: "5", remaining: "0", pack_decided: true, pack_permission_remaining: "100", acts: [act("ГП.26.0000500", "20")] })];
     shipments = [{ ...packedShipment, status: "Собрана", pl_number: "", dn_number: "", lines: [shipmentLine({ picked: "5", requested: "5", grn: "ГП.26.0000500" })] }];
@@ -391,9 +406,10 @@ describe("Приёмка с производства: свои колонки и
     expect(await screen.findByRole("tab", { name: /^Принято/ })).toHaveAttribute("aria-selected", "true");
     expect(bodyRows().map((tr) => cell(tr, "Количество"))).toEqual(["15 шт"]);
     expect(shipmentRows()[0]).toHaveTextContent("5 шт");
-    expect(rowButtons().filter((name) => name.startsWith("Упаковать"))).toEqual(["Упаковать 591К.3 КБ1: 15", "Упаковать 591К.3 КБ1: 5"]);
-    expect(screen.queryByRole("button", { name: /Упаковать.*20/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Упаковать 591К.3 КБ1: 5" }));
+    expect(rowButtons().filter((name) => name.startsWith("Упаковать"))).toEqual(["Упаковать 591К.3 КБ1: 15", "Упаковать ОТГ-20261029-01: 5"]);
+    expect(screen.queryByRole("button", { name: /Упаковать.*: 20$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Короба и PL/DN" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Упаковать ОТГ-20261029-01: 5" }));
     const dialog = await screen.findByRole("dialog", { name: "Упаковка 591К.3" });
     expect(within(dialog).getByRole("article", { name: "Отправка ОТГ-20261029-01" })).toBeInTheDocument();
   });
