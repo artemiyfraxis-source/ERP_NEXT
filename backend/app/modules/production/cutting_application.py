@@ -78,7 +78,8 @@ def _existing_proposal(candidates):
                 "cables_per_assembly": first.snapshot["cables_per_assembly"],
                 "operations": [op["code"] for op in first.snapshot["operations"]],
                 "settings": [{"code": op["code"], "parameters": op["parameters"], "fields": op["fields"],
-                              "tooling": op["card"]["tooling"]} for op in first.snapshot["operations"]]},
+                              "tooling": first.tooling[i] if i < len(first.tooling) else op["card"]["tooling"]}
+                             for i, op in enumerate(first.snapshot["operations"])]},
             "members": members, "warnings": warnings, **assignment}
 
 
@@ -271,20 +272,40 @@ def split_group(group_id, version, member_ids, actor, now, uow, *, cancel=False)
         return result
 
 
+def _baseline_key(group, member, task):
+    """The member's pinned recipe key computed with the CURRENT code (the stored group key may come from older code)."""
+    pinned = member.row_snapshot.get("document")
+    if pinned:
+        recipe, _ = cutting_recipe(task.project, group.site, pinned, task.operations)
+        if recipe is not None:
+            return recipe.key
+    return group.recipe_key
+
+
+def _adopt_key(group, recipe):
+    group.recipe_key, group.recipe, group.recipe_version = recipe.key, recipe.snapshot, recipe.snapshot["version"]
+
+
 def revalidate_group(group_id, version, current, actor, now, uow):
     with uow:
         group = locked_group(group_id, version, uow, actor, now)
         if group.state != "open":
             raise ProductionValidationError("Начатая группа работает по закреплённому снимку ЭТК")
+        checked = []
         for member in uow.cutting.members(group.id):
             task = uow.production.get(member.task_id)
             document, card_version = current.get(task.id, (None, None))
             recipe, reason = cutting_recipe(task.project, group.site, document, task.operations)
-            if recipe is None or recipe.key != group.recipe_key or any(
+            if recipe is None or recipe.key != _baseline_key(group, member, task) or any(
                 member.row_snapshot.get(key) != value for key, value in recipe.row.items()
             ):
                 raise ProductionValidationError(f"{task.item}: параметры изменились; выдайте новую работу отдельно. {reason}")
             member.row_snapshot = {**member.row_snapshot, "validated_card_version": card_version}
+            checked.append(recipe)
+        if checked and len({recipe.key for recipe in checked}) != 1:
+            raise ProductionValidationError("Рецепт резки у КБ группы расходится; выдайте новую работу отдельно")
+        if checked:
+            _adopt_key(group, checked[0])
         group.version += 1
         audit(group, "revalidated", uow, actor, now)
         result = describe_group(group, uow)
@@ -308,10 +329,12 @@ def plan_etk_refresh(group, members, cards, uow):
         recipe, reason = cutting_recipe(task.project, group.site, document, task.operations)
         if recipe is None:
             problems.append(f"{task.item}: {reason}")
-        elif recipe.key != group.recipe_key:
+        elif recipe.key != _baseline_key(group, member, task):
             problems.append(f"{task.item}: рецепт резки в новой ревизии ЭТК отличается")
         else:
             steps.append((member, task, entry, recipe))
+    if not problems and len({step[3].key for step in steps}) > 1:
+        problems.append("рецепты резки у КБ группы в новой ЭТК различаются между собой")
     return steps, problems
 
 
@@ -333,9 +356,17 @@ def refresh_group_etk(group_id, version, cards, actor, now, uow):
                 "Группа не обновлена: у этих КБ рецепт резки в новой ЭТК расходится с группой — " + "; ".join(problems)
                 + ". Выдайте их отдельно («Выдать отдельно») и обновите остальные.")
         todo = [item for item in steps if _stale(*item[:3])]
-        if not todo:
-            return describe_group(group, uow)
         before = group.version
+        if not todo:
+            recipe = steps[0][3] if steps else None
+            if recipe is None or recipe.key == group.recipe_key:
+                return describe_group(group, uow)
+            _adopt_key(group, recipe)  # key from older code: store the current one, nothing to re-pin
+            group.version += 1
+            audit(group, "etk_refreshed", uow, actor, now, tasks=[])
+            result = describe_group(group, uow)
+            uow.commit()
+            return result
         for member, task, entry, recipe in todo:
             card_id, revision, document, card_version, norms = entry
             was = task.techcard_revision
@@ -348,7 +379,7 @@ def refresh_group_etk(group_id, version, cards, actor, now, uow):
                 _audit(updated, "production.norms_refreshed", actor, now, {
                     "techcard_id": str(card_id), "from_revision": was, "revision": revision,
                     "cutting_group_id": str(group.id)}, uow)
-        group.recipe = todo[0][3].snapshot
+        _adopt_key(group, todo[0][3])
         if group.version == before:
             group.version += 1
         audit(group, "etk_refreshed", uow, actor, now, tasks=[str(item[1].id) for item in todo])

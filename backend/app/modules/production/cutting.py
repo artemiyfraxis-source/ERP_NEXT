@@ -59,12 +59,39 @@ def _card_snapshot(card, marks, lengths, tube_cuts=()):
     return result
 
 
+def _without_equipment_names(value):
+    """Identity of equipment is its model/inventory number, never the display name (renames must not split a recipe)."""
+    if isinstance(value, Mapping):
+        return {k: v for k, v in value.items() if k != "name"}
+    return value
+
+
+def _equipment_identity_card(card):
+    """Copy of the card whose equipment rows drop display names; other tooling (tools, consumables) keep theirs."""
+    result = deepcopy(card)
+    result["tooling"] = [
+        _without_equipment_names(tool) if isinstance(tool, Mapping) and (
+            tool.get("section") == "Оборудование" or tool.get("equipment_model_id")) else tool
+        for tool in result.get("tooling") or []]
+    return result
+
+
+def _equipment_identity_extras(fields, parameters):
+    if isinstance(fields.get("machine"), Mapping):
+        fields["machine"] = _without_equipment_names(fields["machine"])
+    if isinstance(parameters.get("machine"), Mapping):
+        parameters["machine"] = _without_equipment_names(parameters["machine"])
+    if isinstance(parameters.get("equipmentTools"), list):
+        parameters["equipmentTools"] = [_without_equipment_names(tool) for tool in parameters["equipmentTools"]]
+
+
 @dataclass(frozen=True)
 class CuttingRecipe:
     operation_id: UUID
     key: str
     snapshot: dict
     row: dict
+    tooling: tuple = ()  # display-only equipment/tooling with names, per operation; not part of the key
 
 
 def cutting_project_label(project: str, document: Mapping | None = None) -> str:
@@ -118,7 +145,7 @@ def cutting_recipe(project: str, site: str, document: Mapping | None,
             multiplicity = number(wire.get("qty", 1))
         if Decimal(multiplicity) != Decimal(multiplicity).to_integral_value():
             raise ValueError("Количество кабелей в сборке должно быть целым")
-        recipes, labels = [], []
+        recipes, labels, display_tooling = [], [], []
         for op, raw in own:
             fields = deepcopy(op.get("fields") or {})
             card = deepcopy(_required(op.get("card"), "карточка операции"))
@@ -244,7 +271,9 @@ def cutting_recipe(project: str, site: str, document: Mapping | None,
                 tail = f"отрезков по {number(group.get('length')).replace('.', ',')} мм ({place})."
                 tube_cuts.append((f"Нарезать {material}: {total} {tail}",
                                   f"Нарезать {material}: {units.replace('.', ',')} {tail}"))
-            card = _card_snapshot(card, marks, lengths, tube_cuts)
+            display_tooling.append(deepcopy(card.get("tooling") or []))
+            card = _card_snapshot(_equipment_identity_card(card), marks, lengths, tube_cuts)
+            _equipment_identity_extras(fields, parameters)
             recipes.append({"type": kind, "code": _required(op.get("code"), "код операции"),
                             "template_id": _required(op.get("template_id"), "шаблон операции"),
                             "card_revision": op.get("card_changed_at") or digest(card),
@@ -253,6 +282,7 @@ def cutting_recipe(project: str, site: str, document: Mapping | None,
                     "cable": cable, "cables_per_assembly": multiplicity,
                     "pf_per_assembly": number(unit_factors(operations)[first.id]), "operations": recipes}
         return CuttingRecipe(first.id, digest(snapshot), snapshot,
-                             {"cut_length_mm": length, "cables_per_assembly": multiplicity, "labels": labels}), ""
+                             {"cut_length_mm": length, "cables_per_assembly": multiplicity, "labels": labels},
+                             tuple(display_tooling)), ""
     except (ValueError, TypeError, KeyError, IndexError, AttributeError) as error:
         return None, str(error) or "Недостаточно параметров резки"
