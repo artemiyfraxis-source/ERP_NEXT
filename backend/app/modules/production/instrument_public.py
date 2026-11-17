@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 import re
 
-from .instrument_characterization import Characterization, connector_line, number
+from .instrument_characterization import Characterization, connector_line, impedance_warning, number
 from .rf_interfaces import RfDetails
 from .traceability import InstrumentKind, MeasurementInstrument
 from .vna_files import VnaTrace
@@ -44,6 +44,7 @@ class PublicPassport:
     impedance: str
     measurement: PublicMeasurement | None
     verification: PublicVerification | None
+    impedance_warning: str
 
 
 _SERIAL = r"([A-Za-z0-9-]{1,32})"
@@ -81,7 +82,7 @@ def public_passport(item: MeasurementInstrument, rf: RfDetails, measured: Charac
     return PublicPassport(item.inventory_number, item.name, item.serial_number, item.manufacturer,
                           connector_line(item.name, item.serial_number, rf),
                           " / ".join(number(value) for value in ohms) + " Ом" if ohms else "Не указано",
-                          _public_measurement(measured) if measured else None, verification)
+                          _public_measurement(measured) if measured else None, verification, impedance_warning(rf))
 
 
 def public_fields(passport: PublicPassport) -> tuple[tuple[str, str], ...]:
@@ -98,6 +99,7 @@ def public_fields(passport: PublicPassport) -> tuple[tuple[str, str], ...]:
 
 def public_measurement_fields(measured: PublicMeasurement) -> tuple[tuple[str, str], ...]:
     return (("Дата замера", measured.measured_on.strftime("%d.%m.%Y")),
+            ("Опорное сопротивление измерения", "50 Ом"),
             ("Прибор", measured.instrument or "Не указан"),
             ("Калибровка", measured.calibration or "Не указана"),
             ("Условия", "; ".join(measured.conditions) or "Не указаны"))

@@ -150,6 +150,8 @@ def public_passport_pdf(passport: PublicPassport, *, generated: datetime, public
     _line(pdf, passport.name, bold=True, size=11)
     for label, value in public_fields(passport):
         _line(pdf, f"{label}: {value}")
+    if passport.impedance_warning:
+        _line(pdf, passport.impedance_warning, bold=True)
     if passport.measurement is None:
         pdf.ln(6)
         _line(pdf, "Замер не проведён", bold=True, size=14)

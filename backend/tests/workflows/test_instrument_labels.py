@@ -235,7 +235,7 @@ def test_passport_uses_registry_auth_is_generated_without_db_write_and_handles_m
 def test_latest_attachment_recomputes_label_and_passport(production_api):
     import base64
     from dataclasses import replace
-    from app.modules.production.infrastructure import SqlAlchemyInstrumentRepository
+    from app.modules.production.infrastructure import ProductionInstrumentFileRow, SqlAlchemyInstrumentRepository
     from tests.production.test_instrument_passport import measured_file
     client, _ = production_api
     item, sessions = setup(client)
@@ -244,7 +244,7 @@ def test_latest_attachment_recomputes_label_and_passport(production_api):
             "content_base64": base64.b64encode(file.content).decode()})
         assert response.status_code == 200, response.text
         with sessions.begin() as session:
-            row = session.get(instrument_labels.ProductionInstrumentFileRow, UUID(response.json()["file"]["id"]))
+            row = session.get(ProductionInstrumentFileRow, UUID(response.json()["file"]["id"]))
             row.uploaded_at = NOW + timedelta(minutes=offset)
     def content():
         with sessions() as session:

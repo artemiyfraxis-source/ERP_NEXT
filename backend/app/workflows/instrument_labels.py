@@ -4,16 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, timedelta
-import re
 from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import select
 
 from app.modules.production.api import production_uow_factory
-from app.modules.production.infrastructure import ProductionInstrumentFileRow, SqlAlchemyInstrumentFileRepository, SqlAlchemyInstrumentRepository
+from app.modules.production.infrastructure import SqlAlchemyInstrumentFileRepository, SqlAlchemyInstrumentRepository
 from app.modules.production.instrument_characterization import characterization, connector_line, impedance_warning
 from app.modules.production.instrument_passport import passport_pdf
 from app.modules.production.rf_infrastructure import RfRepository
@@ -74,14 +72,10 @@ def label_agent_in(session, now: datetime) -> dict:
 
 
 def _characterization(session, instrument_id):
-    rows = session.scalars(select(ProductionInstrumentFileRow).where(
-        ProductionInstrumentFileRow.instrument_id == instrument_id,
-    ).order_by(ProductionInstrumentFileRow.uploaded_at.desc(), ProductionInstrumentFileRow.id.desc()))
-    for row in rows:
-        if re.match(r"^Замер\s+ВАЦ(?:\s|[_-])", row.file_name, re.I) and row.file_name.lower().endswith(".s2p"):
-            file = SqlAlchemyInstrumentFileRepository(session).get(instrument_id, row.id)
-            # A corrupt/replaced latest measurement must not silently revive an older measurement.
-            return characterization(file) if file else None
+    for _, file_id in RfRepository(session).latest_characterization_file_ids([instrument_id]):
+        file = SqlAlchemyInstrumentFileRepository(session).get(instrument_id, file_id)
+        # A corrupt/replaced latest measurement must not silently revive an older measurement.
+        return characterization(file) if file else None
     return None
 
 

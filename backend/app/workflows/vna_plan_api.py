@@ -97,7 +97,7 @@ def vna_plan(task_id: UUID, operation_id: UUID, instrument_id: UUID,
         for item_id, file_id, content in repository.characterization_files(candidates):
             characterized_band = characterization_band(content)
             if characterized_band:
-                characterizations.setdefault(item_id, []).append((file_id, characterized_band))
+                characterizations[item_id] = (file_id, characterized_band)
     document, etk, current = _task_etk(techcards_factory, task)
     refs = CoaxRefs(refs_factory)
     norm = task_norm(document, current, etk.get("current_revision"), refs, now)
@@ -122,8 +122,8 @@ def vna_plan(task_id: UUID, operation_id: UUID, instrument_id: UUID,
     instrument = next(a for a in assets if a.id == instrument_id)
     low, high = profile["band_mhz"]
     if not problems and low is not None and high is not None and 0 < low < high:
-        assets = [replace(a, characterization_file_id=next((file_id for file_id, covered in characterizations.get(a.id, ())
-                  if covered[0] <= low / 1000 and covered[1] >= high / 1000), None)) for a in assets]
+        assets = [replace(a, characterization_file_id=entry[0] if (entry := characterizations.get(a.id))
+                  and entry[1][0] <= low / 1000 and entry[1][1] >= high / 1000 else None) for a in assets]
         chains = plan_connections(instrument, dut, assets, (low / 1000, high / 1000))
     else:
         chains = dict(status="blocked", problems=problems or ["Не задана полоса нормы"], method=None,

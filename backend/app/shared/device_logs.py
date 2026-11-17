@@ -16,6 +16,8 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
+from .safe_logging import redact_passport_urls
+
 try:
     import fcntl
 except ImportError:  # Windows: the local ERP runs one API process
@@ -49,6 +51,7 @@ def _locked(path: Path) -> Iterator[None]:
 
 
 def _append(path: Path, text: str, limit: int) -> None:
+    text = redact_passport_urls(text)
     with _locked(path):
         try:
             size = path.stat().st_size

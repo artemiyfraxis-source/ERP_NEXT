@@ -47,6 +47,11 @@ def test_characterization_rounds_both_sides_up_and_uses_full_stored_band():
     assert upper_two(1.05) == "1,05"
 
 
+@pytest.mark.parametrize("name", ["Замер ВАЦ, СИ.009.s2p", "Замер ВАЦ СИ.009.s2p", "Замер ВАЦ_СИ.009.S2P", "Замер ВАЦ-СИ.009.s2p"])
+def test_characterization_accepts_vna_measurement_file_names(name):
+    assert characterization(measured_file(name=name)) is not None
+
+
 @pytest.mark.parametrize("file", [
     measured_file(resistance=75), measured_file(name="datasheet.s2p"), measured_file(name="Замер ВАЦ.s1p"),
     replace(measured_file(), content=b"# GHz S MA R 50\n1 .1 0\n2 .1 0"),

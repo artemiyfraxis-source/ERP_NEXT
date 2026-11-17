@@ -1,5 +1,4 @@
 import base64
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import fields, replace
 from datetime import datetime
 from io import BytesIO
@@ -14,7 +13,9 @@ from app.main import app
 from app.modules.production.infrastructure import ProductionInstrumentFileRow, ProductionInstrumentRow, SqlAlchemyInstrumentRepository
 from app.modules.production.instrument_characterization import characterization
 from app.modules.production.instrument_public import public_passport
-from app.modules.production.instrument_public_html import PUBLIC_STYLE
+from app.modules.production.instrument_public_html import PUBLIC_STYLE, public_passport_html
+from app.modules.production.instrument_passport import passport_pdf, public_passport_pdf
+from app.modules.production.rf_infrastructure import RfRepository
 from app.modules.production.traceability import InstrumentKind
 from app.shared.http_auth import authenticated_principal
 from app.shared.public_url import PublicSettings, public_passport_token, public_passport_url, public_settings, verify_passport_token
@@ -22,15 +23,16 @@ from app.workflows import instrument_labels, instrument_public_passport as publi
 from tests.production.test_api import MASTER_ID, production_api  # noqa: F401
 from tests.production.test_instrument_passport import instrument, measured_file, rf
 from tests.workflows.test_instrument_labels import setup
+from tests.production.test_instruments_api import create
 
 TEST_SECRET = "test-only-passport-key-do-not-deploy-123456789"
 
 
 @pytest.fixture(autouse=True)
-def configured(monkeypatch):
+def configured(monkeypatch, tmp_path):
     monkeypatch.setenv("ERP_PUBLIC_BASE_URL", "https://erp.example.test")
     monkeypatch.setenv("ERP_PASSPORT_SECRET", TEST_SECRET)
-    monkeypatch.setattr(public_api, "PUBLIC_PASSPORT_LIMITER", public_api.PublicPassportRateLimiter())
+    monkeypatch.setattr(public_api, "PUBLIC_PASSPORT_LIMITS", public_api.PublicPassportLimits(tmp_path / "limits"))
 
 
 def path(item_id, suffix=""):
@@ -156,32 +158,79 @@ def test_public_unsupported_methods_keep_noindex_no_store_headers(production_api
     assert response.headers["cache-control"] == "no-store"
 
 
-def test_shared_rate_limit_precedes_token_and_db_work_and_does_not_trust_forwarded_headers(production_api, monkeypatch):
+def test_link_limit_is_shared_by_html_pdf_and_independent_of_headers_and_other_instruments(production_api, monkeypatch, tmp_path):
     client, _ = production_api
     item, _ = setup(client, online=False)
+    second = create(client, "SI.TEST-SECOND")
     anonymous()
-    monkeypatch.setattr(public_api, "PUBLIC_PASSPORT_LIMITER", public_api.PublicPassportRateLimiter(limit=2))
+    monkeypatch.setattr(public_api, "PUBLIC_PASSPORT_LIMITS", public_api.PublicPassportLimits(tmp_path, views=2))
     assert client.get(path(item["id"])).status_code == 200
     assert client.get(path(item["id"], ".pdf")).status_code == 200
-    def unexpected(*args, **kwargs):
-        pytest.fail("Rate-limited request reached token validation")
-    monkeypatch.setattr(public_api, "verify_passport_token", unexpected)
     response = client.get(path(item["id"]), headers={"X-Forwarded-For": "192.0.2.50"})
     assert response.status_code == 429
     assert response.headers["retry-after"] == "60"
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["x-robots-tag"] == "noindex, nofollow"
+    assert client.get(path(second["id"])).status_code == 200
 
 
-def test_limiter_is_thread_safe_bounded_and_expires():
-    limiter = public_api.PublicPassportRateLimiter(limit=7, max_clients=2)
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        assert sum(executor.map(lambda _: limiter.allow("client-a", now=0), range(40))) == 7
-    assert limiter.allow("client-b", now=0)
-    assert not limiter.allow("client-c", now=0)
-    assert len(limiter._clients) == 2
-    assert limiter.allow("client-c", now=60)
-    assert len(limiter._clients) == 1
+def test_global_failures_never_block_valid_links(production_api, monkeypatch, tmp_path):
+    client, _ = production_api
+    item, _ = setup(client, online=False)
+    anonymous()
+    monkeypatch.setattr(public_api, "PUBLIC_PASSPORT_LIMITS", public_api.PublicPassportLimits(tmp_path, failures=3))
+    bad_signature = f"/p/{UUID(item['id']).hex}.{'x' * 32}"
+    for index, url in enumerate(("/p/invalid", bad_signature, path(uuid4()))):
+        assert client.get(url, headers={"X-Forwarded-For": f"192.0.2.{index + 1}"}).status_code == 404
+    assert client.get("/p/another-invalid", headers={"X-Forwarded-For": "192.0.2.99"}).status_code == 429
+    assert client.get(path(item["id"])).status_code == 200
+    assert client.get(path(item["id"], ".pdf")).status_code == 200
+    assert client.get(path(uuid4())).status_code == 429
+
+
+def test_full_pdf_pool_returns_503_without_charging_view_or_failure_budget(production_api, monkeypatch, tmp_path):
+    client, _ = production_api
+    item, _ = setup(client, online=False)
+    anonymous()
+    limits = public_api.PublicPassportLimits(tmp_path, views=2, failures=1)
+    monkeypatch.setattr(public_api, "PUBLIC_PASSPORT_LIMITS", limits)
+    with limits.pdf_slot() as first, limits.pdf_slot() as second:
+        assert first and second
+        response = client.get(path(item["id"], ".pdf"))
+        assert response.status_code == 503 and response.headers["retry-after"] == "1"
+        assert response.headers["cache-control"] == "no-store"
+        assert client.get(path(item["id"])).status_code == 200
+    assert client.get(path(item["id"], ".pdf")).status_code == 200
+    assert client.get("/p/invalid").status_code == 404
+
+
+def test_render_failure_releases_slot_and_refunds_view(production_api, monkeypatch, tmp_path):
+    client, _ = production_api
+    item, _ = setup(client, online=False)
+    anonymous()
+    limits = public_api.PublicPassportLimits(tmp_path, views=1, pdf_slots=1)
+    monkeypatch.setattr(public_api, "PUBLIC_PASSPORT_LIMITS", limits)
+    render = public_api.public_passport_pdf
+    def broken(*args, **kwargs):
+        raise RuntimeError("render failed")
+    monkeypatch.setattr(public_api, "public_passport_pdf", broken)
+    with pytest.raises(RuntimeError, match="render failed"):
+        client.get(path(item["id"], ".pdf"))
+    monkeypatch.setattr(public_api, "public_passport_pdf", render)
+    assert client.get(path(item["id"], ".pdf")).status_code == 200
+    assert client.get(path(item["id"])).status_code == 429
+
+
+def test_unavailable_shared_state_returns_503_without_unlimited_fallback(production_api, monkeypatch, tmp_path):
+    client, _ = production_api
+    item, _ = setup(client, online=False)
+    anonymous()
+    limits = public_api.PublicPassportLimits(tmp_path)
+    monkeypatch.setattr(public_api, "PUBLIC_PASSPORT_LIMITS", limits)
+    (tmp_path / "counters.json").write_text("invalid state", encoding="utf-8")
+    for url in (path(item["id"]), "/p/invalid"):
+        response = client.get(url)
+        assert response.status_code == 503 and response.headers["retry-after"] == "1"
 
 
 def test_projection_has_only_approved_fields_and_strict_known_provenance():
@@ -193,7 +242,7 @@ def test_projection_has_only_approved_fields_and_strict_known_provenance():
     measured = characterization(measured_file(header=header))
     projection = public_passport(replace(instrument(), storage_location="PRIVATE_STORAGE", warehouse_grn="PRIVATE_GRN", doc_designation="PRIVATE_ARTICLE"),
                                  replace(rf(), source="PRIVATE_SOURCE"), measured)
-    assert {field.name for field in fields(projection)} == {"inventory_number", "name", "serial_number", "manufacturer", "connectors", "impedance", "measurement", "verification"}
+    assert {field.name for field in fields(projection)} == {"inventory_number", "name", "serial_number", "manufacturer", "connectors", "impedance", "impedance_warning", "measurement", "verification"}
     assert {field.name for field in fields(projection.measurement)} == {"measured_on", "traces", "instrument", "calibration", "conditions"}
     assert "PRIVATE_" not in repr(projection)
     assert projection.measurement.instrument == "ВАЦ №26030095"
@@ -279,3 +328,49 @@ def test_latest_synthetic_attachment_cannot_publish_older_or_fabricated_measurem
     assert html.status_code == 200 and "Замер не проведён" in html.text
     assert '<svg ' not in html.text
     assert "Замер не проведён" in pdf_text(client.get(path(identifier, ".pdf")).content)
+
+
+@pytest.mark.parametrize("name", ["Замер ВАЦ, СИ.009.s2p", "Замер ВАЦ СИ.009.s2p"])
+@pytest.mark.parametrize("same_time", [False, True])
+def test_labels_passports_and_planner_select_same_latest_named_upload(production_api, name, same_time):
+    client, _ = production_api
+    item, sessions = setup(client, online=False)
+    identifier = UUID(item["id"])
+    newest_id = UUID(int=2)
+    with sessions.begin() as session:
+        for file_id, filename, uploaded, header in (
+            (UUID(int=1), "Замер ВАЦ 16.11.26.s2p", 17 if same_time else 16, "! captured=2026-11-16T12:00:00Z\n"),
+            (newest_id, name, 17, "! captured=2026-11-15T12:00:00Z\n"),
+            (UUID(int=3), "datasheet.s2p", 18, "! captured=2026-11-18T12:00:00Z\n"),
+        ):
+            session.add(ProductionInstrumentFileRow(id=file_id, instrument_id=identifier, kind="Прочее",
+                file_name=filename, content=measured_file(header=header).content,
+                uploaded_at=datetime(2026, 11, uploaded), uploaded_by=MASTER_ID))
+    with sessions() as session:
+        stored = SqlAlchemyInstrumentRepository(session).get(identifier)
+        assert instrument_labels._content(stored, session).value("measurement_date") == "Замер 15.11.26"
+        assert [(item_id, file_id) for item_id, file_id, _ in RfRepository(session).characterization_files([identifier])] == [(identifier, newest_id)]
+    internal = client.get(f"/api/production/instruments/{identifier}/passport.pdf")
+    assert internal.status_code == 200
+    assert "Дата: 15.11.2026" in pdf_text(internal.content)
+    anonymous()
+    assert "15.11.2026" in client.get(path(identifier)).text
+    assert "Дата замера: 15.11.2026" in pdf_text(client.get(path(identifier, ".pdf")).content)
+
+
+@pytest.mark.parametrize("ohms", [50, 75])
+@pytest.mark.parametrize("measured", [False, True])
+def test_public_html_pdf_show_measurement_reference_and_card_impedance_warning(ohms, measured):
+    item, details = instrument(), rf(ohms)
+    measurement = characterization(measured_file()) if measured else None
+    projected = public_passport(item, details, measurement)
+    html = public_passport_html(projected, pdf_path="/p/example.pdf")
+    pdf = pdf_text(public_passport_pdf(projected, generated=datetime(2026, 11, 17)))
+    internal = pdf_text(passport_pdf(item, details, measurement, generated=datetime(2026, 11, 17)))
+    reference = "Опорное сопротивление измерения"
+    assert (reference in html) == measured
+    assert (reference + ": 50 Ом" in pdf) == measured
+    if measured:
+        assert f"<dt>{reference}</dt><dd>50 Ом</dd>" in html
+    warning = "75 Ом — не для 50 Ом тракта"
+    assert (warning in html) == (warning in pdf) == (warning in internal) == (ohms == 75)

@@ -72,7 +72,10 @@ def public_passport_html(passport: PublicPassport, *, pdf_path: str) -> str:
              f'<div><span class="brand">FRAXIS ERP</span><h1>{escape(title)}</h1></div>',
              f'<a class="download" href="{escape(pdf_path, quote=True)}" download="passport.pdf">Скачать PDF</a></header>',
              f'<section aria-label="Сведения об изделии"><p class="name">{escape(passport.name)}</p>',
-             _fields(public_fields(passport)), '</section><section aria-labelledby="measurement"><h2 id="measurement">Результаты замера</h2>']
+             _fields(public_fields(passport))]
+    if passport.impedance_warning:
+        parts.append(f'<p><strong>{escape(passport.impedance_warning)}</strong></p>')
+    parts.append('</section><section aria-labelledby="measurement"><h2 id="measurement">Результаты замера</h2>')
     measured = passport.measurement
     if measured is None:
         parts.append('<p class="empty">Замер не проведён</p>')

@@ -9,6 +9,7 @@ import re
 from .instrument_serials import CONNECTOR_LETTERS, IN_HOUSE_SERIAL
 from .rf_interfaces import RfDetails, parse_interfaces
 from .traceability import InstrumentFile
+from .vna_characterization import is_characterization_file
 from .vna_files import VSWR_CEILING, VnaFileError, VnaTrace, _decode, parse_vna_traces
 
 
@@ -99,7 +100,7 @@ def _date(text: str) -> date | None:
 
 def characterization(file: InstrumentFile) -> Characterization | None:
     """Only a named, two-port 50-ohm measurement is eligible; unrelated attachments are never evidence."""
-    if not re.match(r"^Замер\s+ВАЦ(?:\s|[_-])", file.file_name, re.I) or not file.file_name.lower().endswith(".s2p"):
+    if not is_characterization_file(file.file_name):
         return None
     try:
         text = _decode(file.content or b"")
