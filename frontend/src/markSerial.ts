@@ -73,3 +73,28 @@ export function markSerialList(text: string, range: MarkSerialRange): string[] {
   const count = Math.max(range.last - range.first + 1, 0);
   return Array.from({ length: count }, (_, index) => expandMarkSerial(text, range.first + index));
 }
+
+export type MarkLabelSource = {
+  text?: unknown; material?: unknown; place?: unknown; qty?: unknown; batch?: unknown; length?: unknown;
+};
+export type MarkLabel = { text: string; material: string; place: string; quantity: number; length: string };
+
+/** Presentation only: numbered labels first, then one row per fixed label with the task quantity. */
+export function markLabelList(marks: readonly MarkLabelSource[], range: MarkSerialRange): MarkLabel[] {
+  if (!Number.isSafeInteger(range.first) || !Number.isSafeInteger(range.last) || range.first < 1 || range.last < range.first) return [];
+  const count = range.last - range.first + 1;
+  const quantity = (value: unknown) => {
+    const parsed = Number(String(value ?? "1").replace(",", "."));
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 1;
+  };
+  const labels = (mark: MarkLabelSource): MarkLabel[] => {
+    const text = String(mark.text ?? "");
+    const numbered = hasMarkSerial(text);
+    return (numbered ? markSerialList(text, range) : [text]).map((text) => ({
+      text, material: String(mark.material ?? ""), place: String(mark.place ?? ""), length: String(mark.length ?? ""),
+      quantity: quantity(mark.qty) * (numbered ? 1 : count),
+    }));
+  };
+  return [...marks.filter((mark) => hasMarkSerial(String(mark.text ?? ""))),
+    ...marks.filter((mark) => !hasMarkSerial(String(mark.text ?? "")))].flatMap(labels);
+}

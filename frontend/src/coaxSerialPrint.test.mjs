@@ -14,8 +14,12 @@ it("prints 15 distinct FRX labels from a generated КБ1 config through the back
   expect(etkSerialMarks(document)).toHaveLength(1); // Printing and installation must not double the labels.
   const card = { project: "708К.", item_index: "КБ1", product_name: config.assemblyName, revision: 1, document };
   const labels = etkMarkLabelsPage(card, serial);
-  const expected = Array.from({ length: 15 }, (_, index) => [String(index + 1), `FRX.708К.120907/AA.${index + 1}`]);
-  expect(labels.blocks[0]).toEqual({ table: { columns: ["№ изделия", "Кабель · Лента Vell VL-S641, 18 мм"], rows: expected } });
+  const expected = [
+    ...Array.from({ length: 15 }, (_, index) => [String(index + 1), `FRX.708К.120907/AA.${index + 1}`, "середина кабеля", "Лента Vell VL-S641, 18 мм", "× 1"]),
+    ["16", "Camera 14", "у разъёма А", "Лента Vell VL-S641, 18 мм", "× 15"],
+    ["17", "Splitter B C6", "у разъёма В", "Лента Vell VL-S641, 18 мм", "× 15"],
+  ];
+  expect(labels.blocks[0]).toEqual({ table: { columns: ["№", "Текст", "Где", "Материал", "Кол-во"], rows: expected } });
   const pages = etkPrintPages(card, [], {}, serial);
   expect(pages.at(-1)).toEqual(labels);
   const labelHtml = buildPrintDocumentHtml("Надписи", [labels]);

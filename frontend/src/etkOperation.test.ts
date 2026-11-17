@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { etkOperationName, etkToleranceLines, etkToleranceParts, parseDefects, solderMode, toolingSections } from "./etkOperation";
+import { etkLabelResult, etkOperationName, etkToleranceLines, etkToleranceParts, parseDefects, solderMode, toolingSections } from "./etkOperation";
+
+it("counts printed label kinds and pieces for a task subrange, while installation keeps its own output", () => {
+  const operation = {
+    code: "PRINT_MARK_LABEL", fields: { marks: [
+      { text: "КБ1-{№:6}", qty: "2", batch: "30" },
+      { text: "Camera 14", qty: "1", batch: "15" },
+      { text: "Splitter B C6", qty: "1", batch: "15" },
+    ] },
+    result: [{ name: "Напечатанные этикетки: 4 шт.", norm: "60", unit: "Шт." }],
+  };
+  expect(etkLabelResult(operation, { first: 11, last: 15 })).toEqual({ name: "Этикетки: 7\u00a0видов, 20 шт.", norm: "20", unit: "Шт." });
+  expect(etkLabelResult(operation)).toEqual({ name: "Этикетки: 3\u00a0вида, 60 шт.", norm: "60", unit: "Шт." });
+  expect(etkLabelResult({ ...operation, code: "INS_MARK_LABEL", result: [{ name: "Кабель маркирован" }] }, { first: 1, last: 15 })).toBeNull();
+  expect(etkLabelResult({ code: "PRINT_MARK_LABEL" }, { first: 1, last: 15 })).toBeNull();
+});
 
 describe("etkOperationName", () => {
   it("names a coax operation by its kind where the card says only the first word (796К.2 КБ1, owner 15.10)", () => {
