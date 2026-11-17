@@ -423,9 +423,16 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
         positionShipment={(line) => line.shipment!}
         positionLine={(row) => row.shipment?.lines.find((line) => row.id === `${row.shipment!.id}:${line.id}`)}
         initialQuery={urlParam("q")} emptyText={EMPTY[tab]}
-        actions={(shipment) => { const line = lines.find((item) => item.shipment?.id === shipment.id)!; return <>
-          {canDispatch && (line.stage === "packed" ? trackAction(line) : ["accepted", "to_ship"].includes(line.stage ?? "") ? actionCell(line) : null)}
-          {canDispatch && ["Новая", "Собрана", "Упакована"].includes(shipment.status) && <button type="button" className="secondary small"
+        actions={(shipment) => {
+          const line = lines.find((item) => item.shipment?.id === shipment.id)!;
+          // Строка — вся отправка: на кнопке штуки всей отправки, не первой КБ; окно то же, что у «Короба и PL/DN», — кнопка одна.
+          const packing = canDispatch && line.stage === "accepted";
+          const picked = round2(shipment.lines.reduce((sum, item) => sum + num(item.picked), 0));
+          return <>
+          {packing ? <button type="button" className="intake-take-btn" title={`Набрано в ${shipment.number}: короба и PL/DN — в окне упаковки`}
+            aria-label={`Упаковать ${shipment.number}: ${picked}`} onClick={() => setOpened({ kind: "pack", project: line.project })}>Упаковать · {formatNumber(picked)}{NBSP}{line.unit}</button>
+            : canDispatch && (line.stage === "packed" ? trackAction(line) : line.stage === "to_ship" ? actionCell(line) : null)}
+          {canDispatch && !packing && ["Новая", "Собрана", "Упакована"].includes(shipment.status) && <button type="button" className="secondary small"
             onClick={() => setOpened({ kind: "pack", project: line.project })}>Короба и PL/DN</button>}
           {canDispatch && ["Отгружена", "Закрыта"].includes(shipment.status) && <button type="button" className="secondary small"
             onClick={() => setOpened({ kind: "ship", project: line.project })}>Действия</button>}
