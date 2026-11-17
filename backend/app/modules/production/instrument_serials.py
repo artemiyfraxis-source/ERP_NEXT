@@ -12,7 +12,7 @@ from .traceability import MeasurementInstrument
 
 
 TYPE_RULES = (
-    ("ADP", r"^(?:Переход|ADP1A)"),
+    ("ADP", r"^(?:(?:Прямой\s+|ВЧ-)?[Пп]ереход|ADP1A)"),
     ("CAB", r"^Кабель"),
     ("KIT", r"^(?:Комплект|Набор.*мер)"),
     ("LOAD", r"^Нагрузка"),
