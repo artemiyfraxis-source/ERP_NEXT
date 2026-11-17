@@ -131,10 +131,21 @@ def cutting_recipe(project: str, site: str, document: Mapping | None,
                     key = "coax" if side == "A" else "coaxB"
                     sizes = _required(fields.get(key), f"разделка {side}")
                     for dimension in ("l1", "l2", "l3", "d1", "d2", "d3"):
-                        sizes[dimension] = number(sizes.get(dimension))
-                    program = _required(sizes.get("stripProgram"), f"программа разделки {side}")
-                    if any(phrase in str(program.get("note", "")).casefold() for phrase in ("не задан", "не рассчитан", "подтвердить")):
-                        raise ValueError(f"Программа разделки {side} требует подтверждения")
+                        value = sizes.get(dimension)
+                        sizes[dimension] = "" if value is None or value == "" else number(value)
+                    program = sizes.get("stripProgram")
+                    unconfirmed = not program or any(phrase in str(program.get("note", "")).casefold()
+                                                     for phrase in ("не рассчитан", "подтвердить"))
+                    if unconfirmed:
+                        # No confirmed numeric program (HFM «подтвердить», ordinary coax without one): the members still cut
+                        # by the same issued instruction, so identity = connector + side sizes + program as written + the card
+                        # snapshot below. Grouping does not hide the open confirmation — every member carries it (owner 17.11).
+                        sizes["stripProgram"] = deepcopy(program) if program else None
+                        sizes["stripMode"] = sizes.get("stripMode") or (program or {}).get("mode") or (
+                            "full" if coax.get("fakraCutStrip") is True else "")
+                        sizes["programStatus"] = "unconfirmed" if program else "absent"
+                        fields[key] = sizes
+                        continue
                     boundaries = _required(program.get("boundaries"), f"границы разделки {side}")
                     previous = Decimal(0)
                     layers = set()
@@ -149,8 +160,11 @@ def cutting_recipe(project: str, site: str, document: Mapping | None,
                     program["boundaries"] = boundaries
                     sizes["stripProgram"] = program
                     mode = sizes.get("stripMode") or program.get("mode")
+                    if not mode and coax.get("fakraCutStrip") is True:
+                        mode = "full"
                     if mode not in {"full", "partial"}:
                         raise ValueError(f"Не задан режим полной/частичной разделки {side}")
+                    sizes["stripMode"] = mode
                     fields[key] = {k: v for k, v in sizes.items() if k not in {
                         "connector", "connectorType", "gender", "article", "name", "lPlus", "lMinus",
                     }}
@@ -172,17 +186,20 @@ def cutting_recipe(project: str, site: str, document: Mapping | None,
             if kind in {"coaxCutTut", "cutTut"}:
                 number(raw.get("units", raw.get("tutCount")))
                 if raw.get("markMaterial") == "tape":
-                    _required(raw.get("parts"), "материал этикетки")
+                    # The generator keeps the tape as a consumable of the issued card, not as raw «parts» (708К., 17.11).
+                    material = raw.get("parts") or [str(tool.get("name") or "").strip() for tool in tooling
+                                                    if tool.get("section") == "Расходники" and str(tool.get("name") or "").strip()]
+                    parameters["labelMaterial"] = _required(material, "материал этикетки")
                     _required(marks, "раскладка этикеток")
                     for mark in marks:
                         _required(mark.get("place"), "место этикетки")
                     copies = sum(Decimal(number(mark.get("copies", 1))) for mark in marks)
-                    if copies != Decimal(number(raw.get("units"))):
+                    units = Decimal(number(raw.get("units")))
+                    # Multi-cable assemblies (HFM, 4 coax) carry the layout once per cable (17.11 #875).
+                    if copies != units and copies * Decimal(multiplicity) != units:
                         raise ValueError("Количество этикеток не совпадает с раскладкой")
-                    # Printing parameters must be known, not a placeholder in the library card.
-                    for machine in machines:
-                        _required(machine.get("program"), "программа печати")
-                        _required(machine.get("parameters"), "параметры печати")
+                    # Printer program/parameters are part of the card snapshot: members must match them exactly, but a
+                    # library placeholder («не задано») shared by all members does not block grouping.
                 else:
                     parameters["tube"] = {"article": _required(coax.get("tutArt"), "материал ТУТ"),
                                           "length": number(coax.get("tutLength"))}
