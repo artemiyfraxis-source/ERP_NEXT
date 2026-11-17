@@ -857,7 +857,7 @@ function MyQueue({ principal, tasks, cuttingGroups = [], session, busy, mutate, 
   };
   return <div className="my-queue">
     {cuttingGroups.map((group) => <CuttingGroupCard key={group.id} group={group} readOnly={readOnly}
-      mutate={mutate} onBehalfOf={onBehalfOf} performerId={onBehalfOf || principal.user.id} busy={Boolean(busy)} activeSession={session}
+      mutate={mutate} onBehalfOf={onBehalfOf} performerId={onBehalfOf || principal.user.id} busy={Boolean(busy)} activeSession={session} canRefreshEtk={canAct(principal, "production")}
       renderInstruction={(row, close) => <OperationEtk key={row.id} principal={principal} task={{ id: row.task_id }} operation={{ id: row.operation_id }} title={`${row.item} · ${row.name}`} close={close} />} />)}
     {renderQueue(active, "active")}
     {!active.length && !cuttingGroups.some((group) => cuttingRows(group).some((row) => row.state !== "done")) && finished.length > 0 && <div className="empty">Невыполненных операций нет — все назначенные сданы.</div>}

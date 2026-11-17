@@ -4163,6 +4163,10 @@ export const productionApi = {
   boxes: (taskId?: string) => api<{ boxes: ProductionBox[] }>(`/api/production/boxes${taskId ? `?task_id=${taskId}` : ""}`),
   // «Задания»: work.onBehalfOf — работа за выбранного сотрудника (право проверяет сервер), work.key — ключ повтора:
   // тот же ключ второй раз не делает действие дважды (двойной клик, повтор после обрыва связи).
+  refreshCuttingGroupEtk: (groupId: string, version: number) =>
+    api<{ group: CuttingGroup }>(`/api/production/cutting-groups/${groupId}/refresh-etk`, {
+      method: "POST", body: JSON.stringify({ version }),
+    }),
   startCuttingGroup: (groupId: string, version: number, work: WorkCall) =>
     api<CuttingWorkResult>(`/api/production/cutting-groups/${groupId}/start${behalfQuery(work.onBehalfOf)}`, {
       method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ version }),
