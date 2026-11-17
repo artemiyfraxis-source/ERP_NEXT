@@ -150,13 +150,15 @@ def migrate_config(config, code_of, *, structural=True):
     new = deepcopy(config)
     if not isinstance(new, dict) or new.get("mode") != "coax" or not isinstance(new.get("ops"), list):
         return new, [], [], [], "не коакс-сборка"
-    coax = new.get("coax") if isinstance(new.get("coax"), dict) else {}
+    if not all(isinstance(op, dict) for op in new["ops"]):
+        return new, [], [], [], "неизвестный формат операций"
+    coax =new.get("coax") if isinstance(new.get("coax"), dict) else {}
     if _normal(coax.get("cableArt")) != "rtk031":
         return new, [], [], [], "другой кабель или нет артикула"
     ends = {}
     for side in ("A", "B"):
         end = coax.get("side" + side)
-        if isinstance(end, dict) and end.get("kind") in ENDS and _normal(end.get("article")) == _normal(ENDS[end["kind"]]):
+        if isinstance(end, dict) and isinstance(end.get("kind"), str) and end["kind"] in ENDS and _normal(end.get("article")) == _normal(ENDS[end["kind"]]):
             ends[side] = end["kind"]
     if not ends:
         return new, [], [], [], "нет концов FAKRA/HFM/Amphenol 708К."
@@ -360,7 +362,8 @@ def main(argv=None):
                 args.plan_out.write_text(json.dumps(plan, ensure_ascii=False, indent=1), encoding="utf-8", newline="\n")
             if args.apply:
                 # Written before the commit: a committed change always has its way back.
-                args.rollback_out.write_text(json.dumps(rollback, ensure_ascii=False, indent=1), encoding="utf-8", newline="\n")
+                with args.rollback_out.open("x", encoding="utf-8", newline="\n") as handle:  # never overwrite
+                    handle.write(json.dumps(rollback, ensure_ascii=False, indent=1))
         if args.apply:
             uow.commit()
             print("COMMITTED — обновление ЭТК поставлено в очередь (одна волна ревизий)")
