@@ -6,13 +6,13 @@ $installPath = Join-Path $here '..\install.ps1'
 $parseErrors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile((Resolve-Path $installPath).Path, [ref]$null, [ref]$parseErrors)
 $TaskName = 'Fraxis — печать этикеток'
-$functions = $ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in 'Get-AgentProcess', 'Stop-Agent', 'Assert-AgentVnaIdle', 'Confirm-AgentStopped', 'Exit-AgentLifecycle' }, $true)
+$functions = $ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in 'Get-AgentProcess', 'Stop-Agent', 'Assert-AgentVnaIdle', 'Assert-AgentPrintIdle', 'Confirm-AgentStopped', 'Exit-AgentLifecycle', 'Resolve-AgentPrinters' }, $true)
 foreach ($function in $functions) { . ([scriptblock]::Create($function.Extent.Text)) }
 
 Describe 'install.ps1' {
     It 'разбирается без ошибок и содержит Stop-Agent' {
         @($parseErrors).Count | Should Be 0
-        @($functions).Count | Should Be 5
+        @($functions).Count | Should Be 7
     }
 }
 
@@ -87,5 +87,40 @@ Describe 'Stop-Agent' {
         $watch = [Diagnostics.Stopwatch]::StartNew()
         Stop-Agent -WaitSeconds 1 | Should Be $true
         $watch.Elapsed.TotalSeconds | Should BeLessThan 5
+    }
+}
+
+Describe 'Marking installer routes and receipt protection' {
+    BeforeEach {
+        $script:Dir = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+        Mock Get-Printer { @([pscustomobject]@{ Name = 'TSC warehouse' }, [pscustomobject]@{ Name = 'Godex 中文' }) }
+    }
+    It 'discovers TSC only and configures marking explicitly' {
+        $targets = Resolve-AgentPrinters -MarkingPrinterName 'Godex 中文'
+        $targets.printer | Should Be 'TSC warehouse'
+        $targets.markingPrinter | Should Be 'Godex 中文'
+    }
+    It 'does not auto-select Godex as a TSPL target' {
+        Mock Get-Printer { [pscustomobject]@{ Name = 'Godex 中文' } }
+        $targets = Resolve-AgentPrinters -MarkingPrinterName 'Godex 中文'
+        ([string]$targets.printer) | Should Be ''
+        $targets.markingPrinter | Should Be 'Godex 中文'
+    }
+    It 'rejects an absent explicit marking queue' { { Resolve-AgentPrinters -MarkingPrinterName 'Godex renamed' } | Should Throw 'нет' }
+    It 'rejects one queue for both formats' { { Resolve-AgentPrinters 'Godex 中文' 'Godex 中文' } | Should Throw 'различаться' }
+    It 'blocks reinstall or uninstall with an unreported spool receipt' {
+        $root = Join-Path $script:Dir 'print-receipts'; [void][IO.Directory]::CreateDirectory($root)
+        [IO.File]::WriteAllText((Join-Path $root 'receipt.json'),'{"acknowledged":false,"payload":{"outcome":"spooled"}}')
+        { Assert-AgentVnaIdle } | Should Throw 'квитанции'
+    }
+    It 'blocks uninstall until an acknowledged unknown is reconciled' {
+        $root = Join-Path $script:Dir 'print-receipts'; [void][IO.Directory]::CreateDirectory($root)
+        [IO.File]::WriteAllText((Join-Path $root 'receipt.json'),'{"acknowledged":true,"resolved":false,"payload":{"outcome":"unknown"}}')
+        { Assert-AgentPrintIdle } | Should Throw 'квитанции'
+    }
+    It 'allows lifecycle changes after reconciliation' {
+        $root = Join-Path $script:Dir 'print-receipts'; [void][IO.Directory]::CreateDirectory($root)
+        [IO.File]::WriteAllText((Join-Path $root 'receipt.json'),'{"acknowledged":true,"resolved":true,"payload":{"outcome":"unknown"}}')
+        Assert-AgentPrintIdle
     }
 }
