@@ -41,6 +41,7 @@ class RfPayload(BaseModel):
     f_min_ghz: float | None = Field(default=None, ge=0, le=1000)
     max_points: int | None = Field(default=None, ge=2, le=10_000_001, strict=True)
     kit_definition: str = Field(default="", max_length=64)
+    mating_resource: int | None = Field(default=None, gt=0, le=2_147_483_647, strict=True)
 
 
 def rf_result(details: RfDetails):

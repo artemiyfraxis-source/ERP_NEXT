@@ -8,7 +8,7 @@ param(
     [Alias('fmax')][ValidateRange(10000000,18000000000)][double]$FmaxHz = 18e9
 )
 
-$script:VnaToolVersion = '1.0.0'
+$script:VnaToolVersion = '1.1.0'
 . (Join-Path $PSScriptRoot 'dsp.ps1')
 . (Join-Path $PSScriptRoot 's2vna.ps1')
 . (Join-Path $PSScriptRoot 'erp.ps1')
@@ -209,7 +209,7 @@ function Get-VnaFixtureData {
     if ($reverse) {
         $data = [pscustomobject]@{ Frequencies = $data.Frequencies; S11 = $data.S22; S21 = $data.S12; S12 = $data.S21; S22 = $data.S11 }
     }
-    return [pscustomobject]@{ Data = $data; Description = "$Number (обратно=$reverse, файл=$([IO.Path]::GetFileName($path)))" }
+    return [pscustomobject]@{ Instrument = $fixture; Reverse = $reverse; Data = $data; Description = "$Number (обратно=$reverse, файл=$([IO.Path]::GetFileName($path)))" }
 }
 
 function Initialize-VnaOfflineDemo {
@@ -242,6 +242,8 @@ function Start-VnaMeasure {
     $lock = $null; $deviceMutex = $null; $deviceLocked = $false; $connection = $null; $backup = $null; $session = $null; $calibration = $null
     $backupPointer = Join-Path $DataDirectory 'operator-backup.json'
     $calLog = Join-Path $DataDirectory 'calibrations.jsonl'; $ledger = Join-Path $DataDirectory 'used-sweeps.jsonl'
+    $pendingDirectory = Join-Path $DataDirectory 'pending-matings'
+    $matingSetup = Get-VnaMatingSetup; $previousMounts = $null
     try {
         $lock = [IO.File]::Open((Join-Path $DataDirectory 'tool.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
         if ($Offline) {
@@ -278,6 +280,8 @@ function Start-VnaMeasure {
                         $calibration = $null
                         $attempt = [ordered]@{ Id = [guid]::NewGuid().ToString(); Event = 'calibration'; Time = [datetimeoffset]::UtcNow.ToString('o'); User = [Environment]::UserName;
                             Method = 'acm-solt2'; VnaSerial = $null; AcmSerial = $null; VnaTemperature = $null; VnaTemperatures = @(); AcmTemperature = $null; LoadCheck = 'not_checked'; Result = 'fail' }
+                        $calPending = Save-VnaPendingMatings $session $pendingDirectory ('vna-calibration-' + $attempt.Id) $calEntries
+                        try { Sync-VnaPendingMatings $session $calPending } catch { Write-Host "?????????? ?????????? ????????? ????????; ????????? ???????? ??????? 7. $($_.Exception.Message)" -ForegroundColor Yellow }
                         try {
                             $info = Assert-VnaDeviceReady $connection
                             foreach ($field in 'VnaSerial', 'AcmSerial', 'VnaTemperature', 'VnaTemperatures', 'AcmTemperature') { $attempt[$field] = $info.$field }
@@ -326,14 +330,6 @@ function Start-VnaMeasure {
                     }
                     '4' {
                         if (-not $calibration -or $calibration.LoadCheck -ne 'pass') { throw 'Нужна калибровка и успешный контроль нагрузкой.' }
-                        if (-not $session) {
-                            if ($Offline) { $session = New-VnaErpSession -OfflineDirectory $OfflineDirectory }
-                            else {
-                                $config = Read-VnaConfig -Path $ConfigPath
-                                $login = Read-Host 'Логин ERP'; $password = Read-Host 'Пароль ERP' -AsSecureString
-                                try { $session = New-VnaErpSession -ServerUrl $config.server_url -Login $login -Password $password } finally { $password = $null }
-                            }
-                        }
                         $number = (Read-Host 'Номер переходника (СИ.035)').Trim().ToUpperInvariant()
                         if ($number -notmatch '^СИ\.\d+$') { throw 'Введите номер вида СИ.035.' }
                         $item = Get-VnaInstrument -Session $session -Number $number
@@ -349,10 +345,11 @@ function Start-VnaMeasure {
                                 [double]::IsNaN($parsed) -or [double]::IsInfinity($parsed) -or $parsed -le 0.01 -or $parsed -gt $FmaxHz / 1e9) { throw 'Частота должна быть > 0,01 ГГц и не выше -FmaxHz.' }
                             $band = $parsed * 1e9
                         }
-                        $left = $null; $right = $null; $descriptions = @()
-                        if ($chain.Left) { $fixture = Get-VnaFixtureData $session $chain.Left (Join-Path $DataDirectory 'fixtures') $band; $left = $fixture.Data; $descriptions += "слева $($fixture.Description)" }
-                        if ($chain.Right) { $fixture = Get-VnaFixtureData $session $chain.Right (Join-Path $DataDirectory 'fixtures') $band; $right = $fixture.Data; $descriptions += "справа $($fixture.Description)" }
+                        $left = $null; $right = $null; $descriptions = @(); $fixtures = @($null, $null)
+                        if ($chain.Left) { $fixture = Get-VnaFixtureData $session $chain.Left (Join-Path $DataDirectory 'fixtures') $band; $left = $fixture.Data; $fixtures[0] = $fixture; $descriptions += "слева $($fixture.Description)" }
+                        if ($chain.Right) { $fixture = Get-VnaFixtureData $session $chain.Right (Join-Path $DataDirectory 'fixtures') $band; $right = $fixture.Data; $fixtures[1] = $fixture; $descriptions += "справа $($fixture.Description)" }
                         [void](Read-Host 'Установите переходник в показанную цепочку. Сторона 1 — к порту 1 ВАЦ. Нажмите Enter для нового замера')
+                        $previousMounts = $matings.Mounts
                         $sweep = Get-VnaSweep $connection
                         Assert-VnaMeasurementSafe -Sweep $sweep -Calibration $calibration -DeviceInfo (Get-VnaDeviceInfo $connection) -TraceStatus (Get-VnaTraceStatus $connection) -LedgerPath $ledger
                         $rawDir = Join-Path $DataDirectory 'raw'; [void][IO.Directory]::CreateDirectory($rawDir)
@@ -384,7 +381,10 @@ function Start-VnaMeasure {
                         $null = Assert-VnaCorrection $connection
                         Assert-VnaMeasurementSafe -Sweep $sweep -Calibration $calibration -DeviceInfo (Get-VnaDeviceInfo $connection) -TraceStatus (Get-VnaTraceStatus $connection) -LedgerPath $ledger
                         $hash = Reserve-VnaSweep -Sweep $sweep -Number $number -LedgerPath $ledger -RawPath $rawPath
-                        $null = Add-VnaInstrumentFile -Session $session -Instrument $item -FileName $fileName -Path $outPath -AllowDuplicate:$allowDuplicate
+                        $upload = @{ instrument = @{ id = $item.id; inventory_number = $item.inventory_number; serial_number = $item.serial_number }; file_name = $fileName; path = [IO.Path]::GetFullPath($outPath) }
+                        $pendingPath = Save-VnaPendingMatings $session $pendingDirectory ('vna-measurement-' + $sweep.Id) $matings.Entries $upload
+                        try { Sync-VnaPendingMatings $session $pendingPath }
+                        catch { throw "????????? ? ?????????? ????????? ????????. ????????? ???????? ??????? 7, ??? ?????? ??????. $($_.Exception.Message)" }
                         Add-VnaJournalEvent $ledger ([ordered]@{ Event = 'uploaded'; Time = [datetimeoffset]::UtcNow.ToString('o'); Hash = $hash; SweepId = $sweep.Id; Number = $number; FileName = $fileName })
                         Write-Host 'Файл добавлен в карточку.'
                     }
@@ -406,6 +406,11 @@ function Start-VnaMeasure {
                         }
                         Set-VnaChartScales $connection
                         Write-Host 'Шкалы графиков применены и проверены.'
+                    }
+                    '7' {
+                        $pendingFiles = @(if (Test-Path -LiteralPath $pendingDirectory) { Get-ChildItem -LiteralPath $pendingDirectory -Filter '*.json' | Sort-Object Name })
+                        foreach ($pendingFile in $pendingFiles) { Sync-VnaPendingMatings $session $pendingFile.FullName }
+                        Write-Host "?????????? ???????: $($pendingFiles.Count). ????? ?????????? ?? ????????? ????????."
                     }
                     '0' { $running = $false }
                     default { Write-Host 'Выберите пункт 0–6.' }
