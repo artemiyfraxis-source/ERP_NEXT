@@ -62,6 +62,133 @@ def recipe(doc, project="708К.", site="ЦАР"):
     return cutting_recipe(project, site, doc, launch_operations(launch_route(doc).steps, 10))
 
 
+@pytest.fixture
+def fakra_document():
+    doc = document()
+    doc["build_config"]["coax"]["fakraCutStrip"] = True
+    for side in ("coax", "coaxB"):
+        sizes = doc["operations"][0]["fields"][side]
+        sizes["d3"] = ""
+        del sizes["stripMode"]
+        sizes["stripProgram"]["note"] = "Отдельная ступень фольги не задана."
+    return doc
+
+
+def test_real_fakra_recipe_ignores_length_and_labels_but_keeps_boundaries(fakra_document):
+    original = deepcopy(fakra_document)
+    first, why = recipe(fakra_document)
+    assert first is not None, why
+    for side in ("coax", "coaxB"):
+        sizes = first.snapshot["operations"][0]["fields"][side]
+        assert sizes["d3"] == ""
+        assert sizes["stripMode"] == "full"
+    assert fakra_document == original
+
+    altered = deepcopy(fakra_document)
+    altered["build_config"]["coax"]["cableLength"] = 2300
+    altered["operations"][0]["fields"]["lengthKd"] = "2300мм"
+    altered["build_config"]["ops"][1]["marks"][0]["text"] = "OTHER {№}"
+    altered["operations"][1]["fields"]["coaxMarks"][0]["text"] = "OTHER {№}"
+    second, why = recipe(altered)
+    assert second is not None, why
+    assert first.key == second.key
+    assert first.row != second.row
+
+    altered["operations"][0]["fields"]["coax"]["stripProgram"]["boundaries"][0]["value"] = "4"
+    third, why = recipe(altered)
+    assert third is not None, why
+    assert first.key != third.key
+
+
+@pytest.mark.parametrize("dimension", ["l1", "l2", "l3", "d1", "d2", "d3"])
+def test_absent_fakra_dimensions_are_canonical_empty_strings(fakra_document, dimension):
+    keys = []
+    for value in ("", None):
+        fakra_document["operations"][0]["fields"]["coax"][dimension] = value
+        result, why = recipe(fakra_document)
+        assert result is not None, why
+        assert result.snapshot["operations"][0]["fields"]["coax"][dimension] == ""
+        keys.append(result.key)
+    assert keys[0] == keys[1]
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "NaN", "Infinity", "unknown", " "])
+def test_nonempty_invalid_fakra_dimension_is_refused(fakra_document, value):
+    fakra_document["operations"][0]["fields"]["coax"]["d3"] = value
+    assert recipe(fakra_document)[0] is None
+
+
+@pytest.mark.parametrize("flag", [None, False, "true", 1])
+def test_fakra_mode_fallback_requires_explicit_true(fakra_document, flag):
+    fakra_document["build_config"]["coax"]["fakraCutStrip"] = flag
+    result, why = recipe(fakra_document)
+    assert result is None
+    assert "режим" in why
+
+
+@pytest.mark.parametrize("mode_field", ["sizes", "program"])
+def test_explicit_fakra_partial_mode_overrides_fallback(fakra_document, mode_field):
+    full, why = recipe(fakra_document)
+    assert full is not None, why
+    sizes = fakra_document["operations"][0]["fields"]["coax"]
+    if mode_field == "sizes":
+        sizes["stripMode"] = "partial"
+    else:
+        sizes["stripProgram"]["mode"] = "partial"
+    partial, why = recipe(fakra_document)
+    assert partial is not None, why
+    assert partial.snapshot["operations"][0]["fields"]["coax"]["stripMode"] == "partial"
+    assert full.key != partial.key
+
+
+@pytest.mark.parametrize("note", ["Программа не рассчитана", "Необходимо подтвердить программу"])
+def test_identical_unconfirmed_fakra_programs_share_a_key(fakra_document, note):
+    fakra_document["operations"][0]["fields"]["coax"]["stripProgram"]["note"] = note
+    result, why = recipe(fakra_document)
+    assert result is not None, why
+    assert result.snapshot["operations"][0]["fields"]["coax"]["programStatus"] == "unconfirmed"
+    same, why = recipe(deepcopy(fakra_document))
+    assert same is not None, why
+    assert result.key == same.key
+
+    altered = deepcopy(fakra_document)
+    altered["operations"][0]["fields"]["coax"]["stripProgram"]["note"] += " (другая инструкция)"
+    other, why = recipe(altered)
+    assert other is not None, why
+    assert result.key != other.key
+
+    altered = deepcopy(fakra_document)
+    altered["operations"][0]["fields"]["coax"]["l1"] = "4"
+    other, why = recipe(altered)
+    assert other is not None, why
+    assert result.key != other.key
+
+
+def test_identical_absent_fakra_programs_share_a_key(fakra_document):
+    del fakra_document["operations"][0]["fields"]["coax"]["stripProgram"]
+    result, why = recipe(fakra_document)
+    assert result is not None, why
+    sizes = result.snapshot["operations"][0]["fields"]["coax"]
+    assert sizes["programStatus"] == "absent"
+    assert sizes["stripProgram"] is None
+    assert sizes["stripMode"] == "full"
+    same, why = recipe(deepcopy(fakra_document))
+    assert same is not None, why
+    assert result.key == same.key
+
+    altered = deepcopy(fakra_document)
+    altered["operations"][0]["fields"]["coax"]["l1"] = "4"
+    other, why = recipe(altered)
+    assert other is not None, why
+    assert result.key != other.key
+
+    altered = deepcopy(fakra_document)
+    altered["operations"][0]["fields"]["coax"]["stripProgram"] = {"note": "Необходимо подтвердить программу"}
+    other, why = recipe(altered)
+    assert other is not None, why
+    assert result.key != other.key
+
+
 def issue(index, doc=None):
     card = ProjectTechcard.create(project="708К.", item_index=index, product_name=f"Сборка {index}",
         source_calculation="", deadline=None, now=NOW).rebuild(doc or document(), NOW).issue(NOW)
@@ -124,11 +251,109 @@ def test_execution_differences_do_not_group(change):
     assert one.key != two.key
 
 
-@pytest.mark.parametrize("missing", ["stripProgram", "stripMode", "d1"])
-def test_missing_strip_settings_are_ineligible(missing):
+def test_missing_strip_mode_is_ineligible_without_fakra_fallback():
     doc = document()
-    del doc["operations"][0]["fields"]["coax"][missing]
+    del doc["operations"][0]["fields"]["coax"]["stripMode"]
     assert recipe(doc)[0] is None
+
+
+def test_missing_strip_program_is_eligible_and_keeps_size_identity():
+    doc = document()
+    del doc["operations"][0]["fields"]["coax"]["stripProgram"]
+    first, why = recipe(doc)
+    assert first is not None, why
+    assert first.snapshot["operations"][0]["fields"]["coax"]["programStatus"] == "absent"
+    same, why = recipe(deepcopy(doc))
+    assert same is not None, why
+    assert first.key == same.key
+
+    doc["operations"][0]["fields"]["coax"]["l1"] = "4"
+    different, why = recipe(doc)
+    assert different is not None, why
+    assert first.key != different.key
+
+
+@pytest.mark.parametrize("parts", [None, []])
+def test_label_material_falls_back_to_issued_card_consumables(parts):
+    doc = document()
+    raw = doc["build_config"]["ops"][1]
+    if parts is None:
+        del raw["parts"]
+    else:
+        raw["parts"] = parts
+    tooling = doc["operations"][1]["card"]["tooling"]
+    tooling.extend([
+        {"section": "Расходники", "name": "  "},
+        {"section": "Расходники", "name": "  VL-S641  "},
+    ])
+    original = deepcopy(doc)
+    first, why = recipe(doc)
+    assert first is not None, why
+    assert first.snapshot["operations"][1]["parameters"]["labelMaterial"] == ["VL-S641"]
+    assert doc == original
+    same, why = recipe(deepcopy(doc))
+    assert same is not None, why
+    assert first.key == same.key
+
+    tooling[-1]["name"] = "OTHER-TAPE"
+    different, why = recipe(doc)
+    assert different is not None, why
+    assert first.key != different.key
+
+
+@pytest.mark.parametrize("consumable", [
+    {"section": "Расходники", "name": "  "},
+    {"section": "Инструмент", "name": "VL-S641"},
+])
+def test_label_material_is_required_when_no_usable_consumable_exists(consumable):
+    doc = document()
+    del doc["build_config"]["ops"][1]["parts"]
+    doc["operations"][1]["card"]["tooling"].append(consumable)
+    result, why = recipe(doc)
+    assert result is None
+    assert "материал этикетки" in why
+
+
+@pytest.mark.parametrize("field", ["program", "parameters"])
+@pytest.mark.parametrize("placeholder", [None, "", "-", "не задано", "unknown"])
+def test_printer_placeholders_allow_grouping_but_card_settings_remain_distinct(field, placeholder):
+    doc = document()
+    printer = doc["operations"][1]["card"]["tooling"][0]
+    if placeholder is None:
+        del printer[field]
+    else:
+        printer[field] = placeholder
+    first, why = recipe(doc)
+    assert first is not None, why
+    same, why = recipe(deepcopy(doc))
+    assert same is not None, why
+    assert first.key == same.key
+
+    printer[field] = "confirmed-other"
+    different, why = recipe(doc)
+    assert different is not None, why
+    assert first.key != different.key
+
+
+@pytest.mark.parametrize("copies_per_mark", [1, 2])
+def test_multi_cable_label_units_may_match_layout_times_cables(copies_per_mark):
+    doc = document(cables=4)
+    raw = doc["build_config"]["ops"][1]
+    for mark in raw["marks"]:
+        mark["copies"] = copies_per_mark
+    raw["units"] = 3 * copies_per_mark * 4
+    first, why = recipe(doc)
+    assert first is not None, why
+    assert first.row["cables_per_assembly"] == "4"
+    assert sum(mark["copies"] for mark in first.row["labels"]) == 3 * copies_per_mark
+    same, why = recipe(deepcopy(doc))
+    assert same is not None, why
+    assert first.key == same.key
+
+    raw["units"] -= 1
+    result, why = recipe(doc)
+    assert result is None
+    assert "Количество этикеток" in why
 
 
 def test_invalid_program_and_nonpreparation_pf_are_ineligible():
