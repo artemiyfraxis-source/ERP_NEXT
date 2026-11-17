@@ -10,8 +10,9 @@ TSPL status machine, held by CHECK constraints and the conditional UPDATEs below
                          │  └──result not ok──▶ failed
                          └─ lease expired ─▶ claimed again (a duplicate label beats a lost one)
 A job never goes back to pending. Finished TSPL jobs older than 30 days are purged on claim.
-Godex marking (migration 0189) uses an exact machine/queue, immutable PNG and attempt token;
-spool acceptance is `spooled`, while expiration becomes `unknown` and pauses that printer until reconciliation.
+Godex marking (migration 0190) uses an exact machine/queue, immutable PNG and attempt token;
+spool acceptance is `spooled`, while expiration becomes `unknown` and pauses that printer until the operator resolves
+it in ERP. A late agent receipt is stored on the `unknown` job; re-sending it answers the job's current status.
 Marking history is retained. `warehouse_label_agent` remains the warehouse TSPL heartbeat only."""
 
 from __future__ import annotations
@@ -209,9 +210,9 @@ def claim(uow, *, printer: str, host: str, now: datetime, token_id: UUID | None 
                 old, new = session.get(AgentTokenRow, agent.token_id), session.get(AgentTokenRow, token_id)
                 if old and new and old.retired and not new.retired and old.machine_id == new.machine_id:
                     agent.token_id = token_id
-            if agent and (agent.token_id not in (None, token_id) or
-                          (agent.printer and agent.printer != printer.strip()) or
-                          (agent.host and agent.host != host.strip())):
+            # Bound by the enrolled token (and so by its machine) only: a renamed Windows queue («TSC … (копия 1)»)
+            # or a changed config printer must not silently stop warehouse printing; the heartbeat below records them.
+            if agent and agent.token_id not in (None, token_id):
                 return None
             if not printer.strip():
                 return None
@@ -335,7 +336,12 @@ def claim_marking(uow, *, machine_id, token_id, now):
     return None
 
 
-def report_marking(uow, job_id, *, machine_id, token_id, attempt, outcome, message, spool_job_id, now):
+def report_marking(uow, job_id, *, machine_id, token_id, attempt, outcome, message, spool_job_id, now) -> str:
+    """The agent's receipt for one attempt → the job's status after it. Idempotent: the same receipt again answers
+    the current status, so an agent holding an `unknown` receipt learns when the operator resolved the job.
+    A receipt after the lease ran out (the job is `unknown` by then) is stored for the operator, the status stays."""
+    if outcome not in ("spooled", "failed", "unknown"):
+        raise ValueError("Неизвестный результат печати")
     with uow:
         session = _session(uow)
         row = session.scalar(select(LabelJobRow).where(LabelJobRow.id == job_id).with_for_update())
@@ -347,23 +353,29 @@ def report_marking(uow, job_id, *, machine_id, token_id, attempt, outcome, messa
             raise JobFinished("Попытка печати устарела")
         receipt = {"outcome": outcome, "message": message[:ERROR_MAX], "spool_job_id": spool_job_id}
         if row.receipt == receipt:
-            return
-        if row.status != TAKEN:
-            raise JobFinished("Результат уже записан или требуется проверка оператором")
-        lease = row.lease_until.replace(tzinfo=now.tzinfo) if row.lease_until.tzinfo is None else row.lease_until
-        if lease < now:
+            return row.status
+        if row.status == TAKEN:
+            lease = row.lease_until.replace(tzinfo=now.tzinfo) if row.lease_until.tzinfo is None else row.lease_until
+            if lease >= now:
+                changed = session.execute(update(LabelJobRow).where(LabelJobRow.id == job_id,
+                    LabelJobRow.status == TAKEN, LabelJobRow.attempt == attempt, LabelJobRow.claim_token_id == token_id)
+                    .values(status=outcome, lease_until=None, finished_at=now, receipt=receipt,
+                            error=(message[:ERROR_MAX] or NO_REASON) if outcome in ("failed", "unknown") else None)
+                    .execution_options(synchronize_session=False))
+                if changed.rowcount != 1:
+                    raise JobFinished("Результат уже записан")
+                uow.commit()
+                return outcome
             expire_marking(session, now)
-            uow.commit()
-            raise JobFinished("Результат неизвестен — требуется проверка оператором")
-        if outcome not in ("spooled", "failed", "unknown"):
-            raise ValueError("Неизвестный результат печати")
-        changed = session.execute(update(LabelJobRow).where(LabelJobRow.id == job_id,
-            LabelJobRow.status == TAKEN, LabelJobRow.attempt == attempt, LabelJobRow.claim_token_id == token_id)
-            .values(status=outcome, lease_until=None, finished_at=now, receipt=receipt,
-                    error=(message[:ERROR_MAX] or NO_REASON) if outcome in ("failed", "unknown") else None))
-        if changed.rowcount != 1:
+            session.flush()
+            session.refresh(row)
+        if row.receipt is not None:
             raise JobFinished("Результат уже записан")
+        # Late receipt: the job became `unknown` (or the operator already resolved it). Keep the operator's decision.
+        row.receipt = receipt
+        status = row.status
         uow.commit()
+        return status
 
 
 def agent_status(uow) -> dict:

@@ -8,6 +8,12 @@ import { boundPrinter, markingApi, type MarkingCatalog, type MarkingGeometry, ty
 import { MarkingBatchProgress } from "./MarkingPrintWindow";
 import "./marking.css";
 
+/** Cloned PCs share one hostname: the IP and a short machine number tell them apart. */
+function workplaceName(printer: { pc: string; machine_id: string; ip?: string }) {
+  const details = [printer.ip, `№ ${printer.machine_id.slice(0, 8)}`].filter(Boolean).join(", ");
+  return `${printer.pc || "ПК без имени"} (${details})`;
+}
+
 export function MarkingProfilesWindow({ equipmentIds, canEdit, close }: { equipmentIds: string[]; canEdit: boolean; close: () => void }) {
   const [catalog, setCatalog] = useState<MarkingCatalog | null>(null);
   const [machineId, setMachineId] = useState("");
@@ -63,11 +69,11 @@ export function MarkingProfilesWindow({ equipmentIds, canEdit, close }: { equipm
           <label>Материал / профиль<select name="equipment-profile" autoComplete="off" disabled={locked || !machine} value={profileId} onChange={(event) => setProfileId(event.target.value)}>
             <option value="">Выберите профиль…</option>{machine?.profiles.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.calibrated ? "Откалиброван" : "Не откалиброван"}</option>)}</select></label>
           <div className="marking-target"><span className="muted">Текущий принтер</span><b>{machine?.binding?.printer || "Не привязан"}</b>
-            {machine?.binding && <span className={printer?.online ? "tone-ok" : "tone-warn"}>{printer?.pc ? `${printer.pc} · ` : ""}{printer?.online ? "На связи" : "Не на связи"}</span>}</div>
+            {machine?.binding && <span className={printer?.online ? "tone-ok" : "tone-warn"}>{printer ? `${workplaceName(printer)} · ` : ""}{printer?.online ? "На связи" : "Не на связи"}</span>}</div>
         </div>
         {canEdit && machine && <div className="marking-binding">
           <label>Принтер на рабочем месте<select name="equipment-printer" autoComplete="off" disabled={locked} value={target} onChange={(event) => setTarget(event.target.value)}>
-            <option value="">Выберите принтер…</option>{printers.map((item) => <option key={JSON.stringify([item.machine_id, item.name])} value={JSON.stringify([item.machine_id, item.name])}>{item.pc} · {item.name}{item.online ? "" : " · Не на связи"}</option>)}</select></label>
+            <option value="">Выберите принтер…</option>{printers.map((item) => <option key={JSON.stringify([item.machine_id, item.name])} value={JSON.stringify([item.machine_id, item.name])}>{workplaceName(item)} · {item.name}{item.online ? "" : " · Не на связи"}</option>)}</select></label>
           <button type="button" className="secondary" disabled={locked || !target} onClick={() => void bind()}>{busy ? "Сохранение…" : "Привязать принтер"}</button>
         </div>}
         {profile && <ProfileEditor key={profile.id} profile={profile} canEdit={canEdit} online={Boolean(printer?.online && printer.present)} onBusy={setEditorBusy} onDirty={setEditorDirty}

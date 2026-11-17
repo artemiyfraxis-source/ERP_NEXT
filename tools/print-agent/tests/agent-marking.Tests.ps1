@@ -46,16 +46,52 @@ Describe 'Exact marking DEVMODE' {
         [BitConverter]::ToInt16($mode,80) | Should Be 925
         [BitConverter]::ToInt16($mode,76) | Should Be 2
     }
-    foreach ($offset in @(76,78,80,82,84,86,90,92,94,96,100)) {
-        It "rejects driver substitution of field $offset" {
+    foreach ($offset in @(76,78,80,82,90)) {
+        It "rejects driver substitution of required field $offset" {
             $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20,$false)
             $returned = $mode.Clone(); $returned[$offset] = $returned[$offset] -bxor 1
             { [ErpGdiPrinter]::ValidateMode($mode,$returned) } | Should Throw 'substituted'
         }
     }
+    It 'requests only required fields from a driver that offers nothing else' {
+        $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20,$false)
+        [BitConverter]::ToInt32($mode,72) | Should Be (1 -bor 2 -bor 4 -bor 8 -bor 1024)
+    }
+    It 'requests optional fields the driver offers' {
+        $original = New-TestMode
+        [Buffer]::BlockCopy([BitConverter]::GetBytes([int](16 -bor 256 -bor 2048 -bor 4096 -bor 8192 -bor 32768 -bor 65536)),0,$original,72,4)
+        $fields = [BitConverter]::ToInt32([ErpGdiPrinter]::RequestMode($original,92.5,20,$false),72)
+        $fields | Should Be (1 -bor 2 -bor 4 -bor 8 -bor 1024 -bor 16 -bor 256 -bor 2048 -bor 4096 -bor 8192 -bor 32768)
+    }
+    It 'accepts a label driver that drops duplex, collate, colour, scale, copies and Y resolution' {
+        $original = New-TestMode
+        [Buffer]::BlockCopy([BitConverter]::GetBytes([int](16 -bor 256 -bor 2048 -bor 4096 -bor 8192 -bor 32768)),0,$original,72,4)
+        $mode = [ErpGdiPrinter]::RequestMode($original,92.5,20,$false)
+        $returned = $mode.Clone()
+        [Buffer]::BlockCopy([BitConverter]::GetBytes([int](1 -bor 2 -bor 4 -bor 8 -bor 1024)),0,$returned,72,4)
+        foreach ($offset in @(84,86,92,94,96,100)) { $returned[$offset] = $returned[$offset] -bxor 1 }
+        [ErpGdiPrinter]::ValidateMode($mode,$returned)
+    }
+    It 'accepts colour, duplex and collation the driver kept but changed' {
+        $original = New-TestMode
+        [Buffer]::BlockCopy([BitConverter]::GetBytes([int](2048 -bor 4096 -bor 32768)),0,$original,72,4)
+        $mode = [ErpGdiPrinter]::RequestMode($original,92.5,20,$false)
+        $returned = $mode.Clone()
+        foreach ($offset in @(92,94,100)) { $returned[$offset] = $returned[$offset] -bxor 1 }
+        [ErpGdiPrinter]::ValidateMode($mode,$returned)
+    }
+    foreach ($case in @(@(16,84),@(256,86),@(8192,96))) {
+        It "rejects a kept field $($case[1]) with another scale, copy count or Y resolution" {
+            $original = New-TestMode
+            [Buffer]::BlockCopy([BitConverter]::GetBytes([int]$case[0]),0,$original,72,4)
+            $mode = [ErpGdiPrinter]::RequestMode($original,92.5,20,$false)
+            $returned = $mode.Clone(); $returned[$case[1]] = $returned[$case[1]] -bxor 2
+            { [ErpGdiPrinter]::ValidateMode($mode,$returned) } | Should Throw 'substituted'
+        }
+    }
     It 'rejects a driver that removes required fields' {
         $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20,$false)
-        $returned = $mode.Clone(); $returned[72] = 0
+        $returned = $mode.Clone(); $returned[72] = $returned[72] -band (-bnot 8)
         { [ErpGdiPrinter]::ValidateMode($mode,$returned) } | Should Throw 'removed'
     }
     It 'rejects missing private DEVMODE data' {
@@ -152,7 +188,8 @@ Describe 'Marking discovery and protocol' {
         Invoke-MarkingPollOnce 'http://test' 'token' 'TSC' 'Godex 中文' | Should Be 'done'
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
             $Url -eq 'http://test/api/stock/labels/jobs/claim' -and $Body.machine_id -eq 'machine-1' -and
-            $MachineId -eq 'machine-1' -and $Body.capabilities -contains 'tspl' -and $Body.capabilities -contains 'gdi_png'
+            $MachineId -eq 'machine-1' -and $Body.capabilities -contains 'tspl' -and $Body.capabilities -contains 'gdi_png' -and
+            $Body.printer -eq 'TSC' -and $Body.host -eq $env:COMPUTERNAME
         }
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
             $Url -eq 'http://test/api/stock/labels/jobs/mark-1/result' -and $Body.attempt -eq 'attempt-1' -and
@@ -202,6 +239,50 @@ Describe 'Marking discovery and protocol' {
         Invoke-MarkingPollOnce 'http://test' 'token' '' 'Godex 中文' | Should Be 'done'
         Invoke-MarkingPollOnce 'http://test' 'token' '' 'Godex 中文' | Should Be 'blocked'
         Assert-MockCalled Send-PngToPrinter -Times 1 -Exactly -Scope It
+    }
+    It 'learns the operator resolution from the server and resumes marking' {
+        Mock Send-PngToPrinter { @{ outcome = 'unknown'; message = 'EndDoc failed' } }
+        $script:ServerStatus = 'unknown'
+        Mock Invoke-ErpApi {
+            if ($Url -like '*/claim') { return @{ job = (New-TestMarkingJob) } }
+            return @{ ok = $true; status = $script:ServerStatus }
+        }
+        Invoke-MarkingPollOnce 'http://test' 'token' '' 'Godex 中文' | Should Be 'done'
+        Invoke-MarkingPollOnce 'http://test' 'token' '' 'Godex 中文' | Should Be 'blocked'
+        $script:ServerStatus = 'failed'  # the operator marked it «Ошибка печати» in ERP
+        Sync-PrintReceipts 'http://test' 'token' | Should Be $false
+        $receipt = Get-Content -Raw -Encoding UTF8 (Get-PrintReceiptPath 'mark-1' 'attempt-1') | ConvertFrom-Json
+        $receipt.resolved | Should Be $true
+        $receipt.payload.outcome | Should Be 'unknown'
+        (Get-PrintReceiptPath 'mark-1' 'attempt-1') | Should Match 'acknowledged'
+        Assert-MockCalled Invoke-ErpApi -Times 3 -Exactly -Scope It -ParameterFilter { $Body.outcome -eq 'unknown' -and $Body.attempt -eq 'attempt-1' }
+        Assert-MockCalled Send-PngToPrinter -Times 1 -Exactly -Scope It
+    }
+    It 'a paused marking lane still claims and prints warehouse TSPL labels' {
+        Mock Send-PngToPrinter { @{ outcome = 'unknown'; message = 'EndDoc failed' } }
+        Invoke-MarkingPollOnce 'http://test' 'token' 'TSC' 'Godex 中文' | Should Be 'done'
+        Mock Invoke-ErpApi { if ($Url -like '*/claim') { @{ job = @{ id = 'tspl-3'; format = 'tspl'; copies = 1; tspl_b64 = 'UFJJTlQgMQ==' } } } else { @{ ok = $true; status = 'unknown' } } }
+        Invoke-MarkingPollOnce 'http://test' 'token' 'TSC' 'Godex 中文' | Should Be 'done'
+        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
+            $Url -like '*/claim' -and @($Body.capabilities).Count -eq 1 -and $Body.capabilities -contains 'tspl' -and $Body.printer -eq 'TSC'
+        }
+        Assert-MockCalled Send-RawToPrinter -Times 1 -Exactly -Scope It -ParameterFilter { $PrinterName -eq 'TSC' }
+        Assert-MockCalled Send-PngToPrinter -Times 1 -Exactly -Scope It
+    }
+    It 'treats 409/404/403 on a receipt as final and does not retry it forever' {
+        Mock Send-PngToPrinter { @{ outcome = 'unknown'; message = 'EndDoc failed' } }
+        Mock Get-ErpErrorStatus { 409 }
+        Mock Invoke-ErpApi { if ($Url -like '*/claim') { return @{ job = (New-TestMarkingJob) } }; throw 'Conflict' }
+        Invoke-MarkingPollOnce 'http://test' 'token' '' 'Godex 中文' | Should Be 'done'
+        @(Get-ChildItem (Get-PrintReceiptRoot) -Filter '*.json').Count | Should Be 0
+        Sync-PrintReceipts 'http://test' 'token' | Should Be $false
+        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Url -like '*/result' }
+    }
+    It 'keeps throwing on a network failure so the receipt is retried' {
+        Mock Get-ErpErrorStatus { 0 }
+        Mock Invoke-ErpApi { if ($Url -like '*/claim') { return @{ job = (New-TestMarkingJob) } }; throw 'network lost' }
+        { Invoke-MarkingPollOnce 'http://test' 'token' '' 'Godex 中文' } | Should Throw 'network lost'
+        @(Get-ChildItem (Get-PrintReceiptRoot) -Filter '*.json').Count | Should Be 1
     }
     It 'journal failure prevents spool submission' {
         Mock Save-PrintReceipt { throw 'disk full' }

@@ -160,7 +160,11 @@ using System.Runtime.InteropServices;
 public static class ErpGdiPrinter {
   const int Fields = 72, Orientation = 76, Paper = 78, Length = 80, Width = 82;
   const int Scale = 84, Copies = 86, Quality = 90, Color = 92, Duplex = 94, YResolution = 96, Collate = 100;
-  const int Required = 1 | 2 | 4 | 8 | 16 | 256 | 1024 | 2048 | 4096 | 8192 | 32768;
+  // Label drivers (Godex EZ2350i, Seagull) drop flags they do not support. Only media, orientation and
+  // resolution are required; the effective DC is verified with GetDeviceCaps before StartDoc.
+  const int DmScale = 16, DmCopies = 256, DmYResolution = 8192;
+  const int Required = 1 | 2 | 4 | 8 | 1024;            // orientation, paper size/length/width, print quality
+  const int Optional = DmScale | DmCopies | 2048 | 4096 | DmYResolution | 32768; // requested only if the driver offers them
   [DllImport("winspool.drv", EntryPoint="OpenPrinterW", CharSet=CharSet.Unicode, SetLastError=true)]
   static extern bool OpenPrinter(string name, out IntPtr handle, IntPtr defaults);
   [DllImport("winspool.drv")] static extern bool ClosePrinter(IntPtr handle);
@@ -198,7 +202,8 @@ public static class ErpGdiPrinter {
   public static byte[] RequestMode(byte[] original, double width, double height, bool landscape) {
     CheckBuffer(original);
     byte[] b = (byte[])original.Clone();
-    int fields = (BitConverter.ToInt32(b,Fields) & ~65536) | Required; // Clear DM_FORMNAME.
+    int offered = BitConverter.ToInt32(b,Fields);
+    int fields = (offered & ~65536 & ~Optional) | Required | (offered & Optional); // Clear DM_FORMNAME.
     Buffer.BlockCopy(BitConverter.GetBytes(fields),0,b,Fields,4);
     Write(b,Orientation,landscape ? 2 : 1); Write(b,Paper,0);
     // Wire dimensions describe the final oriented raster. DEVMODE dimensions describe portrait stock.
@@ -210,11 +215,16 @@ public static class ErpGdiPrinter {
   }
   public static void ValidateMode(byte[] expected, byte[] actual) {
     CheckBuffer(expected); CheckBuffer(actual);
-    if ((BitConverter.ToInt32(actual,Fields) & Required) != Required)
+    int kept = BitConverter.ToInt32(actual,Fields);
+    if ((kept & Required) != Required)
       throw new InvalidOperationException("Driver removed required DEVMODE fields");
-    foreach (int offset in new int[] { Orientation, Paper, Length, Width, Scale, Copies, Quality, Color, Duplex, YResolution, Collate })
+    foreach (int offset in new int[] { Orientation, Paper, Length, Width, Quality })
       if (Read(expected,offset) != Read(actual,offset))
         throw new InvalidOperationException("Driver substituted DEVMODE field at " + offset);
+    // Fields a driver keeps must still mean one unscaled 300 dpi copy; colour, duplex and collation are irrelevant.
+    if ((kept & DmScale) != 0 && Read(actual,Scale) != 100) throw new InvalidOperationException("Driver substituted DEVMODE field at " + Scale);
+    if ((kept & DmCopies) != 0 && Read(actual,Copies) != 1) throw new InvalidOperationException("Driver substituted DEVMODE field at " + Copies);
+    if ((kept & DmYResolution) != 0 && Read(actual,YResolution) != 300) throw new InvalidOperationException("Driver substituted DEVMODE field at " + YResolution);
   }
   public static byte[] ValidateWithDriver(string name, double width, double height, bool landscape) {
     IntPtr printer, input = IntPtr.Zero, output = IntPtr.Zero;
@@ -312,8 +322,9 @@ public static class ErpGdiPrinter {
         // Native geometry was verified before submission; no managed media conversion is used.
         PrintPageEventArgs page = new PrintPageEventArgs(null,Rectangle.Empty,Rectangle.Empty,document.DefaultPageSettings);
         Graphics graphics = controller.OnStartPage(document,page);
-        graphics.DrawImage(image,new RectangleF(0,0,(float)(width*300/25.4),(float)(height*300/25.4)),
-          new RectangleF(0,0,image.Width,image.Height),GraphicsUnit.Pixel);
+        // 1:1 in device pixels: the raster is already the label at 300 dpi (ValidateGeometry checked it against the
+        // millimetres). Scaling to width*300/25.4 (e.g. 1092.52 for 1093 dots) would drop a column.
+        graphics.DrawImage(image,new Rectangle(0,0,image.Width,image.Height),0,0,image.Width,image.Height,GraphicsUnit.Pixel);
         controller.OnEndPage(document,page);
         controller.OnEndPrint(document,printEvent);
       } finally { controller.Cleanup(); }
@@ -370,6 +381,18 @@ function Save-PrintReceipt {
     else { [IO.File]::Move($temporary, $Path) }
 }
 
+# HTTP status of a failed Invoke-RestMethod (PS 5.1 WebException and PS 7 HttpResponseException); 0 - no answer.
+function Get-ErpErrorStatus {
+    param($ErrorRecord)
+    try { if ($ErrorRecord.Exception.Response) { return [int]$ErrorRecord.Exception.Response.StatusCode } } catch {}
+    return 0
+}
+
+# Sends pending receipts. An `unknown` receipt stays pending after the server acknowledged it: re-sending the same
+# receipt is idempotent and answers the job's status, so the agent sees when the operator resolved the job in ERP
+# («Проверка» → spooled/failed) and only then marks it resolved. Returns $true while an unresolved unknown remains
+# (the marking lane stays paused; TSPL keeps printing). 404/409/403 are terminal: the server will never take this
+# receipt (the job is gone, already has another result, or belongs to another token) and holds the job itself.
 function Sync-PrintReceipts {
     param([string]$Base, [string]$AuthToken)
     $root = Get-PrintReceiptRoot
@@ -377,18 +400,35 @@ function Sync-PrintReceipts {
     if (-not (Test-Path -LiteralPath $root)) { return $false }
     foreach ($file in @(Get-ChildItem -LiteralPath $root -Filter '*.json' -File)) {
         $receipt = [IO.File]::ReadAllText($file.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json
-        if ($receipt.payload.outcome -eq 'unknown' -and -not $receipt.resolved) { $blocked = $true }
-        if ($receipt.acknowledged) {
-            if ($receipt.payload.outcome -ne 'unknown' -or $receipt.resolved) { Move-AcknowledgedPrintReceipt $file.FullName }
-            continue
+        $pending = $receipt.payload.outcome -eq 'unknown' -and -not $receipt.resolved
+        if ($receipt.acknowledged -and -not $pending) { Move-AcknowledgedPrintReceipt $file.FullName; continue }
+        if ($receipt.base -ne $Base -or $receipt.machine_id -ne (Get-MachineId)) {
+            if ($receipt.acknowledged) { $blocked = $true; continue }
+            throw 'Квитанция печати принадлежит другому серверу или ПК'
         }
-        if ($receipt.base -ne $Base -or $receipt.machine_id -ne (Get-MachineId)) { throw 'Квитанция печати принадлежит другому серверу или ПК' }
         $body = @{ attempt = $receipt.payload.attempt; outcome = $receipt.payload.outcome; message = $receipt.payload.message }
         if ($receipt.payload.spool_job_id) { $body.spool_job_id = $receipt.payload.spool_job_id }
-        $null = Invoke-ErpApi -Url "$Base/api/stock/labels/jobs/$($receipt.job_id)/result" -Body $body -AuthToken $AuthToken -MachineId $receipt.machine_id
-        $receipt.acknowledged = $true
-        Save-PrintReceipt $file.FullName $receipt
-        if ($receipt.payload.outcome -ne 'unknown' -or $receipt.resolved) { Move-AcknowledgedPrintReceipt $file.FullName }
+        $status = ''
+        try {
+            $reply = Invoke-ErpApi -Url "$Base/api/stock/labels/jobs/$($receipt.job_id)/result" -Body $body -AuthToken $AuthToken -MachineId $receipt.machine_id
+            if ($reply -and $reply.status) { $status = [string]$reply.status }
+        } catch {
+            $code = Get-ErpErrorStatus $_
+            if ($code -notin @(403, 404, 409)) { throw }
+            Write-Log "Квитанция задания $($receipt.job_id) закрыта сервером (HTTP $code): $($_.Exception.Message)"
+            $status = 'closed'
+        }
+        $changed = -not $receipt.acknowledged
+        if ($pending -and $status -and $status -ne 'unknown') {
+            $receipt | Add-Member -NotePropertyName resolved -NotePropertyValue $true -Force
+            Write-Log "Неизвестный результат задания $($receipt.job_id) сверен в ERP: $status"
+            $pending = $false; $changed = $true
+        }
+        if ($changed) {
+            $receipt.acknowledged = $true
+            Save-PrintReceipt $file.FullName $receipt
+        }
+        if ($pending) { $blocked = $true } else { Move-AcknowledgedPrintReceipt $file.FullName }
     }
     return $blocked
 }
@@ -439,14 +479,17 @@ function Send-PngToPrinter {
 
 function Invoke-MarkingPollOnce {
     param([string]$Base, [string]$AuthToken, [string]$PrinterName, [string]$MarkingPrinterName, [switch]$DryRun)
-    if (Sync-PrintReceipts $Base $AuthToken) { return 'blocked' }
+    # An unresolved unknown pauses only the marking lane; warehouse TSPL labels keep printing.
+    $paused = Sync-PrintReceipts $Base $AuthToken
     $printers = @(Get-AgentPrinters $PrinterName $MarkingPrinterName)
-    $capabilities = @($printers | Where-Object { $_.present } | ForEach-Object { $_.kind })
-    if (-not $capabilities.Count) { return 'idle' }
+    $capabilities = @($printers | Where-Object { $_.present -and -not ($paused -and $_.kind -eq 'gdi_png') } | ForEach-Object { $_.kind })
+    if (-not $capabilities.Count) { if ($paused) { return 'blocked' }; return 'idle' }
     $machine = Get-MachineId
-    $claim = Invoke-ErpApi -Url "$Base/api/stock/labels/jobs/claim" -Body @{ machine_id = $machine; capabilities = $capabilities } -AuthToken $AuthToken -MachineId $machine
+    # The server routes TSPL by the exact queue name (and records the host), so both are always sent.
+    $claimBody = @{ machine_id = $machine; capabilities = $capabilities; printer = [string]$PrinterName; host = [string]$env:COMPUTERNAME }
+    $claim = Invoke-ErpApi -Url "$Base/api/stock/labels/jobs/claim" -Body $claimBody -AuthToken $AuthToken -MachineId $machine
     $job = $claim.job
-    if (-not $job) { return 'idle' }
+    if (-not $job) { if ($paused) { return 'blocked' }; return 'idle' }
     # TSPL keeps its established receipt and payload shapes, even on a capable agent.
     if ($job.format -eq 'tspl' -or (-not $job.format -and $job.tspl_b64)) {
         Invoke-TsplJob $Base $AuthToken $PrinterName $job -DryRun:$DryRun
@@ -457,7 +500,11 @@ function Invoke-MarkingPollOnce {
     if (Test-Path -LiteralPath $path) { return 'blocked' } # A repeated claim never prints twice.
     $receipt = @{ base = $Base; machine_id = $machine; job_id = [string]$job.id; printer = [string]$job.printer; acknowledged = $false; resolved = $false
         payload = @{ attempt = $job.attempt; outcome = 'failed'; message = '' } }
-    try { $bytes = ConvertFrom-MarkingJob $job $MarkingPrinterName }
+    try {
+        # Never print marking that was not asked for (lane paused or queue missing): it becomes a failed receipt.
+        if ($capabilities -notcontains 'gdi_png') { throw 'Маркировка на этом ПК на паузе или очередь Godex не найдена' }
+        $bytes = ConvertFrom-MarkingJob $job $MarkingPrinterName
+    }
     catch { $receipt.payload.message = $_.Exception.Message; Save-PrintReceipt $path $receipt; [void](Sync-PrintReceipts $Base $AuthToken); return 'done' }
     if ($DryRun) { $receipt.payload.message = 'dry run'; Save-PrintReceipt $path $receipt }
     else {

@@ -346,9 +346,11 @@ def agent_result(
             if payload.outcome is None or not payload.attempt:
                 raise HTTPException(422, "Нужны результат и номер попытки печати")
             machine = agent_machine(uow_factory(), _agent.actor.id, payload.machine_id or bound_machine)
-            report_marking(uow_factory(), job_id, machine_id=machine, token_id=_agent.actor.id,
+            status = report_marking(uow_factory(), job_id, machine_id=machine, token_id=_agent.actor.id,
                 attempt=payload.attempt, outcome=payload.outcome, message=payload.message,
                 spool_job_id=payload.spool_job_id, now=now)
+            # `status` tells the agent whether an `unknown` job was resolved by the operator (spooled/failed).
+            return {"ok": True, "status": status}
         else:
             if payload.ok is None:
                 raise HTTPException(422, "Нужен результат печати")

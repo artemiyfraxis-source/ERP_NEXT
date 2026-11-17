@@ -162,8 +162,26 @@ def test_queue_unknown_pauses_only_its_target_and_rejects_wrong_attempts(marking
     resolved = client.post(BASE + f"/batches/{batch['id']}/jobs/{job['id']}/resolve",
                            json={"outcome": "spooled", "reason": "Проверено на станке"})
     assert resolved.status_code == 200, resolved.text
+    # The agent re-sends its unknown receipt and learns the operator's decision.
+    assert report_marking(factory(), UUID(job["id"]), **args) == "spooled"
     next_job = claim_marking(factory(), machine_id="godex-pc", token_id=token, now=NOW)
     assert next_job["id"] == batch["jobs"][1]["id"]
+
+
+def test_late_receipt_is_shown_to_the_operator_and_keeps_unknown(marking):
+    client, factory, *_ = marking
+    batch, _, _ = enqueue(marking)
+    token = uuid4()
+    job = claim_marking(factory(), machine_id="godex-pc", token_id=token, now=NOW)
+    late = NOW + timedelta(seconds=121)
+    assert report_marking(factory(), UUID(job["id"]), machine_id="godex-pc", token_id=token, attempt=job["attempt"],
+                          outcome="spooled", message="Передано принтеру", spool_job_id=7, now=late) == "unknown"
+    with factory() as uow:
+        row = uow.session.get(LabelJobRow, UUID(job["id"]))
+        assert row.status == "unknown" and row.receipt["spool_job_id"] == 7
+    status = client.get(BASE + "/batches/" + batch["id"]).json()
+    first = status["jobs"][0]
+    assert first["status"] == "unknown" and "Агент сообщил позже — Передано принтеру" in first["message"]
 
 
 def test_expired_marking_is_never_reclaimed_and_legacy_cannot_take_it(marking):

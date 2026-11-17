@@ -67,6 +67,16 @@ it("binds the exact equipment UUID, PC and named PNG printer, excluding TSPL pri
   await waitFor(() => expect(markingApi.bind).toHaveBeenCalledWith("unit", { version: 2, machine_id: "pc-id", printer: "Godex EZ2350i" }));
 });
 
+it("tells apart two PCs with the same hostname by IP and machine number", async () => {
+  const twin = { ...catalog.printers[0], pc: "SK-20250818JOKI", ip: "192.168.1.31", machine_id: "b7c1e2d40000" };
+  vi.mocked(markingApi.machines).mockResolvedValue({ ...catalog, printers: [
+    { ...catalog.printers[0], pc: "SK-20250818JOKI", ip: "192.168.1.30", machine_id: "a1f09c3e0000" } as MarkingCatalog["printers"][number], twin as MarkingCatalog["printers"][number]] });
+  openProfiles();
+  const picker = await screen.findByLabelText("Принтер на рабочем месте");
+  expect(within(picker).getByRole("option", { name: "SK-20250818JOKI (192.168.1.30, № a1f09c3e) · Godex EZ2350i" })).toBeInTheDocument();
+  expect(within(picker).getByRole("option", { name: "SK-20250818JOKI (192.168.1.31, № b7c1e2d4) · Godex EZ2350i" })).toBeInTheDocument();
+});
+
 it("shows profiles only for matching stable equipment IDs and protects read-only access", async () => {
   const { unmount } = openProfiles(false);
   expect(await screen.findByLabelText("Ширина этикетки, мм")).toBeDisabled();

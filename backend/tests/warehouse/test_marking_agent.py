@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.main import app
 from app.modules.warehouse.devices import PrinterRow
-from app.modules.warehouse.label_jobs import LabelAgentRow, LabelJobRow, add_job, add_marking_job
+from app.modules.warehouse.label_jobs import LabelAgentRow, LabelJobRow, add_job, add_marking_job, expire_marking
 from app.modules.warehouse.marking_profiles import MarkingBatchRow, MarkingProfileRow
 from app.modules.warehouse.marking_render import Geometry, presets, render
 from app.modules.warehouse.scan_jobs import AgentTokenRow
@@ -40,6 +40,14 @@ def _batch(sessions, now):
     return batch_id
 
 
+def _operator_resolves(sessions, now, job_id, outcome, reason):
+    """What «Проверка» in ERP (workflows.marking_labels.resolve, tested there) writes on an unknown job."""
+    with sessions.begin() as session:
+        row = session.get(LabelJobRow, UUID(job_id))
+        assert row.status == "unknown"
+        row.status, row.finished_at, row.error = outcome, now, reason
+
+
 def test_heartbeat_bound_claim_receipt_and_legacy_isolation(tokens_api):
     sessions, clock = tokens_api
     admin, service = _login("admin"), TestClient(app)
@@ -58,8 +66,8 @@ def test_heartbeat_bound_claim_receipt_and_legacy_isolation(tokens_api):
     result = {"attempt": job["attempt"], "outcome": "spooled", "message": "Передано", "spool_job_id": 42}
     assert service.post(path, json=result, headers=other).status_code == 403
     assert service.post(path, json={**result, "attempt": str(uuid4())}, headers=agent).status_code == 409
-    assert service.post(path, json=result, headers=agent).status_code == 200
-    assert service.post(path, json=result, headers=agent).status_code == 200
+    assert service.post(path, json=result, headers=agent).json() == {"ok": True, "status": "spooled"}
+    assert service.post(path, json=result, headers=agent).json() == {"ok": True, "status": "spooled"}
     assert service.post(path, json={**result, "outcome": "unknown"}, headers=agent).status_code == 409
     assert service.post(f"/api/stock/labels/agent/jobs/{job['id']}/result", json={"ok": True}, headers=agent).status_code == 422
     # Omitted capability fields cannot turn a known Godex queue into a TSPL destination.
@@ -81,13 +89,55 @@ def test_marking_timeout_and_disappeared_inventory_are_not_reprints(tokens_api):
     job = service.post(CLAIM, json=payload, headers=agent).json()["job"]
     clock.now += timedelta(seconds=121)
     assert service.post(CLAIM, json=payload, headers=agent).json()["job"] is None
-    late = service.post(f"/api/stock/labels/jobs/{job['id']}/result", headers=agent,
-        json={"attempt": job["attempt"], "outcome": "spooled", "message": "Поздний ответ"})
-    assert late.status_code == 409
+    path = f"/api/stock/labels/jobs/{job['id']}/result"
+    late = {"attempt": job["attempt"], "outcome": "spooled", "message": "Поздний ответ"}
+    # The late receipt is stored for the operator and acknowledged idempotently; the job stays unknown.
+    assert service.post(path, headers=agent, json=late).json() == {"ok": True, "status": "unknown"}
+    assert service.post(path, headers=agent, json=late).json() == {"ok": True, "status": "unknown"}
+    assert service.post(path, headers=agent, json={**late, "outcome": "failed"}).status_code == 409
     assert service.post(HEARTBEAT, headers=agent, json={"machine_id": "pc-1", "version": "2.9.0", "printers": []}).status_code == 200
     with sessions() as session:
-        assert session.get(LabelJobRow, UUID(job["id"])).status == "unknown"
+        row = session.get(LabelJobRow, UUID(job["id"]))
+        assert row.status == "unknown" and row.receipt["outcome"] == "spooled"
         assert session.get(PrinterRow, ("pc-1", "Godex EZ2350i")).present is False
+
+
+def test_unknown_receipt_learns_the_operator_resolution(tokens_api):
+    sessions, clock = tokens_api
+    admin, service = _login("admin"), TestClient(app)
+    agent = _agent(admin, "pc-1")
+    _batch(sessions, clock.now)
+    payload = {"machine_id": "pc-1", "capabilities": ["gdi_png"]}
+    job = service.post(CLAIM, json=payload, headers=agent).json()["job"]
+    path = f"/api/stock/labels/jobs/{job['id']}/result"
+    unknown = {"attempt": job["attempt"], "outcome": "unknown", "message": "EndDoc failed"}
+    assert service.post(path, headers=agent, json=unknown).json() == {"ok": True, "status": "unknown"}
+    # The printer lane stays paused while the result is unknown.
+    assert service.post(CLAIM, json=payload, headers=agent).json()["job"] is None
+    assert service.post(path, headers=agent, json=unknown).json()["status"] == "unknown"
+    _operator_resolves(sessions, clock.now, job["id"], "failed", "Этикетка не вышла")
+    # Re-sending the same receipt is how the agent learns the decision and unblocks itself.
+    assert service.post(path, headers=agent, json=unknown).json() == {"ok": True, "status": "failed"}
+    following = service.post(CLAIM, json=payload, headers=agent).json()["job"]
+    assert following is not None and following["id"] != job["id"]
+
+
+def test_late_receipt_after_operator_resolution_answers_the_decision(tokens_api):
+    sessions, clock = tokens_api
+    admin, service = _login("admin"), TestClient(app)
+    agent = _agent(admin, "pc-1")
+    _batch(sessions, clock.now)
+    payload = {"machine_id": "pc-1", "capabilities": ["gdi_png"]}
+    job = service.post(CLAIM, json=payload, headers=agent).json()["job"]
+    clock.now += timedelta(seconds=121)
+    with sessions.begin() as session:  # the job became unknown by expiry before the operator looked
+        expire_marking(session, clock.now)
+    _operator_resolves(sessions, clock.now, job["id"], "spooled", None)
+    answer = service.post(f"/api/stock/labels/jobs/{job['id']}/result", headers=agent,
+        json={"attempt": job["attempt"], "outcome": "unknown", "message": "Агент прерван"})
+    assert answer.json() == {"ok": True, "status": "spooled"}
+    with sessions() as session:
+        assert session.get(LabelJobRow, UUID(job["id"])).status == "spooled"
 
 
 def test_warehouse_route_survives_enrolled_token_replacement(tokens_api):
@@ -110,3 +160,34 @@ def test_warehouse_route_survives_enrolled_token_replacement(tokens_api):
     answer = service.post(CLAIM, json=payload, headers=second)
     assert answer.status_code == 200, answer.text
     assert answer.json()["job"]["id"] == str(job_id)
+
+
+def test_agent_claim_body_with_both_printers_hands_out_tspl_and_survives_a_renamed_queue(tokens_api):
+    """The exact body Invoke-MarkingPollOnce sends: machine, capabilities, the TSC queue and the host."""
+    sessions, clock = tokens_api
+    admin, service = _login("admin"), TestClient(app)
+    headers = _bearer(_issue(admin, scopes=("labels:print", "scan:upload"), name="warehouse")["token"])
+
+    def heartbeat(tsc):
+        body = {"machine_id": "warehouse", "pc_name": "SK-1", "version": "2.9.0", "printers": [
+            {"name": tsc, "driver": "TSC", "port": "USB002", "kind": "tspl", "present": True},
+            {"name": "Godex EZ2350i", "driver": "Godex", "port": "USB001", "kind": "gdi_png", "present": True}]}
+        assert service.post(HEARTBEAT, headers=headers, json=body).status_code == 200
+
+    heartbeat("TSC MB341")
+    with sessions.begin() as session:
+        first = add_job(session, tspl=b"PRINT 1,1", copies=1, kind="sample", lot_id=None, created_by="test", now=clock.now)
+    agent_body = {"machine_id": "warehouse", "capabilities": ["tspl", "gdi_png"], "printer": "TSC MB341", "host": "SK-1"}
+    # Without the queue name the server cannot route TSPL: the agent must send it.
+    no_printer = {"machine_id": "warehouse", "capabilities": ["tspl", "gdi_png"]}
+    assert service.post(CLAIM, json=no_printer, headers=headers).json()["job"] is None
+    answer = service.post(CLAIM, json=agent_body, headers=headers).json()["job"]
+    assert answer["id"] == str(first)
+    # Windows renamed the queue and the config followed: printing continues, the heartbeat row follows the new name.
+    heartbeat("TSC MB341 (копия 1)")
+    with sessions.begin() as session:
+        second = add_job(session, tspl=b"PRINT 1,1", copies=1, kind="sample", lot_id=None, created_by="test", now=clock.now)
+    renamed = service.post(CLAIM, json={**agent_body, "printer": "TSC MB341 (копия 1)"}, headers=headers).json()["job"]
+    assert renamed["id"] == str(second)
+    with sessions() as session:
+        assert session.get(LabelAgentRow, 1).printer == "TSC MB341 (копия 1)"

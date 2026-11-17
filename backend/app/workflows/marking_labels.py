@@ -115,7 +115,8 @@ def machines(_principal: ReadUser, factory: Factory, now: Now):
         printers = []
         for printer, pc in uow.session.execute(select(PrinterRow, ScanAgentRow).join(ScanAgentRow)):
             seen = printer.last_seen.replace(tzinfo=now.tzinfo) if printer.last_seen.tzinfo is None else printer.last_seen
-            printers.append({"machine_id": pc.machine_id, "pc": pc.pc_name, "name": printer.name,
+            # Cloned PCs share a hostname: the IP and machine id tell them apart in the printer list.
+            printers.append({"machine_id": pc.machine_id, "pc": pc.pc_name, "ip": pc.ip_lan or pc.ip_seen, "name": printer.name,
                 "driver": printer.driver, "port": printer.port, "kind": printer.kind, "present": printer.present,
                 "online": printer.present and seen >= now - LIVE_FOR})
         uow.commit()
@@ -360,8 +361,17 @@ def batch_view(batch, session):
     return {"id": str(batch.id), "status": status, "status_label": STATUS_LABELS[status], "total": batch.total,
         "reprint_of": str(batch.reprint_of) if batch.reprint_of else None,
         "jobs": [{"id": str(job.id), "sequence": job.sequence, "status": job.status,
-            "status_label": STATUS_LABELS[job.status], "message": job.error or (job.receipt or {}).get("message", ""),
+            "status_label": STATUS_LABELS[job.status], "message": job_message(job),
             "spool_job_id": (job.receipt or {}).get("spool_job_id")} for job in jobs]}
+
+
+def job_message(job):
+    receipt = job.receipt or {}
+    if job.status == "unknown" and receipt.get("outcome") in ("spooled", "failed"):
+        # The agent answered after its lease ran out: the operator decides, the agent's word is a hint.
+        late = STATUS_LABELS[receipt["outcome"]] + (f": {receipt['message']}" if receipt.get("message") else "")
+        return f"{job.error or ''} Агент сообщил позже — {late}".strip()
+    return job.error or receipt.get("message", "")
 
 
 def batch_access(batch, principal, uow):
