@@ -40,12 +40,15 @@ def _required(value: object, label: str):
     return deepcopy(value)
 
 
-def _card_snapshot(card, marks, lengths):
+def _card_snapshot(card, marks, lengths, tube_cuts=()):
     """Only rendered step text may vary; never erase a number/text inside equipment or tooling."""
     result = deepcopy(card)
     for step in result.get("steps") or []:
         for field in ("text", "tolerance"):
             value = str(step.get(field) or "")
+            for batch_text, per_item_text in tube_cuts:
+                if value == batch_text:
+                    value = per_item_text
             for mark in marks:
                 if mark.get("text"):
                     value = value.replace(str(mark["text"]), "{label}")
@@ -201,8 +204,16 @@ def cutting_recipe(project: str, site: str, document: Mapping | None,
                     # Printer program/parameters are part of the card snapshot: members must match them exactly, but a
                     # library placeholder («не задано») shared by all members does not block grouping.
                 else:
-                    parameters["tube"] = {"article": _required(coax.get("tutArt"), "материал ТУТ"),
-                                          "length": number(coax.get("tutLength"))}
+                    tube = {"article": _required(coax.get("tutArt"), "материал ТУТ")}
+                    if raw.get("protective") and isinstance(coax.get("tutLengths"), Mapping):
+                        # Read the frozen issued lengths; never apply a new rule to an old production snapshot.
+                        tube["lengths"] = {place: number(coax["tutLengths"].get(place)) for place in ("A", "B", "middle")}
+                        layout = raw.get("marks") or coax.get("marks") or next(
+                            (item.get("marks") for item in raw_ops if item.get("markMaterial") == "tape" and item.get("marks")), [])
+                        tube["marks"] = [{k: v for k, v in mark.items() if k != "text"} for mark in layout]
+                    else:
+                        tube["length"] = number(coax.get("tutLength"))
+                    parameters["tube"] = tube
             # Keep all other fields, including tolerances and A/B orientation. Only cable length varies.
             lengths = []
             if op is cut:
@@ -213,7 +224,17 @@ def cutting_recipe(project: str, site: str, document: Mapping | None,
                 fields.pop("finishedLength", None)
                 fields.pop("lPlusA", None)
                 fields.pop("lPlusB", None)
-            card = _card_snapshot(card, marks, lengths)
+            tube_cuts = []
+            for group in fields.get("coaxProtectiveTubes") or []:
+                units = number(group.get("units"))
+                quantity = Decimal(number(config.get("partQty", (document.get("kit") or {}).get("part_quantity"))))
+                total = number(Decimal(units) * quantity).replace(".", ",")
+                material = coax.get("tutName") or coax.get("tutArt") or "ТУТ"
+                place = "центральные" if group.get("place") == "middle" else "концевые"
+                tail = f"отрезков по {number(group.get('length')).replace('.', ',')} мм ({place})."
+                tube_cuts.append((f"Нарезать {material}: {total} {tail}",
+                                  f"Нарезать {material}: {units.replace('.', ',')} {tail}"))
+            card = _card_snapshot(card, marks, lengths, tube_cuts)
             recipes.append({"type": kind, "code": _required(op.get("code"), "код операции"),
                             "template_id": _required(op.get("template_id"), "шаблон операции"),
                             "card_revision": op.get("card_changed_at") or digest(card),

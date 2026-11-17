@@ -363,6 +363,25 @@ function freshData(kb = "КБ1") {
 }
 
 describe("FAKRA flow 16.11", () => {
+  it.each([1, 4])("protects labels by place on %i cables regardless of the saved single length", (cables) => {
+    const data = freshData(), state = seededState(data);
+    state.coax.cables = cables;
+    for (const tutLen of ["30", "60"]) {
+      state.coax.tutLen = tutLen;
+      const cfg = makeGen(data, state).buildConfig() as any;
+      expect(cfg.coax.tutLengths).toEqual({ A: 35, B: 35, middle: 55 });
+      expect(cfg.coax).not.toHaveProperty("tutLength");
+      for (const key of ["coaxProtectCut", "coaxProtectIns", "coaxHeat"])
+        expect(cfg.ops.find((op: any) => op.opKey === key).units).toBe(3 * cables);
+      state.coax.marks![0].scope = "assembly";
+      expect((makeGen(data, state).buildConfig() as any).ops.find((op: any) => op.opKey === "coaxProtectCut").units).toBe(2 * cables + 1);
+      delete state.coax.marks![0].scope;
+    }
+    state.coax.markMaterial = "tube";
+    const tubes = makeGen(data, state).buildConfig() as any;
+    expect(tubes.coax.tutLength).toBe(60);
+    expect(tubes.coax).not.toHaveProperty("tutLengths");
+  });
   it.each(["КБ1", "КБ2"])("%s seeds finished length, three explicit labels and the BOM colour", (kb) => {
     const data = freshData(kb), state = seededState(data), gen = makeGen(data, state);
     expect(state.coax).toMatchObject({ lengthBasis: "finished", finishedLength: "4800", lPlusA: "30", lPlusB: "25", markMaterial: "tape", markProtect: true });

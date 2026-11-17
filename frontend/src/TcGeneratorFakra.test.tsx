@@ -331,8 +331,10 @@ it("previews re-seeding a saved card, cancels without changes and applies only t
   expect(JSON.stringify(latest())).toBe(before);
   fireEvent.click(screen.getByRole("button", { name: "Заполнить по составу и КД" }));
   fireEvent.click(screen.getByRole("button", { name: "Применить заполнение" }));
-  expect(latest().coax).toMatchObject({ fakraCutStrip: true, finishedLength: 4800, lPlusA: 30, lPlusB: 25, tutLength: 60,
+  expect(latest().coax).toMatchObject({ fakraCutStrip: true, finishedLength: 4800, lPlusA: 30, lPlusB: 25, tutLengths: { A: 35, B: 35, middle: 55 },
     vswrControl: { mode: "sample", every: 13 } });
+  expect(screen.getByText("Защитная ТУТ: концевые метки — 35 мм, центральная — 55 мм.")).toBeInTheDocument();
+  expect(screen.queryByText("Длина ТУТ")).not.toBeInTheDocument();
   expect(latest().coax.marks[0].text).toBe("FRX.708К.120907/AA.{№}");
   expect(screen.getByRole("button", { name: "Подтвердить L" })).toBeInTheDocument();
   expect(latest().ops[0].machine?.model).toBe("BZW-50X");

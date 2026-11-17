@@ -62,6 +62,36 @@ def recipe(doc, project="708К.", site="ЦАР"):
     return cutting_recipe(project, site, doc, launch_operations(launch_route(doc).steps, 10))
 
 
+@pytest.mark.parametrize("place", ["A", "B", "middle"])
+def test_protective_cutting_key_carries_frozen_per_place_lengths(place):
+    doc = document()
+    config = doc["build_config"]
+    config["coax"].update(tutLengths={"A": 35, "B": 35, "middle": 55},
+                          marks=deepcopy(config["ops"][1]["marks"]))
+    config["coax"].pop("tutLength")
+    config["ops"][2]["protective"] = True
+    doc["operations"][2]["fields"] = {"lengthKd": "35 / 55 мм"}
+    before = deepcopy(doc)
+    first, why = recipe(doc)
+    assert first is not None, why
+    assert doc == before
+    tube = first.snapshot["operations"][2]["parameters"]["tube"]
+    assert tube["lengths"] == {"A": "35", "B": "35", "middle": "55"}
+    assert "length" not in tube
+    # Technologist's issued override must never group with the default recipe.
+    config["coax"]["tutLengths"][place] += 5
+    changed, why = recipe(doc)
+    assert changed is not None, why
+    assert changed.key != first.key
+    config["coax"]["tutLengths"].pop(place)
+    missing, why = recipe(doc)
+    assert missing is None and why
+    legacy, why = recipe(document())
+    assert legacy is not None, why
+    assert legacy.snapshot["operations"][2]["parameters"]["tube"] == {"article": "ТУТ 4/2", "length": "60"}
+    assert legacy.key != first.key
+
+
 @pytest.fixture
 def fakra_document():
     doc = document()
@@ -72,6 +102,33 @@ def fakra_document():
         del sizes["stripMode"]
         sizes["stripProgram"]["note"] = "Отдельная ступень фольги не задана."
     return doc
+
+
+def test_protective_cutting_key_ignores_batch_size_but_keeps_manual_instructions():
+    from app.modules.techcards.etk_builder import build_etk
+    from tests.techcards.test_etk_coax_fakra import FRESH, _fresh_cards
+
+    config = deepcopy(FRESH[0]["config"])
+    def issued(quantity):
+        config["partQty"] = quantity
+        doc = build_etk(config, _fresh_cards(config))
+        for op in doc["operations"]:
+            # Use the issued operation bodies with confirmed local equipment identities.
+            op["card"]["tooling"] = [{"section": "Оборудование", "inventory_number": "ОБ.1"}]
+        return doc
+
+    doc15, doc20 = issued(15), issued(20)
+    first, why = recipe(doc15)
+    assert first is not None, why
+    second, why = recipe(doc20)
+    assert second is not None, why
+    assert doc15["operations"][2]["card"]["steps"] != doc20["operations"][2]["card"]["steps"]
+    assert first.key == second.key
+    assert first.snapshot["operations"][2]["parameters"]["tube"]["lengths"] == {"A": "35", "B": "35", "middle": "55"}
+    doc20["operations"][2]["card"]["steps"][0]["text"] += " Проверить по образцу."
+    manual, why = recipe(doc20)
+    assert manual is not None, why
+    assert manual.key != first.key
 
 
 def test_real_fakra_recipe_ignores_length_and_labels_but_keeps_boundaries(fakra_document):

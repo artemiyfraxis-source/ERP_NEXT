@@ -38,7 +38,7 @@ def test_new_fakra_route_independent_preparations_and_label_inputs(fixture):
     assert _inputs(ops[0]) == {"RTK 031": ("72,825", "М.")}
     # Frozen payload keeps its parts, but label stock is a printer consumable.
     assert _inputs(ops[1]) == {}
-    assert _inputs(ops[2]) == {"ТУТ 4/2мм, прозрачная": ("2,7", "М.")}
+    assert _inputs(ops[2]) == {"ТУТ 4/2мм, прозрачная": ("1,875", "М.")}
     assert ops[3]["semis"][1]["name"] == ops[2]["result"][0]["name"]
     assert ops[3]["semis"][1]["norm"] == "45"
     assert ops[6]["semis"][1]["name"] == ops[1]["result"][0]["name"]
@@ -81,6 +81,66 @@ def test_label_tape_is_a_printer_consumable_while_output_counts_labels():
     assert any("лента из состава не расходуется" in text for text in doc["warnings"])
     assert output["result"][0]["norm"] == "45"
     assert build_etk(config, _fresh_cards(config))["operations"] == doc["operations"]
+
+
+@pytest.mark.parametrize("cables", [1, 4])
+@pytest.mark.parametrize("old_length", [30, 60])
+@pytest.mark.parametrize("assembly_mark", [False, True])
+def test_saved_protective_lengths_recount_by_place(cables, old_length, assembly_mark):
+    config = deepcopy(FRESH[0]["config"])
+    config["coax"].pop("tutLengths", None)
+    config["coax"].update(tutLength=old_length, cables=cables)
+    if assembly_mark:
+        config["coax"]["marks"][0]["scope"] = "assembly"
+        for op in config["ops"]:
+            if op.get("marks"):
+                op["marks"][0]["scope"] = "assembly"
+    for op in config["ops"]:
+        if op.get("protective"):
+            op["tOp"] = "60"
+    before = deepcopy(config)
+    doc = build_etk(config, _fresh_cards(config))
+    assert config == before
+    assert doc["build_config"]["coax"]["tutLengths"] == {"A": 35, "B": 35, "middle": 55}
+    assert "tutLength" not in doc["build_config"]["coax"]
+    ends, middle = 2 * cables * 15, (1 if assembly_mark else cables) * 15
+    cut, install, heat = [op for raw, op in zip(doc["build_config"]["ops"], doc["operations"]) if raw.get("protective")]
+    assert cut["components"][0]["norm"] == str((ends * 35 + middle * 55) / 1000).replace(".", ",")
+    assert cut["result"][0]["norm"] == str(ends + middle)
+    assert install["semis"][1]["norm"] == str(ends + middle)
+    for operation in (cut, install, heat):
+        assert operation["time"][0]["norm"] == str(ends + middle)
+        text = "\n".join(step["text"] for step in operation["card"]["steps"])
+        assert f"{ends} отрезков по 35 мм (концевые)" in text
+        assert f"{middle} отрезков по 55 мм (центральные)" in text
+        assert f"по {old_length} мм" not in text
+    assert "35 мм (концевые)" in cut["fields"]["lengthKd"]
+    assert "55 мм (центральные)" in cut["fields"]["lengthKd"]
+    assert build_etk(doc["build_config"], _fresh_cards(config)) == doc
+
+
+def test_manual_protective_tube_length_is_preserved():
+    from app.modules.techcards.assembly_schema import generator_to_assembly
+
+    config = deepcopy(FRESH[0]["config"])
+    config["coax"].pop("tutLengths", None)
+    config["coax"]["tutLength"] = 42
+    config = generator_to_assembly(config)
+    doc = build_etk(config, _fresh_cards(config))
+    cut = next(op for op in doc["operations"] if op["code"] == "CUT_TUT_short")
+    assert cut["components"][0]["norm"] == "1,89"
+    assert cut["fields"]["lengthKd"] == "42мм"
+    assert doc["build_config"]["coax"]["tutLength"] == 42
+
+
+def test_protective_cut_timing_uses_each_length_before_the_manual_time_floor():
+    config = deepcopy(FRESH[0]["config"])
+    cut = next(op for op in config["ops"] if op.get("opKey") == "coaxProtectCut")
+    cut["linearTiming"] = {"rollSpeed": "0.001", "takeSeconds": "40"}
+    doc = build_etk(config, _fresh_cards(config))
+    operation = next(op for op in doc["operations"] if op["code"] == "CUT_TUT_short")
+    # max(35, 40) seconds per end piece; max(55, 40) per centre piece.
+    assert operation["time"][0]["norm"] == "33,75"  # (30 * 40 + 15 * 55) / 60.
 
 
 def test_finished_length_rebuild_is_idempotent_and_missing_allowance_blocks():

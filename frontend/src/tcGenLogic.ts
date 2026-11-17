@@ -8,7 +8,7 @@
  * `POST /api/techcards/projects/{id}/build` (etk_builder.py читает ровно эти ключи).
  */
 import { matchCableRec } from "./cableMatch";
-import { coaxMarkDefaults, coaxMarksFromName, sumCoaxMaterial, type CoaxMark, type ConnColor, markIsTube, markLabel, markSpecs, markTubeShrinks, markTubeSplit, type MarkMat, type MarkRow, type MarkSpec, type MarkTube } from "./tcGenMarks";
+import { COAX_PROTECTIVE_TUT_LENGTHS, coaxMarkDefaults, coaxMarksFromName, sumCoaxMaterial, type CoaxMark, type ConnColor, markIsTube, markLabel, markSpecs, markTubeShrinks, markTubeSplit, type MarkMat, type MarkRow, type MarkSpec, type MarkTube } from "./tcGenMarks";
 import { pickWireMarkTube, WIRE_MARK_DIST_MM, WIRE_MARK_LEN_MM, wireMarkKey, wireMarkRow, wireMarkTexts, type WireMarkCfg, type WireMarkRow, type WireMarkSkip } from "./tcGenWireMarks";
 import { twistGroupProblems, twistGroupsOf, type TwistRow } from "./twistGroups";
 import { pickTerminals, type TerminalPairs } from "./terminalPick";
@@ -4157,7 +4157,9 @@ export function makeGen(D: GenData, S: GenState) {
         ...(S.coax.markMaterial ? { markMaterial: S.coax.markMaterial, markProtect: !!S.coax.markProtect } : {}),
         ...(S.coax.marks ? { marks: S.coax.marks } : {}),
         ...(S.coax.connColor ? { connColor: S.coax.connColor } : {}),
-        tutLength: parseDecimal_(S.coax.tutLen) || 20,
+        ...(S.coax.markMaterial === "tape" && S.coax.markProtect
+          ? { tutLengths: { ...COAX_PROTECTIVE_TUT_LENGTHS } }
+          : { tutLength: parseDecimal_(S.coax.tutLen) || 20 }),
         tutArt: tut?.art || "", tutName: tut?.name || "",
         cableArt: cable?.art || "", cableName: cable?.name || "",
         sleeveArt: sleeve?.art || "", sleeveName: sleeve?.name || "",
