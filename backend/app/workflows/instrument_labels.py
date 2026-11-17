@@ -16,7 +16,6 @@ from app.modules.production.instrument_characterization import application, char
 from app.modules.production.instrument_passport import passport_pdf
 from app.modules.production.rf_infrastructure import RfRepository
 from app.modules.production.rf_interfaces import RfDetails
-from app.modules.production.instrument_serials import is_in_house_serial
 from app.modules.production.traceability import InstrumentKind
 from app.modules.warehouse.infrastructure import SqlAlchemyLabelSettings
 from app.modules.warehouse.label_jobs import LabelAgentRow, add_job
@@ -87,10 +86,13 @@ def _content(item, session=None):
         item.inventory_number, item.name, item.serial_number,
         item.verification_due.date() if item.verification_due else None,
         model=item.doc_designation, accessory=item.kind is InstrumentKind.ACCESSORY,
-        in_house_serial=is_in_house_serial(item.serial_number),
+        in_house_serial=False,  # owner 18.11: every serial reads «Зав. №» (vendor or «article.N»)
+        manufacturer=item.manufacturer,
         connector_line=connector_line(item.name, item.serial_number, rf),
         parameters_line=steps.limit_line if steps else "Не измерен",
         loss_line=steps.values_line if steps else "",
+        range_line=steps.range_line if steps else "Не измерен",
+        table=steps.table_lines() if steps else ("", "", ""),
         measurement_date=measured.measurement_date if measured else "",
         impedance_warning=impedance_warning(rf), card_url=public_passport_url(item.id),
     )

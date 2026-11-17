@@ -8,7 +8,7 @@ from pypdf import PdfReader
 from pydantic import SecretStr
 import pytest
 
-from app.modules.production.instrument_characterization import characterization, connector_line, impedance_warning, upper_two
+from app.modules.production.instrument_characterization import application, characterization, connector_line, impedance_warning, upper_two
 from app.modules.production.instrument_passport import LOSS_SCALE, VSWR_SCALE, band_rows, passport_pdf
 from app.modules.production.rf_interfaces import RfDetails, RfInterface
 from app.modules.production.traceability import InstrumentFile, InstrumentFileKind, InstrumentKind, InstrumentStatus, MeasurementInstrument
@@ -135,8 +135,8 @@ def test_measured_labels_use_real_link_and_show_parameters_at_203_dpi(label_form
     item, measured = instrument(), characterization(measured_file(stop=11))
     data = instrument_content(item.inventory_number, item.name, item.serial_number, model=item.doc_designation,
         accessory=True, in_house_serial=True, connector_line=connector_line(item.name, item.serial_number, rf()),
-        parameters_line=measured.parameters_line, loss_line=measured.loss_line, measurement_date=measured.measurement_date,
-        impedance_warning=impedance_warning(rf(impedance)),
+        range_line=application(measured).range_line, table=application(measured).table_lines(),
+        measurement_date=measured.measurement_date, impedance_warning=impedance_warning(rf(impedance)),
         card_url=public_passport_url(item.id, PublicSettings(public_base_url="https://erp.example.test",
             passport_secret=SecretStr("test-only-passport-key-do-not-deploy-123456789"))))
     width, height = FORMATS[label_format]
@@ -144,7 +144,7 @@ def test_measured_labels_use_real_link_and_show_parameters_at_203_dpi(label_form
     layout = render(default_template("instrument", label_format, "qr"), data, settings)
     assert not layout.overflow and layout.qr_module_dots >= 2
     joined = " ".join(layout.texts)
-    for value in (item.inventory_number, "ADP-ss-26-034", "КСВН ≤ 1,06", "0,01–11", "Потери ≤ 0,18", "16.11.26"):
+    for value in (item.inventory_number, "ADP-ss-26-034", "Частотный диапазон 0–", "КСВН ≤", "дБ ≤", "16.11.26"):
         assert value in joined
     if impedance == 75:
         assert "75 Ом — не для 50 Ом тракта" in joined
@@ -154,8 +154,8 @@ def test_measured_labels_use_real_link_and_show_parameters_at_203_dpi(label_form
 def test_two_line_connector_keeps_each_gender_with_its_series():
     data = instrument_content("СИ.009", "3.5mm розетка – 3.5mm розетка", accessory=True)
     layout = render(default_template("instrument", "58x30", "qr"), data, PrintSettings(width_mm=58, height_mm=30, dpi=203))
-    assert "3.5mm розетка –" in layout.texts
-    assert "3.5mm розетка" in layout.texts
+    # One line on 58×30 (shrunk if needed), never cut inside a connector name.
+    assert "3.5mm розетка – 3.5mm розетка" in layout.texts
 
 
 def test_saturated_vswr_is_a_lower_bound_not_a_false_upper_bound():

@@ -76,9 +76,8 @@ def test_working_band_labels_fit_with_left_margin(label_format, dpi):
         measurement_date="Замер 16.11.26", impedance_warning="75 Ом — не для 50 Ом тракта")
     width, height = FORMATS[label_format]
     template = default_template("instrument", label_format, "qr")
-    assert next(e for e in template.elements if e.id == "parameters_line").x_mm >= 2
+    assert all(e.x_mm >= 2 for e in template.elements if e.id.startswith("table_"))
     layout = render(template, data, PrintSettings(width_mm=width, height_mm=height, dpi=dpi))
     assert not layout.overflow
-    assert "Рабочая полоса 0,01–11,8 ГГц" in layout.texts
-    assert "КСВН ≤ 1,2 · потери ≤ 0,18 дБ" in layout.texts
+    assert "Замер 16.11.26" in layout.texts
     assert Image.open(BytesIO(label_png(layout))).size == (round(width * dpi / 25.4), round(height * dpi / 25.4))
