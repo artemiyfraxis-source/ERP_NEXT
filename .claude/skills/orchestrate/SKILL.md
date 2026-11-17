@@ -87,10 +87,13 @@ verifier → one PR — only the hands do. Main never collapses into «I'll just
   | Wide reading, impact map, plan draft | `erp-planner` | sonnet |
   | Domain plan: status machine, stock/money flow, new module | `erp-planner` | opus |
   | Mechanical renames/copy without string literals in code | `erp-worker` | haiku — main re-checks every literal |
-  | UI copy, wiring, tests mirroring existing ones, one-module feature, screen change | `erp-worker` | sonnet |
+  | UI copy, wiring, tests mirroring existing ones, one-module feature, screen change | `erp-worker` card (see below) | sonnet |
   | Migration, stock/money quantities, generators, importers, hard bug | `erp-worker` | opus |
   | Pre-ship review (fresh, read-only, the `cross-review` brief or `/code-review`) | `general-purpose` | sonnet; opus for migration/stock/money/auth |
   | Verifier (`npm run check` on the integrated worktree) | `erp-verifier` | sonnet |
+- **Launching a worker.** `subagent_type: erp-worker` fails here: its `isolation: worktree` is refused («core.worktree
+  redirect», verified 17.11.2026). Launch `general-purpose` with the chosen `model` and a prompt that says «read
+  `.claude/agents/erp-worker.md` and follow it, then read the brief; work only in <absolute worktree>».
 - **Mechanics.** Main still creates each editing worktree from the recorded SHA (`git worktree add … <SHA>`, then
   `node scripts/setup-env.mjs`) and names its absolute path in the brief; the worker works only there by absolute
   paths and first checks `git -C <path> rev-parse HEAD` equals the SHA. The brief is the same self-contained English
