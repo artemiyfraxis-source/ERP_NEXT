@@ -34,16 +34,23 @@ from app.shared.http_auth import Principal, production_edit_principal, require_s
 router = APIRouter(prefix="/api/production/marking", tags=["production"])
 Factory = Annotated[Callable, Depends(production_uow_factory)]
 Now = Annotated[datetime, Depends(moscow_now)]
+# Named gates of the access contract (tests/identity/test_level_gates.py DEPENDENCIES), added after the levels transfer.
+marking_work_principal = require_section(("myops", "production"), "view")
+marking_print_principal = require_section("print", "edit")
+marking_config_principal = require_section("erpref", "edit")
+marking_read_principal = require_section(("myops", "production", "erpref"), "view")
+
+
 def print_principal(
-    principal: Annotated[Principal, Depends(require_section(("myops", "production"), "view"))],
-    _printing: Annotated[Principal, Depends(require_section("print", "edit"))],
+    principal: Annotated[Principal, Depends(marking_work_principal)],
+    _printing: Annotated[Principal, Depends(marking_print_principal)],
 ):
     return principal
 
 
 PrintUser = Annotated[Principal, Depends(print_principal)]
-ConfigUser = Annotated[Principal, Depends(require_section("erpref", "edit"))]
-ReadUser = Annotated[Principal, Depends(require_section(("myops", "production", "erpref"), "view"))]
+ConfigUser = Annotated[Principal, Depends(marking_config_principal)]
+ReadUser = Annotated[Principal, Depends(marking_read_principal)]
 STALE = "Источник или профиль изменился — обновите предпросмотр"
 STATUS_LABELS = {"pending": "В очереди", "taken": "Печатается", "spooled": "Передано принтеру",
                  "failed": "Ошибка печати", "unknown": "Результат неизвестен"}
