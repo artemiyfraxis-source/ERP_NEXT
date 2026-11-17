@@ -30,13 +30,18 @@ def test_card_and_sketch_share_exact_from_tip_geometry(fixture, expected):
     text = " ".join(_coax_recipe_steps(operation, config))
     assert "от торца жилы" in text
     for b in program["boundaries"]:
-        assert f"{b['value']} {b['tolerance']} мм" in text
+        assert f"{b['value']} {b['tolerance']}" in text
+    assert "Источник:" not in text
+    assert program["source"] not in text
+    assert sum(step.startswith("Сторона А:") for step in _coax_recipe_steps(operation, config)) == 1
     if fixture["kind"] == "hfm":
         assert "Размер обрезки прямой оплётки до отворота не задан" in text
         assert "после полной разделки" in text
         assert "v=7,85±0,2" in program["source"]
     elif fixture["kind"] == "bulkhead":
-        assert "2,7+1,0 = 3,7" in text
+        assert "1,0 мм — участок открытого диэлектрика" in text
+        assert "Фольгу сохранить внутри корпуса, оплётку — снаружи насечки" in text
+        assert "2,7+1,0" not in text
     else:
         assert "X = " in program["source"] and "Z = " in program["source"]
 
@@ -57,14 +62,15 @@ def test_missing_or_reversed_reference_values_do_not_produce_a_machine_program(c
     assert "не рассчитана" in program["note"]
 
 
-def test_legacy_without_new_recipe_keeps_raw_dimensions_and_card_steps():
+def test_legacy_without_new_recipe_keeps_raw_dimensions_and_gets_one_short_step():
     config = deepcopy(FIXTURES[0]["config"])
     del config["coax"]["fakraCutStrip"]
     operation = FIXTURES[0]["operation"]
     end = _fields(operation, config)["coax"]
     assert [end[key] for key in ("l1", "l2", "l3")] == ["3,0", "4,6", "9,7"]
     assert "dimensionOrder" not in end and "stripProgram" not in end
-    assert _coax_recipe_steps(operation, config) == []
+    assert _coax_recipe_steps(operation, config) == [
+        "Сторона А: диэлектрик 3,0; оплётка 4,6; оболочка 9,7 мм (от торца жилы)."]
 
 
 def test_only_selected_side_gets_program_and_instructions():
