@@ -229,7 +229,7 @@ export function mergeMarkRows(current: MarkRow[], extra: MarkRow[]): MarkRow[] {
   return [...kept, ...extra.filter((row) => !seen.has(key(row)))];
 }
 
-export type CoaxMark = { text: string; place: "A" | "B" | "middle"; minMm: number };
+export type CoaxMark = { text: string; place: "A" | "B" | "middle"; minMm: number; scope?: "cable" | "assembly" };
 export type ConnColor = { method: "none" | "paint" | "laser" | "tape"; color: string; code: string; art: string };
 
 export const COAX_COLORS = [
