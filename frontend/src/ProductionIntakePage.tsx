@@ -332,13 +332,12 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       value: (line) => trackGaps(line).join(", "), render: (line) => trackGaps(line).length ? <span className="tone-warn">{trackGaps(line).join(", ")}</span> : dash },
     { key: "pl", title: "PL", width: 136, value: (line) => line.shipment?.pl_number ?? "", render: (line) => line.shipment ? docLink(line.shipment, "pl") : dash },
     { key: "dn", title: "DN", width: 136, value: (line) => line.shipment?.dn_number ?? "", render: (line) => line.shipment ? docLink(line.shipment, "dn") : dash },
-    { key: "itemDelivery", title: "Доставка КБ", width: 128, value: (line) => line.shipment ? "" : Object.keys(itemOf(line)?.overrides ?? {}).length ? "своя" : "как у проекта" },
-    { key: "deliveryEdit", title: "Данные КБ", width: 104, export: false, value: () => "", render: (line) => canDispatch && itemOf(line) ? <button type="button" className="secondary small"
-      aria-label={`Доставка ${who(line)}`} onClick={() => setDeliveryEdit({ project: line.project, items: [itemOf(line)!] })}>Изменить</button> : dash },
+    { key: "deliveryEdit", title: "Доставка КБ", width: 152, export: false, value: () => "", render: (line) => canDispatch && itemOf(line) ? <button type="button" className="secondary small"
+      aria-label={`Доставка ${who(line)}`} onClick={() => setDeliveryEdit({ project: line.project, items: [itemOf(line)!] })}>Изменить доставку</button> : dash },
   ];
   const actionless = (tab === "production" && !canWarehouse) || (["accepted", "to_ship"].includes(tab) && !canDispatch);
   const leading = TAB_COLUMNS[tab].filter((key) => key !== "action" || !actionless);
-  const shipping = ["project", "customer", "shipment", "sequence", "status", "created", "deadline", "shippedAt", ...DELIVERY_COLUMNS, "track", "trackGaps", "upd", "updNumber", "updDate", "updFile", "pl", "dn", "itemDelivery", "deliveryEdit"];
+  const shipping = ["project", "customer", "shipment", "sequence", "status", "created", "deadline", "shippedAt", ...DELIVERY_COLUMNS, "track", "trackGaps", "upd", "updNumber", "updDate", "updFile", "pl", "dn", "deliveryEdit"];
   const visibleColumns = [...leading, ...shipping].flatMap((key) => columns.filter((column) => column.key === key));
 
   const groupLabel = (_key: string, groupRows: IntakeLine[]) => {
