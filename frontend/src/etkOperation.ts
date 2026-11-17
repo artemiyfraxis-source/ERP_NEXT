@@ -3,6 +3,8 @@
 // текста в список (рисунки «Норма | Брак» — etkDefectArt.ts). Считается при показе и печати, поэтому выданные ТК перевыпускать не нужно.
 
 import { opTypeName } from "./tcGenLogic";
+import { countLabel, formatNumber } from "./format";
+import { markLabelList, type MarkSerialRange } from "./markSerial";
 
 type Row = Record<string, unknown>;
 
@@ -16,6 +18,17 @@ function list(value: unknown): Row[] {
 
 function str(value: unknown): string {
   return value == null ? "" : String(value);
+}
+
+/** Correct the label-print output when reading an issued ETK, without rewriting its snapshot. */
+export function etkLabelResult(operation: Row, serial?: MarkSerialRange | null): { name: string; norm: string; unit: string } | null {
+  const marks = list(obj(operation.fields).marks);
+  if (!marks.length || !(str(operation.code) === "PRINT_MARK_LABEL" || list(operation.result).some((row) => /^Напечатанные этикетки:/.test(str(row.name))))) return null;
+  const labels = serial ? markLabelList(marks, serial) : [];
+  const count = labels.length || marks.length;
+  const total = labels.length ? labels.reduce((sum, label) => sum + label.quantity, 0)
+    : marks.reduce((sum, mark) => sum + (Number(str(mark.batch).replace(",", ".")) || 0), 0);
+  return { name: `Этикетки: ${countLabel(count, ["вид", "вида", "видов"])}, ${formatNumber(total)} шт.`, norm: String(total), unit: "Шт." };
 }
 
 export type ShrinkRequirementLine = { material: string; text: string; missing: boolean; sourceUrl: string; quote: string };

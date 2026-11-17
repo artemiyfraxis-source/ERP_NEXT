@@ -1859,6 +1859,18 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .mo-day { margin: 10px 0 2px; font-weight: 700; }
 .mo-card { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; display: grid; gap: 4px; font-size: 13px; background: var(--card); }
 .mo-h { font-size: 15px; }
+/* Сводная очередь по ПФ: действия и формы остаются привязаны к строке КБ. */
+.mo-cut-list { min-width: 0; font-variant-numeric: tabular-nums; }
+.mo-cut-list .manual-stock-head { gap: 8px; }
+.mo-cut-list .manual-stock-head h2 { margin: 0; }
+.mo-cut-list .mo-cut-name { display: block; max-width: 24ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mo-cut-list .mo-cut-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.mo-cut-list .mo-side { justify-content: flex-start; margin-left: 0; }
+.mo-cut-list .mo-cut-actions > .start-work { flex-basis: 100%; }
+.mo-cut-list .mo-s { display: block; }
+.mo-cut-list .data-table td { vertical-align: top; }
+.mo-cut-list .data-table td:last-child { white-space: normal; }
+.mo-cut-list .dwn-bar { margin: 0; }
 .mo-finished { margin-top: 14px; }
 .mo-finished > summary { cursor: pointer; font-weight: 700; padding: 6px 0; }
 .mo-card.late { box-shadow: inset 3px 0 0 var(--tone-danger); }

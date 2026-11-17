@@ -31,6 +31,7 @@ import { MasterBoard, type ProjectDeadlines } from "./MasterBoard";
 import { AutoplanPanel } from "./AutoplanPanel";
 import { PageWindow } from "./PageWindow";
 import { DowntimeControl } from "./DowntimeControl";
+import { DataTable } from "./DataTable";
 import { DowntimeReport } from "./DowntimeReport";
 import { ProductionNormFact } from "./ProductionNormFact";
 import { ShopWorkloadView } from "./ShopWorkload";
@@ -663,6 +664,7 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
   const [starting, setStarting] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [etkOpen, setEtkOpen] = useState("");
+  const [cardGroups, setCardGroups] = useState<Set<string>>(() => new Set());
   const now = useNow(30_000);
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const weekdays = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
@@ -677,7 +679,7 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
   // Код операции (PRS_TERMINAL_auto) — мастеру и технологу; монтажнику он не нужен (владелец 16.10, erp-screens §1).
   const showCodes = canSee(principal, "production") || canSee(principal, "techcards");
   const isRunning = (task: ProductionTask) => Boolean(session && session.task_id === task.id && session.operation_id === task.operations[0]?.id);
-  const renderCard = (task: ProductionTask, last: { title: string | null }) => {
+  const renderCard = (task: ProductionTask, last: { title: string | null }, compact = false) => {
     const operation = task.operations[0];
     if (!operation) return null;
     // Своя доля: у раздробленной операции у монтажника свои штуки и своё время.
@@ -718,13 +720,7 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
     const cardChanged = etkCardsChangedNote(operation.etk_cards);
     // Версия на начале — только с датой: «на начале: по шаблону» без даты ничего не говорит.
     const startedNote = etkCardsNote(operation.etk_cards?.started ?? []);
-    return <div key={key}>
-      {header}
-      <div className={`mo-card${late ? " late" : ""}${done ? " done" : ""}${running ? " run" : ""}`}>
-        <div className="mo-h">
-          <div className="mo-name"><b>{stage}</b>{cardChanged && <span className="mo-state tone-warn">{cardChanged}</span>}{pf ? <small className="op-code">{pfOpsText(operation)}</small> : showCodes && operation.code && <small className="op-code">{operation.code}</small>}{cardNote && <small className="op-code">{cardNote}{cardChanged && /\d/.test(startedNote) ? ` · на начале: ${startedNote}` : ""}</small>}</div>
-          <div className="mo-side">
-            {state && <span id={stateId} className={`mo-state ${state.tone}`} role="status">{state.text}</span>}
+    const actions = <>
             {!readOnly && running && <>
               {paused
                 ? <button className="primary" disabled={Boolean(busy)} onClick={() => void mutate(running.id, () => productionApi.workAction(running.id, "resume", { ...work, key: stepKey(running, "resume") }))}>Продолжить</button>
@@ -735,15 +731,8 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
               disabled={Boolean(session) || Boolean(busy) || blocked} title={session ? "Сначала сдайте начатую работу" : blocked ? state?.text : undefined}
               onClick={() => setStarting(starting === key ? "" : key)}>Начать</button>}
             <button className="secondary" aria-haspopup="dialog" onClick={() => setEtkOpen(key)}>{pf ? "Инструкция" : "ЭТК"}</button>
-          </div>
-        </div>
-        <div className="mo-s">{task.number} · {pf ? `ПФ-${operation.position}` : `этап ${operation.position}`} · <b>{taskItemLabel(task)}</b> × {task.quantity}{requiredNote(task, operation)}{task.name ? ` · ${task.name}` : ""}{own != null ? <> · <b className="mo-own">ваша доля {own} из {task.quantity}</b></> : null}</div>
-        {/* Монтажнику — без «из этапов … ×0,142857» (коробки и их этапы — в «Получить…» и в форме старта) и без строки кодов
-            карт у ПФ (операции — в «Инструкции»); владелец 20.10: «как-то сложно для восприятия». */}
-        {!pf && operation.description && !operation.description.startsWith(operation.stage || stage) && <div className="mo-d">{operation.description}</div>}
-        <div className="mo-s mo-plan"><span className="mo-window">{startAt ? `план ${windowText(plannedStart, plannedFinish)}` : "время не назначено"}</span>{early >= EARLY_NOTE_MS ? <span className="mo-early tone-info"> — начато раньше на {spanText(early)}</span> : null} · <span className="mo-norm" title="Как «Расчётное время» в «Результате» ЭТК: подготовка + время на изделие × штуки. «Время» в шапке ЭТК — на одно действие (один обжим, один рез)">{norm}</span>{task.deadline ? ` · срок задания ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
-        {(handed || factParts.length > 0 || fact) && <div className="mo-fact">{handed}{handed && factParts.length ? " · " : ""}{factParts.join(" · ")}{fact ? <> · <span className="mo-tf">факт {clock(fact.actual_seconds)} · норма {clock(fact.norm_seconds)}{fact.percent != null ? ` · ${fact.percent} %` : ""}</span></> : null}</div>}
-        {pf && <PfCardBlocks taskId={task.id} operation={operation} onBehalfOf={onBehalfOf} showInputs={!done && !operation.first} />}
+    </>;
+    const details = <>
         {!done && <DowntimeControl taskId={task.id} operationId={operation.id} primary={firstOfTask.has(key)} performerId={onBehalfOf || principal.user.id} master={canAct(principal, "production")} readOnly={readOnly} onBehalfOf={onBehalfOf} />}
         {/* «Сдать…» — одно нажатие и окно подтверждения (владелец 22.10), не форма, раскрывающаяся в карточке. */}
         {!readOnly && running && submitting && <PageWindow label="Сдать работу" width={560} close={() => setSubmitting(false)}>
@@ -757,6 +746,26 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
         {etkOpen === key && <PageWindow label={`${pf ? "Инструкция" : "ЭТК"}: ${stage}`} width={1280} dismissable close={() => setEtkOpen("")}>
           <OperationEtk principal={principal} task={task} operation={operation} title={`${task.number} · ${pf ? `ПФ-${operation.position}` : `этап ${operation.position}`} · ${stage}`} close={() => setEtkOpen("")} />
         </PageWindow>}
+    </>;
+    if (compact) return <div className="mo-cut-actions"><div className="mo-side">{actions}</div>{details}</div>;
+    return <div key={key}>
+      {header}
+      <div className={`mo-card${late ? " late" : ""}${done ? " done" : ""}${running ? " run" : ""}`}>
+        <div className="mo-h">
+          <div className="mo-name"><b>{stage}</b>{cardChanged && <span className="mo-state tone-warn">{cardChanged}</span>}{pf ? <small className="op-code">{pfOpsText(operation)}</small> : showCodes && operation.code && <small className="op-code">{operation.code}</small>}{cardNote && <small className="op-code">{cardNote}{cardChanged && /\d/.test(startedNote) ? ` · на начале: ${startedNote}` : ""}</small>}</div>
+          <div className="mo-side">
+            {state && <span id={stateId} className={`mo-state ${state.tone}`} role="status">{state.text}</span>}
+            {actions}
+          </div>
+        </div>
+        <div className="mo-s">{task.number} · {pf ? `ПФ-${operation.position}` : `этап ${operation.position}`} · <b>{taskItemLabel(task)}</b> × {task.quantity}{requiredNote(task, operation)}{task.name ? ` · ${task.name}` : ""}{own != null ? <> · <b className="mo-own">ваша доля {own} из {task.quantity}</b></> : null}</div>
+        {/* Монтажнику — без «из этапов … ×0,142857» (коробки и их этапы — в «Получить…» и в форме старта) и без строки кодов
+            карт у ПФ (операции — в «Инструкции»); владелец 20.10: «как-то сложно для восприятия». */}
+        {!pf && operation.description && !operation.description.startsWith(operation.stage || stage) && <div className="mo-d">{operation.description}</div>}
+        <div className="mo-s mo-plan"><span className="mo-window">{startAt ? `план ${windowText(plannedStart, plannedFinish)}` : "время не назначено"}</span>{early >= EARLY_NOTE_MS ? <span className="mo-early tone-info"> — начато раньше на {spanText(early)}</span> : null} · <span className="mo-norm" title="Как «Расчётное время» в «Результате» ЭТК: подготовка + время на изделие × штуки. «Время» в шапке ЭТК — на одно действие (один обжим, один рез)">{norm}</span>{task.deadline ? ` · срок задания ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
+        {(handed || factParts.length > 0 || fact) && <div className="mo-fact">{handed}{handed && factParts.length ? " · " : ""}{factParts.join(" · ")}{fact ? <> · <span className="mo-tf">факт {clock(fact.actual_seconds)} · норма {clock(fact.norm_seconds)}{fact.percent != null ? ` · ${fact.percent} %` : ""}</span></> : null}</div>}
+        {pf && <PfCardBlocks taskId={task.id} operation={operation} onBehalfOf={onBehalfOf} showInputs={!done && !operation.first} />}
+        {details}
       </div>
     </div>;
   };
@@ -765,13 +774,77 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
   const finished = tasks.filter(isDone);
   // Простой — на задание: полоса с «Закончить простой» — на первой невыполненной карточке задания, на остальных — строка.
   const firstOfTask = new Set(active.filter((task, index) => active.findIndex((other) => other.id === task.id) === index).map((task) => `${task.id}:${task.operations[0]?.id}`));
-  const activeMark = { title: null as string | null };
-  const finishedMark = { title: null as string | null };
+  const groupDay = (task: ProductionTask) => {
+    const operation = task.operations[0];
+    const start = parseDate(operation?.my_share?.planned_start ?? operation?.planned_start);
+    return start ? `${start.getFullYear()}-${start.getMonth()}-${start.getDate()}` : "unplanned";
+  };
+  const groupKey = (task: ProductionTask) => {
+    const operation = task.operations[0];
+    return operation && isPfOperation(operation) && task.project
+      ? JSON.stringify([groupDay(task), task.project, operation.position, operation.stage]) : null;
+  };
+  const renderQueue = (items: ProductionTask[], scope: string) => {
+    const groups = new Map<string, ProductionTask[]>();
+    for (const task of items) {
+      const key = groupKey(task);
+      if (key) groups.set(key, [...(groups.get(key) ?? []), task]);
+    }
+    const rendered = new Set<string>();
+    const last = { title: null as string | null };
+    return items.map((task) => {
+      const key = groupKey(task);
+      const members = key ? groups.get(key) : undefined;
+      if (!key || !members || members.length < 2) return renderCard(task, last);
+      if (rendered.has(key)) return null;
+      rendered.add(key);
+      const operation = task.operations[0];
+      const title = dayTitle(parseDate(operation.my_share?.planned_start ?? operation.planned_start),
+        members.some((member) => isRunning(member) || Number(member.operations[0].fact?.processed ?? 0) > 0 || Boolean(member.operations[0].my_share?.started_at)));
+      const header = title !== last.title ? <div className="mo-day">{title}</div> : null;
+      last.title = title;
+      const viewKey = `${scope}:${key}`;
+      const cards = cardGroups.has(viewKey);
+      const label = `Резка списком · ${task.project} · ПФ-${operation.position} ${operation.stage} · ${members.length} КБ`;
+      return <div key={key}>
+        {header}
+        <section className="mo-cut-list" aria-label={label}>
+          <div className="manual-stock-head"><h2>{label}</h2>
+            <button type="button" className="secondary small" aria-pressed={cards} onClick={() => setCardGroups((current) => {
+              const next = new Set(current);
+              if (next.has(viewKey)) next.delete(viewKey); else next.add(viewKey);
+              return next;
+            })}>{cards ? "списком" : "карточками"}</button>
+          </div>
+          {cards ? members.map((member) => renderCard(member, { title })) : <DataTable
+            label={`КБ · ${task.project} · ПФ-${operation.position} ${operation.stage}`} rows={members} rowKey={(member) => `${member.id}:${member.operations[0].id}`}
+            columns={[
+              { key: "item", title: "КБ", value: (member) => taskItemLabel(member).replace(`${member.project} · `, ""), render: (member) => <b title={member.number}>{taskItemLabel(member).replace(`${member.project} · `, "")}</b> },
+              { key: "name", title: "Изделие", value: (member) => member.name, render: (member) => <span className="mo-cut-name" title={member.name}>{member.name || "—"}</span> },
+              { key: "quantity", title: "Кол-во", numeric: true, value: (member) => ownPieces(member, member.operations[0]) ?? requiredOf(member, member.operations[0]) },
+              { key: "plan", title: "План", value: (member) => {
+                const op = member.operations[0];
+                return windowText(op.my_share?.planned_start ?? op.planned_start, op.my_share?.planned_finish ?? op.planned_finish);
+              }, render: (member) => {
+                const op = member.operations[0];
+                return <span title={cardNorm(member, op)}>{windowText(op.my_share?.planned_start ?? op.planned_start, op.my_share?.planned_finish ?? op.planned_finish)}</span>;
+              } },
+              { key: "state", title: "Состояние", value: (member) => cardState(member.operations[0], isRunning(member) ? session : null, isDone(member), now)?.text ?? "", render: (member) => {
+                const state = cardState(member.operations[0], isRunning(member) ? session : null, isDone(member), now);
+                return <>{state && <span id={`mo-state-${member.id}:${member.operations[0].id}`} className={`mo-state ${state.tone}`} role="status">{state.text}</span>}<small className="mo-s">{handedText(member, member.operations[0])}</small></>;
+              } },
+              { key: "actions", title: "Действия", value: () => "", render: (member) => renderCard(member, { title }, true) },
+            ]}
+          />}
+        </section>
+      </div>;
+    });
+  };
   return <div className="my-queue">
-    {active.map((task) => renderCard(task, activeMark))}
+    {renderQueue(active, "active")}
     {!active.length && finished.length > 0 && <div className="empty">Невыполненных операций нет — все назначенные сданы.</div>}
     {finished.length > 0 && <details className="mo-finished"><summary>Выполнено · {finished.length}</summary>
-      <div className="my-queue">{finished.map((task) => renderCard(task, finishedMark))}</div>
+      <div className="my-queue">{renderQueue(finished, "finished")}</div>
     </details>}
   </div>;
 }

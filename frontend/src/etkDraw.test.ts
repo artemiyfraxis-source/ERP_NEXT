@@ -21,8 +21,8 @@ it("shows the HFM support sleeve on a stripped cable without a central contact o
 
 it.each(["HFM", "Amphenol"])("keeps %s drawing bases explicit instead of reinterpreting lengths", (dimensionOrder) => {
   const html = etkDrawCoax({ type: "coaxCut", fields: { coax: { connector: "test", l1: "2,7", l2: "1,0", l3: "8,5", dimensionOrder } } });
-  expect(html).toContain("полная разделка по базам");
-  expect(html).toContain("Не трактовать как три длины от торца");
+  expect(html).toContain("размеры от торца не заданы — согласовать разделку");
+  expect(html).not.toContain("<svg");
   expect(html).not.toContain("Размеров разделки нет");
 });
 
@@ -288,11 +288,12 @@ describe("etkDraw* sketches", () => {
       coax: { cable: "RG-316", connector: "MMCX", l1: "1,8", l2: "4,5", l3: "10" },
       coaxB: { cable: "RG-316", connector: "N", l1: "3", l2: "6", l3: "9" },
     } });
-    expect(drawn.match(/<svg/g)).toHaveLength(2);
-    expect(drawn).toContain("Сторона А");
-    expect(drawn).toContain("Сторона В");
-    expect(drawn).toContain("L3 = 10 мм");
-    expect(drawn).toContain("L3 = 9 мм");
+    expect(drawn.match(/<svg/g)).toHaveLength(1);
+    expect(drawn).toContain("А — MMCX");
+    expect(drawn).toContain("В — N");
+    expect(drawn).toContain('data-part="break"');
+    expect(drawn).toContain('>10</text>');
+    expect(drawn).toContain('>9</text>');
   });
 
   it("draws the crimp only for prsTerm with the crimp height field", () => {
@@ -455,18 +456,18 @@ describe("cut of tubes (owner 16.10, 713К.4 КБ1: no picture)", () => {
 
 describe("FAKRA cut parameters and strip sketches", () => {
   const end = { connector: "59K13O-1M4A4", cable: "RTK 031", l1: "3,0", l2: "4,6", l3: "9,7", dimensionOrder: "XYZ" };
-  it("draws distances from the tip and preserves the raw X/Y/Z source", () => {
+  it("draws distances from the tip and keeps the raw X/Y/Z source out of the presentation", () => {
     const operation = { type: "coaxCut", fields: { coax: end, coaxB: { ...end, l1: "1,7", l2: "6,4", l3: "11,6" } } };
     const before = JSON.stringify(operation), drawing = etkDrawCoax(operation);
     expect(drawing).not.toContain("Размеров разделки нет");
-    for (const label of ["Сторона А", "Сторона В", "X = 9,7", "Y = 4,6", "Z = 3,0", "X = 11,6"])
+    for (const label of ["А —", "В —"])
       expect(drawing).toContain(label);
-    for (const label of ["Оболочка = 12,7 ±0,4", "Оплётка = 7,6 ±0,4", "Диэлектрик / жила = 3 ±0,2",
-      "Оболочка = 13,3 ±0,4", "Оплётка = 8,1 ±0,4", "Диэлектрик / жила = 1,7 ±0,2"])
+    for (const label of ["12,7 ±0,4", "7,6 ±0,4", "3 ±0,2", "13,3 ±0,4", "8,1 ±0,4", "1,7 ±0,2"])
       expect(drawing).toContain(label);
     const params = JSON.stringify(etkParams(operation));
-    for (const value of ["12,7 ±0,4", "7,6 ±0,4", "13,3 ±0,4", "8,1 ±0,4", "X = 9,7", "X = 11,6"])
+    for (const value of ["12,7 ±0,4", "7,6 ±0,4", "13,3 ±0,4", "8,1 ±0,4"])
       expect(params).toContain(value);
+    expect(drawing + params).not.toMatch(/Источник:|Исходные размеры|Контроль разделки|X =|Y =|Z =/);
     expect(JSON.stringify(operation)).toBe(before);
   });
   it("propagates explicit source tolerances and refuses incomplete or reversed raw dimensions", () => {
@@ -486,8 +487,8 @@ describe("FAKRA cut parameters and strip sketches", () => {
   });
   it("draws just B for a mixed pair", () => {
     const drawing = etkDrawCoax({ type: "coaxCut", fields: { coaxB: end } });
-    expect(drawing).toContain("Сторона В");
-    expect(drawing).not.toContain("Сторона А");
+    expect(drawing).toContain("В —");
+    expect(drawing).not.toContain("А —");
   });
   it("keeps finished length, allowances and cut length distinct", () => {
     const params = etkParams({ type: "coaxCut", fields: { finishedLength: 4800, lPlusA: 30, lPlusB: 25, lengthKd: "4855мм", cutTolerance: "0…+5 мм", drawingTolerance: "0…+10 мм" } });

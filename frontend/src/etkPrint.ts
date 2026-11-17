@@ -10,12 +10,12 @@ import {
   ETK_CONNECTION_COLUMNS, ETK_TUBE_COLUMNS, etkDocumentConnectionRows, etkPhysicalConfig, etkTubePlacementRows, etkContactSpecs, etkDrawHarness, etkFigure, etkParams, type EtkParam,
   type EtkTopologyData,
 } from "./etkDraw";
-import { ETK_TOOLING_SECTIONS, etkOperationName, etkToleranceLines, parseDefects, solderMode, shrinkRequirementLines, toolingSections } from "./etkOperation";
+import { ETK_TOOLING_SECTIONS, etkLabelResult, etkOperationName, etkToleranceLines, parseDefects, solderMode, shrinkRequirementLines, toolingSections } from "./etkOperation";
 import { figuresForDefect, stdFiguresPrintHtml, type StdFigureIndex } from "./stdFigures";
-import { formatDateTime, unitLabel } from "./format";
+import { formatDateTime, formatNumber, unitLabel } from "./format";
 import { etkCardSourceNote } from "./etkCardSource";
 import { etkPartSource, etkPfGroups, etkPfOutName, etkRouteDiagram, etkRouteOf, etkSemiSource, formatMinutes, opNumber, type EtkPfRow } from "./etkRoute";
-import { hasMarkSerial, markSerialList, markSerialText, type MarkSerialRange } from "./markSerial";
+import { hasMarkSerial, markLabelList, markSerialTemplate, type MarkSerialRange } from "./markSerial";
 import type { PrintBlock, PrintPage } from "./print";
 
 type Row = Record<string, unknown>;
@@ -158,8 +158,8 @@ function defectFigures(defects: string, figures: EtkPrintFigures | null | undefi
 }
 
 /** `sketches` — своя картинка эскиза по ключу операции (код::разъём::сторона), абсолютной ссылкой на файл в ERP.
- *  `serial` — номера изделий задания: надписи с «№ изделия» печатаются диапазоном, в конце — лист «Надписи меток»;
- *  без задания — «№ по партии». Надпись без номера печатается как раньше. */
+ *  `serial` supplies the task's label numbers, expanded in both the operation and the separate label list;
+ *  without a task, serial inscriptions retain their template and project quantity. */
 export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision[], sketches: Record<string, string> = {},
   serial?: MarkSerialRange | null, figures?: EtkPrintFigures | null): PrintPage[] {
   const document = object(card.document);
@@ -228,8 +228,11 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
     const semis = numbered(rows(operation.semis), (item) => [text(item.name), text(item.norm), "", unitLabel(text(item.unit)), semiFrom]);
     const markRows = rows(object(operation.fields).marks);
     const withLength = markRows.some((mark) => text(mark.length));
-    const marks = numbered(markRows, (mark) => [
-      text(mark.target), markSerialText(text(mark.text), serial), text(mark.material), text(mark.place), ...(withLength ? [text(mark.length)] : []), text(mark.qty), text(mark.batch),
+    const labels = serial ? markLabelsTable(markRows, serial) : null;
+    const marks = labels?.rows ?? numbered(markRows, (mark) => [
+      text(mark.target), hasMarkSerial(text(mark.text))
+        ? `${markSerialTemplate(text(mark.text))} — номер по заданию${text(mark.batch) ? `, ${formatNumber(text(mark.batch))} шт.` : ""}` : text(mark.text),
+      text(mark.material), text(mark.place), ...(withLength ? [text(mark.length)] : []), text(mark.qty), text(mark.batch),
     ]);
     // Допуска нет в данных («длина не задана») — со знаком внимания, как «нет данных» у высоты обжима.
     // Допуск — строка на значение («Сторона В: 2–3 мм», «± 10 °C»), как колонка допусков на экране.
@@ -239,8 +242,9 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
     });
     const defects = text(opCard.defects);
     const figure = etkFigure(operation) + sketchImg(sketches[operationKeyOf(operation)]);
-    const result = numbered(rows(operation.result), (item) => [text(item.name), text(item.norm), "", unitLabel(text(item.unit))]);
-    const time = numbered(rows(operation.time), (item) => [text(item.name), text(item.norm), ""]);
+    const labelResult = etkLabelResult(operation, serial);
+    const result = numbered(labelResult ? [labelResult] : rows(operation.result), (item) => [text(item.name), text(item.norm), "", unitLabel(text(item.unit))]);
+    const time = numbered(rows(operation.time), (item) => [labelResult && rows(operation.result).some((row) => row.name === item.name) ? labelResult.name : text(item.name), text(item.norm), ""]);
     return {
       title: `Операция ${text(operation.position || index + 1)}. ${etkOperationTitle(operation)}${operation.connector ? ` — ${text(operation.connector)}` : ""}`,
       subtitle: etkCardSourceNote({ card_source: text(operation.card_source), card_changed_at: text(operation.card_changed_at) }),
@@ -259,7 +263,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
             ...toolingRows(rows(opCard.tooling))]),
         ...(marks.length || steps.length ? [
           section("Ход операции"),
-          ...table(["№", "Что маркируем", "Надпись", "Материал", "Где", ...(withLength ? ["Длина, мм"] : []), "На изделие", "На партию"], marks),
+          ...table(labels?.columns ?? ["№", "Что маркируем", "Надпись", "Материал", "Где", ...(withLength ? ["Длина, мм"] : []), "На изделие", "На партию"], marks),
           ...table(["Тип", "№", "Описание операции, материалов и оснастки", "Допуск"], steps),
         ] : []),
         ...(defects ? [section("Типовые дефекты"), { text: defects }, ...defectFigures(defects, figures)] : []),
@@ -283,20 +287,28 @@ export function etkSerialMarks(document: unknown): Row[] {
     .filter((mark) => hasMarkSerial(text(mark.text)));
 }
 
-/** «Надписи меток» задания: строка — изделие, столбец — метка с «№ изделия»; надпись развёрнута для каждого номера.
- *  Нет таких меток — null. Один лист на задание: его печатают к маркировке (принтер хлястиков, трубок). */
+function markLabelsTable(marks: Row[], serial: MarkSerialRange) {
+  const labels = markLabelList(marks, serial);
+  if (!labels.length) return null;
+  const withLength = labels.some((label) => label.length);
+  return {
+    columns: ["№", "Текст", "Где", "Материал", ...(withLength ? ["Длина, мм"] : []), "Кол-во"],
+    rows: labels.map((label, index) => [String(index + 1), label.text, label.place, label.material,
+      ...(withLength ? [label.length] : []), `× ${formatNumber(label.quantity)}`]),
+  };
+}
+
+/** One row per numbered inscription, then fixed inscriptions with their task quantities. */
 export function etkMarkLabelsPage(card: ProjectTechcard, serial: MarkSerialRange): PrintPage | null {
-  const marks = etkSerialMarks(card.document);
-  if (!marks.length || serial.last < serial.first) return null;
-  const lists = marks.map((mark) => markSerialList(text(mark.text), serial));
+  const marks = rows(object(card.document).operations).flatMap((operation) => rows(object(operation.fields).marks));
+  const table = markLabelsTable(marks, serial);
+  if (!table) return null;
   const kit = { project: card.project, index: card.item_index, name: card.product_name, ...object(object(card.document).kit) };
-  const columns = ["№ изделия", ...marks.map((mark) => [text(mark.target) || "Метка", text(mark.material),
-    text(mark.qty) && text(mark.qty) !== "1" ? `${text(mark.qty)} шт на изделие` : ""].filter(Boolean).join(" · "))];
   return {
     title: "Надписи меток по КД",
     subtitle: [text(kit.name), `${text(kit.project)} ${text(kit.index)}`.trim(), serial.task ? `задание ${serial.task}` : "",
       `изделия № ${serial.first}–${serial.last}`].filter(Boolean).join(" · "),
-    blocks: [{ table: { columns, rows: lists[0].map((_, index) => [String(serial.first + index), ...lists.map((list) => list[index])]) } }],
+    blocks: [{ table }],
     sign: "Напечатал: ____________ / ________ Дата: ______    Проверил: ____________ / ________ Дата: ______",
   };
 }

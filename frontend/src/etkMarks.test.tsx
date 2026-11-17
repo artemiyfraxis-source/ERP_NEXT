@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { Principal, ProjectTechcard } from "./api";
 import { EtkSheet } from "./ProjectEtk";
 import { buildPrintDocumentHtml } from "./print";
-import { etkPrintPages } from "./etkPrint";
+import { etkMarkLabelsPage, etkPrintPages } from "./etkPrint";
 
 const principal: Principal = { user: { id: "u", email: "t@x.ru", name: "Технолог", department: "" }, roles: [], permissions: {} };
 
@@ -103,10 +103,15 @@ it("marks without the «№ изделия» token render and print byte-identic
   render(<EtkSheet card={techcard({ marks: old })} principal={principal} onChange={() => undefined} task />);
   expect((await screen.findByRole("table", { name: "Метки по КД" })).outerHTML).toBe(html);
   expect(buildPrintDocumentHtml("ТК", etkPrintPages(techcard({ marks: old }), []))).toMatchSnapshot("print");
-  // Задание без меток с «№ изделия»: ни кнопки печати надписей, ни лишнего листа.
+  // Without a task range, fixed labels retain their original project table.
   expect(screen.queryByRole("button", { name: /Печать надписей/ })).toBeNull();
-  expect(etkPrintPages(techcard({ marks: old }), [], {}, { first: 1, last: 10, task: "ПЗ-7" }))
-    .toEqual(etkPrintPages(techcard({ marks: old }), []));
+  expect(etkMarkLabelsPage(techcard({ marks: old }), { first: 1, last: 10, task: "ПЗ-7" })?.blocks[0]).toEqual({ table: {
+    columns: ["№", "Текст", "Где", "Материал", "Кол-во"], rows: [
+      ["1", "X1", "у разъёма", "Бирка маркировочная TMS", "× 10"],
+      ["2", "708К.4КБ1", "на обоих концах", "Маркировка", "× 20"],
+      ["3", "КБ1-№ 1 {N}", "на изделии", "Хлястик", "× 10"],
+    ],
+  } });
 });
 
 const numbered = [
@@ -115,31 +120,34 @@ const numbered = [
   { target: "Провод W1", text: "W1/{№}", material: "Термотрубка", place: "на обоих концах", qty: "2", batch: "20" },
 ];
 
-it("outside a task the «№ изделия» inscription shows its template and «№ по партии», with no label print", async () => {
+it("outside a task the inscription retains its template, task-number hint and project quantity", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
     new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
   render(<EtkSheet card={techcard({ marks: numbered })} principal={principal} onChange={() => undefined} />);
   const table = await screen.findByRole("table", { name: "Метки по КД" });
   expect(within(table).getAllByRole("row").slice(1).map((row) => (row as HTMLTableRowElement).cells[2].textContent)).toEqual([
-    "КБ1-{№} → № по партии", "X1", "W1/{№} → № по партии",
+    "КБ1-{№} — номер по заданию, 10 шт.", "X1", "W1/{№} — номер по заданию, 20 шт.",
   ]);
   expect(screen.queryByRole("button", { name: /Печать надписей/ })).toBeNull();
   await waitFor(() => expect(fetch).toHaveBeenCalled());
   const html = buildPrintDocumentHtml("ТК", etkPrintPages(techcard({ marks: numbered }), []));
-  expect(html).toContain("КБ1-{№} → № по партии");
+  expect(html).toContain("КБ1-{№} — номер по заданию, 10 шт.");
   expect(html).not.toContain("Надписи меток по КД");
 });
 
-it("in a task the inscription shows the task's numbers and «Печать надписей» prints one row per item", async () => {
+it("shows each task label explicitly on screen and print, numbered labels first and fixed labels once", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
     new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
   const serial = { first: 11, last: 15, task: "ПЗ-0042" };
   const card = techcard({ marks: numbered });
   render(<EtkSheet card={card} principal={principal} onChange={() => undefined} task serial={serial} />);
   const table = await screen.findByRole("table", { name: "Метки по КД" });
-  expect(within(table).getAllByRole("row").slice(1).map((row) => (row as HTMLTableRowElement).cells[2].textContent)).toEqual([
-    "КБ1-{№} → КБ1-011 … КБ1-015", "X1", "W1/{№} → W1/11 … W1/15",
-  ]);
+  const expected = [
+    ...Array.from({ length: 5 }, (_, index) => [String(index + 1), `КБ1-0${11 + index}`, "на изделии", "Хлястик", "× 1"]),
+    ...Array.from({ length: 5 }, (_, index) => [String(index + 6), `W1/${11 + index}`, "на обоих концах", "Термотрубка", "× 2"]),
+    ["11", "X1", "у разъёма", "Бирка маркировочная TMS", "× 5"],
+  ];
+  expect(within(table).getAllByRole("row").slice(1).map((row) => Array.from((row as HTMLTableRowElement).cells, (cell) => cell.textContent))).toEqual(expected);
   expect(screen.getByRole("button", { name: "Печать надписей № 11–15" })).toBeInTheDocument();
   expect(screen.getByText("5 изделий задания")).toBeInTheDocument();
   await waitFor(() => expect(fetch).toHaveBeenCalled());
@@ -149,10 +157,44 @@ it("in a task the inscription shows the task's numbers and «Печать над
   expect(labels.title).toBe("Надписи меток по КД");
   expect(labels.subtitle).toBe("Жгут · P-1 КБ1 · задание ПЗ-0042 · изделия № 11–15");
   expect(labels.blocks).toEqual([{ table: {
-    columns: ["№ изделия", "Изделие КБ1 · Хлястик", "Провод W1 · Термотрубка · 2 шт на изделие"],
-    rows: [["11", "КБ1-011", "W1/11"], ["12", "КБ1-012", "W1/12"], ["13", "КБ1-013", "W1/13"], ["14", "КБ1-014", "W1/14"], ["15", "КБ1-015", "W1/15"]],
+    columns: ["№", "Текст", "Где", "Материал", "Кол-во"], rows: expected,
   } }]);
-  expect(buildPrintDocumentHtml("ТК", pages)).toContain("КБ1-{№} → КБ1-011 … КБ1-015");
+  const printed = buildPrintDocumentHtml("ТК", pages);
+  expect(printed).toContain("КБ1-011");
+  expect(printed).not.toContain("{№}");
+});
+
+it("shows 17 label kinds and 45 pieces for a 15-piece 708К task, correcting an issued result only for display", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  const card = techcard({ marks: [
+    { text: "FRX.708К.120907/AA.{№:6}", qty: "1", batch: "15", place: "середина кабеля", material: "Лента Vell" },
+    { text: "Camera 14", qty: "1", batch: "15", place: "у разъёма А", material: "Лента Vell" },
+    { text: "Splitter B C6", qty: "1", batch: "15", place: "у разъёма В", material: "Лента Vell" },
+  ] });
+  const operation = ((card.document as Record<string, unknown>).operations as Record<string, unknown>[])[0];
+  operation.code = "PRINT_MARK_LABEL";
+  operation.result = [{ name: "Напечатанные этикетки: 3 шт.", norm: "45", unit: "Шт." }];
+  operation.time = [{ name: "Напечатанные этикетки: 3 шт.", norm: "0" }];
+  const original = structuredClone(card);
+  const serial = { first: 1, last: 15, task: "ПЗ-1" };
+  render(<EtkSheet card={card} principal={principal} onChange={() => undefined} task serial={serial} />);
+  const table = await screen.findByRole("table", { name: "Метки по КД" });
+  expect(within(table).getAllByRole("row")).toHaveLength(18);
+  expect(within(table).getByText("FRX.708К.120907/AA.000001")).toBeVisible();
+  expect(within(table).getByText("FRX.708К.120907/AA.000015")).toBeVisible();
+  expect(within(table).getAllByText("× 15")).toHaveLength(2);
+  expect(within(screen.getByRole("region", { name: "Результат" })).getByText("Этикетки: 17 видов, 45 шт.")).toBeInTheDocument();
+  const pages = etkPrintPages(card, [], {}, serial);
+  const printed = buildPrintDocumentHtml("ЭТК", pages);
+  expect(printed.replaceAll("\u00a0", " ")).toContain("Этикетки: 17 видов, 45 шт.");
+  expect(printed).not.toContain("Напечатанные этикетки: 3 шт.");
+  const labelBlock = pages.at(-1)!.blocks[0];
+  if (!("table" in labelBlock)) throw new Error("Expected the label list table");
+  expect(labelBlock.table.rows).toHaveLength(17);
+  const operationBlock = pages[1].blocks.find((block) => "table" in block && block.table.columns[1] === "Текст");
+  expect(operationBlock).toEqual(labelBlock);
+  expect(card).toEqual(original);
 });
 
 it("shows the tolerances of the steps in a column of their own, a line per value, numbers bold (owner 17.10: «почему допуски так мелко»)", async () => {
