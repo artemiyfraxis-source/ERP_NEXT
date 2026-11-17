@@ -19,16 +19,16 @@ from tests.warehouse.test_api import warehouse_api  # noqa: F401
 
 
 def content(**values):
-    return instrument_content("СИ.034", "SMA розетка – SMA розетка", serial_prefix="ФР-", **values)
+    return instrument_content("СИ.034", "SMA розетка – SMA розетка", **values)
 
 
 def test_serials_and_verification_have_domain_display_rules():
-    data = content(serial_number="ФР-034", verification_due=date(2027, 11, 17), model="S-322")
+    data = content(serial_number="ADP-ss-26-034", in_house_serial=True, verification_due=date(2027, 11, 17), model="S-322")
     assert data.code == "СИ.034"
     assert data.value("inventory_number") == "СИ.034"
     assert data.value("name") == "SMA розетка – SMA розетка"
     assert data.value("model") == "S-322"
-    assert data.value("serial_number") == "№ ФР-034"
+    assert data.value("serial_number") == "№ ADP-ss-26-034"
     assert data.value("verification_due") == "Поверка до 17.11.2027"
     assert content(serial_number="N8B139").value("serial_number") == "Зав. № N8B139"
     assert content().value("serial_number") == ""
@@ -45,7 +45,7 @@ def test_default_templates_always_render_cyrillic_inventory_qr_without_overflow(
     template = check_template(default_template("instrument", label_format, code_type), "instrument", label_format)
     layout = render(template, sample_content("instrument"), settings)
     assert "СИ.034" in layout.texts
-    assert "№ ФР-034" in layout.texts
+    assert "№ ADP-ss-26-034" in layout.texts
     assert "Поверка до 17.11.2027" in layout.texts
     assert layout.qr_modules and layout.qr_module_dots >= 2
     assert not layout.overflow and not layout.skipped
@@ -62,7 +62,7 @@ def test_default_templates_always_render_cyrillic_inventory_qr_without_overflow(
 
 def test_long_names_are_ellipsized_inside_their_boxes():
     settings = PrintSettings(width_mm=58, height_mm=30)
-    data = instrument_content("СИ.034", "Очень длинное наименование разъёма " * 20, serial_prefix="ФР-",
+    data = instrument_content("СИ.034", "Очень длинное наименование разъёма " * 20,
                               serial_number="Очень-длинный-заводской-номер-" * 20)
     layout = render(default_template("instrument", "58x30", "qr"), data, settings)
     assert any(text.endswith("…") for text in layout.texts)

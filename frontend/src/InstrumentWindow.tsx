@@ -222,7 +222,11 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
           </div>
         </fieldset>
       </form>
-      <InstrumentRfInterfaces instrumentId={record?.id} locked={busy} onDirty={setRfDirty} onBusy={setRfBusy} />
+      <InstrumentRfInterfaces instrumentId={record?.id} locked={busy} onDirty={setRfDirty} onBusy={setRfBusy}
+        onSaved={async (suggestion) => {
+          if (suggestion !== undefined) setRecord((current) => current ? { ...current, suggested_serial_number: suggestion } : current);
+          await onChanged();
+        }} />
       <section className="instrument-files"><h3>Файлы</h3>
         {record ? <>
           <div className="instrument-upload"><label>Вид файла<select disabled={busy} value={fileKind} onChange={(event) => setFileKind(event.target.value as InstrumentFileKind)}>{fileKinds.map((value) => <option key={value}>{value}</option>)}</select></label>
