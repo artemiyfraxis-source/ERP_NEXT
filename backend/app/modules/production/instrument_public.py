@@ -2,12 +2,16 @@
 
 from dataclasses import dataclass
 from datetime import date
+from calendar import monthrange
 import re
+from urllib.parse import urlsplit
 
-from .instrument_characterization import Characterization, connector_line, impedance_warning, number
-from .rf_interfaces import RfDetails
+from .instrument_characterization import Characterization, WorkingBand, connector_line, impedance_warning, number, working_band
+from .rf_interfaces import RfDetails, ROLE_LABELS, parse_interfaces
 from .traceability import InstrumentKind, MeasurementInstrument
-from .vna_files import VnaTrace
+from .vna_files import VnaTrace, _decode
+
+CONTROL_INTERVAL_MONTHS = 12
 
 
 @dataclass(frozen=True)
@@ -17,6 +21,7 @@ class PublicMeasurement:
     instrument: str
     calibration: str
     conditions: tuple[str, ...]
+    chain: str = ""
 
     def points(self, name: str):
         return next(trace.points for trace in self.traces if trace.name == name)
@@ -45,6 +50,16 @@ class PublicPassport:
     measurement: PublicMeasurement | None
     verification: PublicVerification | None
     impedance_warning: str
+    status: str
+    next_control: date | None
+    control_overdue: bool
+    history: tuple["PublicHistory", ...]
+
+
+@dataclass(frozen=True)
+class PublicHistory:
+    measured_on: date
+    band: WorkingBand | None
 
 
 _SERIAL = r"([A-Za-z0-9-]{1,32})"
@@ -52,7 +67,7 @@ _TEMPERATURE = r"([+-]?\d{1,3}(?:\.\d{1,3})?(?:/[+-]?\d{1,3}(?:\.\d{1,3})?){0,3}
 
 
 def _public_measurement(measurement: Characterization) -> PublicMeasurement:
-    instrument, calibration, conditions = "", "", ()
+    instrument, calibration, conditions, chain = "", "", (), ""
     for comment in measurement.comments:
         # Exact structured records emitted by the VNA tool. Unknown free text is never copied.
         if match := re.fullmatch(r"VNA serial=" + _SERIAL + r"; ACM serial=" + _SERIAL, comment):
@@ -70,36 +85,129 @@ def _public_measurement(measurement: Characterization) -> PublicMeasurement:
             calibration = "АКМ №" + match[1]
         elif match := re.fullmatch(r"Calibration[=:] ?(SOLT|TRL|ECal|АКМ)", comment, re.I):
             calibration = match[1].upper()
-    return PublicMeasurement(measurement.measured_on, measurement.traces, instrument, calibration, conditions)
+        elif match := re.fullmatch(r"Температура ВАЦ: " + _TEMPERATURE + r" C; АКМ: " + _TEMPERATURE + r" C", comment):
+            conditions = ("Температура ВАЦ: " + match[1].replace(".", ",") + " °C",
+                          "Температура АКМ: " + match[2].replace(".", ",") + " °C")
+        elif match := re.fullmatch(r"Chain: (напрямую|(?:слева СИ\.\d{1,6})(?:, справа СИ\.\d{1,6})?|справа СИ\.\d{1,6})(?:;.*)?", comment):
+            chain = match[1]
+    return PublicMeasurement(measurement.measured_on, measurement.traces, instrument, calibration, conditions, chain)
 
 
-def public_passport(item: MeasurementInstrument, rf: RfDetails, measured: Characterization | None) -> PublicPassport:
+def _manufacturer(rf: RfDetails) -> str:
+    # Publish a known maker/source label, never the private source text or URL path.
+    sources = (rf.source, *(p.f_source for p in rf.interfaces))
+    for source in sources:
+        if re.fullmatch(r"(?:Planar|Планар)", source.strip(), re.I):
+            return "Планар"
+        for url in re.findall(r"https?://[^\s;]+", source):
+            try:
+                host = (urlsplit(url).hostname or "").lower().removeprefix("www.")
+            except ValueError:
+                continue
+            if host in ("planar.chel.ru", "planar.ru"):
+                return "Планар"
+            if host in ("gsm-repiteri.ru", "gsm-repiteri.com"):
+                return "gsm-repiteri"
+    return ""
+
+
+def _name(item: MeasurementInstrument, rf: RfDetails) -> str:
+    if rf.role not in ("unknown", "adapter", "test_cable"):
+        return item.name
+    connectors = connector_line(item.name, item.serial_number, rf)
+    ports = rf.interfaces or parse_interfaces(item.name)
+    if not ports and connectors == connector_line(item.name, "", RfDetails()):
+        return item.name
+    kind = ROLE_LABELS.get(rf.role, "") if rf.role != "unknown" else ""
+    if not kind and ("переходник" in item.name.lower() or len(parse_interfaces(item.name)) == 2):
+        kind = "Переходник"
+    # The card's document designation is private. Reuse only a short model already in the public name.
+    model = re.search(r"\b([A-ZА-Я]{1,6}-\d{1,8}[A-Za-zА-Яа-я0-9-]*)\s*$", item.name)
+    return " ".join(filter(None, (kind, connectors))) + (", " + model[1] if model else "")
+
+
+def public_passport(item: MeasurementInstrument, rf: RfDetails, measured: Characterization | None,
+                    *, history: tuple[PublicHistory, ...] = (), today: date | None = None) -> PublicPassport:
     ohms = sorted({port.impedance_ohm for port in rf.interfaces if port.impedance_ohm is not None})
     verification = None
     if item.kind is InstrumentKind.MEASURING and (item.verification_number or item.verified_at or item.verification_due):
         verification = PublicVerification(item.verification_number or "", item.verified_at.date() if item.verified_at else None,
                                           item.verification_due.date() if item.verification_due else None)
-    return PublicPassport(item.inventory_number, item.name, item.serial_number, item.manufacturer,
+    next_control = None
+    if measured:
+        month_index = measured.measured_on.year * 12 + measured.measured_on.month - 1 + CONTROL_INTERVAL_MONTHS
+        year, month = divmod(month_index, 12)
+        if year <= date.max.year:
+            next_control = date(year, month + 1, min(measured.measured_on.day, monthrange(year, month + 1)[1]))
+    return PublicPassport(item.inventory_number, _name(item, rf), item.serial_number, item.manufacturer.strip() or _manufacturer(rf),
                           connector_line(item.name, item.serial_number, rf),
-                          " / ".join(number(value) for value in ohms) + " Ом" if ohms else "Не указано",
-                          _public_measurement(measured) if measured else None, verification, impedance_warning(rf))
+                          " / ".join(number(value) for value in ohms) + " Ом" if ohms else "50 Ом" if measured else "",
+                          _public_measurement(measured) if measured else None, verification, impedance_warning(rf),
+                          item.status.value, next_control, bool(next_control and next_control < (today or date.today())),
+                          tuple(history))
+
+
+def conclusion(measured: PublicMeasurement) -> tuple[str, str]:
+    band = working_band(measured)
+    if band is None:
+        return "Не годен для 50 Ом тракта", ""
+    text = f"{band.band_line} ({band.limits_line.replace(' · ', ', ')})"
+    warning = (f"Выше {number(band.stop_ghz)} ГГц превышение КСВН — не использовать"
+               if band.stop_ghz < measured.band[1] else "")
+    return text, warning
+
+
+def control_line(passport: PublicPassport) -> str:
+    if passport.measurement is None:
+        return ""
+    text = f"Замер: {passport.measurement.measured_on:%d.%m.%Y}"
+    if passport.next_control:
+        text += f" · Следующий контроль: {passport.next_control:%d.%m.%Y} (через {CONTROL_INTERVAL_MONTHS} мес.)"
+    return text
+
+
+def public_measurement_download(content: bytes, measured: PublicMeasurement) -> bytes:
+    """Replace comments with whitelisted metadata; retain data spelling, encoding and line endings."""
+    text = _decode(content)
+    bom, encoding = b"", "utf-8"
+    for prefix, candidate in ((b"\xff\xfe", "utf-16-le"), (b"\xfe\xff", "utf-16-be"), (b"\xef\xbb\xbf", "utf-8")):
+        if content.startswith(prefix):
+            bom, encoding = prefix, candidate
+            break
+    else:
+        try:
+            content.decode("utf-8")
+        except UnicodeDecodeError:
+            encoding = "cp1251"
+    newline = "\r\n" if "\r\n" in text else "\n"
+    header = ["! " + label + ": " + value for label, value in (
+        ("Прибор", measured.instrument), ("Калибровка", measured.calibration),
+        ("Условия", "; ".join(measured.conditions)), ("Цепь", measured.chain)) if value]
+    body = []
+    for line in text.splitlines(keepends=True):
+        if line.lstrip().startswith("!"):
+            continue
+        if "!" in line:
+            ending = line[len(line.rstrip("\r\n")):]
+            line = line.split("!", 1)[0] + ending
+        body.append(line)
+    return bom + ((newline.join(header) + newline if header else "") + "".join(body)).encode(encoding)
 
 
 def public_fields(passport: PublicPassport) -> tuple[tuple[str, str], ...]:
-    fields = [("Серийный номер", passport.serial_number or "Не указан"),
-              ("Изготовитель", passport.manufacturer or "Не указан"),
-              ("Разъёмы", passport.connectors), ("Сопротивление", passport.impedance)]
+    fields = [(label, value) for label, value in (("Серийный номер", passport.serial_number),
+              ("Изготовитель", passport.manufacturer), ("Разъёмы", passport.connectors),
+              ("Сопротивление", passport.impedance), ("Статус", passport.status)) if value]
     if passport.verification:
         verification = passport.verification
-        fields.extend((("Номер поверки", verification.number or "Не указан"),
-                       ("Дата поверки", verification.verified_on.strftime("%d.%m.%Y") if verification.verified_on else "Не указана"),
-                       ("Поверка до", verification.valid_until.strftime("%d.%m.%Y") if verification.valid_until else "Не указана")))
+        fields.extend((label, value) for label, value in (("Номер поверки", verification.number),
+                       ("Дата поверки", verification.verified_on.strftime("%d.%m.%Y") if verification.verified_on else ""),
+                       ("Поверка до", verification.valid_until.strftime("%d.%m.%Y") if verification.valid_until else "")) if value)
     return tuple(fields)
 
 
 def public_measurement_fields(measured: PublicMeasurement) -> tuple[tuple[str, str], ...]:
-    return (("Дата замера", measured.measured_on.strftime("%d.%m.%Y")),
+    return tuple((label, value) for label, value in (("Дата замера", measured.measured_on.strftime("%d.%m.%Y")),
             ("Опорное сопротивление измерения", "50 Ом"),
-            ("Прибор", measured.instrument or "Не указан"),
-            ("Калибровка", measured.calibration or "Не указана"),
-            ("Условия", "; ".join(measured.conditions) or "Не указаны"))
+            ("Прибор", measured.instrument), ("Калибровка", measured.calibration),
+            ("Условия", "; ".join(measured.conditions)), ("Цепь", measured.chain)) if value)

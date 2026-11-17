@@ -8,7 +8,7 @@ from fpdf import FPDF
 
 from .instrument_characterization import Characterization, connector_line, impedance_warning, loss_db, number, upper_two
 from .rf_interfaces import RfDetails
-from .instrument_public import PublicMeasurement, PublicPassport, public_fields, public_measurement_fields
+from .instrument_public import PublicMeasurement, PublicPassport, conclusion, control_line, public_fields, public_measurement_fields
 from .traceability import MeasurementInstrument
 from .vna_files import VSWR_CEILING
 
@@ -152,6 +152,20 @@ def public_passport_pdf(passport: PublicPassport, *, generated: datetime, public
         _line(pdf, f"{label}: {value}")
     if passport.impedance_warning:
         _line(pdf, passport.impedance_warning, bold=True)
+    if passport.measurement:
+        pdf.ln(3)
+        _line(pdf, "Заключение", bold=True, size=12)
+        verdict, warning = conclusion(passport.measurement)
+        _line(pdf, verdict, bold=True, size=11)
+        if warning:
+            _line(pdf, warning, bold=True)
+        _line(pdf, control_line(passport), size=8)
+        if passport.control_overdue:
+            _line(pdf, "Требуется повторный замер", bold=True)
+        if public_url:
+            pdf.set_font("Plex", size=9)
+            pdf.set_text_color(0, 100, 90)
+            pdf.cell(0, 7, "Скачать .s2p", link=public_url + "/measurement.s2p", new_x="LMARGIN", new_y="NEXT")
     if passport.measurement is None:
         pdf.ln(6)
         _line(pdf, "Замер не проведён", bold=True, size=14)
@@ -161,6 +175,11 @@ def public_passport_pdf(passport: PublicPassport, *, generated: datetime, public
         for label, value in public_measurement_fields(passport.measurement):
             _line(pdf, f"{label}: {value}")
         draw_measurement(pdf, passport.measurement)
+    if passport.history:
+        _line(pdf, "История контроля", bold=True, size=12)
+        for previous in passport.history:
+            band = previous.band.band_line if previous.band else "Не годен для 50 Ом тракта"
+            _line(pdf, f"{previous.measured_on:%d.%m.%Y} · {band}", size=8)
     return bytes(pdf.output())
 
 
