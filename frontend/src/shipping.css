@@ -115,6 +115,9 @@ table.ship-lines.ship-lines-compact td.ship-name { width: auto; min-width: 260px
 .ship-positions-page .dt-card-group { margin-top: 12px; }
 .ship-positions-page .dt-card-group-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .ship-position-group-title { padding: 0; font: inherit; font-size: 16px; font-weight: 700; text-align: left; }
+.dt-parent-row .ship-position-group, .dt-parent-row .ship-pack-decision { flex-wrap: nowrap; white-space: nowrap; }
+.dt-parent-row .ship-position-group-title { font-size: 13px; }
+.dt-group-cells .ship-position-document { display: inline-flex; flex-direction: row; }
 .ship-position-group-data { font-size: 13px; font-weight: 400; }
 .ship-shipment-group { display: inline-flex; max-width: calc(100% - 40px); min-width: 0; font-size: 13px; font-weight: 400; font-variant-numeric: tabular-nums; }
 .ship-group-open { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0; font: inherit; text-align: left; }

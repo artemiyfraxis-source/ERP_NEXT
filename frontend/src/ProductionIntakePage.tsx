@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { failureText, shippingApi, type DeliveryValues, type ItemAddressee, type Principal, type ProjectAddressee } from "./api";
-import { DataTable, type DataColumn } from "./DataTable";
+import { cellContent, DataTable, type DataColumn } from "./DataTable";
 import { DispatchCard } from "./DispatchCard";
 import { ItemDeliveryWindow } from "./ProjectData";
 import { DISPATCH_STAGES, stageLabel, type DispatchStage } from "./dispatchStage";
@@ -209,8 +209,9 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   /** Почему «Трек…» выключен — своим столбцом, не только в подсказке кнопки. */
   const trackGaps = (line: IntakeLine) => {
     const shipment = line.shipment;
-    if (!shipment || shipment.status !== "Упакована" || !needsTrack(shipment) || readyForTrack(shipment) || shipment.track_number) return [];
-    return shipment.missing_ship.filter((gap) => gap !== "трек-номер");
+    if (!shipment) return [];
+    const fieldGaps = new Set(["условия доставки", "организация", "телефон получателя", "перевозчик", "адрес доставки", "тип УПД", "файл УПД", "№ УПД", "трек-номер"]);
+    return [...new Set([...shipment.missing_data, ...shipment.missing_ship].filter((gap) => !fieldGaps.has(gap)))];
   };
   const updRequired = (line: IntakeLine) => !["waiting", "production"].includes(line.stage ?? "");
 
@@ -284,10 +285,10 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   };
 
   const columns: DataColumn<IntakeLine>[] = [
-    { key: "kb", title: "КБ", width: 64, value: (line) => line.item_index, render: (line) => <span className="intake-kb">{line.item_index}</span> },
+    { key: "kb", title: "КБ", width: 128, value: (line) => line.item_index, render: (line) => <span className="intake-kb">{line.item_index}</span> },
     { key: "name", title: "Наименование", grow: true, minWidth: 160, maxWidth: 280, wrap: true, value: (line) => line.name,
       render: (line) => <span className="ship-position-name" title={line.name}>{line.name}</span> },
-    { key: "stage", title: "Этап", width: 112, value: (line) => line.stage ? stageLabel(line.stage) : line.shipment?.status === "Отменена" ? "Отменена" : "Не набрано",
+    { key: "stage", title: "Этап позиции", width: 112, value: (line) => line.stage ? stageLabel(line.stage) : line.shipment?.status === "Отменена" ? "Отменена" : "Не набрано",
       render: (line) => <StatusChip tone={line.stage ? STAGE_TONE[line.stage] : "neutral"}>{line.stage ? stageLabel(line.stage) : line.shipment?.status === "Отменена" ? "Отменена" : "Не набрано"}</StatusChip> },
     { key: "quantity", title: QUANTITY_TITLE[tab] ?? "Количество", width: 96, numeric: true, value: (line) => line.quantity,
       render: (line) => `${formatNumber(line.quantity)}${NBSP}${line.unit}` },
@@ -321,13 +322,15 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     ...DELIVERY_COLUMNS.map((key): DataColumn<IntakeLine> => ({ key, title: DELIVERY_TITLES[key], value: (line) => deliveryText(line, key),
       wrap: true, width: key === "address" || key === "warehouseNote" || key === "carrierNote" ? 200 : 128, maxWidth: key === "address" || key === "warehouseNote" || key === "carrierNote" ? 240 : 180,
       render: (line) => deliveryCell(line, key) })),
-    { key: "track", title: "Трек", width: 128, value: (line) => trackText(line.shipment), render: (line) => line.shipment ? trackText(line.shipment) || <span className="tone-warn">не заполнен</span> : dash },
+    { key: "track", title: "Трек", width: 128, value: (line) => trackText(line.shipment), render: (line) => line.shipment ? trackText(line.shipment) || <span className="tone-warn">не заполнено</span> : dash },
     { key: "upd", title: "УПД", width: 104, value: (line) => updLabel(deliveryOf(line).upd_type),
       render: (line) => updLabel(deliveryOf(line).upd_type) || (updRequired(line) ? <span className="tone-warn">не заполнено</span> : dash) },
-    { key: "updNumber", title: "№ УПД", width: 128, value: (line) => deliveryOf(line).upd_number ?? "" },
+    { key: "updNumber", title: "№ УПД", width: 128, value: (line) => deliveryOf(line).upd_number ?? "",
+      render: (line) => deliveryOf(line).upd_number || (updRequired(line) && deliveryOf(line).upd_type !== "БЕЗ УПД" ? shippingValue("№ УПД", "") : dash) },
     { key: "updDate", title: "Дата УПД", width: 104, value: (line) => deliveryOf(line).upd_date ?? "", render: (line) => deliveryOf(line).upd_date ? formatDay(deliveryOf(line).upd_date) : dash },
     { key: "updFile", title: "Файл УПД", width: 104, value: (line) => deliveryOf(line).upd_url ?? "", render: (line) => deliveryOf(line).upd_url
-      ? <a href={deliveryOf(line).upd_url} target="_blank" rel="noreferrer">файл</a> : dash },
+      ? <a href={deliveryOf(line).upd_url} target="_blank" rel="noreferrer">файл</a>
+      : updRequired(line) && deliveryOf(line).upd_type && !["ЭДО", "БЕЗ УПД"].includes(deliveryOf(line).upd_type!) ? shippingValue("Файл УПД", "") : dash },
     { key: "trackGaps", title: "Ждём для трека", hint: "Чего не хватает, чтобы вписать трек-номер", wrap: true, width: 160, maxWidth: 240,
       value: (line) => trackGaps(line).join(", "), render: (line) => trackGaps(line).length ? <span className="tone-warn">{trackGaps(line).join(", ")}</span> : dash },
     { key: "pl", title: "PL", width: 136, value: (line) => line.shipment?.pl_number ?? "", render: (line) => line.shipment ? docLink(line.shipment, "pl") : dash },
@@ -336,28 +339,26 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       aria-label={`Доставка ${who(line)}`} onClick={() => setDeliveryEdit({ project: line.project, items: [itemOf(line)!] })}>Изменить доставку</button> : dash },
   ];
   const actionless = (tab === "production" && !canWarehouse) || (["accepted", "to_ship"].includes(tab) && !canDispatch);
-  const leading = TAB_COLUMNS[tab].filter((key) => key !== "action" || !actionless);
+  const leading = [...TAB_COLUMNS[tab], ...(tab === "shipped" && canDispatch ? ["action"] : [])].filter((key) => key !== "action" || !actionless);
   const shipping = ["project", "customer", "shipment", "sequence", "status", "created", "deadline", "shippedAt", ...DELIVERY_COLUMNS, "track", "trackGaps", "upd", "updNumber", "updDate", "updFile", "pl", "dn", "deliveryEdit"];
-  const visibleColumns = [...leading, ...shipping].flatMap((key) => columns.filter((column) => column.key === key));
+  const hidden = new Set(["project", "customer", "shipment", "sequence", "created", "deadline", "stage", ...(tab === "shipped" ? [] : ["shippedAt"])]);
+  const shipmentFields = new Set(["shipment", "sequence", "status", "created", "deadline", "shippedAt", ...DELIVERY_COLUMNS, "track", "trackGaps", "upd", "updNumber", "updDate", "updFile", "pl", "dn"]);
+  const visibleColumns = [...new Set([...leading, ...shipping, "stage"])].flatMap((key) => columns.filter((column) => column.key === key))
+    .map((column): DataColumn<IntakeLine> => ({ ...column, hidden: hidden.has(column.key),
+      export: column.export ?? (shipmentFields.has(column.key) || hidden.has(column.key)),
+      render: (line) => ["project", "customer"].includes(column.key) || (line.shipment && shipmentFields.has(column.key))
+        ? null : column.render ? column.render(line) : cellContent(column, column.value(line)),
+    }));
 
-  const groupLabel = (_key: string, groupRows: IntakeLine[]) => {
+  const projectLabel = (_key: string, groupRows: IntakeLine[]) => {
     const first = groupRows[0];
     const project = first.project;
-    const shipment = first.shipment;
-    if (shipment) return <span className="ship-group-head">
-      <strong>Отгрузка {sequences.get(shipmentGroupKey(first))} · {shipment.number}</strong>
-      <StatusChip status={shipment.status} />
-      {canDispatch && ["Новая", "Собрана", "Упакована"].includes(shipment.status) && <button type="button" className="secondary small"
-        onClick={() => setOpened({ kind: "pack", project })}>Короба и PL/DN</button>}
-      {canDispatch && ["Отгружена", "Закрыта"].includes(shipment.status) && <button type="button" className="secondary small"
-        onClick={() => setOpened({ kind: "ship", project })}>Действия</button>}
-    </span>;
-    const bulk = tab === "ready" || tab === "all" ? [...new Map(groupRows.filter((line) => tab === "ready" ? line.stage === "ready" : num(line.kb.remaining) > 0)
+    const bulk = tab === "ready" || tab === "all" ? [...new Map(groupRows.filter((line) => !line.shipment && (tab === "ready" ? line.stage === "ready" : num(line.kb.remaining) > 0))
       .map((line) => [kbKey(line.kb), line.kb])).values()] : [];
     const quantity = (row: IntakeRow) => tab === "ready" ? piecesOf(row).ready : num(row.remaining);
     const total = round2(bulk.reduce((sum, row) => sum + quantity(row), 0));
     return <span className="ship-group-head">
-      <strong>{project}</strong><span>{head[project]?.customer || "—"}</span>
+      <strong>{project}</strong><span> · {head[project]?.customer || first.shipment?.customer || "—"}</span>
       <button type="button" className="secondary small" aria-label={`Изменить данные отправки ${project}`}
         onClick={() => setProjectData(project)}>Изменить данные проекта</button>
       {canDispatch && Boolean(itemAddressees[project]?.length) && <button type="button" className="secondary small"
@@ -365,6 +366,28 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       {canWarehouse && bulk.length > 1 && <button type="button" className="primary small" onClick={() => accept(bulk, quantity)}>
         Принять всё: {bulk.length} КБ · {formatNumber(total)} шт</button>}
     </span>;
+  };
+  const shipmentCells = (_key: string, groupRows: IntakeLine[], _filtered: IntakeLine[], visible: DataColumn<IntakeLine>[]) => {
+    const first = groupRows[0];
+    const shipment = first.shipment;
+    if (!shipment) return null;
+    const cells: Partial<Record<string, ReactNode>> = {};
+    for (const column of columns) if (shipmentFields.has(column.key)) cells[column.key] = column.render
+      ? column.render(first) : cellContent(column, column.value(first));
+    const visibleKeys = new Set(visible.map((column) => column.key));
+    if (!visibleKeys.has("shipment")) cells.name = cells.shipment;
+    const ordinal = `Отгрузка ${sequences.get(shipmentGroupKey(first))}`;
+    cells[visibleKeys.has("sequence") ? "sequence" : "kb"] = ordinal;
+    const totals = new Map<string, number>();
+    for (const line of shipment.lines) if (line.project === first.project) totals.set(line.unit, round2((totals.get(line.unit) ?? 0) + num(line.picked)));
+    cells.quantity = [...totals].map(([unit, quantity]) => `${formatNumber(quantity)}${NBSP}${unit}`).join(", ");
+    cells.action = <span className="ship-group-head">
+      {canDispatch && ["Новая", "Собрана", "Упакована"].includes(shipment.status) && <button type="button" className="secondary small"
+        onClick={() => setOpened({ kind: "pack", project: first.project })}>Короба и PL/DN</button>}
+      {canDispatch && ["Отгружена", "Закрыта"].includes(shipment.status) && <button type="button" className="secondary small"
+        onClick={() => setOpened({ kind: "ship", project: first.project })}>Действия</button>}
+    </span>;
+    return cells;
   };
 
   const projectRows = (project: string) => rows.filter((row) => row.project === project);
@@ -387,13 +410,13 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
         <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? "on" : undefined} onClick={() => changeTab(key)}
           title="Число — КБ в шаге; во «Все» КБ считается один раз">
           {text}<span className="page-count"> {board.counts[key]}</span></button>)}</div>
-      <DataTable key={tab} label="Приёмка с производства" storageKey={`production-intake:v6:${tab}`} rows={lines} columns={visibleColumns} rowKey={(line) => line.id}
+      <DataTable key={tab} label="Приёмка с производства" storageKey={`production-intake:v7:${tab}`} rows={lines} columns={visibleColumns} rowKey={(line) => line.id}
         bulkActions={canDispatch ? [{ label: "Задать доставку выбранным КБ", disabled: (selected) => selected.some((line) => !itemOf(line)),
           run: (selected) => {
             if (new Set(selected.map((line) => line.project)).size !== 1) { setError("Для массовой доставки выберите КБ одного проекта."); return; }
             setDeliveryEdit({ project: selected[0].project, items: [...new Map(selected.map((line) => [line.item_index, itemOf(line)!])).values()] });
           } }] : []}
-        groupBy={shipmentGroupKey} groupLabel={groupLabel} groupSort exportName="Приёмка с производства"
+        groupParent={(line) => line.project} groupParentLabel={projectLabel} groupBy={shipmentGroupKey} groupCells={shipmentCells} groupSort exportName="Приёмка с производства"
         searchText={(line) => line.shipment ? shipmentSearch({ ...line.shipment, lines: line.shipment.lines.filter((position) => line.id === `${line.shipment!.id}:${position.id}`) }) : []} initialQuery={urlParam("q")} searchPlaceholder="Проект, КБ, наименование, ГРН или задание"
         rowClassName={(line) => tab === "all" && !(line.stage && hasWork(line.stage, line.kb, piecesOf(line.kb))) ? "ship-line-off" : ""}
         emptyText={board.rows.length ? EMPTY[tab] : EMPTY.all} />

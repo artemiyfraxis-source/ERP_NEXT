@@ -21,9 +21,10 @@ beforeEach(() => {
   localStorage.clear(); forgetPersonalViews(); setRightsPrincipal(null);
   vi.stubGlobal("fetch", vi.fn(async () => new Response("{}")));
 });
-afterEach(() => { cleanup(); setRightsPrincipal(null); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); setRightsPrincipal(null); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-const positions = () => screen.getAllByRole("row").filter((row) => row.querySelector('td[data-label="КБ"]'));
+const positions = () => screen.getAllByRole("row").filter((row) => !row.classList.contains("group-row") && row.querySelector('td[data-label="КБ"]'));
+const shipmentRows = () => screen.getAllByRole("row").filter((row) => row.classList.contains("dt-group-cells"));
 const cell = (row: HTMLElement, title: string) => row.querySelector(`td[data-label="${title}"]`)!;
 const show = (shipments = [shipment]) => render(<JournalWindow shipments={shipments} close={() => undefined} />);
 
@@ -34,8 +35,10 @@ it("shows one immediately visible row per position with separate shipping values
   expect(cell(rows[0], "КБ")).toHaveTextContent("КБ1");
   expect(cell(rows[1], "КБ")).toHaveTextContent("КБ2");
   for (const [label, text] of Object.entries({ Организация: "Организация", Получатель: "Контакт", Телефон: "+7 123", Адрес: "Тула", ТК: "СДЭК", Трек: "12345", "№ УПД": "5", PL: "PL-1", DN: "DN-1" })) {
-    expect(cell(rows[0], label).textContent).toBe(text);
-    expect(cell(rows[0], label).querySelector("small")).toBeNull();
+    expect(cell(shipmentRows()[0], label).textContent).toBe(text);
+    expect(cell(shipmentRows()[0], label).querySelector("small")).toBeNull();
+    expect(cell(rows[0], label).textContent).toBe("");
+    expect(cell(rows[1], label).textContent).toBe("");
   }
   expect(cell(rows[0], "Отгружено").textContent).toBe("2");
   expect(cell(rows[0], "Недогруз").textContent).toBe("2");
@@ -73,16 +76,16 @@ it("filters partial shipments per position and keeps separate waiting and shippe
 it("keeps newest groups first and chronological sequence after search and preset filtering", () => {
   const latest = { ...shipment, id: "s2", number: "ОТГ-2", shipped_at: "2026-11-12", lines: [shipment.lines[1]], note: "Особая заметка" };
   show([shipment, latest]);
-  expect(cell(positions()[0], "Отправка")).toHaveTextContent("ОТГ-2");
-  expect(cell(positions()[0], "Отгрузка")).toHaveTextContent("2 из 2");
+  expect(cell(shipmentRows()[0], "Наименование")).toHaveTextContent("ОТГ-2");
+  expect(cell(shipmentRows()[0], "КБ")).toHaveTextContent("Отгрузка 2 из 2");
   fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Особая заметка" } });
   expect(positions()).toHaveLength(1);
-  expect(cell(positions()[0], "Отгрузка")).toHaveTextContent("2 из 2");
+  expect(cell(shipmentRows()[0], "КБ")).toHaveTextContent("Отгрузка 2 из 2");
   fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Пломба-77" } });
   expect(positions()).toHaveLength(3);
   fireEvent.click(screen.getByRole("button", { name: /Частичные/ }));
   expect(positions()).toHaveLength(1);
-  expect(cell(positions()[0], "Отгрузка")).toHaveTextContent("1 из 2");
+  expect(cell(shipmentRows()[0], "КБ")).toHaveTextContent("Отгрузка 1 из 2");
 });
 
 it("searches a position article without retaining its sibling position", () => {
@@ -92,23 +95,25 @@ it("searches a position article without retaining its sibling position", () => {
   expect(cell(positions()[0], "КБ")).toHaveTextContent("КБ1");
 });
 
-it("shows missing required tracking only in its own cell and keeps all shipping columns visible by default", () => {
+it("shows missing required tracking in its shipment cell and hides redundant default metadata", () => {
   show([{ ...shipment, track_number: "" }]);
-  expect(cell(positions()[0], "Трек")).toHaveTextContent("не заполнен");
-  expect(cell(positions()[0], "Трек").querySelector(".tone-warn")).not.toBeNull();
+  expect(cell(shipmentRows()[0], "Трек")).toHaveTextContent("не заполнено");
+  expect(cell(shipmentRows()[0], "Трек").querySelector(".tone-warn")).not.toBeNull();
+  expect(cell(positions()[0], "Трек")).toBeEmptyDOMElement();
   const headers = screen.getAllByRole("columnheader").map((header) => header.textContent);
   const organization = headers.indexOf("Организация");
   expect(headers.slice(organization, organization + 4)).toEqual(["Организация", "Получатель", "Телефон", "Адрес"]);
   expect(headers).not.toContain("Контакт");
   expect(headers).not.toContain("Контактное лицо");
-  for (const title of ["Создана", "Срок", "Отгружена", "Способ доставки", "Организация", "Телефон", "Адрес", "УПД", "№ УПД", "Дата УПД", "Файл УПД", "PL", "DN"]) {
+  for (const title of ["Отгружена", "Способ доставки", "Организация", "Телефон", "Адрес", "УПД", "№ УПД", "Дата УПД", "Файл УПД", "PL", "DN"]) {
     expect(headers).toContain(title);
   }
+  for (const title of ["Создана", "Срок", "Этап позиции", "Данные", "Проект", "Заказчик", "Отправка", "Отгрузка"]) expect(headers).not.toContain(title);
 });
 
 it("opens shipment data from its number with no editing or history correction authority", () => {
   show();
-  fireEvent.click(within(positions()[0]).getByRole("button", { name: "Данные отправки ОТГ-1" }));
+  fireEvent.click(within(shipmentRows()[0]).getByRole("button", { name: "Данные отправки ОТГ-1" }));
   const data = within(screen.getByRole("dialog", { name: "Данные отправки ОТГ-1" }));
   expect(data.getByRole("textbox", { name: "№ УПД" })).toHaveAttribute("readonly");
   expect(data.queryByRole("button", { name: /Сохранить|Исправить историю/ })).not.toBeInTheDocument();
@@ -126,13 +131,13 @@ it("retains empty selected shipment identity and status without inventing a posi
 it("disables incomplete active DN and respects print permissions", () => {
   const active = { ...shipment, status: "Упакована", shipped_at: null, missing_data: ["файл УПД"] };
   const rendered = show([active]);
-  expect(within(positions()[0]).getByRole("button", { name: "Печать DN DN-1" })).toBeDisabled();
-  expect(within(positions()[0]).getByRole("button", { name: "Печать PL PL-1" })).toBeEnabled();
+  expect(within(shipmentRows()[0]).getByRole("button", { name: "Печать DN DN-1" })).toBeDisabled();
+  expect(within(shipmentRows()[0]).getByRole("button", { name: "Печать PL PL-1" })).toBeEnabled();
   rendered.unmount();
   setRightsPrincipal({ user: { id: "u", name: "Склад", email: "u@test", department: "Склад" }, roles: [], permissions: { shipping_goods: "view" } });
   show();
   expect(screen.queryByRole("button", { name: /Печать/ })).not.toBeInTheDocument();
-  expect(cell(positions()[0], "PL")).toHaveTextContent("PL-1");
+  expect(cell(shipmentRows()[0], "PL")).toHaveTextContent("PL-1");
 });
 
 it("keeps journal row quantities and box totals without counting unshipped goods as shipped", () => {
@@ -140,4 +145,69 @@ it("keeps journal row quantities and box totals without counting unshipped goods
   expect(partial).toMatchObject({ project: "100К.1", ordered: 4, shipped: 2, partial: true, weight: "3", dims: "20×30×40" });
   expect(complete).toMatchObject({ ordered: 5, shipped: 5, partial: false });
   expect(journalRows([{ ...shipment, status: "Упакована", shipped_at: null }])[0]).toMatchObject({ shipped: "", partial: false });
+});
+
+it("groups two shipments once under their project and keeps full totals when a single KB is found", () => {
+  const newer = { ...shipment, id: "s2", number: "ОТГ-2", shipped_at: "2026-11-12", carrier: "ПЭК", lines: [...shipment.lines].reverse() };
+  show([shipment, newer]);
+  expect(document.querySelectorAll(".dt-parent-row")).toHaveLength(1);
+  expect(document.querySelector(".dt-parent-row")).toHaveTextContent("100К.1");
+  expect(document.querySelector(".dt-parent-row")).toHaveTextContent("Заказчик");
+  expect(shipmentRows()).toHaveLength(2);
+  expect(cell(shipmentRows()[0], "Наименование")).toHaveTextContent("ОТГ-2");
+  expect(cell(shipmentRows()[0], "Количество")).toHaveTextContent("5 м, 2 шт");
+  expect(positions().map((row) => cell(row, "КБ").textContent)).toEqual(["КБ1", "КБ2", "КБ1", "КБ2"]);
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "АРТ-1" } });
+  expect(positions()).toHaveLength(2);
+  expect(shipmentRows()).toHaveLength(2);
+  expect(cell(shipmentRows()[0], "Количество")).toHaveTextContent("5 м, 2 шт");
+  expect(positions().every((row) => cell(row, "ТК").textContent === "")).toBe(true);
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "ПЭК" } });
+  expect(positions()).toHaveLength(2);
+  expect(shipmentRows()).toHaveLength(1);
+});
+
+it("preserves non-field authorization blockers without repeating missing field names", () => {
+  show([{ ...shipment, status: "Упакована", upd_type: "БЕЗ УПД", receiver: "", missing_data: ["организация", "разрешение на отгрузку без УПД"], missing_ship: ["организация", "разрешение на отгрузку без УПД", "трек-номер"] }]);
+  expect(cell(shipmentRows()[0], "Ждём для трека").textContent).toBe("разрешение на отгрузку без УПД");
+  expect(cell(shipmentRows()[0], "Организация")).toHaveTextContent("не заполнено");
+  expect(cell(positions()[0], "Ждём для трека").textContent).toBe("");
+});
+
+it("requires an attachment for paper UPD and permits EDO without a file", () => {
+  const paper: Shipment = { ...shipment, id: "paper", number: "БУМ-1", upd_type: "БУМАГА", upd_url: "", missing_data: ["файл УПД"] };
+  const rendered = show([{ ...shipment, upd_url: "" }, paper]);
+  const edoRow = shipmentRows().find((row) => cell(row, "Наименование").textContent === shipment.number)!;
+  const paperRow = shipmentRows().find((row) => cell(row, "Наименование").textContent === paper.number)!;
+  expect(cell(edoRow, "Файл УПД").querySelector(".tone-warn")).toBeNull();
+  expect(cell(paperRow, "Файл УПД").querySelector(".tone-warn")).toHaveTextContent("не заполнено");
+  rendered.unmount();
+});
+
+it("keeps optional metadata available and moves number and ordinal into their columns without duplicates", () => {
+  show();
+  fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+  for (const title of ["Отправка", "Отгрузка", "Создана", "Срок"]) fireEvent.click(screen.getByRole("checkbox", { name: title }));
+  expect(cell(shipmentRows()[0], "Отправка")).toHaveTextContent("ОТГ-1");
+  expect(cell(shipmentRows()[0], "Отгрузка")).toHaveTextContent("Отгрузка 1 из 1");
+  expect(cell(shipmentRows()[0], "Наименование")).toBeEmptyDOMElement();
+  expect(cell(shipmentRows()[0], "КБ")).toBeEmptyDOMElement();
+  expect(cell(positions()[0], "Отправка")).toBeEmptyDOMElement();
+});
+
+it("exports one populated record per KB including hidden project and shipment fields", async () => {
+  let blob: Blob | undefined;
+  vi.spyOn(URL, "createObjectURL").mockImplementation((value) => { blob = value as Blob; return "blob:journal"; });
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+  show();
+  fireEvent.click(screen.getByRole("button", { name: "Excel" }));
+  const text = new TextDecoder("utf-16le").decode(await blob!.arrayBuffer());
+  const [header, ...records] = text.trim().split("\r\n").map((line) => line.split("\t"));
+  expect(records).toHaveLength(2);
+  for (const record of records) {
+    for (const [title, value] of Object.entries({ Проект: "100К.1", Заказчик: "Заказчик", Отправка: "ОТГ-1", Организация: "Организация", ТК: "СДЭК", Телефон: "+7 123", Адрес: "Тула", Создана: "2026-11-01T12:00:00", Срок: "2026-11-08" })) {
+      expect(record[header.indexOf(title)], title).toBe(value);
+    }
+  }
 });
