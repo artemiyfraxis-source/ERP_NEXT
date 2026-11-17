@@ -4301,6 +4301,12 @@ export const shippingApi = {
     api<{ shipment: Shipment; closed?: boolean; why?: string }>(`/api/shipping/shipments/${shipmentId}/${action}`, {
       method: "POST", body: JSON.stringify({ version }),
     }),
+  /** «Отгрузить без данных…» (руководитель): причина обязательна, дата отгрузки — фактическая. Сервер сам вносит
+   *  разрешение «без УПД» на имя руководителя, если УПД нет. */
+  shipWithoutData: (shipmentId: string, version: number, missingReason: string, shipDate: string) =>
+    api<{ shipment: Shipment; closed?: boolean; why?: string }>(`/api/shipping/shipments/${shipmentId}/ship`, {
+      method: "POST", body: JSON.stringify({ version, missing_reason: missingReason, ship_date: shipDate }),
+    }),
   unpick: (shipmentId: string, version: number, lineId: string) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/unpick`, {
     method: "POST", body: JSON.stringify({ version, line_id: lineId }),
   }),

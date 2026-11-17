@@ -1009,14 +1009,24 @@ class Shipment:
             return self
         return replace(self, **changed, inherited=self.inherited - changed.keys(), version=self.version + 1)
 
-    def mark_shipped(self, day: date) -> Shipment:
+    def mark_shipped(self, day: date, *, allow_missing: bool = False) -> Shipment:
         """`shipShipped_`: груз уехал из любого активного статуса; гейт — `shipGateMiss_('Отгружена')`:
-        набрана хоть одна позиция и все данные отправки на месте (`shipping_gaps`)."""
+        набрана хоть одна позиция и все данные отправки на месте (`shipping_gaps`).
+
+        `allow_missing` (владелец 18.11.2026, «отгрузить без данных»): пробелы данных доставки не держат; контроль
+        «Без УПД» остаётся — если самого УПД нет, нужно разрешение по PIN."""
         if self.status not in {ShipmentStatus.NEW, ShipmentStatus.ASSEMBLED, ShipmentStatus.PACKED}:
             raise ShippingValidationError("Отгрузить можно только активную заявку")
         if not any(line.picked > 0 for line in self.lines):
             raise ShippingValidationError("Нельзя отгрузить: ни одна позиция не набрана")
-        gaps = shipping_gaps(self)
+        if allow_missing:
+            if no_upd_offered(self):
+                raise ShippingValidationError(
+                    "Нельзя отгрузить: УПД нет — нужно разрешение «Без УПД…» по PIN, даже при отгрузке без данных"
+                )
+            gaps = ()
+        else:
+            gaps = shipping_gaps(self)
         if gaps:
             raise ShippingValidationError("Нельзя отгрузить: не хватает — " + ", ".join(gaps))
         return replace(self, status=ShipmentStatus.SHIPPED, shipped_at=self.shipped_at or day, version=self.version + 1)
