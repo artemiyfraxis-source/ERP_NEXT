@@ -3,6 +3,7 @@ import type { InstrumentKind, ProductionInstrument } from "./api";
 import { compareCells, DataTable, readSaved, type DataColumn } from "./DataTable";
 import { formatDay, formatNumber } from "./format";
 import { InstrumentWindow } from "./InstrumentWindow";
+import { InstrumentLabelPrint } from "./InstrumentLabelPrint";
 import { StatusChip } from "./StatusChip";
 
 type InstrumentRow = ProductionInstrument & { depth: number; parentLabel: string; parentNumber: string };
@@ -84,6 +85,11 @@ export function InstrumentRegistry({ instruments, onChanged }: {
 }) {
   const [view, setView] = useState<View>(savedView);
   const [treeSort, setTreeSort] = useState(() => readSaved(tableKey).sort ?? null);
+  const [labels, setLabels] = useState<ProductionInstrument[] | null>(null);
+  const labelActions = {
+    bulkActions: [{ label: "Печать выбранных этикеток", run: (items: InstrumentRow[]) => setLabels([...items]) }],
+    filteredActions: [{ label: "Печать этикеток", run: (items: InstrumentRow[]) => setLabels([...items]) }],
+  };
   const rows = useMemo(() => {
     const byId = new Map(instruments.map((item) => [item.id, item]));
     const column = view === "tree" && treeSort && columns.find((item) => item.key === treeSort.key);
@@ -130,6 +136,7 @@ export function InstrumentRegistry({ instruments, onChanged }: {
     <div className="instrument-legend">Поверка до: <span className="is-overdue">просрочена</span> · <span className="is-soon">осталось до 30 дней</span></div>
     {(instrumentRows.length > 0 || !sharedRows.length) && <div onClickCapture={captureSort}>
       <DataTable label="Средства измерения" storageKey={tableKey} rows={instrumentRows}
+        {...labelActions}
         columns={view === "tree" ? columns.filter((column) => column.key !== "parentLabel") : columns} groupSort={view === "tree"}
         rowKey={(item) => item.id} rowLabel={(item) => item.inventory_number || item.name}
         onRowClick={(item) => setWindow({ record: item, kind: item.kind, parentId: item.parent_id })}
@@ -140,6 +147,7 @@ export function InstrumentRegistry({ instruments, onChanged }: {
     {sharedRows.length > 0 && <div>
       <h3>Общие принадлежности</h3>
       <DataTable label="Общие принадлежности" storageKey={`${tableKey}-shared`} rows={sharedRows}
+        {...labelActions}
         columns={columns.filter((column) => column.key !== "parentLabel")}
         rowKey={(item) => item.id} rowLabel={(item) => item.inventory_number || item.name}
         onRowClick={(item) => setWindow({ record: item, kind: item.kind, parentId: null })}
@@ -150,5 +158,6 @@ export function InstrumentRegistry({ instruments, onChanged }: {
     {window && <InstrumentWindow key={window.record?.id ?? `new:${window.kind}:${window.parentId}`} instrument={window.record}
       kind={window.kind} parentId={window.parentId} instruments={instruments} close={() => setWindow(null)} onChanged={onChanged}
       onAccessory={(parentId) => openNew("Принадлежность", parentId)} />}
+    {labels && <InstrumentLabelPrint instruments={labels} bulk close={() => setLabels(null)} />}
   </div>;
 }

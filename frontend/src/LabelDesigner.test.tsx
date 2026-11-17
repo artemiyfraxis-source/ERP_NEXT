@@ -56,6 +56,13 @@ async function designer(props: Partial<Parameters<typeof LabelDesigner>[0]> = {}
 }
 const props = () => within(screen.getByRole("complementary", { name: "Свойства элемента" }));
 
+it("opens the instrument label templates through the Russian kind tab", async () => {
+  await designer();
+  fireEvent.click(screen.getByRole("tab", { name: "СИ и принадлежности" }));
+  await waitFor(() => expect(calls.some((call) => call.path === "/api/stock/labels/templates/instrument")).toBe(true));
+  expect(screen.getByRole("tab", { name: "СИ и принадлежности" })).toHaveAttribute("aria-selected", "true");
+});
+
 it("snaps to 0.5 mm and makes new elements inside the label", () => {
   expect(snap(3.26)).toBe(3.5);
   expect(snap(3.24)).toBe(3);

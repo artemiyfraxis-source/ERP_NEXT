@@ -6,8 +6,8 @@ import { PageWindow } from "./PageWindow";
 /* «Шаблон этикетки» (owner 23.10.2026: «переработать шаблон печати, желательно сделать конструктор»): the label of a
    kind (партия склада, ГП приёмки) per format, drawn over the server's preview — exactly the dots the printer gets. */
 
-export type LabelKind = "lot" | "intake";
-export const LABEL_KINDS: [LabelKind, string][] = [["lot", "Партия склада"], ["intake", "Приёмка с производства"]];
+export type LabelKind = "lot" | "intake" | "instrument";
+export const LABEL_KINDS: [LabelKind, string][] = [["lot", "Партия склада"], ["intake", "Приёмка с производства"], ["instrument", "СИ и принадлежности"]];
 export type LabelFormat = "58x30" | "58x40" | "100x50";
 export const LABEL_FORMATS: LabelFormat[] = ["58x30", "58x40", "100x50"];
 export type ElementKind = "field" | "text" | "qr" | "code128" | "line" | "box";

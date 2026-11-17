@@ -72,6 +72,55 @@ const save = () => fireEvent.click(screen.getByRole("button", { name: "Сохр�
 const writes = (requests: Request[]) => requests.filter((request) => request.method !== "GET");
 afterEach(() => { vi.restoreAllMocks(); localStorage.clear(); });
 
+it("opens the print confirmation for filtered rows and for explicit selection", async () => {
+  setup([instrument, accessory], (request) => request.path === `${base}/label-agent` ? json({ online: true }) : null);
+  fireEvent.change(screen.getByLabelText("Найти средство измерений"), { target: { value: "Переходник" } });
+  fireEvent.click(screen.getByRole("button", { name: "Печать этикеток" }));
+  let dialog = screen.getByRole("dialog", { name: "Печать этикеток" });
+  expect(within(dialog).getByText("Записей: 1")).toBeInTheDocument();
+  expect(within(dialog).getByRole("img")).toHaveAttribute("src", expect.stringContaining("/adapter/label.png"));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Печать этикеток" })).toBeEnabled());
+  fireEvent.change(screen.getByLabelText("Найти средство измерений"), { target: { value: "" } });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Выбрать: СИ.001" }));
+  fireEvent.click(screen.getByRole("button", { name: "Печать выбранных этикеток" }));
+  dialog = screen.getByRole("dialog", { name: "Печать этикеток" });
+  expect(within(dialog).getByText("Записей: 1")).toBeInTheDocument();
+  expect(within(dialog).getByRole("img")).toHaveAttribute("src", expect.stringContaining("/vna/label.png"));
+  await waitFor(() => expect(within(dialog).queryByText("Проверка связи с принтером…")).not.toBeInTheDocument());
+});
+
+it("assigns the server-suggested serial with the saved version and displays it in the card", async () => {
+  const empty = { ...instrument, serial_number: "", suggested_serial_number: "ФР-001" };
+  const { requests } = setup([empty], (request) => request.path === `${base}/vna/serial`
+    ? json({ instrument: { ...empty, serial_number: "ФР-001", suggested_serial_number: null, version: 8 } }) : null);
+  open();
+  fireEvent.click(screen.getByRole("button", { name: "Присвоить номер ФР-001" }));
+  await screen.findByText("Номер присвоен");
+  expect(screen.getByLabelText("Зав. №")).toHaveValue("ФР-001");
+  expect(writes(requests)).toEqual([{ path: `${base}/vna/serial`, method: "POST", body: { version: 7 } }]);
+  expect(screen.queryByRole("button", { name: /Присвоить номер/ })).not.toBeInTheDocument();
+});
+
+it("opens the saved-card preview and closes it without closing the card", async () => {
+  setup([instrument], (request) => request.path === `${base}/label-agent` ? json({ online: true }) : null);
+  open();
+  fireEvent.click(screen.getByRole("button", { name: "Печать этикетки" }));
+  const dialog = screen.getByRole("dialog", { name: "Печать этикеток" });
+  expect(within(dialog).getByRole("img")).toHaveAttribute("src", expect.stringContaining("/vna/label.png"));
+  await waitFor(() => expect(within(dialog).queryByText("Проверка связи с принтером…")).not.toBeInTheDocument());
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  expect(screen.queryByRole("dialog", { name: "Печать этикеток" })).not.toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: /Средство измерений:/ })).toBeInTheDocument();
+});
+
+it("asks to save card edits before printing", () => {
+  setup(); open();
+  fill("Наименование", "Изменено");
+  expect(screen.getByRole("button", { name: "Печать этикетки" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Печать этикетки" })).toHaveAttribute("title", "Сначала сохраните изменения");
+});
+
 const shared: ProductionInstrument = { ...accessory, id: "shared", inventory_number: "СИ.004", name: "Общий переходник", parent_id: null };
 
 it("marks shared accessories in the flat list without confusing missing parents with shared ones", () => {
@@ -94,7 +143,7 @@ it("puts shared accessories in a separate searchable tree group and retains link
   expect(within(mainTable).getByText(accessory.inventory_number)).toBeInTheDocument();
   expect(within(mainTable).queryByText(shared.inventory_number)).not.toBeInTheDocument();
   fireEvent.click(within(mainTable).getByRole("button", { name: "Наименование" }));
-  expect(within(mainTable).getAllByRole("row").slice(1).map(row => within(row).getAllByRole("cell")[0].textContent))
+  expect(within(mainTable).getAllByRole("row").slice(1).map(row => row.querySelector("td.key")?.textContent))
     .toEqual([instrument.inventory_number, kit.inventory_number, accessory.inventory_number]);
   fireEvent.change(screen.getByLabelText("Найти общую принадлежность"), { target: { value: "нет такого" } });
   expect(within(group).getByText("Общие принадлежности не найдены.")).toBeInTheDocument();
@@ -124,7 +173,7 @@ it("keeps shared group sorting independent of instrument tree sorting", () => {
   fireEvent.click(screen.getByRole("button", { name: "По приборам" }));
   const group = screen.getByRole("region", { name: "Общие принадлежности" });
   const main = screen.getByRole("region", { name: "Средства измерения" });
-  const order = () => within(group).getAllByRole("row").slice(1).map(row => within(row).getAllByRole("cell")[0].textContent);
+  const order = () => within(group).getAllByRole("row").slice(1).map(row => row.querySelector("td.key")?.textContent);
   fireEvent.click(within(main).getByRole("button", { name: "Наименование" }));
   expect(order()).toEqual(["СИ.004", "СИ.006"]);
   expect(within(group).getByRole("columnheader", { name: "Наименование" })).toHaveAttribute("aria-sort", "none");
@@ -160,7 +209,7 @@ it("keeps accessories and calibration kits below their parent with indentation a
 });
 
 function inventoryOrder() {
-  return screen.getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell")[0].textContent);
+  return screen.getAllByRole("row").slice(1).map((row) => row.querySelector("td.key")?.textContent);
 }
 
 it("defaults to a flat list with alphabetic prefixes and natural inventory numbers", () => {
@@ -217,7 +266,7 @@ it("shows and sorts the direct parent by its stable id, leaving top-level and or
   const other = { ...instrument, id: "other", inventory_number: "СИ.010", name: "Другой прибор" };
   setup([instrument, accessory, other, { ...kit, parent_id: other.id }, { ...unverified, parent_id: "missing" }]);
   const rows = screen.getAllByRole("row").slice(1);
-  const parentCells = rows.map((row) => within(row).getAllByRole("cell")[2]);
+  const parentCells = rows.map((row) => row.querySelector('td[data-label="Прибор"]')!);
   expect(parentCells.map((cell) => cell.textContent)).toEqual(["—", "СИ.001", "СИ.010", "—", "—"]);
   expect(parentCells[1].firstElementChild).toHaveAttribute("title", "СИ.001 · Анализатор цепей");
   fireEvent.click(screen.getByRole("button", { name: "Прибор" }));

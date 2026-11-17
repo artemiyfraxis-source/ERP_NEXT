@@ -23,6 +23,24 @@ function names() {
 
 afterEach(() => { cleanup(); window.localStorage.clear(); vi.restoreAllMocks(); });
 
+it("runs filtered actions on all matching rows beyond the page, respecting search and column filters", async () => {
+  const run = vi.fn();
+  render(<DataTable rows={rows} columns={columns} rowKey={(row) => row.id} pageSize={1}
+    filteredActions={[{ label: "Печатать список", run }]} />);
+  expect(screen.getAllByRole("row")).toHaveLength(2);
+  fireEvent.click(screen.getByRole("button", { name: "Печатать список" }));
+  expect(run).toHaveBeenLastCalledWith(rows);
+  await act(async () => {});
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Разъём" } });
+  fireEvent.click(screen.getByRole("button", { name: "Фильтры" }));
+  fireEvent.change(screen.getByRole("combobox", { name: "Фильтр: Поставщик" }), { target: { value: "Кабель-Торг" } });
+  fireEvent.click(screen.getByRole("button", { name: "Печатать список" }));
+  expect(run).toHaveBeenLastCalledWith([rows[2]]);
+  await act(async () => {});
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "ничего" } });
+  expect(screen.getByRole("button", { name: "Печатать список" })).toBeDisabled();
+});
+
 it("exports opted-in hidden columns with filtered rows while ordinary hidden columns stay omitted", async () => {
   let blob: Blob | null = null;
   vi.spyOn(URL, "createObjectURL").mockImplementation((value) => { blob = value as Blob; return "blob:x"; });

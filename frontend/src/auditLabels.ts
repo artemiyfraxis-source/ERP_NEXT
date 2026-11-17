@@ -116,6 +116,8 @@ const EVENT_NAMES: Record<string, string> = {
   "production.qc_rejection_decided": "Решение по браку ОТК",
   "production.defect_decided": "Решение по браку",
   "production.instrument_registered": "Средство измерения добавлено",
+  "production.instrument_serial_assigned": "Присвоен собственный номер СИ",
+  "production.instrument_label_queued": "Этикетки СИ поставлены в очередь печати",
   "production.calendar_replaced": "Календарь цеха сохранён",
   "production.skills_replaced": "Компетенции сохранены",
   "production.stage_changed": "Смена этапа проекта",

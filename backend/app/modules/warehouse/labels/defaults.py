@@ -143,5 +143,30 @@ def _wide(kind: str, width: float, height: float, code_type: str) -> list[dict]:
 def default_template(kind: str, label_format: str, code_type: str) -> LabelTemplate:
     """The built-in template of a kind × format for the settings' type of code (qr | code128 | both)."""
     width, height = FORMATS[label_format]
+    if kind == "instrument":
+        return LabelTemplate.model_validate({"elements": _instrument(width, height)})
     build = _wide if width >= 90 else _narrow
     return LabelTemplate.model_validate({"elements": build(kind, width, height, code_type)})
+
+
+def _instrument(width: float, height: float) -> list[dict]:
+    """Inventory number beside a QR; card description and serial below, with room for verified instruments.
+
+    Instrument identifiers contain Cyrillic, so the built-in template always uses QR regardless of lot settings.
+    """
+    large = width >= 90
+    qr_side = 20.0 if large else 14.8
+    x = MARGIN + qr_side + 1
+    elements = [_code("qr", "qr", MARGIN, MARGIN, qr_side, qr_side)]
+    elements.append(_text("inventory_number", x, 1, width - MARGIN - x, 5 if large else 4,
+                          field="inventory_number", bold=True, fit="ellipsis"))
+    elements.append(_text("model", x, 10 if large else 8.5, width - MARGIN - x, 2,
+                          field="model", fit="ellipsis"))
+    lines = 2 if height >= 40 else 1
+    top = MARGIN + qr_side + 0.5
+    rows, _ = _stack(MARGIN, top, width - 2 * MARGIN, [
+        (0, {"id": "name", "font_mm": 2, "field": "name", "bold": True, "lines": lines, "fit": "ellipsis"}),
+        (0.2, {"id": "serial_number", "font_mm": 1.7, "field": "serial_number", "fit": "ellipsis"}),
+        (0.2, {"id": "verification_due", "font_mm": 1.7, "field": "verification_due", "fit": "ellipsis"}),
+    ])
+    return elements + rows

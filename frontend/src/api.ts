@@ -1562,6 +1562,7 @@ export interface ProductionInstrument {
   parent_id: string | null;
   serial_number: string;
   manufacturer: string;
+  suggested_serial_number?: string | null;
   doc_designation: string;
   quantity: string | number;
   storage_location: string;
@@ -1574,7 +1575,7 @@ export interface ProductionInstrument {
   files: InstrumentFile[];
 }
 
-export type InstrumentInput = Omit<ProductionInstrument, "id" | "version" | "files" | "warehouse_writeoff_id">;
+export type InstrumentInput = Omit<ProductionInstrument, "id" | "version" | "files" | "warehouse_writeoff_id" | "suggested_serial_number">;
 export interface RfInterface {
   series: string;
   body: string;
@@ -4199,6 +4200,14 @@ export const productionApi = {
       method: "POST", body: JSON.stringify({ version, disposition, act_reference: actReference }),
     }),
   instruments: () => api<{ instruments: ProductionInstrument[] }>("/api/production/instruments"),
+  instrumentLabelAgent: () => api<{ online: boolean }>("/api/production/instruments/label-agent"),
+  instrumentLabelUrl: (id: string, stamp: number | string = 0) => `/api/production/instruments/${encodeURIComponent(id)}/label.png?t=${stamp}`,
+  printInstrumentLabel: (id: string, copies: number) =>
+    api<{ status: "queued"; job_ids: string[] }>(`/api/production/instruments/${encodeURIComponent(id)}/label`, { method: "POST", body: JSON.stringify({ copies }) }),
+  printInstrumentLabels: (ids: string[], copies: number) =>
+    api<{ status: "queued"; job_ids: string[] }>("/api/production/instruments/labels", { method: "POST", body: JSON.stringify({ ids, copies }) }),
+  assignInstrumentSerial: (id: string, version: number) =>
+    api<{ instrument: ProductionInstrument }>(`/api/production/instruments/${encodeURIComponent(id)}/serial`, { method: "POST", body: JSON.stringify({ version }) }),
   vswrTasks: () => api<{ tasks: VswrTaskListItem[] }>("/api/production/vswr/tasks"),
   vswrTask: (taskId: string) => api<VswrTaskOverview>(`/api/production/vswr/tasks/${taskId}`),
   uploadVswr: (payload: VswrUploadPayload) =>

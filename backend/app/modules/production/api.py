@@ -90,6 +90,7 @@ from .execution import (
     submit_work,
 )
 from .traceability import TAKEABLE_BOX, BoxStatus, DefectDisposition, DefectRecord, InstrumentFileKind, InstrumentKind, InstrumentStatus, MaterialInput, ProductionBox, ProductionOutput, WorkSession
+from .instrument_serials import in_house_serial_number
 from .worklog import SUMMARY_KEYS, WorkTimeEntry, percent, time_fact
 from .resource_assignments import MachineBinding
 from .resource_claims import ResourceConflict
@@ -98,6 +99,7 @@ from .quality import (
     InspectBoxCommand,
     RegisterInstrumentCommand,
     UpdateInstrumentCommand,
+    assign_instrument_serial,
     attach_instrument_file,
     delete_instrument_file,
     next_instrument_number,
@@ -1437,12 +1439,19 @@ def instrument_file_result(item) -> dict:
 
 
 def instrument_result(item, files=()) -> dict:
+    suggested_serial = None
+    if not item.serial_number.strip():
+        try:
+            suggested_serial = in_house_serial_number(item.inventory_number)
+        except ProductionValidationError:
+            pass  # Legacy inventory numbers without a numeric suffix require a manually entered serial.
     return {
         "id": str(item.id), "version": item.version,
         "inventory_number": item.inventory_number, "name": item.name,
         "instrument_type": item.instrument_type, "kind": item.kind.value,
         "parent_id": str(item.parent_id) if item.parent_id else None,
-        "serial_number": item.serial_number, "manufacturer": item.manufacturer,
+        "serial_number": item.serial_number, "suggested_serial_number": suggested_serial,
+        "manufacturer": item.manufacturer,
         "doc_designation": item.doc_designation, "quantity": item.quantity,
         "storage_location": item.storage_location, "warehouse_grn": item.warehouse_grn,
         "warehouse_writeoff_id": str(item.warehouse_writeoff_id) if item.warehouse_writeoff_id else None,
@@ -1501,6 +1510,22 @@ def edit_instrument(
         instrument_id=instrument_id, expected_version=payload.version,
         changes=payload.model_dump(exclude_unset=True, exclude={"version"}), actor=principal.actor, now=now,
     ), uow_factory()))
+    with uow_factory() as uow:
+        files = [file for file in uow.instrument_files.list() if file.instrument_id == item.id]
+    return {"instrument": instrument_result(item, files)}
+
+
+@router.post("/instruments/{instrument_id}/serial")
+def assign_serial(
+    instrument_id: UUID,
+    payload: BoxVersionPayload,
+    principal: Annotated[Principal, Depends(production_quality_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    item = _execution(lambda: assign_instrument_serial(
+        instrument_id, payload.version, principal.actor, now, uow_factory(),
+    ))
     with uow_factory() as uow:
         files = [file for file in uow.instrument_files.list() if file.instrument_id == item.id]
     return {"instrument": instrument_result(item, files)}
