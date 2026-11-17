@@ -76,23 +76,33 @@ class RfRepository:
     def get(self, instrument_id: UUID) -> RfDetails:
         return self.list(instrument_id).get(instrument_id, RfDetails())
 
-    def latest_characterization_file_ids(self, instrument_ids):
-        """One named measurement per instrument; select before validating its payload.
-
-        A corrupt, oversized or narrower replacement must never revive an older measurement.
-        Read metadata only, with the same stable ordering for labels, passports and planning.
-        """
+    def _named_characterization_file_ids(self, instrument_ids):
         if not instrument_ids:
             return
         row = ProductionInstrumentFileRow
         query = select(row.instrument_id, row.id, row.file_name).where(
             row.instrument_id.in_(instrument_ids), func.lower(row.file_name).like("%.s2p"),
         ).order_by(row.uploaded_at.desc(), row.id.desc()).execution_options(yield_per=1)
-        seen = set()
         for instrument_id, file_id, file_name in self.session.execute(query):
-            if instrument_id not in seen and is_characterization_file(file_name):
+            if is_characterization_file(file_name):
+                yield instrument_id, file_id
+
+    def latest_characterization_file_ids(self, instrument_ids):
+        """Select before validation: a corrupt newest upload must never revive older evidence."""
+        seen = set()
+        for instrument_id, file_id in self._named_characterization_file_ids(instrument_ids):
+            if instrument_id not in seen:
                 seen.add(instrument_id)
                 yield instrument_id, file_id
+
+    def characterization_history_file_ids(self, instrument_id, limit=10):
+        """Bound the public history to the ten most recent previous named uploads."""
+        files = self._named_characterization_file_ids([instrument_id])
+        next(files, None)  # Current file, including an invalid replacement, is never history.
+        for index, (_, file_id) in enumerate(files):
+            if index >= limit:
+                break
+            yield file_id
 
     def characterization_files(self, instrument_ids):
         """Load only the latest named measurements, retaining the planner's payload bound."""

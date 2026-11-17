@@ -168,11 +168,14 @@ def _instrument(width: float, height: float) -> list[dict]:
     elements += rows
     top = 21.2 if compact else (29 if large else 23)
     size = 1.4 if compact else 2
-    elements.append(_text("parameters_line", 1, top, width - 2, size, field="parameters_line", bold=True))
+    left = 2.0  # Keep small measured-fact text clear of the printer's unprintable left edge.
+    elements.append(_text("parameters_line", left, top, width - left - 1, size, field="parameters_line", bold=True))
     second = top + (2.9 if compact else 4.3)
-    elements.append(_text("loss_line", 1, second, width * 0.53, size if compact else 1.8, field="loss_line"))
-    elements.append(_text("measurement_date", width * 0.56, second, width * 0.44 - 1,
+    elements.append(_text("loss_line", left, second, width - left - 1, size if compact else 1.8, field="loss_line"))
+    third = second + (2.7 if compact else 4.3)
+    date_width = 31 if large else 23
+    elements.append(_text("measurement_date", left, third, date_width,
                           1.3 if compact else 1.8, field="measurement_date"))
-    elements.append(_text("footer_line", 1, second + (2.7 if compact else 4.3), width - 2,
+    elements.append(_text("footer_line", left + date_width + 0.5, third, width - left - date_width - 1.5,
                           1.1 if compact else 1.6, field="footer_line"))
     return elements
