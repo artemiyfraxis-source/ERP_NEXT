@@ -230,6 +230,8 @@ export function mergeMarkRows(current: MarkRow[], extra: MarkRow[]): MarkRow[] {
 }
 
 export type CoaxMark = { text: string; place: "A" | "B" | "middle"; minMm: number; scope?: "cable" | "assembly" };
+/** Protective clear tubing over tape labels, mm (owner 17.11.2026). Not printed marking tubes. */
+export const COAX_PROTECTIVE_TUT_LENGTHS = { A: 35, B: 35, middle: 55 } as const;
 export type ConnColor = { method: "none" | "paint" | "laser" | "tape"; color: string; code: string; art: string };
 
 export const COAX_COLORS = [

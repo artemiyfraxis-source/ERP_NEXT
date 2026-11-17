@@ -39,7 +39,7 @@
           "code": "OG",
           "art": "151437"
         },
-        "tutLength": 60,
+        "tutLengths": { "A": 35, "B": 35, "middle": 55 },
         "tutArt": "ТУТ 4/2мм, прозрачная",
         "tutName": "ТУТ 4/2мм, прозрачная",
         "cableArt": "RTK 031",
@@ -522,7 +522,7 @@
           "code": "PK",
           "art": "151986"
         },
-        "tutLength": 60,
+        "tutLengths": { "A": 35, "B": 35, "middle": 55 },
         "tutArt": "ТУТ 4/2мм, прозрачная",
         "tutName": "ТУТ 4/2мм, прозрачная",
         "cableArt": "RTK 031",
