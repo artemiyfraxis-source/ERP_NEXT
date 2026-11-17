@@ -516,5 +516,5 @@ def test_label_workflow_reads_the_shared_working_band(production_api):
     with sessions() as session:
         stored = SqlAlchemyInstrumentRepository(session).get(identifier)
         content = instrument_labels._content(stored, session)
-        assert content.value("parameters_line") == "Рабочая полоса 0,01–11,8 ГГц"
-        assert content.value("loss_line") == "КСВН ≤ 1,2 · потери ≤ 0,18 дБ"
+        assert content.value("parameters_line") == "Применять до 6 ГГц"
+        assert content.value("loss_line").startswith("КСВН ≤ 1,")

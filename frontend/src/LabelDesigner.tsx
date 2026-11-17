@@ -10,7 +10,7 @@ export type LabelKind = "lot" | "intake" | "instrument";
 export const LABEL_KINDS: [LabelKind, string][] = [["lot", "Партия склада"], ["intake", "Приёмка с производства"], ["instrument", "СИ и принадлежности"]];
 export type LabelFormat = "58x30" | "58x40" | "100x50";
 export const LABEL_FORMATS: LabelFormat[] = ["58x30", "58x40", "100x50"];
-export type ElementKind = "field" | "text" | "qr" | "code128" | "line" | "box";
+export type ElementKind = "field" | "text" | "qr" | "code128" | "line" | "box" | "logo";
 export type TemplateElement = {
   id: string; kind: ElementKind; field?: string; text?: string;
   x_mm: number; y_mm: number; w_mm: number; h_mm: number;
@@ -60,7 +60,7 @@ export const snap = (value: number) => Math.round(value / STEP) * STEP;
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), Math.max(low, high));
 const decimal = (value: number) => String(Math.round(value * 100) / 100).replace(".", ",");
 
-const KIND_NAMES: Record<ElementKind, string> = { field: "Поле", text: "Текст", qr: "QR-код", code128: "Code128", line: "Линия", box: "Рамка" };
+const KIND_NAMES: Record<ElementKind, string> = { field: "Поле", text: "Текст", qr: "QR-код", code128: "Code128", line: "Линия", box: "Рамка", logo: "Логотип" };
 const ALIGNS: [TemplateElement["align"], string][] = [["left", "слева"], ["center", "по центру"], ["right", "справа"]];
 
 /** A new element of `kind`, placed top-left inside a `width × height` label. */
@@ -70,7 +70,7 @@ export function newElement(kind: ElementKind, elements: TemplateElement[], [widt
   const wide = Math.max(10, width - 4);
   const size: Record<ElementKind, [number, number]> = {
     field: [wide, 4], text: [wide, 4], qr: [Math.min(14, height - 4), Math.min(14, height - 4)], code128: [Math.min(36, wide), 8],
-    line: [wide, 0.5], box: [Math.min(24, wide), Math.min(12, height - 4)],
+    line: [wide, 0.5], box: [Math.min(24, wide), Math.min(12, height - 4)], logo: [Math.min(14, wide), 4],
   };
   const [w, h] = size[kind];
   return {
@@ -322,7 +322,7 @@ export function LabelDesigner({ initialKind, usedFormat = null, settingsVersion 
               <option value="">+ Поле…</option>
               {kindFields.map((field) => <option key={field.key} value={field.key}>{field.label}</option>)}
             </select>
-            {(["text", "qr", "code128", "line", "box"] as ElementKind[]).map((item) =>
+            {(["text", "qr", "code128", "line", "box", "logo"] as ElementKind[]).map((item) =>
               <button key={item} type="button" className="secondary small" onClick={() => add(item)}>+ {item === "qr" ? "QR" : KIND_NAMES[item]}</button>)}
           </div>}
           <h3>Элементы <span className="page-count">{elements.length}</span></h3>

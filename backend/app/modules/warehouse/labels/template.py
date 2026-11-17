@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from .layout import GrnLabelData
 
 TemplateKind = Literal["lot", "intake", "instrument"]
-ElementKind = Literal["field", "text", "qr", "code128", "line", "box"]
+ElementKind = Literal["field", "text", "qr", "code128", "line", "box", "logo"]
 
 TEMPLATE_KINDS: tuple[str, ...] = ("lot", "intake", "instrument")
 KIND_LABELS: dict[str, str] = {"lot": "Партия склада", "intake": "Приёмка с производства", "instrument": "СИ и принадлежности"}

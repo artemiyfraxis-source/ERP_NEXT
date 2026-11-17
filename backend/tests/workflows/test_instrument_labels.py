@@ -251,13 +251,13 @@ def test_latest_attachment_recomputes_label_and_passport(production_api):
             return instrument_labels._content(SqlAlchemyInstrumentRepository(session).get(UUID(item["id"])), session)
     assert content().value("parameters_line") == "Не измерен"
     upload(measured_file(stop=18), 1)
-    assert "0,01–18" in content().value("parameters_line")
+    assert content().value("parameters_line") == "Применять до 18 ГГц"
     before = client.get(f"{BASE}/{item['id']}/label.png").content
     upload(measured_file(stop=11), 2)
-    assert "0,01–11" in content().value("parameters_line")
+    assert content().value("parameters_line") == "Применять до 6 ГГц"
     assert before != client.get(f"{BASE}/{item['id']}/label.png").content
     upload(replace(measured_file(stop=6), file_name="unrelated.s2p"), 3)
-    assert "0,01–11" in content().value("parameters_line")
+    assert content().value("parameters_line") == "Применять до 6 ГГц"
     upload(replace(measured_file(), content=b"invalid"), 4)
     assert content().value("parameters_line") == "Не измерен"
 

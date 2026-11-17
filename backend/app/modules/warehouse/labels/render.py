@@ -15,6 +15,7 @@ Rules the designer relies on:
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw
 
@@ -184,6 +185,26 @@ def _draw_qr(canvas: _Canvas, element: Element, code: str) -> tuple[int, int]:
     return module, size
 
 
+LOGO_FILE = Path(__file__).with_name("assets") / "fraxis-logo.png"
+
+
+def _draw_logo(canvas: _Canvas, element: Element) -> None:
+    """The Fraxis wordmark (vector trace rasterised once at high resolution), scaled to fit the box keeping its
+    proportions and placed by `align`; black and white only, no dither (smoothed edges become a dot or not)."""
+    x0, y0, x1, y1 = canvas.box(element)
+    width, height = x1 - x0, y1 - y0
+    if width < 8 or height < 3:
+        return
+    with Image.open(LOGO_FILE) as source:
+        logo = source.convert("L")
+    scale = min(width / logo.width, height / logo.height)
+    size = (max(1, round(logo.width * scale)), max(1, round(logo.height * scale)))
+    piece = Image.new("L", (width, height), 255)
+    scaled = logo.resize(size, Image.LANCZOS).point(lambda value: 0 if value < 128 else 255)
+    piece.paste(scaled, (_offset(element.align, width, size[0]), _offset("center", height, size[1])))
+    canvas.paste_darker(piece, x0, y0)
+
+
 def _draw_code128(canvas: _Canvas, element: Element, code: str) -> int | None:
     """Dots per module; None — set B cannot carry this ГРН, the box stays empty."""
     try:
@@ -240,6 +261,8 @@ def render(template: LabelTemplate, content: LabelContent, settings: PrintSettin
                 skipped.append(element.id)
             elif bar_module_dots is None:
                 bar_module_dots = module
+        elif element.kind == "logo":
+            _draw_logo(canvas, element)
         else:
             _draw_rule(canvas, element)
     # Threshold in the middle: the label is black and white, the smoothed edges of letters become a dot or not.
