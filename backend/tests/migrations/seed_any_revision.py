@@ -255,6 +255,12 @@ _COUPLED_VALUES: dict[tuple[str, str], Any] = {
 # the one value that needs them: a seeded tech record is `tab = 'ter'` (the first literal of the БД.ТЕР card CHECKs,
 # 0115), and a БД.ТЕР row is always in a list (0155_ter_lug_kind).
 _OVER_CHECK: dict[tuple[str, str], Any] = {
+    # 0189: the generic sample job is TSPL; marking evidence belongs only to gdi_png jobs.
+    ("warehouse_label_jobs", "format"): "tspl",
+    **{("warehouse_label_jobs", name): None for name in (
+        "png", "target_machine_id", "target_printer", "width_mm", "height_mm", "orientation",
+        "batch_id", "sequence", "attempt", "claim_token_id", "receipt",
+    )},
     # A stock journal row has at most one target. Leave the newer alternatives empty;
     # record_id is filled from its parent (or NULL where the historical CHECK requires it).
     **{("reference_stock_links", name): None for name in ("equipment_unit_id", "heat_shrink_id", "covering_id")},
