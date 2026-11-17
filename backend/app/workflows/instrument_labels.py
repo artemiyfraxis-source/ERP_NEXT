@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.modules.production.api import production_uow_factory
 from app.modules.production.infrastructure import SqlAlchemyInstrumentFileRepository, SqlAlchemyInstrumentRepository
-from app.modules.production.instrument_characterization import characterization, connector_line, impedance_warning
+from app.modules.production.instrument_characterization import characterization, connector_line, impedance_warning, working_band
 from app.modules.production.instrument_passport import passport_pdf
 from app.modules.production.rf_infrastructure import RfRepository
 from app.modules.production.rf_interfaces import RfDetails
@@ -82,14 +82,15 @@ def _characterization(session, instrument_id):
 def _content(item, session=None):
     rf = RfRepository(session).get(item.id) if session is not None else RfDetails()
     measured = _characterization(session, item.id) if session is not None else None
+    band = working_band(measured) if measured else None
     return instrument_content(
         item.inventory_number, item.name, item.serial_number,
         item.verification_due.date() if item.verification_due else None,
         model=item.doc_designation, accessory=item.kind is InstrumentKind.ACCESSORY,
         in_house_serial=is_in_house_serial(item.serial_number),
         connector_line=connector_line(item.name, item.serial_number, rf),
-        parameters_line=measured.parameters_line if measured else "Не измерен",
-        loss_line=measured.loss_line if measured else "",
+        parameters_line=band.band_line if band else "Не годен для 50 Ом тракта" if measured else "Не измерен",
+        loss_line=band.limits_line if band else "",
         measurement_date=measured.measurement_date if measured else "",
         impedance_warning=impedance_warning(rf), card_url=public_passport_url(item.id),
     )

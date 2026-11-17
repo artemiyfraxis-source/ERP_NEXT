@@ -5,7 +5,7 @@ from uuid import uuid4
 from app.shared.events import AuditEvent
 from .application import AssignProductionCommand, ConcurrentProductionUpdate, _checked_names, assign_task, lock_reflow_projects
 from .domain import ProductionStatus, ProductionValidationError
-from .cutting import cutting_recipe
+from .cutting import cutting_project_label, cutting_recipe
 from .plan import normalize_project_number
 
 
@@ -71,7 +71,7 @@ def _existing_proposal(candidates):
     if not assignment["planning_consistent"]:
         warnings.append("Плановые окна различаются: общее окно не задано; планы строк сохранены")
     return {"recipe_key": first.key, "recipe_version": first.snapshot["version"],
-            "project": first.snapshot["project"], "site": first.snapshot["site"],
+            "project": cutting_project_label(candidates[0][0].project, candidates[0][2]), "site": first.snapshot["site"],
             "recipe_summary": {"cable": first.snapshot["cable"],
                 "cables_per_assembly": first.snapshot["cables_per_assembly"],
                 "operations": [op["code"] for op in first.snapshot["operations"]],
@@ -295,8 +295,11 @@ def describe_group(group, uow):
     task_ids = tuple({m.task_id for m in members})
     outputs = uow.outputs.active_for_tasks(task_ids)
     rows = []
+    project = group.project_key
     for member in members:
         task = uow.production.get(member.task_id)
+        if not rows:
+            project = cutting_project_label(task.project, member.row_snapshot.get("document"))
         operation = task.operation(member.operation_id)
         own = [item for item in outputs if item.operation_id == operation.id]
         boxes = [box for box in uow.boxes.list(task_id=task.id, limit=10000) if box.operation_id == operation.id]
@@ -338,7 +341,7 @@ def describe_group(group, uow):
                 "pause_started_at": session.pause_started_at.isoformat() if session.pause_started_at else None} if session else None,
             "downtime": downtime,
             "recipe_version": group.recipe_version, "recipe_key": group.recipe_key,
-            "project": group.project_key, "site": group.site, "state": group.state,
+            "project": project, "site": group.site, "state": group.state,
             "membership_frozen": group.state == "frozen", "rows": rows,
             **common_assignment(active),
             "planned_start": min(starts) if starts else None, "planned_finish": max(finishes) if finishes else None,

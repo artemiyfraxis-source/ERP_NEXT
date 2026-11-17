@@ -55,6 +55,32 @@ def test_my_execution_after_group_start(assigned):
     assert session["cutting_group_id"] == group["id"]
 
 
+def test_legacy_receipt_replay_refreshes_display_only(assigned):
+    from copy import deepcopy
+    from app.modules.production.cutting_infrastructure import CuttingActionRow
+
+    client, operator, group = assigned
+    started = action(client, operator, group, "start", key="legacy-start")
+    assert started.status_code == 200, started.text
+    expected = started.json()
+    legacy = deepcopy(expected)
+    legacy["group"].update(number="РЗ-D1E5842A0FD74795", project="708К.1")
+    with app.state.production_uow_factory() as uow:
+        receipt = uow.session.get(CuttingActionRow, "legacy-start")
+        fingerprint = receipt.fingerprint
+        receipt.result = legacy
+        uow.commit()
+    replay = action(client, operator, group, "start", key="legacy-start")
+    assert replay.status_code == 200, replay.text
+    assert replay.json() == expected
+    with app.state.production_uow_factory() as uow:
+        receipt = uow.session.get(CuttingActionRow, "legacy-start")
+        assert receipt.fingerprint == fingerprint
+        assert receipt.result == legacy
+        assert len(uow.session.scalars(select(ProductionWorkSessionRow)).all()) == 1
+        assert not uow.session.scalars(select(ProductionOutputRow)).all()
+
+
 def test_renamed_group_can_be_revalidated_and_started(production_api, monkeypatch):
     from copy import deepcopy
 
@@ -212,6 +238,11 @@ def test_group_downtime_pauses_one_timer(assigned):
         group = paused.json()["group"]
         assert group["session"]["status"] == "Пауза"
         assert group["downtime"]["comment"] == "Настройка"
+        with app.state.production_uow_factory() as uow:
+            from app.modules.production.downtime_infrastructure import SqlAlchemyDowntimeRepository
+            downtime = SqlAlchemyDowntimeRepository(uow.session).get(UUID(group["downtime"]["id"]))
+            assert downtime.project == "708К."
+            assert downtime.task_number == group["number"] == "РЗ-0001"
         assert client.post(f"/api/production/downtime/{group['downtime']['id']}/stop",
                            params={"on_behalf_of": str(operator)}).status_code == 422
         assert client.post("/api/production/downtime", params={"on_behalf_of": str(operator)}, json={
