@@ -39,7 +39,7 @@ from app.shared.identity import Actor
 
 from .application import ConcurrentProductionUpdate, UnitOfWork, launch_task
 from .board import BOARD_KEY_PREFIX, CardSnapshot, launch_command, _open_card, run_of, unlaunched_cards
-from .cutting import cutting_recipe, digest
+from .cutting import RECIPE_VERSION, cutting_recipe, digest
 from .cutting_application import describe_group
 from .domain import ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, unit_factors
 from .launchable import ReadyCard, launch_operations
@@ -195,7 +195,7 @@ def preview_cutting(command: LaunchReadyCommand, uow, ready: Sequence[ReadyCard]
             refused.append({"techcard_id": str(item.techcard_id), "reason": reason})
             continue
         key = recipe.key if not item.issue_separately else f"separate:{item.techcard_id}"
-        group = groups.setdefault(key, {"key": key, "recipe_key": recipe.key, "recipe_version": 1,
+        group = groups.setdefault(key, {"key": key, "recipe_key": recipe.key, "recipe_version": RECIPE_VERSION,
                                        "site": site, "members": []})
         group["members"].append({"techcard_id": str(item.techcard_id), "index": card.index,
                                   "quantity": quantity, **recipe.row})

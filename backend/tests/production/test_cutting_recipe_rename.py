@@ -172,3 +172,17 @@ def test_started_group_is_not_touched(production_api):
     assert current["state"] == "frozen"
     assert refresh(client, current).status_code == 422
     assert current["recipe_key"] == group["recipe_key"]
+
+
+def test_new_task_joins_an_open_version_1_group_of_the_same_document(production_api):
+    client, _ = production_api
+    batch(client, [issue("КБ1", named())])
+    group = groups(client)[0]
+    with app.state.production_uow_factory() as uow:
+        row = uow.cutting.get(UUID(group["id"]), lock=True)
+        row.recipe_key, row.recipe_version = recipe(named())[0].legacy_key, 1
+        uow.commit()
+    batch(client, [issue("КБ2", named())])
+    current = groups(client)
+    assert len(current) == 1 and current[0]["id"] == group["id"]
+    assert {row["item"] for row in current[0]["rows"]} == {"КБ1", "КБ2"}

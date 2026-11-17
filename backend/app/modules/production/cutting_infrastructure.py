@@ -201,7 +201,8 @@ class SqlAlchemyCuttingRepository:
         group = None
         if not separate:
             candidates = self.session.scalars(select(CuttingGroupRow).where(
-                CuttingGroupRow.recipe_key == recipe.key, CuttingGroupRow.state == "open",
+                # An open group frozen by RECIPE_VERSION 1 still matches the same document by its old key until refreshed.
+                CuttingGroupRow.recipe_key.in_({recipe.key, recipe.legacy_key or recipe.key}), CuttingGroupRow.state == "open",
                 CuttingGroupRow.joinable.is_(True)).order_by(CuttingGroupRow.created_at, CuttingGroupRow.id).with_for_update()).all()
             for candidate in candidates:
                 members = self.members(candidate.id)
