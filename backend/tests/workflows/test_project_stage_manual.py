@@ -392,11 +392,13 @@ def _lot(sessions, grn: str, article: str, quantity: str = "20") -> StockLot:
     return lot
 
 
-def _request(sessions, kb: str, lot: StockLot, quantity: str, *, status=None, kind=FulfillmentKind.MAIN):
+def _request(sessions, kb: str, lot: StockLot, quantity: str, *, status=None, kind=FulfillmentKind.MAIN,
+             picked: bool = True):
+    """picked=False — the line waits, nothing is reserved on the lot."""
     request = create_fulfillment(CreateFulfillmentCommand(
         idempotency_key=f"{kb}-{kind.value}-{uuid4()}", purpose=f"{PROJECT} · {kb} · Жгут", deadline=NOW.date(),
         lines=(FulfillmentLine.create(article=lot.article, name=lot.name, unit="шт", requirement=Decimal(quantity)),),
-        actor=ACTOR, now=NOW, lot_ids=(lot.id,), kind=kind,
+        actor=ACTOR, now=NOW, lot_ids=(lot.id,) if picked else (), kind=kind,
     ), SqlAlchemyFulfillmentUnitOfWork(sessions))
     if status is not None:
         with SqlAlchemyFulfillmentUnitOfWork(sessions) as uow:
@@ -458,7 +460,13 @@ def _world(sessions):
     return requests, lots, reserves, tasks
 
 
-def test_forward_to_work_cancels_new_and_underfilled_kits_and_gives_every_reserve_back(production):
+KIT_NEEDED = "Этап ниже «Готово» — комплект нужен для работы, заявка остаётся."
+KIT_PICKED = "В заявке уже набрано — отмените вручную, если не нужна."
+
+
+def test_forward_to_work_keeps_every_kit_and_its_techcard_reserves(production):
+    # Владелец 17.11 (663К.1: запустили 20 из 300 шт, «Новый → В работе» отменил набранные комплекты): комплект нужен
+    # для работы — перенос в «В работе» заявки на комплектацию не трогает.
     factory, sessions = production
     lot, other, picked_lot = _lot(sessions, "G-1", "A-1"), _lot(sessions, "G-2", "B-2"), _lot(sessions, "G-3", "C-3")
     new = _request(sessions, "КБ1", lot, "5")
@@ -472,41 +480,76 @@ def test_forward_to_work_cancels_new_and_underfilled_kits_and_gives_every_reserv
     preview = flow.preview_project_stage(_state(factory, sessions), "В работе")
 
     kb1, kb2, kb3 = preview["kbs"]
-    assert [(item["kind"], item["label"]) for item in kb1["close"]] == [
-        ("kit_request", f"Заявка на комплектацию {new.number} · снимается резерв с 1 поз."),
-        ("kit_request", f"Заявка на комплектацию {extra.number} (довыдача) · снимается резерв с 1 поз."),
-        ("reserve", "Резерв техкарты B-2 · G-2"),
+    # Резерв техкарты держит то, что комплект ещё возьмёт, — пока комплект нужен (ниже «Готово»), он остаётся.
+    assert kb1["close"] == [] and kb1["keep"] == [
+        {"kind": "kit_request", "label": f"Заявка на комплектацию {new.number}", "reason": KIT_NEEDED},
+        {"kind": "kit_request", "label": f"Заявка на комплектацию {extra.number} (довыдача)", "reason": KIT_NEEDED},
+        {"kind": "reserve", "label": "Резерв техкарты B-2 · G-2", "reason": KIT_NEEDED},
     ]
-    assert kb1["close"][2]["qty"] == "3" and kb1["close"][2]["unit"] == "шт"
-    assert [item["label"] for item in kb2["close"]] == [f"Заявка на комплектацию {under.number} · снимается резерв с 1 поз."]
+    assert kb2["close"] == [] and kb2["keep"] == [
+        {"kind": "kit_request", "label": f"Заявка на комплектацию {under.number}", "reason": KIT_NEEDED},
+    ]
     assert kb3["close"] == [] and kb3["keep"] == [{
         "kind": "kit_request", "label": f"Заявка на комплектацию {picked.number}",
         "reason": "Комплект собран («Укомплектован») — остаётся, не мешает переносу.",
     }]
-    assert preview["totals"] == {"tasks": 0, "kit_requests": 3, "reserves": 1, "close": 4, "keep": 1}
+    assert preview["totals"] == {"tasks": 0, "kit_requests": 0, "reserves": 0, "close": 0, "keep": 5}
     assert _world(sessions)[:2] == (requests, lots)  # предпросмотр ничего не пишет
 
     change = _move(factory, sessions, "В работе", token=preview["preview_token"])
 
-    requests, lots, reserves, _tasks = _world(sessions)
-    assert requests == {new.number: "Отменена", extra.number: "Отменена", under.number: "Отменена",
-                        picked.number: "Укомплектован"}
-    # РЕЗЕРВ партий и резерв техкарты — в ноль; остатки (БАЛАНС) не двигались, собранный комплект держит своё.
-    assert lots == {"G-1": (20, 0), "G-2": (20, 0), "G-3": (20, 3)}
-    assert reserves == {("КБ1", "B-2"): 0}
-    assert [item["kind"] for item in change.payload()["close"]] == ["kit_request", "kit_request", "reserve", "kit_request"]
-    # Причина — в журнале проекта и в журнале действий.
+    after, lots, reserves, _tasks = _world(sessions)
+    # Заявки, их РЕЗЕРВ на партиях и резерв техкарты — как были.
+    assert after == requests == {new.number: "Новая", extra.number: "Новая", under.number: "Недоукомплектован",
+                                 picked.number: "Укомплектован"}
+    assert lots == {"G-1": (20, 11), "G-2": (20, 3), "G-3": (20, 3)}
+    assert reserves == {("КБ1", "B-2"): 3}
+    assert change.payload()["close"] == []
     rows = {row.item_index: row for row in _rows(sessions)}
-    assert rows["КБ1"].text.startswith("Новый → В работе · пропущено вручную: Новый → В работе — закрыто: Заявка на комплектацию")
-    assert "пропущено вручную" not in rows["КБ3"].text
+    assert "закрыто" not in rows["КБ1"].text
+    assert "пропущено вручную" not in rows["КБ2"].text
     with sessions() as session:
-        audit = session.scalars(select(AuditEventRow).where(AuditEventRow.event_type.in_((
+        written = session.scalars(select(AuditEventRow).where(AuditEventRow.event_type.in_((
             "fulfillment.cancelled", "fulfillment.kit_reserve_released", "warehouse.kit_reserve_released",
         )))).all()
-    assert len(audit) == 5
-    assert {item.details["reason"] for item in audit} == {"пропущено вручную: Новый → В работе"}
-    [stage_audit] = _audit(sessions)
-    assert sorted(stage_audit.details["closed"]) == ["КБ1", "КБ2"]
+    assert written == []
+
+
+def test_forward_to_ready_cancels_only_kits_with_nothing_picked(production):
+    factory, sessions = production
+    lot = _lot(sessions, "G-1", "A-1")
+    idle = _request(sessions, "КБ1", lot, "5", picked=False)
+    under = _request(sessions, "КБ2", lot, "4", status=FulfillmentStatus.UNDERFILLED)
+    shelf = _request(sessions, "КБ3", lot, "3", picked=False)
+    with SqlAlchemyFulfillmentUnitOfWork(sessions) as uow:  # «есть, но не заведено» — тоже набрано
+        uow.fulfillment.add(shelf.mark_off_book(shelf.lines[0].id, touch=False))
+        uow.commit()
+    requests, lots, _reserves, _tasks = _world(sessions)
+    assert lots == {"G-1": (20, 4)}
+
+    preview = flow.preview_project_stage(_state(factory, sessions), "Готово")
+
+    kb1, kb2, kb3 = preview["kbs"]
+    assert [(item["kind"], item["label"], item["qty"]) for item in kb1["close"]] == [
+        ("kit_request", f"Заявка на комплектацию {idle.number}", "1"),
+    ]
+    assert kb2["close"] == [] and kb2["keep"] == [
+        {"kind": "kit_request", "label": f"Заявка на комплектацию {under.number}", "reason": KIT_PICKED},
+    ]
+    assert kb3["close"] == [] and kb3["keep"] == [
+        {"kind": "kit_request", "label": f"Заявка на комплектацию {shelf.number}", "reason": KIT_PICKED},
+    ]
+    assert kb2["warnings"] == [f"Заявка на комплектацию {under.number}: {KIT_PICKED}"]
+
+    _move(factory, sessions, "Готово", token=preview["preview_token"])
+
+    after, lots, _reserves, _tasks = _world(sessions)
+    assert after == {**requests, idle.number: "Отменена"}
+    assert lots == {"G-1": (20, 4)}  # набранное осталось на партии
+    with sessions() as session:
+        [cancelled] = session.scalars(select(AuditEventRow).where(AuditEventRow.event_type == "fulfillment.cancelled")).all()
+    assert cancelled.details == {"project": PROJECT, "kb": "КБ1", "stage": "Готово",
+                                 "reason": "пропущено вручную: Новый → Готово"}
 
 
 def test_forward_to_qc_cancels_idle_running_tasks_and_keeps_the_one_being_worked_on(production):
@@ -624,7 +667,7 @@ def test_backward_and_auto_close_nothing_and_reopen_nothing(production):
 
     assert back.events and auto.events
     assert (auto_preview["close"], auto_preview["cascade_note"]) == ([], "Назад ничего не открывается")
-    # Отменённая заявка не воскресла, новая довыдача и задание не тронуты.
+    # Набранная заявка осталась как была (не воскресла и не отменилась), новая довыдача и задание не тронуты.
     assert _world(sessions) == before
     assert before[0][fresh.number] == "Новая"
 

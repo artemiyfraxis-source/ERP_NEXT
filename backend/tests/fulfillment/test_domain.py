@@ -237,3 +237,58 @@ def test_unbinding_merges_free_rows_of_one_article_from_different_positions():
         ("Разъём", Decimal("5")), ("Провод", Decimal("4")),
     ]
     assert released.lines[0].requirement_id == first.requirement_id
+
+
+# ── Возврат отменённой заявки (владелец 17.11.2026) ─────────────────────
+
+
+def _cancelled_after_pick():
+    """A kit in work: line 1 got a lot (3 of 10 — split), line 2 waits; then cancelled (bindings wiped)."""
+    first, second = line("10"), replace(line("4"), name="Провод")
+    picked = request(first, second).bind_line(first.id, lot(1), Decimal("3")).stamped(datetime(2026, 11, 13, 9, 0))
+    cancelled = picked.cancel().stamped(datetime(2026, 11, 16, 12, 17))
+    return picked, cancelled
+
+
+def test_reopen_rebinds_the_given_lines_and_returns_to_underfilled():
+    picked, cancelled = _cancelled_after_pick()
+    bound_id = picked.lines[0].id
+    assert cancelled.at_closed is not None and cancelled.lines[0].lot is None
+
+    reopened = cancelled.reopen({bound_id: (lot(1), Decimal("3"))})
+
+    assert reopened.status is FulfillmentStatus.UNDERFILLED
+    assert reopened.version == cancelled.version + 1
+    assert reopened.at_closed is None and reopened.at_work == picked.at_work
+    assert [(item.id, item.lot, item.reserved, item.requirement) for item in reopened.lines] == [
+        (bound_id, lot(1), Decimal("3"), Decimal("3")),
+        (picked.lines[1].id, None, Decimal("0"), Decimal("7")),
+        (picked.lines[2].id, None, Decimal("0"), Decimal("4")),
+    ]
+    assert reopened.shortfall_note is None and "−7" in reopened.shortfall
+    # The picker still presses «Укомплектован»: the waiting lines keep it from that.
+    with pytest.raises(FulfillmentValidationError, match="не закрыто позиций — 2"):
+        reopened.mark_complete()
+
+
+def test_reopen_without_bindings_waits_and_a_never_worked_kit_is_new():
+    _picked, cancelled = _cancelled_after_pick()
+    assert cancelled.reopen({}).status is FulfillmentStatus.UNDERFILLED
+    fresh = request(line()).cancel()
+    reopened = fresh.reopen({})
+    assert reopened.status is FulfillmentStatus.NEW and all(item.waiting for item in reopened.lines)
+
+
+def test_reopen_refusals():
+    picked, cancelled = _cancelled_after_pick()
+    bound_id = picked.lines[0].id
+    with pytest.raises(FulfillmentValidationError, match="только отменённую заявку"):
+        picked.reopen({})
+    with pytest.raises(FulfillmentValidationError, match="Позиция заявки не найдена"):
+        cancelled.reopen({UUID(int=7): (lot(1), Decimal("3"))})
+    # Never a part of the line: the reserve is the whole need the bind left on it.
+    with pytest.raises(FulfillmentValidationError, match="не равен потребности"):
+        cancelled.reopen({bound_id: (lot(1), Decimal("2"))})
+    shelf = replace(cancelled, lines=(replace(cancelled.lines[0], off_book=True), *cancelled.lines[1:]))
+    with pytest.raises(FulfillmentValidationError, match="уже есть отметка или партия"):
+        shelf.reopen({bound_id: (lot(1), Decimal("3"))})
