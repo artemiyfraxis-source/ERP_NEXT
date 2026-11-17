@@ -1,0 +1,51 @@
+.marking-window { display: grid; gap: 16px; min-width: 0; }
+.marking-window h2, .marking-window h3, .marking-window p { margin: 0; }
+.marking-window h2 { font-size: 18px; }
+.marking-window h3 { font-size: 15px; }
+.marking-window label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.marking-window .form-actions { gap: 8px; margin-top: 0; }
+.marking-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.marking-head > div { min-width: 0; overflow-wrap: anywhere; }
+.marking-controls { display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: start; gap: 12px; }
+.marking-target { display: grid; gap: 4px; overflow-wrap: anywhere; }
+.marking-preview { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 320px); align-items: start; gap: 16px; }
+.marking-preview > div { min-width: 0; max-height: min(52vh, 600px); overflow: auto; overscroll-behavior: contain; }
+.marking-submit { position: sticky; bottom: 0; z-index: 2; padding-block: 12px; background: var(--card); border-top: 1px solid var(--border); }
+.marking-raster { display: grid; gap: 12px; margin: 0; padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); overflow: auto; }
+.marking-raster figcaption { font-size: 13px; }
+.marking-raster img { display: block; max-width: 100%; max-height: 400px; width: auto; height: auto; margin-inline: auto; image-rendering: pixelated; border: 1px solid var(--border); background: white; }
+.marking-raster .form-actions { flex-wrap: wrap; }
+.marking-progress, .marking-profile-editor, .marking-calibration { display: grid; gap: 12px; min-width: 0; }
+.marking-profile-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 320px); align-items: start; gap: 16px; }
+.marking-profile-dimensions { display: grid; gap: 12px; min-width: 0; }
+.marking-calibration .form-actions { flex-wrap: wrap; }
+.marking-progress { padding-top: 16px; border-top: 1px solid var(--border); }
+.marking-progress progress { width: 100%; height: 8px; accent-color: var(--primary); }
+.marking-geometry { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.marking-window .tnum, .marking-window input[type="number"] { font-variant-numeric: tabular-nums; }
+.marking-window input[type="number"] { text-align: right; min-width: 72px; width: 100%; }
+.marking-window .check-inline { flex-direction: row; align-items: center; gap: 8px; }
+.marking-selection { display: grid; gap: 8px; }
+.marking-selection summary { cursor: pointer; }
+.marking-selection label { padding-block: 4px; overflow-wrap: anywhere; }
+.marking-binding { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; }
+.marking-binding label { flex: 1; }
+.marking-resolution { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; }
+.marking-resolution .form-actions { grid-column: 1 / -1; }
+.marking-window :is(button, input, select, textarea, summary):focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.marking-window :is(button, input, select, textarea, summary) { touch-action: manipulation; }
+.marking-window h2, .marking-window h3 { text-wrap: balance; }
+@media (max-width: 1000px) {
+  .marking-profile-layout { grid-template-columns: minmax(0, 1fr); }
+  .marking-controls { grid-template-columns: 1fr 1fr; }
+  .marking-target { grid-column: 1 / -1; }
+  .marking-geometry { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+  .marking-preview, .marking-resolution { grid-template-columns: minmax(0, 1fr); }
+}
+@media (pointer: coarse) {
+  .marking-geometry { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .marking-window :is(button, input:not([type="checkbox"]), select) { min-height: 40px; }
+  .marking-window .check-inline { min-height: 40px; }
+}

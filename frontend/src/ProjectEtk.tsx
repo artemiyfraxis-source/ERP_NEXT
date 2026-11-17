@@ -25,6 +25,8 @@ import { ETK_TOOLING_SECTIONS, etkLabelResult, etkToleranceLines, etkTolerancePa
 import { countLabel, formatDateTime, formatNumber, formatQty } from "./format";
 import { openPrintDocument } from "./print";
 import { useCanPrint } from "./rights";
+import { MarkingPrintWindow } from "./MarkingPrintWindow";
+import { markingTaskSource } from "./markingApi";
 import { SAFETY_HEAD, TcCardEditForm, type EditContext } from "./TcCardEditForm";
 import { hasFullAccess } from "./navigation";
 import { EtkFold, EtkFoldScope, useEtkFold } from "./etkFold";
@@ -292,7 +294,7 @@ function StepTolerance({ text }: { text?: string }) {
 }
 
 /** Номера изделий задания для «№ изделия» в надписях и печать их списка; вне задания — нет (номер «по партии»). */
-const MarkSerialContext = createContext<{ range: MarkSerialRange; print: () => void } | null>(null);
+const MarkSerialContext = createContext<{ range: MarkSerialRange; print?: () => void } | null>(null);
 
 /** Without a task, retain the template and its project quantity instead of inventing serial numbers. */
 function MarkText({ text, batch }: { text?: string; batch?: string }) {
@@ -313,7 +315,7 @@ function MarksView({ marks, batch }: { marks: EtkMark[]; batch: string }) {
       {lengths && <td className="num">{label.length || "—"}</td>}<td className="num">× {formatNumber(label.quantity)}</td>
     </tr>)}</tbody>
   </table><div className="etk-marks-print">
-    <button type="button" className="secondary small" onClick={serial.print}>Печать надписей № {serial.range.first}–{serial.range.last}</button>
+    {serial.print && <button type="button" className="secondary small" onClick={serial.print}>Печать надписей № {serial.range.first}–{serial.range.last}</button>}
     <span className="muted">{countLabel(serial.range.last - serial.range.first + 1, ["изделие", "изделия", "изделий"])} задания</span>
   </div></>;
   const table = <table className="etk-marks" aria-label="Метки по КД">
@@ -735,6 +737,7 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [markingOpen, setMarkingOpen] = useState(false);
   const canEdit = principal.permissions.techcards === "edit";
   const canGenerate = Boolean(principal.permissions.tcgen);
   const list = operations(card.document);
@@ -764,8 +767,13 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
   const labelsPage = serial ? etkMarkLabelsPage(card, serial) : null;
   const linkScheme = etkLinkScheme(card.document);
   const serialContext = serial && labelsPage ? {
-    range: serial, print: () => openPrintDocument(`Надписи ${card.project} ${card.item_index}`, [labelsPage]),
+    range: serial, print: canPrint ? () => taskId ? setMarkingOpen(true) : openPrintDocument(`Надписи ${card.project} ${card.item_index}`, [labelsPage]) : undefined,
   } : null;
+
+  async function markingSource() {
+    if (!taskId) throw new Error("Откройте выданную инструкцию задания");
+    return markingTaskSource(taskId, focus);
+  }
 
   return <MarkSerialContext.Provider value={serialContext}><EtkFoldScope user={principal.user.id}><div className="etk-sheet">
     <div className="etk-top">
@@ -773,6 +781,7 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
         <span className="muted">{countLabel(list.length, ["операция", "операции", "операций"])} · {issued ? `ревизия ${card.revision}${card.issued_at ? ` · выдана ${stamp(card.issued_at)}` : ""}` : "черновик, не выдана"}</span></div>
       {canPrint && list.length > 0 && <button className="secondary small etk-print-btn" onClick={() => openPrintDocument(`ТК ${card.project} ${card.item_index}`, etkPrintPages(card, revisions, sketchLinks(), serial,
         stdFigures ? { index: stdFigures, base: window.location.origin } : null))}>Печать / PDF</button>}
+      {canPrint && taskId && labelsPage && <button type="button" className="secondary small" aria-haspopup="dialog" onClick={() => setMarkingOpen(true)}>Печать надписей</button>}
       {canGenerate && onRebuild && <button className="secondary small" onClick={onRebuild}>Пересобрать</button>}
       {canEdit && !issued && card.document && <button className="primary small" disabled={busy} onClick={() => void issue()}>Выдать ЭТК</button>}
     </div>
@@ -800,6 +809,8 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
       </div>)}
     </EtkFold>}
     {changed && <RevisionChangesWindow revision={changed} close={() => setChanged(null)} />}
+    {markingOpen && <MarkingPrintWindow source={markingSource} storageKey={`etk:${taskId}:${focus?.position ?? focus?.positions?.[0] ?? focus?.code ?? ""}`}
+      title={`${card.project} · ${card.item_index}${serial?.task ? ` · ${serial.task}` : ""}`} close={() => setMarkingOpen(false)} />}
   </div></EtkFoldScope></MarkSerialContext.Provider>;
 }
 
