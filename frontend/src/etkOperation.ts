@@ -18,6 +18,37 @@ function str(value: unknown): string {
   return value == null ? "" : String(value);
 }
 
+export type ShrinkRequirementLine = { material: string; text: string; missing: boolean; sourceUrl: string; quote: string };
+
+/** Frozen in the issued operation, never looked up from today's material catalog at render time. */
+export function shrinkRequirementLines(operation: Row): ShrinkRequirementLine[] {
+  const fields = obj(operation.fields);
+  const requirements = list(fields.shrinkRequirements);
+  if (!("shrinkRequirements" in fields) && (["heatTut", "coaxHeat", "endCap"].includes(str(operation.type)) || /^HEAT_(?:TYT|TTK)_/.test(str(operation.code)))) {
+    requirements.push({ status: "missing" });
+  }
+  const number = (value: number) => String(value).replace(".", ",");
+  const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+  const lines = requirements.map((requirement): ShrinkRequirementLine => {
+    const material = obj(requirement.material), temperature = obj(requirement.temperature);
+    const low = temperature.lower_c, high = temperature.upper_c;
+    const missing = requirement.status !== "resolved" || (!finite(low) && !finite(high));
+    const value = missing ? "не задано — проверить" : finite(low) && finite(high)
+      ? (low === high ? number(low) : `${number(low)}…${number(high)}`) + " °C"
+      : finite(low) ? `не ниже ${number(low)} °C` : `не выше ${number(high as number)} °C`;
+    const source = [str(temperature.kind), str(temperature.document), temperature.page ? `стр. ${str(temperature.page)}` : ""].filter(Boolean).join(", ");
+    const characteristic = finite(temperature.characteristic_c) ? `; по характеристикам: ${number(temperature.characteristic_c)} °C` : "";
+    return {
+      material: [...new Set([str(material.article), str(material.name)].filter(Boolean))].join(" · ") || "Материал не определён",
+      text: `Температура усадки материала: ${value}${!missing && source ? ` (${source})` : ""}${!missing ? characteristic : ""}`,
+      missing, sourceUrl: /^https?:\/\//i.test(str(temperature.source_url)) ? str(temperature.source_url) : "",
+      quote: str(temperature.quote),
+    };
+  });
+  if (fields.shrinkReview) lines.push({ material: "Проверка режима", text: str(fields.shrinkReview), missing: true, sourceUrl: "", quote: "" });
+  return lines;
+}
+
 /** Порядок разделов оснастки: инструмент → оборудование → расходники, затем прочее (SUPPLYMAP PortalApp:4533). */
 export const TOOLING_ORDER = ["Инструмент", "Оборудование", "Расходники", "Матрицы", "Оснастка"];
 

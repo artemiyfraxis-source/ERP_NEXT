@@ -4,6 +4,7 @@ import type { Principal, ProjectTechcard } from "./api";
 import { EtkSheet } from "./ProjectEtk";
 import { buildPrintDocumentHtml } from "./print";
 import { etkPrintPages } from "./etkPrint";
+import { shrinkRequirementLines } from "./etkOperation";
 
 /* Порядок блоков операции ЭТК (erp-screens §6, аудит дизайна 10.10 ЭТК-1/ЭТК-2): Вход → Оснастка (Инструмент ·
    Оборудование · Расходники всегда) → Ход операции → Типовые дефекты → Эскиз → Результат — на экране и в печати. */
@@ -38,6 +39,36 @@ function stubFetch() {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
     new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
 }
+
+it("distinguishes a legacy shrink operation without evidence from an explicitly non-shrinking PVC sleeve", () => {
+  expect(shrinkRequirementLines({ type: "heatTut" })[0].text).toContain("не задано — проверить");
+  expect(shrinkRequirementLines({ type: "heatTut", fields: { shrinkRequirements: [] } })).toEqual([]);
+});
+
+it("shows the stored material temperature under tooling identically on screen and in print", async () => {
+  stubFetch();
+  const card = techcard({ type: "heatTut", code: "HEAT_TYT_short", fields: { shrinkRequirements: [
+    { material: { article: "20-4808", name: "ТУТ 4,8/1,6" }, status: "resolved", temperature: {
+      lower_c: 85, upper_c: 125, kind: "оптимальная", document: "Паспорт Rexant", page: "2",
+      source_url: "https://example.com/passport", quote: "Температура усадки 85–125 °C", characteristic_c: 120,
+    } },
+    { material: { article: "ТТК", name: "Трубка без паспорта" }, status: "review", temperature: null },
+  ] } });
+  render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+  const tooling = await screen.findByRole("region", { name: "Оснастка" });
+  const panel = within(tooling).getByLabelText("Температурный режим");
+  const lines = shrinkRequirementLines((card.document as { operations: Record<string, unknown>[] }).operations[0]);
+  const printed = buildPrintDocumentHtml("ЭТК", etkPrintPages(card, []));
+  for (const line of lines) {
+    expect(within(panel).getByText(line.text)).toBeVisible();
+    expect(printed).toContain(line.text);
+  }
+  expect(within(panel).getByRole("link", { name: "Источник" })).toHaveAttribute("href", "https://example.com/passport");
+  expect(printed).toContain("https://example.com/passport");
+  expect(lines[0].text).toContain("85…125 °C (оптимальная, Паспорт Rexant, стр. 2)");
+  expect(lines[0].text).toContain("по характеристикам: 120 °C");
+  expect(lines[1].text).toContain("не задано — проверить");
+});
 
 it("shows «Оснастка» with all three sections, an empty one as «нет», and input quantities as numbers with units", async () => {
   stubFetch();

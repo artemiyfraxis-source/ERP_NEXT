@@ -29,6 +29,9 @@ it("simple assembly: harness tubes go on before the ends are soldered, shrink af
   const keys = ops.map((o) => o.opKey);
   expect(ops.every((o) => o.pf !== "pf-hs")).toBe(true);
   const on = keys.indexOf("insSleeves"), shrink = keys.indexOf("heatHs");
+  const materials = [{ art: "ТУТ 6/3мм, бел", name: "ТУТ 6/3мм, бел" }, { art: "ТУТ 12/6мм, бел", name: "ТУТ 12/6мм, бел" }];
+  expect(ops[on].shrinkMaterials).toEqual(materials);
+  expect(ops[shrink].shrinkMaterials).toEqual(materials);
   const firstSolder = keys.findIndex((k) => k.startsWith("solderConn"));
   const lastSolder = keys.length - 1 - [...keys].reverse().findIndex((k) => k.startsWith("solderConn"));
   expect(on).toBeGreaterThanOrEqual(0);

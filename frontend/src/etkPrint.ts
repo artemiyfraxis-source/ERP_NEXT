@@ -10,7 +10,7 @@ import {
   ETK_CONNECTION_COLUMNS, ETK_TUBE_COLUMNS, etkDocumentConnectionRows, etkPhysicalConfig, etkTubePlacementRows, etkContactSpecs, etkDrawHarness, etkFigure, etkParams, type EtkParam,
   type EtkTopologyData,
 } from "./etkDraw";
-import { ETK_TOOLING_SECTIONS, etkOperationName, etkToleranceLines, parseDefects, solderMode, toolingSections } from "./etkOperation";
+import { ETK_TOOLING_SECTIONS, etkOperationName, etkToleranceLines, parseDefects, solderMode, shrinkRequirementLines, toolingSections } from "./etkOperation";
 import { figuresForDefect, stdFiguresPrintHtml, type StdFigureIndex } from "./stdFigures";
 import { formatDateTime, unitLabel } from "./format";
 import { etkCardSourceNote } from "./etkCardSource";
@@ -254,7 +254,9 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
         ...(components.length || semis.length ? [] : [{ text: "Комплектующих и полуфабрикатов на входе нет." }]),
         section("Оснастка: инструмент, оборудование, расходники"),
         ...table(["Раздел", "№", "Наименование", "Инв. №", "№ прог. / параметры", "Норма", "Ед."],
-          [...solderRows(operation), ...toolingRows(rows(opCard.tooling))]),
+          [...solderRows(operation), ...shrinkRequirementLines(operation).map((item) =>
+            ["Температурный режим", "", `${item.material}. ${item.text}${item.sourceUrl ? ` · Источник: ${item.sourceUrl}` : ""}`, "", "", "", ""]),
+            ...toolingRows(rows(opCard.tooling))]),
         ...(marks.length || steps.length ? [
           section("Ход операции"),
           ...table(["№", "Что маркируем", "Надпись", "Материал", "Где", ...(withLength ? ["Длина, мм"] : []), "На изделие", "На партию"], marks),

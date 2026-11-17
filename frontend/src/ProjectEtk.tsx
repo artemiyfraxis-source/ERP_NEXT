@@ -21,7 +21,7 @@ import { etkDocOperations, etkTitle, harnessPins, navSub, opCode } from "./etkDo
 import { EtkRouteDiagram } from "./EtkRouteDiagram";
 import { defectGroupCode, defectOperationCode } from "./etkDefectArt";
 import { DefectPicture, useStdFigures } from "./EtkStdFigure";
-import { ETK_TOOLING_SECTIONS, etkToleranceLines, etkToleranceParts, parseDefects, solderMode, toolingSections, type SolderMode } from "./etkOperation";
+import { ETK_TOOLING_SECTIONS, etkToleranceLines, etkToleranceParts, parseDefects, solderMode, shrinkRequirementLines, toolingSections, type SolderMode } from "./etkOperation";
 import { countLabel, formatDateTime, formatNumber, formatQty } from "./format";
 import { openPrintDocument } from "./print";
 import { useCanPrint } from "./rights";
@@ -333,6 +333,7 @@ function EtkOperationCard({ operation, number, total, batch = "", route = null, 
   const figure = etkFigure(raw);
   const tooling = operation.card?.tooling ?? [];
   const solder = solderMode(raw);
+  const shrink = shrinkRequirementLines(raw);
   const safety = String(operation.card?.safety || "").replace(SAFETY_HEAD, "").trim();
   const resultLabel = String(raw.result_label || "") || "Результат";
   const marks = operation.fields?.marks ?? [];
@@ -362,6 +363,13 @@ function EtkOperationCard({ operation, number, total, batch = "", route = null, 
     </EtkSection>
     <EtkSection label="Оснастка" number={next()}>
       {solder && <SolderPanel mode={solder} />}
+      {shrink.length > 0 && <div aria-label="Температурный режим">
+        <h4>Температурный режим</h4>
+        {shrink.map((item, index) => <div key={index} className={item.missing ? "warning-inline" : undefined} style={{ marginBottom: 8, overflowWrap: "anywhere" }}>
+          <div><strong>{item.material}</strong><div style={{ fontVariantNumeric: "tabular-nums" }}>{item.text}</div>
+            {item.sourceUrl && <a href={item.sourceUrl} target="_blank" rel="noreferrer" title={item.quote || undefined}>Источник</a>}</div>
+        </div>)}
+      </div>}
       <ToolingBySection tooling={tooling} fixed />
     </EtkSection>
     {operation.card?.steps?.length || marks.length ? <EtkSection label="Ход операции" number={next()}>

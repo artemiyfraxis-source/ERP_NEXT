@@ -229,7 +229,7 @@ def evaluate(card: ProjectTechcard, ctx: Context) -> tuple[ProjectTechcard | Non
         if card.review_note == note:
             return None, None, result
         return replace(card, review_note=note, version=card.version + 1, updated_at=ctx.now), None, result
-    hard = [item for item in conflicts if item["kind"] in (MISSING_OPERATION, ROUTE_NOT_APPLIED)]
+    hard = [item for item in conflicts if item["kind"] in (MISSING_OPERATION, ROUTE_NOT_APPLIED, etk_derive.THERMAL_OVERRIDE)]
     soft = [item for item in conflicts if item["kind"] == TEMPLATE_CHANGED]
     versions = (document.get("source") or {}).get("templates") or {}
     new_hash = etk_derive.derived_hash(card.inputs, overrides, ctx.refs.stamp, versions, ctx.builder)
