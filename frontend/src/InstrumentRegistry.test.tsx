@@ -70,7 +70,27 @@ function open(number = instrument.inventory_number) { fireEvent.click(screen.get
 function fill(label: string, value: string) { fireEvent.change(screen.getByLabelText(label), { target: { value } }); }
 const save = () => fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
 const writes = (requests: Request[]) => requests.filter((request) => request.method !== "GET");
-afterEach(() => { vi.restoreAllMocks(); localStorage.clear(); });
+afterEach(() => { vi.restoreAllMocks(); localStorage.clear(); window.history.replaceState({}, "", "/"); });
+
+it("opens the inventory deep link when records arrive and does not reopen after closing", async () => {
+  window.history.replaceState({}, "", "/?section=quality&tab=instruments&si=" + encodeURIComponent(accessory.inventory_number));
+  const { rerender, onChanged } = setup([]);
+  rerender(<InstrumentRegistry instruments={[instrument, accessory]} onChanged={onChanged} />);
+  const dialog = await screen.findByRole("dialog", { name: "Средство измерений: Переходник" });
+  expect(within(dialog).getByRole("link", { name: "Паспорт (PDF)" })).toHaveAttribute("href", `${base}/adapter/passport.pdf`);
+  expect(within(dialog).getByRole("link", { name: "Паспорт (PDF)" })).toHaveAttribute("target", "_blank");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Закрыть" }));
+  rerender(<InstrumentRegistry instruments={[{ ...instrument }, { ...accessory }]} onChanged={onChanged} />);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(new URLSearchParams(window.location.search).has("si")).toBe(false);
+});
+
+it("explains an unknown inventory deep link", () => {
+  window.history.replaceState({}, "", "/?section=quality&tab=instruments&si=" + encodeURIComponent("СИ.999"));
+  setup();
+  expect(screen.getByRole("alert")).toHaveTextContent("СИ.999 — запись не найдена");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
 
 it("opens the print confirmation for filtered rows and for explicit selection", async () => {
   setup([instrument, accessory], (request) => request.path === `${base}/label-agent` ? json({ online: true }) : null);

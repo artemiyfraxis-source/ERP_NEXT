@@ -150,23 +150,29 @@ def default_template(kind: str, label_format: str, code_type: str) -> LabelTempl
 
 
 def _instrument(width: float, height: float) -> list[dict]:
-    """Inventory number beside a QR; card description and serial below, with room for verified instruments.
+    """A readable inventory and serial, connector facts, then the measured envelope.
 
-    Instrument identifiers contain Cyrillic, so the built-in template always uses QR regardless of lot settings.
+    The QR includes its quiet zone and fits an HTTPS card link at two dots/module at 203 dpi.
     """
     large = width >= 90
-    qr_side = 20.0 if large else 14.8
+    compact = height == 30
+    qr_side = 25.0 if large else 20.0
     x = MARGIN + qr_side + 1
     elements = [_code("qr", "qr", MARGIN, MARGIN, qr_side, qr_side)]
-    elements.append(_text("inventory_number", x, 1, width - MARGIN - x, 5 if large else 4,
-                          field="inventory_number", bold=True, fit="ellipsis"))
-    elements.append(_text("model", x, 10 if large else 8.5, width - MARGIN - x, 2,
-                          field="model", fit="ellipsis"))
-    lines = 2 if height >= 40 else 1
-    top = MARGIN + qr_side + 0.5
-    rows, _ = _stack(MARGIN, top, width - 2 * MARGIN, [
-        (0, {"id": "name", "font_mm": 2, "field": "name", "bold": True, "lines": lines, "fit": "ellipsis"}),
-        (0.2, {"id": "serial_number", "font_mm": 1.7, "field": "serial_number", "fit": "ellipsis"}),
-        (0.2, {"id": "verification_due", "font_mm": 1.7, "field": "verification_due", "fit": "ellipsis"}),
+    rows, _ = _stack(x, 1, width - MARGIN - x, [
+        (0, {"id": "inventory_number", "font_mm": 5 if large else 3.5, "field": "inventory_number", "bold": True}),
+        (0.1, {"id": "serial_number", "font_mm": 2 if large else 1.5, "field": "serial_number"}),
+        (0.2, {"id": "connector_line", "font_mm": 2.2 if large else 1.6, "field": "connector_line", "lines": 2, "bold": True}),
+        (0.1, {"id": "model", "font_mm": 1.8 if large else 1.4, "field": "model"}),
     ])
-    return elements + rows
+    elements += rows
+    top = 21.2 if compact else (29 if large else 23)
+    size = 1.4 if compact else 2
+    elements.append(_text("parameters_line", 1, top, width - 2, size, field="parameters_line", bold=True))
+    second = top + (2.9 if compact else 4.3)
+    elements.append(_text("loss_line", 1, second, width * 0.53, size if compact else 1.8, field="loss_line"))
+    elements.append(_text("measurement_date", width * 0.56, second, width * 0.44 - 1,
+                          1.3 if compact else 1.8, field="measurement_date"))
+    elements.append(_text("footer_line", 1, second + (2.7 if compact else 4.3), width - 2,
+                          1.1 if compact else 1.6, field="footer_line"))
+    return elements

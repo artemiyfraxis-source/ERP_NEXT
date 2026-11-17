@@ -87,6 +87,26 @@ def _set_text(text: str, element: Element, width: int, height: int, dots_per_mm:
                 high = middle - 1
     face = font(name, size)
     lines = wrap_text(text, width, face, capacity(size))
+    if element.field == "connector_line":
+        # A short connector description may wrap or shrink, but a truncated word is not a connector.
+        words, lines = text.split(), []
+        while words and len(lines) < capacity(size):
+            line = ""
+            while words and text_width((line + " " + words[0]).strip(), face) <= width:
+                line = (line + " " + words.pop(0)).strip()
+            if not line:
+                break
+            lines.append(line)
+        if words:
+            last = lines.pop() if lines else ""
+            while last and text_width(last + "…", face) > width:
+                last = last.rsplit(" ", 1)[0] if " " in last else ""
+            lines.append(last + "…")
+        ends = text.split(" – ")
+        if len(lines) > 1 and len(ends) == 2 and capacity(size) >= 2:
+            paired = [ends[0] + " –", ends[1]]
+            if all(text_width(line, face) <= width for line in paired):
+                lines = paired
     pitch = line_metrics(size)[1]
     overflow = len(lines) * pitch > height or any(text_width(line, face) > width for line in lines)
     return lines, size, overflow

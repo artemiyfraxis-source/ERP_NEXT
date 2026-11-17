@@ -43,6 +43,10 @@ class SecurityHeadersMiddleware:
                 headers["Cross-Origin-Opener-Policy"] = "same-origin"
                 content_type = headers.get("content-type", "")
                 path = str(scope.get("path", ""))
+                if path.startswith("/p/"):
+                    # Include framework errors (for example unsupported methods), not only successful passports.
+                    headers["X-Robots-Tag"] = "noindex, nofollow"
+                    headers["Cache-Control"] = "no-store"
                 # A route may let the viewer's own browser keep an immutable picture (`private, …`: never a shared
                 # cache) — the standard figures and connector pictures; every other API answer is no-store.
                 own = headers.get("cache-control", "")

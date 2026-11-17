@@ -49,6 +49,12 @@ class IdentitySessionMiddleware:
             await self.app(scope, receive, send)
             return
 
+        # Public passport bearer links have their own token and pre-database limiter. Resolving an ERP
+        # session here would update last_seen and query identity before that limiter, even on a public read.
+        if str(scope.get("path", "")).startswith("/p/") and scope.get("method") in {"GET", "HEAD"}:
+            await self.app(scope, receive, send)
+            return
+
         request = Request(scope)
         factory: Callable[[], UnitOfWork] | None = getattr(
             request.app.state,

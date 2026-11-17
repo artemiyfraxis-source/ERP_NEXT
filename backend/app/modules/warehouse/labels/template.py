@@ -65,6 +65,12 @@ FIELDS: dict[str, dict[str, str]] = {
         "received": "Дата приёмки",
     },
     "instrument": {
+        "connector_line": "Разъёмы / краткое название",
+        "parameters_line": "КСВН и диапазон замера",
+        "loss_line": "Потери",
+        "measurement_date": "Дата замера",
+        "impedance_warning": "Предупреждение о сопротивлении",
+        "footer_line": "Поверка / сопротивление",
         "inventory_number": "Инвентарный номер",
         "name": "Разъёмы / наименование",
         "model": "Модель",
@@ -308,7 +314,9 @@ def intake_content(data: GrnLabelData, project: str, item_index: str) -> LabelCo
 
 
 def instrument_content(inventory_number: str, name: str, serial_number: str = "", verification_due: date | None = None,
-                       *, model: str = "", accessory: bool = False, in_house_serial: bool = False) -> LabelContent:
+                       *, model: str = "", accessory: bool = False, in_house_serial: bool = False,
+                       connector_line: str = "", parameters_line: str = "", loss_line: str = "",
+                       measurement_date: str = "", impedance_warning: str = "", card_url: str = "") -> LabelContent:
     """An instrument card's printable values; codes carry the inventory number even without an ERP connection.
 
     The caller supplies the domain's classification to keep serial-number policy outside Warehouse.
@@ -320,5 +328,11 @@ def instrument_content(inventory_number: str, name: str, serial_number: str = ""
         "model": model.strip(),
         "serial_number": (f"№ {serial}" if in_house_serial else f"Зав. № {serial}") if serial else "",
         "verification_due": f"Поверка до {verification_due:%d.%m.%Y}" if verification_due and not accessory else "",
+        "connector_line": connector_line or name.strip(),
+        "parameters_line": parameters_line or ("Не измерен" if accessory else ""),
+        "loss_line": loss_line,
+        "measurement_date": measurement_date,
+        "impedance_warning": impedance_warning,
     }
-    return LabelContent("instrument", values["inventory_number"], values)
+    values["footer_line"] = " · ".join(filter(None, (values["verification_due"], impedance_warning)))
+    return LabelContent("instrument", card_url or values["inventory_number"], values)

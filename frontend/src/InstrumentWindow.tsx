@@ -154,7 +154,9 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
   return <PageWindow label={record ? `Средство измерений: ${record.name}` : `Добавить: ${kind.toLocaleLowerCase("ru")}`} width={1120} close={requestClose}>
     <div className="panel instrument-window" aria-busy={busy}>
       <header className="page-head"><h2>{record ? `${record.inventory_number} · ${record.name}` : `Новое: ${kind.toLocaleLowerCase("ru")}`}</h2>
-        <div className="header-actions">{record && <button type="button" className="secondary small" disabled={busy || rfBusy || dirty || conflict}
+        <div className="header-actions">{record && <a className="primary small instrument-passport" href={productionApi.instrumentPassportUrl(record.id)}
+          target="_blank" rel="noopener noreferrer">Паспорт (PDF)</a>}
+          {record && <button type="button" className="secondary small" disabled={busy || rfBusy || dirty || conflict}
           title={dirty ? "Сначала сохраните изменения" : undefined} onClick={() => setLabels(true)}>Печать этикетки</button>}
           <button type="button" className="secondary small" disabled={busy || rfBusy} onClick={requestClose}>Закрыть</button></div></header>
       {error && <div className="error-banner" role="alert">{error}</div>}
