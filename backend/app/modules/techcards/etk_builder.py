@@ -2246,7 +2246,7 @@ def _physical_connector(op: Mapping[str, Any]) -> str:
 
 
 def _coax_recipe_steps(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[str]:
-    """Only explicit new coax settings add instructions; old snapshots remain unchanged."""
+    """Operator instructions; source documents and derivations stay in the structured fields."""
     if not str(op.get("type") or "").startswith("coax"):
         return []
     coax = _coax(config)
@@ -2265,26 +2265,27 @@ def _coax_recipe_steps(op: Mapping[str, Any], config: Mapping[str, Any]) -> list
         steps.append(f"Длина готового изделия L = {_format(coax.get('finishedLength'))} мм (допуск 0…+10 мм); "
                      f"припуск А = {_format(coax.get('lPlusA'))} мм, припуск В = {_format(coax.get('lPlusB'))} мм. "
                      f"Длина реза = {_format(coax.get('cableLength'))} мм; допуск реза 0…+5 мм.")
-    if op.get("type") == "coaxCut" and op.get("stripSides") and coax.get("fakraCutStrip"):
-        steps.append("Разделать при резке только стороны: " + ", ".join("А" if sd == "A" else "В" for sd in op["stripSides"])
-                     + ". Полная разделка; размеры от торца жилы — отдельно для каждой стороны.")
+    if op.get("type") == "coaxCut" and op.get("stripSides"):
         for side in op["stripSides"]:
             end = coax.get(f"side{side}") or {}
             label = "А" if side == "A" else "В"
-            program = _coax_strip_program(_coax_strip_sizes(config, side), str(end.get("kind") or ""))
+            sizes = _coax_strip_sizes(config, side)
+            program = _coax_strip_program(sizes, str(end.get("kind") or "")) if coax.get("fakraCutStrip") else {}
             if program:
-                values = "; ".join(f"{item['label'].lower()} {item['value']} {item['tolerance']} мм"
+                values = "; ".join(f"{item['label'].lower().replace(' / жила', '')} {item['value']} {item['tolerance']}"
                                    for item in program["boundaries"])
-                steps.append(f"Сторона {label}: от торца жилы — {values or 'размеры требуют проверки'}. "
-                             f"Источник: {program['source']} {program['note']}")
+            else:
+                values = "; ".join(f"{name} {sizes[key]}" for key, name in
+                                   (("l1", "диэлектрик"), ("l2", "оплётка"), ("l3", "оболочка")) if sizes.get(key))
+            instruction = (f"Сторона {label}: {values} мм (от торца жилы)." if values
+                           else f"Сторона {label}: размеры от торца требуют проверки — согласовать разделку.")
             if end.get("kind") == "hfm":
-                steps.append(f"Сторона {label}, HFM: полностью разделать кабель по базам MA_AMV003; не повредить оплётку, "
-                             "диэлектрик и фольгу. Опорную гильзу установить и обжать отдельной следующей операцией "
-                             "после полной разделки — технологическое решение от 16.11.2026.")
+                instruction += (" HFM: размеры после отворота оплётки. Размер обрезки прямой оплётки до отворота не задан — "
+                                "согласовать программу станка. Опорную гильзу обжать после полной разделки отдельной операцией.")
             elif end.get("kind") == "bulkhead":
-                steps.append(f"Сторона {label}, Amphenol 2FA1: размер 1,0 мм — участок открытого диэлектрика, "
-                             "не абсолютная длина от торца. "
-                             "ТТК, гильзу и изолирующий диск надеть после разделки в следующей операции.")
+                instruction += (" 1,0 мм — участок открытого диэлектрика. Фольгу сохранить внутри корпуса, "
+                                "оплётку — снаружи насечки. ТТК, гильзу и изолирующий диск надеть следующей операцией.")
+            steps.append(instruction)
     if op.get("protective") and op.get("type") == "coaxInsTut":
         steps.append("Надеть прозрачные отрезки ТУТ на кабель и сдвинуть к середине до монтажа деталей концов.")
     for mark in _list(op.get("marks")):
