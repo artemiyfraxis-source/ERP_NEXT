@@ -64,10 +64,10 @@ export function ProjectDataWindow({ project, customer, stored, canManage, close,
         {carrierTrip && <label>Перевозчик<select aria-label="Перевозчик" value={carrier} onChange={(event) => setCarrier(event.target.value)}>
           <option value="">не выбран</option>{CARRIER_CHOICES.map((name) => <option key={name} value={name}>{name}</option>)}
           {carrier && !(CARRIER_CHOICES as readonly string[]).includes(carrier) && <option value={carrier}>{carrier} (прежнее)</option>}</select></label>}
+        <label className={pickup || !delivery ? "ship-span2" : undefined}>Организация<input aria-label="Организация" placeholder="как в документах" value={receiver} onChange={(event) => setReceiver(event.target.value)} /></label>
+        <label>Получатель<input aria-label="Получатель" placeholder="ФИО, кому передать груз" value={contact} onChange={(event) => setContact(event.target.value)} /></label>
+        <label>Телефон<input aria-label="Телефон" type="tel" value={phone} onChange={(event) => setPhone(event.target.value)} /></label>
         {carrierTrip && <label className="ship-span2">Адрес доставки<input aria-label="Адрес доставки" value={point} onChange={(event) => setPoint(event.target.value)} /></label>}
-        <label className={pickup || !delivery ? "ship-span2" : undefined}>Получатель<input aria-label="Получатель" value={receiver} onChange={(event) => setReceiver(event.target.value)} /></label>
-        <label>Телефон получателя<input aria-label="Телефон получателя" value={phone} onChange={(event) => setPhone(event.target.value)} /></label>
-        <label>Контактное лицо<input aria-label="Контактное лицо" value={contact} onChange={(event) => setContact(event.target.value)} /></label>
         <label>УПД<select aria-label="Тип УПД" value={updType} onChange={(event) => setUpdType(event.target.value)}>
           <option value="">не выбран</option>{UPD_TYPES.map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
       </div>
@@ -89,7 +89,7 @@ export function ProjectDataWindow({ project, customer, stored, canManage, close,
 }
 
 const DELIVERY_LABELS: Record<DeliveryField, string> = {
-  receiver: "Получатель", shipping_point: "Адрес доставки", contact: "Контактное лицо", phone: "Телефон",
+  receiver: "Организация", contact: "Получатель", phone: "Телефон", shipping_point: "Адрес доставки",
   terms: "Способ доставки", carrier: "Перевозчик", upd_type: "Тип УПД",
 };
 
@@ -101,19 +101,21 @@ export function ItemDeliveryWindow({ project, items: initial, close, onSaved }: 
   const [draft, setDraft] = useState<Record<DeliveryField, string>>(() => Object.fromEntries(DELIVERY_FIELDS.map((key) => [
     key, initial.every((item) => item.effective[key] === initial[0]?.effective[key]) ? initial[0]?.effective[key] ?? "" : "",
   ])) as Record<DeliveryField, string>);
-  const [modes, setModes] = useState<Partial<Record<DeliveryField, "value" | "inherit">>>({});
+  const [edited, setEdited] = useState<Partial<Record<DeliveryField, boolean>>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [conflict, setConflict] = useState(false);
   const [refreshed, setRefreshed] = useState(false);
   const single = items.length === 1;
-  const save = async (reset = false) => {
+  const changed = DELIVERY_FIELDS.filter((key) => edited[key] && items.some((item) =>
+    (draft[key] || "").trim() !== (item.effective[key] ?? "").trim()));
+  const save = async () => {
+    if (saving || conflict || !changed.length) return;
     setSaving(true); setError("");
-    const fields = Object.fromEntries(DELIVERY_FIELDS.filter((key) => modes[key] === "value").map((key) => [
+    const fields = Object.fromEntries(changed.map((key) => [
       key, key === "terms" || key === "upd_type" ? draft[key] || null : draft[key].trim(),
     ])) as Partial<DeliveryValues>;
-    const inherit = reset ? [...DELIVERY_FIELDS] : DELIVERY_FIELDS.filter((key) => modes[key] === "inherit");
-    const changes = items.map((item) => ({ item_index: item.item_index, version: item.version, fields: reset ? {} : fields, inherit }));
+    const changes = items.map((item) => ({ item_index: item.item_index, version: item.version, fields }));
     try {
       if (single) await shippingApi.saveItemAddressee(project, changes[0]);
       else await shippingApi.saveItemAddressees(project, changes);
@@ -130,6 +132,10 @@ export function ItemDeliveryWindow({ project, items: initial, close, onSaved }: 
       const wanted = new Set(items.map((item) => item.item_index));
       const current = result.items.filter((item) => wanted.has(item.item_index));
       if (current.length !== items.length) throw new Error("Состав КБ изменился. Откройте доставку заново.");
+      setEdited(Object.fromEntries(changed.map((key) => [key, true])));
+      setDraft((draft) => ({ ...draft, ...Object.fromEntries(DELIVERY_FIELDS.filter((key) => !changed.includes(key)).map((key) => [
+        key, current.every((item) => item.effective[key] === current[0]?.effective[key]) ? current[0]?.effective[key] ?? "" : "",
+      ])) }));
       setItems(current); setConflict(false); setRefreshed(true); setError("Данные обновлены. Проверьте значения и сохраните ещё раз; ваш ввод сохранён.");
     } catch (reason) { setError(failureText(reason, "Не удалось обновить данные")); }
     finally { setSaving(false); }
@@ -141,37 +147,27 @@ export function ItemDeliveryWindow({ project, items: initial, close, onSaved }: 
       <div className="ship-form">
         {DELIVERY_FIELDS.map((key) => {
           const different = items.some((item) => item.effective[key] !== items[0].effective[key]);
-          const mode = modes[key];
-          const set = (value: string) => { setDraft({ ...draft, [key]: value }); setModes({ ...modes, [key]: "value" }); };
-          const choices = key === "terms" ? [["САМОВЫВОЗ", "Самовывоз"], ["ДОСТАВКА ТК", "Доставка ТК"]] : key === "upd_type" ? UPD_TYPES : null;
-          return <div key={key} className={key === "shipping_point" ? "ship-span2" : undefined}>
+          const set = (value: string) => { setDraft({ ...draft, [key]: value }); setEdited({ ...edited, [key]: true }); };
+          const choices = key === "terms" ? [["САМОВЫВОЗ", "Самовывоз"], ["ДОСТАВКА ТК", "Доставка ТК"]] : key === "upd_type" ? UPD_TYPES
+            : key === "carrier" ? CARRIERS.map((name) => [name, name]) : null;
+          return <div key={key}>
             <label>{DELIVERY_LABELS[key]}
-              {choices ? <select name={key} autoComplete="off" aria-label={DELIVERY_LABELS[key]} disabled={saving || mode === "inherit"} value={draft[key]} onChange={(event) => set(event.target.value)}>
-                <option value="">{different && !mode ? "Разные значения" : "Не задано"}</option>
+              {choices ? <select name={key} autoComplete="off" aria-label={DELIVERY_LABELS[key]} disabled={saving} value={draft[key]} onChange={(event) => set(event.target.value)}>
+                <option value="">{different && !edited[key] ? "разные" : "Не задано"}</option>
                 {choices.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </select> : <input name={key} autoComplete="off" type={key === "phone" ? "tel" : "text"} aria-label={DELIVERY_LABELS[key]} disabled={saving || mode === "inherit"} value={draft[key]}
-                placeholder={different && !mode ? "Разные значения" : undefined} onChange={(event) => set(event.target.value)} />}
+                {draft[key] && !choices.some(([value]) => value === draft[key]) && <option value={draft[key]}>{draft[key]} (прежнее)</option>}
+              </select> : <input name={key} autoComplete="off" type={key === "phone" ? "tel" : "text"} aria-label={DELIVERY_LABELS[key]} disabled={saving} value={draft[key]}
+                placeholder={different && !edited[key] ? "разные" : key === "receiver" ? "как в документах" : key === "contact" ? "ФИО, кому передать груз" : undefined} onChange={(event) => set(event.target.value)} />}
             </label>
-            <select name={`${key}_mode`} autoComplete="off" className="item-delivery-mode" aria-label={`Применить: ${DELIVERY_LABELS[key]}`} disabled={saving}
-              value={mode ?? "keep"} onChange={(event) => {
-                const next = { ...modes };
-                if (event.target.value === "keep") delete next[key]; else next[key] = event.target.value as "value" | "inherit";
-                setModes(next);
-              }}>
-              <option value="keep">{single ? (key in items[0].overrides ? "Задано для КБ" : "Как у проекта") : "Не менять"}</option>
-              <option value="value">{single ? "Задать для КБ" : "Задать выбранным КБ"}</option>
-              {single && <option value="inherit">Как у проекта — сбросить</option>}
-            </select>
             {refreshed && <span className="muted">Сейчас: {items.map((item) => item.effective[key] || "—").filter((v, i, all) => all.indexOf(v) === i).join("; ")}</span>}
           </div>;
         })}
       </div>
       {error && <div className="error-banner" role="alert">{error}</div>}
       <div className="ship-actions">
-        <button type="button" className="secondary" disabled={saving || conflict} onClick={() => void save(true)}>Как у проекта</button>
         {conflict && <button type="button" className="secondary" disabled={saving} onClick={() => void refresh()}>Обновить данные</button>}
         <span className="ship-actions-end"><button type="button" className="secondary" onClick={close}>Отмена</button>
-          <button className="primary" disabled={saving || conflict || !Object.keys(modes).length}>{saving ? "Сохраняем…" : "Сохранить"}</button></span>
+          <button className="primary" disabled={saving || conflict || !changed.length}>{saving ? "Сохраняем…" : "Сохранить"}</button></span>
       </div>
     </form>
   </PageWindow>;

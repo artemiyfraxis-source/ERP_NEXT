@@ -71,7 +71,7 @@ def test_bulk_project_card_readiness_includes_virtual_defaults_without_writes(sh
     cards = {card["project"]: card for card in response.json()["addressees"]}
     assert len(response.json()["addressees"]) == 3
     assert cards["EMPTY"]["version"] == 0
-    assert cards["EMPTY"]["dispatch_gaps"] == ["условия доставки", "получатель", "телефон получателя", "адрес доставки", "тип УПД"]
+    assert cards["EMPTY"]["dispatch_gaps"] == ["условия доставки", "организация", "телефон получателя", "адрес доставки", "тип УПД"]
     assert cards["EMPTY"]["dispatch_gap_codes"] == ["terms", "receiver", "phone", "shipping_point", "upd_type"]
     assert cards["PART"]["dispatch_gaps"] == ["условия доставки", "телефон получателя", "адрес доставки", "тип УПД"]
     assert cards["PICKUP"]["dispatch_gaps"] == [] and cards["PICKUP"]["dispatch_gap_codes"] == []

@@ -262,7 +262,7 @@ export function ShipmentCard({ shipment, rights, busy, mutate, openData }: {
       <label>Трек-номер<input aria-label={`Трек-номер ${shipment.number}`} disabled={!trackOpen} title={trackOpen ? undefined : "Трек вносится, когда есть УПД и ТК"} value={documents.track_number} onChange={(event) => setDocuments({ ...documents, track_number: event.target.value })} /></label>
       <button type="button" className="secondary" disabled={disabled} onClick={() => void mutate(`docs:${shipment.id}`, () => shippingApi.documents(shipment.id, { version: shipment.version, ...documents, upd_url: shipment.upd_url, upd_type: documents.upd_type || null, upd_date: documents.upd_date || null }), "Данные УПД и доставки сохранены")}>Сохранить документы</button>
     </div>}
-    <details className="ship-more"><summary>Получатель и адрес этой отправки</summary>
+    <details className="ship-more"><summary>Организация, получатель и адрес этой отправки</summary>
       {canEdit && active
         ? <ShipmentHead shipment={shipment} busy={busy} mutate={mutate} />
         : <dl className="ship-form">{[...HEAD_FIELDS, ["carrier", "ТК"], ["terms", "Условия"], ["deadline", "Срок отгрузки"], ["note", "Комментарий"]].map(([key, title]) =>
@@ -320,7 +320,7 @@ export function NoUpdWindow({ shipment, close, mutate }: { shipment: DispatchShi
 }
 
 const HEAD_FIELDS: Array<[keyof Shipment & string, string]> = [
-  ["receiver", "Получатель"], ["shipping_point", "Адрес отгрузки"], ["contact", "Контактное лицо"], ["phone", "Телефон"],
+  ["receiver", "Организация"], ["contact", "Получатель"], ["phone", "Телефон"], ["shipping_point", "Адрес отгрузки"],
 ];
 
 /** Fields save on blur. Only legacy shipments inherit cleared delivery fields from the project. */
@@ -351,8 +351,8 @@ export function ShipmentHead({ shipment, busy, mutate }: {
   const pickup = isPickup(shipment.carrier);
   const snapshot = Boolean(shipment.delivery_snapshot_at);
   const mark = (key: string) => inherited(key) ? <small className="ship-inherited">из карточки проекта</small> : null;
-  const hint = (key: string) => snapshot
-    ? key === "receiver" ? "укажите получателя" : "пусто — оставить пустым"
+  const hint = (key: string) => key === "receiver" ? "как в документах" : key === "contact" ? "ФИО, кому передать груз" : snapshot
+    ? "пусто — оставить пустым"
     : inherited(key) ? "" : "пусто — из карточки проекта";
   return <div className="ship-form">
     {HEAD_FIELDS.filter(([key]) => !(pickup && key === "shipping_point")).map(([key, label]) => <label key={key} className={key === "shipping_point" ? "ship-span2" : undefined}><span>{label}{mark(key)}</span><input aria-label={`${label} ${shipment.number}`} disabled={Boolean(busy)} placeholder={hint(key)} value={draft[key]} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} onBlur={() => save(key)} /></label>)}
