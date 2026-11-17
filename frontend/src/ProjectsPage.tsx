@@ -371,7 +371,7 @@ function CreateFromCalc({ canRequest, close, done }: {
       <label className="wide">Ссылка на расчёт<input aria-label="Ссылка на расчёт" value={url} placeholder="https://docs.google.com/spreadsheets/…" onChange={(event) => setUrl(event.target.value)} /></label>
       <label>№ проекта<input value={form.number} placeholder="пусто — возьмём из расчёта" onChange={(event) => setForm({ ...form, number: event.target.value })} /></label>
       <label>Дедлайн<input type="date" value={form.deadline} onChange={(event) => setForm({ ...form, deadline: event.target.value })} /></label>
-      <label>Контактное лицо<input value={form.contact} placeholder="кто принимает" onChange={(event) => setForm({ ...form, contact: event.target.value })} /></label>
+      <label>Получатель<input value={form.contact} placeholder="ФИО, кому передать груз" onChange={(event) => setForm({ ...form, contact: event.target.value })} /></label>
       <label>Телефон<input value={form.phone} placeholder="для связи" onChange={(event) => setForm({ ...form, phone: event.target.value })} /></label>
       <label className="wide">Адрес отгрузки<AutoTextarea value={form.shipping_point} maxRows={4} placeholder="можно позже — в окне «Отгрузить»" onChange={(value) => setForm({ ...form, shipping_point: value })} /></label>
       {canRequest && <label className="wide check-inline"><input type="checkbox" checked={withRequests} onChange={(event) => setWithRequests(event.target.checked)} />Сразу создать заявки на закупку по листу ЗКП</label>}

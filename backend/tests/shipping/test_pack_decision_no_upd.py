@@ -152,7 +152,7 @@ def test_dash_counts_as_empty_on_a_shipment(blank):
     from app.modules.shipping.domain import shipping_gaps
     packed = replace(_packed(), receiver=blank, phone=blank, carrier=blank, shipping_point=blank, upd_number=blank)
 
-    assert shipping_gaps(packed, with_track=False) == ("получатель", "телефон получателя", "перевозчик", "адрес доставки", "№ УПД")
+    assert shipping_gaps(packed, with_track=False) == ("организация", "телефон получателя", "перевозчик", "адрес доставки", "№ УПД")
     assert shipping_gaps(replace(packed, track_number=blank))[-1] == "трек-номер"
     with pytest.raises(ShippingValidationError, match="№ УПД"):
         replace(packed, status=ShipmentStatus.SHIPPED, shipped_at=DAY, upd_url="/api/shipping/files/1").close()

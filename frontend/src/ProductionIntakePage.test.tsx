@@ -13,7 +13,7 @@ const principal = {
 };
 const viewer = { ...principal, permissions: { shipping: "view" as const } };
 const admin = { ...principal, roles: ["admin"], access_level: "admin", permissions: { shipping: "edit" as const, shipping_goods: "edit" as const } };
-const shippingHeaders = ["Проект", "Заказчик", "Отправка", "Отгрузка", "Статус", "Создана", "Срок", "Отгружена", "Получатель", "Телефон", "Адрес", "Способ доставки", "ТК", "Контакт", "Комментарий для склада", "Для перевозчика", "Трек", "Ждём для трека", "УПД", "№ УПД", "Дата УПД", "Файл УПД", "PL", "DN", "Доставка КБ"];
+const shippingHeaders = ["Проект", "Заказчик", "Отправка", "Отгрузка", "Статус", "Создана", "Срок", "Отгружена", "Организация", "Получатель", "Телефон", "Адрес", "Способ доставки", "ТК", "Комментарий для склада", "Для перевозчика", "Трек", "Ждём для трека", "УПД", "№ УПД", "Дата УПД", "Файл УПД", "PL", "DN", "Доставка КБ"];
 
 const row = (over: Record<string, unknown>) => ({
   project: "591К.3", customer: "Заказчик", deadline: "2026-10-25", item_index: "КБ1", name: "Жгут", unit: "шт", stage: "В работе",
@@ -26,7 +26,7 @@ const ROWS = [
   row({ project: "600К.1", customer: "Другой", item_index: "КБ7", name: "Шлейф", needed: "5", launched: "5", delivered: "0", accepted: "0", remaining: "0", tasks: [] }),
 ];
 const dispatchCard = {
-  project: "591К.3", version: 2, receiver: "Получатель", shipping_point: "Москва", contact: "", phone: "", terms: "САМОВЫВОЗ", carrier: "",
+  project: "591К.3", version: 2, receiver: "Организация", shipping_point: "Москва", contact: "", phone: "", terms: "САМОВЫВОЗ", carrier: "",
   upd_type: "ЭДО", updated_by: "", updated_at: null, po: "", contract: "", spec: "", invoice: "", pays: "", customer_address: "", hours: "",
   plan_date: null, note: "",
 };
@@ -35,7 +35,7 @@ const act = (grn: string, quantity: string, received_at = "2026-10-30") => ({ gr
 const shipmentLine = (over: Record<string, unknown> = {}) => ({ id: "l1", good_id: "g1", project: "591К.3", item_index: "КБ1", article: "", name: "Жгут", requested: "4", picked: "4", shortage: "0", unit: "шт", grn: "ГП.26.0000001", ...over });
 const packedShipment = {
   id: "s1", number: "ОТГ-20261029-01", version: 3, created_at: "2026-10-29T09:00:00", status: "Упакована",
-  customer: "Заказчик", receiver: "Получатель", shipping_point: "Москва", contact: "", phone: "+7 900", terms: "ДОСТАВКА ТК", carrier: "СДЭК",
+  customer: "Заказчик", receiver: "Организация", shipping_point: "Москва", contact: "", phone: "+7 900", terms: "ДОСТАВКА ТК", carrier: "СДЭК",
   deadline: null, upd_type: "ЭДО", upd_number: "", upd_date: null, upd_url: "", pl_number: "PL591К.3-1", dn_number: "DN591К.3-1", track_number: "",
   packed_at: "2026-10-29", shipped_at: null, manager: "", note: "", tk_note: "", places: 1, weight: "", boxes: [], inherited: [],
   missing_data: ["№ УПД"], missing_ship: ["№ УПД", "трек-номер"], ready_for_track: false, ready_to_ship: false, no_upd_approved_by: null, no_upd_approved_at: null,
@@ -67,7 +67,7 @@ function stub() {
     if (url.endsWith("/approve-no-upd")) { const [status, body] = approvals.shift() ?? [200, { shipment: packedShipment }]; return json(body, status); }
     if (/\/print\?document=/.test(url)) return json({ forms: [{ kind: "pl", title: "PL1-1", number: ["PL", "1", "-", "1"], place: "1", places: "1", package: "Короб", dims: "", net: "", gross: "", seal: "",
       rows: [{ part: "КБ1", name: "", quantity: "1", unit: "шт", batch: "", pl: "", boxes: "" }], packed_at: "", shipped_at: "", packer: "", shipper: "", consignee: "", address: "", project: "591К.3" }] });
-    if (url.endsWith("/labels")) return json({ labels: [{ shipper: "Фраксис", consignee: "Получатель", address: "Москва", project: "591К.3", pl_number: "PL591К.3-1", place: "Упаковка 1/1", items: [{ item_index: "КБ1", quantity: "4", unit: "шт" }], net: "", dims: "" }] });
+    if (url.endsWith("/labels")) return json({ labels: [{ shipper: "Фраксис", consignee: "Организация", address: "Москва", project: "591К.3", pl_number: "PL591К.3-1", place: "Упаковка 1/1", items: [{ item_index: "КБ1", quantity: "4", unit: "шт" }], net: "", dims: "" }] });
     if (url.endsWith("/documents") && method === "PUT") return json({ shipment: packedShipment });
     if (/\/shipments\/[^/]+\/(ship|close|unship)$/.test(url)) return json({ shipment: packedShipment, closed: false, why: "Нельзя закрыть: не хватает — файл УПД" });
     return json({});
@@ -104,8 +104,8 @@ it("warehouse can set delivery for the whole catalog including a KB before finis
   fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
   await waitFor(() => expect(writes()).toEqual([expect.objectContaining({ url: "/api/shipping/item-addressees/bulk", body: {
     project: "591К.3", items: [
-      { item_index: "КБ1", version: 2, fields: { phone: "456" }, inherit: [] },
-      { item_index: "КБ2", version: 0, fields: { phone: "456" }, inherit: [] },
+      { item_index: "КБ1", version: 2, fields: { phone: "456" } },
+      { item_index: "КБ2", version: 0, fields: { phone: "456" } },
     ],
   } })]));
 });
@@ -122,7 +122,7 @@ it("selected receipt rows of the same KB produce one versioned delivery update",
   fireEvent.change(screen.getByRole("textbox", { name: "Телефон" }), { target: { value: "" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
   await waitFor(() => expect(writes()).toEqual([expect.objectContaining({ url: "/api/shipping/item-addressee", body: {
-    project: "591К.3", item_index: "КБ1", version: 2, fields: { phone: "" }, inherit: [],
+    project: "591К.3", item_index: "КБ1", version: 2, fields: { phone: "" },
   } })]));
 });
 
@@ -130,7 +130,7 @@ it.each(["Новая", "Собрана", "Упакована", "Отгружен
   const shipment = { ...packedShipment, status, receiver: "Иванов", phone: "+7 123", contact: "Контакт", note: "Позвонить", deadline: "2026-11-12" } as DispatchShipment;
   render(<ShipmentCard shipment={shipment} rights={{ canManage: true, canWarehouse: true, canEdit: true, canUnship: false }}
     busy="" mutate={vi.fn()} openData={vi.fn()} />);
-  const details = screen.getByText("Получатель и адрес этой отправки").closest("details")!;
+  const details = screen.getByText("Организация, получатель и адрес этой отправки").closest("details")!;
   const active = ["Новая", "Собрана", "Упакована"].includes(status);
   expect(details.querySelectorAll("input").length > 0).toBe(active);
   if (!active) {
@@ -153,7 +153,7 @@ it("position rows repeat shipment fields, preserve newest groups and chronologic
   fireEvent.click(await screen.findByRole("tab", { name: /^Отгружено/ }));
   const positions = shipmentRows();
   expect(positions).toHaveLength(3);
-  expect(positions.map((tr) => [cell(tr, "Отправка"), cell(tr, "Отгрузка"), cell(tr, "Отгружено"), cell(tr, "Отгружена"), cell(tr, "Получатель"), cell(tr, "Телефон")])).toEqual([
+  expect(positions.map((tr) => [cell(tr, "Отправка"), cell(tr, "Отгрузка"), cell(tr, "Отгружено"), cell(tr, "Отгружена"), cell(tr, "Организация"), cell(tr, "Телефон")])).toEqual([
     ["ОТГ-2", "2 из 2", "250 шт", "08.11.2026", "Иванов", "+7 222"],
     ["ОТГ-1", "1 из 2", "100 шт", "03.11.2026", "Петров", "+7 111"],
     ["ОТГ-1", "1 из 2", "50 шт", "03.11.2026", "Петров", "+7 111"],
@@ -201,7 +201,7 @@ it("project delivery values use the table columns, missing fields are highlighte
   const phone = positions[0].querySelector('td[data-label="Телефон"] .tone-warn');
   expect(phone).toHaveTextContent("не заполнено");
   expect(positions[0].querySelector('td[data-label="Адрес"] [title]')).toHaveAttribute("title", address);
-  for (const tr of positions) for (const label of ["Получатель", "Телефон", "Адрес", "Способ доставки", "ТК", "УПД"]) expect(tr.querySelector(`td[data-label="${label}"]`)).not.toBeNull();
+  for (const tr of positions) for (const label of ["Организация", "Получатель", "Телефон", "Адрес", "Способ доставки", "ТК", "УПД"]) expect(tr.querySelector(`td[data-label="${label}"]`)).not.toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Изменить данные отправки 591К.3" }));
   expect(await screen.findByRole("dialog")).toBeInTheDocument();
 });
@@ -257,7 +257,7 @@ it.each(["В ожидании", "В производстве", "Готово", "
   expect(buttons[0]).toBeEnabled();
   fireEvent.click(buttons[0]);
   const dialog = within(await screen.findByRole("dialog"));
-  expect(await dialog.findByLabelText("Получатель")).toBeEnabled();
+  expect(await dialog.findByLabelText("Организация")).toBeEnabled();
 });
 
 it.each([
@@ -382,8 +382,8 @@ describe("Приёмка с производства: свои колонки и
     expect(screen.queryByRole("button", { name: "Excel по позициям" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Короба и PL/DN" })).toBeInTheDocument();
     for (const position of bodyRows()) {
-      expect(["Получатель", "Телефон", "Адрес", "ТК", "Трек", "№ УПД", "PL", "DN"].map((label) => cell(position, label))).toEqual([
-        "Получатель", "+7 900", "Москва", "СДЭК", "не заполнен", "У-7", "PL591К.3-1", "DN591К.3-1",
+      expect(["Организация", "Получатель", "Телефон", "Адрес", "ТК", "Трек", "№ УПД", "PL", "DN"].map((label) => cell(position, label))).toEqual([
+        "Организация", "—", "+7 900", "Москва", "СДЭК", "не заполнен", "У-7", "PL591К.3-1", "DN591К.3-1",
       ]);
       expect(position.querySelector("small")).toBeNull();
     }
@@ -603,7 +603,7 @@ describe("Приёмка с производства: свои колонки и
     fireEvent.click(tab(/^Принято/));
     fireEvent.click(await screen.findByRole("button", { name: "Изменить данные отправки 591К.3" }));
     const card = await screen.findByRole("dialog", { name: "Данные отправки 591К.3" });
-    expect(await within(card).findByLabelText("Получатель")).toBeEnabled();
+    expect(await within(card).findByLabelText("Организация")).toBeEnabled();
     expect(within(card).getByRole("button", { name: "Сохранить" })).toBeInTheDocument();
     fireEvent.click(within(card).getByRole("button", { name: "Закрыть" }));
 
@@ -613,7 +613,7 @@ describe("Приёмка с производства: свои колонки и
     const shipCard = within(within(pack).getByRole("article", { name: "Отправка ОТГ-20261029-01" }));
     expect(shipCard.getByRole("button", { name: "Сохранить документы" })).toBeInTheDocument();
     expect(shipCard.getByLabelText("Загрузить УПД ОТГ-20261029-01")).toBeEnabled();
-    expect(shipCard.getByText("Получатель и адрес этой отправки")).toBeInTheDocument();
+    expect(shipCard.getByText("Организация, получатель и адрес этой отправки")).toBeInTheDocument();
     fireEvent.click(shipCard.getByRole("button", { name: "Данные отправки" }));
     const data = await screen.findByRole("dialog", { name: "Данные отправки ОТГ-20261029-01" });
     expect(within(data).getByRole("button", { name: "Сохранить" })).toBeInTheDocument();

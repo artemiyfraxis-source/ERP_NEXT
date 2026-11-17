@@ -37,9 +37,9 @@ import "./shipping.css";
 const TABS: ReadonlyArray<readonly [Tab, string]> = [...DISPATCH_STAGES, ["all", "Все"]];
 /** Старые ссылки `?section=shipping&tab=…` и вкладки бывшей «Отгрузки» ведут в свои шаги. */
 const TAB_ALIASES: Record<string, Tab> = { stock: "accepted", pack: "accepted", shipments: "packed", ship: "to_ship", done: "shipped", production: "production" };
-const DELIVERY_COLUMNS = ["receiver", "phone", "address", "delivery", "carrier", "contact", "warehouseNote", "carrierNote"] as const;
+const DELIVERY_COLUMNS = ["receiver", "contact", "phone", "address", "delivery", "carrier", "warehouseNote", "carrierNote"] as const;
 type DeliveryField = typeof DELIVERY_COLUMNS[number];
-const DELIVERY_TITLES: Record<DeliveryField, string> = { receiver: "Получатель", phone: "Телефон", address: "Адрес", delivery: "Способ доставки", carrier: "ТК", contact: "Контакт", warehouseNote: "Комментарий для склада", carrierNote: "Для перевозчика" };
+const DELIVERY_TITLES: Record<DeliveryField, string> = { receiver: "Организация", phone: "Телефон", address: "Адрес", delivery: "Способ доставки", carrier: "ТК", contact: "Получатель", warehouseNote: "Комментарий для склада", carrierNote: "Для перевозчика" };
 const STAGE_TONE: Record<DispatchStage, Tone> = { waiting: "neutral", production: "info", ready: "info", accepted: "warning", packed: "warning", to_ship: "info", shipped: "success" };
 /** Row identity, quantities and the action come first; shipping fields stay visible on every tab. */
 const TAB_COLUMNS: Record<Tab, string[]> = {

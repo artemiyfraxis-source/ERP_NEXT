@@ -146,7 +146,7 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     if (!itemOf(row)) return stageGaps(row.stage, cards?.[row.project]?.dispatch_gaps);
     const data = deliveryOf(row);
     const gaps = [
-      !data.terms && "условия доставки", !data.receiver && "получатель", !data.phone && "телефон получателя",
+      !data.terms && "условия доставки", !data.receiver && "организация", !data.phone && "телефон получателя",
       !pickupOf(row) && !data.shipping_point && "адрес доставки",
       data.terms === "ДОСТАВКА ТК" && !pickupOf(row) && !text(data.carrier) && "ТК",
       !data.upd_type && "вариант УПД",
@@ -175,7 +175,7 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
   const gapsCell = (row: DataRow) => {
     const gaps = gapsOf(row);
     if (!row.shipment) return <span className={gaps?.length ? "tone-warn" : undefined}>{gaps === undefined ? "Данные проекта не загружены"
-      : gaps.length ? `Не заполнено: ${gaps.join(", ")}` : EARLY.includes(row.stage) ? "Адрес, получатель и телефон заполнены" : "Данные получателя и УПД заполнены"}</span>;
+      : gaps.length ? `Не заполнено: ${gaps.join(", ")}` : EARLY.includes(row.stage) ? "Организация, телефон и адрес заполнены" : "Данные доставки и УПД заполнены"}</span>;
     return gaps?.length ? <span className="tone-warn">{gaps.join(", ")}</span> : sentNote(row.shipment) || "—";
   };
   const ALL: Record<string, DataColumn<DataRow>> = {
@@ -217,8 +217,10 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
       render: (row) => pickupOf(row) ? empty : field(deliveryOf(row).carrier) },
     track: { key: "track", title: "Трек", value: (row) => row.shipment?.track_number, width: 128,
       render: (row) => field(row.shipment?.track_number, Boolean(row.shipment && needsTrack(row.shipment))) },
-    receiver: { key: "receiver", title: "Получатель", value: (row) => deliveryOf(row).receiver, width: 160, wrap: true, maxWidth: 220,
+    receiver: { key: "receiver", title: "Организация", value: (row) => deliveryOf(row).receiver, width: 160, wrap: true, maxWidth: 220,
       render: (row) => field(deliveryOf(row).receiver) },
+    contact: { key: "contact", title: "Получатель", value: (row) => deliveryOf(row).contact, width: 160, wrap: true, maxWidth: 220,
+      render: (row) => field(deliveryOf(row).contact, false) },
     phone: { key: "phone", title: "Телефон", value: (row) => deliveryOf(row).phone, width: 144,
       render: (row) => field(deliveryOf(row).phone) },
     address: { key: "address", title: "Адрес", value: (row) => deliveryOf(row).shipping_point, width: 200, wrap: true, maxWidth: 280,
@@ -266,7 +268,7 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
       {shipments.length >= 200 && <p className="muted">Загружены последние 200 отправок</p>}
       <DataTable key={tab} label="Данные отправок" storageKey={`${STORAGE_KEY}:${tab}`} rows={rows} columns={columns} rowKey={(row) => row.id}
         groupBy={shipmentGroupKey} groupLabel={groupLabel} groupSort
-        onRowClick={openRow} exportName="Данные отправок" searchPlaceholder="Проект, КБ, наименование, ГРН, получатель, УПД или трек"
+        onRowClick={openRow} exportName="Данные отправок" searchPlaceholder="Проект, КБ, наименование, ГРН, организация, получатель, УПД или трек"
         searchText={(row) => row.shipment ? shipmentSearch({ ...row.shipment,
           lines: row.shipment.lines.filter((line) => row.id === `${row.shipment!.id}:${line.id}`),
         }) : Object.values(deliveryOf(row)).filter((value): value is string => typeof value === "string")}

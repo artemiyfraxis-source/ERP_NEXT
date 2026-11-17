@@ -120,8 +120,8 @@ export function JournalWindow({ shipments, close, initialQuery = "", selectedShi
     { key: "carrier", title: "ТК", value: (row) => pickup(row) ? "" : row.shipment.carrier, filter: true, width: 136 },
     { key: "track", title: "Трек", value: (row) => row.shipment.track_number, width: 144,
       render: (row) => row.shipment.track_number || (needsTrack(row.shipment) ? <span className="tone-warn">не заполнен</span> : "—") },
-    { key: "receiver", title: "Получатель", value: (row) => row.shipment.receiver, width: 160 },
-    { key: "contact", title: "Контактное лицо", value: (row) => row.shipment.contact, width: 160 },
+    { key: "receiver", title: "Организация", value: (row) => row.shipment.receiver, width: 160 },
+    { key: "contact", title: "Получатель", value: (row) => row.shipment.contact, width: 160 },
     { key: "phone", title: "Телефон", value: (row) => row.shipment.phone, width: 136 },
     { key: "address", title: "Адрес", value: (row) => row.shipment.shipping_point, wrap: true, minWidth: 180, maxWidth: 240 },
     { key: "upd", title: "УПД", value: (row) => updLabel(row.shipment.upd_type), filter: true, width: 104 },
@@ -148,7 +148,7 @@ export function JournalWindow({ shipments, close, initialQuery = "", selectedShi
           return <span><strong>Отгрузка {sequence.get(shipmentGroupKey(row))} · {row.shipment.number}</strong>{" "}
             <ShipStatus status={row.shipment.status} /></span>;
         }}
-        initialQuery={initialQuery} exportName="Журнал отгрузок" searchPlaceholder="Проект, КБ, ГРН, получатель, УПД или трек…"
+        initialQuery={initialQuery} exportName="Журнал отгрузок" searchPlaceholder="Проект, КБ, ГРН, организация, получатель, УПД или трек…"
         searchText={(row) => shipmentSearch({ ...row.shipment, lines: [row.line] })}
         presets={[{ label: "Не уехали", test: (row) => !SHIPPED.includes(row.shipment.status) }, { label: "Отгружены", test: (row) => SHIPPED.includes(row.shipment.status) },
           { label: "Частичные", test: (row) => row.partial }]}
@@ -205,15 +205,15 @@ export function CreateShipmentWindow({ close, reload }: { close: () => void; rel
     return body;
   };
   const text = (key: keyof typeof blank, label: string, className?: string) => <label key={key} className={className}>{label}
-    <input placeholder={key === "customer" ? "по выбранному проекту" : "из карточки проекта"} value={key === "customer" ? customer : draft[key]}
+    <input placeholder={key === "customer" ? "по выбранному проекту" : key === "receiver" ? "как в документах" : key === "contact" ? "ФИО, кому передать груз" : "из карточки проекта"} value={key === "customer" ? customer : draft[key]}
       onChange={(event) => { if (key === "customer") setCustomerTyped(true); setDraft({ ...draft, [key]: event.target.value }); }} /></label>;
   return <PageWindow label="Заявка на отгрузку" close={close} width={1200}>
     <form className="panel ship-request" onSubmit={(event) => { event.preventDefault(); void mutate("shipment:new", () => shippingApi.create(payload()), "Заявка на отгрузку создана").then((saved) => { if (saved) close(); }); }}>
       <header className="page-head"><h2>Заявка на отгрузку</h2><button type="button" className="secondary small" onClick={close}>Закрыть</button></header>
       <Banners error={error} notice={notice} />
       <div className="ship-form">
-        {text("customer", "Заказчик")}{text("receiver", "Получатель")}{text("shipping_point", "Точка отгрузки", "ship-span2")}
-        {text("contact", "Контакт")}{text("phone", "Телефон")}
+        {text("customer", "Заказчик")}{text("receiver", "Организация")}{text("contact", "Получатель")}{text("phone", "Телефон")}
+        {text("shipping_point", "Адрес", "ship-span2")}
         <label>ТК<CarrierSelect label="ТК заявки" empty="из карточки проекта" value={draft.carrier} onChange={(carrier) => setDraft({ ...draft, carrier, terms: termsFor(carrier) ?? "" })} /></label>
         <label>Условия<span className="ship-terms">{termsText(draft.terms) || "из карточки проекта"}</span></label>
         <label>Тип УПД<select value={draft.upd_type} onChange={(event) => setDraft({ ...draft, upd_type: event.target.value })}><option value="">из карточки проекта</option>{UPD_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>

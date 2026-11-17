@@ -1864,7 +1864,7 @@ export interface ProjectAddressee {
   upd_date?: string | null;
 }
 
-export const DELIVERY_FIELDS = ["receiver", "shipping_point", "contact", "phone", "terms", "carrier", "upd_type"] as const;
+export const DELIVERY_FIELDS = ["receiver", "contact", "phone", "shipping_point", "terms", "carrier", "upd_type"] as const;
 export type DeliveryField = typeof DELIVERY_FIELDS[number];
 export type DeliveryValues = Pick<ProjectAddressee, DeliveryField>;
 export interface ItemAddressee {

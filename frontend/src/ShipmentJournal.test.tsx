@@ -7,7 +7,7 @@ import { JournalWindow, journalRows } from "./ShipmentJournal";
 
 const shipment: Shipment = {
   id: "s1", number: "ОТГ-1", version: 1, created_at: "2026-11-01T12:00:00", shipped_at: "2026-11-10", deadline: "2026-11-08",
-  status: "Отгружена", customer: "Заказчик", receiver: "Получатель", shipping_point: "Тула", phone: "+7 123", contact: "Контакт",
+  status: "Отгружена", customer: "Заказчик", receiver: "Организация", shipping_point: "Тула", phone: "+7 123", contact: "Контакт",
   terms: "ДОСТАВКА ТК", carrier: "СДЭК", track_number: "12345", upd_type: "ЭДО", upd_number: "5", upd_date: "2026-11-01", upd_url: "/file",
   pl_number: "PL-1", dn_number: "DN-1", packed_at: "2026-11-01", manager: "Менеджер", note: "Примечание", tk_note: "Осторожно", places: 1, weight: "7.75",
   boxes: [{ place: 1, kind: "Короб", dims: "20×30×40", net: "2", gross: "3", seal: "Пломба-77", items: [{ item_index: "КБ1", quantity: "2" }] }],
@@ -33,7 +33,7 @@ it("shows one immediately visible row per position with separate shipping values
   expect(rows).toHaveLength(2);
   expect(cell(rows[0], "КБ")).toHaveTextContent("КБ1");
   expect(cell(rows[1], "КБ")).toHaveTextContent("КБ2");
-  for (const [label, text] of Object.entries({ Получатель: "Получатель", Телефон: "+7 123", Адрес: "Тула", ТК: "СДЭК", Трек: "12345", "№ УПД": "5", PL: "PL-1", DN: "DN-1" })) {
+  for (const [label, text] of Object.entries({ Организация: "Организация", Получатель: "Контакт", Телефон: "+7 123", Адрес: "Тула", ТК: "СДЭК", Трек: "12345", "№ УПД": "5", PL: "PL-1", DN: "DN-1" })) {
     expect(cell(rows[0], label).textContent).toBe(text);
     expect(cell(rows[0], label).querySelector("small")).toBeNull();
   }
@@ -97,7 +97,11 @@ it("shows missing required tracking only in its own cell and keeps all shipping 
   expect(cell(positions()[0], "Трек")).toHaveTextContent("не заполнен");
   expect(cell(positions()[0], "Трек").querySelector(".tone-warn")).not.toBeNull();
   const headers = screen.getAllByRole("columnheader").map((header) => header.textContent);
-  for (const title of ["Создана", "Срок", "Отгружена", "Способ доставки", "Получатель", "Телефон", "Адрес", "УПД", "№ УПД", "Дата УПД", "Файл УПД", "PL", "DN"]) {
+  const organization = headers.indexOf("Организация");
+  expect(headers.slice(organization, organization + 4)).toEqual(["Организация", "Получатель", "Телефон", "Адрес"]);
+  expect(headers).not.toContain("Контакт");
+  expect(headers).not.toContain("Контактное лицо");
+  for (const title of ["Создана", "Срок", "Отгружена", "Способ доставки", "Организация", "Телефон", "Адрес", "УПД", "№ УПД", "Дата УПД", "Файл УПД", "PL", "DN"]) {
     expect(headers).toContain(title);
   }
 });
