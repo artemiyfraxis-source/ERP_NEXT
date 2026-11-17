@@ -55,7 +55,9 @@ from app.modules.references.technology import (
     terminal_record_for_section, wire_section,
 )
 from app.modules.techcards.etk_builder import vswr_control
-from app.modules.techcards.etk_heat_shrink import is_shrink, material_association, missing_requirement
+from app.modules.techcards.etk_heat_shrink import (
+    is_shrink, match_shrink_material, material_association, missing_requirement, requirement_summary,
+)
 
 
 def _rows(records: Iterable[Any]) -> tuple[Mapping[str, Any], ...]:
@@ -217,34 +219,46 @@ def with_technology(
 
 
 def enrich_shrink_temperatures(config: Mapping[str, Any], rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
-    """Exact article, or exact catalog name when no article is available. Ambiguity remains a review state."""
+    """Resolve catalog identity before reading temperature; freeze all KVT alternatives and their provenance."""
     enriched = deepcopy(dict(config))
     rows = tuple(rows)
-    def key(value: object) -> str:
-        return " ".join(str(value or "").casefold().split())
 
     def resolve(material: Mapping[str, str]) -> dict[str, Any]:
-        article, name = key(material["article"]), key(material["name"])
-        found = [row for row in rows if article and article == key(row.get("Артикул"))]
-        if not found:
-            # Materials historically use their full catalog name in the article field. No series/size guessing.
-            found = [row for row in rows if (article and article == key(row.get("Наименование")))
-                     or (name and name == key(row.get("Наименование")) and (not article or not row.get("Артикул")))]
+        resolution, found = match_shrink_material(material, rows)
         result = missing_requirement(material)
         if not found:
             return result
         evidence = [read_shrink_temperature(row) for row in found]
-        if any(item.get("needs_review") for item in evidence) or any(item != evidence[0] for item in evidence[1:]):
-            return {**result, "status": "review", "reason": "Данные справочника требуют проверки или противоречат друг другу",
-                    "evidence": evidence}
-        temperature = evidence[0]
-        if temperature["lower_c"] is None and temperature["upper_c"] is None:
-            return {**result, "temperature": temperature}
-        if not temperature["kind"]:
-            return {**result, "status": "review", "reason": "Не задан вид температуры усадки", "temperature": temperature}
-        result.update(status="resolved", temperature=temperature, reason="")
+        if resolution != "exact":
+            result.update(resolution=resolution, candidates=[{
+                "reference_id": row.get("_reference_id", ""),
+                "label": " ".join(str(value) for value in (
+                    row.get("Производитель"), row.get("Серия") or row.get("Наименование"),
+                    f"{row.get('Размер до, мм', '')}/{row.get('Размер после, мм', '')}", row.get("Цвет"),
+                ) if value),
+                "temperature": temperature,
+            } for row, temperature in zip(found, evidence)])
+        # Different source documents for the same thermal requirement are not a thermal conflict.
+        # Preserve each source on its candidate; never pick one source as the common source.
+        thermal_keys = ("lower_c", "upper_c", "kind", "characteristic_c")
+        signatures = [tuple(item.get(key) for key in thermal_keys) for item in evidence]
+        conflict = (any(item != evidence[0] for item in evidence[1:]) if resolution == "exact"
+                    else any(signature != signatures[0] for signature in signatures[1:]))
+        temperature = {key: value if all(item.get(key) == value for item in evidence) else ""
+                       for key, value in evidence[0].items()}
+        if any(item.get("needs_review") for item in evidence) or conflict:
+            result.update(status="review", reason="Данные справочника требуют проверки или противоречат друг другу",
+                          evidence=evidence)
+        elif temperature["lower_c"] is None and temperature["upper_c"] is None:
+            result["temperature"] = temperature
+        elif not temperature["kind"]:
+            result.update(status="review", reason="Не задан вид температуры усадки", temperature=temperature)
+        else:
+            result.update(status="resolved", temperature=temperature, reason="")
         if len(found) == 1 and found[0].get("_reference_id"):
             result["reference_id"] = found[0]["_reference_id"]
+        if resolution != "exact":
+            result["display_text"] = requirement_summary(result)
         return result
 
     for op in enriched.get("ops") or []:
