@@ -490,9 +490,10 @@ describe("FAKRA cut parameters and strip sketches", () => {
     expect(drawing).toContain("В —");
     expect(drawing).not.toContain("А —");
   });
-  it("keeps finished length, allowances and cut length distinct", () => {
+  it("shows the cutter only the cut length, not the finished length or allowances (owner 17.11)", () => {
     const params = etkParams({ type: "coaxCut", fields: { finishedLength: 4800, lPlusA: 30, lPlusB: 25, lengthKd: "4855мм", cutTolerance: "0…+5 мм", drawingTolerance: "0…+10 мм" } });
-    expect(JSON.stringify(params)).toContain("Длина готового изделия L");
+    expect(JSON.stringify(params)).not.toContain("Длина готового изделия L");
+    expect(JSON.stringify(params)).not.toContain("Припуск");
     expect(JSON.stringify(params)).toContain("Длина реза");
     expect(JSON.stringify(params)).toContain("4855мм");
   });
