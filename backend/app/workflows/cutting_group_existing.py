@@ -60,6 +60,9 @@ def refresh_etk(project, *, factory, techcards_factory, actor, now, dry_run=True
                 steps, problems = plan_etk_refresh(group, uow.cutting.members(group_id), cards, uow)
                 stale = [task.item for member, task, entry, _r in steps if task.techcard_revision != entry[1]
                          or member.row_snapshot.get("validated_card_version") != entry[3]]
+                # A key computed by older code (e.g. equipment names in the key) is stale too: refresh adopts the new key.
+                if not stale and steps and any(recipe.key != group.recipe_key for _m, _t, _e, recipe in steps):
+                    stale = ["ключ рецепта"]
                 version = group.version
             if problems:
                 raise ProductionValidationError("; ".join(problems))

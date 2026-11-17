@@ -150,3 +150,45 @@ def test_cli_refresh_etk_reports_failures_and_filters_tasks(production_api, monk
     assert workflow.main(["--project", "708К.", "--refresh-etk", "--task-id", str(uuid4())]) == 0
     other = json.loads(capsys.readouterr().out)
     assert not other["refreshed"] and not other["refused"] and not other["current"]
+
+
+def _named(doc, name):
+    for op in doc["operations"]:
+        op["card"]["tooling"][0]["name"] = name
+    return doc
+
+
+def _legacy_key(group):
+    with app.state.production_uow_factory() as uow:
+        row = uow.cutting.get(UUID(group["id"]))
+        row.recipe_key = "legacy-key-from-older-code"
+        uow.commit()
+
+
+def _group_key(group):
+    with app.state.production_uow_factory() as uow:
+        return uow.cutting.get(UUID(group["id"])).recipe_key
+
+
+def test_equipment_rename_without_revision_still_refreshes_and_stores_new_key(production_api):
+    client, _ = production_api
+    cards = [issue("КБ1", _named(document(), "Автомат резки")), issue("КБ2", _named(document(), "Автомат резки"))]
+    batch(client, cards)
+    group = groups(client)[0]
+    _legacy_key(group)  # key stored by code that hashed display names
+    for card in cards:
+        reissue(card, _named(document(), "Автомат для резки и роторной разделки кабеля"))
+    response = refresh(client, group)
+    assert response.status_code == 200, response.text
+    assert len(groups(client)) == 1 and pinned() == [("КБ1", 2), ("КБ2", 2)]
+    assert _group_key(group) != "legacy-key-from-older-code"
+
+
+def test_rename_plus_real_change_and_diverging_members_are_refused(production_api):
+    client, _ = production_api
+    cards, group = setup(client)
+    reissue(cards[0], _named(document(), "Другое имя"))
+    reissue(cards[1], _named(document(strip=4), "Другое имя"))
+    response = refresh(client, group)
+    assert response.status_code == 422 and "КБ2" in response.json()["detail"], response.text
+    assert pinned() == [("КБ1", 1), ("КБ2", 1)]

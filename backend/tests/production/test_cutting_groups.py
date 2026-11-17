@@ -926,3 +926,21 @@ def test_retry_of_legacy_launch_keeps_identity_without_grouping_history(producti
     assert response.status_code == 200, response.text
     assert response.json()["task"]["id"] == str(task.id)
     assert groups(client) == []
+
+
+def test_equipment_rename_does_not_change_recipe_key():
+    original = document()
+    for op in original["operations"]:
+        op["card"]["tooling"][0]["name"] = "Автомат резки и зачистки коаксиального кабеля"
+    original["operations"][0]["fields"]["machine"] = {"inventory_number": "ОБ.1", "name": "Старое имя"}
+    original["build_config"]["ops"][0]["equipmentTools"] = [{"equipment_model_id": "m1", "name": "Старое имя"}]
+    renamed = deepcopy(original)
+    for op in renamed["operations"]:
+        op["card"]["tooling"][0]["name"] = "Автомат для резки и роторной разделки кабеля"
+    renamed["operations"][0]["fields"]["machine"]["name"] = "Новое имя"
+    renamed["build_config"]["ops"][0]["equipmentTools"][0]["name"] = "Новое имя"
+    one, why = recipe(original)
+    two, why2 = recipe(renamed)
+    assert one is not None and two is not None, (why, why2)
+    assert one.key == two.key and one.snapshot == two.snapshot
+    assert one.tooling[0][0]["name"] != two.tooling[0][0]["name"]  # display data stays available
