@@ -1,3 +1,4 @@
+import type { CuttingGroup, CuttingSubmission, CuttingWorkResult } from "./cuttingGroups";
 import type { Sto, TdFinding, TdIssue, TdIssueInput, TdPrintModel } from "./tdTypes";
 
 export type AccessMode = "view" | "edit";
@@ -1352,6 +1353,7 @@ export interface ProductionBox {
 
 export interface ProductionWorkSession {
   id: string;
+  cutting_group_id?: string | null;
   task_id: string;
   operation_id: string;
   operator_id: string;
@@ -4054,7 +4056,7 @@ export const productionApi = {
     }),
   list: (task = "") => api<{ tasks: ProductionTask[]; next_cursor: string | null }>(`/api/production/tasks${task ? `?task=${encodeURIComponent(task)}` : ""}`),
   /** can_act — смотрящий может работать за выбранного сотрудника (сервер проверяет то же при каждом действии). */
-  mine: (operatorId = "") => api<{ tasks: ProductionTask[]; can_act?: boolean }>(`/api/production/my${operatorId ? `?operator_id=${operatorId}` : ""}`),
+  mine: (operatorId = "") => api<{ tasks: ProductionTask[]; can_act?: boolean; cutting_groups?: CuttingGroup[] }>(`/api/production/my${operatorId ? `?operator_id=${operatorId}` : ""}`),
   operators: () => api<{ operators: ProductionOperator[]; viewer_site?: string }>("/api/production/operators"),
   calendar: () => api<{ holidays: string[]; absences: ProductionAbsence[]; shift: ProductionShift }>("/api/production/calendar"),
   saveCalendar: (holidays: string[], absences: ProductionAbsence[], shift: ProductionShift) => api<void>("/api/production/calendar", {
@@ -4160,6 +4162,18 @@ export const productionApi = {
   boxes: (taskId?: string) => api<{ boxes: ProductionBox[] }>(`/api/production/boxes${taskId ? `?task_id=${taskId}` : ""}`),
   // «Задания»: work.onBehalfOf — работа за выбранного сотрудника (право проверяет сервер), work.key — ключ повтора:
   // тот же ключ второй раз не делает действие дважды (двойной клик, повтор после обрыва связи).
+  startCuttingGroup: (groupId: string, version: number, work: WorkCall) =>
+    api<CuttingWorkResult>(`/api/production/cutting-groups/${groupId}/start${behalfQuery(work.onBehalfOf)}`, {
+      method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ version }),
+    }),
+  submitCuttingGroup: (groupId: string, version: number, rows: CuttingSubmission[], work: WorkCall) =>
+    api<CuttingWorkResult>(`/api/production/cutting-groups/${groupId}/submit${behalfQuery(work.onBehalfOf)}`, {
+      method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ version, rows }),
+    }),
+  cuttingDowntime: (groupId: string, version: number, action: "start" | "stop", payload: { reason?: string; comment?: string }, work: WorkCall) =>
+    api<CuttingWorkResult>(`/api/production/cutting-groups/${groupId}/downtime/${action}${behalfQuery(work.onBehalfOf)}`, {
+      method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ version, ...payload }),
+    }),
   startWork: (taskId: string, operationId: string, inputs: string[], materials: Array<{ fulfillment_line_id: string; quantity: string }> = [], work: WorkCall = {}) =>
     api<{ session: ProductionWorkSession }>(`/api/production/tasks/${taskId}/operations/${operationId}/work/start${behalfQuery(work.onBehalfOf)}`, {
       method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ inputs, materials }),

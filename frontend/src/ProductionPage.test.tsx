@@ -1438,6 +1438,31 @@ it("puts pause and «Сдать…» on the running card with its timer, and the
   await waitFor(() => expect(posted).toEqual([{ path: `/api/production/work/${session.id}/pause`, key: `${session.id}:pause:0:` }]));
 });
 
+it.each([null, "cutting-group"])("shows orphan session controls only for standalone work (%s)", async (cuttingGroupId) => {
+  const session = {
+    id: "orphan-session", task_id: task.id, operation_id: task.operations[0].id,
+    operator_id: fitter.user.id, status: "В работе", started_at: new Date().toISOString(),
+    pause_started_at: null, pause_seconds: 0, cutting_group_id: cuttingGroupId,
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/production/my") return json({ tasks: [] });
+    if (path === "/api/production/my/execution") return json({ session, boxes: [] });
+    if (path.startsWith("/api/production/cutting-groups")) return json({ groups: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  const { container } = render(<ProductionPage principal={fitter} mine />);
+  await screen.findByText(/Операции вам пока не назначены/);
+  if (cuttingGroupId) {
+    expect(container.querySelector(".execution-current")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Отменить начало" })).not.toBeInTheDocument();
+  } else {
+    expect(screen.getByRole("heading", { name: "Идёт работа" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Пауза" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Отменить начало" })).toBeInTheDocument();
+  }
+});
+
 it("counts worked time without pauses", () => {
   expect(clock(5880)).toBe("1:38");
   expect(clock(59)).toBe("0:00");

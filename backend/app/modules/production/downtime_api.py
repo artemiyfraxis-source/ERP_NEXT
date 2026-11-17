@@ -134,6 +134,9 @@ def start_downtime(
             if not assigned:
                 raise HTTPException(status_code=403, detail="Простой отмечают по своему заданию")
         repository = SqlAlchemyDowntimeRepository(uow.session)
+        affected_operations = (operation,) if operation is not None else task.operations
+        if any((member := uow.cutting.for_operation(op.id)) and uow.cutting.work(member.group_id) for op in affected_operations):
+            raise HTTPException(422, "Простой начатой группы отмечается в карточке группы резки")
         if repository.open_for_task(task.id) is not None:
             raise HTTPException(status_code=409, detail=OPEN_CONFLICT)
         try:
@@ -170,6 +173,10 @@ def stop_downtime(
         item = repository.get(downtime_id)
         if item is None:
             raise HTTPException(status_code=404, detail="Простой не найден")
+        from sqlalchemy import select
+        from .cutting_infrastructure import CuttingWorkRow
+        if uow.session.scalar(select(CuttingWorkRow.session_id).where(CuttingWorkRow.downtime_id == downtime_id)):
+            raise HTTPException(422, "Закончите простой в карточке группы резки")
         if not _master(principal) and item.operator_id != performer.id:
             raise HTTPException(status_code=403, detail="Закончить чужой простой может мастер")
         try:

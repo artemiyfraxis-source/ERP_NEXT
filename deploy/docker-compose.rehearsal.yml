@@ -29,6 +29,9 @@ services:
       ERP_COOKIE_SECURE: "0"
       ERP_AUTO_MIGRATE: "0"
       ERP_API_WORKERS: "1"   # one process and PostgreSQL's defaults: a throwaway check, not the production sizing
+      # As on production (/opt/erp/config/.env): with equipment resources in use the API refuses to start with accounting off
+      # (database.check_equipment_schema) — the copy must run the same way, or every migration rehearsal fails at health.
+      ERP_EQUIPMENT_SETUP_ENABLED: "1"
       TZ: Europe/Moscow
     networks: [rehearsal]
 

@@ -30,9 +30,10 @@ const LIST: LaunchReadyList = {
   no_run: [],
 };
 
-function mockApi(list: LaunchReadyList, launch: (body: { items: unknown[] }) => unknown) {
+function mockApi(list: LaunchReadyList, launch: (body: { items: unknown[] }) => unknown, preview?: (body: unknown) => Response | Promise<Response>) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
+    if (path.endsWith("/api/production/launch-ready/preview")) return preview ? preview(JSON.parse(String(init?.body))) : json({ fingerprint: "preview-1", groups: [], grouping_refused: [] });
     if (path.endsWith("/api/production/launch-ready/launch") && init?.method === "POST") return json(launch(JSON.parse(String(init.body))));
     if (path.endsWith("/api/production/launch-ready")) return json(list);
     return json({});
@@ -73,10 +74,11 @@ it("confirms one row with its stages, norms and site, then launches it", async (
   fireEvent.change(quantity, { target: { value: "301" } });
   expect((within(confirm).getByRole("button", { name: /Запустить задание/ }) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.change(quantity, { target: { value: "250" } });
+  await waitFor(() => expect(within(confirm).getByRole("button", { name: "Запустить задание · 250 шт" })).toBeEnabled());
   fireEvent.click(within(confirm).getByRole("button", { name: "Запустить задание · 250 шт" }));
 
   await waitFor(() => expect(onLaunched).toHaveBeenCalledWith("Запущено 1 задание: ПЗ-26-0015 (713К.4 КБ1, 250 шт)"));
-  expect(launch).toHaveBeenCalledWith({ items: [{ techcard_id: "tc-1", techcard_version: 3, launched: 200, quantity: 250 }] });
+  expect(launch).toHaveBeenCalledWith({ fingerprint: "preview-1", items: [{ techcard_id: "tc-1", techcard_version: 3, launched: 200, quantity: 250, issue_separately: false }] });
   expect(screen.queryByRole("dialog", { name: "Запуск задания" })).toBeNull();
 });
 
@@ -93,6 +95,7 @@ it("launches the selected rows in one batch and shows a refused one", async () =
   fireEvent.click(await within(list).findByRole("button", { name: "Запустить выбранные" }));
 
   const confirm = await screen.findByRole("dialog", { name: "Запуск заданий" });
+  await waitFor(() => expect(within(confirm).getByRole("button", { name: "Запустить 2 задания" })).toBeEnabled());
   fireEvent.click(within(confirm).getByRole("button", { name: "Запустить 2 задания" }));
 
   await waitFor(() => expect(launch).toHaveBeenCalledTimes(1));
@@ -112,4 +115,46 @@ it("shows nothing when there is nothing to launch or wait for", async () => {
 
   await waitFor(() => expect(fetch).toHaveBeenCalled());
   expect(container.textContent).toBe("");
+});
+
+it("refreshes grouping after separate issue and sends the matching fingerprint", async () => {
+  const launch = vi.fn(() => ({ created: [], refused: [] }));
+  const preview = vi.fn((body: unknown) => {
+    const separate = (body as { items: { issue_separately: boolean }[] }).items[0].issue_separately;
+    return json({ fingerprint: separate ? "separate" : "combined", grouping_refused: [],
+      groups: [{ key: "group-1", site: "ЦАР", members: [{ techcard_id: "tc-1", index: "КБ1", quantity: 300 }] }] });
+  });
+  mockApi({ ...LIST, items: [LIST.items[0]] }, launch, preview);
+  render(<LaunchReady onLaunched={vi.fn()} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Открыть список" }));
+  fireEvent.click(screen.getByRole("button", { name: "Запустить" }));
+  const dialog = await screen.findByRole("dialog", { name: "Запуск задания" });
+  const submit = within(dialog).getByRole("button", { name: /Запустить задание ·/ });
+  await waitFor(() => expect(submit).toBeEnabled());
+  expect(within(dialog).getByText(/Группа резки 1/)).toBeTruthy();
+  fireEvent.click(within(dialog).getByLabelText("Выдать отдельно · 713К.4 КБ1"));
+  expect(submit).toBeDisabled();
+  await waitFor(() => expect(submit).toBeEnabled());
+  fireEvent.click(submit);
+  await waitFor(() => expect(launch).toHaveBeenCalledWith({ fingerprint: "separate", items: [{
+    techcard_id: "tc-1", techcard_version: 3, launched: 200, quantity: 300, issue_separately: true,
+  }] }));
+  expect(preview).toHaveBeenCalledTimes(2);
+});
+
+it("blocks launching on preview failure and allows retry", async () => {
+  const launch = vi.fn();
+  const preview = vi.fn().mockImplementationOnce(() => json({ detail: "Нет связи" }, 503))
+    .mockImplementation(() => json({ fingerprint: "retried", groups: [], grouping_refused: [] }));
+  mockApi({ ...LIST, items: [LIST.items[0]] }, launch, preview);
+  render(<LaunchReady onLaunched={vi.fn()} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Открыть список" }));
+  fireEvent.click(screen.getByRole("button", { name: "Запустить" }));
+  const dialog = await screen.findByRole("dialog", { name: "Запуск задания" });
+  expect(await within(dialog).findByRole("alert")).toBeTruthy();
+  const submit = within(dialog).getByRole("button", { name: /Запустить задание ·/ });
+  expect(submit).toBeDisabled();
+  expect(launch).not.toHaveBeenCalled();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Повторить" }));
+  await waitFor(() => expect(submit).toBeEnabled());
 });

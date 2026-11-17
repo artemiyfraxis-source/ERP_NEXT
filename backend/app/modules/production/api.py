@@ -68,6 +68,7 @@ from .launchable import (
 from .plan import kit_stage_key
 from .scheduling import ScheduleVariant
 from .execution import (
+    _card_versions,
     CorrectBoxCommand,
     DecideDefectCommand,
     ManualOutputCommand,
@@ -118,6 +119,7 @@ class LaunchPayload(BaseModel):
     quantity: int = Field(gt=0, le=1_000_000)
     fulfillment_request_id: UUID | None = None
     deadline: date | None = None
+    issue_separately: bool = False
 
 
 class FlowPayload(BaseModel):
@@ -847,6 +849,27 @@ def my_operations(
         can_act = section_allowed(principal, ("myops",), "edit") and (viewed == principal.actor.id or _may_act_for(
             principal, uow.operators.get(principal.actor.id), uow.operators.get(viewed),
         ))
+        from .cutting_application import check_access, describe_group
+        cutting_groups = []
+        for group in uow.cutting.list(task_ids=mine_ids):
+            members = uow.cutting.members(group.id)
+            authorized = {str(m.operation_id) for m in members if m.task_id in mine_ids and viewed in
+                          uow.production.get(m.task_id).operation(m.operation_id).operator_ids}
+            if not authorized:
+                continue
+            try:
+                check_access(group, uow, principal.actor)
+            except PermissionError:
+                continue
+            view = describe_group(group, uow)
+            view["rows"] = [row for row in view["rows"] if row["membership_state"] == "active" and row["operation_id"] in authorized]
+            view["partial_view"] = len(authorized) != len(members)
+            view["norm_seconds"] = sum(row["norm_seconds"] for row in view["rows"])
+            starts = [row["planned_start"] for row in view["rows"] if row["planned_start"]]
+            finishes = [row["planned_finish"] for row in view["rows"] if row["planned_finish"]]
+            view["planned_start"] = min(starts) if starts else None
+            view["planned_finish"] = max(finishes) if finishes else None
+            cutting_groups.append(view)
     boxes_by_task: dict[UUID, list[ProductionBox]] = {}
     for box in boxes:
         boxes_by_task.setdefault(box.task_id, []).append(box)
@@ -883,7 +906,9 @@ def my_operations(
         (item["operations"][0]["my_share"] or {}).get("planned_start") or item["operations"][0]["planned_start"] or "9999",
         item["number"], item["operations"][0]["position"],
     ))
-    return {"tasks": operations, "can_act": can_act}
+    grouped_ids = {row["operation_id"] for group in cutting_groups for row in group["rows"] if row["membership_state"] == "active"}
+    return {"tasks": [item for item in operations if item["operations"][0]["id"] not in grouped_ids],
+            "cutting_groups": cutting_groups, "can_act": can_act}
 
 
 def _time_fact_result(entries) -> dict | None:
@@ -936,21 +961,6 @@ def available_inputs(
     }
 
 
-def _card_versions(view: dict | None, positions: tuple[int, ...]) -> list[dict]:
-    """Откуда сейчас карточки операций ЭТК операции задания (etk_live): номер операции в ЭТК, источник (template /
-    edited / snapshot) и дата шаблона или правки. Своя операция ручной сборки (без шаблона) строки не даёт."""
-    document = view.get("document") if isinstance(view, dict) else None
-    ops = document.get("operations") if isinstance(document, dict) else None
-    if not isinstance(ops, list):
-        return []
-    rows = []
-    for position in positions:
-        op = ops[position - 1] if 1 <= position <= len(ops) else None
-        source = str(op.get("card_source") or "") if isinstance(op, dict) else ""
-        if source:
-            rows.append({"position": position, "source": source, "changed_at": str(op.get("card_changed_at") or "")})
-    return rows
-
 
 def _issued_etk_views(
     techcards_factory: Callable[[], TechcardsUnitOfWork] | None, items: list[tuple[str, str]],
@@ -978,8 +988,40 @@ def _start_card_versions(
         operation = next((item for item in task.operations if item.id == operation_id), None) if task else None
         if operation is None or uow.work.card_versions((operation_id,)):
             return None
+        member = uow.cutting.for_operation(operation_id)
+        if member and member.row_snapshot.get("document"):
+            return tuple(_card_versions({"document": member.row_snapshot["document"]}, operation.etk_positions))
     view = _issued_etk_views(techcards_factory, [(task.project, task.item)]).get((task.project, task.item))
     return tuple(_card_versions(view, operation.etk_positions))
+
+
+def cutting_current_cards(group_id, uow_factory, techcards_factory):
+    if techcards_factory is None:
+        raise HTTPException(503, "База техкарт не настроена")
+    with uow_factory() as uow:
+        tasks = [uow.production.get(m.task_id) for m in uow.cutting.members(group_id)]
+    with techcards_factory() as techcards:
+        result = {}
+        for task in tasks:
+            card = issued_card_for_item(techcards, task.project, task.item)
+            if card is not None:
+                result[task.id] = (card.document, card.version)
+        return result
+
+
+def _check_cutting_start(operation_id, uow_factory, techcards_factory):
+    with uow_factory() as uow:
+        member = uow.cutting.for_operation(operation_id)
+        if not member:
+            return
+        group = uow.cutting.get(member.group_id)
+        if group.state == "frozen":
+            return  # Work continues against the immutable issued document, even after another ETK is issued.
+        expected = {m.task_id: m.row_snapshot.get("validated_card_version") for m in uow.cutting.members(group.id)}
+        group_id = group.id
+    current = cutting_current_cards(group_id, uow_factory, techcards_factory)
+    if any(identifier not in current or version != current[identifier][1] for identifier, version in expected.items()):
+        raise HTTPException(409, "ЭТК группы изменилась — требуется повторная проверка группы резки")
 
 
 def _etk_task_access(task_id: UUID, operation_id: UUID, principal: Principal, uow_factory: Callable[[], UnitOfWork]):
@@ -1022,6 +1064,10 @@ def operation_etk(
             result = revision = None
     if result is None:
         raise HTTPException(status_code=404, detail="Нет выданной ЭТК по этой позиции")
+    with uow_factory() as uow:
+        member = uow.cutting.for_operation(operation_id)
+        if member and member.row_snapshot.get("document"):
+            result = {**result, "document": member.row_snapshot["document"]}
     # position — операция ЭТК, на которой открыть карту (у ПФ — его первая); positions — все операции ЭТК этой
     # операции задания по порядку ПФ (без ПФ — одна).
     positions = list(operation.etk_positions)
@@ -1130,10 +1176,13 @@ def my_execution(
     with uow_factory() as uow:
         viewed = _viewed_operator(uow, principal, operator_id)
         current = uow.work.current(viewed)
+        cutting_work = uow.cutting.for_session(current.id) if current else None
+        cutting_group_id = str(cutting_work.group_id) if cutting_work else None
         boxes = uow.boxes.list(operator_id=viewed)
         limit = _input_limit(uow, current) if current else None
     return {
-        "session": {**_session_result(current), "input_limit": limit} if current else None,
+        "session": {**_session_result(current), "input_limit": limit,
+                    "cutting_group_id": cutting_group_id} if current else None,
         "boxes": [_box_result(box) for box in boxes],
     }
 
@@ -1190,6 +1239,7 @@ def start_execution(
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict:
     performer = _performer(uow_factory, principal, on_behalf_of)
+    _check_cutting_start(operation_id, uow_factory, techcards_factory)
     card_versions = _start_card_versions(task_id, operation_id, uow_factory, techcards_factory)
     session = _execution(lambda: start_work(StartWorkCommand(
         task_id=task_id, operation_id=operation_id,
@@ -1667,9 +1717,20 @@ def launch(
         fulfillment_request_id=payload.fulfillment_request_id, deadline=payload.deadline,
         operations=operations, actor=principal.actor, now=now,
         techcard_id=card.id, techcard_revision=card.revision if card.revision >= 1 else None,
+        cutting_document=card.document, issue_separately=payload.issue_separately,
+        cutting_card_version=card.version,
     ), uow_factory()))
     # Схема полуфабрикатов не подошла — задание идёт цепочкой; экран заданий показывает warnings мастеру.
     response["warnings"] = list(planned.warnings)
+    from .cutting import cutting_recipe
+    with uow_factory() as uow:
+        task = uow.production.get(UUID(response["task"]["id"]))
+        operator = uow.operators.get(principal.actor.id)
+        recipe, reason = cutting_recipe(task.project, operator.site if operator else "", card.document, task.operations)
+        member = uow.cutting.for_operation(recipe.operation_id) if recipe else None
+        response["cutting"] = {"eligible": recipe is not None, "reason": reason,
+                               "group_id": str(member.group_id) if member else None,
+                               "recipe_key": recipe.key if recipe else None}
     return response
 
 

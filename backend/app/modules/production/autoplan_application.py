@@ -36,6 +36,7 @@ from app.shared.identity import Actor
 from app.shared.project_number import normalize_project_number
 
 from .application import (
+    _checked_names,
     DuplicateLaunch,
     UnitOfWork,
     _busy,
@@ -136,6 +137,8 @@ class AutoplanPreview:
     period: tuple[datetime, date]  # начало расчёта и последний день плана
     scope: tuple[int, int, int]  # заданий, новых КБ, монтажников в расчёте
     resources: dict[UUID, dict] = field(default_factory=dict)
+    cutting_groups: tuple[tuple[UUID, ...], ...] = ()
+    site: str = ""
 
     @property
     def placements(self) -> tuple[Placement, ...]:
@@ -367,9 +370,12 @@ def _prepare(
     for machine in machines:
         if machine in needed and machine not in units:
             warnings.append(f"Станок {machine} не найден в БД.ОБ — считаю, что он один")
+    from .cutting_application import planning_groups
+    cutting_groups, operator_options = planning_groups(uow, scope.new_tasks, free, scope.site, team, command.actor)
     data = AutoplanInput(
         tasks=planned_tasks, free=frozenset(free), keys=keys, team=team, skills=skills, busy=busy,
-        capacity=capacity, start=start, end=end, holidays=holidays, shift=shift, steps=steps,
+        capacity=capacity, start=start, end=end, holidays=holidays, shift=shift, steps=steps, cutting_groups=cutting_groups,
+        operator_options=operator_options,
     )
     result = plan(data)
     all_tasks = {**tasks, **{task_id: item.task for task_id, item in scope.new_tasks.items()}}
@@ -379,6 +385,7 @@ def _prepare(
         for item in result.placements
     } if resources is not None else {}
     fingerprint = _fingerprint({
+        "cutting_groups": uow.cutting.fingerprint() if getattr(uow, "cutting", None) else [],
         "mode": command.mode.value,
         "project": normalize_project_number(command.project) if command.mode is AutoplanMode.PROJECT else "",
         "people": sorted(str(value) for value in command.people) if command.mode is AutoplanMode.PROJECT else [],
@@ -413,6 +420,8 @@ def _prepare(
         period=(start, _last_day(command, start, end, result.placements, [*scope.eligible, *(item.task for item in scope.new_tasks.values())])),
         scope=(len([task for task in scope.eligible if task.id in free_tasks]), len(scope.new_tasks), len(team)),
         resources=resource_options,
+        cutting_groups=cutting_groups,
+        site=scope.site,
     )
 
 
@@ -480,6 +489,10 @@ def apply_autoplan(
         if preview.fingerprint != command.fingerprint:
             raise StaleAutoplan("Данные изменились после предпросмотра — пересчитайте автоплан")
         proposed = {item.operation_id: item for item in preview.placements}
+        selected_ids = {item[1] for item in command.items}
+        for group in preview.cutting_groups:
+            if selected_ids.intersection(group) and not set(group) <= selected_ids:
+                raise ProductionValidationError("Выберите все строки группы резки или выдайте их отдельно")
         chosen: dict[UUID, dict[UUID, Placement]] = {}
         for task_id, operation_id, operator_id in command.items:
             placement = proposed.get(operation_id)
@@ -489,6 +502,7 @@ def apply_autoplan(
         mark = f"{AUTOPLAN_MARK}{actor.name}"
         updated: list[ProductionTask] = []
         created: list[ProductionTask] = []
+        assignments = []
         # Сначала запущенные (по номеру), потом новые КБ (по проекту и индексу) — номера ПЗ идут в этом порядке.
         order = sorted(chosen, key=lambda value: (
             value in preview.new_tasks,
@@ -502,10 +516,10 @@ def apply_autoplan(
                 new = preview.new_tasks[task_id]
                 # Один ключ на техкарту в этом плане: повтор того же применения не запустит КБ дважды.
                 try:
-                    task, fresh = launch_task(_launch_command(
+                    task, fresh = launch_task(replace(_launch_command(
                         new.card, new.task.quantity, f"autoplan:{new.card.techcard_id}:{command.fingerprint[:32]}",
                         actor, now, seen.get(new.card.techcard_id, 0),
-                    ), uow)
+                    ), cutting_site=preview.site), uow)
                 except DuplicateLaunch as error:
                     raise StaleAutoplan("Задание по этой КБ уже создано — пересчитайте автоплан") from error
                 if not fresh:
@@ -521,18 +535,23 @@ def apply_autoplan(
                 }
             else:
                 task = preview.tasks[task_id]
+            for operation_id, placement in own.items():
+                _checked_names(uow, task.operation(operation_id), (placement.operator_id,), actor)
             result = task.apply_schedule(tuple(
                 (operation.id, (own[operation.id].operator_id,), own[operation.id].start, own[operation.id].finish)
                 if operation.id in own else
                 (operation.id, operation.operator_ids, operation.planned_start, operation.planned_finish)
                 for operation in task.operations
             ), mark)
+            assignments.append((result, own, own_choices))
+            updated.append(result)
+        # Launch every selected KB before assigning any of them, so compatible new cuts can join atomically.
+        for result, own, own_choices in assignments:
             uow.production.add(result)
             resources = getattr(uow, "resources", None)
             if resources is not None:
                 for operation_id, placement in own.items():
                     resources.ensure_assignment(result, operation_id, (placement.operator_id,), own_choices.get(operation_id))
-            updated.append(result)
         applied = [placement for own in chosen.values() for placement in own.values()]
         uow.audit.add(AuditEvent(
             id=uuid4(), aggregate_id=actor.id, event_type="production.autoplan_applied",
@@ -661,6 +680,8 @@ def describe(preview: AutoplanPreview) -> dict:
     result = preview.result
     return {
         "period": {"start": preview.period[0].isoformat(), "last_day": preview.period[1].isoformat()},
+        "cutting_groups": [{"operation_ids": [str(identifier) for identifier in group]}
+                           for group in preview.cutting_groups],
         "scope": {"tasks": preview.scope[0], "new": preview.scope[1], "fitters": preview.scope[2]},
         "new_tasks": [{
             "task_id": str(task_id), "techcard_id": str(item.card.techcard_id), "project": item.card.project,

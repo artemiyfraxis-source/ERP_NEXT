@@ -286,6 +286,8 @@ class AutoplanInput:
     # Станки операций по шагам ЭТК (machine_load.task_steps): операция занимает каждый свой станок своей операцией ЭТК.
     # У операции без шагов — станок ключа наладки (limited) на всё окно.
     steps: Mapping[UUID, tuple[MachineStep, ...]] = field(default_factory=dict)
+    cutting_groups: tuple[tuple[UUID, ...], ...] = ()
+    operator_options: Mapping[UUID, frozenset[UUID]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -512,6 +514,8 @@ class _Planner:
 
     def slot(self, operation: ProductionOperation, operator_id: UUID, earliest: datetime) -> _Slot | None:
         data = self.data
+        if operation.id in data.operator_options and operator_id not in data.operator_options[operation.id]:
+            return None
         key = data.keys[operation.id]
         task = self.task_of[operation.id]
         rate = _rate(data.skills, operation.skill_codes, (operator_id,))
@@ -610,6 +614,9 @@ class _Planner:
                 self.pull(ready[0], *placed)
 
     def place_best(self, operation_id: UUID) -> tuple[UUID, _Slot] | None:
+        group = next((group for group in self.data.cutting_groups if operation_id in group), ())
+        if group and set(group) <= self.pending:
+            return self.place_cutting_group(group)
         operation = self.ops[operation_id]
         best: tuple[tuple, UUID, _Slot] | None = None
         allowed = False
@@ -635,6 +642,37 @@ class _Planner:
         self.commit(operation_id, operator_id, slot, False)
         return operator_id, slot
 
+    def place_cutting_group(self, group: tuple[UUID, ...]) -> tuple[UUID, _Slot] | None:
+        """One operator, ordered child windows; resource/calendar accounting still happens per child."""
+        best = None
+        for index, operator_id in enumerate(self.data.team):
+            if not all(_allowed(self.data.skills, self.ops[item].skill_codes, operator_id) for item in group):
+                continue
+            trial = self.clone()
+            windows = []
+            cursor = self.data.start
+            for identifier in group:
+                operation = self.ops[identifier]
+                slot = trial.slot(operation, operator_id, max(cursor, trial.earliest(operation, operator_id)))
+                if slot is None:
+                    break
+                windows.append((identifier, slot))
+                trial.commit(identifier, operator_id, slot, False)
+                cursor = slot.finish
+            if len(windows) == len(group):
+                rank = (cursor, index)
+                if best is None or rank < best[0]:
+                    best = (rank, operator_id, windows)
+        if best is None:
+            for identifier in group:
+                self.unplaced[identifier] = "Группа резки не помещается на одного допущенного исполнителя в выбранный период"
+                self.pending.discard(identifier)
+            return None
+        _, operator_id, windows = best
+        for identifier, slot in windows:
+            self.commit(identifier, operator_id, slot, False)
+        return operator_id, windows[-1][1]
+
     def pull(self, operation_id: UUID, operator_id: UUID, slot: _Slot) -> None:
         """Тот же монтажник берёт готовые операции того же семейства наладки, пока это экономит наладку."""
         family = self.data.keys[operation_id].family
@@ -644,6 +682,7 @@ class _Planner:
             candidates = sorted(
                 (
                     candidate for candidate in self._ready()
+                    if not any(candidate in group for group in self.data.cutting_groups)
                     if self.data.keys[candidate].family == family
                     and _allowed(self.data.skills, self.ops[candidate].skill_codes, operator_id)
                 ),

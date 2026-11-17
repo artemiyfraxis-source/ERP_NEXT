@@ -25,6 +25,7 @@ from app.modules.production.launch_ready import (
     LaunchReadyCommand,
     launch_ready,
     planned_operations,
+    preview_cutting,
     ready_rows,
     suggest_site,
 )
@@ -162,10 +163,30 @@ class LaunchItemPayload(BaseModel):
     launched: int = Field(ge=0)
     # Тираж задания; null — весь остаток тиража КБ.
     quantity: int | None = Field(default=None, ge=1, le=1_000_000)
+    issue_separately: bool = False
 
 
 class LaunchPayload(BaseModel):
     items: list[LaunchItemPayload] = Field(min_length=1, max_length=MAX_BATCH)
+    fingerprint: str | None = Field(default=None, min_length=64, max_length=64)
+
+
+@router.post("/preview")
+def preview_selected(
+    payload: LaunchPayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], Any] | None, Depends(techcards_uow_factory)],
+    closed: Annotated[frozenset[str], Depends(closed_kbs)],
+) -> dict:
+    cards, ready = _techcards(techcards_factory, closed)
+    with uow_factory() as uow:
+        stored = tuple(uow.production.with_status(ProductionStatus.RUNNING))
+        ready = unlaunched_cards(uow, stored, ready, cards)
+        return preview_cutting(LaunchReadyCommand(tuple(
+            LaunchItem(i.techcard_id, i.techcard_version, i.launched, i.quantity, i.issue_separately) for i in payload.items
+        ), principal.actor, now), uow, ready)
 
 
 @router.post("/launch")
@@ -182,8 +203,8 @@ def launch_selected(
         raise HTTPException(status_code=503, detail="База техкарт не настроена")
     cards, ready = _techcards(techcards_factory, closed)
     done = _handle(lambda: launch_ready(LaunchReadyCommand(
-        items=tuple(LaunchItem(item.techcard_id, item.techcard_version, item.launched, item.quantity) for item in payload.items),
-        actor=principal.actor, now=now,
+        items=tuple(LaunchItem(item.techcard_id, item.techcard_version, item.launched, item.quantity, item.issue_separately) for item in payload.items),
+        actor=principal.actor, now=now, fingerprint=payload.fingerprint,
     ), uow_factory, cards, ready))
     return {
         "created": [{
@@ -191,4 +212,6 @@ def launch_selected(
             "quantity": task.quantity, "techcard_id": str(task.techcard_id) if task.techcard_id else None,
         } for task in done.created],
         "refused": [{"techcard_id": str(item.item.techcard_id), "reason": item.reason} for item in done.refused],
+        "groups": list(done.groups),
+        "grouping_refused": list(done.grouping_refused),
     }

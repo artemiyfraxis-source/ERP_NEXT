@@ -4,7 +4,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { PageWindow } from "./PageWindow";
 import { StatusChip } from "./StatusChip";
 import { formatDay, formatNumber, plural } from "./format";
-import { launchHours, launchReadyApi, type LaunchReadyList, type LaunchReadyOperation, type LaunchReadyRow } from "./launchReadyApi";
+import { launchHours, launchReadyApi, type LaunchGroupPreview, type LaunchReadyItem, type LaunchReadyList, type LaunchReadyOperation, type LaunchReadyRow } from "./launchReadyApi";
 import "./launchReady.css";
 
 /* «Готово к запуску» (владелец 29.10.2026, идея №3 «Запуск задания в один клик»): полоса над вкладками «Ресурсного
@@ -159,21 +159,41 @@ function LaunchConfirm({ rows, close, done }: {
   const [error, setError] = useState("");
   const single = rows.length === 1 ? rows[0] : null;
 
+  const [separate, setSeparate] = useState<Set<string>>(() => new Set());
+  const [preview, setPreview] = useState<{ selection: string; data: LaunchGroupPreview } | null>(null);
+  const [previewError, setPreviewError] = useState("");
+  const [previewRetry, setPreviewRetry] = useState(0);
   const quantityOf = (row: LaunchReadyRow) => Number(quantities[keyOf(row)]);
   const invalid = rows.filter((row) => {
     const value = quantityOf(row);
     return !Number.isInteger(value) || value < 1 || value > row.remainder;
   });
 
+  const items: LaunchReadyItem[] = rows.map((row) => ({
+    techcard_id: row.techcard_id, techcard_version: row.techcard_version,
+    launched: row.launched, quantity: quantityOf(row), issue_separately: separate.has(row.techcard_id),
+  }));
+  const selection = JSON.stringify(items);
+  const previewReady = preview?.selection === selection;
+  const invalidSelection = invalid.length > 0;
+  useEffect(() => {
+    let live = true;
+    setPreviewError("");
+    if (!invalidSelection) {
+      void launchReadyApi.preview(JSON.parse(selection) as LaunchReadyItem[])
+        .then((data) => { if (live) setPreview({ selection, data }); })
+        .catch((reason) => { if (live) setPreviewError(failureText(reason, "Группы резки не проверены")); });
+    }
+    return () => { live = false; };
+  }, [selection, invalidSelection, previewRetry]);
+
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (busy || invalid.length) return;
+    if (busy || invalid.length || !previewReady || !preview?.data.fingerprint) return;
     setBusy(true);
     setError("");
     try {
-      const result = await launchReadyApi.launch(rows.map((row) => ({
-        techcard_id: row.techcard_id, techcard_version: row.techcard_version, launched: row.launched, quantity: quantityOf(row),
-      })));
+      const result = await launchReadyApi.launch(items, preview.data.fingerprint);
       const names = new Map(rows.map((row) => [row.techcard_id, `${row.project} ${row.index}`]));
       const text = result.created.length
         ? `Запущено ${result.created.length} ${plural(result.created.length, ["задание", "задания", "заданий"])}: `
@@ -183,6 +203,8 @@ function LaunchConfirm({ rows, close, done }: {
     } catch (reason) {
       setError(failureText(reason, "Задание не запущено"));
       setBusy(false);
+      setPreview(null);
+      setPreviewRetry((value) => value + 1);
     }
   }
 
@@ -190,6 +212,7 @@ function LaunchConfirm({ rows, close, done }: {
   const total = rows.reduce((sum, row) => sum + launchHours(row.operations, quantityOf(row) || 0), 0);
   const field = (row: LaunchReadyRow) => <input
     type="number" inputMode="numeric" min={1} max={row.remainder} step={1} className="lr-qty-input"
+    disabled={busy}
     aria-label={`Тираж задания ${row.project} ${row.index}`} value={quantities[keyOf(row)]}
     onChange={(event) => setQuantities((current) => ({ ...current, [keyOf(row)]: event.target.value }))}
   />;
@@ -229,12 +252,34 @@ function LaunchConfirm({ rows, close, done }: {
           <tfoot><tr><td /><td>Итого</td><td /><td /><td className="num"><b>{hours(total)}</b></td><td /><td /></tr></tfoot>
         </table>
       </div>}
+      <div className="lr-group-preview" aria-label="Группы при выдаче" aria-busy={!invalidSelection && !previewReady && !previewError}>
+        <h3>Резка при выдаче</h3>
+        {previewError && <div className="error-banner" role="alert">{previewError} <button type="button" className="secondary small" onClick={() => setPreviewRetry((value) => value + 1)}>Повторить</button></div>}
+        {!invalidSelection && !previewReady && !previewError && <div className="empty">Проверка групп…</div>}
+        {previewReady && preview.data.groups?.map((group, index) => <div key={group.key} className="lr-preview-group">
+          <b>Группа резки {index + 1} · {group.site} · {group.members.length} КБ</b>
+          <span> · {group.members.map((member) => member.index).join(", ")}</span>
+        </div>)}
+        {previewReady && preview.data.grouping_refused?.map((item) => <div key={item.techcard_id} className="warning-inline">
+          {rows.find((row) => row.techcard_id === item.techcard_id)?.index} · отдельно: {item.reason}
+        </div>)}
+        <div className="lr-separate">{rows.map((row) => <label key={row.techcard_id}>
+          <input type="checkbox" disabled={busy} checked={separate.has(row.techcard_id)} onChange={(event) => {
+            setPreview(null);
+            setSeparate((current) => {
+              const next = new Set(current);
+              if (event.target.checked) next.add(row.techcard_id); else next.delete(row.techcard_id);
+              return next;
+            });
+          }} />Выдать отдельно · {row.project} {row.index}
+        </label>)}</div>
+      </div>
       {invalid.length > 0 && <div className="warning-inline">
         Тираж задания — целое число от 1 до остатка тиража КБ{single ? ` (${formatNumber(single.remainder)})` : `: ${invalid.map((row) => `${row.project} ${row.index}`).join(", ")}`}
       </div>}
       <div className="form-actions">
         <button type="button" className="secondary" disabled={busy} onClick={close}>Отмена</button>
-        <button type="submit" className="primary" disabled={busy || invalid.length > 0}>
+        <button type="submit" className="primary" disabled={busy || invalid.length > 0 || !previewReady || !preview?.data.fingerprint}>
           {busy ? "Запускаем…" : single ? `Запустить задание · ${formatNumber(quantityOf(single) || 0)} шт` : `Запустить ${rows.length} ${plural(rows.length, ["задание", "задания", "заданий"])}`}
         </button>
       </div>
