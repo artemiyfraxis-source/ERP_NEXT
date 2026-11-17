@@ -111,6 +111,7 @@ POLICIES: dict[str, dict[str, str]] = {
     "production_plan_baseline_lines": {"project": "p", "item": "c"},
     "production_plan_events": {"project": "p"},
     "production_tasks": {"project": "p", "project_key": "k", "item": "c"},
+    "production_cutting_groups": {"project_key": "k"},
     "production_downtimes": {"project": "p", "item": "c"},
     "production_work_time_log": {"project": "p", "item": "c"},
     "production_boxes": {"item": "c"},
@@ -222,6 +223,11 @@ def _changes(table: Table, row: dict[str, Any], old: str, new: str) -> dict[str,
             moved = rename_token(value, old, new, designation=policy == "d")
         if moved != value:
             values[column] = json.dumps(moved, ensure_ascii=False) if table.name == "operations_job_marks" else moved
+    if table.name == "production_cutting_groups" and "project_key" in values and row["recipe"] is not None:
+        from app.modules.production.cutting import digest
+
+        values["recipe"] = {**row["recipe"], "project": values["project_key"]}
+        values["recipe_key"] = digest(values["recipe"])
     if table.name == "project_tasks" and "project" in values and row.get("status") == "open":
         from app.workflows.arbiter import KINDS
 

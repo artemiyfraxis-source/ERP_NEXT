@@ -46,6 +46,56 @@ def quantities(group, first=(3, 1), second=(7, 0)):
             for row, (good, defect) in zip(group["rows"], (first, second))]
 
 
+def test_my_execution_after_group_start(assigned):
+    client, operator, group = start(assigned)
+    response = client.get("/api/production/my/execution", params={"operator_id": str(operator)})
+    assert response.status_code == 200, response.text
+    session = response.json()["session"]
+    assert session["id"] == group["session"]["id"]
+    assert session["cutting_group_id"] == group["id"]
+
+
+def test_renamed_group_can_be_revalidated_and_started(assigned):
+    from app.modules.techcards.kitsets import Kitset
+    from app.workflows.rename_project import rename_project
+
+    client, operator, group = assigned
+    with app.state.techcards_uow_factory() as uow:
+        uow.kitsets.save(Kitset(project="708К.", customer="", calc_source="", assemblies=(),
+                               updated_at=NOW, updated_by="Технолог", created_at=NOW))
+        uow.commit()
+    with app.state.production_uow_factory() as uow:
+        engine = uow.session.get_bind()
+    rename_project(engine, "708К.", "709К.", apply=True)
+    renamed = groups(client)[0]
+    response = client.post(f"/api/production/cutting-groups/{renamed['id']}/revalidate",
+                           json={"version": renamed["version"]})
+    assert response.status_code == 200, response.text
+    _, _, started = start((client, operator, response.json()["group"]))
+    assert started["id"] == group["id"]
+    assert started["session"]["status"] == "В работе"
+
+
+def test_downstream_downtime_while_another_kb_is_still_cutting(assigned):
+    client, operator, group = start(assigned)
+    response = action(client, operator, group, "submit", rows=quantities(group, (10, 0), (1, 0)))
+    assert response.status_code == 200, response.text
+    group = response.json()["group"]
+    row = group["rows"][0]
+    with app.state.production_uow_factory() as uow:
+        task = uow.production.get(UUID(row["task_id"]))
+        downstream_id = str(task.operations[1].id)
+    for operation_id in (None, row["operation_id"]):
+        blocked = client.post("/api/production/downtime", json={
+            "task_id": row["task_id"], "operation_id": operation_id, "reason": "equipment"})
+        assert blocked.status_code == 422, blocked.text
+    response = client.post("/api/production/downtime", json={
+        "task_id": row["task_id"], "operation_id": downstream_id, "reason": "equipment"})
+    assert response.status_code == 200, response.text
+    assert response.json()["downtime"]["operation_id"] == downstream_id
+    assert groups(client)[0]["session"]["status"] == "В работе"
+
+
 def test_one_session_partial_final_and_idempotent_outputs(assigned):
     client, operator, group = start(assigned)
     session_id = group["session"]["id"]

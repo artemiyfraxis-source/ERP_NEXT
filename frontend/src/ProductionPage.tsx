@@ -1049,7 +1049,7 @@ function OperatorExecution({ execution, tasks, busy, mutate, readOnly = false, o
   const operation = task?.operations.find((item) => item.id === session?.operation_id);
   const work = { onBehalfOf };
   return <>
-    {session && !queued && <div className="panel execution-current">
+    {session && !session.cutting_group_id && !queued && <div className="panel execution-current">
       <div className="manual-stock-head"><div><h2>Идёт работа{operation?.stage ? `: ${operation.stage}` : ""}</h2><small>{task?.number ?? "Задание"}{operation ? ` · этап ${operation.position}` : ""}{task ? ` · ${taskItemLabel(task)}` : ""} · с {formatMoment(session.started_at)}{session.pause_seconds ? ` · пауз ${Math.round(session.pause_seconds / 60)} мин` : ""}</small></div><StatusChip status={session.status} /></div>
       {!readOnly && <div className="execution-actions">
         {session.status === "В работе" && <button className="secondary" disabled={busy} onClick={() => void mutate(session.id, () => productionApi.workAction(session.id, "pause", { ...work, key: stepKey(session, "pause") }))}>Пауза</button>}

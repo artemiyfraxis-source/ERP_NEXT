@@ -1177,11 +1177,12 @@ def my_execution(
         viewed = _viewed_operator(uow, principal, operator_id)
         current = uow.work.current(viewed)
         cutting_work = uow.cutting.for_session(current.id) if current else None
+        cutting_group_id = str(cutting_work.group_id) if cutting_work else None
         boxes = uow.boxes.list(operator_id=viewed)
         limit = _input_limit(uow, current) if current else None
     return {
         "session": {**_session_result(current), "input_limit": limit,
-                    "cutting_group_id": str(cutting_work.group_id) if cutting_work else None} if current else None,
+                    "cutting_group_id": cutting_group_id} if current else None,
         "boxes": [_box_result(box) for box in boxes],
     }
 
