@@ -68,6 +68,9 @@ def sample_content(kind: str) -> LabelContent:
         return LabelContent("instrument", "СИ.034", {
             "inventory_number": "СИ.034", "name": "SMA розетка – SMA розетка", "model": "S-322",
             "serial_number": "№ ADP-ss-26-034", "verification_due": "Поверка до 17.11.2027",
+            "connector_line": "SMA розетка – SMA розетка", "parameters_line": "КСВН ≤ 1,05 · 0,01–18 ГГц",
+            "loss_line": "Потери ≤ 0,15 дБ", "measurement_date": "Замер 16.11.26",
+            "impedance_warning": "", "footer_line": "Поверка до 17.11.2027",
         })
     return SAMPLE_INTAKE if kind == "intake" else lot_content(SAMPLE)
 

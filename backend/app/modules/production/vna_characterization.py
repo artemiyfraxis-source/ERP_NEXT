@@ -5,6 +5,12 @@ coefficients nor establishes their physical orientation or measurement accuracy.
 """
 
 import math
+import re
+
+
+def is_characterization_file(file_name: str) -> bool:
+    """Recognize the measurement names emitted by the VNA tool, not arbitrary S-parameters."""
+    return bool(re.match(r"^Замер\s+ВАЦ(?:[\s,_-])", file_name, re.I)) and file_name.lower().endswith(".s2p")
 
 
 def characterization_band(content: bytes) -> tuple[float, float] | None:
@@ -12,6 +18,8 @@ def characterization_band(content: bytes) -> tuple[float, float] | None:
         return None
     try:
         text = content.decode("utf-8-sig")
+        if "SYNTHETIC OFFLINE DATA - NOT A MEASUREMENT" in text.upper():
+            return None
         options, numbers = None, []
         for raw in text.splitlines():
             line = raw.split("!", 1)[0].strip()

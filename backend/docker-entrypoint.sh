@@ -63,8 +63,8 @@ workers=$(whole ERP_API_WORKERS "${ERP_API_WORKERS:-1}")
 if [ "$workers" -gt 1 ]; then
   max_requests=$(whole ERP_API_MAX_REQUESTS "${ERP_API_MAX_REQUESTS:-10000}")
   echo "API: процессов $workers, замена процесса после $max_requests запросов"
-  exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*' \
+  exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*' --log-config logging_config.json \
     --workers "$workers" --limit-max-requests "$max_requests" --limit-max-requests-jitter $((max_requests / 10)) \
     --timeout-worker-healthcheck 30 --timeout-graceful-shutdown 20
 fi
-exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'
+exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*' --log-config logging_config.json

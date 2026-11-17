@@ -213,3 +213,63 @@ def test_agent_aware_and_naive_time_match(production_api):
         assert instrument_labels.label_agent_in(session, datetime(2026, 9, 22, 6, tzinfo=UTC))["online"]
         assert instrument_labels.label_agent_in(session, NOW + timedelta(minutes=2))["online"]
         assert not instrument_labels.label_agent_in(session, NOW + timedelta(minutes=2, seconds=1))["online"]
+
+
+def test_passport_uses_registry_auth_is_generated_without_db_write_and_handles_missing(production_api):
+    from pypdf import PdfReader
+    client, _ = production_api
+    item, sessions = setup(client, online=False)
+    _as({"production": "view"})
+    response = client.get(f"{BASE}/{item['id']}/passport.pdf")
+    assert response.status_code == 200 and response.content.startswith(b"%PDF")
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["cache-control"] == "no-store"
+    text = "\n".join(page.extract_text() for page in PdfReader(BytesIO(response.content)).pages)
+    assert "N8B139" in text and "Замер не проведён" in text
+    assert client.get(f"{BASE}/{uuid4()}/passport.pdf").status_code == 404
+    _as({})
+    assert client.get(f"{BASE}/{item['id']}/passport.pdf").status_code == 403
+    assert jobs_and_audit(sessions) == ([], [])
+
+
+def test_latest_attachment_recomputes_label_and_passport(production_api):
+    import base64
+    from dataclasses import replace
+    from app.modules.production.infrastructure import ProductionInstrumentFileRow, SqlAlchemyInstrumentRepository
+    from tests.production.test_instrument_passport import measured_file
+    client, _ = production_api
+    item, sessions = setup(client)
+    def upload(file, offset):
+        response = client.post(f"{BASE}/{item['id']}/files", json={"kind": "Прочее", "file_name": file.file_name,
+            "content_base64": base64.b64encode(file.content).decode()})
+        assert response.status_code == 200, response.text
+        with sessions.begin() as session:
+            row = session.get(ProductionInstrumentFileRow, UUID(response.json()["file"]["id"]))
+            row.uploaded_at = NOW + timedelta(minutes=offset)
+    def content():
+        with sessions() as session:
+            return instrument_labels._content(SqlAlchemyInstrumentRepository(session).get(UUID(item["id"])), session)
+    assert content().value("parameters_line") == "Не измерен"
+    upload(measured_file(stop=18), 1)
+    assert "0,01–18" in content().value("parameters_line")
+    before = client.get(f"{BASE}/{item['id']}/label.png").content
+    upload(measured_file(stop=11), 2)
+    assert "0,01–11" in content().value("parameters_line")
+    assert before != client.get(f"{BASE}/{item['id']}/label.png").content
+    upload(replace(measured_file(stop=6), file_name="unrelated.s2p"), 3)
+    assert "0,01–11" in content().value("parameters_line")
+    upload(replace(measured_file(), content=b"invalid"), 4)
+    assert content().value("parameters_line") == "Не измерен"
+
+
+def test_agent_announces_qr_link_configuration(production_api, monkeypatch):
+    client, _ = production_api
+    setup(client)
+    monkeypatch.delenv("ERP_PUBLIC_BASE_URL", raising=False)
+    assert client.get(f"{BASE}/label-agent").json()["qr_link_enabled"] is False
+    monkeypatch.setenv("ERP_PUBLIC_BASE_URL", "https://erp.example.test")
+    assert client.get(f"{BASE}/label-agent").json()["qr_link_enabled"] is False
+    assert "Ключ публичного паспорта" in client.get(f"{BASE}/label-agent").json()["qr_warning"]
+    monkeypatch.setenv("ERP_PASSPORT_SECRET", "test-only-passport-key-do-not-deploy-123456789")
+    assert client.get(f"{BASE}/label-agent").json()["qr_link_enabled"] is True
+    assert client.get(f"{BASE}/label-agent").json()["qr_warning"] == ""

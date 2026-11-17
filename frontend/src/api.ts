@@ -4200,7 +4200,8 @@ export const productionApi = {
       method: "POST", body: JSON.stringify({ version, disposition, act_reference: actReference }),
     }),
   instruments: () => api<{ instruments: ProductionInstrument[] }>("/api/production/instruments"),
-  instrumentLabelAgent: () => api<{ online: boolean }>("/api/production/instruments/label-agent"),
+  instrumentLabelAgent: () => api<{ online: boolean; qr_link_enabled: boolean; qr_warning?: string }>("/api/production/instruments/label-agent"),
+  instrumentPassportUrl: (id: string) => `/api/production/instruments/${encodeURIComponent(id)}/passport.pdf`,
   instrumentLabelUrl: (id: string, stamp: number | string = 0) => `/api/production/instruments/${encodeURIComponent(id)}/label.png?t=${stamp}`,
   printInstrumentLabel: (id: string, copies: number) =>
     api<{ status: "queued"; job_ids: string[] }>(`/api/production/instruments/${encodeURIComponent(id)}/label`, { method: "POST", body: JSON.stringify({ copies }) }),

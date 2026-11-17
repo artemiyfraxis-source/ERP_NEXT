@@ -7,13 +7,15 @@ const instrument = { id: "adapter", inventory_number: "СИ.034", name: "SMA р�
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const base = "/api/production/instruments";
 
-function stage({ online = true, rows = [instrument], bulk = false }: { online?: boolean; rows?: ProductionInstrument[]; bulk?: boolean } = {}) {
+function stage({ online = true, rows = [instrument], bulk = false, qrLink = true, qrWarning = "" }: {
+  online?: boolean; rows?: ProductionInstrument[]; bulk?: boolean; qrLink?: boolean; qrWarning?: string;
+} = {}) {
   const requests: { path: string; method: string; body: unknown }[] = [];
   let connected = online;
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const request = { path: String(input), method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : null };
     requests.push(request);
-    if (request.path === `${base}/label-agent`) return json({ online: connected });
+    if (request.path === `${base}/label-agent`) return json({ online: connected, qr_link_enabled: qrLink, qr_warning: qrWarning });
     if (request.method === "POST") return json({ status: "queued", job_ids: ["job"], copies: 1 });
     throw new Error(`Unexpected request ${request.path}`);
   });
@@ -22,6 +24,25 @@ function stage({ online = true, rows = [instrument], bulk = false }: { online?: 
   fireEvent.load(screen.getByRole("img", { name: /Предпросмотр/ }));
   return { requests, close, fetch, disconnect: () => { connected = false; } };
 }
+
+it("warns when the QR contains only an inventory number and still allows printing", async () => {
+  stage({ qrLink: false });
+  expect(await screen.findByText(/QR содержит только инвентарный номер/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Печатать 1 этикетку" })).toBeEnabled();
+});
+
+it("does not warn when a passport link is configured", async () => {
+  stage();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Печатать 1 этикетку" })).toBeEnabled());
+  expect(screen.queryByText(/QR содержит только инвентарный номер/)).not.toBeInTheDocument();
+});
+
+it("explains that the public passport key is missing even when an ERP address exists", async () => {
+  stage({ qrLink: false, qrWarning: "Ключ публичного паспорта не задан. QR содержит только инвентарный номер." });
+  expect(await screen.findByText("Ключ публичного паспорта не задан. QR содержит только инвентарный номер.")).toBeInTheDocument();
+  expect(screen.queryByText(/адрес ERP не задан/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Печатать 1 этикетку" })).toBeEnabled();
+});
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 

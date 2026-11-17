@@ -12,6 +12,8 @@ export function InstrumentLabelPrint({ instruments, bulk = false, close }: {
 }) {
   const [copies, setCopies] = useState("1");
   const [online, setOnline] = useState<boolean | null>(null);
+  const [qrLink, setQrLink] = useState<boolean | null>(null);
+  const [qrWarning, setQrWarning] = useState("");
   const [checking, setChecking] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -24,7 +26,9 @@ export function InstrumentLabelPrint({ instruments, bulk = false, close }: {
 
   useEffect(() => {
     let active = true;
-    productionApi.instrumentLabelAgent().then((status) => { if (active) setOnline(status.online); })
+    productionApi.instrumentLabelAgent().then((status) => { if (active) {
+      setOnline(status.online); setQrLink(status.qr_link_enabled); setQrWarning(status.qr_warning ?? "");
+    } })
       .catch((reason) => { if (active) setError(failureText(reason, "Не удалось проверить связь с принтером")); })
       .finally(() => { if (active) setChecking(false); });
     return () => { active = false; };
@@ -32,7 +36,10 @@ export function InstrumentLabelPrint({ instruments, bulk = false, close }: {
 
   async function refreshAgent() {
     setChecking(true); setError("");
-    try { setOnline((await productionApi.instrumentLabelAgent()).online); }
+    try {
+      const status = await productionApi.instrumentLabelAgent();
+      setOnline(status.online); setQrLink(status.qr_link_enabled); setQrWarning(status.qr_warning ?? "");
+    }
     catch (reason) { setOnline(null); setError(failureText(reason, "Не удалось проверить связь с принтером")); }
     finally { setChecking(false); }
   }
@@ -45,6 +52,8 @@ export function InstrumentLabelPrint({ instruments, bulk = false, close }: {
     try {
       const status = await productionApi.instrumentLabelAgent();
       setOnline(status.online);
+      setQrLink(status.qr_link_enabled);
+      setQrWarning(status.qr_warning ?? "");
       if (!status.online) return;
       submitted = true;
       if (bulk) await productionApi.printInstrumentLabels(instruments.map((item) => item.id), Number(copies));
@@ -69,6 +78,7 @@ export function InstrumentLabelPrint({ instruments, bulk = false, close }: {
         {checking && <p className="empty" role="status">Проверка связи с принтером…</p>}
         {!checking && online === false && <div className="error-banner" role="alert">Принтер склада не на связи</div>}
         {error && <div className="error-banner" role="alert">{error}</div>}
+        {qrLink === false && <p className="warning-inline" role="status">{qrWarning || "QR содержит только инвентарный номер. Публичная ссылка на паспорт не настроена."}</p>}
         {!checking && online !== true && <button className="secondary small" type="button" disabled={busy} onClick={() => void refreshAgent()}>Проверить связь</button>}
         {uncertain && <p className="warning-inline" role="status">Результат отправки неизвестен. Проверьте очередь принтера перед повторной печатью.</p>}
         {queued !== null && <div className="success-banner" role="status">Добавлено в очередь: {formatNumber(queued)} шт.</div>}

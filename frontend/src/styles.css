@@ -787,6 +787,9 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .instrument-registry .grid td.key { font-weight: 500; font-variant-numeric: tabular-nums slashed-zero; }
 .instrument-window { padding: 16px; margin: 0; min-width: 0; }
 .instrument-window > .page-head { justify-content: space-between; }
+.instrument-passport { display: inline-flex; align-items: center; text-decoration: none; white-space: nowrap; }
+.instrument-passport:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+@media (pointer: coarse) { .instrument-passport { min-height: 40px; } }
 .instrument-window .instrument-verification-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .instrument-window h3 { margin: 16px 0 8px; font-size: 15px; font-weight: 500; }
 .instrument-window h4 { margin: 8px 0; font-size: 13px; font-weight: 500; }
