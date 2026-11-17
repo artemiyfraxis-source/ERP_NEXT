@@ -301,13 +301,13 @@ function coaxCutStripSketch(fields: Row): string {
   // The two jacket halves meet; the conventional break only shortens the long body on paper.
   body += `<g data-part="break"><path d="M309,143 l-8,46 h30 l8,-46 z" fill="#fff"/>` +
     `<path d="M309,143 l-8,46 M339,143 l-8,46" fill="none" stroke="#17272b" stroke-width="1.4"/></g>`;
-  const finished = str(fields.finishedLength).trim(), cut = str(fields.lengthKd).replace(/\s*мм\s*$/i, "").trim();
+  const cut = str(fields.lengthKd).replace(/\s*мм\s*$/i, "").trim();
   let y = cy + 54;
   const lengthDimension = (text: string) => {
     body += [edge, W - edge].map((x) => `<line x1="${x}" y1="${cy + 22}" x2="${x}" y2="${y + 5}" stroke="#9aa7ad" stroke-dasharray="3 3"/>`).join("") + dim(edge, W - edge, y, text);
     y += 34;
   };
-  if (finished) lengthDimension(`L = ${mm(finished)} (готовое изделие)`);
+  // Резчику нужна только длина реза; L готового изделия и припуски — расчёт технолога (владелец 17.11), не на эскиз.
   if (cut) lengthDimension(`Длина реза = ${mm(cut)}`);
   return svg(W, y - 16, body);
 }
@@ -1222,10 +1222,6 @@ export function etkParams(operation: Row): EtkParams {
   const lengths = etkCutLengths(f);
   if (lengths.length > 1) common.push(["Длина по КД", lengths.map(({ length, count }) => `${lengthText(length)} мм ×${lengthText(count)}`).join(", ")]);
   else if (f.lengthKd) common.push([f.finishedLength != null ? "Длина реза" : "Длина по КД", str(f.lengthKd)]);
-  if (f.finishedLength != null) {
-    common.push(["Длина готового изделия L", `${str(f.finishedLength)} мм`], ["Припуск А", `${str(f.lPlusA)} мм`],
-      ["Припуск В", `${str(f.lPlusB)} мм`], ["Допуск готового изделия", str(f.drawingTolerance)]);
-  }
   if (f.cutTolerance) common.push(["Допуск реза", etkTolerance(f.cutTolerance)]);
   // Диаметры провода приходят из БД.ПРОВ при сборке ЭТК (techcard_build.enrich_wire_diameters); нет в базе — «—», не выдумываем.
   const wires = list(f.wires), isWire = wires.length > 0 || /^cutWire/.test(str(operation.type)) || etkCrimpEnds(f).length > 0;

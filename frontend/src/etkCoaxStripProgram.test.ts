@@ -47,7 +47,7 @@ it("updates a stored asymmetric cut in screen and print without changing its sou
   const printed = buildPrintDocumentHtml("ЭТК", etkPrintPages(card, []));
   expect(printed).toContain(sketch);
   expect(sketch.match(/<svg /g)).toHaveLength(1);
-  expect(sketch).toContain("L = 10000 мм (готовое изделие)");
+  expect(sketch).not.toContain("готовое изделие");
   expect(sketch).toContain("Длина реза = 10055 мм");
   expect(sketch).toContain("А — FAKRA-Male bulkhead (тип Z)");
   expect(sketch).toContain("В — FAKRA-Female (тип Z)");
