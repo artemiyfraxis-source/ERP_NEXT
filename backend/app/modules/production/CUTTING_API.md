@@ -6,6 +6,13 @@ Backend worker slice on `cut-group-1117`, base `c024f8ff`. No factory-number or 
 
 Migration `0186_cutting_groups`, parent `0185_shared_accessories`, `DESTRUCTIVE = False`.
 
+Execution adds migration `0187_cutting_execution` after `0186_cutting_groups` (`DESTRUCTIVE = False`).
+`production_cutting_work` extends one ordinary work session and has one open session per group.
+The ordinary active-operator unique index still covers both individual and grouped work.
+`production_cutting_actions` stores request fingerprints and committed responses for retries;
+`production_cutting_outputs` links each original member/output to that session and submission.
+Existing single-output/session uniqueness is unchanged. Downgrade refuses execution history.
+
 - `production_cutting_groups`: UUID, unique number/idempotency key, canonical project/site, recipe hash,
   versioned frozen recipe, optimistic version, state (`open`, `frozen`, `cancelled`), join policy, timestamps.
 - `production_cutting_members`: original task/operation IDs, stable row order, positive assembly/blank counts,
@@ -172,7 +179,7 @@ operator appear there and their child cards are omitted from `tasks`. Only autho
 `partial_view` indicates that other group members were omitted. Totals/windows cover only visible rows.
 Later PF cards remain ordinary per-KB entries in `tasks`.
 
-Use the existing row endpoints and their normal authorization/on-behalf/idempotency handling:
+Instructions, input inspection and standalone work retain the existing row endpoints:
 
 - `GET /api/production/my/tasks/{task_id}/operations/{operation_id}/etk`
 - `GET /api/production/tasks/{task_id}/operations/{operation_id}/inputs`
@@ -182,8 +189,58 @@ Use the existing row endpoints and their normal authorization/on-behalf/idempote
 Before the first group start, changed issued cards require revalidation. Grouped preparation ETK reads
 and recorded operation-card versions use the stored issued document. After start, newer ETKs cannot
 change that frozen work. Printing selected rows uses each row's existing ETK/serial path; no manifest
-API or new numbering exists in this slice. A row must finish/cancel its current session before another
-row can start, following the existing single-session rule.
+API or new numbering exists in this slice. Standalone work cannot start on an actively executing group
+member, and individual pause/resume/cancel/submit cannot mutate a group session. Manual output,
+reassignment, cancellation and handoff cannot change active group members. Completed KB tasks may
+finish their own later PFs and close while other group members continue.
+
+### One group start, submission and downtime (T1c)
+
+All endpoints below require the existing **work/edit** permission (`myops`), optional
+`?on_behalf_of=operator_uuid` with the ordinary on-behalf checks, `Idempotency-Key` (1–255 characters),
+and the group `version`. Both actor and performer pass site checks; the performer must be assigned
+to every active member. A partial view cannot execute the whole group.
+
+- `POST /api/production/cutting-groups/{id}/start`: `{version}`. Creates exactly one work session,
+  anchored to an unfinished member for resource accounting. Refuses another current session of the
+  performer, another open group session or active standalone work on any member. Freezes membership
+  and the issued card versions. With physical resources enabled, every member must have the same
+  explicit physical machine bindings; the group claims that machine set and the performer once.
+- `POST /.../{id}/submit`: `{version, rows: [{member_id, good_quantity, defect_quantity,
+  defect_character?, defect_description?, materials?: [{fulfillment_line_id, quantity}]}]}`.
+  Decimal quantities use PF units. Duplicate/foreign members, overproduction and invalid defect
+  details are refused. Rows may be omitted or have zero quantities; at least one must be positive.
+  One transaction creates each positive row's own output, box, defect and optional material
+  consumption. A failure in any row rolls back the complete request. A partial submission keeps the
+  same session active; it closes when all active members' good + defective quantities reach their
+  respective plans. Each KB's downstream readiness uses its own output boxes as before.
+- `POST /.../{id}/downtime/start`: `{version, reason, comment?}`. Uses existing downtime reasons;
+  `other` requires a comment. Creates one downtime record linked to the group session and pauses
+  its timer. Refuses an existing open downtime on any member.
+- `POST /.../{id}/downtime/stop`: `{version}`. Closes that interval and resumes the same session.
+  Submission while paused is refused. Ordinary downtime endpoints cannot bypass group resume or
+  open a parallel interval on one of its members.
+
+Returns `{group, outputs: [{member_id, output_id, box_id, box_number}]}` (`outputs` empty outside
+submission). Group reads add `session` (ordinary session fields plus `cutting_group_id`, or null)
+and `downtime: {id, reason, reason_name, comment, started_at}` (or null). `/my/execution` also marks
+the shared session with `cutting_group_id`; other work remains blocked until it completes.
+
+An identical key, actor-authorized performer, group, action and payload replays the committed response
+before rejecting a stale version. A different payload/action/performer for that key returns 409.
+Other version/resource conflicts return 409, unauthorized membership/site returns 403, invalid state
+or quantities return 422. Group and child locks use the existing resource/project/task lock order.
+
+Group start selects no material. Optional material selections belong to each submission row and
+consume only that KB's own issued request's available balance, including ordinary session reservations.
+No input material is guessed or shared between KBs. The card submits quantities/defect details and
+does not select materials, preserving the existing permission to work without material inputs.
+
+Working time is counted once: each submission allocates only the shared session's elapsed working
+seconds since its previous submission across positive rows, weighted by unit norm × submitted count
+(minimum weight one). Per-KB earned norms remain ordinary. Linked group outputs have `session_id=null`
+and zero standalone duration; the explicit links retain provenance, and the work-time journal holds
+the allocated actual duration. Downtime seconds are excluded. Group boxes are never mixed.
 
 Output boxes and material inputs always belong to the original child task/PF. Starting without material
 inputs remains permitted. Supplied inputs require the child's own issued request and available quantity;
@@ -201,5 +258,8 @@ child and its own downstream dependencies. Group membership/version participates
 - Unknown recipes remain ordinary launchable tasks with an explanatory grouping refusal.
 - First version supports one unambiguous cable/wire cut per preparation PF; multi-wire ambiguous recipes
   and unconfirmed full/partial strip settings are refused conservatively.
-- Full frontend integration, independent review, the integrated gate, PostgreSQL concurrency verification,
-  and migration rehearsal on a production copy remain coordinator/release work.
+- T1c wires the group card's start, per-KB submission, downtime and shared timer. Labels remain one
+  combined list. True group members are excluded from standalone MyQueue cards. Integration of the
+  later interim-list PRs from main is coordinator work under the local no-merge brief.
+- The full integrated gate, PostgreSQL concurrency verification and migration rehearsal on a production
+  copy remain coordinator/release work; the local worker brief explicitly excludes the full gate.

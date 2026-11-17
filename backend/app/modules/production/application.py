@@ -515,6 +515,8 @@ def assign_production(command: AssignProductionCommand, uow: UnitOfWork) -> tupl
 
 def assign_task(command: AssignProductionCommand, uow: UnitOfWork) -> tuple[ProductionTask, PlanResult]:
     """Assign a child within the caller transaction (also used by cutting groups)."""
+    if getattr(uow, "cutting", None) is not None:
+        uow.cutting.assert_standalone(command.operation_id)
     task = _task(command.task_id, command.expected_version, uow)
     operation = task.operation(command.operation_id)
     names = _checked_names(uow, operation, command.operator_ids, command.actor)
@@ -680,6 +682,8 @@ def assign_share(command: AssignShareCommand, uow: UnitOfWork) -> tuple[Producti
         lock_reflow_projects(uow, (command.task_id,), command.now)
         uow.production.lock(command.task_id)
         loaded = _task(command.task_id, command.expected_version, uow)
+        if getattr(uow, "cutting", None) is not None:
+            uow.cutting.assert_standalone(command.operation_id)
         if loaded.status is ProductionStatus.DONE:
             raise ProductionValidationError(f"Задание {loaded.number} выполнено — назначать нельзя")
         now = command.now

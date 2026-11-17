@@ -995,6 +995,8 @@ class SqlAlchemyProductionRepository:
         with self.session.no_autoflush:
             self._lock_projects((task.id,), projects=(task.project,))
             row = self.session.get(ProductionTaskRow, task.id)
+            if row is not None:
+                SqlAlchemyCuttingRepository(self.session).check_task_change(self.get(task.id), task)
         if self.resources is not None:
             self.resources.record_task(task)
         if row is None:

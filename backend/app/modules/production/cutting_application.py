@@ -303,7 +303,7 @@ def describe_group(group, uow):
         good = sum(item.good_quantity for item in own)
         defects = sum(item.defect_quantity for item in own)
         target = task.operation_units(operation.id)
-        state = (member.state if member.state != "active" else "done" if good >= target else
+        state = (member.state if member.state != "active" else "done" if good + defects >= target else
                  "started" if own or any(s.started_at for s in operation.shares) else
                  "assigned" if operation.operator_ids else "waiting")
         rows.append({"id": str(member.id), "task_id": str(task.id), "operation_id": str(operation.id),
@@ -322,7 +322,21 @@ def describe_group(group, uow):
     active = [row for row in rows if row["membership_state"] == "active"]
     starts = [row["planned_start"] for row in active if row["planned_start"]]
     finishes = [row["planned_finish"] for row in active if row["planned_finish"]]
+    work = uow.cutting.work(group.id)
+    session = uow.work.get(work.session_id) if work else None
+    downtime = None
+    if work and work.downtime_id:
+        from .downtime_infrastructure import SqlAlchemyDowntimeRepository
+        item = SqlAlchemyDowntimeRepository(uow.session).get(work.downtime_id)
+        downtime = {"id": str(item.id), "reason": item.reason.value, "reason_name": item.reason_name,
+                    "comment": item.comment, "started_at": item.started_at.isoformat()}
     return {"id": str(group.id), "number": group.number, "version": group.version,
+            "session": {"id": str(session.id), "task_id": str(session.task_id),
+                "operation_id": str(session.operation_id), "operator_id": str(session.operator_id),
+                "cutting_group_id": str(group.id), "started_at": session.started_at.isoformat(),
+                "status": session.status.value, "pause_seconds": session.pause_seconds,
+                "pause_started_at": session.pause_started_at.isoformat() if session.pause_started_at else None} if session else None,
+            "downtime": downtime,
             "recipe_version": group.recipe_version, "recipe_key": group.recipe_key,
             "project": group.project_key, "site": group.site, "state": group.state,
             "membership_frozen": group.state == "frozen", "rows": rows,

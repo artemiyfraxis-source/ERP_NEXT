@@ -68,6 +68,7 @@ from .launchable import (
 from .plan import kit_stage_key
 from .scheduling import ScheduleVariant
 from .execution import (
+    _card_versions,
     CorrectBoxCommand,
     DecideDefectCommand,
     ManualOutputCommand,
@@ -960,21 +961,6 @@ def available_inputs(
     }
 
 
-def _card_versions(view: dict | None, positions: tuple[int, ...]) -> list[dict]:
-    """Откуда сейчас карточки операций ЭТК операции задания (etk_live): номер операции в ЭТК, источник (template /
-    edited / snapshot) и дата шаблона или правки. Своя операция ручной сборки (без шаблона) строки не даёт."""
-    document = view.get("document") if isinstance(view, dict) else None
-    ops = document.get("operations") if isinstance(document, dict) else None
-    if not isinstance(ops, list):
-        return []
-    rows = []
-    for position in positions:
-        op = ops[position - 1] if 1 <= position <= len(ops) else None
-        source = str(op.get("card_source") or "") if isinstance(op, dict) else ""
-        if source:
-            rows.append({"position": position, "source": source, "changed_at": str(op.get("card_changed_at") or "")})
-    return rows
-
 
 def _issued_etk_views(
     techcards_factory: Callable[[], TechcardsUnitOfWork] | None, items: list[tuple[str, str]],
@@ -1190,10 +1176,12 @@ def my_execution(
     with uow_factory() as uow:
         viewed = _viewed_operator(uow, principal, operator_id)
         current = uow.work.current(viewed)
+        cutting_work = uow.cutting.for_session(current.id) if current else None
         boxes = uow.boxes.list(operator_id=viewed)
         limit = _input_limit(uow, current) if current else None
     return {
-        "session": {**_session_result(current), "input_limit": limit} if current else None,
+        "session": {**_session_result(current), "input_limit": limit,
+                    "cutting_group_id": str(cutting_work.group_id) if cutting_work else None} if current else None,
         "boxes": [_box_result(box) for box in boxes],
     }
 

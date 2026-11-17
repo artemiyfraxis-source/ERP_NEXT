@@ -1,4 +1,4 @@
-import type { CuttingGroup } from "./cuttingGroups";
+import type { CuttingGroup, CuttingSubmission, CuttingWorkResult } from "./cuttingGroups";
 import type { Sto, TdFinding, TdIssue, TdIssueInput, TdPrintModel } from "./tdTypes";
 
 export type AccessMode = "view" | "edit";
@@ -1353,6 +1353,7 @@ export interface ProductionBox {
 
 export interface ProductionWorkSession {
   id: string;
+  cutting_group_id?: string | null;
   task_id: string;
   operation_id: string;
   operator_id: string;
@@ -4161,6 +4162,18 @@ export const productionApi = {
   boxes: (taskId?: string) => api<{ boxes: ProductionBox[] }>(`/api/production/boxes${taskId ? `?task_id=${taskId}` : ""}`),
   // «Задания»: work.onBehalfOf — работа за выбранного сотрудника (право проверяет сервер), work.key — ключ повтора:
   // тот же ключ второй раз не делает действие дважды (двойной клик, повтор после обрыва связи).
+  startCuttingGroup: (groupId: string, version: number, work: WorkCall) =>
+    api<CuttingWorkResult>(`/api/production/cutting-groups/${groupId}/start${behalfQuery(work.onBehalfOf)}`, {
+      method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ version }),
+    }),
+  submitCuttingGroup: (groupId: string, version: number, rows: CuttingSubmission[], work: WorkCall) =>
+    api<CuttingWorkResult>(`/api/production/cutting-groups/${groupId}/submit${behalfQuery(work.onBehalfOf)}`, {
+      method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ version, rows }),
+    }),
+  cuttingDowntime: (groupId: string, version: number, action: "start" | "stop", payload: { reason?: string; comment?: string }, work: WorkCall) =>
+    api<CuttingWorkResult>(`/api/production/cutting-groups/${groupId}/downtime/${action}${behalfQuery(work.onBehalfOf)}`, {
+      method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ version, ...payload }),
+    }),
   startWork: (taskId: string, operationId: string, inputs: string[], materials: Array<{ fulfillment_line_id: string; quantity: string }> = [], work: WorkCall = {}) =>
     api<{ session: ProductionWorkSession }>(`/api/production/tasks/${taskId}/operations/${operationId}/work/start${behalfQuery(work.onBehalfOf)}`, {
       method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ inputs, materials }),

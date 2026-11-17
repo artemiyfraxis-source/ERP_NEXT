@@ -1,3 +1,5 @@
+import { useNow, clock, workedSeconds } from "./productionTime";
+export { clock, workedSeconds } from "./productionTime";
 import { CuttingGroupCard } from "./CuttingGroupCard";
 import { cuttingRows, type CuttingGroup } from "./cuttingGroups";
 import { useEffect, useRef, useState } from "react";
@@ -778,7 +780,8 @@ function MyQueue({ principal, tasks, cuttingGroups = [], session, busy, mutate, 
   const activeMark = { title: null as string | null };
   const finishedMark = { title: null as string | null };
   return <div className="my-queue">
-    {cuttingGroups.map((group) => <CuttingGroupCard key={`${group.id}:${group.version}`} group={group} readOnly={readOnly}
+    {cuttingGroups.map((group) => <CuttingGroupCard key={group.id} group={group} readOnly={readOnly}
+      mutate={mutate} onBehalfOf={onBehalfOf} performerId={onBehalfOf || principal.user.id} busy={Boolean(busy)} activeSession={session}
       renderInstruction={(row, close) => <OperationEtk key={row.id} principal={principal} task={{ id: row.task_id }} operation={{ id: row.operation_id }} title={`${row.item} · ${row.name}`} close={close} />} />)}
     {active.map((task) => renderCard(task, activeMark))}
     {!active.length && !cuttingGroups.some((group) => cuttingRows(group).some((row) => row.state !== "done")) && finished.length > 0 && <div className="empty">Невыполненных операций нет — все назначенные сданы.</div>}
@@ -786,31 +789,6 @@ function MyQueue({ principal, tasks, cuttingGroups = [], session, busy, mutate, 
       <div className="my-queue">{finished.map((task) => renderCard(task, finishedMark))}</div>
     </details>}
   </div>;
-}
-
-/** Текущее время, обновляемое раз в period мс: таймер начатой работы на карточке. */
-function useNow(period: number): Date {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), period);
-    return () => window.clearInterval(timer);
-  }, [period]);
-  return now;
-}
-
-/** Часы:минуты длительности: 5880 с → «1:38». */
-export function clock(seconds: number): string {
-  const minutes = Math.max(0, Math.floor((Number(seconds) || 0) / 60));
-  return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}`;
-}
-
-/** Сколько сессия проработала к now: от начала без пауз (идущая пауза тоже не считается). */
-export function workedSeconds(session: ProductionWorkSession, now: Date): number {
-  const started = parseDate(session.started_at);
-  if (!started) return 0;
-  const pausedSince = session.status === "Пауза" ? parseDate(session.pause_started_at) : null;
-  const end = pausedSince ?? now;
-  return Math.max(0, Math.round((end.getTime() - started.getTime()) / 1000) - (Number(session.pause_seconds) || 0));
 }
 
 // Ключ повтора действия по сессии: двойной клик по той же кнопке в том же состоянии — один и тот же ключ, сервер не

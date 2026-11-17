@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { CuttingGroupCard } from "./CuttingGroupCard";
 import { ProductionPage } from "./ProductionPage";
@@ -27,23 +27,85 @@ const group: CuttingGroup = {
 };
 const ranges = Object.fromEntries(group.rows.map((row) => [row.id, { first: 1, last: 15 }]));
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+const working: CuttingGroup = { ...group, version: 2, state: "frozen", session: {
+  id: "session-1", task_id: "task-0", operation_id: "op-0", operator_id: "operator", cutting_group_id: group.id,
+  started_at: new Date(Date.now() - 120000).toISOString(), status: "В работе", pause_started_at: null, pause_seconds: 0,
+} };
 
-it("renders one card and one action set, with separate PF and blank quantities", () => {
+it("starts one group and renders a working timer with separate PF and blank quantities", async () => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ group: working, outputs: [] }));
   render(<CuttingGroupCard group={group} readOnly={false} renderInstruction={() => null} />);
   expect(screen.getAllByRole("button", { name: "Начать" })).toHaveLength(1);
-  expect(screen.getByRole("button", { name: "Начать" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Начать" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Сдать" })).toBeDisabled();
   expect(screen.getAllByRole("button", { name: "Сдать" })).toHaveLength(1);
   expect(screen.getAllByRole("button", { name: "Простой" })).toHaveLength(1);
   expect(screen.getAllByRole("row")).toHaveLength(5);
   expect(screen.getAllByText("60")).toHaveLength(4);
+  fireEvent.click(screen.getByRole("button", { name: "Начать" }));
+  await screen.findByText(/В работе · время 0:02/);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(String(fetch.mock.calls[0][0])).toContain("/cutting-groups/group-1/start");
+  expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual({ version: 1 });
   fireEvent.click(screen.getByRole("button", { name: "Сдать" }));
   const dialog = screen.getByRole("dialog", { name: "Сдать группу резки" });
   for (const row of group.rows) {
     expect(within(dialog).getByLabelText(`Годные ${row.item}`)).toHaveValue(15);
     expect(within(dialog).getByLabelText(`Брак ${row.item}`)).toHaveValue(0);
   }
-  expect(within(dialog).getByRole("button", { name: "Сдать группу" })).toBeDisabled();
-  expect(within(dialog).getByText(/Количества не сохранены/)).toBeTruthy();
+  expect(within(dialog).getByRole("button", { name: "Сдать группу" })).toBeEnabled();
+});
+
+it("submits all KB quantities atomically and keeps the retry key and form after an error", async () => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(json({ detail: "Повторите запрос" }, 503))
+    .mockResolvedValueOnce(json({ group: working, outputs: [] }));
+  render(<CuttingGroupCard group={working} readOnly={false} onBehalfOf="operator" renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Сдать" }));
+  fireEvent.change(screen.getByLabelText("Годные КБ1"), { target: { value: "4" } });
+  fireEvent.change(screen.getByLabelText("Брак КБ1"), { target: { value: "1" } });
+  expect(screen.getByRole("button", { name: "Сдать группу" })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Характер брака КБ1"), { target: { value: "Размер" } });
+  fireEvent.change(screen.getByLabelText("Описание брака КБ1"), { target: { value: "Короткий рез" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сдать группу" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Повторите запрос");
+  expect(screen.getByLabelText("Годные КБ1")).toHaveValue(4);
+  fireEvent.click(screen.getByRole("button", { name: "Сдать группу" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(fetch.mock.calls[0][1]?.headers).toEqual(fetch.mock.calls[1][1]?.headers);
+  expect(String(fetch.mock.calls[0][0])).toBe("/api/production/cutting-groups/group-1/submit?on_behalf_of=operator");
+  const payload = JSON.parse(String(fetch.mock.calls[0][1]?.body));
+  expect(payload.rows).toHaveLength(4);
+  expect(payload.rows[0]).toMatchObject({ member_id: "member-0", good_quantity: "4", defect_quantity: "1", defect_description: "Короткий рез" });
+  expect(payload.rows[1].good_quantity).toBe("15");
+});
+
+it("starts and stops group downtime and prevents submission during it", async () => {
+  const paused: CuttingGroup = { ...working, version: 3, session: { ...working.session!, status: "Пауза", pause_started_at: new Date().toISOString() },
+    downtime: { id: "down-1", reason: "other", reason_name: "Другое", comment: "Настройка", started_at: new Date().toISOString() } };
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(json({ group: paused, outputs: [] })).mockResolvedValueOnce(json({ group: working, outputs: [] }));
+  render(<CuttingGroupCard group={working} readOnly={false} renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Простой" }));
+  fireEvent.change(screen.getByLabelText("Причина"), { target: { value: "other" } });
+  expect(screen.getByRole("button", { name: "Начать простой" })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Комментарий"), { target: { value: "Настройка" } });
+  fireEvent.click(screen.getByRole("button", { name: "Начать простой" }));
+  const stop = await screen.findByRole("button", { name: "Закончить простой" });
+  expect(screen.getByRole("button", { name: "Сдать" })).toBeDisabled();
+  fireEvent.click(stop);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Сдать" })).toBeEnabled());
+  expect(String(fetch.mock.calls[0][0])).toContain("/downtime/start");
+  expect(String(fetch.mock.calls[1][0])).toContain("/downtime/stop");
+});
+
+it("blocks execution for partial views, another active session, and a different performer", () => {
+  const { rerender } = render(<CuttingGroupCard group={{ ...group, partial_view: true }} readOnly={false} renderInstruction={() => null} />);
+  expect(screen.getByRole("button", { name: "Начать" })).toBeDisabled();
+  rerender(<CuttingGroupCard group={group} activeSession={working.session} readOnly={false} renderInstruction={() => null} />);
+  expect(screen.getByRole("button", { name: "Начать" })).toBeDisabled();
+  rerender(<CuttingGroupCard group={working} performerId="someone-else" readOnly={false} renderInstruction={() => null} />);
+  expect(screen.getByRole("button", { name: "Сдать" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Простой" })).toBeDisabled();
 });
 
 it("produces 17 label rows per KB in member order, preserving serial presentation and totals", () => {

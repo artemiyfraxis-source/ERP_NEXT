@@ -1,25 +1,61 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { failureText, productionApi } from "./api";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { failureText, productionApi, type ProductionWorkSession } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { PageWindow } from "./PageWindow";
 import { formatNumber } from "./format";
 import { windowText } from "./productionGraph";
-import { cuttingLabels, cuttingRows, cuttingState, cuttingLabelsPage, cuttingLabelsTitle, type CuttingGroup, type CuttingLabel, type CuttingMember } from "./cuttingGroups";
+import { cuttingLabels, cuttingRows, cuttingState, cuttingLabelsPage, cuttingLabelsTitle, type CuttingGroup, type CuttingLabel, type CuttingMember, type CuttingSubmission, type CuttingWorkResult } from "./cuttingGroups";
+import { clock, useNow, workedSeconds } from "./productionTime";
+import { DOWNTIME_REASONS, type DowntimeReason } from "./downtimeApi";
 import type { MarkSerialRange } from "./markSerial";
 import { hasMarkSerial } from "./markSerial";
 import { openPrintDocument } from "./print";
 import "./cuttingGroups.css";
 
-const executionGap = "Начало, сдача и простой всей группы пока недоступны.";
 const rowKey = (row: CuttingMember) => row.id;
 
-export function CuttingGroupCard({ group, readOnly, renderInstruction }: {
+export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruction, mutate, onBehalfOf = "", performerId, busy = false, activeSession }: {
   group: CuttingGroup;
   readOnly: boolean;
   renderInstruction: (row: CuttingMember, close: () => void) => ReactNode;
+  mutate?: (key: string, action: () => Promise<unknown>) => Promise<void>;
+  onBehalfOf?: string;
+  performerId?: string;
+  busy?: boolean;
+  activeSession?: ProductionWorkSession | null;
 }) {
+  const [group, setGroup] = useState(initialGroup);
+  useEffect(() => setGroup(initialGroup), [initialGroup]);
   const rows = cuttingRows(group);
-  const [view, setView] = useState<"" | "submit" | "instruction" | "labels">("");
+  const [view, setView] = useState<"" | "submit" | "instruction" | "labels" | "downtime">("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const inFlight = useRef(false);
+  const now = useNow(30_000);
+  const session = group.session;
+  const ownsSession = Boolean(session && (!performerId || session.operator_id === performerId));
+  const disabled = busy || pending;
+  const work = (action: string) => ({ onBehalfOf, key: `cut:${group.id}:${group.version}:${action}` });
+  async function act(action: () => Promise<CuttingWorkResult>) {
+    if (inFlight.current || busy) return;
+    inFlight.current = true;
+    setPending(true);
+    setError("");
+    const perform = async () => {
+      try {
+        const result = await action();
+        setGroup(result.group);
+        setView("");
+        return result;
+      } catch (reason) {
+        setError(failureText(reason, "Действие группы не выполнено"));
+        throw reason;
+      }
+    };
+    try { if (mutate) await mutate(group.id, perform); else await perform(); }
+    catch { /* The actionable error stays in the card and open form. */ }
+    finally { inFlight.current = false; setPending(false); }
+  }
   const [instructionId, setInstructionId] = useState(rows[0]?.id ?? "");
   const instruction = rows.find((row) => row.id === instructionId) ?? rows[0];
   if (!rows.length) return null;
@@ -41,19 +77,29 @@ export function CuttingGroupCard({ group, readOnly, renderInstruction }: {
       <div className="mo-name"><h2>{title}</h2><small>{group.number} · {group.site}</small></div>
       <div className="mo-side">
         {!readOnly && !done && <>
-          <button type="button" className="primary" disabled title={executionGap}>Начать</button>
-          <button type="button" className="secondary" aria-haspopup="dialog" onClick={() => setView("submit")}>Сдать</button>
-          <button type="button" className="secondary" disabled title={executionGap}>Простой</button>
+          {!session && <button type="button" className="primary" disabled={disabled || Boolean(activeSession) || group.partial_view}
+            onClick={() => void act(() => productionApi.startCuttingGroup(group.id, group.version, work("start")))}>Начать</button>}
+          <button type="button" className="secondary" disabled={disabled || !ownsSession || session?.status !== "В работе" || group.partial_view}
+            aria-haspopup="dialog" onClick={() => { setError(""); setView("submit"); }}>Сдать</button>
+          {group.downtime ? <button type="button" className="secondary" disabled={disabled || !ownsSession || group.partial_view}
+            onClick={() => void act(() => productionApi.cuttingDowntime(group.id, group.version, "stop", {}, work("downtime-stop")))}>Закончить простой</button>
+            : <button type="button" className="secondary" disabled={disabled || !ownsSession || group.partial_view} aria-haspopup="dialog"
+              onClick={() => { setError(""); setView("downtime"); }}>Простой</button>}
         </>}
         <button type="button" className="secondary" aria-haspopup="dialog" onClick={() => setView("instruction")}>Инструкция</button>
         <button type="button" className="secondary" aria-haspopup="dialog" onClick={() => setView("labels")}>Этикетки группы</button>
       </div>
     </div>
     <div className="mo-s mo-plan">План {windowText(group.planned_start, group.planned_finish)} · норма {formatNumber(group.norm_seconds / 60)} мин</div>
+    {session && <div className="mo-fact" role="status">{session.status === "Пауза" ? "На простое" : "В работе"} · время {clock(workedSeconds(session, now))}
+      {group.downtime && <> · {group.downtime.reason_name}{group.downtime.comment ? ` · ${group.downtime.comment}` : ""}</>}</div>}
     {group.partial_view && <div className="warning-inline">Показаны только назначенные вам КБ. Этикетки — для показанных КБ.</div>}
-    {!readOnly && !done && <div className="warning-inline">{executionGap}</div>}
+    {error && !["submit", "downtime"].includes(view) && <div className="error-banner" role="alert">{error}</div>}
     <DataTable rows={rows} columns={columns} rowKey={rowKey} label="КБ группы резки" compactBelow={Infinity} pageSize={1000} phoneCards={false} />
-    {view === "submit" && <GroupSubmit group={group} close={() => setView("")} />}
+    {view === "submit" && <GroupSubmit group={group} busy={disabled} error={error} close={() => setView("")}
+      submit={(values, key) => act(() => productionApi.submitCuttingGroup(group.id, group.version, values, { onBehalfOf, key }))} />}
+    {view === "downtime" && <GroupDowntime busy={disabled} error={error} close={() => setView("")}
+      submit={(reason, comment, key) => act(() => productionApi.cuttingDowntime(group.id, group.version, "start", { reason, comment }, { onBehalfOf, key }))} />}
     {view === "labels" && <GroupLabels key={`${group.id}:${group.version}`} group={group} close={() => setView("")} />}
     {view === "instruction" && instruction && <PageWindow label="Инструкция группы резки" width={1400} close={() => setView("")}>
       <label className="cutting-instruction-picker">КБ<select value={instruction.id} onChange={(event) => setInstructionId(event.target.value)}>
@@ -64,27 +110,71 @@ export function CuttingGroupCard({ group, readOnly, renderInstruction }: {
   </section>;
 }
 
-function GroupSubmit({ group, close }: { group: CuttingGroup; close: () => void }) {
+function GroupSubmit({ group, close, submit, busy, error }: { group: CuttingGroup; close: () => void; busy: boolean; error: string;
+  submit: (rows: CuttingSubmission[], key: string) => Promise<void> }) {
   const rows = cuttingRows(group);
+  const retry = useRef({ payload: "", key: crypto.randomUUID() });
   const [values, setValues] = useState(() => Object.fromEntries(rows.map((row) => [row.id, {
-    good: String(Math.max(0, Number(row.operation_quantity) - Number(row.good) - Number(row.defects))), defects: "0",
+    good: String(Math.max(0, Number(row.operation_quantity) - Number(row.good) - Number(row.defects))), defects: "0", character: "", description: "",
   }])));
-  const field = (row: CuttingMember, kind: "good" | "defects") => <input type="number" min="0" step="any" inputMode="decimal"
-    aria-label={`${kind === "good" ? "Годные" : "Брак"} ${row.item}`} value={values[row.id][kind]}
+  const valid = rows.every((row) => {
+    const v = values[row.id];
+    return v.good !== "" && v.defects !== "" && Number.isFinite(Number(v.good)) && Number.isFinite(Number(v.defects)) && Number(v.good) >= 0 && Number(v.defects) >= 0
+      && Number(v.good) + Number(v.defects) <= Number(row.operation_quantity) - Number(row.good) - Number(row.defects)
+      && (Number(v.defects) === 0 || Boolean(v.character.trim() && v.description.trim()));
+  }) && rows.some((row) => Number(values[row.id].good) + Number(values[row.id].defects) > 0);
+  function save() {
+    const result = rows.map((row) => ({ member_id: row.id, good_quantity: values[row.id].good, defect_quantity: values[row.id].defects,
+      defect_character: values[row.id].character.trim(), defect_description: values[row.id].description.trim() }));
+    const payload = JSON.stringify({ version: group.version, rows: result });
+    if (retry.current.payload !== payload) retry.current = { payload, key: crypto.randomUUID() };
+    void submit(result, retry.current.key);
+  }
+  const field = (row: CuttingMember, kind: "good" | "defects") => <input type="number" name={`${kind}-${row.id}`} autoComplete="off" min="0" step="any" inputMode="decimal"
+    disabled={busy} aria-label={`${kind === "good" ? "Годные" : "Брак"} ${row.item}`} value={values[row.id][kind]}
     onChange={(event) => setValues((current) => ({ ...current, [row.id]: { ...current[row.id], [kind]: event.target.value } }))} />;
-  return <PageWindow label="Сдать группу резки" width={1120} close={close}>
+  return <PageWindow label="Сдать группу резки" width={1280} close={() => { if (!busy) close(); }}>
     <div className="panel cutting-submit">
       <h2>Сдать группу · {group.project} · {rows.length} КБ</h2>
-      <div className="warning-inline" role="status">Общая сдача пока недоступна. Количества не сохранены.</div>
+      {error && <div className="error-banner" role="alert">{error}</div>}
       <DataTable rows={rows} rowKey={rowKey} label="Сдача по КБ" compactBelow={Infinity} pageSize={1000} columns={[
         { key: "item", title: "КБ", value: (row) => row.item },
         { key: "name", title: "Изделие", value: (row) => row.name, grow: true },
         { key: "quantity", title: "План ПФ, шт", numeric: true, value: (row) => Number(row.operation_quantity) },
         { key: "good", title: "Годные, шт ПФ", numeric: true, value: (row) => values[row.id].good, render: (row) => field(row, "good") },
         { key: "defects", title: "Брак, шт ПФ", numeric: true, value: (row) => values[row.id].defects, render: (row) => field(row, "defects") },
+        { key: "reason", title: "Характер и описание брака", value: (row) => values[row.id].description, render: (row) => Number(values[row.id].defects) > 0 ? <div className="cutting-defect">
+          <input disabled={busy} name={`character-${row.id}`} autoComplete="off" aria-label={`Характер брака ${row.item}`} placeholder="Характер…" maxLength={255} value={values[row.id].character}
+            onChange={(event) => setValues((current) => ({ ...current, [row.id]: { ...current[row.id], character: event.target.value } }))} />
+          <input disabled={busy} name={`description-${row.id}`} autoComplete="off" aria-label={`Описание брака ${row.item}`} placeholder="Описание…" maxLength={2000} value={values[row.id].description}
+            onChange={(event) => setValues((current) => ({ ...current, [row.id]: { ...current[row.id], description: event.target.value } }))} />
+        </div> : "—" },
       ]} />
-      <div className="form-actions"><button type="button" className="secondary" onClick={close}>Закрыть</button>
-        <button type="button" className="primary" disabled title={executionGap}>Сдать группу</button></div>
+      <div className="form-actions"><button type="button" className="secondary" disabled={busy} onClick={close}>Закрыть</button>
+        <button type="button" className="primary" disabled={busy || !valid} onClick={save}>{busy ? "Сохранение…" : "Сдать группу"}</button></div>
+    </div>
+  </PageWindow>;
+}
+
+function GroupDowntime({ busy, error, close, submit }: { busy: boolean; error: string; close: () => void;
+  submit: (reason: DowntimeReason, comment: string, key: string) => Promise<void> }) {
+  const [reason, setReason] = useState<DowntimeReason>("no_material");
+  const [comment, setComment] = useState("");
+  const retry = useRef({ payload: "", key: crypto.randomUUID() });
+  function save() {
+    const payload = JSON.stringify({ reason, comment: comment.trim() });
+    if (retry.current.payload !== payload) retry.current = { payload, key: crypto.randomUUID() };
+    void submit(reason, comment.trim(), retry.current.key);
+  }
+  return <PageWindow label="Простой группы резки" width={560} close={() => { if (!busy) close(); }}>
+    <div className="panel"><h2>Простой группы резки</h2>
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      <label>Причина<select name="reason" autoComplete="off" disabled={busy} value={reason} onChange={(event) => setReason(event.target.value as DowntimeReason)}>
+        {DOWNTIME_REASONS.map((item) => <option key={item.key} value={item.key}>{item.name}</option>)}
+      </select></label>
+      <label>Комментарий<textarea name="comment" autoComplete="off" disabled={busy} maxLength={500} value={comment} onChange={(event) => setComment(event.target.value)} /></label>
+      <div className="form-actions"><button className="secondary" disabled={busy} onClick={close}>Закрыть</button>
+        <button className="primary" disabled={busy || (reason === "other" && !comment.trim())} onClick={save}>Начать простой</button></div>
     </div>
   </PageWindow>;
 }

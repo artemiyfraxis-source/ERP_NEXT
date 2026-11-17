@@ -2,6 +2,7 @@ import type { MarkLabelSource, MarkLabel, MarkSerialRange } from "./markSerial";
 import { hasMarkSerial, markLabelList } from "./markSerial";
 import { countLabel, formatNumber } from "./format";
 import type { PrintPage } from "./print";
+import type { ProductionWorkSession } from "./api";
 
 export interface CuttingMember {
   id: string;
@@ -46,6 +47,21 @@ export interface CuttingGroup {
   planned_finish: string | null;
   norm_seconds: number;
   rows: CuttingMember[];
+  session?: ProductionWorkSession | null;
+  downtime?: { id: string; reason: string; reason_name: string; comment: string; started_at: string } | null;
+}
+
+export interface CuttingSubmission {
+  member_id: string;
+  good_quantity: string;
+  defect_quantity: string;
+  defect_character: string;
+  defect_description: string;
+}
+
+export interface CuttingWorkResult {
+  group: CuttingGroup;
+  outputs: { member_id: string; output_id: string; box_id: string; box_number: string }[];
 }
 
 export const cuttingState: Record<CuttingMember["state"], string> = {

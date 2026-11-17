@@ -59,6 +59,40 @@ class CuttingMemberRow(Base):
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
 
 
+class CuttingWorkRow(Base):
+    """Extends one ordinary session; its task/operation are the stable resource anchor."""
+    __tablename__ = "production_cutting_work"
+    __table_args__ = (
+        Index("ux_cutting_work_open_group", "group_id", unique=True,
+              sqlite_where=text("closed = 0"), postgresql_where=text("closed = false")),
+        CheckConstraint("accounted_seconds >= 0", name="ck_cutting_work_seconds"),
+    )
+    session_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("production_work_sessions.id", ondelete="RESTRICT"), primary_key=True)
+    group_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("production_cutting_groups.id", ondelete="RESTRICT"), nullable=False)
+    closed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    accounted_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    downtime_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("production_downtimes.id", ondelete="RESTRICT"))
+
+
+class CuttingActionRow(Base):
+    __tablename__ = "production_cutting_actions"
+    key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    group_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("production_cutting_groups.id", ondelete="RESTRICT"), nullable=False)
+    operator_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    result: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class CuttingOutputRow(Base):
+    """A group submission has per-member outputs without inventing child sessions."""
+    __tablename__ = "production_cutting_outputs"
+    __table_args__ = (UniqueConstraint("action_key", "member_id", name="ux_cutting_output_action_member"),)
+    output_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("production_outputs.id", ondelete="RESTRICT"), primary_key=True)
+    session_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("production_cutting_work.session_id", ondelete="RESTRICT"), nullable=False)
+    member_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("production_cutting_members.id", ondelete="RESTRICT"), nullable=False)
+    action_key: Mapped[str] = mapped_column(String(255), ForeignKey("production_cutting_actions.key", ondelete="RESTRICT"), nullable=False)
+
+
 class SqlAlchemyCuttingRepository:
     def __init__(self, session):
         self.session = session
@@ -68,6 +102,30 @@ class SqlAlchemyCuttingRepository:
         if lock:
             query = query.with_for_update().execution_options(populate_existing=True)
         return self.session.scalar(query)
+
+    def work(self, group_id):
+        return self.session.scalar(select(CuttingWorkRow).where(
+            CuttingWorkRow.group_id == group_id, CuttingWorkRow.closed.is_(False)))
+
+    def for_session(self, session_id):
+        return self.session.get(CuttingWorkRow, session_id)
+
+    def assert_standalone(self, operation_id):
+        member = self.for_operation(operation_id)
+        if member and self.work(member.group_id):
+            raise ProductionValidationError("По этой ПФ выполняется группа резки — используйте карточку группы")
+
+    def check_task_change(self, old, task):
+        for operation in old.operations:
+            member = self.for_operation(operation.id)
+            if not member or not self.work(member.group_id):
+                continue
+            updated = task.operation(operation.id)
+            if ((task.status != old.status and task.status is not ProductionStatus.DONE) or task.handed_to != old.handed_to
+                    or task.fulfillment_request_id != old.fulfillment_request_id
+                    or set(updated.operator_ids) != set(operation.operator_ids)
+                    or [(s.operator_id, s.quantity) for s in updated.shares] != [(s.operator_id, s.quantity) for s in operation.shares]):
+                raise ProductionValidationError("Сначала завершите работу группы резки")
 
     def list(self, *, task_ids=None):
         query = select(CuttingGroupRow)

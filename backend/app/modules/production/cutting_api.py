@@ -1,22 +1,25 @@
 """Grouped cutting controls. Row work/ETK URLs remain the ordinary authorized production endpoints."""
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Annotated, Callable
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
-from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal
-from .api import MachineBindingPayload, production_uow_factory, techcards_uow_factory, cutting_current_cards
+from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal, production_view_work_principal
+from .api import MachineBindingPayload, production_uow_factory, techcards_uow_factory, cutting_current_cards, _performer, _replay_key, MaterialInputPayload
 from .application import ConcurrentProductionUpdate, UnitOfWork
 from .cutting_application import assign_group, check_access, describe_group, split_group, revalidate_group
 from .domain import ProductionValidationError
 from .resource_assignments import MachineBinding
 from .resource_claims import ResourceConflict
+from .cutting_execution import execute_group
+from .downtime import DowntimeReason, COMMENT_LIMIT
 
 router = APIRouter(prefix="/api/production/cutting-groups", tags=["production"])
 
@@ -131,3 +134,71 @@ def revalidate(group_id: UUID, payload: VersionPayload,
     current = cutting_current_cards(group_id, factory, techcards_factory)
     return {"group": _handle(lambda: revalidate_group(group_id, payload.version, current,
                                                      principal.actor, now, factory()))}
+
+
+class GroupOutputPayload(BaseModel):
+    member_id: UUID
+    good_quantity: Decimal = Field(ge=0, max_digits=18, decimal_places=6)
+    defect_quantity: Decimal = Field(default=Decimal(0), ge=0, max_digits=18, decimal_places=6)
+    defect_character: str = Field(default="", max_length=255)
+    defect_description: str = Field(default="", max_length=2000)
+    materials: list[MaterialInputPayload] = Field(default_factory=list, max_length=100)
+
+
+class GroupSubmitPayload(VersionPayload):
+    rows: list[GroupOutputPayload] = Field(min_length=1, max_length=1000)
+
+
+class GroupDowntimePayload(VersionPayload):
+    reason: DowntimeReason
+    comment: str = Field(default="", max_length=COMMENT_LIMIT)
+
+
+@router.post("/{group_id}/start")
+def start_group_work(group_id: UUID, payload: VersionPayload,
+    principal: Annotated[Principal, Depends(production_view_work_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable | None, Depends(techcards_uow_factory)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=255)],
+    on_behalf_of: UUID | None = None):
+    worker = _performer(factory, principal, on_behalf_of) or principal.actor
+    current = cutting_current_cards(group_id, factory, techcards_factory)
+    return _handle(lambda: execute_group(group_id, payload.model_dump(mode="json"), "start",
+        _replay_key(idempotency_key), principal.actor, worker, now, factory(), current_cards=current))
+
+
+def _work_action(group_id, payload, action, principal, now, factory, key, on_behalf_of):
+    worker = _performer(factory, principal, on_behalf_of) or principal.actor
+    return _handle(lambda: execute_group(group_id, payload.model_dump(mode="json"), action,
+        _replay_key(key), principal.actor, worker, now, factory()))
+
+
+@router.post("/{group_id}/submit")
+def submit_group_work(group_id: UUID, payload: GroupSubmitPayload,
+    principal: Annotated[Principal, Depends(production_view_work_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=255)],
+    on_behalf_of: UUID | None = None):
+    return _work_action(group_id, payload, "submit", principal, now, factory, idempotency_key, on_behalf_of)
+
+
+@router.post("/{group_id}/downtime/start")
+def start_group_downtime(group_id: UUID, payload: GroupDowntimePayload,
+    principal: Annotated[Principal, Depends(production_view_work_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=255)],
+    on_behalf_of: UUID | None = None):
+    return _work_action(group_id, payload, "downtime/start", principal, now, factory, idempotency_key, on_behalf_of)
+
+
+@router.post("/{group_id}/downtime/stop")
+def stop_group_downtime(group_id: UUID, payload: VersionPayload,
+    principal: Annotated[Principal, Depends(production_view_work_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=255)],
+    on_behalf_of: UUID | None = None):
+    return _work_action(group_id, payload, "downtime/stop", principal, now, factory, idempotency_key, on_behalf_of)
