@@ -61,14 +61,36 @@ def _card_snapshot(card, marks, lengths, tube_cuts=()):
 
 
 _MACHINE_IDENTITY = ("equipment_model_id", "inventory", "inventory_number", "model")
+_EQUIPMENT_IDENTITY = ("equipment_model_id", "inventory", "inventory_number")
+
+
+def _has_identity(value: Mapping, keys) -> bool:
+    return any(str(value.get(key) or "").strip() for key in keys)
+
+
+def equipment_label(name: object) -> str:
+    """«MODEL | reference description — range» without the description: a rename touches only the middle part.
+
+    The model and the template's range («кабель Ø до 5,5 мм») stay. Idempotent; a bare description becomes "".
+    """
+    model, sep, rest = str(name or "").partition(" | ")
+    if not sep:
+        model, rest = "", model
+    _description, dash, suffix = rest.partition(" — ")
+    if not (model or dash):
+        return ""
+    return f"{model} | " + (f" — {suffix}" if dash else "")
 
 
 def _strip_machine_names(value):
-    """In place: a `machine` mapping that carries an identity keeps it and loses only its display `name`."""
+    """In place: a mapping that carries an equipment identity (a `machine`, an `equipmentTools` row) keeps the identity,
+    the model and the range, but not the reference description inside its display `name`."""
     if isinstance(value, dict):
         machine = value.get("machine")
-        if isinstance(machine, dict) and any(str(machine.get(key) or "").strip() for key in _MACHINE_IDENTITY):
-            machine.pop("name", None)
+        if isinstance(machine, dict) and "name" in machine and _has_identity(machine, _MACHINE_IDENTITY):
+            machine["name"] = equipment_label(machine["name"])
+        if "name" in value and _has_identity(value, _EQUIPMENT_IDENTITY):
+            value["name"] = equipment_label(value["name"])
         for item in value.values():
             _strip_machine_names(item)
     elif isinstance(value, list):
@@ -79,9 +101,10 @@ def _strip_machine_names(value):
 def canonical_snapshot(snapshot: Mapping) -> dict:
     """The current-version form of a frozen recipe: equipment display names are dropped where an identity exists.
 
-    Only the `name` of an «Оборудование» tooling row with `equipment_model_id` or `inventory_number`, and the `name`
-    of a `machine` mapping (parameters, fields) with `equipment_model_id`/`inventory`/`model`, are display-only. A row or
-    machine without identity keeps its full text; numbers, ranges («кабель Ø до 5,5 мм»), programs stay in the key.
+    Only the reference description inside the `name` of an «Оборудование» tooling row with `equipment_model_id` or
+    `inventory_number`, of a `machine` mapping with `equipment_model_id`/`inventory`/`model`, and of any parameter mapping
+    with an equipment identity (`equipmentTools` rows) is display-only (`equipment_label`). A row or machine without
+    identity keeps its full text; models, ranges («кабель Ø до 5,5 мм»), numbers and programs stay in the key.
     Idempotent, and applicable to snapshots stored by an older version (the upgrade path of open groups).
     """
     result = deepcopy(dict(snapshot))
@@ -90,9 +113,9 @@ def canonical_snapshot(snapshot: Mapping) -> dict:
         card = op.get("card") or {}
         was_hash = op.get("card_revision") == digest(card)
         for tool in card.get("tooling") or []:
-            if (tool.get("section") == "Оборудование"
-                    and any(str(tool.get(key) or "").strip() for key in ("equipment_model_id", "inventory_number"))):
-                tool.pop("name", None)
+            if (tool.get("section") == "Оборудование" and "name" in tool
+                    and _has_identity(tool, ("equipment_model_id", "inventory_number"))):
+                tool["name"] = equipment_label(tool["name"])
         _strip_machine_names(op.get("parameters"))
         _strip_machine_names(op.get("fields"))
         if was_hash:

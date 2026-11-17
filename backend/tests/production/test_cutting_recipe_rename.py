@@ -6,7 +6,7 @@ from uuid import UUID
 import pytest
 
 from app.main import app
-from app.modules.production.cutting import RECIPE_VERSION, canonical_snapshot, comparable_key, digest
+from app.modules.production.cutting import RECIPE_VERSION, canonical_snapshot, comparable_key, digest, equipment_label
 from tests.production.test_api import production_api  # noqa: F401
 from tests.production.test_cutting_groups import NOW, batch, document, groups, issue, recipe
 from tests.production.test_cutting_group_refresh_etk import pinned, refresh, reissue
@@ -17,15 +17,27 @@ LABEL_OLD = "Автомат печати и намотки этикеток на
 LABEL_NEW = "Полуавтомат для печати и намотки этикеток на провода"
 
 
+def full(name, model="BZW-886+Q2", tail="кабель Ø до 5,5 мм"):
+    """Display name as the reference writes it on prod: «model | description — range of the template row»."""
+    return f"{model} | {name} — {tail}"
+
+
 def named(name=OLD, label_name=LABEL_OLD, inventory="ОБ.094", model_id="m-1", **kwargs):
-    """document() with machines that carry display names beside their identity."""
+    """document() with machines that carry display names beside their identity, shaped like prod 708К. (18.11)."""
     doc = document(**kwargs)
     cut, label = doc["operations"][0], doc["operations"][1]
-    cut["card"]["tooling"][0].update(name=f"BZW-886+Q2 | {name}", inventory_number=inventory,
-                                     equipment_model_id=model_id, parameters="кабель Ø до 5,5 мм")
-    label["card"]["tooling"][0].update(name=label_name, inventory_number="ОБ.102", equipment_model_id="m-2")
+    cut["card"]["tooling"][0].update(name=full(name), inventory_number=inventory, equipment_model_id=model_id,
+                                     parameters="")
+    label["card"]["tooling"][0].update(name=f"ZCUT-RT660 | {label_name}", inventory_number="ОБ.102",
+                                       equipment_model_id="m-2")
     machine = {"model": "BZW-886+Q2", "inventory": inventory, "name": name, "equipment_model_id": model_id}
     doc["build_config"]["ops"][0]["machine"] = dict(machine)
+    doc["build_config"]["ops"][0]["equipmentTools"] = [{
+        "position": 4, "tool": "BZW-886+Q2 | Станок резки провода с роторной зачисткой мал. — кабель Ø до 5,5 мм",
+        "inventory_number": inventory, "equipment_model_id": model_id, "name": full(name), "inventory": inventory}]
+    doc["build_config"]["ops"][1]["equipmentTools"] = [{
+        "position": 1, "tool": "ZCUT-RT660 | Маркиратор проводов трубчатый", "inventory_number": "ОБ.102",
+        "equipment_model_id": "m-2", "name": f"ZCUT-RT660 | {label_name}", "inventory": "ОБ.102"}]
     cut["fields"]["machine"] = dict(machine)
     return doc
 
@@ -42,16 +54,18 @@ def test_display_name_of_a_machine_does_not_change_the_key():
     snapshot = recipe(first)[0].snapshot
     assert snapshot["version"] == RECIPE_VERSION == 2
     tooling = snapshot["operations"][0]["card"]["tooling"][0]
-    assert "name" not in tooling and tooling["inventory_number"] == "ОБ.094" and tooling["equipment_model_id"] == "m-1"
-    assert tooling["parameters"] == "кабель Ø до 5,5 мм"
+    assert tooling["name"] == "BZW-886+Q2 |  — кабель Ø до 5,5 мм"
+    assert tooling["inventory_number"] == "ОБ.094" and tooling["equipment_model_id"] == "m-1"
     assert snapshot["operations"][0]["parameters"]["machine"] == {
-        "model": "BZW-886+Q2", "inventory": "ОБ.094", "equipment_model_id": "m-1"}
+        "model": "BZW-886+Q2", "inventory": "ОБ.094", "equipment_model_id": "m-1", "name": ""}
+    tools = snapshot["operations"][0]["parameters"]["equipmentTools"][0]
+    assert tools["name"] == "BZW-886+Q2 |  — кабель Ø до 5,5 мм" and tools["tool"].endswith("кабель Ø до 5,5 мм")
     assert snapshot["operations"][0]["fields"]["machine"] == snapshot["operations"][0]["parameters"]["machine"]
     assert digest(snapshot) == key(first)
 
 
 @pytest.mark.parametrize("change", ["inventory", "model_id", "model", "strip", "label_width", "tool_range",
-                                    "step_text"])
+                                    "tool_range_param", "model_in_name", "template_tool", "step_text"])
 def test_everything_else_still_differs(change):
     altered = named()
     cut = altered["operations"][0]
@@ -60,7 +74,10 @@ def test_everything_else_still_differs(change):
     if change == "model": altered["build_config"]["ops"][0]["machine"]["model"] = "OTHER"
     if change == "strip": altered = named(strip=4)
     if change == "label_width": altered["build_config"]["ops"][1]["marks"][0]["width"] = 20
-    if change == "tool_range": cut["card"]["tooling"][0]["parameters"] = "кабель Ø до 7 мм"
+    if change == "tool_range": cut["card"]["tooling"][0]["name"] = full(OLD, tail="кабель Ø до 7 мм")
+    if change == "tool_range_param": cut["card"]["tooling"][0]["parameters"] = "кабель Ø до 7 мм"
+    if change == "model_in_name": cut["card"]["tooling"][0]["name"] = full(OLD, model="BZW-50X")
+    if change == "template_tool": altered["build_config"]["ops"][0]["equipmentTools"][0]["tool"] += " (б/у)"
     if change == "step_text": cut["card"]["steps"][0]["text"] += " Проверить."
     assert key(named()) != key(altered)
 
@@ -84,7 +101,8 @@ def test_canonical_is_idempotent_and_old_snapshot_upgrades_to_the_new_key():
     assert canonical_snapshot(snapshot) == snapshot
     old = deepcopy(snapshot)
     old["version"] = 1
-    old["operations"][0]["card"]["tooling"][0]["name"] = OLD
+    old["operations"][0]["card"]["tooling"][0]["name"] = full(OLD)
+    old["operations"][0]["parameters"]["equipmentTools"][0]["name"] = full(OLD)
     old["operations"][0]["parameters"]["machine"]["name"] = OLD
     assert digest(old) != digest(snapshot)
     assert comparable_key(digest(old), 1, old) == digest(snapshot)
@@ -145,7 +163,8 @@ def test_open_group_with_version_1_key_refreshes_and_is_upgraded(production_api)
         row = uow.cutting.get(UUID(group["id"]), lock=True)
         old = deepcopy(row.recipe)
         old["version"] = 1
-        old["operations"][0]["card"]["tooling"][0]["name"] = OLD
+        old["operations"][0]["card"]["tooling"][0]["name"] = full(OLD)
+        old["operations"][0]["parameters"]["equipmentTools"][0]["name"] = full(OLD)
         old["operations"][0]["parameters"]["machine"]["name"] = OLD
         row.recipe, row.recipe_key, row.recipe_version = old, digest(old), 1
         uow.commit()
@@ -186,3 +205,15 @@ def test_new_task_joins_an_open_version_1_group_of_the_same_document(production_
     current = groups(client)
     assert len(current) == 1 and current[0]["id"] == group["id"]
     assert {row["item"] for row in current[0]["rows"]} == {"КБ1", "КБ2"}
+
+
+@pytest.mark.parametrize("name, expected", [
+    ("BZW-886+Q2 | Автомат для резки — кабель Ø до 5,5 мм", "BZW-886+Q2 |  — кабель Ø до 5,5 мм"),
+    ("ZCUT-RT660 | Полуавтомат для печати", "ZCUT-RT660 | "),
+    ("Автомат резки и зачистки коаксиального кабеля", ""),
+    ("Описание — кабель Ø свыше 5,5 мм", " |  — кабель Ø свыше 5,5 мм"),
+    ("", ""), (None, ""),
+])
+def test_equipment_label_keeps_model_and_range_and_is_idempotent(name, expected):
+    assert equipment_label(name) == expected
+    assert equipment_label(expected) == expected
