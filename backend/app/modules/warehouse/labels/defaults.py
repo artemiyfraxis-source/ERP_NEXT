@@ -166,6 +166,14 @@ def _instrument(width: float, height: float) -> list[dict]:
         (0.1, {"id": "model", "font_mm": 1.8 if large else 1.4, "field": "model"}),
     ])
     elements += rows
+    # The wordmark in the top-right corner, right-aligned; the inventory number stays clear of it on its left.
+    logo_w, logo_h = (22.0, 6.2) if large else (14.0, 3.9)
+    logo_x = round(width - MARGIN - logo_w, 1)
+    elements.append({"id": "logo", "kind": "logo", "x_mm": logo_x, "y_mm": 1.2,
+                     "w_mm": logo_w, "h_mm": logo_h, "align": "right"})
+    for element in rows:  # boxes never overlap: the number's box ends before the wordmark
+        if element["id"] == "inventory_number":
+            element["w_mm"] = round(logo_x - element["x_mm"] - 0.5, 1)
     top = 21.2 if compact else (29 if large else 23)
     size = 1.4 if compact else 2
     left = 2.0  # Keep small measured-fact text clear of the printer's unprintable left edge.

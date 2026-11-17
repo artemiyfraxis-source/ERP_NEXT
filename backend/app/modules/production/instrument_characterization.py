@@ -50,6 +50,82 @@ def working_band(summary, limit: float = WORKING_VSWR_LIMIT) -> WorkingBand | No
     return WorkingBand(first[0][0] / 1e9, stop / 1e9, loss, limit)
 
 
+# Standard frequency steps and round limits (owner 17.11): the label and the planner speak in these, not in raw maxima.
+STEPS_GHZ = (1, 3, 6, 12, 18)
+APPLICATION_VSWR_LIMIT = 1.30  # widest step whose worst VSWR stays within this is the «предел применения»
+VSWR_LADDER = (1.05, 1.10, 1.15, 1.20, 1.25, 1.30, 1.40, 1.50, 2.0)
+LOSS_LADDER = (0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 1.0, 2.0)
+SERIES_LIMIT_GHZ = {"BNC": 4.0, "N": 11.0, "TNC": 11.0}  # above the series' own band a step is never claimed
+
+
+def round_up_ladder(value: float, ladder: tuple[float, ...]) -> float | None:
+    """The smallest round value not below `value` (tiny float noise tolerated); None above the ladder."""
+    return next((step for step in ladder if value <= step + 1e-9), None)
+
+
+@dataclass(frozen=True)
+class StepLimits:
+    stop_ghz: int
+    vswr: float          # worst VSWR of both ports from the lowest measured frequency to this step
+    loss_db: float       # worst insertion loss over the same span
+
+    @property
+    def vswr_round(self) -> float | None:
+        return round_up_ladder(self.vswr, VSWR_LADDER)
+
+    @property
+    def loss_round(self) -> float | None:
+        return round_up_ladder(self.loss_db, LOSS_LADDER)
+
+
+@dataclass(frozen=True)
+class Application:
+    steps: tuple[StepLimits, ...]   # every step the measurement and the connector series allow
+    limit_ghz: int | None           # widest step within APPLICATION_VSWR_LIMIT; None - not usable at all
+
+    @property
+    def at_limit(self) -> StepLimits | None:
+        return next((step for step in self.steps if step.stop_ghz == self.limit_ghz), None)
+
+    @property
+    def limit_line(self) -> str:
+        return f"Применять до {self.limit_ghz} ГГц" if self.limit_ghz else "Не годен для 50 Ом тракта"
+
+    @property
+    def values_line(self) -> str:
+        step = self.at_limit
+        if step is None:
+            return ""
+        vswr, loss = step.vswr_round, step.loss_round
+        return f"КСВН ≤ {number(vswr or 2)} · потери ≤ {number(loss or 2)} дБ"
+
+
+def series_cap_ghz(series: tuple[str, ...]) -> float | None:
+    caps = [SERIES_LIMIT_GHZ[name] for name in series if name in SERIES_LIMIT_GHZ]
+    return min(caps) if caps else None
+
+
+def application(summary, series: tuple[str, ...] = ()) -> Application:
+    """Worst-case limits per standard step (cumulative from the lowest frequency) and the application limit."""
+    first, second, transfer = summary.points("S11"), summary.points("S22"), summary.points("S21")
+    highest = min(first[-1][0] / 1e9, series_cap_ghz(series) or math.inf)
+    steps = []
+    for stop in STEPS_GHZ:
+        if stop > highest + 1e-9:
+            break
+        edge = stop * 1e9 + 0.5
+        vswr = max((v for pts in (first, second) for f, v in pts if f <= edge), default=math.inf)
+        loss = max((loss_db(v) for f, v in transfer if f <= edge), default=math.inf)
+        steps.append(StepLimits(stop, vswr, loss))
+    limit = None
+    for step in steps:
+        if step.vswr <= APPLICATION_VSWR_LIMIT:
+            limit = step.stop_ghz
+        else:
+            break
+    return Application(tuple(steps), limit)
+
+
 def number(value: float) -> str:
     return format(value, ".8g").replace(".", ",")
 
