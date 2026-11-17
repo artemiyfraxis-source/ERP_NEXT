@@ -53,6 +53,11 @@ it("shows the stored material temperature under tooling identically on screen an
       source_url: "https://example.com/passport", quote: "Температура усадки 85–125 °C", characteristic_c: 120,
     } },
     { material: { article: "ТТК", name: "Трубка без паспорта" }, status: "review", temperature: null },
+    { material: { article: "ТУТ 5/2,5мм, черная" }, status: "resolved",
+      temperature: { lower_c: 90, upper_c: 120, kind: "диапазон" },
+      display_text: "КВТ ТУТнг-LS 5/2,5: 90…120 °C — производитель по умолчанию" },
+    { material: { article: "ТУТ 6/3мм, черная" }, status: "review", temperature: null,
+      display_text: "КВТ ТУТ(HF) 6/3: 80…110 °C; КВТ ТУТнг-LS 6/3: 90…120 °C — производитель по умолчанию — проверить" },
   ] } });
   render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
   const tooling = await screen.findByRole("region", { name: "Оснастка" });
@@ -68,6 +73,10 @@ it("shows the stored material temperature under tooling identically on screen an
   expect(lines[0].text).toContain("85…125 °C (оптимальная, Паспорт Rexant, стр. 2)");
   expect(lines[0].text).toContain("по характеристикам: 120 °C");
   expect(lines[1].text).toContain("не задано — проверить");
+  expect(lines[2].text).toContain("90…120 °C — производитель по умолчанию");
+  expect(lines[2].missing).toBe(false);
+  expect(lines[3].text).toContain("80…110 °C; КВТ ТУТнг-LS 6/3: 90…120 °C");
+  expect(lines[3].missing).toBe(true);
 });
 
 it("shows «Оснастка» with all three sections, an empty one as «нет», and input quantities as numbers with units", async () => {
