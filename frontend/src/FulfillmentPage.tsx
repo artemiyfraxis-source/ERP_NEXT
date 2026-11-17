@@ -15,6 +15,7 @@ import {
 import { canAct, hasFullAccess, urlParam } from "./navigation";
 import { DataTable, matchesWords, type DataColumn } from "./DataTable";
 import { openPrintSheet } from "./print";
+import { PageWindow } from "./PageWindow";
 import { useCanPrint } from "./rights";
 import { StatusChip } from "./StatusChip";
 import { BulkLotsPanel, absentPosition, absentTargets, searchSeed, CANDIDATE_LEGEND, OffBookQtyPopover, absentMark, bindPosition, bulkApi, candidateTone, isOffBook, matchText, type BulkPosition } from "./FulfillmentBulkLots";
@@ -129,6 +130,14 @@ const ISSUABLE = ["Укомплектован", "Готов к выдаче"];
 
 export function issuable(request: FulfillmentRequest) {
   return ISSUABLE.includes(request.status) && openLines(request).length === 0;
+}
+
+/* «Выдать набранное» (owner 17.11.2026): a main kit still being picked with something picked and something waiting —
+   the picked lines are issued, the rest goes to a new «Довыдача». The server decides; this only shows the button. */
+export function partlyIssuable(request: FulfillmentRequest) {
+  if (request.kind === "extra" || !TO_PICK_STAGES.includes(request.status)) return false;
+  const open = openLines(request).length;
+  return open > 0 && open < request.lines.length;
 }
 
 /** Why a kit of the order can't be handed out now — the chooser shows it next to the disabled box. */
@@ -736,6 +745,7 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
   const [returnLocation, setReturnLocation] = useState(request.return_location ?? "");
   const [sending, setSending] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [issuingPicked, setIssuingPicked] = useState(false);
   const [printError, setPrintError] = useState("");
   const closed = ["КБ Выдана", "КБ Возвращена", "Готово", "Отменена"].includes(request.status);
   const hasIssuedLines = request.lines.some((line) => Number(line.issued) > 0);
@@ -793,6 +803,7 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
           <button className="primary" disabled={busy} onClick={() => void mutate(request.id, () => fulfillmentApi.ready(request.id, request.version, offered))}>Отправить на выдачу</button>
         </>}
         {canHandout && showGive && issuable(request) && <button className="primary" disabled={busy} onClick={() => move("КБ Выдана", `${request.status === "Укомплектован" ? `Комплект уйдёт на выдачу (место: ${offered}) и сразу будет выдан. ` : ""}Количество спишется со склада (резерв → списано), заявка станет выданной. Отменить это можно только возвратом.`, () => fulfillmentApi.issueBatch([{ id: request.id, version: request.version }]))}>Выдать комплект</button>}
+        {canHandout && partlyIssuable(request) && <button className="secondary" disabled={busy} aria-haspopup="dialog" onClick={() => setIssuingPicked(true)}>Выдать набранное…</button>}
         {canHandout && showGive && request.status === "КБ Выдана" && <><label>Место возврата<input value={returnLocation} onChange={(event) => setReturnLocation(event.target.value)} /></label><button className="secondary" disabled={busy || !returnLocation.trim()} onClick={() => void mutate(request.id, () => fulfillmentApi.returned(request.id, request.version, returnLocation))}>Комплект вернулся</button><button className="secondary" disabled={busy} onClick={() => move("Готово", "Заявка закроется и уйдёт в архив.", () => fulfillmentApi.close(request.id, request.version))}>Готово</button></>}
         {canEdit && request.status === "Готов к выдаче" && <button className="secondary" disabled={busy} title="Снять комплект с выдачи — это не возврат материала из цеха" onClick={() => move(returnTarget(request), `Комплект снимут с выдачи${request.handout_location ? ` (${request.handout_location})` : ""} и вернут в комплектацию. Это не возврат материала («КБ Возвращена»): со склада ничего не списано и ничего не двигается, резерв остаётся на партиях. Отменить заявку можно будет после этого.`, () => fulfillmentApi.returnToKitting(request.id, request.version))}>Вернуть в комплектацию</button>}
         {canEdit && request.kind !== "extra" && ["КБ Выдана", "КБ Возвращена", "Готово"].includes(request.status) && !adding && <button className="secondary" disabled={busy} onClick={() => setAdding(true)}>Довыдать</button>}
@@ -805,6 +816,8 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
       </div>
       {sending && <HandoutPlaceForm request={request} places={places} offered={offered} busy={busy} mutate={mutate} onCancel={() => setSending(false)} />}
       {adding && <ExtraIssueForm request={request} busy={busy} mutate={mutate} onClose={() => setAdding(false)} />}
+      {issuingPicked && <IssuePickedWindow request={request} busy={busy} close={() => setIssuingPicked(false)}
+        onIssue={() => { setIssuingPicked(false); void mutate(request.id, () => fulfillmentApi.issuePicked(request.id, request.version)); }} />}
       {printError && <div className="error-banner" role="alert">{printError}</div>}
       {canHandout && showGive && request.status === "КБ Возвращена" && <ReturnForm request={request} busy={busy} mutate={mutate} />}
     </article>
@@ -854,6 +867,47 @@ function ExtraIssueForm({ request, busy, mutate, onClose }: {
       <button className="secondary" onClick={onClose}>Отмена</button>
     </div>
   </div>;
+}
+
+/* «Выдать набранное…» (owner 17.11.2026): what goes out now — the picked lines, written off their ГРН like any issue —
+   and what moves to a new «Довыдача» of the same КБ with its remaining need and marks. One call; the server checks. */
+function IssuePickedWindow({ request, busy, close, onIssue }: {
+  request: FulfillmentRequest;
+  busy: boolean;
+  close: () => void;
+  onIssue: () => void;
+}) {
+  const given = request.lines.filter(closedLine);
+  const moved = openLines(request);
+  const writtenOff = given.filter((line) => !isOffBook(line)).length;
+  const state = (line: FulfillmentLine) => absentMark(line) !== null ? "нет на складе"
+    : line.lot && Number(line.reserved) > 0 ? `резерв ${line.reserved} на ГРН ${line.lot.grn}` : "ждёт ГРН";
+  return <PageWindow label={`Выдать набранное · ${request.number}`} close={close} width={900}>
+    <div className="panel issue-picked">
+      <header className="page-head"><h2>Выдать набранное · {request.number}</h2>
+        <button type="button" className="secondary small" onClick={close}>Закрыть</button></header>
+      <p className="muted">Набранное спишется со склада, заявка станет «КБ Выдана». Остальное уйдёт в новую довыдачу этой КБ и будет ждать ГРН.</p>
+      <h3>Выдаётся сейчас: {given.length} поз.{writtenOff < given.length ? ` · без списания («есть, не заведено»): ${given.length - writtenOff}` : ""}</h3>
+      <div className="table-wrap"><table className="grid wide" aria-label="Выдаётся сейчас"><thead><tr><th>Артикул</th><th>Наименование</th><th className="num">Количество</th><th>Ед.</th><th>Партия (ГРН)</th></tr></thead><tbody>
+        {given.map((line) => <tr key={line.id}>
+          <td>{line.article || "—"}</td><td>{line.name}</td>
+          <td className="num">{isOffBook(line) ? line.requirement : line.reserved}</td><td>{line.unit}</td>
+          <td>{line.lot ? `${line.lot.grn}${line.lot.package ? ` · ${line.lot.package}` : ""}` : "есть, не заведено"}</td>
+        </tr>)}
+      </tbody></table></div>
+      <h3>В довыдачу: {moved.length} поз.</h3>
+      <div className="table-wrap"><table className="grid wide" aria-label="В довыдачу"><thead><tr><th>Артикул</th><th>Наименование</th><th className="num">Осталось</th><th>Ед.</th><th>Отметка</th></tr></thead><tbody>
+        {moved.map((line) => <tr key={line.id}>
+          <td>{line.article || "—"}</td><td>{line.name}</td>
+          <td className="num">{line.requirement}</td><td>{line.unit}</td><td>{state(line)}</td>
+        </tr>)}
+      </tbody></table></div>
+      <div className="fulfillment-actions">
+        <button type="button" className="primary" disabled={busy} onClick={onIssue}>Выдать набранное ({given.length} поз.)</button>
+        <button type="button" className="secondary" onClick={close}>Отмена</button>
+      </div>
+    </div>
+  </PageWindow>;
 }
 
 /* «Вернуть в комплектацию»: a kit whose lines are all closed goes back «Укомплектован», otherwise «Недоукомплектован». */

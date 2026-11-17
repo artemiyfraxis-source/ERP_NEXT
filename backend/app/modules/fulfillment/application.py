@@ -1397,6 +1397,61 @@ def issue_fulfillment(
         return updated
 
 
+@dataclass(frozen=True)
+class PartialIssueResult:
+    issued: FulfillmentRequest  # the main kit, «КБ Выдана» with the issued lines only
+    extra: FulfillmentRequest  # the «Довыдача» holding every line that still waits
+
+
+def _line_brief(line: FulfillmentLine, quantity: Decimal) -> dict:
+    return {
+        "line_id": str(line.id), "article": line.article, "name": line.name, "unit": line.unit,
+        "quantity": _display_number(quantity), "grn": line.lot.grn if line.lot else None,
+        **({"off_book": True} if line.off_book else {}), **({"absent": True} if line.absent else {}),
+    }
+
+
+def issue_picked(command: VersionedFulfillmentCommand, uow: UnitOfWork) -> PartialIssueResult:
+    """«Выдать набранное» (owner 17.11.2026): a main kit at «Новая»/«Недоукомплектован» hands out the lines already
+    picked and leaves the rest to a «Довыдача», in one transaction.
+
+    The open lines move into a new extra request of the same project and КБ unchanged — their lots and reserves too,
+    so nothing moves on the warehouse for them (`FulfillmentRequest.remainder_of`). The main kit keeps the covered
+    lines, becomes «Укомплектован» and goes the way «Выдать выбранные» takes it: sent to the handout place the site
+    used last (`handout_place`, no «готов к получению» message) and issued at once by `_hand_out` — the same
+    reserve → списано and СПИСАНИЕ rows as any issue, for the covered lines only."""
+    with uow:
+        request = _versioned(command.request_id, command.expected_version, uow)
+        kept, open_lines = request.split_picked()
+        key = f"partial-issue:{request.id}:v{request.version}"
+        extra = FulfillmentRequest.remainder_of(
+            request, open_lines,
+            number=uow.fulfillment.next_number(command.now.year),
+            source_idempotency_key=key,
+            source_fingerprint=sha256(key.encode("utf-8")).hexdigest(),
+            created_at=command.now,
+        ).stamped(command.now)
+        # The extra goes first: its rows take the moved lines over before the main kit drops them.
+        uow.fulfillment.add(extra)
+        _audit(extra, "fulfillment.created", command.actor, command.now, {
+            "number": extra.number,
+            "reserved": sum(1 for line in extra.lines if line.reserved > 0),
+            "shortfall": extra.shortfall,
+            "from_request": request.number,
+            "partial_issue": True,
+        }, uow)
+        sent = _send_to_handout(kept, handout_place(kept, uow), command.actor, command.now, uow, notify=False)
+        issued = _hand_out(sent, command.actor, command.now, uow, {})
+        _audit(issued, "fulfillment.issued_partial", command.actor, command.now, {
+            "issued": [_line_brief(line, line.issued) for line in issued.lines],
+            "moved": [_line_brief(line, line.requirement) for line in extra.lines],
+            "extra_id": str(extra.id),
+            "extra_number": extra.number,
+        }, uow)
+        uow.commit()
+        return PartialIssueResult(issued=issued, extra=extra)
+
+
 # What «Выдать комплект» takes (owner 06.10.2026): a fully picked kit, sent to the handout point or not yet.
 ISSUABLE = frozenset({FulfillmentStatus.COMPLETE, FulfillmentStatus.READY})
 

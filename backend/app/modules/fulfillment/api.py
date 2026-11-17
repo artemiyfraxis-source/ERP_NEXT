@@ -67,6 +67,7 @@ from .application import (
     handout_place,
     issue_batch,
     issue_fulfillment,
+    issue_picked,
     kit_label,
     mark_ready,
     mark_returned,
@@ -799,6 +800,33 @@ def issue(
     return _run(lambda: issue_fulfillment(
         _version_command(request_id, payload, principal, now), uow_factory()
     ))
+
+
+@router.post("/{request_id}/issue-picked")
+def issue_picked_route(
+    request_id: UUID,
+    payload: VersionPayload,
+    principal: Annotated[Principal, Depends(fulfillment_handout_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    """«Выдать набранное» (owner 17.11.2026): the picked lines of a kit at «Новая»/«Недоукомплектован» are issued,
+    every line still waiting moves into a new «Довыдача» with its lot/reserve unchanged."""
+    holder: dict = {}
+
+    def operation() -> FulfillmentRequest:
+        holder["result"] = issue_picked(_version_command(request_id, payload, principal, now), uow_factory())
+        return holder["result"].issued
+
+    body = _run(operation)
+    result = holder["result"]
+    issued_lines = sum(1 for line in result.issued.lines if line.issued > 0)
+    body["extra"] = _result(result.extra)
+    body["message"] = (
+        f"Выдано позиций: {issued_lines} ({kit_label(result.issued)}). "
+        f"Остальное ({len(result.extra.lines)} поз.) — в довыдаче {result.extra.number}."
+    )
+    return body
 
 
 class IssueBatchItem(BaseModel):

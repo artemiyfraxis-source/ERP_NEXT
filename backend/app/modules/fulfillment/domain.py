@@ -41,6 +41,9 @@ class FulfillmentKind(str, Enum):
 # Statuses of a main kit after which «Довыдать» is offered: the kit went to the shop.
 EXTRA_AFTER = frozenset({FulfillmentStatus.ISSUED, FulfillmentStatus.RETURNED, FulfillmentStatus.DONE})
 
+# Statuses of a main kit «Выдать набранное» takes (owner 17.11.2026): still being picked, part of it waits for stock.
+PARTIAL_ISSUE_FROM = frozenset({FulfillmentStatus.NEW, FulfillmentStatus.UNDERFILLED})
+
 
 # «Отправить на выдачу» offers this place when the kit's site has none used before (owner, G1-T3 05.10.2026): the rack
 # layout has no named handout zone, so it is a text place, editable on the screen.
@@ -618,6 +621,81 @@ class FulfillmentRequest:
             lines=tuple(line.mark_issued() for line in self.lines),
             handout_location=None,
             version=self.version + 1,
+        )
+
+    def split_picked(self) -> tuple[FulfillmentRequest, tuple[FulfillmentLine, ...]]:
+        """«Выдать набранное» (owner 17.11.2026: «добрать остатки и выдать набранное нельзя»): a main kit still being
+        picked keeps only its covered lines (a lot holding the whole need, or «есть, но не заведено») and becomes
+        «Укомплектован», ready for the normal send-and-issue; every other line — waiting, «нет на складе», a lot holding
+        less than the need — is returned unchanged for the «Довыдача» that takes it over (`remainder_of`). A kit with
+        nothing picked, or with nothing left to wait for, is refused: the normal flow applies."""
+        if self.kind is not FulfillmentKind.MAIN:
+            raise FulfillmentValidationError("«Выдать набранное» — только для основной заявки КБ; довыдачу выдают целиком")
+        if self.status not in PARTIAL_ISSUE_FROM:
+            raise FulfillmentValidationError(
+                f"«Выдать набранное» — у комплекта «Новая» или «Недоукомплектован», а заявка {self.number} — "
+                f"«{self.status.value}»"
+            )
+        if any(line.issued > 0 for line in self.lines):
+            raise FulfillmentValidationError("В заявке уже есть выданные позиции")
+        covered = tuple(line for line in self.lines if line.covered)
+        rest = tuple(line for line in self.lines if not line.covered)
+        if not covered:
+            raise FulfillmentValidationError(
+                "Нечего выдавать: ни одна позиция не набрана — привяжи партию или отметь «есть, но не заведено»"
+            )
+        if not rest:
+            raise FulfillmentValidationError(
+                "Комплект набран целиком — отметь «Укомплектован» и выдай его обычной выдачей"
+            )
+        kept = replace(
+            self, lines=covered, status=FulfillmentStatus.COMPLETE, handout_location=None, shortfall_note=None,
+            version=self.version + 1,
+        )
+        return kept, rest
+
+    @classmethod
+    def remainder_of(
+        cls,
+        main: FulfillmentRequest,
+        lines: tuple[FulfillmentLine, ...],
+        *,
+        number: str,
+        source_idempotency_key: str,
+        source_fingerprint: str,
+        created_at: datetime,
+    ) -> FulfillmentRequest:
+        """The «Довыдача» of «Выдать набранное»: the open lines of `main` move into it exactly as they are — the same
+        line ids, need, unit, «нет на складе» mark and any lot/reserve (no stock moves) — for the same project and КБ,
+        the kit's deadline and requester. «Недоукомплектован»: the kit is in work and short; an arrival binds these
+        lines like any open request's."""
+        if main.kind is not FulfillmentKind.MAIN:
+            raise FulfillmentValidationError("Довыдача — только к основной заявке КБ")
+        if not lines:
+            raise FulfillmentValidationError("В довыдачу нечего переносить")
+        if len({line.id for line in lines}) != len(lines):
+            raise FulfillmentValidationError("Идентификаторы позиций заявки должны быть уникальны")
+        known = {line.id for line in main.lines}
+        if any(line.id not in known for line in lines):
+            raise FulfillmentValidationError("Позиция заявки не найдена")
+        if any(line.covered or line.issued > 0 for line in lines):
+            raise FulfillmentValidationError("В довыдачу переносят только ненабранные позиции")
+        if not str(number).strip() or not str(source_idempotency_key).strip() or not str(source_fingerprint).strip():
+            raise FulfillmentValidationError("Номер довыдачи обязателен")
+        return cls(
+            id=uuid4(),
+            number=str(number).strip(),
+            source_idempotency_key=str(source_idempotency_key).strip(),
+            source_fingerprint=str(source_fingerprint).strip(),
+            version=1,
+            created_at=created_at,
+            requester=main.requester,
+            requester_id=main.requester_id,
+            purpose=f"{main.purpose} · Довыдача: недобор {main.number}"[:512],
+            deadline=main.deadline or created_at.date(),
+            status=FulfillmentStatus.UNDERFILLED,
+            lines=tuple(lines),
+            kind=FulfillmentKind.EXTRA,
         )
 
     def mark_returned(self, return_location: str) -> FulfillmentRequest:

@@ -467,8 +467,17 @@ class SqlAlchemyFulfillmentRepository:
                 select(FulfillmentLineRow).where(FulfillmentLineRow.request_id == request.id)
             )
         }
+        # «Выдать набранное» moves open lines of a kit into its new «Довыдача» unchanged: such a row changes its request
+        # and keeps its id (lot-binding events and logs point at it). The extra is saved before the kit drops them.
+        missing = [line.id for line in request.lines if line.id not in existing]
+        moved = {
+            row.id: row
+            for row in self.session.scalars(select(FulfillmentLineRow).where(FulfillmentLineRow.id.in_(missing)))
+        } if missing else {}
+        for row in moved.values():
+            row.request_id = request.id
         for position, line in enumerate(request.lines):
-            line_row = existing.pop(line.id, None)
+            line_row = existing.pop(line.id, None) or moved.get(line.id)
             if line_row is None:
                 line_row = FulfillmentLineRow(id=line.id, request_id=request.id)
                 self.session.add(line_row)
@@ -493,6 +502,8 @@ class SqlAlchemyFulfillmentRepository:
             line_row.absent_by = line.absent_by if line.absent_at is not None else None
         for stale in existing.values():
             self.session.delete(stale)
+        if moved:
+            self.session.flush()
 
 
     def delete(self, request_id: UUID) -> None:
