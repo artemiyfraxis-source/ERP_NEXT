@@ -293,14 +293,24 @@ class BoxLabel:
     items: tuple[tuple[str, str, str], ...]
     net: str
     dims: str
+    # Человек, которому передать груз, и его телефон (владелец 17.11: «организация и получатель — разные вещи»).
+    contact: str = ""
+    phone: str = ""
 
     def to_dict(self) -> dict:
         return {
             "shipper": self.shipper, "consignee": self.consignee, "address": self.address,
+            "contact": self.contact, "phone": self.phone,
             "project": self.project, "pl_number": self.pl_number, "place": self.place,
             "items": [{"item_index": index, "quantity": quantity, "unit": unit} for index, quantity, unit in self.items],
             "net": self.net, "dims": self.dims,
         }
+
+
+def _person(value: str) -> str:
+    """Прочерк или «самовывоз» вместо человека/телефона — на этикетке пусто."""
+    text = (value or "").strip()
+    return "" if not text.strip("-‐-―−_. ") or text.casefold() == "самовывоз" else text
 
 
 def build_box_labels(shipment: Shipment) -> list[BoxLabel]:
@@ -311,6 +321,7 @@ def build_box_labels(shipment: Shipment) -> list[BoxLabel]:
     return [
         BoxLabel(
             shipper=SHIPPER_SHORT, consignee=shipment.receiver, address=shipment.shipping_point,
+            contact=_person(shipment.contact), phone=_person(shipment.phone),
             project=", ".join(projects), pl_number=shipment.pl_number, place=f"Упаковка {box.place}/{len(boxes)}",
             items=tuple((entry.item_index, _qty(entry.quantity), units.get(entry.item_index) or "шт") for entry in box.items),
             net=box.net, dims=box.dims,

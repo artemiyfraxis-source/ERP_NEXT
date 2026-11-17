@@ -41,6 +41,9 @@ describe("buildShippingFormsHtml", () => {
     const doc = parse(buildShippingFormsHtml([dn]));
 
     expect(doc.querySelector(".brand h1")?.textContent).toBe("ОТГРУЗОЧНАЯ ВЕДОМОСТЬ");
+    // Человек в DN — «Получатель», как на экранах (владелец 17.11), не «Контактное лицо заказчика».
+    expect(doc.querySelector(".contact")?.previousElementSibling?.textContent).toContain("Получатель:");
+    expect(doc.body.textContent).not.toContain("Контактное лицо");
     expect([".customer", ".po", ".invoice", ".date", ".terms", ".shipping-address", ".hours"].map((css) => doc.querySelector(css)?.textContent))
       .toEqual(["ООО «Мегатрон»", "PO-7", "533К.10", "18.09.26", "САМОВЫВОЗ", "Москва", "9-18"]);
     const items = [...doc.querySelectorAll(".items tr")].slice(2, 3).map((line) => [...line.children].map((cell) => cell.textContent));
@@ -84,6 +87,18 @@ const label: BoxLabel = {
   pl_number: "PL228К.20.2-2", place: "Упаковка 1/2", items: [{ item_index: "КБ1", quantity: "6", unit: "шт" }, { item_index: "КБ2", quantity: "2,5", unit: "м" }],
   net: "11", dims: "32x25x21",
 };
+
+describe("buildBoxLabelsHtml — организация и получатель", () => {
+  it("prints the organization under «Организация» and the person with phone under «Получатель»", () => {
+    const doc = parse(buildBoxLabelsHtml([{ ...label, contact: "Соколов А.", phone: "+7 900" }]));
+    const captions = [...doc.querySelectorAll(".caption")].map((caption) => caption.textContent);
+    expect(captions).toContain("Организация");
+    expect(doc.querySelector(".recipient")?.textContent).toBe("ПолучательСоколов А. · +7 900");
+  });
+  it("omits the «Получатель» line when nobody is named", () => {
+    expect(parse(buildBoxLabelsHtml([label])).querySelector(".recipient")).toBeNull();
+  });
+});
 
 describe("buildBoxLabelsHtml", () => {
   it("prints one A6 label per box: shipper, consignee, project and PL, place, KB contents, weight and dims", () => {
