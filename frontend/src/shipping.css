@@ -106,6 +106,12 @@ table.ship-lines.ship-lines-compact td.ship-name { width: auto; min-width: 260px
 .ship-positions-page .data-table .grid td { font-size: 13px; padding: 5px 6px; vertical-align: top; }
 .ship-positions-page .data-table .grid th { font-size: 12px; padding-left: 6px; padding-right: 6px; }
 .ship-position-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; white-space: normal; }
+.ship-group-head { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-weight: 400; }
+.ship-group-head strong { font-variant-numeric: tabular-nums; }
+.shipping-page td:is([data-label="Создана"], [data-label="Срок"], [data-label="Отгружена"], [data-label="Дата приёмки"], [data-label="Дата УПД"]),
+.intake-journal td:is([data-label="Создана"], [data-label="Срок"], [data-label="Дата"], [data-label="Дата упаковки"], [data-label="Отгружена"], [data-label="Дата УПД"]) { font-variant-numeric: tabular-nums; }
+.ship-group-head button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+@media (pointer: coarse) { .ship-group-head button { min-height: 40px; } }
 .ship-positions-page .dt-card-group { margin-top: 12px; }
 .ship-positions-page .dt-card-group-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .ship-position-group-title { padding: 0; font: inherit; font-size: 16px; font-weight: 700; text-align: left; }
