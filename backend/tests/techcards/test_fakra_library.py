@@ -96,12 +96,15 @@ def test_every_numeric_criterion_of_the_earlier_cards_survives():
         "INS_HFM_CONTACT": ("1,05 ± 0,15 мм",),
         "PRS_HFM_SHIELD": ("k = 3,70 ± 0,05 × 3,65 ± 0,05 мм", "t = 3,45 ± 0,05 × 3,35 ± 0,05 мм",
                            "l = 3,80 ± 0,05 × 3,80 ± 0,05 мм", "n ≥ 9,9 мм", "Ø ≤ 3,60 мм", "> 120 Н"),
-        "INS_HFM_HOUSING": ("2,05 +0,15/−0,10 мм",),
+        "INS_HFM_HOUSING": ("2,05 +0,15/−0,10 мм", "> 120 Н к готовому QUAD не прикладывать"),
     }
     for code, values in expected.items():
         for value in values:
             assert value in _tolerances(code), (code, value)
     assert "Ø 3,54" in _text("PRS_HFM_SHIELD")
+    # Setup aids of the HFM tools stay a real tooling row of the preparation, not a placeholder.
+    assert any("HI009 / HI010 / HI002" in tool.name and tool.section == "Инструмент"
+               for tool in CARDS["INS_HFM_PREP"].tooling)
 
 
 def test_wrong_texts_from_the_audit_are_fixed():

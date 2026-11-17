@@ -1282,7 +1282,7 @@
       "rollback_of": "connectors-1118"
     },
     "expected_before": [
-      "b65991f8a51a7334a74136219e11056033d27fa931e25c953fb469e354ccc848"
+      "aaed4603888fadcbf1ae9e312dce71aba4107ebcaeba27e3be0590a750261664"
     ]
   },
   {
@@ -1723,7 +1723,7 @@
       "rollback_of": "connectors-1118"
     },
     "expected_before": [
-      "2632901975fe46e06dbc909deb03368f32dfded03ac59fbc67fe5e95b5d9e21f"
+      "79353efceaec1a50ae40f29292e7b66b6170ec11fca03ee186f537fc553b91af"
     ]
   },
   {
