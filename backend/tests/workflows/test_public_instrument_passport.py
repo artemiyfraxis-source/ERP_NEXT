@@ -16,7 +16,7 @@ from app.modules.production.instrument_public import public_passport
 from app.modules.production.instrument_public_html import PUBLIC_STYLE, public_passport_html
 from app.modules.production.instrument_passport import passport_pdf, public_passport_pdf
 from app.modules.production.rf_infrastructure import RfRepository
-from app.modules.production.traceability import InstrumentKind
+from app.modules.production.traceability import InstrumentKind, InstrumentStatus
 from app.shared.http_auth import authenticated_principal
 from app.shared.public_url import PublicSettings, public_passport_token, public_passport_url, public_settings, verify_passport_token
 from app.workflows import instrument_labels, instrument_public_passport as public_api
@@ -242,8 +242,8 @@ def test_projection_has_only_approved_fields_and_strict_known_provenance():
     measured = characterization(measured_file(header=header))
     projection = public_passport(replace(instrument(), storage_location="PRIVATE_STORAGE", warehouse_grn="PRIVATE_GRN", doc_designation="PRIVATE_ARTICLE"),
                                  replace(rf(), source="PRIVATE_SOURCE"), measured)
-    assert {field.name for field in fields(projection)} == {"inventory_number", "name", "serial_number", "manufacturer", "connectors", "impedance", "impedance_warning", "measurement", "verification"}
-    assert {field.name for field in fields(projection.measurement)} == {"measured_on", "traces", "instrument", "calibration", "conditions"}
+    assert {field.name for field in fields(projection)} == {"inventory_number", "name", "serial_number", "manufacturer", "connectors", "impedance", "impedance_warning", "measurement", "verification", "status", "next_control", "control_overdue", "history"}
+    assert {field.name for field in fields(projection.measurement)} == {"measured_on", "traces", "instrument", "calibration", "conditions", "chain"}
     assert "PRIVATE_" not in repr(projection)
     assert projection.measurement.instrument == "ВАЦ №26030095"
     assert projection.measurement.calibration == "АКМ №26140008"
@@ -284,10 +284,12 @@ def test_html_pdf_whitelist_escape_and_public_routes_do_not_write(production_api
         anonymous()
         html = client.get(path(identifier))
         pdf = client.get(path(identifier, ".pdf"))
+        download = client.get(path(identifier, "/measurement.s2p"))
     finally:
         event.remove(engine, "before_cursor_execute", track)
-    assert html.status_code == pdf.status_code == 200
+    assert html.status_code == pdf.status_code == download.status_code == 200
     assert "PRIVATE_" not in html.text and "PRIVATE_" not in pdf_text(pdf.content)
+    assert "PRIVATE_" not in download.text
     assert "Контролёр" not in html.text and "Контролёр" not in pdf_text(pdf.content)
     assert "&lt;script&gt;" in html.text and "<script>" not in html.text
     assert "26030095" in html.text and "26140008" in pdf_text(pdf.content)
@@ -374,3 +376,145 @@ def test_public_html_pdf_show_measurement_reference_and_card_impedance_warning(o
         assert f"<dt>{reference}</dt><dd>50 Ом</dd>" in html
     warning = "75 Ом — не для 50 Ом тракта"
     assert (warning in html) == (warning in pdf) == (warning in internal) == (ohms == 75)
+
+
+def test_public_conclusion_history_dates_and_hidden_blanks():
+    from datetime import date
+    from app.modules.production.rf_interfaces import RfDetails
+    from app.modules.production.instrument_public import PublicHistory
+    from app.modules.production.instrument_characterization import working_band
+    from tests.production.test_instrument_working_band import summary
+
+    measured = replace(summary(), comments=())
+    item = replace(instrument(), manufacturer="", status=InstrumentStatus.INACTIVE)
+    projected = public_passport(item, RfDetails(), measured,
+        history=(PublicHistory(date(2025, 11, 10), working_band(measured)),), today=date(2027, 11, 17))
+    html = public_passport_html(projected, pdf_path="/p/example.pdf")
+    pdf = pdf_text(public_passport_pdf(projected, generated=datetime(2027, 11, 17), public_url="https://erp.example.test/p/example"))
+    assert projected.name == "Переходник SMA розетка – SMA розетка, S-322"
+    for text in (html, pdf):
+        for expected in ("Заключение", "Рабочая полоса 0,01–11,8 ГГц", "КСВН ≤ 1,2, потери ≤ 0,18 дБ",
+                         "не использовать", "Следующий контроль: 16.11.2027 (через 12 мес.)",
+                         "Требуется повторный замер", "Не используется", "История контроля", "10.11.2025", "Скачать .s2p"):
+            assert expected in text
+        assert "Не указан" not in text
+        assert "Изготовитель" not in text
+        assert "Условия" not in text
+    assert projected.impedance == "50 Ом"
+    failed = public_passport(item, rf(), summary(left=(1.3,) * 4))
+    assert "Не годен для 50 Ом тракта" in public_passport_html(failed, pdf_path="/p/example.pdf")
+    assert "Не годен для 50 Ом тракта" in pdf_text(public_passport_pdf(failed, generated=datetime(2026, 11, 17)))
+
+
+@pytest.mark.parametrize("source,maker", [("https://gsm-repiteri.ru/catalog/s-322", "gsm-repiteri"),
+    ("https://planar.chel.ru/catalog", "Планар"), ("Planar", "Планар"),
+    ("PRIVATE_SOURCE", ""), ("https://planar.chel.ru.evil.test/private", "")])
+def test_manufacturer_source_publishes_only_known_label(source, maker):
+    projected = public_passport(replace(instrument(), manufacturer=""), replace(rf(), source=source), None)
+    assert projected.manufacturer == maker
+    assert source not in repr(projected) or source == maker
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "cp1251", "utf-16", "utf-16-be"])
+def test_s2p_download_sanitizes_all_comments_and_preserves_original_data_bytes(encoding):
+    from app.modules.production.instrument_public import public_measurement_download
+    from app.modules.production.vna_files import _decode
+    header = ("! VNA serial=26030095; ACM serial=26140008\r\n"
+              "! Temperatures VNA=26.5/27.1; ACM=25.3 degC\r\n"
+              "! Chain: слева СИ.009, справа СИ.008; PRIVATE_PATH C:\\Users\\PRIVATE_USER\\file.s2p\r\n"
+              "! PRIVATE_OPERATOR\r\n")
+    data = "# GHz S MA R 50\r\n0.01 .01 0 .99 0 .99 0 .02 0\r\n18 .02 0 .98 0 .98 0 .025 0\r\n"
+    original = (header + data).encode(encoding)
+    if encoding == "utf-16-be":
+        original = b"\xfe\xff" + original
+    file = replace(measured_file(), content=original)
+    measured = public_passport(instrument(), rf(), characterization(file)).measurement
+    result = public_measurement_download(original, measured)
+    decoded = _decode(result)
+    assert "PRIVATE" not in decoded
+    assert "ВАЦ №26030095" in decoded and "АКМ №26140008" in decoded
+    assert "слева СИ.009, справа СИ.008" in decoded and "26,5 / 27,1" in decoded
+    expected_bytes = data.encode(encoding.removesuffix("-sig"))
+    if encoding == "utf-16":
+        expected_bytes = data.encode("utf-16-le")
+    assert result.endswith(expected_bytes)
+    assert characterization(replace(file, content=result)).traces == characterization(file).traces
+
+
+def test_s2p_inline_comments_are_removed():
+    from app.modules.production.instrument_public import public_measurement_download
+    file = measured_file(header="! VNA serial=123; ACM serial=456\n")
+    file = replace(file, content=file.content.replace(b"0.025 0\n", b"0.025 0 ! PRIVATE_INLINE\n"))
+    projected = public_passport(instrument(), rf(), characterization(file))
+    result = public_measurement_download(file.content, projected.measurement)
+    assert b"PRIVATE" not in result
+    assert result.endswith(b"0.025 0 \n")
+
+
+def test_download_route_latest_file_history_pdf_link_and_shared_limits(production_api, monkeypatch, tmp_path):
+    client, _ = production_api
+    item, sessions = setup(client, online=False)
+    identifier = UUID(item["id"])
+    header = "! VNA serial=123; ACM serial=456\n! PRIVATE_OPERATOR\n"
+    with sessions.begin() as session:
+        for file_id, day, stop, name in ((UUID(int=1), 15, 6, "Замер ВАЦ 15.11.26.s2p"),
+            (UUID(int=2), 16, 11, "Замер ВАЦ 16.11.26.s2p"), (UUID(int=3), 17, 18, "datasheet.s2p")):
+            session.add(ProductionInstrumentFileRow(id=file_id, instrument_id=identifier, kind="Прочее", file_name=name,
+                content=measured_file(stop=stop, header=header).content, uploaded_at=datetime(2026, 11, day), uploaded_by=MASTER_ID))
+    anonymous()
+    url = path(identifier)
+    html = client.get(url)
+    pdf = client.get(url + ".pdf")
+    download = client.get(url + "/measurement.s2p")
+    assert html.status_code == pdf.status_code == download.status_code == 200
+    assert 'href="' + url + '/measurement.s2p"' in html.text
+    assert "История контроля" in html.text and "15.11.2026" in html.text and "0,01–6" in html.text
+    assert "PRIVATE" not in download.text and "11 0.02" in download.text and "18 0.02" not in download.text
+    assert download.headers["content-disposition"] == 'attachment; filename="measurement.s2p"'
+    assert download.headers["cache-control"] == "no-store"
+    reader = PdfReader(BytesIO(pdf.content))
+    links = [annotation.get_object().get("/A", {}).get("/URI", "") for page in reader.pages for annotation in page.get("/Annots", [])]
+    assert public_passport_url(identifier) + "/measurement.s2p" in links
+    monkeypatch.setattr(public_api, "PUBLIC_PASSPORT_LIMITS", public_api.PublicPassportLimits(tmp_path, views=2))
+    assert client.get(url + "/measurement.s2p").status_code == 200
+    assert client.get(url).status_code == 200
+    assert client.get(url + ".pdf").status_code == 429
+
+
+def test_download_unavailable_without_measurement_and_never_revives_older_file(production_api):
+    client, _ = production_api
+    item, sessions = setup(client, online=False)
+    identifier = UUID(item["id"])
+    anonymous()
+    url = path(identifier)
+    assert client.get(url + "/measurement.s2p").status_code == 404
+    assert "Скачать .s2p" not in client.get(url).text
+    with sessions.begin() as session:
+        for day, payload in ((16, measured_file().content), (17, b"corrupt newest")):
+            session.add(ProductionInstrumentFileRow(id=uuid4(), instrument_id=identifier, kind="Прочее",
+                file_name=f"Замер ВАЦ {day}.11.26.s2p", content=payload, uploaded_at=datetime(2026, 11, day), uploaded_by=MASTER_ID))
+    html = client.get(url)
+    assert "Замер не проведён" in html.text and "История контроля" in html.text
+    assert "Скачать .s2p" not in html.text
+    assert client.get(url + "/measurement.s2p").status_code == 404
+    wrong = url[:-1] + ("A" if url[-1] != "A" else "B")
+    assert client.get(wrong + "/measurement.s2p").status_code == 404
+
+
+def test_label_workflow_reads_the_shared_working_band(production_api):
+    client, _ = production_api
+    item, sessions = setup(client, online=False)
+    identifier = UUID(item["id"])
+    data = (b"# GHz S MA R 50\n"
+            b".01 .01 0 .99 0 .99 0 .02 0\n"
+            b"11.8 .08 0 .98 0 .98 0 .02 0\n"
+            b"12 .2 0 .1 0 .1 0 .02 0\n"
+            b"18 .01 0 .01 0 .01 0 .02 0\n")
+    with sessions.begin() as session:
+        session.add(ProductionInstrumentFileRow(id=uuid4(), instrument_id=identifier, kind="Прочее",
+            file_name="Замер ВАЦ 16.11.26.s2p", content=data, uploaded_at=datetime(2026, 11, 16), uploaded_by=MASTER_ID))
+    with sessions() as session:
+        stored = SqlAlchemyInstrumentRepository(session).get(identifier)
+        content = instrument_labels._content(stored, session)
+        assert content.value("parameters_line") == "Рабочая полоса 0,01–11,8 ГГц"
+        assert content.value("loss_line") == "КСВН ≤ 1,2 · потери ≤ 0,18 дБ"

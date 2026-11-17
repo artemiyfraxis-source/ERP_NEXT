@@ -12,6 +12,43 @@ from .traceability import InstrumentFile
 from .vna_characterization import is_characterization_file
 from .vna_files import VSWR_CEILING, VnaFileError, VnaTrace, _decode, parse_vna_traces
 
+WORKING_VSWR_LIMIT = 1.2
+
+
+@dataclass(frozen=True)
+class WorkingBand:
+    start_ghz: float
+    stop_ghz: float
+    max_loss_in_band: float
+    limit: float = WORKING_VSWR_LIMIT
+
+    @property
+    def band_line(self) -> str:
+        return f"Рабочая полоса {number(self.start_ghz)}–{number(self.stop_ghz)} ГГц"
+
+    @property
+    def limits_line(self) -> str:
+        loss = upper_two(self.max_loss_in_band) if math.isfinite(self.max_loss_in_band) else "∞"
+        return f"КСВН ≤ {number(self.limit)} · потери ≤ {loss} дБ"
+
+
+def working_band(summary, limit: float = WORKING_VSWR_LIMIT) -> WorkingBand | None:
+    """Measured continuous prefix passing both ports; never bridge a failing sample.
+
+    The boundary is the last passing sample, without interpolating unmeasured evidence.
+    Characterization and the public projection expose the same aligned trace interface.
+    """
+    first, second = summary.points("S11"), summary.points("S22")
+    stop = None
+    for (frequency, left), (other_frequency, right) in zip(first, second):
+        if frequency != other_frequency or not (1 <= left <= limit and 1 <= right <= limit):
+            break
+        stop = frequency
+    if stop is None:
+        return None
+    loss = max((loss_db(v) for f, v in summary.points("S21") if first[0][0] <= f <= stop), default=math.inf)
+    return WorkingBand(first[0][0] / 1e9, stop / 1e9, loss, limit)
+
 
 def number(value: float) -> str:
     return format(value, ".8g").replace(".", ",")

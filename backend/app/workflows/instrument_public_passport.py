@@ -8,15 +8,15 @@ from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
 
-from app.modules.production.infrastructure import SqlAlchemyInstrumentRepository
+from app.modules.production.infrastructure import SqlAlchemyInstrumentFileRepository, SqlAlchemyInstrumentRepository
+from app.modules.production.instrument_characterization import characterization, working_band
 from app.modules.production.instrument_passport import public_passport_pdf
-from app.modules.production.instrument_public import public_passport
+from app.modules.production.instrument_public import PublicHistory, public_measurement_download, public_passport
 from app.modules.production.instrument_public_html import PUBLIC_STYLE, public_passport_html
 from app.modules.production.rf_infrastructure import RfRepository
 from app.shared.clock import moscow_now
 from app.shared.public_passport_limits import PassportLimitsUnavailable, PublicPassportLimits
 from app.shared.public_url import public_passport_url, public_settings, verify_passport_token
-from .instrument_labels import _characterization
 
 router = APIRouter(prefix="/p", tags=["public-passports"])
 _STYLE_HASH = base64.b64encode(hashlib.sha256(PUBLIC_STYLE.encode()).digest()).decode()
@@ -55,7 +55,7 @@ def view_public_passport(locator: str, request: Request) -> Response:
 
 
 def _view_public_passport(locator: str, request: Request) -> Response:
-    match = re.fullmatch(r"([0-9a-f]{32})\.([A-Za-z0-9_-]{32})(\.pdf)?", locator)
+    match = re.fullmatch(r"([0-9a-f]{32})\.([A-Za-z0-9_-]{32})(\.pdf|/measurement\.s2p)?", locator)
     if match is None:
         return _missing()
     settings = public_settings()
@@ -71,15 +71,35 @@ def _view_public_passport(locator: str, request: Request) -> Response:
         if item is None:
             return _missing()
         # A full PDF pool is a temporary server condition, not a successful view or bad link.
-        with PUBLIC_PASSPORT_LIMITS.pdf_slot() if match[3] else nullcontext(True) as slot:
+        with PUBLIC_PASSPORT_LIMITS.pdf_slot() if match[3] == ".pdf" else nullcontext(True) as slot:
             if not slot:
                 return _unavailable()
             with PUBLIC_PASSPORT_LIMITS.view(instrument_id, match[2]) as allowed:
                 if not allowed:
                     return _limited()
-                projection = public_passport(item, RfRepository(session).get(item.id), _characterization(session, item.id))
-                if match[3]:
-                    content = public_passport_pdf(projection, generated=moscow_now(),
+                rf_repository = RfRepository(session)
+                files = SqlAlchemyInstrumentFileRepository(session)
+                latest = next(rf_repository.latest_characterization_file_ids([item.id]), None)
+                file = files.get(item.id, latest[1]) if latest else None
+                measured = characterization(file) if file else None
+                now = moscow_now()
+                if match[3] == "/measurement.s2p":
+                    if measured is None:
+                        return _missing()
+                    projection = public_passport(item, rf_repository.get(item.id), measured, today=now.date())
+                    return Response(public_measurement_download(file.content, projection.measurement),
+                                    media_type="application/octet-stream",
+                                    headers={**PUBLIC_HEADERS, "Content-Disposition": 'attachment; filename="measurement.s2p"'})
+                history = []
+                for file_id in rf_repository.characterization_history_file_ids(item.id):
+                    previous = files.get(item.id, file_id)
+                    if previous and (summary := characterization(previous)):
+                        history.append(PublicHistory(summary.measured_on, working_band(summary)))
+                        del summary
+                    del previous
+                projection = public_passport(item, rf_repository.get(item.id), measured, history=tuple(history), today=now.date())
+                if match[3] == ".pdf":
+                    content = public_passport_pdf(projection, generated=now,
                                                   public_url=public_passport_url(instrument_id, settings))
                     return Response(content, media_type="application/pdf",
                                     headers={**PUBLIC_HEADERS, "Content-Disposition": 'attachment; filename="passport.pdf"'})
