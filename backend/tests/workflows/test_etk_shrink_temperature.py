@@ -11,6 +11,7 @@ import pytest
 from app.modules.references.shrink_temperature import LOWER, UPPER, KIND, DOCUMENT, SOURCE_URL
 from app.modules.techcards.etk_builder import build_etk
 from app.modules.techcards.etk_derive import derive, document_diff
+from app.modules.techcards.etk_heat_shrink import kvt_passport_series
 from app.modules.techcards.operation_cards import parse_operation_library
 from app.modules.techcards.project_cards import ProjectTechcard, operation_key
 from app.workflows.etk_refresh import Context, evaluate
@@ -243,9 +244,14 @@ def test_all_unresolved_production_materials(case):
     steps = doc["operations"][0]["card"]["steps"]
     if candidates:
         assert result["display_text"] in steps[0]["text"]
-        assert all(c["label"] in result["display_text"] for c in candidates)
+        if expected["status"] == "resolved":
+            # One requirement per series, even when the catalog holds duplicate rows of it.
+            assert sum(c["label"] in result["display_text"] for c in candidates) == 1
+            assert result["display_text"].count("°C") == 1
+        else:
+            assert all(c["label"] in result["display_text"] for c in candidates)
     if expected["resolution"] == "default":
-        assert "производитель по умолчанию" in result["display_text"]
+        assert "производитель по умолчанию — КВТ " in result["display_text"]
     if expected["status"] != "resolved":
         assert "проверить" in steps[0]["text"]
     if expected["status"] == "review":
@@ -259,10 +265,10 @@ def test_production_fixture_covers_every_unresolved_group_and_operation():
 
 
 def test_same_temperature_from_different_sources_keeps_both_sources_without_a_conflict():
-    first = next(r for r in PRODUCTION_ROWS if r["Наименование"] == "ТТК 8/2 черная")
+    first = next(r for r in PRODUCTION_ROWS if r["Наименование"] == "ТТК 6/2 черная")
     second = {**first, "_reference_id": "other-source", DOCUMENT: "Другой паспорт"}
     cfg = config()
-    cfg["ops"][0].update(tutArt="ТТК 8/2мм, черная", tutName="")
+    cfg["ops"][0].update(tutArt="ТТК 6/2мм, черная", tutName="")
     result = requirements(document(cfg, first, second))[0]
     assert result["status"] == "resolved" and "reference_id" not in result
     assert len(result["candidates"]) == 2
@@ -271,7 +277,7 @@ def test_same_temperature_from_different_sources_keeps_both_sources_without_a_co
 
 
 @pytest.mark.parametrize("extra,status", [({LOWER: "bad"}, "review"),
-                                         ({LOWER: "", UPPER: "", KIND: ""}, "missing"),
+                                         ({LOWER: "", UPPER: "", KIND: ""}, "resolved"),
                                          ({KIND: ""}, "review")])
 def test_identified_row_with_bad_or_missing_temperature_does_not_borrow_another_series(extra, status):
     first = next(r for r in PRODUCTION_ROWS if r["Наименование"] == "ТУТнг 4/2 черная")
@@ -296,4 +302,62 @@ def test_kvt_reference_refresh_is_visible_and_only_revises_once():
     assert requirements(issued.document)[0]["status"] == "missing"
     assert "производитель по умолчанию" in requirements(updated.document)[0]["display_text"]
     assert evaluate(updated, ctx)[2].status == "unchanged"
+
+
+@pytest.mark.parametrize("article,series,bounds", [
+    ("ТУТ 6/3мм, черная", "ТУТнг-LS", (90, 120)),
+    ("ТУТ 4/2мм, прозрачная", "ТУТ(HF)", (80, 110)),
+    ("ТТК 6/2мм, черная", "ТТК(3:1)", (115, 140)),
+    ("ТТК 8/2мм, черная", "ТТК(4:1)", (115, 140)),
+])
+def test_empty_default_row_uses_its_series_passport_without_other_catalog_rows(article, series, bounds):
+    names = {"ТУТнг-LS": "ТУТнг 6/3 черная", "ТУТ(HF)": "ТУТ(HF) 4/2 прозрачная",
+             "ТТК(3:1)": "ТТК 6/2 черная", "ТТК(4:1)": "ТТК 8/2 черная"}
+    tube = next(r for r in PRODUCTION_ROWS if r["Наименование"] == names[series])
+    empty = {**tube, LOWER: "", UPPER: "", KIND: ""}
+    cfg = config()
+    cfg["ops"][0].update(tutArt=article, tutName=article)
+    result = requirements(document(cfg, empty))[0]
+    assert result["status"] == "resolved" and len(result["candidates"]) == 1
+    assert f"производитель по умолчанию — КВТ {series}" in result["display_text"]
+    temperature = result["temperature"]
+    assert (temperature["lower_c"], temperature["upper_c"]) == bounds
+    assert temperature["basis"] == "series_passport" and temperature["series"] == series
+    assert temperature["source_url"].endswith("psp-hskits-hstubes.pdf#page=3")
+    # The fallback is the passport value already recorded on a catalog row of the same series.
+    assert any(r.get(LOWER) == str(bounds[0]) and r.get(UPPER) == str(bounds[1])
+               and r.get(SOURCE_URL) == temperature["source_url"] and kvt_passport_series(r) == series
+               for r in PRODUCTION_ROWS)
+    assert empty[LOWER] == ""  # The reference row itself is never rewritten.
+
+
+@pytest.mark.parametrize("article,series", [("ТТК 8/2мм, черная", "ТТК(4:1)"), ("ТТК 12/4мм, черная", "ТТК(3:1)")])
+def test_generic_adhesive_tube_takes_kvt_series_by_size_ratio(article, series):
+    cfg = config()
+    cfg["ops"][0].update(tutArt=article, tutName="")
+    result = requirements(document(cfg, *PRODUCTION_ROWS))[0]
+    assert result["status"] == "resolved" and result["resolution"] == "default"
+    assert {kvt_passport_series(r) for r in PRODUCTION_ROWS
+            if r.get("_reference_id") in {c["reference_id"] for c in result["candidates"]}} == {series}
+    assert (result["temperature"]["lower_c"], result["temperature"]["upper_c"]) == (115, 140)
+    assert result["display_text"].endswith(f"производитель по умолчанию — КВТ {series}")
+
+
+def test_generic_adhesive_tube_with_another_ratio_stays_for_review():
+    cfg = config()
+    cfg["ops"][0].update(tutArt="ТТК 8/3мм, черная", tutName="")
+    result = requirements(document(cfg, *PRODUCTION_ROWS))[0]
+    assert result["status"] == "missing" and not result.get("candidates")
+
+
+@pytest.mark.parametrize("extra,status", [({LOWER: "bad"}, "review"),
+                                        ({LOWER: "95", KIND: ""}, "review"),
+                                        ({LOWER: "95", KIND: "минимальная"}, "resolved")])
+def test_default_series_passport_never_overwrites_partial_or_invalid_values(extra, status):
+    tube = next(r for r in PRODUCTION_ROWS if r["Наименование"] == "ТУТ(HF) 4/2 прозрачная")
+    cfg = config()
+    cfg["ops"][0].update(tutArt="ТУТ 4/2мм, прозрачная", tutName="")
+    result = requirements(document(cfg, {**tube, **extra}))[0]
+    assert result["status"] == status
+    assert result["candidates"][0]["temperature"].get("basis") != "series_passport"
 

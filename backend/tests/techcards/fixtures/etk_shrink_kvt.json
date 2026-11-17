@@ -7,15 +7,15 @@
       "reason": "Температура усадки материала н",
       "ops": 80,
       "expected": {
-        "status": "missing",
+        "status": "resolved",
         "resolution": "series",
         "reference_ids": [
           "f9af36a8-9688-467b-b5ab-fa0274914cb2"
         ],
         "ranges": [
           [
-            "",
-            ""
+            "80",
+            "110"
           ]
         ]
       }
@@ -38,23 +38,12 @@
       "reason": "Температура усадки материала н",
       "ops": 34,
       "expected": {
-        "status": "review",
+        "status": "resolved",
         "resolution": "default",
         "reference_ids": [
-          "2c15865f-e7e3-4edb-89b8-2478ae81ef9b",
-          "6a9201c8-9fff-44b8-8081-72746b954517",
-          "fa5c452d-e564-4b2a-9e2d-6e3f3633d27a",
-          "fbe8d4cd-843f-4fe3-b457-ad8f4789267c"
+          "2c15865f-e7e3-4edb-89b8-2478ae81ef9b"
         ],
         "ranges": [
-          [
-            "125",
-            "150"
-          ],
-          [
-            "80",
-            "110"
-          ],
           [
             "90",
             "120"
@@ -91,8 +80,6 @@
         "status": "resolved",
         "resolution": "default",
         "reference_ids": [
-          "24fb0d79-7745-4ba0-bcdc-b978f2c73aa5",
-          "a91d4f76-ec5c-4826-b644-fade533618ea",
           "cee8fee6-0339-4cb3-9dc2-79b70b6a90ee",
           "f08b8c36-e1c3-443c-aab0-6578de8c0923"
         ],
@@ -110,23 +97,12 @@
       "reason": "Температура усадки материала н",
       "ops": 12,
       "expected": {
-        "status": "review",
+        "status": "resolved",
         "resolution": "default",
         "reference_ids": [
-          "2b40b918-dafc-437f-abed-bc1bfc5ca195",
-          "34169c0d-d841-462c-875b-00a3aa766b7c",
-          "9cea9fc5-fad0-4246-9566-e707507f7949",
-          "e47646a3-df21-4e36-8e9e-14798d8b534b"
+          "2b40b918-dafc-437f-abed-bc1bfc5ca195"
         ],
         "ranges": [
-          [
-            "125",
-            "150"
-          ],
-          [
-            "80",
-            "110"
-          ],
           [
             "90",
             "120"
@@ -143,7 +119,6 @@
         "status": "resolved",
         "resolution": "default",
         "reference_ids": [
-          "448c1b2f-f569-44cf-96b4-09f79987b148",
           "c69eed48-2c21-472c-ad10-b8b03d2e6dbe"
         ],
         "ranges": [
@@ -191,23 +166,12 @@
       "reason": "Температура усадки материала н",
       "ops": 2,
       "expected": {
-        "status": "review",
+        "status": "resolved",
         "resolution": "default",
         "reference_ids": [
-          "0116ca41-a2ae-46cb-83dd-4009ba246966",
-          "14f26d3a-9ed7-42ec-8cc4-ee3e47204d34",
-          "69834793-db2a-43bb-b671-7267f47b0377",
-          "a645f379-2a73-4dbf-a0a6-8f64b4e78a14"
+          "0116ca41-a2ae-46cb-83dd-4009ba246966"
         ],
         "ranges": [
-          [
-            "125",
-            "150"
-          ],
-          [
-            "80",
-            "110"
-          ],
           [
             "90",
             "120"
@@ -259,18 +223,12 @@
       "reason": "Температура усадки материала н",
       "ops": 2,
       "expected": {
-        "status": "review",
+        "status": "resolved",
         "resolution": "default",
         "reference_ids": [
-          "62aec2c2-daa4-4dd1-9bc6-df5865436900",
-          "e5996366-8810-46f2-9cee-15d625507518",
-          "fc11df73-f15b-4918-8413-1ca443d40b01"
+          "62aec2c2-daa4-4dd1-9bc6-df5865436900"
         ],
         "ranges": [
-          [
-            "80",
-            "110"
-          ],
           [
             "90",
             "120"
@@ -296,23 +254,12 @@
       "reason": "Температура усадки материала н",
       "ops": 2,
       "expected": {
-        "status": "review",
+        "status": "resolved",
         "resolution": "default",
         "reference_ids": [
-          "6cd846c4-4e76-4488-af40-873502fed6ac",
-          "933af4c0-4a6f-4dab-9a6b-02c2bbd55e1a",
-          "a4048412-a442-4bde-9336-8a2904b64e74",
-          "f97406f1-02cf-4b24-961d-99102d92446c"
+          "6cd846c4-4e76-4488-af40-873502fed6ac"
         ],
         "ranges": [
-          [
-            "125",
-            "150"
-          ],
-          [
-            "80",
-            "110"
-          ],
           [
             "90",
             "120"

@@ -175,6 +175,20 @@ def _generic(text: str) -> bool:
     return not re.search(r"\w", rest)
 
 
+def kvt_passport_series(row: Mapping[str, Any]) -> str:
+    """Only the owner's approved default series, with their actual shrink ratio."""
+    if not _KVT.search(_key(row.get("Производитель"))):
+        return ""
+    series = _series_key(_CATALOG_NUMBER.sub("", _key(row.get("Серия"))))
+    label, ratio = {"тутнгls": ("ТУТнг-LS", 2), "тутhf": ("ТУТ(HF)", 2),
+                    "ттк31": ("ТТК(3:1)", 3), "ттк41": ("ТТК(4:1)", 4)}.get(series, ("", 0))
+    sizes = _sizes(f"{row.get('Размер до, мм', '')}/{row.get('Размер после, мм', '')}")
+    if not label or len(sizes) != 1:
+        return ""
+    before, after = next(iter(sizes))
+    return label if after > 0 and before == ratio * after else ""
+
+
 def match_shrink_material(
     material: Mapping[str, str], rows: tuple[Mapping[str, Any], ...],
 ) -> tuple[str, list[Mapping[str, Any]]]:
@@ -233,9 +247,14 @@ def match_shrink_material(
     if not family or not sizes or not _generic(text):
         return "", []
     before, after = next(iter(sizes))
-    if before <= after or after <= 0 or (family == "ТУТ" and before != 2 * after):
+    # The size ratio of the name selects the series (owner 17.11): ТТК 3:1 or 4:1, ТУТ 2:1 only.
+    ratio = before / after if after > 0 else Decimal(0)
+    if ratio not in ({Decimal(3), Decimal(4)} if family == "ТТК" else {Decimal(2)}):
         return "", []
+    default_series = (f"ТТК({int(ratio)}:1)" if family == "ТТК" else
+                      "ТУТ(HF)" if colours == {"прозр"} else "ТУТнг-LS")
     found = [row for row in kvt if compatible(row) and
+             kvt_passport_series(row) == default_series and
              _key(row.get("Клеевой слой")) == ("да" if family == "ТТК" else "нет")]
     return "default", stable(found) if colour_unambiguous(found) else []
 
@@ -258,9 +277,16 @@ def _temperature_text(temperature: Mapping[str, Any]) -> str:
 def requirement_summary(item: Mapping[str, Any]) -> str:
     """One frozen text for the operation step, screen and print, with all candidate evidence."""
     candidates = item.get("candidates") or []
+    if candidates and item.get("status") == "resolved":
+        # Duplicate catalog rows of one series show one requirement; differing sources stay visible.
+        unique: dict[str, Mapping[str, Any]] = {}
+        for candidate in candidates:
+            unique.setdefault(_temperature_text(candidate["temperature"]), candidate)
+        candidates = list(unique.values())
     if candidates:
         values = "; ".join(f"{candidate['label']}: {_temperature_text(candidate['temperature'])}" for candidate in candidates)
-        default = " — производитель по умолчанию" if item.get("resolution") == "default" else ""
+        default = (" — производитель по умолчанию — КВТ " + str(item["default_series"])
+                   if item.get("resolution") == "default" and item.get("default_series") else "")
         review = " — проверить" if item.get("status") == "review" else ""
         return values + default + review
     return _temperature_text(item.get("temperature") or {}) if item.get("status") == "resolved" else MISSING

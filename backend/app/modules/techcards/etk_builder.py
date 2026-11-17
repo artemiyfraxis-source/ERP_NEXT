@@ -2100,6 +2100,18 @@ def _resolve_card(
     parts_fields = fields.get("coaxParts") if isinstance(fields.get("coaxParts"), Mapping) else {}
     for step in card.steps:
         text = substitute(step.text)
+        if card.code.startswith("CUT_COAX") and fields.get("lengthKd"):
+            length = re.sub(r"\s*мм$", "", str(fields["lengthKd"])) + " мм"
+            text = text.replace("Задать длину отрезка L по КД", f"Задать длину реза {length}")
+            text = text.replace("длину отрезка (L)", f"длину реза {length}")
+            text = text.replace("общую длину реза", f"длину реза {length}")
+            ends = [fields[key] for key in ("coax", "coaxB") if isinstance(fields.get(key), Mapping)]
+            dimensions_known = bool(ends) and all(
+                bool(end["stripProgram"].get("boundaries")) if "stripProgram" in end
+                else all(end.get(key) for key in ("l1", "l2", "l3")) for end in ends)
+            if dimensions_known and re.search(r"разделк|ступен", text, re.IGNORECASE):
+                text = text.replace("по КД, ДИ разъёма", "по размерам сторон в этой карте")
+                text = text.replace("по КД", "по размерам сторон в этой карте")
         strip_sides = fields.get("coaxStripSides")
         if isinstance(strip_sides, list) and len(strip_sides) == 1:
             side = "А" if strip_sides[0] == "A" else "В"
@@ -2261,10 +2273,6 @@ def _coax_recipe_steps(op: Mapping[str, Any], config: Mapping[str, Any]) -> list
             "кабеля" if count % 10 in {2, 3, 4} and count % 100 not in {12, 13, 14} else "кабелей")
         quantity = _part_quantity(config)
         steps.append(f"{count} {word} на сборку: {_format(quantity)} сборок × {count} = {_format(quantity * cables)} шт.")
-    if op.get("type") == "coaxCut" and coax.get("lengthBasis") == "finished":
-        steps.append(f"Длина готового изделия L = {_format(coax.get('finishedLength'))} мм (допуск 0…+10 мм); "
-                     f"припуск А = {_format(coax.get('lPlusA'))} мм, припуск В = {_format(coax.get('lPlusB'))} мм. "
-                     f"Длина реза = {_format(coax.get('cableLength'))} мм; допуск реза 0…+5 мм.")
     if op.get("type") == "coaxCut" and op.get("stripSides"):
         for side in op["stripSides"]:
             end = coax.get(f"side{side}") or {}
@@ -2275,8 +2283,10 @@ def _coax_recipe_steps(op: Mapping[str, Any], config: Mapping[str, Any]) -> list
                 values = "; ".join(f"{item['label'].lower().replace(' / жила', '')} {item['value']} {item['tolerance']}"
                                    for item in program["boundaries"])
             else:
+                # Legacy sketches assign layers according to which dimensions exist (e.g. clamp has no L3).
+                # Keep the dimension names rather than assigning a different layer to the same number.
                 values = "; ".join(f"{name} {sizes[key]}" for key, name in
-                                   (("l1", "диэлектрик"), ("l2", "оплётка"), ("l3", "оболочка")) if sizes.get(key))
+                                   (("l1", "L1"), ("l2", "L2"), ("l3", "L3")) if sizes.get(key))
             instruction = (f"Сторона {label}: {values} мм (от торца жилы)." if values
                            else f"Сторона {label}: размеры от торца требуют проверки — согласовать разделку.")
             if end.get("kind") == "hfm":

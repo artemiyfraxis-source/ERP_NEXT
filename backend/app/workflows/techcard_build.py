@@ -49,14 +49,14 @@ from app.modules.references.equipment import inv_key, parse_inventory
 from app.modules.references.equipment_identity import ref_key
 from app.modules.references.domain import CABLE_TABS, TERMINAL_TABS, TechOperationTab, cable_key, gost_awg_map, pick_wire_row
 from app.modules.references.wire_dia import outer_by_series
-from app.modules.references.shrink_temperature import read_stored as read_shrink_temperature
+from app.modules.references.shrink_temperature import ShrinkTemperature, read_stored as read_shrink_temperature
 from app.modules.references.technology import (
     TECH_SNAPSHOT_SCHEMA_VERSION, TerminalRecord, fold_wire_section, matching_terminal_records, resolve_terminal,
     terminal_record_for_section, wire_section,
 )
 from app.modules.techcards.etk_builder import vswr_control
 from app.modules.techcards.etk_heat_shrink import (
-    is_shrink, match_shrink_material, material_association, missing_requirement, requirement_summary,
+    is_shrink, kvt_passport_series, match_shrink_material, material_association, missing_requirement, requirement_summary,
 )
 
 
@@ -218,8 +218,25 @@ def with_technology(
     return enriched, dict(refs.snapshot)
 
 
+def _shrink_evidence(row: Mapping[str, Any]) -> dict[str, Any]:
+    temperature = read_shrink_temperature(row)
+    series = kvt_passport_series(row)
+    if (not series or temperature.get("needs_review") or temperature.get("lower_c") is not None
+            or temperature.get("upper_c") is not None):
+        return temperature
+    # KVT passport p. 3, retained in tests/techcards/fixtures/etk_shrink_kvt.json.
+    # A missing size-row value may use its own series; malformed/partial values stay reviewable.
+    low, high = {"ТУТнг-LS": (90, 120), "ТУТ(HF)": (80, 110), "ТТК(3:1)": (115, 140),
+                 "ТТК(4:1)": (115, 140)}[series]
+    return {**asdict(ShrinkTemperature(
+        lower_c=low, upper_c=high, kind="диапазон",
+        source_url="https://lib.net.ru/files/passports/psp-hskits-hstubes.pdf#page=3",
+        document="КВТ. Паспорт на термоусадочные трубки", page="3", quote=f"{low}–{high}",
+    )), "basis": "series_passport", "series": series}
+
+
 def enrich_shrink_temperatures(config: Mapping[str, Any], rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
-    """Resolve catalog identity before reading temperature; freeze all KVT alternatives and their provenance."""
+    """Resolve catalog identity before temperature; freeze the selected series and its provenance."""
     enriched = deepcopy(dict(config))
     rows = tuple(rows)
 
@@ -228,7 +245,9 @@ def enrich_shrink_temperatures(config: Mapping[str, Any], rows: Iterable[Mapping
         result = missing_requirement(material)
         if not found:
             return result
-        evidence = [read_shrink_temperature(row) for row in found]
+        evidence = [_shrink_evidence(row) for row in found]
+        if resolution == "default":
+            result["default_series"] = kvt_passport_series(found[0])
         if resolution != "exact":
             result.update(resolution=resolution, candidates=[{
                 "reference_id": row.get("_reference_id", ""),

@@ -17,6 +17,10 @@ def match(text, *rows, article=""):
     return match_shrink_material({"article": article, "name": text}, tuple(rows))
 
 
+def default_row(**fields):
+    return row(**{"Наименование": "ТУТнг-LS 6/3 черная", "Серия": "ТУТнг-LS", **fields})
+
+
 @pytest.mark.parametrize("text", [
     "Трубка 83017", "КВТ ТУТ (HF)-6/3 чёрная", "ТУТ-HF-6/3 черная КВТ",
     "ТУТ (HF) 6,0/3,0 черн. КВТ Калуга",
@@ -31,7 +35,18 @@ def test_number_or_series_identifies_the_catalogue_row(text):
     "ТУТ 6/3мм, черная", "ТУТ 6,0 / 3,0 мм, чёрная", "ТУТ 6/3", "ТУТ 6/3, черная",
 ])
 def test_plain_description_uses_the_default(text):
-    assert match(text, row()) == ("default", [row()])
+    assert match(text, row(), default_row()) == ("default", [default_row()])
+
+
+@pytest.mark.parametrize("series", ["ТТ-150", "ТНТ", "ТУТ(HF)"])
+def test_generic_black_tube_never_substitutes_another_series(series):
+    assert not match("ТУТ 6/3мм черная", row(**{"Серия": series}))[1]
+
+
+def test_transparent_default_selects_hf_only():
+    hf = row(**{"Цвет": "прозрачный"})
+    ls = default_row(**{"Цвет": "прозрачный"})
+    assert match("ТУТ 6/3мм прозрачная", ls, hf) == ("default", [hf])
 
 
 @pytest.mark.parametrize("text", [
@@ -70,28 +85,48 @@ def test_absent_colour_requires_only_one_available_colour():
     assert not match("ТУТ 6/3", row(), white)[1]
     assert not match("КВТ ТУТ(HF) 6/3", row(), white)[1]
     assert not match("ТУТ 6/3", unknown)[1]
-    assert match("ТУТ 6/3мм белая", row(), white)[1] == [white]
+    default_white = default_row(**{"Цвет": "белый"})
+    assert match("ТУТ 6/3мм белая", default_row(), default_white)[1] == [default_white]
 
 
 @pytest.mark.parametrize("description,colour", [("синяя", "синий"), ("жёлто-зелёная", "жёлто-зелёный"),
                                                 ("прозр.", "прозрачный"), ("серая", "серый")])
 def test_colour_inflections_are_not_different_colours(description, colour):
-    tube = row(**{"Цвет": colour})
+    tube = (row if colour == "прозрачный" else default_row)(**{"Цвет": colour})
     assert match(f"ТУТ 6/3мм, {description}", tube)[1] == [tube]
 
 
 @pytest.mark.parametrize("size,before,after", [("4,8/1,6", "4.8", "1.6"), ("1,0/0,5", "1", "0.5")])
 def test_decimal_sizes_are_compared_numerically(size, before, after):
     family = "ТТК" if size.startswith("4") else "ТУТ"
-    tube = row(**{"Группа": family, "Клеевой слой": "да" if family == "ТТК" else "нет",
+    tube = row(**{"Серия": "ТТК(3:1)" if family == "ТТК" else "ТУТнг-LS",
+                  "Группа": family, "Клеевой слой": "да" if family == "ТТК" else "нет",
                   "Размер до, мм": before, "Размер после, мм": after})
     assert match(f"{family} {size}мм, черная", tube) == ("default", [tube])
 
 
 def test_glue_word_identifies_adhesive_family_without_a_series():
-    tube = row(**{"Группа": "ТТК", "Клеевой слой": "да"})
-    assert match("Трубка термоусадочная клеевая 6/3 черная", tube)[1] == [tube]
-    assert not match("Трубка термоусадочная клеевая 6/3 черная", row())[1]
+    tube = row(**{"Серия": "ТТК(3:1)", "Размер после, мм": "2", "Группа": "ТТК", "Клеевой слой": "да"})
+    assert match("Трубка термоусадочная клеевая 6/2 черная", tube)[1] == [tube]
+    assert not match("Трубка термоусадочная клеевая 6/2 черная", row())[1]
+
+
+@pytest.mark.parametrize("size,series", [("8/2", "ТТК(4:1)"), ("12/4", "ТТК(3:1)")])
+def test_adhesive_default_series_follows_the_size_ratio(size, series):
+    before, after = size.split("/")
+    tube = row(**{"Серия": series, "Размер до, мм": before, "Размер после, мм": after,
+                  "Группа": "ТТК", "Клеевой слой": "да"})
+    assert match(f"ТТК {size}мм черная", tube) == ("default", [tube])
+
+
+@pytest.mark.parametrize("size,series", [("6/2", "ТТК(4:1)"), ("8/2", "ТТК(3:1)"), ("6/3", "ТТК(2:1)"),
+                                       ("8/3", "ТТК(3:1)"), ("8/2", "СТТК (79826)"),
+                                       ("6/2", "ТТК2(3:1)"), ("6/2", 'ТТК "Flex"')])
+def test_adhesive_default_never_changes_ratio_or_series(size, series):
+    before, after = size.split("/")
+    tube = row(**{"Серия": series, "Размер до, мм": before, "Размер после, мм": after,
+                  "Группа": "ТТК", "Клеевой слой": "да"})
+    assert not match(f"ТТК {size}мм черная", tube)[1]
 
 
 def test_exact_identity_wins_even_for_other_makers():
