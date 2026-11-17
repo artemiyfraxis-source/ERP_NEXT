@@ -12,7 +12,7 @@ from app.modules.production.resource_assignment_infrastructure import SqlAlchemy
 from app.modules.production.resource_infrastructure import ActiveResourceRow, ResourceGenerationRow
 from app.shared.clock import moscow_now
 from tests.production.test_api import production_api  # noqa: F401
-from tests.production.test_cutting_groups import batch, issue, groups, NOW
+from tests.production.test_cutting_groups import batch, document, issue, groups, NOW
 
 
 @pytest.fixture
@@ -55,18 +55,65 @@ def test_my_execution_after_group_start(assigned):
     assert session["cutting_group_id"] == group["id"]
 
 
-def test_renamed_group_can_be_revalidated_and_started(assigned):
+def test_renamed_group_can_be_revalidated_and_started(production_api, monkeypatch):
+    from copy import deepcopy
+
+    from app.modules.production.cutting_infrastructure import CuttingMemberRow
     from app.modules.techcards.kitsets import Kitset
+    from app.workflows import rename_project as rename_cli
     from app.workflows.rename_project import rename_project
 
-    client, operator, group = assigned
+    client, operator = production_api
+    cards = []
+    for index in ("КБ1", "КБ2"):
+        doc = document()
+        doc["build_config"].update(projectNo="708К.", itemId="708К." + index)
+        for marks in (doc["build_config"]["ops"][1]["marks"], doc["operations"][1]["fields"]["coaxMarks"]):
+            for mark in marks:
+                mark["text"] = "708К." + index
+        cards.append(issue(index, doc))
+    batch(client, cards)
+    group = groups(client)[0]
+    response = client.post(f"/api/production/cutting-groups/{group['id']}/assign",
+                           json={"version": group["version"], "operator_ids": [str(operator)]})
+    assert response.status_code == 200, response.text
     with app.state.techcards_uow_factory() as uow:
         uow.kitsets.save(Kitset(project="708К.", customer="", calc_source="", assemblies=(),
                                updated_at=NOW, updated_by="Технолог", created_at=NOW))
         uow.commit()
     with app.state.production_uow_factory() as uow:
         engine = uow.session.get_bind()
-    rename_project(engine, "708К.", "709К.", apply=True)
+        before = {row.id: deepcopy(row.row_snapshot) for row in uow.session.scalars(select(CuttingMemberRow))}
+    dry_run = rename_project(engine, "708К.", "709К.")
+    assert dry_run.counts["production_cutting_members"] == 2
+    with app.state.production_uow_factory() as uow:
+        assert {row.id: row.row_snapshot for row in uow.session.scalars(select(CuttingMemberRow))} == before
+    groups_before = groups(client)
+
+    def fail_after_writes(*_args):
+        raise RuntimeError("rename interrupted")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(rename_cli, "_restore_checks", fail_after_writes)
+        with pytest.raises(RuntimeError, match="rename interrupted"):
+            rename_project(engine, "708К.", "709К.", apply=True)
+    assert groups(client) == groups_before
+    with app.state.production_uow_factory() as uow:
+        assert {row.id: row.row_snapshot for row in uow.session.scalars(select(CuttingMemberRow))} == before
+    applied = rename_project(engine, "708К.", "709К.", apply=True)
+    assert applied.counts == dry_run.counts
+    with app.state.production_uow_factory() as uow:
+        for row in uow.session.scalars(select(CuttingMemberRow)):
+            expected = deepcopy(before[row.id])
+            for mark in expected["labels"]:
+                mark["text"] = mark["text"].replace("708К.", "709К.")
+            doc = expected["document"]
+            doc["build_config"]["projectNo"] = "709К."
+            doc["build_config"]["itemId"] = doc["build_config"]["itemId"].replace("708К.", "709К.")
+            for marks in (doc["build_config"]["ops"][1]["marks"], doc["operations"][1]["fields"]["coaxMarks"]):
+                for mark in marks:
+                    mark["text"] = mark["text"].replace("708К.", "709К.")
+            assert row.row_snapshot == expected
     renamed = groups(client)[0]
     response = client.post(f"/api/production/cutting-groups/{renamed['id']}/revalidate",
                            json={"version": renamed["version"]})
