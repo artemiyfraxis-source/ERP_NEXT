@@ -4,6 +4,7 @@ import { referencesApi, type CrimpSeries, type TechOperationRecord } from "./api
 import { EquipmentCards } from "./EquipmentCards";
 import { TARGETS_KEY } from "./equipmentModel";
 import type { EquipmentTab } from "./referenceTabs";
+import { markingApi } from "./markingApi";
 
 beforeEach(() => { vi.spyOn(referencesApi, "crimpTargets").mockResolvedValue({ by_code: {} }); });
 afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); window.history.replaceState({}, "", "/"); });
@@ -41,6 +42,15 @@ it("keeps automatic additional units for measuring instruments", async () => {
   expect(screen.getByRole("button", { name: "Ещё такой же" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /Инв\. № СИ\.001.*править/ })).toBeInTheDocument();
   await waitFor(() => expect(referencesApi.crimpCodes).toHaveBeenCalled());
+});
+
+it("opens marking profiles from the equipment card only on demand", async () => {
+  vi.spyOn(markingApi, "machines").mockResolvedValue({ machines: [], printers: [] });
+  card("Оборудование", "ОБ.101");
+  expect(markingApi.machines).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Профили маркировки" }));
+  expect(await screen.findByRole("dialog", { name: "Профили маркировки" })).toBeVisible();
+  expect(await screen.findByText(/Профилей для этих экземпляров нет/)).toBeVisible();
 });
 
 function capabilities(tab: EquipmentTab, code = "A14", fail = false, fieldColumns: string[] = [TARGETS_KEY], links?: CrimpSeries[]) {

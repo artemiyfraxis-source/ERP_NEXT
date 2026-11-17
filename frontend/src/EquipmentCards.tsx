@@ -14,6 +14,7 @@ import "./equipmentPanel.css";
 import { headerLabel, valueLabel } from "./referenceLabels";
 import { EquipmentUnlinked, ServesEditor } from "./EquipmentLinks";
 import { formatDay } from "./format";
+import { MarkingProfilesWindow } from "./MarkingProfilesWindow";
 
 /** БД.ОБ: the list is one row per model (owner 12.10.2026: «дубли одного и того же свернуть»), a row opens the machine
     card in a window over the list (the pick lives in `?equipment=`) — instances with «Ещё такой же», the БД.ОП operations
@@ -119,6 +120,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
 }) {
   const [openId, setOpenId] = useState(() => focusId || new URLSearchParams(window.location.search).get("equipment") || "");
   const [busy, setBusy] = useState(false);
+  const [markingUnits, setMarkingUnits] = useState<string[]>([]);
   const [codes, setCodes] = useState<CrimpCodes | null>(null);
   const [targets, setTargets] = useState<CrimpTargets | null>(null);
   const [targetsError, setTargetsError] = useState("");
@@ -252,6 +254,8 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
         {!canEdit && pick(last.fields, "Описание") && <p className="eq-line pre-line">{pick(last.fields, "Описание")}</p>}
 
         <div className="tr-block"><h4>Экземпляры <span>{open.items.length}</span></h4>
+          {open.items.some((item) => ["ОБ.101", "ОБ.102"].includes(invOf(item))) && <button type="button" className="secondary small" aria-haspopup="dialog"
+            onClick={() => setMarkingUnits(open.items.map((item) => item.id))}>Профили маркировки</button>}
           <table className="eq-table"><thead><tr><th>Инв. №</th><th className="num">№</th><th>Расположение</th>{withCodes && <th>Код терминалов</th>}{canEdit && <th aria-label="Действия" />}</tr></thead>
             <tbody>{open.items.map((item) => <tr key={item.id}>
               <td className="tnum"><b>{typeOf(item) === APPLICATOR_TYPE ? invOf(item) || "—" : unitCell(item, INV_KEY, "Инв. №", invOf(item))}</b></td><td className="tnum num">{unitCell(item, "№", "№")}</td>
@@ -350,6 +354,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
       />}
     </div>
     {panel}
+    {markingUnits.length > 0 && <MarkingProfilesWindow equipmentIds={markingUnits} canEdit={canEdit} close={() => setMarkingUnits([])} />}
     {removal.dialog}
     {deleteId && <PageWindow label="Удалить экземпляр" width={460} close={() => setDeleteId("")}>
       <div className="panel"><p>Удалить {invOf(familyRecords.find((item) => item.id === deleteId) ?? records.find((item) => item.id === deleteId)!)}? Связанный с заданиями или оснасткой экземпляр удалить нельзя.</p>

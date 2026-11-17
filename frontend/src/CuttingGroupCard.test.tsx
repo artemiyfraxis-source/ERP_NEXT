@@ -129,14 +129,14 @@ it("refuses missing or inconsistent serials and excludes split members", () => {
   expect(cuttingRows({ ...group, rows: [{ ...group.rows[0], membership_state: "split" }] })).toHaveLength(0);
 });
 
-it("loads the combined labels on demand and prints the complete table once", async () => {
+it("loads the combined labels on demand and keeps the complete paper list separate", async () => {
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ serial: { first: 1, last: 15 } }));
   render(<CuttingGroupCard group={group} readOnly={false} renderInstruction={() => null} />);
   expect(fetch).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Этикетки группы" }));
   expect(await screen.findByText("Этикетки: 68 видов, 180 шт.")).toBeTruthy();
   expect(fetch).toHaveBeenCalledTimes(4);
-  fireEvent.click(screen.getByRole("button", { name: "Печатать все" }));
+  fireEvent.click(screen.getByRole("button", { name: "Список / PDF" }));
   expect(openPrintDocument).toHaveBeenCalledTimes(1);
   const pages = vi.mocked(openPrintDocument).mock.calls[0][1];
   expect(pages[0].blocks[0]).toHaveProperty("table.rows.length", 68);
