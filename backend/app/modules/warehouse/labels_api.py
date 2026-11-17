@@ -26,7 +26,7 @@ from __future__ import annotations
 import base64
 from collections.abc import Callable
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, Security
@@ -40,7 +40,8 @@ from app.shared.http_auth import (
 
 from .api import warehouse_uow_factory
 from .application import UnitOfWork
-from .label_jobs import JobFinished, agent_status, claim, report
+from .label_jobs import JobFinished, LabelJobRow, agent_status, claim, claim_marking, report, report_marking
+from .scan_jobs import AgentMachineRefused, AgentTokenRow, agent_machine
 from .label_templates import StaleTemplate
 from .labels.settings import CODE_TYPE_LABELS, PrintSettings
 from .labels.template import FORMATS, TEMPLATE_KINDS, lot_content
@@ -72,11 +73,18 @@ class PrintPayload(BaseModel):
 class ClaimPayload(BaseModel):
     printer: str = Field(default="", max_length=255)
     host: str = Field(default="", max_length=255)
+    machine_id: str = Field(default="", max_length=80)
+    capabilities: list[Literal["tspl", "gdi_png"]] | None = Field(default=None, max_length=2)
 
 
 class ResultPayload(BaseModel):
-    ok: bool
+    ok: bool | None = None
     error: str = ""
+    machine_id: str = Field(default="", max_length=80)
+    attempt: str | None = Field(default=None, max_length=36)
+    outcome: Literal["spooled", "failed", "unknown"] | None = None
+    message: str = Field(default="", max_length=2000)
+    spool_job_id: str | int | None = None
 
 
 def agent_principal(
@@ -290,19 +298,37 @@ def preview_template(
 
 
 @router.post("/labels/agent/claim")
+@router.post("/labels/jobs/claim")
 def agent_claim(
     payload: ClaimPayload,
     _agent: Annotated[Principal, Depends(agent_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: UowFactory,
 ) -> dict:
-    job = claim(uow_factory(), printer=payload.printer, host=payload.host, now=now)
+    if payload.capabilities is not None or payload.machine_id:
+        try:
+            machine = agent_machine(uow_factory(), _agent.actor.id, payload.machine_id)
+        except AgentMachineRefused as error:
+            raise HTTPException(403, str(error)) from error
+        capabilities = payload.capabilities if payload.capabilities is not None else ["tspl"]
+        if "gdi_png" in capabilities:
+            marking = claim_marking(uow_factory(), machine_id=machine, token_id=_agent.actor.id, now=now)
+            if marking:
+                return {"job": marking}
+        if "tspl" not in capabilities:
+            return {"job": None}
+        from .devices import printer_online
+        with uow_factory() as uow:
+            if not printer_online(uow.session, machine, payload.printer, now, "tspl"):
+                return {"job": None}
+    job = claim(uow_factory(), printer=payload.printer, host=payload.host, now=now, token_id=_agent.actor.id)
     if job is None:
         return {"job": None}
     return {"job": {"id": str(job.id), "copies": job.copies, "tspl_b64": base64.b64encode(job.tspl).decode("ascii")}}
 
 
 @router.post("/labels/agent/jobs/{job_id}/result")
+@router.post("/labels/jobs/{job_id}/result")
 def agent_result(
     job_id: UUID,
     payload: ResultPayload,
@@ -311,11 +337,28 @@ def agent_result(
     uow_factory: UowFactory,
 ) -> dict:
     try:
-        report(uow_factory(), job_id, ok=payload.ok, error=payload.error, now=now)
+        with uow_factory() as uow:
+            row = uow.session.get(LabelJobRow, job_id)
+            marking = row is not None and row.format == "gdi_png"
+            token = uow.session.get(AgentTokenRow, _agent.actor.id)
+            bound_machine = token.machine_id if token else ""
+        if marking or payload.outcome is not None or payload.attempt is not None:
+            if payload.outcome is None or not payload.attempt:
+                raise HTTPException(422, "Нужны результат и номер попытки печати")
+            machine = agent_machine(uow_factory(), _agent.actor.id, payload.machine_id or bound_machine)
+            report_marking(uow_factory(), job_id, machine_id=machine, token_id=_agent.actor.id,
+                attempt=payload.attempt, outcome=payload.outcome, message=payload.message,
+                spool_job_id=payload.spool_job_id, now=now)
+        else:
+            if payload.ok is None:
+                raise HTTPException(422, "Нужен результат печати")
+            report(uow_factory(), job_id, ok=payload.ok, error=payload.error, now=now, token_id=_agent.actor.id)
     except KeyError as error:
         raise HTTPException(status_code=404, detail=error.args[0]) from error
     except JobFinished as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    except (AgentMachineRefused, PermissionError) as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
     return {"ok": True}
 
 

@@ -75,7 +75,7 @@ from .modules.purchasing import api_settings as purchasing_settings_api
 from .modules.purchasing import api_suppliers as purchasing_suppliers_api
 from .workflows import finished_goods_api
 from .workflows import production_intake_api
-from .workflows import coax_vswr_api, instrument_from_stock, instrument_labels
+from .workflows import coax_vswr_api, instrument_from_stock, instrument_labels, marking_labels
 from .modules.production import rf_interfaces_api
 from .workflows import vna_plan_api
 from .workflows import vna_measurement_api
@@ -185,6 +185,7 @@ app.include_router(vna_plan_api.router)
 app.include_router(vna_measurement_api.router)
 app.include_router(instrument_from_stock.router)
 app.include_router(instrument_labels.router)
+app.include_router(marking_labels.router)
 
 _equipment_enabled = equipment_setup_enabled()
 if database_url := os.getenv("ERP_DATABASE_URL"):

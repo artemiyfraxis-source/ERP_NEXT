@@ -1105,12 +1105,22 @@ def issue_mark_serials(
     («Печать надписей», «Печать / PDF») или переписать с экрана, и это след работы (`_has_work`): ни отмена при снятии
     последнего исполнителя, ни освобождение номеров при отмене такого задания уже не сработают."""
     with uow:
-        tasks = uow.production.for_project(task.project)
-        found = mark_serial_range(task, tasks, uow.production.mark_events([item.id for item in tasks]))
-        if found is not None and numbered and task.id not in uow.production.marks_issued([task.id]):
-            _audit(task, MARKS_ISSUED_EVENT, actor, now, {"first": found[0], "last": found[1]}, uow)
-            uow.commit()
+        uow.production.lock(task.id)
+        task = uow.production.get(task.id)
+        if task is None:
+            raise ProductionValidationError("Задание не найдено")
+        found = issue_mark_serials_in(task, numbered, actor, now, uow)
+        uow.commit()
         return found
+
+
+def issue_mark_serials_in(task, numbered, actor, now, uow):
+    """Caller holds the project/task locks; issuance shares its enqueue transaction."""
+    tasks = uow.production.for_project(task.project)
+    found = mark_serial_range(task, tasks, uow.production.mark_events([item.id for item in tasks]))
+    if found is not None and numbered and task.id not in uow.production.marks_issued([task.id]):
+        _audit(task, MARKS_ISSUED_EVENT, actor, now, {"first": found[0], "last": found[1]}, uow)
+    return found
 
 
 def replace_production_calendar(command: ReplaceProductionCalendarCommand, uow: UnitOfWork) -> None:

@@ -40,6 +40,44 @@ class VnaBindingRow(Base):
     machine_id: Mapped[str] = mapped_column(String(80), ForeignKey("warehouse_scan_agents.machine_id"), nullable=False)
 
 
+class PrinterRow(Base):
+    """Exact Windows queue identity, independent of the singleton warehouse heartbeat."""
+    __tablename__ = "warehouse_agent_printers"
+    __table_args__ = (
+        CheckConstraint("kind IN ('tspl', 'gdi_png')", name="ck_agent_printer_kind"),
+        CheckConstraint("trim(name) <> ''", name="ck_agent_printer_name"),
+    )
+    machine_id: Mapped[str] = mapped_column(String(80), ForeignKey("warehouse_scan_agents.machine_id", ondelete="CASCADE"), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), primary_key=True)
+    driver: Mapped[str] = mapped_column(String(255), nullable=False)
+    port: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    present: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    queue_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+
+def printer_heartbeat(uow, machine_id, printers, now):
+    with uow:
+        session = _session(uow)
+        session.execute(update(PrinterRow).where(PrinterRow.machine_id == machine_id).values(present=False))
+        for item in printers:
+            row = session.get(PrinterRow, (machine_id, item["name"]))
+            if row is None:
+                row = PrinterRow(machine_id=machine_id, name=item["name"])
+                session.add(row)
+            row.driver, row.port, row.kind = item["driver"], item["port"], item["kind"]
+            row.present, row.last_seen = item["present"], now
+        uow.commit()
+
+
+def printer_online(session, machine_id, name, now, kind="gdi_png"):
+    return session.scalar(select(PrinterRow).join(ScanAgentRow).where(
+        PrinterRow.machine_id == machine_id, PrinterRow.name == name, PrinterRow.kind == kind,
+        PrinterRow.present.is_(True), PrinterRow.last_seen >= now - LIVE_FOR,
+        ScanAgentRow.legacy.is_(False)))
+
+
 class VnaControlRow(Base):
     """Separate opt-in protocol; capture capability never implies permission to write."""
 

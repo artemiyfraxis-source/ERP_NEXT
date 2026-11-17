@@ -5,21 +5,25 @@ The TSC MB341 hangs on USB at the warehouse Windows PC, the ERP runs in Docker o
 print agent on the warehouse PC (an API token with the scope `labels:print`) claims the oldest job, sends the bytes to
 the printer once (the copies are inside the job: `PRINT <copies>,1`) and reports the result.
 
-Status machine, held by CHECK constraints (migration 0141) and by the conditional UPDATEs below:
+TSPL status machine, held by CHECK constraints and the conditional UPDATEs below:
     pending ──claim──▶ taken ──result ok──▶ printed
                          │  └──result not ok──▶ failed
                          └─ lease expired ─▶ claimed again (a duplicate label beats a lost one)
-A job never goes back to pending; printed and failed are final. Finished jobs older than 30 days are purged on claim.
-`warehouse_label_agent` is the agent's single-row heartbeat: when it was last seen, from which PC, which printer."""
+A job never goes back to pending. Finished TSPL jobs older than 30 days are purged on claim.
+Godex marking (migration 0189) uses an exact machine/queue, immutable PNG and attempt token;
+spool acceptance is `spooled`, while expiration becomes `unknown` and pauses that printer until reconciliation.
+Marking history is retained. `warehouse_label_agent` remains the warehouse TSPL heartbeat only."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import base64
+import hashlib
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
-    CheckConstraint, DateTime, Index, Integer, LargeBinary, String, Text, Uuid, and_, delete, func, or_, select, update,
+    CheckConstraint, DateTime, Float, ForeignKey, ForeignKeyConstraint, Index, Integer, JSON, LargeBinary, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, update,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
@@ -43,28 +47,39 @@ class LabelJobRow(Base):
     __tablename__ = "warehouse_label_jobs"
     __table_args__ = (
         # 'sample' first: the CI seeder takes the first value of an IN list, and a 'lot' job needs its lot.
-        CheckConstraint("kind IN ('sample', 'lot', 'instrument')", name="ck_warehouse_label_jobs_kind"),
+        CheckConstraint("kind IN ('sample', 'lot', 'instrument', 'marking')", name="ck_warehouse_label_jobs_kind"),
         CheckConstraint("lot_id IS NULL OR kind = 'lot'", name="ck_warehouse_label_jobs_sample_no_lot"),
         CheckConstraint("kind <> 'lot' OR lot_id IS NOT NULL", name="ck_warehouse_label_jobs_lot"),
         CheckConstraint("copies >= 1 AND copies <= 50", name="ck_warehouse_label_jobs_copies"),
-        CheckConstraint("length(tspl) > 0", name="ck_warehouse_label_jobs_tspl"),
-        CheckConstraint("status IN ('pending', 'taken', 'printed', 'failed')", name="ck_warehouse_label_jobs_status"),
+        CheckConstraint("(format = 'tspl' AND length(tspl) > 0) OR (format = 'gdi_png' AND length(png) > 0)", name="ck_warehouse_label_jobs_tspl"),
+        CheckConstraint("status IN ('pending', 'taken', 'printed', 'failed', 'spooled', 'unknown')", name="ck_warehouse_label_jobs_status"),
         CheckConstraint("taken_at IS NULL OR status <> 'pending'", name="ck_warehouse_label_jobs_pending_untaken"),
         CheckConstraint("status = 'pending' OR taken_at IS NOT NULL", name="ck_warehouse_label_jobs_taken_at"),
         CheckConstraint("lease_until IS NULL OR status = 'taken'", name="ck_warehouse_label_jobs_lease_only_taken"),
         CheckConstraint("status <> 'taken' OR lease_until IS NOT NULL", name="ck_warehouse_label_jobs_taken_lease"),
         CheckConstraint("lease_until IS NULL OR lease_until > taken_at", name="ck_warehouse_label_jobs_lease_after"),
         CheckConstraint(
-            "finished_at IS NULL OR status = 'printed' OR status = 'failed'",
+            "finished_at IS NULL OR status IN ('printed', 'failed', 'spooled', 'unknown')",
             name="ck_warehouse_label_jobs_finished_only_final",
         ),
         CheckConstraint(
             "status = 'pending' OR status = 'taken' OR finished_at IS NOT NULL",
             name="ck_warehouse_label_jobs_final_finished",
         ),
-        CheckConstraint("error IS NULL OR status = 'failed'", name="ck_warehouse_label_jobs_error_only_failed"),
+        CheckConstraint("error IS NULL OR status IN ('failed', 'unknown')", name="ck_warehouse_label_jobs_error_only_failed"),
         CheckConstraint("status <> 'failed' OR error IS NOT NULL", name="ck_warehouse_label_jobs_failed_error"),
+        CheckConstraint("(format = 'tspl' AND kind <> 'marking' AND batch_id IS NULL AND png IS NULL AND status NOT IN ('spooled', 'unknown')) OR "
+                        "(format = 'gdi_png' AND kind = 'marking' AND copies = 1 AND png IS NOT NULL AND length(png) BETWEEN 1 AND 2097152 "
+                        "AND target_machine_id IS NOT NULL AND target_printer IS NOT NULL AND trim(target_printer) <> '' "
+                        "AND batch_id IS NOT NULL AND sequence IS NOT NULL AND sequence >= 1 "
+                        "AND width_mm IS NOT NULL AND width_mm BETWEEN 5 AND 150 AND height_mm IS NOT NULL AND height_mm BETWEEN 5 AND 150 "
+                        "AND orientation IS NOT NULL AND orientation IN ('portrait', 'landscape') AND status <> 'printed')", name="ck_label_job_payload"),
+        CheckConstraint("format <> 'gdi_png' OR status = 'pending' OR (attempt IS NOT NULL AND claim_token_id IS NOT NULL)", name="ck_label_job_attempt"),
+        UniqueConstraint("batch_id", "sequence", name="uq_label_job_sequence"),
+        ForeignKeyConstraint(["target_machine_id", "target_printer"], ["warehouse_agent_printers.machine_id", "warehouse_agent_printers.name"],
+                             name="fk_label_job_printer", ondelete="RESTRICT"),
         Index("ix_warehouse_label_jobs_status_created", "status", "created_at"),
+        Index("ix_label_jobs_target", "target_machine_id", "target_printer", "status"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
@@ -79,6 +94,18 @@ class LabelJobRow(Base):
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    format: Mapped[str] = mapped_column(String(16), nullable=False, default="tspl", server_default="tspl")
+    png: Mapped[bytes | None] = mapped_column(LargeBinary)
+    target_machine_id: Mapped[str | None] = mapped_column(String(80), ForeignKey("warehouse_scan_agents.machine_id", ondelete="RESTRICT"))
+    target_printer: Mapped[str | None] = mapped_column(String(255))
+    width_mm: Mapped[float | None] = mapped_column(Float)
+    height_mm: Mapped[float | None] = mapped_column(Float)
+    orientation: Mapped[str | None] = mapped_column(String(16))
+    batch_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("warehouse_marking_batches.id", ondelete="RESTRICT"))
+    sequence: Mapped[int | None] = mapped_column(Integer)
+    attempt: Mapped[str | None] = mapped_column(String(36))
+    claim_token_id: Mapped[UUID | None] = mapped_column(Uuid)
+    receipt: Mapped[dict | None] = mapped_column(JSON)
 
 
 class LabelAgentRow(Base):
@@ -92,6 +119,7 @@ class LabelAgentRow(Base):
     host: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     printer: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     last_error: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    token_id: Mapped[UUID | None] = mapped_column(Uuid)
 
 
 @dataclass(frozen=True)
@@ -163,19 +191,44 @@ def _touch_agent(session: Session, now: datetime, *, host: str | None = None, pr
         row.last_error = last_error
 
 
-def claim(uow, *, printer: str, host: str, now: datetime) -> ClaimedJob | None:
+def claim(uow, *, printer: str, host: str, now: datetime, token_id: UUID | None = None) -> ClaimedJob | None:
     """The oldest pending job, or a taken one whose lease ran out, becomes taken for LEASE. The heartbeat is written
     whether a job is there or not; finished jobs past KEEP_FINISHED are purged on the way."""
     with uow:
         session = _session(uow)
+        agent = session.scalar(select(LabelAgentRow).where(LabelAgentRow.id == 1).with_for_update())
+        if token_id is not None:
+            from .devices import PrinterRow
+            from .scan_jobs import AgentTokenRow
+
+            enrolled = session.get(AgentTokenRow, token_id)
+            device = session.get(PrinterRow, (enrolled.machine_id, printer.strip())) if enrolled else None
+            if enrolled and (enrolled.retired or (device is not None and device.kind != "tspl")):
+                return None
+            if agent and agent.token_id not in (None, token_id):
+                old, new = session.get(AgentTokenRow, agent.token_id), session.get(AgentTokenRow, token_id)
+                if old and new and old.retired and not new.retired and old.machine_id == new.machine_id:
+                    agent.token_id = token_id
+            if agent and (agent.token_id not in (None, token_id) or
+                          (agent.printer and agent.printer != printer.strip()) or
+                          (agent.host and agent.host != host.strip())):
+                return None
+            if not printer.strip():
+                return None
         _touch_agent(session, now, host=host.strip(), printer=printer.strip())
+        if token_id is not None:
+            session.flush()
+            pinned = session.execute(update(LabelAgentRow).where(LabelAgentRow.id == 1,
+                or_(LabelAgentRow.token_id.is_(None), LabelAgentRow.token_id == token_id)).values(token_id=token_id))
+            if pinned.rowcount != 1:
+                return None
         session.execute(delete(LabelJobRow).where(
-            LabelJobRow.status.in_(FINISHED_STATUSES), LabelJobRow.finished_at < now - KEEP_FINISHED,
+            LabelJobRow.format == "tspl", LabelJobRow.status.in_(FINISHED_STATUSES), LabelJobRow.finished_at < now - KEEP_FINISHED,
         ))
         claimed = None
         for _attempt in range(5):  # another agent may take the same row between the read and the write
             candidate = session.scalar(
-                select(LabelJobRow.id).where(_claimable(now))
+                select(LabelJobRow.id).where(_claimable(now), LabelJobRow.format == "tspl")
                 .order_by(LabelJobRow.created_at, LabelJobRow.id).limit(1)
                 .with_for_update(skip_locked=True)
             )
@@ -183,7 +236,7 @@ def claim(uow, *, printer: str, host: str, now: datetime) -> ClaimedJob | None:
                 break
             taken = session.execute(
                 update(LabelJobRow).where(LabelJobRow.id == candidate, _claimable(now))
-                .values(status=TAKEN, taken_at=now, lease_until=now + LEASE)
+                .values(status=TAKEN, taken_at=now, lease_until=now + LEASE, claim_token_id=token_id)
                 .execution_options(synchronize_session=False)
             )
             if taken.rowcount == 1:
@@ -196,14 +249,17 @@ def claim(uow, *, printer: str, host: str, now: datetime) -> ClaimedJob | None:
     return claimed
 
 
-def report(uow, job_id: UUID, *, ok: bool, error: str, now: datetime) -> None:
+def report(uow, job_id: UUID, *, ok: bool, error: str, now: datetime, token_id: UUID | None = None) -> None:
     """A taken job's result: printed, or failed with the agent's reason. KeyError — no such job; JobFinished — its
     result is already in (the job is final)."""
     reason = None if ok else (" ".join(error.split())[:ERROR_MAX] or NO_REASON)
     with uow:
         session = _session(uow)
+        row = session.get(LabelJobRow, job_id)
+        if row is not None and (row.format != "tspl" or (token_id is not None and row.claim_token_id not in (None, token_id))):
+            raise JobFinished("Задание выдано другому агенту или требует результата с номером попытки")
         done = session.execute(
-            update(LabelJobRow).where(LabelJobRow.id == job_id, LabelJobRow.status == TAKEN)
+            update(LabelJobRow).where(LabelJobRow.id == job_id, LabelJobRow.status == TAKEN, LabelJobRow.format == "tspl")
             .values(status=PRINTED if ok else FAILED, finished_at=now, lease_until=None, error=reason)
             .execution_options(synchronize_session=False)
         )
@@ -221,6 +277,95 @@ def _moment(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
+def add_marking_job(session, *, batch_id, sequence, png, geometry, machine_id, printer, actor, now):
+    identifier = uuid4()
+    session.add(LabelJobRow(id=identifier, created_at=now, created_by=actor.name[:255], kind="marking", copies=1,
+        tspl=b"", format="gdi_png", png=png, status=PENDING, batch_id=batch_id, sequence=sequence,
+        target_machine_id=machine_id, target_printer=printer, width_mm=geometry["width_mm"],
+        height_mm=geometry["height_mm"], orientation=geometry["orientation"]))
+    return identifier
+
+
+def expire_marking(session, now):
+    session.execute(update(LabelJobRow).where(LabelJobRow.format == "gdi_png", LabelJobRow.status == TAKEN,
+        LabelJobRow.lease_until < now).values(status="unknown", lease_until=None, finished_at=now,
+            error="Агент не подтвердил результат — проверьте принтер перед продолжением"))
+
+
+def claim_marking(uow, *, machine_id, token_id, now):
+    from .devices import PrinterRow
+    from .scan_agents import LIVE_FOR
+
+    with uow:
+        session = _session(uow)
+        expire_marking(session, now)
+        printers = session.scalars(select(PrinterRow).where(PrinterRow.machine_id == machine_id,
+            PrinterRow.kind == "gdi_png", PrinterRow.present.is_(True), PrinterRow.last_seen >= now - LIVE_FOR)
+            .order_by(PrinterRow.name).with_for_update()).all()
+        for printer in printers:
+            # Row locking handles PostgreSQL. CAS also arbitrates engines without FOR UPDATE.
+            version = printer.queue_version
+            changed = session.execute(update(PrinterRow).where(PrinterRow.machine_id == machine_id,
+                PrinterRow.name == printer.name, PrinterRow.queue_version == version)
+                .values(queue_version=version + 1).execution_options(synchronize_session=False))
+            if changed.rowcount != 1:
+                continue
+            target = (LabelJobRow.format == "gdi_png", LabelJobRow.target_machine_id == machine_id,
+                      LabelJobRow.target_printer == printer.name)
+            if session.scalar(select(LabelJobRow.id).where(*target, LabelJobRow.status.in_((TAKEN, "unknown"))).limit(1)):
+                continue
+            started_batches = select(LabelJobRow.batch_id).where(*target, LabelJobRow.status != PENDING)
+            job = session.scalar(select(LabelJobRow).where(*target, LabelJobRow.status == PENDING)
+                .order_by(LabelJobRow.batch_id.in_(started_batches).desc(), LabelJobRow.created_at,
+                          LabelJobRow.batch_id, LabelJobRow.sequence).limit(1).with_for_update())
+            if job is None:
+                continue
+            attempt = str(uuid4())
+            taken = session.execute(update(LabelJobRow).where(LabelJobRow.id == job.id, LabelJobRow.status == PENDING)
+                .values(status=TAKEN, taken_at=now, lease_until=now + LEASE, attempt=attempt, claim_token_id=token_id))
+            if taken.rowcount != 1:
+                continue
+            result = {"id": str(job.id), "attempt": attempt, "format": "gdi_png", "printer": printer.name,
+                      "width_mm": job.width_mm, "height_mm": job.height_mm, "orientation": job.orientation,
+                      "dpi": 300, "copies": 1, "png_b64": base64.b64encode(job.png).decode("ascii"),
+                      "sha256": hashlib.sha256(job.png).hexdigest()}
+            uow.commit()
+            return result
+        uow.commit()
+    return None
+
+
+def report_marking(uow, job_id, *, machine_id, token_id, attempt, outcome, message, spool_job_id, now):
+    with uow:
+        session = _session(uow)
+        row = session.scalar(select(LabelJobRow).where(LabelJobRow.id == job_id).with_for_update())
+        if row is None:
+            raise KeyError("Задание печати не найдено")
+        if row.target_machine_id != machine_id or row.claim_token_id != token_id:
+            raise PermissionError("Задание выдано другому агенту")
+        if row.format != "gdi_png" or row.attempt != attempt:
+            raise JobFinished("Попытка печати устарела")
+        receipt = {"outcome": outcome, "message": message[:ERROR_MAX], "spool_job_id": spool_job_id}
+        if row.receipt == receipt:
+            return
+        if row.status != TAKEN:
+            raise JobFinished("Результат уже записан или требуется проверка оператором")
+        lease = row.lease_until.replace(tzinfo=now.tzinfo) if row.lease_until.tzinfo is None else row.lease_until
+        if lease < now:
+            expire_marking(session, now)
+            uow.commit()
+            raise JobFinished("Результат неизвестен — требуется проверка оператором")
+        if outcome not in ("spooled", "failed", "unknown"):
+            raise ValueError("Неизвестный результат печати")
+        changed = session.execute(update(LabelJobRow).where(LabelJobRow.id == job_id,
+            LabelJobRow.status == TAKEN, LabelJobRow.attempt == attempt, LabelJobRow.claim_token_id == token_id)
+            .values(status=outcome, lease_until=None, finished_at=now, receipt=receipt,
+                    error=(message[:ERROR_MAX] or NO_REASON) if outcome in ("failed", "unknown") else None))
+        if changed.rowcount != 1:
+            raise JobFinished("Результат уже записан")
+        uow.commit()
+
+
 def agent_status(uow) -> dict:
     """What «Оборудование» shows about the printer: the agent's last call, the queue and how the last job ended."""
     with uow:
@@ -230,11 +375,11 @@ def agent_status(uow) -> dict:
             .where(LabelAgentRow.id == 1)
         ).first()
         queue = session.scalar(
-            select(func.count()).select_from(LabelJobRow).where(LabelJobRow.status.in_(OPEN_STATUSES))
+            select(func.count()).select_from(LabelJobRow).where(LabelJobRow.status.in_(OPEN_STATUSES), LabelJobRow.format == "tspl")
         )
         last = session.execute(
             select(LabelJobRow.status, LabelJobRow.finished_at, LabelJobRow.error)
-            .where(LabelJobRow.status.in_(FINISHED_STATUSES))
+            .where(LabelJobRow.status.in_(FINISHED_STATUSES), LabelJobRow.format == "tspl")
             .order_by(LabelJobRow.finished_at.desc(), LabelJobRow.id.desc()).limit(1)
         ).first()
     return {
