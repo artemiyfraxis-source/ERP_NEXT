@@ -23,9 +23,8 @@ BASE = "/api/production/instruments"
 NOW = datetime(2026, 9, 22, 9)
 
 
-@pytest.mark.parametrize("serial,prefix", [("ADP-ss-26-034", "№ "), ("LOAD-s-26-110", "№ "),
-    ("SI-26-001", "№ "), ("ACM-kk-26-104", "№ "), ("KIT-26-003", "№ "),
-    ("ФР-034", "№ "), ("N8B139", "Зав. № "), ("26030095", "Зав. № "), ("ADP-ss-26-34", "Зав. № ")])
+@pytest.mark.parametrize("serial,prefix", [("S-322.1", "Зав. № "), ("ADP-ss-26-034", "Зав. № "),
+    ("N8B139", "Зав. № "), ("26030095", "Зав. № ")])  # owner 18.11: every serial reads «Зав. №»
 def test_label_workflow_classifies_new_legacy_and_vendor_serials(serial, prefix):
     item = MeasurementInstrument(id=uuid4(), version=1, inventory_number="СИ.034", name="Переходник",
         instrument_type="Принадлежность", kind=InstrumentKind.ACCESSORY, status=InstrumentStatus.ACTIVE,
@@ -251,13 +250,13 @@ def test_latest_attachment_recomputes_label_and_passport(production_api):
             return instrument_labels._content(SqlAlchemyInstrumentRepository(session).get(UUID(item["id"])), session)
     assert content().value("parameters_line") == "Не измерен"
     upload(measured_file(stop=18), 1)
-    assert content().value("parameters_line") == "Применять до 18 ГГц"
+    assert content().value("range_line") == "Частотный диапазон 0–18 ГГц"
     before = client.get(f"{BASE}/{item['id']}/label.png").content
     upload(measured_file(stop=11), 2)
-    assert content().value("parameters_line") == "Применять до 6 ГГц"
+    assert content().value("range_line") == "Частотный диапазон 0–11 ГГц"
     assert before != client.get(f"{BASE}/{item['id']}/label.png").content
     upload(replace(measured_file(stop=6), file_name="unrelated.s2p"), 3)
-    assert content().value("parameters_line") == "Применять до 6 ГГц"
+    assert content().value("range_line") == "Частотный диапазон 0–11 ГГц"
     upload(replace(measured_file(), content=b"invalid"), 4)
     assert content().value("parameters_line") == "Не измерен"
 

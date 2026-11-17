@@ -66,12 +66,17 @@ FIELDS: dict[str, dict[str, str]] = {
     },
     "instrument": {
         "connector_line": "Разъёмы / краткое название",
-        "parameters_line": "КСВН и диапазон замера",
+        "range_line": "Частотный диапазон",
+        "table_bands": "Таблица: диапазоны, ГГц",
+        "table_vswr": "Таблица: КСВН по диапазонам",
+        "table_loss": "Таблица: потери по диапазонам",
+        "parameters_line": "Частотный диапазон (прежнее поле)",
         "loss_line": "Потери",
         "measurement_date": "Дата замера",
         "impedance_warning": "Предупреждение о сопротивлении",
         "footer_line": "Поверка / сопротивление",
         "inventory_number": "Инвентарный номер",
+        "manufacturer": "Производитель",
         "name": "Разъёмы / наименование",
         "model": "Модель",
         "serial_number": "Серийный номер",
@@ -316,7 +321,9 @@ def intake_content(data: GrnLabelData, project: str, item_index: str) -> LabelCo
 def instrument_content(inventory_number: str, name: str, serial_number: str = "", verification_due: date | None = None,
                        *, model: str = "", accessory: bool = False, in_house_serial: bool = False,
                        connector_line: str = "", parameters_line: str = "", loss_line: str = "",
-                       measurement_date: str = "", impedance_warning: str = "", card_url: str = "") -> LabelContent:
+                       measurement_date: str = "", impedance_warning: str = "", card_url: str = "",
+                       range_line: str = "", table: tuple[str, str, str] = ("", "", ""),
+                       manufacturer: str = "") -> LabelContent:
     """An instrument card's printable values; codes carry the inventory number even without an ERP connection.
 
     The caller supplies the domain's classification to keep serial-number policy outside Warehouse.
@@ -326,11 +333,16 @@ def instrument_content(inventory_number: str, name: str, serial_number: str = ""
         "inventory_number": inventory_number.strip(),
         "name": name.strip(),
         "model": model.strip(),
+        "manufacturer": manufacturer.strip(),
         "serial_number": (f"№ {serial}" if in_house_serial else f"Зав. № {serial}") if serial else "",
         "verification_due": f"Поверка до {verification_due:%d.%m.%Y}" if verification_due and not accessory else "",
         "connector_line": connector_line or name.strip(),
         "parameters_line": parameters_line or ("Не измерен" if accessory else ""),
         "loss_line": loss_line,
+        "range_line": range_line or parameters_line or ("Не измерен" if accessory else ""),
+        "table_bands": table[0],
+        "table_vswr": table[1],
+        "table_loss": table[2],
         "measurement_date": measurement_date,
         "impedance_warning": impedance_warning,
     }

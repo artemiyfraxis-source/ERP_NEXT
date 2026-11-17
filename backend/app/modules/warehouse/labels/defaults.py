@@ -150,40 +150,46 @@ def default_template(kind: str, label_format: str, code_type: str) -> LabelTempl
 
 
 def _instrument(width: float, height: float) -> list[dict]:
-    """A readable inventory and serial, connector facts, then the measured envelope.
+    """Logo over the QR on the left; number, serial, connectors, frequency range and date on the right; across the bottom a
+    monospace table of round VSWR / loss limits per classic band (до 1 / 3 / 6 / 12 / 18 ГГц …).
 
-    The QR includes its quiet zone and fits an HTTPS card link at two dots/module at 203 dpi.
+    The QR includes its quiet zone and fits an HTTPS passport link at two dots/module at 203 dpi.
     """
     large = width >= 90
-    compact = height == 30
-    qr_side = 25.0 if large else 20.0
-    x = MARGIN + qr_side + 1
-    elements = [_code("qr", "qr", MARGIN, MARGIN, qr_side, qr_side)]
-    rows, _ = _stack(x, 1, width - MARGIN - x, [
+    compact = height <= 30
+    qr_side = 26.0 if large else (14.0 if compact else 18.0)
+    logo_h = round(qr_side * 82 / 292 + 0.05, 1)  # the wordmark's proportions (292 × 82)
+    elements = [{"id": "logo", "kind": "logo", "x_mm": MARGIN, "y_mm": MARGIN, "w_mm": qr_side, "h_mm": logo_h,
+                 "align": "left"}]
+    qr_top = round(MARGIN + logo_h + 0.6, 1)
+    elements.append(_code("qr", "qr", MARGIN, qr_top, qr_side, qr_side))
+    x = MARGIN + qr_side + 1.0
+    rows, bottom = _stack(x, MARGIN, width - MARGIN - x, [
+        # Owner 18.11: maker, name, serial — in that order under the inventory number.
         (0, {"id": "inventory_number", "font_mm": 5 if large else 3.5, "field": "inventory_number", "bold": True}),
+        (0.1, {"id": "manufacturer", "font_mm": 1.8 if large else 1.3, "field": "manufacturer", "fit": "ellipsis"}),
+        (0.1, {"id": "connector_line", "font_mm": 2.2 if large else 1.6, "field": "connector_line", "lines": 1 if compact else 2, "bold": True}),
         (0.1, {"id": "serial_number", "font_mm": 2 if large else 1.5, "field": "serial_number"}),
-        (0.2, {"id": "connector_line", "font_mm": 2.2 if large else 1.6, "field": "connector_line", "lines": 2, "bold": True}),
-        (0.1, {"id": "model", "font_mm": 1.8 if large else 1.4, "field": "model"}),
+        (0.2, {"id": "range_line", "font_mm": 2.2 if large else 1.5, "field": "range_line", "bold": True}),
     ])
     elements += rows
-    # The wordmark in the top-right corner, right-aligned; the inventory number stays clear of it on its left.
-    logo_w, logo_h = (22.0, 6.2) if large else (14.0, 3.9)
-    logo_x = round(width - MARGIN - logo_w, 1)
-    elements.append({"id": "logo", "kind": "logo", "x_mm": logo_x, "y_mm": 1.2,
-                     "w_mm": logo_w, "h_mm": logo_h, "align": "right"})
-    for element in rows:  # boxes never overlap: the number's box ends before the wordmark
-        if element["id"] == "inventory_number":
-            element["w_mm"] = round(logo_x - element["x_mm"] - 0.5, 1)
-    top = 21.2 if compact else (29 if large else 23)
-    size = 1.4 if compact else 2
-    left = 2.0  # Keep small measured-fact text clear of the printer's unprintable left edge.
-    elements.append(_text("parameters_line", left, top, width - left - 1, size, field="parameters_line", bold=True))
-    second = top + (2.9 if compact else 4.3)
-    elements.append(_text("loss_line", left, second, width - left - 1, size if compact else 1.8, field="loss_line"))
-    third = second + (2.7 if compact else 4.3)
-    date_width = 31 if large else 23
-    elements.append(_text("measurement_date", left, third, date_width,
-                          1.3 if compact else 1.8, field="measurement_date"))
-    elements.append(_text("footer_line", left + date_width + 0.5, third, width - left - date_width - 1.5,
-                          1.1 if compact else 1.6, field="footer_line"))
+    table_font = 2.0 if large else (1.1 if compact else 1.4)
+    table_top = max(qr_top + qr_side, bottom) + 0.4
+    left = 2.0  # clear of the printer's unprintable left edge
+    side_w = 30.0 if large else 18.0  # date and verification/impedance notes on the right of the table rows
+    table_w = round(width - left - MARGIN - side_w - 0.5, 1)
+    table, _ = _stack(left, table_top, table_w, [
+        (0, {"id": "table_bands", "font_mm": table_font, "field": "table_bands", "mono": True, "fit": "ellipsis"}),
+        (0.1, {"id": "table_vswr", "font_mm": table_font, "field": "table_vswr", "mono": True, "fit": "ellipsis"}),
+        (0.1, {"id": "table_loss", "font_mm": table_font, "field": "table_loss", "mono": True, "fit": "ellipsis"}),
+    ])
+    side_x = round(width - MARGIN - side_w, 1)
+    side, _ = _stack(side_x, table_top, side_w, [
+        (0, {"id": "measurement_date", "font_mm": 1.6 if large else 1.1, "field": "measurement_date"}),
+        (0.1, {"id": "footer_line", "font_mm": 1.4 if large else 1.0, "field": "footer_line", "lines": 2}),
+    ])
+    for element in side:
+        element["align"] = "right"
+    elements += side
+    elements += table
     return elements

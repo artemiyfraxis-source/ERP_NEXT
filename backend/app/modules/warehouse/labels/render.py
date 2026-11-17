@@ -58,10 +58,18 @@ def _lines_fit(lines: list[str], limit: int, width: int, face) -> bool:
     return len(lines) <= limit and all(text_width(line, face) <= width for line in lines)
 
 
-def _set_text(text: str, element: Element, width: int, height: int, dots_per_mm: float):
+def _set_text(text: str, element: Element, width: int, height: int, dots_per_mm: float, keep_spaces: bool = False):
     """(lines, size, overflow): the text broken into the box's lines at the size it gets."""
     name = _face(element)
     base = font_dots(element.font_mm, dots_per_mm)
+    if keep_spaces:
+        # One line exactly as given; shrink (down to the floor) until it is as wide as the box, never re-wrapped.
+        size = base
+        floor = max(MIN_FONT_DOTS, math.ceil(base * SHRINK_FLOOR))
+        while size > floor and (text_width(text, font(name, size)) > width or height < line_metrics(size)[1]):
+            size -= 1
+        too_wide = text_width(text, font(name, size)) > width or height < line_metrics(size)[1]
+        return [text], size, too_wide
 
     def capacity(size: int) -> int:
         return max(1, min(element.max_lines, height // line_metrics(size)[1]))
@@ -150,7 +158,11 @@ def _draw_text(canvas: _Canvas, element: Element, text: str, texts: list[str], o
     width, height = x1 - x0, y1 - y0
     if not text.strip() or width <= 0 or height <= 0:
         return
-    lines, size, cut = _set_text(" ".join(text.split()), element, width, height, canvas.dots_per_mm)
+    if element.mono and element.max_lines == 1 and "  " in text.rstrip():
+        # A monospace table row: its padding IS the column alignment — never collapse or re-wrap it.
+        lines, size, cut = _set_text(text.rstrip(), element, width, height, canvas.dots_per_mm, keep_spaces=True)
+    else:
+        lines, size, cut = _set_text(" ".join(text.split()), element, width, height, canvas.dots_per_mm)
     if cut:
         overflow.append(element.id)
     face = font(_face(element), size)

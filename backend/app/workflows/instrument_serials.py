@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.database import build_engine
 from app.modules.production.domain import ProductionValidationError
 from app.modules.production.infrastructure import SqlAlchemyInstrumentRepository
-from app.modules.production.instrument_serials import assign_in_house_serial
+from app.modules.production.instrument_serials import article_of, assign_in_house_serial, is_in_house_serial
 from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
@@ -26,10 +26,24 @@ def assign_serials(sessions, *, apply: bool = False, actor: Actor, now: datetime
         repository = SqlAlchemyInstrumentRepository(session)
         if apply:
             repository.lock_tree()
-        items = repository.list()
-        contexts = repository.serial_contexts([item.id for item in items if not item.serial_number.strip()])
-        proposed = [assign_in_house_serial(item, now=now, context=contexts[item.id])
-                    if not item.serial_number.strip() else item for item in items]
+        items = sorted(repository.list(), key=lambda item: item.inventory_number)
+        renumber = [item for item in items if not item.serial_number.strip() or is_in_house_serial(item.serial_number)]
+        contexts = repository.serial_contexts([item.id for item in renumber])
+        # «article.N» (owner 18.11): vendor serials stay; earlier in-house numbers are replaced, numbering per article
+        # continues after the vendor/kept ones; an item without an article loses an earlier in-house number.
+        taken = {item.serial_number.strip() for item in items if item not in renumber and item.serial_number.strip()}
+        proposed = []
+        for item in items:
+            if item not in renumber:
+                proposed.append(item)
+                continue
+            if article_of(item) is None:
+                proposed.append(replace(item, serial_number="") if item.serial_number.strip() else item)
+                continue
+            context = replace(contexts[item.id], taken=frozenset(taken))
+            assigned = assign_in_house_serial(item, now=now, context=context)
+            taken.add(assigned.serial_number)
+            proposed.append(assigned)
         serials: dict[str, list[str]] = {}
         for item in proposed:
             serials.setdefault(item.serial_number.strip(), []).append(item.inventory_number)
@@ -38,12 +52,13 @@ def assign_serials(sessions, *, apply: bool = False, actor: Actor, now: datetime
             report = "; ".join(f"{serial}: {', '.join(numbers)}" for serial, numbers in sorted(duplicates.items()))
             raise ProductionValidationError(f"Повторяющиеся заводские / собственные номера: {report}")
         changes = [{"id": str(current.id), "inventory_number": current.inventory_number,
-                    "serial_number": assigned.serial_number}
-                   for current, assigned in zip(items, proposed) if assigned is not current]
+                    "serial_number": assigned.serial_number, "previous": current.serial_number}
+                   for current, assigned in zip(items, proposed)
+                   if assigned is not current and assigned.serial_number != current.serial_number]
         if apply:
             audit = SqlAlchemyAuditRepository(session)
             for current, assigned in zip(items, proposed):
-                if assigned is current:
+                if assigned is current or assigned.serial_number == current.serial_number:
                     continue
                 repository.save(replace(assigned, version=current.version + 1))
                 audit.add(AuditEvent(
@@ -72,7 +87,7 @@ def main(argv: list[str] | None = None) -> None:
         changes = assign_serials(sessions, apply=args.apply,
                                 actor=Actor(UUID(int=0), args.actor_name, "Администрирование"), now=moscow_now())
         for item in changes:
-            print(f"{item['inventory_number']} → {item['serial_number']}")
+            print(f"{item['inventory_number']}: {item['previous'] or '—'} → {item['serial_number'] or '— (очищен)'}")
         print(f"{'Назначено' if args.apply else 'Будет назначено'}: {len(changes)}")
     except ProductionValidationError as error:
         raise SystemExit(str(error)) from error
