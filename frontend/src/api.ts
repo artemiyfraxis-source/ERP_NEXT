@@ -860,7 +860,7 @@ export interface FulfillmentRequest {
   /** «main» — комплект КБ (одна живая заявка на КБ проекта); «extra» — «Довыдача» сверх выданного комплекта. */
   kind?: "main" | "extra";
   handout_location: string | null;
-  /** «Укомплектован» only: the place «Отправить на выдачу» offers — the last one used at the kit's site, else «Зона выдачи». */
+  /** «Укомплектован», or a kit «Выдать набранное» takes: the place «Отправить на выдачу» offers — the last one used at the kit's site, else «Зона выдачи». */
   handout_place?: string;
   return_location: string | null;
   fully_reserved: boolean;

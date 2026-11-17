@@ -279,9 +279,11 @@ def requests(
             raise HTTPException(status_code=404, detail="Курсор выдачи не найден")
         rows = list(uow.fulfillment.list(limit + 1, after))
         page = rows[:limit]
-        # «Отправить на выдачу» in one click: a complete kit carries the place the screen offers (G1-T3).
+        # «Отправить на выдачу» in one click: a complete kit carries the place the screen offers (G1-T3); a kit
+        # «Выдать набранное» takes carries the place its picked part goes through.
         places = {
-            request.id: handout_place(request, uow) for request in page if request.status is FulfillmentStatus.COMPLETE
+            request.id: handout_place(request, uow) for request in page
+            if request.status is FulfillmentStatus.COMPLETE or request.partly_issuable
         }
     links = links_for_requests(page, getattr(http_request.app.state, "techcards_uow_factory", None))
     results = []

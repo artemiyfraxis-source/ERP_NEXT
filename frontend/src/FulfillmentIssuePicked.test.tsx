@@ -22,7 +22,7 @@ const lot = { id: "lot-1", warehouse: "ЦАР", grn: "FRX.26.0000001", package: 
 const kit: FulfillmentRequest = {
   id: "kit-7", number: "REQ.26.0000100", version: 6, created_at: "2026-11-17T10:00:00+03:00", requester: "Мастер",
   purpose: "663К.1 · КБ7 · Жгут", project: "663К.1", deadline: "2026-11-20", status: "Недоукомплектован", kind: "main",
-  handout_location: null, return_location: null, fully_reserved: false,
+  handout_location: null, handout_place: "1B3", return_location: null, fully_reserved: false,
   lines: [
     line("l-bound", "CON-001", "Разъём", { requirement: "2", reserved: "2", lot }),
     line("l-off", "TER-002", "Клемма", { off_book: true }),
@@ -35,7 +35,14 @@ function json(body: unknown) {
   return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 }
 
-function mockApi(requests: FulfillmentRequest[], bodies: Array<{ path: string; body: unknown }>) {
+/* The «Выдача» screen opens a project by its kits at «Укомплектован»: КБ1 of the same order is one. */
+const kb1: FulfillmentRequest = {
+  ...kit, id: "kit-1", number: "REQ.26.0000099", purpose: "663К.1 · КБ1 · Жгут", status: "Укомплектован", fully_reserved: true,
+  lines: [line("k1-bound", "CON-001", "Разъём", { requirement: "2", reserved: "2", lot })],
+};
+
+function mockApi(kits: FulfillmentRequest[], bodies: Array<{ path: string; body: unknown }>) {
+  const requests = [kb1, ...kits];
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (init?.method === "POST" && path.endsWith("/issue-picked")) {
@@ -52,8 +59,8 @@ function mockApi(requests: FulfillmentRequest[], bodies: Array<{ path: string; b
   });
 }
 
-async function openKit(principalUsed: Principal = principal) {
-  render(<FulfillmentPage principal={principalUsed} mode="pick" />);
+async function openKit(principalUsed: Principal = principal, mode: "pick" | "give" = "give") {
+  render(<FulfillmentPage principal={principalUsed} mode={mode} />);
   fireEvent.click(await screen.findByRole("button", { name: /^663К\.1/ }));
   fireEvent.click(screen.getByRole("tab", { name: /^КБ7/ }));
 }
@@ -110,27 +117,40 @@ it("«Отмена» closes the window without a call", async () => {
   expect(bodies).toEqual([]);
 });
 
-it("shows no «Выдать набранное…» without the handout right, on a kit with nothing picked or on an extra request", async () => {
+it("follows the server's «набрано»: a lot holding less than the need is not issued, it moves with its reserve", () => {
+  const short = { ...kit, lines: [kit.lines[0], line("l-short", "WIR-005", "Провод", { requirement: "10", reserved: "4", lot })] };
+  expect(partlyIssuable(short)).toBe(true);
+  expect(partlyIssuable({ ...short, lines: [short.lines[1]] })).toBe(false); // the short lot alone is nothing picked
+});
+
+it("names the handout place and moves a short reserve with its ГРН", async () => {
+  mockApi([{ ...kit, lines: [...kit.lines, line("l-short", "WIR-005", "Провод", { requirement: "10", reserved: "4", lot })] }], []);
+  await openKit();
+
+  fireEvent.click(screen.getByRole("button", { name: "Выдать набранное…" }));
+
+  const dialog = screen.getByRole("dialog");
+  expect(within(dialog).getByText(/уйдёт на выдачу \(место: 1B3\)/)).toBeInTheDocument();
+  const moved = within(within(dialog).getByRole("table", { name: "В довыдачу" }));
+  expect(moved.getAllByRole("row").at(-1)?.textContent).toBe("WIR-005Провод10штрезерв 4 на ГРН FRX.26.0000001");
+});
+
+it("shows no «Выдать набранное…» on the picking screen, without the handout right, with nothing picked or on an extra", async () => {
   const picker: Principal = { ...principal, permissions: { fulfillment: "edit", handout: "view" } };
-  mockApi([kit], []);
-  const first = render(<FulfillmentPage principal={picker} mode="pick" />);
-  fireEvent.click(await screen.findByRole("button", { name: /^663К\.1/ }));
-  fireEvent.click(screen.getByRole("tab", { name: /^КБ7/ }));
-  expect(screen.queryByRole("button", { name: "Выдать набранное…" })).not.toBeInTheDocument();
-  first.unmount();
-  vi.restoreAllMocks();
-
-  mockApi([{ ...kit, lines: kit.lines.slice(2) }], []);
-  const second = render(<FulfillmentPage principal={principal} mode="pick" />);
-  fireEvent.click(await screen.findByRole("button", { name: /^663К\.1/ }));
-  fireEvent.click(screen.getByRole("tab", { name: /^КБ7/ }));
-  expect(screen.queryByRole("button", { name: "Выдать набранное…" })).not.toBeInTheDocument();
-  second.unmount();
-  vi.restoreAllMocks();
-
-  mockApi([{ ...kit, kind: "extra" }], []);
-  render(<FulfillmentPage principal={principal} mode="pick" />);
-  fireEvent.click(await screen.findByRole("button", { name: /^663К\.1/ }));
-  fireEvent.click(screen.getByRole("tab", { name: /^КБ7/ }));
-  expect(screen.queryByRole("button", { name: "Выдать набранное…" })).not.toBeInTheDocument();
+  const cases: Array<[FulfillmentRequest, Principal, "pick" | "give"]> = [
+    [kit, principal, "pick"],
+    [kit, picker, "give"],
+    [{ ...kit, lines: kit.lines.slice(2) }, principal, "give"],
+    [{ ...kit, kind: "extra" }, principal, "give"],
+  ];
+  for (const [shown, who, mode] of cases) {
+    mockApi([shown], []);
+    const view = render(<FulfillmentPage principal={who} mode={mode} />);
+    if (mode === "pick") fireEvent.click(await screen.findByRole("button", { name: /^Все · / }));
+    fireEvent.click(await screen.findByRole("button", { name: /^663К\.1/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /^КБ7/ }));
+    expect(screen.queryByRole("button", { name: "Выдать набранное…" })).not.toBeInTheDocument();
+    view.unmount();
+    vi.restoreAllMocks();
+  }
 });

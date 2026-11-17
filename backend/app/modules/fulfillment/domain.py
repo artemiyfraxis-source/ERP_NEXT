@@ -623,6 +623,15 @@ class FulfillmentRequest:
             version=self.version + 1,
         )
 
+    @property
+    def partly_issuable(self) -> bool:
+        """«Выдать набранное» would go through: a main kit being picked, something covered and something open."""
+        return (
+            self.kind is FulfillmentKind.MAIN and self.status in PARTIAL_ISSUE_FROM
+            and not any(line.issued > 0 for line in self.lines)
+            and any(line.covered for line in self.lines) and not self.fully_reserved
+        )
+
     def split_picked(self) -> tuple[FulfillmentRequest, tuple[FulfillmentLine, ...]]:
         """«Выдать набранное» (owner 17.11.2026: «добрать остатки и выдать набранное нельзя»): a main kit still being
         picked keeps only its covered lines (a lot holding the whole need, or «есть, но не заведено») and becomes

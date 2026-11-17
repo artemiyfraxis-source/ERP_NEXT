@@ -61,6 +61,8 @@ class FulfillmentRepository(Protocol):
     def for_project(self, project: str) -> Sequence[FulfillmentRequest]: ...
     def add(self, request: FulfillmentRequest) -> None: ...
     def delete(self, request_id: UUID) -> None: ...
+    # «Выдать набранное»: the given lines leave one request for another unchanged; all of them or none.
+    def move_lines(self, line_ids: Sequence[UUID], from_request_id: UUID, to_request_id: UUID) -> None: ...
     def open_requests(self) -> Sequence[FulfillmentRequest]: ...
     # Read model for the ETK (`app.workflows.etk_lots`): (project_key, item_index, article, name, grn, package, request number).
     def issued_lots(self, kits: Sequence[tuple[str, str]]) -> Sequence[tuple[str, str, str, str, str, str, str]]: ...
@@ -1431,7 +1433,10 @@ def issue_picked(command: VersionedFulfillmentCommand, uow: UnitOfWork) -> Parti
             source_fingerprint=sha256(key.encode("utf-8")).hexdigest(),
             created_at=command.now,
         ).stamped(command.now)
-        # The extra goes first: its rows take the moved lines over before the main kit drops them.
+        # The extra exists first (without lines), the open lines move over explicitly, then both are saved: the main
+        # kit no longer holds them, the extra holds them as they are.
+        uow.fulfillment.add(replace(extra, lines=()))
+        uow.fulfillment.move_lines([line.id for line in open_lines], request.id, extra.id)
         uow.fulfillment.add(extra)
         _audit(extra, "fulfillment.created", command.actor, command.now, {
             "number": extra.number,

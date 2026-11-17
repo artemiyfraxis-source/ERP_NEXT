@@ -9,7 +9,7 @@ from uuid import UUID
 
 from sqlalchemy import (
     Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, Uuid, false, func,
-    select, text,
+    select, text, update,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
@@ -20,9 +20,10 @@ from app.shared.project_number import digit_stem, normalize_project_number, proj
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseRepository, SqlAlchemyWriteOffJournal
 from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 
-from .application import kit_key, next_request_number, request_sequence
+from .application import ConcurrentFulfillmentUpdate, kit_key, next_request_number, request_sequence
 from .domain import (
-    FulfillmentKind, FulfillmentLine, FulfillmentRequest, FulfillmentStatus, KitReserve, LotSnapshot, kb_of,
+    FulfillmentKind, FulfillmentLine, FulfillmentRequest, FulfillmentStatus, FulfillmentValidationError, KitReserve,
+    LotSnapshot, kb_of,
 )
 
 # The partial UNIQUE of migration 0089: one live (not «Отменена») MAIN request per project + КБ; «Довыдача» is free.
@@ -467,17 +468,15 @@ class SqlAlchemyFulfillmentRepository:
                 select(FulfillmentLineRow).where(FulfillmentLineRow.request_id == request.id)
             )
         }
-        # «Выдать набранное» moves open lines of a kit into its new «Довыдача» unchanged: such a row changes its request
-        # and keeps its id (lot-binding events and logs point at it). The extra is saved before the kit drops them.
+        # A line id of another request is never taken over here: a move between requests is explicit (`move_lines`).
         missing = [line.id for line in request.lines if line.id not in existing]
-        moved = {
-            row.id: row
-            for row in self.session.scalars(select(FulfillmentLineRow).where(FulfillmentLineRow.id.in_(missing)))
-        } if missing else {}
-        for row in moved.values():
-            row.request_id = request.id
+        foreign = self.session.scalars(
+            select(FulfillmentLineRow.id).where(FulfillmentLineRow.id.in_(missing))
+        ).first() if missing else None
+        if foreign is not None:
+            raise FulfillmentValidationError(f"Позиция {foreign} принадлежит другой заявке")
         for position, line in enumerate(request.lines):
-            line_row = existing.pop(line.id, None) or moved.get(line.id)
+            line_row = existing.pop(line.id, None)
             if line_row is None:
                 line_row = FulfillmentLineRow(id=line.id, request_id=request.id)
                 self.session.add(line_row)
@@ -502,8 +501,21 @@ class SqlAlchemyFulfillmentRepository:
             line_row.absent_by = line.absent_by if line.absent_at is not None else None
         for stale in existing.values():
             self.session.delete(stale)
-        if moved:
-            self.session.flush()
+
+    def move_lines(self, line_ids: Sequence[UUID], from_request_id: UUID, to_request_id: UUID) -> None:
+        """«Выдать набранное»: the open lines of a kit go over to its new «Довыдача» as they are — same rows, same ids
+        (lot-binding events point at them). Every line must still be on `from_request_id`, else nothing moves."""
+        ids = tuple(dict.fromkeys(line_ids))
+        if not ids:
+            return
+        result = self.session.execute(
+            update(FulfillmentLineRow)
+            .where(FulfillmentLineRow.id.in_(ids), FulfillmentLineRow.request_id == from_request_id)
+            .values(request_id=to_request_id)
+            .execution_options(synchronize_session="fetch")
+        )
+        if result.rowcount != len(ids):
+            raise ConcurrentFulfillmentUpdate("Позиции заявки изменились после загрузки — обнови экран")
 
 
     def delete(self, request_id: UUID) -> None:

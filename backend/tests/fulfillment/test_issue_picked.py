@@ -21,6 +21,7 @@ from app.modules.fulfillment.domain import (
     FulfillmentValidationError,
     LotSnapshot,
 )
+from app.modules.fulfillment.application import ConcurrentFulfillmentUpdate
 from app.modules.fulfillment.infrastructure import SqlAlchemyFulfillmentUnitOfWork
 from app.modules.warehouse.domain import StockLot
 from app.modules.warehouse.infrastructure import WriteOffEntryRow
@@ -396,3 +397,36 @@ def test_issue_picked_takes_the_handout_right(shop):
 
     assert refused.status_code == 403
     assert _stock(factory, lots)[1] == []
+
+
+def test_add_refuses_a_line_of_another_request_and_move_lines_moves_all_or_nothing(shop):
+    client, lots, factory = shop
+    kit = _kit(client, lots)
+    other = client.post("/api/issues", headers={"Idempotency-Key": "other"}, json={
+        "purpose": f"{PROJECT} · КБ13 · Жгут", "deadline": "2026-11-20",
+        "lines": [{"name": "Гильза", "unit": "шт", "requirement": "1"}],
+    }).json()["request"]
+    waiting = next(line for line in kit["lines"] if line["name"] == "Гильза")
+    with factory() as uow:
+        target = uow.fulfillment.get(UUID(other["id"]))
+        stolen = next(line for line in uow.fulfillment.get(UUID(kit["id"])).lines if line.name == "Гильза")
+        with pytest.raises(FulfillmentValidationError, match="принадлежит другой заявке"):
+            uow.fulfillment.add(replace(target, lines=(*target.lines, stolen), version=target.version + 1))
+    with factory() as uow:
+        with pytest.raises(ConcurrentFulfillmentUpdate):  # one id is not on the source request: nothing moves
+            uow.fulfillment.move_lines([UUID(waiting["id"]), UUID(other["lines"][0]["id"])], UUID(kit["id"]), UUID(other["id"]))
+    with factory() as uow:
+        uow.fulfillment.move_lines([UUID(waiting["id"])], UUID(kit["id"]), UUID(other["id"]))
+        uow.commit()
+    with factory() as uow:
+        assert [line.name for line in uow.fulfillment.get(UUID(other["id"])).lines] == ["Гильза", "Гильза"]
+        assert "Гильза" not in [line.name for line in uow.fulfillment.get(UUID(kit["id"])).lines]
+
+
+def test_the_list_offers_the_handout_place_for_a_kit_issue_picked_takes(shop):
+    client, lots, _ = shop
+    kit = _kit(client, lots)
+
+    listed = {request["id"]: request for request in client.get("/api/issues").json()["requests"]}
+
+    assert listed[kit["id"]]["handout_place"] == "Зона выдачи"
