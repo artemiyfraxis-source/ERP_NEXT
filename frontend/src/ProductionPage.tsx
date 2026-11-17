@@ -779,10 +779,13 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
     const start = parseDate(operation?.my_share?.planned_start ?? operation?.planned_start);
     return start ? `${start.getFullYear()}-${start.getMonth()}-${start.getDate()}` : "unplanned";
   };
+  // Номер чертежа заказчика в названии изделия («Кабельная сборка 122664/AA …»): чертёж задаёт пару разъёмов и разделку,
+  // поэтому одна таблица — один чертёж (владелец 17.11: «должно было быть 5 групп с разными зачистками»).
+  const drawingOf = (task: ProductionTask) => /(\d{6})\s*\//.exec(task.name || "")?.[1] ?? "";
   const groupKey = (task: ProductionTask) => {
     const operation = task.operations[0];
     return operation && isPfOperation(operation) && task.project
-      ? JSON.stringify([groupDay(task), task.project, operation.position, operation.stage]) : null;
+      ? JSON.stringify([groupDay(task), task.project, operation.position, operation.stage, drawingOf(task)]) : null;
   };
   const renderQueue = (items: ProductionTask[], scope: string) => {
     const groups = new Map<string, ProductionTask[]>();
@@ -805,7 +808,7 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
       last.title = title;
       const viewKey = `${scope}:${key}`;
       const cards = cardGroups.has(viewKey);
-      const label = `Резка списком · ${task.project} · ПФ-${operation.position} ${operation.stage} · ${members.length} КБ`;
+      const label = `Резка списком · ${task.project}${drawingOf(task) ? ` · черт. ${drawingOf(task)}` : ""} · ПФ-${operation.position} ${operation.stage} · ${members.length} КБ`;
       return <div key={key}>
         {header}
         <section className="mo-cut-list" aria-label={label}>
