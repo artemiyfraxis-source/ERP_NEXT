@@ -14,14 +14,14 @@ import {
 } from "./api";
 import { ETK_CONNECTION_COLUMNS, ETK_TUBE_COLUMNS, ETK_NOT_SET, etkDocumentConnectionRows, etkPhysicalConfig, etkTubePlacementRows, etkContactSpecs, etkDrawHarness, etkDrawTubeCut, etkFigure, etkParams, type EtkParams, type EtkTopologyData } from "./etkDraw";
 import { etkMarkLabelsPage, etkPrintPages } from "./etkPrint";
-import { hasMarkSerial, markSerialSpan, markSerialTemplate, type MarkSerialRange } from "./markSerial";
+import { hasMarkSerial, markLabelList, markSerialTemplate, type MarkSerialRange } from "./markSerial";
 import { etkPartSource, etkRouteOf, etkSemiSource, etkSourceLines, formatMinutes, type EtkPfGroup } from "./etkRoute";
 import { etkConfigOp, etkPfArt } from "./etkPfArt";
 import { etkDocOperations, etkTitle, harnessPins, navSub, opCode } from "./etkDocOps";
 import { EtkRouteDiagram } from "./EtkRouteDiagram";
 import { defectGroupCode, defectOperationCode } from "./etkDefectArt";
 import { DefectPicture, useStdFigures } from "./EtkStdFigure";
-import { ETK_TOOLING_SECTIONS, etkToleranceLines, etkToleranceParts, parseDefects, solderMode, toolingSections, type SolderMode } from "./etkOperation";
+import { ETK_TOOLING_SECTIONS, etkLabelResult, etkToleranceLines, etkToleranceParts, parseDefects, solderMode, shrinkRequirementLines, toolingSections, type SolderMode } from "./etkOperation";
 import { countLabel, formatDateTime, formatNumber, formatQty } from "./format";
 import { openPrintDocument } from "./print";
 import { useCanPrint } from "./rights";
@@ -294,31 +294,37 @@ function StepTolerance({ text }: { text?: string }) {
 /** Номера изделий задания для «№ изделия» в надписях и печать их списка; вне задания — нет (номер «по партии»). */
 const MarkSerialContext = createContext<{ range: MarkSerialRange; print: () => void } | null>(null);
 
-/** Надпись метки: без «№ изделия» — как есть; с ним — шаблон и номера задания «КБ1-{№} → КБ1-001 … КБ1-010». */
-function MarkText({ text, range }: { text?: string; range?: MarkSerialRange }) {
+/** Without a task, retain the template and its project quantity instead of inventing serial numbers. */
+function MarkText({ text, batch }: { text?: string; batch?: string }) {
   if (!text || !hasMarkSerial(text)) return <b>{text || "—"}</b>;
-  return <><b>{markSerialTemplate(text)}</b> <span className="etk-mark-serial">→ {markSerialSpan(text, range)}</span></>;
+  return <><b>{markSerialTemplate(text)}</b> <span className="etk-mark-serial">— номер по заданию{batch ? `, ${formatNumber(batch)} шт.` : ""}</span></>;
 }
 
 /** Метки по КД в «Ходе операции» маркировки: монтажник видит, какую надпись, чем и где делать, сколько штук. */
 function MarksView({ marks, batch }: { marks: EtkMark[]; batch: string }) {
   const serial = useContext(MarkSerialContext);
   const lengths = marks.some((mark) => mark.length);
-  const numbered = marks.some((mark) => hasMarkSerial(mark.text));
-  const count = serial ? serial.range.last - serial.range.first + 1 : 0;
+  const labels = serial ? markLabelList(marks, serial.range) : [];
+  if (labels.length && serial) return <><table className="etk-marks" aria-label="Метки по КД" style={{ overflowWrap: "anywhere" }}>
+    <caption>Метки по КД</caption>
+    <thead><tr><th className="num">№</th><th>Текст</th><th>Где</th><th>Материал</th>{lengths && <th className="num">Длина, мм</th>}<th className="num">Кол-во</th></tr></thead>
+    <tbody>{labels.map((label, index) => <tr key={index}>
+      <td className="num">{index + 1}</td><td><b translate="no">{label.text || "—"}</b></td><td>{label.place || "—"}</td><td>{label.material || "—"}</td>
+      {lengths && <td className="num">{label.length || "—"}</td>}<td className="num">× {formatNumber(label.quantity)}</td>
+    </tr>)}</tbody>
+  </table><div className="etk-marks-print">
+    <button type="button" className="secondary small" onClick={serial.print}>Печать надписей № {serial.range.first}–{serial.range.last}</button>
+    <span className="muted">{countLabel(serial.range.last - serial.range.first + 1, ["изделие", "изделия", "изделий"])} задания</span>
+  </div></>;
   const table = <table className="etk-marks" aria-label="Метки по КД">
     <caption>Метки по КД</caption>
     <thead><tr><th>№</th><th>Что маркируем</th><th>Надпись</th><th>Материал</th><th>Где</th>{lengths && <th className="num">Длина, мм</th>}<th className="num">На изделие</th><th className="num">{batch ? `На партию ${formatQty(batch, "шт")}` : "На партию"}</th></tr></thead>
     <tbody>{marks.map((mark, index) => <tr key={index}>
-      <td className="num">{index + 1}</td><td>{mark.target || "—"}</td><td><MarkText text={mark.text} range={serial?.range} /></td><td>{mark.material || "—"}</td>
+      <td className="num">{index + 1}</td><td>{mark.target || "—"}</td><td><MarkText text={mark.text} batch={mark.batch} /></td><td>{mark.material || "—"}</td>
       <td>{mark.place || "—"}</td>{lengths && <td className="num">{mark.length || ""}</td>}<td className="num">{mark.qty || ""}</td><td className="num">{mark.batch || ""}</td>
     </tr>)}</tbody>
   </table>;
-  if (!numbered || !serial || count < 1) return table;
-  return <>{table}<div className="etk-marks-print">
-    <button type="button" className="secondary small" onClick={serial.print}>Печать надписей № {serial.range.first}–{serial.range.last}</button>
-    <span className="muted">{countLabel(count, ["изделие", "изделия", "изделий"])} задания</span>
-  </div></>;
+  return table;
 }
 
 /** Операция ЭТК в порядке, который задал производство (SUPPLYMAP renderEtk_, доведённый): безопасность (свёрнута) →
@@ -328,16 +334,19 @@ function EtkOperationCard({ operation, number, total, batch = "", route = null, 
   operation: EtkOperation; number: number; total: number; batch?: string; route?: EtkRoute | null; actions?: ReactNode; sketch?: ReactNode;
 }) {
   const raw = operation as Record<string, unknown>;
+  const serial = useContext(MarkSerialContext);
+  const labelResult = etkLabelResult(raw, serial?.range);
   // Эскизы — SVG-строки etkDraw (как в печати); монтаж в разъём — торец серии с номерами контактов всегда, даже без
   // распиновки в генераторе (тогда под ним список проводов «по КД»). `sketch` — своя картинка технолога и кнопки.
   const figure = etkFigure(raw);
   const tooling = operation.card?.tooling ?? [];
   const solder = solderMode(raw);
+  const shrink = shrinkRequirementLines(raw);
   const safety = String(operation.card?.safety || "").replace(SAFETY_HEAD, "").trim();
   const resultLabel = String(raw.result_label || "") || "Результат";
   const marks = operation.fields?.marks ?? [];
   const hasInput = Boolean(operation.components?.length || operation.semis?.length);
-  const hasResult = Boolean(operation.result?.length || operation.time?.length);
+  const hasResult = Boolean(labelResult || operation.result?.length || operation.time?.length);
   // Номера разделов подряд по показанным блокам (эскиза бывает нет).
   let shown = 0;
   const next = () => ++shown;
@@ -362,6 +371,13 @@ function EtkOperationCard({ operation, number, total, batch = "", route = null, 
     </EtkSection>
     <EtkSection label="Оснастка" number={next()}>
       {solder && <SolderPanel mode={solder} />}
+      {shrink.length > 0 && <div aria-label="Температурный режим">
+        <h4>Температурный режим</h4>
+        {shrink.map((item, index) => <div key={index} className={item.missing ? "warning-inline" : undefined} style={{ marginBottom: 8, overflowWrap: "anywhere" }}>
+          <div><strong>{item.material}</strong><div style={{ fontVariantNumeric: "tabular-nums" }}>{item.text}</div>
+            {item.sourceUrl && <a href={item.sourceUrl} target="_blank" rel="noreferrer" title={item.quote || undefined}>Источник</a>}</div>
+        </div>)}
+      </div>}
       <ToolingBySection tooling={tooling} fixed />
     </EtkSection>
     {operation.card?.steps?.length || marks.length ? <EtkSection label="Ход операции" number={next()}>
@@ -380,7 +396,7 @@ function EtkOperationCard({ operation, number, total, batch = "", route = null, 
       </div>
     </EtkSection>}
     {hasResult && <EtkSection label="Результат" number={next()}>
-      <ResultView label={resultLabel} result={operation.result} time={operation.time} figure={etkDrawTubeCut(raw)} />
+      <ResultView label={resultLabel} result={labelResult ? [labelResult] : operation.result} time={operation.time} figure={etkDrawTubeCut(raw)} />
     </EtkSection>}
   </article>;
 }
@@ -516,6 +532,7 @@ function editContext(operation: EtkOperation, batch: string, sketchUrl: string):
   const raw = operation as Record<string, unknown>;
   const figure = etkFigure(raw);
   const params = etkParams(raw);
+  const labelResult = etkLabelResult(raw);
   return {
     chips: <EtkParamBlock params={params} />,
     input: operation.components?.length || operation.semis?.length
@@ -525,7 +542,7 @@ function editContext(operation: EtkOperation, batch: string, sketchUrl: string):
       {sketchUrl && <div className="etk-sketch"><img src={sketchUrl} alt="Эскиз операции" /></div>}
     </div> : undefined,
     result: operation.result?.length || operation.time?.length
-      ? <ResultView label={String(raw.result_label || "") || "Результат"} result={operation.result} time={operation.time} figure={etkDrawTubeCut(raw)} /> : undefined,
+      ? <ResultView label={String(raw.result_label || "") || "Результат"} result={labelResult ? [labelResult] : operation.result} time={operation.time} figure={etkDrawTubeCut(raw)} /> : undefined,
   };
 }
 

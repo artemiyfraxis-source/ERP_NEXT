@@ -12,7 +12,7 @@ export type MarkRow = { target: string; text: string; material: string; place: M
   /** Длина отрезка трубки, мм (только для термоусадочной и ПВХ-трубки); пусто — не задана. */
   len?: string };
 /** Материал маркировки из БД.МАТ: наименование (оно же ключ строки), группа, единица. */
-export type MarkMat = { name: string; group: string; unit: string };
+export type MarkMat = { name: string; group: string; unit: string; art?: string };
 /** Метка в конфиге операции insMark: art/name/qty — как у бирок из состава (комплектующие), остальное — для ЭТК. */
 export type MarkSpec = {
   art: string; name: string; qty: number; target: string; text: string; place: string; placeKind: MarkPlace; placeMm: string;
@@ -60,6 +60,7 @@ export function markIsTube(material: string): boolean {
 /** Трубка метки усаживается: термоусадочная (ТУТ, ТТК, «4/2мм»), не ПВХ-кембрик. */
 export function markTubeShrinks(material: string): boolean {
   const text = String(material || "");
+  if (/пвх|\bpvc\b/i.test(text) && !/термо|усаж|(?<![а-яёa-z])тут|(?<![а-яёa-z])ттк/i.test(text)) return false;
   return !/хляст|флаж|флаш/i.test(text) && (/термо|(?<![а-яёa-z])тут|(?<![а-яёa-z])ттк|усаж|tms-?sce/i.test(text) || TUBE_SIZE_RE.test(text));
 }
 
@@ -85,6 +86,7 @@ export function markRowActive(row: MarkRow): boolean {
 export function markMatsFromRecords(records: Array<Record<string, string>>): MarkMat[] {
   const all = records.map((fields) => ({
     name: String(fields["Наименование"] || "").trim(), group: String(fields["Группа"] || "").trim(), unit: String(fields["Ед. изм."] || "").trim(),
+    ...(fields["Артикул"] ? { art: fields["Артикул"].trim() } : {}),
   })).filter((item) => item.name);
   const marks = all.filter((item) => MARK_GROUP_RE.test(item.group) || MARK_GROUP_RE.test(item.name));
   const tubes = all.filter((item) => !marks.includes(item) && TUBE_GROUP_RE.test(item.group));
@@ -227,7 +229,9 @@ export function mergeMarkRows(current: MarkRow[], extra: MarkRow[]): MarkRow[] {
   return [...kept, ...extra.filter((row) => !seen.has(key(row)))];
 }
 
-export type CoaxMark = { text: string; place: "A" | "B" | "middle"; minMm: number };
+export type CoaxMark = { text: string; place: "A" | "B" | "middle"; minMm: number; scope?: "cable" | "assembly" };
+/** Protective clear tubing over tape labels, mm (owner 17.11.2026). Not printed marking tubes. */
+export const COAX_PROTECTIVE_TUT_LENGTHS = { A: 35, B: 35, middle: 55 } as const;
 export type ConnColor = { method: "none" | "paint" | "laser" | "tape"; color: string; code: string; art: string };
 
 export const COAX_COLORS = [

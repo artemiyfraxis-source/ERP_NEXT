@@ -8,7 +8,7 @@
  * `POST /api/techcards/projects/{id}/build` (etk_builder.py читает ровно эти ключи).
  */
 import { matchCableRec } from "./cableMatch";
-import { coaxMarkDefaults, coaxMarksFromName, sumCoaxMaterial, type CoaxMark, type ConnColor, markIsTube, markLabel, markSpecs, markTubeShrinks, markTubeSplit, type MarkMat, type MarkRow, type MarkSpec, type MarkTube } from "./tcGenMarks";
+import { COAX_PROTECTIVE_TUT_LENGTHS, coaxMarkDefaults, coaxMarksFromName, sumCoaxMaterial, type CoaxMark, type ConnColor, markIsTube, markLabel, markSpecs, markTubeShrinks, markTubeSplit, type MarkMat, type MarkRow, type MarkSpec, type MarkTube } from "./tcGenMarks";
 import { pickWireMarkTube, WIRE_MARK_DIST_MM, WIRE_MARK_LEN_MM, wireMarkKey, wireMarkRow, wireMarkTexts, type WireMarkCfg, type WireMarkRow, type WireMarkSkip } from "./tcGenWireMarks";
 import { twistGroupProblems, twistGroupsOf, type TwistRow } from "./twistGroups";
 import { pickTerminals, type TerminalPairs } from "./terminalPick";
@@ -29,6 +29,8 @@ export type CoaxRec = {
   lPlus: string; lMinus: string; pinType: string; shieldType: string; connArticle: string;
   /** «Центральный контакт» карточки разъёма (слова поставщика): «цанговый» — контакт не паяется. */
   centerContact?: string;
+  /** Number of coax channels in the complete connector, from reference data. */
+  channels?: number;
 };
 export type OpRec = { opNumber: string; opName: string; tOp: string; tPrep: string; tMachine: string };
 export type Tmpl = { id: string; title: string; category: string };
@@ -412,7 +414,7 @@ export function coaxReseedPatch(D: GenData, S: GenState): Partial<GenState["coax
   // A marking tube's piece length is the technologist's: an existing value stays (fresh seed and later reseed agree);
   // only clear protective TUT over tape labels and an empty field are computed from the BOM metres.
   const keepTube = defaults.markMaterial !== "tape" && parseDecimal_(S.coax.tutLen) > 0;
-  const tubeLength = keepTube ? parseDecimal_(S.coax.tutLen) : tube ? qtyNum(tube) * 1000 / (marks.length || g.coaxFakraMarks_()) : 0;
+  const tubeLength = keepTube ? parseDecimal_(S.coax.tutLen) : tube ? qtyNum(tube) * 1000 / (marks.length || g.coaxFakraMarks_() / g.coaxCables_()) : 0;
   return { fakraCutStrip: [S.coax.sideA, S.coax.sideB].some((end) => !!end?.kind),
     lengthBasis: "finished", finishedLength: String(finished || ""), finishedLengthFrom: nameLength ? "name" : calcLength ? "calc" : "bom",
     lPlusA: allowance(S.coax.sideA), lPlusB: allowance(S.coax.sideB), markMaterial: defaults.markMaterial,
@@ -527,6 +529,8 @@ export type OpSpec = {
    *  оболочке под обжим или пайку (ротор снимает оболочку и зачищает жилы одним проходом, владелец 15.10). */
   strip?: { a: boolean; lenA: string; b: boolean; lenB: string; coreA?: string; coreB?: string }; stripCount?: number;
   tutArt?: string; tutName?: string; tutCount?: number; tutSegs?: Array<{ len: string; count: number }>;
+  /** Exact materials carried through cut → preload → shrink; never a combined temperature. */
+  shrinkMaterials?: Array<{ art: string; name: string }>;
   harness?: boolean; units?: number; twistPairs?: number[][]; wrapKind?: "tape" | "braid"; under?: boolean; wrapArt?: string; wrapName?: string;
   wrapLen?: string; wrapFix?: string; marks?: Array<{ art: string; name: string; qty: number } | MarkSpec>;
   sealArt?: string; sealName?: string; sealQty?: string; sealPlaces?: number; tin?: boolean;
@@ -1652,6 +1656,7 @@ export function makeGen(D: GenData, S: GenState) {
         label: `Резка ${tube.art || tube.name} на свободные концы — ${n}×${len || "?"} мм`,
         tutArt: tube.art || tube.name || "", tutName: tube.name || tube.art || "", tutCount: n, tutSegs: [{ len, count: n }] },
       { type: "endCap", opKey: "endCap", tmplHint: "INS_END_CAP", cat: "Монтаж", tutCount: n,
+        shrinkMaterials: tubeMaterials_([tube]),
         label: `Заделка свободных концов — ${n} шт` },
     ];
   }
@@ -2224,16 +2229,17 @@ export function makeGen(D: GenData, S: GenState) {
     .filter((c) => /разъ[её]м|соед|conn/i.test(c.type || ""))
     .map((c) => ({ art: c.art || c.name || "", name: c.name || "", qty: c.qty })));
   const isFakra_ = () => !!S.coax.sideA?.kind;
-  const coaxCables_ = () => Math.max(1, Math.round(S.coax.cables || 1));
+  const coaxCables_ = () => Math.max(1, Math.round(S.coax.cables || 1),
+    ...(["A", "B"] as const).map((side) => coaxRecForSide_(side)?.channels || 1));
   const coaxBomTtk_ = () => {
     const first = comps().find((x) => /ттк/i.test(`${x.type || ""} ${x.name || ""}`));
     return (S.coax.fakraCutStrip ? sumCoaxMaterial(comps(), first) : first) || null;
   };
   /** Меток «Маркировка» в составе (под ТУТ); нет — по КД 3 на изделие, как в 122663 (владелец 25.10: «Маркировка ×3»). */
   const coaxFakraMarks_ = () => {
-    if (S.coax.marks?.length) return S.coax.marks.length;
+    if (S.coax.marks?.length) return S.coax.marks.reduce((n, mark) => n + (mark.scope === "assembly" ? 1 : coaxCables_()), 0);
     const n = comps().filter((x) => /маркировк/i.test(x.type || "")).reduce((sum, x) => sum + (Number(String(x.qty).replace(",", ".")) || 0), 0);
-    return n > 0 ? Math.round(n) : 3;
+    return (n > 0 ? Math.round(n) : 3) * coaxCables_();
   };
   function coaxCableDiaLookup_() {
     const t = (D.coaxCableDia && D.coaxCableDia.byCable) || {};
@@ -2449,7 +2455,8 @@ export function makeGen(D: GenData, S: GenState) {
     const x = (n: number) => (n > 1 ? ` ×${n}` : "");
     const tape = S.coax.markMaterial === "tape";
     const tutOn = tape ? !!S.coax.markProtect : S.coax.tutEnabled;
-    const marks = tape ? coaxFakraMarks_() : nSides;
+    const cables = coaxCables_();
+    const marks = tape ? coaxFakraMarks_() : nSides * cables;
     // Резка и разделка — до всего остального (владелец 14.10): либо резка с разделкой на роторном станке одной
     // операцией, либо резка, разделка А, разделка В; резка ТУТ — после них.
     const stripB = sideB || S.coax.stripB;
@@ -2526,7 +2533,12 @@ export function makeGen(D: GenData, S: GenState) {
     const vswr = coaxVswrControl_(S.coax);
     if (sideB && vswr?.mode !== "none") ops.push({ type: "coaxVswr", opKey: "coaxVswr", tmplHint: "CTRL_VSWR_coax",
       label: vswr?.mode === "sample" ? `Контроль КСВН — выборочно 1 из ${vswr.every}` : "Контроль КСВН", ...(vswr ? { vswrControl: vswr } : {}) });
-    return ops;
+    const cableWork = new Set(["coaxCut", "coaxStrip", "coaxPin", "coaxPinCrimp", "coaxInsSleeve", "coaxShield", "coaxSolderShield"]);
+    return cables > 1 ? ops.map((op) => {
+      if (!cableWork.has(op.type)) return op;
+      const units = (op.units || 1) * cables;
+      return { ...op, units, ...(op.label ? { label: op.label.replace(/×\d+(?=\s*(?:\([АВAB]\))?$)/, `×${units}`) } : {}) };
+    }) : ops;
   }
 
   function topologyProblems_(): string[] {
@@ -2681,7 +2693,7 @@ export function makeGen(D: GenData, S: GenState) {
       const joinedEnds = target.kind === "branch" ? [target.end, { ...target.end, side: target.end.side === "A" ? "B" as const : "A" as const }] : targetEnds;
       const targetOps = [...new Set(joinedEnds.flatMap(closures))];
       const access = tube.preloadEnd || targetEnds[0];
-      const common = { tubePlacement: tube.id, physicalEnds: targetEnds, tutCount: tube.count };
+      const common = { tubePlacement: tube.id, physicalEnds: targetEnds, tutCount: tube.count, shrinkMaterials: [mat] };
       const cut: OpSpec = { ...common, type: "cutTut", opKey: `${key}.cut`, tmplHint: "CUT_TUT_short", cat: "Резка",
         label: `Резка трубки ${mat.art} — ${tube.count}×${len} мм`, tutArt: mat.art, tutName: mat.name,
         tutSegs: [{ len, count: tube.count }], tutParts: [{ ...mat, len, count: tube.count }], dependsOn: [] };
@@ -2732,7 +2744,31 @@ export function makeGen(D: GenData, S: GenState) {
       if (problems.length) throw new Error(problems.join("\n"));
     }
     const ops = autoOps();
-    return topologyOn_() ? topologyOps_(ops) : applyOpOrder(ops, S.opOrder || []);
+    return (topologyOn_() ? topologyOps_(ops) : applyOpOrder(ops, S.opOrder || [])).map(withShrinkMaterials_);
+  }
+  const tubeMaterials_ = (items: Array<{ art?: string; name?: string } | null | undefined>) => items
+    .filter((item): item is { art?: string; name?: string } => !!item)
+    .map((item) => ({ art: item.art || "", name: item.name || item.art || "" }));
+
+  function withShrinkMaterials_(op: OpSpec): OpSpec {
+    if (op.shrinkMaterials) return op;
+    if (!["cutTut", "insTut", "heatTut", "coaxCutTut", "coaxInsTut", "coaxHeat"].includes(op.type) || op.wrapKind) return op;
+    let materials = op.tutParts?.map(({ art, name }) => ({ art, name }))
+      || (op.tutArt || op.tutName ? tubeMaterials_([{ art: op.tutArt, name: op.tutName }]) : []);
+    if (!materials.length) {
+      if (op.type.startsWith("coax") && op.markMaterial !== "tape") {
+        materials = tubeMaterials_([op.opKey.startsWith("coaxHeatTtk") ? coaxBomTtk_()
+          : S.coax.markMaterial === "tape" ? coaxMarkDefaults(comps()).protect : coaxBomTut_()]);
+      } else if (["insTut", "heatTut"].includes(op.opKey)) materials = tubeMaterials_([bomTut_()]);
+      else if (/^(insSpl|heatSpl)\d*$/.test(op.opKey)) materials = tubeMaterials_([spliceTube_()?.comp]);
+      else if (op.opKey.startsWith("heatShr")) materials = tubeMaterials_([sleeveItems_().conn
+        .find((item) => item.ep.side === op.side && endpointOrdinal_(item.ep) === op.ord)?.comp]);
+      else if (op.opKey.startsWith("heatJs")) {
+        const number = Number(op.opKey.match(/\d+$/)?.[0] || 1);
+        materials = tubeMaterials_([sleeveItems_().jacket.filter((item) => item.side === op.side)[number - 1]?.comp]);
+      } else if (op.opKey === "heatHs") materials = tubeMaterials_(sleeveItems_().harness.map((item) => item.comp));
+    }
+    return materials.length ? { ...op, shrinkMaterials: materials } : op;
   }
   function reworkOps_(): OpSpec[] {
     const r = S.rework || emptyRework();
@@ -2841,6 +2877,7 @@ export function makeGen(D: GenData, S: GenState) {
     const where = sides.length === 2 ? " (стороны А и В)" : sides.length ? ` (сторона ${sides[0]})` : "";
     const pieces = it.jacket.reduce((s, x) => s + x.count, 0) + it.conn.length + it.harness.reduce((s, x) => s + x.cnt, 0);
     return { type: "insTut", opKey: "insSleeves", tmplHint: "INS_TUT", cat: "Монтаж", harness: true, tutCount: pieces,
+      shrinkMaterials: tubeMaterials_([...it.jacket, ...it.conn, ...it.harness].map((item) => item.comp)),
       label: `${tubes ? "Надеть трубки" : "Надеть детали корпуса"}${where}: ${parts.join("; ")}` };
   }
   /** Стороны, которые обжимает автомат резки, когда до обжима надо надеть трубку или оплётку: станок обжимает конец при
@@ -3391,8 +3428,10 @@ export function makeGen(D: GenData, S: GenState) {
         label: `${printed ? "Печать и резка" : "Резка"} маркировки — ${sizes}`,
         tutArt: one ? one.art : "", tutName: one ? one.name : "", tutCount: count, tutSegs: segs, tutParts: parts },
       on: { type: "insTut", opKey: "onMark", tmplHint: "INS_TUT", cat: "Монтаж", markTube: true, tutCount: count,
+        shrinkMaterials: tubeMaterials_(tubes),
         label: `Надеть маркировку${atConn ? " у разъёмов" : ""} — ${tubes.map(title).join(", ")}` },
       heat: heat ? { type: "heatTut", opKey: "heatMark", tmplHint: "HEAT_TYT_short", cat: "Усадка", markTube: true, tutCount: heat,
+        shrinkMaterials: tubeMaterials_(tubes.filter((tube) => tube.shrink)),
         label: `Усадка маркировки — ${heat} шт` } : null,
     };
   }
@@ -3466,7 +3505,7 @@ export function makeGen(D: GenData, S: GenState) {
     const len = (cfg.len || "").trim() || WIRE_MARK_LEN_MM, dist = (cfg.dist || "").trim() || WIRE_MARK_DIST_MM;
     const count = rows.length * 2, texts = wireMarkTexts(rows);
     const markCode = [MARK_CUT_CODE_, MARK_CUT_CODE_OLD_].find(hasTemplateCode_);
-    const common = { markTube: true, wireMarks: true, markDist: dist };
+    const common = { markTube: true, wireMarks: true, markDist: dist, shrinkMaterials: [{ art, name }] };
     const out: OpSpec[] = [
       { ...common, type: "cutTut", opKey: "cutWireMark", tmplHint: markCode || "CUT_TUT_short", tmplWant: markCode || MARK_CUT_CODE_, cat: "Резка", markTexts: texts,
         label: `${markCode ? "Печать и резка" : "Резка"} маркировки проводов — ${count} шт × ${len.replace(".", ",")} мм`,
@@ -3840,6 +3879,7 @@ export function makeGen(D: GenData, S: GenState) {
       }
       if (marks.length) {
         out.push({ type: "insTut", opKey: `onMark${side}${ord}`, tmplHint: "INS_TUT", cat: "Монтаж", markTube: true, side, ord, tutCount: markCount,
+          shrinkMaterials: tubeMaterials_(marks),
           branch: name, label: `Надеть маркировку ${name} — ${marked}` });
       }
       if (tube) {
@@ -3849,6 +3889,7 @@ export function makeGen(D: GenData, S: GenState) {
       const shrunk = marks.filter((t) => t.shrink);
       if (shrunk.length) {
         out.push({ type: "heatTut", opKey: `heatMark${side}${ord}`, tmplHint: "HEAT_TYT_short", cat: "Усадка", markTube: true, side, ord,
+          shrinkMaterials: tubeMaterials_(shrunk),
           tutCount: shrunk.reduce((n, t) => n + t.spec.qty, 0), branch: name, label: `Усадка маркировки ${name} — ${shrunk.map(markTitle).join(", ")}` });
       }
       out.push(...markInstalls(key, name));
@@ -3876,6 +3917,7 @@ export function makeGen(D: GenData, S: GenState) {
     if (hsPf) {
       const pieces = sleeves.harness.reduce((n, s) => n + s.cnt, 0);
       hsOps.push({ type: "insTut", opKey: "insSleeves", tmplHint: "INS_TUT", cat: "Монтаж", harness: true, tutCount: pieces,
+        shrinkMaterials: tubeMaterials_(sleeves.harness.map((item) => item.comp)),
         label: `Надеть трубки: ${sleeves.harness.map((s) => `${artOf(s.comp)} на жгут — ${s.cnt} шт`).join("; ")}` });
       if (heatHs) hsOps.push(heatHs);
     }
@@ -3895,6 +3937,9 @@ export function makeGen(D: GenData, S: GenState) {
     const finalOps: OpSpec[] = [...kept.filter((o) => blockOf(o) === FINAL && prepKeys(o))];
     // При ПФ «ТУТ на месте Б» трубки изделия — своим ключом и подписью «перед разъёмами»: ключ ЭТК «на жгут» уже занят.
     if (finalOn.length) finalOps.push({ type: "insTut", opKey: hsPf ? "insSleevesB" : "insSleeves", tmplHint: "INS_TUT", cat: "Монтаж", harness: true,
+      shrinkMaterials: tubeMaterials_([...sleeves.jacket.map((item) => item.comp),
+        ...sleeves.conn.filter((item) => !branchOf(item.ep)).map((item) => item.comp), ...finalMarks,
+        ...(!hsPf ? sleeves.harness.map((item) => item.comp) : [])]),
       tutCount: finalPieces || 1, ...(hsPf ? { branch: "перед разъёмами" } : {}),
       label: `${tubesOn ? "Надеть трубки" : "Надеть детали корпуса"}: ${finalOn.join("; ")}` });
     finalOps.push(...kept.filter((o) => blockOf(o) === FINAL && !prepKeys(o) && o !== heatHs));
@@ -3903,6 +3948,7 @@ export function makeGen(D: GenData, S: GenState) {
     finalOps.push(...markInstalls(FINAL, ""));
     const markHeat = finalMarks.filter((t) => t.shrink).reduce((n, t) => n + t.spec.qty, 0);
     if (markHeat) finalOps.push({ type: "heatTut", opKey: "heatMark", tmplHint: "HEAT_TYT_short", cat: "Усадка", markTube: true, tutCount: markHeat,
+      shrinkMaterials: tubeMaterials_(finalMarks.filter((tube) => tube.shrink)),
       label: `Усадка маркировки — ${markHeat} шт` });
 
     // Ветвь, которая никуда не ведёт, и любой ПФ без выхода — в изделие.
@@ -4067,6 +4113,7 @@ export function makeGen(D: GenData, S: GenState) {
     const fakra = (side: CoaxSide) => (side?.kind ? { kind: side.kind, parts: side.parts || [] } : {});
     const mkSide = (rec: CoaxRec | null, art: string, pinType: string, connName: string, shield: string, ext: object = {}) => (art ? {
       article: art, connName: connName || "", ...ext,
+      ...(rec?.channels ? { channels: rec.channels } : {}),
       type: rec ? rec.type : "", wire: rec ? rec.wire : "", mfr: rec ? rec.mfr : "", program: rec ? rec.program : "",
       ...coaxDia_(), l1: rec ? rec.l1 : "", l2: rec ? rec.l2 : "", l3: rec ? rec.l3 : "",
       lPlus: rec ? rec.lPlus : "", lMinus: rec ? rec.lMinus : "", pinType, shield,
@@ -4075,6 +4122,7 @@ export function makeGen(D: GenData, S: GenState) {
       const row = opRow(spec);
       const machine = spec.machine ? Object.values(COAX_MACHINES).find((m) => m.model === spec.machine) : null;
       return { type: spec.type, opKey: spec.opKey, side: spec.side || "", units: spec.units || 1, templateId: row.templateId,
+        ...(spec.shrinkMaterials ? { shrinkMaterials: spec.shrinkMaterials } : {}),
         opNum: row.matched ? (row.matched.opNumber || "") : "", tPrep: row.times.tPrep, tOp: row.times.tOp, tMachine: row.times.tMachine,
         ...(machine ? { machine: { model: machine.model, inventory: machine.inventory, name: machine.name } } : {}),
         ...(spec.coaxMarks ? { marks: spec.coaxMarks } : spec.marks ? { marks: spec.marks } : {}),
@@ -4109,7 +4157,9 @@ export function makeGen(D: GenData, S: GenState) {
         ...(S.coax.markMaterial ? { markMaterial: S.coax.markMaterial, markProtect: !!S.coax.markProtect } : {}),
         ...(S.coax.marks ? { marks: S.coax.marks } : {}),
         ...(S.coax.connColor ? { connColor: S.coax.connColor } : {}),
-        tutLength: parseDecimal_(S.coax.tutLen) || 20,
+        ...(S.coax.markMaterial === "tape" && S.coax.markProtect
+          ? { tutLengths: { ...COAX_PROTECTIVE_TUT_LENGTHS } }
+          : { tutLength: parseDecimal_(S.coax.tutLen) || 20 }),
         tutArt: tut?.art || "", tutName: tut?.name || "",
         cableArt: cable?.art || "", cableName: cable?.name || "",
         sleeveArt: sleeve?.art || "", sleeveName: sleeve?.name || "",
@@ -4263,6 +4313,7 @@ export function makeGen(D: GenData, S: GenState) {
       const row = opRow(spec);
       const op: Record<string, unknown> = {
         type: spec.type, opKey: spec.opKey, templateId: row.templateId, opNum: row.matched ? (row.matched.opNumber || "") : "",
+        ...(spec.shrinkMaterials ? { shrinkMaterials: spec.shrinkMaterials } : {}),
         tPrep: row.times.tPrep, tOp: row.times.tOp, tMachine: row.times.tMachine,
         // Сложная сборка: своё название операции («Надеть ТТК X2 «I3» — ТТК 8/2») — в блоке схемы ПФ ЭТК вместо имени карты.
         ...(route && spec.label ? { label: spec.label } : {}),
@@ -4626,8 +4677,9 @@ export function initState(D: GenData, base: GenState = emptyState()): GenState {
     const fk = g.coaxFakra_();
     const sideA: CoaxSide = fk ? fk.ends[0] ?? null : cs[0] ? { art: cs[0].art, name: cs[0].name } : null;
     const sideB: CoaxSide = fk ? fk.ends[1] ?? null : cs.length >= 2 ? { art: cs[1].art, name: cs[1].name } : null;
-    S = { ...S, coax: { ...S.coax, sideA, sideB, tutEnabled: !!g.bomTut_(), stripB: false,
-      ...(fk && [sideA, sideB].some((e) => e?.kind === "hfm") ? { cables: 4 } : {}) } };
+    S = { ...S, coax: { ...S.coax, sideA, sideB, tutEnabled: !!g.bomTut_(), stripB: false } };
+    const cables = makeGen(D, S).coaxCables_();
+    if (cables > 1) S = { ...S, coax: { ...S.coax, cables } };
     const g2 = makeGen(D, S);
     if (!S.coax.len && g2.asmLenFromName_() > 0) {
       const lp = (s: CoaxSide) => {
@@ -4643,7 +4695,7 @@ export function initState(D: GenData, base: GenState = emptyState()): GenState {
       const cable = g2.coaxBomCableComp_();
       const fromCalc = cable ? g2.calcCutLengths_([cable])[cable.id] || 0 : 0;
       const fromBom = cable ? Math.round((Number(String(cable.qty).replace(",", ".")) || 0) * 1000) : 0;
-      const cables = fk ? makeGen(D, S).coaxCables_() : 1;
+      const cables = makeGen(D, S).coaxCables_();
       const mm = fromCalc || Math.round(fromBom / cables);
       if (mm > 0) S = { ...S, coax: { ...S.coax, len: String(mm) }, coaxLenFrom: fromCalc ? "calc" : "bom" };
     }
@@ -4810,7 +4862,7 @@ export function fakraSeed_(D: GenData, S: GenState): GenState {
   });
   const tut = sumCoaxMaterial(D.components, g.bomTut_() ?? undefined);
   const tutM = tut ? Number(String(tut.qty).replace(",", ".")) || 0 : 0;
-  if (!coax.tutLen && tutM > 0) coax = { ...coax, tutLen: String(Math.round(tutM * 1000 / g.coaxFakraMarks_())) };
+  if (!coax.tutLen && tutM > 0) coax = { ...coax, tutLen: String(Math.round(tutM * 1000 / (g.coaxFakraMarks_() / g.coaxCables_()))) };
   return { ...S, coax };
 }
 export function onCoaxConnChange(D: GenData, S: GenState, side: Side): GenState {
@@ -5091,6 +5143,11 @@ export function terFromFields(id: string, f: Record<string, string>): TerRec {
     articleBag: f.terArticleBag || String(Object.entries(f).find(([name]) => /\(bag\)/i.test(name))?.[1] || "").trim() };
 }
 export function coaxFromFields(f: Record<string, string>): CoaxRec {
+  const explicit = Number(pick(f, "channels", "Количество каналов", "Число каналов", "Количество контактов"));
+  const text = [pick(f, "Наименование"), pick(f, "Примечание"), pick(f, "coaxType", "Тип/Серия", "type")].join(" ");
+  const stated = /(?:^|\s)(\d+)\s*(?:канал(?:а|ов)?|контакт(?:а|ов)?|[- ]?pin)(?![а-яёa-z])/i.exec(text);
+  const candidate = Number.isSafeInteger(explicit) && explicit > 0 ? explicit : Number(stated?.[1]);
+  const channels = Number.isSafeInteger(candidate) && candidate > 0 ? candidate : undefined;
   return {
     article: pick(f, "coaxArticle", "Артикул"), type: pick(f, "coaxType", "Тип/Серия", "type"), wire: pick(f, "coaxWire", "Провод", "wire"),
     mfr: pick(f, "coaxMfr", "Производитель", "mfr"), program: pick(f, "program", "Программа"),
@@ -5098,6 +5155,7 @@ export function coaxFromFields(f: Record<string, string>): CoaxRec {
     lPlus: pick(f, "lPlus", "L+"), lMinus: pick(f, "lMinus", "L-", "L−"), pinType: pick(f, "pinType", "Тип пина"),
     shieldType: pick(f, "shieldType", "Тип экрана"), connArticle: pick(f, "connArticle", "Артикул разъёма", "Артикул разъема"),
     centerContact: pick(f, "Центральный контакт"),
+    ...(channels ? { channels } : {}),
   };
 }
 /** Поля записи БД.КОАКС, которые создаёт «Добавить в БД.КОАКС» (addCoaxRecordToDb). */
@@ -5106,6 +5164,7 @@ export function coaxRecordFields(p: Omit<CoaxRec, "article">): Record<string, st
     coaxArticle: p.connArticle, coaxType: p.type, coaxWire: p.wire, coaxMfr: p.mfr, program: p.program,
     l1: p.l1, l2: p.l2, l3: p.l3, lPlus: p.lPlus, lMinus: p.lMinus,
     pinType: p.pinType, shieldType: p.shieldType, connArticle: p.connArticle,
+    ...(p.channels ? { channels: String(p.channels) } : {}),
   };
   return Object.fromEntries(Object.entries(fields).filter(([, v]) => String(v || "").trim()));
 }

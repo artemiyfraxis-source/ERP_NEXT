@@ -6,8 +6,8 @@ import { PageWindow } from "./PageWindow";
 /* «Шаблон этикетки» (owner 23.10.2026: «переработать шаблон печати, желательно сделать конструктор»): the label of a
    kind (партия склада, ГП приёмки) per format, drawn over the server's preview — exactly the dots the printer gets. */
 
-export type LabelKind = "lot" | "intake";
-export const LABEL_KINDS: [LabelKind, string][] = [["lot", "Партия склада"], ["intake", "Приёмка с производства"]];
+export type LabelKind = "lot" | "intake" | "instrument";
+export const LABEL_KINDS: [LabelKind, string][] = [["lot", "Партия склада"], ["intake", "Приёмка с производства"], ["instrument", "СИ и принадлежности"]];
 export type LabelFormat = "58x30" | "58x40" | "100x50";
 export const LABEL_FORMATS: LabelFormat[] = ["58x30", "58x40", "100x50"];
 export type ElementKind = "field" | "text" | "qr" | "code128" | "line" | "box";
@@ -20,7 +20,7 @@ export type LabelTemplate = { elements: TemplateElement[] };
 export type TemplateVersion = number | string | null;
 export type FormatTemplate = { template: LabelTemplate; is_default: boolean; version: TemplateVersion };
 export type LabelField = { key: string; label: string };
-export type TemplatesAnswer = { kind: LabelKind; fields: LabelField[]; formats: Record<LabelFormat, FormatTemplate> };
+export type TemplatesAnswer = { kind: LabelKind; fields: LabelField[]; formats: Record<LabelFormat, FormatTemplate>; current_format: LabelFormat };
 
 const path = (kind: LabelKind, format?: LabelFormat) => `/api/stock/labels/templates/${kind}${format ? `/${format}` : ""}`;
 export const templatesApi = {
@@ -132,13 +132,16 @@ async function dataUrl(blob: Blob) {
 }
 
 /** «Шаблон этикетки»: kind and format tabs, the label canvas with element boxes, the palette, the properties.
- *  `usedFormat` — the printer's format (marked «используется»); `onDirty` — unsaved edits exist in any format. */
-export function LabelDesigner({ initialKind, usedFormat = null, readOnly = false, onDirty }: {
-  initialKind: LabelKind; usedFormat?: LabelFormat | null; readOnly?: boolean; onDirty?: (dirty: boolean) => void;
+ *  The API owns the effective format per kind; printer settings updates invalidate those cached answers. */
+export function LabelDesigner({ initialKind, usedFormat = null, settingsVersion = 0, readOnly = false, onDirty }: {
+  initialKind: LabelKind; usedFormat?: LabelFormat | null; settingsVersion?: number; readOnly?: boolean; onDirty?: (dirty: boolean) => void;
 }) {
   const [kind, setKind] = useState<LabelKind>(initialKind);
   const [format, setFormat] = useState<LabelFormat>(usedFormat ?? "58x40");
   const formatChosen = useRef(false);
+  const settingsKey = `${settingsVersion}:${usedFormat ?? ""}`;
+  const [effectiveFormats, setEffectiveFormats] = useState<Partial<Record<LabelKind, { format: LabelFormat; settingsKey: string }>>>({});
+  const currentFormat = effectiveFormats[kind]?.settingsKey === settingsKey ? effectiveFormats[kind]?.format : null;
   const [fields, setFields] = useState<Partial<Record<LabelKind, LabelField[]>>>({});
   const [slots, setSlots] = useState<Record<string, Slot>>({});
   const [loadError, setLoadError] = useState("");
@@ -151,15 +154,16 @@ export function LabelDesigner({ initialKind, usedFormat = null, readOnly = false
   const { box, attach, scale } = useScale(format);
   const drag = useRef<{ id: string; mode: "move" | "resize"; x: number; y: number; start: TemplateElement } | null>(null);
 
-  // The printer's format is where the designer opens, unless a format was already chosen here.
-  useEffect(() => { if (usedFormat && !formatChosen.current) setFormat(usedFormat); }, [usedFormat]);
+  // Switching kind or saving printer settings follows the server unless the user chose a format explicitly.
+  useEffect(() => { if (currentFormat && !formatChosen.current) setFormat(currentFormat); }, [kind, currentFormat]);
 
   useEffect(() => {
-    if (fields[kind]) return;
+    if (currentFormat) return;
     let cancelled = false;
     setLoadError("");
     templatesApi.load(kind).then((answer) => {
       if (cancelled) return;
+      setEffectiveFormats((current) => ({ ...current, [kind]: { format: answer.current_format ?? usedFormat ?? "58x40", settingsKey } }));
       setFields((current) => ({ ...current, [kind]: answer.fields ?? [] }));
       setSlots((current) => {
         const next = { ...current };
@@ -168,7 +172,7 @@ export function LabelDesigner({ initialKind, usedFormat = null, readOnly = false
       });
     }, (reason) => { if (!cancelled) setLoadError(failureText(reason, "Шаблоны этикеток не загрузились")); });
     return () => { cancelled = true; };
-  }, [kind, fields]);
+  }, [kind, settingsKey, currentFormat, usedFormat]);
 
   const slot = slots[slotKey(kind, format)];
   const kindFields = useMemo(() => fields[kind] ?? [], [fields, kind]);
@@ -299,7 +303,7 @@ export function LabelDesigner({ initialKind, usedFormat = null, readOnly = false
       </div>
       <div className="seg-tabs" role="tablist" aria-label="Формат">
         {LABEL_FORMATS.map((item) => <button key={item} type="button" role="tab" aria-selected={format === item} className={format === item ? "on" : undefined}
-          onClick={() => switchFormat(item)}>{formatText(item)}{usedFormat === item && <span className="ld-used"> · используется</span>}{dirtyIn(item) && <span className="ld-dot" title="Есть несохранённые изменения" aria-label="есть изменения"> •</span>}</button>)}
+          onClick={() => switchFormat(item)}>{formatText(item)}{currentFormat === item && <span className="ld-used"> · используется</span>}{dirtyIn(item) && <span className="ld-dot" title="Есть несохранённые изменения" aria-label="есть изменения"> •</span>}</button>)}
       </div>
       {slot && <span className="ld-state muted">{slot.isDefault ? "Стандартный шаблон" : "Свой шаблон"}{dirty ? " · не сохранено" : ""}</span>}
       {!readOnly && slot && <div className="ld-actions">

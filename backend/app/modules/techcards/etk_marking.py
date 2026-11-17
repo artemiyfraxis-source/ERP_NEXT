@@ -56,6 +56,8 @@ TIME_ROWS: tuple[tuple[str, str, frozenset[str]], ...] = (
 def mark_kind(material: str) -> str:
     """Вид метки по её материалу; не распознан — «Прочие метки»."""
     text = str(material or "")
+    if re.search(r"пвх|\bpvc\b", text, re.IGNORECASE) and not re.search(r"термо|усаж|\bтут|\bттк", text, re.IGNORECASE):
+        return "pvc"
     return next((kind for kind, pattern in _KIND_PATTERNS if pattern.search(text)), OTHER)
 
 

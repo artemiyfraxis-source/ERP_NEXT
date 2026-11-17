@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
 from app.shared.http_auth import Principal, production_overview_principal, production_quality_principal
-from .api import production_uow_factory
+from .api import instrument_result, production_uow_factory
 from .application import ConcurrentProductionUpdate
 from .domain import ProductionValidationError
 from .rf_infrastructure import RfRepository
@@ -77,7 +77,9 @@ def put_rf(instrument_id: UUID, payload: RfPayload,
                 event_type="production.rf_interfaces_updated", actor=principal.actor, occurred_at=now,
                 details={"before": asdict(before), "after": asdict(saved)}))
             uow.commit()
-            return rf_result(saved)
+            context = uow.instruments.serial_contexts([item.id])[item.id]
+            suggestion = instrument_result(item, now=now, serial_context=context)["suggested_serial_number"]
+            return {**rf_result(saved), "suggested_serial_number": suggestion}
     except ProductionValidationError as error:
         raise HTTPException(422, str(error)) from error
     except ConcurrentProductionUpdate as error:

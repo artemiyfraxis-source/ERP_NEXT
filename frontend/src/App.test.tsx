@@ -360,6 +360,35 @@ it("opens the ОТК section at the quality route for an edit grant on «ОТК�
   expect(screen.getByRole("button", { name: "ОТК" })).toBeInTheDocument();
 });
 
+it("preserves the scanned inventory link through login and opens its passport card", async () => {
+  window.history.replaceState({}, "", "/?section=quality&tab=instruments&si=" + encodeURIComponent("СИ.034"));
+  const adapter = { id: "adapter", version: 1, inventory_number: "СИ.034", name: "Переходник SMA", instrument_type: "Переходник",
+    kind: "Принадлежность", parent_id: null, serial_number: "ADP-ss-26-034", manufacturer: "", doc_designation: "S-322",
+    quantity: 1, storage_location: "ОТК", warehouse_grn: "", verification_number: null, verified_at: null, verification_due: null,
+    status: "Действует", files: [] };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/auth/me") return json({ detail: "Требуется вход" }, 401);
+    if (path === "/api/auth/login-staff") return json({ staff: [] });
+    if (path === "/api/auth/login") return json(as("foreman", { quality: "edit" }));
+    if (path === "/api/production/tasks") return json({ tasks: [], next_cursor: null });
+    if (path === "/api/production/boxes") return json({ boxes: [] });
+    if (path === "/api/production/instruments") return json({ instruments: [adapter] });
+    if (path === "/api/production/vswr/tasks") return json({ tasks: [] });
+    if (path.endsWith("/rf-interfaces")) return json({ rf: { version: 0, interfaces: [], role: "unknown", confirmed: false, source: "", f_min_ghz: null } });
+    if (path === "/api/notifications/unread") return json({ unread: 0 });
+    return json({}, 404);
+  });
+  render(<App />);
+  await screen.findByRole("button", { name: "Войти" });
+  expect(new URLSearchParams(window.location.search).get("si")).toBe("СИ.034");
+  fireEvent.change(screen.getByLabelText("Логин"), { target: { value: "preview" } });
+  fireEvent.change(screen.getByLabelText("Пароль"), { target: { value: "example-password" } });
+  fireEvent.click(screen.getByRole("button", { name: "Войти" }));
+  const card = await screen.findByRole("dialog", { name: "Средство измерений: Переходник SMA" });
+  expect(within(card).getByRole("link", { name: "Паспорт (PDF)" })).toHaveAttribute("href", "/api/production/instruments/adapter/passport.pdf");
+});
+
 it("does not open the ОТК section without the quality key, even with edit on planning", async () => {
   window.history.replaceState({}, "", "/login?section=quality");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {

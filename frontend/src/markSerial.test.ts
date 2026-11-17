@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import {
   expandMarkSerial, hasMarkSerial, insertMarkSerial, markSerialList, markSerialSpan, markSerialText, markSerialWidth,
-  withMarkSerialWidth,
+  withMarkSerialWidth, markLabelList,
 } from "./markSerial";
 
 it("only {№} and {№:1…6} are the product number; anything else stays plain text", () => {
@@ -9,6 +9,35 @@ it("only {№} and {№:1…6} are the product number; anything else stays plain
   expect(hasMarkSerial("КБ1-{№:3}")).toBe(true);
   for (const text of ["КБ1-№ 1", "{N}", "{№:0}", "{№:7}", "{№:x}", "{ № }", "", undefined]) expect(hasMarkSerial(text)).toBe(false);
   expect(expandMarkSerial("КБ1-{№:7}", 5)).toBe("КБ1-{№:7}");
+});
+
+it("lists the 708К labels as 15 numbered rows and two fixed rows, 45 labels total, without changing the source", () => {
+  const marks = [
+    { text: "Camera 14", qty: "1", batch: "15", place: "у разъёма А", material: "Лента" },
+    { text: "FRX.708К.120907/AA.{№:6}", qty: "1", batch: "15", place: "середина кабеля", material: "Лента" },
+    { text: "Splitter B C6", qty: "1", batch: "15", place: "у разъёма В", material: "Лента" },
+  ];
+  const source = structuredClone(marks);
+  const labels = markLabelList(marks, { first: 1, last: 15 });
+  expect(labels).toHaveLength(17);
+  expect(labels[0]).toMatchObject({ text: "FRX.708К.120907/AA.000001", quantity: 1, place: "середина кабеля" });
+  expect(labels[14].text).toBe("FRX.708К.120907/AA.000015");
+  expect(labels.slice(15).map((label) => [label.text, label.quantity])).toEqual([["Camera 14", 15], ["Splitter B C6", 15]]);
+  expect(labels.reduce((sum, label) => sum + label.quantity, 0)).toBe(45);
+  expect(marks).toEqual(source);
+});
+
+it("uses the assigned subrange and per-item copies instead of the full project batch; keeps lengths and plain tokens", () => {
+  const labels = markLabelList([
+    { text: "W{№}/{№:2}", qty: "2", batch: "200", length: "25" },
+    { text: "{N}", qty: "3", batch: "300" },
+  ], { first: 9, last: 10 });
+  expect(labels.map((label) => [label.text, label.quantity, label.length])).toEqual([
+    ["W9/09", 2, "25"], ["W10/10", 2, "25"], ["{N}", 6, ""],
+  ]);
+  for (const range of [{ first: 2, last: 1 }, { first: 0, last: 3 }, { first: NaN, last: 3 }]) {
+    expect(markLabelList([{ text: "W{№}" }], range)).toEqual([]);
+  }
 });
 
 it("expands every token with its own zero-padding; a number longer than the width is not cut", () => {

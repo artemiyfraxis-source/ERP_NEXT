@@ -21,6 +21,8 @@ from app.shared.advisory_lock import lock_project_run
 from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository
 
 from .application import Absence, ConcurrentProductionUpdate, DuplicateLaunch, Operator
+from .cutting_infrastructure import SqlAlchemyCuttingRepository
+from .instrument_serials import InstrumentSerialContext
 from .domain import DEFAULT_SHIFT, MARKS_ISSUED_EVENT, MARKS_RELEASED_EVENT, RESTORED_EVENT, EtkOperation, FlowMode, MarkEvent, OperationInput, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift
 from .plan import (
     KIT_STAGES, PLAN_BLOCKERS, PLAN_KINDS, PLAN_STAGE_AUTO, PROJECT_TERMINALS, PlanEvent, PlanProjectSnapshot,
@@ -168,6 +170,7 @@ class ProductionOperationRow(Base):
     __tablename__ = "production_operations"
     __table_args__ = (
         Index("ux_production_operation_position", "task_id", "position", unique=True),
+        Index("ux_production_operation_task_id", "task_id", "id", unique=True),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
@@ -610,6 +613,9 @@ class ProductionInstrumentRow(Base):
         CheckConstraint("kind <> 'Принадлежность' OR (verification_number IS NULL AND verified_at IS NULL AND verification_due IS NULL AND status IN ('Действует', 'Не используется'))", name='ck_production_instruments_accessory'),
         CheckConstraint("vna_app IN ('', 'S2VNA', 'Arinst VL')", name="ck_production_instruments_vna_app"),
         CheckConstraint("vna_app = '' OR kind = 'Средство измерений'", name="ck_production_instruments_vna_measuring"),
+        Index("uq_production_instruments_serial_number", "serial_number", unique=True,
+              sqlite_where=text("trim(serial_number) <> ''"),
+              postgresql_where=text("trim(serial_number) <> ''")),
     )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     version: Mapped[int] = mapped_column(Integer(), nullable=False)
@@ -993,6 +999,8 @@ class SqlAlchemyProductionRepository:
         with self.session.no_autoflush:
             self._lock_projects((task.id,), projects=(task.project,))
             row = self.session.get(ProductionTaskRow, task.id)
+            if row is not None:
+                SqlAlchemyCuttingRepository(self.session).check_task_change(self.get(task.id), task)
         if self.resources is not None:
             self.resources.record_task(task)
         if row is None:
@@ -1085,6 +1093,7 @@ class SqlAlchemyProductionRepository:
                 ))
         for stale in existing.values():
             self.session.delete(stale)
+        SqlAlchemyCuttingRepository(self.session).task_changed(task)
 
     def worked(self, task_ids) -> set[UUID]:
         """Задания со следом работы: короб, сессия, выработка, брак или «взял/закончил» в доле монтажника."""
@@ -1133,6 +1142,8 @@ class SqlAlchemyProductionRepository:
     def delete(self, task_id: UUID) -> None:
         """Delete an unworked task and its route under the same project lock as packing."""
         self._lock_projects((task_id,))
+        if SqlAlchemyCuttingRepository(self.session).preserve_task(task_id):
+            raise ProductionValidationError("Задание входит в историю резки — используйте отмену")
         if self.resources is not None:
             self.resources.remove_task(task_id)
         operations = select(ProductionOperationRow.id).where(ProductionOperationRow.task_id == task_id)
@@ -1977,6 +1988,23 @@ class SqlAlchemyInstrumentRepository:
         ))
         return self._domain(row) if row is not None else None
 
+    def serial_contexts(self, instrument_ids: Sequence[UUID]) -> dict[UUID, InstrumentSerialContext]:
+        """Batch-load registration/first-audit dates and RF ends without changing the registry schema."""
+        from .rf_infrastructure import RfRepository
+
+        if not instrument_ids:
+            return {}
+        events = AuditEventRow
+        first = dict(self.session.execute(select(events.aggregate_id, func.min(events.occurred_at)).where(
+            events.aggregate_id.in_(instrument_ids),
+        ).group_by(events.aggregate_id)).all())
+        registered = dict(self.session.execute(select(events.aggregate_id, func.min(events.occurred_at)).where(
+            events.aggregate_id.in_(instrument_ids), events.event_type == "production.instrument_registered",
+        ).group_by(events.aggregate_id)).all())
+        rf = RfRepository(self.session).list(instrument_ids[0] if len(instrument_ids) == 1 else None)
+        return {item_id: InstrumentSerialContext(registered.get(item_id, first.get(item_id)), rf.get(item_id))
+                for item_id in instrument_ids}
+
     def save(self, instrument: MeasurementInstrument) -> None:
         values = {field: getattr(instrument, field) for field in (
             "version", "inventory_number", "name", "instrument_type",
@@ -2362,6 +2390,7 @@ class SqlAlchemyProductionUnitOfWork:
                 self.session.close()
                 raise
         self.production = SqlAlchemyProductionRepository(self.session, self.resources)
+        self.cutting = SqlAlchemyCuttingRepository(self.session)
         self.operators = SqlAlchemyOperatorRepository(self.session)
         self.calendar = SqlAlchemyCalendarRepository(self.session)
         self.skills = SqlAlchemySkillRepository(self.session)

@@ -231,7 +231,7 @@ def get_templates(
     """`{kind, kind_label, fields: [{key, label}], formats: {"58x30"|"58x40"|"100x50": {template, is_default, version,
     width_mm, height_mm, updated_at, updated_by}}, current_format, code_type}`."""
     _kind_format(kind)
-    return templates_view(uow_factory(), kind, label_settings(uow_factory()))
+    return templates_view(uow_factory(), kind, label_settings(uow_factory(), kind))
 
 
 @router.put("/labels/templates/{kind}/{label_format}")
@@ -247,7 +247,7 @@ def put_template(
     false, version, …}`; 409 — saved or reset by someone since; 422 — not a valid template (Russian)."""
     _kind_format(kind, label_format)
     return _designed(lambda: save_label_template(
-        uow_factory(), kind, label_format, payload.template, payload.version, label_settings(uow_factory()),
+        uow_factory(), kind, label_format, payload.template, payload.version, label_settings(uow_factory(), kind),
         principal.actor, now,
     ))
 
@@ -262,7 +262,7 @@ def delete_template(
 ) -> dict:
     """Back to the built-in template → `{template, is_default: true, version: null, …}`."""
     _kind_format(kind, label_format)
-    return reset_label_template(uow_factory(), kind, label_format, label_settings(uow_factory()), principal.actor, now)
+    return reset_label_template(uow_factory(), kind, label_format, label_settings(uow_factory(), kind), principal.actor, now)
 
 
 @router.post("/labels/templates/{kind}/{label_format}/preview")
@@ -286,7 +286,7 @@ def preview_template(
         return lot_content(lot_label_data(uow_factory(), lot_id))
 
     return _png(_designed(lambda: preview_template_png(
-        payload.template, kind, label_format, label_settings(uow_factory()), content())))
+        payload.template, kind, label_format, label_settings(uow_factory(), kind), content())))
 
 
 @router.post("/labels/agent/claim")

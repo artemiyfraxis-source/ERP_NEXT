@@ -192,6 +192,10 @@ class LaunchProductionCommand:
     # Последний номер запуска этой КБ, который видел запускающий (автоплан читает его до расчёта); None — читается
     # при запуске. Задание получает следующий номер; занятый номер — DuplicateLaunch.
     seen_launch_seq: int | None = None
+    cutting_document: Mapping | None = None
+    cutting_site: str | None = None
+    cutting_card_version: int | None = None
+    issue_separately: bool = False
 
 
 @dataclass(frozen=True)
@@ -291,6 +295,12 @@ def _fingerprint(command: LaunchProductionCommand) -> str:
             for operation in command.operations
         ],
     }
+    if command.cutting_document is not None:
+        from .cutting import cutting_recipe
+        recipe, _reason = cutting_recipe(command.project, command.cutting_site or "", command.cutting_document, command.operations)
+        if recipe:
+            payload["cutting"] = {"key": recipe.key, "row": recipe.row, "separate": command.issue_separately,
+                                  "card_version": command.cutting_card_version}
     return sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -317,11 +327,20 @@ def launch_task(command: LaunchProductionCommand, uow: UnitOfWork) -> tuple[Prod
     key = str(command.idempotency_key or "").strip()
     if not key:
         raise ProductionValidationError("Idempotency key обязателен")
+    if command.cutting_document is not None and command.cutting_site is None:
+        operator = uow.operators.get(command.actor.id)
+        command = replace(command, cutting_site=operator.site if operator else "")
     fingerprint = _fingerprint(command)
     existing = uow.production.by_idempotency_key(key)
     if existing is not None:
         if existing.source_fingerprint != fingerprint:
-            raise ProductionValidationError("Idempotency key уже использован для другого задания")
+            # A retry of a pre-group launch must keep its identity and must not group historical work.
+            cutting = getattr(uow, "cutting", None)
+            historical = command.cutting_document is not None and existing.source_fingerprint == _fingerprint(
+                replace(command, cutting_document=None),
+            ) and not (cutting and any(cutting.for_operation(op.id) for op in existing.operations))
+            if not historical:
+                raise ProductionValidationError("Idempotency key уже использован для другого задания")
         return existing, False
     # Номер запуска КБ читается до номера ПЗ: номер ПЗ берётся под замком, и после ожидания замка параллельный
     # запуск уже был бы виден — а гонку должна поймать уникальность (techcard_id, launch_seq).
@@ -351,6 +370,14 @@ def launch_task(command: LaunchProductionCommand, uow: UnitOfWork) -> tuple[Prod
     uow.production.add(task, launch_seq)
     uow.serials.ensure_task(task.id, task.number, task.quantity)
     _audit(task, "production.launched", command.actor, command.now, {"number": task.number}, uow)
+    if command.cutting_document is not None and getattr(uow, "cutting", None) is not None:
+        from .cutting import cutting_recipe
+        operator = uow.operators.get(command.actor.id)
+        site = command.cutting_site if command.cutting_site is not None else (operator.site if operator else "")
+        recipe, _reason = cutting_recipe(task.project, site, command.cutting_document, task.operations)
+        if recipe:
+            uow.cutting.attach(task, recipe, command.now, uow.production, separate=command.issue_separately,
+                               document=command.cutting_document, card_version=command.cutting_card_version)
     return task, True
 
 
@@ -444,10 +471,15 @@ def _checked_names(
     actor: Actor,
 ) -> dict[UUID, str]:
     names: dict[UUID, str] = {}
+    cutting = getattr(uow, "cutting", None)
+    member = cutting.for_operation(operation.id) if cutting else None
+    group = cutting.get(member.group_id) if member else None
     for operator_id in operator_ids:
         operator = uow.operators.get(operator_id)
         if operator is None or not operator.active:
             raise ProductionValidationError("Оператора нет в справочнике сотрудников")
+        if group and group.site and operator.site != group.site:
+            raise ProductionValidationError("Исполнитель другой площадки — сначала отделите строку от группы резки")
         if not operator.installer and operator_id not in operation.operator_ids:
             raise ProductionValidationError(f"{operator.name} не монтажник: работу назначают только монтажникам")
         names[operator_id] = operator.name
@@ -475,71 +507,80 @@ def _skills(uow: UnitOfWork) -> dict[str, dict[UUID, OperatorSkill]]:
 
 def assign_production(command: AssignProductionCommand, uow: UnitOfWork) -> tuple[ProductionTask, PlanResult]:
     with uow:
-        task = _task(command.task_id, command.expected_version, uow)
-        operation = task.operation(command.operation_id)
-        names = _checked_names(uow, operation, command.operator_ids, command.actor)
-        skills = _skills(uow)
-        tasks = uow.production.list(limit=10_000)
-        busy = _with_absences(
-            _busy(tasks, task.id, operation.id, command.now, _load_clock(uow, command.now, tasks)),
-            uow.calendar.absences(),
-            command.operator_ids,
-            command.now.tzinfo,
+        result = assign_task(command, uow)
+        if not command.dry:
+            uow.commit()
+        return result
+
+
+def assign_task(command: AssignProductionCommand, uow: UnitOfWork) -> tuple[ProductionTask, PlanResult]:
+    """Assign a child within the caller transaction (also used by cutting groups)."""
+    if getattr(uow, "cutting", None) is not None:
+        uow.cutting.assert_standalone(command.operation_id)
+    task = _task(command.task_id, command.expected_version, uow)
+    operation = task.operation(command.operation_id)
+    names = _checked_names(uow, operation, command.operator_ids, command.actor)
+    skills = _skills(uow)
+    tasks = uow.production.list(limit=10_000)
+    busy = _with_absences(
+        _busy(tasks, task.id, operation.id, command.now, _load_clock(uow, command.now, tasks)),
+        uow.calendar.absences(),
+        command.operator_ids,
+        command.now.tzinfo,
+    )
+    # Не раньше всего, что идёт в эту операцию по схеме входов (в цепочке — все прежние этапы).
+    upstream = upstream_ids(task.operations, operation.id)
+    previous_finishes = [
+        _same_timezone(item.planned_finish, command.now) for item in task.operations
+        if item.id in upstream and item.planned_finish is not None
+    ]
+    earliest = max([command.now, *previous_finishes])
+    plan = plan_operation(
+        operation=operation,
+        quantity=task.operation_units(operation.id),
+        operator_ids=command.operator_ids,
+        requested_start=_same_timezone(command.requested_start, command.now) if command.requested_start else None,
+        earliest_start=earliest,
+        busy=busy,
+        holidays=uow.calendar.holidays(),
+        shift=_shift(uow.calendar),
+        skills=skills,
+        names=names,
+    )
+    # Сроки других операций пришли из базы: SQLite отдаёт их без пояса, PostgreSQL — с поясом. Новый план
+    # пишется в той же форме, иначе сроки задания не сравнить между собой.
+    stored = next((
+        value for item in task.operations if item.id != operation.id
+        for value in (item.planned_start, item.planned_finish) if value is not None
+    ), None)
+    if stored is not None:
+        plan = replace(
+            plan,
+            start=_same_timezone(plan.start, stored) if plan.start else None,
+            finish=_same_timezone(plan.finish, stored) if plan.finish else None,
         )
-        # Не раньше всего, что идёт в эту операцию по схеме входов (в цепочке — все прежние этапы).
-        upstream = upstream_ids(task.operations, operation.id)
-        previous_finishes = [
-            _same_timezone(item.planned_finish, command.now) for item in task.operations
-            if item.id in upstream and item.planned_finish is not None
-        ]
-        earliest = max([command.now, *previous_finishes])
-        plan = plan_operation(
-            operation=operation,
-            quantity=task.operation_units(operation.id),
-            operator_ids=command.operator_ids,
-            requested_start=_same_timezone(command.requested_start, command.now) if command.requested_start else None,
-            earliest_start=earliest,
-            busy=busy,
-            holidays=uow.calendar.holidays(),
-            shift=_shift(uow.calendar),
-            skills=skills,
-            names=names,
-        )
-        # Сроки других операций пришли из базы: SQLite отдаёт их без пояса, PostgreSQL — с поясом. Новый план
-        # пишется в той же форме, иначе сроки задания не сравнить между собой.
-        stored = next((
-            value for item in task.operations if item.id != operation.id
-            for value in (item.planned_start, item.planned_finish) if value is not None
-        ), None)
-        if stored is not None:
-            plan = replace(
-                plan,
-                start=_same_timezone(plan.start, stored) if plan.start else None,
-                finish=_same_timezone(plan.finish, stored) if plan.finish else None,
-            )
-        updated = task.assign(operation.id, command.operator_ids, plan, command.actor.name)
-        if command.dry:
-            # prodAssign_ dry: the preview is computed exactly like the save and nothing is written.
-            return task, plan
-        if command.machine_bindings is not None and getattr(uow, "resources", None) is None:
-            raise ProductionValidationError("Назначение оборудования ещё не подключено")
-        # След работы — до записи: снятая доля могла быть «взята».
-        unstarted = bool(operation.shares) and not command.operator_ids and not _has_work(task, uow)
-        uow.production.add(updated)
-        resources = getattr(uow, "resources", None)
-        if resources is not None:
-            resources.ensure_assignment(updated, operation.id, command.operator_ids, command.machine_bindings, crew=True)
-        _audit(updated, "production.assigned", command.actor, command.now, {
-            "operation_id": str(operation.id),
-            "operator_ids": [str(value) for value in command.operator_ids],
-            "planned_start": plan.start.isoformat() if plan.start else None,
-            "planned_finish": plan.finish.isoformat() if plan.finish else None,
-            "warnings": list(plan.warnings),
-        }, uow)
-        if unstarted:
-            updated, _ = cancel_if_unassigned(updated, command.actor, command.now, uow)
-        uow.commit()
-        return updated, plan
+    updated = task.assign(operation.id, command.operator_ids, plan, command.actor.name)
+    if command.dry:
+        # prodAssign_ dry: the preview is computed exactly like the save and nothing is written.
+        return task, plan
+    if command.machine_bindings is not None and getattr(uow, "resources", None) is None:
+        raise ProductionValidationError("Назначение оборудования ещё не подключено")
+    # След работы — до записи: снятая доля могла быть «взята».
+    unstarted = bool(operation.shares) and not command.operator_ids and not _has_work(task, uow)
+    uow.production.add(updated)
+    resources = getattr(uow, "resources", None)
+    if resources is not None:
+        resources.ensure_assignment(updated, operation.id, command.operator_ids, command.machine_bindings, crew=True)
+    _audit(updated, "production.assigned", command.actor, command.now, {
+        "operation_id": str(operation.id),
+        "operator_ids": [str(value) for value in command.operator_ids],
+        "planned_start": plan.start.isoformat() if plan.start else None,
+        "planned_finish": plan.finish.isoformat() if plan.finish else None,
+        "warnings": list(plan.warnings),
+    }, uow)
+    if unstarted:
+        updated, _ = cancel_if_unassigned(updated, command.actor, command.now, uow)
+    return updated, plan
 
 
 def _dispatch_calendar(uow: UnitOfWork, now: datetime) -> DispatchCalendar:
@@ -641,6 +682,8 @@ def assign_share(command: AssignShareCommand, uow: UnitOfWork) -> tuple[Producti
         lock_reflow_projects(uow, (command.task_id,), command.now)
         uow.production.lock(command.task_id)
         loaded = _task(command.task_id, command.expected_version, uow)
+        if getattr(uow, "cutting", None) is not None:
+            uow.cutting.assert_standalone(command.operation_id)
         if loaded.status is ProductionStatus.DONE:
             raise ProductionValidationError(f"Задание {loaded.number} выполнено — назначать нельзя")
         now = command.now
@@ -853,6 +896,8 @@ def record_fact(
     Работа после доли сдвигается или подтягивается (dispatch.reflow). Вызывается внутри транзакции исполнения:
     план правится в точке сохранения — если не вышло, выработка всё равно сохраняется, план остаётся прежним."""
     lock_reflow_projects(uow, (task_id,), now)
+    if (started or mine > 0 or total > 0) and getattr(uow, "cutting", None) is not None:
+        uow.cutting.freeze(operation_id, now)
     stored = uow.production.get(task_id)
     if stored is None or stored.status is not ProductionStatus.RUNNING or stored.handed_to:
         return

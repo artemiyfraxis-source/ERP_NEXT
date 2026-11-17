@@ -34,3 +34,6 @@
 @media (pointer: coarse) {
   .lr-strip button, .lr-confirm button, .lr-qty-input { min-height: 40px; }
 }
+.lr-separate { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-block: 12px; }
+.lr-separate label { display: inline-flex; align-items: center; gap: 8px; }
+.lr-separate input { width: auto; }

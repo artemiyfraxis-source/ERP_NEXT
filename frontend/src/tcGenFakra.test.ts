@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import { autoConfig as seededConfig, generatorData, refsFromRecords, runBatch, type BatchBom, type BatchRefs } from "./tcGenBatch";
-import { fakraEndsFromBom_, initState as seededState, makeGen, coaxCutLength, restoreCoaxState, type GenData, type GenState } from "./tcGenLogic";
+import { fakraEndsFromBom_, initState as seededState, makeGen, coaxCutLength, coaxFromFields, restoreCoaxState, type GenData, type GenState } from "./tcGenLogic";
 import batchAConfigs from "./__fixtures__/fakraBatchAConfigs.json";
 import freshConfigs from "./__fixtures__/fakra1116Configs.json";
 import productionConfigs from "./__fixtures__/fakra708Configs.json";
@@ -12,6 +12,9 @@ import { expandMarkSerial, hasMarkSerial, markSerialList } from "./markSerial";
 import { coaxReseedPatch } from "./tcGenLogic";
 import { deriveRoute, type RouteOp } from "./routeLogic";
 import { genCards } from "./routeCards";
+
+// Historical route/consumption fixtures predate the additive per-operation material association.
+const withoutShrinkMaterials = (config: unknown) => JSON.parse(JSON.stringify(config, (key, value) => key === "shrinkMaterials" ? undefined : value));
 
 // Historical assertions exercise a saved state with no new fields, not the new seed recipe.
 function initState(D: GenData): GenState {
@@ -61,7 +64,7 @@ const REFS: BatchRefs = {
     coaxRow("59K13O-1M4A4", "FAKRA-HF прямой", "9,7", "4,6", "3,0", "обжим"),
     coaxRow("59K25H-1M4A4", "FAKRA-HF угловой", "11,6", "6,4", "1,7", "обжим"),
     coaxRow("2FA1-NZSP-C30E2", "FAKRA Gen2 панельный", "2,7", "1,0", "8,5", "пайка"),
-    coaxRow("AMK11D-1M4Z5-Z", "HFM Quad", "13", "5,55", "2,1", "обжим"),
+    { ...coaxRow("AMK11D-1M4Z5-Z", "HFM Quad", "13", "5,55", "2,1", "обжим"), "Наименование": "Корпус на 4 канала с контактами" },
   ],
   kab_coax: [{ "Кабель": "RTK 031", D1: "0,81", D2: "2,1", D3: "3,2" }],
 };
@@ -133,7 +136,8 @@ function productionData(fixture: ProductionFixture, dedicated = true) {
     op: [...config.ops.filter((o) => o.opNum).map((o) => ({ opNumber: o.opNum, opName: o.opNum, tPrep: o.tPrep, tOp: o.tOp, tMachine: o.tMachine })),
       ...(dedicated ? DEDICATED_OPS : [])],
     coax: sides.map((end) => ({ ...coaxRow(end.article, end.type, end.l1, end.l2, end.l3, end.pinType),
-      "Провод": end.wire, "Производитель": end.mfr, "Тип экрана": end.shield })),
+      "Провод": end.wire, "Производитель": end.mfr, "Тип экрана": end.shield,
+      ...(end.kind === "hfm" ? { "Количество каналов": String(coax.cables) } : {}) })),
     kab_coax: [{ "Кабель": coax.cableArt, D1: coax.sideA.d1, D2: coax.sideA.d2, D3: coax.sideA.d3 || "" }],
   };
   return generatorData(refsFromRecords(refs), { ...bom(fixture.kb, config.assemblyName, components), run: String(config.partQty), part_qty: String(config.partQty) });
@@ -155,7 +159,11 @@ describe("production 708К. fixture preservation", () => {
         .replace("Надеть крышку, уплотнитель и гильзу", "Подготовить гильзу, уплотнитель и крышку") };
       return end.kind === "hfm" ? { ...operation, label: operation.label!.replace("Надеть", "Подготовить") } : operation;
     });
-    expect(ops.map(preserved)).toEqual(expected.map(preserved));
+    const marking = new Set(["coaxCutTut", "coaxInsTut", "coaxHeat"]);
+    const corrected = (operation: SavedOp) => endCount > 1 && marking.has(operation.opKey)
+      ? { ...operation, units: operation.units * endCount, label: operation.label?.replace(`×${operation.units}`, `×${operation.units * endCount}`) } : operation;
+    const endCount = fixture.config.coax.cables || 1;
+    expect(ops.map(preserved)).toEqual(expected.map(corrected).map(preserved));
     for (const side of ["A", "B"] as const) {
       const end = fixture.config.coax[side === "A" ? "sideA" : "sideB"];
       const stages = ops.filter((operation) => operation.side === side);
@@ -170,7 +178,7 @@ describe("production 708К. fixture preservation", () => {
     const unchanged = (operation: SavedOp) => ({ ...preserved(operation), templateId: operation.templateId, opNum: operation.opNum,
       tPrep: operation.tPrep, tOp: operation.tOp, tMachine: operation.tMachine });
     expect(ops.filter((operation) => !operation.side).map(unchanged))
-      .toEqual(fixture.config.ops.filter((operation) => !operation.side).map(unchanged));
+      .toEqual(fixture.config.ops.filter((operation) => !operation.side).map(corrected).map(unchanged));
   });
 
   it("ERP-owned cards resolve every production stage without generic fallback", () => {
@@ -190,7 +198,7 @@ describe("production 708К. fixture preservation", () => {
   it("КБ11 generator bytes stay unchanged with dedicated cards in the library", async () => {
     const fixture = fixtures.find((item) => item.kb === "КБ11")!;
     const config = autoConfig(productionData(fixture)).config;
-    const bytes = new TextEncoder().encode(JSON.stringify(config));
+    const bytes = new TextEncoder().encode(JSON.stringify(withoutShrinkMaterials(config)));
     const digest = await crypto.subtle.digest("SHA-256", bytes);
     expect(Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(""))
       .toBe("73b3bcf31283d39f53241504c7c25bd1bdc870f20cac337ab2fda58894694ded");
@@ -299,14 +307,14 @@ describe("операции FAKRA по документам изготовите�
     expect(r.S.coax.cables).toBe(4);
     expect(r.S.coax.len).toBe("1250");
     expect(labels(KB3)).toEqual([
-      "Резка кабеля ×4", "Печать меток и резка ТУТ под маркировку ×3", "Монтаж ТУТ под маркировку ×3",
+      "Резка кабеля ×4", "Печать меток и резка ТУТ под маркировку ×12", "Монтаж ТУТ под маркировку ×12",
       "Подготовить опорные гильзы ×4 (А)",
       "Разделка коаксиала ×4 (А)", "Обжим центрального контакта ×4 (А)", "Вставка контактов в корпус до щелчка ×4 (А)",
       "Обжим гильзы экрана ×4 (А)", "Вторичная фиксация и CPA (А)",
       "Подготовить опорные гильзы ×4 (В)",
       "Разделка коаксиала ×4 (В)", "Обжим центрального контакта ×4 (В)", "Вставка контактов в корпус до щелчка ×4 (В)",
       "Обжим гильзы экрана ×4 (В)", "Вторичная фиксация и CPA (В)",
-      "Усадка ТУТ под маркировку ×3", "Контроль КСВН",
+      "Усадка ТУТ под маркировку ×12", "Контроль КСВН",
     ]);
     expect((r.config!.coax as Record<string, unknown>).cables).toBe(4);
     expect(r.warnings.join("\n")).toMatch(/Кабелей 4/);
@@ -355,6 +363,25 @@ function freshData(kb = "КБ1") {
 }
 
 describe("FAKRA flow 16.11", () => {
+  it.each([1, 4])("protects labels by place on %i cables regardless of the saved single length", (cables) => {
+    const data = freshData(), state = seededState(data);
+    state.coax.cables = cables;
+    for (const tutLen of ["30", "60"]) {
+      state.coax.tutLen = tutLen;
+      const cfg = makeGen(data, state).buildConfig() as any;
+      expect(cfg.coax.tutLengths).toEqual({ A: 35, B: 35, middle: 55 });
+      expect(cfg.coax).not.toHaveProperty("tutLength");
+      for (const key of ["coaxProtectCut", "coaxProtectIns", "coaxHeat"])
+        expect(cfg.ops.find((op: any) => op.opKey === key).units).toBe(3 * cables);
+      state.coax.marks![0].scope = "assembly";
+      expect((makeGen(data, state).buildConfig() as any).ops.find((op: any) => op.opKey === "coaxProtectCut").units).toBe(2 * cables + 1);
+      delete state.coax.marks![0].scope;
+    }
+    state.coax.markMaterial = "tube";
+    const tubes = makeGen(data, state).buildConfig() as any;
+    expect(tubes.coax.tutLength).toBe(60);
+    expect(tubes.coax).not.toHaveProperty("tutLengths");
+  });
   it.each(["КБ1", "КБ2"])("%s seeds finished length, three explicit labels and the BOM colour", (kb) => {
     const data = freshData(kb), state = seededState(data), gen = makeGen(data, state);
     expect(state.coax).toMatchObject({ lengthBasis: "finished", finishedLength: "4800", lPlusA: "30", lPlusB: "25", markMaterial: "tape", markProtect: true });
@@ -365,7 +392,12 @@ describe("FAKRA flow 16.11", () => {
     const expected = structuredClone(freshConfigs.find((item) => item.kb === kb)!.config) as any;
     expected.coax.finishedLengthFrom = "bom";
     delete expected.ops.find((op: any) => op.opKey === "coaxPrintLabel").parts;
-    expect(cfg).toEqual(expected);
+    expect(withoutShrinkMaterials(cfg)).toEqual(expected);
+    for (const key of ["coaxProtectCut", "coaxProtectIns", "coaxHeat"]) {
+      expect(cfg.ops.find((op: any) => op.opKey === key).shrinkMaterials).toEqual([
+        { art: cfg.coax.tutArt, name: cfg.coax.tutName },
+      ]);
+    }
     expect(cfg.coax.marks).toEqual(coaxMarksFromName(kb === "КБ2" ? "120905/AA Camera 11 → Splitter B C3" : "120907/AA Camera 14 → Splitter B C6"));
     expect(cfg.coax.connColor).toMatchObject(kb === "КБ2" ? { color: "розовый", code: "PK" } : { color: "оранжевый", code: "OG" });
     expect(cfg.ops.map((op: any) => op.opKey)).toEqual([
@@ -528,6 +560,73 @@ function batchAData(b: BatchBom): GenData {
   return { ...generatorData(refsFromRecords(refs), b), projectNo: "708К." };
 }
 
+describe("multi-channel coax quantities", () => {
+  it.each([
+    [{ "Количество каналов": "6" }, 6],
+    [{ "Наименование": "Корпус на 4 канала с контактами" }, 4],
+    [{ "Примечание": "Комплект: 2 канала; на каждый кабель свой контакт" }, 2],
+    [{ "Тип/Серия": "HFM" }, undefined],
+    [{ "Количество каналов": "2.5" }, undefined],
+  ])("reads explicit channel data %j", (fields, expected) => {
+    expect(coaxFromFields(fields).channels).toBe(expected);
+  });
+
+  it.each([2, 4, 6])("counts %i cables from references, preserving housing and connector kit counts", (channels) => {
+    const data = batchAData(KB3);
+    data.coaxRecords = data.coaxRecords.map((record) => ({ ...record, channels }));
+    const state = seededState(data);
+    const gen = makeGen(data, state);
+    const ops = gen.getActiveOps();
+    expect(ops[0].units! * 15).toBe(channels * 15);
+    for (const side of ["A", "B"]) {
+      for (const type of ["coaxSupportCrimp", "coaxPinCrimp", "coaxShield"]) {
+        expect(ops.find((op) => op.type === type && op.side === side)?.units! * 15).toBe(channels * 15);
+      }
+      expect(ops.find((op) => op.opKey === `coaxInsert${side}`)?.units).toBe(channels);
+      expect(ops.find((op) => op.opKey === `coaxBody${side}`)?.units ?? 1).toBe(1);
+      expect(ops.find((op) => op.opKey === `coaxPinCrimp${side}`)?.parts?.[0].qty).toBe(1);
+    }
+    for (const type of ["coaxCutTut", "coaxInsTut", "coaxHeat"]) {
+      expect(ops.find((op) => op.type === type)?.units).toBe(3 * channels);
+    }
+    expect(ops.find((op) => op.type === "coaxVswr")?.units ?? 1).toBe(1);
+    const config = gen.buildConfig();
+    expect((config.coax as any).sideA.channels).toBe(channels);
+  });
+
+  it("counts cable labels separately from a label on the complete assembly", () => {
+    const data = batchAData(KB3), state = seededState(data);
+    state.coax.marks![0].scope = "assembly";
+    expect(makeGen(data, state).getActiveOps().find((op) => op.type === "coaxCutTut")?.units).toBe(9);
+  });
+
+  it("applies the same cable counts to a generic multi-channel connector", () => {
+    const data = batchAData(KB3), state = seededState(data);
+    state.coax.sideA = { art: "GEN-2", name: "Двухканальный разъём" };
+    state.coax.sideB = { art: "GEN-2", name: "Двухканальный разъём" };
+    state.coax.cables = 2;
+    state.coax.stripMode = "separate";
+    const ops = makeGen(data, state).getActiveOps();
+    for (const op of ops.filter((op) => ["coaxCut", "coaxStrip", "coaxPinCrimp"].includes(op.type))) expect(op.units).toBe(2);
+    expect(ops.find((op) => op.type === "coaxInsSleeve")?.units).toBe(4);
+    expect(ops.find((op) => op.type === "coaxInsSleeve")?.label).toContain("×4");
+    expect(ops.find((op) => op.type === "coaxShield")?.units).toBe(4);
+    expect(ops.find((op) => op.type === "coaxShield")?.label).toContain("×4");
+    expect(ops.find((op) => op.type === "coaxCutTut")?.units).toBe(4);
+    expect(ops.find((op) => op.type === "coaxHousing")?.units ?? 1).toBe(1);
+  });
+
+  it("divides generic connector cable metres by its channels when no length is named", () => {
+    const data = batchAData(KB3);
+    data.components = data.components.map((comp) => comp.type === "Разъем" ? { ...comp, art: "GEN-4", name: "GEN-4" } : comp);
+    data.coaxRecords = [{ ...data.coaxRecords[3], article: "GEN-4", connArticle: "GEN-4", channels: 4 }];
+    const state = seededState(data);
+    expect(state.coax.cables).toBe(4);
+    expect(state.coax.len).toBe("1250");
+    expect(makeGen(data, state).getActiveOps()[0].units).toBe(4);
+  });
+});
+
 describe("coax batch A contract", () => {
   it("passes each batch BOM's project to the same FRX seed as the form", () => {
     const refs = { ...REFS, templates: [...REFS.templates, ...NEW_CODES.map((code) => T(code, code))],
@@ -584,7 +683,7 @@ describe("coax batch A contract", () => {
       c("Маркировка", "Маркировка", 1.5), c("Маркировка", "Маркировка", 1.5), c("Кабель", "RTK 031", 5)] };
     const data = batchAData(b), state = seededState(data), before = JSON.stringify(data.components);
     expect(state.coax.tutLen).toBe("60");
-    expect(makeGen(data, state).getActiveOps().find((op) => op.opKey === "coaxCutTut")?.units).toBe(3);
+    expect(makeGen(data, state).getActiveOps().find((op) => op.opKey === "coaxCutTut")?.units).toBe(12);
     data.components.push(c("Материал", "Лента Vell VL-S641", 0.18));
     expect(coaxReseedPatch(data, state).tutLen).toBe("60");
     expect(JSON.stringify(data.components.slice(0, -1))).toBe(before);
@@ -637,7 +736,20 @@ describe("coax batch A contract", () => {
 
 it.each([KB3, KB28])("$index matches the shared batch A ETK fixture", (bom) => {
   const data = batchAData(bom), state = seededState(data); state.coax.finishedLengthFrom = "user";
-  expect(makeGen(data, state).buildConfig()).toEqual(batchAConfigs.find((item) => item.kb === bom.index)!.config);
+  const cfg = makeGen(data, state).buildConfig() as any;
+  const expected = structuredClone(batchAConfigs.find((item) => item.kb === bom.index)!.config) as any;
+  if (bom === KB3) {
+    expected.coax.sideA.channels = expected.coax.sideB.channels = 4;
+    for (const op of expected.ops) if (["coaxCutTut", "coaxInsTut", "coaxHeat"].includes(op.opKey)) {
+      op.label = op.label.replace("×3", "×12");
+      op.units = 12;
+    }
+  }
+  expect(withoutShrinkMaterials(cfg)).toEqual(expected);
+  if (bom.index === "КБ28") expect(cfg.ops.find((op: any) => op.opKey === "coaxHeatTtkA").shrinkMaterials)
+    .toEqual([{ art: "ТТК 6/2мм, черная", name: "ТТК 6/2мм, черная" }]);
+  expect(cfg.ops.find((op: any) => op.opKey === "coaxHeat").shrinkMaterials)
+    .toEqual([{ art: cfg.coax.tutArt, name: cfg.coax.tutName }]);
 });
 
 it("re-seeding HFM preserves B-before-A without placing support crimp after B assembly", () => {

@@ -976,7 +976,7 @@ def edit_shipment_head(command: EditHeadCommand, uow: UnitOfWork) -> Shipment:
             updated = replace(shipment, **fields, inherited=frozenset(), delivery_snapshot_at=command.now,
                               version=shipment.version + 1)
             if not updated.receiver:
-                raise ShippingValidationError("Получатель не может быть пустым")
+                raise ShippingValidationError("Организация не может быть пустой")
         else:
             updated = shipment.edit_head(fields, _card(shipment, uow))
         if updated is shipment:

@@ -138,7 +138,7 @@ import { CoaxLength, CoaxMarking, CoaxReseed } from "./GenCoaxSettings";
 import { coaxReseedPatch } from "./tcGenLogic";
 import { applyEnd, firstFreePin, pinConns, pinRows, pinSummary, spliceLines } from "./tcGenPinTable";
 import { useTerminalPairs } from "./useTerminalPairs";
-import { MARK_KIND_DEFAULT, markIsTube, markSpecs, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
+import { COAX_PROTECTIVE_TUT_LENGTHS, MARK_KIND_DEFAULT, markIsTube, markSpecs, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
 
 /** library — карточки библиотеки операций целиком (код, сторона, нормы) для «Ручной сборки». */
 type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia" | "markMats" | "cableRecords" | "lugRecords"> & { library: LibraryCard[] };
@@ -1228,7 +1228,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   ];
   const tubeMaterials: MaterialOption[] = [
     ...gen.shrinkCandidates_().map((c) => ({ label: `${c.art || c.name} · из состава`, material: { compId: c.id } })),
-    ...(D.markMats || []).filter((m) => /^(тут|ттк)$/i.test(m.group)).map((m) => ({ label: `${m.name} · БД`, material: { art: m.name, name: m.name } })),
+    ...(D.markMats || []).filter((m) => /^(тут|ттк)$/i.test(m.group)).map((m) => ({ label: `${m.name} · БД`, material: { art: m.art || m.name, name: m.name } })),
   ];
   const tubeTargets: Parameters<typeof TopologyTubes>[0]["targets"] = complex ? [
     ...pinUnitList.filter((u) => !u.shield).flatMap((u) => (["A", "B"] as const).flatMap((side) => {
@@ -1813,9 +1813,11 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           {!custProblem && custStricter && <div className="warning-inline">Норма заказчика строже возможностей разъёмов (по паспорту до {formatNumber(componentsMax, { digits: 2 })}) — ожидайте брак</div>}
         </div>}
       </div>
-      <Toggle checked={S.coax.tutEnabled} title="ТУТ на концах" onChange={(on) => update((current) => ({ ...current, coax: { ...current.coax, tutEnabled: on } }))}>
+      {S.coax.markMaterial === "tape" ? (S.coax.markProtect && <div className="opt-note">
+        Защитная ТУТ: концевые метки — {COAX_PROTECTIVE_TUT_LENGTHS.A} мм, центральная — {COAX_PROTECTIVE_TUT_LENGTHS.middle} мм.
+      </div>) : <Toggle checked={S.coax.tutEnabled} title="ТУТ на концах" onChange={(on) => update((current) => ({ ...current, coax: { ...current.coax, tutEnabled: on } }))}>
         <Field label="Длина ТУТ" className="short"><UnitInput unit="мм" type="number" min={1} value={S.coax.tutLen} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, tutLen: event.target.value } }))} /></Field>
-      </Toggle>
+      </Toggle>}
     </section>
     <section className="gsec ep-side" aria-label="Сторона А"><div className="gsec-head"><h3>Сторона А</h3></div>{coaxSideBlock("A")}</section>
     <section className="gsec ep-side" aria-label="Сторона В"><div className="gsec-head"><h3>Сторона В</h3>{!S.coax.sideB && <span className="gsec-meta">разъёма нет — голый конец</span>}</div>

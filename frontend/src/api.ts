@@ -1,3 +1,4 @@
+import type { CuttingGroup, CuttingSubmission, CuttingWorkResult } from "./cuttingGroups";
 import type { Sto, TdFinding, TdIssue, TdIssueInput, TdPrintModel } from "./tdTypes";
 
 export type AccessMode = "view" | "edit";
@@ -1352,6 +1353,7 @@ export interface ProductionBox {
 
 export interface ProductionWorkSession {
   id: string;
+  cutting_group_id?: string | null;
   task_id: string;
   operation_id: string;
   operator_id: string;
@@ -1560,6 +1562,7 @@ export interface ProductionInstrument {
   parent_id: string | null;
   serial_number: string;
   manufacturer: string;
+  suggested_serial_number?: string | null;
   doc_designation: string;
   quantity: string | number;
   storage_location: string;
@@ -1572,7 +1575,7 @@ export interface ProductionInstrument {
   files: InstrumentFile[];
 }
 
-export type InstrumentInput = Omit<ProductionInstrument, "id" | "version" | "files" | "warehouse_writeoff_id">;
+export type InstrumentInput = Omit<ProductionInstrument, "id" | "version" | "files" | "warehouse_writeoff_id" | "suggested_serial_number">;
 export interface RfInterface {
   series: string;
   body: string;
@@ -1594,7 +1597,7 @@ export interface InstrumentRfDetails {
 }
 export const rfInterfacesApi = {
   get: (id: string) => api<{ rf: InstrumentRfDetails }>(`/api/production/instruments/${encodeURIComponent(id)}/rf-interfaces`),
-  save: (id: string, rf: InstrumentRfDetails) => api<{ rf: InstrumentRfDetails }>(`/api/production/instruments/${encodeURIComponent(id)}/rf-interfaces`, {
+  save: (id: string, rf: InstrumentRfDetails) => api<{ rf: InstrumentRfDetails; suggested_serial_number?: string | null }>(`/api/production/instruments/${encodeURIComponent(id)}/rf-interfaces`, {
     method: "PUT", body: JSON.stringify(rf),
   }),
 };
@@ -1861,7 +1864,7 @@ export interface ProjectAddressee {
   upd_date?: string | null;
 }
 
-export const DELIVERY_FIELDS = ["receiver", "shipping_point", "contact", "phone", "terms", "carrier", "upd_type"] as const;
+export const DELIVERY_FIELDS = ["receiver", "contact", "phone", "shipping_point", "terms", "carrier", "upd_type"] as const;
 export type DeliveryField = typeof DELIVERY_FIELDS[number];
 export type DeliveryValues = Pick<ProjectAddressee, DeliveryField>;
 export interface ItemAddressee {
@@ -4054,7 +4057,7 @@ export const productionApi = {
     }),
   list: (task = "") => api<{ tasks: ProductionTask[]; next_cursor: string | null }>(`/api/production/tasks${task ? `?task=${encodeURIComponent(task)}` : ""}`),
   /** can_act — смотрящий может работать за выбранного сотрудника (сервер проверяет то же при каждом действии). */
-  mine: (operatorId = "") => api<{ tasks: ProductionTask[]; can_act?: boolean }>(`/api/production/my${operatorId ? `?operator_id=${operatorId}` : ""}`),
+  mine: (operatorId = "") => api<{ tasks: ProductionTask[]; can_act?: boolean; cutting_groups?: CuttingGroup[] }>(`/api/production/my${operatorId ? `?operator_id=${operatorId}` : ""}`),
   operators: () => api<{ operators: ProductionOperator[]; viewer_site?: string }>("/api/production/operators"),
   calendar: () => api<{ holidays: string[]; absences: ProductionAbsence[]; shift: ProductionShift }>("/api/production/calendar"),
   saveCalendar: (holidays: string[], absences: ProductionAbsence[], shift: ProductionShift) => api<void>("/api/production/calendar", {
@@ -4160,6 +4163,18 @@ export const productionApi = {
   boxes: (taskId?: string) => api<{ boxes: ProductionBox[] }>(`/api/production/boxes${taskId ? `?task_id=${taskId}` : ""}`),
   // «Задания»: work.onBehalfOf — работа за выбранного сотрудника (право проверяет сервер), work.key — ключ повтора:
   // тот же ключ второй раз не делает действие дважды (двойной клик, повтор после обрыва связи).
+  startCuttingGroup: (groupId: string, version: number, work: WorkCall) =>
+    api<CuttingWorkResult>(`/api/production/cutting-groups/${groupId}/start${behalfQuery(work.onBehalfOf)}`, {
+      method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ version }),
+    }),
+  submitCuttingGroup: (groupId: string, version: number, rows: CuttingSubmission[], work: WorkCall) =>
+    api<CuttingWorkResult>(`/api/production/cutting-groups/${groupId}/submit${behalfQuery(work.onBehalfOf)}`, {
+      method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ version, rows }),
+    }),
+  cuttingDowntime: (groupId: string, version: number, action: "start" | "stop", payload: { reason?: string; comment?: string }, work: WorkCall) =>
+    api<CuttingWorkResult>(`/api/production/cutting-groups/${groupId}/downtime/${action}${behalfQuery(work.onBehalfOf)}`, {
+      method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ version, ...payload }),
+    }),
   startWork: (taskId: string, operationId: string, inputs: string[], materials: Array<{ fulfillment_line_id: string; quantity: string }> = [], work: WorkCall = {}) =>
     api<{ session: ProductionWorkSession }>(`/api/production/tasks/${taskId}/operations/${operationId}/work/start${behalfQuery(work.onBehalfOf)}`, {
       method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ inputs, materials }),
@@ -4185,6 +4200,15 @@ export const productionApi = {
       method: "POST", body: JSON.stringify({ version, disposition, act_reference: actReference }),
     }),
   instruments: () => api<{ instruments: ProductionInstrument[] }>("/api/production/instruments"),
+  instrumentLabelAgent: () => api<{ online: boolean; qr_link_enabled: boolean; qr_warning?: string }>("/api/production/instruments/label-agent"),
+  instrumentPassportUrl: (id: string) => `/api/production/instruments/${encodeURIComponent(id)}/passport.pdf`,
+  instrumentLabelUrl: (id: string, stamp: number | string = 0) => `/api/production/instruments/${encodeURIComponent(id)}/label.png?t=${stamp}`,
+  printInstrumentLabel: (id: string, copies: number) =>
+    api<{ status: "queued"; job_ids: string[] }>(`/api/production/instruments/${encodeURIComponent(id)}/label`, { method: "POST", body: JSON.stringify({ copies }) }),
+  printInstrumentLabels: (ids: string[], copies: number) =>
+    api<{ status: "queued"; job_ids: string[] }>("/api/production/instruments/labels", { method: "POST", body: JSON.stringify({ ids, copies }) }),
+  assignInstrumentSerial: (id: string, version: number) =>
+    api<{ instrument: ProductionInstrument }>(`/api/production/instruments/${encodeURIComponent(id)}/serial`, { method: "POST", body: JSON.stringify({ version }) }),
   vswrTasks: () => api<{ tasks: VswrTaskListItem[] }>("/api/production/vswr/tasks"),
   vswrTask: (taskId: string) => api<VswrTaskOverview>(`/api/production/vswr/tasks/${taskId}`),
   uploadVswr: (payload: VswrUploadPayload) =>

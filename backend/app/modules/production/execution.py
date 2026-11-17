@@ -42,6 +42,22 @@ from .traceability import (
 from .worklog import WorkEvent, WorkTimeEntry, earned_norm_seconds
 
 
+def _card_versions(view: dict | None, positions: tuple[int, ...]) -> list[dict]:
+    """Откуда сейчас карточки операций ЭТК операции задания (etk_live): номер операции в ЭТК, источник (template /
+    edited / snapshot) и дата шаблона или правки. Своя операция ручной сборки (без шаблона) строки не даёт."""
+    document = view.get("document") if isinstance(view, dict) else None
+    ops = document.get("operations") if isinstance(document, dict) else None
+    if not isinstance(ops, list):
+        return []
+    rows = []
+    for position in positions:
+        op = ops[position - 1] if 1 <= position <= len(ops) else None
+        source = str(op.get("card_source") or "") if isinstance(op, dict) else ""
+        if source:
+            rows.append({"position": position, "source": source, "changed_at": str(op.get("card_changed_at") or "")})
+    return rows
+
+
 class BoxRepository(Protocol):
     def get(self, box_id: UUID) -> ProductionBox | None: ...
     def by_number(self, number: str) -> ProductionBox | None: ...
@@ -387,6 +403,8 @@ def start_work(command: StartWorkCommand, uow: ExecutionUnitOfWork) -> WorkSessi
         if uow.work.current(worker.id) is not None:
             raise ProductionValidationError("Сначала завершите или отмените текущую работу")
         task, operation = _task_operation(command.task_id, command.operation_id, worker, uow)
+        if getattr(uow, "cutting", None) is not None:
+            uow.cutting.assert_standalone(operation.id)
         stages = input_stages(task, operation)
         takes_kit = operation.id == material_operation(task).id
         if not stages and command.box_numbers:
@@ -428,6 +446,8 @@ def start_work(command: StartWorkCommand, uow: ExecutionUnitOfWork) -> WorkSessi
                 )
             inputs = tuple(WorkInput(box.id, box.available) for box in boxes)
         session = WorkSession.start(task.id, operation.id, worker.id, command.now)
+        if getattr(uow, "cutting", None) is not None:
+            uow.cutting.freeze(operation.id, command.now)
         uow.work.save(session)
         uow.work.add_inputs(session.id, inputs)
         uow.work.add_material_inputs(session.id, command.materials)
@@ -453,6 +473,8 @@ def _session(command: SessionCommand, uow: ExecutionUnitOfWork) -> WorkSession:
     session = uow.work.get(command.session_id)
     if session is None:
         raise KeyError(f"Work session not found: {command.session_id}")
+    if getattr(uow, "cutting", None) is not None and uow.cutting.for_session(session.id):
+        raise ProductionValidationError("Работа относится к группе резки — используйте карточку группы")
     if session.operator_id != _worker(command).id:
         raise ProductionValidationError("Работа принадлежит другому оператору")
     return session
@@ -528,108 +550,116 @@ def submit_work(command: SubmitWorkCommand, uow: ExecutionUnitOfWork) -> tuple[W
         session = _session(command, uow)
         lock_reflow_projects(uow, (session.task_id,), command.now)
         task, operation = _task_operation(session.task_id, session.operation_id, worker, uow)
-        good = Decimal(command.good_quantity)
-        defect = Decimal(command.defect_quantity)
-        if not good.is_finite() or not defect.is_finite() or good < 0 or defect < 0 or good + defect <= 0:
-            raise ProductionValidationError("Сумма годных и брака должна быть положительной")
-        materials = tuple(uow.work.material_inputs(session.id))
-        done = uow.outputs.total_for_operation(operation.id)
-        mine = sum((
-            item.good_quantity + item.defect_quantity for item in uow.outputs.active_for_tasks((task.id,))
-            if item.operation_id == operation.id and item.operator_id == worker.id
-        ), Decimal(0))
-        # Сетевой график: операция сдаёт тираж × штук её полуфабриката на изделие (в цепочке — тираж).
-        factor = unit_factor(task, operation)
-        required = operation_quantity(task, operation)
-        if done + good + defect > required:
-            left = max(Decimal(0), required - done)
-            raise ProductionValidationError(
-                f"Больше, чем в задании: уже сдано {_count(done)} из {_count(required)}, осталось {_count(left)}.",
-            )
-        inputs: tuple[WorkInput, ...] = ()
-        stages = input_stages(task, operation)
-        positions = tuple(stage.position for stage in stages)
-        if stages:
-            # prodWorkSubmit_: входные проверяем ещё раз — пока шла работа, коробку мог забрать напарник;
-            # годные + брак берутся из них по порядку ввода (prodPick_) — с каждого входа × его штук на одну.
-            sources = []
-            for item in uow.work.inputs(session.id):
-                box = uow.boxes.get(item.box_id)
-                if box is None:
-                    raise ProductionValidationError("Входная коробка исчезла")
-                error = box.input_error(item=task.item, previous_position=positions, task_id=task.id)
-                if error:
-                    raise ProductionValidationError(error)
-                sources.append(box)
-            inputs = take_inputs(stages, sources, good + defect)
-        output_box = ProductionBox.submitted(
-            task_id=task.id, operation_id=operation.id, item=task.item,
-            operation_position=operation.position, operator_id=worker.id,
-            number=uow.boxes.reserve_number(), good=good, actor=worker.name, now=command.now,
-            code=uow.boxes.reserve_code(project=task.project, item=task.item, operator_id=worker.id, day=_shop_day(command.now)),
-        )
-        running = session.running_seconds(command.now)
-        completed = session.complete(command.now)
-        output = ProductionOutput(
-            id=uuid4(), session_id=session.id, task_id=task.id,
-            operation_id=operation.id, operator_id=worker.id,
-            started_at=session.started_at, finished_at=command.now,
-            pause_seconds=completed.pause_seconds, good_quantity=good,
-            defect_quantity=defect, output_box_id=output_box.id,
-        )
-        defect_record = None
-        if defect > 0:
-            defect_record = DefectRecord.create(
-                number=uow.defects.reserve_number(), output_id=output.id,
-                source_box_id=output_box.id, task_id=task.id,
-                operation_id=operation.id, operator_id=worker.id,
-                quantity=defect, character=command.defect_character,
-                description=command.defect_description, created_at=command.now,
-            )
-        for item in inputs:
-            source = uow.boxes.get(item.box_id)
-            if source is None:
-                raise ProductionValidationError("Входная коробка исчезла")
-            uow.boxes.save(source.reserve(
-                item.quantity, item=task.item, previous_position=positions,
-            ).consume(item.quantity))
-            uow.consumption.add(ConsumptionEdge(
-                id=uuid4(), source_box_id=item.box_id, target_box_id=output_box.id,
-                quantity=item.quantity, output_id=output.id,
-            ))
-        if task.fulfillment_request_id is not None:
-            for item in materials:
-                source = uow.materials.source(task.fulfillment_request_id, item.fulfillment_line_id)
-                if source is None:
-                    raise ProductionValidationError("Позиция выдачи исчезла")
-                uow.materials.add_consumption(MaterialConsumption(
-                    id=uuid4(), fulfillment_line_id=item.fulfillment_line_id,
-                    target_box_id=output_box.id, quantity=item.quantity,
-                    output_id=output.id, grn=source.grn, package=source.package,
-                ))
-        uow.boxes.save(output_box)
-        uow.work.save(completed)
-        uow.outputs.add(output)
-        if defect_record is not None:
-            uow.defects.save(defect_record)
-        _audit(output.id, "production.output_recorded", command.actor, command.now, {
-            "task_id": str(task.id), "operation_id": str(operation.id),
-            "good": str(good), "defect": str(defect), "box_id": str(output_box.id),
-        }, uow, worker)
-        # Сдача в журнал времени: факт сессии без пауз и норма на сданные штуки (подготовка — в первой сдаче).
-        _log(
-            uow, command, completed, WorkEvent.FINISH, task, operation, good=good, defect=defect, running=running,
-            earned=earned_norm_seconds(operation.seconds_per_unit, operation.setup_seconds, good + defect, first=mine == 0),
-        )
-        # Сдал свои штуки — «закончил»: окно доли кончается сейчас; не всё — конец по оставшимся штукам.
-        # План считает штуки в изделиях задания: полуфабрикат «2 на одну» переводится в изделия.
-        record_fact(
-            uow, task_id=task.id, operation_id=operation.id, operator_id=worker.id,
-            actor=command.actor, now=command.now,
-            mine=(mine + good + defect) / factor, total=(done + good + defect) / factor,
-        )
+        result = record_work_output(command, uow, session, task, operation,
+                                    materials=tuple(uow.work.material_inputs(session.id)))
         uow.commit()
-        return completed, output_box, output, defect_record
+        return result
+
+
+def record_work_output(command, uow, session, task, operation, *, materials=(), close_session=True, running=None):
+    """Write one PF output inside the caller transaction; group work keeps its single session open."""
+    worker = _worker(command)
+    good = Decimal(command.good_quantity)
+    defect = Decimal(command.defect_quantity)
+    if not good.is_finite() or not defect.is_finite() or good < 0 or defect < 0 or good + defect <= 0:
+        raise ProductionValidationError("Сумма годных и брака должна быть положительной")
+    done = uow.outputs.total_for_operation(operation.id)
+    mine = sum((
+        item.good_quantity + item.defect_quantity for item in uow.outputs.active_for_tasks((task.id,))
+        if item.operation_id == operation.id and item.operator_id == worker.id
+    ), Decimal(0))
+    # Сетевой график: операция сдаёт тираж × штук её полуфабриката на изделие (в цепочке — тираж).
+    factor = unit_factor(task, operation)
+    required = operation_quantity(task, operation)
+    if done + good + defect > required:
+        left = max(Decimal(0), required - done)
+        raise ProductionValidationError(
+            f"Больше, чем в задании: уже сдано {_count(done)} из {_count(required)}, осталось {_count(left)}.",
+        )
+    inputs: tuple[WorkInput, ...] = ()
+    stages = input_stages(task, operation)
+    positions = tuple(stage.position for stage in stages)
+    if stages:
+        # prodWorkSubmit_: входные проверяем ещё раз — пока шла работа, коробку мог забрать напарник;
+        # годные + брак берутся из них по порядку ввода (prodPick_) — с каждого входа × его штук на одну.
+        sources = []
+        for item in uow.work.inputs(session.id):
+            box = uow.boxes.get(item.box_id)
+            if box is None:
+                raise ProductionValidationError("Входная коробка исчезла")
+            error = box.input_error(item=task.item, previous_position=positions, task_id=task.id)
+            if error:
+                raise ProductionValidationError(error)
+            sources.append(box)
+        inputs = take_inputs(stages, sources, good + defect)
+    output_box = ProductionBox.submitted(
+        task_id=task.id, operation_id=operation.id, item=task.item,
+        operation_position=operation.position, operator_id=worker.id,
+        number=uow.boxes.reserve_number(), good=good, actor=worker.name, now=command.now,
+        code=uow.boxes.reserve_code(project=task.project, item=task.item, operator_id=worker.id, day=_shop_day(command.now)),
+    )
+    running = session.running_seconds(command.now) if running is None else running
+    completed = session.complete(command.now)
+    output = ProductionOutput(
+        id=uuid4(), session_id=session.id if close_session else None, task_id=task.id,
+        operation_id=operation.id, operator_id=worker.id,
+        started_at=session.started_at if close_session else command.now, finished_at=command.now,
+        pause_seconds=completed.pause_seconds if close_session else 0, good_quantity=good,
+        defect_quantity=defect, output_box_id=output_box.id,
+    )
+    defect_record = None
+    if defect > 0:
+        defect_record = DefectRecord.create(
+            number=uow.defects.reserve_number(), output_id=output.id,
+            source_box_id=output_box.id, task_id=task.id,
+            operation_id=operation.id, operator_id=worker.id,
+            quantity=defect, character=command.defect_character,
+            description=command.defect_description, created_at=command.now,
+        )
+    for item in inputs:
+        source = uow.boxes.get(item.box_id)
+        if source is None:
+            raise ProductionValidationError("Входная коробка исчезла")
+        uow.boxes.save(source.reserve(
+            item.quantity, item=task.item, previous_position=positions,
+        ).consume(item.quantity))
+        uow.consumption.add(ConsumptionEdge(
+            id=uuid4(), source_box_id=item.box_id, target_box_id=output_box.id,
+            quantity=item.quantity, output_id=output.id,
+        ))
+    if task.fulfillment_request_id is not None:
+        for item in materials:
+            source = uow.materials.source(task.fulfillment_request_id, item.fulfillment_line_id)
+            if source is None:
+                raise ProductionValidationError("Позиция выдачи исчезла")
+            uow.materials.add_consumption(MaterialConsumption(
+                id=uuid4(), fulfillment_line_id=item.fulfillment_line_id,
+                target_box_id=output_box.id, quantity=item.quantity,
+                output_id=output.id, grn=source.grn, package=source.package,
+            ))
+    uow.boxes.save(output_box)
+    if close_session:
+        uow.work.save(completed)
+    uow.outputs.add(output)
+    if defect_record is not None:
+        uow.defects.save(defect_record)
+    _audit(output.id, "production.output_recorded", command.actor, command.now, {
+        "task_id": str(task.id), "operation_id": str(operation.id),
+        "good": str(good), "defect": str(defect), "box_id": str(output_box.id),
+    }, uow, worker)
+    # Сдача в журнал времени: факт сессии без пауз и норма на сданные штуки (подготовка — в первой сдаче).
+    _log(
+        uow, command, completed, WorkEvent.FINISH, task, operation, good=good, defect=defect, running=running,
+        earned=earned_norm_seconds(operation.seconds_per_unit, operation.setup_seconds, good + defect, first=mine == 0),
+    )
+    # Сдал свои штуки — «закончил»: окно доли кончается сейчас; не всё — конец по оставшимся штукам.
+    # План считает штуки в изделиях задания: полуфабрикат «2 на одну» переводится в изделия.
+    record_fact(
+        uow, task_id=task.id, operation_id=operation.id, operator_id=worker.id,
+        actor=command.actor, now=command.now,
+        mine=(mine + good + defect) / factor, total=(done + good + defect) / factor,
+    )
+    return completed, output_box, output, defect_record
 
 
 @dataclass(frozen=True)
@@ -681,6 +711,8 @@ def _enter_output(
     task: ProductionTask, operation: ProductionOperation, worker: Actor, good: Decimal,
     command: ManualOutputCommand, uow: ExecutionUnitOfWork, filled: list[ProductionBox], closed: list[str],
 ) -> tuple[ProductionBox, ProductionOutput]:
+    if getattr(uow, "cutting", None) is not None:
+        uow.cutting.assert_standalone(operation.id)
     done = uow.outputs.total_for_operation(operation.id)
     required = operation_quantity(task, operation)
     label = f"Этап {operation.position} «{stage_name(operation.stage)}»"

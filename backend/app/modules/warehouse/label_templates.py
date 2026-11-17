@@ -34,7 +34,7 @@ class LabelTemplateRow(Base):
 
     __tablename__ = "warehouse_label_templates"
     __table_args__ = (
-        CheckConstraint("kind IN ('lot', 'intake')", name="ck_warehouse_label_templates_kind"),
+        CheckConstraint("kind IN ('lot', 'intake', 'instrument')", name="ck_warehouse_label_templates_kind"),
         CheckConstraint("format IN ('58x30', '58x40', '100x50')", name="ck_warehouse_label_templates_format"),
         CheckConstraint("version >= 1", name="ck_warehouse_label_templates_version"),
         UniqueConstraint("kind", "format", name="uq_warehouse_label_templates_kind_format"),

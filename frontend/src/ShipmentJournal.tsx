@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { failureText, shippingApi, type FinishedGood, type Shipment } from "./api";
-import { CarrierSelect, termsFor, termsText } from "./carriers";
-import { type DataColumn } from "./DataTable";
-import { formatDate } from "./format";
+import { CarrierSelect, isPickup, needsTrack, termsFor, termsText } from "./carriers";
+import { cellContent, DataTable, type DataColumn } from "./DataTable";
+import { lineGrns } from "./dispatchPositionRows";
+import { formatDay, formatNumber, NBSP } from "./format";
 import { PageWindow } from "./PageWindow";
 import { useCanPrint } from "./rights";
 import { Banners, ShipStatus, useMutate } from "./ShipmentCard";
-import { UPD_TYPES, updLabel } from "./ShipmentData";
+import { ShipmentDataWindow, UPD_TYPES, updLabel } from "./ShipmentData";
+import { orderShipmentRows, shipmentGroupKey, shipmentSequence } from "./ShipmentGroupHeader";
 import { openShippingForms } from "./shippingPrint";
 import { compareShipments, shipmentDay } from "./shipmentOrder";
-import { ShipmentTable } from "./ShipmentTable";
+import { shipmentSearch } from "./shipmentSearch";
 
 /* Окна шапки «Приёмки с производства» (владелец 29.10.2026, экран «Отгрузка» убран): журнал отгрузок, КБ проекта в
    готовую продукцию вручную и заявка на отгрузку заранее. */
@@ -20,13 +22,11 @@ const num = (value: string | number | null | undefined) => {
 };
 const round2 = (value: number) => Math.round(value * 100) / 100;
 
-/* Position rows remain the Excel representation; the journal itself lists shipments. */
-
 const JOURNAL_STATUS = ["Новая", "Собрана", "Упакована", "Отгружена", "Закрыта"];
 const SHIPPED = ["Отгружена", "Закрыта"];
 
 export interface JournalRow {
-  key: string; shipment: Shipment; line: Shipment["lines"][number];
+  key: string; project: string; shipment: Shipment; line: Shipment["lines"][number];
   date: string; ordered: number; shipped: number | ""; partial: boolean; weight: string; dims: string;
 }
 
@@ -43,18 +43,18 @@ export function journalRows(shipments: Shipment[], selectedId = ""): JournalRow[
     .sort(compareShipments)
     .flatMap((shipment) => {
       const totals = boxTotals(shipment);
-      return shipment.lines.map((line): JournalRow => {
+      return [...shipment.lines].sort((a, b) => a.item_index.localeCompare(b.item_index, "ru", { numeric: true })).map((line): JournalRow => {
         const ordered = num(line.requested);
         const gone = SHIPPED.includes(shipment.status);
         const shipped = gone ? num(line.picked) : "";
-        return { key: `${shipment.id}:${line.id}`, shipment, line, date: shipmentDay(shipment), ordered, shipped,
+        return { key: `${shipment.id}:${line.id}`, project: line.project, shipment, line, date: shipmentDay(shipment), ordered, shipped,
           partial: gone && num(line.picked) < ordered, weight: totals.weight, dims: totals.dims };
       });
     });
 }
 
-/** Печать PL / DN по номеру прямо из строки журнала. */
-function useDocLink() {
+/** Печать PL / DN по номеру прямо из строки таблицы (журнал, «Приёмка с производства»). */
+export function useDocLink() {
   const canPrint = useCanPrint();
   const [error, setError] = useState("");
   const open = async (shipment: Shipment, document: "pl" | "dn") => {
@@ -66,62 +66,120 @@ function useDocLink() {
     const number = document === "pl" ? shipment.pl_number : shipment.dn_number;
     const kind = document === "pl" ? "PL" : "DN";
     if (number && !canPrint) return <span>{number}</span>;
-    return number ? <button type="button" className="link-button ship-doc-link" title={`Печать ${kind} ${number}`}
+    const blocked = document === "dn" && ["Новая", "Собрана", "Упакована"].includes(shipment.status) && shipment.missing_data.length > 0;
+    return number ? <button type="button" className="link-button ship-doc-link" disabled={blocked}
+      title={blocked ? `Не хватает: ${shipment.missing_data.join(", ")}` : `Печать ${kind} ${number}`} aria-label={`Печать ${kind} ${number}`}
       onClick={(event) => { event.stopPropagation(); void open(shipment, document); }}>{number}</button> : <span className="muted">—</span>;
   };
   return { error, link };
 }
 
 export function JournalWindow({ shipments, close, initialQuery = "", selectedShipment }: { shipments: Shipment[]; close: () => void; initialQuery?: string; selectedShipment?: Shipment }) {
-  const rows = useMemo(() => journalRows(shipments, selectedShipment?.id), [shipments, selectedShipment]);
+  const rows = useMemo(() => orderShipmentRows(journalRows(shipments, selectedShipment?.id)), [shipments, selectedShipment]);
+  const sequence = useMemo(() => shipmentSequence(shipments.flatMap((shipment) => shipment.lines.map((line) => ({ project: line.project, shipment })))), [shipments]);
   const { error, link: docLink } = useDocLink();
-  const [tableError, setTableError] = useState("");
-  const day = (value: string | null | undefined) => value ? formatDate(value) : "";
-  const columns: DataColumn<JournalRow>[] = [
-    { key: "shipment", title: "Отгрузка", value: (row) => row.shipment.number },
-    { key: "date", title: "Дата", value: (row) => row.date, render: (row) => formatDate(row.date) },
-    { key: "grn", title: "ГРН", value: (row) => row.line.grn ?? "" },
-    { key: "project", title: "Проект", value: (row) => row.line.project, render: (row) => <strong>{row.line.project}</strong> },
-    { key: "customer", title: "Заказчик", value: (row) => row.shipment.customer || row.shipment.receiver, filter: true },
-    { key: "kb", title: "КБ", value: (row) => row.line.item_index },
-    { key: "name", title: "Наименование", value: (row) => row.line.name, wrap: true, maxWidth: 240 },
-    { key: "ordered", title: "В заказе", value: (row) => row.ordered, numeric: true },
-    { key: "shipped", title: "Отгружено", value: (row) => row.shipped, numeric: true, hint: "Уехавшее по отправке; пока отправка не ушла — пусто",
-      render: (row) => row.shipped === "" ? <span className="muted">—</span>
-        : row.partial ? <span className="tone-warn ship-partial">{row.shipped}<small>недогруз {round2(row.ordered - row.shipped)}</small></span> : row.shipped },
-    { key: "unit", title: "Ед.", value: (row) => row.line.unit },
-    { key: "pl", title: "№ PL", value: (row) => row.shipment.pl_number, render: (row) => docLink(row.shipment, "pl") },
-    { key: "packed", title: "Дата упаковки", value: (row) => row.shipment.packed_at ?? "", render: (row) => day(row.shipment.packed_at) },
-    { key: "terms", title: "Условия доставки", value: (row) => row.shipment.terms ?? "", filter: true },
-    { key: "carrier", title: "Способ отгрузки", value: (row) => row.shipment.carrier, filter: true },
-    { key: "track", title: "Трек-номер", value: (row) => row.shipment.track_number },
-    { key: "shippedAt", title: "Дата отгрузки", value: (row) => row.shipment.shipped_at ?? "", render: (row) => day(row.shipment.shipped_at) },
-    { key: "status", title: "Статус", value: (row) => row.shipment.status, filter: true, render: (row) => <ShipStatus status={row.shipment.status} /> },
-    { key: "address", title: "Адрес доставки", value: (row) => row.shipment.shipping_point, wrap: true, maxWidth: 220 },
-    { key: "contact", title: "Контактное лицо", value: (row) => row.shipment.contact },
-    { key: "phone", title: "Телефон", value: (row) => row.shipment.phone },
-    { key: "upd", title: "УПД", value: (row) => updLabel(row.shipment.upd_type), filter: true },
-    { key: "updNumber", title: "№ УПД", value: (row) => row.shipment.upd_number },
-    { key: "updDate", title: "Дата УПД", value: (row) => row.shipment.upd_date ?? "", render: (row) => day(row.shipment.upd_date) },
-    { key: "dn", title: "№ DN", value: (row) => row.shipment.dn_number, render: (row) => docLink(row.shipment, "dn") },
-    { key: "weight", title: "Вес", value: (row) => row.weight, numeric: true, hint: "Брутто по местам, кг" },
-    { key: "dims", title: "Габариты", value: (row) => row.dims, wrap: true, hint: "Шир.×Длина×Высота, см — по местам" },
-    { key: "note", title: "Комментарий", value: (row) => row.shipment.note, wrap: true },
+  const [opened, setOpened] = useState<Shipment | null>(null);
+  const day = (value: string | null | undefined) => formatDay(value) || "—";
+  const pickup = (row: JournalRow) => isPickup(row.shipment.carrier) || row.shipment.terms === "САМОВЫВОЗ";
+  const shipmentLink = (row: JournalRow) => <button type="button" className="link-button" aria-label={`Данные отправки ${row.shipment.number}`}
+    onClick={() => setOpened(row.shipment)}>{row.shipment.number}</button>;
+  const field = (value: string | null | undefined) => value?.trim() ? value : <span className="tone-warn">не заполнено</span>;
+  const extraGaps = (row: JournalRow) => [...new Set([...row.shipment.missing_data, ...row.shipment.missing_ship])]
+    .filter((gap) => !["условия доставки", "организация", "телефон получателя", "перевозчик", "адрес доставки", "тип УПД", "файл УПД", "№ УПД", "трек-номер"].includes(gap)).join(", ");
+  const allColumns: DataColumn<JournalRow>[] = [
+    { key: "kb", title: "КБ", value: (row) => row.line.item_index, width: 128 },
+    { key: "name", title: "Наименование", value: (row) => row.line.name, wrap: true, grow: true, minWidth: 180, maxWidth: 260 },
+    { key: "picked", title: "Количество", value: (row) => num(row.line.picked), numeric: true, width: 96 },
+    { key: "action", title: "Действие", value: () => "Данные отправки", width: 112,
+      render: (row) => <button type="button" className="secondary small" aria-label={`Открыть ${row.project} ${row.line.item_index}`}
+        onClick={() => setOpened(row.shipment)}>Данные</button> },
+    { key: "ordered", title: "В заказе", value: (row) => row.ordered, numeric: true, width: 88 },
+    { key: "shipped", title: "Отгружено", value: (row) => row.shipped, numeric: true, width: 100,
+      hint: "Уехавшее по отправке; пока отправка не ушла — пусто", render: (row) => row.shipped === "" ? "—"
+        : <span className={row.partial ? "tone-warn" : undefined}>{formatNumber(row.shipped)}</span> },
+    { key: "shortage", title: "Недобор", value: (row) => num(row.line.shortage), numeric: true, width: 88 },
+    { key: "underload", title: "Недогруз", value: (row) => row.partial ? round2(row.ordered - Number(row.shipped)) : "", numeric: true, width: 88 },
+    { key: "unit", title: "Ед.", value: (row) => row.line.unit, width: 48 },
+    { key: "grn", title: "ГРН", value: (row) => lineGrns(row.line).join(", "), width: 136 },
+    { key: "lots", title: "Партии, шт", hint: "Сколько взято из каждой партии (ГРН)", wrap: true, minWidth: 160, maxWidth: 240,
+      value: (row) => (row.line.lots ?? []).map((lot) => `${lot.grn}: ${formatNumber(lot.quantity)}`).join("; ") },
+    { key: "places", title: "Места", hint: "Места (короба) с этой КБ и штуки в них", wrap: true, minWidth: 120, maxWidth: 200,
+      value: (row) => row.shipment.boxes.flatMap((box) => box.items.filter((item) => item.item_index === row.line.item_index)
+        .map((item) => `№${box.place}: ${formatNumber(item.quantity)}`)).join("; ") },
+    { key: "seals", title: "Пломбы", wrap: true, minWidth: 104, maxWidth: 180,
+      value: (row) => row.shipment.boxes.filter((box) => box.seal.trim() && box.items.some((item) => item.item_index === row.line.item_index))
+        .map((box) => box.seal.trim()).join(", ") },
+    { key: "project", title: "Проект", value: (row) => row.project, width: 104, render: (row) => <strong>{row.project}</strong> },
+    { key: "customer", title: "Заказчик", value: (row) => row.shipment.customer, filter: true, width: 160 },
+    { key: "shipment", title: "Отправка", value: (row) => row.shipment.number, width: 176, render: shipmentLink },
+    { key: "sequence", title: "Отгрузка", value: (row) => sequence.get(shipmentGroupKey(row)) ?? "", width: 88 },
+    { key: "status", title: "Статус", value: (row) => row.shipment.status, filter: true, width: 104, render: (row) => <ShipStatus status={row.shipment.status} /> },
+    { key: "created", title: "Создана", value: (row) => row.shipment.created_at, width: 104, render: (row) => day(row.shipment.created_at) },
+    { key: "deadline", title: "Срок", value: (row) => row.shipment.deadline, width: 104, render: (row) => day(row.shipment.deadline) },
+    { key: "date", title: "Дата", value: (row) => row.date, width: 104, render: (row) => day(row.date) },
+    { key: "packed", title: "Дата упаковки", value: (row) => row.shipment.packed_at, width: 120, render: (row) => day(row.shipment.packed_at) },
+    { key: "shippedAt", title: "Отгружена", value: (row) => row.shipment.shipped_at, width: 104, render: (row) => day(row.shipment.shipped_at) },
+    { key: "terms", title: "Способ доставки", value: (row) => pickup(row) ? "Самовывоз" : termsText(row.shipment.terms), filter: true, width: 144,
+      render: (row) => field(pickup(row) ? "Самовывоз" : termsText(row.shipment.terms)) },
+    { key: "carrier", title: "ТК", value: (row) => pickup(row) ? "" : row.shipment.carrier, filter: true, width: 136,
+      render: (row) => pickup(row) ? null : field(row.shipment.carrier) },
+    { key: "track", title: "Трек", value: (row) => row.shipment.track_number, width: 144,
+      render: (row) => row.shipment.track_number || (needsTrack(row.shipment) ? <span className="tone-warn">не заполнено</span> : "—") },
+    { key: "trackGaps", title: "Ждём для трека", value: extraGaps, width: 200, wrap: true, maxWidth: 280,
+      render: (row) => extraGaps(row) ? <span className="tone-warn">{extraGaps(row)}</span> : null },
+    { key: "receiver", title: "Организация", value: (row) => row.shipment.receiver, width: 160, render: (row) => field(row.shipment.receiver) },
+    { key: "contact", title: "Получатель", value: (row) => row.shipment.contact, width: 160 },
+    { key: "phone", title: "Телефон", value: (row) => row.shipment.phone, width: 136, render: (row) => field(row.shipment.phone) },
+    { key: "address", title: "Адрес", value: (row) => row.shipment.shipping_point, wrap: true, minWidth: 180, maxWidth: 240,
+      render: (row) => pickup(row) ? null : field(row.shipment.shipping_point) },
+    { key: "upd", title: "УПД", value: (row) => updLabel(row.shipment.upd_type), filter: true, width: 104, render: (row) => field(updLabel(row.shipment.upd_type)) },
+    { key: "updNumber", title: "№ УПД", value: (row) => row.shipment.upd_number, width: 104,
+      render: (row) => row.shipment.upd_type === "БЕЗ УПД" ? null : field(row.shipment.upd_number) },
+    { key: "updDate", title: "Дата УПД", value: (row) => row.shipment.upd_date, width: 104, render: (row) => day(row.shipment.upd_date) },
+    { key: "updFile", title: "Файл УПД", value: (row) => row.shipment.upd_url, width: 104,
+      render: (row) => row.shipment.upd_url ? <a href={row.shipment.upd_url} target="_blank" rel="noreferrer">файл</a>
+        : row.shipment.upd_type === "БУМАГА" ? <span className="tone-warn">не заполнено</span> : null },
+    { key: "pl", title: "PL", value: (row) => row.shipment.pl_number, width: 144, render: (row) => docLink(row.shipment, "pl") },
+    { key: "dn", title: "DN", value: (row) => row.shipment.dn_number, width: 144, render: (row) => docLink(row.shipment, "dn") },
+    { key: "weight", title: "Вес", value: (row) => row.weight, numeric: true, width: 88, hint: "Брутто по местам, кг" },
+    { key: "dims", title: "Габариты", value: (row) => row.dims, wrap: true, minWidth: 144, maxWidth: 200, hint: "Шир.×Длина×Высота, см — по местам" },
+    { key: "note", title: "Комментарий", value: (row) => row.shipment.note, wrap: true, minWidth: 160, maxWidth: 240 },
   ];
+  const positionKeys = new Set(["kb", "name", "picked", "action", "ordered", "shipped", "shortage", "underload", "unit", "grn", "lots", "places", "seals"]);
+  const hiddenKeys = new Set(["project", "customer", "shipment", "sequence", "created", "deadline"]);
+  const columns = allColumns.map((column) => ({ ...column, hidden: hiddenKeys.has(column.key), export: true,
+    render: positionKeys.has(column.key) ? column.render : () => null }));
+  const groupCells = (_key: string, group: JournalRow[], _filtered: JournalRow[], visible: DataColumn<JournalRow>[]) => {
+    const row = group[0];
+    const shown = new Set(visible.map((column) => column.key));
+    const totals = new Map<string, number>();
+    for (const line of row.shipment.lines) if (line.project === row.project) totals.set(line.unit, round2((totals.get(line.unit) ?? 0) + num(line.picked)));
+    const cells = Object.fromEntries(allColumns.filter((column) => !positionKeys.has(column.key) && column.key !== "project" && column.key !== "customer")
+      .map((column) => [column.key, column.render ? column.render(row) : cellContent(column, column.value(row))]));
+    return { ...cells, kb: shown.has("sequence") ? null : `Отгрузка ${sequence.get(shipmentGroupKey(row))}`,
+      name: shown.has("shipment") ? null : shipmentLink(row),
+      picked: [...totals].map(([unit, amount]) => `${formatNumber(amount)}${NBSP}${unit}`).join(", "),
+      action: <button type="button" className="secondary small" aria-label={`Открыть отправку ${row.shipment.number}`} onClick={() => setOpened(row.shipment)}>Данные</button>,
+      sequence: `Отгрузка ${sequence.get(shipmentGroupKey(row))}`,
+      shippedAt: SHIPPED.includes(row.shipment.status) ? day(row.shipment.shipped_at) : null };
+  };
   return <PageWindow label="Журнал отгрузок" close={close} width="min(1760px, 100%)" dismissable>
     <section className="panel intake-journal">
       <header className="page-head"><h2>Журнал отгрузок</h2><button type="button" className="secondary small" onClick={close}>Закрыть</button></header>
-      {(error || tableError) && <div className="error-banner" role="alert">{error || tableError}</div>}
-      {selectedShipment && !selectedShipment.lines.length && <p className="muted">В отгрузке нет позиций.</p>}
-      <ShipmentTable label="Журнал отгрузок" storageKey="shipping-journal:shipments:v1"
-        shipments={shipments.filter((shipment) => selectedShipment ? shipment.id === selectedShipment.id : JOURNAL_STATUS.includes(shipment.status))}
-        onError={setTableError} positions={rows} positionColumns={columns} positionKey={(row) => row.key}
-        positionShipment={(row) => row.shipment}
-        positionLine={(row) => row.line}
-        initialQuery={initialQuery}
-        presets={[{ label: "Не уехали", test: (shipment) => !SHIPPED.includes(shipment.status) }, { label: "Отгружены", test: (shipment) => SHIPPED.includes(shipment.status) },
-          { label: "Частичные", test: (shipment) => SHIPPED.includes(shipment.status) && shipment.lines.some((line) => num(line.picked) < num(line.requested)) }]}
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      {selectedShipment && !selectedShipment.lines.length && <p className="muted"><strong>{selectedShipment.number}</strong>{" · "}
+        <ShipStatus status={selectedShipment.status} /> · В отгрузке нет позиций.</p>}
+      <DataTable label="Журнал отгрузок" storageKey="shipping-journal:positions:v3" rows={rows} columns={columns} rowKey={(row) => row.key}
+        rowLabel={(row) => `${row.project} ${row.line.item_index}`}
+        groupBy={shipmentGroupKey} groupSort groupParent={(row) => row.project}
+        groupParentLabel={(project, group) => <span className="ship-group-head"><strong>{project}</strong>{group[0].shipment.customer && <span>· {group[0].shipment.customer}</span>}</span>}
+        groupCells={groupCells}
+        initialQuery={initialQuery} exportName="Журнал отгрузок" searchPlaceholder="Проект, КБ, ГРН, организация, получатель, УПД или трек…"
+        searchText={(row) => shipmentSearch({ ...row.shipment, lines: [row.line] })}
+        presets={[{ label: "Не уехали", test: (row) => !SHIPPED.includes(row.shipment.status) }, { label: "Отгружены", test: (row) => SHIPPED.includes(row.shipment.status) },
+          { label: "Частичные", test: (row) => row.partial }]}
         emptyText="В журнале пусто — строки появятся, когда упакуете принятое." />
+      {opened && <ShipmentDataWindow shipment={opened} canEdit={false} canCorrectHistory={false} close={() => setOpened(null)} onSaved={() => undefined} />}
     </section>
   </PageWindow>;
 }
@@ -173,15 +231,15 @@ export function CreateShipmentWindow({ close, reload }: { close: () => void; rel
     return body;
   };
   const text = (key: keyof typeof blank, label: string, className?: string) => <label key={key} className={className}>{label}
-    <input placeholder={key === "customer" ? "по выбранному проекту" : "из карточки проекта"} value={key === "customer" ? customer : draft[key]}
+    <input placeholder={key === "customer" ? "по выбранному проекту" : key === "receiver" ? "как в документах" : key === "contact" ? "ФИО, кому передать груз" : "из карточки проекта"} value={key === "customer" ? customer : draft[key]}
       onChange={(event) => { if (key === "customer") setCustomerTyped(true); setDraft({ ...draft, [key]: event.target.value }); }} /></label>;
   return <PageWindow label="Заявка на отгрузку" close={close} width={1200}>
     <form className="panel ship-request" onSubmit={(event) => { event.preventDefault(); void mutate("shipment:new", () => shippingApi.create(payload()), "Заявка на отгрузку создана").then((saved) => { if (saved) close(); }); }}>
       <header className="page-head"><h2>Заявка на отгрузку</h2><button type="button" className="secondary small" onClick={close}>Закрыть</button></header>
       <Banners error={error} notice={notice} />
       <div className="ship-form">
-        {text("customer", "Заказчик")}{text("receiver", "Получатель")}{text("shipping_point", "Точка отгрузки", "ship-span2")}
-        {text("contact", "Контакт")}{text("phone", "Телефон")}
+        {text("customer", "Заказчик")}{text("receiver", "Организация")}{text("contact", "Получатель")}{text("phone", "Телефон")}
+        {text("shipping_point", "Адрес", "ship-span2")}
         <label>ТК<CarrierSelect label="ТК заявки" empty="из карточки проекта" value={draft.carrier} onChange={(carrier) => setDraft({ ...draft, carrier, terms: termsFor(carrier) ?? "" })} /></label>
         <label>Условия<span className="ship-terms">{termsText(draft.terms) || "из карточки проекта"}</span></label>
         <label>Тип УПД<select value={draft.upd_type} onChange={(event) => setDraft({ ...draft, upd_type: event.target.value })}><option value="">из карточки проекта</option>{UPD_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>

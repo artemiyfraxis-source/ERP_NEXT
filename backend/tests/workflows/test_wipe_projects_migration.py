@@ -121,6 +121,11 @@ def database(tmp_path, monkeypatch):
             connection.execute(text(f"ALTER TABLE production_tasks ADD COLUMN {column}"))
         Base.metadata.tables["production_task_team"].create(connection)
         Base.metadata.tables["production_task_deliveries"].create(connection)
+        # 0186/0187: current task guards query cutting membership even for ungrouped tasks.
+        # These tables stay empty: groups did not exist at the historical wipe revision.
+        for name in ("production_cutting_groups", "production_cutting_members", "production_cutting_work",
+                     "production_cutting_actions", "production_cutting_outputs"):
+            Base.metadata.tables[name].create(connection)
         # Ключ № проекта (миграция project_keys, U06): трек и «Снабжение» читают проект по нему.
         for table, column in (
             ("production_tasks", "project_key"), ("finished_goods", "project_key"), ("shipment_lines", "project_key"),

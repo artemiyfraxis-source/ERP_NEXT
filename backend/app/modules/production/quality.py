@@ -15,6 +15,7 @@ from app.shared.identity import Actor
 
 from .application import ConcurrentProductionUpdate, ProductionRepository
 from .domain import ProductionValidationError
+from .instrument_serials import InstrumentSerialContext, assign_in_house_serial
 from .execution import AppendOnlyRepository, BoxRepository, DefectRepository
 from .traceability import (
     DefectDisposition,
@@ -37,6 +38,7 @@ class InstrumentRepository(Protocol):
     def list(self) -> Sequence[MeasurementInstrument]: ...
     def by_inventory_number(self, number: str) -> MeasurementInstrument | None: ...
     def save(self, instrument: MeasurementInstrument) -> None: ...
+    def serial_contexts(self, instrument_ids: Sequence[UUID]) -> dict[UUID, InstrumentSerialContext]: ...
 
 
 class InstrumentFileRepository(Protocol):
@@ -211,6 +213,9 @@ def _validated_instrument(item: MeasurementInstrument, repository: InstrumentRep
     duplicate = repository.by_inventory_number(item.inventory_number)
     if duplicate is not None and duplicate.id != item.id:
         raise ProductionValidationError("СИ с таким инвентарным номером уже есть")
+    if item.serial_number and any(other.id != item.id and other.serial_number.strip() == item.serial_number
+                                  for other in repository.list()):
+        raise ProductionValidationError("СИ с таким заводским / собственным номером уже есть")
     return item
 
 
@@ -260,6 +265,32 @@ def update_instrument(command: UpdateInstrumentCommand, uow: QualityUnitOfWork) 
             "version": [current.version, item.version],
             "changes": {key: [str(getattr(current, key)), str(getattr(item, key))]
                         for key in INSTRUMENT_EDITABLE if getattr(current, key) != getattr(item, key)},
+        }, uow)
+        uow.commit()
+        return item
+
+
+def assign_instrument_serial(instrument_id: UUID, expected_version: int, actor: Actor, now: datetime,
+                             uow: QualityUnitOfWork) -> MeasurementInstrument:
+    """Assign an empty serial once, with the same tree lock and version check as card edits."""
+    with uow:
+        uow.instruments.lock_tree()
+        current = uow.instruments.get(instrument_id)
+        if current is None:
+            raise KeyError("СИ не найдено")
+        if current.version != expected_version:
+            raise ConcurrentProductionUpdate("СИ изменилось после загрузки формы")
+        if current.serial_number.strip():
+            return current
+        context = uow.instruments.serial_contexts([current.id])[current.id]
+        assigned = assign_in_house_serial(current, now=now, context=context)
+        if assigned is current:
+            return current
+        item = _validated_instrument(replace(assigned, version=current.version + 1), uow.instruments)
+        uow.instruments.save(item)
+        _audit(item.id, "production.instrument_serial_assigned", actor, now, {
+            "inventory_number": item.inventory_number, "serial_number": [current.serial_number, item.serial_number],
+            "version": [current.version, item.version],
         }, uow)
         uow.commit()
         return item

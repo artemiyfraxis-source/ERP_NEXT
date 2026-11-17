@@ -7,8 +7,8 @@ designer screen works against:
 
 - `LabelTemplate {elements: [Element]}`; an element is a field of the label's data, a free text with `{field}`
   placeholders, the QR or the Code128 of the ГРН, a line or a box. Unknown keys are refused, in Russian.
-- `FIELDS` — the one registry of what each kind of label can show: «lot» (a warehouse lot) and «intake» (an act of
-  «Приёмка с производства», ГРН «ГП.YY.NNNNNNN»). The codes always carry the ГРН, so they take no field.
+- `FIELDS` — the registry for «lot» (warehouse lot), «intake» (finished-goods receipt) and «instrument» (СИ/accessory).
+  Codes carry the ГРН or inventory number, so they take no field.
 - `LabelContent` — the values a label is drawn with: `lot_content` / `intake_content` build them from `GrnLabelData`."""
 
 from __future__ import annotations
@@ -16,17 +16,18 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .layout import GrnLabelData
 
-TemplateKind = Literal["lot", "intake"]
+TemplateKind = Literal["lot", "intake", "instrument"]
 ElementKind = Literal["field", "text", "qr", "code128", "line", "box"]
 
-TEMPLATE_KINDS: tuple[str, ...] = ("lot", "intake")
-KIND_LABELS: dict[str, str] = {"lot": "Партия склада", "intake": "Приёмка с производства"}
+TEMPLATE_KINDS: tuple[str, ...] = ("lot", "intake", "instrument")
+KIND_LABELS: dict[str, str] = {"lot": "Партия склада", "intake": "Приёмка с производства", "instrument": "СИ и принадлежности"}
 # The label formats of `settings.LABEL_SIZES` by key, width × height in mm.
 FORMATS: dict[str, tuple[float, float]] = {"58x30": (58, 30), "58x40": (58, 40), "100x50": (100, 50)}
 ELEMENTS_MAX = 40
@@ -62,6 +63,19 @@ FIELDS: dict[str, dict[str, str]] = {
         "warehouse": "Склад",
         "place_warehouse": "Место · склад",
         "received": "Дата приёмки",
+    },
+    "instrument": {
+        "connector_line": "Разъёмы / краткое название",
+        "parameters_line": "КСВН и диапазон замера",
+        "loss_line": "Потери",
+        "measurement_date": "Дата замера",
+        "impedance_warning": "Предупреждение о сопротивлении",
+        "footer_line": "Поверка / сопротивление",
+        "inventory_number": "Инвентарный номер",
+        "name": "Разъёмы / наименование",
+        "model": "Модель",
+        "serial_number": "Серийный номер",
+        "verification_due": "Поверка до",
     },
 }
 
@@ -297,3 +311,28 @@ def intake_content(data: GrnLabelData, project: str, item_index: str) -> LabelCo
         "project_item": " ".join(part for part in (project, item_index) if part),
     }
     return LabelContent("intake", data.grn, values)
+
+
+def instrument_content(inventory_number: str, name: str, serial_number: str = "", verification_due: date | None = None,
+                       *, model: str = "", accessory: bool = False, in_house_serial: bool = False,
+                       connector_line: str = "", parameters_line: str = "", loss_line: str = "",
+                       measurement_date: str = "", impedance_warning: str = "", card_url: str = "") -> LabelContent:
+    """An instrument card's printable values; codes carry the inventory number even without an ERP connection.
+
+    The caller supplies the domain's classification to keep serial-number policy outside Warehouse.
+    """
+    serial = serial_number.strip()
+    values = {
+        "inventory_number": inventory_number.strip(),
+        "name": name.strip(),
+        "model": model.strip(),
+        "serial_number": (f"№ {serial}" if in_house_serial else f"Зав. № {serial}") if serial else "",
+        "verification_due": f"Поверка до {verification_due:%d.%m.%Y}" if verification_due and not accessory else "",
+        "connector_line": connector_line or name.strip(),
+        "parameters_line": parameters_line or ("Не измерен" if accessory else ""),
+        "loss_line": loss_line,
+        "measurement_date": measurement_date,
+        "impedance_warning": impedance_warning,
+    }
+    values["footer_line"] = " · ".join(filter(None, (values["verification_due"], impedance_warning)))
+    return LabelContent("instrument", card_url or values["inventory_number"], values)

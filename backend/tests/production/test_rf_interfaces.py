@@ -23,6 +23,23 @@ def test_ambiguous_names_never_get_guessed_interfaces(name):
     assert parse_interfaces(name) == ()
 
 
+@pytest.mark.parametrize("name", ["SMA розетка–розетка", "SMA розетка–SMA розетка"])
+def test_explicit_shared_series_names_keep_both_ends(name):
+    ports = parse_interfaces(name)
+    assert len(ports) == 2 and all(p.series == "SMA" and p.center == "гнездо" for p in ports)
+
+
+@pytest.mark.parametrize("word,body,center", [("вилка", "розетка", "штырь"), ("розетка", "вилка", "гнездо")])
+def test_russian_rp_names_follow_contact_gender(word, body, center):
+    port, = parse_interfaces(f"RP-SMA {word}")
+    assert port.body == body and port.center == center
+
+
+@pytest.mark.parametrize("name", ["SMA розетка–розетка–розетка", "SMA розетка–неизвестная розетка"])
+def test_partial_shared_series_names_are_not_guessed(name):
+    assert parse_interfaces(name) == ()
+
+
 def test_cross_series_lower_rating_and_unknown_impedance():
     male = RfInterface("SMA", "вилка", "штырь", 50, 6)
     female = RfInterface("3.5mm", "розетка", "гнездо", 50, 26.5)

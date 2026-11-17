@@ -19,14 +19,15 @@
 * **Запуск** — `board`: `_open_card` (доска устарела: техкарта перевыпущена, по КБ запустили ещё — отказ),
   `run_of`, `_launch_new` → `application.launch_task` (номер ПЗ, номер запуска КБ, серийники, аудит
   `production.launched`). Ключ идемпотентности — от техкарты и номера запуска КБ: повторный клик не создаёт второе
-  задание, а получает отказ «уже запущено». Каждая КБ пакета — своей транзакцией: устаревшая строка не мешает
-  остальным, её причина возвращается мастеру.
+  задание, а получает отказ «уже запущено».
+  Compatible cutting rows launch atomically as one group; independent groups and ineligible standalone
+  rows use separate transactions. A stale child refuses its entire proposed cutting group.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import ROUND_FLOOR, Decimal
 from uuid import UUID
@@ -36,8 +37,10 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.identity import Actor
 
-from .application import ConcurrentProductionUpdate, UnitOfWork
-from .board import CardSnapshot, _launch_new, _open_card, run_of, unlaunched_cards
+from .application import ConcurrentProductionUpdate, UnitOfWork, launch_task
+from .board import BOARD_KEY_PREFIX, CardSnapshot, launch_command, _open_card, run_of, unlaunched_cards
+from .cutting import cutting_recipe, digest
+from .cutting_application import describe_group
 from .domain import ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, unit_factors
 from .launchable import ReadyCard, launch_operations
 from .workload import UNASSIGNED, ZERO, Done, kb_site
@@ -147,6 +150,7 @@ class LaunchItem:
     techcard_version: int
     launched: int
     quantity: int | None = None
+    issue_separately: bool = False
 
 
 @dataclass(frozen=True)
@@ -154,6 +158,7 @@ class LaunchReadyCommand:
     items: tuple[LaunchItem, ...]
     actor: Actor
     now: datetime
+    fingerprint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -166,6 +171,40 @@ class Refused:
 class LaunchReadyResult:
     created: tuple[ProductionTask, ...]
     refused: tuple[Refused, ...]
+    groups: tuple[dict, ...] = ()
+    grouping_refused: tuple[dict, ...] = ()
+
+
+def preview_cutting(command: LaunchReadyCommand, uow, ready: Sequence[ReadyCard]) -> dict:
+    cards = {card.techcard_id: card for card in ready}
+    operator = uow.operators.get(command.actor.id)
+    site = operator.site if operator else ""
+    groups, refused = {}, []
+    for item in command.items:
+        card = cards.get(item.techcard_id)
+        if card is None:
+            refused.append({"techcard_id": str(item.techcard_id), "reason": "КБ недоступна к запуску"})
+            continue
+        try:
+            quantity = run_of(card, item.quantity)
+            operations = launch_operations(card.route.steps, quantity)
+            recipe, reason = cutting_recipe(card.project, site, card.document, operations)
+        except ProductionValidationError as error:
+            recipe, reason = None, str(error)
+        if recipe is None:
+            refused.append({"techcard_id": str(item.techcard_id), "reason": reason})
+            continue
+        key = recipe.key if not item.issue_separately else f"separate:{item.techcard_id}"
+        group = groups.setdefault(key, {"key": key, "recipe_key": recipe.key, "recipe_version": 1,
+                                       "site": site, "members": []})
+        group["members"].append({"techcard_id": str(item.techcard_id), "index": card.index,
+                                  "quantity": quantity, **recipe.row})
+    current = uow.cutting.fingerprint() if getattr(uow, "cutting", None) else []
+    result = {"groups": list(groups.values()), "grouping_refused": refused}
+    result["fingerprint"] = digest({**result, "membership": current,
+        "items": [[str(i.techcard_id), i.techcard_version, i.launched, i.quantity, i.issue_separately] for i in command.items],
+        "cards": [[str(c.techcard_id), c.version, c.revision, c.launched] for c in ready]})
+    return result
 
 
 def launch_ready(
@@ -174,7 +213,7 @@ def launch_ready(
     cards: Mapping[tuple[str, str], CardSnapshot],
     ready: Sequence[ReadyCard],
 ) -> LaunchReadyResult:
-    """Запуск выбранных КБ тем же путём, что «Создать задание» с доски: каждая — своей транзакцией (см. модуль)."""
+    """Launch each compatible cutting group atomically through the ordinary task launch service."""
     items = command.items
     if not items:
         raise ProductionValidationError("Не выбрано ни одной КБ")
@@ -182,29 +221,61 @@ def launch_ready(
         raise ProductionValidationError(f"За один раз — не больше {MAX_BATCH} КБ")
     if len({item.techcard_id for item in items}) != len(items):
         raise ProductionValidationError("КБ выбрана дважды")
+    with uow_factory() as uow:
+        stored = tuple(uow.production.with_status(ProductionStatus.RUNNING))
+        current_ready = unlaunched_cards(uow, stored, ready, cards)
+        preview = preview_cutting(command, uow, current_ready)
+        if command.fingerprint is not None and preview["fingerprint"] != command.fingerprint:
+            raise ConcurrentProductionUpdate("Группы изменились после предпросмотра — обновите список")
+        membership = uow.cutting.fingerprint() if getattr(uow, "cutting", None) else []
+    buckets = {}
+    key_of = {member["techcard_id"]: group["key"] for group in preview["groups"] for member in group["members"]}
+    for item in items:
+        buckets.setdefault(key_of.get(str(item.techcard_id), str(item.techcard_id)), []).append(item)
     created: list[ProductionTask] = []
     refused: list[Refused] = []
-    for item in items:
+    group_ids = set()
+    for bucket in buckets.values():
         try:
-            created.append(_launch_one(item, command.actor, command.now, uow_factory(), cards, ready))
+            with uow_factory() as uow:
+                selected = {i.techcard_id for i in bucket}
+                uow.production.lock_projects(projects=tuple(c.project for c in ready if c.techcard_id in selected))
+                if command.fingerprint and getattr(uow, "cutting", None):
+                    # Changes to a group this bucket could join invalidate its preview under the project lock.
+                    recipe_keys = {g["recipe_key"] for g in preview["groups"]
+                                   if any(UUID(m["techcard_id"]) in selected for m in g["members"])}
+                    before = sorted(r for r in membership if r[2] in recipe_keys)
+                    after = sorted(r for r in uow.cutting.fingerprint() if r[2] in recipe_keys)
+                    if before != after:
+                        raise ConcurrentProductionUpdate("Состав группы изменился — пересчитайте предпросмотр")
+                seen = uow.production.last_launch_seqs(tuple(selected))
+                stored = tuple(uow.production.with_status(ProductionStatus.RUNNING))
+                opened = {c.techcard_id: c for c in unlaunched_cards(uow, stored, ready, cards)}
+                pending = []
+                new_group_ids = set()
+                for item in bucket:
+                    card = _open_card(opened, item.techcard_id, item.techcard_version, item.launched)
+                    sequence = seen.get(card.techcard_id, 0)
+                    launch = launch_command(card, run_of(card, item.quantity),
+                        f"{BOARD_KEY_PREFIX}{card.techcard_id}:{sequence + 1}", command.actor, command.now, sequence)
+                    task, fresh = launch_task(replace(launch, issue_separately=item.issue_separately), uow)
+                    if not fresh:
+                        raise ConcurrentProductionUpdate("Задание уже создано — обновите список")
+                    pending.append(task)
+                    if getattr(uow, "cutting", None):
+                        for operation in task.operations:
+                            member = uow.cutting.for_operation(operation.id)
+                            if member:
+                                new_group_ids.add(member.group_id)
+                changed_groups = [r for r in uow.cutting.fingerprint() if UUID(r[0]) in new_group_ids] if new_group_ids else []
+                uow.commit()
+                created.extend(pending)
+                group_ids.update(new_group_ids)
+                membership = [r for r in membership if UUID(r[0]) not in new_group_ids] + changed_groups
         except (ConcurrentProductionUpdate, ProductionValidationError) as error:
-            refused.append(Refused(item, str(error)))
+            refused.extend(Refused(item, str(error)) for item in bucket)
         except (IntegrityError, StaleDataError):
-            refused.append(Refused(item, "Эту КБ одновременно запустили — обновите список"))
-    return LaunchReadyResult(tuple(created), tuple(refused))
-
-
-def _launch_one(
-    item: LaunchItem, actor: Actor, now: datetime, uow: UnitOfWork,
-    cards: Mapping[tuple[str, str], CardSnapshot], ready: Sequence[ReadyCard],
-) -> ProductionTask:
-    with uow:
-        # Номер запуска КБ — до чтения заданий: параллельный запуск займёт тот же номер и упрётся в уникальность.
-        seen = uow.production.last_launch_seqs([item.techcard_id])
-        stored = tuple(uow.production.with_status(ProductionStatus.RUNNING))
-        open_cards = {card.techcard_id: card for card in unlaunched_cards(uow, stored, ready, cards)}
-        card = _open_card(open_cards, item.techcard_id, item.techcard_version, item.launched)
-        quantity = run_of(card, item.quantity)
-        task = _launch_new(card, quantity, seen.get(card.techcard_id, 0), actor, now, uow)
-        uow.commit()
-        return task
+            refused.extend(Refused(item, "Эту КБ одновременно запустили — обновите список") for item in bucket)
+    with uow_factory() as uow:
+        groups = tuple(describe_group(uow.cutting.get(identifier), uow) for identifier in sorted(group_ids, key=str))
+    return LaunchReadyResult(tuple(created), tuple(refused), groups, tuple(preview["grouping_refused"]))

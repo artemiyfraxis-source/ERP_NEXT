@@ -3,6 +3,8 @@
 // текста в список (рисунки «Норма | Брак» — etkDefectArt.ts). Считается при показе и печати, поэтому выданные ТК перевыпускать не нужно.
 
 import { opTypeName } from "./tcGenLogic";
+import { countLabel, formatNumber } from "./format";
+import { markLabelList, type MarkSerialRange } from "./markSerial";
 
 type Row = Record<string, unknown>;
 
@@ -16,6 +18,48 @@ function list(value: unknown): Row[] {
 
 function str(value: unknown): string {
   return value == null ? "" : String(value);
+}
+
+/** Correct the label-print output when reading an issued ETK, without rewriting its snapshot. */
+export function etkLabelResult(operation: Row, serial?: MarkSerialRange | null): { name: string; norm: string; unit: string } | null {
+  const marks = list(obj(operation.fields).marks);
+  if (!marks.length || !(str(operation.code) === "PRINT_MARK_LABEL" || list(operation.result).some((row) => /^Напечатанные этикетки:/.test(str(row.name))))) return null;
+  const labels = serial ? markLabelList(marks, serial) : [];
+  const count = labels.length || marks.length;
+  const total = labels.length ? labels.reduce((sum, label) => sum + label.quantity, 0)
+    : marks.reduce((sum, mark) => sum + (Number(str(mark.batch).replace(",", ".")) || 0), 0);
+  return { name: `Этикетки: ${countLabel(count, ["вид", "вида", "видов"])}, ${formatNumber(total)} шт.`, norm: String(total), unit: "Шт." };
+}
+
+export type ShrinkRequirementLine = { material: string; text: string; missing: boolean; sourceUrl: string; quote: string };
+
+/** Frozen in the issued operation, never looked up from today's material catalog at render time. */
+export function shrinkRequirementLines(operation: Row): ShrinkRequirementLine[] {
+  const fields = obj(operation.fields);
+  const requirements = list(fields.shrinkRequirements);
+  if (!("shrinkRequirements" in fields) && (["heatTut", "coaxHeat", "endCap"].includes(str(operation.type)) || /^HEAT_(?:TYT|TTK)_/.test(str(operation.code)))) {
+    requirements.push({ status: "missing" });
+  }
+  const number = (value: number) => String(value).replace(".", ",");
+  const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+  const lines = requirements.map((requirement): ShrinkRequirementLine => {
+    const material = obj(requirement.material), temperature = obj(requirement.temperature);
+    const low = temperature.lower_c, high = temperature.upper_c;
+    const missing = requirement.status !== "resolved" || (!finite(low) && !finite(high));
+    const value = missing ? "не задано — проверить" : finite(low) && finite(high)
+      ? (low === high ? number(low) : `${number(low)}…${number(high)}`) + " °C"
+      : finite(low) ? `не ниже ${number(low)} °C` : `не выше ${number(high as number)} °C`;
+    const source = [str(temperature.kind), str(temperature.document), temperature.page ? `стр. ${str(temperature.page)}` : ""].filter(Boolean).join(", ");
+    const characteristic = finite(temperature.characteristic_c) ? `; по характеристикам: ${number(temperature.characteristic_c)} °C` : "";
+    return {
+      material: [...new Set([str(material.article), str(material.name)].filter(Boolean))].join(" · ") || "Материал не определён",
+      text: `Температура усадки материала: ${value}${!missing && source ? ` (${source})` : ""}${!missing ? characteristic : ""}`,
+      missing, sourceUrl: /^https?:\/\//i.test(str(temperature.source_url)) ? str(temperature.source_url) : "",
+      quote: str(temperature.quote),
+    };
+  });
+  if (fields.shrinkReview) lines.push({ material: "Проверка режима", text: str(fields.shrinkReview), missing: true, sourceUrl: "", quote: "" });
+  return lines;
 }
 
 /** Порядок разделов оснастки: инструмент → оборудование → расходники, затем прочее (SUPPLYMAP PortalApp:4533). */

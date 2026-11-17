@@ -24,7 +24,8 @@ function rebuilt() {
 
 it("keeps the complete existing matched config byte-identical", async () => {
   // Captured from the unmodified generator at 0782917b; includes every config field, not only the displayed ops.
-  const bytes = new TextEncoder().encode(JSON.stringify(rebuilt().buildConfig()));
+  // Only the new material association is excluded from the historical byte contract.
+  const bytes = new TextEncoder().encode(JSON.stringify(rebuilt().buildConfig(), (key, value) => key === "shrinkMaterials" ? undefined : value));
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   expect(Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(""))
     .toBe("0ab67d2d5120368d399ff7a3785d042b58863265823042a66f6b8f556b954834");
@@ -33,6 +34,15 @@ it("keeps the complete existing matched config byte-identical", async () => {
 it("the prod snapshot carries no hand-set operation order and no hand-picked cards", () => {
   expect(snap.S.opOrder ?? []).toEqual([]);
   expect(snap.S.manualTemplates ?? []).toEqual([]);
+});
+
+it("keeps an exact material on every shrink operation of the complex production harness", () => {
+  const ops = rebuilt().getActiveOps().filter((op) => op.type === "heatTut");
+  expect(ops.length).toBeGreaterThan(3);
+  for (const op of ops) {
+    expect(op.shrinkMaterials, op.opKey).toBeDefined();
+    expect(op.shrinkMaterials!.every((material) => !!(material.art || material.name)), op.opKey).toBe(true);
+  }
 });
 
 it("rebuilds prod rev 17 from its form snapshot: the same 44 operations, labels and library cards", () => {

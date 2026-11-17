@@ -56,6 +56,13 @@ export interface LaunchReadyItem {
   techcard_version: number;
   launched: number;
   quantity: number;
+  issue_separately?: boolean;
+}
+
+export interface LaunchGroupPreview {
+  fingerprint: string;
+  groups: { key: string; site: string; members: { techcard_id: string; index: string; quantity: number; cut_length_mm: string | null }[] }[];
+  grouping_refused: { techcard_id: string; reason: string }[];
 }
 
 export interface LaunchReadyResult {
@@ -65,8 +72,10 @@ export interface LaunchReadyResult {
 
 export const launchReadyApi = {
   list: () => api<LaunchReadyList>("/api/production/launch-ready"),
-  launch: (items: LaunchReadyItem[]) =>
-    api<LaunchReadyResult>("/api/production/launch-ready/launch", { method: "POST", body: JSON.stringify({ items }) }),
+  preview: (items: LaunchReadyItem[]) =>
+    api<LaunchGroupPreview>("/api/production/launch-ready/preview", { method: "POST", body: JSON.stringify({ items }) }),
+  launch: (items: LaunchReadyItem[], fingerprint?: string) =>
+    api<LaunchReadyResult>("/api/production/launch-ready/launch", { method: "POST", body: JSON.stringify({ items, ...(fingerprint ? { fingerprint } : {}) }) }),
 };
 
 /** Нормочасы задания: Σ (норма на штуку × штук на изделие × тираж + подготовка). */

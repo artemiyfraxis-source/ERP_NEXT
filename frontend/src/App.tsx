@@ -180,6 +180,7 @@ export function App() {
     url.searchParams.delete("project");
     url.searchParams.delete("user");
     url.searchParams.delete("tab");
+    url.searchParams.delete("si");
     url.searchParams.delete("q");
     url.searchParams.delete("harness");
     url.searchParams.delete("library");

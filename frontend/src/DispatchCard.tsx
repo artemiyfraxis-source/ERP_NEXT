@@ -14,12 +14,12 @@ import "./dispatch.css";
 const UPD: Array<[string, string]> = [["ЭДО", "ЭДО"], ["БУМАГА", "Бумага"], ["БЕЗ УПД", "Без УПД"]];
 const CONFLICT = "Данные отправки уже изменил другой сотрудник. Закройте окно и откройте его заново.";
 
-export type DispatchKey = "receiver" | "shipping_point" | "phone" | "upd_type" | "upd_number" | "upd_date";
+export type DispatchKey = "receiver" | "contact" | "shipping_point" | "phone" | "upd_type" | "upd_number" | "upd_date";
 export type DispatchDraft = Record<DispatchKey, string>;
-const KEYS: DispatchKey[] = ["receiver", "shipping_point", "phone", "upd_type", "upd_number", "upd_date"];
+const KEYS: DispatchKey[] = ["receiver", "contact", "phone", "shipping_point", "upd_type", "upd_number", "upd_date"];
 
 export const dispatchDraft = (card?: Partial<ProjectAddressee> | Partial<DispatchData> | null): DispatchDraft => ({
-  receiver: card?.receiver ?? "", shipping_point: card?.shipping_point ?? "", phone: card?.phone ?? "", upd_type: card?.upd_type ?? "",
+  receiver: card?.receiver ?? "", contact: card?.contact ?? "", shipping_point: card?.shipping_point ?? "", phone: card?.phone ?? "", upd_type: card?.upd_type ?? "",
   upd_number: card?.upd_number ?? "", upd_date: card?.upd_date ?? "",
 });
 
@@ -39,8 +39,8 @@ export function readFile(file: File) {
   });
 }
 
-const FIELDS: Array<["receiver" | "shipping_point" | "phone", string, string]> = [
-  ["receiver", "Получатель", "как в документах"], ["shipping_point", "Адрес доставки", "куда везём"], ["phone", "Телефон", ""],
+const FIELDS: Array<["receiver" | "contact" | "shipping_point" | "phone", string, string]> = [
+  ["receiver", "Организация", "как в документах"], ["contact", "Получатель", "ФИО, кому передать груз"], ["phone", "Телефон", ""], ["shipping_point", "Адрес доставки", "куда везём"],
 ];
 
 /** Получатель, адрес, телефон, тип, номер, дата и файл УПД. Файл прикладывается сразу (загрузка + правка

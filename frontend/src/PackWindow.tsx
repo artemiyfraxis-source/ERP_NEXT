@@ -102,7 +102,7 @@ function PackForm({ project, candidates, rights, busy, mutate, reload }: { proje
         {groups.length > 0 && <div className="item-delivery-groups" aria-label="Группы доставки">
           {groups.map((group, index) => <div key={index}>
             <strong>{groups.length > 1 ? `Доставка ${index + 1} · ` : "Доставка · "}{group.items.join(", ")}</strong>
-            <span>{[group.delivery.receiver, group.delivery.shipping_point, group.delivery.contact, group.delivery.phone,
+            <span>{[group.delivery.receiver, group.delivery.contact, group.delivery.phone, group.delivery.shipping_point,
               termsText(group.delivery.terms), group.delivery.carrier, group.delivery.upd_type].filter(Boolean).join(" · ") || "Не задана"}</span>
           </div>)}
         </div>}

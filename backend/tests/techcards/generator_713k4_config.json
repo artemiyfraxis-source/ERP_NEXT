@@ -400,6 +400,20 @@
       "opKey": "cutTubes",
       "templateId": "cut-tut-short-резка",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "ТТК 8/2мм, черная",
+          "name": "ТТК 8/2мм, черная"
+        },
+        {
+          "art": "ТТК 12/4мм, черная",
+          "name": "ТТК 12/4мм, черная"
+        },
+        {
+          "art": "ТТК 3/1мм, черная",
+          "name": "ТТК 3/1мм, черная"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
@@ -485,6 +499,24 @@
       "opKey": "cutMark",
       "templateId": "ins-mark-tube-auto-печать-и-резка-маркировочной-трубки",
       "opNum": "PRINT_MARK_TUBE",
+      "shrinkMaterials": [
+        {
+          "art": "Маркировка \"5\" 4/2мм",
+          "name": "Маркировка \"5\" 4/2мм"
+        },
+        {
+          "art": "Маркировка \"I3\" 4/2мм",
+          "name": "Маркировка \"I3\" 4/2мм"
+        },
+        {
+          "art": "Маркировка \"C\" 4/2мм",
+          "name": "Маркировка \"C\" 4/2мм"
+        },
+        {
+          "art": "Маркировка \"A6\" 4/2мм",
+          "name": "Маркировка \"A6\" 4/2мм"
+        }
+      ],
       "tPrep": "600",
       "tOp": "4",
       "tMachine": "",
@@ -593,6 +625,12 @@
       "opKey": "onTubesA1",
       "templateId": "ins-tut-монтаж",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "ТТК 8/2мм, черная",
+          "name": "ТТК 8/2мм, черная"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
@@ -608,6 +646,12 @@
       "opKey": "onMarkA1",
       "templateId": "ins-tut-монтаж",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "Маркировка \"5\" 4/2мм",
+          "name": "Маркировка \"5\" 4/2мм"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
@@ -623,6 +667,12 @@
       "opKey": "heatShrA1",
       "templateId": "heat-ttk-short-усадка",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "ТТК 8/2мм, черная",
+          "name": "ТТК 8/2мм, черная"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
@@ -638,6 +688,12 @@
       "opKey": "heatMarkA1",
       "templateId": "heat-tyt-short-усадка",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "Маркировка \"5\" 4/2мм",
+          "name": "Маркировка \"5\" 4/2мм"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
@@ -733,6 +789,12 @@
       "opKey": "onTubesA2",
       "templateId": "ins-tut-монтаж",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "ТТК 8/2мм, черная",
+          "name": "ТТК 8/2мм, черная"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
@@ -748,6 +810,12 @@
       "opKey": "onMarkA2",
       "templateId": "ins-tut-монтаж",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "Маркировка \"I3\" 4/2мм",
+          "name": "Маркировка \"I3\" 4/2мм"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
@@ -763,6 +831,12 @@
       "opKey": "heatShrA2",
       "templateId": "heat-ttk-short-усадка",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "ТТК 8/2мм, черная",
+          "name": "ТТК 8/2мм, черная"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
@@ -778,6 +852,12 @@
       "opKey": "heatMarkA2",
       "templateId": "heat-tyt-short-усадка",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "Маркировка \"I3\" 4/2мм",
+          "name": "Маркировка \"I3\" 4/2мм"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
@@ -873,6 +953,12 @@
       "opKey": "onTubesA3",
       "templateId": "ins-tut-монтаж",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "ТТК 8/2мм, черная",
+          "name": "ТТК 8/2мм, черная"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
@@ -888,6 +974,12 @@
       "opKey": "onMarkA3",
       "templateId": "ins-tut-монтаж",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "Маркировка \"C\" 4/2мм",
+          "name": "Маркировка \"C\" 4/2мм"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
@@ -903,6 +995,12 @@
       "opKey": "heatShrA3",
       "templateId": "heat-ttk-short-усадка",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "ТТК 8/2мм, черная",
+          "name": "ТТК 8/2мм, черная"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
@@ -918,6 +1016,12 @@
       "opKey": "heatMarkA3",
       "templateId": "heat-tyt-short-усадка",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "Маркировка \"C\" 4/2мм",
+          "name": "Маркировка \"C\" 4/2мм"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
@@ -1003,6 +1107,12 @@
       "opKey": "onMarkA4",
       "templateId": "ins-tut-монтаж",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "Маркировка \"A6\" 4/2мм",
+          "name": "Маркировка \"A6\" 4/2мм"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
@@ -1018,6 +1128,12 @@
       "opKey": "heatMarkA4",
       "templateId": "heat-tyt-short-усадка",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "Маркировка \"A6\" 4/2мм",
+          "name": "Маркировка \"A6\" 4/2мм"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
@@ -1047,6 +1163,12 @@
       "opKey": "insSpl1",
       "templateId": "ins-tut-монтаж",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "ТТК 3/1мм, черная",
+          "name": "ТТК 3/1мм, черная"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
@@ -1061,6 +1183,12 @@
       "opKey": "heatSpl1",
       "templateId": "heat-ttk-short-усадка",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "ТТК 3/1мм, черная",
+          "name": "ТТК 3/1мм, черная"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
@@ -1089,6 +1217,12 @@
       "opKey": "insSpl2",
       "templateId": "ins-tut-монтаж",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "ТТК 3/1мм, черная",
+          "name": "ТТК 3/1мм, черная"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
@@ -1103,6 +1237,12 @@
       "opKey": "heatSpl2",
       "templateId": "heat-ttk-short-усадка",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "ТТК 3/1мм, черная",
+          "name": "ТТК 3/1мм, черная"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
@@ -1117,6 +1257,12 @@
       "opKey": "insSleeves",
       "templateId": "ins-tut-монтаж",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "ТТК 12/4мм, черная",
+          "name": "ТТК 12/4мм, черная"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
@@ -1131,6 +1277,12 @@
       "opKey": "heatHs",
       "templateId": "heat-ttk-short-усадка",
       "opNum": "",
+      "shrinkMaterials": [
+        {
+          "art": "ТТК 12/4мм, черная",
+          "name": "ТТК 12/4мм, черная"
+        }
+      ],
       "tPrep": "",
       "tOp": "",
       "tMachine": "",

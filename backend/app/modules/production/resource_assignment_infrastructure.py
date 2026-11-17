@@ -143,6 +143,8 @@ class SqlAlchemyProductionResources:
         self.tasks.pop(task_id, None)
 
     def ensure_assignment(self, task, operation_id, operator_ids, machines=None, *, crew=False):
+        from .cutting_infrastructure import SqlAlchemyCuttingRepository
+        SqlAlchemyCuttingRepository(self.session).assert_standalone(operation_id)
         if not operator_ids:
             self.record_task(task)
             return

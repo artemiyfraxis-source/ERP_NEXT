@@ -23,15 +23,13 @@ const texts = (svg: string) => [...svg.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].
 describe("разделка коакса: каждая сторона названа разъёмом", () => {
   const sketch = etkFigure(operations[0]);
 
-  it("заголовок над рисунком каждой стороны: сторона, разъём (вилка/розетка) и артикул", () => {
-    expect(sketch).toContain("Сторона А — SMA-Male (вилка), SMA-C174P");
-    expect(sketch).toContain("Сторона В — SMA-Female bulkhead (розетка), SMA-C316F");
+  it("один кабель, над каждым концом только сторона и тип разъёма", () => {
+    expect(sketch).toContain("А — SMA-Male");
+    expect(sketch).toContain("В — SMA-Female bulkhead");
     const titles = [...sketch.matchAll(/data-coax-title/g)];
     expect(titles).toHaveLength(2);
-    // Заголовок идёт раньше своего рисунка и крупный (не подпись сбоку).
-    expect(sketch.indexOf("Сторона А —")).toBeLessThan(sketch.indexOf('data-band="jacket"'));
-    expect(sketch.indexOf("Сторона В —")).toBeLessThan(sketch.lastIndexOf('data-band="jacket"'));
-    expect(sketch).toContain('data-coax-title x="40" y="22" font-size="20"');
+    expect(sketch.match(/<svg /g)).toHaveLength(1);
+    expect(sketch).not.toMatch(/SMA-C174P|SMA-C316F|вилка|розетка/);
   });
 
   it("в шапке операции у каждой стороны — разъём и ступени L1–L3", () => {
@@ -39,8 +37,10 @@ describe("разделка коакса: каждая сторона назва�
     const find = (end: string, label: string) => sides.find((side) => side.end === end)?.items.find((item) => item[0] === label)?.[1];
     expect(find("A", "Разъём")).toBe("SMA-Male (вилка), SMA-C174P");
     expect(find("B", "Разъём")).toBe("SMA-Female bulkhead (розетка), SMA-C316F");
-    expect(find("A", "Разделка")).toBe("L1 2,5 · L2 3,5 · L3 7,5 мм");
-    expect(find("B", "Разделка")).toBe("L1 2,5 · L2 4,8 · L3 10 мм");
+    expect(find("A", "Диэлектрик / жила от торца")).toBe("2,5 мм");
+    expect(find("A", "Оплётка от торца")).toBe("3,5 мм");
+    expect(find("A", "Оболочка от торца")).toBe("7,5 мм");
+    expect(find("B", "Оболочка от торца")).toBe("10 мм");
   });
 
   it("выданный ЭТК без готовых имён: половина считается по типу из БД.КОАКС", () => {
@@ -84,7 +84,7 @@ describe("ПФ коаксиальной сборки: картинка на ра
 
   it("резка кабеля и трубок рисуются как раньше", () => {
     expect(art("Нарезанные трубки")).toContain("ТУТ 4/2мм, черная");
-    expect(art("Нарезанный и разделанный кабель")).toContain("Сторона А — SMA-Male (вилка), SMA-C174P");
+    expect(art("Нарезанный и разделанный кабель")).toContain("А — SMA-Male");
   });
 });
 

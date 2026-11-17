@@ -120,6 +120,12 @@ export interface DataTableProps<T> {
   /** Подпись заголовка группы (по умолчанию — её имя); например, заказ и поставщик. */
   /** Третий аргумент — все строки после поиска и фильтров, до разбиения на страницы. */
   groupLabel?: (name: string, rows: T[], filteredRows: T[]) => ReactNode;
+  /** Parent headers above ordinary table groups, in first-seen parent order. Parent headers have no selection checkbox. */
+  groupParent?: (row: T) => string;
+  groupParentLabel?: (name: string, rows: T[], filteredRows: T[]) => ReactNode;
+  /** Aligned ordinary-table group cells, keyed by column. Unspecified cells are empty; null omits the group header.
+      Raw row values still drive search, filters and export. The fourth argument follows the visible header order. */
+  groupCells?: (name: string, rows: T[], filteredRows: T[], visibleColumns: DataColumn<T>[]) => Partial<Record<string, ReactNode>> | null;
   /** Opt in to project/group headers above cards; existing card consumers keep their flat layout. */
   groupCards?: boolean;
   /** Заголовок группы сворачивает её строки (по умолчанию группы всегда раскрыты). */
@@ -128,6 +134,8 @@ export interface DataTableProps<T> {
       В режиме blocks начальное состояние всегда раскрыто, затем запоминается выбор пользователя. */
   foldedByDefault?: boolean;
   bulkActions?: DataBulkAction<T>[];
+  /** Actions on every row matching the current search and filters, including rows beyond the page. */
+  filteredActions?: DataBulkAction<T>[];
   /** Раскрытая строка: форма, карточка, история. */
   renderDetail?: (row: T) => ReactNode;
   rowClassName?: (row: T) => string;
@@ -437,10 +445,14 @@ export function DataTable<T>({
   allLast = false,
   groupBy,
   groupLabel,
+  groupParent,
+  groupParentLabel,
+  groupCells,
   groupCards = false,
   collapsibleGroups,
   foldedByDefault = false,
   bulkActions = [],
+  filteredActions = [],
   renderDetail,
   rowClassName,
   onRowClick,
@@ -651,13 +663,13 @@ export function DataTable<T>({
     // before the page is cut, so a list shown in pages is sorted as a whole.
     const rank = new Map<string, number>();
     return result.map((row, index) => {
-      const name = grouping(row);
+      const name = groupParent ? JSON.stringify([groupParent(row), grouping(row)]) : grouping(row);
       if (!rank.has(name)) rank.set(name, rank.size);
       return { row, group: rank.get(name)!, index };
     }).sort((a, b) => a.group - b.group || directed(column.value(a.row), column.value(b.row), sort.direction, column.numeric) || a.index - b.index)
       .map((item) => item.row);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `grouping` is `groupBy`, or the list's one block
-  }, [searched, columns, sort, activePreset, groupSort, groupBy, blocks, label]);
+  }, [searched, columns, sort, activePreset, groupSort, groupBy, groupParent, blocks, label]);
 
   // A search, a column filter or a chip opens every group of a folded-by-default list (the rows found are seen at once);
   // the user's flips start over whenever that changes.
@@ -688,7 +700,20 @@ export function DataTable<T>({
   const windowed = blocks && typeof IntersectionObserver !== "undefined";
   const shown = windowed ? filtered : filtered.slice(0, limit);
   const groups: Array<[string, T[]]> = [];
-  if (grouping) {
+  const parentRows = new Map<string, T[]>();
+  if (groupParent && !blocks && !cards) {
+    const parents = new Map<string, Map<string, T[]>>();
+    for (const row of shown) {
+      const parent = groupParent(row);
+      if (!parents.has(parent)) { parents.set(parent, new Map()); parentRows.set(parent, []); }
+      parentRows.get(parent)!.push(row);
+      const children = parents.get(parent)!;
+      const name = grouping?.(row) ?? "";
+      if (!children.has(name)) children.set(name, []);
+      children.get(name)!.push(row);
+    }
+    for (const children of parents.values()) groups.push(...children);
+  } else if (grouping) {
     const byName = new Map<string, T[]>();
     for (const row of shown) {
       const name = grouping(row);
@@ -750,10 +775,10 @@ export function DataTable<T>({
     });
   }
 
-  async function runBulk(action: DataBulkAction<T>) {
+  async function runBulk(action: DataBulkAction<T>, actionRows = selectedRows) {
     setRunning(action.label);
     try {
-      await action.run(selectedRows);
+      await action.run(actionRows);
       setSelected(new Set());
     } catch { /* ошибку показывает страница, выбор остаётся */ } finally {
       setRunning("");
@@ -1558,6 +1583,11 @@ export function DataTable<T>({
         )}
         <div className="toolbar-end">
           {toolbar}
+          {filteredActions.filter((action) => !action.hidden?.(filtered)).map((action) => (
+            <button type="button" key={action.label} className="secondary small" disabled={Boolean(running) || filtered.length === 0 || action.disabled?.(filtered)} onClick={() => void runBulk(action, filtered)}>
+              {running === action.label ? "Выполнение…" : action.label}
+            </button>
+          ))}
           {(blocks ? blockTotals.size > 1 : collapsibleGroups && foldedByDefault && groups.length > 1) && (() => {
             const names = blocks ? [...blockTotals.keys()] : groups.map(([name]) => name);
             const allOpen = names.every((name) => !isFolded(name) && (!blocks || !isSectionFolded(blockSection?.(name))));
@@ -1761,24 +1791,33 @@ export function DataTable<T>({
         <table ref={tableRef} className={tableClass}>
           {headOf(null)}
           <tbody>
-            {groups.map(([name, groupRows]) => (
-              <Fragment key={`group:${name}`}>
-                {grouping && (
-                  <tr className="group-row">
+            {groups.map(([name, groupRows], index) => {
+              const parent = groupParent?.(groupRows[0]);
+              const startsParent = parent !== undefined && (index === 0 || groupParent?.(groups[index - 1][1][0]) !== parent);
+              const cells = grouping && groupCells ? groupCells(name, groupRows, filtered, visible) : undefined;
+              const checkbox = selectable ? (() => {
+                const picked = groupRows.filter((row) => selected.has(rowKey(row))).length;
+                return <input type="checkbox" aria-label="Выбрать группу" title="Выбрать группу"
+                  checked={picked === groupRows.length}
+                  ref={(input) => { if (input) input.indeterminate = picked > 0 && picked < groupRows.length; }}
+                  onChange={(event) => toggleGroup(groupRows, event.currentTarget.checked)} />;
+              })() : null;
+              return <Fragment key={`group:${JSON.stringify([parent, name])}`}>
+                {startsParent && <tr className="group-row dt-parent-row">
+                  <td colSpan={span}>{groupParentLabel ? groupParentLabel(parent, parentRows.get(parent)!, filtered) : parent}</td>
+                </tr>}
+                {grouping && cells !== null && (cells !== undefined ? <tr className="group-row dt-group-cells">
+                  {selectable && <td>{checkbox}</td>}
+                  {visible.map((column, at) => {
+                    const width = widths[column.key];
+                    return <td key={column.key} data-col={column.key} data-label={column.title}
+                      className={[columnClass(width ? { ...column, width } : column, at, sized), width ? "dt-w" : ""].filter(Boolean).join(" ") || undefined}
+                      style={width ? { "--dt-w": `${width}px` } as CSSProperties : undefined}>{cells[column.key]}</td>;
+                  })}
+                  {filler && <td className="dt-fill" aria-hidden="true" />}
+                </tr> : <tr className="group-row">
                     <td colSpan={span}>
-                      {selectable && (() => {
-                        const picked = groupRows.filter((row) => selected.has(rowKey(row))).length;
-                        return (
-                          <input
-                            type="checkbox"
-                            aria-label="Выбрать группу"
-                            title="Выбрать группу"
-                            checked={picked === groupRows.length}
-                            ref={(input) => { if (input) input.indeterminate = picked > 0 && picked < groupRows.length; }}
-                            onChange={(event) => toggleGroup(groupRows, event.currentTarget.checked)}
-                          />
-                        );
-                      })()}
+                      {checkbox}
                       {(() => {
                         const picked = selectable ? groupRows.filter((row) => selected.has(rowKey(row))).length : 0;
                         const title = <><strong>{(groupLabel ? groupLabel(name, groupRows, filtered) : name) || "—"}</strong> · {groupRows.length}{picked > 0 && <span className="group-picked"> · выбрано {picked}</span>}</>;
@@ -1787,11 +1826,10 @@ export function DataTable<T>({
                           : title;
                       })()}
                     </td>
-                  </tr>
-                )}
+                  </tr>)}
                 {!isFolded(name) && groupRows.map(renderRow)}
-              </Fragment>
-            ))}
+              </Fragment>;
+            })}
             {!shown.length && <tr><td colSpan={span} className="empty">{loading ? "Загрузка…" : emptyText}</td></tr>}
           </tbody>
         </table>

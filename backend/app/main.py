@@ -20,6 +20,7 @@ from .modules.identity import api as identity_api
 from .modules.identity.middleware import IdentitySessionMiddleware
 from .shared.http_limits import RequestBodyLimitMiddleware
 from .shared.security_headers import SecurityHeadersMiddleware
+from .shared.public_url import public_settings
 from .shared.stop_file import watch_stop_file
 from .shared.warehouse_location import configured_rack_layout
 from .modules.procurement import api as procurement_api
@@ -33,6 +34,7 @@ from .modules.warehouse import scan_jobs_api as warehouse_scan_jobs_api
 from .modules.warehouse import vna_jobs_api as warehouse_vna_jobs_api
 from .modules.fulfillment import api as fulfillment_api
 from .modules.production import api as production_api
+from .modules.production import cutting_api as production_cutting_api
 from .modules.production import plan_api as production_plan_api
 from .modules.production import autoplan_api as production_autoplan_api
 from .modules.production import ship_plan_api as production_ship_plan_api
@@ -74,7 +76,7 @@ from .modules.purchasing import api_settings as purchasing_settings_api
 from .modules.purchasing import api_suppliers as purchasing_suppliers_api
 from .workflows import finished_goods_api
 from .workflows import production_intake_api
-from .workflows import coax_vswr_api, instrument_from_stock
+from .workflows import coax_vswr_api, instrument_from_stock, instrument_labels, instrument_public_passport
 from .modules.production import rf_interfaces_api
 from .workflows import vna_plan_api
 from .workflows import vna_measurement_api
@@ -104,6 +106,7 @@ app.state.cookie_secure = os.getenv("ERP_COOKIE_SECURE", "1").strip().lower() no
     "no",
 }
 configured_rack_layout()  # a broken ERP_WAREHOUSE_RACK_LAYOUT stops the start, not the first placement
+public_settings()  # reject a malformed public origin or passport key before accepting requests
 # Supplier domains read without a certificate check (audit U09): shown on «Системный журнал» and in /api/health?detail.
 app.state.tls_exception_hosts = tls_exception_hosts()
 app.add_middleware(
@@ -145,6 +148,7 @@ app.include_router(warehouse_vna_jobs_api.router)
 app.include_router(scan_agent_install.router)
 app.include_router(fulfillment_api.router)
 app.include_router(production_api.router)
+app.include_router(production_cutting_api.router)
 app.include_router(production_plan_api.router)
 app.include_router(production_autoplan_api.router)
 app.include_router(production_ship_plan_api.router)
@@ -182,6 +186,8 @@ app.include_router(rf_interfaces_api.router)
 app.include_router(vna_plan_api.router)
 app.include_router(vna_measurement_api.router)
 app.include_router(instrument_from_stock.router)
+app.include_router(instrument_labels.router)
+app.include_router(instrument_public_passport.router)
 
 _equipment_enabled = equipment_setup_enabled()
 if database_url := os.getenv("ERP_DATABASE_URL"):

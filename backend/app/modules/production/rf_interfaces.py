@@ -99,11 +99,15 @@ _SERIES_TOKEN = re.compile(r"(?<![\w])(?:RP[- ]?SMA|SMA|3[.,]5\s*(?:mm|мм)|TNC
 def parse_interfaces(name: str) -> tuple[RfInterface, ...]:
     """Parse explicit connector/gender pairs only; article codes and partial names are not evidence.
 
-    male/female describes the body; RP-SMA reverses the centre contact. Impedance
-    and frequency stay unknown unless explicitly stated in the name.
+    English male/female describes the body; Russian вилка/розетка describes the contact.
+    An explicit shared-series pair (SMA розетка–розетка) names two ends.
+    Impedance and frequency stay unknown unless explicitly stated in the name.
     """
-    found = list(_CONNECTOR.finditer(name))
-    if not 1 <= len(found) <= 2 or len(_SERIES_TOKEN.findall(name)) != len(found):
+    expanded = re.sub(_CONNECTOR.pattern + r"\s*[–—-]\s*(?P<second>female|male|вилка|розетка)(?![\w])",
+                      lambda m: f"{m[0][:m.start('second') - m.start()]}{m['series']} {m['second']}", name, flags=re.I)
+    found = list(_CONNECTOR.finditer(expanded))
+    genders = re.findall(r"(?<![\w])(?:female|male|вилка|розетка)(?![\w])", expanded, re.I)
+    if not 1 <= len(found) <= 2 or len(_SERIES_TOKEN.findall(expanded)) != len(found) or len(genders) != len(found):
         return ()
     impedance = re.findall(r"(?<![\d.])(\d+(?:[.,]\d+)?)\s*(?:Ω|Ом|ohm)\b", name, re.I)
     freq = re.findall(r"(?:до|≤)\s*(\d+(?:[.,]\d+)?)\s*(?:ГГц|GHz)\b", name, re.I)
@@ -118,9 +122,13 @@ def parse_interfaces(name: str) -> tuple[RfInterface, ...]:
             series = "тип III"
         elif series == "RPSMA":
             series = "RP-SMA"
-        male = match["gender"].lower() in ("male", "вилка")
-        result.append(RfInterface(series, "вилка" if male else "розетка",
-                                  "штырь" if male != (series == "RP-SMA") else "гнездо",
+        gender = match["gender"].lower()
+        male = gender in ("male", "вилка")
+        russian = gender in ("вилка", "розетка")
+        body_male = male != (russian and series == "RP-SMA")
+        center_male = male != (not russian and series == "RP-SMA")
+        result.append(RfInterface(series, "вилка" if body_male else "розетка",
+                                  "штырь" if center_male else "гнездо",
                                   ohms, ghz, f_source=f"Наименование: {name}"))
     return tuple(result)
 

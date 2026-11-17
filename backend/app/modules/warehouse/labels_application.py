@@ -33,8 +33,8 @@ from .labels.tspl import TsplOptions, build_tspl_job
 
 # «queued» — in the print queue; the agent of the warehouse PC prints it (the old keys stay for the screens).
 PrintStatus = Literal["queued"]
-# The job's kind in the queue (CHECK of migration 0141), not the template's: an intake label is queued as «lot».
-LabelKind = Literal["lot", "sample"]
+# The queue's kind (migrations 0141/0188), not the template's: an intake label is queued as «lot».
+LabelKind = Literal["lot", "sample", "instrument"]
 
 # A sample with the same fields as a real label — to see that everything fits (Roller_Buyer SAMPLE).
 SAMPLE = GrnLabelData(
@@ -64,6 +64,14 @@ SAMPLE_INTAKE = intake_content(GrnLabelData(
 
 
 def sample_content(kind: str) -> LabelContent:
+    if kind == "instrument":
+        return LabelContent("instrument", "СИ.034", {
+            "inventory_number": "СИ.034", "name": "SMA розетка – SMA розетка", "model": "S-322",
+            "serial_number": "№ ADP-ss-26-034", "verification_due": "Поверка до 17.11.2027",
+            "connector_line": "SMA розетка – SMA розетка", "parameters_line": "КСВН ≤ 1,05 · 0,01–18 ГГц",
+            "loss_line": "Потери ≤ 0,15 дБ", "measurement_date": "Замер 16.11.26",
+            "impedance_warning": "", "footer_line": "Поверка до 17.11.2027",
+        })
     return SAMPLE_INTAKE if kind == "intake" else lot_content(SAMPLE)
 
 
@@ -82,9 +90,18 @@ class PrintResult:
         return asdict(self)
 
 
-def label_settings(uow) -> PrintSettings:
+def effective_label_settings(settings: PrintSettings | None, kind: str = "lot") -> PrintSettings:
+    """One format policy for the designer, previews and queued labels."""
+    if settings is not None:
+        return settings
+    if kind == "instrument":
+        return DEFAULT_PRINT_SETTINGS.model_copy(update={"height_mm": 30})
+    return DEFAULT_PRINT_SETTINGS
+
+
+def label_settings(uow, kind: str = "lot") -> PrintSettings:
     with uow:
-        return uow.label_settings.load() or DEFAULT_PRINT_SETTINGS
+        return effective_label_settings(uow.label_settings.load(), kind)
 
 
 def _settings_message(settings: PrintSettings) -> str:
@@ -199,7 +216,11 @@ def render_label(uow, content: LabelContent, settings: PrintSettings) -> LabelLa
 
 def lot_layout_in(session, lot, received: datetime | None, settings: PrintSettings) -> LabelLayout:
     """The lot's label as `render_label` draws it, read inside a transaction already open."""
-    content = lot_content(label_of(lot, received))
+    return layout_in(session, lot_content(label_of(lot, received)), settings)
+
+
+def layout_in(session, content: LabelContent, settings: PrintSettings) -> LabelLayout:
+    """Render a saved or built-in template using the caller's open transaction."""
     stored = stored_template_in(session, content.kind, format_key(settings.width_mm, settings.height_mm))
     if stored is not None and stored.template is not None:
         return render(stored.template, content, settings)

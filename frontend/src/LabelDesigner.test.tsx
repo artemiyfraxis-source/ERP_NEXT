@@ -5,6 +5,7 @@ import { EquipmentPage } from "./EquipmentPage";
 import { FALLBACK_SCALE, LabelDesigner, PREVIEW_DELAY_MS, newElement, snap, textShown, textStored, type TemplateElement, textBoxHeight } from "./LabelDesigner";
 import { ProductionIntakePage } from "./ProductionIntakePage";
 import { WarehousePage } from "./WarehousePage";
+import { PrintSetupWindow } from "./PrintSetupWindow";
 
 const FIELDS = [{ key: "grn", label: "ГРН" }, { key: "article", label: "Артикул" }, { key: "name", label: "Наименование" }];
 const GRN: TemplateElement = {
@@ -13,7 +14,7 @@ const GRN: TemplateElement = {
 const TEMPLATE = { elements: [GRN] };
 const DEFAULT = { template: { elements: [{ ...GRN, x_mm: 1 }] }, is_default: true, version: null };
 const answer = (kind: string) => ({
-  kind, fields: FIELDS,
+  kind, fields: FIELDS, current_format: "58x40",
   formats: { "58x30": DEFAULT, "58x40": { template: TEMPLATE, is_default: false, version: 3 }, "100x50": DEFAULT },
 });
 const SETTINGS = {
@@ -49,12 +50,78 @@ const previews = () => calls.filter((call) => call.path.endsWith("/preview"));
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
+it("offers characterization fields and stores their placeholders without breaking old fields", async () => {
+  const fields = [
+    { key: "inventory_number", label: "Инвентарный номер" },
+    { key: "name", label: "Наименование" },
+    { key: "connector_line", label: "Разъёмы" },
+    { key: "parameters_line", label: "КСВН и диапазон" },
+    { key: "measurement_date", label: "Дата замера" },
+  ];
+  stage({ "GET /api/stock/labels/templates/instrument": () => json({ ...answer("instrument"), fields,
+    formats: { "58x30": { ...DEFAULT, template: { elements: [{ ...GRN, field: "inventory_number" }] } },
+      "58x40": { ...DEFAULT, template: { elements: [{ ...GRN, field: "name" }] } }, "100x50": DEFAULT } }) });
+  render(<LabelDesigner initialKind="instrument" usedFormat="58x40" />);
+  await screen.findByRole("button", { name: "Поле: Наименование" });
+  const select = screen.getByLabelText("Добавить поле");
+  for (const field of fields.slice(2)) expect(within(select).getByRole("option", { name: field.label })).toHaveValue(field.key);
+  fireEvent.change(select, { target: { value: "parameters_line" } });
+  expect(screen.getByRole("button", { name: "Поле: КСВН и диапазон" })).toBeInTheDocument();
+  expect(textStored("{Разъёмы} · {Дата замера} · {Наименование}", fields)).toBe("{connector_line} · {measurement_date} · {name}");
+  expect(textShown("{connector_line} · {parameters_line}", fields)).toBe("{Разъёмы} · {КСВН и диапазон}");
+});
+
 async function designer(props: Partial<Parameters<typeof LabelDesigner>[0]> = {}) {
   stage();
   render(<LabelDesigner initialKind="lot" usedFormat="58x40" {...props} />);
   return screen.findByRole("button", { name: "Поле: ГРН" });
 }
 const props = () => within(screen.getByRole("complementary", { name: "Свойства элемента" }));
+
+it("opens the instrument label templates through the Russian kind tab", async () => {
+  await designer();
+  fireEvent.click(screen.getByRole("tab", { name: "СИ и принадлежности" }));
+  await waitFor(() => expect(calls.some((call) => call.path === "/api/stock/labels/templates/instrument")).toBe(true));
+  expect(screen.getByRole("tab", { name: "СИ и принадлежности" })).toHaveAttribute("aria-selected", "true");
+});
+
+it("follows the effective format of each kind, including cached instrument defaults", async () => {
+  stage({ "GET /api/stock/labels/templates/instrument": () => json({ ...answer("instrument"), current_format: "58x30" }) });
+  render(<LabelDesigner initialKind="lot" usedFormat="58x40" />);
+  await screen.findByRole("button", { name: "Поле: ГРН" });
+  fireEvent.click(screen.getByRole("tab", { name: "СИ и принадлежности" }));
+  await waitFor(() => expect(screen.getByRole("tab", { name: /58 × 30/ })).toHaveAttribute("aria-selected", "true"));
+  expect(screen.getByRole("tab", { name: /58 × 30/ })).toHaveTextContent("используется");
+  expect(screen.getByRole("tab", { name: /58 × 40/ })).not.toHaveTextContent("используется");
+  fireEvent.click(screen.getByRole("tab", { name: "Партия склада" }));
+  await waitFor(() => expect(screen.getByRole("tab", { name: /58 × 40/ })).toHaveAttribute("aria-selected", "true"));
+  fireEvent.click(screen.getByRole("tab", { name: "СИ и принадлежности" }));
+  await waitFor(() => expect(screen.getByRole("tab", { name: /58 × 30/ })).toHaveAttribute("aria-selected", "true"));
+  expect(calls.filter((call) => call.path === "/api/stock/labels/templates/instrument")).toHaveLength(1);
+});
+
+it("refreshes effective formats after saving unchanged printer dimensions and preserves explicit draft choice", async () => {
+  let saved = false;
+  stage({
+    "GET /api/stock/labels/templates/instrument": () => json({ ...answer("instrument"), current_format: saved ? "58x40" : "58x30" }),
+    "PUT /api/stock/labels/settings": () => { saved = true; return json({ settings: SETTINGS }); },
+  });
+  render(<PrintSetupWindow kind="instrument" close={() => undefined} />);
+  await screen.findByRole("status", { name: "Агент печати" });
+  fireEvent.click(screen.getByRole("tab", { name: "Шаблон этикетки" }));
+  await waitFor(() => expect(screen.getByRole("tab", { name: /58 × 30/ })).toHaveTextContent("используется"));
+  fireEvent.click(screen.getByRole("tab", { name: /58 × 30/ }));
+  fireEvent.click(screen.getByRole("button", { name: "+ Текст" }));
+  expect(screen.getByRole("button", { name: "Текст: Текст" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "Принтер" }));
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  await waitFor(() => expect(saved).toBe(true));
+  fireEvent.click(screen.getByRole("tab", { name: "Шаблон этикетки" }));
+  await waitFor(() => expect(screen.getByRole("tab", { name: /58 × 40/ })).toHaveTextContent("используется"));
+  expect(screen.getByRole("tab", { name: /58 × 30/ })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("button", { name: "Текст: Текст" })).toBeInTheDocument();
+  expect(screen.getByText(/не сохранено/)).toBeInTheDocument();
+});
 
 it("snaps to 0.5 mm and makes new elements inside the label", () => {
   expect(snap(3.26)).toBe(3.5);

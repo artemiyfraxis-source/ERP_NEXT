@@ -7,6 +7,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { formatDay, formatNumber } from "./format";
 import { PageWindow } from "./PageWindow";
 import { InstrumentRfInterfaces } from "./InstrumentRfInterfaces";
+import { InstrumentLabelPrint } from "./InstrumentLabelPrint";
 
 const fileKinds: InstrumentFileKind[] = ["Паспорт", "Свидетельство о поверке", "Руководство", "Прочее"];
 const conflictText = "Запись изменил другой пользователь — обновите";
@@ -57,6 +58,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
   const [conflict, setConflict] = useState(false);
   const [verification, setVerification] = useState(false);
   const [stock, setStock] = useState(false);
+  const [labels, setLabels] = useState(false);
   const [fileKind, setFileKind] = useState<InstrumentFileKind>("Паспорт");
   const [numberAttempt, setNumberAttempt] = useState(0);
   const verificationInput = useRef<HTMLInputElement>(null);
@@ -152,7 +154,11 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
   return <PageWindow label={record ? `Средство измерений: ${record.name}` : `Добавить: ${kind.toLocaleLowerCase("ru")}`} width={1120} close={requestClose}>
     <div className="panel instrument-window" aria-busy={busy}>
       <header className="page-head"><h2>{record ? `${record.inventory_number} · ${record.name}` : `Новое: ${kind.toLocaleLowerCase("ru")}`}</h2>
-        <button type="button" className="secondary small" disabled={busy || rfBusy} onClick={requestClose}>Закрыть</button></header>
+        <div className="header-actions">{record && <a className="primary small instrument-passport" href={productionApi.instrumentPassportUrl(record.id)}
+          target="_blank" rel="noopener noreferrer">Паспорт (PDF)</a>}
+          {record && <button type="button" className="secondary small" disabled={busy || rfBusy || dirty || conflict}
+          title={dirty ? "Сначала сохраните изменения" : undefined} onClick={() => setLabels(true)}>Печать этикетки</button>}
+          <button type="button" className="secondary small" disabled={busy || rfBusy} onClick={requestClose}>Закрыть</button></div></header>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner" role="status">{notice}</div>}
       {conflict && <button className="secondary small" disabled={busy} onClick={() => {
@@ -174,7 +180,14 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
             {showVnaApp && <label>Программа ВАЦ<select name="vna_app" value={draft.vna_app ?? ""} onChange={(event) => field("vna_app", event.target.value as InstrumentInput["vna_app"])}>
               <option value="">Не указана</option><option>S2VNA</option><option>Arinst VL</option>
             </select></label>}
-            {text("doc_designation", "Обозначение для документов")}{text("serial_number", "Зав. №")}{text("manufacturer", "Изготовитель")}
+            {text("doc_designation", "Обозначение для документов")}
+            <div className="instrument-serial"><label>Зав. №<input name="serial_number" autoComplete="off" value={draft.serial_number} onChange={(event) => field("serial_number", event.target.value)} /></label>
+              {record && !record.serial_number.trim() && !draft.serial_number.trim() && record.suggested_serial_number && <button type="button" className="secondary small"
+                disabled={busy || rfBusy || dirty || conflict} title={dirty ? "Сначала сохраните изменения" : undefined} onClick={() => void run(async () => {
+                  const result = await productionApi.assignInstrumentSerial(record.id, record.version);
+                  accept(result.instrument); setNotice("Номер присвоен"); await onChanged();
+                })}>Присвоить номер {record.suggested_serial_number}</button>}
+            </div>{text("manufacturer", "Изготовитель")}
             <label>Количество, шт<input name="quantity" type="number" min="1" step="1" required disabled={record?.kind === "Средство измерений" || Boolean(record?.warehouse_writeoff_id)} value={draft.quantity} onChange={(event) => field("quantity", event.target.value)} /></label>
             <label>В составе прибора<select name="parent_id" value={draft.parent_id ?? ""} onChange={(event) => field("parent_id", event.target.value || null)}>
               <option value="">{accessory ? "Без прибора (общая)" : "Самостоятельный прибор"}</option>{parents.map((item) => <option value={item.id} key={item.id}>{item.inventory_number} · {item.name}</option>)}
@@ -211,7 +224,11 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
           </div>
         </fieldset>
       </form>
-      <InstrumentRfInterfaces instrumentId={record?.id} locked={busy} onDirty={setRfDirty} onBusy={setRfBusy} />
+      <InstrumentRfInterfaces instrumentId={record?.id} locked={busy} onDirty={setRfDirty} onBusy={setRfBusy}
+        onSaved={async (suggestion) => {
+          if (suggestion !== undefined) setRecord((current) => current ? { ...current, suggested_serial_number: suggestion } : current);
+          await onChanged();
+        }} />
       <section className="instrument-files"><h3>Файлы</h3>
         {record ? <>
           <div className="instrument-upload"><label>Вид файла<select disabled={busy} value={fileKind} onChange={(event) => setFileKind(event.target.value as InstrumentFileKind)}>{fileKinds.map((value) => <option key={value}>{value}</option>)}</select></label>
@@ -238,6 +255,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
       }}>+ Принадлежность</button><button className="secondary small" disabled={busy} onClick={() => setStock(true)}>+ Со склада</button></div>}
     </div>
     {stock && record && <InstrumentStockWindow parent={record} close={() => setStock(false)} onChanged={onChanged} />}
+    {labels && record && <InstrumentLabelPrint instruments={[record]} close={() => setLabels(false)} />}
   </PageWindow>;
 }
 
