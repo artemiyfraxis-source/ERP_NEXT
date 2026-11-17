@@ -169,6 +169,14 @@ All control actions require production edit permission and an optimistic `versio
   still-identical preparation recipe and row values. Changed cut/label/recipe values refuse; launch new
   work separately. It does not silently replace the issued task document or later PFs.
 
+- `POST /.../{id}/refresh-etk`: `{version}`, edit permission. For an unstarted (`open`, no work session) group: atomically
+  re-pins every active member task to its current issued ETK revision (same effect as `tasks/{id}/norms/refresh`),
+  recomputes the recipe and refreshes the member rows (cut length, labels). All members must keep the group's recipe
+  key; otherwise 422 lists the diverging КБ (issue them separately via split) and nothing is written. The group keeps
+  its id, number and member positions; its version is bumped. Already current group: no-op, version unchanged.
+  Started/frozen group: 422. Group views carry `etk_stale` (some member pinned older than the issued ETK).
+  CLI: `python -m app.workflows.cutting_group_existing --project X --refresh-etk [--apply]` (dry-run by default).
+
 All controls return `{group: ...}`. Stale versions/concurrent resource changes: 409; forbidden site: 403;
 invalid state/settings: 422. The first row start or manual output freezes membership and recipe.
 

@@ -12,9 +12,9 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal, production_view_work_principal
-from .api import MachineBindingPayload, production_uow_factory, techcards_uow_factory, cutting_current_cards, _performer, _replay_key, MaterialInputPayload
+from .api import MachineBindingPayload, production_uow_factory, techcards_uow_factory, cutting_current_cards, cutting_refresh_cards, mark_stale_etk, _performer, _replay_key, MaterialInputPayload
 from .application import ConcurrentProductionUpdate, UnitOfWork
-from .cutting_application import assign_group, check_access, describe_group, split_group, revalidate_group
+from .cutting_application import assign_group, check_access, describe_group, split_group, revalidate_group, refresh_group_etk
 from .domain import ProductionValidationError
 from .resource_assignments import MachineBinding
 from .resource_claims import ResourceConflict
@@ -39,7 +39,8 @@ def _handle(action):
 
 @router.get("")
 def groups(principal: Annotated[Principal, Depends(production_overview_principal)],
-           factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]):
+           factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+           techcards_factory: Annotated[Callable | None, Depends(techcards_uow_factory)]):
     with factory() as uow:
         result = []
         for group in uow.cutting.list():
@@ -48,7 +49,7 @@ def groups(principal: Annotated[Principal, Depends(production_overview_principal
             except PermissionError:
                 continue
             result.append(describe_group(group, uow))
-        return {"groups": result}
+    return {"groups": mark_stale_etk(result, techcards_factory)}
 
 
 class ExistingGroupsPayload(BaseModel):
@@ -73,13 +74,15 @@ def from_existing(payload: ExistingGroupsPayload,
 
 @router.get("/{group_id}")
 def group_detail(group_id: UUID, principal: Annotated[Principal, Depends(production_overview_principal)],
-                 factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]):
+                 factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+                 techcards_factory: Annotated[Callable | None, Depends(techcards_uow_factory)]):
     with factory() as uow:
         group = uow.cutting.get(group_id)
         if group is None:
             raise HTTPException(404, "Группа не найдена")
         _handle(lambda: check_access(group, uow, principal.actor))
-        return {"group": describe_group(group, uow)}
+        view = describe_group(group, uow)
+    return {"group": mark_stale_etk([view], techcards_factory)[0]}
 
 
 class VersionPayload(BaseModel):
@@ -134,6 +137,16 @@ def revalidate(group_id: UUID, payload: VersionPayload,
     current = cutting_current_cards(group_id, factory, techcards_factory)
     return {"group": _handle(lambda: revalidate_group(group_id, payload.version, current,
                                                      principal.actor, now, factory()))}
+
+
+@router.post("/{group_id}/refresh-etk")
+def refresh_etk(group_id: UUID, payload: VersionPayload,
+                principal: Annotated[Principal, Depends(production_edit_principal)],
+                now: Annotated[datetime, Depends(moscow_now)],
+                factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+                techcards_factory: Annotated[Callable | None, Depends(techcards_uow_factory)]):
+    cards = cutting_refresh_cards(group_id, factory, techcards_factory)
+    return {"group": _handle(lambda: refresh_group_etk(group_id, payload.version, cards, principal.actor, now, factory()))}
 
 
 class GroupOutputPayload(BaseModel):

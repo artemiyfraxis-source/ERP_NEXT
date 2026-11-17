@@ -43,6 +43,8 @@ export interface CuttingGroup {
   state: "open" | "frozen" | "cancelled";
   membership_frozen: boolean;
   partial_view?: boolean;
+  /** Some active member is pinned to an older ETK revision than the issued one. */
+  etk_stale?: boolean;
   planned_start: string | null;
   planned_finish: string | null;
   norm_seconds: number;

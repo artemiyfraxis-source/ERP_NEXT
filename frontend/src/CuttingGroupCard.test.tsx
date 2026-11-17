@@ -180,3 +180,19 @@ it("uses real groups instead of duplicate child cards in MyQueue and counts a gr
   expect(screen.queryByText(/Резка списком/)).toBeNull();
   expect(screen.queryByText(/Операции вам пока не назначены/)).toBeNull();
 });
+
+it("shows «Обновить из ЭТК» only for a stale open group and re-pins it", async () => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ group: { ...group, version: 5 } }));
+  const stale = { ...group, etk_stale: true };
+  const { unmount } = render(<CuttingGroupCard group={group} readOnly={false} canRefreshEtk renderInstruction={() => null} />);
+  expect(screen.queryByRole("button", { name: "Обновить из ЭТК" })).toBeNull();
+  unmount();
+  const second = render(<CuttingGroupCard group={stale} readOnly={false} renderInstruction={() => null} />);
+  expect(screen.queryByRole("button", { name: "Обновить из ЭТК" })).toBeNull();
+  second.unmount();
+  render(<CuttingGroupCard group={stale} readOnly={false} canRefreshEtk renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Обновить из ЭТК" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Обновить из ЭТК" })).toBeNull());
+  expect(String(fetch.mock.calls[0][0])).toContain("/cutting-groups/group-1/refresh-etk");
+  expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual({ version: 1 });
+});
