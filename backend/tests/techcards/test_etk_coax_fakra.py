@@ -56,7 +56,8 @@ def test_new_fakra_route_independent_preparations_and_label_inputs(fixture):
     assert "coaxParts" not in heat["fields"]  # no misleading sleeve-over-connector sketch
     prep = " ".join(step["text"] for op in ops if op["code"] in {"INS_FAKRA_ST_PREP", "INS_FAKRA_RA_PREP"}
                     for step in op["card"]["steps"])
-    assert "крышку 59Z163-000/51, уплотнитель 59K14B-1M4/50, гильзу" in prep
+    # Short canonical card (18.11): the parts are named once; their articles live in the operation's components.
+    assert "крышку, уплотнитель и гильзу" in prep
     assert "неразделанный кабель" not in prep
     assert "до разделки" not in prep
     assert "установить по отсутствующей" not in prep

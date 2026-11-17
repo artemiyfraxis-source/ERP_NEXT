@@ -158,14 +158,14 @@ export function wrapFixText(slot: Pick<WrapSlot, "fix" | "points" | "step" | "se
 /** Вид конца FAKRA / HFM (Rosenberger, Amphenol): прямой герметичный, угловой, панельный (2FA1) и четверной HFM. */
 export type FakraKind = "straight" | "angled" | "bulkhead" | "hfm";
 type FakraCards = { prep: string; strip: string; pin: string; contact: string; shield: string;
-  housing?: string; cap?: string; seal?: string; heat?: string };
+  housing?: string; cap?: string; seal?: string; heat?: string; support?: string };
 const FAKRA_CARDS_: Record<FakraKind, FakraCards> = {
   straight: { prep: "INS_FAKRA_ST_PREP", strip: "STRIP_FAKRA_ST", pin: "PRS_FAKRA_ST_PIN", contact: "INS_FAKRA_ST_CONTACT",
     shield: "PRS_FAKRA_ST_SHIELD", housing: "INS_FAKRA_ST_HOUSING", seal: "INS_FAKRA_ST_SEAL" },
   angled: { prep: "INS_FAKRA_RA_PREP", strip: "STRIP_FAKRA_RA", pin: "PRS_FAKRA_RA_PIN", contact: "INS_FAKRA_RA_CONTACT",
     shield: "PRS_FAKRA_RA_SHIELD", cap: "PRS_FAKRA_RA_CAP", housing: "INS_FAKRA_RA_HOUSING" },
   hfm: { prep: "INS_HFM_PREP", strip: "STRIP_HFM", pin: "PRS_HFM_PIN", contact: "INS_HFM_CONTACT",
-    shield: "PRS_HFM_SHIELD", housing: "INS_HFM_HOUSING" },
+    shield: "PRS_HFM_SHIELD", housing: "INS_HFM_HOUSING", support: "PRS_HFM_SUPPORT" },
   bulkhead: { prep: "INS_FAKRA_BH_PREP", strip: "STRIP_FAKRA_BH", pin: "SDR_FAKRA_BH_PIN", contact: "INS_FAKRA_BH_CONTACT",
     shield: "PRS_FAKRA_BH_SHIELD", heat: "HEAT_FAKRA_BH_TTK" },
 };
@@ -2385,7 +2385,7 @@ export function makeGen(D: GenData, S: GenState) {
       }
       if (S.coax.fakraCutStrip && end.kind === "hfm") {
         ops.push({ type: "coaxSupportCrimp", side: sideKey, opKey: "coaxSupportCrimp" + sideKey, units: n,
-          tmplHint: "PRS_HFM_SUPPORT", label: `Обжим опорной гильзы HFM${x(n)} (${sd})` });
+          tmplHint: cards.support!, label: `Обжим опорной гильзы HFM${x(n)} (${sd})` });
       } else ops.push({ type: "coaxInsSleeve", side: sideKey, opKey: "coaxInsSleeve" + sideKey, units: n, tmplHint: cards.prep,
         label: `${flow && end.kind === "straight" ? "Надеть крышку, уплотнитель и гильзу" : prepLabel[end.kind!]}${x(n)} (${sd})`, ...(onParts.length ? { parts: onParts } : {}) });
       if (!machineSides.includes(sideKey)) ops.push({ type: "coaxStrip", side: sideKey, opKey: FAKRA_STRIP_KEY_ + sideKey, label: `Разделка коаксиала${x(n)} (${sd})`, units: n, tmplHint: cards.strip });
@@ -2399,12 +2399,13 @@ export function makeGen(D: GenData, S: GenState) {
       ops.push({ type: "coaxPinCrimp", side: sideKey, opKey: "coaxPinCrimp" + sideKey, units: n, label: `Обжим центрального контакта${x(n)} (${sd})`,
         tmplHint: cards.pin, ...main });
       const insertLabel = end.kind === "angled" ? "Вставка в корпус, контроль пина в окне"
-        : end.kind === "hfm" ? `Вставка контактов в корпус до щелчка${x(n)}` : "Вставка во вставку до щелчка, контроль заглубления контакта 0,18 мм";
+        : end.kind === "hfm" ? `Вставка контактов в металлические корпуса${x(n)}` : "Вставка контакта в металлический корпус, утопание 0,18…0,68 мм";
       ops.push({ type: "coaxHousing", side: sideKey, opKey: "coaxInsert" + sideKey, units: n, label: `${insertLabel} (${sd})`, tmplHint: cards.contact });
       ops.push({ type: "coaxShield", side: sideKey, opKey: "coaxShield" + sideKey, units: n, tmplHint: cards.shield,
         label: `Обжим гильзы экрана${x(n)} (${sd})` });
       if (end.kind === "angled") ops.push({ type: "coaxCapCrimp", side: sideKey, opKey: "coaxCapCrimp" + sideKey, label: `Запрессовать крышку (${sd})`, tmplHint: cards.cap, cat: "Опрессовка крышки коакс" });
-      const body = end.kind === "hfm" ? "Вторичная фиксация и CPA" : end.kind === "angled" ? "Корпус и вторичная фиксация" : "Установка в корпус до щелчка";
+      // CPA is named only once its order is defined (svod 17.11); the sealed straight housing click is not a confirmed criterion.
+      const body = end.kind === "hfm" ? "Установка в корпус QUAD и вторичная фиксация" : end.kind === "angled" ? "Корпус и вторичная фиксация" : "Установка в пластмассовый корпус";
       ops.push({ type: "coaxHousing", side: sideKey, opKey: "coaxBody" + sideKey, label: `${body} (${sd})`, tmplHint: cards.housing, ...housing });
       if (end.kind === "straight") ops.push({ type: "coaxCapScrew", side: sideKey, opKey: "coaxSealCap" + sideKey, label: `Уплотнитель и крышка (${sd})`, tmplHint: cards.seal, noTooling: true });
     });

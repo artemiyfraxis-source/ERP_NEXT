@@ -27,7 +27,8 @@ NEUTRAL_LINE = ("Если кабель уже разделан при резке
                 "и не повреждая уплотнение; сохранить ориентацию деталей.")
 
 
-@pytest.mark.parametrize("item", PAYLOAD, ids=lambda item: item["code"])
+# The two FAKRA PREP cards were superseded by the short connector cards of 18.11 (test_fakra_library).
+@pytest.mark.parametrize("item", [item for item in PAYLOAD if item["code"] in NAMES], ids=lambda item: item["code"])
 def test_payload_matches_the_seed_card_and_has_stable_identity(item):
     edit = normalize_record_edit(item["record"])
     card = CARDS[item["code"]]
