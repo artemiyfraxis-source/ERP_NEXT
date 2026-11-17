@@ -53,8 +53,8 @@ export function journalRows(shipments: Shipment[], selectedId = ""): JournalRow[
     });
 }
 
-/** Печать PL / DN по номеру прямо из строки журнала. */
-function useDocLink() {
+/** Печать PL / DN по номеру прямо из строки таблицы (журнал, «Приёмка с производства»). */
+export function useDocLink() {
   const canPrint = useCanPrint();
   const [error, setError] = useState("");
   const open = async (shipment: Shipment, document: "pl" | "dn") => {
@@ -98,6 +98,14 @@ export function JournalWindow({ shipments, close, initialQuery = "", selectedShi
       render: (row) => <button type="button" className="secondary small" aria-label={`Открыть ${row.project} ${row.line.item_index}`}
         onClick={() => setOpened(row.shipment)}>Данные</button> },
     { key: "grn", title: "ГРН", value: (row) => lineGrns(row.line).join(", "), width: 136 },
+    { key: "lots", title: "Партии, шт", hint: "Сколько взято из каждой партии (ГРН)", wrap: true, minWidth: 160, maxWidth: 240,
+      value: (row) => (row.line.lots ?? []).map((lot) => `${lot.grn}: ${formatNumber(lot.quantity)}`).join("; ") },
+    { key: "places", title: "Места", hint: "Места (короба) с этой КБ и штуки в них", wrap: true, minWidth: 120, maxWidth: 200,
+      value: (row) => row.shipment.boxes.flatMap((box) => box.items.filter((item) => item.item_index === row.line.item_index)
+        .map((item) => `№${box.place}: ${formatNumber(item.quantity)}`)).join("; ") },
+    { key: "seals", title: "Пломбы", wrap: true, minWidth: 104, maxWidth: 180,
+      value: (row) => row.shipment.boxes.filter((box) => box.seal.trim() && box.items.some((item) => item.item_index === row.line.item_index))
+        .map((box) => box.seal.trim()).join(", ") },
     { key: "project", title: "Проект", value: (row) => row.project, width: 104, render: (row) => <strong>{row.project}</strong> },
     { key: "customer", title: "Заказчик", value: (row) => row.shipment.customer, filter: true, width: 160 },
     { key: "shipment", title: "Отправка", value: (row) => row.shipment.number, width: 176, render: shipmentLink },

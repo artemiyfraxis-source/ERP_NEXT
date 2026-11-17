@@ -965,7 +965,7 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     projectStub(card, 200, "Принято складом", "10");
     const fallback = vi.mocked(fetch).getMockImplementation()!;
     vi.mocked(fetch).mockImplementation((input, init) => String(input).startsWith("/api/shipping/item-addressees?")
-      ? Promise.resolve(json({ items: [{ item_index: "КБ1", effective: { ...card, receiver: "" } }] })) : fallback(input, init));
+      ? Promise.resolve(json({ items: [{ project: "780К.1", item_index: "КБ1", name: "КБ1", version: 1, overrides: {}, provenance: {}, updated_by: "", updated_at: null, effective: { ...card, receiver: "" } }] })) : fallback(input, init));
     render(<ShipmentDataPage principal={principal} />); fireEvent.click(await screen.findByRole("button", { name: /^Принято/ }));
     const row = shipmentRows()[0];
     expect(row.querySelector('td[data-label="Получатель"] .tone-warn')).toHaveTextContent("не заполнено");
@@ -973,6 +973,10 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     expect(row).not.toHaveTextContent("Данные получателя и УПД заполнены");
     fireEvent.click(screen.getByLabelText("Только с недостающими данными"));
     expect(shipmentRows()).toHaveLength(1);
+    // Строка показывает доставку этой КБ — «Изменить» открывает доставку КБ, не карточку проекта.
+    fireEvent.click(within(row).getByRole("button", { name: /^Открыть данные 780К\.1 КБ1/ }));
+    expect(await screen.findByRole("dialog", { name: "Доставка КБ · 780К.1" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: /Данные отправки проекта/ })).not.toBeInTheDocument();
   });
 
   it("drops cached KB delivery when reloading project data fails for item overrides", async () => {

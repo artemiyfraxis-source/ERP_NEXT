@@ -12,6 +12,7 @@ import { useCanPrint } from "./rights";
 import { openShippingForms } from "./shippingPrint";
 import { DISPATCH_STAGES, stageLabel, type DispatchStage } from "./dispatchStage";
 import { DispatchCard } from "./DispatchCard";
+import { ItemDeliveryWindow } from "./ProjectData";
 import { canAct, hasFullAccess } from "./navigation";
 import { dispatchBoard, kbKey, num, recentShipment, type Tab } from "./intakeStages";
 import { actShares, dataRows, type DataRow } from "./dispatchPositionRows";
@@ -81,6 +82,7 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
   const [itemCards, setItemCards] = useState<Record<string, ItemAddressee[]>>({});
   const [open, setOpen] = useState<{ id: string; row: DataRow } | null>(null);
   const [onlyGaps, setOnlyGaps] = useState(false);
+  const [deliveryEdit, setDeliveryEdit] = useState<{ project: string; items: ItemAddressee[] } | null>(null);
   const [tab, setTab] = useState<Tab>("packed");
   const [forecasts, setForecasts] = useState<Record<string, ProjectForecast>>({});
   const canEdit = canAct(principal, "shipping") || canAct(principal, "shipping_goods");
@@ -189,7 +191,12 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
       render: (row) => `${formatNumber(num(sourceOf(row)?.remaining))}${NBSP}${row.unit}` },
     action: { key: "action", title: "Действие", value: () => "", width: 112,
       render: (row) => <button type="button" className="secondary small" aria-label={`Открыть данные ${row.project} ${row.item_index}`}
-        onClick={(event) => { event.stopPropagation(); openRow(row); }}>{canEdit ? "Изменить" : "Открыть"}</button> },
+        onClick={(event) => {
+          event.stopPropagation();
+          // Строка без отправки показывает доставку этой КБ — «Изменить» правит её, а не карточку проекта.
+          const item = !row.shipment && canEdit ? itemOf(row) : undefined;
+          if (item) setDeliveryEdit({ project: row.project, items: [item] }); else openRow(row);
+        }}>{canEdit ? "Изменить" : "Открыть"}</button> },
     grn: { key: "grn", title: "ГРН", value: (row) => grnText(row, sourceOf(row), shipments), width: 144, wrap: true, maxWidth: 200 },
     project: { key: "project", title: "Проект", value: (row) => row.project, width: 112 },
     customer: { key: "customer", title: "Заказчик", value: (row) => row.customer, filter: true, width: 160, wrap: true, maxWidth: 200 },
@@ -265,6 +272,7 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
         }) : Object.values(deliveryOf(row)).filter((value): value is string => typeof value === "string")}
         emptyText="В этом разделе пусто — другие этапы под чипами выше." /></>}
     {current && <ShipmentDataWindow key={current.id} shipment={current} stage={open?.row.stage} canEdit={canEdit} canCorrectHistory={hasFullAccess(principal) && !principal.viewing} close={() => setOpen(null)} onSaved={reload} />}
+    {deliveryEdit && <ItemDeliveryWindow project={deliveryEdit.project} items={deliveryEdit.items} close={() => setDeliveryEdit(null)} onSaved={reload} />}
     {project && <DispatchCard key={project.id} project={project.project} customer={project.customer} stage={project.stage ?? undefined} canEdit={canEdit} close={() => setOpen(null)} onSaved={() => void reload()} />}
   </section>;
 }

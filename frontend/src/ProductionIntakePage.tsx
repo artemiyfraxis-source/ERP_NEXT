@@ -17,7 +17,7 @@ import { PrintOutcome, type PrintResult } from "./LabelPrint";
 import { PackWindow } from "./PackWindow";
 import { PrintSetupButton } from "./PrintSetupWindow";
 import { needsTrack, NoUpdWindow, onlyUpdBlocks, readyForTrack, readyToShip, type CardRights } from "./ShipmentCard";
-import { CreateShipmentWindow, JournalWindow, RegisterGoodWindow } from "./ShipmentJournal";
+import { CreateShipmentWindow, JournalWindow, RegisterGoodWindow, useDocLink } from "./ShipmentJournal";
 import { ShipWindow } from "./ShipWindow";
 import { TrackWindow } from "./TrackWindow";
 import { PackingPermissionWindow } from "./PackingPermissionWindow";
@@ -117,6 +117,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const [projectData, setProjectData] = useState<string | null>(null);
   const [permissionProject, setPermissionProject] = useState<string | null>(null);
   const [shipmentData, setShipmentData] = useState<string | null>(null);
+  const { error: docError, link: docLink } = useDocLink();
 
   async function reload() {
     try {
@@ -205,6 +206,12 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     !shipment ? "" : contactText(shipment.track_number) || (!needsTrack(shipment) ? "Не требуется" : "");
   const packStatus = (line: IntakeLine) => line.stage !== "accepted" || line.shipment ? ""
     : line.kb.pack_auto_allowed ? AUTO_PACK_LABEL : line.packNow > 0 ? "Разрешено" : "Нужно разрешение";
+  /** Почему «Трек…» выключен — своим столбцом, не только в подсказке кнопки. */
+  const trackGaps = (line: IntakeLine) => {
+    const shipment = line.shipment;
+    if (!shipment || shipment.status !== "Упакована" || !needsTrack(shipment) || readyForTrack(shipment) || shipment.track_number) return [];
+    return shipment.missing_ship.filter((gap) => gap !== "трек-номер");
+  };
   const updRequired = (line: IntakeLine) => !["waiting", "production"].includes(line.stage ?? "");
 
   /** «Печать» этикетки ГРН акта: та же очередь печати, что у приёмки закупки; статус — под таблицей. */
@@ -321,15 +328,17 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     { key: "updDate", title: "Дата УПД", width: 104, value: (line) => deliveryOf(line).upd_date ?? "", render: (line) => deliveryOf(line).upd_date ? formatDay(deliveryOf(line).upd_date) : dash },
     { key: "updFile", title: "Файл УПД", width: 104, value: (line) => deliveryOf(line).upd_url ?? "", render: (line) => deliveryOf(line).upd_url
       ? <a href={deliveryOf(line).upd_url} target="_blank" rel="noreferrer">файл</a> : dash },
-    { key: "pl", title: "PL", width: 136, value: (line) => line.shipment?.pl_number ?? "" },
-    { key: "dn", title: "DN", width: 136, value: (line) => line.shipment?.dn_number ?? "" },
+    { key: "trackGaps", title: "Ждём для трека", hint: "Чего не хватает, чтобы вписать трек-номер", wrap: true, width: 160, maxWidth: 240,
+      value: (line) => trackGaps(line).join(", "), render: (line) => trackGaps(line).length ? <span className="tone-warn">{trackGaps(line).join(", ")}</span> : dash },
+    { key: "pl", title: "PL", width: 136, value: (line) => line.shipment?.pl_number ?? "", render: (line) => line.shipment ? docLink(line.shipment, "pl") : dash },
+    { key: "dn", title: "DN", width: 136, value: (line) => line.shipment?.dn_number ?? "", render: (line) => line.shipment ? docLink(line.shipment, "dn") : dash },
     { key: "itemDelivery", title: "Доставка КБ", width: 128, value: (line) => line.shipment ? "" : Object.keys(itemOf(line)?.overrides ?? {}).length ? "своя" : "как у проекта" },
     { key: "deliveryEdit", title: "Данные КБ", width: 104, export: false, value: () => "", render: (line) => canDispatch && itemOf(line) ? <button type="button" className="secondary small"
       aria-label={`Доставка ${who(line)}`} onClick={() => setDeliveryEdit({ project: line.project, items: [itemOf(line)!] })}>Изменить</button> : dash },
   ];
   const actionless = (tab === "production" && !canWarehouse) || (["accepted", "to_ship"].includes(tab) && !canDispatch);
   const leading = TAB_COLUMNS[tab].filter((key) => key !== "action" || !actionless);
-  const shipping = ["project", "customer", "shipment", "sequence", "status", "created", "deadline", "shippedAt", ...DELIVERY_COLUMNS, "track", "upd", "updNumber", "updDate", "updFile", "pl", "dn", "itemDelivery", "deliveryEdit"];
+  const shipping = ["project", "customer", "shipment", "sequence", "status", "created", "deadline", "shippedAt", ...DELIVERY_COLUMNS, "track", "trackGaps", "upd", "updNumber", "updDate", "updFile", "pl", "dn", "itemDelivery", "deliveryEdit"];
   const visibleColumns = [...leading, ...shipping].flatMap((key) => columns.filter((column) => column.key === key));
 
   const groupLabel = (_key: string, groupRows: IntakeLine[]) => {
@@ -372,7 +381,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
         {/* Принтер и шаблон этикеток — складские настройки: видит тот, кому открыт склад, правит — кто его правит. */}
         {canSee(principal, "warehouse") && <PrintSetupButton kind="intake" readOnly={!canAct(principal, "warehouse")} />}
       </div></header>
-    {error && <div className="error-banner" role="alert">{error}</div>}
+    {(error || docError) && <div className="error-banner" role="alert">{error || docError}</div>}
     {notice && <div className="success-banner" role="status">{notice}</div>}
     {!loaded ? <div className="empty">Загрузка…</div> : <>
       <div className="seg-tabs" role="tablist" aria-label="Шаг">{TABS.map(([key, text]) =>

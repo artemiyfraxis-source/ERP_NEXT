@@ -13,7 +13,7 @@ const principal = {
 };
 const viewer = { ...principal, permissions: { shipping: "view" as const } };
 const admin = { ...principal, roles: ["admin"], access_level: "admin", permissions: { shipping: "edit" as const, shipping_goods: "edit" as const } };
-const shippingHeaders = ["Проект", "Заказчик", "Отправка", "Отгрузка", "Статус", "Создана", "Срок", "Отгружена", "Получатель", "Телефон", "Адрес", "Способ доставки", "ТК", "Контакт", "Комментарий для склада", "Для перевозчика", "Трек", "УПД", "№ УПД", "Дата УПД", "Файл УПД", "PL", "DN", "Доставка КБ", "Данные КБ"];
+const shippingHeaders = ["Проект", "Заказчик", "Отправка", "Отгрузка", "Статус", "Создана", "Срок", "Отгружена", "Получатель", "Телефон", "Адрес", "Способ доставки", "ТК", "Контакт", "Комментарий для склада", "Для перевозчика", "Трек", "Ждём для трека", "УПД", "№ УПД", "Дата УПД", "Файл УПД", "PL", "DN", "Доставка КБ", "Данные КБ"];
 
 const row = (over: Record<string, unknown>) => ({
   project: "591К.3", customer: "Заказчик", deadline: "2026-10-25", item_index: "КБ1", name: "Жгут", unit: "шт", stage: "В работе",
@@ -83,7 +83,7 @@ const bodyRows = (text = "Жгут") => [...document.querySelectorAll("tbody tr"
 const shipmentRows = () => bodyRows("").filter((tr) => tr.querySelector('td[data-label="Отправка"] button'));
 const rowButtons = (text = "Жгут") => bodyRows(text).flatMap((tr) => [...tr.querySelectorAll("button[aria-label]")]
   .map((button) => button.getAttribute("aria-label")!)
-  .filter((label) => !label.startsWith("Данные отправки") && !label.startsWith("Доставка ")));
+  .filter((label) => !label.startsWith("Данные отправки") && !label.startsWith("Доставка ") && !/^Печать (PL|DN) /.test(label)));
 const cell = (tr: Element, label: string) => (tr.querySelector(`td[data-label="${label}"]`)?.textContent ?? "").replace(/ /g, " ");
 const writes = () => calls.filter((call) => call.method !== "GET");
 
@@ -518,6 +518,8 @@ describe("Приёмка с производства: свои колонки и
     const second = render(<ProductionIntakePage principal={principal} />);
     expect(await screen.findByRole("button", { name: "Трек 591К.3 КБ1" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Без УПД 591К.3 КБ1" })).not.toBeInTheDocument();
+    // Причина выключенного «Трек…» — своим столбцом, видна без подсказки.
+    expect(cell(shipmentRows()[0], "Ждём для трека")).toBe("№ УПД");
     second.unmount();
 
     shipments = [{ ...packedShipment, upd_type: null, missing_ship: ["тип УПД", "трек-номер"], missing_ship_codes: ["upd_type", "track_number"], no_upd_offered: true }];
@@ -567,13 +569,16 @@ describe("Приёмка с производства: свои колонки и
     expect(screen.queryByRole("button", { name: /^(Документы|Сформировать отгрузочные) / })).not.toBeInTheDocument();
     expect(cell(shipmentRows()[0], "PL")).toContain("PL591К.3-1");
     expect(cell(shipmentRows()[0], "DN")).toContain("DN591К.3-1");
+    // PL печатается прямо из строки, как раньше из шапки отправки.
+    fireEvent.click(screen.getByRole("button", { name: "Печать PL PL591К.3-1" }));
+    await waitFor(() => expect(calls.some((call) => /\/shipments\/s1\/print\?document=pl/.test(call.url))).toBe(true));
     fireEvent.click(screen.getByRole("button", { name: "Короба и PL/DN" }));
     const dialog = await screen.findByRole("dialog", { name: "Упаковка 591К.3" });
     const card = within(within(dialog).getByRole("article", { name: "Отправка ОТГ-20261029-01" }));
     fireEvent.click(card.getByRole("button", { name: "Печать PL" }));
-    await waitFor(() => expect(printed.print).toHaveBeenCalledTimes(1));
-    fireEvent.click(card.getByRole("button", { name: "Печать этикеток" }));
     await waitFor(() => expect(printed.print).toHaveBeenCalledTimes(2));
+    fireEvent.click(card.getByRole("button", { name: "Печать этикеток" }));
+    await waitFor(() => expect(printed.print).toHaveBeenCalledTimes(3));
     expect(card.getByRole("button", { name: "Перевыпустить" })).toBeInTheDocument();
     printed.restore();
   });

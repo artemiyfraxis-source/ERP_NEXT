@@ -45,6 +45,16 @@ it("shows one immediately visible row per position with separate shipping values
   expect(within(rows[0]).getByRole("button", { name: "Открыть 100К.1 КБ1" })).toBeInTheDocument();
 });
 
+it("keeps the shipment breakdown per position: lots, places and seals in their own columns", () => {
+  const lots = { ...shipment, lines: [{ ...shipment.lines[0], lots: [{ grn: "ГП-1", quantity: "1", act_id: null }, { grn: "ГП-2", quantity: "1", act_id: null }] }, shipment.lines[1]] };
+  show([lots]);
+  const [first, second] = positions();
+  expect(cell(first, "Партии, шт").textContent).toBe("ГП-1: 1; ГП-2: 1");
+  expect(cell(first, "Места").textContent).toBe("№1: 2");
+  expect(cell(first, "Пломбы").textContent).toBe("Пломба-77");
+  expect(cell(second, "Места").textContent).toBe("—");
+});
+
 it("filters partial shipments per position and keeps separate waiting and shipped presets", () => {
   const waiting = { ...shipment, id: "s2", number: "ОТГ-2", status: "Упакована", shipped_at: null,
     lines: [{ ...shipment.lines[0], id: "wait", item_index: "КБ3" }] };
