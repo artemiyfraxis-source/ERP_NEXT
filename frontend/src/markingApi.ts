@@ -15,6 +15,7 @@ export interface MarkingMachine {
 }
 export interface MarkingPrinter {
   machine_id: string; pc: string; name: string; driver: string; port: string; kind: string; present: boolean; online: boolean;
+  ip?: string;
 }
 export interface MarkingCatalog { machines: MarkingMachine[]; printers: MarkingPrinter[] }
 export type MarkingSource = { task_id: string; operation_id: string; version: number } | { group_id: string; version: number };
