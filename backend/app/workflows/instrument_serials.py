@@ -27,7 +27,9 @@ def assign_serials(sessions, *, apply: bool = False, actor: Actor, now: datetime
         if apply:
             repository.lock_tree()
         items = repository.list()
-        proposed = [assign_in_house_serial(item) for item in items]
+        contexts = repository.serial_contexts([item.id for item in items if not item.serial_number.strip()])
+        proposed = [assign_in_house_serial(item, now=now, context=contexts[item.id])
+                    if not item.serial_number.strip() else item for item in items]
         serials: dict[str, list[str]] = {}
         for item in proposed:
             serials.setdefault(item.serial_number.strip(), []).append(item.inventory_number)

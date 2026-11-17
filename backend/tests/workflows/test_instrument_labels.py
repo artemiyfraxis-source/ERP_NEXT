@@ -13,6 +13,7 @@ from app.modules.warehouse.labels.render import render
 from app.modules.warehouse.labels.settings import PrintSettings
 from app.modules.warehouse.labels.template import LabelContent, parse_template
 from app.modules.warehouse.labels_application import effective_label_settings, tspl_job
+from app.modules.production.traceability import InstrumentKind, InstrumentStatus, MeasurementInstrument
 from app.shared.persistence import AuditEventRow
 from app.workflows import instrument_labels
 from tests.production.test_api import production_api  # noqa: F401
@@ -20,6 +21,16 @@ from tests.production.test_instruments_api import _as, create
 
 BASE = "/api/production/instruments"
 NOW = datetime(2026, 9, 22, 9)
+
+
+@pytest.mark.parametrize("serial,prefix", [("ADP-ss-26-034", "№ "), ("LOAD-s-26-110", "№ "),
+    ("SI-26-001", "№ "), ("ACM-kk-26-104", "№ "), ("KIT-26-003", "№ "),
+    ("ФР-034", "№ "), ("N8B139", "Зав. № "), ("26030095", "Зав. № "), ("ADP-ss-26-34", "Зав. № ")])
+def test_label_workflow_classifies_new_legacy_and_vendor_serials(serial, prefix):
+    item = MeasurementInstrument(id=uuid4(), version=1, inventory_number="СИ.034", name="Переходник",
+        instrument_type="Принадлежность", kind=InstrumentKind.ACCESSORY, status=InstrumentStatus.ACTIVE,
+        verification_number=None, verified_at=None, verification_due=None, serial_number=serial)
+    assert instrument_labels._content(item).value("serial_number") == prefix + serial
 
 
 def setup(client, *, online=True):

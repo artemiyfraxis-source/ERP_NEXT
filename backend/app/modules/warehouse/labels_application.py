@@ -67,7 +67,7 @@ def sample_content(kind: str) -> LabelContent:
     if kind == "instrument":
         return LabelContent("instrument", "СИ.034", {
             "inventory_number": "СИ.034", "name": "SMA розетка – SMA розетка", "model": "S-322",
-            "serial_number": "№ ФР-034", "verification_due": "Поверка до 17.11.2027",
+            "serial_number": "№ ADP-ss-26-034", "verification_due": "Поверка до 17.11.2027",
         })
     return SAMPLE_INTAKE if kind == "intake" else lot_content(SAMPLE)
 

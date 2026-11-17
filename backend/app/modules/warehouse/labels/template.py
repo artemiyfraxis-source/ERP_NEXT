@@ -308,17 +308,17 @@ def intake_content(data: GrnLabelData, project: str, item_index: str) -> LabelCo
 
 
 def instrument_content(inventory_number: str, name: str, serial_number: str = "", verification_due: date | None = None,
-                       *, model: str = "", accessory: bool = False, serial_prefix: str) -> LabelContent:
+                       *, model: str = "", accessory: bool = False, in_house_serial: bool = False) -> LabelContent:
     """An instrument card's printable values; codes carry the inventory number even without an ERP connection.
 
-    The caller supplies the domain's in-house prefix to keep serial-number policy outside Warehouse.
+    The caller supplies the domain's classification to keep serial-number policy outside Warehouse.
     """
     serial = serial_number.strip()
     values = {
         "inventory_number": inventory_number.strip(),
         "name": name.strip(),
         "model": model.strip(),
-        "serial_number": (f"№ {serial}" if serial.startswith(serial_prefix) else f"Зав. № {serial}") if serial else "",
+        "serial_number": (f"№ {serial}" if in_house_serial else f"Зав. № {serial}") if serial else "",
         "verification_due": f"Поверка до {verification_due:%d.%m.%Y}" if verification_due and not accessory else "",
     }
     return LabelContent("instrument", values["inventory_number"], values)

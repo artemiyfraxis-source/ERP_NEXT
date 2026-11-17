@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.modules.production.api import production_uow_factory
 from app.modules.production.infrastructure import SqlAlchemyInstrumentRepository
-from app.modules.production.instrument_serials import IN_HOUSE_SERIAL_PREFIX
+from app.modules.production.instrument_serials import is_in_house_serial
 from app.modules.production.traceability import InstrumentKind
 from app.modules.warehouse.infrastructure import SqlAlchemyLabelSettings
 from app.modules.warehouse.label_jobs import LabelAgentRow, add_job
@@ -69,7 +69,7 @@ def _content(item):
         item.inventory_number, item.name, item.serial_number,
         item.verification_due.date() if item.verification_due else None,
         model=item.doc_designation, accessory=item.kind is InstrumentKind.ACCESSORY,
-        serial_prefix=IN_HOUSE_SERIAL_PREFIX,
+        in_house_serial=is_in_house_serial(item.serial_number),
     )
 
 

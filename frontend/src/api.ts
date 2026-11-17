@@ -1597,7 +1597,7 @@ export interface InstrumentRfDetails {
 }
 export const rfInterfacesApi = {
   get: (id: string) => api<{ rf: InstrumentRfDetails }>(`/api/production/instruments/${encodeURIComponent(id)}/rf-interfaces`),
-  save: (id: string, rf: InstrumentRfDetails) => api<{ rf: InstrumentRfDetails }>(`/api/production/instruments/${encodeURIComponent(id)}/rf-interfaces`, {
+  save: (id: string, rf: InstrumentRfDetails) => api<{ rf: InstrumentRfDetails; suggested_serial_number?: string | null }>(`/api/production/instruments/${encodeURIComponent(id)}/rf-interfaces`, {
     method: "PUT", body: JSON.stringify(rf),
   }),
 };

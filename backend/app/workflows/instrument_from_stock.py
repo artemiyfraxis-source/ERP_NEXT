@@ -146,7 +146,7 @@ def create_instrument_from_stock(
         raise HTTPException(status_code=409, detail="Данные изменились: обновите форму") from error
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return {"instrument": instrument_result(item), "lot_id": str(lot.id), "lot_version": lot.version}
+    return {"instrument": instrument_result(item, now=now), "lot_id": str(lot.id), "lot_version": lot.version}
 
 
 @router.post("/{instrument_id}/return-to-stock")
@@ -168,4 +168,7 @@ def return_instrument_to_stock(
         raise HTTPException(status_code=409, detail="Данные изменились: обновите форму") from error
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return {"instrument": instrument_result(item, files), "lot_id": str(lot.id), "lot_version": lot.version}
+    with sessions() as session:
+        context = SqlAlchemyInstrumentRepository(session).serial_contexts([item.id])[item.id]
+    return {"instrument": instrument_result(item, files, now=now, serial_context=context),
+            "lot_id": str(lot.id), "lot_version": lot.version}

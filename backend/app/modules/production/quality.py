@@ -15,7 +15,7 @@ from app.shared.identity import Actor
 
 from .application import ConcurrentProductionUpdate, ProductionRepository
 from .domain import ProductionValidationError
-from .instrument_serials import assign_in_house_serial
+from .instrument_serials import InstrumentSerialContext, assign_in_house_serial
 from .execution import AppendOnlyRepository, BoxRepository, DefectRepository
 from .traceability import (
     DefectDisposition,
@@ -38,6 +38,7 @@ class InstrumentRepository(Protocol):
     def list(self) -> Sequence[MeasurementInstrument]: ...
     def by_inventory_number(self, number: str) -> MeasurementInstrument | None: ...
     def save(self, instrument: MeasurementInstrument) -> None: ...
+    def serial_contexts(self, instrument_ids: Sequence[UUID]) -> dict[UUID, InstrumentSerialContext]: ...
 
 
 class InstrumentFileRepository(Protocol):
@@ -279,7 +280,10 @@ def assign_instrument_serial(instrument_id: UUID, expected_version: int, actor: 
             raise KeyError("СИ не найдено")
         if current.version != expected_version:
             raise ConcurrentProductionUpdate("СИ изменилось после загрузки формы")
-        assigned = assign_in_house_serial(current)
+        if current.serial_number.strip():
+            return current
+        context = uow.instruments.serial_contexts([current.id])[current.id]
+        assigned = assign_in_house_serial(current, now=now, context=context)
         if assigned is current:
             return current
         item = _validated_instrument(replace(assigned, version=current.version + 1), uow.instruments)
