@@ -316,6 +316,10 @@ def test_ship_without_data_needs_full_access_and_a_reason_and_audits_the_gaps(re
     assert blank.status_code == 422
     future = client.post(url, json={"version": made["version"], "missing_reason": "потом", "ship_date": "2026-12-31"})
     assert future.status_code == 422
+    # Дата отгрузки — только с «Отгрузить без данных» (ревью #901); задним числом можно: отправку могли завести после
+    # того, как груз уехал, — дата пишется в аудит.
+    dated = client.post(url, json={"version": made["version"], "ship_date": "2026-10-11"})
+    assert dated.status_code == 422 and "без данных" in dated.json()["detail"]
 
     done = client.post(url, json={"version": made["version"], "missing_reason": "данные внесём после отпуска", "ship_date": "2026-10-11"})
     assert done.status_code == 200, done.text
@@ -326,7 +330,7 @@ def test_ship_without_data_needs_full_access_and_a_reason_and_audits_the_gaps(re
     assert "shipping.shipped" in events and "shipping.shipped_with_gaps" in events
     details = events["shipping.shipped_with_gaps"]
     details = json.loads(details) if isinstance(details, str) else details
-    assert details == {"gaps": ["телефон получателя"], "reason": "данные внесём после отпуска"}
+    assert details == {"gaps": ["телефон получателя"], "reason": "данные внесём после отпуска", "ship_date": "2026-10-11"}
     _journal_matches_counters(sessions)
 
 

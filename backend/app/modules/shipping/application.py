@@ -1257,6 +1257,8 @@ def mark_shipped(command: ShipmentCommand, uow: UnitOfWork) -> ShippedResult:
             raise ShippingPermissionError(SHIP_WITHOUT_DATA_DENIED)
         if not str(reason).strip():
             raise ShippingValidationError("Укажите, почему отгружаете без данных")
+    if ship_date is not None and reason is None:
+        raise ShippingValidationError("Дату отгрузки задают только при «Отгрузить без данных»")
     if ship_date is not None and ship_date > command.now.date():
         raise ShippingValidationError("Дата отгрузки не может быть в будущем")
     with uow:
@@ -1304,7 +1306,8 @@ def _mark_shipped(
         uow.goods.add(good.dispatch(quantity), _context(actor, now, shipment_id=shipment.id))
     _audit(shipment.id, "shipping.shipped", actor, now, {}, uow)
     if missing_reason is not None:
-        _audit(shipment.id, "shipping.shipped_with_gaps", actor, now, {"gaps": list(gaps), "reason": missing_reason}, uow)
+        _audit(shipment.id, "shipping.shipped_with_gaps", actor, now,
+               {"gaps": list(gaps), "reason": missing_reason, "ship_date": (day or now.date()).isoformat()}, uow)
     updated = _close_if_complete(updated, actor, now, uow)
     why = ""
     if updated.status == ShipmentStatus.SHIPPED:
