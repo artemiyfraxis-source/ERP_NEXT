@@ -43,7 +43,7 @@ class LabelJobRow(Base):
     __tablename__ = "warehouse_label_jobs"
     __table_args__ = (
         # 'sample' first: the CI seeder takes the first value of an IN list, and a 'lot' job needs its lot.
-        CheckConstraint("kind IN ('sample', 'lot')", name="ck_warehouse_label_jobs_kind"),
+        CheckConstraint("kind IN ('sample', 'lot', 'instrument')", name="ck_warehouse_label_jobs_kind"),
         CheckConstraint("lot_id IS NULL OR kind = 'lot'", name="ck_warehouse_label_jobs_sample_no_lot"),
         CheckConstraint("kind <> 'lot' OR lot_id IS NOT NULL", name="ck_warehouse_label_jobs_lot"),
         CheckConstraint("copies >= 1 AND copies <= 50", name="ck_warehouse_label_jobs_copies"),

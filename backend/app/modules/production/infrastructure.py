@@ -612,6 +612,9 @@ class ProductionInstrumentRow(Base):
         CheckConstraint("kind <> 'Принадлежность' OR (verification_number IS NULL AND verified_at IS NULL AND verification_due IS NULL AND status IN ('Действует', 'Не используется'))", name='ck_production_instruments_accessory'),
         CheckConstraint("vna_app IN ('', 'S2VNA', 'Arinst VL')", name="ck_production_instruments_vna_app"),
         CheckConstraint("vna_app = '' OR kind = 'Средство измерений'", name="ck_production_instruments_vna_measuring"),
+        Index("uq_production_instruments_serial_number", "serial_number", unique=True,
+              sqlite_where=text("trim(serial_number) <> ''"),
+              postgresql_where=text("trim(serial_number) <> ''")),
     )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     version: Mapped[int] = mapped_column(Integer(), nullable=False)

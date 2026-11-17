@@ -777,10 +777,14 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 @media (pointer: coarse) {
   .instrument-registry .instrument-views button { min-height: 40px; }
   .instrument-registry .data-table tbody td { height: 40px; }
+  /* The shared colgroup has an inline width; leave room for the full 40px touch target. */
+  .instrument-registry .data-table table.selectable > colgroup > col:first-child { width: 48px !important; }
+  .instrument-registry .data-table table.selectable > thead > tr > th:first-child,
+  .instrument-registry .data-table table.selectable > tbody > tr:not(.detail):not(.group-row) > td:first-child { width: 48px; padding: 0 4px; }
 }
 .instrument-registry .is-overdue { color: var(--tone-danger); }
 .instrument-registry .is-soon { color: var(--tone-warn); }
-.instrument-registry .grid td:first-child { font-weight: 500; font-variant-numeric: tabular-nums slashed-zero; }
+.instrument-registry .grid td.key { font-weight: 500; font-variant-numeric: tabular-nums slashed-zero; }
 .instrument-window { padding: 16px; margin: 0; min-width: 0; }
 .instrument-window > .page-head { justify-content: space-between; }
 .instrument-window .instrument-verification-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
@@ -788,7 +792,9 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .instrument-window h4 { margin: 8px 0; font-size: 13px; font-weight: 500; }
 .instrument-window .instrument-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
 .instrument-window .form-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 0; gap: 8px; }
-.instrument-window .form-grid label { min-width: 0; }
+.instrument-window .form-grid label { min-width: 0; align-content: start; }
+.instrument-window .instrument-serial { display: grid; align-content: start; gap: 8px; min-width: 0; }
+.instrument-window .instrument-serial button { justify-self: start; }
 .instrument-window .form-grid input, .instrument-window .form-grid select { width: 100%; min-width: 0; }
 .instrument-window input[type="number"], .instrument-window input[type="date"], .instrument-file span { font-variant-numeric: tabular-nums; }
 .instrument-window input[type="number"] { text-align: right; }

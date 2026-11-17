@@ -128,6 +128,8 @@ export interface DataTableProps<T> {
       В режиме blocks начальное состояние всегда раскрыто, затем запоминается выбор пользователя. */
   foldedByDefault?: boolean;
   bulkActions?: DataBulkAction<T>[];
+  /** Actions on every row matching the current search and filters, including rows beyond the page. */
+  filteredActions?: DataBulkAction<T>[];
   /** Раскрытая строка: форма, карточка, история. */
   renderDetail?: (row: T) => ReactNode;
   rowClassName?: (row: T) => string;
@@ -441,6 +443,7 @@ export function DataTable<T>({
   collapsibleGroups,
   foldedByDefault = false,
   bulkActions = [],
+  filteredActions = [],
   renderDetail,
   rowClassName,
   onRowClick,
@@ -750,10 +753,10 @@ export function DataTable<T>({
     });
   }
 
-  async function runBulk(action: DataBulkAction<T>) {
+  async function runBulk(action: DataBulkAction<T>, actionRows = selectedRows) {
     setRunning(action.label);
     try {
-      await action.run(selectedRows);
+      await action.run(actionRows);
       setSelected(new Set());
     } catch { /* ошибку показывает страница, выбор остаётся */ } finally {
       setRunning("");
@@ -1558,6 +1561,11 @@ export function DataTable<T>({
         )}
         <div className="toolbar-end">
           {toolbar}
+          {filteredActions.filter((action) => !action.hidden?.(filtered)).map((action) => (
+            <button type="button" key={action.label} className="secondary small" disabled={Boolean(running) || filtered.length === 0 || action.disabled?.(filtered)} onClick={() => void runBulk(action, filtered)}>
+              {running === action.label ? "Выполнение…" : action.label}
+            </button>
+          ))}
           {(blocks ? blockTotals.size > 1 : collapsibleGroups && foldedByDefault && groups.length > 1) && (() => {
             const names = blocks ? [...blockTotals.keys()] : groups.map(([name]) => name);
             const allOpen = names.every((name) => !isFolded(name) && (!blocks || !isSectionFolded(blockSection?.(name))));
