@@ -42,7 +42,7 @@ it("keeps shipment, position, lot and box fields searchable after the flat-table
     lines: [{ project: "100К.1", item_index: "КБ1", article: "АРТ-1", name: "Жгут", requested: "20", picked: "10", shortage: "10", unit: "шт",
       grn: "ГП-1", grns: ["ГП-1", "ГП-2"], lots: [{ grn: "ГП-2", quantity: "5" }] }],
     boxes: [{ place: 1, kind: "Короб", dims: "20×30×40", net: "2", gross: "3", seal: "Пломба-77", items: [{ item_index: "КБ1", quantity: "10" }] }],
-  } as Shipment;
+  } as unknown as Shipment;
   expect(shipmentSearch(source)).toEqual(expect.arrayContaining([
     "Получатель", "+7 123", "Трек-1", "УПД-5", "/document", "PL-1", "DN-1", "файл УПД",
     "100К.1", "КБ1", "АРТ-1", "Жгут", "ГП-2", "5", "Пломба-77", "20×30×40", "15.11.2026",

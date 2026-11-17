@@ -159,7 +159,7 @@ it("position rows repeat shipment fields, preserve newest groups and chronologic
     ["ОТГ-1", "1 из 2", "50 шт", "03.11.2026", "Петров", "+7 111"],
   ]);
   expect(screen.getByText("Отгрузка 2 из 2 · ОТГ-2")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Отправка", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: /^Отправка$/ }));
   expect(shipmentRows().map((tr) => cell(tr, "Отправка"))).toEqual(["ОТГ-2", "ОТГ-1", "ОТГ-1"]);
   fireEvent.change(screen.getByRole("searchbox"), { target: { value: "ОТГ-2" } });
   expect(shipmentRows()).toHaveLength(1);
@@ -178,13 +178,13 @@ it("normal Excel exports all position rows beyond the rendered page and follows 
   fireEvent.click(await screen.findByRole("tab", { name: /^Отгружено/ }));
   expect(shipmentRows()).toHaveLength(200);
   expect(screen.queryByRole("button", { name: "Excel по позициям" })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Excel", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: /^Excel$/ }));
   let text = new TextDecoder("utf-16le").decode(await blob!.arrayBuffer());
   expect(text.split(packedShipment.number)).toHaveLength(202);
   fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Особый" } });
   expect(shipmentRows()).toHaveLength(1);
   expect(shipmentRows()[0]).toHaveTextContent("КБ200");
-  fireEvent.click(screen.getByRole("button", { name: "Excel", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: /^Excel$/ }));
   text = new TextDecoder("utf-16le").decode(await blob!.arrayBuffer());
   expect(text.split(packedShipment.number)).toHaveLength(2);
 });
@@ -691,7 +691,7 @@ describe("Приёмка с производства: свои колонки и
     const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
     try {
-      fireEvent.click(screen.getByRole("button", { name: "Excel", exact: true }));
+      fireEvent.click(screen.getByRole("button", { name: /^Excel$/ }));
       const text = new TextDecoder("utf-16le").decode(new Uint8Array(await blob!.arrayBuffer()).slice(2));
       const [heads, values] = text.split("\r\n").map((line) => line.split("\t"));
       expect(values[heads.indexOf("ГРН")]).toBe("ГП.26.0000043, ГП.26.0000044");
