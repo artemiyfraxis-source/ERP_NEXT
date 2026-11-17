@@ -14,7 +14,7 @@ import "./cuttingGroups.css";
 
 const rowKey = (row: CuttingMember) => row.id;
 
-export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruction, mutate, onBehalfOf = "", performerId, busy = false, activeSession }: {
+export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruction, mutate, onBehalfOf = "", performerId, busy = false, activeSession, canRefreshEtk = false }: {
   group: CuttingGroup;
   readOnly: boolean;
   renderInstruction: (row: CuttingMember, close: () => void) => ReactNode;
@@ -23,6 +23,8 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
   performerId?: string;
   busy?: boolean;
   activeSession?: ProductionWorkSession | null;
+  /** Master only: re-pin the unstarted group to the current ETK revision. */
+  canRefreshEtk?: boolean;
 }) {
   const [group, setGroup] = useState(initialGroup);
   useEffect(() => setGroup(initialGroup), [initialGroup]);
@@ -86,6 +88,8 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
             : <button type="button" className="secondary" disabled={disabled || !ownsSession || group.partial_view} aria-haspopup="dialog"
               onClick={() => { setError(""); setView("downtime"); }}>Простой</button>}
         </>}
+        {canRefreshEtk && !readOnly && group.state === "open" && group.etk_stale && <button type="button" className="secondary" disabled={disabled}
+          onClick={() => void act(async () => ({ ...(await productionApi.refreshCuttingGroupEtk(group.id, group.version)), outputs: [] }))}>Обновить из ЭТК</button>}
         <button type="button" className="secondary" aria-haspopup="dialog" onClick={() => setView("instruction")}>Инструкция</button>
         <button type="button" className="secondary" aria-haspopup="dialog" onClick={() => setView("labels")}>Этикетки группы</button>
       </div>

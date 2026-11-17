@@ -872,6 +872,7 @@ def my_operations(
             view["planned_start"] = min(starts) if starts else None
             view["planned_finish"] = max(finishes) if finishes else None
             cutting_groups.append(view)
+    mark_stale_etk(cutting_groups, techcards_factory)
     boxes_by_task: dict[UUID, list[ProductionBox]] = {}
     for box in boxes:
         boxes_by_task.setdefault(box.task_id, []).append(box)
@@ -1009,6 +1010,52 @@ def cutting_current_cards(group_id, uow_factory, techcards_factory):
             if card is not None:
                 result[task.id] = (card.document, card.version)
         return result
+
+
+def cutting_refresh_cards(group_id, uow_factory, techcards_factory):
+    """Current issued ETK per active member task: (card id, revision, document, card version, norms) or an error text."""
+    if techcards_factory is None:
+        raise HTTPException(503, "База техкарт не настроена")
+    with uow_factory() as uow:
+        tasks = [uow.production.get(m.task_id) for m in uow.cutting.members(group_id)]
+    result = {}
+    with techcards_factory() as techcards:
+        for task in tasks:
+            card = issued_card_for_item(techcards, task.project, task.item)
+            if card is None or card.status is not TechcardStatus.ISSUED or not card.document:
+                result[task.id] = "нет выданной ЭТК"
+                continue
+            try:
+                steps = semifinished_steps(launch_route(card.document).steps)
+                fresh = {step.position: [(item.position, item.code) for item in step.etk_ops] for step in steps}
+                own = {op.position: [(item.position, item.code) for item in op.etk_ops] for op in task.operations}
+                if fresh != own:
+                    raise ProductionValidationError("состав ПФ или коды операций в новой ЭТК изменились")
+            except ProductionValidationError as error:
+                result[task.id] = str(error)
+                continue
+            norms = {step.position: (step.code, step.seconds_per_unit, step.setup_seconds) for step in steps}
+            result[task.id] = (card.id, card.revision, card.document, card.version, norms)
+    return result
+
+
+def mark_stale_etk(views, techcards_factory):
+    """`etk_stale` on open group views: some active member is pinned to an older revision than the issued ETK."""
+    if techcards_factory is None:
+        return views
+    with techcards_factory() as techcards:
+        for view in views:
+            view["etk_stale"] = False
+            if view.get("state") != "open":
+                continue
+            for row in view["rows"]:
+                if row["membership_state"] != "active":
+                    continue
+                card = issued_card_for_item(techcards, row["project"], row["item"])
+                if card is not None and card.revision != row.get("techcard_revision"):
+                    view["etk_stale"] = True
+                    break
+    return views
 
 
 def _check_cutting_start(operation_id, uow_factory, techcards_factory):
