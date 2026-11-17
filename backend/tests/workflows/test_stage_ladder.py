@@ -247,10 +247,10 @@ def test_a_new_write_of_the_old_word_is_refused_by_name():
 # ── Пороги закрытия при шаге вперёд (stage_cascade) ─────────────────────
 
 
-def _cascade(to_stage: str):
+def _cascade(to_stage: str, lines=()):
     task = SimpleNamespace(id=uuid4(), version=1, number="П-1", name="Жгут", quantity=10,
                            status=ProductionStatus.RUNNING, project=PROJECT, item="КБ1")
-    request = SimpleNamespace(id=uuid4(), version=1, number="К-1", kind=FulfillmentKind.MAIN, lines=(),
+    request = SimpleNamespace(id=uuid4(), version=1, number="К-1", kind=FulfillmentKind.MAIN, lines=lines,
                               status=FulfillmentStatus.NEW, purpose=f"{PROJECT} · КБ1 · Жгут")
     plan = plan_stage_change((KitStageNow("КБ1", "Новый", False, "Новый"),), to_stage)
     cascade = stage_cascade.plan_cascade(PROJECT, plan, stage_cascade.CascadeFacts(tasks=(task,), requests=(request,)))
@@ -258,13 +258,29 @@ def _cascade(to_stage: str):
     return [item.kind for item in kb.close], [(item.kind, item.reason) for item in kb.keep]
 
 
-def test_kit_requests_close_from_work_and_idle_tasks_from_ready():
-    # Производство кончается на «Готово» (владелец 29.10) — с него простаивающие задания цеха закрываются.
-    assert _cascade("В работе") == (["kit_request"], [("task", "Этап ниже «Готово» — задание остаётся.")])
+def _line(**picked):
+    return SimpleNamespace(**{"lot": None, "reserved": 0, "off_book": False, "issued": 0, **picked})
+
+
+def test_kit_requests_close_from_ready_when_nothing_is_picked_and_idle_tasks_from_ready():
+    # «В работе» комплект не отменяет (владелец 17.11: запустили 20 из 300 шт — комплект нужен для работы).
+    # Производство кончается на «Готово» (владелец 29.10) — с него закрываются простаивающие задания цеха и заявки,
+    # в которых ничего не набрано.
+    assert _cascade("В работе") == ([], [
+        ("kit_request", "Этап ниже «Готово» — комплект нужен для работы, заявка остаётся."),
+        ("task", "Этап ниже «Готово» — задание остаётся."),
+    ])
     assert _cascade("Готово") == (["kit_request", "task"], [])
     assert _cascade("ОТК") == (["kit_request", "task"], [])
     assert _cascade("ОТК пройден") == (["kit_request", "task"], [])
     assert _cascade("Принято складом") == (["kit_request", "task"], [])
+
+
+def test_a_kit_with_anything_picked_is_kept_on_ready_and_higher():
+    picked = "В заявке уже набрано — отмените вручную, если не нужна."
+    for line in (_line(lot=object(), reserved=5), _line(reserved=5), _line(off_book=True)):
+        assert _cascade("Готово", (_line(), line)) == (["task"], [("kit_request", picked)])
+    assert _cascade("Принято складом", (_line(), _line())) == (["kit_request", "task"], [])
 
 
 def test_a_manual_move_to_a_former_stage_is_refused():
