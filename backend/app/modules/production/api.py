@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
-from app.modules.techcards.etk_read import IssuedLots, card_views, issued_card_for_item, pinned_card, saved_harness
+from app.modules.techcards.etk_read import IssuedLots, _item_index, card_views, issued_card_for_item, pinned_card, saved_harness
 from app.workflows.etk_lots import IssuedKitLots
 from app.workflows.project_kitset import closed_kb_keys
 from app.modules.techcards.project_cards import TechcardStatus
@@ -1043,18 +1043,29 @@ def mark_stale_etk(views, techcards_factory):
     """`etk_stale` on open group views: some active member is pinned to an older revision than the issued ETK."""
     if techcards_factory is None:
         return views
+    open_views = [view for view in views if view.get("state") == "open"]
+    for view in views:
+        view["etk_stale"] = False
+    projects = {row["project"] for view in open_views for row in view["rows"] if row["membership_state"] == "active"}
+    if not projects:
+        return views
+    revisions: dict[tuple[str, str], int] = {}
     with techcards_factory() as techcards:
-        for view in views:
-            view["etk_stale"] = False
-            if view.get("state") != "open":
+        # One read per project instead of one per row: issued cards by exact project and КБ index.
+        for project in projects:
+            for card in techcards.techcards.for_project(project):
+                if card.project == project and card.status is TechcardStatus.ISSUED:
+                    revisions[(project, card.item_index)] = card.revision
+    for view in open_views:
+        for row in view["rows"]:
+            if row["membership_state"] != "active":
                 continue
-            for row in view["rows"]:
-                if row["membership_state"] != "active":
-                    continue
-                card = issued_card_for_item(techcards, row["project"], row["item"])
-                if card is not None and card.revision != row.get("techcard_revision"):
-                    view["etk_stale"] = True
-                    break
+            index = _item_index(row["project"], row["item"])
+            revision = next((revisions[key] for key in ((row["project"], index), (row["project"], index.upper()))
+                             if key in revisions), None)
+            if revision is not None and revision != row.get("techcard_revision"):
+                view["etk_stale"] = True
+                break
     return views
 
 

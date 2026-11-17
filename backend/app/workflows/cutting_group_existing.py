@@ -6,6 +6,12 @@ import os
 import sys
 from uuid import UUID, NAMESPACE_URL, uuid5
 
+from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm.exc import StaleDataError
+
+from app.modules.production.application import ConcurrentProductionUpdate
+from app.modules.production.resource_claims import ResourceConflict
 from app.modules.production.cutting_application import describe_group, group_existing, plan_etk_refresh, refresh_group_etk
 from app.modules.production.domain import ProductionValidationError
 from app.modules.production.plan import normalize_project_number
@@ -29,7 +35,7 @@ def run(project, *, factory, techcards_factory, actor, now, task_ids=None, dry_r
     return group_existing(project, task_ids, dry_run, load_card, actor, now, factory)
 
 
-def refresh_etk(project, *, factory, techcards_factory, actor, now, dry_run=True):
+def refresh_etk(project, *, factory, techcards_factory, actor, now, dry_run=True, task_ids=None):
     """Re-pin all unstarted groups of the project to their current ETK (one transaction per group)."""
     from app.modules.production.api import cutting_refresh_cards
 
@@ -39,13 +45,16 @@ def refresh_etk(project, *, factory, techcards_factory, actor, now, dry_run=True
     result = {"project": key, "dry_run": dry_run, "refreshed": [], "current": [], "refused": [], "skipped": []}
     with factory() as uow:
         groups = [(g.id, g.number, g.state) for g in uow.cutting.list() if normalize_project_number(g.project_key) == key]
+        if task_ids is not None:
+            wanted = set(task_ids)
+            groups = [item for item in groups if wanted & {m.task_id for m in uow.cutting.members(item[0], active=False)}]
     for group_id, number, state in groups:
         identity = {"group_id": str(group_id), "number": number}
         if state != "open":
             result["skipped"].append({**identity, "reason": "Группа начата или отменена"})
             continue
-        cards = cutting_refresh_cards(group_id, factory, techcards_factory)
         try:
+            cards = cutting_refresh_cards(group_id, factory, techcards_factory)
             with factory() as uow:
                 group = uow.cutting.get(group_id)
                 steps, problems = plan_etk_refresh(group, uow.cutting.members(group_id), cards, uow)
@@ -61,8 +70,10 @@ def refresh_etk(project, *, factory, techcards_factory, actor, now, dry_run=True
             else:
                 refresh_group_etk(group_id, version, cards, actor, now, factory())
                 result["refreshed"].append({**identity, "items": stale})
-        except ProductionValidationError as error:
-            result["refused"].append({**identity, "reason": str(error)})
+        except (ProductionValidationError, ConcurrentProductionUpdate, ResourceConflict, PermissionError,
+                KeyError, StaleDataError, IntegrityError, HTTPException) as error:
+            reason = getattr(error, "detail", None) or str(error) or type(error).__name__
+            result["refused"].append({**identity, "reason": str(reason)})
     return result
 
 
@@ -86,7 +97,7 @@ def main(argv=None):
 
     engine = build_engine(url)
     try:
-        extra = {"task_ids": args.task_ids} if not args.refresh_etk else {}
+        extra = {"task_ids": args.task_ids}
         result = (refresh_etk if args.refresh_etk else run)(args.project, factory=build_production_uow_factory(engine),
             techcards_factory=build_techcards_uow_factory(engine),
             actor=Actor(uuid5(NAMESPACE_URL, "erp-next:cutting-group-existing"), "Группировка запущенных ПФ", "ERP"),
