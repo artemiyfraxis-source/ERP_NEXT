@@ -36,6 +36,7 @@ from app.shared.identity import Actor
 from app.shared.project_number import normalize_project_number
 
 from .application import (
+    _checked_names,
     DuplicateLaunch,
     UnitOfWork,
     _busy,
@@ -370,10 +371,11 @@ def _prepare(
         if machine in needed and machine not in units:
             warnings.append(f"Станок {machine} не найден в БД.ОБ — считаю, что он один")
     from .cutting_application import planning_groups
-    cutting_groups = planning_groups(uow, scope.new_tasks, free, scope.site)
+    cutting_groups, operator_options = planning_groups(uow, scope.new_tasks, free, scope.site, team, command.actor)
     data = AutoplanInput(
         tasks=planned_tasks, free=frozenset(free), keys=keys, team=team, skills=skills, busy=busy,
         capacity=capacity, start=start, end=end, holidays=holidays, shift=shift, steps=steps, cutting_groups=cutting_groups,
+        operator_options=operator_options,
     )
     result = plan(data)
     all_tasks = {**tasks, **{task_id: item.task for task_id, item in scope.new_tasks.items()}}
@@ -533,6 +535,8 @@ def apply_autoplan(
                 }
             else:
                 task = preview.tasks[task_id]
+            for operation_id, placement in own.items():
+                _checked_names(uow, task.operation(operation_id), (placement.operator_id,), actor)
             result = task.apply_schedule(tuple(
                 (operation.id, (own[operation.id].operator_id,), own[operation.id].start, own[operation.id].finish)
                 if operation.id in own else

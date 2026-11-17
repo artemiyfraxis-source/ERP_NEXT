@@ -287,6 +287,7 @@ class AutoplanInput:
     # У операции без шагов — станок ключа наладки (limited) на всё окно.
     steps: Mapping[UUID, tuple[MachineStep, ...]] = field(default_factory=dict)
     cutting_groups: tuple[tuple[UUID, ...], ...] = ()
+    operator_options: Mapping[UUID, frozenset[UUID]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -513,6 +514,8 @@ class _Planner:
 
     def slot(self, operation: ProductionOperation, operator_id: UUID, earliest: datetime) -> _Slot | None:
         data = self.data
+        if operation.id in data.operator_options and operator_id not in data.operator_options[operation.id]:
+            return None
         key = data.keys[operation.id]
         task = self.task_of[operation.id]
         rate = _rate(data.skills, operation.skill_codes, (operator_id,))

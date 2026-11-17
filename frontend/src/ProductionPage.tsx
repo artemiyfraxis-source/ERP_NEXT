@@ -1,3 +1,5 @@
+import { CuttingGroupCard } from "./CuttingGroupCard";
+import { cuttingRows, type CuttingGroup } from "./cuttingGroups";
 import { useEffect, useRef, useState } from "react";
 import { ProductionMachinePicker, type MachineSelection } from "./ProductionMachinePicker";
 import {
@@ -44,6 +46,7 @@ import { deadlineChips, feedsText, isFirst, isNetwork, previousStage, requiredNo
 
 export function ProductionPage({ principal, mine = false }: { principal: Principal; mine?: boolean }) {
   const [tasks, setTasks] = useState<ProductionTask[]>([]);
+  const [cuttingGroups, setCuttingGroups] = useState<CuttingGroup[]>([]);
   const [operators, setOperators] = useState<ProductionOperator[]>([]);
   const [viewerSite, setViewerSite] = useState("");
   const [execution, setExecution] = useState<{ session: ProductionWorkSession | null; boxes: ProductionBox[] }>({ session: null, boxes: [] });
@@ -75,6 +78,9 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const canEdit = canAct(principal, "production");
   const canOverview = canSee(principal, "production");
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
+  const groupedOperations = new Set(cuttingGroups.flatMap((group) => cuttingRows(group).map((row) => `${row.task_id}:${row.operation_id}`)));
+  const queueCount = tasks.filter((task) => !isDoneCard(task) && !groupedOperations.has(`${task.id}:${task.operations[0]?.id}`)).length
+    + cuttingGroups.filter((group) => cuttingRows(group).some((row) => row.state !== "done")).length;
 
   async function reload() {
     setError("");
@@ -92,6 +98,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
         taskResult.tasks = [...taskResult.tasks, ...selected.tasks];
       }
       setTasks(taskResult.tasks);
+      setCuttingGroups((taskResult as { cutting_groups?: CuttingGroup[] }).cutting_groups ?? []);
       setActFor((taskResult as { can_act?: boolean }).can_act ? viewAs : null);
       setOperators(operatorResult.operators);
       setViewerSite((operatorResult as { viewer_site?: string }).viewer_site ?? "");
@@ -161,7 +168,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
       <h1>{mine && viewAs ? "Задания" : mine ? "Мои задания" : "Ресурсное планирование"}</h1>
       {/* «Мои задания»: счётчик — невыполненные (выполненные — в «Выполнено · N»), владелец 16.10. */}
       {mine
-        ? <span className="page-count" title="Невыполненных операций">{tasks.filter((task) => !isDoneCard(task)).length}</span>
+        ? <span className="page-count" title="Невыполненных операций">{queueCount}</span>
         : <span className="page-count">{tasks.length}</span>}
       {canPick && <label className="view-as">Сотрудник
         <select aria-label="Сотрудник" style={{ width: "auto" }} value={viewAs} onChange={(event) => setViewAs(event.target.value)}>
@@ -193,7 +200,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {/* «Коробки на подтверждение» убраны (владелец, 13.10.2026: «ОТК подтверждает и все»): сданная коробка сразу идёт
         на вход следующей операции, коробку последней операции принимает или возвращает «Очередь ОТК». */}
     {/* Задания — первыми (кнопки действий видны сразу), коробки сотрудника — под ними. */}
-    {mine && <MyQueue principal={principal} tasks={tasks} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} onBehalfOf={onBehalfOf} onSubmitted={(number, box) => setShown({ number, box, fixed: false })} />}
+    {mine && <MyQueue principal={principal} tasks={tasks} cuttingGroups={cuttingGroups} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} onBehalfOf={onBehalfOf} onSubmitted={(number, box) => setShown({ number, box, fixed: false })} />}
     {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} readOnly={readOnly} ownerName={viewAs ? viewedName : ""} onBehalfOf={onBehalfOf}
       onSubmitted={(number, box) => setShown({ number, box, fixed: false })} onCorrected={(number, box) => setShown({ number, box, fixed: true })} />}
     {shown && <ShownBox shown={shown} boxes={execution.boxes} tasks={tasks} close={() => setShown(null)} />}
@@ -220,7 +227,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
       openProjectCard={canSee(principal, "projects") ? (project) => openPlace("projects", { project }) : undefined}
       openTask={(taskId, operationId) => { setSelectedTaskId(taskId); setSelectedOperationId(operationId ?? ""); }}
     />}
-    {mine && loaded && !tasks.length && <div className="empty">{viewAs ? "Операции сотруднику не назначены." : canPick ? "Вам операции не назначены. Выберите сотрудника, чтобы увидеть его задания." : "Операции вам пока не назначены — мастер назначает их в «Ресурсном планировании»."}</div>}
+    {mine && loaded && !tasks.length && !cuttingGroups.length && <div className="empty">{viewAs ? "Операции сотруднику не назначены." : canPick ? "Вам операции не назначены. Выберите сотрудника, чтобы увидеть его задания." : "Операции вам пока не назначены — мастер назначает их в «Ресурсном планировании»."}</div>}
   </section>;
 }
 
@@ -649,9 +656,10 @@ function SchedulePlanner({ task, operators, busy, mutate }: {
 // Очередь оператора (myOpsRender_): операции по дням плана — «Сегодня / Завтра / Начато ранее», факт «сдано X из N»,
 // «вместе с», «план истёк». Главное действие карточки — справа вверху, рядом с состоянием (владелец, 12.10.2026: «я не
 // вижу старт»): «Начать», у начатой — «Пауза» / «Продолжить» и «Сдать…»; ЭТК — второстепенная кнопка. Начатая — первой.
-function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, onBehalfOf = "", onSubmitted }: {
+function MyQueue({ principal, tasks, cuttingGroups = [], session, busy, mutate, readOnly = false, onBehalfOf = "", onSubmitted }: {
   principal: Principal;
   tasks: ProductionTask[];
+  cuttingGroups?: CuttingGroup[];
   session: ProductionWorkSession | null;
   busy: string;
   readOnly?: boolean;
@@ -761,15 +769,19 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
     </div>;
   };
   // Начатая — первой, невыполненное — по дням плана; выполненное свёрнуто ниже, чтобы «Начать» не искали под сделанным.
-  const active = tasks.filter((task) => !isDone(task)).sort((left, right) => Number(isRunning(right)) - Number(isRunning(left)));
-  const finished = tasks.filter(isDone);
+  const grouped = new Set(cuttingGroups.flatMap((group) => cuttingRows(group).map((row) => `${row.task_id}:${row.operation_id}`)));
+  const standalone = tasks.filter((task) => !grouped.has(`${task.id}:${task.operations[0]?.id}`));
+  const active = standalone.filter((task) => !isDone(task)).sort((left, right) => Number(isRunning(right)) - Number(isRunning(left)));
+  const finished = standalone.filter(isDone);
   // Простой — на задание: полоса с «Закончить простой» — на первой невыполненной карточке задания, на остальных — строка.
   const firstOfTask = new Set(active.filter((task, index) => active.findIndex((other) => other.id === task.id) === index).map((task) => `${task.id}:${task.operations[0]?.id}`));
   const activeMark = { title: null as string | null };
   const finishedMark = { title: null as string | null };
   return <div className="my-queue">
+    {cuttingGroups.map((group) => <CuttingGroupCard key={`${group.id}:${group.version}`} group={group} readOnly={readOnly}
+      renderInstruction={(row, close) => <OperationEtk key={row.id} principal={principal} task={{ id: row.task_id }} operation={{ id: row.operation_id }} title={`${row.item} · ${row.name}`} close={close} />} />)}
     {active.map((task) => renderCard(task, activeMark))}
-    {!active.length && finished.length > 0 && <div className="empty">Невыполненных операций нет — все назначенные сданы.</div>}
+    {!active.length && !cuttingGroups.some((group) => cuttingRows(group).some((row) => row.state !== "done")) && finished.length > 0 && <div className="empty">Невыполненных операций нет — все назначенные сданы.</div>}
     {finished.length > 0 && <details className="mo-finished"><summary>Выполнено · {finished.length}</summary>
       <div className="my-queue">{finished.map((task) => renderCard(task, finishedMark))}</div>
     </details>}
@@ -896,7 +908,7 @@ export function etkRevisionNotice(revision: EtkRevisionNotice | undefined): stri
   return revision.fallback ?? "";
 }
 
-function OperationEtk({ principal, task, operation, title, close }: { principal: Principal; task: ProductionTask; operation: ProductionOperation; title: string; close: () => void }) {
+function OperationEtk({ principal, task, operation, title, close }: { principal: Principal; task: Pick<ProductionTask, "id">; operation: Pick<ProductionOperation, "id">; title: string; close: () => void }) {
   const [view, setView] = useState<{ card: ProjectTechcard; focus: { position: number; code: string }; revision?: EtkRevisionNotice; serial?: MarkSerialRange } | undefined>(undefined);
   const [error, setError] = useState("");
   useEffect(() => {

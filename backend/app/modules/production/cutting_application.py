@@ -3,7 +3,7 @@
 from uuid import uuid4
 
 from app.shared.events import AuditEvent
-from .application import AssignProductionCommand, ConcurrentProductionUpdate, assign_task, lock_reflow_projects
+from .application import AssignProductionCommand, ConcurrentProductionUpdate, _checked_names, assign_task, lock_reflow_projects
 from .domain import ProductionStatus, ProductionValidationError
 from .cutting import cutting_recipe
 from .plan import normalize_project_number
@@ -140,14 +140,34 @@ def group_existing(project, task_ids, dry_run, load_card, actor, now, factory):
     return result
 
 
-def planning_groups(uow, new_tasks, free, site):
+def planning_groups(uow, new_tasks, free, site, team, actor):
     """The same recipe key and late-join rule as issue, expressed in preview operation IDs."""
     groups = {}
     joinable = {}
+    operator_options = {}
     if getattr(uow, "cutting", None):
         for group in uow.cutting.list():
             members = uow.cutting.members(group.id)
             identifiers = [member.operation_id for member in members]
+            try:
+                check_access(group, uow, actor)
+                accessible = not site or not group.site or site == group.site
+            except PermissionError:
+                accessible = False
+            for member in members:
+                if member.operation_id not in free:
+                    continue
+                operation = uow.production.get(member.task_id).operation(member.operation_id)
+                allowed = set()
+                for operator_id in team if accessible else ():
+                    try:
+                        _checked_names(uow, operation, (operator_id,), actor)
+                    except ProductionValidationError:
+                        continue
+                    allowed.add(operator_id)
+                operator_options[operation.id] = frozenset(allowed)
+            if not accessible:
+                continue
             if group.state != "open" or not identifiers or not set(identifiers) <= free:
                 continue
             groups[str(group.id)] = identifiers
@@ -158,13 +178,17 @@ def planning_groups(uow, new_tasks, free, site):
         if recipe and recipe.operation_id in free:
             key = joinable.get(recipe.key, recipe.key)
             groups.setdefault(key, []).append(recipe.operation_id)
-    return tuple(tuple(identifiers) for identifiers in groups.values() if len(identifiers) > 1)
+            operator_options[recipe.operation_id] = frozenset(
+                identifier for identifier in team if not site or uow.operators.get(identifier).site == site)
+    return tuple(tuple(identifiers) for identifiers in groups.values() if len(identifiers) > 1), operator_options
 
 
 def check_access(group, uow, actor):
     viewer = uow.operators.get(actor.id)
     site = viewer.site if viewer else ""
-    for member in uow.cutting.members(group.id, active=False):
+    if site and group.site and site != group.site:
+        raise PermissionError("Группа содержит работу другой площадки")
+    for member in uow.cutting.members(group.id):
         task = uow.production.get(member.task_id)
         sites = {group.site, task.handed_to} - {""}
         for identifier in task.operation(member.operation_id).operator_ids:

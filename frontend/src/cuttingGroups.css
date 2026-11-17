@@ -1,0 +1,10 @@
+.cutting-group { font-variant-numeric: tabular-nums; }
+.cutting-group h2 { margin: 0; }
+.cutting-group .mo-h { align-items: flex-start; }
+.cutting-group .mo-side { flex-wrap: wrap; }
+.cutting-group .data-table { margin-top: 8px; }
+.cutting-group .warning-inline { margin: 8px 0; }
+.cutting-labels, .cutting-submit { font-variant-numeric: tabular-nums; }
+.cutting-submit input { width: 104px; text-align: right; font-variant-numeric: tabular-nums; }
+.cutting-instruction-picker { display: flex; align-items: center; gap: 8px; margin: 16px; }
+.cutting-instruction-picker select { width: auto; max-width: 100%; }

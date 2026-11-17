@@ -1,3 +1,4 @@
+import type { CuttingGroup } from "./cuttingGroups";
 import type { Sto, TdFinding, TdIssue, TdIssueInput, TdPrintModel } from "./tdTypes";
 
 export type AccessMode = "view" | "edit";
@@ -4054,7 +4055,7 @@ export const productionApi = {
     }),
   list: (task = "") => api<{ tasks: ProductionTask[]; next_cursor: string | null }>(`/api/production/tasks${task ? `?task=${encodeURIComponent(task)}` : ""}`),
   /** can_act — смотрящий может работать за выбранного сотрудника (сервер проверяет то же при каждом действии). */
-  mine: (operatorId = "") => api<{ tasks: ProductionTask[]; can_act?: boolean }>(`/api/production/my${operatorId ? `?operator_id=${operatorId}` : ""}`),
+  mine: (operatorId = "") => api<{ tasks: ProductionTask[]; can_act?: boolean; cutting_groups?: CuttingGroup[] }>(`/api/production/my${operatorId ? `?operator_id=${operatorId}` : ""}`),
   operators: () => api<{ operators: ProductionOperator[]; viewer_site?: string }>("/api/production/operators"),
   calendar: () => api<{ holidays: string[]; absences: ProductionAbsence[]; shift: ProductionShift }>("/api/production/calendar"),
   saveCalendar: (holidays: string[], absences: ProductionAbsence[], shift: ProductionShift) => api<void>("/api/production/calendar", {

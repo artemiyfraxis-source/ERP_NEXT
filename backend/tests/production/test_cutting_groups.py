@@ -316,6 +316,95 @@ def test_group_site_access_and_membership_preview_version(production_api):
     assert forbidden.status_code == 403
 
 
+@pytest.mark.parametrize("size", [1, 2])
+@pytest.mark.parametrize("actor_site,operator_site", [("ЖУК", "ЖУК"), ("", "ЖУК"), ("ЦАР", "ЦАР"), ("", "ЦАР")])
+def test_autoplan_respects_existing_group_site(production_api, size, actor_site, operator_site):
+    from app.modules.identity.infrastructure import IdentityUserRow
+
+    client, operator = production_api
+    batch(client, [issue(f"КБ{i}") for i in range(size)])
+    group = groups(client)[0]
+    identifiers = {row["operation_id"] for row in group["rows"]}
+    with app.state.production_uow_factory() as uow:
+        uow.session.get(IdentityUserRow, MASTER_ID).site = actor_site
+        uow.session.get(IdentityUserRow, operator).site = operator_site
+        uow.commit()
+    response = client.post("/api/production/autoplan/preview", json={})
+    assert response.status_code == 200, response.text
+    preview = response.json()
+    cuts = [p for p in preview["proposals"] if p["operation_id"] in identifiers]
+    if operator_site == "ЖУК":
+        assert cuts == []
+        with app.state.production_uow_factory() as uow:
+            assert all(not uow.production.get(UUID(row["task_id"])).operation(UUID(row["operation_id"])).operator_ids
+                       for row in group["rows"])
+    else:
+        assert len(cuts) == size
+        selected = [{k: p[k] for k in ("task_id", "operation_id", "operator_id")} for p in cuts]
+        applied = client.post("/api/production/autoplan/apply",
+                              json={"fingerprint": preview["fingerprint"], "items": selected})
+        assert applied.status_code == 200, applied.text
+
+
+def test_autoplan_apply_rechecks_manual_group_assignment_guard(production_api, monkeypatch):
+    from app.modules.identity.infrastructure import IdentityUserRow
+    from app.modules.production import cutting_application
+
+    client, operator = production_api
+    batch(client, [issue("КБ1"), issue("КБ2")])
+    group = groups(client)[0]
+    identifiers = {row["operation_id"] for row in group["rows"]}
+    with app.state.production_uow_factory() as uow:
+        uow.session.get(IdentityUserRow, MASTER_ID).site = "ЖУК"
+        uow.session.get(IdentityUserRow, operator).site = "ЖУК"
+        uow.commit()
+    # Simulate a planner regression: persistence must independently reject the invalid assignments.
+    monkeypatch.setattr(cutting_application, "planning_groups", lambda *args: ((), {}))
+    response = client.post("/api/production/autoplan/preview", json={})
+    assert response.status_code == 200, response.text
+    preview = response.json()
+    cuts = [p for p in preview["proposals"] if p["operation_id"] in identifiers]
+    assert len(cuts) == 2
+    selected = [{k: p[k] for k in ("task_id", "operation_id", "operator_id")} for p in cuts]
+    applied = client.post("/api/production/autoplan/apply",
+                          json={"fingerprint": preview["fingerprint"], "items": selected})
+    assert applied.status_code == 422, applied.text
+    assert "площадки" in applied.json()["detail"]
+    with app.state.production_uow_factory() as uow:
+        for row in group["rows"]:
+            task = uow.production.get(UUID(row["task_id"]))
+            assert task.version == row["task_version"]
+            assert task.operation(UUID(row["operation_id"])).operator_ids == ()
+
+
+def test_split_foreign_history_does_not_block_active_group(production_api):
+    from app.modules.identity.infrastructure import IdentityUserRow
+
+    client, _ = production_api
+    batch(client, [issue("КБ1"), issue("КБ2")])
+    group = groups(client)[0]
+    row = group["rows"][0]
+    url = f"/api/production/cutting-groups/{group['id']}"
+    split = client.post(f"{url}/split", json={"version": group["version"], "member_ids": [row["id"]]})
+    assert split.status_code == 200, split.text
+    handed = client.post(f"/api/production/tasks/{row['task_id']}/handover",
+                         json={"version": row["task_version"], "site": "ЖУК"})
+    assert handed.status_code == 200, handed.text
+    detail = client.get(url)
+    assert detail.status_code == 200, detail.text
+    current = detail.json()["group"]
+    assert groups(client)[0]["id"] == group["id"]
+    assert {r["id"]: r["membership_state"] for r in current["rows"]} == {
+        row["id"]: "split", group["rows"][1]["id"]: "active"}
+    cancelled = client.post(f"{url}/cancel", json={"version": current["version"]})
+    assert cancelled.status_code == 200, cancelled.text
+    with app.state.production_uow_factory() as uow:
+        uow.session.get(IdentityUserRow, MASTER_ID).site = "ЖУК"
+        uow.commit()
+    assert client.get(url).status_code == 403
+    assert groups(client) == []
+
+
 def test_revalidation_requires_equal_recipe_and_preserves_issued_document(production_api):
     client, operator = production_api
     cards = [issue("КБ1"), issue("КБ2")]
