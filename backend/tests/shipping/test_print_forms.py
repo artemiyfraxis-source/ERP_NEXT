@@ -306,7 +306,9 @@ def test_box_labels_one_per_box_with_contents_weight_and_dims(shipping_api):
     response = client.get(f"/api/shipping/shipments/{shipment['id']}/labels")
 
     assert response.status_code == 200, response.text
-    common = {"shipper": SHIPPER, "consignee": "Получатель", "address": "Москва", "project": "591К.3", "pl_number": "PL591К.3-1"}
+    # «Получатель» на этикетке — человек и его телефон (contact пуст — только телефон), организация — consignee.
+    common = {"shipper": SHIPPER, "consignee": "Получатель", "address": "Москва", "contact": "", "phone": "+7 900 000-00-00",
+              "project": "591К.3", "pl_number": "PL591К.3-1"}
     assert response.json()["labels"] == [
         {**common, "place": "Упаковка 1/2", "items": [
             {"item_index": "КБ1", "quantity": "6", "unit": "шт"}, {"item_index": "КБ2", "quantity": "5", "unit": "шт"},
