@@ -97,6 +97,20 @@ class SqlAlchemyCuttingRepository:
     def __init__(self, session):
         self.session = session
 
+    def reserve_number(self):
+        # Same global, transactional numbering as PZ; migration seeds the row on existing databases.
+        from .infrastructure import ProductionSequenceRow
+
+        row = self.session.scalar(select(ProductionSequenceRow).where(
+            ProductionSequenceRow.name == "cutting_group").with_for_update().execution_options(populate_existing=True))
+        if row is None:
+            row = ProductionSequenceRow(name="cutting_group", value=0)
+            self.session.add(row)
+            self.session.flush()
+        row.value += 1
+        self.session.flush()
+        return f"РЗ-{row.value:04d}"
+
     def get(self, group_id, *, lock=False):
         query = select(CuttingGroupRow).where(CuttingGroupRow.id == group_id)
         if lock:
@@ -164,7 +178,7 @@ class SqlAlchemyCuttingRepository:
         """Caller holds project/task locks and has rechecked every member; never late-join another group."""
         recipe = candidates[0][1]
         identifier = uuid4()
-        group = CuttingGroupRow(id=identifier, number=f"РЗ-{identifier.hex[:16].upper()}",
+        group = CuttingGroupRow(id=identifier, number=self.reserve_number(),
             idempotency_key=f"cutting-existing:{identifier}", project_key=recipe.snapshot["project"],
             site=recipe.snapshot["site"], recipe_key=recipe.key, recipe_version=RECIPE_VERSION,
             recipe=recipe.snapshot, version=1, state="open", joinable=False, created_at=now)
@@ -196,7 +210,7 @@ class SqlAlchemyCuttingRepository:
                     break
         if group is None:
             identifier = uuid4()
-            group = CuttingGroupRow(id=identifier, number=f"РЗ-{identifier.hex[:16].upper()}",
+            group = CuttingGroupRow(id=identifier, number=self.reserve_number(),
                 idempotency_key=f"cutting:{digest(task.source_idempotency_key)}", project_key=recipe.snapshot["project"],
                 site=recipe.snapshot["site"], recipe_key=recipe.key, recipe_version=RECIPE_VERSION,
                 recipe=recipe.snapshot, version=1, state="open", joinable=not separate, created_at=now)
