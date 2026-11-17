@@ -2002,7 +2002,9 @@ class SqlAlchemyInstrumentRepository:
             events.aggregate_id.in_(instrument_ids), events.event_type == "production.instrument_registered",
         ).group_by(events.aggregate_id)).all())
         rf = RfRepository(self.session).list(instrument_ids[0] if len(instrument_ids) == 1 else None)
-        return {item_id: InstrumentSerialContext(registered.get(item_id, first.get(item_id)), rf.get(item_id))
+        taken = frozenset(serial.strip() for serial in self.session.scalars(
+            select(ProductionInstrumentRow.serial_number)) if serial and serial.strip())
+        return {item_id: InstrumentSerialContext(registered.get(item_id, first.get(item_id)), rf.get(item_id), taken)
                 for item_id in instrument_ids}
 
     def save(self, instrument: MeasurementInstrument) -> None:

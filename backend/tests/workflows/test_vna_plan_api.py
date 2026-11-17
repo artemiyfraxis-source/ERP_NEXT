@@ -1,4 +1,5 @@
 from dataclasses import asdict, replace
+from datetime import datetime
 import base64
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -9,11 +10,12 @@ from sqlalchemy import select
 from app.main import app
 from app.shared.persistence import AuditEventRow
 from app.modules.production.rf_infrastructure import RfRepository
+from app.modules.production.infrastructure import ProductionInstrumentFileRow
 from app.modules.production.rf_interfaces import propose_details
 from app.workflows.coax_vswr_api import CoaxRefs
 from app.workflows.rf_interfaces_fill import fill
 from app.workflows.vna_plan_api import _available
-from tests.production.test_api import production_api  # noqa: F401
+from tests.production.test_api import MASTER_ID, production_api  # noqa: F401
 from tests.production.test_instruments_api import create
 from tests.production.test_vna_planner import fixture, one_port_fixture
 from tests.workflows.test_coax_vswr_api import NORM, _as, _card, _launch
@@ -221,7 +223,7 @@ def test_characterization_file_is_checked_and_one_port_profile_requires_both_ori
     for adapter in client.get("/api/production/instruments").json()["instruments"]:
         if adapter["inventory_number"] in ("СИ.020", "СИ.021"):
             response = client.post(f"/api/production/instruments/{adapter['id']}/files", json={
-                "kind": "Прочее", "file_name": "adapter.s2p", "content_base64": base64.b64encode(content).decode()})
+                "kind": "Прочее", "file_name": "Замер ВАЦ, adapter.s2p", "content_base64": base64.b64encode(content).decode()})
             assert response.status_code == 200, response.text
     result = client.get("/api/production/vna-plan", params=params)
     assert result.status_code == 200, result.text
@@ -233,6 +235,35 @@ def test_characterization_file_is_checked_and_one_port_profile_requires_both_ori
         assert data["profile"]["required_orientations"] == ["А", "Б"]
         assert data["profile"]["one_attempt"]
         assert all(o["termination"]["load_label"] for o in data["chains"]["orientations"])
+
+
+@pytest.mark.parametrize("replacement", ["valid", "broken", "narrow", "oversized", "synthetic"])
+def test_planner_never_falls_back_to_older_measurement(production_api, monkeypatch, replacement):
+    client, _ = production_api
+    params = _plan_setup(client, monkeypatch, series="BNC", split_adapters=True)
+    valid = b"# GHz S RI R 50\n.001 .1 0 .9 0 .9 0 .1 0\n18 .1 0 .9 0 .9 0 .1 0"
+    contents = {"valid": valid, "broken": b"invalid", "narrow": valid.replace(b"18 .1", b"1 .1"),
+                "oversized": b"!" + b"x" * (2 * 1024 * 1024) + b"\n" + valid,
+                "synthetic": b"! SYNTHETIC OFFLINE DATA - NOT A MEASUREMENT\n" + valid}
+    latest_ids = set()
+    with app.state.production_uow_factory() as uow:
+        for adapter in uow.instruments.list():
+            if adapter.inventory_number not in ("СИ.020", "СИ.021"):
+                continue
+            latest_id = uuid4()
+            latest_ids.add(str(latest_id))
+            for file_id, filename, day, content in (
+                (uuid4(), "Замер ВАЦ старый.s2p", 15, valid),
+                (latest_id, "Замер ВАЦ, новый.s2p", 16, contents[replacement]),
+                (uuid4(), "datasheet.s2p", 17, valid),
+            ):
+                uow.session.add(ProductionInstrumentFileRow(id=file_id, instrument_id=adapter.id, kind="Прочее",
+                    file_name=filename, content=content, uploaded_at=datetime(2026, 11, day), uploaded_by=MASTER_ID))
+        uow.session.commit()
+    result = client.get("/api/production/vna-plan", params=params)
+    assert result.status_code == 200, result.text
+    selected = {entry["file_id"] for entry in result.json()["chains"].get("characterizations", ())}
+    assert selected == (latest_ids if replacement == "valid" else set())
 
 
 def test_owner_confirmed_acm_fill_keeps_unknown_band_explicit(production_api):

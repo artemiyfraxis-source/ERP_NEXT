@@ -23,8 +23,15 @@ function New-VnaConnection {
         foreach ($name in 'S11','S21','S12','S22') {
             $states[$name] = if ($device.TraceStatus -and $device.TraceStatus.PSObject.Properties[$name]) { [string]$device.TraceStatus.$name } else { 'C?' }
         }
+        $traces = @($device.Traces)
+        if (-not $device.Traces) {
+            $traces = @(foreach ($name in 'S11','S21','S12','S22') {
+                [pscustomobject]@{ Parameter = $name; Format = $(if ($name -in 'S11','S22') { 'SWR' } else { 'MLOG' })
+                    PDIVision = 1.0; RLEVel = 0.0; RPOSition = 5 }
+            })
+        }
         return [pscustomobject]@{ Offline = $true; Directory = $directory; Device = $device; App = $null
-            TraceStatus = $states; ProfileApplied = $false; Calibrated = $false; Released = $false; BoundSerial = $null }
+            Traces = $traces; TraceStatus = $states; ProfileApplied = $false; Calibrated = $false; Released = $false; BoundSerial = $null }
     }
     return [pscustomobject]@{ Offline = $false; Directory = $null; Device = $null; App = (New-VnaApplication)
         TraceStatus = $null; ProfileApplied = $false; Calibrated = $false; Released = $false; BoundSerial = $null }
@@ -141,8 +148,9 @@ function Backup-VnaState {
     if ([IO.File]::Exists($Path)) { throw 'Резервный файл уже существует: перезапись запрещена.' }
     $null = Assert-VnaDeviceReady $Connection
     if ($Connection.Offline) {
-        $saved = @{ profile_applied = $Connection.ProfileApplied; calibrated = $Connection.Calibrated }
-        [IO.File]::WriteAllText($Path, ($saved | ConvertTo-Json), [Text.Encoding]::UTF8)
+        $saved = @{ profile_applied = $Connection.ProfileApplied; calibrated = $Connection.Calibrated
+            traces = $Connection.Traces; trace_status = $Connection.TraceStatus }
+        [IO.File]::WriteAllText($Path, ($saved | ConvertTo-Json -Depth 6), [Text.Encoding]::UTF8)
     } else {
         Invoke-VnaComIo $Connection 'MMEMory.STORe.STYPe' set 'CDST'
         Invoke-VnaComIo $Connection 'MMEMory.STORe.STATe' set ([IO.Path]::GetFullPath($Path))
@@ -179,7 +187,13 @@ function Assert-VnaSetting {
 function Assert-VnaProfile {
     param($Connection, [switch]$Apply)
     if ($Connection.Offline) {
-        if ($Apply) { $Connection.ProfileApplied = $true; $Connection.Calibrated = $false }
+        if ($Apply) {
+            $Connection.ProfileApplied = $true; $Connection.Calibrated = $false
+            $Connection.Traces = @(foreach ($name in 'S11','S21','S12','S22') {
+                [pscustomobject]@{ Parameter = $name; Format = $(if ($name -in 'S11','S22') { 'SWR' } else { 'MLOG' })
+                    PDIVision = 1.0; RLEVel = 0.0; RPOSition = 5 }
+            })
+        }
         if (-not $Connection.ProfileApplied) { throw 'Профиль не установлен; выполните калибровку.' }
         return
     }
@@ -215,6 +229,70 @@ function Set-VnaProfile {
     }
     Assert-VnaProfile $Connection -Apply
     $Connection.ProfileApplied = $true; $Connection.Calibrated = $false
+    Set-VnaChartScales $Connection
+}
+
+function Get-VnaTraces {
+    param($Connection)
+    if ($Connection.Released) { throw 'Соединение закрыто.' }
+    $count = if ($Connection.Offline) { @($Connection.Traces).Count } else { [int](Invoke-VnaComIo $Connection 'CALCulate(1).PARameter(1).COUNt') }
+    for ($traceIndex = 1; $traceIndex -le $count; $traceIndex++) {
+        if ($Connection.Offline) {
+            $trace = $Connection.Traces[$traceIndex - 1]
+            [pscustomobject]@{ Index = $traceIndex; Parameter = $trace.Parameter; Format = $trace.Format
+                PDIVision = $trace.PDIVision; RLEVel = $trace.RLEVel; RPOSition = $trace.RPOSition
+                Correction = $Connection.TraceStatus[$trace.Parameter] }
+        } else {
+            $parameter = ([string](Invoke-VnaComIo $Connection "CALCulate(1).PARameter($traceIndex).DEFine")).Trim().ToUpperInvariant()
+            Invoke-VnaComIo $Connection "CALCulate(1).PARameter($traceIndex).SELect" call
+            $scalePath = "DISPlay.WINDow(1).TRACe($traceIndex).Y.SCALe"
+            [pscustomobject]@{ Index = $traceIndex; Parameter = $parameter
+                Format = ([string](Invoke-VnaComIo $Connection 'CALCulate(1).SELected.FORMat')).Trim().ToUpperInvariant()
+                PDIVision = (Invoke-VnaComIo $Connection "$scalePath.PDIVision")
+                RLEVel = (Invoke-VnaComIo $Connection "$scalePath.RLEVel")
+                RPOSition = (Invoke-VnaComIo $Connection "$scalePath.RPOSition")
+                Correction = ([string](Invoke-VnaComIo $Connection 'CALCulate(1).SELected.CORRection.STATus')).Trim().ToUpperInvariant() }
+        }
+    }
+}
+
+function Get-VnaChartScaleSettings {
+    param([string]$Parameter)
+    if ($Parameter -in 'S11','S22') { return [ordered]@{ PDIVision = 0.1; RLEVel = 1.0; RPOSition = 0 } }
+    if ($Parameter -in 'S21','S12') { return [ordered]@{ PDIVision = 0.3; RLEVel = 0.0; RPOSition = 10 } }
+    throw "Неизвестная трасса $Parameter. Выполните пункт 2."
+}
+
+function Assert-VnaChartScales {
+    param([object[]]$Traces)
+    if ($Traces.Count -ne 4 -or @($Traces.Parameter | Select-Object -Unique).Count -ne 4) { throw 'Требуются четыре трассы S11/S21/S12/S22; выполните пункт 2.' }
+    foreach ($trace in $Traces) {
+        $expected = Get-VnaChartScaleSettings $trace.Parameter
+        $format = if ($trace.Parameter -in 'S11','S22') { 'SWR' } else { 'MLOG' }
+        Assert-VnaSetting $trace.Format $format "формат $($trace.Parameter)"
+        foreach ($member in $expected.Keys) { Assert-VnaSetting $trace.$member $expected[$member] "шкала $($trace.Parameter).$member" }
+    }
+}
+
+function Set-VnaChartScales {
+    param($Connection)
+    $null = Assert-VnaInstrumentIdentity $Connection
+    $traces = @(Get-VnaTraces $Connection)
+    # Validate definitions and formats before changing any display setting.
+    if ($traces.Count -ne 4 -or @($traces.Parameter | Select-Object -Unique).Count -ne 4) { throw 'Требуются четыре трассы S11/S21/S12/S22; выполните пункт 2.' }
+    foreach ($trace in $traces) {
+        $null = Get-VnaChartScaleSettings $trace.Parameter
+        $format = if ($trace.Parameter -in 'S11','S22') { 'SWR' } else { 'MLOG' }
+        Assert-VnaSetting $trace.Format $format "формат $($trace.Parameter); выполните пункт 2"
+    }
+    foreach ($trace in $traces) {
+        $expected = Get-VnaChartScaleSettings $trace.Parameter
+        foreach ($member in $expected.Keys) {
+            if ($Connection.Offline) { $Connection.Traces[$trace.Index - 1].$member = $expected[$member] }
+            else { Invoke-VnaComIo $Connection "DISPlay.WINDow(1).TRACe($($trace.Index)).Y.SCALe.$member" set $expected[$member] }
+        }
+    }
+    Assert-VnaChartScales @(Get-VnaTraces $Connection)
 }
 
 function Get-VnaTraceStatus {
@@ -235,7 +313,7 @@ function Assert-VnaCorrection {
     param($Connection)
     $states = Get-VnaTraceStatus $Connection
     foreach ($parameter in 'S11','S21','S12','S22') {
-        if (-not $states.ContainsKey($parameter) -or $states[$parameter] -cne 'COR') { throw "Нет полной коррекции $parameter; выполните калибровку." }
+        if (-not $states.ContainsKey($parameter) -or $states[$parameter] -cne 'COR') { throw "Нет полной коррекции $parameter; калибровки нет — выполните пункт 2." }
     }
     if (-not $Connection.Offline) { Assert-VnaSetting (Invoke-VnaComIo $Connection 'SENSe(1).CORRection.STATe') $true 'коррекция канала' }
     return $states
@@ -327,6 +405,13 @@ function Restore-VnaState {
         Invoke-VnaComIo $Connection 'MMEMory.LOAD.STATe' set ([IO.Path]::GetFullPath($Path))
         $null = Invoke-VnaComIo $Connection 'IEEE4882.OPC'
         Invoke-VnaComIo $Connection 'INITiate(1).CONTinuous' set $true
+    } else {
+        $saved = [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) | ConvertFrom-Json
+        if ($saved.traces) { $Connection.Traces = @($saved.traces) }
+        if ($saved.trace_status) {
+            $Connection.TraceStatus = @{}
+            foreach ($property in $saved.trace_status.PSObject.Properties) { $Connection.TraceStatus[$property.Name] = $property.Value }
+        }
     }
 }
 

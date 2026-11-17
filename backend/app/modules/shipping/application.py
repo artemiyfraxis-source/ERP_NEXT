@@ -26,7 +26,7 @@ from .domain import (
     ADDRESSEE_CARD_FIELDS, ItemAddressee, item_delivery,
     HISTORY_CORRECTION_LIMITS, AcceptanceAct, ActStock, DeliveryTerms, GoodLots, FinishedGood, GoodMove, MoveContext, PackPermission, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
     ShipmentStatus, ShippingValidationError, StoredFile, UpdType, check_boxes, effective_address, packed_by_index,
-    plan_project_queue, whole_order_accepted,
+    no_upd_offered, shipping_gaps, plan_project_queue, whole_order_accepted,
 )
 
 
@@ -237,6 +237,14 @@ class ShipmentCommand:
     expected_version: int
     actor: Actor
     now: datetime
+
+
+@dataclass(frozen=True)
+class ShipCommand(ShipmentCommand):
+    """«Отгрузить»; с `missing_reason` — «Отгрузить без данных» (владелец 18.11.2026): только полный доступ, с причиной."""
+    missing_reason: str | None = None
+    allowed_missing: bool = False
+    ship_date: date | None = None
 
 
 @dataclass(frozen=True)
@@ -976,7 +984,7 @@ def edit_shipment_head(command: EditHeadCommand, uow: UnitOfWork) -> Shipment:
             updated = replace(shipment, **fields, inherited=frozenset(), delivery_snapshot_at=command.now,
                               version=shipment.version + 1)
             if not updated.receiver:
-                raise ShippingValidationError("Получатель не может быть пустым")
+                raise ShippingValidationError("Организация не может быть пустой")
         else:
             updated = shipment.edit_head(fields, _card(shipment, uow))
         if updated is shipment:
@@ -1238,10 +1246,27 @@ def update_documents(command: UpdateDocumentsCommand, uow: UnitOfWork) -> Shipme
 
 
 def mark_shipped(command: ShipmentCommand, uow: UnitOfWork) -> ShippedResult:
-    """`shipShipped_`: одна кнопка склада — дата отгрузки и сразу «Закрыта», если для этого всё есть."""
+    """`shipShipped_`: одна кнопка склада — дата отгрузки и сразу «Закрыта», если для этого всё есть.
+
+    `ShipCommand.missing_reason` — отгрузка без данных доставки: руководитель, причина обязательна, пробелы — в аудит;
+    закрывается отправка сама, когда всё внесено (`_close_if_complete`)."""
+    reason = getattr(command, "missing_reason", None)
+    ship_date = getattr(command, "ship_date", None)
+    if reason is not None:
+        if not getattr(command, "allowed_missing", False):
+            raise ShippingPermissionError(SHIP_WITHOUT_DATA_DENIED)
+        if not str(reason).strip():
+            raise ShippingValidationError("Укажите, почему отгружаете без данных")
+    if ship_date is not None and reason is None:
+        raise ShippingValidationError("Дату отгрузки задают только при «Отгрузить без данных»")
+    if ship_date is not None and ship_date > command.now.date():
+        raise ShippingValidationError("Дата отгрузки не может быть в будущем")
     with uow:
         shipment = _packing_shipment(command.shipment_id, command.expected_version, uow, validate_delivery=True)
-        result = _mark_shipped(shipment, command.actor, command.now, uow)
+        result = _mark_shipped(
+            shipment, command.actor, command.now, uow,
+            missing_reason=None if reason is None else str(reason).strip(), day=ship_date,
+        )
         uow.commit()
         return result
 
@@ -1258,8 +1283,17 @@ def _close_if_complete(shipment: Shipment, actor: Actor, now: datetime, uow: Uni
     return closed
 
 
-def _mark_shipped(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork) -> ShippedResult:
-    updated = shipment.mark_shipped(now.date())
+def _mark_shipped(
+    shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork, *,
+    missing_reason: str | None = None, day: date | None = None,
+) -> ShippedResult:
+    gaps = shipping_gaps(shipment) if missing_reason is not None else ()
+    if missing_reason is not None and no_upd_offered(shipment):
+        # Владелец 18.11.2026: полный доступ с причиной разрешает «без УПД» этой же отгрузкой, без PIN.
+        shipment = shipment.approve_no_upd(actor.name, now)
+        _audit(shipment.id, "shipping.no_upd_approved", actor, now,
+               {"via": "shipped_with_gaps", "reason": missing_reason}, uow)
+    updated = shipment.mark_shipped(day or now.date(), allow_missing=missing_reason is not None)
     uow.shipments.add(updated)
     sent: dict[UUID, Decimal] = {}
     for line in updated.lines:
@@ -1271,6 +1305,9 @@ def _mark_shipped(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWo
             raise ShippingValidationError("Позиция готовой продукции больше не существует")
         uow.goods.add(good.dispatch(quantity), _context(actor, now, shipment_id=shipment.id))
     _audit(shipment.id, "shipping.shipped", actor, now, {}, uow)
+    if missing_reason is not None:
+        _audit(shipment.id, "shipping.shipped_with_gaps", actor, now,
+               {"gaps": list(gaps), "reason": missing_reason, "ship_date": (day or now.date()).isoformat()}, uow)
     updated = _close_if_complete(updated, actor, now, uow)
     why = ""
     if updated.status == ShipmentStatus.SHIPPED:
@@ -1551,6 +1588,7 @@ def approve_no_upd(command: ApproveNoUpdCommand, uow: UnitOfWork) -> Shipment:
         return updated
 
 
+SHIP_WITHOUT_DATA_DENIED = "Отгрузить без данных может только руководитель (администратор)"
 ROLLBACK_SHIPPED_DENIED = "Откатить «Отгружено» может только руководитель (администратор)"
 
 

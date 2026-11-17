@@ -14,7 +14,7 @@ def test_migration_retains_existing_jobs_and_seeds_only_uncalibrated_profiles(tm
     path = tmp_path / "marking.db"
     config = Config(Path(__file__).parents[2] / "alembic.ini")
     config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{path.as_posix()}")
-    command.upgrade(config, "0188_instrument_labels")
+    command.upgrade(config, "0189_cutting_group_numbers")
     engine = create_engine(f"sqlite+pysqlite:///{path.as_posix()}")
     try:
         seed(engine, rows=2)
@@ -25,7 +25,7 @@ def test_migration_retains_existing_jobs_and_seeds_only_uncalibrated_profiles(tm
         before = db.execute("SELECT * FROM warehouse_label_jobs ORDER BY id").fetchall()
         tables = [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
         counts = {table: db.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0] for table in tables}
-    command.upgrade(config, "0189_godex_marking")
+    command.upgrade(config, "0190_godex_marking")
     with sqlite3.connect(path) as db:
         assert db.execute(f"SELECT {','.join(columns)} FROM warehouse_label_jobs ORDER BY id").fetchall() == before
         assert {table: db.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0] for table in tables} == counts

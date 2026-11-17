@@ -859,7 +859,7 @@ class Shipment:
         return cls(
             id=id or uuid4(), number=_text(number, "Номер отгрузки"), version=1,
             created_at=created_at, status=ShipmentStatus.NEW,
-            customer=str(customer or "").strip(), receiver=_text(receiver, "Получатель"),
+            customer=str(customer or "").strip(), receiver=_text(receiver, "Организация"),
             # Адрес может быть пуст: упаковывает кладовщик, адрес и телефон вносит менеджер позже (владелец 28.10.2026);
             # без него отправка не уедет — `shipping_gaps`.
             shipping_point=str(shipping_point or "").strip(),
@@ -972,7 +972,7 @@ class Shipment:
         if edited == self:
             return self
         if not edited.receiver:
-            raise ShippingValidationError("Получатель не может быть пустым")
+            raise ShippingValidationError("Организация не может быть пустой")
         return replace(edited, version=self.version + 1)
 
     def follow(self, card: ProjectAddressee | None) -> Shipment:
@@ -1009,14 +1009,24 @@ class Shipment:
             return self
         return replace(self, **changed, inherited=self.inherited - changed.keys(), version=self.version + 1)
 
-    def mark_shipped(self, day: date) -> Shipment:
+    def mark_shipped(self, day: date, *, allow_missing: bool = False) -> Shipment:
         """`shipShipped_`: груз уехал из любого активного статуса; гейт — `shipGateMiss_('Отгружена')`:
-        набрана хоть одна позиция и все данные отправки на месте (`shipping_gaps`)."""
+        набрана хоть одна позиция и все данные отправки на месте (`shipping_gaps`).
+
+        `allow_missing` (владелец 18.11.2026, «отгрузить без данных»): пробелы данных доставки не держат; контроль
+        «Без УПД» остаётся — если самого УПД нет, нужно разрешение по PIN."""
         if self.status not in {ShipmentStatus.NEW, ShipmentStatus.ASSEMBLED, ShipmentStatus.PACKED}:
             raise ShippingValidationError("Отгрузить можно только активную заявку")
         if not any(line.picked > 0 for line in self.lines):
             raise ShippingValidationError("Нельзя отгрузить: ни одна позиция не набрана")
-        gaps = shipping_gaps(self)
+        if allow_missing:
+            if no_upd_offered(self):
+                raise ShippingValidationError(
+                    "Нельзя отгрузить: УПД нет — нужно разрешение «Без УПД…» по PIN, даже при отгрузке без данных"
+                )
+            gaps = ()
+        else:
+            gaps = shipping_gaps(self)
         if gaps:
             raise ShippingValidationError("Нельзя отгрузить: не хватает — " + ", ".join(gaps))
         return replace(self, status=ShipmentStatus.SHIPPED, shipped_at=self.shipped_at or day, version=self.version + 1)
@@ -1153,7 +1163,7 @@ GAP_UPD_NUMBER = "upd_number"
 GAP_TRACK = "track_number"
 NO_UPD_APPROVAL_GAP = "разрешение на отгрузку без УПД"
 GAP_LABELS = {
-    GAP_TERMS: "условия доставки", GAP_RECEIVER: "получатель", GAP_PHONE: "телефон получателя",
+    GAP_TERMS: "условия доставки", GAP_RECEIVER: "организация", GAP_PHONE: "телефон получателя",
     GAP_CARRIER: "перевозчик", GAP_ADDRESS: "адрес доставки", GAP_UPD_TYPE: "тип УПД",
     GAP_NO_UPD_APPROVAL: NO_UPD_APPROVAL_GAP, GAP_UPD_FILE: "файл УПД", GAP_UPD_NUMBER: "№ УПД",
     GAP_TRACK: "трек-номер",
@@ -1177,7 +1187,7 @@ def dispatch_gap_codes(
     upd_type: UpdType | None, upd_number: str, upd_url: str, no_upd_approval: bool,
 ) -> tuple[str, ...]:
     """Единые правила данных отправки (владелец 28.10 и 06.11.2026) — что вносит менеджер: условия доставки,
-    получатель, телефон; не самовывозу — адрес, доставке ТК — ещё перевозчик; УПД — тип, у бумажной файл, у ЭДО
+    организация, телефон; не самовывозу — адрес, доставке ТК — ещё перевозчик; УПД — тип, у бумажной файл, у ЭДО
     и бумажной №. «Без УПД» — пробел «разрешение», если `no_upd_approval` (отправка; карточке проекта его не дают)."""
     gaps: list[str] = []
     pickup = is_pickup(terms, carrier)

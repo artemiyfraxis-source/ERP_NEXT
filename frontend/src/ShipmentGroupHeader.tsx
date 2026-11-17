@@ -21,7 +21,8 @@ export function orderShipmentRows<T extends GroupRow>(rows: T[]): T[] {
       return (headA && headB ? compareShipments(headA, headB) : headA ? -1 : headB ? 1 : 0)
         || a.project.localeCompare(b.project, "ru", { numeric: true });
     }
-    return a.shipment && b.shipment ? compareShipments(a.shipment, b.shipment) : a.shipment ? -1 : b.shipment ? 1 : 0;
+    // Unassigned KB belong directly below the project heading, before its shipment branches.
+    return a.shipment && b.shipment ? compareShipments(a.shipment, b.shipment) : a.shipment ? 1 : b.shipment ? -1 : 0;
   });
 }
 

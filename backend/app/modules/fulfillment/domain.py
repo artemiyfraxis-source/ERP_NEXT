@@ -667,6 +667,41 @@ class FulfillmentRequest:
             version=self.version + 1,
         )
 
+    def reopen(self, bindings: dict[UUID, tuple[LotSnapshot, Decimal]]) -> FulfillmentRequest:
+        """Back from «Отменена» (owner 17.11.2026: kits a manual stage move cancelled are needed again). `bindings` —
+        line id → the lot and quantity the line held right before the cancel, for the lines whose lot still has that
+        much free; the caller moves the lot's РЕЗЕРВ. A bound line holds its whole need (a bind made it so), never
+        part of it; every other line waits. «Недоукомплектован» if the kit was ever in work, else «Новая» — the picker
+        still presses «Укомплектован»; ЗАКРЫТА is cleared, the other stage dates stay, НЕДОБОР is read from the
+        lines again."""
+        if self.status is not FulfillmentStatus.CANCELLED:
+            raise FulfillmentValidationError(f"Вернуть можно только отменённую заявку, а не «{self.status.value}»")
+        if any(line.issued > 0 for line in self.lines):
+            raise FulfillmentValidationError("В заявке есть выданные позиции — её не возвращают")
+        known = {line.id for line in self.lines}
+        unknown = set(bindings) - known
+        if unknown:
+            raise FulfillmentValidationError("Позиция заявки не найдена")
+        lines: list[FulfillmentLine] = []
+        for line in self.lines:
+            binding = bindings.get(line.id)
+            if binding is None:
+                lines.append(line)
+                continue
+            lot, quantity = binding
+            if line.off_book or line.lot is not None or line.reserved != 0:
+                raise FulfillmentValidationError(f"«{line.name}»: у позиции уже есть отметка или партия")
+            if Decimal(quantity) != line.requirement:
+                raise FulfillmentValidationError(
+                    f"«{line.name}»: резерв {quantity} не равен потребности позиции {line.requirement}"
+                )
+            lines.append(replace(line, lot=lot, reserved=line.requirement, absent_at=None, absent_by=""))
+        status = FulfillmentStatus.UNDERFILLED if self.at_work is not None else FulfillmentStatus.NEW
+        return replace(
+            self, status=status, lines=tuple(lines), handout_location=None, at_closed=None, shortfall_note=None,
+            version=self.version + 1,
+        )
+
     def _require_editable(self) -> None:
         if self.status in {
             FulfillmentStatus.READY,

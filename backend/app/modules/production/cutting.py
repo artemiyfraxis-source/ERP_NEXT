@@ -67,6 +67,16 @@ class CuttingRecipe:
     row: dict
 
 
+def cutting_project_label(project: str, document: Mapping | None = None) -> str:
+    """Display the issued spelling, never reconstruct it from the normalized recipe key."""
+    document = document or {}
+    for token in ((document.get("kit") or {}).get("project"),
+                  (document.get("build_config") or {}).get("projectNo"), project):
+        if str(token or "").strip():
+            return str(token).strip()
+    return ""
+
+
 def cutting_recipe(project: str, site: str, document: Mapping | None,
                    operations: Sequence[ProductionOperation]) -> tuple[CuttingRecipe | None, str]:
     """Only the first issued PF, without incoming edges, consisting exclusively of preparation.

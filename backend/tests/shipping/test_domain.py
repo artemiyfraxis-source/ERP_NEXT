@@ -37,6 +37,11 @@ def test_partial_pick_keeps_requested_and_picked_separate():
     assert taken == {item.id: Decimal("6")}
 
 
+def test_empty_receiver_is_reported_as_organization():
+    with pytest.raises(ShippingValidationError, match="Организация"):
+        shipment(good(), receiver=" ")
+
+
 def test_carrier_close_requires_upd_file_number_date_and_track():
     item = good().accept(Decimal("10"), date(2026, 9, 22), "ГП.26.0000001")
     picked, _ = shipment(item, terms=DeliveryTerms.CARRIER, upd_type=UpdType.PAPER, upd_number="").pick({item.id: item.remaining}, {item.id: item.grn or ""})
@@ -371,7 +376,7 @@ def test_pickup_needs_terms_receiver_phone_and_upd_but_neither_address_nor_track
     assert _gaps(phone="") == ("телефон получателя",)
     assert _gaps(terms=None) == ("условия доставки",)
     item = good()
-    assert shipping_gaps(replace(shipment(item), receiver=" ")) == ("получатель",)
+    assert shipping_gaps(replace(shipment(item), receiver=" ")) == ("организация",)
 
 
 def test_carrier_delivery_adds_carrier_address_and_track_and_the_track_is_the_storekeepers_part():

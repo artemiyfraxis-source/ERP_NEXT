@@ -3,9 +3,13 @@
 
 Relative to the stage a КБ is moved to:
 
-* to «В работе» or higher — the КБ's kit requests (main and «Довыдача») still at «Новая» / «Недоукомплектован» are
-  cancelled: their lines give РЕЗЕРВ back to the lots; the КБ's active techcard reserves are released too;
-* to «Готово» or higher (production over) — the КБ's shop tasks at «Запущено» with no work session open are cancelled.
+* to «В работе» — nothing kit-related closes: the kit requests and the КБ's techcard reserves stay (owner 17.11.2026:
+  the kit is what the work is done with — launching 20 of 300 pcs must not cancel it; until then the 12.10 rule
+  cancelled them here and lost the storekeeper's picking, see `fulfillment_reopen`);
+* to «Готово» or higher (production over) — the КБ's kit requests (main and «Довыдача») still at «Новая» /
+  «Недоукомплектован» are cancelled ONLY when nothing is picked on them (no line with a lot, a reserve, «есть, но не
+  заведено» or an issue); a kit with anything picked stays, with the reason, for a person to cancel by hand. The
+  КБ's active techcard reserves are released and its shop tasks at «Запущено» with no work session open are cancelled.
 
 Picked kits («Укомплектован», «Готов к выдаче»), issued kits, tasks someone is working on and finished goods stay —
 the preview lists them with the reason. Stock quantities never move: only reserve fields are released. A backward
@@ -78,6 +82,10 @@ WORK_STAGE = "В работе"
 MADE_STAGE = "Готово"
 CASCADE_CONFLICT = "Этапы проекта или связанные задания изменились — обновите и повторите"
 BACK_NOTE = "Назад ничего не открывается"
+# Why an open kit request stays (owner 17.11.2026): below «Готово» the kit is still needed for the work; from «Готово»
+# a kit with anything picked is not thrown away by a stage pick.
+KIT_NEEDED = f"Этап ниже «{MADE_STAGE}» — комплект нужен для работы, заявка остаётся."
+KIT_PICKED = "В заявке уже набрано — отмените вручную, если не нужна."
 
 CLOSE_TASK = "task"
 CLOSE_KIT_REQUEST = "kit_request"
@@ -221,6 +229,13 @@ def _reserve_label(reserve: KitReserve) -> str:
     return f"Резерв техкарты {reserve.article}" + (f" · {where}" if where else "")
 
 
+def kit_picked(request: FulfillmentRequest) -> bool:
+    """Anything picked on the kit: a line with a lot, a reserve, «есть, но не заведено» or an issue."""
+    return any(
+        line.lot is not None or line.reserved > 0 or line.off_book or line.issued > 0 for line in request.lines
+    )
+
+
 def plan_cascade(project: str, plan: StagePlan, facts: CascadeFacts, reason: str = "") -> StageCascade:
     """What the planned move closes and keeps, per КБ moved forward. Pure: the preview and the apply share it."""
     if plan.direction in (STAGE_BACK, STAGE_AUTO):
@@ -243,7 +258,6 @@ def plan_cascade(project: str, plan: StagePlan, facts: CascadeFacts, reason: str
 
         close: list[CloseItem] = []
         keep: list[KeepItem] = []
-        at_work = target >= KIT_STAGES.index(WORK_STAGE)
         at_made = target >= KIT_STAGES.index(MADE_STAGE)
         for request in facts.requests:
             if request.status in _CLOSED_REQUESTS or not owns(project_from_purpose(request.purpose), kb_of(request.purpose)):
@@ -255,22 +269,23 @@ def plan_cascade(project: str, plan: StagePlan, facts: CascadeFacts, reason: str
                 keep.append(KeepItem(CLOSE_KIT_REQUEST, label, "Комплект собран и лежит в зоне выдачи — остаётся, не мешает переносу."))
             elif request.status is FulfillmentStatus.COMPLETE:
                 keep.append(KeepItem(CLOSE_KIT_REQUEST, label, "Комплект собран («Укомплектован») — остаётся, не мешает переносу."))
-            elif request.status in _OPEN_REQUESTS and at_work:
-                positions = sum(1 for line in request.lines if line.lot is not None and line.reserved > 0)
-                close.append(CloseItem(
-                    CLOSE_KIT_REQUEST, request.id, request.version,
-                    label + (f" · снимается резерв с {positions} поз." if positions else ""),
-                    Decimal(len(request.lines)), "поз.",
-                ))
+            elif request.status in _OPEN_REQUESTS and not at_made:
+                keep.append(KeepItem(CLOSE_KIT_REQUEST, label, KIT_NEEDED))
+            elif request.status in _OPEN_REQUESTS and kit_picked(request):
+                keep.append(KeepItem(CLOSE_KIT_REQUEST, label, KIT_PICKED))
             elif request.status in _OPEN_REQUESTS:
-                keep.append(KeepItem(CLOSE_KIT_REQUEST, label, f"Этап ниже «{WORK_STAGE}» — заявка остаётся."))
-        if at_work:
-            for reserve in facts.reserves:
-                if reserve.active and owns(reserve.project, reserve.item_index):
-                    close.append(CloseItem(
-                        CLOSE_RESERVE, reserve.id, reserve.version, _reserve_label(reserve), reserve.quantity,
-                        reserve.unit,
-                    ))
+                close.append(CloseItem(CLOSE_KIT_REQUEST, request.id, request.version, label,
+                                       Decimal(len(request.lines)), "поз."))
+        # Techcard reserves hold the stock the kit is still to take: kept while the kit is needed (below «Готово»).
+        for reserve in facts.reserves:
+            if not reserve.active or not owns(reserve.project, reserve.item_index):
+                continue
+            if not at_made:
+                keep.append(KeepItem(CLOSE_RESERVE, _reserve_label(reserve), KIT_NEEDED))
+            else:
+                close.append(CloseItem(
+                    CLOSE_RESERVE, reserve.id, reserve.version, _reserve_label(reserve), reserve.quantity, reserve.unit,
+                ))
         for task in facts.tasks:
             if task.status is not ProductionStatus.RUNNING or not owns(task.project, task.item):
                 continue

@@ -153,7 +153,7 @@ def test_dispatch_gaps_name_what_is_missing():
     paper = ProjectAddressee(project=PROJECT, receiver="П", shipping_point="М", phone="1", terms=DeliveryTerms.CARRIER,
                              carrier="ПЭК", upd_type=UpdType.PAPER, upd_number="125")
 
-    assert empty.dispatch_gaps() == ("условия доставки", "получатель", "телефон получателя", "адрес доставки", "тип УПД")
+    assert empty.dispatch_gaps() == ("условия доставки", "организация", "телефон получателя", "адрес доставки", "тип УПД")
     assert empty.dispatch_gap_codes() == ("terms", "receiver", "phone", "shipping_point", "upd_type")
     assert paper.dispatch_gaps() == ("файл УПД",)
     assert paper.edit({"upd_url": " /api/shipping/files/1 "}).dispatch_gaps() == ()

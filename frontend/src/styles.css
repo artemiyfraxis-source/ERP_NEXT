@@ -787,6 +787,9 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .instrument-registry .grid td.key { font-weight: 500; font-variant-numeric: tabular-nums slashed-zero; }
 .instrument-window { padding: 16px; margin: 0; min-width: 0; }
 .instrument-window > .page-head { justify-content: space-between; }
+.instrument-passport { display: inline-flex; align-items: center; text-decoration: none; white-space: nowrap; }
+.instrument-passport:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+@media (pointer: coarse) { .instrument-passport { min-height: 40px; } }
 .instrument-window .instrument-verification-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .instrument-window h3 { margin: 16px 0 8px; font-size: 15px; font-weight: 500; }
 .instrument-window h4 { margin: 8px 0; font-size: 13px; font-weight: 500; }
@@ -1623,6 +1626,8 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .data-table tr.detail > td > .detail-body { position: sticky; left: 0; box-sizing: border-box; max-width: calc(var(--detail-width, 100%) - 24px); }
 .data-table tr.group-row td { background: var(--accent); font-size: 12px; }
 .data-table tr.group-row strong { display: inline; }
+.data-table .table-wrap tr.dt-parent-row > td { white-space: nowrap; font-weight: 400; }
+.data-table .table-wrap tr.dt-group-cells > td { white-space: nowrap; font-weight: 400; vertical-align: middle; }
 .data-table tr.group-row input[type="checkbox"] { width: auto; display: inline-block; margin: 0 8px 0 2px; padding: 0; vertical-align: middle; }
 .intake-page .intake-auto-permission { display: block; max-width: 240px; white-space: normal; font-size: 12px; }
 .intake-page td[data-label="Дата приёмки"] { font-variant-numeric: tabular-nums; }

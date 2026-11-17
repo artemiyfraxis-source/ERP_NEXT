@@ -734,12 +734,16 @@ def test_stage_apply_with_a_stale_preview_token_is_409_and_writes_nothing(kitset
         "kb": "", "kind": "stage", "value": "В работе", "preview_token": preview["preview_token"],
     })
     assert applied.status_code == 200, applied.text
-    assert applied.json()["change"]["totals"]["kit_requests"] == 2
+    # «В работе» комплекты не отменяет (владелец 17.11): заявки и резерв партии — как были.
+    assert applied.json()["change"]["totals"]["kit_requests"] == 0
+    assert _side_effects(lot)[:2] == before[:2]
     # «Производственный план» — тот же ответ.
     app.dependency_overrides[authenticated_principal] = _principal({"projects": "edit", "production": "edit"})
     plan_preview = client.get("/api/production/plan/stage-preview", params={"project": "708К.4", "value": "ОТК"})
     assert plan_preview.status_code == 200, plan_preview.text
-    assert plan_preview.json()["preview_token"] and plan_preview.json()["kbs"][0]["close"] == []
+    # С «Готово» и выше незанятая заявка (ничего не набрано) закрывается.
+    assert plan_preview.json()["preview_token"]
+    assert [item["kind"] for item in plan_preview.json()["kbs"][0]["close"]] == ["kit_request"]
 
 
 def test_the_old_stage_word_is_refused_on_every_write_route(kitset_api):

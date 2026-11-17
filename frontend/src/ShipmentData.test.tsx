@@ -9,7 +9,7 @@ vi.mock("./ScanAgent", () => ({
 }));
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
-const source = { receiver: "Получатель", phone: "+7 900", shipping_point: "Москва", carrier: "СДЭК", terms: "ДОСТАВКА ТК", upd_type: "ЭДО", upd_number: "123",
+const source = { receiver: "Организация", phone: "+7 900", shipping_point: "Москва", carrier: "СДЭК", terms: "ДОСТАВКА ТК", upd_type: "ЭДО", upd_number: "123",
   missing_data: [], missing_ship: ["трек-номер"], ready_for_track: true, ready_to_ship: false, track_number: "" };
 
 describe("Readiness", () => {
@@ -17,7 +17,7 @@ describe("Readiness", () => {
     render(<Readiness source={source} gaps={["телефон получателя", "№ УПД"]} />);
     expect(screen.getByText("телефон получателя, № УПД")).toBeInTheDocument();
     expect(screen.getAllByText("Ждёт данных менеджера")).toHaveLength(1);
-    expect(screen.queryByText("Получатель")).not.toBeInTheDocument();
+    expect(screen.queryByText("Организация")).not.toBeInTheDocument();
   });
   it("does not ask our courier for a track when server readiness is true", () => {
     render(<Readiness source={{ ...source, carrier: "Курьер (наш)", track_required: false, ready_to_ship: true, missing_ship: [] }} gaps={[]} withTrack />);
@@ -77,7 +77,7 @@ describe("ShipmentDataWindow read-only mode", () => {
     const onSaved = vi.fn();
     render(<ShipmentDataWindow shipment={shipment} stage="packed" canEdit={false} close={() => undefined} onSaved={onSaved} />);
 
-    for (const label of ["Адрес доставки", "Получатель", "Телефон получателя", "Комментарий для склада", "№ УПД"]) {
+    for (const label of ["Организация", "Получатель", "Телефон", "Адрес доставки", "Комментарий для склада", "№ УПД"]) {
       expect(screen.getByLabelText(label)).toHaveAttribute("readonly");
     }
     for (const label of ["Тип доставки", "Перевозчик", "Тип УПД", "Дата УПД"]) {
@@ -104,15 +104,24 @@ describe("ShipmentDataWindow read-only mode", () => {
     fireEvent.click(screen.getByRole("button", { name: "Взять данные КБ" }));
     await screen.findByText("Доставка обновлена. Перепечатайте этикетки и документы.");
     expect(head).toHaveBeenCalledWith("s1", { version: 4, refresh_delivery: true });
-    expect(screen.getByLabelText("Получатель")).toHaveValue("Новый получатель");
+    expect(screen.getByLabelText("Организация")).toHaveValue("Новый получатель");
     expect(saved).toHaveBeenCalled();
   });
 
   const historical = { ...shipment, status: "Закрыта", shipped_at: "2026-10-25", track_number: "TRK-42" };
+  it("saves only the edited recipient in the shipment head", async () => {
+    const head = vi.spyOn(shippingApi, "head").mockResolvedValue({ shipment: { ...shipment, contact: "Петров", version: 5 } });
+    const close = vi.fn();
+    render(<ShipmentDataWindow shipment={shipment} stage="packed" close={close} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Получатель"), { target: { value: "Петров" } });
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+    await waitFor(() => expect(close).toHaveBeenCalled());
+    expect(head).toHaveBeenCalledWith(shipment.id, { version: 4, contact: "Петров" });
+  });
   function openCorrection() {
     fireEvent.click(screen.getByRole("button", { name: "Исправить историю" }));
-    fireEvent.click(screen.getByLabelText("Исправить Телефон получателя"));
-    fireEvent.click(screen.getByRole("button", { name: "Очистить Телефон получателя" }));
+    fireEvent.click(screen.getByLabelText("Исправить Телефон"));
+    fireEvent.click(screen.getByRole("button", { name: "Очистить Телефон" }));
     fireEvent.change(screen.getByLabelText("Причина исправления"), { target: { value: "Ошибка переноса" } });
     fireEvent.change(screen.getByLabelText("Источник правильных данных"), { target: { value: "Накладная 42" } });
     fireEvent.click(screen.getByRole("button", { name: "Проверить исправление" }));
@@ -156,8 +165,8 @@ describe("ShipmentDataWindow read-only mode", () => {
     expect(correction).toHaveBeenCalledTimes(1);
     expect(reload).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Загрузить актуальную отправку" }));
-    await waitFor(() => expect(screen.getByLabelText("Новое значение: Телефон получателя")).toHaveValue("Другой телефон"));
-    expect(screen.getByLabelText("Исправить Телефон получателя")).not.toBeChecked();
+    await waitFor(() => expect(screen.getByLabelText("Новое значение: Телефон")).toHaveValue("Другой телефон"));
+    expect(screen.getByLabelText("Исправить Телефон")).not.toBeChecked();
     expect(screen.queryByRole("button", { name: "Записать исправление" })).not.toBeInTheDocument();
     expect(correction).toHaveBeenCalledTimes(1);
   });
@@ -187,8 +196,8 @@ describe("ShipmentDataWindow read-only mode", () => {
     fireEvent.click(screen.getByRole("button", { name: "Исправить историю" }));
     fireEvent.submit(screen.getByRole("dialog").querySelector("form")!);
     expect(screen.getByRole("alert")).toHaveTextContent("Выберите поля и внесите исправления");
-    fireEvent.click(screen.getByLabelText("Исправить Телефон получателя"));
-    fireEvent.change(screen.getByLabelText("Новое значение: Телефон получателя"), { target: { value: "new" } });
+    fireEvent.click(screen.getByLabelText("Исправить Телефон"));
+    fireEvent.change(screen.getByLabelText("Новое значение: Телефон"), { target: { value: "new" } });
     fireEvent.change(screen.getByLabelText("Причина исправления"), { target: { value: " " } });
     fireEvent.submit(screen.getByRole("dialog").querySelector("form")!);
     expect(screen.getByRole("alert")).toHaveTextContent("Укажите причину");

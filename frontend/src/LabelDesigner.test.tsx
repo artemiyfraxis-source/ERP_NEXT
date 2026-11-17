@@ -50,6 +50,27 @@ const previews = () => calls.filter((call) => call.path.endsWith("/preview"));
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
+it("offers characterization fields and stores their placeholders without breaking old fields", async () => {
+  const fields = [
+    { key: "inventory_number", label: "Инвентарный номер" },
+    { key: "name", label: "Наименование" },
+    { key: "connector_line", label: "Разъёмы" },
+    { key: "parameters_line", label: "КСВН и диапазон" },
+    { key: "measurement_date", label: "Дата замера" },
+  ];
+  stage({ "GET /api/stock/labels/templates/instrument": () => json({ ...answer("instrument"), fields,
+    formats: { "58x30": { ...DEFAULT, template: { elements: [{ ...GRN, field: "inventory_number" }] } },
+      "58x40": { ...DEFAULT, template: { elements: [{ ...GRN, field: "name" }] } }, "100x50": DEFAULT } }) });
+  render(<LabelDesigner initialKind="instrument" usedFormat="58x40" />);
+  await screen.findByRole("button", { name: "Поле: Наименование" });
+  const select = screen.getByLabelText("Добавить поле");
+  for (const field of fields.slice(2)) expect(within(select).getByRole("option", { name: field.label })).toHaveValue(field.key);
+  fireEvent.change(select, { target: { value: "parameters_line" } });
+  expect(screen.getByRole("button", { name: "Поле: КСВН и диапазон" })).toBeInTheDocument();
+  expect(textStored("{Разъёмы} · {Дата замера} · {Наименование}", fields)).toBe("{connector_line} · {measurement_date} · {name}");
+  expect(textShown("{connector_line} · {parameters_line}", fields)).toBe("{Разъёмы} · {КСВН и диапазон}");
+});
+
 async function designer(props: Partial<Parameters<typeof LabelDesigner>[0]> = {}) {
   stage();
   render(<LabelDesigner initialKind="lot" usedFormat="58x40" {...props} />);

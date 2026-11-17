@@ -15,6 +15,7 @@ Rules the designer relies on:
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw
 
@@ -57,10 +58,18 @@ def _lines_fit(lines: list[str], limit: int, width: int, face) -> bool:
     return len(lines) <= limit and all(text_width(line, face) <= width for line in lines)
 
 
-def _set_text(text: str, element: Element, width: int, height: int, dots_per_mm: float):
+def _set_text(text: str, element: Element, width: int, height: int, dots_per_mm: float, keep_spaces: bool = False):
     """(lines, size, overflow): the text broken into the box's lines at the size it gets."""
     name = _face(element)
     base = font_dots(element.font_mm, dots_per_mm)
+    if keep_spaces:
+        # One line exactly as given; shrink (down to the floor) until it is as wide as the box, never re-wrapped.
+        size = base
+        floor = max(MIN_FONT_DOTS, math.ceil(base * SHRINK_FLOOR))
+        while size > floor and (text_width(text, font(name, size)) > width or height < line_metrics(size)[1]):
+            size -= 1
+        too_wide = text_width(text, font(name, size)) > width or height < line_metrics(size)[1]
+        return [text], size, too_wide
 
     def capacity(size: int) -> int:
         return max(1, min(element.max_lines, height // line_metrics(size)[1]))
@@ -87,6 +96,26 @@ def _set_text(text: str, element: Element, width: int, height: int, dots_per_mm:
                 high = middle - 1
     face = font(name, size)
     lines = wrap_text(text, width, face, capacity(size))
+    if element.field == "connector_line":
+        # A short connector description may wrap or shrink, but a truncated word is not a connector.
+        words, lines = text.split(), []
+        while words and len(lines) < capacity(size):
+            line = ""
+            while words and text_width((line + " " + words[0]).strip(), face) <= width:
+                line = (line + " " + words.pop(0)).strip()
+            if not line:
+                break
+            lines.append(line)
+        if words:
+            last = lines.pop() if lines else ""
+            while last and text_width(last + "…", face) > width:
+                last = last.rsplit(" ", 1)[0] if " " in last else ""
+            lines.append(last + "…")
+        ends = text.split(" – ")
+        if len(lines) > 1 and len(ends) == 2 and capacity(size) >= 2:
+            paired = [ends[0] + " –", ends[1]]
+            if all(text_width(line, face) <= width for line in paired):
+                lines = paired
     pitch = line_metrics(size)[1]
     overflow = len(lines) * pitch > height or any(text_width(line, face) > width for line in lines)
     return lines, size, overflow
@@ -129,7 +158,11 @@ def _draw_text(canvas: _Canvas, element: Element, text: str, texts: list[str], o
     width, height = x1 - x0, y1 - y0
     if not text.strip() or width <= 0 or height <= 0:
         return
-    lines, size, cut = _set_text(" ".join(text.split()), element, width, height, canvas.dots_per_mm)
+    if element.mono and element.max_lines == 1 and "  " in text.rstrip():
+        # A monospace table row: its padding IS the column alignment — never collapse or re-wrap it.
+        lines, size, cut = _set_text(text.rstrip(), element, width, height, canvas.dots_per_mm, keep_spaces=True)
+    else:
+        lines, size, cut = _set_text(" ".join(text.split()), element, width, height, canvas.dots_per_mm)
     if cut:
         overflow.append(element.id)
     face = font(_face(element), size)
@@ -162,6 +195,26 @@ def _draw_qr(canvas: _Canvas, element: Element, code: str) -> tuple[int, int]:
                 x, y = left + column * module, upper + row * module
                 canvas.fill(x, y, x + module, y + module)
     return module, size
+
+
+LOGO_FILE = Path(__file__).with_name("assets") / "fraxis-logo.png"
+
+
+def _draw_logo(canvas: _Canvas, element: Element) -> None:
+    """The Fraxis wordmark (vector trace rasterised once at high resolution), scaled to fit the box keeping its
+    proportions and placed by `align`; black and white only, no dither (smoothed edges become a dot or not)."""
+    x0, y0, x1, y1 = canvas.box(element)
+    width, height = x1 - x0, y1 - y0
+    if width < 8 or height < 3:
+        return
+    with Image.open(LOGO_FILE) as source:
+        logo = source.convert("L")
+    scale = min(width / logo.width, height / logo.height)
+    size = (max(1, round(logo.width * scale)), max(1, round(logo.height * scale)))
+    piece = Image.new("L", (width, height), 255)
+    scaled = logo.resize(size, Image.LANCZOS).point(lambda value: 0 if value < 128 else 255)
+    piece.paste(scaled, (_offset(element.align, width, size[0]), _offset("center", height, size[1])))
+    canvas.paste_darker(piece, x0, y0)
 
 
 def _draw_code128(canvas: _Canvas, element: Element, code: str) -> int | None:
@@ -220,6 +273,8 @@ def render(template: LabelTemplate, content: LabelContent, settings: PrintSettin
                 skipped.append(element.id)
             elif bar_module_dots is None:
                 bar_module_dots = module
+        elif element.kind == "logo":
+            _draw_logo(canvas, element)
         else:
             _draw_rule(canvas, element)
     # Threshold in the middle: the label is black and white, the smoothed edges of letters become a dot or not.

@@ -38,10 +38,14 @@ def test_machine_strips_both_ends_and_preserves_side_ownership(fixture):
     text = " ".join(step["text"] for step in ops[0]["card"]["steps"])
     if fixture["kb"] == "КБ3":
         assert ops[0]["fields"]["coax"]["dimensionOrder"] == "HFM"
-        assert "MA_AMV003" in text and "после полной разделки" in text
+        assert "MA_AMV003" in ops[0]["fields"]["coax"]["stripProgram"]["source"]
+        assert "MA_AMV003" not in text and "после полной разделки" in text
     else:
         assert ops[0]["fields"]["coax"]["dimensionOrder"] == "Amphenol"
-        assert "размер 1,0 мм — участок открытого диэлектрика" in text and "13,9 ±0,2 мм" in text
+        assert "1,0 мм — участок открытого диэлектрика" in text and "13,9 ±0,2 мм" in text
+    assert "Источник:" not in text and "Длина готового изделия" not in text
+    for side in ("А", "В"):
+        assert sum(step["text"].startswith(f"Сторона {side}:") for step in ops[0]["card"]["steps"]) == 1
     assert not any(op["type"] == "coaxStrip" for op in ops)
     route = doc["route"]
     assert [block["name"] for block in route["blocks"]][:-1] == [

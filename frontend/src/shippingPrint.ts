@@ -154,7 +154,7 @@ function deliveryNoteHtml(form: DeliveryNoteForm, sheet: number): string {
     `<tr><td class="grey lbl">${label("Условия поставки:", "Delivery terms")}</td>${wide(form.terms, "terms")}</tr>` +
     `<tr><td class="grey lbl">${label("Адрес доставки изделий:", "Shipping address")}</td>${wide(form.shipping_address, "shipping-address")}</tr>` +
     `<tr><td class="grey lbl">Время работы:</td>${wide(form.hours, "hours")}</tr>` +
-    `<tr><td class="grey lbl">${label("Контактное лицо заказчика:", "Customer contact person")}</td><td class="contact">${escapeHtml(form.contact)}</td>` +
+    `<tr><td class="grey lbl">${label("Получатель:", "Recipient")}</td><td class="contact">${escapeHtml(form.contact)}</td>` +
     `<td class="grey lbl">${label("Телефон:", "Phone")}</td><td class="phone">${escapeHtml(form.phone)}</td></tr>` +
     `<tr><td class="grey lbl">${label("Наименование перевозчика/ТК:", "Name shipping company")}</td><td class="carrier">${escapeHtml(form.carrier)}</td>` +
     `<td class="grey lbl">${label("Номер ТТН/перевозки:", "Shipment number")}</td><td class="track">${escapeHtml(form.track)}</td></tr>` +
@@ -199,6 +199,9 @@ export interface BoxLabel {
   shipper: string;
   consignee: string;
   address: string;
+  /** Человек, которому передать груз, и его телефон; пусто — строки нет. */
+  contact?: string;
+  phone?: string;
   project: string;
   pl_number: string;
   place: string;
@@ -241,8 +244,10 @@ function labelHtml(label: BoxLabel): string {
     `<tr><td>${escapeHtml(item.item_index)}</td><td class="qty">${escapeHtml(item.quantity)}</td><td class="unit">${escapeHtml(item.unit)}</td></tr>`).join("");
   return `<section class="label" aria-label="${escapeHtml(label.place)}">` +
     `<div class="shipper"><span class="caption">Отправитель</span><br>${escapeHtml(label.shipper)}</div>` +
-    `<div><span class="caption">Получатель</span><div class="consignee">${escapeHtml(label.consignee)}</div>` +
+    `<div><span class="caption">Организация</span><div class="consignee">${escapeHtml(label.consignee)}</div>` +
     `<div class="address">${escapeHtml(label.address)}</div></div>` +
+    (label.contact || label.phone ? `<div class="recipient"><span class="caption">Получатель</span><br>` +
+      `${escapeHtml([label.contact, label.phone].filter(Boolean).join(" · "))}</div>` : "") +
     `<div class="refs"><div><span class="caption">Проект</span><strong>${escapeHtml(label.project)}</strong></div>` +
     `<div><span class="caption">Упаковочная ведомость</span><strong>${escapeHtml(label.pl_number)}</strong></div></div>` +
     `<div class="place">${escapeHtml(label.place)}</div>` +

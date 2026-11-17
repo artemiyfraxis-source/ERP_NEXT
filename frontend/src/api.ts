@@ -1864,7 +1864,7 @@ export interface ProjectAddressee {
   upd_date?: string | null;
 }
 
-export const DELIVERY_FIELDS = ["receiver", "shipping_point", "contact", "phone", "terms", "carrier", "upd_type"] as const;
+export const DELIVERY_FIELDS = ["receiver", "contact", "phone", "shipping_point", "terms", "carrier", "upd_type"] as const;
 export type DeliveryField = typeof DELIVERY_FIELDS[number];
 export type DeliveryValues = Pick<ProjectAddressee, DeliveryField>;
 export interface ItemAddressee {
@@ -4163,6 +4163,10 @@ export const productionApi = {
   boxes: (taskId?: string) => api<{ boxes: ProductionBox[] }>(`/api/production/boxes${taskId ? `?task_id=${taskId}` : ""}`),
   // «Задания»: work.onBehalfOf — работа за выбранного сотрудника (право проверяет сервер), work.key — ключ повтора:
   // тот же ключ второй раз не делает действие дважды (двойной клик, повтор после обрыва связи).
+  refreshCuttingGroupEtk: (groupId: string, version: number) =>
+    api<{ group: CuttingGroup }>(`/api/production/cutting-groups/${groupId}/refresh-etk`, {
+      method: "POST", body: JSON.stringify({ version }),
+    }),
   startCuttingGroup: (groupId: string, version: number, work: WorkCall) =>
     api<CuttingWorkResult>(`/api/production/cutting-groups/${groupId}/start${behalfQuery(work.onBehalfOf)}`, {
       method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ version }),
@@ -4200,7 +4204,8 @@ export const productionApi = {
       method: "POST", body: JSON.stringify({ version, disposition, act_reference: actReference }),
     }),
   instruments: () => api<{ instruments: ProductionInstrument[] }>("/api/production/instruments"),
-  instrumentLabelAgent: () => api<{ online: boolean }>("/api/production/instruments/label-agent"),
+  instrumentLabelAgent: () => api<{ online: boolean; qr_link_enabled: boolean; qr_warning?: string }>("/api/production/instruments/label-agent"),
+  instrumentPassportUrl: (id: string) => `/api/production/instruments/${encodeURIComponent(id)}/passport.pdf`,
   instrumentLabelUrl: (id: string, stamp: number | string = 0) => `/api/production/instruments/${encodeURIComponent(id)}/label.png?t=${stamp}`,
   printInstrumentLabel: (id: string, copies: number) =>
     api<{ status: "queued"; job_ids: string[] }>(`/api/production/instruments/${encodeURIComponent(id)}/label`, { method: "POST", body: JSON.stringify({ copies }) }),
@@ -4295,6 +4300,12 @@ export const shippingApi = {
   action: (shipmentId: string, action: "pick" | "pack" | "ship" | "close" | "cancel", version: number) =>
     api<{ shipment: Shipment; closed?: boolean; why?: string }>(`/api/shipping/shipments/${shipmentId}/${action}`, {
       method: "POST", body: JSON.stringify({ version }),
+    }),
+  /** «Отгрузить без данных…» (руководитель): причина обязательна, дата отгрузки — фактическая. Сервер сам вносит
+   *  разрешение «без УПД» на имя руководителя, если УПД нет. */
+  shipWithoutData: (shipmentId: string, version: number, missingReason: string, shipDate: string) =>
+    api<{ shipment: Shipment; closed?: boolean; why?: string }>(`/api/shipping/shipments/${shipmentId}/ship`, {
+      method: "POST", body: JSON.stringify({ version, missing_reason: missingReason, ship_date: shipDate }),
     }),
   unpick: (shipmentId: string, version: number, lineId: string) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/unpick`, {
     method: "POST", body: JSON.stringify({ version, line_id: lineId }),

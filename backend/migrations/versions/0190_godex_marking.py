@@ -5,8 +5,8 @@ from uuid import NAMESPACE_URL, uuid5
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0189_godex_marking"
-down_revision = "0188_instrument_labels"
+revision = "0190_godex_marking"
+down_revision = "0189_cutting_group_numbers"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False

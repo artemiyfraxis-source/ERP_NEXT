@@ -255,7 +255,7 @@ _COUPLED_VALUES: dict[tuple[str, str], Any] = {
 # the one value that needs them: a seeded tech record is `tab = 'ter'` (the first literal of the БД.ТЕР card CHECKs,
 # 0115), and a БД.ТЕР row is always in a list (0155_ter_lug_kind).
 _OVER_CHECK: dict[tuple[str, str], Any] = {
-    # 0189: the generic sample job is TSPL; marking evidence belongs only to gdi_png jobs.
+    # 0190: the generic sample job is TSPL; marking evidence belongs only to gdi_png jobs.
     ("warehouse_label_jobs", "format"): "tspl",
     **{("warehouse_label_jobs", name): None for name in (
         "png", "target_machine_id", "target_printer", "width_mm", "height_mm", "orientation",

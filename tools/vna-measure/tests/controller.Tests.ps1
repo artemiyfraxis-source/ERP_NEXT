@@ -171,7 +171,7 @@ Describe 'Offline restart recovery' {
         $folder = Join-Path $TestDrive 'restart'
         [void][IO.Directory]::CreateDirectory($folder)
         $mockFolder = Join-Path $folder 'mock'; Initialize-VnaOfflineDemo $mockFolder
-        $state = Join-Path $folder 'operator-original.sta'; [IO.File]::WriteAllText($state, 'original')
+        $state = Join-Path $folder 'operator-original.sta'; [IO.File]::WriteAllText($state, '{}')
         @{ VnaSerial='MOCK-VNA'; Path=$state } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $folder 'operator-backup.json') -Encoding UTF8
         Mock Get-VnaDeviceInfo { throw 'ACM disconnected' }
         Mock Read-Host { '0' }
@@ -224,5 +224,140 @@ Describe 'Offline complete session' {
         Assert-MockCalled New-VnaApplication -Times 0 -Exactly
         Assert-MockCalled Invoke-RestMethod -Times 0 -Exactly
         Assert-MockCalled Invoke-WebRequest -Times 0 -Exactly
+    }
+}
+
+Describe 'Instrument state verdicts' {
+    BeforeEach {
+        $script:stateContext = New-SafeVnaContext
+        $script:stateContext.Calibration | Add-Member NoteProperty Result 'pass'
+        $traces = @(foreach ($parameter in 'S11','S21','S12','S22') {
+            $settings = Get-VnaChartScaleSettings $parameter
+            [pscustomobject]@{ Parameter = $parameter; Format = $(if ($parameter -in 'S11','S22') { 'SWR' } else { 'MLOG' })
+                PDIVision = $settings.PDIVision; RLEVel = $settings.RLEVel; RPOSition = $settings.RPOSition }
+        })
+        $script:stateConnection = [pscustomobject]@{ Offline = $true; Released = $false; Device = $script:stateContext.Device
+            Traces = $traces; TraceStatus = $script:stateContext.States.Clone(); ProfileApplied = $true; Calibrated = $true }
+        $script:stateOutput = New-Object 'System.Collections.Generic.List[string]'
+        Mock Write-Host { param($Object); $script:stateOutput.Add([string]$Object) }
+        Mock New-VnaApplication { throw 'REAL COM FORBIDDEN' }
+    }
+    It 'prints trace definitions formats scales COR age and a valid verdict without changing scales' {
+        $before = $script:stateConnection.Traces | ConvertTo-Json -Compress
+        Show-VnaInstrumentState $script:stateConnection $script:stateContext.Calibration -Now $script:stateContext.Now
+        $output = $script:stateOutput -join "`n"
+        $output | Should Match 'Трасс: 4'
+        $output | Should Match 'S11, SWR; шкала:'
+        $output | Should Match 'S21, MLOG; шкала:'
+        $output | Should Match 'коррекция: COR'
+        $output | Should Match 'Возраст калибровки: 10'
+        $output | Should Match 'Калибровка действует'
+        $output | Should Match 'Шкалы стандартные'
+        ($script:stateConnection.Traces | ConvertTo-Json -Compress) | Should Be $before
+    }
+    It 'reports missing calibration even when all live traces are COR' {
+        Show-VnaInstrumentState $script:stateConnection $null
+        ($script:stateOutput -join "`n") | Should Match 'Калибровки нет — выполните пункт 2'
+        ($script:stateOutput -join "`n") | Should Not Match 'Калибровка действует'
+    }
+    It 'reports a lost live correction despite a fresh passing calibration record' {
+        $script:stateConnection.TraceStatus.S12 = 'C?'
+        Show-VnaInstrumentState $script:stateConnection $script:stateContext.Calibration
+        $output = $script:stateOutput -join "`n"
+        $output | Should Match 'S12, MLOG;.*коррекция: нет'
+        $output | Should Match 'Калибровки нет — выполните пункт 2'
+        $output | Should Not Match 'Калибровка действует'
+    }
+    It 'reports nonstandard scales separately from a valid calibration' {
+        $script:stateConnection.Traces[1].RPOSition = 5
+        Show-VnaInstrumentState $script:stateConnection $script:stateContext.Calibration
+        ($script:stateOutput -join "`n") | Should Match 'Шкалы не стандартные — пункт 6'
+        ($script:stateOutput -join "`n") | Should Match 'Калибровка действует'
+    }
+    It 'reports expired calibration and its age' {
+        Show-VnaInstrumentState $script:stateConnection $script:stateContext.Calibration -Now $script:stateContext.Now.AddHours(4)
+        ($script:stateOutput -join "`n") | Should Match 'Возраст калибровки: 250'
+        ($script:stateOutput -join "`n") | Should Match 'Калибровки нет — выполните пункт 2'
+    }
+    It 'rejects identity changes unknown temperatures and thermal drift' {
+        $script:stateConnection.Device.VnaSerial = 'REPLACEMENT'
+        Show-VnaInstrumentState $script:stateConnection $script:stateContext.Calibration
+        ($script:stateOutput -join "`n") | Should Not Match 'Калибровка действует'
+        $script:stateConnection.Device.VnaSerial = 'TEST-VNA'
+        $script:stateConnection.Device.AcmTemperature = $null
+        Show-VnaInstrumentState $script:stateConnection $script:stateContext.Calibration
+        ($script:stateOutput -join "`n") | Should Not Match 'Калибровка действует'
+        $script:stateConnection.Device.AcmTemperature = 28.1
+        $script:stateConnection.Device.VnaTemperatures = @(30.2, 40)
+        Show-VnaInstrumentState $script:stateConnection $script:stateContext.Calibration
+        ($script:stateOutput -join "`n") | Should Not Match 'Калибровка действует'
+    }
+    It 'prints actual trace count and rejects an incomplete layout' {
+        $script:stateConnection.Traces = @($script:stateConnection.Traces[0])
+        $script:stateConnection.ProfileApplied = $false
+        Show-VnaInstrumentState $script:stateConnection $script:stateContext.Calibration
+        ($script:stateOutput -join "`n") | Should Match 'Трасс: 1'
+        ($script:stateOutput -join "`n") | Should Match 'Калибровки нет — выполните пункт 2'
+    }
+    It 'still prints traces and a missing calibration verdict with disconnected ACM telemetry' {
+        Mock Get-VnaDeviceInfo { throw 'АКМ не подключён' }
+        Show-VnaInstrumentState $script:stateConnection $script:stateContext.Calibration
+        ($script:stateOutput -join "`n") | Should Match 'АКМ не подключён'
+        ($script:stateOutput -join "`n") | Should Match 'Трасс: 4'
+        ($script:stateOutput -join "`n") | Should Match 'коррекция: COR'
+        ($script:stateOutput -join "`n") | Should Match 'Калибровки нет — выполните пункт 2'
+        ($script:stateOutput -join "`n") | Should Not Match 'Калибровка действует'
+    }
+}
+
+Describe 'Offline chart menu and lost correction' {
+    It 'applies menu six scales and restores the initial display without recalibrating' {
+        $script:answers = New-Object 'System.Collections.Generic.Queue[string]'
+        foreach ($answer in @('6','1','5','1','0')) { $script:answers.Enqueue($answer) }
+        Mock Read-Host { if ($script:answers.Count -eq 0) { throw 'Unexpected extra prompt' }; $script:answers.Dequeue() }
+        Mock Invoke-VnaCalibration { throw 'MUST NOT CALIBRATE' }
+        $script:menuOutput = New-Object 'System.Collections.Generic.List[string]'
+        Mock Write-Host { param($Object); $script:menuOutput.Add([string]$Object) }
+        Start-VnaMeasure -Offline -DataDirectory (Join-Path $TestDrive 'chart-menu')
+        ($script:menuOutput -join "`n") | Should Match 'Шкалы графиков применены и проверены'
+        ($script:menuOutput -join "`n") | Should Match 'Шкалы стандартные'
+        ($script:menuOutput -join "`n") | Should Match 'Шкалы не стандартные — пункт 6'
+        Assert-MockCalled Invoke-VnaCalibration -Times 0 -Exactly -Scope It
+        $script:answers.Count | Should Be 0
+    }
+}
+
+Describe 'Offline correction loss after calibration and load check' {
+    It 'refuses an adapter sweep after passing calibration and LOAD if live COR disappears' {
+        $script:answers = New-Object 'System.Collections.Generic.Queue[string]'
+        foreach ($answer in @('2','д','3','','','4','СИ.035','напрямую','','','0','д')) { $script:answers.Enqueue($answer) }
+        $script:loseCorrection = $false
+        Mock Read-Host {
+            if ($script:answers.Count -eq 0) { throw 'Unexpected extra prompt' }
+            $answer = $script:answers.Dequeue()
+            if ($answer -eq '4') { $script:loseCorrection = $true }
+            return $answer
+        }
+        Mock Get-VnaTraceStatus {
+            param($Connection)
+            $states = $Connection.TraceStatus.Clone()
+            if ($script:loseCorrection) { $states.S21 = 'C?' }
+            return $states
+        }
+        $script:refusalOutput = New-Object 'System.Collections.Generic.List[string]'
+        Mock Write-Host { param($Object); $script:refusalOutput.Add([string]$Object) }
+        Mock New-VnaApplication { throw 'REAL COM FORBIDDEN' }
+        Mock Invoke-RestMethod { throw 'NETWORK FORBIDDEN' }
+        Mock Invoke-WebRequest { throw 'NETWORK FORBIDDEN' }
+        $folder = Join-Path $TestDrive 'lost-correction'
+        Start-VnaMeasure -Offline -DataDirectory $folder
+        $events = @(Get-VnaJournal (Join-Path $folder 'calibrations.jsonl'))
+        $events[0].Result | Should Be 'pass'
+        $events[1].LoadCheck | Should Be 'pass'
+        ($script:refusalOutput -join "`n") | Should Match 'Нет полной коррекции S21; калибровки нет — выполните пункт 2'
+        (Test-Path -LiteralPath (Join-Path $folder 'raw')) | Should Be $false
+        (Test-Path -LiteralPath (Join-Path $folder 'used-sweeps.jsonl')) | Should Be $false
+        $script:answers.Count | Should Be 0
+        Assert-MockCalled New-VnaApplication -Times 0 -Exactly -Scope It
     }
 }

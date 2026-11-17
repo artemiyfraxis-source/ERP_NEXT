@@ -176,6 +176,7 @@ export function ShipmentCard({ shipment, rights, busy, mutate, openData }: {
   const [layout, setLayout] = useState(false);
   const [rollback, setRollback] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
+  const [shippingBare, setShippingBare] = useState(false);
   const action = (name: "pick" | "pack" | "ship" | "cancel", message: string | ((result: unknown) => string)) => mutate(`${name}:${shipment.id}`, () => shippingApi.action(shipment.id, name, shipment.version), message);
   const got = shipment.lines.some((line) => num(line.picked) > 0);
   const open = !["Закрыта", "Отменена"].includes(shipment.status);
@@ -237,6 +238,7 @@ export function ShipmentCard({ shipment, rights, busy, mutate, openData }: {
     <div className="ship-actions">
       {canWarehouse && got && SHIPPABLE.includes(shipment.status) && <button type="button" className="primary" disabled={disabled || !canShip}
         title={canShip ? undefined : `Отгрузить можно, когда упаковано и есть УПД, ТК и трек. Не хватает: ${shipGaps.join(", ") || "данных"}`} onClick={ship}>Отгрузить</button>}
+      {canUnship && got && SHIPPABLE.includes(shipment.status) && !canShip && shipGaps.length > 0 && <button type="button" className="secondary" disabled={disabled} title="Груз уже уехал, данные внесём позже — только руководитель" onClick={() => setShippingBare(true)}>Отгрузить без данных…</button>}
       {canWarehouse && onlyUpdBlocks(shipment) && <button type="button" className="secondary" disabled={disabled} onClick={() => setApproving(true)}>Разрешить без УПД</button>}
       {canWarehouse && shipment.status === "Новая" && <button type="button" className="secondary" disabled={disabled} onClick={() => void action("pick", "Заявка набрана из доступного остатка")}>Набрать со склада</button>}
       {shipment.pl_number && got && <>{canPrintDocs && <><button type="button" className="secondary" onClick={() => void print("pl")}>Печать PL</button><button type="button" className="secondary" disabled={dnGaps.length > 0} title={dnGaps.length ? `DN печатается, когда внесены данные. Не хватает: ${dnGaps.join(", ")}` : undefined} onClick={() => void print("dn")}>Печать DN</button></>}<button type="button" className="secondary" onClick={() => void printLabels()}>Печать этикеток</button></>}
@@ -262,14 +264,52 @@ export function ShipmentCard({ shipment, rights, busy, mutate, openData }: {
       <label>Трек-номер<input aria-label={`Трек-номер ${shipment.number}`} disabled={!trackOpen} title={trackOpen ? undefined : "Трек вносится, когда есть УПД и ТК"} value={documents.track_number} onChange={(event) => setDocuments({ ...documents, track_number: event.target.value })} /></label>
       <button type="button" className="secondary" disabled={disabled} onClick={() => void mutate(`docs:${shipment.id}`, () => shippingApi.documents(shipment.id, { version: shipment.version, ...documents, upd_url: shipment.upd_url, upd_type: documents.upd_type || null, upd_date: documents.upd_date || null }), "Данные УПД и доставки сохранены")}>Сохранить документы</button>
     </div>}
-    <details className="ship-more"><summary>Получатель и адрес этой отправки</summary>
+    <details className="ship-more"><summary>Организация, получатель и адрес этой отправки</summary>
       {canEdit && active
         ? <ShipmentHead shipment={shipment} busy={busy} mutate={mutate} />
         : <dl className="ship-form">{[...HEAD_FIELDS, ["carrier", "ТК"], ["terms", "Условия"], ["deadline", "Срок отгрузки"], ["note", "Комментарий"]].map(([key, title]) =>
           <div key={key} className={key === "shipping_point" || key === "note" ? "ship-span2" : undefined}><dt>{title}</dt><dd>{key === "deadline" ? formatDate(shipment.deadline) || "—" : key === "terms" ? termsText(shipment.terms) || "—" : String(shipment[key as keyof Shipment] || "—")}</dd></div>)}</dl>}
     </details>
+    {shippingBare && <ShipWithoutDataWindow shipment={shipment} gaps={shipGaps} close={() => setShippingBare(false)} mutate={mutate} />}
     {approving && <NoUpdWindow shipment={shipment} close={() => setApproving(false)} mutate={mutate} />}
   </article>;
+}
+
+/** «Отгрузить без данных…» (владелец 18.11): груз уехал, а данных доставки нет — отправка становится «Отгружена»,
+ *  пробелы остаются «не заполнено» и вносятся позже; закроется сама, когда всё внесено. Только полный доступ. */
+export function ShipWithoutDataWindow({ shipment, gaps, close, mutate }: { shipment: DispatchShipment; gaps: string[]; close: () => void; mutate: Mutate }) {
+  const [reason, setReason] = useState("");
+  const [day, setDay] = useState(isoDay(new Date()));
+  const [busy, setBusy] = useState(false);
+  const noUpd = Boolean(shipment.no_upd_offered);
+  const ready = Boolean(reason.trim() && day) && !busy;
+  async function submit() {
+    if (!ready) return;
+    setBusy(true);
+    const saved = await mutate(`shipbare:${shipment.id}`, () => shippingApi.shipWithoutData(shipment.id, shipment.version, reason.trim(), day),
+      (result) => {
+        const outcome = result as { closed?: boolean };
+        return outcome.closed ? `Отгружено и закрыто: ${shipment.number}` : `Отгружено без данных: ${shipment.number}. Не заполнено: ${gaps.join(", ")}`;
+      });
+    setBusy(false);
+    if (saved) close();
+  }
+  return <PageWindow label={`Отгрузить без данных · ${shipment.number}`} close={close} width={520}>
+    <form className="panel intake-pin" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+      <header className="page-head"><h2>Отгрузить без данных · {shipment.number}</h2>
+        <button type="button" className="secondary small" onClick={close}>Закрыть</button></header>
+      <p className="muted">Не заполнено — останется видно и вносится позже:</p>
+      <ul aria-label="Не заполнено">{gaps.map((gap) => <li key={gap} className="tone-warn">{gap}</li>)}</ul>
+      {noUpd && <p className="tone-warn">Без УПД — разрешение запишется на ваше имя</p>}
+      <div className="form-grid intake-pin-grid">
+        <label className="ship-span2">Почему без данных<input aria-label="Почему без данных" placeholder="например: данные внесём после отпуска менеджера" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+        <label>Дата отгрузки<input aria-label="Дата отгрузки" type="date" max={isoDay(new Date())} value={day} onChange={(event) => setDay(event.target.value)} /></label>
+      </div>
+      <div className="intake-window-actions">
+        <button type="submit" className="primary" disabled={!ready}>{busy ? "Отгружаем…" : "Отгрузить"}</button>
+      </div>
+    </form>
+  </PageWindow>;
 }
 
 /** «Разрешить без УПД» (владелец 29.10): уполномоченный (Артемий, Зингер, Касаточкин) выбирает себя и вводит ПИН на
@@ -320,7 +360,7 @@ export function NoUpdWindow({ shipment, close, mutate }: { shipment: DispatchShi
 }
 
 const HEAD_FIELDS: Array<[keyof Shipment & string, string]> = [
-  ["receiver", "Получатель"], ["shipping_point", "Адрес отгрузки"], ["contact", "Контактное лицо"], ["phone", "Телефон"],
+  ["receiver", "Организация"], ["contact", "Получатель"], ["phone", "Телефон"], ["shipping_point", "Адрес отгрузки"],
 ];
 
 /** Fields save on blur. Only legacy shipments inherit cleared delivery fields from the project. */
@@ -351,8 +391,8 @@ export function ShipmentHead({ shipment, busy, mutate }: {
   const pickup = isPickup(shipment.carrier);
   const snapshot = Boolean(shipment.delivery_snapshot_at);
   const mark = (key: string) => inherited(key) ? <small className="ship-inherited">из карточки проекта</small> : null;
-  const hint = (key: string) => snapshot
-    ? key === "receiver" ? "укажите получателя" : "пусто — оставить пустым"
+  const hint = (key: string) => key === "receiver" ? "как в документах" : key === "contact" ? "ФИО, кому передать груз" : snapshot
+    ? "пусто — оставить пустым"
     : inherited(key) ? "" : "пусто — из карточки проекта";
   return <div className="ship-form">
     {HEAD_FIELDS.filter(([key]) => !(pickup && key === "shipping_point")).map(([key, label]) => <label key={key} className={key === "shipping_point" ? "ship-span2" : undefined}><span>{label}{mark(key)}</span><input aria-label={`${label} ${shipment.number}`} disabled={Boolean(busy)} placeholder={hint(key)} value={draft[key]} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} onBlur={() => save(key)} /></label>)}

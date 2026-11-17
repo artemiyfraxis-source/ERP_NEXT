@@ -1,11 +1,13 @@
 """Group controls use child assignment/execution; no synthetic quantities or resource claims."""
 
+from copy import deepcopy
+from decimal import Decimal
 from uuid import uuid4
 
 from app.shared.events import AuditEvent
-from .application import AssignProductionCommand, ConcurrentProductionUpdate, _checked_names, assign_task, lock_reflow_projects
+from .application import AssignProductionCommand, ConcurrentProductionUpdate, _audit, _checked_names, assign_task, lock_reflow_projects
 from .domain import ProductionStatus, ProductionValidationError
-from .cutting import cutting_recipe
+from .cutting import cutting_project_label, cutting_recipe
 from .plan import normalize_project_number
 
 
@@ -71,7 +73,7 @@ def _existing_proposal(candidates):
     if not assignment["planning_consistent"]:
         warnings.append("Плановые окна различаются: общее окно не задано; планы строк сохранены")
     return {"recipe_key": first.key, "recipe_version": first.snapshot["version"],
-            "project": first.snapshot["project"], "site": first.snapshot["site"],
+            "project": cutting_project_label(candidates[0][0].project, candidates[0][2]), "site": first.snapshot["site"],
             "recipe_summary": {"cable": first.snapshot["cable"],
                 "cables_per_assembly": first.snapshot["cables_per_assembly"],
                 "operations": [op["code"] for op in first.snapshot["operations"]],
@@ -290,13 +292,81 @@ def revalidate_group(group_id, version, current, actor, now, uow):
         return result
 
 
+def plan_etk_refresh(group, members, cards, uow):
+    """Per member: its task, the current card entry and the recipe it yields; plus problems keeping the group apart.
+
+    `cards` maps task id -> (card_id, revision, document, card_version, norms) or an error text.
+    """
+    steps, problems = [], []
+    for member in members:
+        task = uow.production.get(member.task_id)
+        entry = cards.get(task.id)
+        if entry is None or isinstance(entry, str):
+            problems.append(f"{task.item}: {entry or 'нет выданной ЭТК'}")
+            continue
+        _card_id, _revision, document, _version, _norms = entry
+        recipe, reason = cutting_recipe(task.project, group.site, document, task.operations)
+        if recipe is None:
+            problems.append(f"{task.item}: {reason}")
+        elif recipe.key != group.recipe_key:
+            problems.append(f"{task.item}: рецепт резки в новой ревизии ЭТК отличается")
+        else:
+            steps.append((member, task, entry, recipe))
+    return steps, problems
+
+
+def _stale(member, task, entry):
+    _card_id, revision, _document, card_version, _norms = entry
+    return task.techcard_revision != revision or member.row_snapshot.get("validated_card_version") != card_version
+
+
+def refresh_group_etk(group_id, version, cards, actor, now, uow):
+    """Re-pin every active member to its current issued ETK; all or nothing, the group keeps its id and number."""
+    with uow:
+        group = locked_group(group_id, version, uow, actor, now)
+        if group.state != "open":
+            raise ProductionValidationError("Начатая группа работает по закреплённому снимку ЭТК — обновить её нельзя")
+        members = uow.cutting.members(group.id)
+        steps, problems = plan_etk_refresh(group, members, cards, uow)
+        if problems:
+            raise ProductionValidationError(
+                "Группа не обновлена: у этих КБ рецепт резки в новой ЭТК расходится с группой — " + "; ".join(problems)
+                + ". Выдайте их отдельно («Выдать отдельно») и обновите остальные.")
+        todo = [item for item in steps if _stale(*item[:3])]
+        if not todo:
+            return describe_group(group, uow)
+        before = group.version
+        for member, task, entry, recipe in todo:
+            card_id, revision, document, card_version, norms = entry
+            was = task.techcard_revision
+            member.row_snapshot = {**recipe.row, "document": deepcopy(document),
+                                   "validated_card_version": card_version, "techcard_revision": revision}
+            member.blank_quantity = task.quantity * Decimal(recipe.row["cables_per_assembly"])
+            if was != revision:
+                updated = task.refresh_norms(norms, card_id, revision)
+                uow.production.add(updated)
+                _audit(updated, "production.norms_refreshed", actor, now, {
+                    "techcard_id": str(card_id), "from_revision": was, "revision": revision,
+                    "cutting_group_id": str(group.id)}, uow)
+        group.recipe = todo[0][3].snapshot
+        if group.version == before:
+            group.version += 1
+        audit(group, "etk_refreshed", uow, actor, now, tasks=[str(item[1].id) for item in todo])
+        result = describe_group(group, uow)
+        uow.commit()
+        return result
+
+
 def describe_group(group, uow):
     members = uow.cutting.members(group.id, active=False)
     task_ids = tuple({m.task_id for m in members})
     outputs = uow.outputs.active_for_tasks(task_ids)
     rows = []
+    project = group.project_key
     for member in members:
         task = uow.production.get(member.task_id)
+        if not rows:
+            project = cutting_project_label(task.project, member.row_snapshot.get("document"))
         operation = task.operation(member.operation_id)
         own = [item for item in outputs if item.operation_id == operation.id]
         boxes = [box for box in uow.boxes.list(task_id=task.id, limit=10000) if box.operation_id == operation.id]
@@ -338,7 +408,7 @@ def describe_group(group, uow):
                 "pause_started_at": session.pause_started_at.isoformat() if session.pause_started_at else None} if session else None,
             "downtime": downtime,
             "recipe_version": group.recipe_version, "recipe_key": group.recipe_key,
-            "project": group.project_key, "site": group.site, "state": group.state,
+            "project": project, "site": group.site, "state": group.state,
             "membership_frozen": group.state == "frozen", "rows": rows,
             **common_assignment(active),
             "planned_start": min(starts) if starts else None, "planned_finish": max(finishes) if finishes else None,

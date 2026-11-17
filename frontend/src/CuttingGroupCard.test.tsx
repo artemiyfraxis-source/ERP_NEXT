@@ -35,6 +35,8 @@ const working: CuttingGroup = { ...group, version: 2, state: "frozen", session: 
 it("starts one group and renders a working timer with separate PF and blank quantities", async () => {
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ group: working, outputs: [] }));
   render(<CuttingGroupCard group={group} readOnly={false} renderInstruction={() => null} />);
+  expect(screen.getByRole("heading", { name: "Резка · 708К. · ПФ-1 Заготовки · 4 КБ" })).toBeTruthy();
+  expect(screen.getByText("РЗ-0001 · ЦАР")).toBeTruthy();
   expect(screen.getAllByRole("button", { name: "Начать" })).toHaveLength(1);
   expect(screen.getByRole("button", { name: "Начать" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Сдать" })).toBeDisabled();
@@ -118,6 +120,7 @@ it("produces 17 label rows per KB in member order, preserving serial presentatio
   expect(labels[17].item).toBe("КБ2");
   expect(cuttingLabelsTitle(labels).replaceAll("\u00a0", " ")).toBe("Этикетки: 68 видов, 180 шт.");
   const page = cuttingLabelsPage(group, labels);
+  expect(page.subtitle).toBe(`708К. · РЗ-0001 · ${cuttingLabelsTitle(labels)}`);
   expect(buildPrintDocumentHtml("Этикетки группы", [page])).toContain("FRX.708К.120900/AA.1");
   const withPadding = { ...group, rows: [{ ...group.rows[0], labels: [{ text: "КБ-{№:3}", qty: 2 }] }] };
   expect(cuttingLabels(withPadding, ranges)[0]).toMatchObject({ text: "КБ-001", quantity: 2 });
@@ -176,4 +179,20 @@ it("uses real groups instead of duplicate child cards in MyQueue and counts a gr
   expect(container.querySelector(".page-count")?.textContent).toBe("1");
   expect(screen.queryByText(/Резка списком/)).toBeNull();
   expect(screen.queryByText(/Операции вам пока не назначены/)).toBeNull();
+});
+
+it("shows «Обновить из ЭТК» only for a stale open group and re-pins it", async () => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ group: { ...group, version: 5 } }));
+  const stale = { ...group, etk_stale: true };
+  const { unmount } = render(<CuttingGroupCard group={group} readOnly={false} canRefreshEtk renderInstruction={() => null} />);
+  expect(screen.queryByRole("button", { name: "Обновить из ЭТК" })).toBeNull();
+  unmount();
+  const second = render(<CuttingGroupCard group={stale} readOnly={false} renderInstruction={() => null} />);
+  expect(screen.queryByRole("button", { name: "Обновить из ЭТК" })).toBeNull();
+  second.unmount();
+  render(<CuttingGroupCard group={stale} readOnly={false} canRefreshEtk renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Обновить из ЭТК" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Обновить из ЭТК" })).toBeNull());
+  expect(String(fetch.mock.calls[0][0])).toContain("/cutting-groups/group-1/refresh-etk");
+  expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual({ version: 1 });
 });
