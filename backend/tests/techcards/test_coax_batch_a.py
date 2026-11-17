@@ -13,11 +13,15 @@ from app.modules.techcards.template_sheets import make_template_id
 
 ROOT = Path(__file__).resolve().parents[3]
 FOLDER = ROOT / "docs/data/operation-templates-hfm-1116"
+SHORT = ROOT / "docs/data/operation-templates-connectors-1118"
 FIXTURES = json.loads((ROOT / "frontend/src/__fixtures__/fakraBatchAConfigs.json").read_text(encoding="utf-8"))
 ERP = json.loads((ROOT / "backend/data/techcard-library-erp.json").read_text(encoding="utf-8"))
 BASE = json.loads((ROOT / "backend/data/techcard-library.json").read_text(encoding="utf-8"))
 CARDS = {card.code: card for card in parse_operation_library([*BASE["templates"], *ERP["templates"]])}
 PAYLOAD = json.loads((FOLDER / "payload.json").read_text(encoding="utf-8"))
+# The 16.11 support card was rewritten to the short canonical form on 18.11; the seed follows the newest delivery.
+CURRENT = [item for item in json.loads((SHORT / "payload.json").read_text(encoding="utf-8"))
+           if item["code"] == "PRS_HFM_SUPPORT"]
 
 
 def _build(fixture):
@@ -66,8 +70,10 @@ def test_hfm_support_is_four_operations_per_end_with_no_invented_consumption_or_
         assert op["components"] == []  # The sleeves belong to the connector kit, not another BOM demand.
         assert "coaxEnd" in op["fields"]
         text = " ".join(step["text"] for step in op["card"]["steps"])
-        assert "полностью разделан" in text and "11WS001_A" in text
-        assert "в цеху нет" in text and "не задано" in text
+        tolerances = " ".join(step["tolerance"] for step in op["card"]["steps"])
+        tools = " ".join(tool["name"] for tool in op["card"]["tooling"])
+        assert "полностью разделан" in text and "11WS001_A" in tools
+        assert "в цеху нет" in tools and "не задано" in tolerances
         assert all(not tool.get("inventory_number") for tool in op["card"]["tooling"])
     assert ops[0]["components"][0]["norm"] == "78"  # 4 cables * (1250+25+25) mm * 15 assemblies.
     assert ops[0]["components"][0]["unit"] == "М."
@@ -244,7 +250,7 @@ def test_amphenol_prep_after_strip_takes_ttk_once_in_metres():
 
 def test_support_card_payload_matches_seed_and_keeps_unknown_values_unknown():
     assert [item["code"] for item in PAYLOAD] == ["PRS_HFM_SUPPORT"]
-    item = PAYLOAD[0]
+    item = CURRENT[0]
     card = CARDS[item["code"]]
     edit = normalize_record_edit(item["record"])
     assert card.source_id == make_template_id(f"{item['code']} | {edit.name}", ())
