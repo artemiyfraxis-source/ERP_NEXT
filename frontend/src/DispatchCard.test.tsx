@@ -36,24 +36,31 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const open = async (canEdit = true) => {
   render(<DispatchCard project="591К.3" canEdit={canEdit} close={() => undefined} />);
-  await waitFor(() => expect(screen.getByLabelText("Получатель")).toHaveValue("ООО Заказчик"));
+  await waitFor(() => expect(screen.getByLabelText("Организация")).toHaveValue("ООО Заказчик"));
   return screen.getByRole("dialog");
 };
 
 describe("Данные отправки", () => {
+  it("saves the recipient separately from the organization", async () => {
+    await open();
+    fireEvent.change(screen.getByLabelText("Получатель"), { target: { value: "Петров" } });
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+    await screen.findByText("Данные отправки сохранены");
+    expect(calls.find((call) => call.method === "PUT")!.body).toEqual({ project: "591К.3", version: 2, contact: "Петров" });
+  });
   it("не разрешает запись по выдуманной версии после ошибки загрузки", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(json({ detail: "Нет связи" }, 503));
     render(<DispatchCard project="591К.3" stage="accepted" canEdit close={() => undefined} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Нет связи");
     expect(screen.queryByRole("button", { name: "Сохранить" })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Получатель")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Организация")).not.toBeInTheDocument();
   });
   it("до упаковки сохраняет №, дату, файл ЭДО и адрес без создания отправки", async () => {
     render(<DispatchCard project="591К.3" stage="accepted" canEdit close={() => undefined} />);
     fireEvent.change(await screen.findByLabelText("№ УПД"), { target: { value: "523" } });
     fireEvent.change(screen.getByLabelText("Дата УПД"), { target: { value: "2026-11-03" } });
     fireEvent.change(screen.getByLabelText("Адрес доставки"), { target: { value: "Тула" } });
-    fireEvent.change(screen.getByLabelText("Получатель"), { target: { value: "ООО Получатель" } });
+    fireEvent.change(screen.getByLabelText("Организация"), { target: { value: "ООО Получатель" } });
     fireEvent.change(screen.getByLabelText("Приложить УПД"), { target: { files: [new File(["%PDF-1.4"], "УПД.pdf", { type: "application/pdf" })] } });
     await screen.findByText("УПД приложена");
     expect(screen.getByLabelText("УПД")).toHaveValue("ЭДО");
@@ -77,7 +84,7 @@ describe("Данные отправки", () => {
   });
   it("окно проекта: только адрес, получатель, телефон и УПД — без типа доставки, ТК и комментария", async () => {
     const dialog = await open();
-    expect(within(dialog).getAllByRole("textbox").map((input) => input.getAttribute("aria-label"))).toEqual(["Получатель", "Адрес доставки", "Телефон", "№ УПД"]);
+    expect(within(dialog).getAllByRole("textbox").map((input) => input.getAttribute("aria-label"))).toEqual(["Организация", "Получатель", "Телефон", "Адрес доставки", "№ УПД"]);
     expect(within(dialog).getAllByRole("combobox").map((input) => input.getAttribute("aria-label"))).toEqual(["УПД"]);
     for (const hidden of ["Тип доставки", "Перевозчик", "Комментарий для склада", "Контактное лицо", "Условия доставки", "Способ отгрузки / ТК", "Плановая дата отгрузки", "Комментарий"]) {
       expect(within(dialog).queryByLabelText(hidden)).not.toBeInTheDocument();
@@ -88,8 +95,8 @@ describe("Данные отправки", () => {
     ["waiting", false], ["production", false], ["ready", true], ["accepted", true], ["packed", true], ["to_ship", true], ["shipped", true],
   ] as const)("этап %s: адрес, получатель, телефон всегда; УПД с «Готово» (%s); доставки и ТК нет", async (stage, withUpd) => {
     render(<DispatchCard project="591К.3" stage={stage} canEdit close={() => undefined} />);
-    await waitFor(() => expect(screen.getByLabelText("Получатель")).toHaveValue("ООО Заказчик"));
-    for (const label of ["Получатель", "Адрес доставки", "Телефон"]) expect(screen.getByLabelText(label)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Организация")).toHaveValue("ООО Заказчик"));
+    for (const label of ["Организация", "Адрес доставки", "Телефон"]) expect(screen.getByLabelText(label)).toBeInTheDocument();
     expect(Boolean(screen.queryByLabelText("УПД"))).toBe(withUpd);
     for (const hidden of ["Тип доставки", "Перевозчик", "Комментарий для склада"]) expect(screen.queryByLabelText(hidden)).not.toBeInTheDocument();
   });
@@ -146,7 +153,7 @@ describe("Данные отправки", () => {
     stored = { ...card, upd_type: "БУМАГА", upd_url: "/api/shipping/files/f0", upd_file_name: "старая.pdf" };
     await open(false);
     expect(screen.getByRole("link", { name: "старая.pdf" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Получатель")).toBeDisabled();
+    expect(screen.getByLabelText("Организация")).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Убрать" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Приложить УПД")).not.toBeInTheDocument();
     expect(screen.getByText("Только просмотр")).toBeInTheDocument();
@@ -155,7 +162,7 @@ describe("Данные отправки", () => {
   it("by stage: waiting/production show address fields; ready/accepted add UPD and explicit KB permissions", async () => {
     for (const stage of ["waiting", "production"] as const) {
       const view = render(<DispatchCard project="591К.3" stage={stage} canEdit close={() => undefined} />);
-      await waitFor(() => expect(screen.getByLabelText("Получатель")).toHaveValue("ООО Заказчик"));
+      await waitFor(() => expect(screen.getByLabelText("Организация")).toHaveValue("ООО Заказчик"));
       expect(screen.getByLabelText("Адрес доставки")).toBeInTheDocument();
       expect(screen.getByLabelText("Телефон")).toBeInTheDocument();
       expect(screen.queryByLabelText("УПД")).not.toBeInTheDocument();
@@ -165,7 +172,7 @@ describe("Данные отправки", () => {
     }
     for (const stage of ["ready", "accepted"] as const) {
       const view = render(<DispatchCard project="591К.3" stage={stage} canEdit close={() => undefined} />);
-      await waitFor(() => expect(screen.getByLabelText("Получатель")).toHaveValue("ООО Заказчик"));
+      await waitFor(() => expect(screen.getByLabelText("Организация")).toHaveValue("ООО Заказчик"));
       expect(screen.getByLabelText("УПД")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Разрешить упаковку по КБ" })).toBeEnabled();
       view.unmount();
@@ -174,7 +181,7 @@ describe("Данные отправки", () => {
 
   it("packing requires an explicit KB quantity and its own version, not the address version", async () => {
     render(<DispatchCard project="591К.3" stage="ready" canEdit close={() => undefined} />);
-    await waitFor(() => expect(screen.getByLabelText("Получатель")).toHaveValue("ООО Заказчик"));
+    await waitFor(() => expect(screen.getByLabelText("Организация")).toHaveValue("ООО Заказчик"));
     fireEvent.click(screen.getByRole("button", { name: "Разрешить упаковку по КБ" }));
     const permissions = within(await screen.findByRole("dialog", { name: "Разрешения упаковки 591К.3" }));
     expect(await permissions.findByLabelText("Изменить КБ1")).not.toBeChecked();
@@ -196,7 +203,7 @@ describe("Данные отправки", () => {
       return fallback(input, init);
     });
     render(<DispatchCard project="591К.3" stage="accepted" canEdit onSaved={onSaved} close={() => undefined} />);
-    await waitFor(() => expect(screen.getByLabelText("Получатель")).toHaveValue(card.receiver));
+    await waitFor(() => expect(screen.getByLabelText("Организация")).toHaveValue(card.receiver));
     fireEvent.change(screen.getByLabelText("Телефон"), { target: { value: "+7 набрано" } });
     fireEvent.click(screen.getByRole("button", { name: "Разрешить упаковку по КБ" }));
     const permissions = within(await screen.findByRole("dialog", { name: "Разрешения упаковки 591К.3" }));

@@ -41,7 +41,7 @@ def test_accept_with_an_empty_card_tells_every_project_manager_once_per_batch(fl
     notice = notices[0]
     assert notice["recipient_audiences"] == "project_manager" and notice["recipient_user_ids"] == ""
     assert notice["body"].startswith(
-        "Приняли на склад КБ КБ1, КБ2 проекта 708К.4, а данных отправки нет: условия доставки, получатель, "
+        "Приняли на склад КБ КБ1, КБ2 проекта 708К.4, а данных отправки нет: условия доставки, организация, "
         "телефон получателя, адрес доставки, тип УПД. Заполните в „Приёмке с производства“ → „Данные отправки“."
     )
     assert "?section=intake" in notice["body"] and notice["type"] == "ship"

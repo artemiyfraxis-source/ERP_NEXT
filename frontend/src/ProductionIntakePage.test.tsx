@@ -13,7 +13,7 @@ const principal = {
 };
 const viewer = { ...principal, permissions: { shipping: "view" as const } };
 const admin = { ...principal, roles: ["admin"], access_level: "admin", permissions: { shipping: "edit" as const, shipping_goods: "edit" as const } };
-const shippingHeaders = ["Проект", "Заказчик", "Отправка", "Отгрузка", "Статус", "Создана", "Срок", "Отгружена", "Получатель", "Телефон", "Адрес", "Способ доставки", "ТК", "Контакт", "Комментарий для склада", "Для перевозчика", "Трек", "Ждём для трека", "УПД", "№ УПД", "Дата УПД", "Файл УПД", "PL", "DN", "Доставка КБ"];
+const shippingHeaders = ["Статус", "Организация", "Получатель", "Телефон", "Адрес", "Способ доставки", "ТК", "Комментарий для склада", "Для перевозчика", "Трек", "Ждём для трека", "УПД", "№ УПД", "Дата УПД", "Файл УПД", "PL", "DN", "Доставка КБ"];
 
 const row = (over: Record<string, unknown>) => ({
   project: "591К.3", customer: "Заказчик", deadline: "2026-10-25", item_index: "КБ1", name: "Жгут", unit: "шт", stage: "В работе",
@@ -26,7 +26,7 @@ const ROWS = [
   row({ project: "600К.1", customer: "Другой", item_index: "КБ7", name: "Шлейф", needed: "5", launched: "5", delivered: "0", accepted: "0", remaining: "0", tasks: [] }),
 ];
 const dispatchCard = {
-  project: "591К.3", version: 2, receiver: "Получатель", shipping_point: "Москва", contact: "", phone: "", terms: "САМОВЫВОЗ", carrier: "",
+  project: "591К.3", version: 2, receiver: "Организация", shipping_point: "Москва", contact: "", phone: "", terms: "САМОВЫВОЗ", carrier: "",
   upd_type: "ЭДО", updated_by: "", updated_at: null, po: "", contract: "", spec: "", invoice: "", pays: "", customer_address: "", hours: "",
   plan_date: null, note: "",
 };
@@ -35,7 +35,7 @@ const act = (grn: string, quantity: string, received_at = "2026-10-30") => ({ gr
 const shipmentLine = (over: Record<string, unknown> = {}) => ({ id: "l1", good_id: "g1", project: "591К.3", item_index: "КБ1", article: "", name: "Жгут", requested: "4", picked: "4", shortage: "0", unit: "шт", grn: "ГП.26.0000001", ...over });
 const packedShipment = {
   id: "s1", number: "ОТГ-20261029-01", version: 3, created_at: "2026-10-29T09:00:00", status: "Упакована",
-  customer: "Заказчик", receiver: "Получатель", shipping_point: "Москва", contact: "", phone: "+7 900", terms: "ДОСТАВКА ТК", carrier: "СДЭК",
+  customer: "Заказчик", receiver: "Организация", shipping_point: "Москва", contact: "", phone: "+7 900", terms: "ДОСТАВКА ТК", carrier: "СДЭК",
   deadline: null, upd_type: "ЭДО", upd_number: "", upd_date: null, upd_url: "", pl_number: "PL591К.3-1", dn_number: "DN591К.3-1", track_number: "",
   packed_at: "2026-10-29", shipped_at: null, manager: "", note: "", tk_note: "", places: 1, weight: "", boxes: [], inherited: [],
   missing_data: ["№ УПД"], missing_ship: ["№ УПД", "трек-номер"], ready_for_track: false, ready_to_ship: false, no_upd_approved_by: null, no_upd_approved_at: null,
@@ -67,7 +67,7 @@ function stub() {
     if (url.endsWith("/approve-no-upd")) { const [status, body] = approvals.shift() ?? [200, { shipment: packedShipment }]; return json(body, status); }
     if (/\/print\?document=/.test(url)) return json({ forms: [{ kind: "pl", title: "PL1-1", number: ["PL", "1", "-", "1"], place: "1", places: "1", package: "Короб", dims: "", net: "", gross: "", seal: "",
       rows: [{ part: "КБ1", name: "", quantity: "1", unit: "шт", batch: "", pl: "", boxes: "" }], packed_at: "", shipped_at: "", packer: "", shipper: "", consignee: "", address: "", project: "591К.3" }] });
-    if (url.endsWith("/labels")) return json({ labels: [{ shipper: "Фраксис", consignee: "Получатель", address: "Москва", project: "591К.3", pl_number: "PL591К.3-1", place: "Упаковка 1/1", items: [{ item_index: "КБ1", quantity: "4", unit: "шт" }], net: "", dims: "" }] });
+    if (url.endsWith("/labels")) return json({ labels: [{ shipper: "Фраксис", consignee: "Организация", address: "Москва", project: "591К.3", pl_number: "PL591К.3-1", place: "Упаковка 1/1", items: [{ item_index: "КБ1", quantity: "4", unit: "шт" }], net: "", dims: "" }] });
     if (url.endsWith("/documents") && method === "PUT") return json({ shipment: packedShipment });
     if (/\/shipments\/[^/]+\/(ship|close|unship)$/.test(url)) return json({ shipment: packedShipment, closed: false, why: "Нельзя закрыть: не хватает — файл УПД" });
     return json({});
@@ -80,7 +80,7 @@ const tab = (name: RegExp) => screen.getByRole("tab", { name });
 const count = (name: RegExp) => tab(name).querySelector(".page-count")?.textContent?.trim();
 const headers = () => screen.getAllByRole("columnheader").map((cell) => (cell.textContent ?? "").replace(/[^А-Яа-яЁёA-Za-z№ /]/g, "").trim()).filter(Boolean);
 const bodyRows = (text = "Жгут") => [...document.querySelectorAll("tbody tr")].filter((tr) => tr.querySelector(".intake-kb") && tr.textContent?.includes(text));
-const shipmentRows = () => bodyRows("").filter((tr) => tr.querySelector('td[data-label="Отправка"] button'));
+const shipmentRows = () => [...document.querySelectorAll("tr.dt-group-cells")];
 const rowButtons = (text = "Жгут") => bodyRows(text).flatMap((tr) => [...tr.querySelectorAll("button[aria-label]")]
   .map((button) => button.getAttribute("aria-label")!)
   .filter((label) => !label.startsWith("Данные отправки") && !label.startsWith("Доставка ") && !/^Печать (PL|DN) /.test(label)));
@@ -104,8 +104,8 @@ it("warehouse can set delivery for the whole catalog including a KB before finis
   fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
   await waitFor(() => expect(writes()).toEqual([expect.objectContaining({ url: "/api/shipping/item-addressees/bulk", body: {
     project: "591К.3", items: [
-      { item_index: "КБ1", version: 2, fields: { phone: "456" }, inherit: [] },
-      { item_index: "КБ2", version: 0, fields: { phone: "456" }, inherit: [] },
+      { item_index: "КБ1", version: 2, fields: { phone: "456" } },
+      { item_index: "КБ2", version: 0, fields: { phone: "456" } },
     ],
   } })]));
 });
@@ -122,7 +122,7 @@ it("selected receipt rows of the same KB produce one versioned delivery update",
   fireEvent.change(screen.getByRole("textbox", { name: "Телефон" }), { target: { value: "" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
   await waitFor(() => expect(writes()).toEqual([expect.objectContaining({ url: "/api/shipping/item-addressee", body: {
-    project: "591К.3", item_index: "КБ1", version: 2, fields: { phone: "" }, inherit: [],
+    project: "591К.3", item_index: "КБ1", version: 2, fields: { phone: "" },
   } })]));
 });
 
@@ -130,7 +130,7 @@ it.each(["Новая", "Собрана", "Упакована", "Отгружен
   const shipment = { ...packedShipment, status, receiver: "Иванов", phone: "+7 123", contact: "Контакт", note: "Позвонить", deadline: "2026-11-12" } as DispatchShipment;
   render(<ShipmentCard shipment={shipment} rights={{ canManage: true, canWarehouse: true, canEdit: true, canUnship: false }}
     busy="" mutate={vi.fn()} openData={vi.fn()} />);
-  const details = screen.getByText("Получатель и адрес этой отправки").closest("details")!;
+  const details = screen.getByText("Организация, получатель и адрес этой отправки").closest("details")!;
   const active = ["Новая", "Собрана", "Упакована"].includes(status);
   expect(details.querySelectorAll("input").length > 0).toBe(active);
   if (!active) {
@@ -143,7 +143,7 @@ it.each(["Новая", "Собрана", "Упакована", "Отгружен
   expect(Boolean(screen.queryByRole("button", { name: "Сохранить документы" }))).toBe(!["Закрыта", "Отменена"].includes(status));
 });
 
-it("position rows repeat shipment fields, preserve newest groups and chronological ordinals", async () => {
+it("one project contains aligned shipment rows with blank shipment cells on its KB rows", async () => {
   intakeRows = [];
   shipments = [
     { ...packedShipment, id: "later", number: "ОТГ-2", status: "Закрыта", shipped_at: "2026-11-08", receiver: "Иванов", phone: "+7 222", lines: [shipmentLine({ picked: "250" })] },
@@ -151,19 +151,90 @@ it("position rows repeat shipment fields, preserve newest groups and chronologic
   ];
   render(<ProductionIntakePage principal={principal} />);
   fireEvent.click(await screen.findByRole("tab", { name: /^Отгружено/ }));
-  const positions = shipmentRows();
-  expect(positions).toHaveLength(3);
-  expect(positions.map((tr) => [cell(tr, "Отправка"), cell(tr, "Отгрузка"), cell(tr, "Отгружено"), cell(tr, "Отгружена"), cell(tr, "Получатель"), cell(tr, "Телефон")])).toEqual([
-    ["ОТГ-2", "2 из 2", "250 шт", "08.11.2026", "Иванов", "+7 222"],
-    ["ОТГ-1", "1 из 2", "100 шт", "03.11.2026", "Петров", "+7 111"],
-    ["ОТГ-1", "1 из 2", "50 шт", "03.11.2026", "Петров", "+7 111"],
+  expect(document.querySelectorAll("tr.dt-parent-row")).toHaveLength(1);
+  expect(document.querySelector("tr.dt-parent-row")).toHaveTextContent("591К.3 · Заказчик");
+  expect(shipmentRows()).toHaveLength(2);
+  expect(shipmentRows().map((tr) => [cell(tr, "Наименование"), cell(tr, "КБ"), cell(tr, "Отгружено"), cell(tr, "Отгружена"), cell(tr, "Организация"), cell(tr, "Телефон")])).toEqual([
+    ["ОТГ-2", "Отгрузка 2 из 2", "250 шт", "08.11.2026", "Иванов", "+7 222"],
+    ["ОТГ-1", "Отгрузка 1 из 2", "150 шт", "03.11.2026", "Петров", "+7 111"],
   ]);
-  expect(screen.getByText("Отгрузка 2 из 2 · ОТГ-2")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: /^Отправка$/ }));
-  expect(shipmentRows().map((tr) => cell(tr, "Отправка"))).toEqual(["ОТГ-2", "ОТГ-1", "ОТГ-1"]);
+  expect(bodyRows()).toHaveLength(3);
+  for (const position of bodyRows()) for (const title of ["Статус", "Отгружена", "Организация", "Телефон", "Трек", "PL", "DN"])
+    expect(cell(position, title)).toBe("");
+  for (const title of ["Создана", "Срок", "Этап позиции", "Данные", "Проект", "Заказчик", "Отправка", "Отгрузка"])
+    expect(headers()).not.toContain(title);
+  fireEvent.click(screen.getByRole("button", { name: /^КБ$/ }));
+  expect(shipmentRows().map((tr) => cell(tr, "Наименование"))).toEqual(["ОТГ-2", "ОТГ-1"]);
   fireEvent.change(screen.getByRole("searchbox"), { target: { value: "ОТГ-2" } });
   expect(shipmentRows()).toHaveLength(1);
-  expect(screen.getByText("Отгрузка 2 из 2 · ОТГ-2")).toBeInTheDocument();
+  expect(screen.getByText("Отгрузка 2 из 2")).toBeInTheDocument();
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Петров" } });
+  expect(bodyRows()).toHaveLength(2);
+  expect(shipmentRows()).toHaveLength(1);
+  expect(cell(shipmentRows()[0], "Наименование")).toBe("ОТГ-1");
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
+  fireEvent.click(screen.getByRole("button", { name: "Фильтры" }));
+  fireEvent.change(screen.getByRole("combobox", { name: "Фильтр: Статус" }), { target: { value: "Отгружена" } });
+  expect(bodyRows()).toHaveLength(2);
+  expect(shipmentRows()).toHaveLength(1);
+});
+
+it("all shows unshipped KB directly under its project and keeps its own effective delivery", async () => {
+  window.history.replaceState({}, "", "/?tab=all");
+  intakeRows = [row({ item_index: "КБ3", needed: "6", delivered: "6", accepted: "6", packed: "0", remaining: "0", tasks: [] })];
+  itemDeliveries = [kbDelivery("КБ3")];
+  shipments = [packedShipment, { ...packedShipment, id: "s2", number: "ОТГ-2", created_at: "2026-11-01", lines: [shipmentLine({ id: "l2", item_index: "КБ2" })] }];
+  render(<ProductionIntakePage principal={principal} />);
+  await screen.findByRole("button", { name: "Всем КБ проекта 591К.3" });
+  const parent = document.querySelector("tr.dt-parent-row")!;
+  expect(document.querySelectorAll("tr.dt-parent-row")).toHaveLength(1);
+  expect(shipmentRows()).toHaveLength(2);
+  expect(parent.nextElementSibling).toHaveTextContent("КБ3");
+  expect(cell(parent.nextElementSibling!, "Организация")).toBe("Получатель КБ");
+  expect(cell(parent.nextElementSibling!, "Адрес")).toBe("Адрес КБ");
+  expect(bodyRows()).toHaveLength(3);
+  expect(screen.queryByText("Данные", { selector: "th" })).not.toBeInTheDocument();
+});
+
+it("shipment columns can be enabled without repeating values in the fallback or KB cells", async () => {
+  window.history.replaceState({}, "", "/?tab=packed");
+  intakeRows = [];
+  shipments = [packedShipment];
+  render(<ProductionIntakePage principal={principal} />);
+  await screen.findByText(packedShipment.number);
+  fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /^Отправка$/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /^Отгрузка$/ }));
+  expect(cell(shipmentRows()[0], "Отправка")).toBe(packedShipment.number);
+  expect(cell(shipmentRows()[0], "Отгрузка")).toBe("Отгрузка 1 из 1");
+  expect(cell(shipmentRows()[0], "КБ")).toBe("");
+  expect(cell(shipmentRows()[0], "Наименование")).toBe("");
+  expect(cell(bodyRows()[0], "Отправка")).toBe("");
+  expect(cell(bodyRows()[0], "Отгрузка")).toBe("");
+});
+
+it("shipment permission and unknown blockers remain visible once, including pickup shipments", async () => {
+  window.history.replaceState({}, "", "/?tab=packed");
+  intakeRows = [];
+  shipments = [{ ...packedShipment, terms: "САМОВЫВОЗ", carrier: "", missing_data: ["№ УПД"],
+    missing_ship: ["№ УПД", "разрешение на отгрузку без УПД", "согласование склада"] }];
+  render(<ProductionIntakePage principal={principal} />);
+  await screen.findByText(packedShipment.number);
+  expect(cell(shipmentRows()[0], "Ждём для трека")).toBe("разрешение на отгрузку без УПД, согласование склада");
+  expect(cell(bodyRows()[0], "Ждём для трека")).toBe("");
+  expect(screen.getAllByText(/разрешение на отгрузку без УПД, согласование склада/)).toHaveLength(1);
+});
+
+it.each(["БУМАГА", "ЭДО", "БЕЗ УПД", null])("a missing UPD file is highlighted only when required by UPD type %s", async (upd_type) => {
+  window.history.replaceState({}, "", "/?tab=packed");
+  intakeRows = [];
+  shipments = [{ ...packedShipment, upd_type, upd_url: "" }];
+  render(<ProductionIntakePage principal={principal} />);
+  await screen.findByText(packedShipment.number);
+  const file = shipmentRows()[0].querySelector('td[data-label="Файл УПД"]')!;
+  expect(file).toHaveTextContent(upd_type === "БУМАГА" ? "не заполнено" : "—");
+  expect(Boolean(file.querySelector(".tone-warn"))).toBe(upd_type === "БУМАГА");
+  expect(cell(bodyRows()[0], "Файл УПД")).toBe("");
 });
 
 it("normal Excel exports all position rows beyond the rendered page and follows search", async () => {
@@ -176,14 +247,19 @@ it("normal Excel exports all position rows beyond the rendered page and follows 
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
   render(<ProductionIntakePage principal={principal} />);
   fireEvent.click(await screen.findByRole("tab", { name: /^Отгружено/ }));
-  expect(shipmentRows()).toHaveLength(200);
+  expect(bodyRows()).toHaveLength(200);
   expect(screen.queryByRole("button", { name: "Excel по позициям" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: /^Excel$/ }));
   let text = new TextDecoder("utf-16le").decode(await blob!.arrayBuffer());
   expect(text.split(packedShipment.number)).toHaveLength(202);
+  const [exportHeaders, firstExport] = text.replace(/^\uFEFF/, "").split("\r\n").map((line) => line.split("\t"));
+  for (const [title, value] of [["Проект", "591К.3"], ["Заказчик", "Заказчик"], ["Отправка", packedShipment.number], ["Организация", "Организация"],
+    ["Телефон", "+7 900"], ["Адрес", "Москва"], ["Создана", "2026-10-29T09:00:00"], ["Отгружена", "2026-11-08"]])
+    expect(firstExport[exportHeaders.indexOf(title)]).toBe(value);
   fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Особый" } });
-  expect(shipmentRows()).toHaveLength(1);
-  expect(shipmentRows()[0]).toHaveTextContent("КБ200");
+  expect(bodyRows("")).toHaveLength(1);
+  expect(bodyRows("")[0]).toHaveTextContent("КБ200");
+  expect(cell(shipmentRows()[0], "Отгружено")).toBe("201 шт");
   fireEvent.click(screen.getByRole("button", { name: /^Excel$/ }));
   text = new TextDecoder("utf-16le").decode(await blob!.arrayBuffer());
   expect(text.split(packedShipment.number)).toHaveLength(2);
@@ -201,7 +277,7 @@ it("project delivery values use the table columns, missing fields are highlighte
   const phone = positions[0].querySelector('td[data-label="Телефон"] .tone-warn');
   expect(phone).toHaveTextContent("не заполнено");
   expect(positions[0].querySelector('td[data-label="Адрес"] [title]')).toHaveAttribute("title", address);
-  for (const tr of positions) for (const label of ["Получатель", "Телефон", "Адрес", "Способ доставки", "ТК", "УПД"]) expect(tr.querySelector(`td[data-label="${label}"]`)).not.toBeNull();
+  for (const tr of positions) for (const label of ["Организация", "Получатель", "Телефон", "Адрес", "Способ доставки", "ТК", "УПД"]) expect(tr.querySelector(`td[data-label="${label}"]`)).not.toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Изменить данные отправки 591К.3" }));
   expect(await screen.findByRole("dialog")).toBeInTheDocument();
 });
@@ -257,7 +333,7 @@ it.each(["В ожидании", "В производстве", "Готово", "
   expect(buttons[0]).toBeEnabled();
   fireEvent.click(buttons[0]);
   const dialog = within(await screen.findByRole("dialog"));
-  expect(await dialog.findByLabelText("Получатель")).toBeEnabled();
+  expect(await dialog.findByLabelText("Организация")).toBeEnabled();
 });
 
 it.each([
@@ -309,11 +385,11 @@ describe("Приёмка с производства: свои колонки и
       [/^Принято/, ["КБ", "Наименование", "Количество", "Упаковать", "ГРН", "Дата приёмки", "Этикетка", "Разрешение на упаковку", "Разрешено по КБ", "Упаковано по КБ"], ["Упаковать 591К.3 КБ1: 10"]],
       [/^Упаковано/, ["КБ", "Наименование", "Упаковано", "Действие", "ГРН"], ["Трек 591К.3 КБ1"]],
       [/^На отгрузку/, ["КБ", "Наименование", "Упаковано", "Отгрузка", "ГРН"], ["Отгрузить 591К.3 КБ1"]],
-      [/^Отгружено/, ["КБ", "Наименование", "Отгружено", "ГРН"], []],
+      [/^Отгружено/, ["КБ", "Наименование", "Отгружено", "ГРН", "Действие"], []],
     ];
     for (const [name, heads, buttons] of expected) {
       fireEvent.click(tab(name));
-      await waitFor(() => expect(headers()).toEqual([...heads, ...shippingHeaders]));
+      await waitFor(() => expect(headers()).toEqual([...heads, ...(name.source === "^Отгружено" ? ["Статус", "Отгружена", ...shippingHeaders.slice(1)] : shippingHeaders)]));
       expect(rowButtons()).toEqual(buttons);
     }
     fireEvent.click(tab(/^Принято/));
@@ -325,7 +401,7 @@ describe("Приёмка с производства: свои колонки и
     fireEvent.click(tab(/^В ожидании/));
     expect(await screen.findByText("В ожидании производства ничего нет.")).toBeInTheDocument();
     fireEvent.click(tab(/^Все/));
-    await waitFor(() => expect(headers()).toEqual(["КБ", "Наименование", "Количество", "Заказано", "Запущено", "Остаток", "Действие", "Этап", "ГРН", "Дата приёмки", "Этикетка", "Задания", "Разрешение на упаковку", "Разрешено по КБ", "Упаковано по КБ", ...shippingHeaders]));
+    await waitFor(() => expect(headers()).toEqual(["КБ", "Наименование", "Количество", "Заказано", "Запущено", "Остаток", "Действие", "ГРН", "Дата приёмки", "Этикетка", "Задания", "Разрешение на упаковку", "Разрешено по КБ", "Упаковано по КБ", ...shippingHeaders]));
     expect(rowButtons().sort()).toEqual(["Принять досрочно 591К.3 КБ1: 14", "Принять 591К.3 КБ1: 6", "Упаковать 591К.3 КБ1: 10", "Трек 591К.3 КБ1", "Отгрузить 591К.3 КБ1"].sort());
     expect(screen.queryByText(/Счётчики:/)).not.toBeInTheDocument();
     expect(writes()).toEqual([]);
@@ -363,7 +439,7 @@ describe("Приёмка с производства: свои колонки и
     expect(bodyRows().map((tr) => [cell(tr, "ГРН"), cell(tr, "Количество")])).toEqual([["ГП.СТАРЫЙ", "10 шт"], ["ГП.НОВЫЙ", "10 шт"]]);
   });
 
-  it("a shipment of two KB has two immediate pack buttons with each position quantity and separate shipping cells", async () => {
+  it("a shipment of two KB has two immediate pack buttons and one aligned set of shipping cells", async () => {
     window.history.replaceState({}, "", "/?tab=accepted");
     intakeRows = [
       row({ needed: "20", accepted: "20", packed: "20", remaining: "0", pack_decided: true, pack_permission_remaining: "100", acts: [act("ГП.26.0000501", "20")] }),
@@ -382,11 +458,13 @@ describe("Приёмка с производства: свои колонки и
     expect(screen.queryByRole("button", { name: "Excel по позициям" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Короба и PL/DN" })).toBeInTheDocument();
     for (const position of bodyRows()) {
-      expect(["Получатель", "Телефон", "Адрес", "ТК", "Трек", "№ УПД", "PL", "DN"].map((label) => cell(position, label))).toEqual([
-        "Получатель", "+7 900", "Москва", "СДЭК", "не заполнен", "У-7", "PL591К.3-1", "DN591К.3-1",
-      ]);
+      expect(["Организация", "Получатель", "Телефон", "Адрес", "ТК", "Трек", "№ УПД", "PL", "DN"].map((label) => cell(position, label))).toEqual(Array(9).fill(""));
       expect(position.querySelector("small")).toBeNull();
     }
+    expect(["Организация", "Получатель", "Телефон", "Адрес", "ТК", "Трек", "№ УПД", "PL", "DN"].map((label) => cell(shipmentRows()[0], label))).toEqual([
+      "Организация", "—", "+7 900", "Москва", "СДЭК", "не заполнено", "У-7", "PL591К.3-1", "DN591К.3-1",
+    ]);
+    expect(cell(shipmentRows()[0], "Количество")).toBe("40 шт");
     expect(document.querySelector("tr[aria-expanded]")).toBeNull();
   });
 
@@ -395,9 +473,9 @@ describe("Приёмка с производства: свои колонки и
     shipments = [{ ...packedShipment, status: "Собрана", pl_number: "", dn_number: "", lines: [shipmentLine({ picked: "5", requested: "5", grn: "ГП.26.0000500" })] }];
     render(<ProductionIntakePage principal={principal} />);
     expect(await screen.findByRole("tab", { name: /^Принято/ })).toHaveAttribute("aria-selected", "true");
-    expect(bodyRows().map((tr) => cell(tr, "Количество"))).toEqual(["5 шт", "15 шт"]);
+    expect(bodyRows().map((tr) => cell(tr, "Количество"))).toEqual(["15 шт", "5 шт"]);
     expect(shipmentRows()[0]).toHaveTextContent("5 шт");
-    expect(rowButtons().filter((name) => name.startsWith("Упаковать"))).toEqual(["Упаковать 591К.3 КБ1: 5", "Упаковать 591К.3 КБ1: 15"]);
+    expect(rowButtons().filter((name) => name.startsWith("Упаковать"))).toEqual(["Упаковать 591К.3 КБ1: 15", "Упаковать 591К.3 КБ1: 5"]);
     expect(screen.queryByRole("button", { name: /Упаковать.*: 20$/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Короба и PL/DN" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Упаковать 591К.3 КБ1: 5" }));
@@ -518,8 +596,9 @@ describe("Приёмка с производства: свои колонки и
     const second = render(<ProductionIntakePage principal={principal} />);
     expect(await screen.findByRole("button", { name: "Трек 591К.3 КБ1" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Без УПД 591К.3 КБ1" })).not.toBeInTheDocument();
-    // Причина выключенного «Трек…» — своим столбцом, видна без подсказки.
-    expect(cell(shipmentRows()[0], "Ждём для трека")).toBe("№ УПД");
+    // Пропуск УПД виден в своей ячейке и не дублируется текстовым перечнем.
+    expect(cell(shipmentRows()[0], "№ УПД")).toBe("не заполнено");
+    expect(cell(shipmentRows()[0], "Ждём для трека")).toBe("—");
     second.unmount();
 
     shipments = [{ ...packedShipment, upd_type: null, missing_ship: ["тип УПД", "трек-номер"], missing_ship_codes: ["upd_type", "track_number"], no_upd_offered: true }];
@@ -548,7 +627,7 @@ describe("Приёмка с производства: свои колонки и
     }));
     render(<ProductionIntakePage principal={principal} />);
     await screen.findByText("ОТГ-20261029-02");
-    const party = screen.getByText("ОТГ-20261029-02").closest("tr")!;
+    const party = screen.getByText("ОТГ-20261029-02").closest("tr")!.nextElementSibling!;
     fireEvent.click(within(party as HTMLElement).getByRole("button", { name: "Трек 591К.3 КБ1" }));
     const dialog = await screen.findByRole("dialog", { name: "Трек 591К.3 КБ1" });
     expect(within(dialog).queryByLabelText("Трек-номер ОТГ-20261029-01")).not.toBeInTheDocument();
@@ -603,7 +682,7 @@ describe("Приёмка с производства: свои колонки и
     fireEvent.click(tab(/^Принято/));
     fireEvent.click(await screen.findByRole("button", { name: "Изменить данные отправки 591К.3" }));
     const card = await screen.findByRole("dialog", { name: "Данные отправки 591К.3" });
-    expect(await within(card).findByLabelText("Получатель")).toBeEnabled();
+    expect(await within(card).findByLabelText("Организация")).toBeEnabled();
     expect(within(card).getByRole("button", { name: "Сохранить" })).toBeInTheDocument();
     fireEvent.click(within(card).getByRole("button", { name: "Закрыть" }));
 
@@ -613,7 +692,7 @@ describe("Приёмка с производства: свои колонки и
     const shipCard = within(within(pack).getByRole("article", { name: "Отправка ОТГ-20261029-01" }));
     expect(shipCard.getByRole("button", { name: "Сохранить документы" })).toBeInTheDocument();
     expect(shipCard.getByLabelText("Загрузить УПД ОТГ-20261029-01")).toBeEnabled();
-    expect(shipCard.getByText("Получатель и адрес этой отправки")).toBeInTheDocument();
+    expect(shipCard.getByText("Организация, получатель и адрес этой отправки")).toBeInTheDocument();
     fireEvent.click(shipCard.getByRole("button", { name: "Данные отправки" }));
     const data = await screen.findByRole("dialog", { name: "Данные отправки ОТГ-20261029-01" });
     expect(within(data).getByRole("button", { name: "Сохранить" })).toBeInTheDocument();
@@ -657,7 +736,7 @@ describe("Приёмка с производства: свои колонки и
     ] }];
     render(<ProductionIntakePage principal={viewer} />);
     fireEvent.click(await screen.findByRole("tab", { name: /^Отгружено/ }));
-    expect([...document.querySelectorAll('td[data-label="КБ"]')].map((td) => td.textContent)).toEqual(["КБ1", "КБ2", "КБ2", "КБ10"]);
+    expect(bodyRows().map((tr) => cell(tr, "КБ"))).toEqual(["КБ1", "КБ2", "КБ2", "КБ10"]);
     expect(count(/^Отгружено/)).toBe("3");
   });
 
@@ -685,7 +764,7 @@ describe("Приёмка с производства: свои колонки и
     fireEvent.change(screen.getByRole("searchbox", { name: "Поиск: Приёмка с производства" }), { target: { value: "ГП.26.0000044" } });
     expect(shipmentRows()).toHaveLength(1);
     expect(shipmentRows()[0]).toHaveTextContent("ОТГ-2");
-    expect(bodyRows().map((tr) => cell(tr, "Отправка"))).toEqual(["ОТГ-2"]);
+    expect(bodyRows().map((tr) => cell(tr, "ТК"))).toEqual([""]);
     let blob: Blob | null = null;
     const create = vi.spyOn(URL, "createObjectURL").mockImplementation((value) => { blob = value as Blob; return "blob:intake"; });
     const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);

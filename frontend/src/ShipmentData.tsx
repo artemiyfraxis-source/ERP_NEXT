@@ -42,7 +42,7 @@ export function readinessItems(source: ReadinessSource, withTrack = false): Read
   const pickup = source.terms === "САМОВЫВОЗ" || isPickup(source.carrier);
   const way = source.terms || source.carrier ? [source.terms === "ДОСТАВКА ТК" ? "Доставка ТК" : pickup ? "Самовывоз" : "", !pickup ? source.carrier : ""].filter(Boolean).join(" · ") : "";
   const items: ReadinessItem[] = [
-    source.receiver.trim() ? { label: "Получатель", ok: true } : { label: "нет получателя", ok: false },
+    source.receiver.trim() ? { label: "Организация", ok: true } : { label: "нет организации", ok: false },
     way ? { label: way, ok: true } : { label: "нет условий доставки", ok: false },
   ];
   if (!pickup) items.push(source.shipping_point.trim() ? { label: "Адрес", ok: true } : { label: "нет адреса", ok: false });
@@ -100,6 +100,7 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
   const [carrier, setCarrier] = useState(isPickup(shipment.carrier) ? "" : shipment.carrier);
   const [point, setPoint] = useState(shipment.shipping_point);
   const [receiver, setReceiver] = useState(shipment.receiver);
+  const [contact, setContact] = useState(shipment.contact);
   const [phone, setPhone] = useState(shipment.phone);
   const [warehouseNote, setWarehouseNote] = useState(shipment.note);
   const [updType, setUpdType] = useState<string>(shipment.upd_type ?? "");
@@ -171,6 +172,7 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
       const wantedCarrier = pickup ? PICKUP_CARRIER : carrier.trim();
       if (canEditHead) {
         if (receiver.trim() !== shipment.receiver.trim()) head.receiver = receiver.trim();
+        if (contact.trim() !== shipment.contact.trim()) head.contact = contact.trim();
         if (phone.trim() !== shipment.phone.trim()) head.phone = phone.trim();
         if (warehouseNote.trim() !== shipment.note.trim()) head.note = warehouseNote.trim();
         if (delivery && delivery !== shipment.terms) head.terms = delivery;
@@ -211,9 +213,10 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
       {deciding && <div className="ship-block"><h3>Упаковка</h3>
         {[...new Set(shipment.lines.map((line) => line.project))].map((name) => <PackDecision key={name} project={name} editable={canEdit} />)}</div>}
       {!shipped && <div className="ship-block"><h3>Адрес</h3><div className="ship-form">
+        <label>Организация<input aria-label="Организация" placeholder="как в документах" value={receiver} readOnly={!canEditHead} onChange={canEditHead ? (event) => setReceiver(event.target.value) : undefined} /></label>
+        <label>Получатель<input aria-label="Получатель" placeholder="ФИО, кому передать груз" value={contact} readOnly={!canEditHead} onChange={canEditHead ? (event) => setContact(event.target.value) : undefined} /></label>
+        <label>Телефон<input aria-label="Телефон" type="tel" value={phone} readOnly={!canEditHead} onChange={canEditHead ? (event) => setPhone(event.target.value) : undefined} /></label>
         {!pickup && <label className="ship-span2">Адрес доставки<input aria-label="Адрес доставки" value={point} readOnly={!canEditHead} onChange={canEditHead ? (event) => setPoint(event.target.value) : undefined} /></label>}
-        <label>Получатель<input aria-label="Получатель" value={receiver} readOnly={!canEditHead} onChange={canEditHead ? (event) => setReceiver(event.target.value) : undefined} /></label>
-        <label>Телефон получателя<input aria-label="Телефон получателя" value={phone} readOnly={!canEditHead} onChange={canEditHead ? (event) => setPhone(event.target.value) : undefined} /></label>
         <label className="ship-span2">Комментарий для склада<textarea aria-label="Комментарий для склада" maxLength={5000} value={warehouseNote} readOnly={!canEditHead} onChange={canEditHead ? (event) => setWarehouseNote(event.target.value) : undefined} /></label>
       </div></div>}
       <div className="ship-block"><h3>ТК и УПД</h3><div className="ship-form">
@@ -267,7 +270,7 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
           setSaving(true); setError(""); setDeliveryNotice("");
           try {
             const { shipment: refreshed } = await shippingApi.head(shipment.id, { version: shipment.version, refresh_delivery: true });
-            setShipment(refreshed); setReceiver(refreshed.receiver); setPhone(refreshed.phone); setPoint(refreshed.shipping_point);
+            setShipment(refreshed); setReceiver(refreshed.receiver); setContact(refreshed.contact); setPhone(refreshed.phone); setPoint(refreshed.shipping_point);
             setDelivery(refreshed.terms ?? ""); setCarrier(isPickup(refreshed.carrier) ? "" : refreshed.carrier); setUpdType(refreshed.upd_type ?? "");
             setDeliveryNotice("Доставка обновлена. Перепечатайте этикетки и документы.");
             await onSaved();
@@ -284,8 +287,8 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
 }
 
 const HISTORY_FIELDS: Array<{ key: ShipmentHistoryField; label: string; max: number }> = [
-  { key: "receiver", label: "Получатель", max: 512 }, { key: "shipping_point", label: "Адрес доставки", max: 5000 },
-  { key: "contact", label: "Контактное лицо", max: 255 }, { key: "phone", label: "Телефон получателя", max: 128 },
+  { key: "receiver", label: "Организация", max: 512 }, { key: "contact", label: "Получатель", max: 255 },
+  { key: "phone", label: "Телефон", max: 128 }, { key: "shipping_point", label: "Адрес доставки", max: 5000 },
   { key: "carrier", label: "Перевозчик", max: 255 }, { key: "track_number", label: "Трек-номер", max: 255 },
 ];
 type HistoryChange = { key: ShipmentHistoryField; label: string; before: string; after: string };

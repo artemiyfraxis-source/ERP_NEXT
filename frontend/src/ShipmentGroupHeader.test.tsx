@@ -32,3 +32,11 @@ it("keeps group identities distinct for project rows and shipment rows", () => {
   expect(shipmentGroupKey({ project: "100К", shipment })).not.toBe(shipmentGroupKey({ project: "200К", shipment }));
   expect(shipmentGroupKey({ project: "100К", shipment })).not.toBe(shipmentGroupKey({ project: "100К" }));
 });
+
+it("places unassigned KB directly under their project before shipment branches without changing project priority", () => {
+  const old = { project: "100К", shipment: dated("old", "2026-11-01") };
+  const newest = { project: "200К", shipment: dated("new", "2026-11-15") };
+  const middle = { project: "200К", shipment: dated("middle", "2026-11-10") };
+  const free = { project: "200К", shipment: null };
+  expect(orderShipmentRows([old, newest, middle, free])).toEqual([free, newest, middle, old]);
+});
