@@ -20,6 +20,7 @@ NAME = "Planar, S50180, 26030095, 26.2.2/2"
 TRACE = f"! S2VNA {NAME} 2026-11-12T10:00:00Z S11\n# Hz S RI R 50\n100000000 0.1 0\n200000000 0.2 0\n".encode()
 S2_INSTRUMENT = "11111111-1111-1111-1111-111111111111"
 ARINST_INSTRUMENT = "22222222-2222-2222-2222-222222222222"
+ARINST_SERIAL = "26030096"
 
 
 @pytest.fixture()
@@ -28,9 +29,10 @@ def capture(tokens_api):  # noqa: F811
     admin = _login("admin")
     agent = _bearer(_issue(admin, scopes=("scan:upload",))["token"])
     with sessions() as session:
-        for id, vna_app in ((S2_INSTRUMENT, "S2VNA"), (ARINST_INSTRUMENT, "Arinst VL")):
+        for id, vna_app, serial in ((S2_INSTRUMENT, "S2VNA", "26030095"),
+                                    (ARINST_INSTRUMENT, "Arinst VL", ARINST_SERIAL)):
             session.add(ProductionInstrumentRow(id=UUID(id), version=1, inventory_number=id[:8],
-                name=vna_app, instrument_type="ВАЦ", kind="Средство измерений", status="Действует", serial_number="26030095",
+                name=vna_app, instrument_type="ВАЦ", kind="Средство измерений", status="Действует", serial_number=serial,
                 verification_number="test", verified_at=clock.now - timedelta(days=1),
                 verification_due=clock.now + timedelta(days=30), vna_app=vna_app))
         session.commit()

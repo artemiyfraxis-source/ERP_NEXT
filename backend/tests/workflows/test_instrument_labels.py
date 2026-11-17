@@ -7,7 +7,12 @@ import pytest
 from sqlalchemy import select
 
 from app.main import app
+from app.modules.warehouse.infrastructure import SqlAlchemyLabelSettings, SqlAlchemyWarehouseUnitOfWork
 from app.modules.warehouse.label_jobs import LabelAgentRow, LabelJobRow
+from app.modules.warehouse.labels.render import render
+from app.modules.warehouse.labels.settings import PrintSettings
+from app.modules.warehouse.labels.template import LabelContent, parse_template
+from app.modules.warehouse.labels_application import effective_label_settings, tspl_job
 from app.shared.persistence import AuditEventRow
 from app.workflows import instrument_labels
 from tests.production.test_api import production_api  # noqa: F401
@@ -72,6 +77,39 @@ def test_preview_is_png_in_default_58_by_30_and_does_not_enqueue(production_api)
     assert image.width == round(58 * 300 / 25.4)
     assert image.height == round(30 * 300 / 25.4)
     assert jobs_and_audit(sessions) == ([], [])
+
+
+@pytest.mark.parametrize("saved_size", [None, (58, 40), (100, 50)])
+def test_designer_effective_format_saved_template_preview_and_print_agree(production_api, monkeypatch, saved_size):
+    client, _ = production_api
+    item, sessions = setup(client)
+    monkeypatch.setattr(app.state, "warehouse_uow_factory", lambda: SqlAlchemyWarehouseUnitOfWork(sessions), raising=False)
+    _as({"quality": "edit", "production": "view", "warehouse": "edit"})
+    saved_settings = PrintSettings(width_mm=saved_size[0], height_mm=saved_size[1]) if saved_size else None
+    if saved_settings is not None:
+        with sessions.begin() as session:
+            SqlAlchemyLabelSettings(session).save(saved_settings, NOW, "ОТК")
+    view = client.get("/api/stock/labels/templates/instrument").json()
+    settings = effective_label_settings(saved_settings, "instrument")
+    assert view["current_format"] == f"{settings.width_mm:g}x{settings.height_mm:g}"
+    if saved_size is None:
+        assert view["current_format"] == "58x30"
+        assert client.get("/api/stock/labels/templates/lot").json()["current_format"] == "58x40"
+    template = {"elements": [{"id": "saved", "kind": "text", "text": "Сохранённый шаблон",
+                              "x_mm": 2, "y_mm": 2, "w_mm": 54, "h_mm": 8, "font_mm": 2}]}
+    route = f"/api/stock/labels/templates/instrument/{view['current_format']}"
+    assert client.put(route, json={"template": template, "version": None}).status_code == 200
+    designer_preview = client.post(route + "/preview", json={"template": template})
+    actual_preview = client.get(f"{BASE}/{item['id']}/label.png")
+    assert actual_preview.status_code == designer_preview.status_code == 200
+    assert actual_preview.content == designer_preview.content
+    image = Image.open(BytesIO(actual_preview.content))
+    assert image.size == (round(settings.width_mm * settings.dpi / 25.4), round(settings.height_mm * settings.dpi / 25.4))
+    assert client.post(f"{BASE}/{item['id']}/label", json={}).status_code == 200
+    layout = render(parse_template(template, "instrument", view["current_format"]),
+                    LabelContent("instrument", item["inventory_number"], {}), settings)
+    jobs, _ = jobs_and_audit(sessions)
+    assert len(jobs) == 1 and jobs[0].tspl == tspl_job(layout, settings, 1)
 
 
 @pytest.mark.parametrize("case", ["absent", "old", "blank_printer", "future"])

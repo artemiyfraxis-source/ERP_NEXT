@@ -17,9 +17,8 @@ from app.modules.production.traceability import InstrumentKind
 from app.modules.warehouse.infrastructure import SqlAlchemyLabelSettings
 from app.modules.warehouse.label_jobs import LabelAgentRow, add_job
 from app.modules.warehouse.labels.layout import label_png
-from app.modules.warehouse.labels.settings import DEFAULT_PRINT_SETTINGS
 from app.modules.warehouse.labels.template import instrument_content
-from app.modules.warehouse.labels_application import layout_in, tspl_job
+from app.modules.warehouse.labels_application import effective_label_settings, layout_in, tspl_job
 from app.shared.clock import MOSCOW, moscow_now
 from app.shared.events import AuditEvent
 from app.shared.http_auth import Principal, production_overview_principal, production_quality_principal
@@ -75,7 +74,7 @@ def _content(item):
 
 
 def _settings(session):
-    return SqlAlchemyLabelSettings(session).load() or DEFAULT_PRINT_SETTINGS.model_copy(update={"height_mm": 30})
+    return effective_label_settings(SqlAlchemyLabelSettings(session).load(), "instrument")
 
 
 def enqueue_instrument_labels(sessions, ids: list[UUID], copies: int, actor, now: datetime) -> dict:

@@ -87,9 +87,18 @@ class PrintResult:
         return asdict(self)
 
 
-def label_settings(uow) -> PrintSettings:
+def effective_label_settings(settings: PrintSettings | None, kind: str = "lot") -> PrintSettings:
+    """One format policy for the designer, previews and queued labels."""
+    if settings is not None:
+        return settings
+    if kind == "instrument":
+        return DEFAULT_PRINT_SETTINGS.model_copy(update={"height_mm": 30})
+    return DEFAULT_PRINT_SETTINGS
+
+
+def label_settings(uow, kind: str = "lot") -> PrintSettings:
     with uow:
-        return uow.label_settings.load() or DEFAULT_PRINT_SETTINGS
+        return effective_label_settings(uow.label_settings.load(), kind)
 
 
 def _settings_message(settings: PrintSettings) -> str:

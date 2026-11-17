@@ -19,10 +19,10 @@ def mapping(before="ОБ.106", after="СИ.106", kind=MEASURING_TYPE, **extra):
     return {"from": before, "to": after, "type": kind, **extra}
 
 
-def instrument(number):
+def instrument(number, serial_number="SERIAL-123"):
     return ProductionInstrumentRow(id=uuid4(), version=3, inventory_number=number, name="Прибор",
         instrument_type="Мультиметр", status="Не используется", verification_number=None,
-        verified_at=None, verification_due=None, serial_number="SERIAL-123", manufacturer="Изготовитель")
+        verified_at=None, verification_due=None, serial_number=serial_number, manufacturer="Изготовитель")
 
 
 @pytest.mark.parametrize("value", [
@@ -266,7 +266,8 @@ def test_existing_registry_number_requires_explicit_allow_list(engine, allow):
 
 def test_allow_list_never_merges_two_registry_rows(engine):
     with Session(engine) as session, session.begin():
-        session.add_all([unit(session, "ОБ.105", kind="Оборудование"), instrument("ОБ.105"), instrument("СИ.001")])
+        session.add_all([unit(session, "ОБ.105", kind="Оборудование"), instrument("ОБ.105"),
+                         instrument("СИ.001", serial_number="SERIAL-456")])
     before = snapshot(engine)
     with pytest.raises(ValueError, match="оба номера"):
         run(engine, [mapping("ОБ.105", "СИ.001", registry_existing=True)], apply=True)

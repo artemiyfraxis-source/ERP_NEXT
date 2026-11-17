@@ -25,12 +25,14 @@ export function PrintSetupWindow({ kind, readOnly = false, close }: { kind: Labe
   // The designer stays mounted once opened: switching tabs keeps its unsaved edits.
   const [designerShown, setDesignerShown] = useState(false);
   const [usedFormat, setUsedFormat] = useState<LabelFormat | null>(null);
+  const [settingsVersion, setSettingsVersion] = useState(0);
   const dirty = useRef(false);
   const [asking, setAsking] = useState(false);
   const onDirty = useCallback((value: boolean) => { dirty.current = value; }, []);
   const onSettings = useCallback((settings: PrintSettings) => {
     const key = `${settings.width_mm}x${settings.height_mm}`;
     setUsedFormat(LABEL_FORMATS.includes(key as LabelFormat) ? key as LabelFormat : null);
+    setSettingsVersion((current) => current + 1);
   }, []);
   const tryClose = () => { if (dirty.current) setAsking(true); else close(); };
   const show = (next: Tab) => { setTab(next); if (next === "template") setDesignerShown(true); };
@@ -45,7 +47,7 @@ export function PrintSetupWindow({ kind, readOnly = false, close }: { kind: Labe
         <button type="button" className="secondary small" onClick={tryClose}>Закрыть</button>
       </header>
       <div hidden={tab !== "printer"}><PrinterSettingsCard readOnly={readOnly} onSettings={onSettings} /></div>
-      {designerShown && <div hidden={tab !== "template"}><LabelDesigner initialKind={kind} usedFormat={usedFormat} readOnly={readOnly} onDirty={onDirty} /></div>}
+      {designerShown && <div hidden={tab !== "template"}><LabelDesigner initialKind={kind} usedFormat={usedFormat} settingsVersion={settingsVersion} readOnly={readOnly} onDirty={onDirty} /></div>}
     </section>
     {asking && <PageWindow label="Несохранённый шаблон" close={() => setAsking(false)} width={480}>
       <section className="panel ld-confirm">
