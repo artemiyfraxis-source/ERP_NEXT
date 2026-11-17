@@ -17,6 +17,7 @@ param(
     [string]$Printer,
     [string]$MarkingPrinter,
     [string]$Scanner,
+    [switch]$NewMachineId,
     [switch]$Uninstall
 )
 
@@ -159,13 +160,31 @@ $Server = $Server.TrimEnd('/')
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 $ProgressPreference = 'SilentlyContinue'
 
-# Постоянный номер этого ПК: MachineGuid Windows (тот же, что у агента).
+# Постоянный номер этого ПК: MachineGuid Windows (тот же, что у агента); machine-id.txt в папке агента важнее —
+# его пишет -NewMachineId для ПК-клонов одного образа с одинаковым MachineGuid (ПК станков, 18.11.2026).
 function Get-MachineId {
+    try {
+        $override = Join-Path $Dir 'machine-id.txt'
+        if (Test-Path -LiteralPath $override) {
+            $own = ([string](Get-Content -LiteralPath $override -Raw)).Trim().ToLower()
+            if ($own -match '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { return $own }
+        }
+    } catch {}
     try {
         $guid = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Cryptography' -Name MachineGuid).MachineGuid
         if ($guid) { return ([string]$guid).ToLower() }
     } catch {}
     return ([string]$env:COMPUTERNAME).ToLower()
+}
+
+# ПК-клон с чужим MachineGuid: свой постоянный номер пишется один раз и сохраняется при переустановке.
+if ($NewMachineId) {
+    $idPath = Join-Path $Dir 'machine-id.txt'
+    if (-not (Test-Path -LiteralPath $idPath)) {
+        New-Item -ItemType Directory -Path $Dir -Force | Out-Null
+        [IO.File]::WriteAllText($idPath, ([guid]::NewGuid().ToString()), (New-Object Text.UTF8Encoding $false))
+    }
+    Write-Host "Номер ПК для ERP: $(Get-MachineId)"
 }
 
 # Одноразовый токен установки меняется на токен API агента (сервер гасит токен установки при первом обмене).

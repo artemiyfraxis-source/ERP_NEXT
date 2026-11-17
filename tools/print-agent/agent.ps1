@@ -574,7 +574,16 @@ function Invoke-TsplJob {
 # ---------------------------------------------------------------- Реестр агентов (сканер с любого ПК)
 
 # Постоянный номер ПК: MachineGuid Windows (не меняется при смене сети, имени, пользователя).
+# ПК-клоны одного образа (два SK-20250818JOKI у станков, 18.11.2026) имеют одинаковый MachineGuid — для них установщик
+# с -NewMachineId кладёт свой GUID в machine-id.txt рядом с config.json, и он важнее MachineGuid.
 function Get-MachineId {
+    try {
+        $override = Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($ConfigPath))) 'machine-id.txt'
+        if (Test-Path -LiteralPath $override) {
+            $own = ([string](Get-Content -LiteralPath $override -Raw)).Trim().ToLower()
+            if ($own -match '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { return $own }
+        }
+    } catch {}
     try {
         $guid = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Cryptography' -Name MachineGuid).MachineGuid
         if ($guid) { return ([string]$guid).ToLower() }

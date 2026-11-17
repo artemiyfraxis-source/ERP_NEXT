@@ -326,6 +326,24 @@ Describe 'Marking discovery and protocol' {
     }
 }
 
+Describe 'Machine id of cloned PCs' {
+    It 'prefers machine-id.txt next to the config over MachineGuid' {
+        $ConfigPath = Join-Path $tmp 'config.json'; $idPath = Join-Path $tmp 'machine-id.txt'
+        try {
+            [IO.File]::WriteAllText($idPath, "  0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0`r`n")
+            Get-MachineId | Should Be '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0'
+        } finally { Remove-Item -LiteralPath $idPath -Force -ErrorAction SilentlyContinue }
+    }
+    It 'ignores a malformed machine-id.txt and falls back to MachineGuid' {
+        $ConfigPath = Join-Path $tmp 'config.json'; $idPath = Join-Path $tmp 'machine-id.txt'
+        try {
+            [IO.File]::WriteAllText($idPath, 'not-a-guid')
+            Get-MachineId | Should Not Be 'not-a-guid'
+            (Get-MachineId) -match '^[0-9a-z-]+$' | Should Be $true
+        } finally { Remove-Item -LiteralPath $idPath -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 Describe 'Marking heartbeat' {
     BeforeEach {
         $script:VnaControlInitialized = $false; $script:HeartbeatDevices = $null
