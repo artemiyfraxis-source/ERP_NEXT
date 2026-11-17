@@ -135,6 +135,34 @@ def test_legacy_hfm_generic_housing_card_groups_only_at_coax_body():
     assert build_etk(doc["build_config"], cards) == doc
 
 
+@pytest.mark.parametrize("cables,saved_units,expected_units", [(1, 3, 3), (4, 3, 12), (4, 12, 12), (4, 8, 8)])
+def test_saved_hfm_without_marks_recounts_tubes_once(cables, saved_units, expected_units):
+    frozen = json.loads((ROOT / "frontend/src/__fixtures__/fakra708Configs.json").read_text(encoding="utf-8"))
+    fixture = next(item for item in frozen if item["config"]["coax"].get("cables") == 4)
+    config = deepcopy(fixture["config"])
+    config["coax"]["cables"] = cables
+    assert "marks" not in config["coax"]
+    tube_types = {"coaxCutTut", "coaxInsTut", "coaxHeat"}
+    for op in config["ops"]:
+        assert "marks" not in op
+        if op["type"] in tube_types:
+            op["units"] = saved_units
+            op["label"] = f"{op['type']} ×{saved_units}"
+            op["tOp"] = "60"
+    before = deepcopy(config)
+    cards = [replace(CARDS[op["opNum"]], source_id=op["templateId"])
+             for op in config["ops"] if op.get("opNum") in CARDS]
+    doc = build_etk(config, cards)
+    assert config == before
+    tubes = [op for op in doc["operations"] if op["type"] in tube_types]
+    assert len(tubes) == 3
+    assert tubes[0]["result"][0]["norm"] == str(expected_units * 15)
+    assert all(op["time"][0]["norm"] == str(expected_units * 15) for op in tubes)
+    assert all(op["card"]["name"].endswith(f"×{expected_units}") for op in tubes)
+    assert all(op["units"] == expected_units for op in doc["build_config"]["ops"] if op["type"] in tube_types)
+    assert build_etk(doc["build_config"], cards) == doc
+
+
 @pytest.mark.parametrize("last_type", ["coaxCut", "coaxSupportCrimp", "coaxPinCrimp", "coaxShield"])
 def test_multichannel_partial_route_still_outputs_cables(last_type):
     fixture = deepcopy(FIXTURES[0])

@@ -563,6 +563,10 @@ def _coax_quantity_config(config: Mapping[str, Any]) -> Mapping[str, Any]:
             elif marks:
                 op["units"] = sum(1 if mark.get("scope") == "assembly" else int(cables)
                                   for mark in marks if isinstance(mark, Mapping))
+            elif _coax_units(op) == 3:
+                # Legacy default: three marking positions per cable. Other saved totals may come from the BOM.
+                # Recount only the old default so replay preserves corrected and custom quantities.
+                op["units"] = 3 * int(cables)
         if _coax_units(op) != _coax_units(raw) and isinstance(op.get("label"), str):
             # Only the generated trailing multiplier, before an optional side suffix, is recounted.
             op["label"] = re.sub(r"×\d+(?=\s*(?:\([АВAB]\))?$)", f"×{_format(_coax_units(op))}", op["label"])
