@@ -2100,6 +2100,18 @@ def _resolve_card(
     parts_fields = fields.get("coaxParts") if isinstance(fields.get("coaxParts"), Mapping) else {}
     for step in card.steps:
         text = substitute(step.text)
+        if card.code.startswith("CUT_COAX") and fields.get("lengthKd"):
+            length = re.sub(r"\s*мм$", "", str(fields["lengthKd"])) + " мм"
+            text = text.replace("Задать длину отрезка L по КД", f"Задать длину реза {length}")
+            text = text.replace("длину отрезка (L)", f"длину реза {length}")
+            text = text.replace("общую длину реза", f"длину реза {length}")
+            ends = [fields[key] for key in ("coax", "coaxB") if isinstance(fields.get(key), Mapping)]
+            dimensions_known = bool(ends) and all(
+                bool(end["stripProgram"].get("boundaries")) if "stripProgram" in end
+                else all(end.get(key) for key in ("l1", "l2", "l3")) for end in ends)
+            if dimensions_known and re.search(r"разделк|ступен", text, re.IGNORECASE):
+                text = text.replace("по КД, ДИ разъёма", "по размерам сторон в этой карте")
+                text = text.replace("по КД", "по размерам сторон в этой карте")
         strip_sides = fields.get("coaxStripSides")
         if isinstance(strip_sides, list) and len(strip_sides) == 1:
             side = "А" if strip_sides[0] == "A" else "В"
@@ -2246,7 +2258,7 @@ def _physical_connector(op: Mapping[str, Any]) -> str:
 
 
 def _coax_recipe_steps(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[str]:
-    """Only explicit new coax settings add instructions; old snapshots remain unchanged."""
+    """Operator instructions; source documents and derivations stay in the structured fields."""
     if not str(op.get("type") or "").startswith("coax"):
         return []
     coax = _coax(config)
@@ -2261,30 +2273,29 @@ def _coax_recipe_steps(op: Mapping[str, Any], config: Mapping[str, Any]) -> list
             "кабеля" if count % 10 in {2, 3, 4} and count % 100 not in {12, 13, 14} else "кабелей")
         quantity = _part_quantity(config)
         steps.append(f"{count} {word} на сборку: {_format(quantity)} сборок × {count} = {_format(quantity * cables)} шт.")
-    if op.get("type") == "coaxCut" and coax.get("lengthBasis") == "finished":
-        steps.append(f"Длина готового изделия L = {_format(coax.get('finishedLength'))} мм (допуск 0…+10 мм); "
-                     f"припуск А = {_format(coax.get('lPlusA'))} мм, припуск В = {_format(coax.get('lPlusB'))} мм. "
-                     f"Длина реза = {_format(coax.get('cableLength'))} мм; допуск реза 0…+5 мм.")
-    if op.get("type") == "coaxCut" and op.get("stripSides") and coax.get("fakraCutStrip"):
-        steps.append("Разделать при резке только стороны: " + ", ".join("А" if sd == "A" else "В" for sd in op["stripSides"])
-                     + ". Полная разделка; размеры от торца жилы — отдельно для каждой стороны.")
+    if op.get("type") == "coaxCut" and op.get("stripSides"):
         for side in op["stripSides"]:
             end = coax.get(f"side{side}") or {}
             label = "А" if side == "A" else "В"
-            program = _coax_strip_program(_coax_strip_sizes(config, side), str(end.get("kind") or ""))
+            sizes = _coax_strip_sizes(config, side)
+            program = _coax_strip_program(sizes, str(end.get("kind") or "")) if coax.get("fakraCutStrip") else {}
             if program:
-                values = "; ".join(f"{item['label'].lower()} {item['value']} {item['tolerance']} мм"
+                values = "; ".join(f"{item['label'].lower().replace(' / жила', '')} {item['value']} {item['tolerance']}"
                                    for item in program["boundaries"])
-                steps.append(f"Сторона {label}: от торца жилы — {values or 'размеры требуют проверки'}. "
-                             f"Источник: {program['source']} {program['note']}")
+            else:
+                # Legacy sketches assign layers according to which dimensions exist (e.g. clamp has no L3).
+                # Keep the dimension names rather than assigning a different layer to the same number.
+                values = "; ".join(f"{name} {sizes[key]}" for key, name in
+                                   (("l1", "L1"), ("l2", "L2"), ("l3", "L3")) if sizes.get(key))
+            instruction = (f"Сторона {label}: {values} мм (от торца жилы)." if values
+                           else f"Сторона {label}: размеры от торца требуют проверки — согласовать разделку.")
             if end.get("kind") == "hfm":
-                steps.append(f"Сторона {label}, HFM: полностью разделать кабель по базам MA_AMV003; не повредить оплётку, "
-                             "диэлектрик и фольгу. Опорную гильзу установить и обжать отдельной следующей операцией "
-                             "после полной разделки — технологическое решение от 16.11.2026.")
+                instruction += (" HFM: размеры после отворота оплётки. Размер обрезки прямой оплётки до отворота не задан — "
+                                "согласовать программу станка. Опорную гильзу обжать после полной разделки отдельной операцией.")
             elif end.get("kind") == "bulkhead":
-                steps.append(f"Сторона {label}, Amphenol 2FA1: размер 1,0 мм — участок открытого диэлектрика, "
-                             "не абсолютная длина от торца. "
-                             "ТТК, гильзу и изолирующий диск надеть после разделки в следующей операции.")
+                instruction += (" 1,0 мм — участок открытого диэлектрика. Фольгу сохранить внутри корпуса, "
+                                "оплётку — снаружи насечки. ТТК, гильзу и изолирующий диск надеть следующей операцией.")
+            steps.append(instruction)
     if op.get("protective") and op.get("type") == "coaxInsTut":
         steps.append("Надеть прозрачные отрезки ТУТ на кабель и сдвинуть к середине до монтажа деталей концов.")
     for mark in _list(op.get("marks")):
