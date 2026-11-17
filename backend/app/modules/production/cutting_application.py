@@ -7,8 +7,13 @@ from uuid import uuid4
 from app.shared.events import AuditEvent
 from .application import AssignProductionCommand, ConcurrentProductionUpdate, _audit, _checked_names, assign_task, lock_reflow_projects
 from .domain import ProductionStatus, ProductionValidationError
-from .cutting import cutting_project_label, cutting_recipe
+from .cutting import RECIPE_VERSION, comparable_key, cutting_project_label, cutting_recipe
 from .plan import normalize_project_number
+
+
+def group_key(group):
+    """The group's recipe key in the current algorithm (an older frozen snapshot is recomputed, never trusted as is)."""
+    return comparable_key(group.recipe_key, group.recipe_version, group.recipe)
 
 
 def common_assignment(rows):
@@ -174,7 +179,7 @@ def planning_groups(uow, new_tasks, free, site, team, actor):
                 continue
             groups[str(group.id)] = identifiers
             if group.joinable and all(not uow.production.get(m.task_id).operation(m.operation_id).operator_ids for m in members):
-                joinable.setdefault(group.recipe_key, str(group.id))
+                joinable.setdefault(group_key(group), str(group.id))
     for new in sorted(new_tasks.values(), key=lambda n: (n.card.project, n.card.index)):
         recipe, _ = cutting_recipe(new.card.project, site, new.card.document, new.task.operations)
         if recipe and recipe.operation_id in free:
@@ -280,7 +285,7 @@ def revalidate_group(group_id, version, current, actor, now, uow):
             task = uow.production.get(member.task_id)
             document, card_version = current.get(task.id, (None, None))
             recipe, reason = cutting_recipe(task.project, group.site, document, task.operations)
-            if recipe is None or recipe.key != group.recipe_key or any(
+            if recipe is None or recipe.key != group_key(group) or any(
                 member.row_snapshot.get(key) != value for key, value in recipe.row.items()
             ):
                 raise ProductionValidationError(f"{task.item}: параметры изменились; выдайте новую работу отдельно. {reason}")
@@ -308,7 +313,7 @@ def plan_etk_refresh(group, members, cards, uow):
         recipe, reason = cutting_recipe(task.project, group.site, document, task.operations)
         if recipe is None:
             problems.append(f"{task.item}: {reason}")
-        elif recipe.key != group.recipe_key:
+        elif recipe.key != group_key(group):
             problems.append(f"{task.item}: рецепт резки в новой ревизии ЭТК отличается")
         else:
             steps.append((member, task, entry, recipe))
@@ -318,6 +323,11 @@ def plan_etk_refresh(group, members, cards, uow):
 def _stale(member, task, entry):
     _card_id, revision, _document, card_version, _norms = entry
     return task.techcard_revision != revision or member.row_snapshot.get("validated_card_version") != card_version
+
+
+def _upgrade_key(group, recipe):
+    """Store the current-algorithm snapshot and key; equal to what plan_etk_refresh already verified for every member."""
+    group.recipe, group.recipe_key, group.recipe_version = recipe.snapshot, recipe.key, RECIPE_VERSION
 
 
 def refresh_group_etk(group_id, version, cards, actor, now, uow):
@@ -334,6 +344,13 @@ def refresh_group_etk(group_id, version, cards, actor, now, uow):
                 + ". Выдайте их отдельно («Выдать отдельно») и обновите остальные.")
         todo = [item for item in steps if _stale(*item[:3])]
         if not todo:
+            if steps and group.recipe_version < RECIPE_VERSION:
+                _upgrade_key(group, steps[0][3])
+                group.version += 1
+                audit(group, "recipe_upgraded", uow, actor, now)
+                result = describe_group(group, uow)
+                uow.commit()
+                return result
             return describe_group(group, uow)
         before = group.version
         for member, task, entry, recipe in todo:
@@ -348,7 +365,7 @@ def refresh_group_etk(group_id, version, cards, actor, now, uow):
                 _audit(updated, "production.norms_refreshed", actor, now, {
                     "techcard_id": str(card_id), "from_revision": was, "revision": revision,
                     "cutting_group_id": str(group.id)}, uow)
-        group.recipe = todo[0][3].snapshot
+        _upgrade_key(group, todo[0][3])
         if group.version == before:
             group.version += 1
         audit(group, "etk_refreshed", uow, actor, now, tasks=[str(item[1].id) for item in todo])

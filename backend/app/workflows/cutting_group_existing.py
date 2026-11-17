@@ -12,6 +12,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app.modules.production.application import ConcurrentProductionUpdate
 from app.modules.production.resource_claims import ResourceConflict
+from app.modules.production.cutting import RECIPE_VERSION
 from app.modules.production.cutting_application import describe_group, group_existing, plan_etk_refresh, refresh_group_etk
 from app.modules.production.domain import ProductionValidationError
 from app.modules.production.plan import normalize_project_number
@@ -61,8 +62,11 @@ def refresh_etk(project, *, factory, techcards_factory, actor, now, dry_run=True
                 stale = [task.item for member, task, entry, _r in steps if task.techcard_revision != entry[1]
                          or member.row_snapshot.get("validated_card_version") != entry[3]]
                 version = group.version
+                legacy = bool(steps) and group.recipe_version < RECIPE_VERSION
             if problems:
                 raise ProductionValidationError("; ".join(problems))
+            if not stale and legacy and not dry_run:
+                refresh_group_etk(group_id, version, cards, actor, now, factory())  # key/version upgrade only
             if not stale:
                 result["current"].append(identity)
             elif dry_run:

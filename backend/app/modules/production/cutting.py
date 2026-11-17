@@ -14,7 +14,8 @@ from uuid import UUID
 from .domain import ProductionOperation, unit_factors
 from .plan import normalize_project_number
 
-RECIPE_VERSION = 1
+# 2 (18.11.2026): a machine is its equipment identity, never its display name (a reference rename must not split groups).
+RECIPE_VERSION = 2
 SUPPORTED = frozenset({"coaxCut", "coaxCutTut", "cutWire", "cutWireStrip", "cutTut"})
 
 
@@ -59,12 +60,61 @@ def _card_snapshot(card, marks, lengths, tube_cuts=()):
     return result
 
 
+_MACHINE_IDENTITY = ("equipment_model_id", "inventory", "inventory_number", "model")
+
+
+def _strip_machine_names(value):
+    """In place: a `machine` mapping that carries an identity keeps it and loses only its display `name`."""
+    if isinstance(value, dict):
+        machine = value.get("machine")
+        if isinstance(machine, dict) and any(str(machine.get(key) or "").strip() for key in _MACHINE_IDENTITY):
+            machine.pop("name", None)
+        for item in value.values():
+            _strip_machine_names(item)
+    elif isinstance(value, list):
+        for item in value:
+            _strip_machine_names(item)
+
+
+def canonical_snapshot(snapshot: Mapping) -> dict:
+    """The current-version form of a frozen recipe: equipment display names are dropped where an identity exists.
+
+    Only the `name` of an «Оборудование» tooling row with `equipment_model_id` or `inventory_number`, and the `name`
+    of a `machine` mapping (parameters, fields) with `equipment_model_id`/`inventory`/`model`, are display-only. A row or
+    machine without identity keeps its full text; numbers, ranges («кабель Ø до 5,5 мм»), programs stay in the key.
+    Idempotent, and applicable to snapshots stored by an older version (the upgrade path of open groups).
+    """
+    result = deepcopy(dict(snapshot))
+    result["version"] = RECIPE_VERSION
+    for op in result.get("operations") or []:
+        card = op.get("card") or {}
+        was_hash = op.get("card_revision") == digest(card)
+        for tool in card.get("tooling") or []:
+            if (tool.get("section") == "Оборудование"
+                    and any(str(tool.get(key) or "").strip() for key in ("equipment_model_id", "inventory_number"))):
+                tool.pop("name", None)
+        _strip_machine_names(op.get("parameters"))
+        _strip_machine_names(op.get("fields"))
+        if was_hash:
+            # No issue stamp on the card: its body hash is the revision, and must not see display names either.
+            op["card_revision"] = digest(card)
+    return result
+
+
+def comparable_key(recipe_key: str, recipe_version: int, recipe: Mapping | None) -> str:
+    """A stored group's key in the current algorithm: a group frozen by an older version is recomputed from its snapshot."""
+    if recipe_version >= RECIPE_VERSION or not recipe:
+        return recipe_key
+    return digest(canonical_snapshot(recipe))
+
+
 @dataclass(frozen=True)
 class CuttingRecipe:
     operation_id: UUID
     key: str
     snapshot: dict
     row: dict
+    legacy_key: str = ""  # RECIPE_VERSION 1 key of the same document: how an old open group still matches exactly
 
 
 def cutting_project_label(project: str, document: Mapping | None = None) -> str:
@@ -249,10 +299,13 @@ def cutting_recipe(project: str, site: str, document: Mapping | None,
                             "template_id": _required(op.get("template_id"), "шаблон операции"),
                             "card_revision": op.get("card_changed_at") or digest(card),
                             "card": card, "parameters": parameters, "fields": fields})
-        snapshot = {"version": RECIPE_VERSION, "project": normalize_project_number(project), "site": site,
+        snapshot = {"version": 1, "project": normalize_project_number(project), "site": site,
                     "cable": cable, "cables_per_assembly": multiplicity,
                     "pf_per_assembly": number(unit_factors(operations)[first.id]), "operations": recipes}
+        legacy_key = digest(snapshot)
+        snapshot = canonical_snapshot(snapshot)
         return CuttingRecipe(first.id, digest(snapshot), snapshot,
-                             {"cut_length_mm": length, "cables_per_assembly": multiplicity, "labels": labels}), ""
+                             {"cut_length_mm": length, "cables_per_assembly": multiplicity, "labels": labels},
+                             legacy_key), ""
     except (ValueError, TypeError, KeyError, IndexError, AttributeError) as error:
         return None, str(error) or "Недостаточно параметров резки"

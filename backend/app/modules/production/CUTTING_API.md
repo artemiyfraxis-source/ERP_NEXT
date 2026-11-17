@@ -22,7 +22,7 @@ Existing single-output/session uniqueness is unchanged. Downgrade refuses execut
   History cannot be deleted through child-task deletion. Downgrade refuses any group history; an empty
   group schema can be downgraded even when ordinary production tasks exist. No cross-module FKs added.
 
-Recipe version 1 compares the first explicit PF without inputs, containing one unambiguous cable cut
+Recipe version 2 (18.11.2026) compares the first explicit PF without inputs, containing one unambiguous cable cut
 and only supported cutting/preparation operations. Its ordered key includes canonical project, site,
 cable identity, cable/PF multiplicity, operation/template identity and revision/content, frozen cards,
 equipment/tooling, oriented A/B strip dimensions, tolerances, confirmed full/partial mode, label layout,
@@ -271,3 +271,9 @@ child and its own downstream dependencies. Group membership/version participates
   later interim-list PRs from main is coordinator work under the local no-merge brief.
 - The full integrated gate, PostgreSQL concurrency verification and migration rehearsal on a production
   copy remain coordinator/release work; the local worker brief explicitly excludes the full gate.
+
+Machine identity (version 2): a machine is its `equipment_model_id` / `inventory_number` (tooling row) or
+`equipment_model_id` / `inventory` / `model` (`machine` mapping in parameters and fields); the display `name` of such a row
+or mapping is dropped from the recipe, so renaming equipment in the reference does not change the key. A row without
+identity keeps its full text. Open groups stored with version 1 are compared by the key recomputed from their stored
+snapshot (`comparable_key`); `refresh-etk` writes the version 2 snapshot, key and version into the group.
