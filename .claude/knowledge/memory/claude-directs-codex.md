@@ -29,6 +29,11 @@ Claude main is the orchestrator, Codex CLI the workhorse.
   Limit: ≤ 3 editing workers, affected tests only with `-n 4`, one full gate at a time (verifier only). Owner worried
   about speed: model time dominates, 4 parallel full suites were not faster (shared cores + RAM paging).
 
+- **17.11.2026: Codex quota exhausted — off until 22.11.2026** (owner: «до 22 ноября без него; оркестрирование
+  сохранить и доработать»). Until then `orchestrate` «Without Codex»: same plan → worktree → review → verifier
+  process with Claude subagents, ≤ 2 editing at once, small fixes by main. On/after 22.11 probe with one cheap
+  `gpt-6-luna` read-only call and switch back.
+
 **Why:** Claude tokens are the scarce resource; spending them on file reading and code writing burns the 5-hour window.
 **How to apply:** follow `orchestrate` skill «Budget routing» and `cross-review`; Claude subagents only as a fallback
 when Codex is down. See [[owner-working-rules]] (token cost) and [[parallel-sessions-worktrees]].

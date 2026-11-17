@@ -17,7 +17,8 @@ send reading-heavy and writing-heavy work to Codex CLI (installed globally, Chat
   (always line by line for migrations, stock and money), commits, PRs, merges and releases.
 - **Codex does:** wide code searches and first-pass plans (read-only), implementation and affected tests in a
   task worktree, the independent pre-ship review, long log and test-output digging.
-- Claude subagents (`erp-planner`/`erp-worker`/`erp-verifier`) only when Codex is down or out of quota — say so.
+- Claude subagents (`erp-planner`/`erp-worker`/`erp-verifier`) only when Codex is down or out of quota — say so,
+  and switch to «Without Codex» below (same process, different hands).
 - Pick model and effort per task from this table (owner authorized it 11.11.2026). Models come from `~/.codex/models_cache.json`:
   `gpt-6-astra` is the frontier model (272k ctx), `gpt-6.1-sol` the workhorse (500k ctx), `gpt-6.1-terra` the balanced
   model for straightforward work (500k ctx), `gpt-6-luna` the fast one for easy tasks. Older generations (`gpt-6-sol`, `gpt-5.6-*`) only
@@ -61,11 +62,45 @@ send reading-heavy and writing-heavy work to Codex CLI (installed globally, Chat
   (`.claude/agents/erp-verifier.md`) pasted into the brief; the pre-ship review is another fresh run (`cross-review`).
 - **The PC is the limit, not the Codex quota** (owner 12.11.2026: four parallel workers each ran the backend
   suite — `-n auto` = 21 pytest workers × 2 processes on 20 threads — and took 95 % CPU and ~27 GB RAM).
-  At most **3 editing workers** at once (model time dominates; tests are short bursts). Workers run only the
+  At most **5 editing workers** at once (owner 17.11.2026: «комп тянет»; was 3; model time dominates; tests are short bursts). Workers run only the
   affected test files with 4 processes: `backend\.venv\Scripts\python -m pytest tests/<files> -q -n 4` (`-n 0` for
   one or two files) and `npx vitest run <files>`; every worker brief
   forbids `npm run check`, `npm run test:backend` and `-n auto`. The full gate runs **one at a time**, only in
   the verifier; read-only runs (search, review, plan) don't count toward the limit.
+
+## Without Codex — Claude subagents keep the same process
+Codex is out when `codex exec` reports a usage/quota limit (429, «usage limit», «quota»), the owner says so, or the
+state file says so. The process does not change — plan → exclusive worktrees → affected tests → independent review →
+verifier → one PR — only the hands do. Main never collapses into «I'll just do everything myself in one context».
+- **State.** Record «Codex off until <date>» in the root `TASKS.md` (and project memory `claude-directs-codex`); at
+  session start read it. After the date, try one cheap read-only `gpt-6-luna` call; success → back to Codex routing.
+- **Budget.** Claude is the $20 plan: every subagent spends the same quota as main. Delegate only work whose reading
+  or output would cost main more than a cold start (a cold start ≈ re-reading the files it needs). Tiny fixes,
+  copy edits and one-file changes: main does them directly. At most **2 editing subagents** at once (quota, not the
+  PC, is the limit here); read-only ones (search, plan, review) don't count but still need a reason.
+- **Mapping** (same rows as the Codex table; `model` passed to the Agent tool — authorized by the global
+  delegation tiers):
+
+  | Task | Agent | Model |
+  |---|---|---|
+  | Lookup, «where is X», log/CI digest | `Explore` (read-only) | haiku |
+  | Wide reading, impact map, plan draft | `erp-planner` | sonnet |
+  | Domain plan: status machine, stock/money flow, new module | `erp-planner` | opus |
+  | Mechanical renames/copy without string literals in code | `erp-worker` | haiku — main re-checks every literal |
+  | UI copy, wiring, tests mirroring existing ones, one-module feature, screen change | `erp-worker` | sonnet |
+  | Migration, stock/money quantities, generators, importers, hard bug | `erp-worker` | opus |
+  | Pre-ship review (fresh, read-only, the `cross-review` brief or `/code-review`) | `general-purpose` | sonnet; opus for migration/stock/money/auth |
+  | Verifier (`npm run check` on the integrated worktree) | `erp-verifier` | sonnet |
+- **Mechanics.** Main still creates each editing worktree from the recorded SHA (`git worktree add … <SHA>`, then
+  `node scripts/setup-env.mjs`) and names its absolute path in the brief; the worker works only there by absolute
+  paths and first checks `git -C <path> rev-parse HEAD` equals the SHA. The brief is the same self-contained English
+  file in `<scratch>\<task>.brief.md`, passed as «Read the task brief at <path> and follow it»; same forbidden list
+  (`npm run check`, `npm run test:backend`, `-n auto`), same «no commit/push/merge — main commits». Launch with
+  `run_in_background`, wait for the notification, never poll. The report is ≤ 30 lines: files, tests with counts,
+  open issues — main reads the diff itself.
+- **Independence holds.** The reviewer and the verifier are fresh subagents that did not write the code, never the
+  worker continued via SendMessage. A finding is fixed by main (small) or a new worker brief (substantive).
+- **Ship** exactly as in sections 3–4: PR, CI `check` on the exact SHA, merge, `update-server.yml`, prod check.
 
 ## Runtime and model policy
 - Claude uses the existing role cards in `.claude/agents/` with their YAML tool/model/isolation defaults.
@@ -114,7 +149,7 @@ send reading-heavy and writing-heavy work to Codex CLI (installed globally, Chat
 ## 4. Gate and ship
 - Workers run affected tests before any authorized worker commit. Main obtains an independent code
   review (a fresh read-only Codex run of the `cross-review` brief) and a verifier verdict (a fresh Codex run
-  with the `erp-verifier` card; the Claude `erp-verifier` subagent as fallback) on the final integrated
+  with the `erp-verifier` card; without Codex — the fresh Claude subagents of «Without Codex») on the final integrated
   content before claiming done or shipping.
   Every failed or unrun required gate blocks PASS, completion claims and shipping, including when an
   environment issue is established. Report its evidence and the unverified gate as a blocker; there is
