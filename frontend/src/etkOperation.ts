@@ -53,7 +53,7 @@ export function shrinkRequirementLines(operation: Row): ShrinkRequirementLine[] 
     const characteristic = finite(temperature.characteristic_c) ? `; по характеристикам: ${number(temperature.characteristic_c)} °C` : "";
     return {
       material: [...new Set([str(material.article), str(material.name)].filter(Boolean))].join(" · ") || "Материал не определён",
-      text: `Температура усадки материала: ${value}${!missing && source ? ` (${source})` : ""}${!missing ? characteristic : ""}`,
+      text: `Температура усадки материала: ${str(requirement.display_text) || `${value}${!missing && source ? ` (${source})` : ""}${!missing ? characteristic : ""}`}`,
       missing, sourceUrl: /^https?:\/\//i.test(str(temperature.source_url)) ? str(temperature.source_url) : "",
       quote: str(temperature.quote),
     };
