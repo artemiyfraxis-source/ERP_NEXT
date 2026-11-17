@@ -91,15 +91,42 @@ it("opens the print confirmation for filtered rows and for explicit selection", 
 });
 
 it("assigns the server-suggested serial with the saved version and displays it in the card", async () => {
-  const empty = { ...instrument, serial_number: "", suggested_serial_number: "ФР-001" };
+  const empty = { ...instrument, serial_number: "", suggested_serial_number: "ADP-sS-26-001" };
   const { requests } = setup([empty], (request) => request.path === `${base}/vna/serial`
-    ? json({ instrument: { ...empty, serial_number: "ФР-001", suggested_serial_number: null, version: 8 } }) : null);
+    ? json({ instrument: { ...empty, serial_number: "ADP-sS-26-001", suggested_serial_number: null, version: 8 } }) : null);
   open();
-  fireEvent.click(screen.getByRole("button", { name: "Присвоить номер ФР-001" }));
+  fireEvent.click(screen.getByRole("button", { name: "Присвоить номер ADP-sS-26-001" }));
   await screen.findByText("Номер присвоен");
-  expect(screen.getByLabelText("Зав. №")).toHaveValue("ФР-001");
+  expect(screen.getByLabelText("Зав. №")).toHaveValue("ADP-sS-26-001");
   expect(writes(requests)).toEqual([{ path: `${base}/vna/serial`, method: "POST", body: { version: 7 } }]);
   expect(screen.queryByRole("button", { name: /Присвоить номер/ })).not.toBeInTheDocument();
+});
+
+it("refreshes the suggested serial after saving RF ends and preserves unsaved card fields", async () => {
+  const empty = { ...instrument, serial_number: "", suggested_serial_number: "SI-26-001" };
+  const { onChanged, rerender } = setup([empty], (request) => {
+    if (request.path !== `${base}/vna/rf-interfaces` || request.method !== "PUT") return null;
+    empty.suggested_serial_number = "SI-s-26-001";
+    return json({ rf: { ...request.body, version: 1 }, suggested_serial_number: empty.suggested_serial_number });
+  });
+  open();
+  fireEvent.change(screen.getByLabelText("Место хранения"), { target: { value: "Ячейка 2" } });
+  fireEvent.click(await screen.findByRole("button", { name: "Добавить интерфейсы" }));
+  fireEvent.click(screen.getByRole("button", { name: "Добавить интерфейс" }));
+  fireEvent.change(screen.getByLabelText("Серия 1"), { target: { value: "SMA" } });
+  fireEvent.change(screen.getByLabelText("Корпус 1"), { target: { value: "розетка" } });
+  fireEvent.change(screen.getByLabelText("Центральный контакт 1"), { target: { value: "гнездо" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить без подтверждения" }));
+  await screen.findByText("ВЧ-интерфейсы сохранены без подтверждения");
+  expect(screen.getByRole("button", { name: "Присвоить номер SI-s-26-001" })).toBeInTheDocument();
+  expect(screen.getByLabelText("Место хранения")).toHaveValue("Ячейка 2");
+  expect(onChanged).toHaveBeenCalledOnce();
+  rerender(<InstrumentRegistry instruments={[{ ...empty }]} onChanged={onChanged} />);
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Закрыть" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: /Средство измерений:/ })).not.toBeInTheDocument());
+  open();
+  expect(await screen.findByRole("button", { name: "Присвоить номер SI-s-26-001" })).toBeInTheDocument();
 });
 
 it("opens the saved-card preview and closes it without closing the card", async () => {

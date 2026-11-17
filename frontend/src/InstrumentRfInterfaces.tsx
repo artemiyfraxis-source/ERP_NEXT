@@ -10,8 +10,9 @@ const series = ["SMA", "3.5mm", "N", "TNC", "BNC", "F", "RP-SMA", "тип III"];
 const blankPort = (): RfInterface => ({ series: "", body: "", center: "", impedance_ohm: null, f_max_ghz: null, f_confirmed: false, f_source: "" });
 const number = (value: string) => value === "" ? null : Number(value);
 
-export function InstrumentRfInterfaces({ instrumentId, locked, onDirty, onBusy }: {
+export function InstrumentRfInterfaces({ instrumentId, locked, onDirty, onBusy, onSaved }: {
   instrumentId: string | undefined; locked: boolean; onDirty: (value: boolean) => void; onBusy: (value: boolean) => void;
+  onSaved?: (suggestedSerial: string | null | undefined) => void | Promise<void>;
 }) {
   const [saved, setSaved] = useState<InstrumentRfDetails | null>(null);
   const [draft, setDraft] = useState<InstrumentRfDetails | null>(null);
@@ -54,8 +55,9 @@ export function InstrumentRfInterfaces({ instrumentId, locked, onDirty, onBusy }
         ...port, f_confirmed: confirm && port.f_max_ghz !== null && port.impedance_ohm !== null,
         f_source: port.f_source.trim() || draft.source.trim(),
       })) };
-      const { rf } = await rfInterfacesApi.save(instrumentId, payload);
+      const { rf, suggested_serial_number } = await rfInterfacesApi.save(instrumentId, payload);
       setSaved(rf); setDraft(rf); setEditing(false);
+      await onSaved?.(suggested_serial_number);
       setNotice(confirm ? "ВЧ-интерфейсы подтверждены" : "ВЧ-интерфейсы сохранены без подтверждения");
     } catch (reason) {
       setError(failureText(reason, "Не удалось сохранить ВЧ-интерфейсы"));

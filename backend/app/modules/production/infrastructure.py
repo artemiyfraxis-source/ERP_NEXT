@@ -22,6 +22,7 @@ from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepositor
 
 from .application import Absence, ConcurrentProductionUpdate, DuplicateLaunch, Operator
 from .cutting_infrastructure import SqlAlchemyCuttingRepository
+from .instrument_serials import InstrumentSerialContext
 from .domain import DEFAULT_SHIFT, MARKS_ISSUED_EVENT, MARKS_RELEASED_EVENT, RESTORED_EVENT, EtkOperation, FlowMode, MarkEvent, OperationInput, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift
 from .plan import (
     KIT_STAGES, PLAN_BLOCKERS, PLAN_KINDS, PLAN_STAGE_AUTO, PROJECT_TERMINALS, PlanEvent, PlanProjectSnapshot,
@@ -1986,6 +1987,23 @@ class SqlAlchemyInstrumentRepository:
             ProductionInstrumentRow.inventory_number == number,
         ))
         return self._domain(row) if row is not None else None
+
+    def serial_contexts(self, instrument_ids: Sequence[UUID]) -> dict[UUID, InstrumentSerialContext]:
+        """Batch-load registration/first-audit dates and RF ends without changing the registry schema."""
+        from .rf_infrastructure import RfRepository
+
+        if not instrument_ids:
+            return {}
+        events = AuditEventRow
+        first = dict(self.session.execute(select(events.aggregate_id, func.min(events.occurred_at)).where(
+            events.aggregate_id.in_(instrument_ids),
+        ).group_by(events.aggregate_id)).all())
+        registered = dict(self.session.execute(select(events.aggregate_id, func.min(events.occurred_at)).where(
+            events.aggregate_id.in_(instrument_ids), events.event_type == "production.instrument_registered",
+        ).group_by(events.aggregate_id)).all())
+        rf = RfRepository(self.session).list(instrument_ids[0] if len(instrument_ids) == 1 else None)
+        return {item_id: InstrumentSerialContext(registered.get(item_id, first.get(item_id)), rf.get(item_id))
+                for item_id in instrument_ids}
 
     def save(self, instrument: MeasurementInstrument) -> None:
         values = {field: getattr(instrument, field) for field in (

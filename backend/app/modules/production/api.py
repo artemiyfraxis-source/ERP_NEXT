@@ -90,7 +90,7 @@ from .execution import (
     submit_work,
 )
 from .traceability import TAKEABLE_BOX, BoxStatus, DefectDisposition, DefectRecord, InstrumentFileKind, InstrumentKind, InstrumentStatus, MaterialInput, ProductionBox, ProductionOutput, WorkSession
-from .instrument_serials import in_house_serial_number
+from .instrument_serials import InstrumentSerialContext, in_house_serial_number
 from .worklog import SUMMARY_KEYS, WorkTimeEntry, percent, time_fact
 from .resource_assignments import MachineBinding
 from .resource_claims import ResourceConflict
@@ -1438,11 +1438,12 @@ def instrument_file_result(item) -> dict:
             "uploaded_at": item.uploaded_at.isoformat(), "uploaded_by_name": item.uploaded_by_name}
 
 
-def instrument_result(item, files=()) -> dict:
+def instrument_result(item, files=(), *, now: datetime,
+                      serial_context: InstrumentSerialContext = InstrumentSerialContext()) -> dict:
     suggested_serial = None
     if not item.serial_number.strip():
         try:
-            suggested_serial = in_house_serial_number(item.inventory_number)
+            suggested_serial = in_house_serial_number(item, now=now, context=serial_context)
         except ProductionValidationError:
             pass  # Legacy inventory numbers without a numeric suffix require a manually entered serial.
     return {
@@ -1466,6 +1467,7 @@ def instrument_result(item, files=()) -> dict:
 @router.get("/instruments")
 def instruments(
     _principal: Annotated[Principal, Depends(production_overview_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
 ) -> dict:
     with uow_factory() as uow:
@@ -1473,7 +1475,10 @@ def instruments(
         files = {}
         for file in uow.instrument_files.list():
             files.setdefault(file.instrument_id, []).append(file)
-        return {"instruments": [instrument_result(item, files.get(item.id, ())) for item in rows]}
+        contexts = uow.instruments.serial_contexts([item.id for item in rows if not item.serial_number.strip()])
+        return {"instruments": [instrument_result(item, files.get(item.id, ()), now=now,
+                                                 serial_context=contexts.get(item.id, InstrumentSerialContext()))
+                                for item in rows]}
 
 
 @router.get("/instruments/next-number")
@@ -1495,7 +1500,7 @@ def create_instrument(
     item = _execution(lambda: register_instrument(RegisterInstrumentCommand(
         **payload.model_dump(), actor=principal.actor, now=now,
     ), uow_factory()))
-    return {"instrument": instrument_result(item)}
+    return {"instrument": instrument_result(item, now=now, serial_context=InstrumentSerialContext(created_at=now))}
 
 
 @router.patch("/instruments/{instrument_id}")
@@ -1512,7 +1517,8 @@ def edit_instrument(
     ), uow_factory()))
     with uow_factory() as uow:
         files = [file for file in uow.instrument_files.list() if file.instrument_id == item.id]
-    return {"instrument": instrument_result(item, files)}
+        context = uow.instruments.serial_contexts([item.id])[item.id]
+        return {"instrument": instrument_result(item, files, now=now, serial_context=context)}
 
 
 @router.post("/instruments/{instrument_id}/serial")
@@ -1528,7 +1534,7 @@ def assign_serial(
     ))
     with uow_factory() as uow:
         files = [file for file in uow.instrument_files.list() if file.instrument_id == item.id]
-    return {"instrument": instrument_result(item, files)}
+    return {"instrument": instrument_result(item, files, now=now)}
 
 
 @router.post("/instruments/{instrument_id}/files")
