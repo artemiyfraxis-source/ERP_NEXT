@@ -89,6 +89,38 @@ class SqlAlchemyCuttingRepository:
     def fingerprint(self):
         return [[str(row.id), row.version, row.recipe_key, row.recipe_version] for row in self.list()]
 
+    def execution_reason(self, operation):
+        # Include cancelled sessions and corrected outputs: absence of active work is insufficient.
+        from .infrastructure import ProductionWorkSessionRow, ProductionOutputRow, ProductionBoxRow
+
+        if any(share.started_at or share.finished_at for share in operation.shares):
+            return "ПФ уже начат"
+        for model, reason in ((ProductionWorkSessionRow, "У ПФ есть рабочая сессия"),
+                              (ProductionOutputRow, "У ПФ есть выпуск"),
+                              (ProductionBoxRow, "У ПФ есть коробки")):
+            if self.session.scalar(select(model.id).where(model.operation_id == operation.id).limit(1)):
+                return reason
+        return ""
+
+    def create_existing(self, candidates, now):
+        """Caller holds project/task locks and has rechecked every member; never late-join another group."""
+        recipe = candidates[0][1]
+        identifier = uuid4()
+        group = CuttingGroupRow(id=identifier, number=f"РЗ-{identifier.hex[:16].upper()}",
+            idempotency_key=f"cutting-existing:{identifier}", project_key=recipe.snapshot["project"],
+            site=recipe.snapshot["site"], recipe_key=recipe.key, recipe_version=RECIPE_VERSION,
+            recipe=recipe.snapshot, version=1, state="open", joinable=False, created_at=now)
+        self.session.add(group)
+        self.session.flush()
+        for position, (task, recipe, document, card_version) in enumerate(candidates, 1):
+            self.session.add(CuttingMemberRow(id=uuid4(), group_id=group.id, task_id=task.id,
+                operation_id=recipe.operation_id, position=position, assembly_quantity=task.quantity,
+                blank_quantity=task.quantity * Decimal(recipe.row["cables_per_assembly"]),
+                row_snapshot={**recipe.row, "document": deepcopy(document), "validated_card_version": card_version,
+                              "techcard_revision": task.techcard_revision}, state="active"))
+        self.session.flush()
+        return group
+
     def attach(self, task, recipe: CuttingRecipe, now, production, *, separate=False, document=None, card_version=None):
         """Caller holds the normalized project lock; use the same transaction as task/serial creation."""
         existing = self.for_operation(recipe.operation_id)

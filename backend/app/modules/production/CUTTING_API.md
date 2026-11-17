@@ -62,6 +62,70 @@ historical group memberships.
 
 ## Group reads and controls
 
+### Group already-launched work (T1b)
+
+`POST /api/production/cutting-groups/from-existing` requires production edit permission, including preview:
+
+```json
+{"project":"708К.","task_ids":["optional-task-uuid"],"dry_run":true}
+```
+
+Omit `task_ids` to inspect all tasks of the normalized project. `dry_run` defaults to `true`; send
+`false` to apply. Empty/unknown selections or tasks outside the project return 422. Foreign-site work
+returns 403 before applying the discovered selection. A task selection may contain at most 1000 IDs.
+
+Response (both modes):
+
+```text
+project, dry_run,
+groups: [{recipe_key, recipe_version, project, site,
+          recipe_summary: {cable, cables_per_assembly, operations: [code],
+                           settings: [{code, parameters, fields, tooling}]},
+          members: [{task_id, task_number, item, operation_id, quantity,
+                     cut_length_mm, cables_per_assembly, labels,
+                     operator_ids, planned_start, planned_finish}],
+          operator_ids, assignment_consistent, planning_consistent,
+          common_planned_start, common_planned_finish, warnings,
+          group_id (apply only), number (apply only)}],
+created: [group_uuid],
+refused: [{task_id, task_number, item, reason}],
+skipped: [{task_id, task_number, item, reason}]
+```
+
+Only running tasks whose first explicit preparation PF has no work session (including cancelled
+sessions), output (including corrections), box, or started/finished share qualify. Uses the exact T1
+recipe function, so length and label text may vary, while incomplete recipes are refused. The task's
+referenced issued card must still have its launch revision; changed/missing cards are refused with a
+reason. No historical recipe is guessed from a newer card.
+
+The site comes from the existing preparation assignees and task handoff. For unassigned tasks without
+a handoff it is resolved from the launching employee's unambiguous site; unresolved/conflicting sites
+are refused. This is independent of which master invokes the action.
+
+Preview writes nothing. Apply locks the project and tasks and rechecks eligibility, then creates one
+group per recipe in a separate transaction, including singleton groups. Existing active memberships
+are skipped, so retries create no duplicate memberships. These explicit groups do not accept late
+launch joins. Concurrent changes can return 409; earlier groups may already have committed, and a
+rerun safely skips them. No child assignment, plan, quantities, materials, serials, or later PF is changed.
+
+The common assignee list and common plan window are inherited independently when all members agree.
+On disagreement the respective group field is empty/null with a warning; child assignments and
+windows remain intact. Group GET responses also expose `operator_ids`, `assignment_consistent`,
+`planning_consistent`, `common_planned_start`, `common_planned_finish`. Existing `planned_start` and
+`planned_finish` remain the aggregate extent of child windows, as before.
+
+CLI, from `backend`, using the application's `ERP_DATABASE_URL`:
+
+```powershell
+.\.venv\Scripts\python -m app.workflows.cutting_group_existing --project '708К.'
+.\.venv\Scripts\python -m app.workflows.cutting_group_existing --project '708К.' --apply
+```
+
+Optional repeated `--task-id UUID` narrows the selection. `--dry-run` is an explicit alias for the
+default. The CLI prints the same JSON response, and apply records `production.cutting_from_existing`
+audit events. The service account is for this local maintenance command; HTTP uses the authenticated
+master. No live grouping was performed as part of implementation.
+
 `GET /api/production/cutting-groups` returns `{groups: [...]}`; `GET /.../{id}` returns `{group: ...}`.
 Production overview permissions and every member's site are checked.
 

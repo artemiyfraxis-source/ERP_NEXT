@@ -48,6 +48,26 @@ def groups(principal: Annotated[Principal, Depends(production_overview_principal
         return {"groups": result}
 
 
+class ExistingGroupsPayload(BaseModel):
+    project: str = Field(min_length=1, max_length=255)
+    task_ids: list[UUID] | None = Field(default=None, min_length=1, max_length=1000)
+    dry_run: bool = True
+
+
+@router.post("/from-existing")
+def from_existing(payload: ExistingGroupsPayload,
+                  principal: Annotated[Principal, Depends(production_edit_principal)],
+                  now: Annotated[datetime, Depends(moscow_now)],
+                  factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+                  techcards_factory: Annotated[Callable | None, Depends(techcards_uow_factory)]):
+    from app.workflows.cutting_group_existing import run
+
+    if techcards_factory is None:
+        raise HTTPException(503, "База техкарт не настроена")
+    return _handle(lambda: run(payload.project, task_ids=payload.task_ids, dry_run=payload.dry_run,
+        factory=factory, techcards_factory=techcards_factory, actor=principal.actor, now=now))
+
+
 @router.get("/{group_id}")
 def group_detail(group_id: UUID, principal: Annotated[Principal, Depends(production_overview_principal)],
                  factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]):

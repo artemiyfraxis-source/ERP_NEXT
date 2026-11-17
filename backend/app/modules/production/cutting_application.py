@@ -4,8 +4,140 @@ from uuid import uuid4
 
 from app.shared.events import AuditEvent
 from .application import AssignProductionCommand, ConcurrentProductionUpdate, assign_task, lock_reflow_projects
-from .domain import ProductionValidationError
+from .domain import ProductionStatus, ProductionValidationError
 from .cutting import cutting_recipe
+from .plan import normalize_project_number
+
+
+def common_assignment(rows):
+    """Group metadata never overwrites individual reservations or assignment windows."""
+    assignees = {tuple(sorted(row["operator_ids"])) for row in rows}
+    windows = {(row["planned_start"], row["planned_finish"]) for row in rows}
+    same_people, same_window = len(assignees) == 1, len(windows) == 1
+    return {"operator_ids": list(next(iter(assignees))) if same_people else [],
+            "assignment_consistent": same_people, "planning_consistent": same_window,
+            "common_planned_start": rows[0]["planned_start"] if same_window else None,
+            "common_planned_finish": rows[0]["planned_finish"] if same_window else None}
+
+
+def _existing_candidate(task, load_card, actor, uow):
+    if not task.operations:
+        raise ProductionValidationError("Нет первого ПФ")
+    first = min(task.operations, key=lambda op: op.position)
+    sites = {task.handed_to} - {""}
+    for identifier in first.operator_ids:
+        operator = uow.operators.get(identifier)
+        if operator is None or not operator.site:
+            raise ProductionValidationError("Не определена площадка исполнителя")
+        sites.add(operator.site)
+    if not sites:
+        sites = {op.site for op in uow.operators.list() if op.name == task.launched_by and op.site}
+    viewer = uow.operators.get(actor.id)
+    if viewer and viewer.site and any(site != viewer.site for site in sites):
+        raise PermissionError("Задание другой площадки")
+    if len(sites) != 1:
+        raise ProductionValidationError("Не определена единая площадка ПФ")
+    site = next(iter(sites))
+    if task.status is not ProductionStatus.RUNNING:
+        raise ProductionValidationError("Задание не запущено или уже закрыто")
+    if uow.cutting.for_operation(first.id):
+        return None
+    reason = uow.cutting.execution_reason(first)
+    if reason:
+        raise ProductionValidationError(reason)
+    document, version = load_card(task)
+    recipe, reason = cutting_recipe(task.project, site, document, task.operations)
+    if recipe is None:
+        raise ProductionValidationError(reason)
+    if [op.code for op in first.etk_ops] != [op["code"] for op in recipe.snapshot["operations"]]:
+        raise ProductionValidationError("Операции первого ПФ расходятся с выданной ЭТК")
+    return task, recipe, document, version
+
+
+def _existing_proposal(candidates):
+    first = candidates[0][1]
+    members = []
+    for task, recipe, _document, _version in candidates:
+        operation = task.operation(recipe.operation_id)
+        members.append({"task_id": str(task.id), "task_number": task.number, "item": task.item,
+            "operation_id": str(operation.id), "quantity": task.quantity, **recipe.row,
+            "operator_ids": [str(identifier) for identifier in operation.operator_ids],
+            "planned_start": operation.planned_start.isoformat() if operation.planned_start else None,
+            "planned_finish": operation.planned_finish.isoformat() if operation.planned_finish else None})
+    assignment = common_assignment(members)
+    warnings = []
+    if not assignment["assignment_consistent"]:
+        warnings.append("Исполнители различаются: общий исполнитель не назначен; назначения строк сохранены")
+    if not assignment["planning_consistent"]:
+        warnings.append("Плановые окна различаются: общее окно не задано; планы строк сохранены")
+    return {"recipe_key": first.key, "recipe_version": first.snapshot["version"],
+            "project": first.snapshot["project"], "site": first.snapshot["site"],
+            "recipe_summary": {"cable": first.snapshot["cable"],
+                "cables_per_assembly": first.snapshot["cables_per_assembly"],
+                "operations": [op["code"] for op in first.snapshot["operations"]],
+                "settings": [{"code": op["code"], "parameters": op["parameters"], "fields": op["fields"],
+                              "tooling": op["card"]["tooling"]} for op in first.snapshot["operations"]]},
+            "members": members, "warnings": warnings, **assignment}
+
+
+def group_existing(project, task_ids, dry_run, load_card, actor, now, factory):
+    """Discover without writes, then recheck and create each recipe in its own transaction."""
+    project = normalize_project_number(project)
+    if not project:
+        raise ProductionValidationError("Укажите проект")
+    result = {"project": project, "dry_run": dry_run, "groups": [], "created": [], "refused": [], "skipped": []}
+    buckets = {}
+
+    def collect(task, uow):
+        identity = {"task_id": str(task.id), "task_number": task.number, "item": task.item}
+        try:
+            candidate = _existing_candidate(task, load_card, actor, uow)
+        except ProductionValidationError as error:
+            result["refused"].append({**identity, "reason": str(error)})
+            return None
+        if candidate is None:
+            result["skipped"].append({**identity, "reason": "Первый ПФ уже в группе"})
+        return candidate
+
+    with factory() as uow:
+        tasks = uow.production.for_project(project)
+        if task_ids is not None:
+            selected = set(task_ids)
+            if not selected <= {task.id for task in tasks}:
+                raise ProductionValidationError("Выбранное задание не найдено в проекте")
+            tasks = [task for task in tasks if task.id in selected]
+        for task in tasks:
+            candidate = collect(task, uow)
+            if candidate:
+                buckets.setdefault(candidate[1].key, []).append(candidate)
+        if dry_run:
+            result["groups"] = [_existing_proposal(candidates) for candidates in buckets.values()]
+            return result
+
+    for key, candidates in buckets.items():
+        with factory() as uow:
+            uow.production.lock_projects(projects=(project,))
+            for identifier in sorted((item[0].id for item in candidates), key=str):
+                uow.production.lock(identifier)
+            current = []
+            for old_task, _recipe, _document, _version in candidates:
+                task = uow.production.get(old_task.id)
+                if task is None or normalize_project_number(task.project) != project:
+                    raise ConcurrentProductionUpdate("Задание изменилось — повторите группировку")
+                candidate = collect(task, uow)
+                if candidate:
+                    if candidate[1].key != key:
+                        raise ConcurrentProductionUpdate("Рецепт изменился — повторите группировку")
+                    current.append(candidate)
+            if not current:
+                continue
+            group = uow.cutting.create_existing(current, now)
+            audit(group, "from_existing", uow, actor, now, tasks=[str(item[0].id) for item in current])
+            proposal = {**_existing_proposal(current), "group_id": str(group.id), "number": group.number}
+            uow.commit()
+            result["groups"].append(proposal)
+            result["created"].append(str(group.id))
+    return result
 
 
 def planning_groups(uow, new_tasks, free, site):
@@ -170,5 +302,6 @@ def describe_group(group, uow):
             "recipe_version": group.recipe_version, "recipe_key": group.recipe_key,
             "project": group.project_key, "site": group.site, "state": group.state,
             "membership_frozen": group.state == "frozen", "rows": rows,
+            **common_assignment(active),
             "planned_start": min(starts) if starts else None, "planned_finish": max(finishes) if finishes else None,
             "norm_seconds": sum(row["norm_seconds"] for row in active)}
