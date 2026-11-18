@@ -782,3 +782,69 @@ function Save-VnaPresetFiles {
     $Connection.Calibrated = $false
     return $written
 }
+
+function Read-VnaTraceComplex {
+    param($Connection, [int]$TraceIndex, [ValidateSet('SDATa','SMEMory')][string]$Array, [int]$Count)
+    $raw = @(Invoke-VnaComIo $Connection "CALCulate(1).TRACe($TraceIndex).DATA.$Array")
+    if ($raw.Count -ne 2 * $Count) { throw "Неполные данные трассы $TraceIndex ($Array)." }
+    $samples = New-Object 'System.Numerics.Complex[]' $Count
+    for ($pointIndex = 0; $pointIndex -lt $Count; $pointIndex++) {
+        $samples[$pointIndex] = New-Object System.Numerics.Complex([double]$raw[2*$pointIndex], [double]$raw[2*$pointIndex+1])
+    }
+    return , $samples
+}
+
+function Invoke-VnaConfidenceTest {
+    param($Connection)
+    # ACM confidence test (РЭ ч. 2, «Процедура доверительного теста»; РЭ АКМ п. 5.9.1): the ACM switches to its
+    # attenuator state; the measured S-parameters go to the data traces, the ones stored in the ACM to memory.
+    $infoBefore = Assert-VnaDeviceReady $Connection
+    $null = Assert-VnaCorrection $Connection
+    if ($Connection.Offline) {
+        $dataPath = Join-Path $Connection.Directory 'confidence.s2p'; $memoryPath = Join-Path $Connection.Directory 'confidence-memory.s2p'
+        if (-not [IO.File]::Exists($dataPath)) { $dataPath = Join-Path $Connection.Directory 'sweep.s2p' }
+        if (-not [IO.File]::Exists($memoryPath)) { $memoryPath = $dataPath }
+        return [pscustomobject]@{ Data = (Read-VnaTouchstone -Path $dataPath); Memory = (Read-VnaTouchstone -Path $memoryPath) }
+    }
+    Invoke-VnaComIo $Connection 'SENSe(1).CORRection.COLLect.ECAL.CCHeck.ACQuire' call
+    $null = Invoke-VnaComIo $Connection 'IEEE4882.OPC'
+    $frequencies = [double[]]@(Invoke-VnaComIo $Connection 'SENSe(1).FREQuency.DATA')
+    $data = @{ Frequencies = $frequencies }; $memory = @{ Frequencies = $frequencies }
+    for ($traceIndex = 1; $traceIndex -le 4; $traceIndex++) {
+        $parameter = ([string](Invoke-VnaComIo $Connection "CALCulate(1).PARameter($traceIndex).DEFine")).Trim().ToUpperInvariant()
+        if ($parameter -notin @('S11','S21','S12','S22') -or $data.ContainsKey($parameter)) { throw 'Доверительный тест: на местах 1–4 нужны трассы S11/S21/S12/S22.' }
+        $data[$parameter] = Read-VnaTraceComplex $Connection $traceIndex SDATa $frequencies.Count
+        $memory[$parameter] = Read-VnaTraceComplex $Connection $traceIndex SMEMory $frequencies.Count
+    }
+    $infoAfter = Assert-VnaDeviceReady $Connection
+    if ($infoBefore.VnaSerial -cne $infoAfter.VnaSerial -or $infoBefore.AcmSerial -cne $infoAfter.AcmSerial) { throw 'Прибор или АКМ заменены во время доверительного теста.' }
+    return [pscustomobject]@{ Data = [pscustomobject]$data; Memory = [pscustomobject]$memory }
+}
+
+function Get-VnaKitStandards {
+    param($Connection, [int]$Slot = 28, [string]$Label = '6650F27')
+    # Kit definitions are read from S2VNA (the commissioned 6650F27 is slot 28); the operator's selected kit is restored.
+    if ($Connection.Offline) { return @($Connection.Device.Kit) }
+    $prefix = 'SENSe(1).CORRection.COLLect.CKIT'
+    $previous = [int](Invoke-VnaComIo $Connection "$prefix.SELect")
+    $standards = @()
+    try {
+        Invoke-VnaComIo $Connection "$prefix.SELect" set $Slot
+        if (([string](Invoke-VnaComIo $Connection "$prefix.LABel")).Trim() -cne $Label) { throw "В S2VNA набор №$Slot — не $Label. Укажите kit_slot в config.json." }
+        for ($index = 1; $index -le 12; $index++) {
+            try { $type = ([string](Invoke-VnaComIo $Connection "$prefix.STAN($index).TYPE")).Trim().ToUpperInvariant() } catch { break }
+            if (-not $type) { break }
+            if ($type -notin @('OPEN','SHORT','LOAD','THRU')) { continue }
+            $standard = [ordered]@{ Index = $index; Type = $type; Label = ([string](Invoke-VnaComIo $Connection "$prefix.STAN($index).LABel")).Trim() }
+            foreach ($name in 'C0','C1','C2','C3','L0','L1','L2','L3') { $standard[$name] = 0.0 }
+            $names = @('DELay','LOSS','Z0') + $(if ($type -eq 'OPEN') { @('C0','C1','C2','C3') } elseif ($type -eq 'SHORT') { @('L0','L1','L2','L3') } else { @() })
+            foreach ($name in $names) {
+                $key = switch ($name) { 'DELay' { 'Delay' } 'LOSS' { 'Loss' } default { $name } }
+                $standard[$key] = [double](Invoke-VnaComIo $Connection "$prefix.STAN($index).$name")
+            }
+            $standards += [pscustomobject]$standard
+        }
+    } finally { Invoke-VnaComIo $Connection "$prefix.SELect" set $previous }
+    if (-not $standards.Count) { throw "Определения мер набора $Label не прочитаны." }
+    return $standards
+}

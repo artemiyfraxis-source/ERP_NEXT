@@ -21,7 +21,7 @@ function Read-VnaConfig {
     catch { throw 'Некорректный JSON в config.json.' }
     if (-not $config -or -not ($config.PSObject.Properties.Name -contains 'server_url') -or
         -not ($config.server_url -is [string])) { throw 'В config.json необходимо строковое поле server_url.' }
-    $allowed = @('server_url', 'mating_cables', 'mating_acm')
+    $allowed = @('server_url', 'mating_cables', 'mating_acm', 'control_standard', 'kit_inventory', 'kit_slot', 'kit_description_uncertainty')
     foreach ($property in $config.PSObject.Properties.Name) {
         if ($property -notin $allowed) { throw "Недопустимое поле config.json: $property. Учётные данные в файле не сохраняются." }
     }

@@ -8,6 +8,7 @@ import { formatDay, formatNumber } from "./format";
 import { PageWindow } from "./PageWindow";
 import { InstrumentRfInterfaces } from "./InstrumentRfInterfaces";
 import { InstrumentMatings } from "./InstrumentMatings";
+import { InstrumentVnaChecks } from "./InstrumentVnaChecks";
 import { InstrumentLabelPrint } from "./InstrumentLabelPrint";
 
 const fileKinds: InstrumentFileKind[] = ["Паспорт", "Свидетельство о поверке", "Руководство", "Прочее"];
@@ -236,6 +237,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
         }} />
       {record && <InstrumentMatings instrumentId={record.id} locked={busy || rfBusy} refreshKey={rfRevision} onChanged={onChanged}
         onDirty={setMatingsDirty} onBusy={setMatingsBusy} />}
+      {record && <InstrumentVnaChecks instrumentId={record.id} refreshKey={rfRevision} />}
       <section className="instrument-files"><h3>Файлы</h3>
         {record ? <>
           <div className="instrument-upload"><label>Вид файла<select disabled={busy} value={fileKind} onChange={(event) => setFileKind(event.target.value as InstrumentFileKind)}>{fileKinds.map((value) => <option key={value}>{value}</option>)}</select></label>

@@ -816,6 +816,9 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .instrument-mating-history > summary { cursor: pointer; color: var(--muted-foreground); font-size: 13px; padding: 4px 0; }
 .instrument-mating-adjustment .form-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
 @media (pointer: coarse) { .instrument-matings button, .instrument-mating-adjustment button { min-height: 40px; } }
+.instrument-vna-due { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 4px 32px; margin-bottom: 8px; }
+.instrument-vna-due-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 6px 0; border-top: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.instrument-vna-due-item span { font-size: 13px; }
 .instrument-window .instrument-file span { color: var(--muted-foreground); font-size: 12px; }
 .instrument-window .instrument-lot-selected > td { background: var(--accent); }
 @media (max-width: 1599px) {
