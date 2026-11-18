@@ -39,7 +39,7 @@ DEPENDENCIES = {
     "marking_print": marking_labels.marking_print_principal,
     "marking_config": marking_labels.marking_config_principal,
     "marking_read": marking_labels.marking_read_principal,
-    # «Станки» (0192, after the transfer): the master (Производство) and the fitter (Задания) read the list and the card.
+    # «Станки» (0193, after the transfer): the master (Производство) and the fitter (Задания) read the list and the card.
     "machines_view": machines_api.machines_view_principal,
 }
 

@@ -26,16 +26,13 @@ $script:BridgeVersion = '1.0.0'
 $script:Proto = 1
 # OB.019 in Cyrillic, built from code points to keep this file ASCII.
 $script:Inventory = [string][char]0x041E + [string][char]0x0411 + '.019'
-# Register ranges read each cycle: @(first address, count). Must stay inside OB019_ALLOWED of
-# backend/app/modules/production/machines.py (ERP refuses any other address with 422).
+# Register ranges read each cycle: @(first address, count). As few requests as possible: mbd opens COM8 for each one,
+# and while it holds the port the vendor HMI cannot start. Words outside OB019_ALLOWED of
+# backend/app/modules/production/machines.py are read (FC3 has no side effects) but never sent (ERP refuses them, 422).
 $script:Ranges = @(
-    @(20, 1),     # D20 mode
-    @(22, 22),    # D22..D27 total set / order qty / batch, D28..D31 (not sent), D32..D43 wire parameters
-    @(641, 6),    # D641 UPH, D643 order done, D645 batch done
-    @(649, 2),    # D649 total done
-    @(711, 1),    # D711.0 order lamp
-    @(766, 1),    # D766 machine state
-    @(782, 1),    # D782 alarm
+    @(20, 24),    # D20 mode, D22..D27 total set / order qty / batch, D32..D43 wire parameters
+    @(641, 10),   # D641 UPH, D643 order done, D645 batch done, D649 total done
+    @(711, 72),   # D711.0 order lamp, D766 machine state, D782 alarm
     @(940, 30),   # D940..D969 order number, product name
     @(1280, 1)    # D1280 program
 )

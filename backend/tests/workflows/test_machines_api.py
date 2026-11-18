@@ -202,4 +202,6 @@ def test_the_bridge_reads_and_sends_exactly_the_server_allow_list():
     sent |= {address for low, high in re.findall(r"\((\d+)\.\.(\d+)\)", line) for address in range(int(low), int(high) + 1)}
     assert sent == rules.OB019_ALLOWED
     ranges = [(int(first), int(count)) for first, count in re.findall(r"^\s+@\((\d+), (\d+)\),?\s+#", source, re.MULTILINE)]
-    assert len(ranges) == 9 and rules.OB019_ALLOWED <= {a for first, count in ranges for a in range(first, first + count)}
+    # Few requests (mbd opens COM8 per request), each within mbd's 120-word read limit.
+    assert len(ranges) == 5 and all(1 <= count <= 120 for _, count in ranges)
+    assert rules.OB019_ALLOWED <= {a for first, count in ranges for a in range(first, first + count)}

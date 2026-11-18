@@ -2,8 +2,9 @@ param([int]$Port = 5020, [string]$Allow = '192.168.1.85', [switch]$Mock, [string
 # Fraxis Modbus command service for OB.019 (PowerShell 2.0 compatible).
 # One TCP connection = one JSON request line -> one JSON reply line.
 # COM8 is opened per request and closed afterwards, so the vendor HMI can still be used when this service is idle.
-# -LocalOnly (ERP_NEXT tools/machine-agent): listen on 127.0.0.1 only and serve only the local ERP bridge
-# (ob019-bridge.ps1); without it the service behaves exactly as deployed on 18.11.2026.
+# -Allow takes one address or a comma list: '192.168.1.85,127.0.0.1' keeps the ERP server's client and also serves the
+# local ERP bridge (ob019-bridge.ps1 talks to 127.0.0.1). -LocalOnly (ERP_NEXT tools/machine-agent): listen on
+# 127.0.0.1 only and serve only the local bridge. Without either the service behaves exactly as deployed on 18.11.2026.
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Web.Extensions
 $script:js = New-Object System.Web.Script.Serialization.JavaScriptSerializer
@@ -228,10 +229,11 @@ function ConvertTo-JsonLite($v) {
 
 function Start-Service2 {
     $bind = [System.Net.IPAddress]::Any
-    if ($LocalOnly) { $bind = [System.Net.IPAddress]::Loopback; $Allow = '127.0.0.1' }
+    $allowed = @($Allow -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($LocalOnly) { $bind = [System.Net.IPAddress]::Loopback; $allowed = @('127.0.0.1') }
     $listener = New-Object System.Net.Sockets.TcpListener ($bind, $Port)
     $listener.Start()
-    Write-MbLog ('listening on ' + $bind + ':' + $Port + ' allow ' + $Allow + ' mock=' + [bool]$Mock)
+    Write-MbLog ('listening on ' + $bind + ':' + $Port + ' allow ' + ($allowed -join ',') + ' mock=' + [bool]$Mock)
     while ($true) {
         $client = $listener.AcceptTcpClient()
         $remote = $client.Client.RemoteEndPoint.Address.ToString()
@@ -240,7 +242,7 @@ function Start-Service2 {
             $stream = $client.GetStream()
             $enc = New-Object System.Text.UTF8Encoding $false
             $writer = New-Object System.IO.StreamWriter($stream, $enc); $writer.AutoFlush = $true
-            if ($remote -ne $Allow) {
+            if ($allowed -notcontains $remote) {
                 Write-MbLog ('REJECT ' + $remote)
                 $writer.WriteLine('{"ok":false,"error":"forbidden"}')
                 continue

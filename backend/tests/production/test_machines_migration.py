@@ -6,7 +6,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 
-REVISION = "0192_machines"
+REVISION = "0193_machines"
 LINK = ("INSERT INTO production_machine_links (equipment_id, inventory_number, kind, token_id, machine_id, bound_at,"
         " version) VALUES (?, ?, ?, ?, ?, '2026-11-18 10:00:00', ?)")
 SNAPSHOT = ("INSERT INTO production_machine_snapshots (equipment_id, link_state, boot, seq, proto, registers, reported_at)"

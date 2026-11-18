@@ -7,7 +7,8 @@ param(
 # Installs the read-only ERP bridge of OB.019 on the machine PC (Windows 7, PowerShell 2.0); run as Administrator.
 # Copies ob019-bridge.ps1 next to mbd.ps1, stores the API token (scope machine:report) readable by SYSTEM and
 # Administrators only, and registers a task that starts the bridge at boot (E-stop powers this PC off) and keeps it
-# running. mbd.ps1 must accept the bridge: run it with -LocalOnly (or -Allow 127.0.0.1).
+# running. mbd.ps1 must accept the bridge on 127.0.0.1: run it with -Allow '192.168.1.85,127.0.0.1' (keeps the ERP
+# server's client) or -LocalOnly (the bridge only). The machine PC of OB.019 is 192.168.1.71 since 18.11.2026.
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not (Test-Path $Dir)) { New-Item -ItemType Directory -Path $Dir | Out-Null }

@@ -6,8 +6,8 @@ on the first report) and `production_machine_snapshots` (the latest allow-listed
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0192_machines"
-down_revision = "0190_godex_marking"
+revision = "0193_machines"
+down_revision = "0192_operation_template_sides"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False

@@ -2,7 +2,7 @@
 read only. A bridge on the machine PC (`tools/machine-agent/ob019-bridge.ps1`) reads an allow-list of PLC registers
 through the local Modbus service and reports them to ERP outbound (pull transport, API token scope `machine:report`).
 
-Binding (migration 0192): the first report of a `machine:report` token for a supported ОБ binds that token and that
+Binding (migration 0193): the first report of a `machine:report` token for a supported ОБ binds that token and that
 PC to the ОБ (trust on first use, like the print agent's legacy tokens; tokens are issued by an administrator only).
 From then on only the same token from the same PC reports for it — anything else is refused (403). A token serves one
 ОБ (UNIQUE), an ОБ has one link (PK). The latest snapshot per ОБ is kept (no history in this slice); an older or
@@ -82,7 +82,7 @@ class MachineReportInvalid(ValueError):
 
 
 class MachineLinkRow(Base):
-    """One ОБ connected to ERP through a bridge (migration 0192)."""
+    """One ОБ connected to ERP through a bridge (migration 0193)."""
 
     __tablename__ = "production_machine_links"
     __table_args__ = (
@@ -113,7 +113,7 @@ class MachineLinkRow(Base):
 
 
 class MachineSnapshotRow(Base):
-    """The latest reading of a linked ОБ (migration 0192): raw words of the allow-list, as the bridge read them."""
+    """The latest reading of a linked ОБ (migration 0193): raw words of the allow-list, as the bridge read them."""
 
     __tablename__ = "production_machine_snapshots"
     __table_args__ = (

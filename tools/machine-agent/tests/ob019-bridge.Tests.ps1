@@ -23,7 +23,7 @@ Describe 'read only' {
         Mock Invoke-MbdLine { $script:sent += $Line; Reply-Values $Line }
         $snapshot = Read-Snapshot
         $snapshot['link'] | Should Be 'ok'
-        $script:sent.Count | Should Be 9
+        $script:sent.Count | Should Be 5
         foreach ($line in $script:sent) { $script:Json.DeserializeObject($line)['cmd'] | Should Be 'read' }
         ($script:sent -join ' ') -match '"write"|"pulse"|"status"' | Should Be $false
     }
@@ -35,6 +35,7 @@ Describe 'read only' {
         $words['766'] | Should Be 766
         $words.ContainsKey('28') | Should Be $false
         $words.ContainsKey('21') | Should Be $false
+        $words.ContainsKey('720') | Should Be $false
     }
     It 'the bridge source carries no bus write command' {
         $source = [IO.File]::ReadAllText((Join-Path $root 'ob019-bridge.ps1'))

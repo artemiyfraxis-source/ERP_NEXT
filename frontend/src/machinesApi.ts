@@ -86,15 +86,20 @@ export function usePolled<T>(load: (signal: AbortSignal) => Promise<T>, period =
     let stopped = false;
     const tick = async () => {
       if (stopped || document.visibilityState === "hidden") return;
-      controller = new AbortController();
+      controller?.abort();
+      const own = new AbortController();
+      controller = own;
       try {
-        setData(await loader.current(controller.signal));
+        const loaded = await loader.current(own.signal);
+        if (own.signal.aborted) return;
+        setData(loaded);
         setError("");
       } catch (reason) {
-        if (controller.signal.aborted) return;
+        if (own.signal.aborted) return;
         setError(failureText(reason, failure));
       }
-      if (!stopped) timer = setTimeout(() => void tick(), period);
+      // A tick superseded by a newer one (the tab came back while this one was loading) ends its own chain.
+      if (!stopped && controller === own) timer = setTimeout(() => void tick(), period);
     };
     const visible = () => {
       if (document.visibilityState === "hidden") { clearTimeout(timer); controller?.abort(); return; }
