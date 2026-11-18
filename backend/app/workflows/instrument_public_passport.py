@@ -17,6 +17,7 @@ from app.modules.production.rf_infrastructure import RfRepository
 from app.shared.clock import moscow_now
 from app.shared.public_passport_limits import PassportLimitsUnavailable, PublicPassportLimits
 from app.shared.public_url import public_passport_url, public_settings, verify_passport_token
+from app.workflows.instrument_labels import same_day_repeats
 
 router = APIRouter(prefix="/p", tags=["public-passports"])
 _STYLE_HASH = base64.b64encode(hashlib.sha256(PUBLIC_STYLE.encode()).digest()).decode()
@@ -99,7 +100,8 @@ def _view_public_passport(locator: str, request: Request) -> Response:
                         history.append(history_entry(item, rf, summary, registry))
                         del summary
                     del previous
-                projection = public_passport(item, rf, measured, history=tuple(history), today=now.date(), registry=registry)
+                projection = public_passport(item, rf, measured, history=tuple(history), today=now.date(), registry=registry,
+                                             repeats=same_day_repeats(session, item.id, measured))
                 if match[3] == ".pdf":
                     content = public_passport_pdf(projection, generated=now,
                                                   public_url=public_passport_url(instrument_id, settings))

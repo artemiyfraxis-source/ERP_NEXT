@@ -4,7 +4,8 @@ from dataclasses import replace
 
 import pytest
 
-from app.modules.production.instrument_norms import (assess, assess_loss, item_spec, loss_uncertainty_for, norm_for, norms_data, uncertainty_for, vna_model)
+from app.modules.production.instrument_norms import (assess, assess_loss, item_spec, loss_uncertainty_for, norm_for, norms_data,
+                                                     resolve_vna, uncertainty_for, vna_model)
 from app.modules.production.rf_interfaces import RfDetails, RfInterface
 from tests.production.test_instrument_application import summary
 
@@ -22,7 +23,7 @@ def test_every_number_has_a_source():
     assert all(maker["source"] and maker["url"] for maker in data["makers"])
     assert all(sheet["sheet"].startswith("MIL-PRF-55339/") and sheet["url"] for sheet in data["mil_adapters"])
     assert all(vna["source"] for vna in data["vna"])
-    assert data["shop_requirement"] == {**data["shop_requirement"], "vswr_max": 1.30, "label": "требование цеха"}
+    assert "shop_requirement" not in data  # owner 18.11: 1,30 was never a requirement; the item's own norm decides
 
 
 def test_maker_spec_wins_over_mil_sheet():
@@ -54,13 +55,29 @@ def test_pass_fail_and_border_against_the_norm():
     failed = assess(summary({0.01: 1.02, 6: 1.05, 13: 1.30, 18: 1.10}), norm)
     assert failed.verdict == "Не соответствует норме выше 6 ГГц"
     assert failed.result_line == "КСВН 1,3 на 13 ГГц при норме ≤ 1,129"
-    border = assess(summary({0.01: 1.02, 6: 1.085}), norm, uncertainty_for("S50180"))
-    assert border.status == "pass" and border.verdict.endswith("(на границе допуска)")
+
+
+@pytest.mark.parametrize("offset,status", [(-0.03, "pass"), (-0.02, "border"), (0.0, "border"), (0.02, "border"),
+                                           (0.03, "fail")])
+def test_vswr_within_the_uncertainty_either_side_is_a_border_until_repeated(offset, status):
+    # Owner decision 18.11: |КСВН − предел| ≤ U (S50180 ±0,022 to 10 GHz, РЭ табл. 23) — no pass/fail until repeated.
+    norm, u = norm_for("", "", pair("N", "SMA")), uncertainty_for("S50180")
+    measured = summary({0.01: 1.02, 3: 1.02, 6: round(norm.limit(6) + offset, 4)})
+    once = assess(measured, norm, u)
+    assert once.status == status
+    if status == "border":
+        assert once.verdict == "На границе допуска выше 3 ГГц — " + "нужен повторный замер (3 подключения с поворотом 120°)"
+        assert once.brief.endswith("погрешность ±0,022")
+    repeated = assess(measured, norm, u, repeated=True)
+    assert repeated.status == ("fail" if status != "pass" else "pass")
+    if status != "pass":
+        assert repeated.verdict == "Не соответствует норме выше 3 ГГц"
 
 
 def test_uncertainty_is_stored_per_vna_model_and_resolved_by_serial():
     u = uncertainty_for("S50180")
-    assert (u.at(5), u.at(12)) == (0.015, 0.022) and u.line.startswith("±0,015 до 10 ГГц, ±0,022 выше 10 ГГц")
+    assert (u.at(5), u.at(12)) == (0.022, 0.029) and u.line.startswith("±0,022 до 10 ГГц, ±0,029 выше 10 ГГц")
+    assert "табл. 23" in u.source  # РЭ S-серия, табл. 23 (methodology review PR #928)
     assert uncertainty_for("") is None
     assert vna_model("Planar S50180 №123") == "S50180"
 
@@ -68,6 +85,28 @@ def test_uncertainty_is_stored_per_vna_model_and_resolved_by_serial():
         serial_number, name, doc_designation = "22123456", "Анализатор цепей Planar S50180", ""
     assert vna_model("ВАЦ №22123456", [Vna()]) == "S50180"
     assert vna_model("ВАЦ №1", [Vna()]) == ""
+
+
+def test_vna_resolved_from_the_file_name_or_the_only_registry_entry_of_that_model():
+    class Vna:
+        inventory_number, serial_number, name, doc_designation = "СИ.002", "22051234", "Анализатор цепей векторный S50180", ""
+    vna = Vna()
+    # The tool writes «VNA serial=…» that differs from the card's serial; the file name still names the model.
+    header = ("VNA serial=2205123; ACM serial=2104056", "Замер ВАЦ S50180, АКМ, 16.11.2026, СИ.006.s2p")
+    assert resolve_vna(header, [vna]) == ("S50180", vna)
+    assert resolve_vna(("VNA serial=22051234; ACM serial=1",), [vna]) == ("S50180", vna)
+    assert resolve_vna(("Замер ВАЦ.s2p",), [vna]) == ("", None)
+    assert resolve_vna(header, [vna, vna]) == ("S50180", None)  # two of that model: no guess
+
+
+def test_brief_norm_names_only_the_bands_the_measurement_touches():
+    adp = norm_for("Переход коаксиальный ADP1A-35F-35F", "", pair("3.5mm", "3.5mm"))
+    assert adp.brief(0.01, 18) == "РЭ Планар ADP1A, табл. 2.6 — КСВН ≤ 1,06 до 20 ГГц; потери ≤ 0,2 дБ до 32 ГГц"
+    assert adp.brief(0.01, 26) == "РЭ Планар ADP1A, табл. 2.6 — КСВН ≤ 1,06 до 20 ГГц; ≤ 1,1 до 26,5 ГГц; потери ≤ 0,2 дБ до 32 ГГц"
+    mil = norm_for("", "", pair("SMA", "SMA"))
+    assert mil.brief(0.01, 18) == ("MIL-PRF-55339/55 — КСВН ≤ 1,05 + 0,005·F в полосе 0,5–27 ГГц; "
+                                   "потери ≤ 0,03·√F дБ в полосе 0,5–18 ГГц")
+    assert "http" not in adp.brief(0.01, 18) + mil.brief(0.01, 18)
 
 
 def test_item_spec_tag_over_datasheet_and_mil_default():
@@ -107,9 +146,9 @@ def test_loss_norm_follows_the_vswr_source():
     assert sma.limit(18) == pytest.approx(0.03 * 18 ** 0.5) and sma.limit(25) == pytest.approx(0.05 * 25 ** 0.5)
     assert "0,03·√F дБ в полосе 0,5–18 ГГц" in sma.line and "F — частота, ГГц" in sma.line
     maker = norm_for("Переход ADP1A-35F-35F", "", pair("3.5mm", "3.5mm")).loss
-    assert maker.reference == "Планар ADP1A, РЭ табл. 2.6"
+    assert maker.reference == "РЭ Планар ADP1A, табл. 2.6"
     assert maker.limit(0.01) == pytest.approx(0.20) and maker.limit(32) == pytest.approx(0.20)
-    assert norm_for("ADP1A-NM-NF", "", pair("N", "N")).loss.reference == "Планар ADP1A, РЭ табл. 2.5"
+    assert norm_for("ADP1A-NM-NF", "", pair("N", "N")).loss.reference == "РЭ Планар ADP1A, табл. 2.5"
     assert norm_for("ADP1A-NM-35F", "", pair("N", "3.5mm")).loss.limit(18) == pytest.approx(0.15)
 
 
@@ -137,21 +176,21 @@ def test_point_norm_uses_the_nearest_measured_point_inside_the_span():
     assert outside.status == "no_points" and outside.short == "нет точки замера на частоте испытания"
 
 
-def test_loss_excess_within_the_uncertainty_is_a_border_not_a_failure():
+def test_loss_follows_the_same_border_rule():
     loss, uncertainty = norm_for("", "", pair("SMA", "SMA")).loss, loss_uncertainty_for("S50180")
     assert uncertainty.at(9) == pytest.approx(0.102) and uncertainty.at(18) == pytest.approx(0.107)
-    vswr = {0.01: 1.02, 1: 1.03, 9: 1.04}
+    vswr = {0.01: 1.02, 9: 1.04}  # 0,01 GHz is below the sheet's 0,5 GHz: only 9 GHz is judged
 
-    def judged(at_nine, unc=uncertainty):
-        return assess_loss(summary(vswr, {0.01: 0.01, 1: 0.02, 9: at_nine}), loss, unc)
+    def judged(at_nine, unc=uncertainty, repeated=False):
+        return assess_loss(summary(vswr, {0.01: 0.01, 9: at_nine}), loss, unc, repeated=repeated)
 
-    assert judged(0.05).status == "pass" and judged(0.05).border and judged(0.05).short == "соответствует норме (на границе допуска)"
-    assert judged(0.15).status == "border" and judged(0.15).short == "на границе допуска — превышение меньше погрешности ВАЦ"
-    assert judged(0.15).result_line == "потери 0,15 дБ на 9 ГГц при норме ≤ 0,09 дБ, погрешность ±0,102 дБ"
-    failed = judged(0.20)
-    assert failed.status == "fail" and failed.short == "не соответствует норме выше 1 ГГц"
-    # The VNA model unknown: an excess under 0,05 dB is still a border, not a failure.
-    assert judged(0.13, None).status == "border" and judged(0.15, None).status == "fail"
+    # /55 at 9 GHz: 0,03·√9 = 0,09 dB; the S50180 ±0,102 dB is wider than the limit, so 0,05 dB is a border too.
+    assert judged(0.05).status == "border" and judged(0.05).short == "на границе допуска — нужен повторный замер (3 подключения с поворотом 120°)"
+    assert judged(0.15).brief == "потери 0,15 дБ на 9 ГГц при норме ≤ 0,09 дБ, погрешность ±0,102 дБ"
+    assert judged(0.20).status == "fail" and judged(0.20).short == "не соответствует норме"
+    assert judged(0.05, repeated=True).status == "fail"
+    # The VNA model unknown: ±0,05 dB.
+    assert judged(0.03, None).status == "pass" and judged(0.13, None).status == "border" and judged(0.15, None).status == "fail"
     assert assess_loss(summary(vswr), None).short == "норма не установлена"
 
 
@@ -175,23 +214,45 @@ def _conclusion(points):
     return conclusion(public_passport(instrument(), rf(), characterization(_s2p(points))))
 
 
-def test_passport_conclusion_states_the_loss_norm_and_its_uncertainty():
-    # SMA–SMA by /55: 0,175 dB at 18 GHz over 0,127 dB — within ±0,107 dB of the S50180: a border, VSWR verdict kept.
+def test_passport_conclusion_is_short_and_asks_for_the_repeat_at_the_border():
+    # SMA–SMA by /55: loss 0,087 dB at 9 GHz against 0,09 dB is within ±0,102 dB of the S50180 — a border.
     result = _conclusion([(0.01, 0.01, 0.99), (9, 0.01, 0.99), (18, 0.02, 0.98)])
     lines = dict(result.lines)
-    assert result.verdict == "Соответствует норме в полосе 9–18 ГГц; вносимые потери на границе допуска"
-    assert lines["Норма потерь"].startswith("MIL-PRF-55339/55 — вносимые потери ≤ 0,03·√F дБ в полосе 0,5–18 ГГц")
-    assert lines["Результат по потерям"].startswith("на границе допуска")
-    assert lines["Погрешность измерения потерь"].startswith("±0,102 дБ до 10 ГГц, ±0,107 дБ выше 10 ГГц (Планар S50180")
-    assert "по вносимым потерям" in lines["Правило принятия решения"]
+    assert result.title == "Заключение"
+    assert result.verdict == "На границе допуска (потери) — нужен повторный замер (3 подключения с поворотом 120°)"
+    assert lines["Норма"].startswith("MIL-PRF-55339/55 — КСВН ≤ 1,05 + 0,005·F в полосе 0,5–27 ГГц; потери ≤ 0,03·√F дБ")
+    assert lines["Результат"] == ("КСВН ≤ 1,041 (18 ГГц); потери 0,087 дБ на 9 ГГц при норме ≤ 0,09 дБ, "
+                                  "погрешность ±0,102 дБ")
+    # The first judged point (9 GHz) is already at the border: no range is claimed until the repeat.
+    assert lines["Методика"] == "СТО ФРАК-002-2026"
+    assert set(lines) == {"Норма", "Результат", "Методика"}
+    assert result.closing == ("Утвердил: Генеральный директор ______________ (подпись)   «____» __________ 20___ г.",)
 
 
-def test_loss_failure_overrides_a_vswr_pass_even_on_the_vswr_border():
-    # VSWR 1,13 at 18 GHz: within 0,022 of the /55 limit 1,14 (border pass); |S21| 0,95 = 0,446 dB » 0,127 + 0,107.
+def test_after_three_connections_the_worst_decides_and_a_border_fails():
+    from app.modules.production.instrument_characterization import characterization
+    from app.modules.production.instrument_public import conclusion, public_passport
+    from tests.production.test_instrument_passport import instrument, rf
+
+    good = [(0.01, 0.01, 0.999), (9, 0.01, 0.999), (18, 0.01, 0.999)]
+    vswr_border = [(0.01, 0.01, 0.999), (9, 0.01, 0.999), (18, 0.13 / 2.13, 0.999)]  # 1,13 vs 1,14 ± 0,029
+    first = characterization(_s2p(vswr_border))
+    once = conclusion(public_passport(instrument(), rf(), first))
+    assert once.verdict.startswith("На границе допуска (КСВН")
+    repeats = (characterization(_s2p(good)), characterization(_s2p(good)))
+    after = conclusion(public_passport(instrument(), rf(), first, repeats=repeats))
+    assert after.verdict.startswith("Не соответствует норме")
+    two = conclusion(public_passport(instrument(), rf(), first, repeats=repeats[:1]))
+    assert two.verdict.startswith("На границе допуска")  # two connections are not the three the rule asks for
+
+
+def test_loss_failure_overrides_a_vswr_border():
+    # VSWR 1,13 at 18 GHz: within 0,029 of the /55 limit 1,14 (border); |S21| 0,95 = 0,446 dB » 0,127 + 0,107.
     gamma = 0.13 / 2.13
     result = _conclusion([(0.01, 0.01, 0.999), (9, 0.01, 0.999), (18, gamma, 0.95)])
-    assert result.verdict == "Не соответствует норме по вносимым потерям выше 9 ГГц"
-    assert dict(result.lines)["Результат"].startswith("худший КСВН 1,13 на 18 ГГц")
+    assert result.verdict == "Не соответствует норме по вносимым потерям"
+    assert dict(result.lines)["Результат"].startswith("КСВН 1,13 на 18 ГГц при норме ≤ 1,14, погрешность ±0,029; потери")
+    assert "" not in dict(result.lines)
 
 
 def test_both_failures_are_named():
@@ -205,5 +266,4 @@ def test_history_names_vswr_and_loss():
     from tests.production.test_instrument_passport import instrument, rf
 
     entry = history_entry(instrument(), rf(), characterization(_s2p([(0.01, 0.01, 0.999), (9, 0.01, 0.999), (18, 0.01, 0.99)])))
-    assert entry.summary.startswith("КСВН: соответствует норме до 18 ГГц; потери: соответствует норме")
-    assert "; применение: КСВН ≤ 1,30 (требование цеха)" in entry.summary
+    assert entry.summary == ("КСВН: соответствует норме до 18 ГГц; потери: на границе допуска — нужен повторный замер (3 подключения с поворотом 120°)")
