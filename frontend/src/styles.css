@@ -808,6 +808,14 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .instrument-window .instrument-file a { color: var(--primary); }
 .instrument-rf p { overflow-wrap: anywhere; }
 @media (pointer: coarse) { .instrument-rf button { min-height: 40px; } }
+.instrument-mating-ends { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 8px 32px; }
+.instrument-mating-end { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-top: 1px solid var(--border); }
+.instrument-mating-count { display: grid; gap: 2px; font-variant-numeric: tabular-nums; }
+.instrument-mating-count span { font-size: 12px; }
+.instrument-mating-history { margin-top: 8px; }
+.instrument-mating-history > summary { cursor: pointer; color: var(--muted-foreground); font-size: 13px; padding: 4px 0; }
+.instrument-mating-adjustment .form-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+@media (pointer: coarse) { .instrument-matings button, .instrument-mating-adjustment button { min-height: 40px; } }
 .instrument-window .instrument-file span { color: var(--muted-foreground); font-size: 12px; }
 .instrument-window .instrument-lot-selected > td { background: var(--accent); }
 @media (max-width: 1599px) {

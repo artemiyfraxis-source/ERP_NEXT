@@ -8,7 +8,7 @@ param(
     [Alias('fmax')][ValidateRange(10000000,18000000000)][double]$FmaxHz = 18e9
 )
 
-$script:VnaToolVersion = '1.0.0'
+$script:VnaToolVersion = '1.1.0'
 . (Join-Path $PSScriptRoot 'dsp.ps1')
 . (Join-Path $PSScriptRoot 's2vna.ps1')
 . (Join-Path $PSScriptRoot 'erp.ps1')
@@ -209,7 +209,7 @@ function Get-VnaFixtureData {
     if ($reverse) {
         $data = [pscustomobject]@{ Frequencies = $data.Frequencies; S11 = $data.S22; S21 = $data.S12; S12 = $data.S21; S22 = $data.S11 }
     }
-    return [pscustomobject]@{ Data = $data; Description = "$Number (обратно=$reverse, файл=$([IO.Path]::GetFileName($path)))" }
+    return [pscustomobject]@{ Instrument = $fixture; Reverse = $reverse; Data = $data; Description = "$Number (обратно=$reverse, файл=$([IO.Path]::GetFileName($path)))" }
 }
 
 function Initialize-VnaOfflineDemo {
@@ -218,7 +218,11 @@ function Initialize-VnaOfflineDemo {
     $device = [ordered]@{ Ready = $true; VnaName = 'Planar, S50180, MOCK-VNA, mock'; VnaSerial = 'MOCK-VNA'; AcmSerial = 'MOCK-ACM';
         AcmInfo = 'SYNTHETIC OFFLINE ACM'; AcmMinHz = 10e6; AcmMaxHz = 18e9; VnaTemperature = 30; VnaTemperatures = @(30, 31); AcmTemperature = 29 }
     $device | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Directory 'device.json') -Encoding UTF8
-    @{ instruments = @(@{ id = 'offline-035'; inventory_number = 'СИ.035'; name = 'Учебный переходник SMA–SMA'; serial_number = 'MOCK-DUT'; files = @() }) } |
+    @{ instruments = @(
+        @{ id = 'offline-035'; inventory_number = 'СИ.035'; name = 'Учебный переходник SMA–SMA'; serial_number = 'MOCK-DUT'; files = @(); mating_ends = @('A', 'B'); mating_resource = 500 },
+        @{ id = 'offline-100'; inventory_number = 'СИ.100'; name = 'Учебный кабель порта 1'; serial_number = 'MOCK-C1'; files = @(); mating_ends = @('A', 'B'); mating_resource = $null },
+        @{ id = 'offline-101'; inventory_number = 'СИ.101'; name = 'Учебный кабель порта 2'; serial_number = 'MOCK-C2'; files = @(); mating_ends = @('A', 'B'); mating_resource = $null },
+        @{ id = 'offline-104'; inventory_number = 'СИ.104'; name = 'Учебный АКМ'; serial_number = 'MOCK-ACM'; files = @(); mating_ends = @('A', 'B'); mating_resource = $null }) } |
         ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Directory 'instruments.json') -Encoding UTF8
     $frequencies = [double[]]::new(1601); $reflection = [Numerics.Complex[]]::new(1601); $transmission = [Numerics.Complex[]]::new(1601)
     for ($index = 0; $index -lt 1601; $index++) {
@@ -227,6 +231,14 @@ function Initialize-VnaOfflineDemo {
         $transmission[$index] = [Numerics.Complex]::FromPolarCoordinates(0.98, -$index / 1600.0)
     }
     Write-VnaTouchstone -Path (Join-Path $Directory 'sweep.s2p') -Data ([pscustomobject]@{ Frequencies = $frequencies; S11 = $reflection; S21 = $transmission; S12 = $transmission; S22 = $reflection }) -Comments @('SYNTHETIC OFFLINE DATA - NOT A MEASUREMENT')
+}
+
+function Connect-VnaErp {
+    param([switch]$Offline, [string]$OfflineDirectory, [string]$ConfigPath)
+    if ($Offline) { return New-VnaErpSession -OfflineDirectory $OfflineDirectory }
+    $config = Read-VnaConfig -Path $ConfigPath
+    $login = Read-Host 'Логин ERP'; $password = Read-Host 'Пароль ERP' -AsSecureString
+    try { return New-VnaErpSession -ServerUrl $config.server_url -Login $login -Password $password } finally { $password = $null }
 }
 
 function Start-VnaMeasure {
@@ -242,6 +254,9 @@ function Start-VnaMeasure {
     $lock = $null; $deviceMutex = $null; $deviceLocked = $false; $connection = $null; $backup = $null; $session = $null; $calibration = $null
     $backupPointer = Join-Path $DataDirectory 'operator-backup.json'
     $calLog = Join-Path $DataDirectory 'calibrations.jsonl'; $ledger = Join-Path $DataDirectory 'used-sweeps.jsonl'
+    # Matings wait here until the ERP confirms them (see matings.ps1); item 7 resends them.
+    $pendingDirectory = Join-Path $DataDirectory 'pending-matings'
+    $config = $null; $matingSetup = $null; $matingTarget = $null; $previousMounts = $null
     try {
         $lock = [IO.File]::Open((Join-Path $DataDirectory 'tool.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
         if ($Offline) {
@@ -251,6 +266,7 @@ function Start-VnaMeasure {
                 if (-not (Test-Path -LiteralPath $OfflineDirectory)) { Initialize-VnaOfflineDemo $OfflineDirectory }
             }
             $connection = New-VnaConnection -OfflineDirectory $OfflineDirectory
+            $matingSetup = Get-VnaMatingSetup $null; $matingTarget = Get-VnaMatingTarget -OfflineDirectory $OfflineDirectory
         } else { $connection = New-VnaConnection }
         # Boot and recovery must also work when the ACM USB cable is disconnected.
         $boundSerial = Assert-VnaInstrumentIdentity $connection
@@ -269,15 +285,20 @@ function Start-VnaMeasure {
         }
         $running = $true
         while ($running) {
-            Write-Host "`n1 Проверить прибор и АКМ`n2 Калибровка АКМ`n3 Контроль нагрузкой`n4 Замер переходника`n5 Вернуть настройки оператора`n6 Применить шкалы графиков`n0 Выход"
+            Write-Host "`n1 Проверить прибор и АКМ`n2 Калибровка АКМ`n3 Контроль нагрузкой`n4 Замер переходника`n5 Вернуть настройки оператора`n6 Применить шкалы графиков`n7 Отправить сочленения в ERP`n0 Выход"
             try {
                 switch (Read-Host 'Выберите действие') {
                     '1' { Show-VnaInstrumentState $connection $calibration }
                     '2' {
                         if (-not (Confirm-VnaAction 'Подключите АКМ к концам тракта портов 1 и 2. Начать калибровку?')) { break }
                         $calibration = $null
+                        if (-not $matingSetup) { $config = Read-VnaConfig -Path $ConfigPath; $matingSetup = Get-VnaMatingSetup $config; $matingTarget = Get-VnaMatingTarget -ServerUrl $config.server_url }
+                        $previousMounts = $null  # The cables were on the ACM: the next measurement mates them again.
                         $attempt = [ordered]@{ Id = [guid]::NewGuid().ToString(); Event = 'calibration'; Time = [datetimeoffset]::UtcNow.ToString('o'); User = [Environment]::UserName;
                             Method = 'acm-solt2'; VnaSerial = $null; AcmSerial = $null; VnaTemperature = $null; VnaTemperatures = @(); AcmTemperature = $null; LoadCheck = 'not_checked'; Result = 'fail' }
+                        # The ACM is connected now, whatever the calibration result: the mating is counted.
+                        $null = Save-VnaPendingMatings $pendingDirectory $matingTarget ('vna-calibration-' + $attempt.Id) (New-VnaCalibrationMatings $matingSetup)
+                        if ($session) { $null = Sync-VnaPendingMatings $session $pendingDirectory }
                         try {
                             $info = Assert-VnaDeviceReady $connection
                             foreach ($field in 'VnaSerial', 'AcmSerial', 'VnaTemperature', 'VnaTemperatures', 'AcmTemperature') { $attempt[$field] = $info.$field }
@@ -327,13 +348,11 @@ function Start-VnaMeasure {
                     '4' {
                         if (-not $calibration -or $calibration.LoadCheck -ne 'pass') { throw 'Нужна калибровка и успешный контроль нагрузкой.' }
                         if (-not $session) {
-                            if ($Offline) { $session = New-VnaErpSession -OfflineDirectory $OfflineDirectory }
-                            else {
-                                $config = Read-VnaConfig -Path $ConfigPath
-                                $login = Read-Host 'Логин ERP'; $password = Read-Host 'Пароль ERP' -AsSecureString
-                                try { $session = New-VnaErpSession -ServerUrl $config.server_url -Login $login -Password $password } finally { $password = $null }
-                            }
+                            $session = Connect-VnaErp -Offline:$Offline -OfflineDirectory $OfflineDirectory -ConfigPath $ConfigPath
+                            if (-not $matingSetup) { $config = Read-VnaConfig -Path $ConfigPath; $matingSetup = Get-VnaMatingSetup $config }
+                            $matingTarget = Get-VnaMatingTarget -Session $session
                         }
+                        $null = Sync-VnaPendingMatings $session $pendingDirectory
                         $number = (Read-Host 'Номер переходника (СИ.035)').Trim().ToUpperInvariant()
                         if ($number -notmatch '^СИ\.\d+$') { throw 'Введите номер вида СИ.035.' }
                         $item = Get-VnaInstrument -Session $session -Number $number
@@ -349,12 +368,20 @@ function Start-VnaMeasure {
                                 [double]::IsNaN($parsed) -or [double]::IsInfinity($parsed) -or $parsed -le 0.01 -or $parsed -gt $FmaxHz / 1e9) { throw 'Частота должна быть > 0,01 ГГц и не выше -FmaxHz.' }
                             $band = $parsed * 1e9
                         }
-                        $left = $null; $right = $null; $descriptions = @()
-                        if ($chain.Left) { $fixture = Get-VnaFixtureData $session $chain.Left (Join-Path $DataDirectory 'fixtures') $band; $left = $fixture.Data; $descriptions += "слева $($fixture.Description)" }
-                        if ($chain.Right) { $fixture = Get-VnaFixtureData $session $chain.Right (Join-Path $DataDirectory 'fixtures') $band; $right = $fixture.Data; $descriptions += "справа $($fixture.Description)" }
+                        $left = $null; $right = $null; $descriptions = @(); $fixtures = @($null, $null)
+                        if ($chain.Left) { $fixture = Get-VnaFixtureData $session $chain.Left (Join-Path $DataDirectory 'fixtures') $band; $left = $fixture.Data; $fixtures[0] = $fixture; $descriptions += "слева $($fixture.Description)" }
+                        if ($chain.Right) { $fixture = Get-VnaFixtureData $session $chain.Right (Join-Path $DataDirectory 'fixtures') $band; $right = $fixture.Data; $fixtures[1] = $fixture; $descriptions += "справа $($fixture.Description)" }
+                        $matings = Get-VnaMeasurementMatings $session $matingSetup $item $fixtures $previousMounts
+                        $known = Select-VnaKnownMatings $session $matings.Entries
+                        if ($known.Exhausted -and -not (Confirm-VnaAction 'Ресурс сочленений исчерпан. Всё равно выполнить замер?')) { break }
                         [void](Read-Host 'Установите переходник в показанную цепочку. Сторона 1 — к порту 1 ВАЦ. Нажмите Enter для нового замера')
                         $sweep = Get-VnaSweep $connection
                         Assert-VnaMeasurementSafe -Sweep $sweep -Calibration $calibration -DeviceInfo (Get-VnaDeviceInfo $connection) -TraceStatus (Get-VnaTraceStatus $connection) -LedgerPath $ledger
+                        # The measurement is done: the chain was mated, whether or not the file goes to the card.
+                        $null = Save-VnaPendingMatings $pendingDirectory $matingTarget ('vna-measurement-' + $sweep.Id) $known.Entries
+                        $previousMounts = $matings.Mounts
+                        $sent = Sync-VnaPendingMatings $session $pendingDirectory
+                        if ($sent.Sent) { Write-Host 'Сочленения записаны в ERP.' }
                         $rawDir = Join-Path $DataDirectory 'raw'; [void][IO.Directory]::CreateDirectory($rawDir)
                         $rawPath = Join-Path $rawDir ($sweep.Id + '.s2p')
                         Write-VnaTouchstone -Path $rawPath -Data $sweep.Data -Comments @('Raw corrected four-trace sweep; ' + $sweep.CapturedAt)
@@ -407,8 +434,16 @@ function Start-VnaMeasure {
                         Set-VnaChartScales $connection
                         Write-Host 'Шкалы графиков применены и проверены.'
                     }
+                    '7' {
+                        if (-not $session) {
+                            $session = Connect-VnaErp -Offline:$Offline -OfflineDirectory $OfflineDirectory -ConfigPath $ConfigPath
+                            $matingTarget = Get-VnaMatingTarget -Session $session
+                        }
+                        $sent = Sync-VnaPendingMatings $session $pendingDirectory
+                        Write-Host "Сочленения: отправлено пакетов $($sent.Sent), отклонено $($sent.Rejected), ожидают $($sent.Left)."
+                    }
                     '0' { $running = $false }
-                    default { Write-Host 'Выберите пункт 0–6.' }
+                    default { Write-Host 'Выберите пункт 0–7.' }
                 }
             } catch { Write-Host $_.Exception.Message -ForegroundColor Red }
         }
