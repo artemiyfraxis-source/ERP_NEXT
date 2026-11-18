@@ -50,10 +50,10 @@ import {
   type ManualState,
 } from "./manualLogic";
 
-const CUT: LibraryCard = { id: "cut", code: "CUT_WIRE_hand", side: "", title: "CUT_WIRE_hand | Резка", name: "Резка", category: "Резка" };
-const CRIMP: LibraryCard = { id: "prsA", code: "PRS_TERMINAL_auto", side: "A", title: "PRS_TERMINAL_auto | Опрессовка терминалов (A)", name: "", category: "" };
-const TUT: LibraryCard = { id: "tut", code: "CUT_TUT_short", side: "", title: "CUT_TUT_short | Резка ТУТ", name: "Резка ТУТ", category: "Резка" };
-const HEAT: LibraryCard = { id: "heat", code: "HEAT_TYT_short", side: "", title: "HEAT_TYT_short | Усадка", name: "Усадка", category: "Усадка" };
+const CUT: LibraryCard = { id: "cut", code: "CUT_WIRE_hand", title: "CUT_WIRE_hand | Резка", name: "Резка", category: "Резка" };
+const CRIMP: LibraryCard = { id: "prs", code: "PRS_TERMINAL_auto", title: "PRS_TERMINAL_auto | Опрессовка терминалов", name: "", category: "" };
+const TUT: LibraryCard = { id: "tut", code: "CUT_TUT_short", title: "CUT_TUT_short | Резка ТУТ", name: "Резка ТУТ", category: "Резка" };
+const HEAT: LibraryCard = { id: "heat", code: "HEAT_TYT_short", title: "HEAT_TYT_short | Усадка", name: "Усадка", category: "Усадка" };
 const OPS = [{ opNumber: "CUT_WIRE_hand", opName: "Резка", tPrep: "120", tOp: "6", tMachine: "" }];
 
 /** Все три операции — в итоговом блоке, по порядку: резка, своя «Пайка экрана», опрессовка. */
@@ -88,11 +88,11 @@ describe("manual assembly: diagram first", () => {
     expect(manualProblem(state)).toBe("Ручная сборка: добавьте хотя бы одну операцию — из библиотеки или свою.");
   });
 
-  it("names library cards in Russian with their side, takes the norms from БД.ОП and adds into the selected block", () => {
-    expect(cardLabel(CRIMP)).toBe("Опрессовка терминалов (А)");
+  it("names library cards in Russian (one card per code, no side), takes the norms from БД.ОП and adds into the selected block", () => {
+    expect(cardLabel(CRIMP)).toBe("Опрессовка терминалов");
     const state = three();
     expect(state.ops.map((op) => [op.seq, op.kind, op.label, op.prepMin, op.opSec])).toEqual([
-      [1, "library", "Резка", "2", "6"], [2, "custom", "Пайка экрана", "", "45"], [3, "library", "Опрессовка терминалов (А)", "", ""],
+      [1, "library", "Резка", "2", "6"], [2, "custom", "Пайка экрана", "", "45"], [3, "library", "Опрессовка терминалов", "", ""],
     ]);
     expect(state.blocks[0].ops).toEqual([1, 2, 3]);
     expect(state.nextSeq).toBe(4);
@@ -106,24 +106,24 @@ describe("manual assembly: diagram first", () => {
     state = addLibraryOp(state, TUT, OPS);
     expect(state.blocks[1].ops).toEqual([4]);
     // Блок-вход идёт раньше итога: резка ТУТ — операция 1.
-    expect(order(state)).toEqual(["Резка ТУТ", "Резка", "Пайка экрана", "Опрессовка терминалов (А)"]);
+    expect(order(state)).toEqual(["Резка ТУТ", "Резка", "Пайка экрана", "Опрессовка терминалов"]);
   });
 
   it("numbers operations by the diagram: inputs before consumers, ties by block creation order, then the order in a block", () => {
     const state = twoBranches();
     expect(blockOrder(state)).toEqual(["b2", "b3", "b1"]);
-    expect(order(state)).toEqual(["Резка", "Опрессовка терминалов (А)", "Резка ТУТ", "Усадка", "Контроль"]);
+    expect(order(state)).toEqual(["Резка", "Опрессовка терминалов", "Резка ТУТ", "Усадка", "Контроль"]);
     // «Зачистка» — вход «Провода», создана последней: «Трубка» готова раньше и создана раньше — идёт первой.
     let deeper = addBlock(selectBlock(state, "b2"), "Зачистка");
     deeper = addCustomOp(deeper);
     deeper = updateOp(deeper, 6, { label: "Зачистка" });
     expect(blockOrder(deeper)).toEqual(["b3", "b4", "b2", "b1"]);
-    expect(order(deeper)).toEqual(["Резка ТУТ", "Зачистка", "Резка", "Опрессовка терминалов (А)", "Усадка", "Контроль"]);
+    expect(order(deeper)).toEqual(["Резка ТУТ", "Зачистка", "Резка", "Опрессовка терминалов", "Усадка", "Контроль"]);
   });
 
   it("moves an operation only inside its block and removes it from its block", () => {
     let state = moveOp(twoBranches(), 3, -1);
-    expect(order(state).slice(0, 2)).toEqual(["Опрессовка терминалов (А)", "Резка"]);
+    expect(order(state).slice(0, 2)).toEqual(["Опрессовка терминалов", "Резка"]);
     expect(moveOp(state, 3, -1)).toEqual(state); // уже первая в блоке
     state = removeOp(state, 3);
     expect(state.blocks.find((block) => block.key === "b2")?.ops).toEqual([2]);
@@ -169,7 +169,7 @@ describe("manual assembly: diagram first", () => {
     expect(manualProblem(updateOp(state, 2, { label: " " }))).toBe("Ручная сборка: операция 2 — укажите название своей операции.");
     expect(manualProblem(updateOp(state, 1, { opSec: "шесть" }))).toBe("Ручная сборка: операция 1 «Резка» — время на штуку должно быть числом секунд не меньше нуля.");
     expect(manualProblem(updateOp(state, 1, { prepMin: "-1" }))).toBe("Ручная сборка: операция 1 «Резка» — подготовка должна быть числом минут не меньше нуля.");
-    expect(manualProblem(updateOp(state, 3, { qty: "0" }))).toBe("Ручная сборка: операция 3 «Опрессовка терминалов (А)» — количество на изделие должно быть числом больше нуля.");
+    expect(manualProblem(updateOp(state, 3, { qty: "0" }))).toBe("Ручная сборка: операция 3 «Опрессовка терминалов» — количество на изделие должно быть числом больше нуля.");
   });
 
   it("builds the payload: seconds, own steps with controls, tooling by section, one final block", () => {
@@ -194,7 +194,7 @@ describe("manual assembly: diagram first", () => {
     expect(ops[1].tooling).toEqual([
       { section: "Инструмент", name: "Пинцет" }, { section: "Оборудование", name: "паяльная станция" }, { section: "Расходники", name: "припой" },
     ]);
-    expect(ops[2]).toMatchObject({ type: "libraryOp", side: "A", label: "Опрессовка терминалов (А)" });
+    expect(ops[2]).toMatchObject({ type: "libraryOp", side: "", label: "Опрессовка терминалов" });
     expect(ops.some((op) => "parallel" in op)).toBe(false);
     expect(config.route).toEqual({
       blocks: [{ key: "b1", ops: [1, 2, 3], final: true, components: [{ id: "kit-0", art: "МГТФ 0,35", name: "МГТФ", qty: "0.6" }] }],
@@ -208,7 +208,7 @@ describe("manual assembly: diagram first", () => {
     state = { ...state, edges: state.edges.map((edge) => (edge.from === "b3" ? { ...edge, per_unit: 2 } : edge)) };
     const config = manualConfig(state, base);
     expect((config.ops as Array<Record<string, unknown>>).map((op) => [op.seq, op.label])).toEqual([
-      [2, "Резка"], [3, "Опрессовка терминалов (А)"], [4, "Резка ТУТ"], [1, "Усадка"], [5, "Контроль"],
+      [2, "Резка"], [3, "Опрессовка терминалов"], [4, "Резка ТУТ"], [1, "Усадка"], [5, "Контроль"],
     ]);
     expect(config.route).toEqual({
       blocks: [
@@ -686,7 +686,7 @@ describe("manual assembly: order of blocks and short names (owner 10.10: «ка�
     const up = moveBlock(state, "b3", -1);
     expect(up.problem).toBeNull();
     expect(blockOrder(up.state)).toEqual(["b3", "b2", "b1"]);
-    expect(order(up.state)).toEqual(["Резка ТУТ", "Резка", "Опрессовка терминалов (А)", "Усадка", "Контроль"]);
+    expect(order(up.state)).toEqual(["Резка ТУТ", "Резка", "Опрессовка терминалов", "Усадка", "Контроль"]);
     expect(blockOrder(moveBlock(up.state, "b3", 1).state)).toEqual(["b2", "b3", "b1"]);
     // Края: выше первого и ниже последнего двигать некуда — схема прежняя, без слов.
     expect(moveBlock(state, "b2", -1)).toEqual({ state, problem: null });
@@ -713,7 +713,7 @@ describe("manual assembly: order of blocks and short names (owner 10.10: «ка�
     state = renameBlock(state, "b3", "Трубка");
     const { route, ops } = manualRoute(state, 1);
     const title = (key: string) => manualShortTitle(route.blocks.find((block) => block.key === key)!, ops, "Изделие");
-    expect(title("b2")).toEqual({ title: "Резка · опрессовка терминалов (А)", full: "Разъём I-DS1071-SCB02X5 смонтирован (сторона А, 4 провода) (со свивкой) (маркирован)" });
+    expect(title("b2")).toEqual({ title: "Резка · опрессовка терминалов", full: "Разъём I-DS1071-SCB02X5 смонтирован (сторона А, 4 провода) (со свивкой) (маркирован)" });
     expect(title("b3")).toEqual({ title: "Трубка", full: "Трубка" });
     // Итог с операциями назван ими, изделие — в подсказке (и строкой «итог: …» на схеме).
   expect(title("b1")).toEqual({ title: "Усадка · контроль", full: "Изделие" });

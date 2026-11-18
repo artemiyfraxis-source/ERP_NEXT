@@ -22,7 +22,7 @@ def _end(article: str, shield: str, hex_value: str = "", pin: str = "пайка"
 
 
 def _housing(side: str) -> dict:
-    card = next(card for title, card in CLAMP_HOUSING.items() if title.endswith(f"({side})"))
+    card = next(iter(CLAMP_HOUSING.values()))  # one template for both sides (0192); the side is the operation's
     return {"type": "coaxHousing", "side": side, "templateId": card.source_id}
 
 
@@ -42,7 +42,7 @@ def _built(config: dict) -> list[dict]:
 
 
 def test_the_clamp_housing_cards_are_in_the_erp_library_as_the_owner_wrote_them():
-    assert sorted(CLAMP_HOUSING) == ["INS_housing_COAX_clamp | Монтаж корпуса с прижимом (A)", "INS_housing_COAX_clamp | Монтаж корпуса с прижимом (B)"]
+    assert sorted(CLAMP_HOUSING) == ["INS_housing_COAX_clamp | Монтаж корпуса с прижимом"]
     assert not any(card.code in {"INS_NUT_coax", "INS_BRAID_clamp"} for card in ERP_CARDS)
     for card in CLAMP_HOUSING.values():
         assert card.category == "Монтаж корпуса"

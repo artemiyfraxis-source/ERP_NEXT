@@ -112,7 +112,7 @@ it("NAV-1: «Шаблоны техкарт» shows only the operation library", 
     const path = String(input);
     paths.push(path);
     if (path === "/api/techcards/templates") return json({ metadata: null, items: [
-      { id: "cut", code: "CUT_WIRE_auto", side: "", title: "CUT_WIRE_auto | Резка", name: "Резка", category: "Резка", steps: 1, tooling: 1 },
+      { id: "cut", code: "CUT_WIRE_auto", title: "CUT_WIRE_auto | Резка", name: "Резка", category: "Резка", steps: 1, tooling: 1 },
     ] });
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -321,9 +321,7 @@ const libraryItems = [
   { id: "cut", code: "CUT_WIRE_auto", side: "", title: "CUT_WIRE_auto | Резка", name: "Резка", category: "Сборка", steps: 2, controls: 1, tooling: 1,
     first_step: "Отрезать провод", step_text: "Отрезать провод Проверить длину", norms: { operation_seconds: "3,50", setup_seconds: "180" }, norms_known: true,
     changed_at: "2026-09-28T10:00:00+03:00", changed_by: "Технолог" },
-  { id: "sdr-a", code: "SDR_TIN", side: "A", title: "SDR_TIN | Лужение (A)", name: "Лужение", category: "Сборка", steps: 1, controls: 0, tooling: 0,
-    first_step: "Облудить жилу флюсом", step_text: "Облудить жилу флюсом", norms: null, norms_known: true, changed_at: null, changed_by: "" },
-  { id: "sdr-b", code: "SDR_TIN", side: "B", title: "SDR_TIN | Лужение (B)", name: "Лужение", category: "Сборка", steps: 1, controls: 0, tooling: 0,
+  { id: "sdr", code: "SDR_TIN", title: "SDR_TIN | Лужение", name: "Лужение", category: "Сборка", steps: 1, controls: 0, tooling: 0,
     first_step: "Облудить жилу флюсом", step_text: "Облудить жилу флюсом", norms: null, norms_known: true, changed_at: null, changed_by: "" },
 ];
 

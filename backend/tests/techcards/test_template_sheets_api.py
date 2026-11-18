@@ -135,3 +135,19 @@ def test_template_sheet_writes_need_templates_edit(operation_library_api):
     assert operation_library_api.get("/api/techcards/template-sheets").status_code == 200
     assert operation_library_api.post("/api/techcards/template-sheets/drafts", json={"title": "A | B"}).status_code == 403
     assert operation_library_api.delete("/api/techcards/template-sheets/cut-wire").status_code == 403
+
+
+def test_a_second_template_of_one_operation_code_is_refused(operation_library_api):
+    """One template per operation code (0192: «шаблоны (A)/(B) искоренять»): a side block saved as a new sheet is a
+    Russian validation error, nothing is written and the draft stays."""
+    _import(operation_library_api, _template("cut-wire", "CUT_WIRE"))
+    draft = operation_library_api.post("/api/techcards/template-sheets/drafts", json={"title": "CUT_WIRE | Резка (B)"}).json()
+    operation_library_api.put(f"/api/techcards/template-sheets/drafts/{draft['id']}", json={"rows": _grid("CUT_WIRE")})
+
+    response = operation_library_api.post(f"/api/techcards/template-sheets/drafts/{draft['id']}/save",
+                                          json={"title": "cut_wire | Резка (B)"})
+
+    assert response.status_code == 422
+    assert response.json()["detail"].startswith("Операция «cut_wire» уже есть в шаблоне")
+    catalog = operation_library_api.get("/api/techcards/template-sheets").json()
+    assert [item["id"] for item in catalog["list"]] == ["cut-wire"] and len(catalog["drafts"]) == 1

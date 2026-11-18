@@ -5,10 +5,9 @@ import { deriveRoute, type RouteOp } from "./routeLogic";
 
 const templates = [
   { id: "cut", title: "CUT_WIRE_auto | Резка", category: "Резка" },
-  { id: "prsA", title: "PRS_TERMINAL_2.50 | Опрессовка терминалов (А)", category: "Опрессовка терминалов" },
-  { id: "prsB", title: "PRS_TERMINAL_2.50 | Опрессовка терминалов (В)", category: "Опрессовка терминалов" },
-  { id: "insA", title: "INS_terminal_2.50 | Монтаж терминалов (А)", category: "Монтаж терминалов" },
-  { id: "insB", title: "INS_terminal_2.50 | Монтаж терминалов (В)", category: "Монтаж терминалов" },
+  // Один шаблон на код (миграция 0192): обе стороны берут одну карту, сторона — у операции.
+  { id: "prs", title: "PRS_TERMINAL_2.50 | Опрессовка терминалов", category: "Опрессовка терминалов" },
+  { id: "ins", title: "INS_terminal_2.50 | Монтаж терминалов", category: "Монтаж терминалов" },
   { id: "sdrXt", title: "SDR_XT60 | Пайка XT60", category: "Пайка" },
   { id: "cutTut", title: "CUT_TUT_short | Резка ТУТ", category: "Резка" },
   { id: "insTut", title: "INS_TUT | Надеть ТУТ", category: "Монтаж" },
@@ -41,7 +40,7 @@ it("builds the interboard config the /build endpoint reads (TcGenInline buildCon
   // 150 по чертежу + L+ обеих сторон из БД.ТЕР = 160; проводов по терминалам: 4 контакта / 2 разъёма
   expect(cfg.wires).toEqual([{ name: "МГТФ 0,12", art: "МГТФ 0,12", qty: 2, length: 160 }]);
   expect(cfg.ops.map((op: any) => [op.type, op.side ?? "", op.templateId])).toEqual([
-    ["cutWire", "", "cut"], ["prsTerm", "A", "prsA"], ["insTerm", "A", "insA"], ["prsTerm", "B", "prsB"], ["insTerm", "B", "insB"],
+    ["cutWire", "", "cut"], ["prsTerm", "A", "prs"], ["insTerm", "A", "ins"], ["prsTerm", "B", "prs"], ["insTerm", "B", "ins"],
   ]);
   expect(cfg.ops[0]).toMatchObject({ opNum: "CUT_WIRE_auto", tOp: "12", tPrep: "60", tMachine: "3" });
   expect(cfg.ops[1]).toMatchObject({ firstTerm: true, ep: { connArt: "XHP-2", termArt: "SXH-001T-P0.6" }, wireSources: [""] });
@@ -344,8 +343,7 @@ describe("коакс: резка с разделкой на роторном с�
       const clampHousings = (G: GenData) => opsOf(G, initState(G)).filter((op) => op.type === "coaxHousing");
       expect(clampHousings(D).map((op) => op.tmplHint)).toEqual(["INS_housing_COAX", "INS_housing_COAX"]);
       const withCards: GenData = { ...D, templates: [...coaxTemplates,
-        { id: "ha", title: "INS_housing_COAX_clamp | Монтаж корпуса с прижимом (A)", category: "Монтаж корпуса" },
-        { id: "hb", title: "INS_housing_COAX_clamp | Монтаж корпуса с прижимом (B)", category: "Монтаж корпуса" }] };
+        { id: "h", title: "INS_housing_COAX_clamp | Монтаж корпуса с прижимом", category: "Монтаж корпуса" }] };
       expect(clampHousings(withCards).map((op) => [op.tmplHint, op.tmplWant])).toEqual([
         ["INS_housing_COAX_clamp", "INS_housing_COAX_clamp"], ["INS_housing_COAX_clamp", "INS_housing_COAX_clamp"]]);
     });
@@ -736,7 +734,7 @@ it("a technologist's operation order (opOrder) reorders the ops and the config, 
   const g = makeGen(plain.D, { ...plain.S, opOrder: order });
   expect(kinds(g.getActiveOps())).toEqual(["cutWireCrimp:A", "insTerm:B", "insTerm:A"]);
   const cfg = g.buildConfig() as Record<string, any>;
-  expect(cfg.ops.map((op: any) => [op.type, op.side, op.templateId])).toEqual([["cutWireCrimp", "A", "cw2c"], ["insTerm", "B", "insB"], ["insTerm", "A", "insA"]]);
+  expect(cfg.ops.map((op: any) => [op.type, op.side, op.templateId])).toEqual([["cutWireCrimp", "A", "cw2c"], ["insTerm", "B", "ins"], ["insTerm", "A", "ins"]]);
   expect(cfg.opOrder).toEqual(order);
   expect(plain.g.buildConfig()).not.toHaveProperty("opOrder");
   expect(opOrderFromConfig(cfg)).toEqual(order);

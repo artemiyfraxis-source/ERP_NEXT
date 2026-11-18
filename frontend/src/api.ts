@@ -2310,7 +2310,6 @@ export interface TechcardRevision {
 export interface OperationCardSummary {
   id: string;
   code: string;
-  side: string;
   title: string;
   name: string;
   category: string;

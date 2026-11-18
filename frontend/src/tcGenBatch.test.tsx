@@ -14,10 +14,8 @@ const card: ProjectTechcard = {
 const refs: BatchRefs = {
   templates: [
     { id: "cut", title: "CUT_WIRE_auto | Резка", category: "Резка" },
-    { id: "prsA", title: "PRS_TERMINAL_2.50 | Опрессовка терминалов (А)", category: "Опрессовка терминалов" },
-    { id: "prsB", title: "PRS_TERMINAL_2.50 | Опрессовка терминалов (В)", category: "Опрессовка терминалов" },
-    { id: "insA", title: "INS_terminal_2.50 | Монтаж терминалов (А)", category: "Монтаж терминалов" },
-    { id: "insB", title: "INS_terminal_2.50 | Монтаж терминалов (В)", category: "Монтаж терминалов" },
+    { id: "prs", title: "PRS_TERMINAL_2.50 | Опрессовка терминалов", category: "Опрессовка терминалов" },
+    { id: "ins", title: "INS_terminal_2.50 | Монтаж терминалов", category: "Монтаж терминалов" },
   ],
   op: [{ opNumber: "CUT_WIRE_auto", opName: "Резка", tOp: "12", tPrep: "60", tMachine: "3" }],
   ter: [{ id: "t1", fields: { terArticle: "SXH-001T-P0.6", terLPlus: "5", terStep: "2.50", terApplicator: "S12" } }],
@@ -69,7 +67,7 @@ it("gives the same config as opening the generator and pressing «Создать
   // Снимок формы (gen_state) есть только у сборки из формы; пакетная сборка его не пишет.
   const { gen_state: _snapshot, ...built } = onBuild.mock.calls[0][0] as Record<string, unknown>;
   expect(batch.config).toEqual(built);
-  expect((batch.config?.ops as Array<{ templateId: string }>).map((op) => op.templateId)).toEqual(["cut", "prsA", "insA", "prsB", "insB"]);
+  expect((batch.config?.ops as Array<{ templateId: string }>).map((op) => op.templateId)).toEqual(["cut", "prs", "ins", "prs", "ins"]);
 });
 
 it("reports what the form would refuse instead of building", () => {

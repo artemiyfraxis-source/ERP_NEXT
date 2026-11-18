@@ -263,13 +263,6 @@ def test_manual_assembly_builds_through_the_same_endpoint_and_refuses_an_empty_l
     assert document["build_config"]["mode"] == "manual"
 
 
-def _sided(source_id: str, code: str, side: str) -> dict:
-    template = _template(source_id, code)
-    template["title"] = f"{code} | Операция ({side})"
-    template["rows"][0] = [template["title"]]
-    return template
-
-
 EDIT = {
     "name": "Операция поправленная",
     "safety": "Работать в очках",
@@ -292,17 +285,15 @@ EDIT = {
 def test_engineer_edits_operation_record_as_supplymap_normalizes_it(operation_library_api):
     """SUPPLYMAP tcRecordNormalize_ + tcRecordSave_: empty rows dropped, steps numbered through, tooling inside its
     section, empty tolerance «-», safety with the form heading, revision placeholder dropped, who/when stamped;
-    one record per code — both (A)/(B) blocks carry the edit."""
-    load_library(app.state.techcards_uow_factory, [
-        _sided("sdr-a", "SDR_X", "A"), _sided("sdr-b", "SDR_X", "B"), _template("other", "OP_OTHER"),
-    ])
+    one record per code — one template."""
+    load_library(app.state.techcards_uow_factory, [_template("sdr", "SDR_X"), _template("other", "OP_OTHER")])
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(id=UUID("30000000-0000-0000-0000-000000000010"), name="Инженер", department="Производство"),
         email="engineer@example.test", roles=frozenset({"engineer"}), permissions={"techcards": "edit", "erptctpl": "edit"},
     )
 
-    saved = operation_library_api.put("/api/techcards/templates/sdr-a", json=EDIT)
-    other_side = operation_library_api.get("/api/techcards/templates/sdr-b").json()
+    saved = operation_library_api.put("/api/techcards/templates/sdr", json=EDIT)
+    reread = operation_library_api.get("/api/techcards/templates/sdr").json()
     untouched = operation_library_api.get("/api/techcards/templates/other").json()
 
     assert saved.status_code == 200, saved.text
@@ -318,8 +309,9 @@ def test_engineer_edits_operation_record_as_supplymap_normalizes_it(operation_li
     assert [(t["section"], t["number"], t["name"]) for t in document["tooling"]] == [
         ("Инструмент", "1", "Клещи"), ("Оборудование", "1", "Автомат"), ("Инструмент", "2", "Нож"),
     ]
-    assert other_side["document"]["steps"] == document["steps"]
-    assert other_side["changed_by"] == "Инженер"
+    assert reread["document"]["steps"] == document["steps"]
+    assert reread["changed_by"] == "Инженер"
+    assert "side" not in reread and "side" not in document
     assert untouched["changed_at"] is None
     assert untouched["document"]["steps"][0]["text"] == "Выполнить операцию"
 

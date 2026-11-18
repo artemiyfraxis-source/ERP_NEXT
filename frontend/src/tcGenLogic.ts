@@ -4000,37 +4000,31 @@ export function makeGen(D: GenData, S: GenState) {
   }
 
   // ── Шаблоны и времена ──
-  function pickCoaxTemplate_(hint: string, side?: Side) {
+  // Один шаблон на код операции (миграция 0192): сторона — у операции, не у шаблона.
+  function pickCoaxTemplate_(hint: string) {
     const norm = (s: string) => String(s || "").toLowerCase().replace(/\s+/g, "");
     const target = norm(hint);
-    const cands = (D.templates || []).filter((t) => norm(String(t.title || "").split("|")[0]) === target);
-    if (!cands.length) return "";
-    if (!side) return cands[0].id;
-    const re = side === "A" ? /\([АA]\)/ : /\([BВ]\)/;
-    return (cands.find((t) => re.test(String(t.title || ""))) || cands[0]).id;
+    const hit = (D.templates || []).find((t) => norm(String(t.title || "").split("|")[0]) === target);
+    return hit ? hit.id : "";
   }
+  /** Шаблон с таким id есть в библиотеке (пустая библиотека — не проверяем: справочник ещё не загружен). */
+  const inLibrary_ = (id: string) => !(D.templates || []).length || (D.templates || []).some((t) => t.id === id);
   function autoPickTemplate(spec: OpSpec) {
     const opKey = spec.opKey;
-    if (S.selectedTemplates[opKey]) return S.selectedTemplates[opKey];
+    if (S.selectedTemplates[opKey] && inLibrary_(S.selectedTemplates[opKey])) return S.selectedTemplates[opKey];
     const cat = spec.cat || OP_CATEGORY_MAP[opKey];
     if (!cat) return "";
     const n = (s: string) => (s || "").replace(/\(A\)/g, "(А)").replace(/\(B\)/g, "(В)").toLowerCase().replace(/[_\-|.+()\s]+/g, " ").trim();
     const stripSide = (s: string) => s.replace(/ [ав]$/, "");
-    const target = n(cat);
-    const sideMatch = target.match(/ ([ав])$/);
-    const sideWanted = sideMatch ? sideMatch[1] : "";
-    const targetBase = stripSide(target);
+    const targetBase = stripSide(n(cat));
     if (!targetBase) return "";
     const ec = (t: Tmpl) => {
       const stored = (t.category || "").trim();
       const raw = stored ? n(stored) : (() => { const p = (t.title || "").split("|"); return p.length > 1 ? n(p[p.length - 1]) : ""; })();
       return stripSide(raw);
     };
-    const best = (D.templates || []).filter((t) => ec(t) === targetBase);
-    if (!best.length) return "";
-    const sideRe = sideWanted === "а" ? /\([АA]\)/ : sideWanted === "в" ? /\([BВ]\)/ : null;
-    let cands = best;
-    if (sideRe) { const sided = best.filter((t) => sideRe.test(String(t.title || ""))); if (sided.length) cands = sided; }
+    const cands = (D.templates || []).filter((t) => ec(t) === targetBase);
+    if (!cands.length) return "";
     if (cands.length === 1) return cands[0].id;
     if (spec.termArt) {
       const terRec = findTerRecord_(spec.termArt);
@@ -4044,7 +4038,7 @@ export function makeGen(D: GenData, S: GenState) {
     return cands[0].id;
   }
   function pickTemplateForOp_(spec: OpSpec) {
-    if (spec.tmplHint) return pickCoaxTemplate_(spec.tmplHint, spec.side);
+    if (spec.tmplHint) return pickCoaxTemplate_(spec.tmplHint);
     if (spec.opKey === "cutWire" && (spec.stripCount || 0) > 0) {
       const re = new RegExp("cut_wire\\+" + spec.stripCount + "strip", "i");
       const hit = (D.templates || []).find((t) => re.test(String(t.title || "").split("|")[0]));
@@ -4062,6 +4056,8 @@ export function makeGen(D: GenData, S: GenState) {
     // нужным кодом есть: 713К.4 КБ1 (17.10) — резка маркировки ушла на PRINT_MARK_TUBE, а у ключа cutMark остался
     // CUT_TUT_short (резка трубок: не тот станок, не те дефекты).
     const stuck = S.selectedTemplates[spec.opKey];
+    // Залипшего id нет в библиотеке (шаблон стороны (A)/(B) слит в один, 0192) — подбор заново.
+    if (stuck && !inLibrary_(stuck)) return pickTemplateForOp_(spec);
     const want = (spec.tmplWant || spec.tmplHint || "").trim();
     const stuckCode = stuck ? String((D.templates || []).find((t) => t.id === stuck)?.title || "").split("|")[0].trim() : "";
     const outdated = !!stuck && !!want && !!stuckCode && stuckCode.toLowerCase() !== want.toLowerCase() && hasTemplateCode_(want);
