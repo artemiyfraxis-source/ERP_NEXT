@@ -50,8 +50,11 @@ class RfDetails:
     # This definition explicitly means the complete M+F SOL set and all three named thrus.
     kit_definition: str = ""
     version: int = 0
+    mating_resource: int | None = None
 
     def __post_init__(self):
+        if self.mating_resource is not None and (type(self.mating_resource) is not int or not 0 < self.mating_resource <= 2_147_483_647):
+            raise ProductionValidationError("Ресурс сочленений должен быть положительным целым числом")
         if len(self.interfaces) > 2 or self.role not in ROLES:
             raise ProductionValidationError("Допустимы не более двух ВЧ-интерфейсов и известное назначение")
         if len(self.source) > 2000 or self.version < 0:

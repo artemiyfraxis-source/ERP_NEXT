@@ -21,11 +21,12 @@ function Read-VnaConfig {
     catch { throw 'Некорректный JSON в config.json.' }
     if (-not $config -or -not ($config.PSObject.Properties.Name -contains 'server_url') -or
         -not ($config.server_url -is [string])) { throw 'В config.json необходимо строковое поле server_url.' }
-    $allowed = @('server_url')
+    $allowed = @('server_url', 'mating_cables', 'mating_acm')
     foreach ($property in $config.PSObject.Properties.Name) {
         if ($property -notin $allowed) { throw "Недопустимое поле config.json: $property. Учётные данные в файле не сохраняются." }
     }
     $config.server_url = Assert-VnaServerUrl -ServerUrl $config.server_url
+    $null = Get-VnaMatingSetup $config
     return $config
 }
 
@@ -241,3 +242,5 @@ function Add-VnaInstrumentFile {
     return Invoke-VnaErpRequest -Session $Session -ApiPath "/api/production/instruments/$instrumentId/files" -Method Post `
         -Body @{ kind = 'Прочее'; file_name = $FileName; content_base64 = [Convert]::ToBase64String($content) }
 }
+
+. (Join-Path $PSScriptRoot 'matings.ps1')
