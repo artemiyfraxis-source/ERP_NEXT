@@ -101,7 +101,7 @@
           "units": 1,
           "tMachine": "4.00",
           "noTooling": true,
-          "templateId": "strip-coax-auto-разделка-a",
+          "templateId": "strip-coax-auto-разделка",
           "equipmentTools": [
             {
               "name": "EW-1165 | Станок зачистки коаксиального кабеля",
@@ -154,7 +154,7 @@
           "units": 1,
           "tMachine": "0.00",
           "noTooling": true,
-          "templateId": "ins-housing-coax-монтаж-корпуса-a"
+          "templateId": "ins-housing-coax-монтаж-корпуса"
         },
         {
           "tOp": "8.00",
@@ -197,7 +197,7 @@
           "units": 1,
           "tMachine": "0.00",
           "noTooling": true,
-          "templateId": "ins-housing-coax-монтаж-корпуса-a"
+          "templateId": "ins-housing-coax-монтаж-корпуса"
         },
         {
           "tOp": "15.00",
@@ -236,7 +236,7 @@
           "units": 1,
           "tMachine": "4.00",
           "noTooling": true,
-          "templateId": "strip-coax-auto-разделка-b",
+          "templateId": "strip-coax-auto-разделка",
           "equipmentTools": [
             {
               "name": "EW-1165 | Станок зачистки коаксиального кабеля",
@@ -289,7 +289,7 @@
           "units": 1,
           "tMachine": "0.00",
           "noTooling": true,
-          "templateId": "ins-housing-coax-монтаж-корпуса-b"
+          "templateId": "ins-housing-coax-монтаж-корпуса"
         },
         {
           "tOp": "8.00",
@@ -363,7 +363,7 @@
           "units": 1,
           "tMachine": "0.00",
           "noTooling": true,
-          "templateId": "ins-housing-coax-монтаж-корпуса-b"
+          "templateId": "ins-housing-coax-монтаж-корпуса"
         },
         {
           "tOp": "9.00",
@@ -630,7 +630,7 @@
           "units": 4,
           "tMachine": "4.00",
           "noTooling": true,
-          "templateId": "strip-coax-auto-разделка-a",
+          "templateId": "strip-coax-auto-разделка",
           "equipmentTools": [
             {
               "name": "EW-1165 | Станок зачистки коаксиального кабеля",
@@ -683,7 +683,7 @@
           "units": 4,
           "tMachine": "0.00",
           "noTooling": true,
-          "templateId": "ins-housing-coax-монтаж-корпуса-a"
+          "templateId": "ins-housing-coax-монтаж-корпуса"
         },
         {
           "tOp": "8.00",
@@ -719,7 +719,7 @@
           "units": 1,
           "tMachine": "0.00",
           "noTooling": true,
-          "templateId": "ins-housing-coax-монтаж-корпуса-a"
+          "templateId": "ins-housing-coax-монтаж-корпуса"
         },
         {
           "tOp": "3.00",
@@ -745,7 +745,7 @@
           "units": 4,
           "tMachine": "4.00",
           "noTooling": true,
-          "templateId": "strip-coax-auto-разделка-b",
+          "templateId": "strip-coax-auto-разделка",
           "equipmentTools": [
             {
               "name": "EW-1165 | Станок зачистки коаксиального кабеля",
@@ -798,7 +798,7 @@
           "units": 4,
           "tMachine": "0.00",
           "noTooling": true,
-          "templateId": "ins-housing-coax-монтаж-корпуса-b"
+          "templateId": "ins-housing-coax-монтаж-корпуса"
         },
         {
           "tOp": "8.00",
@@ -834,7 +834,7 @@
           "units": 1,
           "tMachine": "0.00",
           "noTooling": true,
-          "templateId": "ins-housing-coax-монтаж-корпуса-b"
+          "templateId": "ins-housing-coax-монтаж-корпуса"
         },
         {
           "tOp": "9.00",
@@ -1092,7 +1092,7 @@
           "tPrep": "120",
           "units": 1,
           "tMachine": "3.00",
-          "templateId": "sdr-coax-pin-пайка-b",
+          "templateId": "sdr-coax-pin-пайка",
           "equipmentTools": [
             {
               "name": "T21(R) | Станция паяльная",
@@ -1135,7 +1135,7 @@
           "tPrep": "120",
           "units": 1,
           "tMachine": "0.00",
-          "templateId": "ins-housing-coax-монтаж-корпуса-a"
+          "templateId": "ins-housing-coax-монтаж-корпуса"
         },
         {
           "tOp": "10.00",
@@ -1146,7 +1146,7 @@
           "tPrep": "120",
           "units": 1,
           "tMachine": "0.00",
-          "templateId": "ins-housing-coax-монтаж-корпуса-b"
+          "templateId": "ins-housing-coax-монтаж-корпуса"
         },
         {
           "tOp": "8.00",
@@ -1400,7 +1400,7 @@
           "units": 1,
           "tMachine": "4.00",
           "noTooling": true,
-          "templateId": "strip-coax-auto-разделка-a",
+          "templateId": "strip-coax-auto-разделка",
           "equipmentTools": [
             {
               "name": "EW-1165 | Станок зачистки коаксиального кабеля",
@@ -1430,7 +1430,7 @@
           "units": 1,
           "tMachine": "3.00",
           "noTooling": true,
-          "templateId": "sdr-coax-pin-пайка-a",
+          "templateId": "sdr-coax-pin-пайка",
           "equipmentTools": [
             {
               "name": "T21(R) | Станция паяльная",
@@ -1453,7 +1453,7 @@
           "units": 1,
           "tMachine": "0.00",
           "noTooling": true,
-          "templateId": "ins-housing-coax-монтаж-корпуса-a"
+          "templateId": "ins-housing-coax-монтаж-корпуса"
         },
         {
           "tOp": "8.00",
@@ -1536,7 +1536,7 @@
           "units": 1,
           "tMachine": "4.00",
           "noTooling": true,
-          "templateId": "strip-coax-auto-разделка-b",
+          "templateId": "strip-coax-auto-разделка",
           "equipmentTools": [
             {
               "name": "EW-1165 | Станок зачистки коаксиального кабеля",
@@ -1589,7 +1589,7 @@
           "units": 1,
           "tMachine": "0.00",
           "noTooling": true,
-          "templateId": "ins-housing-coax-монтаж-корпуса-b"
+          "templateId": "ins-housing-coax-монтаж-корпуса"
         },
         {
           "tOp": "8.00",
@@ -1632,7 +1632,7 @@
           "units": 1,
           "tMachine": "0.00",
           "noTooling": true,
-          "templateId": "ins-housing-coax-монтаж-корпуса-b"
+          "templateId": "ins-housing-coax-монтаж-корпуса"
         },
         {
           "tOp": "15.00",

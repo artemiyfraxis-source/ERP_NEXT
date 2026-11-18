@@ -203,7 +203,7 @@ async function readRefs(): Promise<Refs> {
   return {
     templates: (templates?.items || []).map((item): Tmpl => ({ id: item.id, title: item.title, category: item.category })),
     library: (templates?.items || []).map((item): LibraryCard => ({
-      id: item.id, code: item.code || "", side: item.side || "", title: item.title, name: item.name || "", category: item.category,
+      id: item.id, code: item.code || "", title: item.title, name: item.name || "", category: item.category,
       norms: item.norms, first_step: item.first_step,
     })),
     ops: (op?.records || []).map((record) => opFromFields(record.fields)),

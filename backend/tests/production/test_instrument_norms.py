@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from app.modules.production.instrument_norms import (assess, item_spec, norm_for, norms_data, uncertainty_for, vna_model)
+from app.modules.production.instrument_norms import (assess, assess_loss, item_spec, loss_uncertainty_for, norm_for, norms_data, uncertainty_for, vna_model)
 from app.modules.production.rf_interfaces import RfDetails, RfInterface
 from tests.production.test_instrument_application import summary
 
@@ -88,3 +88,122 @@ def test_instrument_card_resource_wins_when_present():
     spec = item_spec("Переходник S-322", "", details)
     assert (spec.mating_resource, spec.mating_source, spec.temp_max_c) == (800, "карточка СИ", 165)
     assert replace(spec, mating_resource=None).mating_resource is None
+
+
+def test_every_vswr_norm_has_a_loss_norm_with_source():
+    data = norms_data()
+    for holder in [*data["mil_adapters"], *(group for maker in data["makers"] for group in maker["groups"])]:
+        loss = holder["loss"]
+        assert loss["source"] and (loss.get("segments") or loss.get("points"))
+    s50180 = next(entry for entry in data["vna"] if entry["model"] == "S50180")
+    assert "табл. 16" in s50180["loss_uncertainty"]["source"] and "табл. 19" in s50180["loss_uncertainty"]["source"]
+    assert data["decision_rule_loss"]
+
+
+def test_loss_norm_follows_the_vswr_source():
+    sma = norm_for("", "", pair("SMA", "SMA")).loss
+    assert sma.reference == "MIL-PRF-55339/55"
+    assert sma.limit(0.4) is None and sma.limit(9) == pytest.approx(0.03 * 3)
+    assert sma.limit(18) == pytest.approx(0.03 * 18 ** 0.5) and sma.limit(25) == pytest.approx(0.05 * 25 ** 0.5)
+    assert "0,03·√F дБ в полосе 0,5–18 ГГц" in sma.line and "F — частота, ГГц" in sma.line
+    maker = norm_for("Переход ADP1A-35F-35F", "", pair("3.5mm", "3.5mm")).loss
+    assert maker.reference == "Планар ADP1A, РЭ табл. 2.6"
+    assert maker.limit(0.01) == pytest.approx(0.20) and maker.limit(32) == pytest.approx(0.20)
+    assert norm_for("ADP1A-NM-NF", "", pair("N", "N")).loss.reference == "Планар ADP1A, РЭ табл. 2.5"
+    assert norm_for("ADP1A-NM-35F", "", pair("N", "3.5mm")).loss.limit(18) == pytest.approx(0.15)
+
+
+@pytest.mark.parametrize("ports,ghz,limit", [(("N", "SMA"), 9, 0.18), (("SMA", "TNC"), 6, 0.06 * 6 ** 0.5),
+                                             (("N", "N"), 9, 0.15), (("TNC", "TNC"), 3, 0.12 * 3 ** 0.5),
+                                             (("BNC", "SMA"), 3, 0.2), (("BNC", "BNC"), 3, 0.2), (("BNC", "N"), 3, 0.35)])
+def test_sheets_tested_at_one_frequency_are_judged_only_there(ports, ghz, limit):
+    loss = norm_for("", "", pair(*ports)).loss
+    assert not loss.segments and [(point.ghz, point.max_db) for point in loss.points] == [(ghz, pytest.approx(limit))]
+    assert loss.limit(ghz) is None  # no banded limit: only the test frequency
+    assert f"на частоте испытания {ghz} ГГц" in loss.limit_text
+
+
+def test_point_norm_texts():
+    assert norm_for("", "", pair("N", "SMA")).loss.limit_text == "вносимые потери ≤ 0,18 дБ на частоте испытания 9 ГГц"
+    assert norm_for("", "", pair("SMA", "TNC")).loss.limit_text == \
+        "вносимые потери ≤ 0,06·√F = 0,147 дБ на частоте испытания 6 ГГц; F — частота, ГГц"
+
+
+def test_point_norm_uses_the_nearest_measured_point_inside_the_span():
+    point = norm_for("", "", pair("N", "SMA")).loss
+    result = assess_loss(summary({0.01: 1.02, 8.99: 1.03, 9.2: 1.04}, {0.01: 0.01, 8.99: 0.10, 9.2: 0.5}), point)
+    assert result.status == "pass" and result.at_ghz == pytest.approx(8.99) and result.limit == pytest.approx(0.18)
+    outside = assess_loss(summary({0.01: 1.02, 6: 1.04}), point)
+    assert outside.status == "no_points" and outside.short == "нет точки замера на частоте испытания"
+
+
+def test_loss_excess_within_the_uncertainty_is_a_border_not_a_failure():
+    loss, uncertainty = norm_for("", "", pair("SMA", "SMA")).loss, loss_uncertainty_for("S50180")
+    assert uncertainty.at(9) == pytest.approx(0.102) and uncertainty.at(18) == pytest.approx(0.107)
+    vswr = {0.01: 1.02, 1: 1.03, 9: 1.04}
+
+    def judged(at_nine, unc=uncertainty):
+        return assess_loss(summary(vswr, {0.01: 0.01, 1: 0.02, 9: at_nine}), loss, unc)
+
+    assert judged(0.05).status == "pass" and judged(0.05).border and judged(0.05).short == "соответствует норме (на границе допуска)"
+    assert judged(0.15).status == "border" and judged(0.15).short == "на границе допуска — превышение меньше погрешности ВАЦ"
+    assert judged(0.15).result_line == "потери 0,15 дБ на 9 ГГц при норме ≤ 0,09 дБ, погрешность ±0,102 дБ"
+    failed = judged(0.20)
+    assert failed.status == "fail" and failed.short == "не соответствует норме выше 1 ГГц"
+    # The VNA model unknown: an excess under 0,05 dB is still a border, not a failure.
+    assert judged(0.13, None).status == "border" and judged(0.15, None).status == "fail"
+    assert assess_loss(summary(vswr), None).short == "норма не установлена"
+
+
+def _s2p(points, model="S50180"):
+    from datetime import datetime
+    from uuid import uuid4
+
+    from app.modules.production.traceability import InstrumentFile, InstrumentFileKind
+
+    rows = "".join(f"{ghz} {s11} 0 {s21} 0 {s21} 0 {s11} 0\n" for ghz, s11, s21 in points)
+    content = (f"! S2VNA Planar {model} №123 2026-11-16T12:30:00\n! Калибровка: АКМ №456\n# GHz S MA R 50\n" + rows).encode()
+    return InstrumentFile(uuid4(), uuid4(), InstrumentFileKind.OTHER, "Замер ВАЦ 16.11.26.s2p", len(content),
+                          datetime(2026, 11, 17), uuid4(), "Иван", content)
+
+
+def _conclusion(points):
+    from app.modules.production.instrument_characterization import characterization
+    from app.modules.production.instrument_public import conclusion, public_passport
+    from tests.production.test_instrument_passport import instrument, rf
+
+    return conclusion(public_passport(instrument(), rf(), characterization(_s2p(points))))
+
+
+def test_passport_conclusion_states_the_loss_norm_and_its_uncertainty():
+    # SMA–SMA by /55: 0,175 dB at 18 GHz over 0,127 dB — within ±0,107 dB of the S50180: a border, VSWR verdict kept.
+    result = _conclusion([(0.01, 0.01, 0.99), (9, 0.01, 0.99), (18, 0.02, 0.98)])
+    lines = dict(result.lines)
+    assert result.verdict == "Соответствует норме в полосе 9–18 ГГц; вносимые потери на границе допуска"
+    assert lines["Норма потерь"].startswith("MIL-PRF-55339/55 — вносимые потери ≤ 0,03·√F дБ в полосе 0,5–18 ГГц")
+    assert lines["Результат по потерям"].startswith("на границе допуска")
+    assert lines["Погрешность измерения потерь"].startswith("±0,102 дБ до 10 ГГц, ±0,107 дБ выше 10 ГГц (Планар S50180")
+    assert "по вносимым потерям" in lines["Правило принятия решения"]
+
+
+def test_loss_failure_overrides_a_vswr_pass_even_on_the_vswr_border():
+    # VSWR 1,13 at 18 GHz: within 0,022 of the /55 limit 1,14 (border pass); |S21| 0,95 = 0,446 dB » 0,127 + 0,107.
+    gamma = 0.13 / 2.13
+    result = _conclusion([(0.01, 0.01, 0.999), (9, 0.01, 0.999), (18, gamma, 0.95)])
+    assert result.verdict == "Не соответствует норме по вносимым потерям выше 9 ГГц"
+    assert dict(result.lines)["Результат"].startswith("худший КСВН 1,13 на 18 ГГц")
+
+
+def test_both_failures_are_named():
+    result = _conclusion([(0.01, 0.01, 0.999), (9, 0.01, 0.999), (18, 0.2, 0.95)])
+    assert result.verdict == "Не соответствует норме выше 9 ГГц; вносимые потери тоже вне нормы"
+
+
+def test_history_names_vswr_and_loss():
+    from app.modules.production.instrument_characterization import characterization
+    from app.modules.production.instrument_public import history_entry
+    from tests.production.test_instrument_passport import instrument, rf
+
+    entry = history_entry(instrument(), rf(), characterization(_s2p([(0.01, 0.01, 0.999), (9, 0.01, 0.999), (18, 0.01, 0.99)])))
+    assert entry.summary.startswith("КСВН: соответствует норме до 18 ГГц; потери: соответствует норме")
+    assert "; применение: КСВН ≤ 1,30 (требование цеха)" in entry.summary

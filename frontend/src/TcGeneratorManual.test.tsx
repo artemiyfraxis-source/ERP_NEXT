@@ -19,11 +19,11 @@ function mockApi() {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/techcards/templates") return json({ metadata: null, items: [
-      { id: "cut", code: "CUT_WIRE_hand", side: "", title: "CUT_WIRE_hand | Резка", name: "Резка", category: "Резка", steps: 8, tooling: 3,
+      { id: "cut", code: "CUT_WIRE_hand", title: "CUT_WIRE_hand | Резка", name: "Резка", category: "Резка", steps: 8, tooling: 3,
         first_step: "Подготовить инструмент резки" },
-      { id: "prsA", code: "PRS_TERMINAL_hand", side: "A", title: "PRS_TERMINAL_hand | Опрессовка терминалов (A)", name: "Опрессовка терминалов",
+      { id: "prs", code: "PRS_TERMINAL_hand", title: "PRS_TERMINAL_hand | Опрессовка терминалов", name: "Опрессовка терминалов",
         category: "Опрессовка терминалов", steps: 8, tooling: 3, norms: { operation_seconds: "20", setup_seconds: "300" } },
-      { id: "heat", code: "HEAT_TYT_short", side: "", title: "HEAT_TYT_short | Усадка", name: "Усадка", category: "Усадка", steps: 4, tooling: 2 },
+      { id: "heat", code: "HEAT_TYT_short", title: "HEAT_TYT_short | Усадка", name: "Усадка", category: "Усадка", steps: 4, tooling: 2 },
     ] });
     if (path.startsWith("/api/references/tech-operations?")) {
       const tab = new URLSearchParams(path.split("?")[1]).get("tab");
@@ -105,7 +105,7 @@ it("draws the diagram first: adds a block, puts library operations into it by a 
   addFromLibrary(/^Резка$/);
   expect(screen.getByRole("status")).toHaveTextContent("Добавлено в «Провод с лепестком»: «Резка»");
   fireEvent.change(within(picker).getByLabelText("Поиск карточки"), { target: { value: "" } });
-  addFromLibrary(/^Опрессовка терминалов \(А\)$/);
+  addFromLibrary(/^Опрессовка терминалов$/);
 
   // Операции из библиотеки — свёрнутые строки с нормой; поля открываются нажатием.
   expect(screen.getByLabelText("Норма: Резка")).toBeInTheDocument();
@@ -114,13 +114,13 @@ it("draws the diagram first: adds a block, puts library operations into it by a 
   // Норма — из БД.ОП по коду карточки, иначе из библиотеки.
   expect(screen.getByLabelText("Подготовка, мин: Резка")).toHaveValue("2");
   expect(screen.getByLabelText("Операция, сек/шт: Резка")).toHaveValue("6");
-  expect(screen.getByLabelText("Подготовка, мин: Опрессовка терминалов (А)")).toHaveValue("5");
-  fireEvent.change(screen.getByLabelText("На изделие: Опрессовка терминалов (А)"), { target: { value: "2" } });
+  expect(screen.getByLabelText("Подготовка, мин: Опрессовка терминалов")).toHaveValue("5");
+  fireEvent.change(screen.getByLabelText("На изделие: Опрессовка терминалов"), { target: { value: "2" } });
   fireEvent.change(screen.getByLabelText("Параметры: Резка"), { target: { value: "L = 300 мм" } });
   // ↑/↓ — внутри блока.
-  fireEvent.click(screen.getByRole("button", { name: "Выше: Опрессовка терминалов (А)" }));
-  expect(screen.getByLabelText("Операция 1: Опрессовка терминалов (А)")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Ниже: Опрессовка терминалов (А)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Выше: Опрессовка терминалов" }));
+  expect(screen.getByLabelText("Операция 1: Опрессовка терминалов")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Ниже: Опрессовка терминалов" }));
 
   // Итоговый блок: своя операция — после операций входа, номер 3.
   pick(/Провод нетиповой 300мм/);
@@ -147,7 +147,7 @@ it("draws the diagram first: adds a block, puts library operations into it by a 
   expect(within(diagram()).getByText("2 шт")).toBeInTheDocument();
   const order = screen.getByRole("group", { name: "Порядок операций" });
   expect(within(order).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
-    expect.stringMatching(/^1Резка/), expect.stringMatching(/^2Опрессовка терминалов \(А\)/), expect.stringMatching(/^3Пайка экрана/),
+    expect.stringMatching(/^1Резка/), expect.stringMatching(/^2Опрессовка терминалов/), expect.stringMatching(/^3Пайка экрана/),
   ]);
 
   vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -158,7 +158,7 @@ it("draws the diagram first: adds a block, puts library operations into it by a 
   expect(config).not.toHaveProperty("materialsSheet");
   expect(config.ops.map((op: Record<string, unknown>) => [op.type, op.seq, op.label, op.qty, op.tPrep, op.tOp])).toEqual([
     ["libraryOp", 1, "Резка", "1", "120", "6"],
-    ["libraryOp", 2, "Опрессовка терминалов (А)", "2", "300", "20"],
+    ["libraryOp", 2, "Опрессовка терминалов", "2", "300", "20"],
     ["customOp", 3, "Пайка экрана", "1", "", "45"],
   ]);
   expect(config.ops[0]).toMatchObject({ templateId: "cut", opNum: "CUT_WIRE_hand", params: "L = 300 мм" });

@@ -139,6 +139,35 @@ Describe 'Marking device geometry' {
     }
 }
 
+Describe 'Ink inside the driver printable area (Godex/Seagull 92.5 x 20: offset 36, printable 1042 x 237)' {
+    function New-WhiteRaster {
+        $bitmap = New-Object Drawing.Bitmap 1093, 236
+        $g = [Drawing.Graphics]::FromImage($bitmap); try { $g.Clear([Drawing.Color]::White) } finally { $g.Dispose() }
+        return ,$bitmap
+    }
+    It 'accepts white margins and ink inside the printable rect' {
+        $bitmap = New-WhiteRaster
+        try {
+            $bitmap.SetPixel(36, 0, [Drawing.Color]::Black); $bitmap.SetPixel(1077, 235, [Drawing.Color]::Black)
+            [ErpGdiPrinter]::CheckInk($bitmap, 36, 0, 1042, 237)
+        } finally { $bitmap.Dispose() }
+    }
+    It 'refuses ink in the left hard margin and names both rectangles in mm' {
+        $bitmap = New-WhiteRaster
+        try {
+            $bitmap.SetPixel(12, 12, [Drawing.Color]::Black); $bitmap.SetPixel(600, 100, [Drawing.Color]::Black)
+            { [ErpGdiPrinter]::CheckInk($bitmap, 36, 0, 1042, 237) } | Should Throw 'по ширине 3,05–91,27 мм, по подаче 0,00–20,07 мм; краска по ширине 1,02–50,88 мм'
+        } finally { $bitmap.Dispose() }
+    }
+    It 'refuses ink in the right hard margin' {
+        $bitmap = New-WhiteRaster
+        try {
+            $bitmap.SetPixel(1078, 10, [Drawing.Color]::Black)
+            { [ErpGdiPrinter]::CheckInk($bitmap, 36, 0, 1042, 237) } | Should Throw 'outside printable bounds'
+        } finally { $bitmap.Dispose() }
+    }
+}
+
 Describe 'Marking payload' {
     It 'decodes the exact approved one-bit PNG' {
         $job = New-TestMarkingJob

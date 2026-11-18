@@ -399,7 +399,6 @@ def _operation_card_result(
     result = {
         "id": card.source_id,
         "code": card.code,
-        "side": card.side,
         "title": card.title,
         "name": card.name,
         "category": card.category,

@@ -212,7 +212,7 @@ def test_a_card_gone_from_the_library_and_an_own_operation_without_steps_are_war
     config["ops"][0]["templateId"] = "нет-такой"
     config["ops"][1]["steps"] = []
     config["ops"][2].update(tOp="", tPrep="0")
-    document = build(config)
+    document = build_etk(config, [card for card in CARDS if card.code != "CUT_WIRE_hand"])  # the card is gone
     assert document["operations"][0]["card"] is None
     assert document["operations"][0]["code"] == "CUT_WIRE_hand"
     assert document["warnings"] == [

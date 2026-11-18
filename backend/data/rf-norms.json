@@ -1,5 +1,5 @@
 {
-  "about": "Нормы для паспорта СИ (коаксиальные переходники и кабели). Источник каждого числа — в поле source. Исследование: docs/data/norms-coax-testing-2026-11-18.md (PR #912). Предел КСВН участка: a + b·F, F — частота в ГГц, участок от предыдущего to_ghz (или from_ghz) до своего to_ghz. Температуры и ресурс MIL сверены по текстам листов DLA 18.11.2026.",
+  "about": "Нормы для паспорта СИ (коаксиальные переходники и кабели). Источник каждого числа — в поле source. Исследование: docs/data/norms-coax-testing-2026-11-18.md (PR #912). Предел КСВН участка: a + b·F, F — частота в ГГц, участок от предыдущего to_ghz (или from_ghz) до своего to_ghz. Температуры и ресурс MIL сверены по текстам листов DLA 18.11.2026. Предел вносимых потерь участка: a + k·√F дБ (поле loss.segments) либо значение на частоте испытания листа (loss.points: max_db или k·√F при этой частоте) — лист с «tested at» проверяется только на этой частоте.",
   "makers": [
     {
       "series": "ADP1A",
@@ -36,7 +36,19 @@
               "b": 0
             }
           ],
-          "mating_resource": 3000
+          "mating_resource": 3000,
+          "loss": {
+            "from_ghz": 0,
+            "segments": [
+              {
+                "to_ghz": 32,
+                "a": 0.2,
+                "k": 0
+              }
+            ],
+            "source": "Планар, РЭ ADP1A, табл. 2.6: «Вносимые потери, дБ, не более: 0,2» в диапазоне 0–32 ГГц (сверено по PDF изготовителя 18.11.2026)",
+            "reference": "Планар ADP1A, РЭ табл. 2.6"
+          }
         },
         {
           "title": "тракт 7,0/3,04 (N)",
@@ -52,7 +64,19 @@
               "b": 0
             }
           ],
-          "mating_resource": 5000
+          "mating_resource": 5000,
+          "loss": {
+            "from_ghz": 0,
+            "segments": [
+              {
+                "to_ghz": 18,
+                "a": 0.15,
+                "k": 0
+              }
+            ],
+            "source": "Планар, РЭ ADP1A, табл. 2.5: «Вносимые потери, дБ, не более: 0,15» в диапазоне 0–18 ГГц (сверено по PDF изготовителя 18.11.2026)",
+            "reference": "Планар ADP1A, РЭ табл. 2.5"
+          }
         },
         {
           "title": "между трактами N и 3,5 мм",
@@ -67,7 +91,19 @@
               "a": 1.1,
               "b": 0
             }
-          ]
+          ],
+          "loss": {
+            "from_ghz": 0,
+            "segments": [
+              {
+                "to_ghz": 18,
+                "a": 0.15,
+                "k": 0
+              }
+            ],
+            "source": "Планар, РЭ ADP1A, табл. 2.7: «Вносимые потери, дБ, не более: 0,15» в диапазоне 0–18 ГГц (сверено по PDF изготовителя 18.11.2026)",
+            "reference": "Планар ADP1A, РЭ табл. 2.7"
+          }
         }
       ],
       "articles": [
@@ -104,7 +140,23 @@
       "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss55.pdf",
       "temp_min_c": -65,
       "temp_max_c": 165,
-      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)"
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "from_ghz": 0.5,
+        "segments": [
+          {
+            "to_ghz": 18,
+            "a": 0,
+            "k": 0.03
+          },
+          {
+            "to_ghz": 27,
+            "a": 0,
+            "k": 0.05
+          }
+        ],
+        "source": "«RF insertion loss: 0.05√f(GHz) dB maximum from 18.0 to 27.0 GHz; 0.03√f(GHz) dB maximum from 0.5 to 18.0 GHz» (текст листа DLA, сверено 18.11.2026; знак √ — по изображению листа)"
+      }
     },
     {
       "sheet": "MIL-PRF-55339/54B",
@@ -130,7 +182,16 @@
       "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss54.pdf",
       "temp_min_c": -65,
       "temp_max_c": 165,
-      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)"
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 9,
+            "max_db": 0.18
+          }
+        ],
+        "source": "«RF insertion loss: .18 dB, maximum, at 9 GHz» (текст листа DLA, сверено 18.11.2026; формулы по частоте в листе нет — норма только на 9 ГГц)"
+      }
     },
     {
       "sheet": "MIL-PRF-55339/40B, /41B, /42A",
@@ -151,7 +212,16 @@
       "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss40.pdf",
       "temp_min_c": -65,
       "temp_max_c": 165,
-      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)"
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 6,
+            "k": 0.06
+          }
+        ],
+        "source": "«RF insertion loss: .06√F(GHz) dB maximum at 6 GHz» — одинаково в /40B, /41B, /42A (текст листа DLA, сверено 18.11.2026); норма на частоте испытания 6 ГГц: 0,06·√6 = 0,147 дБ"
+      }
     },
     {
       "sheet": "MIL-PRF-55339/5A",
@@ -172,7 +242,16 @@
       "mating_resource": 500,
       "temp_min_c": -65,
       "temp_max_c": 165,
-      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)"
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 9,
+            "max_db": 0.15
+          }
+        ],
+        "source": "«RF insertion loss: .15 dB, maximum, 9 GHz (.050√F(GHz) dB maximum tested at 9 GHz)» (текст листа DLA, сверено 18.11.2026); норма на частоте испытания 9 ГГц"
+      }
     },
     {
       "sheet": "MIL-PRF-55339/33A",
@@ -193,7 +272,16 @@
       "mating_resource": 500,
       "temp_min_c": -65,
       "temp_max_c": 165,
-      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)"
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 3,
+            "k": 0.12
+          }
+        ],
+        "source": "«RF insertion loss: .12√F(GHz) dB max, tested at 3 GHz» (текст листа DLA, сверено 18.11.2026); норма на частоте испытания 3 ГГц: 0,12·√3 = 0,208 дБ"
+      }
     },
     {
       "sheet": "MIL-PRF-55339/13B",
@@ -214,7 +302,16 @@
       "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss13.pdf",
       "temp_min_c": -65,
       "temp_max_c": 165,
-      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)"
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 3,
+            "max_db": 0.2
+          }
+        ],
+        "source": "«RF insertion loss: 0.5 dB maximum for hermetic and 0.2 dB maximum for non-hermetic, 3 GHz (.144√F(GHz) dB maximum tested at 3 GHz)» (текст листа DLA, сверено 18.11.2026). Взято 0,2 дБ на 3 ГГц — негерметичный, как норма КСВН 1,25; формула в скобках даёт 0,249 дБ и с этим числом не сходится"
+      }
     },
     {
       "sheet": "MIL-PRF-55339/20A",
@@ -235,7 +332,16 @@
       "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss20.pdf",
       "temp_min_c": -65,
       "temp_max_c": 165,
-      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)"
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 3,
+            "max_db": 0.35
+          }
+        ],
+        "source": "«RF insertion loss: .35 dB, max, 3 GHz (.020√F(GHz) dB max tested at 3 GHz)» (текст листа DLA, сверено 18.11.2026). Взято 0,35 дБ на 3 ГГц; формула в скобках даёт 0,035 дБ — вероятно опечатка листа"
+      }
     },
     {
       "sheet": "MIL-PRF-55339/44C",
@@ -256,7 +362,16 @@
       "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss44.pdf",
       "temp_min_c": -65,
       "temp_max_c": 165,
-      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)"
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 3,
+            "max_db": 0.2
+          }
+        ],
+        "source": "«RF insertion loss: .2 dB, maximum, 3 GHz (.115√F(GHz) dB maximum tested at 3 GHz)» (текст листа DLA, сверено 18.11.2026); норма на частоте испытания 3 ГГц"
+      }
     }
   ],
   "vna": [
@@ -275,7 +390,21 @@
         }
       ],
       "source": "Планар S50180, РЭ ч. 1 вер. 26.1, табл. 16 и 19 (прецизионные принадлежности)",
-      "url": "https://planarchel.ru/upload/medialibrary/0a9/7j78lxcjlfo7vc4vbt5blv1nind7wh2z/OM_Sseries_Part1_ver_26.1.pdf"
+      "url": "https://planarchel.ru/upload/medialibrary/0a9/7j78lxcjlfo7vc4vbt5blv1nind7wh2z/OM_Sseries_Part1_ver_26.1.pdf",
+      "loss_uncertainty": {
+        "at_vswr": 1.2,
+        "steps": [
+          {
+            "to_ghz": 10,
+            "value_db": 0.102
+          },
+          {
+            "to_ghz": 18,
+            "value_db": 0.107
+          }
+        ],
+        "source": "Планар S50180, РЭ ч. 1 вер. 26.1: табл. 16 — ±|Sji|·[(Et−1) + Es·|Sii| + El·|Sjj| + Ex·|Sji|⁻¹ + L·|Sji|²], табл. 19 — Et−1 = 0,009; Es/El = 0,010/0,005 до 10 ГГц и 0,013/0,008 выше; L0 = 1,15·10⁻³; расчёт для |S21| = 1, КСВН 1,2 обоих портов, 0 дБм, ПЧ 1 кГц, округлено вверх"
+      }
     }
   ],
   "shop_requirement": {
@@ -303,5 +432,6 @@
     "months": 12,
     "matings": 100,
     "basis": "100 сочленений — руководство ADP1A п. 3.2; 12 мес. — решение цеха"
-  }
+  },
+  "decision_rule_loss": "по вносимым потерям: превышение нормы меньше погрешности ВАЦ — «на границе допуска», а не «не соответствует»; превышение больше погрешности — «не соответствует»"
 }

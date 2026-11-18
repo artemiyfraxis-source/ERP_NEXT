@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from functools import lru_cache
 import json
+import math
 from pathlib import Path
 import re
 
@@ -41,6 +42,87 @@ class Segment:
         return f"{_num(self.a)} + {_num(self.b)}·F" if self.b else _num(self.a)
 
 
+def loss_db(magnitude: float) -> float:
+    """Insertion loss in dB from a linear |S21|."""
+    return max(0.0, -20 * math.log10(magnitude)) if magnitude > 0 else math.inf
+
+
+# A test frequency outside the measured span by more than this is «no point»; inside, the nearest measured point is used.
+TEST_FREQUENCY_TOLERANCE_GHZ = 0.05
+# Without a VNA loss uncertainty (model unknown) an excess smaller than this is reported as a border, not a failure.
+LOSS_BORDER_FALLBACK_DB = 0.05
+
+
+@dataclass(frozen=True)
+class LossSegment:
+    to_ghz: float
+    a: float = 0.0
+    k: float = 0.0           # limit a + k·√F dB, F in GHz
+
+    @property
+    def text(self) -> str:
+        root = f"{_num(self.k)}·√F" if self.k else ""
+        if self.a and root:
+            return f"{_num(self.a)} + {root}"
+        return root or _num(self.a)
+
+
+@dataclass(frozen=True)
+class LossPoint:
+    """A sheet that tests at one frequency («tested at X GHz») is judged only there."""
+    ghz: float
+    max_db: float
+    k: float = 0.0           # the sheet's k·√F, kept for the text
+
+    @property
+    def text(self) -> str:
+        value = f"{_num(self.k)}·√F = {_num(self.max_db)}" if self.k else _num(self.max_db)
+        return f"≤ {value} дБ на частоте испытания {ghz_text(self.ghz)} ГГц"
+
+
+@dataclass(frozen=True)
+class LossNorm:
+    """Insertion-loss limit of the same source as the VSWR norm: a + k·√F per band, or values at the test frequency."""
+    reference: str
+    from_ghz: float = 0.0
+    segments: tuple[LossSegment, ...] = ()
+    points: tuple[LossPoint, ...] = ()
+    source: str = ""
+
+    def limit(self, ghz: float) -> float | None:
+        """The banded limit; point norms are judged by `assess_loss` at their test frequency only."""
+        if self.segments and ghz >= self.from_ghz - 1e-9:
+            for segment in self.segments:
+                if ghz <= segment.to_ghz + 1e-9:
+                    return segment.a + segment.k * math.sqrt(max(ghz, 0.0))
+        return None
+
+    @property
+    def limit_text(self) -> str:
+        parts, low = [], self.from_ghz
+        for segment in self.segments:
+            parts.append(f"≤ {segment.text} дБ в полосе {ghz_text(low)}–{ghz_text(segment.to_ghz)} ГГц")
+            low = segment.to_ghz
+        parts += [point.text for point in self.points]
+        formula = "; F — частота, ГГц" if any(s.k for s in self.segments) or any(p.k for p in self.points) else ""
+        return "вносимые потери " + "; ".join(parts) + formula
+
+    @property
+    def line(self) -> str:
+        return f"{self.reference} — {self.limit_text}"
+
+
+def _loss_norm(reference: str, raw: dict | None) -> LossNorm | None:
+    if not raw:
+        return None
+    segments = tuple(LossSegment(float(s["to_ghz"]), float(s.get("a", 0)), float(s.get("k", 0))) for s in raw.get("segments", ()))
+    points = []
+    for point in raw.get("points", ()):
+        ghz, k = float(point["ghz"]), float(point.get("k", 0))
+        points.append(LossPoint(ghz, float(point["max_db"]) if "max_db" in point else k * math.sqrt(ghz), k))
+    return LossNorm(raw.get("reference", reference), float(raw.get("from_ghz", 0)), segments, tuple(points), raw.get("source", ""))
+
+
 @dataclass(frozen=True)
 class Norm:
     reference: str            # «Планар ADP1A, …» or «MIL-PRF-55339/54B»
@@ -50,6 +132,7 @@ class Norm:
     url: str = ""
     mating_resource: int | None = None
     maker: bool = False
+    loss: LossNorm | None = None
 
     @property
     def to_ghz(self) -> float:
@@ -126,12 +209,13 @@ def norm_for(name: str, model: str, rf: RfDetails) -> Norm | None:
         for group in maker["groups"]:
             if tuple(sorted(group["ports"])) == ports:
                 return Norm(maker["source"], group["title"], float(group["from_ghz"]),
-                            _segments(group["segments"]), maker.get("url", ""), group.get("mating_resource"), True)
+                            _segments(group["segments"]), maker.get("url", ""), group.get("mating_resource"), True,
+                            _loss_norm(maker["title"], group.get("loss")))
     sheet = _mil_sheet(ports)
     if sheet is None:
         return None
     return Norm(sheet["sheet"], sheet["title"], float(sheet["from_ghz"]), _segments(sheet["segments"]),
-                sheet.get("url", ""), sheet.get("mating_resource"))
+                sheet.get("url", ""), sheet.get("mating_resource"), loss=_loss_norm(sheet["sheet"], sheet.get("loss")))
 
 
 def _mil_sheet(ports: tuple[str, ...] | None) -> dict | None:
@@ -280,3 +364,108 @@ def assess(measured, norm: Norm | None, uncertainty: Uncertainty | None = None) 
     ghz, value, limit = min(judged, key=lambda point: point[2] - point[1])
     border = bool(uncertainty and limit - value < uncertainty.at(ghz))
     return Assessment(norm, "pass", start, stop, ghz, value, limit, None, border)
+
+
+@dataclass(frozen=True)
+class LossUncertainty:
+    """Transmission-magnitude uncertainty of the VNA in dB, per band (from the maker's manual)."""
+    steps: tuple[tuple[float, float], ...]   # (to_ghz, ±dB)
+    source: str
+
+    def at(self, ghz: float) -> float:
+        return next((value for top, value in self.steps if ghz <= top + 1e-9), self.steps[-1][1])
+
+    @property
+    def line(self) -> str:
+        parts, low = [], None
+        for top, value in self.steps:
+            parts.append(f"±{_num(value)} дБ " + (f"до {ghz_text(top)} ГГц" if low is None else f"выше {ghz_text(low)} ГГц"))
+            low = top
+        return f"{', '.join(parts)} ({self.source})"
+
+
+def loss_uncertainty_for(model: str) -> LossUncertainty | None:
+    entry = next((entry for entry in norms_data()["vna"] if entry["model"] == model), None) if model else None
+    raw = entry.get("loss_uncertainty") if entry else None
+    if not raw:
+        return None
+    return LossUncertainty(tuple((float(s["to_ghz"]), float(s["value_db"])) for s in raw["steps"]), raw["source"])
+
+
+@dataclass(frozen=True)
+class LossAssessment:
+    """Insertion loss |S21| against the loss norm. An excess smaller than the VNA uncertainty (or, with the VNA model
+    unknown, than LOSS_BORDER_FALLBACK_DB) is «на границе допуска», not a failure (owner decision 18.11)."""
+    norm: LossNorm | None
+    status: str                    # "pass" | "border" | "fail" | "none" | "no_points"
+    at_ghz: float = 0.0
+    loss: float = 0.0
+    limit: float = 0.0
+    last_pass_ghz: float | None = None
+    border: bool = False           # a pass whose margin is smaller than the uncertainty
+    uncertainty_db: float | None = None
+
+    @property
+    def short(self) -> str:
+        if self.status == "pass":
+            return "соответствует норме" + (" (на границе допуска)" if self.border else "")
+        if self.status == "border":
+            return "на границе допуска — превышение меньше погрешности ВАЦ"
+        if self.status == "fail":
+            return f"не соответствует норме выше {ghz_text(self.last_pass_ghz)} ГГц" if self.last_pass_ghz is not None \
+                else "не соответствует норме"
+        if self.status == "no_points":
+            return "нет точек замера в полосе нормы" if self.norm and self.norm.segments else \
+                "нет точки замера на частоте испытания"
+        return "норма не установлена"
+
+    @property
+    def result_line(self) -> str:
+        if self.status not in ("pass", "border", "fail"):
+            return ""
+        word = "худшие потери" if self.status == "pass" else "потери"
+        text = f"{word} {_num(self.loss, 3)} дБ на {ghz_text(self.at_ghz)} ГГц при норме ≤ {_num(self.limit, 3)} дБ"
+        if self.uncertainty_db is not None and self.status != "fail":
+            text += f", погрешность ±{_num(self.uncertainty_db)} дБ"
+        return text
+
+
+def _judged_loss(measured, norm: LossNorm):
+    points = [(frequency / 1e9, loss_db(magnitude)) for frequency, magnitude in measured.points("S21")]
+    judged = [(ghz, value, limit) for ghz, value in points if (limit := norm.limit(ghz)) is not None]
+    if points:
+        low, high = points[0][0], points[-1][0]
+        for point in norm.points:
+            if low - TEST_FREQUENCY_TOLERANCE_GHZ <= point.ghz <= high + TEST_FREQUENCY_TOLERANCE_GHZ:
+                ghz, value = min(points, key=lambda item: abs(item[0] - point.ghz))
+                judged.append((ghz, value, point.max_db))
+    return sorted(judged)
+
+
+def assess_loss(measured, norm: LossNorm | None, uncertainty: LossUncertainty | None = None) -> LossAssessment:
+    """Every measured S21 point the banded norm covers, and the nearest point to each test frequency."""
+    if norm is None:
+        return LossAssessment(None, "none")
+    judged = _judged_loss(measured, norm)
+    if not judged:
+        return LossAssessment(norm, "no_points")
+
+    def allowance(ghz: float) -> float:
+        return uncertainty.at(ghz) if uncertainty else LOSS_BORDER_FALLBACK_DB
+
+    def stated(ghz: float) -> float | None:
+        return uncertainty.at(ghz) if uncertainty else None
+
+    last_pass, border = None, None
+    for ghz, value, limit in judged:
+        excess = value - limit
+        if excess > 1e-12 and excess >= allowance(ghz):
+            return LossAssessment(norm, "fail", ghz, value, limit, last_pass, uncertainty_db=stated(ghz))
+        if excess > 1e-12 and (border is None or excess > border[1] - border[2]):
+            border = (ghz, value, limit)
+        last_pass = ghz
+    if border:
+        ghz, value, limit = border
+        return LossAssessment(norm, "border", ghz, value, limit, uncertainty_db=stated(ghz))
+    ghz, value, limit = min(judged, key=lambda point: point[2] - point[1])
+    return LossAssessment(norm, "pass", ghz, value, limit, border=limit - value < allowance(ghz), uncertainty_db=stated(ghz))
