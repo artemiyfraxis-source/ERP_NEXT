@@ -9,8 +9,8 @@ the reviewed proposals (python -m app.workflows.si_norm_assignment). Not destruc
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0193_si_norm_assignment"
-down_revision = "0192_operation_template_sides"
+revision = "0194_si_norm_assignment"
+down_revision = "0193_machines"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False

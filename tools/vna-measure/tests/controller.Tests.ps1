@@ -29,7 +29,9 @@ Describe 'Adapter chain and card series' {
     }
     It 'selects the weakest connector series in a mixed card name' {
         (Get-VnaSeriesFmaxHz 'ADP1A-35F-35F SMA') | Should Be 18e9
-        (Get-VnaSeriesFmaxHz 'SN-312 SMA male - N female') | Should Be 11e9
+        (Get-VnaSeriesFmaxHz 'SN-312 SMA male - N female') | Should Be 18e9
+        (Get-VnaSeriesFmaxHz 'N-type male - N female') | Should Be 18e9
+        (Get-VnaSeriesFmaxHz 'ADP TNC male - TNC female') | Should Be 11e9
         (Get-VnaSeriesFmaxHz 'ST-321 SMA female - TNC male') | Should Be 11e9
         (Get-VnaSeriesFmaxHz 'TN-322') | Should Be 11e9
         (Get-VnaSeriesFmaxHz 'SB-311 SMA BNC') | Should Be 4e9
