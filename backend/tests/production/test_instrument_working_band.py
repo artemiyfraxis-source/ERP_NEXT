@@ -40,7 +40,7 @@ def test_unrepresentable_next_control_date_does_not_break_public_passport():
     from app.modules.production.instrument_public import control_line
     projected = public_passport(instrument(), rf(), replace(summary(), measured_on=date.max))
     assert projected.next_control is None
-    assert control_line(projected) == "Замер: 31.12.9999"
+    assert control_line(projected) == "Замер 31.12.9999"
 
 
 @pytest.mark.parametrize("label_format", FORMATS)

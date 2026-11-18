@@ -341,6 +341,14 @@ it("shows the administrator all four tabs, with only the selected job visible", 
   expect(headings()).toEqual(["Средства измерения"]);
 });
 
+it("leaves boxes of a fully shipped КБ out of the QC queue", async () => {
+  qualityFetch({ boxes: [box("000003-4", 3, assembly), { ...box("000004-2", 4, assembly), kb_shipped: true }] });
+  render(<QualityPage principal={qc} />);
+  expect(await screen.findByLabelText("Брак ОТК 000003-4")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Брак ОТК 000004-2")).not.toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Очередь ОТК · 1" })).toBeInTheDocument();
+});
+
 it("shows the load failure instead of a blank section", async () => {
   vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Нет связи с ERP"));
   render(<QualityPage principal={qc} />);

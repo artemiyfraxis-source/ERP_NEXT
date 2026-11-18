@@ -1349,6 +1349,8 @@ export interface ProductionBox {
   confirmed_by: string | null;
   return_reason: string;
   qc_inspected?: boolean;
+  /** КБ коробки уехала целиком (отгружено ≥ заказано) — в «Очередь ОТК» не идёт. */
+  kb_shipped?: boolean;
 }
 
 export interface ProductionWorkSession {
