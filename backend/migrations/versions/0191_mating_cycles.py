@@ -11,7 +11,8 @@ branch_labels = None
 depends_on = None
 DESTRUCTIVE = False
 
-# Shared with the ORM model (mating_infrastructure.py): the chain makes a negative or forked total impossible.
+# Frozen copy of MATING_CHECKS in mating_infrastructure.py as of this revision: never import app code here, and
+# change the model's checks only through a new migration. The chain makes a negative or forked total impossible.
 MATING_CHECKS = {
     "ck_mating_side": "side IN ('A','B')",
     "ck_mating_seq": "seq >= 1",

@@ -128,6 +128,9 @@ class RfRepository:
         if recorded - set(end_names(details)):
             raise ProductionValidationError("Нельзя удалить сторону с историей сочленений")
         before = self.get(instrument_id)
+        # «Нагрузка» redefines the physical sides (one connector whatever the interfaces): with history it is fixed.
+        if recorded and before.role != details.role and "load" in (before.role, details.role):
+            raise ProductionValidationError("Нельзя сменить назначение «Нагрузка» у элемента с историей сочленений")
         for end in sorted(recorded):
             position = 0 if end == "A" else 1
             if position < len(before.interfaces):

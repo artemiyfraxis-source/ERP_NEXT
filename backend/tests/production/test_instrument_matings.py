@@ -152,7 +152,7 @@ def test_batch_by_inventory_number_is_idempotent_per_run(production_api):
     assert replay.status_code == 200 and replay.json()["replayed"]
     assert {e["id"] for e in replay.json()["events"]} == {e["id"] for e in first.json()["events"]}
     other = client.post("/api/production/matings/batch", json={**batch, "entries": batch["entries"][:2]})
-    assert other.status_code == 409
+    assert other.status_code == 422 and "другим составом" in other.json()["detail"]
     totals = {end["end"]: end["total"] for end in client.get(f"/api/production/instruments/{cable}/matings").json()["ends"]}
     assert totals == {"A": 1, "B": 0}
 
@@ -165,12 +165,17 @@ def test_batch_is_all_or_nothing(production_api):
         {"instrument_id": dut, "end": "A", "delta": 1, "kind": "calibration"},
         {"instrument_id": load, "end": "B", "delta": 1, "kind": "calibration"}]})
     assert bad.status_code == 422
+    with sessions()() as session:  # the failing entry leaves no batch row: the run can be sent again once fixed
+        assert session.get(MatingBatchRow, "vna-calibration-1") is None
+    fixed = client.post("/api/production/matings/batch", json={"source": "vna-calibration-1", "entries": [
+        {"instrument_id": dut, "end": "A", "delta": 1, "kind": "calibration"}]})
+    assert fixed.status_code == 200 and not fixed.json()["replayed"]
     missing = client.post("/api/production/matings/batch", json={"source": "vna-calibration-2", "entries": [
         {"inventory_number": "СИ.999", "end": "A", "delta": 1, "kind": "calibration"}]})
     assert missing.status_code == 404
     with sessions()() as session:
-        assert session.scalars(select(InstrumentMatingRow)).all() == []
-        assert session.scalars(select(MatingBatchRow)).all() == []
+        assert [row.source for row in session.scalars(select(InstrumentMatingRow))] == ["vna-calibration-1"]
+        assert [row.source for row in session.scalars(select(MatingBatchRow))] == ["vna-calibration-1"]
     manual_kind = client.post("/api/production/matings/batch", json={"source": "x", "entries": [
         {"instrument_id": dut, "end": "A", "delta": 1, "kind": "manual"}]})
     assert manual_kind.status_code == 422
@@ -224,3 +229,34 @@ def test_item_without_rf_connectors_has_no_counter_on_the_card(production_api):
     assert snapshot["has_connectors"] is False and [end["end"] for end in snapshot["ends"]] == ["A"]
     adapter = create(client)
     assert client.get(f"/api/production/instruments/{adapter}/matings").json()["has_connectors"] is True
+
+
+def test_retry_after_inventory_number_reassignment_is_still_a_replay(production_api):
+    client, _ = production_api
+    cable = create(client, number="СИ.100", name="Кабель C50SMNM.2")
+    batch = {"source": "vna-calibration-77", "entries": [{"inventory_number": "СИ.100", "end": "B", "delta": 1, "kind": "calibration"}]}
+    assert client.post("/api/production/matings/batch", json=batch).status_code == 200
+    version = next(i for i in client.get("/api/production/instruments").json()["instruments"] if i["id"] == cable)["version"]
+    renamed = client.patch(f"/api/production/instruments/{cable}", json={"version": version, "inventory_number": "СИ.200"})
+    assert renamed.status_code == 200, renamed.text
+    other = create(client, number="СИ.100", name="Другой кабель")
+    replay = client.post("/api/production/matings/batch", json=batch)
+    assert replay.status_code == 200 and replay.json()["replayed"]
+    assert [end["total"] for end in client.get(f"/api/production/instruments/{other}/matings").json()["ends"]] == [0, 0]
+    assert [end["total"] for end in client.get(f"/api/production/instruments/{cable}/matings").json()["ends"]] == [0, 1]
+
+
+def test_role_load_is_fixed_once_a_side_has_history(production_api):
+    client, _ = production_api
+    item = create(client)
+    assert post(client, item, end="A", delta=1, kind="manual").status_code == 200
+    put = lambda role, version: client.put(f"/api/production/instruments/{item}/rf-interfaces", json={
+        "version": version, "role": role, "interfaces": ADAPTER, "mating_resource": 3000})
+    refused = put("load", 1)
+    assert refused.status_code == 422 and "Нагрузка" in refused.json()["detail"]
+    assert put("test_cable", 1).status_code == 200  # same physical sides: an ordinary role fix stays possible
+    load = create(client, number="СИ.022", name="Нагрузка", interfaces=[ADAPTER[0]], resource=None, role="load")
+    assert post(client, load, end="A", delta=1, kind="manual").status_code == 200
+    back = client.put(f"/api/production/instruments/{load}/rf-interfaces", json={
+        "version": 1, "role": "adapter", "interfaces": [ADAPTER[0]], "mating_resource": None})
+    assert back.status_code == 422

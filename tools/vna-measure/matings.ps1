@@ -189,7 +189,9 @@ function Sync-VnaPendingMatings {
             $result.Sent++
         } catch {
             $status = Get-VnaHttpStatus $_
-            if ($_.Exception -is [InvalidOperationException] -or $status -in @(404, 409, 422)) {
+            # 404/422 never change on retry (no card or side, run already written differently); 409 is a concurrent
+            # write and stays queued like a network error.
+            if ($_.Exception -is [InvalidOperationException] -or $status -in @(404, 422)) {
                 $rejected = Join-Path $Directory 'rejected'
                 [void][IO.Directory]::CreateDirectory($rejected)
                 Move-Item -LiteralPath $file.FullName -Destination (Join-Path $rejected $file.Name) -Force -ErrorAction Stop

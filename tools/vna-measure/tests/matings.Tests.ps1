@@ -102,3 +102,24 @@ Describe 'Offline session records matings' {
         @(Get-ChildItem -LiteralPath (Join-Path $folder 'pending-matings') -Filter '*.json' -File).Count | Should Be 0
     }
 }
+
+Describe 'ERP refusals versus retryable conflicts' {
+    It 'keeps a batch queued on 409 and moves it to rejected on 422' {
+        $session = [pscustomobject]@{ Offline = $false; OfflineDirectory = ''; Login = 'x'; ServerUrl = 'https://erp.test'; WebSession = $null }
+        $pending = Join-Path $TestDrive 'http'
+        $target = Get-VnaMatingTarget -Session $session
+        $path = Save-VnaPendingMatings $pending $target 'vna-calibration-00000000-0000-0000-0000-000000000009' @(New-VnaCalibrationMatings (Get-VnaMatingSetup $null))
+        Mock Send-VnaMatingBatch { throw 'HTTP error' }
+        $script:status = 409
+        Mock Get-VnaHttpStatus { $script:status }
+        $result = Sync-VnaPendingMatings $session $pending
+        $result.Left | Should Be 1
+        $result.Rejected | Should Be 0
+        (Test-Path -LiteralPath $path) | Should Be $true
+        $script:status = 422
+        $result = Sync-VnaPendingMatings $session $pending
+        $result.Rejected | Should Be 1
+        (Test-Path -LiteralPath $path) | Should Be $false
+        (Test-Path -LiteralPath (Join-Path (Join-Path $pending 'rejected') (Split-Path -Leaf $path))) | Should Be $true
+    }
+}

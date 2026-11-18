@@ -25,6 +25,7 @@ Factory = Annotated[Callable, Depends(production_uow_factory)]
 Editor = Annotated[Principal, Depends(production_quality_principal)]
 Now = Annotated[datetime, Depends(moscow_now)]
 CONFLICT = "Сочленения изменены другим пользователем — обновите карточку"
+BATCH_MISMATCH = "Этот замер уже записан с другим составом сочленений"
 
 
 class MatingPayload(BaseModel):
@@ -101,26 +102,31 @@ def post_batch(payload: BatchPayload, factory: Factory, principal: Editor, now: 
     source = payload.source.strip()
     if not source:
         raise HTTPException(422, "Укажите источник пакета сочленений")
+    # The fingerprint is the payload as sent (an inventory number stays a number), so a retry after the number
+    # was reassigned is still recognised as the same run instead of being resolved to another instrument.
+    sent = [{"instrument_id": str(entry.instrument_id) if entry.instrument_id is not None else None,
+             "inventory_number": entry.inventory_number.strip() if entry.inventory_number is not None else None,
+             "end": entry.end, "delta": entry.delta, "kind": entry.kind, "note": entry.note.strip()} for entry in payload.entries]
+    canonical = sorted(json.dumps(entry, sort_keys=True, ensure_ascii=False) for entry in sent)
+    fingerprint = hashlib.sha256(json.dumps(canonical, ensure_ascii=False).encode()).hexdigest()
     try:
         with factory() as uow:
             uow.instruments.lock_tree()
-            entries = []
-            for entry in payload.entries:
-                item = (uow.instruments.get(entry.instrument_id) if entry.instrument_id is not None
-                        else uow.instruments.by_inventory_number(entry.inventory_number.strip()))
-                if item is None:
-                    raise HTTPException(404, f"СИ {entry.inventory_number or entry.instrument_id} не найдено")
-                entries.append({"instrument_id": str(item.id), "end": entry.end, "delta": entry.delta,
-                                "kind": entry.kind, "note": entry.note.strip()})
-            canonical = sorted(json.dumps(entry, sort_keys=True, ensure_ascii=False) for entry in entries)
-            fingerprint = hashlib.sha256(json.dumps(canonical, ensure_ascii=False).encode()).hexdigest()
             previous = uow.session.get(MatingBatchRow, source)
             if previous is not None:
                 if previous.payload_hash != fingerprint:
-                    raise HTTPException(409, "Этот замер уже записан с другим составом сочленений")
+                    # Permanent: the same run can never be accepted with another content (422, not a retryable 409).
+                    raise HTTPException(422, BATCH_MISMATCH)
                 row = InstrumentMatingRow
                 rows = uow.session.scalars(select(row).where(row.source == source).order_by(row.instrument_id, row.side, row.seq))
                 return {"source": source, "replayed": True, "events": [event_result(event) for event in rows]}
+            entries = []
+            for entry in sent:
+                item = (uow.instruments.get(UUID(entry["instrument_id"])) if entry["instrument_id"] is not None
+                        else uow.instruments.by_inventory_number(entry["inventory_number"]))
+                if item is None:
+                    raise HTTPException(404, f"СИ {entry['inventory_number'] or entry['instrument_id']} не найдено")
+                entries.append({**entry, "instrument_id": str(item.id)})
             uow.session.add(MatingBatchRow(source=source, payload_hash=fingerprint, actor=principal.actor.name, created_at=now))
             uow.session.flush()
             repository = MatingRepository(uow.session)
