@@ -17,6 +17,7 @@ class RfDetailsRow(Base):
     __tablename__ = "production_rf_details"
     __table_args__ = (
         CheckConstraint("version >= 1", name="ck_rf_details_version"),
+        CheckConstraint("mating_resource IS NULL OR mating_resource > 0", name="ck_rf_details_mating_resource"),
         CheckConstraint("role IN ('unknown','vna','adapter','test_cable','auto_calibration','solt_kit','load','load_kit')", name="ck_rf_details_role"),
         CheckConstraint("f_min_ghz IS NULL OR (f_min_ghz >= 0 AND f_min_ghz <= 1000)", name="ck_rf_details_min"),
         CheckConstraint("max_points IS NULL OR (role = 'vna' AND max_points BETWEEN 2 AND 10000001)", name="ck_rf_details_points"),
@@ -31,6 +32,7 @@ class RfDetailsRow(Base):
     f_min_ghz: Mapped[float | None] = mapped_column(Float(), nullable=True)
     max_points: Mapped[int | None] = mapped_column(Integer(), nullable=True)
     kit_definition: Mapped[str] = mapped_column(String(64), nullable=False)
+    mating_resource: Mapped[int | None] = mapped_column(Integer(), nullable=True)
 
 
 class RfInterfaceRow(Base):
@@ -118,6 +120,20 @@ class RfRepository:
         current = self.session.get(RfDetailsRow, instrument_id)
         if (current.version if current else 0) != details.version:
             raise ConcurrentProductionUpdate("ВЧ-интерфейсы изменены другим пользователем — обновите запись")
+        from .mating_infrastructure import InstrumentMatingRow
+        from .matings import end_names
+        from .domain import ProductionValidationError
+        recorded = set(self.session.scalars(select(InstrumentMatingRow.end).where(InstrumentMatingRow.instrument_id == instrument_id)))
+        if recorded - set(end_names(details)):
+            raise ProductionValidationError("Нельзя удалить сторону с историей сочленений")
+        before = self.get(instrument_id)
+        for end in recorded:
+            position = 0 if end == "A" else 1
+            if position < len(before.interfaces):
+                old = before.interfaces[position]
+                if position >= len(details.interfaces) or any(
+                        getattr(old, key) != getattr(details.interfaces[position], key) for key in ("series", "body", "center")):
+                    raise ProductionValidationError("Нельзя изменить физический разъём стороны с историей сочленений")
         saved = replace(details, version=details.version + 1)
         values = asdict(saved)
         values.pop("interfaces")
