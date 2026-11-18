@@ -21,7 +21,7 @@ from app.modules.shipping import api as shipping_api
 from app.modules.warehouse import scan_jobs_api
 from app.shared import http_auth
 from app.shared.http_auth import Principal, authenticated_principal
-from app.workflows import employee_card_api
+from app.workflows import employee_card_api, marking_labels
 from tests.access_levels import principal_as
 
 # Every route dependency of the contract; references_suppliers is `_map_rights` inside references/api.py.
@@ -33,6 +33,12 @@ DEPENDENCIES = {
     "staffdir_view": employee_card_api.staffdir_view_principal,
     # «Сканирование документов» (0159, after the transfer): its own section, no role-era gate behind it.
     "scan_edit": scan_jobs_api.scan_edit_principal,
+    # Godex marking print (0190, after the transfer): who prints (Задания/Производство + Печать на правку), who sets up
+    # machine profiles (Справочники ERP на правку), who reads profiles and batches.
+    "marking_work": marking_labels.marking_work_principal,
+    "marking_print": marking_labels.marking_print_principal,
+    "marking_config": marking_labels.marking_config_principal,
+    "marking_read": marking_labels.marking_read_principal,
 }
 
 

@@ -10,6 +10,8 @@ import { DOWNTIME_REASONS, type DowntimeReason } from "./downtimeApi";
 import type { MarkSerialRange } from "./markSerial";
 import { hasMarkSerial } from "./markSerial";
 import { openPrintDocument } from "./print";
+import { useCanPrint } from "./rights";
+import { MarkingPrintWindow } from "./MarkingPrintWindow";
 import "./cuttingGroups.css";
 
 const rowKey = (row: CuttingMember) => row.id;
@@ -184,6 +186,8 @@ function GroupDowntime({ busy, error, close, submit }: { busy: boolean; error: s
 }
 
 function GroupLabels({ group, close }: { group: CuttingGroup; close: () => void }) {
+  const [printing, setPrinting] = useState(false);
+  const canPrint = useCanPrint();
   const [labels, setLabels] = useState<CuttingLabel[] | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -209,7 +213,8 @@ function GroupLabels({ group, close }: { group: CuttingGroup; close: () => void 
   return <PageWindow label="Этикетки группы" width={1280} close={close}>
     <div className="panel cutting-labels">
       <div className="manual-stock-head"><h2>Этикетки группы · {group.project}</h2>
-        <button type="button" className="primary" disabled={!labels?.length || Boolean(error)} onClick={() => labels && openPrintDocument("Этикетки группы", [cuttingLabelsPage(group, labels)])}>Печатать все</button>
+        {canPrint && <button type="button" className="primary" disabled={!labels?.length || Boolean(error) || group.partial_view} aria-haspopup="dialog" onClick={() => setPrinting(true)}>Печатать все</button>}
+        {canPrint && <button type="button" className="secondary" disabled={!labels?.length || Boolean(error)} onClick={() => labels && openPrintDocument("Этикетки группы", [cuttingLabelsPage(group, labels)])}>Список / PDF</button>}
         <button type="button" className="secondary" onClick={close}>Закрыть</button>
       </div>
       {error && <div className="error-banner" role="alert">{error}</div>}
@@ -225,6 +230,7 @@ function GroupLabels({ group, close }: { group: CuttingGroup; close: () => void 
           { key: "quantity", title: "Количество", numeric: true, value: (row) => row.quantity, render: (row) => `× ${formatNumber(row.quantity)}` },
         ]} />
       </>}
+      {printing && <MarkingPrintWindow source={{ group_id: group.id, version: group.version }} title={`${group.project} · ${group.number}`} close={() => setPrinting(false)} />}
     </div>
   </PageWindow>;
 }
