@@ -4,7 +4,7 @@ import {
   type InstrumentMatingsSnapshot, type MatingStatus,
 } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
-import { formatDateTime, formatNumber } from "./format";
+import { formatDate, formatDateTime, formatNumber } from "./format";
 import { PageWindow } from "./PageWindow";
 
 export const matingStatusLabels: Record<MatingStatus, string> = {
@@ -108,6 +108,9 @@ export function InstrumentMatings({ instrumentId, locked, refreshKey, onChanged,
     {error && instrumentId && !loading && <button type="button" className="secondary small" disabled={locked || busy}
       onClick={() => setAttempt((value) => value + 1)}>Обновить сочленения</button>}
     {snapshot && !loading && <>
+      {snapshot.control && <p className={`instrument-control${snapshot.control.overdue ? " tone-danger" : ""}`}>
+        Замер {formatDate(snapshot.control.measured_on)} · <span>{snapshot.control.line}</span>
+      </p>}
       <div className="instrument-mating-ends">
         {snapshot.ends.map((end) => <div className="instrument-mating-end" key={end.end}>
           <div className="instrument-mating-count">

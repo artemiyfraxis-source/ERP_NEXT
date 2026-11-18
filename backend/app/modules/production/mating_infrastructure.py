@@ -4,15 +4,17 @@ Each side of an instrument is a chain: seq 1, 2, 3… with the running total sto
 (instrument, side, seq) key turns a concurrent append into a conflict, CHECK keeps every total non-negative.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, Uuid, select
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, Uuid, func, select
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.shared.persistence import Base
 from .application import ConcurrentProductionUpdate
 from .domain import ProductionValidationError
+from .instrument_characterization import Characterization, characterization
+from .instrument_control import ControlDue, control_due, control_since
 from .matings import end_names, status_for, validate_entry
 from .rf_infrastructure import RfRepository
 
@@ -70,6 +72,33 @@ def event_result(row: InstrumentMatingRow) -> dict:
             "actor": row.actor, "created_at": row.created_at}
 
 
+def latest_characterization(session, instrument_id: UUID) -> Characterization | None:
+    """The newest named measurement; a corrupt/replaced newest upload never revives an older one."""
+    from .infrastructure import SqlAlchemyInstrumentFileRepository
+
+    for _, file_id in RfRepository(session).latest_characterization_file_ids([instrument_id]):
+        file = SqlAlchemyInstrumentFileRepository(session).get(instrument_id, file_id)
+        return characterization(file) if file else None
+    return None
+
+
+def instrument_control(session, instrument_id: UUID, today: date,
+                       measured: Characterization | None = None) -> ControlDue | None:
+    """12 months or 100 matings since the last measurement, whichever first; None - never measured."""
+    measured = measured or latest_characterization(session, instrument_id)
+    if measured is None:
+        return None
+    return control_due(measured.measured_on, MatingRepository(session).matings_since(instrument_id, measured.measured_on), today)
+
+
+def control_result(control: ControlDue | None) -> dict | None:
+    if control is None:
+        return None
+    return {"measured_on": control.measured_on.isoformat(), "due_on": control.due_on.isoformat() if control.due_on else None,
+            "matings_since": control.matings_since, "matings_left": control.matings_left, "overdue": control.overdue,
+            "line": control.line}
+
+
 def recorded_sides(session, instrument_id: UUID) -> set[str]:
     return set(session.scalars(select(InstrumentMatingRow.side).where(InstrumentMatingRow.instrument_id == instrument_id).distinct()))
 
@@ -104,6 +133,16 @@ class MatingRepository:
         # A tape measure or a multimeter has no RF connector: the card shows no counter for it.
         return {"instrument_id": str(instrument_id), "resource": resource, "ends": ends, "status": worst["status"],
                 "has_connectors": bool(rf.interfaces) or bool(events), "events": [event_result(event) for event in events]}
+
+    def matings_since(self, instrument_id: UUID, measured_on: date) -> int:
+        """Matings of the busier side since the start of the measurement day; the «initial» entry is history before the
+        counter, not a mating after the measurement."""
+        row = InstrumentMatingRow
+        totals = self.session.execute(
+            select(row.side, func.sum(row.delta))
+            .where(row.instrument_id == instrument_id, row.created_at >= control_since(measured_on), row.kind != "initial")
+            .group_by(row.side)).all()
+        return max((max(0, int(total or 0)) for _, total in totals), default=0)
 
     def append(self, instrument_id: UUID, *, end: str, delta: int, kind: str, note: str, source: str | None,
                actor: str, now: datetime, version: int | None = None) -> InstrumentMatingRow:

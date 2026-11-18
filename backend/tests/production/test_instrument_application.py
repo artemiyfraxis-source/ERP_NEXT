@@ -12,13 +12,15 @@ from app.modules.production.vna_files import VnaTrace
 from tests.production.test_instrument_passport import measured_file
 
 
-def summary(vswr_by_ghz, loss_by_ghz=None, right=None):
+def summary(vswr_by_ghz, loss_by_ghz=None, right=None, reverse_loss_by_ghz=None):
+    """A reciprocal item by default (S12 = S21); `reverse_loss_by_ghz` makes S12 differ."""
     frequencies = [f * 1e9 for f in vswr_by_ghz]
     left = list(vswr_by_ghz.values())
     losses = loss_by_ghz or {f: 0.05 for f in vswr_by_ghz}
+    reverse = reverse_loss_by_ghz or losses
     traces = tuple(VnaTrace(name, tuple(zip(frequencies, values))) for name, values in (
         ("S11", left), ("S22", right or left), ("S21", [10 ** (-losses[f] / 20) for f in vswr_by_ghz]),
-        ("S12", [0.99] * len(frequencies))))
+        ("S12", [10 ** (-reverse[f] / 20) for f in vswr_by_ghz])))
     return replace(characterization(measured_file()), traces=traces)
 
 

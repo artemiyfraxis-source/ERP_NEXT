@@ -1627,6 +1627,17 @@ export interface InstrumentMatingsSnapshot {
   has_connectors: boolean;
   ends: InstrumentMatingEnd[];
   events: InstrumentMatingEvent[];
+  /** Следующий контроль: 12 мес. или 100 сочленений с последнего замера, что раньше; null — замера нет. */
+  control?: InstrumentControl | null;
+}
+export interface InstrumentControl {
+  measured_on: string;
+  due_on: string | null;
+  matings_since: number | null;
+  matings_left: number | null;
+  overdue: boolean;
+  /** Готовая строка сервера: «следующий контроль до 16.11.2027 или ещё 87 сочленений из 100 — что раньше». */
+  line: string;
 }
 export interface InstrumentMatingInput {
   end: "A" | "B";

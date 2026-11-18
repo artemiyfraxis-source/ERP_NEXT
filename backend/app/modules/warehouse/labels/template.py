@@ -377,11 +377,13 @@ def instrument_content(inventory_number: str, name: str, serial_number: str = ""
                        table_long: tuple[str, str, str] = ("", "", ""),
                        bands: tuple[tuple[str, str, str], ...] = (),
                        mating_resource: int | None = None, mating_count: int | None = None,
-                       temp_min_c: float | None = None, temp_max_c: float | None = None) -> LabelContent:
+                       temp_min_c: float | None = None, temp_max_c: float | None = None,
+                       control_short: str = "", control_line: str = "") -> LabelContent:
     """An instrument card's printable values; codes carry the inventory number even without an ERP connection.
 
     The caller supplies the domain's classification to keep serial-number policy outside Warehouse. `bands` —
-    (frequency up to, VSWR ≤, loss ≤) per band, already formatted; `mating_count` — matings done so far.
+    (frequency up to, VSWR ≤, loss ≤) per band, already formatted; `mating_count` — matings done so far;
+    `control_short`/`control_line` — the next control by date or matings, whichever first (Production decides).
     """
     serial = serial_number.strip()
     values = {
@@ -394,9 +396,10 @@ def instrument_content(inventory_number: str, name: str, serial_number: str = ""
         "model_line": model_line.strip() or model.strip(),
         "serial_full": f"Заводской № {serial}" if serial else "",
         "date_full": " · ".join(filter(None, (f"Измерение: {measured_on:%d.%m.%Y}" if measured_on else "",
-                                              f"следующий контроль: {next_control:%d.%m.%Y}" if next_control else ""))),
+                                              control_line or (f"следующий контроль: {next_control:%d.%m.%Y}"
+                                                               if next_control else "")))),
         "date_short": f"Изм. {measured_on:%d.%m.%Y}" if measured_on else "",
-        "next_short": f"Контроль {next_control:%d.%m.%Y}" if next_control else "",
+        "next_short": control_short or (f"Контроль {next_control:%d.%m.%Y}" if next_control else ""),
         "table_bands_long": table_long[0],
         "table_vswr_long": table_long[1],
         "table_loss_long": table_long[2],

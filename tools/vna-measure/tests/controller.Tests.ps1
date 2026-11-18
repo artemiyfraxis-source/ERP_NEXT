@@ -57,9 +57,11 @@ Describe 'Measurement safety before attachment' {
     }
     It 'refuses an uncorrected live trace and an uncorrected captured trace' {
         $script:ctx.States.S21 = 'C?'
-        { Assert-VnaMeasurementSafe $script:ctx.Sweep $script:ctx.Calibration $script:ctx.Device $script:ctx.States } | Should Throw
+        { Assert-VnaMeasurementSafe $script:ctx.Sweep $script:ctx.Calibration $script:ctx.Device $script:ctx.States } | Should Throw 'Трасса S21: калибровка интерполирована («К?»)'
         $script:ctx.States.S21 = 'COR'; $script:ctx.Sweep.TraceStatus.S12 = 'C!'
-        { Assert-VnaMeasurementSafe $script:ctx.Sweep $script:ctx.Calibration $script:ctx.Device $script:ctx.States } | Should Throw
+        { Assert-VnaMeasurementSafe $script:ctx.Sweep $script:ctx.Calibration $script:ctx.Device $script:ctx.States } | Should Throw 'Трасса S12: калибровка экстраполирована («К!»)'
+        $script:ctx.Sweep.TraceStatus.S12 = 'NONE'
+        { Assert-VnaMeasurementSafe $script:ctx.Sweep $script:ctx.Calibration $script:ctx.Device $script:ctx.States } | Should Throw 'без COR'
     }
     It 'refuses calibration older than four hours, including after operator delay' {
         { Assert-VnaMeasurementSafe $script:ctx.Sweep $script:ctx.Calibration $script:ctx.Device $script:ctx.States -Now $script:ctx.Now.AddHours(4) } | Should Throw
@@ -429,7 +431,7 @@ Describe 'Offline correction loss after calibration and load check' {
         $events = @(Get-VnaJournal (Join-Path $folder 'calibrations.jsonl'))
         $events[0].Result | Should Be 'pass'
         $events[1].LoadCheck | Should Be 'pass'
-        ($script:refusalOutput -join "`n") | Should Match 'Нет полной коррекции S21; калибровки нет — выполните пункт 2'
+        ($script:refusalOutput -join "`n") | Should Match 'Трасса S21: калибровка интерполирована \(«К\?»\) — замер не принимается; выполните пункт 2'
         (Test-Path -LiteralPath (Join-Path $folder 'raw')) | Should Be $false
         (Test-Path -LiteralPath (Join-Path $folder 'used-sweeps.jsonl')) | Should Be $false
         $script:answers.Count | Should Be 0

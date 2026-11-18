@@ -9,7 +9,7 @@ from pathlib import Path
 from fpdf import FPDF
 
 from .instrument_characterization import STEPS_GHZ, Characterization, loss_db, number, step_stops, upper_two
-from .instrument_norms import Norm, norms_data
+from .instrument_norms import TRANSFER_TITLE, Norm, norms_data, transfer_points
 from .instrument_serials import article_of
 from .rf_interfaces import RfDetails
 from .instrument_public import (PublicMeasurement, PublicPassport, conclusion, control_line, measurement_line, public_fields,
@@ -61,10 +61,14 @@ def _nice(span: float, steps: tuple[float, ...]) -> float:
     return next((step for step in steps if span / step <= 10 + 1e-9), steps[-1])
 
 
+def curves(measurement, reflection: bool) -> tuple[tuple[tuple[float, float], ...], ...]:
+    """The plotted series: VSWR of side 1 and side 2; transmission — the worse of S21 and S12 (linear |S|)."""
+    return (tuple(measurement.points("S11")), tuple(measurement.points("S22"))) if reflection else (transfer_points(measurement),)
+
+
 def _values(measurement, reflection: bool, stop: float) -> list[float]:
-    names = ("S11", "S22") if reflection else ("S21",)
     values = [value if reflection else (20 * math.log10(value) if value > 0 else -math.inf)
-              for name in names for frequency, value in measurement.points(name) if frequency <= stop * 1e9 + 0.5]
+              for points in curves(measurement, reflection) for frequency, value in points if frequency <= stop * 1e9 + 0.5]
     return [value for value in values if math.isfinite(value)]
 
 
@@ -94,8 +98,8 @@ def _above(measurement, reflection: bool, limit) -> bool:
     if not limit:
         return True
     ghz, value = limit[-1]
-    names = ("S11", "S22") if reflection else ("S21",)
-    near = [v for name in names for f, v in measurement.points(name) if f <= ghz * 1e9 + 0.5][-len(names):]
+    series = curves(measurement, reflection)
+    near = [v for points in series for f, v in points if f <= ghz * 1e9 + 0.5][-len(series):]
     if not reflection:
         near = [20 * math.log10(v) if v > 0 else -math.inf for v in near]
     return not near or max(near) < value
@@ -148,13 +152,13 @@ def band_rows(measurement: Characterization | PublicMeasurement):
     start, stop = measurement.band
     for high in (edge for edge in step_stops(stop) if edge > start):
         values = []
-        for name in ("S11", "S22", "S21"):
-            points = [v for f, v in measurement.points(name) if f <= high * 1e9 + 0.5]
+        for name, series in zip(("S11", "S22", "loss"), (*curves(measurement, True), *curves(measurement, False))):
+            points = [v for f, v in series if f <= high * 1e9 + 0.5]
             if not points:
                 values.append("—")
             else:
-                maximum = max(loss_db(v) for v in points) if name == "S21" else max(points)
-                values.append(f"≥ {number(VSWR_CEILING)}" if name != "S21" and maximum >= VSWR_CEILING
+                maximum = max(loss_db(v) for v in points) if name == "loss" else max(points)
+                values.append(f"≥ {number(VSWR_CEILING)}" if name != "loss" and maximum >= VSWR_CEILING
                               else upper_two(maximum) if math.isfinite(maximum) else "∞")
         yield number(start) + "–" + number(high), *values
 
@@ -177,7 +181,7 @@ def _envelope(points, stop: float, limit=600):
 def _chart(pdf, measurement: Characterization | PublicMeasurement, reflection: bool, norm: Norm | None):
     if pdf.get_y() + 50 > pdf.h - 22:
         pdf.add_page()
-    title = "КСВН · сторона 1 (синяя), сторона 2 (красная)" if reflection else "Передача S21, дБ"
+    title = "КСВН · сторона 1 (синяя), сторона 2 (красная)" if reflection else TRANSFER_TITLE
     _line(pdf, title, bold=True)
     scale = chart_scale(measurement, reflection, norm)
     left, top, width, height = 23, pdf.get_y() + 1.5, 172, 34
@@ -218,9 +222,7 @@ def _chart(pdf, measurement: Characterization | PublicMeasurement, reflection: b
         pdf.text(x_of(scale.limit[-1][0]) - label_width, min(ys) - 1.2 if scale.label_above else max(ys) + 3,
                  scale.limit_label)
     outside = False
-    names = ("S11", "S22") if reflection else ("S21",)
-    for name, color in zip(names, SIDE_COLORS):
-        raw = measurement.points(name)
+    for raw, color in zip(curves(measurement, reflection), SIDE_COLORS):
         points = raw if reflection else tuple((f, 20 * math.log10(v) if v > 0 else -math.inf) for f, v in raw)
         outside |= any(v < minimum or v > maximum for f, v in points if f <= stop * 1e9 + 0.5)
         pdf.set_draw_color(*color)
@@ -344,9 +346,11 @@ def header_fields(item: MeasurementInstrument, rf: RfDetails, projection: Public
 
 
 def passport_pdf(item: MeasurementInstrument, rf: RfDetails, measurement: Characterization | None,
-                 *, generated: datetime, card_url: str = "", registry=(), repeats=()) -> bytes:
+                 *, generated: datetime, card_url: str = "", registry=(), repeats=(),
+                 matings_since: int | None = None) -> bytes:
     pdf = _new_pdf(generated, card_url)
-    projection = public_passport(item, rf, measurement, registry=registry, repeats=repeats)
+    projection = public_passport(item, rf, measurement, registry=registry, repeats=repeats, today=generated.date(),
+                                 matings_since=matings_since)
     _line(pdf, f"Паспорт {item.inventory_number}", bold=True, size=17, height=8)
     _line(pdf, item.name, bold=True, size=11, height=6)
     for label, value in header_fields(item, rf, projection):
