@@ -60,7 +60,9 @@ def test_pass_fail_and_border_against_the_norm():
 
 def test_uncertainty_is_stored_per_vna_model_and_resolved_by_serial():
     u = uncertainty_for("S50180")
-    assert (u.at(5), u.at(12)) == (0.015, 0.022) and u.line.startswith("±0,015 до 10 ГГц, ±0,022 выше 10 ГГц")
+    assert (u.at(5, 1.2), u.at(12, 1.2)) == (pytest.approx(0.018), pytest.approx(0.024))
+    assert u.line.startswith("±1,5·КСВН % до 10 ГГц, ±2·КСВН % выше 10 ГГц") and "табл. 23" in u.line
+    assert loss_uncertainty_for("S50180").at(5) == loss_uncertainty_for("S50180").at(12) == 0.1
     assert uncertainty_for("") is None
     assert vna_model("Planar S50180 №123") == "S50180"
 
@@ -96,7 +98,7 @@ def test_every_vswr_norm_has_a_loss_norm_with_source():
         loss = holder["loss"]
         assert loss["source"] and (loss.get("segments") or loss.get("points"))
     s50180 = next(entry for entry in data["vna"] if entry["model"] == "S50180")
-    assert "табл. 16" in s50180["loss_uncertainty"]["source"] and "табл. 19" in s50180["loss_uncertainty"]["source"]
+    assert "табл. 23" in s50180["loss_uncertainty"]["source"] and "табл. 23" in s50180["source"]
     assert data["decision_rule_loss"]
 
 
@@ -139,7 +141,7 @@ def test_point_norm_uses_the_nearest_measured_point_inside_the_span():
 
 def test_loss_excess_within_the_uncertainty_is_a_border_not_a_failure():
     loss, uncertainty = norm_for("", "", pair("SMA", "SMA")).loss, loss_uncertainty_for("S50180")
-    assert uncertainty.at(9) == pytest.approx(0.102) and uncertainty.at(18) == pytest.approx(0.107)
+    assert uncertainty.at(9) == pytest.approx(0.1) and uncertainty.at(18) == pytest.approx(0.1)
     vswr = {0.01: 1.02, 1: 1.03, 9: 1.04}
 
     def judged(at_nine, unc=uncertainty):
@@ -147,7 +149,7 @@ def test_loss_excess_within_the_uncertainty_is_a_border_not_a_failure():
 
     assert judged(0.05).status == "pass" and judged(0.05).border and judged(0.05).short == "соответствует норме (на границе допуска)"
     assert judged(0.15).status == "border" and judged(0.15).short == "на границе допуска — превышение меньше погрешности ВАЦ"
-    assert judged(0.15).result_line == "потери 0,15 дБ на 9 ГГц при норме ≤ 0,09 дБ, погрешность ±0,102 дБ"
+    assert judged(0.15).result_line == "потери 0,15 дБ на 9 ГГц при норме ≤ 0,09 дБ, погрешность ±0,1 дБ"
     failed = judged(0.20)
     assert failed.status == "fail" and failed.short == "не соответствует норме выше 1 ГГц"
     # The VNA model unknown: an excess under 0,05 dB is still a border, not a failure.
@@ -176,18 +178,18 @@ def _conclusion(points):
 
 
 def test_passport_conclusion_states_the_loss_norm_and_its_uncertainty():
-    # SMA–SMA by /55: 0,175 dB at 18 GHz over 0,127 dB — within ±0,107 dB of the S50180: a border, VSWR verdict kept.
+    # SMA–SMA by /55: 0,175 dB at 18 GHz over 0,127 dB — within ±0,1 dB of the S50180: a border, VSWR verdict kept.
     result = _conclusion([(0.01, 0.01, 0.99), (9, 0.01, 0.99), (18, 0.02, 0.98)])
     lines = dict(result.lines)
     assert result.verdict == "Соответствует норме в полосе 9–18 ГГц; вносимые потери на границе допуска"
     assert lines["Норма потерь"].startswith("MIL-PRF-55339/55 — вносимые потери ≤ 0,03·√F дБ в полосе 0,5–18 ГГц")
     assert lines["Результат по потерям"].startswith("на границе допуска")
-    assert lines["Погрешность измерения потерь"].startswith("±0,102 дБ до 10 ГГц, ±0,107 дБ выше 10 ГГц (Планар S50180")
+    assert lines["Погрешность измерения потерь"].startswith("±0,1 дБ до 10 ГГц, ±0,1 дБ выше 10 ГГц (Планар S50180")
     assert "по вносимым потерям" in lines["Правило принятия решения"]
 
 
 def test_loss_failure_overrides_a_vswr_pass_even_on_the_vswr_border():
-    # VSWR 1,13 at 18 GHz: within 0,022 of the /55 limit 1,14 (border pass); |S21| 0,95 = 0,446 dB » 0,127 + 0,107.
+    # VSWR 1,13 at 18 GHz: within U of the /55 limit 1,14 (border pass); |S21| 0,95 = 0,446 dB » 0,127 + 0,1.
     gamma = 0.13 / 2.13
     result = _conclusion([(0.01, 0.01, 0.999), (9, 0.01, 0.999), (18, gamma, 0.95)])
     assert result.verdict == "Не соответствует норме по вносимым потерям выше 9 ГГц"

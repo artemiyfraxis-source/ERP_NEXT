@@ -30,7 +30,8 @@ function Get-VnaSeriesFmaxHz {
     param([Parameter(Mandatory)][string]$Name)
     # Match complete connector labels and the adapter series used in the ERP cards.
     if ($Name -match '(?i)\bBNC\b|\b(?:SB|TB|B)-\d') { return 4e9 }
-    if ($Name -match '(?i)\bTNC\b|\bN(?:-type|[ -](?:вилка|розетка|male|female))?\b|\b(?:SN|ST|TN|T|N)-\d') { return 11e9 }
+    if ($Name -match '(?i)\bTNC\b|\b(?:ST|TN|T)-\d') { return 11e9 }
+    if ($Name -match '(?i)\bN(?:-type|[ -](?:вилка|розетка|male|female))?\b|\b(?:SN|N)-\d') { return 18e9 }
     return 18e9
 }
 
@@ -101,8 +102,8 @@ function Assert-VnaMeasurementSafe {
     }
     foreach ($info in @($DeviceInfo, $Sweep.DeviceInfo)) {
         for ($sensor = 0; $sensor -lt 2; $sensor++) {
-            if ([math]::Abs([double]$info.VnaTemperatures[$sensor] - [double]$Calibration.VnaTemperatures[$sensor]) -gt 5) {
-                throw 'Температура ВАЦ изменилась более чем на 5 °C; повторите калибровку.'
+            if ([math]::Abs([double]$info.VnaTemperatures[$sensor] - [double]$Calibration.VnaTemperatures[$sensor]) -gt 1) {
+                throw 'Температура ВАЦ изменилась более чем на 1 °C; повторите калибровку.'
             }
         }
     }
@@ -176,7 +177,7 @@ function Show-VnaInstrumentState {
             foreach ($temperature in $reading.VnaTemperatures) { Assert-VnaTemperature $temperature }
         }
         for ($sensorIndex = 0; $sensorIndex -lt 2; $sensorIndex++) {
-            if ([math]::Abs([double]$info.VnaTemperatures[$sensorIndex] - [double]$Calibration.VnaTemperatures[$sensorIndex]) -gt 5) { throw 'Температура ВАЦ изменилась более чем на 5 °C.' }
+            if ([math]::Abs([double]$info.VnaTemperatures[$sensorIndex] - [double]$Calibration.VnaTemperatures[$sensorIndex]) -gt 1) { throw 'Температура ВАЦ изменилась более чем на 1 °C.' }
         }
         Assert-VnaProfile $Connection
         $null = Assert-VnaCorrection $Connection

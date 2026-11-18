@@ -261,21 +261,24 @@ def _series_spec(name: str, model: str, rf: RfDetails) -> ItemSpec | None:
 
 @dataclass(frozen=True)
 class Uncertainty:
+    """VSWR measurement uncertainty of the VNA: relative, ±percent·VSWR per band (maker's manual)."""
     title: str
-    at_vswr: float
-    steps: tuple[tuple[float, float], ...]   # (to_ghz, ±VSWR)
+    steps: tuple[tuple[float, float], ...]   # (to_ghz, ±percent of the VSWR)
     source: str
 
-    def at(self, ghz: float) -> float:
+    def percent_at(self, ghz: float) -> float:
         return next((value for top, value in self.steps if ghz <= top + 1e-9), self.steps[-1][1])
+
+    def at(self, ghz: float, vswr: float) -> float:
+        return self.percent_at(ghz) / 100 * vswr
 
     @property
     def line(self) -> str:
         parts, low = [], None
         for top, value in self.steps:
-            parts.append(f"±{_num(value)} " + (f"до {ghz_text(top)} ГГц" if low is None else f"выше {ghz_text(low)} ГГц"))
+            parts.append(f"±{_num(value)}·КСВН % " + (f"до {ghz_text(top)} ГГц" if low is None else f"выше {ghz_text(low)} ГГц"))
             low = top
-        return f"{', '.join(parts)} (при КСВН {_num(self.at_vswr)}; {self.source})"
+        return f"{', '.join(parts)} ({self.source})"
 
 
 def vna_model(instrument_text: str, registry=()) -> str:
@@ -297,8 +300,8 @@ def uncertainty_for(model: str) -> Uncertainty | None:
     entry = next((entry for entry in norms_data()["vna"] if entry["model"] == model), None) if model else None
     if entry is None:
         return None
-    return Uncertainty(entry["title"], float(entry["at_vswr"]),
-                       tuple((float(s["to_ghz"]), float(s["value"])) for s in entry["uncertainty"]), entry["source"])
+    return Uncertainty(entry["title"], tuple((float(s["to_ghz"]), float(s["percent"])) for s in entry["uncertainty"]),
+                       entry["source"])
 
 
 @dataclass(frozen=True)
@@ -358,11 +361,11 @@ def assess(measured, norm: Norm | None, uncertainty: Uncertainty | None = None) 
     last_pass = None
     for ghz, value, limit in judged:
         if value > limit:
-            border = bool(uncertainty and value - limit < uncertainty.at(ghz))
+            border = bool(uncertainty and value - limit < uncertainty.at(ghz, limit))
             return Assessment(norm, "fail", start, stop, ghz, value, limit, last_pass, border)
         last_pass = ghz
     ghz, value, limit = min(judged, key=lambda point: point[2] - point[1])
-    border = bool(uncertainty and limit - value < uncertainty.at(ghz))
+    border = bool(uncertainty and limit - value < uncertainty.at(ghz, limit))
     return Assessment(norm, "pass", start, stop, ghz, value, limit, None, border)
 
 
