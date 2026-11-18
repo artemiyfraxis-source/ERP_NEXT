@@ -213,8 +213,12 @@ def _journal_reason(ctx: Context, changes: list[dict[str, str]], soft: list[dict
     return reason
 
 
-def evaluate(card: ProjectTechcard, ctx: Context) -> tuple[ProjectTechcard | None, TechcardRevision | None, CardResult]:
-    """(the card to save or None, the revision to add or None, the result). Pure: nothing is written here."""
+def evaluate(
+    card: ProjectTechcard, ctx: Context, *, rename_reason: str | None = None,
+) -> tuple[ProjectTechcard | None, TechcardRevision | None, CardResult]:
+    """(the card to save or None, the revision to add or None, the result). Pure: nothing is written here.
+    `rename_reason` — a deliberate rename of operations: when the document differs only in operation titles (which
+    `document_diff` ignores), those titles alone make the revision, journaled with this reason."""
     label = _label(card)
     overrides = _effective_overrides(card)
     document, conflicts = etk_derive.derive(
@@ -238,6 +242,10 @@ def evaluate(card: ProjectTechcard, ctx: Context) -> tuple[ProjectTechcard | Non
     else:
         note = None if (card.review_note or "").startswith(NOTE_PREFIX) else card.review_note
     changes = etk_derive.document_diff(without_identity(card.document), without_identity(document))
+    renamed = False
+    if rename_reason and not changes and not hard:
+        changes = etk_derive.title_diff(without_identity(card.document), without_identity(document))
+        renamed = bool(changes)
     status = "conflict" if hard else "unchanged"
     if not changes:
         if new_hash == card.derived_hash and note == card.review_note:
@@ -250,7 +258,7 @@ def evaluate(card: ProjectTechcard, ctx: Context) -> tuple[ProjectTechcard | Non
         return updated, None, CardResult(card.id, label, "refreshed", tuple(changes), tuple(hard))
     updated = replace(card, document=document, revision=card.revision + 1, derived_hash=new_hash, review_note=note,
                       version=card.version + 1, updated_at=ctx.now)
-    reason = _journal_reason(ctx, changes, soft)
+    reason = f"{rename_reason} ({ctx.now.strftime('%d.%m.%Y')})" if renamed else _journal_reason(ctx, changes, soft)
     revision = TechcardRevision(
         id=uuid4(), project_card_id=card.id, revision=updated.revision, reason=reason,
         actor_name=ACTOR_NAME, occurred_at=ctx.now, document=document, source="auto",
@@ -366,14 +374,7 @@ def _refresh_one(sessions: sessionmaker[Session], card_id: UUID, ctx: Context, d
             stored = uow.session.scalar(select(ProjectTechcardRow.version).where(ProjectTechcardRow.id == card_id))
             if stored != card.version:
                 return CardResult(card_id, result.label, "skipped")
-            uow.techcards.save(updated)
-            if revision is not None:
-                uow.techcards.add_revision(revision)
-                td_auto.on_revision(uow, updated, revision.reason, ctx.now)
-                uow.audit.add(AuditEvent(
-                    id=uuid4(), aggregate_id=card.id, event_type="techcards.project_auto_revised",
-                    actor=Actor(id=uuid4(), name=ACTOR_NAME, department=""), occurred_at=ctx.now,
-                    details={"revision": revision.revision, "reason": revision.reason, "changes": len(result.changes)}))
+            save_result(uow, updated, revision, result, ctx.now)
             uow.commit()
             return result
     except StaleDataError:
@@ -381,6 +382,20 @@ def _refresh_one(sessions: sessionmaker[Session], card_id: UUID, ctx: Context, d
     except Exception:  # noqa: BLE001 — one broken card must not stop the batch
         logging.exception("ETK refresh: card %s failed", card_id)
         return CardResult(card_id, str(card_id), "failed")
+
+
+def save_result(uow: Any, updated: ProjectTechcard, revision: TechcardRevision | None, result: CardResult,
+                now: datetime) -> None:
+    """Write what `evaluate` decided into an open techcards unit of work: the card, its revision, the automatic ТД
+    issue and the journal. Never commits."""
+    uow.techcards.save(updated)
+    if revision is not None:
+        uow.techcards.add_revision(revision)
+        td_auto.on_revision(uow, updated, revision.reason, now)
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=updated.id, event_type="techcards.project_auto_revised",
+            actor=Actor(id=uuid4(), name=ACTOR_NAME, department=""), occurred_at=now,
+            details={"revision": revision.revision, "reason": revision.reason, "changes": len(result.changes)}))
 
 
 def refresh_tick(sessions: sessionmaker[Session]) -> int:
