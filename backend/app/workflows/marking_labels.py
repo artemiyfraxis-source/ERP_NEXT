@@ -243,6 +243,8 @@ class PreviewInput(BaseModel):
     profile_version: int = Field(ge=1, strict=True)
     source: SourceInput
     selected: list[str] = Field(default_factory=list, max_length=500)
+    # «Чередовать по изделию»: per item, fixed marks then numbered ones (XS1, A1 №1, XS1, A1 №2 …).
+    interleave: bool = False
 
 
 class BatchInput(PreviewInput):
@@ -286,7 +288,7 @@ def issued_document(task, uow):
     return shown.document, {"card_id": str(card.id), "card_version": card.version, "revision": shown.revision}
 
 
-def source_rows(source, selected, principal, uow, now):
+def source_rows(source, selected, principal, uow, now, interleave=False):
     if len(set(selected)) != len(selected):
         raise ValueError("Надпись выбрана несколько раз")
     if source.group_id:
@@ -328,7 +330,7 @@ def source_rows(source, selected, principal, uow, now):
             document, revision = issued_document(task, uow)
         # Calculate and reserve through the established issuance semantics in this same transaction.
         serial = issue_mark_serials_in(task, False, principal.actor, now, uow)
-        expanded = labels(document, task, serial, selected)
+        expanded = labels(document, task, serial, selected, interleave)
         if any(row["serial"] is not None for row in expanded):
             issue_mark_serials_in(task, True, principal.actor, now, uow)
         rows.extend(expanded)
@@ -364,7 +366,7 @@ def profile_target(session, profile_id, version, now, *, calibration=False, onli
 
 
 def build_preview(payload, principal, uow, now):
-    rows, source = source_rows(payload.source, payload.selected, principal, uow, now)
+    rows, source = source_rows(payload.source, payload.selected, principal, uow, now, payload.interleave)
     profile, binding = profile_target(uow.session, payload.profile_id, payload.profile_version, now, online=False)
     geometry = Geometry.model_validate(profile.geometry)
     rendered, cache = [], {}
