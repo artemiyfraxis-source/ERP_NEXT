@@ -108,6 +108,24 @@ Describe 'S2VNA information and strict profile checks' {
         { Assert-VnaSetting $true $false 'processing' } | Should Throw
         { Assert-VnaSetting 'LOG' 'LIN' 'sweep' } | Should Throw
     }
+    It 'refuses a measurement with smoothing on any measurement trace, with its own reason' {
+        Mock Invoke-VnaComIo {
+            param($Connection,$Path,$Mode,$Value)
+            $profile = Get-VnaProfileSettings
+            if ($profile.Contains($Path)) { return $profile[$Path] }
+            if ($Path -like '*RESolution') { return 1000 }
+            if ($Path -like '*COUNt') { return 4 }
+            if ($Path -match 'PARameter\(([1-4])\).DEFine$') { $script:smoothParameter = @('S11','S21','S12','S22')[[int]$Matches[1] - 1]; return $script:smoothParameter }
+            if ($Path -like '*SELect') { return }
+            if ($Path -like '*FORMat') { if ($script:smoothParameter -in 'S11','S22') { return 'SWR' } else { return 'MLOG' } }
+            if ($Path -like '*SMOothing.STATe') { return ($script:smoothParameter -eq 'S21') }
+            if ($Path -like '*MATH.FUNCtion') { return 'OFF' }
+            return $false
+        }
+        { Assert-VnaProfile (New-TestS2Connection) } | Should Throw 'Трасса S21: включено сглаживание — замер не принимается'
+        foreach ($value in @($true, 1, '1', 'ON')) { Test-VnaSettingOn $value | Should Be $true }
+        foreach ($value in @($false, 0, '0', 'OFF', 'false')) { Test-VnaSettingOn $value | Should Be $false }
+    }
     It 'refuses duplicate and missing traces' {
         Mock Invoke-VnaComIo {
             param($Connection,$Path)
@@ -119,7 +137,9 @@ Describe 'S2VNA information and strict profile checks' {
     }
     It 'requires COR on each parameter' {
         $connection = [pscustomobject]@{ Offline = $true; TraceStatus = @{S11='COR';S21='COR';S12='C?';S22='COR'} }
-        { Assert-VnaCorrection $connection } | Should Throw
+        { Assert-VnaCorrection $connection } | Should Throw 'S12: калибровка интерполирована («К?») — замер не принимается'
+        $connection.TraceStatus.S12 = 'C!'
+        { Assert-VnaCorrection $connection } | Should Throw 'калибровка экстраполирована («К!») — замер не принимается'
         $connection.TraceStatus.Remove('S12')
         { Assert-VnaCorrection $connection } | Should Throw
     }

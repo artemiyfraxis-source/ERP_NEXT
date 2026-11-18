@@ -108,6 +108,9 @@ function Assert-VnaMeasurementSafe {
         }
     }
     foreach ($name in 'S11', 'S21', 'S12', 'S22') {
+        foreach ($status in @($TraceStatus[$name], $Sweep.TraceStatus[$name])) {
+            if ($refusal = Get-VnaCorrectionRefusal $name $status) { throw $refusal }
+        }
         if ($TraceStatus[$name] -cne 'COR' -or $Sweep.TraceStatus[$name] -cne 'COR' -or
             $null -eq $Sweep.Data.$name -or $Sweep.Data.$name.Count -ne $Sweep.Data.Frequencies.Count) {
             throw "Трасса $name отсутствует или без COR; повторите калибровку."
@@ -362,7 +365,7 @@ function Start-VnaMeasure {
                             $info = Get-VnaDeviceInfo $connection
                             foreach ($field in 'VnaSerial', 'AcmSerial', 'VnaTemperature', 'VnaTemperatures', 'AcmTemperature') { $attempt[$field] = $info.$field }
                             $status = Get-VnaTraceStatus $connection
-                            foreach ($name in 'S11', 'S21', 'S12', 'S22') { if ($status[$name] -cne 'COR') { throw "Нет COR на $name." } }
+                            foreach ($name in 'S11', 'S21', 'S12', 'S22') { if ($refusal = Get-VnaCorrectionRefusal $name $status[$name]) { throw $refusal }; if ($status[$name] -cne 'COR') { throw "Нет COR на $name." } }
                             foreach ($temperature in @($info.VnaTemperatures) + @($info.AcmTemperature)) { Assert-VnaTemperature $temperature }
                             $attempt.Time = [datetimeoffset]::UtcNow.ToString('o'); $attempt.Result = 'pass'
                             Show-VnaDevice $info
