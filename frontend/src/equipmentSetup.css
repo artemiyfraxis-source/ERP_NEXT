@@ -22,3 +22,22 @@
 @media (pointer: coarse) {
   .equipment-setup button, .equipment-setup input, .equipment-setup select { min-height: 40px; }
 }
+/* Наладка ОБ.019: предложение, значения станка и фактические значения в одной плотной таблице. */
+.ob019-setup .ob019-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.ob019-setup .ob019-bar .seg-tabs { margin: 0; }
+.ob019-setup .ob019-live { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.ob019-setup .ob019-pick { grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: end; margin: 12px 0; }
+.ob019-setup .ob019-pick .setup-wide { grid-column: span 2; }
+.ob019-setup .ob019-pick-action { margin: 0; }
+.ob019-setup .ob019-source { margin: 8px 0; overflow-wrap: anywhere; }
+.ob019-setup .ob019-table th, .ob019-setup .ob019-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); text-align: left; height: 32px; }
+.ob019-setup .ob019-table thead th { font-size: 12px; font-weight: 500; color: var(--muted-foreground); background: var(--accent); }
+.ob019-setup .ob019-table tbody th { font-weight: 500; }
+.ob019-setup .ob019-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ob019-setup .ob019-table .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
+.ob019-setup .ob019-table td.num input { width: 96px; height: 28px; text-align: right; }
+
+.ob019-setup .ob019-table input.ob019-changed { border-color: var(--tone-warn); }
+.ob019-setup .ob019-hint { margin: 8px 0 0; font-size: 12px; }
+@media (max-width: 1100px) { .ob019-setup .ob019-pick { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ob019-setup .ob019-table tr.ob019-diff > * { background: var(--warn-soft); }

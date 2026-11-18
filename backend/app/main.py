@@ -199,7 +199,9 @@ elif _equipment_enabled:
     raise RuntimeError("ERP_DATABASE_URL is required when equipment setup is enabled")
 if _equipment_enabled:
     from .modules.equipment_setup.api import router as equipment_setup_router
+    from .workflows.ob019_setup import router as ob019_setup_router
     app.include_router(equipment_setup_router)
+    app.include_router(ob019_setup_router)
 watch_stop_file()  # локальная ERP на ПК: обновление останавливает API файлом-стопом (scripts/update-local.ps1)
 
 
