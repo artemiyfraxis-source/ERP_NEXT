@@ -116,7 +116,14 @@ function ProfileEditor({ profile, canEdit, online, onSaved, onBusy, onDirty }: {
   // «Разный» sends «ЛЕВО | ПРАВО»: the same divider an ETK label text uses for the halves of a flag.
   const sample = flag && halves === "split" ? (text.trim() && right.trim() ? joinHalves(text, right) : "") : text;
   useEffect(() => { onDirty(dirty); return () => onDirty(false); }, [dirty, onDirty]);
-  useEffect(() => { setGeometry(profile.geometry); setName(profile.name); setPreview(null); setConfirmed(false); }, [profile]);
+  // Reset the form only when the saved profile really changes: on mount the state already equals the profile, and a
+  // late mount-time reset used to overwrite the first edit made before passive effects were flushed.
+  const syncedProfile = useRef(profile);
+  useEffect(() => {
+    if (syncedProfile.current === profile) return;
+    syncedProfile.current = profile;
+    setGeometry(profile.geometry); setName(profile.name); setPreview(null); setConfirmed(false);
+  }, [profile]);
   useEffect(() => {
     if (!dirty) return;
     const prevent = (event: BeforeUnloadEvent) => event.preventDefault();
