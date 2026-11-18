@@ -101,8 +101,8 @@ function Assert-VnaMeasurementSafe {
     }
     foreach ($info in @($DeviceInfo, $Sweep.DeviceInfo)) {
         for ($sensor = 0; $sensor -lt 2; $sensor++) {
-            if ([math]::Abs([double]$info.VnaTemperatures[$sensor] - [double]$Calibration.VnaTemperatures[$sensor]) -gt 5) {
-                throw 'Температура ВАЦ изменилась более чем на 5 °C; повторите калибровку.'
+            if ([math]::Abs([double]$info.VnaTemperatures[$sensor] - [double]$Calibration.VnaTemperatures[$sensor]) -gt 1) {
+                throw 'Температура ушла больше чем на 1 °C — откалибруйте заново.'
             }
         }
     }
@@ -176,7 +176,7 @@ function Show-VnaInstrumentState {
             foreach ($temperature in $reading.VnaTemperatures) { Assert-VnaTemperature $temperature }
         }
         for ($sensorIndex = 0; $sensorIndex -lt 2; $sensorIndex++) {
-            if ([math]::Abs([double]$info.VnaTemperatures[$sensorIndex] - [double]$Calibration.VnaTemperatures[$sensorIndex]) -gt 5) { throw 'Температура ВАЦ изменилась более чем на 5 °C.' }
+            if ([math]::Abs([double]$info.VnaTemperatures[$sensorIndex] - [double]$Calibration.VnaTemperatures[$sensorIndex]) -gt 1) { throw 'Температура ушла больше чем на 1 °C — откалибруйте заново.' }
         }
         Assert-VnaProfile $Connection
         $null = Assert-VnaCorrection $Connection
@@ -188,11 +188,42 @@ function Show-VnaInstrumentState {
 }
 
 function Set-VnaMeasureScreen {
-    param($Connection, $Limits, [string]$BackupPath)
+    param($Connection, $Limits, [string]$BackupPath, [string]$Preset = $script:VnaDefaultPreset)
     # The operator's screen is saved once, before the first change; «8» puts it back without touching calibration.
     if (-not (Test-Path -LiteralPath $BackupPath)) { Backup-VnaScreen $Connection $BackupPath }
-    Set-VnaScreen $Connection $Limits
+    Set-VnaScreen $Connection $Limits -Preset $Preset
     if ($Limits -and $Limits.Title) { Write-Host "Экран: $($Limits.Title)" }
+}
+
+function Select-VnaPreset {
+    param($Norms)
+    # «6 Экран»: every preset with its fixed parameters; band and assembly norm come from the ETK when the check needs them.
+    $presets = @(Get-VnaScreenPresets)
+    for ($i = 0; $i -lt $presets.Count; $i++) {
+        Write-Host ("{0} {1} — {2}. {3}" -f ($i + 1), $presets[$i].Name, $presets[$i].Purpose, (Format-VnaPresetParameters $presets[$i] $null))
+    }
+    $choice = 0
+    if (-not [int]::TryParse((Read-Host 'Номер экрана').Trim(), [ref]$choice) -or $choice -lt 1 -or $choice -gt $presets.Count) { throw 'Нет такого экрана.' }
+    $preset = $presets[$choice - 1]; $stimulus = $null; $limits = $null
+    if (-not $preset.Stimulus) {
+        $band = (Read-Host 'Полоса по ЭТК, МГц (например 1–6000)').Trim()
+        if ($band -notmatch '^(\d+(?:[.,]\d+)?)\s*[–-]\s*(\d+(?:[.,]\d+)?)$') { throw 'Полоса: два числа в МГц через тире.' }
+        $low = [double]::Parse($Matches[1].Replace(',', '.'), [Globalization.CultureInfo]::InvariantCulture) * 1e6
+        $high = [double]::Parse($Matches[2].Replace(',', '.'), [Globalization.CultureInfo]::InvariantCulture) * 1e6
+        if ($low -lt 1e5 -or $high -gt 18e9 -or $high -le $low) { throw 'Полоса вне диапазона ВАЦ 0,1–18000 МГц.' }
+        $stimulus = [pscustomobject]@{ StartHz = $low; StopHz = $high }
+    }
+    if (@($preset.Traces | Where-Object { $_.Limit -eq 'Assembly' }).Count) {
+        $norm = (Read-Host 'Норма КСВН сборки по ЭТК (Enter — без линии)').Trim()
+        if ($norm) {
+            $value = 0.0
+            if (-not [double]::TryParse($norm.Replace(',', '.'), [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$value) -or $value -le 1) { throw 'Норма КСВН — число больше 1.' }
+            $span = if ($stimulus) { $stimulus } else { $preset.Stimulus }
+            $limits = [pscustomobject]@{ Title = ('КСВН сборки ≤ {0} по ЭТК' -f $norm); Assembly = @([pscustomobject]@{ StartHz = $span.StartHz; StopHz = $span.StopHz; From = $value; To = $value }) }
+        }
+    }
+    $mode = (Read-Host 'Enter — обычный (ПЧ 1 кГц); т — точный отсчёт (ПЧ 300 Гц); у — усреднение 4×').Trim()
+    return [pscustomobject]@{ Preset = $preset; Stimulus = $stimulus; Limits = $limits; Precise = ($mode -match '^т'); Average = ($mode -match '^у') }
 }
 
 function Restore-VnaOperatorState {
@@ -260,6 +291,7 @@ function Start-VnaMeasure {
         if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Запустите обычным двойным щелчком, без прав администратора: S2VNA COM требует обычный сеанс.' }
     }
     [void][IO.Directory]::CreateDirectory($DataDirectory)
+    $script:VnaActivePreset = $script:VnaDefaultPreset; $script:VnaActiveScales = $null
     $lock = $null; $deviceMutex = $null; $deviceLocked = $false; $connection = $null; $backup = $null; $session = $null; $calibration = $null
     $backupPointer = Join-Path $DataDirectory 'operator-backup.json'
     $screenBackup = Join-Path $DataDirectory 'screen-backup.json'
@@ -298,7 +330,7 @@ function Start-VnaMeasure {
         if (-not $norms) { Write-Host 'Нет rf-norms.json рядом с программой: линии допуска на экране не показываются.' -ForegroundColor Yellow }
         $running = $true
         while ($running) {
-            Write-Host "`n1 Проверить прибор и АКМ`n2 Калибровка АКМ`n3 Контроль нагрузкой`n4 Замер переходника`n5 Вернуть настройки оператора`n6 Экран замера: все графики`n7 Отправить сочленения в ERP`n8 Вернуть прежний экран`n0 Выход"
+            Write-Host "`n1 Проверить прибор и АКМ`n2 Калибровка АКМ`n3 Контроль нагрузкой`n4 Замер переходника`n5 Вернуть настройки оператора`n6 Экран: выбрать вариант`n7 Отправить сочленения в ERP`n8 Вернуть прежний экран`n9 Шевеление: запомнить графики (до изгиба)`n10 Записать экраны в файлы S2VNA`n0 Выход"
             try {
                 switch (Read-Host 'Выберите действие') {
                     '1' { Show-VnaInstrumentState $connection $calibration }
@@ -322,6 +354,8 @@ function Start-VnaMeasure {
                                 $backup | ConvertTo-Json | Set-Content -LiteralPath $backupPointer -Encoding UTF8
                             }
                             if (-not (Test-Path -LiteralPath $screenBackup)) { Backup-VnaScreen $connection $screenBackup }
+                            $warmup = Get-VnaWarmupMinutes $connection
+                            if ($null -ne $warmup -and $warmup -lt 40) { Write-Host ('S2VNA работает {0:N0} мин: прогрев ВАЦ по РЭ — 40 мин, АКМ — 15 мин.' -f $warmup) -ForegroundColor Yellow }
                             Set-VnaProfile $connection (Get-VnaScreenLimits $norms $null)
                             $null = Invoke-VnaCalibration $connection
                             $info = Get-VnaDeviceInfo $connection
@@ -340,6 +374,8 @@ function Start-VnaMeasure {
                     '3' {
                         if (-not $calibration) { throw 'Сначала выполните калибровку АКМ.' }
                         $calibration.LoadCheck = 'fail'; $values = @(); $passed = $false
+                        try { Set-VnaMeasureScreen $connection $null $screenBackup 'Проверка калибровки (нагрузка)' }
+                        catch { Write-Host "Экран проверки не поставлен: $($_.Exception.Message)" -ForegroundColor Yellow }
                         try {
                             foreach ($port in 1, 2) {
                                 [void](Read-Host "Подключите LOAD к порту $port на плоскости калибровки; второй порт свободен. Нажмите Enter")
@@ -453,8 +489,14 @@ function Start-VnaMeasure {
                             $backup = [pscustomobject]@{ Path = $backupPath; VnaSerial = $serial }
                             $backup | ConvertTo-Json | Set-Content -LiteralPath $backupPointer -Encoding UTF8
                         }
-                        Set-VnaMeasureScreen $connection (Get-VnaScreenLimits $norms $null) $screenBackup
-                        Write-Host "Экран замера применён и проверен: графиков $(@(Get-VnaScreenTraces).Count), маркеры 1/3/6/12/18 ГГц."
+                        $chosen = Select-VnaPreset $norms
+                        $changed = Set-VnaPresetStimulus $connection $chosen.Preset $chosen.Stimulus -Precise:$chosen.Precise -Average:$chosen.Average
+                        Set-VnaMeasureScreen $connection $chosen.Limits $screenBackup $chosen.Preset.Name
+                        Write-Host "Экран «$($chosen.Preset.Name)»: $(Format-VnaPresetParameters $chosen.Preset $chosen.Stimulus)"
+                        if ($changed -and $calibration) {
+                            $calibration = $null; $connection.Calibrated = $false
+                            Write-Host 'Калибровка не действует — откалибруйте заново (пункт 2).' -ForegroundColor Yellow
+                        }
                     }
                     '7' {
                         if (-not $session) {
@@ -470,8 +512,20 @@ function Start-VnaMeasure {
                         Remove-Item -LiteralPath $screenBackup -ErrorAction Stop
                         Write-Host 'Прежний экран возвращён; калибровка не тронута. Для замера снова выберите 6.'
                     }
+                    '9' {
+                        Save-VnaTraceMemory $connection
+                        Write-Host 'Графики запомнены: изгибайте кабель — память и текущие графики видны вместе.'
+                    }
+                    '10' {
+                        if (-not (Confirm-VnaAction 'Каждый экран будет поставлен со своей полосой; калибровка этого запуска перестанет действовать. Записать файлы?')) { break }
+                        $folder = 'C:\VNA\Экраны'
+                        $band = [pscustomobject]@{ StartHz = 1e6; StopHz = 6e9 }
+                        $files = @(Save-VnaPresetFiles $connection $folder $band 'C:\VNA\S2VNA\State\Autorecall.sta')
+                        $calibration = $null
+                        Write-Host "Записано файлов: $($files.Count) (существующие не перезаписаны). Калибровка не действует — откалибруйте заново."
+                    }
                     '0' { $running = $false }
-                    default { Write-Host 'Выберите пункт 0–8.' }
+                    default { Write-Host 'Выберите пункт 0–10.' }
                 }
             } catch { Write-Host $_.Exception.Message -ForegroundColor Red }
         }
