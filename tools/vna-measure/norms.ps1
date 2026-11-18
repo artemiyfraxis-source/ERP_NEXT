@@ -1,6 +1,6 @@
-﻿# Passport norms for the measurement screen. Reads backend/data/rf-norms.json — the same file and the same choice as
-# backend/app/modules/production/instrument_norms.py: the maker spec of the series, else the MIL-PRF-55339 sheet of the
-# connector pair, else no type norm. Only the item's own norm is drawn: the shop «1,30» is not a requirement (owner 18.11).
+﻿# Passport norms for the measurement screen. Reads backend/data/rf-norms.json — the same file and the same rule as
+# backend/app/modules/production/instrument_norms.py: only the norm ASSIGNED to the item (norm_id of the card's RF data,
+# an id of makers[].groups[], type_norms[] or mil_adapters[]); unassigned — no lines (owner 18.11, no run-time choice).
 # Dot-source; no network or files touched on import.
 
 function Find-VnaNormsFile {
@@ -54,26 +54,26 @@ function Get-VnaItemPorts {
     return [pscustomobject]@{ Series = $series; ForeignOhm = $null }
 }
 
-function Test-VnaSamePorts {
-    param([object[]]$Ports, [string[]]$Series)
-    $sorted = [string[]]@($Ports | ForEach-Object { [string]$_ }); [Array]::Sort($sorted, [StringComparer]::Ordinal)
-    return ($sorted -join '|') -ceq ($Series -join '|')
-}
-
 function Get-VnaItemNorm {
-    param($Norms, [string]$Name, [string]$Model, [string[]]$Series)
-    if (-not $Norms -or -not $Series) { return $null }
-    $text = ("$Name $Model").ToUpperInvariant()
-    $maker = @($Norms.makers | Where-Object { $text -cmatch ('(?<![A-Z0-9])' + [regex]::Escape(([string]$_.match).ToUpperInvariant())) }) | Select-Object -First 1
-    if ($maker) {
-        $group = @($maker.groups | Where-Object { Test-VnaSamePorts $_.ports $Series }) | Select-Object -First 1
-        if ($group) { return [pscustomobject]@{ Reference = [string]$maker.title; Title = [string]$group.title; FromGhz = [double]$group.from_ghz; Segments = @($group.segments)
-            Loss = $(if ($group.PSObject.Properties['loss']) { $group.loss } else { $null }) } }
+    param($Norms, [string]$NormId)
+    # The catalog entry with this id: a maker group, a ТУ/IEC/ESCC type norm or a MIL sheet; $null when absent.
+    if (-not $Norms -or -not $NormId) { return $null }
+    $found = @()
+    foreach ($maker in @($Norms.makers)) {
+        foreach ($group in @($maker.groups | Where-Object { $_ -and $_.PSObject.Properties['id'] -and $_.id -ceq $NormId })) {
+            $found += [pscustomobject]@{ Reference = [string]$maker.title; Entry = $group }
+        }
     }
-    $sheet = @($Norms.mil_adapters | Where-Object { Test-VnaSamePorts $_.ports $Series }) | Select-Object -First 1
-    if ($sheet) { return [pscustomobject]@{ Reference = [string]$sheet.sheet; Title = [string]$sheet.title; FromGhz = [double]$sheet.from_ghz; Segments = @($sheet.segments)
-        Loss = $(if ($sheet.PSObject.Properties['loss']) { $sheet.loss } else { $null }) } }
-    return $null
+    if ($Norms.PSObject.Properties['type_norms']) {
+        foreach ($entry in @($Norms.type_norms | Where-Object { $_ -and $_.id -ceq $NormId })) { $found += [pscustomobject]@{ Reference = [string]$entry.reference; Entry = $entry } }
+    }
+    foreach ($sheet in @($Norms.mil_adapters | Where-Object { $_ -and $_.PSObject.Properties['id'] -and $_.id -ceq $NormId })) {
+        $found += [pscustomobject]@{ Reference = [string]$sheet.sheet; Entry = $sheet }
+    }
+    if ($found.Count -ne 1) { return $null }
+    $entry = $found[0].Entry
+    return [pscustomobject]@{ Reference = $found[0].Reference; Title = [string]$entry.title; FromGhz = [double]$entry.from_ghz; Segments = @($entry.segments)
+        Loss = $(if ($entry.PSObject.Properties['loss']) { $entry.loss } else { $null }) }
 }
 
 function Format-VnaNumber {
@@ -118,18 +118,20 @@ function Get-VnaLossLines {
 }
 
 function Get-VnaScreenLimits {
-    param($Norms, $Item, [object[]]$Interfaces, [double]$BandHz = 18e9, [double]$StartHz = 10e6)
+    param($Norms, $Item, $Rf, [double]$BandHz = 18e9, [double]$StartHz = 10e6)
     # Upper SWR lines for the SWR graphs and the window title. A segment a + b·F is linear in F, so a straight
     # S2VNA limit segment between its ends is exact.
     $number = if ($Item) { "$($Item.inventory_number) · " } else { '' }
     if (-not $Norms) { return [pscustomobject]@{ Swr = @(); Loss = @(); Title = "${number}нормы не загружены (нет rf-norms.json) — линий допуска нет" } }
     $parts = @(); $segments = @(); $loss = [pscustomobject]@{ Lines = @(); Text = 'потери: нормы нет' }
     if ($Item) {
-        $ports = Get-VnaItemPorts ([string]$Item.name) $Interfaces
+        $interfaces = if ($Rf -and $Rf.PSObject.Properties['interfaces']) { @($Rf.interfaces) } else { @() }
+        $normId = if ($Rf -and $Rf.PSObject.Properties['norm_id']) { [string]$Rf.norm_id } else { '' }
+        $ports = Get-VnaItemPorts ([string]$Item.name) $interfaces
         if ($null -ne $ports.ForeignOhm) {
             return [pscustomobject]@{ Swr = @(); Loss = @(); Title = "${number}$(Format-VnaNumber $ports.ForeignOhm) Ом — не для 50 Ом тракта; линий допуска нет" }
         }
-        $norm = Get-VnaItemNorm $Norms ([string]$Item.name) ([string]$Item.doc_designation) $ports.Series
+        $norm = Get-VnaItemNorm $Norms $normId
         if ($norm) {
             $low = $norm.FromGhz; $texts = @()
             foreach ($segment in $norm.Segments) {
@@ -145,22 +147,23 @@ function Get-VnaScreenLimits {
             $loss = Get-VnaLossLines $norm.Loss $norm.Reference $StartHz $BandHz
             if ($texts.Count) { $parts += "КСВН $($texts -join '; ') — $($norm.Reference)" }
             else { $parts += "норма $($norm.Reference) не покрывает полосу замера" }
-        } else { $parts += 'норма на тип не найдена' }
+        } elseif ($normId) { $parts += "норма $normId отсутствует в rf-norms.json — обновите файл рядом с программой" }
+        else { $parts += 'норма не назначена — линий допуска нет' }
     }
     if (-not $Item) { return [pscustomobject]@{ Swr = @(); Loss = @(); Title = '' } }  # no item yet: no norm to draw
     $parts += $loss.Text
     return [pscustomobject]@{ Swr = $segments; Loss = @($loss.Lines); Title = $number + ($parts -join ' · ') }
 }
 
-function Get-VnaItemInterfaces {
+function Get-VnaItemRf {
     param($Session, $Instrument)
-    # The card's RF interfaces (/rf-interfaces); none offline or on a read error — then the name decides.
-    if (-not $Session -or $Session.Offline -or -not $Instrument -or -not $Instrument.id) { return @() }
+    # The card's RF data (/rf-interfaces): interfaces and the assigned norm id; $null offline or on a read error.
+    if (-not $Session -or $Session.Offline -or -not $Instrument -or -not $Instrument.id) { return $null }
     try {
         $response = Invoke-VnaErpRequest -Session $Session -ApiPath "/api/production/instruments/$($Instrument.id)/rf-interfaces"
-        return @($response.rf.interfaces)
+        return $response.rf
     } catch {
-        Write-Host 'ВЧ-интерфейсы карточки не прочитаны; норма выбрана по наименованию.' -ForegroundColor Yellow
-        return @()
+        Write-Host 'ВЧ-данные карточки не прочитаны: назначенная норма неизвестна, линий допуска нет.' -ForegroundColor Yellow
+        return $null
     }
 }

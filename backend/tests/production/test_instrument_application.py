@@ -86,7 +86,7 @@ def test_loss_outside_its_norm_ends_the_range_too():
 def test_without_a_norm_bands_are_quoted_as_measured_and_no_range_is_claimed():
     result = application(summary({0.01: 1.02, 6: 1.15, 12: 1.22, 13.3: 1.49, 18: 1.41}))
     assert not result.judged and result.fit_line == "" and result.limit_ghz is None
-    assert result.range_line == "Норма не установлена"
+    assert result.range_line == "Норма не назначена"
     assert [step.stop_ghz for step in result.bands] == [1, 3, 6, 12, 18]
 
 

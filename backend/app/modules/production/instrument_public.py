@@ -216,7 +216,7 @@ def conclusion(passport: PublicPassport) -> PassportConclusion | None:
     if measured is None or check is None or usage is None:
         return None
     start, stop = measured.band
-    lines = [("Норма", check.norm.brief(start, stop) if check.norm else "не установлена")]
+    lines = [("Норма", check.norm.brief(start, stop) if check.norm else "не назначена")]
     loss = passport.loss_check
     result = "; ".join(filter(None, (check.brief, loss.brief if loss else "")))
     if result:

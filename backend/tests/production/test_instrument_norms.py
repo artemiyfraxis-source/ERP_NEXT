@@ -1,10 +1,10 @@
-"""Passport norms come from backend/data/rf-norms.json: maker spec, else MIL-PRF-55339 sheet, else none."""
+"""Passport norms come from backend/data/rf-norms.json: only the norm ASSIGNED to the item (norm_id), else none."""
 
 from dataclasses import replace
 
 import pytest
 
-from app.modules.production.instrument_norms import (assess, assess_loss, item_spec, loss_uncertainty_for, norm_for, norms_data,
+from app.modules.production.instrument_norms import (assess, assess_loss, item_spec, loss_uncertainty_for, norm_by_id, norm_for, norms_data,
                                                      resolve_vna, uncertainty_for, vna_model)
 from app.modules.production.rf_interfaces import RfDetails, RfInterface
 from tests.production.test_instrument_application import summary
@@ -14,8 +14,8 @@ def port(series, male=True, ohm=50):
     return RfInterface(series, "вилка" if male else "розетка", "штырь" if male else "гнездо", ohm)
 
 
-def pair(a, b, ohm=50):
-    return RfDetails((port(a, ohm=ohm), port(b, False, ohm)), "adapter")
+def pair(a, b, ohm=50, norm=""):
+    return RfDetails((port(a, ohm=ohm), port(b, False, ohm)), "adapter", norm_id=norm)
 
 
 def test_every_number_has_a_source():
@@ -26,30 +26,33 @@ def test_every_number_has_a_source():
     assert "shop_requirement" not in data  # owner 18.11: 1,30 was never a requirement; the item's own norm decides
 
 
-def test_maker_spec_wins_over_mil_sheet():
-    norm = norm_for("Переход коаксиальный ADP1A-35F-35F", "", pair("3.5mm", "3.5mm"))
+def test_assigned_maker_norm():
+    norm = norm_for("Переход коаксиальный ADP1A-35F-35F", "", pair("3.5mm", "3.5mm", norm="adp1a-35"))
     assert norm.maker and norm.limit(18) == pytest.approx(1.06) and norm.limit(21) == pytest.approx(1.10)
-    assert norm_for("ADP1A-NM-NF", "", pair("N", "N")).limit(18) == pytest.approx(1.08)
+    assert norm_for("ADP1A-NM-NF", "", pair("N", "N", norm="adp1a-n")).limit(18) == pytest.approx(1.08)
 
 
 def test_mil_sheet_by_connector_pair_with_formula():
-    norm = norm_for("Переходник SN-321", "", pair("N", "SMA"))
+    norm = norm_for("Переходник SN-321", "", pair("N", "SMA", norm="mil-55339-54b"))
     assert norm.reference == "MIL-PRF-55339/54B" and not norm.maker
     assert norm.limit(12) == pytest.approx(1.12) and norm.limit(18) == pytest.approx(0.83 + 0.023 * 18)
     assert norm.limit(19) is None
-    sma = norm_for("", "", pair("SMA", "SMA"))
+    sma = norm_by_id("mil-55339-55")
     assert sma.limit(0.4) is None and sma.limit(18) == pytest.approx(1.14)
 
 
-@pytest.mark.parametrize("details", [pair("RP-SMA", "SMA"), pair("3.5mm", "3.5mm"), pair("BNC", "BNC", ohm=75), RfDetails()])
-def test_no_norm_without_maker_data_or_sheet(details):
-    assert norm_for("Переходник", "", details) is None
+@pytest.mark.parametrize("details", [pair("SMA", "SMA"), pair("3.5mm", "3.5mm"), pair("N", "N"), RfDetails(),
+                                     replace(pair("SMA", "SMA"), norm_id="no-such-norm")])
+def test_no_norm_unless_assigned_no_run_time_fallback(details):
+    # Even an ADP1A by name or an SMA pair with a MIL sheet gets no norm until one is assigned to the item.
+    assert norm_for("Переход ADP1A-35F-35F", "ADP1A-35F-35F", details) is None
+    assert item_spec("Переход ADP1A-35F-35F", "", details) is None
     assert assess(summary({0.01: 1.02, 18: 1.04}), None).verdict == \
-        "Норма не установлена — заключение о соответствии не выдаётся"
+        "Норма не назначена — заключение о соответствии не выдаётся"
 
 
 def test_pass_fail_and_border_against_the_norm():
-    norm = norm_for("", "", pair("N", "SMA"))
+    norm = norm_by_id("mil-55339-54b")
     passed = assess(summary({0.01: 1.02, 6: 1.05, 18: 1.10}), norm)
     assert passed.status == "pass" and passed.verdict == "Соответствует норме в полосе 0,01–18 ГГц"
     failed = assess(summary({0.01: 1.02, 6: 1.05, 13: 1.30, 18: 1.10}), norm)
@@ -62,7 +65,7 @@ def test_pass_fail_and_border_against_the_norm():
 def test_vswr_within_the_uncertainty_is_a_border_that_asks_for_the_repeat(offset, status):
     # Owner decision 18.11: |КСВН − предел| ≤ U (S50180 ±0,022 to 10 GHz, РЭ табл. 23) triggers the 3-connection repeat;
     # after it the worst connection is judged by simple acceptance.
-    norm, u = norm_for("", "", pair("N", "SMA")), uncertainty_for("S50180")
+    norm, u = norm_by_id("mil-55339-54b"), uncertainty_for("S50180")
     measured = summary({0.01: 1.02, 3: 1.02, 6: round(norm.limit(6) + offset, 4)})
     once = assess(measured, norm, u)
     assert once.status == status
@@ -101,29 +104,29 @@ def test_vna_resolved_from_the_file_name_or_the_only_registry_entry_of_that_mode
 
 
 def test_brief_norm_names_only_the_bands_the_measurement_touches():
-    adp = norm_for("Переход коаксиальный ADP1A-35F-35F", "", pair("3.5mm", "3.5mm"))
+    adp = norm_by_id("adp1a-35")
     assert adp.brief(0.01, 18) == "РЭ Планар ADP1A, табл. 2.6 — КСВН ≤ 1,06 до 20 ГГц; потери ≤ 0,2 дБ до 32 ГГц"
     assert adp.brief(0.01, 26) == "РЭ Планар ADP1A, табл. 2.6 — КСВН ≤ 1,06 до 20 ГГц; ≤ 1,1 до 26,5 ГГц; потери ≤ 0,2 дБ до 32 ГГц"
-    mil = norm_for("", "", pair("SMA", "SMA"))
+    mil = norm_by_id("mil-55339-55")
     assert mil.brief(0.01, 18) == ("MIL-PRF-55339/55 — КСВН ≤ 1,05 + 0,005·F в полосе 0,5–27 ГГц; "
                                    "потери ≤ 0,03·√F дБ в полосе 0,5–18 ГГц")
     assert "http" not in adp.brief(0.01, 18) + mil.brief(0.01, 18)
 
 
 def test_item_spec_tag_over_datasheet_and_mil_default():
-    tag = item_spec("Переход коаксиальный ADP1A-35F-35F", "", pair("3.5mm", "3.5mm"))
+    tag = item_spec("Переход коаксиальный ADP1A-35F-35F", "", pair("3.5mm", "3.5mm", norm="adp1a-35"))
     assert (tag.temp_min_c, tag.temp_max_c, tag.mating_resource) == (-60, 85, 3000)
     assert tag.temperature_line == "−60…+85 °C" and "бирка на изделии" in tag.temp_source
-    series = item_spec("ADP1A-35M-35F", "", pair("3.5mm", "3.5mm"))
+    series = item_spec("ADP1A-35M-35F", "", pair("3.5mm", "3.5mm", norm="adp1a-35"))
     assert (series.temp_max_c, series.mating_resource) == (110, 3000)
-    stock = item_spec("Переходник S-322", "S-322", pair("SMA", "SMA"))
+    stock = item_spec("Переходник S-322", "S-322", pair("SMA", "SMA", norm="mil-55339-55"))
     assert (stock.temp_min_c, stock.temp_max_c, stock.mating_resource) == (-65, 165, 500)
     assert stock.temp_source == stock.mating_source == "MIL-PRF-55339/55"
     assert item_spec("Переходник", "", pair("RP-SMA", "SMA")) is None
 
 
 def test_instrument_card_resource_wins_when_present():
-    details = pair("SMA", "SMA")
+    details = pair("SMA", "SMA", norm="mil-55339-55")
     object.__setattr__(details, "mating_resource", 800)  # PR #913 stores it on RfDetails
     spec = item_spec("Переходник S-322", "", details)
     assert (spec.mating_resource, spec.mating_source, spec.temp_max_c) == (800, "карточка СИ", 165)
@@ -132,7 +135,8 @@ def test_instrument_card_resource_wins_when_present():
 
 def test_every_vswr_norm_has_a_loss_norm_with_source():
     data = norms_data()
-    for holder in [*data["mil_adapters"], *(group for maker in data["makers"] for group in maker["groups"])]:
+    type_norms = [entry for entry in data["type_norms"] if entry["level"] != "iec"]  # IEC 61169-8 sets no loss
+    for holder in [*data["mil_adapters"], *type_norms, *(group for maker in data["makers"] for group in maker["groups"])]:
         loss = holder["loss"]
         assert loss["source"] and (loss.get("segments") or loss.get("points"))
     s50180 = next(entry for entry in data["vna"] if entry["model"] == "S50180")
@@ -142,36 +146,35 @@ def test_every_vswr_norm_has_a_loss_norm_with_source():
 
 
 def test_loss_norm_follows_the_vswr_source():
-    sma = norm_for("", "", pair("SMA", "SMA")).loss
+    sma = norm_by_id("mil-55339-55").loss
     assert sma.reference == "MIL-PRF-55339/55"
     assert sma.limit(0.4) is None and sma.limit(9) == pytest.approx(0.03 * 3)
     assert sma.limit(18) == pytest.approx(0.03 * 18 ** 0.5) and sma.limit(25) == pytest.approx(0.05 * 25 ** 0.5)
     assert "0,03·√F дБ в полосе 0,5–18 ГГц" in sma.line and "F — частота, ГГц" in sma.line
-    maker = norm_for("Переход ADP1A-35F-35F", "", pair("3.5mm", "3.5mm")).loss
+    maker = norm_by_id("adp1a-35").loss
     assert maker.reference == "РЭ Планар ADP1A, табл. 2.6"
     assert maker.limit(0.01) == pytest.approx(0.20) and maker.limit(32) == pytest.approx(0.20)
-    assert norm_for("ADP1A-NM-NF", "", pair("N", "N")).loss.reference == "РЭ Планар ADP1A, табл. 2.5"
-    assert norm_for("ADP1A-NM-35F", "", pair("N", "3.5mm")).loss.limit(18) == pytest.approx(0.15)
+    assert norm_by_id("adp1a-n").loss.reference == "РЭ Планар ADP1A, табл. 2.5"
+    assert norm_by_id("adp1a-n-35").loss.limit(18) == pytest.approx(0.15)
 
 
-@pytest.mark.parametrize("ports,ghz,limit", [(("N", "SMA"), 9, 0.18), (("SMA", "TNC"), 6, 0.06 * 6 ** 0.5),
-                                             (("N", "N"), 9, 0.15), (("TNC", "TNC"), 3, 0.12 * 3 ** 0.5),
-                                             (("BNC", "SMA"), 3, 0.2), (("BNC", "BNC"), 3, 0.2), (("BNC", "N"), 3, 0.35)])
-def test_sheets_tested_at_one_frequency_are_judged_only_there(ports, ghz, limit):
-    loss = norm_for("", "", pair(*ports)).loss
+@pytest.mark.parametrize("sheet,ghz,limit", [("54b", 9, 0.18), ("40b-43b", 6, 0.06 * 6 ** 0.5), ("5a", 9, 0.15),
+                                             ("33a", 3, 0.12 * 3 ** 0.5), ("44c", 3, 0.2), ("13b", 3, 0.2), ("20a", 3, 0.35)])
+def test_sheets_tested_at_one_frequency_are_judged_only_there(sheet, ghz, limit):
+    loss = norm_by_id(f"mil-55339-{sheet}").loss
     assert not loss.segments and [(point.ghz, point.max_db) for point in loss.points] == [(ghz, pytest.approx(limit))]
     assert loss.limit(ghz) is None  # no banded limit: only the test frequency
     assert f"на частоте испытания {ghz} ГГц" in loss.limit_text
 
 
 def test_point_norm_texts():
-    assert norm_for("", "", pair("N", "SMA")).loss.limit_text == "вносимые потери ≤ 0,18 дБ на частоте испытания 9 ГГц"
-    assert norm_for("", "", pair("SMA", "TNC")).loss.limit_text == \
+    assert norm_by_id("mil-55339-54b").loss.limit_text == "вносимые потери ≤ 0,18 дБ на частоте испытания 9 ГГц"
+    assert norm_by_id("mil-55339-40b-43b").loss.limit_text == \
         "вносимые потери ≤ 0,06·√F = 0,147 дБ на частоте испытания 6 ГГц; F — частота, ГГц"
 
 
 def test_point_norm_uses_the_nearest_measured_point_inside_the_span():
-    point = norm_for("", "", pair("N", "SMA")).loss
+    point = norm_by_id("mil-55339-54b").loss
     result = assess_loss(summary({0.01: 1.02, 8.99: 1.03, 9.2: 1.04}, {0.01: 0.01, 8.99: 0.10, 9.2: 0.5}), point)
     assert result.status == "pass" and result.at_ghz == pytest.approx(8.99) and result.limit == pytest.approx(0.18)
     outside = assess_loss(summary({0.01: 1.02, 6: 1.04}), point)
@@ -180,7 +183,7 @@ def test_point_norm_uses_the_nearest_measured_point_inside_the_span():
 
 def test_loss_limit_within_twice_the_vna_uncertainty_is_not_judged():
     # /55 at 9 GHz: 0,03·√9 = 0,09 dB ≤ 2 · 0,1 dB (S50180, РЭ ч. 1 табл. 23): the VNA cannot resolve it — reported, not judged.
-    loss, uncertainty = norm_for("", "", pair("SMA", "SMA")).loss, loss_uncertainty_for("S50180")
+    loss, uncertainty = norm_by_id("mil-55339-55").loss, loss_uncertainty_for("S50180")
     assert uncertainty.at(9) == pytest.approx(0.1) and uncertainty.at(18) == pytest.approx(0.1)
     vswr = {0.01: 1.02, 9: 1.04}
 
@@ -193,7 +196,7 @@ def test_loss_limit_within_twice_the_vna_uncertainty_is_not_judged():
     assert judged(0.05).short == "норма ниже точности ВАЦ — не оценивается"
     # The VNA model unknown (±0,05 dB): 0,09 dB ≤ 0,1 dB — still not judged.
     assert judged(0.5, None).status == "below_accuracy"
-    assert assess_loss(summary(vswr), None).short == "норма не установлена"
+    assert assess_loss(summary(vswr), None).short == "норма не назначена"
 
 
 def test_resolvable_loss_follows_the_same_border_rule():

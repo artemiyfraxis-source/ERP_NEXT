@@ -98,14 +98,14 @@ class Application:
 
     @property
     def fit_line(self) -> str:
-        """«Пригоден до 18 ГГц»; "" without a norm (the verdict says «норма не установлена») or when it fails at once."""
+        """«Пригоден до 18 ГГц»; "" without a norm (the verdict says «норма не назначена») or when it fails at once."""
         return f"Пригоден до {ghz_text(self.fit_ghz)} ГГц" if self.judged and self.fit_ghz else ""
 
     @property
     def range_line(self) -> str:
         if not self.judged:
             below = self.check is not None and self.check.status == "below_accuracy"
-            return "Норма ниже точности ВАЦ" if below else "Норма не установлена"
+            return "Норма ниже точности ВАЦ" if below else "Норма не назначена"
         if self.limit_ghz:
             return f"Применять до {number(self.limit_ghz)} ГГц"
         statuses = {a.status for a in (self.check, self.loss_check) if a is not None}
