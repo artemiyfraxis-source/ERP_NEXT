@@ -33,7 +33,7 @@ def test_next_control_is_calendar_year_and_leap_day_is_clamped():
 
 def test_serial_connectors_can_supply_russian_title_without_rf_record():
     projected = public_passport(replace(instrument(), name="Переходник"), RfDetails(), None)
-    assert projected.name == "Переходник SMA розетка – SMA розетка"
+    assert projected.name == "Переход коаксиальный SMA розетка – SMA розетка"
 
 
 def test_unrepresentable_next_control_date_does_not_break_public_passport():
@@ -48,7 +48,8 @@ def test_unrepresentable_next_control_date_does_not_break_public_passport():
 def test_working_band_labels_fit_with_left_margin(label_format, dpi):
     data = instrument_content("СИ.034", "Переходник", "ADP-ss-26-034", accessory=True,
         connector_line="SMA розетка – SMA розетка", parameters_line="Частотный диапазон 0–12 ГГц",
-        loss_line="КСВН ≤ 1,25 · потери ≤ 0,20 дБ",
+        loss_line="КСВН ≤ 1,25 · потери ≤ 0,20 дБ", mating_resource=500, temp_min_c=-65, temp_max_c=165,
+        bands=(("1", "1,05", "0,05"), ("3", "1,10", "0,10"), ("6", "1,15", "0,10"), ("12", "1,25", "0,20")),
         measurement_date="Замер 16.11.26", impedance_warning="75 Ом — не для 50 Ом тракта",
         measured_on=date(2026, 11, 16), next_control=date(2027, 11, 16))
     width, height = FORMATS[label_format]

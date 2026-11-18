@@ -69,8 +69,10 @@ def sample_content(kind: str) -> LabelContent:
         from datetime import date
         from .labels.template import instrument_content
         return instrument_content(
-            "СИ.034", "Переходник SMA female–SMA female S-322", "S-322.1", date(2027, 11, 17), model="S-322",
-            manufacturer="Gsm-repiteri", type_line="Переходник", model_line="S-322",
+            "СИ.034", "Переход коаксиальный SMA female–SMA female S-322", "S-322.1", date(2027, 11, 17), model="S-322",
+            manufacturer="Gsm-repiteri", type_line="Переход коаксиальный", model_line="S-322",
+            bands=(("1", "1,05", "0,05"), ("3", "1,10", "0,10"), ("6", "1,15", "0,10"), ("12", "1,25", "0,50")),
+            mating_resource=500, temp_min_c=-55, temp_max_c=125,
             connector_line="SMA розетка – SMA розетка", range_line="Частотный диапазон 0–12 ГГц",
             table=("до ГГц  1     3     6     12", "КСВН ≤  1,05  1,10  1,15  1,25", "дБ ≤    0,05  0,10  0,10  0,50"),
             table_long=("Частота до, ГГц  1     3     6     12", "КСВН ≤           1,05  1,10  1,15  1,25",

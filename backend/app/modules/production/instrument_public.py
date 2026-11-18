@@ -9,12 +9,14 @@ from urllib.parse import urlsplit
 from .instrument_characterization import Application, Characterization, application, connector_line, impedance_warning, number
 from .instrument_norms import (Assessment, ItemSpec, Uncertainty, assess, item_spec, norm_for, norms_data, uncertainty_for,
                                vna_model)
-from .rf_interfaces import RfDetails, ROLE_LABELS, parse_interfaces
+from .rf_interfaces import RfDetails, ROLE_LABELS, is_adapter_name, parse_interfaces
 from .traceability import InstrumentKind, MeasurementInstrument
 from .vna_files import VnaTrace, _decode
 
 CONTROL_INTERVAL_MONTHS = int(norms_data()["recheck"]["months"])
 RECHECK_MATINGS = int(norms_data()["recheck"]["matings"])
+# Owner 18.11: the general director approves the conclusion by hand; no name is stored.
+APPROVER_ROLE = "Генеральный директор"
 
 
 @dataclass(frozen=True)
@@ -135,8 +137,8 @@ def _name(item: MeasurementInstrument, rf: RfDetails) -> str:
     if not ports and connectors == connector_line(item.name, "", RfDetails()):
         return item.name
     kind = ROLE_LABELS.get(rf.role, "") if rf.role != "unknown" else ""
-    if not kind and ("переходник" in item.name.lower() or len(parse_interfaces(item.name)) == 2):
-        kind = "Переходник"
+    if not kind and (is_adapter_name(item.name) or len(parse_interfaces(item.name)) == 2):
+        kind = ROLE_LABELS["adapter"]
     # The card's document designation is private. Reuse only a short model already in the public name.
     model = re.search(r"\b([A-ZА-Я]{1,6}-\d{1,8}[A-Za-zА-Яа-я0-9-]*)\s*$", item.name)
     return " ".join(filter(None, (kind, connectors))) + (", " + model[1] if model else "")
@@ -202,7 +204,7 @@ def conclusion(passport: PublicPassport) -> PassportConclusion | None:
               ("Погрешность измерения КСВН", passport.uncertainty.line if passport.uncertainty
                else "не определена — модель ВАЦ не указана в файле замера"),
               ("Правило принятия решения", norms_data()["decision_rule"]),
-              ("Метод", f"{method['code']} «{method['title']}», {method['edition']}")]
+              ("Метод", f"{method['code']} «{method['title']}»")]
     warning = ""
     if usage.limit_ghz is None:
         warning = "КСВН больше требования цеха уже на первой ступени — не использовать в тракте 50 Ом"
@@ -210,7 +212,7 @@ def conclusion(passport: PublicPassport) -> PassportConclusion | None:
         warning = f"Выше {number(usage.limit_ghz)} ГГц КСВН больше требования цеха — не использовать в тракте 50 Ом"
     return PassportConclusion("Заключение (контроль характеристик, не поверка)", check.verdict, warning, tuple(lines),
                               ("Результаты относятся только к данному изделию.",
-                               "Утвердил: ______________________ (подпись, ФИО, дата)"))
+                               f"Утвердил: {APPROVER_ROLE} ______________ (подпись)   «____» __________ 20___ г."))
 
 
 def control_line(passport: PublicPassport) -> str:

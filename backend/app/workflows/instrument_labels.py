@@ -13,10 +13,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.modules.production.api import production_uow_factory
 from app.modules.production.infrastructure import SqlAlchemyInstrumentFileRepository, SqlAlchemyInstrumentRepository
 from app.modules.production.instrument_serials import article_of
-from app.modules.production.instrument_characterization import application, characterization, connector_line, impedance_warning
+from app.modules.production.instrument_characterization import (
+    application, characterization, connector_line, impedance_warning, number,
+)
+from app.modules.production.instrument_norms import item_spec
 from app.modules.production.instrument_passport import passport_pdf
 from app.modules.production.rf_infrastructure import RfRepository
-from app.modules.production.rf_interfaces import RfDetails
+from app.modules.production.rf_interfaces import ROLE_LABELS, RfDetails, is_adapter_name
 from app.modules.production.traceability import InstrumentKind
 from app.modules.warehouse.infrastructure import SqlAlchemyLabelSettings
 from app.modules.warehouse.label_jobs import LabelAgentRow, add_job
@@ -100,10 +103,26 @@ def type_line(name: str) -> str:
     return " ".join(words).strip(" ,–—-")
 
 
+def _limit(value: float | None) -> str:
+    return f"{value:.2f}".replace(".", ",") if value is not None else ">2"
+
+
+def band_cells(steps) -> tuple[tuple[str, str, str], ...]:
+    """The label grid's cells per band: (up to, GHz; VSWR ≤; loss ≤, dB) — the round limits the passport quotes."""
+    return tuple((number(step.stop_ghz), _limit(step.vswr_round), _limit(step.loss_round)) for step in steps.bands)
+
+
+def kind_line(name: str, rf: RfDetails) -> str:
+    """The label's kind: an adapter reads «Переход коаксиальный» (ГОСТ term, owner 18.11) whatever its old name says."""
+    return ROLE_LABELS["adapter"] if rf.role == "adapter" or is_adapter_name(name) else type_line(name)
+
+
 def _content(item, session=None):
     rf = RfRepository(session).get(item.id) if session is not None else RfDetails()
     measured = _characterization(session, item.id) if session is not None else None
     steps = application(measured, tuple(port.series for port in rf.interfaces)) if measured else None
+    # The passport's spec: the card's own mating resource, else the maker's/MIL sheet's; the count waits for PR #913.
+    spec = item_spec(item.name, item.doc_designation or "", rf)
     return instrument_content(
         item.inventory_number, item.name, item.serial_number,
         item.verification_due.date() if item.verification_due else None,
@@ -116,11 +135,14 @@ def _content(item, session=None):
         range_line=steps.range_line if steps else "Не измерен",
         table=steps.table_lines() if steps else ("", "", ""),
         table_long=steps.table_lines(long=True) if steps else ("", "", ""),
-        type_line=type_line(item.name), model_line=item.doc_designation or article_of(item) or "",
+        bands=band_cells(steps) if steps else (),
+        type_line=kind_line(item.name, rf), model_line=item.doc_designation or article_of(item) or "",
         measured_on=measured.measured_on if measured else None,
         next_control=_next_control(measured.measured_on) if measured else None,
         measurement_date=measured.measurement_date if measured else "",
         impedance_warning=impedance_warning(rf), card_url=public_passport_url(item.id),
+        mating_resource=spec.mating_resource if spec else None, mating_count=None,
+        temp_min_c=spec.temp_min_c if spec else None, temp_max_c=spec.temp_max_c if spec else None,
     )
 
 
