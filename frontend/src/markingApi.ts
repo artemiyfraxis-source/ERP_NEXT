@@ -22,7 +22,8 @@ export type MarkingSource = { task_id: string; operation_id: string; version: nu
 export interface MarkingRequest { profile_id: string; profile_version: number; source: MarkingSource; selected: string[] }
 export interface MarkingDimensions { width_mm: number; height_mm: number; orientation: string; dpi: number }
 export interface MarkingRaster extends MarkingDimensions { png_b64: string; sha256: string }
-export interface MarkingLabel { key: string; task_id: string; text: string; material: string; quantity: number; serial: number | null; png_b64: string; sha256: string }
+/** `halves` — the text of each text zone: «X1 | X2» in the ETK prints X1 on the left half of a flag and X2 on the right. */
+export interface MarkingLabel { key: string; task_id: string; text: string; material: string; quantity: number; serial: number | null; png_b64: string; sha256: string; halves?: string[] }
 export interface MarkingPreview extends MarkingDimensions {
   manifest_hash: string; profile_id: string; profile_version: number; binding_version: number;
   source_snapshot: unknown; labels: MarkingLabel[]; total: number;
@@ -39,8 +40,8 @@ export const markingApi = {
   preview: (body: MarkingRequest) => post<MarkingPreview>("/preview", body),
   enqueue: (body: MarkingBatchRequest) => post<MarkingBatch>("/batches", body),
   batch: (id: string, signal?: AbortSignal) => api<MarkingBatch>(`${root}/batches/${encodeURIComponent(id)}`, { signal }),
-  profile: (profile: MarkingProfile, geometry: MarkingGeometry, calibrated: boolean) => api<MarkingProfile>(`${root}/profiles/${encodeURIComponent(profile.id)}`, {
-    method: "PUT", body: JSON.stringify({ version: profile.version, geometry, calibrated }),
+  profile: (profile: MarkingProfile, geometry: MarkingGeometry, calibrated: boolean, name = profile.name) => api<MarkingProfile>(`${root}/profiles/${encodeURIComponent(profile.id)}`, {
+    method: "PUT", body: JSON.stringify({ version: profile.version, geometry, calibrated, name }),
   }),
   bind: (equipmentId: string, body: MarkingBinding) => api<MarkingBinding>(`${root}/machines/${encodeURIComponent(equipmentId)}/binding`, {
     method: "PUT", body: JSON.stringify(body),
@@ -52,6 +53,15 @@ export const markingApi = {
   resolve: (batchId: string, jobId: string, outcome: "spooled" | "failed", reason: string) =>
     post<MarkingBatch>(`/batches/${encodeURIComponent(batchId)}/jobs/${encodeURIComponent(jobId)}/resolve`, { outcome, reason }),
 };
+
+/** Divider of flag halves in a label text, as the server reads it (marking_render.halves). */
+export const MARKING_HALF = "|";
+/** Two halves → «ЛЕВО | ПРАВО»; one text → as is (the same on both halves). */
+export const joinHalves = (left: string, right: string) => `${left.trim()} ${MARKING_HALF} ${right.trim()}`;
+export function splitHalves(text: string): [string, string] | null {
+  const parts = text.split(MARKING_HALF).map((part) => part.trim());
+  return parts.length === 2 ? [parts[0], parts[1]] : null;
+}
 
 export function boundPrinter(catalog: MarkingCatalog, machine: MarkingMachine | undefined) {
   return catalog.printers.find((printer) => printer.machine_id === machine?.binding?.machine_id && printer.name === machine.binding.printer && printer.kind === "gdi_png");

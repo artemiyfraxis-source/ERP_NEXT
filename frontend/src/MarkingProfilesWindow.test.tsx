@@ -22,7 +22,7 @@ beforeEach(() => {
   vi.spyOn(markingApi, "machines").mockResolvedValue(structuredClone(catalog));
   vi.spyOn(markingApi, "enqueue").mockResolvedValue(structuredClone(batch));
   vi.spyOn(markingApi, "batch").mockResolvedValue(structuredClone(batch));
-  vi.spyOn(markingApi, "profile").mockImplementation(async (current, geometry, calibrated) => ({ ...current, geometry, calibrated, version: current.version + 1 }));
+  vi.spyOn(markingApi, "profile").mockImplementation(async (current, geometry, calibrated, name) => ({ ...current, name: name ?? current.name, geometry, calibrated, version: current.version + 1 }));
   vi.spyOn(markingApi, "bind").mockImplementation(async (_id, body) => ({ ...body, version: body.version + 1 }));
   vi.spyOn(markingApi, "calibration").mockResolvedValue({ png_b64: png, sha256: "calibration", width_mm: 92.5, height_mm: 20, orientation: "landscape", dpi: 300 });
 });
@@ -36,12 +36,12 @@ it("preserves exact 92.5 mm geometry, resets calibration on edit and requires a 
   expect(screen.getByLabelText("Ширина этикетки, мм")).toHaveValue(92.5);
   fireEvent.change(screen.getByLabelText("Смещение по ширине, мм"), { target: { value: "0.2" } });
   expect(screen.getByRole("button", { name: "Пробная печать" })).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "Сохранить размеры" }));
-  await waitFor(() => expect(markingApi.profile).toHaveBeenCalledWith(profile, { ...profile.geometry, offset_x_mm: 0.2 }, false));
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить профиль" }));
+  await waitFor(() => expect(markingApi.profile).toHaveBeenCalledWith(profile, { ...profile.geometry, offset_x_mm: 0.2 }, false, profile.name));
   fireEvent.click(await screen.findByRole("checkbox", { name: /Размер, положение текста и подача проверены/ }));
   fireEvent.click(screen.getByRole("button", { name: "Подтвердить калибровку" }));
   await waitFor(() => expect(markingApi.profile).toHaveBeenCalledTimes(2));
-  expect(vi.mocked(markingApi.profile).mock.calls[1]).toEqual([expect.objectContaining({ version: 8 }), { ...profile.geometry, offset_x_mm: 0.2 }, true]);
+  expect(vi.mocked(markingApi.profile).mock.calls[1]).toEqual([expect.objectContaining({ version: 8 }), { ...profile.geometry, offset_x_mm: 0.2 }, true, profile.name]);
 });
 
 it("keeps calibration print retries idempotent and does not confirm calibration automatically", async () => {
@@ -133,11 +133,11 @@ it("retains edited geometry and the original version when a concurrent save is r
   vi.mocked(markingApi.profile).mockRejectedValueOnce(new ApiError("Профиль изменился — обновите данные", 409));
   openProfiles();
   fireEvent.change(await screen.findByLabelText("Смещение по ширине, мм"), { target: { value: "0.2" } });
-  fireEvent.click(screen.getByRole("button", { name: "Сохранить размеры" }));
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить профиль" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Профиль изменился");
   expect(screen.getByLabelText("Смещение по ширине, мм")).toHaveValue(0.2);
   expect(screen.getByRole("button", { name: "Закрыть" })).toBeDisabled();
-  expect(markingApi.profile).toHaveBeenCalledExactlyOnceWith(profile, { ...profile.geometry, offset_x_mm: 0.2 }, false);
+  expect(markingApi.profile).toHaveBeenCalledExactlyOnceWith(profile, { ...profile.geometry, offset_x_mm: 0.2 }, false, profile.name);
 });
 
 it("reports overflowing trial text without a raster or a production enqueue", async () => {
@@ -158,3 +158,36 @@ it("does not send a trial print if its recovery key cannot be persisted", async 
   expect(markingApi.calibration).not.toHaveBeenCalled();
 });
 
+
+it("renames a calibrated profile without dropping its calibration", async () => {
+  openProfiles();
+  const field = await screen.findByLabelText("Название профиля");
+  expect(field).toHaveValue("Флажок 92,5 × 20");
+  fireEvent.change(field, { target: { value: "  Флажок  100 × 20 " } });
+  expect(screen.getByText("Откалиброван")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Пробная печать" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить профиль" }));
+  await waitFor(() => expect(markingApi.profile).toHaveBeenCalledExactlyOnceWith(profile, profile.geometry, true, "Флажок 100 × 20"));
+  expect(await screen.findByText("Профиль сохранён")).toBeVisible();
+  expect(within(screen.getByLabelText("Материал / профиль")).getByRole("option", { name: /Флажок 100 × 20/ })).toBeInTheDocument();
+});
+
+it("prints different trial text on the two halves of a flag", async () => {
+  openProfiles();
+  fireEvent.change(await screen.findByLabelText("Текст на половинах"), { target: { value: "split" } });
+  fireEvent.change(screen.getByLabelText("Левая половина"), { target: { value: "X1" } });
+  fireEvent.change(screen.getByLabelText("Правая половина"), { target: { value: "КБ1-001" } });
+  fireEvent.click(screen.getByRole("button", { name: "Показать пробную этикетку" }));
+  await screen.findByRole("img", { name: "Пробная этикетка: X1 | КБ1-001" });
+  expect(markingApi.calibration).toHaveBeenCalledExactlyOnceWith(profile, "X1 | КБ1-001", false, undefined);
+  fireEvent.change(screen.getByLabelText("Правая половина"), { target: { value: " " } });
+  expect(screen.getByRole("button", { name: "Показать пробную этикетку" })).toBeDisabled();
+});
+
+it("offers no halves choice for a single-zone label", async () => {
+  vi.mocked(markingApi.machines).mockResolvedValue({ ...catalog, machines: [{ ...catalog.machines[0], profiles: [{ ...profile,
+    geometry: { ...profile.geometry, zones: [profile.geometry.zones[0]] } }] }] });
+  openProfiles();
+  await screen.findByLabelText("Текст пробной этикетки");
+  expect(screen.queryByLabelText("Текст на половинах")).toBeNull();
+});

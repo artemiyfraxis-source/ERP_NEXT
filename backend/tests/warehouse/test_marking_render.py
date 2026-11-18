@@ -3,7 +3,7 @@ from io import BytesIO
 from PIL import Image, ImageChops
 import pytest
 
-from app.modules.warehouse.marking_render import Geometry, dots, presets, render
+from app.modules.warehouse.marking_render import Geometry, dots, halves, presets, render
 
 
 @pytest.mark.parametrize("inventory,name,raw", presets())
@@ -60,3 +60,37 @@ def test_width_feed_rotates_into_the_driver_feed_axis():
     turned, dimensions = render("ABC", geometry.model_copy(update={"feed_direction": "width"}))
     assert (dimensions["width_mm"], dimensions["height_mm"]) == (20, 92.5)
     assert Image.open(BytesIO(turned)).tobytes() == Image.open(BytesIO(plain)).rotate(-90, expand=True).tobytes()
+
+
+def _zone_crops(png, geometry):
+    image = Image.open(BytesIO(png))
+    crops = []
+    for zone in geometry.zones:
+        crop = image.crop((dots(zone.x), dots(zone.y), dots(zone.x + zone.width), dots(zone.y + zone.height))).convert("L")
+        crops.append(crop.crop(ImageChops.invert(crop).getbbox()))
+    return crops
+
+
+def test_flag_halves_carry_their_own_text_with_one_font_size():
+    geometry = Geometry.model_validate(presets()[-1][2])
+    assert halves("X1 | КБ1-001", 2) == ["X1", "КБ1-001"] and halves("X1", 2) == ["X1", "X1"]
+    left, right = _zone_crops(render("X1 | X1", geometry)[0], geometry)
+    assert ImageChops.difference(left, right).getbbox() is None
+    split = _zone_crops(render("X1 | X2", geometry)[0], geometry)
+    same = _zone_crops(render("X1", geometry)[0], geometry)
+    assert ImageChops.difference(split[0], same[0]).getbbox() is None
+    assert ImageChops.difference(*split).getbbox() is not None
+    # A long right half shrinks both halves: the flag reads as one label.
+    long_left, long_right = _zone_crops(render("X1 | КБ1-001 ЛЕВЫЙ ВЫВОД", geometry)[0], geometry)
+    assert long_left.size[1] <= same[0].size[1]
+
+
+@pytest.mark.parametrize("text,zones", [("А | Б | В", 2), ("А |", 2), ("| Б", 2), ("А | Б", 1)])
+def test_bad_halves_are_rejected(text, zones):
+    with pytest.raises(ValueError):
+        halves(text, zones)
+
+
+def test_single_zone_profile_refuses_different_halves():
+    with pytest.raises(ValueError, match="двумя текстовыми зонами"):
+        render("А | Б", Geometry.model_validate(presets()[0][2]))

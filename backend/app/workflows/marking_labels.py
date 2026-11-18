@@ -25,7 +25,7 @@ from app.modules.techcards.infrastructure import ProjectTechcardRow, SqlAlchemyT
 from app.modules.warehouse.devices import PrinterRow, printer_online
 from app.modules.warehouse.label_jobs import LabelJobRow, add_marking_job, expire_marking
 from app.modules.warehouse.marking_profiles import MarkingBatchRow, MarkingBindingRow, MarkingProfileRow
-from app.modules.warehouse.marking_render import Geometry, render
+from app.modules.warehouse.marking_render import Geometry, halves, render
 from app.modules.warehouse.scan_agents import LIVE_FOR, ScanAgentRow
 from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
@@ -135,6 +135,26 @@ class ProfileInput(BaseModel):
     version: int = Field(ge=1, strict=True)
     calibrated: bool
     geometry: Geometry
+    # The material name the operator picks («Флажок 100×20»); absent — unchanged.
+    name: str | None = Field(default=None, max_length=200)
+
+
+def profile_name(session, profile, requested):
+    """A renamed profile keeps its calibration; the name is unique per machine (equipment or inventory number)."""
+    if requested is None:
+        return profile.name
+    name = " ".join(requested.split())
+    if not name:
+        raise ValueError("Укажите название профиля")
+    if len(name) > 80:
+        raise ValueError("Название профиля — не длиннее 80 знаков")
+    owner = MarkingProfileRow.inventory_number == profile.inventory_number
+    if profile.equipment_id:
+        owner = owner | (MarkingProfileRow.equipment_id == profile.equipment_id)
+    taken = session.scalars(select(MarkingProfileRow.name).where(owner, MarkingProfileRow.id != profile.id))
+    if any(other.casefold() == name.casefold() for other in taken):
+        raise ValueError(f"У этого станка уже есть профиль «{name}»")
+    return name
 
 
 @router.put("/profiles/{profile_id}")
@@ -146,12 +166,14 @@ def save_profile(profile_id: UUID, payload: ProfileInput, principal: ConfigUser,
                 raise KeyError("Профиль не найден")
             geometry = payload.geometry.model_dump()
             calibrated = payload.calibrated and geometry == profile.geometry
+            name = profile_name(uow.session, profile, payload.name)
+            renamed = {"name": name, "previous_name": profile.name} if name != profile.name else {}
             changed = uow.session.execute(update(MarkingProfileRow).where(MarkingProfileRow.id == profile_id,
-                MarkingProfileRow.version == payload.version).values(geometry=geometry, calibrated=calibrated,
+                MarkingProfileRow.version == payload.version).values(name=name, geometry=geometry, calibrated=calibrated,
                                                                     version=payload.version + 1))
             if changed.rowcount != 1:
                 raise ConcurrentProductionUpdate(STALE)
-            audit(uow, principal.actor, now, profile_id, "profile_saved", version=payload.version + 1, calibrated=calibrated)
+            audit(uow, principal.actor, now, profile_id, "profile_saved", version=payload.version + 1, calibrated=calibrated, **renamed)
             uow.session.refresh(profile)
             result = profile_view(profile)
             uow.commit()
@@ -342,7 +364,8 @@ def build_preview(payload, principal, uow, now):
     for row in rows:
         if row["text"] not in cache:
             png, dimensions = render(row["text"], geometry)
-            cache[row["text"]] = {"png_b64": base64.b64encode(png).decode("ascii"), "sha256": hashlib.sha256(png).hexdigest()}
+            cache[row["text"]] = {"png_b64": base64.b64encode(png).decode("ascii"), "sha256": hashlib.sha256(png).hexdigest(),
+                                  "halves": halves(row["text"], len(geometry.zones))}
         rendered.append({**row, **cache[row["text"]]})
     result = {"profile_id": str(profile.id), "profile_version": profile.version, "binding_version": binding.version,
         "profile_snapshot": {"equipment_id": str(profile.equipment_id), "geometry": profile.geometry},

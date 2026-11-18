@@ -361,3 +361,41 @@ def test_calibration_preview_can_be_used_before_binding_the_printer(marking):
     path = BASE + "/profiles/" + payload["profile_id"] + "/calibration"
     assert client.post(path, json={"version": 1, "print": False}).status_code == 200
     assert client.post(path, json={"version": 1, "print": True, "idempotency_key": "sample"}).status_code == 409
+
+
+def test_flag_mark_prints_different_text_on_each_half(marking):
+    client, factory, payload, task, card, *_ = marking
+    with factory() as uow:
+        stored = uow.session.get(ProjectTechcardRow, card.id)
+        document = deepcopy(stored.document)
+        document["operations"][0]["fields"] = {"marks": [{"text": "X1 | КБ-{№:3}", "qty": "1", "material": "Флажок"},
+            {"text": "АБВ", "qty": "1", "material": "Флажок"}]}
+        stored.document = document
+        uow.commit()
+    shown = preview(marking)
+    assert [row["halves"] for row in shown["labels"]][:2] == [["X1", "КБ-001"], ["X1", "КБ-002"]]
+    assert shown["labels"][-1]["halves"] == ["АБВ", "АБВ"]
+    assert shown["labels"][0]["text"] == "X1 | КБ-001"
+
+
+def test_profile_rename_keeps_calibration_and_is_unique_per_machine(marking):
+    client, factory, payload, _task, _card, equipment_id, _ = marking
+    principal = app.dependency_overrides[authenticated_principal]()
+    app.dependency_overrides[authenticated_principal] = lambda: replace(principal, permissions={**principal.permissions, "erpref": "edit"})
+    with factory() as uow:
+        uow.session.add(MarkingProfileRow(id=uuid4(), equipment_id=equipment_id, inventory_number="ОБ.101", name="92,5×20",
+                                          version=1, calibrated=False, geometry=presets()[-1][2]))
+        uow.commit()
+    path = BASE + "/profiles/" + payload["profile_id"]
+    body = {"version": 1, "calibrated": True, "geometry": presets()[-1][2]}
+    for name, error in (("  ", "Укажите название профиля"), ("92,5×20", "уже есть профиль"), ("Я" * 81, "80 знаков")):
+        response = client.put(path, json={**body, "name": name})
+        assert response.status_code == 422 and error in response.json()["detail"], response.text
+    response = client.put(path, json={**body, "name": " Флажок  100×20 "})
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == "Флажок 100×20" and response.json()["calibrated"] is True
+    assert client.put(path, json={**body, "version": 2}).json()["name"] == "Флажок 100×20"
+    with factory() as uow:
+        event = uow.session.scalar(select(AuditEventRow).where(AuditEventRow.event_type == "production.marking_profile_saved")
+                                   .order_by(AuditEventRow.occurred_at))
+        assert event.details["previous_name"] == "Флажок"

@@ -75,7 +75,7 @@ export function MarkTable({ enabled, onEnabled, hint, rows, onChange, targets, k
         return <tr key={index}>
           <td className="num">{n}</td>
           <td><input aria-label={`Что маркируем ${n}`} list={`${id}-targets`} value={row.target} title={row.target || undefined} placeholder="жгут, разъём, провод" onChange={(event) => set(index, { target: event.target.value })} /></td>
-          <td><AutoTextarea aria-label={`Надпись ${n}`} value={row.text} placeholder="как в КД" onChange={(text) => set(index, { text })}
+          <td><AutoTextarea aria-label={`Надпись ${n}`} value={row.text} placeholder="как в КД" title="Флажок с разным текстом на половинах — через «|»: X1 | X2" onChange={(text) => set(index, { text })}
               ref={(node) => { if (node) textBoxes.current.set(index, node); else textBoxes.current.delete(index); }}
               onSelect={(event) => carets.current.set(index, event.currentTarget.selectionStart)} />
             {/* «№ изделия»: у надписи с номером — разрядность и пример всегда; у остальных кнопка видна в строке с фокусом. */}
