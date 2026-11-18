@@ -4150,6 +4150,8 @@ export function makeGen(D: GenData, S: GenState) {
         ...(S.coax.lengthBasis ? { lengthBasis: S.coax.lengthBasis, finishedLength: custNumber(S.coax.finishedLength),
           lPlusA: custNumber(S.coax.lPlusA), lPlusB: custNumber(S.coax.lPlusB) } : {}),
         ...(S.coax.fakraCutStrip ? { fakraCutStrip: true } : {}),
+        // Свод инструкций 708К. (17.11): the finished-length recipe gets the short common cards (etk_builder.coax_short_steps).
+        ...(S.coax.lengthBasis === "finished" ? { shortCards: true } : {}),
         ...(S.coax.finishedLengthFrom ? { finishedLengthFrom: S.coax.finishedLengthFrom } : {}),
         ...(S.coax.markMaterial ? { markMaterial: S.coax.markMaterial, markProtect: !!S.coax.markProtect } : {}),
         ...(S.coax.marks ? { marks: S.coax.marks } : {}),

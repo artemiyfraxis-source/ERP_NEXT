@@ -17,7 +17,7 @@ from .domain.route import (
     Block, Route, RouteError, RouteOp, chain_route, derive_route, parse_route, route_json, route_levels, route_totals,
 )
 from .etk_marking import apply_marking, mark_length, mark_kind, TUBE_KINDS
-from .etk_heat_shrink import apply_requirements
+from .etk_heat_shrink import PLACEHOLDER as SHRINK_PLACEHOLDER, apply_requirements
 from .operation_cards import FORMER_PAIR_CODES, OperationCardTemplate, resolve_template_id
 from .project_cards import CUSTOM_OP
 
@@ -2185,12 +2185,7 @@ def _resolve_card(
         # Оснастка операции не определена (владелец 25.10, FAKRA 708К): строк оснастки нет — ни карты, ни подсказок шагов.
         return {"name": card.name, "safety": card.safety, "defects": _combined_defects(card.code, card.defects, cards_by_code or {}),
                 "steps": steps, "tooling": []}
-    step_text =" ".join(step["text"] for step in steps)
-    for pattern, name, inventory in STEP_TOOLS:
-        if pattern.search(step_text) and not any(pattern.search(tool["name"]) for tool in tooling):
-            number = sum(1 for tool in tooling if tool["section"] == "Инструмент") + 1
-            tooling.append({"section": "Инструмент", "number": str(number), "name": name, "inventory_number": inventory,
-                            "program": "", "parameters": "", "norm": "", "unit": ""})
+    _add_step_tools(tooling, steps)
     defects = _combined_defects(card.code, card.defects, cards_by_code or {})
     return {"name": card.name, "safety": card.safety, "defects": defects, "steps": steps, "tooling": tooling}
 
@@ -2339,6 +2334,314 @@ def _coax_recipe_steps(op: Mapping[str, Any], config: Mapping[str, Any]) -> list
     return steps
 
 
+
+# Short common coax cards (свод инструкций 708К., 17.11.2026). `coax.shortCards` — the generator writes it for the
+# finished-length recipe; saved 708К. inputs get it from docs/data/etk-short-common-1118. With it the common operations
+# (cut with strip, label print, TUT cut and put-on, label install, TUT shrink, VSWR) carry one short resolved action
+# list instead of recipe lines prepended to the generic card: exactly one control, whose tolerance holds the resolved
+# numbers. The card still supplies its name, safety, defects and tooling; unknown data stays visibly «не задано».
+# Without the flag nothing changes (other projects keep their cards).
+SHORT_CARDS = "shortCards"
+_SIDE_RU = {"A": "А", "B": "В"}
+_STO_MARKING = "СТО ФРАК-001-2026, раздел 4.6"
+_JOINT_OVERLAP = ("нахлёст — по КД; при отсутствии в КД трубка перекрывает оголённые жилы и хвостовик "
+                  "(ГОСТ 23592-96, п. 4.4.7)")
+
+
+def _step(kind: str, text: str, tolerance: str = "") -> dict[str, str]:
+    return {"kind": kind, "text": text, "tolerance": tolerance}
+
+
+def _pieces(count: Decimal) -> str:
+    return _count_text(int(count), "отрезок", "отрезка", "отрезков")
+
+
+def _cables_word(count: int) -> str:
+    return _count_text(count, "кабель", "кабеля", "кабелей")
+
+
+def _mark_place(mark: Mapping[str, Any]) -> str:
+    place = str(mark.get("place") or "")
+    return "середина кабеля" if place == "middle" else f"у разъёма {_SIDE_RU.get(place, place or '?')}"
+
+
+def _mark_label(mark: Mapping[str, Any]) -> str:
+    text = str(mark.get("text") or "")
+    return "надпись по листу задания" if _MARK_SERIAL_TOKEN.search(text) else f"«{text}»"
+
+
+def _mark_distances(marks: Sequence[Mapping[str, Any]]) -> str:
+    """«не ближе 100 мм от разъёма» for the end labels; several minima — each one."""
+    values = sorted({_format(mark.get("minMm", 100)) for mark in marks if mark.get("place") in _SIDE_RU})
+    return "; ".join(f"не ближе {value} мм от разъёма" for value in values)
+
+
+def _short_marks(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    marks = [mark for mark in _list(op.get("marks")) if isinstance(mark, Mapping)]
+    return marks or [mark for mark in _list(_coax(config).get("marks")) if isinstance(mark, Mapping)]
+
+
+def _tube_material(config: Mapping[str, Any], protective: bool) -> str:
+    """The article first: a BOM name may be a whole shop listing."""
+    coax = _coax(config)
+    return str(coax.get("tutArt") or coax.get("tutName") or ("прозрачная ТУТ" if protective else "ТУТ")).strip()
+
+
+def _tube_per_assembly(groups: Sequence[Mapping[str, Any]]) -> str:
+    """«2 отрезка по 35 мм (концевые), 1 отрезок по 55 мм (центральные)» — per assembly."""
+    return ", ".join(f"{_pieces(group['units'])} по {_format(group['length'])} мм "
+                     f"({'центральные' if group['place'] == 'middle' else 'концевые'})" for group in groups)
+
+
+def _plain_tube(op: Mapping[str, Any], config: Mapping[str, Any]) -> tuple[str, str]:
+    """(«2 отрезка по 20 мм», «ТУТ 6/3: 20 мм ×2») of a plain coax TUT; no length — said so."""
+    length = _format(_coax(config).get("tutLength"))
+    units = _coax_units(op)
+    material = _tube_material(config, False)
+    if length == "0":
+        return f"{_pieces(units)}, длина не задана", f"{material}: длина не задана"
+    return f"{_pieces(units)} по {length} мм", f"{material}: {length} мм ×{_format(units)}"
+
+
+def _strip_tolerance(fields: Mapping[str, Any], side: str) -> tuple[str, str]:
+    """(tolerance of one stripped side, blocking note or ""). Program boundaries win; legacy L1–L3 without a tolerance
+    and missing sizes are said as they are, never «по КД»."""
+    sizes = fields.get("coax" if side == "A" else "coaxB")
+    label = _SIDE_RU[side]
+    missing = (f"{label}: размеры не заданы",
+               f"Сторона {label}: размеры разделки не заданы — согласовать с технологом до запуска.")
+    if not isinstance(sizes, Mapping):
+        return missing
+    program = sizes.get("stripProgram") if isinstance(sizes.get("stripProgram"), Mapping) else None
+    if program is not None:
+        boundaries = [item for item in _list(program.get("boundaries")) if isinstance(item, Mapping)]
+        if boundaries:
+            values = "; ".join(f"{str(item.get('label') or '').lower().replace(' / жила', '')} {item.get('value')} "
+                               f"{item.get('tolerance') or ''}".strip() for item in boundaries)
+            return f"{label}: {values} мм от торца жилы", ""
+        note = str(program.get("note") or "Программа от торца не рассчитана.").strip()
+        note = note[:1].lower() + note[1:]
+        return (f"{label}: программа от торца не рассчитана",
+                f"Сторона {label}: {note} Согласовать разделку до запуска.")
+    values = "; ".join(f"{name} {sizes[key]}" for key, name in (("l1", "L1"), ("l2", "L2"), ("l3", "L3")) if sizes.get(key))
+    return (f"{label}: {values} мм, допуск не задан", "") if values else missing
+
+
+def _short_cut(op: Mapping[str, Any], config: Mapping[str, Any], fields: Mapping[str, Any]) -> list[dict[str, str]]:
+    coax = _coax(config)
+    sides = [side for side in _list(op.get("stripSides")) if side in _SIDE_RU]
+    cut = re.sub(r"\s*мм$", "", str(fields.get("lengthKd") or "")).strip()
+    cut_text = f"длину реза Lрез = {cut} мм" if cut else "длину реза (не задана — согласовать)"
+    if fields.get("finishedLength") not in (None, ""):
+        allowances = ", ".join(f"{_SIDE_RU[side]} {_format(fields.get(f'lPlus{side}'))}" for side in ("A", "B")
+                               if fields.get(f"lPlus{side}") not in (None, ""))
+        cut_text += (f" (L = {_format(fields['finishedLength'])} мм, допуск изделия "
+                     f"{fields.get('drawingTolerance') or 'не задан'}" + (f"; припуски {allowances} мм" if allowances else "") + ")")
+    names = " и ".join(_SIDE_RU[side] for side in sides)
+    strip = f" и разделку {'стороны' if len(sides) == 1 else 'сторон'} {names} по эскизу операции" if sides else ""
+    cable = str(coax.get("cableArt") or coax.get("cableName") or "").strip()
+    steps = [_step("Операция", f"Заправить кабель{' ' + cable if cable else ''} в станок, задать {cut_text}{strip}; "
+                               "прижим роликов и глубину ножей выставить без смятия кабеля и повреждения слоёв.")]
+    tolerances = [f"Lрез {cut} мм {fields.get('cutTolerance') or 'допуск не задан'}" if cut else "Lрез не задана"]
+    for side in sides:
+        tolerance, note = _strip_tolerance(fields, side)
+        tolerances.append(tolerance)
+        kind = str((coax.get(f"side{side}") or {}).get("kind") or "")
+        if kind == "hfm":
+            note = (f"Сторона {_SIDE_RU[side]} (HFM): размеры — конечная геометрия после отворота оплётки; размер обрезки "
+                    "прямой оплётки до отворота не задан — согласовать программу станка. Опорную гильзу обжать после "
+                    "полной разделки отдельной операцией.")
+        elif kind == "bulkhead":
+            note = (f"Сторона {_SIDE_RU[side]} (Amphenol): 1,0 мм — участок открытого диэлектрика; фольгу сохранить "
+                    "внутри корпуса, оплётку — снаружи насечки. ТТК, гильзу и изолирующий диск надеть следующей операцией.")
+        if note:
+            steps.append(_step("Операция", note))
+    steps.append(_step("Операция", "Выполнить 2–3 пробных реза" + (" с разделкой." if sides else ".")))
+    steps.append(_step("Контроль", "Проверить пробные образцы: длину реза — линейкой или рулеткой"
+                       + (", ступени разделки — штангенциркулем, диаметр диэлектрика — по параметрам кабеля; под лупой — "
+                          "без надрезов жилы, повреждений диэлектрика и замыкания экрана" if sides else "")
+                       + ". Повторять через каждые 50 шт., после смены бухты и регулировки ножей.", "; ".join(tolerances)))
+    cables = int(_coax_cables(config))
+    per = f" ({_cables_word(cables)} на сборку)" if cables > 1 else ""
+    steps.append(_step("Операция", f"Запустить партию{per}; " + ("разделанные концы уложить" if sides else "отрезки уложить")
+                       + " без перегибов и смятия, соблюдая радиус изгиба кабеля."))
+    return steps
+
+
+def _short_print(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, str]] | None:
+    marks = _short_marks(op, config)
+    if not marks:
+        return None
+    texts = "; ".join(f"{_mark_label(mark)} — {_mark_place(mark)}" for mark in marks)
+    return [
+        _step("Операция", f"Заправить этикеточную ленту в маркиратор, задать тексты этикеток: {texts}; количество — по "
+                          "результату операции. Номер программы и параметры печати — не задано."),
+        _step("Операция", "Выполнить тестовую печать, затем напечатать партию и разложить этикетки по текстам и местам "
+                          "установки."),
+        _step("Контроль", "Проверить на тестовой печати и в партии тексты, регистр и количество: надпись читается, без "
+                          "смазывания, пропусков и обрезанных знаков, не стирается лёгким протиранием.", _STO_MARKING),
+    ]
+
+
+def _short_label(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, str]] | None:
+    marks = _short_marks(op, config)
+    if not marks:
+        return None
+    places = "; ".join(f"{_mark_label(mark)} — {_mark_place(mark)}"
+                       + (f", не ближе {_format(mark.get('minMm', 100))} мм от разъёма" if mark.get("place") in _SIDE_RU else "")
+                       for mark in marks)
+    protect = bool(_coax(config).get("markProtect"))
+    steps = [_step("Операция", "Наклеить этикетки на чистую сухую оболочку ровной обёрткой, без складок и отслоения "
+                               f"краёв: {places}.")]
+    if protect:
+        steps.append(_step("Операция", "Надвинуть предварительно надетую прозрачную ТУТ поверх каждой этикетки без "
+                                       "смещения и смятия; усадка — отдельной операцией."))
+    distance = _mark_distances(marks)
+    steps.append(_step("Контроль", "Проверить текст, сторону, место и читаемость каждой этикетки"
+                       + (" через прозрачную ТУТ" if protect else "") + ".",
+                       "; ".join(part for part in (distance, _STO_MARKING) if part)))
+    return steps
+
+
+def _short_tut_cut(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, str]]:
+    groups = _coax_protective_tubes(op, config)
+    material = _tube_material(config, bool(groups))
+    steps = [_step("Операция", f"Заправить {material} в автомат мерной резки; зазор подающих роликов — без сплющивания "
+                               "трубки. Выполнить 2–3 пробных реза.")]
+    if groups:
+        # production.cutting recognises exactly these batch lines (grouping across batch sizes): keep their wording.
+        quantity, named = _part_quantity(config), str(_coax(config).get("tutName") or _coax(config).get("tutArt") or "ТУТ")
+        steps.extend(_step("Операция", f"Нарезать {named}: {_coax_tube_text(group, quantity)}.") for group in groups)
+        lengths = "; ".join(f"{_format(group['length'])} мм ({'центральные' if group['place'] == 'middle' else 'концевые'})"
+                            for group in groups)
+    else:
+        pieces, _ = _plain_tube(op, config)
+        steps.append(_step("Операция", f"Нарезать партию: {pieces} на сборку."))
+        length = _format(_coax(config).get("tutLength"))
+        lengths = f"{length} мм" if length != "0" else "длина не задана"
+    steps.append(_step("Контроль", "Проверить длину пробных и выборочно — отрезков партии; рез ровный, перпендикулярный, "
+                                   "без заусенцев, надрывов и сплющивания.", f"{lengths}; допуск длины не задан"))
+    steps.append(_step("Операция", "Уложить отрезки по длинам в чистую тару, вдали от нагрева и солнечных лучей."))
+    return steps
+
+
+def _short_tut_on(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, str]]:
+    groups = _coax_protective_tubes(op, config)
+    material = _tube_material(config, bool(groups))
+    if groups:
+        per_assembly = _tube_per_assembly(groups)
+        return [
+            _step("Операция", f"Надеть {material} на кабель до монтажа деталей концов: {per_assembly} на сборку."),
+            _step("Операция", "Сдвинуть трубки к середине кабеля, вне зон монтажа и нагрева."),
+            _step("Контроль", "Проверить количество и длины трубок; надрывов и проколов нет.",
+                  f"{material}: {per_assembly} на сборку"),
+        ]
+    pieces, tolerance = _plain_tube(op, config)
+    return [
+        _step("Операция", f"Надеть {material} до монтажа разъёмов: {pieces} на сборку."),
+        _step("Операция", "Отвести трубки от зон пайки и монтажа разъёмов, чтобы они не нагревались на следующих операциях."),
+        _step("Контроль", "Проверить количество, типоразмер и порядок трубок; надрывов и проколов нет.", tolerance),
+    ]
+
+
+def _short_heat(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, str]]:
+    # The first step is the material requirement (etk_heat_shrink replaces the placeholder); never a heat-gun setting.
+    groups = _coax_protective_tubes(op, config)
+    if groups:
+        return [
+            _step("Операция", SHRINK_PLACEHOLDER),
+            _step("Операция", f"Расположить прозрачную ТУТ по центру каждой этикетки ({_tube_per_assembly(groups)} на "
+                              "сборку) и усадить равномерно горячим воздухом через рефлектор, не сдвигая этикетки и без "
+                              "местного перегрева."),
+            _step("Контроль", "После охлаждения проверить: этикетка закрыта полностью и читается, ТУТ плотно облегает "
+                              "кабель; смещения, складок, пузырей и прожогов нет.",
+                  _mark_distances(_short_marks(op, config))),
+        ]
+    material = _tube_material(config, False)
+    return [
+        _step("Операция", SHRINK_PLACEHOLDER),
+        _step("Операция", f"Надвинуть {material} на соединение с нахлёстом на корпус разъёма и оболочку кабеля и "
+                          "равномерно усадить горячим воздухом через рефлектор без смещения и местного перегрева."),
+        _step("Контроль", "После охлаждения проверить покрытие и прилегание: открытых участков соединения, складок, "
+                          "пузырей и прожогов нет; трубка не проворачивается.", _JOINT_OVERLAP),
+    ]
+
+
+def _short_vswr(config: Mapping[str, Any], fields: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Band and limit resolved once; component provenance stays in `coaxVswrNorm`, not in the shop-floor sentence.
+    No limit — the result is undetermined and ОТК decides, never a default norm."""
+    norm = fields.get("coaxVswrNorm") if isinstance(fields.get("coaxVswrNorm"), Mapping) else {}
+    band = _list(norm.get("bandMhz")) + [None, None]
+    start = _format(band[0] if band[0] is not None else 1, 2)
+    limit = ""
+    if not norm:
+        band_text, reason = "измерения (не определена — нет данных справочников)", "нет данных справочников"
+    else:
+        band_text = (f"{start}…{_format(band[1], 2)} МГц" if band[1]
+                     else f"от {start} МГц (верхняя граница не определена — нет «Частота до» у разъёмов и кабеля)")
+        reason = str(norm.get("reason") or "нет данных разъёмов")
+        if norm.get("source") == "customer" and norm.get("vswrMax") is not None:
+            basis = str(norm.get("basis") or "").strip()
+            limit = f"≤ {_format(norm['vswrMax'], 3)} (норма заказчика" + (f", {basis}" if basis else "") + ")"
+        elif norm.get("status") == "ok" and norm.get("vswrMax") is not None:
+            limit = f"≤ {_format(norm['vswrMax'], 2)}"
+    has_b = bool(str((_coax(config).get("sideB") or {}).get("article") or "").strip())
+    scope = _vswr_scope(fields.get("coaxVswrControl"))
+    channels = int(_coax_cables(config))
+    check = ("Измерить КСВН (S11)" + (f" каждого из {channels} каналов сборки" if channels > 1 else "")
+             + (f"; {scope}" if scope else "") + "; сравнить наибольшее значение в полосе с нормой.")
+    if not limit:
+        check += f" Норма не определена — {reason}: результат не определён, решение принимает ОТК."
+    return [
+        _step("Операция", f"Прогреть векторный анализатор цепей не менее 30 мин, задать полосу {band_text} и выполнить "
+                          "калибровку OSL на конце измерительного кабеля."),
+        _step("Операция", "Подключить сторону А к измерительному кабелю, на " + ("сторону В" if has_b else "второй конец")
+              + " установить согласованную нагрузку 50 Ом; резьбовые разъёмы затянуть динамометрическим ключом с моментом "
+              "по документации производителя, защёлкивающиеся — до фиксации."),
+        _step("Контроль", check, limit or "решение ОТК"),
+        _step("Операция", "Записать наибольший КСВН в графу «Факт/БРАК»; сборку с превышением нормы отложить в изолятор брака."),
+    ]
+
+
+def coax_short_steps(op: Mapping[str, Any], config: Mapping[str, Any], fields: Mapping[str, Any]) -> list[dict[str, str]] | None:
+    """The short resolved steps of a common coax operation, numbered; None — the card with its recipe lines, as before."""
+    coax = _coax(config)
+    if not coax.get(SHORT_CARDS) or op.get("side"):
+        return None
+    operation_type = str(op.get("type") or "")
+    tape = op.get("markMaterial") == "tape"
+    # Printed marking tubes (markMaterial «tube») keep their own print/put-on/shrink cards.
+    plain = bool(op.get("protective")) or coax.get("markMaterial") != "tube"
+    steps: list[dict[str, str]] | None = None
+    if operation_type == "coaxCut":
+        steps = _short_cut(op, config, fields)
+    elif operation_type == "coaxCutTut" and tape:
+        steps = _short_print(op, config)
+    elif operation_type == "coaxCutTut" and plain:
+        steps = _short_tut_cut(op, config)
+    elif operation_type == "coaxInsTut" and (tape or op.get("opKey") == "coaxInsLabel"):
+        steps = _short_label(op, config)
+    elif operation_type == "coaxInsTut" and plain:
+        steps = _short_tut_on(op, config)
+    elif operation_type == "coaxHeat" and plain:
+        steps = _short_heat(op, config)
+    elif operation_type == "coaxVswr":
+        steps = _short_vswr(config, fields)
+    if steps is None:
+        return None
+    return [{"number": str(index), **step} for index, step in enumerate(steps, start=1)]
+
+
+def _add_step_tools(tooling: list[dict[str, Any]], steps: Sequence[Mapping[str, Any]]) -> None:
+    """Measuring tools a step names but the card does not list (STEP_TOOLS)."""
+    step_text = " ".join(str(step.get("text") or "") for step in steps)
+    for pattern, name, inventory in STEP_TOOLS:
+        if pattern.search(step_text) and not any(pattern.search(tool["name"]) for tool in tooling):
+            number = sum(1 for tool in tooling if tool["section"] == "Инструмент") + 1
+            tooling.append({"section": "Инструмент", "number": str(number), "name": name, "inventory_number": inventory,
+                            "program": "", "parameters": "", "norm": "", "unit": ""})
+
+
 def _typed_operation(
     op: Mapping[str, Any], config: Mapping[str, Any], *, position: int, code: str,
     card: OperationCardTemplate | None, cards_by_code: Mapping[str, OperationCardTemplate],
@@ -2392,7 +2695,13 @@ def _typed_operation(
                                "inventory_number": "", "program": "", "parameters": "", "norm": "не задано", "unit": ""}
                 tooling.append(label_stock)
             label_stock["name"] = "Лента Vell VL-S641, 18 мм — расходник маркиратора ZCUT-RT660 (ОБ.102)"
-        extra = _coax_recipe_steps(op, config)
+        short = coax_short_steps(op, config, fields)
+        extra = [] if short is not None else _coax_recipe_steps(op, config)
+        if short is not None:
+            # Свод инструкций 708К. (17.11): one short resolved list replaces the card steps, not prepended to them.
+            operation["card"]["steps"] = short
+            if not fields.get("noTooling"):
+                _add_step_tools(operation["card"]["tooling"], short)
         if extra:
             operation["card"]["steps"] = [{"number": str(i), "kind": "Операция", "text": text, "tolerance": ""}
                                           for i, text in enumerate(extra, start=1)] + operation["card"]["steps"]
