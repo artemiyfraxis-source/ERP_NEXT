@@ -200,8 +200,8 @@ Describe 'S2VNA offline lifecycle' {
         Set-VnaProfile $connection
         Assert-VnaScreen @(Get-VnaTraces $connection)
         $connection.Traces.Count | Should Be 4
-        $connection.Traces[0].PDIVision | Should Be 0.1
-        $connection.Traces[1].PDIVision | Should Be 0.3
+        $connection.Traces[0].PDIVision | Should Be 0.02
+        $connection.Traces[1].PDIVision | Should Be 0.05
         Restore-VnaState $connection $backup
         ($connection.Traces | ConvertTo-Json -Compress) | Should Be $original
         { Assert-VnaScreen @(Get-VnaTraces $connection) } | Should Throw
@@ -242,7 +242,7 @@ Describe 'S2VNA offline lifecycle' {
 Describe 'S2VNA measurement screen over mocked COM' {
     BeforeEach {
         $script:chartConnection = New-TestS2Connection
-        $script:VnaActivePreset = $script:VnaDefaultPreset
+        $script:VnaActivePreset = $script:VnaDefaultPreset; $script:VnaActiveScales = $null
         $script:com = @{ 'CALCulate(1).PARameter(1).COUNt' = 4; 'DISPlay.SPLit' = 2; 'DISPlay.WINDow(1).SPLit' = 8
             'DISPlay.WINDow(1).TITLe.DATA' = 'operator'; 'DISPlay.WINDow(1).TITLe.STATe' = $true }
         foreach ($index in 1..4) {
@@ -312,6 +312,9 @@ Describe 'S2VNA measurement screen over mocked COM' {
         $script:com['DISPlay.WINDow(1).TITLe.DATA'] | Should Be 'СИ.035 · КСВН ≤ 1,05 + 0,005·F'
         $script:com['DISPlay.WINDow(1).TITLe.STATe'] | Should Be $true
         $script:com['DISPlay.WINDow(1).TRACe(10).Y.SCALe.PDIVision'] | Should Be 5
+        # SWR top = max(norm × 1,15; 1,20): the highest line here is 1,30 → 1,495 → 1,50; adapter loss 0…−0,5 dB.
+        $script:com['DISPlay.WINDow(1).TRACe(1).Y.SCALe.PDIVision'] | Should Be 0.05
+        $script:com['DISPlay.WINDow(1).TRACe(2).Y.SCALe.PDIVision'] | Should Be 0.05
         @($script:comWrites | Where-Object { $_ -match 'SENSe|SOURce|CORRection|TRIGger|INITiate|MMEMory|CKIT' }).Count | Should Be 0
     }
     It 'shows the calibration check as two big SWR graphs with the 1,06 line and hidden transmission traces' {
@@ -328,6 +331,7 @@ Describe 'S2VNA measurement screen over mocked COM' {
         Set-VnaScreen $script:chartConnection $null -Preset 'Проверка кабелей (шевеление)'
         ((1..4 | ForEach-Object { $script:com["T$_.FORMat"] }) -join ',') | Should Be 'SWR,SWR,MLOG,PHAS'
         ((1..4 | ForEach-Object { $script:com["DISPlay.WINDow(1).TRACe($_).MEMory.STATe"] }) -join ',') | Should Be 'True,True,True,True'
+        ((1..4 | ForEach-Object { $script:com["DISPlay.WINDow(1).TRACe($_).Y.SCALe.PDIVision"] }) -join ',') | Should Be '0.01,0.01,0.03,36'
         Save-VnaTraceMemory $script:chartConnection
         @($script:comWrites | Where-Object { $_ -like '*MATH.MEMorize' }).Count | Should Be 4
     }

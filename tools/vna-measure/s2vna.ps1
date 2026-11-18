@@ -272,6 +272,7 @@ $script:VnaPresetPoints = 1601
 $script:VnaPresetPowerDbm = 0
 $script:VnaDefaultPreset = 'ОТК — переход'
 if (-not (Get-Variable -Name VnaActivePreset -Scope Script -ErrorAction SilentlyContinue)) { $script:VnaActivePreset = $script:VnaDefaultPreset }
+if (-not (Get-Variable -Name VnaActiveScales -Scope Script -ErrorAction SilentlyContinue)) { $script:VnaActiveScales = $null }
 
 function New-VnaPresetTrace {
     param([string]$Parameter, [string]$Format, $Scale, [string]$Limit, [switch]$Hidden, [switch]$Memory, [switch]$AutoScale)
@@ -280,30 +281,34 @@ function New-VnaPresetTrace {
 }
 
 function Get-VnaScreenPresets {
-    $swr = [ordered]@{ PDIVision = 0.1; RLEVel = 1.0; RPOSition = 0 }
-    $fine = [ordered]@{ PDIVision = 0.01; RLEVel = 1.0; RPOSition = 0 }       # 1,00–1,10
-    $loss = [ordered]@{ PDIVision = 0.3; RLEVel = 0.0; RPOSition = 10 }
-    $overview = [ordered]@{ PDIVision = 5.0; RLEVel = 0.0; RPOSition = 10 }   # 0…−50 dB
-    $smith = [ordered]@{ PDIVision = 1.0 }
-    $phase = [ordered]@{ PDIVision = 36.0; RLEVel = 0.0; RPOSition = 5 }
+    # Every window has an explicit scale (owner 18.11): nothing is left over from the previous screen. 10 divisions.
+    $swrNorm = [ordered]@{ NormTop = $true; PDIVision = 0.02; RLEVel = 1.0; RPOSition = 0 }  # 1,00…max(норма×1,15; 1,20)
+    $swrAssembly = [ordered]@{ PDIVision = 0.05; RLEVel = 1.0; RPOSition = 0 }               # 1,00–1,50
+    $fine = [ordered]@{ PDIVision = 0.01; RLEVel = 1.0; RPOSition = 0 }                      # 1,00–1,10
+    $lossAdapter = [ordered]@{ PDIVision = 0.05; RLEVel = 0.0; RPOSition = 10 }              # 0…−0,5 дБ
+    $lossAssembly = [ordered]@{ PDIVision = 0.3; RLEVel = 0.0; RPOSition = 10 }              # 0…−3 дБ
+    $lossFlex = [ordered]@{ PDIVision = 0.03; RLEVel = 0.0; RPOSition = 10 }                 # 0…−0,3 дБ
+    $overview = [ordered]@{ PDIVision = 5.0; RLEVel = 0.0; RPOSition = 10 }                  # −50…0 дБ
+    $smith = [ordered]@{ PDIVision = 1.0 }                                                   # Вольперт-Смит, полная шкала 1
+    $phase = [ordered]@{ PDIVision = 36.0; RLEVel = 0.0; RPOSition = 5 }                     # ±180°
     $full = [pscustomobject]@{ StartHz = 10e6; StopHz = 18e9 }
     $presets = @(
         [pscustomobject]@{ Name = 'ОТК — переход'; Purpose = 'замер переходника (пункт 4)'; Measuring = $true; Stimulus = $full; Split = 8
-            Traces = @((New-VnaPresetTrace S11 SWR $swr Swr), (New-VnaPresetTrace S21 MLOG $loss Loss),
-                       (New-VnaPresetTrace S12 MLOG $loss Loss), (New-VnaPresetTrace S22 SWR $swr Swr)) }
+            Traces = @((New-VnaPresetTrace S11 SWR $swrNorm Swr), (New-VnaPresetTrace S21 MLOG $lossAdapter Loss),
+                       (New-VnaPresetTrace S12 MLOG $lossAdapter Loss), (New-VnaPresetTrace S22 SWR $swrNorm Swr)) }
         [pscustomobject]@{ Name = 'ОТК — кабельная сборка'; Purpose = 'сборка с двух сторон, полоса и норма по ЭТК'; Measuring = $false; Stimulus = $null; Split = 5
-            Traces = @((New-VnaPresetTrace S11 SWR $swr Assembly), (New-VnaPresetTrace S21 MLOG $loss), (New-VnaPresetTrace S22 SWR $swr Assembly)) }
+            Traces = @((New-VnaPresetTrace S11 SWR $swrAssembly Assembly), (New-VnaPresetTrace S21 MLOG $lossAssembly), (New-VnaPresetTrace S22 SWR $swrAssembly Assembly)) }
         [pscustomobject]@{ Name = 'ОТК — один порт'; Purpose = 'сборка с одной стороны, на другом конце нагрузка (ЭТК CTRL_VSWR_coax)'; Measuring = $false; Stimulus = $null; Split = 3
-            Traces = @((New-VnaPresetTrace S11 SWR $swr Assembly), (New-VnaPresetTrace S11 MLOG $overview)) }
+            Traces = @((New-VnaPresetTrace S11 SWR $swrAssembly Assembly), (New-VnaPresetTrace S11 MLOG $overview)) }
         [pscustomobject]@{ Name = 'Проверка калибровки (нагрузка)'; Purpose = 'нагрузка 6650F27 на каждом порту (пункт 3)'; Measuring = $true; Stimulus = $full; Split = 3
-            Traces = @((New-VnaPresetTrace S11 SWR $fine Cal), (New-VnaPresetTrace S21 MLOG $loss -Hidden),
-                       (New-VnaPresetTrace S12 MLOG $loss -Hidden), (New-VnaPresetTrace S22 SWR $fine Cal)) }
+            Traces = @((New-VnaPresetTrace S11 SWR $fine Cal), (New-VnaPresetTrace S21 MLOG $lossAdapter -Hidden),
+                       (New-VnaPresetTrace S12 MLOG $lossAdapter -Hidden), (New-VnaPresetTrace S22 SWR $fine Cal)) }
         [pscustomobject]@{ Name = 'Проверка кабелей (шевеление)'; Purpose = 'запомнить графики, изогнуть кабель, сравнить'; Measuring = $false; Stimulus = $full; Split = 8
-            Traces = @((New-VnaPresetTrace S11 SWR $swr -Memory), (New-VnaPresetTrace S22 SWR $swr -Memory),
-                       (New-VnaPresetTrace S21 MLOG $loss -Memory), (New-VnaPresetTrace S21 PHAS $phase -Memory)) }
+            Traces = @((New-VnaPresetTrace S11 SWR $fine -Memory), (New-VnaPresetTrace S22 SWR $fine -Memory),
+                       (New-VnaPresetTrace S21 MLOG $lossFlex -Memory), (New-VnaPresetTrace S21 PHAS $phase -Memory)) }
         [pscustomobject]@{ Name = 'Подробно (инженер)'; Purpose = 'все графики: КСВН, потери, Вольперт-Смит, фаза, ГВЗ, возвратные потери'; Measuring = $true; Stimulus = $full; Split = 15
-            Traces = @((New-VnaPresetTrace S11 SWR $swr Swr), (New-VnaPresetTrace S21 MLOG $loss Loss), (New-VnaPresetTrace S12 MLOG $loss Loss),
-                       (New-VnaPresetTrace S22 SWR $swr Swr), (New-VnaPresetTrace S11 SMIT $smith), (New-VnaPresetTrace S21 PHAS $phase),
+            Traces = @((New-VnaPresetTrace S11 SWR $swrNorm Swr), (New-VnaPresetTrace S21 MLOG $lossAdapter Loss), (New-VnaPresetTrace S12 MLOG $lossAdapter Loss),
+                       (New-VnaPresetTrace S22 SWR $swrNorm Swr), (New-VnaPresetTrace S11 SMIT $smith), (New-VnaPresetTrace S21 PHAS $phase),
                        (New-VnaPresetTrace S21 GDEL ([ordered]@{}) -AutoScale), (New-VnaPresetTrace S22 SMIT $smith),
                        (New-VnaPresetTrace S11 MLOG $overview), (New-VnaPresetTrace S21 MLOG $overview), (New-VnaPresetTrace S12 MLOG $overview),
                        (New-VnaPresetTrace S22 MLOG $overview)) }
@@ -328,7 +333,8 @@ function Format-VnaPresetParameters {
     param($Preset, $Stimulus)
     $span = if ($Stimulus) { '{0}–{1} МГц' -f ($Stimulus.StartHz / 1e6), ($Stimulus.StopHz / 1e6) } elseif ($Preset.Stimulus) {
         '{0}–{1} МГц' -f ($Preset.Stimulus.StartHz / 1e6), ($Preset.Stimulus.StopHz / 1e6) } else { 'полоса по ЭТК' }
-    return "$span; $script:VnaPresetPoints точек; ПЧ 1 кГц (точный отсчёт 300 Гц); $script:VnaPresetPowerDbm дБм; усреднение откл. (4× по выбору); сглаживание откл.; расширение портов, временная область и стробирование откл."
+    $scales = (@($Preset.Traces) | ForEach-Object { Format-VnaScaleText $_ }) -join '; '
+    return "$span; шкалы: $scales; $script:VnaPresetPoints точек; ПЧ 1 кГц (точный отсчёт 300 Гц); $script:VnaPresetPowerDbm дБм; усреднение откл. (4× по выбору); сглаживание откл.; расширение портов, временная область и стробирование откл."
 }
 
 function Set-VnaPresetStimulus {
@@ -357,6 +363,37 @@ function Set-VnaPresetStimulus {
     return $changed
 }
 
+function Resolve-VnaTraceScale {
+    param($Spec, [object[]]$SwrSegments)
+    # Scale members actually written for a trace: the SWR top of an adapter screen follows the item's norm,
+    # max(norm × 1,15; 1,20), rounded up to 0,05; without a norm 1,00–1,20.
+    $scale = [ordered]@{}
+    foreach ($member in $Spec.Scale.Keys) { if ($member -ne 'NormTop') { $scale[$member] = $Spec.Scale[$member] } }
+    if ($Spec.Scale.Contains('NormTop')) {
+        $norm = 0.0
+        foreach ($segment in @($SwrSegments)) { $norm = [math]::Max($norm, [math]::Max([double]$segment.From, [double]$segment.To)) }
+        $top = [math]::Max($norm * 1.15, 1.20)
+        $top = [math]::Ceiling([math]::Round($top * 20, 6)) / 20
+        $scale['PDIVision'] = [math]::Round(($top - 1.0) / 10, 4)
+    }
+    return $scale
+}
+
+function Format-VnaScaleText {
+    param($Spec)
+    $scale = Resolve-VnaTraceScale $Spec @()
+    $name = @{ SWR = 'КСВН'; MLOG = 'дБ'; PHAS = 'фаза'; GDEL = 'ГВЗ'; SMIT = 'Вольперт-Смит' }[$Spec.Format]
+    $text = switch ($Spec.Format) {
+        'SWR' { if ($Spec.Scale.Contains('NormTop')) { '1,00…max(норма×1,15; 1,20)' } else { '1,00–{0:0.00}' -f (1 + 10 * $scale.PDIVision) } }
+        'MLOG' { '0…−{0:0.###} дБ' -f (10 * $scale.PDIVision) }
+        'PHAS' { '±180°' }
+        'GDEL' { 'авто после каждой развёртки' }
+        default { 'по умолчанию' }
+    }
+    $flags = @(); if ($Spec.Hidden) { $flags += 'скрыт' }; if ($Spec.Memory) { $flags += 'с памятью' }
+    return ("{0} {1} {2}" -f $Spec.Parameter, $name, $text).Replace('.', ',') + $(if ($flags) { ' (' + ($flags -join ', ') + ')' } else { '' })
+}
+
 function Get-VnaScreenLimitSegments {
     param($Preset, $Limits, [string]$Kind)
     if ($Kind -eq 'Cal') {
@@ -372,7 +409,7 @@ function Get-VnaChartScaleSettings {
     param([string]$Parameter)
     $trace = @(Get-VnaScreenTraces | Where-Object { $_.Parameter -eq $Parameter -and $_.Index -le 4 })
     if ($trace.Count -ne 1) { throw "Неизвестная трасса $Parameter. Выполните пункт 6." }
-    return $trace[0].Scale
+    return Resolve-VnaTraceScale $trace[0] @()
 }
 
 function ConvertTo-VnaLimitData {
@@ -392,11 +429,13 @@ function Assert-VnaScreen {
     param([object[]]$Traces, [string]$Preset = $script:VnaActivePreset)
     $expected = @(Get-VnaScreenTraces $Preset)
     if ($Traces.Count -ne $expected.Count) { throw "Экран замера: нужно графиков $($expected.Count), сейчас $($Traces.Count); выполните пункт 6." }
+    $applied = if ($Preset -ceq $script:VnaActivePreset -and $script:VnaActiveScales) { $script:VnaActiveScales } else { @{} }
     foreach ($spec in $expected) {
         $trace = $Traces[$spec.Index - 1]
+        $scale = if ($applied.ContainsKey($spec.Index)) { $applied[$spec.Index] } else { Resolve-VnaTraceScale $spec @() }
         Assert-VnaSetting $trace.Parameter $spec.Parameter "график $($spec.Index): параметр"
         Assert-VnaSetting $trace.Format $spec.Format "график $($spec.Index): формат $($spec.Parameter)"
-        foreach ($member in $spec.Scale.Keys) { Assert-VnaSetting $trace.$member $spec.Scale[$member] "шкала $($spec.Parameter).$member (график $($spec.Index))" }
+        foreach ($member in $scale.Keys) { Assert-VnaSetting $trace.$member $scale[$member] "шкала $($spec.Parameter).$member (график $($spec.Index))" }
     }
 }
 
@@ -410,12 +449,14 @@ function Set-VnaScreen {
     if ($title.Length -gt 256) { $title = $title.Substring(0, 256) }
     $specs = @($presetSpec.Traces)
     $split = $presetSpec.Split
+    $scales = @{}
+    foreach ($spec in $specs) { $scales[$spec.Index] = Resolve-VnaTraceScale $spec $byKind['Swr'] }
     if ($Connection.Offline) {
         $Connection.Traces = @(foreach ($spec in $specs) {
             $trace = [ordered]@{ Parameter = $spec.Parameter; Format = $spec.Format; PDIVision = $null; RLEVel = $null; RPOSition = $null
                 Limit = $(if ($spec.Limit) { $byKind[$spec.Limit] } else { @() }); Markers = $script:VnaScreenMarkersHz
                 Hidden = $spec.Hidden; Memory = $spec.Memory }
-            foreach ($member in $spec.Scale.Keys) { $trace[$member] = $spec.Scale[$member] }
+            foreach ($member in $scales[$spec.Index].Keys) { $trace[$member] = $scales[$spec.Index][$member] }
             [pscustomobject]$trace
         })
         if (-not $Connection.PSObject.Properties['Screen']) { $Connection | Add-Member NoteProperty Screen $null }
@@ -436,7 +477,7 @@ function Set-VnaScreen {
             Invoke-VnaComIo $Connection 'CALCulate(1).SELected.FILTer.GATE.TIME.STATe' set $false
             Invoke-VnaComIo $Connection "DISPlay.WINDow(1).TRACe($index).STATe" set (-not $spec.Hidden)
             Invoke-VnaComIo $Connection "DISPlay.WINDow(1).TRACe($index).MEMory.STATe" set ([bool]$spec.Memory)
-            foreach ($member in $spec.Scale.Keys) { Invoke-VnaComIo $Connection "DISPlay.WINDow(1).TRACe($index).Y.SCALe.$member" set $spec.Scale[$member] }
+            foreach ($member in $scales[$index].Keys) { Invoke-VnaComIo $Connection "DISPlay.WINDow(1).TRACe($index).Y.SCALe.$member" set $scales[$index][$member] }
             # @(...) around the whole if: a single PSCustomObject has no .Count in Windows PowerShell 5.1.
             $segments = @(if ($spec.Limit) { $byKind[$spec.Limit] })
             $withLimit = $segments.Count -gt 0
@@ -461,6 +502,7 @@ function Set-VnaScreen {
         Assert-VnaSetting (Invoke-VnaComIo $Connection 'DISPlay.WINDow(1).SPLit') $split 'расположение графиков'
     }
     $script:VnaActivePreset = $presetSpec.Name
+    $script:VnaActiveScales = $scales
     Assert-VnaScreen @(Get-VnaTraces $Connection) $presetSpec.Name
 }
 

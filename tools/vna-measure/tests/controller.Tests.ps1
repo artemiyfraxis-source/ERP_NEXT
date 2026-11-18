@@ -239,6 +239,11 @@ Describe 'Screen presets in the menu' {
         foreach ($name in 'ОТК — переход', 'ОТК — кабельная сборка', 'ОТК — один порт', 'Проверка калибровки \(нагрузка\)', 'Проверка кабелей \(шевеление\)', 'Подробно \(инженер\)') { $output | Should Match $name }
         $output | Should Match '1601 точек; ПЧ 1 кГц \(точный отсчёт 300 Гц\); 0 дБм; усреднение откл\.'
         $output | Should Match 'сглаживание откл\.'
+        $output | Should Match 'шкалы: S11 КСВН 1,00…max\(норма×1,15; 1,20\); S21 дБ 0…−0,5 дБ'
+        $output | Should Match 'S11 КСВН 1,00–1,50; S21 дБ 0…−3 дБ'
+        $output | Should Match 'S11 КСВН 1,00–1,10; S21 дБ 0…−0,5 дБ \(скрыт\)'
+        $output | Should Match 'S21 дБ 0…−0,3 дБ \(с памятью\); S21 фаза ±180°'
+        $output | Should Match 'S21 ГВЗ авто после каждой развёртки'
         $output | Should Match 'Экран «ОТК — кабельная сборка»: 1–6000 МГц'
         $output | Should Not Match '1,30|требование цеха'
         $script:answers.Count | Should Be 0
@@ -369,7 +374,7 @@ Describe 'Offline chart menu and lost correction' {
         $script:menuOutput = New-Object 'System.Collections.Generic.List[string]'
         Mock Write-Host { param($Object); $script:menuOutput.Add([string]$Object) }
         Start-VnaMeasure -Offline -DataDirectory (Join-Path $TestDrive 'chart-menu')
-        ($script:menuOutput -join "`n") | Should Match 'Экран «ОТК — переход»: 10–18000 МГц; 1601 точек'
+        ($script:menuOutput -join "`n") | Should Match 'Экран «ОТК — переход»: 10–18000 МГц; шкалы: S11 КСВН'
         ($script:menuOutput -join "`n") | Should Match 'Экран замера стандартный'
         ($script:menuOutput -join "`n") | Should Match 'Экран не стандартный — пункт 6'
         (Test-Path -LiteralPath (Join-Path $TestDrive 'chart-menu\screen-backup.json')) | Should Be $false

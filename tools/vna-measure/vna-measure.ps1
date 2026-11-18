@@ -291,7 +291,7 @@ function Start-VnaMeasure {
         if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Запустите обычным двойным щелчком, без прав администратора: S2VNA COM требует обычный сеанс.' }
     }
     [void][IO.Directory]::CreateDirectory($DataDirectory)
-    $script:VnaActivePreset = $script:VnaDefaultPreset
+    $script:VnaActivePreset = $script:VnaDefaultPreset; $script:VnaActiveScales = $null
     $lock = $null; $deviceMutex = $null; $deviceLocked = $false; $connection = $null; $backup = $null; $session = $null; $calibration = $null
     $backupPointer = Join-Path $DataDirectory 'operator-backup.json'
     $screenBackup = Join-Path $DataDirectory 'screen-backup.json'
