@@ -294,8 +294,8 @@ def test_the_bridge_reads_and_sends_exactly_the_server_allow_list():
     sent |= {address for low, high in re.findall(r"\((\d+)\.\.(\d+)\)", line) for address in range(int(low), int(high) + 1)}
     assert sent == rules.OB019_ALLOWED
     ranges = [(int(first), int(count)) for first, count in re.findall(r"^\s+@\((\d+), (\d+)\),?\s+#", source, re.MULTILINE)]
-    # Few requests (mbd opens COM8 per request), each within mbd's 120-word read limit.
-    assert len(ranges) == 5 and all(1 <= count <= 120 for _, count in ranges)
+    # Few requests (mbd opens COM8 per request): 5 every cycle, 4 slow pages; each within mbd's 120-word limit.
+    assert len(ranges) == 9 and all(1 <= count <= 120 for _, count in ranges)
     assert rules.OB019_ALLOWED <= {a for first, count in ranges for a in range(first, first + count)}
 
 
@@ -328,12 +328,16 @@ def test_the_card_of_ob019_shows_live_values_settings_by_hmi_page_journal_and_co
     card = admin.get(CARD + "ОБ.019").json()
     assert card["kind"] == "ob019" and card["setup"] is True and card["live"]["mode"]["text"] == "Автомат"
     pages = {group["title"]: {field["label"]: field for field in group["fields"]} for group in card["settings"]}
-    assert list(pages) == ["Задание", "Провод и зачистка", "Средняя зачистка", "Маркировка", "Скорости"]
-    assert pages["Провод и зачистка"]["Длина"] == {"label": "Длина", "value": 325.0, "unit": "мм", "read": True}
+    assert list(pages) == ["Задание", "Провод и зачистка", "Средняя зачистка", "Разделение жил", "Намотка",
+                           "Маркировка", "Скорости"]
+    assert pages["Провод и зачистка"]["Длина провода"] == {
+        "label": "Длина провода", "value": 325.0, "unit": "мм", "read": True, "key": "length_mm", "kind": "u32"}
     assert pages["Задание"]["Тираж"]["value"] == 300 and pages["Задание"]["Заказ"]["value"] == "ED F"
-    assert pages["Задание"]["Пауза между пучками"] == {"label": "Пауза между пучками", "value": None, "unit": "с",
-                                                         "read": False}
-    assert not any(field["read"] for field in pages["Скорости"].values())  # the bridge does not read them yet
+    assert pages["Задание"]["Режим"]["text"] == "Автомат" and pages["Задание"]["Режим"]["key"] == "mode"
+    # Every group is read now; a word the snapshot lacks is «—», a field ERP does not write has no key.
+    assert all(field["read"] for group in pages.values() for field in group.values())
+    assert pages["Задание"]["Пауза между пучками"]["value"] is None
+    assert pages["Скорости"]["Нож"]["key"] is None and pages["Маркировка"]["Текст у начала"]["key"] == "mark_front"
     assert card["positions"]["title"] == "Положение осей"
     assert card["connection"]["pc"] == "PC-108" and card["connection"]["agent"] == "Агент ERP · станок"
     assert card["journal"][-1]["text"] == "Агент станка привязан к ПК PC-108"

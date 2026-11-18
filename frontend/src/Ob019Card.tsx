@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { PageWindow } from "./PageWindow";
 import { EMPTY, formatMoment, formatNumber } from "./format";
 import { machinesApi, usePolled, type MachineCard, type Ob019Live, type Tone } from "./machinesApi";
+import { Ob019SettingsPanel } from "./Ob019SettingsPanel";
 
 /** Живая карточка ОБ.019 (линия резки и зачистки с лазерной маркировкой): состояние ПЛК, задание и счётчики,
  *  параметры провода — только чтение, опрос раз в 3 с, пока окно открыто и вкладка видна. */
@@ -91,6 +92,7 @@ export function Ob019CardView({ card }: { card: MachineCard }) {
         <Facts title="Задание и счётчики" facts={blocks[1]} />
         <Facts title="Провод" facts={blocks[2]} />
       </div>}
+    <Ob019SettingsPanel inventory={card.inventory} />
     <Facts title="Подключение" facts={[
       ["ПК", plain(card.pc)], ["IP", plain(card.ip)], ["Версия агента", plain(card.bridge_version)],
       ["Служба Modbus", plain(card.service_version)],

@@ -359,7 +359,10 @@ def _device_rows(session, now) -> list[dict]:
 NOT_CONNECTED = {"text": "Не подключён", "tone": "neutral"}
 NO_JOB = "Нет задания"
 JOB_TONES = {"pending": "info", "taken": "info", "spooled": "ok", "printed": "ok", "failed": "danger", "unknown": "warn"}
-EVENT_TEXTS = {"production.machine_bound": "Агент станка привязан к ПК {pc_name}"}
+EVENT_TEXTS = {"production.machine_bound": "Агент станка привязан к ПК {pc_name}",
+               # Writes and corrections (slice 4, machine_writes_api.py) carry their own line.
+               **{f"production.machine_{event}": "{text}" for event in (
+                   "write_queued", "write_done", "write_failed", "offset_set", "etk_corrected")}}
 JOURNAL_LIMIT = 30
 
 

@@ -10,7 +10,7 @@ Add-Type -AssemblyName System.Web.Extensions
 $script:js = New-Object System.Web.Script.Serialization.JavaScriptSerializer
 $script:log = Join-Path $Dir 'mbd.log'
 $script:sp = $null
-$script:allowedWrite = @(@(20, 53), @(400, 484), @(599, 599), @(600, 600), @(730, 730), @(1087, 1089))
+$script:allowedWrite = @(@(20, 53), @(400, 484), @(599, 599), @(600, 600), @(730, 730), @(940, 969), @(1087, 1089))
 $script:allowedPulse = @{ 599 = @(0, 2); 600 = @(1, 4) }
 
 function Write-MbLog([string]$s) {

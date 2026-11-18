@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import JSON, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, Uuid, delete, func, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
 
-from app.shared.persistence import Base, SqlAlchemyAuditRepository
+from app.shared.persistence import Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 from app.shared.advisory_lock import lock_project_run
 from app.shared.project_number import normalize_project_number
 
@@ -583,6 +583,7 @@ class SqlAlchemyTechcardsUnitOfWork:
         self.td_issues = SqlAlchemyTdIssueRepository(self.session)
         self.std_figures = SqlAlchemyStdFigureRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
+        self.outbox = SqlAlchemyOutboxRepository(self.session)
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:
