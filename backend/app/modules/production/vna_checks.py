@@ -2,7 +2,7 @@
 
 One append-only record per check written by the VNA program on the VNA's own card:
 - session — after every calibration: the ACM confidence test («Данные/Память», 4.1 limits) and LOAD on both ports;
-- flex — the cable bend check with a thru: S21/S12 stays within ±0.05 dB;
+- flex — the cable bend check (10.6): LOAD on each cable end stays ≤ 1.06 and S21/S12 of a thru within ±0.05 dB;
 - control_standard — weekly: the control adapter (СИ.009) against its stored reference curve, deviation ≤ U;
 - kit_standards — monthly: the 6650F27 standards against their description, √(U² + δ²) (МП п. 10.6.61).
 The verdict is recomputed here and by CHECK constraints in the database: a record whose numbers disagree with its
@@ -59,8 +59,9 @@ def expected_verdict(kind: str, values: dict) -> bool:
         loads = (values.get("load_p1_vswr"), values.get("load_p2_vswr"))
         return bool(values["confidence_passed"]) and all(load is not None and load <= LOAD_LIMIT for load in loads)
     if kind == "flex":
-        need("s21_dev_db", "vswr_dev")
-        return values["s21_dev_db"] <= FLEX_S21_LIMIT_DB
+        need("s21_dev_db", "vswr_dev", "load_p1_vswr", "load_p2_vswr")
+        return (values["s21_dev_db"] <= FLEX_S21_LIMIT_DB and values["load_p1_vswr"] <= LOAD_LIMIT
+                and values["load_p2_vswr"] <= LOAD_LIMIT)
     if kind == "control_standard":
         need("standard_inventory", "vswr_dev", "vswr_limit", "s21_dev_db", "s21_limit_db")
         return values["vswr_dev"] <= values["vswr_limit"] and values["s21_dev_db"] <= values["s21_limit_db"]

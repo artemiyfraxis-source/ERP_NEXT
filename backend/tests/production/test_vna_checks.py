@@ -51,13 +51,20 @@ def periodic(kind, when, passed=True):
     ("session", {"confidence_passed": True, "confidence_tx_dev_db": 0.02, "load_p1_vswr": 1.06, "load_p2_vswr": 1.02}, True),
     ("session", {"confidence_passed": True, "confidence_tx_dev_db": 0.02, "load_p1_vswr": 1.0601, "load_p2_vswr": 1.02}, False),
     ("session", {"confidence_passed": False, "confidence_tx_dev_db": 0.3}, False),
-    ("flex", {"s21_dev_db": 0.05, "vswr_dev": 0.01}, True),
-    ("flex", {"s21_dev_db": 0.051, "vswr_dev": 0.01}, False),
+    ("flex", {"s21_dev_db": 0.05, "vswr_dev": 0.01, "load_p1_vswr": 1.06, "load_p2_vswr": 1.03}, True),
+    ("flex", {"s21_dev_db": 0.051, "vswr_dev": 0.01, "load_p1_vswr": 1.02, "load_p2_vswr": 1.03}, False),
+    ("flex", {"s21_dev_db": 0.01, "vswr_dev": 0.01, "load_p1_vswr": 1.02, "load_p2_vswr": 1.0601}, False),
     ("control_standard", {"standard_inventory": "СИ.009", "vswr_dev": 0.02, "vswr_limit": 0.015, "s21_dev_db": 0.0, "s21_limit_db": 0.1}, False),
     ("kit_standards", {"standard_inventory": "СИ.003", "kit_ratio": 1.0}, True),
 ])
 def test_verdict_follows_the_numbers(kind, values, verdict):
     assert expected_verdict(kind, values) is verdict
+
+
+def test_flex_needs_the_load_on_both_cable_ends():
+    """СТО ФРАК-002-2026 п. 10.6: LOAD on each cable end while bending, then the thru."""
+    with pytest.raises(ProductionValidationError, match="load_p1_vswr"):
+        expected_verdict("flex", {"s21_dev_db": 0.01, "vswr_dev": 0.0})
 
 
 def test_passed_confidence_needs_loads_and_transmission_within_limit():
@@ -135,7 +142,9 @@ def test_database_refuses_a_verdict_that_disagrees_with_numbers(production_api):
                 calibration_id="", acm_serial="", profile="", reference="", note="")
     rows = (dict(kind="session", passed=True, confidence_passed=True, confidence_tx_dev_db=0.01, load_p1_vswr=1.07, load_p2_vswr=1.01),
             dict(kind="session", passed=False, confidence_passed=True, confidence_tx_dev_db=0.01),
-            dict(kind="flex", passed=True, s21_dev_db=0.2, vswr_dev=0.0),
+            dict(kind="flex", passed=True, s21_dev_db=0.2, vswr_dev=0.0, load_p1_vswr=1.01, load_p2_vswr=1.01),
+            dict(kind="flex", passed=True, s21_dev_db=0.01, vswr_dev=0.0, load_p1_vswr=1.07, load_p2_vswr=1.01),
+            dict(kind="kit_standards", passed=True, standard_inventory="СИ.003", kit_ratio=0.5, load_p1_vswr=1.01),
             dict(kind="control_standard", passed=True, standard_inventory="СИ.009", vswr_dev=0.1, vswr_limit=0.015,
                  s21_dev_db=0.0, s21_limit_db=0.1),
             dict(kind="kit_standards", passed=True, standard_inventory="СИ.003", kit_ratio=1.5),
@@ -159,8 +168,8 @@ def test_migration_creates_the_journal_with_constraints(tmp_path):
             "manufacturer, doc_designation, quantity, storage_location, warehouse_grn) "
             "VALUES (?, 1, 'СИ.002', 'ВАЦ', 'ВАЦ', 'Не используется', 'Средство измерений', '1', '', '', 1, 'ОТК', '')", (instrument,))
         insert = ("INSERT INTO production_vna_checks (id, instrument_id, kind, passed, performed_at, recorded_at, source, payload_hash, "
-                  "operator, actor, calibration_id, acm_serial, profile, reference, note, s21_dev_db, vswr_dev) "
-                  "VALUES (?, ?, 'flex', ?, '2026-11-18', '2026-11-18', ?, ?, '', 'x', '', '', '', '', '', ?, 0)")
+                  "operator, actor, calibration_id, acm_serial, profile, reference, note, s21_dev_db, vswr_dev, load_p1_vswr, "
+                  "load_p2_vswr) VALUES (?, ?, 'flex', ?, '2026-11-18', '2026-11-18', ?, ?, '', 'x', '', '', '', '', '', ?, 0, 1.02, 1.02)")
         connection.execute(insert, (uuid4().hex, instrument, 1, "a", "0" * 64, 0.05))
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(insert, (uuid4().hex, instrument, 1, "b", "0" * 64, 0.06))

@@ -23,14 +23,15 @@ VNA_CHECKS = {
                            "(s21_dev_db IS NULL OR s21_dev_db >= 0) AND (s21_limit_db IS NULL OR s21_limit_db > 0) AND "
                            "(kit_ratio IS NULL OR kit_ratio >= 0)",
     "ck_vna_check_standard": "standard_inventory IS NULL OR length(trim(standard_inventory)) > 0",
-    "ck_vna_check_session_only": "kind = 'session' OR (confidence_passed IS NULL AND confidence_tx_dev_db IS NULL AND "
-                                 "load_p1_vswr IS NULL AND load_p2_vswr IS NULL)",
+    "ck_vna_check_session_only": "kind = 'session' OR (confidence_passed IS NULL AND confidence_tx_dev_db IS NULL)",
+    "ck_vna_check_loads": "kind IN ('session','flex') OR (load_p1_vswr IS NULL AND load_p2_vswr IS NULL)",
     "ck_vna_check_session": "kind <> 'session' OR (confidence_passed IS NOT NULL AND confidence_tx_dev_db IS NOT NULL AND "
                             "(NOT confidence_passed OR (confidence_tx_dev_db <= 0.1 AND load_p1_vswr IS NOT NULL AND "
                             "load_p2_vswr IS NOT NULL)) AND passed = (CASE WHEN confidence_passed AND load_p1_vswr <= 1.06 "
                             "AND load_p2_vswr <= 1.06 THEN TRUE ELSE FALSE END))",
-    "ck_vna_check_flex": "kind <> 'flex' OR (s21_dev_db IS NOT NULL AND vswr_dev IS NOT NULL AND "
-                         "passed = (CASE WHEN s21_dev_db <= 0.05 THEN TRUE ELSE FALSE END))",
+    "ck_vna_check_flex": "kind <> 'flex' OR (s21_dev_db IS NOT NULL AND vswr_dev IS NOT NULL AND load_p1_vswr IS NOT NULL AND "
+                         "load_p2_vswr IS NOT NULL AND passed = (CASE WHEN s21_dev_db <= 0.05 AND load_p1_vswr <= 1.06 AND "
+                         "load_p2_vswr <= 1.06 THEN TRUE ELSE FALSE END))",
     "ck_vna_check_control": "kind <> 'control_standard' OR (standard_inventory IS NOT NULL AND vswr_dev IS NOT NULL AND "
                             "vswr_limit IS NOT NULL AND s21_dev_db IS NOT NULL AND s21_limit_db IS NOT NULL AND "
                             "passed = (CASE WHEN vswr_dev <= vswr_limit AND s21_dev_db <= s21_limit_db THEN TRUE ELSE FALSE END))",

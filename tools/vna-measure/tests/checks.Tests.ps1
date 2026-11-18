@@ -88,13 +88,20 @@ Describe 'Check records and due dates' {
         $record.passed | Should Be $true
         (New-VnaCheckRecord session $calibration -Values @{ confidence_passed = $true; confidence_tx_dev_db = 0.02; load_p1_vswr = 1.07; load_p2_vswr = 1.02 }).passed | Should Be $false
         (New-VnaCheckRecord session $calibration -Values @{ confidence_passed = $false; confidence_tx_dev_db = 0.3 }).passed | Should Be $false
+        $lost = New-VnaCheckRecord session $calibration -Values @{ confidence_passed = $false; confidence_tx_dev_db = [double]::PositiveInfinity; confidence_rx_dev_db = [double]::NaN }
+        $lost.confidence_tx_dev_db | Should Be 1000
+        $lost.confidence_rx_dev_db | Should Be 1000
+        ($lost | ConvertTo-Json) | Should Not Match 'Infinity|NaN' 
         $record.source | Should Match '^vna-check-[a-f0-9-]{36}$'
     }
     It 'saves each record once and replays it into the training ERP without doubling' {
         $folder = Join-Path $TestDrive 'erp'; [void][IO.Directory]::CreateDirectory($folder)
         $session = [pscustomobject]@{ Offline = $true; OfflineDirectory = $folder }
         $pending = Join-Path $TestDrive 'pending'
-        $record = New-VnaCheckRecord flex $calibration -Values @{ s21_dev_db = 0.01; vswr_dev = 0.002 }
+        $record = New-VnaCheckRecord flex $calibration -Values @{ s21_dev_db = 0.01; vswr_dev = 0.002; load_p1_vswr = 1.02; load_p2_vswr = 1.03 }
+        $record.passed | Should Be $true
+        (New-VnaCheckRecord flex $calibration -Values @{ s21_dev_db = 0.01; vswr_dev = 0.002; load_p1_vswr = 1.07; load_p2_vswr = 1.03 }).passed | Should Be $false
+        (New-VnaCheckRecord flex $calibration -Values @{ s21_dev_db = 0.01; vswr_dev = 0.002 }).passed | Should Be $false
         $path = Save-VnaPendingCheck $pending (Get-VnaMatingTarget -Session $session) $record
         { Save-VnaPendingCheck $pending (Get-VnaMatingTarget -Session $session) $record } | Should Throw
         (Sync-VnaPendingChecks $session $pending).Sent | Should Be 1

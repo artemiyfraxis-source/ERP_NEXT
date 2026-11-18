@@ -311,12 +311,13 @@ function Get-VnaReferenceName {
 }
 
 function Update-VnaCheckState {
-    param($Session, [string]$PendingDirectory, [string]$StatusCache, $Calibration)
-    # Sends the waiting records, then reads the weekly/monthly state of this VNA; a network failure keeps the old cache.
+    param($Session, [string]$PendingDirectory, [string]$StatusCache, $Calibration, $Previous)
+    # Sends the waiting records, then reads the weekly/monthly state of this VNA; a network failure keeps the last known
+    # state ($Previous), so a failed weekly/monthly check still stops measurements.
     $sent = Sync-VnaPendingChecks $Session $PendingDirectory
     if ($sent.Sent) { Write-Host "Проверки ВАЦ записаны в ERP: $($sent.Sent)." }
     $serial = if ($Calibration) { [string]$Calibration.VnaSerial } else { '' }
-    if (-not $serial -and -not $Session.Offline) { return $null }
+    if (-not $serial -and -not $Session.Offline) { return $Previous }
     try {
         $due = @(Get-VnaCheckStatus $Session $serial)
         ([ordered]@{ fetched_at = [datetimeoffset]::UtcNow.ToString('o'); vna_serial = $serial; due = $due } | ConvertTo-Json -Depth 6) |
@@ -325,7 +326,7 @@ function Update-VnaCheckState {
         return $due
     } catch {
         Write-Host "Сроки контроля не прочитаны из ERP: $($_.Exception.Message)" -ForegroundColor Yellow
-        return $null
+        return $Previous
     }
 }
 
@@ -517,7 +518,7 @@ function Start-VnaMeasure {
                             $matingTarget = Get-VnaMatingTarget -Session $session
                         }
                         $null = Sync-VnaPendingMatings $session $pendingDirectory
-                        $checkDue = Update-VnaCheckState $session $pendingChecks $statusCache $calibration
+                        $checkDue = Update-VnaCheckState $session $pendingChecks $statusCache $calibration $checkDue
                         Assert-VnaControlNotFailed $checkDue
                         $number = (Read-Host 'Номер переходника (СИ.035)').Trim().ToUpperInvariant()
                         if ($number -notmatch '^СИ\.\d+$') { throw 'Введите номер вида СИ.035.' }
@@ -620,7 +621,7 @@ function Start-VnaMeasure {
                         }
                         $sent = Sync-VnaPendingMatings $session $pendingDirectory
                         Write-Host "Сочленения: отправлено пакетов $($sent.Sent), отклонено $($sent.Rejected), ожидают $($sent.Left)."
-                        $checkDue = Update-VnaCheckState $session $pendingChecks $statusCache $calibration
+                        $checkDue = Update-VnaCheckState $session $pendingChecks $statusCache $calibration $checkDue
                     }
                     '8' {
                         if (-not (Test-Path -LiteralPath $screenBackup)) { Write-Host 'Прежний экран не сохранялся.'; break }
@@ -642,7 +643,17 @@ function Start-VnaMeasure {
                     }
                     '11' {
                         Assert-VnaCalibrationChecked $calibration
-                        [void](Read-Host 'Соедините концы кабелей перемычкой (MA6666B или СИ.009), кабели в рабочем положении. Нажмите Enter')
+                        # 10.6: first LOAD on each cable end while bending — VSWR stays ≤ 1,06; then the thru.
+                        $flexLoads = @()
+                        foreach ($port in 1, 2) {
+                            [void](Read-Host "Поставьте LOAD на конец кабеля порта $port и изгибайте кабель в рабочих пределах во время развёртки. Нажмите Enter")
+                            $loadSweep = Get-VnaSweep $connection
+                            Assert-VnaMeasurementSafe -Sweep $loadSweep -Calibration $calibration -DeviceInfo (Get-VnaDeviceInfo $connection) -TraceStatus (Get-VnaTraceStatus $connection)
+                            $loadSummary = Get-VnaSummary -Data $loadSweep.Data
+                            $flexLoads += $(if ($port -eq 1) { $loadSummary.Vswr1 } else { $loadSummary.Vswr2 })
+                            Write-Host ('Порт {0} при изгибе: макс. КСВН LOAD {1:N4} (допуск 1,06)' -f $port, $flexLoads[-1])
+                        }
+                        [void](Read-Host 'Соедините концы кабелей переходом СИ.008, кабели в рабочем положении. Нажмите Enter')
                         $before = Get-VnaSweep $connection
                         Assert-VnaMeasurementSafe -Sweep $before -Calibration $calibration -DeviceInfo (Get-VnaDeviceInfo $connection) -TraceStatus (Get-VnaTraceStatus $connection)
                         [void](Read-Host 'Изогните кабели так, как они изгибаются при замерах, и держите. Нажмите Enter')
@@ -650,11 +661,12 @@ function Start-VnaMeasure {
                         Assert-VnaMeasurementSafe -Sweep $after -Calibration $calibration -DeviceInfo (Get-VnaDeviceInfo $connection) -TraceStatus (Get-VnaTraceStatus $connection)
                         $flex = Compare-VnaFlex $before.Data $after.Data
                         Write-Host ('Изгиб: S21 изменился до {0:N3} дБ (допуск 0,05), КСВН — до {1:N4}.' -f $flex.S21DevDb, $flex.VswrDev)
-                        if (-not $flex.Passed) { Write-Host 'Не годен: замените кабель (СТО ФРАК-002-2026, разд. 14).' -ForegroundColor Red }
-                        $record = New-VnaCheckRecord flex $calibration -Values @{ s21_dev_db = $flex.S21DevDb; vswr_dev = $flex.VswrDev } -Profile (Get-VnaCheckProfile)
+                        $record = New-VnaCheckRecord flex $calibration -Values @{ s21_dev_db = $flex.S21DevDb; vswr_dev = $flex.VswrDev
+                            load_p1_vswr = $flexLoads[0]; load_p2_vswr = $flexLoads[1] } -Profile (Get-VnaCheckProfile)
+                        if (-not $record.passed) { Write-Host 'Не годен: замените кабель (СТО ФРАК-002-2026, 10.6 и разд. 14).' -ForegroundColor Red }
                         $null = Save-VnaPendingCheck $pendingChecks $matingTarget $record
                         if (-not $session) { $session = Connect-VnaErp -Offline:$Offline -OfflineDirectory $OfflineDirectory -ConfigPath $ConfigPath; $matingTarget = Get-VnaMatingTarget -Session $session }
-                        $checkDue = Update-VnaCheckState $session $pendingChecks $statusCache $calibration
+                        $checkDue = Update-VnaCheckState $session $pendingChecks $statusCache $calibration $checkDue
                     }
                     '12' {
                         Assert-VnaCalibrationChecked $calibration
@@ -675,7 +687,7 @@ function Start-VnaMeasure {
                         $record = New-VnaCheckRecord control_standard $calibration -Values @{ standard_inventory = $standardNumber; reference = (Get-VnaReferenceName $session $standard)
                             vswr_dev = $control.VswrDev; vswr_limit = $control.VswrLimit; s21_dev_db = $control.S21DevDb; s21_limit_db = $control.S21LimitDb } -Profile (Get-VnaCheckProfile)
                         $null = Save-VnaPendingCheck $pendingChecks $matingTarget $record
-                        $checkDue = Update-VnaCheckState $session $pendingChecks $statusCache $calibration
+                        $checkDue = Update-VnaCheckState $session $pendingChecks $statusCache $calibration $checkDue
                     }
                     '13' {
                         Assert-VnaCalibrationChecked $calibration
@@ -689,7 +701,7 @@ function Start-VnaMeasure {
                         if ($kitResult.Ratio -gt 1) { Write-Host 'Не годен: замеры остановить до выяснения причины (СТО ФРАК-002-2026, разд. 14).' -ForegroundColor Red }
                         $record = New-VnaCheckRecord kit_standards $calibration -Values @{ standard_inventory = $kitNumber; kit_ratio = $kitResult.Ratio } -Note $kitResult.Note -Profile (Get-VnaCheckProfile)
                         $null = Save-VnaPendingCheck $pendingChecks $matingTarget $record
-                        $checkDue = Update-VnaCheckState $session $pendingChecks $statusCache $calibration
+                        $checkDue = Update-VnaCheckState $session $pendingChecks $statusCache $calibration $checkDue
                     }
                     '0' { $running = $false }
                     default { Write-Host 'Выберите пункт 0–13.' }

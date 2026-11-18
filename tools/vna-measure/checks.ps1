@@ -179,7 +179,14 @@ function Compare-VnaKitStandard {
     return $worst
 }
 
-function ConvertTo-VnaRounded { param($Value) if ($null -eq $Value) { return $null } return [math]::Round([double]$Value, 6) }
+function ConvertTo-VnaRounded {
+    param($Value)
+    # A lost signal gives ∞/NaN: the ERP takes numbers up to 1000, so a failed check is still journaled as 1000.
+    if ($null -eq $Value) { return $null }
+    $number = [double]$Value
+    if ([double]::IsNaN($number) -or [double]::IsInfinity($number) -or $number -gt 1000) { return 1000.0 }
+    return [math]::Round($number, 6)
+}
 
 function New-VnaCheckRecord {
     param([Parameter(Mandatory)][ValidateSet('session', 'flex', 'control_standard', 'kit_standards')][string]$Kind,
@@ -197,7 +204,8 @@ function New-VnaCheckRecord {
     $record.passed = switch ($Kind) {
         'session' { [bool]$record.confidence_passed -and $null -ne $record.load_p1_vswr -and $null -ne $record.load_p2_vswr -and
             $record.load_p1_vswr -le $script:VnaLoadLimit -and $record.load_p2_vswr -le $script:VnaLoadLimit }
-        'flex' { $record.s21_dev_db -le $script:VnaFlexLimitDb }
+        'flex' { $null -ne $record.load_p1_vswr -and $null -ne $record.load_p2_vswr -and $record.s21_dev_db -le $script:VnaFlexLimitDb -and
+            $record.load_p1_vswr -le $script:VnaLoadLimit -and $record.load_p2_vswr -le $script:VnaLoadLimit }
         'control_standard' { $record.vswr_dev -le $record.vswr_limit -and $record.s21_dev_db -le $record.s21_limit_db }
         'kit_standards' { $record.kit_ratio -le 1 }
     }
