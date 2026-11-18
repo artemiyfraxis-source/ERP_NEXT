@@ -7,8 +7,8 @@ import re
 from urllib.parse import urlsplit
 
 from .instrument_characterization import Application, Characterization, application, connector_line, impedance_warning, number
-from .instrument_norms import (Assessment, ItemSpec, Uncertainty, assess, item_spec, norm_for, norms_data, uncertainty_for,
-                               vna_model)
+from .instrument_norms import (Assessment, ItemSpec, LossAssessment, Uncertainty, assess, assess_loss, ghz_text, item_spec,
+                               norm_for, norms_data, uncertainty_for, vna_model)
 from .rf_interfaces import RfDetails, ROLE_LABELS, is_adapter_name, parse_interfaces
 from .traceability import InstrumentKind, MeasurementInstrument
 from .vna_files import VnaTrace, _decode
@@ -63,6 +63,7 @@ class PublicPassport:
     norm_check: Assessment | None = None      # decision against the maker spec / MIL sheet; None - not measured
     usage: Application | None = None         # frequency range within the shop requirement (1,30)
     uncertainty: Uncertainty | None = None    # of the VNA that measured, from the reference data
+    loss_check: LossAssessment | None = None  # insertion loss against the loss norm of the same source
 
 
 @dataclass(frozen=True)
@@ -151,10 +152,11 @@ def _series(rf: RfDetails) -> tuple[str, ...]:
 def history_entry(item: MeasurementInstrument, rf: RfDetails, measured: Characterization, registry=()) -> PublicHistory:
     """One earlier measurement judged by today's norm and shop requirement."""
     projected = _public_measurement(measured)
-    check = assess(projected, norm_for(item.name, item.doc_designation or "", rf),
-                   uncertainty_for(vna_model(projected.instrument, registry)))
+    norm = norm_for(item.name, item.doc_designation or "", rf)
+    check = assess(projected, norm, uncertainty_for(vna_model(projected.instrument, registry)))
+    loss = assess_loss(projected, norm.loss if norm else None)
     usage = application(projected, _series(rf))
-    return PublicHistory(measured.measured_on, f"{check.short}; применение: {usage.requirement_line}")
+    return PublicHistory(measured.measured_on, f"КСВН: {check.short}; потери: {loss.short}; применение: {usage.requirement_line}")
 
 
 def public_passport(item: MeasurementInstrument, rf: RfDetails, measured: Characterization | None,
@@ -173,17 +175,19 @@ def public_passport(item: MeasurementInstrument, rf: RfDetails, measured: Charac
         if year <= date.max.year:
             next_control = date(year, month + 1, min(measured.measured_on.day, monthrange(year, month + 1)[1]))
     projected = _public_measurement(measured) if measured else None
-    check = usage = uncertainty = None
+    check = usage = uncertainty = loss = None
     if projected:
         uncertainty = uncertainty_for(vna_model(projected.instrument, registry))
-        check = assess(projected, norm_for(item.name, item.doc_designation or "", rf), uncertainty)
+        norm = norm_for(item.name, item.doc_designation or "", rf)
+        check = assess(projected, norm, uncertainty)
+        loss = assess_loss(projected, norm.loss if norm else None)
         usage = application(projected, _series(rf))
     return PublicPassport(item.inventory_number, _name(item, rf), item.serial_number, item.manufacturer.strip() or _manufacturer(rf),
                           connector_line(item.name, item.serial_number, rf),
                           " / ".join(number(value) for value in ohms) + " Ом" if ohms else "50 Ом" if measured else "",
                           projected, verification, impedance_warning(rf),
                           item.status.value, next_control, bool(next_control and next_control < (today or date.today())),
-                          tuple(history), item_spec(item.name, item.doc_designation or "", rf), check, usage, uncertainty)
+                          tuple(history), item_spec(item.name, item.doc_designation or "", rf), check, usage, uncertainty, loss)
 
 
 def recheck_text() -> str:
@@ -200,17 +204,32 @@ def conclusion(passport: PublicPassport) -> PassportConclusion | None:
               "не установлена — нет данных изготовителя и листа MIL-PRF-55339 для этой пары разъёмов")]
     if check.result_line:
         lines.append(("Результат", check.result_line))
+    loss = passport.loss_check
+    if check.norm:
+        lines.append(("Норма потерь", loss.norm.line if loss and loss.norm else f"в {check.norm.reference} не установлена"))
+        if loss and loss.result_line:
+            lines.append(("Результат по потерям", f"{loss.short}: {loss.result_line}"))
+        elif loss and loss.status == "no_points":
+            lines.append(("Результат по потерям", "нет точек замера в полосе нормы потерь"))
     lines += [("Применение", usage.requirement_line),
               ("Погрешность измерения КСВН", passport.uncertainty.line if passport.uncertainty
-               else "не определена — модель ВАЦ не указана в файле замера"),
-              ("Правило принятия решения", norms_data()["decision_rule"]),
+               else "не определена — модель ВАЦ не указана в файле замера")]
+    if loss and loss.norm:
+        lines.append(("Погрешность измерения потерь", "в справочных данных ВАЦ не задана — граница допуска по потерям не оценивается"))
+    lines += [("Правило принятия решения", norms_data()["decision_rule"]),
               ("Метод", f"{method['code']} «{method['title']}»")]
     warning = ""
     if usage.limit_ghz is None:
         warning = "КСВН больше требования цеха уже на первой ступени — не использовать в тракте 50 Ом"
     elif usage.limit_ghz < measured.band[1] - 0.05:
         warning = f"Выше {number(usage.limit_ghz)} ГГц КСВН больше требования цеха — не использовать в тракте 50 Ом"
-    return PassportConclusion("Заключение (контроль характеристик, не поверка)", check.verdict, warning, tuple(lines),
+    verdict = check.verdict
+    if loss and loss.status == "fail":
+        # Loss outside its norm overrides a VSWR pass: the item does not conform.
+        verdict = (f"{verdict}; вносимые потери тоже вне нормы" if check.status == "fail"
+                   else "Не соответствует норме по вносимым потерям" + (f" выше {ghz_text(loss.last_pass_ghz)} ГГц"
+                                                                       if loss.last_pass_ghz is not None else ""))
+    return PassportConclusion("Заключение (контроль характеристик, не поверка)", verdict, warning, tuple(lines),
                               ("Результаты относятся только к данному изделию.",
                                f"Утвердил: {APPROVER_ROLE} ______________ (подпись)   «____» __________ 20___ г."))
 

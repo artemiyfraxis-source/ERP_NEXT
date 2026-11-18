@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from app.modules.production.instrument_norms import (assess, item_spec, norm_for, norms_data, uncertainty_for, vna_model)
+from app.modules.production.instrument_norms import (assess, assess_loss, item_spec, norm_for, norms_data, uncertainty_for, vna_model)
 from app.modules.production.rf_interfaces import RfDetails, RfInterface
 from tests.production.test_instrument_application import summary
 
@@ -88,3 +88,61 @@ def test_instrument_card_resource_wins_when_present():
     spec = item_spec("Переходник S-322", "", details)
     assert (spec.mating_resource, spec.mating_source, spec.temp_max_c) == (800, "карточка СИ", 165)
     assert replace(spec, mating_resource=None).mating_resource is None
+
+
+def test_every_vswr_norm_has_a_loss_norm_with_source():
+    data = norms_data()
+    for holder in [*data["mil_adapters"], *(group for maker in data["makers"] for group in maker["groups"])]:
+        loss = holder["loss"]
+        assert loss["source"] and (loss.get("segments") or loss.get("points"))
+
+
+def test_loss_norm_follows_the_vswr_source():
+    sma = norm_for("", "", pair("SMA", "SMA")).loss
+    assert sma.reference == "MIL-PRF-55339/55"
+    assert sma.limit(0.4) is None and sma.limit(9) == pytest.approx(0.03 * 3)
+    assert sma.limit(18) == pytest.approx(0.03 * 18 ** 0.5) and sma.limit(25) == pytest.approx(0.05 * 25 ** 0.5)
+    assert "0,03·√F дБ в полосе 0,5–18 ГГц" in sma.line and "F — частота, ГГц" in sma.line
+    maker = norm_for("Переход ADP1A-35F-35F", "", pair("3.5mm", "3.5mm")).loss
+    assert maker.reference == "Планар ADP1A" and maker.limit(0.01) == pytest.approx(0.20) and maker.limit(32) == pytest.approx(0.20)
+    assert norm_for("ADP1A-NM-NF", "", pair("N", "N")).loss.limit(18) == pytest.approx(0.15)
+    assert norm_for("ADP1A-NM-35F", "", pair("N", "3.5mm")).loss.limit(18) == pytest.approx(0.15)
+    assert norm_for("", "", pair("SMA", "TNC")).loss.limit(6) == pytest.approx(0.06 * 6 ** 0.5)
+    assert norm_for("", "", pair("BNC", "SMA")).loss.limit(3) == pytest.approx(0.115 * 3 ** 0.5)
+
+
+def test_sheet_without_formula_is_judged_only_at_its_test_frequency():
+    loss = norm_for("", "", pair("N", "SMA")).loss
+    assert loss.limit(9) == pytest.approx(0.18) and loss.limit(9.04) == pytest.approx(0.18)
+    assert loss.limit(6) is None and loss.limit(12) is None
+    assert loss.limit_text == "вносимые потери ≤ 0,18 дБ на 9 ГГц"
+    assert norm_for("", "", pair("BNC", "BNC")).loss.limit(3) == pytest.approx(0.2)
+    assert norm_for("", "", pair("BNC", "N")).loss.limit(3) == pytest.approx(0.35)
+
+
+def test_loss_pass_fail_and_missing_points():
+    loss = norm_for("", "", pair("SMA", "SMA")).loss
+    vswr = {0.01: 1.02, 1: 1.03, 9: 1.04, 18: 1.05}
+    passed = assess_loss(summary(vswr, {0.01: 0.01, 1: 0.02, 9: 0.05, 18: 0.10}), loss)
+    assert passed.status == "pass" and passed.short == "соответствует норме"
+    assert passed.result_line == "худшие потери 0,02 дБ на 1 ГГц при норме ≤ 0,03 дБ"
+    failed = assess_loss(summary(vswr, {0.01: 0.01, 1: 0.02, 9: 0.12, 18: 0.10}), loss)
+    assert failed.status == "fail" and failed.short == "не соответствует норме выше 1 ГГц"
+    assert assess_loss(summary(vswr), None).short == "норма не установлена"
+    point = norm_for("", "", pair("N", "SMA")).loss
+    assert assess_loss(summary({0.01: 1.02, 6: 1.04}), point).status == "no_points"
+    assert assess_loss(summary({0.01: 1.02, 9: 1.04}, {0.01: 0.01, 9: 0.2}), point).status == "fail"
+
+
+def test_passport_conclusion_states_the_loss_norm_and_fails_on_loss():
+    from app.modules.production.instrument_characterization import characterization
+    from app.modules.production.instrument_public import conclusion, public_passport
+    from tests.production.test_instrument_passport import instrument, measured_file, rf
+
+    # SMA–SMA by MIL-PRF-55339/55: VSWR 1,04 at 18 GHz passes, |S21| 0,98 (0,175 dB) exceeds 0,03·√18 = 0,127 dB.
+    result = conclusion(public_passport(instrument(), rf(), characterization(measured_file())))
+    lines = dict(result.lines)
+    assert result.verdict == "Не соответствует норме по вносимым потерям"
+    assert lines["Норма потерь"].startswith("MIL-PRF-55339/55 — вносимые потери ≤ 0,03·√F дБ в полосе 0,5–18 ГГц")
+    assert lines["Результат по потерям"] == "не соответствует норме: потери 0,175 дБ на 18 ГГц при норме ≤ 0,127 дБ"
+    assert "не задана" in lines["Погрешность измерения потерь"]
