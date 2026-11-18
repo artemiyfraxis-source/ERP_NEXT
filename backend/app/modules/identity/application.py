@@ -895,6 +895,9 @@ API_TOKEN_SCOPES: dict[str, str] = {
     "scan:upload": "Сканирование УПД (агент склада)",
     # Скрипт загрузки рисунков стандартов к строкам СТО (owner 23.10.2026): only PUT /api/techcards/std-figures/{code}.
     "figures:write": "Загрузка рисунков стандартов",
+    # Мост станка на его ПК (owner 18.11.2026, «Станки»): only POST /api/production/machines/agent/report — read-only
+    # snapshots of the PLC; the first report binds the token and the PC to the ОБ.
+    "machine:report": "Снимки станка (мост на ПК станка)",
 }
 API_TOKEN_MAX_DAYS = 365
 API_TOKEN_NAME_MAX = 128

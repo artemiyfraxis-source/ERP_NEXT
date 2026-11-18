@@ -1,0 +1,274 @@
+param([int]$Port = 5020, [string]$Allow = '192.168.1.85', [switch]$Mock, [string]$Dir = 'D:\fraxis-mb', [switch]$LocalOnly)
+# Fraxis Modbus command service for OB.019 (PowerShell 2.0 compatible).
+# One TCP connection = one JSON request line -> one JSON reply line.
+# COM8 is opened per request and closed afterwards, so the vendor HMI can still be used when this service is idle.
+# -Allow takes one address or a comma list: '192.168.1.85,127.0.0.1' keeps the ERP server's client and also serves the
+# local ERP bridge (ob019-bridge.ps1 talks to 127.0.0.1). -LocalOnly (ERP_NEXT tools/machine-agent): listen on
+# 127.0.0.1 only and serve only the local bridge. Without either the service behaves exactly as deployed on 18.11.2026.
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Web.Extensions
+$script:js = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+$script:log = Join-Path $Dir 'mbd.log'
+$script:sp = $null
+$script:allowedWrite = @(@(20, 53), @(400, 484), @(599, 599), @(600, 600), @(730, 730), @(1087, 1089))
+$script:allowedPulse = @{ 599 = @(0, 2); 600 = @(1, 4) }
+
+function Write-MbLog([string]$s) {
+    $line = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff') + ' ' + $s
+    try { Add-Content -Path $script:log -Value $line -Encoding UTF8 } catch { }
+}
+
+function Get-Crc([byte[]]$b, [int]$n) {
+    $c = 0xFFFF
+    for ($i = 0; $i -lt $n; $i++) {
+        $c = $c -bxor $b[$i]
+        for ($k = 0; $k -lt 8; $k++) {
+            if ($c -band 1) { $c = [int][Math]::Floor($c / 2) -bxor 0xA001 } else { $c = [int][Math]::Floor($c / 2) }
+        }
+    }
+    return $c
+}
+
+function Test-Busy {
+    $p = Get-Process | Where-Object { $_.ProcessName -like 'PXS_HMI*' -or $_.ProcessName -like '*modbus*' -or $_.ProcessName -like '*auto mark*' -or $_.ProcessName -like 'EzCad*' }
+    if ($p) { return (($p | ForEach-Object { $_.ProcessName }) -join ',') }
+    return ''
+}
+
+# --- serial layer -------------------------------------------------------------------------------------------
+$script:mockR = @{}
+function Invoke-Xfer([byte[]]$body, [int]$exp) {
+    if ($Mock) {
+        $a = [int]$body[2] * 256 + [int]$body[3]; $n = [int]$body[4] * 256 + [int]$body[5]
+        if ($body[1] -eq 0x10) {
+            for ($i = 0; $i -lt $n; $i++) { $script:mockR[$a + $i] = [int]$body[7 + 2 * $i] * 256 + [int]$body[8 + 2 * $i] }
+            $r = New-Object byte[] 8; [Array]::Copy($body, $r, 6)
+        } else {
+            $r = New-Object byte[] (5 + 2 * $n); $r[0] = 1; $r[1] = 3; $r[2] = [byte](2 * $n)
+            for ($i = 0; $i -lt $n; $i++) { $v = [int]$script:mockR[$a + $i]; $r[3 + 2 * $i] = [byte][Math]::Floor($v / 256); $r[4 + 2 * $i] = [byte]($v -band 255) }
+        }
+        $c = Get-Crc $r ($r.Length - 2); $r[$r.Length - 2] = [byte]($c -band 255); $r[$r.Length - 1] = [byte][Math]::Floor($c / 256)
+        return ,$r
+    }
+    $f = New-Object byte[] ($body.Length + 2)
+    [Array]::Copy($body, $f, $body.Length)
+    $c = Get-Crc $body $body.Length
+    $f[$body.Length] = [byte]($c -band 255); $f[$body.Length + 1] = [byte][Math]::Floor($c / 256)
+    $script:sp.DiscardInBuffer()
+    $script:sp.Write($f, 0, $f.Length)
+    $buf = New-Object byte[] 300; $got = 0
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    while ($got -lt $exp -and $sw.ElapsedMilliseconds -lt 500) {
+        if ($script:sp.BytesToRead -gt 0) { $got += $script:sp.Read($buf, $got, [Math]::Min($script:sp.BytesToRead, 300 - $got)) }
+        else { Start-Sleep -Milliseconds 5 }
+        if ($got -ge 5 -and ($buf[1] -band 0x80)) { break }
+    }
+    $r = New-Object byte[] $got
+    [Array]::Copy($buf, $r, $got)
+    return ,$r
+}
+
+function Test-Frame([byte[]]$r) {
+    if ($r.Length -lt 5) { return $false }
+    $c = Get-Crc $r ($r.Length - 2)
+    return ($r[$r.Length - 2] -eq ($c -band 255)) -and ($r[$r.Length - 1] -eq [Math]::Floor($c / 256))
+}
+
+function Read-Regs([int]$a, [int]$n) {
+    if ($n -lt 1 -or $n -gt 120) { throw "count must be 1..120" }
+    $body = [byte[]](1, 3, [byte][Math]::Floor($a / 256), [byte]($a -band 255), 0, [byte]$n)
+    for ($t = 1; $t -le 3; $t++) {
+        $r = Invoke-Xfer $body (5 + 2 * $n)
+        if ($r.Length -eq (5 + 2 * $n) -and (Test-Frame $r) -and $r[1] -eq 3) {
+            $w = New-Object int[] $n
+            for ($i = 0; $i -lt $n; $i++) { $w[$i] = [int]$r[3 + 2 * $i] * 256 + [int]$r[4 + 2 * $i] }
+            return ,$w
+        }
+        if ($r.Length -ge 5 -and ($r[1] -band 0x80) -and (Test-Frame $r)) { throw ('modbus exception ' + $r[2] + ' reading D' + $a) }
+    }
+    throw ('no valid reply reading D' + $a)
+}
+
+function Write-Regs([int]$a, [int[]]$vals) {
+    $n = $vals.Length
+    if ($n -lt 1 -or $n -gt 60) { throw "values must be 1..60" }
+    $body = New-Object byte[] (7 + 2 * $n)
+    $body[0] = 1; $body[1] = 0x10; $body[2] = [byte][Math]::Floor($a / 256); $body[3] = [byte]($a -band 255)
+    $body[4] = 0; $body[5] = [byte]$n; $body[6] = [byte](2 * $n)
+    for ($i = 0; $i -lt $n; $i++) {
+        $v = [int]$vals[$i]
+        if ($v -lt 0 -or $v -gt 65535) { throw ('value out of 0..65535 at D' + ($a + $i)) }
+        $body[7 + 2 * $i] = [byte][Math]::Floor($v / 256); $body[8 + 2 * $i] = [byte]($v -band 255)
+    }
+    $r = Invoke-Xfer $body 8
+    $ok = ($r.Length -eq 8) -and (Test-Frame $r)
+    if ($ok) { for ($i = 0; $i -lt 6; $i++) { if ($r[$i] -ne $body[$i]) { $ok = $false } } }
+    if (-not $ok) {
+        if ($r.Length -ge 5 -and ($r[1] -band 0x80) -and (Test-Frame $r)) { throw ('modbus exception ' + $r[2] + ' writing D' + $a) }
+        throw ('no valid echo writing D' + $a)
+    }
+}
+
+function Test-WriteAllowed([int]$a, [int]$n) {
+    for ($x = $a; $x -lt $a + $n; $x++) {
+        $okOne = $false
+        foreach ($rg in $script:allowedWrite) { if ($x -ge $rg[0] -and $x -le $rg[1]) { $okOne = $true } }
+        if (-not $okOne) { return $false }
+    }
+    return $true
+}
+
+function Write-HmiContext {
+    $now = Get-Date
+    Write-Regs 730 @(13)
+    Write-Regs 1087 @($now.Day, $now.Month, $now.Year)
+}
+
+function Get-U32($w, [int]$i) { return [long]$w[$i] + 65536 * [long]$w[$i + 1] }
+function Get-I32($w, [int]$i) { $v = Get-U32 $w $i; if ($v -ge 2147483648) { $v -= 4294967296 }; return $v }
+
+function Get-Status {
+    $st = Read-Regs 766 1; $al = Read-Regs 782 1; $md = Read-Regs 20 1; $ts = Read-Regs 22 2; $tf = Read-Regs 649 2
+    $wire = Read-Regs 32 12; $pr = Read-Regs 400 1; $pos = Read-Regs 660 14
+    $names = @{ 100 = 'Please Reset'; 101 = 'Resetting'; 102 = 'Ready'; 103 = 'Running'; 104 = 'Paused'; 105 = 'E-stop'; 106 = 'Batch finish'; 107 = 'Total finish' }
+    $axes = @('roller_f', 'roller_b', 'cutter', 'pipe', 'clamp_f', 'clamp_b', 'shift')
+    $p = @{}
+    for ($i = 0; $i -lt 7; $i++) { $p[$axes[$i]] = (Get-I32 $pos (2 * $i)) / 100.0 }
+    return @{
+        state = $st[0]; state_name = $names[[int]$st[0]]; alarm = $al[0]; mode = $md[0]
+        total_set = Get-U32 $ts 0; total_finish = Get-U32 $tf 0
+        length_mm = (Get-U32 $wire 0) / 100.0; strip_head_mm = (Get-U32 $wire 2) / 100.0; pull_head_mm = (Get-U32 $wire 4) / 100.0
+        strip_tail_mm = (Get-U32 $wire 6) / 100.0; pull_tail_mm = (Get-U32 $wire 8) / 100.0
+        diameter_mm = $wire[10] / 100.0; blade_back_mm = $wire[11] / 100.0; print_word = $pr[0]; positions_mm = $p
+    }
+}
+
+function Invoke-Pulse([int]$a, [int]$bit, [int]$hold) {
+    if (-not $script:allowedPulse.ContainsKey($a) -or -not ($script:allowedPulse[$a] -contains $bit)) { throw ('pulse not allowed: D' + $a + '.' + $bit) }
+    if ($hold -lt 100) { $hold = 100 }
+    if ($hold -gt 3000) { $hold = 3000 }
+    $mask = [int][Math]::Pow(2, $bit)
+    $orig = (Read-Regs $a 1)[0]
+    $set = $false; $cleared = $false
+    try {
+        Write-Regs $a @($orig -bor $mask); $set = $true
+        $sw = [Diagnostics.Stopwatch]::StartNew(); $lastCtx = 0
+        while ($sw.ElapsedMilliseconds -lt $hold) {
+            if ($sw.ElapsedMilliseconds - $lastCtx -ge 700) { try { Write-HmiContext } catch { }; $lastCtx = $sw.ElapsedMilliseconds }
+            Start-Sleep -Milliseconds 50
+        }
+    } finally {
+        for ($t = 1; $t -le 3 -and -not $cleared; $t++) { try { Write-Regs $a @($orig -band (65535 - $mask)); $cleared = $true } catch { Start-Sleep -Milliseconds 100 } }
+    }
+    $after = (Read-Regs $a 1)[0]
+    return @{ addr = $a; bit = $bit; hold_ms = $hold; before = $orig; set = $set; cleared = $cleared; after = $after }
+}
+
+function Invoke-Request($req) {
+    $cmd = [string]$req['cmd']
+    if (@('read', 'write', 'pulse', 'status') -notcontains $cmd) { throw ('unknown cmd ' + $cmd) }
+    if ($cmd -eq 'write') {
+        $a = [int]$req['addr']; $vals = [int[]]@($req['values'] | ForEach-Object { [int]$_ })
+        if (-not (Test-WriteAllowed $a $vals.Length)) { throw ('write not allowed: D' + $a + ' x' + $vals.Length) }
+    }
+    if (-not $Mock) {
+        $busy = Test-Busy
+        if ($busy) { throw ('busy: ' + $busy + ' is running, bus refused') }
+        $script:sp = New-Object IO.Ports.SerialPort 'COM8', 38400, ([IO.Ports.Parity]::None), 8, ([IO.Ports.StopBits]::One)
+        $script:sp.ReadTimeout = 500; $script:sp.WriteTimeout = 500
+        $script:sp.Open()
+    }
+    try {
+        switch ($cmd) {
+            'read' { return @{ addr = [int]$req['addr']; values = [int[]](Read-Regs ([int]$req['addr']) ([int]$req['count'])) } }
+            'status' { Write-HmiContext; return (Get-Status) }
+            'write' {
+                Write-HmiContext
+                Write-Regs $a $vals
+                return @{ addr = $a; written = [int[]]$vals; readback = [int[]](Read-Regs $a $vals.Length) }
+            }
+            'pulse' { Write-HmiContext; return (Invoke-Pulse ([int]$req['addr']) ([int]$req['bit']) ([int]$req['hold_ms'])) }
+        }
+    } finally {
+        if ($script:sp) { try { $script:sp.Close(); $script:sp.Dispose() } catch { }; $script:sp = $null }
+    }
+}
+
+# Own JSON writer: JavaScriptSerializer on PowerShell 2 trips over PSObject-wrapped values.
+function ConvertTo-JsonLite($v) {
+    if ($v -eq $null) { return 'null' }
+    if ($v -is [bool]) { if ($v) { return 'true' } else { return 'false' } }
+    if ($v -is [string]) {
+        $sb = New-Object System.Text.StringBuilder
+        [void]$sb.Append('"')
+        foreach ($ch in $v.ToCharArray()) {
+            $code = [int]$ch
+            if ($ch -eq '"') { [void]$sb.Append('\"') }
+            elseif ($ch -eq '\') { [void]$sb.Append('\\') }
+            elseif ($code -lt 32 -or $code -gt 126) { [void]$sb.Append('\u' + $code.ToString('x4')) }
+            else { [void]$sb.Append($ch) }
+        }
+        [void]$sb.Append('"')
+        return $sb.ToString()
+    }
+    if ($v -is [int] -or $v -is [long] -or $v -is [byte] -or $v -is [int16] -or $v -is [uint16] -or $v -is [uint32] -or $v -is [double] -or $v -is [decimal] -or $v -is [single]) {
+        return ([double]$v).ToString('R', [Globalization.CultureInfo]::InvariantCulture)
+    }
+    if ($v -is [System.Collections.IDictionary]) {
+        $parts = @()
+        foreach ($k in ($v.Keys | Sort-Object)) { $parts += ((ConvertTo-JsonLite ([string]$k)) + ':' + (ConvertTo-JsonLite $v[$k])) }
+        return '{' + ($parts -join ',') + '}'
+    }
+    if ($v -is [System.Collections.IEnumerable]) {
+        $parts = @()
+        foreach ($x in $v) { $parts += (ConvertTo-JsonLite $x) }
+        return '[' + ($parts -join ',') + ']'
+    }
+    return (ConvertTo-JsonLite ([string]$v))
+}
+
+function Start-Service2 {
+    $bind = [System.Net.IPAddress]::Any
+    $allowed = @($Allow -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($LocalOnly) { $bind = [System.Net.IPAddress]::Loopback; $allowed = @('127.0.0.1') }
+    $listener = New-Object System.Net.Sockets.TcpListener ($bind, $Port)
+    $listener.Start()
+    Write-MbLog ('listening on ' + $bind + ':' + $Port + ' allow ' + ($allowed -join ',') + ' mock=' + [bool]$Mock)
+    while ($true) {
+        $client = $listener.AcceptTcpClient()
+        $remote = $client.Client.RemoteEndPoint.Address.ToString()
+        try {
+            $client.ReceiveTimeout = 5000; $client.SendTimeout = 5000
+            $stream = $client.GetStream()
+            $enc = New-Object System.Text.UTF8Encoding $false
+            $writer = New-Object System.IO.StreamWriter($stream, $enc); $writer.AutoFlush = $true
+            if ($allowed -notcontains $remote) {
+                Write-MbLog ('REJECT ' + $remote)
+                $writer.WriteLine('{"ok":false,"error":"forbidden"}')
+                continue
+            }
+            $reader = New-Object System.IO.StreamReader($stream, $enc)
+            $line = $reader.ReadLine()
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            Write-MbLog ('REQ ' + $remote + ' ' + $line)
+            try {
+                $req = $script:js.DeserializeObject($line)
+                $res = Invoke-Request $req
+                $out = ConvertTo-JsonLite @{ ok = $true; ms = $sw.ElapsedMilliseconds; result = $res }
+            } catch {
+                $out = ConvertTo-JsonLite @{ ok = $false; ms = $sw.ElapsedMilliseconds; error = $_.Exception.Message }
+            }
+            Write-MbLog ('RES ' + $out)
+            $writer.WriteLine($out)
+        } catch {
+            Write-MbLog ('CONN ERROR ' + $_.Exception.Message)
+        } finally {
+            try { $client.Close() } catch { }
+        }
+    }
+}
+
+if (-not (Test-Path $Dir)) { New-Item -ItemType Directory -Path $Dir | Out-Null }
+while ($true) {
+    try { Start-Service2 } catch { Write-MbLog ('LISTENER ERROR ' + $_.Exception.Message); Start-Sleep -Seconds 5 }
+}

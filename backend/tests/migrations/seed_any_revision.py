@@ -331,6 +331,8 @@ _SHAPED_VALUES: dict[tuple[str, str], Any] = {
     ("warehouse_label_templates", "format"): lambda i: _LABEL_FORMATS[i % len(_LABEL_FORMATS)],
     # The model API address is '' or http(s):// (0151_upd_llm_recognition); the key is made up.
     ("warehouse_upd_llm_settings", "base_url"): lambda i: "https://llm.example.test/v1",
+    # A machine snapshot speaks bridge protocol 1 only (0193_machines).
+    ("production_machine_snapshots", "proto"): lambda i: 1,
 }
 # Shaped values win over a CHECK's first `IN (…)` value; a table with a UNIQUE of shaped pairs gets no more rows than
 # there are pairs.
