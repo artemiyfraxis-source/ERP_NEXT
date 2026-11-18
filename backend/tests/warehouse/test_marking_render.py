@@ -1,3 +1,4 @@
+import hashlib
 from io import BytesIO
 
 from PIL import Image, ImageChops
@@ -94,3 +95,26 @@ def test_bad_halves_are_rejected(text, zones):
 def test_single_zone_profile_refuses_different_halves():
     with pytest.raises(ValueError, match="двумя текстовыми зонами"):
         render("А | Б", Geometry.model_validate(presets()[0][2]))
+
+
+def test_left_half_follows_the_zone_position_not_the_list_order():
+    raw = presets()[-1][2]
+    geometry = Geometry.model_validate(raw)
+    reversed_zones = Geometry.model_validate({**raw, "zones": list(reversed(raw["zones"]))})
+    assert render("X1 | КБ1-001", reversed_zones)[0] == render("X1 | КБ1-001", geometry)[0]
+
+
+# sha256 of the renderer before halves (origin/main ed34f2a3): a text without «|» must stay byte-identical.
+BEFORE_HALVES = {
+    (0, False): "ef39d66e1e62f10fc47253980b78693c4ce2da9796bb045d0d9116abdbc9a325",
+    (0, True): "a048661b5240e9b231db0b83b20108a150c1c3f0f449810b8d8f7def42ad1601",
+    (4, False): "fdee1b6ee1582370504eeab88c9a5da79ce2fd752722a914a0b395a8d8ae5832",
+    (4, True): "6412b347980ef8c162ab11cba1cf944fbb4d75ed87c2689b404bb65c5251726f",
+}
+
+
+@pytest.mark.parametrize("preset,calibration", list(BEFORE_HALVES))
+def test_text_without_divider_renders_byte_identical_to_before(preset, calibration):
+    text = "АБВ 123" if calibration else "КБ1\nЛЕВО\n123"
+    png, _ = render(text, Geometry.model_validate(presets()[preset][2]), calibration=calibration)
+    assert hashlib.sha256(png).hexdigest() == BEFORE_HALVES[(preset, calibration)]

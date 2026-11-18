@@ -164,13 +164,20 @@ def save_profile(profile_id: UUID, payload: ProfileInput, principal: ConfigUser,
             profile = uow.session.get(MarkingProfileRow, profile_id)
             if profile is None:
                 raise KeyError("Профиль не найден")
+            zones = payload.geometry.zones
+            if len(zones) == 2 and zones[0].x >= zones[1].x:
+                raise ValueError("Текст 1 — левая половина флажка: его зона должна начинаться левее зоны «Текст 2»")
             geometry = payload.geometry.model_dump()
             calibrated = payload.calibrated and geometry == profile.geometry
             name = profile_name(uow.session, profile, payload.name)
             renamed = {"name": name, "previous_name": profile.name} if name != profile.name else {}
-            changed = uow.session.execute(update(MarkingProfileRow).where(MarkingProfileRow.id == profile_id,
-                MarkingProfileRow.version == payload.version).values(name=name, geometry=geometry, calibrated=calibrated,
-                                                                    version=payload.version + 1))
+            try:
+                changed = uow.session.execute(update(MarkingProfileRow).where(MarkingProfileRow.id == profile_id,
+                    MarkingProfileRow.version == payload.version).values(name=name, geometry=geometry, calibrated=calibrated,
+                                                                        version=payload.version + 1))
+            except IntegrityError as error:
+                # Another session took the name between our check and this write (uq_marking_profile_preset).
+                raise ValueError(f"У этого станка уже есть профиль «{name}»") from error
             if changed.rowcount != 1:
                 raise ConcurrentProductionUpdate(STALE)
             audit(uow, principal.actor, now, profile_id, "profile_saved", version=payload.version + 1, calibrated=calibrated, **renamed)

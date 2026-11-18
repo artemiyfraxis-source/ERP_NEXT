@@ -120,7 +120,10 @@ def _layout(draw, text, font, size, geometry, width, height):
 def render(text: str, geometry: Geometry, *, calibration: bool = False) -> tuple[bytes, dict]:
     if not text.strip() or len(text) > 1000 or any(ord(c) < 32 and c != "\n" for c in text):
         raise ValueError("Нужна непустая надпись до 1000 символов без управляющих знаков")
-    texts = halves(text, len(geometry.zones))
+    # The left half is the zone nearer the label's left edge, whatever order the zones are listed in.
+    by_x = sorted(range(len(geometry.zones)), key=lambda index: geometry.zones[index].x)
+    parts = halves(text, len(geometry.zones))
+    texts = [parts[by_x.index(index)] for index in range(len(geometry.zones))]
     image = Image.new("1", (dots(geometry.width_mm), dots(geometry.height_mm)), 1)
     draw = ImageDraw.Draw(image)
     bounds = [(dots(z.x), dots(z.y), dots(z.x + z.width), dots(z.y + z.height)) for z in geometry.zones]

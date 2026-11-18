@@ -399,3 +399,24 @@ def test_profile_rename_keeps_calibration_and_is_unique_per_machine(marking):
         event = uow.session.scalar(select(AuditEventRow).where(AuditEventRow.event_type == "production.marking_profile_saved")
                                    .order_by(AuditEventRow.occurred_at))
         assert event.details["previous_name"] == "Флажок"
+
+
+def test_profile_save_rejects_reversed_halves_and_a_raced_duplicate_name(marking, monkeypatch):
+    client, factory, payload, _task, _card, equipment_id, _ = marking
+    principal = app.dependency_overrides[authenticated_principal]()
+    app.dependency_overrides[authenticated_principal] = lambda: replace(principal, permissions={**principal.permissions, "erpref": "edit"})
+    with factory() as uow:
+        uow.session.add(MarkingProfileRow(id=uuid4(), equipment_id=equipment_id, inventory_number="ОБ.101", name="92,5×20",
+                                          version=1, calibrated=False, geometry=presets()[-1][2]))
+        uow.commit()
+    path = BASE + "/profiles/" + payload["profile_id"]
+    raw = presets()[-1][2]
+    response = client.put(path, json={"version": 1, "calibrated": True, "geometry": {**raw, "zones": list(reversed(raw["zones"]))}})
+    assert response.status_code == 422 and "левая половина" in response.json()["detail"]
+    # The other session commits the same name after our uniqueness check: the database constraint answers in Russian.
+    import app.workflows.marking_labels as marking_labels
+    monkeypatch.setattr(marking_labels, "profile_name", lambda _session, _profile, _requested: "92,5×20")
+    response = client.put(path, json={"version": 1, "calibrated": True, "geometry": raw, "name": "92,5×20"})
+    assert response.status_code == 422 and "уже есть профиль" in response.json()["detail"], response.text
+    with factory() as uow:
+        assert uow.session.get(MarkingProfileRow, UUID(payload["profile_id"])).name == "Флажок"

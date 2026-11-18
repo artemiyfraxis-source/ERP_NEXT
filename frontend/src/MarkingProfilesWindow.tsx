@@ -211,7 +211,7 @@ function ProfileEditor({ profile, canEdit, online, onSaved, onBusy, onDirty }: {
       {flag && <label>Текст на половинах<select name="marking-calibration-halves" autoComplete="off" disabled={disabled} value={halves}
         onChange={(event) => { setHalves(event.target.value as "same" | "split"); setPreview(null); setConfirmed(false); }}>
         <option value="same">Одинаковый на обеих половинах</option><option value="split">Разный на левой и правой</option></select></label>}
-      <label>{flag && halves === "split" ? "Левая половина" : "Текст пробной этикетки"}<textarea name="marking-calibration-text" autoComplete="off" maxLength={480} disabled={disabled} value={text}
+      <label>{flag && halves === "split" ? "Левая половина" : "Текст пробной этикетки"}<textarea name="marking-calibration-text" autoComplete="off" maxLength={flag && halves === "split" ? 480 : 1000} disabled={disabled} value={text}
         onChange={(event) => { setText(event.target.value); setPreview(null); setConfirmed(false); }} /></label>
       {flag && halves === "split" && <label>Правая половина<textarea name="marking-calibration-right" autoComplete="off" maxLength={480} disabled={disabled} value={right}
         onChange={(event) => { setRight(event.target.value); setPreview(null); setConfirmed(false); }} /></label>}
