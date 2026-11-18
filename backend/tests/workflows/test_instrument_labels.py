@@ -263,14 +263,13 @@ def test_latest_attachment_recomputes_label_and_passport(production_api):
             return instrument_labels._content(SqlAlchemyInstrumentRepository(session).get(UUID(item["id"])), session)
     assert content().value("parameters_line") == "Не измерен"
     upload(measured_file(stop=18), 1)
-    # Two points only (0,01 and 18 GHz): /55 judges 18 GHz alone, where the loss is within ±U — a border, no range.
-    assert content().value("range_line") == "На границе допуска — повторить замер"
+    assert content().value("range_line") == "Применять до 18 ГГц"
     before = client.get(f"{BASE}/{item['id']}/label.png").content
     upload(measured_file(stop=11), 2)
-    assert content().value("range_line") == "На границе допуска — повторить замер"
-    assert before.startswith(b"\x89PNG")  # both uploads read the same border state; the switch is proven below
+    assert content().value("range_line") == "Применять до 11 ГГц"
+    assert before != client.get(f"{BASE}/{item['id']}/label.png").content
     upload(replace(measured_file(stop=6), file_name="unrelated.s2p"), 3)
-    assert content().value("range_line") == "На границе допуска — повторить замер"
+    assert content().value("range_line") == "Применять до 11 ГГц"
     upload(replace(measured_file(), content=b"invalid"), 4)
     assert content().value("parameters_line") == "Не измерен"
 

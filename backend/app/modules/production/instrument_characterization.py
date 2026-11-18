@@ -104,7 +104,8 @@ class Application:
     @property
     def range_line(self) -> str:
         if not self.judged:
-            return "Норма не установлена"
+            below = self.check is not None and self.check.status == "below_accuracy"
+            return "Норма ниже точности ВАЦ" if below else "Норма не установлена"
         if self.limit_ghz:
             return f"Применять до {number(self.limit_ghz)} ГГц"
         statuses = {a.status for a in (self.check, self.loss_check) if a is not None}

@@ -78,8 +78,8 @@ def test_one_bad_side_decides():
 
 
 def test_loss_outside_its_norm_ends_the_range_too():
-    norm = Norm("Лист", "", 0.0, (Segment(18, 1.25),), loss=LossNorm("Лист", 0.0, (LossSegment(18, 0.1),)))
-    measured = summary({0.01: 1.02, 6: 1.04, 12: 1.05, 18: 1.06}, {0.01: 0.01, 6: 0.03, 12: 0.3, 18: 0.3})
+    norm = Norm("Лист", "", 0.0, (Segment(18, 1.25),), loss=LossNorm("Лист", 0.0, (LossSegment(18, 0.3),)))
+    measured = summary({0.01: 1.02, 6: 1.04, 12: 1.05, 18: 1.06}, {0.01: 0.01, 6: 0.03, 12: 0.5, 18: 0.5})
     assert application(measured, (), norm).fit_ghz == 6
 
 
