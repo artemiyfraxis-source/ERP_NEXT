@@ -261,8 +261,9 @@ function Get-VnaTraces {
 #   Smith S11            | фаза S21             | ГВЗ S21              | Smith S22
 #   возвр. потери S11, дБ | S21, дБ обзор (0…−50) | S12, дБ обзор (0…−50) | возвр. потери S22, дБ
 # Traces 1-4 are the measurement traces (Get-VnaSweep reads them by index). Markers 1/3/6/12/18 GHz on every graph
-# (S2VNA couples markers of the same number across graphs by default). Limit lines go on the two SWR graphs only:
-# rf-norms.json has no insertion-loss norm. Display only: sweep, calibration and calibration kit stay untouched.
+# (S2VNA couples markers of the same number across graphs by default). Limit lines: SWR norm on the SWR graphs, the
+# insertion-loss norm (lower line on S21/S12 dB) on the two loss graphs. Group delay is autoscaled (S2VNA has a one-shot
+# autoscale only: on every screen apply and after every sweep). Display only: sweep, calibration and kit stay untouched.
 $script:VnaScreenSplit = 15
 $script:VnaScreenMarkersHz = @(1e9, 3e9, 6e9, 12e9, 18e9)
 
@@ -272,18 +273,18 @@ function Get-VnaScreenTraces {
     $smith = [ordered]@{ PDIVision = 1.0 }
     $overview = [ordered]@{ PDIVision = 5.0; RLEVel = 0.0; RPOSition = 10 }
     return @(
-        [pscustomobject]@{ Index = 1; Parameter = 'S11'; Format = 'SWR';  Scale = $swr;  SwrLimit = $true }
-        [pscustomobject]@{ Index = 2; Parameter = 'S21'; Format = 'MLOG'; Scale = $loss; SwrLimit = $false }
-        [pscustomobject]@{ Index = 3; Parameter = 'S12'; Format = 'MLOG'; Scale = $loss; SwrLimit = $false }
-        [pscustomobject]@{ Index = 4; Parameter = 'S22'; Format = 'SWR';  Scale = $swr;  SwrLimit = $true }
-        [pscustomobject]@{ Index = 5; Parameter = 'S11'; Format = 'SMIT'; Scale = $smith; SwrLimit = $false }
-        [pscustomobject]@{ Index = 6; Parameter = 'S21'; Format = 'PHAS'; Scale = [ordered]@{ PDIVision = 36.0; RLEVel = 0.0; RPOSition = 5 }; SwrLimit = $false }
-        [pscustomobject]@{ Index = 7; Parameter = 'S21'; Format = 'GDEL'; Scale = [ordered]@{ PDIVision = 2e-10; RLEVel = 0.0; RPOSition = 0 }; SwrLimit = $false }
-        [pscustomobject]@{ Index = 8; Parameter = 'S22'; Format = 'SMIT'; Scale = $smith; SwrLimit = $false }
-        [pscustomobject]@{ Index = 9; Parameter = 'S11'; Format = 'MLOG'; Scale = $overview; SwrLimit = $false }
-        [pscustomobject]@{ Index = 10; Parameter = 'S21'; Format = 'MLOG'; Scale = $overview; SwrLimit = $false }
-        [pscustomobject]@{ Index = 11; Parameter = 'S12'; Format = 'MLOG'; Scale = $overview; SwrLimit = $false }
-        [pscustomobject]@{ Index = 12; Parameter = 'S22'; Format = 'MLOG'; Scale = $overview; SwrLimit = $false }
+        [pscustomobject]@{ Index = 1; Parameter = 'S11'; Format = 'SWR';  Scale = $swr;  Limit = 'Swr' }
+        [pscustomobject]@{ Index = 2; Parameter = 'S21'; Format = 'MLOG'; Scale = $loss; Limit = 'Loss' }
+        [pscustomobject]@{ Index = 3; Parameter = 'S12'; Format = 'MLOG'; Scale = $loss; Limit = 'Loss' }
+        [pscustomobject]@{ Index = 4; Parameter = 'S22'; Format = 'SWR';  Scale = $swr;  Limit = 'Swr' }
+        [pscustomobject]@{ Index = 5; Parameter = 'S11'; Format = 'SMIT'; Scale = $smith; Limit = $null }
+        [pscustomobject]@{ Index = 6; Parameter = 'S21'; Format = 'PHAS'; Scale = [ordered]@{ PDIVision = 36.0; RLEVel = 0.0; RPOSition = 5 }; Limit = $null }
+        [pscustomobject]@{ Index = 7; Parameter = 'S21'; Format = 'GDEL'; Scale = [ordered]@{}; Limit = $null; AutoScale = $true }
+        [pscustomobject]@{ Index = 8; Parameter = 'S22'; Format = 'SMIT'; Scale = $smith; Limit = $null }
+        [pscustomobject]@{ Index = 9; Parameter = 'S11'; Format = 'MLOG'; Scale = $overview; Limit = $null }
+        [pscustomobject]@{ Index = 10; Parameter = 'S21'; Format = 'MLOG'; Scale = $overview; Limit = $null }
+        [pscustomobject]@{ Index = 11; Parameter = 'S12'; Format = 'MLOG'; Scale = $overview; Limit = $null }
+        [pscustomobject]@{ Index = 12; Parameter = 'S22'; Format = 'MLOG'; Scale = $overview; Limit = $null }
     )
 }
 
@@ -300,7 +301,9 @@ function ConvertTo-VnaLimitData {
     $values = New-Object 'System.Collections.Generic.List[double]'
     $values.Add(@($Segments).Count)
     foreach ($segment in @($Segments)) {
-        foreach ($value in 1, $segment.StartHz, $segment.StopHz, $segment.From, $segment.To) { $values.Add([double]$value) }
+        # Type 1 = upper limit (SWR), 2 = lower limit (S21/S12 in dB against an insertion-loss norm).
+        $type = if ($segment.PSObject.Properties['Type'] -and $segment.Type) { [int]$segment.Type } else { 1 }
+        foreach ($value in $type, $segment.StartHz, $segment.StopHz, $segment.From, $segment.To) { $values.Add([double]$value) }
     }
     return [double[]]$values.ToArray()
 }
@@ -320,14 +323,15 @@ function Assert-VnaScreen {
 function Set-VnaScreen {
     param($Connection, $Limits)
     $null = Assert-VnaInstrumentIdentity $Connection
-    $segments = if ($Limits) { @($Limits.Swr) } else { @() }
+    $byKind = @{ Swr = @(); Loss = @() }
+    if ($Limits) { foreach ($kind in 'Swr', 'Loss') { if ($Limits.PSObject.Properties[$kind]) { $byKind[$kind] = @($Limits.$kind) } } }
     $title = if ($Limits -and $Limits.Title) { [string]$Limits.Title } else { '' }
     if ($title.Length -gt 256) { $title = $title.Substring(0, 256) }
     $specs = @(Get-VnaScreenTraces)
     if ($Connection.Offline) {
         $Connection.Traces = @(foreach ($spec in $specs) {
             $trace = [ordered]@{ Parameter = $spec.Parameter; Format = $spec.Format; PDIVision = $null; RLEVel = $null; RPOSition = $null
-                Limit = $(if ($spec.SwrLimit) { $segments } else { @() }); Markers = $script:VnaScreenMarkersHz }
+                Limit = $(if ($spec.Limit) { $byKind[$spec.Limit] } else { @() }); Markers = $script:VnaScreenMarkersHz }
             foreach ($member in $spec.Scale.Keys) { $trace[$member] = $spec.Scale[$member] }
             [pscustomobject]$trace
         })
@@ -337,7 +341,6 @@ function Set-VnaScreen {
         Invoke-VnaComIo $Connection 'DISPlay.SPLit' set 1
         Invoke-VnaComIo $Connection 'CALCulate(1).PARameter(1).COUNt' set $specs.Count
         Invoke-VnaComIo $Connection 'DISPlay.WINDow(1).SPLit' set $script:VnaScreenSplit
-        $limitData = ConvertTo-VnaLimitData $segments
         $markers = $script:VnaScreenMarkersHz.Count
         foreach ($spec in $specs) {
             $index = $spec.Index
@@ -345,7 +348,10 @@ function Set-VnaScreen {
             Invoke-VnaComIo $Connection "CALCulate(1).PARameter($index).SELect" call
             Invoke-VnaComIo $Connection 'CALCulate(1).SELected.FORMat' set $spec.Format
             foreach ($member in $spec.Scale.Keys) { Invoke-VnaComIo $Connection "DISPlay.WINDow(1).TRACe($index).Y.SCALe.$member" set $spec.Scale[$member] }
-            $withLimit = $spec.SwrLimit -and $segments.Count -gt 0
+            # @(...) around the whole if: a single PSCustomObject has no .Count in Windows PowerShell 5.1.
+            $segments = @(if ($spec.Limit) { $byKind[$spec.Limit] })
+            $withLimit = $segments.Count -gt 0
+            $limitData = ConvertTo-VnaLimitData $segments
             # S2VNA rejects an empty table (N = 0) over COM: a graph without a norm keeps its table, hidden and not tested.
             if ($withLimit) { Invoke-VnaComIo $Connection 'CALCulate(1).SELected.LIMit.DATA' set $limitData }
             Invoke-VnaComIo $Connection 'CALCulate(1).SELected.LIMit.DISPlay.STATe' set $withLimit
@@ -362,9 +368,18 @@ function Set-VnaScreen {
         }
         Invoke-VnaComIo $Connection 'DISPlay.WINDow(1).TITLe.DATA' set $title
         Invoke-VnaComIo $Connection 'DISPlay.WINDow(1).TITLe.STATe' set ([bool]$title)
+        Update-VnaScreenAutoScale $Connection
         Assert-VnaSetting (Invoke-VnaComIo $Connection 'DISPlay.WINDow(1).SPLit') $script:VnaScreenSplit 'расположение графиков'
     }
     Assert-VnaScreen @(Get-VnaTraces $Connection)
+}
+
+function Update-VnaScreenAutoScale {
+    param($Connection)
+    if ($Connection.Offline) { return }
+    foreach ($spec in @(Get-VnaScreenTraces | Where-Object { $_.PSObject.Properties['AutoScale'] -and $_.AutoScale })) {
+        Invoke-VnaComIo $Connection "DISPlay.WINDow(1).TRACe($($spec.Index)).Y.SCALe.AUTO" call
+    }
 }
 
 function Read-VnaComOptional {

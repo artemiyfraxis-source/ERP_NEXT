@@ -264,7 +264,7 @@ Describe 'S2VNA measurement screen over mocked COM' {
             if ($Path -match '^CALCulate\(1\)\.PARameter\((\d+)\)\.SELect$') { $script:comSelected = [int]$Matches[1]; return }
             $key = $Path -replace '^CALCulate\(1\)\.SELected\.', "T$($script:comSelected)."
             if ($key -like '*CORRection.STATus') { return 'COR' }
-            if ($Mode -eq 'call') { $script:comWrites.Add($Path); return }
+            if ($Mode -eq 'call') { $script:comWrites.Add($Path); if ($Path -like '*Y.SCALe.AUTO') { $script:com[$Path] = 1 + [int]$script:com[$Path] }; return }
             if ($Mode -eq 'set') {
                 $script:comWrites.Add($Path)
                 if ($script:ignoreScaleWrite -and $key -like 'DISPlay.WINDow(1).TRACe*') { return }
@@ -282,7 +282,8 @@ Describe 'S2VNA measurement screen over mocked COM' {
         }
         $script:screenLimits = [pscustomobject]@{ Title = 'СИ.035 · КСВН ≤ 1,05 + 0,005·F'
             Swr = @([pscustomobject]@{ StartHz = 5e8; StopHz = 18e9; From = 1.0525; To = 1.14 },
-                    [pscustomobject]@{ StartHz = 1e7; StopHz = 18e9; From = 1.3; To = 1.3 }) }
+                    [pscustomobject]@{ StartHz = 1e7; StopHz = 18e9; From = 1.3; To = 1.3 })
+            Loss = @([pscustomobject]@{ Type = 2; StartHz = 5e8; StopHz = 18e9; From = -0.0212; To = -0.1273 }) }
     }
     It 'shows twelve graphs, SWR limit lines and classic-frequency markers without touching sweep or calibration' {
         Set-VnaScreen $script:chartConnection $script:screenLimits
@@ -294,9 +295,12 @@ Describe 'S2VNA measurement screen over mocked COM' {
         (@($script:com['T1.LIMit.DATA']) -join ',') | Should Be '2,1,500000000,18000000000,1.0525,1.14,1,10000000,18000000000,1.3,1.3'
         (@($script:com['T4.LIMit.DATA'])).Count | Should Be 11
         $script:com['T1.LIMit.STATe'] | Should Be $true
-        (@($script:com['T2.LIMit.DATA']) -join ',') | Should Be '0'
-        $script:com['T2.LIMit.STATe'] | Should Be $false
+        (@($script:com['T2.LIMit.DATA']) -join ',') | Should Be '1,2,500000000,18000000000,-0.0212,-0.1273'
+        (@($script:com['T3.LIMit.DATA']) -join ',') | Should Be '1,2,500000000,18000000000,-0.0212,-0.1273'
+        $script:com['T2.LIMit.STATe'] | Should Be $true
         $script:com['T5.LIMit.DISPlay.STATe'] | Should Be $false
+        $script:com['T10.LIMit.STATe'] | Should Be $false
+        $script:com['DISPlay.WINDow(1).TRACe(7).Y.SCALe.AUTO'] | Should Be 1
         $script:com['T9.LIMit.STATe'] | Should Be $false
         foreach ($trace in 1..12) {
             $script:com["T$trace.MARKer(5).STATe"] | Should Be $true
@@ -306,7 +310,6 @@ Describe 'S2VNA measurement screen over mocked COM' {
         }
         $script:com['DISPlay.WINDow(1).TITLe.DATA'] | Should Be 'СИ.035 · КСВН ≤ 1,05 + 0,005·F'
         $script:com['DISPlay.WINDow(1).TITLe.STATe'] | Should Be $true
-        $script:com['DISPlay.WINDow(1).TRACe(7).Y.SCALe.PDIVision'] | Should Be 2e-10
         $script:com['DISPlay.WINDow(1).TRACe(10).Y.SCALe.PDIVision'] | Should Be 5
         @($script:comWrites | Where-Object { $_ -match 'SENSe|SOURce|CORRection|TRIGger|INITiate|MMEMory|CKIT' }).Count | Should Be 0
     }

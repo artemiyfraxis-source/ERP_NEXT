@@ -10,11 +10,14 @@ function New-TestNorms {
 {
   "makers": [ { "series": "ADP1A", "match": "ADP1A", "title": "Планар ADP1A", "source": "Планар, РЭ ADP1A",
       "groups": [ { "title": "3,5 мм", "ports": ["3.5mm", "3.5mm"], "from_ghz": 0,
-                    "segments": [ { "to_ghz": 20, "a": 1.06, "b": 0 }, { "to_ghz": 26.5, "a": 1.1, "b": 0 } ] } ] } ],
+                    "segments": [ { "to_ghz": 20, "a": 1.06, "b": 0 }, { "to_ghz": 26.5, "a": 1.1, "b": 0 } ],
+                    "loss": { "from_ghz": 0, "segments": [ { "to_ghz": 32, "a": 0.2, "k": 0 } ], "source": "РЭ" } } ] } ],
   "mil_adapters": [
-    { "sheet": "MIL-PRF-55339/55", "title": "SMA–SMA", "ports": ["SMA", "SMA"], "from_ghz": 0.5, "segments": [ { "to_ghz": 27, "a": 1.05, "b": 0.005 } ] },
+    { "sheet": "MIL-PRF-55339/55", "title": "SMA–SMA", "ports": ["SMA", "SMA"], "from_ghz": 0.5, "segments": [ { "to_ghz": 27, "a": 1.05, "b": 0.005 } ],
+      "loss": { "from_ghz": 0.5, "segments": [ { "to_ghz": 18, "a": 0, "k": 0.03 }, { "to_ghz": 27, "a": 0, "k": 0.05 } ], "source": "лист" } },
     { "sheet": "MIL-PRF-55339/54B", "title": "SMA–N", "ports": ["SMA", "N"], "from_ghz": 0,
-      "segments": [ { "to_ghz": 12.4, "a": 1.06, "b": 0.005 }, { "to_ghz": 18, "a": 0.83, "b": 0.023 } ] } ],
+      "segments": [ { "to_ghz": 12.4, "a": 1.06, "b": 0.005 }, { "to_ghz": 18, "a": 0.83, "b": 0.023 } ],
+      "loss": { "points": [ { "ghz": 9, "max_db": 0.18 } ], "source": "лист" } } ],
   "shop_requirement": { "vswr_max": 1.3, "label": "требование цеха" }
 }
 '@
@@ -35,6 +38,28 @@ Describe 'Screen limit lines from passport norms' {
         $limits.Swr[1].StartHz | Should Be 10e6
         $limits.Title | Should Match '^СИ\.035 · КСВН ≤ 1,05 \+ 0,005·F \(0,5–18 ГГц\) — MIL-PRF-55339/55'
         $limits.Title | Should Match 'КСВН ≤ 1,30 — требование цеха до 18 ГГц'
+        $limits.Loss.Count | Should Be 12
+        $limits.Loss[0].Type | Should Be 2
+        $limits.Loss[0].StartHz | Should Be 5e8
+        [math]::Round($limits.Loss[0].From, 5) | Should Be ([math]::Round(-0.03 * [math]::Sqrt(0.5), 5))
+        [math]::Round($limits.Loss[11].To, 5) | Should Be ([math]::Round(-0.03 * [math]::Sqrt(18), 5))
+        $limits.Loss[11].StopHz | Should Be 18e9
+        $limits.Title | Should Match 'потери ≤ 0,03·√F дБ \(0,5–18 ГГц\) — MIL-PRF-55339/55'
+    }
+    It 'draws a short line at the test frequency of a sheet without a loss formula' {
+        $item = [pscustomobject]@{ inventory_number = 'СИ.040'; name = 'Переходник SMA розетка – N вилка'; doc_designation = '' }
+        $limits = Get-VnaScreenLimits $script:norms $item @() 18e9
+        $limits.Loss.Count | Should Be 1
+        $limits.Loss[0].StartHz | Should Be 8.95e9
+        $limits.Loss[0].From | Should Be -0.18
+        $limits.Title | Should Match 'потери ≤ 0,18 дБ на 9 ГГц'
+        (Get-VnaScreenLimits $script:norms $item @() 4e9).Title | Should Match 'норма MIL-PRF-55339/54B не покрывает полосу'
+    }
+    It 'reads norms without loss keys tolerantly' {
+        $old = New-TestNorms; $old.mil_adapters[0].PSObject.Properties.Remove('loss')
+        $item = [pscustomobject]@{ inventory_number = 'СИ.035'; name = 'Переходник SMA вилка – SMA розетка'; doc_designation = '' }
+        $limits = Get-VnaScreenLimits $old $item @() 18e9
+        $limits.Loss.Count | Should Be 0
         $limits.Title | Should Match 'потери: нормы нет'
     }
     It 'expands a shared-series pair the way the ERP parser does' {
@@ -49,6 +74,9 @@ Describe 'Screen limit lines from passport norms' {
         $limits.Swr[0].StartHz | Should Be 10e6
         $limits.Swr[0].StopHz | Should Be 18e9
         $limits.Title | Should Match 'КСВН ≤ 1,06 \(0,01–18 ГГц\) — Планар ADP1A'
+        $limits.Loss.Count | Should Be 1
+        $limits.Loss[0].From | Should Be -0.2
+        $limits.Title | Should Match 'потери ≤ 0,2 дБ \(0,01–18 ГГц\) — Планар ADP1A'
         $limits.Title | Should Not Match '26,5'
     }
     It 'cuts the norm at the chosen upper frequency' {

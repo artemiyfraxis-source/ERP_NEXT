@@ -344,6 +344,7 @@ function Start-VnaMeasure {
                             foreach ($port in 1, 2) {
                                 [void](Read-Host "Подключите LOAD к порту $port на плоскости калибровки; второй порт свободен. Нажмите Enter")
                                 $sweep = Get-VnaSweep $connection
+                                try { Update-VnaScreenAutoScale $connection } catch { }  # group delay autoscale: display only, never blocks
                                 Assert-VnaMeasurementSafe -Sweep $sweep -Calibration $calibration -DeviceInfo (Get-VnaDeviceInfo $connection) -TraceStatus (Get-VnaTraceStatus $connection) -SkipLoadCheck
                                 $summary = Get-VnaSummary -Data $sweep.Data
                                 $value = if ($port -eq 1) { $summary.Vswr1 } else { $summary.Vswr2 }
@@ -391,6 +392,7 @@ function Start-VnaMeasure {
                         if ($known.Exhausted -and -not (Confirm-VnaAction 'Ресурс сочленений исчерпан. Всё равно выполнить замер?')) { break }
                         [void](Read-Host 'Установите переходник в показанную цепочку. Сторона 1 — к порту 1 ВАЦ. Нажмите Enter для нового замера')
                         $sweep = Get-VnaSweep $connection
+                        try { Update-VnaScreenAutoScale $connection } catch { }  # group delay autoscale: display only, never blocks
                         Assert-VnaMeasurementSafe -Sweep $sweep -Calibration $calibration -DeviceInfo (Get-VnaDeviceInfo $connection) -TraceStatus (Get-VnaTraceStatus $connection) -LedgerPath $ledger
                         # The measurement is done: the chain was mated, whether or not the file goes to the card.
                         $null = Save-VnaPendingMatings $pendingDirectory $matingTarget ('vna-measurement-' + $sweep.Id) $known.Entries
