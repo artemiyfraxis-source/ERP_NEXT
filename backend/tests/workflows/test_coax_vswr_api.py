@@ -505,6 +505,24 @@ def test_task_list_has_only_coax_assemblies_with_counts(production_api):  # noqa
     assert rows[new_task["id"]]["norm"]["vswr_max"] == 1.35 and rows[new_task["id"]]["required"] == {"total": 4, "measured": 0}
 
 
+def test_task_list_hides_tasks_of_a_fully_shipped_kb(production_api):  # noqa: F811
+    """Владелец 18.11: КБ уехала целиком (отгружено ≥ заказано) — её задание из «Замеров КСВН» уходит; уехала часть — остаётся."""
+    from tests.production.test_otk_shipped import finished_good
+
+    client, _ = production_api
+    _as({"quality": "edit", "production": "edit"})
+    shipped = _launch(client, _card({"coaxVswrNorm": NORM}, index="КБ1", config=COAX_CONFIG), key="vswr-shipped")
+    partly = _launch(client, _card({"coaxVswrNorm": NORM}, index="КБ2", config=COAX_CONFIG), key="vswr-partly")
+    finished_good("591K.3", "КБ1", "3", "3")
+    finished_good("591K.3", "КБ2", "4", "2")
+
+    listed = client.get("/api/production/vswr/tasks")
+
+    assert listed.status_code == 200, listed.text
+    ids = {row["id"] for row in listed.json()["tasks"]}
+    assert shipped["id"] not in ids and partly["id"] in ids
+
+
 def test_parser_and_domain_errors_are_russian_422(production_api):  # noqa: F811
     client, _ = production_api
     _card_, task, instrument = _setup(client)
