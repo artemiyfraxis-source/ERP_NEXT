@@ -115,14 +115,18 @@ def test_pdf_is_readable_with_serial_measured_unmeasured_limited_and_75_ohm(stop
     reader = PdfReader(BytesIO(pdf))
     text = "\n".join(page.extract_text() for page in reader.pages)
     assert item.serial_number in text and "Паспорт СИ.034" in text
-    assert "Методика: —" in text and "erp.example.test" in text
+    assert "Методика: МК-ВАЦ-01" in text and "erp.example.test" in text
     assert ("Результаты замера" in text) == measured
     assert ("Замер не проведён" in text) != measured
     if measured:
         assert "Planar S50180" in text and "АКМ №456" in text and "Иван" in text
         assert "de-embedding" in text and "27 C" in text
-        assert len(list(band_rows(data))) == (4 if stop == 18 else 3)
-        assert list(band_rows(data))[-1][0].endswith(str(stop))
+        rows = list(band_rows(data))
+        assert [row[0] for row in rows] == ["0,01–1", "0,01–3", "0,01–6"] + (["0,01–12", "0,01–18"] if stop == 18 else ["0,01–11"])
+        assert "Заключение (контроль характеристик, не поверка)" in text
+        flat = " ".join(text.split())
+        assert ("MIL-PRF-55339/55" in flat and "Ресурс сочленений: 500 — MIL-PRF-55339/55" in flat) == (impedance == 50)
+        assert ("Норма не установлена" in flat) == (impedance == 75)
     if impedance == 75:
         assert "не для 50 Ом тракта" in text
     assert VSWR_SCALE == (1.0, 2.0, 0.1)

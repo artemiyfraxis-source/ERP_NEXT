@@ -62,7 +62,8 @@ def test_one_bad_side_decides():
     assert result.limit_ghz == 3 or result.limit_ghz == 1
 
 
-@pytest.mark.parametrize("series,last_step", [(("BNC",), 4), (("N",), 11), (("TNC", "SMA"), 11), (("SMA",), 18), ((), 18)])
+@pytest.mark.parametrize("series,last_step", [(("BNC",), 4), (("N",), 18), (("N", "SMA"), 18), (("TNC", "SMA"), 11),
+                                               (("SMA",), 18), ((), 18)])
 def test_connector_series_cap_the_steps(series, last_step):
     result = application(summary({0.01: 1.01, 6: 1.02, 12: 1.03, 18: 1.04}), series)
     assert result.steps[-1].stop_ghz == last_step
@@ -71,3 +72,9 @@ def test_connector_series_cap_the_steps(series, last_step):
 
 def test_threshold_is_the_documented_constant():
     assert APPLICATION_VSWR_LIMIT == 1.30
+
+
+def test_shop_requirement_is_labelled_as_such():
+    usable = application(summary({0.01: 1.02, 6: 1.15, 12: 1.22, 13.3: 1.49, 18: 1.41}))
+    assert usable.requirement_line == "КСВН ≤ 1,30 (требование цеха) — до 12 ГГц"
+    assert application(summary({0.01: 1.8, 18: 1.9})).requirement_line == "КСВН ≤ 1,30 (требование цеха) — не выполняется"
