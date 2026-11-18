@@ -83,21 +83,24 @@ def public_passport_html(passport: PublicPassport, *, pdf_path: str) -> str:
         parts.append(f'<p><strong>{escape(passport.impedance_warning)}</strong></p>')
     parts.append('</section>')
     measured = passport.measurement
-    if measured:
-        verdict, warning = conclusion(measured)
-        parts += ['<section class="conclusion" aria-labelledby="conclusion"><h2 id="conclusion">Заключение</h2>',
-                  f'<p class="verdict">{escape(verdict)}</p>', f'<p>{escape(control_line(passport))}</p>']
-        if warning:
-            parts.append(f'<p class="warning">{escape(warning)}</p>')
+    result = conclusion(passport) if measured else None
+    if result:
+        parts += ['<section class="conclusion" aria-labelledby="conclusion">',
+                  f'<h2 id="conclusion">{escape(result.title)}</h2>', f'<p class="verdict">{escape(result.verdict)}</p>']
+        if result.warning:
+            parts.append(f'<p class="warning">{escape(result.warning)}</p>')
+        parts.append(_fields(result.lines))
+        parts.append(f'<p>{escape(control_line(passport))}</p>')
         if passport.control_overdue:
             parts.append('<p class="warning">Требуется повторный замер</p>')
+        parts += [f'<p class="note">{escape(text)}</p>' for text in result.closing]
         parts.append('</section>')
     parts.append('<section aria-labelledby="measurement"><h2 id="measurement">Результаты замера</h2>')
     if measured is None:
         parts.append('<p class="empty">Замер не проведён</p>')
     else:
         parts += [_fields(public_measurement_fields(measured)), '<h3>Параметры по диапазонам</h3><div class="table-wrap"><table><thead><tr>',
-                  '<th scope="col">Диапазон, ГГц</th><th scope="col">КСВН 1, макс.</th><th scope="col">КСВН 2, макс.</th><th scope="col">Потери, дБ</th></tr></thead><tbody>']
+                  '<th scope="col">Полоса, ГГц</th><th scope="col">КСВН 1, макс.</th><th scope="col">КСВН 2, макс.</th><th scope="col">Потери, дБ</th></tr></thead><tbody>']
         for row in band_rows(measured):
             parts.append("<tr>" + "".join(f"<td>{escape(value)}</td>" for value in row) + "</tr>")
         parts += ['</tbody></table></div><h3>КСВН</h3><div class="legend"><span class="side-one">Сторона 1</span><span class="side-two">Сторона 2</span></div>',
@@ -107,8 +110,7 @@ def public_passport_html(passport: PublicPassport, *, pdf_path: str) -> str:
     if passport.history:
         parts.append('<section aria-labelledby="history"><h2 id="history">История контроля</h2><ul class="history">')
         for previous in passport.history:
-            band = previous.band.band_line if previous.band else "Не годен для 50 Ом тракта"
-            parts.append(f'<li>{previous.measured_on:%d.%m.%Y} · {escape(band)}</li>')
+            parts.append(f'<li>{previous.measured_on:%d.%m.%Y} · {escape(previous.summary)}</li>')
         parts.append('</ul></section>')
     parts.append('<footer>Fraxis ERP</footer></main></body></html>')
     return "".join(parts)

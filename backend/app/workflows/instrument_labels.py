@@ -218,6 +218,7 @@ def instrument_passport(
             if item is None:
                 raise KeyError("СИ не найдено")
             return passport_pdf(item, RfRepository(session).get(item.id), _characterization(session, item.id),
-                                generated=now, card_url=instrument_card_url(item.inventory_number))
+                                generated=now, card_url=instrument_card_url(item.inventory_number),
+                                registry=SqlAlchemyInstrumentRepository(session).list())
     return Response(content=_rendered(build), media_type="application/pdf",
                     headers={"Cache-Control": "no-store", "Content-Disposition": 'inline; filename="instrument-passport.pdf"'})
