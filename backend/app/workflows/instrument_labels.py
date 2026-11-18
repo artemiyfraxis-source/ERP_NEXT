@@ -19,6 +19,7 @@ from app.modules.production.instrument_characterization import (
 from app.modules.production.instrument_norms import (item_spec, loss_uncertainty_for, norm_for, resolve_vna,
                                                      uncertainty_for)
 from app.modules.production.instrument_passport import passport_pdf
+from app.modules.production.mating_infrastructure import MatingRepository, instrument_control
 from app.modules.production.rf_infrastructure import RfRepository
 from app.modules.production.rf_interfaces import ROLE_LABELS, RfDetails, is_adapter_name
 from app.modules.production.traceability import InstrumentKind
@@ -96,16 +97,6 @@ def same_day_repeats(session, instrument_id, measured) -> tuple:
     return tuple(repeats)
 
 
-def _next_control(measured_on):
-    """Same interval as the passport (CONTROL_INTERVAL_MONTHS), day clamped to the month's end."""
-    from calendar import monthrange
-    from datetime import date
-    from app.modules.production.instrument_public import CONTROL_INTERVAL_MONTHS
-    month = measured_on.month - 1 + CONTROL_INTERVAL_MONTHS
-    year, month = measured_on.year + month // 12, month % 12 + 1
-    return date(year, month, min(measured_on.day, monthrange(year, month)[1]))
-
-
 def type_line(name: str) -> str:
     """The kind of item from its name: the leading Russian words before the first Latin/digit word
     («Переход коаксиальный ADP1A-…» → «Переход коаксиальный»)."""
@@ -139,9 +130,10 @@ def _application(item, rf: RfDetails, measured, repeats=()):
                        uncertainty=uncertainty_for(model), loss_uncertainty=loss_uncertainty_for(model), repeats=repeats)
 
 
-def _content(item, session=None):
+def _content(item, session=None, today=None):
     rf = RfRepository(session).get(item.id) if session is not None else RfDetails()
     measured = _characterization(session, item.id) if session is not None else None
+    control = instrument_control(session, item.id, today or moscow_now().date(), measured) if measured else None
     steps = _application(item, rf, measured, same_day_repeats(session, item.id, measured)) if measured else None
     # The passport's spec: the card's own mating resource, else the maker's/MIL sheet's; the count waits for PR #913.
     spec = item_spec(item.name, item.doc_designation or "", rf)
@@ -160,7 +152,8 @@ def _content(item, session=None):
         bands=band_cells(steps) if steps else (),
         type_line=kind_line(item.name, rf), model_line=item.doc_designation or article_of(item) or "",
         measured_on=measured.measured_on if measured else None,
-        next_control=_next_control(measured.measured_on) if measured else None,
+        next_control=control.due_on if control else None, control_short=control.short if control else "",
+        control_line=control.label_line if control else "",
         measurement_date=measured.measurement_date if measured else "",
         impedance_warning=impedance_warning(rf), card_url=public_passport_url(item.id),
         mating_resource=spec.mating_resource if spec else None, mating_count=None,
@@ -265,6 +258,8 @@ def instrument_passport(
             return passport_pdf(item, RfRepository(session).get(item.id), measured,
                                 generated=now, card_url=instrument_card_url(item.inventory_number),
                                 registry=SqlAlchemyInstrumentRepository(session).list(),
-                                repeats=same_day_repeats(session, item.id, measured))
+                                repeats=same_day_repeats(session, item.id, measured),
+                                matings_since=MatingRepository(session).matings_since(item.id, measured.measured_on)
+                                if measured else None)
     return Response(content=_rendered(build), media_type="application/pdf",
                     headers={"Cache-Control": "no-store", "Content-Disposition": 'inline; filename="instrument-passport.pdf"'})

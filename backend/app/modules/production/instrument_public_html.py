@@ -4,8 +4,8 @@ from html import escape
 import math
 
 from .instrument_characterization import number
-from .instrument_norms import Norm
-from .instrument_passport import _envelope, band_rows, chart_scale
+from .instrument_norms import TRANSFER_TITLE, Norm
+from .instrument_passport import _envelope, band_rows, chart_scale, curves
 from .instrument_public import PublicMeasurement, PublicPassport, conclusion, control_line, measurement_line, public_fields
 
 
@@ -36,7 +36,7 @@ def _svg(measured: PublicMeasurement, reflection: bool, norm: Norm | None = None
     """Scaled to the data and the norm (the same scale as the PDF); the norm is a red dashed line with its value."""
     scale = chart_scale(measured, reflection, norm)
     minimum, maximum, stop = scale.minimum, scale.maximum, scale.stop_ghz
-    title = "КСВН" if reflection else "Передача S21, дБ"
+    title = "КСВН" if reflection else TRANSFER_TITLE
     left, top, width, height = (40, 12, 294, 250) if compact else (50, 12, 634, 220)
     viewbox = "0 0 350 310" if compact else "0 0 710 270"
     variant = "chart-narrow" if compact else "chart-wide"
@@ -64,8 +64,7 @@ def _svg(measured: PublicMeasurement, reflection: bool, norm: Norm | None = None
         body.append(f'<text x="{x_of(scale.limit[-1][0]) - 4:.2f}" y="{min(span) - 5 if scale.label_above else max(span) + 14:.2f}" '
                     f'text-anchor="end" fill="#c81e1e">{escape(scale.limit_label)}</text>')
     clipped = False
-    for name, color in zip(("S11", "S22") if reflection else ("S21",), ("#1950be", "#be2d23")):
-        points = measured.points(name)
+    for points, color in zip(curves(measured, reflection), ("#1950be", "#be2d23")):
         if not reflection:
             points = tuple((f, 20 * math.log10(v) if v > 0 else -math.inf) for f, v in points)
         clipped |= any(v < minimum or v > maximum for f, v in points if f <= stop * 1e9 + 0.5)
@@ -118,7 +117,7 @@ def public_passport_html(passport: PublicPassport, *, pdf_path: str) -> str:
         for row in band_rows(measured):
             parts.append("<tr>" + "".join(f"<td>{escape(value)}</td>" for value in row) + "</tr>")
         parts += ['</tbody></table></div><h3>КСВН</h3><div class="legend"><span class="side-one">Сторона 1</span><span class="side-two">Сторона 2</span></div>',
-                  _svg(measured, True, norm), _svg(measured, True, norm, compact=True), '<h3>Передача S21, дБ</h3>',
+                  _svg(measured, True, norm), _svg(measured, True, norm, compact=True), f'<h3>{TRANSFER_TITLE}</h3>',
                   _svg(measured, False, norm), _svg(measured, False, norm, compact=True)]
     parts.append('</section>')
     if passport.history:
