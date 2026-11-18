@@ -21,7 +21,7 @@ from app.modules.shipping import api as shipping_api
 from app.modules.warehouse import scan_jobs_api
 from app.shared import http_auth
 from app.shared.http_auth import Principal, authenticated_principal
-from app.workflows import employee_card_api, marking_labels
+from app.workflows import employee_card_api, machines_api, marking_labels
 from tests.access_levels import principal_as
 
 # Every route dependency of the contract; references_suppliers is `_map_rights` inside references/api.py.
@@ -39,6 +39,8 @@ DEPENDENCIES = {
     "marking_print": marking_labels.marking_print_principal,
     "marking_config": marking_labels.marking_config_principal,
     "marking_read": marking_labels.marking_read_principal,
+    # «Станки» (0192, after the transfer): the master (Производство) and the fitter (Задания) read the list and the card.
+    "machines_view": machines_api.machines_view_principal,
 }
 
 
