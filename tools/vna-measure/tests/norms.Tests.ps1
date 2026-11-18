@@ -20,7 +20,7 @@ function New-TestNorms {
       "loss": { "points": [ { "ghz": 9, "max_db": 0.18 } ], "source": "лист" } },
     { "sheet": "MIL-PRF-55339/40B, /41B, /42A", "title": "SMA–TNC", "ports": ["SMA", "TNC"], "from_ghz": 0.5,
       "segments": [ { "to_ghz": 11, "a": 1.15, "b": 0.015 } ], "loss": { "points": [ { "ghz": 6, "k": 0.06 } ], "source": "лист" } } ],
-  "shop_requirement": { "vswr_max": 1.3, "label": "требование цеха" }
+  "vna": []
 }
 '@
     return $json | ConvertFrom-Json
@@ -31,15 +31,13 @@ Describe 'Screen limit lines from passport norms' {
     It 'takes the MIL sheet of an SMA pair parsed from the card name, from its lower edge, linear in F' {
         $item = [pscustomobject]@{ inventory_number = 'СИ.035'; name = 'Переходник SMA вилка – SMA розетка'; doc_designation = '' }
         $limits = Get-VnaScreenLimits $script:norms $item @() 18e9
-        $limits.Swr.Count | Should Be 2
+        $limits.Swr.Count | Should Be 1
         $limits.Swr[0].StartHz | Should Be 5e8
         $limits.Swr[0].StopHz | Should Be 18e9
         [math]::Round($limits.Swr[0].From, 6) | Should Be 1.0525
         [math]::Round($limits.Swr[0].To, 6) | Should Be 1.14
-        $limits.Swr[1].From | Should Be 1.3
-        $limits.Swr[1].StartHz | Should Be 10e6
         $limits.Title | Should Match '^СИ\.035 · КСВН ≤ 1,05 \+ 0,005·F \(0,5–18 ГГц\) — MIL-PRF-55339/55'
-        $limits.Title | Should Match 'КСВН ≤ 1,30 — требование цеха до 18 ГГц'
+        $limits.Title | Should Not Match '1,30|требование цеха'
         $limits.Loss.Count | Should Be 12
         $limits.Loss[0].Type | Should Be 2
         $limits.Loss[0].StartHz | Should Be 5e8
@@ -91,15 +89,14 @@ Describe 'Screen limit lines from passport norms' {
     It 'cuts the norm at the chosen upper frequency' {
         $item = [pscustomobject]@{ inventory_number = 'СИ.040'; name = 'Переходник SMA розетка – N вилка'; doc_designation = '' }
         $limits = Get-VnaScreenLimits $script:norms $item @() 11e9
-        $limits.Swr.Count | Should Be 2
+        $limits.Swr.Count | Should Be 1
         $limits.Swr[0].StopHz | Should Be 11e9
         [math]::Round($limits.Swr[0].To, 6) | Should Be 1.115
-        $limits.Swr[1].StopHz | Should Be 11e9
     }
     It 'keeps both pieces of a two-segment sheet across 12.4 GHz' {
         $item = [pscustomobject]@{ inventory_number = 'СИ.040'; name = 'Переходник SMA розетка – N вилка'; doc_designation = '' }
         $limits = Get-VnaScreenLimits $script:norms $item @() 18e9
-        $limits.Swr.Count | Should Be 3
+        $limits.Swr.Count | Should Be 2
         $limits.Swr[1].StartHz | Should Be 12.4e9
         [math]::Round($limits.Swr[1].From, 4) | Should Be 1.1152
         [math]::Round($limits.Swr[1].To, 4) | Should Be 1.244
@@ -110,12 +107,15 @@ Describe 'Screen limit lines from passport norms' {
         $limits.Swr.Count | Should Be 0
         $limits.Title | Should Match '75 Ом — не для 50 Ом тракта'
     }
-    It 'shows only the shop requirement when the type has no norm' {
+    It 'draws no line when the type has no norm and none before an item is chosen' {
         $item = [pscustomobject]@{ inventory_number = 'СИ.060'; name = 'Переходник BNC вилка – BNC вилка'; doc_designation = '' }
         $limits = Get-VnaScreenLimits $script:norms $item @() 4e9
-        $limits.Swr.Count | Should Be 1
+        $limits.Swr.Count | Should Be 0
+        $limits.Loss.Count | Should Be 0
         $limits.Title | Should Match 'норма на тип не найдена'
-        (Get-VnaScreenLimits $script:norms $null).Swr.Count | Should Be 1
+        $generic = Get-VnaScreenLimits $script:norms $null
+        $generic.Swr.Count | Should Be 0
+        $generic.Title | Should Be ''
     }
     It 'warns instead of drawing anything without the norms file' {
         $limits = Get-VnaScreenLimits $null $null
@@ -132,7 +132,6 @@ Describe 'Screen limit lines from passport norms' {
         $path = Find-VnaNormsFile (Join-Path $here '..')
         if (-not $path) { return }
         $norms = Read-VnaNorms $path
-        [double]$norms.shop_requirement.vswr_max | Should BeGreaterThan 1
         $item = [pscustomobject]@{ inventory_number = 'СИ.009'; name = 'Переход ADP1A 35F-35F'; doc_designation = 'ADP1A-35F-35F' }
         $interfaces = @([pscustomobject]@{ series = '3.5mm'; impedance_ohm = 50 }, [pscustomobject]@{ series = '3.5mm'; impedance_ohm = 50 })
         (Get-VnaScreenLimits $norms $item $interfaces 18e9).Title | Should Match 'ADP1A'

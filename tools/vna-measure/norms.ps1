@@ -1,6 +1,6 @@
 ﻿# Passport norms for the measurement screen. Reads backend/data/rf-norms.json — the same file and the same choice as
 # backend/app/modules/production/instrument_norms.py: the maker spec of the series, else the MIL-PRF-55339 sheet of the
-# connector pair, else no type norm; the shop requirement (1.30) is always shown and never presented as a type norm.
+# connector pair, else no type norm. Only the item's own norm is drawn: the shop «1,30» is not a requirement (owner 18.11).
 # Dot-source; no network or files touched on import.
 
 function Find-VnaNormsFile {
@@ -16,9 +16,7 @@ function Read-VnaNorms {
     param([string]$Path)
     if (-not $Path) { return $null }
     $norms = [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) | ConvertFrom-Json
-    $shop = $norms.shop_requirement
-    if (-not $shop -or -not ($shop.vswr_max -is [double] -or $shop.vswr_max -is [int] -or $shop.vswr_max -is [decimal]) -or
-        [double]$shop.vswr_max -le 1 -or -not $norms.makers -or -not $norms.mil_adapters) { throw "Файл норм $Path повреждён." }
+    if (-not $norms.makers -or -not $norms.mil_adapters) { throw "Файл норм $Path повреждён." }
     return $norms
 }
 
@@ -125,7 +123,6 @@ function Get-VnaScreenLimits {
     # S2VNA limit segment between its ends is exact.
     $number = if ($Item) { "$($Item.inventory_number) · " } else { '' }
     if (-not $Norms) { return [pscustomobject]@{ Swr = @(); Loss = @(); Title = "${number}нормы не загружены (нет rf-norms.json) — линий допуска нет" } }
-    $shop = [double]$Norms.shop_requirement.vswr_max; $shopLabel = [string]$Norms.shop_requirement.label
     $parts = @(); $segments = @(); $loss = [pscustomobject]@{ Lines = @(); Text = 'потери: нормы нет' }
     if ($Item) {
         $ports = Get-VnaItemPorts ([string]$Item.name) $Interfaces
@@ -150,8 +147,7 @@ function Get-VnaScreenLimits {
             else { $parts += "норма $($norm.Reference) не покрывает полосу замера" }
         } else { $parts += 'норма на тип не найдена' }
     }
-    $segments += [pscustomobject]@{ StartHz = $StartHz; StopHz = $BandHz; From = $shop; To = $shop }
-    $parts += "КСВН ≤ $($shop.ToString('0.00', [Globalization.CultureInfo]::InvariantCulture).Replace('.', ',')) — $shopLabel до $(Format-VnaNumber ($BandHz / 1e9) 2) ГГц"
+    if (-not $Item) { return [pscustomobject]@{ Swr = @(); Loss = @(); Title = '' } }  # no item yet: no norm to draw
     $parts += $loss.Text
     return [pscustomobject]@{ Swr = $segments; Loss = @($loss.Lines); Title = $number + ($parts -join ' · ') }
 }
