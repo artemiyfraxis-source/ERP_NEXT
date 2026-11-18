@@ -1,4 +1,4 @@
-"""Миграция 0191: шаблоны карт операций без сторон (A)/(B) — одна карта на код (владелец 17.11.2026)."""
+"""Миграция 0192: шаблоны карт операций без сторон (A)/(B) — одна карта на код (владелец 17.11.2026)."""
 
 import contextlib
 import io
@@ -13,7 +13,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
-AFTER = "0191_operation_template_sides"
+AFTER = "0192_operation_template_sides"
 
 
 def _config(database_path: Path) -> Config:
@@ -40,7 +40,7 @@ def _upgrade(path: Path, revision: str) -> str:
 def migrated_before(tmp_path_factory):
     with pytest.MonkeyPatch.context() as patch:
         patch.delenv("ERP_DATABASE_URL", raising=False)
-        path = tmp_path_factory.mktemp("m0191") / "before.db"
+        path = tmp_path_factory.mktemp("m0192") / "before.db"
         _upgrade(path, BEFORE)
     return path
 
@@ -80,7 +80,7 @@ def _document(code: str, side: str, title: str, step: str = "Выполнить"
 
 def _template(connection, template_id: str, code: str, side: str | None, title: str, *, step: str = "Выполнить",
               designation: str = "ТК.01", images=(), edited=None) -> None:
-    """side None — the table after 0191 (no `side` column)."""
+    """side None — the table after 0192 (no `side` column)."""
     _insert(connection, "techcard_operation_templates", id=template_id, code=code, **({} if side is None else {"side": side}),
             title=title,
             name=title.split(" | ")[1].split(" (")[0], category="К", document=_document(code, side, title, step, designation),
@@ -203,7 +203,7 @@ def test_diverging_sides_stop_the_migration_with_the_list_and_change_nothing(dat
         _upgrade(database, AFTER)
 
     message = str(error.value)
-    assert message.startswith("Миграция 0191 остановлена, ничего не изменено")
+    assert message.startswith("Миграция 0192 остановлена, ничего не изменено")
     for part in ("код EDIT_X: стороны A и B правлены по-разному", "код TEXT_X: содержимое сторон A и B расходится",
                  "код SAME_X: новый id «same-x-пара» уже занят", "код DUP: 2 шаблона без сторон — dup-1, dup-2",
                  "код SDR_COAX_pin: содержимое сторон A и B расходится"):
@@ -220,7 +220,7 @@ def test_downgrade_brings_back_the_schema_only(database):
         command.downgrade(_config(database), BEFORE)
     with sqlite3.connect(database) as connection:
         _template(connection, "one-a", "ONE", "", "ONE | Один")
-        _template(connection, "one-b", "ONE", "", "ONE | Один")  # no UNIQUE(code) before 0191
+        _template(connection, "one-b", "ONE", "", "ONE | Один")  # no UNIQUE(code) before 0192
         connection.execute("DELETE FROM techcard_operation_templates WHERE id = 'one-b'")
     _upgrade(database, AFTER)
     with sqlite3.connect(database) as connection:

@@ -25,7 +25,7 @@ TOOL_COLUMNS = {
 }
 
 
-# Migration 0191 merged each (A)/(B) template pair into one template per code; the merged id is the side's id without
+# Migration 0192 merged each (A)/(B) template pair into one template per code; the merged id is the side's id without
 # its suffix («-a»/«-b» — the slug of «(A)»/«(B)», Latin or Cyrillic). Saved history may still name a side's id.
 FORMER_SIDE_ID = re.compile(r"^(.+)-[abав]$")
 # The codes whose templates were (A)/(B) pairs in the library: their ETK title keeps the side mark («(А)»/«(В)»).
@@ -40,7 +40,7 @@ def resolve_template_id(
     template_id: object, op_num: object, known_ids: Container[str],
     ids_by_code: Mapping[str, Sequence[str]] | None = None,
 ) -> str | None:
-    """The library template an operation names: its own id; for a former side's id (0191) — the merged template (the
+    """The library template an operation names: its own id; for a former side's id (0192) — the merged template (the
     id without the side suffix), else the one template of the operation's code. Any other unknown id — None (the
     card is gone from the library: the ETK keeps «нет карточки»)."""
     clean = str(template_id or "").strip()

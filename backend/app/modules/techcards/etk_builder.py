@@ -2212,7 +2212,7 @@ def _typed_fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str,
 
 
 class CardFinder:
-    """The library cards of a build: an operation's card by its `templateId`; a former side's id (0191 merged the
+    """The library cards of a build: an operation's card by its `templateId`; a former side's id (0192 merged the
     (A)/(B) pairs, a saved config may still name a side) — the merged card (`operation_cards.resolve_template_id`).
     Any other unknown id finds no card, as before."""
 

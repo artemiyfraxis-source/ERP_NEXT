@@ -100,7 +100,7 @@ class RefreshRequestRow(Base):
 
 
 class OperationCardTemplateRow(Base):
-    """One template per operation code (0191: the (A)/(B) pairs were merged; UNIQUE(lower(code)) keeps them from coming
+    """One template per operation code (0192: the (A)/(B) pairs were merged; UNIQUE(lower(code)) keeps them from coming
     back, as case-insensitive as the code checks)."""
 
     __tablename__ = "techcard_operation_templates"

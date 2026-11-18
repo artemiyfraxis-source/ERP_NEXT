@@ -140,7 +140,7 @@ def _cases() -> dict[str, Callable[[], dict[str, Any]]]:
     cases.update({
         "720К.-КБ1 распиновка": plain(_pins),
         "720К.-КБ1 соединения": plain(_connections),
-        # the card is gone from the library: with it, a missing id would resolve by the operation code (0191)
+        # the card is gone from the library: with it, a missing id would resolve by the operation code (0192)
         "720К.-КБ1 нет шаблона": plain(_missing_template, tuple(card for card in CARDS if card.code != "CUT_WIRE_auto")),
         "708К.2-КБ1 без длины": plain(_no_length),
         "резка с обжимом": plain(lambda: _cut_crimp(100, 2)),

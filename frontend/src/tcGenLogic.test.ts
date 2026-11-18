@@ -5,7 +5,7 @@ import { deriveRoute, type RouteOp } from "./routeLogic";
 
 const templates = [
   { id: "cut", title: "CUT_WIRE_auto | Резка", category: "Резка" },
-  // Один шаблон на код (миграция 0191): обе стороны берут одну карту, сторона — у операции.
+  // Один шаблон на код (миграция 0192): обе стороны берут одну карту, сторона — у операции.
   { id: "prs", title: "PRS_TERMINAL_2.50 | Опрессовка терминалов", category: "Опрессовка терминалов" },
   { id: "ins", title: "INS_terminal_2.50 | Монтаж терминалов", category: "Монтаж терминалов" },
   { id: "sdrXt", title: "SDR_XT60 | Пайка XT60", category: "Пайка" },

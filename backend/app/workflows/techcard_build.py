@@ -579,7 +579,7 @@ def enrich_equipment(
             continue
         op.pop(EQUIPMENT_TOOLS, None)
         tools = []
-        # A former side's id (0191) takes the links of the merged template, as the builder takes its card.
+        # A former side's id (0192) takes the links of the merged template, as the builder takes its card.
         template_id = resolve_template_id(op.get("templateId"), op.get("opNum"), by_template, template_codes) or ""
         for row in by_template.get(template_id, ()):
             model = index.by_id.get(str(row.get("model_id") or ""))

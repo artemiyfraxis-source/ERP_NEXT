@@ -77,7 +77,7 @@ def load_templates(repository: Any, documents: Sequence[Mapping[str, Any] | None
 
 def template_for(op: Mapping[str, Any], by_id: Mapping[str, OperationCardTemplate],
                   templates: Sequence[OperationCardTemplate]) -> OperationCardTemplate | None:
-    """The operation's template by its id; gone (a library reload renamed it, 0191 merged the (A)/(B) sides) — by its
+    """The operation's template by its id; gone (a library reload renamed it, 0192 merged the (A)/(B) sides) — by its
     code (one template per code). An operation built without a card (its template was missing then) gets none: the ETK
     stays as it was built."""
     template_id = str(op.get("template_id") or "").strip()

@@ -164,7 +164,7 @@ def test_etk_surfaces_terminal_sections_missing_from_current_database():
 def test_build_resolves_a_former_side_template_by_code_and_tracks_pinout():
     config = kit("720К.-КБ1")["config"]
     config["ops"][2]["pins"] = ["1", "2"]
-    assert config["ops"][2]["templateId"].endswith("-a")  # saved before 0191 merged the (A)/(B) templates
+    assert config["ops"][2]["templateId"].endswith("-a")  # saved before 0192 merged the (A)/(B) templates
     document = build_etk(config, CARDS)
     operation = document["operations"][2]
     assert operation["template_id"] == "ins-terminal-1-00-монтаж-терминалов"
@@ -279,7 +279,7 @@ def _both_sides_config(term_b: str) -> dict:
 
 
 def test_a_former_side_template_id_resolves_by_the_operation_code_and_the_side_is_in_the_title():
-    """0191 merged the (A)/(B) templates into one per code: a saved config still naming a side's id gets the one
+    """0192 merged the (A)/(B) templates into one per code: a saved config still naming a side's id gets the one
     template of its `opNum`, the ETK carries the merged id, and the side comes from the operation («(А)» / «(В)»)."""
     config = _both_sides_config("SXH-001T-P0.6N")
     config["ops"][1]["templateId"] = "ins-terminal-2-54-6-3-монтаж-терминалов-a"

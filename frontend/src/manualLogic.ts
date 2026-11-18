@@ -87,7 +87,7 @@ function text(value: number): string {
 }
 
 /** Русское название карточки: имя карты, иначе название шаблона без кода, иначе категория по коду. Сторона — у
- *  операции, не у карточки (один шаблон на код, миграция 0191). */
+ *  операции, не у карточки (один шаблон на код, миграция 0192). */
 export function cardLabel(card: LibraryCard): string {
   const fromTitle = String(card.title || "").split("|").map((part) => part.trim()).filter(Boolean).at(-1) || "";
   return card.name?.trim() || fromTitle || recordCategory(card.code) || "Операция";

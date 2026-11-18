@@ -35,8 +35,8 @@ from typing import Any
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0191_operation_template_sides"
-down_revision = "0190_godex_marking"
+revision = "0192_operation_template_sides"
+down_revision = "0191_mating_cycles"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = True
@@ -225,7 +225,7 @@ def merge_sides(bind) -> dict[str, Any]:
     rows = bind.execute(sa.select(templates)).all()
     merges, problems = plan_merges(rows)
     if problems:
-        raise RuntimeError("Миграция 0191 остановлена, ничего не изменено — шаблоны (A)/(B) нельзя слить:\n"
+        raise RuntimeError("Миграция 0192 остановлена, ничего не изменено — шаблоны (A)/(B) нельзя слить:\n"
                            + "\n".join(f"- {line}" for line in problems))
     ids: dict[str, str] = {}
     report: list[str] = []
@@ -286,10 +286,10 @@ def merge_sides(bind) -> dict[str, Any]:
 
 def upgrade() -> None:
     result = merge_sides(op.get_bind())
-    print(f"0191: слито пар {result['merged']}, удалено шаблонов {result['deleted']}; оборудование: перенесено "
+    print(f"0192: слито пар {result['merged']}, удалено шаблонов {result['deleted']}; оборудование: перенесено "
           f"{result['tools_moved']}, удалено {result['tools_deleted']}; замены id: {result['replaced'] or 'нет'}")
     for line in result["report"]:
-        print(f"0191: {line}")
+        print(f"0192: {line}")
     with op.batch_alter_table(TABLE) as batch:
         batch.drop_index(CODE_SIDE_INDEX)
         batch.drop_column("side")

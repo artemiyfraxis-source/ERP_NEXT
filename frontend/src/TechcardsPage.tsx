@@ -246,7 +246,7 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
       render: (card) => (pfPending(card) ? <StatusChip status="ПФ не настроены" tone="warning" /> : card.document ? <span className="muted">настроены</span> : "") },
     { key: "deadline", title: "Срок", value: (card) => card.deadline ?? "" },
   ];
-  // Одна запись на код операции — один шаблон (миграция 0191).
+  // Одна запись на код операции — один шаблон (миграция 0192).
   const records = templates;
   const opByCode = useMemo(() => {
     const byCode = new Map<string, TechOperationRecord>();

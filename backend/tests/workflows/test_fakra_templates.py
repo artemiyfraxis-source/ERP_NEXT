@@ -138,7 +138,7 @@ def test_second_apply_is_byte_identical_and_analog_process_settings_are_not_copi
 
 @pytest.mark.parametrize("signature", ["saved_by", "edited_by"])
 def test_a_human_sheet_or_record_edit_protects_the_template(base, signature):
-    """One template per code since 0191 (the (A)/(B) siblings were merged): a human signature on it protects the code."""
+    """One template per code since 0192 (the (A)/(B) siblings were merged): a human signature on it protects the code."""
     _apply(base)
     item = _payload()[0]
     with base() as session:

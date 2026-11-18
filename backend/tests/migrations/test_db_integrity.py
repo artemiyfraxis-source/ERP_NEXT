@@ -20,7 +20,7 @@ PREVIOUS = MIGRATIONS[HEAD].down_revisions[0]
 
 
 def _versions(tmp_path: Path, destructive: bool) -> Path:
-    """A copy of the migrations whose head declares DESTRUCTIVE as given (the real head may be either: 0191 is)."""
+    """A copy of the migrations whose head declares DESTRUCTIVE as given (the real head may be either: 0192 is)."""
     versions = tmp_path / ("versions-destructive" if destructive else "versions-plain")
     shutil.copytree(DEFAULT_MIGRATIONS_DIR, versions, ignore=shutil.ignore_patterns("__pycache__"))
     head_file = versions / MIGRATIONS[HEAD].file

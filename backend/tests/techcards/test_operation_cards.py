@@ -77,7 +77,7 @@ def test_bundled_library_is_fully_parseable():
     payload = json.loads((backend / "data" / "techcard-library.json").read_text(encoding="utf-8"))
     cards = parse_operation_library(payload["templates"])
 
-    # 0191: the 11 (A)/(B) pairs merged — one template per code (the БД.ОП-ТК mirror's 714 steps / 309 tooling rows)
+    # 0192: the 11 (A)/(B) pairs merged — one template per code (the БД.ОП-ТК mirror's 714 steps / 309 tooling rows)
     assert len(cards) == len({card.code for card in cards}) == 107
     assert sum(len(card.steps) for card in cards) == 714
     assert sum(len(card.tooling) for card in cards) == 309
@@ -156,7 +156,7 @@ def test_bundled_library_strip_templates_without_equipment_keep_the_mirror_state
 
 def test_bundled_libraries_have_one_template_per_code():
     """Owner 17.11.2026 «шаблоны (A)/(B) искоренять»: the bundled libraries carry one template per operation code,
-    no side suffix in titles or ids (a fresh database must satisfy UNIQUE(code) of migration 0191)."""
+    no side suffix in titles or ids (a fresh database must satisfy UNIQUE(code) of migration 0192)."""
     backend = Path(__file__).resolve().parents[2]
     cards = []
     for name in ("techcard-library.json", "techcard-library-erp.json"):

@@ -208,7 +208,7 @@ describe("production 708К. fixture preservation", () => {
     const bytes = new TextEncoder().encode(JSON.stringify(withoutShrinkMaterials(config)));
     const digest = await crypto.subtle.digest("SHA-256", bytes);
     expect(Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(""))
-      // 0191: the saved (A)/(B) template ids remapped to the merged ones; nothing else changed (verified 18.11)
+      // 0192: the saved (A)/(B) template ids remapped to the merged ones; nothing else changed (verified 18.11)
       .toBe("508266ccd3e42a51b7f7dbaba7df3c21621f02e9e7447db80cf3994d3d3328fc");
     expect(config).toEqual(autoConfig(productionData(fixture, false)).config);
   });

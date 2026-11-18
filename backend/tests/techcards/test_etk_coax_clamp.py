@@ -22,7 +22,7 @@ def _end(article: str, shield: str, hex_value: str = "", pin: str = "пайка"
 
 
 def _housing(side: str) -> dict:
-    card = next(iter(CLAMP_HOUSING.values()))  # one template for both sides (0191); the side is the operation's
+    card = next(iter(CLAMP_HOUSING.values()))  # one template for both sides (0192); the side is the operation's
     return {"type": "coaxHousing", "side": side, "templateId": card.source_id}
 
 

@@ -138,7 +138,7 @@ def test_template_sheet_writes_need_templates_edit(operation_library_api):
 
 
 def test_a_second_template_of_one_operation_code_is_refused(operation_library_api):
-    """One template per operation code (0191: «шаблоны (A)/(B) искоренять»): a side block saved as a new sheet is a
+    """One template per operation code (0192: «шаблоны (A)/(B) искоренять»): a side block saved as a new sheet is a
     Russian validation error, nothing is written and the draft stays."""
     _import(operation_library_api, _template("cut-wire", "CUT_WIRE"))
     draft = operation_library_api.post("/api/techcards/template-sheets/drafts", json={"title": "CUT_WIRE | Резка (B)"}).json()

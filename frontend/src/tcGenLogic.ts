@@ -4000,7 +4000,7 @@ export function makeGen(D: GenData, S: GenState) {
   }
 
   // ── Шаблоны и времена ──
-  // Один шаблон на код операции (миграция 0191): сторона — у операции, не у шаблона.
+  // Один шаблон на код операции (миграция 0192): сторона — у операции, не у шаблона.
   function pickCoaxTemplate_(hint: string) {
     const norm = (s: string) => String(s || "").toLowerCase().replace(/\s+/g, "");
     const target = norm(hint);
@@ -4056,7 +4056,7 @@ export function makeGen(D: GenData, S: GenState) {
     // нужным кодом есть: 713К.4 КБ1 (17.10) — резка маркировки ушла на PRINT_MARK_TUBE, а у ключа cutMark остался
     // CUT_TUT_short (резка трубок: не тот станок, не те дефекты).
     const stuck = S.selectedTemplates[spec.opKey];
-    // Залипшего id нет в библиотеке (шаблон стороны (A)/(B) слит в один, 0191) — подбор заново.
+    // Залипшего id нет в библиотеке (шаблон стороны (A)/(B) слит в один, 0192) — подбор заново.
     if (stuck && !inLibrary_(stuck)) return pickTemplateForOp_(spec);
     const want = (spec.tmplWant || spec.tmplHint || "").trim();
     const stuckCode = stuck ? String((D.templates || []).find((t) => t.id === stuck)?.title || "").split("|")[0].trim() : "";

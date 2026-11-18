@@ -219,7 +219,7 @@ def test_prep_applied_by_the_14_november_script_gains_only_the_neutral_clarifica
 
 
 def test_human_edit_protects_the_template(base):
-    """One template per code since 0191 (the (A)/(B) siblings were merged): a human edit protects the code."""
+    """One template per code since 0192 (the (A)/(B) siblings were merged): a human edit protects the code."""
     _apply(base)
     code = "INS_MARK_LABEL"
     with base() as session:

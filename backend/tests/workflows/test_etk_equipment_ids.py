@@ -23,7 +23,7 @@ from tests.workflows.test_etk_refresh import (  # noqa: F401  (fixture `base`)
 )
 
 PIN = "sdr-coax-pin-пайка"  # «T21(R) | Станция паяльная», ОБ.071.X — строка 2
-LEGACY_PIN = "sdr-coax-pin-пайка-a"  # what the saved CONFIG still names: the side (A) before 0191 merged the pair
+LEGACY_PIN = "sdr-coax-pin-пайка-a"  # what the saved CONFIG still names: the side (A) before 0192 merged the pair
 SLEEVE = "prs-sleeve-coax-опрессовка"  # «SR-16M | Пресс пневматический…», ОБ.006.1 — строка 0
 T21 = {"id": "m-t21", "article": "T21", "name": "Станция паяльная", "role": "operational",
        "display": "T21/Станция паяльная", "inventory_numbers": ("ОБ.071.1", "ОБ.071.2")}
@@ -142,7 +142,7 @@ def test_enrichment_is_refreshing():
 
 
 def test_a_former_side_template_id_takes_the_links_of_the_merged_template():
-    """0191 moved the links of the (A)/(B) pair to the merged template (its id is the side's id without «-a»/«-b»):
+    """0192 moved the links of the (A)/(B) pair to the merged template (its id is the side's id without «-a»/«-b»):
     a config still naming the side's id gets them, and the ETK names the merged template."""
     op = enrich_equipment(CONFIG, [T21, BZW], [PIN_LINK])["ops"][2]
     assert op["templateId"] == LEGACY_PIN and op["equipmentTools"][0][EQUIPMENT_ID] == "m-t21"
