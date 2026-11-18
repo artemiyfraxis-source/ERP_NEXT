@@ -1,0 +1,307 @@
+{
+  "about": "Нормы для паспорта СИ (коаксиальные переходники и кабели). Источник каждого числа — в поле source. Исследование: docs/data/norms-coax-testing-2026-11-18.md (PR #912). Предел КСВН участка: a + b·F, F — частота в ГГц, участок от предыдущего to_ghz (или from_ghz) до своего to_ghz. Температуры и ресурс MIL сверены по текстам листов DLA 18.11.2026.",
+  "makers": [
+    {
+      "series": "ADP1A",
+      "maker": "Планар",
+      "match": "ADP1A",
+      "title": "Планар ADP1A",
+      "source": "Планар, руководство по эксплуатации переходов ADP1A, табл. 2.5–2.7",
+      "url": "https://planarchel.ru/upload/uf/c70/8hlgfcachftzizo7soya2jcblo4k0046/operating_manual_junction_adp1a_series_rus.pdf",
+      "temp_min_c": -60,
+      "temp_max_c": 110,
+      "temp_source": "данные изготовителя ADP1A",
+      "groups": [
+        {
+          "title": "тракт 3,5/1,52 (3,5 мм)",
+          "ports": [
+            "3.5mm",
+            "3.5mm"
+          ],
+          "from_ghz": 0,
+          "segments": [
+            {
+              "to_ghz": 20,
+              "a": 1.06,
+              "b": 0
+            },
+            {
+              "to_ghz": 26.5,
+              "a": 1.1,
+              "b": 0
+            },
+            {
+              "to_ghz": 32,
+              "a": 1.15,
+              "b": 0
+            }
+          ],
+          "mating_resource": 3000
+        },
+        {
+          "title": "тракт 7,0/3,04 (N)",
+          "ports": [
+            "N",
+            "N"
+          ],
+          "from_ghz": 0,
+          "segments": [
+            {
+              "to_ghz": 18,
+              "a": 1.08,
+              "b": 0
+            }
+          ],
+          "mating_resource": 5000
+        },
+        {
+          "title": "между трактами N и 3,5 мм",
+          "ports": [
+            "N",
+            "3.5mm"
+          ],
+          "from_ghz": 0,
+          "segments": [
+            {
+              "to_ghz": 18,
+              "a": 1.1,
+              "b": 0
+            }
+          ]
+        }
+      ],
+      "articles": [
+        {
+          "article": "ADP1A-35F-35F",
+          "temp_min_c": -60,
+          "temp_max_c": 85,
+          "temp_source": "бирка на изделии; данные изготовителя ADP1A: −60…+110 °C",
+          "mating_resource": 3000,
+          "mating_source": "бирка на изделии",
+          "note": "Бирка ADP1A-35F-35F сфотографирована владельцем 18.11.2026: «Ресурс 3000», «Диапазон температур −60…+85 °C». Бирка на изделии важнее данных изготовителя."
+        }
+      ],
+      "temp_note": "−60…+110 °C — данные изготовителя по сообщению владельца 18.11.2026; лист не сверен"
+    }
+  ],
+  "mil_adapters": [
+    {
+      "sheet": "MIL-PRF-55339/55",
+      "title": "SMA–SMA, вилка–розетка; для других сочетаний SMA–SMA — ближайший лист",
+      "ports": [
+        "SMA",
+        "SMA"
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 27,
+          "a": 1.05,
+          "b": 0.005
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss55.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)"
+    },
+    {
+      "sheet": "MIL-PRF-55339/54B",
+      "title": "SMA–N",
+      "ports": [
+        "SMA",
+        "N"
+      ],
+      "from_ghz": 0,
+      "segments": [
+        {
+          "to_ghz": 12.4,
+          "a": 1.06,
+          "b": 0.005
+        },
+        {
+          "to_ghz": 18,
+          "a": 0.83,
+          "b": 0.023
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss54.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)"
+    },
+    {
+      "sheet": "MIL-PRF-55339/40B, /41B, /42A",
+      "title": "SMA–TNC",
+      "ports": [
+        "SMA",
+        "TNC"
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 11,
+          "a": 1.15,
+          "b": 0.015
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss40.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)"
+    },
+    {
+      "sheet": "MIL-PRF-55339/5A",
+      "title": "N–N, класс 2",
+      "ports": [
+        "N",
+        "N"
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 11,
+          "a": 1.3,
+          "b": 0
+        }
+      ],
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss5.pdf",
+      "mating_resource": 500,
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)"
+    },
+    {
+      "sheet": "MIL-PRF-55339/33A",
+      "title": "TNC–TNC прямой, класс 2",
+      "ports": [
+        "TNC",
+        "TNC"
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 11,
+          "a": 1.25,
+          "b": 0
+        }
+      ],
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss33.pdf",
+      "mating_resource": 500,
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)"
+    },
+    {
+      "sheet": "MIL-PRF-55339/13B",
+      "title": "BNC–BNC, негерметичный",
+      "ports": [
+        "BNC",
+        "BNC"
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 4,
+          "a": 1.25,
+          "b": 0
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss13.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)"
+    },
+    {
+      "sheet": "MIL-PRF-55339/20A",
+      "title": "BNC–N, класс 2",
+      "ports": [
+        "BNC",
+        "N"
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 4,
+          "a": 1.35,
+          "b": 0
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss20.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)"
+    },
+    {
+      "sheet": "MIL-PRF-55339/44C",
+      "title": "SMA–BNC, класс 2",
+      "ports": [
+        "SMA",
+        "BNC"
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 4,
+          "a": 1.3,
+          "b": 0
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss44.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)"
+    }
+  ],
+  "vna": [
+    {
+      "model": "S50180",
+      "title": "Планар S50180",
+      "at_vswr": 1.2,
+      "uncertainty": [
+        {
+          "to_ghz": 10,
+          "value": 0.015
+        },
+        {
+          "to_ghz": 18,
+          "value": 0.022
+        }
+      ],
+      "source": "Планар S50180, РЭ ч. 1 вер. 26.1, табл. 16 и 19 (прецизионные принадлежности)",
+      "url": "https://planarchel.ru/upload/medialibrary/0a9/7j78lxcjlfo7vc4vbt5blv1nind7wh2z/OM_Sseries_Part1_ver_26.1.pdf"
+    }
+  ],
+  "shop_requirement": {
+    "vswr_max": 1.3,
+    "label": "требование цеха",
+    "basis": "Решение цеха для тракта 50 Ом, не норма на тип (то же число в MIL-PRF-55339/5A и /44C)"
+  },
+  "series_top_ghz": {
+    "BNC": {
+      "to_ghz": 4,
+      "source": "MIL-PRF-55339/13B, /20A, /44C: нормы до 4 ГГц"
+    },
+    "TNC": {
+      "to_ghz": 11,
+      "source": "MIL-PRF-55339/33A, /40B–/42A: нормы до 11 ГГц"
+    }
+  },
+  "method": {
+    "code": "СТО ФРАК-002-2026",
+    "title": "ГСИ. Переходы коаксиальные и кабельные сборки. Методика измерений КСВН и вносимых потерь векторным анализатором цепей",
+    "basis": "стандарт организации по ГОСТ Р 1.4 (обозначение как у СТО ФРАК-001-2026); построение методики — по ГОСТ Р 8.563-2009 (владелец 18.11.2026)"
+  },
+  "decision_rule": "простое принятие, w = 0 (ILAC-G8:09/2019 п. 4.2); запас до предела меньше погрешности — «на границе допуска»",
+  "recheck": {
+    "months": 12,
+    "matings": 100,
+    "basis": "100 сочленений — руководство ADP1A п. 3.2; 12 мес. — решение цеха"
+  }
+}

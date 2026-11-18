@@ -242,7 +242,7 @@ def test_projection_has_only_approved_fields_and_strict_known_provenance():
     measured = characterization(measured_file(header=header))
     projection = public_passport(replace(instrument(), storage_location="PRIVATE_STORAGE", warehouse_grn="PRIVATE_GRN", doc_designation="PRIVATE_ARTICLE"),
                                  replace(rf(), source="PRIVATE_SOURCE"), measured)
-    assert {field.name for field in fields(projection)} == {"inventory_number", "name", "serial_number", "manufacturer", "connectors", "impedance", "impedance_warning", "measurement", "verification", "status", "next_control", "control_overdue", "history"}
+    assert {field.name for field in fields(projection)} == {"inventory_number", "name", "serial_number", "manufacturer", "connectors", "impedance", "impedance_warning", "measurement", "verification", "status", "next_control", "control_overdue", "history", "spec", "norm_check", "usage", "uncertainty"}
     assert {field.name for field in fields(projection.measurement)} == {"measured_on", "traces", "instrument", "calibration", "conditions", "chain"}
     assert "PRIVATE_" not in repr(projection)
     assert projection.measurement.instrument == "ВАЦ №26030095"
@@ -381,29 +381,36 @@ def test_public_html_pdf_show_measurement_reference_and_card_impedance_warning(o
 def test_public_conclusion_history_dates_and_hidden_blanks():
     from datetime import date
     from app.modules.production.rf_interfaces import RfDetails
-    from app.modules.production.instrument_public import PublicHistory
-    from app.modules.production.instrument_characterization import working_band
+    from app.modules.production.instrument_public import history_entry
     from tests.production.test_instrument_working_band import summary
 
     measured = replace(summary(), comments=())
     item = replace(instrument(), manufacturer="", status=InstrumentStatus.INACTIVE)
     projected = public_passport(item, RfDetails(), measured,
-        history=(PublicHistory(date(2025, 11, 10), working_band(measured)),), today=date(2027, 11, 17))
+        history=(history_entry(item, RfDetails(), replace(measured, measured_on=date(2025, 11, 10))),), today=date(2027, 11, 17))
     html = public_passport_html(projected, pdf_path="/p/example.pdf")
     pdf = pdf_text(public_passport_pdf(projected, generated=datetime(2027, 11, 17), public_url="https://erp.example.test/p/example"))
-    assert projected.name == "Переходник SMA розетка – SMA розетка, S-322"
-    for text in (html, pdf):
-        for expected in ("Заключение", "Рабочая полоса 0,01–11,8 ГГц", "КСВН ≤ 1,2, потери ≤ 0,18 дБ",
-                         "не использовать", "Следующий контроль: 16.11.2027 (через 12 мес.)",
-                         "Требуется повторный замер", "Не используется", "История контроля", "10.11.2025", "Скачать .s2p"):
+    assert projected.name == "Переход коаксиальный SMA розетка – SMA розетка, S-322"
+    for text in (html, " ".join(pdf.split())):
+        for expected in ("Заключение (контроль характеристик, не поверка)",
+                         "Не соответствует норме", "MIL-PRF-55339/55", "КСВН ≤ 1,05 + 0,005·F в полосе 0,5–27 ГГц",
+                         "КСВН 1,2 на 11,8 ГГц при норме ≤ 1,109", "КСВН ≤ 1,30 (требование цеха) — до 18 ГГц",
+                         "Погрешность измерения КСВН",
+                         "не определена — модель ВАЦ не указана", "Правило принятия решения", "ILAC-G8", "СТО ФРАК-002-2026", "Методика измерений КСВН",
+                         "Результаты относятся только к данному изделию.", "Утвердил: Генеральный директор",
+                         "Следующий контроль: не позднее 16.11.2027 (через 12 мес. или 100 сочленений — что раньше)",
+                         "Требуется повторный замер", "Не используется", "История контроля", "10.11.2025",
+                         "не соответствует норме; применение: КСВН ≤ 1,30 (требование цеха) — до 18 ГГц",
+                         "Рабочие температуры", "−65…+165 °C — MIL-PRF-55339/55", "Скачать .s2p"):
             assert expected in text
         assert "Не указан" not in text
         assert "Изготовитель" not in text
         assert "Условия" not in text
     assert projected.impedance == "50 Ом"
-    failed = public_passport(item, rf(), summary(left=(1.3,) * 4))
-    assert "Не годен для 50 Ом тракта" in public_passport_html(failed, pdf_path="/p/example.pdf")
-    assert "Не годен для 50 Ом тракта" in pdf_text(public_passport_pdf(failed, generated=datetime(2026, 11, 17)))
+    failed = public_passport(item, rf(), summary(left=(1.31,) * 4))
+    for text in (public_passport_html(failed, pdf_path="/p/example.pdf"),
+                 pdf_text(public_passport_pdf(failed, generated=datetime(2026, 11, 17)))):
+        assert "Не соответствует норме" in text and "КСВН больше требования цеха уже на первой ступени" in text
 
 
 @pytest.mark.parametrize("source,maker", [("https://gsm-repiteri.ru/catalog/s-322", "gsm-repiteri"),

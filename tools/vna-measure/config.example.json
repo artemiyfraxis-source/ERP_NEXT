@@ -1,3 +1,8 @@
 {
-  "server_url": "https://YOUR-ERP-HOST.invalid"
+  "server_url": "https://YOUR-ERP-HOST.invalid",
+  "mating_cables": [
+    { "inventory_number": "СИ.100", "end": "B" },
+    { "inventory_number": "СИ.101", "end": "B" }
+  ],
+  "mating_acm": "СИ.104"
 }
