@@ -7,7 +7,7 @@ import re
 from urllib.parse import urlsplit
 
 from .instrument_characterization import Characterization, WorkingBand, connector_line, impedance_warning, number, working_band
-from .rf_interfaces import RfDetails, ROLE_LABELS, parse_interfaces
+from .rf_interfaces import RfDetails, ROLE_LABELS, is_adapter_name, parse_interfaces
 from .traceability import InstrumentKind, MeasurementInstrument
 from .vna_files import VnaTrace, _decode
 
@@ -119,8 +119,8 @@ def _name(item: MeasurementInstrument, rf: RfDetails) -> str:
     if not ports and connectors == connector_line(item.name, "", RfDetails()):
         return item.name
     kind = ROLE_LABELS.get(rf.role, "") if rf.role != "unknown" else ""
-    if not kind and ("переходник" in item.name.lower() or len(parse_interfaces(item.name)) == 2):
-        kind = "Переходник"
+    if not kind and (is_adapter_name(item.name) or len(parse_interfaces(item.name)) == 2):
+        kind = ROLE_LABELS["adapter"]
     # The card's document designation is private. Reuse only a short model already in the public name.
     model = re.search(r"\b([A-ZА-Я]{1,6}-\d{1,8}[A-Za-zА-Яа-я0-9-]*)\s*$", item.name)
     return " ".join(filter(None, (kind, connectors))) + (", " + model[1] if model else "")

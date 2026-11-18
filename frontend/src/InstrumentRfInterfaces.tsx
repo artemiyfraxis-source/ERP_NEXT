@@ -3,7 +3,7 @@ import { ApiError, failureText, rfInterfacesApi, type InstrumentRfDetails, type 
 import { formatNumber } from "./format";
 
 const roles: Record<string, string> = {
-  unknown: "Не указано", vna: "ВАЦ", adapter: "Переходник", test_cable: "Тестовый кабель",
+  unknown: "Не указано", vna: "ВАЦ", adapter: "Переход коаксиальный", test_cable: "Тестовый кабель",
   auto_calibration: "АКМ", solt_kit: "Набор SOLT", load: "Нагрузка", load_kit: "Нагрузки SMA-MF06",
 };
 const series = ["SMA", "3.5mm", "N", "TNC", "BNC", "F", "RP-SMA", "тип III"];

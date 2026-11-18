@@ -57,7 +57,7 @@ def test_next_control_is_calendar_year_and_leap_day_is_clamped():
 
 def test_serial_connectors_can_supply_russian_title_without_rf_record():
     projected = public_passport(replace(instrument(), name="Переходник"), RfDetails(), None)
-    assert projected.name == "Переходник SMA розетка – SMA розетка"
+    assert projected.name == "Переход коаксиальный SMA розетка – SMA розетка"
 
 
 def test_unrepresentable_next_control_date_does_not_break_public_passport():

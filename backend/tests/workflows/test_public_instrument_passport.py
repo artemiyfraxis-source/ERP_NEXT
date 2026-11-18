@@ -391,7 +391,7 @@ def test_public_conclusion_history_dates_and_hidden_blanks():
         history=(PublicHistory(date(2025, 11, 10), working_band(measured)),), today=date(2027, 11, 17))
     html = public_passport_html(projected, pdf_path="/p/example.pdf")
     pdf = pdf_text(public_passport_pdf(projected, generated=datetime(2027, 11, 17), public_url="https://erp.example.test/p/example"))
-    assert projected.name == "Переходник SMA розетка – SMA розетка, S-322"
+    assert projected.name == "Переход коаксиальный SMA розетка – SMA розетка, S-322"
     for text in (html, pdf):
         for expected in ("Заключение", "Рабочая полоса 0,01–11,8 ГГц", "КСВН ≤ 1,2, потери ≤ 0,18 дБ",
                          "не использовать", "Следующий контроль: 16.11.2027 (через 12 мес.)",
