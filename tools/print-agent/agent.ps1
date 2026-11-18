@@ -30,7 +30,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.9.1'
+$script:AgentVersion = '2.9.2'
 $script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
@@ -262,6 +262,23 @@ public static class ErpGdiPrinter {
         offsetX+printableW > physicalW+1 || offsetY+printableH > physicalH+1)
       throw new InvalidOperationException("Driver substituted physical media or printable bounds");
   }
+  static string Mm(int dots) { return (dots*25.4/300).ToString("0.00", System.Globalization.CultureInfo.GetCultureInfo("ru-RU")); }
+  // Never silently clip or shift ink: the driver's hard margins (Godex/Seagull: 36 dots left, 15 right) are
+  // physical. White outside the printable rect is safe. The refusal names both rectangles in mm from the label's
+  // top-left corner so the profile's text zones can be moved inside.
+  public static void CheckInk(Bitmap bitmap, int ox, int oy, int pw, int ph) {
+    int minX=int.MaxValue, minY=int.MaxValue, maxX=-1, maxY=-1; bool outside=false;
+    for (int y=0;y<bitmap.Height;y++) for (int x=0;x<bitmap.Width;x++) {
+      if (bitmap.GetPixel(x,y).R == 255) continue;
+      if (x<minX) minX=x; if (x>maxX) maxX=x; if (y<minY) minY=y; if (y>maxY) maxY=y;
+      if (x<ox || y<oy || x>=ox+pw || y>=oy+ph) outside=true;
+    }
+    if (outside)
+      throw new InvalidOperationException("Raster ink outside printable bounds: драйвер печатает по ширине " +
+        Mm(ox) + "–" + Mm(ox+pw) + " мм, по подаче " + Mm(oy) + "–" + Mm(oy+ph) + " мм; краска по ширине " +
+        Mm(minX) + "–" + Mm(maxX+1) + " мм, по подаче " + Mm(minY) + "–" + Mm(maxY+1) +
+        " мм. Сдвиньте текстовые зоны профиля внутрь печатаемой области");
+  }
   // Drive the no-dialog controller's single-page lifecycle explicitly below. Calling the
   // managed PrintDocument.Print loop would rebuild DEVMODE from rounded PaperSize.
   public sealed class Controller : StandardPrintController {
@@ -280,10 +297,7 @@ public static class ErpGdiPrinter {
         int ox=GetDeviceCaps(dc,112), oy=GetDeviceCaps(dc,113), pw=GetDeviceCaps(dc,8), ph=GetDeviceCaps(dc,10);
         ValidateGeometry(width,height,bitmap.Width,bitmap.Height,GetDeviceCaps(dc,88),GetDeviceCaps(dc,90),
           GetDeviceCaps(dc,110),GetDeviceCaps(dc,111),ox,oy,pw,ph);
-        // Never silently clip ink in physical hard margins. White outside the printable area is safe.
-        for (int y=0;y<bitmap.Height;y++) for (int x=0;x<bitmap.Width;x++)
-          if ((x<ox || y<oy || x>=ox+pw || y>=oy+ph) && bitmap.GetPixel(x,y).R != 255)
-            throw new InvalidOperationException("Raster ink outside printable bounds");
+        CheckInk(bitmap,ox,oy,pw,ph);
         SubmissionStarted=true;
         JobId=StartDoc(dc,new DocInfo());
         if (JobId<=0) throw new InvalidOperationException("StartDoc failed; delivery unknown");
