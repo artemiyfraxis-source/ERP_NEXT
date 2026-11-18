@@ -161,12 +161,14 @@ def test_etk_surfaces_terminal_sections_missing_from_current_database():
     assert resolved["fields"]["crimpHeight"] == "0,91 - 1,09"
 
 
-def test_build_uses_template_id_not_ambiguous_side_title_and_tracks_pinout():
+def test_build_resolves_a_former_side_template_by_code_and_tracks_pinout():
     config = kit("720К.-КБ1")["config"]
     config["ops"][2]["pins"] = ["1", "2"]
+    assert config["ops"][2]["templateId"].endswith("-a")  # saved before 0191 merged the (A)/(B) templates
     document = build_etk(config, CARDS)
     operation = document["operations"][2]
-    assert operation["template_id"].endswith("-a")
+    assert operation["template_id"] == "ins-terminal-1-00-монтаж-терминалов"
+    assert operation["title"] == "INS_terminal_1.00 | Монтаж терминалов (А)"
     assert [item["pins"] for item in operation["fields"]["wires"]] == [[1], [2]]
     assert operation["fields"]["pinout"] is True
 
@@ -220,7 +222,7 @@ def test_project_document_accepts_repeated_code_when_connectors_are_distinct():
 
 def test_missing_template_is_visible_in_the_built_project_snapshot():
     config = kit("720К.-КБ1")["config"]
-    config["ops"][0]["templateId"] = "missing"
+    config["ops"][0].update(templateId="missing", opNum="NO_SUCH_CODE")
     document = build_etk(config, CARDS)
     assert document["operations"][0]["card"] is None
     assert "нет карточки" in document["warnings"][0]
@@ -274,6 +276,28 @@ def _both_sides_config(term_b: str) -> dict:
         }, *({"type": "insTerm", "opNum": "INS_terminal_2,54-6,3", "side": side, "wires": [dict(wire)], "wireSources": [""],
               "ep": {"connArt": "I-DS1071-SCB02X5", "termArt": "SXH-001T-P0.6N" if side == "A" else term_b}} for side in ("A", "B"))],
     }
+
+
+def test_a_former_side_template_id_resolves_by_the_operation_code_and_the_side_is_in_the_title():
+    """0191 merged the (A)/(B) templates into one per code: a saved config still naming a side's id gets the one
+    template of its `opNum`, the ETK carries the merged id, and the side comes from the operation («(А)» / «(В)»)."""
+    config = _both_sides_config("SXH-001T-P0.6N")
+    config["ops"][1]["templateId"] = "ins-terminal-2-54-6-3-монтаж-терминалов-a"
+    config["ops"][2]["templateId"] = "ins-terminal-2-54-6-3-монтаж-терминалов-b"
+    legacy = build_etk(config, CARDS)
+    config["ops"][1]["templateId"] = config["ops"][2]["templateId"] = "ins-terminal-2-54-6-3-монтаж-терминалов"
+    current = build_etk(config, CARDS)
+
+    mounts = [item for item in legacy["operations"] if item["type"] == "insTerm"]
+    assert [(item["template_id"], item["title"]) for item in mounts] == [
+        ("ins-terminal-2-54-6-3-монтаж-терминалов", "INS_terminal_2,54-6,3 | Монтаж терминалов (А)"),
+        ("ins-terminal-2-54-6-3-монтаж-терминалов", "INS_terminal_2,54-6,3 | Монтаж терминалов (В)"),
+    ]
+    assert all(item["card"] for item in mounts) and not legacy["warnings"]
+    assert legacy["operations"] == current["operations"]
+    # an unknown id whose code has no template stays unresolved, as before
+    config["ops"][1].update(templateId="gone-a", opNum="NO_SUCH_CODE")
+    assert build_etk(config, CARDS)["operations"][1]["card"] is None
 
 
 def test_cut_crimping_both_sides_carries_both_terminals_once_and_no_manual_crimp():
@@ -1016,7 +1040,7 @@ def test_linear_timing_is_dropped_when_the_record_lost_its_node_speeds():
 def test_test_cut_step_gets_the_cut_tolerance_when_saved_template_stores_dash(stored):
     # Сохранённый шаблон хранит пустой допуск как «-» (normalize_record_edit) — допуск реза всё равно подставляется.
     card = OperationCardTemplate(
-        source_id="t", code="CUT_WIRE_auto", side="", title="", name="Резка", category="", designation="", revision="",
+        source_id="t", code="CUT_WIRE_auto", title="", name="Резка", category="", designation="", revision="",
         safety="", defects="", steps=(OperationCardStep("1", "Контроль", "Выполнить тестовый рез и измерить длину", stored),),
         tooling=(), raw_rows=(),
     )

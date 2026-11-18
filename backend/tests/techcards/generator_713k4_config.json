@@ -561,7 +561,7 @@
     {
       "type": "insTerm",
       "opKey": "insTermA1",
-      "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
+      "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов",
       "opNum": "",
       "tPrep": "",
       "tOp": "",
@@ -707,7 +707,7 @@
     {
       "type": "insTerm",
       "opKey": "insTermA2",
-      "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
+      "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов",
       "opNum": "",
       "tPrep": "",
       "tOp": "",
@@ -871,7 +871,7 @@
     {
       "type": "insTerm",
       "opKey": "insTermA3",
-      "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
+      "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов",
       "opNum": "",
       "tPrep": "",
       "tOp": "",
@@ -1035,7 +1035,7 @@
     {
       "type": "insTerm",
       "opKey": "insTermA4",
-      "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
+      "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов",
       "opNum": "",
       "tPrep": "",
       "tOp": "",
@@ -1295,7 +1295,7 @@
     {
       "type": "insTerm",
       "opKey": "insTermB1",
-      "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-b",
+      "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов",
       "opNum": "",
       "tPrep": "",
       "tOp": "",
@@ -1341,7 +1341,7 @@
     {
       "type": "insTerm",
       "opKey": "insTermB2",
-      "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-b",
+      "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов",
       "opNum": "",
       "tPrep": "",
       "tOp": "",

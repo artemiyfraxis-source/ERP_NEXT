@@ -19,6 +19,16 @@ HEAD = heads(MIGRATIONS)[0]
 PREVIOUS = MIGRATIONS[HEAD].down_revisions[0]
 
 
+def _versions(tmp_path: Path, destructive: bool) -> Path:
+    """A copy of the migrations whose head declares DESTRUCTIVE as given (the real head may be either: 0191 is)."""
+    versions = tmp_path / ("versions-destructive" if destructive else "versions-plain")
+    shutil.copytree(DEFAULT_MIGRATIONS_DIR, versions, ignore=shutil.ignore_patterns("__pycache__"))
+    head_file = versions / MIGRATIONS[HEAD].file
+    text = head_file.read_text(encoding="utf-8").replace("\nDESTRUCTIVE = True\n", "\nDESTRUCTIVE = False\n")
+    head_file.write_text(text + ("\nDESTRUCTIVE = True\n" if destructive else ""), encoding="utf-8")
+    return versions
+
+
 def _url(path: Path) -> str:
     return f"sqlite+pysqlite:///{path.as_posix()}"
 
@@ -103,12 +113,12 @@ def test_unchanged_database_passes(database):
     assert compare(_snapshot(database), _snapshot(database)) == []
 
 
-def test_table_losing_rows_without_destructive_fails_in_russian(database):
+def test_table_losing_rows_without_destructive_fails_in_russian(database, tmp_path):
     before = _snapshot(database)
     command.upgrade(_config(database), "head")
     _execute(database, "DELETE FROM warehouse_writeoffs WHERE id IN (SELECT id FROM warehouse_writeoffs LIMIT 2)")
 
-    violations = compare(before, _snapshot(database))
+    violations = compare(before, _snapshot(database), _versions(tmp_path, destructive=False))
 
     assert violations == [
         f"Таблица warehouse_writeoffs потеряла строки: было 6, стало 4 (−2), "
@@ -122,13 +132,9 @@ def test_table_losing_rows_passes_when_every_migration_in_range_is_destructive(d
     _execute(database, "DELETE FROM warehouse_writeoffs WHERE id IN (SELECT id FROM warehouse_writeoffs LIMIT 2)")
     _execute(database, "UPDATE warehouse_lots SET written_off = written_off + 1")
     after = _snapshot(database)
-    versions = tmp_path / "versions"
-    shutil.copytree(DEFAULT_MIGRATIONS_DIR, versions, ignore=shutil.ignore_patterns("__pycache__"))
-    head_file = versions / MIGRATIONS[HEAD].file
 
-    assert compare(before, after, versions) != []
-    head_file.write_text(head_file.read_text(encoding="utf-8") + "\nDESTRUCTIVE = True\n", encoding="utf-8")
-    assert compare(before, after, versions) == []
+    assert compare(before, after, _versions(tmp_path, destructive=False)) != []
+    assert compare(before, after, _versions(tmp_path, destructive=True)) == []
 
 
 def test_over_reserve_appearing_fails(database):
@@ -192,7 +198,8 @@ def test_cli_snapshot_and_compare(database, tmp_path, capsys):
     assert db_integrity.main(["snapshot", "--out", str(after), "--database-url", url]) == 0
     capsys.readouterr()
 
-    assert db_integrity.main(["compare", str(before), str(after)]) == 1
+    plain = str(_versions(tmp_path, destructive=False))
+    assert db_integrity.main(["compare", str(before), str(after), "--migrations-dir", plain]) == 1
     assert "Таблица notifications потеряла строки: было 6, стало 0 (−6)" in capsys.readouterr().out
 
 

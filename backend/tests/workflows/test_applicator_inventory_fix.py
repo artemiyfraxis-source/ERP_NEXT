@@ -84,7 +84,7 @@ def seed(engine):
         rows = [["Операция", "1", "Установить ОБ.106"], ["Оборудование", "1", "Аппликатор ОБ.106", "", "", "ОБ.106"]]
         template = parse_operation_template(source_id="press", title="PRESS | Опрессовка", category="Опрессовка", rows=rows)
         document = template.document()
-        session.add(OperationCardTemplateRow(id="press", code="PRESS", side="", title=template.title, name=template.name,
+        session.add(OperationCardTemplateRow(id="press", code="PRESS", title=template.title, name=template.name,
             category=template.category, document=document, raw_rows=rows, images=[], source_commit="frozen-source",
             imported_at=NOW, edited=deepcopy(document), edited_at=NOW, edited_by="Технолог", description="Применить ОБ.106"))
         draft = OperationCardDraftRow(id=uuid4(), name="Черновик ОБ.106", existing_template_id="press", title=template.title,

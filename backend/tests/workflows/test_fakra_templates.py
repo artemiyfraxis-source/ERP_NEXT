@@ -137,19 +137,13 @@ def test_second_apply_is_byte_identical_and_analog_process_settings_are_not_copi
 
 
 @pytest.mark.parametrize("signature", ["saved_by", "edited_by"])
-@pytest.mark.parametrize("side", ["A", "B"])
-def test_a_human_sheet_or_record_edit_on_either_variant_protects_all_siblings(base, signature, side):
+def test_a_human_sheet_or_record_edit_protects_the_template(base, signature):
+    """One template per code since 0191 (the (A)/(B) siblings were merged): a human signature on it protects the code."""
     _apply(base)
     item = _payload()[0]
     with base() as session:
         original = session.scalar(select(OperationCardTemplateRow).where(OperationCardTemplateRow.code == item["code"]))
-        original.side = "A"
-        duplicate = OperationCardTemplateRow(**{column.name: deepcopy(getattr(original, column.name))
-                                               for column in OperationCardTemplateRow.__table__.columns})
-        duplicate.id += "-b"
-        duplicate.side = "B"
-        setattr(original if side == "A" else duplicate, signature, "Технолог Иван")
-        session.add(duplicate)
+        setattr(original, signature, "Технолог Иван")
         session.commit()
     before = _snapshot(base)
     item["record"]["steps"][0]["text"] = "Текст новой поставки"

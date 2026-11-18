@@ -77,17 +77,16 @@ def load_templates(repository: Any, documents: Sequence[Mapping[str, Any] | None
 
 def template_for(op: Mapping[str, Any], by_id: Mapping[str, OperationCardTemplate],
                   templates: Sequence[OperationCardTemplate]) -> OperationCardTemplate | None:
-    """The operation's template by its id; gone (a library reload renamed it) — by its code, the same side first. An
-    operation built without a card (its template was missing then) gets none: the ETK stays as it was built."""
+    """The operation's template by its id; gone (a library reload renamed it, 0191 merged the (A)/(B) sides) — by its
+    code (one template per code). An operation built without a card (its template was missing then) gets none: the ETK
+    stays as it was built."""
     template_id = str(op.get("template_id") or "").strip()
     if template_id in by_id:
         return by_id[template_id]
     code = str(op.get("code") or "").strip()
     if not template_id or not code or not isinstance(op.get("card"), Mapping):
         return None
-    found = [card for card in templates if card.code == code]
-    side = str(op.get("side") or "").strip()
-    return next((card for card in found if card.side == side), found[0] if found else None)
+    return next((card for card in templates if card.code == code), None)
 
 
 def _after(left: datetime, right: datetime) -> bool:

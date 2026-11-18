@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from datetime import date, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, Uuid, delete, func, or_, select
+from sqlalchemy import JSON, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint, Uuid, delete, func, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
@@ -19,7 +19,7 @@ from .harness_infrastructure import (
 from .kitset_infrastructure import SqlAlchemyKitsetRepository
 from .std_figures_infrastructure import SqlAlchemyStdFigureRepository
 from .td_issues_infrastructure import SqlAlchemyTdIssueRepository, TdIssueRow
-from .project_cards import OperationSketch, ProjectTechcard, TechcardRevision, TechcardStatus
+from .project_cards import OperationSketch, ProjectTechcard, TechcardRevision, TechcardStatus, TechcardValidationError
 from .operation_cards import OperationCardTemplate, OperationRecordEdit, parse_operation_template
 from .template_sheets import TemplateDraft
 
@@ -100,12 +100,13 @@ class RefreshRequestRow(Base):
 
 
 class OperationCardTemplateRow(Base):
+    """One template per operation code (0191: the (A)/(B) pairs were merged, UNIQUE keeps them from coming back)."""
+
     __tablename__ = "techcard_operation_templates"
-    __table_args__ = (Index("ix_techcard_operation_templates_code_side", "code", "side"),)
+    __table_args__ = (UniqueConstraint("code", name="uq_techcard_operation_templates_code"),)
 
     id: Mapped[str] = mapped_column(String(255), primary_key=True)
     code: Mapped[str] = mapped_column(String(255), nullable=False)
-    side: Mapped[str] = mapped_column(String(1), nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     name: Mapped[str] = mapped_column(String(512), nullable=False)
     category: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -388,7 +389,6 @@ class SqlAlchemyOperationCardRepository:
             select(OperationCardTemplateRow).order_by(
                 OperationCardTemplateRow.category,
                 OperationCardTemplateRow.code,
-                OperationCardTemplateRow.side,
                 OperationCardTemplateRow.id,
             )
         )
@@ -410,25 +410,25 @@ class SqlAlchemyOperationCardRepository:
             .order_by(
                 OperationCardTemplateRow.category,
                 OperationCardTemplateRow.code,
-                OperationCardTemplateRow.side,
                 OperationCardTemplateRow.id,
             )
         )
         return [self._domain(row) for row in rows]
 
     def edit(self, code: str, edit: OperationRecordEdit, *, changed_at: datetime, changed_by: str) -> int:
-        """One record = one operation code (SUPPLYMAP tcRecordsByCode_): the edit lands on every (A)/(B) block of the
-        code. Returns how many templates were changed (0 — no such code)."""
-        rows = list(self.session.scalars(
+        """One record = one operation code = one template (SUPPLYMAP tcRecordSave_). Returns how many templates were
+        changed (0 — no such code)."""
+        row = self.session.scalars(
             select(OperationCardTemplateRow).where(OperationCardTemplateRow.code == code)
-        ))
-        for row in rows:
-            row.edited = edit.as_json()
-            row.edited_at = changed_at
-            row.edited_by = changed_by
-            row.name = edit.name
-            row.document = self._domain(row).document()
-        return len(rows)
+        ).first()
+        if row is None:
+            return 0
+        row.edited = edit.as_json()
+        row.edited_at = changed_at
+        row.edited_by = changed_by
+        row.name = edit.name
+        row.document = self._domain(row).document()
+        return 1
 
     def load(self, cards: tuple[OperationCardTemplate, ...], *, imported_at: datetime) -> None:
         """The base templates of a fresh database (`seed_library`), added as they are; the caller loads them only
@@ -436,7 +436,6 @@ class SqlAlchemyOperationCardRepository:
         self.session.add_all(OperationCardTemplateRow(
             id=card.source_id,
             code=card.code,
-            side=card.side,
             title=card.title,
             name=card.name,
             category=card.category,
@@ -472,26 +471,21 @@ class SqlAlchemyOperationCardRepository:
         self, card: OperationCardTemplate, *, description: str, saved_at: datetime, saved_by: str,
     ) -> bool:
         """SUPPLYMAP upsertCatalogRecord_ + writeRangeToStore_: блок и строка каталога пишутся целиком.
-        Правка записи (ИЗМЕНЕНО) шаблона не трогается — пересохранение листа её не сбрасывает.
-        Returns True when the template was created."""
+        Правка записи (ИЗМЕНЕНО) шаблона не трогается — пересохранение листа её не сбрасывает. Один шаблон на код
+        операции: код другого шаблона — ошибка проверки. Returns True when the template was created."""
+        twin = self.session.scalars(select(OperationCardTemplateRow).where(
+            func.lower(OperationCardTemplateRow.code) == card.code.lower(),
+            OperationCardTemplateRow.id != card.source_id,
+        )).first()
+        if twin is not None:
+            raise TechcardValidationError(
+                f"Операция «{card.code}» уже есть в шаблоне «{twin.title}» — у кода операции один шаблон")
         row = self.session.get(OperationCardTemplateRow, card.source_id)
         created = row is None
         if row is None:
-            sibling = self.session.scalars(select(OperationCardTemplateRow).where(
-                OperationCardTemplateRow.code == card.code, OperationCardTemplateRow.edited_at.is_not(None),
-            )).first()
-            row = OperationCardTemplateRow(
-                id=card.source_id,
-                source_commit="",
-                imported_at=saved_at,
-                # Одна запись на код (tcRecordsByCode_): новый блок кода с правленой записью получает ту же правку.
-                edited=sibling.edited if sibling is not None else None,
-                edited_at=sibling.edited_at if sibling is not None else None,
-                edited_by=sibling.edited_by if sibling is not None else None,
-            )
+            row = OperationCardTemplateRow(id=card.source_id, source_commit="", imported_at=saved_at)
             self.session.add(row)
         row.code = card.code
-        row.side = card.side
         row.title = card.title
         row.name = card.name
         row.category = card.category

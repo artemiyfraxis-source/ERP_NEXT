@@ -398,8 +398,8 @@ def discard_project_techcard_draft(command: ChangeProjectTechcardCommand, uow: U
 def _card_to_template(
     current: ProjectTechcard, command: EditTechcardOperationCommand, card: dict[str, Any], uow: UnitOfWork,
 ) -> dict[str, Any]:
-    """«Сохранить также в шаблон»: the edited card written into the operation's template (one record per operation
-    code — every (A)/(B) block of it, as «Шаблоны техкарт» saves it), in the same unit of work. What the technologist
+    """«Сохранить также в шаблон»: the edited card written into the operation's template (one template per operation
+    code, as «Шаблоны техкарт» saves it), in the same unit of work. What the technologist
     left as shown goes back with the template's placeholders (etk_live.template_record). Returns the ETK document
     stamped with the template versions its cards were filled from before the edit, so every operation of this
     template — this one included — is filled anew from the edited template on read."""
@@ -565,9 +565,9 @@ def operation_template_codes(uow: UnitOfWork) -> set[str]:
 def create_operation_templates_in(
     operation: NewOperation, actor: Actor, now: datetime, uow: UnitOfWork,
 ) -> list[OperationCardTemplate]:
-    """The card template(s) of a new operation inside an open unit of work (nothing committed). Blank — the sheet head
-    and one hint step; a copy — every block (A)/(B) of `copy_of` with its steps, tooling, defects, safety and pictures,
-    an ERP edit of the record included. Saved as an ERP sheet (`saved_at`)."""
+    """The card template of a new operation inside an open unit of work (nothing committed). Blank — the sheet head
+    and one hint step; a copy — the template of `copy_of` with its steps, tooling, defects, safety and pictures, an ERP
+    edit of the record included. Saved as an ERP sheet (`saved_at`)."""
     repo = uow.operation_cards
     catalog = repo.sheets()
     taken = operation.code.casefold()
@@ -575,46 +575,40 @@ def create_operation_templates_in(
         raise TechcardValidationError(
             f"Операция с номером «{operation.code}» уже есть — номер операции должен быть уникальным")
     if operation.copy_of:
-        sources = sorted((row for row in catalog if row.code == operation.copy_of), key=lambda row: (row.side, row.id))
-        if not sources:
+        source = next((row for row in catalog if row.code == operation.copy_of), None)
+        if source is None:
             raise TechcardValidationError(f"Операции «{operation.copy_of}» для копии нет среди карточек операций")
     else:
-        sources = []
-    ids = {row.id for row in catalog}
-    created: list[OperationCardTemplate] = []
+        source = None
+    title = f"{operation.code} | {operation.name}"
     edit: OperationRecordEdit | None = None
-    for source in sources or [None]:
-        title = f"{operation.code} | {operation.name}" + (f" ({source.side})" if source is not None and source.side else "")
-        if source is None:
-            rows: list[list[str]] = [[title], *(list(row) for row in _BLANK_HEAD)]
-            images, category = None, operation.category
-        else:
-            rows = [list(row) for row in source.raw_rows] or [[]]
-            rows[0] = [title, *rows[0][1:]]
-            images, category = source.images, operation.category or source.category
-            current = repo.get(source.id)
-            if current is not None and current.changed_at is not None:
-                edit = OperationRecordEdit(
-                    name=operation.name, safety=current.safety, defects=current.defects, revision=current.revision,
-                    steps=current.steps, tooling=current.tooling,
-                )
-        template_id = make_template_id(title, ids)
-        ids.add(template_id)
-        try:
-            card = parse_operation_template(source_id=template_id, title=title, category=category, rows=rows,
-                                            images=images)
-        except ValueError as error:
-            raise TechcardValidationError(str(error)) from error
-        if card.code != operation.code:
-            raise TechcardValidationError(f"Номер «{operation.code}» занят служебной карточкой — выберите другой")
-        description = f"Новая операция, копия {operation.copy_of}" if source is not None else "Новая операция"
-        repo.save_sheet(card, description=description, saved_at=now, saved_by=actor.name)
-        created.append(card)
+    if source is None:
+        rows: list[list[str]] = [[title], *(list(row) for row in _BLANK_HEAD)]
+        images, category = None, operation.category
+    else:
+        rows = [list(row) for row in source.raw_rows] or [[]]
+        rows[0] = [title, *rows[0][1:]]
+        images, category = source.images, operation.category or source.category
+        current = repo.get(source.id)
+        if current is not None and current.changed_at is not None:
+            edit = OperationRecordEdit(
+                name=operation.name, safety=current.safety, defects=current.defects, revision=current.revision,
+                steps=current.steps, tooling=current.tooling,
+            )
+    template_id = make_template_id(title, (row.id for row in catalog))
+    try:
+        card = parse_operation_template(source_id=template_id, title=title, category=category, rows=rows, images=images)
+    except ValueError as error:
+        raise TechcardValidationError(str(error)) from error
+    if card.code != operation.code:
+        raise TechcardValidationError(f"Номер «{operation.code}» занят служебной карточкой — выберите другой")
+    description = f"Новая операция, копия {operation.copy_of}" if source is not None else "Новая операция"
+    repo.save_sheet(card, description=description, saved_at=now, saved_by=actor.name)
     if edit is not None:
-        # Одна запись на код: правка исходной записи ложится на все блоки копии (как tcRecordsByCode_).
+        # Правка исходной записи переходит в копию (как tcRecordSave_ пишет запись целиком).
         repo.edit(operation.code, edit, changed_at=now, changed_by=actor.name)
-        created = [card.with_edit(edit, changed_at=now, changed_by=actor.name) for card in created]
-    return created
+        card = card.with_edit(edit, changed_at=now, changed_by=actor.name)
+    return [card]
 
 
 # Кто «сохранил» шаблон поставки ERP: по этой подписи сид отличает свой шаблон от пересохранённого человеком.
@@ -630,8 +624,8 @@ class SeedErpTemplatesCommand:
 
 def seed_erp_templates(command: SeedErpTemplatesCommand, uow: UnitOfWork) -> dict[str, list[str]]:
     """Шаблоны карт поставки ERP (`backend/data/techcard-library-erp.json`) — в библиотеку как сохранённые в ERP.
-    Нет шаблона — создаётся; свой прежний — обновляется, если поставка изменилась; пересохранённый человеком или
-    пришедший из базовой библиотеки с тем же id — не трогается."""
+    Нет шаблона — создаётся; свой прежний — обновляется, если поставка изменилась; пересохранённый человеком,
+    пришедший из базовой библиотеки с тем же id или код, у которого в библиотеке уже есть шаблон, — не трогается."""
     result: dict[str, list[str]] = {"created": [], "updated": [], "kept": []}
     cards = []
     for item in command.templates:
@@ -644,10 +638,12 @@ def seed_erp_templates(command: SeedErpTemplatesCommand, uow: UnitOfWork) -> dic
             raise TechcardValidationError(str(error)) from error
     with uow:
         repo = uow.operation_cards
+        codes = {item.code.casefold(): item.id for item in repo.sheets()}
         for card in cards:
             row = repo.sheet(card.source_id)
             same = row is not None and [list(item) for item in row.raw_rows or []] == [list(item) for item in card.raw_rows]
-            if row is not None and (row.saved_by != ERP_TEMPLATE_AUTHOR or same):
+            other = codes.get(card.code.casefold(), card.source_id) != card.source_id  # один шаблон на код
+            if other or row is not None and (row.saved_by != ERP_TEMPLATE_AUTHOR or same):
                 result["kept"].append(card.title)
                 continue
             repo.save_sheet(card, description="Шаблон ERP (в БД.ТК SUPPLYMAP его нет)", saved_at=command.now,

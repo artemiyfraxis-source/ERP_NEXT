@@ -5,7 +5,6 @@ import pytest
 
 from app.modules.techcards.operation_cards import (
     OperationCardImage,
-    build_operation_records,
     normalize_record_edit,
     parse_operation_library,
     parse_operation_template,
@@ -32,17 +31,17 @@ def _template(title: str, source_id: str, *, revision: str = "2", step_text: str
 
 
 def test_parses_operation_card_semantics_without_losing_raw_rows():
-    rows = _rows("PRS_TERMINAL_auto | Опрессовка терминалов (A)")
+    rows = _rows("PRS_TERMINAL_auto | Опрессовка терминалов")
     card = parse_operation_template(
-        source_id="prs-terminal-a",
+        source_id="prs-terminal",
         title=rows[0][0],
         category="Опрессовка терминалов",
         rows=rows,
     )
 
     assert card.code == "PRS_TERMINAL_auto"
-    assert card.side == "A"
     assert card.name == "Опрессовка терминалов"
+    assert "side" not in card.document()
     assert card.safety.endswith("Отключить станок.")
     assert card.defects.endswith("недожим.")
     assert [step.kind for step in card.steps] == ["Операция", "Контроль"]
@@ -78,10 +77,10 @@ def test_bundled_library_is_fully_parseable():
     payload = json.loads((backend / "data" / "techcard-library.json").read_text(encoding="utf-8"))
     cards = parse_operation_library(payload["templates"])
 
-    assert len(cards) == 118
-    assert len({card.code for card in cards}) == 107
-    assert sum(len(card.steps) for card in cards) == 795
-    assert sum(len(card.tooling) for card in cards) == 344
+    # 0191: the 11 (A)/(B) pairs merged — one template per code (the БД.ОП-ТК mirror's 714 steps / 309 tooling rows)
+    assert len(cards) == len({card.code for card in cards}) == 107
+    assert sum(len(card.steps) for card in cards) == 714
+    assert sum(len(card.tooling) for card in cards) == 309
 
 
 def _bundled_equipment():
@@ -128,9 +127,9 @@ def test_bundled_library_has_the_three_new_solder_templates():
     payload = json.loads((backend / "data" / "techcard-library.json").read_text(encoding="utf-8"))
     cards = {card.source_id: card for card in parse_operation_library(payload["templates"])}
 
-    assert {(cards[i].code, cards[i].category, cards[i].side) for i in (
+    assert {(cards[i].code, cards[i].category) for i in (
         "sdr-banana-пайка", "sdr-pcb-пайка-на-плату", "sdr-нк-пайка",
-    )} == {("SDR_BANANA", "Пайка", ""), ("SDR_PCB", "Пайка на плату", ""), ("SDR_НК", "Пайка", "")}
+    )} == {("SDR_BANANA", "Пайка"), ("SDR_PCB", "Пайка на плату"), ("SDR_НК", "Пайка")}
     assert all(cards[i].steps and cards[i].tooling for i in cards if i.startswith(("sdr-banana", "sdr-pcb", "sdr-нк")))
 
 
@@ -155,24 +154,37 @@ def test_bundled_library_strip_templates_without_equipment_keep_the_mirror_state
         assert not [tool for tool in cards[template_id].tooling if tool.section == "Оборудование"]
 
 
-def test_bundled_library_resolves_to_one_record_per_code_without_error():
-    """SUPPLYMAP TcRecord.gs tcRecordsByCode_ — the same grouping the bundled library must
-    already satisfy: 11 codes come as an (A)/(B) pair, the rest are singles, and every pair
-    either agrees or has a RECORD_SIDE_PICK owner (no unresolved divergence)."""
+def test_bundled_libraries_have_one_template_per_code():
+    """Owner 17.11.2026 «шаблоны (A)/(B) искоренять»: the bundled libraries carry one template per operation code,
+    no side suffix in titles or ids (a fresh database must satisfy UNIQUE(code) of migration 0191)."""
     backend = Path(__file__).resolve().parents[2]
-    payload = json.loads((backend / "data" / "techcard-library.json").read_text(encoding="utf-8"))
-    cards = parse_operation_library(payload["templates"])
+    cards = []
+    for name in ("techcard-library.json", "techcard-library-erp.json"):
+        payload = json.loads((backend / "data" / name).read_text(encoding="utf-8"))
+        cards.extend(parse_operation_library(payload["templates"]))
 
-    records = build_operation_records(cards)
+    codes = [card.code for card in cards]
+    assert len(codes) == len(set(codes)) == 145
+    assert not [card.title for card in cards if card.title.endswith(("(A)", "(B)", "(А)", "(В)"))]
+    assert not [card.source_id for card in cards if card.source_id.endswith(("-a", "-b"))]
+    housing = next(card for card in cards if card.code == "SDR_COAX_housing")
+    assert housing.source_id == "sdr-coax-housing-пайка-экрана"
+    # owner 17.09: side B's text owns SDR_COAX_housing; side A's picture is kept
+    assert any("5,0 сек" in step.tolerance for step in housing.steps)
+    assert len(housing.images) == 1
 
-    assert len(records) == 107
-    paired = {record.code: record.sides for record in records if len(record.sides) == 2}
-    assert paired == {
-        "INS_housing_COAX": ("A", "B"), "INS_terminal_1.00": ("A", "B"), "INS_terminal_1.25": ("A", "B"),
-        "INS_terminal_1.5": ("A", "B"), "INS_terminal_2": ("A", "B"), "INS_terminal_2,54-6,3": ("A", "B"),
-        "PRS_TERMINAL_auto": ("A", "B"), "SDR_COAX_housing": ("A", "B"), "SDR_COAX_pin": ("A", "B"),
-        "SDR_COAX_pin_R/A": ("A", "B"), "STRIP_COAX_auto": ("A", "B"),
-    }
+
+def test_library_with_two_templates_of_one_code_is_refused():
+    rows = _rows("CUT_WIRE | Резка провода")
+    items = [{"id": "cut-wire-1", "title": rows[0][0], "category": "Резка", "rows": rows},
+             {"id": "cut-wire-2", "title": "cut_wire | Резка провода", "category": "Резка", "rows": rows}]
+    with pytest.raises(ValueError, match="больше одного шаблона: CUT_WIRE"):
+        parse_operation_library(items)
+
+
+def test_side_suffix_is_no_longer_a_side():
+    card = _template("PRS_TERMINAL_auto | Опрессовка терминалов (A)", "prs-terminal-a")
+    assert (card.code, card.name) == ("PRS_TERMINAL_auto", "Опрессовка терминалов (A)")
 
 
 def test_every_bundled_record_saves_back_through_the_record_editor_with_its_step_kinds():
@@ -182,7 +194,7 @@ def test_every_bundled_record_saves_back_through_the_record_editor_with_its_step
     unchanged in kinds and texts."""
     backend = Path(__file__).resolve().parents[2]
     payload = json.loads((backend / "data" / "techcard-library.json").read_text(encoding="utf-8"))
-    records = build_operation_records(parse_operation_library(payload["templates"]))
+    records = parse_operation_library(payload["templates"])
 
     for record in records:
         edit = normalize_record_edit({
@@ -223,78 +235,3 @@ def test_library_item_without_images_key_has_no_images():
     item = {"id": "prs-terminal", "title": rows[0][0], "category": "Опрессовка", "rows": rows}
     cards = parse_operation_library([item])
     assert cards[0].images == ()
-
-
-def test_non_pair_code_is_unaffected_by_grouping():
-    card = _template("CUT_WIRE | Резка провода", "cut-wire")
-    assert card.side == ""
-    records = build_operation_records([card])
-    assert len(records) == 1
-    assert records[0].sides == ()
-    assert records[0].code == "CUT_WIRE"
-
-
-def test_pair_with_one_side_missing_keeps_a_single_record():
-    """Only the (A) block of a code exists (the (B) block was never imported) — behaves like a
-    single-sided record, not an error."""
-    card = _template("PRS_TERMINAL_auto | Опрессовка терминалов (A)", "prs-terminal-a")
-    records = build_operation_records([card])
-    assert len(records) == 1
-    assert records[0].sides == ("A",)
-
-
-def test_matching_ab_pair_merges_into_one_record_with_name_without_side_suffix():
-    card_a = _template("PRS_TERMINAL_auto | Опрессовка терминалов (A)", "prs-terminal-a")
-    card_b = _template("PRS_TERMINAL_auto | Опрессовка терминалов (B)", "prs-terminal-b")
-
-    records = build_operation_records([card_a, card_b])
-
-    assert len(records) == 1
-    record = records[0]
-    assert record.code == "PRS_TERMINAL_auto"
-    assert record.name == "Опрессовка терминалов"
-    assert record.sides == ("A", "B")
-
-
-def test_special_codes_pair_merges_regardless_of_side():
-    """PRS_CAP_COAX / INS_MARK_HARNESS get their own code from the title regardless of which
-    side the block is on (SPECIAL_CODES applied before side stripping) — the pair still merges
-    like any other matching (A)/(B) pair once grouped by that code."""
-    card_a = _template("PRS_CAP | Опрессовка крышки коакс (A)", "prs-cap-a")
-    card_b = _template("PRS_CAP | Опрессовка крышки коакс (B)", "prs-cap-b")
-    assert card_a.code == card_b.code == "PRS_CAP_COAX"
-
-    records = build_operation_records([card_a, card_b])
-
-    assert len(records) == 1
-    assert records[0].sides == ("A", "B")
-
-
-def test_divergent_sides_use_the_configured_owner():
-    """RECORD_SIDE_PICK (SUPPLYMAP TC_REC_SIDE_PICK_) resolves a real SUPPLYMAP divergence:
-    SDR_COAX_housing's B side owns the record when A and B disagree."""
-    card_a = _template("SDR_COAX_housing | Пайка (A)", "sdr-housing-a", step_text="Пайка без просушки")
-    card_b = _template("SDR_COAX_housing | Пайка (B)", "sdr-housing-b", step_text="Пайка с просушкой")
-
-    records = build_operation_records([card_a, card_b])
-
-    assert len(records) == 1
-    record = records[0]
-    assert record.sides == ("A", "B")
-    assert record.steps[0].text == "Пайка с просушкой"
-
-
-def test_divergent_sides_without_an_owner_raise():
-    card_a = _template("CUSTOM_CODE | Операция (A)", "custom-a", step_text="Шаг A")
-    card_b = _template("CUSTOM_CODE | Операция (B)", "custom-b", step_text="Шаг B")
-
-    with pytest.raises(ValueError, match="без выбора владельца|расходятся"):
-        build_operation_records([card_a, card_b])
-
-
-def test_duplicate_code_without_side_information_raises():
-    card_1 = _template("CUT_WIRE | Резка провода", "cut-wire-1")
-    card_2 = _template("CUT_WIRE | Резка провода", "cut-wire-2")
-
-    with pytest.raises(ValueError, match="без сторон"):
-        build_operation_records([card_1, card_2])

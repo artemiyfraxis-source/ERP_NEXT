@@ -91,7 +91,7 @@ def test_bundled_vswr_card_measures_s11_with_a_matched_load_and_leaves_the_norm_
 def test_seed_creates_the_template_once_beside_the_base_library(operation_library_api):
     load_library(app.state.techcards_uow_factory, [_template("cut-wire", "CUT_WIRE")])
     assert "добавлены" in seed_erp(app.state.techcards_uow_factory, NOW)
-    assert seed_erp(app.state.techcards_uow_factory, NOW) == "Шаблоны ERP: без изменений (39)"
+    assert seed_erp(app.state.techcards_uow_factory, NOW) == "Шаблоны ERP: без изменений (38)"
 
     ids = {item["id"] for item in operation_library_api.get("/api/techcards/templates").json()["items"]}
     fakra = {template["id"] for template in ERP_LIBRARY["templates"]
@@ -102,8 +102,7 @@ def test_seed_creates_the_template_once_beside_the_base_library(operation_librar
                if card.code in marking_codes}
     assert len(marking) == 5
     assert ids == {"cut-wire", TIN_ID, COAX_CUT_ID, MARK_TUBE_ID, CUT_2STRIP_TIN_ID,
-                   "ins-housing-coax-clamp-монтаж-корпуса-с-прижимом-a",
-                   "ins-housing-coax-clamp-монтаж-корпуса-с-прижимом-b", VSWR_ID} | fakra | marking
+                   "ins-housing-coax-clamp-монтаж-корпуса-с-прижимом", VSWR_ID} | fakra | marking
     detail = operation_library_api.get(f"/api/techcards/templates/{TIN_ID}").json()
     assert detail["code"] == "CUT_WIRE+1crimp+tin"
 

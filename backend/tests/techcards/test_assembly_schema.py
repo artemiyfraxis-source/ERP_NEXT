@@ -282,7 +282,7 @@ def test_generator_library_and_own_operations_mix_in_one_manual_assembly():
 def test_a_generator_operation_without_its_card_is_a_warning_not_an_error():
     config = generator_to_assembly(golden._cut_crimp(10, 1))
     config["ops"][0]["templateId"] = "нет-такой"
-    document = _build(config, CARDS)
+    document = _build(config, [card for card in CARDS if card.code != "CUT_WIRE+1crimp"])  # the card is gone
     assert document["operations"][0]["card"] is None
     assert document["warnings"] == [
         "Операция 1 (cutWireCrimp): нет карточки CUT_WIRE+1crimp", "Операция 2 (insTerm): нет карточки INS_terminal",

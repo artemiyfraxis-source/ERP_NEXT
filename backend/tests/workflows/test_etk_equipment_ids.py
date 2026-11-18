@@ -22,7 +22,8 @@ from tests.workflows.test_etk_refresh import (  # noqa: F401  (fixture `base`)
     CARDS, CONFIG, T1, _derive, _revisions, _row, _settle, _store, base,
 )
 
-PIN = "sdr-coax-pin-пайка-a"  # «T21(R) | Станция паяльная», ОБ.071.X — строка 2
+PIN = "sdr-coax-pin-пайка"  # «T21(R) | Станция паяльная», ОБ.071.X — строка 2
+LEGACY_PIN = "sdr-coax-pin-пайка-a"  # what the saved CONFIG still names: the side (A) before 0191 merged the pair
 SLEEVE = "prs-sleeve-coax-опрессовка"  # «SR-16M | Пресс пневматический…», ОБ.006.1 — строка 0
 T21 = {"id": "m-t21", "article": "T21", "name": "Станция паяльная", "role": "operational",
        "display": "T21/Станция паяльная", "inventory_numbers": ("ОБ.071.1", "ОБ.071.2")}
@@ -140,6 +141,16 @@ def test_enrichment_is_refreshing():
     assert "equipmentTools" not in enrich_equipment(once, [T21, BZW], [])["ops"][2]  # a link gone — gone from the op
 
 
+def test_a_former_side_template_id_takes_the_links_of_the_merged_template():
+    """0191 moved the links of the (A)/(B) pair to the merged template (its id is the side's id without «-a»/«-b»):
+    a config still naming the side's id gets them, and the ETK names the merged template."""
+    op = enrich_equipment(CONFIG, [T21, BZW], [PIN_LINK])["ops"][2]
+    assert op["templateId"] == LEGACY_PIN and op["equipmentTools"][0][EQUIPMENT_ID] == "m-t21"
+    assert _tool(_build([T21, BZW], [PIN_LINK]), PIN)[EQUIPMENT_ID] == "m-t21"
+    unrelated = {**PIN_LINK, "template_id": "sdr-coax-pin"}  # only the exact stem counts
+    assert "equipmentTools" not in enrich_equipment(CONFIG, [T21, BZW], [unrelated])["ops"][2]
+
+
 def test_identity_keys_are_only_the_model_id():
     assert IDENTITY_KEYS == frozenset({EQUIPMENT_ID})
     assert without_identity({"a": [{EQUIPMENT_ID: "x", "name": "n"}], EQUIPMENT_ID: "y"}) == {"a": [{"name": "n"}]}
@@ -158,7 +169,6 @@ def linked(base):
     with SqlAlchemyReferencesUnitOfWork(base) as uow:
         for template_id, position, name, number, model in (
             (PIN, 2, "T21(R) | Станция паяльная", "ОБ.071.X", t21),
-            ("sdr-coax-pin-пайка-b", 2, "T21(R) | Станция паяльная", "ОБ.071.X", t21),
             (SLEEVE, 0, "SR-16M | Пресс пневматический для опрессовки кабельных контактов и наконечников", "ОБ.006.1", press),
         ):
             uow.session.add(EquipmentTemplateToolRow(template_id=template_id, position=position, tool_name=name,
@@ -208,6 +218,6 @@ def test_a_renamed_model_issues_a_revision_with_the_new_name(linked):
 
 def test_the_references_give_the_models_and_links_to_the_build(linked):
     refs = load_refs(lambda: SqlAlchemyReferencesUnitOfWork(linked))
-    assert {row["template_id"] for row in refs.template_tools} == {PIN, "sdr-coax-pin-пайка-b", SLEEVE}
+    assert {row["template_id"] for row in refs.template_tools} == {PIN, SLEEVE}
     config, _ = with_technology(CONFIG, refs=refs)
     assert config["ops"][2]["equipmentTools"][0][EQUIPMENT_ID] == _model_of(linked, "ОБ.071.1")

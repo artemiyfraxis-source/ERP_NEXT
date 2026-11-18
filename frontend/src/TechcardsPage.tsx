@@ -23,8 +23,6 @@ import { groupModels, operationField } from "./equipmentModel";
 import { CYCLE_COLUMNS, changedFields, cycleTimes, OP_TYPES, opFieldKey, timeByLength, withCycleTimes } from "./opFields";
 
 const CATEGORY_ORDER = [...new Set([...RECORD_CATEGORIES.map(([, name]) => name), "Прочее"])];
-// Где стороны (A)/(B) расходятся, чья сторона — запись (backend operation_cards.RECORD_SIDE_PICK).
-const RECORD_SIDE_PICK: Record<string, string> = { SDR_COAX_housing: "B", SDR_COAX_pin: "A" };
 
 
 
@@ -248,14 +246,8 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
       render: (card) => (pfPending(card) ? <StatusChip status="ПФ не настроены" tone="warning" /> : card.document ? <span className="muted">настроены</span> : "") },
     { key: "deadline", title: "Срок", value: (card) => card.deadline ?? "" },
   ];
-  // Одна запись на код операции: пара (A)/(B) — одна карточка (SUPPLYMAP tcRecordsByCode_).
-  const records = useMemo(() => {
-    const byCode = new Map<string, OperationCardSummary>();
-    templates.forEach((item) => {
-      if (!byCode.has(item.code) || RECORD_SIDE_PICK[item.code] === item.side) byCode.set(item.code, item);
-    });
-    return [...byCode.values()];
-  }, [templates]);
+  // Одна запись на код операции — один шаблон (миграция 0191).
+  const records = templates;
   const opByCode = useMemo(() => {
     const byCode = new Map<string, TechOperationRecord>();
     opRows.forEach((row) => { const code = opCode(row.fields); if (code && !byCode.has(code)) byCode.set(code, row); });

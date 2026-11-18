@@ -560,6 +560,18 @@ class _Models:
         return None
 
 
+_LEGACY_SIDE_ID = re.compile(r"^(.+)-[ab]$")
+
+
+def _tool_template_id(template_id: str, by_template: Mapping[str, Any]) -> str:
+    """The template whose equipment rows an operation takes: its own; an id of a former (A)/(B) side (0191 merged
+    each pair into one template whose id is the side's id without «-a» / «-b») — the merged template's."""
+    if template_id in by_template:
+        return template_id
+    legacy = _LEGACY_SIDE_ID.match(template_id)
+    return legacy.group(1) if legacy and legacy.group(1) in by_template else template_id
+
+
 def enrich_equipment(
     config: Mapping[str, Any], models: Iterable[Mapping[str, Any]], template_tools: Iterable[Mapping[str, Any]],
 ) -> dict[str, Any]:
@@ -577,7 +589,7 @@ def enrich_equipment(
             continue
         op.pop(EQUIPMENT_TOOLS, None)
         tools = []
-        for row in by_template.get(str(op.get("templateId") or "").strip(), ()):
+        for row in by_template.get(_tool_template_id(str(op.get("templateId") or "").strip(), by_template), ()):
             model = index.by_id.get(str(row.get("model_id") or ""))
             if model is None:
                 continue

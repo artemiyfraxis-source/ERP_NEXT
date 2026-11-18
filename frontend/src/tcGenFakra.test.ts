@@ -128,7 +128,7 @@ function productionData(fixture: ProductionFixture, dedicated = true) {
   }
   const genericCode = (operation: SavedOp) => operation.opNum || (operation.type === "coaxCapCrimp" ? "PRS_CAP" : "CTRL_VSWR_coax");
   const templates = Array.from(new Map(config.ops.map((operation) => [operation.templateId, {
-    id: operation.templateId, title: `${genericCode(operation)} | ${operation.label || operation.type} (${operation.side})`,
+    id: operation.templateId, title: `${genericCode(operation)} | ${operation.label || operation.type}`,
     category: operation.type === "coaxCapCrimp" ? "Опрессовка крышки коакс" : "",
   }])).values());
   const refs: BatchRefs = {
@@ -208,7 +208,8 @@ describe("production 708К. fixture preservation", () => {
     const bytes = new TextEncoder().encode(JSON.stringify(withoutShrinkMaterials(config)));
     const digest = await crypto.subtle.digest("SHA-256", bytes);
     expect(Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(""))
-      .toBe("73b3bcf31283d39f53241504c7c25bd1bdc870f20cac337ab2fda58894694ded");
+      // 0191: the saved (A)/(B) template ids remapped to the merged ones; nothing else changed (verified 18.11)
+      .toBe("508266ccd3e42a51b7f7dbaba7df3c21621f02e9e7447db80cf3994d3d3328fc");
     expect(config).toEqual(autoConfig(productionData(fixture, false)).config);
   });
 });

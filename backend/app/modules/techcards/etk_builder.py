@@ -2211,6 +2211,38 @@ def _typed_fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str,
     return fields
 
 
+_LEGACY_SIDE_ID = re.compile(r"^(.+)-[ab]$")
+
+
+class CardFinder:
+    """The library cards of a build: an operation's card by its `templateId`; an id the library no longer has (0191
+    merged the (A)/(B) sides into one template per code, a saved config may still name a side's id) — the merged card
+    (the side's id without «-a» / «-b»), else the one card of the operation's `opNum`."""
+
+    def __init__(self, cards: Sequence[OperationCardTemplate]):
+        self.by_id = {card.source_id: card for card in cards}
+        self._by_code: dict[str, list[OperationCardTemplate]] = defaultdict(list)
+        for card in cards:
+            self._by_code[card.code].append(card)
+
+    def __call__(self, op: Mapping[str, Any]) -> OperationCardTemplate | None:
+        template_id = str(op.get("templateId") or "").strip()
+        if not template_id:
+            return None
+        if template_id in self.by_id:
+            return self.by_id[template_id]
+        legacy = _LEGACY_SIDE_ID.match(template_id)
+        if legacy and legacy.group(1) in self.by_id:
+            return self.by_id[legacy.group(1)]
+        found = self._by_code.get(str(op.get("opNum") or "").strip(), [])
+        return found[0] if len(found) == 1 else None
+
+
+def _card_title(card: OperationCardTemplate, op: Mapping[str, Any]) -> str:
+    """The ETK title of an operation's card: the template's title and the operation's side («(А)» / «(В)»)."""
+    return card.title + (f" ({_side_label(op)})" if op.get("side") in ("A", "B") else "")
+
+
 def _card_warning(op: Mapping[str, Any], position: int, code: str) -> str:
     missing_card = code or op.get("templateId") or "шаблон не выбран"
     return f"Операция {position} ({op.get('type') or ''}): нет карточки {missing_card}"
@@ -2339,7 +2371,8 @@ def _typed_operation(
         "position": position, "code": code, "type": str(op.get("type") or ""),
         "side": str(op.get("side") or ""), "connector": connector,
         "connector_article": str(_endpoint(op).get("connArt") or _endpoint(op).get("connName") or ""),
-        "template_id": str(op.get("templateId") or ""), "title": card.title if card else "",
+        "template_id": card.source_id if card else str(op.get("templateId") or ""),
+        "title": _card_title(card, op) if card else "",
         "card": _resolve_card(card, replacements, fields, cards_by_code, _equipment_links(op)) if card else None,
         "components": _components(op, config, code, manual=manual), "semis": semis,
         "result": _result_rows(op, config, result, is_last, single, manual=manual) if result_rows is None else result_rows,
@@ -2809,7 +2842,7 @@ class _ManualOp:
 
 
 def _manual_ops(
-    config: Mapping[str, Any], cards_by_id: Mapping[str, OperationCardTemplate], warnings: list[str],
+    config: Mapping[str, Any], find_card: CardFinder, warnings: list[str],
 ) -> list[_ManualOp]:
     raw = config.get("ops")
     if not isinstance(raw, list) or not raw:
@@ -2825,8 +2858,7 @@ def _manual_ops(
         card = None
         generator = kind in GENERATOR_TYPES
         if generator:
-            template = _manual_text(op.get("templateId"))
-            card = cards_by_id.get(template)
+            card = find_card(op)
             code = card.code if card else _manual_text(op.get("opNum"))
             label = _manual_text(op.get("label")) or (card.name if card else "") or code or kind
             if card is None:
@@ -2835,7 +2867,7 @@ def _manual_ops(
             template = _manual_text(op.get("templateId"))
             if not template:
                 raise _manual_error(f"операция {position}: не выбрана карточка из библиотеки")
-            card = cards_by_id.get(template)
+            card = find_card(op)
             label = _manual_text(op.get("label")) or (card.name if card else "") or f"Операция {position}"
             code = card.code if card else _manual_text(op.get("opNum"))
             if card is None:
@@ -3066,12 +3098,11 @@ def _build_manual(
     config: Mapping[str, Any], cards: Sequence[OperationCardTemplate], *,
     operation_library_commit: str = "", technology_source: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    cards_by_id = {card.source_id: card for card in cards}
     cards_by_code: dict[str, OperationCardTemplate] = {}
     for item in cards:
         cards_by_code.setdefault(item.code, item)
     warnings: list[str] = []
-    items = _manual_ops(config, cards_by_id, warnings)
+    items = _manual_ops(config, CardFinder(cards), warnings)
     quantity = _part_quantity(config)
     final_name = str(config.get("assemblyName") or "")
     route_ops = [RouteOp(position=item.position, type=item.kind, code=item.code, name=item.product) for item in items]
@@ -3134,8 +3165,8 @@ def _build_manual(
         built.append({
             "position": item.position, "code": item.code, "type": item.kind,
             "side": _manual_text(item.source.get("side")), "connector": seqs[item.position - 1], "connector_article": "",
-            "template_id": _manual_text(item.source.get("templateId")),
-            "title": item.card.title if item.card else item.label, "card": card,
+            "template_id": item.card.source_id if item.card else _manual_text(item.source.get("templateId")),
+            "title": _card_title(item.card, item.source) if item.card else item.label, "card": card,
             "components": _manual_components(item, quantity), "semis": semis, "result": [_row(result, _format(quantity))],
             "result_label": "Изделие" if block.final and item.position == order[-1] else "Полуфабрикат",
             "time": [{"name": result, "norm": _format(norm, 2)}],
@@ -3529,7 +3560,7 @@ def _rework_config(config: Mapping[str, Any], cards: Sequence[OperationCardTempl
     ops = config.get("ops")
     if not isinstance(ops, list) or len(ops) != len(expected):
         fail("операции не соответствуют выбранной обработке")
-    by_id = {card.source_id: card for card in cards}
+    find_card = CardFinder(cards)
     allowed_codes = {"cutWire": {"CUT_WIRE_hand", "CUT_WIRE_auto"}, "stripCable": {"STRIP_WIRE", "STRIP_CABLE", "STRIP_CABLE_sheld"},
                      "tin": {"SDR_tin"}, "insMark": {"INS_MARK"}}
     enriched = next((wire for wire in _wires({}, config) if (wire.get("art") or wire.get("name")) == (incoming["art"] or incoming["name"])), {})
@@ -3539,7 +3570,7 @@ def _rework_config(config: Mapping[str, Any], cards: Sequence[OperationCardTempl
     for raw, (kind, key, side, label) in zip(ops, expected):
         if not isinstance(raw, Mapping) or (raw.get("type"), raw.get("opKey"), raw.get("side", "")) != (kind, key, side):
             fail("операции не соответствуют выбранной обработке")
-        card = by_id.get(str(raw.get("templateId") or ""))
+        card = find_card(raw)
         if card is None:
             fail(f"не выбрана карточка: {label}")
         if card.code not in allowed_codes[kind]:
@@ -3661,14 +3692,14 @@ def build_etk(
         # «Контроль КСВН: не проверять» (генератор, владелец 22.10) — операции контроля в ЭТК нет.
         raw_operations = [item for item in raw_operations if not (isinstance(item, Mapping) and item.get("type") == "coaxVswr")]
         config = {**config, "ops": raw_operations}
-    cards_by_id = {card.source_id: card for card in cards}
+    find_card = CardFinder(cards)
     cards_by_code: dict[str, OperationCardTemplate] = {}
     for item in cards:
         cards_by_code.setdefault(item.code, item)
     operations = [deepcopy(item) for item in raw_operations if isinstance(item, Mapping)]
     warnings: list[str] = []
     built: list[dict[str, Any]] = []
-    found = [cards_by_id.get(str(op.get("templateId") or "")) for op in operations]
+    found = [find_card(op) for op in operations]
     codes = [card.code if card else str(op.get("opNum") or "") for op, card in zip(operations, found)]
     for index, (op, card, code, link) in enumerate(zip(operations, found, codes, _generator_chain(operations, config, codes)), start=1):
         if card is None:

@@ -17,7 +17,7 @@ const CUSTOM_OP = "customOp";
 const TOOL_SECTIONS = ["Инструмент", "Оборудование", "Расходники"];
 
 /** Карточка библиотеки операций (GET /api/techcards/templates) в выборе ручной сборки. */
-export type LibraryCard = Pick<OperationCardSummary, "id" | "code" | "side" | "title" | "name" | "category" | "norms" | "first_step">;
+export type LibraryCard = Pick<OperationCardSummary, "id" | "code" | "title" | "name" | "category" | "norms" | "first_step">;
 
 /** Строка состава КБ на операции: сколько на одно изделие. */
 export type ManualComponent = { id: string; art: string; name: string; qty: string; unit: string };
@@ -74,8 +74,6 @@ export type KdChange = { field: KdField; was: string; now: string };
 /** Ключ операции в КД: объект документа жгута и код операции — по нему пересчёт находит «ту же» операцию. */
 export const kdKey = (objectId: string, opCode: string) => `harness:${objectId}:${opCode}`;
 
-const SIDES: Record<string, string> = { A: "А", B: "В", "А": "А", "В": "В" };
-
 function num(text: unknown): number | null {
   const value = String(text ?? "").trim().replace(/\s/g, "").replace(",", ".");
   if (!value) return null;
@@ -88,12 +86,11 @@ function text(value: number): string {
   return String(Math.round(value * 1000) / 1000).replace(".", ",");
 }
 
-/** Русское название карточки: имя карты, иначе название шаблона без кода, иначе категория по коду; со стороной. */
+/** Русское название карточки: имя карты, иначе название шаблона без кода, иначе категория по коду. Сторона — у
+ *  операции, не у карточки (один шаблон на код, миграция 0191). */
 export function cardLabel(card: LibraryCard): string {
   const fromTitle = String(card.title || "").split("|").map((part) => part.trim()).filter(Boolean).at(-1) || "";
-  const base = card.name?.trim() || fromTitle.replace(/\s*\((?:[AАBВ])\)$/, "") || recordCategory(card.code) || "Операция";
-  const side = SIDES[String(card.side || "").trim()];
-  return side ? `${base} (${side})` : base;
+  return card.name?.trim() || fromTitle || recordCategory(card.code) || "Операция";
 }
 
 export function cardCategory(card: LibraryCard): string {
@@ -120,7 +117,7 @@ function blank(seq: number): ManualOp {
 export function libraryOp(seq: number, card: LibraryCard, opRecs: OpRec[]): ManualOp {
   const norms = cardNorms(card, opRecs);
   return {
-    ...blank(seq), kind: "library", templateId: card.id, code: card.code, side: card.side || "", label: cardLabel(card),
+    ...blank(seq), kind: "library", templateId: card.id, code: card.code, side: "", label: cardLabel(card),
     prepMin: norms && norms.prep ? text(norms.prep / 60) : "", opSec: norms && norms.op ? text(norms.op) : "",
   };
 }
