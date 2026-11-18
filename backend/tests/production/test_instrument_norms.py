@@ -136,7 +136,8 @@ def test_every_vswr_norm_has_a_loss_norm_with_source():
         loss = holder["loss"]
         assert loss["source"] and (loss.get("segments") or loss.get("points"))
     s50180 = next(entry for entry in data["vna"] if entry["model"] == "S50180")
-    assert "табл. 16" in s50180["loss_uncertainty"]["source"] and "табл. 19" in s50180["loss_uncertainty"]["source"]
+    assert "табл. 23" in s50180["loss_uncertainty"]["source"]
+    assert [step["value_db"] for step in s50180["loss_uncertainty"]["steps"]] == [0.1, 0.1]
     assert data["decision_rule_loss"]
 
 
