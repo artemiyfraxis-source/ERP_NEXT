@@ -6,9 +6,11 @@ from pathlib import Path
 
 from fpdf import FPDF
 
-from .instrument_characterization import Characterization, connector_line, impedance_warning, loss_db, number, upper_two
+from .instrument_characterization import Characterization, connector_line, impedance_warning, loss_db, number, step_stops, upper_two
+from .instrument_norms import norms_data
 from .rf_interfaces import RfDetails
-from .instrument_public import PublicMeasurement, PublicPassport, conclusion, control_line, public_fields, public_measurement_fields
+from .instrument_public import (PublicMeasurement, PublicPassport, conclusion, control_line, public_fields, public_measurement_fields,
+                                public_passport)
 from .traceability import MeasurementInstrument
 from .vna_files import VSWR_CEILING
 
@@ -26,7 +28,8 @@ class _Passport(FPDF):
         self.set_y(-20)
         self.set_font("Plex", size=7)
         self.set_text_color(60)
-        self.multi_cell(0, 3.5, f"Fraxis ERP · {self.generated:%d.%m.%Y %H:%M} · Методика: — · Стр. {self.page_no()}",
+        method = norms_data()["method"]["code"]
+        self.multi_cell(0, 3.5, f"Fraxis ERP · {self.generated:%d.%m.%Y %H:%M} · Методика: {method} · Стр. {self.page_no()}",
                         new_x="LMARGIN", new_y="NEXT")
         if self.card_url:
             self.multi_cell(0, 3, self.card_url, link=self.card_url, new_x="LMARGIN", new_y="NEXT")
@@ -39,19 +42,19 @@ def _line(pdf, text: str, *, bold=False, size=9):
 
 
 def band_rows(measurement: Characterization | PublicMeasurement):
+    """The label's bands «до 1 / 3 / 6 / 12 / 18 ГГц», cumulative from the lowest measured frequency."""
     start, stop = measurement.band
-    edges = [start] + [edge for edge in (2, 6, 11, 18) if start < edge < stop] + [stop]
-    for low, high in zip(edges, edges[1:]):
+    for high in (edge for edge in step_stops(stop) if edge > start):
         values = []
         for name in ("S11", "S22", "S21"):
-            points = [v for f, v in measurement.points(name) if low * 1e9 <= f <= high * 1e9]
+            points = [v for f, v in measurement.points(name) if f <= high * 1e9 + 0.5]
             if not points:
                 values.append("—")
             else:
                 maximum = max(loss_db(v) for v in points) if name == "S21" else max(points)
                 values.append(f"≥ {number(VSWR_CEILING)}" if name != "S21" and maximum >= VSWR_CEILING
                               else upper_two(maximum) if math.isfinite(maximum) else "∞")
-        yield number(low) + "–" + number(high), *values
+        yield number(start) + "–" + number(high), *values
 
 
 def _envelope(points, stop: float, limit=600):
@@ -125,7 +128,7 @@ def _new_pdf(generated: datetime, card_url: str) -> _Passport:
 
 
 def draw_measurement(pdf: FPDF, measurement: Characterization | PublicMeasurement):
-    rows = [("Диапазон, ГГц", "КСВН 1, макс.", "КСВН 2, макс.", "Потери, дБ, макс."),
+    rows = [("Полоса, ГГц", "КСВН 1, макс.", "КСВН 2, макс.", "Потери, дБ, макс."),
             *band_rows(measurement)]
     row_height = 6
     if pdf.get_y() + len(rows) * row_height > pdf.h - pdf.b_margin:
@@ -153,15 +156,7 @@ def public_passport_pdf(passport: PublicPassport, *, generated: datetime, public
     if passport.impedance_warning:
         _line(pdf, passport.impedance_warning, bold=True)
     if passport.measurement:
-        pdf.ln(3)
-        _line(pdf, "Заключение", bold=True, size=12)
-        verdict, warning = conclusion(passport.measurement)
-        _line(pdf, verdict, bold=True, size=11)
-        if warning:
-            _line(pdf, warning, bold=True)
-        _line(pdf, control_line(passport), size=8)
-        if passport.control_overdue:
-            _line(pdf, "Требуется повторный замер", bold=True)
+        _draw_conclusion(pdf, passport)
         if public_url:
             pdf.set_font("Plex", size=9)
             pdf.set_text_color(0, 100, 90)
@@ -178,13 +173,30 @@ def public_passport_pdf(passport: PublicPassport, *, generated: datetime, public
     if passport.history:
         _line(pdf, "История контроля", bold=True, size=12)
         for previous in passport.history:
-            band = previous.band.band_line if previous.band else "Не годен для 50 Ом тракта"
-            _line(pdf, f"{previous.measured_on:%d.%m.%Y} · {band}", size=8)
+            _line(pdf, f"{previous.measured_on:%d.%m.%Y} · {previous.summary}", size=8)
     return bytes(pdf.output())
 
 
+def _draw_conclusion(pdf: FPDF, passport: PublicPassport):
+    result = conclusion(passport)
+    if result is None:
+        return
+    pdf.ln(3)
+    _line(pdf, result.title, bold=True, size=12)
+    _line(pdf, result.verdict, bold=True, size=11)
+    if result.warning:
+        _line(pdf, result.warning, bold=True)
+    for label, value in result.lines:
+        _line(pdf, f"{label}: {value}", size=8)
+    _line(pdf, control_line(passport), size=8)
+    if passport.control_overdue:
+        _line(pdf, "Требуется повторный замер", bold=True)
+    for text in result.closing:
+        _line(pdf, text, size=8)
+
+
 def passport_pdf(item: MeasurementInstrument, rf: RfDetails, measurement: Characterization | None,
-                 *, generated: datetime, card_url: str = "") -> bytes:
+                 *, generated: datetime, card_url: str = "", registry=()) -> bytes:
     pdf = _new_pdf(generated, card_url)
     _line(pdf, f"Паспорт {item.inventory_number}", bold=True, size=17)
     _line(pdf, item.name, bold=True, size=11)
@@ -208,6 +220,12 @@ def passport_pdf(item: MeasurementInstrument, rf: RfDetails, measurement: Charac
         _line(pdf, f"Пределы по карточке: от {number(rf.f_min_ghz)} ГГц; верхняя частота не указана", size=8)
     if rf.source:
         _line(pdf, "Источник ВЧ-данных: " + rf.source, size=8)
+    projection = public_passport(item, rf, measurement, registry=registry)
+    for label, value in public_fields(projection):
+        if label in ("Рабочие температуры", "Ресурс сочленений"):
+            _line(pdf, f"{label}: {value}")
+    if measurement is not None:
+        _draw_conclusion(pdf, projection)
     if measurement is None:
         pdf.ln(6)
         _line(pdf, "Замер не проведён", bold=True, size=14)
