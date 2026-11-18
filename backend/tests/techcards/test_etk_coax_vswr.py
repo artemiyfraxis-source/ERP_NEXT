@@ -43,7 +43,7 @@ def test_the_control_step_gives_the_band_and_the_norm_by_components():
     config = enrich_coax_vswr_norm(_config(), ROWS, (CABLE,))
     document = build_etk(config, list(CARDS.values()))
     step = _control(document)
-    assert step["text"] == ("Измерить КСВН (S11) в полосе 1…3000 МГц, сторона Б нагружена согласованной нагрузкой 50 Ом. "
+    assert step["text"] == ("Измерить КСВН с двух концов (S11 — сторона А, S22 — сторона Б) в полосе 1…3000 МГц, метод — по СТО ФРАК-002-2026. "
                             "Норма ≤ 2,06 (по комплектующим: SMA-C174P ≤1,43; SMA-C316F ≤1,41). "
                             "Справочно: затухание S21 на 3000 МГц ≈ 0,31 дБ.")
     assert step["tolerance"] == "≤ 2,06"
@@ -58,7 +58,7 @@ def test_without_vswr_of_a_connector_the_step_hands_the_decision_to_otk():
     rows = (ROWS[0] | {"КСВ": ""}, ROWS[1])
     document = build_etk(enrich_coax_vswr_norm(_config(), rows, ()), list(CARDS.values()))
     step = _control(document)
-    assert step["text"] == ("Измерить КСВН (S11) в полосе 1…6000 МГц, сторона Б нагружена согласованной нагрузкой 50 Ом; "
+    assert step["text"] == ("Измерить КСВН с двух концов (S11 — сторона А, S22 — сторона Б) в полосе 1…6000 МГц, метод — по СТО ФРАК-002-2026; "
                             "норма не определена — у SMA-C174P нет КСВ в БД.КОАКС, решение принимает ОТК.")
     assert step["tolerance"] == "решение ОТК"
     assert document["coaxVswrNorm"]["status"] == "undefined" and document["coaxVswrNorm"]["vswrMax"] is None
@@ -69,6 +69,7 @@ def test_without_references_the_norm_is_not_computed_and_not_made_up():
     assert "coaxVswrNorm" not in document
     step = _control(document)
     assert "норма не рассчитана" in step["text"] and "≤" not in step["text"] and step["tolerance"] == "решение ОТК"
+    assert step["text"].startswith("Измерить КСВН с двух концов (S11 — сторона А, S22 — сторона Б), метод — по СТО ФРАК-002-2026; ")
 
 
 def test_enrichment_twice_is_enrichment_once_and_a_stale_norm_goes():
@@ -124,10 +125,10 @@ def test_the_step_says_which_units_of_the_batch_are_measured():
     every = _control(build_etk(enrich_coax_vswr_norm(_with_control({"mode": "all"}), ROWS, (CABLE,)), list(CARDS.values())))
     sample = _control(build_etk(enrich_coax_vswr_norm(_with_control({"mode": "sample", "every": 50}), ROWS, (CABLE,)),
                                 list(CARDS.values())))
-    load = "сторона Б нагружена согласованной нагрузкой 50 Ом"
-    assert every["text"].startswith(f"Измерить КСВН (S11) в полосе 1…3000 МГц, {load}; "
+    method = "метод — по СТО ФРАК-002-2026"
+    assert every["text"].startswith(f"Измерить КСВН с двух концов (S11 — сторона А, S22 — сторона Б) в полосе 1…3000 МГц, {method}; "
                                     "контроль сплошной — каждое изделие партии. Норма ≤ 2,06")
-    assert sample["text"].startswith(f"Измерить КСВН (S11) в полосе 1…3000 МГц, {load}; контроль выборочный: "
+    assert sample["text"].startswith(f"Измерить КСВН с двух концов (S11 — сторона А, S22 — сторона Б) в полосе 1…3000 МГц, {method}; контроль выборочный: "
                                      "первое изделие партии и далее каждое 50-е (1 из 50). Норма ≤ 2,06")
     assert every["tolerance"] == sample["tolerance"] == "≤ 2,06"
     # Без справочников норма не рассчитана, но выборка всё равно в шаге.
@@ -147,8 +148,8 @@ def test_an_old_config_without_the_setting_reads_as_before():
     document = build_etk(config, list(CARDS.values()))
     assert "control" not in config["coax"]["vswrNorm"]
     step = _control(document)
-    assert step["text"].startswith("Измерить КСВН (S11) в полосе 1…3000 МГц, сторона Б нагружена согласованной нагрузкой "
-                                   "50 Ом. Норма ≤ 2,06") and "контроль" not in step["text"]
+    assert step["text"].startswith("Измерить КСВН с двух концов (S11 — сторона А, S22 — сторона Б) в полосе 1…3000 МГц, метод — по СТО ФРАК-002-2026. "
+                                   "Норма ≤ 2,06") and "контроль" not in step["text"]
     assert _vswr_minutes(document) == "10"  # 1 мин × партия 10
 
 
