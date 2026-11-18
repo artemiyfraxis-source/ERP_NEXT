@@ -199,10 +199,9 @@ Describe 'S2VNA offline lifecycle' {
         Backup-VnaState $connection $backup
         Set-VnaProfile $connection
         Assert-VnaScreen @(Get-VnaTraces $connection)
-        $connection.Traces.Count | Should Be 12
+        $connection.Traces.Count | Should Be 4
         $connection.Traces[0].PDIVision | Should Be 0.1
         $connection.Traces[1].PDIVision | Should Be 0.3
-        $connection.Traces[6].Format | Should Be 'GDEL'
         Restore-VnaState $connection $backup
         ($connection.Traces | ConvertTo-Json -Compress) | Should Be $original
         { Assert-VnaScreen @(Get-VnaTraces $connection) } | Should Throw
@@ -243,6 +242,7 @@ Describe 'S2VNA offline lifecycle' {
 Describe 'S2VNA measurement screen over mocked COM' {
     BeforeEach {
         $script:chartConnection = New-TestS2Connection
+        $script:VnaActivePreset = $script:VnaDefaultPreset
         $script:com = @{ 'CALCulate(1).PARameter(1).COUNt' = 4; 'DISPlay.SPLit' = 2; 'DISPlay.WINDow(1).SPLit' = 8
             'DISPlay.WINDow(1).TITLe.DATA' = 'operator'; 'DISPlay.WINDow(1).TITLe.STATe' = $true }
         foreach ($index in 1..4) {
@@ -287,7 +287,7 @@ Describe 'S2VNA measurement screen over mocked COM' {
             Loss = @([pscustomobject]@{ Type = 2; StartHz = 5e8; StopHz = 18e9; From = -0.0212; To = -0.1273 }) }
     }
     It 'shows twelve graphs, SWR limit lines and classic-frequency markers without touching sweep or calibration' {
-        Set-VnaScreen $script:chartConnection $script:screenLimits
+        Set-VnaScreen $script:chartConnection $script:screenLimits -Preset 'Подробно (инженер)'
         $script:com['CALCulate(1).PARameter(1).COUNt'] | Should Be 12
         $script:com['DISPlay.WINDow(1).SPLit'] | Should Be 15
         $script:com['DISPlay.SPLit'] | Should Be 1
@@ -314,6 +314,23 @@ Describe 'S2VNA measurement screen over mocked COM' {
         $script:com['DISPlay.WINDow(1).TRACe(10).Y.SCALe.PDIVision'] | Should Be 5
         @($script:comWrites | Where-Object { $_ -match 'SENSe|SOURce|CORRection|TRIGger|INITiate|MMEMory|CKIT' }).Count | Should Be 0
     }
+    It 'shows the calibration check as two big SWR graphs with the 1,06 line and hidden transmission traces' {
+        Set-VnaScreen $script:chartConnection $null -Preset 'Проверка калибровки (нагрузка)'
+        $script:com['CALCulate(1).PARameter(1).COUNt'] | Should Be 4
+        $script:com['DISPlay.WINDow(1).SPLit'] | Should Be 3
+        ((1..4 | ForEach-Object { $script:com["DISPlay.WINDow(1).TRACe($_).STATe"] }) -join ',') | Should Be 'True,False,False,True'
+        (@($script:com['T1.LIMit.DATA']) -join ',') | Should Be '1,1,10000000,18000000000,1.06,1.06'
+        (@($script:com['T4.LIMit.DATA']) -join ',') | Should Be '1,1,10000000,18000000000,1.06,1.06'
+        $script:com['DISPlay.WINDow(1).TRACe(1).Y.SCALe.PDIVision'] | Should Be 0.01
+        ((1..4 | ForEach-Object { $script:com["T$_.SMOothing.STATe"] }) -join ',') | Should Be 'False,False,False,False'
+    }
+    It 'shows the flex check with memory traces and stores data to memory on request' {
+        Set-VnaScreen $script:chartConnection $null -Preset 'Проверка кабелей (шевеление)'
+        ((1..4 | ForEach-Object { $script:com["T$_.FORMat"] }) -join ',') | Should Be 'SWR,SWR,MLOG,PHAS'
+        ((1..4 | ForEach-Object { $script:com["DISPlay.WINDow(1).TRACe($_).MEMory.STATe"] }) -join ',') | Should Be 'True,True,True,True'
+        Save-VnaTraceMemory $script:chartConnection
+        @($script:comWrites | Where-Object { $_ -like '*MATH.MEMorize' }).Count | Should Be 4
+    }
     It 'clears limit lines and the title when no norm is known' {
         Set-VnaScreen $script:chartConnection $null
         $script:com['T1.LIMit.STATe'] | Should Be $false
@@ -326,7 +343,7 @@ Describe 'S2VNA measurement screen over mocked COM' {
         { Set-VnaScreen $script:chartConnection $script:screenLimits } | Should Throw 'шкала S11.PDIVision'
     }
     It 'reads correction of the four measurement traces among the twelve graphs' {
-        Set-VnaScreen $script:chartConnection $script:screenLimits
+        Set-VnaScreen $script:chartConnection $script:screenLimits -Preset 'Подробно (инженер)'
         $states = Get-VnaTraceStatus $script:chartConnection
         ($states.Keys | Sort-Object) -join ',' | Should Be 'S11,S12,S21,S22'
     }
