@@ -17,6 +17,7 @@ from app.modules.warehouse.labels.layout import label_png
 from app.modules.warehouse.labels.render import render
 from app.modules.warehouse.labels.settings import PrintSettings
 from app.modules.warehouse.labels.template import FORMATS, instrument_content
+from app.workflows.instrument_labels import band_cells
 from app.shared.public_url import PublicSettings, instrument_card_url, public_passport_url
 
 
@@ -115,14 +116,18 @@ def test_pdf_is_readable_with_serial_measured_unmeasured_limited_and_75_ohm(stop
     reader = PdfReader(BytesIO(pdf))
     text = "\n".join(page.extract_text() for page in reader.pages)
     assert item.serial_number in text and "Паспорт СИ.034" in text
-    assert "Методика: —" in text and "erp.example.test" in text
+    assert "Методика: СТО ФРАК-002-2026" in text and "erp.example.test" in text
     assert ("Результаты замера" in text) == measured
     assert ("Замер не проведён" in text) != measured
     if measured:
         assert "Planar S50180" in text and "АКМ №456" in text and "Иван" in text
         assert "de-embedding" in text and "27 C" in text
-        assert len(list(band_rows(data))) == (4 if stop == 18 else 3)
-        assert list(band_rows(data))[-1][0].endswith(str(stop))
+        rows = list(band_rows(data))
+        assert [row[0] for row in rows] == ["0,01–1", "0,01–3", "0,01–6"] + (["0,01–12", "0,01–18"] if stop == 18 else ["0,01–11"])
+        assert "Заключение (контроль характеристик, не поверка)" in text
+        flat = " ".join(text.split())
+        assert ("MIL-PRF-55339/55" in flat and "Ресурс сочленений: 500 — MIL-PRF-55339/55" in flat) == (impedance == 50)
+        assert ("Норма не установлена" in flat) == (impedance == 75)
     if impedance == 75:
         assert "не для 50 Ом тракта" in text
     assert VSWR_SCALE == (1.0, 2.0, 0.1)
@@ -137,6 +142,7 @@ def test_measured_labels_use_real_link_and_show_parameters_at_203_dpi(label_form
         accessory=True, in_house_serial=True, connector_line=connector_line(item.name, item.serial_number, rf()),
         range_line=application(measured).range_line, table=application(measured).table_lines(),
         table_long=application(measured).table_lines(long=True), measured_on=measured.measured_on,
+        bands=band_cells(application(measured)),
         measurement_date=measured.measurement_date, impedance_warning=impedance_warning(rf(impedance)),
         card_url=public_passport_url(item.id, PublicSettings(public_base_url="https://erp.example.test",
             passport_secret=SecretStr("test-only-passport-key-do-not-deploy-123456789"))))
@@ -145,7 +151,9 @@ def test_measured_labels_use_real_link_and_show_parameters_at_203_dpi(label_form
     layout = render(default_template("instrument", label_format, "qr"), data, settings)
     assert not layout.overflow and layout.qr_module_dots >= 2
     joined = " ".join(layout.texts)
-    for value in (item.inventory_number, "ADP-ss-26-034", "Частотный диапазон 0–", "КСВН ≤", "Потери, дБ ≤", "16.11.2026"):
+    # The 58 mm card states the range by its band grid («Частота до, ГГц»), the 100 × 50 one also in words.
+    for value in (item.inventory_number, "ADP-ss-26-034", "КСВН ≤", "Потери, дБ ≤", "16.11.2026",
+                  "Частотный диапазон 0–" if width >= 90 else "Частота до, ГГц"):
         assert value in joined
     if impedance == 75:
         assert "75 Ом — не для 50 Ом тракта" in joined

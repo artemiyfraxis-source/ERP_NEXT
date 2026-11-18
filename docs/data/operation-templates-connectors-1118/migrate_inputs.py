@@ -6,6 +6,8 @@
     ERP_DATABASE_URL=... PYTHONPATH=backend python migrate_inputs.py --expect plan.json --rollback-out inputs-rollback.json --apply
     # one refresh wave: the short cards (apply_templates.py payload) in the SAME transaction
     ... migrate_inputs.py --templates payload.json --expect plan.json --rollback-out inputs-rollback.json --apply
+    # titles only (the cards are already in place): --reissue issues the ETK revisions in the same transaction
+    ... migrate_inputs.py --reissue --expect plan.json --rollback-out inputs-rollback.json --apply
     # rollback (dry run without --apply); --templates rollback.json restores the cards in the same transaction
     ERP_DATABASE_URL=... PYTHONPATH=backend python migrate_inputs.py --rollback inputs-rollback.json [--templates rollback.json] [--apply]
 
@@ -23,7 +25,10 @@ get titles only, never a structural change. The ETK refresh worker issues the re
 The refresh diff does not compare operation titles: a card whose only change is a title is NOT re-issued. Each run
 previews `etk_refresh.evaluate` per changed card («revised» / «inputs_only»); --apply refuses any «inputs_only» card.
 Run it with --templates payload.json (the short cards) so titles and card text land in one revision — one refresh
-wave instead of two, whatever the worker does between two separate commits.
+wave instead of two, whatever the worker does between two separate commits. When the cards are already in place (on
+production a release delivered them and the worker re-issued the ETK on 18.11), --reissue makes the renamed titles
+themselves a revision «Переименование операций по своду инструкций» in this transaction, through the refresh's own
+evaluate/save path (journal, automatic ТД issue); the refresh diff itself still ignores titles everywhere else.
 """
 
 from __future__ import annotations
@@ -55,6 +60,7 @@ from app.workflows.techcard_build import load_refs
 
 AUTHOR = "Разъёмы — входные данные ЭТК 18.11.2026"
 REASON = "Короткие карты разъёмов 708К. (свод 17.11.2026): названия операций и полная разделка при резке"
+RENAME_REASON = "Переименование операций по своду инструкций"
 PROJECT = normalize_project_number("708К.")
 OUTCOMES = ("changed", "revised", "inputs_only", "rebuild", "protected", "kept")
 # Exact part identity and RTK 031 are required, never just the word FAKRA.
@@ -227,9 +233,30 @@ def _preview(uow, refs, now, rows):
     return {row.id: etk_refresh.evaluate(cards.get(row.id), ctx)[2].status for row in rows}
 
 
-def migrate_inputs(uow, *, who, now, expect=None, refs=None):
+def _reissue(uow, refs, now, rows):
+    """Issue the revisions now, in this transaction: the refresh's `evaluate` with the rename reason, so a card whose
+    document differs only in operation titles gets a revision too. → status per card id."""
+    metadata = uow.operation_cards.metadata() or {}
+    ctx = etk_refresh.Context(
+        refs=refs, templates=tuple(uow.operation_cards.list()), commit=str(metadata.get("source_commit") or ""),
+        snapshot=dict(refs.snapshot) if refs.snapshot is not None else None, builder=etk_derive.builder_hash(),
+        reason=etk_refresh.REASON_REFERENCE, now=now)
+    inner = getattr(uow, "inner", uow)
+    uow.session.flush()
+    statuses = {}
+    for row in rows:
+        updated, revision, result = etk_refresh.evaluate(inner.techcards.get(row.id), ctx, rename_reason=RENAME_REASON)
+        if updated is not None:
+            etk_refresh.save_result(inner, updated, revision, result, now)
+        statuses[row.id] = result.status
+    uow.session.flush()
+    return statuses
+
+
+def migrate_inputs(uow, *, who, now, expect=None, refs=None, reissue=False):
     """Open UoW only; never commits. `expect` — the dry-run plan: exactly these cards, versions and hashes, or nothing;
-    with `refs` every changed card must also come out as a new revision (or a refreshed draft)."""
+    with `refs` every changed card must also come out as a new revision (or a refreshed draft). `reissue` — issue
+    those revisions here, titles included (see the module note); without it the refresh worker issues them later."""
     result = {key: [] for key in OUTCOMES}
     plan, rollback, changed_rows = [], [], []
     code_of = code_resolver(tuple(uow.operation_cards.list()))
@@ -258,13 +285,14 @@ def migrate_inputs(uow, *, who, now, expect=None, refs=None):
                                  + ("; есть ручные правки операций — их названия остаются ручными" if manual else ""))
         _event(uow, who, now, row, "techcards.connector_inputs_migrated", {"changes": changes, "reason": REASON})
     if refs is not None and changed_rows:
-        statuses = _preview(uow, refs, now, changed_rows)
+        statuses = (_reissue if reissue else _preview)(uow, refs, now, changed_rows)
         for row in changed_rows:
             visible = statuses[row.id] in {"revised", "refreshed"}
             result["revised" if visible else "inputs_only"].append(f"{row.item_index} [{row.id}]: {statuses[row.id]}")
         if expect is not None and result["inputs_only"]:
             raise ValueError("ЭТК не перевыпустятся, изменятся только входные данные: "
-                             f"{', '.join(result['inputs_only'])} — запустите вместе с --templates payload.json")
+                             f"{', '.join(result['inputs_only'])} — запустите вместе с --templates payload.json "
+                             "(или --reissue, если карты уже на месте)")
     if expect is not None:
         expected = {item["id"]: item for item in expect.get("cards", [])}
         actual = {item["id"]: item for item in plan}
@@ -280,7 +308,7 @@ def migrate_inputs(uow, *, who, now, expect=None, refs=None):
     return result, {"project": PROJECT, "cards": plan}, {"project": PROJECT, "cards": rollback}
 
 
-def rollback_inputs(data, uow, *, who, now, refs=None):
+def rollback_inputs(data, uow, *, who, now, refs=None, reissue=False):
     """Restore saved inputs only where they are still exactly what this migration wrote; otherwise nothing."""
     result = {key: [] for key in OUTCOMES}
     rows = {str(row.id): row for row in _rows(uow)}
@@ -296,7 +324,7 @@ def rollback_inputs(data, uow, *, who, now, refs=None):
         result["changed"].append(f"{row.item_index} [{row.id}]: входные данные восстановлены")
         _event(uow, who, now, row, "techcards.connector_inputs_rolled_back", {"reason": REASON})
     if refs is not None and restored:
-        statuses = _preview(uow, refs, now, restored)
+        statuses = (_reissue if reissue else _preview)(uow, refs, now, restored)
         for row in restored:
             visible = statuses[row.id] in {"revised", "refreshed"}
             result["revised" if visible else "inputs_only"].append(f"{row.item_index} [{row.id}]: {statuses[row.id]}")
@@ -334,6 +362,8 @@ def main(argv=None):
     parser.add_argument("--rollback-out", type=Path, help="куда записать исходные inputs до записи")
     parser.add_argument("--rollback", type=Path, help="файл отката, записанный --rollback-out")
     parser.add_argument("--templates", type=Path, help="payload.json / rollback.json карт apply_templates.py — в той же транзакции")
+    parser.add_argument("--reissue", action="store_true",
+                        help="выпустить ревизии ЭТК в этой же транзакции, в том числе только с новыми названиями операций")
     args = parser.parse_args(argv)
     if args.apply and not args.rollback and not (args.expect and args.rollback_out):
         parser.error("--apply требует --expect (план пробного прогона) и --rollback-out")
@@ -353,10 +383,12 @@ def main(argv=None):
             _print("Карты операций:", script.apply_payload(payload, uow, who=script.actor(), now=now))
         if args.rollback:
             _print("Входные данные ЭТК (откат):", rollback_inputs(
-                json.loads(args.rollback.read_text(encoding="utf-8")), uow, who=actor(), now=now, refs=refs))
+                json.loads(args.rollback.read_text(encoding="utf-8")), uow, who=actor(), now=now, refs=refs,
+                reissue=args.reissue))
         else:
             expect = json.loads(args.expect.read_text(encoding="utf-8")) if args.expect else None
-            result, plan, rollback = migrate_inputs(uow, who=actor(), now=now, expect=expect, refs=refs)
+            result, plan, rollback = migrate_inputs(uow, who=actor(), now=now, expect=expect, refs=refs,
+                                                      reissue=args.reissue)
             _print("Входные данные ЭТК 708К.:", result)
             if args.plan_out:
                 args.plan_out.write_text(json.dumps(plan, ensure_ascii=False, indent=1), encoding="utf-8", newline="\n")

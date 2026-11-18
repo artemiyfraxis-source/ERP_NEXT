@@ -860,7 +860,7 @@ export interface FulfillmentRequest {
   /** «main» — комплект КБ (одна живая заявка на КБ проекта); «extra» — «Довыдача» сверх выданного комплекта. */
   kind?: "main" | "extra";
   handout_location: string | null;
-  /** «Укомплектован» only: the place «Отправить на выдачу» offers — the last one used at the kit's site, else «Зона выдачи». */
+  /** «Укомплектован», or a kit «Выдать набранное» takes: the place «Отправить на выдачу» offers — the last one used at the kit's site, else «Зона выдачи». */
   handout_place?: string;
   return_location: string | null;
   fully_reserved: boolean;
@@ -1594,7 +1594,51 @@ export interface InstrumentRfDetails {
   f_min_ghz: number | null;
   max_points: number | null;
   kit_definition: string;
+  mating_resource?: number | null;
 }
+export type MatingStatus = "unknown" | "ok" | "warning" | "exhausted";
+export interface InstrumentMatingEnd {
+  end: "A" | "B";
+  total: number;
+  version: number;
+  percent_used: number | null;
+  status: MatingStatus;
+  initial_recorded: boolean;
+  can_initialize: boolean;
+}
+export interface InstrumentMatingEvent {
+  id: string;
+  instrument_id: string;
+  end: "A" | "B";
+  delta: number;
+  total_after: number;
+  kind: "measurement" | "calibration" | "manual" | "initial" | "correction";
+  note: string;
+  source: string | null;
+  actor: string;
+  created_at: string;
+}
+export interface InstrumentMatingsSnapshot {
+  instrument_id: string;
+  resource: number | null;
+  status: MatingStatus;
+  has_connectors: boolean;
+  ends: InstrumentMatingEnd[];
+  events: InstrumentMatingEvent[];
+}
+export interface InstrumentMatingInput {
+  end: "A" | "B";
+  delta: number;
+  kind: "manual" | "initial" | "correction";
+  note: string;
+  version?: number;
+}
+export const instrumentMatingsApi = {
+  get: (id: string) => api<InstrumentMatingsSnapshot>(`/api/production/instruments/${encodeURIComponent(id)}/matings`),
+  append: (id: string, input: InstrumentMatingInput) => api<InstrumentMatingsSnapshot>(`/api/production/instruments/${encodeURIComponent(id)}/matings`, {
+    method: "POST", body: JSON.stringify(input),
+  }),
+};
 export const rfInterfacesApi = {
   get: (id: string) => api<{ rf: InstrumentRfDetails }>(`/api/production/instruments/${encodeURIComponent(id)}/rf-interfaces`),
   save: (id: string, rf: InstrumentRfDetails) => api<{ rf: InstrumentRfDetails; suggested_serial_number?: string | null }>(`/api/production/instruments/${encodeURIComponent(id)}/rf-interfaces`, {
@@ -3855,6 +3899,13 @@ export const fulfillmentApi = {
     api<{ requests: FulfillmentRequest[]; message: string }>("/api/issues/issue-batch", {
       method: "POST",
       body: JSON.stringify({ requests }),
+    }),
+  /** «Выдать набранное» (owner 17.11.2026): the picked lines of a kit still being picked are issued, the rest moves
+      into a new «Довыдача» (`extra`) unchanged. */
+  issuePicked: (requestId: string, version: number) =>
+    api<{ request: FulfillmentRequest; extra: FulfillmentRequest; message: string }>(`/api/issues/${requestId}/issue-picked`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
     }),
   returned: (requestId: string, version: number, returnLocation: string) =>
     api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/returned`, {

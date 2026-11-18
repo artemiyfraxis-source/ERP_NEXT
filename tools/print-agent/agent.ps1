@@ -30,7 +30,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.9.0'
+$script:AgentVersion = '2.9.1'
 $script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
@@ -160,6 +160,7 @@ using System.Runtime.InteropServices;
 public static class ErpGdiPrinter {
   const int Fields = 72, Orientation = 76, Paper = 78, Length = 80, Width = 82;
   const int Scale = 84, Copies = 86, Quality = 90, Color = 92, Duplex = 94, YResolution = 96, Collate = 100;
+  const int DmPaperUser = 256;
   // Label drivers (Godex EZ2350i, Seagull) drop flags they do not support. Only media, orientation and
   // resolution are required; the effective DC is verified with GetDeviceCaps before StartDoc.
   const int DmScale = 16, DmCopies = 256, DmYResolution = 8192;
@@ -199,15 +200,17 @@ public static class ErpGdiPrinter {
       throw new InvalidOperationException("Media must use exact 0.1 mm units (0 < mm <= 500)");
     return checked((int)Math.Round(mm*10));
   }
-  public static byte[] RequestMode(byte[] original, double width, double height, bool landscape) {
+  public static byte[] RequestMode(byte[] original, double width, double height) {
     CheckBuffer(original);
     byte[] b = (byte[])original.Clone();
     int offered = BitConverter.ToInt32(b,Fields);
     int fields = (offered & ~65536 & ~Optional) | Required | (offered & Optional); // Clear DM_FORMNAME.
     Buffer.BlockCopy(BitConverter.GetBytes(fields),0,b,Fields,4);
-    Write(b,Orientation,landscape ? 2 : 1); Write(b,Paper,0);
-    // Wire dimensions describe the final oriented raster. DEVMODE dimensions describe portrait stock.
-    Write(b,Width,Tenths(landscape ? height : width)); Write(b,Length,Tenths(landscape ? width : height));
+    // The server already turned the raster so that its Y axis is the feed (marking_render feed_direction):
+    // width runs across the head, height along the feed. That is portrait stock 1:1. A GDI landscape page
+    // would swap the stock and rotate once more; the Godex/Seagull driver also clamps a 20 mm width to 25.4 mm.
+    Write(b,Orientation,1); Write(b,Paper,DmPaperUser);
+    Write(b,Width,Tenths(width)); Write(b,Length,Tenths(height));
     Write(b,Scale,100); Write(b,Copies,1); Write(b,Quality,300); Write(b,YResolution,300);
     Write(b,Color,1); Write(b,Duplex,1); Write(b,Collate,0);
     Array.Clear(b,102,64);
@@ -218,7 +221,9 @@ public static class ErpGdiPrinter {
     int kept = BitConverter.ToInt32(actual,Fields);
     if ((kept & Required) != Required)
       throw new InvalidOperationException("Driver removed required DEVMODE fields");
-    foreach (int offset in new int[] { Orientation, Paper, Length, Width, Quality })
+    // dmPaperSize is only the driver's name for the media: Seagull drivers answer their own custom index for a
+    // user size. The exact length/width in 0.1 mm and the DC's physical size (ValidateGeometry) are what bind.
+    foreach (int offset in new int[] { Orientation, Length, Width, Quality })
       if (Read(expected,offset) != Read(actual,offset))
         throw new InvalidOperationException("Driver substituted DEVMODE field at " + offset);
     // Fields a driver keeps must still mean one unscaled 300 dpi copy; colour, duplex and collation are irrelevant.
@@ -226,7 +231,7 @@ public static class ErpGdiPrinter {
     if ((kept & DmCopies) != 0 && Read(actual,Copies) != 1) throw new InvalidOperationException("Driver substituted DEVMODE field at " + Copies);
     if ((kept & DmYResolution) != 0 && Read(actual,YResolution) != 300) throw new InvalidOperationException("Driver substituted DEVMODE field at " + YResolution);
   }
-  public static byte[] ValidateWithDriver(string name, double width, double height, bool landscape) {
+  public static byte[] ValidateWithDriver(string name, double width, double height) {
     IntPtr printer, input = IntPtr.Zero, output = IntPtr.Zero;
     if (!OpenPrinter(name,out printer,IntPtr.Zero)) throw new InvalidOperationException("Printer unavailable: " + name);
     try {
@@ -236,7 +241,7 @@ public static class ErpGdiPrinter {
       if (DocumentProperties(IntPtr.Zero,printer,name,input,IntPtr.Zero,2) != 1)
         throw new InvalidOperationException("Cannot read DEVMODE");
       byte[] original = new byte[count]; Marshal.Copy(input,original,0,count);
-      byte[] requested = RequestMode(original,width,height,landscape); Marshal.Copy(requested,0,input,count);
+      byte[] requested = RequestMode(original,width,height); Marshal.Copy(requested,0,input,count);
       if (DocumentProperties(IntPtr.Zero,printer,name,output,input,10) != 1)
         throw new InvalidOperationException("Driver rejected DEVMODE");
       byte[] actual = new byte[count]; Marshal.Copy(output,actual,0,count);
@@ -464,7 +469,7 @@ function Send-PngToPrinter {
     $bitmap = $controller = $null
     try {
         $bitmap = New-Object Drawing.Bitmap($stream)
-        $mode = [ErpGdiPrinter]::ValidateWithDriver($Job.printer, [double]$Job.width_mm, [double]$Job.height_mm, ($Job.orientation -eq 'landscape'))
+        $mode = [ErpGdiPrinter]::ValidateWithDriver($Job.printer, [double]$Job.width_mm, [double]$Job.height_mm)
         $controller = New-Object ErpGdiPrinter+Controller($Job.printer, $mode, $bitmap, [double]$Job.width_mm, [double]$Job.height_mm)
         [ErpGdiPrinter]::Print($Job.printer, $bitmap, [double]$Job.width_mm, [double]$Job.height_mm, $controller)
         return @{ outcome = 'spooled'; message = 'Передано принтеру'; spool_job_id = $controller.JobId }
