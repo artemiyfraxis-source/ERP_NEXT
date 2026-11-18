@@ -1,10 +1,9 @@
-import hashlib
 from io import BytesIO
 
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 import pytest
 
-from app.modules.warehouse.marking_render import Geometry, dots, halves, presets, render
+from app.modules.warehouse.marking_render import DPI, FONT, Geometry, _lines, dots, halves, presets, render
 
 
 @pytest.mark.parametrize("inventory,name,raw", presets())
@@ -104,17 +103,62 @@ def test_left_half_follows_the_zone_position_not_the_list_order():
     assert render("X1 | КБ1-001", reversed_zones)[0] == render("X1 | КБ1-001", geometry)[0]
 
 
-# sha256 of the renderer before halves (origin/main ed34f2a3): a text without «|» must stay byte-identical.
-BEFORE_HALVES = {
-    (0, False): "ef39d66e1e62f10fc47253980b78693c4ce2da9796bb045d0d9116abdbc9a325",
-    (0, True): "a048661b5240e9b231db0b83b20108a150c1c3f0f449810b8d8f7def42ad1601",
-    (4, False): "fdee1b6ee1582370504eeab88c9a5da79ce2fd752722a914a0b395a8d8ae5832",
-    (4, True): "6412b347980ef8c162ab11cba1cf944fbb4d75ed87c2689b404bb65c5251726f",
-}
+def _render_before_halves(text, geometry, *, calibration=False):
+    """The renderer as it was before flag halves (origin/main ed34f2a3): one text in every zone. Kept verbatim as
+    the in-process reference, so the comparison holds on any Pillow/FreeType build."""
+    image = Image.new("1", (dots(geometry.width_mm), dots(geometry.height_mm)), 1)
+    draw = ImageDraw.Draw(image)
+    bounds = [(dots(z.x), dots(z.y), dots(z.x + z.width), dots(z.y + z.height)) for z in geometry.zones]
+    width = min(b[2] - b[0] for b in bounds) - 2 * abs(dots(geometry.offset_x_mm))
+    height = min(b[3] - b[1] for b in bounds) - 2 * abs(dots(geometry.offset_y_mm))
+    fitted = None
+    for size in range(dots(geometry.max_font_mm) * 2, 0, -1):
+        font = ImageFont.truetype(str(FONT), size=size)
+        cap = draw.textbbox((0, 0), "БH", font=font)
+        if cap[3] - cap[1] > dots(geometry.max_font_mm):
+            continue
+        if cap[3] - cap[1] < dots(geometry.min_font_mm):
+            break
+        lines = _lines(draw, text, font, width)
+        if lines is None or len(lines) > geometry.max_lines:
+            continue
+        boxes = [draw.textbbox((0, 0), line or " ", font=font) for line in lines]
+        gap = max(2, round(size * 0.15))
+        total = sum(b[3] - b[1] for b in boxes) + gap * (len(boxes) - 1)
+        if total <= height and all(b[2] - b[0] <= width for b in boxes):
+            fitted = font, lines, boxes, gap, total
+            break
+    font, lines, boxes, gap, total = fitted
+    for left, top, right, bottom in bounds:
+        y = top + (bottom - top - total) // 2 + dots(geometry.offset_y_mm)
+        for line, box in zip(lines, boxes):
+            w = box[2] - box[0]
+            x = (left + (right - left - w) // 2 if geometry.alignment == "center" else
+                 left + abs(dots(geometry.offset_x_mm)) if geometry.alignment == "left" else
+                 right - w - abs(dots(geometry.offset_x_mm))) + dots(geometry.offset_x_mm)
+            draw.text((x - box[0], y - box[1]), line, font=font, fill=0)
+            y += box[3] - box[1] + gap
+        if calibration:
+            draw.line([(left, min(top + 8, bottom - 1)), (left, top), (min(left + 16, right - 1), top)], fill=0, width=1)
+    rotation = (geometry.rotation + (90 if geometry.feed_direction == "width" else 0)) % 360
+    if rotation:
+        image = image.rotate(-rotation, expand=True)
+    output = BytesIO()
+    image.save(output, format="PNG", dpi=(DPI, DPI))
+    return output.getvalue()
 
 
-@pytest.mark.parametrize("preset,calibration", list(BEFORE_HALVES))
-def test_text_without_divider_renders_byte_identical_to_before(preset, calibration):
-    text = "АБВ 123" if calibration else "КБ1\nЛЕВО\n123"
-    png, _ = render(text, Geometry.model_validate(presets()[preset][2]), calibration=calibration)
-    assert hashlib.sha256(png).hexdigest() == BEFORE_HALVES[(preset, calibration)]
+@pytest.mark.parametrize("preset", range(len(presets())))
+@pytest.mark.parametrize("text,calibration,change", [("КБ1\nЛЕВО\n123", False, {}), ("АБВ 123", True, {}),
+    ("X1", False, {"alignment": "left", "offset_x_mm": 0.5}), ("Жгут 12", False, {"rotation": 90, "offset_y_mm": -0.4})])
+def test_text_without_divider_renders_byte_identical_to_before(preset, text, calibration, change):
+    geometry = Geometry.model_validate({**presets()[preset][2], **change})
+    assert render(text, geometry, calibration=calibration)[0] == _render_before_halves(text, geometry, calibration=calibration)
+
+
+def test_same_text_sits_identically_inside_both_flag_zones():
+    geometry = Geometry.model_validate(presets()[-1][2])
+    image = Image.open(BytesIO(render("КБ1-001\nX1", geometry)[0])).convert("L")
+    boxes = [ImageChops.invert(image.crop((dots(z.x), dots(z.y), dots(z.x + z.width), dots(z.y + z.height)))).getbbox()
+             for z in geometry.zones]
+    assert boxes[0] is not None and boxes[0] == boxes[1]
