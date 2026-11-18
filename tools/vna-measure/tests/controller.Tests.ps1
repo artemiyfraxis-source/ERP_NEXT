@@ -227,6 +227,26 @@ Describe 'Offline complete session' {
     }
 }
 
+Describe 'Display failure during a measurement' {
+    It 'warns and still measures when the item screen cannot be set' {
+        $script:answers = New-Object 'System.Collections.Generic.Queue[string]'
+        foreach ($answer in @('2','д','3','','','4','СИ.035','напрямую','','','н','0','д')) { $script:answers.Enqueue($answer) }
+        Mock Read-Host { if ($script:answers.Count -eq 0) { throw 'Unexpected extra prompt' }; return $script:answers.Dequeue() }
+        Mock New-VnaApplication { throw 'REAL COM FORBIDDEN' }
+        Mock Invoke-RestMethod { throw 'NETWORK FORBIDDEN' }
+        Mock Invoke-WebRequest { throw 'NETWORK FORBIDDEN' }
+        Mock Set-VnaMeasureScreen { throw 'S2VNA display error' }
+        $script:displayOutput = New-Object 'System.Collections.Generic.List[string]'
+        Mock Write-Host { param($Object); $script:displayOutput.Add([string]$Object) }
+        Start-VnaMeasure -Offline -DataDirectory (Join-Path $TestDrive 'display-failure')
+        $output = $script:displayOutput -join "`n"
+        $output | Should Match 'Экран замера не перестроен: S2VNA display error'
+        $output | Should Match 'КСВН сторона 1: '
+        $output | Should Match 'Локальный результат: '
+        $script:answers.Count | Should Be 0
+    }
+}
+
 Describe 'Instrument state verdicts' {
     BeforeEach {
         $script:stateContext = New-SafeVnaContext

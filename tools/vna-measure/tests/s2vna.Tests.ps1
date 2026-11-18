@@ -256,6 +256,7 @@ Describe 'S2VNA measurement screen over mocked COM' {
             $script:com["T$index.LIMit.DISPlay.STATe"] = $index -eq 1
         }
         $script:com['T1.MARKer(1).STATe'] = $true; $script:com['T1.MARKer(1).X'] = 2e9
+        $script:com['T1.MARKer(2).STATe'] = $true; $script:com['T1.MARKer(2).X'] = 7e9
         $script:comSelected = 1
         $script:comWrites = New-Object 'System.Collections.Generic.List[string]'
         $script:ignoreScaleWrite = $false
@@ -341,8 +342,12 @@ Describe 'S2VNA measurement screen over mocked COM' {
             if ($key -like '*LIMit.DATA' -and $before[$key] -eq '0') { $script:com[$key.Replace('DATA', 'STATe')] | Should Be $false; continue }
             "$key=$(@($script:com[$key]) -join ',')" | Should Be "$key=$($before[$key])"
         }
-        $script:com['T1.MARKer(2).STATe'] | Should Be $false
+        $script:com['T1.MARKer(2).STATe'] | Should Be $true
+        $script:com['T1.MARKer(2).X'] | Should Be 7e9
+        $script:com['T1.MARKer(3).STATe'] | Should Be $false
         $script:com['T2.MARKer(1).STATe'] | Should Be $false
+        $saved = [IO.File]::ReadAllText($path) | ConvertFrom-Json
+        (@($saved.Traces[0].Markers | ForEach-Object { $_.Number }) -join ',') | Should Be '1,2'
         @($script:comWrites | Where-Object { $_ -match 'SENSe|SOURce|CORRection|TRIGger|INITiate|MMEMory|CKIT' }).Count | Should Be 0
     }
     It 'refuses to restore a screen saved on another instrument' {

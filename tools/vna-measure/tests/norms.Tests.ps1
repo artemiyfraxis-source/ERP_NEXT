@@ -17,7 +17,9 @@ function New-TestNorms {
       "loss": { "from_ghz": 0.5, "segments": [ { "to_ghz": 18, "a": 0, "k": 0.03 }, { "to_ghz": 27, "a": 0, "k": 0.05 } ], "source": "лист" } },
     { "sheet": "MIL-PRF-55339/54B", "title": "SMA–N", "ports": ["SMA", "N"], "from_ghz": 0,
       "segments": [ { "to_ghz": 12.4, "a": 1.06, "b": 0.005 }, { "to_ghz": 18, "a": 0.83, "b": 0.023 } ],
-      "loss": { "points": [ { "ghz": 9, "max_db": 0.18 } ], "source": "лист" } } ],
+      "loss": { "points": [ { "ghz": 9, "max_db": 0.18 } ], "source": "лист" } },
+    { "sheet": "MIL-PRF-55339/40B, /41B, /42A", "title": "SMA–TNC", "ports": ["SMA", "TNC"], "from_ghz": 0.5,
+      "segments": [ { "to_ghz": 11, "a": 1.15, "b": 0.015 } ], "loss": { "points": [ { "ghz": 6, "k": 0.06 } ], "source": "лист" } } ],
   "shop_requirement": { "vswr_max": 1.3, "label": "требование цеха" }
 }
 '@
@@ -52,8 +54,15 @@ Describe 'Screen limit lines from passport norms' {
         $limits.Loss.Count | Should Be 1
         $limits.Loss[0].StartHz | Should Be 8.95e9
         $limits.Loss[0].From | Should Be -0.18
-        $limits.Title | Should Match 'потери ≤ 0,18 дБ на 9 ГГц'
+        $limits.Title | Should Match 'потери ≤ 0,18 дБ на частоте испытания 9 ГГц'
         (Get-VnaScreenLimits $script:norms $item @() 4e9).Title | Should Match 'норма MIL-PRF-55339/54B не покрывает полосу'
+    }
+    It 'computes a test-frequency limit given as k·√F' {
+        $item = [pscustomobject]@{ inventory_number = 'СИ.041'; name = 'Переходник SMA розетка – TNC вилка'; doc_designation = '' }
+        $limits = Get-VnaScreenLimits $script:norms $item @() 11e9
+        $limits.Loss.Count | Should Be 1
+        [math]::Round($limits.Loss[0].From, 4) | Should Be ([math]::Round(-0.06 * [math]::Sqrt(6), 4))
+        $limits.Title | Should Match 'потери ≤ 0,147 дБ на частоте испытания 6 ГГц'
     }
     It 'reads norms without loss keys tolerantly' {
         $old = New-TestNorms; $old.mil_adapters[0].PSObject.Properties.Remove('loss')

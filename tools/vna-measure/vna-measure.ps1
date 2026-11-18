@@ -383,7 +383,11 @@ function Start-VnaMeasure {
                                 [double]::IsNaN($parsed) -or [double]::IsInfinity($parsed) -or $parsed -le 0.01 -or $parsed -gt $FmaxHz / 1e9) { throw 'Частота должна быть > 0,01 ГГц и не выше -FmaxHz.' }
                             $band = $parsed * 1e9
                         }
-                        Set-VnaMeasureScreen $connection (Get-VnaScreenLimits $norms $item (Get-VnaItemInterfaces $session $item) $band) $screenBackup
+                        try { Set-VnaMeasureScreen $connection (Get-VnaScreenLimits $norms $item (Get-VnaItemInterfaces $session $item) $band) $screenBackup }
+                        catch {
+                            # Display only: the sweep below still checks traces 1–4 (definitions, formats, COR) itself.
+                            Write-Host "Экран замера не перестроен: $($_.Exception.Message) Замер продолжается; графики можно поставить пунктом 6." -ForegroundColor Yellow
+                        }
                         $left = $null; $right = $null; $descriptions = @(); $fixtures = @($null, $null)
                         if ($chain.Left) { $fixture = Get-VnaFixtureData $session $chain.Left (Join-Path $DataDirectory 'fixtures') $band; $left = $fixture.Data; $fixtures[0] = $fixture; $descriptions += "слева $($fixture.Description)" }
                         if ($chain.Right) { $fixture = Get-VnaFixtureData $session $chain.Right (Join-Path $DataDirectory 'fixtures') $band; $right = $fixture.Data; $fixtures[1] = $fixture; $descriptions += "справа $($fixture.Description)" }

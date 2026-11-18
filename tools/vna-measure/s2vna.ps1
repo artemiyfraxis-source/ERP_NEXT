@@ -400,11 +400,12 @@ function Backup-VnaScreen {
         $traces = @(for ($index = 1; $index -le $count; $index++) {
             $parameter = [string](Invoke-VnaComIo $Connection "CALCulate(1).PARameter($index).DEFine")
             Invoke-VnaComIo $Connection "CALCulate(1).PARameter($index).SELect" call
-            $markers = @()
-            for ($marker = 1; $marker -le 15; $marker++) {
-                if (-not [bool](Read-VnaComOptional $Connection "CALCulate(1).SELected.MARKer($marker).STATe")) { break }
-                $markers += [double](Invoke-VnaComIo $Connection "CALCulate(1).SELected.MARKer($marker).X")
-            }
+            # All 15 ordinary markers (16 is the reference marker, never touched): number and position of each one on.
+            $markers = @(for ($marker = 1; $marker -le 15; $marker++) {
+                if ([bool](Read-VnaComOptional $Connection "CALCulate(1).SELected.MARKer($marker).STATe")) {
+                    [ordered]@{ Number = $marker; X = [double](Invoke-VnaComIo $Connection "CALCulate(1).SELected.MARKer($marker).X") }
+                }
+            })
             $scalePath = "DISPlay.WINDow(1).TRACe($index).Y.SCALe"
             [ordered]@{ Parameter = $parameter.Trim(); Format = ([string](Invoke-VnaComIo $Connection 'CALCulate(1).SELected.FORMat')).Trim()
                 PDIVision = (Read-VnaComOptional $Connection "$scalePath.PDIVision"); RLEVel = (Read-VnaComOptional $Connection "$scalePath.RLEVel")
@@ -451,11 +452,12 @@ function Restore-VnaScreen {
         if ($limit.Count -ge 6) { Invoke-VnaComIo $Connection 'CALCulate(1).SELected.LIMit.DATA' set $limit }
         Invoke-VnaComIo $Connection 'CALCulate(1).SELected.LIMit.DISPlay.STATe' set ([bool]$trace.LimitDisplay)
         Invoke-VnaComIo $Connection 'CALCulate(1).SELected.LIMit.STATe' set ([bool]$trace.LimitState)
-        $markers = @($trace.Markers)
-        if ($markers.Count -eq 0) { Invoke-VnaComIo $Connection 'CALCulate(1).SELected.MARKer(1).STATe' set $false; continue }
-        Invoke-VnaComIo $Connection "CALCulate(1).SELected.MARKer($($markers.Count)).STATe" set $true
-        if ($markers.Count -lt 15) { Invoke-VnaComIo $Connection "CALCulate(1).SELected.MARKer($($markers.Count + 1)).STATe" set $false }
-        for ($marker = 1; $marker -le $markers.Count; $marker++) { Invoke-VnaComIo $Connection "CALCulate(1).SELected.MARKer($marker).X" set ([double]$markers[$marker - 1]) }
+        # S2VNA chains markers (n on switches 1..n on, n off switches n..15 off), so the markers on are always 1..n.
+        $markers = @($trace.Markers | Where-Object { $null -ne $_ })
+        $highest = 0; foreach ($marker in $markers) { $highest = [math]::Max($highest, [int]$marker.Number) }
+        Invoke-VnaComIo $Connection 'CALCulate(1).SELected.MARKer(1).STATe' set $false
+        if ($highest -gt 0) { Invoke-VnaComIo $Connection "CALCulate(1).SELected.MARKer($highest).STATe" set $true }
+        foreach ($marker in $markers) { Invoke-VnaComIo $Connection "CALCulate(1).SELected.MARKer($([int]$marker.Number)).X" set ([double]$marker.X) }
     }
     Invoke-VnaComIo $Connection 'DISPlay.WINDow(1).TITLe.DATA' set ([string]$saved.Title)
     Invoke-VnaComIo $Connection 'DISPlay.WINDow(1).TITLe.STATe' set ([bool]$saved.TitleState)

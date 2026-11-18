@@ -108,10 +108,12 @@ function Get-VnaLossLines {
         $low = $top
     }
     foreach ($point in @($Loss.points | Where-Object { $_ })) {
-        $at = [double]$point.ghz * 1e9; $value = [double]$point.max_db
+        # A sheet «tested at X GHz» is judged only there: a short line around the test frequency.
+        $at = [double]$point.ghz * 1e9
+        $value = if ($null -ne $point.max_db) { [double]$point.max_db } else { [double]$point.k * [math]::Sqrt([double]$point.ghz) }
         if ($at -lt $StartHz -or $at -gt $BandHz) { continue }
         $lines += [pscustomobject]@{ Type = 2; StartHz = [math]::Max($StartHz, $at - 5e7); StopHz = [math]::Min($BandHz, $at + 5e7); From = -$value; To = -$value }
-        $texts += "≤ $(Format-VnaNumber $value) дБ на $(Format-VnaNumber ($at / 1e9) 2) ГГц"
+        $texts += "≤ $(Format-VnaNumber $value) дБ на частоте испытания $(Format-VnaNumber ($at / 1e9) 2) ГГц"
     }
     if (-not $texts.Count) { return [pscustomobject]@{ Lines = @(); Text = "потери: норма $Reference не покрывает полосу замера" } }
     return [pscustomobject]@{ Lines = $lines; Text = "потери $($texts -join '; ') — $Reference" }
