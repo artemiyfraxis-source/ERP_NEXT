@@ -30,7 +30,8 @@ function Get-VnaSeriesFmaxHz {
     param([Parameter(Mandatory)][string]$Name)
     # Match complete connector labels and the adapter series used in the ERP cards.
     if ($Name -match '(?i)\bBNC\b|\b(?:SB|TB|B)-\d') { return 4e9 }
-    if ($Name -match '(?i)\bTNC\b|\bN(?:-type|[ -](?:вилка|розетка|male|female))?\b|\b(?:SN|ST|TN|T|N)-\d') { return 11e9 }
+    # N is rated to 18 GHz (ADP1A N, MIL-PRF-55339/54B); only TNC stays at 11 GHz.
+    if ($Name -match '(?i)\bTNC\b|\b(?:ST|TN|T)-\d') { return 11e9 }
     return 18e9
 }
 

@@ -136,7 +136,8 @@ def test_every_vswr_norm_has_a_loss_norm_with_source():
         loss = holder["loss"]
         assert loss["source"] and (loss.get("segments") or loss.get("points"))
     s50180 = next(entry for entry in data["vna"] if entry["model"] == "S50180")
-    assert "табл. 16" in s50180["loss_uncertainty"]["source"] and "табл. 19" in s50180["loss_uncertainty"]["source"]
+    assert "табл. 23" in s50180["loss_uncertainty"]["source"]
+    assert [step["value_db"] for step in s50180["loss_uncertainty"]["steps"]] == [0.1, 0.1]
     assert data["decision_rule_loss"]
 
 
@@ -178,9 +179,9 @@ def test_point_norm_uses_the_nearest_measured_point_inside_the_span():
 
 
 def test_loss_limit_within_twice_the_vna_uncertainty_is_not_judged():
-    # /55 at 9 GHz: 0,03·√9 = 0,09 dB ≤ 2 · 0,102 dB (S50180): the VNA cannot resolve it — reported, not judged.
+    # /55 at 9 GHz: 0,03·√9 = 0,09 dB ≤ 2 · 0,1 dB (S50180, РЭ ч. 1 табл. 23): the VNA cannot resolve it — reported, not judged.
     loss, uncertainty = norm_for("", "", pair("SMA", "SMA")).loss, loss_uncertainty_for("S50180")
-    assert uncertainty.at(9) == pytest.approx(0.102) and uncertainty.at(18) == pytest.approx(0.107)
+    assert uncertainty.at(9) == pytest.approx(0.1) and uncertainty.at(18) == pytest.approx(0.1)
     vswr = {0.01: 1.02, 9: 1.04}
 
     def judged(at_nine, unc=uncertainty):
@@ -207,7 +208,7 @@ def test_resolvable_loss_follows_the_same_border_rule():
     assert judged(0.3).status == "pass" and judged(0.3).brief == "потери ≤ 0,3 дБ (9 ГГц)"
     assert judged(0.45).status == judged(0.55).status == "border"
     assert judged(0.55).short == "на границе допуска выше 3 ГГц — нужен повторный замер (3 подключения с поворотом 120°)"
-    assert judged(0.55).brief == "потери 0,55 дБ на 9 ГГц при норме ≤ 0,5 дБ, погрешность ±0,102 дБ"
+    assert judged(0.55).brief == "потери 0,55 дБ на 9 ГГц при норме ≤ 0,5 дБ, погрешность ±0,1 дБ"
     assert judged(0.65).status == "fail" and judged(0.65).short == "не соответствует норме выше 3 ГГц"
     assert judged(0.45, repeated=True).status == "pass" and judged(0.55, repeated=True).status == "fail"
 
