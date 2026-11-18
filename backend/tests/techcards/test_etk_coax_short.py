@@ -207,6 +207,24 @@ def test_vswr_resolves_band_limit_and_coverage_without_provenance(norm, toleranc
     assert "Ключ динамометрический" in tools
 
 
+def test_short_vswr_measures_both_ends_after_warm_up_with_numeric_torques():
+    """СТО ФРАК-001-2026, 4.8.16 «с двух концов»; СТО ФРАК-002-2026: прогрев 40 мин, полная двухпортовая калибровка,
+    моменты затяжки по прил. Б. Однопорт с нагрузкой — только запасной, по согласованию ОТК."""
+    vswr = next(op for op in _build(deepcopy(BATCH["КБ3"]))["operations"] if op["type"] == "coaxVswr")
+    steps = vswr["card"]["steps"]
+    assert [step["kind"] for step in steps].count("Контроль") == 1
+    warm, connect, control, record = steps
+    assert warm["text"].startswith("Прогреть векторный анализатор цепей не менее 40 мин, задать полосу ")
+    assert "полную двухпортовую калибровку на концах обоих измерительных кабелей; метод — по СТО ФРАК-002-2026" in warm["text"]
+    assert connect["text"].startswith("Подключить сторону А к порту 1, сторону В — к порту 2;")
+    assert "с согласования ОТК" in connect["text"] and "документации производителя" not in connect["text"]
+    assert connect["tolerance"] == "N — 1,1–1,5 Н·м; 3,5 мм и SMA — 0,8–1,0 Н·м"
+    assert control["text"].startswith("Измерить КСВН с двух концов (S11 и S22) каждого из 4 каналов сборки")
+    assert "S11 и S22" in record["text"]
+    joined = " ".join(step["text"] for step in steps)
+    assert "30 мин" not in joined and "OSL" not in joined
+
+
 def test_printed_marking_tubes_keep_their_own_cards():
     config = deepcopy(BATCH["КБ3"])
     short = {op["code"]: op["card"]["steps"] for op in _build(config)["operations"] if not op["side"]}
