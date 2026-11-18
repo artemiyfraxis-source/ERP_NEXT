@@ -297,3 +297,92 @@ def test_the_bridge_reads_and_sends_exactly_the_server_allow_list():
     # Few requests (mbd opens COM8 per request), each within mbd's 120-word read limit.
     assert len(ranges) == 5 and all(1 <= count <= 120 for _, count in ranges)
     assert rules.OB019_ALLOWED <= {a for first, count in ranges for a in range(first, first + count)}
+
+
+CARD = "/api/production/machines/card/"
+
+
+def test_the_machines_tab_lists_production_equipment_only(machines_api):
+    """Owner 18.11: «Станки» are machines with cards; PCs, analysers and scanners live in «ПК и агенты»."""
+    sessions, clock, admin, _, ob101 = machines_api
+    now = clock.now
+    with sessions.begin() as session:
+        _unit(session, "ОБ.094", "Станок резки провода с роторной зачисткой")
+        _agent(session, "otk", "DESKTOP-PTA57QF", "2.9.4", now, ip_lan="192.168.1.121")
+        session.add(DeviceRow(machine_id="otk", kind="arinst", device_id="arinst", name="Arinst VNA-DL", present=True,
+                              last_seen=now))
+    body = admin.get(LIST).json()
+    machines = {row["inventory"]: row for row in body["machines"]}
+    assert list(machines) == ["ОБ.019", "ОБ.094", "ОБ.099"]  # ОБ.101 is not bound to a printer here
+    assert machines["ОБ.094"]["state"] == {"text": "Не подключён", "tone": "neutral"}
+    assert machines["ОБ.094"]["name"] == "Станок резки провода с роторной зачисткой"
+    assert [row["device"] for row in body["rows"] if row["kind"] == "device"] == ["Arinst VNA-DL"]
+
+
+def test_the_card_of_ob019_shows_live_values_settings_by_hmi_page_journal_and_connection(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    assert _report(_bridge(admin)).status_code == 200
+    [row] = [row for row in admin.get(LIST).json()["machines"] if row["inventory"] == "ОБ.019"]
+    assert row["state"] == {"text": "Готов, ждёт пуска", "tone": "ok"}
+    assert (row["job"], row["counter"]) == ("ED F", {"value": 65537, "of": 300, "today": False})
+    card = admin.get(CARD + "ОБ.019").json()
+    assert card["kind"] == "ob019" and card["setup"] is True and card["live"]["mode"]["text"] == "Автомат"
+    pages = {group["title"]: {field["label"]: field for field in group["fields"]} for group in card["settings"]}
+    assert list(pages) == ["Задание", "Провод и зачистка", "Средняя зачистка", "Маркировка", "Скорости"]
+    assert pages["Провод и зачистка"]["Длина"] == {"label": "Длина", "value": 325.0, "unit": "мм", "read": True}
+    assert pages["Задание"]["Тираж"]["value"] == 300 and pages["Задание"]["Заказ"]["value"] == "ED F"
+    assert pages["Задание"]["Пауза между пучками"] == {"label": "Пауза между пучками", "value": None, "unit": "с",
+                                                         "read": False}
+    assert not any(field["read"] for field in pages["Скорости"].values())  # the bridge does not read them yet
+    assert card["positions"]["title"] == "Положение осей"
+    assert card["connection"]["pc"] == "PC-108" and card["connection"]["agent"] == "Агент ERP · станок"
+    assert card["journal"][-1]["text"] == "Агент станка привязан к ПК PC-108"
+
+
+def test_the_card_of_a_machine_without_an_agent_and_an_unknown_number(machines_api):
+    sessions, clock, admin, _, _ = machines_api
+    card = admin.get(CARD + "ОБ.099").json()
+    assert card["kind"] == "planned" and card["state"]["text"] == "Не подключён" and card["settings"] == []
+    assert card["connection"]["link"]["text"] == "Агент не установлен" and card["connection"]["ip"] == "192.168.1.82"
+    unlinked = admin.get(CARD + "ОБ.019").json()
+    assert unlinked["live"] is None and unlinked["settings"][1]["fields"][0]["value"] is None
+    assert admin.get(CARD + "ОБ.555").status_code == 404
+
+
+def test_the_card_of_a_godex_shows_its_queue_profiles_and_print_journal(machines_api):
+    from app.modules.warehouse.label_jobs import LabelJobRow
+    from app.modules.warehouse.marking_profiles import MarkingBatchRow, MarkingProfileRow
+    sessions, clock, admin, _, ob101 = machines_api
+    now = clock.now
+    with sessions.begin() as session:
+        _agent(session, "godex-pc", "SK-20250818JOKI", "2.9.2", now, ip_lan="192.168.1.70")
+        session.add(PrinterRow(machine_id="godex-pc", name="Godex EZ2350i", driver="Godex", port="USB001",
+                               kind="gdi_png", present=True, last_seen=now))
+        session.flush()
+        session.add(MarkingBindingRow(equipment_id=ob101, version=1, machine_id="godex-pc", printer="Godex EZ2350i"))
+        profile = uuid4()
+        session.add(MarkingProfileRow(id=profile, equipment_id=ob101, inventory_number="ОБ.101", name="Флажок 30×10",
+                                      version=2, calibrated=True, geometry={}))
+        session.flush()
+        batch = uuid4()
+        session.add(MarkingBatchRow(id=batch, created_by=uuid4(), created_at=now, idempotency_key="k", fingerprint="f",
+                                    profile_id=profile, manifest={}, total=2))
+        session.flush()
+        common = dict(kind="marking", copies=1, tspl=b"", format="gdi_png", png=b"x", target_machine_id="godex-pc",
+                      target_printer="Godex EZ2350i", width_mm=30, height_mm=10, orientation="landscape", batch_id=batch)
+        session.add_all([
+            LabelJobRow(id=uuid4(), created_at=now, status="spooled", sequence=1, taken_at=now, finished_at=now,
+                        attempt="a1", claim_token_id=uuid4(), **common),
+            LabelJobRow(id=uuid4(), created_at=now, status="pending", sequence=2, **common),
+        ])
+    machines = {row["inventory"]: row for row in admin.get(LIST).json()["machines"]}
+    godex = machines["ОБ.101"]
+    assert godex["state"] == {"text": "Готов", "tone": "ok"} and godex["job"] == "В очереди: 1"
+    assert godex["counter"] == {"value": 1, "of": None, "today": True}
+    card = admin.get(CARD + "ОБ.101").json()
+    assert card["kind"] == "marking" and card["setup"] is False
+    assert card["marking"]["profiles"] == [{"id": str(profile), "name": "Флажок 30×10", "calibrated": True, "version": 2}]
+    assert card["marking"]["last_job"]["status"] == "Передано принтеру"
+    assert [item["text"] for item in card["journal"]] == ["Этикетка 2 · В очереди", "Этикетка 1 · Передано принтеру"] \
+        or [item["text"] for item in card["journal"]] == ["Этикетка 1 · Передано принтеру", "Этикетка 2 · В очереди"]
+    assert card["connection"]["pc"] == "SK-20250818JOKI" and card["connection"]["extra"] == [["Принтер", "Godex EZ2350i"]]

@@ -33,12 +33,14 @@ from app.modules.references.equipment import INV_KEY, NAME_KEYS, field
 from app.modules.references.infrastructure import EquipmentMachineRow
 from app.modules.warehouse.agent_release import version_tuple
 from app.modules.warehouse.devices import DeviceRow, PrinterRow
-from app.modules.warehouse.label_jobs import LabelAgentRow
-from app.modules.warehouse.marking_profiles import MarkingBindingRow
+from app.modules.warehouse.label_jobs import OPEN_STATUSES as LABEL_OPEN, LabelAgentRow, LabelJobRow
+from app.modules.warehouse.marking_profiles import MarkingBindingRow, MarkingProfileRow
 from app.modules.warehouse.scan_agents import LIVE_FOR, ScanAgentRow
 from app.modules.warehouse.scan_jobs import DONE, ScanJobRow
 from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
+from app.shared.persistence import AuditEventRow
+from app.workflows.marking_labels import STATUS_LABELS
 from app.shared.http_auth import TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, require_section
 
 router = APIRouter(prefix="/api/production/machines", tags=["production"])
@@ -350,6 +352,197 @@ def _device_rows(session, now) -> list[dict]:
     return rows
 
 
+# --- «Станки»: production machines and their cards (owner 18.11.2026: «я думал будут карточки станков, куда я могу
+# зайти, посмотреть актуальные настройки, поработать с ними»). PCs, agents, instruments and scanners are the
+# «ПК и агенты» tab (`rows`); `machines` holds production equipment only. ---
+
+NOT_CONNECTED = {"text": "Не подключён", "tone": "neutral"}
+NO_JOB = "Нет задания"
+JOB_TONES = {"pending": "info", "taken": "info", "spooled": "ok", "printed": "ok", "failed": "danger", "unknown": "warn"}
+EVENT_TEXTS = {"production.machine_bound": "Агент станка привязан к ПК {pc_name}"}
+JOURNAL_LIMIT = 30
+
+
+def _unit_inventory(unit: EquipmentMachineRow) -> str:
+    return _inventory(field(unit.fields or {}, INV_KEY, "inventoryNumber"))
+
+
+def _ob019_summary(snapshot, now: datetime) -> dict:
+    code = rules.link_status(snapshot, now)
+    words = rules.snapshot_words(snapshot)
+    if code != "ok" or not words:
+        text, tone = rules.LINK_TEXTS[code]
+        state, job, counter = {"text": text, "tone": tone}, "", {"value": None, "of": None, "today": False}
+    else:
+        decoded = rules.decode_ob019(words)
+        state = {"text": decoded["state"]["text"], "tone": decoded["state"]["tone"]}
+        running = decoded["job"]
+        job = (running["order_number"] or running["product"] or "") if running["order_running"] else NO_JOB
+        counter = {"value": running["total_finished"], "of": running["total_set"], "today": False}
+    return {"state": state, "job": job, "counter": counter,
+            "last_seen": _moment(snapshot.reported_at, now) if snapshot else None}
+
+
+def _start_of_day(now: datetime) -> datetime:
+    return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _marking_state(session, binding: MarkingBindingRow, now: datetime) -> dict:
+    printer = session.get(PrinterRow, (binding.machine_id, binding.printer))
+    agent = session.get(ScanAgentRow, binding.machine_id)
+    target = (LabelJobRow.kind == "marking", LabelJobRow.target_machine_id == binding.machine_id,
+              LabelJobRow.target_printer == binding.printer)
+    waiting = dict(session.execute(select(LabelJobRow.status, func.count()).where(
+        *target, LabelJobRow.status.in_(LABEL_OPEN)).group_by(LabelJobRow.status)).all())
+    today = session.scalar(select(func.count()).select_from(LabelJobRow).where(
+        *target, LabelJobRow.status.in_(("printed", "spooled")), LabelJobRow.finished_at >= _start_of_day(now))) or 0
+    last = session.execute(select(LabelJobRow.status, LabelJobRow.finished_at, LabelJobRow.error).where(
+        *target, LabelJobRow.finished_at.is_not(None)).order_by(LabelJobRow.finished_at.desc()).limit(1)).first()
+    online = agent is not None and _fresh(agent.last_seen, now)
+    present = printer is not None and bool(printer.present) and _fresh(printer.last_seen, now)
+    queue = sum(waiting.values())
+    if not online:
+        state = {"text": "Нет связи с ПК", "tone": "danger"}
+    elif not present:
+        state = {"text": "Принтер не найден", "tone": "warn"}
+    elif waiting.get("taken"):
+        state = {"text": "Печатает", "tone": "ok"}
+    else:
+        state = {"text": "Готов", "tone": "ok"}
+    seen = printer.last_seen if printer else agent.last_seen if agent else None
+    return {
+        "state": state, "job": f"В очереди: {queue}" if queue else NO_JOB,
+        "counter": {"value": today, "of": None, "today": True}, "last_seen": _moment(seen, now),
+        "printer": binding.printer, "present": present, "queue": queue, "agent": agent,
+        "last_job": {"status": STATUS_LABELS.get(last.status, "Напечатано"), "tone": JOB_TONES.get(last.status, "ok"),
+                     "finished_at": _moment(last.finished_at, now), "error": last.error or ""} if last else None,
+    }
+
+
+def _catalog_name(equipment, inventory: str) -> str:
+    units = equipment.get(_inventory(inventory), [])
+    return _name(units[0]) if len(units) == 1 else _planned_name(equipment, inventory)
+
+
+def _machine_entries(session, equipment, now: datetime) -> dict[str, dict]:
+    """Every production machine of «Станки» by inventory number: its summary and what its card needs."""
+    found: dict[str, dict] = {}
+    for link, snapshot in rules.links(session):
+        found[link.inventory_number] = {"kind": "ob019", "equipment_id": str(link.equipment_id), "link": link,
+                                        "snapshot": snapshot, **_ob019_summary(snapshot, now)}
+    units = {row.id: row for rows in equipment.values() for row in rows}
+    for binding in session.scalars(select(MarkingBindingRow)):
+        unit = units.get(binding.equipment_id)
+        inventory = _unit_inventory(unit) if unit else ""
+        if inventory and inventory not in found:
+            found[inventory] = {"kind": "marking", "equipment_id": str(binding.equipment_id), "binding": binding,
+                                **_marking_state(session, binding, now)}
+    for inventory in (*rules.SUPPORTED, *rules.PLANNED):
+        if inventory not in found:
+            own = equipment.get(_inventory(inventory), [])
+            found[inventory] = {
+                "kind": "ob019" if inventory in rules.SUPPORTED else "planned",
+                "equipment_id": str(own[0].id) if len(own) == 1 else None, "link": None, "snapshot": None,
+                "state": NOT_CONNECTED, "job": "", "counter": {"value": None, "of": None, "today": False},
+                "last_seen": None}
+    for inventory, entry in found.items():
+        entry["inventory"], entry["name"] = inventory, _catalog_name(equipment, inventory)
+    return dict(sorted(found.items()))
+
+
+def _machine_list(session, equipment, now: datetime) -> list[dict]:
+    return [{"inventory": inventory, "name": entry["name"], "kind": entry["kind"], "equipment_id": entry["equipment_id"],
+             "state": entry["state"], "job": entry["job"], "counter": entry["counter"], "last_seen": entry["last_seen"]}
+            for inventory, entry in _machine_entries(session, equipment, now).items()]
+
+
+def _journal_ob019(session, entry: dict, now: datetime) -> list[dict]:
+    events = []
+    snapshot = entry.get("snapshot")
+    if snapshot is not None:
+        words = rules.snapshot_words(snapshot)
+        alarm = rules.decode_ob019(words)["alarm"] if words else None
+        if alarm and alarm["code"] not in (None, 0):
+            events.append({"at": _moment(snapshot.reported_at, now), "text": "Сейчас: " + alarm["text"],
+                           "tone": alarm["tone"]})
+        if snapshot.error:
+            events.append({"at": _moment(snapshot.reported_at, now), "text": snapshot.error, "tone": "warn"})
+    if entry.get("equipment_id"):
+        for event in session.scalars(select(AuditEventRow).where(
+                AuditEventRow.aggregate_id == UUID(entry["equipment_id"]),
+                AuditEventRow.event_type.like("production.machine%"))
+                .order_by(AuditEventRow.occurred_at.desc()).limit(JOURNAL_LIMIT)):
+            details = {"pc_name": "", **{key: str(value) for key, value in (event.details or {}).items()}}
+            text = EVENT_TEXTS.get(event.event_type, "Событие станка").format_map(details)
+            events.append({"at": _moment(event.occurred_at, now), "text": text.strip(), "tone": "neutral"})
+    return events
+
+
+def _journal_marking(session, binding: MarkingBindingRow, now: datetime) -> list[dict]:
+    rows = session.execute(select(LabelJobRow.status, LabelJobRow.created_at, LabelJobRow.finished_at,
+                                  LabelJobRow.sequence, LabelJobRow.error).where(
+        LabelJobRow.kind == "marking", LabelJobRow.target_machine_id == binding.machine_id,
+        LabelJobRow.target_printer == binding.printer)
+        .order_by(func.coalesce(LabelJobRow.finished_at, LabelJobRow.created_at).desc()).limit(JOURNAL_LIMIT))
+    journal = []
+    for status, created, finished, sequence, error in rows:
+        parts = (f"Этикетка {sequence}" if sequence else "Этикетка", STATUS_LABELS.get(status, "Напечатано"), error or "")
+        journal.append({"at": _moment(finished or created, now), "text": " · ".join(part for part in parts if part),
+                        "tone": JOB_TONES.get(status, "ok")})
+    return journal
+
+
+def _connection(entry: dict, now: datetime) -> dict:
+    if entry["kind"] == "ob019" and entry.get("link") is not None:
+        link = entry["link"]
+        return {"pc": link.pc_name, "ip": _address(link.ip_lan, link.ip_seen), "agent": rules.KIND_NAMES[link.kind],
+                "version": link.bridge_version, "link": _tone(rules.link_status(entry["snapshot"], now)),
+                "last_seen": entry["last_seen"], "extra": [["Служба Modbus", link.service_version]],
+                "error": entry["snapshot"].error if entry["snapshot"] else ""}
+    if entry["kind"] == "marking":
+        agent = entry["agent"]
+        return {"pc": agent.pc_name if agent else "", "ip": _address(agent.ip_lan, agent.ip_seen) if agent else "",
+                "agent": PRINT_SERVICE, "version": agent.version if agent else "",
+                "link": _agent_link(agent, now) if agent else _tone("not_installed"), "last_seen": entry["last_seen"],
+                "extra": [["Принтер", entry["printer"]]], "error": ""}
+    planned = rules.PLANNED.get(entry["inventory"])
+    return {"pc": planned.pc if planned else "", "ip": planned.ip if planned else "",
+            "agent": rules.KIND_NAMES[rules.KIND_OB019], "version": "", "link": _tone("not_installed"),
+            "last_seen": None, "extra": [], "error": ""}
+
+
+@router.get("/card/{inventory}")
+def machine_window(inventory: str, _principal: Reader, factory: Factory, now: Now) -> dict:
+    """The machine's card: «Состояние», «Настройки», «Наладка и рецепты», «Журнал», «Связь» — read only."""
+    with factory() as uow:
+        session = uow.session
+        equipment = _equipment(session)
+        entry = _machine_entries(session, equipment, now).get(_inventory(inventory))
+        if entry is None:
+            raise HTTPException(status_code=404, detail=f"{inventory} нет среди станков ERP")
+        card = {key: entry[key] for key in ("inventory", "name", "kind", "equipment_id", "state", "job", "counter",
+                                            "last_seen")}
+        card.update({"live": None, "positions": None, "settings": [], "marking": None, "journal": [],
+                     "connection": _connection(entry, now), "setup": entry["kind"] == "ob019"})
+        if entry["kind"] == "ob019":
+            words = rules.snapshot_words(entry["snapshot"])
+            card["live"] = rules.decode_ob019(words) if words else None
+            card["positions"] = rules.setting_group("Положение осей", rules.OB019_POSITIONS, words)
+            card["settings"] = rules.ob019_settings(words)
+            card["journal"] = _journal_ob019(session, entry, now)
+        elif entry["kind"] == "marking":
+            binding = entry["binding"]
+            profiles = session.scalars(select(MarkingProfileRow).where(
+                MarkingProfileRow.equipment_id == binding.equipment_id).order_by(MarkingProfileRow.name))
+            card["marking"] = {
+                "printer": entry["printer"], "present": entry["present"], "queue": entry["queue"],
+                "last_job": entry["last_job"],
+                "profiles": [{"id": str(row.id), "name": row.name, "calibrated": row.calibrated, "version": row.version}
+                             for row in profiles]}
+            card["journal"] = _journal_marking(session, binding, now)
+        return card
+
+
 @router.get("")
 def machines(_principal: Reader, factory: Factory, now: Now) -> dict:
     with factory() as uow:
@@ -357,7 +550,8 @@ def machines(_principal: Reader, factory: Factory, now: Now) -> dict:
         equipment = _equipment(session)
         rows = [*_machine_rows(session, equipment, now), *_printer_rows(session, equipment, now),
                 *_device_rows(session, now)]
-    return {"now": now.isoformat(), "rows": _agent_names(rows)}
+        machine_list = _machine_list(session, equipment, now)
+    return {"now": now.isoformat(), "machines": machine_list, "rows": _agent_names(rows)}
 
 
 def _agent_names(rows: list[dict]) -> list[dict]:
