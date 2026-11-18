@@ -5,6 +5,9 @@
 в данные BZW ничего не писалось (разбор шёл в сессии `SET SESSION TRANSACTION READ ONLY`). На ПК создана только папка `D:\fraxis-probe\`
 (`probe.log`, `erp_ro.txt`; временные копии файлов для разбора удалены). Пароли в документ не попали.
 
+Продолжение: полная карта экранов BZW2.5 ↔ адреса ПЛК — [`ob099-bzw25-full-map-2026-11-18.md`](ob099-bzw25-full-map-2026-11-18.md);
+проект управления из ERP — [`ob099-erp-control-design-2026-11-18.md`](ob099-erp-control-design-2026-11-18.md).
+
 ## ПК
 - DESKTOP-K6M7O0U, Windows 10 Pro (zh-CN, ACP 936), `Administrator`. Wi-Fi 192.168.1.82 (DHCP). Второй Ethernet
   192.168.250.115/24, без шлюза — отдельная сеть к прессу.
