@@ -389,7 +389,7 @@ Describe 'Marking heartbeat' {
     BeforeEach {
         $script:VnaControlInitialized = $false; $script:HeartbeatDevices = $null
         Mock Get-MachineId { 'machine-1' }; Mock Get-LanIp { '' }; Mock Get-AgentScanners { @() }
-        Mock Test-ArinstInstalled { $false }; Mock Get-VnaCapability { $null }; Mock Invoke-AgentUpdate {}
+        Mock Test-ArinstPresent { $false }; Mock Get-VnaCapability { $null }; Mock Invoke-AgentUpdate {}
         Mock Get-Printer { [pscustomobject]@{ Name = 'Godex 中文'; DriverName = 'Seagull'; PortName = 'USB001' } }
         Mock Invoke-ErpApi { @{} }
     }

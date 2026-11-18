@@ -30,7 +30,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.9.2'
+$script:AgentVersion = '2.9.4'
 $script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
@@ -610,15 +610,50 @@ function Get-MachineId {
     return ([string]$env:COMPUTERNAME).ToLower()
 }
 
-# Адрес ПК в локальной сети: интерфейс со шлюзом по умолчанию; запасной путь - DNS-имя ПК.
+# Виртуальные адаптеры (Hyper-V/WSL/Docker, VPN-туннели вроде happ-xray с «шлюзом» 0.0.0.0) не дают адрес ПК в сети цеха.
+$script:VirtualAdapter = 'Hyper-V|vEthernet|WSL|Docker|VirtualBox|VMware|TAP-|Wintun|WireGuard|OpenVPN|xray|Happ|Loopback'
+
+# Лучший адрес из кандидатов @{ Ip; Gateway; Virtual }: адаптер с настоящим шлюзом 192.168.x → 10.x → 172.16–31.x → иной;
+# затем Tailscale 100.64/10; затем адаптер без шлюза. Виртуальные, 127.x, 169.254.x отбрасываются. Нет кандидатов — ''.
+function Select-LanIp {
+    param($Candidates)
+    $best = ''; $bestRank = [int]::MaxValue
+    foreach ($item in @($Candidates)) {
+        $text = [string]$item.Ip; $ip = $null
+        if (-not [Net.IPAddress]::TryParse($text, [ref]$ip) -or $ip.AddressFamily -ne 'InterNetwork') { continue }
+        $b = $ip.GetAddressBytes()
+        if ($b[0] -eq 127 -or $b[0] -eq 0 -or ($b[0] -eq 169 -and $b[1] -eq 254)) { continue }
+        if ($b[0] -eq 100 -and $b[1] -ge 64 -and $b[1] -le 127) { $rank = 5 }
+        elseif ($item.Virtual) { continue }
+        else {
+            $rank = if ($b[0] -eq 192 -and $b[1] -eq 168) { 0 } elseif ($b[0] -eq 10) { 1 }
+                elseif ($b[0] -eq 172 -and $b[1] -ge 16 -and $b[1] -le 31) { 2 } else { 3 }
+            if (-not $item.Gateway) { $rank += 10 }
+        }
+        if ($rank -lt $bestRank) { $best = $text; $bestRank = $rank }
+    }
+    return $best
+}
+
+# Адрес ПК в локальной сети (Select-LanIp); запасной путь - DNS-имя ПК.
 function Get-LanIp {
     try {
-        $cfg = Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up' } | Select-Object -First 1
-        if ($cfg -and $cfg.IPv4Address) { return [string]$cfg.IPv4Address[0].IPAddress }
+        $found = @(Get-NetIPConfiguration -ErrorAction Stop | Where-Object { $_.NetAdapter.Status -eq 'Up' } | ForEach-Object {
+            $config = $_
+            $gateway = @($config.IPv4DefaultGateway | Where-Object { $_.NextHop -and [string]$_.NextHop -ne '0.0.0.0' }).Count -gt 0
+            $virtual = "$($config.InterfaceAlias) $($config.InterfaceDescription)" -match $script:VirtualAdapter
+            foreach ($address in @($config.IPv4Address)) {
+                if ($address) { @{ Ip = [string]$address.IPAddress; Gateway = $gateway; Virtual = $virtual } }
+            }
+        })
+        $pick = Select-LanIp $found
+        if ($pick) { return $pick }
     } catch {}
     try {
-        $ip = [Net.Dns]::GetHostAddresses($env:COMPUTERNAME) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | Select-Object -First 1
-        if ($ip) { return $ip.IPAddressToString }
+        $names = @([Net.Dns]::GetHostAddresses($env:COMPUTERNAME) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } |
+            ForEach-Object { @{ Ip = $_.IPAddressToString; Gateway = $true; Virtual = $false } })
+        $pick = Select-LanIp $names
+        if ($pick) { return $pick }
     } catch {}
     return ''
 }
@@ -739,23 +774,37 @@ function Get-ArinstFolders {
     return @($documents, $desktop, (Join-Path $profilePath 'Downloads'))
 }
 
-function Invoke-ArinstCapture {
+# Touchstone-файлы Arinst, сохранённые за последние 15 минут (папки arinstFolders и один уровень вложенности).
+function Find-ArinstTraces {
     $now = [DateTime]::UtcNow
-    try {
-        $files = @(foreach ($folder in (Get-ArinstFolders)) {
-            if (-not $folder -or -not (Test-Path -LiteralPath $folder -PathType Container)) { continue }
-            # One child level only. Do not follow junctions into unrelated trees.
-            $dirs = @($folder) + @(Get-ChildItem -LiteralPath $folder -Directory -ErrorAction Stop |
-                Where-Object { -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } |
-                ForEach-Object { $_.FullName })
-            foreach ($dir in $dirs) {
-                Get-ChildItem -LiteralPath $dir -File -ErrorAction Stop | Where-Object {
-                    $_.Extension -in @('.s1p', '.s2p') -and
-                    -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -and
-                    $_.LastWriteTimeUtc -ge $now.AddMinutes(-15) -and $_.LastWriteTimeUtc -le $now
-                }
+    return @(foreach ($folder in (Get-ArinstFolders)) {
+        if (-not $folder -or -not (Test-Path -LiteralPath $folder -PathType Container)) { continue }
+        # One child level only. Do not follow junctions into unrelated trees.
+        $dirs = @($folder) + @(Get-ChildItem -LiteralPath $folder -Directory -ErrorAction Stop |
+            Where-Object { -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } |
+            ForEach-Object { $_.FullName })
+        foreach ($dir in $dirs) {
+            Get-ChildItem -LiteralPath $dir -File -ErrorAction Stop | Where-Object {
+                $_.Extension -in @('.s1p', '.s2p') -and
+                -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -and
+                $_.LastWriteTimeUtc -ge $now.AddMinutes(-15) -and $_.LastWriteTimeUtc -le $now
             }
-        })
+        }
+    })
+}
+
+# Arinst на этом ПК есть на деле, а не только установлен: Arinst Virtual Lab запущена (без прибора она не меряет) или
+# за 15 минут сохранена трасса, которую можно снять. Одна установленная программа прибор не означает (владелец 18.11:
+# ПК владельца с Arinst VL без прибора показывался в «Станках» вторым Arinst).
+function Test-ArinstPresent {
+    if (-not (Test-ArinstInstalled)) { return $false }
+    if (Get-Process -Name 'ArinstVL' -ErrorAction SilentlyContinue) { return $true }
+    try { return @(Find-ArinstTraces).Count -gt 0 } catch { return $false }
+}
+
+function Invoke-ArinstCapture {
+    try {
+        $files = Find-ArinstTraces
     } catch {
         Write-Log "Arinst: ошибка поиска сохранённой трассы: $($_.Exception.Message)"
         throw 'Не удалось найти файл Arinst — проверьте arinstFolders и доступ к папкам в настройках агента'
@@ -931,7 +980,7 @@ function Send-Heartbeat {
     if (-not $Lightweight) {
         $devices = @{
             scanners = @(Get-AgentScanners -ScannerAddress $ScannerAddress); printer = [string]$PrinterName
-            lan_ip = (Get-LanIp); arinst = (Test-ArinstInstalled)
+            lan_ip = (Get-LanIp); arinst = (Test-ArinstPresent)
             printers = @(Get-AgentPrinters $PrinterName $MarkingPrinterName)
         }
         $script:HeartbeatDevices = $devices

@@ -31,8 +31,28 @@ KIND_OB019 = "ob019_modbus"
 KINDS = (KIND_OB019,)
 # The ОБ an ERP bridge exists for (inventory number → kind). Others are refused until a bridge is written for them.
 SUPPORTED = {"ОБ.019": KIND_OB019}
+
+# ОБ whose bridge is planned but not written yet: shown in «Станки» as «Мост не установлен» (owner 18.11.2026), never
+# accepted as a reporter. ОБ.099 — servo crimp press BZW (Omron CP2E, BZW2.5 on its PC; docs/data/ob099-*). The
+# catalogue keeps it as ОБ.099.1/ОБ.099.2, so the row takes its name from those units.
+@dataclass(frozen=True)
+class PlannedMachine:
+    device: str
+    pc: str = ""
+    ip: str = ""
+
+
+PLANNED = {
+    "ОБ.099": PlannedMachine(device="ПЛК пресса", pc="DESKTOP-K6M7O0U", ip="192.168.1.82"),
+    # BZW-886+Q2 cut/strip machine: a PLC with a vendor MES port, no ERP connection yet (memory bzw-machine-control).
+    "ОБ.094": PlannedMachine(device="ПЛК станка"),
+}
 LINK_STATES = ("ok", "port_busy", "no_plc", "no_service")
-KIND_NAMES = {KIND_OB019: "Мост ERP"}
+# One name for every ERP agent on a PC (owner 18.11.2026: «Мост ERP» next to «Агент печати» confused him); the part
+# after «·» says what it does there. The bridge and the print agent are still two programs — merging them is later.
+AGENT_NAME = "Агент ERP"
+AGENT_PARTS = ("печать", "приборы", "станок")
+KIND_NAMES = {KIND_OB019: f"{AGENT_NAME} · станок"}
 DEVICE_NAMES = {KIND_OB019: "ПЛК линии резки"}
 
 # Registers the ОБ.019 bridge may read and send (Dn = holding register n). Mirrors `$script:Allowed` in
@@ -69,7 +89,7 @@ LINK_TEXTS = {
     "no_plc": ("ПЛК не отвечает", "danger"),
     "no_service": ("Служба mbd на ПК не отвечает", "danger"),
     "stale": ("Нет связи с ПК станка", "danger"),
-    "not_installed": ("Мост не установлен", "neutral"),
+    "not_installed": ("Агент не установлен", "neutral"),
 }
 
 
@@ -192,12 +212,12 @@ def report(session: Session, *, equipment_id: UUID, inventory: str, token_id: UU
         raise MachineReportInvalid("Неизвестное состояние связи")
     boot = _clean(snapshot.boot, 64)
     if not boot or snapshot.seq < 0:
-        raise MachineReportInvalid("Нужны идентификатор запуска моста и номер снимка")
+        raise MachineReportInvalid("Нужны идентификатор запуска агента станка и номер снимка")
     link, bound = session.get(MachineLinkRow, equipment_id), False
     if link is None:
         taken = session.scalar(select(MachineLinkRow.inventory_number).where(MachineLinkRow.token_id == token_id))
         if taken is not None:
-            raise MachineRefused(f"Токен моста уже привязан к {taken}")
+            raise MachineRefused(f"Токен агента станка уже привязан к {taken}")
         try:
             with session.begin_nested():
                 session.add(MachineLinkRow(
@@ -209,7 +229,7 @@ def report(session: Session, *, equipment_id: UUID, inventory: str, token_id: UU
             pass
         link = session.get(MachineLinkRow, equipment_id)
         if link is None:
-            raise MachineRefused(f"{inventory} уже привязан к другому мосту")
+            raise MachineRefused(f"{inventory} уже привязан к другому агенту станка")
     if link.token_id != token_id or link.machine_id != machine_id:
         raise MachineRefused(f"Этот ПК или токен не привязан к {link.inventory_number}")
     details = {
@@ -308,6 +328,79 @@ def decode_ob019(words: dict[int, int]) -> dict:
             "diameter_mm": _hundredths(words.get(42)), "knife_back_mm": _hundredths(words.get(43)),
         },
     }
+
+
+# Settings of ОБ.019 grouped like its PXS_HMI pages (register map docs/data/ob019-register-map-2026-11-18.md, PR #919):
+# (label, first register, kind, scale, unit). A group whose registers are not on the bridge's allow-list yet shows its
+# fields without values — the bridge reads them once the allow-list grows (editing comes with the commands slice).
+SettingField = tuple[str, int, str, float, str]
+OB019_SETTINGS: tuple[tuple[str, tuple[SettingField, ...]], ...] = (
+    ("Задание", (
+        ("Тираж", 22, "u32", 1, "шт"), ("Пучок", 26, "u32", 1, "шт"), ("Пауза между пучками", 28, "u16", 0.001, "с"),
+        ("Программа", 1280, "u16", 1, ""), ("Заказ", 940, "text15", 1, ""), ("Изделие", 955, "text15", 1, ""),
+        ("Количество по заказу", 24, "u32", 1, "шт"),
+    )),
+    ("Провод и зачистка", (
+        ("Длина", 32, "u32", 0.01, "мм"), ("Зачистка начала", 34, "u32", 0.01, "мм"),
+        ("Стягивание начала", 36, "u32", 0.01, "мм"), ("Зачистка конца", 38, "u32", 0.01, "мм"),
+        ("Стягивание конца", 40, "u32", 0.01, "мм"), ("Диаметр провода", 42, "u16", 0.01, "мм"),
+        ("Отвод ножа", 43, "u16", 0.01, "мм"),
+    )),
+    ("Средняя зачистка", (
+        ("Средняя зачистка", 132, "bit0", 1, ""), ("Поправка конца", 197, "i16", 0.01, "мм"),
+        ("Поправка диаметра", 199, "i16", 0.01, "мм"),
+    )),
+    ("Маркировка", (
+        ("Маркировка", 400, "bit0", 1, ""), ("Расстояние до головки", 401, "u32", 0.01, "мм"),
+        ("Метка у начала", 405, "u32", 0.01, "мм"), ("Метка у конца", 407, "u32", 0.01, "мм"),
+        ("Шаг средних меток", 409, "u32", 0.01, "мм"), ("Число средних меток", 411, "u32", 1, "шт"),
+        ("Скорость роликов при печати", 415, "u16", 1, ""), ("Текст у начала", 440, "text15", 1, ""),
+        ("Текст в середине", 455, "text15", 1, ""), ("Текст у конца", 470, "text15", 1, ""),
+    )),
+    ("Скорости", (
+        ("Подача провода", 100, "u16", 1, ""), ("Нож", 101, "u16", 1, ""), ("Трубка", 102, "u16", 1, ""),
+        ("Передний прижим", 103, "u16", 1, ""), ("Задний прижим", 104, "u16", 1, ""),
+        ("Замедление при резке", 120, "u16", 1, ""), ("Зачистка", 121, "u16", 1, ""), ("Вывод провода", 122, "u16", 1, ""),
+    )),
+)
+# Axis positions (Jog page): read by the HMI, not yet by the bridge; the scale is not confirmed at the machine.
+OB019_POSITIONS: tuple[SettingField, ...] = (
+    ("Передние ролики", 660, "i32", 0.01, "мм"), ("Задние ролики", 662, "i32", 0.01, "мм"), ("Нож", 664, "i32", 0.01, "мм"),
+    ("Трубка", 666, "i32", 0.01, "мм"), ("Передний прижим", 668, "i32", 0.01, "мм"),
+    ("Задний прижим", 670, "i32", 0.01, "мм"), ("Сдвиг ножа", 672, "i32", 0.01, "мм"),
+)
+_WORDS = {"u16": 1, "i16": 1, "bit0": 1, "u32": 2, "i32": 2, "text15": 15}
+
+
+def _field_value(words: dict[int, int], address: int, kind: str, scale: float) -> object:
+    if kind == "text15":
+        return _text(words, address, 15)
+    if any(address + offset not in words for offset in range(_WORDS[kind])):
+        return None
+    if kind == "bit0":
+        return bool(words[address] & 1)
+    raw = words[address] if _WORDS[kind] == 1 else words[address] | (words[address + 1] << 16)
+    if kind == "i16" and raw >= 0x8000:
+        raw -= 0x10000
+    elif kind == "i32" and raw >= 0x80000000:
+        raw -= 0x100000000
+    return raw if scale == 1 else round(raw * scale, 3)
+
+
+def _readable(address: int, kind: str) -> bool:
+    return all(address + offset in OB019_ALLOWED for offset in range(_WORDS[kind]))
+
+
+def setting_group(title: str, fields: tuple[SettingField, ...], words: dict[int, int]) -> dict:
+    """One HMI page: its fields with the values of the last snapshot; a field's `read` — the bridge reads it."""
+    return {"title": title, "fields": [
+        {"label": label, "value": _field_value(words, address, kind, scale) if _readable(address, kind) else None,
+         "unit": unit, "read": _readable(address, kind)}
+        for label, address, kind, scale, unit in fields]}
+
+
+def ob019_settings(words: dict[int, int]) -> list[dict]:
+    return [setting_group(title, fields, words) for title, fields in OB019_SETTINGS]
 
 
 def snapshot_words(snapshot: MachineSnapshotRow | None) -> dict[int, int]:
