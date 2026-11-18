@@ -837,14 +837,14 @@ Describe 'Управление ВАЦ: журнал, опрос, watchdog' {
     It 'обновление откладывается пока прибор принадлежит сессии' {
         $script:VnaWorker = @{ command = $script:command }
         Mock Invoke-WebRequest { throw 'must not download during session' }
-        (Invoke-AgentUpdate 'http://test' @{ version = '2.9.0'; sha256 = ('a' * 64) } -AgentPath (Join-Path $TestDrive 'agent.ps1') -NoRestart) | Should Be $false
+        (Invoke-AgentUpdate 'http://test' @{ version = '99.0.0'; sha256 = ('a' * 64) } -AgentPath (Join-Path $TestDrive 'agent.ps1') -NoRestart) | Should Be $false
         Assert-MockCalled Invoke-WebRequest -Times 0 -Exactly -Scope It
     }
     It 'фоновая проверка прибора не мешает самообновлению' {
         $script:VnaWorker = @{ command = $null }
         Mock Stop-VnaWorker { $script:VnaWorker = $null }
         Mock Invoke-WebRequest { throw 'download reached' }
-        [void](Invoke-AgentUpdate 'http://test' @{ version = '2.9.0'; sha256 = ('a' * 64); path = '/agent.ps1' } -AgentPath (Join-Path $TestDrive 'agent.ps1') -NoRestart)
+        [void](Invoke-AgentUpdate 'http://test' @{ version = '99.0.0'; sha256 = ('a' * 64); path = '/agent.ps1' } -AgentPath (Join-Path $TestDrive 'agent.ps1') -NoRestart)
         Assert-MockCalled Stop-VnaWorker -Times 1 -Exactly -Scope It
         Assert-MockCalled Invoke-WebRequest -Times 1 -Exactly -Scope It
     }
@@ -938,7 +938,7 @@ Describe 'Управление ВАЦ: журнал, опрос, watchdog' {
         Mock Invoke-ErpApi { @{} }
         Send-Heartbeat 'http://test' 'token'
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
-            $Body.version -eq '2.9.0' -and $Body.vna_control.version -eq 1 -and ($Body.vna_control.methods -join ',') -eq 'acm'
+            $Body.version -eq $script:AgentVersion -and $Body.vna_control.version -eq 1 -and ($Body.vna_control.methods -join ',') -eq 'acm'
         }
         Assert-MockCalled Get-VnaApplication -Times 0 -Exactly -Scope It
     }

@@ -28,10 +28,10 @@ function New-TestMarkingJob {
 Describe 'Exact marking DEVMODE' {
     It 'keeps 92.5 mm as 925 tenths and preserves driver-private bytes' {
         $original = New-TestMode
-        $requested = [ErpGdiPrinter]::RequestMode($original,92.5,20,$false)
+        $requested = [ErpGdiPrinter]::RequestMode($original,92.5,20)
         [BitConverter]::ToInt16($requested,82) | Should Be 925
         [BitConverter]::ToInt16($requested,80) | Should Be 200
-        [BitConverter]::ToInt16($requested,78) | Should Be 0
+        [BitConverter]::ToInt16($requested,78) | Should Be 256
         [BitConverter]::ToInt16($requested,84) | Should Be 100
         [BitConverter]::ToInt16($requested,86) | Should Be 1
         [BitConverter]::ToInt16($requested,90) | Should Be 300
@@ -40,33 +40,45 @@ Describe 'Exact marking DEVMODE' {
         $original[82] | Should Be 0
         [ErpGdiPrinter]::ValidateMode($requested,$requested)
     }
-    It 'landscape swaps portrait stock dimensions once' {
-        $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20,$true)
-        [BitConverter]::ToInt16($mode,82) | Should Be 200
-        [BitConverter]::ToInt16($mode,80) | Should Be 925
-        [BitConverter]::ToInt16($mode,76) | Should Be 2
+    It 'maps a wide raster 1:1 onto portrait stock: width across the head, height along the feed' {
+        $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20)
+        [BitConverter]::ToInt16($mode,82) | Should Be 925
+        [BitConverter]::ToInt16($mode,80) | Should Be 200
+        [BitConverter]::ToInt16($mode,76) | Should Be 1
     }
-    foreach ($offset in @(76,78,80,82,90)) {
+    It 'accepts the driver''s own paper index when exact length and width are kept (Godex/Seagull, 18.11)' {
+        $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20)
+        $returned = $mode.Clone()
+        [Buffer]::BlockCopy([BitConverter]::GetBytes([int16]32003),0,$returned,78,2)
+        [ErpGdiPrinter]::ValidateMode($mode,$returned)
+    }
+    It 'rejects a driver that clamps the 20 mm stock width to 25.4 mm' {
+        $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),20,92.5)
+        $returned = $mode.Clone()
+        [Buffer]::BlockCopy([BitConverter]::GetBytes([int16]254),0,$returned,82,2)
+        { [ErpGdiPrinter]::ValidateMode($mode,$returned) } | Should Throw 'substituted DEVMODE field at 82'
+    }
+    foreach ($offset in @(76,80,82,90)) {
         It "rejects driver substitution of required field $offset" {
-            $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20,$false)
+            $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20)
             $returned = $mode.Clone(); $returned[$offset] = $returned[$offset] -bxor 1
             { [ErpGdiPrinter]::ValidateMode($mode,$returned) } | Should Throw 'substituted'
         }
     }
     It 'requests only required fields from a driver that offers nothing else' {
-        $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20,$false)
+        $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20)
         [BitConverter]::ToInt32($mode,72) | Should Be (1 -bor 2 -bor 4 -bor 8 -bor 1024)
     }
     It 'requests optional fields the driver offers' {
         $original = New-TestMode
         [Buffer]::BlockCopy([BitConverter]::GetBytes([int](16 -bor 256 -bor 2048 -bor 4096 -bor 8192 -bor 32768 -bor 65536)),0,$original,72,4)
-        $fields = [BitConverter]::ToInt32([ErpGdiPrinter]::RequestMode($original,92.5,20,$false),72)
+        $fields = [BitConverter]::ToInt32([ErpGdiPrinter]::RequestMode($original,92.5,20),72)
         $fields | Should Be (1 -bor 2 -bor 4 -bor 8 -bor 1024 -bor 16 -bor 256 -bor 2048 -bor 4096 -bor 8192 -bor 32768)
     }
     It 'accepts a label driver that drops duplex, collate, colour, scale, copies and Y resolution' {
         $original = New-TestMode
         [Buffer]::BlockCopy([BitConverter]::GetBytes([int](16 -bor 256 -bor 2048 -bor 4096 -bor 8192 -bor 32768)),0,$original,72,4)
-        $mode = [ErpGdiPrinter]::RequestMode($original,92.5,20,$false)
+        $mode = [ErpGdiPrinter]::RequestMode($original,92.5,20)
         $returned = $mode.Clone()
         [Buffer]::BlockCopy([BitConverter]::GetBytes([int](1 -bor 2 -bor 4 -bor 8 -bor 1024)),0,$returned,72,4)
         foreach ($offset in @(84,86,92,94,96,100)) { $returned[$offset] = $returned[$offset] -bxor 1 }
@@ -75,7 +87,7 @@ Describe 'Exact marking DEVMODE' {
     It 'accepts colour, duplex and collation the driver kept but changed' {
         $original = New-TestMode
         [Buffer]::BlockCopy([BitConverter]::GetBytes([int](2048 -bor 4096 -bor 32768)),0,$original,72,4)
-        $mode = [ErpGdiPrinter]::RequestMode($original,92.5,20,$false)
+        $mode = [ErpGdiPrinter]::RequestMode($original,92.5,20)
         $returned = $mode.Clone()
         foreach ($offset in @(92,94,100)) { $returned[$offset] = $returned[$offset] -bxor 1 }
         [ErpGdiPrinter]::ValidateMode($mode,$returned)
@@ -84,19 +96,19 @@ Describe 'Exact marking DEVMODE' {
         It "rejects a kept field $($case[1]) with another scale, copy count or Y resolution" {
             $original = New-TestMode
             [Buffer]::BlockCopy([BitConverter]::GetBytes([int]$case[0]),0,$original,72,4)
-            $mode = [ErpGdiPrinter]::RequestMode($original,92.5,20,$false)
+            $mode = [ErpGdiPrinter]::RequestMode($original,92.5,20)
             $returned = $mode.Clone(); $returned[$case[1]] = $returned[$case[1]] -bxor 2
             { [ErpGdiPrinter]::ValidateMode($mode,$returned) } | Should Throw 'substituted'
         }
     }
     It 'rejects a driver that removes required fields' {
-        $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20,$false)
+        $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20)
         $returned = $mode.Clone(); $returned[72] = $returned[72] -band (-bnot 8)
         { [ErpGdiPrinter]::ValidateMode($mode,$returned) } | Should Throw 'removed'
     }
     It 'rejects missing private DEVMODE data' {
         $mode = New-TestMode
-        { [ErpGdiPrinter]::RequestMode([byte[]]$mode[0..219],92.5,20,$false) } | Should Throw 'complete'
+        { [ErpGdiPrinter]::RequestMode([byte[]]$mode[0..219],92.5,20) } | Should Throw 'complete'
     }
     foreach ($value in @(0,-1,92.55,501,[double]::NaN,[double]::PositiveInfinity)) {
         It "rejects invalid media $value" { { [ErpGdiPrinter]::Tenths($value) } | Should Throw }
