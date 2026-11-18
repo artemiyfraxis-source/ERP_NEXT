@@ -222,8 +222,9 @@ function inQcQueue(box: ProductionBox, tasks: ProductionTask[]): boolean {
   // В ОТК идёт коробка финальной операции схемы; операция не нашлась в задании — по старому: последний номер.
   const final = task && operation ? isFinal(task, operation) : task ? box.operation_position === Math.max(...task.operations.map((item) => item.position)) : false;
   // Подтверждает только ОТК (владелец, 13.10.2026): в очередь — сданная коробка; «Подтверждена» и не проверена — старые,
-  // подтверждённые мастером до 13.10.
-  return (box.status === "Закрыта оператором" || box.status === "Подтверждена") && !box.qc_inspected && final;
+  // подтверждённые мастером до 13.10. КБ уже уехала целиком (склад принял и отгрузил мимо ОТК) — проверять нечего
+  // (владелец 18.11).
+  return (box.status === "Закрыта оператором" || box.status === "Подтверждена") && !box.qc_inspected && !box.kb_shipped && final;
 }
 
 type QcDraft = { accepted: string; rejected: string; character: string; description: string; instrumentIds: string[] };

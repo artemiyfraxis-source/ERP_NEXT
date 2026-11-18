@@ -26,7 +26,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.modules.production.api import production_uow_factory, techcards_uow_factory
+from app.modules.production.api import production_uow_factory, shipped_task_ids, techcards_uow_factory
 from app.modules.production.domain import ProductionValidationError
 from app.modules.production.vswr import (
     VERDICT_NAMES,
@@ -450,9 +450,12 @@ def coax_tasks(
     refs_factory: Annotated[Callable[[], Any] | None, Depends(references_uow_factory)],
 ) -> dict:
     """Список для выбора задания в «Замерах КСВН»: только задания, чья закреплённая ЭТК — коаксиальная сборка. Каждая
-    ЭТК читается один раз, справочники — один раз и только если нужна норма старой ЭТК; файлов замеров не грузим."""
+    ЭТК читается один раз, справочники — один раз и только если нужна норма старой ЭТК; файлов замеров не грузим.
+    Задания КБ, уехавшей целиком (`shipped_task_ids`), не показываем — мерить уже нечего (владелец 18.11)."""
     with uow_factory() as uow:
         tasks = [task for task in uow.production.list(limit=1000) if task.status is not ProductionStatus.CANCELLED]
+        shipped = shipped_task_ids(uow, tasks)
+        tasks = [task for task in tasks if task.id not in shipped]
     documents = _etk_documents(techcards_factory, tasks)
     refs = CoaxRefs(refs_factory)
     norms: dict[tuple[Any, Any, Any, Any], dict[str, Any]] = {}
