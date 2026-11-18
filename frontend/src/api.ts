@@ -860,7 +860,7 @@ export interface FulfillmentRequest {
   /** «main» — комплект КБ (одна живая заявка на КБ проекта); «extra» — «Довыдача» сверх выданного комплекта. */
   kind?: "main" | "extra";
   handout_location: string | null;
-  /** «Укомплектован» only: the place «Отправить на выдачу» offers — the last one used at the kit's site, else «Зона выдачи». */
+  /** «Укомплектован», or a kit «Выдать набранное» takes: the place «Отправить на выдачу» offers — the last one used at the kit's site, else «Зона выдачи». */
   handout_place?: string;
   return_location: string | null;
   fully_reserved: boolean;
@@ -3856,6 +3856,13 @@ export const fulfillmentApi = {
     api<{ requests: FulfillmentRequest[]; message: string }>("/api/issues/issue-batch", {
       method: "POST",
       body: JSON.stringify({ requests }),
+    }),
+  /** «Выдать набранное» (owner 17.11.2026): the picked lines of a kit still being picked are issued, the rest moves
+      into a new «Довыдача» (`extra`) unchanged. */
+  issuePicked: (requestId: string, version: number) =>
+    api<{ request: FulfillmentRequest; extra: FulfillmentRequest; message: string }>(`/api/issues/${requestId}/issue-picked`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
     }),
   returned: (requestId: string, version: number, returnLocation: string) =>
     api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/returned`, {
