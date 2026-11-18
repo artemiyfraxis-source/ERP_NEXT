@@ -120,3 +120,31 @@ Describe 'Invoke-AgentUpdate' {
         Invoke-AgentUpdate -Base 'http://x' -Update $update -AgentPath $script:agentFile -NoRestart | Should Be $false
     }
 }
+
+Describe 'Адрес ПК: настоящая сеть, а не виртуальный адаптер' {
+    It 'Wi-Fi со шлюзом важнее туннеля happ-xray и Tailscale' {
+        $pick = Select-LanIp @(
+            @{ Ip = '172.19.0.1'; Gateway = $false; Virtual = $true },
+            @{ Ip = '100.75.209.90'; Gateway = $false; Virtual = $false },
+            @{ Ip = '192.168.31.25'; Gateway = $true; Virtual = $false })
+        $pick | Should Be '192.168.31.25'
+    }
+    It 'без сети цеха — Tailscale; адаптер без шлюза ниже Tailscale; 169.254 и виртуальные не берутся' {
+        Select-LanIp @(
+            @{ Ip = '169.254.10.1'; Gateway = $true; Virtual = $false },
+            @{ Ip = '192.168.250.115'; Gateway = $false; Virtual = $false },
+            @{ Ip = '100.64.1.2'; Gateway = $false; Virtual = $false }) | Should Be '100.64.1.2'
+        Select-LanIp @(@{ Ip = '172.19.0.1'; Gateway = $true; Virtual = $true }) | Should Be ''
+        Select-LanIp @(
+            @{ Ip = '172.20.0.5'; Gateway = $true; Virtual = $false },
+            @{ Ip = '10.0.0.7'; Gateway = $true; Virtual = $false }) | Should Be '10.0.0.7'
+    }
+    It 'Get-LanIp: туннель happ-xray со «шлюзом» 0.0.0.0 не выбирается' {
+        Mock Get-NetIPConfiguration { @(
+            [pscustomobject]@{ InterfaceAlias = 'happ-xray'; InterfaceDescription = 'Happ Tunnel'; NetAdapter = [pscustomobject]@{ Status = 'Up' }
+                IPv4DefaultGateway = @([pscustomobject]@{ NextHop = '0.0.0.0' }); IPv4Address = @([pscustomobject]@{ IPAddress = '172.19.0.1' }) },
+            [pscustomobject]@{ InterfaceAlias = 'Wi-Fi'; InterfaceDescription = 'MediaTek Wi-Fi'; NetAdapter = [pscustomobject]@{ Status = 'Up' }
+                IPv4DefaultGateway = @([pscustomobject]@{ NextHop = '192.168.31.1' }); IPv4Address = @([pscustomobject]@{ IPAddress = '192.168.31.25' }) }) }
+        Get-LanIp | Should Be '192.168.31.25'
+    }
+}

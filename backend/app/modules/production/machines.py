@@ -31,8 +31,24 @@ KIND_OB019 = "ob019_modbus"
 KINDS = (KIND_OB019,)
 # The ОБ an ERP bridge exists for (inventory number → kind). Others are refused until a bridge is written for them.
 SUPPORTED = {"ОБ.019": KIND_OB019}
+
+# ОБ whose bridge is planned but not written yet: shown in «Станки» as «Мост не установлен» (owner 18.11.2026), never
+# accepted as a reporter. ОБ.099 — servo crimp press BZW (Omron CP2E, BZW2.5 on its PC; docs/data/ob099-*). The
+# catalogue keeps it as ОБ.099.1/ОБ.099.2, so the row takes its name from those units.
+@dataclass(frozen=True)
+class PlannedMachine:
+    device: str
+    pc: str = ""
+    ip: str = ""
+
+
+PLANNED = {"ОБ.099": PlannedMachine(device="ПЛК пресса", pc="DESKTOP-K6M7O0U", ip="192.168.1.82")}
 LINK_STATES = ("ok", "port_busy", "no_plc", "no_service")
-KIND_NAMES = {KIND_OB019: "Мост ERP"}
+# One name for every ERP agent on a PC (owner 18.11.2026: «Мост ERP» next to «Агент печати» confused him); the part
+# after «·» says what it does there. The bridge and the print agent are still two programs — merging them is later.
+AGENT_NAME = "Агент ERP"
+AGENT_PARTS = ("печать", "приборы", "станок")
+KIND_NAMES = {KIND_OB019: f"{AGENT_NAME} · станок"}
 DEVICE_NAMES = {KIND_OB019: "ПЛК линии резки"}
 
 # Registers the ОБ.019 bridge may read and send (Dn = holding register n). Mirrors `$script:Allowed` in
@@ -69,7 +85,7 @@ LINK_TEXTS = {
     "no_plc": ("ПЛК не отвечает", "danger"),
     "no_service": ("Служба mbd на ПК не отвечает", "danger"),
     "stale": ("Нет связи с ПК станка", "danger"),
-    "not_installed": ("Мост не установлен", "neutral"),
+    "not_installed": ("Агент не установлен", "neutral"),
 }
 
 
@@ -192,12 +208,12 @@ def report(session: Session, *, equipment_id: UUID, inventory: str, token_id: UU
         raise MachineReportInvalid("Неизвестное состояние связи")
     boot = _clean(snapshot.boot, 64)
     if not boot or snapshot.seq < 0:
-        raise MachineReportInvalid("Нужны идентификатор запуска моста и номер снимка")
+        raise MachineReportInvalid("Нужны идентификатор запуска агента станка и номер снимка")
     link, bound = session.get(MachineLinkRow, equipment_id), False
     if link is None:
         taken = session.scalar(select(MachineLinkRow.inventory_number).where(MachineLinkRow.token_id == token_id))
         if taken is not None:
-            raise MachineRefused(f"Токен моста уже привязан к {taken}")
+            raise MachineRefused(f"Токен агента станка уже привязан к {taken}")
         try:
             with session.begin_nested():
                 session.add(MachineLinkRow(
@@ -209,7 +225,7 @@ def report(session: Session, *, equipment_id: UUID, inventory: str, token_id: UU
             pass
         link = session.get(MachineLinkRow, equipment_id)
         if link is None:
-            raise MachineRefused(f"{inventory} уже привязан к другому мосту")
+            raise MachineRefused(f"{inventory} уже привязан к другому агенту станка")
     if link.token_id != token_id or link.machine_id != machine_id:
         raise MachineRefused(f"Этот ПК или токен не привязан к {link.inventory_number}")
     details = {
