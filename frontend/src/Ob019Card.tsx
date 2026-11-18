@@ -85,14 +85,14 @@ export function Ob019CardView({ card }: { card: MachineCard }) {
     </p>
     {card.error && card.link.code !== "ok" && <p className="warning-inline">{card.error}</p>}
     {!blocks
-      ? <p className="empty">Нет данных ПЛК — мост на связи, но станок ещё не ответил</p>
+      ? <p className="empty">Нет данных ПЛК — агент на связи, но станок ещё не ответил</p>
       : <div className={`machine-grid${old ? " machine-old" : ""}`} aria-label={old ? "Последние полученные данные" : "Данные станка"}>
         <Facts title="Станок" facts={blocks[0]} />
         <Facts title="Задание и счётчики" facts={blocks[1]} />
         <Facts title="Провод" facts={blocks[2]} />
       </div>}
     <Facts title="Подключение" facts={[
-      ["ПК", plain(card.pc)], ["IP", plain(card.ip)], ["Версия моста", plain(card.bridge_version)],
+      ["ПК", plain(card.pc)], ["IP", plain(card.ip)], ["Версия агента", plain(card.bridge_version)],
       ["Служба Modbus", plain(card.service_version)],
     ]} />
   </>;
