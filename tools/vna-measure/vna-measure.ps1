@@ -12,6 +12,7 @@ $script:VnaToolVersion = '1.1.0'
 . (Join-Path $PSScriptRoot 'dsp.ps1')
 . (Join-Path $PSScriptRoot 's2vna.ps1')
 . (Join-Path $PSScriptRoot 'erp.ps1')
+. (Join-Path $PSScriptRoot 'norms.ps1')
 
 function ConvertFrom-VnaChain {
     param([Parameter(Mandatory)][string]$Text)
@@ -156,8 +157,8 @@ function Show-VnaInstrumentState {
         $correction = if ($trace.Correction -ceq 'COR') { 'COR' } else { 'нет' }
         Write-Host "Трасса $($trace.Index): $($trace.Parameter), $($trace.Format); шкала: деление=$($trace.PDIVision), уровень=$($trace.RLEVel), позиция=$($trace.RPOSition); коррекция: $correction"
     }
-    try { Assert-VnaChartScales $traces; Write-Host 'Шкалы стандартные.' }
-    catch { Write-Host 'Шкалы не стандартные — пункт 6' }
+    try { Assert-VnaScreen $traces; Write-Host 'Экран замера стандартный.' }
+    catch { Write-Host 'Экран не стандартный — пункт 6' }
     try {
         if (-not $Calibration) { throw 'В этом запуске калибровка не выполнялась.' }
         $calTime = [datetimeoffset]::Parse($Calibration.Time, [Globalization.CultureInfo]::InvariantCulture)
@@ -184,6 +185,14 @@ function Show-VnaInstrumentState {
         Write-Host 'Калибровки нет — выполните пункт 2'
         Write-Host $_.Exception.Message
     }
+}
+
+function Set-VnaMeasureScreen {
+    param($Connection, $Limits, [string]$BackupPath)
+    # The operator's screen is saved once, before the first change; «8» puts it back without touching calibration.
+    if (-not (Test-Path -LiteralPath $BackupPath)) { Backup-VnaScreen $Connection $BackupPath }
+    Set-VnaScreen $Connection $Limits
+    if ($Limits -and $Limits.Title) { Write-Host "Экран: $($Limits.Title)" }
 }
 
 function Restore-VnaOperatorState {
@@ -253,6 +262,7 @@ function Start-VnaMeasure {
     [void][IO.Directory]::CreateDirectory($DataDirectory)
     $lock = $null; $deviceMutex = $null; $deviceLocked = $false; $connection = $null; $backup = $null; $session = $null; $calibration = $null
     $backupPointer = Join-Path $DataDirectory 'operator-backup.json'
+    $screenBackup = Join-Path $DataDirectory 'screen-backup.json'
     $calLog = Join-Path $DataDirectory 'calibrations.jsonl'; $ledger = Join-Path $DataDirectory 'used-sweeps.jsonl'
     # Matings wait here until the ERP confirms them (see matings.ps1); item 7 resends them.
     $pendingDirectory = Join-Path $DataDirectory 'pending-matings'
@@ -283,9 +293,12 @@ function Start-VnaMeasure {
             $backup = $candidateBackup
             Write-Host "Есть невосстановленное состояние оператора: $($backup.Path). Калибровка прошлого запуска не используется."
         }
+        $norms = $null
+        try { $norms = Read-VnaNorms (Find-VnaNormsFile $PSScriptRoot) } catch { Write-Host $_.Exception.Message -ForegroundColor Yellow }
+        if (-not $norms) { Write-Host 'Нет rf-norms.json рядом с программой: линии допуска на экране не показываются.' -ForegroundColor Yellow }
         $running = $true
         while ($running) {
-            Write-Host "`n1 Проверить прибор и АКМ`n2 Калибровка АКМ`n3 Контроль нагрузкой`n4 Замер переходника`n5 Вернуть настройки оператора`n6 Применить шкалы графиков`n7 Отправить сочленения в ERP`n0 Выход"
+            Write-Host "`n1 Проверить прибор и АКМ`n2 Калибровка АКМ`n3 Контроль нагрузкой`n4 Замер переходника`n5 Вернуть настройки оператора`n6 Экран замера: все графики`n7 Отправить сочленения в ERP`n8 Вернуть прежний экран`n0 Выход"
             try {
                 switch (Read-Host 'Выберите действие') {
                     '1' { Show-VnaInstrumentState $connection $calibration }
@@ -308,7 +321,8 @@ function Start-VnaMeasure {
                                 $backup = [pscustomobject]@{ Path = $backupPath; VnaSerial = $info.VnaSerial }
                                 $backup | ConvertTo-Json | Set-Content -LiteralPath $backupPointer -Encoding UTF8
                             }
-                            Set-VnaProfile $connection
+                            if (-not (Test-Path -LiteralPath $screenBackup)) { Backup-VnaScreen $connection $screenBackup }
+                            Set-VnaProfile $connection (Get-VnaScreenLimits $norms $null)
                             $null = Invoke-VnaCalibration $connection
                             $info = Get-VnaDeviceInfo $connection
                             foreach ($field in 'VnaSerial', 'AcmSerial', 'VnaTemperature', 'VnaTemperatures', 'AcmTemperature') { $attempt[$field] = $info.$field }
@@ -368,6 +382,7 @@ function Start-VnaMeasure {
                                 [double]::IsNaN($parsed) -or [double]::IsInfinity($parsed) -or $parsed -le 0.01 -or $parsed -gt $FmaxHz / 1e9) { throw 'Частота должна быть > 0,01 ГГц и не выше -FmaxHz.' }
                             $band = $parsed * 1e9
                         }
+                        Set-VnaMeasureScreen $connection (Get-VnaScreenLimits $norms $item (Get-VnaItemInterfaces $session $item) $band) $screenBackup
                         $left = $null; $right = $null; $descriptions = @(); $fixtures = @($null, $null)
                         if ($chain.Left) { $fixture = Get-VnaFixtureData $session $chain.Left (Join-Path $DataDirectory 'fixtures') $band; $left = $fixture.Data; $fixtures[0] = $fixture; $descriptions += "слева $($fixture.Description)" }
                         if ($chain.Right) { $fixture = Get-VnaFixtureData $session $chain.Right (Join-Path $DataDirectory 'fixtures') $band; $right = $fixture.Data; $fixtures[1] = $fixture; $descriptions += "справа $($fixture.Description)" }
@@ -420,6 +435,7 @@ function Start-VnaMeasure {
                         $calibration = $null
                         Restore-VnaOperatorState -Connection $connection -Backup $backup
                         Remove-Item -LiteralPath $backupPointer -ErrorAction Stop
+                        Remove-Item -LiteralPath $screenBackup -ErrorAction SilentlyContinue
                         $backup = $null
                         Write-Host 'Настройки оператора восстановлены. Для следующего замера нужна новая калибровка.'
                     }
@@ -431,8 +447,8 @@ function Start-VnaMeasure {
                             $backup = [pscustomobject]@{ Path = $backupPath; VnaSerial = $serial }
                             $backup | ConvertTo-Json | Set-Content -LiteralPath $backupPointer -Encoding UTF8
                         }
-                        Set-VnaChartScales $connection
-                        Write-Host 'Шкалы графиков применены и проверены.'
+                        Set-VnaMeasureScreen $connection (Get-VnaScreenLimits $norms $null) $screenBackup
+                        Write-Host "Экран замера применён и проверен: графиков $(@(Get-VnaScreenTraces).Count), маркеры 1/3/6/12/18 ГГц."
                     }
                     '7' {
                         if (-not $session) {
@@ -442,8 +458,14 @@ function Start-VnaMeasure {
                         $sent = Sync-VnaPendingMatings $session $pendingDirectory
                         Write-Host "Сочленения: отправлено пакетов $($sent.Sent), отклонено $($sent.Rejected), ожидают $($sent.Left)."
                     }
+                    '8' {
+                        if (-not (Test-Path -LiteralPath $screenBackup)) { Write-Host 'Прежний экран не сохранялся.'; break }
+                        Restore-VnaScreen $connection $screenBackup
+                        Remove-Item -LiteralPath $screenBackup -ErrorAction Stop
+                        Write-Host 'Прежний экран возвращён; калибровка не тронута. Для замера снова выберите 6.'
+                    }
                     '0' { $running = $false }
-                    default { Write-Host 'Выберите пункт 0–7.' }
+                    default { Write-Host 'Выберите пункт 0–8.' }
                 }
             } catch { Write-Host $_.Exception.Message -ForegroundColor Red }
         }
@@ -452,6 +474,7 @@ function Start-VnaMeasure {
             if ($backup -and $connection -and (Confirm-VnaAction 'Вернуть настройки оператора перед выходом?')) {
                 Restore-VnaOperatorState -Connection $connection -Backup $backup
                 Remove-Item -LiteralPath $backupPointer -ErrorAction Stop
+                Remove-Item -LiteralPath $screenBackup -ErrorAction SilentlyContinue
                 Write-Host 'Настройки оператора восстановлены.'
             }
         } finally {
