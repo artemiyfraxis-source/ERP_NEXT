@@ -47,6 +47,19 @@ def loss_db(magnitude: float) -> float:
     return max(0.0, -20 * math.log10(magnitude)) if magnitude > 0 else math.inf
 
 
+TRANSFER_TITLE = "Передача, худшее из S21 и S12, дБ"
+
+
+def transfer_points(measured) -> tuple[tuple[float, float], ...]:
+    """|S| of transmission per frequency, the worse (smaller) of S21 and S12 — loss is judged on both directions
+    (СТО ФРАК-002-2026 п. 13.1). A file without S12 falls back to S21 alone."""
+    forward = measured.points("S21")
+    if not any(trace.name == "S12" for trace in measured.traces):
+        return tuple(forward)
+    backward = dict(measured.points("S12"))
+    return tuple((frequency, min(value, backward.get(frequency, value))) for frequency, value in forward)
+
+
 # A test frequency outside the measured span by more than this is «no point»; inside, the nearest measured point is used.
 TEST_FREQUENCY_TOLERANCE_GHZ = 0.05
 # Without a VNA loss uncertainty (model unknown) an excess smaller than this is reported as a border, not a failure.
@@ -537,7 +550,7 @@ def loss_uncertainty_for(model: str) -> LossUncertainty | None:
 
 @dataclass(frozen=True)
 class LossAssessment:
-    """Insertion loss |S21| against the loss norm by the same rule as VSWR; with the VNA unknown the uncertainty is
+    """Insertion loss (the worse of |S21| and |S12|) against the loss norm by the same rule as VSWR; with the VNA unknown the uncertainty is
     LOSS_BORDER_FALLBACK_DB (owner decision 18.11)."""
     norm: LossNorm | None
     status: str                    # "pass" | "border" | "fail" | "below_accuracy" | "none" | "no_points"
@@ -587,7 +600,7 @@ class LossAssessment:
 
 
 def _judged_loss(measured, norm: LossNorm):
-    points = [(frequency / 1e9, loss_db(magnitude)) for frequency, magnitude in measured.points("S21")]
+    points = [(frequency / 1e9, loss_db(magnitude)) for frequency, magnitude in transfer_points(measured)]
     judged = [(ghz, value, limit) for ghz, value in points if (limit := norm.limit(ghz)) is not None]
     if points:
         low, high = points[0][0], points[-1][0]
@@ -600,7 +613,7 @@ def _judged_loss(measured, norm: LossNorm):
 
 def assess_loss(measured, norm: LossNorm | None, uncertainty: LossUncertainty | None = None, *,
                 repeated: bool = False) -> LossAssessment:
-    """Every measured S21 point the banded norm covers, and the nearest point to each test frequency."""
+    """Every measured transmission point (worse of S21/S12) the banded norm covers, and the nearest point to each test frequency."""
     if norm is None:
         return LossAssessment(None, "none")
     judged = _judged_loss(measured, norm)

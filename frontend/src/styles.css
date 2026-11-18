@@ -808,6 +808,8 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .instrument-window .instrument-file a { color: var(--primary); }
 .instrument-rf p { overflow-wrap: anywhere; }
 @media (pointer: coarse) { .instrument-rf button { min-height: 40px; } }
+.instrument-control { margin: 0 0 8px; font-variant-numeric: tabular-nums; }
+.instrument-control.tone-danger { font-weight: 600; }
 .instrument-mating-ends { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 8px 32px; }
 .instrument-mating-end { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-top: 1px solid var(--border); }
 .instrument-mating-count { display: grid; gap: 2px; font-variant-numeric: tabular-nums; }

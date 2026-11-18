@@ -220,7 +220,12 @@ function Assert-VnaProfile {
         foreach ($tail in $traceSettings.Keys) {
             $path = 'CALCulate(1).SELected.' + $tail
             if ($Apply) { Invoke-VnaComIo $Connection $path set $traceSettings[$tail] }
-            Assert-VnaSetting (Invoke-VnaComIo $Connection $path) $traceSettings[$tail] $path
+            $actual = Invoke-VnaComIo $Connection $path
+            # СТО ФРАК-002-2026 п. 11.1: smoothing lowers VSWR peaks — the measurement is refused, not warned.
+            if ($tail -eq 'SMOothing.STATe' -and $null -ne $actual -and (Test-VnaSettingOn $actual)) {
+                throw "Трасса ${parameter}: включено сглаживание — замер не принимается; выключите сглаживание (пункт 6)."
+            }
+            Assert-VnaSetting $actual $traceSettings[$tail] $path
         }
     }
 }
@@ -610,10 +615,27 @@ function Get-VnaTraceStatus {
     return $result
 }
 
+# СТО ФРАК-002-2026 п. 11.5 (РЭ ч. 1 п. 3.3.3): a calibration recomputed onto another grid — «К?» interpolated,
+# «К!» extrapolated — lowers accuracy; such a measurement is refused with its own reason, never written.
+function Get-VnaCorrectionRefusal {
+    param([string]$Parameter, $Status)
+    $code = ([string]$Status).Trim().ToUpperInvariant()
+    if ($code -ceq 'C?' -or $code -ceq 'RC?') { return "Трасса ${Parameter}: калибровка интерполирована («К?») — замер не принимается; выполните пункт 2 (калибровку) на сетке замера." }
+    if ($code -ceq 'C!' -or $code -ceq 'RC!') { return "Трасса ${Parameter}: калибровка экстраполирована («К!») — замер не принимается; выполните пункт 2 (калибровку) на полосе замера." }
+    return ''
+}
+
+function Test-VnaSettingOn {
+    param($Value)
+    if ($Value -is [bool]) { return $Value }
+    return ([string]$Value).Trim().ToUpperInvariant() -in @('1', 'ON', 'TRUE')
+}
+
 function Assert-VnaCorrection {
     param($Connection)
     $states = Get-VnaTraceStatus $Connection
     foreach ($parameter in 'S11','S21','S12','S22') {
+        if ($states.ContainsKey($parameter) -and ($refusal = Get-VnaCorrectionRefusal $parameter $states[$parameter])) { throw $refusal }
         if (-not $states.ContainsKey($parameter) -or $states[$parameter] -cne 'COR') { throw "Нет полной коррекции $parameter; калибровки нет — выполните пункт 2." }
     }
     if (-not $Connection.Offline) { Assert-VnaSetting (Invoke-VnaComIo $Connection 'SENSe(1).CORRection.STATe') $true 'коррекция канала' }

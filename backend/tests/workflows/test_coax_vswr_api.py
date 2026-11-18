@@ -96,14 +96,38 @@ def _setup(client, norm=NORM):
 def test_capture_settings_are_kept_in_existing_measurement_metadata(production_api):
     client, _ = production_api
     _, task, instrument = _setup(client)
-    settings = {"points": 4, "smoothing_enabled": True, "correction_enabled": False,
-                "correction_status": "C?", "s_parameter": "S11", "unavailable": ["averaging_factor"]}
+    settings = {"points": 4, "smoothing_enabled": False, "correction_enabled": True,
+                "correction_status": "COR", "s_parameter": "S11", "unavailable": ["averaging_factor"]}
     response = client.post("/api/production/vswr", json=_body(task, instrument, GOOD, capture_settings=settings))
     assert response.status_code == 200, response.text
     measurement = response.json()["measurement"]
     assert measurement["file_meta"]["capture_settings"] == settings
     serials = client.get(f"/api/production/vswr/tasks/{task['id']}").json()["serials"]
     assert serials[0]["latest"]["file_meta"]["capture_settings"] == settings
+
+
+@pytest.mark.parametrize(("settings", "reason"), [
+    ({"correction_status": "C?"}, "«К?»"), ({"correction_status": "RC?"}, "«К?»"),
+    ({"correction_status": "C!"}, "«К!»"), ({"correction_status": "RC!"}, "«К!»"),
+    ({"correction_status": "COR", "smoothing_enabled": True}, "сглаживание"),
+])
+def test_interpolated_calibration_or_smoothing_is_refused_not_warned(production_api, settings, reason):
+    """СТО ФРАК-002-2026 п. 11.1, 11.5: «К?», «К!» и сглаживание — замер не принимается, попытка не создаётся."""
+    client, _ = production_api
+    _, task, instrument = _setup(client)
+    response = client.post("/api/production/vswr", json=_body(task, instrument, GOOD, capture_settings={**settings, "s_parameter": "S11"}))
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"].startswith("Замер не принят: ") and reason in response.json()["detail"]
+    assert client.get(f"/api/production/vswr/tasks/{task['id']}/serials/1").json()["measurements"] == []
+
+
+def test_verified_capture_with_smoothing_is_refused_whatever_the_client_sends(production_api):
+    client, _ = production_api
+    _, task, instrument = _setup(client)
+    job_id = _capture_job(instrument, GOOD, capture_settings={"smoothing_enabled": True, "s_parameter": "S11"})
+    response = client.post("/api/production/vswr", json=_body(task, instrument, GOOD, capture_job_id=job_id,
+                                                              capture_settings={"smoothing_enabled": False}))
+    assert response.status_code == 422 and "сглаживание" in response.json()["detail"]
 
 
 def test_two_end_api_result_mapping_replay_and_passport(production_api):
@@ -212,7 +236,7 @@ def _capture_job(instrument, content, **changes):
         values = dict(id=job_id, status="done", kind="vna", source="s2vna", requested_by=str(MASTER_ID),
             created_at=NOW, claimed_at=NOW, finished_at=NOW, target_machine_id="capture-pc",
             instrument_id=UUID(instrument["id"]), capture_content=content,
-            capture_settings={"smoothing_enabled": True, "s_parameter": "S11"})
+            capture_settings={"smoothing_enabled": False, "correction_status": "COR", "s_parameter": "S11"})
         values.update(changes)
         uow.session.add(ScanJobRow(**values))
         uow.commit()
@@ -258,7 +282,7 @@ def test_neither_client_settings_nor_verified_capture_bypass_customer_coverage(p
     assert measurement["band_mhz"] == [1000, 3000]
     assert measurement["verdict"] == "fail" and not measurement["complete"]
     assert "не покрывает" in measurement["file_meta"]["capture_warnings"][0]
-    assert measurement["file_meta"]["capture_settings"]["smoothing_enabled"] is True
+    assert measurement["file_meta"]["capture_settings"]["correction_status"] == "COR"  # the job's, not the client's
 
 
 @pytest.mark.parametrize("case", ["missing", "owner", "instrument", "bytes", "pending"])

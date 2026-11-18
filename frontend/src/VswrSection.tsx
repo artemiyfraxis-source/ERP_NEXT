@@ -17,7 +17,7 @@ import { formatDate, formatNumber } from "./format";
 import { PageWindow } from "./PageWindow";
 import { StatusChip } from "./StatusChip";
 import { VswrChart } from "./VswrChart";
-import { VnaCapture, VnaSettings } from "./vnaCapture";
+import { VnaCapture, VnaSettings, captureRefusals } from "./vnaCapture";
 
 /* «Замеры КСВН» в «ОТК» (T4): задание коаксиальной сборки → таблица изделий с последним замером. Замер грузится файлом
    ВАЦ (.s1p / .csv / .txt) в окне; норму сервер берёт из ЭТК задания, а когда её там нет — вердикт и причину пишет
@@ -226,12 +226,13 @@ function VswrUploadWindow({ task, norm, row, instruments, close, onSaved, canRej
   const [result, setResult] = useState<VswrMeasurement | null>(null);
   const savedCaptureSettings = result?.file_meta?.capture_settings ?? captureSettings;
   const savedCaptureWarnings = result?.file_meta?.capture_warnings ?? [];
+  const refusals = captureSettings ? captureRefusals(captureSettings) : [];
   const problems = uploadProblems({ instrumentId, file, bandFrom, bandTo, norm, verdict, reason });
   const undefinedNorm = norm.status !== "ok";
   const customer = norm.status === "ok" && norm.source === "customer";
 
   async function submit() {
-    if (!file || busy || capturing || problems.length) return;
+    if (!file || busy || capturing || problems.length || refusals.length) return;
     setBusy(true);
     setError("");
     try {
@@ -293,7 +294,7 @@ function VswrUploadWindow({ task, norm, row, instruments, close, onSaved, canRej
       {problems.length > 0 && <small className="danger-text vswr-problems">{problems.join(". ")}.</small>}
       <div className="form-actions">
         <button className="secondary small" onClick={close}>Отмена</button>
-        <button className="primary small" disabled={busy || capturing || problems.length > 0} onClick={() => void submit()}>{busy ? "Загрузка…" : "Загрузить замер"}</button>
+        <button className="primary small" disabled={busy || capturing || problems.length > 0 || refusals.length > 0} onClick={() => void submit()}>{busy ? "Загрузка…" : "Загрузить замер"}</button>
       </div>
     </>}
     {result && <>

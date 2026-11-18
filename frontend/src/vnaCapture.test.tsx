@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { productionApi, vnaCaptureApi, warehouseApi, type Principal, type ProductionInstrument, type VswrTaskOverview, type VswrMeasurement, type VnaCaptureJob, type VnaCaptureSettings } from "./api";
 import { VswrSection } from "./VswrSection";
-import { VnaCapture, captureWarnings, VnaSettings } from "./vnaCapture";
+import { VnaCapture, captureRefusals, captureWarnings, VnaSettings } from "./vnaCapture";
 import { setRightsPrincipal } from "./rights";
 
 const principal = (id: string): Principal => ({ user: { id, email: "", name: "", department: "" }, roles: [], permissions: {} });
@@ -220,19 +220,38 @@ it("passes the original Arinst s2p and the explicitly selected instrument throug
   await waitFor(() => expect(productionApi.uploadVswr).toHaveBeenCalledWith(expect.objectContaining({ instrument_id: "arinst", file_name: "кабель.s2p", file_base64: btoa(arinstTrace) })));
 });
 
-it("shows all four warnings without blocking an upload", async () => {
-  const warned = { ...settings, smoothing_enabled: true, correction_status: "C?", start_hz: 110e6, frequency_step_hz: 20e6 };
+it("shows the warnings without blocking an upload", async () => {
+  const warned = { ...settings, correction_status: "NONE", start_hz: 110e6, frequency_step_hz: 20e6 };
   vi.mocked(vnaCaptureApi.start).mockResolvedValue({ ...pending, status: "done", capture_settings: warned });
   await open(); chooseInstrument();
   for (const warning of captureWarnings(warned, overview.norm)) expect(await screen.findByText(warning)).toBeInTheDocument();
-  expect(captureWarnings(warned, overview.norm)).toHaveLength(4);
+  expect(captureWarnings(warned, overview.norm)).toHaveLength(3);
   await waitFor(() => expect(uploadButton()).toBeEnabled());
   fireEvent.click(uploadButton());
   await waitFor(() => expect(productionApi.uploadVswr).toHaveBeenCalled());
 });
 
-it.each(["NONE", "C?", "C!", "RC?", "RC!"])("warns for calibration status %s", (correction_status) => {
-  expect(captureWarnings({ ...settings, correction_status }, overview.norm)).toEqual(["Нет калибровки на этом диапазоне"]);
+it.each([
+  [{ correction_status: "C?" }, "«К?»"], [{ correction_status: "RC?" }, "«К?»"],
+  [{ correction_status: "C!" }, "«К!»"], [{ correction_status: "RC!" }, "«К!»"], [{ smoothing_enabled: true }, "сглаживание"],
+])("refuses a capture with %o: reason shown, upload blocked", async (changes, reason) => {
+  const refused = { ...settings, ...changes };
+  vi.mocked(vnaCaptureApi.start).mockResolvedValue({ ...pending, status: "done", capture_settings: refused });
+  await open(); chooseInstrument();
+  await screen.findByText("Выбран файл: vna.s1p");
+  const [refusal] = captureRefusals(refused);
+  expect(refusal).toContain(reason);
+  expect(screen.getByRole("alert")).toHaveTextContent(refusal);
+  expect(uploadButton()).toBeDisabled();
+  fireEvent.click(uploadButton());
+  expect(productionApi.uploadVswr).not.toHaveBeenCalled();
+});
+
+it("warns, not refuses, without any calibration status read; refuses nothing for a clean capture", () => {
+  expect(captureWarnings({ ...settings, correction_status: "NONE" }, overview.norm)).toEqual(["Нет калибровки на этом диапазоне"]);
+  expect(captureWarnings({ ...settings, correction_status: "C?" }, overview.norm)).toEqual([]);
+  expect(captureRefusals(settings)).toEqual([]);
+  expect(captureRefusals({})).toEqual([]);
 });
 
 it("does not fabricate OFF states, coverage or a length-based warning from missing settings", () => {
