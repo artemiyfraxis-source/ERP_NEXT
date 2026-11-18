@@ -21,6 +21,7 @@ from .mating_infrastructure import InstrumentMatingRow, MatingBatchRow, MatingRe
 from .matings import MAX_COUNT
 
 router = APIRouter(prefix="/api/production", tags=["production"])
+# The access gate comes before the unit of work in every signature: a refused caller gets 401/403, never 503.
 Factory = Annotated[Callable, Depends(production_uow_factory)]
 Editor = Annotated[Principal, Depends(production_quality_principal)]
 Now = Annotated[datetime, Depends(moscow_now)]
@@ -61,8 +62,8 @@ class BatchPayload(BaseModel):
 
 
 @router.get("/instruments/{instrument_id}/matings")
-def get_matings(instrument_id: UUID, factory: Factory,
-                _principal: Annotated[Principal, Depends(production_overview_principal)]):
+def get_matings(instrument_id: UUID, _principal: Annotated[Principal, Depends(production_overview_principal)],
+                factory: Factory):
     with factory() as uow:
         if uow.instruments.get(instrument_id) is None:
             raise HTTPException(404, "СИ не найдено")
@@ -78,7 +79,7 @@ def _audit(uow, event, principal, now):
 
 
 @router.post("/instruments/{instrument_id}/matings")
-def post_mating(instrument_id: UUID, payload: MatingPayload, factory: Factory, principal: Editor, now: Now):
+def post_mating(instrument_id: UUID, payload: MatingPayload, principal: Editor, factory: Factory, now: Now):
     try:
         with factory() as uow:
             uow.instruments.lock_tree()
@@ -97,7 +98,7 @@ def post_mating(instrument_id: UUID, payload: MatingPayload, factory: Factory, p
 
 
 @router.post("/matings/batch")
-def post_batch(payload: BatchPayload, factory: Factory, principal: Editor, now: Now):
+def post_batch(payload: BatchPayload, principal: Editor, factory: Factory, now: Now):
     """One measurement or calibration run = one source; a repeated POST of the same run changes nothing."""
     source = payload.source.strip()
     if not source:
