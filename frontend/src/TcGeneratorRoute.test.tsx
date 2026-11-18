@@ -19,8 +19,8 @@ function mockApi() {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/techcards/templates") return json({ metadata: null, items: [
-      { id: "cut", code: "CUT_WIRE_auto", side: "", title: "CUT_WIRE_auto | Резка", name: "Резка", category: "Резка", steps: 1, tooling: 1 },
-      { id: "prsA", code: "PRS", side: "A", title: "PRS_TERMINAL | Опрессовка терминалов (А)", name: "", category: "Опрессовка терминалов", steps: 1, tooling: 1 },
+      { id: "cut", code: "CUT_WIRE_auto", title: "CUT_WIRE_auto | Резка", name: "Резка", category: "Резка", steps: 1, tooling: 1 },
+      { id: "prsA", code: "PRS", title: "PRS_TERMINAL | Опрессовка терминалов (А)", name: "", category: "Опрессовка терминалов", steps: 1, tooling: 1 },
     ] });
     if (path.startsWith("/api/references/tech-operations?")) {
       const tab = new URLSearchParams(path.split("?")[1]).get("tab");
@@ -185,9 +185,8 @@ function mockUsb() {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/techcards/templates") return json({ metadata: null, items: [
-      { id: "cwc", code: "CUT_WIRE+1crimp", side: "", title: "CUT_WIRE+1crimp | Автомат резка + опрессовка", name: "", category: "Автомат резка + опрессовка", steps: 1, tooling: 1 },
-      { id: "insA", code: "INS_terminal_2.50", side: "A", title: "INS_terminal_2.50 | Монтаж терминалов (А)", name: "", category: "Монтаж терминалов", steps: 1, tooling: 1 },
-      { id: "insB", code: "INS_terminal_2.50", side: "B", title: "INS_terminal_2.50 | Монтаж терминалов (В)", name: "", category: "Монтаж терминалов", steps: 1, tooling: 1 },
+      { id: "cwc", code: "CUT_WIRE+1crimp", title: "CUT_WIRE+1crimp | Автомат резка + опрессовка", name: "", category: "Автомат резка + опрессовка", steps: 1, tooling: 1 },
+      { id: "ins", code: "INS_terminal_2.50", title: "INS_terminal_2.50 | Монтаж терминалов", name: "", category: "Монтаж терминалов", steps: 1, tooling: 1 },
     ] });
     if (path.startsWith("/api/references/tech-operations?")) {
       const tab = new URLSearchParams(path.split("?")[1]).get("tab");
@@ -246,7 +245,7 @@ it("USB: «Выше» on a block reorders the operations, the build sends that o
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
   const config = onBuild.mock.calls[0][0];
   expect(config.ops.map((op: { type: string; side?: string; templateId: string }) => [op.type, op.side ?? "", op.templateId])).toEqual([
-    ["cutWireCrimp", "A", "cwc"], ["insTerm", "B", "insB"], ["insTerm", "A", "insA"],
+    ["cutWireCrimp", "A", "cwc"], ["insTerm", "B", "ins"], ["insTerm", "A", "ins"],
   ]);
   expect(config.opOrder).toEqual(["cutWire", "insTermB1", "insTermA1"]);
   expect(config).not.toHaveProperty("route");
