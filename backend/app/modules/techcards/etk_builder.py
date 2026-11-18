@@ -17,7 +17,7 @@ from .domain.route import (
     Block, Route, RouteError, RouteOp, chain_route, derive_route, parse_route, route_json, route_levels, route_totals,
 )
 from .etk_marking import apply_marking, mark_length, mark_kind, TUBE_KINDS
-from .etk_heat_shrink import PLACEHOLDER as SHRINK_PLACEHOLDER, apply_requirements
+from .etk_heat_shrink import PLACEHOLDER as SHRINK_PLACEHOLDER, apply_requirements, material_association
 from .operation_cards import FORMER_PAIR_CODES, OperationCardTemplate, resolve_template_id
 from .project_cards import CUSTOM_OP
 
@@ -2381,10 +2381,42 @@ def _short_marks(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[Mappi
     return marks or [mark for mark in _list(_coax(config).get("marks")) if isinstance(mark, Mapping)]
 
 
+# A BOM name copied from a web shop: «ТУТ (HF)-4/2 прозр КВТ- Трубка термоусадочная … купить - цена, фото … Доставка».
+_SHOP_WORDS = re.compile(r"купить|цена|доставка|характеристик", re.IGNORECASE)
+_SHOP_TAIL = re.compile(r"[-–—]\s*Трубка термоусадочная|\bкупить\b", re.IGNORECASE)
+
+
+def clean_material_name(name: object) -> str:
+    """The material name without a shop listing tail (its head stays); a plain name — as it is."""
+    text = str(name or "").strip()
+    if not _SHOP_WORDS.search(text):
+        return text
+    return re.sub(r"[\s\-–—]+$", "", _SHOP_TAIL.split(text, maxsplit=1)[0]).strip()
+
+
 def _tube_material(config: Mapping[str, Any], protective: bool) -> str:
-    """The article first: a BOM name may be a whole shop listing."""
+    """The article first: a BOM name may be a whole shop listing (then only its clean head)."""
     coax = _coax(config)
-    return str(coax.get("tutArt") or coax.get("tutName") or ("прозрачная ТУТ" if protective else "ТУТ")).strip()
+    return (str(coax.get("tutArt") or "").strip() or clean_material_name(coax.get("tutName"))
+            or ("прозрачная ТУТ" if protective else "ТУТ"))
+
+
+def _short_shrink_op(op: Mapping[str, Any], config: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Short cards name the shrink material without a shop listing — in the requirement step and its fields alike, so a
+    re-derived requirement still matches the stored one."""
+    def clean(material: Mapping[str, Any]) -> dict[str, Any]:
+        name = clean_material_name(material.get("name"))
+        return {**material, "name": "" if name == str(material.get("article") or "").strip() else name}
+
+    materials = material_association(op, config)
+    result = dict(op)
+    if materials:
+        result["shrinkMaterials"] = [clean(material) for material in materials]
+    if isinstance(op.get("shrinkRequirements"), list):
+        result["shrinkRequirements"] = [{**item, "material": clean(item["material"])}
+                                        if isinstance(item, Mapping) and isinstance(item.get("material"), Mapping) else item
+                                        for item in op["shrinkRequirements"]]
+    return result
 
 
 def _tube_per_assembly(groups: Sequence[Mapping[str, Any]]) -> str:
@@ -2464,7 +2496,8 @@ def _short_cut(op: Mapping[str, Any], config: Mapping[str, Any], fields: Mapping
     cables = int(_coax_cables(config))
     per = f" ({_cables_word(cables)} на сборку)" if cables > 1 else ""
     steps.append(_step("Операция", f"Запустить партию{per}; " + ("разделанные концы уложить" if sides else "отрезки уложить")
-                       + " без перегибов и смятия, соблюдая радиус изгиба кабеля."))
+                       + " без перегибов и смятия; радиус изгиба не менее двух наружных диаметров кабеля "
+                         "(ГОСТ 23592-96, п. 4.2.4)."))
     return steps
 
 
@@ -2510,8 +2543,8 @@ def _short_tut_cut(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dic
                                "трубки. Выполнить 2–3 пробных реза.")]
     if groups:
         # production.cutting recognises exactly these batch lines (grouping across batch sizes): keep their wording.
-        quantity, named = _part_quantity(config), str(_coax(config).get("tutName") or _coax(config).get("tutArt") or "ТУТ")
-        steps.extend(_step("Операция", f"Нарезать {named}: {_coax_tube_text(group, quantity)}.") for group in groups)
+        quantity = _part_quantity(config)
+        steps.extend(_step("Операция", f"Нарезать {material}: {_coax_tube_text(group, quantity)}.") for group in groups)
         lengths = "; ".join(f"{_format(group['length'])} мм ({'центральные' if group['place'] == 'middle' else 'концевые'})"
                             for group in groups)
     else:
@@ -2685,6 +2718,7 @@ def _typed_operation(
     if label and operation["card"] is not None and operation["type"].startswith("coax"):
         # FAKRA/HFM (генератор 25.10): у каждой операции своё название («Обжим центрального контакта (А)»), а не общее имя карты.
         operation["card"]["name"] = label
+    short = None
     if operation["card"] is not None:
         if printer_labels:
             tooling = operation["card"]["tooling"]
@@ -2722,7 +2756,7 @@ def _typed_operation(
     if op.get("type") == "insMark" and _kd_marks(_mark_items(op)):
         # Маркировка по КД: ход операции, дефекты, оборудование и время — по видам меток (etk_marking).
         apply_marking(operation, op, _mark_items(op), _part_quantity(config), warnings)
-    apply_requirements(operation, op, config)
+    apply_requirements(operation, _short_shrink_op(op, config) if short is not None else op, config)
     return operation
 
 

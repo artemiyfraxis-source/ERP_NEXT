@@ -131,6 +131,28 @@ def test_protective_cutting_key_ignores_batch_size_but_keeps_manual_instructions
     assert manual.key != first.key
 
 
+def test_short_card_protective_cut_groups_across_batch_sizes_by_article():
+    from app.modules.techcards.etk_builder import build_etk
+    from tests.techcards.test_etk_coax_fakra import FRESH, _fresh_cards
+
+    config = deepcopy(FRESH[0]["config"])
+    assert config["coax"]["shortCards"] is True
+    config["coax"]["tutName"] = "ТУТ (HF)-4/2 прозр КВТ- Трубка термоусадочная купить - цена"  # BOM name ≠ article
+
+    def issued(quantity):
+        config["partQty"] = quantity
+        doc = build_etk(config, _fresh_cards(config))
+        for op in doc["operations"]:
+            op["card"]["tooling"] = [{"section": "Оборудование", "inventory_number": "ОБ.1"}]
+        return doc
+
+    first, why = recipe(issued(15))
+    assert first is not None, why
+    second, why = recipe(issued(20))
+    assert second is not None, why
+    assert first.key == second.key
+
+
 def test_real_fakra_recipe_ignores_length_and_labels_but_keeps_boundaries(fakra_document):
     original = deepcopy(fakra_document)
     first, why = recipe(fakra_document)

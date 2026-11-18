@@ -154,9 +154,31 @@ def test_plain_tube_uses_the_article_and_the_saved_length():
     put_on = next(op for op in ops if op["type"] == "coaxInsTut")
     assert put_on["card"]["steps"][0]["text"] == "Надеть ТУТ 4/2мм, прозрачная до монтажа разъёмов: 2 отрезка по 20 мм на сборку."
     assert put_on["card"]["steps"][-1]["tolerance"] == "ТУТ 4/2мм, прозрачная: 20 мм ×2"
-    # The BOM listing name stays out of the own steps (the material requirement names both, as before).
-    own = [step for op in ops if op["type"] in COMMON for step in op["card"]["steps"] if not step.get("material_requirement")]
-    assert "купить" not in json.dumps(own, ensure_ascii=False)
+    steps = json.dumps([op["card"]["steps"] for op in ops if op["type"] in COMMON], ensure_ascii=False)
+    assert "купить" not in steps and "Доставка" not in steps
+    heat = next(op for op in ops if op["type"] == "coaxHeat")
+    assert heat["card"]["steps"][0]["text"].startswith("Температура усадки материала: ТУТ 4/2мм, прозрачная · ТУТ (HF)-4/2 прозр КВТ:")
+
+
+LISTING = ("ТУТ (HF)-4/2 прозр КВТ- Трубка термоусадочная ТУТ (HF)-4/2 прозр (КВТ) купить - цена, фото, характеристики - "
+           "Доставка по Москве и РФ")
+
+
+def test_protective_tube_never_shows_the_shop_listing():
+    config = deepcopy(FRESH["КБ1"])
+    config["coax"]["tutName"] = LISTING
+    ops = {op["code"]: op for op in _build(config)["operations"]}
+    for code in ("CUT_TUT_short", "INS_TUT", "HEAT_TYT_short"):
+        text = json.dumps(ops[code]["card"]["steps"], ensure_ascii=False)
+        assert "купить" not in text and "Доставка" not in text, code
+    assert ops["CUT_TUT_short"]["card"]["steps"][1]["text"] == "Нарезать ТУТ 4/2мм, прозрачная: 30 отрезков по 35 мм (концевые)."
+    assert all("купить" not in item["name"] for item in ops["HEAT_TYT_short"]["fields"]["shrinkMaterials"])
+    assert _build(_build(config)["build_config"])["operations"] == _build(config)["operations"]
+
+
+def test_cut_keeps_the_bend_radius_rule():
+    steps = _build(deepcopy(FRESH["КБ1"]))["operations"][0]["card"]["steps"]
+    assert "радиус изгиба не менее двух наружных диаметров кабеля (ГОСТ 23592-96, п. 4.2.4)" in steps[-1]["text"]
 
 
 @pytest.mark.parametrize("norm,tolerance,text", [
