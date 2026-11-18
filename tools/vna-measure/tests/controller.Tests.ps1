@@ -227,14 +227,69 @@ Describe 'Offline complete session' {
     }
 }
 
+Describe 'Screen presets in the menu' {
+    It 'lists every preset with its fixed parameters and asks the ETK band and norm for an assembly' {
+        $script:answers = New-Object 'System.Collections.Generic.Queue[string]'
+        foreach ($answer in @('6','2','1–6000','1,32','т','0','н')) { $script:answers.Enqueue($answer) }
+        Mock Read-Host { if ($script:answers.Count -eq 0) { throw 'Unexpected extra prompt' }; $script:answers.Dequeue() }
+        $script:menuOutput = New-Object 'System.Collections.Generic.List[string]'
+        Mock Write-Host { param($Object); $script:menuOutput.Add([string]$Object) }
+        Start-VnaMeasure -Offline -DataDirectory (Join-Path $TestDrive 'preset-menu')
+        $output = $script:menuOutput -join "`n"
+        foreach ($name in 'ОТК — переход', 'ОТК — кабельная сборка', 'ОТК — один порт', 'Проверка калибровки \(нагрузка\)', 'Проверка кабелей \(шевеление\)', 'Подробно \(инженер\)') { $output | Should Match $name }
+        $output | Should Match '1601 точек; ПЧ 1 кГц \(точный отсчёт 300 Гц\); 0 дБм; усреднение откл\.'
+        $output | Should Match 'сглаживание откл\.'
+        $output | Should Match 'шкалы: S11 КСВН 1,00…max\(норма×1,15; 1,20\); S21 дБ 0…−0,5 дБ'
+        $output | Should Match 'S11 КСВН 1,00–1,50; S21 дБ 0…−3 дБ'
+        $output | Should Match 'S11 КСВН 1,00–1,10; S21 дБ 0…−0,5 дБ \(скрыт\)'
+        $output | Should Match 'S21 дБ 0…−0,3 дБ \(с памятью\); S21 фаза ±180°'
+        $output | Should Match 'S21 ГВЗ авто после каждой развёртки'
+        $output | Should Match 'Экран «ОТК — кабельная сборка»: 1–6000 МГц'
+        $output | Should Not Match '1,30|требование цеха'
+        $script:answers.Count | Should Be 0
+    }
+    It 'warns that the calibration is invalid after a preset with another band' {
+        $script:answers = New-Object 'System.Collections.Generic.Queue[string]'
+        foreach ($answer in @('2','д','6','3','1–6000','','','4','0','д')) { $script:answers.Enqueue($answer) }
+        Mock Read-Host { if ($script:answers.Count -eq 0) { throw 'Unexpected extra prompt' }; $script:answers.Dequeue() }
+        $script:menuOutput = New-Object 'System.Collections.Generic.List[string]'
+        Mock Write-Host { param($Object); $script:menuOutput.Add([string]$Object) }
+        Start-VnaMeasure -Offline -DataDirectory (Join-Path $TestDrive 'preset-recal')
+        $output = $script:menuOutput -join "`n"
+        $output | Should Match 'Калибровка не действует — откалибруйте заново'
+        $output | Should Match 'Нужна калибровка и успешный контроль нагрузкой'
+        $script:answers.Count | Should Be 0
+    }
+}
+
+Describe 'Display failure during a measurement' {
+    It 'warns and still measures when the item screen cannot be set' {
+        $script:answers = New-Object 'System.Collections.Generic.Queue[string]'
+        foreach ($answer in @('2','д','3','','','4','СИ.035','напрямую','','','н','0','д')) { $script:answers.Enqueue($answer) }
+        Mock Read-Host { if ($script:answers.Count -eq 0) { throw 'Unexpected extra prompt' }; return $script:answers.Dequeue() }
+        Mock New-VnaApplication { throw 'REAL COM FORBIDDEN' }
+        Mock Invoke-RestMethod { throw 'NETWORK FORBIDDEN' }
+        Mock Invoke-WebRequest { throw 'NETWORK FORBIDDEN' }
+        Mock Set-VnaMeasureScreen { throw 'S2VNA display error' }
+        $script:displayOutput = New-Object 'System.Collections.Generic.List[string]'
+        Mock Write-Host { param($Object); $script:displayOutput.Add([string]$Object) }
+        Start-VnaMeasure -Offline -DataDirectory (Join-Path $TestDrive 'display-failure')
+        $output = $script:displayOutput -join "`n"
+        $output | Should Match 'Экран замера не перестроен: S2VNA display error'
+        $output | Should Match 'КСВН сторона 1: '
+        $output | Should Match 'Локальный результат: '
+        $script:answers.Count | Should Be 0
+    }
+}
+
 Describe 'Instrument state verdicts' {
     BeforeEach {
         $script:stateContext = New-SafeVnaContext
         $script:stateContext.Calibration | Add-Member NoteProperty Result 'pass'
-        $traces = @(foreach ($parameter in 'S11','S21','S12','S22') {
-            $settings = Get-VnaChartScaleSettings $parameter
-            [pscustomobject]@{ Parameter = $parameter; Format = $(if ($parameter -in 'S11','S22') { 'SWR' } else { 'MLOG' })
-                PDIVision = $settings.PDIVision; RLEVel = $settings.RLEVel; RPOSition = $settings.RPOSition }
+        $traces = @(foreach ($spec in Get-VnaScreenTraces) {
+            $trace = [ordered]@{ Parameter = $spec.Parameter; Format = $spec.Format; PDIVision = $null; RLEVel = $null; RPOSition = $null }
+            foreach ($member in $spec.Scale.Keys) { $trace[$member] = $spec.Scale[$member] }
+            [pscustomobject]$trace
         })
         $script:stateConnection = [pscustomobject]@{ Offline = $true; Released = $false; Device = $script:stateContext.Device
             Traces = $traces; TraceStatus = $script:stateContext.States.Clone(); ProfileApplied = $true; Calibrated = $true }
@@ -252,7 +307,7 @@ Describe 'Instrument state verdicts' {
         $output | Should Match 'коррекция: COR'
         $output | Should Match 'Возраст калибровки: 10'
         $output | Should Match 'Калибровка действует'
-        $output | Should Match 'Шкалы стандартные'
+        $output | Should Match 'Экран замера стандартный'
         ($script:stateConnection.Traces | ConvertTo-Json -Compress) | Should Be $before
     }
     It 'reports missing calibration even when all live traces are COR' {
@@ -271,7 +326,7 @@ Describe 'Instrument state verdicts' {
     It 'reports nonstandard scales separately from a valid calibration' {
         $script:stateConnection.Traces[1].RPOSition = 5
         Show-VnaInstrumentState $script:stateConnection $script:stateContext.Calibration
-        ($script:stateOutput -join "`n") | Should Match 'Шкалы не стандартные — пункт 6'
+        ($script:stateOutput -join "`n") | Should Match 'Экран не стандартный — пункт 6'
         ($script:stateOutput -join "`n") | Should Match 'Калибровка действует'
     }
     It 'reports expired calibration and its age' {
@@ -311,18 +366,36 @@ Describe 'Instrument state verdicts' {
 }
 
 Describe 'Offline chart menu and lost correction' {
-    It 'applies menu six scales and restores the initial display without recalibrating' {
+    It 'applies the menu six screen and restores the initial display without recalibrating' {
         $script:answers = New-Object 'System.Collections.Generic.Queue[string]'
-        foreach ($answer in @('6','1','5','1','0')) { $script:answers.Enqueue($answer) }
+        foreach ($answer in @('6','1','','1','5','1','0')) { $script:answers.Enqueue($answer) }
         Mock Read-Host { if ($script:answers.Count -eq 0) { throw 'Unexpected extra prompt' }; $script:answers.Dequeue() }
         Mock Invoke-VnaCalibration { throw 'MUST NOT CALIBRATE' }
         $script:menuOutput = New-Object 'System.Collections.Generic.List[string]'
         Mock Write-Host { param($Object); $script:menuOutput.Add([string]$Object) }
         Start-VnaMeasure -Offline -DataDirectory (Join-Path $TestDrive 'chart-menu')
-        ($script:menuOutput -join "`n") | Should Match 'Шкалы графиков применены и проверены'
-        ($script:menuOutput -join "`n") | Should Match 'Шкалы стандартные'
-        ($script:menuOutput -join "`n") | Should Match 'Шкалы не стандартные — пункт 6'
+        ($script:menuOutput -join "`n") | Should Match 'Экран «ОТК — переход»: 10–18000 МГц; шкалы: S11 КСВН'
+        ($script:menuOutput -join "`n") | Should Match 'Экран замера стандартный'
+        ($script:menuOutput -join "`n") | Should Match 'Экран не стандартный — пункт 6'
+        (Test-Path -LiteralPath (Join-Path $TestDrive 'chart-menu\screen-backup.json')) | Should Be $false
         Assert-MockCalled Invoke-VnaCalibration -Times 0 -Exactly -Scope It
+        $script:answers.Count | Should Be 0
+    }
+    It 'returns only the previous screen with item eight and keeps the full operator backup' {
+        $script:answers = New-Object 'System.Collections.Generic.Queue[string]'
+        foreach ($answer in @('6','1','','8','1','0','н')) { $script:answers.Enqueue($answer) }
+        Mock Read-Host { if ($script:answers.Count -eq 0) { throw 'Unexpected extra prompt' }; $script:answers.Dequeue() }
+        Mock Invoke-VnaCalibration { throw 'MUST NOT CALIBRATE' }
+        $script:menuOutput = New-Object 'System.Collections.Generic.List[string]'
+        Mock Write-Host { param($Object); $script:menuOutput.Add([string]$Object) }
+        $folder = Join-Path $TestDrive 'screen-menu'
+        Start-VnaMeasure -Offline -DataDirectory $folder
+        $output = $script:menuOutput -join "`n"
+        $output | Should Match 'Прежний экран возвращён; калибровка не тронута'
+        $output | Should Match 'Трасс: 4'
+        $output | Should Match 'Экран не стандартный — пункт 6'
+        (Test-Path -LiteralPath (Join-Path $folder 'screen-backup.json')) | Should Be $false
+        (Test-Path -LiteralPath (Join-Path $folder 'operator-backup.json')) | Should Be $true
         $script:answers.Count | Should Be 0
     }
 }
