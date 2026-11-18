@@ -120,14 +120,15 @@ class RfRepository:
         current = self.session.get(RfDetailsRow, instrument_id)
         if (current.version if current else 0) != details.version:
             raise ConcurrentProductionUpdate("ВЧ-интерфейсы изменены другим пользователем — обновите запись")
-        from .mating_infrastructure import InstrumentMatingRow
+        # A side with mating history is a physical connector: it may not disappear or turn into another one.
+        from .mating_infrastructure import recorded_sides
         from .matings import end_names
         from .domain import ProductionValidationError
-        recorded = set(self.session.scalars(select(InstrumentMatingRow.end).where(InstrumentMatingRow.instrument_id == instrument_id)))
+        recorded = recorded_sides(self.session, instrument_id)
         if recorded - set(end_names(details)):
             raise ProductionValidationError("Нельзя удалить сторону с историей сочленений")
         before = self.get(instrument_id)
-        for end in recorded:
+        for end in sorted(recorded):
             position = 0 if end == "A" else 1
             if position < len(before.interfaces):
                 old = before.interfaces[position]

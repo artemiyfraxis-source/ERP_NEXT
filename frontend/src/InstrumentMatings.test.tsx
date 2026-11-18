@@ -4,15 +4,15 @@ import { InstrumentMatings } from "./InstrumentMatings";
 import type { InstrumentMatingsSnapshot } from "./api";
 
 const snapshot: InstrumentMatingsSnapshot = {
-  instrument_id: "adapter", resource: 3000, status: "warning",
+  instrument_id: "adapter", resource: 3000, status: "warning", has_connectors: true,
   ends: [
-    { end: "A", total: 2400, percent_used: 80, status: "warning", initial_recorded: true, can_initialize: false },
-    { end: "B", total: 0, percent_used: 0, status: "ok", initial_recorded: false, can_initialize: true },
+    { end: "A", total: 2400, version: 1, percent_used: 80, status: "warning", initial_recorded: true, can_initialize: false },
+    { end: "B", total: 0, version: 0, percent_used: 0, status: "ok", initial_recorded: false, can_initialize: true },
   ],
-  events: [{ id: "first", instrument_id: "adapter", end: "A", delta: 2400, kind: "initial", note: "Журнал", source: null, actor: "Иванов", created_at: "2026-11-17T09:00:00+03:00" }],
+  events: [{ id: "first", instrument_id: "adapter", end: "A", delta: 2400, total_after: 2400, kind: "initial", note: "Журнал", source: null, actor: "Иванов", created_at: "2026-11-17T09:00:00+03:00" }],
 };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-type Write = { end: "A" | "B"; delta: number; kind: string; note: string };
+type Write = { end: "A" | "B"; delta: number; kind: string; note: string; version?: number };
 function setup(initial = snapshot, writeStatus = 200) {
   let current = structuredClone(initial);
   const writes: Write[] = [];
@@ -22,7 +22,7 @@ function setup(initial = snapshot, writeStatus = 200) {
       writes.push(body);
       if (writeStatus !== 200) return json({ detail: "Сумма сочленений не может быть отрицательной" }, writeStatus);
       current = { ...current, ends: current.ends.map((end) => end.end === body.end
-        ? { ...end, total: end.total + body.delta, initial_recorded: end.initial_recorded || body.kind === "initial", can_initialize: false } : end) };
+        ? { ...end, total: end.total + body.delta, version: end.version + 1, initial_recorded: end.initial_recorded || body.kind === "initial", can_initialize: false } : end) };
       return json(current);
     }
     return json(current);
@@ -63,7 +63,7 @@ it("records a noted initial value once for a fresh end and warns the card about 
   expect(onDirty).toHaveBeenLastCalledWith(true);
   fireEvent.submit(screen.getByRole("form", { name: "Сочленения стороны B" }));
   await screen.findByRole("status");
-  expect(writes).toEqual([{ end: "B", delta: 142, kind: "initial", note: "Журнал смены" }]);
+  expect(writes).toEqual([{ end: "B", delta: 142, kind: "initial", note: "Журнал смены", version: 0 }]);
   expect(screen.queryByRole("button", { name: "Задать начальное значение стороны B" })).not.toBeInTheDocument();
   expect(onDirty).toHaveBeenLastCalledWith(false);
 });
@@ -77,12 +77,12 @@ it("requires a correction reason and prevents a negative total before sending", 
   expect(screen.getByLabelText("Причина исправления")).toHaveFocus();
   fireEvent.change(screen.getByLabelText("Причина исправления"), { target: { value: "Ошибка журнала" } });
   fireEvent.submit(screen.getByRole("form", { name: "Сочленения стороны A" }));
-  expect(screen.getByRole("alert")).toHaveTextContent("не может быть отрицательной");
+  expect(screen.getByRole("alert")).toHaveTextContent("не может быть отрицательным");
   expect(writes).toHaveLength(0);
   fireEvent.change(screen.getByLabelText("Изменение числа сочленений"), { target: { value: "-2" } });
   fireEvent.submit(screen.getByRole("form", { name: "Сочленения стороны A" }));
   await screen.findByRole("status");
-  expect(writes).toEqual([{ end: "A", delta: -2, kind: "correction", note: "Ошибка журнала" }]);
+  expect(writes).toEqual([{ end: "A", delta: -2, kind: "correction", note: "Ошибка журнала", version: 1 }]);
 });
 
 it("keeps a failed correction draft and shows the server error", async () => {
@@ -121,4 +121,31 @@ it("reloads after RF resource changes and exposes an honest load error with retr
   fireEvent.click(screen.getByRole("button", { name: "Обновить сочленения" }));
   await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
   expect(fetch).toHaveBeenCalledTimes(3);
+});
+
+it("opens initial and correction input in a modal window and closes it with Esc", async () => {
+  setup();
+  fireEvent.click(await screen.findByRole("button", { name: "Исправить сочленения стороны A" }));
+  const dialog = screen.getByRole("dialog", { name: "Исправление сочленений · сторона A" });
+  expect(within(dialog).getByLabelText("Причина исправления")).toBeInTheDocument();
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Исправить сочленения стороны B" })).not.toBeInTheDocument();
+});
+
+it("reloads the counter after a concurrent change instead of writing twice", async () => {
+  const { writes, fetch } = setup(snapshot, 409);
+  fireEvent.click(await screen.findByRole("button", { name: "Исправить сочленения стороны A" }));
+  fireEvent.change(screen.getByLabelText("Изменение числа сочленений"), { target: { value: "-1" } });
+  fireEvent.change(screen.getByLabelText("Причина исправления"), { target: { value: "Ошибка" } });
+  fireEvent.submit(screen.getByRole("form", { name: "Сочленения стороны A" }));
+  expect(await screen.findByRole("alert")).toBeInTheDocument();
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+  expect(writes).toEqual([{ end: "A", delta: -1, kind: "correction", note: "Ошибка", version: 1 }]);
+});
+
+it("shows nothing for an item without RF connectors and without history", async () => {
+  const { fetch, container } = setup({ ...snapshot, has_connectors: false, events: [] });
+  await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+  await waitFor(() => expect(container.querySelector(".instrument-matings")).toBeNull());
 });

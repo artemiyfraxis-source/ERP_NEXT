@@ -7,6 +7,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { formatDay, formatNumber } from "./format";
 import { PageWindow } from "./PageWindow";
 import { InstrumentRfInterfaces } from "./InstrumentRfInterfaces";
+import { InstrumentMatings } from "./InstrumentMatings";
 import { InstrumentLabelPrint } from "./InstrumentLabelPrint";
 
 const fileKinds: InstrumentFileKind[] = ["Паспорт", "Свидетельство о поверке", "Руководство", "Прочее"];
@@ -53,6 +54,9 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
   const [busy, setBusy] = useState(false);
   const [rfDirty, setRfDirty] = useState(false);
   const [rfBusy, setRfBusy] = useState(false);
+  const [matingsDirty, setMatingsDirty] = useState(false);
+  const [matingsBusy, setMatingsBusy] = useState(false);
+  const [rfRevision, setRfRevision] = useState(0);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [conflict, setConflict] = useState(false);
@@ -63,7 +67,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
   const [numberAttempt, setNumberAttempt] = useState(0);
   const verificationInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const dirty = rfDirty || JSON.stringify(draft) !== JSON.stringify(baseline);
+  const dirty = rfDirty || matingsDirty || JSON.stringify(draft) !== JSON.stringify(baseline);
   const accessory = draft.kind === "Принадлежность";
   const showVnaApp = !accessory && (Boolean(draft.vna_app) || /ВАЦ|VNA|векторн.*анализ|анализ.*(?:векторн|цеп)/i.test(`${draft.instrument_type} ${draft.name}`));
   const parents = instruments.filter((item) => item.kind === "Средство измерений" && item.id !== record?.id && !isDescendant(item, record?.id, instruments));
@@ -92,7 +96,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
   }, [dirty]);
 
   function requestClose() {
-    if (!busy && !rfBusy && (!dirty || window.confirm("Закрыть без сохранения изменений?"))) close();
+    if (!busy && !rfBusy && !matingsBusy && (!dirty || window.confirm("Закрыть без сохранения изменений?"))) close();
   }
   const field = <K extends keyof InstrumentInput>(key: K, value: InstrumentInput[K]) => setDraft((current) => ({ ...current, [key]: value }));
   const text = (key: "inventory_number" | "name" | "instrument_type" | "serial_number" | "manufacturer" | "doc_designation" | "storage_location" | "warehouse_grn", label: string, required = false) =>
@@ -227,8 +231,11 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
       <InstrumentRfInterfaces instrumentId={record?.id} locked={busy} onDirty={setRfDirty} onBusy={setRfBusy}
         onSaved={async (suggestion) => {
           if (suggestion !== undefined) setRecord((current) => current ? { ...current, suggested_serial_number: suggestion } : current);
+          setRfRevision((value) => value + 1);
           await onChanged();
         }} />
+      {record && <InstrumentMatings instrumentId={record.id} locked={busy || rfBusy} refreshKey={rfRevision} onChanged={onChanged}
+        onDirty={setMatingsDirty} onBusy={setMatingsBusy} />}
       <section className="instrument-files"><h3>Файлы</h3>
         {record ? <>
           <div className="instrument-upload"><label>Вид файла<select disabled={busy} value={fileKind} onChange={(event) => setFileKind(event.target.value as InstrumentFileKind)}>{fileKinds.map((value) => <option key={value}>{value}</option>)}</select></label>
