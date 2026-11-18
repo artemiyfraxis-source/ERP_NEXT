@@ -336,7 +336,9 @@ _SHAPED_VALUES: dict[tuple[str, str], Any] = {
 }
 # Shaped values win over a CHECK's first `IN (…)` value; a table with a UNIQUE of shaped pairs gets no more rows than
 # there are pairs.
-_ROW_CAPS = {"warehouse_label_templates": len(_LABEL_TEMPLATE_KINDS) * len(_LABEL_FORMATS), "shipment_line_lots": 0}
+_ROW_CAPS = {"warehouse_label_templates": len(_LABEL_TEMPLATE_KINDS) * len(_LABEL_FORMATS), "shipment_line_lots": 0,
+              # A per-side chain (seq, running total) the generic filler cannot build; empty is a valid ledger.
+              "production_instrument_matings": 0, "production_mating_batches": 0}
 # One row per installation (CHECK `id = 1`): seeded with a single row (the label print agent's heartbeat, 0141, too).
 _SINGLE_ROW_TABLES = frozenset({"warehouse_label_settings", "warehouse_label_agent", "warehouse_upd_llm_settings"})
 

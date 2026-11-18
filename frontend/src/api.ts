@@ -1349,6 +1349,8 @@ export interface ProductionBox {
   confirmed_by: string | null;
   return_reason: string;
   qc_inspected?: boolean;
+  /** КБ коробки уехала целиком (отгружено ≥ заказано) — в «Очередь ОТК» не идёт. */
+  kb_shipped?: boolean;
 }
 
 export interface ProductionWorkSession {
@@ -1594,7 +1596,51 @@ export interface InstrumentRfDetails {
   f_min_ghz: number | null;
   max_points: number | null;
   kit_definition: string;
+  mating_resource?: number | null;
 }
+export type MatingStatus = "unknown" | "ok" | "warning" | "exhausted";
+export interface InstrumentMatingEnd {
+  end: "A" | "B";
+  total: number;
+  version: number;
+  percent_used: number | null;
+  status: MatingStatus;
+  initial_recorded: boolean;
+  can_initialize: boolean;
+}
+export interface InstrumentMatingEvent {
+  id: string;
+  instrument_id: string;
+  end: "A" | "B";
+  delta: number;
+  total_after: number;
+  kind: "measurement" | "calibration" | "manual" | "initial" | "correction";
+  note: string;
+  source: string | null;
+  actor: string;
+  created_at: string;
+}
+export interface InstrumentMatingsSnapshot {
+  instrument_id: string;
+  resource: number | null;
+  status: MatingStatus;
+  has_connectors: boolean;
+  ends: InstrumentMatingEnd[];
+  events: InstrumentMatingEvent[];
+}
+export interface InstrumentMatingInput {
+  end: "A" | "B";
+  delta: number;
+  kind: "manual" | "initial" | "correction";
+  note: string;
+  version?: number;
+}
+export const instrumentMatingsApi = {
+  get: (id: string) => api<InstrumentMatingsSnapshot>(`/api/production/instruments/${encodeURIComponent(id)}/matings`),
+  append: (id: string, input: InstrumentMatingInput) => api<InstrumentMatingsSnapshot>(`/api/production/instruments/${encodeURIComponent(id)}/matings`, {
+    method: "POST", body: JSON.stringify(input),
+  }),
+};
 export const rfInterfacesApi = {
   get: (id: string) => api<{ rf: InstrumentRfDetails }>(`/api/production/instruments/${encodeURIComponent(id)}/rf-interfaces`),
   save: (id: string, rf: InstrumentRfDetails) => api<{ rf: InstrumentRfDetails; suggested_serial_number?: string | null }>(`/api/production/instruments/${encodeURIComponent(id)}/rf-interfaces`, {
@@ -2266,7 +2312,6 @@ export interface TechcardRevision {
 export interface OperationCardSummary {
   id: string;
   code: string;
-  side: string;
   title: string;
   name: string;
   category: string;

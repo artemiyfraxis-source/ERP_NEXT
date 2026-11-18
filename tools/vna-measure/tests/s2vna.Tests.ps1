@@ -198,12 +198,13 @@ Describe 'S2VNA offline lifecycle' {
         $backup = Join-Path $script:offline 'operator-scales.sta'
         Backup-VnaState $connection $backup
         Set-VnaProfile $connection
-        Assert-VnaChartScales @(Get-VnaTraces $connection)
-        $connection.Traces[0].PDIVision | Should Be 0.1
-        $connection.Traces[1].PDIVision | Should Be 0.3
+        Assert-VnaScreen @(Get-VnaTraces $connection)
+        $connection.Traces.Count | Should Be 4
+        $connection.Traces[0].PDIVision | Should Be 0.02
+        $connection.Traces[1].PDIVision | Should Be 0.05
         Restore-VnaState $connection $backup
         ($connection.Traces | ConvertTo-Json -Compress) | Should Be $original
-        { Assert-VnaChartScales @(Get-VnaTraces $connection) } | Should Throw
+        { Assert-VnaScreen @(Get-VnaTraces $connection) } | Should Throw
     }
     It 'refuses an uncorrected offline trace after calibration' {
         $connection = New-VnaConnection -OfflineDirectory $script:offline
@@ -238,59 +239,143 @@ Describe 'S2VNA offline lifecycle' {
     }
 }
 
-Describe 'S2VNA chart scale COM readbacks' {
+Describe 'S2VNA measurement screen over mocked COM' {
     BeforeEach {
         $script:chartConnection = New-TestS2Connection
-        $script:chartValues = @{}
-        $script:chartSelected = 1
-        $script:ignoreScaleWrite = $false
-        foreach ($traceNumber in 1..4) {
-            $script:chartValues["DISPlay.WINDow(1).TRACe($traceNumber).Y.SCALe.PDIVision"] = 2.0
-            $script:chartValues["DISPlay.WINDow(1).TRACe($traceNumber).Y.SCALe.RLEVel"] = 5.0
-            $script:chartValues["DISPlay.WINDow(1).TRACe($traceNumber).Y.SCALe.RPOSition"] = 5
+        $script:VnaActivePreset = $script:VnaDefaultPreset; $script:VnaActiveScales = $null
+        $script:com = @{ 'CALCulate(1).PARameter(1).COUNt' = 4; 'DISPlay.SPLit' = 2; 'DISPlay.WINDow(1).SPLit' = 8
+            'DISPlay.WINDow(1).TITLe.DATA' = 'operator'; 'DISPlay.WINDow(1).TITLe.STATe' = $true }
+        foreach ($index in 1..4) {
+            $script:com["CALCulate(1).PARameter($index).DEFine"] = @('S11','S21','S12','S22')[$index - 1]
+            $script:com["T$index.FORMat"] = 'MLOG'
+            $script:com["DISPlay.WINDow(1).TRACe($index).Y.SCALe.PDIVision"] = 10.0
+            $script:com["DISPlay.WINDow(1).TRACe($index).Y.SCALe.RLEVel"] = 0.0
+            $script:com["DISPlay.WINDow(1).TRACe($index).Y.SCALe.RPOSition"] = 5.0
+            $script:com["T$index.LIMit.DATA"] = $(if ($index -eq 1) { [double[]]@(1, 1, 1e9, 2e9, 1.5, 1.5) } else { [double[]]@(0) })
+            $script:com["T$index.LIMit.STATe"] = $index -eq 1
+            $script:com["T$index.LIMit.DISPlay.STATe"] = $index -eq 1
         }
+        $script:com['T1.MARKer(1).STATe'] = $true; $script:com['T1.MARKer(1).X'] = 2e9
+        $script:com['T1.MARKer(2).STATe'] = $true; $script:com['T1.MARKer(2).X'] = 7e9
+        $script:comSelected = 1
+        $script:comWrites = New-Object 'System.Collections.Generic.List[string]'
+        $script:ignoreScaleWrite = $false
         Mock Invoke-VnaComIo {
             param($Connection,$Path,$Mode,$Value)
-            if ($Path -like '*COUNt') { return 4 }
-            if ($Path -match 'PARameter\(([1-4])\).DEFine$') { return @('S11','S21','S12','S22')[[int]$Matches[1] - 1] }
-            if ($Path -match 'PARameter\(([1-4])\).SELect$') { $script:chartSelected = [int]$Matches[1]; return }
-            if ($Path -like '*FORMat') { if ($script:chartSelected -in 1,4) { return 'SWR' }; return 'MLOG' }
-            if ($Path -like '*STATus') { return 'COR' }
-            if ($script:chartValues.ContainsKey($Path)) {
-                if ($Mode -eq 'set') {
-                    if (-not $script:ignoreScaleWrite) { $script:chartValues[$Path] = $Value }
+            if ($Path -match '^CALCulate\(1\)\.PARameter\((\d+)\)\.SELect$') { $script:comSelected = [int]$Matches[1]; return }
+            $key = $Path -replace '^CALCulate\(1\)\.SELected\.', "T$($script:comSelected)."
+            if ($key -like '*CORRection.STATus') { return 'COR' }
+            if ($Mode -eq 'call') { $script:comWrites.Add($Path); if ($Path -like '*Y.SCALe.AUTO') { $script:com[$Path] = 1 + [int]$script:com[$Path] }; return }
+            if ($Mode -eq 'set') {
+                $script:comWrites.Add($Path)
+                if ($script:ignoreScaleWrite -and $key -like 'DISPlay.WINDow(1).TRACe*') { return }
+                if ($key -match '^(T\d+)\.MARKer\((\d+)\)\.STATe$') {
+                    # S2VNA: switching marker n on switches on 1..n; switching it off switches off n..15.
+                    $trace = $Matches[1]; $number = [int]$Matches[2]
+                    $range = if ($Value) { 1..$number } else { $number..15 }
+                    foreach ($marker in $range) { $script:com["$trace.MARKer($marker).STATe"] = [bool]$Value }
                     return
                 }
-                return $script:chartValues[$Path]
+                $script:com[$key] = $Value
+                return
             }
-            throw "Unexpected IO: $Path"
+            return $script:com[$key]
         }
+        $script:screenLimits = [pscustomobject]@{ Title = 'СИ.035 · КСВН ≤ 1,05 + 0,005·F'
+            Swr = @([pscustomobject]@{ StartHz = 5e8; StopHz = 18e9; From = 1.0525; To = 1.14 },
+                    [pscustomobject]@{ StartHz = 1e7; StopHz = 18e9; From = 1.3; To = 1.3 })
+            Loss = @([pscustomobject]@{ Type = 2; StartHz = 5e8; StopHz = 18e9; From = -0.0212; To = -0.1273 }) }
     }
-    It 'writes and reads back all twelve commissioned scale properties' {
-        Set-VnaChartScales $script:chartConnection
-        $traces = @(Get-VnaTraces $script:chartConnection)
-        foreach ($trace in $traces) {
-            if ($trace.Parameter -in 'S11','S22') {
-                $trace.PDIVision | Should Be 0.1
-                $trace.RLEVel | Should Be 1.0
-                $trace.RPOSition | Should Be 0
-            } else {
-                $trace.PDIVision | Should Be 0.3
-                $trace.RLEVel | Should Be 0.0
-                $trace.RPOSition | Should Be 10
-            }
+    It 'shows twelve graphs, SWR limit lines and classic-frequency markers without touching sweep or calibration' {
+        Set-VnaScreen $script:chartConnection $script:screenLimits -Preset 'Подробно (инженер)'
+        $script:com['CALCulate(1).PARameter(1).COUNt'] | Should Be 12
+        $script:com['DISPlay.WINDow(1).SPLit'] | Should Be 15
+        $script:com['DISPlay.SPLit'] | Should Be 1
+        ((1..12 | ForEach-Object { $script:com["CALCulate(1).PARameter($_).DEFine"] }) -join ',') | Should Be 'S11,S21,S12,S22,S11,S21,S21,S22,S11,S21,S12,S22'
+        ((1..12 | ForEach-Object { $script:com["T$_.FORMat"] }) -join ',') | Should Be 'SWR,MLOG,MLOG,SWR,SMIT,PHAS,GDEL,SMIT,MLOG,MLOG,MLOG,MLOG'
+        (@($script:com['T1.LIMit.DATA']) -join ',') | Should Be '2,1,500000000,18000000000,1.0525,1.14,1,10000000,18000000000,1.3,1.3'
+        (@($script:com['T4.LIMit.DATA'])).Count | Should Be 11
+        $script:com['T1.LIMit.STATe'] | Should Be $true
+        (@($script:com['T2.LIMit.DATA']) -join ',') | Should Be '1,2,500000000,18000000000,-0.0212,-0.1273'
+        (@($script:com['T3.LIMit.DATA']) -join ',') | Should Be '1,2,500000000,18000000000,-0.0212,-0.1273'
+        $script:com['T2.LIMit.STATe'] | Should Be $true
+        $script:com['T5.LIMit.DISPlay.STATe'] | Should Be $false
+        $script:com['T10.LIMit.STATe'] | Should Be $false
+        $script:com['DISPlay.WINDow(1).TRACe(7).Y.SCALe.AUTO'] | Should Be 1
+        $script:com['T9.LIMit.STATe'] | Should Be $false
+        foreach ($trace in 1..12) {
+            $script:com["T$trace.MARKer(5).STATe"] | Should Be $true
+            $script:com["T$trace.MARKer(6).STATe"] | Should Be $false
+            $script:com["T$trace.MARKer(1).X"] | Should Be 1e9
+            $script:com["T$trace.MARKer(5).X"] | Should Be 18e9
         }
-        Assert-MockCalled Invoke-VnaComIo -Times 12 -Exactly -Scope It -ParameterFilter { $Mode -eq 'set' -and $Path -like 'DISPlay*' }
-        Assert-MockCalled Invoke-VnaComIo -Times 0 -Exactly -Scope It -ParameterFilter { $Mode -eq 'set' -and $Path -notlike 'DISPlay*' }
+        $script:com['DISPlay.WINDow(1).TITLe.DATA'] | Should Be 'СИ.035 · КСВН ≤ 1,05 + 0,005·F'
+        $script:com['DISPlay.WINDow(1).TITLe.STATe'] | Should Be $true
+        $script:com['DISPlay.WINDow(1).TRACe(10).Y.SCALe.PDIVision'] | Should Be 5
+        # SWR top = max(norm × 1,15; 1,20): the highest line here is 1,30 → 1,495 → 1,50; adapter loss 0…−0,5 dB.
+        $script:com['DISPlay.WINDow(1).TRACe(1).Y.SCALe.PDIVision'] | Should Be 0.05
+        $script:com['DISPlay.WINDow(1).TRACe(2).Y.SCALe.PDIVision'] | Should Be 0.05
+        @($script:comWrites | Where-Object { $_ -match 'SENSe|SOURce|CORRection|TRIGger|INITiate|MMEMory|CKIT' }).Count | Should Be 0
+    }
+    It 'shows the calibration check as two big SWR graphs with the 1,06 line and hidden transmission traces' {
+        Set-VnaScreen $script:chartConnection $null -Preset 'Проверка калибровки (нагрузка)'
+        $script:com['CALCulate(1).PARameter(1).COUNt'] | Should Be 4
+        $script:com['DISPlay.WINDow(1).SPLit'] | Should Be 3
+        ((1..4 | ForEach-Object { $script:com["DISPlay.WINDow(1).TRACe($_).STATe"] }) -join ',') | Should Be 'True,False,False,True'
+        (@($script:com['T1.LIMit.DATA']) -join ',') | Should Be '1,1,10000000,18000000000,1.06,1.06'
+        (@($script:com['T4.LIMit.DATA']) -join ',') | Should Be '1,1,10000000,18000000000,1.06,1.06'
+        $script:com['DISPlay.WINDow(1).TRACe(1).Y.SCALe.PDIVision'] | Should Be 0.01
+        ((1..4 | ForEach-Object { $script:com["T$_.SMOothing.STATe"] }) -join ',') | Should Be 'False,False,False,False'
+    }
+    It 'shows the flex check with memory traces and stores data to memory on request' {
+        Set-VnaScreen $script:chartConnection $null -Preset 'Проверка кабелей (шевеление)'
+        ((1..4 | ForEach-Object { $script:com["T$_.FORMat"] }) -join ',') | Should Be 'SWR,SWR,MLOG,PHAS'
+        ((1..4 | ForEach-Object { $script:com["DISPlay.WINDow(1).TRACe($_).MEMory.STATe"] }) -join ',') | Should Be 'True,True,True,True'
+        ((1..4 | ForEach-Object { $script:com["DISPlay.WINDow(1).TRACe($_).Y.SCALe.PDIVision"] }) -join ',') | Should Be '0.01,0.01,0.03,36'
+        Save-VnaTraceMemory $script:chartConnection
+        @($script:comWrites | Where-Object { $_ -like '*MATH.MEMorize' }).Count | Should Be 4
+    }
+    It 'clears limit lines and the title when no norm is known' {
+        Set-VnaScreen $script:chartConnection $null
+        $script:com['T1.LIMit.STATe'] | Should Be $false
+        $script:com['T1.LIMit.DISPlay.STATe'] | Should Be $false
+        @($script:comWrites | Where-Object { $_ -like '*LIMit.DATA' }).Count | Should Be 0
+        $script:com['DISPlay.WINDow(1).TITLe.STATe'] | Should Be $false
     }
     It 'refuses success when the instrument ignores a scale write' {
         $script:ignoreScaleWrite = $true
-        { Set-VnaChartScales $script:chartConnection } | Should Throw 'шкала S11.PDIVision'
+        { Set-VnaScreen $script:chartConnection $script:screenLimits } | Should Throw 'шкала S11.PDIVision'
     }
-    It 'rejects a missing scale readback' {
-        Set-VnaChartScales $script:chartConnection
-        $script:chartValues['DISPlay.WINDow(1).TRACe(4).Y.SCALe.RPOSition'] = $null
-        { Assert-VnaChartScales @(Get-VnaTraces $script:chartConnection) } | Should Throw
+    It 'reads correction of the four measurement traces among the twelve graphs' {
+        Set-VnaScreen $script:chartConnection $script:screenLimits -Preset 'Подробно (инженер)'
+        $states = Get-VnaTraceStatus $script:chartConnection
+        ($states.Keys | Sort-Object) -join ',' | Should Be 'S11,S12,S21,S22'
+    }
+    It 'returns the previous screen exactly and leaves calibration and sweep alone' {
+        $path = Join-Path $TestDrive 'screen.json'
+        $before = @{}; foreach ($key in $script:com.Keys) { $before[$key] = (@($script:com[$key]) -join ',') }
+        Backup-VnaScreen $script:chartConnection $path
+        { Backup-VnaScreen $script:chartConnection $path } | Should Throw
+        Set-VnaScreen $script:chartConnection $script:screenLimits
+        Restore-VnaScreen $script:chartConnection $path
+        foreach ($key in $before.Keys) {
+            # COM cannot write an empty limit table: a graph that had none keeps the new lines hidden and untested.
+            if ($key -like '*LIMit.DATA' -and $before[$key] -eq '0') { $script:com[$key.Replace('DATA', 'STATe')] | Should Be $false; continue }
+            "$key=$(@($script:com[$key]) -join ',')" | Should Be "$key=$($before[$key])"
+        }
+        $script:com['T1.MARKer(2).STATe'] | Should Be $true
+        $script:com['T1.MARKer(2).X'] | Should Be 7e9
+        $script:com['T1.MARKer(3).STATe'] | Should Be $false
+        $script:com['T2.MARKer(1).STATe'] | Should Be $false
+        $saved = [IO.File]::ReadAllText($path) | ConvertFrom-Json
+        (@($saved.Traces[0].Markers | ForEach-Object { $_.Number }) -join ',') | Should Be '1,2'
+        @($script:comWrites | Where-Object { $_ -match 'SENSe|SOURce|CORRection|TRIGger|INITiate|MMEMory|CKIT' }).Count | Should Be 0
+    }
+    It 'refuses to restore a screen saved on another instrument' {
+        $path = Join-Path $TestDrive 'other.json'
+        Backup-VnaScreen $script:chartConnection $path
+        $other = New-TestS2Connection; $other.App.Name = 'Planar, S50180, OTHER-VNA, test'
+        { Restore-VnaScreen $other $path } | Should Throw 'другого прибора'
     }
 }
 

@@ -3,7 +3,7 @@ import { ApiError, failureText, rfInterfacesApi, type InstrumentRfDetails, type 
 import { formatNumber } from "./format";
 
 const roles: Record<string, string> = {
-  unknown: "Не указано", vna: "ВАЦ", adapter: "Переходник", test_cable: "Тестовый кабель",
+  unknown: "Не указано", vna: "ВАЦ", adapter: "Переход коаксиальный", test_cable: "Тестовый кабель",
   auto_calibration: "АКМ", solt_kit: "Набор SOLT", load: "Нагрузка", load_kit: "Нагрузки SMA-MF06",
 };
 const series = ["SMA", "3.5mm", "N", "TNC", "BNC", "F", "RP-SMA", "тип III"];
@@ -86,6 +86,7 @@ export function InstrumentRfInterfaces({ instrumentId, locked, onDirty, onBusy, 
       </p>) : <p className="muted-text">Интерфейсы не указаны — добавьте данные из паспорта.</p>}
       {saved.interfaces.length > 0 && <p>Частота от: {saved.f_min_ghz === null ? "не указана" : `${formatNumber(saved.f_min_ghz, { digits: 9 })} ГГц`}
         {saved.role === "vna" && <> · Максимум точек: {saved.max_points === null ? "не указан" : formatNumber(saved.max_points)}</>}
+        {" "}· Ресурс сочленений: {saved.mating_resource == null ? "не указан" : formatNumber(saved.mating_resource)}
       </p>}
       {saved.source && <p className="muted-text">Источник: {saved.source}</p>}
       {saved.confirmed && (saved.f_min_ghz === null || saved.interfaces.some((port) => !port.f_confirmed)) && <p className="warning-inline">Разъёмы подтверждены; рабочую полосу нужно уточнить.</p>}
@@ -97,6 +98,7 @@ export function InstrumentRfInterfaces({ instrumentId, locked, onDirty, onBusy, 
             {Object.entries(roles).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select></label>
           <label>Частота от, ГГц<input name="rf_min" type="number" min="0" max="1000" step="any" value={draft.f_min_ghz ?? ""} onChange={(event) => change({ f_min_ghz: number(event.target.value) })} /></label>
+          <label>Ресурс сочленений<input name="rf_mating_resource" type="number" min="1" max="2147483647" step="1" value={draft.mating_resource ?? ""} onChange={(event) => change({ mating_resource: number(event.target.value) })} /></label>
           {draft.role === "vna" && <label>Максимум точек ВАЦ<input name="rf_points" type="number" min="2" max="10000001" step="1" value={draft.max_points ?? ""} onChange={(event) => change({ max_points: number(event.target.value) })} /></label>}
           <label className="wide">Источник данных<input name="rf_source" autoComplete="off" maxLength={2000} value={draft.source} onChange={(event) => change({ source: event.target.value })} /></label>
           {draft.role === "solt_kit" && <label className="wide">Состав набора<select name="rf_kit" value={draft.kit_definition} onChange={(event) => change({ kit_definition: event.target.value })}>

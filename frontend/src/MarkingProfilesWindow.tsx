@@ -4,7 +4,7 @@ import { DataTable } from "./DataTable";
 import { PageWindow } from "./PageWindow";
 import { formatNumber } from "./format";
 import { useCanPrint, useCurrentUserId } from "./rights";
-import { boundPrinter, markingApi, type MarkingCatalog, type MarkingGeometry, type MarkingProfile, type MarkingRaster, type MarkingRect } from "./markingApi";
+import { boundPrinter, joinHalves, markingApi, splitHalves, type MarkingCatalog, type MarkingGeometry, type MarkingProfile, type MarkingRaster, type MarkingRect } from "./markingApi";
 import { MarkingBatchProgress } from "./MarkingPrintWindow";
 import "./marking.css";
 
@@ -99,15 +99,24 @@ function ProfileEditor({ profile, canEdit, online, onSaved, onBusy, onDirty }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(restored.error);
   const [notice, setNotice] = useState("");
-  const [text, setText] = useState(restored.record?.text ?? "АБВ 123");
+  const restoredHalves = splitHalves(restored.record?.text ?? "");
+  const flag = profile.geometry.zones.length === 2;
+  const [name, setName] = useState(profile.name);
+  const [halves, setHalves] = useState<"same" | "split">(flag && restoredHalves ? "split" : "same");
+  const [text, setText] = useState(restoredHalves && flag ? restoredHalves[0] : restored.record?.text ?? "АБВ 123");
+  const [right, setRight] = useState(restoredHalves && flag ? restoredHalves[1] : "123 АБВ");
   const [preview, setPreview] = useState<MarkingRaster | null>(null);
   const [batchId, setBatchId] = useState(restored.record?.batchId ?? "");
   const [confirmed, setConfirmed] = useState(false);
   const inFlight = useRef(false);
   const canPrint = useCanPrint();
-  const dirty = JSON.stringify(geometry) !== JSON.stringify(profile.geometry);
+  const geometryDirty = JSON.stringify(geometry) !== JSON.stringify(profile.geometry);
+  const nameDirty = name.trim().replace(/\s+/g, " ") !== profile.name;
+  const dirty = geometryDirty || nameDirty;
+  // «Разный» sends «ЛЕВО | ПРАВО»: the same divider an ETK label text uses for the halves of a flag.
+  const sample = flag && halves === "split" ? (text.trim() && right.trim() ? joinHalves(text, right) : "") : text;
   useEffect(() => { onDirty(dirty); return () => onDirty(false); }, [dirty, onDirty]);
-  useEffect(() => { setGeometry(profile.geometry); setPreview(null); setConfirmed(false); }, [profile]);
+  useEffect(() => { setGeometry(profile.geometry); setName(profile.name); setPreview(null); setConfirmed(false); }, [profile]);
   useEffect(() => {
     if (!dirty) return;
     const prevent = (event: BeforeUnloadEvent) => event.preventDefault();
@@ -126,18 +135,23 @@ function ProfileEditor({ profile, canEdit, online, onSaved, onBusy, onDirty }: {
     finally { inFlight.current = false; setBusy(false); onBusy(false); }
   }
   async function save(calibrated: boolean) {
-    await act(async () => { onSaved(await markingApi.profile(profile, geometry, calibrated)); setNotice(calibrated ? "Калибровка подтверждена" : "Профиль сохранён — выполните пробную печать"); });
+    // A rename alone keeps the calibration: the server resets it only when the geometry changes.
+    const keep = calibrated || (!geometryDirty && profile.calibrated);
+    await act(async () => {
+      onSaved(await markingApi.profile(profile, geometry, keep, name.trim().replace(/\s+/g, " ")));
+      setNotice(calibrated ? "Калибровка подтверждена" : keep ? "Профиль сохранён" : "Профиль сохранён — выполните пробную печать");
+    });
   }
   async function calibrate(print: boolean) {
     await act(async () => {
-      const request: CalibrationRecord = calibrationIntent?.pending ? calibrationIntent : { text, version: profile.version, key: crypto.randomUUID(), pending: true };
+      const request: CalibrationRecord = calibrationIntent?.pending ? calibrationIntent : { text: sample, version: profile.version, key: crypto.randomUUID(), pending: true };
       if (print) {
         try { sessionStorage.setItem(storageName, JSON.stringify(request)); }
         catch { throw new Error("Не удалось сохранить запрос пробной печати — проверьте хранилище браузера"); }
         setCalibrationIntent(request);
       }
       let result;
-      try { result = await markingApi.calibration({ ...profile, version: print ? request.version : profile.version }, print ? request.text : text, print, print ? request.key : undefined); }
+      try { result = await markingApi.calibration({ ...profile, version: print ? request.version : profile.version }, print ? request.text : sample, print, print ? request.key : undefined); }
       catch (problem) {
         if (print && problem instanceof ApiError && problem.status >= 400 && problem.status < 500) {
           sessionStorage.removeItem(storageName); setCalibrationIntent(null);
@@ -169,12 +183,14 @@ function ProfileEditor({ profile, canEdit, online, onSaved, onBusy, onDirty }: {
     ]} />;
   }
   return <section className="marking-profile-editor" aria-label="Геометрия профиля">
-    <div className="marking-head"><h3>Размеры и расположение текста</h3><span className={profile.calibrated && !dirty ? "tone-ok" : "tone-warn"}>{profile.calibrated && !dirty ? "Откалиброван" : "Не откалиброван"}</span></div>
+    <div className="marking-head"><h3>Размеры и расположение текста</h3><span className={profile.calibrated && !geometryDirty ? "tone-ok" : "tone-warn"}>{profile.calibrated && !geometryDirty ? "Откалиброван" : "Не откалиброван"}</span></div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {calibrationIntent?.pending && <p className="warning-inline">Проверьте постановку предыдущей пробной этикетки: повторите запрос пробы.</p>}
     {notice && <p className="success-banner" role="status">{notice}</p>}
     <div className="marking-profile-layout"><div className="marking-profile-dimensions">
     <div className="marking-geometry">
+      <label className="marking-name">Название профиля<input name="profile-name" autoComplete="off" maxLength={80} disabled={disabled} value={name}
+        onChange={(event) => { setName(event.target.value); setNotice(""); }} /></label>
       {number("width_mm", "Ширина этикетки, мм", 5, 150)}{number("height_mm", "Высота этикетки, мм", 5, 150)}
       <label>Поворот<select name="geometry-rotation" autoComplete="off" disabled={disabled} value={geometry.rotation} onChange={(event) => change("rotation", Number(event.target.value) as MarkingGeometry["rotation"])}>
         {[0, 90, 180, 270].map((value) => <option key={value} value={value}>{value}°</option>)}</select></label>
@@ -187,18 +203,23 @@ function ProfileEditor({ profile, canEdit, online, onSaved, onBusy, onDirty }: {
         <option value="center">По центру</option><option value="left">По левому краю</option><option value="right">По правому краю</option></select></label>
     </div>
     {rectangles("zones", "Текстовые зоны")}{rectangles("blank_zones", "Зоны без печати")}
-    {canEdit && <div className="form-actions"><button type="button" className="secondary" disabled={busy || !dirty || !valid} onClick={() => void save(false)}>Сохранить размеры</button>
-      {dirty && <><button type="button" className="secondary" disabled={busy} onClick={() => { setGeometry(profile.geometry); setError(""); }}>Отменить изменения</button>
+    {canEdit && <div className="form-actions"><button type="button" className="secondary" disabled={busy || !dirty || !valid || !name.trim()} onClick={() => void save(false)}>Сохранить профиль</button>
+      {dirty && <><button type="button" className="secondary" disabled={busy} onClick={() => { setGeometry(profile.geometry); setName(profile.name); setError(""); }}>Отменить изменения</button>
         <span className="muted">Сохраните или отмените изменения перед закрытием.</span></>}</div>}
     </div><div className="marking-calibration">
       <h3>Пробная печать</h3>
-      <label>Текст пробной этикетки<textarea name="marking-calibration-text" autoComplete="off" maxLength={1000} disabled={disabled} value={text}
+      {flag && <label>Текст на половинах<select name="marking-calibration-halves" autoComplete="off" disabled={disabled} value={halves}
+        onChange={(event) => { setHalves(event.target.value as "same" | "split"); setPreview(null); setConfirmed(false); }}>
+        <option value="same">Одинаковый на обеих половинах</option><option value="split">Разный на левой и правой</option></select></label>}
+      <label>{flag && halves === "split" ? "Левая половина" : "Текст пробной этикетки"}<textarea name="marking-calibration-text" autoComplete="off" maxLength={flag && halves === "split" ? 480 : 1000} disabled={disabled} value={text}
         onChange={(event) => { setText(event.target.value); setPreview(null); setConfirmed(false); }} /></label>
-      {dirty && <p className="warning-inline">Сохраните размеры перед пробной печатью.</p>}
-      <div className="form-actions"><button type="button" className="secondary" disabled={disabled || dirty || !text.trim()} onClick={() => void calibrate(false)}>Показать пробную этикетку</button>
-        {canPrint && <button type="button" className="primary" disabled={busy || !canEdit || Boolean(restored.error) || dirty || !text.trim() || (!online && !calibrationIntent?.pending)} onClick={() => void calibrate(true)}>{busy ? "Обработка…" : calibrationIntent?.pending ? "Повторить запрос пробы" : "Пробная печать"}</button>}</div>
+      {flag && halves === "split" && <label>Правая половина<textarea name="marking-calibration-right" autoComplete="off" maxLength={480} disabled={disabled} value={right}
+        onChange={(event) => { setRight(event.target.value); setPreview(null); setConfirmed(false); }} /></label>}
+      {geometryDirty && <p className="warning-inline">Сохраните размеры перед пробной печатью.</p>}
+      <div className="form-actions"><button type="button" className="secondary" disabled={disabled || geometryDirty || !sample.trim()} onClick={() => void calibrate(false)}>Показать пробную этикетку</button>
+        {canPrint && <button type="button" className="primary" disabled={busy || !canEdit || Boolean(restored.error) || geometryDirty || !sample.trim() || (!online && !calibrationIntent?.pending)} onClick={() => void calibrate(true)}>{busy ? "Обработка…" : calibrationIntent?.pending ? "Повторить запрос пробы" : "Пробная печать"}</button>}</div>
       {preview && <figure className="marking-raster"><figcaption>Пробная этикетка · <span className="tnum">{formatNumber(preview.width_mm)} × {formatNumber(preview.height_mm)} мм</span></figcaption>
-        <img src={`data:image/png;base64,${preview.png_b64}`} alt={`Пробная этикетка: ${text}`}
+        <img src={`data:image/png;base64,${preview.png_b64}`} alt={`Пробная этикетка: ${sample}`}
           width={Math.round(preview.width_mm * preview.dpi / 25.4)} height={Math.round(preview.height_mm * preview.dpi / 25.4)} /></figure>}
       {canEdit && !profile.calibrated && <><label className="check-inline"><input type="checkbox" name="marking-calibration-confirm" checked={confirmed} disabled={busy || dirty}
         onChange={(event) => setConfirmed(event.target.checked)} />Размер, положение текста и подача проверены на станке</label>

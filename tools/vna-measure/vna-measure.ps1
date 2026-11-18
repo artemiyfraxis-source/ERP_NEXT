@@ -8,10 +8,11 @@ param(
     [Alias('fmax')][ValidateRange(10000000,18000000000)][double]$FmaxHz = 18e9
 )
 
-$script:VnaToolVersion = '1.0.0'
+$script:VnaToolVersion = '1.1.0'
 . (Join-Path $PSScriptRoot 'dsp.ps1')
 . (Join-Path $PSScriptRoot 's2vna.ps1')
 . (Join-Path $PSScriptRoot 'erp.ps1')
+. (Join-Path $PSScriptRoot 'norms.ps1')
 
 function ConvertFrom-VnaChain {
     param([Parameter(Mandatory)][string]$Text)
@@ -100,8 +101,8 @@ function Assert-VnaMeasurementSafe {
     }
     foreach ($info in @($DeviceInfo, $Sweep.DeviceInfo)) {
         for ($sensor = 0; $sensor -lt 2; $sensor++) {
-            if ([math]::Abs([double]$info.VnaTemperatures[$sensor] - [double]$Calibration.VnaTemperatures[$sensor]) -gt 5) {
-                throw 'Температура ВАЦ изменилась более чем на 5 °C; повторите калибровку.'
+            if ([math]::Abs([double]$info.VnaTemperatures[$sensor] - [double]$Calibration.VnaTemperatures[$sensor]) -gt 1) {
+                throw 'Температура ушла больше чем на 1 °C — откалибруйте заново.'
             }
         }
     }
@@ -156,8 +157,8 @@ function Show-VnaInstrumentState {
         $correction = if ($trace.Correction -ceq 'COR') { 'COR' } else { 'нет' }
         Write-Host "Трасса $($trace.Index): $($trace.Parameter), $($trace.Format); шкала: деление=$($trace.PDIVision), уровень=$($trace.RLEVel), позиция=$($trace.RPOSition); коррекция: $correction"
     }
-    try { Assert-VnaChartScales $traces; Write-Host 'Шкалы стандартные.' }
-    catch { Write-Host 'Шкалы не стандартные — пункт 6' }
+    try { Assert-VnaScreen $traces; Write-Host 'Экран замера стандартный.' }
+    catch { Write-Host 'Экран не стандартный — пункт 6' }
     try {
         if (-not $Calibration) { throw 'В этом запуске калибровка не выполнялась.' }
         $calTime = [datetimeoffset]::Parse($Calibration.Time, [Globalization.CultureInfo]::InvariantCulture)
@@ -175,7 +176,7 @@ function Show-VnaInstrumentState {
             foreach ($temperature in $reading.VnaTemperatures) { Assert-VnaTemperature $temperature }
         }
         for ($sensorIndex = 0; $sensorIndex -lt 2; $sensorIndex++) {
-            if ([math]::Abs([double]$info.VnaTemperatures[$sensorIndex] - [double]$Calibration.VnaTemperatures[$sensorIndex]) -gt 5) { throw 'Температура ВАЦ изменилась более чем на 5 °C.' }
+            if ([math]::Abs([double]$info.VnaTemperatures[$sensorIndex] - [double]$Calibration.VnaTemperatures[$sensorIndex]) -gt 1) { throw 'Температура ушла больше чем на 1 °C — откалибруйте заново.' }
         }
         Assert-VnaProfile $Connection
         $null = Assert-VnaCorrection $Connection
@@ -184,6 +185,45 @@ function Show-VnaInstrumentState {
         Write-Host 'Калибровки нет — выполните пункт 2'
         Write-Host $_.Exception.Message
     }
+}
+
+function Set-VnaMeasureScreen {
+    param($Connection, $Limits, [string]$BackupPath, [string]$Preset = $script:VnaDefaultPreset)
+    # The operator's screen is saved once, before the first change; «8» puts it back without touching calibration.
+    if (-not (Test-Path -LiteralPath $BackupPath)) { Backup-VnaScreen $Connection $BackupPath }
+    Set-VnaScreen $Connection $Limits -Preset $Preset
+    if ($Limits -and $Limits.Title) { Write-Host "Экран: $($Limits.Title)" }
+}
+
+function Select-VnaPreset {
+    param($Norms)
+    # «6 Экран»: every preset with its fixed parameters; band and assembly norm come from the ETK when the check needs them.
+    $presets = @(Get-VnaScreenPresets)
+    for ($i = 0; $i -lt $presets.Count; $i++) {
+        Write-Host ("{0} {1} — {2}. {3}" -f ($i + 1), $presets[$i].Name, $presets[$i].Purpose, (Format-VnaPresetParameters $presets[$i] $null))
+    }
+    $choice = 0
+    if (-not [int]::TryParse((Read-Host 'Номер экрана').Trim(), [ref]$choice) -or $choice -lt 1 -or $choice -gt $presets.Count) { throw 'Нет такого экрана.' }
+    $preset = $presets[$choice - 1]; $stimulus = $null; $limits = $null
+    if (-not $preset.Stimulus) {
+        $band = (Read-Host 'Полоса по ЭТК, МГц (например 1–6000)').Trim()
+        if ($band -notmatch '^(\d+(?:[.,]\d+)?)\s*[–-]\s*(\d+(?:[.,]\d+)?)$') { throw 'Полоса: два числа в МГц через тире.' }
+        $low = [double]::Parse($Matches[1].Replace(',', '.'), [Globalization.CultureInfo]::InvariantCulture) * 1e6
+        $high = [double]::Parse($Matches[2].Replace(',', '.'), [Globalization.CultureInfo]::InvariantCulture) * 1e6
+        if ($low -lt 1e5 -or $high -gt 18e9 -or $high -le $low) { throw 'Полоса вне диапазона ВАЦ 0,1–18000 МГц.' }
+        $stimulus = [pscustomobject]@{ StartHz = $low; StopHz = $high }
+    }
+    if (@($preset.Traces | Where-Object { $_.Limit -eq 'Assembly' }).Count) {
+        $norm = (Read-Host 'Норма КСВН сборки по ЭТК (Enter — без линии)').Trim()
+        if ($norm) {
+            $value = 0.0
+            if (-not [double]::TryParse($norm.Replace(',', '.'), [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$value) -or $value -le 1) { throw 'Норма КСВН — число больше 1.' }
+            $span = if ($stimulus) { $stimulus } else { $preset.Stimulus }
+            $limits = [pscustomobject]@{ Title = ('КСВН сборки ≤ {0} по ЭТК' -f $norm); Assembly = @([pscustomobject]@{ StartHz = $span.StartHz; StopHz = $span.StopHz; From = $value; To = $value }) }
+        }
+    }
+    $mode = (Read-Host 'Enter — обычный (ПЧ 1 кГц); т — точный отсчёт (ПЧ 300 Гц); у — усреднение 4×').Trim()
+    return [pscustomobject]@{ Preset = $preset; Stimulus = $stimulus; Limits = $limits; Precise = ($mode -match '^т'); Average = ($mode -match '^у') }
 }
 
 function Restore-VnaOperatorState {
@@ -209,7 +249,7 @@ function Get-VnaFixtureData {
     if ($reverse) {
         $data = [pscustomobject]@{ Frequencies = $data.Frequencies; S11 = $data.S22; S21 = $data.S12; S12 = $data.S21; S22 = $data.S11 }
     }
-    return [pscustomobject]@{ Data = $data; Description = "$Number (обратно=$reverse, файл=$([IO.Path]::GetFileName($path)))" }
+    return [pscustomobject]@{ Instrument = $fixture; Reverse = $reverse; Data = $data; Description = "$Number (обратно=$reverse, файл=$([IO.Path]::GetFileName($path)))" }
 }
 
 function Initialize-VnaOfflineDemo {
@@ -218,7 +258,11 @@ function Initialize-VnaOfflineDemo {
     $device = [ordered]@{ Ready = $true; VnaName = 'Planar, S50180, MOCK-VNA, mock'; VnaSerial = 'MOCK-VNA'; AcmSerial = 'MOCK-ACM';
         AcmInfo = 'SYNTHETIC OFFLINE ACM'; AcmMinHz = 10e6; AcmMaxHz = 18e9; VnaTemperature = 30; VnaTemperatures = @(30, 31); AcmTemperature = 29 }
     $device | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Directory 'device.json') -Encoding UTF8
-    @{ instruments = @(@{ id = 'offline-035'; inventory_number = 'СИ.035'; name = 'Учебный переходник SMA–SMA'; serial_number = 'MOCK-DUT'; files = @() }) } |
+    @{ instruments = @(
+        @{ id = 'offline-035'; inventory_number = 'СИ.035'; name = 'Учебный переходник SMA–SMA'; serial_number = 'MOCK-DUT'; files = @(); mating_ends = @('A', 'B'); mating_resource = 500 },
+        @{ id = 'offline-100'; inventory_number = 'СИ.100'; name = 'Учебный кабель порта 1'; serial_number = 'MOCK-C1'; files = @(); mating_ends = @('A', 'B'); mating_resource = $null },
+        @{ id = 'offline-101'; inventory_number = 'СИ.101'; name = 'Учебный кабель порта 2'; serial_number = 'MOCK-C2'; files = @(); mating_ends = @('A', 'B'); mating_resource = $null },
+        @{ id = 'offline-104'; inventory_number = 'СИ.104'; name = 'Учебный АКМ'; serial_number = 'MOCK-ACM'; files = @(); mating_ends = @('A', 'B'); mating_resource = $null }) } |
         ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Directory 'instruments.json') -Encoding UTF8
     $frequencies = [double[]]::new(1601); $reflection = [Numerics.Complex[]]::new(1601); $transmission = [Numerics.Complex[]]::new(1601)
     for ($index = 0; $index -lt 1601; $index++) {
@@ -227,6 +271,14 @@ function Initialize-VnaOfflineDemo {
         $transmission[$index] = [Numerics.Complex]::FromPolarCoordinates(0.98, -$index / 1600.0)
     }
     Write-VnaTouchstone -Path (Join-Path $Directory 'sweep.s2p') -Data ([pscustomobject]@{ Frequencies = $frequencies; S11 = $reflection; S21 = $transmission; S12 = $transmission; S22 = $reflection }) -Comments @('SYNTHETIC OFFLINE DATA - NOT A MEASUREMENT')
+}
+
+function Connect-VnaErp {
+    param([switch]$Offline, [string]$OfflineDirectory, [string]$ConfigPath)
+    if ($Offline) { return New-VnaErpSession -OfflineDirectory $OfflineDirectory }
+    $config = Read-VnaConfig -Path $ConfigPath
+    $login = Read-Host 'Логин ERP'; $password = Read-Host 'Пароль ERP' -AsSecureString
+    try { return New-VnaErpSession -ServerUrl $config.server_url -Login $login -Password $password } finally { $password = $null }
 }
 
 function Start-VnaMeasure {
@@ -239,9 +291,14 @@ function Start-VnaMeasure {
         if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Запустите обычным двойным щелчком, без прав администратора: S2VNA COM требует обычный сеанс.' }
     }
     [void][IO.Directory]::CreateDirectory($DataDirectory)
+    $script:VnaActivePreset = $script:VnaDefaultPreset; $script:VnaActiveScales = $null
     $lock = $null; $deviceMutex = $null; $deviceLocked = $false; $connection = $null; $backup = $null; $session = $null; $calibration = $null
     $backupPointer = Join-Path $DataDirectory 'operator-backup.json'
+    $screenBackup = Join-Path $DataDirectory 'screen-backup.json'
     $calLog = Join-Path $DataDirectory 'calibrations.jsonl'; $ledger = Join-Path $DataDirectory 'used-sweeps.jsonl'
+    # Matings wait here until the ERP confirms them (see matings.ps1); item 7 resends them.
+    $pendingDirectory = Join-Path $DataDirectory 'pending-matings'
+    $config = $null; $matingSetup = $null; $matingTarget = $null; $previousMounts = $null
     try {
         $lock = [IO.File]::Open((Join-Path $DataDirectory 'tool.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
         if ($Offline) {
@@ -251,6 +308,7 @@ function Start-VnaMeasure {
                 if (-not (Test-Path -LiteralPath $OfflineDirectory)) { Initialize-VnaOfflineDemo $OfflineDirectory }
             }
             $connection = New-VnaConnection -OfflineDirectory $OfflineDirectory
+            $matingSetup = Get-VnaMatingSetup $null; $matingTarget = Get-VnaMatingTarget -OfflineDirectory $OfflineDirectory
         } else { $connection = New-VnaConnection }
         # Boot and recovery must also work when the ACM USB cable is disconnected.
         $boundSerial = Assert-VnaInstrumentIdentity $connection
@@ -267,17 +325,25 @@ function Start-VnaMeasure {
             $backup = $candidateBackup
             Write-Host "Есть невосстановленное состояние оператора: $($backup.Path). Калибровка прошлого запуска не используется."
         }
+        $norms = $null
+        try { $norms = Read-VnaNorms (Find-VnaNormsFile $PSScriptRoot) } catch { Write-Host $_.Exception.Message -ForegroundColor Yellow }
+        if (-not $norms) { Write-Host 'Нет rf-norms.json рядом с программой: линии допуска на экране не показываются.' -ForegroundColor Yellow }
         $running = $true
         while ($running) {
-            Write-Host "`n1 Проверить прибор и АКМ`n2 Калибровка АКМ`n3 Контроль нагрузкой`n4 Замер переходника`n5 Вернуть настройки оператора`n6 Применить шкалы графиков`n0 Выход"
+            Write-Host "`n1 Проверить прибор и АКМ`n2 Калибровка АКМ`n3 Контроль нагрузкой`n4 Замер переходника`n5 Вернуть настройки оператора`n6 Экран: выбрать вариант`n7 Отправить сочленения в ERP`n8 Вернуть прежний экран`n9 Шевеление: запомнить графики (до изгиба)`n10 Записать экраны в файлы S2VNA`n0 Выход"
             try {
                 switch (Read-Host 'Выберите действие') {
                     '1' { Show-VnaInstrumentState $connection $calibration }
                     '2' {
                         if (-not (Confirm-VnaAction 'Подключите АКМ к концам тракта портов 1 и 2. Начать калибровку?')) { break }
                         $calibration = $null
+                        if (-not $matingSetup) { $config = Read-VnaConfig -Path $ConfigPath; $matingSetup = Get-VnaMatingSetup $config; $matingTarget = Get-VnaMatingTarget -ServerUrl $config.server_url }
+                        $previousMounts = $null  # The cables were on the ACM: the next measurement mates them again.
                         $attempt = [ordered]@{ Id = [guid]::NewGuid().ToString(); Event = 'calibration'; Time = [datetimeoffset]::UtcNow.ToString('o'); User = [Environment]::UserName;
                             Method = 'acm-solt2'; VnaSerial = $null; AcmSerial = $null; VnaTemperature = $null; VnaTemperatures = @(); AcmTemperature = $null; LoadCheck = 'not_checked'; Result = 'fail' }
+                        # The ACM is connected now, whatever the calibration result: the mating is counted.
+                        $null = Save-VnaPendingMatings $pendingDirectory $matingTarget ('vna-calibration-' + $attempt.Id) (New-VnaCalibrationMatings $matingSetup)
+                        if ($session) { $null = Sync-VnaPendingMatings $session $pendingDirectory }
                         try {
                             $info = Assert-VnaDeviceReady $connection
                             foreach ($field in 'VnaSerial', 'AcmSerial', 'VnaTemperature', 'VnaTemperatures', 'AcmTemperature') { $attempt[$field] = $info.$field }
@@ -287,7 +353,10 @@ function Start-VnaMeasure {
                                 $backup = [pscustomobject]@{ Path = $backupPath; VnaSerial = $info.VnaSerial }
                                 $backup | ConvertTo-Json | Set-Content -LiteralPath $backupPointer -Encoding UTF8
                             }
-                            Set-VnaProfile $connection
+                            if (-not (Test-Path -LiteralPath $screenBackup)) { Backup-VnaScreen $connection $screenBackup }
+                            $warmup = Get-VnaWarmupMinutes $connection
+                            if ($null -ne $warmup -and $warmup -lt 40) { Write-Host ('S2VNA работает {0:N0} мин: прогрев ВАЦ по РЭ — 40 мин, АКМ — 15 мин.' -f $warmup) -ForegroundColor Yellow }
+                            Set-VnaProfile $connection (Get-VnaScreenLimits $norms $null)
                             $null = Invoke-VnaCalibration $connection
                             $info = Get-VnaDeviceInfo $connection
                             foreach ($field in 'VnaSerial', 'AcmSerial', 'VnaTemperature', 'VnaTemperatures', 'AcmTemperature') { $attempt[$field] = $info.$field }
@@ -305,10 +374,13 @@ function Start-VnaMeasure {
                     '3' {
                         if (-not $calibration) { throw 'Сначала выполните калибровку АКМ.' }
                         $calibration.LoadCheck = 'fail'; $values = @(); $passed = $false
+                        try { Set-VnaMeasureScreen $connection $null $screenBackup 'Проверка калибровки (нагрузка)' }
+                        catch { Write-Host "Экран проверки не поставлен: $($_.Exception.Message)" -ForegroundColor Yellow }
                         try {
                             foreach ($port in 1, 2) {
                                 [void](Read-Host "Подключите LOAD к порту $port на плоскости калибровки; второй порт свободен. Нажмите Enter")
                                 $sweep = Get-VnaSweep $connection
+                                try { Update-VnaScreenAutoScale $connection } catch { }  # group delay autoscale: display only, never blocks
                                 Assert-VnaMeasurementSafe -Sweep $sweep -Calibration $calibration -DeviceInfo (Get-VnaDeviceInfo $connection) -TraceStatus (Get-VnaTraceStatus $connection) -SkipLoadCheck
                                 $summary = Get-VnaSummary -Data $sweep.Data
                                 $value = if ($port -eq 1) { $summary.Vswr1 } else { $summary.Vswr2 }
@@ -327,13 +399,11 @@ function Start-VnaMeasure {
                     '4' {
                         if (-not $calibration -or $calibration.LoadCheck -ne 'pass') { throw 'Нужна калибровка и успешный контроль нагрузкой.' }
                         if (-not $session) {
-                            if ($Offline) { $session = New-VnaErpSession -OfflineDirectory $OfflineDirectory }
-                            else {
-                                $config = Read-VnaConfig -Path $ConfigPath
-                                $login = Read-Host 'Логин ERP'; $password = Read-Host 'Пароль ERP' -AsSecureString
-                                try { $session = New-VnaErpSession -ServerUrl $config.server_url -Login $login -Password $password } finally { $password = $null }
-                            }
+                            $session = Connect-VnaErp -Offline:$Offline -OfflineDirectory $OfflineDirectory -ConfigPath $ConfigPath
+                            if (-not $matingSetup) { $config = Read-VnaConfig -Path $ConfigPath; $matingSetup = Get-VnaMatingSetup $config }
+                            $matingTarget = Get-VnaMatingTarget -Session $session
                         }
+                        $null = Sync-VnaPendingMatings $session $pendingDirectory
                         $number = (Read-Host 'Номер переходника (СИ.035)').Trim().ToUpperInvariant()
                         if ($number -notmatch '^СИ\.\d+$') { throw 'Введите номер вида СИ.035.' }
                         $item = Get-VnaInstrument -Session $session -Number $number
@@ -349,12 +419,26 @@ function Start-VnaMeasure {
                                 [double]::IsNaN($parsed) -or [double]::IsInfinity($parsed) -or $parsed -le 0.01 -or $parsed -gt $FmaxHz / 1e9) { throw 'Частота должна быть > 0,01 ГГц и не выше -FmaxHz.' }
                             $band = $parsed * 1e9
                         }
-                        $left = $null; $right = $null; $descriptions = @()
-                        if ($chain.Left) { $fixture = Get-VnaFixtureData $session $chain.Left (Join-Path $DataDirectory 'fixtures') $band; $left = $fixture.Data; $descriptions += "слева $($fixture.Description)" }
-                        if ($chain.Right) { $fixture = Get-VnaFixtureData $session $chain.Right (Join-Path $DataDirectory 'fixtures') $band; $right = $fixture.Data; $descriptions += "справа $($fixture.Description)" }
+                        try { Set-VnaMeasureScreen $connection (Get-VnaScreenLimits $norms $item (Get-VnaItemInterfaces $session $item) $band) $screenBackup }
+                        catch {
+                            # Display only: the sweep below still checks traces 1–4 (definitions, formats, COR) itself.
+                            Write-Host "Экран замера не перестроен: $($_.Exception.Message) Замер продолжается; графики можно поставить пунктом 6." -ForegroundColor Yellow
+                        }
+                        $left = $null; $right = $null; $descriptions = @(); $fixtures = @($null, $null)
+                        if ($chain.Left) { $fixture = Get-VnaFixtureData $session $chain.Left (Join-Path $DataDirectory 'fixtures') $band; $left = $fixture.Data; $fixtures[0] = $fixture; $descriptions += "слева $($fixture.Description)" }
+                        if ($chain.Right) { $fixture = Get-VnaFixtureData $session $chain.Right (Join-Path $DataDirectory 'fixtures') $band; $right = $fixture.Data; $fixtures[1] = $fixture; $descriptions += "справа $($fixture.Description)" }
+                        $matings = Get-VnaMeasurementMatings $session $matingSetup $item $fixtures $previousMounts
+                        $known = Select-VnaKnownMatings $session $matings.Entries
+                        if ($known.Exhausted -and -not (Confirm-VnaAction 'Ресурс сочленений исчерпан. Всё равно выполнить замер?')) { break }
                         [void](Read-Host 'Установите переходник в показанную цепочку. Сторона 1 — к порту 1 ВАЦ. Нажмите Enter для нового замера')
                         $sweep = Get-VnaSweep $connection
+                        try { Update-VnaScreenAutoScale $connection } catch { }  # group delay autoscale: display only, never blocks
                         Assert-VnaMeasurementSafe -Sweep $sweep -Calibration $calibration -DeviceInfo (Get-VnaDeviceInfo $connection) -TraceStatus (Get-VnaTraceStatus $connection) -LedgerPath $ledger
+                        # The measurement is done: the chain was mated, whether or not the file goes to the card.
+                        $null = Save-VnaPendingMatings $pendingDirectory $matingTarget ('vna-measurement-' + $sweep.Id) $known.Entries
+                        $previousMounts = $matings.Mounts
+                        $sent = Sync-VnaPendingMatings $session $pendingDirectory
+                        if ($sent.Sent) { Write-Host 'Сочленения записаны в ERP.' }
                         $rawDir = Join-Path $DataDirectory 'raw'; [void][IO.Directory]::CreateDirectory($rawDir)
                         $rawPath = Join-Path $rawDir ($sweep.Id + '.s2p')
                         Write-VnaTouchstone -Path $rawPath -Data $sweep.Data -Comments @('Raw corrected four-trace sweep; ' + $sweep.CapturedAt)
@@ -393,6 +477,7 @@ function Start-VnaMeasure {
                         $calibration = $null
                         Restore-VnaOperatorState -Connection $connection -Backup $backup
                         Remove-Item -LiteralPath $backupPointer -ErrorAction Stop
+                        Remove-Item -LiteralPath $screenBackup -ErrorAction SilentlyContinue
                         $backup = $null
                         Write-Host 'Настройки оператора восстановлены. Для следующего замера нужна новая калибровка.'
                     }
@@ -404,11 +489,43 @@ function Start-VnaMeasure {
                             $backup = [pscustomobject]@{ Path = $backupPath; VnaSerial = $serial }
                             $backup | ConvertTo-Json | Set-Content -LiteralPath $backupPointer -Encoding UTF8
                         }
-                        Set-VnaChartScales $connection
-                        Write-Host 'Шкалы графиков применены и проверены.'
+                        $chosen = Select-VnaPreset $norms
+                        $changed = Set-VnaPresetStimulus $connection $chosen.Preset $chosen.Stimulus -Precise:$chosen.Precise -Average:$chosen.Average
+                        Set-VnaMeasureScreen $connection $chosen.Limits $screenBackup $chosen.Preset.Name
+                        Write-Host "Экран «$($chosen.Preset.Name)»: $(Format-VnaPresetParameters $chosen.Preset $chosen.Stimulus)"
+                        if ($changed -and $calibration) {
+                            $calibration = $null; $connection.Calibrated = $false
+                            Write-Host 'Калибровка не действует — откалибруйте заново (пункт 2).' -ForegroundColor Yellow
+                        }
+                    }
+                    '7' {
+                        if (-not $session) {
+                            $session = Connect-VnaErp -Offline:$Offline -OfflineDirectory $OfflineDirectory -ConfigPath $ConfigPath
+                            $matingTarget = Get-VnaMatingTarget -Session $session
+                        }
+                        $sent = Sync-VnaPendingMatings $session $pendingDirectory
+                        Write-Host "Сочленения: отправлено пакетов $($sent.Sent), отклонено $($sent.Rejected), ожидают $($sent.Left)."
+                    }
+                    '8' {
+                        if (-not (Test-Path -LiteralPath $screenBackup)) { Write-Host 'Прежний экран не сохранялся.'; break }
+                        Restore-VnaScreen $connection $screenBackup
+                        Remove-Item -LiteralPath $screenBackup -ErrorAction Stop
+                        Write-Host 'Прежний экран возвращён; калибровка не тронута. Для замера снова выберите 6.'
+                    }
+                    '9' {
+                        Save-VnaTraceMemory $connection
+                        Write-Host 'Графики запомнены: изгибайте кабель — память и текущие графики видны вместе.'
+                    }
+                    '10' {
+                        if (-not (Confirm-VnaAction 'Каждый экран будет поставлен со своей полосой; калибровка этого запуска перестанет действовать. Записать файлы?')) { break }
+                        $folder = 'C:\VNA\Экраны'
+                        $band = [pscustomobject]@{ StartHz = 1e6; StopHz = 6e9 }
+                        $files = @(Save-VnaPresetFiles $connection $folder $band 'C:\VNA\S2VNA\State\Autorecall.sta')
+                        $calibration = $null
+                        Write-Host "Записано файлов: $($files.Count) (существующие не перезаписаны). Калибровка не действует — откалибруйте заново."
                     }
                     '0' { $running = $false }
-                    default { Write-Host 'Выберите пункт 0–6.' }
+                    default { Write-Host 'Выберите пункт 0–10.' }
                 }
             } catch { Write-Host $_.Exception.Message -ForegroundColor Red }
         }
@@ -417,6 +534,7 @@ function Start-VnaMeasure {
             if ($backup -and $connection -and (Confirm-VnaAction 'Вернуть настройки оператора перед выходом?')) {
                 Restore-VnaOperatorState -Connection $connection -Backup $backup
                 Remove-Item -LiteralPath $backupPointer -ErrorAction Stop
+                Remove-Item -LiteralPath $screenBackup -ErrorAction SilentlyContinue
                 Write-Host 'Настройки оператора восстановлены.'
             }
         } finally {

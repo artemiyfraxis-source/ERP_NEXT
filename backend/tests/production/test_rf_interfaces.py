@@ -80,3 +80,16 @@ def test_interface_validation(changes):
 def test_cannot_confirm_unknown_or_partial_rf_data():
     with pytest.raises(ProductionValidationError):
         RfDetails(confirmed=True)
+
+
+def test_adapter_reads_as_gost_coaxial_transition_and_old_names_still_match():
+    from app.modules.production.rf_interfaces import ROLE_LABELS, is_adapter_name
+    from app.workflows.instrument_labels import kind_line
+    assert ROLE_LABELS["adapter"] == "Переход коаксиальный"
+    for name in ("Переходник SMA female–SMA female", "Переход коаксиальный ADP1A-35F-35F", "переход SMA–N"):
+        assert is_adapter_name(name)
+    for name in ("Переходная плата SMA female–SMA female", "Переходы SMA", "Кабель SMA male–SMA male"):
+        assert not is_adapter_name(name)
+    assert propose_details("СИ.050", "Переход коаксиальный SMA female–SMA male").role == "adapter"
+    assert kind_line("Переходник SMA female–SMA female S-322", RfDetails()) == "Переход коаксиальный"
+    assert kind_line("Нагрузка согласованная SMA", RfDetails()) == "Нагрузка согласованная"

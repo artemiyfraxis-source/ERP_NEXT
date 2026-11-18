@@ -289,3 +289,18 @@ it("allocates a fresh key for another deliberate reprint of the same original ba
   expect(second).toEqual({ ...first, idempotency_key: expect.any(String) });
   expect(second.idempotency_key).not.toBe(first.idempotency_key);
 });
+
+it("shows each half of a flag in its own column when the ETK text differs per half", async () => {
+  vi.mocked(markingApi.preview).mockResolvedValueOnce({ ...preview, labels: [
+    { ...preview.labels[0], text: "X1 | КБ-011", halves: ["X1", "КБ-011"] },
+    { ...preview.labels[2], halves: ["Разъём А", "Разъём А"] }], total: 4 });
+  render(<MarkingPrintWindow source={source} title="ПР-1 · КБ1" close={vi.fn()} />);
+  await screen.findByRole("option", { name: "ОБ.101 · ZCUT-RT430" });
+  fireEvent.click(screen.getByRole("button", { name: "Обновить предпросмотр" }));
+  await screen.findByRole("img", { name: "Этикетка: X1 | КБ-011" });
+  const table = document.body;
+  expect(within(table).getByRole("columnheader", { name: /Левая половина/ })).toBeInTheDocument();
+  expect(within(table).getByRole("columnheader", { name: /Правая половина/ })).toBeInTheDocument();
+  expect(within(table).getAllByText("Разъём А").length).toBeGreaterThanOrEqual(2);
+  expect(within(table).queryByRole("columnheader", { name: /^Надпись/ })).toBeNull();
+});

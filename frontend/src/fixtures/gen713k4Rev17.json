@@ -751,18 +751,18 @@
     "cutWire": "cut-wire-2crimp-автомат-резка-опрессовка",
     "twist": "twist-свивка",
     "insMark": "ins-mark-монтаж-маркировки",
-    "prsTermA1": "prs-terminal-auto-опрессовка-терминалов-a",
-    "insTermA1": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
-    "prsTermA2": "prs-terminal-auto-опрессовка-терминалов-a",
-    "insTermA2": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
-    "prsTermA3": "prs-terminal-auto-опрессовка-терминалов-a",
-    "insTermA3": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
-    "prsTermA4": "prs-terminal-auto-опрессовка-терминалов-a",
-    "insTermA4": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
-    "prsTermB1": "prs-terminal-auto-опрессовка-терминалов-b",
-    "insTermB1": "ins-terminal-2-54-6-3-монтаж-терминалов-b",
-    "prsTermB2": "prs-terminal-auto-опрессовка-терминалов-b",
-    "insTermB2": "ins-terminal-2-54-6-3-монтаж-терминалов-b",
+    "prsTermA1": "prs-terminal-auto-опрессовка-терминалов",
+    "insTermA1": "ins-terminal-2-54-6-3-монтаж-терминалов",
+    "prsTermA2": "prs-terminal-auto-опрессовка-терминалов",
+    "insTermA2": "ins-terminal-2-54-6-3-монтаж-терминалов",
+    "prsTermA3": "prs-terminal-auto-опрессовка-терминалов",
+    "insTermA3": "ins-terminal-2-54-6-3-монтаж-терминалов",
+    "prsTermA4": "prs-terminal-auto-опрессовка-терминалов",
+    "insTermA4": "ins-terminal-2-54-6-3-монтаж-терминалов",
+    "prsTermB1": "prs-terminal-auto-опрессовка-терминалов",
+    "insTermB1": "ins-terminal-2-54-6-3-монтаж-терминалов",
+    "prsTermB2": "prs-terminal-auto-опрессовка-терминалов",
+    "insTermB2": "ins-terminal-2-54-6-3-монтаж-терминалов",
     "cutShr1": "cut-tut-short-резка",
     "cutShr2": "cut-tut-short-резка",
     "cutHs1": "cut-tut-short-резка",
@@ -1001,7 +1001,7 @@
     "opKey": "insTermA1",
     "type": "insTerm",
     "label": "Монтаж контактов в разъём X1 «5» — SMR-02V-B",
-    "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
+    "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов",
     "opNum": "INS_terminal_2,54-6,3"
    },
    {
@@ -1043,7 +1043,7 @@
     "opKey": "insTermA2",
     "type": "insTerm",
     "label": "Монтаж контактов в разъём X2 «I3» — SMR-02V-B",
-    "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
+    "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов",
     "opNum": "INS_terminal_2,54-6,3"
    },
    {
@@ -1092,7 +1092,7 @@
     "opKey": "insTermA3",
     "type": "insTerm",
     "label": "Монтаж контактов в разъём X3 «C» — SMP-02V-BC",
-    "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
+    "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов",
     "opNum": "INS_terminal_2,54-6,3"
    },
    {
@@ -1141,7 +1141,7 @@
     "opKey": "insTermA4",
     "type": "insTerm",
     "label": "Монтаж контактов в разъём X4 «A6» — SMR-04V-B",
-    "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
+    "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов",
     "opNum": "INS_terminal_2,54-6,3"
    },
    {
@@ -1239,14 +1239,14 @@
     "opKey": "insTermB1",
     "type": "insTerm",
     "label": "Монтаж контактов в разъём X5 — I-DS1071-SCB01X3",
-    "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-b",
+    "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов",
     "opNum": "INS_terminal_2,54-6,3"
    },
    {
     "opKey": "insTermB2",
     "type": "insTerm",
     "label": "Монтаж контактов в разъём X6 — I-DS1071-SCB02X3",
-    "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-b",
+    "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов",
     "opNum": "INS_terminal_2,54-6,3"
    }
   ],

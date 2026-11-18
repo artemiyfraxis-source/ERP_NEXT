@@ -32,6 +32,19 @@ def test_label_workflow_classifies_new_legacy_and_vendor_serials(serial, prefix)
     assert instrument_labels._content(item).value("serial_number") == prefix + serial
 
 
+@pytest.mark.parametrize("name,model,line", [
+    ("Переходник SMA female–SMA female S-322", "S-322", "Ресурс 500 сочл. · −65…+165 °C"),  # MIL-PRF-55339/55
+    ("Переход коаксиальный ADP1A-35F-35F", "ADP1A-35F-35F", "Ресурс 3000 сочл. · −60…+85 °C"),  # tag on the item
+    ("Нагрузка", "", ""),  # no norm, no spec: no row
+])
+def test_label_resource_and_temperature_come_from_the_passport_spec(name, model, line):
+    item = MeasurementInstrument(id=uuid4(), version=1, inventory_number="СИ.034", name=name,
+        instrument_type="Принадлежность", kind=InstrumentKind.ACCESSORY, status=InstrumentStatus.ACTIVE,
+        verification_number=None, verified_at=None, verification_due=None, serial_number="S-322.1",
+        doc_designation=model)
+    assert instrument_labels._content(item).value("resource_line") == line
+
+
 def setup(client, *, online=True):
     _as({"quality": "edit", "production": "view"})
     item = create(client, "СИ.034", name="SMA розетка – SMA розетка, S-322", serial_number="N8B139")

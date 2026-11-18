@@ -8,57 +8,31 @@ import re
 
 from .instrument_serials import CONNECTOR_LETTERS, IN_HOUSE_SERIAL
 from .rf_interfaces import RfDetails, parse_interfaces
+from .instrument_norms import loss_db, norms_data
 from .traceability import InstrumentFile
 from .vna_characterization import is_characterization_file
 from .vna_files import VSWR_CEILING, VnaFileError, VnaTrace, _decode, parse_vna_traces
-
-WORKING_VSWR_LIMIT = 1.2
-
-
-@dataclass(frozen=True)
-class WorkingBand:
-    start_ghz: float
-    stop_ghz: float
-    max_loss_in_band: float
-    limit: float = WORKING_VSWR_LIMIT
-
-    @property
-    def band_line(self) -> str:
-        return f"Рабочая полоса {number(self.start_ghz)}–{number(self.stop_ghz)} ГГц"
-
-    @property
-    def limits_line(self) -> str:
-        loss = upper_two(self.max_loss_in_band) if math.isfinite(self.max_loss_in_band) else "∞"
-        return f"КСВН ≤ {number(self.limit)} · потери ≤ {loss} дБ"
-
-
-def working_band(summary, limit: float = WORKING_VSWR_LIMIT) -> WorkingBand | None:
-    """Measured continuous prefix passing both ports; never bridge a failing sample.
-
-    The boundary is the last passing sample, without interpolating unmeasured evidence.
-    Characterization and the public projection expose the same aligned trace interface.
-    """
-    first, second = summary.points("S11"), summary.points("S22")
-    stop = None
-    for (frequency, left), (other_frequency, right) in zip(first, second):
-        if frequency != other_frequency or not (1 <= left <= limit and 1 <= right <= limit):
-            break
-        stop = frequency
-    if stop is None:
-        return None
-    loss = max((loss_db(v) for f, v in summary.points("S21") if first[0][0] <= f <= stop), default=math.inf)
-    return WorkingBand(first[0][0] / 1e9, stop / 1e9, loss, limit)
-
 
 # Standard frequency steps and round limits (owner 17.11): the label and the planner speak in these, not in raw maxima.
 # Classic frequency steps (owner 17.11/18.11): VSWR is quoted «до 1 / 3 / 6 / 12 / 18 ГГц»; 26,5 and 40 GHz are kept for a
 # future VNA upgrade. A band below a step (series limit or measured top) ends at that maximum instead («или максимум»).
 STEPS_GHZ = (1.0, 3.0, 6.0, 12.0, 18.0, 26.5, 40.0)
 STEP_TOLERANCE_GHZ = 0.05
-APPLICATION_VSWR_LIMIT = 1.30  # the frequency range ends at the widest band whose worst VSWR stays within this
+# The frequency range ends at the widest band whose worst VSWR stays within the shop requirement (not a type norm).
+APPLICATION_VSWR_LIMIT = float(norms_data()["shop_requirement"]["vswr_max"])
+APPLICATION_BASIS = norms_data()["shop_requirement"]["label"]
 VSWR_LADDER = (1.05, 1.10, 1.15, 1.20, 1.25, 1.30, 1.40, 1.50, 2.0)
 LOSS_LADDER = (0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 1.0, 2.0)
-SERIES_LIMIT_GHZ = {"BNC": 4.0, "N": 11.0, "TNC": 11.0}  # above the series' own band a step is never claimed
+# Above the band its MIL sheets cover a step is never claimed. N is not capped: /54B and ADP1A rate it to 18 GHz.
+SERIES_LIMIT_GHZ = {name: float(entry["to_ghz"]) for name, entry in norms_data()["series_top_ghz"].items()}
+
+
+def step_stops(highest: float) -> list[float]:
+    """Band edges «до 1 / 3 / 6 / 12 / 18 ГГц» up to `highest`, ending at `highest` itself when it is off-step."""
+    stops = [stop for stop in STEPS_GHZ if stop <= highest + STEP_TOLERANCE_GHZ]
+    if not stops or highest - stops[-1] > STEP_TOLERANCE_GHZ:
+        stops.append(round(highest, 1))  # «или максимум»: the last band ends where the measurement/series does
+    return stops
 
 
 def round_up_ladder(value: float, ladder: tuple[float, ...]) -> float | None:
@@ -106,6 +80,12 @@ class Application:
         return self.bands[-1] if self.bands else None
 
     @property
+    def requirement_line(self) -> str:
+        """«КСВН ≤ 1,30 (требование цеха) — до 12 ГГц»: the shop requirement is never presented as a type norm."""
+        head = f"КСВН ≤ {_vswr_text(APPLICATION_VSWR_LIMIT)} ({APPLICATION_BASIS})"
+        return f"{head} — до {number(self.limit_ghz)} ГГц" if self.limit_ghz else f"{head} — не выполняется"
+
+    @property
     def range_line(self) -> str:
         return f"Частотный диапазон 0–{number(self.limit_ghz)} ГГц" if self.limit_ghz else "Не годен для 50 Ом тракта"
 
@@ -146,11 +126,8 @@ def application(summary, series: tuple[str, ...] = ()) -> Application:
     """Worst-case limits per classic band (cumulative from the lowest frequency) and the usable frequency range."""
     first, second, transfer = summary.points("S11"), summary.points("S22"), summary.points("S21")
     highest = min(first[-1][0] / 1e9, series_cap_ghz(series) or math.inf)
-    stops = [stop for stop in STEPS_GHZ if stop <= highest + STEP_TOLERANCE_GHZ]
-    if not stops or highest - stops[-1] > STEP_TOLERANCE_GHZ:
-        stops.append(round(highest, 1))  # «или максимум»: the last band ends where the measurement/series does
     steps = []
-    for stop in stops:
+    for stop in step_stops(highest):
         edge = stop * 1e9 + 0.5  # the step edge itself, no tolerance: a point at 6.04 GHz is not «до 6»
         vswr = max((v for pts in (first, second) for f, v in pts if f <= edge), default=math.inf)
         loss = max((loss_db(v) for f, v in transfer if f <= edge), default=math.inf)
@@ -230,10 +207,6 @@ class Characterization:
     @property
     def measurement_date(self) -> str:
         return f"Замер {self.measured_on:%d.%m.%y}"
-
-
-def loss_db(magnitude: float) -> float:
-    return max(0.0, -20 * math.log10(magnitude)) if magnitude > 0 else math.inf
 
 
 def _date(text: str) -> date | None:

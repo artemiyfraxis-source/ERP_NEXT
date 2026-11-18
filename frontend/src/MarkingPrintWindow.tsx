@@ -124,6 +124,8 @@ export function MarkingPrintWindow({ source, storageKey, title, close }: {
   const label = preview?.labels[labelIndex];
   const selectedKeys = new Set(selected);
   const selectable = preview ? [...new Map(preview.labels.map((row) => [row.key, row])).values()] : [];
+  // A flag whose halves differ («X1 | X2» in the ETK) shows each half in its own column.
+  const splitFlag = Boolean(preview?.labels.some((row) => row.halves?.length === 2 && row.halves[0] !== row.halves[1]));
   return <PageWindow label="Печать надписей" width={1280} close={() => { if (!inFlight.current) close(); }}>
     <div className="panel marking-window">
       <div className="marking-head"><div><h2>Печать надписей</h2><p className="muted">{title}</p></div>
@@ -159,7 +161,10 @@ export function MarkingPrintWindow({ source, storageKey, title, close }: {
           <div>
             <DataTable rows={preview.labels} rowKey={(row: MarkingLabel) => `${row.key}:${row.serial ?? "fixed"}`} label="Надписи к печати"
               compactBelow={Infinity} pageSize={20} phoneCards={false} onRowClick={(row) => setLabelIndex(preview.labels.indexOf(row))} columns={[
-                { key: "text", title: "Надпись", value: (row) => row.text, grow: true, wrap: true },
+                ...(splitFlag ? [
+                  { key: "left", title: "Левая половина", value: (row: MarkingLabel) => row.halves?.[0] ?? row.text, grow: true, wrap: true },
+                  { key: "right", title: "Правая половина", value: (row: MarkingLabel) => row.halves?.[1] ?? row.text, grow: true, wrap: true },
+                ] : [{ key: "text", title: "Надпись", value: (row: MarkingLabel) => row.text, grow: true, wrap: true }]),
                 { key: "material", title: "Материал", value: (row) => row.material, wrap: true },
                 { key: "quantity", title: "Шт.", numeric: true, value: (row) => row.quantity },
               ]} />
