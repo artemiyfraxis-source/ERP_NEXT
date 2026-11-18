@@ -380,15 +380,23 @@ BELOW_ACCURACY = "ниже точности ВАЦ — не оцениваетс
 
 
 def _decide(judged, allowance, repeated: bool):
-    """One rule for VSWR and loss (owner decision 18.11): a point within ±U of the limit is «на границе допуска» and only
-    triggers the 3-connection repeat; after the repeat the worst connection is judged by simple acceptance (≤ limit).
+    """One rule for VSWR and loss (owner decisions 18.11; stated in СТО ФРАК-002-2026): a point within ±U of the limit is
+    «на границе допуска» and triggers the 3-connection repeat. After the repeat the worst connection is judged with the
+    ILAC-G8 acceptance zone extended by the measurement uncertainty: ≤ limit + U conforms, > limit + U does not —
+    «пару соток» over the norm are tolerated, a real excess never is. U is the stored VNA uncertainty at that frequency.
 
     Returns (status, first non-pass point, last pass before it, peak point)."""
     first_bad, last_pass, clear_fail, border = None, None, False, False
     for point in judged:
         ghz, value, limit = point
-        allowed = 0.0 if repeated else allowance(ghz)
-        if value > limit + allowed + 1e-12:
+        allowed = allowance(ghz)
+        if repeated:
+            if value <= limit + allowed + 1e-12:
+                if first_bad is None:
+                    last_pass = ghz
+                continue
+            clear_fail = True
+        elif value > limit + allowed + 1e-12:
             clear_fail = True
         elif abs(value - limit) <= allowed + 1e-12 and allowed > 0:
             border = True

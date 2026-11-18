@@ -60,22 +60,25 @@ def test_pass_fail_and_border_against_the_norm():
     assert failed.result_line == "КСВН 1,3 на 13 ГГц при норме ≤ 1,129"
 
 
-@pytest.mark.parametrize("offset,status", [(-0.03, "pass"), (-0.02, "border"), (0.0, "border"), (0.02, "border"),
-                                           (0.03, "fail")])
-def test_vswr_within_the_uncertainty_is_a_border_that_asks_for_the_repeat(offset, status):
-    # Owner decision 18.11: |КСВН − предел| ≤ U (S50180 ±0,022 to 10 GHz, РЭ табл. 23) triggers the 3-connection repeat;
-    # after it the worst connection is judged by simple acceptance.
+@pytest.mark.parametrize("offset,once_status,final_status", [
+    (-0.03, "pass", "pass"), (-0.02, "border", "pass"), (0.0, "border", "pass"), (0.02, "border", "pass"),
+    (0.022, "border", "pass"),     # limit + U exactly: «пару соток» over the norm conform after the repeat
+    (0.023, "fail", "fail"),       # beyond limit + U: a real excess, before and after the repeat
+    (0.03, "fail", "fail")])
+def test_vswr_decision_zone_is_the_limit_extended_by_the_uncertainty(offset, once_status, final_status):
+    # СТО ФРАК-002-2026 (owner 18.11): |КСВН − предел| ≤ U (S50180 ±0,022 to 10 GHz, РЭ табл. 23) triggers the
+    # 3-connection repeat; after it the worst connection conforms when ≤ limit + U (ILAC-G8 zone extended by U).
     norm, u = norm_by_id("mil-55339-54b"), uncertainty_for("S50180")
     measured = summary({0.01: 1.02, 3: 1.02, 6: round(norm.limit(6) + offset, 4)})
     once = assess(measured, norm, u)
-    assert once.status == status
-    if status == "border":
+    assert once.status == once_status
+    if once_status == "border":
         assert once.verdict == "На границе допуска выше 3 ГГц — нужен повторный замер (3 подключения с поворотом 120°)"
         assert once.brief.endswith("погрешность ±0,022")
-    repeated = assess(measured, norm, u, repeated=True)
-    assert repeated.status == ("pass" if offset <= 0 else "fail")
-    if offset > 0:
-        assert repeated.verdict == "Не соответствует норме выше 3 ГГц"
+    final = assess(measured, norm, u, repeated=True)
+    assert final.status == final_status
+    assert final.verdict == ("Соответствует норме в полосе 0,01–6 ГГц" if final_status == "pass"
+                             else "Не соответствует норме выше 3 ГГц")
 
 
 def test_uncertainty_is_stored_per_vna_model_and_resolved_by_serial():
@@ -199,7 +202,7 @@ def test_loss_limit_within_twice_the_vna_uncertainty_is_not_judged():
     assert assess_loss(summary(vswr), None).short == "норма не назначена"
 
 
-def test_resolvable_loss_follows_the_same_border_rule():
+def test_resolvable_loss_follows_the_same_decision_zone():
     from app.modules.production.instrument_norms import LossNorm, LossSegment
 
     loss, uncertainty = LossNorm("Лист", 0.0, (LossSegment(18, 0.5),)), loss_uncertainty_for("S50180")
@@ -209,11 +212,12 @@ def test_resolvable_loss_follows_the_same_border_rule():
         return assess_loss(summary(vswr, {0.01: 0.01, 3: 0.02, 9: at_nine}), loss, uncertainty, repeated=repeated)
 
     assert judged(0.3).status == "pass" and judged(0.3).brief == "потери ≤ 0,3 дБ (9 ГГц)"
-    assert judged(0.45).status == judged(0.55).status == "border"
+    assert judged(0.45).status == judged(0.55).status == judged(0.6).status == "border"
     assert judged(0.55).short == "на границе допуска выше 3 ГГц — нужен повторный замер (3 подключения с поворотом 120°)"
     assert judged(0.55).brief == "потери 0,55 дБ на 9 ГГц при норме ≤ 0,5 дБ, погрешность ±0,1 дБ"
-    assert judged(0.65).status == "fail" and judged(0.65).short == "не соответствует норме выше 3 ГГц"
-    assert judged(0.45, repeated=True).status == "pass" and judged(0.55, repeated=True).status == "fail"
+    assert judged(0.61).status == "fail" and judged(0.61).short == "не соответствует норме выше 3 ГГц"
+    # After the repeat: ≤ 0,5 + 0,1 dB conforms, above it does not.
+    assert [judged(value, repeated=True).status for value in (0.45, 0.55, 0.6, 0.61)] == ["pass", "pass", "pass", "fail"]
 
 
 def test_vswr_limit_within_the_uncertainty_is_not_judged():
@@ -260,24 +264,28 @@ def test_passport_conclusion_is_short_and_reports_an_unresolvable_loss():
     assert result.closing == ("Утвердил: Генеральный директор ______________ (подпись)   «____» __________ 20___ г.",)
 
 
-@pytest.mark.parametrize("vswr,after", [(1.13, "Соответствует норме"), (1.15, "Не соответствует норме")])
-def test_a_border_asks_for_three_connections_then_the_worst_decides_by_simple_acceptance(vswr, after):
+@pytest.mark.parametrize("repeat_vswr,after", [(1.10, "Соответствует норме"), (1.165, "Соответствует норме"),
+                                                (1.175, "Не соответствует норме")])
+def test_a_border_asks_for_three_connections_then_the_worst_decides_within_limit_plus_u(repeat_vswr, after):
     from app.modules.production.instrument_characterization import characterization
     from app.modules.production.instrument_public import conclusion, public_passport
     from tests.production.test_instrument_passport import instrument, rf
 
-    gamma = (vswr - 1) / (vswr + 1)  # /55 at 18 GHz: 1,14 ± 0,029 — both values are at the border
-    good = [(0.01, 0.01, 0.999), (9, 0.01, 0.999), (18, 0.01, 0.999)]
-    first = characterization(_s2p([(0.01, 0.01, 0.999), (9, 0.01, 0.999), (18, gamma, 0.999)]))
+    def gamma(vswr):
+        return (vswr - 1) / (vswr + 1)
+
+    # /55 at 18 GHz: limit 1,14, U ±0,029 → the decision zone ends at 1,169.
+    first = characterization(_s2p([(0.01, 0.01, 0.999), (9, 0.01, 0.999), (18, gamma(1.15), 0.999)]))
     once = conclusion(public_passport(instrument(), rf(), first))
     assert once.verdict == "На границе допуска (КСВН) выше 9 ГГц — нужен повторный замер (3 подключения с поворотом 120°)"
-    assert "" not in dict(once.lines) or dict(once.lines)[""] == "Пригоден до 6 ГГц"
-    repeats = (characterization(_s2p(good)), characterization(_s2p(good)))
-    final = conclusion(public_passport(instrument(), rf(), first, repeats=repeats))
+    repeat = characterization(_s2p([(0.01, 0.01, 0.999), (9, 0.01, 0.999), (18, gamma(repeat_vswr), 0.999)]))
+    final = conclusion(public_passport(instrument(), rf(), first, repeats=(repeat, repeat)))
     assert final.verdict.startswith(after)
-    assert (dict(final.lines).get("") == "Пригоден до 18 ГГц") == (vswr < 1.14)
-    two = conclusion(public_passport(instrument(), rf(), first, repeats=repeats[:1]))
-    assert two.verdict.startswith("На границе допуска")  # two connections are not the three the rule asks for
+    assert "погрешност" not in final.verdict and "границ" not in final.verdict  # only the verdict, no extra wording
+    assert (dict(final.lines).get("") == "Пригоден до 18 ГГц") == (after == "Соответствует норме")
+    two = conclusion(public_passport(instrument(), rf(), first, repeats=(repeat,)))
+    # Two connections are not the three the rule asks for; a connection beyond limit + U fails at once.
+    assert two.verdict.startswith("На границе допуска" if repeat_vswr <= 1.169 else "Не соответствует норме")
 
 
 def test_loss_failure_overrides_a_vswr_border():
