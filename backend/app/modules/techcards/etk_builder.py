@@ -1627,21 +1627,32 @@ def _vswr_scope(control: Mapping[str, Any] | None) -> str:
     return ""
 
 
+# Assembly VSWR method (СТО ФРАК-002-2026, 12.3; СТО ФРАК-001-2026, 4.8.16 «с двух концов»): a two-port sweep gives
+# S11 from side А and S22 from side Б; a one-port check with a matched load is only the agreed fallback. Torques —
+# СТО ФРАК-002-2026, appendix Б (Planar РЭ ч. 1 п. 4.6, РЭ АКМ п. 6.2.3–6.2.4). Warm-up — РЭ ч. 1, табл. 17.
+VSWR_METHOD = "СТО ФРАК-002-2026"
+VSWR_TWO_ENDS = "с двух концов (S11 — сторона А, S22 — сторона Б)"
+VSWR_TORQUE = "N — 1,1–1,5 Н·м; 3,5 мм и SMA — 0,8–1,0 Н·м"
+VSWR_WARMUP = "не менее 40 мин"
+
+
 def vswr_step(norm: Mapping[str, Any], control: Mapping[str, Any] | None = None) -> tuple[str, str]:
-    """(text, tolerance) of the «Контроль КСВН» step from the assembly's `coaxVswrNorm`: «Измерить КСВН (S11) в полосе
-    1…6000 МГц, сторона Б нагружена согласованной нагрузкой 50 Ом. Норма ≤ 2,06 (по комплектующим: SMA-C174P ≤1,43;
-    SMA-C316F ≤1,41).» Norm not defined (no КСВ of a connector) or not computed ({} — no references) — the reason, and
-    the decision is ОТК's; never a default norm. `control` (generator «Контроль КСВН») adds which units of the batch
-    are measured: «…; контроль выборочный: первое изделие партии и далее каждое 50-е (1 из 50)»."""
+    """(text, tolerance) of the «Контроль КСВН» step from the assembly's `coaxVswrNorm`: «Измерить КСВН с двух концов
+    (S11 — сторона А, S22 — сторона Б) в полосе 1…6000 МГц, метод — по СТО ФРАК-002-2026. Норма ≤ 2,06 (по
+    комплектующим: SMA-C174P ≤1,43; SMA-C316F ≤1,41).» Norm not defined (no КСВ of a connector) or not computed ({} — no
+    references) — the reason, and the decision is ОТК's; never a default norm. `control` (generator «Контроль КСВН»)
+    adds which units of the batch are measured: «…; контроль выборочный: первое изделие партии и далее каждое 50-е
+    (1 из 50)»."""
     scope = _vswr_scope(control)
-    load = "сторона Б нагружена согласованной нагрузкой 50 Ом" + (f"; {scope}" if scope else "")
+    method = f"метод — по {VSWR_METHOD}" + (f"; {scope}" if scope else "")
     if not norm:
-        return f"Измерить КСВН (S11), {load}; норма не рассчитана — нет данных справочников, решение принимает ОТК.", "решение ОТК"
+        return (f"Измерить КСВН {VSWR_TWO_ENDS}, {method}; норма не рассчитана — нет данных справочников, решение "
+                "принимает ОТК."), "решение ОТК"
     band = _list(norm.get("bandMhz")) + [None, None]
     start = _format(band[0] if band[0] is not None else 1, 2)
     band_text = (f"в полосе {start}…{_format(band[1], 2)} МГц" if band[1]
                  else f"в полосе от {start} МГц (верхняя граница не определена — нет «Частота до» у разъёмов и кабеля)")
-    head = f"Измерить КСВН (S11) {band_text}, {load}"
+    head = f"Измерить КСВН {VSWR_TWO_ENDS} {band_text}, {method}"
     if norm.get("source") == "customer" and norm.get("vswrMax") is not None:
         # Норма заказчика (технолог, владелец 23.10) — приёмка по ней в её полосе; по комплектующим — справочно.
         maximum = _format(norm["vswrMax"], 3)
@@ -2621,18 +2632,19 @@ def _short_vswr(config: Mapping[str, Any], fields: Mapping[str, Any]) -> list[di
     has_b = bool(str((_coax(config).get("sideB") or {}).get("article") or "").strip())
     scope = _vswr_scope(fields.get("coaxVswrControl"))
     channels = int(_coax_cables(config))
-    check = ("Измерить КСВН (S11)" + (f" каждого из {channels} каналов сборки" if channels > 1 else "")
+    check = ("Измерить КСВН с двух концов (S11 и S22)" + (f" каждого из {channels} каналов сборки" if channels > 1 else "")
              + (f"; {scope}" if scope else "") + "; сравнить наибольшее значение в полосе с нормой.")
     if not limit:
         check += f" Норма не определена — {reason}: результат не определён, решение принимает ОТК."
     return [
-        _step("Операция", f"Прогреть векторный анализатор цепей не менее 30 мин, задать полосу {band_text} и выполнить "
-                          "калибровку OSL на конце измерительного кабеля."),
-        _step("Операция", "Подключить сторону А к измерительному кабелю, на " + ("сторону В" if has_b else "второй конец")
-              + " установить согласованную нагрузку 50 Ом; резьбовые разъёмы затянуть динамометрическим ключом с моментом "
-              "по документации производителя, защёлкивающиеся — до фиксации."),
+        _step("Операция", f"Прогреть векторный анализатор цепей {VSWR_WARMUP}, задать полосу {band_text} и выполнить "
+                          f"полную двухпортовую калибровку на концах обоих измерительных кабелей; метод — по {VSWR_METHOD}."),
+        _step("Операция", "Подключить сторону А к порту 1, " + ("сторону В" if has_b else "второй конец")
+              + " — к порту 2; резьбовые разъёмы затянуть динамометрическим ключом, защёлкивающиеся — до фиксации. "
+              "Однопортовый замер с нагрузкой 50 Ом — только если сборку нельзя подключить двумя концами, с согласования "
+              "ОТК.", VSWR_TORQUE),
         _step("Контроль", check, limit or "решение ОТК"),
-        _step("Операция", "Записать наибольший КСВН в графу «Факт/БРАК»; сборку с превышением нормы отложить в изолятор брака."),
+        _step("Операция", "Записать наибольший КСВН из S11 и S22 в графу «Факт/БРАК»; сборку с превышением нормы отложить в изолятор брака."),
     ]
 
 
