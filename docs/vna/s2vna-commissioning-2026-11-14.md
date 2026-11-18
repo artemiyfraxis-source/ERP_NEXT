@@ -26,7 +26,7 @@
 ## Запись с проверкой обратным чтением — работает
 
 `C.SWEep.POINts = 1601`, `C.FREQuency.STARt/STOP`, `C.BANDwidth.RESolution = 1000`, `T.FORMat = "SWR"`,
-`T.SMOothing.STATe = False`, `T.LIMit.DATA = [1,1,f1,f2,1.3,1.3]` + `T.LIMit.DISPlay.STATe = True`,
+`T.SMOothing.STATe = False`, `T.LIMit.DATA` (линия нормы СИ) + `T.LIMit.DISPlay.STATe = True`,
 `T.MATH.FUNCtion = "OFF"`, `T.FILTer.GATE.TIME.STATe = False`, `S.CALCulate(1).FSIMulator.STATe = False`,
 `…CKIT.SELect = 28` (и возврат прежнего номера).
 

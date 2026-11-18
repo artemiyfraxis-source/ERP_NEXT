@@ -53,6 +53,17 @@ TEST_FREQUENCY_TOLERANCE_GHZ = 0.05
 LOSS_BORDER_FALLBACK_DB = 0.05
 
 
+def _bands_text(segments, from_ghz: float, start: float, stop: float, unit: str = "") -> str:
+    """«≤ 1,06 до 20 ГГц; ≤ 1,1 до 26,5 ГГц» — only the segments the measured range [start, stop] touches."""
+    parts, low = [], from_ghz
+    for segment in segments:
+        if segment.to_ghz > start + 1e-9 and low < stop - 1e-9:
+            span = f"до {ghz_text(segment.to_ghz)}" if not parts and low <= 1e-9 or parts else                 f"в полосе {ghz_text(low)}–{ghz_text(segment.to_ghz)}"
+            parts.append(f"≤ {segment.text}{unit} {span} ГГц")
+        low = segment.to_ghz
+    return "; ".join(parts)
+
+
 @dataclass(frozen=True)
 class LossSegment:
     to_ghz: float
@@ -111,6 +122,12 @@ class LossNorm:
     def line(self) -> str:
         return f"{self.reference} — {self.limit_text}"
 
+    def brief(self, start: float, stop: float) -> str:
+        """«≤ 0,2 дБ до 32 ГГц» for the measured range; test-frequency norms only when that frequency was measured."""
+        parts = [_bands_text(self.segments, self.from_ghz, start, stop, " дБ")] if self.segments else []
+        parts += [point.text for point in self.points if start - 0.5 <= point.ghz <= stop + 0.5]
+        return "; ".join(filter(None, parts))
+
 
 def _loss_norm(reference: str, raw: dict | None) -> LossNorm | None:
     if not raw:
@@ -157,7 +174,16 @@ class Norm:
 
     @property
     def line(self) -> str:
-        return f"{self.reference} ({self.title}) — {self.limit_text}"
+        return f"{self.reference} — {self.limit_text}"
+
+    def brief(self, start: float, stop: float) -> str:
+        """«РЭ Планар ADP1A, табл. 2.6 — КСВН ≤ 1,06 до 20 ГГц; потери ≤ 0,2 дБ до 32 ГГц»: the bands that apply only."""
+        text = f"{self.reference} — КСВН {_bands_text(self.segments, self.from_ghz, start, stop) or self.limit_text[5:]}"
+        loss = self.loss.brief(start, stop) if self.loss else ""
+        if loss:
+            other = f" ({self.loss.reference})" if self.loss.reference not in ("", self.reference) else ""
+            text += f"; потери{other} {loss}"
+        return text
 
 
 @dataclass(frozen=True)
@@ -208,7 +234,7 @@ def norm_for(name: str, model: str, rf: RfDetails) -> Norm | None:
     if maker:
         for group in maker["groups"]:
             if tuple(sorted(group["ports"])) == ports:
-                return Norm(maker["source"], group["title"], float(group["from_ghz"]),
+                return Norm(group.get("reference", maker["source"]), group["title"], float(group["from_ghz"]),
                             _segments(group["segments"]), maker.get("url", ""), group.get("mating_resource"), True,
                             _loss_norm(maker["title"], group.get("loss")))
     sheet = _mil_sheet(ports)
@@ -293,6 +319,22 @@ def vna_model(instrument_text: str, registry=()) -> str:
     return ""
 
 
+def resolve_vna(texts, registry=()):
+    """(model, registry item) of the VNA that measured: the model from any header/file-name text or the item; the item
+    by the serial the header names («ВАЦ №…», «VNA serial=…»), else the only registry entry of that model."""
+    known = [entry["model"] for entry in norms_data()["vna"]]
+    joined = " ".join(texts)
+    serial = re.search(r"(?:ВАЦ №|VNA serial=)([A-Za-z0-9-]+)", joined)
+    item = next((entry for entry in registry if serial and entry.serial_number == serial[1]), None)
+    model = next((m for m in known if re.search(rf"(?<![A-Z0-9]){re.escape(m)}(?![0-9])", joined.upper())), "")
+    if not model and item is not None:
+        model = next((m for m in known if m in _model_text(item.name, item.doc_designation or "")), "")
+    if item is None and model:
+        same = [entry for entry in registry if model in _model_text(entry.name, entry.doc_designation or "")]
+        item = same[0] if len(same) == 1 else None
+    return model, item
+
+
 def uncertainty_for(model: str) -> Uncertainty | None:
     entry = next((entry for entry in norms_data()["vna"] if entry["model"] == model), None) if model else None
     if entry is None:
@@ -301,18 +343,63 @@ def uncertainty_for(model: str) -> Uncertainty | None:
                        tuple((float(s["to_ghz"]), float(s["value"])) for s in entry["uncertainty"]), entry["source"])
 
 
+REPEAT_CONNECTIONS = 3  # «3 подключения с поворотом 120°» (owner decision 18.11)
+REPEAT_TEXT = "нужен повторный замер (3 подключения с поворотом 120°)"
+
+
+BELOW_ACCURACY = "ниже точности ВАЦ — не оценивается"
+
+
+def _decide(judged, allowance, repeated: bool):
+    """One rule for VSWR and loss (owner decision 18.11): a point within ±U of the limit is «на границе допуска» and only
+    triggers the 3-connection repeat; after the repeat the worst connection is judged by simple acceptance (≤ limit).
+
+    Returns (status, first non-pass point, last pass before it, peak point)."""
+    first_bad, last_pass, clear_fail, border = None, None, False, False
+    for point in judged:
+        ghz, value, limit = point
+        allowed = 0.0 if repeated else allowance(ghz)
+        if value > limit + allowed + 1e-12:
+            clear_fail = True
+        elif abs(value - limit) <= allowed + 1e-12 and allowed > 0:
+            border = True
+        elif value <= limit:
+            if first_bad is None:
+                last_pass = ghz
+            continue
+        else:  # above the limit with no stated uncertainty: simple acceptance
+            clear_fail = True
+        if first_bad is None:
+            first_bad = point
+    status = "fail" if clear_fail else "border" if border else "pass"
+    return status, first_bad, last_pass, max(judged, key=lambda point: point[1])
+
+
+def _resolvable(judged, allowance, margin):
+    """Points whose limit the VNA can resolve: a limit within its own uncertainty (`margin(limit) ≤ 2·U` for loss,
+    `limit − 1 ≤ U` for VSWR) is not judged (owner decision 18.11)."""
+    return [point for point in judged if margin(point) > allowance(point[0]) + 1e-12]
+
+
 @dataclass(frozen=True)
 class Assessment:
-    """Decision against the norm, simple acceptance (w = 0); a margin under the uncertainty is flagged."""
+    """Decision against the norm: pass below limit − U; «на границе допуска» within ±U until repeated; fail above."""
     norm: Norm | None
-    status: str                    # "pass" | "fail" | "none" | "no_points"
+    status: str                    # "pass" | "border" | "fail" | "below_accuracy" | "none" | "no_points"
     start_ghz: float = 0.0
     stop_ghz: float = 0.0
-    at_ghz: float = 0.0            # the decisive point: worst margin (pass) or first excess (fail)
+    at_ghz: float = 0.0            # the first point that is not a clean pass (border/fail)
     vswr: float = 0.0
     limit: float = 0.0
     last_pass_ghz: float | None = None
-    border: bool = False
+    uncertainty: float | None = None
+    peak_ghz: float = 0.0          # the worst measured value (what the passport quotes as «КСВН ≤ …»)
+    peak: float = 0.0
+    repeated: bool = False
+
+    @property
+    def first_bad_ghz(self) -> float | None:
+        return self.at_ghz if self.status in ("border", "fail") else None
 
     @property
     def verdict(self) -> str:
@@ -320,33 +407,48 @@ class Assessment:
             return "Норма не установлена — заключение о соответствии не выдаётся"
         if self.status == "no_points":
             return "Нет точек замера в полосе нормы — заключение о соответствии не выдаётся"
+        if self.status == "below_accuracy":
+            return "Норма ниже точности ВАЦ — заключение о соответствии не выдаётся"
         if self.status == "pass":
-            text = f"Соответствует норме в полосе {ghz_text(self.start_ghz)}–{ghz_text(self.stop_ghz)} ГГц"
-        elif self.last_pass_ghz is None:
-            text = "Не соответствует норме"
-        else:
-            text = f"Не соответствует норме выше {ghz_text(self.last_pass_ghz)} ГГц"
-        return text + (" (на границе допуска)" if self.border else "")
+            return f"Соответствует норме в полосе {ghz_text(self.start_ghz)}–{ghz_text(self.stop_ghz)} ГГц"
+        above = f" выше {ghz_text(self.last_pass_ghz)} ГГц" if self.last_pass_ghz is not None else ""
+        if self.status == "border":
+            return f"На границе допуска{above} — {REPEAT_TEXT}"
+        return f"Не соответствует норме{above}"
 
     @property
     def result_line(self) -> str:
-        if self.status not in ("pass", "fail"):
-            return ""
-        word = "худший КСВН" if self.status == "pass" else "КСВН"
-        return f"{word} {_num(self.vswr, 3)} на {ghz_text(self.at_ghz)} ГГц при норме ≤ {_num(self.limit, 3)}"
+        return self.brief
+
+    @property
+    def brief(self) -> str:
+        """«КСВН ≤ 1,035 (13,04 ГГц)»; a border or a failure names its point, limit and, when known, the uncertainty."""
+        if self.status == "pass":
+            return f"КСВН ≤ {_num(self.peak, 3)} ({ghz_text(self.peak_ghz)} ГГц)"
+        if self.status in ("border", "fail"):
+            text = f"КСВН {_num(self.vswr, 3)} на {ghz_text(self.at_ghz)} ГГц при норме ≤ {_num(self.limit, 3)}"
+            return text + (f", погрешность ±{_num(self.uncertainty)}" if self.uncertainty else "")
+        if self.status == "below_accuracy":
+            return f"КСВН {_num(self.peak, 3)} (норма {_num(self.limit, 3)} {BELOW_ACCURACY})"
+        return ""
 
     @property
     def short(self) -> str:
         if self.status == "pass":
             return f"соответствует норме до {ghz_text(self.stop_ghz)} ГГц"
+        above = f" выше {ghz_text(self.last_pass_ghz)} ГГц" if self.last_pass_ghz is not None else ""
+        if self.status == "border":
+            return f"на границе допуска{above} — {REPEAT_TEXT}"
         if self.status == "fail":
-            return f"не соответствует норме выше {ghz_text(self.last_pass_ghz)} ГГц" if self.last_pass_ghz is not None \
-                else "не соответствует норме"
+            return f"не соответствует норме{above}"
+        if self.status == "below_accuracy":
+            return f"норма {BELOW_ACCURACY}"
         return "норма не установлена" if self.status == "none" else "нет точек в полосе нормы"
 
 
-def assess(measured, norm: Norm | None, uncertainty: Uncertainty | None = None) -> Assessment:
-    """Both ports at every measured frequency within the norm's band (and the measurement's)."""
+def assess(measured, norm: Norm | None, uncertainty: Uncertainty | None = None, *, repeated: bool = False) -> Assessment:
+    """Both ports at every measured frequency within the norm's band (and the measurement's). Without a known VNA the
+    uncertainty is unknown and the decision is simple acceptance."""
     if norm is None:
         return Assessment(None, "none")
     first, second = measured.points("S11"), measured.points("S22")
@@ -354,16 +456,20 @@ def assess(measured, norm: Norm | None, uncertainty: Uncertainty | None = None) 
     judged = [(ghz, value, norm.limit(ghz)) for ghz, value in points if norm.limit(ghz) is not None]
     if not judged:
         return Assessment(norm, "no_points")
-    start, stop = judged[0][0], judged[-1][0]
-    last_pass = None
-    for ghz, value, limit in judged:
-        if value > limit:
-            border = bool(uncertainty and value - limit < uncertainty.at(ghz))
-            return Assessment(norm, "fail", start, stop, ghz, value, limit, last_pass, border)
-        last_pass = ghz
-    ghz, value, limit = min(judged, key=lambda point: point[2] - point[1])
-    border = bool(uncertainty and limit - value < uncertainty.at(ghz))
-    return Assessment(norm, "pass", start, stop, ghz, value, limit, None, border)
+
+    def allowance(ghz: float) -> float:
+        return uncertainty.at(ghz) if uncertainty else 0.0
+
+    resolvable = _resolvable(judged, allowance, lambda point: point[2] - 1)
+    if not resolvable:
+        ghz, value, limit = max(judged, key=lambda point: point[1])
+        return Assessment(norm, "below_accuracy", judged[0][0], judged[-1][0], ghz, value, limit, None,
+                          allowance(ghz) or None, ghz, value)
+    judged = resolvable
+    status, bad, last_pass, peak = _decide(judged, allowance, repeated)
+    ghz, value, limit = bad or peak
+    return Assessment(norm, status, judged[0][0], judged[-1][0], ghz, value, limit, last_pass,
+                      uncertainty.at(ghz) if uncertainty else None, peak[0], peak[1], repeated)
 
 
 @dataclass(frozen=True)
@@ -394,40 +500,53 @@ def loss_uncertainty_for(model: str) -> LossUncertainty | None:
 
 @dataclass(frozen=True)
 class LossAssessment:
-    """Insertion loss |S21| against the loss norm. An excess smaller than the VNA uncertainty (or, with the VNA model
-    unknown, than LOSS_BORDER_FALLBACK_DB) is «на границе допуска», not a failure (owner decision 18.11)."""
+    """Insertion loss |S21| against the loss norm by the same rule as VSWR; with the VNA unknown the uncertainty is
+    LOSS_BORDER_FALLBACK_DB (owner decision 18.11)."""
     norm: LossNorm | None
-    status: str                    # "pass" | "border" | "fail" | "none" | "no_points"
+    status: str                    # "pass" | "border" | "fail" | "below_accuracy" | "none" | "no_points"
     at_ghz: float = 0.0
     loss: float = 0.0
     limit: float = 0.0
     last_pass_ghz: float | None = None
-    border: bool = False           # a pass whose margin is smaller than the uncertainty
     uncertainty_db: float | None = None
+    peak_ghz: float = 0.0
+    peak: float = 0.0
+    repeated: bool = False
+
+    @property
+    def first_bad_ghz(self) -> float | None:
+        return self.at_ghz if self.status in ("border", "fail") else None
 
     @property
     def short(self) -> str:
+        above = f" выше {ghz_text(self.last_pass_ghz)} ГГц" if self.last_pass_ghz is not None else ""
         if self.status == "pass":
-            return "соответствует норме" + (" (на границе допуска)" if self.border else "")
+            return "соответствует норме"
         if self.status == "border":
-            return "на границе допуска — превышение меньше погрешности ВАЦ"
+            return f"на границе допуска{above} — {REPEAT_TEXT}"
         if self.status == "fail":
-            return f"не соответствует норме выше {ghz_text(self.last_pass_ghz)} ГГц" if self.last_pass_ghz is not None \
-                else "не соответствует норме"
+            return f"не соответствует норме{above}"
+        if self.status == "below_accuracy":
+            return f"норма {BELOW_ACCURACY}"
         if self.status == "no_points":
             return "нет точек замера в полосе нормы" if self.norm and self.norm.segments else \
                 "нет точки замера на частоте испытания"
         return "норма не установлена"
 
     @property
+    def brief(self) -> str:
+        if self.status == "pass":
+            return f"потери ≤ {_num(self.peak, 3)} дБ ({ghz_text(self.peak_ghz)} ГГц)"
+        if self.status in ("border", "fail"):
+            text = f"потери {_num(self.loss, 3)} дБ на {ghz_text(self.at_ghz)} ГГц при норме ≤ {_num(self.limit, 3)} дБ"
+            return text + (f", погрешность ±{_num(self.uncertainty_db)} дБ" if self.uncertainty_db is not None else "")
+        if self.status == "below_accuracy":
+            return f"потери {_num(self.peak, 3)} дБ (норма {_num(self.limit, 3)} дБ {BELOW_ACCURACY})"
+        return ""
+
+    @property
     def result_line(self) -> str:
-        if self.status not in ("pass", "border", "fail"):
-            return ""
-        word = "худшие потери" if self.status == "pass" else "потери"
-        text = f"{word} {_num(self.loss, 3)} дБ на {ghz_text(self.at_ghz)} ГГц при норме ≤ {_num(self.limit, 3)} дБ"
-        if self.uncertainty_db is not None and self.status != "fail":
-            text += f", погрешность ±{_num(self.uncertainty_db)} дБ"
-        return text
+        return self.brief
 
 
 def _judged_loss(measured, norm: LossNorm):
@@ -442,7 +561,8 @@ def _judged_loss(measured, norm: LossNorm):
     return sorted(judged)
 
 
-def assess_loss(measured, norm: LossNorm | None, uncertainty: LossUncertainty | None = None) -> LossAssessment:
+def assess_loss(measured, norm: LossNorm | None, uncertainty: LossUncertainty | None = None, *,
+                repeated: bool = False) -> LossAssessment:
     """Every measured S21 point the banded norm covers, and the nearest point to each test frequency."""
     if norm is None:
         return LossAssessment(None, "none")
@@ -453,19 +573,22 @@ def assess_loss(measured, norm: LossNorm | None, uncertainty: LossUncertainty | 
     def allowance(ghz: float) -> float:
         return uncertainty.at(ghz) if uncertainty else LOSS_BORDER_FALLBACK_DB
 
-    def stated(ghz: float) -> float | None:
-        return uncertainty.at(ghz) if uncertainty else None
+    resolvable = _resolvable(judged, allowance, lambda point: point[2] / 2)  # limit ≤ 2·U: not judged
+    if not resolvable:
+        ghz, value, limit = max(judged, key=lambda point: point[1])
+        return LossAssessment(norm, "below_accuracy", ghz, value, limit, None, allowance(ghz), ghz, value)
+    judged = resolvable
+    status, bad, last_pass, peak = _decide(judged, allowance, repeated)
+    ghz, value, limit = bad or peak
+    return LossAssessment(norm, status, ghz, value, limit, last_pass, uncertainty.at(ghz) if uncertainty else None,
+                          peak[0], peak[1], repeated)
 
-    last_pass, border = None, None
-    for ghz, value, limit in judged:
-        excess = value - limit
-        if excess > 1e-12 and excess >= allowance(ghz):
-            return LossAssessment(norm, "fail", ghz, value, limit, last_pass, uncertainty_db=stated(ghz))
-        if excess > 1e-12 and (border is None or excess > border[1] - border[2]):
-            border = (ghz, value, limit)
-        last_pass = ghz
-    if border:
-        ghz, value, limit = border
-        return LossAssessment(norm, "border", ghz, value, limit, uncertainty_db=stated(ghz))
-    ghz, value, limit = min(judged, key=lambda point: point[2] - point[1])
-    return LossAssessment(norm, "pass", ghz, value, limit, border=limit - value < allowance(ghz), uncertainty_db=stated(ghz))
+
+_ORDER = {"fail": 5, "border": 4, "pass": 3, "below_accuracy": 2, "no_points": 1, "none": 0}
+
+
+def worst(assessments):
+    """Across the repeated connections the worst result decides: the worst status, then the lowest first non-pass point,
+    then the highest peak."""
+    return max(assessments, key=lambda a: (_ORDER[a.status], -(a.first_bad_ghz if a.first_bad_ghz is not None else 1e9),
+                                           a.peak))
