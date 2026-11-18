@@ -87,16 +87,50 @@ def _lines(draw, text, font, width):
     return lines
 
 
+HALF = "|"
+
+
+def halves(text: str, zones: int) -> list[str]:
+    """Text of every text zone. «ЛЕВО | ПРАВО» — different text on the two halves of a flag (owner, 18.11);
+    without «|» — the same text on every zone, as before."""
+    if HALF not in text:
+        return [text] * zones
+    parts = [part.strip() for part in text.split(HALF)]
+    if len(parts) != 2:
+        raise ValueError(f"Половины флажка разделяет один знак «|»: «{text}»")
+    if zones != 2:
+        raise ValueError(f"Разный текст на половинах печатается только на флажке с двумя текстовыми зонами: «{text}»")
+    if not all(parts):
+        raise ValueError(f"Заполните обе половины флажка: «{text}»")
+    return parts
+
+
+def _layout(draw, text, font, size, geometry, width, height):
+    lines = _lines(draw, text, font, width)
+    if lines is None or len(lines) > geometry.max_lines:
+        return None
+    boxes = [draw.textbbox((0, 0), line or " ", font=font) for line in lines]
+    gap = max(2, round(size * 0.15))
+    total = sum(b[3] - b[1] for b in boxes) + gap * (len(boxes) - 1)
+    if total > height or any(b[2] - b[0] > width for b in boxes):
+        return None
+    return lines, boxes, gap, total
+
+
 def render(text: str, geometry: Geometry, *, calibration: bool = False) -> tuple[bytes, dict]:
     if not text.strip() or len(text) > 1000 or any(ord(c) < 32 and c != "\n" for c in text):
         raise ValueError("Нужна непустая надпись до 1000 символов без управляющих знаков")
+    # The left half is the zone nearer the label's left edge, whatever order the zones are listed in.
+    by_x = sorted(range(len(geometry.zones)), key=lambda index: geometry.zones[index].x)
+    parts = halves(text, len(geometry.zones))
+    texts = [parts[by_x.index(index)] for index in range(len(geometry.zones))]
     image = Image.new("1", (dots(geometry.width_mm), dots(geometry.height_mm)), 1)
     draw = ImageDraw.Draw(image)
     bounds = [(dots(z.x), dots(z.y), dots(z.x + z.width), dots(z.y + z.height)) for z in geometry.zones]
     width = min(b[2] - b[0] for b in bounds) - 2 * abs(dots(geometry.offset_x_mm))
     height = min(b[3] - b[1] for b in bounds) - 2 * abs(dots(geometry.offset_y_mm))
     fitted = None
-    # min_font_mm measures visible capital height, not the font's em square.
+    # min_font_mm measures visible capital height, not the font's em square. Both halves share one size.
     for size in range(dots(geometry.max_font_mm) * 2, 0, -1):
         font = ImageFont.truetype(str(FONT), size=size)
         cap = draw.textbbox((0, 0), "БH", font=font)
@@ -104,19 +138,14 @@ def render(text: str, geometry: Geometry, *, calibration: bool = False) -> tuple
             continue
         if cap[3] - cap[1] < dots(geometry.min_font_mm):
             break
-        lines = _lines(draw, text, font, width)
-        if lines is None or len(lines) > geometry.max_lines:
-            continue
-        boxes = [draw.textbbox((0, 0), line or " ", font=font) for line in lines]
-        gap = max(2, round(size * 0.15))
-        total = sum(b[3] - b[1] for b in boxes) + gap * (len(boxes) - 1)
-        if total <= height and all(b[2] - b[0] <= width for b in boxes):
-            fitted = font, lines, boxes, gap, total
+        layouts = [_layout(draw, part, font, size, geometry, width, height) for part in texts]
+        if all(layouts):
+            fitted = font, layouts
             break
     if fitted is None:
         raise ValueError(f"Надпись не помещается: «{text}»")
-    font, lines, boxes, gap, total = fitted
-    for left, top, right, bottom in bounds:
+    font, layouts = fitted
+    for (left, top, right, bottom), (lines, boxes, gap, total) in zip(bounds, layouts):
         y = top + (bottom - top - total) // 2 + dots(geometry.offset_y_mm)
         for line, box in zip(lines, boxes):
             w = box[2] - box[0]
