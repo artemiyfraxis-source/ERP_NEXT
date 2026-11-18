@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import math
 
-from .template import FORMATS, LabelTemplate
+from .template import FORMATS, GRID_COLUMNS, LabelTemplate
 
 MARGIN = 1.0
 CAP_TO_PITCH = 1.676  # a line of text takes 1.17 em, and capitals are 0.698 em (render.py)
@@ -162,46 +162,75 @@ def _instrument(width: float, height: float) -> list[dict]:
     return _instrument_narrow(width, height)
 
 
+def _row(font_mm: float) -> float:
+    """The smallest box holding one line of `font_mm` capitals at 300 and at 203 dpi (no shrink, no overflow)."""
+    from .render import font_dots, line_metrics
+    pitch = max(line_metrics(font_dots(font_mm, dpi / 25.4))[1] / (dpi / 25.4) for dpi in (300, 203))
+    return math.ceil((pitch + 0.04) * 20 - 1e-6) / 20
+
+
+def _line(id_: str, x: float, y: float, w: float, font_mm: float, field: str, *, align: str = "left",
+          fit: str = "ellipsis") -> dict:
+    return {"id": id_, "kind": "field", "field": field, "x_mm": round(x, 2), "y_mm": round(y, 2), "w_mm": round(w, 2),
+            "h_mm": _row(font_mm), "font_mm": font_mm, "bold": True, "align": align, "max_lines": 1, "fit": fit,
+            "mono": False}
+
+
 def _instrument_narrow(width: float, height: float) -> list[dict]:
-    """58 × 30 / 58 × 40 — the GOST-style identification card squeezed into the shop's roll (owner 18.11): logo over the
-    QR on the left; number, kind, model, connectors, maker, serial and frequency range on the right; the measured limits
-    table with titles across the bottom; measurement date and next control in the last line. 300 dpi keeps 1 mm type."""
+    """58 × 30 / 58 × 40 after the owner's print of 18.11 («не всё пропечатывается, компоновка стрём»), on the pattern
+    of the maker's tag: the wordmark, «СИ.NNN» and the kind on one line; the QR on the left and beside it the model, the
+    connectors and up to three lines (serial, maker, resource, verification — no empty rows); a ruled grid of the
+    measured bands — frequencies over right-aligned VSWR and loss in fixed columns; measurement and next control at the
+    bottom. Thermal print: one sans SemiBold face, capitals ≥ 1.6 mm (strokes ≥ 3 dots at 300 dpi), solid rules."""
     tall = height >= 40
-    k = 1.25 if tall else 1.0
-    side = 18.0 if tall else 14.0
-    logo_h = round(side * 82 / 292 + 0.05, 1)
-    elements = [{"id": "logo", "kind": "logo", "x_mm": MARGIN, "y_mm": MARGIN, "w_mm": side, "h_mm": logo_h, "align": "left"}]
-    qr_top = round(MARGIN + logo_h + 0.5, 1)
-    elements.append(_code("qr", "qr", MARGIN, qr_top, side, side))
-    x = MARGIN + side + 1.0
-    w = round(width - MARGIN - x, 1)
-    rows, bottom = _stack(x, MARGIN, w, [
-        (0, {"id": "inventory_number", "font_mm": round(3.2 * k, 1), "field": "inventory_number", "bold": True}),
-        (0.2, {"id": "type_line", "font_mm": round(1.0 * k, 1), "field": "type_line", "bold": True, "fit": "ellipsis"}),
-        (0.1, {"id": "model_line", "font_mm": round(1.8 * k, 1), "field": "model_line", "bold": True}),
-        (0.1, {"id": "connector_line", "font_mm": round(1.4 * k, 1), "field": "connector_line", "bold": True}),
-        (0.1, {"id": "manufacturer_line", "font_mm": round(1.1 * k, 1), "field": "manufacturer_line", "fit": "ellipsis"}),
-        (0.1, {"id": "serial_full", "font_mm": round(1.3 * k, 1), "field": "serial_full", "bold": True}),
-        (0.15, {"id": "range_line", "font_mm": round(1.2 * k, 1), "field": "range_line", "bold": True}),
-    ])
-    elements += rows
-    left = 2.0  # clear of the printer's unprintable left edge
-    table_top = round(max(qr_top + side, bottom) + 0.3, 1)
-    font_t = round(1.0 * k, 1)
-    side_w = round(15.0 * k, 1)  # dates on the right of the table rows
-    table_w = round(width - left - MARGIN - side_w - 0.5, 1)
-    table, _ = _stack(left, table_top, table_w, [
-        (0, {"id": "table_bands_long", "font_mm": font_t, "field": "table_bands_long", "mono": True, "fit": "ellipsis"}),
-        (0.1, {"id": "table_vswr_long", "font_mm": font_t, "field": "table_vswr_long", "mono": True, "fit": "ellipsis"}),
-        (0.1, {"id": "table_loss_long", "font_mm": font_t, "field": "table_loss_long", "mono": True, "fit": "ellipsis"}),
-    ])
-    elements += table
-    dates = []
-    for row, field in zip(table, ("date_short", "next_short", "footer_line")):
-        element = _text(field, round(width - MARGIN - side_w, 1), row["y_mm"], side_w, round(1.0 * k, 1), field=field)
-        element["align"] = "right"
-        dates.append(element)
-    elements += dates
+    # 58 × 40 keeps the 1.6 mm body (a wider one would cut the connectors beside the QR) and spends its height on a
+    # larger number and model and on air between the rows.
+    base, title, model = 1.6, (2.2 if tall else 2.0), (2.1 if tall else 1.8)
+    left, right = 2.0, width - 1.0  # clear of the printer's unprintable left edge
+    row = _row(base)
+    top = 0.1  # the ink of the number starts ~0.8 mm lower; the bottom line keeps ~0.7 mm under its descenders
+    head = _row(title)
+    content = head + 0.1 + _row(model) + 8 * row
+    pad = max(0.0, math.floor((height - 0.6 - top - content) / 10 * 20) / 20)  # air per row, 0 on 58 × 30
+    logo_h = round(title * 1.3, 1)
+    logo_w = round(logo_h * 292 / 82, 1)
+    elements: list[dict] = [{"id": "logo", "kind": "logo", "x_mm": left, "y_mm": round(top + pad / 2 + head * 0.17, 2),
+                             "w_mm": logo_w, "h_mm": logo_h, "align": "left"}]
+    number_x = left + logo_w + 1.0
+    number_w = round(title * 5.2, 1)
+    elements.append(_line("inventory_number", number_x, top + pad / 2, number_w, title, "inventory_number", fit="shrink"))
+    # The kind sits on the number's baseline, right-aligned.
+    from .render import INK_TOP_EM, font_dots
+    drop = (math.ceil(INK_TOP_EM * font_dots(title, 300 / 25.4)) - math.ceil(INK_TOP_EM * font_dots(base, 300 / 25.4)))
+    type_x = number_x + number_w + 0.5
+    elements.append(_line("type_line", type_x, top + pad / 2 + drop * 25.4 / 300, right - type_x, base, "type_line",
+                          align="right"))
+    body = round(top + head + pad + 0.1, 2)
+    lines = [("model_line", model, "model_line"), ("connector_line", base, "connector_line"),
+             ("info_1", base, "info_1"), ("info_2", base, "info_2"), ("info_3", base, "info_3")]
+    block = _row(model) + 4 * row + 5 * pad
+    # As big as the block, up to 4 dots a module at 300 dpi for a passport link (41 modules and the light field).
+    qr_side = round(min(block, 16.6), 2)
+    elements.append(_code("qr", "qr", 1.0, round(body + (block - qr_side) / 2, 2), qr_side, qr_side))
+    x = round(1.0 + qr_side + 0.3, 2)
+    y = body
+    for id_, size, field in lines:
+        elements.append(_line(id_, x, y + pad / 2, right - x, size, field))
+        y = round(y + _row(size) + pad, 2)
+    # The band grid: a title column, then GRID_COLUMNS right-aligned numbers; thin rules between the rows.
+    label_w = 17.5
+    column = (right - left - label_w) / GRID_COLUMNS
+    for index, (head_id, prefix) in enumerate((("table_band_head", "table_band"), ("table_vswr_head", "table_vswr"),
+                                               ("table_loss_head", "table_loss"))):
+        # A 2-dot hairline across the boundary, in the empty space under one row's baseline and over the next capitals.
+        elements.append({"id": f"rule_{index + 1}", "kind": "line", "x_mm": left, "y_mm": round(y - 0.1, 2),
+                         "w_mm": round(right - left, 2), "h_mm": 0.17})
+        elements.append(_line(head_id, left, y + pad / 2, label_w, base, head_id))
+        for n in range(1, GRID_COLUMNS + 1):
+            cell_x = left + label_w + (n - 1) * column
+            elements.append(_line(f"{prefix}_{n}", cell_x, y + pad / 2, column, base, f"{prefix}_{n}", align="right"))
+        y = round(y + row + pad, 2)
+    elements.append(_line("dates_line", left, y + pad / 2, right - left, base, "dates_line"))
     return elements
 
 

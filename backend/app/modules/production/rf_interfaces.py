@@ -10,7 +10,7 @@ from .domain import ProductionValidationError
 
 SERIES = ("SMA", "3.5mm", "N", "TNC", "BNC", "F", "RP-SMA", "тип III")
 ROLES = ("unknown", "vna", "adapter", "test_cable", "auto_calibration", "solt_kit", "load", "load_kit")
-ROLE_LABELS = dict(zip(ROLES, ("Не указано", "ВАЦ", "Переходник", "Тестовый кабель", "АКМ", "Набор SOLT", "Нагрузка", "Нагрузки SMA-MF06")))
+ROLE_LABELS = dict(zip(ROLES, ("Не указано", "ВАЦ", "Переход коаксиальный", "Тестовый кабель", "АКМ", "Набор SOLT", "Нагрузка", "Нагрузки SMA-MF06")))
 
 
 @dataclass(frozen=True)
@@ -78,6 +78,14 @@ class RfDetails:
                 raise ProductionValidationError("Для подтверждения интерфейсов укажите сопротивление")
             if self.role in definitions and self.kit_definition != definitions[self.role]:
                 raise ProductionValidationError("Подтвердите состав набора калибровки или нагрузок")
+
+
+# «Переход коаксиальный» (ГОСТ term, owner 18.11) and the older «переходник»; not «переходная» / «переходы».
+_ADAPTER_WORD = re.compile(r"(?<![\w])переход(?:ник)?(?![\w])", re.I)
+
+
+def is_adapter_name(name: str) -> bool:
+    return bool(_ADAPTER_WORD.search(name))
 
 
 def mates(left: RfInterface, right: RfInterface) -> bool:
@@ -178,5 +186,5 @@ def propose_details(inventory_number: str, name: str) -> RfDetails:
         from dataclasses import replace
         interfaces = tuple(replace(p, impedance_ohm=75, f_source=f"{p.f_source}; перечень владельца: 75 Ом") for p in interfaces)
     # A kit name without its contents never becomes a two-port adapter or a valid SOLT kit.
-    role = "adapter" if len(interfaces) == 2 and "переходник" in name.lower() else "unknown"
+    role = "adapter" if len(interfaces) == 2 and is_adapter_name(name) else "unknown"
     return RfDetails(interfaces, role, source=f"Наименование: {name}")
