@@ -18,7 +18,7 @@ from .domain.route import (
 )
 from .etk_marking import apply_marking, mark_length, mark_kind, TUBE_KINDS
 from .etk_heat_shrink import apply_requirements
-from .operation_cards import OperationCardTemplate
+from .operation_cards import FORMER_PAIR_CODES, OperationCardTemplate, resolve_template_id
 from .project_cards import CUSTOM_OP
 
 
@@ -2211,36 +2211,27 @@ def _typed_fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str,
     return fields
 
 
-_LEGACY_SIDE_ID = re.compile(r"^(.+)-[ab]$")
-
-
 class CardFinder:
-    """The library cards of a build: an operation's card by its `templateId`; an id the library no longer has (0191
-    merged the (A)/(B) sides into one template per code, a saved config may still name a side's id) — the merged card
-    (the side's id without «-a» / «-b»), else the one card of the operation's `opNum`."""
+    """The library cards of a build: an operation's card by its `templateId`; a former side's id (0191 merged the
+    (A)/(B) pairs, a saved config may still name a side) — the merged card (`operation_cards.resolve_template_id`).
+    Any other unknown id finds no card, as before."""
 
     def __init__(self, cards: Sequence[OperationCardTemplate]):
         self.by_id = {card.source_id: card for card in cards}
-        self._by_code: dict[str, list[OperationCardTemplate]] = defaultdict(list)
+        self._ids_by_code: dict[str, list[str]] = defaultdict(list)
         for card in cards:
-            self._by_code[card.code].append(card)
+            self._ids_by_code[card.code].append(card.source_id)
 
     def __call__(self, op: Mapping[str, Any]) -> OperationCardTemplate | None:
-        template_id = str(op.get("templateId") or "").strip()
-        if not template_id:
-            return None
-        if template_id in self.by_id:
-            return self.by_id[template_id]
-        legacy = _LEGACY_SIDE_ID.match(template_id)
-        if legacy and legacy.group(1) in self.by_id:
-            return self.by_id[legacy.group(1)]
-        found = self._by_code.get(str(op.get("opNum") or "").strip(), [])
-        return found[0] if len(found) == 1 else None
+        found = resolve_template_id(op.get("templateId"), op.get("opNum"), self.by_id, self._ids_by_code)
+        return self.by_id[found] if found else None
 
 
 def _card_title(card: OperationCardTemplate, op: Mapping[str, Any]) -> str:
-    """The ETK title of an operation's card: the template's title and the operation's side («(А)» / «(В)»)."""
-    return card.title + (f" ({_side_label(op)})" if op.get("side") in ("A", "B") else "")
+    """The ETK title of an operation's card: the template's title; a code that was an (A)/(B) pair keeps the side
+    mark, now from the operation («(А)» / «(В)»), so stage names of other codes stay as they were."""
+    sided = card.code in FORMER_PAIR_CODES and op.get("side") in ("A", "B")
+    return card.title + (f" ({_side_label(op)})" if sided else "")
 
 
 def _card_warning(op: Mapping[str, Any], position: int, code: str) -> str:

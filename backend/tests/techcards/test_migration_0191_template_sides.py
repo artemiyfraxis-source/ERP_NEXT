@@ -103,11 +103,11 @@ def test_pairs_become_one_template_per_code_and_saved_references_follow(database
     with sqlite3.connect(database) as connection:
         _template(connection, "ins-x-монтаж-a", "INS_X", "A", "INS_X | Монтаж (A)", edited=EDIT)
         _template(connection, "ins-x-монтаж-b", "INS_X", "B", "INS_X | Монтаж (B)", edited=EDIT, designation="ТК..")
-        # owner 17.09: B owns SDR_COAX_housing although its text differs; A's picture is kept
+        # owner 17.09: B owns SDR_COAX_housing although its grid differs (both sides carry the 22.10 edit); A's picture
         _template(connection, "sdr-coax-housing-пайка-экрана-a", "SDR_COAX_housing", "A",
-                  "SDR_COAX_housing | Пайка экрана (A)", step="Пайка 3 сек", images=[IMAGE])
+                  "SDR_COAX_housing | Пайка экрана (A)", step="Пайка 3 сек", images=[IMAGE], edited=EDIT)
         _template(connection, "sdr-coax-housing-пайка-экрана-b", "SDR_COAX_housing", "B",
-                  "SDR_COAX_housing | Пайка экрана (B)", step="Пайка 5,0 сек")
+                  "SDR_COAX_housing | Пайка экрана (B)", step="Пайка 5,0 сек", edited=EDIT)
         _template(connection, "solo-разделка-a", "SOLO", "A", "SOLO | Разделка (A)")
         _template(connection, "op-one-резка", "OP_ONE", "", "OP_ONE | Резка")
         _tool(connection, "ins-x-монтаж-a", 0, "Пресс", M1)
@@ -152,8 +152,9 @@ def test_pairs_become_one_template_per_code_and_saved_references_follow(database
         assert json.loads(document)["images"] == [
             {"row": 19, "col": 9, "drive_file_id": "img-a", "width": 654, "height": 674}]
         assert "side" not in json.loads(templates["op-one-резка"][4])
-        with pytest.raises(sqlite3.IntegrityError):  # UNIQUE(code): a side can't come back
-            _template(connection, "ins-x-again", "INS_X", None, "INS_X | Монтаж")
+        for code in ("INS_X", "ins_x"):  # UNIQUE(lower(code)): a side can't come back
+            with pytest.raises(sqlite3.IntegrityError):
+                _template(connection, f"again-{code}", code, None, f"{code} | Монтаж")
 
         assert sorted(connection.execute(
             "SELECT template_id, position, tool_name, model_id FROM equipment_template_tools")) == sorted([
@@ -194,6 +195,9 @@ def test_diverging_sides_stop_the_migration_with_the_list_and_change_nothing(dat
         _template(connection, "same-x-пара", "OTHER", "", "OTHER | Пара")  # the new id of SAME_X is taken
         _template(connection, "dup-1", "DUP", "", "DUP | Один")
         _template(connection, "dup-2", "dup", "", "dup | Два")
+        # the owner's pick covers a differing text only over one shared ERP edit
+        _template(connection, "pin-a", "SDR_COAX_pin", "A", "SDR_COAX_pin | Пайка (A)", step="Пайка A")
+        _template(connection, "pin-b", "SDR_COAX_pin", "B", "SDR_COAX_pin | Пайка (B)", step="Пайка B")
 
     with pytest.raises(RuntimeError) as error:
         _upgrade(database, AFTER)
@@ -201,11 +205,12 @@ def test_diverging_sides_stop_the_migration_with_the_list_and_change_nothing(dat
     message = str(error.value)
     assert message.startswith("Миграция 0191 остановлена, ничего не изменено")
     for part in ("код EDIT_X: стороны A и B правлены по-разному", "код TEXT_X: содержимое сторон A и B расходится",
-                 "код SAME_X: новый id «same-x-пара» уже занят", "код DUP: 2 шаблона без сторон — dup-1, dup-2"):
+                 "код SAME_X: новый id «same-x-пара» уже занят", "код DUP: 2 шаблона без сторон — dup-1, dup-2",
+                 "код SDR_COAX_pin: содержимое сторон A и B расходится"):
         assert part in message
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (BEFORE,)
-        assert connection.execute("SELECT count(*) FROM techcard_operation_templates").fetchone() == (9,)
+        assert connection.execute("SELECT count(*) FROM techcard_operation_templates").fetchone() == (11,)
         assert "side" in {row[1] for row in connection.execute("PRAGMA table_info(techcard_operation_templates)")}
 
 

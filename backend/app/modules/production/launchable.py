@@ -335,7 +335,8 @@ def launch_route(document: Mapping[str, Any] | None) -> LaunchRoute:
             position=index + 1,
             code=code,
             stage=stage,
-            description=description + (f" (ст. {side})" if side else ""),
+            # «(ст. A)», unless the title already carries the side mark of its card (ETK «… (А)» / «… (В)», 0191)
+            description=description + (f" (ст. {side})" if side and not description.endswith(("(А)", "(В)")) else ""),
             seconds_per_unit=seconds_per_unit,
             setup_seconds=setup_seconds,
             block=blocks[index].key,

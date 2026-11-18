@@ -9,8 +9,8 @@ survivor; the stored `document` loses its `side` key (all templates).
 
 Pre-checks — the migration stops with the list and changes nothing when any fails:
 - both sides carry the same ERP edit (`edited`) or none;
-- both sides give the same `document` once side, title, pictures and designation are ignored (except the owner-picked
-  codes above);
+- both sides give the same `document` once side, title, pictures and designation are ignored (the owner-picked codes
+  above may differ only when both sides carry the same ERP edit);
 - no other template repeats a code (case-insensitive), no side appears twice;
 - the new ids are free.
 
@@ -20,7 +20,7 @@ and the exact ids inside saved techcard JSON (`techcard_projects` inputs / docum
 assembly drafts, harness routes). Issued revisions and production snapshots are history and keep the old ids: the
 readers resolve a missing id by the operation code.
 
-Schema: the code+side index and the `side` column go, `UNIQUE(code)` keeps a pair from coming back. Merged rows are
+Schema: the code+side index and the `side` column go, a UNIQUE index on lower(code) keeps a pair from coming back. Merged rows are
 deleted, so DESTRUCTIVE: the owner approves this revision id. The downgrade restores the schema only (an empty
 `side`); the deleted sides come back only from the pre-update backup.
 """
@@ -43,7 +43,7 @@ DESTRUCTIVE = True
 
 TABLE = "techcard_operation_templates"
 CODE_SIDE_INDEX = "ix_techcard_operation_templates_code_side"
-UNIQUE_CODE = "uq_techcard_operation_templates_code"
+UNIQUE_CODE = "ux_techcard_operation_templates_code"  # UNIQUE(lower(code)), as the code checks compare
 SIDES = ("A", "B")
 SIDE_SUFFIX = re.compile(r"\s*\(([AА]|[BВ])\)$")
 # The side that owns the record where the sides were known to differ (owner 17.09; SUPPLYMAP TC_REC_SIDE_PICK_).
@@ -150,7 +150,9 @@ def plan_merges(rows: list[Any]) -> tuple[list[dict[str, Any]], list[str]]:
             if _edit(keep) != _edit(other):
                 problems.append(f"код {code}: стороны A и B правлены по-разному (правка записи в ERP) — "
                                 "какую оставить, решает владелец")
-            elif code not in OWNER_PICK and _content(keep.document) != _content(other.document):
+            elif _content(keep.document) != _content(other.document) and not (
+                    code in OWNER_PICK and _edit(keep) != "null"):
+                # The owner's pick (17.09) covers a code whose sides carry the same ERP edit; without one, a list.
                 problems.append(f"код {code}: содержимое сторон A и B расходится — какую оставить, решает владелец")
         title = base_title(keep.title)
         merges.append({"code": code, "keep": keep, "drop": other, "title": title, "new_id": slugify(title) or "template"})
@@ -291,12 +293,13 @@ def upgrade() -> None:
     with op.batch_alter_table(TABLE) as batch:
         batch.drop_index(CODE_SIDE_INDEX)
         batch.drop_column("side")
-        batch.create_unique_constraint(UNIQUE_CODE, ["code"])
+    op.create_index(UNIQUE_CODE, TABLE, [sa.text("lower(code)")], unique=True)
 
 
 def downgrade() -> None:
-    """Schema only: the deleted sides and old ids come back only from the pre-update backup."""
+    """Schema only (a deviation from a full reversal): an empty `side` comes back, the merged sides and old ids only
+    from the pre-update backup."""
+    op.drop_index(UNIQUE_CODE, table_name=TABLE)
     with op.batch_alter_table(TABLE) as batch:
-        batch.drop_constraint(UNIQUE_CODE, type_="unique")
         batch.add_column(sa.Column("side", sa.String(1), nullable=False, server_default=""))
         batch.create_index(CODE_SIDE_INDEX, ["code", "side"])

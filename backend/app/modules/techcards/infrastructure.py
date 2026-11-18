@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from datetime import date, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint, Uuid, delete, func, or_, select
+from sqlalchemy import JSON, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, Uuid, delete, func, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
@@ -100,10 +100,10 @@ class RefreshRequestRow(Base):
 
 
 class OperationCardTemplateRow(Base):
-    """One template per operation code (0191: the (A)/(B) pairs were merged, UNIQUE keeps them from coming back)."""
+    """One template per operation code (0191: the (A)/(B) pairs were merged; UNIQUE(lower(code)) keeps them from coming
+    back, as case-insensitive as the code checks)."""
 
     __tablename__ = "techcard_operation_templates"
-    __table_args__ = (UniqueConstraint("code", name="uq_techcard_operation_templates_code"),)
 
     id: Mapped[str] = mapped_column(String(255), primary_key=True)
     code: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -124,6 +124,8 @@ class OperationCardTemplateRow(Base):
     saved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     saved_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+
+Index("ux_techcard_operation_templates_code", func.lower(OperationCardTemplateRow.code), unique=True)
 
 class OperationCardDraftRow(Base):
     """Черновик шаблона-листа (SUPPLYMAP лист «Черновик — <название>» в файле-хранилище)."""

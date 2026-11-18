@@ -6,7 +6,7 @@ from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import datetime
 import re
-from typing import Mapping, Sequence
+from typing import Container, Mapping, Sequence
 
 
 SPECIAL_CODES = {
@@ -23,6 +23,38 @@ TOOL_COLUMNS = {
     "Оборудование": {"number": 1, "name": 2, "inventory_number": 5, "program": 6},
     "Расходники": {"number": 1, "name": 2, "parameters": 3, "norm": 4, "unit": 6},
 }
+
+
+# Migration 0191 merged each (A)/(B) template pair into one template per code; the merged id is the side's id without
+# its suffix («-a»/«-b» — the slug of «(A)»/«(B)», Latin or Cyrillic). Saved history may still name a side's id.
+FORMER_SIDE_ID = re.compile(r"^(.+)-[abав]$")
+# The codes whose templates were (A)/(B) pairs in the library: their ETK title keeps the side mark («(А)»/«(В)»).
+FORMER_PAIR_CODES = frozenset({
+    "INS_housing_COAX", "INS_housing_COAX_clamp", "INS_terminal_1.00", "INS_terminal_1.25", "INS_terminal_1.5",
+    "INS_terminal_2", "INS_terminal_2,54-6,3", "PRS_TERMINAL_auto", "SDR_COAX_pin", "SDR_COAX_pin_R/A",
+    "SDR_COAX_housing", "STRIP_COAX_auto",
+})
+
+
+def resolve_template_id(
+    template_id: object, op_num: object, known_ids: Container[str],
+    ids_by_code: Mapping[str, Sequence[str]] | None = None,
+) -> str | None:
+    """The library template an operation names: its own id; for a former side's id (0191) — the merged template (the
+    id without the side suffix), else the one template of the operation's code. Any other unknown id — None (the
+    card is gone from the library: the ETK keeps «нет карточки»)."""
+    clean = str(template_id or "").strip()
+    if not clean:
+        return None
+    if clean in known_ids:
+        return clean
+    former = FORMER_SIDE_ID.match(clean)
+    if former is None:
+        return None
+    if former.group(1) in known_ids:
+        return former.group(1)
+    found = (ids_by_code or {}).get(str(op_num or "").strip(), ())
+    return found[0] if len(found) == 1 else None
 
 
 def _cell(rows: Sequence[Sequence[object]], row: int, column: int) -> str:

@@ -31,7 +31,7 @@ import hashlib
 import json
 import re
 from types import MappingProxyType
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork, coax_dia_rows
 from app.modules.references.cable_structure import (
@@ -55,6 +55,7 @@ from app.modules.references.technology import (
     terminal_record_for_section, wire_section,
 )
 from app.modules.techcards.etk_builder import vswr_control
+from app.modules.techcards.operation_cards import resolve_template_id
 from app.modules.techcards.etk_heat_shrink import (
     is_shrink, kvt_passport_series, match_shrink_material, material_association, missing_requirement, requirement_summary,
 )
@@ -560,20 +561,9 @@ class _Models:
         return None
 
 
-_LEGACY_SIDE_ID = re.compile(r"^(.+)-[ab]$")
-
-
-def _tool_template_id(template_id: str, by_template: Mapping[str, Any]) -> str:
-    """The template whose equipment rows an operation takes: its own; an id of a former (A)/(B) side (0191 merged
-    each pair into one template whose id is the side's id without «-a» / «-b») — the merged template's."""
-    if template_id in by_template:
-        return template_id
-    legacy = _LEGACY_SIDE_ID.match(template_id)
-    return legacy.group(1) if legacy and legacy.group(1) in by_template else template_id
-
-
 def enrich_equipment(
     config: Mapping[str, Any], models: Iterable[Mapping[str, Any]], template_tools: Iterable[Mapping[str, Any]],
+    template_codes: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, Any]:
     """Copy of the config whose operations carry the equipment models: `equipmentTools` — the linked «Оборудование»
     rows of the operation's template (position, the text and number the link was made on, the model id, the name and
@@ -589,7 +579,9 @@ def enrich_equipment(
             continue
         op.pop(EQUIPMENT_TOOLS, None)
         tools = []
-        for row in by_template.get(_tool_template_id(str(op.get("templateId") or "").strip(), by_template), ()):
+        # A former side's id (0191) takes the links of the merged template, as the builder takes its card.
+        template_id = resolve_template_id(op.get("templateId"), op.get("opNum"), by_template, template_codes) or ""
+        for row in by_template.get(template_id, ()):
             model = index.by_id.get(str(row.get("model_id") or ""))
             if model is None:
                 continue
