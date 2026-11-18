@@ -8,7 +8,7 @@ import re
 
 from .instrument_serials import CONNECTOR_LETTERS, IN_HOUSE_SERIAL
 from .rf_interfaces import RfDetails, parse_interfaces
-from .instrument_norms import norms_data
+from .instrument_norms import loss_db, norms_data
 from .traceability import InstrumentFile
 from .vna_characterization import is_characterization_file
 from .vna_files import VSWR_CEILING, VnaFileError, VnaTrace, _decode, parse_vna_traces
@@ -207,10 +207,6 @@ class Characterization:
     @property
     def measurement_date(self) -> str:
         return f"Замер {self.measured_on:%d.%m.%y}"
-
-
-def loss_db(magnitude: float) -> float:
-    return max(0.0, -20 * math.log10(magnitude)) if magnitude > 0 else math.inf
 
 
 def _date(text: str) -> date | None:

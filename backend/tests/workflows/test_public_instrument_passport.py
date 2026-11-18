@@ -242,7 +242,7 @@ def test_projection_has_only_approved_fields_and_strict_known_provenance():
     measured = characterization(measured_file(header=header))
     projection = public_passport(replace(instrument(), storage_location="PRIVATE_STORAGE", warehouse_grn="PRIVATE_GRN", doc_designation="PRIVATE_ARTICLE"),
                                  replace(rf(), source="PRIVATE_SOURCE"), measured)
-    assert {field.name for field in fields(projection)} == {"inventory_number", "name", "serial_number", "manufacturer", "connectors", "impedance", "impedance_warning", "measurement", "verification", "status", "next_control", "control_overdue", "history", "spec", "norm_check", "usage", "uncertainty"}
+    assert {field.name for field in fields(projection)} == {"inventory_number", "name", "serial_number", "manufacturer", "connectors", "impedance", "impedance_warning", "measurement", "verification", "status", "next_control", "control_overdue", "history", "spec", "norm_check", "usage", "uncertainty", "loss_check", "loss_uncertainty"}
     assert {field.name for field in fields(projection.measurement)} == {"measured_on", "traces", "instrument", "calibration", "conditions", "chain"}
     assert "PRIVATE_" not in repr(projection)
     assert projection.measurement.instrument == "ВАЦ №26030095"
