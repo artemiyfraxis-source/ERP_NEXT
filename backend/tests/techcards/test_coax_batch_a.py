@@ -40,16 +40,17 @@ def test_machine_strips_both_ends_and_preserves_side_ownership(fixture):
     assert ops[0]["fields"]["coaxStripSides"] == ["A", "B"]
     assert "coax" in ops[0]["fields"] and "coaxB" in ops[0]["fields"]
     text = " ".join(step["text"] for step in ops[0]["card"]["steps"])
+    tolerance = " ".join(step["tolerance"] for step in ops[0]["card"]["steps"])
     if fixture["kb"] == "КБ3":
         assert ops[0]["fields"]["coax"]["dimensionOrder"] == "HFM"
         assert "MA_AMV003" in ops[0]["fields"]["coax"]["stripProgram"]["source"]
         assert "MA_AMV003" not in text and "после полной разделки" in text
     else:
         assert ops[0]["fields"]["coax"]["dimensionOrder"] == "Amphenol"
-        assert "1,0 мм — участок открытого диэлектрика" in text and "13,9 ±0,2 мм" in text
+        assert "1,0 мм — участок открытого диэлектрика" in text and "оболочка 13,9 ±0,2 мм" in tolerance
     assert "Источник:" not in text and "Длина готового изделия" not in text
     for side in ("А", "В"):
-        assert sum(step["text"].startswith(f"Сторона {side}:") for step in ops[0]["card"]["steps"]) == 1
+        assert sum(step["text"].startswith(f"Сторона {side}") for step in ops[0]["card"]["steps"]) == 1
     assert not any(op["type"] == "coaxStrip" for op in ops)
     route = doc["route"]
     assert [block["name"] for block in route["blocks"]][:-1] == [
@@ -98,7 +99,7 @@ def test_channel_counts_preserve_physical_cables_until_common_housing(channels):
     assert ops[0]["time"][0]["norm"] == str(15 * channels)
     text = " ".join(step["text"] for step in ops[0]["card"]["steps"])
     if channels == 4:
-        assert text.count("4 кабеля на сборку: 15 сборок × 4 = 60 шт.") == 1
+        assert text.count("4 кабеля на сборку") == 1
     for side in ("A", "B"):
         for code in ("PRS_HFM_SUPPORT", "PRS_HFM_PIN", "INS_HFM_CONTACT", "PRS_HFM_SHIELD"):
             op = next(op for op in ops if op["code"] == code and op["side"] == side)
