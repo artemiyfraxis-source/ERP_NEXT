@@ -220,7 +220,7 @@ export function MarkingBatchProgress({ initial, onChange }: { initial: MarkingBa
         const result = await markingApi.batch(initial.id, controller.signal);
         if (controller.signal.aborted) return;
         setBatch(result); callback.current?.(result); setError("");
-        if (result.jobs.some((job) => ["pending", "taken", "unknown"].includes(job.status))) timer = setTimeout(() => void poll(), 2000);
+        if (result.jobs.some((job) => ["pending", "taken", "unknown"].includes(job.status) || job.print_state === "queued" || job.print_state === "error")) timer = setTimeout(() => void poll(), 2000);
       } catch (problem) { if (!controller.signal.aborted) setError(failureText(problem, "Не удалось получить состояние печати")); }
     }
     void poll();
@@ -236,9 +236,15 @@ export function MarkingBatchProgress({ initial, onChange }: { initial: MarkingBa
     finally { setBusy(false); }
   }
   const spooled = batch.jobs.filter((job) => job.status === "spooled").length;
+  // Spooled only means Windows took the job: the printer may still hold the labels (peel-off mode).
+  const progress = batch.progress_label;
+  const done = progress ? batch.printed ?? 0 : spooled;
   return <section className="marking-progress" aria-label="Очередь печати">
-    <div className="marking-head"><h3>{batch.status_label}</h3><strong className="tnum" role="status">Передано принтеру: {spooled} из {batch.total}</strong></div>
-    <progress max={batch.total} value={spooled} aria-label="Передано принтеру" />
+    <div className="marking-head"><h3>{batch.status_label}</h3><strong className="tnum" role="status">{progress ?? `Передано принтеру: ${spooled} из ${batch.total}`}</strong></div>
+    <progress max={batch.total} value={done} aria-label={progress ? "Напечатано" : "Передано принтеру"} />
+    {batch.stuck && <p className="warning-inline" role="alert">{batch.stuck_label ?? "Принтер ждёт (снимите этикетку / проверьте принтер)"}</p>}
+    {!!batch.print_errors && <p className="warning-inline">Ошибок принтера: {batch.print_errors}. Проверьте принтер — печать продолжится после устранения.</p>}
+    {!!batch.cancelled && <p className="warning-inline">Отменено в очереди Windows: {batch.cancelled}.</p>}
     <p className="muted">Проверьте напечатанные этикетки перед нанесением.</p>
     {batch.status === "unknown" && <p className="warning-inline">Результат неизвестен. Очередь приостановлена — проверьте этикетки и подтвердите результат в «Производстве».</p>}
     {error && <div className="error-banner" role="alert">{error} <button type="button" className="secondary small" onClick={() => setReload(reload + 1)}>Обновить состояние</button></div>}
