@@ -35,6 +35,7 @@ function pause(signal: AbortSignal): Promise<void> {
 /** Почему ERP не примет замер с этими настройками (СТО ФРАК-002-2026 п. 11.1, 11.5) — та же проверка, что на сервере. */
 export function captureRefusals(settings: VnaCaptureSettings): string[] {
   const status = settings.correction_status ?? "";
+  if (status === "NONE" || settings.correction_enabled === false) return ["Нет калибровки (коррекция выключена) — замер не принимается: откалибруйте ВАЦ на полосе замера"];
   if (status === "C?" || status === "RC?") return ["Калибровка интерполирована («К?») — замер не принимается: откалибруйте ВАЦ на полосе и точках замера"];
   if (status === "C!" || status === "RC!") return ["Калибровка экстраполирована («К!») — замер не принимается: откалибруйте ВАЦ на полосе замера"];
   if (settings.smoothing_enabled === true) return ["Включено сглаживание — замер не принимается: выключите сглаживание и повторите"];
@@ -43,9 +44,6 @@ export function captureRefusals(settings: VnaCaptureSettings): string[] {
 
 export function captureWarnings(settings: VnaCaptureSettings, norm: VswrNorm): string[] {
   const warnings: string[] = [];
-  if (settings.correction_enabled === false || settings.correction_status === "NONE") {
-    warnings.push("Нет калибровки на этом диапазоне");
-  }
   const [from, to] = norm.band_mhz ?? [];
   if ((from != null && settings.start_hz != null && settings.start_hz > from * 1e6)
     || (to != null && settings.stop_hz != null && settings.stop_hz < to * 1e6)) {

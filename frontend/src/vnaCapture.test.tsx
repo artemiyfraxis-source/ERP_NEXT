@@ -221,11 +221,11 @@ it("passes the original Arinst s2p and the explicitly selected instrument throug
 });
 
 it("shows the warnings without blocking an upload", async () => {
-  const warned = { ...settings, correction_status: "NONE", start_hz: 110e6, frequency_step_hz: 20e6 };
+  const warned = { ...settings, start_hz: 110e6, frequency_step_hz: 20e6 };
   vi.mocked(vnaCaptureApi.start).mockResolvedValue({ ...pending, status: "done", capture_settings: warned });
   await open(); chooseInstrument();
   for (const warning of captureWarnings(warned, overview.norm)) expect(await screen.findByText(warning)).toBeInTheDocument();
-  expect(captureWarnings(warned, overview.norm)).toHaveLength(3);
+  expect(captureWarnings(warned, overview.norm)).toHaveLength(2);
   await waitFor(() => expect(uploadButton()).toBeEnabled());
   fireEvent.click(uploadButton());
   await waitFor(() => expect(productionApi.uploadVswr).toHaveBeenCalled());
@@ -234,6 +234,7 @@ it("shows the warnings without blocking an upload", async () => {
 it.each([
   [{ correction_status: "C?" }, "«К?»"], [{ correction_status: "RC?" }, "«К?»"],
   [{ correction_status: "C!" }, "«К!»"], [{ correction_status: "RC!" }, "«К!»"], [{ smoothing_enabled: true }, "сглаживание"],
+  [{ correction_status: "NONE" }, "Нет калибровки"], [{ correction_enabled: false }, "Нет калибровки"],
 ])("refuses a capture with %o: reason shown, upload blocked", async (changes, reason) => {
   const refused = { ...settings, ...changes };
   vi.mocked(vnaCaptureApi.start).mockResolvedValue({ ...pending, status: "done", capture_settings: refused });
@@ -247,8 +248,9 @@ it.each([
   expect(productionApi.uploadVswr).not.toHaveBeenCalled();
 });
 
-it("warns, not refuses, without any calibration status read; refuses nothing for a clean capture", () => {
-  expect(captureWarnings({ ...settings, correction_status: "NONE" }, overview.norm)).toEqual(["Нет калибровки на этом диапазоне"]);
+it("refuses, not warns, without a calibration; refuses nothing for a clean capture or unread settings", () => {
+  expect(captureWarnings({ ...settings, correction_status: "NONE" }, overview.norm)).toEqual([]);
+  expect(captureRefusals({ ...settings, correction_status: "NONE" })[0]).toContain("Нет калибровки");
   expect(captureWarnings({ ...settings, correction_status: "C?" }, overview.norm)).toEqual([]);
   expect(captureRefusals(settings)).toEqual([]);
   expect(captureRefusals({})).toEqual([]);

@@ -110,6 +110,7 @@ def test_capture_settings_are_kept_in_existing_measurement_metadata(production_a
     ({"correction_status": "C?"}, "«К?»"), ({"correction_status": "RC?"}, "«К?»"),
     ({"correction_status": "C!"}, "«К!»"), ({"correction_status": "RC!"}, "«К!»"),
     ({"correction_status": "COR", "smoothing_enabled": True}, "сглаживание"),
+    ({"correction_status": "NONE"}, "нет калибровки"), ({"correction_enabled": False}, "нет калибровки"),
 ])
 def test_interpolated_calibration_or_smoothing_is_refused_not_warned(production_api, settings, reason):
     """СТО ФРАК-002-2026 п. 11.1, 11.5: «К?», «К!» и сглаживание — замер не принимается, попытка не создаётся."""
