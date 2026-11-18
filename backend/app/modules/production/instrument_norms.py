@@ -1,4 +1,4 @@
-"""VSWR norms for an instrument passport: maker spec of the series, else the MIL-PRF-55339 sheet, else none.
+"""Norms for an instrument passport: the norm ASSIGNED to the item by id from the catalog, else none (owner 18.11).
 
 Every number lives in backend/data/rf-norms.json with its source; this module only reads and applies it.
 """
@@ -12,7 +12,7 @@ import math
 from pathlib import Path
 import re
 
-from .rf_interfaces import RfDetails, parse_interfaces
+from .rf_interfaces import RfDetails
 
 NORMS_FILE = Path(__file__).resolve().parents[3] / "data" / "rf-norms.json"
 
@@ -212,40 +212,68 @@ def _model_text(name: str, model: str) -> str:
     return f"{name} {model}".upper()
 
 
-def _maker(name: str, model: str) -> dict | None:
-    text = _model_text(name, model)
-    return next((entry for entry in norms_data()["makers"]
-                 if re.search(rf"(?<![A-Z0-9]){re.escape(entry['match'].upper())}", text)), None)
+@dataclass(frozen=True)
+class CatalogNorm:
+    """One assignable norm of rf-norms.json: a maker group, a ТУ/IEC/ESCC type norm or a MIL-PRF-55339 sheet."""
+    id: str
+    level: str                                   # maker | tu | iec | escc | mil
+    norm: Norm
+    port_pairs: tuple[tuple[str, str], ...]      # sorted series pairs the norm covers
+    ends: tuple[tuple[str, str], ...] = ()       # sorted «SERIES штырь|гнездо» pairs when the source names the genders
+    angle: bool | None = None                    # True/False when the source tells straight from right-angle
+    holder: dict | None = None                   # maker entry, type norm or sheet: temperature, resource, articles
+    group: dict | None = None                    # the maker's group (resource)
 
 
-def _ports(name: str, rf: RfDetails) -> tuple[str, ...] | None:
-    ports = rf.interfaces or parse_interfaces(name)
-    if len(ports) != 2 or any(p.impedance_ohm is not None and p.impedance_ohm != 50 for p in ports):
-        return None
-    return tuple(sorted(p.series for p in ports))
+def _pair(ports) -> tuple[str, str]:
+    return tuple(sorted(ports))
+
+
+def _pairs(raw: dict) -> tuple[tuple[str, str], ...]:
+    return tuple(_pair(p) for p in raw.get("port_pairs", [raw.get("ports", ())]))
+
+
+def _ends(raw: dict) -> tuple[tuple[str, str], ...]:
+    return tuple(_pair(pair) for pair in raw.get("ends", ()))
+
+
+@lru_cache(maxsize=1)
+def catalog() -> dict[str, CatalogNorm]:
+    """Every assignable norm by id; an id repeated in the file is an error, not a silent override."""
+    data, found = norms_data(), []
+    for maker in data["makers"]:
+        for group in maker["groups"]:
+            found.append(CatalogNorm(group["id"], "maker", Norm(
+                group.get("reference", group.get("source", maker["source"])), group["title"], float(group["from_ghz"]), _segments(group["segments"]),
+                group.get("url", maker.get("url", "")), group.get("mating_resource"), True,
+                _loss_norm(maker["title"], group.get("loss"))), _pairs(group), _ends(group), holder=maker, group=group))
+    for entry in data.get("type_norms", ()):
+        found.append(CatalogNorm(entry["id"], entry["level"], Norm(
+            entry["reference"], entry["title"], float(entry["from_ghz"]), _segments(entry["segments"]), entry.get("url", ""),
+            entry.get("mating_resource"), loss=_loss_norm(entry["reference"], entry.get("loss"))),
+            _pairs(entry), _ends(entry), entry.get("angle"), holder=entry))
+    for sheet in data["mil_adapters"]:
+        found.append(CatalogNorm(sheet["id"], "mil", Norm(
+            sheet["sheet"], sheet["title"], float(sheet["from_ghz"]), _segments(sheet["segments"]), sheet.get("url", ""),
+            sheet.get("mating_resource"), loss=_loss_norm(sheet["sheet"], sheet.get("loss"))),
+            _pairs(sheet), _ends(sheet), holder=sheet))
+    result = {}
+    for entry in found:
+        if entry.id in result:
+            raise ValueError(f"Норма {entry.id} повторяется в rf-norms.json")
+        result[entry.id] = entry
+    return result
+
+
+def norm_by_id(norm_id: str) -> Norm | None:
+    entry = catalog().get(norm_id or "")
+    return entry.norm if entry else None
 
 
 def norm_for(name: str, model: str, rf: RfDetails) -> Norm | None:
-    """Maker spec of the series if stored, else the MIL-PRF-55339 sheet of the connector pair, else None."""
-    ports = _ports(name, rf)
-    if ports is None:
-        return None
-    maker = _maker(name, model)
-    if maker:
-        for group in maker["groups"]:
-            if tuple(sorted(group["ports"])) == ports:
-                return Norm(group.get("reference", maker["source"]), group["title"], float(group["from_ghz"]),
-                            _segments(group["segments"]), maker.get("url", ""), group.get("mating_resource"), True,
-                            _loss_norm(maker["title"], group.get("loss")))
-    sheet = _mil_sheet(ports)
-    if sheet is None:
-        return None
-    return Norm(sheet["sheet"], sheet["title"], float(sheet["from_ghz"]), _segments(sheet["segments"]),
-                sheet.get("url", ""), sheet.get("mating_resource"), loss=_loss_norm(sheet["sheet"], sheet.get("loss")))
-
-
-def _mil_sheet(ports: tuple[str, ...] | None) -> dict | None:
-    return next((s for s in norms_data()["mil_adapters"] if ports and tuple(sorted(s["ports"])) == ports), None)
+    """The norm ASSIGNED to the item (RfDetails.norm_id), never derived at run time (owner 18.11): unassigned or an id
+    missing from the catalog gives None — «норма не назначена», no verdict. `name`/`model` stay for the callers."""
+    return norm_by_id(getattr(rf, "norm_id", ""))
 
 
 CARD_RESOURCE_SOURCE = "карточка СИ"
@@ -263,26 +291,27 @@ def item_spec(name: str, model: str, rf: RfDetails = RfDetails()) -> ItemSpec | 
 
 
 def _series_spec(name: str, model: str, rf: RfDetails) -> ItemSpec | None:
-    ports = _ports(name, rf)
-    maker = _maker(name, model)
-    if maker is None:
-        sheet = _mil_sheet(ports)
-        if sheet is None:
-            return None
-        source = sheet["sheet"]
-        return ItemSpec(sheet["sheet"], sheet.get("temp_min_c"), sheet.get("temp_max_c"), source,
-                        sheet.get("mating_resource"), source)
-    group = next((g for g in maker["groups"] if ports and tuple(sorted(g["ports"])) == ports), None)
-    resource = group.get("mating_resource") if group else None
-    source = maker["source"]
-    spec = dict(temp_min_c=maker.get("temp_min_c"), temp_max_c=maker.get("temp_max_c"),
-                temp_source=maker.get("temp_source", ""), mating_resource=resource,
+    """Temperature and resource of the assigned norm's source; a maker's article tag beats its series data."""
+    entry = catalog().get(getattr(rf, "norm_id", "") or "")
+    if entry is None:
+        return None
+    holder = entry.holder or {}
+    if entry.level != "maker":
+        source = entry.norm.reference
+        temp = holder.get("temp_min_c") is not None
+        resource = holder.get("mating_resource")
+        return ItemSpec(source, holder.get("temp_min_c"), holder.get("temp_max_c"), source if temp else "",
+                        resource, source if resource else "")
+    resource = (entry.group or {}).get("mating_resource")
+    source = holder["source"]
+    spec = dict(temp_min_c=holder.get("temp_min_c"), temp_max_c=holder.get("temp_max_c"),
+                temp_source=holder.get("temp_source", ""), mating_resource=resource,
                 mating_source=source if resource else "")
     text = _model_text(name, model)
-    for article in maker.get("articles", ()):
+    for article in holder.get("articles", ()):
         if re.search(rf"(?<![A-Z0-9]){re.escape(article['article'].upper())}(?![A-Z0-9])", text):
             spec.update({key: article[key] for key in spec if key in article})
-    return ItemSpec(maker["title"], **spec)
+    return ItemSpec(holder["title"], **spec)
 
 
 @dataclass(frozen=True)
@@ -404,7 +433,7 @@ class Assessment:
     @property
     def verdict(self) -> str:
         if self.status == "none":
-            return "Норма не установлена — заключение о соответствии не выдаётся"
+            return "Норма не назначена — заключение о соответствии не выдаётся"
         if self.status == "no_points":
             return "Нет точек замера в полосе нормы — заключение о соответствии не выдаётся"
         if self.status == "below_accuracy":
@@ -443,7 +472,7 @@ class Assessment:
             return f"не соответствует норме{above}"
         if self.status == "below_accuracy":
             return f"норма {BELOW_ACCURACY}"
-        return "норма не установлена" if self.status == "none" else "нет точек в полосе нормы"
+        return "норма не назначена" if self.status == "none" else "нет точек в полосе нормы"
 
 
 def assess(measured, norm: Norm | None, uncertainty: Uncertainty | None = None, *, repeated: bool = False) -> Assessment:
@@ -531,7 +560,7 @@ class LossAssessment:
         if self.status == "no_points":
             return "нет точек замера в полосе нормы" if self.norm and self.norm.segments else \
                 "нет точки замера на частоте испытания"
-        return "норма не установлена"
+        return "норма не назначена"
 
     @property
     def brief(self) -> str:

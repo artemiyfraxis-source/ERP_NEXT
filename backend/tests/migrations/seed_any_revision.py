@@ -279,6 +279,7 @@ _OVER_CHECK: dict[tuple[str, str], Any] = {
     ("production_rf_details", "kit_definition"): "",
     ("production_rf_details", "max_points"): None,
     ("production_rf_details", "f_min_ghz"): None,
+    ("production_rf_details", "norm_id"): "",  # 0193: only adapters/cables carry an assigned norm
     ("production_rf_interfaces", "position"): 1,
     ("production_rf_interfaces", "f_confirmed"): False,
     # 0181_vna_sessions: terminal rows hold no active instrument/command lease, even when parents repeat.

@@ -13,6 +13,10 @@ from .rf_interfaces import RfDetails, RfInterface
 from .vna_characterization import is_characterization_file
 
 
+# Only an adapter or a test cable carries an assigned norm; the id itself is checked against rf-norms.json on save.
+NORM_CHECK = "norm_id = '' OR (role IN ('adapter','test_cable') AND norm_id = trim(norm_id))"
+
+
 class RfDetailsRow(Base):
     __tablename__ = "production_rf_details"
     __table_args__ = (
@@ -23,6 +27,7 @@ class RfDetailsRow(Base):
         CheckConstraint("max_points IS NULL OR (role = 'vna' AND max_points BETWEEN 2 AND 10000001)", name="ck_rf_details_points"),
         CheckConstraint("kit_definition = '' OR (role = 'solt_kit' AND kit_definition = '6650F27-full') OR (role = 'load_kit' AND kit_definition = 'SMA-MF06-loads')", name="ck_rf_details_kit"),
         CheckConstraint("NOT confirmed OR (role <> 'unknown' AND length(trim(source)) > 0)", name="ck_rf_details_confirmed"),
+        CheckConstraint(NORM_CHECK, name="ck_rf_details_norm"),
     )
     instrument_id: Mapped[UUID] = mapped_column(Uuid(), ForeignKey("production_instruments.id", ondelete="RESTRICT"), primary_key=True)
     version: Mapped[int] = mapped_column(Integer(), nullable=False)
@@ -33,6 +38,7 @@ class RfDetailsRow(Base):
     max_points: Mapped[int | None] = mapped_column(Integer(), nullable=True)
     kit_definition: Mapped[str] = mapped_column(String(64), nullable=False)
     mating_resource: Mapped[int | None] = mapped_column(Integer(), nullable=True)
+    norm_id: Mapped[str] = mapped_column(String(64), nullable=False, server_default="")
 
 
 class RfInterfaceRow(Base):
@@ -127,6 +133,9 @@ class RfRepository:
         recorded = recorded_sides(self.session, instrument_id)
         if recorded - set(end_names(details)):
             raise ProductionValidationError("Нельзя удалить сторону с историей сочленений")
+        from .instrument_norm_assignment import norm_problem
+        if problem := norm_problem(details):
+            raise ProductionValidationError(problem)
         before = self.get(instrument_id)
         # «Нагрузка» redefines the physical sides (one connector whatever the interfaces): with history it is fixed.
         if recorded and before.role != details.role and "load" in (before.role, details.role):

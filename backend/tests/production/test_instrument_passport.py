@@ -36,7 +36,9 @@ def instrument():
 
 
 def rf(impedance=50):
-    return RfDetails(interfaces=(RfInterface("SMA", "розетка", "гнездо", impedance, 18),) * 2, role="adapter")
+    # The norm is assigned per item (owner 18.11); these fixtures pin MIL-PRF-55339/55 explicitly for their numbers.
+    return RfDetails(interfaces=(RfInterface("SMA", "розетка", "гнездо", impedance, 18),) * 2, role="adapter",
+                     norm_id="mil-55339-55" if impedance == 50 else "")
 
 
 def test_characterization_rounds_both_sides_up_and_uses_full_stored_band():
@@ -136,7 +138,7 @@ def test_pdf_is_readable_with_serial_measured_unmeasured_limited_and_75_ohm(stop
         assert "Заключение" in text and "контроль характеристик" not in text
         flat = " ".join(text.split())
         assert ("Норма: MIL-PRF-55339/55 — КСВН ≤ 1,05 + 0,005·F в полосе 0,5–27 ГГц" in flat) == (impedance == 50)
-        assert ("Норма не установлена" in flat) == (impedance == 75)
+        assert ("Норма не назначена" in flat) == (impedance == 75)
     if impedance == 75:
         assert "не для 50 Ом тракта" in text
 
@@ -174,7 +176,7 @@ def test_measured_labels_use_real_link_and_show_parameters_at_203_dpi(label_form
     joined = " ".join(layout.texts)
     # The 58 mm card states the range by its band grid («Частота до, ГГц»), the 100 × 50 one also in words.
     for value in (item.inventory_number, "ADP-ss-26-034", "КСВН ≤", "Потери, дБ ≤", "16.11.2026",
-                  "Норма не установлена" if width >= 90
+                  "Норма не назначена" if width >= 90
                   else "Частота до, ГГц"):
         assert value in joined
     if impedance == 75:

@@ -419,7 +419,7 @@ function Start-VnaMeasure {
                                 [double]::IsNaN($parsed) -or [double]::IsInfinity($parsed) -or $parsed -le 0.01 -or $parsed -gt $FmaxHz / 1e9) { throw 'Частота должна быть > 0,01 ГГц и не выше -FmaxHz.' }
                             $band = $parsed * 1e9
                         }
-                        try { Set-VnaMeasureScreen $connection (Get-VnaScreenLimits $norms $item (Get-VnaItemInterfaces $session $item) $band) $screenBackup }
+                        try { Set-VnaMeasureScreen $connection (Get-VnaScreenLimits $norms $item (Get-VnaItemRf $session $item) $band) $screenBackup }
                         catch {
                             # Display only: the sweep below still checks traces 1–4 (definitions, formats, COR) itself.
                             Write-Host "Экран замера не перестроен: $($_.Exception.Message) Замер продолжается; графики можно поставить пунктом 6." -ForegroundColor Yellow

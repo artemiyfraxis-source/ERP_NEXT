@@ -261,7 +261,7 @@ def test_unknown_comments_are_omitted_and_legacy_metadata_extraction_is_bounded(
 
 def test_html_pdf_whitelist_escape_and_public_routes_do_not_write(production_api):
     client, _ = production_api
-    item, sessions = setup(client, online=False)
+    item, sessions = setup(client, online=False, assigned=False)  # the raw name reaches the page
     identifier = UUID(item["id"])
     header = ("! VNA serial=26030095; ACM serial=26140008\n! Temperatures VNA=26.5; ACM=25.3 degC\n"
               "! Operator=PRIVATE_OPERATOR\n! Chain=PRIVATE_CHAIN\n! Internal note PRIVATE_NOTE\n")
@@ -380,14 +380,14 @@ def test_public_html_pdf_show_measurement_reference_and_card_impedance_warning(o
 
 def test_public_conclusion_history_dates_and_hidden_blanks():
     from datetime import date
-    from app.modules.production.rf_interfaces import RfDetails
     from app.modules.production.instrument_public import history_entry
     from tests.production.test_instrument_working_band import summary
 
     measured = replace(summary(), comments=())
     item = replace(instrument(), manufacturer="", status=InstrumentStatus.INACTIVE)
-    projected = public_passport(item, RfDetails(), measured,
-        history=(history_entry(item, RfDetails(), replace(measured, measured_on=date(2025, 11, 10))),), today=date(2027, 11, 17))
+    # rf() carries the assigned norm MIL-PRF-55339/55 (owner 18.11: no norm without an assignment).
+    projected = public_passport(item, rf(), measured,
+        history=(history_entry(item, rf(), replace(measured, measured_on=date(2025, 11, 10))),), today=date(2027, 11, 17))
     html = public_passport_html(projected, pdf_path="/p/example.pdf")
     pdf = pdf_text(public_passport_pdf(projected, generated=datetime(2027, 11, 17), public_url="https://erp.example.test/p/example"))
     assert projected.name == "Переход коаксиальный SMA розетка – SMA розетка, S-322"
