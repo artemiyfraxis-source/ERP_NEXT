@@ -15,7 +15,9 @@ param(
     [string]$Token,
     [string]$InstallToken,
     [string]$Printer,
+    [string]$MarkingPrinter,
     [string]$Scanner,
+    [switch]$NewMachineId,
     [switch]$Uninstall
 )
 
@@ -23,12 +25,25 @@ $ErrorActionPreference = 'Stop'
 $TaskName = 'Fraxis — печать этикеток'
 $Dir = Join-Path $env:ProgramData 'FraxisPrintAgent'
 
+function Resolve-AgentPrinters {
+    param([string]$PrinterName, [string]$MarkingPrinterName)
+    $names = @()
+    try { $names = @(Get-Printer -ErrorAction Stop | Select-Object -ExpandProperty Name) } catch {}
+    if (-not $PrinterName) { $PrinterName = [string]($names | Where-Object { $_ -like '*TSC*' } | Select-Object -First 1) }
+    foreach ($name in @($PrinterName, $MarkingPrinterName)) {
+        if ($name -and $names -cnotcontains $name) { throw ("Очереди '$name' нет. Установленные: " + ($names -join '; ')) }
+    }
+    if ($PrinterName -and $PrinterName -eq $MarkingPrinterName) { throw 'Очереди TSC и маркировки должны различаться' }
+    return @{ printer = $PrinterName; markingPrinter = $MarkingPrinterName }
+}
+
 function Get-AgentProcess {
     @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
         Where-Object { $_.CommandLine -like '*FraxisPrintAgent*agent.ps1*' })
 }
 
 function Assert-AgentVnaIdle {
+    Assert-AgentPrintIdle
     # Never erase the only original calibration backup or replace credentials under a live lease.
     foreach ($name in @('owner.json','quarantine.json')) {
         if (Test-Path -LiteralPath (Join-Path $Dir ('vna-control\' + $name))) {
@@ -50,6 +65,17 @@ function Assert-AgentVnaIdle {
                 $receiptPath = Join-Path (Join-Path $pendingDir 'acknowledged') $commandName
                 if (-not (Test-Path -LiteralPath $receiptPath)) { throw 'На ПК осталась команда исполнителя ВАЦ. Сначала восстановите сессию в ERP.' }
             }
+        }
+    }
+}
+
+function Assert-AgentPrintIdle {
+    $root = Join-Path $Dir 'print-receipts'
+    if (-not (Test-Path -LiteralPath $root)) { return }
+    foreach ($file in @(Get-ChildItem -LiteralPath $root -Filter '*.json' -File)) {
+        $receipt = [IO.File]::ReadAllText($file.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json
+        if (-not $receipt.acknowledged -or ($receipt.payload.outcome -eq 'unknown' -and -not $receipt.resolved)) {
+            throw 'Есть неподтверждённая или неизвестная печать маркировки. Сначала сверьте квитанции с ERP; настройки и журнал сохранены.'
         }
     }
 }
@@ -134,13 +160,31 @@ $Server = $Server.TrimEnd('/')
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 $ProgressPreference = 'SilentlyContinue'
 
-# Постоянный номер этого ПК: MachineGuid Windows (тот же, что у агента).
+# Постоянный номер этого ПК: MachineGuid Windows (тот же, что у агента); machine-id.txt в папке агента важнее —
+# его пишет -NewMachineId для ПК-клонов одного образа с одинаковым MachineGuid (ПК станков, 18.11.2026).
 function Get-MachineId {
+    try {
+        $override = Join-Path $Dir 'machine-id.txt'
+        if (Test-Path -LiteralPath $override) {
+            $own = ([string](Get-Content -LiteralPath $override -Raw)).Trim().ToLower()
+            if ($own -match '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { return $own }
+        }
+    } catch {}
     try {
         $guid = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Cryptography' -Name MachineGuid).MachineGuid
         if ($guid) { return ([string]$guid).ToLower() }
     } catch {}
     return ([string]$env:COMPUTERNAME).ToLower()
+}
+
+# ПК-клон с чужим MachineGuid: свой постоянный номер пишется один раз и сохраняется при переустановке.
+if ($NewMachineId) {
+    $idPath = Join-Path $Dir 'machine-id.txt'
+    if (-not (Test-Path -LiteralPath $idPath)) {
+        New-Item -ItemType Directory -Path $Dir -Force | Out-Null
+        [IO.File]::WriteAllText($idPath, ([guid]::NewGuid().ToString()), (New-Object Text.UTF8Encoding $false))
+    }
+    Write-Host "Номер ПК для ERP: $(Get-MachineId)"
 }
 
 # Одноразовый токен установки меняется на токен API агента (сервер гасит токен установки при первом обмене).
@@ -155,14 +199,16 @@ if ($InstallToken) {
     $Token = [string]$reply.token
 }
 
-# Принтер этикеток необязателен: указанный проверяется, иначе берётся первая очередь с 'TSC'; нет такой - ПК только сканирует.
-$printers = @()
-try { $printers = @(Get-Printer | Select-Object -ExpandProperty Name) } catch {}
-if ($Printer) {
-    if ($printers -notcontains $Printer) { throw ("Очереди '$Printer' нет. Установленные: " + ($printers -join '; ')) }
-} else {
-    $Printer = [string]($printers | Where-Object { $_ -like '*TSC*' } | Select-Object -First 1)
+# Preserve explicitly configured routes on reinstall, including UTF-8 queue names on zh-CN Windows.
+$previous = Join-Path $Dir 'config.json'
+if (Test-Path -LiteralPath $previous) {
+    $oldConfig = [IO.File]::ReadAllText($previous, [Text.Encoding]::UTF8) | ConvertFrom-Json
+    if (-not $PSBoundParameters.ContainsKey('Printer')) { $Printer = [string]$oldConfig.printer }
+    if (-not $PSBoundParameters.ContainsKey('MarkingPrinter')) { $MarkingPrinter = [string]$oldConfig.markingPrinter }
 }
+$targets = Resolve-AgentPrinters -PrinterName $Printer -MarkingPrinterName $MarkingPrinter
+$Printer = $targets.printer
+$MarkingPrinter = $targets.markingPrinter
 
 # Переустановка: прежний агент (со старым токеном) останавливается до записи нового, иначе он продолжит работать.
 Assert-AgentVnaIdle
@@ -190,6 +236,7 @@ $secure = ConvertTo-SecureString -String $Token -AsPlainText -Force
 $cfg = [ordered]@{
     server         = $Server
     printer        = $Printer
+    markingPrinter = $MarkingPrinter
     tokenProtected = (ConvertFrom-SecureString $secure)
 }
 $cfgPath = Join-Path $Dir 'config.json'
@@ -198,7 +245,8 @@ if ($Scanner) { $cfg['scanner'] = $Scanner.Trim() }
 
 # Доступ к папке: только SYSTEM, администраторы и текущий пользователь.
 $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-& icacls.exe $Dir /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "BUILTIN\Administrators:(OI)(CI)F" "${me}:(OI)(CI)F" | Out-Null
+& icacls.exe $Dir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' "${me}:(OI)(CI)F" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Не удалось ограничить доступ к настройкам агента' }
 
 $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $taskArgs = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + (Join-Path $Dir 'agent.ps1') + '"'
@@ -219,6 +267,7 @@ Write-Host 'Агент Fraxis (сканер УПД и печать этикет�
 Write-Host "  Сервер:   $($cfg.server)"
 Write-Host "  ПК:       $($env:COMPUTERNAME)"
 Write-Host "  Принтер:  $(if ($Printer) { $Printer } else { 'нет (этот ПК только сканирует)' })"
+Write-Host "  Маркировка: $(if ($MarkingPrinter) { $MarkingPrinter } else { 'не настроена' })"
 Write-Host "  Сканер:   $(if ($Scanner) { $Scanner + ' (eSCL)' } else { 'USB (WIA): ищется сам, подключённый позже подхватится' })"
 Write-Host "  Задача:   $TaskName (запуск при входе в Windows, уже запущена)"
 Write-Host "  Журнал:   $Dir\agent.log"

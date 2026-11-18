@@ -284,6 +284,18 @@ class AgentHeartbeatInput(BaseModel):
     vna: VnaCapability | None = None
     vna_sources: list[Literal["s2vna", "arinst"]] | None = Field(default=None, max_length=2)
     vna_control: VnaControlCapability | None = None
+    printers: list["PrinterCapability"] = Field(default_factory=list, max_length=50)
+
+
+class PrinterCapability(BaseModel):
+    name: str = Field(min_length=1, max_length=255, pattern=r"\S")
+    driver: str = Field(default="", max_length=255)
+    port: str = Field(default="", max_length=255)
+    kind: Literal["tspl", "gdi_png"]
+    present: bool = True
+
+
+AgentHeartbeatInput.model_rebuild()
 
 
 @router.post("/scan/agent/claim")
@@ -331,6 +343,7 @@ def scan_agent_heartbeat(
         raise HTTPException(status_code=422, detail=str(error)) from error
     devices.control_heartbeat(uow_factory(), machine_id,
                               payload.vna_control.model_dump() if payload.vna_control else None, now)
+    devices.printer_heartbeat(uow_factory(), machine_id, [item.model_dump() for item in payload.printers], now)
     return {"ok": True, "update": update_for(payload.version)}
 
 

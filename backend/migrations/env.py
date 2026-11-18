@@ -12,6 +12,7 @@ from app.modules.requests import infrastructure as _requests  # noqa: F401
 from app.modules.receiving import infrastructure as _receiving  # noqa: F401
 from app.modules.warehouse import infrastructure as _warehouse  # noqa: F401
 from app.modules.warehouse import devices as _warehouse_devices  # noqa: F401
+from app.modules.warehouse import marking_profiles as _marking_profiles  # noqa: F401
 from app.modules.fulfillment import infrastructure as _fulfillment  # noqa: F401
 from app.modules.production import infrastructure as _production  # noqa: F401
 from app.modules.production import rf_infrastructure as _production_rf  # noqa: F401

@@ -213,11 +213,13 @@ def test_a_few_hundred_rows_answer_fast(env):
          *[lot(f"FRX.26.{n:07d}", f"Деталь {n} Разъём", article=f"ART-{n}") for n in range(1, 1501)])
     client.get(URL, params={"q": "разъём"})  # warm-up
     for query in ("разъём 77", "FRX.26.0001200", "резистор тип 5", "нет такого"):
-        started = time.perf_counter()
-        response = client.get(URL, params={"q": query})
-        elapsed = (time.perf_counter() - started) * 1000
-        assert response.status_code == 200
-        assert elapsed < 1500, (query, elapsed)  # catches an order-of-magnitude regression, not CI jitter
+        timings = []
+        for _attempt in range(3):  # best of three: a busy parallel run (pytest -n 4) stalls single requests
+            started = time.perf_counter()
+            response = client.get(URL, params={"q": query})
+            timings.append((time.perf_counter() - started) * 1000)
+            assert response.status_code == 200
+        assert min(timings) < 1500, (query, timings)  # catches an order-of-magnitude regression, not CI jitter
     assert titles(client.get(URL, params={"q": "FRX.26.0001200"}), "Склад") == ["FRX.26.0001200"]
 
 

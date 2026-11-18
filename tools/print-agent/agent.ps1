@@ -16,6 +16,7 @@ param(
     [string]$Server,
     [string]$Token,
     [string]$Printer,
+    [string]$MarkingPrinter,
     [string]$Scanner,
     [switch]$DryRun,
     [switch]$Once,
@@ -29,7 +30,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.8.4'
+$script:AgentVersion = '2.9.0'
 $script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
@@ -54,11 +55,12 @@ function Write-Log {
 
 function Read-AgentConfig {
     param([string]$Path)
-    $cfg = @{ server = ''; token = ''; printer = ''; scanner = ''; arinstFolders = $null }
+    $cfg = @{ server = ''; token = ''; printer = ''; markingPrinter = ''; scanner = ''; arinstFolders = $null }
     if ($Path -and (Test-Path $Path)) {
         $raw = Get-Content -Raw -Encoding UTF8 $Path | ConvertFrom-Json
         if ($raw.server) { $cfg.server = [string]$raw.server }
         if ($raw.printer) { $cfg.printer = [string]$raw.printer }
+        if ($raw.markingPrinter) { $cfg.markingPrinter = [string]$raw.markingPrinter }
         if ($raw.scanner) { $cfg.scanner = [string]$raw.scanner }
         if ($null -ne $raw.arinstFolders) { $cfg.arinstFolders = @($raw.arinstFolders) }
         if ($raw.tokenProtected) {
@@ -142,6 +144,380 @@ function Send-RawToPrinter {
     [ErpRawPrinter]::Send($PrinterName, $Bytes)
 }
 
+# Exact custom media must never round-trip through PaperSize (hundredths of an inch).
+# The controller retains the complete driver DEVMODE and uses its validated native DC.
+function Initialize-GdiPrinter {
+    if ('ErpGdiPrinter' -as [type]) { return }
+    Add-Type -AssemblyName System.Drawing
+    Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @'
+using System;
+using System.Drawing;
+using System.Drawing.Printing;
+using System.Drawing.Drawing2D;
+using System.IO;
+using System.Runtime.InteropServices;
+
+public static class ErpGdiPrinter {
+  const int Fields = 72, Orientation = 76, Paper = 78, Length = 80, Width = 82;
+  const int Scale = 84, Copies = 86, Quality = 90, Color = 92, Duplex = 94, YResolution = 96, Collate = 100;
+  // Label drivers (Godex EZ2350i, Seagull) drop flags they do not support. Only media, orientation and
+  // resolution are required; the effective DC is verified with GetDeviceCaps before StartDoc.
+  const int DmScale = 16, DmCopies = 256, DmYResolution = 8192;
+  const int Required = 1 | 2 | 4 | 8 | 1024;            // orientation, paper size/length/width, print quality
+  const int Optional = DmScale | DmCopies | 2048 | 4096 | DmYResolution | 32768; // requested only if the driver offers them
+  [DllImport("winspool.drv", EntryPoint="OpenPrinterW", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern bool OpenPrinter(string name, out IntPtr handle, IntPtr defaults);
+  [DllImport("winspool.drv")] static extern bool ClosePrinter(IntPtr handle);
+  [DllImport("winspool.drv", EntryPoint="DocumentPropertiesW", CharSet=CharSet.Unicode)]
+  static extern int DocumentProperties(IntPtr window, IntPtr printer, string name, IntPtr output, IntPtr input, int flags);
+  [DllImport("gdi32.dll", EntryPoint="CreateDCW", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern IntPtr CreateDC(string driver, string device, string output, IntPtr mode);
+  [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
+  [DllImport("gdi32.dll")] static extern int GetDeviceCaps(IntPtr dc, int index);
+  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+  class DocInfo {
+    public int size = Marshal.SizeOf(typeof(DocInfo));
+    [MarshalAs(UnmanagedType.LPWStr)] public string name = "ERP marking";
+    public IntPtr output = IntPtr.Zero, type = IntPtr.Zero;
+    public int flags = 0;
+  }
+  [DllImport("gdi32.dll", EntryPoint="StartDocW", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern int StartDoc(IntPtr dc, DocInfo info);
+  [DllImport("gdi32.dll")] static extern int StartPage(IntPtr dc);
+  [DllImport("gdi32.dll")] static extern int EndPage(IntPtr dc);
+  [DllImport("gdi32.dll")] static extern int EndDoc(IntPtr dc);
+  [DllImport("gdi32.dll")] static extern int AbortDoc(IntPtr dc);
+  static short Read(byte[] b, int offset) { return BitConverter.ToInt16(b, offset); }
+  static void Write(byte[] b, int offset, int value) { Buffer.BlockCopy(BitConverter.GetBytes((short)value), 0, b, offset, 2); }
+  static void CheckBuffer(byte[] b) {
+    if (b == null || b.Length < 220 || (ushort)Read(b,68) < 220 ||
+        (uint)(ushort)Read(b,68) + (ushort)Read(b,70) > b.Length)
+      throw new InvalidOperationException("Invalid complete DEVMODEW");
+  }
+  public static int Tenths(double mm) {
+    if (Double.IsNaN(mm) || Double.IsInfinity(mm) || mm <= 0 || mm > 500 || Math.Abs(mm*10-Math.Round(mm*10)) > 0.000001)
+      throw new InvalidOperationException("Media must use exact 0.1 mm units (0 < mm <= 500)");
+    return checked((int)Math.Round(mm*10));
+  }
+  public static byte[] RequestMode(byte[] original, double width, double height, bool landscape) {
+    CheckBuffer(original);
+    byte[] b = (byte[])original.Clone();
+    int offered = BitConverter.ToInt32(b,Fields);
+    int fields = (offered & ~65536 & ~Optional) | Required | (offered & Optional); // Clear DM_FORMNAME.
+    Buffer.BlockCopy(BitConverter.GetBytes(fields),0,b,Fields,4);
+    Write(b,Orientation,landscape ? 2 : 1); Write(b,Paper,0);
+    // Wire dimensions describe the final oriented raster. DEVMODE dimensions describe portrait stock.
+    Write(b,Width,Tenths(landscape ? height : width)); Write(b,Length,Tenths(landscape ? width : height));
+    Write(b,Scale,100); Write(b,Copies,1); Write(b,Quality,300); Write(b,YResolution,300);
+    Write(b,Color,1); Write(b,Duplex,1); Write(b,Collate,0);
+    Array.Clear(b,102,64);
+    return b;
+  }
+  public static void ValidateMode(byte[] expected, byte[] actual) {
+    CheckBuffer(expected); CheckBuffer(actual);
+    int kept = BitConverter.ToInt32(actual,Fields);
+    if ((kept & Required) != Required)
+      throw new InvalidOperationException("Driver removed required DEVMODE fields");
+    foreach (int offset in new int[] { Orientation, Paper, Length, Width, Quality })
+      if (Read(expected,offset) != Read(actual,offset))
+        throw new InvalidOperationException("Driver substituted DEVMODE field at " + offset);
+    // Fields a driver keeps must still mean one unscaled 300 dpi copy; colour, duplex and collation are irrelevant.
+    if ((kept & DmScale) != 0 && Read(actual,Scale) != 100) throw new InvalidOperationException("Driver substituted DEVMODE field at " + Scale);
+    if ((kept & DmCopies) != 0 && Read(actual,Copies) != 1) throw new InvalidOperationException("Driver substituted DEVMODE field at " + Copies);
+    if ((kept & DmYResolution) != 0 && Read(actual,YResolution) != 300) throw new InvalidOperationException("Driver substituted DEVMODE field at " + YResolution);
+  }
+  public static byte[] ValidateWithDriver(string name, double width, double height, bool landscape) {
+    IntPtr printer, input = IntPtr.Zero, output = IntPtr.Zero;
+    if (!OpenPrinter(name,out printer,IntPtr.Zero)) throw new InvalidOperationException("Printer unavailable: " + name);
+    try {
+      int count = DocumentProperties(IntPtr.Zero,printer,name,IntPtr.Zero,IntPtr.Zero,0);
+      if (count < 220 || count > 1048576) throw new InvalidOperationException("Invalid driver DEVMODE size");
+      input = Marshal.AllocHGlobal(count); output = Marshal.AllocHGlobal(count);
+      if (DocumentProperties(IntPtr.Zero,printer,name,input,IntPtr.Zero,2) != 1)
+        throw new InvalidOperationException("Cannot read DEVMODE");
+      byte[] original = new byte[count]; Marshal.Copy(input,original,0,count);
+      byte[] requested = RequestMode(original,width,height,landscape); Marshal.Copy(requested,0,input,count);
+      if (DocumentProperties(IntPtr.Zero,printer,name,output,input,10) != 1)
+        throw new InvalidOperationException("Driver rejected DEVMODE");
+      byte[] actual = new byte[count]; Marshal.Copy(output,actual,0,count);
+      ValidateMode(requested,actual); return actual;
+    } finally {
+      if (input != IntPtr.Zero) Marshal.FreeHGlobal(input);
+      if (output != IntPtr.Zero) Marshal.FreeHGlobal(output);
+      ClosePrinter(printer);
+    }
+  }
+  public static void ValidateGeometry(double width, double height, int pixelsW, int pixelsH,
+      int dpiX, int dpiY, int physicalW, int physicalH, int offsetX, int offsetY, int printableW, int printableH) {
+    if (dpiX != 300 || dpiY != 300 || Math.Abs(width*300/25.4-pixelsW) > 0.500001 ||
+        Math.Abs(height*300/25.4-pixelsH) > 0.500001)
+      throw new InvalidOperationException("Raster or device resolution mismatch");
+    if (Math.Abs(physicalW-width*300/25.4) > 1.01 || Math.Abs(physicalH-height*300/25.4) > 1.01 ||
+        offsetX < 0 || offsetY < 0 || printableW <= 0 || printableH <= 0 ||
+        offsetX+printableW > physicalW+1 || offsetY+printableH > physicalH+1)
+      throw new InvalidOperationException("Driver substituted physical media or printable bounds");
+  }
+  // Drive the no-dialog controller's single-page lifecycle explicitly below. Calling the
+  // managed PrintDocument.Print loop would rebuild DEVMODE from rounded PaperSize.
+  public sealed class Controller : StandardPrintController {
+    readonly string printer; readonly byte[] mode; readonly Bitmap bitmap; readonly double width, height;
+    IntPtr dc; Graphics graphics; bool completed;
+    public bool SubmissionStarted; public int JobId;
+    public Controller(string name, byte[] validatedMode, Bitmap image, double w, double h) {
+      printer=name; mode=validatedMode; bitmap=image; width=w; height=h;
+    }
+    public override void OnStartPrint(PrintDocument document, PrintEventArgs e) {
+      try {
+        IntPtr buffer=Marshal.AllocHGlobal(mode.Length);
+        try { Marshal.Copy(mode,0,buffer,mode.Length); dc=CreateDC("WINSPOOL",printer,null,buffer); }
+        finally { Marshal.FreeHGlobal(buffer); }
+        if (dc == IntPtr.Zero) throw new InvalidOperationException("Cannot create printer DC");
+        int ox=GetDeviceCaps(dc,112), oy=GetDeviceCaps(dc,113), pw=GetDeviceCaps(dc,8), ph=GetDeviceCaps(dc,10);
+        ValidateGeometry(width,height,bitmap.Width,bitmap.Height,GetDeviceCaps(dc,88),GetDeviceCaps(dc,90),
+          GetDeviceCaps(dc,110),GetDeviceCaps(dc,111),ox,oy,pw,ph);
+        // Never silently clip ink in physical hard margins. White outside the printable area is safe.
+        for (int y=0;y<bitmap.Height;y++) for (int x=0;x<bitmap.Width;x++)
+          if ((x<ox || y<oy || x>=ox+pw || y>=oy+ph) && bitmap.GetPixel(x,y).R != 255)
+            throw new InvalidOperationException("Raster ink outside printable bounds");
+        SubmissionStarted=true;
+        JobId=StartDoc(dc,new DocInfo());
+        if (JobId<=0) throw new InvalidOperationException("StartDoc failed; delivery unknown");
+      } catch { Cleanup(); throw; }
+    }
+    public override Graphics OnStartPage(PrintDocument document, PrintPageEventArgs e) {
+      if (StartPage(dc)<=0) throw new InvalidOperationException("StartPage failed");
+      graphics=Graphics.FromHdc(dc);
+      graphics.PageUnit=GraphicsUnit.Pixel; graphics.PageScale=1;
+      graphics.TranslateTransform(-GetDeviceCaps(dc,112),-GetDeviceCaps(dc,113));
+      graphics.InterpolationMode=InterpolationMode.NearestNeighbor;
+      graphics.PixelOffsetMode=PixelOffsetMode.Half;
+      return graphics;
+    }
+    public override void OnEndPage(PrintDocument document, PrintPageEventArgs e) {
+      if (graphics!=null) { graphics.Dispose(); graphics=null; }
+      if (EndPage(dc)<=0) throw new InvalidOperationException("EndPage failed");
+    }
+    public override void OnEndPrint(PrintDocument document, PrintEventArgs e) {
+      try {
+        if (e.Cancel) throw new InvalidOperationException("Print cancelled; delivery unknown");
+        if (EndDoc(dc)<=0) throw new InvalidOperationException("EndDoc failed; delivery unknown");
+        completed=true;
+      } finally { Cleanup(); }
+    }
+    public void Cleanup() {
+      if (graphics!=null) { graphics.Dispose(); graphics=null; }
+      if (dc!=IntPtr.Zero) { if (JobId>0 && !completed) AbortDoc(dc); DeleteDC(dc); dc=IntPtr.Zero; }
+    }
+  }
+  public static void Print(string printer, Bitmap image, double width, double height, Controller controller) {
+    using (PrintDocument document=new PrintDocument()) {
+      document.PrinterSettings.PrinterName=printer;
+      document.PrinterSettings.Copies=1;
+      document.DefaultPageSettings.Margins=new Margins(0,0,0,0);
+      document.OriginAtMargins=false;
+      document.PrintController=controller;
+      PrintEventArgs printEvent = new PrintEventArgs();
+      try {
+        controller.OnStartPrint(document,printEvent);
+        // Native geometry was verified before submission; no managed media conversion is used.
+        PrintPageEventArgs page = new PrintPageEventArgs(null,Rectangle.Empty,Rectangle.Empty,document.DefaultPageSettings);
+        Graphics graphics = controller.OnStartPage(document,page);
+        // 1:1 in device pixels: the raster is already the label at 300 dpi (ValidateGeometry checked it against the
+        // millimetres). Scaling to width*300/25.4 (e.g. 1092.52 for 1093 dots) would drop a column.
+        graphics.DrawImage(image,new Rectangle(0,0,image.Width,image.Height),0,0,image.Width,image.Height,GraphicsUnit.Pixel);
+        controller.OnEndPage(document,page);
+        controller.OnEndPrint(document,printEvent);
+      } finally { controller.Cleanup(); }
+    }
+  }
+}
+'@
+}
+
+function Get-AgentPrinters {
+    param([string]$PrinterName, [string]$MarkingPrinterName)
+    if ($PrinterName -and $PrinterName -eq $MarkingPrinterName) { throw 'Очереди TSC и маркировки должны различаться' }
+    $installed = @()
+    if ($PrinterName -or $MarkingPrinterName) {
+        try { $installed = @(Get-Printer -ErrorAction Stop) }
+        catch { Write-Log "Не удалось проверить очереди принтеров: $($_.Exception.Message)" }
+    }
+    foreach ($target in @(@{ name = $PrinterName; kind = 'tspl' }, @{ name = $MarkingPrinterName; kind = 'gdi_png' })) {
+        if (-not $target.name) { continue }
+        $queue = $installed | Where-Object { $_.Name -eq $target.name } | Select-Object -First 1
+        @{ name = $target.name; driver = [string]$queue.DriverName; port = [string]$queue.PortName; kind = $target.kind; present = [bool]$queue }
+    }
+}
+
+function Get-PrintReceiptRoot { return Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($ConfigPath))) 'print-receipts' }
+
+function Get-PrintReceiptPath {
+    param([string]$JobId, [string]$Attempt)
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try { $key = ([BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($JobId + ':' + $Attempt)))).Replace('-', '').ToLowerInvariant() }
+    finally { $hash.Dispose() }
+    $root = Get-PrintReceiptRoot
+    $archive = Join-Path (Join-Path $root 'acknowledged') ($key + '.json')
+    if (Test-Path -LiteralPath $archive) { return $archive }
+    return Join-Path $root ($key + '.json')
+}
+
+function Move-AcknowledgedPrintReceipt {
+    param([string]$Path)
+    $archive = Join-Path (Get-PrintReceiptRoot) 'acknowledged'
+    [void][IO.Directory]::CreateDirectory($archive)
+    [IO.File]::Move($Path, (Join-Path $archive ([IO.Path]::GetFileName($Path))))
+}
+
+function Save-PrintReceipt {
+    param([string]$Path, $Receipt)
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $Path))
+    $temporary = $Path + '.tmp'
+    [IO.File]::WriteAllText($temporary, ($Receipt | ConvertTo-Json -Depth 5), (New-Object Text.UTF8Encoding($false)))
+    # Force the write before any spool call. File.Replace is atomic on local NTFS.
+    $stream = [IO.File]::Open($temporary, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try { $stream.Flush($true) } finally { $stream.Dispose() }
+    if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temporary, $Path, [NullString]::Value) }
+    else { [IO.File]::Move($temporary, $Path) }
+}
+
+# HTTP status of a failed Invoke-RestMethod (PS 5.1 WebException and PS 7 HttpResponseException); 0 - no answer.
+function Get-ErpErrorStatus {
+    param($ErrorRecord)
+    try { if ($ErrorRecord.Exception.Response) { return [int]$ErrorRecord.Exception.Response.StatusCode } } catch {}
+    return 0
+}
+
+# Sends pending receipts. An `unknown` receipt stays pending after the server acknowledged it: re-sending the same
+# receipt is idempotent and answers the job's status, so the agent sees when the operator resolved the job in ERP
+# («Проверка» → spooled/failed) and only then marks it resolved. Returns $true while an unresolved unknown remains
+# (the marking lane stays paused; TSPL keeps printing). 404/409/403 are terminal: the server will never take this
+# receipt (the job is gone, already has another result, or belongs to another token) and holds the job itself.
+function Sync-PrintReceipts {
+    param([string]$Base, [string]$AuthToken)
+    $root = Get-PrintReceiptRoot
+    $blocked = $false
+    if (-not (Test-Path -LiteralPath $root)) { return $false }
+    foreach ($file in @(Get-ChildItem -LiteralPath $root -Filter '*.json' -File)) {
+        $receipt = [IO.File]::ReadAllText($file.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json
+        $pending = $receipt.payload.outcome -eq 'unknown' -and -not $receipt.resolved
+        if ($receipt.acknowledged -and -not $pending) { Move-AcknowledgedPrintReceipt $file.FullName; continue }
+        if ($receipt.base -ne $Base -or $receipt.machine_id -ne (Get-MachineId)) {
+            if ($receipt.acknowledged) { $blocked = $true; continue }
+            throw 'Квитанция печати принадлежит другому серверу или ПК'
+        }
+        $body = @{ attempt = $receipt.payload.attempt; outcome = $receipt.payload.outcome; message = $receipt.payload.message }
+        if ($receipt.payload.spool_job_id) { $body.spool_job_id = $receipt.payload.spool_job_id }
+        $status = ''
+        try {
+            $reply = Invoke-ErpApi -Url "$Base/api/stock/labels/jobs/$($receipt.job_id)/result" -Body $body -AuthToken $AuthToken -MachineId $receipt.machine_id
+            if ($reply -and $reply.status) { $status = [string]$reply.status }
+        } catch {
+            $code = Get-ErpErrorStatus $_
+            if ($code -notin @(403, 404, 409)) { throw }
+            Write-Log "Квитанция задания $($receipt.job_id) закрыта сервером (HTTP $code): $($_.Exception.Message)"
+            $status = 'closed'
+        }
+        $changed = -not $receipt.acknowledged
+        if ($pending -and $status -and $status -ne 'unknown') {
+            $receipt | Add-Member -NotePropertyName resolved -NotePropertyValue $true -Force
+            Write-Log "Неизвестный результат задания $($receipt.job_id) сверен в ERP: $status"
+            $pending = $false; $changed = $true
+        }
+        if ($changed) {
+            $receipt.acknowledged = $true
+            Save-PrintReceipt $file.FullName $receipt
+        }
+        if ($pending) { $blocked = $true } else { Move-AcknowledgedPrintReceipt $file.FullName }
+    }
+    return $blocked
+}
+
+function ConvertFrom-MarkingJob {
+    param($Job, [string]$MarkingPrinterName)
+    if (-not $Job.id -or -not $Job.attempt -or $Job.format -ne 'gdi_png' -or
+        -not $MarkingPrinterName -or $Job.printer -cne $MarkingPrinterName) { throw 'Неверный формат, попытка или очередь задания маркировки' }
+    if ($Job.copies -ne 1 -or $Job.dpi -ne 300 -or $Job.orientation -cnotin @('portrait', 'landscape')) { throw 'Неверные копии, DPI или ориентация' }
+    Initialize-GdiPrinter
+    [void][ErpGdiPrinter]::Tenths([double]$Job.width_mm)
+    [void][ErpGdiPrinter]::Tenths([double]$Job.height_mm)
+    if ([string]$Job.sha256 -notmatch '^[a-fA-F0-9]{64}$' -or ([string]$Job.png_b64).Length -gt 16MB) { throw 'Неверный SHA-256 или слишком большой PNG' }
+    [byte[]]$bytes = [Convert]::FromBase64String([string]$Job.png_b64)
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try { $actual = ([BitConverter]::ToString($hash.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }
+    finally { $hash.Dispose() }
+    if ($actual -ne $Job.sha256) { throw 'SHA-256 PNG не совпадает' }
+    # Check PNG IHDR before decoding, including dimensions and monochrome encoding, to bound allocation.
+    if ($bytes.Length -lt 33 -or ([BitConverter]::ToString($bytes[0..7])) -ne '89-50-4E-47-0D-0A-1A-0A' -or
+        ([Text.Encoding]::ASCII.GetString($bytes,12,4)) -ne 'IHDR' -or $bytes[24] -ne 1 -or $bytes[25] -ne 0) { throw 'Требуется однобитный PNG' }
+    $w = [double]$Job.width_mm * 300 / 25.4; $h = [double]$Job.height_mm * 300 / 25.4
+    [byte[]]$wb = $bytes[16..19]; [array]::Reverse($wb)
+    [byte[]]$hb = $bytes[20..23]; [array]::Reverse($hb)
+    if ([Math]::Abs([BitConverter]::ToUInt32($wb,0) - $w) -gt 0.500001 -or
+        [Math]::Abs([BitConverter]::ToUInt32($hb,0) - $h) -gt 0.500001 -or $w*$h -gt 16000000) { throw 'Размер растра не соответствует миллиметрам и 300 DPI' }
+    return ,$bytes
+}
+
+function Send-PngToPrinter {
+    param($Job, [byte[]]$Bytes)
+    $stream = New-Object IO.MemoryStream(,$Bytes)
+    $bitmap = $controller = $null
+    try {
+        $bitmap = New-Object Drawing.Bitmap($stream)
+        $mode = [ErpGdiPrinter]::ValidateWithDriver($Job.printer, [double]$Job.width_mm, [double]$Job.height_mm, ($Job.orientation -eq 'landscape'))
+        $controller = New-Object ErpGdiPrinter+Controller($Job.printer, $mode, $bitmap, [double]$Job.width_mm, [double]$Job.height_mm)
+        [ErpGdiPrinter]::Print($Job.printer, $bitmap, [double]$Job.width_mm, [double]$Job.height_mm, $controller)
+        return @{ outcome = 'spooled'; message = 'Передано принтеру'; spool_job_id = $controller.JobId }
+    } catch {
+        return @{ outcome = $(if ($controller -and $controller.SubmissionStarted) { 'unknown' } else { 'failed' }); message = $_.Exception.Message }
+    } finally {
+        if ($controller) { $controller.Cleanup() }
+        if ($bitmap) { $bitmap.Dispose() }
+        $stream.Dispose()
+    }
+}
+
+function Invoke-MarkingPollOnce {
+    param([string]$Base, [string]$AuthToken, [string]$PrinterName, [string]$MarkingPrinterName, [switch]$DryRun)
+    # An unresolved unknown pauses only the marking lane; warehouse TSPL labels keep printing.
+    $paused = Sync-PrintReceipts $Base $AuthToken
+    $printers = @(Get-AgentPrinters $PrinterName $MarkingPrinterName)
+    $capabilities = @($printers | Where-Object { $_.present -and -not ($paused -and $_.kind -eq 'gdi_png') } | ForEach-Object { $_.kind })
+    if (-not $capabilities.Count) { if ($paused) { return 'blocked' }; return 'idle' }
+    $machine = Get-MachineId
+    # The server routes TSPL by the exact queue name (and records the host), so both are always sent.
+    $claimBody = @{ machine_id = $machine; capabilities = $capabilities; printer = [string]$PrinterName; host = [string]$env:COMPUTERNAME }
+    $claim = Invoke-ErpApi -Url "$Base/api/stock/labels/jobs/claim" -Body $claimBody -AuthToken $AuthToken -MachineId $machine
+    $job = $claim.job
+    if (-not $job) { if ($paused) { return 'blocked' }; return 'idle' }
+    # TSPL keeps its established receipt and payload shapes, even on a capable agent.
+    if ($job.format -eq 'tspl' -or (-not $job.format -and $job.tspl_b64)) {
+        Invoke-TsplJob $Base $AuthToken $PrinterName $job -DryRun:$DryRun
+        return 'done'
+    }
+    if (-not $job.id -or -not $job.attempt) { throw 'Сервер вернул задание без id/attempt' }
+    $path = Get-PrintReceiptPath ([string]$job.id) ([string]$job.attempt)
+    if (Test-Path -LiteralPath $path) { return 'blocked' } # A repeated claim never prints twice.
+    $receipt = @{ base = $Base; machine_id = $machine; job_id = [string]$job.id; printer = [string]$job.printer; acknowledged = $false; resolved = $false
+        payload = @{ attempt = $job.attempt; outcome = 'failed'; message = '' } }
+    try {
+        # Never print marking that was not asked for (lane paused or queue missing): it becomes a failed receipt.
+        if ($capabilities -notcontains 'gdi_png') { throw 'Маркировка на этом ПК на паузе или очередь Godex не найдена' }
+        $bytes = ConvertFrom-MarkingJob $job $MarkingPrinterName
+    }
+    catch { $receipt.payload.message = $_.Exception.Message; Save-PrintReceipt $path $receipt; [void](Sync-PrintReceipts $Base $AuthToken); return 'done' }
+    if ($DryRun) { $receipt.payload.message = 'dry run'; Save-PrintReceipt $path $receipt }
+    else {
+        $receipt.payload.outcome = 'unknown'; $receipt.payload.message = 'Результат неизвестен: агент прерван при передаче в очередь'
+        Save-PrintReceipt $path $receipt
+        $receipt.payload = Send-PngToPrinter $job $bytes
+        $receipt.payload.attempt = $job.attempt
+        Save-PrintReceipt $path $receipt
+    }
+    [void](Sync-PrintReceipts $Base $AuthToken)
+    return 'done'
+}
+
 function Invoke-ErpApi {
     param([string]$Url, [hashtable]$Body, [string]$AuthToken, [string]$MachineId)
     $json = $Body | ConvertTo-Json -Compress -Depth 5
@@ -167,9 +543,18 @@ function Invoke-PollOnce {
         -Body @{ printer = $PrinterName; host = $env:COMPUTERNAME } -AuthToken $AuthToken
     $job = $claim.job
     if (-not $job) { return 'idle' }
+    Invoke-TsplJob $Base $AuthToken $PrinterName $job -DryRun:$DryRun
+    return 'done'
+}
+
+function Invoke-TsplJob {
+    param([string]$Base, [string]$AuthToken, [string]$PrinterName, $Job, [switch]$DryRun)
     $id = [string]$job.id
     $ok = $false; $err = ''
     try {
+        if (-not $PrinterName -or ($job.printer -and $job.printer -cne $PrinterName) -or ($job.format -and $job.format -ne 'tspl')) {
+            throw 'Неверная очередь или формат TSPL'
+        }
         $bytes = [Convert]::FromBase64String([string]$job.tspl_b64)
         if ($DryRun) {
             Write-Log "DRY RUN: задание $id, копий $($job.copies), $($bytes.Length) байт, принтер '$PrinterName' - печать пропущена"
@@ -184,13 +569,21 @@ function Invoke-PollOnce {
         Write-Log "Ошибка печати задания ${id}: $err"
     }
     Send-JobResult -Base $Base -AuthToken $AuthToken -JobId $id -Ok $ok -ErrorText $err
-    return 'done'
 }
 
 # ---------------------------------------------------------------- Реестр агентов (сканер с любого ПК)
 
 # Постоянный номер ПК: MachineGuid Windows (не меняется при смене сети, имени, пользователя).
+# ПК-клоны одного образа (два SK-20250818JOKI у станков, 18.11.2026) имеют одинаковый MachineGuid — для них установщик
+# с -NewMachineId кладёт свой GUID в machine-id.txt рядом с config.json, и он важнее MachineGuid.
 function Get-MachineId {
+    try {
+        $override = Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($ConfigPath))) 'machine-id.txt'
+        if (Test-Path -LiteralPath $override) {
+            $own = ([string](Get-Content -LiteralPath $override -Raw)).Trim().ToLower()
+            if ($own -match '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { return $own }
+        }
+    } catch {}
     try {
         $guid = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Cryptography' -Name MachineGuid).MachineGuid
         if ($guid) { return ([string]$guid).ToLower() }
@@ -514,21 +907,23 @@ function Invoke-AgentUpdate {
 
 # Отчёт серверу: кто я (номер, имя ПК), версия, сканеры, адрес в сети. Ответ может содержать update - новую версию.
 function Send-Heartbeat {
-    param([string]$Base, [string]$AuthToken, [string]$PrinterName, [string]$ScannerAddress, [switch]$Lightweight)
+    param([string]$Base, [string]$AuthToken, [string]$PrinterName, [string]$ScannerAddress, [switch]$Lightweight, [string]$MarkingPrinterName)
     $devices = $script:HeartbeatDevices
     if (-not $Lightweight) {
         $devices = @{
             scanners = @(Get-AgentScanners -ScannerAddress $ScannerAddress); printer = [string]$PrinterName
             lan_ip = (Get-LanIp); arinst = (Test-ArinstInstalled)
+            printers = @(Get-AgentPrinters $PrinterName $MarkingPrinterName)
         }
         $script:HeartbeatDevices = $devices
     }
     # A restarted parent may already own a session before its first full discovery.
-    if (-not $devices) { $devices = @{ scanners = @(); printer = [string]$PrinterName; lan_ip = ''; arinst = $false } }
+    if (-not $devices) { $devices = @{ scanners = @(); printer = [string]$PrinterName; printers = @(); lan_ip = ''; arinst = $false } }
     $scanners = $devices.scanners
     $body = @{
         machine_id = (Get-MachineId); pc_name = [string]$env:COMPUTERNAME; version = $script:AgentVersion
         lan_ip = $devices.lan_ip; printer = $devices.printer; scanners = $scanners
+        printers = @($devices.printers | Where-Object { $null -ne $_ })
     }
     $vna = if ($script:VnaControlInitialized -or $Lightweight) {
         $observed = Get-VnaObservation
@@ -553,7 +948,8 @@ function Send-Heartbeat {
 }
 
 function Start-AgentLoop {
-    param([string]$Base, [string]$AuthToken, [string]$PrinterName, [switch]$DryRun, [switch]$Once, [string]$ScannerAddress)
+    param([string]$Base, [string]$AuthToken, [string]$PrinterName, [switch]$DryRun, [switch]$Once, [string]$ScannerAddress, [string]$MarkingPrinterName)
+    if ($PrinterName -and $PrinterName -eq $MarkingPrinterName) { throw 'Очереди TSC и маркировки должны различаться' }
     $delay = 3
     $nextBeat = Get-Date
     $lastBeat = $nextBeat
@@ -576,7 +972,7 @@ function Start-AgentLoop {
         $beatEvery = if ($controlActive) { [Math]::Min(60, $script:HeartbeatEverySec) } else { $script:HeartbeatEverySec }
         if ($controlActive -and $nextBeat -gt $lastBeat.AddSeconds($beatEvery)) { $nextBeat = $lastBeat.AddSeconds($beatEvery) }
         if ((Get-Date) -ge $nextBeat -or ($lastBeatWasLightweight -and -not $controlActive)) {
-            try { Send-Heartbeat -Base $Base -AuthToken $AuthToken -PrinterName $PrinterName -ScannerAddress $ScannerAddress -Lightweight:$controlActive }
+            try { Send-Heartbeat -Base $Base -AuthToken $AuthToken -PrinterName $PrinterName -ScannerAddress $ScannerAddress -Lightweight:$controlActive -MarkingPrinterName $MarkingPrinterName }
             catch { Write-Log "Отчёт серверу не ушёл: $($_.Exception.Message)" }
             $lastBeat = Get-Date; $lastBeatWasLightweight = [bool]$controlActive
             $nextBeat = $lastBeat.AddSeconds($beatEvery)
@@ -584,7 +980,11 @@ function Start-AgentLoop {
         $state = 'error'
         try {
             # Без принтера (ПК только со сканером) этикетки не опрашиваем.
-            $state = if ($PrinterName -and -not $controlActive) { Invoke-PollOnce -Base $Base -AuthToken $AuthToken -PrinterName $PrinterName -DryRun:$DryRun } else { 'idle' }
+            $state = if ($MarkingPrinterName -and -not $controlActive) {
+                Invoke-MarkingPollOnce -Base $Base -AuthToken $AuthToken -PrinterName $PrinterName -MarkingPrinterName $MarkingPrinterName -DryRun:$DryRun
+            } elseif ($PrinterName -and -not $controlActive) {
+                Invoke-PollOnce -Base $Base -AuthToken $AuthToken -PrinterName $PrinterName -DryRun:$DryRun
+            } else { 'idle' }
             $delay = 3
         } catch {
             Write-Log "Сеть/сервер: $($_.Exception.Message). Повтор через $delay с"
@@ -1807,11 +2207,12 @@ if ($MyInvocation.InvocationName -ne '.') {
     if ($Server) { $cfg.server = $Server }
     if ($Token) { $cfg.token = $Token }
     if ($Printer) { $cfg.printer = $Printer }
+    if ($MarkingPrinter) { $cfg.markingPrinter = $MarkingPrinter }
     if ($Scanner) { $cfg.scanner = $Scanner }
     if ($TestScan) { Invoke-TestScan -ScannerAddress $cfg.scanner; return }
     if (-not $cfg.server -or -not $cfg.token) {
         Write-Log "Нет настроек (сервер/токен) в $ConfigPath"
         throw "Агент не настроен: запустите install.ps1"
     }
-    Start-AgentLoop -Base $cfg.server.TrimEnd('/') -AuthToken $cfg.token -PrinterName $cfg.printer -DryRun:$DryRun -Once:$Once -ScannerAddress $cfg.scanner
+    Start-AgentLoop -Base $cfg.server.TrimEnd('/') -AuthToken $cfg.token -PrinterName $cfg.printer -DryRun:$DryRun -Once:$Once -ScannerAddress $cfg.scanner -MarkingPrinterName $cfg.markingPrinter
 }

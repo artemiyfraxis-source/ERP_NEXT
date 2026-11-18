@@ -938,7 +938,7 @@ Describe 'Управление ВАЦ: журнал, опрос, watchdog' {
         Mock Invoke-ErpApi { @{} }
         Send-Heartbeat 'http://test' 'token'
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
-            $Body.version -eq '2.8.4' -and $Body.vna_control.version -eq 1 -and ($Body.vna_control.methods -join ',') -eq 'acm'
+            $Body.version -eq '2.9.0' -and $Body.vna_control.version -eq 1 -and ($Body.vna_control.methods -join ',') -eq 'acm'
         }
         Assert-MockCalled Get-VnaApplication -Times 0 -Exactly -Scope It
     }
