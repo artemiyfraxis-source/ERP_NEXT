@@ -102,6 +102,7 @@ from .quality import (
     assign_instrument_serial,
     attach_instrument_file,
     delete_instrument_file,
+    mark_reference_curve,
     next_instrument_number,
     update_instrument,
     MAX_INSTRUMENT_FILE_SIZE,
@@ -1254,13 +1255,34 @@ def boxes(
     task_id: UUID | None = None,
     q: str = "",
 ) -> dict:
-    """Коробки; q — поиск по коду с коробки (без учёта точек и пробелов) или по номеру."""
+    """Коробки; q — поиск по коду с коробки (без учёта точек и пробелов) или по номеру. `kb_shipped` — КБ коробки уехала
+    целиком (`shipped_task_ids`): такую коробку «Очередь ОТК» не показывает."""
     with uow_factory() as uow:
         rows = uow.boxes.search(q) if q.strip() else uow.boxes.list(task_id=task_id)
         if q.strip() and task_id is not None:
             rows = [box for box in rows if box.task_id == task_id]
-        result = [{**_box_result(box), "qc_inspected": uow.qc.by_box(box.id) is not None} for box in rows]
+        tasks = [task for task in (uow.production.get(task_id) for task_id in {box.task_id for box in rows}) if task is not None]
+        shipped = shipped_task_ids(uow, tasks)
+        result = [{**_box_result(box), "qc_inspected": uow.qc.by_box(box.id) is not None,
+                   "kb_shipped": box.task_id in shipped} for box in rows]
     return {"boxes": result}
+
+
+def shipped_task_ids(uow: UnitOfWork, tasks) -> set[UUID]:
+    """Задания, чья КБ уже уехала с завода целиком: по ГП отгружено (`sent`, отправки «Отгружена»/«Закрыта», в т. ч.
+    «Отгрузить без данных» и до ERP) не меньше заказанного, заказ известен. То же правило, по которому КБ уходит из
+    «Приёмки с производства» (`production_intake`). Владелец 18.11: отгруженное не висит в очереди ОТК и в замерах КСВН —
+    склад принял и отгрузил КБ мимо ОТК, ждать проверки там нечего. ГП читаются одним запросом на проект."""
+    goods_by_project: dict[str, dict] = {}
+    shipped: set[UUID] = set()
+    for task in tasks:
+        canon = kit_stage_key(task.project, "")
+        if canon not in goods_by_project:
+            goods_by_project[canon] = {kit_stage_key(good.project, good.item_index): good for good in uow.goods.for_project(task.project)}
+        good = goods_by_project[canon].get(kit_stage_key(task.project, task.item))
+        if good is not None and good.ordered > 0 and good.sent >= good.ordered:
+            shipped.add(task.id)
+    return shipped
 
 
 @router.get("/finished-goods-ready")
@@ -1493,7 +1515,8 @@ def decide_execution_defect(
 
 def instrument_file_result(item) -> dict:
     return {"id": str(item.id), "kind": item.kind.value, "file_name": item.file_name, "size": item.size,
-            "uploaded_at": item.uploaded_at.isoformat(), "uploaded_by_name": item.uploaded_by_name}
+            "uploaded_at": item.uploaded_at.isoformat(), "uploaded_by_name": item.uploaded_by_name,
+            "is_reference": item.is_reference}
 
 
 def instrument_result(item, files=(), *, now: datetime,
@@ -1622,6 +1645,18 @@ def serve_instrument_file(
         if item is None:
             raise HTTPException(status_code=404, detail="Документ СИ не найден")
         return file_response(item.content, item.file_name)
+
+
+@router.post("/instruments/{instrument_id}/files/{file_id}/reference")
+def set_instrument_reference_curve(
+    instrument_id: UUID,
+    file_id: UUID,
+    principal: Annotated[Principal, Depends(production_quality_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    item = _execution(lambda: mark_reference_curve(instrument_id, file_id, principal.actor, now, uow_factory()))
+    return {"file": instrument_file_result(item)}
 
 
 @router.delete("/instruments/{instrument_id}/files/{file_id}", status_code=204)

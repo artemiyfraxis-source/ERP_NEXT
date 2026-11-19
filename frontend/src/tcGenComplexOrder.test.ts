@@ -119,7 +119,7 @@ it("the build config carries the graph as a generated route: every op in one blo
   const gen = makeGen(DSA, S);
   const ops = gen.getActiveOps();
   expect(branch(2).map((key) => gen.templateIdFor(ops.find((o) => o.opKey === key)!))).toEqual([
-    "ins-terminal-2-54-6-3-монтаж-терминалов-a", "twist-свивка", "ins-braid-монтаж-оплётки", "ins-tut-монтаж", "ins-tut-монтаж",
+    "ins-terminal-2-54-6-3-монтаж-терминалов", "twist-свивка", "ins-braid-монтаж-оплётки", "ins-tut-монтаж", "ins-tut-монтаж",
     "heat-ttk-short-усадка", "heat-tyt-short-усадка"]);
   const edge = (from: string, to: string) => route.edges.find((e) => e.from === from && e.to === to)?.item;
   // Партия SYM отдаёт провода двум ветвям; провода с обжимом В и хвосты — в группы сростков. Провода партии — одной строкой.

@@ -806,8 +806,22 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .instrument-window .instrument-file { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 4px 0; }
 .instrument-window .instrument-file a { overflow-wrap: anywhere; min-width: 0; }
 .instrument-window .instrument-file a { color: var(--primary); }
+.instrument-window .instrument-file-reference { font-size: 12px; font-weight: 600; }
 .instrument-rf p { overflow-wrap: anywhere; }
 @media (pointer: coarse) { .instrument-rf button { min-height: 40px; } }
+.instrument-control { margin: 0 0 8px; font-variant-numeric: tabular-nums; }
+.instrument-control.tone-danger { font-weight: 600; }
+.instrument-mating-ends { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 8px 32px; }
+.instrument-mating-end { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-top: 1px solid var(--border); }
+.instrument-mating-count { display: grid; gap: 2px; font-variant-numeric: tabular-nums; }
+.instrument-mating-count span { font-size: 12px; }
+.instrument-mating-history { margin-top: 8px; }
+.instrument-mating-history > summary { cursor: pointer; color: var(--muted-foreground); font-size: 13px; padding: 4px 0; }
+.instrument-mating-adjustment .form-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+@media (pointer: coarse) { .instrument-matings button, .instrument-mating-adjustment button { min-height: 40px; } }
+.instrument-vna-due { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 4px 32px; margin-bottom: 8px; }
+.instrument-vna-due-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 6px 0; border-top: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.instrument-vna-due-item span { font-size: 13px; }
 .instrument-window .instrument-file span { color: var(--muted-foreground); font-size: 12px; }
 .instrument-window .instrument-lot-selected > td { background: var(--accent); }
 @media (max-width: 1599px) {
@@ -5243,37 +5257,39 @@ tr.order-row-late > td:first-child { box-shadow: inset 3px 0 0 var(--tone-danger
 .mb-block-summary { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 400; color: var(--muted-foreground); }
 .tcgen .wrap-plan { margin: 0; padding: 4px 8px 4px 28px; border-left: 2px solid var(--primary); font-size: 13px; display: grid; gap: 2px; }
 
-/* ОТК → «Замеры КСВН»: выбор задания в шапке панели, строка нормы, действия в строке таблицы, график. */
+/* ОТК → «Замеры КСВН» (редизайн 19.11): задания коаксиальных сборок таблицей, под выбранным — его изделия. */
 .vswr-section, .vswr-upload { margin: 16px 0; }
 .vswr-section .manual-stock-head { gap: 12px; flex-wrap: wrap; }
-.vswr-task-pick { display: flex; align-items: center; gap: 8px; margin-left: auto; font-size: 13px; color: var(--muted-foreground); }
-.vswr-task-pick select { min-width: 320px; max-width: 520px; }
-.vswr-norm { margin: 0 0 10px; padding: 7px 12px; border-left: 3px solid var(--tone-ok); border-radius: 4px; background: var(--accent); font-size: 13.5px; font-weight: 600; }
+.vswr-flow-toggle { margin-left: auto; }
+.vswr-flow-toggle.on { border-color: var(--primary); background: var(--bg-teal-8); color: var(--foreground); }
+.vswr-norm { margin: 0 0 8px; padding: 6px 12px; border-left: 3px solid var(--tone-ok); border-radius: 4px; background: var(--accent); font-size: 13px; font-weight: 500; }
 .vswr-norm.is-undefined { border-left-color: var(--warn-border); background: var(--warn-soft); }
-.vswr-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 10px; }
-.vswr-head .vswr-norm { flex: 1 1 420px; margin: 0; }
+.vswr-norm-missing { color: var(--tone-warn); }
 .vswr-count { color: var(--foreground); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.vswr-control { color: var(--muted-foreground); font-weight: 500; }
+.vswr-count.has-reject { color: var(--tone-danger); }
+.vswr-control { color: var(--muted-foreground); font-weight: 400; }
 .vswr-actions { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .vswr-actions .link-button { padding: 0; }
+.vswr-actions > .link-button { font-size: 13px; line-height: 1.4; }
+.vswr-section .data-table tr.selected td, .vswr-section .data-table tr.selected:hover td { background: var(--sheet-selected); }
+.vswr-section .data-table tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
+.vswr-group { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+.vswr-group-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin: 0 0 8px; }
+.vswr-group-head h3 { margin: 0; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.vswr-group-head .vswr-count { margin-left: auto; }
+.vswr-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0 0 8px; font-size: 12px; color: var(--muted-foreground); }
+.vswr-legend > span { display: inline-flex; align-items: center; gap: 4px; }
+.vswr-flow { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin: 0 0 8px; padding: 8px 12px; border: 1px solid var(--primary); border-radius: 8px; background: var(--bg-teal-8); }
+.vswr-flow label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted-foreground); }
+.vswr-flow input { width: 280px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.vswr-flow small { flex-basis: 100%; }
 
-/* ОТК: one row per box, with quantity entry and instrument toggles in place. */
+/* ОТК: очередь коробок таблицей; коробка открывает окно ОТК с проверками по ЭТК, СИ и решением. */
 .quality-page > [role="tabpanel"] > .panel { margin-top: 0; }
 .quality-page > [role="tabpanel"][hidden] { display: none; }
-.quality-page .vswr-section > :is(.manual-stock-head, .vswr-head, .error-banner, .empty) { margin-left: 16px; margin-right: 16px; }
+.quality-page .vswr-section > :is(.manual-stock-head, .error-banner, .empty) { margin-left: 16px; margin-right: 16px; }
 .quality-page .vswr-section > .manual-stock-head { padding-top: 16px; }
-.qc-queue { table-layout: fixed; min-width: 1040px; }
-.qc-queue .qc-box-col { width: 160px; }
-.qc-queue .qc-item-col { width: 160px; }
-.qc-queue .qc-qty-col { width: 72px; }
-.qc-queue .qc-number-col { width: 80px; }
-.qc-queue .qc-vswr-col { width: 156px; }
-.qc-queue .qc-actions-col { width: 144px; }
-.qc-queue :is(th, td) { padding: 4px 8px; }
-.qc-queue td { vertical-align: top; }
-.qc-queue :is(.qc-item, .qc-item small) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.qc-queue .box-name { overflow-wrap: anywhere; white-space: normal; }
-.qc-queue input { text-align: right; padding: 4px; min-height: var(--control-h-cell); font-variant-numeric: tabular-nums; }
+.quality-page .vswr-section > .vswr-group { margin: 16px; }
 .qc-instruments { display: flex; align-items: center; gap: 4px; min-height: var(--control-h-cell); }
 .qc-selected { display: flex; flex: 1; gap: 4px; min-width: 0; }
 .qc-selected-many { flex-wrap: wrap; }
@@ -5292,20 +5308,31 @@ tr.order-row-late > td:first-child { box-shadow: inset 3px 0 0 var(--tone-danger
 .qc-instrument-options input { flex-shrink: 0; width: 16px; height: 16px; margin: 0; }
 .qc-instrument-options label span { min-width: 0; overflow-wrap: anywhere; }
 .qc-instrument-popup :is(button, input):focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
-.qc-vswr-link { display: inline-block; max-width: 100%; min-height: var(--control-h-cell); padding: 4px 8px; border: 1px solid currentColor; border-radius: var(--control-radius); white-space: normal; text-align: left; font-variant-numeric: tabular-nums; }
-.qc-vswr-link:hover { text-decoration: underline; background: var(--accent); }
-.qc-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
-.qc-actions > .small { padding: 4px 8px; white-space: nowrap; }
-.qc-actions .link-button { min-height: var(--control-h-cell); padding: 4px 8px; }
-.qc-actions small { white-space: normal; }
-.qc-dialog { padding: 16px; }
-.qc-dialog .form-grid { padding: 8px 0; }
-.qc-dialog .form-actions { margin-top: 16px; }
-.qc-dialog textarea { min-height: 96px; }
-.quality-tabs button:focus-visible, .qc-queue button:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+.qc-window { padding: 16px; }
+.qc-window .manual-stock-head { flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.qc-window .manual-stock-head h2 { display: inline-flex; gap: 8px; align-items: baseline; }
+.qc-window-head { color: var(--muted-foreground); }
+.qc-window h3 { margin: 16px 0 8px; font-size: 14px; font-weight: 600; }
+.qc-checks { width: 100%; font-size: 13px; }
+.qc-checks :is(th, td) { padding: 4px 8px; vertical-align: top; text-align: left; }
+.qc-checks tbody th { font-weight: 600; white-space: nowrap; }
+.qc-checks td.num { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.qc-vswr-status { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin: 8px 0 0; font-size: 13px; font-variant-numeric: tabular-nums; }
+.qc-passports { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; color: var(--muted-foreground); }
+.qc-passports .link-button, .qc-vswr-status .link-button { padding: 0; }
+.qc-decision { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; }
+.qc-decision label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted-foreground); }
+.qc-decision input[type="number"] { width: 112px; text-align: right; font-variant-numeric: tabular-nums; }
+.qc-decision .qc-left { padding-bottom: 8px; font-size: 13px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.qc-decision .qc-reason { flex: 1 1 360px; }
+.qc-decision .qc-description { flex: 1 1 100%; }
+.qc-review .box-name strong { white-space: nowrap; }
+.qc-window textarea { min-height: 72px; }
+.qc-window .form-actions { margin-top: 16px; }
+.qc-window .qc-return { margin-right: auto; }
+.quality-tabs button:focus-visible, .qc-window button:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
 @media (pointer: coarse) {
-  .quality-tabs button, .qc-queue :is(button, input) { min-height: 40px; }
-  .qc-queue .qc-instrument { min-width: 40px; }
+  .quality-tabs button, .qc-window :is(button, input, select), .vswr-flow :is(button, input), .vswr-actions button { min-height: 40px; }
   .qc-instrument-popup :is(button, label), .qc-instrument-popup > input { min-height: 40px; }
   .qc-instrument-popup button { min-width: 40px; }
   .qc-instrument-options input { width: 20px; height: 20px; }

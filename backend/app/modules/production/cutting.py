@@ -266,11 +266,13 @@ def cutting_recipe(project: str, site: str, document: Mapping | None,
                 units = number(group.get("units"))
                 quantity = Decimal(number(config.get("partQty", (document.get("kit") or {}).get("part_quantity"))))
                 total = number(Decimal(units) * quantity).replace(".", ",")
-                material = coax.get("tutName") or coax.get("tutArt") or "ТУТ"
                 place = "центральные" if group.get("place") == "middle" else "концевые"
                 tail = f"отрезков по {number(group.get('length')).replace('.', ',')} мм ({place})."
-                tube_cuts.append((f"Нарезать {material}: {total} {tail}",
-                                  f"Нарезать {material}: {units.replace('.', ',')} {tail}"))
+                # Generic cards name the tube by its BOM name, short cards (etk_builder) by its article.
+                for material in dict.fromkeys(str(value) for value in (
+                        coax.get("tutName") or coax.get("tutArt") or "ТУТ", coax.get("tutArt")) if value):
+                    tube_cuts.append((f"Нарезать {material}: {total} {tail}",
+                                      f"Нарезать {material}: {units.replace('.', ',')} {tail}"))
             display_tooling.append(deepcopy(card.get("tooling") or []))
             card = _card_snapshot(_equipment_identity_card(card), marks, lengths, tube_cuts)
             _equipment_identity_extras(fields, parameters)

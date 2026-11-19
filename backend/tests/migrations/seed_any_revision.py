@@ -155,7 +155,9 @@ def _check_values(connection: Connection, metadata: MetaData) -> dict[tuple[str,
 def _parent_values(connection: Connection, table: Table) -> dict[str, list[Any]]:
     """column → the parent values a row may point at (each foreign key, composite ones as aligned columns)."""
     values: dict[str, list[Any]] = {}
-    for key in table.foreign_key_constraints:
+    # A column shared by a single and a composite key (0199: configurations.unit_id → units and, with reference_id, →
+    # references) takes the composite key's aligned values — set order must not decide which parent wins.
+    for key in sorted(table.foreign_key_constraints, key=lambda key: (len(key.elements), key.name or "")):
         parent = key.referred_table
         if parent is table:
             continue  # self reference (a correction of an earlier row): left NULL
@@ -180,8 +182,8 @@ def _row(table: Table, index: int, parents: dict[str, list[Any]], lots: list[Any
         if _database_assigns(table, column, dialect):
             continue
         name = column.name
-        if table.name == "warehouse_scan_jobs" and name == "capture_settings":
-            # Reflection forgets JSON(none_as_null=True); omission keeps SQL NULL on scan rows.
+        if (table.name, name) in {("warehouse_scan_jobs", "capture_settings"), ("production_vswr_measurements", "repeat_set")}:
+            # Reflection forgets JSON(none_as_null=True); omission keeps SQL NULL (a repeat set needs its repeat, 0200).
             continue
         if (table.name, name) in _OVER_CHECK:
             row[name] = _OVER_CHECK[(table.name, name)]
@@ -279,6 +281,7 @@ _OVER_CHECK: dict[tuple[str, str], Any] = {
     ("production_rf_details", "kit_definition"): "",
     ("production_rf_details", "max_points"): None,
     ("production_rf_details", "f_min_ghz"): None,
+    ("production_rf_details", "norm_id"): "",  # 0193: only adapters/cables carry an assigned norm
     ("production_rf_interfaces", "position"): 1,
     ("production_rf_interfaces", "f_confirmed"): False,
     # 0181_vna_sessions: terminal rows hold no active instrument/command lease, even when parents repeat.
@@ -331,10 +334,22 @@ _SHAPED_VALUES: dict[tuple[str, str], Any] = {
     ("warehouse_label_templates", "format"): lambda i: _LABEL_FORMATS[i % len(_LABEL_FORMATS)],
     # The model API address is '' or http(s):// (0151_upd_llm_recognition); the key is made up.
     ("warehouse_upd_llm_settings", "base_url"): lambda i: "https://llm.example.test/v1",
+    # A machine snapshot speaks bridge protocol 1 only (0193_machines).
+    ("production_machine_snapshots", "proto"): lambda i: 1,
 }
 # Shaped values win over a CHECK's first `IN (…)` value; a table with a UNIQUE of shaped pairs gets no more rows than
 # there are pairs.
-_ROW_CAPS = {"warehouse_label_templates": len(_LABEL_TEMPLATE_KINDS) * len(_LABEL_FORMATS), "shipment_line_lots": 0}
+_ROW_CAPS = {"warehouse_label_templates": len(_LABEL_TEMPLATE_KINDS) * len(_LABEL_FORMATS), "shipment_line_lots": 0,
+              # A per-side chain (seq, running total) the generic filler cannot build; empty is a valid ledger.
+              "production_instrument_matings": 0, "production_mating_batches": 0,
+              # Each verdict is tied to its numbers by kind-specific CHECKs (0195_vna_check_journal).
+              "production_vna_checks": 0,
+              # A command's times follow its status and a machine command needs its command (0196 / 0197): the generic
+              # filler sets every time and no command; empty is a valid queue.
+              "production_machine_writes": 0,
+              # A manual job's fields follow its status and count source (0202_manual_jobs); an issue needs its job,
+              # lot and write-off. Empty is a valid journal.
+              "production_manual_jobs": 0, "production_manual_job_issues": 0}
 # One row per installation (CHECK `id = 1`): seeded with a single row (the label print agent's heartbeat, 0141, too).
 _SINGLE_ROW_TABLES = frozenset({"warehouse_label_settings", "warehouse_label_agent", "warehouse_upd_llm_settings"})
 

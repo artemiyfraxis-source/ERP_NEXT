@@ -2477,10 +2477,12 @@ export function makeGen(D: GenData, S: GenState) {
     if (tape) ops.push(coaxLabelPrint_());
     if (tutOn) ops.push({ type: "coaxCutTut", opKey: tape ? "coaxProtectCut" : "coaxCutTut", label: `Резка ${tape ? "прозрачной " : ""}ТУТ${x(marks)}`, units: marks, tmplHint: "CUT_TUT_short", ...(tape ? { protective: true } : {}) });
     const pinOp = (sd: Side, pin: string): OpSpec => ({ type: "coaxPin", side: sd, opKey: "coaxPin" + sd, label: `Пайка центрального контакта (${sd === "B" ? "B" : "А"})`, tmplHint: pinHint(pin) });
-    // Обжимной центральный контакт (владелец 19.10) — опрессовка на жилу своей операцией, не пайка.
+    // Обжимной центральный контакт (владелец 19.10) — опрессовка на жилу своей операцией, не пайка. Только своя карта
+    // PRS_PIN_coax (свод 708К. 4/5): карта обжима экрана PRS_SLEEVE_coax давала пину инструкцию и матрицу HEX гильзы.
+    // Нет карты — сборка остановлена (fakraTemplateProblem_), а не подмена.
     const crimpOp = (sd: Side): OpSpec => ({ type: "coaxPinCrimp", side: sd, opKey: "coaxPinCrimp" + sd,
       label: `Опрессовка центрального контакта (${sd === "B" ? "B" : "А"})`,
-      tmplHint: hasOperation_(COAX_PIN_CRIMP_CODE_) ? COAX_PIN_CRIMP_CODE_ : "PRS_SLEEVE_coax", tmplWant: COAX_PIN_CRIMP_CODE_ });
+      tmplHint: COAX_PIN_CRIMP_CODE_, tmplWant: COAX_PIN_CRIMP_CODE_ });
     // Цанговый центральный контакт (владелец 16.10, «не требует пайки») — пайки пина нет, жилу зажимает корпус.
     const pushPin = (sd: Side, pin: string) => {
       if (pin === COAX_PIN_CRIMP) ops.push(crimpOp(sd));
@@ -4000,37 +4002,31 @@ export function makeGen(D: GenData, S: GenState) {
   }
 
   // ── Шаблоны и времена ──
-  function pickCoaxTemplate_(hint: string, side?: Side) {
+  // Один шаблон на код операции (миграция 0192): сторона — у операции, не у шаблона.
+  function pickCoaxTemplate_(hint: string) {
     const norm = (s: string) => String(s || "").toLowerCase().replace(/\s+/g, "");
     const target = norm(hint);
-    const cands = (D.templates || []).filter((t) => norm(String(t.title || "").split("|")[0]) === target);
-    if (!cands.length) return "";
-    if (!side) return cands[0].id;
-    const re = side === "A" ? /\([АA]\)/ : /\([BВ]\)/;
-    return (cands.find((t) => re.test(String(t.title || ""))) || cands[0]).id;
+    const hit = (D.templates || []).find((t) => norm(String(t.title || "").split("|")[0]) === target);
+    return hit ? hit.id : "";
   }
+  /** Шаблон с таким id есть в библиотеке (пустая библиотека — не проверяем: справочник ещё не загружен). */
+  const inLibrary_ = (id: string) => !(D.templates || []).length || (D.templates || []).some((t) => t.id === id);
   function autoPickTemplate(spec: OpSpec) {
     const opKey = spec.opKey;
-    if (S.selectedTemplates[opKey]) return S.selectedTemplates[opKey];
+    if (S.selectedTemplates[opKey] && inLibrary_(S.selectedTemplates[opKey])) return S.selectedTemplates[opKey];
     const cat = spec.cat || OP_CATEGORY_MAP[opKey];
     if (!cat) return "";
     const n = (s: string) => (s || "").replace(/\(A\)/g, "(А)").replace(/\(B\)/g, "(В)").toLowerCase().replace(/[_\-|.+()\s]+/g, " ").trim();
     const stripSide = (s: string) => s.replace(/ [ав]$/, "");
-    const target = n(cat);
-    const sideMatch = target.match(/ ([ав])$/);
-    const sideWanted = sideMatch ? sideMatch[1] : "";
-    const targetBase = stripSide(target);
+    const targetBase = stripSide(n(cat));
     if (!targetBase) return "";
     const ec = (t: Tmpl) => {
       const stored = (t.category || "").trim();
       const raw = stored ? n(stored) : (() => { const p = (t.title || "").split("|"); return p.length > 1 ? n(p[p.length - 1]) : ""; })();
       return stripSide(raw);
     };
-    const best = (D.templates || []).filter((t) => ec(t) === targetBase);
-    if (!best.length) return "";
-    const sideRe = sideWanted === "а" ? /\([АA]\)/ : sideWanted === "в" ? /\([BВ]\)/ : null;
-    let cands = best;
-    if (sideRe) { const sided = best.filter((t) => sideRe.test(String(t.title || ""))); if (sided.length) cands = sided; }
+    const cands = (D.templates || []).filter((t) => ec(t) === targetBase);
+    if (!cands.length) return "";
     if (cands.length === 1) return cands[0].id;
     if (spec.termArt) {
       const terRec = findTerRecord_(spec.termArt);
@@ -4044,7 +4040,7 @@ export function makeGen(D: GenData, S: GenState) {
     return cands[0].id;
   }
   function pickTemplateForOp_(spec: OpSpec) {
-    if (spec.tmplHint) return pickCoaxTemplate_(spec.tmplHint, spec.side);
+    if (spec.tmplHint) return pickCoaxTemplate_(spec.tmplHint);
     if (spec.opKey === "cutWire" && (spec.stripCount || 0) > 0) {
       const re = new RegExp("cut_wire\\+" + spec.stripCount + "strip", "i");
       const hit = (D.templates || []).find((t) => re.test(String(t.title || "").split("|")[0]));
@@ -4057,11 +4053,15 @@ export function makeGen(D: GenData, S: GenState) {
    *  cutWire1…N идут по порядку партий, и при перегруппировке тот же ключ достаётся резке другого вида. */
   function templateIdFor(spec: OpSpec) {
     // Dedicated assembly stages cannot inherit a generic coax card, including an old manual selection.
-    if (S.tab === "coax" && ((isFakra_() && (spec.side || S.coax.fakraCutStrip)) || spec.connColor || spec.markMaterial === "tape" || spec.protective)) return pickTemplateForOp_(spec);
+    // A crimped centre contact never keeps the shield-crimp card (PRS_SLEEVE_coax), even as an old manual choice.
+    if (S.tab === "coax" && ((isFakra_() && (spec.side || S.coax.fakraCutStrip)) || spec.connColor || spec.markMaterial === "tape" || spec.protective
+      || spec.type === "coaxPinCrimp")) return pickTemplateForOp_(spec);
     // Залипший (не ручной) шаблон с другим кодом, чем просит правило генератора, тоже пересчитывается, если карта с
     // нужным кодом есть: 713К.4 КБ1 (17.10) — резка маркировки ушла на PRINT_MARK_TUBE, а у ключа cutMark остался
     // CUT_TUT_short (резка трубок: не тот станок, не те дефекты).
     const stuck = S.selectedTemplates[spec.opKey];
+    // Залипшего id нет в библиотеке (шаблон стороны (A)/(B) слит в один, 0192) — подбор заново.
+    if (stuck && !inLibrary_(stuck)) return pickTemplateForOp_(spec);
     const want = (spec.tmplWant || spec.tmplHint || "").trim();
     const stuckCode = stuck ? String((D.templates || []).find((t) => t.id === stuck)?.title || "").split("|")[0].trim() : "";
     const outdated = !!stuck && !!want && !!stuckCode && stuckCode.toLowerCase() !== want.toLowerCase() && hasTemplateCode_(want);
@@ -4154,6 +4154,8 @@ export function makeGen(D: GenData, S: GenState) {
         ...(S.coax.lengthBasis ? { lengthBasis: S.coax.lengthBasis, finishedLength: custNumber(S.coax.finishedLength),
           lPlusA: custNumber(S.coax.lPlusA), lPlusB: custNumber(S.coax.lPlusB) } : {}),
         ...(S.coax.fakraCutStrip ? { fakraCutStrip: true } : {}),
+        // Свод инструкций 708К. (17.11): the finished-length recipe gets the short common cards (etk_builder.coax_short_steps).
+        ...(S.coax.lengthBasis === "finished" ? { shortCards: true } : {}),
         ...(S.coax.finishedLengthFrom ? { finishedLengthFrom: S.coax.finishedLengthFrom } : {}),
         ...(S.coax.markMaterial ? { markMaterial: S.coax.markMaterial, markProtect: !!S.coax.markProtect } : {}),
         ...(S.coax.marks ? { marks: S.coax.marks } : {}),
@@ -4454,7 +4456,7 @@ export function makeGen(D: GenData, S: GenState) {
   function fakraTemplateProblem_(): string {
     if (S.tab !== "coax") return "";
     return getActiveOpsCoax_().filter((spec) => ((isFakra_() && (spec.side || S.coax.fakraCutStrip))
-      || spec.markMaterial === "tape" || spec.protective || spec.connColor) && !templateIdFor(spec))
+      || spec.markMaterial === "tape" || spec.protective || spec.connColor || spec.type === "coaxPinCrimp") && !templateIdFor(spec))
       .map((spec) => `Нет специализированной карты ${spec.tmplHint} для операции «${spec.label}» — создание сборки остановлено.`).join("\n");
   }
   /** FAKRA/HFM: лишние концы, детали без главной, метки по умолчанию, длина кабеля HFM и нерешённая герметизация. */

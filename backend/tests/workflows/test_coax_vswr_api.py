@@ -96,14 +96,39 @@ def _setup(client, norm=NORM):
 def test_capture_settings_are_kept_in_existing_measurement_metadata(production_api):
     client, _ = production_api
     _, task, instrument = _setup(client)
-    settings = {"points": 4, "smoothing_enabled": True, "correction_enabled": False,
-                "correction_status": "C?", "s_parameter": "S11", "unavailable": ["averaging_factor"]}
+    settings = {"points": 4, "smoothing_enabled": False, "correction_enabled": True,
+                "correction_status": "COR", "s_parameter": "S11", "unavailable": ["averaging_factor"]}
     response = client.post("/api/production/vswr", json=_body(task, instrument, GOOD, capture_settings=settings))
     assert response.status_code == 200, response.text
     measurement = response.json()["measurement"]
     assert measurement["file_meta"]["capture_settings"] == settings
     serials = client.get(f"/api/production/vswr/tasks/{task['id']}").json()["serials"]
     assert serials[0]["latest"]["file_meta"]["capture_settings"] == settings
+
+
+@pytest.mark.parametrize(("settings", "reason"), [
+    ({"correction_status": "C?"}, "«К?»"), ({"correction_status": "RC?"}, "«К?»"),
+    ({"correction_status": "C!"}, "«К!»"), ({"correction_status": "RC!"}, "«К!»"),
+    ({"correction_status": "COR", "smoothing_enabled": True}, "сглаживание"),
+    ({"correction_status": "NONE"}, "нет калибровки"), ({"correction_enabled": False}, "нет калибровки"),
+])
+def test_interpolated_calibration_or_smoothing_is_refused_not_warned(production_api, settings, reason):
+    """СТО ФРАК-002-2026 п. 11.1, 11.5: «К?», «К!» и сглаживание — замер не принимается, попытка не создаётся."""
+    client, _ = production_api
+    _, task, instrument = _setup(client)
+    response = client.post("/api/production/vswr", json=_body(task, instrument, GOOD, capture_settings={**settings, "s_parameter": "S11"}))
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"].startswith("Замер не принят: ") and reason in response.json()["detail"]
+    assert client.get(f"/api/production/vswr/tasks/{task['id']}/serials/1").json()["measurements"] == []
+
+
+def test_verified_capture_with_smoothing_is_refused_whatever_the_client_sends(production_api):
+    client, _ = production_api
+    _, task, instrument = _setup(client)
+    job_id = _capture_job(instrument, GOOD, capture_settings={"smoothing_enabled": True, "s_parameter": "S11"})
+    response = client.post("/api/production/vswr", json=_body(task, instrument, GOOD, capture_job_id=job_id,
+                                                              capture_settings={"smoothing_enabled": False}))
+    assert response.status_code == 422 and "сглаживание" in response.json()["detail"]
 
 
 def test_two_end_api_result_mapping_replay_and_passport(production_api):
@@ -212,7 +237,7 @@ def _capture_job(instrument, content, **changes):
         values = dict(id=job_id, status="done", kind="vna", source="s2vna", requested_by=str(MASTER_ID),
             created_at=NOW, claimed_at=NOW, finished_at=NOW, target_machine_id="capture-pc",
             instrument_id=UUID(instrument["id"]), capture_content=content,
-            capture_settings={"smoothing_enabled": True, "s_parameter": "S11"})
+            capture_settings={"smoothing_enabled": False, "correction_status": "COR", "s_parameter": "S11"})
         values.update(changes)
         uow.session.add(ScanJobRow(**values))
         uow.commit()
@@ -258,7 +283,7 @@ def test_neither_client_settings_nor_verified_capture_bypass_customer_coverage(p
     assert measurement["band_mhz"] == [1000, 3000]
     assert measurement["verdict"] == "fail" and not measurement["complete"]
     assert "не покрывает" in measurement["file_meta"]["capture_warnings"][0]
-    assert measurement["file_meta"]["capture_settings"]["smoothing_enabled"] is True
+    assert measurement["file_meta"]["capture_settings"]["correction_status"] == "COR"  # the job's, not the client's
 
 
 @pytest.mark.parametrize("case", ["missing", "owner", "instrument", "bytes", "pending"])
@@ -487,7 +512,7 @@ def test_task_list_has_only_coax_assemblies_with_counts(production_api):  # noqa
     client, _ = production_api
     try:
         _card_, coax_task, instrument = _old_coax_setup(client)
-        client.post("/api/production/vswr", json=_body(coax_task, instrument, GOOD))
+        verdict = client.post("/api/production/vswr", json=_body(coax_task, instrument, GOOD)).json()["measurement"]["verdict"]
         _launch(client, _card(None, index="КБ2"), key="plain-1", quantity=2)  # ЭТК без коаксиальной сборки — в список не попадает
         new_card = _card({"coaxVswrNorm": NORM}, index="КБ3", config=COAX_CONFIG)
         new_task = _launch(client, new_card, key="vswr-new", quantity=4)
@@ -500,9 +525,32 @@ def test_task_list_has_only_coax_assemblies_with_counts(production_api):  # noqa
     assert set(rows) == {coax_task["id"], new_task["id"]}
     old = rows[coax_task["id"]]
     assert old["number"] == coax_task["number"] and old["quantity"] == 3 and old["status"]
-    assert old["norm"] == {"status": "ok", "vswr_max": 1.51, "source": "computed"}
-    assert old["required"] == {"total": 3, "measured": 1}
-    assert rows[new_task["id"]]["norm"]["vswr_max"] == 1.35 and rows[new_task["id"]]["required"] == {"total": 4, "measured": 0}
+    assert {key: old["norm"][key] for key in ("status", "vswr_max", "source")} == {"status": "ok", "vswr_max": 1.51, "source": "computed"}
+    assert old["project"] == "591K.3" and old["item"] == coax_task["item"] and old["etk_revision"] is not None
+    assert old["required"]["total"] == 3 and old["required"]["measured"] == 1
+    assert old["required"]["failed"] == (verdict == "fail")
+    assert old["required"]["max_vswr"] is not None
+    new = rows[new_task["id"]]
+    assert new["norm"]["vswr_max"] == 1.35 and new["norm"]["band_mhz"] == [1000, 3000]
+    assert new["required"] == {"total": 4, "measured": 0, "failed": 0, "max_vswr": None}
+
+
+def test_task_list_hides_tasks_of_a_fully_shipped_kb(production_api):  # noqa: F811
+    """Владелец 18.11: КБ уехала целиком (отгружено ≥ заказано) — её задание из «Замеров КСВН» уходит; уехала часть — остаётся."""
+    from tests.production.test_otk_shipped import finished_good
+
+    client, _ = production_api
+    _as({"quality": "edit", "production": "edit"})
+    shipped = _launch(client, _card({"coaxVswrNorm": NORM}, index="КБ1", config=COAX_CONFIG), key="vswr-shipped")
+    partly = _launch(client, _card({"coaxVswrNorm": NORM}, index="КБ2", config=COAX_CONFIG), key="vswr-partly")
+    finished_good("591K.3", "КБ1", "3", "3")
+    finished_good("591K.3", "КБ2", "4", "2")
+
+    listed = client.get("/api/production/vswr/tasks")
+
+    assert listed.status_code == 200, listed.text
+    ids = {row["id"] for row in listed.json()["tasks"]}
+    assert shipped["id"] not in ids and partly["id"] in ids
 
 
 def test_parser_and_domain_errors_are_russian_422(production_api):  # noqa: F811
@@ -674,3 +722,90 @@ def test_accessory_cannot_record_vswr_or_accept_qc(production_api):
         assert uow.qc.by_box(box.id) is None
         assert uow.serials.list_for_task(UUID(task["id"])) == serials_before
     assert client.get(f"/api/production/vswr/tasks/{task['id']}/serials/1").json()["measurements"] == []
+
+
+def _planar(client):
+    response = client.post("/api/production/instruments", json={
+        "inventory_number": "ВАЦ-02", "name": "Planar S50180 — анализатор цепей векторный", "instrument_type": "ВАЦ",
+        "verification_number": "ПВ-2026-18", "verified_at": "2026-09-01T00:00:00", "verification_due": "2027-09-01T00:00:00",
+    })
+    assert response.status_code == 200, response.text
+    return response.json()["instrument"]
+
+
+def _peak(client, task, vna, peak, position=1):
+    """Замер двухпортовым файлом с максимумом `peak` на 1800 МГц (оба конца одинаковы)."""
+    response = client.post("/api/production/vswr", json=_body(
+        task, vna, _both([(1000, 1.1), (1800, peak), (3000, 1.2)]), position=position, name=f"{peak}.s2p"))
+    assert response.status_code == 200, response.text
+    return response.json()["measurement"]
+
+
+@pytest.mark.parametrize(("peak", "verdict"), [
+    # U для значения нормы 1,35 (п. 13.3): 0,022 · 1,35 / 1,2 = 0,02475 → 0,0248 (Планар S50180 до 10 ГГц).
+    (1.3251, "pass"),     # ниже нормы больше чем на U
+    (1.3252, "border"),   # норма − U — граница включительно
+    (1.34, "border"),
+    (1.36, "border"),     # выше нормы, но в пределах U — не брак, а повтор
+    (1.3748, "border"),   # норма + U — граница включительно
+    (1.3749, "fail"),     # выше нормы + U — брак сразу
+])
+def test_first_measurement_within_the_vna_uncertainty_of_the_limit_is_border(production_api, peak, verdict):  # noqa: F811
+    """СТО ФРАК-002-2026 п. 13.3: в пределах ±U ВАЦ от нормы — «на границе допуска», повтор в 3 подключениях."""
+    client, _ = production_api
+    _as({"quality": "edit", "production": "edit"})
+    task = _launch(client, _card({"coaxVswrNorm": NORM}), key=f"border-{peak}")
+    measurement = _peak(client, task, _planar(client), peak)
+    assert measurement["verdict"] == verdict and measurement["decision"]["status"] == verdict
+    assert measurement["decision"]["uncertainty"] == 0.0248 and measurement["repeat_of"] is None
+    if verdict == "border":
+        assert "3 подключения с поворотом 120°" in measurement["decision"]["text"]
+        assert measurement["verdict_name"] == "На границе допуска"
+
+
+def test_without_a_known_vna_uncertainty_the_norm_alone_decides(production_api):  # noqa: F811
+    client, _ = production_api
+    _as({"quality": "edit", "production": "edit"})
+    task = _launch(client, _card({"coaxVswrNorm": NORM}), key="border-unknown")
+    analyser = _instrument(client)  # Arinst VNA-DL: погрешности в справочнике ВАЦ нет
+    assert _peak(client, task, analyser, 1.34)["decision"] == {"status": "pass", "uncertainty": None, "text": ""}
+    assert _peak(client, task, analyser, 1.36, position=2)["verdict"] == "fail"
+
+
+@pytest.mark.parametrize(("repeats", "final"), [
+    ((1.37, 1.365, 1.372), "pass"),  # худший 1,372 ≤ норма + U — годно, хотя выше нормы (тот же файл — не новое подключение)
+    ((1.34, 1.3749), "fail"),       # второе подключение выше нормы + U (1,3748) — брак сразу, без третьего
+])
+def test_repeat_in_three_connections_decides_against_norm_plus_uncertainty(production_api, repeats, final):  # noqa: F811
+    client, _ = production_api
+    _as({"quality": "edit", "production": "edit"})
+    task = _launch(client, _card({"coaxVswrNorm": NORM}), key=f"repeat-{final}")
+    vna = _planar(client)
+    origin = _peak(client, task, vna, 1.36)
+    assert origin["verdict"] == "border"
+    results = [_peak(client, task, vna, peak) for peak in repeats]
+    assert [item["repeat_of"] for item in results] == [origin["id"]] * len(results), [(item["verdict"], item["verdict_reason"]) for item in results]
+    for index, item in enumerate(results[:-1], start=1):
+        assert item["verdict"] == "border" and item["verdict_reason"].startswith(f"Повтор {index} из 3") and item["repeat_set"] == []
+    decided = results[-1]
+    assert decided["verdict"] == final
+    assert [entry["max_vswr"] for entry in decided["repeat_set"]] == list(repeats)
+    assert [entry["attempt"] for entry in decided["repeat_set"]] == [item["attempt"] for item in results]
+    serial = client.get(f"/api/production/vswr/tasks/{task['id']}").json()["serials"][0]
+    assert serial["latest"]["verdict"] == final and serial["attempts"] == 1 + len(repeats)
+    # Повтор решён: следующий замер «на границе» начинает новый повтор, а не продолжает старый.
+    fresh = _peak(client, task, vna, 1.355)
+    assert fresh["verdict"] == "border" and fresh["repeat_of"] is None
+
+
+def test_a_border_unit_is_not_accepted_as_good_by_qc(production_api):  # noqa: F811
+    client, _ = production_api
+    _as({"quality": "edit", "production": "edit"})
+    task = _launch(client, _card({"coaxVswrNorm": NORM}), key="border-qc", quantity=1)
+    _peak(client, task, _planar(client), 1.36)
+    from app.main import app as application
+    from app.modules.production.infrastructure import SqlAlchemySerialRepository
+    with application.state.production_uow_factory() as uow:
+        repository = SqlAlchemySerialRepository(uow.session)
+        with pytest.raises(Exception, match="без брака по КСВН 0"):
+            repository.assign_qc(UUID(task["id"]), uuid4(), accepted=1, rejected=0)

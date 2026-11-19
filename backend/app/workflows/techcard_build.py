@@ -31,7 +31,7 @@ import hashlib
 import json
 import re
 from types import MappingProxyType
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork, coax_dia_rows
 from app.modules.references.cable_structure import (
@@ -55,6 +55,7 @@ from app.modules.references.technology import (
     terminal_record_for_section, wire_section,
 )
 from app.modules.techcards.etk_builder import vswr_control
+from app.modules.techcards.operation_cards import resolve_template_id
 from app.modules.techcards.etk_heat_shrink import (
     is_shrink, kvt_passport_series, match_shrink_material, material_association, missing_requirement, requirement_summary,
 )
@@ -562,6 +563,7 @@ class _Models:
 
 def enrich_equipment(
     config: Mapping[str, Any], models: Iterable[Mapping[str, Any]], template_tools: Iterable[Mapping[str, Any]],
+    template_codes: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, Any]:
     """Copy of the config whose operations carry the equipment models: `equipmentTools` — the linked «Оборудование»
     rows of the operation's template (position, the text and number the link was made on, the model id, the name and
@@ -577,7 +579,9 @@ def enrich_equipment(
             continue
         op.pop(EQUIPMENT_TOOLS, None)
         tools = []
-        for row in by_template.get(str(op.get("templateId") or "").strip(), ()):
+        # A former side's id (0192) takes the links of the merged template, as the builder takes its card.
+        template_id = resolve_template_id(op.get("templateId"), op.get("opNum"), by_template, template_codes) or ""
+        for row in by_template.get(template_id, ()):
             model = index.by_id.get(str(row.get("model_id") or ""))
             if model is None:
                 continue

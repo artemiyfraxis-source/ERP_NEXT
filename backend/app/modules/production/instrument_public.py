@@ -2,16 +2,20 @@
 
 from dataclasses import dataclass
 from datetime import date
-from calendar import monthrange
 import re
 from urllib.parse import urlsplit
 
-from .instrument_characterization import Characterization, WorkingBand, connector_line, impedance_warning, number, working_band
-from .rf_interfaces import RfDetails, ROLE_LABELS, parse_interfaces
+from .instrument_control import CONTROL_INTERVAL_MONTHS, RECHECK_MATINGS, ControlDue, control_due, recheck_text
+from .instrument_characterization import Application, Characterization, application, connector_line, impedance_warning, number
+from .instrument_norms import (Assessment, ItemSpec, LossAssessment, LossUncertainty, Uncertainty, ghz_text, item_spec,
+                               REPEAT_TEXT, loss_uncertainty_for, norm_for, norms_data, resolve_vna, uncertainty_for)
+from .instrument_serials import article_of
+from .rf_interfaces import RfDetails, ROLE_LABELS, is_adapter_name, parse_interfaces
 from .traceability import InstrumentKind, MeasurementInstrument
 from .vna_files import VnaTrace, _decode
 
-CONTROL_INTERVAL_MONTHS = 12
+# Owner 18.11: the general director approves the conclusion by hand; no name is stored.
+APPROVER_ROLE = "Генеральный директор"
 
 
 @dataclass(frozen=True)
@@ -54,12 +58,29 @@ class PublicPassport:
     next_control: date | None
     control_overdue: bool
     history: tuple["PublicHistory", ...]
+    spec: ItemSpec | None = None              # temperature range and mating resource with their sources
+    norm_check: Assessment | None = None      # decision against the maker spec / MIL sheet; None - not measured
+    usage: Application | None = None         # frequency range within the item's own norm
+    uncertainty: Uncertainty | None = None    # of the VNA that measured, from the reference data
+    loss_check: LossAssessment | None = None  # insertion loss against the loss norm of the same source
+    loss_uncertainty: LossUncertainty | None = None  # transmission uncertainty of the VNA that measured
+    vna: str = ""                             # «ВАЦ Планар S50180 (СИ.002)» — the VNA that measured, as resolved
+    control: ControlDue | None = None         # 12 months or 100 matings since the measurement, whichever first
 
 
 @dataclass(frozen=True)
 class PublicHistory:
     measured_on: date
-    band: WorkingBand | None
+    summary: str
+
+
+@dataclass(frozen=True)
+class PassportConclusion:
+    title: str
+    verdict: str
+    warning: str
+    lines: tuple[tuple[str, str], ...]
+    closing: tuple[str, ...]
 
 
 _SERIAL = r"([A-Za-z0-9-]{1,32})"
@@ -119,50 +140,109 @@ def _name(item: MeasurementInstrument, rf: RfDetails) -> str:
     if not ports and connectors == connector_line(item.name, "", RfDetails()):
         return item.name
     kind = ROLE_LABELS.get(rf.role, "") if rf.role != "unknown" else ""
-    if not kind and ("переходник" in item.name.lower() or len(parse_interfaces(item.name)) == 2):
-        kind = "Переходник"
+    if not kind and (is_adapter_name(item.name) or len(parse_interfaces(item.name)) == 2):
+        kind = ROLE_LABELS["adapter"]
     # The card's document designation is private. Reuse only a short model already in the public name.
     model = re.search(r"\b([A-ZА-Я]{1,6}-\d{1,8}[A-Za-zА-Яа-я0-9-]*)\s*$", item.name)
-    return " ".join(filter(None, (kind, connectors))) + (", " + model[1] if model else "")
+    article = article_of(item)  # «ADP1A-35M-35F»: an article word already in the public name
+    shown = model[1] if model else article if article and article in item.name.split() else ""
+    return " ".join(filter(None, (kind, connectors))) + (", " + shown if shown else "")
+
+
+def _series(rf: RfDetails) -> tuple[str, ...]:
+    return tuple(port.series for port in rf.interfaces)  # the same series the label's frequency range uses
+
+
+def _usage(item: MeasurementInstrument, rf: RfDetails, measured: Characterization, projected: PublicMeasurement,
+           registry=(), repeats=()) -> tuple[Application, str, str]:
+    """The norm-based range and the VNA (model, label) resolved from the header, the file name or the registry."""
+    model, vna = resolve_vna((projected.instrument, *measured.comments, measured.file_name), registry)
+    usage = application(projected, _series(rf), norm_for(item.name, item.doc_designation or "", rf),
+                        uncertainty=uncertainty_for(model), loss_uncertainty=loss_uncertainty_for(model), repeats=repeats)
+    title = next((entry["title"] for entry in norms_data()["vna"] if entry["model"] == model), "")
+    label = " ".join(filter(None, ("ВАЦ " + title if title else projected.instrument,
+                                   f"({vna.inventory_number})" if vna is not None else "")))
+    return usage, model, label
+
+
+def history_entry(item: MeasurementInstrument, rf: RfDetails, measured: Characterization, registry=()) -> PublicHistory:
+    """One earlier measurement judged by today's norm."""
+    usage, _, _ = _usage(item, rf, measured, _public_measurement(measured), registry)
+    parts = [f"КСВН: {usage.check.short}"]
+    if usage.loss_check and usage.loss_check.status != "none":
+        parts.append(f"потери: {usage.loss_check.short}")
+    if usage.fit_line:
+        parts.append(usage.fit_line[0].lower() + usage.fit_line[1:])
+    return PublicHistory(measured.measured_on, "; ".join(parts))
 
 
 def public_passport(item: MeasurementInstrument, rf: RfDetails, measured: Characterization | None,
-                    *, history: tuple[PublicHistory, ...] = (), today: date | None = None) -> PublicPassport:
+                    *, history: tuple[PublicHistory, ...] = (), today: date | None = None,
+                    registry=(), repeats=(), matings_since: int | None = None) -> PublicPassport:
+    """`registry` - instruments to resolve the VNA by its serial or model when the file names only «ВАЦ №…»;
+    `repeats` - the other connections of the same control (same day), see `application`; `matings_since` - matings
+    recorded since the measurement day (None - not read)."""
     ohms = sorted({port.impedance_ohm for port in rf.interfaces if port.impedance_ohm is not None})
     verification = None
     if item.kind is InstrumentKind.MEASURING and (item.verification_number or item.verified_at or item.verification_due):
         verification = PublicVerification(item.verification_number or "", item.verified_at.date() if item.verified_at else None,
                                           item.verification_due.date() if item.verification_due else None)
-    next_control = None
-    if measured:
-        month_index = measured.measured_on.year * 12 + measured.measured_on.month - 1 + CONTROL_INTERVAL_MONTHS
-        year, month = divmod(month_index, 12)
-        if year <= date.max.year:
-            next_control = date(year, month + 1, min(measured.measured_on.day, monthrange(year, month + 1)[1]))
+    control = control_due(measured.measured_on, matings_since, today or date.today()) if measured else None
+    projected = _public_measurement(measured) if measured else None
+    usage, model, vna = _usage(item, rf, measured, projected, registry, repeats) if projected else (None, "", "")
     return PublicPassport(item.inventory_number, _name(item, rf), item.serial_number, item.manufacturer.strip() or _manufacturer(rf),
                           connector_line(item.name, item.serial_number, rf),
                           " / ".join(number(value) for value in ohms) + " Ом" if ohms else "50 Ом" if measured else "",
-                          _public_measurement(measured) if measured else None, verification, impedance_warning(rf),
-                          item.status.value, next_control, bool(next_control and next_control < (today or date.today())),
-                          tuple(history))
+                          projected, verification, impedance_warning(rf),
+                          item.status.value, control.due_on if control else None, bool(control and control.overdue),
+                          tuple(history), item_spec(item.name, item.doc_designation or "", rf),
+                          usage.check if usage else None, usage, uncertainty_for(model) if usage else None,
+                          usage.loss_check if usage else None, loss_uncertainty_for(model) if usage else None, vna,
+                          control)
 
 
-def conclusion(measured: PublicMeasurement) -> tuple[str, str]:
-    band = working_band(measured)
-    if band is None:
-        return "Не годен для 50 Ом тракта", ""
-    text = f"{band.band_line} ({band.limits_line.replace(' · ', ', ')})"
-    warning = (f"Выше {number(band.stop_ghz)} ГГц превышение КСВН — не использовать"
-               if band.stop_ghz < measured.band[1] else "")
-    return text, warning
+def conclusion(passport: PublicPassport) -> PassportConclusion | None:
+    """Short by owner decision 18.11: norm (the bands that apply), result, range within the norm, method, control, signer.
+    The decision rule and the uncertainty stay in the code: a margin under the uncertainty reads «на границе допуска»."""
+    measured, check, usage = passport.measurement, passport.norm_check, passport.usage
+    if measured is None or check is None or usage is None:
+        return None
+    start, stop = measured.band
+    lines = [("Норма", check.norm.brief(start, stop) if check.norm else "не назначена")]
+    loss = passport.loss_check
+    result = "; ".join(filter(None, (check.brief, loss.brief if loss else "")))
+    if result:
+        lines.append(("Результат", result))
+    if usage.fit_line:
+        lines.append(("", usage.fit_line))
+    lines.append(("Методика", norms_data()["method"]["code"]))
+    verdict = combined_verdict(check, loss)
+    return PassportConclusion("Заключение", verdict, "", tuple(lines),
+                              (f"Утвердил: {APPROVER_ROLE} ______________ (подпись)   «____» __________ 20___ г.",))
+
+
+def combined_verdict(check, loss) -> str:
+    """One rule for VSWR and loss: a failure of either fails the item; else a border of either asks for the repeat."""
+    loss = loss if loss is not None and loss.status in ("pass", "border", "fail") else None
+    if check.status == "fail":
+        return check.verdict + ("; вносимые потери тоже вне нормы" if loss and loss.status == "fail" else "")
+    if loss and loss.status == "fail":
+        above = f" выше {ghz_text(loss.last_pass_ghz)} ГГц" if loss.last_pass_ghz is not None else ""
+        return f"Не соответствует норме по вносимым потерям{above}"
+    if check.status == "border" or (loss and loss.status == "border"):
+        which = [name for name, a in (("КСВН", check), ("потери", loss)) if a and a.status == "border"]
+        passes = [a.last_pass_ghz for a in (check, loss) if a and a.status == "border"]
+        above = f" выше {ghz_text(min(passes))} ГГц" if None not in passes else ""
+        return f"На границе допуска ({', '.join(which)}){above} — {REPEAT_TEXT}"
+    return check.verdict
 
 
 def control_line(passport: PublicPassport) -> str:
     if passport.measurement is None:
         return ""
-    text = f"Замер: {passport.measurement.measured_on:%d.%m.%Y}"
-    if passport.next_control:
-        text += f" · Следующий контроль: {passport.next_control:%d.%m.%Y} (через {CONTROL_INTERVAL_MONTHS} мес.)"
+    text = f"Замер {passport.measurement.measured_on:%d.%m.%Y}"
+    if passport.control:
+        text += " · " + passport.control.line
     return text
 
 
@@ -195,9 +275,14 @@ def public_measurement_download(content: bytes, measured: PublicMeasurement) -> 
 
 
 def public_fields(passport: PublicPassport) -> tuple[tuple[str, str], ...]:
-    fields = [(label, value) for label, value in (("Серийный номер", passport.serial_number),
+    fields = [(label, value) for label, value in (("Заводской №", passport.serial_number),
               ("Изготовитель", passport.manufacturer), ("Разъёмы", passport.connectors),
               ("Сопротивление", passport.impedance), ("Статус", passport.status)) if value]
+    spec = passport.spec
+    if spec and spec.temperature_line:
+        fields.append(("Рабочие температуры", spec.temperature_line))
+    if spec and spec.mating_resource:
+        fields.append(("Ресурс сочленений", str(spec.mating_resource)))
     if passport.verification:
         verification = passport.verification
         fields.extend((label, value) for label, value in (("Номер поверки", verification.number),
@@ -206,8 +291,11 @@ def public_fields(passport: PublicPassport) -> tuple[tuple[str, str], ...]:
     return tuple(fields)
 
 
-def public_measurement_fields(measured: PublicMeasurement) -> tuple[tuple[str, str], ...]:
-    return tuple((label, value) for label, value in (("Дата замера", measured.measured_on.strftime("%d.%m.%Y")),
-            ("Опорное сопротивление измерения", "50 Ом"),
-            ("Прибор", measured.instrument), ("Калибровка", measured.calibration),
-            ("Условия", "; ".join(measured.conditions)), ("Цепь", measured.chain)) if value)
+def measurement_line(passport: PublicPassport, operator: str = "") -> str:
+    """«Замер 16.11.2026, Васильев А., ВАЦ Планар S50180 (СИ.002), калибровка АКМ» — one line, no file header text."""
+    measured = passport.measurement
+    if measured is None:
+        return ""
+    calibration = measured.calibration.split()[0] if measured.calibration else ""
+    return ", ".join(filter(None, (f"Замер {measured.measured_on:%d.%m.%Y}", operator.strip(), passport.vna,
+                                   f"калибровка {calibration}" if calibration else "")))

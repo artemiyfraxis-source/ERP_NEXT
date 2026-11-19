@@ -9,7 +9,7 @@ import json
 from typing import Sequence
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, text, update
+from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, text, update, false
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, aliased, mapped_column, relationship, sessionmaker, validates
 
@@ -639,12 +639,20 @@ class ProductionInstrumentRow(Base):
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
 
+REFERENCE_CURVE_CHECK = "NOT is_reference OR lower(file_name) LIKE '%.s2p'"
+
+
 class ProductionInstrumentFileRow(Base):
     __tablename__ = "production_instrument_files"
     __table_args__ = (
         CheckConstraint("kind IN ('Паспорт', 'Свидетельство о поверке', 'Руководство', 'Прочее')", name="ck_production_instrument_files_kind"),
         CheckConstraint("length(trim(file_name)) > 0", name="ck_production_instrument_files_name"),
         CheckConstraint("length(content) BETWEEN 1 AND 20971520", name="ck_production_instrument_files_size"),
+        # The weekly control check compares a control standard with its reference curve (СТО ФРАК-002-2026, разд. 14):
+        # at most one per instrument, and only a Touchstone measurement file (0201_instrument_reference_curve).
+        CheckConstraint(REFERENCE_CURVE_CHECK, name="ck_production_instrument_files_reference"),
+        Index("uq_production_instrument_files_reference", "instrument_id", unique=True,
+              sqlite_where=text("is_reference"), postgresql_where=text("is_reference")),
     )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     instrument_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_instruments.id", ondelete="RESTRICT"), nullable=False, index=True)
@@ -653,6 +661,7 @@ class ProductionInstrumentFileRow(Base):
     content: Mapped[bytes] = mapped_column(LargeBinary(), nullable=False, deferred=True)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     uploaded_by: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("identity_users.id", ondelete="RESTRICT"), nullable=False)
+    is_reference: Mapped[bool] = mapped_column(Boolean(), nullable=False, server_default=false())
 
 
 class ProductionQcInspectionRow(Base):
@@ -674,6 +683,19 @@ class ProductionQcInstrumentRow(Base):
     instrument_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_instruments.id", ondelete="RESTRICT"), primary_key=True)
 
 
+# Автоматический вердикт сходится с нормой (0142, 0182) и с правилом решения СТО ФРАК-002-2026 п. 13.3 (0200): первый замер —
+# годно ≤ нормы, брак > нормы, «на границе» в пределах ±U ВАЦ; повтор «на границе» — брак > нормы + U, иначе годно или
+# ещё «на границе» (повтор не закончен). Допуск 1e-6 — только шум float в SQLite на самой границе ±U (в PG numeric точен).
+VSWR_AUTO_VERDICT = (
+    "verdict_manual OR (complete IS FALSE AND verdict = 'fail') OR (norm_vswr_max IS NOT NULL AND ("
+    "(repeat_of IS NULL AND ((verdict = 'pass' AND max_vswr <= norm_vswr_max)"
+    " OR (verdict = 'fail' AND max_vswr > norm_vswr_max)"
+    " OR (verdict = 'border' AND uncertainty IS NOT NULL AND abs(max_vswr - norm_vswr_max) <= uncertainty + 0.000001)))"
+    " OR (repeat_of IS NOT NULL AND uncertainty IS NOT NULL AND ((verdict = 'fail' AND max_vswr > norm_vswr_max + uncertainty - 0.000001)"
+    " OR ((verdict = 'pass' OR verdict = 'border') AND max_vswr <= norm_vswr_max + uncertainty + 0.000001)))))"
+)
+
+
 class ProductionVswrMeasurementRow(Base):
     """Замер КСВН изделия (0142): каждый замер хранится, действует последняя попытка по серийному номеру."""
     __tablename__ = "production_vswr_measurements"
@@ -693,13 +715,10 @@ class ProductionVswrMeasurementRow(Base):
             "max_vswr_mhz >= band_from_mhz AND max_vswr_mhz <= band_to_mhz", name="ck_production_vswr_peak_in_band",
         ),
         CheckConstraint("norm_vswr_max IS NULL OR norm_vswr_max >= 1", name="ck_production_vswr_norm"),
-        CheckConstraint("verdict IN ('pass', 'fail')", name="ck_production_vswr_verdict"),
-        CheckConstraint(
-            "verdict_manual OR (complete IS FALSE AND verdict = 'fail') OR "
-            "(norm_vswr_max IS NOT NULL AND ((verdict = 'pass' AND max_vswr <= norm_vswr_max)"
-            " OR (verdict = 'fail' AND max_vswr > norm_vswr_max)))",
-            name="ck_production_vswr_auto_verdict",
-        ),
+        CheckConstraint("verdict IN ('pass', 'fail', 'border')", name="ck_production_vswr_verdict"),
+        CheckConstraint(VSWR_AUTO_VERDICT, name="ck_production_vswr_auto_verdict"),
+        CheckConstraint("repeat_set IS NULL OR repeat_of IS NOT NULL", name="ck_production_vswr_repeat_set"),
+        CheckConstraint("uncertainty IS NULL OR uncertainty > 0", name="ck_production_vswr_uncertainty"),
         CheckConstraint("NOT verdict_manual OR length(trim(verdict_reason)) > 0", name="ck_production_vswr_manual_reason"),
         CheckConstraint("length(trim(file_name)) > 0", name="ck_production_vswr_file_name"),
         CheckConstraint("length(content) BETWEEN 1 AND 2097152", name="ck_production_vswr_file_size"),
@@ -731,6 +750,10 @@ class ProductionVswrMeasurementRow(Base):
     required_ends: Mapped[list | None] = mapped_column(JSON, nullable=True)
     end_results: Mapped[list | None] = mapped_column(JSON, nullable=True)
     complete: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    uncertainty: Mapped[Decimal | None] = mapped_column(Numeric(9, 4), nullable=True)
+    repeat_of: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey(
+        "production_vswr_measurements.id", ondelete="RESTRICT", name="fk_production_vswr_repeat_of"), nullable=True)
+    repeat_set: Mapped[list | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     traces: Mapped[list[ProductionVswrTraceRow]] = relationship(lazy="selectin", order_by="ProductionVswrTraceRow.name")
     files: Mapped[list[ProductionVswrFileRow]] = relationship(lazy="selectin", order_by="ProductionVswrFileRow.end")
 
@@ -2045,7 +2068,7 @@ class SqlAlchemyInstrumentFileRepository:
         return InstrumentFile(id=row.id, instrument_id=row.instrument_id, kind=InstrumentFileKind(row.kind),
                               file_name=row.file_name, size=size, uploaded_at=uploaded_at,
                               uploaded_by=row.uploaded_by, uploaded_by_name=name,
-                              content=row.content if content else None)
+                              content=row.content if content else None, is_reference=bool(row.is_reference))
 
     def list(self) -> list[InstrumentFile]:
         return [self._domain(row) for row in self.session.execute(self._query().order_by(
@@ -2063,6 +2086,16 @@ class SqlAlchemyInstrumentFileRepository:
             id=file.id, instrument_id=file.instrument_id, kind=file.kind.value, file_name=file.file_name,
             content=file.content, uploaded_at=file.uploaded_at, uploaded_by=file.uploaded_by,
         ))
+
+    def set_reference(self, instrument_id: UUID, file_id: UUID) -> UUID | None:
+        """Moves the instrument's reference-curve mark to this file; returns the file that held it before."""
+        row = ProductionInstrumentFileRow
+        previous = self.session.scalar(select(row.id).where(row.instrument_id == instrument_id, row.is_reference.is_(True)))
+        self.session.execute(update(row).where(row.instrument_id == instrument_id, row.is_reference.is_(True)).values(is_reference=False))
+        self.session.flush()
+        self.session.execute(update(row).where(row.instrument_id == instrument_id, row.id == file_id).values(is_reference=True))
+        self.session.flush()
+        return previous
 
     def delete(self, instrument_id: UUID, file_id: UUID) -> bool:
         return self.session.execute(delete(ProductionInstrumentFileRow).where(
@@ -2118,7 +2151,9 @@ class SqlAlchemySerialRepository:
         if len(rows) < accepted + rejected:
             raise ProductionValidationError("Недостаточно свободных серийных номеров задания")
         verdicts = SqlAlchemyVswrRepository(self.session).latest_verdicts([row.id for row in rows])
-        failed = [row for row in rows if verdicts.get(row.id) is VswrVerdict.FAIL]
+        # «На границе допуска» (повтор не закончен) годным не принимается, в брак — после явного брака.
+        failed = [row for row in rows if verdicts.get(row.id) is VswrVerdict.FAIL] + [
+            row for row in rows if verdicts.get(row.id) is VswrVerdict.BORDER]
         passed = [row for row in rows if verdicts.get(row.id) is VswrVerdict.PASS]
         unmeasured = [row for row in rows if row.id not in verdicts]
         candidates = passed + unmeasured
@@ -2174,6 +2209,7 @@ class SqlAlchemyVswrRepository:
                 trace=tuple((float(p[0]), float(p[1])) for p in item.trace),
             ) for item in row.traces),
             files=tuple(VswrFile(item.end, item.file_name, dict(item.file_meta)) for item in row.files),
+            uncertainty=row.uncertainty, repeat_of=row.repeat_of, repeat_set=tuple(row.repeat_set or ()),
         )
 
     def _select(self):
@@ -2214,6 +2250,8 @@ class SqlAlchemyVswrRepository:
             required_ends=list(measurement.required_ends) if measurement.complete is not None else None,
             end_results=list(measurement.end_results) if measurement.complete is not None else None,
             complete=measurement.complete,
+            uncertainty=measurement.uncertainty, repeat_of=measurement.repeat_of,
+            repeat_set=list(measurement.repeat_set) or None,
             traces=[ProductionVswrTraceRow(
                 name=item.name, quantity=item.quantity, points=item.points,
                 trace=[list(point) for point in item.trace], samples=[list(point) for point in item.samples],

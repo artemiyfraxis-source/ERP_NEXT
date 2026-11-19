@@ -36,7 +36,7 @@ const BUYER_MENU = ["Сегодня", "Заявки", "Запросы КП", "З
 const READER_MENU = BUYER_MENU.filter((label) => label !== "Сегодня");
 
 const EVERYTHING = {
-  "Производство": ["Проекты", "Ресурсное планирование", "Задания", "ОТК"],
+  "Производство": ["Проекты", "Ресурсное планирование", "Станки", "Ручная работа", "Задания", "ОТК"],
   // «Мои заявки» and «Заявки» are no menu items (Витя's edits 2–3): the card and «Снабжение → Заявки» open them.
   "Снабжение": ["Оформить заявку", ...BUYER_MENU],
   "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства"],
@@ -77,7 +77,7 @@ const COMMERCIAL = {
 
 it("gives the operator the request form, own rows, own tasks and read-only stock", () => {
   expect(layout(as("operator", OPERATOR))).toEqual({
-    "Производство": ["Задания"],
+    "Производство": ["Станки", "Ручная работа", "Задания"],
     "Снабжение": ["Оформить заявку"],
     "Склад": ["Приёмка", "Склад"],
     "Справочники": ["База данных"],
@@ -86,7 +86,7 @@ it("gives the operator the request form, own rows, own tasks and read-only stock
 
 it("gives the foreman the shop, the stock and the storekeeper's shipping, of the reference books only purchasing's", () => {
   expect(layout(as("foreman", FOREMAN))).toEqual({
-    "Производство": ["Ресурсное планирование", "Задания", "ОТК"],
+    "Производство": ["Ресурсное планирование", "Станки", "Ручная работа", "Задания", "ОТК"],
     "Снабжение": ["Оформить заявку", ...READER_MENU],
     "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства"],
     "Менеджмент": ["Производственный план"],
@@ -98,7 +98,7 @@ it("gives the foreman the shop, the stock and the storekeeper's shipping, of the
 
 it("gives the technical lead projects, planning, the whole supply block and the reference book", () => {
   expect(layout(as("tech_lead", TECH_LEAD))).toEqual({
-    "Производство": ["Проекты", "Ресурсное планирование", "ОТК"],
+    "Производство": ["Проекты", "Ресурсное планирование", "Станки", "Ручная работа", "ОТК"],
     "Снабжение": ["Оформить заявку", ...BUYER_MENU],
     "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства"],
     "Менеджмент": ["Производственный план"],
@@ -109,7 +109,7 @@ it("gives the technical lead projects, planning, the whole supply block and the 
 
 it("gives the commercial lead projects, the supply sheets and shipping for reading", () => {
   expect(layout(as("commercial", COMMERCIAL))).toEqual({
-    "Производство": ["Проекты", "Ресурсное планирование"],
+    "Производство": ["Проекты", "Ресурсное планирование", "Станки", "Ручная работа"],
     "Снабжение": ["Оформить заявку", ...READER_MENU],
     "Склад": ["Склад", "Приёмка с производства"],
     "Менеджмент": ["Производственный план"],
@@ -132,9 +132,9 @@ it("opens «Задания» by myops alone, for any level", () => {
 });
 
 it("opens «Ресурсное планирование» and «Производственный план» by production, not by myops", () => {
-  expect(section(as("operator", { myops: "edit" }), "Производство")).toEqual(["Задания"]);
+  expect(section(as("operator", { myops: "edit" }), "Производство")).toEqual(["Станки", "Ручная работа", "Задания"]);
   expect(section(as("operator", { myops: "edit" }), "Менеджмент")).toEqual([]);
-  expect(section(as("foreman", { production: "view" }), "Производство")).toEqual(["Ресурсное планирование"]);
+  expect(section(as("foreman", { production: "view" }), "Производство")).toEqual(["Ресурсное планирование", "Станки", "Ручная работа"]);
   expect(section(as("foreman", { production: "view" }), "Менеджмент")).toEqual(["Производственный план"]);
 });
 
@@ -150,7 +150,7 @@ it("opens «ОТК» by the quality key, not by production", () => {
 });
 
 it("keeps «Ресурсное планирование» in the production block next to «ОТК»", () => {
-  expect(section(as("foreman", { production: "edit", quality: "edit" }), "Производство")).toEqual(["Ресурсное планирование", "ОТК"]);
+  expect(section(as("foreman", { production: "edit", quality: "edit" }), "Производство")).toEqual(["Ресурсное планирование", "Станки", "Ручная работа", "ОТК"]);
 });
 
 it("opens «Приёмка с производства» by either shipping key; «Отгрузка» is no menu item since 29.10", () => {

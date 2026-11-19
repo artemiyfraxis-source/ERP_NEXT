@@ -26,6 +26,7 @@ from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
 from .domain import ProductionValidationError
+from .instrument_norms import REPEAT_CONNECTIONS, REPEAT_TEXT, uncertainty_for, vna_model, vswr_resolvable
 from .traceability import SerialStatus
 from .vna_files import VnaTrace, VswrPoint, parse_vna_traces, vna_header
 
@@ -42,9 +43,35 @@ _VSWR = Decimal("0.0001")
 class VswrVerdict(str, Enum):
     PASS = "pass"
     FAIL = "fail"
+    BORDER = "border"  # в пределах ±U ВАЦ от нормы — решение после повтора в 3 подключениях (СТО ФРАК-002-2026 п. 13.3)
 
 
-VERDICT_NAMES = {VswrVerdict.PASS: "Годно", VswrVerdict.FAIL: "Не годно"}
+VERDICT_NAMES = {VswrVerdict.PASS: "Годно", VswrVerdict.FAIL: "Не годно", VswrVerdict.BORDER: "На границе допуска"}
+
+# СТО ФРАК-002-2026 п. 11.1, 11.5 (РЭ ч. 1 п. 3.3.3; РЭ ч. 2, табл. 73): калибровка, пересчитанная на другую сетку
+# («К?» — интерполяция, «К!» — экстраполяция), замер без коррекции («Нет», коррекция выключена) и сглаживание трассы
+# искажают КСВН — такой замер не принимается.
+INTERPOLATED_CALIBRATION = {"C?": "К?", "RC?": "К?", "C!": "К!", "RC!": "К!"}
+
+
+def capture_refusal(settings: Mapping[str, Any] | None) -> str:
+    """Почему замер с этими настройками ВАЦ не принимается; "" — принимается (или настройки не прочитаны)."""
+    if not isinstance(settings, Mapping):
+        return ""
+    raw_status = str(settings.get("correction_status") or "")
+    if raw_status == "NONE" or settings.get("correction_enabled") is False:
+        return ("нет калибровки (коррекция выключена или статус «Нет»): замер без коррекции не отражает изделие — "
+                "откалибруйте ВАЦ на полосе замера и повторите")
+    status = INTERPOLATED_CALIBRATION.get(raw_status)
+    if status == "К?":
+        return ("калибровка интерполирована («К?»): сетка замера не совпадает с сеткой калибровки — "
+                "откалибруйте ВАЦ на полосе и точках замера и повторите")
+    if status == "К!":
+        return ("калибровка экстраполирована («К!»): полоса замера шире калиброванной — "
+                "откалибруйте ВАЦ на полосе замера и повторите")
+    if settings.get("smoothing_enabled") is True:
+        return "включено сглаживание трассы: оно занижает пики КСВН — выключите сглаживание и повторите замер"
+    return ""
 
 
 @dataclass(frozen=True)
@@ -96,6 +123,9 @@ class VswrMeasurement:
     complete: bool | None = None  # None identifies historical attempts, never re-evaluated.
     traces: tuple[VswrTrace, ...] = ()
     files: tuple[VswrFile, ...] = ()
+    uncertainty: Decimal | None = None   # U ВАЦ на частоте максимума; None — погрешность ВАЦ неизвестна
+    repeat_of: UUID | None = None        # замер «на границе», который этот замер повторяет
+    repeat_set: tuple[dict, ...] = ()    # у замера, решившего повтор: все подключения повтора и их максимумы
 
 
 class VswrRepository(Protocol):
@@ -229,6 +259,52 @@ def decide_verdict(
     if not reason:
         raise ProductionValidationError("Вердикт без нормы КСВН ставится с причиной — напишите, по чему решено")
     return manual, True, reason
+
+
+def vna_uncertainty(instrument, mhz: Decimal, limit: Decimal) -> Decimal | None:
+    """U КСВН ВАЦ (по модели прибора из справочника ВАЦ норм СИ) на частоте `mhz` для значения нормы `limit`
+    (СТО ФРАК-002-2026 п. 13.3, `Uncertainty.for_value` — та же, что у паспорта СИ, уже округлена до 0,0001 половиной
+    вверх, как хранится); модель неизвестна — None."""
+    found = uncertainty_for(vna_model(f"{instrument.name} {instrument.doc_designation or ''}"))
+    if found is None:
+        return None
+    return Decimal(str(found.for_value(float(mhz) / 1000, float(limit)))).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+
+
+def decide_by_rule(
+    peak: Decimal, mhz: Decimal, limit: Decimal, allowance: Decimal | None, previous: Sequence[VswrMeasurement],
+) -> tuple[VswrVerdict, str, UUID | None, tuple[dict, ...]]:
+    """Правило решения СТО ФРАК-002-2026 п. 13.3 (то же, что у паспорта СИ, `instrument_norms._decide`) для замера сборки:
+    наибольший КСВН в пределах ±U ВАЦ от нормы — «на границе допуска», нужен повтор в 3 подключениях с поворотом 120°.
+    Повторы: КСВН выше нормы + U — брак сразу; после третьего — худший ≤ норма + U → годно (ILAC-G8 с зоной U).
+    U — у каждого подключения своя, на частоте его максимума; ВАЦ без известной U — простая приёмка по норме.
+    → (вердикт, причина, какой замер повторяем, набор повтора у решившего замера)."""
+    origin = next((item for item in reversed(previous) if item.verdict is VswrVerdict.BORDER and item.repeat_of is None), None)
+    repeats = [item for item in previous if origin is not None and item.repeat_of == origin.id]
+    if origin is not None and (repeats and (repeats[-1].repeat_set or repeats[-1].verdict is VswrVerdict.FAIL)):
+        origin = None  # повтор уже решён — этот замер новый
+    if origin is not None and allowance is not None:
+        done = [{"attempt": item.attempt, "max_vswr": float(item.max_vswr), "max_vswr_mhz": float(item.max_vswr_mhz),
+                 "uncertainty": float(item.uncertainty)} for item in repeats if item.uncertainty is not None]
+        connection = len(repeats) + 1
+        current = {"attempt": None, "max_vswr": float(peak), "max_vswr_mhz": float(mhz), "uncertainty": float(allowance)}
+        if peak > limit + allowance:
+            return (VswrVerdict.FAIL, f"Повтор {connection} из {REPEAT_CONNECTIONS}: КСВН {_vswr_text(peak)} выше нормы "
+                    f"{_vswr_text(limit)} с погрешностью ВАЦ ±{_vswr_text(allowance)}", origin.id, (*done, current))
+        if connection < REPEAT_CONNECTIONS:
+            return (VswrVerdict.BORDER, f"Повтор {connection} из {REPEAT_CONNECTIONS} (поворот 120°) — "
+                    f"нужно ещё {REPEAT_CONNECTIONS - connection}", origin.id, ())
+        worst = max((*done, current), key=lambda entry: entry["max_vswr"])
+        return (VswrVerdict.PASS, f"По повтору в {REPEAT_CONNECTIONS} подключениях: худший КСВН "
+                f"{_vswr_text(Decimal(str(worst['max_vswr'])))} ≤ нормы {_vswr_text(limit)} с погрешностью ВАЦ",
+                origin.id, (*done, current))
+    if allowance is not None and not vswr_resolvable(limit, allowance):
+        return ((VswrVerdict.PASS if peak <= limit else VswrVerdict.FAIL),
+                f"Норма {_vswr_text(limit)} ниже точности ВАЦ (норма − 1 < 2U, U ±{_vswr_text(allowance)}) — "
+                "решено по норме без зоны «на границе»", None, ())
+    if allowance is not None and abs(peak - limit) <= allowance:
+        return VswrVerdict.BORDER, f"На границе допуска — {REPEAT_TEXT}", None, ()
+    return (VswrVerdict.PASS if peak <= limit else VswrVerdict.FAIL), "", None, ()
 
 
 def _mhz_text(value: Decimal) -> str:
@@ -427,6 +503,8 @@ def _prepare_files(
             end_traces[end] = name
             traces = (VnaTrace(name, source.points, source.complex_points),)
             ends = (end,)
+        if refusal := capture_refusal(item.capture_settings):
+            raise ProductionValidationError("Замер не принят: " + refusal)
         file_meta = vna_header(content)
         if item.capture_settings is not None:
             file_meta.update(capture_settings=item.capture_settings, capture_verified=item.capture_verified)
@@ -494,6 +572,12 @@ def record_vswr(
             parsed, norm, mapping, low, high, command, end_traces,
         )
         limit = norm_limit(norm)
+        allowance = vna_uncertainty(instrument, max_mhz, limit) if limit is not None else None
+        repeat_of, repeat_set = None, ()
+        if complete and not manual and limit is not None:
+            verdict, rule_reason, repeat_of, repeat_set = decide_by_rule(
+                max_vswr, max_mhz, limit, allowance, uow.vswr.list_for_serial(serial.id))
+            reason = rule_reason or reason
         primary_name = next((item["trace_name"] for item in results if item["max_vswr"] == float(max_vswr)), None)
         primary = next(item for item in traces if item.name == primary_name) if primary_name else next(
             item for item in traces if item.name.endswith(("S11", "S22")))
@@ -505,8 +589,9 @@ def record_vswr(
             file_meta["summary_trace"] = primary.name
         if any(entry["capture_verified"] for entry in signature) and not complete:
             file_meta["capture_warnings"] = [item["reason"] for item in results if not item["complete"]]
+        attempt = uow.vswr.next_attempt(serial.id)
         measurement = VswrMeasurement(
-            id=uuid4(), serial_id=serial.id, attempt=uow.vswr.next_attempt(serial.id),
+            id=uuid4(), serial_id=serial.id, attempt=attempt,
             instrument_id=instrument.id, band_from_mhz=low, band_to_mhz=high,
             max_vswr=max_vswr, max_vswr_mhz=max_mhz, norm=norm, norm_vswr_max=limit,
             verdict=verdict, verdict_manual=manual, verdict_reason=reason,
@@ -515,6 +600,8 @@ def record_vswr(
             file_meta=file_meta, trace=primary.trace, serial_number=serial.serial_number,
             evidence_key=evidence_key, port_mapping=mapping, required_ends=required_ends(norm),
             end_results=results, complete=complete, traces=traces, files=files,
+            uncertainty=allowance, repeat_of=repeat_of,
+            repeat_set=tuple({**entry, "attempt": entry["attempt"] or attempt} for entry in repeat_set),
         )
         uow.vswr.add(measurement, content)
         uow.audit.add(AuditEvent(
@@ -525,6 +612,8 @@ def record_vswr(
                 "band_mhz": [str(low), str(high)], "max_vswr": str(max_vswr), "max_vswr_mhz": str(max_mhz),
                 "norm_vswr_max": str(limit) if limit is not None else None,
                 "verdict": verdict.value, "manual": manual, "file_name": file_name,
+                "uncertainty": str(allowance) if allowance is not None else None,
+                "repeat_of": str(repeat_of) if repeat_of is not None else None,
             },
         ))
         if manage_transaction:

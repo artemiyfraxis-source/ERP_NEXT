@@ -1,7 +1,7 @@
 """Compose equipment identity, pinned production marks and the targeted print queue."""
 
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import json
 from types import SimpleNamespace
@@ -23,9 +23,16 @@ from app.modules.references.infrastructure import EquipmentMachineRow
 from app.modules.techcards.etk_read import issued_card_for_item, pinned_card
 from app.modules.techcards.infrastructure import ProjectTechcardRow, SqlAlchemyTechcardRepository
 from app.modules.warehouse.devices import PrinterRow, printer_online
-from app.modules.warehouse.label_jobs import LabelJobRow, add_marking_job, expire_marking
+from app.modules.warehouse.label_jobs import (
+    JobFinished, LabelJobRow, add_marking_job, ancestor_sequence, cancel_pending_marking, expire_marking, marking_halts,
+    pending_marking_by_printer, reprint_tree,
+)
 from app.modules.warehouse.marking_profiles import MarkingBatchRow, MarkingBindingRow, MarkingProfileRow
-from app.modules.warehouse.marking_render import Geometry, render
+from app.modules.warehouse.marking_render import Geometry, halves, render
+from app.modules.warehouse.printer_commands import (
+    MIN_AGENT_VERSION, CommandBusy, agent_executes_commands, command_view, expire_commands, latest_command, marking_printers,
+    request_clear,
+)
 from app.modules.warehouse.scan_agents import LIVE_FOR, ScanAgentRow
 from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
@@ -53,7 +60,34 @@ ConfigUser = Annotated[Principal, Depends(marking_config_principal)]
 ReadUser = Annotated[Principal, Depends(marking_read_principal)]
 STALE = "Источник или профиль изменился — обновите предпросмотр"
 STATUS_LABELS = {"pending": "В очереди", "taken": "Печатается", "spooled": "Передано принтеру",
-                 "failed": "Ошибка печати", "unknown": "Результат неизвестен"}
+                 "failed": "Ошибка печати", "unknown": "Результат неизвестен", "cancelled": "Отменено"}
+
+
+# Spooled jobs the agent (2.9.6+) keeps watching in the Windows queue; the printer may hold them (peel-off mode).
+PRINT_STATE_LABELS = {"queued": "В очереди принтера", "printed": "Напечатано", "error": "Ошибка принтера",
+                      "cancelled": "Отменено", "untracked": "Передано принтеру"}
+STUCK_AFTER = timedelta(minutes=3)
+STUCK_TEXT = "Принтер ждёт (снимите этикетку / проверьте принтер)"
+OLD_AGENT_HOLD = ("Агент печати на ПК принтера — версии {version}: печать с отделителем выполняет агент "
+                  f"{'.'.join(map(str, MIN_AGENT_VERSION))} и новее, задания ждут его обновления")
+HALT_TEXT = ("Печать партии остановлена на этикетке №{sequence}: она не напечатана — не прошла проверка отделителя Godex. "
+             "Включите отделитель, затем «Перепечатать номера…» этой этикетки (партия продолжится после неё), "
+             "«Продолжить без неё» или «Отменить оставшиеся».")
+
+
+def print_state(job):
+    if job.status != "spooled":
+        return None
+    receipt = job.receipt or {}
+    if not receipt.get("tracked"):
+        return "untracked"
+    return receipt.get("print_state") or "queued"
+
+
+def _moment(value):
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value)
+    return value.replace(tzinfo=None) if value is not None and value.tzinfo else value
 
 
 def digest(value):
@@ -67,7 +101,7 @@ def checked(action):
         raise HTTPException(403, str(error)) from error
     except KeyError as error:
         raise HTTPException(404, error.args[0]) from error
-    except ConcurrentProductionUpdate as error:
+    except (ConcurrentProductionUpdate, JobFinished, CommandBusy) as error:
         raise HTTPException(409, str(error)) from error
     except IntegrityError as error:
         raise HTTPException(409, "Данные изменились — повторите запрос") from error
@@ -85,8 +119,20 @@ def profile_view(row):
             "name": row.name, "version": row.version, "calibrated": row.calibrated, "geometry": row.geometry}
 
 
-def binding_view(row):
-    return {"version": row.version, "machine_id": row.machine_id, "printer": row.printer} if row else None
+def binding_view(row, session=None):
+    if row is None:
+        return None
+    result = {"version": row.version, "machine_id": row.machine_id, "printer": row.printer}
+    if session is not None:
+        # «Очистить принтер»: the latest command on this queue and how it ended; batch labels still waiting for it.
+        result["command"] = command_view(latest_command(session, row.machine_id, row.printer))
+        result["pending_jobs"] = sum(len(items) for items in pending_marking_by_printer(session, row.machine_id, row.printer).values())
+    return result
+
+
+def raster_geometry(value):
+    """What calibration proves: everything but the peel-off flag (a driver setting, not the raster)."""
+    return {key: item for key, item in Geometry.model_validate(value).model_dump().items() if key != "peel"}
 
 
 def resolve_equipment(session):
@@ -109,6 +155,7 @@ def resolve_equipment(session):
 def machines(_principal: ReadUser, factory: Factory, now: Now):
     with factory() as uow:
         catalog = resolve_equipment(uow.session)
+        expire_commands(uow.session, now)
         profiles = list(uow.session.scalars(select(MarkingProfileRow).order_by(MarkingProfileRow.inventory_number, MarkingProfileRow.name)))
         grouped = {}
         for profile in profiles:
@@ -117,15 +164,22 @@ def machines(_principal: ReadUser, factory: Factory, now: Now):
                 continue
             item = grouped.setdefault(str(machine.id), {"equipment_id": str(machine.id),
                 "inventory_number": machine.fields.get(INV_KEY, profile.inventory_number), "name": machine.display_text,
-                "binding": binding_view(uow.session.get(MarkingBindingRow, machine.id)), "profiles": []})
+                "binding": binding_view(uow.session.get(MarkingBindingRow, machine.id), uow.session), "profiles": []})
             item["profiles"].append(profile_view(profile))
-        printers = []
+        printers, peel = [], {}
         for printer, pc in uow.session.execute(select(PrinterRow, ScanAgentRow).join(ScanAgentRow)):
             seen = printer.last_seen.replace(tzinfo=now.tzinfo) if printer.last_seen.tzinfo is None else printer.last_seen
+            online = printer.present and seen >= now - LIVE_FOR
+            hold = printer.hold if online else ""
+            if printer.kind == "gdi_png" and not hold and not agent_executes_commands(pc.version):
+                if pc.machine_id not in peel:
+                    peel[pc.machine_id] = {item["name"] for item in marking_printers(uow.session, pc.machine_id) if item["peel"]}
+                if printer.name in peel[pc.machine_id]:
+                    hold = OLD_AGENT_HOLD.format(version=pc.version or "без номера")  # claim_marking holds the jobs
             # Cloned PCs share a hostname: the IP and machine id tell them apart in the printer list.
             printers.append({"machine_id": pc.machine_id, "pc": pc.pc_name, "ip": pc.ip_lan or pc.ip_seen, "name": printer.name,
                 "driver": printer.driver, "port": printer.port, "kind": printer.kind, "present": printer.present,
-                "online": printer.present and seen >= now - LIVE_FOR})
+                "online": online, "hold": hold})
         uow.commit()
         return {"machines": list(grouped.values()), "printers": printers}
 
@@ -135,6 +189,26 @@ class ProfileInput(BaseModel):
     version: int = Field(ge=1, strict=True)
     calibrated: bool
     geometry: Geometry
+    # The material name the operator picks («Флажок 100×20»); absent — unchanged.
+    name: str | None = Field(default=None, max_length=200)
+
+
+def profile_name(session, profile, requested):
+    """A renamed profile keeps its calibration; the name is unique per machine (equipment or inventory number)."""
+    if requested is None:
+        return profile.name
+    name = " ".join(requested.split())
+    if not name:
+        raise ValueError("Укажите название профиля")
+    if len(name) > 80:
+        raise ValueError("Название профиля — не длиннее 80 знаков")
+    owner = MarkingProfileRow.inventory_number == profile.inventory_number
+    if profile.equipment_id:
+        owner = owner | (MarkingProfileRow.equipment_id == profile.equipment_id)
+    taken = session.scalars(select(MarkingProfileRow.name).where(owner, MarkingProfileRow.id != profile.id))
+    if any(other.casefold() == name.casefold() for other in taken):
+        raise ValueError(f"У этого станка уже есть профиль «{name}»")
+    return name
 
 
 @router.put("/profiles/{profile_id}")
@@ -144,14 +218,25 @@ def save_profile(profile_id: UUID, payload: ProfileInput, principal: ConfigUser,
             profile = uow.session.get(MarkingProfileRow, profile_id)
             if profile is None:
                 raise KeyError("Профиль не найден")
+            zones = payload.geometry.zones
+            if len(zones) == 2 and zones[0].x >= zones[1].x:
+                raise ValueError("Текст 1 — левая половина флажка: его зона должна начинаться левее зоны «Текст 2»")
             geometry = payload.geometry.model_dump()
-            calibrated = payload.calibrated and geometry == profile.geometry
-            changed = uow.session.execute(update(MarkingProfileRow).where(MarkingProfileRow.id == profile_id,
-                MarkingProfileRow.version == payload.version).values(geometry=geometry, calibrated=calibrated,
-                                                                    version=payload.version + 1))
+            calibrated = payload.calibrated and raster_geometry(geometry) == raster_geometry(profile.geometry)
+            name = profile_name(uow.session, profile, payload.name)
+            renamed = {"name": name, "previous_name": profile.name} if name != profile.name else {}
+            peel = {"peel": geometry["peel"]} if bool((profile.geometry or {}).get("peel")) != geometry["peel"] else {}
+            try:
+                changed = uow.session.execute(update(MarkingProfileRow).where(MarkingProfileRow.id == profile_id,
+                    MarkingProfileRow.version == payload.version).values(name=name, geometry=geometry, calibrated=calibrated,
+                                                                        version=payload.version + 1))
+            except IntegrityError as error:
+                # Another session took the name between our check and this write (uq_marking_profile_preset).
+                raise ValueError(f"У этого станка уже есть профиль «{name}»") from error
             if changed.rowcount != 1:
                 raise ConcurrentProductionUpdate(STALE)
-            audit(uow, principal.actor, now, profile_id, "profile_saved", version=payload.version + 1, calibrated=calibrated)
+            audit(uow, principal.actor, now, profile_id, "profile_saved", version=payload.version + 1, calibrated=calibrated,
+                  **renamed, **peel)
             uow.session.refresh(profile)
             result = profile_view(profile)
             uow.commit()
@@ -214,6 +299,8 @@ class PreviewInput(BaseModel):
     profile_version: int = Field(ge=1, strict=True)
     source: SourceInput
     selected: list[str] = Field(default_factory=list, max_length=500)
+    # «Чередовать по изделию»: per item, fixed marks then numbered ones (XS1, A1 №1, XS1, A1 №2 …).
+    interleave: bool = False
 
 
 class BatchInput(PreviewInput):
@@ -257,7 +344,7 @@ def issued_document(task, uow):
     return shown.document, {"card_id": str(card.id), "card_version": card.version, "revision": shown.revision}
 
 
-def source_rows(source, selected, principal, uow, now):
+def source_rows(source, selected, principal, uow, now, interleave=False):
     if len(set(selected)) != len(selected):
         raise ValueError("Надпись выбрана несколько раз")
     if source.group_id:
@@ -299,7 +386,7 @@ def source_rows(source, selected, principal, uow, now):
             document, revision = issued_document(task, uow)
         # Calculate and reserve through the established issuance semantics in this same transaction.
         serial = issue_mark_serials_in(task, False, principal.actor, now, uow)
-        expanded = labels(document, task, serial, selected)
+        expanded = labels(document, task, serial, selected, interleave)
         if any(row["serial"] is not None for row in expanded):
             issue_mark_serials_in(task, True, principal.actor, now, uow)
         rows.extend(expanded)
@@ -335,14 +422,15 @@ def profile_target(session, profile_id, version, now, *, calibration=False, onli
 
 
 def build_preview(payload, principal, uow, now):
-    rows, source = source_rows(payload.source, payload.selected, principal, uow, now)
+    rows, source = source_rows(payload.source, payload.selected, principal, uow, now, payload.interleave)
     profile, binding = profile_target(uow.session, payload.profile_id, payload.profile_version, now, online=False)
     geometry = Geometry.model_validate(profile.geometry)
     rendered, cache = [], {}
     for row in rows:
         if row["text"] not in cache:
             png, dimensions = render(row["text"], geometry)
-            cache[row["text"]] = {"png_b64": base64.b64encode(png).decode("ascii"), "sha256": hashlib.sha256(png).hexdigest()}
+            cache[row["text"]] = {"png_b64": base64.b64encode(png).decode("ascii"), "sha256": hashlib.sha256(png).hexdigest(),
+                                  "halves": halves(row["text"], len(geometry.zones))}
         rendered.append({**row, **cache[row["text"]]})
     result = {"profile_id": str(profile.id), "profile_version": profile.version, "binding_version": binding.version,
         "profile_snapshot": {"equipment_id": str(profile.equipment_id), "geometry": profile.geometry},
@@ -361,14 +449,55 @@ def preview(payload: PreviewInput, principal: PrintUser, factory: Factory, now: 
     return checked(run)
 
 
-def batch_view(batch, session):
+def label_rows(manifest):
+    """The manifest label of every job, by sequence − 1 (persist_batch expands each label by its quantity)."""
+    return [label for label in manifest.get("labels", []) for _ in range(int(label.get("quantity") or 1))]
+
+
+def batch_view(batch, session, now=None):
     jobs = list(session.scalars(select(LabelJobRow).where(LabelJobRow.batch_id == batch.id).order_by(LabelJobRow.sequence)))
+    rows = label_rows(batch.manifest)
     statuses = {job.status for job in jobs}
-    status = next((value for value in ("unknown", "failed", "taken", "pending") if value in statuses), "spooled")
-    return {"id": str(batch.id), "status": status, "status_label": STATUS_LABELS[status], "total": batch.total,
+    withdrawn = sum(1 for job in jobs if job.status == "cancelled")
+    live = [job for job in jobs if job.status != "cancelled"]
+    status = next((value for value in ("unknown", "failed", "taken", "pending") if value in statuses),
+                  "cancelled" if jobs and not live else "spooled")
+    states = {job.id: print_state(job) for job in jobs}
+    counts = {key: sum(1 for value in states.values() if value == key) for key in PRINT_STATE_LABELS}
+    status_label = STATUS_LABELS[status]
+    if status == "spooled" and live and counts["printed"] == len(live):
+        status_label = PRINT_STATE_LABELS["printed"]
+    elif status == "spooled" and (counts["queued"] or counts["error"]):
+        status_label = "Печатается"
+    # «Принтер ждёт»: nothing finished for a few minutes while tracked labels still sit in the printer's queue.
+    stuck = False
+    if now is not None and counts["queued"]:
+        marks = [_moment((job.receipt or {}).get("print_state_at")) for job in jobs if states[job.id] == "printed"]
+        marks += [_moment(job.finished_at) for job in jobs if states[job.id] in ("queued", "error") and job.finished_at]
+        last = max((mark for mark in marks if mark), default=None)
+        stuck = last is not None and _moment(now) - last > STUCK_AFTER
+    progress = f"Напечатано {counts['printed']} из {batch.total - withdrawn} · в очереди {counts['queued'] + counts['error']}"
+    if withdrawn:
+        progress += f" · отменено {withdrawn}"
+    # A failed peel-off check stops the rest of the batch (label_jobs.marking_halts); nothing to stop once none wait.
+    halts = set(marking_halts(session, [batch.id]).get(batch.id, []))
+    pending = sum(1 for job in jobs if job.status == "pending")
+    halt_label = HALT_TEXT.format(sequence=min(halts)) if halts and pending else None
+    return {"id": str(batch.id), "status": status, "status_label": status_label, "total": batch.total,
         "reprint_of": str(batch.reprint_of) if batch.reprint_of else None,
-        "jobs": [{"id": str(job.id), "sequence": job.sequence, "status": job.status,
-            "status_label": STATUS_LABELS[job.status], "message": job_message(job),
+        "printed": counts["printed"], "queued": counts["queued"], "print_errors": counts["error"],
+        "cancelled": counts["cancelled"], "untracked": counts["untracked"], "tracked": counts["untracked"] == 0,
+        "progress_label": progress if status == "spooled" and live and counts["untracked"] != len(live) else None,
+        "withdrawn": withdrawn, "pending": pending,
+        "reason": batch.reason or "",
+        "stuck": stuck, "stuck_label": STUCK_TEXT if stuck else None,
+        "halted": halt_label is not None, "halt_label": halt_label,
+        "jobs": [{"id": str(job.id), "sequence": job.sequence, "status": job.status, "halted": job.sequence in halts,
+            "text": rows[job.sequence - 1].get("text", "") if job.sequence <= len(rows) else "",
+            "serial": rows[job.sequence - 1].get("serial") if job.sequence <= len(rows) else None,
+            "print_state": states[job.id],
+            "status_label": PRINT_STATE_LABELS[states[job.id]] if states[job.id] else STATUS_LABELS[job.status],
+            "message": job_message(job),
             "spool_job_id": (job.receipt or {}).get("spool_job_id")} for job in jobs]}
 
 
@@ -378,6 +507,8 @@ def job_message(job):
         # The agent answered after its lease ran out: the operator decides, the agent's word is a hint.
         late = STATUS_LABELS[receipt["outcome"]] + (f": {receipt['message']}" if receipt.get("message") else "")
         return f"{job.error or ''} Агент сообщил позже — {late}".strip()
+    if job.status == "spooled" and receipt.get("print_state") in ("error", "cancelled") and receipt.get("print_message"):
+        return receipt["print_message"]
     return job.error or receipt.get("message", "")
 
 
@@ -421,7 +552,7 @@ def enqueue(payload: BatchInput, principal: PrintUser, factory: Factory, now: No
                 batch_access(old, principal, uow)
                 if old.fingerprint != fingerprint:
                     raise ConcurrentProductionUpdate("Ключ запроса уже использован")
-                return batch_view(old, uow.session)
+                return batch_view(old, uow.session, now)
             manifest, binding = build_preview(payload, principal, uow, now)
             if manifest["manifest_hash"] != payload.manifest_hash:
                 raise ConcurrentProductionUpdate(STALE)
@@ -436,7 +567,7 @@ def enqueue(payload: BatchInput, principal: PrintUser, factory: Factory, now: No
                 if content(original.manifest) != content(manifest):
                     raise ConcurrentProductionUpdate("Надписи повторной печати расходятся с исходной партией")
             batch = persist_batch(uow, manifest, binding, payload, principal, now, fingerprint)
-            result = batch_view(batch, uow.session)
+            result = batch_view(batch, uow.session, now)
             uow.commit()
             return result
     def race_safe():
@@ -453,7 +584,7 @@ def enqueue(payload: BatchInput, principal: PrintUser, factory: Factory, now: No
                 batch_access(existing, principal, uow)
                 if existing.fingerprint != digest(payload.model_dump(mode="json")):
                     raise ConcurrentProductionUpdate("Ключ запроса уже использован")
-                return batch_view(existing, uow.session)
+                return batch_view(existing, uow.session, now)
     return checked(race_safe)
 
 
@@ -464,7 +595,7 @@ def get_batch(batch_id: UUID, principal: ReadUser, factory: Factory, now: Now):
             batch = uow.session.get(MarkingBatchRow, batch_id)
             batch_access(batch, principal, uow)
             expire_marking(uow.session, now)
-            result = batch_view(batch, uow.session)
+            result = batch_view(batch, uow.session, now)
             uow.commit()
             return result
     return checked(run)
@@ -543,13 +674,260 @@ def resolve(batch_id: UUID, job_id: UUID, payload: ResolveInput,
             batch = uow.session.get(MarkingBatchRow, batch_id)
             batch_access(batch, principal, uow)
             expire_marking(uow.session, now)
+            job = uow.session.scalar(select(LabelJobRow).where(LabelJobRow.id == job_id, LabelJobRow.batch_id == batch_id)
+                                     .with_for_update())
+            if job is not None and job.status == "failed" and job.sequence in marking_halts(uow.session, [batch_id]).get(batch_id, []):
+                # «Продолжить без неё»: the label failed its peel-off check and was never printed; the rest of the batch goes on.
+                if payload.outcome != "failed":
+                    raise ConcurrentProductionUpdate("Эта этикетка не печаталась — её можно только перепечатать или продолжить без неё")
+                job.receipt = {**(job.receipt or {}), "halt_released": True, "halt_released_reason": " ".join(payload.reason.split())}
+                uow.session.flush()
+                audit(uow, principal.actor, now, batch_id, "halt_released", job_id=str(job_id), sequence=job.sequence,
+                      reason=payload.reason)
+                result = batch_view(batch, uow.session, now)
+                uow.commit()
+                return result
             changed = uow.session.execute(update(LabelJobRow).where(LabelJobRow.id == job_id,
                 LabelJobRow.batch_id == batch_id, LabelJobRow.status == "unknown").values(status=payload.outcome,
                     finished_at=now, error=payload.reason if payload.outcome == "failed" else None))
             if changed.rowcount != 1:
                 raise ConcurrentProductionUpdate("Задание не ожидает проверки результата")
             audit(uow, principal.actor, now, batch_id, "reconciled", job_id=str(job_id), outcome=payload.outcome, reason=payload.reason)
-            result = batch_view(batch, uow.session)
+            result = batch_view(batch, uow.session, now)
+            uow.commit()
+            return result
+    return checked(run)
+
+
+
+class CancelInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=1, max_length=1000, pattern=r"\S")
+
+
+@router.post("/batches/{batch_id}/cancel")
+def cancel_rest(batch_id: UUID, payload: CancelInput,
+                principal: Annotated[Principal, Depends(production_edit_principal)], factory: Factory, now: Now):
+    """«Отменить оставшиеся»: the batch's jobs not yet handed to the agent never print. Taken/spooled ones stay."""
+    def run():
+        with factory() as uow:
+            batch = uow.session.get(MarkingBatchRow, batch_id)
+            batch_access(batch, principal, uow)
+            expire_marking(uow.session, now)
+            sequences = cancel_pending_marking(uow.session, batch_id, reason=payload.reason, now=now)
+            if not sequences:
+                raise ConcurrentProductionUpdate("В партии нет заданий, ожидающих печати")
+            audit(uow, principal.actor, now, batch_id, "cancelled", sequences=sequences, count=len(sequences),
+                  reason=" ".join(payload.reason.split()))
+            result = batch_view(batch, uow.session, now)
+            uow.commit()
+            return result
+    return checked(run)
+
+
+class ReprintInput(BaseModel):
+    """Selected labels (job numbers of the batch) or a serial range; never new serial numbers."""
+    model_config = ConfigDict(extra="forbid")
+    sequences: list[int] = Field(default_factory=list, max_length=500)
+    serial_from: int | None = Field(default=None, ge=0, strict=True)
+    serial_to: int | None = Field(default=None, ge=0, strict=True)
+    reason: str = Field(min_length=1, max_length=1000, pattern=r"\S")
+    idempotency_key: str = Field(min_length=1, max_length=128, pattern=r"\S")
+
+    @model_validator(mode="after")
+    def one_selection(self):
+        ranged = self.serial_from is not None or self.serial_to is not None
+        if bool(self.sequences) == ranged:
+            raise ValueError("Укажите этикетки партии либо диапазон номеров")
+        if ranged and (self.serial_from is None or self.serial_to is None or self.serial_from > self.serial_to):
+            raise ValueError("Диапазон номеров: «с» не больше «по»")
+        if any(value < 1 for value in self.sequences) or len(set(self.sequences)) != len(self.sequences):
+            raise ValueError("Номера этикеток партии — разные, от 1")
+        return self
+
+
+def reprint_selection(batch, jobs, payload):
+    rows = label_rows(batch.manifest)
+    if payload.sequences:
+        chosen = sorted(payload.sequences)
+        if chosen[-1] > len(rows):
+            raise ValueError(f"В партии {len(rows)} этикеток — номера {chosen[-1]} нет")
+    else:
+        chosen = [index + 1 for index, row in enumerate(rows)
+                  if row.get("serial") is not None and payload.serial_from <= row["serial"] <= payload.serial_to]
+        if not chosen:
+            raise ValueError(f"В партии нет этикеток с номерами {payload.serial_from}–{payload.serial_to}")
+    picked = set(chosen)
+    waiting = sorted(job.sequence for job in jobs if job.sequence in picked and job.status in ("pending", "taken"))
+    if waiting:
+        raise ConcurrentProductionUpdate(f"Этикетка №{waiting[0]} партии ещё в очереди — дождитесь печати или отмените оставшиеся")
+    return chosen, rows
+
+
+def reprint_root(session, batch):
+    """The first batch of a reprint chain (reprint of a reprint … of it)."""
+    seen = {batch.id}
+    while batch.reprint_of is not None:
+        parent = session.get(MarkingBatchRow, batch.reprint_of)
+        if parent is None or parent.id in seen:
+            break
+        seen.add(parent.id)
+        batch = parent
+    return batch
+
+
+def reprint_not_in_flight(session, root, original, chosen):
+    """Two reprints of the same labels must not both print (a duplicate serial). The whole chain counts — a reprint of
+    a reprint prints the root's label too: while any other batch below the root still has that label waiting, taken or
+    unresolved, it is refused. Finished labels free it. The caller holds the root's row lock."""
+    tree = reprint_tree(session, root)
+    picked = {ancestor_sequence(tree, original, sequence, root.id): sequence for sequence in chosen}
+    for other in tree.values():
+        if other.id == original.id:
+            continue  # its own waiting labels are refused by reprint_selection
+        open_jobs = session.scalars(select(LabelJobRow.sequence).where(LabelJobRow.batch_id == other.id,
+            LabelJobRow.status.in_(("pending", "taken", "unknown"))))
+        busy = sorted(picked[source] for source in {ancestor_sequence(tree, other, index, root.id) for index in open_jobs}
+                      if source in picked)
+        if busy:
+            raise ConcurrentProductionUpdate(f"Этикетка №{busy[0]} уже перепечатывается другой партией — дождитесь её печати "
+                                             "или отмените оставшиеся в ней")
+
+
+def reprint_tasks_still_own_serials(batch, principal, uow, now):
+    """The reprint reuses the serials already issued to the tasks; a task that released them (cancelled without work)
+    or a moved range refuses it."""
+    for item in batch.manifest.get("source_snapshot", {}).get("tasks", []):
+        task = uow.production.get(UUID(item["task_id"]))
+        # A finished task still owns its serials: a lost flag of it is reprinted (like batch_access reads it).
+        task_access(task, UUID(item["operation_id"]), principal, uow, historical=True)
+        if item.get("serial"):
+            current = issue_mark_serials_in(task, False, principal.actor, now, uow)  # numbered=False never issues
+            if list(current or ()) != list(item["serial"]):
+                raise ConcurrentProductionUpdate("Номера задания изменились — повторная печать прежних номеров недоступна")
+
+
+@router.post("/batches/{batch_id}/reprint")
+def reprint_labels(batch_id: UUID, payload: ReprintInput, principal: PrintUser, factory: Factory, now: Now):
+    """«Перепечатать номера…»: a new batch (reprint_of + reason) of selected labels or a serial range of this batch,
+    rendered with the profile's current geometry from the stored texts. Serials are reused, none issued."""
+    def run():
+        fingerprint = digest({"reprint": str(batch_id), **payload.model_dump(mode="json")})
+        def replay(uow):
+            old = uow.session.scalar(select(MarkingBatchRow).where(MarkingBatchRow.created_by == principal.actor.id,
+                MarkingBatchRow.idempotency_key == payload.idempotency_key))
+            if old is None:
+                return None
+            batch_access(old, principal, uow)
+            if old.fingerprint != fingerprint:
+                raise ConcurrentProductionUpdate("Ключ запроса уже использован")
+            return batch_view(old, uow.session, now)
+
+        with factory() as uow:
+            if (result := replay(uow)) is not None:
+                return result
+            original = uow.session.get(MarkingBatchRow, batch_id)
+            batch_access(original, principal, uow)
+            # The root batch row of the reprint chain serializes every reprint in it (PostgreSQL; SQLite writes one at
+            # a time anyway). A retry with the same key that waited for the lock answers the batch the first one made.
+            root = reprint_root(uow.session, original)
+            uow.session.execute(select(MarkingBatchRow.id).where(MarkingBatchRow.id == root.id).with_for_update())
+            if (result := replay(uow)) is not None:
+                return result
+            expire_marking(uow.session, now)
+            jobs = list(uow.session.scalars(select(LabelJobRow).where(LabelJobRow.batch_id == batch_id)))
+            chosen, rows = reprint_selection(original, jobs, payload)
+            reprint_not_in_flight(uow.session, root, original, chosen)
+            reprint_tasks_still_own_serials(original, principal, uow, now)
+            trial = not original.manifest.get("source_snapshot", {}).get("tasks")
+            current = uow.session.get(MarkingProfileRow, original.profile_id)
+            if current is None:
+                raise KeyError("Профиль не найден")
+            profile, binding = profile_target(uow.session, current.id, current.version, now, calibration=trial)
+            geometry = Geometry.model_validate(profile.geometry)
+            labels, cache, dimensions = [], {}, {}
+            for sequence in chosen:
+                row = rows[sequence - 1]
+                if row["text"] not in cache:
+                    png, dimensions = render(row["text"], geometry, calibration=trial)
+                    cache[row["text"]] = {"png_b64": base64.b64encode(png).decode("ascii"),
+                        "sha256": hashlib.sha256(png).hexdigest(), "halves": halves(row["text"], len(geometry.zones))}
+                kept = {key: row[key] for key in ("key", "task_id", "text", "material", "serial") if key in row}
+                labels.append({**kept, **cache[row["text"]], "quantity": 1, "source_sequence": sequence})
+            serials = sorted({row["serial"] for row in labels if row.get("serial") is not None})
+            manifest = {"profile_id": str(profile.id), "profile_version": profile.version, "binding_version": binding.version,
+                "profile_snapshot": {"equipment_id": str(profile.equipment_id), "geometry": profile.geometry},
+                "machine_id": binding.machine_id, "printer": binding.printer,
+                "source_snapshot": original.manifest.get("source_snapshot", {"tasks": []}), "labels": labels,
+                "total": len(labels), "reprint": {"of": str(original.id), "sequences": chosen}, **dimensions}
+            manifest["manifest_hash"] = digest(manifest)
+            request = SimpleNamespace(idempotency_key=payload.idempotency_key, reason=" ".join(payload.reason.split()),
+                                      reprint_of=original.id)
+            batch = persist_batch(uow, manifest, binding, request, principal, now, fingerprint)
+            audit(uow, principal.actor, now, original.id, "reprinted", batch_id=str(batch.id), sequences=chosen,
+                  serials=[serials[0], serials[-1]] if serials else None, reason=request.reason)
+            result = batch_view(batch, uow.session, now)
+            uow.commit()
+            return result
+    def race_safe():
+        try:
+            return run()
+        except IntegrityError:
+            with factory() as uow:
+                existing = uow.session.scalar(select(MarkingBatchRow.id).where(MarkingBatchRow.created_by == principal.actor.id,
+                    MarkingBatchRow.idempotency_key == payload.idempotency_key))
+            if existing is None:
+                raise
+            return run()  # answers the winning batch after checking its fingerprint
+    return checked(race_safe)
+
+
+class ClearInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=1, max_length=1000, pattern=r"\S")
+    # Also «Отменить оставшиеся» of every batch on this queue: otherwise they keep printing after the clearing.
+    cancel_pending: bool = False
+
+
+@router.post("/machines/{equipment_id}/printer/clear")
+def clear_printer(equipment_id: UUID, payload: ClearInput,
+                  principal: Annotated[Principal, Depends(production_edit_principal)], factory: Factory, now: Now):
+    """«Очистить принтер»: the agent removes the queue's ERP marking jobs from Windows and empties the Godex buffer
+    (~S,BUFCLR). Jobs it removed are reported «Отменено» by the spool watch. The batches' pending jobs keep printing after
+    the clearing unless `cancel_pending` cancels them too (journaled per batch like «Отменить оставшиеся»)."""
+    def run():
+        with factory() as uow:
+            binding = uow.session.get(MarkingBindingRow, equipment_id)
+            if binding is None:
+                raise KeyError("Принтер станка не привязан")
+            row = request_clear(uow.session, equipment_id=equipment_id, machine_id=binding.machine_id, printer=binding.printer,
+                                reason=payload.reason, actor=principal.actor, now=now)
+            cancelled = 0
+            if payload.cancel_pending:
+                expire_marking(uow.session, now)
+                for batch_id in pending_marking_by_printer(uow.session, binding.machine_id, binding.printer):
+                    sequences = cancel_pending_marking(uow.session, batch_id, reason=f"очистка принтера: {row.reason}", now=now)
+                    if sequences:
+                        cancelled += len(sequences)
+                        audit(uow, principal.actor, now, batch_id, "cancelled", sequences=sequences, count=len(sequences),
+                              reason=f"Очистка принтера: {row.reason}")
+            audit(uow, principal.actor, now, equipment_id, "printer_clear_requested", command_id=str(row.id),
+                  machine_id=binding.machine_id, printer=binding.printer, reason=row.reason, cancelled_jobs=cancelled)
+            result = {**command_view(row), "cancelled_jobs": cancelled}
+            uow.commit()
+            return result
+    return checked(run)
+
+
+@router.get("/machines/{equipment_id}/printer/command")
+def printer_command(equipment_id: UUID, _principal: ReadUser, factory: Factory, now: Now):
+    def run():
+        with factory() as uow:
+            binding = uow.session.get(MarkingBindingRow, equipment_id)
+            if binding is None:
+                raise KeyError("Принтер станка не привязан")
+            expire_commands(uow.session, now)
+            result = command_view(latest_command(uow.session, binding.machine_id, binding.printer))
             uow.commit()
             return result
     return checked(run)

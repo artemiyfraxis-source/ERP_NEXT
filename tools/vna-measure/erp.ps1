@@ -21,11 +21,12 @@ function Read-VnaConfig {
     catch { throw 'Некорректный JSON в config.json.' }
     if (-not $config -or -not ($config.PSObject.Properties.Name -contains 'server_url') -or
         -not ($config.server_url -is [string])) { throw 'В config.json необходимо строковое поле server_url.' }
-    $allowed = @('server_url')
+    $allowed = @('server_url', 'mating_cables', 'mating_acm', 'control_standard', 'kit_inventory', 'kit_slot', 'kit_description_uncertainty')
     foreach ($property in $config.PSObject.Properties.Name) {
         if ($property -notin $allowed) { throw "Недопустимое поле config.json: $property. Учётные данные в файле не сохраняются." }
     }
     $config.server_url = Assert-VnaServerUrl -ServerUrl $config.server_url
+    $null = Get-VnaMatingSetup $config
     return $config
 }
 
@@ -167,7 +168,25 @@ function Get-VnaFixtureFile {
     })
     if ($files.Count -eq 0) { throw "У $($Instrument.inventory_number) нет собственного файла «Замер ВАЦ» с правильным номером или серийным номером." }
     if ($files.Count -gt 1) { throw "У $($Instrument.inventory_number) несколько подходящих замеров. Оставьте однозначный набор файлов в локальной копии или уточните файл в ERP." }
-    $file = $files[0]
+    return Save-VnaInstrumentFileCopy -Session $Session -Instrument $Instrument -File $files[0] -CacheDirectory $CacheDirectory
+}
+
+function Get-VnaReferenceCurve {
+    param([Parameter(Mandatory = $true)]$Session, [Parameter(Mandatory = $true)]$Instrument, [Parameter(Mandatory = $true)][string]$CacheDirectory)
+    # СТО ФРАК-002-2026, разд. 14: the weekly check compares with the file marked «Эталонная кривая» on the card,
+    # never with a file guessed by its name.
+    $files = @(Get-VnaInstrumentFiles -Session $Session -Instrument $Instrument | Where-Object { $_.PSObject.Properties.Name -contains 'is_reference' -and $_.is_reference -eq $true })
+    if ($files.Count -eq 0) {
+        throw "Эталонная кривая не назначена: в карточке $($Instrument.inventory_number) отметьте файл замера кнопкой «Сделать эталонной кривой». Еженедельная проверка не выполнена; остальные пункты работают."
+    }
+    if ($files.Count -gt 1 -or [IO.Path]::GetExtension([string]$files[0].file_name) -ine '.s2p') { throw "Эталонная кривая $($Instrument.inventory_number) задана неоднозначно или не файлом .s2p — проверьте карточку." }
+    return [pscustomobject]@{ Path = (Save-VnaInstrumentFileCopy -Session $Session -Instrument $Instrument -File $files[0] -CacheDirectory $CacheDirectory); FileName = [string]$files[0].file_name }
+}
+
+function Save-VnaInstrumentFileCopy {
+    param([Parameter(Mandatory = $true)]$Session, [Parameter(Mandatory = $true)]$Instrument, [Parameter(Mandatory = $true)]$File,
+        [Parameter(Mandatory = $true)][string]$CacheDirectory)
+    $file = $File
     if ([string]::IsNullOrWhiteSpace([string]$file.id)) { throw 'У файла переходника отсутствует id.' }
     $source = $(if ($Session.Offline) { $Session.OfflineDirectory } else { $Session.ServerUrl })
     $key = $source + '|' + [string]$Instrument.id + '|' + [string]$file.id
@@ -241,3 +260,5 @@ function Add-VnaInstrumentFile {
     return Invoke-VnaErpRequest -Session $Session -ApiPath "/api/production/instruments/$instrumentId/files" -Method Post `
         -Body @{ kind = 'Прочее'; file_name = $FileName; content_base64 = [Convert]::ToBase64String($content) }
 }
+
+. (Join-Path $PSScriptRoot 'matings.ps1')
