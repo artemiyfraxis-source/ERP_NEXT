@@ -31,7 +31,7 @@ param(
 #     itself is the queue: no line is lost while the network or ERP is down, a resend is deduplicated by ERP.
 # API token scope machine:report. The file is ASCII on purpose (OB.099 in Cyrillic is built from code points).
 $ErrorActionPreference = 'Stop'
-$script:AgentVersion = '1.0.0'
+$script:AgentVersion = '1.0.1'
 $script:Proto = 1
 $script:Inventory = [string][char]0x041E + [string][char]0x0411 + '.099.' + $Unit
 
@@ -245,10 +245,13 @@ function Read-MysqlCredential([string]$Path) {
     return @{ user = $user; password = $password }
 }
 
+# The press PC of OB.099.1 has MySQL 8.0 on D: (D:\Program Files\MySQL\MySQL Server 8.0\bin, checked 19.11.2026).
 function Find-MysqlExe {
     if ($MysqlExe) { return $MysqlExe }
-    $found = @(Get-ChildItem 'C:\Program Files\MySQL\*\bin\mysql.exe' -ErrorAction SilentlyContinue | Select-Object -First 1)
-    if ($found.Count) { return $found[0].FullName }
+    foreach ($drive in 'C', 'D') {
+        $found = @(Get-ChildItem ($drive + ':\Program Files\MySQL\*\bin\mysql.exe') -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ($found.Count) { return $found[0].FullName }
+    }
     throw 'mysql.exe not found (set -MysqlExe)'
 }
 

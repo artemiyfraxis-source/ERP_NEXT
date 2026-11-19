@@ -169,6 +169,11 @@ Describe 'alarm journal' {
     It 'refuses a SaveTime mark that is not a time (no SQL from the state file)' {
         { Read-AlarmBatch "2026-11-18' OR '1'='1" } | Should Throw
     }
+    It 'finds mysql.exe on D: when MySQL is not on C: (the press PC of OB.099.1)' {
+        Mock Get-ChildItem { } -ParameterFilter { $Path -like 'C:*' }
+        Mock Get-ChildItem { [pscustomobject]@{ FullName = 'D:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe' } } -ParameterFilter { $Path -like 'D:*' }
+        Find-MysqlExe | Should Be 'D:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe'
+    }
 }
 
 Describe 'sync and report' {
