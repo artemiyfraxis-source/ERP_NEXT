@@ -277,15 +277,19 @@ def _machine_rows(session, equipment, printers: list[dict], now) -> list[dict]:
             "last_seen": None, "device": planned.device, "state": {"text": "—", "tone": "neutral"}, "card": False,
             "others": "",
         }, unit, False)
-    by_unit = {row["equipment_id"]: row for row in printers if row["equipment_id"]}
+    # A marking machine reaches ERP through the print agent of its bound printer (ОБ.101 and ОБ.102 share one Godex).
+    by_key = {row["key"]: row for row in printers}
+    by_unit = {str(binding.equipment_id): by_key[f"printer:{binding.machine_id}:{binding.printer}"]
+               for binding in session.scalars(select(MarkingBindingRow))
+               if f"printer:{binding.machine_id}:{binding.printer}" in by_key}
     for inventory, units in sorted(equipment.items()):
         if inventory in shown:
             continue
         for unit in units:
             printer = by_unit.get(str(unit.id))
             if printer is not None:  # a marking machine: its printer's agent is its connection to ERP
-                add({**printer, "key": f"machine:{unit.id}", "kind": "machine", "inventory": inventory,
-                     "name": _name(unit)}, unit, True)
+                add({**printer, "key": f"machine:{unit.id}", "kind": "machine", "equipment_id": str(unit.id),
+                     "inventory": inventory, "name": _name(unit)}, unit, True)
             elif unit.show_in_equipment:
                 add({
                     "key": f"machine:{unit.id}", "kind": "machine", "equipment_id": str(unit.id), "inventory": inventory,

@@ -433,11 +433,16 @@ def test_the_screen_shows_ticked_machines_and_every_agent_linked_one(machines_ap
                                kind="gdi_png", present=True, last_seen=now))
         session.flush()
         session.add(MarkingBindingRow(equipment_id=ob101, version=1, machine_id="godex-pc", printer="Godex EZ2350i"))
+        ob102 = _unit(session, "ОБ.102", "Полуавтомат для печати и намотки этикеток на провода")
+        session.flush()
+        session.add(MarkingBindingRow(equipment_id=ob102, version=1, machine_id="godex-pc", printer="Godex EZ2350i"))
     body = admin.get(LIST).json()
     assert body["families"] == ["Резка и зачистка", "Опрессовка", "Пайка и усадка", "Маркировка", "Прочее оборудование"]
     machines = {row["inventory"]: row for row in body["rows"] if row["kind"] == "machine"}
     # ОБ.017 is not ticked; СИ.110 is no machine; ОБ.019 / ОБ.094 wait for their bridge; ОБ.101 has an agent.
-    assert sorted(machines) == ["ОБ.005", "ОБ.019", "ОБ.070.1", "ОБ.094", "ОБ.101"]
+    assert sorted(machines) == ["ОБ.005", "ОБ.019", "ОБ.070.1", "ОБ.094", "ОБ.101", "ОБ.102"]
+    # One Godex serves both marking machines: both are reached by its print agent.
+    assert machines["ОБ.102"]["controlled"] is True and machines["ОБ.102"]["equipment_id"] == str(ob102)
     row = machines["ОБ.005"]
     assert (row["article"], row["site"], row["operations"], row["family"]) == ("SR-W01", "ЦАР", ["Свивка"], "Резка и зачистка")
     assert row["link"] == {"code": "not_connected", "text": "Нет подключения к ERP", "tone": "neutral"}
@@ -447,7 +452,8 @@ def test_the_screen_shows_ticked_machines_and_every_agent_linked_one(machines_ap
     marking = machines["ОБ.101"]
     assert (marking["link"]["text"], marking["pc"], marking["equipment_id"], marking["controlled"]) == (
         "На связи", "Цех", str(ob101), True)
-    assert [row["inventory"] for row in body["rows"] if row["kind"] == "printer"] == ["ОБ.101"]
+    [printer] = [row for row in body["rows"] if row["kind"] == "printer"]  # one Godex — one printer tile
+    assert printer["inventory"] in {"ОБ.101", "ОБ.102"}
     # The bridge of ОБ.019 reports → «С управлением», with or without the checkbox.
     assert _report(_bridge(admin)).status_code == 200
     linked = {row["inventory"]: row for row in admin.get(LIST).json()["rows"] if row["kind"] == "machine"}["ОБ.019"]
