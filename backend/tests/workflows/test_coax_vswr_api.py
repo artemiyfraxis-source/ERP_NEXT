@@ -733,37 +733,78 @@ def _planar(client):
     return response.json()["instrument"]
 
 
-@pytest.mark.parametrize(("peak", "verdict", "status"), [
-    (1.36, "fail", "border"),   # выше нормы, но в пределах U = 0,022 ВАЦ S50180 до 10 ГГц — повторить 3 подключения
-    (1.34, "pass", "border"),   # ниже нормы, но в пределах U
-    (1.32, "pass", "pass"),
-    (1.38, "fail", "fail"),
+def _peak(client, task, vna, peak, position=1):
+    """Замер двухпортовым файлом с максимумом `peak` на 1800 МГц (оба конца одинаковы)."""
+    response = client.post("/api/production/vswr", json=_body(
+        task, vna, _both([(1000, 1.1), (1800, peak), (3000, 1.2)]), position=position, name=f"{peak}.s2p"))
+    assert response.status_code == 200, response.text
+    return response.json()["measurement"]
+
+
+@pytest.mark.parametrize(("peak", "verdict"), [
+    (1.3279, "pass"),     # ниже нормы 1,35 больше чем на U = 0,022 (Планар S50180 до 10 ГГц)
+    (1.328, "border"),    # норма − U — граница включительно
+    (1.34, "border"),
+    (1.36, "border"),     # выше нормы, но в пределах U — не брак, а повтор
+    (1.372, "border"),    # норма + U — граница включительно
+    (1.3721, "fail"),     # выше нормы + U — брак сразу
 ])
-def test_decision_marks_a_peak_within_the_vna_uncertainty_of_the_limit_as_border(production_api, peak, verdict, status):  # noqa: F811
-    """СТО ФРАК-002-2026 п. 13.3: в пределах ±U ВАЦ от нормы — «на границе допуска», повторный замер; U — по модели ВАЦ."""
+def test_first_measurement_within_the_vna_uncertainty_of_the_limit_is_border(production_api, peak, verdict):  # noqa: F811
+    """СТО ФРАК-002-2026 п. 13.3: в пределах ±U ВАЦ от нормы — «на границе допуска», повтор в 3 подключениях."""
     client, _ = production_api
     _as({"quality": "edit", "production": "edit"})
     task = _launch(client, _card({"coaxVswrNorm": NORM}), key=f"border-{peak}")
-    vna = _planar(client)
-    response = client.post("/api/production/vswr", json=_body(task, vna, _both([(1000, 1.1), (1800, peak), (3000, 1.2)]), name="a.s2p"))
-    assert response.status_code == 200, response.text
-    measurement = response.json()["measurement"]
-    assert measurement["verdict"] == verdict
-    assert measurement["decision"]["status"] == status and measurement["decision"]["uncertainty"] == 0.022
-    assert ("повторный замер (3 подключения" in measurement["decision"]["text"]) == (status == "border")
-    latest = client.get(f"/api/production/vswr/tasks/{task['id']}").json()["serials"][0]["latest"]
-    assert latest["decision"]["status"] == status
+    measurement = _peak(client, task, _planar(client), peak)
+    assert measurement["verdict"] == verdict and measurement["decision"]["status"] == verdict
+    assert measurement["decision"]["uncertainty"] == 0.022 and measurement["repeat_of"] is None
+    if verdict == "border":
+        assert "3 подключения с поворотом 120°" in measurement["decision"]["text"]
+        assert measurement["verdict_name"] == "На границе допуска"
 
 
-def test_decision_without_a_known_vna_uncertainty_or_after_a_repeat_is_the_recorded_verdict(production_api):  # noqa: F811
+def test_without_a_known_vna_uncertainty_the_norm_alone_decides(production_api):  # noqa: F811
     client, _ = production_api
     _as({"quality": "edit", "production": "edit"})
     task = _launch(client, _card({"coaxVswrNorm": NORM}), key="border-unknown")
-    close = _both([(1000, 1.1), (1800, 1.34), (3000, 1.2)])
-    unknown = client.post("/api/production/vswr", json=_body(task, _instrument(client), close, name="a.s2p")).json()["measurement"]
-    assert unknown["decision"] == {"status": "pass", "uncertainty": None, "text": ""}
+    analyser = _instrument(client)  # Arinst VNA-DL: погрешности в справочнике ВАЦ нет
+    assert _peak(client, task, analyser, 1.34)["decision"] == {"status": "pass", "uncertainty": None, "text": ""}
+    assert _peak(client, task, analyser, 1.36, position=2)["verdict"] == "fail"
+
+
+@pytest.mark.parametrize(("repeats", "final"), [
+    ((1.37, 1.365, 1.372), "pass"),  # худший 1,372 ≤ норма + U — годно, хотя выше нормы (тот же файл — не новое подключение)
+    ((1.34, 1.3721), "fail"),       # второе подключение выше нормы + U — брак сразу, без третьего
+])
+def test_repeat_in_three_connections_decides_against_norm_plus_uncertainty(production_api, repeats, final):  # noqa: F811
+    client, _ = production_api
+    _as({"quality": "edit", "production": "edit"})
+    task = _launch(client, _card({"coaxVswrNorm": NORM}), key=f"repeat-{final}")
     vna = _planar(client)
-    first = client.post("/api/production/vswr", json=_body(task, vna, close, position=2, name="b.s2p")).json()["measurement"]
-    repeat = _both([(1000, 1.1), (1800, 1.345), (3000, 1.2)])  # тот же файл — повтор запроса, не новая попытка
-    again = client.post("/api/production/vswr", json=_body(task, vna, repeat, position=2, name="c.s2p")).json()["measurement"]
-    assert first["decision"]["status"] == "border" and again["attempt"] == 2 and again["decision"]["status"] == "pass"
+    origin = _peak(client, task, vna, 1.36)
+    assert origin["verdict"] == "border"
+    results = [_peak(client, task, vna, peak) for peak in repeats]
+    assert [item["repeat_of"] for item in results] == [origin["id"]] * len(results), [(item["verdict"], item["verdict_reason"]) for item in results]
+    for index, item in enumerate(results[:-1], start=1):
+        assert item["verdict"] == "border" and item["verdict_reason"].startswith(f"Повтор {index} из 3") and item["repeat_set"] == []
+    decided = results[-1]
+    assert decided["verdict"] == final
+    assert [entry["max_vswr"] for entry in decided["repeat_set"]] == list(repeats)
+    assert [entry["attempt"] for entry in decided["repeat_set"]] == [item["attempt"] for item in results]
+    serial = client.get(f"/api/production/vswr/tasks/{task['id']}").json()["serials"][0]
+    assert serial["latest"]["verdict"] == final and serial["attempts"] == 1 + len(repeats)
+    # Повтор решён: следующий замер «на границе» начинает новый повтор, а не продолжает старый.
+    fresh = _peak(client, task, vna, 1.355)
+    assert fresh["verdict"] == "border" and fresh["repeat_of"] is None
+
+
+def test_a_border_unit_is_not_accepted_as_good_by_qc(production_api):  # noqa: F811
+    client, _ = production_api
+    _as({"quality": "edit", "production": "edit"})
+    task = _launch(client, _card({"coaxVswrNorm": NORM}), key="border-qc", quantity=1)
+    _peak(client, task, _planar(client), 1.36)
+    from app.main import app as application
+    from app.modules.production.infrastructure import SqlAlchemySerialRepository
+    with application.state.production_uow_factory() as uow:
+        repository = SqlAlchemySerialRepository(uow.session)
+        with pytest.raises(Exception, match="без брака по КСВН 0"):
+            repository.assign_qc(UUID(task["id"]), uuid4(), accepted=1, rejected=0)
