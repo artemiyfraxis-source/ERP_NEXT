@@ -870,8 +870,8 @@ def _components(
     if config.get("topologyVersion") == 1 and op.get("tubePlacement") and operation_type != "cutTut":
         # A placement moves the pieces its cut already issued, even with a custom operation card.
         return []
-    # Опрессовка центрального контакта (владелец 19.10) идёт картой опрессовки коакса, пока своей нет: её вход —
-    # разъём своей стороны, какой бы картой она ни шла.
+    # Опрессовка центрального контакта (владелец 19.10): её вход — разъём своей стороны, какой бы картой она ни шла
+    # (своя PRS_PIN_coax с 19.11; сохранённые маршруты до переноса — прежняя PRS_SLEEVE_coax).
     own_material = manual and operation_type == "insWrap" and not op.get("wrapCut") and bool(op.get("wrapArt") or op.get("wrapName"))
     if code in NO_COMPONENTS and operation_type != "coaxPinCrimp" and not own_material:
         return []
@@ -1561,6 +1561,18 @@ def _clamp_put_on_text(text: str, clamp: int, total: int) -> str:
 HEX_MISSING = "HEX не задан — по чертежу разъёма"
 _COLLET_PIN = re.compile(r"припаянн\w*\s+центральн\w*\s+контакт\w*", re.IGNORECASE)
 _PLAIN_NUMBER = re.compile(r"^\d+(?:[.,]\d+)?$")
+PIN_CRIMP_CODE = "PRS_PIN_coax"
+
+
+def _pin_crimped_by_own_card(op: Mapping[str, Any], config: Mapping[str, Any]) -> bool:
+    """The housing's side has a centre-contact crimp on the dedicated PRS_PIN_coax card (свод 708К. 4/5). Routes still
+    on the former shield-card fallback keep their wording until the saved-route correction moves them."""
+    side = "B" if op.get("side") == "B" else "A"
+    return any(isinstance(item, Mapping) and item.get("type") == "coaxPinCrimp"
+               and ("B" if item.get("side") == "B" else "A") == side
+               and (str(item.get("opNum") or "") == PIN_CRIMP_CODE
+                    or str(item.get("templateId") or "").casefold().startswith("prs-pin-coax"))
+               for item in config.get("ops") or [])
 
 
 SHIELD_CLAMP = "прижим"
@@ -1837,6 +1849,9 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
     if operation_type == "coaxHousing" and "цанг" in str(_coax_end(op, config).get("pinType") or "").casefold():
         # Цанговый центральный контакт (владелец 16.10): пайки пина не было — карта корпуса не говорит «припаянный».
         fields["collet"] = True
+    elif operation_type == "coaxHousing" and _pin_crimped_by_own_card(op, config):
+        # Свод 708К. 4/5: контакт этой стороны обжат своей операцией PRS_PIN_coax — корпус не говорит «припаянный».
+        fields["crimpedPin"] = True
     machine = _coax_machine(op)
     if machine:
         fields["machine"] = machine
@@ -2159,6 +2174,8 @@ def _resolve_card(
             tolerance = "по КД"
         if fields.get("collet"):
             text = _COLLET_PIN.sub("центральный контакт (цанговый, без пайки)", text)
+        elif fields.get("crimpedPin"):
+            text = _COLLET_PIN.sub("обжатый центральный контакт", text)
         if fields.get("compression") and step.kind == "Контроль" and "hex" in text.casefold():
             text = f"{text.rstrip()} Компрессионный разъём: компрессионный инструмент, матрица HEX не применяется."
         if not maker_dimensions and isinstance(fields.get("crimpHex"), list) and step.kind == "Контроль" and "hex" in text.casefold():
