@@ -13,11 +13,14 @@
   border-radius: 8px; background: var(--card); color: var(--foreground); font-weight: 400; text-align: left; }
 .machine-tile:hover { border-color: var(--primary); }
 .machine-tile:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
-.machine-tile-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.machine-tile-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .machine-tile-no { font-size: 20px; font-weight: 600; letter-spacing: -.01em; font-variant-numeric: tabular-nums slashed-zero; }
 .machine-tile-no.is-none { font-size: 14px; font-weight: 500; color: var(--muted-foreground); }
-.machine-tile-link { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; white-space: nowrap; }
-.machine-tile-link::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.machine-tile-head .machine-tile-no { flex: none; }
+/* A warning wraps onto more lines, never cut with «…» (owner 19.11: the busy-console text was cut). */
+.machine-tile-link { display: inline-flex; align-items: flex-start; gap: 6px; min-width: 0; padding-top: 4px; font-size: 13px;
+  font-weight: 500; line-height: 1.3; text-align: right; overflow-wrap: anywhere; }
+.machine-tile-link::before { content: ""; flex: none; width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; background: currentColor; }
 .machine-tile-name { display: -webkit-box; min-height: 2.6em; overflow: hidden; font-size: 14px; line-height: 1.3;
   -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .machine-tile-state { font-size: 14px; font-weight: 600; }
@@ -96,6 +99,7 @@
 .machine-card-head h2 { min-width: 0; overflow-wrap: anywhere; }
 .machine-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .machine-card-head h2 { margin: 0; font-size: 16px; }
+.machine-card-head .machine-manual { margin-left: auto; }
 .machine-link { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin: 0; }
 .machine-link span { color: var(--muted-foreground); font-size: 13px; font-variant-numeric: tabular-nums; }
 .machine-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }

@@ -378,7 +378,7 @@ def finish(session: Session, *, equipment_id: UUID, command_id: UUID, ok: bool, 
         row.status = "failed"
         reason = " ".join(str(error or "").split())
         if "busy" in reason or "PXS_HMI" in reason:
-            reason = "Пульт PXS_HMI открыт — порт занят"
+            reason = "Открыт пульт станка на ПК — запись из ERP недоступна"
         elif reason.startswith("mbd outdated"):
             reason = "Служба обмена со станком устарела — обновите"
         elif reason.startswith("state "):

@@ -147,9 +147,9 @@ it("keeps the last PLC values greyed when the machine PC is gone and says so", (
 });
 
 it("says the port is busy while PXS_HMI holds COM8 and there are no PLC words", () => {
-  render(<Ob019CardView card={card({ link: { code: "port_busy", text: "Пульт PXS_HMI открыт — порт занят", tone: "warn" },
+  render(<Ob019CardView card={card({ link: { code: "port_busy", text: "Открыт пульт станка на ПК — запись из ERP недоступна", tone: "warn" },
     error: "COM8 занят", live: null })} />);
-  expect(screen.getByText("Пульт PXS_HMI открыт — порт занят")).toBeTruthy();
+  expect(screen.getByText("Открыт пульт станка на ПК — запись из ERP недоступна")).toBeTruthy();
   expect(screen.getByText("COM8 занят")).toBeTruthy();
   expect(screen.getByText(/Нет данных ПЛК/)).toBeTruthy();
 });

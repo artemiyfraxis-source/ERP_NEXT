@@ -11,7 +11,7 @@ import { Ob019WireDrawing } from "./Ob019WireDrawing";
 /** «Настройки» карточки ОБ.019: чертёж провода с полями длины и зачистки на своих местах, рядом — значение станка
  *  (владелец 19.11.2026), под ним тираж, пучок, режим и «Передать на станок из ЭТК», которое заполняет чертёж; редкие
  *  страницы пульта — в «Остальных параметрах»; правка после пробы. Запись — только когда станок ждёт пуска или тираж
- *  готов, пульт PXS_HMI закрыт. */
+ *  готов, пульт станка на ПК закрыт. */
 
 const STATES: Record<number, string> = {
   100: "Не сброшен", 101: "Идёт сброс", 102: "Готов, ждёт пуска", 103: "Работает", 104: "Пауза", 105: "Аварийный стоп",
@@ -278,7 +278,7 @@ export function Ob019SettingsPanel({ inventory, live = null, old = false }: {
     </p>}
 
     {control && <p className={control.problem ? "warning-inline" : "machine-muted"} role="status">
-      {control.problem || `Можно записывать: ${stateText(control.state).toLowerCase()}, пульт PXS_HMI закрыт`}
+      {control.problem || `Можно записывать: ${stateText(control.state).toLowerCase()}, пульт станка на ПК закрыт`}
       {!control.can_edit && " · запись вам не разрешена"}
     </p>}
     {confirming === "transfer" && plan
