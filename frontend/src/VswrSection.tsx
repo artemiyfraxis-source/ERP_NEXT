@@ -87,7 +87,7 @@ export const VSWR_TONES: Record<VswrTone, { label: string; tone: Tone; hint: str
 
 export function vswrTone(measurement: Pick<VswrMeasurement, "verdict" | "decision"> | null): VswrTone {
   if (!measurement) return "none";
-  if (measurement.decision?.status === "border") return "edge";
+  if (measurement.verdict === "border" || measurement.decision?.status === "border") return "edge";
   return measurement.verdict === "fail" ? "fail" : "pass";
 }
 
@@ -162,7 +162,7 @@ export function VswrSection({ instruments, choices, taskId, onTaskChange, onOver
   const request = useRef(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [measuring, setMeasuring] = useState<{ row: VswrSerialRow; capture: boolean } | null>(null);
+  const [measuring, setMeasuring] = useState<{ row: VswrSerialRow; capture: boolean; round?: number } | null>(null);
   const [flow, setFlow] = useState(false);
   const [scan, setScan] = useState("");
   const [scanError, setScanError] = useState("");
@@ -331,10 +331,11 @@ export function VswrSection({ instruments, choices, taskId, onTaskChange, onOver
         rowClassName={(row) => `vswr-row-${vswrTone(row.latest)}`}
         exportName={`Замеры КСВН ${overview.task.number}`} emptyText="У задания нет изделий с серийными номерами." />
     </section>}
-    {measuring && overview && <VswrUploadWindow key={`${overview.task.id}:${measuring.row.position}`}
+    {measuring && overview && <VswrUploadWindow key={`${overview.task.id}:${measuring.row.position}:${measuring.round ?? 0}`}
       task={overview.task} norm={overview.norm} row={measuring.row} instruments={instruments} capture={measuring.capture} flow={flow}
       close={() => setMeasuring(null)} onSaved={() => load(taskId)}
       onPassport={canPrint ? () => openPassport(measuring.row, overview.task.id) : undefined}
+      onRepeat={() => setMeasuring((current) => current && { row: current.row, capture: true, round: (current.round ?? 0) + 1 })}
       next={flow ? () => setMeasuring(null) : next ? () => setMeasuring({ row: next, capture: true }) : undefined}
       nextLabel={flow ? "Сканировать следующий" : next ? `Следующий: ${next.serial_number}` : ""}
       canReject={canReject(taskId)} onReject={(rejected) => { setMeasuring(null); onReject(rejected); }} />}
@@ -359,7 +360,7 @@ export function uploadProblems(input: { instrumentId: string; file: File | null;
   return problems;
 }
 
-function VswrUploadWindow({ task, norm, row, instruments, capture, flow, close, onSaved, onPassport, next, nextLabel, canReject, onReject }: {
+function VswrUploadWindow({ task, norm, row, instruments, capture, flow, close, onSaved, onPassport, onRepeat, next, nextLabel, canReject, onReject }: {
   task: VswrTaskOverview["task"];
   norm: VswrNorm;
   row: VswrSerialRow;
@@ -371,6 +372,8 @@ function VswrUploadWindow({ task, norm, row, instruments, capture, flow, close, 
   close: () => void;
   onSaved: () => Promise<void>;
   onPassport?: () => Promise<void>;
+  /** «На границе допуска»: то же изделие ещё раз — подключение с поворотом 120° (СТО ФРАК-002-2026 п. 13.3). */
+  onRepeat?: () => void;
   next?: () => void;
   nextLabel: string;
   canReject: boolean;
@@ -489,9 +492,11 @@ function VswrUploadWindow({ task, norm, row, instruments, capture, flow, close, 
         {result.verdict === "fail" && canReject && <button className="secondary small" onClick={() => onReject({
           taskId: task.id, serialNumber: row.serial_number, description: rejectDescription(row.serial_number, result),
         })}>В брак ОТК</button>}
-        {onPassport && <button className="secondary small" onClick={() => void onPassport()}>Паспорт</button>}
+        {onPassport && result.verdict !== "border" && <button className="secondary small" onClick={() => void onPassport()}>Паспорт</button>}
         <button className="secondary small" onClick={close}>Закрыть</button>
-        {next && nextLabel && <button ref={nextButton} className="primary small" onClick={next}>{nextLabel}</button>}
+        {result.verdict === "border" && onRepeat
+          ? <button ref={nextButton} className="primary small" onClick={onRepeat}>Повторный замер (поворот 120°)</button>
+          : next && nextLabel && <button ref={nextButton} className="primary small" onClick={next}>{nextLabel}</button>}
       </div>
     </>}
   </div></PageWindow>;
