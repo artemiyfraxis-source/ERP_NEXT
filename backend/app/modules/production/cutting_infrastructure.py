@@ -222,10 +222,11 @@ class SqlAlchemyCuttingRepository:
             return self.get(existing.group_id)
         group = None
         if not separate:
+            # Lock by id (the one group lock order); the oldest compatible group is still chosen.
             candidates = self.session.scalars(select(CuttingGroupRow).where(
                 CuttingGroupRow.recipe_key == recipe.key, CuttingGroupRow.state == "open",
-                CuttingGroupRow.joinable.is_(True)).order_by(CuttingGroupRow.created_at, CuttingGroupRow.id).with_for_update()).all()
-            for candidate in candidates:
+                CuttingGroupRow.joinable.is_(True)).order_by(CuttingGroupRow.id).with_for_update()).all()
+            for candidate in sorted(candidates, key=lambda row: (row.created_at, str(row.id))):
                 members = self.members(candidate.id)
                 if members and all(not production.get(m.task_id).operation(m.operation_id).operator_ids for m in members):
                     group = candidate
@@ -255,8 +256,11 @@ class SqlAlchemyCuttingRepository:
         """Any child edit invalidates group previews; cancellation keeps restrictive history references."""
         members = self.session.scalars(select(CuttingMemberRow).where(
             CuttingMemberRow.task_id == task.id, CuttingMemberRow.state.in_(("active", "cancelled")))).all()
-        for member in members:
-            group = self.get(member.group_id, lock=True)
+        # Groups by id, like every cutting path (project → groups → tasks); cutting paths hold them already.
+        for group_id in sorted({member.group_id for member in members}, key=str):
+            self.get(group_id, lock=True)
+        for member in sorted(members, key=lambda item: (str(item.group_id), item.position)):
+            group = self.get(member.group_id)
             if group.state == "cancelled":
                 continue
             if task.status is not ProductionStatus.CANCELLED:
