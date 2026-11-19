@@ -9,7 +9,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import Field, ValidationError, model_validator
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from starlette.concurrency import run_in_threadpool
 
@@ -17,7 +17,7 @@ from app.modules.production.api import production_uow_factory, techcards_uow_fac
 from app.modules.production.autoplan_api import references_uow_factory
 from app.modules.production.rf_infrastructure import RfRepository
 from app.modules.production.vna_bench_protocol import V2_OPS
-from app.modules.production.vna_session_infrastructure import VnaArtifactRow, VnaSessionRepository
+from app.modules.production.vna_session_infrastructure import VnaArtifactRow, VnaSessionRepository, VnaSessionRow
 from app.modules.production.vna_sessions import TERMINAL, Override, SessionConflict, StrictModel, ordered_steps, resolved_profile
 from app.modules.production.vswr import RecordVswrCommand, VswrFileInput, VswrVerdict, record_vswr
 from app.modules.warehouse import devices, vna_jobs
@@ -105,6 +105,12 @@ def create_session(payload: StartInput, principal: Person, now: Now, factory: Fa
                    techcards_factory: Annotated[Callable | None, Depends(techcards_uow_factory)],
                    refs_factory: Annotated[Callable | None, Depends(references_uow_factory)]):
     with _errors():
+        with factory() as uow:
+            # Expire the instrument's sessions first: a stale command or a 12 h idle bench session frees the lease.
+            active = [row.id for row in uow.session.scalars(select(VnaSessionRow).where(
+                VnaSessionRow.instrument_id == payload.instrument_id, VnaSessionRow.state.not_in(TERMINAL)))]
+        for session_id in active:
+            _expire(factory, now, session_id=session_id)
         instrument = capture_instrument(factory(), payload.instrument_id)
         if instrument["source"] != "s2vna" or not instrument["serial"]:
             raise ValueError("Управление доступно для S2VNA с серийным номером; используйте импорт файла")

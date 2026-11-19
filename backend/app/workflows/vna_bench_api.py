@@ -475,17 +475,9 @@ def _phases(uow, row, run, commands):
 
 
 def _series_rows(row, run, rows, phases):
-    """The rows that count for each phase: a standard's three connections (monthly) or the whole run (bend check) under
-    one calibration; an unfinished series made under a replaced calibration is started again."""
-    current = row.calibration_check_id
-    if run["kind"] == "kit_standards":
-        counted = []
-        for key in {(p["target"], p["standard"]) for p in phases}:
-            candidates = [r for r in rows if (r.target, r.standard) == key]
-            series = [r for r in candidates if candidates and r.group_id == candidates[-1].group_id]
-            counted += _open_series(series, current, len(series) >= bench.REPEATS)
-        return counted
-    return _open_series(rows, current, any(r.result.get("check_id") for r in rows))
+    """The rows that count: a whole check (bend, monthly) is made under one calibration — an unfinished check whose
+    calibration was replaced starts again from its first phase, so its journal row covers every standard."""
+    return _open_series(rows, row.calibration_check_id, any(r.result.get("check_id") for r in rows))
 
 
 def _phase_done(rows, phase):
@@ -518,7 +510,9 @@ def _check_view(uow, row, run, all_runs, items, commands):
         view.append(dict(key=phase["key"], label=phase["label"], status=status, connection_no=phase["connection_no"],
                          connections_total=phase["connections_total"], result_text=text))
     finished = bool(finals)
-    status = ("passed" if finals[-1].verdict == "pass" else "failed") if finished else ("running" if busy else "pending")
+    # The check's verdict is its journal row's (every standard / phase), never the last phase's own.
+    status = (("passed" if finals[-1].result["check_passed"] else "failed") if finished
+              else ("running" if busy else "pending"))
     refusal = None
     if not finished and not busy:
         refusal = _refusal(row, run, all_runs)
@@ -602,6 +596,12 @@ def open_session(principal: Person, now: Now, factory: Factory, techcards_factor
                  payload: SessionInput | None = None):
     payload = payload or SessionInput()
     with _refusals():
+        with factory() as uow:
+            vna = _station(uow, payload.instrument_id)
+            stale = _session_row(uow, vna.id if vna else None)
+            stale_id = stale.id if stale else None
+        if stale_id:
+            _expire(factory, now, session_id=stale_id)   # a session idle 12 h must not block a new one
         with factory() as uow:
             vna = _station(uow, payload.instrument_id)
             if vna is None:
@@ -1152,6 +1152,7 @@ def check_next(session_id: UUID, check_id: str, payload: Version, principal: Per
         if any(it.result.get("check_id") for it in rows):
             raise Refusal("stale", "Проверка уже завершена")
         counted = _series_rows(row, run, rows, phases)
+        restarted = bool(rows) and not counted
         pending = [p for p in phases if _phase_done(counted, p) is None]
         if not phases or not pending:
             raise Refusal("stale", "Проверка не ожидает подключения")
@@ -1162,6 +1163,9 @@ def check_next(session_id: UUID, check_id: str, payload: Version, principal: Per
         item = bench.connection(meta, phase["target"], phase["connection_no"] or 1, group,
                                 **({"standard": phase["standard"], "port": phase["port"], "definition": phase["definition"]}
                                    if run["kind"] == "kit_standards" else {}))
+        if restarted:
+            phase = {**phase, "label": "Калибровка сменилась — проверка начата заново с первой фазы (одна калибровка "
+                                       "на проверку). " + phase["label"]}
         if run["kind"] == "flex" and phase["key"] == "thru_memory":
             bend = bench.fit_screen(bench_screen("flex"), profile)
             hash_ = screen_hash(bend)
@@ -1518,7 +1522,7 @@ def _flex(uow, repository, row, command, artifact, item, data, now):
         load_p2_vswr=done["port2"].result["vswr"]), temperatures, now)
     text = f"S21 {number_text(record_row.s21_dev_db, 3)} дБ ≤ 0,05; КСВН ±{number_text(record_row.vswr_dev, 4)}"
     _add(repository, row, command, artifact.id, item, "pass" if record_row.passed else "fail",
-                        dict(s21_dev_db=record_row.s21_dev_db, vswr_dev=record_row.vswr_dev, check_id=str(record_row.id),
+                        dict(s21_dev_db=record_row.s21_dev_db, vswr_dev=record_row.vswr_dev, check_id=str(record_row.id), check_passed=record_row.passed,
                              temperatures=temperatures, result_text=text), now)
     return {} if record_row.passed else dict(error="Проверка на изгиб не пройдена — замените кабель (СТО п. 10.6)")
 
@@ -1535,7 +1539,7 @@ def _control(uow, repository, row, command, artifact, item, data, now):
     text = (f"КСВН {number_text(record_row.vswr_dev, 4)} при U {number_text(record_row.vswr_limit, 4)}; "
             f"S21 {number_text(record_row.s21_dev_db, 3)} дБ при U {number_text(record_row.s21_limit_db, 2)} дБ")
     _add(repository, row, command, artifact.id, item, "pass" if record_row.passed else "fail",
-                        dict(check_id=str(record_row.id), temperatures=temperatures, result_text=text), now)
+                        dict(check_id=str(record_row.id), check_passed=record_row.passed, temperatures=temperatures, result_text=text), now)
     return {} if record_row.passed else dict(
         error="Контрольная мера вне U — замеры остановить, проверить калибровку и кабели (СТО разд. 14)")
 
@@ -1583,7 +1587,7 @@ def _kit(uow, repository, row, command, artifact, item, data, now):
                           dict(standard_inventory=item["number"], kit_ratio=max(v for _, _, v in ratios)),
                           temperatures, now, note=note)
     _add(repository, row, command, artifact.id, item, "pass" if ratio <= 1 else "fail",
-                        {**result, "check_id": str(record_row.id),
+                        {**result, "check_id": str(record_row.id), "check_passed": record_row.passed,
                          "result_text": f"худшая доля допуска {number_text(record_row.kit_ratio, 2)} (≤ 1 — годен)"}, now)
     return {} if record_row.passed else dict(error="Меры набора вне допуска — замеры остановить до выяснения причины "
                                                    "(СТО разд. 14)")

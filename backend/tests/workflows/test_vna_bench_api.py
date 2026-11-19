@@ -631,3 +631,64 @@ def test_a_bench_session_idle_for_twelve_hours_frees_the_instrument(env):
         assert session.scalar(select(VnaSessionRow.state)) == "aborted"
     assert post(env, "/sessions")["session"]["status"] == "open"
 
+
+
+def run_monthly(env, check_id, standard_for=lambda kind: kind, stop=None):
+    """Sweep pending monthly phases; `standard_for` says which standard is really connected; `stop(phase)` pauses."""
+    stub = env["stub"]
+    while (pending := [p for c in state(env)["session"]["checks"] if c["id"] == check_id
+                       for p in c["phases"] if p["status"] == "pending"]):
+        phase = pending[0]
+        if stop and stop(phase):
+            return phase
+        kind = standard_for(phase["key"].split("_")[0].upper())
+        stub.connected = ("kit", next(s for s in KIT if s["type"] == kind))
+        view = state(env)
+        post(env, session_path(view, f"/checks/{check_id}/next"), {"version": view["session"]["version"]})
+        stub.drive()
+    return None
+
+
+def start_monthly(env):
+    view = state(env)
+    post(env, session_path(view, "/checks"), {"version": view["session"]["version"], "kind": "monthly"})
+    env["stub"].drive()
+    return state(env)["session"]["checks"][-1]["id"]
+
+
+def test_monthly_check_restarts_whole_after_a_recalibration_and_journals_every_standard(env):
+    calibrate(env)
+    check_id = start_monthly(env)
+    phase = run_monthly(env, check_id, stop=lambda p: p["key"] == "short_p1")
+    assert phase is not None
+    env["stub"].connected = ("load",)
+    view = state(env)
+    post(env, session_path(view, "/steps/calibration"), {"version": view["session"]["version"]})
+    env["stub"].drive()
+    calibrate_loads(env, state(env))
+    check = next(c for c in state(env)["session"]["checks"] if c["id"] == check_id)
+    assert [p["status"] for p in check["phases"]][:3] == ["pending"] * 3   # OPEN p1 is measured again
+    assert run_monthly(env, check_id) is None
+    with env["sessions"]() as session:
+        steps = session.scalar(select(VnaSessionRow.steps))
+        assert any("проверка начата заново" in s.get("label", "") for s in steps)
+        note = session.scalar(select(VnaCheckRow.note).where(VnaCheckRow.kind == "kit_standards"))
+        assert note.count(";") == 6 and "OPEN-F п.1" in note and "MA6666A" in note   # all seven standards
+
+
+def test_monthly_check_fails_when_only_open_fails(env):
+    calibrate(env)
+    check_id = start_monthly(env)
+    run_monthly(env, check_id, standard_for=lambda kind: "LOAD" if kind == "OPEN" else kind)
+    check = next(c for c in state(env)["session"]["checks"] if c["id"] == check_id)
+    assert check["status"] == "failed"
+    assert check["phases"][-1]["status"] == "passed"   # the last phase (the thru) itself is good
+    with env["sessions"]() as session:
+        assert session.scalar(select(VnaCheckRow.passed).where(VnaCheckRow.kind == "kit_standards")) is False
+
+
+def test_a_direct_open_after_twelve_idle_hours_is_not_blocked(env):
+    calibrate(env)
+    env["clock"].now += timedelta(hours=12, minutes=1)
+    control_heartbeat(env["agent"])
+    assert post(env, "/sessions")["session"]["status"] == "open"   # no state read in between
