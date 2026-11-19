@@ -5,13 +5,17 @@ The machine card («Настройки» part):
   their read-back result, the machine's stored corrections.
 - `POST /api/production/machines/card/{ОБ}/write` (edit) `{values: {key: value}, confirm_state}` → a queued write of
   the card's writable fields (job, mode, quantities, wire and strip lengths, marking texts with zero-filled tails).
-- `GET  /api/production/machines/card/{ОБ}/transfer[?group_id=…&length_mm=…]` (view) → the ETK cutting jobs of open
-  groups; with a job: what «Передать на станок» writes — ETK nominal + the machine's correction per parameter.
+- `GET  /api/production/machines/card/{ОБ}/transfer[?group_id=…&length_mm=…|?wire=…&length_mm=…]` (view) → the ETK
+  cutting jobs of open groups and the hook-up wires `{label, conductor_mm, has_recipe}`; with a job: what «Передать на
+  станок» writes — ETK nominal + the machine's correction per parameter; with a wire and no job (`group_id: null`):
+  the wire's newest recipe, else the reference fallback + the correction. A recipe value is final (no offset on top).
 - `POST /api/production/machines/card/{ОБ}/transfer` (edit) `{group_id, length_mm, confirm_state}` → that write.
 - `POST /api/production/machines/card/{ОБ}/correction` (edit) — after a trial Слава says which case it is (owner 19.11):
   `machine` «станок режет не так» → the machine's stored offset of that parameter (ETK unchanged); `etk` «размер в ЭТК
   неверный» → a new revision of every issued ETK of the job with reason «правка наладчика: …», the technologist is
-  notified (not asked); `both`. Each correction is journaled on the machine.
+  notified (not asked); `both`. Each correction is journaled on the machine. `measured` without `offset` → the server
+  computes the offset from the machine's live value (offset = на станке − получилось); response `{offset, etk, written,
+  measured}`.
 `confirm_state` is the machine state the person confirmed in the dialog: a different state now → 409.
 
 The command runner on the machine PC (`tools/machine-agent/ob019-writer.ps1`, token `machine:report`, PC bound):
@@ -35,7 +39,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from app.modules.equipment_setup.recipe_infrastructure import SqlAlchemyRecipes
-from app.modules.equipment_setup.recipes import EtkNominal, latest_for_wire, ob019_proposal
+from app.modules.equipment_setup.recipes import (EtkNominal, latest_for_wire, ob019_proposal, recipe_holds, recipe_wire,
+                                                 wire_key)
 from app.modules.production import machine_control
 from app.modules.production import machine_writes as commands
 from app.modules.production import machines as rules
@@ -50,7 +55,7 @@ from app.shared.http_auth import Principal, require_section, section_allowed
 from app.shared.notifications import TECHNOLOGIST_AUDIENCE, notification_requested
 
 from .machines_api import Bridge, Reader, _inventory
-from .ob019_setup import GROUP_STATES, WIRE_CUTS, _conductor, _wires, group_choices, group_nominal
+from .ob019_setup import GROUP_STATES, WIRE_CUTS, _conductor, _wires, group_choices, group_nominal, wire_label
 
 router = APIRouter(prefix="/api/production/machines", tags=["production"])
 Factory = Annotated[Callable, Depends(production_uow_factory)]
@@ -277,61 +282,115 @@ def _quantity(session, group_id: UUID, length: Decimal) -> int:
     return int(total.to_integral_value(rounding=ROUND_CEILING))
 
 
-def _transfer_plan(session, link: rules.MachineLinkRow, group_id: UUID, length_text: str) -> dict:
-    """ETK nominal of the job + this machine's corrections → what «Передать на станок» writes."""
-    length = _decimal(length_text, "Длина провода")
+def _length(text: str) -> Decimal:
+    length = _decimal(text, "Длина провода")
     if length <= 0:
         raise HTTPException(422, "Длина провода: нужно положительное число")
-    group = _group(session, group_id)
-    nominal = group_nominal(group.recipe or {})
-    if nominal is None:
-        raise HTTPException(422, "В группе нет резки провода")
-    wires = _wires(session)
-    nominal = EtkNominal(nominal.wire, length, nominal.strip_front_mm, nominal.strip_back_mm, nominal.partial_front,
-                         nominal.partial_back, _conductor(wires, nominal.wire))
+    return length
+
+
+def _versions(session, link: rules.MachineLinkRow):
+    return SqlAlchemyRecipes(session).list_versions(link.equipment_id, limit=200, offset=0)
+
+
+def _plan_rows(session, link: rules.MachineLinkRow, nominal: EtkNominal, length: Decimal,
+               recipe_keys: tuple[str, ...]) -> tuple[list[dict], list[str], list[str]]:
+    """Per parameter: the base value + this machine's offset. Keys of `recipe_keys` take the newest recipe of the wire;
+    a recipe value is final (what the machine held when it cut right — the offset is not added twice, owner 19.11);
+    the offset goes only on top of the ETK nominal / reference fallback. → (rows, missing labels, blocking labels)."""
     etk = {item.key: item for item in ob019_proposal(None, nominal, length)}
-    recipe = latest_for_wire(SqlAlchemyRecipes(session).list_versions(link.equipment_id, limit=200, offset=0),
-                             nominal.wire)
+    recipe = latest_for_wire(_versions(session, link), nominal.wire)
     reference = {item.key: item for item in ob019_proposal(recipe, nominal, length)}
     stored = commands.offsets(session, link.equipment_id)
     words = rules.snapshot_words(session.get(rules.MachineSnapshotRow, link.equipment_id))
     rows, missing = [], []
     for key in WIRE_KEYS:
-        # The ETK gives length and strip; cut diameter and knife back-off are the machine's own (Слава's эталон).
-        base = etk[key] if key in ("length_mm", "strip_front_mm", "pull_front_mm", "strip_back_mm", "pull_back_mm") \
-            else reference[key]
-        offset = commands.offset_value(stored.get(key))
-        value = None if base.value is None else max(base.value + offset, Decimal(0))
+        base = reference[key] if key in recipe_keys else etk[key]
+        final = key in recipe_keys and recipe_holds(recipe, key)
+        offset = None if final else commands.offset_value(stored.get(key))
+        value = None if base.value is None else (base.value if final else max(base.value + offset, Decimal(0)))
         if value is None:
             missing.append(rules.OB019_FIELDS[key].label)
+        live = rules.field_value(key, words)
         rows.append({"key": key, "label": rules.OB019_FIELDS[key].label, "unit": "мм", "nominal": _shown(base.value),
                      "source": base.source, "offset": _shown(offset), "value": _shown(value),
-                     "live": None if rules.field_value(key, words) is None
-                     else _shown(Decimal(str(rules.field_value(key, words))))})
+                     "live": None if live is None else _shown(Decimal(str(live)))})
+    blocking = [rules.OB019_FIELDS[key].label for key in ("length_mm", "strip_front_mm", "strip_back_mm")
+                if rules.OB019_FIELDS[key].label in missing]
+    return rows, missing, blocking
+
+
+# The ETK gives length and strip of a job; cut diameter and knife back-off are the machine's own (Слава's эталон).
+JOB_RECIPE_KEYS = ("diameter_mm", "knife_back_mm")
+# Without a job everything but the length comes from the wire's recipe, else the reference fallback.
+WIRE_RECIPE_KEYS = tuple(key for key in WIRE_KEYS if key != "length_mm")
+
+
+def _transfer_plan(session, link: rules.MachineLinkRow, group_id: UUID, length_text: str) -> dict:
+    """ETK nominal of the job + this machine's corrections → what «Передать на станок» writes."""
+    length = _length(length_text)
+    group = _group(session, group_id)
+    nominal = group_nominal(group.recipe or {})
+    if nominal is None:
+        raise HTTPException(422, "В группе нет резки провода")
+    nominal = EtkNominal(nominal.wire, length, nominal.strip_front_mm, nominal.strip_back_mm, nominal.partial_front,
+                         nominal.partial_back, _conductor(_wires(session), nominal.wire))
+    rows, missing, blocking = _plan_rows(session, link, nominal, length, JOB_RECIPE_KEYS)
     quantity = _quantity(session, group.id, length)
     job = {"total_set": quantity, "order_quantity": quantity, "order_number": latin(group.number),
            "product": latin(f"{nominal.wire} L{_shown(length)}")}
     return {"group_id": str(group.id), "number": group.number, "wire": nominal.wire, "length_mm": _shown(length),
-            "quantity": quantity, "rows": rows, "job": job, "missing": missing,
-            "blocking": [label for key, label in ((key, rules.OB019_FIELDS[key].label)
-                                                  for key in ("length_mm", "strip_front_mm", "strip_back_mm"))
-                         if label in missing]}
+            "quantity": quantity, "rows": rows, "job": job, "missing": missing, "blocking": blocking}
+
+
+def _wire_plan(session, link: rules.MachineLinkRow, wire_text: str, length_text: str) -> dict:
+    """A wire picked by hand, no ETK job: the wire's newest recipe on this machine, else the reference fallback + the
+    machine's offset; the length is the one entered."""
+    wire = wire_label(wire_text)
+    if not wire:
+        raise HTTPException(422, "Выберите провод")
+    length = _length(length_text)
+    nominal = EtkNominal(wire, length, conductor_mm=_conductor(_wires(session), wire))
+    rows, missing, blocking = _plan_rows(session, link, nominal, length, WIRE_RECIPE_KEYS)
+    job = {"total_set": None, "order_quantity": None, "order_number": "", "product": latin(f"{wire} L{_shown(length)}")}
+    return {"group_id": None, "number": None, "wire": wire, "length_mm": _shown(length), "quantity": None,
+            "rows": rows, "job": job, "missing": missing, "blocking": blocking}
+
+
+def _wire_choices(session, link: rules.MachineLinkRow) -> list[dict]:
+    """Hook-up wires of the reference (Ø жилы) and the wires with a recipe on this machine, by label."""
+    wires = _wires(session)
+    recorded: dict[str, str] = {}
+    for version in _versions(session, link):
+        label = recipe_wire(version)
+        if label and wire_key(label) not in recorded:
+            recorded[wire_key(label)] = label
+    names = {wire_key(label): label for label in wires} | recorded
+    return [{"label": label, "conductor_mm": _plain(_conductor(wires, label)), "has_recipe": key in recorded}
+            for key, label in sorted(names.items(), key=lambda item: item[1])]
+
+
+def _plain(value: Decimal | None) -> str | None:
+    return None if value is None else format(value.normalize(), "f").replace(".", ",")
 
 
 @router.get("/card/{inventory}/transfer")
 def transfer_preview(inventory: str, _principal: Reader, factory: Factory,
-                     group_id: UUID | None = None, length_mm: Annotated[str, Query(max_length=20)] = "") -> dict:
+                     group_id: UUID | None = None, length_mm: Annotated[str, Query(max_length=20)] = "",
+                     wire: Annotated[str, Query(max_length=200)] = "") -> dict:
     with factory() as uow:
         session = uow.session
         link = _link(session, inventory)
-        if group_id is None:
-            groups = list(session.scalars(select(CuttingGroupRow).where(CuttingGroupRow.state.in_(GROUP_STATES))
-                                          .order_by(CuttingGroupRow.created_at.desc()).limit(100)))
-            members = list(session.scalars(select(CuttingMemberRow).where(
-                CuttingMemberRow.state == "active", CuttingMemberRow.group_id.in_([group.id for group in groups])))) \
-                if groups else []
-            return {"choices": group_choices(groups, members)}
-        return _transfer_plan(session, link, group_id, length_mm)
+        if group_id is not None:
+            return _transfer_plan(session, link, group_id, length_mm)
+        if wire.strip():
+            return _wire_plan(session, link, wire, length_mm)
+        groups = list(session.scalars(select(CuttingGroupRow).where(CuttingGroupRow.state.in_(GROUP_STATES))
+                                      .order_by(CuttingGroupRow.created_at.desc()).limit(100)))
+        members = list(session.scalars(select(CuttingMemberRow).where(
+            CuttingMemberRow.state == "active", CuttingMemberRow.group_id.in_([group.id for group in groups])))) \
+            if groups else []
+        return {"choices": group_choices(groups, members), "wires": _wire_choices(session, link)}
 
 
 @router.post("/card/{inventory}/transfer")
@@ -412,17 +471,42 @@ def _correct_etk(request: Request, *, card_ids: list[UUID], parameter: str, valu
     return done
 
 
+STALE_LIVE = "Нет свежих данных со станка — повторите, когда станок на связи"
+
+
+def _live_value(session, link: rules.MachineLinkRow, key: str, now: datetime) -> Decimal | None:
+    """The parameter's value on the machine now (latest snapshot, link «На связи»), мм; None — no fresh reading."""
+    snapshot = session.get(rules.MachineSnapshotRow, link.equipment_id)
+    if rules.link_status(snapshot, now) != "ok":
+        return None
+    value = rules.field_value(key, rules.snapshot_words(snapshot))
+    return None if value is None else Decimal(str(value)).quantize(commands.STEP)
+
+
 @router.post("/card/{inventory}/correction")
 def correction(inventory: str, payload: CorrectionPayload, request: Request, principal: Writer, factory: Factory,
                now: Now) -> dict:
+    """«Правка после пробы». With `measured` and no `offset` the server computes the machine's new total offset from
+    what the machine holds now: it cuts with a constant error e = M − W, the wanted value is W' = N − e = N + (W − M),
+    and W' = N + offset' → offset' = W − M — independent of the nominal and of the old offset, so a hand edit on the
+    panel or a repeated trial without a new transfer give the right offset, not a doubled one. An explicit `offset`
+    (manual entry) wins."""
     label = rules.OB019_FIELDS[payload.parameter].label
     note = " ".join(payload.note.split())
-    measured = f", получилось {payload.measured} мм" if payload.measured else ""
-    result: dict = {"offset": None, "etk": []}
+    got: Decimal | None = None
+    if payload.measured not in (None, ""):
+        got = _decimal(payload.measured, "Получилось")
+        if got < 0 or got != got.quantize(commands.STEP):
+            raise HTTPException(422, "Получилось: число ≥ 0 с точностью 0,01 мм")
+        got = got.quantize(commands.STEP)
+    measured = f", получилось {_shown(got)} мм" if got is not None else ""
+    result: dict = {"offset": None, "etk": [], "written": None, "measured": _shown(got)}
     with factory() as uow:
         session = uow.session
         link = _link(session, inventory)
         equipment_id = link.equipment_id
+        written = _live_value(session, link, payload.parameter, now)
+        result["written"] = _shown(written)
         card_ids: list[UUID] = []
         if payload.case in ("etk", "both"):
             if payload.parameter not in ETK_SIDES:
@@ -435,10 +519,16 @@ def correction(inventory: str, payload: CorrectionPayload, request: Request, pri
             if not card_ids:
                 raise HTTPException(409, "У задания нет выданной ЭТК")
         if payload.case in ("machine", "both"):
-            if payload.offset in (None, ""):
-                raise HTTPException(422, "Укажите поправку станка")
-            offset = _decimal(payload.offset, "Поправка станка")
-            reason = f"{CASES[payload.case]}{measured}" + (f"; {note}" if note else "")
+            if payload.offset not in (None, ""):
+                offset = _decimal(payload.offset, "Поправка станка")
+                reason = f"{CASES[payload.case]}{measured}" + (f"; {note}" if note else "")
+            elif got is None:
+                raise HTTPException(422, "Укажите, сколько получилось, или поправку станка")
+            elif written is None:
+                raise HTTPException(422, STALE_LIVE)
+            else:
+                offset = written - got
+                reason = f"{CASES[payload.case]}, на станке {_shown(written)}{measured}" + (f"; {note}" if note else "")
             try:
                 old, new = commands.set_offset(session, equipment_id=equipment_id, parameter=payload.parameter,
                                                offset=offset, reason=reason, actor_name=principal.actor.name, now=now)
