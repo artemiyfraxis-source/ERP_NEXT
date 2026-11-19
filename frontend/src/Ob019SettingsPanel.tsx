@@ -229,6 +229,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   };
   const changeLines = () => changes.map(([key, value]) => {
     const field = fields.get(key);
+    if (key === "total_set") return `Тираж: ${value} шт в этом задании (цель станка = счётчик + ${value})`;
     const after = field?.kind === "mode" ? MODES.find(([code]) => code === value)?.[1] ?? value
       : field?.kind === "bit0" ? SWITCH.find(([code]) => code === value)?.[1] ?? value : value || "пусто";
     return `${field?.label ?? key}: ${field ? shown(field) : EMPTY} → ${after}${field?.unit && field.kind !== "mode" ? ` ${field.unit}` : ""}`;
@@ -251,10 +252,10 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   };
 
   /** Поле значения: подпись, ввод, рядом — что сейчас на станке; отличие подсвечено. */
-  const input = (key: string, label: string, note = "") => {
+  const input = (key: string, label: string, note = "", own?: { live: string; diff: boolean }) => {
     const field = fields.get(key);
     const value = edits[key] ?? "";
-    const diff = enteredDiffers(field, value);
+    const diff = own ? own.diff : enteredDiffers(field, value);
     const editable = !!field && !!control?.can_edit;
     const aria = `${field?.label ?? label}: новое значение`;
     return <label key={key} className={`machine-input${diff ? " is-diff" : ""}`}>
@@ -269,12 +270,22 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
           {field?.unit && <span className="machine-input-unit">{field.unit}</span>}
         </span>}
       <span className={`machine-input-live${old ? " is-old" : ""}`} title={diff ? "Введённое отличается от значения на станке" : undefined}>
-        {diff ? "≠ " : ""}на станке {field?.read ? shown(field) : EMPTY}{note}
+        {diff ? "≠ " : ""}{own ? own.live : <>на станке {field?.read ? shown(field) : EMPTY}{note}</>}
       </span>
     </label>;
   };
 
   const job = live?.job;
+  /** «Тираж» — штук в этом задании; станок сравнивает свою цель D22 с накопленным счётчиком D649, ERP пишет
+   *  D22 = D649 + N (сервер, production/machine_writes.py). Под полем — сырые значения станка. */
+  const tirazh = () => {
+    const counter = typeof job?.total_finished === "number" ? job.total_finished : null;
+    const target = typeof job?.total_set === "number" ? job.total_set : null;
+    const entered = (edits.total_set ?? "").trim();
+    const left = counter !== null && target !== null ? target - counter : null;
+    return { live: `счётчик станка ${counter === null ? EMPTY : formatNumber(counter)} / цель ${target === null ? EMPTY : formatNumber(target)}`,
+      diff: entered !== "" && (left === null || Number(entered) !== left) };
+  };
   return <section className="machine-settings" aria-label="Настройки станка">
     {error && <div className="error-banner" role="alert">{error}</div>}
     <Ob019RunJob inventory={inventory} equipmentId={equipmentId} state={runState} live={live} choices={choices}
@@ -285,7 +296,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
         pull_back: size("pull_back_mm") }} />
 
     <div className="machine-job-row">
-      {input("total_set", "Тираж", typeof job?.total_finished === "number" ? ` · сделано ${formatNumber(job.total_finished)}` : "")}
+      {input("total_set", "Тираж (штук в этом задании)", "", tirazh())}
       {input("batch_set", "Пучок", typeof job?.batch_finished === "number" ? ` · сделано ${formatNumber(job.batch_finished)}` : "")}
       {input("mode", "Режим")}
       {(picked || manualJob) && <p className="machine-input-live machine-run-order">
@@ -310,7 +321,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     {confirming === "transfer" && (plan || manualJob)
       ? <Confirm state={control?.state ?? null} busy={busy} onNo={() => setConfirming("")} onYes={() => void transfer()}
         lines={plan && asTransfer
-          ? [...plan.rows.filter((row) => row.value !== null).map((row) => `${row.label}: ${row.value} мм`), `Тираж: ${plan.quantity} шт`]
+          ? [...plan.rows.filter((row) => row.value !== null).map((row) => `${row.label}: ${row.value} мм`), `Тираж: ${plan.quantity} шт в этом задании (цель станка = счётчик + ${plan.quantity})`]
           : [...changeLines(), ...(manualJob ? [`Заказ: ${manualJob.plc_number}`] : [])]} />
       : confirming === "settings"
         ? <Confirm state={control?.state ?? null} busy={busy} onNo={() => setConfirming("")} onYes={() => void writeSettings()}

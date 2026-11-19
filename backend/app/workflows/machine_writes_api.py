@@ -182,6 +182,17 @@ def _closed(uow, rows: list[commands.MachineWriteRow], actor, now: datetime) -> 
 def _enqueue(uow, link, principal: Principal, purpose: str, writes, summary: str, now: datetime,
              run: dict | None = None) -> dict:
     """Queue a write; `run` (production/machine_runs.py) makes it the start of a job run from the card."""
+    try:
+        # «Тираж» N is pieces in this job: written as the target D22 = D649 + N (production/machine_writes.py).
+        writes, quantity = commands.quantity_as_target(
+            list(writes), uow.session.get(rules.MachineSnapshotRow, link.equipment_id), now)
+    except commands.MachineCommandRefused as error:
+        raise HTTPException(409, str(error)) from error
+    except rules.MachineWriteInvalid as error:
+        raise HTTPException(422, str(error)) from error
+    if quantity is not None:
+        summary = (f"{summary}; тираж {quantity['pieces']} шт: счётчик станка {quantity['counter']} → "
+                   f"цель {quantity['target']}")
     if run is not None:
         run = runs.supersede(uow.session, link.equipment_id, run, now, principal.actor.name)
     try:

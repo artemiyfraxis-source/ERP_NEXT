@@ -99,13 +99,35 @@ it("shows the machine value beside each field and highlights an entered value th
   server();
   render(<Ob019SettingsPanel inventory="ОБ.019" />);
   expect(await screen.findByText("на станке 325,00 мм")).toBeInTheDocument();
-  expect(screen.getByText("на станке 300 шт")).toBeInTheDocument();
+  expect(screen.getByText("счётчик станка — / цель —")).toBeInTheDocument();  // no live words in this render
   const length = screen.getByLabelText("Длина провода: новое значение");
   fireEvent.change(length, { target: { value: "325,00" } });
   expect(length.closest("label")!.className).not.toContain("is-diff");
   fireEvent.change(length, { target: { value: "325,5" } });
   expect(length.closest("label")!.className).toContain("is-diff");
   expect(screen.getByText("≠ на станке 325,00 мм")).toBeInTheDocument();
+});
+
+it("takes «Тираж» as pieces in this job and shows the machine counter and target under it", async () => {
+  const posts = server();
+  const live = { state: { code: 107, text: "Тираж готов", tone: "ok" as const }, alarm: { code: 5, text: "Тираж готов", tone: "info" as const },
+    mode: { code: 2, text: "Автомат" }, job: { total_set: 582, total_finished: 570, batch_set: 0, batch_finished: 0, uph: 0, program: 1,
+      order_quantity: null, order_finished: null, order_number: null, product: null, order_running: false },
+    wire: { length_mm: 325, strip_front_mm: 5, pull_front_mm: 0, strip_back_mm: 5, pull_back_mm: 0, diameter_mm: 0.8, knife_back_mm: 0.1 } };
+  render(<Ob019SettingsPanel inventory="ОБ.019" live={live} />);
+  expect(await screen.findByText("Тираж (штук в этом задании)")).toBeInTheDocument();
+  expect(screen.getByText("счётчик станка 570 / цель 582")).toBeInTheDocument();
+  const tirazh = screen.getByLabelText("Тираж: новое значение");
+  fireEvent.change(tirazh, { target: { value: "12" } });  // 582 − 570: what the machine already aims at
+  expect(tirazh.closest("label")!.className).not.toContain("is-diff");
+  fireEvent.change(tirazh, { target: { value: "20" } });
+  expect(tirazh.closest("label")!.className).toContain("is-diff");
+  fireEvent.click(screen.getByRole("button", { name: "Записать на станок (1)" }));
+  const confirm = screen.getByRole("alertdialog");
+  expect(within(confirm).getByText("Тираж: 20 шт в этом задании (цель станка = счётчик + 20)")).toBeInTheDocument();
+  fireEvent.click(within(confirm).getByRole("button", { name: "Подтвердить запись" }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].body).toEqual({ values: { total_set: "20" }, confirm_state: 102 });  // the server adds the counter
 });
 
 it("writes a changed value only after the confirmation with the machine state", async () => {

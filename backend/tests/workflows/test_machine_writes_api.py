@@ -344,7 +344,9 @@ def test_transfer_writes_etk_nominal_plus_machine_corrections(machines_api):
     assert sent.status_code == 200, sent.text
     claimed = TestClient(app).post(NEXT, headers=bridge, json=AGENT).json()["command"]
     words = {block["addr"] + index: word for block in claimed["blocks"] for index, word in enumerate(block["values"])}
-    assert (words[32], words[34], words[38], words[22], words[24]) == (32500, 540, 650, 12, 12)
+    assert (words[32], words[34], words[38], words[24]) == (32500, 540, 650, 12)
+    # «Тираж» 12 pieces is the target over the cumulative T.Finish: D22 = D649 (65537 in WORDS) + 12.
+    assert words[22] | words[23] << 16 == 0x10001 + 12
     assert 43 not in words  # knife back-off: no эталон yet — the machine keeps its own
     kinds = [kind for kind, _ in _events(sessions, ob019)]
     assert "production.machine_offset_set" in kinds and "production.machine_write_queued" in kinds

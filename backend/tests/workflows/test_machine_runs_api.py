@@ -25,6 +25,10 @@ def _post(client, path, body):
     return client.post(path, json=body, headers=_csrf(client))
 
 
+def _u32(words: dict, low: int) -> int:
+    return words[str(low)] | words[str(low + 1)] << 16
+
+
 def _counter(value: int, state: int = 102, alarm: int = 0) -> dict:
     return {**WORDS, "649": value & 0xFFFF, "650": value >> 16, "766": state, "782": alarm}
 
@@ -66,7 +70,8 @@ def test_a_cutting_run_counts_from_the_verified_write_and_prefills_the_hand_in(m
     # The machine counted on before the write was verified: the start is the counter at the verified moment.
     machine.report(_counter(START + 3))
     words = machine.written(sent.json()["id"])
-    assert (words["32"], words["22"]) == (32500, 12)  # the same words as «Передать на станок»
+    # The same words as «Передать на станок»; «Тираж» 12 = the target over T.Finish at the moment it was queued.
+    assert (words["32"], _u32(words, 22)) == (32500, START + 12)
     run = admin.get(RUN).json()["run"]
     assert (run["stage"], run["counter_start"], run["done"]) == ("ready", START + 3, 0)
     # Still «Тираж готов» from the previous job: not finished before anything was cut.
@@ -149,7 +154,7 @@ def test_a_manual_job_runs_on_the_machine_counter_and_blocks_a_cutting_job(machi
                               "confirm_state": 102})
     assert sent.status_code == 200, sent.text
     words = machine.written(sent.json()["id"])
-    assert (words["32"], words["34"], words["22"]) == (10000, 500, 5)
+    assert (words["32"], words["34"], _u32(words, 22)) == (10000, 500, START + 5)
     assert rules._text({int(key): value for key, value in words.items()}, 940, 15) == "R-000001"
     assert rules._text({int(key): value for key, value in words.items()}, 955, 15) == "PVAM 0,35 L100"
     state = admin.get(RUN).json()
@@ -203,3 +208,28 @@ def test_the_operator_panel_open_on_the_pc_is_said_in_plain_words(machines_api):
     assert rules.agent_error("Access to the port 'COM8' is denied.") == rules.HMI_OPEN
     assert rules.agent_error("PLC: no reply") == "ПЛК не отвечает"
     assert rules.agent_error("что-то своё") == "что-то своё"
+
+
+def test_tirazh_is_pieces_in_this_job_written_as_a_target_over_the_machine_counter(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    machine.report(_counter(570, state=107, alarm=5))  # the prod card: «задано 570 / сделано 570»
+    sent = _post(admin, CARD + "/write", {"values": {"total_set": "12"}, "confirm_state": 107})
+    assert sent.status_code == 200, sent.text
+    assert [(item["label"], item["after"]) for item in sent.json()["fields"]] == [("Тираж", "582")]
+    words = machine.written(sent.json()["id"])  # the read-back is compared with D649 + N
+    assert _u32(words, 22) == 582
+    bare = _post(admin, CARD + "/write", {"values": {"total_set": "3"}}).json()["id"]
+    TestClient(app).post(NEXT, headers=machine.bridge, json=AGENT)
+    assert _result(machine.bridge, bare, {"22": 3, "23": 0}).json() == {"status": "failed", "error": "Станок не принял: D22"}
+    assert _post(admin, CARD + "/write", {"values": {"total_set": "0"}}).status_code == 422
+    clock.now += timedelta(seconds=6)  # the link is still «На связи», but the counter is older than 5 s
+    stale = _post(admin, CARD + "/write", {"values": {"total_set": "12"}})
+    assert stale.status_code == 409 and "нет свежего счётчика станка" in stale.json()["detail"]
+    machine.report(_counter(575, state=103))
+    running = _post(admin, CARD + "/write", {"values": {"total_set": "12"}})
+    assert running.status_code == 409 and running.json()["detail"].startswith("Тираж не записан: станок не готов")
+    with sessions() as session:
+        texts = [row.details["text"] for row in session.scalars(select(AuditEventRow).where(
+            AuditEventRow.aggregate_id == ob019, AuditEventRow.event_type == "production.machine_write_queued"))]
+    assert "тираж 12 шт: счётчик станка 570 → цель 582" in texts[0]
