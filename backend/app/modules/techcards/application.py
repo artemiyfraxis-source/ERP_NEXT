@@ -9,7 +9,7 @@ import re
 from typing import Any, Protocol, Sequence
 from uuid import UUID, uuid4
 
-from app.shared.events import AuditEvent
+from app.shared.events import AuditEvent, OutboxMessage
 from app.shared.identity import Actor
 
 from .project_cards import ProjectTechcard, TechcardRevision, TechcardStatus, TechcardValidationError
@@ -109,6 +109,12 @@ class EditTechcardOperationCommand(ChangeProjectTechcardCommand):
     # «Сохранить также в шаблон»: the edited card goes into the operation's template too (every ETK with this
     # operation shows it), and the operation stays live — it follows its template, not a hand-edited copy.
     to_template: bool = False
+    # A caller's revision reason (the setup technician's correction from the machine card, «правка наладчика: …»),
+    # else «Правка операции …»; `notice` (technologist's inbox) and `journal` (e.g. the machine's journal line) are
+    # written in the same transaction as the revision.
+    reason: str = ""
+    notice: OutboxMessage | None = None
+    journal: tuple[AuditEvent, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -442,7 +448,7 @@ def edit_project_operation(command: EditTechcardOperationCommand, uow: UnitOfWor
             "base_template_version": (((current.document or {}).get("source") or {}).get("templates") or {}).get(
                 str(stored.get("template_id") or "").strip(), ""),
         })
-        reason = _edit_reason(operation)
+        reason = command.reason or _edit_reason(operation)
         if command.to_template:
             stamped = _card_to_template(current, command, operation["card"], uow)
             updated = replace(updated, document={**updated.document, "source": stamped["source"]})
@@ -456,6 +462,10 @@ def edit_project_operation(command: EditTechcardOperationCommand, uow: UnitOfWor
             details={"operation_key": command.operation_key, "revision": updated.revision,
                      **({"to_template": True} if command.to_template else {})},
         ))
+        for event in command.journal:
+            uow.audit.add(event)
+        if command.notice is not None:
+            uow.outbox.add(command.notice)
         uow.commit()
         return updated
 

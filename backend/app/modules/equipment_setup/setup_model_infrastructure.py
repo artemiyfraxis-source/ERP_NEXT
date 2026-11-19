@@ -1,4 +1,4 @@
-"""Tables of the setup model (migration 0195_equipment_setup_model); rules in `setup_model.py`. The caller commits.
+"""Tables of the setup model (migration 0198_equipment_setup_model); rules in `setup_model.py`. The caller commits.
 
 Constraints, not rollbacks: the class and the source are CHECKed lists, a unit's parameters hang on its override row,
 a reference is unique per unit + wire + contact + version and needs a wire or a contact, a configuration points only at

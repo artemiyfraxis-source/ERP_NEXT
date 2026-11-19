@@ -2,10 +2,10 @@
 
 from dataclasses import dataclass
 from datetime import date
-from calendar import monthrange
 import re
 from urllib.parse import urlsplit
 
+from .instrument_control import CONTROL_INTERVAL_MONTHS, RECHECK_MATINGS, ControlDue, control_due, recheck_text
 from .instrument_characterization import Application, Characterization, application, connector_line, impedance_warning, number
 from .instrument_norms import (Assessment, ItemSpec, LossAssessment, LossUncertainty, Uncertainty, ghz_text, item_spec,
                                REPEAT_TEXT, loss_uncertainty_for, norm_for, norms_data, resolve_vna, uncertainty_for)
@@ -14,8 +14,6 @@ from .rf_interfaces import RfDetails, ROLE_LABELS, is_adapter_name, parse_interf
 from .traceability import InstrumentKind, MeasurementInstrument
 from .vna_files import VnaTrace, _decode
 
-CONTROL_INTERVAL_MONTHS = int(norms_data()["recheck"]["months"])
-RECHECK_MATINGS = int(norms_data()["recheck"]["matings"])
 # Owner 18.11: the general director approves the conclusion by hand; no name is stored.
 APPROVER_ROLE = "Генеральный директор"
 
@@ -67,6 +65,7 @@ class PublicPassport:
     loss_check: LossAssessment | None = None  # insertion loss against the loss norm of the same source
     loss_uncertainty: LossUncertainty | None = None  # transmission uncertainty of the VNA that measured
     vna: str = ""                             # «ВАЦ Планар S50180 (СИ.002)» — the VNA that measured, as resolved
+    control: ControlDue | None = None         # 12 months or 100 matings since the measurement, whichever first
 
 
 @dataclass(frozen=True)
@@ -179,34 +178,27 @@ def history_entry(item: MeasurementInstrument, rf: RfDetails, measured: Characte
 
 def public_passport(item: MeasurementInstrument, rf: RfDetails, measured: Characterization | None,
                     *, history: tuple[PublicHistory, ...] = (), today: date | None = None,
-                    registry=(), repeats=()) -> PublicPassport:
+                    registry=(), repeats=(), matings_since: int | None = None) -> PublicPassport:
     """`registry` - instruments to resolve the VNA by its serial or model when the file names only «ВАЦ №…»;
-    `repeats` - the other connections of the same control (same day), see `application`."""
+    `repeats` - the other connections of the same control (same day), see `application`; `matings_since` - matings
+    recorded since the measurement day (None - not read)."""
     ohms = sorted({port.impedance_ohm for port in rf.interfaces if port.impedance_ohm is not None})
     verification = None
     if item.kind is InstrumentKind.MEASURING and (item.verification_number or item.verified_at or item.verification_due):
         verification = PublicVerification(item.verification_number or "", item.verified_at.date() if item.verified_at else None,
                                           item.verification_due.date() if item.verification_due else None)
-    next_control = None
-    if measured:
-        month_index = measured.measured_on.year * 12 + measured.measured_on.month - 1 + CONTROL_INTERVAL_MONTHS
-        year, month = divmod(month_index, 12)
-        if year <= date.max.year:
-            next_control = date(year, month + 1, min(measured.measured_on.day, monthrange(year, month + 1)[1]))
+    control = control_due(measured.measured_on, matings_since, today or date.today()) if measured else None
     projected = _public_measurement(measured) if measured else None
     usage, model, vna = _usage(item, rf, measured, projected, registry, repeats) if projected else (None, "", "")
     return PublicPassport(item.inventory_number, _name(item, rf), item.serial_number, item.manufacturer.strip() or _manufacturer(rf),
                           connector_line(item.name, item.serial_number, rf),
                           " / ".join(number(value) for value in ohms) + " Ом" if ohms else "50 Ом" if measured else "",
                           projected, verification, impedance_warning(rf),
-                          item.status.value, next_control, bool(next_control and next_control < (today or date.today())),
+                          item.status.value, control.due_on if control else None, bool(control and control.overdue),
                           tuple(history), item_spec(item.name, item.doc_designation or "", rf),
                           usage.check if usage else None, usage, uncertainty_for(model) if usage else None,
-                          usage.loss_check if usage else None, loss_uncertainty_for(model) if usage else None, vna)
-
-
-def recheck_text() -> str:
-    return f"через {CONTROL_INTERVAL_MONTHS} мес. или {RECHECK_MATINGS} сочленений — что раньше"
+                          usage.loss_check if usage else None, loss_uncertainty_for(model) if usage else None, vna,
+                          control)
 
 
 def conclusion(passport: PublicPassport) -> PassportConclusion | None:
@@ -249,8 +241,8 @@ def control_line(passport: PublicPassport) -> str:
     if passport.measurement is None:
         return ""
     text = f"Замер {passport.measurement.measured_on:%d.%m.%Y}"
-    if passport.next_control:
-        text += f" · следующий контроль до {passport.next_control:%d.%m.%Y} или через {RECHECK_MATINGS} сочленений"
+    if passport.control:
+        text += " · " + passport.control.line
     return text
 
 

@@ -1627,6 +1627,17 @@ export interface InstrumentMatingsSnapshot {
   has_connectors: boolean;
   ends: InstrumentMatingEnd[];
   events: InstrumentMatingEvent[];
+  /** Следующий контроль: 12 мес. или 100 сочленений с последнего замера, что раньше; null — замера нет. */
+  control?: InstrumentControl | null;
+}
+export interface InstrumentControl {
+  measured_on: string;
+  due_on: string | null;
+  matings_since: number | null;
+  matings_left: number | null;
+  overdue: boolean;
+  /** Готовая строка сервера: «следующий контроль до 16.11.2027 или ещё 87 сочленений из 100 — что раньше». */
+  line: string;
 }
 export interface InstrumentMatingInput {
   end: "A" | "B";
@@ -1640,6 +1651,55 @@ export const instrumentMatingsApi = {
   append: (id: string, input: InstrumentMatingInput) => api<InstrumentMatingsSnapshot>(`/api/production/instruments/${encodeURIComponent(id)}/matings`, {
     method: "POST", body: JSON.stringify(input),
   }),
+};
+export type VnaCheckKind = "session" | "flex" | "control_standard" | "kit_standards";
+export type VnaDueStatus = "ok" | "overdue" | "never" | "failed";
+export interface VnaCheckDue {
+  kind: "control_standard" | "kit_standards";
+  label: string;
+  last_at: string | null;
+  last_passed: boolean | null;
+  due_at: string | null;
+  status: VnaDueStatus;
+  status_label: string;
+}
+export interface VnaCheckRecord {
+  id: string;
+  kind: VnaCheckKind;
+  kind_label: string;
+  passed: boolean;
+  performed_at: string;
+  recorded_at: string;
+  source: string;
+  operator: string;
+  actor: string;
+  calibration_id: string;
+  acm_serial: string;
+  profile: string;
+  vna_temperature_c: number | null;
+  acm_temperature_c: number | null;
+  confidence_passed: boolean | null;
+  confidence_tx_dev_db: number | null;
+  confidence_rx_dev_db: number | null;
+  load_p1_vswr: number | null;
+  load_p2_vswr: number | null;
+  standard_inventory: string | null;
+  reference: string;
+  vswr_dev: number | null;
+  vswr_limit: number | null;
+  s21_dev_db: number | null;
+  s21_limit_db: number | null;
+  kit_ratio: number | null;
+  note: string;
+}
+export interface VnaChecksSnapshot {
+  instrument_id: string;
+  applicable: boolean;
+  due: VnaCheckDue[];
+  records: VnaCheckRecord[];
+}
+export const vnaChecksApi = {
+  get: (id: string) => api<VnaChecksSnapshot>(`/api/production/instruments/${encodeURIComponent(id)}/vna-checks`),
 };
 export const rfInterfacesApi = {
   get: (id: string) => api<{ rf: InstrumentRfDetails }>(`/api/production/instruments/${encodeURIComponent(id)}/rf-interfaces`),

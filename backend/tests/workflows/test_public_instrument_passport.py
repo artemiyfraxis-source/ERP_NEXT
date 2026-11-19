@@ -242,7 +242,7 @@ def test_projection_has_only_approved_fields_and_strict_known_provenance():
     measured = characterization(measured_file(header=header))
     projection = public_passport(replace(instrument(), storage_location="PRIVATE_STORAGE", warehouse_grn="PRIVATE_GRN", doc_designation="PRIVATE_ARTICLE"),
                                  replace(rf(), source="PRIVATE_SOURCE"), measured)
-    assert {field.name for field in fields(projection)} == {"inventory_number", "name", "serial_number", "manufacturer", "connectors", "impedance", "impedance_warning", "measurement", "verification", "status", "next_control", "control_overdue", "history", "spec", "norm_check", "usage", "uncertainty", "loss_check", "loss_uncertainty", "vna"}
+    assert {field.name for field in fields(projection)} == {"inventory_number", "name", "serial_number", "manufacturer", "connectors", "impedance", "impedance_warning", "measurement", "verification", "status", "next_control", "control_overdue", "history", "spec", "norm_check", "usage", "uncertainty", "loss_check", "loss_uncertainty", "vna", "control"}
     assert {field.name for field in fields(projection.measurement)} == {"measured_on", "traces", "instrument", "calibration", "conditions", "chain"}
     assert "PRIVATE_" not in repr(projection)
     assert projection.measurement.instrument == "ВАЦ №26030095"
@@ -395,7 +395,7 @@ def test_public_conclusion_history_dates_and_hidden_blanks():
         for expected in ("Заключение", "Не соответствует норме", "MIL-PRF-55339/55",
                          "КСВН ≤ 1,05 + 0,005·F в полосе 0,5–27 ГГц", "КСВН 1,2 на 11,8 ГГц при норме ≤ 1,109",
                          "Методика", "СТО ФРАК-002-2026", "Утвердил: Генеральный директор",
-                         "Замер 16.11.2026 · следующий контроль до 16.11.2027 или через 100 сочленений",
+                         "Замер 16.11.2026 · контроль просрочен: срок 16.11.2027 прошёл",
                          "Требуется повторный замер", "Не используется", "История контроля", "10.11.2025",
                          "КСВН: не соответствует норме", "Рабочие температуры", "−65…+165 °C", "Скачать .s2p"):
             assert expected in text, expected

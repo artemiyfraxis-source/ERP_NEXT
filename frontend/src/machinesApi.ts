@@ -52,7 +52,32 @@ export interface Ob019Live {
   };
 }
 
-export interface MachineCard {
+export interface Ob099Live {
+  state: { text: string; tone: Tone };
+  /** Активные аварии W80 и предупреждения бегущей строки (W83/W84). */
+  alarms: { code: string; text: string; tone: Tone }[];
+  job: { product: string | null; wire: string | null; terminal: string | null; applicator: string | null; equipment_no: string | null };
+  crimp: {
+    height_mm: number | null; tolerance_mm: number | null; height_min_mm: number | null; height_max_mm: number | null;
+    cfm_on: boolean | null; work_mode: boolean | null;
+  };
+  counters: { total_set: number | null; batch_set: number | null; total_done: number | null; batch_done: number | null };
+  tools: { name: string; life: number | null; used: number | null; left: number | null; used_pct: number | null; tone: Tone }[];
+}
+
+/** Обжимы пресса за день цеха (по журналу BZW2.5) и его журнал аварий. */
+export interface Ob099Today {
+  day: string;
+  total: number;
+  ok: number;
+  ng: number;
+  ng_pct: number | null;
+  ng_reasons: { text: string; count: number }[];
+  last: { at: string; result: "OK" | "NG"; peak: number | null; terminal: string; applicator: string } | null;
+  alarms: { text: string; count: number; last_at: string | null }[];
+}
+
+interface MachineCardBase {
   equipment_id: string;
   inventory: string;
   name: string;
@@ -65,13 +90,26 @@ export interface MachineCard {
   reported_at: string | null;
   age_seconds: number | null;
   error: string;
+}
+
+export interface MachineCard extends MachineCardBase {
+  kind?: "ob019_modbus";
   /** Последние слова ПЛК; при потере связи остаются, `link` и `reported_at` говорят, что они старые. */
   live: Ob019Live | null;
 }
 
+/** Пресс ОБ.099: ПЛК по FINS (только чтение) и поштучные обжимы. */
+export interface Ob099MachineCard extends MachineCardBase {
+  kind: "ob099_fins";
+  live: Ob099Live | null;
+  today: Ob099Today;
+}
+
+export type AnyMachineCard = MachineCard | Ob099MachineCard;
+
 export const machinesApi = {
   list: (signal?: AbortSignal) => api<MachinesList>("/api/production/machines", { signal }),
-  card: (id: string, signal?: AbortSignal) => api<MachineCard>(`/api/production/machines/${encodeURIComponent(id)}`, { signal }),
+  card: (id: string, signal?: AbortSignal) => api<AnyMachineCard>(`/api/production/machines/${encodeURIComponent(id)}`, { signal }),
 };
 
 export const POLL_MS = 3000;

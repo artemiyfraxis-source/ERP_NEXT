@@ -304,3 +304,18 @@ it("shows each half of a flag in its own column when the ETK text differs per ha
   expect(within(table).getAllByText("Разъём А").length).toBeGreaterThanOrEqual(2);
   expect(within(table).queryByRole("columnheader", { name: /^Надпись/ })).toBeNull();
 });
+
+it("shows honest print progress: printed N of M, queued K, and a waiting printer instead of «Передано принтеру»", async () => {
+  const states = ["printed", "queued", "queued", "queued", "error", "cancelled"] as const;
+  const tracked: MarkingBatch = { ...structuredClone(batch), status_label: "Печатается", printed: 1, queued: 3, print_errors: 1, cancelled: 1, untracked: 0,
+    progress_label: "Напечатано 1 из 6 · в очереди 4", stuck: true, stuck_label: "Принтер ждёт (снимите этикетку / проверьте принтер)",
+    jobs: batch.jobs.map((job, index) => ({ ...job, print_state: states[index], status_label: states[index] === "printed" ? "Напечатано" : "В очереди принтера" })) };
+  vi.mocked(markingApi.batch).mockResolvedValue(structuredClone(tracked));
+  render(<MarkingBatchProgress initial={tracked} />);
+  expect(screen.getByRole("status")).toHaveTextContent("Напечатано 1 из 6 · в очереди 4");
+  expect(screen.queryByText(/Передано принтеру: /)).toBeNull();
+  expect(screen.getByRole("progressbar")).toHaveAttribute("value", "1");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Принтер ждёт (снимите этикетку / проверьте принтер)");
+  expect(screen.getByText(/Ошибок принтера: 1/)).toBeVisible();
+  expect(screen.getByText(/Отменено в очереди Windows: 1/)).toBeVisible();
+});

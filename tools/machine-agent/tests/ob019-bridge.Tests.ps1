@@ -23,19 +23,32 @@ Describe 'read only' {
         Mock Invoke-MbdLine { $script:sent += $Line; Reply-Values $Line }
         $snapshot = Read-Snapshot
         $snapshot['link'] | Should Be 'ok'
-        $script:sent.Count | Should Be 5
+        $script:sent.Count | Should Be 9
         foreach ($line in $script:sent) { $script:Json.DeserializeObject($line)['cmd'] | Should Be 'read' }
         ($script:sent -join ' ') -match '"write"|"pulse"|"status"' | Should Be $false
     }
-    It 'keeps only allow-listed words (D28..D31 read but not sent)' {
+    It 'keeps only allow-listed words (D29..D31 read but not sent)' {
         Mock Invoke-MbdLine { Reply-Values $Line }
         $words = (Read-Snapshot)['registers']
-        $words.Count | Should Be 61
+        $words.Count | Should Be 245
         $words.ContainsKey('766') | Should Be $true
         $words['766'] | Should Be 766
-        $words.ContainsKey('28') | Should Be $false
+        $words['440'] | Should Be 440
+        $words.ContainsKey('29') | Should Be $false
         $words.ContainsKey('21') | Should Be $false
         $words.ContainsKey('720') | Should Be $false
+    }
+    It 'reads the slow HMI pages only every SettingsSec and sends them from the last reading in between' {
+        $script:SlowWords = @{}
+        $script:sent = @()
+        Mock Invoke-MbdLine { $script:sent += $Line; Reply-Values $Line }
+        (Read-Snapshot)['registers'].Count | Should Be 245
+        $script:sent.Count | Should Be 9
+        $script:sent = @()
+        $again = (Read-Snapshot)['registers']
+        $script:sent.Count | Should Be 5
+        $again.Count | Should Be 245
+        $again['1753'] | Should Be 1753
     }
     It 'the bridge source carries no bus write command' {
         $source = [IO.File]::ReadAllText((Join-Path $root 'ob019-bridge.ps1'))
@@ -102,7 +115,7 @@ Describe 'against mbd.ps1 -Mock -LocalOnly' {
             $MbdPort = $port
             $snapshot = Read-Snapshot
             $snapshot['link'] | Should Be 'ok'
-            $snapshot['registers'].Count | Should Be 61
+            $snapshot['registers'].Count | Should Be 245
         }
     } finally {
         if (-not $mbd.HasExited) { Stop-Process -Id $mbd.Id -Force }
