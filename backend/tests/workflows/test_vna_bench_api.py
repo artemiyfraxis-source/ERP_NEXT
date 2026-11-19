@@ -66,8 +66,12 @@ class Agent:
         self.connected = None   # None: the default DUT; ("kit", definition) or ("load",) or ("thru",)
         self.confidence_offset = 0.0
         self.errors = {}
+        self.corrupt = 0   # the next N sweeps come back unreadable: refused, nothing counted, the same connection again
 
     def sweep(self, profile):
+        if self.corrupt:
+            self.corrupt -= 1
+            return b"# HZ S RI R 50\n1 nan 0 0 0 0 0 0 0\n"
         f = grid(profile)
         n = len(f)
         if self.connected and self.connected[0] == "kit":
@@ -235,7 +239,7 @@ def test_calibration_journal_item_record_and_close(env):
         assert [(r.kind, r.passed, r.load_p1_vswr <= 1.06) for r in journal] == [("session", True, True)]
         row = session.scalar(select(VnaSessionRow))
         assert row.calibration_check_id == journal[0].id and row.purpose == "bench" and row.task_id is None
-    assert matings(env, env["ids"]["acm"]) == 2 and matings(env, env["ids"]["cable1"]) == 1
+    assert matings(env, env["ids"]["acm"]) == 2 and matings(env, env["ids"]["cable1"]) == 2   # ECAL + LOAD
     plan = post(env, session_path(view, "/plan"), {"target": dict(kind="instrument", instrument_id=str(env["ids"]["dut"]))})
     assert plan["refusal"] is None and plan["norm_vswr"] == 1.06 and plan["band_mhz"] == [10.0, 18000.0]
     assert plan["uncertainty"] and plan["screen_name"] == "ОТК — переход"
@@ -379,7 +383,7 @@ def calibrate_loads(env, view):
         post(env, session_path(view, f"/steps/{key}"), {"version": view["session"]["version"]})
         env["stub"].drive()
         view = state(env)
-    assert view["calibration"]["valid"]
+    assert view["calibration"]["valid"], (view["calibration"], view["session"]["steps"], view["session"]["error"])
     return view
 
 
@@ -512,4 +516,118 @@ def test_assembly_session_records_each_connection_through_the_vswr_rule(env, mon
                                .order_by(VnaBenchItemRow.created_at)).all()
         assert [r.connection_no for r in rows] == [1, 1, 2, 3] and all(r.vswr_measurement_id for r in rows)
         assert len({r.group_id for r in rows}) == 2
-    assert matings(env, env["ids"]["cable1"]) == 1 + 4
+    assert matings(env, env["ids"]["cable1"]) == 2 + 4
+    # «Измерить заново»: a new item of the same position starts a fresh series, even after an open border one.
+    for _ in range(2):   # the first new item ends «на границе»; the second must not become its repeat
+        view = state(env)
+        measure(env, view, target)
+        env["stub"].drive()
+    new = state(env)["session"]["items"][-1]
+    assert new["verdict"]["code"] == "border" and new["connections_total"] == 2
+    with env["sessions"]() as session:
+        rows = session.scalars(select(VnaBenchItemRow).where(VnaBenchItemRow.kind == "assembly")).all()
+        last_two = sorted(rows, key=lambda r: r.result["attempt"])[-2:]
+        assert all(r.result["repeat_of"] is None for r in last_two)   # each new item is its own origin
+
+
+def connect_next(env, item):
+    view = state(env)
+    post(env, session_path(view, f"/items/{item['id']}/connections"), {"version": view["session"]["version"]})
+    env["stub"].drive()
+    return state(env)["session"]["items"][-1]
+
+
+def test_refused_sweep_holds_no_connection_and_the_same_connection_is_taken_again(env):
+    view = calibrate(env)
+    env["stub"].dut_vswr = 1.065
+    measure(env, view)
+    env["stub"].drive()
+    item = state(env)["session"]["items"][0]
+    env["stub"].corrupt = 1
+    item = connect_next(env, item)
+    assert [c["status"] for c in item["connections"]] == ["passed", "pending", "pending"]   # 2 is not used up
+    assert item["refusal"] and state(env)["calibration"]["valid"]
+    item = connect_next(env, item)
+    item = connect_next(env, item)
+    assert item["verdict"]["final"] and [c["no"] for c in item["connections"]] == [1, 2, 3]
+    with env["sessions"]() as session:
+        refused = session.execute(select(func.count()).select_from(VnaBenchItemRow)).scalar()
+        assert refused == 2 + 3   # LOAD 1/2 and three counted connections; the refused sweep is not a row
+    assert matings(env, env["ids"]["dut"]) == 2 * 4                        # the refused sweep was a mating too
+    view = state(env)
+    post(env, session_path(view, f"/items/{item['id']}/record"), {"version": view["session"]["version"]})
+    with env["sessions"]() as session:
+        assert session.scalar(select(func.count()).select_from(ProductionInstrumentFileRow).where(
+            ProductionInstrumentFileRow.instrument_id == env["ids"]["dut"])) == 3
+
+
+def test_a_border_series_restarts_after_a_recalibration(env):
+    view = calibrate(env)
+    env["stub"].dut_vswr = 1.065
+    measure(env, view)
+    env["stub"].drive()
+    item = connect_next(env, state(env)["session"]["items"][0])
+    assert len(item["connections"]) == 3 and item["connections"][1]["status"] == "passed", (item["connections"], item["refusal"])
+    view = state(env)
+    post(env, session_path(view, "/steps/calibration"), {"version": view["session"]["version"]})
+    env["stub"].drive()
+    env["stub"].connected = ("load",)
+    calibrate_loads(env, state(env))
+    env["stub"].connected = None
+    item = connect_next(env, item)
+    with env["sessions"]() as session:
+        rows = session.scalars(select(VnaBenchItemRow).where(VnaBenchItemRow.kind == "instrument")
+                               .order_by(VnaBenchItemRow.created_at)).all()
+        assert [r.connection_no for r in rows] == [1, 2, 1] and len({r.group_id for r in rows}) == 2
+        steps = session.scalar(select(VnaSessionRow.steps))
+        assert any("серия повтора начата заново" in s.get("label", "") for s in steps)
+        first, last = rows[0].result["calibration"], rows[-1].result["calibration"]
+        assert first["check_id"] != last["check_id"]
+    # The new series: its connection 1 measured, 2 and 3 still to do under the new calibration.
+    assert [c["status"] for c in item["connections"]] == ["passed", "pending", "pending"]
+
+
+def test_refused_phases_are_retaken_in_flex_and_monthly_checks(env):
+    view = calibrate(env)
+    stub = env["stub"]
+    view = post(env, session_path(view, "/checks"), {"version": view["session"]["version"], "kind": "flex"})
+    stub.drive()
+    check = state(env)["session"]["checks"][0]
+    for connected, corrupt in ((("load",), 1), (("load",), 0), (("load",), 0), (("thru",), 1), (("thru",), 0),
+                               (("thru",), 0)):
+        stub.connected, stub.corrupt = connected, corrupt
+        view = state(env)
+        post(env, session_path(view, f"/checks/{check['id']}/next"), {"version": view["session"]["version"]})
+        stub.drive()
+    assert state(env)["session"]["checks"][0]["status"] == "passed"
+    view = state(env)
+    post(env, session_path(view, "/checks"), {"version": view["session"]["version"], "kind": "monthly"})
+    stub.drive()
+    check = state(env)["session"]["checks"][1]
+    corrupted, sweeps = False, 0
+    while (pending := [p for p in state(env)["session"]["checks"][1]["phases"] if p["status"] == "pending"]):
+        phase = pending[0]
+        stub.connected = ("kit", next(s for s in KIT if s["type"] == phase["key"].split("_")[0].upper()))
+        if (phase["key"], phase["connection_no"]) == ("open_p1", 2) and not corrupted:
+            stub.corrupt, corrupted = 1, True   # refused once: OPEN, connection 2 is taken again
+        view = state(env)
+        post(env, session_path(view, f"/checks/{check['id']}/next"), {"version": view["session"]["version"]})
+        stub.drive()
+        sweeps += 1
+    assert corrupted and sweeps == 22
+    phases = state(env)["session"]["checks"][1]["phases"]
+    assert all(p["result_text"] and "годен" in p["result_text"] for p in phases), phases
+    assert phases[6]["result_text"].startswith("|Г| ") and phases[0]["result_text"].startswith("Δ отражения")
+    assert all(p["result_text"] for p in state(env)["session"]["checks"][0]["phases"])
+    assert state(env)["session"]["checks"][1]["status"] == "passed"
+
+
+def test_a_bench_session_idle_for_twelve_hours_frees_the_instrument(env):
+    calibrate(env)
+    env["clock"].now += timedelta(hours=12, minutes=1)
+    control_heartbeat(env["agent"])
+    assert state(env)["session"] is None
+    with env["sessions"]() as session:
+        assert session.scalar(select(VnaSessionRow.state)) == "aborted"
+    assert post(env, "/sessions")["session"]["status"] == "open"
+

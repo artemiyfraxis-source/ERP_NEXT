@@ -15,6 +15,7 @@ from .vna_bench_protocol import OPS_V2, command_args, validate_result_v2
 
 ACTIVE_SQL = "state NOT IN ('recorded','failed','aborted')"
 COMMAND_TIMEOUT = timedelta(seconds=180)
+BENCH_IDLE = timedelta(hours=12)   # a bench session idle in `ready` this long is closed and frees the instrument
 # Bench sessions (0205_vna_bench_sessions): purpose, nullable task fields and an all-or-nothing calibration.
 SESSION_CHECKS = {
     "ck_vna_sessions_purpose": "purpose IN ('assembly','bench')",
@@ -24,8 +25,9 @@ SESSION_CHECKS = {
     "ck_vna_sessions_bench_state": "purpose = 'bench' OR state NOT IN ('ready','releasing')",
     "ck_vna_sessions_bench_only": "purpose = 'bench' OR (calibrated_at IS NULL AND calibration_temps IS NULL AND "
                                   "profile_hash IS NULL AND calibration_check_id IS NULL)",
-    "ck_vna_sessions_calibrated": "calibrated_at IS NULL OR (calibration_temps IS NOT NULL AND profile_hash IS NOT NULL "
-                                  "AND calibration_check_id IS NOT NULL)",
+    "ck_vna_sessions_calibrated": "(calibrated_at IS NULL) = (calibration_temps IS NULL) AND "
+                                  "(calibrated_at IS NULL) = (profile_hash IS NULL) AND "
+                                  "(calibrated_at IS NULL) = (calibration_check_id IS NULL)",
     "ck_vna_sessions_profile_hash": "profile_hash IS NULL OR length(profile_hash) = 64",
 }
 ITEM_CHECKS = {
@@ -82,7 +84,7 @@ class VnaSessionRow(Base):
     recorded_reference: Mapped[str] = mapped_column(String(128), nullable=False, default="", server_default="")
     # Bench only: the valid calibration (СТО ФРАК-002-2026 п. 11.5) — all set together with its passed journal row.
     calibrated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    calibration_temps: Mapped[dict | None] = mapped_column(JSON)
+    calibration_temps: Mapped[dict | None] = mapped_column(JSON(none_as_null=True))   # None is SQL NULL for the CHECK
     profile_hash: Mapped[str | None] = mapped_column(String(64))
     calibration_check_id: Mapped[UUID | None] = mapped_column(
         Uuid, ForeignKey("production_vna_checks.id", ondelete="RESTRICT", name="fk_vna_sessions_calibration_check"))
@@ -289,6 +291,7 @@ class VnaSessionRepository:
             self._enqueue(row, "abort", {}, now)
 
     def expire(self, now, *, machine_id=None, session_id=None):
+        self._expire_idle_bench(now, machine_id=machine_id, session_id=session_id)
         query = select(VnaCommandRow).join(VnaSessionRow).where(
             VnaCommandRow.status == "claimed", VnaCommandRow.claimed_at < now - COMMAND_TIMEOUT,
             VnaSessionRow.state.not_in(domain.TERMINAL))
@@ -301,6 +304,20 @@ class VnaSessionRepository:
             self.expect(row, command.expected_version, command.expected_step)
             self._change(row, now, state="recovery_required", error="Ответ ВАЦ потерян; требуется остановка и восстановление")
             command.status, command.finished_at = "uncertain", now
+        self.session.flush()
+
+    def _expire_idle_bench(self, now, *, machine_id=None, session_id=None):
+        """A forgotten workplace session must not hold the instrument for ever: idle in `ready` for 12 h → aborted.
+        Nothing is queued in `ready`, so no device work is left; the operator's S2VNA state is not restored."""
+        query = select(VnaSessionRow).where(VnaSessionRow.purpose == "bench", VnaSessionRow.state == "ready",
+                                            VnaSessionRow.updated_at < now - BENCH_IDLE)
+        if machine_id is not None:
+            query = query.where(VnaSessionRow.machine_id == machine_id)
+        if session_id is not None:
+            query = query.where(VnaSessionRow.id == session_id)
+        for row in list(self.session.scalars(query)):
+            self._change(row, now, state="aborted", error="Сеанс рабочего места простоял больше 12 ч и закрыт; "
+                                                          "настройки оператора на ВАЦ не восстанавливались")
         self.session.flush()
 
     def pending(self, machine_id):
@@ -429,7 +446,9 @@ class VnaSessionRepository:
         query = select(VnaBenchItemRow).where(VnaBenchItemRow.session_id == session_id)
         if run_id is not None:
             query = query.where(VnaBenchItemRow.run_id == UUID(str(run_id)))
-        return list(self.session.scalars(query.order_by(VnaBenchItemRow.created_at, VnaBenchItemRow.connection_no)))
+        # In the order the sweeps were commanded: the command version grows with every session change.
+        query = query.join(VnaCommandRow, VnaCommandRow.id == VnaBenchItemRow.command_id)
+        return list(self.session.scalars(query.order_by(VnaCommandRow.expected_version)))
 
     def artifact(self, command_id) -> VnaArtifactRow:
         artifact = self.session.scalar(select(VnaArtifactRow).where(VnaArtifactRow.command_id == command_id))

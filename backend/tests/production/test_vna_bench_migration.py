@@ -84,6 +84,7 @@ def test_session_constraints(migrated):
                         {"state": "ready"},                                              # ready/releasing: bench only
                         {**bench, "calibrated_at": "2026-11-19 10:00:00"},               # all or nothing
                         {**bench, "profile_hash": "short"},
+                        {**bench, "profile_hash": "a" * 64},                            # NULL iff calibrated_at NULL
                         {"calibration_temps": "{}"},                                     # bench only
                         {**bench, "calibration_check_id": uuid4().hex,
                          "calibrated_at": "2026-11-19 10:00:00", "calibration_temps": "{}", "profile_hash": "a" * 64}):

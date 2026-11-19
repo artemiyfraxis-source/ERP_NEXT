@@ -393,7 +393,9 @@ def _trace(data: TwoPort):
 
 
 def _item_view(uow, repository, row, run, all_runs, items, commands):
-    rows = [it for it in items if str(it.run_id) == run["run_id"]]
+    run_rows = [it for it in items if str(it.run_id) == run["run_id"]]
+    # СИ: the latest series (a recalibration starts a new one); КБ: every attempt, linked by the VSWR rule.
+    rows = _last_group(run_rows) if run["kind"] == "instrument" else run_rows
     busy = any(c.status in ("pending", "claimed") for c in commands
                if (row.steps[c.expected_step].get("item") or {}).get("run_id") == run["run_id"]
                if c.expected_step < len(row.steps))
@@ -408,7 +410,7 @@ def _item_view(uow, repository, row, run, all_runs, items, commands):
                       position=run["product_position"], serial=None, name=run.get("task_name", ""), item=run.get("task_item", ""))
         # A «на границе» attempt asks for the next connection; record_vswr decides when the repeat series is done.
         total = max(1, len(rows) + (1 if rows and rows[-1].verdict == "border" else 0))
-    connections = [dict(no=n, status=("refused" if it.verdict is None else "failed" if it.verdict == "fail" else "passed"),
+    connections = [dict(no=n, status="failed" if it.verdict == "fail" else "passed",
                         max_vswr=it.result.get("worst_vswr", it.result.get("max_vswr")),
                         max_mhz=it.result.get("worst_mhz", it.result.get("max_vswr_mhz")), measured_at=it.created_at)
                    for n, it in enumerate(rows, start=1)]
@@ -437,7 +439,7 @@ def _item_view(uow, repository, row, run, all_runs, items, commands):
             trace = _trace(data)
         except JUDGE_ERRORS:
             trace = []
-    recorded = [it.recorded_at for it in rows if it.recorded_at is not None]
+    recorded = [it.recorded_at for it in run_rows if it.recorded_at is not None]
     unfinished = not verdict or not verdict["final"]
     refusal = _refusal(row, run, all_runs) if unfinished and not busy else None
     return dict(id=run["run_id"], version=row.version, target=target, plan=run.get("plan"), connections_total=total,
@@ -472,6 +474,20 @@ def _phases(uow, row, run, commands):
     return phases
 
 
+def _series_rows(row, run, rows, phases):
+    """The rows that count for each phase: a standard's three connections (monthly) or the whole run (bend check) under
+    one calibration; an unfinished series made under a replaced calibration is started again."""
+    current = row.calibration_check_id
+    if run["kind"] == "kit_standards":
+        counted = []
+        for key in {(p["target"], p["standard"]) for p in phases}:
+            candidates = [r for r in rows if (r.target, r.standard) == key]
+            series = [r for r in candidates if candidates and r.group_id == candidates[-1].group_id]
+            counted += _open_series(series, current, len(series) >= bench.REPEATS)
+        return counted
+    return _open_series(rows, current, any(r.result.get("check_id") for r in rows))
+
+
 def _phase_done(rows, phase):
     for it in rows:
         if it.target == phase["target"] and (phase["standard"] is None or it.standard == phase["standard"]) and (
@@ -488,19 +504,19 @@ def _check_view(uow, row, run, all_runs, items, commands):
         phases = _phases(uow, row, run, commands)
     except ProductionValidationError:
         phases = []
+    finals = [it for it in rows if it.result.get("check_id")]
+    rows = rows if finals else _series_rows(row, run, rows, phases)
     view, current = [], True
     for phase in phases:
         done = _phase_done(rows, phase)
         if done is not None:
-            status = "refused" if done.verdict is None and done.result.get("refused") else (
-                "failed" if done.verdict == "fail" else "passed")
+            status = "failed" if done.verdict == "fail" else "passed"
             text = done.result.get("result_text")
         else:
             status, text = ("running" if busy else "pending") if current else "pending", None
             current = False
         view.append(dict(key=phase["key"], label=phase["label"], status=status, connection_no=phase["connection_no"],
                          connections_total=phase["connections_total"], result_text=text))
-    finals = [it for it in rows if it.result.get("check_id")]
     finished = bool(finals)
     status = ("passed" if finals[-1].verdict == "pass" else "failed") if finished else ("running" if busy else "pending")
     refusal = None
@@ -937,7 +953,9 @@ def measure(session_id: UUID, payload: ItemInput, principal: Person, now: Now, f
             if task_norm(document, current, etk["current_revision"], CoaxRefs(refs_factory), row.created_at) != assembly["norm"]:
                 raise Refusal("other_calibration", "Норма КСВН изменилась после начала сеанса — откройте новый сеанс")
         screen = Screen.model_validate(meta.pop("screen"))
-        extra = dict(task_id=meta["task_id"], product_position=meta["product_position"]) if meta["kind"] == "assembly" else {}
+        # A new КБ item is a new decision: its first sweep never continues an older «на границе» series.
+        extra = (dict(task_id=meta["task_id"], product_position=meta["product_position"], fresh_series=True)
+                 if meta["kind"] == "assembly" else {})
         label = ("Развёртка: " + plan_card["connection_hint"]) if plan_card["connection_hint"] else "Развёртка"
         repository.append(row, bench.item_steps(_profile(row), screen, label, meta, **extra), now, error="")
     return _act(factory, session_id, principal, now, action)
@@ -952,30 +970,40 @@ def next_connection(session_id: UUID, item_id: str, payload: Version, principal:
         if run is None:
             raise KeyError("Объект сеанса не найден")
         _gates(uow, row, now, run["kind"])
-        rows = repository.items(row.id, item_id)
-        if not rows or rows[0].verdict is None:
+        rows = _last_group(repository.items(row.id, item_id))
+        if not rows:
             raise Refusal("stale", "Первое подключение ещё не оценено")
-        last = rows[-1]
+        last, head = rows[-1], {k: v for k, v in run.items() if k != "first_step"}
+        restarted = last.result.get("calibration", {}).get("check_id") != str(row.calibration_check_id)
         if run["kind"] == "instrument":
             if rows[0].verdict != "border" or len(rows) >= bench.REPEATS:
                 raise Refusal("stale", "Повтор не нужен: решение уже окончательное")
-            meta = {**bench.run_meta(run), "target": "dut", "group_id": str(last.group_id), "connection_no": len(rows) + 1}
+            group, number = (str(uuid4()), 1) if restarted else (str(last.group_id), len(rows) + 1)
+            meta = {**head, "target": "dut", "group_id": group, "connection_no": number}
             what = run["number"]
         else:
             if last.verdict != "border":
                 raise Refusal("stale", "Повтор не нужен: решение уже окончательное")
-            origin = last.result.get("repeat_of") is None
+            origin = restarted or last.result.get("repeat_of") is None
             number = 1 if origin else last.connection_no + 1
             if number > bench.REPEATS:
                 raise Refusal("stale", "Повтор уже выполнен в трёх подключениях")
-            meta = {**bench.run_meta(run), "target": "dut", "group_id": str(uuid4()) if origin else str(last.group_id),
-                    "connection_no": number, "task_id": run["task_id"], "product_position": run["product_position"]}
+            meta = {**head, "target": "dut", "group_id": str(uuid4()) if origin else str(last.group_id),
+                    "connection_no": number, "task_id": run["task_id"], "product_position": run["product_position"],
+                    "fresh_series": restarted}
             what = f"изделие № {run['product_position']}"
-        meta.pop("first_step", None)
+        label = bench.repeat_label(number, what)
+        if restarted:
+            label = ("Калибровка сменилась — серия повтора начата заново с подключения 1 (одна калибровка на решение). "
+                     + label)
         hash_ = bench.last_screen_hash([s for _, s in _run_steps(row, item_id)])
-        repository.append(row, [bench.capture_step(_profile(row), hash_, bench.repeat_label(len(rows) + 1, what), meta,
-                                                   human=False)], now, error="")
+        repository.append(row, [bench.step("device_status", item=head),
+                                bench.capture_step(_profile(row), hash_, label, meta, human=False)], now, error="")
     return _act(factory, session_id, principal, now, action)
+
+
+def _last_group(rows):
+    return [r for r in rows if r.group_id == rows[-1].group_id] if rows else []
 
 
 def _instrument_data(uow, run, raw: TwoPort):
@@ -991,7 +1019,7 @@ def _instrument_data(uow, run, raw: TwoPort):
     return bench.adapter_data(measured, top, sides["left"], sides["right"]), top
 
 
-def _instrument_file(uow, row, run, item_row_or_none, raw, command, when, temperatures):
+def _instrument_file(uow, row, run, item_row_or_none, raw, command, when, temperatures, calibration):
     """15.1: «Замер ВАЦ S50180, АКМ, <дата>, <СИ.…>.s2p» — rebuilt identically from the stored sweep."""
     data, top = _instrument_data(uow, run, raw)
     snapshot = row.snapshot
@@ -1003,7 +1031,8 @@ def _instrument_file(uow, row, run, item_row_or_none, raw, command, when, temper
                 f"Temperatures VNA={'/'.join(str(t) for t in temperatures['vna_c'])}; ACM={temperatures['acm_c']} degC",
                 f"Chain: {run['chain']}; stored port 1 faces VNA port 1",
                 f"Operator={snapshot['operator']['name']}; tool=ERP bench session {row.id}; "
-                f"calibration={as_utc(row.calibrated_at).isoformat() if row.calibrated_at else ''}; load_check=pass",
+                f"calibration={calibration['calibrated_at'] or ''}; check={calibration['check_id'] or ''}; "
+                f"load_check={calibration['load_check']}",
                 f"Raw=ERP command {command['id']}; captured={as_utc(when).isoformat()}; deembedding=T-matrix; "
                 f"fmax_Hz={top:g}; connection={connection_no}"]
     return file_name, write_touchstone(data, comments).encode(), data
@@ -1018,9 +1047,9 @@ def record(session_id: UUID, item_id: str, payload: Version, principal: Person, 
         run = next((r for r in _runs(row) if r["run_id"] == item_id and r["kind"] in ITEMS), None)
         if run is None:
             raise KeyError("Объект сеанса не найден")
-        rows = [it for it in repository.items(row.id, item_id) if it.verdict is not None]
         if run["kind"] == "assembly":
             return
+        rows = _last_group(repository.items(row.id, item_id))
         if not rows or (rows[0].verdict == "border" and len(rows) < bench.REPEATS):
             raise Refusal("not_final", "Решение ещё не окончательное — выполните все подключения")
         card, _ = _card(uow, UUID(run["instrument_id"]))
@@ -1031,7 +1060,7 @@ def record(session_id: UUID, item_id: str, payload: Version, principal: Person, 
             artifact = repository.artifact(it.command_id)
             raw = read_touchstone(bytes(artifact.content), artifact.file_name)
             name, content, _ = _instrument_file(uow, row, run, it, raw, dict(id=str(it.command_id)), it.created_at,
-                                                it.result["temperatures"])
+                                                it.result["temperatures"], it.result["calibration"])
             file = InstrumentFile(id=uuid4(), instrument_id=card.id, kind=InstrumentFileKind.OTHER, file_name=name,
                                   size=len(content), content=content, uploaded_at=as_utc(now), uploaded_by=actor.id,
                                   uploaded_by_name=actor.name)
@@ -1120,12 +1149,16 @@ def check_next(session_id: UUID, check_id: str, payload: Version, principal: Per
             phases = _phases(uow, row, run, commands)
         except ProductionValidationError as error:
             raise Refusal("kit_choice", str(error)) from error
-        pending = [p for p in phases if _phase_done(rows, p) is None]
+        if any(it.result.get("check_id") for it in rows):
+            raise Refusal("stale", "Проверка уже завершена")
+        counted = _series_rows(row, run, rows, phases)
+        pending = [p for p in phases if _phase_done(counted, p) is None]
         if not phases or not pending:
             raise Refusal("stale", "Проверка не ожидает подключения")
         phase, profile, meta = pending[0], _profile(row), {k: v for k, v in run.items() if k != "first_step"}
         hash_ = bench.last_screen_hash([s for _, s in _run_steps(row, check_id)])
-        group = str(uuid5(UUID(check_id), f"{phase['target']}:{phase['standard']}"))
+        # One group per standard and calibration: a recalibrated series gets a new group from connection 1.
+        group = str(uuid5(UUID(check_id), f"{phase['target']}:{phase['standard']}:{row.calibration_check_id}"))
         item = bench.connection(meta, phase["target"], phase["connection_no"] or 1, group,
                                 **({"standard": phase["standard"], "port": phase["port"], "definition": phase["definition"]}
                                    if run["kind"] == "kit_standards" else {}))
@@ -1137,6 +1170,7 @@ def check_next(session_id: UUID, check_id: str, payload: Version, principal: Per
                      bench.step("store_memory", dict(screen_hash=hash_, traces=memorized), item=meta)]
         else:
             steps = [bench.capture_step(profile, hash_, phase["label"], item, human=False)]
+        steps.insert(0, bench.step("device_status", item=meta))   # the same ACM, «Кор», ±1 °C before each phase
         repository.append(row, steps, now, error="")
     return _act(factory, session_id, principal, now, action)
 
@@ -1161,6 +1195,11 @@ def complete_command(uow, row, command_id, payload, now):
         message = str(error.args[0]) if isinstance(error, KeyError) and error.args else str(error)
         uncalibrated = bench.UNCALIBRATED if item.get("kind") in ("calibration", "load") else {}
         decision = dict(tail=[], error=message or "Замер не принят", **uncalibrated)
+        if command.op == "capture":
+            _refused(uow, row, command, item, decision["error"], now)
+    if command.op == "capture":
+        if note := _capture_matings(uow, row, command, item, now):
+            decision["error"] = "; ".join(filter(None, (decision.get("error"), note)))
     repository.proceed(row, now, **decision)
 
 
@@ -1192,11 +1231,91 @@ def _judge(uow, repository, row, command, item, now) -> dict:
     refusal = (bench.calibration_refusal(row.calibrated_at, now)
                or bench.temperature_refusal(row.calibration_temps, temperatures))
     if refusal:
-        repository.add_item(row, command, artifact.id, item, None, dict(refused=refusal, temperatures=temperatures), now)
+        _refused(uow, row, command, item, refusal, now)
         return dict(tail=[], error=refusal, **bench.UNCALIBRATED)
     judge = {"instrument": _instrument, "assembly": _assembly, "flex": _flex, "control_standard": _control,
              "kit_standards": _kit}[kind]
     return judge(uow, repository, row, command, artifact, item, data, now)
+
+
+def _calibration_ref(row) -> dict:
+    """The calibration a sweep was judged under — kept with the row: the card file and a repeat series use this one,
+    never whatever calibration the session holds later."""
+    return dict(check_id=str(row.calibration_check_id) if row.calibration_check_id else None,
+                calibrated_at=as_utc(row.calibrated_at).isoformat() if row.calibrated_at else None, load_check="pass")
+
+
+def _add(repository, row, command, artifact_id, item, verdict, result, now, **values):
+    if item["kind"] != "load":
+        result = {**result, "calibration": _calibration_ref(row)}
+    return repository.add_item(row, command, artifact_id, item, verdict, result, now, **values)
+
+
+def _same_calibration(rows) -> list:
+    """The rows of a series made under the calibration of its latest row."""
+    if not rows:
+        return []
+    check = rows[-1].result.get("calibration", {}).get("check_id")
+    return [r for r in rows if r.result.get("calibration", {}).get("check_id") == check]
+
+
+def _open_series(rows, current_check, complete: bool) -> list:
+    """A finished series stays as it is; an unfinished one continues only under the current calibration — after a
+    recalibration it starts again (СТО п. 11.5, 12.4: the connections of one decision share one calibration)."""
+    series = _same_calibration(rows)
+    if complete or not series:
+        return series
+    check = series[-1].result.get("calibration", {}).get("check_id")
+    return series if current_check is not None and check == str(current_check) else []
+
+
+def _capture_entries(row, item) -> tuple[str, list[dict]]:
+    """Every physical mating of a sweep (10.7), judged or refused: the connector was mated either way."""
+    cables = row.snapshot["cables"]
+    kind, target = item["kind"], item.get("target")
+
+    def cable(index, mating="measurement"):
+        return dict(instrument_id=cables[index]["instrument_id"], end=cables[index]["end"], delta=1, kind=mating)
+
+    def card(instrument_id, *ends):
+        return [dict(instrument_id=instrument_id, end=end, delta=1, kind="measurement") for end in ends]
+    if kind == "load":
+        return "calibration", [cable(0 if target == "port1" else 1, "calibration")]
+    if kind == "instrument":
+        return "measurement", _instrument_matings(row, item)
+    if kind == "assembly":
+        return "measurement", [cable(0), cable(1)]
+    if kind == "control_standard":
+        return "measurement", card(item["instrument_id"], "A", "B") + [cable(0), cable(1)]
+    if kind == "flex":
+        if target in ("port1", "port2"):
+            return "measurement", [cable(0 if target == "port1" else 1)]
+        return "measurement", [cable(0), cable(1)] if target == "thru" else []   # the bent thru stays connected
+    if kind == "kit_standards":
+        if target == "thru":
+            return "measurement", card(item["instrument_id"], "A", "B") + [cable(0), cable(1)]
+        return "measurement", card(item["instrument_id"], "A") + [cable(0 if target == "port1" else 1)]
+    return "measurement", []
+
+
+def _capture_matings(uow, row, command, item, now) -> str:
+    kind, entries = _capture_entries(row, item)
+    try:
+        with uow.session.begin_nested():
+            _matings(uow, f"vna-{kind}-{command.id}", entries, row, now)
+    except JUDGE_ERRORS as error:
+        return f"Сочленения не записаны: {error}"
+    return ""
+
+
+def _refused(uow, row, command, item, reason, now):
+    """A refused sweep holds no connection number and decides nothing: it goes to the audit journal only, and the
+    operator takes the same connection again."""
+    uow.audit.add(AuditEvent(id=uuid4(), aggregate_id=row.id, event_type="production.vna_bench_capture_refused",
+                             actor=_actor(row.snapshot), occurred_at=now,
+                             details={"command_id": str(command.id), "run_id": item.get("run_id"), "kind": item.get("kind"),
+                                      "target": item.get("target"), "connection_no": item.get("connection_no"),
+                                      "reason": reason}))
 
 
 def _matings(uow, source, entries, row, now):
@@ -1263,7 +1382,7 @@ def _load(uow, repository, row, command, artifact, item, data, now):
         raise ProductionValidationError(refusal)
     port = 1 if item["target"] == "port1" else 2
     value = load_vswr(data, port)
-    repository.add_item(row, command, artifact.id, item, "pass" if value <= LOAD_LIMIT else "fail",
+    _add(repository, row, command, artifact.id, item, "pass" if value <= LOAD_LIMIT else "fail",
                         dict(vswr=journal_number(value), limit=LOAD_LIMIT, temperatures=temperatures), now)
     if port == 1:
         return {}
@@ -1305,19 +1424,20 @@ def _instrument(uow, repository, row, command, artifact, item, data, now):
     after the 12.4 repeat. Matings are recorded at the sweep (10.7); the file goes to the card on «Записать»."""
     temperatures = command.result["temperatures"]
     name, content, result_data = _instrument_file(uow, row, item, None, data, dict(id=str(command.id), **item), now,
-                                                  temperatures)
+                                                  temperatures, _calibration_ref(row))
     snapshot = row.snapshot
     model = snapshot.get("vna_model") or bench.VNA_MODEL
     card, rf = _card(uow, UUID(item["instrument_id"]))
     current = bench.characterize(name, content, card.id, snapshot["operator"], now)
     repeats = []
     for previous in repository.items(row.id, item["run_id"]):
-        if previous.group_id != UUID(item["group_id"]) or previous.verdict is None:
+        if previous.group_id != UUID(item["group_id"]):
             continue
         stored = repository.artifact(previous.command_id)
         raw = read_touchstone(bytes(stored.content), stored.file_name)
         p_name, p_content, _ = _instrument_file(uow, row, item, previous, raw, dict(id=str(previous.command_id)),
-                                                previous.created_at, previous.result["temperatures"])
+                                                previous.created_at, previous.result["temperatures"],
+                                                previous.result["calibration"])
         repeats.append(bench.characterize(p_name, p_content, card.id, snapshot["operator"], previous.created_at))
     judged = application(current, tuple(p.series for p in rf.interfaces), norm_for(card.name, card.doc_designation or "", rf),
                          uncertainty=uncertainty_for(model), loss_uncertainty=loss_uncertainty_for(model),
@@ -1325,11 +1445,10 @@ def _instrument(uow, repository, row, command, artifact, item, data, now):
     verdict = bench.verdict_of(judged)
     totals = summary(result_data)
     worst_vswr, worst_mhz = _peak(result_data)
-    repository.add_item(row, command, artifact.id, item, verdict, dict(
+    _add(repository, row, command, artifact.id, item, verdict, dict(
         file_name=name, fmax_hz=item["fmax_hz"], temperatures=temperatures, worst_vswr=worst_vswr, worst_mhz=worst_mhz,
         vswr1=journal_number(totals.vswr1), vswr2=journal_number(totals.vswr2), loss_db=journal_number(totals.loss_db),
         **bench.application_view(judged)), now)
-    _matings(uow, f"vna-measurement-{command.id}", _instrument_matings(row, item), row, now)
     return {}
 
 
@@ -1367,16 +1486,13 @@ def _assembly(uow, repository, row, command, artifact, item, data, now):
     measurement = record_vswr(RecordVswrCommand(
         task_id=UUID(item["task_id"]), position=item["product_position"], instrument_id=row.instrument_id, file_name="",
         content=b"", files=files, port_mapping={"1": "A", "2": "B"}, norm=row.snapshot["assembly"]["norm"],
-        actor=_actor(row.snapshot), now=now), uow, manage_transaction=False)
-    repository.add_item(row, command, artifact.id, item, measurement.verdict.value, dict(
+        actor=_actor(row.snapshot), now=now, continue_series=not item.get("fresh_series")), uow, manage_transaction=False)
+    _add(repository, row, command, artifact.id, item, measurement.verdict.value, dict(
         measurement_id=str(measurement.id), attempt=measurement.attempt, max_vswr=float(measurement.max_vswr),
         max_vswr_mhz=float(measurement.max_vswr_mhz), reason=measurement.verdict_reason,
         repeat_of=str(measurement.repeat_of) if measurement.repeat_of else None,
         uncertainty=float(measurement.uncertainty) if measurement.uncertainty is not None else None,
         temperatures=result["temperatures"]), now, vswr_measurement_id=measurement.id)
-    _matings(uow, f"vna-measurement-{command.id}",
-             [dict(instrument_id=c["instrument_id"], end=c["end"], delta=1, kind="measurement")
-              for c in row.snapshot["cables"]], row, now)
     return {}
 
 
@@ -1384,21 +1500,24 @@ def _flex(uow, repository, row, command, artifact, item, data, now):
     target, temperatures = item["target"], command.result["temperatures"]
     if target in ("port1", "port2"):
         value = load_vswr(data, 1 if target == "port1" else 2)
-        repository.add_item(row, command, artifact.id, item, "pass" if value <= LOAD_LIMIT else "fail",
+        _add(repository, row, command, artifact.id, item, "pass" if value <= LOAD_LIMIT else "fail",
                             dict(vswr=journal_number(value), limit=LOAD_LIMIT, temperatures=temperatures,
                                  result_text=f"КСВН {number_text(value, 4)} ≤ 1,06"), now)
         return {}
     if target == "thru":
-        repository.add_item(row, command, artifact.id, item, None, dict(temperatures=temperatures), now)
+        loss = summary(data).loss_db
+        _add(repository, row, command, artifact.id, item, None, dict(
+            temperatures=temperatures, result_text=f"перемычка запомнена: потери до {number_text(loss, 3)} дБ"), now)
         return {}
-    done = {i.target: i for i in repository.items(row.id, item["run_id"])}
+    done = {i.target: i for i in repository.items(row.id, item["run_id"])
+            if i.result.get("calibration", {}).get("check_id") == str(row.calibration_check_id)}
     before_artifact = repository.artifact(done["thru"].command_id)
     bend = flex(read_touchstone(bytes(before_artifact.content), before_artifact.file_name), data)
     record_row = _journal(uow, repository, row, command, "flex", dict(
         s21_dev_db=bend.s21_dev_db, vswr_dev=bend.vswr_dev, load_p1_vswr=done["port1"].result["vswr"],
         load_p2_vswr=done["port2"].result["vswr"]), temperatures, now)
     text = f"S21 {number_text(record_row.s21_dev_db, 3)} дБ ≤ 0,05; КСВН ±{number_text(record_row.vswr_dev, 4)}"
-    repository.add_item(row, command, artifact.id, item, "pass" if record_row.passed else "fail",
+    _add(repository, row, command, artifact.id, item, "pass" if record_row.passed else "fail",
                         dict(s21_dev_db=record_row.s21_dev_db, vswr_dev=record_row.vswr_dev, check_id=str(record_row.id),
                              temperatures=temperatures, result_text=text), now)
     return {} if record_row.passed else dict(error="Проверка на изгиб не пройдена — замените кабель (СТО п. 10.6)")
@@ -1415,21 +1534,30 @@ def _control(uow, repository, row, command, artifact, item, data, now):
         vswr_limit=check.vswr_limit, s21_dev_db=check.s21_dev_db, s21_limit_db=check.s21_limit_db), temperatures, now)
     text = (f"КСВН {number_text(record_row.vswr_dev, 4)} при U {number_text(record_row.vswr_limit, 4)}; "
             f"S21 {number_text(record_row.s21_dev_db, 3)} дБ при U {number_text(record_row.s21_limit_db, 2)} дБ")
-    repository.add_item(row, command, artifact.id, item, "pass" if record_row.passed else "fail",
+    _add(repository, row, command, artifact.id, item, "pass" if record_row.passed else "fail",
                         dict(check_id=str(record_row.id), temperatures=temperatures, result_text=text), now)
-    _matings(uow, f"vna-measurement-{command.id}",
-             [dict(instrument_id=item["instrument_id"], end=end, delta=1, kind="measurement") for end in ("A", "B")]
-             + [dict(instrument_id=c["instrument_id"], end=c["end"], delta=1, kind="measurement")
-                for c in row.snapshot["cables"]], row, now)
     return {} if record_row.passed else dict(
         error="Контрольная мера вне U — замеры остановить, проверить калибровку и кабели (СТО разд. 14)")
+
+
+def _kit_text(kind: str, check) -> str:
+    """One connection of a standard in words: «|Г| 0,012 ≤ 0,035 — годен»."""
+    symbol, unit = {"LOAD": ("|Г|", ""), "THRU": ("ΔS21", " дБ")}.get(kind, ("Δ отражения", " дБ"))
+    verdict = "годен" if check.deviation <= check.limit + 1e-12 else "не годен"
+    if check.ratio == 0:   # no deviation at any point: the judging point (and its limit) is not defined
+        return f"{symbol} {number_text(check.deviation, 3)}{unit} — {verdict}"
+    return f"{symbol} {number_text(check.deviation, 3)} ≤ {number_text(check.limit, 3)}{unit} — {verdict}"
 
 
 def _kit(uow, repository, row, command, artifact, item, data, now):
     """Разд. 14, monthly (МП п. 10.6, метод 4): each standard in three connections; the worst one decides."""
     temperatures = command.result["temperatures"]
+    standard = bench.kit_standard(item["definition"])
+    single = judge_kit_standard(standard, item["port"], [data], KitTolerance())
+    connection_text = _kit_text(item["standard"], single)
     if item["connection_no"] < bench.REPEATS:
-        repository.add_item(row, command, artifact.id, item, None, dict(temperatures=temperatures), now)
+        _add(repository, row, command, artifact.id, item, None, dict(temperatures=temperatures,
+                                                                     result_text=connection_text), now)
         return {}
     group = [i for i in repository.items(row.id, item["run_id"]) if i.group_id == UUID(item["group_id"])]
     sweeps = []
@@ -1437,14 +1565,16 @@ def _kit(uow, repository, row, command, artifact, item, data, now):
         stored = repository.artifact(previous.command_id)
         sweeps.append(read_touchstone(bytes(stored.content), stored.file_name))
     sweeps.append(data)
-    check = judge_kit_standard(bench.kit_standard(item["definition"]), item["port"], sweeps, KitTolerance())
+    check = judge_kit_standard(standard, item["port"], sweeps, KitTolerance())
     ratio = journal_number(check.ratio)
     label = item["definition"].get("label") or item["standard"]
-    judged = [i for i in repository.items(row.id, item["run_id"]) if i.connection_no == bench.REPEATS]
+    judged = [i for i in repository.items(row.id, item["run_id"]) if i.connection_no == bench.REPEATS
+              and i.result.get("calibration", {}).get("check_id") == str(row.calibration_check_id)]
     result = dict(ratio=ratio, deviation=journal_number(check.deviation), limit=journal_number(check.limit), label=label,
-                  temperatures=temperatures, result_text=f"{number_text(ratio, 2)} допуска")
+                  temperatures=temperatures,
+                  result_text=f"{connection_text}; по трём подключениям {number_text(ratio, 2)} допуска")
     if item["standard"] != "THRU":
-        repository.add_item(row, command, artifact.id, item, "pass" if ratio <= 1 else "fail", result, now)
+        _add(repository, row, command, artifact.id, item, "pass" if ratio <= 1 else "fail", result, now)
         return {}
     ratios = [(i.result["label"], i.target, i.result["ratio"]) for i in judged] + [(label, "thru", ratio)]
     note = "Доля допуска √(U²+δ²) по мерам: " + "; ".join(
@@ -1452,7 +1582,7 @@ def _kit(uow, repository, row, command, artifact, item, data, now):
     record_row = _journal(uow, repository, row, command, "kit_standards",
                           dict(standard_inventory=item["number"], kit_ratio=max(v for _, _, v in ratios)),
                           temperatures, now, note=note)
-    repository.add_item(row, command, artifact.id, item, "pass" if ratio <= 1 else "fail",
+    _add(repository, row, command, artifact.id, item, "pass" if ratio <= 1 else "fail",
                         {**result, "check_id": str(record_row.id),
                          "result_text": f"худшая доля допуска {number_text(record_row.kit_ratio, 2)} (≤ 1 — годен)"}, now)
     return {} if record_row.passed else dict(error="Меры набора вне допуска — замеры остановить до выяснения причины "

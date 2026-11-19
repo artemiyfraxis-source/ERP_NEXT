@@ -40,8 +40,9 @@ SESSION_CHECKS = {
     "ck_vna_sessions_bench_state": "purpose = 'bench' OR state NOT IN ('ready','releasing')",
     "ck_vna_sessions_bench_only": "purpose = 'bench' OR (calibrated_at IS NULL AND calibration_temps IS NULL AND "
                                   "profile_hash IS NULL AND calibration_check_id IS NULL)",
-    "ck_vna_sessions_calibrated": "calibrated_at IS NULL OR (calibration_temps IS NOT NULL AND profile_hash IS NOT NULL "
-                                  "AND calibration_check_id IS NOT NULL)",
+    "ck_vna_sessions_calibrated": "(calibrated_at IS NULL) = (calibration_temps IS NULL) AND "
+                                  "(calibrated_at IS NULL) = (profile_hash IS NULL) AND "
+                                  "(calibrated_at IS NULL) = (calibration_check_id IS NULL)",
     "ck_vna_sessions_profile_hash": "profile_hash IS NULL OR length(profile_hash) = 64",
 }
 ITEM_CHECKS = {
