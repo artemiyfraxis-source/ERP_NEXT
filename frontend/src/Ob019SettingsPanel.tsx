@@ -422,6 +422,9 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     setStatus((current) => ({ ...current, ...Object.fromEntries(keys.map((key) => [key, { kind: "queued", value: values[key] }])) }));
   }
 
+  const writePlanRef = useRef(writePlan);
+  writePlanRef.current = writePlan;
+
   async function pick(next: PlanQuery | null) {
     query.current = next;
     setPlan(null);
@@ -433,7 +436,8 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
       const answer = await loadPlan(next);
       if (query.current !== next) return;
       setPlan(answer);
-      await writePlan(answer);
+      // The latest render's writePlan: open/inFlight/queue as they are now, not as they were when the pick started.
+      await writePlanRef.current(answer);
     } catch (reason) {
       if (query.current === next) setMessage({ tone: "danger", text: failureText(reason, "Не удалось посчитать значения") });
     } finally {
