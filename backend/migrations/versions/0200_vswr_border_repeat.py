@@ -26,7 +26,7 @@ NEW_AUTO = (
     " OR (verdict = 'fail' AND max_vswr > norm_vswr_max)"
     " OR (verdict = 'border' AND uncertainty IS NOT NULL AND abs(max_vswr - norm_vswr_max) <= uncertainty + 0.000001)))"
     " OR (repeat_of IS NOT NULL AND uncertainty IS NOT NULL AND ((verdict = 'fail' AND max_vswr > norm_vswr_max + uncertainty - 0.000001)"
-    " OR (verdict IN ('pass', 'border') AND max_vswr <= norm_vswr_max + uncertainty + 0.000001)))))"
+    " OR ((verdict = 'pass' OR verdict = 'border') AND max_vswr <= norm_vswr_max + uncertainty + 0.000001)))))"
 )
 
 

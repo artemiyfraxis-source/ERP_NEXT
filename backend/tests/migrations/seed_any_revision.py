@@ -182,8 +182,8 @@ def _row(table: Table, index: int, parents: dict[str, list[Any]], lots: list[Any
         if _database_assigns(table, column, dialect):
             continue
         name = column.name
-        if table.name == "warehouse_scan_jobs" and name == "capture_settings":
-            # Reflection forgets JSON(none_as_null=True); omission keeps SQL NULL on scan rows.
+        if (table.name, name) in {("warehouse_scan_jobs", "capture_settings"), ("production_vswr_measurements", "repeat_set")}:
+            # Reflection forgets JSON(none_as_null=True); omission keeps SQL NULL (a repeat set needs its repeat, 0200).
             continue
         if (table.name, name) in _OVER_CHECK:
             row[name] = _OVER_CHECK[(table.name, name)]
