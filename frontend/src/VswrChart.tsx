@@ -13,6 +13,10 @@ export interface VswrChartProps {
   band?: readonly [number | null, number | null] | null;
   maxVswr?: number | null;
   maxMhz?: number | null;
+  /** Расширенная неопределённость U при норме: полоса «норма ± U» (СТО ФРАК-002, 13.3); null — не рисуется. */
+  uncertainty?: number | null;
+  /** Мелкая шкала для приборных норм около 1,06 (ВАЦ — рабочее место): верх — по размаху над 1, с шагом 0,01. */
+  fineScale?: boolean;
   width?: number;
   height?: number;
 }
@@ -50,6 +54,7 @@ export function vswrChartSvg(props: VswrChartProps): string {
   const pad = bandFrom !== null && bandTo !== null && bandTo > bandFrom ? (bandTo - bandFrom) / 2 : null;
   const trace = pad === null ? finite : finite.filter((point) => point.mhz >= (bandFrom as number) - pad && point.mhz <= (bandTo as number) + pad);
   const norm = props.normMax;
+  const u = norm !== null && props.uncertainty != null && props.uncertainty > 0 ? props.uncertainty : null;
   const label = `График КСВН по частоте${norm !== null ? `, норма не более ${text(norm)}` : ""}`;
   if (!trace.length) {
     return `<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${label}" viewBox="0 0 ${width} ${height}" width="100%" ${FONT}>` +
@@ -58,9 +63,11 @@ export function vswrChartSvg(props: VswrChartProps): string {
   const xs = [...trace.map((point) => point.mhz), ...(bandFrom !== null ? [bandFrom] : []), ...(bandTo !== null ? [bandTo] : [])];
   const xMin = Math.min(...xs);
   const xMax = Math.max(...xs) === xMin ? xMin + 1 : Math.max(...xs);
-  const yTop = Math.max(...trace.map((point) => point.vswr), norm ?? 0, props.maxVswr ?? 0);
+  const yTop = Math.max(...trace.map((point) => point.vswr), norm !== null ? norm + (u ?? 0) : 0, props.maxVswr ?? 0);
   const yMin = 1;
-  const yMax = Math.max(yMin + 0.5, Math.ceil(yTop * 1.12 * 10) / 10);
+  const yMax = props.fineScale
+    ? Math.max(yMin + 0.05, Math.ceil((yMin + (yTop - yMin) * 1.3) * 100 - 1e-9) / 100)
+    : Math.max(yMin + 0.5, Math.ceil(yTop * 1.12 * 10) / 10);
   const plotW = width - left - right;
   const plotH = height - top - bottom;
   const px = (mhz: number) => left + ((mhz - xMin) / (xMax - xMin)) * plotW;
@@ -83,11 +90,20 @@ export function vswrChartSvg(props: VswrChartProps): string {
   for (const edge of [bandFrom, bandTo]) {
     if (edge !== null) parts.push(`<line x1="${esc(px(edge))}" x2="${esc(px(edge))}" y1="${top}" y2="${top + plotH}" stroke="#555" stroke-width="1" stroke-dasharray="5 3"/>`);
   }
+  if (norm !== null && u !== null) {
+    const yHigh = py(norm + u);
+    const yLow = py(Math.max(yMin, norm - u));
+    parts.push(`<rect x="${left}" y="${esc(yHigh)}" width="${plotW}" height="${esc(yLow - yHigh)}" fill="#f4d7d7"/>`,
+      `<text x="${left + 6}" y="${esc(yHigh - 4)}" font-size="11" fill="${RED}">Норма ± U ${text(u, 3)}</text>`);
+  }
   parts.push(`<polyline fill="none" stroke="#000" stroke-width="1.5" stroke-linejoin="round" points="${trace.map((point) => `${esc(px(point.mhz))},${esc(py(point.vswr))}`).join(" ")}"/>`);
   if (norm !== null) {
     const y = py(norm);
     parts.push(`<line x1="${left}" x2="${left + plotW}" y1="${esc(y)}" y2="${esc(y)}" stroke="${RED}" stroke-width="2"/>`,
-      `<text x="${left + plotW - 4}" y="${esc(y - 5)}" text-anchor="end" font-size="12" font-weight="bold" fill="${RED}">Норма ≤ ${text(norm)}</text>`);
+      props.fineScale
+        // Мелкая шкала: подпись нормы слева под линией, чтобы не спорить с отметкой максимума справа.
+        ? `<text x="${left + 6}" y="${esc(y + 14)}" font-size="12" font-weight="bold" fill="${RED}">Норма ≤ ${text(norm, 3)}</text>`
+        : `<text x="${left + plotW - 4}" y="${esc(y - 5)}" text-anchor="end" font-size="12" font-weight="bold" fill="${RED}">Норма ≤ ${text(norm)}</text>`);
   }
   if (props.maxVswr != null && props.maxMhz != null) {
     const x = px(props.maxMhz);
@@ -95,7 +111,7 @@ export function vswrChartSvg(props: VswrChartProps): string {
     const anchor = x > left + plotW * 0.7 ? "end" : "start";
     const dx = anchor === "end" ? -8 : 8;
     parts.push(`<circle cx="${esc(x)}" cy="${esc(y)}" r="5" fill="#fff" stroke="#000" stroke-width="2"/>`,
-      `<text x="${esc(x + dx)}" y="${esc(Math.max(y - 8, top + 12))}" text-anchor="${anchor}" font-size="12" font-weight="bold" fill="#000" stroke="#fff" stroke-width="4" paint-order="stroke">Максимум ${text(props.maxVswr)} на ${text(props.maxMhz, 1)} МГц</text>`);
+      `<text x="${esc(x + dx)}" y="${esc(Math.max(y - 8, top + 12))}" text-anchor="${anchor}" font-size="12" font-weight="bold" fill="#000" stroke="#fff" stroke-width="4" paint-order="stroke">Максимум ${text(props.maxVswr, props.fineScale ? 3 : 2)} на ${text(props.maxMhz, 1)} МГц</text>`);
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${label}" viewBox="0 0 ${width} ${height}" width="100%" ${FONT}>${parts.join("")}</svg>`;
 }
