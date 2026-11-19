@@ -24,7 +24,8 @@ from app.modules.techcards.etk_read import issued_card_for_item, pinned_card
 from app.modules.techcards.infrastructure import ProjectTechcardRow, SqlAlchemyTechcardRepository
 from app.modules.warehouse.devices import PrinterRow, printer_online
 from app.modules.warehouse.label_jobs import (
-    JobFinished, LabelJobRow, add_marking_job, cancel_pending_marking, expire_marking, marking_halts, pending_marking_by_printer,
+    JobFinished, LabelJobRow, add_marking_job, ancestor_sequence, cancel_pending_marking, expire_marking, marking_halts,
+    pending_marking_by_printer, reprint_tree,
 )
 from app.modules.warehouse.marking_profiles import MarkingBatchRow, MarkingBindingRow, MarkingProfileRow
 from app.modules.warehouse.marking_render import Geometry, halves, render
@@ -763,15 +764,31 @@ def reprint_selection(batch, jobs, payload):
     return chosen, rows
 
 
-def reprint_not_in_flight(session, original, chosen):
-    """Two reprints of the same labels must not both print (a duplicate serial): while an earlier reprint batch of this
-    one still has a label waiting, taken or unresolved, the same labels are refused. Its finished labels free them."""
-    picked = set(chosen)
-    for other in session.scalars(select(MarkingBatchRow).where(MarkingBatchRow.reprint_of == original.id)):
-        sources = ((other.manifest or {}).get("reprint") or {}).get("sequences") or []
+def reprint_root(session, batch):
+    """The first batch of a reprint chain (reprint of a reprint … of it)."""
+    seen = {batch.id}
+    while batch.reprint_of is not None:
+        parent = session.get(MarkingBatchRow, batch.reprint_of)
+        if parent is None or parent.id in seen:
+            break
+        seen.add(parent.id)
+        batch = parent
+    return batch
+
+
+def reprint_not_in_flight(session, root, original, chosen):
+    """Two reprints of the same labels must not both print (a duplicate serial). The whole chain counts — a reprint of
+    a reprint prints the root's label too: while any other batch below the root still has that label waiting, taken or
+    unresolved, it is refused. Finished labels free it. The caller holds the root's row lock."""
+    tree = reprint_tree(session, root)
+    picked = {ancestor_sequence(tree, original, sequence, root.id): sequence for sequence in chosen}
+    for other in tree.values():
+        if other.id == original.id:
+            continue  # its own waiting labels are refused by reprint_selection
         open_jobs = session.scalars(select(LabelJobRow.sequence).where(LabelJobRow.batch_id == other.id,
             LabelJobRow.status.in_(("pending", "taken", "unknown"))))
-        busy = sorted({sources[index - 1] for index in open_jobs if 0 < index <= len(sources)} & picked)
+        busy = sorted(picked[source] for source in {ancestor_sequence(tree, other, index, root.id) for index in open_jobs}
+                      if source in picked)
         if busy:
             raise ConcurrentProductionUpdate(f"Этикетка №{busy[0]} уже перепечатывается другой партией — дождитесь её печати "
                                              "или отмените оставшиеся в ней")
@@ -796,21 +813,31 @@ def reprint_labels(batch_id: UUID, payload: ReprintInput, principal: PrintUser, 
     rendered with the profile's current geometry from the stored texts. Serials are reused, none issued."""
     def run():
         fingerprint = digest({"reprint": str(batch_id), **payload.model_dump(mode="json")})
-        with factory() as uow:
+        def replay(uow):
             old = uow.session.scalar(select(MarkingBatchRow).where(MarkingBatchRow.created_by == principal.actor.id,
                 MarkingBatchRow.idempotency_key == payload.idempotency_key))
-            if old:
-                batch_access(old, principal, uow)
-                if old.fingerprint != fingerprint:
-                    raise ConcurrentProductionUpdate("Ключ запроса уже использован")
-                return batch_view(old, uow.session, now)
-            # The original batch row serializes reprints of it (PostgreSQL; SQLite writes one at a time anyway).
-            original = uow.session.scalar(select(MarkingBatchRow).where(MarkingBatchRow.id == batch_id).with_for_update())
+            if old is None:
+                return None
+            batch_access(old, principal, uow)
+            if old.fingerprint != fingerprint:
+                raise ConcurrentProductionUpdate("Ключ запроса уже использован")
+            return batch_view(old, uow.session, now)
+
+        with factory() as uow:
+            if (result := replay(uow)) is not None:
+                return result
+            original = uow.session.get(MarkingBatchRow, batch_id)
             batch_access(original, principal, uow)
+            # The root batch row of the reprint chain serializes every reprint in it (PostgreSQL; SQLite writes one at
+            # a time anyway). A retry with the same key that waited for the lock answers the batch the first one made.
+            root = reprint_root(uow.session, original)
+            uow.session.execute(select(MarkingBatchRow.id).where(MarkingBatchRow.id == root.id).with_for_update())
+            if (result := replay(uow)) is not None:
+                return result
             expire_marking(uow.session, now)
             jobs = list(uow.session.scalars(select(LabelJobRow).where(LabelJobRow.batch_id == batch_id)))
             chosen, rows = reprint_selection(original, jobs, payload)
-            reprint_not_in_flight(uow.session, original, chosen)
+            reprint_not_in_flight(uow.session, root, original, chosen)
             reprint_tasks_still_own_serials(original, principal, uow, now)
             trial = not original.manifest.get("source_snapshot", {}).get("tasks")
             current = uow.session.get(MarkingProfileRow, original.profile_id)

@@ -328,11 +328,39 @@ def pending_marking_by_printer(session, machine_id, printer) -> dict:
     return result
 
 
+def reprint_tree(session, root) -> dict:
+    """`root` and every «Перепечатать номера…» batch below it, at any depth: batch id → row."""
+    from .marking_profiles import MarkingBatchRow
+
+    tree = {root.id: root} if root is not None else {}
+    frontier = list(tree)
+    while frontier:
+        children = [row for row in session.scalars(select(MarkingBatchRow).where(MarkingBatchRow.reprint_of.in_(frontier)))
+                    if row.id not in tree]
+        tree.update({row.id: row for row in children})
+        frontier = [row.id for row in children]
+    return tree
+
+
+def ancestor_sequence(tree, batch, sequence, ancestor_id):
+    """The label number in `ancestor_id` that job `sequence` of `batch` reprints (manifest.reprint.sequences per step;
+    an older whole-batch reprint without them keeps the numbering). None — out of range or not below the ancestor."""
+    while batch is not None and batch.id != ancestor_id:
+        sources = ((batch.manifest or {}).get("reprint") or {}).get("sequences")
+        if sources is not None:
+            if not 0 < sequence <= len(sources):
+                return None
+            sequence = sources[sequence - 1]
+        batch = tree.get(batch.reprint_of)
+    return sequence if batch is not None else None
+
+
 def marking_halts(session, batch_ids) -> dict:
     """Peel-off check failures nobody has dealt with yet: batch id → sequences. The agent (2.11.0+) marks such a failed
     receipt `halt`: nothing was printed, so the rest of the batch must not print past the gap. Dealt with:
-    «Продолжить без неё» (`halt_released`, workflows.marking_labels.resolve) or a «Перепечатать номера…» batch of this
-    one has spooled that label. «Отменить оставшиеся» leaves nothing to hold."""
+    «Продолжить без неё» (`halt_released`, workflows.marking_labels.resolve) or a «Перепечатать номера…» batch below
+    this one (at any depth) has spooled that label and it was not removed from the Windows queue afterwards.
+    «Отменить оставшиеся» leaves nothing to hold."""
     from .marking_profiles import MarkingBatchRow
 
     batch_ids = list(batch_ids)
@@ -344,11 +372,16 @@ def marking_halts(session, batch_ids) -> dict:
     if not failed:
         return {}
     covered = set()
-    for reprint in session.scalars(select(MarkingBatchRow).where(MarkingBatchRow.reprint_of.in_({batch_id for batch_id, _ in failed}))):
-        sources = ((reprint.manifest or {}).get("reprint") or {}).get("sequences") or []
-        spooled = set(session.scalars(select(LabelJobRow.sequence).where(LabelJobRow.batch_id == reprint.id,
-            LabelJobRow.status == "spooled")))
-        covered |= {(reprint.reprint_of, source) for index, source in enumerate(sources, 1) if index in spooled}
+    for halted_id in {batch_id for batch_id, _ in failed}:
+        tree = reprint_tree(session, session.get(MarkingBatchRow, halted_id))
+        for reprint in tree.values():
+            if reprint.id == halted_id:
+                continue
+            # Spooled and not removed from the Windows queue afterwards («Очистить принтер» → print state cancelled).
+            for sequence, receipt in session.execute(select(LabelJobRow.sequence, LabelJobRow.receipt).where(
+                    LabelJobRow.batch_id == reprint.id, LabelJobRow.status == "spooled")):
+                if (receipt or {}).get("print_state") != "cancelled":
+                    covered.add((halted_id, ancestor_sequence(tree, reprint, sequence, halted_id)))
     result: dict = {}
     for batch_id, sequence in failed:
         if (batch_id, sequence) not in covered:
@@ -394,8 +427,12 @@ def claim_marking(uow, *, machine_id, token_id, now):
             halted = list(marking_halts(session, session.scalars(select(LabelJobRow.batch_id).where(*target,
                 LabelJobRow.status == PENDING).distinct())))
             waiting = (LabelJobRow.batch_id.not_in(halted),) if halted else ()
+            # Reprints below a halted batch fill its gap: they go before any other waiting batch of the queue.
+            rescues = [batch_id for halted_id in halted
+                       for batch_id in reprint_tree(session, session.get(MarkingBatchRow, halted_id)) if batch_id != halted_id]
+            order = (LabelJobRow.batch_id.in_(rescues).desc(),) if rescues else ()
             job = session.scalar(select(LabelJobRow).where(*target, LabelJobRow.status == PENDING, *waiting)
-                .order_by(LabelJobRow.batch_id.in_(started_batches).desc(), LabelJobRow.created_at,
+                .order_by(*order, LabelJobRow.batch_id.in_(started_batches).desc(), LabelJobRow.created_at,
                           LabelJobRow.batch_id, LabelJobRow.sequence).limit(1).with_for_update())
             if job is None:
                 continue

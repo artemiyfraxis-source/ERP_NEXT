@@ -373,3 +373,83 @@ def test_reprint_works_for_a_task_cancelled_after_its_flags_were_printed(marking
     response = client.post(BASE + f"/batches/{batch['id']}/reprint", json={"sequences": [2], "reason": "Потерян", "idempotency_key": "lost"})
     assert response.status_code == 200, response.text
     assert response.json()["jobs"][0]["serial"] == 2
+
+
+def test_a_reprint_chain_never_prints_the_same_serial_twice(marking):
+    client, factory, *_ = marking
+    batch, _, _ = enqueue(marking)
+    token = uuid4()
+    spool_all(factory, token)
+    first = client.post(BASE + f"/batches/{batch['id']}/reprint", json={"sequences": [5], "reason": "Смялся", "idempotency_key": "r1"})
+    assert first.status_code == 200, first.text
+    spool_all(factory, token)  # R1 printed №5 again
+    # One window reprints R1's label (it is the root's №5); another, still on the root, reprints №5 too.
+    second = client.post(BASE + f"/batches/{first.json()['id']}/reprint", json={"sequences": [1], "reason": "Опять", "idempotency_key": "r2"})
+    assert second.status_code == 200, second.text
+    assert [job["serial"] for job in second.json()["jobs"]] == [5]
+    third = client.post(BASE + f"/batches/{batch['id']}/reprint", json={"sequences": [4, 5], "reason": "Опять", "idempotency_key": "r3"})
+    assert third.status_code == 409 and "№5 уже перепечатывается" in third.json()["detail"]
+    assert client.post(BASE + f"/batches/{batch['id']}/reprint", json={"sequences": [4], "reason": "Смялся", "idempotency_key": "r4"}).status_code == 200
+    # And the other way round: the root's reprint of №4 is waiting, so R1 … cannot take a sibling route to it either.
+    spool_all(factory, token)
+    assert client.post(BASE + f"/batches/{batch['id']}/reprint", json={"sequences": [5], "reason": "Опять", "idempotency_key": "r3"}).status_code == 200
+    again = client.post(BASE + f"/batches/{first.json()['id']}/reprint", json={"sequences": [1], "reason": "Ещё", "idempotency_key": "r5"})
+    assert again.status_code == 409 and "№1 уже перепечатывается" in again.json()["detail"]
+
+
+def test_a_cancelled_reprint_does_not_release_the_halt(marking):
+    from app.modules.warehouse.label_jobs import report_print_state
+
+    client, factory, *_ = marking
+    batch, _, _ = enqueue(marking)
+    token = uuid4()
+    first = claim_marking(factory(), machine_id="godex-pc", token_id=token, now=NOW)
+    report(factory, first, token, outcome="failed", message="Godex: отделитель выключен", halt=True)
+    copy = client.post(BASE + f"/batches/{batch['id']}/reprint", json={"sequences": [1], "reason": "Отделитель", "idempotency_key": "p"})
+    reprinted = claim_marking(factory(), machine_id="godex-pc", token_id=token, now=NOW)
+    assert reprinted["id"] == copy.json()["jobs"][0]["id"]
+    report_marking(factory(), UUID(reprinted["id"]), machine_id="godex-pc", token_id=token, attempt=reprinted["attempt"],
+                   outcome="spooled", message="", spool_job_id=1, now=NOW, tracked=True)
+    # «Очистить принтер» removed it from the Windows queue before it printed: the gap is back.
+    report_print_state(factory(), UUID(reprinted["id"]), machine_id="godex-pc", token_id=token, attempt=reprinted["attempt"],
+                       state="cancelled", message="Задание удалено из очереди печати", now=NOW)
+    assert claim_marking(factory(), machine_id="godex-pc", token_id=token, now=NOW) is None
+    assert client.get(BASE + f"/batches/{batch['id']}").json()["halted"] is True
+
+
+def test_the_reprint_of_a_halted_label_goes_before_other_waiting_batches(marking):
+    client, factory, *_ = marking
+    batch, _, _ = enqueue(marking)
+    token = uuid4()
+    first = claim_marking(factory(), machine_id="godex-pc", token_id=token, now=NOW)
+    report(factory, first, token, outcome="failed", message="Godex: отделитель выключен", halt=True)
+    other, _, _ = enqueue(marking, "other")
+    with factory() as uow:  # queued well before the reprint
+        uow.session.execute(update(LabelJobRow).where(LabelJobRow.batch_id == UUID(other["id"])).values(created_at=NOW - timedelta(hours=1)))
+        uow.commit()
+    copy = client.post(BASE + f"/batches/{batch['id']}/reprint", json={"sequences": [1], "reason": "Отделитель", "idempotency_key": "p"})
+    assert copy.status_code == 200, copy.text
+    assert claim_marking(factory(), machine_id="godex-pc", token_id=token, now=NOW)["id"] == copy.json()["jobs"][0]["id"]
+
+
+def test_a_retry_with_the_same_key_answers_the_batch_made_while_it_waited(marking, monkeypatch):
+    import app.workflows.marking_labels as workflow
+
+    client, factory, *_ = marking
+    batch, _, _ = enqueue(marking)
+    spool_all(factory, uuid4())
+    body = {"sequences": [2], "reason": "Смялся", "idempotency_key": "same"}
+    made = {}
+    real_root = workflow.reprint_root
+
+    def concurrent_winner(session, original):
+        # The first request commits while this one waits for the root lock.
+        if not made:
+            made["id"] = "pending"
+            made["id"] = client.post(BASE + f"/batches/{batch['id']}/reprint", json=body).json()["id"]
+        return real_root(session, original)
+
+    monkeypatch.setattr(workflow, "reprint_root", concurrent_winner)
+    response = client.post(BASE + f"/batches/{batch['id']}/reprint", json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == made["id"]
