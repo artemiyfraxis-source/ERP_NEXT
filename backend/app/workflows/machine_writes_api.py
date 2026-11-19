@@ -16,7 +16,7 @@ The machine card («Настройки» part):
 
 The command runner on the machine PC (`tools/machine-agent/ob019-writer.ps1`, token `machine:report`, PC bound):
 - `POST /api/production/machines/agent/writes/next` `{inventory, machine_id}` → `{command: null | {id, kind: "write",
-  blocks, states}}`; `POST …/agent/writes/{id}/result` `{inventory, machine_id, ok, readback: {"32": 32500}, error}`.
+  blocks, bits: [{addr, bit, value}], states}}`; `POST …/agent/writes/{id}/result` `{inventory, machine_id, ok, readback: {"32": 32500}, error}`.
 - Machine commands (Стоп / Сброс / Пуск / Сброс аварии, workflows/machine_control_api.py) ride the same queue: `next`
   gives `{id, kind: "control", action, deadline_ms}` — Stop first; the result adds `outcome` (done / failed / expired /
   unknown), `reason` (a code, production/machine_control.py REASONS), `detail` (journal only) and `before` / `after`
@@ -111,6 +111,8 @@ class CorrectionPayload(Payload):
 class AgentPayload(Payload):
     inventory: str = Field(min_length=1, max_length=64)
     machine_id: str = Field(min_length=1, max_length=80)
+    # The command runner names its version since 1.2.0; none = 1.1.0 (no switch bits, no other HMI pages).
+    runner_version: str = Field(default="", max_length=32)
 
 
 class ResultPayload(AgentPayload):
@@ -224,6 +226,9 @@ def control(inventory: str, principal: Reader, factory: Factory, now: Now) -> di
             "offsets": _offset_rows(session, link.equipment_id),
             "can_edit": _can_edit(principal),
             "can_control": can_control(principal),
+            # The runner on the PC is older than 1.2.0: the other HMI pages and switches are not written yet.
+            "runner_outdated": commands.runner_outdated(link.equipment_id, now),
+            "runner_keys": sorted(key for key, field in rules.OB019_FIELDS.items() if commands.field_needs_runner(field)),
         }
         uow.commit()
     return result
@@ -471,7 +476,7 @@ def _agent_link(session, bridge: Principal, payload: AgentPayload) -> rules.Mach
 def next_command(payload: AgentPayload, bridge: Bridge, factory: Factory, now: Now) -> dict:
     with factory() as uow:
         link = _agent_link(uow.session, bridge, payload)
-        row, expired = commands.claim(uow.session, link.equipment_id, now)
+        row, expired = commands.claim(uow.session, link.equipment_id, now, payload.runner_version)
         _closed(uow, expired, bridge.actor, now)
         uow.commit()
         if row is None:
@@ -480,7 +485,7 @@ def next_command(payload: AgentPayload, bridge: Bridge, factory: Factory, now: N
             return {"command": {"id": str(row.id), "kind": "control", "action": row.command,
                                 "deadline_ms": machine_control.deadline_ms(row, now)}}
         return {"command": {"id": str(row.id), "kind": "write", "blocks": row.payload["blocks"],
-                            "states": list(commands.IDLE_STATES)}}
+                            "bits": commands.expected_bits(row), "states": list(commands.IDLE_STATES)}}
 
 
 @router.post("/agent/writes/{command_id}/result")

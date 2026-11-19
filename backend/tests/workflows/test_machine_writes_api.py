@@ -26,7 +26,8 @@ from tests.workflows.test_machines_api import WORDS, _bridge, _report, machines_
 
 CARD = "/api/production/machines/card/ОБ.019"
 NEXT = "/api/production/machines/agent/writes/next"
-AGENT = {"inventory": "ОБ.019", "machine_id": "guid-108"}
+AGENT = {"inventory": "ОБ.019", "machine_id": "guid-108"}  # a runner 1.1.0: it names no version
+AGENT_NEW = {**AGENT, "runner_version": "1.2.0"}
 
 
 def _post(client, path, body):
@@ -39,9 +40,9 @@ def _events(sessions, equipment_id):
             select(AuditEventRow).where(AuditEventRow.aggregate_id == equipment_id).order_by(AuditEventRow.occurred_at))]
 
 
-def _result(bridge, command_id, readback, ok=True, error=""):
+def _result(bridge, command_id, readback, ok=True, error="", agent=AGENT):
     return TestClient(app).post(f"/api/production/machines/agent/writes/{command_id}/result", headers=bridge,
-                                json={**AGENT, "ok": ok, "readback": readback, "error": error})
+                                json={**agent, "ok": ok, "readback": readback, "error": error})
 
 
 def test_encoding_texts_zero_filled_ascii_lengths_in_hundredths():
@@ -60,20 +61,149 @@ def test_encoding_texts_zero_filled_ascii_lengths_in_hundredths():
         with pytest.raises(rules.MachineWriteInvalid, match=message):
             rules.encode_field(key, value)
     with pytest.raises(rules.MachineWriteInvalid):
-        rules.encode_field("speed_cutter", 5)  # not writable from ERP
+        rules.encode_field("program", 5)  # not writable from ERP
 
 
-def test_the_runner_writes_exactly_the_registers_erp_writes():
-    source = (Path(__file__).parents[3] / "tools" / "machine-agent" / "ob019-writer.ps1").read_text(encoding="ascii")
+def test_encoding_of_the_other_hmi_pages_switches_signed_and_limits():
+    # A switch is only the intent for its bit; the word is read and written back on the PC (mbd `setbit`).
+    field, words, value = rules.encode_field("marking", "Вкл")
+    assert field.address == 400 and words == [1] and value is True
+    assert rules.encode_field("middle_strip", "0")[1] == [0]
+    with pytest.raises(rules.MachineWriteInvalid, match="Вкл"):
+        rules.encode_field("marking", "да")
+    with pytest.raises(rules.MachineWriteInvalid, match="не записывает"):
+        rules.encode_field("mark_send", "1")  # D421: order transfer handshake, map open question 8
+    assert rules.encode_field("middle_end_fix_mm", "-0,5")[1] == [0x10000 - 50]
+    assert rules.encode_field("coil_speed_fix", "-9999")[1] == [0x10000 - 9999]
+    assert rules.encode_field("split_front_mm", "12,5")[1] == [1250, 0]
+    assert rules.encode_field("split_delay_s", "0,25")[1] == [250]
+    assert rules.encode_field("speed_cutter", 5)[1] == [5]
+    assert rules.encode_field("mark_font", 6)[1] == [6]
+    for key, value in (("middle_dia_fix_mm", "5,01"), ("middle_dia_fix_mm", "-5,01"), ("speed_feed", "100"),
+                       ("mark_font", "0"), ("mark_divider", "61"), ("coil_ratio_min", "0,49"), ("coil_speed", "-1")):
+        with pytest.raises(rules.MachineWriteInvalid, match="диапазона"):
+            rules.encode_field(key, value)
+
+
+def test_switches_go_as_bits_and_one_register_is_written_by_one_field():
+    with pytest.raises(rules.MachineWriteInvalid, match="D103"):
+        commands.plan_writes([commands.FieldWrite("coil_speed", "5"), commands.FieldWrite("speed_clamp_front", "6")], {})
+    blocks, bits, shown = commands.plan_writes(
+        [commands.FieldWrite("marking", "1"), commands.FieldWrite("mark_step_mm", "10")], {400: 0b1010})
+    assert blocks == [{"addr": 409, "values": [1000, 0]}]
+    assert bits == [{"addr": 400, "bit": 0, "value": 1}]  # no word from the snapshot goes to the machine
+    assert shown[0]["before"] == "Выкл" and shown[0]["after"] == "Вкл"
+
+
+def test_unknown_registers_are_labelled_and_never_written():
+    labels = [field.label for _title, fields in rules.OB019_SETTINGS for field in fields]
+    assert not [label for label in labels if label.startswith(("Колонка", "Переключатель"))]
+    for _title, fields in rules.OB019_SETTINGS:
+        for field in fields:
+            if "назначение не установлено" in field.label:
+                assert field.label == f"Параметр D{field.address} (назначение не установлено)" and not field.key
+    assert [title for title, _fields in rules.OB019_SETTINGS] == [
+        "Задание", "Провод и зачистка", "Средняя зачистка", "Разделение жил", "Намотка", "Маркировка", "Скорости"]
+
+
+ROOT = Path(__file__).parents[3] / "tools" / "machine-agent"
+
+
+def _runner_writable() -> set[int]:
+    source = (ROOT / "ob019-writer.ps1").read_text(encoding="ascii")
     line = next(row for row in source.splitlines() if row.startswith("foreach ($a in "))
     allowed = {int(item) for group in re.findall(r"@\(([\d, ]+)\)", line) for item in group.split(",")}
-    allowed |= {address for low, high in re.findall(r"\((\d+)\.\.(\d+)\)", line)
-                for address in range(int(low), int(high) + 1)}
-    assert allowed == {address for field in rules.OB019_FIELDS.values() for address in rules.field_words(field)}
-    mbd = (Path(__file__).parents[3] / "tools" / "machine-agent" / "mbd.ps1").read_text(encoding="utf-8-sig")
-    spans = [(int(low), int(high)) for low, high in re.findall(r"@\((\d+), (\d+)\)", next(
-        row for row in mbd.splitlines() if row.startswith("$script:allowedWrite")))]
-    assert all(any(low <= address <= high for low, high in spans) for address in allowed)
+    return allowed | {address for low, high in re.findall(r"\((\d+)\.\.(\d+)\)", line)
+                      for address in range(int(low), int(high) + 1)}
+
+
+def _mbd_writable() -> set[int]:
+    mbd = (ROOT / "mbd.ps1").read_text(encoding="utf-8-sig")
+    line = next(row for row in mbd.splitlines() if row.startswith("$script:allowedWrite"))
+    return {address for low, high in re.findall(r"@\((\d+), (\d+)\)", line)
+            for address in range(int(low), int(high) + 1)}
+
+
+def _bits(path: str, prefix: str) -> set[tuple[int, int]]:
+    source = (ROOT / path).read_text(encoding="utf-8-sig")
+    line = next(row for row in source.splitlines() if row.startswith(prefix))
+    return {(int(address), int(bit)) for address, group in re.findall(r"(\d+) = @\(([\d, ]+)\)", line)
+            for bit in group.split(",")}
+
+
+def test_erp_the_runner_and_mbd_write_exactly_the_same_registers_and_bits():
+    assert rules.OB019_WRITTEN_WORDS | {address for address, _bit in rules.OB019_WRITTEN_BITS} == {
+        address for field in rules.OB019_FIELDS.values() for address in rules.field_words(field)}
+    assert _runner_writable() == rules.OB019_WRITTEN_WORDS
+    assert _mbd_writable() == rules.OB019_WRITTEN_WORDS
+    assert rules.OB019_WRITTEN_BITS == {(132, 0), (400, 0), (422, 0), (434, 0), (435, 0), (436, 0)}
+    assert _bits("ob019-writer.ps1", "$script:WritableBits") == rules.OB019_WRITTEN_BITS
+    assert _bits("mbd.ps1", "$script:allowedBits") == rules.OB019_WRITTEN_BITS
+    # A switch word is never written whole.
+    assert not {address for address, _bit in rules.OB019_WRITTEN_BITS} & (_runner_writable() | _mbd_writable())
+
+
+def test_passwords_sha_command_bits_page_date_and_order_handshake_are_never_writable():
+    denied = set(range(1682, 1688)) | set(range(1203, 1212)) | {599, 600, 730} | set(range(1087, 1090))
+    assert rules.OB019_NEVER_WRITTEN == denied
+    erp = {address for field in rules.OB019_FIELDS.values() for address in rules.field_words(field)}
+    for name, allowed in (("ERP", erp), ("ob019-writer.ps1", _runner_writable()), ("mbd.ps1", _mbd_writable()),
+                          ("writer bits", {a for a, _ in _bits("ob019-writer.ps1", "$script:WritableBits")}),
+                          ("mbd bits", {a for a, _ in _bits("mbd.ps1", "$script:allowedBits")})):
+        assert not allowed & (denied | {421}), f"{name} may write {sorted(allowed & (denied | {421}))}"
+
+
+def test_a_switch_is_claimed_as_a_bit_and_confirmed_by_its_bit_only(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    bridge = _bridge(admin)
+    _report(bridge)
+    command_id = _post(admin, CARD + "/write", {"values": {"marking": "1"}}).json()["id"]
+    claimed = TestClient(app).post(NEXT, headers=bridge, json=AGENT_NEW).json()["command"]
+    assert claimed["blocks"] == [] and claimed["bits"] == [{"addr": 400, "bit": 0, "value": 1}]
+    assert _result(bridge, command_id, {"400": 0x0A0B}, agent=AGENT_NEW).json() == {"status": "done", "error": ""}
+    second = _post(admin, CARD + "/write", {"values": {"marking": "0"}}).json()["id"]
+    TestClient(app).post(NEXT, headers=bridge, json=AGENT_NEW)
+    assert _result(bridge, second, {"400": 0x0A0B}, agent=AGENT_NEW).json() == {
+        "status": "failed", "error": "Станок не принял: D400.0"}
+    third = _post(admin, CARD + "/write", {"values": {"marking": "0"}}).json()["id"]
+    TestClient(app).post(NEXT, headers=bridge, json=AGENT_NEW)
+    old = _result(bridge, third, {}, ok=False, error="mbd outdated: no version, need 1.2.0", agent=AGENT_NEW).json()
+    assert old == {"status": "failed", "error": "Служба обмена со станком устарела — обновите"}
+
+
+def test_an_old_runner_never_gets_a_write_it_could_do_only_in_part(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    commands._runners.clear()
+    bridge = _bridge(admin)
+    _report(bridge)
+    # Nothing heard from the runner yet: the card does not block, the claim decides.
+    assert admin.get(CARD + "/control").json()["runner_outdated"] is False
+    mixed = _post(admin, CARD + "/write", {"values": {"length_mm": "326", "marking": "1"}}).json()["id"]
+    assert TestClient(app).post(NEXT, headers=bridge, json=AGENT).json() == {"command": None}
+    with sessions() as session:
+        row = session.get(commands.MachineWriteRow, UUID(mixed))
+        assert (row.status, row.error, row.taken_at) == ("failed", commands.RUNNER_OUTDATED, None)
+    assert any("устарела" in text for kind, text in _events(sessions, ob019) if kind == "production.machine_write_failed")
+    # The card now knows the runner is old: new pages are refused, the old ones still go to it.
+    control = admin.get(CARD + "/control").json()
+    assert control["runner_outdated"] is True and "marking" in control["runner_keys"]
+    assert "speed_cutter" in control["runner_keys"] and "length_mm" not in control["runner_keys"]
+    refused = _post(admin, CARD + "/write", {"values": {"speed_cutter": "5"}})
+    assert refused.status_code == 409 and refused.json()["detail"] == commands.RUNNER_OUTDATED
+    legacy = _post(admin, CARD + "/write", {"values": {"length_mm": "326"}}).json()["id"]
+    claimed = TestClient(app).post(NEXT, headers=bridge, json=AGENT).json()["command"]
+    assert claimed["id"] == legacy and claimed["bits"] == []
+    _result(bridge, legacy, {"32": 32600, "33": 0})
+    # The runner 1.2.0 names itself and gets the new pages.
+    assert TestClient(app).post(NEXT, headers=bridge, json=AGENT_NEW).json() == {"command": None}
+    assert admin.get(CARD + "/control").json()["runner_outdated"] is False
+    speed = _post(admin, CARD + "/write", {"values": {"speed_cutter": "5", "marking": "0"}}).json()["id"]
+    claimed = TestClient(app).post(NEXT, headers=bridge, json=AGENT_NEW).json()["command"]
+    assert claimed["id"] == speed and claimed["blocks"] == [{"addr": 101, "values": [5]}]
+    assert claimed["bits"] == [{"addr": 400, "bit": 0, "value": 0}]
+    # A runner that is newer still is current; garbage is not.
+    assert commands.runner_current("1.10.0") and not commands.runner_current("1.1.9")
+    assert not commands.runner_current("") and not commands.runner_current("abc")
 
 
 def test_card_write_is_queued_claimed_written_and_confirmed_by_read_back(machines_api):

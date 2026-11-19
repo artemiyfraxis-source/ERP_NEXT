@@ -125,6 +125,43 @@ it("writes a changed value only after the confirmation with the machine state", 
   expect(await screen.findByText("Запись настроек: ждёт агента станка")).toBeInTheDocument();
 });
 
+it("writes a switch of another HMI page as Вкл / Выкл and leaves unknown registers read-only", async () => {
+  const window: MachineWindow = { ...WINDOW, settings: [...WINDOW.settings, { title: "Маркировка", fields: [
+    { label: "Маркировка", value: false, unit: "", read: true, key: "marking", kind: "bit0" },
+    { label: "Параметр D390 (назначение не установлено)", value: true, unit: "", read: true, key: null, kind: "bit0" }] }] };
+  const posts = server(CONTROL, { window });
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  fireEvent.click(await screen.findByRole("button", { name: /Остальные параметры/ }));
+  fireEvent.click(screen.getByRole("tab", { name: "Маркировка" }));
+  const table = screen.getByRole("table", { name: "Маркировка" });
+  expect(within(table).getByRole("row", { name: /^Маркировка Выкл/ })).toBeInTheDocument();
+  expect(within(table).queryByLabelText("Параметр D390 (назначение не установлено): новое значение")).toBeNull();
+  const marking = within(table).getByLabelText("Маркировка: новое значение");
+  fireEvent.change(marking, { target: { value: "1" } });
+  expect(marking.closest("tr")!.className).toContain("is-diff");
+  fireEvent.click(screen.getByRole("button", { name: "Записать на станок (1)" }));
+  const dialog = screen.getByRole("alertdialog");
+  expect(within(dialog).getByText("Маркировка: Выкл → Вкл")).toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Подтвердить запись" }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].body).toEqual({ values: { marking: "1" }, confirm_state: 102 });
+});
+
+it("keeps the other HMI pages read-only while the writer on the machine PC is older than 1.2.0", async () => {
+  const window: MachineWindow = { ...WINDOW, settings: [...WINDOW.settings, { title: "Маркировка", fields: [
+    { label: "Маркировка", value: false, unit: "", read: true, key: "marking", kind: "bit0" },
+    { label: "Текст у начала", value: "X1", unit: "", read: true, key: "mark_front", kind: "text15" }] }] };
+  server({ ...CONTROL, runner_outdated: true, runner_keys: ["marking"] }, { window });
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  fireEvent.click(await screen.findByRole("button", { name: /Остальные параметры/ }));
+  fireEvent.click(screen.getByRole("tab", { name: "Маркировка" }));
+  expect(screen.getByText(/Служба записи на ПК станка устарела — обновите \(нужна 1\.2\.0\)/)).toBeInTheDocument();
+  expect(screen.getByLabelText("Маркировка: новое значение")).toBeDisabled();
+  expect(screen.getByLabelText("Текст у начала: новое значение")).toBeEnabled();
+  fireEvent.change(screen.getByLabelText("Длина провода: новое значение"), { target: { value: "326" } });
+  expect(screen.getByRole("button", { name: "Записать на станок (1)" })).toBeEnabled();
+});
+
 it("transfers the ETK job with the machine correction and refuses while the machine runs", async () => {
   const posts = server();
   render(<Ob019SettingsPanel inventory="ОБ.019" />);

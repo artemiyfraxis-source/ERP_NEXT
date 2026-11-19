@@ -6,11 +6,21 @@ param([int]$Port = 5020, [string]$Allow = '192.168.1.85', [switch]$Mock, [string
 # local ERP bridge (ob019-bridge.ps1 talks to 127.0.0.1). -LocalOnly (ERP_NEXT tools/machine-agent): listen on
 # 127.0.0.1 only and serve only the local bridge. Without either the service behaves exactly as deployed on 18.11.2026.
 $ErrorActionPreference = 'Stop'
+$script:Self = $MyInvocation.InvocationName
 Add-Type -AssemblyName System.Web.Extensions
 $script:js = New-Object System.Web.Script.Serialization.JavaScriptSerializer
 $script:log = Join-Path $Dir 'mbd.log'
 $script:sp = $null
-$script:allowedWrite = @(@(20, 53), @(400, 484), @(599, 599), @(600, 600), @(730, 730), @(940, 969), @(1087, 1089))
+# 1.2.0 (19.11.2026): 'version' (no bus) and 'setbit'; 'write' limited to ERP's writable words.
+# Registers a 'write' request may set: exactly ERP's writable numbers and texts - ob019-writer.ps1 $script:Writable and
+# OB019_WRITTEN_WORDS of backend production/machines.py (a backend test compares the three). Switch words are never
+# written whole: 'setbit' reads the word and writes it back with one bit of $script:allowedBits changed, in the same
+# request (one request = one COM8 session, requests are served one at a time). The command bits D599/D600, the HMI
+# page D730 and the date D1087..D1089 are written only by 'pulse' / Write-HmiContext below, never on request;
+# passwords D1682..D1687 and the SHA-256 handshake D1203..D1211 never.
+$script:MbdVersion = '1.2.0'
+$script:allowedWrite = @(@(20, 20), @(22, 28), @(32, 43), @(67, 72), @(74, 74), @(100, 104), @(120, 123), @(197, 197), @(199, 199), @(391, 395), @(401, 402), @(404, 415), @(423, 423), @(430, 432), @(440, 484), @(940, 969), @(1703, 1705), @(1722, 1723), @(1750, 1753))
+$script:allowedBits = @{ 132 = @(0); 400 = @(0); 422 = @(0); 434 = @(0); 435 = @(0); 436 = @(0) }
 $script:allowedPulse = @{ 599 = @(0, 2); 600 = @(1, 4) }
 
 # Log rotation (PowerShell 2.0): when the log reaches $MaxBytes it becomes .1, .1 becomes .2 and so on; the oldest
@@ -179,12 +189,32 @@ function Invoke-Pulse([int]$a, [int]$bit, [int]$hold) {
     return @{ addr = $a; bit = $bit; hold_ms = $hold; before = $orig; set = $set; cleared = $cleared; after = $after }
 }
 
+function Test-BitAllowed([int]$a, [int]$bit) {
+    return ($script:allowedBits.ContainsKey($a) -and ($script:allowedBits[$a] -contains $bit))
+}
+
+# Read-modify-write of one switch bit: only that bit changes, the word is read in the same COM8 session.
+function Invoke-SetBit([int]$a, [int]$bit, [int]$value) {
+    if (-not (Test-BitAllowed $a $bit)) { throw ('setbit not allowed: D' + $a + '.' + $bit) }
+    $mask = [int][Math]::Pow(2, $bit)
+    $orig = (Read-Regs $a 1)[0]
+    if ($value) { $word = $orig -bor $mask } else { $word = $orig -band (65535 - $mask) }
+    if ($word -ne $orig) { Write-Regs $a @($word) }
+    return @{ addr = $a; bit = $bit; value = $value; before = $orig; written = $word; readback = [int[]](Read-Regs $a 1) }
+}
+
 function Invoke-Request($req) {
     $cmd = [string]$req['cmd']
-    if (@('read', 'write', 'pulse', 'status') -notcontains $cmd) { throw ('unknown cmd ' + $cmd) }
+    if (@('read', 'write', 'pulse', 'status', 'setbit', 'version') -notcontains $cmd) { throw ('unknown cmd ' + $cmd) }
+    if ($cmd -eq 'version') { return @{ version = $script:MbdVersion } }
     if ($cmd -eq 'write') {
         $a = [int]$req['addr']; $vals = [int[]]@($req['values'] | ForEach-Object { [int]$_ })
         if (-not (Test-WriteAllowed $a $vals.Length)) { throw ('write not allowed: D' + $a + ' x' + $vals.Length) }
+    }
+    if ($cmd -eq 'setbit') {
+        $a = [int]$req['addr']; $bit = [int]$req['bit']; $value = [int]$req['value']
+        if (-not (Test-BitAllowed $a $bit)) { throw ('setbit not allowed: D' + $a + '.' + $bit) }
+        if ($value -ne 0 -and $value -ne 1) { throw ('setbit value must be 0 or 1') }
     }
     if (-not $Mock) {
         $busy = Test-Busy
@@ -203,6 +233,7 @@ function Invoke-Request($req) {
                 return @{ addr = $a; written = [int[]]$vals; readback = [int[]](Read-Regs $a $vals.Length) }
             }
             'pulse' { Write-HmiContext; return (Invoke-Pulse ([int]$req['addr']) ([int]$req['bit']) ([int]$req['hold_ms'])) }
+            'setbit' { Write-HmiContext; return (Invoke-SetBit $a $bit $value) }
         }
     } finally {
         if ($script:sp) { try { $script:sp.Close(); $script:sp.Dispose() } catch { }; $script:sp = $null }
@@ -248,7 +279,7 @@ function Start-Service2 {
     if ($LocalOnly) { $bind = [System.Net.IPAddress]::Loopback; $allowed = @('127.0.0.1') }
     $listener = New-Object System.Net.Sockets.TcpListener ($bind, $Port)
     $listener.Start()
-    Write-MbLog ('listening on ' + $bind + ':' + $Port + ' allow ' + ($allowed -join ',') + ' mock=' + [bool]$Mock)
+    Write-MbLog ('mbd ' + $script:MbdVersion + ' listening on ' + $bind + ':' + $Port + ' allow ' + ($allowed -join ',') + ' mock=' + [bool]$Mock)
     while ($true) {
         $client = $listener.AcceptTcpClient()
         $remote = $client.Client.RemoteEndPoint.Address.ToString()
@@ -284,6 +315,9 @@ function Start-Service2 {
 }
 
 if (-not (Test-Path $Dir)) { New-Item -ItemType Directory -Path $Dir | Out-Null }
-while ($true) {
-    try { Start-Service2 } catch { Write-MbLog ('LISTENER ERROR ' + $_.Exception.Message); Start-Sleep -Seconds 5 }
+# Dot-sourced (tests/mbd.Tests.ps1): functions only, no listener.
+if ($script:Self -ne '.') {
+    while ($true) {
+        try { Start-Service2 } catch { Write-MbLog ('LISTENER ERROR ' + $_.Exception.Message); Start-Sleep -Seconds 5 }
+    }
 }
