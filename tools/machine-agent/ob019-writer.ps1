@@ -188,7 +188,11 @@ function Invoke-ControlCommand($Command, [Diagnostics.Stopwatch]$Since) {
     foreach ($off in @($spec['off'])) {
         if (-not $off) { continue }
         $pair = ([string]$off).Split('.')
-        try { $word = [int](Read-Range ([int]$pair[0]) 1)[0] } catch { return (New-Outcome 'failed' 'mbd_error' $_.Exception.Message $before $before) }
+        try { $word = [int](Read-Range ([int]$pair[0]) 1)[0] } catch {
+            $message = $_.Exception.Message
+            if ($message -like 'mbd: busy:*') { return (New-Outcome 'failed' 'hmi_open' $message $before $before) }
+            return (New-Outcome 'failed' 'mbd_error' $message $before $before)
+        }
         $mask = [int][math]::Pow(2, [int]$pair[1])
         if (($word -band $mask) -ne 0) { return (New-Outcome 'failed' 'rollers_up' ('D' + $off + '=1') $before $before) }
     }
