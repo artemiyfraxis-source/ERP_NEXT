@@ -4,6 +4,7 @@ import csv
 import json
 from dataclasses import replace
 from datetime import datetime
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -45,6 +46,9 @@ def test_every_catalog_entry_has_a_unique_id_and_a_source():
     ("escc-3402-010-tnc-plug-plug", 12.4, 1.162, 0.07 * 12.4 ** 0.5),
     ("mikran-pk2-18", 12, 1.10, 0.15), ("mikran-pk2-18", 18, 1.15, 0.15),
     ("planar-c50smnm-2", 2.5, 1.152, 0.60), ("planar-c50smnm-2", 18, 1.329, 1.75), ("planar-c50nmnm-2", 6, 1.222, 1.00),
+    ("planar-c50nmiiim-2", 2.5, 1.152, 0.90), ("planar-c50nmiiim-2", 6, 1.222, 1.60),  # passport v26.1, 19.11
+    ("planar-c50nmiiim-2", 12, 1.329, 1.90), ("planar-c50nmiiim-2", 18, 1.329, 2.70),
+    ("mil-55339-37a", 0.5, 1.25, None), ("mil-55339-37a", 4, 1.25, None),
     ("mil-55339-51a-58", 9, 1.35, None), ("mil-55339-51a-58", 11, 1.5, None), ("mil-55339-7a", 11, 1.30, None),
     ("iec-61169-8-bnc", 4, 1.30, None), ("iec-61169-8-bnc-angle", 4, 1.35, None),
 ])
@@ -84,6 +88,9 @@ def test_tnc_plug_plug_stops_at_the_verified_segment_and_bnc_at_4_ghz():
     ("Переходник SMA–BNC", adapter(end("SMA"), end("BNC", "вилка")), "mil-55339-44c"),
     ("Переходник BNC–N BN-312", adapter(end("BNC", "вилка"), end("N")), "mil-55339-24b"),
     ("Переходник BNC–N BN-321", adapter(end("BNC"), end("N", "вилка")), "mil-55339-20a"),
+    ("Переходник TNC–BNC TB-322", adapter(end("TNC"), end("BNC")), "mil-55339-37a"),  # once 50 Ом is confirmed
+    ("Кабель измерительный C50NMIIIM.2", adapter(end("N", "вилка"), end("тип III", "вилка"), role="test_cable"),
+     "planar-c50nmiiim-2"),
 ])
 def test_proposal_follows_maker_tu_iec_escc_mil(name, details, expected):
     assert propose(name, "", "", details).norm_id == expected
@@ -96,13 +103,29 @@ def test_proposal_follows_maker_tu_iec_escc_mil(name, details, expected):
     (adapter(end("TNC", "вилка"), end("BNC")), "нет листа MIL-PRF-55339 на сочетание родов TNC вилка – BNC розетка"),
     (adapter(end("SMA", "вилка"), end("BNC")), "сочетание родов SMA вилка – BNC розетка"),  # /47B ambiguous
     (adapter(end("SMA"), end("3.5mm")), "нет нормы на пару"),
-    (adapter(end("N", "вилка"), end("тип III", "вилка"), role="test_cable"), "кабельная сборка"),
-    (adapter(end("N", "вилка"), end("тип III", "вилка"), role="test_cable"), "C50NMIIIM.2"),
+    (adapter(end("TNC", ohm=None), end("BNC", ohm=None)), "BNC бывает 50 и 75 Ом"),  # TB-322: /37A only after the check
     (RfDetails((), "adapter"), "нет двух ВЧ-интерфейсов"),
 ])
 def test_unassigned_items_carry_the_reason(details, reason):
     proposal = propose("Кабель измерительный C50NMIIIM.2", "", "Планар", details)
     assert proposal.norm_id == "" and reason in proposal.reason
+
+
+def test_cable_without_its_passport_in_the_catalog_gets_no_norm():
+    proposal = propose("Кабель измерительный C50SMSM.2", "", "Планар",
+                       adapter(end("SMA", "вилка"), end("SMA", "вилка"), role="test_cable"))
+    assert proposal.norm_id == "" and "кабельная сборка" in proposal.reason and "C50NMIIIM.2" in proposal.reason
+
+
+def test_reviewed_csv_of_19_11_assigns_only_catalog_norms_and_leaves_the_rest_open():
+    path = Path(__file__).resolve().parents[3] / "docs" / "data" / "si-norm-assignment-2026-11-19.csv"
+    rows = list(csv.DictReader(path.open(encoding="utf-8")))
+    assert tuple(rows[0]) == si_norm_assignment.COLUMNS and len(rows) == 30
+    assigned = {row["inventory_no"]: row["norm_id"] for row in rows if row["norm_id"]}
+    assert assigned == {"СИ.098": "planar-c50nmiiim-2", "СИ.099": "planar-c50nmiiim-2"}
+    assert all(row["current_norm_id"] == "" and row["reason"] for row in rows)
+    open_pairs = " ".join(row["pair"] for row in rows if not row["norm_id"])
+    assert "RP-SMA" in open_pairs and "F розетка" in open_pairs
 
 
 def test_items_without_a_norm_role_are_not_proposed():

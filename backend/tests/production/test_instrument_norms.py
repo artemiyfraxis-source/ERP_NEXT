@@ -162,7 +162,8 @@ def test_loss_norm_follows_the_vswr_source():
 
 
 @pytest.mark.parametrize("sheet,ghz,limit", [("54b", 9, 0.18), ("40b-43b", 6, 0.06 * 6 ** 0.5), ("5a", 9, 0.15),
-                                             ("33a", 3, 0.12 * 3 ** 0.5), ("44c", 3, 0.2), ("13b", 3, 0.2), ("20a", 3, 0.35)])
+                                             ("33a", 3, 0.12 * 3 ** 0.5), ("44c", 3, 0.2), ("13b", 3, 0.2), ("20a", 3, 0.35),
+                                             ("37a", 3, 0.2)])
 def test_sheets_tested_at_one_frequency_are_judged_only_there(sheet, ghz, limit):
     loss = norm_by_id(f"mil-55339-{sheet}").loss
     assert not loss.segments and [(point.ghz, point.max_db) for point in loss.points] == [(ghz, pytest.approx(limit))]
