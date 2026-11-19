@@ -1466,12 +1466,43 @@ export interface VswrTaskListItem {
   id: string;
   number: string;
   name: string;
+  /** КБ задания («КБ1»). */
   item: string;
+  project?: string;
   quantity: number;
   status: string;
-  norm: { status: "ok" | "undefined"; vswr_max: number | null; source: string | null };
+  /** Ревизия ЭТК, на которой запущено задание. */
+  etk_revision?: number | null;
+  norm: { status: "ok" | "undefined"; vswr_max: number | null; source: string | null; band_mhz?: [number | null, number | null] | null };
   control: VswrControl;
-  required: { total: number; measured: number };
+  /** Требуемые замеры партии, сколько замерено; брак и наибольший КСВН — по последним замерам изделий. */
+  required: { total: number; measured: number; failed?: number; max_vswr?: number | null };
+}
+/** Окно ОТК коробки: проверки из шагов «Контроль» ЭТК и СТО ФРАК-001, СИ из реестра, замеры КСВН, причины брака по СТО. */
+export interface QcCheck {
+  kind: "visual" | "dimensions" | "vswr" | "continuity";
+  title: string;
+  /** Методика: «СТО ФРАК-001-2026, разд. 4.1, 4.2». */
+  method: string;
+  tools: string[];
+  items: Array<{ operation: string; text: string; tolerance: string }>;
+  /** Только у КСВН: false — ЭТК контроль не требует. */
+  required?: boolean;
+}
+export interface QcPlan {
+  task: { id: string; number: string; project: string; item: string; name: string; quantity: number };
+  etk: { item_index: string; product_name: string; revision: number | null; current_revision: number | null };
+  checks: QcCheck[];
+  instruments: Array<{ id: string; inventory_number: string; name: string; purpose: string }>;
+  missing_instruments: Array<{ tool: string; purpose: string }>;
+  vswr: {
+    mode: VswrControl["mode"]; every: number | null; total: number; measured: number; failed: number;
+    max_vswr: number | null; norm_vswr_max: number | null; band_mhz: [number | null, number | null] | null;
+    norm_status: "ok" | "undefined"; norm_reason: string;
+    units: Array<{ position: number; serial_number: string; verdict: "pass" | "fail"; verdict_name: string; max_vswr: number | null; instrument_id: string }>;
+  } | null;
+  defects: Array<{ code: string; section: string; defect: string; criterion: string; class: string }>;
+  sto: { designation: string; revision: string; title: string };
 }
 export interface VswrSerialRow {
   position: number;
@@ -1484,7 +1515,8 @@ export interface VswrSerialRow {
   latest: VswrMeasurement | null;
 }
 export interface VswrTaskOverview {
-  task: { id: string; number: string; name: string; quantity: number };
+  task: { id: string; number: string; name: string; quantity: number; project?: string; item?: string };
+  etk?: { item_index: string; revision: number | null; current_revision: number | null };
   norm: VswrNorm;
   control: VswrControl;
   /** Требуемые замеры по всей партии задания и сколько из них замерено. */
@@ -4284,6 +4316,7 @@ export const productionApi = {
     api<CableAssemblyPassport>(`/api/production/vswr/tasks/${taskId}/serials/${position}/passport`),
   vswrFileUrl: (measurementId: string) => `/api/production/vswr/measurements/${measurementId}/file`,
   qcRejections: () => api<{ rejections: ProductionQcRejection[] }>("/api/production/qc/rejections"),
+  qcPlan: (taskId: string) => api<QcPlan>(`/api/production/qc/plan/${taskId}`),
   decideQcRejection: (inspectionId: string, disposition: "Доработка" | "Списание" | "Использовать как есть", actReference: string) =>
     api(`/api/production/qc/rejections/${inspectionId}/decide`, {
       method: "POST", body: JSON.stringify({ disposition, act_reference: actReference }),

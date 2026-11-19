@@ -512,7 +512,7 @@ def test_task_list_has_only_coax_assemblies_with_counts(production_api):  # noqa
     client, _ = production_api
     try:
         _card_, coax_task, instrument = _old_coax_setup(client)
-        client.post("/api/production/vswr", json=_body(coax_task, instrument, GOOD))
+        verdict = client.post("/api/production/vswr", json=_body(coax_task, instrument, GOOD)).json()["measurement"]["verdict"]
         _launch(client, _card(None, index="КБ2"), key="plain-1", quantity=2)  # ЭТК без коаксиальной сборки — в список не попадает
         new_card = _card({"coaxVswrNorm": NORM}, index="КБ3", config=COAX_CONFIG)
         new_task = _launch(client, new_card, key="vswr-new", quantity=4)
@@ -525,9 +525,14 @@ def test_task_list_has_only_coax_assemblies_with_counts(production_api):  # noqa
     assert set(rows) == {coax_task["id"], new_task["id"]}
     old = rows[coax_task["id"]]
     assert old["number"] == coax_task["number"] and old["quantity"] == 3 and old["status"]
-    assert old["norm"] == {"status": "ok", "vswr_max": 1.51, "source": "computed"}
-    assert old["required"] == {"total": 3, "measured": 1}
-    assert rows[new_task["id"]]["norm"]["vswr_max"] == 1.35 and rows[new_task["id"]]["required"] == {"total": 4, "measured": 0}
+    assert {key: old["norm"][key] for key in ("status", "vswr_max", "source")} == {"status": "ok", "vswr_max": 1.51, "source": "computed"}
+    assert old["project"] == "591K.3" and old["item"] == coax_task["item"] and old["etk_revision"] is not None
+    assert old["required"]["total"] == 3 and old["required"]["measured"] == 1
+    assert old["required"]["failed"] == (verdict == "fail")
+    assert old["required"]["max_vswr"] is not None
+    new = rows[new_task["id"]]
+    assert new["norm"]["vswr_max"] == 1.35 and new["norm"]["band_mhz"] == [1000, 3000]
+    assert new["required"] == {"total": 4, "measured": 0, "failed": 0, "max_vswr": None}
 
 
 def test_task_list_hides_tasks_of_a_fully_shipped_kb(production_api):  # noqa: F811

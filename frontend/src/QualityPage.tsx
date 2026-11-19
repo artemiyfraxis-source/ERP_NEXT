@@ -10,15 +10,21 @@ import {
   type ProductionOperator,
   type ProductionQcRejection,
   type ProductionTask,
+  type QcCheck,
+  type QcPlan,
   type VswrTaskListItem,
+  type VswrTaskOverview,
 } from "./api";
 import { InstrumentRegistry } from "./InstrumentRegistry";
-import { formatDay } from "./format";
+import { formatDay, formatMoment, formatNumber } from "./format";
 import { canAct } from "./navigation";
 import { isFinal } from "./productionGraph";
-import { BoxName, boxMatches } from "./BoxLabel";
-import { VswrSection, type VswrRejectRequest } from "./VswrSection";
+import { BoxName, boxCodeKey } from "./BoxLabel";
+import { VswrSection, progressText, type VswrRejectRequest } from "./VswrSection";
 import { PageWindow } from "./PageWindow";
+import { DataTable, type DataColumn } from "./DataTable";
+import { printCoaxPassport } from "./coaxPassportPrint";
+import { useCanPrint } from "./rights";
 
 type Mutate = (key: string, operation: () => Promise<unknown>) => Promise<boolean>;
 type QualityTab = "queue" | "vswr" | "rejects" | "instruments";
@@ -155,7 +161,8 @@ export function QualityPage({ principal }: { principal: Principal }) {
     </div>}
     {loaded && canQuality && <div role="tabpanel" id="quality-panel-vswr" aria-labelledby="quality-tab-vswr" hidden={tab !== "vswr"}>
       <VswrSection instruments={instruments} choices={vswrTasks} taskId={vswrTaskId} onTaskChange={setVswrTaskId}
-        onOverview={(overview) => setVswrTasks((current) => current.map((item) => item.id === overview.task.id ? { ...item, required: overview.required, control: overview.control } : item))}
+        onOverview={(overview) => setVswrTasks((current) => current.map((item) => item.id === overview.task.id ? { ...item, control: overview.control,
+          required: { ...item.required, ...overview.required, ...overviewTotals(overview) } } : item))}
         canUpload={canQuality} canReject={(taskId) => Boolean(queueBox(taskId))} onReject={rejectFromVswr} />
     </div>}
     {loaded && canEdit && <div role="tabpanel" id="quality-panel-rejects" aria-labelledby="quality-tab-rejects" hidden={tab !== "rejects"}><div className="review-row">
@@ -215,6 +222,12 @@ function QcRejectionReview({ rejections, busy, mutate }: {
   </div>;
 }
 
+/** Брак и наибольший КСВН задания по последним замерам изделий — как в списке заданий на замер. */
+function overviewTotals(overview: VswrTaskOverview): { failed: number; max_vswr: number | null } {
+  const peaks = overview.serials.map((row) => row.latest?.max_vswr).filter((value): value is number => value != null);
+  return { failed: overview.serials.filter((row) => row.latest?.verdict === "fail").length, max_vswr: peaks.length ? Math.max(...peaks) : null };
+}
+
 /** Коробка в очереди ОТК: сдана с финальной операции схемы и ещё не проверена. */
 function inQcQueue(box: ProductionBox, tasks: ProductionTask[]): boolean {
   const task = tasks.find((item) => item.id === box.task_id);
@@ -227,7 +240,6 @@ function inQcQueue(box: ProductionBox, tasks: ProductionTask[]): boolean {
   return (box.status === "Закрыта оператором" || box.status === "Подтверждена") && !box.qc_inspected && !box.kb_shipped && final;
 }
 
-type QcDraft = { accepted: string; rejected: string; character: string; description: string; instrumentIds: string[] };
 const lastInstrumentsKey = "erp-quality-last-instruments";
 
 function savedInstruments(): string[] {
@@ -311,6 +323,36 @@ function QcInstrumentPicker({ instruments, selected, onChange, disabled, boxNumb
   </div>;
 }
 
+const CHECK_FALLBACK: Record<QcCheck["kind"], string> = {
+  visual: "Типовые дефекты разделов СТО",
+  dimensions: "Размеры по КД и ЭТК",
+  vswr: "КСВН по норме ЭТК",
+  continuity: "Цепи и подключение экрана",
+};
+const OTHER_REASON = "other";
+const qty = (text: string) => (text.trim() === "" ? NaN : Number(text));
+
+/** Строка «КСВН» окна ОТК: «померено 12 из 20 · брак 1 · макс. КСВН 1,18 при норме ≤ 1,35». */
+export function qcVswrText(vswr: NonNullable<QcPlan["vswr"]>): string {
+  if (vswr.mode === "none") return "контроль КСВН по ЭТК не проводится";
+  const peak = vswr.max_vswr != null ? ` · макс. КСВН ${formatNumber(vswr.max_vswr, { digits: 2 })}` : "";
+  const norm = vswr.norm_vswr_max != null ? ` при норме ≤ ${formatNumber(vswr.norm_vswr_max, { digits: 2 })}` : vswr.norm_status === "ok" ? "" : " · норма не определена";
+  return `померено ${vswr.measured} из ${vswr.total}${vswr.failed ? ` · брак ${vswr.failed}` : ""}${peak}${peak ? norm : ""}`;
+}
+
+/** Ошибки решения ОТК; пусто — можно «Принять». Годные не подставляются (владелец 19.11): контролёр вводит оба числа. */
+export function qcProblems(available: number, draft: { accepted: string; rejected: string; character: string; description: string }): string[] {
+  const accepted = qty(draft.accepted), rejected = qty(draft.rejected);
+  if (!Number.isInteger(accepted) || !Number.isInteger(rejected) || accepted < 0 || rejected < 0) return ["Введите годные и брак — целые числа"];
+  const problems: string[] = [];
+  if (accepted + rejected !== available) problems.push(`Годные и брак вместе — ${available} шт, сейчас ${accepted + rejected}`);
+  if (rejected > 0 && !draft.character.trim()) problems.push("Выберите причину брака");
+  if (rejected > 0 && !draft.description.trim()) problems.push("Опишите брак");
+  return problems;
+}
+
+type QcDraft = { accepted: string; rejected: string; reason: string; character: string; description: string; instrumentIds: string[] | null };
+
 function QualityPanel({ boxes, tasks, instruments, vswrTasks, openVswr, busy, error, mutate, prefill }: {
   boxes: ProductionBox[];
   tasks: ProductionTask[];
@@ -322,110 +364,216 @@ function QualityPanel({ boxes, tasks, instruments, vswrTasks, openVswr, busy, er
   mutate: Mutate;
   prefill: { boxId: string; description: string; stamp: number } | null;
 }) {
+  const [openId, setOpenId] = useState("");
   const [drafts, setDrafts] = useState<Record<string, QcDraft>>({});
-  const [lastInstruments, setLastInstruments] = useState(savedInstruments);
-  const [query, setQuery] = useState("");
-  const [reasons, setReasons] = useState<Record<string, string>>({});
-  const [dialog, setDialog] = useState<{ boxId: string; kind: "reject" | "return" } | null>(null);
   const ready = boxes.filter((box) => inQcQueue(box, tasks));
-  const active = instruments.filter((item) => item.kind === "Средство измерений" && item.status === "Действует");
-  const validIds = (ids: string[]) => [...new Set(ids)].filter((id) => active.some((item) => item.id === id));
-  const draftFor = (box: ProductionBox): QcDraft => drafts[box.id] ?? {
-    accepted: box.available, rejected: "0", character: "", description: "", instrumentIds: validIds(lastInstruments),
-  };
   const panel = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!prefill) return;
     const box = ready.find((item) => item.id === prefill.boxId);
     if (!box) return;
-    setDrafts((current) => ({
-      ...current,
-      [box.id]: { ...draftFor(box), accepted: String(Math.max(Number(box.available) - 1, 0)), rejected: "1",
-        character: "КСВН выше нормы", description: prefill.description },
-    }));
-    setQuery(""); setDialog({ boxId: box.id, kind: "reject" });
+    // «В брак ОТК» из замеров: брак 1 шт с причиной «КСВН вне нормы»; годные контролёр вводит сам.
+    setDrafts((current) => ({ ...current, [box.id]: { ...(current[box.id] ?? emptyDraft()), accepted: "", rejected: "1", reason: "vswr",
+      character: "", description: prefill.description } }));
+    setOpenId(box.id);
     panel.current?.scrollIntoView?.({ block: "start" });
   }, [prefill?.stamp]);
 
-  const update = (box: ProductionBox, patch: Partial<QcDraft>) => setDrafts((current) => ({
-    ...current, [box.id]: { ...draftFor(box), ...patch },
-  }));
-  const totalMatches = (box: ProductionBox, draft: QcDraft) => {
-    const accepted = Number(draft.accepted || 0), rejected = Number(draft.rejected || 0);
-    return Number.isInteger(accepted) && Number.isInteger(rejected) && accepted >= 0 && rejected >= 0
-      && accepted + rejected === Number(box.available);
-  };
-  const close = () => { if (!busy) setDialog(null); };
-  async function inspect(box: ProductionBox) {
-    const draft = draftFor(box);
-    if (!totalMatches(box, draft) || (Number(draft.rejected) > 0 && (!draft.character.trim() || !draft.description.trim()))) return;
-    const ids = validIds(draft.instrumentIds);
+  const taskOf = (box: ProductionBox) => tasks.find((item) => item.id === box.task_id);
+  const columns: DataColumn<ProductionBox>[] = [
+    { key: "box", title: "Коробка", value: (box) => box.code ?? box.number ?? "", width: 220, render: (box) => <BoxName box={box} /> },
+    { key: "project", title: "Проект", value: (box) => taskOf(box)?.project ?? "", filter: true },
+    { key: "kb", title: "КБ", value: (box) => box.item },
+    { key: "name", title: "Изделие", value: (box) => taskOf(box)?.name ?? "", grow: true, wrap: true },
+    { key: "qty", title: "Кол-во", value: (box) => Number(box.available), numeric: true },
+    { key: "vswr", title: "КСВН", value: (box) => { const vswr = vswrTasks.find((item) => item.id === box.task_id); return vswr ? progressText(vswr.control, vswr.required) : ""; },
+      render: (box) => {
+        const vswr = vswrTasks.find((item) => item.id === box.task_id);
+        if (!vswr) return <span className="muted">не требуется</span>;
+        const tone = vswr.control.mode === "none" ? "" : vswr.required.failed ? "tone-danger" : vswr.required.measured >= vswr.required.total ? "tone-ok" : "tone-warn";
+        return <span className={tone}>{progressText(vswr.control, vswr.required)}</span>;
+      } },
+    { key: "handed", title: "Сдана", value: (box) => box.closed_at ?? box.created_at, render: (box) => formatMoment(box.closed_at ?? box.created_at) },
+    { key: "status", title: "Статус", value: (box) => (box.status === "Подтверждена" ? "подтверждена мастером" : "сдана монтажником"), filter: true },
+  ];
+  const open = ready.find((box) => box.id === openId);
+  return <div ref={panel} className="panel box-review qc-review">
+    <div className="manual-stock-head"><h2>Очередь ОТК</h2><span className="page-count">{ready.length}</span></div>
+    <DataTable label="Коробки на проверку ОТК" storageKey="quality-queue" rows={ready} columns={columns} rowKey={(box) => box.id}
+      searchPlaceholder="Код с коробки, номер, проект или КБ…" searchText={(box) => [box.code, box.number, boxCodeKey(box.code ?? "")]}
+      onRowClick={(box) => setOpenId(box.id)} rowTitle={() => "Открыть окно ОТК"}
+      emptyText="Коробок на проверку нет — они появятся, когда монтажник сдаст коробку с последней операции." />
+    {open && <QcWindow box={open} task={taskOf(open)} instruments={instruments} busy={busy} error={error} mutate={mutate}
+      draft={drafts[open.id] ?? emptyDraft()} setDraft={(patch) => setDrafts((current) => ({ ...current, [open.id]: { ...(current[open.id] ?? emptyDraft()), ...patch } }))}
+      openVswr={() => { setOpenId(""); openVswr(open.task_id); }}
+      close={() => { if (!busy) setOpenId(""); }}
+      done={() => { setOpenId(""); setDrafts((current) => { const rest = { ...current }; delete rest[open.id]; return rest; }); }} />}
+  </div>;
+}
+
+const emptyDraft = (): QcDraft => ({ accepted: "", rejected: "", reason: "", character: "", description: "", instrumentIds: null });
+
+function QcWindow({ box, task, instruments, busy, error, mutate, draft, setDraft, openVswr, close, done }: {
+  box: ProductionBox;
+  task: ProductionTask | undefined;
+  instruments: ProductionInstrument[];
+  busy: boolean;
+  error: string;
+  mutate: Mutate;
+  draft: QcDraft;
+  setDraft: (patch: Partial<QcDraft>) => void;
+  openVswr: () => void;
+  close: () => void;
+  done: () => void;
+}) {
+  const canPrint = useCanPrint();
+  const [plan, setPlan] = useState<QcPlan | null>(null);
+  const [planError, setPlanError] = useState("");
+  const [returning, setReturning] = useState(false);
+  const [returnReason, setReturnReason] = useState("");
+  const [printError, setPrintError] = useState("");
+  const active = instruments.filter((item) => item.kind === "Средство измерений" && item.status === "Действует");
+  const validIds = (ids: string[]) => [...new Set(ids)].filter((id) => active.some((item) => item.id === id));
+  const available = Number(box.available);
+
+  useEffect(() => {
+    let alive = true;
+    setPlan(null); setPlanError("");
+    productionApi.qcPlan(box.task_id).then((loaded) => {
+      if (!alive) return;
+      setPlan(loaded);
+      // СИ — из плана (ЭТК, СТО, ВАЦ замеров); план ничего не нашёл — прошлый выбор контролёра.
+      if (draft.instrumentIds === null) {
+        const planned = validIds(loaded.instruments.map((item) => item.id));
+        setDraft({ instrumentIds: planned.length ? planned : validIds(savedInstruments()) });
+      }
+      if (draft.reason === "vswr") {
+        const row = loaded.defects.find((item) => item.code === "4.8.16");
+        setDraft(row ? { reason: row.code, character: `${row.code} ${row.defect}` } : { reason: OTHER_REASON, character: "КСВН выше нормы" });
+      }
+    }).catch((reason) => {
+      if (!alive) return;
+      setPlanError(reason instanceof Error ? reason.message : "Проверки по ЭТК не загружены");
+      if (draft.instrumentIds === null) setDraft({ instrumentIds: validIds(savedInstruments()) });
+      if (draft.reason === "vswr") setDraft({ reason: OTHER_REASON, character: "КСВН выше нормы" });
+    });
+    return () => { alive = false; };
+  }, [box.task_id]);
+
+  const selected = draft.instrumentIds ?? [];
+  const problems = qcProblems(available, draft);
+  const rejected = qty(draft.rejected);
+  const accepted = qty(draft.accepted);
+
+  function pickReason(code: string) {
+    const row = plan?.defects.find((item) => item.code === code);
+    const previous = plan?.defects.find((item) => item.code === draft.reason);
+    const keep = draft.description.trim() && draft.description !== previous?.criterion;
+    setDraft({ reason: code, character: row ? `${row.code} ${row.defect}` : "", ...(row && !keep ? { description: row.criterion } : {}) });
+  }
+
+  async function accept() {
+    if (busy || problems.length) return;
+    const ids = validIds(selected);
     const success = await mutate(`qc:${box.id}`, () => productionApi.inspectBox(box.id, {
-      version: box.version, accepted: Number(draft.accepted), rejected: Number(draft.rejected),
-      defect_character: draft.character.trim(), defect_description: draft.description.trim(), instrument_ids: ids,
+      version: box.version, accepted, rejected,
+      defect_character: rejected > 0 ? draft.character.trim() : "", defect_description: rejected > 0 ? draft.description.trim() : "", instrument_ids: ids,
     }));
     if (success) {
-      setDialog(null); setLastInstruments(ids);
       try { localStorage.setItem(lastInstrumentsKey, JSON.stringify(ids)); } catch { /* Selection remains usable without storage. */ }
+      done();
     }
   }
-  async function returnBox(box: ProductionBox) {
-    const reason = (reasons[box.id] ?? "").trim();
+  async function sendBack() {
+    const reason = returnReason.trim();
     if (!reason) return;
-    if (await mutate(`qc-return:${box.id}`, () => productionApi.returnBox(box.id, box.version, reason))) {
-      setDialog(null); setReasons((current) => ({ ...current, [box.id]: "" }));
-    }
+    if (await mutate(`qc-return:${box.id}`, () => productionApi.returnBox(box.id, box.version, reason))) done();
   }
-  const shown = ready.filter((box) => boxMatches(box, query));
-  const dialogBox = dialog && ready.find((box) => box.id === dialog.boxId);
-  const dialogDraft = dialogBox ? draftFor(dialogBox) : null;
-  return <div ref={panel} className="panel box-review qc-review">
-    <div className="manual-stock-head"><h2>Очередь ОТК</h2><span className="page-count">{ready.length}</span>
-      {ready.length > 3 && <input className="search box-search" type="search" aria-label="Найти коробку по коду" placeholder="Код с коробки или номер…" autoComplete="off" value={query} onChange={(event) => setQuery(event.target.value)} />}
-    </div>
-    {!ready.length ? <div className="empty">Коробок на проверку нет — они появятся, когда монтажник сдаст коробку с последней операции.</div>
-      : !shown.length ? <div className="empty">Нет коробки с кодом «{query}» — проверьте код на коробке.</div>
-      : <div className="table-wrap qc-queue-wrap"><table className="grid wide qc-queue" aria-label="Коробки на проверку ОТК">
-        <colgroup><col className="qc-box-col" /><col className="qc-item-col" /><col className="qc-qty-col" /><col className="qc-number-col" /><col className="qc-number-col" /><col /><col className="qc-vswr-col" /><col className="qc-actions-col" /></colgroup>
-        <thead><tr><th scope="col">Коробка</th><th scope="col">КБ / изделие</th><th scope="col" className="num">Кол-во</th><th scope="col" className="num">Годные</th><th scope="col" className="num">Брак</th><th scope="col">СИ</th><th scope="col">КСВН</th><th scope="col">Действия</th></tr></thead>
-        <tbody>{shown.map((box) => {
-          const draft = draftFor(box);
-          const valid = totalMatches(box, draft);
-          const task = tasks.find((item) => item.id === box.task_id);
-          const vswr = vswrTasks.find((item) => item.id === box.task_id);
-          const measured = vswr && (vswr.control.mode === "none" ? "не требуется" : `замерено ${vswr.required.measured} из ${vswr.required.total}`);
-          return <tr key={`${box.id}:${box.version}`} title={valid ? undefined : `Сумма должна быть ${box.available}.`}>
-            <td className="key"><BoxName box={box} /></td>
-            <td><span className="qc-item" title={[box.item, task?.name].filter(Boolean).join(" · ")}>{box.item}{task?.name && <small>{task.name}</small>}</span></td>
-            <td className="num">{box.available}</td>
-            <td className="num"><input aria-label={`Годные ОТК ${box.number}`} name={`accepted-${box.id}`} type="number" min="0" max={box.available} step="1" disabled={busy} value={draft.accepted} onChange={(event) => update(box, { accepted: event.target.value })} /></td>
-            <td className="num"><input aria-label={`Брак ОТК ${box.number}`} name={`rejected-${box.id}`} type="number" min="0" max={box.available} step="1" disabled={busy} value={draft.rejected} onChange={(event) => update(box, { rejected: event.target.value })} /></td>
-            <td><QcInstrumentPicker instruments={active} selected={draft.instrumentIds} disabled={busy} boxNumber={box.number}
-              onChange={(instrumentIds) => update(box, { instrumentIds })} /></td>
-            <td>{vswr && <button type="button" className={`qc-vswr-link ${vswr.control.mode === "none" ? "tone-neutral" : vswr.required.measured >= vswr.required.total ? "tone-ok" : "tone-warn"}`} onClick={() => openVswr(box.task_id)}>{measured}</button>}</td>
-            <td><div className="qc-actions">
-              <button className="primary small" disabled={busy || !valid} onClick={() => Number(draft.rejected) > 0 ? setDialog({ boxId: box.id, kind: "reject" }) : void inspect(box)}>Принять ОТК</button>
-              {box.status === "Закрыта оператором" && <button className="link-button" disabled={busy} onClick={() => setDialog({ boxId: box.id, kind: "return" })}>Вернуть…</button>}
-              {!valid && <small className="danger-text" role="status">Сумма должна быть {box.available}.</small>}
-            </div></td>
-          </tr>;
-        })}</tbody>
-      </table></div>}
-    {dialogBox && dialogDraft && <PageWindow label={dialog?.kind === "reject" ? `Приёмка с браком · ${dialogBox.number}` : `Возврат коробки ${dialogBox.number}`} width={560} close={close}>
-      <form className="panel qc-dialog" onSubmit={(event) => { event.preventDefault(); if (!busy) void (dialog?.kind === "reject" ? inspect(dialogBox) : returnBox(dialogBox)); }}>
-        <div className="manual-stock-head"><h2>{dialog?.kind === "reject" ? "Брак ОТК" : "Вернуть монтажнику"}</h2><BoxName box={dialogBox} /></div>
-        {error && <div className="error-banner">{error}</div>}
-        {dialog?.kind === "reject" ? <div className="form-grid">
-          <label className="wide">Характер<input name="character" autoComplete="off" disabled={busy} value={dialogDraft.character} onChange={(event) => update(dialogBox, { character: event.target.value })} /></label>
-          <label className="wide">Описание<textarea name="description" disabled={busy} value={dialogDraft.description} onChange={(event) => update(dialogBox, { description: event.target.value })} /></label>
-        </div> : <label>Причина возврата<textarea name="reason" aria-label={`Причина возврата ${dialogBox.number}`} disabled={busy} value={reasons[dialogBox.id] ?? ""} onChange={(event) => setReasons((current) => ({ ...current, [dialogBox.id]: event.target.value }))} /></label>}
+  async function passport(position: number) {
+    setPrintError("");
+    try { printCoaxPassport(await productionApi.vswrPassport(box.task_id, position)); }
+    catch (reason) { setPrintError(reason instanceof Error ? reason.message : "Паспорт не получен"); }
+  }
+
+  const head = [task?.project, box.item, task?.name].filter(Boolean).join(" · ");
+  const rows = (plan?.checks ?? []).flatMap((check) => (check.items.length ? check.items : [{ operation: "", text: CHECK_FALLBACK[check.kind], tolerance: "" }])
+    .map((item, index) => ({ check, item, first: index === 0, span: Math.max(check.items.length, 1) })));
+  const sections = [...new Set((plan?.defects ?? []).map((row) => row.section))];
+  const passed = plan?.vswr?.units.filter((unit) => unit.verdict === "pass") ?? [];
+
+  return <PageWindow label={`ОТК · ${box.code ?? box.number}`} width={1120} close={close}>
+    <form className="panel qc-window" onSubmit={(event) => { event.preventDefault(); void (returning ? sendBack() : accept()); }}>
+      <div className="manual-stock-head"><h2>ОТК · <BoxName box={box} /></h2>
+        <span className="qc-window-head">{head}</span>
+        <span className="page-count">{available} шт</span>
+        {plan?.etk.revision != null && <span className="muted">ЭТК {plan.etk.item_index}, ред. {plan.etk.revision}</span>}
+      </div>
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      {returning ? <>
+        <label>Причина возврата монтажнику<textarea name="reason" aria-label={`Причина возврата ${box.number}`} disabled={busy} value={returnReason} onChange={(event) => setReturnReason(event.target.value)} /></label>
         <div className="form-actions">
+          <button type="button" className="secondary small" disabled={busy} onClick={() => setReturning(false)}>Назад к проверке</button>
+          <button type="submit" className="primary small" disabled={busy || !returnReason.trim()}>{busy ? "Сохраняю…" : "Вернуть монтажнику"}</button>
+        </div>
+      </> : <>
+        <h3>Что проверить</h3>
+        {planError && <p className="warning-inline" role="status">{planError} — проверьте по ЭТК задания.</p>}
+        {!plan && !planError && <div className="empty">Загрузка проверок по ЭТК…</div>}
+        {plan && !rows.length && <div className="empty">В ЭТК задания нет операций с контролем — проверьте по КД.</div>}
+        {rows.length > 0 && <div className="table-wrap"><table className="grid qc-checks" aria-label="Проверки ОТК по ЭТК">
+          <thead><tr><th scope="col">Проверка</th><th scope="col">Операция ЭТК</th><th scope="col">Что проверить</th><th scope="col">Допуск</th><th scope="col">Методика</th><th scope="col">Чем</th></tr></thead>
+          <tbody>{rows.map(({ check, item, first, span }, index) => <tr key={`${check.kind}:${index}`}>
+            {first && <th scope="row" rowSpan={span}>{check.title}{check.required === false && <small className="muted"> · не требуется</small>}</th>}
+            <td>{item.operation || <span className="muted">—</span>}</td>
+            <td>{item.text}</td>
+            <td className="num">{item.tolerance || <span className="muted">—</span>}</td>
+            {first && <td rowSpan={span}>{check.method}</td>}
+            {first && <td rowSpan={span}>{check.tools.join(", ") || <span className="muted">—</span>}</td>}
+          </tr>)}</tbody>
+        </table></div>}
+        {plan?.vswr && <div className="qc-vswr-status">
+          <span><b>Замеры КСВН:</b> <span className={plan.vswr.failed ? "tone-danger" : plan.vswr.measured >= plan.vswr.total ? "tone-ok" : "tone-warn"}>{qcVswrText(plan.vswr)}</span></span>
+          <button type="button" className="link-button" onClick={openVswr}>Протокол замеров</button>
+          {canPrint && passed.length > 0 && <span className="qc-passports" aria-label="Паспорта годных изделий">Паспорта:
+            {passed.slice(0, 12).map((unit) => <button key={unit.position} type="button" className="link-button" title={`Паспорт ${unit.serial_number}`}
+              onClick={() => void passport(unit.position)}>№ {unit.position}</button>)}
+            {passed.length > 12 && <button type="button" className="link-button" onClick={openVswr}>ещё {passed.length - 12}</button>}
+          </span>}
+          {printError && <small className="danger-text" role="alert">{printError}</small>}
+        </div>}
+        <h3>Средства измерения</h3>
+        <QcInstrumentPicker instruments={active} selected={selected} disabled={busy} boxNumber={box.number} onChange={(instrumentIds) => setDraft({ instrumentIds })} />
+        {plan?.missing_instruments.length ? <p className="warning-inline">Нет действующего СИ в реестре: {plan.missing_instruments.map((item) => `${item.tool.toLocaleLowerCase("ru")} (${item.purpose.toLocaleLowerCase("ru")})`).join(", ")}.</p> : null}
+        <h3>Решение ОТК</h3>
+        <div className="qc-decision">
+          <label>Годные, шт<input name="accepted" type="number" min="0" max={available} step="1" inputMode="numeric" aria-label={`Годные ОТК ${box.number}`}
+            disabled={busy} value={draft.accepted} onChange={(event) => setDraft({ accepted: event.target.value })} /></label>
+          <label>Брак, шт<input name="rejected" type="number" min="0" max={available} step="1" inputMode="numeric" aria-label={`Брак ОТК ${box.number}`}
+            disabled={busy} value={draft.rejected} onChange={(event) => setDraft({ rejected: event.target.value })} /></label>
+          <span className="qc-left" role="status">В коробке {available} шт{Number.isInteger(accepted + rejected) && accepted + rejected !== available ? ` · не распределено ${available - accepted - rejected}` : ""}</span>
+          {rejected > 0 && <>
+            <label className="qc-reason">Причина брака ({plan?.sto.designation ?? "СТО ФРАК-001-2026"})
+              <select name="reason" disabled={busy} value={draft.reason} onChange={(event) => pickReason(event.target.value)}>
+                <option value="">— выберите типовой дефект —</option>
+                {sections.map((section) => <optgroup key={section} label={`Раздел ${section}`}>
+                  {plan!.defects.filter((row) => row.section === section).map((row) => <option key={row.code} value={row.code}>{row.code} {row.defect} · {row.class.toLocaleLowerCase("ru")}</option>)}
+                </optgroup>)}
+                <option value={OTHER_REASON}>Другая причина…</option>
+              </select>
+            </label>
+            {draft.reason === OTHER_REASON && <label className="qc-reason">Характер брака<input name="character" autoComplete="off" disabled={busy} value={draft.character} onChange={(event) => setDraft({ character: event.target.value })} /></label>}
+            <label className="qc-description">Описание брака<textarea name="description" disabled={busy} value={draft.description} onChange={(event) => setDraft({ description: event.target.value })} /></label>
+          </>}
+        </div>
+        {problems.length > 0 && (draft.accepted !== "" || draft.rejected !== "") && <small className="danger-text" role="status">{problems.join(". ")}.</small>}
+        <div className="form-actions">
+          {box.status === "Закрыта оператором" && <button type="button" className="link-button qc-return" disabled={busy} onClick={() => setReturning(true)}>Вернуть монтажнику…</button>}
           <button type="button" className="secondary small" disabled={busy} onClick={close}>Отмена</button>
-          <button type="submit" className="primary small" disabled={busy || (dialog?.kind === "reject" ? !totalMatches(dialogBox, dialogDraft) || !dialogDraft.character.trim() || !dialogDraft.description.trim() : !(reasons[dialogBox.id] ?? "").trim())}>
-            {busy ? "Сохраняю…" : dialog?.kind === "reject" ? "Принять ОТК" : "Вернуть монтажнику"}
+          <button type="submit" className="primary small" disabled={busy || problems.length > 0}>
+            {busy ? "Сохраняю…" : problems.length ? "Принять ОТК" : `Принять ОТК: годных ${accepted}${rejected ? `, брак ${rejected}` : ""}`}
           </button>
         </div>
-      </form>
-    </PageWindow>}
-  </div>;
+      </>}
+    </form>
+  </PageWindow>;
 }

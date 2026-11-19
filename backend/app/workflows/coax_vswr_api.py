@@ -472,12 +472,15 @@ def coax_tasks(
         shown = _norm_result(norm)
         control = etk_control(document, norm)
         required = [position for position in range(1, task.quantity + 1) if vswr_in_sample(control, position)]
+        # Экран ОТК группирует замеры по заданию/КБ (владелец 19.11): проект, КБ, ревизия ЭТК, полоса нормы и брак.
         rows.append({
-            "id": str(task.id), "number": task.number, "name": task.name, "item": task.item,
+            "id": str(task.id), "number": task.number, "name": task.name, "item": task.item, "project": task.project,
             "quantity": task.quantity, "status": task.status.value,
-            "norm": {"status": shown["status"], "vswr_max": shown["vswr_max"], "source": shown["source"]},
+            "etk_revision": task.techcard_revision if task.techcard_revision is not None else current_revision,
+            "norm": {"status": shown["status"], "vswr_max": shown["vswr_max"], "source": shown["source"],
+                     "band_mhz": shown["band_mhz"]},
             "control": control,
-            "required": {"total": len(required), "measured": _measured_count(uow_factory, task, required)},
+            "required": {"total": len(required), **_progress(uow_factory, task, required)},
         })
     return {"tasks": rows}
 
@@ -510,18 +513,26 @@ def _etk_documents(techcards_factory: Callable[[], Any] | None, tasks) -> dict[t
     return found
 
 
-def _measured_count(uow_factory, task, required: list[int]) -> int:
-    """Сколько из требуемых изделий задания уже имеют замер; заданию без замеров изделия не перебираем."""
-    measured_ids = {item.serial_id for item in list_vswr_for_task(task.id, uow_factory())}
-    if not measured_ids:
-        return 0
+def _progress(uow_factory, task, required: list[int]) -> dict[str, Any]:
+    """Сколько из требуемых изделий задания уже имеют замер, сколько изделий в браке по последнему замеру и наибольший
+    КСВН последних замеров; заданию без замеров изделия не перебираем."""
+    latest: dict[UUID, VswrMeasurement] = {}
+    for item in list_vswr_for_task(task.id, uow_factory()):  # позиция, попытка — последняя перекрывает
+        latest[item.serial_id] = item
+    if not latest:
+        return {"measured": 0, "failed": 0, "max_vswr": None}
     count = 0
     with uow_factory() as uow:
         for position in required:
             serial = uow.serials.by_position(task.id, position)
-            if serial is not None and serial.id in measured_ids:
+            if serial is not None and serial.id in latest:
                 count += 1
-    return count
+    peaks = [item.max_vswr for item in latest.values() if item.max_vswr is not None]
+    return {
+        "measured": count,
+        "failed": sum(item.verdict is VswrVerdict.FAIL for item in latest.values()),
+        "max_vswr": _num(max(peaks)) if peaks else None,
+    }
 
 
 @router.get("/tasks/{task_id}")
@@ -555,7 +566,9 @@ def task_measurements(
     measured = {position for position, serial in serials if serial.id in latest}
     required = [position for position in range(1, task.quantity + 1) if vswr_in_sample(control, position)]
     return {
-        "task": {"id": str(task.id), "number": task.number, "name": task.name, "quantity": task.quantity},
+        "task": {"id": str(task.id), "number": task.number, "name": task.name, "quantity": task.quantity,
+                 "project": task.project, "item": task.item},
+        "etk": {"item_index": etk["item_index"], "revision": etk["revision"], "current_revision": etk["current_revision"]},
         "norm": _norm_result(norm),
         "control": control,
         "required": {"total": len(required), "measured": len(measured.intersection(required))},
