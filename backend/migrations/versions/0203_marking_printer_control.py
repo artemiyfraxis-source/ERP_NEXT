@@ -58,7 +58,7 @@ def _set_peel(value):
     bind = op.get_bind()
     profiles = sa.table("warehouse_marking_profiles", sa.column("id", sa.Uuid()), sa.column("inventory_number", sa.String()),
                         sa.column("geometry", sa.JSON()), sa.column("version", sa.Integer()))
-    query = sa.select(profiles.c.id, profiles.c.geometry, profiles.c.version)
+    query = sa.select(profiles.c.id, profiles.c.geometry, profiles.c.version, profiles.c.inventory_number)
     if value:
         query = query.where(profiles.c.inventory_number == PEEL_INVENTORY)
     for row in bind.execute(query):
@@ -68,8 +68,19 @@ def _set_peel(value):
         geometry = {key: item for key, item in geometry.items() if key != "peel"}
         if value:
             geometry["peel"] = True
-        # A changed profile gets a new version: an editor still holding the old one gets the usual 409, never saves over it.
-        bind.execute(sa.update(profiles).where(profiles.c.id == row.id).values(geometry=geometry, version=row.version + 1))
+            # A changed profile gets a new version: an editor still holding the old one gets the usual 409, never saves
+            # over it.
+            version = row.version + 1
+        else:
+            # Downgrade mirrors the upgrade exactly (seeded roundtrip): the ОБ.101 bump is taken back; a profile whose
+            # flag an operator set later keeps its version — the older code that runs next cannot hold `peel` anyway.
+            version = max(row.version - 1, 1) if row.inventory_number == PEEL_INVENTORY and geometry_had_peel(row) else row.version
+        bind.execute(sa.update(profiles).where(profiles.c.id == row.id).values(geometry=geometry, version=version))
+
+
+def geometry_had_peel(row):
+    geometry = row.geometry if isinstance(row.geometry, dict) else json.loads(row.geometry)
+    return geometry.get("peel") is True
 
 
 def upgrade() -> None:

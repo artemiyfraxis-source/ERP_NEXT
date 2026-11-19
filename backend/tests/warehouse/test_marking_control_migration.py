@@ -49,6 +49,8 @@ def test_0203_keeps_rows_sets_peel_for_ob101_and_round_trips(tmp_path, monkeypat
     with sqlite3.connect(path) as db:
         assert "warehouse_printer_commands" not in {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         assert all("peel" not in json.loads(raw) for (raw,) in db.execute("SELECT geometry FROM warehouse_marking_profiles"))
+        # The downgrade takes the ОБ.101 bump back: a roundtrip leaves the profiles exactly as they were.
+        assert dict(db.execute("SELECT id, version FROM warehouse_marking_profiles")) == versions
     command.upgrade(config, REVISION)
 
 
