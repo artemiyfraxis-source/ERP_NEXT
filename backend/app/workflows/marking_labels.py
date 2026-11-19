@@ -211,6 +211,63 @@ def profile_name(session, profile, requested):
     return name
 
 
+class NewProfileInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(max_length=200)
+    copy_from: UUID | None = None
+    geometry: Geometry | None = None
+
+
+@router.post("/machines/{equipment_id}/profiles")
+def create_profile(equipment_id: UUID, payload: NewProfileInput, principal: ConfigUser, factory: Factory, now: Now):
+    """A new label size for a machine. Never calibrated: a copied calibration is not valid for another size or printer."""
+    def create():
+        with factory() as uow:
+            machine = resolve_equipment(uow.session).get(equipment_id)
+            if machine is None:
+                raise KeyError("Оборудование маркировки не найдено")
+            inventory = str(machine.fields.get(INV_KEY) or machine.fields.get("inventoryNumber") or "").strip().upper()
+            name = " ".join(payload.name.split())
+            if not name:
+                raise ValueError("Укажите название профиля")
+            if len(name) > 80:
+                raise ValueError("Название профиля — не длиннее 80 знаков")
+            source = None
+            if payload.copy_from is not None:
+                source = uow.session.get(MarkingProfileRow, payload.copy_from)
+                if source is None:
+                    raise KeyError("Профиль-образец не найден")
+            if payload.geometry is not None:
+                geometry = payload.geometry.model_dump()
+                if source is not None and "peel" not in payload.geometry.model_fields_set:
+                    geometry["peel"] = bool((source.geometry or {}).get("peel"))
+            elif source is not None:
+                geometry = Geometry.model_validate(source.geometry).model_dump()
+            else:
+                raise ValueError("Укажите разметку или профиль, с которого её копировать")
+            zones = geometry["zones"]
+            if len(zones) == 2 and zones[0]["x"] >= zones[1]["x"]:
+                raise ValueError("Текст 1 — левая половина флажка: его зона должна начинаться левее зоны «Текст 2»")
+            owner = (MarkingProfileRow.inventory_number == inventory) | (MarkingProfileRow.equipment_id == equipment_id)
+            taken = uow.session.scalars(select(MarkingProfileRow.name).where(owner))
+            if any(other.casefold() == name.casefold() for other in taken):
+                raise ConcurrentProductionUpdate(f"У этого станка уже есть профиль «{name}»")
+            row = MarkingProfileRow(id=uuid4(), equipment_id=equipment_id, inventory_number=inventory, name=name,
+                                    version=1, calibrated=False, geometry=geometry)
+            uow.session.add(row)
+            try:
+                uow.session.flush()
+            except IntegrityError as error:
+                raise ConcurrentProductionUpdate(f"У этого станка уже есть профиль «{name}»") from error
+            audit(uow, principal.actor, now, row.id, "profile_created", equipment_id=str(equipment_id), name=name,
+                  copy_from=str(payload.copy_from) if payload.copy_from else None,
+                  width_mm=geometry["width_mm"], height_mm=geometry["height_mm"])
+            result = profile_view(row)
+            uow.commit()
+            return result
+    return checked(create)
+
+
 @router.put("/profiles/{profile_id}")
 def save_profile(profile_id: UUID, payload: ProfileInput, principal: ConfigUser, factory: Factory, now: Now):
     def save():

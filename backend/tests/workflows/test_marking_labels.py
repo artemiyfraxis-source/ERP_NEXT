@@ -420,3 +420,43 @@ def test_profile_save_rejects_reversed_halves_and_a_raced_duplicate_name(marking
     assert response.status_code == 422 and "уже есть профиль" in response.json()["detail"], response.text
     with factory() as uow:
         assert uow.session.get(MarkingProfileRow, UUID(payload["profile_id"])).name == "Флажок"
+
+
+def test_new_profile_from_copy_is_uncalibrated_audited_and_unique_per_machine(marking):
+    client, factory, payload, _task, _card, equipment_id, _ = marking
+    path = f"{BASE}/machines/{equipment_id}/profiles"
+    body = {"name": " 100×20 ", "copy_from": payload["profile_id"]}
+    # Editing the catalog needs the reference-edit right, like saving a profile.
+    assert client.post(path, json=body).status_code == 403
+    principal = app.dependency_overrides[authenticated_principal]()
+    app.dependency_overrides[authenticated_principal] = lambda: replace(principal, permissions={**principal.permissions, "erpref": "edit"})
+    response = client.post(path, json=body)
+    assert response.status_code == 200, response.text
+    created = response.json()
+    assert created["name"] == "100×20" and created["version"] == 1 and created["calibrated"] is False
+    assert created["equipment_id"] == str(equipment_id) and created["geometry"] == presets()[-1][2] and created["geometry"]["peel"] is True
+    with factory() as uow:
+        row = uow.session.get(MarkingProfileRow, UUID(created["id"]))
+        assert row.inventory_number == "ОБ.101" and row.calibrated is False
+        assert uow.session.get(MarkingProfileRow, UUID(payload["profile_id"])).calibrated is True
+        event = uow.session.scalar(select(AuditEventRow).where(AuditEventRow.event_type == "production.marking_profile_created"))
+        assert event.details["name"] == "100×20" and event.details["copy_from"] == payload["profile_id"]
+    machine = next(item for item in client.get(BASE + "/machines").json()["machines"] if item["equipment_id"] == str(equipment_id))
+    assert created in machine["profiles"]
+    clash = client.post(path, json={"name": "100×20", "geometry": presets()[-1][2]})
+    assert clash.status_code == 409 and "уже есть профиль" in clash.json()["detail"]
+    assert client.post(path, json={"name": "ЖУК"}).status_code == 422
+    assert client.post(f"{BASE}/machines/{uuid4()}/profiles", json=body).status_code == 404
+
+
+def test_new_profile_geometry_overrides_the_copy_and_is_validated(marking):
+    client, factory, payload, _task, _card, equipment_id, _ = marking
+    principal = app.dependency_overrides[authenticated_principal]()
+    app.dependency_overrides[authenticated_principal] = lambda: replace(principal, permissions={**principal.permissions, "erpref": "edit"})
+    path = f"{BASE}/machines/{equipment_id}/profiles"
+    raw = {key: value for key, value in presets()[0][2].items() if key != "peel"}
+    response = client.post(path, json={"name": "10×60", "copy_from": payload["profile_id"], "geometry": raw})
+    assert response.status_code == 200, response.text
+    assert response.json()["geometry"]["width_mm"] == 10 and response.json()["geometry"]["peel"] is True and response.json()["calibrated"] is False
+    bad = {**raw, "zones": [{"x": 1, "y": 1, "width": 50, "height": 13}]}
+    assert client.post(path, json={"name": "Кривой", "geometry": bad}).status_code == 422
