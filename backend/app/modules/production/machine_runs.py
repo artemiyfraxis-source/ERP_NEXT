@@ -10,8 +10,12 @@ purpose `transfer`) as `payload["run"]`; the words the command writes (`blocks`,
   ok); a counter that moved or could not be read (`moved` / `unknown`) makes the run void — «передайте заново», no
   «Пуск». A manual job is counted by the machine only after an ok check (`count_source` plc, `write_id`).
 - While it runs: done = D649 − counter_start; a counter below the start → «счётчик станка сброшен» (manual entry).
-- Closed by «Завершить» (or a newer run of another job on the machine): `machine_count`, `counter_end`, `reset`,
-  `closed_at`. A cutting run's count then pre-fills «Сдать группу» in «Мои задания» (the operator confirms, materials
+- «Пуск» from ERP only for an open, checked run whose target is still on the machine (`start_blocker`): a fresh snapshot
+  taken after the last write must show D22 = `target` and 0 < D22 − D649 ≤ the pieces left — a «Тираж» written from
+  the settings, a closed run or a counter that moved never start the machine.
+- Closed by «Завершить» (or a newer run of another job on the machine): `machine_count`, `counter_end`, `reset` (the
+  counter went back), `unread` (no fresh counter: count unknown, not a reset), `closed_at`. Never while it cuts.
+  Every change of a run's payload locks its write row first (`lock`): a close and a re-send never both count it. A cutting run's count then pre-fills «Сдать группу» in «Мои задания» (the operator confirms, materials
   move only there); a manual run finishes its manual job.
 A run of the same job again (after a correction) keeps the first `counter_start`: the pieces of both writes count."""
 
@@ -23,6 +27,8 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+
+from app.shared.clock import MOSCOW
 
 from . import machine_writes as queue
 from . import machines as rules
@@ -78,14 +84,40 @@ def _set(row: queue.MachineWriteRow, run: dict) -> None:
     row.payload = {**row.payload, KEY: dict(run)}  # a new dict: the JSON column notices the change
 
 
-def current(session: Session, equipment_id: UUID) -> queue.MachineWriteRow | None:
-    """The newest run of the machine (open, closed or failed); None — no run yet."""
+def lock(session: Session, row: queue.MachineWriteRow) -> queue.MachineWriteRow:
+    """Re-read a run's write row under a row lock (PostgreSQL `FOR UPDATE`) before its payload changes: a close and a
+    re-send of the same job in parallel wait for each other and the second sees the first one's result."""
+    session.flush()
+    session.refresh(row, with_for_update=True)
+    return row
+
+
+def current(session: Session, equipment_id: UUID, *, for_update: bool = False) -> queue.MachineWriteRow | None:
+    """The newest run of the machine (open, closed or failed); None — no run yet. `for_update` — locked, to change it."""
     for row in session.scalars(select(queue.MachineWriteRow).where(
             queue.MachineWriteRow.equipment_id == equipment_id, queue.MachineWriteRow.purpose == "transfer")
             .order_by(queue.MachineWriteRow.created_at.desc()).limit(LOOKBACK)):
         if info(row) is not None:
-            return row
+            return lock(session, row) if for_update else row
     return None
+
+
+def aware(value: datetime | None) -> datetime | None:
+    """A stored moment with its zone: SQLite (tests, preview) gives it back naive in shop time, PostgreSQL aware."""
+    return None if value is None else value.replace(tzinfo=MOSCOW) if value.tzinfo is None else value
+
+
+def fresh_words(session: Session, equipment_id: UUID, now: datetime,
+                after: datetime | None) -> dict[int, int] | None:
+    """The machine's words from a snapshot on the link, at most `COUNTER_FRESH` old and reported at or after `after`
+    (the write it has to show); None — no such snapshot."""
+    snapshot = session.get(rules.MachineSnapshotRow, equipment_id)
+    if snapshot is None or rules.link_status(snapshot, now) != "ok" \
+            or rules.since(snapshot.reported_at, now) > queue.COUNTER_FRESH:
+        return None
+    if after is not None and aware(snapshot.reported_at) < aware(after):
+        return None
+    return rules.snapshot_words(snapshot)
 
 
 VOID_CHECKS = ("moved", "unknown")
@@ -148,12 +180,19 @@ def progress(row: queue.MachineWriteRow, words: dict[int, int], link_ok: bool) -
 
 def verified(session: Session, row: queue.MachineWriteRow, now: datetime) -> dict | None:
     """The write of a run read back right: its counter start from the fresh snapshot. → the run, or None (no run)."""
+    if info(row) is None:
+        return None
+    lock(session, row)
     run = info(row)
     if run is None or run.get("verified_at"):
         return run
     run = dict(run)
+    # Only a snapshot reported after the runner took the write says what D649 was while it wrote: an older one may
+    # predate a piece cut meanwhile.
     snapshot = session.get(rules.MachineSnapshotRow, row.equipment_id)
-    seen = counter(rules.snapshot_words(snapshot)) if rules.link_status(snapshot, now) == "ok" else None
+    fresh = (row.taken_at is not None and snapshot is not None and rules.link_status(snapshot, now) == "ok"
+             and aware(snapshot.reported_at) >= aware(row.taken_at))
+    seen = counter(rules.snapshot_words(snapshot)) if fresh else None
     run["counter_seen"] = seen
     if run.get("counter") is not None:
         # The target D22 was computed from `counter`: anything else on the machine now makes it wrong.
@@ -172,8 +211,8 @@ def close(row: queue.MachineWriteRow, words: dict[int, int], link_ok: bool, now:
     run = dict(info(row) or {})
     seen = progress(row, words, link_ok)
     run.update({"closed_at": queue.moment(now), "closed_by": " ".join(actor_name.split())[:200], "closed_why": why,
-                "machine_count": seen["done"], "counter_end": seen["counter"],
-                "reset": bool(seen["reset"]) or seen["done"] is None})
+                "machine_count": seen["done"], "counter_end": seen["counter"], "reset": bool(seen["reset"]),
+                "unread": seen["done"] is None and not seen["reset"]})
     _set(row, run)
     return run
 
@@ -181,7 +220,7 @@ def close(row: queue.MachineWriteRow, words: dict[int, int], link_ok: bool, now:
 def supersede(session: Session, equipment_id: UUID, new: dict, now: datetime, actor_name: str) -> dict:
     """Before a new run is queued: the open run of the same job lends its counter start; an open run of another job
     is closed with its count. → the new run (with the inherited start, if any)."""
-    row = current(session, equipment_id)
+    row = current(session, equipment_id, for_update=True)
     if not is_open(row):
         return new
     old = info(row) or {}
@@ -206,7 +245,8 @@ def view(row: queue.MachineWriteRow, words: dict[int, int], link_ok: bool) -> di
             "write": {"status": row.status, "status_text": text, "tone": tone, "error": row.error},
             "verified_at": run.get("verified_at"), "closed_at": run.get("closed_at"),
             "closed_why": run.get("closed_why", ""), "machine_count": run.get("machine_count"),
-            "closed_reset": bool(run.get("reset")), "created_by": row.created_by_name,
+            "closed_reset": bool(run.get("reset")), "closed_unread": bool(run.get("unread")),
+            "created_by": row.created_by_name,
             "created_at": queue.moment(row.created_at), **seen}
 
 
@@ -225,27 +265,61 @@ def done_before(session: Session, equipment_id: UUID, new: dict, now: datetime) 
     return seen["done"] or 0 if seen["stage"] not in ("reset", "nolink") else 0
 
 
+NO_JOB = "Нет открытого задания — Пуск из ERP только по заданию: передайте задание на станок"
+WRITING = "Задание ещё записывается на станок — дождитесь результата"
+NOT_FRESH = "Нет свежих данных станка после записи задания — проверьте связь и повторите Пуск через секунду"
+MISMATCH = "Тираж на станке не совпадает с заданием — передайте задание заново"
+TOO_MANY = "Тираж на станке больше, чем осталось по заданию, — передайте задание заново"
+DONE_ALREADY = "Тираж задания уже выполнен — завершите задание или передайте новое"
+CUTTING = "Станок режет — сначала нажмите «Стоп», потом завершайте задание"
+
+
+def cutting_now(words: dict[int, int], link_ok: bool) -> bool:
+    """The machine is cutting (or feeding) now: a run is not closed under it."""
+    return link_ok and words.get(766) in RUNNING_STATES
+
+
 def start_blocker(session: Session, equipment_id: UUID, now: datetime) -> str:
-    """Why «Пуск» must wait for the job to be written again ('' — it need not): the run's counter moved while it was
-    written, or went back below the start after it (the target D22 no longer stops the machine at the right count)."""
+    """Why «Пуск» from ERP must not go ('' — it may): only an open run whose write was checked starts the machine, and
+    only while a fresh snapshot after the last write shows its target D22 with 0 < D22 − D649 ≤ the pieces left. A
+    «Тираж» written from the settings, a closed or void run, a counter moved or reset — the machine would not stop at
+    the job's count."""
     row = current(session, equipment_id)
     run = info(row)
-    if run is None or run.get("closed_at") or row.status in FAILED or row.status in queue.OPEN:
-        return ""
+    if run is None or run.get("closed_at") or row.status in FAILED:
+        return NO_JOB
+    if row.status in queue.OPEN:
+        return WRITING
     if run.get("check") == "moved":
         return MOVED
-    if run.get("check") == "unknown":
+    if run.get("check") != "ok" or run.get("target") is None or run.get("counter_start") is None:
         return UNREAD
-    snapshot = session.get(rules.MachineSnapshotRow, equipment_id)
-    if progress(row, rules.snapshot_words(snapshot), rules.link_status(snapshot, now) == "ok")["stage"] == "reset":
+    last = session.scalar(select(queue.MachineWriteRow.finished_at).where(
+        queue.MachineWriteRow.equipment_id == equipment_id, queue.MachineWriteRow.purpose != queue.CONTROL,
+        queue.MachineWriteRow.finished_at.is_not(None)).order_by(queue.MachineWriteRow.finished_at.desc()).limit(1))
+    words = fresh_words(session, equipment_id, now, last)
+    if words is None:
+        return NOT_FRESH
+    seen = progress(row, words, True)
+    if seen["stage"] == "reset":
         return RESET_START
+    target, now_count = rules._u32(words, 22), seen["counter"]
+    if target is None or now_count is None or seen["done"] is None:
+        return NOT_FRESH
+    if target != run["target"]:
+        return MISMATCH
+    left = target - now_count
+    if left <= 0:
+        return DONE_ALREADY
+    if run.get("quantity") is None or left > run["quantity"] - seen["done"]:
+        return TOO_MANY
     return ""
 
 
 def close_for_manual(session: Session, equipment_id: UUID, job_id: UUID, now: datetime, actor_name: str,
                      why: str) -> dict | None:
     """A manual job finished or cancelled from its own window closes its open run on the machine. → the closed run."""
-    row = current(session, equipment_id)
+    row = current(session, equipment_id, for_update=True)
     run = info(row)
     if not is_open(row) or run.get("kind") != "manual" or run.get("job_id") != str(job_id):
         return None

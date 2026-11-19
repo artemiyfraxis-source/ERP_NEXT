@@ -2,16 +2,19 @@
 from T.Finish (D649) at that moment, shows done of planned, closes with the machine count — the cutting hand-in is
 pre-filled from it, a manual job is finished with it; a counter that went back or was not read means manual entry."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import event, select
+from sqlalchemy.orm import Session as OrmSession
 
 from app.main import app
 from app.modules.production import machine_runs as runs
 from app.modules.production import machines as rules
 from app.modules.production import manual_jobs as manual
+from app.modules.production.machine_writes import MachineWriteRow
+from app.shared.clock import MOSCOW
 from app.shared.persistence import AuditEventRow
 from tests.identity.test_api_tokens import _csrf, tokens_api  # noqa: F401
 from tests.workflows.test_machine_writes_api import AGENT, CARD, NEXT, _job, _result
@@ -34,25 +37,33 @@ def _counter(value: int, state: int = 102, alarm: int = 0) -> dict:
 
 
 class Machine:
-    """The bridge and the runner on the machine PC; the clock moves a second per write so runs keep their order."""
+    """The bridge and the runner on the machine PC; the clock moves a second per write so runs keep their order. The
+    words written stay on the machine: every later report carries them (D22 = the target written last)."""
 
     def __init__(self, admin, clock):
         self.clock = clock
         self.bridge = _bridge(admin)
         self.seq = 0
+        self.held: dict = {}
+        self.last = WORDS
         self.report()
 
     def report(self, registers=None, **extra):
         self.seq += 1
-        answer = _report(self.bridge, seq=self.seq, registers=registers, **extra)
+        self.last = self.last if registers is None else registers
+        answer = _report(self.bridge, seq=self.seq, registers={**self.last, **self.held}, **extra)
         assert answer.status_code == 200, answer.text
 
-    def written(self, command_id: str) -> dict:
-        """The runner claims the command and reads back exactly what it was asked to write."""
+    def written(self, command_id: str, fresh: bool = True) -> dict:
+        """The runner claims the command and reads back exactly what it was asked to write; `fresh` — the bridge
+        reports the machine while it writes (as it does twice a second)."""
         claimed = TestClient(app).post(NEXT, headers=self.bridge, json=AGENT).json()["command"]
         assert claimed["id"] == command_id
         readback = {str(block["addr"] + index): word for block in claimed["blocks"]
                     for index, word in enumerate(block["values"])}
+        self.held.update(readback)
+        if fresh:
+            self.report()
         assert _result(self.bridge, command_id, readback).json()["status"] == "done"
         self.clock.now += timedelta(seconds=1)
         return readback
@@ -110,8 +121,11 @@ def test_a_reset_counter_or_a_failed_write_never_gives_a_machine_count(machines_
     machine.report(_counter(4, state=103))  # the counter went back below the start
     run = admin.get(RUN).json()["run"]
     assert (run["stage"], run["reset"], run["done"]) == ("reset", True, None)
+    cutting = _post(admin, RUN + "/close", {"run_id": second})  # never closed under a cutting machine
+    assert cutting.status_code == 409 and cutting.json()["detail"] == runs.CUTTING
+    machine.report(_counter(4, state=102))  # «Стоп» pressed
     closed = _post(admin, RUN + "/close", {"run_id": second}).json()["run"]
-    assert closed["machine_count"] is None and closed["closed_reset"] is True
+    assert closed["machine_count"] is None and closed["closed_reset"] is True and closed["closed_unread"] is False
     assert admin.get(f"/api/production/machines/runs/cutting/{group_id}").json()["runs"][0]["count"] is None
 
 
@@ -133,7 +147,6 @@ def test_the_same_job_written_again_keeps_its_start_another_job_closes_the_first
     assert (run["counter_start"], run["done"], run["quantity"]) == (START, 2, 12)
     other = _post(admin, RUN, {**body, "length_mm": "150"}).json()["id"]
     with sessions() as session:
-        from app.modules.production.machine_writes import MachineWriteRow
         old = runs.info(session.get(MachineWriteRow, UUID(run["id"])))
     assert (old["closed_why"], old["machine_count"]) == ("Передано другое задание", 2)
     assert admin.get(RUN).json()["run"]["id"] == other
@@ -305,3 +318,112 @@ def test_the_hand_in_sums_every_run_of_a_length_not_handed_in_yet(machines_api):
     [entry] = admin.get(f"/api/production/machines/runs/cutting/{group_id}").json()["runs"]
     assert (entry["length_mm"], entry["count"], entry["runs"], entry["unknown"], entry["inventory"]) == \
         ("325", 7, 2, False, "ОБ.019")
+
+
+def _start(admin):
+    return _post(admin, CARD + "/command", {"command": "start", "confirm_state": 102, "hands_clear": True})
+
+
+def test_start_goes_only_for_an_open_run_whose_target_is_on_the_machine(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    group_id = _job(sessions)
+    # «Тираж 500» from the settings, no job: the machine would cut 500 pieces nobody asked for.
+    machine.written(_post(admin, CARD + "/write", {"values": {"total_set": "500"}, "confirm_state": 102}).json()["id"])
+    assert _start(admin).json()["detail"] == runs.NO_JOB
+    body = {"kind": "cutting", "group_id": str(group_id), "length_mm": "325"}
+    machine.written(_post(admin, RUN, body).json()["id"])  # target START + 12
+    # «Тираж» written again from the settings while the run is open: D22 is no longer the job's.
+    machine.written(_post(admin, CARD + "/write", {"values": {"total_set": "7"}}).json()["id"])
+    assert _start(admin).json()["detail"] == runs.MISMATCH
+    sent = _post(admin, RUN, body).json()["id"]  # written again: the target is the job's once more
+    machine.written(sent)
+    # A target farther than the pieces left of the job (the run says fewer remain than D22 − D649).
+    with sessions.begin() as session:
+        row = session.get(MachineWriteRow, UUID(sent))
+        row.payload = {**row.payload, "run": {**row.payload["run"], "quantity": 11}}
+    assert _start(admin).json()["detail"] == runs.TOO_MANY
+    with sessions.begin() as session:
+        row = session.get(MachineWriteRow, UUID(sent))
+        row.payload = {**row.payload, "run": {**row.payload["run"], "quantity": 12}}
+    clock.now += timedelta(seconds=6)  # the link is on, but the snapshot is older than 5 s
+    assert _start(admin).json()["detail"] == runs.NOT_FRESH
+    machine.report()
+    started = _start(admin)
+    assert started.status_code == 200, started.text
+    machine.report(_counter(START + 12, state=107, alarm=5))
+    assert _start(admin).json()["detail"] == runs.DONE_ALREADY
+    assert _post(admin, RUN + "/close", {"run_id": sent}).status_code == 200
+    # The run is closed; D22 still holds its target — a later «Пуск» would cut pieces nobody counts.
+    machine.report(_counter(START, state=102))
+    assert _start(admin).json()["detail"] == runs.NO_JOB
+
+
+def test_a_snapshot_older_than_the_taken_write_is_no_check_and_blocks_start(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    group_id = _job(sessions)
+    sent = _post(admin, RUN, {"kind": "cutting", "group_id": str(group_id), "length_mm": "325"}).json()["id"]
+    clock.now += timedelta(seconds=1)  # the runner takes it a second after the last report
+    machine.written(sent, fresh=False)  # and answers before the next one
+    assert admin.get(RUN).json()["run"]["stage"] == "moved"
+    with sessions() as session:
+        assert runs.info(session.get(MachineWriteRow, UUID(sent)))["check"] == "unknown"
+    machine.report()
+    assert _start(admin).json()["detail"] == runs.UNREAD
+    # SQLite gives the moments back naive in shop time, PostgreSQL aware: compared as the same instant.
+    naive, utc = datetime(2026, 11, 19, 10, 0), datetime(2026, 11, 19, 7, 0, tzinfo=timezone.utc)
+    assert runs.aware(naive) == utc and runs.aware(naive).tzinfo == MOSCOW and runs.aware(utc) is utc
+
+
+def test_a_close_locks_the_run_and_a_stale_close_after_a_re_send_counts_nothing_twice(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    group_id = _job(sessions)
+    body = {"kind": "cutting", "group_id": str(group_id), "length_mm": "325"}
+    first = _post(admin, RUN, body).json()["id"]
+    machine.written(first)
+    machine.report(_counter(START + 2, state=102))
+    # Another window re-sends the same job: the first run is continued into the second.
+    second = _post(admin, RUN, body).json()["id"]
+    machine.written(second)
+    # The close pressed in the first window, on the run it still shows, is refused: no double count.
+    assert _post(admin, RUN + "/close", {"run_id": first}).status_code == 409
+    locked: list[str] = []
+
+    def spy(state):
+        if getattr(state.statement, "_for_update_arg", None) is not None:
+            locked.append(str(state.statement))
+
+    event.listen(OrmSession, "do_orm_execute", spy)
+    try:
+        machine.report(_counter(START + 5, state=102))
+        assert _post(admin, RUN + "/close", {"run_id": second}).status_code == 200
+    finally:
+        event.remove(OrmSession, "do_orm_execute", spy)
+    assert any("production_machine_writes" in text for text in locked)  # FOR UPDATE on PostgreSQL
+    [entry] = admin.get(f"/api/production/machines/runs/cutting/{group_id}").json()["runs"]
+    assert (entry["count"], entry["runs"]) == (5, 1)
+
+
+def test_an_unread_counter_closes_a_run_as_unknown_not_as_reset(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    job = _post(admin, "/api/production/manual-jobs", {"equipment_id": str(ob019), "purpose": "Проба",
+                                                       "quantity_planned": 4}).json()
+    sent = _post(admin, RUN, {"kind": "manual", "job_id": job["id"]}).json()["id"]
+    machine.written(sent)
+    version = admin.get(RUN).json()["manual"]["version"]
+    clock.now += timedelta(seconds=30)  # the bridge is silent: no link
+    assert admin.get(RUN).json()["run"]["stage"] == "nolink"
+    closed = _post(admin, RUN + "/close", {"run_id": sent, "version": version, "good": 4, "material": "pending"})
+    assert closed.status_code == 200, closed.text
+    run, finished = closed.json()["run"], closed.json()["manual"]
+    assert (run["closed_reset"], run["closed_unread"], run["machine_count"]) == (False, True, None)
+    assert (finished["count_text"], finished["machine_count"], finished["good"]) == ("Вручную", None, 4)
+    with sessions() as session:
+        params = session.get(manual.ManualJobRow, UUID(job["id"])).params
+        texts = [row.details["text"] for row in session.scalars(select(AuditEventRow).where(
+            AuditEventRow.event_type == "production.machine_run_closed"))]
+    assert params["counter_unread"] is True and "counter_reset" not in params
+    assert texts[-1].endswith("счётчик станка не прочитан — вручную")

@@ -4,7 +4,8 @@
   (the same view as the card's writes in `GET …/control`, which also says `can_control`).
   `stop` — the card's gate only (Производство or Задания, view), no confirmation. `reset` / `start` / `alarm_clear` —
   also «Управление станками» on edit (403), `hands_clear: true` and the D766 state the person confirmed (409 when it
-  changed, when the state does not allow the command or another command is open).
+  changed, when the state does not allow the command or another command is open). `start` only for an open job run
+  whose «Тираж» is on the machine (production/machine_runs.py `start_blocker`, 409 otherwise).
 The runner on the machine PC takes them through `…/agent/writes/next` (workflows/machine_writes_api.py)."""
 
 from __future__ import annotations
@@ -42,8 +43,8 @@ class CommandPayload(BaseModel):
 def send_command(inventory: str, payload: CommandPayload, principal: Reader, factory: Factory, now: Now) -> dict:
     with factory() as uow:
         link = _link(uow.session, inventory)
-        if payload.command == "start":
-            # A job whose counter moved or was reset after its Тираж was written must be written again first.
+        if payload.command == "start" and can_control(principal):  # without the right: 403 from the request below
+            # «Пуск» from ERP only for an open checked run whose target D22 is on the machine (production/machine_runs).
             blocker = runs.start_blocker(uow.session, link.equipment_id, now)
             if blocker:
                 raise HTTPException(409, blocker)
