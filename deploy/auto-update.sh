@@ -21,7 +21,7 @@ state=$status_dir/auto-update.state
 log=$status_dir/update-last.log
 mkdir -p "$status_dir"; chmod 755 "$status_dir"
 [ -f "$key" ] || { echo "нет ключа $key — автообновление не настроено (install-auto-update.sh)"; exit 0; }
-export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 exec 9>"$status_dir/auto-update.lock"; flock -n 9 || exit 0
 
 write_status() {  # kind reason retry logfile
@@ -42,9 +42,19 @@ clear_status() { [ "$(python3 -c "import json;print(json.load(open('$status')).g
 
 # 1. Fetch.
 fetch_log=$status_dir/fetch.log
-if [ ! -d "$src/.git" ]; then git clone -q --branch main "$REPO" "$src" >"$fetch_log" 2>&1 || true; fi
-if ! git -C "$src" fetch -q origin main >"$fetch_log" 2>&1; then
-  write_status fetch "сервер не достучался до GitHub" "" "$fetch_log"
+# Bounded in time (19.11.2026: an unbounded fetch hung 33 min). Fails here, before backup/migration, so nothing is half-applied.
+if [ ! -d "$src/.git" ]; then
+  rm -rf "$src"
+  timeout -k 10 900 git clone -q --branch main "$REPO" "$src" >"$fetch_log" 2>&1 || rm -rf "$src"
+fi
+timeout -k 10 600 git -C "$src" fetch -q origin main >"$fetch_log" 2>&1; frc=$?
+if [ "$frc" -ne 0 ]; then
+  if [ "$frc" -eq 124 ] || [ "$frc" -eq 137 ]; then
+    echo "загрузка с GitHub не уложилась в 10 минут, обновление прервано до изменений, следующий запуск повторит"
+    write_status fetch "загрузка с GitHub не уложилась в 10 минут" "" "$fetch_log"
+  else
+    write_status fetch "сервер не достучался до GitHub" "" "$fetch_log"
+  fi
   exit 1
 fi
 [ -f "$status" ] && clear_status fetch

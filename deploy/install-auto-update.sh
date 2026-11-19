@@ -70,8 +70,8 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now erp-auto-update.timer erp-update-request.timer >/dev/null
 
-export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-if git ls-remote git@github.com:artemiyfraxis-source/ERP_NEXT.git main >/dev/null 2>&1; then
+export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+if timeout -k 10 60 git ls-remote git@github.com:artemiyfraxis-source/ERP_NEXT.git main >/dev/null 2>&1; then
   echo "Автообновление включено: GitHub доступен, обновление в 2:00 и 6:00, вручную — erp-update now."
 else
   echo "Автообновление включено, но GitHub пока не пускает. Добавь ключ (только чтение) один раз:"
