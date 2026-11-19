@@ -261,10 +261,14 @@ def decide_verdict(
     return manual, True, reason
 
 
-def vna_uncertainty(instrument, mhz: Decimal) -> Decimal | None:
-    """U КСВН ВАЦ (по модели прибора из справочника ВАЦ норм СИ) на частоте `mhz`; модель неизвестна — None."""
+def vna_uncertainty(instrument, mhz: Decimal, limit: Decimal) -> Decimal | None:
+    """U КСВН ВАЦ (по модели прибора из справочника ВАЦ норм СИ) на частоте `mhz` для значения нормы `limit`
+    (СТО ФРАК-002-2026 п. 13.3, `Uncertainty.for_value`); модель неизвестна — None. Округлена до 4 знаков, как хранится:
+    решение и CHECK базы видят одно и то же число."""
     found = uncertainty_for(vna_model(f"{instrument.name} {instrument.doc_designation or ''}"))
-    return Decimal(str(found.at(float(mhz) / 1000))) if found is not None else None
+    if found is None:
+        return None
+    return Decimal(str(found.for_value(float(mhz) / 1000, float(limit)))).quantize(Decimal("0.0001"))
 
 
 def decide_by_rule(
@@ -564,7 +568,7 @@ def record_vswr(
             parsed, norm, mapping, low, high, command, end_traces,
         )
         limit = norm_limit(norm)
-        allowance = vna_uncertainty(instrument, max_mhz) if limit is not None else None
+        allowance = vna_uncertainty(instrument, max_mhz, limit) if limit is not None else None
         repeat_of, repeat_set = None, ()
         if complete and not manual and limit is not None:
             verdict, rule_reason, repeat_of, repeat_set = decide_by_rule(

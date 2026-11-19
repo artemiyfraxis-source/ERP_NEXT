@@ -61,20 +61,21 @@ def test_pass_fail_and_border_against_the_norm():
 
 
 @pytest.mark.parametrize("offset,once_status,final_status", [
-    (-0.03, "pass", "pass"), (-0.02, "border", "pass"), (0.0, "border", "pass"), (0.02, "border", "pass"),
-    (0.022, "border", "pass"),     # limit + U exactly: «пару соток» over the norm conform after the repeat
-    (0.023, "fail", "fail"),       # beyond limit + U: a real excess, before and after the repeat
+    (-0.03, "pass", "pass"), (-0.0201, "pass", "pass"), (-0.0199, "border", "pass"), (0.0, "border", "pass"),
+    (0.0199, "border", "pass"),    # within limit + U: «пару соток» over the norm conform after the repeat
+    (0.0201, "fail", "fail"),      # beyond limit + U: a real excess, before and after the repeat
     (0.03, "fail", "fail")])
 def test_vswr_decision_zone_is_the_limit_extended_by_the_uncertainty(offset, once_status, final_status):
-    # СТО ФРАК-002-2026 (owner 18.11): |КСВН − предел| ≤ U (S50180 ±0,022 to 10 GHz, РЭ табл. 23) triggers the
-    # 3-connection repeat; after it the worst connection conforms when ≤ limit + U (ILAC-G8 zone extended by U).
+    # СТО ФРАК-002-2026 (owner 18.11): |КСВН − предел| ≤ U triggers the 3-connection repeat; after it the worst
+    # connection conforms when ≤ limit + U (ILAC-G8 zone extended by U). U for the norm value (13.3): limit 1,09 at
+    # 6 GHz → 0,022 · 1,09 / 1,2 = 0,01998 (S50180, РЭ табл. 23).
     norm, u = norm_by_id("mil-55339-54b"), uncertainty_for("S50180")
     measured = summary({0.01: 1.02, 3: 1.02, 6: round(norm.limit(6) + offset, 4)})
     once = assess(measured, norm, u)
     assert once.status == once_status
     if once_status == "border":
         assert once.verdict == "На границе допуска выше 3 ГГц — нужен повторный замер (3 подключения с поворотом 120°)"
-        assert once.brief.endswith("погрешность ±0,022")
+        assert once.brief.endswith("погрешность ±0,02")
     final = assess(measured, norm, u, repeated=True)
     assert final.status == final_status
     assert final.verdict == ("Соответствует норме в полосе 0,01–6 ГГц" if final_status == "pass"
@@ -224,11 +225,30 @@ def test_resolvable_loss_follows_the_same_decision_zone():
 def test_vswr_limit_within_the_uncertainty_is_not_judged():
     from app.modules.production.instrument_norms import Norm, Segment
 
-    tight = Norm("Лист", "", 0.0, (Segment(18, 1.02),))  # 1,02 − 1 ≤ ±0,022: the VNA cannot resolve it
-    result = assess(summary({0.01: 1.01, 6: 1.015}), tight, uncertainty_for("S50180"))
+    tight = Norm("Лист", "", 0.0, (Segment(18, 1.015),))  # 1,015 − 1 ≤ U(1,015) = 0,0186: the VNA cannot resolve it
+    result = assess(summary({0.01: 1.01, 6: 1.012}), tight, uncertainty_for("S50180"))
     assert result.status == "below_accuracy"
     assert result.verdict == "Норма ниже точности ВАЦ — заключение о соответствии не выдаётся"
-    assert result.brief == "КСВН 1,015 (норма 1,02 ниже точности ВАЦ — не оценивается)"
+    assert result.brief == "КСВН 1,012 (норма 1,015 ниже точности ВАЦ — не оценивается)"
+    # 1,02 − 1 = 0,02 > U(1,02) = 0,0187: resolvable now that U is computed for the norm value.
+    assert assess(summary({0.01: 1.01, 6: 1.015}), Norm("Лист", "", 0.0, (Segment(18, 1.02),)),
+                  uncertainty_for("S50180")).status == "border"
+
+
+@pytest.mark.parametrize("limit", [1.10, 1.20, 1.30])
+@pytest.mark.parametrize("ghz,stated", [(5, 0.022), (10, 0.022), (10.01, 0.029), (12, 0.029)])
+def test_vswr_uncertainty_is_computed_for_the_norm_value(limit, ghz, stated):
+    """СТО ФРАК-002-2026, 4.1 изм. 1 и 13.3: U(КСВН) = U(1,2) · КСВН / 1,2; the 10 GHz edge belongs to the lower band."""
+    from app.modules.production.instrument_norms import Norm, Segment
+
+    u, norm = uncertainty_for("S50180"), Norm("Лист", "", 0.0, (Segment(18, limit),))
+    expected = stated * limit / 1.2
+    assert u.for_value(ghz, limit) == pytest.approx(expected)
+    inside = assess(summary({0.01: 1.01, ghz: limit + expected - 1e-4}), norm, u)
+    assert inside.status == "border" and inside.uncertainty == pytest.approx(expected)
+    assert assess(summary({0.01: 1.01, ghz: limit + expected - 1e-4}), norm, u, repeated=True).status == "pass"
+    assert assess(summary({0.01: 1.01, ghz: limit + expected + 1e-4}), norm, u).status == "fail"
+    assert assess(summary({0.01: 1.01, ghz: limit - expected - 1e-4}), norm, u).status == "pass"
 
 
 def _s2p(points, model="S50180"):

@@ -335,7 +335,14 @@ class Uncertainty:
     source: str
 
     def at(self, ghz: float) -> float:
+        """U stated at `at_vswr` for the band holding `ghz`; a band edge belongs to the lower band."""
         return next((value for top, value in self.steps if ghz <= top + 1e-9), self.steps[-1][1])
+
+    def for_value(self, ghz: float, vswr: float) -> float:
+        """U of the VSWR value `vswr` at `ghz`: the stated U scaled to the value, U(КСВН) = U(at_vswr)·КСВН/at_vswr
+        (СТО ФРАК-002-2026, 4.1 изм. 1 и 13.3 — U computed for the norm value). The one rule for passports, the
+        ОТК assembly verdict and the bench checks."""
+        return self.at(ghz) * vswr / self.at_vswr
 
     @property
     def line(self) -> str:
@@ -396,7 +403,8 @@ def _decide(judged, allowance, repeated: bool):
     """One rule for VSWR and loss (owner decisions 18.11; stated in СТО ФРАК-002-2026): a point within ±U of the limit is
     «на границе допуска» and triggers the 3-connection repeat. After the repeat the worst connection is judged with the
     ILAC-G8 acceptance zone extended by the measurement uncertainty: ≤ limit + U conforms, > limit + U does not —
-    «пару соток» over the norm are tolerated, a real excess never is. U is the stored VNA uncertainty at that frequency.
+    «пару соток» over the norm are tolerated, a real excess never is. U is the VNA uncertainty at that frequency for the
+    norm value (`Uncertainty.for_value`; loss: the stated transmission U).
 
     Returns (status, first non-pass point, last pass before it, peak point)."""
     first_bad, last_pass, clear_fail, border = None, None, False, False
@@ -508,7 +516,7 @@ def assess(measured, norm: Norm | None, uncertainty: Uncertainty | None = None, 
         return Assessment(norm, "no_points")
 
     def allowance(ghz: float) -> float:
-        return uncertainty.at(ghz) if uncertainty else 0.0
+        return uncertainty.for_value(ghz, norm.limit(ghz)) if uncertainty else 0.0  # 13.3: U for the norm value
 
     resolvable = _resolvable(judged, allowance, lambda point: point[2] - 1)
     if not resolvable:
@@ -519,7 +527,7 @@ def assess(measured, norm: Norm | None, uncertainty: Uncertainty | None = None, 
     status, bad, last_pass, peak = _decide(judged, allowance, repeated)
     ghz, value, limit = bad or peak
     return Assessment(norm, status, judged[0][0], judged[-1][0], ghz, value, limit, last_pass,
-                      uncertainty.at(ghz) if uncertainty else None, peak[0], peak[1], repeated)
+                      allowance(ghz) if uncertainty else None, peak[0], peak[1], repeated)
 
 
 @dataclass(frozen=True)
