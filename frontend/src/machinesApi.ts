@@ -63,8 +63,9 @@ export interface UnitSetup {
   parameters: { key: string; label: string; unit: string; source: string; source_field: string; register: string }[];
   configuration: { values: Record<string, string>; wire: string; contact: string; set_by: string; set_at: string | null; version: number } | null;
   references: { id: string; wire: string; contact: string; version: number; values: Record<string, string>; created_by: string; created_at: string }[];
-  /** Открытые задания наладки, которые сотрудник видит в «Запросах на наладку»; `mine` — назначены ему. */
-  open_tasks: { id: string; version: number; status: string; operation: string; planned_start: string | null; planned_finish: string | null; mine: boolean }[];
+  /** Открытые задания наладки, которые сотрудник видит в «Запросах на наладку»; `mine` — назначены ему,
+   *  `can_confirm` — он может записать «Настроено по заданию» (назначенный наладчик или мастер площадки). */
+  open_tasks: { id: string; version: number; status: string; operation: string; planned_start: string | null; planned_finish: string | null; mine: boolean; can_confirm: boolean }[];
   history: { at: string; by: string; operation: string; reason: string; values: Record<string, string> }[];
   online: boolean;
 }

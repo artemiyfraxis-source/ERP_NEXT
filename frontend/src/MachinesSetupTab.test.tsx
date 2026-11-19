@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { productionApi } from "./api";
 import { equipmentSetupApi, type SetupStatus, type SetupTask } from "./equipmentSetupApi";
@@ -64,6 +64,31 @@ it("hosts the setup task list with every step of the old «Наладка» scre
 
   dialog = await openTask("ОБ.023");
   expect(within(dialog).getByRole("button", { name: "Продолжить наладку" })).toBeTruthy();
+});
+
+it("opens on «Запросы на наладку» when open setup tasks wait, otherwise on «С управлением»", async () => {
+  const first = render(<MachinesPage setupViewer />);
+  await waitFor(() => expect(screen.getByRole("tab", { name: "Запросы на наладку" }).getAttribute("aria-selected")).toBe("true"));
+  first.unmount();
+  vi.mocked(equipmentSetupApi.tasks).mockClear().mockResolvedValue(page([task("t-done", "m1", "Ready"), task("t-off", "m2", "Cancelled")]));
+  render(<MachinesPage setupViewer />);
+  await waitFor(() => expect(equipmentSetupApi.tasks).toHaveBeenCalledTimes(1));
+  expect((await screen.findByRole("tab", { name: /С управлением/ })).getAttribute("aria-selected")).toBe("true");
+});
+
+it("a tab chosen by the link wins over open setup tasks", async () => {
+  render(<MachinesPage setupViewer initialView="controlled" />);
+  expect((await screen.findByRole("tab", { name: /С управлением/ })).getAttribute("aria-selected")).toBe("true");
+  expect(equipmentSetupApi.tasks).not.toHaveBeenCalled();
+});
+
+it("the master of the machine's site may confirm readiness of another technician's task, not block it", async () => {
+  vi.mocked(equipmentSetupApi.viewer).mockResolvedValue({ actor_id: "master", site: "ЦАР", can_assign: true, writable: true, site_master: true });
+  render(<MachinesPage setupViewer initialView="setup" />);
+  const dialog = await openTask("ОБ.022");
+  expect(within(dialog).getByRole("button", { name: "Подтвердить готовность наладки" })).toBeTruthy();
+  expect(within(dialog).queryByRole("button", { name: "Заблокировать" })).toBeNull();
+  expect(within(dialog).queryByRole("button", { name: "Начать наладку" })).toBeNull();
 });
 
 it("opens on «Запросы на наладку» from the old setup link", async () => {

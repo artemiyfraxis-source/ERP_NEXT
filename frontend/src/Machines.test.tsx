@@ -72,8 +72,8 @@ const SETUP: UnitSetup = {
   parameters: [{ key: "twist_pitch_mm", label: "Шаг скрутки", unit: "мм", source: "ЭТК", source_field: "Шаг", register: "" }],
   configuration: { values: { twist_pitch_mm: "20" }, wire: "", contact: "", set_by: "Слава", set_at: "2026-11-18T09:00:00+03:00", version: 3 },
   references: [], history: [], online: false,
-  open_tasks: [{ id: "t1", version: 1, status: "Назначена", operation: "П-104 · Жгут · Свивка · ЭТК 4", planned_start: "2026-11-19T08:00:00+03:00", planned_finish: null, mine: true },
-    { id: "t2", version: 2, status: "В работе", operation: "П-105 · Жгут · Свивка · ЭТК 1", planned_start: null, planned_finish: null, mine: false }],
+  open_tasks: [{ id: "t1", version: 1, status: "Назначена", operation: "П-104 · Жгут · Свивка · ЭТК 4", planned_start: "2026-11-19T08:00:00+03:00", planned_finish: null, mine: true, can_confirm: true },
+    { id: "t2", version: 2, status: "В работе", operation: "П-105 · Жгут · Свивка · ЭТК 1", planned_start: null, planned_finish: null, mine: false, can_confirm: false }],
 };
 
 function machines(calls: string[] = []) {

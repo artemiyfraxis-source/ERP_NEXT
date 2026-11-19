@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { EMPTY, formatMoment } from "./format";
 import { equipmentSetupApi, type SetupViewer } from "./equipmentSetupApi";
 import { EquipmentSetupPage } from "./EquipmentSetupPage";
@@ -121,7 +121,11 @@ function SetupWindow({ row, canWrite, setupViewer, close, saved }: {
   </PageWindow>;
 }
 
-export function MachinesPage({ setupViewer = false, canWrite = false, initialView = "controlled" }: {
+const OPEN_SETUP = new Set(["New", "InProgress", "Blocked"]);
+
+/** `initialView` — вкладка, выбранная ссылкой; без неё «Запросы на наладку» открываются первыми, когда у сотрудника
+ *  с доступом к наладке есть открытые задания, иначе — «С управлением» (владелец 19.11.2026). */
+export function MachinesPage({ setupViewer = false, canWrite = false, initialView }: {
   setupViewer?: boolean; canWrite?: boolean; initialView?: View;
 }) {
   const load = useCallback((signal: AbortSignal) => machinesApi.list(signal), []);
@@ -129,9 +133,17 @@ export function MachinesPage({ setupViewer = false, canWrite = false, initialVie
   const [open, setOpen] = useState<MachineRow | null>(null);
   const [setupOf, setSetupOf] = useState<MachineRow | null>(null);
   const [manual, setManual] = useState<{ row: MachineRow; job: ManualJob | null } | null>(null);
-  const [chosen, setView] = useState<View>(initialView);
+  const [chosen, setView] = useState<View | null>(initialView ?? null);
+  useEffect(() => {
+    if (!setupViewer || chosen !== null) return;
+    let live = true;
+    equipmentSetupApi.tasks().then((page) => {
+      if (live && page.items.some((item) => OPEN_SETUP.has(item.status))) setView((current) => current ?? "setup");
+    }).catch(() => undefined);
+    return () => { live = false; };
+  }, [setupViewer, chosen]);
   // «Запросы на наладку» — только тому, кому открыта наладка (её ключ проверяет App).
-  const view: View = chosen === "setup" && !setupViewer ? "controlled" : chosen;
+  const view: View = chosen === null || (chosen === "setup" && !setupViewer) ? "controlled" : chosen;
   const views = VIEWS.filter(([id]) => id !== "setup" || setupViewer);
   const [site, setSite] = useState<Site>("");
   /** Идёт ручная работа на этом станке — открываем её (завершить / отменить), иначе — новую с этим станком. */

@@ -605,21 +605,16 @@ def test_configuring_by_task_moves_the_task_to_ready_and_clears_waiting(setup_wo
 
 def test_setup_card_and_configuration_follow_the_task_list_rules(setup_world):
     """Old «Наладка» rules: another site sees no tasks and no journal and may not record; on the site a master sees
-    every task, anyone else only their own; «Настроено по заданию» is the assigned technician's alone; view-only
-    users may not record at all."""
+    every task, anyone else only their own; «Настроено по заданию» — the assigned technician or the master of the
+    machine's site (owner 19.11.2026), the journal names who; view-only users may not record at all."""
+    from app.modules.equipment_setup.infrastructure import SetupTaskRow, SetupTransitionRow
     sessions, admin, ob019, task = setup_world
-    tasks = {login: [item["id"] for item in _login(login).get(SETUP_CARD).json()["open_tasks"]]
-             for login in ("tech", "fitter", "master", "stranger")}
-    assert tasks == {"tech": [str(task)], "fitter": [], "master": [str(task)], "stranger": []}
-    assert [item["id"] for item in admin.get(SETUP_CARD).json()["open_tasks"]] == [str(task)]
-    body = {"expected_version": 0, "task_id": str(task), "values": {"strip_mm": "5"}}
-    for login in ("fitter", "master", "stranger"):
-        client = _login(login)
-        refused = client.post(CONFIGURE, json=body, headers=_csrf(client))
-        assert refused.status_code == 403, (login, refused.text)
-        assert "назначенный наладчик" in refused.json()["detail"]
-    stranger = _login("stranger")
+    cards = {login: _login(login).get(SETUP_CARD).json()["open_tasks"] for login in ("tech", "fitter", "master", "stranger")}
+    assert {login: [(item["id"], item["can_confirm"]) for item in items] for login, items in cards.items()} == {
+        "tech": [(str(task), True)], "fitter": [], "master": [(str(task), True)], "stranger": []}
+    assert [(item["id"], item["can_confirm"]) for item in admin.get(SETUP_CARD).json()["open_tasks"]] == [(str(task), False)]
     by_hand = {"expected_version": 0, "values": {"strip_mm": "5"}, "reason": "смена ножа"}
+    stranger = _login("stranger")
     refused = stranger.post(CONFIGURE, json=by_hand, headers=_csrf(stranger))
     assert refused.status_code == 403 and "другой площадки" in refused.json()["detail"]
     reader = _login("reader")
@@ -628,6 +623,25 @@ def test_setup_card_and_configuration_follow_the_task_list_rules(setup_world):
     fitter = _login("fitter")
     assert fitter.post(CONFIGURE, json=by_hand, headers=_csrf(fitter)).status_code == 200
     assert stranger.get(SETUP_CARD).json()["history"] == [] and len(fitter.get(SETUP_CARD).json()["history"]) == 1
+    body = {"expected_version": 1, "task_id": str(task), "values": {"strip_mm": "5"}}
+    for login in ("fitter", "stranger"):  # a plain colleague; the master of another site
+        client = _login(login)
+        refused = client.post(CONFIGURE, json=body, headers=_csrf(client))
+        assert refused.status_code == 403, (login, refused.text)
+        assert "мастер площадки" in refused.json()["detail"]
+    master = _login("master")
+    done = master.post(CONFIGURE, json=body, headers=_csrf(master))
+    assert done.status_code == 200, done.text
+    assert done.json()["task_status"] == "Ready"
+    with sessions() as session:
+        row = session.get(SetupTaskRow, task)
+        transitions = session.scalars(select(SetupTransitionRow).where(SetupTransitionRow.task_id == task)
+                                      .order_by(SetupTransitionRow.version)).all()
+        master_id = str(session.scalar(select(AuditEventRow.actor_id).where(
+            AuditEventRow.aggregate_id == task, AuditEventRow.event_type == "equipment_setup.ready")))
+    assert row.status == "Ready" and {item.snapshot["actor_id"] for item in transitions} == {master_id}
+    assert master_id != str(row.technician_id)
+    assert master.get(SETUP_CARD).json()["history"][0]["by"] == "Master"
 
 
 def test_only_a_reference_editor_ticks_the_shown_checkbox(setup_world):

@@ -5,7 +5,7 @@ from uuid import UUID
 
 from app.shared.http_auth import Principal
 
-from .application import SITE_UNKNOWN, SITES, SetupOperationUnavailable, SetupPermissionError
+from .application import SITE_UNKNOWN, SITES, SetupOperationUnavailable, SetupPermissionError, site_master_of
 
 
 @dataclass(frozen=True)
@@ -30,13 +30,14 @@ class SetupViewer:
     site: str
     can_assign: bool
     writable: bool
+    site_master: bool = False  # «Мастер площадки» of `site`: may also confirm readiness (owner 19.11.2026)
 
 
 def read_viewer(uow, *, principal):
     with uow:
         person = _reader(principal, uow.context)
-        return SetupViewer(person.actor.id, person.site,
-            principal.full_access or (person.site_master and person.site in {"ЦАР", "ЖУК"}), principal.viewer is None)
+        master = person.site_master and person.site in {"ЦАР", "ЖУК"}
+        return SetupViewer(person.actor.id, person.site, principal.full_access or master, principal.viewer is None, master)
 
 
 def _page(limit, offset):
@@ -155,23 +156,29 @@ def list_trials(task_id, uow, *, principal, limit=100, offset=0):
 
 
 def readable_setup(machine_id, tasks, context, *, principal):
-    """The open tasks of one machine this employee may read and whether its setup journal is theirs to read — the same
-    rules as the task list: an administrator everything; otherwise only a machine of their own site, the site master
-    all its tasks, anyone else only the tasks assigned to them. Another site or no personal session → ((), False)."""
+    """The open tasks of one machine this employee may read, which of them they may confirm («Настроено по заданию»:
+    the assignee or the master of the machine's site) and whether its setup journal is theirs to read — the same rules
+    as the task list: an administrator reads everything; otherwise only a machine of their own site, the site master
+    all its tasks, anyone else only the tasks assigned to them. Another site or no personal session → ((), set(), False)."""
     try:
         person = _reader(principal, context)
         if not principal.full_access:
             _machine_scope(machine_id, principal, person, context)
     except (SetupPermissionError, KeyError):
-        return (), False
-    readable = []
+        return (), set(), False
+    machine = context.machine(machine_id)
+    master = machine is not None and site_master_of(person, machine.site)
+    readable, confirmable = [], set()
     for task in tasks:
         try:
             _may_read(principal, person, task, context)
         except SetupPermissionError:
             continue
         readable.append(task)
-    return tuple(readable), True
+        if principal.viewer is None and (master or (task.technician_id == person.actor.id
+                                                    and machine is not None and person.site == machine.site)):
+            confirmable.add(task.id)
+    return tuple(readable), confirmable, True
 
 
 def may_record_by_hand(machine_id, context, *, principal):

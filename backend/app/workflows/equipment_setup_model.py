@@ -183,17 +183,18 @@ def open_tasks(session, unit_id: UUID, principal: Principal | None = None) -> tu
     rows = list(session.scalars(select(SetupTaskRow).where(SetupTaskRow.machine_id == unit_id,
                                                            SetupTaskRow.status.in_(SETUP_OPEN))
                                 .order_by(SetupTaskRow.created_at)))
-    journal = True
+    journal, confirmable = True, set()
     if principal is not None:
         context = SqlAlchemySetupContext(session, resolve_issued_operation=lambda reference: None)
-        rows, journal = readable_setup(unit_id, rows, context, principal=principal)
+        rows, confirmable, journal = readable_setup(unit_id, rows, context, principal=principal)
     result = []
     for row in rows:
         result.append({"id": str(row.id), "version": row.version, "status": SETUP_STATUSES.get(row.status, row.status),
                        "operation": operation_text(session, row.snapshot or {}),
                        "planned_start": (row.snapshot or {}).get("planned_start"),
                        "planned_finish": (row.snapshot or {}).get("planned_finish"),
-                       "mine": principal is not None and row.technician_id == principal.actor.id})
+                       "mine": principal is not None and row.technician_id == principal.actor.id,
+                       "can_confirm": row.id in confirmable})
     return result, journal
 
 
@@ -326,7 +327,7 @@ def _http(action):
 def record_configuration(inventory: str, payload: ConfigurationPayload, principal: Editor, factory: Factory,
                          request: Request, now: Now) -> dict:
     """The machine is set: what it holds now is stored as its current configuration (who / when), journaled with the
-    task's operation or the reason. By task — only the assigned technician of the machine's site, and the task goes
+    task's operation or the reason. By task — the assigned technician or the master of the machine's site; the task goes
     to «Готова» through the existing transitions in the same transaction (that clears «Ждёт наладки»); by hand — an
     administrator, or an employee of the machine's site."""
     from app.modules.equipment_setup.application import ready_by_configuration

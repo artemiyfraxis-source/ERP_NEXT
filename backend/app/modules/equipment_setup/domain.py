@@ -150,9 +150,10 @@ class SetupTask:
 
     def transition(
         self, target: SetupStatus, *, actor_id: UUID, now: datetime,
-        reason: str = "", machine_available: bool | None = None,
+        reason: str = "", machine_available: bool | None = None, by_site_master: bool = False,
     ) -> tuple[SetupTask, SetupTransition]:
-        """Ready records the assigned technician's statement, never a QC acceptance.
+        """Ready records the assigned technician's statement, never a QC acceptance — or, with `by_site_master`, the
+        statement of the master of the task's site (owner 19.11.2026), whom the caller has verified.
 
         The caller authenticates actor_id and persists the returned snapshot and fact atomically,
         with a version guard and command idempotency. This method alone provides neither guarantee.
@@ -165,8 +166,8 @@ class SetupTask:
         if not isinstance(reason, str):
             raise SetupValidationError("Причина должна быть текстом")
         reason = reason.strip()
-        if target is SetupStatus.READY and actor_id != self.technician_id:
-            raise SetupValidationError("Готовность подтверждает назначенный наладчик")
+        if target is SetupStatus.READY and actor_id != self.technician_id and not by_site_master:
+            raise SetupValidationError("Готовность подтверждает назначенный наладчик или мастер площадки")
         if target is SetupStatus.BLOCKED:
             reason = _required(reason, "Причина блокировки")
             if type(machine_available) is not bool:

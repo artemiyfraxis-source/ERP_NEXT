@@ -91,6 +91,8 @@ function SetupDetail({ task, viewer, machine, label, changed, close }: { task: S
   const attempt = useRef({ fingerprint: "", key: "" });
   const own = viewer.writable && task.technician_id === viewer.actor_id;
   const canManage = viewer.writable && viewer.can_assign;
+  // Готовность подтверждает назначенный наладчик или мастер площадки станка (владелец 19.11.2026).
+  const confirms = own || (viewer.writable && Boolean(viewer.site_master) && Boolean(machine) && machine?.site === viewer.site);
   useEffect(() => {
     let alive = true; setLoaded(false);
     Promise.all([equipmentSetupApi.recipe(task.recipe.recipe_id, task.recipe.version), equipmentSetupApi.executors(task.machine_id)])
@@ -118,7 +120,8 @@ function SetupDetail({ task, viewer, machine, label, changed, close }: { task: S
     <div className="setup-actions">
       {own && task.status === "New" && <button className="primary" disabled={busy} onClick={() => void transition("start")}>Начать наладку</button>}
       {own && task.status === "Blocked" && <button className="primary" disabled={busy} onClick={() => void transition("resume")}>Продолжить наладку</button>}
-      {own && task.status === "InProgress" && <><button className="primary" disabled={busy} onClick={() => void transition("ready")}>Подтвердить готовность наладки</button><button className="secondary" disabled={busy} onClick={() => setMode("block")}>Заблокировать</button></>}
+      {confirms && task.status === "InProgress" && <button className="primary" disabled={busy} onClick={() => void transition("ready")}>Подтвердить готовность наладки</button>}
+      {own && task.status === "InProgress" && <button className="secondary" disabled={busy} onClick={() => setMode("block")}>Заблокировать</button>}
       {canManage && !["Ready", "Cancelled"].includes(task.status) && <button className="secondary" disabled={busy} onClick={() => setMode("cancel")}>Отменить наладку</button>}
     </div>
     {mode && <form className="setup-grid" onSubmit={event => { event.preventDefault(); void transition(mode); }}>

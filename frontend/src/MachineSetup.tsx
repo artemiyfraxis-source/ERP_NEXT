@@ -24,7 +24,7 @@ export function MachineSetupPart({ inventory, canWrite, extra, saved }: {
       const next = await machinesApi.setup(inventory);
       setSetup(next);
       setError("");
-      setTask(next.open_tasks.find((item) => item.mine)?.id ?? NO_TASK);
+      setTask(next.open_tasks.find((item) => item.mine)?.id ?? next.open_tasks.find((item) => item.can_confirm)?.id ?? NO_TASK);
       setValues({});
     } catch (reason) { setError(failureText(reason, "Не удалось загрузить наладку станка")); }
   }, [inventory]);
@@ -74,9 +74,9 @@ export function MachineSetupPart({ inventory, canWrite, extra, saved }: {
     {notice && <p className="success-banner" role="status">{notice}</p>}
     <div className="machine-setup-tasks" role="radiogroup" aria-label="Для чего настройка">
       {setup.open_tasks.map((item) => <label key={item.id} className={task === item.id ? "is-on" : ""}>
-        <input type="radio" name={`setup-task-${inventory}`} checked={task === item.id} disabled={!canWrite || !item.mine} onChange={() => setTask(item.id)} />
+        <input type="radio" name={`setup-task-${inventory}`} checked={task === item.id} disabled={!canWrite || !item.can_confirm} onChange={() => setTask(item.id)} />
         <span><strong>{item.operation}</strong>
-          <span className="machine-muted"> · {item.status}{item.planned_start ? ` · ${formatMoment(item.planned_start)}` : ""}{item.mine ? " · ждёт наладки" : " · назначено другому наладчику"}</span></span>
+          <span className="machine-muted"> · {item.status}{item.planned_start ? ` · ${formatMoment(item.planned_start)}` : ""}{item.can_confirm ? " · ждёт наладки" : " · назначено другому наладчику"}</span></span>
       </label>)}
       <label className={task === NO_TASK ? "is-on" : ""}>
         <input type="radio" name={`setup-task-${inventory}`} checked={task === NO_TASK} disabled={!canWrite} onChange={() => setTask(NO_TASK)} />
