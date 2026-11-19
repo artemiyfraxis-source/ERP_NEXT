@@ -127,7 +127,295 @@ function Initialize-BenchCalibrated {
     [void](Invoke-BenchOp acm_calibrate @{ ports = @(1,2); kit_ports = @(2,1); module_serial = '26140008'; start_hz = 1e6; stop_hz = 2e6 })
     [void](Invoke-BenchOp save_calibration @{ method = 'acm'; traces = $script:profile.traces })
 }
+# Python reference: struct bits of x and of float(f"{x:.9g}") (ties, signs, subnormal, 1e-12..1e12 random sweep).
+$script:sig9Table = @'
+3ff00000015798ee 3ff0000000000000
+419d6f3442000000 419d6f3440000000
+419d6f3446000000 419d6f3448000000
+3ff000000406caca 3ff0000002af31dc
+3ff0000006b5fca7 3ff00000080d9595
+3ff000001172c418 3ff0000012ca5d06
+3fa1111110c7c411 3fa1111110c7c411
+3fa1111111111111 3fa1111110c7c411
+3fa1111110c7c412 3fa1111110c7c411
+3e90c6f7a0b5ed8d 3e90c6f7a0b5ed8d
+426d1a94a2000000 426d1a94a2000000
+4210c388d0000000 4210c388d0000000
+416312d000000000 416312d000000000
+bfd3333333333333 bfd3333333333333
+bfe0000000000000 bfe0000000000000
+c12e848000000000 c12e848000000000
+412e848000000000 412e848000000000
+41cdcd64ffc00000 41cdcd6500000000
+4023ffffffd50ce2 4023ffffffaa19c4
+3fd3333333333334 3fd3333333333333
+0000000000000001 0000000000000001
+01a56e1fc2f8f359 01a56e1fc2f8f359
+3ff0000000000000 3ff0000000000000
+3f947ae147ae147b 3f947ae147ae147b
+408bf52362e90364 408bf52362a5e786
+3fa49f44c1cd80ac 3fa49f44c15f8d2d
+3ee1cbcc3eccf27d 3ee1cbcc3e9fe946
+3ed865477b25c1a5 3ed865477acbaf38
+3fa456aea27d3381 3fa456aea2eb2700
+4032236797bece06 4032236796e80e72
+3fb82cd505557f64 3fb82cd5058c7923
+3f83f2db0fc2d80c 3f83f2db0f96dd0d
+3f5084cef76b7c3b 3f5084cef8cb5439
+3ed3780e56a72ad5 3ed3780e564d1867
+400b64d95546587f 400b64d955f224f6
+413d7e18e28f5c29 413d7e18e3d70a3d
+405dae4b790fb657 405dae4b7b28954a
+3f79bd5dc3508972 3f79bd5dc3a87f71
+40147921d740433c 40147921d6ea5d01
+3f820f6f63ae01de 3f820f6f63d9fcde
+3ee3b9b23f31a0ea 3ee3b9b23f0497b4
+3ed2c255723e566d 3ed2c255729868db
+40354e3a6a5f196b 40354e3a698859d6
+40e15ab7a161e4f8 40e15ab7a1cac083
+4051accba40d90e2 4051accba3d7e0fd
+40b3eacd797cc3a0 40b3eacd79d0a676
+3f3f71f201dae190 3f3f71f2014e24c5
+40213fc059210386 40213fc0594bf6a4
+4046e33d7ccdb0f9 4046e33d7d3910c3
+3ece9518f0ca765a 3ece9518f016517f
+4122934ab810624e 4122934ab851eb85
+4128eff472f1a9fd 4128eff473333333
+3f4f7b7f8627b6d1 3f4f7b7f866e1536
+3ed872dc2522894c 3ed872dc24c876de
+40239a30c2c0846a 40239a30c295914c
+40234ff2211a2bfb 40234ff220ef38dd
+404c01cf143a49a8 404c01cf14a5a972
+40c06ff1acc4ef89 40c06ff1aceee0f4
+4019b3872f33ca32 4019b3872f89b06d
+4161bf47ebae147b 4161bf47ebd70a3d
+3fdcfda8e22e554a 3fdcfda8e1a4e4eb
+3ee3c16f2ffe3708 3ee3c16f2fd12dd2
+3f911c6219fd368a 3f911c621ad91d89
+40b50be99a95421c 40b50be99a415f46
+be726d848cf53fca be726d848d20877e
+3e77b8441e274fce 3e77b8441e1685f3
+bfe9811aeb4859f5 bfe9811aeb1b7504
+c09593bd1167553d c09593bd1244a622
+3fede8571d5e00bf 3fede8571d596862
+bdba209b5e466002 bdba209b5f2b0765
+4050f3a355f5dd50 4050f3a355dafde8
+c0ad9d8740f2bce5 c0ad9d87414a4d2b
+4027a8cb6058ad6c 4027a8cb5f0e8351
+be4665884dec2ba2 be4665884fac1cdb
+c230df6b130d910e c230df6b12ec0000
+40adc9d8a14b29ca 40adc9d8a1dfb939
+c1ccb5f15d5b4d16 c1ccb5f15d800000
+c1616d7b242a463b c1616d7b2428f5c3
+c22e90faadd4f726 c22e90faad800000
+c194abd5ab20ace7 c194abd5ab333333
+c08ef643278a3088 c08ef64327674d16
+c11286afcf58ed85 c11286afced91687
+bfb0680387efc911 bfb0680387d27a69
+41c6b7e18afd4e09 41c6b7e18b000000
+3fe89f18815d2798 3fe89f1881811ef9
+3e4280530d6d19f0 3e4280530d7ca43a
+c03858fa68458739 c03858fa68108a92
+3d81c3b3c3e8a6f7 3d81c3b3c3e0566f
+c0d8f9f6fd713a0d c0d8f9f6fd21ff2e
+4260eeecf1a4a4b9 4260eeecf1a40000
+c19140019a6a484d c19140019a666666
+bea08339701cea6e bea08339700c7a3d
+3f794feae7a510aa 3f794feae75099e9
+40e267f685480284 40e267f6858793de
+c1922c44ab541a9b c1922c44ab333333
+c03798e3e47e4850 c03798e3e517466e
+bf59e32bb9b7f8cd bf59e32bbac228f2
+c1ac853fefadefde c1ac853ff0000000
+bf4d93035c01f245 bf4d93035c439329
+406a9f82c6a594d3 406a9f82c6ef3d3a
+41f1e23051e5a9a5 41f1e23052200000
+bda11237eadb143b bda11237eabd96b3
+42326af24bbe2998 42326af24ba40000
+41c9792f9d494b22 41c9792f9d800000
+40b31b65f8a90f93 40b31b65f8f47304
+c057a8359e52b348 c057a8359e477e44
+3dd660bb9779eace 3dd660bb974a8a02
+c15d726fa9ded669 c15d726fa999999a
+bf72db43b2b28adf bf72db43b2b0349c
+407794c1add9ea52 407794c1adea8976
+c0b8d31d4afbae5f c0b8d31d4b48d3ae
+bf7e99db4cc4718d bf7e99db4d091866
+c088e0545dba2948 c088e0545d851655
+402a8b5c8b22ad2b 402a8b5c8a449200
+be5362309dd6e8de be5362309d69c382
+c16142c85d1b8bd0 c16142c85d1eb852
+3e99edd2461ee83c 3e99edd245db63e6
+c148227bb40d7c71 c148227bb47ae148
+3fadad9e78a2bb6a 3fadad9e78f0647e
+3f985c12fcb6ace0 3f985c12fd1221dc
+408517c769e3c456 408517c769ec2ce4
+41572da5d9f57a2c 41572da5da3d70a4
+bfc91a1611662158 bfc91a1611f65dd1
+bf8073f45fbc468d bf8073f45fb60d8c
+3ffddde34e86a786 3ffddde34d41d232
+bfabc0a167400d6a bfabc0a166dfb673
+3e7a571b2093a930 3e7a571b209e651b
+41804518d617b382 41804518d6666666
+415cf923d73a41b6 415cf923d70a3d71
+40c1e50c5b2e6871 40c1e50c5b18548b
+411e9f7bb51ef1e2 411e9f7bb53f7cee
+c1ad2d8736c9376c c1ad2d8736000000
+3f8c7ad033d03800 3f8c7ad0351f0c2e
+bf182c59e85ec92e bf182c59e8708a8f
+bf67927b4932e7b3 bf67927b491fcf40
+42130561c6772903 42130561c6100000
+40212fe24f54b726 40212fe24f400427
+bda322ee6024e044 bda322ee6010d795
+bf3993ba7fb38040 bf3993ba7fb6f356
+40ccf4fd83079c29 40ccf4fd844d013b
+4071a3854de4b164 4071a3854de7ea60
+41f0caee1317dbdc 41f0caee13000000
+3f9ddad849f809ba 3f9ddad84aa6b9b5
+41f9ad3b18d32e02 41f9ad3b18e00000
+3da749be639ed0f9 3da749be6342fdcb
+be0a4971cf052bc1 be0a4971cee2e4fb
+401f14f8247a836b 401f14f824945ef2
+c197d638eb610bb5 c197d638eb333333
+3d5e68ede7273977 3d5e68ede6f66b85
+bfb024ab8e0a58bf bfb024ab8e294723
+416eb23e00097239 416eb23e00000000
+bd3570cacdd9b862 bd3570cacdbf69e1
+bdb788989805b5e7 bdb7889898a6555f
+40e7cbb5a2eb6b9b 40e7cbb5a29c779a
+3e670c75d47e7179 3e670c75d4e5a161
+40ae7dcc1f137a4e 40ae7dcc1e7967cb
+3fd2cdb1fb90c4aa 3fd2cdb1fb208369
+41ae3cb9a8952724 41ae3cb9a8000000
+3f624fc5e2e67967 3f624fc5e28e2f4c
+3ed9a57b58906506 3ed9a57b5866b2be
+3e418daebd82be93 3e418daebd5981fe
+3e749df538c17bfd 3e749df538c172ad
+bfe6f68be673848c bfe6f68be63053b8
+3f0185a1fb60d531 3f0185a1fb9f31f2
+bf834772128202aa bf8347721295a694
+bf73aa30e150dab1 bf73aa30e13675ba
+bfdee5792667321a bfdee579263197fe
+3e052fa40de69947 3e052fa40e1194b0
+be98af54ccb84c23 be98af54cd402095
+bef1ded49764f4f1 bef1ded496be799e
+3f8375f158e9c4b3 3f8375f158fe3503
+3e63e8152e1e1d08 3e63e8152e5128d3
+c1ca397169e72658 c1ca39716a000000
+4033cfd09656e610 4033cfd095af294e
+3ed3253d06958d0b 3ed3253d06b135fb
+be74ad2b8985c08f be74ad2b897dd230
+c0b84f29e663c735 c0b84f29e646f156
+42539158599398dd 4253915859680000
+3ed85bd2f4e3486d 3ed85bd2f501254a
+c038674f893fe77b c038674f89ab0f0d
+c120faf293454025 c120faf29374bc6a
+3e00003ec40ad337 3e00003ec416f0b0
+3d72fb381696f3b1 3d72fb38155f4abb
+c1ca9ac245d3e9f1 c1ca9ac246000000
+3f9cd6b29227a980 3f9cd6b291a8ad8a
+be69cf14702f1cf6 be69cf146fc4fa91
+c16026cfb951149c c16026cfb947ae14
+bda4897e7e893192 bda4897e7eb7445a
+3f4c973795cab828 3f4c973795c1e198
+3d7081b358251ead 3d7081b358158994
+40107ca02ab138fe 40107ca02ad845d2
+3e4d79a95fa3042b 3e4d79a95edd59f8
+3d69c067949ba3fd 3d69c06794c6d805
+c15fed8aff4e7c14 c15fed8aff5c28f6
+3e71b3112c8ecdb0 3e71b3112c6a48aa
+bdc35238d75edb7c bdc35238d79d8c57
+41c98c41b3973224 41c98c41b3800000
+c0f2396ced61aad1 c0f2396ced916873
+bda51efb6b32f2ee bda51efb6b21ebd8
+c0808535e031fc7a c0808535e071c53f
+bfbdf7e528d04ba0 bfbdf7e52964fe31
+c2380f34660f0219 c2380f3464b80000
+3f4474f7dc4f1c0a 3f4474f7dc37cc8a
+408c1cc90893efd8 408c1cc908a265f1
+3db4c99f810a6540 3db4c99f80258790
+41fd687a6a134e60 41fd687a6a400000
+3fe92c0981df096a 3fe92c0981c522c6
+3f828b422db30c0d 3f828b422dc1ee18
+c1231e2a61f06123 c1231e2a61cac083
+3f5d72078f68a47b 3f5d72078f577fa5
+c119714d340a53f3 c119714d34395810
+414e5b5d935a55b1 414e5b5d93333333
+c118f75d8663e9eb c118f75d8624dd2f
+3d6a0a5bc3e58912 3d6a0a5bc3e01892
+c1cc79c543b2a4cf c1cc79c543800000
+40477e2b74c86846 40477e2b74f8d061
+bf0bf0222f90aee7 bf0bf0222fdb1057
+3da577d1e94d641d 3da577d1e97c986d
+bfebac0ffbfdc1e9 bfebac0ffc2a1027
+3dff8b4638f68258 3dff8b463928704b
+3e3261be66b2f995 3e3261be668196d5
+bdf685091ae68c4f bdf685091a5cd9ec
+4086d05641cd84b2 4086d05641f64495
+c231c58c1024c7ab c231c58c10500000
+3f4bdaa29351674a 3f4bdaa2938a5646
+3e7201630b872193 3e7201630b526edf
+3fb96ec8d248b0e8 3fb96ec8d257ab57
+40a37e4376e83846 40a37e43775b8130
+c1ab8740bd4eed56 c1ab8740be000000
+3f140c022d3109ae 3f140c022d06cbef
+bf500794dd16d997 bf500794dd0ee9c9
+c254b5072ab10cf9 c254b5072ae60000
+40a3043008b9673a 40a30430092ccf6c
+3fa55c59c826a16c 3fa55c59c81d6597
+bf0dc5b44f2ac4e1 bf0dc5b44f003a4a
+3f1440fde0c9d97f 3f1440fde0e281ff
+3d65a7ac36fa4d36 3d65a7ac371943a3
+3f6d0665dc779c9a 3f6d0665dceb0865
+3e9fbec768937df8 3e9fbec768c57e78
+c089016685c039b7 c089016685db76b4
+3d96546614c7c510 3d965466149dcf9a
+41c32b3642d26bb8 41c32b3643000000
+3edfb201aed369f6 3edfb201aea05f71
+be79d1be774a4899 be79d1be775f7fac
+40f29914d507dc4f 40f29914d4fdf3b6
+bdd51fea988bb3d0 bdd51fea986541f9
+424de54a75203c52 424de54a745c0000
+c101e28825fae557 c101e28826e978d5
+c162f767587eacbc c162f76758a3d70a
+3fa5d796fa6b8670 3fa5d796fa33e17a
+c190ea30aa4b8ef7 c190ea30aa666666
+3e433e3cb5df61c1 3e433e3cb60902a0
+3fb8c2cf85dea6f3 3fb8c2cf85d53ab1
+be6f3286e2f52791 be6f3286e2d68186
+c07d7d25331b8575 c07d7d25332acfb7
+40d44d25a245568e 40d44d25a1cac083
+3e252122ed93244d 3e252122ee361458
+c232e5f9c0f30058 c232e5f9c1240000
+c1f5af85b22abe0a c1f5af85b1e00000
+40520e234a5c0416 40520e234a87e38f
+c050c96d1348135f c050c96d1328d1b0
+becd053b2f7cc335 becd053b2f517537
+41c1cc5f3b3cf748 41c1cc5f3b000000
+be74072478b47664 be74072478856dee
+'@
 function Get-BenchSets { param([string]$Like) return @($script:ioLog | Where-Object { $_ -like "set $Like" }) }
+
+Describe 'ВАЦ v2: округление до 9 значащих цифр как в Python' {
+    It 'граничные значения: <Value>' -TestCases @(
+        @{ Value = 1.000000005; Expected = 1.0 }, @{ Value = 123456784.5; Expected = 123456784.0 },
+        @{ Value = 123456785.5; Expected = 123456786.0 }, @{ Value = 1.000000015; Expected = 1.00000001 },
+        @{ Value = 999999999.5; Expected = 1e9 }, @{ Value = -0.3; Expected = -0.3 }) {
+        param($Value, $Expected)
+        ConvertTo-VnaSig9 $Value | Should Be $Expected
+    }
+    It 'совпадает с таблицей Python по битам на всех значениях' {
+        $mismatches = @()
+        foreach ($line in ($script:sig9Table -split "`n")) {
+            $pair = $line.Trim().Split(' ')
+            $value = [BitConverter]::Int64BitsToDouble([Convert]::ToInt64($pair[0], 16))
+            $actual = '{0:x16}' -f [BitConverter]::DoubleToInt64Bits((ConvertTo-VnaSig9 $value))
+            if ($actual -cne $pair[1]) { $mismatches += "$($pair[0]) -> $actual, Python $($pair[1])" }
+        }
+        ($mismatches -join '; ') | Should Be ''
+        ($script:sig9Table -split "`n").Count | Should BeGreaterThan 250
+    }
+}
 
 Describe 'ВАЦ v2: рабочее место' {
     BeforeEach {
@@ -282,6 +570,7 @@ Describe 'ВАЦ v2: рабочее место' {
         @{ Case = 'сглаживание'; Path = 'CALCulate(1).trace3.SMOothing.STATe'; Value = $true; Text = 'сглаживание' },
         @{ Case = 'стробирование'; Path = 'CALCulate(1).trace1.FILTer.GATE.TIME.STATe'; Value = $true; Text = 'стробирование' },
         @{ Case = 'усреднение'; Path = 'SENSe(1).AVERage.STATe'; Value = 'ON'; Text = 'усреднение' },
+        @{ Case = 'расширение портов'; Path = 'SENSe(1).CORRection.EXTension.STATe'; Value = $true; Text = 'расширение портов' },
         @{ Case = 'полоса'; Path = 'SENSe(1).FREQuency.STARt'; Value = 1.5e6; Text = 'сетка частот изменены' },
         @{ Case = 'маркер'; Path = 'CALCulate(1).trace4.MARKer(2).X'; Value = 1.6e6; Text = 'экран S2VNA изменён' },
         @{ Case = 'заголовок'; Path = 'DISPlay.WINDow(1).TITLe.DATA'; Value = 'другое'; Text = 'экран S2VNA изменён' }) {
@@ -328,6 +617,27 @@ Describe 'ВАЦ v2: рабочее место' {
         ($names -contains 'temperatures') | Should Be $false
         ($names -contains 'screen_hash') | Should Be $false
         $result.artifacts[0].file_name | Should Be 'measurement.s2p'
+    }
+    It 'профиль v1 выключает расширение портов и отказывает, если его включили' {
+        $script:ioValues['SENSe(1).CORRection.EXTension.STATe'] = $true
+        Initialize-BenchCalibrated
+        $script:ioValues['SENSe(1).CORRection.EXTension.STATe'] | Should Be $false
+        $script:ioValues['SENSe(1).CORRection.EXTension.STATe'] = $true
+        { Invoke-BenchOp capture @{ profile = $script:profile; orientation = 'both'; port_to_end = @{ '1' = 'А'; '2' = 'Б' } } 1 } | Should Throw 'EXTension'
+        { Invoke-BenchOp acm_confidence @{ profile = $script:profile; module_serial = '26140008' } } | Should Throw 'расширение портов'
+    }
+    It 'apply_screen и store_memory возвращают выбранный оператором график' {
+        Initialize-BenchCalibrated
+        $script:selected = 3
+        [void](Invoke-BenchOp apply_screen @{ screen = (New-BenchScreen); screen_hash = $script:benchHash })
+        $script:selected | Should Be 3
+        $script:selected = 4
+        [void](Invoke-BenchOp store_memory @{ screen_hash = $script:benchHash; traces = @(2,5) })
+        $script:selected | Should Be 4
+        $screen = New-BenchScreen; $screen.traces = @($screen.traces[0], $screen.traces[1])
+        $script:selected = 5
+        [void](Invoke-BenchOp apply_screen @{ screen = $screen; screen_hash = ('c' * 64) })
+        $script:selected | Should Be 1
     }
     It 'acm_confidence: удержание и внутренний запуск, данные и память АКМ парами' {
         Initialize-BenchCalibrated; $script:ioLog.Clear()

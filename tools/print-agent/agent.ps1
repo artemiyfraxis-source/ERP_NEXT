@@ -1769,6 +1769,8 @@ function Get-S2ProfileWrites {
         'SENSe(1).FREQuency.STOP' = $Profile.stop_hz; 'SENSe(1).SWEep.POINts' = $Profile.points
         'SENSe(1).BANDwidth.RESolution' = $Profile.if_bandwidth_hz; 'SENSe(1).AVERage.STATe' = $false
         'SENSe(1).CORRection.IMPedance.INPut.MAGNitude' = 50; 'SOURce(1).POWer.PORT(1).COUPle' = $false
+        # Port extension shifts the reference plane after calibration: always off, as tools/vna-measure set it.
+        'SENSe(1).CORRection.EXTension.STATe' = $false
     }
     foreach ($port in 1,2) {
         $writes["SOURce(1).POWer.PORT($port).LEVel.IMMediate.AMPLitude"] = $Profile.power_dbm
@@ -1901,13 +1903,67 @@ $script:VnaScreenFormats = @('SWR','MLOG','PHAS','GDEL','SMIT')
 $script:VnaSParameters = @('S11','S21','S12','S22')
 $script:VnaConfidencePointsMax = 4001
 
+Add-Type -AssemblyName System.Numerics
 function ConvertTo-VnaSig9 {
     param($Value)
-    # Same normalization as the ERP schema (9 significant digits) before any comparison of screen numbers.
+    # Exactly Python's float(f"{x:.9g}") used by the ERP schema: the exact binary value of the double is rounded
+    # half-to-even to 9 significant digits. .NET Framework 'G9' rounds through 15 digits first, and rounding the
+    # 'R' string disagrees with Python on ties such as 1.000000015, so the rounding is done on exact integers.
     $number = [double]$Value
     if ([double]::IsNaN($number) -or [double]::IsInfinity($number)) { throw 'ВАЦ: недопустимое число экрана' }
-    $culture = [Globalization.CultureInfo]::InvariantCulture
-    return [double]::Parse($number.ToString('G9', $culture), $culture)
+    if ($number -eq 0) { return $number }
+    $bits = [BitConverter]::DoubleToInt64Bits($number)
+    $exponentBits = [int](($bits -shr 52) -band 0x7FF)
+    $mantissa = $bits -band 0xFFFFFFFFFFFFF
+    if ($exponentBits -eq 0) { $exponent = -1074 } else { $mantissa = $mantissa -bor 0x10000000000000; $exponent = $exponentBits - 1075 }
+    $numerator = [Numerics.BigInteger]$mantissa; $denominator = [Numerics.BigInteger]::One
+    if ($exponent -ge 0) { $numerator = $numerator * [Numerics.BigInteger]::Pow(2, $exponent) }
+    else { $denominator = [Numerics.BigInteger]::Pow(2, -$exponent) }
+    $low = [Numerics.BigInteger]::Pow(10, 8); $high = [Numerics.BigInteger]::Pow(10, 9)
+    $decimalExponent = [int][Math]::Floor([Math]::Log10([Math]::Abs($number)))
+    for ($attempt = 0; $attempt -lt 4; $attempt++) {
+        # quotient = |x| * 10^(8 - e) must have exactly 9 digits; the log estimate can be off by one.
+        $shift = 8 - $decimalExponent; $scaledNumerator = $numerator; $scaledDenominator = $denominator
+        if ($shift -ge 0) { $scaledNumerator = $scaledNumerator * [Numerics.BigInteger]::Pow(10, $shift) }
+        else { $scaledDenominator = $scaledDenominator * [Numerics.BigInteger]::Pow(10, -$shift) }
+        $remainder = [Numerics.BigInteger]::Zero
+        $quotient = [Numerics.BigInteger]::DivRem($scaledNumerator, $scaledDenominator, [ref]$remainder)
+        if ($quotient -ge $high) { $decimalExponent++ } elseif ($quotient -lt $low) { $decimalExponent-- } else { break }
+    }
+    $half = [Numerics.BigInteger]::Compare($remainder * 2, $scaledDenominator)
+    if ($half -gt 0 -or ($half -eq 0 -and -not $quotient.IsEven)) { $quotient = $quotient + 1 }
+    if ($quotient -ge $high) { $quotient = $low; $decimalExponent++ }
+    # .NET Framework double.Parse is not correctly rounded for every short decimal (seen at ~1e-11): build the nearest
+    # double from the exact rational quotient * 10^(e - 8) instead.
+    $power = $decimalExponent - 8
+    if ($power -ge 0) { $rounded = ConvertFrom-VnaRational ($quotient * [Numerics.BigInteger]::Pow(10, $power)) ([Numerics.BigInteger]::One) }
+    else { $rounded = ConvertFrom-VnaRational $quotient ([Numerics.BigInteger]::Pow(10, -$power)) }
+    if ($number -lt 0) { return -$rounded }
+    return $rounded
+}
+function ConvertFrom-VnaRational {
+    param([Numerics.BigInteger]$Numerator, [Numerics.BigInteger]$Denominator)
+    # Nearest double (ties to even) to a positive rational: a 53-bit mantissa m and a binary exponent b, assembled as bits.
+    $two52 = [Numerics.BigInteger]::Pow(2, 52); $two53 = [Numerics.BigInteger]::Pow(2, 53)
+    $binaryExponent = [int][Math]::Floor([Numerics.BigInteger]::Log($Numerator, 2) - [Numerics.BigInteger]::Log($Denominator, 2)) - 52
+    for ($attempt = 0; $attempt -lt 6; $attempt++) {
+        if ($binaryExponent -lt -1074) { $binaryExponent = -1074 }
+        $scaledNumerator = $Numerator; $scaledDenominator = $Denominator
+        if ($binaryExponent -ge 0) { $scaledDenominator = $scaledDenominator * [Numerics.BigInteger]::Pow(2, $binaryExponent) }
+        else { $scaledNumerator = $scaledNumerator * [Numerics.BigInteger]::Pow(2, -$binaryExponent) }
+        $remainder = [Numerics.BigInteger]::Zero
+        $mantissa = [Numerics.BigInteger]::DivRem($scaledNumerator, $scaledDenominator, [ref]$remainder)
+        if ($mantissa -ge $two53) { $binaryExponent++ }
+        elseif ($mantissa -lt $two52 -and $binaryExponent -gt -1074) { $binaryExponent-- }
+        else { break }
+    }
+    $half = [Numerics.BigInteger]::Compare($remainder * 2, $scaledDenominator)
+    if ($half -gt 0 -or ($half -eq 0 -and -not $mantissa.IsEven)) { $mantissa = $mantissa + 1 }
+    if ($mantissa -ge $two53) { $mantissa = $two52; $binaryExponent++ }
+    if ($mantissa -lt $two52) { return [BitConverter]::Int64BitsToDouble([long]$mantissa) }  # subnormal, exponent field 0
+    if ($binaryExponent + 1075 -ge 2047) { throw 'ВАЦ: число экрана вне диапазона' }
+    $bits = ([long]($binaryExponent + 1075) -shl 52) -bor [long]($mantissa - $two52)
+    return [BitConverter]::Int64BitsToDouble($bits)
 }
 function ConvertTo-VnaNumber {
     param($Value, [double]$Min, [double]$Max, [string]$Label, [switch]$ExclusiveMin)
@@ -2154,6 +2210,12 @@ function Update-S2AutoScale {
         if ($traces[$index - 1].scale -is [string]) { Invoke-S2Io $Scpi "DISPlay.WINDow(1).TRACe($index).Y.SCALe.AUTO" call }
     }
 }
+function Restore-S2Selection {
+    param($Scpi, [int]$Selected, [int]$Count)
+    # The operator keeps the graph they had active; a graph beyond the new screen falls back to graph 1.
+    $target = if ($Selected -ge 1 -and $Selected -le $Count) { $Selected } else { 1 }
+    Invoke-S2Io $Scpi "CALCulate(1).PARameter($target).SELect" call
+}
 function Get-S2BenchCorrection {
     param($Scpi, [string[]]$Traces, [switch]$RequireAll, [switch]$Report)
     # Correction is read per graph after selecting it. -Report returns the worst code of each S-parameter on screen.
@@ -2258,6 +2320,7 @@ function Assert-S2BenchReady {
     if (-not $Owner.profile) { throw 'ВАЦ: профиль ещё не применён' }
     if ($null -ne $Profile) { Assert-VnaEqual $Profile $Owner.profile 'сохранённый профиль' }
     if (Test-S2On (Invoke-S2Io $Scpi 'SENSe(1).AVERage.STATe')) { throw 'ВАЦ: включено усреднение — замер не принимается; профиль задаёт только ERP' }
+    if (Test-S2On (Invoke-S2Io $Scpi 'SENSe(1).CORRection.EXTension.STATe')) { throw 'ВАЦ: включено расширение портов — замер не принимается; профиль задаёт только ERP' }
     $writes = Get-S2ProfileWrites $Owner.profile
     $writes.Remove('CALCulate(1).PARameter(1).COUNt')
     foreach ($path in @($writes.Keys)) {
@@ -2327,7 +2390,9 @@ function Invoke-S2BenchOp {
             $spec = ConvertTo-VnaScreen $argsValue.screen
             Assert-S2BenchReady $Scpi $Owner $null '' -SkipScreen
             Save-VnaScreenSpec $screenHash $spec $Serial $Command.session_id
-            Set-S2Screen $Scpi $spec
+            $selected = [int](Invoke-S2Io $Scpi 'SERVice.CHANnel(1).TRACe(1).ACTive')
+            try { Set-S2Screen $Scpi $spec }
+            finally { Restore-S2Selection $Scpi $selected @($spec.traces).Count }
             $read = Read-S2Screen $Scpi $spec
             if (@($read.issues).Count) { throw ('ВАЦ: ' + $read.issues[0]) }
             if (-not (Test-VnaScreenMatch $read $spec)) { throw 'ВАЦ: прочитанный экран S2VNA не совпадает с заданным в ERP' }
@@ -2371,10 +2436,13 @@ function Invoke-S2BenchOp {
             $count = @((Get-VnaScreenSpec $screenHash).traces).Count
             $numbers = @(foreach ($number in @($argsValue.traces)) { ConvertTo-VnaInteger $number 1 $count 'номер графика' })
             if (-not $numbers.Count -or @($numbers | Select-Object -Unique).Count -ne $numbers.Count) { throw 'ВАЦ: графики для памяти повторяются или не заданы' }
-            foreach ($number in $numbers) {
-                Invoke-S2Io $Scpi "CALCulate(1).PARameter($number).SELect" call
-                Invoke-S2Io $Scpi 'CALCulate(1).SELected.MATH.MEMorize' call
-            }
+            $selected = [int](Invoke-S2Io $Scpi 'SERVice.CHANnel(1).TRACe(1).ACTive')
+            try {
+                foreach ($number in $numbers) {
+                    Invoke-S2Io $Scpi "CALCulate(1).PARameter($number).SELect" call
+                    Invoke-S2Io $Scpi 'CALCulate(1).SELected.MATH.MEMorize' call
+                }
+            } finally { Restore-S2Selection $Scpi $selected $count }
             $Result.screen_hash = $screenHash; $Result.memorized = $numbers
         }
         'release' {
