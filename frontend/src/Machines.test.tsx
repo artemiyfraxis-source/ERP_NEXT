@@ -138,7 +138,8 @@ it("splits machines into «С управлением» and «Без управл
   fireEvent.click(screen.getByRole("tab", { name: /С управлением/ }));
   fireEvent.click(screen.getByText("ОБ.019"));
   const dialog = await screen.findByRole("dialog", { name: /ОБ\.019/ });
-  expect(await within(dialog).findByText("на станке 325,00 мм")).toBeTruthy();
+  // The drawing shows what is on the machine now.
+  await waitFor(() => expect(within(dialog).getByLabelText("Длина провода")).toHaveValue("325,00"));
   expect(within(dialog).getByText("3 621 шт/ч")).toBeTruthy();
   expect(calls).toContain("/api/production/machines/u19");
   fireEvent.click(within(dialog).getByRole("button", { name: "Наладка · ждёт" }));
@@ -220,20 +221,47 @@ it("polls every 3 seconds only while the tab is visible", async () => {
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
 });
 
-it("keeps the last PLC values greyed when the machine PC is gone and says so", () => {
+it("keeps the last PLC values greyed when the machine PC is gone and says so once, in one line", () => {
   const { container } = render(<Ob019CardView card={card({
     link: { code: "stale", text: "Нет связи с ПК станка", tone: "danger" }, age_seconds: 75 })} />);
-  expect(screen.getByText("Нет связи с ПК станка").closest("p")?.className).toContain("tone-danger");
-  expect(screen.getByText(/1 мин назад/)).toBeTruthy();
+  const status = screen.getByRole("status", { name: "Состояние станка" });
+  expect(status.className).toContain("is-danger");
+  expect(within(status).getByText("Нет связи с ПК станка")).toBeTruthy();
+  expect(within(status).getByText(/1 мин назад/)).toBeTruthy();
+  expect(screen.getAllByText("Нет связи с ПК станка")).toHaveLength(1);
   expect(container.querySelector(".machine-old")).not.toBeNull();
+  expect(screen.queryByText(/на станке —/)).toBeNull();
 });
 
-it("says the port is busy while PXS_HMI holds COM8 and there are no PLC words", () => {
+it("names the open PXS_HMI console in operator words instead of the agent's raw error, without an empty panel", () => {
   render(<Ob019CardView card={card({ link: { code: "port_busy", text: "Открыт пульт станка на ПК — запись из ERP недоступна", tone: "warn" },
-    error: "COM8 занят", live: null })} />);
-  expect(screen.getByText("Открыт пульт станка на ПК — запись из ERP недоступна")).toBeTruthy();
-  expect(screen.getByText("COM8 занят")).toBeTruthy();
-  expect(screen.getByText(/Нет данных ПЛК/)).toBeTruthy();
+    error: "mbd: busy: PXS_HMI is running, bus refused", live: null })} />);
+  const status = screen.getByRole("status", { name: "Состояние станка" });
+  expect(status.className).toContain("is-warn");
+  expect(within(status).getByText("На ПК станка открыт пульт PXS_HMI — закройте его, ERP ждёт")).toBeTruthy();
+  expect(screen.getAllByText("На ПК станка открыт пульт PXS_HMI — закройте его, ERP ждёт")).toHaveLength(1);
+  expect(screen.queryByText(/Нет данных ПЛК/)).toBeNull();
+  // The raw agent text lives only in the folded «Подключение».
+  expect(screen.getByText("mbd: busy: PXS_HMI is running, bus refused").closest("details")).not.toBeNull();
+});
+
+it("says the state, the link and the next step once at the top; an alarm leads", () => {
+  const { rerender } = render(<Ob019CardView card={card()} />);
+  let status = screen.getByRole("status", { name: "Состояние станка" });
+  expect(within(status).getByText("Аварийный стоп")).toBeTruthy();
+  expect(within(status).getByText(/На связи · сигнал/)).toBeTruthy();
+  expect(within(status).getByText("Отпустите аварийную кнопку на станке и нажмите «Сброс»")).toBeTruthy();
+  expect(within(status).getByText("Аварийная остановка — кнопкой на станке")).toBeTruthy();
+  const running = card();
+  running.live = { ...running.live!, state: { code: 103, text: "Работает", tone: "ok" } };
+  rerender(<Ob019CardView card={running} />);
+  status = screen.getByRole("status", { name: "Состояние станка" });
+  expect(within(status).getByText("Режет 12 из 300")).toBeTruthy();
+  expect(status.className).not.toContain("is-");
+  const alarm = card();
+  alarm.live = { ...alarm.live!, alarm: { code: 6, text: "Нет провода", tone: "danger" } };
+  rerender(<Ob019CardView card={alarm} />);
+  expect(within(screen.getByRole("status", { name: "Состояние станка" })).getByText("Авария: Нет провода")).toBeTruthy();
 });
 
 it("opens «Оборудование» for Производство or Задания view", () => {
