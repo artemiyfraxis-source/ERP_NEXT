@@ -115,8 +115,8 @@ def reflection_u_db(hz: float) -> float:
 
 
 def table_vswr_u(model: str = VNA_MODEL) -> VswrU:
-    """U of a VSWR value at a frequency from the stored VNA table. The table states U at `at_vswr`; 4.1 makes U
-    proportional to the VSWR (±k·КСВН %), so the stored value is scaled to the value judged."""
+    """U of a VSWR value at a frequency from the stored VNA table (РЭ S50180 ч. 1, табл. 23, stated at `at_vswr`),
+    scaled to the value judged: U(КСВН) = U(1,2) · КСВН / 1,2 (СТО ФРАК-002-2026, 4.1, изм. 1 от 19.11.2026)."""
     table = uncertainty_for(model)
     if table is None:
         raise ProductionValidationError(f"Нет погрешности ВАЦ {model} в rf-norms.json")
