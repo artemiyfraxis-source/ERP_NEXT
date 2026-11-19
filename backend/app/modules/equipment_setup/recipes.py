@@ -95,6 +95,7 @@ WIRE_LABEL = "Провод"
 PLC_STEP = Decimal("0.01")
 PLC_MAX = Decimal("655.35")  # u16 ×0,01 of D34–D43; D32 (length) is u32
 LENGTH_MAX = Decimal("99999.99")
+DIAMETER_OVER_CONDUCTOR = Decimal("0.10")  # cut diameter without a recipe: Ø жилы + 0,10 мм (owner 19.11.2026)
 
 
 @dataclass(frozen=True)
@@ -247,12 +248,23 @@ def ob019_proposal(recipe: ManualRecipeVersion | None, etk: EtkNominal | None,
             result[key] = ProposedValue(key, proposed_strip, "ЭТК: полное снятие")
     if saved.get("diameter_mm") is not None:
         result["diameter_mm"] = ProposedValue("diameter_mm", saved["diameter_mm"], tag)
+    elif etk.conductor_mm is not None:
+        # The knife closes just above the conductor (owner 19.11.2026): Ø жилы of the reference + 0,10 мм.
+        diameter = (etk.conductor_mm + DIAMETER_OVER_CONDUCTOR).quantize(PLC_STEP)
+        result["diameter_mm"] = ProposedValue("diameter_mm", diameter, "Ø жилы + 0,10")
     else:
-        result["diameter_mm"] = ProposedValue("diameter_mm", etk.conductor_mm,
-            "Ø жилы по справочнику" if etk.conductor_mm is not None else NO_DATA)
+        result["diameter_mm"] = ProposedValue("diameter_mm", None, NO_DATA)
     back = saved.get("knife_back_mm")
     result["knife_back_mm"] = ProposedValue("knife_back_mm", back, tag if back is not None else NO_DATA)
     return tuple(result[item.key] for item in OB019_PARAMETERS)
+
+
+def recipe_holds(recipe: ManualRecipeVersion | None, key: str) -> bool:
+    """The recipe has a panel value for this parameter: that value is what the machine held when it cut right, so it is
+    final — the machine's offset is not added on top of it (owner 19.11.2026)."""
+    parameter = OB019_BY_KEY.get(key)
+    return recipe is not None and parameter is not None and parameter.in_recipe \
+        and decimal_value(recipe_value(recipe, parameter.label)) is not None
 
 
 def ob019_recipe_fields(wire: str, values: dict[str, object],

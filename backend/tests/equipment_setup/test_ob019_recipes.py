@@ -67,11 +67,18 @@ def test_etk_nominal_without_recipe_full_partial_and_no_strip():
     assert values["strip_front_mm"] == (Decimal(4), "ЭТК")
     assert values["pull_front_mm"] == (Decimal(4), "ЭТК: полное снятие")
     assert values["pull_back_mm"] == (Decimal(0), "ЭТК: без зачистки")
-    assert values["diameter_mm"] == (Decimal("0.39"), "Ø жилы по справочнику")
+    assert values["diameter_mm"] == (Decimal("0.49"), "Ø жилы + 0,10")  # owner 19.11.2026
     assert values["knife_back_mm"] == (None, "Нет данных")
     partial = by_key(ob019_proposal(None, EtkNominal("МГТФ 0,12", None, Decimal(4), None, partial_front=True)))
     assert partial["pull_front_mm"] == (None, "ЭТК: частичная зачистка — задайте")
     assert partial["strip_back_mm"] == (None, "Нет данных")
+    assert partial["diameter_mm"] == (None, "Нет данных")  # no Ø жилы in the reference
+
+
+def test_recipe_holds_only_the_recorded_panel_values():
+    from app.modules.equipment_setup.recipes import recipe_holds
+    assert recipe_holds(recipe(), "diameter_mm") and recipe_holds(recipe(), "strip_front_mm")
+    assert not recipe_holds(recipe(), "length_mm") and not recipe_holds(None, "diameter_mm")
 
 
 def test_newest_version_of_the_same_wire_is_picked_first():

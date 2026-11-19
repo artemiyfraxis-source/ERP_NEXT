@@ -67,7 +67,11 @@ def test_seed_is_a_dry_run_by_default_then_writes_once(world):
     plan = _seed(world, apply=False)
     assert plan["applied"] is False and plan["version"] == 1
     assert [item["value"] for item in plan["panel_settings"]] == ["5,00", "5,00", "5,00", "5,00", "0,80", "0,10"]
-    assert world.client.get(f"{ROOT}/{world.machine}/proposal", params={"wire": "ПВАМ 0,35"}).json()["recipe"] is None
+    before = world.client.get(f"{ROOT}/{world.machine}/proposal", params={"wire": "ПВАМ 0,35"}).json()
+    assert before["recipe"] is None
+    # No recipe yet: the cut diameter is Ø жилы 0,77 + 0,10 (owner 19.11.2026).
+    assert {item["key"]: (item["value"], item["source"]) for item in before["values"]}["diameter_mm"] == (
+        "0.87", "Ø жилы + 0,10")
     assert _seed(world, apply=True)["applied"] is True
     assert "уже есть" in _seed(world, apply=True)["skipped"]
 
