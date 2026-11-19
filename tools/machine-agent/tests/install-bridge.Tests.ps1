@@ -50,3 +50,35 @@ Describe 'installer source' {
         [Text.Encoding]::ASCII.GetString([Text.Encoding]::ASCII.GetBytes($source)) | Should Be $source
     }
 }
+
+Describe 'one installer for the three tasks' {
+    It 'runs the writer like the bridge, hidden, against the ERP server' {
+        $writer = Get-WriterArguments 'D:\fraxis-mb\ob019-writer.ps1' 'http://192.168.1.85'
+        $writer | Should Match '-WindowStyle Hidden'
+        $writer | Should Match '-File "D:\\fraxis-mb\\ob019-writer.ps1" -Server http://192.168.1.85$'
+    }
+    It 'runs mbd hidden with the allow list as one argument' {
+        $mbd = Get-MbdArguments 'D:\fraxis-mb\mbd.ps1' '192.168.1.85,127.0.0.1'
+        $mbd | Should Match '-WindowStyle Hidden'
+        $mbd | Should Match '-File "D:\\fraxis-mb\\mbd.ps1" -Allow "192\.168\.1\.85,127\.0\.0\.1"$'
+        $xml = [xml](New-BridgeTaskXml 'powershell.exe' $mbd 'mbd')
+        $xml.Task.Actions.Exec.Arguments | Should Be $mbd
+        $xml.Task.Settings.ExecutionTimeLimit | Should Be 'PT0S'
+    }
+    It 'refuses while the vendor HMI or the laser software runs' {
+        Mock Get-Process { @([pscustomobject]@{ ProcessName = 'explorer' }, [pscustomobject]@{ ProcessName = 'PXS_HMI' }) }
+        $busy = Get-BusyMachineSoftware
+        $busy.Count | Should Be 1
+        $busy[0] | Should Be 'PXS_HMI'
+        Mock Get-Process { @([pscustomobject]@{ ProcessName = 'explorer' }) }
+        (Get-BusyMachineSoftware).Count | Should Be 0
+    }
+    $source = Get-Content (Join-Path $root 'install-bridge.ps1') -Raw
+    It 'registers the Modbus service, the bridge and the writer, and keeps an existing token without -Token' {
+        $source | Should Match 'Register-BridgeTask \$MbdTaskName'
+        $source | Should Match 'Register-BridgeTask \$TaskName'
+        $source | Should Match 'Register-BridgeTask \$WriterTaskName'
+        $source | Should Match "elseif \(-not \(Test-Path \`$tokenPath\)\)"
+        $source | Should Match 'Get-BusyMachineSoftware'
+    }
+}

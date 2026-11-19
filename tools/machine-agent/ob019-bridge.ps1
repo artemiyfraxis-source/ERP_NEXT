@@ -56,11 +56,24 @@ $script:ServiceVersion = ''
 Add-Type -AssemblyName System.Web.Extensions
 $script:Json = New-Object System.Web.Script.Serialization.JavaScriptSerializer
 
+# Log rotation (PowerShell 2.0): when the log reaches $MaxBytes it becomes .1, .1 becomes .2 and so on; the oldest
+# (.$Keep) is dropped. Same function in mbd.ps1, ob019-bridge.ps1 (also used by ob019-writer.ps1) and ob099-agent.ps1.
+function Invoke-LogRotation([string]$Path, [long]$MaxBytes = 5242880, [int]$Keep = 3) {
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    if ((Get-Item -LiteralPath $Path).Length -lt $MaxBytes) { return $false }
+    $oldest = $Path + '.' + $Keep
+    if (Test-Path -LiteralPath $oldest) { Remove-Item -Force -LiteralPath $oldest }
+    for ($i = $Keep - 1; $i -ge 1; $i--) {
+        $from = $Path + '.' + $i
+        if (Test-Path -LiteralPath $from) { Move-Item -Force -LiteralPath $from ($Path + '.' + ($i + 1)) }
+    }
+    Move-Item -Force -LiteralPath $Path ($Path + '.1')
+    return $true
+}
+
 function Write-BridgeLog([string]$Text) {
     try {
-        if ((Test-Path $LogPath) -and (Get-Item $LogPath).Length -gt 1048576) {
-            Move-Item -Force $LogPath ($LogPath + '.1')
-        }
+        [void](Invoke-LogRotation $LogPath)
         Add-Content -Path $LogPath -Value ((Get-Date).ToString('yyyy-MM-dd HH:mm:ss') + ' ' + $Text) -Encoding UTF8
     } catch { }
 }
