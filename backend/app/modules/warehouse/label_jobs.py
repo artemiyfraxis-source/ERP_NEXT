@@ -13,6 +13,7 @@ A job never goes back to pending. Finished TSPL jobs older than 30 days are purg
 Godex marking (migration 0190) uses an exact machine/queue, immutable PNG and attempt token;
 spool acceptance is `spooled`, while expiration becomes `unknown` and pauses that printer until the operator resolves
 it in ERP. A late agent receipt is stored on the `unknown` job; re-sending it answers the job's current status.
+«Отменить оставшиеся» (0203) moves only never-handed-out marking jobs `pending → cancelled` with the reason.
 Marking history is retained. `warehouse_label_agent` remains the warehouse TSPL heartbeat only."""
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ ERROR_MAX = 2000
 NO_REASON = "Агент печати не напечатал этикетку и не сказал почему"
 QUEUED = "В очереди принтера."
 
-PENDING, TAKEN, PRINTED, FAILED = "pending", "taken", "printed", "failed"
+PENDING, TAKEN, PRINTED, FAILED, CANCELLED = "pending", "taken", "printed", "failed", "cancelled"
 OPEN_STATUSES = (PENDING, TAKEN)
 FINISHED_STATUSES = (PRINTED, FAILED)
 
@@ -53,21 +54,21 @@ class LabelJobRow(Base):
         CheckConstraint("kind <> 'lot' OR lot_id IS NOT NULL", name="ck_warehouse_label_jobs_lot"),
         CheckConstraint("copies >= 1 AND copies <= 50", name="ck_warehouse_label_jobs_copies"),
         CheckConstraint("(format = 'tspl' AND length(tspl) > 0) OR (format = 'gdi_png' AND length(png) > 0)", name="ck_warehouse_label_jobs_tspl"),
-        CheckConstraint("status IN ('pending', 'taken', 'printed', 'failed', 'spooled', 'unknown')", name="ck_warehouse_label_jobs_status"),
+        CheckConstraint("status IN ('pending', 'taken', 'printed', 'failed', 'spooled', 'unknown', 'cancelled')", name="ck_warehouse_label_jobs_status"),
         CheckConstraint("taken_at IS NULL OR status <> 'pending'", name="ck_warehouse_label_jobs_pending_untaken"),
-        CheckConstraint("status = 'pending' OR taken_at IS NOT NULL", name="ck_warehouse_label_jobs_taken_at"),
+        CheckConstraint("status IN ('pending', 'cancelled') OR taken_at IS NOT NULL", name="ck_warehouse_label_jobs_taken_at"),
         CheckConstraint("lease_until IS NULL OR status = 'taken'", name="ck_warehouse_label_jobs_lease_only_taken"),
         CheckConstraint("status <> 'taken' OR lease_until IS NOT NULL", name="ck_warehouse_label_jobs_taken_lease"),
         CheckConstraint("lease_until IS NULL OR lease_until > taken_at", name="ck_warehouse_label_jobs_lease_after"),
         CheckConstraint(
-            "finished_at IS NULL OR status IN ('printed', 'failed', 'spooled', 'unknown')",
+            "finished_at IS NULL OR status IN ('printed', 'failed', 'spooled', 'unknown', 'cancelled')",
             name="ck_warehouse_label_jobs_finished_only_final",
         ),
         CheckConstraint(
             "status = 'pending' OR status = 'taken' OR finished_at IS NOT NULL",
             name="ck_warehouse_label_jobs_final_finished",
         ),
-        CheckConstraint("error IS NULL OR status IN ('failed', 'unknown')", name="ck_warehouse_label_jobs_error_only_failed"),
+        CheckConstraint("error IS NULL OR status IN ('failed', 'unknown', 'cancelled')", name="ck_warehouse_label_jobs_error_only_failed"),
         CheckConstraint("status <> 'failed' OR error IS NOT NULL", name="ck_warehouse_label_jobs_failed_error"),
         CheckConstraint("(format = 'tspl' AND kind <> 'marking' AND batch_id IS NULL AND png IS NULL AND status NOT IN ('spooled', 'unknown')) OR "
                         "(format = 'gdi_png' AND kind = 'marking' AND copies = 1 AND png IS NOT NULL AND length(png) BETWEEN 1 AND 2097152 "
@@ -75,7 +76,10 @@ class LabelJobRow(Base):
                         "AND batch_id IS NOT NULL AND sequence IS NOT NULL AND sequence >= 1 "
                         "AND width_mm IS NOT NULL AND width_mm BETWEEN 5 AND 150 AND height_mm IS NOT NULL AND height_mm BETWEEN 5 AND 150 "
                         "AND orientation IS NOT NULL AND orientation IN ('portrait', 'landscape') AND status <> 'printed')", name="ck_label_job_payload"),
-        CheckConstraint("format <> 'gdi_png' OR status = 'pending' OR (attempt IS NOT NULL AND claim_token_id IS NOT NULL)", name="ck_label_job_attempt"),
+        CheckConstraint("format <> 'gdi_png' OR status IN ('pending', 'cancelled') OR (attempt IS NOT NULL AND claim_token_id IS NOT NULL)", name="ck_label_job_attempt"),
+        # 0203: «Отменить оставшиеся» — only a never-handed-out marking job, with the operator's reason.
+        CheckConstraint("status <> 'cancelled' OR (format = 'gdi_png' AND taken_at IS NULL AND attempt IS NULL "
+                        "AND claim_token_id IS NULL AND finished_at IS NOT NULL AND error IS NOT NULL AND trim(error) <> '')", name="ck_label_job_cancelled"),
         UniqueConstraint("batch_id", "sequence", name="uq_label_job_sequence"),
         ForeignKeyConstraint(["target_machine_id", "target_printer"], ["warehouse_agent_printers.machine_id", "warehouse_agent_printers.name"],
                              name="fk_label_job_printer", ondelete="RESTRICT"),
@@ -293,8 +297,30 @@ def expire_marking(session, now):
             error="Агент не подтвердил результат — проверьте принтер перед продолжением"))
 
 
+def cancel_pending_marking(session, batch_id, *, reason, now) -> list[int]:
+    """«Отменить оставшиеся»: every never-handed-out job of the batch becomes `cancelled` with the reason; a job the
+    agent already took (or spooled) is not touched. Returns the cancelled sequence numbers (the caller journals them)."""
+    reason = " ".join(reason.split())
+    if not reason:
+        raise ValueError("Укажите причину отмены")
+    text = f"Отменено: {reason}"[:ERROR_MAX]
+    sequences = list(session.scalars(select(LabelJobRow.sequence).where(LabelJobRow.batch_id == batch_id,
+        LabelJobRow.format == "gdi_png", LabelJobRow.status == PENDING).order_by(LabelJobRow.sequence).with_for_update()))
+    if not sequences:
+        return []
+    changed = session.execute(update(LabelJobRow).where(LabelJobRow.batch_id == batch_id, LabelJobRow.format == "gdi_png",
+        LabelJobRow.status == PENDING, LabelJobRow.sequence.in_(sequences)).values(status=CANCELLED, finished_at=now, error=text)
+        .execution_options(synchronize_session=False))
+    if changed.rowcount != len(sequences):
+        # The agent took one between the read and the write (engines without FOR UPDATE): the caller retries.
+        raise JobFinished("Очередь изменилась — повторите отмену")
+    return sequences
+
+
 def claim_marking(uow, *, machine_id, token_id, now):
     from .devices import PrinterRow
+    from .marking_profiles import MarkingBatchRow
+    from .printer_commands import open_command_printers
     from .scan_agents import LIVE_FOR
 
     with uow:
@@ -303,7 +329,11 @@ def claim_marking(uow, *, machine_id, token_id, now):
         printers = session.scalars(select(PrinterRow).where(PrinterRow.machine_id == machine_id,
             PrinterRow.kind == "gdi_png", PrinterRow.present.is_(True), PrinterRow.last_seen >= now - LIVE_FOR)
             .order_by(PrinterRow.name).with_for_update()).all()
+        # «Очистить принтер» in progress: nothing new is spooled under the clearing.
+        clearing = open_command_printers(session, machine_id)
         for printer in printers:
+            if printer.name in clearing:
+                continue
             # Row locking handles PostgreSQL. CAS also arbitrates engines without FOR UPDATE.
             version = printer.queue_version
             changed = session.execute(update(PrinterRow).where(PrinterRow.machine_id == machine_id,
@@ -330,6 +360,10 @@ def claim_marking(uow, *, machine_id, token_id, now):
                       "width_mm": job.width_mm, "height_mm": job.height_mm, "orientation": job.orientation,
                       "dpi": 300, "copies": 1, "png_b64": base64.b64encode(job.png).decode("ascii"),
                       "sha256": hashlib.sha256(job.png).hexdigest()}
+            # The profile's peel-off dispenser (0203): the agent refuses the job unless the driver emits ^O1.
+            batch = session.get(MarkingBatchRow, job.batch_id)
+            geometry = ((batch.manifest if batch else {}).get("profile_snapshot") or {}).get("geometry") or {}
+            result["peel"] = bool(geometry.get("peel"))
             uow.commit()
             return result
         uow.commit()

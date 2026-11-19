@@ -8,6 +8,9 @@
  Свой сканер (28.10.2026): задание приходит с выбранным человеком сканером (WIA DeviceID или имя) - сканирует он;
  его нет на этом ПК - ошибка без подмены; без выбора WIA допускает только единственное устройство.
  Новая версия агента лежит на сервере: агент скачивает её, сверяет SHA-256, подменяет себя и перезапускает задачу.
+ Управление Godex из ERP (2.10.0, 19.11.2026): режим отделителя (peel-off) по профилю станка — агент держит его в DevMode
+ своей учётной записи и .DEFAULT и перед каждой этикеткой проверяет вывод драйвера на ^O1; этикетки маркировки уходят в
+ очередь Windows по одной; команда «Очистить принтер» из ERP убирает задания ERP из очереди и очищает буфер Godex.
 #>
 [CmdletBinding()]
 param(
@@ -30,7 +33,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.9.7'
+$script:AgentVersion = '2.10.0'
 $script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
@@ -107,13 +110,15 @@ public static class ErpRawPrinter {
     return code + " (" + new System.ComponentModel.Win32Exception(code).Message + ")";
   }
 
-  public static void Send(string printer, byte[] bytes) {
+  public static void Send(string printer, byte[] bytes) { Send(printer, bytes, "ERP label"); }
+
+  public static void Send(string printer, byte[] bytes, string document) {
     IntPtr handle;
     if (!OpenPrinter(printer, out handle, IntPtr.Zero))
       throw new Exception("Принтер не открывается: " + Err());
     try {
       DOCINFO info = new DOCINFO();
-      info.pDocName = "ERP label";
+      info.pDocName = document;
       info.pDataType = "RAW";
       if (!StartDocPrinter(handle, 1, info))
         throw new Exception("Очередь не приняла задание: " + Err());
@@ -139,9 +144,9 @@ public static class ErpRawPrinter {
 
 # Отправка байтов в очередь. Вынесено в функцию, чтобы тесты подменяли её.
 function Send-RawToPrinter {
-    param([string]$PrinterName, [byte[]]$Bytes)
+    param([string]$PrinterName, [byte[]]$Bytes, [string]$DocumentName = 'ERP label')
     Initialize-RawPrinter
-    [ErpRawPrinter]::Send($PrinterName, $Bytes)
+    [ErpRawPrinter]::Send($PrinterName, $Bytes, $DocumentName)
 }
 
 # Exact custom media must never round-trip through PaperSize (hundredths of an inch).
@@ -175,11 +180,17 @@ public static class ErpGdiPrinter {
   static extern IntPtr CreateDC(string driver, string device, string output, IntPtr mode);
   [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
   [DllImport("gdi32.dll")] static extern int GetDeviceCaps(IntPtr dc, int index);
+  [DllImport("winspool.drv", EntryPoint="GetPrinterW", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern bool GetPrinter(IntPtr printer, int level, IntPtr buffer, int size, out int needed);
+  [DllImport("winspool.drv", EntryPoint="SetPrinterW", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern bool SetPrinter(IntPtr printer, int level, IntPtr buffer, int command);
   [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
   class DocInfo {
     public int size = Marshal.SizeOf(typeof(DocInfo));
     [MarshalAs(UnmanagedType.LPWStr)] public string name = "ERP marking";
-    public IntPtr output = IntPtr.Zero, type = IntPtr.Zero;
+    // lpszOutput: a file instead of the printer port (DOCINFO, StartDoc) - the driver's own output, never printed.
+    [MarshalAs(UnmanagedType.LPWStr)] public string output = null;
+    public IntPtr type = IntPtr.Zero;
     public int flags = 0;
   }
   [DllImport("gdi32.dll", EntryPoint="StartDocW", CharSet=CharSet.Unicode, SetLastError=true)]
@@ -252,6 +263,74 @@ public static class ErpGdiPrinter {
       ClosePrinter(printer);
     }
   }
+  static IntPtr OpenNamed(string name) {
+    IntPtr printer;
+    if (!OpenPrinter(name,out printer,IntPtr.Zero)) throw new InvalidOperationException("Printer unavailable: " + name);
+    return printer;
+  }
+  static byte[] CopyMode(IntPtr mode) {
+    if (mode == IntPtr.Zero) return null;
+    int size = (ushort)Marshal.ReadInt16(mode,68) + (ushort)Marshal.ReadInt16(mode,70);
+    byte[] b = new byte[size]; Marshal.Copy(mode,b,0,size); CheckBuffer(b); return b;
+  }
+  // PRINTER_INFO_8 (global defaults: the printer's «Default DevMode») or PRINTER_INFO_9 (this account's DevModePerUser).
+  static byte[] LevelMode(string name, int level) {
+    IntPtr printer = OpenNamed(name);
+    try {
+      int needed; GetPrinter(printer,level,IntPtr.Zero,0,out needed);
+      if (needed <= 0) return null;
+      IntPtr buffer = Marshal.AllocHGlobal(needed);
+      try {
+        if (!GetPrinter(printer,level,buffer,needed,out needed)) throw new InvalidOperationException("GetPrinter level " + level + " failed: " + Marshal.GetLastWin32Error());
+        return CopyMode(Marshal.ReadIntPtr(buffer));
+      } finally { Marshal.FreeHGlobal(buffer); }
+    } finally { ClosePrinter(printer); }
+  }
+  public static byte[] GlobalMode(string name) {
+    byte[] mode = LevelMode(name,8);
+    if (mode == null) throw new InvalidOperationException("Printer has no default DEVMODE");
+    return mode;
+  }
+  public static byte[] UserMode(string name) { return LevelMode(name,9); }
+  public static void SetUserMode(string name, byte[] mode) {
+    CheckBuffer(mode);
+    IntPtr printer = OpenNamed(name), dm = Marshal.AllocHGlobal(mode.Length), info = Marshal.AllocHGlobal(IntPtr.Size);
+    try {
+      Marshal.Copy(mode,0,dm,mode.Length); Marshal.WriteIntPtr(info,dm);
+      if (!SetPrinter(printer,9,info,0)) throw new InvalidOperationException("SetPrinter level 9 failed: " + Marshal.GetLastWin32Error());
+    } finally { Marshal.FreeHGlobal(info); Marshal.FreeHGlobal(dm); ClosePrinter(printer); }
+  }
+  // What a job of this account gets without any request: DevModePerUser merged over the printer defaults.
+  public static byte[] CurrentMode(string name) {
+    IntPtr printer = OpenNamed(name), output = IntPtr.Zero;
+    try {
+      int count = DocumentProperties(IntPtr.Zero,printer,name,IntPtr.Zero,IntPtr.Zero,0);
+      if (count < 220 || count > 1048576) throw new InvalidOperationException("Invalid driver DEVMODE size");
+      output = Marshal.AllocHGlobal(count);
+      if (DocumentProperties(IntPtr.Zero,printer,name,output,IntPtr.Zero,2) != 1) throw new InvalidOperationException("Cannot read DEVMODE");
+      byte[] mode = new byte[count]; Marshal.Copy(output,mode,0,count); CheckBuffer(mode); return mode;
+    } finally { if (output != IntPtr.Zero) Marshal.FreeHGlobal(output); ClosePrinter(printer); }
+  }
+  // One blank page through the driver with this DEVMODE into a file: the spooler despools the driver's printer
+  // language (EZPL header with ^O) to `path` instead of the port. Returns the Windows job id.
+  public static int Capture(string name, byte[] mode, string path, string document) {
+    CheckBuffer(mode);
+    IntPtr buffer = Marshal.AllocHGlobal(mode.Length), dc;
+    try { Marshal.Copy(mode,0,buffer,mode.Length); dc = CreateDC("WINSPOOL",name,null,buffer); }
+    finally { Marshal.FreeHGlobal(buffer); }
+    if (dc == IntPtr.Zero) throw new InvalidOperationException("Cannot create printer DC");
+    try {
+      DocInfo info = new DocInfo(); info.name = document; info.output = path;
+      int job = StartDoc(dc,info);
+      if (job <= 0) throw new InvalidOperationException("StartDoc (capture) failed");
+      bool ok = false;
+      try {
+        if (StartPage(dc) <= 0 || EndPage(dc) <= 0 || EndDoc(dc) <= 0) throw new InvalidOperationException("Capture page failed");
+        ok = true;
+      } finally { if (!ok) AbortDoc(dc); }
+      return job;
+    } finally { DeleteDC(dc); }
+  }
   public static void ValidateGeometry(double width, double height, int pixelsW, int pixelsH,
       int dpiX, int dpiY, int physicalW, int physicalH, int offsetX, int offsetY, int printableW, int printableH) {
     if (dpiX != 300 || dpiY != 300 || Math.Abs(width*300/25.4-pixelsW) > 0.500001 ||
@@ -284,7 +363,7 @@ public static class ErpGdiPrinter {
   public sealed class Controller : StandardPrintController {
     readonly string printer; readonly byte[] mode; readonly Bitmap bitmap; readonly double width, height;
     IntPtr dc; Graphics graphics; bool completed;
-    public bool SubmissionStarted; public int JobId;
+    public bool SubmissionStarted; public int JobId; public string DocName = "ERP marking";
     public Controller(string name, byte[] validatedMode, Bitmap image, double w, double h) {
       printer=name; mode=validatedMode; bitmap=image; width=w; height=h;
     }
@@ -299,7 +378,8 @@ public static class ErpGdiPrinter {
           GetDeviceCaps(dc,110),GetDeviceCaps(dc,111),ox,oy,pw,ph);
         CheckInk(bitmap,ox,oy,pw,ph);
         SubmissionStarted=true;
-        JobId=StartDoc(dc,new DocInfo());
+        DocInfo info=new DocInfo(); info.name=DocName;
+        JobId=StartDoc(dc,info);
         if (JobId<=0) throw new InvalidOperationException("StartDoc failed; delivery unknown");
       } catch { Cleanup(); throw; }
     }
@@ -484,8 +564,10 @@ function Send-PngToPrinter {
     $bitmap = $controller = $null
     try {
         $bitmap = New-Object Drawing.Bitmap($stream)
-        $mode = [ErpGdiPrinter]::ValidateWithDriver($Job.printer, [double]$Job.width_mm, [double]$Job.height_mm)
+        $mode = Get-JobDriverMode $Job
+        if ($Job.peel) { $mode = Confirm-JobPeelMode $Job $mode }
         $controller = New-Object ErpGdiPrinter+Controller($Job.printer, $mode, $bitmap, [double]$Job.width_mm, [double]$Job.height_mm)
+        $controller.DocName = Get-MarkingDocName ([string]$Job.id)
         [ErpGdiPrinter]::Print($Job.printer, $bitmap, [double]$Job.width_mm, [double]$Job.height_mm, $controller)
         return @{ outcome = 'spooled'; message = 'Передано принтеру'; spool_job_id = $controller.JobId }
     } catch {
@@ -535,7 +617,7 @@ function Resolve-SpoolJobState {
 function Save-PrintWatch {
     param([string]$JobId, [string]$Attempt, [string]$Base, [string]$MachineId, [string]$Printer, $SpoolJobId)
     $watch = @{ base = $Base; machine_id = $MachineId; job_id = $JobId; attempt = $Attempt; printer = $Printer
-        spool_job_id = [int]$SpoolJobId; deleting = $false; last_state = ''; last_message = ''
+        spool_job_id = [int]$SpoolJobId; doc_name = (Get-MarkingDocName $JobId); deleting = $false; last_state = ''; last_message = ''
         started_at = (Get-Date).ToUniversalTime().ToString('o') }
     Save-PrintReceipt (Get-PrintWatchPath $JobId $Attempt) $watch
 }
@@ -556,7 +638,8 @@ function Update-PrintWatches {
             catch { Write-Log "Очередь '$printer' не прочитана: $($_.Exception.Message)"; $queues[$printer] = $null }
         }
         if ($null -eq $queues[$printer]) { continue }
-        $job = $queues[$printer] | Where-Object { [int]$_.ID -eq [int]$watch.spool_job_id } | Select-Object -First 1
+        $job = $queues[$printer] | Where-Object { [int]$_.ID -eq [int]$watch.spool_job_id -and
+            (-not $watch.doc_name -or -not [string]$_.DocumentName -or [string]$_.DocumentName -eq [string]$watch.doc_name) } | Select-Object -First 1
         $result = Resolve-SpoolJobState $job ([bool]$watch.deleting)
         $changed = $false
         if ([bool]$watch.deleting -ne [bool]$result.deleting) { $watch.deleting = [bool]$result.deleting; $changed = $true }
@@ -584,14 +667,26 @@ function Invoke-MarkingPollOnce {
     # Never let the status watcher stop the print lane.
     try { Update-PrintWatches $Base $AuthToken } catch { Write-Log "Слежение за очередью печати: $($_.Exception.Message)" }
     $printers = @(Get-AgentPrinters $PrinterName $MarkingPrinterName)
-    $capabilities = @($printers | Where-Object { $_.present -and -not ($paused -and $_.kind -eq 'gdi_png') } | ForEach-Object { $_.kind })
-    if (-not $capabilities.Count) { if ($paused) { return 'blocked' }; return 'idle' }
+    $markingPresent = [bool]($printers | Where-Object { $_.present -and $_.kind -eq 'gdi_png' })
+    # One marking label at a time (2.10.0): the next is claimed only after the previous one left the Windows queue,
+    # so a reboot mid-spool can never reorder a long queue; a failed peel-off check holds the lane too.
+    $hold = if ($markingPresent -and -not $paused) { Get-MarkingHold $Base $MarkingPrinterName } else { '' }
+    if ($hold -and $hold -ne $script:LastMarkingHold) { Write-Log "Маркировка ждёт: $hold" }
+    $script:LastMarkingHold = $hold
+    $capabilities = @($printers | Where-Object { $_.present -and -not (($paused -or $hold) -and $_.kind -eq 'gdi_png') } | ForEach-Object { $_.kind })
+    # A present marking queue keeps polling (empty capabilities): «Очистить принтер» must reach a held or paused lane.
+    if (-not $capabilities.Count -and -not $markingPresent) { if ($paused) { return 'blocked' }; return 'idle' }
     $machine = Get-MachineId
     # The server routes TSPL by the exact queue name (and records the host), so both are always sent.
     $claimBody = @{ machine_id = $machine; capabilities = $capabilities; printer = [string]$PrinterName; host = [string]$env:COMPUTERNAME }
     $claim = Invoke-ErpApi -Url "$Base/api/stock/labels/jobs/claim" -Body $claimBody -AuthToken $AuthToken -MachineId $machine
+    if ($null -ne $claim.marking_printers) { Update-MarkingPrinterSettings @($claim.marking_printers) $MarkingPrinterName -DryRun:$DryRun }
+    if ($claim.command) {
+        Invoke-PrinterCommand $Base $AuthToken $claim.command $MarkingPrinterName -DryRun:$DryRun
+        return 'done'
+    }
     $job = $claim.job
-    if (-not $job) { if ($paused) { return 'blocked' }; return 'idle' }
+    if (-not $job) { if ($paused -or $hold) { return 'blocked' }; return 'idle' }
     # TSPL keeps its established receipt and payload shapes, even on a capable agent.
     if ($job.format -eq 'tspl' -or (-not $job.format -and $job.tspl_b64)) {
         Invoke-TsplJob $Base $AuthToken $PrinterName $job -DryRun:$DryRun
@@ -624,6 +719,257 @@ function Invoke-MarkingPollOnce {
     }
     [void](Sync-PrintReceipts $Base $AuthToken)
     return 'done'
+}
+
+# --- Godex control from ERP (2.10.0, owner 19.11.2026) -----------------------------------------------------------
+# Peel-off: the ОБ.101 profile says the flags are handed out one by one through the dispenser. EZPL `^On`
+# (GoDEX EZPL User Manual, «^On — label dispenser (peel) / applicator»: 0 off, 1 dispenser, 2 applicator) comes from
+# the driver's DevMode. The agent runs as SYSTEM, whose own DevModePerUser once had it off while the printer default
+# had it on: every job carried ^O0 and flags crumpled. So the driver output itself is checked: a blank page is
+# rendered through the driver into a file (DOCINFO.lpszOutput) and its EZPL header must carry ^O1.
+$script:PeelDocName = 'ERP peel check'
+$script:CommandDocName = 'ERP printer command'
+$script:PeelCaptureTimeoutSec = 20
+$script:CommandSendTimeoutSec = 20
+$script:PeelRetrySec = 60
+$script:PeelRequired = @{}
+$script:PeelInitialized = @{}
+$script:PeelBlocked = @{}
+$script:LastMarkingHold = ''
+
+function Get-MarkingDocName { param([string]$JobId) return "ERP marking $JobId" }
+function Remove-SpoolJob { param($Job) Remove-PrintJob -InputObject $Job -ErrorAction Stop }
+
+# The first EZPL `^O<n>` at a line start of the driver output; $null when the driver sent none.
+function Get-DispenserMode {
+    param([byte[]]$Bytes)
+    if (-not $Bytes) { return $null }
+    $text = [Text.Encoding]::GetEncoding(28591).GetString($Bytes)
+    $match = [regex]::Match($text, '(?:^|[\r\n])\^O(\d)')
+    if ($match.Success) { return [int]$match.Groups[1].Value }
+    return $null
+}
+
+function Format-PeelError {
+    param($Found, [string]$Where = '')
+    $seen = if ($null -eq $Found) { 'нет команды ^O' } else { "^O$Found" }
+    return "Godex: отделитель (peel-off) выключен$Where — драйвер выдаёт $seen вместо ^O1. Этикетка не напечатана, " +
+        'маркировка на этом принтере на паузе. Включите «Отделитель» в настройках печати Godex по умолчанию ' +
+        '(Принтеры → Godex → Настройки печати), агент повторит проверку через минуту'
+}
+
+# Driver output of one blank page with this DEVMODE, never sent to the printer.
+function Invoke-DriverCapture {
+    param([string]$PrinterName, [byte[]]$Mode)
+    Initialize-GdiPrinter
+    $dir = Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($ConfigPath))) 'peel-check'
+    [void][IO.Directory]::CreateDirectory($dir)
+    $file = Join-Path $dir ([guid]::NewGuid().ToString('N') + '.prn')
+    try {
+        $id = [ErpGdiPrinter]::Capture($PrinterName, $Mode, $file, $script:PeelDocName)
+        $deadline = (Get-Date).AddSeconds($script:PeelCaptureTimeoutSec)
+        while ($true) {
+            $left = @(Get-PrintJob -PrinterName $PrinterName -ErrorAction Stop | Where-Object {
+                [int]$_.ID -eq $id -and [string]$_.DocumentName -eq $script:PeelDocName -and [string]$_.JobStatus -notmatch 'Printed|Complete' })
+            if (-not $left.Count -and (Test-Path -LiteralPath $file)) { break }
+            if ((Get-Date) -gt $deadline) {
+                foreach ($job in $left) { try { Remove-SpoolJob $job } catch {} }
+                throw "Проверка режима отделителя не завершилась за $($script:PeelCaptureTimeoutSec) с: очередь «$PrinterName» занята или приостановлена"
+            }
+            Start-Sleep -Milliseconds 200
+        }
+        return ,([IO.File]::ReadAllBytes($file))
+    } finally { if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue } }
+}
+
+# Device boundaries, one function each so the tests replace them.
+function Get-PeelCurrentMode { param([string]$PrinterName) Initialize-GdiPrinter; return ,([ErpGdiPrinter]::CurrentMode($PrinterName)) }
+function Get-PeelDefaultMode { param([string]$PrinterName) Initialize-GdiPrinter; return ,([ErpGdiPrinter]::GlobalMode($PrinterName)) }
+function Set-PeelUserMode { param([string]$PrinterName, [byte[]]$Mode) Initialize-GdiPrinter; [ErpGdiPrinter]::SetUserMode($PrinterName, $Mode) }
+function Get-JobDriverMode { param($Job) Initialize-GdiPrinter; return ,([ErpGdiPrinter]::ValidateWithDriver($Job.printer, [double]$Job.width_mm, [double]$Job.height_mm)) }
+function Get-AgentAccountSid { return [Security.Principal.WindowsIdentity]::GetCurrent().User.Value }
+function Get-PerUserDevMode {
+    param([string]$Hive, [string]$PrinterName)
+    $key = "Registry::HKEY_USERS\$Hive\Printers\DevModePerUser"
+    if (-not (Test-Path -LiteralPath $key)) { return $null }
+    $item = Get-ItemProperty -LiteralPath $key -Name $PrinterName -ErrorAction SilentlyContinue
+    if ($item) { return ,([byte[]]$item.$PrinterName) }
+    return $null
+}
+function Set-PerUserDevMode {
+    param([string]$Hive, [string]$PrinterName, [byte[]]$Mode)
+    $key = "Registry::HKEY_USERS\$Hive\Printers\DevModePerUser"
+    if (-not (Test-Path -LiteralPath $key)) { New-Item -Path $key -Force | Out-Null }
+    New-ItemProperty -LiteralPath $key -Name $PrinterName -Value $Mode -PropertyType Binary -Force | Out-Null
+}
+
+# Before any DevMode write: the agent account's and .DEFAULT per-user DevMode of this queue, as they were.
+function Save-DevModeBackup {
+    param([string]$PrinterName)
+    $root = Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($ConfigPath))) 'devmode-backup'
+    $entries = @()
+    foreach ($hive in @(@((Get-AgentAccountSid), '.DEFAULT') | Select-Object -Unique)) {
+        $value = Get-PerUserDevMode $hive $PrinterName
+        $entries += @{ hive = $hive; devmode_b64 = $(if ($value) { [Convert]::ToBase64String($value) } else { $null }) }
+    }
+    $path = Join-Path $root ((Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.json')
+    Save-PrintReceipt $path @{ printer = $PrinterName; saved_at = (Get-Date).ToUniversalTime().ToString('o'); per_user = $entries }
+    return $path
+}
+
+# The queue's current DevMode must make the driver emit ^O1. If not, and the printer's default DevMode does, the
+# default becomes the per-user DevMode of the agent's account and .DEFAULT (backup first). Throws a Russian reason.
+function Initialize-PeelMode {
+    param([string]$PrinterName)
+    $found = Get-DispenserMode (Invoke-DriverCapture $PrinterName (Get-PeelCurrentMode $PrinterName))
+    if ($found -eq 1) { return 'ok' }
+    $backup = Save-DevModeBackup $PrinterName
+    $default = Get-PeelDefaultMode $PrinterName
+    $defaultFound = Get-DispenserMode (Invoke-DriverCapture $PrinterName $default)
+    if ($defaultFound -ne 1) { throw (Format-PeelError $defaultFound ' и в настройках агента, и в настройках принтера по умолчанию') }
+    foreach ($hive in @(@((Get-AgentAccountSid), '.DEFAULT') | Select-Object -Unique)) { Set-PerUserDevMode $hive $PrinterName $default }
+    try { Set-PeelUserMode $PrinterName $default } catch { Write-Log "Godex '$PrinterName': SetPrinter(9) не принят: $($_.Exception.Message)" }
+    $after = Get-DispenserMode (Invoke-DriverCapture $PrinterName (Get-PeelCurrentMode $PrinterName))
+    if ($after -ne 1) { throw (Format-PeelError $after ' после восстановления из настроек по умолчанию') }
+    $was = if ($null -eq $found) { 'без ^O' } else { "^O$found" }
+    Write-Log "Godex '$PrinterName': отделитель в DevMode учётной записи агента был выключен ($was) — восстановлен из настроек принтера по умолчанию; копия прежних настроек: $backup"
+    return 'repaired'
+}
+
+function Set-PeelBlocked {
+    param([string]$PrinterName, [string]$Message)
+    $script:PeelBlocked[$PrinterName] = @{ message = $Message; retry = (Get-Date).AddSeconds($script:PeelRetrySec) }
+}
+
+# Before each peel-off job: the very DEVMODE of the job must produce ^O1; one repair attempt, else the job fails
+# (nothing is spooled) and the marking lane holds until a later check passes.
+function Confirm-JobPeelMode {
+    param($Job, [byte[]]$Mode)
+    $printer = [string]$Job.printer
+    try {
+        $found = Get-DispenserMode (Invoke-DriverCapture $printer $Mode)
+        if ($found -eq 1) { return ,$Mode }
+        Write-Log "Godex '$printer': вывод драйвера для задания $($Job.id) без ^O1 — восстанавливаю режим отделителя"
+        [void](Initialize-PeelMode $printer)
+        $fresh = Get-JobDriverMode $Job
+        $found = Get-DispenserMode (Invoke-DriverCapture $printer $fresh)
+        if ($found -ne 1) { throw (Format-PeelError $found) }
+        return ,$fresh
+    } catch {
+        Set-PeelBlocked $printer $_.Exception.Message
+        throw
+    }
+}
+
+# The claim reply says which marking queues run peel-off. The first time per process (agent start) the DevMode is
+# checked and repaired.
+function Update-MarkingPrinterSettings {
+    param($Settings, [string]$MarkingPrinterName, [switch]$DryRun)
+    if (-not $MarkingPrinterName) { return }
+    $mine = @($Settings | Where-Object { [string]$_.name -ceq $MarkingPrinterName }) | Select-Object -First 1
+    $peel = [bool]($mine -and $mine.peel)
+    $script:PeelRequired[$MarkingPrinterName] = $peel
+    if (-not $peel) { $script:PeelBlocked.Remove($MarkingPrinterName); return }
+    if ($script:PeelInitialized[$MarkingPrinterName] -or $DryRun) { return }
+    $script:PeelInitialized[$MarkingPrinterName] = $true
+    try { Write-Log "Godex '$MarkingPrinterName': режим отделителя — $(Initialize-PeelMode $MarkingPrinterName)" }
+    catch { Set-PeelBlocked $MarkingPrinterName $_.Exception.Message; Write-Log "Godex '$MarkingPrinterName': $($_.Exception.Message)" }
+}
+
+# '' when the marking lane may take the next label, else why it waits.
+function Test-MarkingQueueBusy {
+    param([string]$Base, [string]$PrinterName)
+    $root = Get-PrintWatchRoot
+    if (Test-Path -LiteralPath $root) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $root -Filter '*.json' -File)) {
+            $watch = [IO.File]::ReadAllText($file.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json
+            if ($watch.base -eq $Base -and $watch.machine_id -eq (Get-MachineId) -and [string]$watch.printer -ceq $PrinterName) {
+                return "предыдущая этикетка (задание $($watch.job_id)) ещё в очереди Windows"
+            }
+        }
+    }
+    try { $jobs = @(Get-PrintJob -PrinterName $PrinterName -ErrorAction Stop) }
+    catch { return "очередь «$PrinterName» не прочитана: $($_.Exception.Message)" }
+    $ours = @($jobs | Where-Object { [string]$_.DocumentName -like 'ERP marking*' })
+    if ($ours.Count) { return "в очереди Windows задание маркировки ($($ours[0].DocumentName))" }
+    return ''
+}
+
+function Get-MarkingHold {
+    param([string]$Base, [string]$PrinterName)
+    $block = $script:PeelBlocked[$PrinterName]
+    if ($block) {
+        if ((Get-Date) -lt $block.retry) { return $block.message }
+        try {
+            [void](Initialize-PeelMode $PrinterName)
+            $script:PeelBlocked.Remove($PrinterName)
+            Write-Log "Godex '$PrinterName': режим отделителя в порядке, маркировка продолжается"
+        } catch { Set-PeelBlocked $PrinterName $_.Exception.Message; return $_.Exception.Message }
+    }
+    return (Test-MarkingQueueBusy $Base $PrinterName)
+}
+
+# Removed jobs must end as «Отменено», never as «Напечатано», in the spool watch.
+function Set-PrintWatchesDeleting {
+    param([string]$PrinterName, [int[]]$SpoolIds)
+    $root = Get-PrintWatchRoot
+    if (-not (Test-Path -LiteralPath $root)) { return }
+    foreach ($file in @(Get-ChildItem -LiteralPath $root -Filter '*.json' -File)) {
+        $watch = [IO.File]::ReadAllText($file.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json
+        if ([string]$watch.printer -ceq $PrinterName -and $SpoolIds -contains [int]$watch.spool_job_id) {
+            $watch.deleting = $true
+            Save-PrintReceipt $file.FullName $watch
+        }
+    }
+}
+
+function Remove-ErpMarkingJobs {
+    param([string]$PrinterName)
+    $jobs = @(Get-PrintJob -PrinterName $PrinterName -ErrorAction Stop | Where-Object {
+        $name = [string]$_.DocumentName; $name -like 'ERP marking*' -or $name -eq $script:PeelDocName -or $name -eq $script:CommandDocName })
+    if (-not $jobs.Count) { return 0 }
+    Set-PrintWatchesDeleting $PrinterName @($jobs | ForEach-Object { [int]$_.ID })
+    foreach ($job in $jobs) { Remove-SpoolJob $job }
+    return $jobs.Count
+}
+
+function Wait-PrinterCommandSent {
+    param([string]$PrinterName)
+    $deadline = (Get-Date).AddSeconds($script:CommandSendTimeoutSec)
+    while ($true) {
+        $left = @(Get-PrintJob -PrinterName $PrinterName -ErrorAction Stop | Where-Object {
+            [string]$_.DocumentName -eq $script:CommandDocName -and [string]$_.JobStatus -notmatch 'Printed|Complete' })
+        if (-not $left.Count) { return }
+        if ((Get-Date) -gt $deadline) {
+            foreach ($job in $left) { try { Remove-SpoolJob $job } catch {} }
+            throw "Godex не принял команду очистки за $($script:CommandSendTimeoutSec) с: проверьте, что принтер включён и на связи"
+        }
+        Start-Sleep -Milliseconds 250
+    }
+}
+
+# «Очистить принтер» from ERP: remove this queue's ERP jobs from Windows, then empty the Godex's own buffer.
+function Invoke-PrinterCommand {
+    param([string]$Base, [string]$AuthToken, $Command, [string]$MarkingPrinterName, [switch]$DryRun)
+    $machine = Get-MachineId
+    $body = @{ machine_id = $machine; attempt = [string]$Command.attempt; outcome = 'failed'; message = ''; removed_jobs = 0; buffer_cleared = $false }
+    try {
+        if ([string]$Command.kind -cne 'clear') { throw "Неизвестная команда принтера: $($Command.kind)" }
+        if (-not $MarkingPrinterName -or [string]$Command.printer -cne $MarkingPrinterName) {
+            throw "Очередь «$($Command.printer)» не настроена для маркировки на этом ПК"
+        }
+        $body.removed_jobs = Remove-ErpMarkingJobs $MarkingPrinterName
+        if ($DryRun) { throw "DRY RUN: удалено заданий $($body.removed_jobs), буфер Godex не очищался" }
+        # GoDEX EZPL User Manual, «~S,n — analogue press control keys» (p. 34): n = BUFCLR — the printer stops printing
+        # immediately, empties its buffer (serial and variable data too) and stays in standby. ~S,CANCEL is only the
+        # Cancel key that clears an error state. https://www.manualsdir.com/manuals/736893/godex-ezpl.html?page=34
+        Send-RawToPrinter -PrinterName $MarkingPrinterName -Bytes ([Text.Encoding]::ASCII.GetBytes("~S,BUFCLR`r`n")) -DocumentName $script:CommandDocName
+        Wait-PrinterCommandSent $MarkingPrinterName
+        $body.buffer_cleared = $true; $body.outcome = 'done'
+        $body.message = "Удалено заданий ERP из очереди Windows: $($body.removed_jobs); буфер Godex очищен (~S,BUFCLR)"
+    } catch { $body.message = $_.Exception.Message }
+    Write-Log "Команда принтера $($Command.id) ($($Command.kind)): $($body.outcome) — $($body.message)"
+    Invoke-ErpApi -Url "$Base/api/stock/labels/printer-commands/$($Command.id)/result" -Body $body -AuthToken $AuthToken -MachineId $machine | Out-Null
 }
 
 function Invoke-ErpApi {

@@ -5,11 +5,19 @@ export interface MarkingGeometry {
   width_mm: number; height_mm: number; rotation: 0 | 90 | 180 | 270; feed_direction: "height" | "width";
   zones: MarkingRect[]; blank_zones: MarkingRect[]; offset_x_mm: number; offset_y_mm: number;
   min_font_mm: number; max_font_mm: number; max_lines: number; alignment: "center" | "left" | "right";
+  /** Labels go out one by one through the peel-off dispenser; the agent refuses a job without ^O1. */
+  peel?: boolean;
 }
 export interface MarkingProfile {
   id: string; equipment_id: string | null; name: string; version: number; calibrated: boolean; geometry: MarkingGeometry;
 }
-export interface MarkingBinding { version: number; machine_id: string; printer: string }
+/** «Очистить принтер»: the latest command on the bound queue and how it ended. */
+export interface MarkingPrinterCommand {
+  id: string; kind: "clear"; status: "pending" | "taken" | "done" | "failed"; status_label: string; reason: string;
+  requested_by: string; created_at: string; finished_at: string | null; message: string;
+  result: { removed_jobs?: number; buffer_cleared?: boolean };
+}
+export interface MarkingBinding { version: number; machine_id: string; printer: string; command?: MarkingPrinterCommand | null }
 export interface MarkingMachine {
   equipment_id: string; inventory_number: string; name: string; profiles: MarkingProfile[]; binding: MarkingBinding | null;
 }
@@ -28,13 +36,17 @@ export interface MarkingPreview extends MarkingDimensions {
   manifest_hash: string; profile_id: string; profile_version: number; binding_version: number;
   source_snapshot: unknown; labels: MarkingLabel[]; total: number;
 }
-export type MarkingStatus = "pending" | "taken" | "spooled" | "failed" | "unknown";
+export type MarkingStatus = "pending" | "taken" | "spooled" | "failed" | "unknown" | "cancelled";
 export type MarkingPrintState = "queued" | "printed" | "error" | "cancelled" | "untracked";
-export interface MarkingJob { id: string; sequence: number; status: MarkingStatus; status_label: string; message: string; spool_job_id?: number | string | null; print_state?: MarkingPrintState | null }
+export interface MarkingJob { id: string; sequence: number; status: MarkingStatus; status_label: string; message: string; spool_job_id?: number | string | null; print_state?: MarkingPrintState | null
+  text?: string; serial?: number | null }
 export interface MarkingBatch { id: string; status: MarkingStatus; status_label: string; total: number; jobs: MarkingJob[]; reprint_of: string | null
   // Honest print progress (agent 2.9.6+ watches the Windows queue); absent on older servers.
   printed?: number; queued?: number; print_errors?: number; cancelled?: number; untracked?: number
-  progress_label?: string | null; stuck?: boolean; stuck_label?: string | null }
+  progress_label?: string | null; stuck?: boolean; stuck_label?: string | null
+  /** Jobs withdrawn by «Отменить оставшиеся» and still waiting for the agent. */
+  withdrawn?: number; pending?: number; reason?: string }
+export type MarkingReprintRequest = ({ sequences: number[] } | { serial_from: number; serial_to: number }) & { reason: string; idempotency_key: string };
 export interface MarkingBatchRequest extends MarkingRequest { manifest_hash: string; idempotency_key: string; reprint_of?: string; reason?: string }
 
 const root = "/api/production/marking";
@@ -56,7 +68,25 @@ export const markingApi = {
     }),
   resolve: (batchId: string, jobId: string, outcome: "spooled" | "failed", reason: string) =>
     post<MarkingBatch>(`/batches/${encodeURIComponent(batchId)}/jobs/${encodeURIComponent(jobId)}/resolve`, { outcome, reason }),
+  cancelRest: (batchId: string, reason: string) => post<MarkingBatch>(`/batches/${encodeURIComponent(batchId)}/cancel`, { reason }),
+  reprint: (batchId: string, body: MarkingReprintRequest) => post<MarkingBatch>(`/batches/${encodeURIComponent(batchId)}/reprint`, body),
+  clearPrinter: (equipmentId: string, reason: string) => post<MarkingPrinterCommand>(`/machines/${encodeURIComponent(equipmentId)}/printer/clear`, { reason }),
+  printerCommand: (equipmentId: string, signal?: AbortSignal) =>
+    api<MarkingPrinterCommand | null>(`${root}/machines/${encodeURIComponent(equipmentId)}/printer/command`, { signal }),
 };
+
+/** «3, 5–7» → [3, 5, 6, 7]; null when the text is not a list of label numbers. */
+export function parseSequences(text: string): number[] | null {
+  const result = new Set<number>();
+  for (const part of text.split(/[,;\s]+/).filter(Boolean)) {
+    const match = /^(\d+)(?:[-–—](\d+))?$/.exec(part);
+    if (!match) return null;
+    const first = Number(match[1]), last = Number(match[2] ?? match[1]);
+    if (first < 1 || last < first || last - first > 500) return null;
+    for (let value = first; value <= last; value += 1) result.add(value);
+  }
+  return result.size ? [...result].sort((a, b) => a - b) : null;
+}
 
 /** Divider of flag halves in a label text, as the server reads it (marking_render.halves). */
 export const MARKING_HALF = "|";

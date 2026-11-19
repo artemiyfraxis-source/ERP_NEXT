@@ -213,7 +213,9 @@ Describe 'Marking discovery and protocol' {
         Mock Send-PngToPrinter { @{ outcome = 'spooled'; message = 'Передано принтеру'; spool_job_id = 77 } }
         Mock Save-PrintReceipt { & $script:RealSavePrintReceipt $Path $Receipt }
         Mock Send-RawToPrinter {}
-        Mock Invoke-ErpApi { if ($Url -like '*/claim') { @{ job = (New-TestMarkingJob) } } }
+        Mock Get-PrintJob { @() }
+        # The server hands out marking only to a claim that asks for it (an empty claim polls printer commands).
+        Mock Invoke-ErpApi { if ($Url -like '*/claim') { if ($Body.capabilities -contains 'gdi_png') { @{ job = (New-TestMarkingJob) } } else { @{ job = $null } } } }
     }
     It 'reports driver, port, kind and missing target without enumerating arbitrary queues' {
         $targets = @(Get-AgentPrinters 'TSC' 'Renamed Godex')
@@ -250,6 +252,7 @@ Describe 'Marking discovery and protocol' {
         Assert-MockCalled Invoke-ErpApi -Times 0 -Exactly -Scope It
     }
     It 'a renamed queue fails the job and never receives TSPL' {
+        Mock Invoke-ErpApi { if ($Url -like '*/claim') { @{ job = (New-TestMarkingJob) } } }  # a server that hands it out anyway
         Invoke-MarkingPollOnce 'http://test' 'token' 'TSC' 'Renamed Godex' | Should Be 'done'
         Assert-MockCalled Send-PngToPrinter -Times 0 -Exactly -Scope It
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Body.outcome -eq 'failed' }
@@ -278,7 +281,7 @@ Describe 'Marking discovery and protocol' {
         { Invoke-MarkingPollOnce 'http://test' 'token' '' 'Godex 中文' } | Should Throw 'process interrupted'
         Invoke-MarkingPollOnce 'http://test' 'token' '' 'Godex 中文' | Should Be 'blocked'
         Assert-MockCalled Send-PngToPrinter -Times 1 -Exactly -Scope It
-        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Url -like '*/claim' }
+        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Url -like '*/claim' -and $Body.capabilities -contains 'gdi_png' }
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Body.outcome -eq 'unknown' }
     }
     It 'a GDI submission error with uncertain delivery pauses the lane' {

@@ -4,7 +4,7 @@ import { DataTable } from "./DataTable";
 import { PageWindow } from "./PageWindow";
 import { formatNumber } from "./format";
 import { useCanAct, useCanPrint, useCurrentUserId } from "./rights";
-import { boundPrinter, markingApi, type MarkingBatch, type MarkingBatchRequest, type MarkingCatalog, type MarkingLabel, type MarkingPreview, type MarkingRequest, type MarkingSource } from "./markingApi";
+import { boundPrinter, markingApi, parseSequences, type MarkingBatch, type MarkingBatchRequest, type MarkingCatalog, type MarkingLabel, type MarkingPreview, type MarkingRequest, type MarkingSource } from "./markingApi";
 import "./marking.css";
 
 type BatchHistory = { id: string; request: MarkingBatchRequest; total: number };
@@ -192,7 +192,15 @@ export function MarkingPrintWindow({ source, storageKey, title, close }: {
       </>}
       {!catalog && error && <button type="button" className="secondary" onClick={() => setReload(reload + 1)}>Повторить загрузку</button>}
       {batch && <>
-        <MarkingBatchProgress key={batch.id} initial={batch} onChange={setBatch} />
+        <MarkingBatchProgress key={batch.id} initial={batch} onChange={setBatch} onReprinted={(next) => {
+          // «Перепечатать номера…» made a new batch: it becomes the window's current batch and joins the history.
+          const request = record?.request;
+          if (record && request) {
+            const completed: PrintRecord = { ...record, pending: false, batch: next, history: [...history.filter((item) => item.id !== next.id), { id: next.id, request, total: next.total }] };
+            try { sessionStorage.setItem(storageName, JSON.stringify(completed)); setRecord(completed); } catch { /* the batch is in ERP; only the window history is lost */ }
+          }
+          setBatch(next);
+        }} />
         {!reprinting && !creatingNew && canPrint && <div className="form-actions">
           <button type="button" className="secondary" disabled={busy || outstanding || batch.jobs.some((job) => ["pending", "taken", "unknown"].includes(job.status))}
             onClick={() => { setReprinting(true); setReprintId(batch.id); setReason(""); invalidate(); }}>Повторная печать…</button>
@@ -204,13 +212,22 @@ export function MarkingPrintWindow({ source, storageKey, title, close }: {
   </PageWindow>;
 }
 
-export function MarkingBatchProgress({ initial, onChange }: { initial: MarkingBatch; onChange?: (batch: MarkingBatch) => void }) {
+type BatchAction = { kind: "cancel"; reason: string }
+  | { kind: "reprint"; by: "serials" | "labels"; from: string; to: string; labels: string; reason: string };
+
+export function MarkingBatchProgress({ initial, onChange, onReprinted }: {
+  initial: MarkingBatch; onChange?: (batch: MarkingBatch) => void; onReprinted?: (batch: MarkingBatch) => void;
+}) {
   const [batch, setBatch] = useState(initial);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [reload, setReload] = useState(0);
   const [resolution, setResolution] = useState<{ job: string; outcome: "spooled" | "failed"; reason: string } | null>(null);
+  const [action, setAction] = useState<BatchAction | null>(null);
   const [busy, setBusy] = useState(false);
+  const reprintKey = useRef({ payload: "", key: "" });
   const canResolve = useCanAct("production");
+  const canPrint = useCanPrint();
   const callback = useRef(onChange); callback.current = onChange;
   useEffect(() => {
     const controller = new AbortController();
@@ -235,6 +252,43 @@ export function MarkingBatchProgress({ initial, onChange }: { initial: MarkingBa
     } catch (problem) { setError(failureText(problem, "Результат проверки не сохранён")); }
     finally { setBusy(false); }
   }
+  async function cancelRest() {
+    if (busy || action?.kind !== "cancel" || !action.reason.trim()) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const result = await markingApi.cancelRest(batch.id, action.reason.trim());
+      setBatch(result); callback.current?.(result); setAction(null);
+      setNotice(`Отменено этикеток: ${formatNumber(result.withdrawn ?? 0)}`);
+    } catch (problem) { setError(failureText(problem, "Оставшиеся этикетки не отменены")); }
+    finally { setBusy(false); }
+  }
+  const serials = batch.jobs.map((job) => job.serial).filter((value): value is number => typeof value === "number");
+  const reprintSelection = (() => {
+    if (action?.kind !== "reprint") return null;
+    if (action.by === "labels") {
+      const sequences = parseSequences(action.labels);
+      return sequences && sequences[sequences.length - 1] <= batch.jobs.length ? { body: { sequences }, count: sequences.length } : null;
+    }
+    const from = Number(action.from), to = Number(action.to);
+    if (!action.from.trim() || !action.to.trim() || !Number.isInteger(from) || !Number.isInteger(to) || from > to) return null;
+    const count = batch.jobs.filter((job) => typeof job.serial === "number" && job.serial >= from && job.serial <= to).length;
+    return count ? { body: { serial_from: from, serial_to: to }, count } : null;
+  })();
+  async function reprint() {
+    if (busy || action?.kind !== "reprint" || !reprintSelection || !action.reason.trim()) return;
+    const payload = { ...reprintSelection.body, reason: action.reason.trim() };
+    const fingerprint = JSON.stringify(payload);
+    // The same request after a lost answer reuses its key: the server answers the batch it already made.
+    if (reprintKey.current.payload !== fingerprint) reprintKey.current = { payload: fingerprint, key: crypto.randomUUID() };
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const result = await markingApi.reprint(batch.id, { ...payload, idempotency_key: reprintKey.current.key });
+      setAction(null); reprintKey.current = { payload: "", key: "" };
+      setNotice(`Повторная печать поставлена в очередь: ${formatNumber(result.total)} шт.`);
+      onReprinted?.(result);
+    } catch (problem) { setError(failureText(problem, "Повторная печать не поставлена")); }
+    finally { setBusy(false); }
+  }
   const spooled = batch.jobs.filter((job) => job.status === "spooled").length;
   // Spooled only means Windows took the job: the printer may still hold the labels (peel-off mode).
   const progress = batch.progress_label;
@@ -247,9 +301,46 @@ export function MarkingBatchProgress({ initial, onChange }: { initial: MarkingBa
     {!!batch.cancelled && <p className="warning-inline">Отменено в очереди Windows: {batch.cancelled}.</p>}
     <p className="muted">Проверьте напечатанные этикетки перед нанесением.</p>
     {batch.status === "unknown" && <p className="warning-inline">Результат неизвестен. Очередь приостановлена — проверьте этикетки и подтвердите результат в «Производстве».</p>}
+    {!!batch.withdrawn && <p className="muted">Отменено до печати: {formatNumber(batch.withdrawn)}.</p>}
     {error && <div className="error-banner" role="alert">{error} <button type="button" className="secondary small" onClick={() => setReload(reload + 1)}>Обновить состояние</button></div>}
+    {notice && <p className="success-banner" role="status">{notice}</p>}
+    {!action && ((canResolve && !!batch.pending) || canPrint) && <div className="form-actions">
+      {canResolve && !!batch.pending && <button type="button" className="secondary small" disabled={busy}
+        onClick={() => { setNotice(""); setAction({ kind: "cancel", reason: "" }); }}>Отменить оставшиеся</button>}
+      {canPrint && <button type="button" className="secondary small" disabled={busy} onClick={() => {
+        setNotice("");
+        setAction({ kind: "reprint", by: serials.length ? "serials" : "labels", from: serials.length ? String(Math.min(...serials)) : "",
+          to: serials.length ? String(Math.max(...serials)) : "", labels: "", reason: "" });
+      }}>Перепечатать номера…</button>}
+    </div>}
+    {action?.kind === "cancel" && <div className="marking-resolution">
+      <p className="marking-action-note">Отменить {formatNumber(batch.pending ?? 0)} эт., ещё не переданных принтеру. Переданные принтеру этикетки отмена не останавливает — для них «Очистить принтер» в карточке станка.</p>
+      <label>Причина отмены<input name="marking-cancel-reason" autoComplete="off" maxLength={1000} disabled={busy} value={action.reason}
+        onChange={(event) => setAction({ ...action, reason: event.target.value })} /></label>
+      <div className="form-actions"><button type="button" className="primary" disabled={busy || !action.reason.trim()} onClick={() => void cancelRest()}>{busy ? "Обработка…" : `Отменить ${formatNumber(batch.pending ?? 0)} эт.`}</button>
+        <button type="button" className="secondary" disabled={busy} onClick={() => setAction(null)}>Назад</button></div>
+    </div>}
+    {action?.kind === "reprint" && <div className="marking-reprint">
+      <label>Что перепечатать<select name="marking-reprint-by" autoComplete="off" disabled={busy} value={action.by}
+        onChange={(event) => setAction({ ...action, by: event.target.value as "serials" | "labels" })}>
+        {serials.length > 0 && <option value="serials">Диапазон номеров изделий</option>}<option value="labels">Этикетки партии по №</option></select></label>
+      {action.by === "serials" ? <>
+        <label>Номер с<input type="number" name="marking-reprint-from" autoComplete="off" inputMode="numeric" min={0} step="1" disabled={busy} value={action.from}
+          onChange={(event) => setAction({ ...action, from: event.target.value })} /></label>
+        <label>Номер по<input type="number" name="marking-reprint-to" autoComplete="off" inputMode="numeric" min={0} step="1" disabled={busy} value={action.to}
+          onChange={(event) => setAction({ ...action, to: event.target.value })} /></label>
+      </> : <label className="marking-reprint-wide">№ этикеток партии<input name="marking-reprint-labels" autoComplete="off" placeholder="3, 5–7" disabled={busy} value={action.labels}
+        onChange={(event) => setAction({ ...action, labels: event.target.value })} /></label>}
+      <label className="marking-reprint-wide">Причина повторной печати<input name="marking-reprint-reason" autoComplete="off" maxLength={1000} disabled={busy} value={action.reason}
+        onChange={(event) => setAction({ ...action, reason: event.target.value })} /></label>
+      <div className="form-actions"><button type="button" className="primary" disabled={busy || !reprintSelection || !action.reason.trim()} onClick={() => void reprint()}>
+        {busy ? "Обработка…" : reprintSelection ? `Перепечатать ${formatNumber(reprintSelection.count)} шт.` : "Перепечатать"}</button>
+        <button type="button" className="secondary" disabled={busy} onClick={() => setAction(null)}>Назад</button>
+        {!reprintSelection && <span className="muted">{action.by === "serials" ? "В партии нет этикеток с этими номерами" : `Укажите № этикеток от 1 до ${batch.jobs.length}`}</span>}</div>
+    </div>}
     <DataTable rows={batch.jobs} rowKey={(job) => job.id} label="Задания печати" compactBelow={Infinity} pageSize={10} phoneCards={false} columns={[
       { key: "sequence", title: "№", numeric: true, value: (job) => job.sequence },
+      { key: "text", title: "Надпись", value: (job) => job.text ?? "", wrap: true },
       { key: "status", title: "Состояние", value: (job) => job.status_label },
       { key: "message", title: "Сообщение", value: (job) => job.message, grow: true, wrap: true },
       { key: "resolve", title: "Проверка", value: () => "", render: (job) => job.status === "unknown" && canResolve
