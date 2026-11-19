@@ -26,7 +26,8 @@ Extend `POST /api/stock/scan/agent/heartbeat`:
 ```
 
 This is an example of the next agent contract, **not an assertion that agent 2.8.0 has shipped**. The server
-requires an installed version greater than 2.7.0, protocol version exactly 1, fresh control heartbeat and a fresh,
+requires an installed version greater than 2.7.0, protocol version 1 or 2 (v2 is the superset described in
+[bench-protocol-v2.md](bench-protocol-v2.md)), fresh control heartbeat and a fresh,
 ready S2VNA device with the session serial. Omission of `vna_control` revokes the advertisement. Arinst and agents
 without this capability remain capture/file mode. Unsupported protocol versions cannot claim session commands.
 The server persists `vna_control.version` and `vna_control.methods` directly; the P3 heartbeat uses this same
