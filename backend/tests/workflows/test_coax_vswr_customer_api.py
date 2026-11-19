@@ -79,7 +79,7 @@ def test_overview_and_passport_show_the_customer_norm_and_the_components_for_ref
     assert overview["norm"]["components"] == {"status": "ok", "reason": "", "vswr_max": 2.06, "band_mhz": [1.0, 6000.0]}
     assert passport["norm"]["basis"] == "ЭТК КБ1, ревизия 1; ТУ 16-505.123, п. 3.4"
     assert passport["norm"]["components"]["vswr_max"] == 2.06
-    assert listed[task["id"]]["norm"] == {"status": "ok", "vswr_max": 1.35, "source": "customer"}
+    assert listed[task["id"]]["norm"] == {"status": "ok", "vswr_max": 1.35, "source": "customer", "band_mhz": [1000.0, 3000.0]}
 
 
 def test_a_customer_norm_of_the_current_revision_overrides_the_pinned_one_for_new_measurements(production_api):  # noqa: F811
@@ -108,7 +108,7 @@ def test_a_customer_norm_of_the_current_revision_overrides_the_pinned_one_for_ne
     assert result["norm"]["basis"] == "ТУ 16-505.123, п. 3.4; норма заказчика из ревизии 2 ЭТК"
     assert result["norm"]["components"]["vswrMax"] == 1.35  # справочная — из закреплённой ревизии
     assert overview["norm"]["vswr_max"] == 1.25 and "из ревизии 2 ЭТК" in overview["norm"]["basis"]
-    assert listed[task["id"]]["norm"] == {"status": "ok", "vswr_max": 1.25, "source": "customer"}
+    assert listed[task["id"]]["norm"] == {"status": "ok", "vswr_max": 1.25, "source": "customer", "band_mhz": [1000.0, 3000.0]}
     assert passport["etk"]["revision"] == 1
     assert passport["norm"]["basis"] == "ЭТК КБ1, ревизия 1; ТУ 16-505.123, п. 3.4; норма заказчика из ревизии 2 ЭТК"
     # Сохранённый замер хранит свой снимок нормы.

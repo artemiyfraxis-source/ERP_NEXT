@@ -43,6 +43,7 @@ from app.modules.production.vswr import (
 )
 from app.modules.production.autoplan_api import references_uow_factory
 from app.modules.production.domain import ProductionStatus
+from app.modules.production.instrument_norms import REPEAT_TEXT, Uncertainty, uncertainty_for, vna_model
 from app.modules.references.coax_vswr import (
     SOURCE_CUSTOMER,
     CustomerNormError,
@@ -257,7 +258,37 @@ def _num(value: Any) -> float | None:
     return float(value) if value is not None else None
 
 
-def _measurement_result(item: VswrMeasurement, *, trace: bool = False) -> dict[str, Any]:
+def vswr_decision(item: VswrMeasurement, uncertainty: Uncertainty | None) -> dict[str, Any]:
+    """Решение по замеру сборки по правилу СТО ФРАК-002-2026 (п. 13.3; то же, что у паспорта СИ — `instrument_norms._decide`):
+    наибольший КСВН в пределах ±U ВАЦ от нормы — «на границе допуска», нужен повторный замер (3 подключения с поворотом
+    120°). U — погрешность ВАЦ этого замера на частоте максимума; ВАЦ без известной погрешности, ручной вердикт, неполный
+    замер (не все концы) и уже повторённый замер — вердикт как записан."""
+    status = item.verdict.value
+    peak, limit = _num(item.max_vswr), _num(item.norm_vswr_max)
+    allowed = uncertainty.at(float(item.max_vswr_mhz) / 1000) if uncertainty is not None and item.max_vswr_mhz is not None else None
+    if (allowed and not item.verdict_manual and item.complete is not False and item.attempt == 1 and peak is not None
+            and limit is not None and limit - 1 > allowed and abs(peak - limit) <= allowed + 1e-12):
+        status = "border"
+    return {"status": status, "uncertainty": allowed,
+            "text": f"На границе допуска — {REPEAT_TEXT}" if status == "border" else ""}
+
+
+def _uncertainties(uow_factory) -> Callable[[UUID], Uncertainty | None]:
+    """Погрешность КСВН ВАЦ по его модели (справочник ВАЦ норм СИ); каждый прибор читается один раз за запрос."""
+    found: dict[UUID, Uncertainty | None] = {}
+
+    def get(instrument_id: UUID) -> Uncertainty | None:
+        if instrument_id not in found:
+            with uow_factory() as uow:
+                instrument = uow.instruments.get(instrument_id)
+            found[instrument_id] = (uncertainty_for(vna_model(f"{instrument.name} {instrument.doc_designation or ''}"))
+                                    if instrument is not None else None)
+        return found[instrument_id]
+    return get
+
+
+def _measurement_result(item: VswrMeasurement, *, trace: bool = False,
+                        uncertainty: Callable[[UUID], Uncertainty | None] | None = None) -> dict[str, Any]:
     result = {
         "id": str(item.id), "serial_id": str(item.serial_id), "serial_number": item.serial_number,
         "attempt": item.attempt, "instrument_id": str(item.instrument_id),
@@ -266,6 +297,7 @@ def _measurement_result(item: VswrMeasurement, *, trace: bool = False) -> dict[s
         "norm": item.norm, "norm_vswr_max": _num(item.norm_vswr_max),
         "verdict": item.verdict.value, "verdict_name": VERDICT_NAMES[item.verdict],
         "verdict_manual": item.verdict_manual, "verdict_reason": item.verdict_reason,
+        "decision": vswr_decision(item, uncertainty(item.instrument_id) if uncertainty is not None else None),
         "inspector": {"id": str(item.inspector_id), "name": item.inspector_name},
         "measured_at": item.measured_at.isoformat(),
         "file_name": item.file_name, "points": item.points, "file_meta": item.file_meta,
@@ -438,7 +470,8 @@ def upload_measurement(
         capture_verified=legacy.capture_verified if legacy else False, port_mapping=payload.port_mapping,
         evidence_id=legacy.evidence_id if legacy else None, files=files,
     ), uow_factory()))
-    return {"measurement": _measurement_result(measurement, trace=True), "position": payload.position}
+    return {"measurement": _measurement_result(measurement, trace=True, uncertainty=_uncertainties(uow_factory)),
+            "position": payload.position}
 
 
 @router.get("/tasks")
@@ -472,12 +505,15 @@ def coax_tasks(
         shown = _norm_result(norm)
         control = etk_control(document, norm)
         required = [position for position in range(1, task.quantity + 1) if vswr_in_sample(control, position)]
+        # Экран ОТК группирует замеры по заданию/КБ (владелец 19.11): проект, КБ, ревизия ЭТК, полоса нормы и брак.
         rows.append({
-            "id": str(task.id), "number": task.number, "name": task.name, "item": task.item,
+            "id": str(task.id), "number": task.number, "name": task.name, "item": task.item, "project": task.project,
             "quantity": task.quantity, "status": task.status.value,
-            "norm": {"status": shown["status"], "vswr_max": shown["vswr_max"], "source": shown["source"]},
+            "etk_revision": task.techcard_revision if task.techcard_revision is not None else current_revision,
+            "norm": {"status": shown["status"], "vswr_max": shown["vswr_max"], "source": shown["source"],
+                     "band_mhz": shown["band_mhz"]},
             "control": control,
-            "required": {"total": len(required), "measured": _measured_count(uow_factory, task, required)},
+            "required": {"total": len(required), **_progress(uow_factory, task, required)},
         })
     return {"tasks": rows}
 
@@ -510,18 +546,26 @@ def _etk_documents(techcards_factory: Callable[[], Any] | None, tasks) -> dict[t
     return found
 
 
-def _measured_count(uow_factory, task, required: list[int]) -> int:
-    """Сколько из требуемых изделий задания уже имеют замер; заданию без замеров изделия не перебираем."""
-    measured_ids = {item.serial_id for item in list_vswr_for_task(task.id, uow_factory())}
-    if not measured_ids:
-        return 0
+def _progress(uow_factory, task, required: list[int]) -> dict[str, Any]:
+    """Сколько из требуемых изделий задания уже имеют замер, сколько изделий в браке по последнему замеру и наибольший
+    КСВН последних замеров; заданию без замеров изделия не перебираем."""
+    latest: dict[UUID, VswrMeasurement] = {}
+    for item in list_vswr_for_task(task.id, uow_factory()):  # позиция, попытка — последняя перекрывает
+        latest[item.serial_id] = item
+    if not latest:
+        return {"measured": 0, "failed": 0, "max_vswr": None}
     count = 0
     with uow_factory() as uow:
         for position in required:
             serial = uow.serials.by_position(task.id, position)
-            if serial is not None and serial.id in measured_ids:
+            if serial is not None and serial.id in latest:
                 count += 1
-    return count
+    peaks = [item.max_vswr for item in latest.values() if item.max_vswr is not None]
+    return {
+        "measured": count,
+        "failed": sum(item.verdict is VswrVerdict.FAIL for item in latest.values()),
+        "max_vswr": _num(max(peaks)) if peaks else None,
+    }
 
 
 @router.get("/tasks/{task_id}")
@@ -551,11 +595,14 @@ def task_measurements(
     norm = (task_norm(document, current, etk["current_revision"], CoaxRefs(refs_factory), now) if etk["techcard_id"]
             else undefined_norm(NO_ETK_REASON))
     control = etk_control(document, norm)
+    uncertainty = _uncertainties(uow_factory)
     # Требуемые замеры — по всей партии задания (выборка 1 из N: первое и каждое N-е), замерено — у кого есть замер.
     measured = {position for position, serial in serials if serial.id in latest}
     required = [position for position in range(1, task.quantity + 1) if vswr_in_sample(control, position)]
     return {
-        "task": {"id": str(task.id), "number": task.number, "name": task.name, "quantity": task.quantity},
+        "task": {"id": str(task.id), "number": task.number, "name": task.name, "quantity": task.quantity,
+                 "project": task.project, "item": task.item},
+        "etk": {"item_index": etk["item_index"], "revision": etk["revision"], "current_revision": etk["current_revision"]},
         "norm": _norm_result(norm),
         "control": control,
         "required": {"total": len(required), "measured": len(measured.intersection(required))},
@@ -563,7 +610,7 @@ def task_measurements(
             "position": position, "serial_id": str(serial.id), "serial_number": serial.serial_number,
             "status": serial.status.value, "attempts": attempts.get(serial.id, 0),
             "in_sample": vswr_in_sample(control, position),
-            "latest": _measurement_result(latest[serial.id]) if serial.id in latest else None,
+            "latest": _measurement_result(latest[serial.id], uncertainty=uncertainty) if serial.id in latest else None,
         } for position, serial in serials],
     }
 
@@ -580,7 +627,7 @@ def serial_measurements(
     return {
         "task_id": str(task.id), "position": position,
         "serial_number": serial.serial_number if serial else None,
-        "measurements": [_measurement_result(item) for item in rows],
+        "measurements": [_measurement_result(item, uncertainty=_uncertainties(uow_factory)) for item in rows],
     }
 
 
@@ -636,7 +683,7 @@ def serial_passport(
         checks.append({
             "kind": "vswr", "title": "КСВН по ВАЦ", "verdict": latest.verdict.value,
             "verdict_name": VERDICT_NAMES[latest.verdict],
-            "measurement": _measurement_result(latest, trace=True),
+            "measurement": _measurement_result(latest, trace=True, uncertainty=_uncertainties(uow_factory)),
             "instrument": instrument, "attempts": len(rows),
             "inspector": {"id": str(latest.inspector_id), "name": latest.inspector_name},
             "inspected_at": latest.measured_at.isoformat(),

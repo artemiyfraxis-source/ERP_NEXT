@@ -791,11 +791,15 @@ def quality_screen():
     if session:
         fitter.ok("POST", f"/api/production/work/{session['session']['id']}/submit", "quality_queued_boxes",
                   json={"good_quantity": "8", "defect_quantity": "0"})
-    for position, peak in ((1, "1,22"), (2, "1,42")):
-        content = f"Частота, МГц;КСВН\n1000;1,1\n1800;{peak}\n3000;1,2\n".encode("utf-8")
+    # Сборка с разъёмами на обоих концах: норма требует концы А и Б, поэтому замер — двухпортовый .s2p (S11 и S22).
+    # Однопортовый CSV давал «Брак: Не измерен конец Б» даже при КСВН 1,22 < 1,35 (разбор 19.11).
+    for position, peak in ((1, 1.22), (2, 1.42)):
+        rows = "\n".join(f"{mhz} {(vswr - 1) / (vswr + 1):.6f} 0 0.8 0 0.8 0 {(vswr - 1) / (vswr + 1):.6f} 0"
+                         for mhz, vswr in ((1000, 1.1), (1800, peak), (3000, 1.2)))
+        content = f"# MHz S RI R 50\n{rows}\n".encode("utf-8")
         qc.ok("POST", "/api/production/vswr", "quality_measurements", json={
             "task_id": task["id"], "position": position, "instrument_id": parent["id"],
-            "file_name": f"Изделие {position}.csv", "file_base64": base64.b64encode(content).decode()})
+            "file_name": f"Изделие {position}.s2p", "file_base64": base64.b64encode(content).decode()})
 
 
 def main():

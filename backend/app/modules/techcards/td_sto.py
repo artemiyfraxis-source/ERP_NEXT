@@ -157,6 +157,44 @@ _COMBINED = (
 )
 
 
+@lru_cache(maxsize=1)
+def _section_rows() -> dict[str, list[dict[str, str]]]:
+    """Строки дефектов каждого раздела СТО; раздел с подразделами — строки всех подразделов по порядку."""
+    found: dict[str, list[dict[str, str]]] = {}
+
+    def walk(sections: list[dict[str, Any]]) -> list[dict[str, str]]:
+        collected: list[dict[str, str]] = []
+        for section in sections:
+            rows = [{key: str(row.get(key) or "") for key in ("code", "defect", "criterion", "class", "method", "action")}
+                    | {"section": str(section["code"])} for row in section.get("rows") or []]
+            rows += walk(section.get("subsections") or [])
+            found[str(section["code"])] = rows
+            collected += rows
+        return collected
+
+    walk(sto()["sections"])
+    return found
+
+
+def sto_defects(codes: list[str]) -> list[dict[str, str]]:
+    """Типовые дефекты СТО для операций с этими кодами — список причин брака ОТК (владелец 19.11): разделы по
+    `_section_codes` в порядке операций, каждая строка один раз. ОТК, упаковка и покупка разделов не дают."""
+    seen: set[str] = set()
+    result: list[dict[str, str]] = []
+    for code in codes:
+        for section in _section_codes(code):
+            for row in _section_rows().get(section, []):
+                if row["code"] not in seen:
+                    seen.add(row["code"])
+                    result.append(row)
+    return result
+
+
+def sto_section_defects(section: str) -> list[dict[str, str]]:
+    """Строки дефектов раздела СТО («4.8») с подразделами."""
+    return list(_section_rows().get(section, []))
+
+
 def outside_sto(code: str) -> bool:
     """ОТК, упаковка, покупка: СТО их не нормирует, отсутствие раздела — не замечание."""
     return bool(_OUTSIDE_STO.search(str(code or "").strip()))

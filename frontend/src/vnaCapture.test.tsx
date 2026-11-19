@@ -50,12 +50,12 @@ async function open(canUpload = true) {
   render(<VswrSection instruments={instruments} choices={[{ ...overview.task, item: "КС", status: "В работе",
     norm: { status: "ok", vswr_max: 1.8, source: "customer" }, control: overview.control, required: overview.required }]}
     taskId="task" onTaskChange={() => {}} canUpload={canUpload} canReject={() => false} onReject={() => {}} />);
-  await screen.findByRole("option", { name: /ПЗ-1/ });
-  fireEvent.change(screen.getByLabelText("Задание"), { target: { value: "task" } });
-  if (canUpload) fireEvent.click(await screen.findByRole("button", { name: "Загрузить замер" }));
+  await screen.findByText("КС-1");
+  // «Снять с ВАЦ» в строке изделия: окно замера сразу с окном съёма трассы.
+  if (canUpload) fireEvent.click(screen.getByRole("button", { name: "Снять с ВАЦ КС-1" }));
 }
 function chooseInstrument(id = "planar") {
-  fireEvent.click(screen.getByRole("button", { name: "Снять с ВАЦ" }));
+  if (!screen.queryByLabelText("Средство измерений")) fireEvent.click(screen.getByRole("button", { name: "Снять с ВАЦ" }));
   fireEvent.change(screen.getByLabelText("Средство измерений"), { target: { value: id } });
   fireEvent.click(screen.getByRole("button", { name: "Снять трассу" }));
 }
@@ -443,4 +443,20 @@ it("routes Planar by the chosen instrument without a remembered PC", async () =>
   await waitFor(() => expect(onFile).toHaveBeenCalledTimes(1));
   expect(vnaCaptureApi.start).toHaveBeenCalledExactlyOnceWith("planar", "", false);
   expect(screen.queryByLabelText("Устройство ВАЦ")).not.toBeInTheDocument();
+});
+
+it("opens at once with the only analyser and, in the flow, starts the capture without a click", async () => {
+  const onFile = vi.fn();
+  render(<VnaCapture instruments={[instruments[1]]} onFile={onFile} onBusy={vi.fn()} autoOpen autoStart />);
+  expect(screen.getByLabelText("Средство измерений")).toHaveValue("planar");
+  await waitFor(() => expect(vnaCaptureApi.start).toHaveBeenCalledWith("planar", "", false));
+  await waitFor(() => expect(onFile).toHaveBeenCalled(), { timeout: 3000 });
+  expect(localStorage.getItem("erp.vna.instrument:user-a")).toBe("planar");
+});
+
+it("opens at once with the analyser used last time but waits for «Снять трассу» outside the flow", () => {
+  localStorage.setItem("erp.vna.instrument:user-a", "planar");
+  render(<VnaCapture instruments={instruments} onFile={vi.fn()} onBusy={vi.fn()} autoOpen />);
+  expect(screen.getByLabelText("Средство измерений")).toHaveValue("planar");
+  expect(vnaCaptureApi.start).not.toHaveBeenCalled();
 });

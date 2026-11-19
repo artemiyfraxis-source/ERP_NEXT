@@ -5,6 +5,7 @@ import { PageWindow } from "./PageWindow";
 import { useCurrentUserId } from "./rights";
 
 const PC_STORAGE = "erp.vna.pc";
+const INSTRUMENT_STORAGE = "erp.vna.instrument";
 type RememberedPc = Pick<VnaAgent, "id" | "pc">;
 function rememberedPc(userId: string | null): RememberedPc | null {
   try {
@@ -83,6 +84,10 @@ type VnaCaptureProps = {
   instruments: ProductionInstrument[];
   onFile: (file: File, instrumentId: string, settings: VnaCaptureSettings | null, jobId: string) => void;
   onBusy: (busy: boolean) => void; disabled?: boolean; children?: ReactNode;
+  /** Окно «Снять с ВАЦ» открывается сразу (кнопка «Снять с ВАЦ» в строке изделия), прибор — единственный или прошлый. */
+  autoOpen?: boolean;
+  /** И трасса снимается сразу, когда прибор известен (поток «скан → замер → следующий»). */
+  autoStart?: boolean;
 };
 
 export function VnaCapture(props: VnaCaptureProps) {
@@ -90,10 +95,17 @@ export function VnaCapture(props: VnaCaptureProps) {
   return <UserVnaCapture key={userId ?? ""} {...props} userId={userId} />;
 }
 
-function UserVnaCapture({ instruments, onFile, onBusy, disabled = false, children, userId }: VnaCaptureProps & { userId: string | null }) {
+function lastInstrument(userId: string | null): string {
+  try { return userId ? localStorage.getItem(`${INSTRUMENT_STORAGE}:${userId}`) ?? "" : ""; } catch { return ""; }
+}
+
+function UserVnaCapture({ instruments, onFile, onBusy, disabled = false, children, userId, autoOpen = false, autoStart = false }: VnaCaptureProps & { userId: string | null }) {
   const configured = instruments.filter((item) => item.kind === "Средство измерений" && item.status === "Действует" && item.vna_app);
-  const [opened, setOpened] = useState(false);
-  const [instrumentId, setInstrumentId] = useState("");
+  // Прибор по умолчанию: единственный ВАЦ с программой или тот, которым этот сотрудник снимал в прошлый раз.
+  const preset = () => configured.length === 1 ? configured[0].id
+    : configured.find((item) => item.id === lastInstrument(userId))?.id ?? "";
+  const [opened, setOpened] = useState(() => autoOpen && !disabled);
+  const [instrumentId, setInstrumentId] = useState(() => (autoOpen ? preset() : ""));
   const instrument = configured.find((item) => item.id === instrumentId);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -111,6 +123,7 @@ function UserVnaCapture({ instruments, onFile, onBusy, disabled = false, childre
   const jobId = useRef("");
   const mounted = useRef(true);
   const viewEpoch = useRef(0);
+  const started = useRef(false);
 
   useEffect(() => { mounted.current = true; return () => {
     mounted.current = false;
@@ -164,6 +177,8 @@ function UserVnaCapture({ instruments, onFile, onBusy, disabled = false, childre
         if (job.status === "done") {
           const blob = await vnaCaptureApi.file(job.id, signal);
           if (!signal.aborted) {
+            try { if (userId) localStorage.setItem(`${INSTRUMENT_STORAGE}:${userId}`, selectedId); }
+            catch { /* The next capture simply asks for the analyser again. */ }
             onFile(new File([blob], job.file_name, { type: "application/octet-stream" }), selectedId, job.capture_settings ?? null, job.id);
             setOpened(false);
           }
@@ -186,6 +201,14 @@ function UserVnaCapture({ instruments, onFile, onBusy, disabled = false, childre
       }
     }
   }
+
+  useEffect(() => {
+    if (!autoStart || started.current || !opened || !instrument) return;
+    started.current = true;
+    const arinst = instrument.vna_app === "Arinst VL";
+    if (arinst && remembered) { setAgentId(remembered.id); setPc(remembered.pc); }
+    void begin(arinst ? remembered?.id ?? "" : "");
+  }, [autoStart, opened, instrument]);
 
   async function moveDevice(target: VnaAgent) {
     if (!instrument || !transfer || transferring) return;
@@ -215,7 +238,9 @@ function UserVnaCapture({ instruments, onFile, onBusy, disabled = false, childre
     <div className="form-actions">
       {children}
       <button type="button" className="secondary" disabled={disabled || busy} onClick={() => {
-        setInstrumentId(""); setAgentId(""); setAgents(null); setError(""); setGuide(false); setPc(""); setTransfer(null); setNotice(""); setOpened(true);
+        const chosen = preset();
+        const arinst = configured.find((item) => item.id === chosen)?.vna_app === "Arinst VL";
+        setInstrumentId(chosen); setAgentId(arinst ? remembered?.id ?? "" : ""); setAgents(null); setError(""); setGuide(false); setPc(arinst ? remembered?.pc ?? "" : ""); setTransfer(null); setNotice(""); setOpened(true);
       }}>Снять с ВАЦ</button>
     </div>
     {opened && <PageWindow label="Снять с ВАЦ" width={680} close={close}><div className="panel">

@@ -512,7 +512,7 @@ def test_task_list_has_only_coax_assemblies_with_counts(production_api):  # noqa
     client, _ = production_api
     try:
         _card_, coax_task, instrument = _old_coax_setup(client)
-        client.post("/api/production/vswr", json=_body(coax_task, instrument, GOOD))
+        verdict = client.post("/api/production/vswr", json=_body(coax_task, instrument, GOOD)).json()["measurement"]["verdict"]
         _launch(client, _card(None, index="КБ2"), key="plain-1", quantity=2)  # ЭТК без коаксиальной сборки — в список не попадает
         new_card = _card({"coaxVswrNorm": NORM}, index="КБ3", config=COAX_CONFIG)
         new_task = _launch(client, new_card, key="vswr-new", quantity=4)
@@ -525,9 +525,14 @@ def test_task_list_has_only_coax_assemblies_with_counts(production_api):  # noqa
     assert set(rows) == {coax_task["id"], new_task["id"]}
     old = rows[coax_task["id"]]
     assert old["number"] == coax_task["number"] and old["quantity"] == 3 and old["status"]
-    assert old["norm"] == {"status": "ok", "vswr_max": 1.51, "source": "computed"}
-    assert old["required"] == {"total": 3, "measured": 1}
-    assert rows[new_task["id"]]["norm"]["vswr_max"] == 1.35 and rows[new_task["id"]]["required"] == {"total": 4, "measured": 0}
+    assert {key: old["norm"][key] for key in ("status", "vswr_max", "source")} == {"status": "ok", "vswr_max": 1.51, "source": "computed"}
+    assert old["project"] == "591K.3" and old["item"] == coax_task["item"] and old["etk_revision"] is not None
+    assert old["required"]["total"] == 3 and old["required"]["measured"] == 1
+    assert old["required"]["failed"] == (verdict == "fail")
+    assert old["required"]["max_vswr"] is not None
+    new = rows[new_task["id"]]
+    assert new["norm"]["vswr_max"] == 1.35 and new["norm"]["band_mhz"] == [1000, 3000]
+    assert new["required"] == {"total": 4, "measured": 0, "failed": 0, "max_vswr": None}
 
 
 def test_task_list_hides_tasks_of_a_fully_shipped_kb(production_api):  # noqa: F811
@@ -717,3 +722,48 @@ def test_accessory_cannot_record_vswr_or_accept_qc(production_api):
         assert uow.qc.by_box(box.id) is None
         assert uow.serials.list_for_task(UUID(task["id"])) == serials_before
     assert client.get(f"/api/production/vswr/tasks/{task['id']}/serials/1").json()["measurements"] == []
+
+
+def _planar(client):
+    response = client.post("/api/production/instruments", json={
+        "inventory_number": "ВАЦ-02", "name": "Planar S50180 — анализатор цепей векторный", "instrument_type": "ВАЦ",
+        "verification_number": "ПВ-2026-18", "verified_at": "2026-09-01T00:00:00", "verification_due": "2027-09-01T00:00:00",
+    })
+    assert response.status_code == 200, response.text
+    return response.json()["instrument"]
+
+
+@pytest.mark.parametrize(("peak", "verdict", "status"), [
+    (1.36, "fail", "border"),   # выше нормы, но в пределах U = 0,022 ВАЦ S50180 до 10 ГГц — повторить 3 подключения
+    (1.34, "pass", "border"),   # ниже нормы, но в пределах U
+    (1.32, "pass", "pass"),
+    (1.38, "fail", "fail"),
+])
+def test_decision_marks_a_peak_within_the_vna_uncertainty_of_the_limit_as_border(production_api, peak, verdict, status):  # noqa: F811
+    """СТО ФРАК-002-2026 п. 13.3: в пределах ±U ВАЦ от нормы — «на границе допуска», повторный замер; U — по модели ВАЦ."""
+    client, _ = production_api
+    _as({"quality": "edit", "production": "edit"})
+    task = _launch(client, _card({"coaxVswrNorm": NORM}), key=f"border-{peak}")
+    vna = _planar(client)
+    response = client.post("/api/production/vswr", json=_body(task, vna, _both([(1000, 1.1), (1800, peak), (3000, 1.2)]), name="a.s2p"))
+    assert response.status_code == 200, response.text
+    measurement = response.json()["measurement"]
+    assert measurement["verdict"] == verdict
+    assert measurement["decision"]["status"] == status and measurement["decision"]["uncertainty"] == 0.022
+    assert ("повторный замер (3 подключения" in measurement["decision"]["text"]) == (status == "border")
+    latest = client.get(f"/api/production/vswr/tasks/{task['id']}").json()["serials"][0]["latest"]
+    assert latest["decision"]["status"] == status
+
+
+def test_decision_without_a_known_vna_uncertainty_or_after_a_repeat_is_the_recorded_verdict(production_api):  # noqa: F811
+    client, _ = production_api
+    _as({"quality": "edit", "production": "edit"})
+    task = _launch(client, _card({"coaxVswrNorm": NORM}), key="border-unknown")
+    close = _both([(1000, 1.1), (1800, 1.34), (3000, 1.2)])
+    unknown = client.post("/api/production/vswr", json=_body(task, _instrument(client), close, name="a.s2p")).json()["measurement"]
+    assert unknown["decision"] == {"status": "pass", "uncertainty": None, "text": ""}
+    vna = _planar(client)
+    first = client.post("/api/production/vswr", json=_body(task, vna, close, position=2, name="b.s2p")).json()["measurement"]
+    repeat = _both([(1000, 1.1), (1800, 1.345), (3000, 1.2)])  # тот же файл — повтор запроса, не новая попытка
+    again = client.post("/api/production/vswr", json=_body(task, vna, repeat, position=2, name="c.s2p")).json()["measurement"]
+    assert first["decision"]["status"] == "border" and again["attempt"] == 2 and again["decision"]["status"] == "pass"
