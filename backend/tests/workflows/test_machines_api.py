@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from app.main import app
 from app.modules.production import machines as rules
-from app.modules.production.infrastructure import SqlAlchemyProductionUnitOfWork
+from app.modules.production.infrastructure import ProductionInstrumentRow, SqlAlchemyProductionUnitOfWork
 from app.modules.references.infrastructure import EquipmentMachineRow, EquipmentModelRow, EquipmentUnitRow
 from app.modules.warehouse.devices import DeviceRow, PrinterRow
 from app.modules.warehouse.marking_profiles import MarkingBindingRow
@@ -129,7 +129,8 @@ def test_list_shows_the_machine_printers_and_devices_and_staleness_means_no_link
     sessions, clock, admin, ob019, ob101 = machines_api
     rows = admin.get(LIST).json()["rows"]
     [waiting] = [row for row in rows if row["inventory"] == "ОБ.019"]
-    assert waiting["link"]["text"] == "Мост не установлен" and waiting["card"] is False
+    assert waiting["link"]["text"] == "Агент не установлен" and waiting["card"] is False
+    assert waiting["service"] == "Агент ERP · станок"
     assert admin.get(f"{LIST}/{ob019}").status_code == 404
     bridge = _bridge(admin)
     _report(bridge, link="port_busy", registers={})
@@ -154,11 +155,102 @@ def test_list_shows_the_machine_printers_and_devices_and_staleness_means_no_link
         "Godex EZ2350i", "Godex EZ2350i", "На связи", "Принтер виден")
     vna = rows["device:Планар S50180"]
     assert (vna["name"], vna["state"]["text"]) == ("Анализатор цепей", "Подключён")
+    # One name for the PC's agent, whatever it does there (owner 18.11: «Мост ERP» vs «Агент печати» confused).
+    assert printer["service"] == vna["service"] == "Агент ERP · печать, приборы"
+    assert machine["service"] == "Агент ERP · станок"
     clock.now = now + rules.STALE_AFTER + timedelta(seconds=1)
     stale = {row["key"]: row for row in admin.get(LIST).json()["rows"]}[f"machine:{ob019}"]
     assert stale["link"] == {"code": "stale", "text": "Нет связи с ПК станка", "tone": "danger"}
     card = admin.get(f"{LIST}/{ob019}").json()
     assert card["link"]["text"] == "Нет связи с ПК станка" and card["age_seconds"] == 11
+
+
+def _instrument(session, number, name, app, serial=""):
+    session.add(ProductionInstrumentRow(
+        id=uuid4(), version=1, inventory_number=number, name=name, instrument_type="Анализатор цепей",
+        kind="Средство измерений", serial_number=serial, vna_app=app, status="Поверка не подтверждена"))
+
+
+def _agent(session, machine, pc, version, now, ip_lan="", ip_seen=""):
+    session.add(ScanAgentRow(machine_id=machine, pc_name=pc, version=version, ip_lan=ip_lan, ip_seen=ip_seen,
+                             first_seen=now, last_seen=now))
+
+
+def test_one_analyser_is_one_row_on_the_pc_where_it_really_is(machines_api):
+    """Owner 18.11: Arinst and Planar S50180 stood twice — on the ОТК PC (where they are) and on the owner's PC (Arinst
+    VL installed, the Planar was there on 16.11). One row per СИ, on the PC with the latest real presence."""
+    sessions, clock, admin, _, _ = machines_api
+    now = clock.now
+    planar = "Planar, S50180, 26030095, 26.2.2/2"
+    with sessions.begin() as session:
+        _instrument(session, "СИ.001", "Arinst VNA-DL 1–8800 МГц", "Arinst VL")
+        _instrument(session, "СИ.002", "Planar S50180", "S2VNA", serial="26030095")
+        _agent(session, "otk", "DESKTOP-PTA57QF", "2.9.7", now, ip_lan="192.168.1.121")
+        _agent(session, "owner", "DESKTOP-5O46RH6", "2.9.2", now, ip_lan="172.19.0.1", ip_seen="100.75.209.90")
+        session.add_all([
+            DeviceRow(machine_id="otk", kind="arinst", device_id="arinst", name="Arinst VNA-DL", present=True, last_seen=now),
+            DeviceRow(machine_id="owner", kind="arinst", device_id="arinst", name="Arinst VNA-DL", present=True,
+                      last_seen=now),
+            DeviceRow(machine_id="otk", kind="s2vna", device_id="26030095", name=planar, present=True,
+                      last_seen=now - timedelta(minutes=1)),
+            DeviceRow(machine_id="owner", kind="s2vna", device_id="26030095", name=planar, present=False,
+                      last_seen=now - timedelta(days=2)),
+        ])
+    rows = [row for row in admin.get(LIST).json()["rows"] if row["kind"] == "device"]
+    assert [(row["inventory"], row["pc"]) for row in rows] == [("СИ.001", "DESKTOP-PTA57QF"), ("СИ.002", "DESKTOP-PTA57QF")]
+    arinst, vna = rows
+    assert arinst["name"] == "Arinst VNA-DL 1–8800 МГц" and arinst["state"]["text"] == "Подключён"
+    assert arinst["others"] == "DESKTOP-5O46RH6 — только программа, без прибора (агент 2.9.2)"
+    assert vna["ip"] == "192.168.1.121" and vna["device"] == planar and vna["others"] == "DESKTOP-5O46RH6 — не найден"
+    # Nowhere now → the PC where it was seen last, «Не найден», and since when.
+    with sessions.begin() as session:
+        session.get(DeviceRow, ("otk", "s2vna", "26030095")).present = False
+    vna = {row["inventory"]: row for row in admin.get(LIST).json()["rows"]}["СИ.002"]
+    assert (vna["pc"], vna["state"]["text"]) == ("DESKTOP-PTA57QF", "Не найден")
+    assert vna["last_seen"].startswith((now - timedelta(minutes=1)).isoformat()[:16])
+
+
+def test_an_old_agent_claiming_arinst_loses_to_the_pc_that_captured_from_it(machines_api):
+    from app.modules.warehouse.scan_jobs import DONE, ScanJobRow
+    sessions, clock, admin, _, _ = machines_api
+    now = clock.now
+    with sessions.begin() as session:
+        _instrument(session, "СИ.001", "Arinst VNA-DL", "Arinst VL")
+        _agent(session, "otk", "DESKTOP-PTA57QF", "2.8.4", now, ip_lan="192.168.1.121")
+        _agent(session, "owner", "DESKTOP-5O46RH6", "2.9.2", now)
+        for machine in ("otk", "owner"):
+            session.add(DeviceRow(machine_id=machine, kind="arinst", device_id="arinst", name="Arinst VNA-DL",
+                                  present=True, last_seen=now if machine == "owner" else now - timedelta(seconds=30)))
+        session.add(ScanJobRow(id=uuid4(), kind="vna", source="arinst", status=DONE, target_machine_id="otk",
+                               requested_by="u", created_at=now - timedelta(hours=3),
+                               claimed_at=now - timedelta(hours=3), finished_at=now - timedelta(hours=3),
+                               capture_content=b"! s1p", capture_file_name="trace.s1p", vna_name="Arinst VNA-DL"))
+    [row] = [row for row in admin.get(LIST).json()["rows"] if row["kind"] == "device"]
+    assert (row["pc"], row["state"]["text"]) == ("DESKTOP-PTA57QF", "Подключён")
+    assert row["others"] == "DESKTOP-5O46RH6 — только программа, без прибора (агент 2.9.2)"
+
+
+def test_the_ip_column_prefers_the_lan_then_tailscale_over_a_virtual_adapter():
+    from app.workflows.machines_api import _address
+    assert _address("172.19.0.1", "192.168.1.5") == "192.168.1.5"
+    assert _address("172.19.0.1", "100.75.209.90") == "100.75.209.90"
+    assert _address("192.168.1.121", "100.75.209.90") == "192.168.1.121"
+    assert _address("", "172.19.0.1") == "172.19.0.1"
+    assert _address("169.254.3.3", "") == "169.254.3.3"
+    assert _address("", "") == ""
+
+
+def test_ob099_waits_for_its_bridge_with_the_catalogue_name(machines_api):
+    sessions, clock, admin, _, _ = machines_api
+    with sessions.begin() as session:
+        _unit(session, "ОБ.099.1", "Пресс сервоприводный для опрессовки контактов в ленте")
+        _unit(session, "ОБ.099.2", "Пресс сервоприводный для опрессовки контактов в ленте")
+    [press] = [row for row in admin.get(LIST).json()["rows"] if row["inventory"] == "ОБ.099"]
+    assert press["name"] == "Пресс сервоприводный для опрессовки контактов в ленте"
+    assert (press["link"]["text"], press["card"], press["pc"], press["ip"]) == (
+        "Агент не установлен", False, "DESKTOP-K6M7O0U", "192.168.1.82")
+    report = _report(_bridge(admin), inventory="ОБ.099")
+    assert report.status_code == 403  # no bridge yet: a planned ОБ never reports
 
 
 @pytest.mark.parametrize("permissions, opens", [
@@ -202,6 +294,99 @@ def test_the_bridge_reads_and_sends_exactly_the_server_allow_list():
     sent |= {address for low, high in re.findall(r"\((\d+)\.\.(\d+)\)", line) for address in range(int(low), int(high) + 1)}
     assert sent == rules.OB019_ALLOWED
     ranges = [(int(first), int(count)) for first, count in re.findall(r"^\s+@\((\d+), (\d+)\),?\s+#", source, re.MULTILINE)]
-    # Few requests (mbd opens COM8 per request), each within mbd's 120-word read limit.
-    assert len(ranges) == 5 and all(1 <= count <= 120 for _, count in ranges)
+    # Few requests (mbd opens COM8 per request): 5 every cycle, 4 slow pages; each within mbd's 120-word limit.
+    assert len(ranges) == 9 and all(1 <= count <= 120 for _, count in ranges)
     assert rules.OB019_ALLOWED <= {a for first, count in ranges for a in range(first, first + count)}
+
+
+CARD = "/api/production/machines/card/"
+
+
+def test_the_machines_tab_lists_production_equipment_only(machines_api):
+    """Owner 18.11: «Станки» are machines with cards; PCs, analysers and scanners live in «ПК и агенты»."""
+    sessions, clock, admin, _, ob101 = machines_api
+    now = clock.now
+    with sessions.begin() as session:
+        _unit(session, "ОБ.094", "Станок резки провода с роторной зачисткой")
+        _agent(session, "otk", "DESKTOP-PTA57QF", "2.9.7", now, ip_lan="192.168.1.121")
+        session.add(DeviceRow(machine_id="otk", kind="arinst", device_id="arinst", name="Arinst VNA-DL", present=True,
+                              last_seen=now))
+    body = admin.get(LIST).json()
+    machines = {row["inventory"]: row for row in body["machines"]}
+    assert list(machines) == ["ОБ.019", "ОБ.094", "ОБ.099"]  # ОБ.101 is not bound to a printer here
+    assert machines["ОБ.094"]["state"] == {"text": "Не подключён", "tone": "neutral"}
+    assert machines["ОБ.094"]["name"] == "Станок резки провода с роторной зачисткой"
+    assert [row["device"] for row in body["rows"] if row["kind"] == "device"] == ["Arinst VNA-DL"]
+
+
+def test_the_card_of_ob019_shows_live_values_settings_by_hmi_page_journal_and_connection(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    assert _report(_bridge(admin)).status_code == 200
+    [row] = [row for row in admin.get(LIST).json()["machines"] if row["inventory"] == "ОБ.019"]
+    assert row["state"] == {"text": "Готов, ждёт пуска", "tone": "ok"}
+    assert (row["job"], row["counter"]) == ("ED F", {"value": 65537, "of": 300, "today": False})
+    card = admin.get(CARD + "ОБ.019").json()
+    assert card["kind"] == "ob019" and card["setup"] is True and card["live"]["mode"]["text"] == "Автомат"
+    pages = {group["title"]: {field["label"]: field for field in group["fields"]} for group in card["settings"]}
+    assert list(pages) == ["Задание", "Провод и зачистка", "Средняя зачистка", "Разделение жил", "Намотка",
+                           "Маркировка", "Скорости"]
+    assert pages["Провод и зачистка"]["Длина провода"] == {
+        "label": "Длина провода", "value": 325.0, "unit": "мм", "read": True, "key": "length_mm", "kind": "u32"}
+    assert pages["Задание"]["Тираж"]["value"] == 300 and pages["Задание"]["Заказ"]["value"] == "ED F"
+    assert pages["Задание"]["Режим"]["text"] == "Автомат" and pages["Задание"]["Режим"]["key"] == "mode"
+    # Every group is read now; a word the snapshot lacks is «—», a field ERP does not write has no key.
+    assert all(field["read"] for group in pages.values() for field in group.values())
+    assert pages["Задание"]["Пауза между пучками"]["value"] is None
+    assert pages["Скорости"]["Нож"]["key"] is None and pages["Маркировка"]["Текст у начала"]["key"] == "mark_front"
+    assert card["positions"]["title"] == "Положение осей"
+    assert card["connection"]["pc"] == "PC-108" and card["connection"]["agent"] == "Агент ERP · станок"
+    assert card["journal"][-1]["text"] == "Агент станка привязан к ПК PC-108"
+
+
+def test_the_card_of_a_machine_without_an_agent_and_an_unknown_number(machines_api):
+    sessions, clock, admin, _, _ = machines_api
+    card = admin.get(CARD + "ОБ.099").json()
+    assert card["kind"] == "planned" and card["state"]["text"] == "Не подключён" and card["settings"] == []
+    assert card["connection"]["link"]["text"] == "Агент не установлен" and card["connection"]["ip"] == "192.168.1.82"
+    unlinked = admin.get(CARD + "ОБ.019").json()
+    assert unlinked["live"] is None and unlinked["settings"][1]["fields"][0]["value"] is None
+    assert admin.get(CARD + "ОБ.555").status_code == 404
+
+
+def test_the_card_of_a_godex_shows_its_queue_profiles_and_print_journal(machines_api):
+    from app.modules.warehouse.label_jobs import LabelJobRow
+    from app.modules.warehouse.marking_profiles import MarkingBatchRow, MarkingProfileRow
+    sessions, clock, admin, _, ob101 = machines_api
+    now = clock.now
+    with sessions.begin() as session:
+        _agent(session, "godex-pc", "SK-20250818JOKI", "2.9.2", now, ip_lan="192.168.1.70")
+        session.add(PrinterRow(machine_id="godex-pc", name="Godex EZ2350i", driver="Godex", port="USB001",
+                               kind="gdi_png", present=True, last_seen=now))
+        session.flush()
+        session.add(MarkingBindingRow(equipment_id=ob101, version=1, machine_id="godex-pc", printer="Godex EZ2350i"))
+        profile = uuid4()
+        session.add(MarkingProfileRow(id=profile, equipment_id=ob101, inventory_number="ОБ.101", name="Флажок 30×10",
+                                      version=2, calibrated=True, geometry={}))
+        session.flush()
+        batch = uuid4()
+        session.add(MarkingBatchRow(id=batch, created_by=uuid4(), created_at=now, idempotency_key="k", fingerprint="f",
+                                    profile_id=profile, manifest={}, total=2))
+        session.flush()
+        common = dict(kind="marking", copies=1, tspl=b"", format="gdi_png", png=b"x", target_machine_id="godex-pc",
+                      target_printer="Godex EZ2350i", width_mm=30, height_mm=10, orientation="landscape", batch_id=batch)
+        session.add_all([
+            LabelJobRow(id=uuid4(), created_at=now, status="spooled", sequence=1, taken_at=now, finished_at=now,
+                        attempt="a1", claim_token_id=uuid4(), **common),
+            LabelJobRow(id=uuid4(), created_at=now, status="pending", sequence=2, **common),
+        ])
+    machines = {row["inventory"]: row for row in admin.get(LIST).json()["machines"]}
+    godex = machines["ОБ.101"]
+    assert godex["state"] == {"text": "Готов", "tone": "ok"} and godex["job"] == "В очереди: 1"
+    assert godex["counter"] == {"value": 1, "of": None, "today": True}
+    card = admin.get(CARD + "ОБ.101").json()
+    assert card["kind"] == "marking" and card["setup"] is False
+    assert card["marking"]["profiles"] == [{"id": str(profile), "name": "Флажок 30×10", "calibrated": True, "version": 2}]
+    assert card["marking"]["last_job"]["status"] == "Передано принтеру"
+    assert [item["text"] for item in card["journal"]] == ["Этикетка 2 · В очереди", "Этикетка 1 · Передано принтеру"] \
+        or [item["text"] for item in card["journal"]] == ["Этикетка 1 · Передано принтеру", "Этикетка 2 · В очереди"]
+    assert card["connection"]["pc"] == "SK-20250818JOKI" and card["connection"]["extra"] == [["Принтер", "Godex EZ2350i"]]
