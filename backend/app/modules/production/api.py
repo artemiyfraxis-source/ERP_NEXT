@@ -102,6 +102,7 @@ from .quality import (
     assign_instrument_serial,
     attach_instrument_file,
     delete_instrument_file,
+    mark_reference_curve,
     next_instrument_number,
     update_instrument,
     MAX_INSTRUMENT_FILE_SIZE,
@@ -1514,7 +1515,8 @@ def decide_execution_defect(
 
 def instrument_file_result(item) -> dict:
     return {"id": str(item.id), "kind": item.kind.value, "file_name": item.file_name, "size": item.size,
-            "uploaded_at": item.uploaded_at.isoformat(), "uploaded_by_name": item.uploaded_by_name}
+            "uploaded_at": item.uploaded_at.isoformat(), "uploaded_by_name": item.uploaded_by_name,
+            "is_reference": item.is_reference}
 
 
 def instrument_result(item, files=(), *, now: datetime,
@@ -1643,6 +1645,18 @@ def serve_instrument_file(
         if item is None:
             raise HTTPException(status_code=404, detail="Документ СИ не найден")
         return file_response(item.content, item.file_name)
+
+
+@router.post("/instruments/{instrument_id}/files/{file_id}/reference")
+def set_instrument_reference_curve(
+    instrument_id: UUID,
+    file_id: UUID,
+    principal: Annotated[Principal, Depends(production_quality_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    item = _execution(lambda: mark_reference_curve(instrument_id, file_id, principal.actor, now, uow_factory()))
+    return {"file": instrument_file_result(item)}
 
 
 @router.delete("/instruments/{instrument_id}/files/{file_id}", status_code=204)

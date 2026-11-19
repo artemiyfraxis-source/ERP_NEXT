@@ -306,13 +306,6 @@ function Assert-VnaCalibrationChecked {
     if ($Calibration.LoadCheck -ne 'pass') { throw 'Нужен успешный контроль нагрузкой (пункт 3).' }
 }
 
-function Get-VnaReferenceName {
-    param($Session, $Instrument)
-    $files = @(Get-VnaInstrumentFiles -Session $Session -Instrument $Instrument | Where-Object { Test-VnaFixtureFileIdentity -Instrument $Instrument -File $_ })
-    if ($files.Count -eq 1) { return [string]$files[0].file_name }
-    return ''
-}
-
 function Update-VnaCheckState {
     param($Session, [string]$PendingDirectory, [string]$StatusCache, $Calibration, $Previous)
     # Sends the waiting records, then reads the weekly/monthly state of this VNA; a network failure keeps the last known
@@ -677,8 +670,8 @@ function Start-VnaMeasure {
                         if (-not $config -and -not $Offline) { $config = Read-VnaConfig -Path $ConfigPath }
                         $standardNumber = Get-VnaConfigText $config 'control_standard' 'СИ.009'
                         $standard = Get-VnaInstrument -Session $session -Number $standardNumber
-                        $referencePath = Get-VnaFixtureFile -Session $session -Instrument $standard -CacheDirectory (Join-Path $DataDirectory 'fixtures')
-                        $reference = Read-VnaTouchstone -Path $referencePath
+                        $referenceCurve = Get-VnaReferenceCurve -Session $session -Instrument $standard -CacheDirectory (Join-Path $DataDirectory 'fixtures')
+                        $reference = Read-VnaTouchstone -Path $referenceCurve.Path
                         Write-Host "Контрольная мера $standardNumber`: $($standard.name), зав. № $($standard.serial_number)."
                         [void](Read-Host "Установите $standardNumber между концами кабелей так же, как при эталонном замере: сторона 1 — к порту 1. Нажмите Enter")
                         $sweep = Get-VnaSweep $connection
@@ -687,7 +680,7 @@ function Start-VnaMeasure {
                         $control = Compare-VnaControlStandard $measured $reference
                         Write-Host ('Отклонение от эталонной кривой: КСВН {0:N4} при U {1:N4}; S21 {2:N3} дБ при U 0,1 дБ.' -f $control.VswrDev, $control.VswrLimit, $control.S21DevDb)
                         if (-not $control.Passed) { Write-Host 'Не годен: замеры остановить, проверить калибровку и кабели (СТО ФРАК-002-2026, разд. 14).' -ForegroundColor Red }
-                        $record = New-VnaCheckRecord control_standard $calibration -Values @{ standard_inventory = $standardNumber; reference = (Get-VnaReferenceName $session $standard)
+                        $record = New-VnaCheckRecord control_standard $calibration -Values @{ standard_inventory = $standardNumber; reference = $referenceCurve.FileName
                             vswr_dev = $control.VswrDev; vswr_limit = $control.VswrLimit; s21_dev_db = $control.S21DevDb; s21_limit_db = $control.S21LimitDb } -Profile (Get-VnaCheckProfile)
                         $null = Save-VnaPendingCheck $pendingChecks $matingTarget $record
                         $checkDue = Update-VnaCheckState $session $pendingChecks $statusCache $calibration $checkDue

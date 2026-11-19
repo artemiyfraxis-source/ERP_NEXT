@@ -545,6 +545,30 @@ it("uploads a passport as base64, displays its link and metadata, and deletes on
   expect(writes(requests)[1]).toMatchObject({ path: `${base}/ruler/files/file`, method: "DELETE" });
 });
 
+it("marks one .s2p measurement as the reference curve, asking before replacing the current one", async () => {
+  const curve = (id: string, name: string, is_reference = false) => ({ id, kind: "Прочее" as const, file_name: name, size: 9, uploaded_at: "2026-11-16", uploaded_by_name: "Иванов", is_reference });
+  let files = [curve("old", "Замер ВАЦ 16.11.2026, СИ.005.s2p", true), curve("new", "Замер ВАЦ 18.11.2026, СИ.005.s2p"), curve("pdf", "паспорт.pdf")];
+  const { requests } = setup([{ ...unverified, files }], ({ path, method }) => {
+    if (method === "POST" && path.endsWith("/reference")) {
+      files = files.map((file) => ({ ...file, is_reference: path.includes("/files/new/") ? file.id === "new" : file.is_reference }));
+      return json({ file: files[1] });
+    }
+    if (method === "GET" && path === base) return json({ instruments: [{ ...unverified, files }] });
+    return null;
+  });
+  open(unverified.inventory_number);
+  expect(screen.getByText("Эталонная кривая")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Сделать эталонной кривой: паспорт.pdf" })).not.toBeInTheDocument();
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  fireEvent.click(screen.getByRole("button", { name: "Сделать эталонной кривой: Замер ВАЦ 18.11.2026, СИ.005.s2p" }));
+  expect(writes(requests)).toHaveLength(0);
+  confirm.mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Сделать эталонной кривой: Замер ВАЦ 18.11.2026, СИ.005.s2p" }));
+  expect(await screen.findByText("Эталонная кривая назначена")).toBeInTheDocument();
+  expect(writes(requests)).toEqual([{ path: `${base}/ruler/files/new/reference`, method: "POST", body: {} }]);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Сделать эталонной кривой: Замер ВАЦ 16.11.2026, СИ.005.s2p" })).toBeInTheDocument());
+});
+
 it("shows passport presence and file counts in the registry", () => {
   setup([{ ...instrument, files: [{ id: "p", kind: "Паспорт", file_name: "паспорт.pdf", size: 12, uploaded_at: "2026-11-12", uploaded_by_name: "Иванов" }] }]);
   expect(screen.getByText("1 · паспорт")).toBeInTheDocument();

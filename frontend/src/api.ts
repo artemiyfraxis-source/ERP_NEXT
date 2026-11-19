@@ -1585,6 +1585,8 @@ export interface InstrumentFile {
   size: number;
   uploaded_at: string;
   uploaded_by_name: string;
+  /** Эталонная кривая СИ: с ней еженедельно сравнивают контрольную меру (СТО ФРАК-002-2026, разд. 14). */
+  is_reference?: boolean;
 }
 
 export interface ProductionInstrument {
@@ -4384,6 +4386,8 @@ export const productionApi = {
   uploadInstrumentFile: (id: string, payload: { kind: InstrumentFileKind; file_name: string; content_base64: string }) =>
     api(`/api/production/instruments/${encodeURIComponent(id)}/files`, { method: "POST", body: JSON.stringify(payload) }),
   instrumentFileUrl: (id: string, fileId: string) => `/api/production/instruments/${encodeURIComponent(id)}/files/${encodeURIComponent(fileId)}`,
+  setInstrumentReferenceCurve: (id: string, fileId: string) =>
+    api(`/api/production/instruments/${encodeURIComponent(id)}/files/${encodeURIComponent(fileId)}/reference`, { method: "POST" }),
   deleteInstrumentFile: (id: string, fileId: string) =>
     api(`/api/production/instruments/${encodeURIComponent(id)}/files/${encodeURIComponent(fileId)}`, { method: "DELETE" }),
   instrumentFromStock: (payload: InstrumentFromStockInput) =>
