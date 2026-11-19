@@ -1,6 +1,6 @@
 /* «Станки»: плитки подключённого оборудования и живая карточка ОБ.019 (MachinesPage.tsx, Ob019Card.tsx). */
-:root { --wire-copper: #c27c2c; --wire-insulation: #4f7fb0; }
-:root[data-theme="dark"] { --wire-copper: #d99a52; --wire-insulation: #6b97c4; }
+:root { --wire-copper: #c27c2c; --wire-insulation: #4f7fb0; --wire-mark: #1d2733; }
+:root[data-theme="dark"] { --wire-copper: #d99a52; --wire-insulation: #6b97c4; --wire-mark: #f1f4f7; }
 .machine-mono { font-variant-numeric: tabular-nums slashed-zero; }
 .machine-muted { color: var(--muted-foreground); }
 
@@ -67,6 +67,7 @@
   .wire-back-top { order: 1; } .wire-front-bottom { order: 2; } .wire-back-bottom { order: 3; }
   .wire-knife { order: 4; grid-column: 1 / -1; justify-content: flex-start; }
   .wire-middle-bottom { order: 5; grid-column: 1 / -1; }
+  .wire-mark-row { order: 5; } .wire-mark-row.is-ends { justify-content: flex-start; }
   .wire-dim { order: 6; }
   .wire-back-top, .wire-back-bottom { justify-content: flex-start; }
 }
@@ -182,6 +183,17 @@ button.machine-stop { min-width: 160px; min-height: 48px; font-size: 18px; font-
 
 /* «Что режем»: задание из ЭТК и провод вручную рядом. */
 .machine-what h3, .machine-correction h3 { margin: 0; font-size: 15px; font-weight: 600; }
+/* Маркировка: блок с режимом и поля меток под проводом (Ob019MarkingBlock.tsx). */
+.wire-mark rect { fill: var(--wire-mark); }
+.wire-mark-row { grid-column: 1 / -1; justify-content: space-between; align-items: flex-start; padding-top: 6px; border-top: 1px dashed var(--border); }
+.wire-mark-row.is-full { justify-content: center; }
+.wire-mark-group { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 12px; min-width: 0; }
+.machine-mark-text .machine-input-box input { width: 16rem; max-width: 100%; text-align: left; font-variant-numeric: normal; }
+.machine-marking-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.machine-marking h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.machine-mark-modes button { min-width: 112px; }
+.machine-marking-etk { margin: 0; font-size: 13px; }
+.machine-marking-warnings { margin: 0; padding-left: 18px; font-size: 12px; }
 .machine-ways { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; }
 .machine-way { display: grid; gap: 4px; align-content: start; min-width: 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; }
 .machine-way.is-on { border-color: var(--primary); }

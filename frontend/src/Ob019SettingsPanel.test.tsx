@@ -118,6 +118,8 @@ it("says where each planned value comes from", () => {
   const row = (source: string, value: string, nominal: string | null, offset: string | null) =>
     ({ key: "k", label: "L", unit: "мм", source, value, nominal, offset, live: null });
   expect(sourceText(row("Ø жилы + 0,15", "0,79", "0,79", "0,00"), "0,64", null)).toBe("0,79 = Ø жилы 0,64 + 0,15");
+  // With a machine correction on top the sum still names the base; the correction is shown apart (not «0,62 = 0,52 + 0,15»).
+  expect(sourceText(row("Ø жилы + 0,15", "0,62", "0,67", "-0,05"), "0,52", null)).toBe("0,67 = Ø жилы 0,52 + 0,15 + поправка -0,05");
   expect(sourceText(row("Рецепт, версия 2", "5,00", "5,00", null), null, "2026-11-18T12:00:00+01:00")).toBe("из настройки 18.11");
   expect(sourceText(row("ЭТК", "5,00", "5,00", "0,00"), null, null)).toBe("из ЭТК");
   expect(sourceText(row("ЭТК", "5,40", "5,00", "0,40"), null, null)).toBe("ЭТК 5,00 + поправка +0,40");

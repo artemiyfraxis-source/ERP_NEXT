@@ -8,7 +8,9 @@ import {
 } from "./machineControlApi";
 import { usePolled, type Ob019Live } from "./machinesApi";
 import { Ob019Correction } from "./Ob019Correction";
-import { Ob019WireDrawing } from "./Ob019WireDrawing";
+import { MARK_KEYS, MarkText, latin, latinLength, markMode, modeValues, Ob019MarkingBlock, Ob019MarkingRow, planValues,
+  TEXT_CHARS } from "./Ob019MarkingBlock";
+import { markCount, Ob019WireDrawing } from "./Ob019WireDrawing";
 import { Ob019WirePicker } from "./Ob019WirePicker";
 
 /** Настройки карточки ОБ.019 вживую (владелец 19.11.2026: «хочу в лайве менять данные: чертёжик, там данные
@@ -29,7 +31,8 @@ const DRAWN = ["length_mm", "strip_front_mm", "pull_front_mm", "strip_back_mm", 
 const JOB_ROW = ["total_set", "batch_set", "mode"];
 /** Стягивание на чертеже — переключатель режима; точное значение правится в «Остальных параметрах». */
 const PULL_OF: Record<string, string> = { strip_front_mm: "pull_front_mm", strip_back_mm: "pull_back_mm" };
-const ON_TOP = new Set([...DRAWN.filter((key) => !Object.values(PULL_OF).includes(key)), ...JOB_ROW, "feed_wheel"]);
+/** Маркировка — свой блок и поля под проводом; шрифт, скорости, поворот и прочее — в «Остальных параметрах». */
+const ON_TOP = new Set([...DRAWN.filter((key) => !Object.values(PULL_OF).includes(key)), ...JOB_ROW, "feed_wheel", ...MARK_KEYS]);
 export type PullMode = "full" | "half" | "none";
 /** Режим по значениям станка; «own» — своё стягивание, не по правилу режима (правка зачистки его не трогает). */
 export type PullState = PullMode | "own";
@@ -129,6 +132,13 @@ export function enteredDiffers(field: SettingField | undefined, entered: string)
   return number === null || Math.abs(number - field.value) >= 0.005;
 }
 
+/** Как `enteredDiffers`, но «» — тоже значение (стереть текст метки), а не «не менять». */
+export function markDiffers(field: SettingField | undefined, value: string): boolean {
+  if (!field || field.value === null || field.value === undefined) return true;
+  if (typeof field.value === "string") return field.value !== value.split(/\s+/).filter(Boolean).join(" ");
+  return enteredDiffers(field, value);
+}
+
 /** Запас диаметра реза над жилой без настройки провода (сервер: recipes.DIAMETER_OVER_CONDUCTOR, владелец 20.11.2026). */
 export const DIAMETER_OVER = "0,15";
 
@@ -137,7 +147,11 @@ export function sourceText(row: TransferRow, conductor: string | null, recipeAt:
   if (row.value === null) return "";
   const offset = row.offset && row.offset !== "0,00" ? row.offset : "";
   const plus = offset ? ` + поправка ${offset.startsWith("-") ? offset : `+${offset}`}` : "";
-  if (row.source.startsWith("Ø жилы")) return conductor ? `${row.value} = Ø жилы ${conductor} + ${DIAMETER_OVER}` : `${row.value} = Ø жилы + ${DIAMETER_OVER}`;
+  if (row.source.startsWith("Ø жилы")) {
+    // The sum names the base (Ø жилы + запас), not the value with the machine's correction on top.
+    const base = row.nominal ?? row.value;
+    return (conductor ? `${base} = Ø жилы ${conductor} + ${DIAMETER_OVER}` : `${base} = Ø жилы + ${DIAMETER_OVER}`) + plus;
+  }
   if (row.source.startsWith("Рецепт")) return recipeAt ? `из настройки ${formatMoment(recipeAt).split(" ")[0]}` : "из настройки провода";
   if (row.source === "Задание") return plus ? `задание ${row.nominal}${plus}` : "из задания";
   if (row.source.startsWith("ЭТК")) return plus ? `ЭТК ${row.nominal}${plus}` : row.source === "ЭТК" ? "из ЭТК" : row.source;
@@ -326,6 +340,29 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   const commitRef = useRef(commit);
   commitRef.current = commit;
 
+  /** Маркировка: все значения одной записью, как есть — и совпадающие со станком, и «» (стереть текст). Настройку провода
+   *  не трогает. */
+  const commitBatch = (values: Record<string, string>) => {
+    const keys = Object.keys(values).filter((key) => fields.has(key));
+    if (!keys.length) return;
+    setDrafts((current) => without(current, keys));
+    setQueue((current) => ({ ...current, ...Object.fromEntries(keys.map((key) => [key, { value: values[key], recipe: false }])) }));
+    setStatus((current) => ({ ...current, ...Object.fromEntries(keys.map((key) => [key, { kind: "queued", value: values[key] }])) }));
+  };
+
+  /** Текст метки: в латиницу, как ляжет на станок; пустой — стирает текст на станке; длиннее 30 знаков — не уходит. */
+  const commitText = (key: string, raw: string) => {
+    setDrafts((current) => without(current, [key]));
+    if (!fields.has(key)) return;
+    if (latinLength(raw) > TEXT_CHARS) {
+      setStatus((current) => ({ ...current, [key]: { kind: "failed", value: raw, text: `не длиннее ${TEXT_CHARS} знаков` } }));
+      return;
+    }
+    const text = latin(raw);
+    if (text === settledOf(key)) return;
+    commitBatch({ [key]: text });
+  };
+
   // «Запомнить для провода» — само: после серии своих правок значения станка сохраняются как настройка провода.
   const latest = useRef({ fields, plan, linkUp, equipmentId });
   latest.current = { fields, plan, linkUp, equipmentId };
@@ -395,9 +432,20 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     for (const [key, value] of Object.entries(next.job)) {
       if (value !== null && value !== "" && fields.has(key) && enteredDiffers(fields.get(key), String(value))) values[key] = String(value);
     }
+    // Маркировка из ЭТК уходит вместе с заданием (сервер пишет её в «Передать на станок»); с ошибкой в ней сервер
+    // откажет в передаче целиком — так же и запись через очередь её не обходит.
+    const marking = next.marking ?? null;
+    const markBlocked = marking && marking.blocking.length > 0 ? `Маркировка: ${marking.blocking.join("; ")}` : "";
+    if (marking && !markBlocked) {
+      for (const [key, value] of Object.entries(planValues(marking))) if (fields.has(key) && markDiffers(fields.get(key), value)) values[key] = value;
+    }
     const keys = Object.keys(values);
     const wire = next.wire;
-    if (!keys.length) { markWire(wire, "done", true); setMessage({ tone: "info", text: "Станок уже настроен на это" }); return; }
+    if (!keys.length) {
+      markWire(wire, markBlocked ? "failed" : "done", true);
+      if (!markBlocked) setMessage({ tone: "info", text: "Станок уже настроен на это" });
+      return;
+    }
     if (!canWrite) {
       markWire(wire, "failed", true);
       setMessage({ tone: "warn", text: `Не записано: ${old ? "нет связи со станком" : !control?.can_edit ? "запись вам не разрешена"
@@ -416,6 +464,11 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
         markWire(wire, "failed", true);
         setStatus((current) => ({ ...current, ...Object.fromEntries(keys.map((key) => [key, { kind: "failed", value: values[key], text }])) }));
       }
+      return;
+    }
+    if (markBlocked) {
+      markWire(wire, "failed", true);
+      setStatus((current) => ({ ...current, ...Object.fromEntries(keys.map((key) => [key, { kind: "failed", value: values[key], text: markBlocked }])) }));
       return;
     }
     setQueue((current) => ({ ...current, ...Object.fromEntries(keys.map((key) => [key, { value: values[key], recipe: false, wire, plan: true }])) }));
@@ -597,6 +650,14 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     : runningText || (control.problem ? `Изменения не записываются: ${operatorText(control.problem)}` : "")) : "";
   const picked = choices?.find((item) => item.key === choice) ?? null;
   const wireInfo = wires?.find((item) => item.label === wire);
+  // Маркировка: режим — с регистров станка (то, что уже уходит на станок, видно сразу); поля — под проводом на чертеже.
+  const hasMarking = fields.has("marking");
+  const markNow = hasMarking ? markMode(settledOf("marking"), settledOf("mark_by_step")) : null;
+  const markText = (key: string, label: string) => <MarkText key={key} id={`ob019-${key}`} label={label}
+    name={fields.get(key)?.label ?? label} value={valueOf(key)} dirty={key in drafts} disabled={!fields.has(key) || !canWrite}
+    old={old} note={fieldNote(key)} onChange={(value) => setDrafts((current) => ({ ...current, [key]: value }))}
+    onCommit={(value) => commitText(key, value)} onCancel={() => setDrafts((current) => without(current, [key]))} />;
+  const markRow = hasMarking ? <Ob019MarkingRow mode={markNow} text={markText} number={(key, label) => input(key, label)} /> : null;
 
   return <section className="machine-settings" aria-label="Настройки станка">
     {error && <div className="error-banner" role="alert">{error}</div>}
@@ -634,7 +695,10 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     </section>
 
     {problem && <p className="warning-inline" role="status">{problem}</p>}
-    <Ob019WireDrawing middle={middle} field={drawn}
+    {(hasMarking || plan?.marking) && <Ob019MarkingBlock mode={markNow} disabled={!hasMarking || !canWrite} old={old}
+      note={fieldNote("marking")} plan={plan?.marking ?? null} onPick={(mode) => commitBatch(modeValues(mode, settledOf))} />}
+    <Ob019WireDrawing middle={middle} field={drawn} markRow={markRow}
+      marks={{ mode: markNow, count: markCount(size("length_mm"), size("mark_step_mm")) }}
       sizes={{ strip_front: size("strip_front_mm"), pull_front: size("pull_front_mm"), strip_back: size("strip_back_mm"),
         pull_back: size("pull_back_mm") }} />
     {recipeNote && <p className={`machine-message tone-${recipeNote.tone}`} role="status">{recipeNote.text}</p>}

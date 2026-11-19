@@ -111,6 +111,17 @@ export interface TransferRow {
   live: string | null;
 }
 
+/** Лазерная маркировка из ЭТК (сервер: workflows/ob019_marking.py): регистры, которые «Передать на станок» пишет вместе
+ *  с заданием; `blocking` — сервер откажет в передаче (422 «Маркировка: …»). Значения переключателей — «Вкл»/«Выкл». */
+export interface MarkingPlan {
+  mode: "none" | "ends" | "full";
+  mode_label: string;
+  source: string;
+  rows: { key: string; label: string; value: string }[];
+  warnings: string[];
+  blocking: string[];
+}
+
 /** Что запишется на станок: по заданию резки ЭТК (`group_id`) или по проводу, выбранному вручную (`group_id: null`). */
 export interface TransferPlan {
   group_id: string | null;
@@ -122,6 +133,8 @@ export interface TransferPlan {
   job: { total_set: number | null; order_quantity: number | null; order_number: string; product: string };
   missing: string[];
   blocking: string[];
+  /** Маркировка из ЭТК; null — в ЭТК её нет (или провод выбран вручную), регистры маркировки не трогаются. */
+  marking?: MarkingPlan | null;
 }
 
 export type CorrectionCase = "machine" | "etk" | "both";
