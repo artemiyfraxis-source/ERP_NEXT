@@ -9,7 +9,7 @@ export type Section =
   | "projects" | "techcards" | "tctemplates" | "references" | "production" | "myops" | "quality"
   | "newrequest" | "myrequests" | "requests" | "procurement" | "purchasingrefs" | "primarydocs"
   | "receiving" | "stock" | "issues" | "handout" | "intake" | "shipdata"
-  | "prodplan" | "staff" | "access" | "notifications" | "operations" | "equipmentsetup" | "machines";
+  | "prodplan" | "staff" | "access" | "notifications" | "operations" | "equipmentsetup" | "machines" | "manualjobs";
 
 export type NavCapabilities = { equipmentSetup?: boolean };
 
@@ -99,6 +99,8 @@ export const NAV: NavItem[] = [
   { id: "equipmentsetup", label: "Наладка оборудования", sub: "станки · рецепты · пробные измерения", capability: "equipmentSetup", block: "prod" },
   // «Станки» (владелец 18.11.2026): подключённое к ERP оборудование и его живое состояние; читают мастер и монтажник.
   { id: "machines", label: "Станки", sub: "подключённое оборудование · состояние на станке", anyPermission: ["production", "myops"], block: "prod" },
+  // «Ручная работа» (план «Станки вне проекта», 19.11.2026): журнал работ на любом станке вне проекта; те же ключи, что у «Станков».
+  { id: "manualjobs", label: "Ручная работа", sub: "работа на станке вне проекта · журнал за период", anyPermission: ["production", "myops"], block: "prod" },
   // «Задания» (`myops`) и «ОТК» (`quality`) — разделы матрицы со своими ключами (owner 04.10.2026), не часть `production`.
   // «ОТК»: очередь на проверку, брак цеха и ОТК, средства измерения; приёмку и реестр ведёт правка `quality`, решение по
   // браку — правка `production` (экран сам прячет то, что не открыто).

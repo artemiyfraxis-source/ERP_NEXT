@@ -1,0 +1,46 @@
+/* «Ручная работа»: журнал за период (ManualJobsPage) и окно работы (ManualJobWindow). Цвета — токены :root. */
+
+.mj-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.mj-head h1 { margin: 0; }
+.mj-period { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.mj-period label { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted-foreground); }
+.mj-period input { width: auto; }
+.mj-period button.on { border-color: var(--primary); color: var(--primary); background: var(--sheet-selected); }
+.mj-new { margin-left: auto; }
+.mj-summary { margin: 0 0 8px; color: var(--muted-foreground); font-size: 13px; font-variant-numeric: tabular-nums; }
+.mj-number, .mj-num { font-variant-numeric: tabular-nums slashed-zero; white-space: nowrap; }
+.mj-status { font-weight: 600; white-space: nowrap; }
+
+.mj-window { display: grid; gap: 16px; }
+.mj-window-head { display: flex; align-items: center; gap: 12px; }
+.mj-window-head h2 { margin: 0; font-size: 18px; font-variant-numeric: tabular-nums slashed-zero; }
+.mj-window-head > button { margin-left: auto; }
+.mj-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 16px; margin: 0; }
+.mj-facts div { display: grid; gap: 2px; min-width: 0; }
+.mj-facts dt { color: var(--muted-foreground); font-size: 12px; }
+.mj-facts dd { margin: 0; font-size: 14px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.mj-form { display: grid; gap: 12px; }
+.mj-form h3 { margin: 0; font-size: 15px; font-weight: 500; }
+.mj-form .mj-grid { padding: 0; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 16px; }
+.mj-grid > .half { grid-column: span 2; }
+.mj-material { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; margin: 0; padding: 12px 16px;
+  border: 1px solid var(--border); border-radius: 8px; }
+.mj-material legend { padding: 0 4px; font-size: 13px; color: var(--muted-foreground); }
+.mj-choice { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; }
+.mj-choice input { width: auto; margin: 0; }
+.mj-choice small { color: var(--muted-foreground); font-size: 12px; }
+.mj-choice.is-off { color: var(--muted-foreground); }
+.mj-note { display: grid; gap: 4px; flex: 1 1 320px; font-size: 13px; }
+.mj-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.mj-hint { color: var(--muted-foreground); font-size: 13px; }
+.mj-cancel-toggle { margin-left: auto; }
+.mj-cancel { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 16px; padding: 12px 16px; border: 1px solid var(--border);
+  border-radius: 8px; }
+.mj-cancel label { display: grid; gap: 4px; flex: 1 1 320px; font-size: 13px; }
+
+@media (max-width: 1100px) {
+  .mj-facts, .mj-form .mj-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (pointer: coarse) {
+  .mj-page button, .mj-window button { min-height: 40px; }
+}

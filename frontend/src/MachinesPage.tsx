@@ -1,6 +1,8 @@
 import { useCallback, useMemo, useState } from "react";
 import { EMPTY, formatMoment } from "./format";
 import { machinesApi, usePolled, type MachineRow, type Tone } from "./machinesApi";
+import { ManualJobWindow } from "./ManualJobWindow";
+import { manualJobsApi, type ManualJob } from "./manualJobsApi";
 import { Ob019Card } from "./Ob019Card";
 import { PageWindow } from "./PageWindow";
 import "./machines.css";
@@ -8,7 +10,8 @@ import "./machines.css";
 /** «Станки» (Производство): всё, что подключено к ERP, — ОБ с агентом ERP на своём ПК, принтеры агентов, сканеры и
  *  анализаторы цепей. Плитка — одно устройство (прибор с двух ПК — одна плитка с номером СИ, второй ПК — в «Также на
  *  ПК»), группы — Станки / Принтеры / Приборы и сканеры (владелец 19.11.2026: «плитками»). Плитка станка с агентом
- *  открывает живую карточку, остальные — сведения о подключении. */
+ *  открывает живую карточку, остальные — сведения о подключении. На карточке станка — «Ручная работа»: окно новой
+ *  работы вне проекта с этим станком (журнал — раздел «Ручная работа»). */
 
 const GROUPS: [MachineRow["kind"], string][] = [["machine", "Станки"], ["printer", "Принтеры"], ["device", "Приборы и сканеры"]];
 
@@ -42,7 +45,7 @@ function MachineTile({ row, open }: { row: MachineRow; open: (row: MachineRow) =
 }
 
 /** Сведения о плитке без живой карточки: принтер, прибор, станок без агента. */
-function MachineInfo({ row, close }: { row: MachineRow; close: () => void }) {
+function MachineInfo({ row, close, manual }: { row: MachineRow; close: () => void; manual?: () => void }) {
   const title = [row.inventory, row.name].filter(Boolean).join(" · ");
   const facts: [string, string, Tone?][] = [
     ["Связь", row.link.text, row.link.tone], ["Состояние", row.state.text, row.state.tone], ["Устройство", row.device],
@@ -53,6 +56,7 @@ function MachineInfo({ row, close }: { row: MachineRow; close: () => void }) {
     <section className="panel machine-card">
       <header className="machine-card-head">
         <h2>{title}</h2>
+        {manual && <button type="button" className="secondary small machine-manual" onClick={manual}>Ручная работа</button>}
         <button className="secondary small" onClick={close}>Закрыть</button>
       </header>
       {row.link.code === "not_installed" && row.kind === "machine"
@@ -71,6 +75,19 @@ export function MachinesPage() {
   const load = useCallback((signal: AbortSignal) => machinesApi.list(signal), []);
   const { data, error } = usePolled(load);
   const [open, setOpen] = useState<MachineRow | null>(null);
+  const [manual, setManual] = useState<{ row: MachineRow; job: ManualJob | null } | null>(null);
+  /** Идёт ручная работа на этом станке — открываем её (завершить / отменить), иначе — новую с этим станком. */
+  const openManual = useCallback(async (row: MachineRow) => {
+    let job: ManualJob | null = null;
+    if (row.equipment_id) {
+      const now = new Date();
+      const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      try {
+        job = (await manualJobsApi.list(day, day, row.equipment_id)).rows.find((item) => item.status === "running") ?? null;
+      } catch { /* нет связи — окно новой работы скажет об этом само */ }
+    }
+    setManual({ row, job });
+  }, []);
   const [query, setQuery] = useState("");
   const rows = useMemo(() => data?.rows ?? [], [data]);
   const found = useMemo(() => {
@@ -100,7 +117,10 @@ export function MachinesPage() {
       </>}
     {open?.card && open.equipment_id
       ? <Ob019Card equipmentId={open.equipment_id} title={[open.inventory, open.name].filter(Boolean).join(" · ")}
-        close={() => setOpen(null)} />
-      : open && <MachineInfo row={open} close={() => setOpen(null)} />}
+        close={() => setOpen(null)}
+        actions={<button type="button" className="secondary small machine-manual" onClick={() => void openManual(open)}>Ручная работа</button>} />
+      : open && <MachineInfo row={open} close={() => setOpen(null)} manual={open.kind === "machine" ? () => void openManual(open) : undefined} />}
+    {manual && <ManualJobWindow job={manual.job} equipmentId={manual.row.equipment_id} inventory={manual.row.inventory}
+      close={() => setManual(null)} />}
   </section>;
 }

@@ -419,3 +419,53 @@ Describe 'S2VNA live correction loss before acquisition' {
         Assert-MockCalled Invoke-VnaComIo -Times 0 -Exactly -Scope It -ParameterFilter { $Path -like 'TRIGger*' -or $Path -like 'INITiate*' -or $Path -like '*SDATa' }
     }
 }
+
+Describe 'S2VNA live fixes 19.11 (S50180, S2VNA 26.2.2)' {
+    . (Join-Path $here '..\checks.ps1')
+    It 'checks the power slope as one channel setting, never per port' {
+        $settings = Get-VnaProfileSettings
+        $settings.Contains('SOURce(1).POWer.LEVel.SLOPe.STATe') | Should Be $true
+        $settings['SOURce(1).POWer.LEVel.SLOPe.STATe'] | Should Be $false
+        @($settings.Keys | Where-Object { $_ -like '*PORT(*SLOPe*' }).Count | Should Be 0
+    }
+    It 'sweeps once after the ACM confidence acquisition and only then reads data and memory' {
+        Mock Assert-VnaDeviceReady { [pscustomobject]@{VnaSerial='TEST-VNA';AcmSerial='TEST-ACM'} }
+        Mock Assert-VnaCorrection { @{} }
+        $script:confidenceCalls = New-Object System.Collections.Generic.List[string]
+        Mock Invoke-VnaComIo {
+            param($Connection,$Path,$Mode,$Value)
+            $script:confidenceCalls.Add($Path)
+            if ($Path -eq 'IEEE4882.OPC') { return 1 }
+            if ($Path -eq 'SENSe(1).FREQuency.DATA') { return [double[]](0..1600 | ForEach-Object { 10e6 + (18e9 - 10e6) * $_ / 1600 }) }
+            if ($Path -match 'PARameter\(([1-4])\).DEFine$') { return @('S11','S21','S12','S22')[[int]$Matches[1] - 1] }
+            if ($Path -like '*DATA.SDATa' -or $Path -like '*DATA.SMEMory') { return [double[]](0..3201 | ForEach-Object { if ($_ % 2) { 0.0 } else { 0.08 } }) }
+            if ($Mode -in 'set', 'call') { return }
+            throw "Unexpected IO: $Path"
+        }
+        $result = Invoke-VnaConfidenceTest (New-TestS2Connection)
+        $calls = @($script:confidenceCalls)
+        $acquire = [array]::IndexOf($calls, 'SENSe(1).CORRection.COLLect.ECAL.CCHeck.ACQuire')
+        $single = [array]::IndexOf($calls, 'TRIGger.SEQuence.SINGle')
+        $firstData = [array]::IndexOf($calls, 'CALCulate(1).TRACe(1).DATA.SDATa')
+        $acquire | Should BeGreaterThan -1
+        $single | Should BeGreaterThan $acquire
+        $firstData | Should BeGreaterThan $single
+        ($calls -contains 'INITiate(1).CONTinuous') | Should Be $true
+        (Measure-VnaConfidence -Data $result.Data -Memory $result.Memory).Passed | Should Be $true
+    }
+    It 'refuses an empty data trace instead of reporting an infinite deviation' {
+        Mock Assert-VnaDeviceReady { [pscustomobject]@{VnaSerial='TEST-VNA';AcmSerial='TEST-ACM'} }
+        Mock Assert-VnaCorrection { @{} }
+        Mock Invoke-VnaComIo {
+            param($Connection,$Path,$Mode,$Value)
+            if ($Path -eq 'IEEE4882.OPC') { return 1 }
+            if ($Path -eq 'SENSe(1).FREQuency.DATA') { return [double[]](0..1600 | ForEach-Object { 10e6 + (18e9 - 10e6) * $_ / 1600 }) }
+            if ($Path -match 'PARameter\(([1-4])\).DEFine$') { return @('S11','S21','S12','S22')[[int]$Matches[1] - 1] }
+            if ($Path -like '*DATA.SDATa') { return [double[]](New-Object double[] 3202) }
+            if ($Path -like '*DATA.SMEMory') { return [double[]](0..3201 | ForEach-Object { 0.08 }) }
+            if ($Mode -in 'set', 'call') { return }
+            throw "Unexpected IO: $Path"
+        }
+        { Invoke-VnaConfidenceTest (New-TestS2Connection) } | Should Throw 'не дал данных измерения по S11'
+    }
+}

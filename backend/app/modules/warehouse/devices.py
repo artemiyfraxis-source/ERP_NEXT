@@ -55,6 +55,8 @@ class PrinterRow(Base):
     present: Mapped[bool] = mapped_column(Boolean, nullable=False)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     queue_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # Why the agent holds this marking queue (0203): the peel-off check failed. Empty — no hold.
+    hold: Mapped[str] = mapped_column(String(500), nullable=False, default="", server_default="")
 
 
 def printer_heartbeat(uow, machine_id, printers, now):
@@ -68,6 +70,7 @@ def printer_heartbeat(uow, machine_id, printers, now):
                 session.add(row)
             row.driver, row.port, row.kind = item["driver"], item["port"], item["kind"]
             row.present, row.last_seen = item["present"], now
+            row.hold = " ".join(str(item.get("hold") or "").split())[:500]
         uow.commit()
 
 

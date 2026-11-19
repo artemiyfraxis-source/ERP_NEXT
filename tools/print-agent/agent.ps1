@@ -8,6 +8,9 @@
  Свой сканер (28.10.2026): задание приходит с выбранным человеком сканером (WIA DeviceID или имя) - сканирует он;
  его нет на этом ПК - ошибка без подмены; без выбора WIA допускает только единственное устройство.
  Новая версия агента лежит на сервере: агент скачивает её, сверяет SHA-256, подменяет себя и перезапускает задачу.
+ Управление Godex из ERP (2.11.0, 19.11.2026): режим отделителя (peel-off) по профилю станка — агент держит его в DevMode
+ своей учётной записи и .DEFAULT и перед каждой этикеткой проверяет вывод драйвера на ^O1; этикетки маркировки уходят в
+ очередь Windows по одной; команда «Очистить принтер» из ERP убирает задания ERP из очереди и очищает буфер Godex.
 #>
 [CmdletBinding()]
 param(
@@ -30,7 +33,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.9.7'
+$script:AgentVersion = '2.11.0'
 $script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
@@ -107,13 +110,15 @@ public static class ErpRawPrinter {
     return code + " (" + new System.ComponentModel.Win32Exception(code).Message + ")";
   }
 
-  public static void Send(string printer, byte[] bytes) {
+  public static void Send(string printer, byte[] bytes) { Send(printer, bytes, "ERP label"); }
+
+  public static void Send(string printer, byte[] bytes, string document) {
     IntPtr handle;
     if (!OpenPrinter(printer, out handle, IntPtr.Zero))
       throw new Exception("Принтер не открывается: " + Err());
     try {
       DOCINFO info = new DOCINFO();
-      info.pDocName = "ERP label";
+      info.pDocName = document;
       info.pDataType = "RAW";
       if (!StartDocPrinter(handle, 1, info))
         throw new Exception("Очередь не приняла задание: " + Err());
@@ -139,9 +144,9 @@ public static class ErpRawPrinter {
 
 # Отправка байтов в очередь. Вынесено в функцию, чтобы тесты подменяли её.
 function Send-RawToPrinter {
-    param([string]$PrinterName, [byte[]]$Bytes)
+    param([string]$PrinterName, [byte[]]$Bytes, [string]$DocumentName = 'ERP label')
     Initialize-RawPrinter
-    [ErpRawPrinter]::Send($PrinterName, $Bytes)
+    [ErpRawPrinter]::Send($PrinterName, $Bytes, $DocumentName)
 }
 
 # Exact custom media must never round-trip through PaperSize (hundredths of an inch).
@@ -175,11 +180,17 @@ public static class ErpGdiPrinter {
   static extern IntPtr CreateDC(string driver, string device, string output, IntPtr mode);
   [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
   [DllImport("gdi32.dll")] static extern int GetDeviceCaps(IntPtr dc, int index);
+  [DllImport("winspool.drv", EntryPoint="GetPrinterW", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern bool GetPrinter(IntPtr printer, int level, IntPtr buffer, int size, out int needed);
+  [DllImport("winspool.drv", EntryPoint="SetPrinterW", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern bool SetPrinter(IntPtr printer, int level, IntPtr buffer, int command);
   [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
   class DocInfo {
     public int size = Marshal.SizeOf(typeof(DocInfo));
     [MarshalAs(UnmanagedType.LPWStr)] public string name = "ERP marking";
-    public IntPtr output = IntPtr.Zero, type = IntPtr.Zero;
+    // lpszOutput: a file instead of the printer port (DOCINFO, StartDoc) - the driver's own output, never printed.
+    [MarshalAs(UnmanagedType.LPWStr)] public string output = null;
+    public IntPtr type = IntPtr.Zero;
     public int flags = 0;
   }
   [DllImport("gdi32.dll", EntryPoint="StartDocW", CharSet=CharSet.Unicode, SetLastError=true)]
@@ -252,6 +263,74 @@ public static class ErpGdiPrinter {
       ClosePrinter(printer);
     }
   }
+  static IntPtr OpenNamed(string name) {
+    IntPtr printer;
+    if (!OpenPrinter(name,out printer,IntPtr.Zero)) throw new InvalidOperationException("Printer unavailable: " + name);
+    return printer;
+  }
+  static byte[] CopyMode(IntPtr mode) {
+    if (mode == IntPtr.Zero) return null;
+    int size = (ushort)Marshal.ReadInt16(mode,68) + (ushort)Marshal.ReadInt16(mode,70);
+    byte[] b = new byte[size]; Marshal.Copy(mode,b,0,size); CheckBuffer(b); return b;
+  }
+  // PRINTER_INFO_8 (global defaults: the printer's «Default DevMode») or PRINTER_INFO_9 (this account's DevModePerUser).
+  static byte[] LevelMode(string name, int level) {
+    IntPtr printer = OpenNamed(name);
+    try {
+      int needed; GetPrinter(printer,level,IntPtr.Zero,0,out needed);
+      if (needed <= 0) return null;
+      IntPtr buffer = Marshal.AllocHGlobal(needed);
+      try {
+        if (!GetPrinter(printer,level,buffer,needed,out needed)) throw new InvalidOperationException("GetPrinter level " + level + " failed: " + Marshal.GetLastWin32Error());
+        return CopyMode(Marshal.ReadIntPtr(buffer));
+      } finally { Marshal.FreeHGlobal(buffer); }
+    } finally { ClosePrinter(printer); }
+  }
+  public static byte[] GlobalMode(string name) {
+    byte[] mode = LevelMode(name,8);
+    if (mode == null) throw new InvalidOperationException("Printer has no default DEVMODE");
+    return mode;
+  }
+  public static byte[] UserMode(string name) { return LevelMode(name,9); }
+  public static void SetUserMode(string name, byte[] mode) {
+    CheckBuffer(mode);
+    IntPtr printer = OpenNamed(name), dm = Marshal.AllocHGlobal(mode.Length), info = Marshal.AllocHGlobal(IntPtr.Size);
+    try {
+      Marshal.Copy(mode,0,dm,mode.Length); Marshal.WriteIntPtr(info,dm);
+      if (!SetPrinter(printer,9,info,0)) throw new InvalidOperationException("SetPrinter level 9 failed: " + Marshal.GetLastWin32Error());
+    } finally { Marshal.FreeHGlobal(info); Marshal.FreeHGlobal(dm); ClosePrinter(printer); }
+  }
+  // What a job of this account gets without any request: DevModePerUser merged over the printer defaults.
+  public static byte[] CurrentMode(string name) {
+    IntPtr printer = OpenNamed(name), output = IntPtr.Zero;
+    try {
+      int count = DocumentProperties(IntPtr.Zero,printer,name,IntPtr.Zero,IntPtr.Zero,0);
+      if (count < 220 || count > 1048576) throw new InvalidOperationException("Invalid driver DEVMODE size");
+      output = Marshal.AllocHGlobal(count);
+      if (DocumentProperties(IntPtr.Zero,printer,name,output,IntPtr.Zero,2) != 1) throw new InvalidOperationException("Cannot read DEVMODE");
+      byte[] mode = new byte[count]; Marshal.Copy(output,mode,0,count); CheckBuffer(mode); return mode;
+    } finally { if (output != IntPtr.Zero) Marshal.FreeHGlobal(output); ClosePrinter(printer); }
+  }
+  // One blank page through the driver with this DEVMODE into a file: the spooler despools the driver's printer
+  // language (EZPL header with ^O) to `path` instead of the port. Returns the Windows job id.
+  public static int Capture(string name, byte[] mode, string path, string document) {
+    CheckBuffer(mode);
+    IntPtr buffer = Marshal.AllocHGlobal(mode.Length), dc;
+    try { Marshal.Copy(mode,0,buffer,mode.Length); dc = CreateDC("WINSPOOL",name,null,buffer); }
+    finally { Marshal.FreeHGlobal(buffer); }
+    if (dc == IntPtr.Zero) throw new InvalidOperationException("Cannot create printer DC");
+    try {
+      DocInfo info = new DocInfo(); info.name = document; info.output = path;
+      int job = StartDoc(dc,info);
+      if (job <= 0) throw new InvalidOperationException("StartDoc (capture) failed");
+      bool ok = false;
+      try {
+        if (StartPage(dc) <= 0 || EndPage(dc) <= 0 || EndDoc(dc) <= 0) throw new InvalidOperationException("Capture page failed");
+        ok = true;
+      } finally { if (!ok) AbortDoc(dc); }
+      return job;
+    } finally { DeleteDC(dc); }
+  }
   public static void ValidateGeometry(double width, double height, int pixelsW, int pixelsH,
       int dpiX, int dpiY, int physicalW, int physicalH, int offsetX, int offsetY, int printableW, int printableH) {
     if (dpiX != 300 || dpiY != 300 || Math.Abs(width*300/25.4-pixelsW) > 0.500001 ||
@@ -261,6 +340,15 @@ public static class ErpGdiPrinter {
         offsetX < 0 || offsetY < 0 || printableW <= 0 || printableH <= 0 ||
         offsetX+printableW > physicalW+1 || offsetY+printableH > physicalH+1)
       throw new InvalidOperationException("Driver substituted physical media or printable bounds");
+  }
+  // Margin compensation (ported from PR #933, agent 2.9.3 there): 'shift' - the raster is moved left by the driver's
+  // PHYSICALOFFSETX so that it lands at its true physical position (TSC and others); 'none' - the driver (Godex/Seagull)
+  // already compensates its hard margin, a second shift would double it (measured on ОБ.101: text ~5 mm too far left).
+  // With 'none' the raster origin is the printable origin and the ink must fit the printable width [0, printableW).
+  public static int EffectiveOffsetX(int offsetX, string compensation) {
+    if (compensation == "none") return 0;
+    if (compensation == "shift") return offsetX;
+    throw new InvalidOperationException("Unknown margin compensation: " + compensation);
   }
   static string Mm(int dots) { return (dots*25.4/300).ToString("0.00", System.Globalization.CultureInfo.GetCultureInfo("ru-RU")); }
   // Never silently clip or shift ink: the driver's hard margins (Godex/Seagull: 36 dots left, 15 right) are
@@ -282,11 +370,11 @@ public static class ErpGdiPrinter {
   // Drive the no-dialog controller's single-page lifecycle explicitly below. Calling the
   // managed PrintDocument.Print loop would rebuild DEVMODE from rounded PaperSize.
   public sealed class Controller : StandardPrintController {
-    readonly string printer; readonly byte[] mode; readonly Bitmap bitmap; readonly double width, height;
+    readonly string printer, compensation; readonly byte[] mode; readonly Bitmap bitmap; readonly double width, height;
     IntPtr dc; Graphics graphics; bool completed;
-    public bool SubmissionStarted; public int JobId;
-    public Controller(string name, byte[] validatedMode, Bitmap image, double w, double h) {
-      printer=name; mode=validatedMode; bitmap=image; width=w; height=h;
+    public bool SubmissionStarted; public int JobId; public string DocName = "ERP marking";
+    public Controller(string name, byte[] validatedMode, Bitmap image, double w, double h, string marginCompensation) {
+      compensation=marginCompensation; EffectiveOffsetX(0,compensation); printer=name; mode=validatedMode; bitmap=image; width=w; height=h;
     }
     public override void OnStartPrint(PrintDocument document, PrintEventArgs e) {
       try {
@@ -297,9 +385,10 @@ public static class ErpGdiPrinter {
         int ox=GetDeviceCaps(dc,112), oy=GetDeviceCaps(dc,113), pw=GetDeviceCaps(dc,8), ph=GetDeviceCaps(dc,10);
         ValidateGeometry(width,height,bitmap.Width,bitmap.Height,GetDeviceCaps(dc,88),GetDeviceCaps(dc,90),
           GetDeviceCaps(dc,110),GetDeviceCaps(dc,111),ox,oy,pw,ph);
-        CheckInk(bitmap,ox,oy,pw,ph);
+        CheckInk(bitmap,EffectiveOffsetX(ox,compensation),oy,pw,ph);
         SubmissionStarted=true;
-        JobId=StartDoc(dc,new DocInfo());
+        DocInfo info=new DocInfo(); info.name=DocName;
+        JobId=StartDoc(dc,info);
         if (JobId<=0) throw new InvalidOperationException("StartDoc failed; delivery unknown");
       } catch { Cleanup(); throw; }
     }
@@ -307,7 +396,7 @@ public static class ErpGdiPrinter {
       if (StartPage(dc)<=0) throw new InvalidOperationException("StartPage failed");
       graphics=Graphics.FromHdc(dc);
       graphics.PageUnit=GraphicsUnit.Pixel; graphics.PageScale=1;
-      graphics.TranslateTransform(-GetDeviceCaps(dc,112),-GetDeviceCaps(dc,113));
+      graphics.TranslateTransform(-EffectiveOffsetX(GetDeviceCaps(dc,112),compensation),-GetDeviceCaps(dc,113));
       graphics.InterpolationMode=InterpolationMode.NearestNeighbor;
       graphics.PixelOffsetMode=PixelOffsetMode.Half;
       return graphics;
@@ -364,7 +453,13 @@ function Get-AgentPrinters {
     foreach ($target in @(@{ name = $PrinterName; kind = 'tspl' }, @{ name = $MarkingPrinterName; kind = 'gdi_png' })) {
         if (-not $target.name) { continue }
         $queue = $installed | Where-Object { $_.Name -eq $target.name } | Select-Object -First 1
-        @{ name = $target.name; driver = [string]$queue.DriverName; port = [string]$queue.PortName; kind = $target.kind; present = [bool]$queue }
+        $item = @{ name = $target.name; driver = [string]$queue.DriverName; port = [string]$queue.PortName; kind = $target.kind; present = [bool]$queue }
+        if ($target.kind -eq 'gdi_png') {
+            # ERP keeps 500 characters of it; a longer Windows error text must not cost the heartbeat.
+            $hold = [string]$script:MarkingHoldReason
+            $item.hold = if ($hold.Length -gt 500) { $hold.Substring(0, 500) } else { $hold }
+        }
+        $item
     }
 }
 
@@ -428,6 +523,7 @@ function Sync-PrintReceipts {
         $body = @{ attempt = $receipt.payload.attempt; outcome = $receipt.payload.outcome; message = $receipt.payload.message }
         if ($receipt.payload.spool_job_id) { $body.spool_job_id = $receipt.payload.spool_job_id }
         if ($receipt.payload.tracked) { $body.tracked = $true }
+        if ($receipt.payload.halt) { $body.halt = $true }
         $status = ''
         try {
             $reply = Invoke-ErpApi -Url "$Base/api/stock/labels/jobs/$($receipt.job_id)/result" -Body $body -AuthToken $AuthToken -MachineId $receipt.machine_id
@@ -478,18 +574,46 @@ function ConvertFrom-MarkingJob {
     return ,$bytes
 }
 
+# 'shift' (default: TSC and others) or 'none' (Godex/Seagull driver compensates its own margin). The job's
+# margin_compensation field wins; otherwise the queue's driver name decides (PR #933).
+function Resolve-MarginCompensation {
+    param($Job, [string]$DriverName)
+    $explicit = [string]$Job.margin_compensation
+    if ($explicit) {
+        if ($explicit -cnotin @('shift', 'none')) { throw "Неверная компенсация полей: $explicit" }
+        return $explicit
+    }
+    if ($DriverName -match '(?i)godex|seagull') { return 'none' }
+    return 'shift'
+}
+
 function Send-PngToPrinter {
     param($Job, [byte[]]$Bytes)
     $stream = New-Object IO.MemoryStream(,$Bytes)
     $bitmap = $controller = $null
+    $peelCheck = $false
     try {
         $bitmap = New-Object Drawing.Bitmap($stream)
-        $mode = [ErpGdiPrinter]::ValidateWithDriver($Job.printer, [double]$Job.width_mm, [double]$Job.height_mm)
-        $controller = New-Object ErpGdiPrinter+Controller($Job.printer, $mode, $bitmap, [double]$Job.width_mm, [double]$Job.height_mm)
+        $driver = ''
+        try { $driver = [string](Get-Printer -Name $Job.printer -ErrorAction Stop).DriverName } catch {}
+        $compensation = Resolve-MarginCompensation $Job $driver
+        $mode = Get-JobDriverMode $Job
+        # The job's own flag (batch snapshot) or the queue's profile now (claim reply marking_printers): an older batch
+        # or one queued before «отделитель» was ticked carries no flag.
+        if ($Job.peel -or $script:PeelRequired[[string]$Job.printer]) {
+            $peelCheck = $true
+            $mode = Confirm-JobPeelMode $Job $mode
+            $peelCheck = $false
+        }
+        $controller = New-Object ErpGdiPrinter+Controller($Job.printer, $mode, $bitmap, [double]$Job.width_mm, [double]$Job.height_mm, $compensation)
+        $controller.DocName = Get-MarkingDocName ([string]$Job.id)
         [ErpGdiPrinter]::Print($Job.printer, $bitmap, [double]$Job.width_mm, [double]$Job.height_mm, $controller)
         return @{ outcome = 'spooled'; message = 'Передано принтеру'; spool_job_id = $controller.JobId }
     } catch {
-        return @{ outcome = $(if ($controller -and $controller.SubmissionStarted) { 'unknown' } else { 'failed' }); message = $_.Exception.Message }
+        $result = @{ outcome = $(if ($controller -and $controller.SubmissionStarted) { 'unknown' } else { 'failed' }); message = $_.Exception.Message }
+        # Nothing printed: ERP stops the rest of the batch until the operator reprints this label or continues without it.
+        if ($peelCheck) { $result.halt = $true }
+        return $result
     } finally {
         if ($controller) { $controller.Cleanup() }
         if ($bitmap) { $bitmap.Dispose() }
@@ -535,7 +659,7 @@ function Resolve-SpoolJobState {
 function Save-PrintWatch {
     param([string]$JobId, [string]$Attempt, [string]$Base, [string]$MachineId, [string]$Printer, $SpoolJobId)
     $watch = @{ base = $Base; machine_id = $MachineId; job_id = $JobId; attempt = $Attempt; printer = $Printer
-        spool_job_id = [int]$SpoolJobId; deleting = $false; last_state = ''; last_message = ''
+        spool_job_id = [int]$SpoolJobId; doc_name = (Get-MarkingDocName $JobId); deleting = $false; last_state = ''; last_message = ''
         started_at = (Get-Date).ToUniversalTime().ToString('o') }
     Save-PrintReceipt (Get-PrintWatchPath $JobId $Attempt) $watch
 }
@@ -556,7 +680,8 @@ function Update-PrintWatches {
             catch { Write-Log "Очередь '$printer' не прочитана: $($_.Exception.Message)"; $queues[$printer] = $null }
         }
         if ($null -eq $queues[$printer]) { continue }
-        $job = $queues[$printer] | Where-Object { [int]$_.ID -eq [int]$watch.spool_job_id } | Select-Object -First 1
+        $job = $queues[$printer] | Where-Object { [int]$_.ID -eq [int]$watch.spool_job_id -and
+            (-not $watch.doc_name -or -not [string]$_.DocumentName -or [string]$_.DocumentName -eq [string]$watch.doc_name) } | Select-Object -First 1
         $result = Resolve-SpoolJobState $job ([bool]$watch.deleting)
         $changed = $false
         if ([bool]$watch.deleting -ne [bool]$result.deleting) { $watch.deleting = [bool]$result.deleting; $changed = $true }
@@ -584,14 +709,29 @@ function Invoke-MarkingPollOnce {
     # Never let the status watcher stop the print lane.
     try { Update-PrintWatches $Base $AuthToken } catch { Write-Log "Слежение за очередью печати: $($_.Exception.Message)" }
     $printers = @(Get-AgentPrinters $PrinterName $MarkingPrinterName)
-    $capabilities = @($printers | Where-Object { $_.present -and -not ($paused -and $_.kind -eq 'gdi_png') } | ForEach-Object { $_.kind })
-    if (-not $capabilities.Count) { if ($paused) { return 'blocked' }; return 'idle' }
+    $markingPresent = [bool]($printers | Where-Object { $_.present -and $_.kind -eq 'gdi_png' })
+    # One marking label at a time (2.11.0): the next is claimed only after the previous one left the Windows queue,
+    # so a reboot mid-spool can never reorder a long queue; a failed peel-off check holds the lane too.
+    $hold = if ($markingPresent -and -not $paused) { Get-MarkingHold $Base $MarkingPrinterName } else { '' }
+    if ($hold -and $hold -ne $script:LastMarkingHold) { Write-Log "Маркировка ждёт: $hold" }
+    $script:LastMarkingHold = $hold
+    $capabilities = @($printers | Where-Object { $_.present -and -not (($paused -or $hold) -and $_.kind -eq 'gdi_png') } | ForEach-Object { $_.kind })
+    # A present marking queue keeps polling (empty capabilities): «Очистить принтер» must reach a held or paused lane.
+    if (-not $capabilities.Count -and -not $markingPresent) { if ($paused) { return 'blocked' }; return 'idle' }
     $machine = Get-MachineId
     # The server routes TSPL by the exact queue name (and records the host), so both are always sent.
     $claimBody = @{ machine_id = $machine; capabilities = $capabilities; printer = [string]$PrinterName; host = [string]$env:COMPUTERNAME }
     $claim = Invoke-ErpApi -Url "$Base/api/stock/labels/jobs/claim" -Body $claimBody -AuthToken $AuthToken -MachineId $machine
+    if ($null -ne $claim.marking_printers) { Update-MarkingPrinterSettings @($claim.marking_printers) $MarkingPrinterName }
+    if ($claim.command) {
+        Invoke-PrinterCommand $Base $AuthToken $claim.command $MarkingPrinterName -DryRun:$DryRun
+        return 'done'
+    }
     $job = $claim.job
-    if (-not $job) { if ($paused) { return 'blocked' }; return 'idle' }
+    if (-not $job) {
+        if ($markingPresent -and -not $paused) { Invoke-PeelMaintenance $Base $MarkingPrinterName -DryRun:$DryRun }
+        if ($paused -or $hold) { return 'blocked' }; return 'idle'
+    }
     # TSPL keeps its established receipt and payload shapes, even on a capable agent.
     if ($job.format -eq 'tspl' -or (-not $job.format -and $job.tspl_b64)) {
         Invoke-TsplJob $Base $AuthToken $PrinterName $job -DryRun:$DryRun
@@ -624,6 +764,295 @@ function Invoke-MarkingPollOnce {
     }
     [void](Sync-PrintReceipts $Base $AuthToken)
     return 'done'
+}
+
+# --- Godex control from ERP (2.11.0, owner 19.11.2026) -----------------------------------------------------------
+# Peel-off: the ОБ.101 profile says the flags are handed out one by one through the dispenser. EZPL `^On`
+# (GoDEX EZPL User Manual, «^On — label dispenser (peel) / applicator»: 0 off, 1 dispenser, 2 applicator) comes from
+# the driver's DevMode. Jobs use the DevModePerUser of the account the agent runs as (install.ps1 registers the task
+# for the installing user, Interactive/Limited; only a SYSTEM install uses HKU\S-1-5-18, alias HKU\.DEFAULT). On
+# 19.11 that per-user DevMode had peel off while the printer default had it on: every job carried ^O0 and flags
+# crumpled. So the driver output itself is checked: a blank page is rendered through the driver into a file
+# (DOCINFO.lpszOutput) and its EZPL header must carry ^O1. The check never runs in front of warehouse TSPL labels:
+# before a marking job, or when the shared claim found nothing to print.
+$script:PeelDocName = 'ERP peel check'
+$script:CommandDocName = 'ERP printer command'
+$script:PeelCaptureTimeoutSec = 20
+$script:CommandSendTimeoutSec = 20
+$script:PeelRetrySec = 60
+$script:PeelRequired = @{}
+$script:PeelInitialized = @{}
+$script:PeelBlocked = @{}
+# Why marking is held (peel-off check failed), sent to ERP in the heartbeat (printers[].hold) and shown there.
+$script:MarkingHoldReason = ''
+$script:HeartbeatSoon = $false
+$script:LastMarkingHold = ''
+
+function Get-MarkingDocName { param([string]$JobId) return "ERP marking $JobId" }
+function Remove-SpoolJob { param($Job) Remove-PrintJob -InputObject $Job -ErrorAction Stop }
+
+# The first EZPL `^O<n>` at a line start of the driver output; $null when the driver sent none.
+function Get-DispenserMode {
+    param([byte[]]$Bytes)
+    if (-not $Bytes) { return $null }
+    $text = [Text.Encoding]::GetEncoding(28591).GetString($Bytes)
+    $match = [regex]::Match($text, '(?:^|[\r\n])\^O(\d)')
+    if ($match.Success) { return [int]$match.Groups[1].Value }
+    return $null
+}
+
+function Format-PeelError {
+    param($Found, [string]$Where = '')
+    $seen = if ($null -eq $Found) { 'нет команды ^O' } else { "^O$Found" }
+    return "Godex: отделитель (peel-off) выключен$Where — драйвер выдаёт $seen вместо ^O1. Этикетка не напечатана, " +
+        'маркировка на этом принтере на паузе. Включите «Отделитель» в настройках печати Godex по умолчанию ' +
+        '(Принтеры → Godex → Настройки печати), агент повторит проверку через минуту'
+}
+
+# Driver output of one blank page with this DEVMODE, never sent to the printer.
+function Invoke-DriverCapture {
+    param([string]$PrinterName, [byte[]]$Mode)
+    Initialize-GdiPrinter
+    $dir = Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($ConfigPath))) 'peel-check'
+    [void][IO.Directory]::CreateDirectory($dir)
+    $file = Join-Path $dir ([guid]::NewGuid().ToString('N') + '.prn')
+    try {
+        $id = Invoke-GdiCapture $PrinterName $Mode $file
+        $deadline = (Get-Date).AddSeconds($script:PeelCaptureTimeoutSec)
+        while ($true) {
+            $left = @(Get-PrintJob -PrinterName $PrinterName -ErrorAction Stop | Where-Object {
+                [int]$_.ID -eq $id -and [string]$_.DocumentName -eq $script:PeelDocName -and [string]$_.JobStatus -notmatch 'Printed|Complete' })
+            if (-not $left.Count -and (Test-Path -LiteralPath $file)) { break }
+            if ((Get-Date) -gt $deadline) {
+                foreach ($job in $left) { try { Remove-SpoolJob $job } catch {} }
+                throw "Проверка режима отделителя не завершилась за $($script:PeelCaptureTimeoutSec) с: очередь «$PrinterName» занята или приостановлена"
+            }
+            Start-Sleep -Milliseconds 200
+        }
+        $bytes = [IO.File]::ReadAllBytes($file)
+        # «Сохранять напечатанные документы» (KeepPrintedJobs) keeps the finished check in the queue: remove our own.
+        foreach ($done in @(Get-PrintJob -PrinterName $PrinterName -ErrorAction SilentlyContinue | Where-Object {
+                [int]$_.ID -eq $id -and [string]$_.DocumentName -eq $script:PeelDocName })) {
+            try { Remove-SpoolJob $done } catch { Write-Log "Godex '$PrinterName': задание проверки отделителя не удалено: $($_.Exception.Message)" }
+        }
+        return ,$bytes
+    } finally { if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue } }
+}
+
+# Device boundaries, one function each so the tests replace them.
+function Invoke-GdiCapture { param([string]$PrinterName, [byte[]]$Mode, [string]$File) return [ErpGdiPrinter]::Capture($PrinterName, $Mode, $File, $script:PeelDocName) }
+function Get-PeelCurrentMode { param([string]$PrinterName) Initialize-GdiPrinter; return ,([ErpGdiPrinter]::CurrentMode($PrinterName)) }
+function Get-PeelDefaultMode { param([string]$PrinterName) Initialize-GdiPrinter; return ,([ErpGdiPrinter]::GlobalMode($PrinterName)) }
+function Set-PeelUserMode { param([string]$PrinterName, [byte[]]$Mode) Initialize-GdiPrinter; [ErpGdiPrinter]::SetUserMode($PrinterName, $Mode) }
+function Get-JobDriverMode { param($Job) Initialize-GdiPrinter; return ,([ErpGdiPrinter]::ValidateWithDriver($Job.printer, [double]$Job.width_mm, [double]$Job.height_mm)) }
+function Get-AgentAccountSid { return [Security.Principal.WindowsIdentity]::GetCurrent().User.Value }
+# The per-user DevMode hives the agent's jobs read: its own account; HKU\.DEFAULT only when it runs as SYSTEM.
+function Get-PeelHives {
+    param([string]$PrinterName)
+    $sid = Get-AgentAccountSid
+    if ($sid -eq 'S-1-5-18') { return @($sid, '.DEFAULT') }
+    Write-Log "Godex '$PrinterName': агент работает от $sid, не от SYSTEM — HKU\.DEFAULT не трогаю"
+    return @($sid)
+}
+function Get-PerUserDevMode {
+    param([string]$Hive, [string]$PrinterName)
+    $key = "Registry::HKEY_USERS\$Hive\Printers\DevModePerUser"
+    if (-not (Test-Path -LiteralPath $key)) { return $null }
+    $item = Get-ItemProperty -LiteralPath $key -Name $PrinterName -ErrorAction SilentlyContinue
+    if ($item) { return ,([byte[]]$item.$PrinterName) }
+    return $null
+}
+function Set-PerUserDevMode {
+    param([string]$Hive, [string]$PrinterName, [byte[]]$Mode)
+    $key = "Registry::HKEY_USERS\$Hive\Printers\DevModePerUser"
+    if (-not (Test-Path -LiteralPath $key)) { New-Item -Path $key -Force | Out-Null }
+    New-ItemProperty -LiteralPath $key -Name $PrinterName -Value $Mode -PropertyType Binary -Force | Out-Null
+}
+
+# Before any DevMode write: the per-user DevMode of this queue in the hives about to be written, as it was.
+function Save-DevModeBackup {
+    param([string]$PrinterName, [string[]]$Hives)
+    $root = Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($ConfigPath))) 'devmode-backup'
+    $entries = @()
+    foreach ($hive in $Hives) {
+        $value = Get-PerUserDevMode $hive $PrinterName
+        $entries += @{ hive = $hive; devmode_b64 = $(if ($value) { [Convert]::ToBase64String($value) } else { $null }) }
+    }
+    $path = Join-Path $root ((Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.json')
+    Save-PrintReceipt $path @{ printer = $PrinterName; saved_at = (Get-Date).ToUniversalTime().ToString('o'); per_user = $entries }
+    return $path
+}
+
+# The queue's current DevMode must make the driver emit ^O1. If not, and the printer's default DevMode does, the
+# default becomes the per-user DevMode of the agent's account (and .DEFAULT for SYSTEM), backup first. Throws a Russian reason.
+function Initialize-PeelMode {
+    param([string]$PrinterName)
+    $found = Get-DispenserMode (Invoke-DriverCapture $PrinterName (Get-PeelCurrentMode $PrinterName))
+    if ($found -eq 1) { return 'ok' }
+    $default = Get-PeelDefaultMode $PrinterName
+    $defaultFound = Get-DispenserMode (Invoke-DriverCapture $PrinterName $default)
+    if ($defaultFound -ne 1) { throw (Format-PeelError $defaultFound ' и в настройках агента, и в настройках принтера по умолчанию') }
+    # The backup only right before a write: a failing check every minute must not pile up copies.
+    $hives = @(Get-PeelHives $PrinterName)
+    $backup = Save-DevModeBackup $PrinterName $hives
+    foreach ($hive in $hives) { Set-PerUserDevMode $hive $PrinterName $default }
+    try { Set-PeelUserMode $PrinterName $default } catch { Write-Log "Godex '$PrinterName': SetPrinter(9) не принят: $($_.Exception.Message)" }
+    $after = Get-DispenserMode (Invoke-DriverCapture $PrinterName (Get-PeelCurrentMode $PrinterName))
+    if ($after -ne 1) { throw (Format-PeelError $after ' после восстановления из настроек по умолчанию') }
+    $was = if ($null -eq $found) { 'без ^O' } else { "^O$found" }
+    Write-Log "Godex '$PrinterName': отделитель в DevMode учётной записи агента был выключен ($was) — восстановлен из настроек принтера по умолчанию; копия прежних настроек: $backup"
+    return 'repaired'
+}
+
+function Set-PeelBlocked {
+    param([string]$PrinterName, [string]$Message)
+    $script:PeelBlocked[$PrinterName] = @{ message = $Message; retry = (Get-Date).AddSeconds($script:PeelRetrySec) }
+    if ($script:MarkingHoldReason -ne $Message) { $script:MarkingHoldReason = $Message; $script:HeartbeatSoon = $true }
+}
+
+function Clear-PeelBlocked {
+    param([string]$PrinterName)
+    $script:PeelBlocked.Remove($PrinterName)
+    if ($script:MarkingHoldReason) { $script:MarkingHoldReason = ''; $script:HeartbeatSoon = $true }
+}
+
+# Before each peel-off job: the very DEVMODE of the job must produce ^O1; one repair attempt, else the job fails
+# (nothing is spooled) and the marking lane holds until a later check passes.
+function Confirm-JobPeelMode {
+    param($Job, [byte[]]$Mode)
+    $printer = [string]$Job.printer
+    try {
+        $found = Get-DispenserMode (Invoke-DriverCapture $printer $Mode)
+        if ($found -eq 1) { return ,$Mode }
+        Write-Log "Godex '$printer': вывод драйвера для задания $($Job.id) без ^O1 — восстанавливаю режим отделителя"
+        [void](Initialize-PeelMode $printer)
+        $fresh = Get-JobDriverMode $Job
+        $found = Get-DispenserMode (Invoke-DriverCapture $printer $fresh)
+        if ($found -ne 1) { throw (Format-PeelError $found) }
+        return ,$fresh
+    } catch {
+        Set-PeelBlocked $printer $_.Exception.Message
+        throw
+    }
+}
+
+# The claim reply says which marking queues run peel-off. Only remembered here: the check itself runs later, never in
+# front of a warehouse label (Invoke-PeelMaintenance, Confirm-JobPeelMode).
+function Update-MarkingPrinterSettings {
+    param($Settings, [string]$MarkingPrinterName)
+    if (-not $MarkingPrinterName) { return }
+    $mine = @($Settings | Where-Object { [string]$_.name -ceq $MarkingPrinterName }) | Select-Object -First 1
+    $peel = [bool]($mine -and $mine.peel)
+    $script:PeelRequired[$MarkingPrinterName] = $peel
+    if (-not $peel) { Clear-PeelBlocked $MarkingPrinterName }
+}
+
+# When the shared claim found nothing to print: the first check after the agent starts (repairing the DevMode if
+# needed), or the retry of a failed one once its minute is up. Not while a marking label is still in the queue.
+function Invoke-PeelMaintenance {
+    param([string]$Base, [string]$PrinterName, [switch]$DryRun)
+    if (-not $PrinterName -or -not $script:PeelRequired[$PrinterName] -or $DryRun) { return }
+    $block = $script:PeelBlocked[$PrinterName]
+    if ($block -and (Get-Date) -lt $block.retry) { return }
+    if (-not $block -and $script:PeelInitialized[$PrinterName]) { return }
+    if (Test-MarkingQueueBusy $Base $PrinterName) { return }
+    $script:PeelInitialized[$PrinterName] = $true
+    try {
+        Write-Log "Godex '$PrinterName': режим отделителя — $(Initialize-PeelMode $PrinterName)"
+        Clear-PeelBlocked $PrinterName
+    } catch { Set-PeelBlocked $PrinterName $_.Exception.Message; Write-Log "Godex '$PrinterName': $($_.Exception.Message)" }
+}
+
+# '' when the marking lane may take the next label, else why it waits.
+function Test-MarkingQueueBusy {
+    param([string]$Base, [string]$PrinterName)
+    $root = Get-PrintWatchRoot
+    if (Test-Path -LiteralPath $root) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $root -Filter '*.json' -File)) {
+            $watch = [IO.File]::ReadAllText($file.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json
+            if ($watch.base -eq $Base -and $watch.machine_id -eq (Get-MachineId) -and [string]$watch.printer -ceq $PrinterName) {
+                return "предыдущая этикетка (задание $($watch.job_id)) ещё в очереди Windows"
+            }
+        }
+    }
+    try { $jobs = @(Get-PrintJob -PrinterName $PrinterName -ErrorAction Stop) }
+    catch { return "очередь «$PrinterName» не прочитана: $($_.Exception.Message)" }
+    # A finished job kept in the queue («Сохранять напечатанные документы») has left the printer: it does not hold the lane.
+    $ours = @($jobs | Where-Object { [string]$_.DocumentName -like 'ERP marking*' -and [string]$_.JobStatus -notmatch 'Printed|Complete' })
+    if ($ours.Count) { return "в очереди Windows задание маркировки ($($ours[0].DocumentName))" }
+    return ''
+}
+
+# Why the marking lane may not take a label now ('' — it may). No driver check here: this runs in the shared poll.
+function Get-MarkingHold {
+    param([string]$Base, [string]$PrinterName)
+    $block = $script:PeelBlocked[$PrinterName]
+    if ($block) { return $block.message }
+    return (Test-MarkingQueueBusy $Base $PrinterName)
+}
+
+# Removed jobs must end as «Отменено», never as «Напечатано», in the spool watch.
+function Set-PrintWatchesDeleting {
+    param([string]$PrinterName, [int[]]$SpoolIds)
+    $root = Get-PrintWatchRoot
+    if (-not (Test-Path -LiteralPath $root)) { return }
+    foreach ($file in @(Get-ChildItem -LiteralPath $root -Filter '*.json' -File)) {
+        $watch = [IO.File]::ReadAllText($file.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json
+        if ([string]$watch.printer -ceq $PrinterName -and $SpoolIds -contains [int]$watch.spool_job_id) {
+            $watch.deleting = $true
+            Save-PrintReceipt $file.FullName $watch
+        }
+    }
+}
+
+function Remove-ErpMarkingJobs {
+    param([string]$PrinterName)
+    $jobs = @(Get-PrintJob -PrinterName $PrinterName -ErrorAction Stop | Where-Object {
+        $name = [string]$_.DocumentName; $name -like 'ERP marking*' -or $name -eq $script:PeelDocName -or $name -eq $script:CommandDocName })
+    if (-not $jobs.Count) { return 0 }
+    Set-PrintWatchesDeleting $PrinterName @($jobs | ForEach-Object { [int]$_.ID })
+    foreach ($job in $jobs) { Remove-SpoolJob $job }
+    return $jobs.Count
+}
+
+function Wait-PrinterCommandSent {
+    param([string]$PrinterName)
+    $deadline = (Get-Date).AddSeconds($script:CommandSendTimeoutSec)
+    while ($true) {
+        $left = @(Get-PrintJob -PrinterName $PrinterName -ErrorAction Stop | Where-Object {
+            [string]$_.DocumentName -eq $script:CommandDocName -and [string]$_.JobStatus -notmatch 'Printed|Complete' })
+        if (-not $left.Count) { return }
+        if ((Get-Date) -gt $deadline) {
+            foreach ($job in $left) { try { Remove-SpoolJob $job } catch {} }
+            throw "Godex не принял команду очистки за $($script:CommandSendTimeoutSec) с: проверьте, что принтер включён и на связи"
+        }
+        Start-Sleep -Milliseconds 250
+    }
+}
+
+# «Очистить принтер» from ERP: remove this queue's ERP jobs from Windows, then empty the Godex's own buffer.
+function Invoke-PrinterCommand {
+    param([string]$Base, [string]$AuthToken, $Command, [string]$MarkingPrinterName, [switch]$DryRun)
+    $machine = Get-MachineId
+    $body = @{ machine_id = $machine; attempt = [string]$Command.attempt; outcome = 'failed'; message = ''; removed_jobs = 0; buffer_cleared = $false }
+    try {
+        if ([string]$Command.kind -cne 'clear') { throw "Неизвестная команда принтера: $($Command.kind)" }
+        if (-not $MarkingPrinterName -or [string]$Command.printer -cne $MarkingPrinterName) {
+            throw "Очередь «$($Command.printer)» не настроена для маркировки на этом ПК"
+        }
+        # A dry run never touches the real Windows queue or the printer.
+        if ($DryRun) { throw 'DRY RUN: задания Windows не удалялись, буфер Godex не очищался' }
+        $body.removed_jobs = Remove-ErpMarkingJobs $MarkingPrinterName
+        # GoDEX EZPL User Manual, «~S,n — analogue press control keys» (p. 34): n = BUFCLR — the printer stops printing
+        # immediately, empties its buffer (serial and variable data too) and stays in standby. ~S,CANCEL is only the
+        # Cancel key that clears an error state. https://www.manualsdir.com/manuals/736893/godex-ezpl.html?page=34
+        Send-RawToPrinter -PrinterName $MarkingPrinterName -Bytes ([Text.Encoding]::ASCII.GetBytes("~S,BUFCLR`r`n")) -DocumentName $script:CommandDocName
+        Wait-PrinterCommandSent $MarkingPrinterName
+        $body.buffer_cleared = $true; $body.outcome = 'done'
+        $body.message = "Удалено заданий ERP из очереди Windows: $($body.removed_jobs); буфер Godex очищен (~S,BUFCLR)"
+    } catch { $body.message = $_.Exception.Message }
+    Write-Log "Команда принтера $($Command.id) ($($Command.kind)): $($body.outcome) — $($body.message)"
+    Invoke-ErpApi -Url "$Base/api/stock/labels/printer-commands/$($Command.id)/result" -Body $body -AuthToken $AuthToken -MachineId $machine | Out-Null
 }
 
 function Invoke-ErpApi {
@@ -1093,7 +1522,7 @@ function Send-Heartbeat {
     }
     # Recovery still needs a live protocol report when the instrument observation is unavailable.
     # Empty methods allow no new calibration; readiness and serial are never inferred.
-    if ($Lightweight -and -not $body.vna_control) { $body.vna_control = @{ version = 1; methods = @() } }
+    if ($Lightweight -and -not $body.vna_control) { $body.vna_control = New-VnaControlAdvert @() }
     $body.vna_sources = @()
     if ($vna) { $body.vna_sources += 's2vna' }
     if ($devices.arinst) { $body.vna_sources += 'arinst' }
@@ -1125,9 +1554,10 @@ function Start-AgentLoop {
         # Winspool and scanner discovery can block without a timeout. Keep them out of
         # the control path, including gaps between commands while the session still needs restoration.
         $owner = Read-VnaJson (Join-Path (Get-VnaControlRoot) 'owner.json')
-        $controlActive = ($script:VnaWorker -and $script:VnaWorker.command) -or ($owner -and -not $owner.restored)
+        $controlActive = ($script:VnaWorker -and $script:VnaWorker.command) -or ($owner -and -not $owner.restored -and -not $owner.released)
         $beatEvery = if ($controlActive) { [Math]::Min(60, $script:HeartbeatEverySec) } else { $script:HeartbeatEverySec }
         if ($controlActive -and $nextBeat -gt $lastBeat.AddSeconds($beatEvery)) { $nextBeat = $lastBeat.AddSeconds($beatEvery) }
+        if ($script:HeartbeatSoon -and -not $controlActive) { $script:HeartbeatSoon = $false; $nextBeat = Get-Date }
         if ((Get-Date) -ge $nextBeat -or ($lastBeatWasLightweight -and -not $controlActive)) {
             try { Send-Heartbeat -Base $Base -AuthToken $AuthToken -PrinterName $PrinterName -ScannerAddress $ScannerAddress -Lightweight:$controlActive -MarkingPrinterName $MarkingPrinterName }
             catch { Write-Log "Отчёт серверу не ушёл: $($_.Exception.Message)" }
@@ -1524,7 +1954,7 @@ function Invoke-ScanPollOnce {
             if ($DryRun) { throw 'ВАЦ: управление запрещено в пробном режиме' }
             $command = $claim.job
             [void][guid]::Parse($command.command_id); [void][guid]::Parse($command.session_id)
-            if ($command.protocol_version -ne 1 -or $command.id -cne $command.command_id) { throw 'ВАЦ: неподдерживаемый конверт команды' }
+            if ($command.protocol_version -notin @(1,2) -or $command.id -cne $command.command_id) { throw 'ВАЦ: неподдерживаемый конверт команды' }
             if ($script:VnaWorker -and $script:VnaWorker.command) {
                 if ($script:VnaWorker.command.command_id -cne $command.command_id) {
                     Stop-VnaWorker $script:VnaWorker 'ВАЦ: команда заменена сервером; выполнение неизвестно'
@@ -1769,6 +2199,8 @@ function Get-S2ProfileWrites {
         'SENSe(1).FREQuency.STOP' = $Profile.stop_hz; 'SENSe(1).SWEep.POINts' = $Profile.points
         'SENSe(1).BANDwidth.RESolution' = $Profile.if_bandwidth_hz; 'SENSe(1).AVERage.STATe' = $false
         'SENSe(1).CORRection.IMPedance.INPut.MAGNitude' = 50; 'SOURce(1).POWer.PORT(1).COUPle' = $false
+        # Port extension shifts the reference plane after calibration: always off, as tools/vna-measure set it.
+        'SENSe(1).CORRection.EXTension.STATe' = $false
     }
     foreach ($port in 1,2) {
         $writes["SOURce(1).POWer.PORT($port).LEVel.IMMediate.AMPLitude"] = $Profile.power_dbm
@@ -1892,8 +2324,599 @@ function ConvertTo-S2Artifact {
     $extension = if ($traces.Count -eq 4) { 's2p' } else { 's1p' }
     return @{ file_name = "measurement.$extension"; content_base64 = [Convert]::ToBase64String($bytes); traces = $traces }
 }
+# ---------------------------------------------------------------- ВАЦ: рабочее место, протокол v2
+# Contract: docs/vna/bench-protocol-v2.md. Typed ops only; every COM path below is a fixed driver literal.
+# ERP owns norms, scales and limit lines; the agent applies its screen, reads it back and refuses on its own
+# before every sweep when the operator changed S2VNA (screen, profile, smoothing, averaging, calibration, devices).
+$script:VnaControlOps = @('device_status','apply_screen','acm_confidence','store_memory','release')
+$script:VnaScreenFormats = @('SWR','MLOG','PHAS','GDEL','SMIT')
+$script:VnaSParameters = @('S11','S21','S12','S22')
+$script:VnaConfidencePointsMax = 4001
+
+Add-Type -AssemblyName System.Numerics
+function ConvertTo-VnaSig9 {
+    param($Value)
+    # Exactly Python's float(f"{x:.9g}") used by the ERP schema: the exact binary value of the double is rounded
+    # half-to-even to 9 significant digits. .NET Framework 'G9' rounds through 15 digits first, and rounding the
+    # 'R' string disagrees with Python on ties such as 1.000000015, so the rounding is done on exact integers.
+    $number = [double]$Value
+    if ([double]::IsNaN($number) -or [double]::IsInfinity($number)) { throw 'ВАЦ: недопустимое число экрана' }
+    if ($number -eq 0) { return $number }
+    $bits = [BitConverter]::DoubleToInt64Bits($number)
+    $exponentBits = [int](($bits -shr 52) -band 0x7FF)
+    $mantissa = $bits -band 0xFFFFFFFFFFFFF
+    if ($exponentBits -eq 0) { $exponent = -1074 } else { $mantissa = $mantissa -bor 0x10000000000000; $exponent = $exponentBits - 1075 }
+    $numerator = [Numerics.BigInteger]$mantissa; $denominator = [Numerics.BigInteger]::One
+    if ($exponent -ge 0) { $numerator = $numerator * [Numerics.BigInteger]::Pow(2, $exponent) }
+    else { $denominator = [Numerics.BigInteger]::Pow(2, -$exponent) }
+    $low = [Numerics.BigInteger]::Pow(10, 8); $high = [Numerics.BigInteger]::Pow(10, 9)
+    $decimalExponent = [int][Math]::Floor([Math]::Log10([Math]::Abs($number)))
+    for ($attempt = 0; $attempt -lt 4; $attempt++) {
+        # quotient = |x| * 10^(8 - e) must have exactly 9 digits; the log estimate can be off by one.
+        $shift = 8 - $decimalExponent; $scaledNumerator = $numerator; $scaledDenominator = $denominator
+        if ($shift -ge 0) { $scaledNumerator = $scaledNumerator * [Numerics.BigInteger]::Pow(10, $shift) }
+        else { $scaledDenominator = $scaledDenominator * [Numerics.BigInteger]::Pow(10, -$shift) }
+        $remainder = [Numerics.BigInteger]::Zero
+        $quotient = [Numerics.BigInteger]::DivRem($scaledNumerator, $scaledDenominator, [ref]$remainder)
+        if ($quotient -ge $high) { $decimalExponent++ } elseif ($quotient -lt $low) { $decimalExponent-- } else { break }
+    }
+    $half = [Numerics.BigInteger]::Compare($remainder * 2, $scaledDenominator)
+    if ($half -gt 0 -or ($half -eq 0 -and -not $quotient.IsEven)) { $quotient = $quotient + 1 }
+    if ($quotient -ge $high) { $quotient = $low; $decimalExponent++ }
+    # .NET Framework double.Parse is not correctly rounded for every short decimal (seen at ~1e-11): build the nearest
+    # double from the exact rational quotient * 10^(e - 8) instead.
+    $power = $decimalExponent - 8
+    if ($power -ge 0) { $rounded = ConvertFrom-VnaRational ($quotient * [Numerics.BigInteger]::Pow(10, $power)) ([Numerics.BigInteger]::One) }
+    else { $rounded = ConvertFrom-VnaRational $quotient ([Numerics.BigInteger]::Pow(10, -$power)) }
+    if ($number -lt 0) { return -$rounded }
+    return $rounded
+}
+function ConvertFrom-VnaRational {
+    param([Numerics.BigInteger]$Numerator, [Numerics.BigInteger]$Denominator)
+    # Nearest double (ties to even) to a positive rational: a 53-bit mantissa m and a binary exponent b, assembled as bits.
+    $two52 = [Numerics.BigInteger]::Pow(2, 52); $two53 = [Numerics.BigInteger]::Pow(2, 53)
+    $binaryExponent = [int][Math]::Floor([Numerics.BigInteger]::Log($Numerator, 2) - [Numerics.BigInteger]::Log($Denominator, 2)) - 52
+    for ($attempt = 0; $attempt -lt 6; $attempt++) {
+        if ($binaryExponent -lt -1074) { $binaryExponent = -1074 }
+        $scaledNumerator = $Numerator; $scaledDenominator = $Denominator
+        if ($binaryExponent -ge 0) { $scaledDenominator = $scaledDenominator * [Numerics.BigInteger]::Pow(2, $binaryExponent) }
+        else { $scaledNumerator = $scaledNumerator * [Numerics.BigInteger]::Pow(2, -$binaryExponent) }
+        $remainder = [Numerics.BigInteger]::Zero
+        $mantissa = [Numerics.BigInteger]::DivRem($scaledNumerator, $scaledDenominator, [ref]$remainder)
+        if ($mantissa -ge $two53) { $binaryExponent++ }
+        elseif ($mantissa -lt $two52 -and $binaryExponent -gt -1074) { $binaryExponent-- }
+        else { break }
+    }
+    $half = [Numerics.BigInteger]::Compare($remainder * 2, $scaledDenominator)
+    if ($half -gt 0 -or ($half -eq 0 -and -not $mantissa.IsEven)) { $mantissa = $mantissa + 1 }
+    if ($mantissa -ge $two53) { $mantissa = $two52; $binaryExponent++ }
+    if ($mantissa -lt $two52) { return [BitConverter]::Int64BitsToDouble([long]$mantissa) }  # subnormal, exponent field 0
+    if ($binaryExponent + 1075 -ge 2047) { throw 'ВАЦ: число экрана вне диапазона' }
+    $bits = ([long]($binaryExponent + 1075) -shl 52) -bor [long]($mantissa - $two52)
+    return [BitConverter]::Int64BitsToDouble($bits)
+}
+function ConvertTo-VnaNumber {
+    param($Value, [double]$Min, [double]$Max, [string]$Label, [switch]$ExclusiveMin)
+    if ($null -eq $Value -or $Value -is [bool] -or $Value -isnot [ValueType]) { throw "ВАЦ: недопустимое число экрана ($Label)" }
+    $number = [double]$Value
+    if ([double]::IsNaN($number) -or [double]::IsInfinity($number) -or $number -lt $Min -or $number -gt $Max -or
+        ($ExclusiveMin -and $number -le $Min)) { throw "ВАЦ: число экрана вне допустимых границ ($Label)" }
+    return ConvertTo-VnaSig9 $number
+}
+function ConvertTo-VnaInteger {
+    param($Value, [int]$Min, [int]$Max, [string]$Label)
+    if ($null -eq $Value -or $Value -is [bool] -or $Value -isnot [ValueType] -or [double]::IsNaN([double]$Value) -or
+        [double]$Value -ne [Math]::Truncate([double]$Value) -or [double]$Value -lt $Min -or [double]$Value -gt $Max) { throw "ВАЦ: недопустимое целое число ($Label)" }
+    return [int]$Value
+}
+function Get-VnaFlag {
+    param($Object, [string]$Name)
+    $value = $Object.$Name
+    if ($null -eq $value) { return $false }
+    if ($value -isnot [bool]) { throw "ВАЦ: признак $Name должен быть логическим" }
+    return $value
+}
+function Assert-VnaScreenHash {
+    param($Value)
+    # Also a journal file name: \A…\z, because $ accepts a trailing newline in .NET.
+    if ($Value -isnot [string] -or $Value -cnotmatch '\A[0-9a-f]{64}\z') { throw 'ВАЦ: неверный отпечаток экрана' }
+    return $Value
+}
+function Test-S2On {
+    param($Value)
+    if ($Value -is [bool]) { return $Value }
+    return ([string]$Value).Trim().ToUpperInvariant() -in @('1','ON','TRUE')
+}
+function ConvertTo-VnaScreen {
+    param($Screen)
+    # Validated, normalized copy of a screen with the bounds of the Pydantic Screen schema. Readbacks pass through
+    # the same function, so a requested screen and a COM readback compare after identical rounding.
+    if ($null -eq $Screen) { throw 'ВАЦ: нет описания экрана' }
+    $traces = @($Screen.traces | Where-Object { $null -ne $_ })
+    if ($traces.Count -lt 1 -or $traces.Count -gt 16) { throw 'ВАЦ: на экране должно быть от 1 до 16 графиков' }
+    $normalized = New-Object 'Collections.Generic.List[object]'
+    foreach ($trace in $traces) {
+        if ($trace.param -isnot [string] -or $trace.param -cnotin $script:VnaSParameters -or
+            $trace.format -isnot [string] -or $trace.format -cnotin $script:VnaScreenFormats) { throw 'ВАЦ: неверный параметр или формат графика' }
+        $smith = $trace.format -ceq 'SMIT'
+        if ($trace.scale -is [string]) {
+            if ($trace.scale -cne 'auto') { throw 'ВАЦ: неверная шкала графика' }
+            $scale = 'auto'
+        } elseif ($null -ne $trace.scale) {
+            $pdiv = ConvertTo-VnaNumber $trace.scale.pdiv 0 1e6 'pdiv' -ExclusiveMin
+            if ($smith) {
+                if ($null -ne $trace.scale.rlev -or $null -ne $trace.scale.rpos) { throw 'ВАЦ: шкала Вольперта-Смита задаётся только pdiv' }
+                $scale = [ordered]@{ pdiv = $pdiv; rlev = $null; rpos = $null }
+            } else {
+                $scale = [ordered]@{ pdiv = $pdiv; rlev = (ConvertTo-VnaNumber $trace.scale.rlev (-1e6) 1e6 'rlev')
+                    rpos = (ConvertTo-VnaInteger $trace.scale.rpos 0 10 'rpos') }
+            }
+        } else { throw 'ВАЦ: не задана шкала графика' }
+        $rawLimits = @($trace.limits | Where-Object { $null -ne $_ })
+        if ($rawLimits.Count -gt 20 -or ($smith -and $rawLimits.Count)) { throw 'ВАЦ: недопустимые линии допуска графика' }
+        $limits = New-Object 'Collections.Generic.List[object]'
+        foreach ($segment in $rawLimits) {
+            if ($segment.kind -isnot [string] -or $segment.kind -cnotin @('upper','lower')) { throw 'ВАЦ: неверный вид линии допуска' }
+            $start = ConvertTo-VnaNumber $segment.start_hz 0 1e12 'start_hz' -ExclusiveMin
+            $stop = ConvertTo-VnaNumber $segment.stop_hz 0 1e12 'stop_hz' -ExclusiveMin
+            if ($start -ge $stop) { throw 'ВАЦ: отрезок линии допуска: начало должно быть меньше конца' }
+            $limits.Add([ordered]@{ kind = $segment.kind; start_hz = $start; stop_hz = $stop
+                start_value = (ConvertTo-VnaNumber $segment.start_value (-1e6) 1e6 'start_value')
+                stop_value = (ConvertTo-VnaNumber $segment.stop_value (-1e6) 1e6 'stop_value') })
+        }
+        $normalized.Add([ordered]@{ param = $trace.param; format = $trace.format; scale = $scale
+            hidden = (Get-VnaFlag $trace 'hidden'); memory = (Get-VnaFlag $trace 'memory'); limits = $limits.ToArray() })
+    }
+    $rawMarkers = @($Screen.markers_hz | Where-Object { $null -ne $_ })
+    if ($rawMarkers.Count -gt 15) { throw 'ВАЦ: не более 15 маркеров' }
+    $markers = New-Object 'Collections.Generic.List[double]'
+    foreach ($marker in $rawMarkers) {
+        $value = ConvertTo-VnaNumber $marker 0 1e12 'markers_hz' -ExclusiveMin
+        if ($markers.Count -and $markers[$markers.Count - 1] -ge $value) { throw 'ВАЦ: маркеры задаются по возрастанию частоты без повторов' }
+        $markers.Add($value)
+    }
+    $title = $Screen.title
+    if ($null -eq $title) { $title = '' }
+    if ($title -isnot [string] -or $title.Length -gt 256 -or $title -match '[\x00-\x1f\x7f]') { throw 'ВАЦ: недопустимый заголовок экрана' }
+    return [ordered]@{ split = (ConvertTo-VnaInteger $Screen.split 1 16 'split'); traces = $normalized.ToArray()
+        markers_hz = $markers.ToArray(); title = $title }
+}
+function Get-VnaScreenPath {
+    param([string]$ScreenHash)
+    [void](Assert-VnaScreenHash $ScreenHash)
+    $directory = Join-Path (Get-VnaControlRoot) 'screens'
+    [void][IO.Directory]::CreateDirectory($directory)
+    return Join-Path $directory ($ScreenHash + '.json')
+}
+function Save-VnaScreenSpec {
+    param([string]$ScreenHash, $Spec, [string]$Serial, [string]$SessionId)
+    # The agent never recomputes ERP's fingerprint: it journals the description under it and later only echoes it.
+    $path = Get-VnaScreenPath $ScreenHash
+    $existing = Read-VnaJson $path
+    if ($existing) {
+        if ((ConvertTo-VnaCanonical (ConvertTo-VnaScreen $existing.screen)) -cne (ConvertTo-VnaCanonical $Spec)) { throw 'ВАЦ: под этим отпечатком в журнале агента другой экран' }
+        return
+    }
+    Write-VnaJson $path @{ screen_hash = $ScreenHash; screen = $Spec; serial = $Serial; session_id = $SessionId; saved_at = [DateTime]::UtcNow.ToString('o') }
+}
+function Get-VnaScreenSpec {
+    param([string]$ScreenHash)
+    $entry = Read-VnaJson (Get-VnaScreenPath $ScreenHash)
+    if (-not $entry -or $entry.screen_hash -cne $ScreenHash) { throw 'ВАЦ: экран с этим отпечатком не применялся агентом' }
+    return ConvertTo-VnaScreen $entry.screen
+}
+function ConvertFrom-S2LimitData {
+    param([object[]]$Data)
+    # S2VNA limit table: N, then per segment type (1 upper, 2 lower), start/stop stimulus, start/stop response.
+    $values = @($Data | Where-Object { $null -ne $_ } | ForEach-Object { [double]$_ })
+    if (-not $values.Count) { return }
+    $count = [int]$values[0]
+    if ($count -lt 0 -or $values.Count -ne 1 + 5 * $count) { return [ordered]@{ kind = 'invalid' } }
+    for ($segment = 0; $segment -lt $count; $segment++) {
+        $offset = 1 + 5 * $segment
+        $kind = switch ([int]$values[$offset]) { 1 { 'upper' } 2 { 'lower' } default { 'type' + [int]$values[$offset] } }
+        [ordered]@{ kind = $kind; start_hz = $values[$offset + 1]; stop_hz = $values[$offset + 2]
+            start_value = $values[$offset + 3]; stop_value = $values[$offset + 4] }
+    }
+}
+function Read-S2Screen {
+    param($Scpi, $Spec)
+    # Reads the live screen in the shape of the ERP Screen. Scale of an "auto" graph has nothing to read back.
+    $count = [int](Invoke-S2Io $Scpi 'CALCulate(1).PARameter(1).COUNt')
+    if ($count -lt 1 -or $count -gt 16) { throw 'ВАЦ: на приборе недопустимое число графиков' }
+    $selected = [int](Invoke-S2Io $Scpi 'SERVice.CHANnel(1).TRACe(1).ACTive')
+    $specTraces = if ($Spec) { @($Spec.traces) } else { @() }
+    $traces = New-Object 'Collections.Generic.List[object]'
+    $markerSets = New-Object 'Collections.Generic.List[string]'
+    $issues = New-Object 'Collections.Generic.List[string]'
+    $firstMarkers = @()
+    try {
+        for ($index = 1; $index -le $count; $index++) {
+            $param = ([string](Invoke-S2Io $Scpi "CALCulate(1).PARameter($index).DEFine")).Trim().ToUpperInvariant()
+            Invoke-S2Io $Scpi "CALCulate(1).PARameter($index).SELect" call
+            $format = ([string](Invoke-S2Io $Scpi 'CALCulate(1).SELected.FORMat')).Trim().ToUpperInvariant()
+            # СТО ФРАК-002-2026 п. 11.1: smoothing hides ripple; time domain, gating, math and conversion change what is measured.
+            if (Test-S2On (Invoke-S2Io $Scpi 'CALCulate(1).SELected.SMOothing.STATe')) { $issues.Add("график ${index} ($param): включено сглаживание — замер не принимается") }
+            if (Test-S2On (Invoke-S2Io $Scpi 'CALCulate(1).SELected.TRANsform.TIME.STATe')) { $issues.Add("график ${index} ($param): включена временная область — замер не принимается") }
+            if (Test-S2On (Invoke-S2Io $Scpi 'CALCulate(1).SELected.FILTer.GATE.TIME.STATe')) { $issues.Add("график ${index} ($param): включено стробирование — замер не принимается") }
+            if (([string](Invoke-S2Io $Scpi 'CALCulate(1).SELected.MATH.FUNCtion')).Trim().ToUpperInvariant() -cne 'OFF') { $issues.Add("график ${index} ($param): включена математика трасс — замер не принимается") }
+            if (Test-S2On (Invoke-S2Io $Scpi 'CALCulate(1).SELected.CONVersion.STATe')) { $issues.Add("график ${index} ($param): включено преобразование — замер не принимается") }
+            $window = "DISPlay.WINDow(1).TRACe($index)"
+            $auto = $index -le $specTraces.Count -and $specTraces[$index - 1].scale -is [string]
+            $scale = if ($auto) { 'auto' } elseif ($format -ceq 'SMIT') {
+                [ordered]@{ pdiv = (Invoke-S2Io $Scpi "$window.Y.SCALe.PDIVision"); rlev = $null; rpos = $null }
+            } else {
+                [ordered]@{ pdiv = (Invoke-S2Io $Scpi "$window.Y.SCALe.PDIVision"); rlev = (Invoke-S2Io $Scpi "$window.Y.SCALe.RLEVel")
+                    rpos = [int](Invoke-S2Io $Scpi "$window.Y.SCALe.RPOSition") }
+            }
+            $limits = @()
+            if (Test-S2On (Invoke-S2Io $Scpi 'CALCulate(1).SELected.LIMit.DISPlay.STATe')) {
+                $limits = @(ConvertFrom-S2LimitData @(Invoke-S2Io $Scpi 'CALCulate(1).SELected.LIMit.DATA'))
+            }
+            $markers = New-Object 'Collections.Generic.List[double]'
+            for ($marker = 1; $marker -le 15; $marker++) {
+                if (Test-S2On (Invoke-S2Io $Scpi "CALCulate(1).SELected.MARKer($marker).STATe")) {
+                    $markers.Add([double](Invoke-S2Io $Scpi "CALCulate(1).SELected.MARKer($marker).X"))
+                }
+            }
+            if ($index -eq 1) { $firstMarkers = $markers.ToArray() }
+            $markerSets.Add((ConvertTo-VnaCanonical @($markers.ToArray())))
+            $traces.Add([ordered]@{ param = $param; format = $format; scale = $scale
+                hidden = -not (Test-S2On (Invoke-S2Io $Scpi "$window.STATe")); memory = (Test-S2On (Invoke-S2Io $Scpi "$window.MEMory.STATe"))
+                limits = $limits })
+        }
+    } finally {
+        if ($selected -ge 1 -and $selected -le $count) { Invoke-S2Io $Scpi "CALCulate(1).PARameter($selected).SELect" call }
+    }
+    $title = if (Test-S2On (Invoke-S2Io $Scpi 'DISPlay.WINDow(1).TITLe.STATe')) { [string](Invoke-S2Io $Scpi 'DISPlay.WINDow(1).TITLe.DATA') } else { '' }
+    $screen = [ordered]@{ split = [int](Invoke-S2Io $Scpi 'DISPlay.WINDow(1).SPLit'); traces = $traces.ToArray()
+        markers_hz = @($firstMarkers); title = $title }
+    return @{ screen = $screen; issues = $issues.ToArray(); markers_consistent = @($markerSets | Select-Object -Unique).Count -le 1 }
+}
+function Test-VnaScreenMatch {
+    param($Read, $Spec)
+    if (-not $Read.markers_consistent) { return $false }
+    try { return (ConvertTo-VnaCanonical (ConvertTo-VnaScreen $Read.screen)) -ceq (ConvertTo-VnaCanonical $Spec) }
+    catch { return $false }
+}
+function Set-S2Screen {
+    param($Scpi, $Spec)
+    # Ported from tools/vna-measure/s2vna.ps1 Set-VnaScreen; the content now comes only from ERP.
+    $traces = @($Spec.traces)
+    Invoke-S2Io $Scpi 'DISPlay.SPLit' set 1
+    Set-S2Checked $Scpi 'CALCulate(1).PARameter(1).COUNt' $traces.Count
+    Invoke-S2Io $Scpi 'DISPlay.WINDow(1).SPLit' set ([int]$Spec.split)
+    $markers = @($Spec.markers_hz)
+    for ($index = 1; $index -le $traces.Count; $index++) {
+        $trace = $traces[$index - 1]; $window = "DISPlay.WINDow(1).TRACe($index)"
+        Invoke-S2Io $Scpi "CALCulate(1).PARameter($index).DEFine" set ([string]$trace.param)
+        Invoke-S2Io $Scpi "CALCulate(1).PARameter($index).SELect" call
+        Invoke-S2Io $Scpi 'CALCulate(1).SELected.FORMat' set ([string]$trace.format)
+        Invoke-S2Io $Scpi 'CALCulate(1).SELected.SMOothing.STATe' set $false
+        Invoke-S2Io $Scpi 'CALCulate(1).SELected.TRANsform.TIME.STATe' set $false
+        Invoke-S2Io $Scpi 'CALCulate(1).SELected.FILTer.GATE.TIME.STATe' set $false
+        Invoke-S2Io $Scpi 'CALCulate(1).SELected.MATH.FUNCtion' set 'OFF'
+        Invoke-S2Io $Scpi 'CALCulate(1).SELected.CONVersion.STATe' set $false
+        Invoke-S2Io $Scpi "$window.STATe" set (-not $trace.hidden)
+        Invoke-S2Io $Scpi "$window.MEMory.STATe" set ([bool]$trace.memory)
+        if ($trace.scale -isnot [string]) {
+            Invoke-S2Io $Scpi "$window.Y.SCALe.PDIVision" set ([double]$trace.scale.pdiv)
+            if ($trace.format -cne 'SMIT') {
+                Invoke-S2Io $Scpi "$window.Y.SCALe.RLEVel" set ([double]$trace.scale.rlev)
+                # RPOSition is a COM Long; a Double there fails with «Specified cast is not valid» (seen live 18.11).
+                Invoke-S2Io $Scpi "$window.Y.SCALe.RPOSition" set ([int]$trace.scale.rpos)
+            }
+        }
+        $segments = @($trace.limits)
+        if ($segments.Count) {
+            $data = New-Object 'Collections.Generic.List[double]'
+            $data.Add($segments.Count)
+            foreach ($segment in $segments) {
+                $type = if ($segment.kind -ceq 'upper') { 1 } else { 2 }
+                foreach ($value in $type, $segment.start_hz, $segment.stop_hz, $segment.start_value, $segment.stop_value) { $data.Add([double]$value) }
+            }
+            Invoke-S2Io $Scpi 'CALCulate(1).SELected.LIMit.DATA' set ([double[]]$data.ToArray())
+        }
+        # S2VNA rejects an empty table (N = 0) over COM: a graph without a norm keeps its table, hidden and not tested.
+        Invoke-S2Io $Scpi 'CALCulate(1).SELected.LIMit.DISPlay.STATe' set ([bool]$segments.Count)
+        Invoke-S2Io $Scpi 'CALCulate(1).SELected.LIMit.STATe' set ([bool]$segments.Count)
+        # S2VNA chains markers: n on switches 1..n on, n off switches n..15 off.
+        if ($markers.Count -lt 15) { Invoke-S2Io $Scpi "CALCulate(1).SELected.MARKer($($markers.Count + 1)).STATe" set $false }
+        if ($markers.Count) { Invoke-S2Io $Scpi "CALCulate(1).SELected.MARKer($($markers.Count)).STATe" set $true }
+        for ($marker = 1; $marker -le $markers.Count; $marker++) {
+            Invoke-S2Io $Scpi "CALCulate(1).SELected.MARKer($marker).X" set ([double]$markers[$marker - 1])
+        }
+    }
+    # The title is data: assigned to the COM property, never assembled into an instrument command.
+    Invoke-S2Io $Scpi 'DISPlay.WINDow(1).TITLe.DATA' set ([string]$Spec.title)
+    Invoke-S2Io $Scpi 'DISPlay.WINDow(1).TITLe.STATe' set ([bool]$Spec.title)
+    Update-S2AutoScale $Scpi $Spec
+}
+function Update-S2AutoScale {
+    param($Scpi, $Spec)
+    if (-not $Spec) { return }
+    $traces = @($Spec.traces)
+    for ($index = 1; $index -le $traces.Count; $index++) {
+        if ($traces[$index - 1].scale -is [string]) { Invoke-S2Io $Scpi "DISPlay.WINDow(1).TRACe($index).Y.SCALe.AUTO" call }
+    }
+}
+function Restore-S2Selection {
+    param($Scpi, [int]$Selected, [int]$Count)
+    # The operator keeps the graph they had active; a graph beyond the new screen falls back to graph 1.
+    $target = if ($Selected -ge 1 -and $Selected -le $Count) { $Selected } else { 1 }
+    Invoke-S2Io $Scpi "CALCulate(1).PARameter($target).SELect" call
+}
+function Get-S2BenchCorrection {
+    param($Scpi, [string[]]$Traces, [switch]$RequireAll, [switch]$Report)
+    # Correction is read per graph after selecting it. -Report returns the worst code of each S-parameter on screen.
+    $codes = [ordered]@{}
+    $count = [int](Invoke-S2Io $Scpi 'CALCulate(1).PARameter(1).COUNt')
+    $selected = [int](Invoke-S2Io $Scpi 'SERVice.CHANnel(1).TRACe(1).ACTive')
+    try {
+        for ($index = 1; $index -le $count; $index++) {
+            $param = ([string](Invoke-S2Io $Scpi "CALCulate(1).PARameter($index).DEFine")).Trim().ToUpperInvariant()
+            if ($param -cnotin $script:VnaSParameters -or (-not $Report -and $param -cnotin $Traces)) { continue }
+            Invoke-S2Io $Scpi "CALCulate(1).PARameter($index).SELect" call
+            $code = ([string](Invoke-S2Io $Scpi 'CALCulate(1).SELected.CORRection.STATus')).Trim().ToUpperInvariant()
+            if ($code -cnotmatch '\A[A-Z?!]{1,8}\z') { throw "ВАЦ: не прочитано состояние калибровки $param" }
+            if (-not $codes.Contains($param) -or $codes[$param] -ceq 'COR') { $codes[$param] = $code }
+        }
+    } finally {
+        if ($selected -ge 1 -and $selected -le $count) { Invoke-S2Io $Scpi "CALCulate(1).PARameter($selected).SELect" call }
+    }
+    if ($Report) { return $codes }
+    foreach ($param in @($Traces)) {
+        if ($RequireAll -and -not $codes.Contains($param)) { throw "ВАЦ: трассы $param нет на экране ERP" }
+    }
+    if (-not $codes.Count) { throw 'ВАЦ: на экране нет трасс калибровочного профиля' }
+    foreach ($param in @($codes.Keys)) {
+        $code = $codes[$param]
+        # СТО ФРАК-002-2026 п. 11.5: C? interpolated / C! extrapolated calibration lowers accuracy — refused.
+        if ($code -cin @('C?','RC?')) { throw "ВАЦ: трасса ${param}: калибровка интерполирована (C?) — замер не принимается; откалибруйте на сетке замера" }
+        if ($code -cin @('C!','RC!')) { throw "ВАЦ: трасса ${param}: калибровка экстраполирована (C!) — замер не принимается; откалибруйте на полосе замера" }
+        if ($code -cne 'COR') { throw "ВАЦ: трасса ${param}: нет полной калибровки ($code)" }
+    }
+    return $codes
+}
+function Get-S2AcmInfoOptional {
+    param($Scpi)
+    # The ACM may be disconnected after calibration (the DUT takes its place): unknown, not an error.
+    try { return ConvertFrom-S2AcmInfo ([string](Invoke-S2Io $Scpi 'SENSe(1).CORRection.COLLect.ECAL.INFormation')) } catch { return $null }
+}
+function Assert-S2AcmUnchanged {
+    param($Scpi, $Owner)
+    if (-not $Owner.calibration -or $Owner.calibration.method -cne 'acm') { return }
+    $expected = [string]$Owner.calibration.definition.serial
+    $info = Get-S2AcmInfoOptional $Scpi
+    if ($info -and $expected -and $info.serial -cne $expected) { throw 'ВАЦ: подключён другой АКМ, чем при калибровке' }
+}
+function ConvertTo-S2Temperature {
+    param($Value)
+    if ($null -eq $Value -or [string]::IsNullOrWhiteSpace([string]$Value)) { return $null }
+    $number = 0.0
+    $typeCode = [int][Type]::GetTypeCode($Value.GetType())
+    if ($typeCode -ge 5 -and $typeCode -le 15) { $number = [double]$Value }
+    elseif (-not [double]::TryParse([string]$Value, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$number)) { return $null }
+    if ([double]::IsNaN($number) -or [double]::IsInfinity($number) -or $number -lt -50 -or $number -gt 150) { return $null }
+    return $number
+}
+function Get-S2Temperatures {
+    param($Scpi)
+    # Unknown telemetry stays null; never a fabricated 0 °C.
+    $vna = New-Object 'Collections.Generic.List[object]'
+    foreach ($sensor in 1,2) {
+        $reading = $null
+        try { $reading = ConvertTo-S2Temperature (Invoke-S2Io $Scpi "SYSTem.TEMPerature.SENSor($sensor)") } catch {}
+        $vna.Add($reading)
+    }
+    $acm = $null
+    try { $acm = ConvertTo-S2Temperature (Invoke-S2Io $Scpi 'SYSTem.COMMunicate.ECAL.TEMPerature.SENSor') } catch {}
+    return [ordered]@{ vna_c = $vna.ToArray(); acm_c = $acm }
+}
+function Get-VnaWarmupMinutes {
+    # S2VNA start time stands in for the VNA power-on (the VNA is powered before S2VNA finds it).
+    try {
+        $process = @(Get-Process -Name S2VNA -ErrorAction Stop | Sort-Object StartTime | Select-Object -First 1)
+        if (-not $process.Count -or -not $process[0].StartTime) { return $null }
+        $minutes = ([DateTime]::Now - $process[0].StartTime).TotalMinutes
+        if ($minutes -lt 0) { return $null }
+        return [Math]::Round($minutes, 1)
+    } catch { return $null }
+}
+function Get-S2TraceIndex {
+    param($Scpi, [string]$Parameter)
+    $count = [int](Invoke-S2Io $Scpi 'CALCulate(1).PARameter(1).COUNt')
+    for ($index = 1; $index -le $count; $index++) {
+        if (([string](Invoke-S2Io $Scpi "CALCulate(1).PARameter($index).DEFine")).Trim().ToUpperInvariant() -ceq $Parameter) { return $index }
+    }
+    throw "ВАЦ: трассы $Parameter нет на экране ERP"
+}
+function Set-VnaOwnerField {
+    param($Owner, [string]$Name, $Value)
+    $Owner | Add-Member NoteProperty $Name $Value -Force
+}
+function Get-S2ActiveScreenHash {
+    param($Scpi, [string]$Serial)
+    $active = Read-VnaJson (Join-Path (Get-VnaControlRoot) 'screen-active.json')
+    if (-not $active -or $active.serial -cne $Serial) { return $null }
+    try { $spec = Get-VnaScreenSpec ([string]$active.screen_hash) } catch { return $null }
+    $read = Read-S2Screen $Scpi $spec
+    if (@($read.issues).Count -or -not (Test-VnaScreenMatch $read $spec)) { return $null }
+    return [string]$active.screen_hash
+}
+function Assert-S2BenchReady {
+    param($Scpi, $Owner, $Profile, [string]$ScreenHash, [switch]$RequireAllTraces, [switch]$SkipScreen)
+    # The agent's own refusal before every sweep or screen write; ERP checks the receipts again.
+    if (-not $Owner.profile) { throw 'ВАЦ: профиль ещё не применён' }
+    if ($null -ne $Profile) { Assert-VnaEqual $Profile $Owner.profile 'сохранённый профиль' }
+    if (Test-S2On (Invoke-S2Io $Scpi 'SENSe(1).AVERage.STATe')) { throw 'ВАЦ: включено усреднение — замер не принимается; профиль задаёт только ERP' }
+    if (Test-S2On (Invoke-S2Io $Scpi 'SENSe(1).CORRection.EXTension.STATe')) { throw 'ВАЦ: включено расширение портов — замер не принимается; профиль задаёт только ERP' }
+    $writes = Get-S2ProfileWrites $Owner.profile
+    $writes.Remove('CALCulate(1).PARameter(1).COUNt')
+    foreach ($path in @($writes.Keys)) {
+        $actual = Invoke-S2Io $Scpi $path
+        $same = $true
+        try { Assert-VnaEqual $actual $writes[$path] $path } catch { $same = $false }
+        if (-not $same) { throw "ВАЦ: профиль или сетка частот изменены после настройки из ERP ($path)" }
+    }
+    if (-not $SkipScreen) {
+        $spec = $null
+        if ($ScreenHash) {
+            if ($Owner.screen_hash -cne $ScreenHash) { throw 'ВАЦ: экран ERP с этим отпечатком не применялся в этой сессии' }
+            $spec = Get-VnaScreenSpec $ScreenHash
+        }
+        $read = Read-S2Screen $Scpi $spec
+        if (@($read.issues).Count) { throw ('ВАЦ: ' + $read.issues[0]) }
+        if ($spec -and -not (Test-VnaScreenMatch $read $spec)) { throw 'ВАЦ: экран S2VNA изменён после настройки из ERP; повторите настройку экрана из ERP' }
+    }
+    [void](Get-S2BenchCorrection $Scpi @($Owner.profile.traces) -RequireAll:$RequireAllTraces)
+    Assert-S2AcmUnchanged $Scpi $Owner
+}
+function Assert-S2Grid {
+    param($Frequencies, $Profile)
+    $values = @($Frequencies)
+    if ($values.Count -ne [int]$Profile.points) { throw 'ВАЦ: неполная сетка частот' }
+    for ($i = 0; $i -lt $values.Count; $i++) {
+        $expected = [double]$Profile.start_hz + ([double]$Profile.stop_hz - [double]$Profile.start_hz) * $i / ($values.Count - 1)
+        $frequency = [double]$values[$i]
+        if ([double]::IsNaN($frequency) -or [Math]::Abs($frequency - $expected) -gt [Math]::Max(0.001, [Math]::Abs($expected) * 1e-10)) { throw 'ВАЦ: сетка частот не соответствует профилю калибровки' }
+    }
+}
+function ConvertTo-S2Pairs {
+    param($Raw, [int]$Count, [string]$Label)
+    $values = @($Raw)
+    if ($values.Count -ne 2 * $Count) { throw "ВАЦ: неполные данные трассы $Label" }
+    $pairs = New-Object 'Collections.Generic.List[object]'
+    for ($i = 0; $i -lt $Count; $i++) {
+        $re = [double]$values[2 * $i]; $im = [double]$values[2 * $i + 1]
+        if ([double]::IsNaN($re) -or [double]::IsInfinity($re) -or [double]::IsNaN($im) -or [double]::IsInfinity($im)) { throw "ВАЦ: недопустимое число в трассе $Label" }
+        $pairs.Add([double[]]@($re, $im))
+    }
+    return ,$pairs.ToArray()
+}
+function Invoke-S2SweepOnce {
+    param($Scpi)
+    # Proven fresh-sweep sequence (16.11): continuous, BUS trigger, single, then *OPC? as the completion barrier.
+    Set-S2Checked $Scpi 'INITiate(1).CONTinuous' $true
+    Set-S2Checked $Scpi 'TRIGger.SEQuence.SOURce' 'BUS'
+    Invoke-S2Io $Scpi 'TRIGger.SEQuence.SINGle' call
+    if ((Invoke-S2Io $Scpi 'IEEE4882.OPC') -ne 1) { throw 'ВАЦ: развёртка не завершена' }
+}
+function Invoke-S2BenchOp {
+    param($Application, $Scpi, $Command, $Owner, [string]$OwnerPath, [string]$Serial, [hashtable]$Result)
+    $argsValue = $Command.args
+    switch -CaseSensitive ($Command.op) {
+        'device_status' {
+            $Result.name = [string]$Application.Name; $Result.ready = [bool]$Application.Ready
+            $Result.warmup_min = Get-VnaWarmupMinutes
+            $Result.temperatures = Get-S2Temperatures $Scpi
+            $acm = Get-S2AcmInfoOptional $Scpi
+            $Result.acm = if ($acm) { [ordered]@{ model = $acm.model; serial = $acm.serial; min_hz = $acm.min_hz; max_hz = $acm.max_hz } } else { $null }
+            $Result.correction = Get-S2BenchCorrection $Scpi $null -Report
+            $Result.screen_hash = Get-S2ActiveScreenHash $Scpi $Serial
+        }
+        'apply_screen' {
+            $screenHash = Assert-VnaScreenHash $argsValue.screen_hash
+            $spec = ConvertTo-VnaScreen $argsValue.screen
+            Assert-S2BenchReady $Scpi $Owner $null '' -SkipScreen
+            Save-VnaScreenSpec $screenHash $spec $Serial $Command.session_id
+            $selected = [int](Invoke-S2Io $Scpi 'SERVice.CHANnel(1).TRACe(1).ACTive')
+            try { Set-S2Screen $Scpi $spec }
+            finally { Restore-S2Selection $Scpi $selected @($spec.traces).Count }
+            $read = Read-S2Screen $Scpi $spec
+            if (@($read.issues).Count) { throw ('ВАЦ: ' + $read.issues[0]) }
+            if (-not (Test-VnaScreenMatch $read $spec)) { throw 'ВАЦ: прочитанный экран S2VNA не совпадает с заданным в ERP' }
+            Set-VnaOwnerField $Owner 'screen_hash' $screenHash; Write-VnaJson $OwnerPath $Owner
+            Write-VnaJson (Join-Path (Get-VnaControlRoot) 'screen-active.json') @{
+                serial = $Serial; screen_hash = $screenHash; session_id = $Command.session_id; applied_at = [DateTime]::UtcNow.ToString('o') }
+            $Result.screen = $read.screen; $Result.screen_hash = $screenHash
+        }
+        'acm_confidence' {
+            if (-not $Owner.calibration -or $Owner.calibration.method -cne 'acm') { throw 'ВАЦ: доверительный тест выполняется только после калибровки АКМ' }
+            $profile = $argsValue.profile
+            if ([int]$profile.points -gt $script:VnaConfidencePointsMax) { throw "ВАЦ: доверительный тест АКМ — не более $($script:VnaConfidencePointsMax) точек" }
+            $screenHash = if ($Owner.screen_hash) { [string]$Owner.screen_hash } else { '' }
+            Assert-S2BenchReady $Scpi $Owner $profile $screenHash -RequireAllTraces
+            $info = Assert-S2Acm $Scpi ([string]$argsValue.module_serial) ([double]$profile.start_hz) ([double]$profile.stop_hz) $Owner.calibration.definition
+            $indices = [ordered]@{}
+            foreach ($param in @($profile.traces)) { $indices[[string]$param] = Get-S2TraceIndex $Scpi ([string]$param) }
+            # Hold sweeps and use the internal trigger, as during the ECAL itself: a BUS trigger left by a capture
+            # must not block the module's own acquisition, and free-running sweeps must not overwrite its data.
+            Set-S2Checked $Scpi 'INITiate(1).CONTinuous' $false
+            Set-S2Checked $Scpi 'TRIGger.SEQuence.SOURce' 'INT'
+            Invoke-S2Io $Scpi 'SENSe(1).CORRection.COLLect.ECAL.CCHeck.ACQuire' call
+            if ((Invoke-S2Io $Scpi 'IEEE4882.OPC') -ne 1) { throw 'ВАЦ: доверительный тест не завершён' }
+            $frequencies = [double[]]@(Invoke-S2Io $Scpi 'SENSe(1).FREQuency.DATA')
+            Assert-S2Grid $frequencies $profile
+            $data = [ordered]@{}; $memory = [ordered]@{}
+            foreach ($param in @($indices.Keys)) {
+                $index = $indices[$param]
+                $data[$param] = ConvertTo-S2Pairs (Invoke-S2Io $Scpi "CALCulate(1).TRACe($index).DATA.SDATa") $frequencies.Count $param
+                $memory[$param] = ConvertTo-S2Pairs (Invoke-S2Io $Scpi "CALCulate(1).TRACe($index).DATA.SMEMory") $frequencies.Count ($param + ' (память АКМ)')
+            }
+            if ($screenHash) { Update-S2AutoScale $Scpi (Get-VnaScreenSpec $screenHash) }
+            $after = Assert-S2Acm $Scpi ([string]$argsValue.module_serial) ([double]$profile.start_hz) ([double]$profile.stop_hz) $Owner.calibration.definition
+            if ($after.serial -cne $info.serial -or (Get-VnaSerial $Application) -cne $Serial) { throw 'ВАЦ: прибор или АКМ заменены во время доверительного теста' }
+            $Result.module_serial = $info.serial; $Result.frequencies_hz = $frequencies
+            $Result.data = $data; $Result.memory = $memory; $Result.temperatures = Get-S2Temperatures $Scpi
+        }
+        'store_memory' {
+            $screenHash = Assert-VnaScreenHash $argsValue.screen_hash
+            Assert-S2BenchReady $Scpi $Owner $null $screenHash
+            $count = @((Get-VnaScreenSpec $screenHash).traces).Count
+            $numbers = @(foreach ($number in @($argsValue.traces)) { ConvertTo-VnaInteger $number 1 $count 'номер графика' })
+            if (-not $numbers.Count -or @($numbers | Select-Object -Unique).Count -ne $numbers.Count) { throw 'ВАЦ: графики для памяти повторяются или не заданы' }
+            $selected = [int](Invoke-S2Io $Scpi 'SERVice.CHANnel(1).TRACe(1).ACTive')
+            try {
+                foreach ($number in $numbers) {
+                    Invoke-S2Io $Scpi "CALCulate(1).PARameter($number).SELect" call
+                    Invoke-S2Io $Scpi 'CALCulate(1).SELected.MATH.MEMorize' call
+                }
+            } finally { Restore-S2Selection $Scpi $selected $count }
+            $Result.screen_hash = $screenHash; $Result.memorized = $numbers
+        }
+        'release' {
+            $screenHash = $null
+            if ($null -ne $argsValue.screen_hash) {
+                $screenHash = Assert-VnaScreenHash $argsValue.screen_hash
+                if ($Owner.screen_hash -cne $screenHash) { throw 'ВАЦ: экран ERP с этим отпечатком не применялся в этой сессии' }
+            }
+            # Unlike restore, the operator state is not loaded: the ERP screen and calibration stay for viewing.
+            Set-S2Checked $Scpi 'TRIGger.SEQuence.SOURce' 'INT'
+            Set-S2Checked $Scpi 'INITiate(1).CONTinuous' $true
+            Set-VnaOwnerField $Owner 'released' $true; Write-VnaJson $OwnerPath $Owner
+            $Result.released = $true; $Result.continuous = $true; $Result.screen_hash = $screenHash
+        }
+        default { throw 'ВАЦ: неизвестная операция рабочего места' }
+    }
+}
+function Invoke-S2CaptureV2 {
+    param($Application, $Scpi, $ArgsValue, $Owner, [string]$Serial, [hashtable]$Result)
+    $screenHash = Assert-VnaScreenHash $ArgsValue.screen_hash
+    $profile = $ArgsValue.profile
+    Assert-S2BenchReady $Scpi $Owner $profile $screenHash -RequireAllTraces
+    $indices = [ordered]@{}
+    foreach ($param in @($profile.traces)) { $indices[[string]$param] = Get-S2TraceIndex $Scpi ([string]$param) }
+    Invoke-S2SweepOnce $Scpi
+    $frequencies = @(Invoke-S2Io $Scpi 'SENSe(1).FREQuency.DATA')
+    $data = @{}
+    foreach ($param in @($indices.Keys)) { $data[$param] = @(Invoke-S2Io $Scpi "CALCulate(1).TRACe($($indices[$param])).DATA.SDATa") }
+    Update-S2AutoScale $Scpi (Get-VnaScreenSpec $screenHash)
+    Assert-S2BenchReady $Scpi $Owner $profile $screenHash -RequireAllTraces
+    Assert-VnaEqual @(Invoke-S2Io $Scpi 'SENSe(1).FREQuency.DATA') $frequencies 'частоты после чтения'
+    if ((Get-VnaSerial $Application) -cne $Serial) { throw 'ВАЦ: прибор заменён во время развёртки' }
+    $correction = @{}; foreach ($param in @($indices.Keys)) { $correction[$param] = 'COR' }
+    $Result.correction = $correction; $Result.profile = $profile
+    $Result.artifacts = @((ConvertTo-S2Artifact $frequencies $data $profile))
+    $Result.temperatures = Get-S2Temperatures $Scpi; $Result.screen_hash = $screenHash
+}
 function Get-VnaManifest {
     return Read-VnaJson (Join-Path (Get-VnaControlRoot) 'commissioned.json')
+}
+function New-VnaControlAdvert {
+    param([string[]]$Methods)
+    # Protocol 2 (bench ops) is a superset of 1: the server still hands this agent v1 session commands.
+    return @{ version = 2; methods = @($Methods); ops = @($script:VnaControlOps) }
 }
 function Get-VnaControlCapability {
     param($Observation)
@@ -1904,7 +2927,7 @@ function Get-VnaControlCapability {
             if ($kit.method -ceq 'acm' -and $kit.registry_fingerprint -match '^[a-f0-9]{64}$' -and $kit.definition.serial) { $methods = @('acm'); break }
         }
     }
-    return @{ version = 1; methods = $methods }
+    return New-VnaControlAdvert $methods
 }
 function Invoke-VnaSessionApi {
     param([string]$Base, [string]$AuthToken, [string]$Path, $Body, [string]$Method = 'Get')
@@ -1970,6 +2993,10 @@ function Invoke-S2Command {
     # A pre-existing owner/fence means missing files do not prove an untouched instrument.
     if ($Preparation -and ((Test-Path -LiteralPath $OwnerPath) -or
         (Test-Path -LiteralPath (Join-Path (Get-VnaControlRoot) 'quarantine.json')))) { $Preparation.backup_saved = $null }
+    # Protocol 2 is a superset of 1; bench ops exist only in protocol 2 (docs/vna/bench-protocol-v2.md).
+    $protocol = if ($null -eq $Command.protocol_version) { 1 } else { [int]$Command.protocol_version }
+    if ($protocol -notin @(1,2)) { throw 'ВАЦ: неподдерживаемая версия протокола управления' }
+    if ($Command.op -cin $script:VnaControlOps -and $protocol -ne 2) { throw 'ВАЦ: операция рабочего места требует протокол управления версии 2' }
     $serial = Get-VnaSerial $Application
     if ($serial -cne $Command.instrument_serial) { throw 'ВАЦ: серийный номер прибора не соответствует сессии' }
     Assert-VnaLease $Command $Status
@@ -1988,9 +3015,20 @@ function Invoke-S2Command {
     $scpi = $Application.SCPI; $argsValue = $Command.args
     $owner = Read-VnaJson $OwnerPath
     if ($owner -and ($owner.session_id -cne $Command.session_id -or $owner.serial -cne $serial)) { throw 'ВАЦ: локальная копия принадлежит другой сессии; требуется сверка с ERP' }
-    if ($Command.op -ne 'prepare' -and -not $owner) { throw 'ВАЦ: исходное состояние не сохранено' }
+    # device_status only reads: it may run before prepare to show the station header.
+    if ($Command.op -cnotin @('prepare','device_status') -and -not $owner) { throw 'ВАЦ: исходное состояние не сохранено' }
+    if ($owner -and $owner.released -and $Command.op -cnotin @('abort','restore','device_status')) { throw 'ВАЦ: управление прибором в этой сессии уже завершено' }
     $result = @{ serial = $serial }
     $collect = 'SENSe(1).CORRection.COLLect'
+    if ($Command.op -cin $script:VnaControlOps) {
+        Invoke-S2BenchOp $Application $scpi $Command $owner $OwnerPath $serial $result
+        return $result
+    }
+    if ($Command.op -ceq 'capture' -and $protocol -eq 2) {
+        Assert-VnaEqual $argsValue.profile $owner.profile 'сохранённый профиль'
+        Invoke-S2CaptureV2 $Application $scpi $argsValue $owner $serial $result
+        return $result
+    }
     switch -CaseSensitive ($Command.op) {
         'prepare' {
             if ($owner) { throw 'ВАЦ: исходное состояние этой сессии уже сохранено' }
@@ -2010,7 +3048,7 @@ function Invoke-S2Command {
             $owner = [pscustomobject]@{ session_id = $Command.session_id; serial = $serial; backup_id = $backupId
                 state_path = $statePath; kit_path = $kitPath; slot = $slot; original = $original
                 state_hash = ''; kit_hash = ''; definition_hash = ''; calibration = $null; profile = $null; restored = $false
-                prepare_command_id = $Command.command_id }
+                prepare_command_id = $Command.command_id; screen_hash = $null; released = $false }
             # Reserve durable ownership before any state/kit store write, even if backup subsequently fails.
             Write-VnaJson $OwnerPath $owner
             if ($Preparation) { $Preparation.backup_saved = $null }
@@ -2323,12 +3361,14 @@ function Sync-VnaReceipts {
                 $receipt.command.instrument_serial -ceq $owner.serial -and $receipt.payload.error -and
                 $receipt.payload.backup_saved -is [bool] -and $receipt.payload.backup_saved -eq $false
         }
-        if (-not $owner.restored -and -not $untouched) { return }
+        # release (protocol 2) ends control like restore, leaving the ERP screen on the instrument.
+        $settled = $owner.restored -or $owner.released
+        if (-not $settled -and -not $untouched) { return }
         $status = Invoke-VnaSessionApi $Base $AuthToken ("/api/stock/vna/sessions/" + $owner.session_id)
         $prepareFailed = $untouched -and $status.state -ceq 'failed' -and
             @($status.commands | Where-Object { $_.command_id -ceq $owner.prepare_command_id -and $_.status -ceq 'failed' }).Count -eq 1
         if (-not $status.lease_held -and $status.session_id -ceq $owner.session_id -and $status.instrument_serial -ceq $owner.serial -and
-            (($owner.restored -and $status.state -in @('recorded','aborted','failed')) -or $prepareFailed)) {
+            (($settled -and $status.state -in @('recorded','aborted','failed')) -or $prepareFailed)) {
             # Keep private backup files and journals for diagnostics; release only the local ownership marker.
             Remove-Item -LiteralPath $ownerPath -Force
         }
