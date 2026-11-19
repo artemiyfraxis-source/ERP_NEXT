@@ -8,7 +8,8 @@ from uuid import uuid4
 from app.shared.events import AuditEvent
 from .application import AssignProductionCommand, ConcurrentProductionUpdate, _audit, _checked_names, assign_task, lock_reflow_projects
 from .domain import ProductionStatus, ProductionValidationError, restructured_operations
-from .cutting import KIND_NAMES, cutting_project_label, cutting_recipes, recipe_for_operation, recipe_kind
+from .cutting import (KIND_NAMES, TUBES, cutting_project_label, cutting_recipes, number, recipe_for_operation,
+                      recipe_kind)
 from .plan import normalize_project_number
 
 
@@ -236,12 +237,16 @@ def check_access(group, uow, actor):
             raise PermissionError("Группа содержит работу другой площадки")
 
 
-def locked_group(group_id, version, uow, actor, now):
+def locked_group(group_id, version, uow, actor, now, *, project_groups=False):
+    """Lock in the one order every cutting path uses: project → groups (by id) → tasks (by id). `project_groups` —
+    every group of the project (a refresh may move rows between them), otherwise only this one."""
     initial = uow.cutting.get(group_id)
     if initial is None:
         raise KeyError("Группа резки не найдена")
     # Follow the existing resource/project/task locking order, including the possible reflow scope.
     lock_reflow_projects(uow, (), now, projects=(initial.project_key,))
+    if project_groups:
+        lock_groups(uow, initial.project_key)
     group = uow.cutting.get(group_id, lock=True)
     if group.version != version:
         raise ConcurrentProductionUpdate("Группа изменилась — обновите список")
@@ -352,6 +357,8 @@ def plan_etk_refresh(group, members, cards, uow):
 
     `cards` maps task id -> (card_id, revision, document, card_version, norms) or an error text. A member whose new
     recipe differs from the group is not a problem any more: the refresh moves it to the group of its recipe.
+    norms None — the PF composition changed: the step carries recipe None and the refresh rebuilds that task in place
+    (`rebuild_task`, the same rules as the CLI restructure).
     """
     steps, problems = [], []
     for member in members:
@@ -359,6 +366,9 @@ def plan_etk_refresh(group, members, cards, uow):
         entry = cards.get(task.id)
         if entry is None or isinstance(entry, str):
             problems.append(f"{task.item}: {entry or 'нет выданной ЭТК'}")
+            continue
+        if needs_rebuild(entry):
+            steps.append((member, task, entry, None))
             continue
         document = entry[2]
         recipe, reason = recipe_for_operation(task.project, group.site, document, task.operations, member.operation_id)
@@ -369,6 +379,11 @@ def plan_etk_refresh(group, members, cards, uow):
     return steps, problems
 
 
+def needs_rebuild(entry):
+    """A refresh card entry whose PF composition changed (norms None): the task is rebuilt in place, not re-pinned."""
+    return not isinstance(entry, str) and len(entry) > 4 and entry[4] is None
+
+
 def _stale(member, task, entry):
     _card_id, revision, _document, card_version, _norms = entry
     return task.techcard_revision != revision or member.row_snapshot.get("validated_card_version") != card_version
@@ -377,21 +392,36 @@ def _stale(member, task, entry):
 def refresh_group_etk(group_id, version, cards, actor, now, uow):
     """Re-pin every active member to its current issued ETK in one transaction. Members keeping one recipe stay in the
     group (its id and number; the most common new recipe keeps it); a member whose recipe now differs moves to an open
-    unstarted group of that recipe in the project, or to a new one (owner 20.11 — instead of refusing the refresh)."""
+    unstarted group of that recipe in the project, or to a new one (owner 20.11 — instead of refusing the refresh).
+    A member whose PF composition changed (`needs_rebuild`) has its task rebuilt in place by the same `rebuild_task` as
+    the CLI restructure, and all its unstarted preparation PFs are regrouped; any refusal writes nothing."""
     with uow:
-        group = locked_group(group_id, version, uow, actor, now)
+        group = locked_group(group_id, version, uow, actor, now, project_groups=True)
         if group.state != "open" or uow.cutting.work(group.id):
             raise ProductionValidationError("Начатая группа работает по закреплённому снимку ЭТК — обновить её нельзя")
-        lock_groups(uow, group.project_key, exclude=group.id)
         members = uow.cutting.members(group.id)
         steps, problems = plan_etk_refresh(group, members, cards, uow)
         if problems:
             raise ProductionValidationError(
                 "Группа не обновлена: у этих КБ новая ЭТК не даёт рецепта резки — " + "; ".join(problems)
                 + ". Исправьте ЭТК или выдайте их отдельно («Выдать отдельно») и обновите остальные.")
+        rebuild = list({step[1].id: step for step in steps if step[3] is None}.values())
+        steps = [step for step in steps if step[3] is not None]
         todo = [item for item in steps if _stale(*item[:3])]
-        if not todo and {step[3].key for step in steps} <= {group.recipe_key}:
+        if not rebuild and not todo and {step[3].key for step in steps} <= {group.recipe_key}:
             return describe_group(group, uow)
+        homes, rebuilt_entries, rebuilt = {}, [], []
+        for _member, task, entry, _recipe in sorted(rebuild, key=lambda step: (step[1].item, step[1].number)):
+            updated, reason = rebuild_task(task, entry, uow, actor, now, homes)
+            if reason:
+                raise ProductionValidationError(f"Группа не обновлена: {task.item}: {reason}")
+            found, refused = task_regroup_entries(updated, entry[2], entry[3], uow, actor)
+            if not found:
+                raise ProductionValidationError(
+                    f"Группа не обновлена: у {task.item} новая ЭТК не даёт рецепта резки — "
+                    + ("; ".join(refused) or "нет ПФ подготовки") + ".")
+            rebuilt_entries.extend(found)
+            rebuilt.append({"task_id": str(updated.id), "item": updated.item, "refused": refused})
         tasks = {}
         for member, task, entry, recipe in todo:
             card_id, revision, _document, _card_version, norms = entry
@@ -406,22 +436,23 @@ def refresh_group_etk(group_id, version, cards, actor, now, uow):
             tasks[task.id] = task
         entries = [(tasks.get(task.id) or task, recipe, entry[2], entry[3]) for _member, task, entry, recipe in steps]
         before = group.version
-        moved = regroup(entries, uow, actor, now)
+        moved = regroup(entries + rebuilt_entries, uow, actor, now, homes=homes)
         group = uow.cutting.get(group.id)
         if group.version == before:
             group.version += 1
         audit(group, "etk_refreshed", uow, actor, now, tasks=[str(item[1].id) for item in todo],
-              moved=moved["moved"])
+              moved=moved["moved"], restructured=rebuilt)
         result = describe_group(group, uow)
         uow.commit()
         return result
 
 
-def lock_groups(uow, project_key, *, exclude=None):
-    """Lock every group of the project (by id) after the project lock: regrouping may move members between them."""
+def lock_groups(uow, project_key):
+    """Lock every group of the project (by id) after the project lock and before any task lock: regrouping may move
+    members between them."""
     key = normalize_project_number(project_key)
-    for group in sorted((g for g in uow.cutting.list() if normalize_project_number(g.project_key) == key
-                         and g.id != exclude), key=lambda g: str(g.id)):
+    for group in sorted((g for g in uow.cutting.list() if normalize_project_number(g.project_key) == key),
+                        key=lambda g: str(g.id)):
         uow.cutting.get(group.id, lock=True)
 
 
@@ -526,14 +557,74 @@ def restructure_reason(task, uow, kept=None):
     return ""
 
 
+def rebuild_task(task, entry, uow, actor, now, homes):
+    """Rebuild one locked, unstarted task on its reissued ETK in place: same task id, number, quantity, serials and
+    assignments (`restructured_operations`). Its PFs leave their groups first (recorded in `homes`, {PF id: group id})
+    so `regroup` can put the rebuilt PFs back. Returns (rebuilt task, "") or (task untouched, refusal reason).
+    Shared by the CLI restructure and «Обновить из ЭТК»; the caller holds the project, group and task locks."""
+    from .launchable import launch_operations, launch_route
+
+    card_id, revision, document = entry[:3]
+    reason = restructure_reason(task, uow)
+    operations = kept = None
+    if not reason:
+        try:
+            fresh = launch_operations(launch_route(document).steps, task.quantity)
+            operations, kept = restructured_operations(task.operations, fresh)
+        except ProductionValidationError as error:
+            reason = str(error)
+    reason = reason or restructure_reason(task, uow, kept)
+    if reason:
+        return task, reason
+    for operation in task.operations:
+        member = uow.cutting.for_operation(operation.id)
+        if member:
+            # Leave the old group first: the rebuilt PF is regrouped below (task_changed must not see it).
+            homes[operation.id] = member.group_id
+            member.state = "split"
+            uow.cutting.get(member.group_id).version += 1
+    before = [(op.stage, len(op.etk_ops)) for op in task.operations]
+    # Stage numbers are unique per task: park the old ones out of the way before the new route takes them.
+    uow.production.add(replace(task, operations=tuple(
+        replace(op, position=op.position + PARKED) for op in task.operations)))
+    uow.session.flush()
+    updated = task.restructure(operations, card_id, revision)
+    uow.production.add(updated)
+    _audit(updated, "production.restructured", actor, now, {
+        "techcard_id": str(card_id), "from_revision": task.techcard_revision, "revision": revision,
+        "operations": [[op.stage, len(op.etk_ops)] for op in updated.operations],
+        "before": before}, uow)
+    return updated, ""
+
+
+def task_regroup_entries(task, document, card_version, uow, actor):
+    """Regroup entries (task, recipe, document, card version) for every unstarted preparation PF of the task, and the
+    grouping refusals. PFs with work or in a started group stay where they are."""
+    try:
+        site = _site(task, min(task.operations, key=lambda op: op.position), uow, actor)
+    except (ProductionValidationError, PermissionError) as error:
+        return [], [str(error)]
+    recipes, refused = cutting_recipes(task.project, site, document, task.operations)
+    entries = []
+    for recipe in recipes:
+        operation = task.operation(recipe.operation_id)
+        member = uow.cutting.for_operation(operation.id)
+        if member is None and uow.cutting.execution_reason(operation):
+            continue
+        if member is not None:
+            group = uow.cutting.get(member.group_id)
+            if group.state != "open" or uow.cutting.work(group.id):
+                continue
+        entries.append((task, recipe, document, card_version))
+    return entries, [reason for _operation, reason in refused]
+
+
 def restructure_project(project, cards, actor, now, uow, *, task_ids=None):
     """Rebuild unstarted tasks of the project whose issued ETK changed (same task id, number, quantity, serials and
     assignments; `restructured_operations`) and regroup all their unstarted preparation PFs by kind and recipe.
 
     `cards` maps task id -> (card_id, revision, document, card_version[, ...]) of the issued ETK, or an error text.
     One transaction: the caller commits (apply) or leaves it uncommitted (dry run rolls back)."""
-    from .launchable import launch_operations, launch_route
-
     key = normalize_project_number(project)
     if not key:
         raise ProductionValidationError("Укажите проект")
@@ -553,64 +644,54 @@ def restructure_project(project, cards, actor, now, uow, *, task_ids=None):
         if entry is None or isinstance(entry, str):
             result["refused"].append({**identity, "reason": entry or "нет выданной ЭТК"})
             continue
-        card_id, revision, document, card_version = entry[:4]
+        _card_id, revision, document, card_version = entry[:4]
         if revision != task.techcard_revision:
-            reason = restructure_reason(task, uow)
-            operations = kept = None
-            if not reason:
-                try:
-                    fresh = launch_operations(launch_route(document).steps, task.quantity)
-                    operations, kept = restructured_operations(task.operations, fresh)
-                except ProductionValidationError as error:
-                    reason = str(error)
-            reason = reason or restructure_reason(task, uow, kept)
+            updated, reason = rebuild_task(task, entry, uow, actor, now, homes)
             if reason:
                 result["refused"].append({**identity, "reason": reason})
                 continue
-            for operation in task.operations:
-                member = uow.cutting.for_operation(operation.id)
-                if member:
-                    # Leave the old group first: the rebuilt PF is regrouped below (task_changed must not see it).
-                    homes[operation.id] = member.group_id
-                    member.state = "split"
-                    uow.cutting.get(member.group_id).version += 1
-            before = [(op.stage, len(op.etk_ops)) for op in task.operations]
-            # Stage numbers are unique per task: park the old ones out of the way before the new route takes them.
-            uow.production.add(replace(task, operations=tuple(
-                replace(op, position=op.position + PARKED) for op in task.operations)))
-            uow.session.flush()
-            updated = task.restructure(operations, card_id, revision)
-            uow.production.add(updated)
-            _audit(updated, "production.restructured", actor, now, {
-                "techcard_id": str(card_id), "from_revision": task.techcard_revision, "revision": revision,
-                "operations": [[op.stage, len(op.etk_ops)] for op in updated.operations],
-                "before": before}, uow)
             result["restructured"].append({**identity, "from_revision": task.techcard_revision, "revision": revision,
                                            "pf_before": len(task.operations), "pf_after": len(updated.operations)})
             task = updated
         else:
             result["unchanged"].append(identity)
-        try:
-            site = _site(task, min(task.operations, key=lambda op: op.position), uow, actor)
-        except (ProductionValidationError, PermissionError) as error:
-            result["refused"].append({**identity, "reason": f"группировка: {error}"})
-            continue
-        recipes, refused = cutting_recipes(task.project, site, document, task.operations)
-        for _operation, reason in refused:
-            result["refused"].append({**identity, "reason": f"группировка: {reason}"})
-        for recipe in recipes:
-            operation = task.operation(recipe.operation_id)
-            member = uow.cutting.for_operation(operation.id)
-            if member is None and uow.cutting.execution_reason(operation):
-                continue
-            if member is not None:
-                group = uow.cutting.get(member.group_id)
-                if group.state != "open" or uow.cutting.work(group.id):
-                    continue
-            entries.append((task, recipe, document, card_version))
+        found, refused = task_regroup_entries(task, document, card_version, uow, actor)
+        result["refused"].extend({**identity, "reason": f"группировка: {reason}"} for reason in refused)
+        entries.extend(found)
     moved = regroup(entries, uow, actor, now, homes=homes)
     result.update(groups=moved["groups"], moved=moved["moved"], cancelled=moved["cancelled"])
     return result
+
+
+def row_tubes(recipe, assembly_quantity):
+    """Tube pieces of one КБ row of a tubes group, from the group's frozen recipe: [{material, length_mm, quantity}]
+    for the row's whole assembly quantity, merged by material and length («Резка трубок»). Other kinds: []."""
+    if recipe_kind(recipe) != TUBES:
+        return []
+    pieces = {}
+    for op in recipe.get("operations") or []:
+        parameters = op.get("parameters") or {}
+        tube = parameters.get("tube")
+        if not tube:
+            continue
+        try:
+            cables = Decimal(number(recipe.get("cables_per_assembly") or 1))
+            groups = (op.get("fields") or {}).get("coaxProtectiveTubes") or []
+            if groups:  # per-assembly cut groups written into the issued card (protective tubes)
+                per = [(group.get("length"), Decimal(number(group.get("units")))) for group in groups]
+            elif tube.get("lengths"):  # protective tubes of an older card: one piece per label place
+                marks = tube.get("marks") or [{"place": place} for place in ("A", "B", "middle")]
+                per = [(tube["lengths"].get(mark.get("place")),
+                        Decimal(1) if mark.get("scope") == "assembly" else cables) for mark in marks]
+            else:
+                per = [(tube.get("length"), Decimal(number(parameters.get("units"))))]
+            found = [((str(tube.get("article") or ""), number(length)), units) for length, units in per]
+        except (ValueError, TypeError, AttributeError):
+            continue  # an incomplete snapshot never breaks the group view; the row just shows no tube data
+        for key, units in found:
+            pieces[key] = pieces.get(key, Decimal(0)) + units * assembly_quantity
+    return [{"material": material, "length_mm": length, "quantity": number(quantity)}
+            for (material, length), quantity in sorted(pieces.items(), key=lambda item: (item[0][0], Decimal(item[0][1])))]
 
 
 def describe_group(group, uow):
@@ -638,6 +719,7 @@ def describe_group(group, uow):
                      "assembly_quantity": member.assembly_quantity, "blank_quantity": str(member.blank_quantity),
                      "operation_quantity": str(target), **{k: v for k, v in member.row_snapshot.items()
                                                             if k not in {"document", "validated_card_version"}},
+                     "tubes": row_tubes(group.recipe, member.assembly_quantity),
                      "good": str(good), "defects": str(defects), "state": state, "membership_state": member.state,
                      "operator_ids": [str(i) for i in operation.operator_ids],
                      "planned_start": operation.planned_start.isoformat() if operation.planned_start else None,

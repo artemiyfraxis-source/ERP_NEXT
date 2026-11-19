@@ -1014,7 +1014,8 @@ def cutting_current_cards(group_id, uow_factory, techcards_factory):
 
 
 def cutting_refresh_cards(group_id, uow_factory, techcards_factory):
-    """Current issued ETK per active member task: (card id, revision, document, card version, norms) or an error text."""
+    """Current issued ETK per active member task: (card id, revision, document, card version, norms) or an error text.
+    norms None — a reissued ETK changed the PF composition: `refresh_group_etk` rebuilds that task in place."""
     if techcards_factory is None:
         raise HTTPException(503, "База техкарт не настроена")
     with uow_factory() as uow:
@@ -1031,6 +1032,9 @@ def cutting_refresh_cards(group_id, uow_factory, techcards_factory):
                 fresh = {step.position: [(item.position, item.code) for item in step.etk_ops] for step in steps}
                 own = {op.position: [(item.position, item.code) for item in op.etk_ops] for op in task.operations}
                 if fresh != own:
+                    if card.revision != task.techcard_revision:
+                        result[task.id] = (card.id, card.revision, card.document, card.version, None)
+                        continue
                     raise ProductionValidationError("состав ПФ или коды операций в новой ЭТК изменились")
             except ProductionValidationError as error:
                 result[task.id] = str(error)

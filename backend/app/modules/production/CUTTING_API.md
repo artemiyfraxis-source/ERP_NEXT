@@ -146,10 +146,17 @@ rows: [{id, task_id, operation_id, task_version, task_number, project, item, nam
         assembly_quantity, blank_quantity, operation_quantity, cables_per_assembly,
         cut_length_mm, labels, techcard_revision, good, defects,
         membership_state (active|split|cancelled),
+        tubes: [{material, length_mm, quantity}],
         state (waiting|assigned|started|done|split|cancelled),
         operator_ids, planned_start, planned_finish, norm_seconds,
         boxes: [{id, number, quantity}], etk_url}]
 ```
+
+`tubes` (owner 20.11, «Резка трубок»: КБ | Материал | Длина, мм | Шт) is filled only in `tubes` groups, from the
+group's frozen recipe: tube article, piece length and pieces for the row's whole assembly quantity, merged by material
+and length — protective tubes per cut group of the issued card (`coaxProtectiveTubes`; older cards: one piece per
+label place, per cable unless the mark is per assembly), plain tubes `tutLength` × `units` per assembly. `[]` in other
+kinds or when the snapshot lacks a positive length/count. `length_mm`/`quantity` are decimal strings.
 
 Decimal quantities are strings; assembly counts/norm seconds are integers. `operation_quantity` is the
 existing PF output quantity. For a kit of four cable blanks it may differ from `blank_quantity`.
@@ -174,10 +181,14 @@ All control actions require production edit permission and an optimistic `versio
   recomputes each member's recipe for its own PF and refreshes the member rows (cut length, labels). Since 20.11 a
   member whose new recipe differs is not refused: the most common new recipe keeps this group (id, number, positions;
   tie — the lowest row position), every other recipe moves its rows to an open unstarted group of the same project,
-  site, kind and recipe, or to a new explicit group; moved rows are `split` here (`regroup`). Still 422 with nothing
-  written: a member whose new ETK gives no recipe or whose PF composition changed (`cutting_refresh_cards` error text —
-  use the CLI restructure below). Already current group: no-op, version unchanged. Started/frozen group: 422. Group
-  views carry `etk_stale` (some member pinned older than the issued ETK).
+  site, kind and recipe, or to a new explicit group; moved rows are `split` here (`regroup`). Since 20.11 (T2b) a member
+  whose reissued ETK changed the PF composition (`cutting_refresh_cards` gives norms `None`) is rebuilt in place by the
+  same `rebuild_task` as the CLI restructure below, and all its unstarted preparation PFs are regrouped by kind (the
+  cut keeps this group's id and number). Same refusal rules and messages as the CLI (work/output/box on the task, a PF
+  in a started group, a disappearing PF with group history or equipment); any refusal is 422 with nothing written.
+  Still 422 with nothing written: a member whose new ETK gives no recipe at all. Already current group: no-op, version
+  unchanged. Started/frozen group: 422. Group views carry `etk_stale` (some member pinned older than the issued ETK).
+  Lock order: project → every group of the project (by id) → member tasks (by id).
   CLI: `python -m app.workflows.cutting_group_existing --project X --refresh-etk [--apply]` (dry-run by default).
 - Re-pinning a grouped task (`tasks/{id}/norms/refresh`) is no longer refused while its group is open and has no work
   session: the row keeps its frozen document (the group shows `etk_stale`, start stays blocked by the card-version
@@ -205,7 +216,7 @@ transaction.
 
 ## Restructure unstarted tasks in place (owner 20.11)
 
-`restructure_project` (CLI only — HTTP wiring of composition changes stays in `api.py`, outside this slice):
+`restructure_project` (whole project, CLI); per group over HTTP through `refresh-etk` above — both use `rebuild_task`:
 
 ```powershell
 .\.venv\Scripts\python -m app.workflows.cutting_group_existing --project '708К.' --restructure            # dry run
@@ -301,6 +312,12 @@ An identical key, actor-authorized performer, group, action and payload replays 
 before rejecting a stale version. A different payload/action/performer for that key returns 409.
 Other version/resource conflicts return 409, unauthorized membership/site returns 403, invalid state
 or quantities return 422. Group and child locks use the existing resource/project/task lock order.
+
+Lock order (T2b, every cutting path): project advisory lock → groups (`with_for_update`, sorted by id) → tasks (sorted
+by id). `locked_group` takes this group (refresh: every group of the project), restructure every project group;
+launch late-join locks candidate groups by id; `task_changed` re-locks the task's groups by id (already held on cutting
+paths; elsewhere the project lock taken first serializes it). Verified by a lock-sequence spy on SQLite only —
+PostgreSQL concurrency is unproven.
 
 Group start selects no material. Optional material selections belong to each submission row and
 consume only that KB's own issued request's available balance, including ordinary session reservations.
