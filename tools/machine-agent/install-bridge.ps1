@@ -23,7 +23,8 @@ param(
 #
 # The task is registered from XML, not with a schtasks ONSTART schedule (/SC): that form keeps the default 72-hour execution
 # limit, so Windows would stop the bridge three days after boot (found on OB.019, 19.11.2026). The XML task runs as
-# SYSTEM (session 0, nothing on the operator's screen), hidden, without a time limit, restarts after a failure and is
+# SYSTEM and opens no window (session 0, nothing on the operator's screen; the task itself stays visible in Task
+# Scheduler, Hidden=false), without a time limit, restarts after a failure and is
 # re-run every 5 minutes as a watchdog (a second copy never starts: MultipleInstancesPolicy IgnoreNew).
 # Pass the token through a file the caller deletes afterwards (-Token (Get-Content file)): never type it on a command
 # line that is logged.

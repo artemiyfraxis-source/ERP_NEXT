@@ -31,7 +31,7 @@ param(
 #     itself is the queue: no line is lost while the network or ERP is down, a resend is deduplicated by ERP.
 # API token scope machine:report. The file is ASCII on purpose (OB.099 in Cyrillic is built from code points).
 $ErrorActionPreference = 'Stop'
-$script:AgentVersion = '1.0.1'
+$script:AgentVersion = '1.0.2'
 $script:Proto = 1
 $script:Inventory = [string][char]0x041E + [string][char]0x0411 + '.099.' + $Unit
 
@@ -245,7 +245,8 @@ function Read-MysqlCredential([string]$Path) {
     return @{ user = $user; password = $password }
 }
 
-# The press PC of OB.099.1 has MySQL 8.0 on D: (D:\Program Files\MySQL\MySQL Server 8.0\bin, checked 19.11.2026).
+# The installer pins -MysqlExe (install-ob099.ps1 resolves it once from the MySQL service). The search below is for a
+# manual run only. The press PC of OB.099.1 has MySQL 8.0 on D: (D:\Program Files\MySQL\MySQL Server 8.0\bin, 19.11.2026).
 function Find-MysqlExe {
     if ($MysqlExe) { return $MysqlExe }
     foreach ($drive in 'C', 'D') {
@@ -255,12 +256,66 @@ function Find-MysqlExe {
     throw 'mysql.exe not found (set -MysqlExe)'
 }
 
+# The agent runs as SYSTEM and hands mysql.exe the MySQL password: it must not start a program ordinary users could
+# replace. Users, Authenticated Users, Everyone and INTERACTIVE may only read the exe and every folder above it.
+$script:UserSids = @('S-1-5-32-545', 'S-1-5-11', 'S-1-1-0', 'S-1-5-4')
+# Rights that let a user replace the exe or a folder of its path: write/append data (exe), add files (its folder: DLLs
+# next to it), delete, delete children, change permissions or owner, generic write/all.
+$script:ExeWriteMask = 0x500D0006
+$script:BinWriteMask = 0x500D0042
+$script:PathWriteMask = 0x500D0040
+# Russian: "Zhurnal avariy ne chitaetsya: obychnye polzovateli mogut menyat " + path (one warning per hour; the vendor's
+# MySQL rights are not changed by the agent, an administrator closes them).
+$script:AclWarning = [regex]::Unescape('\u0416\u0443\u0440\u043d\u0430\u043b \u0430\u0432\u0430\u0440\u0438\u0439 \u043d\u0435 \u0447\u0438\u0442\u0430\u0435\u0442\u0441\u044f: \u043e\u0431\u044b\u0447\u043d\u044b\u0435 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0438 \u043c\u043e\u0433\u0443\u0442 \u043c\u0435\u043d\u044f\u0442\u044c ')
+$script:NextAclWarning = [datetime]::MinValue
+
+# Allow rules of a file or folder that apply to the object itself: @{ sid; rights (unsigned) }.
+function Get-PathAccessRules([string]$Path) {
+    $rules = @()
+    foreach ($rule in (Get-Acl -LiteralPath $Path).GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+        if ($rule.AccessControlType -ne 'Allow') { continue }
+        if (($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
+        $rights = [int64][int]$rule.FileSystemRights
+        if ($rights -lt 0) { $rights += 4294967296 }
+        $rules += @{ sid = $rule.IdentityReference.Value; rights = $rights }
+    }
+    return ,$rules
+}
+
+# '' when only administrators can change $Exe and its folders, else the first path ordinary users can change.
+function Get-UserWritablePath([string]$Exe) {
+    $path = $Exe; $mask = $script:ExeWriteMask; $level = 0
+    while ($path) {
+        foreach ($rule in (Get-PathAccessRules $path)) {
+            if ($script:UserSids -contains $rule['sid'] -and ($rule['rights'] -band $mask)) { return $path }
+        }
+        $level++
+        $mask = if ($level -eq 1) { $script:BinWriteMask } else { $script:PathWriteMask }
+        $path = [IO.Path]::GetDirectoryName($path)
+    }
+    return ''
+}
+
+# True when mysql.exe may be run; otherwise the alarm read is skipped with one warning in the log per hour.
+function Test-MysqlExeTrusted([datetime]$Now) {
+    try { $open = Get-UserWritablePath (Find-MysqlExe) } catch { $open = $_.Exception.Message }
+    if (-not $open) { return $true }
+    if ($Now -ge $script:NextAclWarning) {
+        Write-AgentLog ($script:AclWarning + $open)
+        $script:NextAclWarning = $Now.AddHours(1)
+    }
+    return $false
+}
+
 # Rows of one SELECT as arrays of fields (mysql --batch: tab-separated, \t \n \\ escaped).
 function Invoke-MysqlSelect([string]$Sql) {
     Assert-ReadOnlySql $Sql
+    $exe = Find-MysqlExe
+    $open = Get-UserWritablePath $exe
+    if ($open) { throw ('mysql.exe is not run: ordinary users can change ' + $open) }
     $credential = Read-MysqlCredential $MysqlCredPath
     $info = New-Object System.Diagnostics.ProcessStartInfo
-    $info.FileName = (Find-MysqlExe)
+    $info.FileName = $exe
     $info.Arguments = '--host=127.0.0.1 --port=3306 --user=' + $credential['user'] + ' --batch --skip-column-names' +
         ' --default-character-set=utf8mb4 --database=bzw2.5 --execute="SET SESSION TRANSACTION READ ONLY; ' + $Sql + '"'
     $info.EnvironmentVariables['MYSQL_PWD'] = $credential['password']
@@ -389,8 +444,12 @@ function Sync-Events($State, [string]$Token, [bool]$WithAlarms) {
         if ($batch['skipped']) { Write-AgentLog ('skipped ' + $batch['skipped'] + ' non-crimp lines in ' + $batch['day']) }
         $alarmBatch = @{ alarms = @(); after = $State.alarm_after }
         if (-not $alarmsDone) {
-            try { $alarmBatch = Read-AlarmBatch $State.alarm_after } catch { Write-AgentLog ('alarms: ' + $_.Exception.Message) }
-            $alarmsDone = $alarmBatch['alarms'].Count -lt $script:BatchMax
+            if (Test-MysqlExeTrusted (Get-Date)) {
+                try { $alarmBatch = Read-AlarmBatch $State.alarm_after } catch { Write-AgentLog ('alarms: ' + $_.Exception.Message) }
+                $alarmsDone = $alarmBatch['alarms'].Count -lt $script:BatchMax
+            } else {
+                $alarmsDone = $true
+            }
         }
         $moved = ($batch['day'] -ne $State.day) -or ($batch['offset'] -ne $State.offset) -or ($alarmBatch['after'] -ne $State.alarm_after)
         if (-not $moved) { return $true }

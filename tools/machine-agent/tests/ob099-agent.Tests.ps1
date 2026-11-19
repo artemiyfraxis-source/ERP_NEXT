@@ -174,6 +174,55 @@ Describe 'alarm journal' {
         Mock Get-ChildItem { [pscustomobject]@{ FullName = 'D:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe' } } -ParameterFilter { $Path -like 'D:*' }
         Find-MysqlExe | Should Be 'D:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe'
     }
+    It 'uses the pinned -MysqlExe without searching' {
+        $MysqlExe = 'E:\pinned\mysql.exe'
+        Mock Get-ChildItem { throw 'searched' }
+        Find-MysqlExe | Should Be 'E:\pinned\mysql.exe'
+        Assert-MockCalled Get-ChildItem -Times 0 -Exactly -Scope It
+    }
+}
+
+Describe 'mysql.exe runs as SYSTEM only when ordinary users cannot change it' {
+    $exe = 'D:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe'
+    $admins = @{ sid = 'S-1-5-32-544'; rights = 0x1F01FF }
+    $usersRead = @{ sid = 'S-1-5-32-545'; rights = 0x1200A9 }
+    $authModify = @{ sid = 'S-1-5-11'; rights = 0x1301BF }
+    $authCreateFolders = @{ sid = 'S-1-5-11'; rights = 0x4 }
+    It 'trusts a path that users can only read (a drive root may let them create folders)' {
+        Mock Get-PathAccessRules { if ($Path -eq 'D:\') { ,@($admins, $usersRead, $authCreateFolders) } else { ,@($admins, $usersRead) } }
+        Get-UserWritablePath $exe | Should Be ''
+    }
+    It 'names the first folder ordinary users can change (D: of the press PC: Authenticated Users Modify)' {
+        Mock Get-PathAccessRules { if ($Path -like 'D:\Program Files*') { ,@($admins, $usersRead) } else { ,@($admins, $authModify) } }
+        Get-UserWritablePath $exe | Should Be 'D:\'
+        Mock Get-PathAccessRules { ,@($admins, $usersRead, $authModify) }
+        Get-UserWritablePath $exe | Should Be $exe
+    }
+    It 'refuses a bin folder where users can add files (DLLs next to the exe)' {
+        Mock Get-PathAccessRules { if ($Path -like '*\bin') { ,@($admins, @{ sid = 'S-1-1-0'; rights = 0x2 }) } else { ,@($admins, $usersRead) } }
+        Get-UserWritablePath $exe | Should Be 'D:\Program Files\MySQL\MySQL Server 8.0\bin'
+    }
+    It 'skips the alarm read with one warning per hour and never starts mysql.exe' {
+        $MysqlExe = $exe
+        Mock Get-PathAccessRules { ,@($admins, $authModify) }
+        Mock Write-AgentLog { }
+        Mock Read-AlarmBatch { throw 'must not read' }
+        Mock Send-Json { 200 }
+        Mock Get-Date { [datetime]'2026-11-22 10:00:00' }
+        $script:NextAclWarning = [datetime]::MinValue
+        Test-MysqlExeTrusted ([datetime]'2026-11-22 10:00:00') | Should Be $false
+        Test-MysqlExeTrusted ([datetime]'2026-11-22 10:30:00') | Should Be $false
+        Assert-MockCalled Write-AgentLog -Times 1 -Exactly -Scope It
+        Test-MysqlExeTrusted ([datetime]'2026-11-22 11:00:00') | Should Be $false
+        Assert-MockCalled Write-AgentLog -Times 2 -Exactly -Scope It
+        $state = @{ day = '20261122'; offset = 0L; alarm_after = '2026-11-21 23:59:59' }
+        Sync-Events $state 'token' $true | Should Be $true
+        Assert-MockCalled Read-AlarmBatch -Times 0 -Exactly -Scope It
+        { Invoke-MysqlSelect 'SELECT 1' } | Should Throw
+    }
+    It 'warns in Russian' {
+        $script:AclWarning | Should Match ('^' + [string][char]0x0416)
+    }
 }
 
 Describe 'sync and report' {
@@ -181,6 +230,7 @@ Describe 'sync and report' {
         $path = Join-Path $logs '20261122.txt'
         [IO.File]::WriteAllText($path, $line1 + "`n" + $line2 + "`n", $utf8)
         Mock Get-Date { [datetime]'2026-11-22 10:00:00' }
+        Mock Test-MysqlExeTrusted { $true }
         Mock Read-AlarmBatch { @{ alarms = @(@{ key = 'k'; at = '2026-11-22T09:00:00+03:00'; text = 'Device not reset' }); after = '2026-11-22 09:00:00' } }
         Mock Send-Json { 503 }
         $state = @{ day = '20261122'; offset = 0L; alarm_after = '2026-11-21 23:59:59' }
