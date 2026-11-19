@@ -888,3 +888,22 @@ it("opens a deep-linked tab and follows keyboard and browser navigation", async 
   fireEvent.popState(window);
   expect(screen.getByRole("tab", { name: "Брак · 0", selected: true })).toBeInTheDocument();
 });
+
+it("shows «ВАЦ — рабочее место» only when the server answers the bench state", async () => {
+  qualityFetch();
+  const { unmount } = render(<QualityPage principal={qc} />);
+  expect(await screen.findByRole("tab", { name: "Средства измерения" })).toBeInTheDocument();
+  await waitFor(() => expect(vi.mocked(globalThis.fetch).mock.calls.some(([input]) => String(input) === "/api/production/vna-bench/state")).toBe(true));
+  expect(screen.queryByRole("tab", { name: "ВАЦ — рабочее место" })).not.toBeInTheDocument();
+  unmount();
+  vi.restoreAllMocks();
+
+  const bench = { device: { pc_name: "ОТК-121", agent_online: true, agent_version: "2.10.0", instrument_number: "СИ.002", instrument_id: null,
+    model: "Planar S50180", serial: "26030095", s2vna_ready: true, warmup_min: 60, temperatures: null, acm: null, refusal: null, read_at: null },
+  calibration: { valid: false, calibrated_at: null, valid_until: null, reason: "Калибровки нет", temperatures: null }, due: [], session: null };
+  qualityFetch({ get: (path) => (path === "/api/production/vna-bench/state" ? json(bench) : null) });
+  render(<QualityPage principal={qc} />);
+  fireEvent.click(await screen.findByRole("tab", { name: "ВАЦ — рабочее место" }));
+  expect(await screen.findByText("Калибровки нет")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Начать сеанс" })).toBeEnabled();
+});

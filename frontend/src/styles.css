@@ -5412,3 +5412,54 @@ a.button-link { display: inline-block; text-decoration: none; text-align: center
 .item-delivery-groups { display: grid; gap: 8px; margin-bottom: 12px; }
 .item-delivery-groups > div { display: grid; gap: 4px; padding: 8px 12px; background: var(--accent); border-radius: 4px; overflow-wrap: anywhere; }
 @media (pointer: coarse) { .item-delivery-actions .small, .item-delivery-editor button, .item-delivery-editor select { min-height: 40px; } }
+
+/* «ОТК → ВАЦ — рабочее место» (VnaBench.tsx): шапка прибора, шаги сеанса, объект, проверки. */
+.vna-bench { display: grid; gap: 12px; min-width: 0; }
+.vna-bench .panel { padding: 12px 16px; min-width: 0; }
+.vna-bench .panel > h2:first-child { padding: 0; }
+.vna-bench h2 { margin: 0 0 8px; font-size: 15px; font-weight: 500; }
+.vna-bench h3 { margin: 0 0 8px; font-size: 14px; font-weight: 500; }
+.vna-bench p { margin: 0 0 8px; }
+.vna-bench .num { font-variant-numeric: tabular-nums; }
+.vna-bench .muted-text { color: var(--muted-foreground); font-size: 13px; }
+.vna-bench .seg-tabs { justify-self: start; margin: 0; }
+.vna-bench-facts { display: flex; flex-wrap: wrap; gap: 8px 32px; margin: 0; }
+.vna-bench-facts dt, .vna-bench-plan dt { color: var(--muted-foreground); font-size: 12px; }
+.vna-bench-facts dd, .vna-bench-plan dd { margin: 0; font-size: 14px; font-variant-numeric: tabular-nums; }
+.vna-bench-head .warning-inline { margin-top: 8px; }
+.vna-bench-command { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--accent); font-size: 13px; }
+.vna-bench-steps-panel { display: grid; gap: 12px; }
+.vna-bench-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; }
+.vna-bench-steps li { display: grid; align-content: start; gap: 4px; padding: 4px 12px; border-left: 1px solid var(--border); font-size: 13px; }
+.vna-bench-steps li:first-child { border-left: 0; padding-left: 0; }
+.vna-bench-steps li.current .vna-bench-step-no { background: var(--primary); color: var(--primary-foreground); }
+.vna-bench-step-no { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 24px; height: 24px; border-radius: 999px; background: var(--accent); color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.vna-bench-step-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.vna-bench-hint { max-width: 960px; color: var(--foreground); font-size: 13px; line-height: 1.45; }
+.vna-bench-find { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-bottom: 8px; }
+.vna-bench-find label { display: grid; gap: 4px; font-size: 12px; color: var(--muted-foreground); }
+.vna-bench-find input { width: min(420px, 80vw); }
+.vna-bench-candidates { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; padding: 0; }
+.vna-bench-candidates button.on { border-color: var(--primary); color: var(--primary); }
+.vna-bench-target { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.vna-bench-plan { display: flex; flex-wrap: wrap; gap: 8px 32px; margin: 0; }
+.vna-bench-plan .wide { flex-basis: 100%; }
+.vna-bench-result { display: grid; gap: 8px; }
+.vna-bench-verdict { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 14px; }
+.vna-bench-verdict .status-chip { height: 24px; line-height: 24px; font-size: 13px; }
+.vna-bench-prompt { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-left: 3px solid var(--primary); border-radius: 4px; background: var(--accent); font-size: 13px; line-height: 1.45; }
+.vna-bench-prompt > span, .vna-bench-prompt > strong { flex: 1 1 480px; }
+.vna-bench-result .vswr-chart { max-width: 1100px; }
+.vna-bench table { width: auto; justify-self: start; border-collapse: collapse; font-size: 13px; }
+.vna-bench th { padding: 4px 12px 4px 0; color: var(--muted-foreground); font-size: 12px; font-weight: 500; text-align: left; border-bottom: 1px solid var(--border); }
+.vna-bench td { padding: 4px 12px 4px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+.vna-bench th.num, .vna-bench td.num { text-align: right; }
+.vna-bench td.wrap { min-width: 280px; max-width: 560px; white-space: normal; }
+.vna-bench td.result { white-space: normal; }
+.vna-bench td strong { display: inline; }
+.vna-bench tr.current td { background: color-mix(in srgb, var(--primary) 8%, var(--card)); }
+.vna-bench-check-list { margin-bottom: 12px; }
+.vna-bench-active-check { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.vna-bench-close { margin-top: 0; }
+@media (max-width: 1100px) { .vna-bench-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 8px; } .vna-bench-steps li:nth-child(3) { border-left: 0; padding-left: 0; } }
+@media (pointer: coarse) { .vna-bench button { min-height: 40px; } }

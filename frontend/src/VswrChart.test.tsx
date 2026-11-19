@@ -36,3 +36,13 @@ it("says so when the file has no points, and exposes the chart to assistive tech
   rerender(<VswrChart trace={trace} normMax={2.06} />);
   expect(screen.getByRole("img", { name: "График КСВН по частоте, норма не более 2,06" })).toBeInTheDocument();
 });
+
+it("draws the «norm ± U» band and a fine scale for instrument norms near 1,06", () => {
+  const svg = vswrChartSvg({ trace: [{ mhz: 10, vswr: 1.01 }, { mhz: 17200, vswr: 1.065 }], normMax: 1.06, uncertainty: 0.012, fineScale: true });
+  expect(svg).toContain("Норма ± U 0,012");
+  expect(svg).toContain('fill="#f4d7d7"');
+  expect(svg).toContain(">1,1<");
+  expect(svg).not.toContain(">1,5<");
+  expect(vswrChartSvg({ trace: [{ mhz: 10, vswr: 1.065 }], normMax: 1.06, fineScale: true, maxVswr: 1.065, maxMhz: 10 })).toContain("Максимум 1,065 на 10");
+  expect(vswrChartSvg({ trace, normMax: 2.06 })).not.toContain("Норма ± U");
+});
