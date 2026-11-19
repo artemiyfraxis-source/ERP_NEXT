@@ -54,7 +54,7 @@ it.each([404, 403, 503])("explains unavailable setup deep links (%s) without fet
   await waitFor(() => expect(requests.filter(path => path.endsWith("/equipment-setup/viewer"))).toHaveLength(2));
 });
 
-it("opens server-approved setup for the viewed employee without inferring assignment rights from admin", async () => {
+it("opens «Оборудование» for the old setup link of a person who sees it", async () => {
   const viewed = as("admin", {}, { viewing: { viewer: { id: "v", name: "Другой сотрудник" }, until: null } });
   vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
     const path = String(input);
@@ -66,10 +66,9 @@ it("opens server-approved setup for the viewed employee without inferring assign
   });
   window.history.replaceState({}, "", "/?section=equipmentsetup");
   render(<App />);
-  expect(await screen.findByText("Нет доступных заданий наладки. Мастер может назначить выданную операцию.")).toBeInTheDocument();
-  expect(screen.getByText("ЖУК")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Назначить наладку" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Наладка оборудования" })).toBeInTheDocument();
+  // «Наладка оборудования» is a part of «Оборудование» (owner 19.11.2026): its old link opens «Оборудование».
+  expect(await screen.findByRole("heading", { name: "Оборудование" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Наладка оборудования" })).not.toBeInTheDocument();
 });
 
 it("discards setup discovery from the previous principal when admin mode changes", async () => {

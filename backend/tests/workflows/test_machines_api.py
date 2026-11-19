@@ -25,13 +25,14 @@ WORDS = {"20": 2, "22": 300, "23": 0, "26": 10, "27": 0, "32": 0x7EF4, "33": 0, 
          "940": 0x4544, "941": 0x2046, **{str(address): 0 for address in range(942, 955)}, "1280": 3}
 
 
-def _unit(session, inventory, name):
+def _unit(session, inventory, name, **extra):
     unit_id, model_id = uuid4(), uuid4()
     session.add_all([
         EquipmentModelRow(id=model_id),
         EquipmentUnitRow(id=unit_id, catalog="ob", model_id=model_id, ob_id=unit_id),
         EquipmentMachineRow(id=unit_id, tab="ob", equipment_model_id=model_id, display_text=name, normalized_search="",
-                            source_sheet="", sort_key="", fields={"Инв. номер": inventory, "Наименование": name}),
+                            source_sheet="", sort_key="",
+                            fields={"Инв. номер": inventory, "Наименование": name, **extra}),
     ])
     return unit_id
 
@@ -39,13 +40,16 @@ def _unit(session, inventory, name):
 @pytest.fixture
 def machines_api(tokens_api):
     sessions, clock = tokens_api
+    from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
     app.state.production_uow_factory = lambda: SqlAlchemyProductionUnitOfWork(sessions)
+    app.state.references_uow_factory = lambda: SqlAlchemyReferencesUnitOfWork(sessions)
     with sessions.begin() as session:
         ob019 = _unit(session, "ОБ.019", "Автомат резки и зачистки провода с лазерной маркировкой")
         ob101 = _unit(session, "ОБ.101", "Godex EZ2350i")
     admin = _login("admin")
     yield sessions, clock, admin, ob019, ob101
     del app.state.production_uow_factory
+    del app.state.references_uow_factory
 
 
 def _bridge(admin, name="Мост ОБ.019", scopes=("machine:report",)):
@@ -399,3 +403,171 @@ def test_the_card_of_a_godex_shows_its_queue_profiles_and_print_journal(machines
     assert [item["text"] for item in card["journal"]] == ["Этикетка 2 · В очереди", "Этикетка 1 · Передано принтеру"] \
         or [item["text"] for item in card["journal"]] == ["Этикетка 1 · Передано принтеру", "Этикетка 2 · В очереди"]
     assert card["connection"]["pc"] == "SK-20250818JOKI" and card["connection"]["extra"] == [["Принтер", "Godex EZ2350i"]]
+
+
+def test_the_screen_shows_ticked_machines_and_every_agent_linked_one(machines_api):
+    """Owner 19.11: «просто галочку для вытягивания» — a БД.ОБ machine is on «Оборудование» when its checkbox
+    «Показывать в «Оборудовании»» is on, or when an ERP agent reaches it (whatever the checkbox). СИ never. Every tile
+    carries the article, site, operations and family; ОБ.101's printer agent is its link."""
+    from app.modules.references.infrastructure import EquipmentMeasuringRow
+    sessions, clock, admin, ob019, ob101 = machines_api
+    now = clock.now
+    with sessions.begin() as session:
+        twist = _unit(session, "ОБ.005", "Полуавтомат для скрутки проводов", **{
+            "Артикул": "SR-W01", "Расположение": "Цар", "Операции": "Свивка"})
+        solder = _unit(session, "ОБ.070.1", "Станция паяльная термовоздушная", **{
+            "Артикул": "8620DX-Pro", "Расположение": "Жук", "Операции": "Пайка, Усадка"})
+        bath = _unit(session, "ОБ.017", "Ванна ультразвуковая 10 л с нагревом", **{"Артикул": "VBS-10DS"})
+        session.flush()
+        for unit_id in (twist, solder):
+            session.get(EquipmentMachineRow, unit_id).show_in_equipment = True
+        unit_id, model_id = uuid4(), uuid4()
+        session.add_all([EquipmentModelRow(id=model_id),
+                         EquipmentUnitRow(id=unit_id, catalog="ob_measuring", model_id=model_id, ob_measuring_id=unit_id),
+                         EquipmentMeasuringRow(id=unit_id, tab="ob_measuring", equipment_model_id=model_id,
+                                               display_text="Микрометр", normalized_search="", source_sheet="", sort_key="",
+                                               fields={"Инв. номер": "СИ.110", "Наименование": "Микрометр",
+                                                       "Артикул": "EW-2550"})])
+        _agent(session, "godex-pc", "Цех", "2.9.2", now, ip_lan="192.168.1.70")
+        session.add(PrinterRow(machine_id="godex-pc", name="Godex EZ2350i", driver="Godex", port="USB001",
+                               kind="gdi_png", present=True, last_seen=now))
+        session.flush()
+        session.add(MarkingBindingRow(equipment_id=ob101, version=1, machine_id="godex-pc", printer="Godex EZ2350i"))
+    body = admin.get(LIST).json()
+    assert body["families"] == ["Резка и зачистка", "Опрессовка", "Пайка и усадка", "Маркировка", "Прочее оборудование"]
+    machines = {row["inventory"]: row for row in body["rows"] if row["kind"] == "machine"}
+    # ОБ.017 is not ticked; СИ.110 is no machine; ОБ.019 / ОБ.094 wait for their bridge; ОБ.101 has an agent.
+    assert sorted(machines) == ["ОБ.005", "ОБ.019", "ОБ.070.1", "ОБ.094", "ОБ.101"]
+    row = machines["ОБ.005"]
+    assert (row["article"], row["site"], row["operations"], row["family"]) == ("SR-W01", "ЦАР", ["Свивка"], "Резка и зачистка")
+    assert row["link"] == {"code": "not_connected", "text": "Нет подключения к ERP", "tone": "neutral"}
+    assert row["equipment_id"] == str(twist) and row["card"] is False and row["controlled"] is False
+    assert (machines["ОБ.070.1"]["site"], machines["ОБ.070.1"]["family"]) == ("ЖУК", "Пайка и усадка")
+    assert machines["ОБ.019"]["controlled"] is False and machines["ОБ.019"]["link"]["code"] == "not_installed"
+    marking = machines["ОБ.101"]
+    assert (marking["link"]["text"], marking["pc"], marking["equipment_id"], marking["controlled"]) == (
+        "На связи", "Цех", str(ob101), True)
+    assert [row["inventory"] for row in body["rows"] if row["kind"] == "printer"] == ["ОБ.101"]
+    # The bridge of ОБ.019 reports → «С управлением», with or without the checkbox.
+    assert _report(_bridge(admin)).status_code == 200
+    linked = {row["inventory"]: row for row in admin.get(LIST).json()["rows"] if row["kind"] == "machine"}["ОБ.019"]
+    assert linked["controlled"] is True and linked["card"] is True
+
+    # The checkbox is changed from БД.ОБ (edit right, journaled) and the screen follows.
+    shown = admin.put(f"/api/references/equipment/{bath}/shown", json={"shown": True}, headers=_csrf(admin))
+    assert shown.status_code == 200, shown.text
+    assert "ОБ.017" in {row["inventory"] for row in admin.get(LIST).json()["rows"]}
+    assert str(bath) in admin.get("/api/references/equipment-shown").json()["ids"]
+    assert admin.put(f"/api/references/equipment/{twist}/shown", json={"shown": False}, headers=_csrf(admin)).status_code == 200
+    assert "ОБ.005" not in {row["inventory"] for row in admin.get(LIST).json()["rows"]}
+    with sessions() as session:
+        events = session.scalars(select(AuditEventRow).where(AuditEventRow.event_type == "references.equipment_shown")).all()
+        assert sorted(event.details["shown"] for event in events) == ["да", "нет"]
+    # A СИ has no such checkbox.
+    assert admin.put(f"/api/references/equipment/{unit_id}/shown", json={"shown": True},
+                     headers=_csrf(admin)).status_code == 404
+
+
+def test_tiles_carry_the_setup_class_and_wait_for_setup_until_it_is_recorded(machines_api):
+    """«Требует наладки» comes from the setup model (independent of the checkbox); «Ждёт наладки» — an open setup task
+    no configuration was recorded for; «Настроено по заданию» clears it, «Настроено вручную» needs a reason."""
+    from datetime import timedelta as delta
+    from app.modules.equipment_setup.infrastructure import SetupTaskRow
+    from app.modules.equipment_setup.recipe_infrastructure import RecipeVersionRow
+    from app.modules.equipment_setup.setup_model_infrastructure import (SetupConfigurationRow, SetupModelParameterRow,
+                                                                        SetupModelRow)
+    sessions, clock, admin, ob019, _ = machines_api
+    now = clock.now
+    with sessions.begin() as session:
+        model_id = session.get(EquipmentUnitRow, ob019).model_id
+        session.add(SetupModelRow(model_id=model_id, requires_setup="full", updated_at=now, version=1))
+        session.flush()
+        session.add(SetupModelParameterRow(model_id=model_id, param_key="strip_mm", position=0, label="Зачистка",
+                                           unit="мм", source="etk", source_field="Зачистка А"))
+        recipe = uuid4()
+        session.add(RecipeVersionRow(recipe_id=recipe, version=1, machine_id=ob019, title="Рецепт", geometry=[],
+                                     panel_settings=[], source="тест", created_by=uuid4(), created_at=now))
+        session.flush()
+        task = uuid4()
+        session.add(SetupTaskRow(id=task, version=1, status="New", technician_id=uuid4(), machine_id=ob019,
+                                 recipe_id=recipe, recipe_version=1, created_at=now, updated_at=now,
+                                 snapshot={"operation": {"etk_position": 3}, "planned_start": now.isoformat(),
+                                           "planned_finish": (now + delta(hours=1)).isoformat()}))
+    row = {r["inventory"]: r for r in admin.get(LIST).json()["rows"]}["ОБ.019"]
+    assert row["setup"] == {"code": "full", "label": "полная"} and row["pending_setup"] == 1
+    card = admin.get("/api/production/setup-model/ОБ.019").json()
+    assert [(item["id"], item["status"], item["operation"], item["configured"]) for item in card["open_tasks"]] == [
+        (str(task), "Назначена", "ЭТК 3", False)]
+    url = "/api/production/setup-model/ОБ.019/configuration"
+    manual = admin.post(url, json={"expected_version": 0, "values": {"strip_mm": "5"}}, headers=_csrf(admin))
+    assert manual.status_code == 422 and "причину" in manual.json()["detail"]
+    stray = admin.post(url, json={"expected_version": 0, "task_id": str(task), "values": {"length": "5"}},
+                       headers=_csrf(admin))
+    assert stray.status_code == 422
+    done = admin.post(url, json={"expected_version": 0, "task_id": str(task), "values": {"strip_mm": "5,5"}},
+                      headers=_csrf(admin))
+    assert done.status_code == 200, done.text
+    assert done.json() == {"ok": True, "version": 1, "values": {"strip_mm": "5.5"}}
+    row = {r["inventory"]: r for r in admin.get(LIST).json()["rows"]}["ОБ.019"]
+    assert row["pending_setup"] == 0
+    stale = admin.post(url, json={"expected_version": 0, "values": {"strip_mm": "6"}, "reason": "смена ножа"},
+                       headers=_csrf(admin))
+    assert stale.status_code == 409
+    by_hand = admin.post(url, json={"expected_version": 1, "values": {"strip_mm": "6"}, "reason": "смена ножа"},
+                         headers=_csrf(admin))
+    assert by_hand.status_code == 200 and by_hand.json()["version"] == 2
+    card = admin.get("/api/production/setup-model/ОБ.019").json()
+    assert card["configuration"]["values"] == {"strip_mm": "6"} and card["configuration"]["version"] == 2
+    assert [(item["reason"], item["values"]) for item in card["history"]] == [
+        ("смена ножа", {"strip_mm": "6"}), ("", {"strip_mm": "5.5"})]
+    assert card["open_tasks"][0]["configured"] is True
+    with sessions() as session:
+        assert session.get(SetupConfigurationRow, ob019).set_by_name
+
+
+def test_a_machine_without_a_setup_model_takes_free_values(machines_api):
+    sessions, clock, admin, _, _ = machines_api
+    with sessions.begin() as session:
+        _unit(session, "ОБ.025", "Машина бандажная для кабельных жгутов")
+    url = "/api/production/setup-model/ОБ.025/configuration"
+    answer = admin.post(url, json={"expected_version": 0, "values": {"Натяжение ленты": "3", "Лента": ""},
+                                   "reason": "новая лента"}, headers=_csrf(admin))
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["values"] == {"Натяжение ленты": "3"}
+    empty = admin.post(url, json={"expected_version": 1, "values": {}, "reason": "x"}, headers=_csrf(admin))
+    assert empty.status_code == 422
+
+
+def test_the_article_of_an_instrument_comes_from_its_si_card(machines_api):
+    from app.modules.references.infrastructure import EquipmentMeasuringRow
+    sessions, clock, admin, _, _ = machines_api
+    now = clock.now
+    with sessions.begin() as session:
+        _instrument(session, "СИ.001", "Arinst VNA-DL", "Arinst VL")
+        unit_id, model_id = uuid4(), uuid4()
+        session.add_all([EquipmentModelRow(id=model_id),
+                         EquipmentUnitRow(id=unit_id, catalog="ob_measuring", model_id=model_id, ob_measuring_id=unit_id),
+                         EquipmentMeasuringRow(id=unit_id, tab="ob_measuring", equipment_model_id=model_id,
+                                               display_text="ВАЦ", normalized_search="", source_sheet="", sort_key="",
+                                               fields={"Инв. номер": "СИ.001", "Артикул": "VNA-DL 1-8800 MHz"})])
+        _agent(session, "otk", "DESKTOP-PTA57QF", "2.9.7", now)
+        session.add(DeviceRow(machine_id="otk", kind="arinst", device_id="arinst", name="Arinst VNA-DL", present=True,
+                              last_seen=now))
+    [row] = [row for row in admin.get(LIST).json()["rows"] if row["kind"] == "device"]
+    assert (row["inventory"], row["article"]) == ("СИ.001", "VNA-DL 1-8800 MHz")
+
+
+@pytest.mark.parametrize("operations, name, family", [
+    (["Резка", "Резка с разделкой", "Резка с разделкой+ маркировка"], "Автомат", "Резка и зачистка"),
+    (["Автомат резка + опрессовка", "Лужение"], "Автомат", "Резка и зачистка"),
+    (["Опрессовка наконечников", "Опрессовка"], "Пресс", "Опрессовка"),
+    (["Ленточный обжим"], "Пресс", "Опрессовка"),
+    (["Пайка", "Монтаж корпуса"], "Установка", "Пайка и усадка"),
+    (["Монтаж маркировки"], "Полуавтомат", "Маркировка"),
+    ([], "Маркиратор флажковый", "Маркировка"),
+    ([], "Полуавтомат для снятия изоляции с проводов", "Резка и зачистка"),
+    (["Литье пластика"], "Машина литьевая", "Прочее оборудование"),
+    ([], "Принтер 3D экструзионный", "Прочее оборудование"),
+])
+def test_machine_family_by_operations_then_name(operations, name, family):
+    assert rules.machine_family(operations, name) == family

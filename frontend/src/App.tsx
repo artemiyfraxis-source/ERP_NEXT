@@ -309,7 +309,10 @@ export function App() {
   }
   const relogin = expired && <SessionExpiredDialog onLogin={signInAgain} />;
   // A section or block the principal cannot open falls back to the home screen.
-  const activeSection = place.section === "equipmentsetup" || visibleNav.some(({ id }) => id === place.section) ? place.section : "cabinet";
+  // «Наладка оборудования» — часть «Оборудования» (владелец 19.11.2026): её старая ссылка открывает «Оборудование».
+  const seesMachines = visibleNav.some(({ id }) => id === "machines");
+  const activeSection = place.section === "equipmentsetup" && seesMachines ? "machines"
+    : place.section === "equipmentsetup" || visibleNav.some(({ id }) => id === place.section) ? place.section : "cabinet";
   const activeWithin = visibleNav.find(({ id }) => id === activeSection)?.within;
   const activeBlock = activeSection === "cabinet" ? blocks.find((block) => block.id === place.block) ?? null : null;
   // «Снабжение» is menu items per tab: the lit one follows `?tab=`; the «Заявки» register lights the «Заявки» tab.
@@ -418,7 +421,8 @@ export function App() {
                 {setupState.state === "disabled" ? "Наладка оборудования ещё не включена." : setupState.state === "denied" ? "Наладка недоступна этому сотруднику." : setupState.error}
               </p><button className="secondary" onClick={() => setSetupRetry(value => value + 1)}>Проверить снова</button></>}
           </section>)}
-        {activeSection === "machines" && <Suspense fallback={<p className="empty">Загрузка…</p>}><MachinesPage /></Suspense>}
+        {activeSection === "machines" && <Suspense fallback={<p className="empty">Загрузка…</p>}><MachinesPage setupViewer={setupAvailable}
+          canWrite={canAct(principal, "production") || canAct(principal, "myops")} /></Suspense>}
         {activeSection === "manualjobs" && <Suspense fallback={<p className="empty">Загрузка…</p>}><ManualJobsPage /></Suspense>}
         {activeSection === "myops" && <ProductionPage principal={principal} mine />}
         {activeSection === "quality" && <QualityPage principal={principal} />}

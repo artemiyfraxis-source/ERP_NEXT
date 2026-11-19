@@ -11,7 +11,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import (JSON, Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Integer, Numeric,
-                        String, UniqueConstraint, Uuid, select)
+                        String, UniqueConstraint, Uuid, select, update)
 from sqlalchemy.orm import Mapped, Session, mapped_column
 from sqlalchemy.sql import false as sa_false
 
@@ -174,6 +174,10 @@ class SetupMachineCorrectionRow(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
+class ConcurrentConfiguration(Exception):
+    """The configuration changed since the screen read it (409)."""
+
+
 def _aware(value: datetime | None) -> datetime | None:
     """SQLite gives naive timestamps back; they were stored as UTC."""
     return value.replace(tzinfo=UTC) if value is not None and value.tzinfo is None else value
@@ -227,6 +231,28 @@ class SqlAlchemySetupModels:
         rows = self.session.scalars(select(SetupMachineCorrectionRow).where(SetupMachineCorrectionRow.unit_id == unit_id)
                                     .order_by(SetupMachineCorrectionRow.parameter_key, SetupMachineCorrectionRow.wire_key))
         return [MachineCorrection(row.parameter_key, decimal_of(row.offset_value), row.wire, row.reason) for row in rows]
+
+    # --- the setup screen ---
+    def put_configuration(self, unit_id: UUID, values: dict[str, str], *, wire: str, contact: str, actor_id: UUID,
+                          actor_name: str, now: datetime, expected_version: int) -> int:
+        """Replace what the unit holds now (Слава set it by hand or ERP wrote it). `expected_version` — the version the
+        screen showed (0: none yet); another one → ConcurrentConfiguration. Returns the new version."""
+        row = self.session.get(SetupConfigurationRow, unit_id)
+        if (row.version if row is not None else 0) != expected_version:
+            raise ConcurrentConfiguration("Настройку станка уже записал кто-то другой — откройте карточку заново")
+        changes = dict(setup_values=dict(values), wire=wire, contact=contact, reference_id=None, tooling_unit_id=None,
+                       blades="", set_by=actor_id, set_by_name=actor_name, set_at=now)
+        if row is None:
+            self.session.add(SetupConfigurationRow(unit_id=unit_id, version=1, **changes))
+            self.session.flush()
+            return 1
+        done = self.session.execute(update(SetupConfigurationRow).where(
+            SetupConfigurationRow.unit_id == unit_id, SetupConfigurationRow.version == expected_version)
+            .values(**changes, version=expected_version + 1)).rowcount
+        if done != 1:
+            raise ConcurrentConfiguration("Настройку станка уже записал кто-то другой — откройте карточку заново")
+        self.session.expire(row)
+        return expected_version + 1
 
     # --- the seed (owner-reviewed CSV) ---
     def put_model(self, model_id: UUID, model: SetupModel, *, source: str, actor_name: str, now: datetime) -> str:

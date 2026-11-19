@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
-import { failureText, referencesApi, type CrimpCodes, type CrimpTargets, type EquipmentLinksReport, type EquipmentModelInfo, type EquipmentRole, type TechOperationRecord } from "./api";
+import { api, failureText, referencesApi, type CrimpCodes, type CrimpTargets, type EquipmentLinksReport, type EquipmentModelInfo, type EquipmentRole, type TechOperationRecord } from "./api";
 import { EQUIPMENT_TABS, type EquipmentTab } from "./referenceTabs";
 import { filledIn, useColumnRemoval } from "./CustomColumn";
 import { PageWindow } from "./PageWindow";
@@ -165,6 +165,24 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     return () => { live = false; };
   }, [records]);
   const infoById = useMemo(() => new Map(infos.map((info) => [info.id, info])), [infos]);
+  // «Показывать в «Оборудовании»» (владелец 19.11.2026, миграция 0203): станок вкладки «Оборудование» выходит на экран
+  // «Производство → Оборудование». Галочка — у каждого экземпляра; правка — с правом на справочник, пишется в журнал.
+  const [shownIds, setShownIds] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    if (tab !== "ob") return;
+    let live = true;
+    api<{ ids: string[] }>("/api/references/equipment-shown").then((result) => { if (live) setShownIds(new Set(result?.ids ?? [])); })
+      .catch(() => { if (live) setShownIds(null); });
+    return () => { live = false; };
+  }, [records, tab]);
+  const setShown = (item: TechOperationRecord, shown: boolean) => guarded(async () => {
+    await api(`/api/references/equipment/${encodeURIComponent(item.id)}/shown`, { method: "PUT", body: JSON.stringify({ shown }) });
+    setShownIds((ids) => { const next = new Set(ids ?? []); if (shown) next.add(item.id); else next.delete(item.id); return next; });
+  }, `${invOf(item) || "Экземпляр"}: ${shown ? "показывается" : "не показывается"} в «Оборудовании»`);
+  const shownOf = (model: EquipmentModel) => {
+    const count = model.items.filter((item) => shownIds?.has(item.id)).length;
+    return !shownIds ? "" : count === 0 ? "нет" : count === model.items.length ? "да" : `${count} из ${model.items.length}`;
+  };
 
   const models = useMemo(() => groupModels(records).sort((a, b) => Number(!a.name) - Number(!b.name)), [records]);
   // Matrices that name one of the model's inventory numbers in «Для инструмента».
@@ -256,11 +274,14 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
         <div className="tr-block"><h4>Экземпляры <span>{open.items.length}</span></h4>
           {open.items.some((item) => ["ОБ.101", "ОБ.102"].includes(invOf(item))) && <button type="button" className="secondary small" aria-haspopup="dialog"
             onClick={() => setMarkingUnits(open.items.map((item) => item.id))}>Профили маркировки</button>}
-          <table className="eq-table"><thead><tr><th>Инв. №</th><th className="num">№</th><th>Расположение</th>{withCodes && <th>Код терминалов</th>}{canEdit && <th aria-label="Действия" />}</tr></thead>
+          <table className="eq-table"><thead><tr><th>Инв. №</th><th className="num">№</th><th>Расположение</th>{withCodes && <th>Код терминалов</th>}{tab === "ob" && shownIds && <th>В «Оборудовании»</th>}{canEdit && <th aria-label="Действия" />}</tr></thead>
             <tbody>{open.items.map((item) => <tr key={item.id}>
               <td className="tnum"><b>{typeOf(item) === APPLICATOR_TYPE ? invOf(item) || "—" : unitCell(item, INV_KEY, "Инв. №", invOf(item))}</b></td><td className="tnum num">{unitCell(item, "№", "№")}</td>
               <td>{unitCell(item, "Расположение", "Расположение", valueLabel("Расположение", placeOf(item)))}</td>
               {withCodes && <td className="tnum">{unitCell(item, CODE_KEY, "Код терминалов")}</td>}
+              {tab === "ob" && shownIds && <td><label className="check-inline"><input type="checkbox" checked={shownIds.has(item.id)} disabled={!canEdit || busy}
+                aria-label={`Показывать ${invOf(item) || "экземпляр"} в «Оборудовании»`} onChange={(event) => void setShown(item, event.target.checked)} />
+                {shownIds.has(item.id) ? "показывать" : "нет"}</label></td>}
               {canEdit && <td><button type="button" className="secondary small" aria-label={`Удалить ${invOf(item) || "экземпляр"}`} disabled={busy} onClick={() => setDeleteId(item.id)}>Удалить</button></td>}
             </tr>)}</tbody></table>
         </div>
@@ -297,6 +318,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     { key: "article", title: "Артикул", value: (model) => model.article },
     { key: "maker", title: "Производитель", value: (model) => model.maker },
     { key: "place", title: "Расположение", value: (model) => model.places.map((item) => valueLabel("Расположение", item)).join(", "), filter: true },
+    { key: "shown", title: "В «Оборудовании»", value: shownOf, filter: true, hint: "Галочка «Показывать в «Оборудовании»» — станок на экране «Производство → Оборудование»" },
     { key: "ops", title: "Операций", numeric: true, value: (model) => opsOf(model).length, hint: "Сколько операций БД.ОП привязано к этой модели" },
     { key: TARGETS_KEY, title: "Обжимает (артикулы контактов)", wrap: true, minWidth: 230,
       value: (model) => (targetsByModel.get(model.key) ?? []).map((part) => part.text).join(", "),
@@ -310,7 +332,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     + report.counts.models_without_units + report.counts.models_units_disagree + report.counts.roles_unconfirmed : 0;
   const allowed = new Set(["inv", "name", "count", "maker", "place", ...(tab === "ob_applicators" ? [] : ["article"]),
     ...(withTargets ? [TARGETS_KEY] : []),
-    ...(tab === "ob_applicators" ? ["kind"] : []), ...(tab === "ob" ? ["ops"] : []),
+    ...(tab === "ob_applicators" ? ["kind"] : []), ...(tab === "ob" ? ["ops", ...(shownIds ? ["shown"] : [])] : []),
     ...(tab === "ob_tools" ? ["type", "code"] : []), ...(tab === "ob_dies" ? ["code"] : [])]);
   const visibleColumns = columns.filter((column) => allowed.has(column.key));
   for (const field of [...new Set([...fieldColumns, ...ownColumns])].filter((name) => !["Инв. номер", "Наименование", "Наменование", "Артикул", "Производитель", "Расположение", "Подтип", "Код в базе терминалов", TARGETS_KEY].includes(name))) visibleColumns.push({

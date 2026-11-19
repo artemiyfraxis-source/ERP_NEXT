@@ -26,9 +26,10 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from app.modules.equipment_setup.setup_model import (REQUIRES_LABELS, SOURCE_LABELS, SetupModel, SetupValidationError,
@@ -44,12 +45,14 @@ from app.modules.warehouse.scan_agents import LIVE_FOR, ScanAgentRow
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal
 
+from .machine_writes_api import machines_edit_principal
 from .machines_api import machines_view_principal
 
 router = APIRouter(prefix="/api/production/setup-model", tags=["production"])
 Factory = Annotated[Callable, Depends(production_uow_factory)]
 Now = Annotated[datetime, Depends(moscow_now)]
 Reader = Annotated[Principal, Depends(machines_view_principal)]
+Editor = Annotated[Principal, Depends(machines_edit_principal)]
 NOT_SET = "не задано"
 SEED_ACTOR = "Модель наладки (CSV владельца)"
 
@@ -158,7 +161,64 @@ def unit_setup(session, inventory: str, now: datetime) -> dict | None:
         "corrections": [{"parameter": item.parameter_key, "wire": item.wire, "offset": str(item.offset),
                          "reason": item.reason} for item in store.corrections(unit.id)],
         "online": bool(link), "connection": link,
+        "open_tasks": open_tasks(session, unit.id), "history": history(session, unit.id, now),
     }
+
+
+SETUP_STATUSES = {"New": "Назначена", "InProgress": "В работе", "Blocked": "Заблокирована"}
+HISTORY_LIMIT = 20
+
+
+def open_tasks(session, unit_id: UUID) -> list[dict]:
+    """The unit's open setup tasks (Назначена / В работе / Заблокирована), the operation they set it up for and whether
+    a configuration was already recorded for them («Настроено по заданию» clears «Ждёт наладки»)."""
+    from app.modules.equipment_setup.infrastructure import SetupTaskRow
+    from app.modules.production.infrastructure import ProductionOperationRow, ProductionTaskRow
+    from .machines_api import SETUP_OPEN, configured_tasks
+    done = configured_tasks(session)
+    result = []
+    for row in session.scalars(select(SetupTaskRow).where(SetupTaskRow.machine_id == unit_id,
+                                                          SetupTaskRow.status.in_(SETUP_OPEN))
+                               .order_by(SetupTaskRow.created_at)):
+        snapshot = row.snapshot or {}
+        operation = snapshot.get("operation") or {}
+        task_id, step_id = _uuid(operation.get("production_task_id")), _uuid(operation.get("production_operation_id"))
+        task = session.get(ProductionTaskRow, task_id) if task_id else None
+        step = session.get(ProductionOperationRow, step_id) if step_id else None
+        position = operation.get("etk_position")
+        parts = [task.project if task else "", task.item if task else "", step.stage if step else "",
+                 f"ЭТК {position}" if position else ""]
+        result.append({"id": str(row.id), "status": SETUP_STATUSES.get(row.status, row.status),
+                       "operation": " · ".join(part for part in parts if part) or "Операция недоступна",
+                       "planned_start": snapshot.get("planned_start"), "planned_finish": snapshot.get("planned_finish"),
+                       "configured": str(row.id) in done})
+    return result
+
+
+def _uuid(value) -> UUID | None:
+    try:
+        return UUID(str(value))
+    except ValueError:
+        return None
+
+
+def history(session, unit_id: UUID, now: datetime) -> list[dict]:
+    """«Настроено по заданию / вручную» of the unit, newest first: who, when, for what, the values."""
+    from app.shared.persistence import AuditEventRow
+    from .machines_api import SETUP_CONFIGURED
+    rows = session.scalars(select(AuditEventRow).where(AuditEventRow.aggregate_id == unit_id,
+                                                       AuditEventRow.event_type == SETUP_CONFIGURED)
+                           .order_by(AuditEventRow.occurred_at.desc()).limit(HISTORY_LIMIT))
+    result = []
+    # Same moment (a fast double press, the tests' fixed clock): the configuration version decides.
+    ordered = sorted(rows, key=lambda event: (event.occurred_at, int((event.details or {}).get("version") or 0)),
+                     reverse=True)
+    for event in ordered:
+        details = event.details or {}
+        at = event.occurred_at if event.occurred_at.tzinfo else event.occurred_at.replace(tzinfo=now.tzinfo)
+        result.append({"at": at.isoformat(), "by": details.get("by", ""), "operation": details.get("operation", ""),
+                       "reason": details.get("reason", ""), "values": json.loads(details.get("values") or "{}")})
+    return result
 
 
 @router.get("/{inventory}")
@@ -168,6 +228,82 @@ def setup_model_card(inventory: str, _principal: Reader, factory: Factory, now: 
     if result is None:
         raise HTTPException(status_code=404, detail=f"{inventory}: в БД.ОБ нет такой единицы (или номер не единственный)")
     return result
+
+
+class ConfigurationPayload(BaseModel):
+    """«Настроено по заданию» (`task_id`) or «Настроено вручную» (no task, `reason` required): the values the machine
+    holds now. With a setup model the keys are its parameters (numbers for parameters with a unit); without one — free
+    names of what was set."""
+    model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=0)
+    task_id: UUID | None = None
+    values: dict[str, str] = Field(default_factory=dict, max_length=60)
+    wire: str = Field(default="", max_length=200)
+    contact: str = Field(default="", max_length=200)
+    reason: str = Field(default="", max_length=500)
+
+
+def _free_values(values: dict[str, str]) -> dict[str, str]:
+    result = {}
+    for label, value in values.items():
+        name, text = " ".join(str(label).split()), " ".join(str(value).split())
+        if not name or len(name) > 160:
+            raise SetupValidationError("Название параметра: от 1 до 160 символов")
+        if len(text) > 200:
+            raise SetupValidationError(f"{name}: не длиннее 200 символов")
+        if text:
+            result[name] = text
+    return dict(sorted(result.items()))
+
+
+@router.post("/{inventory}/configuration")
+def record_configuration(inventory: str, payload: ConfigurationPayload, principal: Editor, factory: Factory,
+                         now: Now) -> dict:
+    """The machine is set: what it holds now is stored as its current configuration (who / when), journaled with the
+    task's operation or the reason; for a task it clears «Ждёт наладки»."""
+    from app.modules.equipment_setup.infrastructure import SetupTaskRow
+    from app.modules.equipment_setup.setup_model import setup_values
+    from app.modules.equipment_setup.setup_model_infrastructure import ConcurrentConfiguration
+    from app.shared.events import AuditEvent
+    from .machines_api import SETUP_CONFIGURED, SETUP_OPEN
+    with factory() as uow:
+        session = uow.session
+        matches = [unit for unit in units(session) if unit.inventory == inventory_of(inventory)]
+        if len(matches) != 1:
+            raise HTTPException(status_code=404,
+                                detail=f"{inventory}: в БД.ОБ нет такой единицы (или номер не единственный)")
+        unit = matches[0]
+        store = SqlAlchemySetupModels(session)
+        operation = ""
+        if payload.task_id is not None:
+            task = session.get(SetupTaskRow, payload.task_id)
+            if task is None or task.machine_id != unit.id or task.status not in SETUP_OPEN:
+                raise HTTPException(status_code=409, detail="Это задание наладки не открыто для этого станка")
+            operation = next((item["operation"] for item in open_tasks(session, unit.id)
+                              if item["id"] == str(task.id)), "")
+        elif not payload.reason.strip():
+            raise HTTPException(status_code=422, detail="Настроено вручную: укажите причину")
+        try:
+            model = _effective(unit, store.models(), store.overrides())
+            values = setup_values(model, payload.values) if model is not None and model.parameters \
+                else _free_values(payload.values)
+            if not values:
+                raise SetupValidationError("Укажите хотя бы одно значение")
+            version = store.put_configuration(
+                unit.id, values, wire=" ".join(payload.wire.split()), contact=" ".join(payload.contact.split()),
+                actor_id=principal.actor.id, actor_name=principal.actor.name, now=now,
+                expected_version=payload.expected_version)
+        except SetupValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except ConcurrentConfiguration as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=unit.id, event_type=SETUP_CONFIGURED, actor=principal.actor, occurred_at=now,
+            details={"inventory": unit.inventory, "task_id": str(payload.task_id or ""), "operation": operation,
+                     "reason": " ".join(payload.reason.split()), "by": principal.actor.name, "version": str(version),
+                     "values": json.dumps(values, ensure_ascii=False)}))
+        uow.commit()
+    return {"ok": True, "version": version, "values": values}
 
 
 # --- seed from the owner-reviewed CSV ---

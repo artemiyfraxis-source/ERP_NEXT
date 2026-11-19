@@ -13,6 +13,7 @@ const PRESS: MachineRow = {
   name: "Пресс сервоприводный для опрессовки контактов", pc: "DESKTOP-K6M7O0U", ip: "192.168.1.82",
   service: "Агент ERP · станок", version: "1.0.0", link: { code: "ok", text: "На связи", tone: "ok" },
   last_seen: "2026-11-19T10:00:00+03:00", device: "ПЛК пресса", state: { text: "Работа", tone: "ok" }, card: true, others: "",
+  article: "BZW-SF4040T", site: "ЦАР", operations: ["Опрессовка терминалов"], family: "Опрессовка", controlled: true,
 };
 
 function card(overrides: Partial<Ob099MachineCard> = {}): Ob099MachineCard {
@@ -73,11 +74,11 @@ it("says there was no NG and no alarm on a quiet day, and greys the last words w
   expect(screen.getByText(/1 мин назад/)).toBeTruthy();
 });
 
-it("opens the press card from «Станки»", async () => {
+it("opens the press card from «Оборудование»", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
     String(input).endsWith("/u99") ? json(card()) : json({ now: "2026-11-19T10:00:02+03:00", rows: [PRESS] }));
   render(<MachinesPage />);
-  fireEvent.click(within(await screen.findByRole("region", { name: "Станки" })).getByText("ОБ.099.1"));
+  fireEvent.click(within(await screen.findByRole("region", { name: "Опрессовка" })).getByText("ОБ.099.1"));
   const dialog = await screen.findByRole("dialog", { name: /ОБ\.099\.1/ });
   expect(await within(dialog).findByText("2,500 мм ± 0,050")).toBeTruthy();
 });

@@ -1171,3 +1171,48 @@ def equipment_unit_model(
 ) -> dict:
     return {"equipment_model_id": _run_edit(lambda: set_equipment_model(
         record_id, payload.model_id, principal.actor, now, uow_factory()))}
+
+
+# «Показывать в «Оборудовании»» (owner 19.11.2026, migration 0203): the checkbox of a БД.ОБ machine that puts it on the
+# screen «Производство → Оборудование». Machines of the tab «Оборудование» only; every change is journaled.
+class ShownPayload(BaseModel):
+    shown: bool
+
+
+@router.get("/equipment-shown")
+def equipment_shown(
+    _principal: Annotated[Principal, Depends(references_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    from sqlalchemy import select
+    from .infrastructure import EquipmentMachineRow
+    with uow_factory() as uow:
+        ids = uow.session.scalars(select(EquipmentMachineRow.id).where(EquipmentMachineRow.show_in_equipment.is_(True)))
+        return {"ids": sorted(str(item) for item in ids)}
+
+
+@router.put("/equipment/{record_id}/shown")
+def set_equipment_shown(
+    record_id: UUID,
+    payload: ShownPayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    from uuid import uuid4
+    from app.shared.events import AuditEvent
+    from .equipment import INV_KEY, field
+    from .infrastructure import EquipmentMachineRow
+    with uow_factory() as uow:
+        row = uow.session.get(EquipmentMachineRow, record_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Галочка «Показывать в «Оборудовании»» есть только у станков "
+                                                        "вкладки «Оборудование»")
+        if row.show_in_equipment != payload.shown:
+            row.show_in_equipment = payload.shown
+            uow.audit.add(AuditEvent(
+                id=uuid4(), aggregate_id=record_id, event_type="references.equipment_shown", actor=principal.actor,
+                occurred_at=now, details={"inventory": field(row.fields or {}, INV_KEY),
+                                          "shown": "да" if payload.shown else "нет"}))
+            uow.commit()
+        return {"id": str(record_id), "shown": payload.shown}

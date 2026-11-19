@@ -85,7 +85,30 @@ LINK_TEXTS = {
     "no_service": ("Служба mbd на ПК не отвечает", "danger"),
     "stale": ("Нет связи с ПК станка", "danger"),
     "not_installed": ("Агент не установлен", "neutral"),
+    # A machine of БД.ОБ no ERP agent is planned for yet (owner 19.11.2026: «почему не все видны»).
+    "not_connected": ("Нет подключения к ERP", "neutral"),
 }
+
+# Families of «Станки» (owner 19.11.2026): the machines of БД.ОБ grouped by what they do. The field «Операции» decides,
+# the name only when it says nothing; the first family in this order wins («Автомат резка + опрессовка» → резка, «Пайка,
+# Усадка» → пайка). Matched by word stems, so «Опрессовка терминалов» and «Ленточный обжим» are both опрессовка.
+FAMILY_STEMS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Резка и зачистка", ("резк", "разделк", "свивк", "изоляци", "скрутк")),
+    ("Опрессовка", ("опрессовк", "обжим")),
+    ("Пайка и усадка", ("пайк", "лужен", "усадк")),
+    ("Маркировка", ("маркир", "маркер", "этикет")),
+)
+OTHER_FAMILY = "Прочее оборудование"
+FAMILIES = (*(family for family, _stems in FAMILY_STEMS), OTHER_FAMILY)
+
+
+def machine_family(operations: list[str] | tuple[str, ...], name: str) -> str:
+    for text in (", ".join(operations), name):
+        words = text.casefold()
+        for family, stems in FAMILY_STEMS:
+            if any(stem in words for stem in stems):
+                return family
+    return OTHER_FAMILY
 
 
 class MachineRefused(Exception):
