@@ -17,7 +17,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Security
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from starlette.concurrency import run_in_threadpool
 
 from app.shared.clock import moscow_now
@@ -270,9 +270,22 @@ class VnaCapability(BaseModel):
 
 
 class VnaControlCapability(BaseModel):
+    """`version` stays tolerant so a newer agent keeps its scanner/printer heartbeat; claims accept only 1 and 2
+    (`devices.control_capability`). `ops` lists the implemented bench ops of protocol 2 (docs/vna/bench-protocol-v2.md)."""
+
     model_config = ConfigDict(extra="forbid")
     version: int = Field(ge=1, le=100, strict=True)
     methods: list[Literal["acm", "solt2", "solt1"]] = Field(default_factory=list, max_length=3)
+    ops: list[Literal["device_status", "apply_screen", "acm_confidence", "store_memory", "release"]] = Field(
+        default_factory=list, max_length=5)
+
+    @model_validator(mode="after")
+    def ops_follow_version(self):
+        if len(set(self.ops)) != len(self.ops):
+            raise ValueError("Операции vna_control повторяются")
+        if self.version < 2 and self.ops:
+            raise ValueError("Операции рабочего места ВАЦ есть только в протоколе vna_control версии 2")
+        return self
 
 
 class AgentHeartbeatInput(BaseModel):

@@ -232,11 +232,31 @@ def test_human_wait_does_not_expire(env):
     assert get_view(env, view)["version"] == view["version"]
 
 
-@pytest.mark.parametrize("version,protocol,methods", [("2.7.0", 1, ["solt2"]), ("2.8.0", 2, ["solt2"]),
+@pytest.mark.parametrize("version,protocol,methods", [("2.7.0", 1, ["solt2"]), ("2.8.0", 3, ["solt2"]),
     ("2.8.0", 1, []), ("bad", 1, ["solt2"])])
 def test_capability_mismatch(env, version, protocol, methods):
     control_heartbeat(env[1], version=version, protocol=protocol, methods=methods)
     assert create(env).status_code == 409
+
+
+def test_protocol_two_agent_still_serves_v1_sessions(env):
+    data = dict(machine_id="pc-1", pc_name="pc-1", version="2.10.0", vna=dict(name=NAME, ready=True),
+                vna_control=dict(version=2, methods=["acm", "solt2", "solt1"], ops=["device_status", "release"]))
+    assert TestClient(app).post(HEARTBEAT, json=data, headers=env[1]).status_code == 200
+    view = advance_until(env, start(env), "awaiting_standard")
+    assert view["state"] == "awaiting_standard"  # prepare/apply_profile/begin_calibration claimed as protocol 1
+
+
+@pytest.mark.parametrize("control", [
+    dict(version=1, methods=["acm"], ops=["release"]),          # bench ops need protocol 2
+    dict(version=2, methods=["acm"], ops=["raw_scpi"]),          # unknown op
+    dict(version=2, methods=["acm"], ops=["release", "release"]),
+    dict(version=2, methods=["acm"], ops=[], scpi="*RST"),       # unknown field
+    dict(version="2", methods=["acm"]),
+])
+def test_heartbeat_rejects_malformed_bench_capability(env, control):
+    data = dict(machine_id="pc-1", pc_name="pc-1", version="2.10.0", vna=dict(name=NAME, ready=True), vna_control=control)
+    assert TestClient(app).post(HEARTBEAT, json=data, headers=env[1]).status_code == 422
 
 
 def test_capture_only_heartbeat_revokes_control_without_disabling_capture(env):
