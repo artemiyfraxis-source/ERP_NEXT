@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { EMPTY, formatMoment } from "./format";
 import { equipmentSetupApi, type SetupViewer } from "./equipmentSetupApi";
+import { EquipmentSetupPage } from "./EquipmentSetupPage";
 import { machinesApi, usePolled, type MachineRow, type Tone } from "./machinesApi";
 import { MachineSetupPart } from "./MachineSetup";
 import { ManualJobWindow } from "./ManualJobWindow";
@@ -10,14 +11,17 @@ import { Ob019SetupPanel } from "./Ob019SetupPanel";
 import { PageWindow } from "./PageWindow";
 import "./machines.css";
 
-/** «Оборудование» (Производство; бывшие «Станки», владелец 19.11.2026): станки цеха — «С управлением» (ERP достаёт их
+/** «Оборудование» (Производство; бывшие «Станки», владелец 19.11.2026): «Запросы на наладку» — список заданий наладки
+ *  с окном задания (все шаги бывшего экрана «Наладка оборудования»: назначить, начать, продолжить, подтвердить
+ *  готовность, заблокировать, отменить, рецепт и пробные измерения); станки цеха — «С управлением» (ERP достаёт их
  *  через агента: живое состояние, запись на станок) и «Без управления» (отмечены в БД.ОБ галочкой «Показывать в
- *  «Оборудовании»»), плитками по семействам операций; принтеры и приборы агентов — своя вкладка. На плитке — артикул,
- *  участок, «Ждёт наладки» по открытому заданию; в карточке станка — «Наладка» и «Ручная работа». */
+ *  «Оборудовании»»), плитками по семействам операций; принтеры и приборы агентов — своя вкладка; «Все» — всё сразу.
+ *  На плитке — артикул, участок, «Ждёт наладки» по открытому заданию; в карточке станка — «Наладка» и «Ручная работа». */
 
-type View = "controlled" | "manual" | "agents";
+export type View = "setup" | "controlled" | "manual" | "agents" | "all";
 type Site = "" | "ЦАР" | "ЖУК";
-const VIEWS: [View, string][] = [["controlled", "С управлением"], ["manual", "Без управления"], ["agents", "Принтеры и приборы"]];
+const VIEWS: [View, string][] = [["setup", "Запросы на наладку"], ["controlled", "С управлением"], ["manual", "Без управления"],
+  ["agents", "Принтеры и приборы"], ["all", "Все"]];
 const SITES: [Site, string][] = [["", "Все участки"], ["ЦАР", "ЦАР"], ["ЖУК", "ЖУК"]];
 const AGENT_GROUPS: [MachineRow["kind"], string][] = [["printer", "Принтеры"], ["device", "Приборы и сканеры"]];
 const OTHER_FAMILY = "Прочее оборудование";
@@ -88,7 +92,10 @@ function MachineInfo({ row, close, manual, canWrite, saved }: {
           <dd className={tone && tone !== "neutral" ? `tone-${tone}` : ""}>{text(value)}</dd>
         </div>)}</dl>
       </section>
-      {row.kind === "machine" && row.inventory && <MachineSetupPart inventory={row.inventory} canWrite={canWrite} saved={saved} />}
+      {row.kind === "machine" && (row.equipment_id
+        ? <MachineSetupPart inventory={row.inventory} canWrite={canWrite} saved={saved} />
+        : <section className="machine-facts machine-setup" aria-label="Наладка"><h3>Наладка</h3>
+          <p className="machine-muted">Станка нет в БД.ОБ — наладка появится, когда его внесут в базу.</p></section>)}
     </section>
   </PageWindow>;
 }
@@ -114,13 +121,18 @@ function SetupWindow({ row, canWrite, setupViewer, close, saved }: {
   </PageWindow>;
 }
 
-export function MachinesPage({ setupViewer = false, canWrite = false }: { setupViewer?: boolean; canWrite?: boolean }) {
+export function MachinesPage({ setupViewer = false, canWrite = false, initialView = "controlled" }: {
+  setupViewer?: boolean; canWrite?: boolean; initialView?: View;
+}) {
   const load = useCallback((signal: AbortSignal) => machinesApi.list(signal), []);
   const { data, error } = usePolled(load);
   const [open, setOpen] = useState<MachineRow | null>(null);
   const [setupOf, setSetupOf] = useState<MachineRow | null>(null);
   const [manual, setManual] = useState<{ row: MachineRow; job: ManualJob | null } | null>(null);
-  const [view, setView] = useState<View>("controlled");
+  const [chosen, setView] = useState<View>(initialView);
+  // «Запросы на наладку» — только тому, кому открыта наладка (её ключ проверяет App).
+  const view: View = chosen === "setup" && !setupViewer ? "controlled" : chosen;
+  const views = VIEWS.filter(([id]) => id !== "setup" || setupViewer);
   const [site, setSite] = useState<Site>("");
   /** Идёт ручная работа на этом станке — открываем её (завершить / отменить), иначе — новую с этим станком. */
   const openManual = useCallback(async (row: MachineRow) => {
@@ -142,17 +154,20 @@ export function MachinesPage({ setupViewer = false, canWrite = false }: { setupV
       : rows;
   }, [rows, query]);
   const atSite = (row: MachineRow) => row.kind !== "machine" || !site || row.site === site;
-  const count = (which: View) => found.filter((row) => viewOf(row) === which && atSite(row)).length;
-  const siteCount = (which: Site) => found.filter((row) => viewOf(row) === view && (!which || row.site === which)).length;
-  const shown = found.filter((row) => viewOf(row) === view && atSite(row)).sort(byNumber);
+  const inView = (row: MachineRow, which: View) => which === "all" || viewOf(row) === which;
+  const count = (which: View) => found.filter((row) => inView(row, which) && atSite(row)).length;
+  const siteCount = (which: Site) => found.filter((row) => row.kind === "machine" && inView(row, view) && (!which || row.site === which)).length;
+  const shown = view === "setup" ? [] : found.filter((row) => inView(row, view) && atSite(row)).sort(byNumber);
   const families = data?.families ?? [];
-  const groups: [string, MachineRow[]][] = view === "agents"
-    ? AGENT_GROUPS.map(([kind, title]) => [title, shown.filter((row) => row.kind === kind)])
-    : [...families, ...new Set(shown.map((row) => row.family || OTHER_FAMILY).filter((family) => !families.includes(family)))]
-      .map((family) => [family, shown.filter((row) => (row.family || OTHER_FAMILY) === family)]);
+  const machineRows = shown.filter((row) => row.kind === "machine");
+  const familyGroups: [string, MachineRow[]][] = [...families, ...new Set(machineRows.map((row) => row.family || OTHER_FAMILY)
+    .filter((family) => !families.includes(family)))].map((family) => [family, machineRows.filter((row) => (row.family || OTHER_FAMILY) === family)]);
+  const agentGroups: [string, MachineRow[]][] = AGENT_GROUPS.map(([kind, title]) => [title, shown.filter((row) => row.kind === kind)]);
+  const groups = view === "agents" ? agentGroups : view === "all" ? [...familyGroups, ...agentGroups] : familyGroups;
   const empty = view === "controlled" ? "Нет станков с агентом ERP — установите агент на ПК станка"
     : view === "manual" ? "Нет станков без управления — отметьте станок в БД.ОБ галочкой «Показывать в «Оборудовании»»"
-      : "Принтеры и приборы агентов не найдены";
+      : view === "all" ? "Ничего не подключено и не отмечено — установите агент ERP или отметьте станок в БД.ОБ"
+        : "Принтеры и приборы агентов не найдены";
   return <section className="page machines-page">
     <header className="page-head"><h1>Оборудование</h1></header>
     {error && <div className="error-banner" role="alert">{error}</div>}
@@ -161,17 +176,18 @@ export function MachinesPage({ setupViewer = false, canWrite = false }: { setupV
       : <>
         <div className="machine-toolbar">
           <div className="seg-tabs" role="tablist" aria-label="Оборудование">
-            {VIEWS.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={view === id} className={view === id ? "on" : ""}
-              onClick={() => setView(id)}>{label}<span className="ship-tab-count">{count(id)}</span></button>)}
+            {views.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={view === id} className={view === id ? "on" : ""}
+              onClick={() => setView(id)}>{label}{id !== "setup" && <span className="ship-tab-count">{count(id)}</span>}</button>)}
           </div>
-          {view !== "agents" && <div className="seg-tabs sub" role="radiogroup" aria-label="Участок">
+          {view !== "agents" && view !== "setup" && <div className="seg-tabs sub" role="radiogroup" aria-label="Участок">
             {SITES.map(([id, label]) => <button key={id || "all"} type="button" role="radio" aria-checked={site === id} className={site === id ? "on" : ""}
               onClick={() => setSite(id)}>{label}<span className={`ship-tab-count${siteCount(id) ? "" : " is-zero"}`}>{siteCount(id)}</span></button>)}
           </div>}
-          <input className="search" type="search" aria-label="Поиск оборудования" placeholder="№, название, артикул, ПК или IP"
-            value={query} onChange={(event) => setQuery(event.target.value)} />
+          {view !== "setup" && <input className="search" type="search" aria-label="Поиск оборудования" placeholder="№, название, артикул, ПК или IP"
+            value={query} onChange={(event) => setQuery(event.target.value)} />}
         </div>
-        {!shown.length && (query.trim() ? <p className="empty">Ничего не найдено по «{query.trim()}»</p> : <p className="empty">{empty}</p>)}
+        {view === "setup" && <EquipmentSetupPage embedded />}
+        {view !== "setup" && !shown.length && (query.trim() ? <p className="empty">Ничего не найдено по «{query.trim()}»</p> : <p className="empty">{empty}</p>)}
         {groups.map(([title, group]) => group.length > 0 && <section key={title} className="machine-group" aria-label={title}>
           <h2>{title} <span className="machine-muted">· {group.length}</span></h2>
           <div className="machine-tiles">{group.map((row) => <MachineTile key={row.key} row={row} open={setOpen} />)}</div>

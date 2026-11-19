@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from enum import Enum
@@ -294,17 +295,18 @@ _STATUS_LABELS = {
 }
 
 
-def _save(task: SetupTask, command, fingerprint: str, person: SetupPerson,
-          now: datetime, uow: SetupUnitOfWork, action: str) -> SetupTask:
-    machine = uow.context.machine(task.machine_id)
-    label = (machine.inventory_number if machine is not None else "") or str(task.machine_id)
-    uow.tasks.save(task, expected_version=command.expected_version)
+def _journal(task: SetupTask, person: SetupPerson, now: datetime, uow: SetupUnitOfWork, action: str,
+             command_key: str) -> None:
     uow.audit.add(AuditEvent(
         id=uuid4(), aggregate_id=task.id, event_type=f"equipment_setup.{action}",
         actor=person.actor, occurred_at=now,
-        details={"version": str(task.version), "status": task.status.value,
-                 "command_key": command.idempotency_key},
+        details={"version": str(task.version), "status": task.status.value, "command_key": command_key},
     ))
+
+
+def _notify(task: SetupTask, now: datetime, uow: SetupUnitOfWork) -> None:
+    machine = uow.context.machine(task.machine_id)
+    label = (machine.inventory_number if machine is not None else "") or str(task.machine_id)
     message = notification_requested(
         key=f"equipment_setup:{task.id}:{task.version}", now=now,
         title="Задание наладки", body=f"Станок {label}: {_STATUS_LABELS[task.status]}",
@@ -312,6 +314,13 @@ def _save(task: SetupTask, command, fingerprint: str, person: SetupPerson,
     )
     if message is not None:
         uow.outbox.add(message)
+
+
+def _save(task: SetupTask, command, fingerprint: str, person: SetupPerson,
+          now: datetime, uow: SetupUnitOfWork, action: str) -> SetupTask:
+    uow.tasks.save(task, expected_version=command.expected_version)
+    _journal(task, person, now, uow, action, command.idempotency_key)
+    _notify(task, now, uow)
     uow.commands.add(SetupCommandReceipt(command.idempotency_key, fingerprint, task))
     uow.commit()
     return task
@@ -366,18 +375,64 @@ def change_setup_task(command: ChangeSetupCommand, uow: SetupUnitOfWork, *,
         _authorize(principal, person, site, manager=cancelling, task=task)
         if task.version != command.expected_version:
             raise ConcurrentSetupUpdate("Задание наладки уже изменилось — обновите данные")
-        allowed, target = _ACTIONS[command.action]
-        if task.status not in allowed:
-            raise SetupValidationError("Недопустимый переход статуса наладки")
-        updated, transition = task.transition(
-            target, actor_id=person.actor.id, now=now, reason=command.reason,
-            machine_available=command.machine_available,
-        )
-        if command.action in {SetupAction.START, SetupAction.RESUME}:
-            uow.reservations.reserve(updated)
-        elif target is SetupStatus.BLOCKED:
-            uow.reservations.block(updated)
-        elif target in {SetupStatus.READY, SetupStatus.CANCELLED}:
-            uow.reservations.release(updated)
-        uow.transitions.add(transition)
+        updated = _move(task, command.action, person, now, uow, reason=command.reason,
+                        machine_available=command.machine_available)
         return _save(updated, command, fingerprint, person, now, uow, command.action.value)
+
+
+def _move(task: SetupTask, action: SetupAction, person: SetupPerson, now: datetime, uow: SetupUnitOfWork, *,
+          reason: str = "", machine_available: bool | None = None) -> SetupTask:
+    """One existing transition with its reservation change and transition fact (not yet saved)."""
+    allowed, target = _ACTIONS[action]
+    if task.status not in allowed:
+        raise SetupValidationError("Недопустимый переход статуса наладки")
+    updated, transition = task.transition(
+        target, actor_id=person.actor.id, now=now, reason=reason, machine_available=machine_available,
+    )
+    if action in {SetupAction.START, SetupAction.RESUME}:
+        uow.reservations.reserve(updated)
+    elif target is SetupStatus.BLOCKED:
+        uow.reservations.block(updated)
+    elif target in {SetupStatus.READY, SetupStatus.CANCELLED}:
+        uow.reservations.release(updated)
+    uow.transitions.add(transition)
+    return updated
+
+
+# «Настроено по заданию» (owner 19.11.2026): the way from each open status to «Готова» — the same transitions as the
+# buttons «Начать наладку» / «Продолжить наладку» and «Подтвердить готовность наладки».
+_TO_READY = {
+    SetupStatus.NEW: (SetupAction.START, SetupAction.READY),
+    SetupStatus.BLOCKED: (SetupAction.RESUME, SetupAction.READY),
+    SetupStatus.IN_PROGRESS: (SetupAction.READY,),
+}
+TASK_CLOSED = "Задание наладки уже закрыто — откройте карточку заново"
+
+
+def ready_by_configuration(task_id: UUID, expected_version: int | None, uow: SetupUnitOfWork, *, principal: Principal,
+                           now: datetime, record: Callable[[SetupUnitOfWork, SetupTask], None]) -> SetupTask:
+    """«Настроено по заданию»: the assigned technician of the machine's site states the machine is set. The task goes
+    to «Готова» through the existing transitions (reservations, transition facts, journal, one notification) and
+    `record(uow, task)` writes what the machine holds now — all in one transaction. `expected_version` — the task
+    version the screen showed (None: not checked)."""
+    with uow:
+        person = _actor(principal, uow.context)
+        task = uow.tasks.get(task_id)
+        if task is None:
+            raise KeyError("Задание наладки не найдено")
+        site = _site(uow.context, task)
+        _authorize(principal, person, site, manager=False, task=task)
+        if expected_version is not None and task.version != expected_version:
+            raise ConcurrentSetupUpdate("Задание наладки уже изменилось — обновите данные")
+        steps = _TO_READY.get(task.status)
+        if steps is None:
+            raise ConcurrentSetupUpdate(TASK_CLOSED)
+        for action in steps:
+            updated = _move(task, action, person, now, uow)
+            uow.tasks.save(updated, expected_version=task.version)
+            _journal(updated, person, now, uow, action.value, f"configuration:{task.id}:{updated.version}")
+            task = updated
+        record(uow, task)
+        _notify(task, now, uow)
+        uow.commit()
+        return task

@@ -1152,6 +1152,24 @@ def set_equipment_model(unit_id: UUID, model_id: UUID | None, actor: Actor, now:
     return result
 
 
+def equipment_shown_ids(uow: UnitOfWork) -> list[str]:
+    """Machines with the checkbox «Показывать в «Оборудовании»» (owner 19.11.2026, migration 0203)."""
+    with uow:
+        return uow.equipment.shown_ids()
+
+
+def set_equipment_shown(unit_id: UUID, shown: bool, actor: Actor, now: datetime, uow: UnitOfWork) -> bool:
+    """Puts a БД.ОБ machine on «Производство → Оборудование» or takes it off; every change is journaled."""
+    with uow:
+        inventory, changed = uow.equipment.set_shown(unit_id, shown)
+        if changed:
+            uow.audit.add(AuditEvent(
+                id=uuid4(), aggregate_id=unit_id, event_type="references.equipment_shown", actor=actor, occurred_at=now,
+                details={"inventory": inventory, "shown": "да" if shown else "нет"}))
+            uow.commit()
+    return shown
+
+
 # --- «Кабели и провода»: the three lists, moving a БД.ПРОВ row between them, D1·D2·D3 of a coax cable ---
 
 def cable_overrides(entries: Sequence[ReferenceEntry]) -> dict[str, CableKind]:

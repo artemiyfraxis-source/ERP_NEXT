@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
@@ -134,8 +134,9 @@ def _parameter(item) -> dict:
             "source_field": item.source_field, "register": item.register}
 
 
-def unit_setup(session, inventory: str, now: datetime) -> dict | None:
-    """The setup part of one unit's card; None — no such unit (or the number names several)."""
+def unit_setup(session, inventory: str, now: datetime, principal: Principal) -> dict | None:
+    """The setup part of one unit's card; None — no such unit (or the number names several). Open tasks and the setup
+    journal only as far as `principal` may read them (see `open_tasks`)."""
     matches = [unit for unit in units(session) if unit.inventory == inventory_of(inventory)]
     if len(matches) != 1:
         return None
@@ -144,6 +145,7 @@ def unit_setup(session, inventory: str, now: datetime) -> dict | None:
     model = effective(store.models().get(unit.model_id), store.overrides().get(unit.id))
     configuration = store.configuration(unit.id)
     link = connections(session, now).get(unit.id)
+    tasks, journal = open_tasks(session, unit.id, principal)
     return {
         "unit_id": str(unit.id), "inventory": unit.inventory, "name": unit.name, "model": unit.article,
         "requires_setup": _class(model), "reason": model.reason if model else "",
@@ -161,7 +163,7 @@ def unit_setup(session, inventory: str, now: datetime) -> dict | None:
         "corrections": [{"parameter": item.parameter_key, "wire": item.wire, "offset": str(item.offset),
                          "reason": item.reason} for item in store.corrections(unit.id)],
         "online": bool(link), "connection": link,
-        "open_tasks": open_tasks(session, unit.id), "history": history(session, unit.id, now),
+        "open_tasks": tasks, "history": history(session, unit.id, now) if journal else [],
     }
 
 
@@ -169,30 +171,43 @@ SETUP_STATUSES = {"New": "Назначена", "InProgress": "В работе", 
 HISTORY_LIMIT = 20
 
 
-def open_tasks(session, unit_id: UUID) -> list[dict]:
-    """The unit's open setup tasks (Назначена / В работе / Заблокирована), the operation they set it up for and whether
-    a configuration was already recorded for them («Настроено по заданию» clears «Ждёт наладки»)."""
+def open_tasks(session, unit_id: UUID, principal: Principal | None = None) -> tuple[list[dict], bool]:
+    """The unit's open setup tasks (Назначена / В работе / Заблокирована: «Ждёт наладки» until the task is «Готова»)
+    with the operation they set it up for, and whether the unit's setup journal may be read. With `principal` — only
+    what the task list shows this employee (`readable_setup`: own site; a site master all tasks, anyone else only
+    their own)."""
     from app.modules.equipment_setup.infrastructure import SetupTaskRow
-    from app.modules.production.infrastructure import ProductionOperationRow, ProductionTaskRow
-    from .machines_api import SETUP_OPEN, configured_tasks
-    done = configured_tasks(session)
+    from app.modules.equipment_setup.queries import readable_setup
+    from .equipment_setup_context import SqlAlchemySetupContext
+    from .machines_api import SETUP_OPEN
+    rows = list(session.scalars(select(SetupTaskRow).where(SetupTaskRow.machine_id == unit_id,
+                                                           SetupTaskRow.status.in_(SETUP_OPEN))
+                                .order_by(SetupTaskRow.created_at)))
+    journal = True
+    if principal is not None:
+        context = SqlAlchemySetupContext(session, resolve_issued_operation=lambda reference: None)
+        rows, journal = readable_setup(unit_id, rows, context, principal=principal)
     result = []
-    for row in session.scalars(select(SetupTaskRow).where(SetupTaskRow.machine_id == unit_id,
-                                                          SetupTaskRow.status.in_(SETUP_OPEN))
-                               .order_by(SetupTaskRow.created_at)):
-        snapshot = row.snapshot or {}
-        operation = snapshot.get("operation") or {}
-        task_id, step_id = _uuid(operation.get("production_task_id")), _uuid(operation.get("production_operation_id"))
-        task = session.get(ProductionTaskRow, task_id) if task_id else None
-        step = session.get(ProductionOperationRow, step_id) if step_id else None
-        position = operation.get("etk_position")
-        parts = [task.project if task else "", task.item if task else "", step.stage if step else "",
-                 f"ЭТК {position}" if position else ""]
-        result.append({"id": str(row.id), "status": SETUP_STATUSES.get(row.status, row.status),
-                       "operation": " · ".join(part for part in parts if part) or "Операция недоступна",
-                       "planned_start": snapshot.get("planned_start"), "planned_finish": snapshot.get("planned_finish"),
-                       "configured": str(row.id) in done})
-    return result
+    for row in rows:
+        result.append({"id": str(row.id), "version": row.version, "status": SETUP_STATUSES.get(row.status, row.status),
+                       "operation": operation_text(session, row.snapshot or {}),
+                       "planned_start": (row.snapshot or {}).get("planned_start"),
+                       "planned_finish": (row.snapshot or {}).get("planned_finish"),
+                       "mine": principal is not None and row.technician_id == principal.actor.id})
+    return result, journal
+
+
+def operation_text(session, snapshot: dict) -> str:
+    """«Проект · изделие · операция · ЭТК n» of a setup task's snapshot."""
+    from app.modules.production.infrastructure import ProductionOperationRow, ProductionTaskRow
+    operation = snapshot.get("operation") or {}
+    task_id, step_id = _uuid(operation.get("production_task_id")), _uuid(operation.get("production_operation_id"))
+    task = session.get(ProductionTaskRow, task_id) if task_id else None
+    step = session.get(ProductionOperationRow, step_id) if step_id else None
+    position = operation.get("etk_position")
+    parts = [task.project if task else "", task.item if task else "", step.stage if step else "",
+             f"ЭТК {position}" if position else ""]
+    return " · ".join(part for part in parts if part) or "Операция недоступна"
 
 
 def _uuid(value) -> UUID | None:
@@ -221,22 +236,26 @@ def history(session, unit_id: UUID, now: datetime) -> list[dict]:
     return result
 
 
+NO_UNIT = "{inventory}: в БД.ОБ нет такой единицы (или номер не единственный)"
+
+
 @router.get("/{inventory}")
-def setup_model_card(inventory: str, _principal: Reader, factory: Factory, now: Now) -> dict:
+def setup_model_card(inventory: str, principal: Reader, factory: Factory, now: Now) -> dict:
     with factory() as uow:
-        result = unit_setup(uow.session, inventory, now)
+        result = unit_setup(uow.session, inventory, now, principal)
     if result is None:
-        raise HTTPException(status_code=404, detail=f"{inventory}: в БД.ОБ нет такой единицы (или номер не единственный)")
+        raise HTTPException(status_code=404, detail=NO_UNIT.format(inventory=inventory))
     return result
 
 
 class ConfigurationPayload(BaseModel):
-    """«Настроено по заданию» (`task_id`) or «Настроено вручную» (no task, `reason` required): the values the machine
-    holds now. With a setup model the keys are its parameters (numbers for parameters with a unit); without one — free
-    names of what was set."""
+    """«Настроено по заданию» (`task_id`, `task_version` — the version the card showed) or «Настроено вручную» (no task,
+    `reason` required): the values the machine holds now. With a setup model the keys are its parameters (numbers for
+    parameters with a unit); without one — free names of what was set."""
     model_config = ConfigDict(extra="forbid")
     expected_version: int = Field(ge=0)
     task_id: UUID | None = None
+    task_version: int | None = Field(default=None, ge=1)
     values: dict[str, str] = Field(default_factory=dict, max_length=60)
     wire: str = Field(default="", max_length=200)
     contact: str = Field(default="", max_length=200)
@@ -256,54 +275,94 @@ def _free_values(values: dict[str, str]) -> dict[str, str]:
     return dict(sorted(result.items()))
 
 
+def _unit(session, inventory: str) -> Unit:
+    matches = [unit for unit in units(session) if unit.inventory == inventory_of(inventory)]
+    if len(matches) != 1:
+        raise HTTPException(status_code=404, detail=NO_UNIT.format(inventory=inventory))
+    return matches[0]
+
+
+def _write(session, audit, unit: Unit, payload: ConfigurationPayload, principal: Principal, now: datetime,
+           operation: str) -> tuple[int, dict[str, str]]:
+    """Validate the values, store them as the unit's current configuration (version check) and journal them."""
+    from app.modules.equipment_setup.setup_model import setup_values
+    from app.shared.events import AuditEvent
+    from .machines_api import SETUP_CONFIGURED
+    store = SqlAlchemySetupModels(session)
+    model = _effective(unit, store.models(), store.overrides())
+    values = setup_values(model, payload.values) if model is not None and model.parameters \
+        else _free_values(payload.values)
+    if not values:
+        raise SetupValidationError("Укажите хотя бы одно значение")
+    version = store.put_configuration(
+        unit.id, values, wire=" ".join(payload.wire.split()), contact=" ".join(payload.contact.split()),
+        actor_id=principal.actor.id, actor_name=principal.actor.name, now=now,
+        expected_version=payload.expected_version)
+    audit.add(AuditEvent(
+        id=uuid4(), aggregate_id=unit.id, event_type=SETUP_CONFIGURED, actor=principal.actor, occurred_at=now,
+        details={"inventory": unit.inventory, "task_id": str(payload.task_id or ""), "operation": operation,
+                 "reason": " ".join(payload.reason.split()), "by": principal.actor.name, "version": str(version),
+                 "values": json.dumps(values, ensure_ascii=False)}))
+    return version, values
+
+
+def _http(action):
+    from app.modules.equipment_setup.application import (ConcurrentSetupUpdate, SetupPermissionError,
+                                                          SetupResourceConflict)
+    from app.modules.equipment_setup.setup_model_infrastructure import ConcurrentConfiguration
+    try:
+        return action()
+    except SetupPermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except (ConcurrentSetupUpdate, SetupResourceConflict, ConcurrentConfiguration) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error.args[0])) from error
+    except ValueError as error:  # both setup validation errors
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
 @router.post("/{inventory}/configuration")
 def record_configuration(inventory: str, payload: ConfigurationPayload, principal: Editor, factory: Factory,
-                         now: Now) -> dict:
+                         request: Request, now: Now) -> dict:
     """The machine is set: what it holds now is stored as its current configuration (who / when), journaled with the
-    task's operation or the reason; for a task it clears «Ждёт наладки»."""
-    from app.modules.equipment_setup.infrastructure import SetupTaskRow
-    from app.modules.equipment_setup.setup_model import setup_values
-    from app.modules.equipment_setup.setup_model_infrastructure import ConcurrentConfiguration
-    from app.shared.events import AuditEvent
-    from .machines_api import SETUP_CONFIGURED, SETUP_OPEN
-    with factory() as uow:
-        session = uow.session
-        matches = [unit for unit in units(session) if unit.inventory == inventory_of(inventory)]
-        if len(matches) != 1:
-            raise HTTPException(status_code=404,
-                                detail=f"{inventory}: в БД.ОБ нет такой единицы (или номер не единственный)")
-        unit = matches[0]
-        store = SqlAlchemySetupModels(session)
-        operation = ""
-        if payload.task_id is not None:
-            task = session.get(SetupTaskRow, payload.task_id)
-            if task is None or task.machine_id != unit.id or task.status not in SETUP_OPEN:
-                raise HTTPException(status_code=409, detail="Это задание наладки не открыто для этого станка")
-            operation = next((item["operation"] for item in open_tasks(session, unit.id)
-                              if item["id"] == str(task.id)), "")
-        elif not payload.reason.strip():
+    task's operation or the reason. By task — only the assigned technician of the machine's site, and the task goes
+    to «Готова» through the existing transitions in the same transaction (that clears «Ждёт наладки»); by hand — an
+    administrator, or an employee of the machine's site."""
+    from app.modules.equipment_setup.application import ready_by_configuration
+    from app.modules.equipment_setup.queries import may_record_by_hand
+    from .equipment_setup_context import SqlAlchemySetupContext
+    if payload.task_id is None:
+        if not payload.reason.strip():
             raise HTTPException(status_code=422, detail="Настроено вручную: укажите причину")
-        try:
-            model = _effective(unit, store.models(), store.overrides())
-            values = setup_values(model, payload.values) if model is not None and model.parameters \
-                else _free_values(payload.values)
-            if not values:
-                raise SetupValidationError("Укажите хотя бы одно значение")
-            version = store.put_configuration(
-                unit.id, values, wire=" ".join(payload.wire.split()), contact=" ".join(payload.contact.split()),
-                actor_id=principal.actor.id, actor_name=principal.actor.name, now=now,
-                expected_version=payload.expected_version)
-        except SetupValidationError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        except ConcurrentConfiguration as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        uow.audit.add(AuditEvent(
-            id=uuid4(), aggregate_id=unit.id, event_type=SETUP_CONFIGURED, actor=principal.actor, occurred_at=now,
-            details={"inventory": unit.inventory, "task_id": str(payload.task_id or ""), "operation": operation,
-                     "reason": " ".join(payload.reason.split()), "by": principal.actor.name, "version": str(version),
-                     "values": json.dumps(values, ensure_ascii=False)}))
-        uow.commit()
-    return {"ok": True, "version": version, "values": values}
+        with factory() as uow:
+            session = uow.session
+            unit = _unit(session, inventory)
+
+            def by_hand():
+                context = SqlAlchemySetupContext(session, resolve_issued_operation=lambda reference: None)
+                may_record_by_hand(unit.id, context, principal=principal)
+                return _write(session, uow.audit, unit, payload, principal, now, "")
+            version, values = _http(by_hand)
+            uow.commit()
+        return {"ok": True, "version": version, "values": values}
+    setup = getattr(request.app.state, "equipment_setup_uow_factory", None)
+    if setup is None:
+        raise HTTPException(status_code=503, detail="Задания наладки ещё не подключены")
+    written: dict = {}
+
+    def record(uow, task) -> None:
+        from app.modules.equipment_setup.infrastructure import task_payload
+        unit = _unit(uow.session, inventory)
+        if unit.id != task.machine_id:
+            raise HTTPException(status_code=409, detail="Это задание наладки — для другого станка")
+        operation = operation_text(uow.session, task_payload(task))
+        written["version"], written["values"] = _write(uow.session, uow.audit, unit, payload, principal, now,
+                                                       operation)
+
+    task = _http(lambda: ready_by_configuration(payload.task_id, payload.task_version, setup(), principal=principal,
+                                                now=now, record=record))
+    return {"ok": True, "version": written["version"], "values": written["values"], "task_status": task.status.value}
 
 
 # --- seed from the owner-reviewed CSV ---

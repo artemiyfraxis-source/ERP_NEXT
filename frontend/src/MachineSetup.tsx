@@ -24,7 +24,7 @@ export function MachineSetupPart({ inventory, canWrite, extra, saved }: {
       const next = await machinesApi.setup(inventory);
       setSetup(next);
       setError("");
-      setTask(next.open_tasks.find((item) => !item.configured)?.id ?? NO_TASK);
+      setTask(next.open_tasks.find((item) => item.mine)?.id ?? NO_TASK);
       setValues({});
     } catch (reason) { setError(failureText(reason, "Не удалось загрузить наладку станка")); }
   }, [inventory]);
@@ -52,9 +52,10 @@ export function MachineSetupPart({ inventory, canWrite, extra, saved }: {
     if (!setup || busy || !ready) return;
     setBusy(true); setError(""); setNotice("");
     try {
+      const chosen = setup.open_tasks.find((item) => item.id === task);
       await machinesApi.configure(inventory, { expected_version: setup.configuration?.version ?? 0, task_id: byTask ? task : null,
-        values: draftValues, reason: reason.trim() });
-      setNotice(byTask ? "Настройка записана по заданию — «Ждёт наладки» снят" : "Настройка записана");
+        ...(byTask ? { task_version: chosen?.version ?? null } : {}), values: draftValues, reason: reason.trim() });
+      setNotice(byTask ? "Настройка записана по заданию — задание наладки готово" : "Настройка записана");
       setReason(""); setFree([{ name: "", value: "" }]);
       await load();
       saved?.();
@@ -73,9 +74,9 @@ export function MachineSetupPart({ inventory, canWrite, extra, saved }: {
     {notice && <p className="success-banner" role="status">{notice}</p>}
     <div className="machine-setup-tasks" role="radiogroup" aria-label="Для чего настройка">
       {setup.open_tasks.map((item) => <label key={item.id} className={task === item.id ? "is-on" : ""}>
-        <input type="radio" name={`setup-task-${inventory}`} checked={task === item.id} disabled={!canWrite} onChange={() => setTask(item.id)} />
+        <input type="radio" name={`setup-task-${inventory}`} checked={task === item.id} disabled={!canWrite || !item.mine} onChange={() => setTask(item.id)} />
         <span><strong>{item.operation}</strong>
-          <span className="machine-muted"> · {item.status}{item.planned_start ? ` · ${formatMoment(item.planned_start)}` : ""}{item.configured ? " · настроено" : " · ждёт наладки"}</span></span>
+          <span className="machine-muted"> · {item.status}{item.planned_start ? ` · ${formatMoment(item.planned_start)}` : ""}{item.mine ? " · ждёт наладки" : " · назначено другому наладчику"}</span></span>
       </label>)}
       <label className={task === NO_TASK ? "is-on" : ""}>
         <input type="radio" name={`setup-task-${inventory}`} checked={task === NO_TASK} disabled={!canWrite} onChange={() => setTask(NO_TASK)} />

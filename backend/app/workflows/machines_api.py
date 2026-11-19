@@ -203,22 +203,13 @@ def _setup_classes(session) -> dict[UUID, dict]:
     return found
 
 
-def configured_tasks(session) -> set[str]:
-    """Setup tasks a configuration was recorded for («Настроено по заданию»; the audit event carries the task)."""
-    return {str((event.details or {}).get("task_id")) for event in session.scalars(
-        select(AuditEventRow).where(AuditEventRow.event_type == SETUP_CONFIGURED)) if (event.details or {}).get("task_id")}
-
-
 def pending_setup(session) -> dict[str, int]:
-    """«Ждёт наладки»: open setup tasks per unit that no configuration was recorded for yet."""
+    """«Ждёт наладки»: open setup tasks (Назначена / В работе / Заблокирована) per unit — a task leaves it when it is
+    «Готова» («Подтвердить готовность наладки» or «Настроено по заданию») or «Отменена». Counted in SQL: the list polls."""
     from app.modules.equipment_setup.infrastructure import SetupTaskRow
-    done = configured_tasks(session)
-    pending: dict[str, int] = {}
-    for task_id, machine_id in session.execute(select(SetupTaskRow.id, SetupTaskRow.machine_id)
-                                               .where(SetupTaskRow.status.in_(SETUP_OPEN))):
-        if str(task_id) not in done:
-            pending[str(machine_id)] = pending.get(str(machine_id), 0) + 1
-    return pending
+    return {str(machine_id): count for machine_id, count in session.execute(
+        select(SetupTaskRow.machine_id, func.count()).where(SetupTaskRow.status.in_(SETUP_OPEN))
+        .group_by(SetupTaskRow.machine_id))}
 
 
 def _machine_rows(session, equipment, printers: list[dict], now) -> list[dict]:
@@ -671,7 +662,7 @@ def _connection(entry: dict, now: datetime) -> dict:
 
 
 @router.get("/card/{inventory}")
-def machine_window(inventory: str, _principal: Reader, factory: Factory, now: Now) -> dict:
+def machine_window(inventory: str, principal: Reader, factory: Factory, now: Now) -> dict:
     """The machine's card: «Состояние», «Настройки», «Наладка и рецепты», «Журнал», «Связь» — read only."""
     with factory() as uow:
         session = uow.session
@@ -706,7 +697,7 @@ def machine_window(inventory: str, _principal: Reader, factory: Factory, now: No
             card["journal"] = _journal_marking(session, binding, now)
         from .equipment_setup_model import unit_setup  # lazy: that module reuses this one's gate
 
-        card["setup_model"] = unit_setup(session, entry["inventory"], now)
+        card["setup_model"] = unit_setup(session, entry["inventory"], now, principal)
         return card
 
 

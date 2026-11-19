@@ -24,7 +24,8 @@ export function setupOperationChoices(tasks: ProductionTask[]): SetupOperationCh
     }))) : []);
 }
 
-export function EquipmentSetupPage({ principal }: { principal?: Principal }) {
+/** Список заданий наладки; `embedded` — вкладка «Запросы на наладку» раздела «Оборудование» (без своего заголовка). */
+export function EquipmentSetupPage({ principal, embedded = false }: { principal?: Principal; embedded?: boolean }) {
   const [tasks, setTasks] = useState<SetupTask[]>([]), [machines, setMachines] = useState<SetupMachine[]>([]), [production, setProduction] = useState<ProductionTask[]>([]);
   // Станок задания хранится по ID экземпляра БД.ОБ (миграция 0172); показываем его инвентарный номер.
   const machineLabel = (id: string) => machines.find(item => item.id === id)?.inventory_number || id;
@@ -58,7 +59,7 @@ export function EquipmentSetupPage({ principal }: { principal?: Principal }) {
     finally { setProductionBusy(false); }
   }
   return <div className="equipment-setup">
-    <div className="page-head"><div><h1>Наладка оборудования</h1><span className="muted">{viewer?.site || "Все доступные площадки"}</span></div><div className="setup-actions">
+    <div className="page-head"><div>{!embedded && <h1>Наладка оборудования</h1>}<span className="muted">{viewer?.site || "Все доступные площадки"}</span></div><div className="setup-actions">
       <button className="secondary" disabled={!loaded || busy} onClick={() => setRefresh(value => value + 1)}>Обновить</button>
       {ob019 && viewer && <button className="secondary" onClick={() => setPanel(true)}>Наладка {ob019.inventory_number}</button>}
       {viewer?.can_assign && viewer.writable && <button className="primary" onClick={() => setCreate(true)}>Назначить наладку</button>}

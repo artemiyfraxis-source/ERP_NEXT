@@ -32,7 +32,8 @@ from .crimps import change_target, change_terminal, crimp_codes, crimp_overview,
 from .equipment import EXTRA_KEYS, next_instance_inventory, next_model_inventory, next_row_number
 from .application import LinkStockCommand, link_stock_article, stock_links
 from .application import (
-    equipment_links_report, equipment_models, set_equipment_model, set_equipment_role, set_equipment_serves,
+    equipment_links_report, equipment_models, equipment_shown_ids, set_equipment_model, set_equipment_role,
+    set_equipment_serves, set_equipment_shown,
 )
 from .application import (
     CableCatalog, duplicate_equipment, SaveGaugeCommand, SaveHookupCommand, cable_catalog, coax_dia_rows, delete_gauge,
@@ -1184,35 +1185,16 @@ def equipment_shown(
     _principal: Annotated[Principal, Depends(references_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
 ) -> dict:
-    from sqlalchemy import select
-    from .infrastructure import EquipmentMachineRow
-    with uow_factory() as uow:
-        ids = uow.session.scalars(select(EquipmentMachineRow.id).where(EquipmentMachineRow.show_in_equipment.is_(True)))
-        return {"ids": sorted(str(item) for item in ids)}
+    return {"ids": equipment_shown_ids(uow_factory())}
 
 
 @router.put("/equipment/{record_id}/shown")
-def set_equipment_shown(
+def equipment_shown_set(
     record_id: UUID,
     payload: ShownPayload,
     principal: Annotated[Principal, Depends(references_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
 ) -> dict:
-    from uuid import uuid4
-    from app.shared.events import AuditEvent
-    from .equipment import INV_KEY, field
-    from .infrastructure import EquipmentMachineRow
-    with uow_factory() as uow:
-        row = uow.session.get(EquipmentMachineRow, record_id)
-        if row is None:
-            raise HTTPException(status_code=404, detail="Галочка «Показывать в «Оборудовании»» есть только у станков "
-                                                        "вкладки «Оборудование»")
-        if row.show_in_equipment != payload.shown:
-            row.show_in_equipment = payload.shown
-            uow.audit.add(AuditEvent(
-                id=uuid4(), aggregate_id=record_id, event_type="references.equipment_shown", actor=principal.actor,
-                occurred_at=now, details={"inventory": field(row.fields or {}, INV_KEY),
-                                          "shown": "да" if payload.shown else "нет"}))
-            uow.commit()
-        return {"id": str(record_id), "shown": payload.shown}
+    return {"id": str(record_id), "shown": _run_edit(lambda: set_equipment_shown(
+        record_id, payload.shown, principal.actor, now, uow_factory()))}

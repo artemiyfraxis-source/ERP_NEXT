@@ -309,7 +309,8 @@ export function App() {
   }
   const relogin = expired && <SessionExpiredDialog onLogin={signInAgain} />;
   // A section or block the principal cannot open falls back to the home screen.
-  // «Наладка оборудования» — часть «Оборудования» (владелец 19.11.2026): её старая ссылка открывает «Оборудование».
+  // «Наладка оборудования» — вкладка «Запросы на наладку» «Оборудования» (владелец 19.11.2026): её старая ссылка
+  // открывает «Оборудование» на этой вкладке (там же окно задания со всеми шагами наладки).
   const seesMachines = visibleNav.some(({ id }) => id === "machines");
   const activeSection = place.section === "equipmentsetup" && seesMachines ? "machines"
     : place.section === "equipmentsetup" || visibleNav.some(({ id }) => id === place.section) ? place.section : "cabinet";
@@ -422,6 +423,7 @@ export function App() {
               </p><button className="secondary" onClick={() => setSetupRetry(value => value + 1)}>Проверить снова</button></>}
           </section>)}
         {activeSection === "machines" && <Suspense fallback={<p className="empty">Загрузка…</p>}><MachinesPage setupViewer={setupAvailable}
+          initialView={place.section === "equipmentsetup" ? "setup" : undefined}
           canWrite={canAct(principal, "production") || canAct(principal, "myops")} /></Suspense>}
         {activeSection === "manualjobs" && <Suspense fallback={<p className="empty">Загрузка…</p>}><ManualJobsPage /></Suspense>}
         {activeSection === "myops" && <ProductionPage principal={principal} mine />}

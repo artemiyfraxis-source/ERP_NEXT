@@ -152,3 +152,32 @@ def list_trials(task_id, uow, *, principal, limit=100, offset=0):
             raise KeyError("Задание наладки не найдено")
         _may_read(principal, person, task, uow.context)
         return uow.recipes.trials(task.id, limit=limit, offset=offset)
+
+
+def readable_setup(machine_id, tasks, context, *, principal):
+    """The open tasks of one machine this employee may read and whether its setup journal is theirs to read — the same
+    rules as the task list: an administrator everything; otherwise only a machine of their own site, the site master
+    all its tasks, anyone else only the tasks assigned to them. Another site or no personal session → ((), False)."""
+    try:
+        person = _reader(principal, context)
+        if not principal.full_access:
+            _machine_scope(machine_id, principal, person, context)
+    except (SetupPermissionError, KeyError):
+        return (), False
+    readable = []
+    for task in tasks:
+        try:
+            _may_read(principal, person, task, context)
+        except SetupPermissionError:
+            continue
+        readable.append(task)
+    return tuple(readable), True
+
+
+def may_record_by_hand(machine_id, context, *, principal):
+    """«Настроено вручную»: an administrator on any machine; anyone else with a personal session only on a machine of
+    their own site (a machine with no known site — whoever may edit the screen)."""
+    person = _reader(principal, context)
+    if principal.full_access or context.machine(machine_id) is None:
+        return
+    _machine_scope(machine_id, principal, person, context)

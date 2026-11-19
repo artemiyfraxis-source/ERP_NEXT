@@ -66,8 +66,11 @@ it("opens «Оборудование» for the old setup link of a person who se
   });
   window.history.replaceState({}, "", "/?section=equipmentsetup");
   render(<App />);
-  // «Наладка оборудования» is a part of «Оборудование» (owner 19.11.2026): its old link opens «Оборудование».
+  // «Наладка оборудования» is the tab «Запросы на наладку» of «Оборудование» (owner 19.11.2026): its old link opens it.
   expect(await screen.findByRole("heading", { name: "Оборудование" })).toBeInTheDocument();
+  const tab = await screen.findByRole("tab", { name: "Запросы на наладку" });
+  expect(tab).toHaveAttribute("aria-selected", "true");
+  expect(await screen.findByText(/Нет доступных заданий наладки/)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Наладка оборудования" })).not.toBeInTheDocument();
 });
 

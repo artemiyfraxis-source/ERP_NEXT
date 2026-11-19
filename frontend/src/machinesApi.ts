@@ -63,7 +63,8 @@ export interface UnitSetup {
   parameters: { key: string; label: string; unit: string; source: string; source_field: string; register: string }[];
   configuration: { values: Record<string, string>; wire: string; contact: string; set_by: string; set_at: string | null; version: number } | null;
   references: { id: string; wire: string; contact: string; version: number; values: Record<string, string>; created_by: string; created_at: string }[];
-  open_tasks: { id: string; status: string; operation: string; planned_start: string | null; planned_finish: string | null; configured: boolean }[];
+  /** Открытые задания наладки, которые сотрудник видит в «Запросах на наладку»; `mine` — назначены ему. */
+  open_tasks: { id: string; version: number; status: string; operation: string; planned_start: string | null; planned_finish: string | null; mine: boolean }[];
   history: { at: string; by: string; operation: string; reason: string; values: Record<string, string> }[];
   online: boolean;
 }
@@ -71,6 +72,7 @@ export interface UnitSetup {
 export interface ConfigurationDraft {
   expected_version: number;
   task_id: string | null;
+  task_version?: number | null;
   values: Record<string, string>;
   reason: string;
 }
@@ -149,7 +151,7 @@ export const machinesApi = {
   list: (signal?: AbortSignal) => api<MachinesList>("/api/production/machines", { signal }),
   card: (id: string, signal?: AbortSignal) => api<AnyMachineCard>(`/api/production/machines/${encodeURIComponent(id)}`, { signal }),
   setup: (inventory: string) => api<UnitSetup>(`/api/production/setup-model/${encodeURIComponent(inventory)}`),
-  configure: (inventory: string, draft: ConfigurationDraft) => api<{ ok: boolean; version: number; values: Record<string, string> }>(
+  configure: (inventory: string, draft: ConfigurationDraft) => api<{ ok: boolean; version: number; values: Record<string, string>; task_status?: string }>(
     `/api/production/setup-model/${encodeURIComponent(inventory)}/configuration`, { method: "POST", body: JSON.stringify(draft) }),
 };
 

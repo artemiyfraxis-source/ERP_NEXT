@@ -12,6 +12,7 @@ from uuid import UUID
 
 from sqlalchemy import (JSON, Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Integer, Numeric,
                         String, UniqueConstraint, Uuid, select, update)
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 from sqlalchemy.sql import false as sa_false
 
@@ -243,8 +244,13 @@ class SqlAlchemySetupModels:
         changes = dict(setup_values=dict(values), wire=wire, contact=contact, reference_id=None, tooling_unit_id=None,
                        blades="", set_by=actor_id, set_by_name=actor_name, set_at=now)
         if row is None:
-            self.session.add(SetupConfigurationRow(unit_id=unit_id, version=1, **changes))
-            self.session.flush()
+            # Two first saves at once: the second insert hits the primary key — the same answer as a stale version.
+            try:
+                with self.session.begin_nested():
+                    self.session.add(SetupConfigurationRow(unit_id=unit_id, version=1, **changes))
+            except IntegrityError as error:
+                raise ConcurrentConfiguration("Настройку станка уже записал кто-то другой — откройте карточку заново") \
+                    from error
             return 1
         done = self.session.execute(update(SetupConfigurationRow).where(
             SetupConfigurationRow.unit_id == unit_id, SetupConfigurationRow.version == expected_version)

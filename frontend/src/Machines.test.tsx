@@ -72,7 +72,8 @@ const SETUP: UnitSetup = {
   parameters: [{ key: "twist_pitch_mm", label: "Шаг скрутки", unit: "мм", source: "ЭТК", source_field: "Шаг", register: "" }],
   configuration: { values: { twist_pitch_mm: "20" }, wire: "", contact: "", set_by: "Слава", set_at: "2026-11-18T09:00:00+03:00", version: 3 },
   references: [], history: [], online: false,
-  open_tasks: [{ id: "t1", status: "Назначена", operation: "П-104 · Жгут · Свивка · ЭТК 4", planned_start: "2026-11-19T08:00:00+03:00", planned_finish: null, configured: false }],
+  open_tasks: [{ id: "t1", version: 1, status: "Назначена", operation: "П-104 · Жгут · Свивка · ЭТК 4", planned_start: "2026-11-19T08:00:00+03:00", planned_finish: null, mine: true },
+    { id: "t2", version: 2, status: "В работе", operation: "П-105 · Жгут · Свивка · ЭТК 1", planned_start: null, planned_finish: null, mine: false }],
 };
 
 function machines(calls: string[] = []) {
@@ -98,6 +99,8 @@ it("splits machines into «С управлением» and «Без управл
   expect(controlled.textContent).toBe("С управлением1");
   expect(screen.getByRole("tab", { name: /Без управления/ }).textContent).toBe("Без управления3");
   expect(screen.getByRole("tab", { name: /Принтеры и приборы/ }).textContent).toBe("Принтеры и приборы2");
+  expect(screen.getByRole("tab", { name: /^Все/ }).textContent).toBe("Все6");
+  expect(screen.queryByRole("tab", { name: "Запросы на наладку" })).toBeNull();  // наладка этому сотруднику закрыта
   // ОБ.019 — in its family block, with the article, the site, the operations and «Ждёт наладки».
   const cutting = screen.getByRole("region", { name: "Резка и зачистка" });
   const tile = within(cutting).getByText("ОБ.019").closest("button")!;
@@ -130,6 +133,8 @@ it("splits machines into «С управлением» and «Без управл
   fireEvent.click(within(info).getByRole("button", { name: "Закрыть" }));
   expect(calls.some((url) => url.includes("/setup-model/"))).toBe(false);
 
+  fireEvent.click(screen.getByRole("tab", { name: /^Все/ }));
+  for (const title of ["Резка и зачистка", "Пайка и усадка", "Принтеры", "Приборы и сканеры"]) expect(screen.getByRole("region", { name: title })).toBeTruthy();
   fireEvent.click(screen.getByRole("tab", { name: /С управлением/ }));
   fireEvent.click(screen.getByText("ОБ.019"));
   const dialog = await screen.findByRole("dialog", { name: /ОБ\.019/ });
@@ -179,9 +184,11 @@ it("records the machine setup by the task from its card, by hand only with a rea
   expect(pitch.value).toBe("20");
   fireEvent.change(pitch, { target: { value: "22" } });
   fireEvent.click(within(part).getByRole("button", { name: "Настроено по заданию" }));
-  expect(await within(part).findByText("Настройка записана по заданию — «Ждёт наладки» снят")).toBeTruthy();
+  expect(await within(part).findByText("Настройка записана по заданию — задание наладки готово")).toBeTruthy();
   expect(posts[0]).toEqual({ url: "/api/production/setup-model/ОБ.005/configuration",
-    body: { expected_version: 3, task_id: "t1", values: { twist_pitch_mm: "22" }, reason: "" } });
+    body: { expected_version: 3, task_id: "t1", task_version: 1, values: { twist_pitch_mm: "22" }, reason: "" } });
+  // Another technician's task is visible but «Настроено по заданию» is not theirs to press.
+  expect(within(part).getByRole("radio", { name: /П-105/ })).toHaveProperty("disabled", true);
   fireEvent.click(within(part).getByRole("radio", { name: /Без задания/ }));
   const byHand = within(part).getByRole("button", { name: "Настроено вручную" }) as HTMLButtonElement;
   expect(byHand.disabled).toBe(true);
@@ -235,4 +242,16 @@ it("opens «Оборудование» for Производство or Зада�
   expect(visibleNav(as({ myops: "view" })).some((item) => item.id === "machines")).toBe(true);
   expect(visibleNav(as({ production: "view" })).some((item) => item.id === "machines")).toBe(true);
   expect(visibleNav(as({ warehouse: "edit" })).some((item) => item.id === "machines")).toBe(false);
+});
+
+it("a planned machine without a БД.ОБ entry says so calmly instead of a setup error", async () => {
+  const calls: string[] = [];
+  machines(calls);
+  render(<MachinesPage canWrite />);
+  fireEvent.click(await screen.findByRole("tab", { name: /Без управления/ }));
+  fireEvent.click(screen.getByText("ОБ.037"));
+  const dialog = await screen.findByRole("dialog", { name: /ОБ\.037/ });
+  expect(within(dialog).getByText(/Станка нет в БД\.ОБ/)).toBeTruthy();
+  expect(within(dialog).queryByRole("alert")).toBeNull();
+  expect(calls.some((url) => url.includes("/setup-model/"))).toBe(false);
 });

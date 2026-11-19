@@ -474,61 +474,170 @@ def test_the_screen_shows_ticked_machines_and_every_agent_linked_one(machines_ap
                      headers=_csrf(admin)).status_code == 404
 
 
-def test_tiles_carry_the_setup_class_and_wait_for_setup_until_it_is_recorded(machines_api):
-    """«Требует наладки» comes from the setup model (independent of the checkbox); «Ждёт наладки» — an open setup task
-    no configuration was recorded for; «Настроено по заданию» clears it, «Настроено вручную» needs a reason."""
+class _FreeMachines:
+    """Test reservations: every window is free (occupancy has its own tests)."""
+
+    def __init__(self, session):
+        self.session = session
+
+    def acquire(self):
+        pass
+
+    def reserve(self, task):
+        pass
+
+    def release(self, task):
+        pass
+
+    def block(self, task):
+        pass
+
+
+def _person(session, login, level, site, master=False):
+    from app.modules.identity.domain import IdentityUser, hash_password
+    from app.modules.identity.infrastructure import IdentityUserRow, provision_user
+    user_id = uuid4()
+    provision_user(session, IdentityUser(id=user_id, login=login, email=f"{login}@example.test", name=login.title(),
+                                         department="Цех", role="installer", site=site, active=True, access_level=level,
+                                         site_master=master), hash_password(f"{login}-password"))
+    session.flush()
+    session.get(IdentityUserRow, user_id).site_master = master
+    return user_id
+
+
+@pytest.fixture
+def setup_world(machines_api):
+    """ОБ.019 on ЦАР with a setup model, a recipe and one «Назначена» task of the technician `tech`; people of both
+    sites; the setup unit of work over the same database (the issued operation resolves to ОБ.019, windows are free)."""
     from datetime import timedelta as delta
-    from app.modules.equipment_setup.infrastructure import SetupTaskRow
+    from app.modules.equipment_setup.application import IssuedSetupOperation
+    from app.modules.equipment_setup.domain import IssuedOperationRef, RecipeVersionRef, SetupTask
+    from app.modules.equipment_setup.infrastructure import SqlAlchemySetupTasks, SqlAlchemySetupUnitOfWork
     from app.modules.equipment_setup.recipe_infrastructure import RecipeVersionRow
-    from app.modules.equipment_setup.setup_model_infrastructure import (SetupConfigurationRow, SetupModelParameterRow,
-                                                                        SetupModelRow)
+    from app.modules.equipment_setup.setup_model_infrastructure import SetupModelParameterRow, SetupModelRow
+    from app.workflows.equipment_setup_context import SqlAlchemySetupContext
     sessions, clock, admin, ob019, _ = machines_api
     now = clock.now
     with sessions.begin() as session:
+        machine = session.get(EquipmentMachineRow, ob019)
+        machine.fields = {**machine.fields, "Тип": "Оборудование", "Расположение": "ЦАР"}
         model_id = session.get(EquipmentUnitRow, ob019).model_id
         session.add(SetupModelRow(model_id=model_id, requires_setup="full", updated_at=now, version=1))
         session.flush()
         session.add(SetupModelParameterRow(model_id=model_id, param_key="strip_mm", position=0, label="Зачистка",
                                            unit="мм", source="etk", source_field="Зачистка А"))
+        people = {login: _person(session, login, level, site, master) for login, level, site, master in (
+            ("tech", "operator", "ЦАР", False), ("fitter", "operator", "ЦАР", False),
+            ("master", "foreman", "ЦАР", True), ("stranger", "foreman", "ЖУК", True), ("reader", "pm", "ЦАР", False))}
         recipe = uuid4()
         session.add(RecipeVersionRow(recipe_id=recipe, version=1, machine_id=ob019, title="Рецепт", geometry=[],
                                      panel_settings=[], source="тест", created_by=uuid4(), created_at=now))
         session.flush()
-        task = uuid4()
-        session.add(SetupTaskRow(id=task, version=1, status="New", technician_id=uuid4(), machine_id=ob019,
-                                 recipe_id=recipe, recipe_version=1, created_at=now, updated_at=now,
-                                 snapshot={"operation": {"etk_position": 3}, "planned_start": now.isoformat(),
-                                           "planned_finish": (now + delta(hours=1)).isoformat()}))
+        task = SetupTask.create(operation=IssuedOperationRef(uuid4(), 1, uuid4(), uuid4(), 3), machine_id=ob019,
+                                technician_id=people["tech"], recipe=RecipeVersionRef(recipe, 1), planned_start=now,
+                                planned_finish=now + delta(hours=1), now=now)
+        SqlAlchemySetupTasks(session).save(task, expected_version=0)
+
+    def context(session):
+        return SqlAlchemySetupContext(session, resolve_issued_operation=lambda reference: IssuedSetupOperation(
+            reference, "", (ob019,)))
+    before = getattr(app.state, "equipment_setup_uow_factory", None)
+    app.state.equipment_setup_uow_factory = lambda: SqlAlchemySetupUnitOfWork(
+        sessions, context_factory=context, reservations_factory=_FreeMachines)
+    yield sessions, admin, ob019, task.id
+    app.state.equipment_setup_uow_factory = before
+
+
+SETUP_CARD = "/api/production/setup-model/ОБ.019"
+CONFIGURE = f"{SETUP_CARD}/configuration"
+
+
+def test_configuring_by_task_moves_the_task_to_ready_and_clears_waiting(setup_world):
+    """«Ждёт наладки» — an open task; «Настроено по заданию» by its technician takes it New → В работе → Готова through
+    the existing transitions, in one transaction with the configuration; «Настроено вручную» needs a reason."""
+    from app.modules.equipment_setup.infrastructure import SetupTaskRow, SetupTransitionRow
+    from app.modules.equipment_setup.setup_model_infrastructure import SetupConfigurationRow
+    sessions, admin, ob019, task = setup_world
     row = {r["inventory"]: r for r in admin.get(LIST).json()["rows"]}["ОБ.019"]
     assert row["setup"] == {"code": "full", "label": "полная"} and row["pending_setup"] == 1
-    card = admin.get("/api/production/setup-model/ОБ.019").json()
-    assert [(item["id"], item["status"], item["operation"], item["configured"]) for item in card["open_tasks"]] == [
-        (str(task), "Назначена", "ЭТК 3", False)]
-    url = "/api/production/setup-model/ОБ.019/configuration"
-    manual = admin.post(url, json={"expected_version": 0, "values": {"strip_mm": "5"}}, headers=_csrf(admin))
+    tech = _login("tech")
+    card = tech.get(SETUP_CARD).json()
+    assert [(item["id"], item["version"], item["status"], item["operation"], item["mine"])
+            for item in card["open_tasks"]] == [(str(task), 1, "Назначена", "ЭТК 3", True)]
+    manual = tech.post(CONFIGURE, json={"expected_version": 0, "values": {"strip_mm": "5"}}, headers=_csrf(tech))
     assert manual.status_code == 422 and "причину" in manual.json()["detail"]
-    stray = admin.post(url, json={"expected_version": 0, "task_id": str(task), "values": {"length": "5"}},
-                       headers=_csrf(admin))
+    stray = tech.post(CONFIGURE, json={"expected_version": 0, "task_id": str(task), "values": {"length": "5"}},
+                      headers=_csrf(tech))
     assert stray.status_code == 422
-    done = admin.post(url, json={"expected_version": 0, "task_id": str(task), "values": {"strip_mm": "5,5"}},
-                      headers=_csrf(admin))
+    stale_task = tech.post(CONFIGURE, json={"expected_version": 0, "task_id": str(task), "task_version": 2,
+                                            "values": {"strip_mm": "5"}}, headers=_csrf(tech))
+    assert stale_task.status_code == 409
+    with sessions() as session:  # a refused request leaves nothing behind
+        assert session.get(SetupConfigurationRow, ob019) is None
+        assert session.get(SetupTaskRow, task).status == "New"
+    done = tech.post(CONFIGURE, json={"expected_version": 0, "task_id": str(task), "task_version": 1,
+                                      "values": {"strip_mm": "5,5"}}, headers=_csrf(tech))
     assert done.status_code == 200, done.text
-    assert done.json() == {"ok": True, "version": 1, "values": {"strip_mm": "5.5"}}
+    assert done.json() == {"ok": True, "version": 1, "values": {"strip_mm": "5.5"}, "task_status": "Ready"}
+    with sessions() as session:
+        assert (session.get(SetupTaskRow, task).status, session.get(SetupTaskRow, task).version) == ("Ready", 3)
+        assert [item.version for item in session.scalars(select(SetupTransitionRow).where(
+            SetupTransitionRow.task_id == task).order_by(SetupTransitionRow.version))] == [2, 3]
+        assert {event.event_type for event in session.scalars(select(AuditEventRow).where(
+            AuditEventRow.aggregate_id == task))} == {"equipment_setup.start", "equipment_setup.ready"}
     row = {r["inventory"]: r for r in admin.get(LIST).json()["rows"]}["ОБ.019"]
     assert row["pending_setup"] == 0
-    stale = admin.post(url, json={"expected_version": 0, "values": {"strip_mm": "6"}, "reason": "смена ножа"},
-                       headers=_csrf(admin))
+    again = tech.post(CONFIGURE, json={"expected_version": 1, "task_id": str(task), "values": {"strip_mm": "6"}},
+                      headers=_csrf(tech))
+    assert again.status_code == 409  # the task is closed
+    stale = tech.post(CONFIGURE, json={"expected_version": 0, "values": {"strip_mm": "6"}, "reason": "смена ножа"},
+                      headers=_csrf(tech))
     assert stale.status_code == 409
-    by_hand = admin.post(url, json={"expected_version": 1, "values": {"strip_mm": "6"}, "reason": "смена ножа"},
-                         headers=_csrf(admin))
+    by_hand = tech.post(CONFIGURE, json={"expected_version": 1, "values": {"strip_mm": "6"}, "reason": "смена ножа"},
+                        headers=_csrf(tech))
     assert by_hand.status_code == 200 and by_hand.json()["version"] == 2
-    card = admin.get("/api/production/setup-model/ОБ.019").json()
+    card = tech.get(SETUP_CARD).json()
     assert card["configuration"]["values"] == {"strip_mm": "6"} and card["configuration"]["version"] == 2
-    assert [(item["reason"], item["values"]) for item in card["history"]] == [
-        ("смена ножа", {"strip_mm": "6"}), ("", {"strip_mm": "5.5"})]
-    assert card["open_tasks"][0]["configured"] is True
+    assert [(item["reason"], item["operation"], item["values"]) for item in card["history"]] == [
+        ("смена ножа", "", {"strip_mm": "6"}), ("", "ЭТК 3", {"strip_mm": "5.5"})]
+    assert card["open_tasks"] == []
+
+
+def test_setup_card_and_configuration_follow_the_task_list_rules(setup_world):
+    """Old «Наладка» rules: another site sees no tasks and no journal and may not record; on the site a master sees
+    every task, anyone else only their own; «Настроено по заданию» is the assigned technician's alone; view-only
+    users may not record at all."""
+    sessions, admin, ob019, task = setup_world
+    tasks = {login: [item["id"] for item in _login(login).get(SETUP_CARD).json()["open_tasks"]]
+             for login in ("tech", "fitter", "master", "stranger")}
+    assert tasks == {"tech": [str(task)], "fitter": [], "master": [str(task)], "stranger": []}
+    assert [item["id"] for item in admin.get(SETUP_CARD).json()["open_tasks"]] == [str(task)]
+    body = {"expected_version": 0, "task_id": str(task), "values": {"strip_mm": "5"}}
+    for login in ("fitter", "master", "stranger"):
+        client = _login(login)
+        refused = client.post(CONFIGURE, json=body, headers=_csrf(client))
+        assert refused.status_code == 403, (login, refused.text)
+        assert "назначенный наладчик" in refused.json()["detail"]
+    stranger = _login("stranger")
+    by_hand = {"expected_version": 0, "values": {"strip_mm": "5"}, "reason": "смена ножа"}
+    refused = stranger.post(CONFIGURE, json=by_hand, headers=_csrf(stranger))
+    assert refused.status_code == 403 and "другой площадки" in refused.json()["detail"]
+    reader = _login("reader")
+    assert reader.get(SETUP_CARD).status_code == 200
+    assert reader.post(CONFIGURE, json=by_hand, headers=_csrf(reader)).status_code == 403
+    fitter = _login("fitter")
+    assert fitter.post(CONFIGURE, json=by_hand, headers=_csrf(fitter)).status_code == 200
+    assert stranger.get(SETUP_CARD).json()["history"] == [] and len(fitter.get(SETUP_CARD).json()["history"]) == 1
+
+
+def test_only_a_reference_editor_ticks_the_shown_checkbox(setup_world):
+    sessions, admin, ob019, task = setup_world
+    reader = _login("reader")  # «База данных»: view only
+    assert reader.get("/api/references/equipment-shown").status_code == 200
+    refused = reader.put(f"/api/references/equipment/{ob019}/shown", json={"shown": True}, headers=_csrf(reader))
+    assert refused.status_code == 403
     with sessions() as session:
-        assert session.get(SetupConfigurationRow, ob019).set_by_name
+        assert session.get(EquipmentMachineRow, ob019).show_in_equipment is False
 
 
 def test_a_machine_without_a_setup_model_takes_free_values(machines_api):
