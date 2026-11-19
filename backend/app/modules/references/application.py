@@ -1153,7 +1153,7 @@ def set_equipment_model(unit_id: UUID, model_id: UUID | None, actor: Actor, now:
 
 
 def equipment_shown_ids(uow: UnitOfWork) -> list[str]:
-    """Machines with the checkbox «Показывать в «Оборудовании»» (owner 19.11.2026, migration 0204)."""
+    """Machines with the checkbox «Показывать в «Оборудовании»» (owner 19.11.2026, migration 0206)."""
     with uow:
         return uow.equipment.shown_ids()
 

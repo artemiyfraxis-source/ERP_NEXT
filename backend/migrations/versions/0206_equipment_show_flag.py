@@ -10,8 +10,8 @@ Not destructive: the downgrade drops only the new column."""
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0204_equipment_show_flag"
-down_revision = "0203_marking_printer_control"
+revision = "0206_equipment_show_flag"
+down_revision = "0205_vna_bench_sessions"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False

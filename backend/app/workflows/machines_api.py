@@ -214,7 +214,7 @@ def pending_setup(session) -> dict[str, int]:
 
 def _machine_rows(session, equipment, printers: list[dict], now) -> list[dict]:
     """The machines of «Оборудование» (owner 19.11.2026: «просто галочку для вытягивания»): a unit of БД.ОБ
-    «Оборудование» with the checkbox «Показывать в «Оборудовании»» (`show_in_equipment`, 0204) plus every unit an ERP
+    «Оборудование» with the checkbox «Показывать в «Оборудовании»» (`show_in_equipment`, 0206) plus every unit an ERP
     agent reaches whatever the checkbox — a machine bridge (live state), a supported or planned bridge not installed
     yet («Агент не установлен»), the print agent of a marking machine's printer. `controlled` — ERP reaches it through
     an agent now (the tab «С управлением»); a ticked unit without one says «Нет подключения к ERP». Every row carries
