@@ -42,7 +42,7 @@ Describe 'write allow-list' {
         Test-BlockWritable @{ addr = 401; values = @(500, 0) } | Should Be $true
     }
     It 'writes switches only as single bits, never as whole words' {
-        foreach ($a in @(132, 400, 422, 434, 435, 436)) {
+        foreach ($a in @(132, 136, 400, 422, 434, 435, 436)) {
             Test-BlockWritable @{ addr = $a; values = @(1) } | Should Be $false
             Test-BitWritable @{ addr = $a; bit = 0; value = 1 } | Should Be $true
         }
@@ -144,7 +144,7 @@ Describe 'ERP exchange' {
         $script:posted[1]['body'] | Should Match '"readback":\{"20":1\}'
         $script:posted[1]['body'] | Should Match '"ok":true'
         $script:posted[1]['body'] | Should Match '"inventory":"\\u041e\\u0411.019"'
-        $script:posted[0]['body'] | Should Match '"runner_version":"1.2.0"'
+        $script:posted[0]['body'] | Should Match '"runner_version":"1.3.0"'
     }
     It 'does nothing when ERP has no command' {
         Mock Invoke-Erp { @{ code = 200; text = '{"command":null}' } }

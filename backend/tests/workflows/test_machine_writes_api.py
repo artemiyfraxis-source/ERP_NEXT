@@ -136,7 +136,7 @@ def test_erp_the_runner_and_mbd_write_exactly_the_same_registers_and_bits():
         address for field in rules.OB019_FIELDS.values() for address in rules.field_words(field)}
     assert _runner_writable() == rules.OB019_WRITTEN_WORDS
     assert _mbd_writable() == rules.OB019_WRITTEN_WORDS
-    assert rules.OB019_WRITTEN_BITS == {(132, 0), (400, 0), (422, 0), (434, 0), (435, 0), (436, 0)}
+    assert rules.OB019_WRITTEN_BITS == {(132, 0), (136, 0), (400, 0), (422, 0), (434, 0), (435, 0), (436, 0)}
     assert _bits("ob019-writer.ps1", "$script:WritableBits") == rules.OB019_WRITTEN_BITS
     assert _bits("mbd.ps1", "$script:allowedBits") == rules.OB019_WRITTEN_BITS
     # A switch word is never written whole.

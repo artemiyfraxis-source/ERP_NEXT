@@ -46,8 +46,11 @@ $script:SlowRanges = @(
     @(390, 95),   # D390..D395 coiling, D400..D484 marking and its texts
     @(1703, 51)   # D1703/D1705 slitting die, D1722 marking drop, D1750..D1753 coiling limits
 )
+# D136.0 vs D604.0 - settle by bench probe. Mirrors OB019_FEED_WHEEL_ADDRESS of backend production/machines.py (136 lies
+# inside the SlowRanges read above and is sent with the other words; the lift switch is the field feed_wheel).
+$script:FeedWheelAddress = 136
 $script:Allowed = @{}
-foreach ($a in @(20, 74, 142, 197, 711, 766, 782, 1280) + (22..28) + (32..53) + (60..61) + (67..72) + (100..104) + (120..123) + (132..133) + (199..231) + (250..281) + (390..395) + (400..402) + (404..415) + (421..423) + (430..432) + (434..436) + (440..484) + (641..646) + (649..650) + (938..969) + (1703..1705) + (1722..1723) + (1750..1753)) { $script:Allowed[[int]$a] = $true }
+foreach ($a in @(20, 74, 136, 142, 197, 711, 766, 782, 1280) + (22..28) + (32..53) + (60..61) + (67..72) + (100..104) + (120..123) + (132..133) + (199..231) + (250..281) + (390..395) + (400..402) + (404..415) + (421..423) + (430..432) + (434..436) + (440..484) + (641..646) + (649..650) + (938..969) + (1703..1705) + (1722..1723) + (1750..1753)) { $script:Allowed[[int]$a] = $true }
 $script:SlowWords = @{}
 $script:SlowAt = [datetime]::MinValue
 $script:ReadOnlyCommands = @('read')

@@ -35,7 +35,7 @@ $ErrorActionPreference = 'Stop'
 $script:Self = $MyInvocation.InvocationName
 if (-not $BridgeScript) { $BridgeScript = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'ob019-bridge.ps1' }
 . $BridgeScript -Server $Server -TokenPath $TokenPath -MbdHost $MbdHost -MbdPort $MbdPort -MbdScript $MbdScript -LogPath $LogPath -PollMs $PollMs -Once:$Once
-$script:RunnerVersion = '1.2.0'
+$script:RunnerVersion = '1.3.0'
 # Machine commands: the bit held and the machine states (D766) each may run in, empty = any state. Mirrors
 # ALLOWED_STATES of backend production/machine_control.py (a backend test compares them).
 $script:HoldMs = 1500
@@ -48,14 +48,14 @@ $script:Controls = @{
 # Words: D20 mode, D22..D28 job and quantities, D32..D43 wire and strip lengths, D940..D969 order number and product;
 # the other HMI pages (1.2.0): middle strip D197/D199, slitting D67..D74/D1703..D1705, coiling D391..D395/D1750..D1753,
 # marking D401..D432 numbers, D1722 and the texts D440..D484, speeds D100..D104/D120..D123. Switch bits (setbit only,
-# never a whole word): middle strip D132.0, marking D400.0, D422.0, D434.0..D436.0. Not: D390/D133/D142 (meaning not
+# never a whole word): middle strip D132.0, feed-roller lift D136.0 (D136.0 vs D604.0: bench probe), marking D400.0, D422.0, D434.0..D436.0. Not: D390/D133/D142 (meaning not
 # established), D421 (order transfer handshake, map open question 8). Mirrors OB019_WRITTEN_WORDS / _BITS of backend
 # production/machines.py and mbd.ps1 allowedWrite / allowedBits (a backend test compares the three). Never: passwords
 # D1682..D1687, SHA-256 D1203..D1211, command bits D599/D600, D730, date D1087..D1089.
 $script:MbdMinVersion = '1.2.0'
 $script:Writable = @{}
 foreach ($a in @(20, 74, 197, 199, 423) + (22..28) + (32..43) + (67..72) + (100..104) + (120..123) + (391..395) + (401..402) + (404..415) + (430..432) + (440..484) + (940..969) + (1703..1705) + (1722..1723) + (1750..1753)) { $script:Writable[[int]$a] = $true }
-$script:WritableBits = @{ 132 = @(0); 400 = @(0); 422 = @(0); 434 = @(0); 435 = @(0); 436 = @(0) }
+$script:WritableBits = @{ 132 = @(0); 136 = @(0); 400 = @(0); 422 = @(0); 434 = @(0); 435 = @(0); 436 = @(0) }
 
 function Test-BlockWritable($Block) {
     $first = [int]$Block['addr']; $values = @($Block['values'])

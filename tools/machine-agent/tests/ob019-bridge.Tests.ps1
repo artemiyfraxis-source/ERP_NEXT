@@ -30,7 +30,7 @@ Describe 'read only' {
     It 'keeps only allow-listed words (D29..D31 read but not sent)' {
         Mock Invoke-MbdLine { Reply-Values $Line }
         $words = (Read-Snapshot)['registers']
-        $words.Count | Should Be 245
+        $words.Count | Should Be 246
         $words.ContainsKey('766') | Should Be $true
         $words['766'] | Should Be 766
         $words['440'] | Should Be 440
@@ -42,12 +42,12 @@ Describe 'read only' {
         $script:SlowWords = @{}
         $script:sent = @()
         Mock Invoke-MbdLine { $script:sent += $Line; Reply-Values $Line }
-        (Read-Snapshot)['registers'].Count | Should Be 245
+        (Read-Snapshot)['registers'].Count | Should Be 246
         $script:sent.Count | Should Be 9
         $script:sent = @()
         $again = (Read-Snapshot)['registers']
         $script:sent.Count | Should Be 5
-        $again.Count | Should Be 245
+        $again.Count | Should Be 246
         $again['1753'] | Should Be 1753
     }
     It 'the bridge source carries no bus write command' {
@@ -115,7 +115,7 @@ Describe 'against mbd.ps1 -Mock -LocalOnly' {
             $MbdPort = $port
             $snapshot = Read-Snapshot
             $snapshot['link'] | Should Be 'ok'
-            $snapshot['registers'].Count | Should Be 245
+            $snapshot['registers'].Count | Should Be 246
         }
     } finally {
         if (-not $mbd.HasExited) { Stop-Process -Id $mbd.Id -Force }
