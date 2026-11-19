@@ -742,12 +742,13 @@ def _peak(client, task, vna, peak, position=1):
 
 
 @pytest.mark.parametrize(("peak", "verdict"), [
-    (1.3279, "pass"),     # ниже нормы 1,35 больше чем на U = 0,022 (Планар S50180 до 10 ГГц)
-    (1.328, "border"),    # норма − U — граница включительно
+    # U для значения нормы 1,35 (п. 13.3): 0,022 · 1,35 / 1,2 = 0,02475 → 0,0248 (Планар S50180 до 10 ГГц).
+    (1.3251, "pass"),     # ниже нормы больше чем на U
+    (1.3252, "border"),   # норма − U — граница включительно
     (1.34, "border"),
     (1.36, "border"),     # выше нормы, но в пределах U — не брак, а повтор
-    (1.372, "border"),    # норма + U — граница включительно
-    (1.3721, "fail"),     # выше нормы + U — брак сразу
+    (1.3748, "border"),   # норма + U — граница включительно
+    (1.3749, "fail"),     # выше нормы + U — брак сразу
 ])
 def test_first_measurement_within_the_vna_uncertainty_of_the_limit_is_border(production_api, peak, verdict):  # noqa: F811
     """СТО ФРАК-002-2026 п. 13.3: в пределах ±U ВАЦ от нормы — «на границе допуска», повтор в 3 подключениях."""
@@ -756,7 +757,7 @@ def test_first_measurement_within_the_vna_uncertainty_of_the_limit_is_border(pro
     task = _launch(client, _card({"coaxVswrNorm": NORM}), key=f"border-{peak}")
     measurement = _peak(client, task, _planar(client), peak)
     assert measurement["verdict"] == verdict and measurement["decision"]["status"] == verdict
-    assert measurement["decision"]["uncertainty"] == 0.022 and measurement["repeat_of"] is None
+    assert measurement["decision"]["uncertainty"] == 0.0248 and measurement["repeat_of"] is None
     if verdict == "border":
         assert "3 подключения с поворотом 120°" in measurement["decision"]["text"]
         assert measurement["verdict_name"] == "На границе допуска"
@@ -773,7 +774,7 @@ def test_without_a_known_vna_uncertainty_the_norm_alone_decides(production_api):
 
 @pytest.mark.parametrize(("repeats", "final"), [
     ((1.37, 1.365, 1.372), "pass"),  # худший 1,372 ≤ норма + U — годно, хотя выше нормы (тот же файл — не новое подключение)
-    ((1.34, 1.3721), "fail"),       # второе подключение выше нормы + U — брак сразу, без третьего
+    ((1.34, 1.3749), "fail"),       # второе подключение выше нормы + U (1,3748) — брак сразу, без третьего
 ])
 def test_repeat_in_three_connections_decides_against_norm_plus_uncertainty(production_api, repeats, final):  # noqa: F811
     client, _ = production_api
