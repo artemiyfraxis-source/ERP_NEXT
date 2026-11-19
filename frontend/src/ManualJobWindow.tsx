@@ -36,7 +36,7 @@ function Facts({ job }: { job: ManualJob }) {
   </div>)}</dl>;
 }
 
-function StartForm({ options, equipmentId, inventory, onStarted }: {
+export function StartForm({ options, equipmentId, inventory, onStarted }: {
   options: ManualJobOptions; equipmentId?: string; inventory?: string; onStarted: (job: ManualJob) => void;
 }) {
   const initial = options.machines.find((item) => item.id === equipmentId || (inventory && item.inventory === inventory));

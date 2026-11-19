@@ -166,7 +166,7 @@ class EquipmentRecordRow(AbstractConcreteBase, Base):
 class EquipmentMachineRow(EquipmentRecordRow):
     __tablename__ = "equipment_machines"
     __mapper_args__ = {"polymorphic_identity": "ob", "concrete": True, "exclude_properties": ["type"]}
-    # «Показывать в «Оборудовании»» (migration 0203): the machine is on the screen «Производство → Оборудование».
+    # «Показывать в «Оборудовании»» (migration 0204): the machine is on the screen «Производство → Оборудование».
     show_in_equipment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa_false())
 
 

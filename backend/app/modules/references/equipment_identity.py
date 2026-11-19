@@ -599,7 +599,7 @@ class SqlAlchemyEquipmentRepository:
         prune_models(self.session)
         return str(model.id)
 
-    # «Показывать в «Оборудовании»» (owner 19.11.2026, migration 0203): machines of the tab «Оборудование» only.
+    # «Показывать в «Оборудовании»» (owner 19.11.2026, migration 0204): machines of the tab «Оборудование» only.
     def shown_ids(self) -> list[str]:
         from .infrastructure import EquipmentMachineRow
         return sorted(str(item) for item in self.session.scalars(

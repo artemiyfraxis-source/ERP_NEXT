@@ -1,0 +1,1318 @@
+{
+  "about": "Нормы для паспорта СИ (коаксиальные переходники и кабели). Источник каждого числа — в поле source. Исследование: docs/data/norms-coax-testing-2026-11-18.md (PR #912). Предел КСВН участка: a + b·F, F — частота в ГГц, участок от предыдущего to_ghz (или from_ghz) до своего to_ghz. Температуры и ресурс MIL сверены по текстам листов DLA 18.11.2026. Предел вносимых потерь участка: a + k·√F дБ (поле loss.segments) либо значение на частоте испытания листа (loss.points: max_db или k·√F при этой частоте) — лист с «tested at» проверяется только на этой частоте.",
+  "makers": [
+    {
+      "series": "ADP1A",
+      "maker": "Планар",
+      "match": "ADP1A",
+      "title": "Планар ADP1A",
+      "source": "Планар, руководство по эксплуатации переходов ADP1A, табл. 2.5–2.7",
+      "url": "https://planarchel.ru/upload/uf/c70/8hlgfcachftzizo7soya2jcblo4k0046/operating_manual_junction_adp1a_series_rus.pdf",
+      "temp_min_c": -60,
+      "temp_max_c": 110,
+      "temp_source": "данные изготовителя ADP1A",
+      "groups": [
+        {
+          "title": "тракт 3,5/1,52 (3,5 мм)",
+          "reference": "РЭ Планар ADP1A, табл. 2.6",
+          "ports": [
+            "3.5mm",
+            "3.5mm"
+          ],
+          "from_ghz": 0,
+          "id": "adp1a-35",
+          "segments": [
+            {
+              "to_ghz": 20,
+              "a": 1.06,
+              "b": 0
+            },
+            {
+              "to_ghz": 26.5,
+              "a": 1.1,
+              "b": 0
+            },
+            {
+              "to_ghz": 32,
+              "a": 1.15,
+              "b": 0
+            }
+          ],
+          "mating_resource": 3000,
+          "loss": {
+            "from_ghz": 0,
+            "segments": [
+              {
+                "to_ghz": 32,
+                "a": 0.2,
+                "k": 0
+              }
+            ],
+            "source": "Планар, РЭ ADP1A, табл. 2.6: «Вносимые потери, дБ, не более: 0,2» в диапазоне 0–32 ГГц (сверено по PDF изготовителя 18.11.2026)",
+            "reference": "РЭ Планар ADP1A, табл. 2.6"
+          }
+        },
+        {
+          "title": "тракт 7,0/3,04 (N)",
+          "reference": "РЭ Планар ADP1A, табл. 2.5",
+          "ports": [
+            "N",
+            "N"
+          ],
+          "from_ghz": 0,
+          "id": "adp1a-n",
+          "segments": [
+            {
+              "to_ghz": 18,
+              "a": 1.08,
+              "b": 0
+            }
+          ],
+          "mating_resource": 5000,
+          "loss": {
+            "from_ghz": 0,
+            "segments": [
+              {
+                "to_ghz": 18,
+                "a": 0.15,
+                "k": 0
+              }
+            ],
+            "source": "Планар, РЭ ADP1A, табл. 2.5: «Вносимые потери, дБ, не более: 0,15» в диапазоне 0–18 ГГц (сверено по PDF изготовителя 18.11.2026)",
+            "reference": "РЭ Планар ADP1A, табл. 2.5"
+          }
+        },
+        {
+          "title": "между трактами N и 3,5 мм",
+          "reference": "РЭ Планар ADP1A, табл. 2.7",
+          "ports": [
+            "N",
+            "3.5mm"
+          ],
+          "from_ghz": 0,
+          "id": "adp1a-n-35",
+          "segments": [
+            {
+              "to_ghz": 18,
+              "a": 1.1,
+              "b": 0
+            }
+          ],
+          "loss": {
+            "from_ghz": 0,
+            "segments": [
+              {
+                "to_ghz": 18,
+                "a": 0.15,
+                "k": 0
+              }
+            ],
+            "source": "Планар, РЭ ADP1A, табл. 2.7: «Вносимые потери, дБ, не более: 0,15» в диапазоне 0–18 ГГц (сверено по PDF изготовителя 18.11.2026)",
+            "reference": "РЭ Планар ADP1A, табл. 2.7"
+          }
+        }
+      ],
+      "articles": [
+        {
+          "article": "ADP1A-35F-35F",
+          "temp_min_c": -60,
+          "temp_max_c": 85,
+          "temp_source": "бирка на изделии; данные изготовителя ADP1A: −60…+110 °C",
+          "mating_resource": 3000,
+          "mating_source": "бирка на изделии",
+          "note": "Бирка ADP1A-35F-35F сфотографирована владельцем 18.11.2026: «Ресурс 3000», «Диапазон температур −60…+85 °C». Бирка на изделии важнее данных изготовителя."
+        }
+      ],
+      "temp_note": "−60…+110 °C — данные изготовителя по сообщению владельца 18.11.2026; лист не сверен"
+    },
+    {
+      "series": "PK2-18",
+      "maker": "Микран",
+      "match": "МИКРАН",
+      "matches": [
+        "МИКРАН",
+        "MICRAN"
+      ],
+      "title": "Микран PK2-18 (ЖНКУ.468562.002 ТУ)",
+      "source": "Микран, каталог переходов 7,0/3,04 мм PK2-18 по ЖНКУ.468562.002 ТУ: КСВН не более 1,10 на 0–12 ГГц, 1,15 на 12–18 ГГц (исследование docs/data/norms-coax-gost-iec-2026-11-18.md (PR #932)); текст ТУ не опубликован, числа — по каталогу изготовителя",
+      "url": "https://www.micran.com/upload/iblock/098/7.03.04%20mm.pdf",
+      "note": "ТУ изготовителя обязывает только его изделия: норма назначается переходам Микран, не переходам других изготовителей (решение 18.11.2026)",
+      "groups": [
+        {
+          "title": "тракт 7/3,04 и N: N–N, тип III–N, тип III–тип III, любые роды",
+          "port_pairs": [
+            [
+              "N",
+              "N"
+            ],
+            [
+              "N",
+              "тип III"
+            ],
+            [
+              "тип III",
+              "тип III"
+            ]
+          ],
+          "from_ghz": 0,
+          "id": "mikran-pk2-18",
+          "segments": [
+            {
+              "to_ghz": 12,
+              "a": 1.1,
+              "b": 0
+            },
+            {
+              "to_ghz": 18,
+              "a": 1.15,
+              "b": 0
+            }
+          ],
+          "loss": {
+            "from_ghz": 0,
+            "segments": [
+              {
+                "to_ghz": 18,
+                "a": 0.15,
+                "k": 0
+              }
+            ],
+            "source": "Микран, каталог PK2-18 (ЖНКУ.468562.002 ТУ): вносимые потери не более 0,15 дБ на 0–18 ГГц (исследование docs/data/norms-coax-gost-iec-2026-11-18.md (PR #932))",
+            "reference": "Микран, ЖНКУ.468562.002 ТУ"
+          },
+          "reference": "Микран, ЖНКУ.468562.002 ТУ (PK2-18)"
+        }
+      ]
+    },
+    {
+      "series": "C50",
+      "maker": "Планар",
+      "match": "C50",
+      "title": "Планар, кабели измерительные C50",
+      "source": "Планар, паспорта кабелей измерительных C50, табл. 1",
+      "url": "https://planarchel.ru/upload/medialibrary/fef/8qhodifsvgagzioagh49mquij4ui5biw/Паспорт Кабель измерительный C50SMNM.2.pdf",
+      "note": "в каталоге паспорта C50SMNM.2, C50NMNM.2 и C50NMIIIM.2; паспорт C50NMIIIM.2 на сайте изготовителя не найден, норма — по паспортам изделий зав. № 62001 и 62002 из карточек СИ (19.11.2026)",
+      "groups": [
+        {
+          "title": "кабель C50SMNM.2, вилка – вилка, 600 мм",
+          "article": "C50SMNM.2",
+          "source": "Планар, паспорт «Кабель измерительный C50SMNM.2» (версия 24.3), табл. 1: коэффициент отражения не более −23 дБ на 0,02 МГц–2,5 ГГц, −20 дБ на 2,5–6 ГГц, −17 дБ на 6–18 ГГц; КСВН = (1 + |Г|)/(1 − |Г|): 1,152 / 1,222 / 1,328 (округлено вниз до 0,001: 1,15238 / 1,22222 / 1,32898; уточнено 19.11.2026, было 1,329 — округление вверх) (сверено по PDF изготовителя 18.11.2026)",
+          "url": "https://planarchel.ru/upload/medialibrary/fef/8qhodifsvgagzioagh49mquij4ui5biw/Паспорт Кабель измерительный C50SMNM.2.pdf",
+          "from_ghz": 2e-05,
+          "segments": [
+            {
+              "to_ghz": 2.5,
+              "a": 1.152,
+              "b": 0
+            },
+            {
+              "to_ghz": 6,
+              "a": 1.222,
+              "b": 0
+            },
+            {
+              "to_ghz": 18,
+              "a": 1.328,
+              "b": 0
+            }
+          ],
+          "loss": {
+            "from_ghz": 2e-05,
+            "segments": [
+              {
+                "to_ghz": 2.5,
+                "a": 0.6,
+                "k": 0
+              },
+              {
+                "to_ghz": 6,
+                "a": 0.95,
+                "k": 0
+              },
+              {
+                "to_ghz": 12,
+                "a": 1.4,
+                "k": 0
+              },
+              {
+                "to_ghz": 18,
+                "a": 1.75,
+                "k": 0
+              }
+            ],
+            "source": "Планар, паспорт C50SMNM.2, табл. 1: «Затухание, дБ, не более» 0,60, 0,95, 1,40, 1,75 на 0,02 МГц–2,5 / 2,5–6 / 6–12 / 12–18 ГГц (сверено 18.11.2026)",
+            "reference": "Планар, паспорт C50SMNM.2, табл. 1"
+          },
+          "ports": [
+            "SMA",
+            "N"
+          ],
+          "id": "planar-c50smnm-2",
+          "reference": "Планар, паспорт C50SMNM.2, табл. 1"
+        },
+        {
+          "title": "кабель C50NMNM.2, вилка – вилка, 600 мм",
+          "article": "C50NMNM.2",
+          "source": "Планар, паспорт «Кабель измерительный C50NMNM.2» (версия 24.2), табл. 1: коэффициент отражения не более −23 дБ на 0,02 МГц–2,5 ГГц, −20 дБ на 2,5–6 ГГц, −17 дБ на 6–18 ГГц; КСВН = (1 + |Г|)/(1 − |Г|): 1,152 / 1,222 / 1,328 (округлено вниз до 0,001: 1,15238 / 1,22222 / 1,32898; уточнено 19.11.2026, было 1,329 — округление вверх) (сверено по PDF изготовителя 18.11.2026)",
+          "url": "https://planarchel.ru/upload/medialibrary/812/dxwjia35t53q3j9qavi6ksv7lwefqk2w/Паспорт Кабель измерительный C50NMNM.2.pdf",
+          "from_ghz": 2e-05,
+          "segments": [
+            {
+              "to_ghz": 2.5,
+              "a": 1.152,
+              "b": 0
+            },
+            {
+              "to_ghz": 6,
+              "a": 1.222,
+              "b": 0
+            },
+            {
+              "to_ghz": 18,
+              "a": 1.328,
+              "b": 0
+            }
+          ],
+          "loss": {
+            "from_ghz": 2e-05,
+            "segments": [
+              {
+                "to_ghz": 2.5,
+                "a": 0.6,
+                "k": 0
+              },
+              {
+                "to_ghz": 6,
+                "a": 1.0,
+                "k": 0
+              },
+              {
+                "to_ghz": 12,
+                "a": 1.4,
+                "k": 0
+              },
+              {
+                "to_ghz": 18,
+                "a": 1.8,
+                "k": 0
+              }
+            ],
+            "source": "Планар, паспорт C50NMNM.2, табл. 1: «Затухание, дБ, не более» 0,60, 1,00, 1,40, 1,80 на 0,02 МГц–2,5 / 2,5–6 / 6–12 / 12–18 ГГц (сверено 18.11.2026)",
+            "reference": "Планар, паспорт C50NMNM.2, табл. 1"
+          },
+          "ports": [
+            "N",
+            "N"
+          ],
+          "id": "planar-c50nmnm-2",
+          "reference": "Планар, паспорт C50NMNM.2, табл. 1"
+        },
+        {
+          "title": "кабель C50NMIIIM.2, вилка – вилка, 2000 мм",
+          "article": "C50NMIIIM.2",
+          "source": "Планар, паспорт «Кабель измерительный C50NMIIIM.2» (версия 26.1 от 29.01.2026), табл. 1: коэффициент отражения не более −23 дБ на 0,02 МГц–2,5 ГГц, −20 дБ на 2,5–6 ГГц, −17 дБ на 6–18 ГГц; КСВН = (1 + |Г|)/(1 − |Г|): 1,152 / 1,222 / 1,328 (округлено вниз до 0,001: 1,15238 / 1,22222 / 1,32898; уточнено 19.11.2026, было 1,329 — округление вверх) (сверено по паспортам зав. № 62001 и 62002 из карточек СИ, 19.11.2026)",
+          "from_ghz": 2e-05,
+          "segments": [
+            {
+              "to_ghz": 2.5,
+              "a": 1.152,
+              "b": 0
+            },
+            {
+              "to_ghz": 6,
+              "a": 1.222,
+              "b": 0
+            },
+            {
+              "to_ghz": 18,
+              "a": 1.328,
+              "b": 0
+            }
+          ],
+          "loss": {
+            "from_ghz": 2e-05,
+            "segments": [
+              {
+                "to_ghz": 2.5,
+                "a": 0.9,
+                "k": 0
+              },
+              {
+                "to_ghz": 6,
+                "a": 1.6,
+                "k": 0
+              },
+              {
+                "to_ghz": 12,
+                "a": 1.9,
+                "k": 0
+              },
+              {
+                "to_ghz": 18,
+                "a": 2.7,
+                "k": 0
+              }
+            ],
+            "source": "Планар, паспорт C50NMIIIM.2 (версия 26.1), табл. 1: «Затухание, дБ, не более» 0,90, 1,60, 1,90, 2,70 на 0,02 МГц–2,5 / 2,5–6 / 6–12 / 12–18 ГГц (сверено по паспортам зав. № 62001 и 62002, 19.11.2026)",
+            "reference": "Планар, паспорт C50NMIIIM.2, табл. 1"
+          },
+          "ports": [
+            "N",
+            "тип III"
+          ],
+          "id": "planar-c50nmiiim-2",
+          "reference": "Планар, паспорт C50NMIIIM.2, табл. 1"
+        }
+      ]
+    }
+  ],
+  "mil_adapters": [
+    {
+      "id": "mil-55339-55",
+      "sheet": "MIL-PRF-55339/55",
+      "title": "SMA–SMA, вилка–розетка; для других сочетаний SMA–SMA — ближайший лист",
+      "ports": [
+        "SMA",
+        "SMA"
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 27,
+          "a": 1.05,
+          "b": 0.005
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss55.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "from_ghz": 0.5,
+        "segments": [
+          {
+            "to_ghz": 18,
+            "a": 0,
+            "k": 0.03
+          },
+          {
+            "to_ghz": 27,
+            "a": 0,
+            "k": 0.05
+          }
+        ],
+        "source": "«RF insertion loss: 0.05√f(GHz) dB maximum from 18.0 to 27.0 GHz; 0.03√f(GHz) dB maximum from 0.5 to 18.0 GHz» (текст листа DLA, сверено 18.11.2026; знак √ — по изображению листа)"
+      }
+    },
+    {
+      "id": "mil-55339-54b",
+      "sheet": "MIL-PRF-55339/54B",
+      "title": "SMA–N",
+      "ports": [
+        "SMA",
+        "N"
+      ],
+      "from_ghz": 0,
+      "segments": [
+        {
+          "to_ghz": 12.4,
+          "a": 1.06,
+          "b": 0.005
+        },
+        {
+          "to_ghz": 18,
+          "a": 0.83,
+          "b": 0.023
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss54.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 9,
+            "max_db": 0.18
+          }
+        ],
+        "source": "«RF insertion loss: .18 dB, maximum, at 9 GHz» (текст листа DLA, сверено 18.11.2026; формулы по частоте в листе нет — норма только на 9 ГГц)"
+      }
+    },
+    {
+      "id": "mil-55339-40b-43b",
+      "sheet": "MIL-PRF-55339/40B, /41B, /42A, /43B",
+      "title": "SMA–TNC: вилка–розетка (/40B), розетка–розетка (/41B), розетка–вилка (/42A), вилка–вилка (/43B)",
+      "ports": [
+        "SMA",
+        "TNC"
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 11,
+          "a": 1.15,
+          "b": 0.015
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss40.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 6,
+            "k": 0.06
+          }
+        ],
+        "source": "«RF insertion loss: .06√F(GHz) dB maximum at 6 GHz» — одинаково в /40B, /41B, /42A, /43B (текст листа DLA, сверено 18.11.2026); норма на частоте испытания 6 ГГц: 0,06·√6 = 0,147 дБ"
+      },
+      "ends": [
+        [
+          "SMA штырь",
+          "TNC гнездо"
+        ],
+        [
+          "SMA гнездо",
+          "TNC гнездо"
+        ],
+        [
+          "SMA гнездо",
+          "TNC штырь"
+        ],
+        [
+          "SMA штырь",
+          "TNC штырь"
+        ]
+      ]
+    },
+    {
+      "id": "mil-55339-5a",
+      "sheet": "MIL-PRF-55339/5A",
+      "title": "N вилка – N вилка, класс 2",
+      "ports": [
+        "N",
+        "N"
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 11,
+          "a": 1.3,
+          "b": 0
+        }
+      ],
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss5.pdf",
+      "mating_resource": 500,
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 9,
+            "max_db": 0.15
+          }
+        ],
+        "source": "«RF insertion loss: .15 dB, maximum, 9 GHz (.050√F(GHz) dB maximum tested at 9 GHz)» (текст листа DLA, сверено 18.11.2026); норма на частоте испытания 9 ГГц"
+      },
+      "ends": [
+        [
+          "N штырь",
+          "N штырь"
+        ]
+      ]
+    },
+    {
+      "id": "mil-55339-33a",
+      "sheet": "MIL-PRF-55339/33A",
+      "title": "TNC–TNC прямой, класс 2",
+      "ports": [
+        "TNC",
+        "TNC"
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 11,
+          "a": 1.25,
+          "b": 0
+        }
+      ],
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss33.pdf",
+      "mating_resource": 500,
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 3,
+            "k": 0.12
+          }
+        ],
+        "source": "«RF insertion loss: .12√F(GHz) dB max, tested at 3 GHz» (текст листа DLA, сверено 18.11.2026); норма на частоте испытания 3 ГГц: 0,12·√3 = 0,208 дБ"
+      }
+    },
+    {
+      "id": "mil-55339-13b",
+      "sheet": "MIL-PRF-55339/13B",
+      "title": "BNC розетка – BNC розетка, негерметичный",
+      "ports": [
+        "BNC",
+        "BNC"
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 4,
+          "a": 1.25,
+          "b": 0
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss13.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 3,
+            "max_db": 0.2
+          }
+        ],
+        "source": "«RF insertion loss: 0.5 dB maximum for hermetic and 0.2 dB maximum for non-hermetic, 3 GHz (.144√F(GHz) dB maximum tested at 3 GHz)» (текст листа DLA, сверено 18.11.2026). Взято 0,2 дБ на 3 ГГц — негерметичный, как норма КСВН 1,25; формула в скобках даёт 0,249 дБ и с этим числом не сходится"
+      },
+      "ends": [
+        [
+          "BNC гнездо",
+          "BNC гнездо"
+        ]
+      ]
+    },
+    {
+      "id": "mil-55339-20a",
+      "sheet": "MIL-PRF-55339/20A",
+      "title": "BNC розетка – N вилка, класс 2",
+      "ports": [
+        "BNC",
+        "N"
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 4,
+          "a": 1.35,
+          "b": 0
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss20.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 3,
+            "max_db": 0.35
+          }
+        ],
+        "source": "«RF insertion loss: .35 dB, max, 3 GHz (.020√F(GHz) dB max tested at 3 GHz)» (текст листа DLA, сверено 18.11.2026). Взято 0,35 дБ на 3 ГГц; формула в скобках даёт 0,035 дБ — вероятно опечатка листа"
+      },
+      "ends": [
+        [
+          "BNC гнездо",
+          "N штырь"
+        ]
+      ]
+    },
+    {
+      "id": "mil-55339-44c",
+      "sheet": "MIL-PRF-55339/44C",
+      "title": "SMA розетка – BNC вилка, класс 2",
+      "ports": [
+        "SMA",
+        "BNC"
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 4,
+          "a": 1.3,
+          "b": 0
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss44.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 3,
+            "max_db": 0.2
+          }
+        ],
+        "source": "«RF insertion loss: .2 dB, maximum, 3 GHz (.115√F(GHz) dB maximum tested at 3 GHz)» (текст листа DLA, сверено 18.11.2026); норма на частоте испытания 3 ГГц"
+      },
+      "ends": [
+        [
+          "BNC штырь",
+          "SMA гнездо"
+        ]
+      ]
+    },
+    {
+      "id": "mil-55339-3a",
+      "sheet": "MIL-PRF-55339/3A",
+      "title": "N вилка – N розетка, класс 2",
+      "ports": [
+        "N",
+        "N"
+      ],
+      "ends": [
+        [
+          "N гнездо",
+          "N штырь"
+        ]
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 9,
+          "a": 1.35,
+          "b": 0
+        },
+        {
+          "to_ghz": 11,
+          "a": 1.5,
+          "b": 0
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss3.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 9,
+            "max_db": 0.28
+          }
+        ],
+        "source": "«VSWR: 1.35, max at .5 to 9 GHz; 1.5, max at 9 to 11 GHz»; «RF insertion loss: .28 dB, max, 9 GHz» (текст листа DLA, сверено 18.11.2026)"
+      }
+    },
+    {
+      "id": "mil-55339-7a",
+      "sheet": "MIL-PRF-55339/7A",
+      "title": "N розетка – N розетка, класс 2",
+      "ports": [
+        "N",
+        "N"
+      ],
+      "ends": [
+        [
+          "N гнездо",
+          "N гнездо"
+        ]
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 11,
+          "a": 1.3,
+          "b": 0
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss7.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 9,
+            "max_db": 0.15
+          }
+        ],
+        "source": "«VSWR: 1.30, max .5 to 11 GHz»; «RF insertion loss: .15 dB, max, 9 GHz» (текст листа DLA, сверено 18.11.2026)"
+      }
+    },
+    {
+      "id": "mil-55339-24b",
+      "sheet": "MIL-PRF-55339/24B",
+      "title": "BNC вилка – N розетка, класс 2",
+      "ports": [
+        "BNC",
+        "N"
+      ],
+      "ends": [
+        [
+          "BNC штырь",
+          "N гнездо"
+        ]
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 4,
+          "a": 1.35,
+          "b": 0
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss24.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 3,
+            "max_db": 0.1
+          }
+        ],
+        "source": "«VSWR: 1.35, max .5 to 4 GHz»; «RF insertion loss: .1 dB, max, 3 GHz» (текст листа DLA, сверено 18.11.2026)"
+      }
+    },
+    {
+      "id": "mil-55339-25c",
+      "sheet": "MIL-PRF-55339/25C",
+      "title": "BNC розетка – N розетка, класс 2",
+      "ports": [
+        "BNC",
+        "N"
+      ],
+      "ends": [
+        [
+          "BNC гнездо",
+          "N гнездо"
+        ]
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 4,
+          "a": 1.3,
+          "b": 0
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss25.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 3,
+            "max_db": 0.2
+          }
+        ],
+        "source": "«VSWR: 1.30, max .5 to 4 GHz»; «RF insertion loss: .2 dB, max, 3 GHz» (то же в /1B) (текст листа DLA, сверено 18.11.2026)"
+      }
+    },
+    {
+      "id": "mil-55339-45b",
+      "sheet": "MIL-PRF-55339/45B",
+      "title": "SMA вилка – BNC вилка, класс 2",
+      "ports": [
+        "BNC",
+        "SMA"
+      ],
+      "ends": [
+        [
+          "BNC штырь",
+          "SMA штырь"
+        ]
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 4,
+          "a": 1.3,
+          "b": 0
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss45.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 3,
+            "max_db": 0.2
+          }
+        ],
+        "source": "«VSWR: 1.30 max at .5 to 4 GHz»; «RF insertion loss: (.2 dB, max, 3 GHz)» (текст листа DLA, сверено 18.11.2026)"
+      }
+    },
+    {
+      "id": "mil-55339-46b",
+      "sheet": "MIL-PRF-55339/46B",
+      "title": "SMA розетка – BNC розетка, класс 2",
+      "ports": [
+        "BNC",
+        "SMA"
+      ],
+      "ends": [
+        [
+          "BNC гнездо",
+          "SMA гнездо"
+        ]
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 4,
+          "a": 1.3,
+          "b": 0
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss46.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 3,
+            "max_db": 0.2
+          }
+        ],
+        "source": "«VSWR: 1.30 max at .5 to 4.0 GHz»; «RF insertion loss: .2 dB, max, 3 GHz» (текст листа DLA, сверено 18.11.2026)"
+      }
+    },
+    {
+      "id": "mil-55339-38a",
+      "sheet": "MIL-PRF-55339/38A",
+      "title": "BNC вилка – TNC розетка, класс 2",
+      "ports": [
+        "BNC",
+        "TNC"
+      ],
+      "ends": [
+        [
+          "BNC штырь",
+          "TNC гнездо"
+        ]
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 4,
+          "a": 1.25,
+          "b": 0
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss38.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 3,
+            "max_db": 0.2
+          }
+        ],
+        "source": "«VSWR: 1.25:1, maximum .5 to 4 GHz»; «RF insertion loss: .2 dB, max, 3 GHz» (текст листа DLA, сверено 18.11.2026)"
+      }
+    },
+    {
+      "id": "mil-55339-37a",
+      "sheet": "MIL-PRF-55339/37A",
+      "title": "BNC розетка – TNC розетка, класс 2",
+      "ports": [
+        "BNC",
+        "TNC"
+      ],
+      "ends": [
+        [
+          "BNC гнездо",
+          "TNC гнездо"
+        ]
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 4,
+          "a": 1.25,
+          "b": 0
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss37.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "MIL-PRF-55339/37A w/Amendment 1 (12.01.2023): «Impedance: 50 ohms, nominal»; «Temperature range: -65º to +165ºC»; «Durability: 500 minimum» (текст листа DLA, сверено 19.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 3,
+            "max_db": 0.2
+          }
+        ],
+        "source": "«Reference Series Contact: A BNC Socket, B TNC Socket»; «VSWR: 1.25:1, max .5 to 4 GHz»; «RF insertion loss: .2 dB, max, 3 GHz» (текст листа DLA, сверено 19.11.2026)"
+      }
+    },
+    {
+      "id": "mil-55339-51a-58",
+      "sheet": "MIL-PRF-55339/51A, /56, /57, /58",
+      "title": "TNC–N: TNC розетка – N вилка (/51A), N розетка – TNC вилка (/56), N вилка – TNC вилка (/57), N розетка – TNC розетка (/58)",
+      "ports": [
+        "N",
+        "TNC"
+      ],
+      "ends": [
+        [
+          "N штырь",
+          "TNC гнездо"
+        ],
+        [
+          "N гнездо",
+          "TNC штырь"
+        ],
+        [
+          "N штырь",
+          "TNC штырь"
+        ],
+        [
+          "N гнездо",
+          "TNC гнездо"
+        ]
+      ],
+      "from_ghz": 0.5,
+      "segments": [
+        {
+          "to_ghz": 9,
+          "a": 1.35,
+          "b": 0
+        },
+        {
+          "to_ghz": 11,
+          "a": 1.5,
+          "b": 0
+        }
+      ],
+      "mating_resource": 500,
+      "url": "https://weaponssupportapps.dla.mil/Downloads/MilSpec/Docs/MIL-PRF-55339/prf55339ss51.pdf",
+      "temp_min_c": -65,
+      "temp_max_c": 165,
+      "spec_source": "Temperature range −65…+165 °C; Durability 500 cycles minimum (текст листа DLA, сверено 18.11.2026)",
+      "loss": {
+        "points": [
+          {
+            "ghz": 6,
+            "k": 0.06
+          }
+        ],
+        "source": "«VSWR: 1.35:1, maximum at .5 to 9 GHz. 1.5 maximum at 9 to 11 GHz»; «RF insertion loss: .060√F (GHz) dB maximum, tested at 6 GHz» — одинаково в /51A, /56, /57, /58 (текст листа DLA, сверено 18.11.2026); норма на частоте испытания 6 ГГц: 0,06·√6 = 0,147 дБ"
+      }
+    }
+  ],
+  "type_norms": [
+    {
+      "id": "iec-61169-8-bnc",
+      "level": "iec",
+      "reference": "IEC 61169-8:2007 (= IS 5054 (Part 8):2013), табл. 9",
+      "title": "BNC 50 Ом, прямой",
+      "ports": [
+        "BNC",
+        "BNC"
+      ],
+      "angle": false,
+      "from_ghz": 0,
+      "segments": [
+        {
+          "to_ghz": 4,
+          "a": 1.298,
+          "b": 0
+        }
+      ],
+      "url": "https://archive.org/download/gov.in.is.5054.8.2013/is.5054.8.2013.pdf",
+      "source": "IEC 61169-8, табл. 9: коэффициент отражения не более 0,13 для прямых соединителей класса 2 до 4 ГГц, то есть КСВН ≤ 1,13/0,87 = 1,29885, округлено вниз до 1,298 (уточнено 19.11.2026, было 1,30 — мягче стандарта); норма на соединитель, принята для перехода BNC–BNC как норма на тип (исследование docs/data/norms-coax-gost-iec-2026-11-18.md (PR #932)); вносимые потери в IEC 61169-8 не нормированы"
+    },
+    {
+      "id": "iec-61169-8-bnc-angle",
+      "level": "iec",
+      "reference": "IEC 61169-8:2007 (= IS 5054 (Part 8):2013), табл. 9",
+      "title": "BNC 50 Ом, угловой",
+      "ports": [
+        "BNC",
+        "BNC"
+      ],
+      "angle": true,
+      "from_ghz": 0,
+      "segments": [
+        {
+          "to_ghz": 4,
+          "a": 1.352,
+          "b": 0
+        }
+      ],
+      "url": "https://archive.org/download/gov.in.is.5054.8.2013/is.5054.8.2013.pdf",
+      "source": "IEC 61169-8, табл. 9: коэффициент отражения не более 0,15 для угловых соединителей класса 2 до 4 ГГц, то есть КСВН ≤ 1,15/0,85 = 1,35294, округлено вниз до 1,352 (уточнено 19.11.2026, было 1,35) (исследование docs/data/norms-coax-gost-iec-2026-11-18.md (PR #932)); вносимые потери не нормированы"
+    },
+    {
+      "id": "escc-3402-003-sma",
+      "level": "escc",
+      "reference": "ESCC 3402/003",
+      "title": "SMA–SMA, прямой, любые роды (варианты 01–04, 09–14)",
+      "ports": [
+        "SMA",
+        "SMA"
+      ],
+      "angle": false,
+      "from_ghz": 0,
+      "segments": [
+        {
+          "to_ghz": 18,
+          "a": 1.1,
+          "b": 0.008
+        }
+      ],
+      "url": "https://escies.org/download/specdraftapppub?id=4744",
+      "source": "ESCC 3402/003 Issue 6 (06.2025), переходы SMA прямые: КСВН не более 1,1 + 0,008·f на 0–18 ГГц (исследование docs/data/norms-coax-gost-iec-2026-11-18.md (PR #932))",
+      "loss": {
+        "from_ghz": 0,
+        "segments": [
+          {
+            "to_ghz": 18,
+            "a": 0.02,
+            "k": 0.06
+          }
+        ],
+        "source": "ESCC 3402/003 Issue 6 (06.2025): вносимые потери не более 0,02 + 0,06·√f дБ на 0–18 ГГц, варианты 01–05, 09–15 (исследование docs/data/norms-coax-gost-iec-2026-11-18.md (PR #932))",
+        "reference": "ESCC 3402/003"
+      }
+    },
+    {
+      "id": "escc-3402-003-sma-angle",
+      "level": "escc",
+      "reference": "ESCC 3402/003",
+      "title": "SMA–SMA, угловой вилка–розетка (вариант 05)",
+      "ports": [
+        "SMA",
+        "SMA"
+      ],
+      "angle": true,
+      "from_ghz": 0,
+      "segments": [
+        {
+          "to_ghz": 18,
+          "a": 1.05,
+          "b": 0.01
+        }
+      ],
+      "url": "https://escies.org/download/specdraftapppub?id=4744",
+      "source": "ESCC 3402/003 Issue 6 (06.2025), вариант 05: КСВН не более 1,05 + 0,01·f на 0–18 ГГц (исследование docs/data/norms-coax-gost-iec-2026-11-18.md (PR #932))",
+      "loss": {
+        "from_ghz": 0,
+        "segments": [
+          {
+            "to_ghz": 18,
+            "a": 0.02,
+            "k": 0.06
+          }
+        ],
+        "source": "ESCC 3402/003 Issue 6 (06.2025): вносимые потери не более 0,02 + 0,06·√f дБ на 0–18 ГГц, варианты 01–05, 09–15 (исследование docs/data/norms-coax-gost-iec-2026-11-18.md (PR #932))",
+        "reference": "ESCC 3402/003"
+      }
+    },
+    {
+      "id": "escc-3402-010-tnc-plug-jack",
+      "level": "escc",
+      "reference": "ESCC 3402/010",
+      "title": "TNC вилка–розетка (вариант 02)",
+      "ports": [
+        "TNC",
+        "TNC"
+      ],
+      "from_ghz": 0,
+      "segments": [
+        {
+          "to_ghz": 18,
+          "a": 1.1,
+          "b": 0.005
+        }
+      ],
+      "url": "https://escies.org/download/specdraftapppub?id=2942",
+      "source": "ESCC 3402/010 Issue 2 (04.2014), вариант 02: КСВН не более 1,1 + 0,005·f на 0–18 ГГц (исследование docs/data/norms-coax-gost-iec-2026-11-18.md (PR #932))",
+      "loss": {
+        "from_ghz": 0,
+        "segments": [
+          {
+            "to_ghz": 18,
+            "a": 0,
+            "k": 0.07
+          }
+        ],
+        "source": "ESCC 3402/010 Issue 2 (04.2014): вносимые потери не более 0,07·√f дБ на 0–18 ГГц, все варианты (исследование docs/data/norms-coax-gost-iec-2026-11-18.md (PR #932))",
+        "reference": "ESCC 3402/010"
+      },
+      "ends": [
+        [
+          "TNC гнездо",
+          "TNC штырь"
+        ]
+      ]
+    },
+    {
+      "id": "escc-3402-010-tnc-jack-jack",
+      "level": "escc",
+      "reference": "ESCC 3402/010",
+      "title": "TNC розетка–розетка, проходной (варианты 03, 04)",
+      "ports": [
+        "TNC",
+        "TNC"
+      ],
+      "from_ghz": 0,
+      "segments": [
+        {
+          "to_ghz": 18,
+          "a": 1.15,
+          "b": 0.003
+        }
+      ],
+      "url": "https://escies.org/download/specdraftapppub?id=2942",
+      "source": "ESCC 3402/010 Issue 2 (04.2014), варианты 03, 04: КСВН не более 1,15 + 0,003·f на 0–18 ГГц (исследование docs/data/norms-coax-gost-iec-2026-11-18.md (PR #932))",
+      "loss": {
+        "from_ghz": 0,
+        "segments": [
+          {
+            "to_ghz": 18,
+            "a": 0,
+            "k": 0.07
+          }
+        ],
+        "source": "ESCC 3402/010 Issue 2 (04.2014): вносимые потери не более 0,07·√f дБ на 0–18 ГГц, все варианты (исследование docs/data/norms-coax-gost-iec-2026-11-18.md (PR #932))",
+        "reference": "ESCC 3402/010"
+      },
+      "ends": [
+        [
+          "TNC гнездо",
+          "TNC гнездо"
+        ]
+      ]
+    },
+    {
+      "id": "escc-3402-010-tnc-plug-plug",
+      "level": "escc",
+      "reference": "ESCC 3402/010",
+      "title": "TNC вилка–вилка (вариант 01), до 12,4 ГГц",
+      "ports": [
+        "TNC",
+        "TNC"
+      ],
+      "from_ghz": 0,
+      "segments": [
+        {
+          "to_ghz": 12.4,
+          "a": 1.1,
+          "b": 0.005
+        }
+      ],
+      "url": "https://escies.org/download/specdraftapppub?id=2942",
+      "source": "ESCC 3402/010 Issue 2 (04.2014), вариант 01: КСВН не более 1,1 + 0,005·f до 12,4 ГГц (исследование docs/data/norms-coax-gost-iec-2026-11-18.md (PR #932)). Второй участок листа «1,16 + 0,008·f up to 18 GHz» даёт скачок на 12,4 ГГц и не сверен — норма взята только до 12,4 ГГц",
+      "loss": {
+        "from_ghz": 0,
+        "segments": [
+          {
+            "to_ghz": 18,
+            "a": 0,
+            "k": 0.07
+          }
+        ],
+        "source": "ESCC 3402/010 Issue 2 (04.2014): вносимые потери не более 0,07·√f дБ на 0–18 ГГц, все варианты (исследование docs/data/norms-coax-gost-iec-2026-11-18.md (PR #932))",
+        "reference": "ESCC 3402/010"
+      },
+      "ends": [
+        [
+          "TNC штырь",
+          "TNC штырь"
+        ]
+      ]
+    }
+  ],
+  "vna": [
+    {
+      "model": "S50180",
+      "title": "Планар S50180",
+      "at_vswr": 1.2,
+      "uncertainty": [
+        {
+          "to_ghz": 10,
+          "value": 0.022
+        },
+        {
+          "to_ghz": 18,
+          "value": 0.029
+        }
+      ],
+      "source": "Планар S50180, РЭ S-серия, табл. 23: погрешность измерения КСВН при КСВН 1,2 (исправлено 18.11.2026 по ревью методики PR #928; было ±0,015/±0,022)",
+      "url": "https://planarchel.ru/upload/medialibrary/0a9/7j78lxcjlfo7vc4vbt5blv1nind7wh2z/OM_Sseries_Part1_ver_26.1.pdf",
+      "loss_uncertainty": {
+        "steps": [
+          {
+            "to_ghz": 10,
+            "value_db": 0.1
+          },
+          {
+            "to_ghz": 18,
+            "value_db": 0.1
+          }
+        ],
+        "source": "Планар S50180, РЭ ч. 1, табл. 23: модуль коэффициента передачи около 0 дБ ±0,1 дБ"
+      }
+    }
+  ],
+  "series_top_ghz": {
+    "BNC": {
+      "to_ghz": 4,
+      "source": "MIL-PRF-55339/13B, /20A, /44C: нормы до 4 ГГц"
+    },
+    "TNC": {
+      "to_ghz": 11,
+      "source": "MIL-PRF-55339/33A, /40B–/42A: нормы до 11 ГГц"
+    }
+  },
+  "method": {
+    "code": "СТО ФРАК-002-2026",
+    "title": "ГСИ. Переходы коаксиальные и кабельные сборки. Методика измерений КСВН и вносимых потерь векторным анализатором цепей",
+    "basis": "стандарт организации по ГОСТ Р 1.4 (обозначение как у СТО ФРАК-001-2026); построение методики — по ГОСТ Р 8.563-2009 (владелец 18.11.2026)"
+  },
+  "decision_rule": "Правило решения (СТО ФРАК-002-2026, владелец 18.11.2026): |результат − предел| ≤ U — «на границе допуска», нужен повторный замер (3 подключения с поворотом 120°); после повтора решает худшее подключение, зона приёмки ILAC-G8:09/2019 расширена на погрешность измерения: ≤ предел + U — соответствует, > предел + U — не соответствует. U — погрешность ВАЦ при этой частоте (КСВН: РЭ S-серия, табл. 23)",
+  "recheck": {
+    "months": 12,
+    "matings": 100,
+    "basis": "100 сочленений — руководство ADP1A п. 3.2; 12 мес. — решение цеха"
+  },
+  "decision_rule_loss": "По вносимым потерям то же правило с погрешностью передачи ВАЦ; предел ≤ 2·U не оценивается (норма ниже точности ВАЦ)",
+  "assignment": {
+    "rule": "Норма СИ (переход, кабель) назначается на изделие явно: поле norm_id ВЧ-данных карточки ссылается на id из makers[].groups[], type_norms[] или mil_adapters[]. Паспорт, этикетка и программа ВАЦ берут только назначенную норму; без назначения — «норма не назначена», заключения нет. Оператор норму не вводит (владелец 18.11.2026).",
+    "precedence": [
+      "изготовитель (makers; ТУ изготовителя — только его изделиям)",
+      "ГОСТ / ОСТ / ТУ на тип (type_norms, level tu)",
+      "IEC (type_norms, level iec)",
+      "ESCC (type_norms, level escc)",
+      "MIL-PRF-55339 (mil_adapters)"
+    ],
+    "decisions": "SMA–SMA — ESCC 3402/003 (норма именно на переходы), не MIL-PRF-55339/55 (владелец 18.11.2026). ТУ изготовителя — только для его изделий (Микран PK2-18 — переходам Микран). Лист MIL назначается, только если его текст покрывает роды обоих разъёмов. RP-SMA, 75 Ом и BNC без указанного сопротивления — без нормы (разбор 19.11.2026: docs/quality/нормы-СИ-остаток-2026-11-19.md): у RP-SMA нет ни стандарта (MIL-STD-348, ESCC 3402/003 — только SMA со штырём у вилки), ни изготовителя; 75 Ом — IEC 61169-63 (BNC75) и IEC 61169-24 (F), но СТО ФРАК-002 п. 1.2 75 Ом не охватывает, ВАЦ и АКМ — 50 Ом; BNC без сопротивления — сначала проверка сопротивления. Предложение назначения — python -m app.workflows.si_norm_assignment (без записи по умолчанию)."
+  },
+  "mil_adapters_note": "Роды разъёмов листа — по «Reference Series Contact» и заголовку (pin = штырь, socket = гнездо), поле ends. Без ends (/54B, /55, /33A) текст листа роды не задаёт. BNC–TNC: /37A (розетка–розетка), /38A (BNC вилка – TNC розетка), /39A (вилка–вилка); листа на BNC розетка – TNC вилка нет. /47B (SMA вилка – BNC розетка) не взят: в тексте и на изображении листа (ред. 30.04.2015) «VSWR: 1.30 +0.025 GHz, max. at .5 to 4 GHz» — без F, тогда как соседние листы пишут «1.06 + .005 F (GHz)» (/54B), «1.15 + .015 F (GHz)» (/40B), а /45B — «1.30 max»; прочтение не выбирается без разъяснения DLA (сверено 19.11.2026)."
+}

@@ -41,6 +41,9 @@ class Geometry(BaseModel):
     max_font_mm: float = Field(default=5, ge=1.6, le=15)
     max_lines: int = Field(default=3, ge=1, le=3, strict=True)
     alignment: Literal["center", "left", "right"] = "center"
+    # The machine hands labels out one by one through the peel-off dispenser (ОБ.101, owner 19.11, migration 0203):
+    # the print agent keeps the driver's peel-off mode and refuses a job whose driver output lacks ^O1. Not raster.
+    peel: bool = False
 
     @model_validator(mode="after")
     def valid_geometry(self):
@@ -66,7 +69,7 @@ def presets():
             blank_zones=[Rect(x=0, y=15, width=width, height=height - 15)]).model_dump()))
     result.append(("ОБ.101", "92,5×20", Geometry(width_mm=92.5, height_mm=20,
         zones=[Rect(x=1, y=1, width=38.25, height=18), Rect(x=53.25, y=1, width=38.25, height=18)],
-        blank_zones=[Rect(x=40.25, y=0, width=12, height=20)]).model_dump()))
+        blank_zones=[Rect(x=40.25, y=0, width=12, height=20)], peel=True).model_dump()))
     return result
 
 

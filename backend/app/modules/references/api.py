@@ -1174,7 +1174,7 @@ def equipment_unit_model(
         record_id, payload.model_id, principal.actor, now, uow_factory()))}
 
 
-# «Показывать в «Оборудовании»» (owner 19.11.2026, migration 0203): the checkbox of a БД.ОБ machine that puts it on the
+# «Показывать в «Оборудовании»» (owner 19.11.2026, migration 0204): the checkbox of a БД.ОБ machine that puts it on the
 # screen «Производство → Оборудование». Machines of the tab «Оборудование» only; every change is journaled.
 class ShownPayload(BaseModel):
     shown: bool

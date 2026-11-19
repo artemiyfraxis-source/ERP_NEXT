@@ -165,7 +165,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     return () => { live = false; };
   }, [records]);
   const infoById = useMemo(() => new Map(infos.map((info) => [info.id, info])), [infos]);
-  // «Показывать в «Оборудовании»» (владелец 19.11.2026, миграция 0203): станок вкладки «Оборудование» выходит на экран
+  // «Показывать в «Оборудовании»» (владелец 19.11.2026, миграция 0204): станок вкладки «Оборудование» выходит на экран
   // «Производство → Оборудование». Галочка — у каждого экземпляра; правка — с правом на справочник, пишется в журнал.
   const [shownIds, setShownIds] = useState<Set<string> | null>(null);
   useEffect(() => {

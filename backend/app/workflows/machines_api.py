@@ -214,7 +214,7 @@ def pending_setup(session) -> dict[str, int]:
 
 def _machine_rows(session, equipment, printers: list[dict], now) -> list[dict]:
     """The machines of «Оборудование» (owner 19.11.2026: «просто галочку для вытягивания»): a unit of БД.ОБ
-    «Оборудование» with the checkbox «Показывать в «Оборудовании»» (`show_in_equipment`, 0203) plus every unit an ERP
+    «Оборудование» with the checkbox «Показывать в «Оборудовании»» (`show_in_equipment`, 0204) plus every unit an ERP
     agent reaches whatever the checkbox — a machine bridge (live state), a supported or planned bridge not installed
     yet («Агент не установлен»), the print agent of a marking machine's printer. `controlled` — ERP reaches it through
     an agent now (the tab «С управлением»); a ticked unit without one says «Нет подключения к ERP». Every row carries
@@ -490,7 +490,7 @@ JOB_TONES = {"pending": "info", "taken": "info", "spooled": "ok", "printed": "ok
 EVENT_TEXTS = {"production.machine_bound": "Агент станка привязан к ПК {pc_name}",
                # Writes and corrections (slice 4, machine_writes_api.py) carry their own line.
                **{f"production.machine_{event}": "{text}" for event in (
-                   "write_queued", "write_done", "write_failed", "offset_set", "etk_corrected")}}
+                   "write_queued", "write_done", "write_failed", "offset_set", "etk_corrected", "run_verified", "run_closed")}}
 JOURNAL_LIMIT = 30
 
 
@@ -615,7 +615,7 @@ def _journal_ob019(session, entry: dict, now: datetime) -> list[dict]:
             events.append({"at": _moment(snapshot.reported_at, now), "text": "Сейчас: " + alarm["text"],
                            "tone": alarm["tone"]})
         if snapshot.error:
-            events.append({"at": _moment(snapshot.reported_at, now), "text": snapshot.error, "tone": "warn"})
+            events.append({"at": _moment(snapshot.reported_at, now), "text": rules.agent_error(snapshot.error), "tone": "warn"})
     if entry.get("equipment_id"):
         for event in session.scalars(select(AuditEventRow).where(
                 AuditEventRow.aggregate_id == UUID(entry["equipment_id"]),
@@ -648,7 +648,7 @@ def _connection(entry: dict, now: datetime) -> dict:
                 "version": link.bridge_version, "link": _tone(rules.link_status(entry["snapshot"], now)),
                 "last_seen": entry["last_seen"],
                 "extra": [["Служба Modbus", link.service_version]] if entry["kind"] == "ob019" else [],
-                "error": entry["snapshot"].error if entry["snapshot"] else ""}
+                "error": rules.agent_error(entry["snapshot"].error) if entry["snapshot"] else ""}
     if entry["kind"] == "marking":
         agent = entry["agent"]
         return {"pc": agent.pc_name if agent else "", "ip": _address(agent.ip_lan, agent.ip_seen) if agent else "",
@@ -744,7 +744,7 @@ def machine_card(equipment_id: UUID, _principal: Reader, factory: Factory, now: 
             "service_version": link.service_version, "bridge_version": link.bridge_version,
             "link": _tone(code), "reported_at": _moment(reported, now),
             "age_seconds": None if reported is None else max(0, int(rules.since(reported, now).total_seconds())),
-            "error": snapshot.error if snapshot else "",
+            "error": rules.agent_error(snapshot.error) if snapshot else "",
             # The last words stay visible when the link is lost, marked by `link` and `reported_at` as old.
             "live": rules.decode(link.kind, snapshot),
         }
