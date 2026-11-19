@@ -1,0 +1,68 @@
+"""Printed / remaining labels per KB come from the print queue; «Печатать оставшиеся» skips what was printed."""
+
+from collections import Counter
+from types import SimpleNamespace
+
+from sqlalchemy import update
+
+from app.modules.warehouse.label_jobs import LabelJobRow
+from app.workflows.marking_progress import remaining_rows, task_progress
+from tests.production.test_api import production_api  # noqa: F401
+from tests.workflows.test_marking_labels import BASE, NOW, enqueue, marking, preview  # noqa: F401
+
+
+def _keep_only_first(factory):
+    """The first label (serial 1, numbered) stays queued; the rest of the batch is withdrawn."""
+    with factory() as uow:
+        uow.session.execute(update(LabelJobRow).where(LabelJobRow.sequence > 1).values(
+            status="cancelled", finished_at=NOW, error="тест"))
+        uow.commit()
+
+
+def test_progress_counts_printed_serials_and_remaining_prints_only_the_rest(marking):
+    client, factory, payload, task, *_ = marking
+    enqueue(marking)
+    _keep_only_first(factory)
+    progress = client.get(BASE + "/progress", params={"task_id": str(task.id), "operation_id": payload["source"]["operation_id"]})
+    assert progress.status_code == 200, progress.text
+    row = progress.json()["rows"][0]
+    assert (row["printed"], row["remaining"], row["printed_serials"]) == (1, task.quantity - 1, [1])
+    assert row["remaining_serials"] == list(range(2, task.quantity + 1))
+    rest = preview(marking, {**payload, "remaining": True})
+    texts = [(label["text"], label["quantity"]) for label in rest["labels"]]
+    assert ("КБ-001", 1) not in texts
+    assert texts[:4] == [("КБ-002", 1), ("КБ-003", 1), ("КБ-004", 1), ("КБ-005", 1)]
+    assert texts[-1] == ("АБВ", 2 * task.quantity)
+    full = preview(marking)
+    assert rest["total"] == full["total"] - 1
+
+
+def test_failed_and_cancelled_jobs_are_not_printed(marking):
+    client, factory, payload, task, *_ = marking
+    enqueue(marking)
+    with factory() as uow:
+        uow.session.execute(update(LabelJobRow).values(status="cancelled", finished_at=NOW, error="тест"))
+        uow.commit()
+    rest = preview(marking, {**payload, "remaining": True})
+    assert rest["total"] == preview(marking)["total"]
+
+
+def test_nothing_left_is_a_clear_refusal(marking):
+    client, _factory, payload, *_ = marking
+    enqueue(marking)  # every job still queued: all taken
+    response = client.post(BASE + "/preview", json={**payload, "remaining": True})
+    assert response.status_code == 422 and "уже напечатаны" in response.json()["detail"], response.text
+
+
+def test_rows_match_by_task_serial_and_text_not_by_etk_index():
+    task = SimpleNamespace(id="t1", quantity=3)
+    rows = [{"key": "t1:5:0", "task_id": "t1", "text": "FRX.1", "quantity": 1, "serial": 1},
+            {"key": "t1:5:0", "task_id": "t1", "text": "FRX.2", "quantity": 1, "serial": 2},
+            {"key": "t1:5:1", "task_id": "t1", "text": "XS1", "quantity": 6, "serial": None}]
+    printed = Counter({("t1", 1, "FRX.1"): 1, ("t1", None, "XS1"): 2})
+    assert remaining_rows(rows, printed) == [rows[1], {**rows[2], "quantity": 4}]
+    document = {"operations": [{"fields": {"marks": [{"text": "FRX.{№}", "qty": "1"}]}}]}
+    view = task_progress(SimpleNamespace(id="t1", number="ПЗ-1", item="КБ1", quantity=3), document, (1, 3),
+                         Counter({("t1", 1, "FRX.1"): 1}))
+    assert (view["printed"], view["remaining"], view["remaining_serials"]) == (1, 2, [2, 3])
+    assert task.quantity == 3

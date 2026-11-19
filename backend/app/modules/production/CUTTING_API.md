@@ -171,11 +171,74 @@ All control actions require production edit permission and an optimistic `versio
 
 - `POST /.../{id}/refresh-etk`: `{version}`, edit permission. For an unstarted (`open`, no work session) group: atomically
   re-pins every active member task to its current issued ETK revision (same effect as `tasks/{id}/norms/refresh`),
-  recomputes the recipe and refreshes the member rows (cut length, labels). All members must keep the group's recipe
-  key; otherwise 422 lists the diverging КБ (issue them separately via split) and nothing is written. The group keeps
-  its id, number and member positions; its version is bumped. Already current group: no-op, version unchanged.
-  Started/frozen group: 422. Group views carry `etk_stale` (some member pinned older than the issued ETK).
+  recomputes each member's recipe for its own PF and refreshes the member rows (cut length, labels). Since 20.11 a
+  member whose new recipe differs is not refused: the most common new recipe keeps this group (id, number, positions;
+  tie — the lowest row position), every other recipe moves its rows to an open unstarted group of the same project,
+  site, kind and recipe, or to a new explicit group; moved rows are `split` here (`regroup`). Still 422 with nothing
+  written: a member whose new ETK gives no recipe or whose PF composition changed (`cutting_refresh_cards` error text —
+  use the CLI restructure below). Already current group: no-op, version unchanged. Started/frozen group: 422. Group
+  views carry `etk_stale` (some member pinned older than the issued ETK).
   CLI: `python -m app.workflows.cutting_group_existing --project X --refresh-etk [--apply]` (dry-run by default).
+- Re-pinning a grouped task (`tasks/{id}/norms/refresh`) is no longer refused while its group is open and has no work
+  session: the row keeps its frozen document (the group shows `etk_stale`, start stays blocked by the card-version
+  check) until `refresh-etk` moves it. A started/frozen group still refuses the re-pin.
+
+## Kinds: cable cut, labels, tubes (owner 20.11)
+
+Grouping takes **every** input-less PF made only of supported preparation operations (`cutting_recipes`), not only
+the first; each PF is its own `ProductionOperation`, so one active membership per operation still holds and a КБ may
+be a member of up to three groups. `cutting_recipe` (first PF only) is kept for the launch fingerprint and the
+`POST /tasks` `cutting` response.
+
+Kind of a PF (`pf_kind`): any cable cut (`coaxCut`, `cutWire`, `cutWireStrip`) → `cut`; otherwise only printing
+operations (tape labels `markMaterial = tape`, printed marking tubes `PRINT_MARK…`) → `labels`; only tube cuts →
+`tubes`; printing and tube cuts together without a cut → not grouped. The old mixed «Заготовки» PF (cut + labels +
+tubes in one PF, ETKs before the generator split) is kind `cut` with all its operations, exactly as before.
+
+Recipe JSON: kind `cut` keeps version 1 and its identity unchanged (stored keys of existing groups stay valid; no
+`kind` field); `labels`/`tubes` are version 2 with `"kind"` in the key and **without** the cable (printing a label or
+cutting a tube does not depend on the cable; multiplicity, layout, material, tube article/lengths, cards and equipment
+still do). A key of one kind never equals a key of another, so a group never mixes kinds. Labels/tubes rows still carry
+`cut_length_mm` (from the ETK's only cable cut) for display. Group reads, the launch preview and the from-existing
+proposal add `kind` (`cut|labels|tubes`) and `kind_name`. Launch-ready runs items sharing any proposed group in one
+transaction.
+
+## Restructure unstarted tasks in place (owner 20.11)
+
+`restructure_project` (CLI only — HTTP wiring of composition changes stays in `api.py`, outside this slice):
+
+```powershell
+.\.venv\Scripts\python -m app.workflows.cutting_group_existing --project '708К.' --restructure            # dry run
+.\.venv\Scripts\python -m app.workflows.cutting_group_existing --project '708К.' --restructure --apply
+```
+
+One transaction for the project (project lock, then its groups by id, then tasks). The dry run executes everything and
+rolls back. For every running task whose issued ETK revision differs from the pinned one: refused (task untouched)
+when it has any work trace (`worked`: session, output, box, defect, delivery, started share), a PF in a started/frozen
+group, a disappearing PF with cutting-group history or with an equipment allocation. Otherwise the task keeps its id,
+number, quantity, serial numbers and mark events; operations are rebuilt from the new route
+(`restructured_operations`): same ETK operations → same operation (id, assignees, window), PFs split out of one old PF
+→ the first keeps the old id and window, the others get its assignees without a window; same scheme block → same
+operation; the rest are new. Audit `production.restructured`. Then all unstarted preparation PFs of the project's
+tasks are regrouped by recipe (`regroup`): the old group of the cut keeps its id and number; labels and tubes get their
+own explicit groups; emptied groups are cancelled. A rerun changes nothing.
+
+Output: `restructured`, `unchanged`, `refused`, `groups`, `moved`, `cancelled`, `counts.before/after` (tasks,
+operations, serials, groups by state and kind, members by state, marking batches, label jobs, mark events),
+`invariants` (tasks, serials, batches, jobs, mark events unchanged), `labels` (printed/remaining per КБ),
+`labels_unchanged`, `printed_one_per_kb`.
+
+## Printed and remaining labels (owner 20.11)
+
+`workflows/marking_progress.py`: no counter is stored; per task, marking batches whose manifest names it and their
+jobs. A label counts as printed when its job is `spooled` (unless the tracked printer reported error/cancel) or still
+`pending`/`taken`/`unknown`; `failed`/`cancelled` are not printed. Rows match by (task, serial, text), not by the ETK
+operation index. An item (serial) is printed when all its numbered labels are.
+
+- `GET /api/production/marking/progress?group_id=…` or `?task_id=…&operation_id=…` (marking read gate):
+  `{rows: [{task_id, task_number, item, quantity, serial_first, serial_last, printed, remaining, printed_serials,
+  remaining_serials}], printed, remaining}`.
+- Preview/batch input `remaining: true` («Печатать оставшиеся»): the same rows minus printed ones; nothing left → 422.
 
 All controls return `{group: ...}`. Stale versions/concurrent resource changes: 409; forbidden site: 403;
 invalid state/settings: 422. The first row start or manual output freezes membership and recipe.
