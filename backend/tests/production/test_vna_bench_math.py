@@ -87,6 +87,13 @@ def fresh_catalog():
 
 @pytest.mark.parametrize("case", GOLDEN["dsp"]["touchstone"])
 def test_touchstone_reading_matches_tool(case):
+    lines = [line.split("!", 1)[0].split() for line in case["text"].splitlines()]
+    if any(values and not values[0].startswith("#") and len(values) != 9 for values in lines):
+        # The tool regrouped a record split over lines; ERP wants 9 numbers per line (main review 19.11), so an .s1p
+        # can never be read as a two-port file.
+        with pytest.raises(VnaDataError, match="9"):
+            read_touchstone(case["text"])
+        return
     assert_same(read_touchstone(case["text"]), case["data"])
 
 
@@ -207,7 +214,7 @@ def test_touchstone_roundtrip_formats_and_refusals():
     back = read_touchstone(text.encode("utf-8"))
     assert back.frequencies[2] == 18e9
     assert all(abs(a - b) < 1e-14 for name in TRACES for a, b in zip(back.trace(name), data.trace(name)))
-    ma = read_touchstone("# GHZ S MA R 50\n! fixture\n1 0.1 90 0.5 -90 ! first part\n0.5 -90 0.2 180")
+    ma = read_touchstone("# GHZ S MA R 50\n! fixture\n1 0.1 90 0.5 -90 0.5 -90 0.2 180 ! one record per line")
     assert ma.frequencies[0] == 1e9 and abs(ma.s11[0].imag - 0.1) < 1e-14 and abs(ma.s22[0].real + 0.2) < 1e-14
     dbs = read_touchstone("# MHZ S DB R 50\n1D1 -20 0 -6.020599913279624 0 -6.020599913279624 0 -20 0")
     assert dbs.frequencies[0] == 1e7 and abs(dbs.s21[0].real - 0.5) < 1e-14
@@ -216,6 +223,16 @@ def test_touchstone_roundtrip_formats_and_refusals():
                     "# HZ S RI R 50\n10 0,5 0 1 0 1 0 0 0", "# HZ S MA R 50\n10 -0.1 0 1 0 1 0 0 0"):
         with pytest.raises(VnaDataError):
             read_touchstone(content)
+    one_port = "# HZ S RI R 50\n1e7 0.1 0\n2e7 0.1 0\n3e7 0.1 0\n"   # 9 numbers in all: must not become one record
+    with pytest.raises(VnaDataError, match="3 чисел"):
+        read_touchstone(one_port)
+    with pytest.raises(VnaDataError, match="двухпортовый"):
+        read_touchstone(text, file_name="Замер.s1p")
+    with pytest.raises(VnaDataError, match="двухпортовый"):
+        read_touchstone(text, ports=1)
+    assert read_touchstone(text, file_name="Замер.S2P").frequencies == data.frequencies
+    with pytest.raises(VnaDataError, match="9"):
+        read_touchstone("# GHZ S MA R 50\n1 0.1 90 0.5 -90\n0.5 -90 0.2 180")
     with pytest.raises(VnaDataError):
         replace(data, "S21", 0, complex(math.inf, 0))
     with pytest.raises(VnaDataError):
@@ -297,8 +314,9 @@ def test_flex_control_standard_and_kit_pester_cases_with_erp_uncertainty():
     assert good.passed and good.vswr_dev < good.vswr_limit
     bad = control_standard(check_data(0.04), reference)
     assert not bad.passed
-    # ERP table: ±0,022 at VSWR 1,2 to 10 GHz, proportional to VSWR; the worst point is the smaller U below 10 GHz.
-    assert math.isclose(bad.vswr_limit, 0.022 / 1.2 * (1.02 / 0.98), rel_tol=1e-12)
+    # ERP table: ±0,022 at VSWR 1,2 to 10 GHz, proportional to VSWR, rounded half up to 0,0001 (0,019082 → 0,0191);
+    # the worst point is the smaller U below 10 GHz.
+    assert bad.vswr_limit == 0.0191
     assert math.isclose(bad.vswr_dev, 1.04 / 0.96 - 1.02 / 0.98, rel_tol=1e-12)
     assert bad.s21_limit_db == 0.1
     # The tool's own U gives the Pester number.
@@ -314,7 +332,7 @@ def test_flex_control_standard_and_kit_pester_cases_with_erp_uncertainty():
     load = std("LOAD")
     good = kit_standard(load, 1, [check_data(0.01), check_data(0.02), check_data(0.03)])
     assert good.ratio < 1 and round(good.deviation, 3) == 0.03
-    assert math.isclose(good.limit, math.hypot(0.022 / 1.2 / 2, 0.05), rel_tol=1e-12)
+    assert math.isclose(good.limit, math.hypot(0.0183 / 2, 0.05), rel_tol=1e-12)   # U(1,0) = 0,018333 → 0,0183
     assert kit_standard(load, 2, [check_data(0.01), check_data(0.06)]).ratio > 1
     with pytest.raises(ProductionValidationError):
         kit_standard(load, 0, [check_data()])

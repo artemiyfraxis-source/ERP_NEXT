@@ -69,8 +69,19 @@ class TwoPort:
 
 # ---- Touchstone 1.x ----------------------------------------------------------------------------------------------
 
-def read_touchstone(content: bytes | str) -> TwoPort:
-    """A two-port Touchstone 1.x file: `# HZ|KHZ|MHZ|GHZ S RI|MA|DB R 50`, `!` comments, records over several lines."""
+VALUES_PER_LINE = {1: 3, 2: 9}   # Touchstone 1.x: frequency + N² complex pairs on one line for 1 and 2 ports
+
+
+def read_touchstone(content: bytes | str, file_name: str = "", ports: int = 2) -> TwoPort:
+    """A two-port Touchstone 1.x file: `# HZ|KHZ|MHZ|GHZ S RI|MA|DB R 50`, `!` comments, one frequency per line with
+    9 numbers. The port count comes from the extension (`.s1p` = 1, `.s2p` = 2) or the argument; a one-port file, or
+    lines whose count does not match it (an .s1p read as a two-port), are refused — never regrouped into records."""
+    extension = re.search(r"\.s(\d+)p$", file_name.lower())
+    if extension:
+        ports = int(extension[1])
+    if ports != 2:
+        raise VnaDataError(f"Файл на {ports} порт(а): нужен двухпортовый замер .s2p (S11, S21, S12, S22).")
+    expected = VALUES_PER_LINE[ports]
     text = content.decode("utf-8-sig") if isinstance(content, bytes) else content
     scale, fmt, tokens = 0.0, "", []
     for raw in text.splitlines():
@@ -90,7 +101,11 @@ def read_touchstone(content: bytes | str) -> TwoPort:
             continue
         if not fmt or line.startswith("["):
             raise VnaDataError("Неподдерживаемый формат Touchstone; требуется файл двухпортового замера 1.x.")
-        tokens.extend(line.split())
+        values = line.split()
+        if len(values) != expected:
+            raise VnaDataError(f"Строка «{line[:60]}»: {len(values)} чисел, для двухпортового замера нужно {expected} "
+                               "(частота и S11, S21, S12, S22).")
+        tokens.extend(values)
     if not fmt or not tokens or len(tokens) % 9:
         raise VnaDataError("Неполная строка двухпортовых данных Touchstone.")
     frequencies, traces = [], {name: [] for name in TRACES}
@@ -182,7 +197,10 @@ def _point(data: TwoPort, index: int) -> tuple[complex, complex, complex, comple
 
 
 def remove_fixtures(data: TwoPort, left: TwoPort | None = None, right: TwoPort | None = None) -> TwoPort:
-    """The DUT between two fixtures: T_dut = T_left⁻¹ · T_measured · T_right⁻¹ at every point of the same grid."""
+    """The DUT between two fixtures: T_dut = T_left⁻¹ · T_measured · T_right⁻¹ at every point of the same grid.
+
+    Orientation: the left fixture has port 1 toward VNA port 1 and port 2 toward the DUT; the right fixture has port 1
+    toward the DUT and port 2 toward VNA port 2 — its file must be measured (or reversed) in that orientation."""
     for fixture in (left, right):
         if fixture is None:
             continue

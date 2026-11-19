@@ -61,14 +61,15 @@ def test_pass_fail_and_border_against_the_norm():
 
 
 @pytest.mark.parametrize("offset,once_status,final_status", [
-    (-0.03, "pass", "pass"), (-0.0201, "pass", "pass"), (-0.0199, "border", "pass"), (0.0, "border", "pass"),
+    (-0.03, "pass", "pass"), (-0.0201, "pass", "pass"), (-0.02, "border", "pass"), (-0.0199, "border", "pass"),
+    (0.0, "border", "pass"), (0.02, "border", "pass"),
     (0.0199, "border", "pass"),    # within limit + U: «пару соток» over the norm conform after the repeat
     (0.0201, "fail", "fail"),      # beyond limit + U: a real excess, before and after the repeat
     (0.03, "fail", "fail")])
 def test_vswr_decision_zone_is_the_limit_extended_by_the_uncertainty(offset, once_status, final_status):
     # СТО ФРАК-002-2026 (owner 18.11): |КСВН − предел| ≤ U triggers the 3-connection repeat; after it the worst
     # connection conforms when ≤ limit + U (ILAC-G8 zone extended by U). U for the norm value (13.3): limit 1,09 at
-    # 6 GHz → 0,022 · 1,09 / 1,2 = 0,01998 (S50180, РЭ табл. 23).
+    # 6 GHz → 0,022 · 1,09 / 1,2 = 0,01998 → 0,0200 (S50180, РЭ табл. 23; rounded half up to 0,0001).
     norm, u = norm_by_id("mil-55339-54b"), uncertainty_for("S50180")
     measured = summary({0.01: 1.02, 3: 1.02, 6: round(norm.limit(6) + offset, 4)})
     once = assess(measured, norm, u)
@@ -230,9 +231,22 @@ def test_vswr_limit_within_the_uncertainty_is_not_judged():
     assert result.status == "below_accuracy"
     assert result.verdict == "Норма ниже точности ВАЦ — заключение о соответствии не выдаётся"
     assert result.brief == "КСВН 1,012 (норма 1,015 ниже точности ВАЦ — не оценивается)"
-    # 1,02 − 1 = 0,02 > U(1,02) = 0,0187: resolvable now that U is computed for the norm value.
-    assert assess(summary({0.01: 1.01, 6: 1.015}), Norm("Лист", "", 0.0, (Segment(18, 1.02),)),
-                  uncertainty_for("S50180")).status == "border"
+
+
+@pytest.mark.parametrize("limit,judged_to", [(1.02, None), (1.05, 5), (1.10, 12)])
+def test_vswr_norm_below_twice_the_uncertainty_is_not_judged(limit, judged_to):
+    """СТО 13.3 п. 5: (норма − 1) < 2U — not judged. 1,02: 2U = 0,0374 / 0,0510 — nowhere; 1,05: 2U = 0,0386 to 10 GHz,
+    0,0508 above — judged to 10 GHz only; 1,10: 0,0404 / 0,0532 — everywhere."""
+    from app.modules.production.instrument_norms import Norm, Segment, vswr_resolvable
+
+    u = uncertainty_for("S50180")
+    result = assess(summary({0.01: 1.005, 5: 1.008, 12: 1.009}), Norm("Лист", "", 0.0, (Segment(18, limit),)), u)
+    if judged_to is None:
+        assert result.status == "below_accuracy"
+    else:
+        assert result.status == "pass" and result.stop_ghz == judged_to
+    assert vswr_resolvable(limit, u.for_value(5, limit)) == (judged_to is not None)
+    assert vswr_resolvable(limit, u.for_value(12, limit)) == (judged_to == 12)
 
 
 @pytest.mark.parametrize("limit", [1.10, 1.20, 1.30])
@@ -241,9 +255,11 @@ def test_vswr_uncertainty_is_computed_for_the_norm_value(limit, ghz, stated):
     """СТО ФРАК-002-2026, 4.1 изм. 1 и 13.3: U(КСВН) = U(1,2) · КСВН / 1,2; the 10 GHz edge belongs to the lower band."""
     from app.modules.production.instrument_norms import Norm, Segment
 
+    from decimal import ROUND_HALF_UP, Decimal
+
     u, norm = uncertainty_for("S50180"), Norm("Лист", "", 0.0, (Segment(18, limit),))
-    expected = stated * limit / 1.2
-    assert u.for_value(ghz, limit) == pytest.approx(expected)
+    expected = float(Decimal(f"{stated * limit / 1.2:.12g}").quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
+    assert u.for_value(ghz, limit) == expected
     inside = assess(summary({0.01: 1.01, ghz: limit + expected - 1e-4}), norm, u)
     assert inside.status == "border" and inside.uncertainty == pytest.approx(expected)
     assert assess(summary({0.01: 1.01, ghz: limit + expected - 1e-4}), norm, u, repeated=True).status == "pass"

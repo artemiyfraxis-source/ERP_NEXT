@@ -26,7 +26,7 @@ from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
 from .domain import ProductionValidationError
-from .instrument_norms import REPEAT_CONNECTIONS, REPEAT_TEXT, uncertainty_for, vna_model
+from .instrument_norms import REPEAT_CONNECTIONS, REPEAT_TEXT, uncertainty_for, vna_model, vswr_resolvable
 from .traceability import SerialStatus
 from .vna_files import VnaTrace, VswrPoint, parse_vna_traces, vna_header
 
@@ -263,12 +263,12 @@ def decide_verdict(
 
 def vna_uncertainty(instrument, mhz: Decimal, limit: Decimal) -> Decimal | None:
     """U КСВН ВАЦ (по модели прибора из справочника ВАЦ норм СИ) на частоте `mhz` для значения нормы `limit`
-    (СТО ФРАК-002-2026 п. 13.3, `Uncertainty.for_value`); модель неизвестна — None. Округлена до 4 знаков, как хранится:
-    решение и CHECK базы видят одно и то же число."""
+    (СТО ФРАК-002-2026 п. 13.3, `Uncertainty.for_value` — та же, что у паспорта СИ, уже округлена до 0,0001 половиной
+    вверх, как хранится); модель неизвестна — None."""
     found = uncertainty_for(vna_model(f"{instrument.name} {instrument.doc_designation or ''}"))
     if found is None:
         return None
-    return Decimal(str(found.for_value(float(mhz) / 1000, float(limit)))).quantize(Decimal("0.0001"))
+    return Decimal(str(found.for_value(float(mhz) / 1000, float(limit)))).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
 
 
 def decide_by_rule(
@@ -298,7 +298,11 @@ def decide_by_rule(
         return (VswrVerdict.PASS, f"По повтору в {REPEAT_CONNECTIONS} подключениях: худший КСВН "
                 f"{_vswr_text(Decimal(str(worst['max_vswr'])))} ≤ нормы {_vswr_text(limit)} с погрешностью ВАЦ",
                 origin.id, (*done, current))
-    if allowance is not None and limit - 1 > allowance and abs(peak - limit) <= allowance:
+    if allowance is not None and not vswr_resolvable(limit, allowance):
+        return ((VswrVerdict.PASS if peak <= limit else VswrVerdict.FAIL),
+                f"Норма {_vswr_text(limit)} ниже точности ВАЦ (норма − 1 < 2U, U ±{_vswr_text(allowance)}) — "
+                "решено по норме без зоны «на границе»", None, ())
+    if allowance is not None and abs(peak - limit) <= allowance:
         return VswrVerdict.BORDER, f"На границе допуска — {REPEAT_TEXT}", None, ()
     return (VswrVerdict.PASS if peak <= limit else VswrVerdict.FAIL), "", None, ()
 

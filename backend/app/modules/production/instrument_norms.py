@@ -6,6 +6,7 @@ Every number lives in backend/data/rf-norms.json with its source; this module on
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from decimal import ROUND_HALF_UP, Decimal
 from functools import lru_cache
 import json
 import math
@@ -340,9 +341,10 @@ class Uncertainty:
 
     def for_value(self, ghz: float, vswr: float) -> float:
         """U of the VSWR value `vswr` at `ghz`: the stated U scaled to the value, U(КСВН) = U(at_vswr)·КСВН/at_vswr
-        (СТО ФРАК-002-2026, 4.1 изм. 1 и 13.3 — U computed for the norm value). The one rule for passports, the
-        ОТК assembly verdict and the bench checks."""
-        return self.at(ghz) * vswr / self.at_vswr
+        (СТО ФРАК-002-2026, 4.1 изм. 1 и 13.3 — U computed for the norm value), rounded half up to 0,0001 as the ОТК
+        record stores it. The one rule for passports, the ОТК assembly verdict and the bench checks, so they agree."""
+        exact = self.at(ghz) * vswr / self.at_vswr
+        return float(Decimal(f"{exact:.12g}").quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
 
     @property
     def line(self) -> str:
@@ -399,6 +401,13 @@ REPEAT_TEXT = "нужен повторный замер (3 подключени�
 BELOW_ACCURACY = "ниже точности ВАЦ — не оценивается"
 
 
+def vswr_resolvable(limit: float, uncertainty: float) -> bool:
+    """СТО ФРАК-002-2026 п. 13.3.5: a VSWR norm is judged only when (норма − 1) ≥ 2U — read like the loss rule (норма
+    ≥ 2U). Below that the VNA cannot tell the item from the norm: the passport gives no conclusion, ОТК decides by the
+    norm alone without the ±U zone. One rule for both."""
+    return float(limit) - 1 >= 2 * float(uncertainty) - 1e-12
+
+
 def _decide(judged, allowance, repeated: bool):
     """One rule for VSWR and loss (owner decisions 18.11; stated in СТО ФРАК-002-2026): a point within ±U of the limit is
     «на границе допуска» and triggers the 3-connection repeat. After the repeat the worst connection is judged with the
@@ -434,8 +443,8 @@ def _decide(judged, allowance, repeated: bool):
 
 
 def _resolvable(judged, allowance, margin):
-    """Points whose limit the VNA can resolve: a limit within its own uncertainty (`margin(limit) ≤ 2·U` for loss,
-    `limit − 1 ≤ U` for VSWR) is not judged (owner decision 18.11)."""
+    """Points whose loss limit the VNA can resolve: a limit within twice its uncertainty (`margin(limit) ≤ 2·U`) is not
+    judged (owner decision 18.11; VSWR — `vswr_resolvable`)."""
     return [point for point in judged if margin(point) > allowance(point[0]) + 1e-12]
 
 
@@ -518,7 +527,7 @@ def assess(measured, norm: Norm | None, uncertainty: Uncertainty | None = None, 
     def allowance(ghz: float) -> float:
         return uncertainty.for_value(ghz, norm.limit(ghz)) if uncertainty else 0.0  # 13.3: U for the norm value
 
-    resolvable = _resolvable(judged, allowance, lambda point: point[2] - 1)
+    resolvable = [point for point in judged if vswr_resolvable(point[2], allowance(point[0]))]
     if not resolvable:
         ghz, value, limit = max(judged, key=lambda point: point[1])
         return Assessment(norm, "below_accuracy", judged[0][0], judged[-1][0], ghz, value, limit, None,
