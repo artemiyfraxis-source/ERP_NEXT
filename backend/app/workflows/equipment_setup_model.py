@@ -1,6 +1,6 @@
 """Setup model of БД.ОБ for «Станки + наладка» (owner 18–19.11.2026) — read API and the guarded seed.
 
-Rules: app/modules/equipment_setup/setup_model.py; tables: setup_model_infrastructure.py (migration 0198).
+Rules: app/modules/equipment_setup/setup_model.py; tables: setup_model_infrastructure.py (migration 0199).
 
 HTTP (read only; the same gate as «Станки»: Производство or Задания, view):
 - `GET /api/production/setup-model` → `{rows, counts}`: every БД.ОБ unit with its effective class (нет / простая /

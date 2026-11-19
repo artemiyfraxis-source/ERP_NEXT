@@ -1,4 +1,4 @@
-"""0198_equipment_setup_model: the tables refuse bad states themselves (constraints, not rollbacks)."""
+"""0199_equipment_setup_model: the tables refuse bad states themselves (constraints, not rollbacks)."""
 
 import json
 import sqlite3
@@ -9,7 +9,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 
-REVISION = "0198_equipment_setup_model"
+REVISION = "0199_equipment_setup_model"
 TABLES = ("equipment_setup_models", "equipment_setup_model_parameters", "equipment_setup_unit_overrides",
           "equipment_setup_unit_parameters", "equipment_setup_references", "equipment_setup_configurations",
           "equipment_setup_machine_corrections")

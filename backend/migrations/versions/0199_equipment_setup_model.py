@@ -13,8 +13,8 @@ Literal copies of the lists in app/modules/equipment_setup/setup_model.py (a mig
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0198_equipment_setup_model"
-down_revision = "0197_ob099_crimp_records"
+revision = "0199_equipment_setup_model"
+down_revision = "0198_ob099_crimp_records"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False
