@@ -2332,8 +2332,10 @@ function ConvertTo-S2Artifact {
 # before every sweep when the operator changed S2VNA (screen, profile, smoothing, averaging, calibration, devices).
 $script:VnaControlOps = @('device_status','apply_screen','acm_confidence','store_memory','release','read_kit')
 # read_kit (2.11.1): kit slots are searched by label up to this number (6650F27 was commissioned in slot 28);
-# a slot S2VNA refuses or reads back differently ends the search. Up to 12 standards per kit (contract limit).
+# a slot S2VNA refuses or reads back differently ends the search. A kit's list holds up to VnaKitEntriesMax entries
+# (as the commissioned manifest's standard index), of which at most 12 OPEN/SHORT/LOAD/THRU (contract limit).
 $script:VnaKitSlotsMax = 100
+$script:VnaKitEntriesMax = 100
 $script:VnaKitStandardsMax = 12
 $script:VnaKitTypes = @('OPEN','SHORT','LOAD','THRU')
 $script:VnaScreenFormats = @('SWR','MLOG','PHAS','GDEL','SMIT')
@@ -2821,18 +2823,31 @@ function ConvertTo-VnaKitNumber {
     if ([double]::IsNaN($number) -or [double]::IsInfinity($number)) { throw "ВАЦ: недопустимое число в описании меры ($Label)" }
     return $number
 }
+function Get-S2KitStandardType {
+    param($Scpi, [int]$Index)
+    # $null: S2VNA rejected the index (no such standard) or has no type for it.
+    try { $type = ([string](Invoke-S2Io $Scpi "SENSe(1).CORRection.COLLect.CKIT.STAN($Index).TYPE")).Trim().ToUpperInvariant() } catch { return $null }
+    if (-not $type) { return $null }
+    return $type
+}
 function Read-S2KitStandards {
     param($Scpi)
     # Reads the selected kit as S2VNA defines it (ported from tools/vna-measure Get-VnaKitStandards). Units are S2VNA's
     # own and pass through unchanged: C0…C3 in 1e-15/-27/-36/-45 F, L0…L3 in 1e-12/-24/-33/-42 H, delay s, loss Ω/s, Z0 Ω.
+    # S2VNA's COM has no standard count, so the list runs until the instrument rejects an index. A rejection counts as
+    # the end only when it repeats and the next index is rejected too: a COM failure inside the list fails the op
+    # instead of returning a truncated kit. Any failure reading a standard's fields fails the op as well.
     $prefix = 'SENSe(1).CORRection.COLLect.CKIT.STAN'
-    $standards = @()
-    for ($index = 1; $index -le $script:VnaKitStandardsMax + 1; $index++) {
-        $type = $null
-        try { $type = ([string](Invoke-S2Io $Scpi "$prefix($index).TYPE")).Trim().ToUpperInvariant() } catch { $type = '' }
-        if (-not $type) { break }
+    $standards = @(); $ended = $false
+    for ($index = 1; $index -le $script:VnaKitEntriesMax; $index++) {
+        $type = Get-S2KitStandardType $Scpi $index
+        if ($null -eq $type) {
+            if ($null -ne (Get-S2KitStandardType $Scpi $index) -or $null -ne (Get-S2KitStandardType $Scpi ($index + 1))) {
+                throw "ВАЦ: мера $index набора не прочитана — список мер прочитан не полностью"
+            }
+            $ended = $true; break
+        }
         if ($type -cnotin $script:VnaKitTypes) { continue }
-        if ($index -gt $script:VnaKitStandardsMax) { throw "ВАЦ: в наборе больше $($script:VnaKitStandardsMax) описаний мер" }
         $label = ([string](Invoke-S2Io $Scpi "$prefix($index).LABel")).Trim()
         if (-not (Test-VnaKitText $label 0)) { throw "ВАЦ: недопустимое название меры $index набора" }
         $c = [double[]]@(0, 0, 0, 0); $l = [double[]]@(0, 0, 0, 0)
@@ -2846,7 +2861,15 @@ function Read-S2KitStandards {
             z0 = (ConvertTo-VnaKitNumber (Invoke-S2Io $Scpi "$prefix($index).Z0") 'Z0')
             c = $c; l = $l }
     }
+    if (-not $ended) { throw "ВАЦ: конец списка мер набора не найден за $($script:VnaKitEntriesMax) позиций" }
+    if ($standards.Count -gt $script:VnaKitStandardsMax) { throw "ВАЦ: в наборе больше $($script:VnaKitStandardsMax) мер OPEN/SHORT/LOAD/THRU ($($standards.Count))" }
     return ,@($standards)
+}
+function Test-S2KitSlot {
+    param($Scpi, [int]$Slot)
+    # $true when S2VNA accepted this kit number and reads it back; the selection is restored by the caller.
+    $select = 'SENSe(1).CORRection.COLLect.CKIT.SELect'
+    try { Invoke-S2Io $Scpi $select set $Slot; return ([int](Invoke-S2Io $Scpi $select) -eq $Slot) } catch { return $false }
 }
 function Read-S2KitByLabel {
     param($Scpi, [string]$Label)
@@ -2857,8 +2880,11 @@ function Read-S2KitByLabel {
     try {
         $found = @()
         for ($slot = 1; $slot -le $script:VnaKitSlotsMax; $slot++) {
-            try { Invoke-S2Io $Scpi $select set $slot; $actual = [int](Invoke-S2Io $Scpi $select) } catch { break }
-            if ($actual -ne $slot) { break }
+            if (-not (Test-S2KitSlot $Scpi $slot)) {
+                # Same rule as for standards: a refused number ends the list only if it repeats and the next one is refused.
+                if ((Test-S2KitSlot $Scpi $slot) -or (Test-S2KitSlot $Scpi ($slot + 1))) { throw "ВАЦ: набор №$slot в S2VNA не выбран — список наборов прочитан не полностью" }
+                break
+            }
             if (([string](Invoke-S2Io $Scpi 'SENSe(1).CORRection.COLLect.CKIT.LABel')).Trim() -ceq $Label) { $found += $slot }
         }
         if (-not $found.Count) { throw "ВАЦ: в S2VNA нет калибровочного набора «$Label»" }
@@ -2956,9 +2982,10 @@ function Invoke-S2BenchOp {
         }
         'read_kit' {
             if (-not (Test-VnaKitText $argsValue.label 1)) { throw 'ВАЦ: неверная метка калибровочного набора' }
-            $kit = Read-S2KitByLabel $Scpi ([string]$argsValue.label)
+            # Both labels are compared trimmed; the receipt echoes the ERP label exactly as sent (server checks equality).
+            $kit = Read-S2KitByLabel $Scpi ([string]$argsValue.label).Trim()
             if ((Get-VnaSerial $Application) -cne $Serial) { throw 'ВАЦ: прибор заменён во время чтения набора' }
-            $Result.label = $kit.label; $Result.standards = @($kit.standards)
+            $Result.label = [string]$argsValue.label; $Result.standards = @($kit.standards)
         }
         default { throw 'ВАЦ: неизвестная операция рабочего места' }
     }

@@ -55,9 +55,12 @@ function Invoke-BenchFakeIo {
     [void]$script:ioLog.Add("$Mode $Path")
     if ($script:kitSlots -and $Path -like 'SENSe(1).CORRection.COLLect.CKIT.*') {
         # S2VNA kit table: SELect picks a slot (out of range throws), LABel and STAN(i).* read the selected slot.
+        # kitFaults: path -> how many reads fail with a COM error; kitSlotFault: a slot whose selection fails once.
         $select = 'SENSe(1).CORRection.COLLect.CKIT.SELect'
+        if ($script:kitFaults.ContainsKey($Path) -and $script:kitFaults[$Path] -gt 0) { $script:kitFaults[$Path]--; throw 'COM busy' }
         if ($Path -eq $select) {
             if ($Mode -ne 'set') { return $script:ioValues[$select] }
+            if ([int]$Value -eq $script:kitSlotFault) { $script:kitSlotFault = 0; throw 'COM busy' }
             if ([int]$Value -lt 1 -or [int]$Value -gt @($script:kitSlots).Count) { throw 'Parameter out of range' }
             $script:ioValues[$select] = [int]$Value; return
         }
@@ -109,6 +112,7 @@ function Initialize-BenchDevice {
     $script:memorized = New-Object 'Collections.Generic.List[int]'
     $script:setValues = @{}
     $script:ioValues = @{}; $script:selected = 1; $script:ignorePath = ''; $script:onSweep = $null; $script:kitSlots = $null
+    $script:kitFaults = @{}; $script:kitSlotFault = 0
     $script:correction = @{ S11 = 'COR'; S21 = 'COR'; S12 = 'COR'; S22 = 'COR' }
     $script:acmInfo = 'ACM2520.2,26140008,30,Factory,2026-01-01,100 kHz,20 GHz,1601,3.5mm -F-,3.5mm -F-'
     $writes = Get-S2ProfileWrites $script:profile
@@ -794,6 +798,52 @@ Describe 'ВАЦ v2: рабочее место' {
         $script:kitSlots[27].standards = @(@{ TYPE = 'ARBI'; LABel = 'x' })
         { Invoke-BenchOp read_kit @{ label = '6650F27' } } | Should Throw 'нет мер OPEN/SHORT/LOAD/THRU'
         $script:ioValues['SENSe(1).CORRection.COLLect.CKIT.SELect'] | Should Be 7
+    }
+    It 'read_kit: 12 мер SOLT считаются по числу, а не по позиции; список идёт до отказа прибора' {
+        Initialize-BenchCalibrated
+        $script:kitSlots = New-BenchKitTable; $script:ioValues['SENSe(1).CORRection.COLLect.CKIT.SELect'] = 7
+        $list = @(@{ TYPE = 'ARBI'; LABel = 'a' }, @{ TYPE = 'ARBI'; LABel = 'b' }, @{ TYPE = 'ARBI'; LABel = 'c' })
+        for ($i = 0; $i -lt 12; $i++) { $list += @{ TYPE = 'LOAD'; LABel = "L$i"; DELay = 0; LOSS = 0; Z0 = 50 } }
+        $script:kitSlots[27].standards = $list
+        $result = Invoke-BenchOp read_kit @{ label = '6650F27' }
+        @($result.standards).Count | Should Be 12
+        $result.standards[11].label | Should Be 'L11'
+        # End of list: index 16 refused twice and 17 refused as well; nothing beyond is read.
+        @($script:ioLog | Where-Object { $_ -eq 'get SENSe(1).CORRection.COLLect.CKIT.STAN(16).TYPE' }).Count | Should Be 2
+        @($script:ioLog | Where-Object { $_ -like '*STAN(18)*' }).Count | Should Be 0
+        $script:ioValues['SENSe(1).CORRection.COLLect.CKIT.SELect'] | Should Be 7
+    }
+    It 'read_kit: сбой COM на мере <Path> — отказ, не усечённый набор; выбранный набор возвращён' -TestCases @(
+        @{ Path = 'STAN(3).TYPE'; Text = 'список мер прочитан не полностью' }
+        @{ Path = 'STAN(2).LABel'; Text = 'COM busy' }
+        @{ Path = 'STAN(7).DELay'; Text = 'COM busy' }
+        @{ Path = 'STAN(1).C2'; Text = 'COM busy' }) {
+        param($Path, $Text)
+        Initialize-BenchCalibrated
+        $script:kitSlots = New-BenchKitTable; $script:ioValues['SENSe(1).CORRection.COLLect.CKIT.SELect'] = 4
+        $script:kitFaults['SENSe(1).CORRection.COLLect.CKIT.' + $Path] = 1
+        { Invoke-BenchOp read_kit @{ label = '6650F27' } } | Should Throw $Text
+        $script:ioValues['SENSe(1).CORRection.COLLect.CKIT.SELect'] | Should Be 4
+    }
+    It 'read_kit: стойкий отказ на мере внутри списка — отказ' {
+        Initialize-BenchCalibrated
+        $script:kitSlots = New-BenchKitTable
+        $script:kitFaults['SENSe(1).CORRection.COLLect.CKIT.STAN(4).TYPE'] = 99
+        { Invoke-BenchOp read_kit @{ label = '6650F27' } } | Should Throw 'мера 4 набора не прочитана'
+    }
+    It 'read_kit: сбой выбора набора посреди перебора — отказ, а не «набора нет»' {
+        Initialize-BenchCalibrated
+        $script:kitSlots = New-BenchKitTable; $script:ioValues['SENSe(1).CORRection.COLLect.CKIT.SELect'] = 4
+        $script:kitSlotFault = 5
+        { Invoke-BenchOp read_kit @{ label = '6650F27' } } | Should Throw 'набор №5 в S2VNA не выбран'
+        $script:ioValues['SENSe(1).CORRection.COLLect.CKIT.SELect'] | Should Be 4
+    }
+    It 'read_kit: метка ERP с пробелами сравнивается обрезанной, квитанция повторяет её как прислано' {
+        Initialize-BenchCalibrated
+        $script:kitSlots = New-BenchKitTable
+        $result = Invoke-BenchOp read_kit @{ label = '  6650F27 ' }
+        $result.label | Should Be '  6650F27 '
+        @($result.standards).Count | Should Be 7
     }
     It 'read_kit: неверная метка, протокол 1, до prepare и после release отклоняются без перебора наборов' {
         $script:kitSlots = New-BenchKitTable
