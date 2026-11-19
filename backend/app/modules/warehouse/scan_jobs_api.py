@@ -17,7 +17,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Security
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from starlette.concurrency import run_in_threadpool
 
 from app.shared.clock import moscow_now
@@ -312,6 +312,14 @@ class PrinterCapability(BaseModel):
     port: str = Field(default="", max_length=255)
     kind: Literal["tspl", "gdi_png"]
     present: bool = True
+    # Agent 2.11.0+: why marking on this queue is held (peel-off check failed); empty — printing. A longer reason is
+    # cut to the stored 500 characters (devices.printer_heartbeat), never refused: the heartbeat must go through.
+    hold: str = ""
+
+    @field_validator("hold", mode="before")
+    @classmethod
+    def short_hold(cls, value):
+        return " ".join(str(value or "").split())[:500]
 
 
 AgentHeartbeatInput.model_rebuild()
