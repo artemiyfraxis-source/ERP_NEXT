@@ -45,12 +45,12 @@ def test_every_catalog_entry_has_a_unique_id_and_a_source():
     ("escc-3402-010-tnc-plug-jack", 18, 1.19, 0.07 * 18 ** 0.5), ("escc-3402-010-tnc-jack-jack", 12, 1.186, 0.07 * 12 ** 0.5),
     ("escc-3402-010-tnc-plug-plug", 12.4, 1.162, 0.07 * 12.4 ** 0.5),
     ("mikran-pk2-18", 12, 1.10, 0.15), ("mikran-pk2-18", 18, 1.15, 0.15),
-    ("planar-c50smnm-2", 2.5, 1.152, 0.60), ("planar-c50smnm-2", 18, 1.329, 1.75), ("planar-c50nmnm-2", 6, 1.222, 1.00),
+    ("planar-c50smnm-2", 2.5, 1.152, 0.60), ("planar-c50smnm-2", 18, 1.328, 1.75), ("planar-c50nmnm-2", 6, 1.222, 1.00),
     ("planar-c50nmiiim-2", 2.5, 1.152, 0.90), ("planar-c50nmiiim-2", 6, 1.222, 1.60),  # passport v26.1, 19.11
-    ("planar-c50nmiiim-2", 12, 1.329, 1.90), ("planar-c50nmiiim-2", 18, 1.329, 2.70),
+    ("planar-c50nmiiim-2", 12, 1.328, 1.90), ("planar-c50nmiiim-2", 18, 1.328, 2.70),
     ("mil-55339-37a", 0.5, 1.25, None), ("mil-55339-37a", 4, 1.25, None),
     ("mil-55339-51a-58", 9, 1.35, None), ("mil-55339-51a-58", 11, 1.5, None), ("mil-55339-7a", 11, 1.30, None),
-    ("iec-61169-8-bnc", 4, 1.30, None), ("iec-61169-8-bnc-angle", 4, 1.35, None),
+    ("iec-61169-8-bnc", 4, 1.298, None), ("iec-61169-8-bnc-angle", 4, 1.352, None),  # Γ 0,13 / 0,15, floor
 ])
 def test_type_norm_limits_follow_the_research(norm_id, ghz, vswr, loss):
     norm = norm_by_id(norm_id)
@@ -217,6 +217,23 @@ def test_apply_writes_reviewed_rows_with_guard_and_audit_and_the_card_keeps_it(p
     changed = client.put(url, json={**card, "interfaces": [card["interfaces"][0], {**card["interfaces"][1], "series": "N"}]})
     assert changed.status_code == 200 and changed.json()["rf"]["norm_id"] == ""
     assert client.get(f"/api/production/instruments/{second['id']}/rf-interfaces").json()["rf"]["norm_id"] == ""
+
+
+def test_second_apply_of_the_same_csv_changes_nothing(production_api):
+    client, _ = production_api
+    _card(client, "СИ.034"), _card(client, "СИ.035")
+    rows = [{"inventory_no": "СИ.034", "norm_id": "escc-3402-003-sma", "current_norm_id": "", "reason": "ESCC"},
+            {"inventory_no": "СИ.035", "norm_id": "", "current_norm_id": "", "reason": "без нормы"}]
+    outcomes = []
+    for _ in range(2):
+        with app.state.production_uow_factory() as uow:
+            outcomes.append(si_norm_assignment.apply(uow, rows, datetime(2026, 11, 19)))
+            uow.commit()
+    assert outcomes[0] == {"written": ["СИ.034: — → escc-3402-003-sma"], "unchanged": ["СИ.035"], "refused": []}
+    assert outcomes[1] == {"written": [], "unchanged": ["СИ.034", "СИ.035"], "refused": []}
+    with sessions()() as session:
+        events = list(session.scalars(select(AuditEventRow).where(AuditEventRow.event_type == "production.rf_norm_assigned")))
+    assert len(events) == 1  # the repeat writes no audit either
 
 
 def test_repository_refuses_an_id_outside_the_catalog(production_api):
