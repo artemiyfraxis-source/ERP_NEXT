@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, it, vi } from "vitest";
 import type { MachineControl, MachineWindow, TransferPlan } from "./machineControlApi";
 import { Ob019SettingsPanel } from "./Ob019SettingsPanel";
+import { wireZones } from "./Ob019WireDrawing";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -56,15 +57,52 @@ function server(control: MachineControl = CONTROL) {
 
 afterEach(() => { vi.restoreAllMocks(); });
 
-it("shows every HMI page and writes a changed value only after the confirmation with the machine state", async () => {
+it("scales the stripped ends with their size but keeps room for the fields", () => {
+  const zones = (strip: number | null, pull: number | null) => wireZones({ strip_front: strip, pull_front: pull, strip_back: 0, pull_back: 0 });
+  expect(zones(0, 0).front).toBe(20);
+  expect(zones(5, 0).front).toBe(25);
+  expect(zones(80, 0).front).toBe(30);
+  expect(zones(null, null).back).toBe(20);
+  expect(zones(5, 0).slugFront).toBe(0);
+  expect(zones(5, 2.5).slugFront).toBe(0.5);
+  expect(zones(5, 4.9).slugFront).toBe(0.25);
+});
+
+it("puts the wire on a drawing and the rare HMI pages under «Остальные параметры»", async () => {
+  server();
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  const toggle = await screen.findByRole("button", { name: /Остальные параметры/ });
+  expect(screen.queryByRole("tab")).toBeNull();
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  // Only pages with something not on the drawing: «Задание» and «Провод и зачистка» here are all on top.
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Скорости"]);
+  expect(screen.getByText("только просмотр")).toBeInTheDocument();
+  const drawing = screen.getByRole("region", { name: "Провод: длина и зачистка" });
+  expect(within(drawing).getByLabelText("Длина провода: новое значение")).toBeInTheDocument();
+  expect(within(drawing).getByText("Зачистка начала")).toBeInTheDocument();
+  expect(within(drawing).getByText("Стягивание конца")).toBeInTheDocument();
+  expect(within(drawing).getByText("Отвод ножа")).toBeInTheDocument();
+});
+
+it("shows the machine value beside each field and highlights an entered value that differs", async () => {
+  server();
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  expect(await screen.findByText("на станке 325,00 мм")).toBeInTheDocument();
+  expect(screen.getByText("на станке 300 шт")).toBeInTheDocument();
+  const length = screen.getByLabelText("Длина провода: новое значение");
+  fireEvent.change(length, { target: { value: "325,00" } });
+  expect(length.closest("label")!.className).not.toContain("is-diff");
+  fireEvent.change(length, { target: { value: "325,5" } });
+  expect(length.closest("label")!.className).toContain("is-diff");
+  expect(screen.getByText("≠ на станке 325,00 мм")).toBeInTheDocument();
+});
+
+it("writes a changed value only after the confirmation with the machine state", async () => {
   const posts = server();
   render(<Ob019SettingsPanel inventory="ОБ.019" />);
-  expect(await screen.findByRole("tab", { name: "Скорости" })).toBeInTheDocument();
-  expect(screen.getByText("Можно записывать: готов, ждёт пуска, пульт PXS_HMI закрыт")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("tab", { name: "Скорости" }));
-  expect(screen.getByText("только просмотр")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("tab", { name: "Провод и зачистка" }));
-  expect(screen.getByText("325,00 мм")).toBeInTheDocument();
+  expect(await screen.findByText("Можно записывать: готов, ждёт пуска, пульт PXS_HMI закрыт")).toBeInTheDocument();
+  await screen.findByText("на станке 325,00 мм");
   fireEvent.change(screen.getByLabelText("Длина провода: новое значение"), { target: { value: "326" } });
   fireEvent.click(screen.getByRole("button", { name: "Записать на станок (1)" }));
   const dialog = screen.getByRole("alertdialog");
@@ -84,12 +122,33 @@ it("transfers the ETK job with the machine correction and refuses while the mach
   const pick = await screen.findByLabelText("Задание резки");
   await waitFor(() => expect(within(pick).getAllByRole("option")).toHaveLength(2));
   fireEvent.change(pick, { target: { value: "g1:325" } });
-  expect(await screen.findByText("5,40")).toBeInTheDocument();
-  expect(screen.getByText("остаётся как на станке")).toBeInTheDocument();
+  // The ETK job fills the drawing with what «Передать на станок» writes.
+  await waitFor(() => expect(screen.getByLabelText("Зачистка начала: новое значение")).toHaveValue("5,40"));
+  expect(screen.getByLabelText("Длина провода: новое значение")).toHaveValue("325,00");
+  expect(screen.getByLabelText("Тираж: новое значение")).toHaveValue("12");
+  expect(screen.getByText(/Отвод ножа — остаётся как на станке/)).toBeInTheDocument();
+  expect(screen.getByText(/Зачистка начала: ЭТК 5,00, поправка станка 0,40/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Передать на станок" }));
   fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Подтвердить запись" }));
   await waitFor(() => expect(posts).toHaveLength(1));
   expect(posts[0].body).toEqual({ group_id: "g1", length_mm: "325", confirm_state: 102 });
+});
+
+it("writes the edited ETK values as settings once a prefilled field is changed", async () => {
+  const posts = server();
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  const pick = await screen.findByLabelText("Задание резки");
+  await waitFor(() => expect(within(pick).getAllByRole("option")).toHaveLength(2));
+  fireEvent.change(pick, { target: { value: "g1:325" } });
+  await waitFor(() => expect(screen.getByLabelText("Длина провода: новое значение")).toHaveValue("325,00"));
+  fireEvent.change(screen.getByLabelText("Длина провода: новое значение"), { target: { value: "326" } });
+  expect(screen.queryByRole("button", { name: "Передать на станок" })).toBeNull();
+  // Only fields the machine page knows are written (this window: length and run), through the same /write path.
+  fireEvent.click(screen.getByRole("button", { name: "Записать на станок (2)" }));
+  fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Подтвердить запись" }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0]).toEqual({ url: "/api/production/machines/card/%D0%9E%D0%91.019/write",
+    body: { values: { length_mm: "326", total_set: "12" }, confirm_state: 102 } });
 });
 
 it("blocks writing with the reason when the machine is not idle", async () => {
@@ -106,7 +165,7 @@ it("records «станок режет не так» with the offset suggested fr
   const pick = await screen.findByLabelText("Задание резки");
   await waitFor(() => expect(within(pick).getAllByRole("option")).toHaveLength(2));
   fireEvent.change(pick, { target: { value: "g1:325" } });
-  await screen.findByText("5,40");
+  await waitFor(() => expect(screen.getByLabelText("Зачистка начала: новое значение")).toHaveValue("5,40"));
   fireEvent.change(screen.getByLabelText("Получилось, мм"), { target: { value: "4,6" } });
   expect(screen.getByLabelText("Поправка станка, мм")).toHaveValue("0,40");
   fireEvent.click(screen.getByRole("button", { name: "Записать правку" }));

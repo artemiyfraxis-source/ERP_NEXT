@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, type ReactNode } from "react";
 import { PageWindow } from "./PageWindow";
 import { EMPTY, formatMoment, formatNumber } from "./format";
 import { machinesApi, usePolled, type MachineCard, type Ob019Live, type Tone } from "./machinesApi";
@@ -6,8 +6,9 @@ import { Ob099CardView } from "./Ob099Card";
 import { Ob019Controls } from "./Ob019Controls";
 import { Ob019SettingsPanel } from "./Ob019SettingsPanel";
 
-/** Живая карточка ОБ.019 (линия резки и зачистки с лазерной маркировкой): команды станку (Ob019Controls.tsx), состояние
- *  ПЛК, задание и счётчики, параметры провода, настройки (Ob019SettingsPanel.tsx); опрос раз в 3 с, пока окно открыто. */
+/** Живая карточка ОБ.019 (линия резки и зачистки с лазерной маркировкой): состояние ПЛК и строка задания, команды станку
+ *  (Ob019Controls.tsx), под ними чертёж провода и запись настроек (Ob019SettingsPanel.tsx); опрос раз в 3 с, пока окно
+ *  открыто. */
 
 type Fact = [label: string, value: string, tone?: Tone];
 
@@ -15,10 +16,6 @@ const toneClass = (tone?: Tone) => (tone && tone !== "neutral" ? `tone-${tone}` 
 
 function count(value: number | null): string {
   return value === null ? EMPTY : formatNumber(value);
-}
-
-function mm(value: number | null): string {
-  return value === null ? EMPTY : `${formatNumber(value, { digits: 2, minDigits: 2 })} мм`;
 }
 
 function plain(value: string | null | undefined): string {
@@ -44,57 +41,41 @@ function Facts({ title, facts }: { title: string; facts: Fact[] }) {
   </section>;
 }
 
-function liveFacts(live: Ob019Live): Fact[][] {
-  const { job, wire } = live;
+/** Одна строка о станке и задании под состоянием; длины и тираж — на чертеже ниже (владелец 19.11.2026). */
+function liveFacts(live: Ob019Live): Fact[] {
+  const { job } = live;
+  const order = job.order_quantity === null ? EMPTY : `${count(job.order_finished)} из ${count(job.order_quantity)}`;
   return [
-    [
-      ["Состояние", live.state.text, live.state.tone],
-      ["Авария", live.alarm.text, live.alarm.tone],
-      ["Режим", live.mode.text],
-      ["Программа", count(job.program)],
-      ["Производительность", job.uph === null ? EMPTY : `${formatNumber(job.uph)} шт/ч`],
-    ],
-    [
-      ["Тираж, задано", count(job.total_set)],
-      ["Тираж, сделано", count(job.total_finished)],
-      ["Пучок, задано", count(job.batch_set)],
-      ["Пучок, сделано", count(job.batch_finished)],
-      ["Заказ", plain(job.order_number)],
-      ["Изделие", plain(job.product)],
-      ["Заказ, количество", count(job.order_quantity)],
-      ["Заказ, выполнено", count(job.order_finished)],
-      ["Задание на станке", job.order_running === null ? EMPTY : job.order_running ? "Идёт" : "Нет"],
-    ],
-    [
-      ["Длина", mm(wire.length_mm)],
-      ["Зачистка начала", mm(wire.strip_front_mm)],
-      ["Стягивание начала", mm(wire.pull_front_mm)],
-      ["Зачистка конца", mm(wire.strip_back_mm)],
-      ["Стягивание конца", mm(wire.pull_back_mm)],
-      ["Диаметр провода", mm(wire.diameter_mm)],
-      ["Отвод ножа", mm(wire.knife_back_mm)],
-    ],
+    ["Авария", live.alarm.text, live.alarm.tone],
+    ["Режим", live.mode.text],
+    ["Программа", count(job.program)],
+    ["Производительность", job.uph === null ? EMPTY : `${formatNumber(job.uph)} шт/ч`],
+    ["Заказ", plain(job.order_number)],
+    ["Изделие", plain(job.product)],
+    ["Заказ, выполнено", order],
+    ["Задание на станке", job.order_running === null ? EMPTY : job.order_running ? "Идёт" : "Нет"],
   ];
 }
 
-export function Ob019CardView({ card }: { card: MachineCard }) {
+export function Ob019CardView({ card, controls }: { card: MachineCard; controls?: ReactNode }) {
   const old = card.link.code !== "ok";
-  const blocks = card.live ? liveFacts(card.live) : null;
   return <>
     <p className={`machine-link ${toneClass(card.link.tone)}`} role="status">
       {card.live && !old && <strong className={`machine-state ${toneClass(card.live.state.tone)}`}>{card.live.state.text}</strong>}
       <strong>{card.link.text}</strong>
       <span>Последний сигнал: {card.reported_at ? `${formatMoment(card.reported_at)} · ${ago(card.age_seconds)}` : EMPTY}</span>
     </p>
+    {card.live && <dl className={`machine-summary${old ? " machine-old" : ""}`}
+      aria-label={old ? "Последние полученные данные" : "Данные станка"}>
+      {liveFacts(card.live).map(([label, value, tone]) => <div key={label}>
+        <dt>{label}</dt>
+        <dd className={toneClass(tone)}>{value}</dd>
+      </div>)}
+    </dl>}
     {card.error && card.link.code !== "ok" && <p className="warning-inline">{card.error}</p>}
-    {!blocks
-      ? <p className="empty">Нет данных ПЛК — агент на связи, но станок ещё не ответил</p>
-      : <div className={`machine-grid${old ? " machine-old" : ""}`} aria-label={old ? "Последние полученные данные" : "Данные станка"}>
-        <Facts title="Станок" facts={blocks[0]} />
-        <Facts title="Задание и счётчики" facts={blocks[1]} />
-        <Facts title="Провод" facts={blocks[2]} />
-      </div>}
-    <Ob019SettingsPanel inventory={card.inventory} />
+    {controls}
+    {!card.live && <p className="empty">Нет данных ПЛК — агент на связи, но станок ещё не ответил</p>}
+    <Ob019SettingsPanel inventory={card.inventory} live={card.live} old={old} />
     <Facts title="Подключение" facts={[
       ["ПК", plain(card.pc)], ["IP", plain(card.ip)], ["Версия агента", plain(card.bridge_version)],
       ["Служба Modbus", plain(card.service_version)],
@@ -113,10 +94,8 @@ export function Ob019Card({ equipmentId, title, close }: { equipmentId: string; 
       </header>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {!data && !error && <p className="empty">Загрузка…</p>}
-      {data && (data.kind === "ob099_fins" ? <Ob099CardView card={data} /> : <>
-        <Ob019Controls card={data} />
-        <Ob019CardView card={data} />
-      </>)}
+      {data && (data.kind === "ob099_fins" ? <Ob099CardView card={data} />
+        : <Ob019CardView card={data} controls={<Ob019Controls card={data} />} />)}
     </section>
   </PageWindow>;
 }
