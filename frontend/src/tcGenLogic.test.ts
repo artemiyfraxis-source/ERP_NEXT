@@ -372,10 +372,22 @@ describe("коакс: резка с разделкой на роторном с�
     const ops = opsOf(D, S);
     const crimp = ops.filter((op) => op.type === "coaxPinCrimp");
     expect(crimp.map((op) => [op.side, op.label])).toEqual([["A", "Опрессовка центрального контакта (А)"]]);
-    // Своей карты PRS_PIN_coax ещё нет — карта опрессовки коакса, с пометкой, какой карты не хватает.
-    expect(crimp[0]).toMatchObject({ tmplWant: "PRS_PIN_coax" });
+    // Свод 708К. 4/5: только своя карта PRS_PIN_coax, без подмены картой обжима экрана PRS_SLEEVE_coax.
+    expect(crimp[0]).toMatchObject({ tmplHint: "PRS_PIN_coax", tmplWant: "PRS_PIN_coax" });
     expect(ops.filter((op) => op.type === "coaxPin").map((op) => op.side)).toEqual(["B"]);
     expect((makeGen(D, S).buildConfig() as Record<string, any>).coax.sideA.pinType).toBe("обжим");
+    // Нет карты в библиотеке — не подмена, а остановка «Создать» с названием недостающей карты.
+    const shield = { id: "sleeve", title: "PRS_SLEEVE_coax | Опрессовка", category: "Опрессовка" };
+    const noPin: GenData = { ...D, templates: [...coaxTemplates, shield] };
+    expect(makeGen(noPin, S).templateIdFor(crimp[0])).toBe("");
+    expect(makeGen(noPin, S).validate().error).toContain("PRS_PIN_coax");
+    // Карта есть — операция идёт ею, даже если раньше вручную выбрали карту экрана.
+    const withPin: GenData = { ...noPin, templates: [...noPin.templates, { id: "pin", title: "PRS_PIN_coax | Обжим центрального контакта", category: "Опрессовка" }] };
+    const manual = { ...S, selectedTemplates: { ...S.selectedTemplates, coaxPinCrimpA: "sleeve" }, manualTemplates: ["coaxPinCrimpA"] };
+    expect(makeGen(withPin, manual).templateIdFor(crimp[0])).toBe("pin");
+    expect(makeGen(withPin, S).validate().error || "").not.toContain("PRS_PIN_coax");
+    // Экран — по-прежнему своей картой и отдельной операцией.
+    expect(ops.find((op) => op.type === "coaxShield")?.tmplHint).toBe("PRS_SLEEVE_coax");
   });
 
   it("the 2.92 mm and SMP stock articles are matched by article, dots and hyphens ignored (19.10); «Тип пина» цанга → no pin solder (20.10)", () => {

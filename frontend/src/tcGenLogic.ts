@@ -2477,10 +2477,12 @@ export function makeGen(D: GenData, S: GenState) {
     if (tape) ops.push(coaxLabelPrint_());
     if (tutOn) ops.push({ type: "coaxCutTut", opKey: tape ? "coaxProtectCut" : "coaxCutTut", label: `Резка ${tape ? "прозрачной " : ""}ТУТ${x(marks)}`, units: marks, tmplHint: "CUT_TUT_short", ...(tape ? { protective: true } : {}) });
     const pinOp = (sd: Side, pin: string): OpSpec => ({ type: "coaxPin", side: sd, opKey: "coaxPin" + sd, label: `Пайка центрального контакта (${sd === "B" ? "B" : "А"})`, tmplHint: pinHint(pin) });
-    // Обжимной центральный контакт (владелец 19.10) — опрессовка на жилу своей операцией, не пайка.
+    // Обжимной центральный контакт (владелец 19.10) — опрессовка на жилу своей операцией, не пайка. Только своя карта
+    // PRS_PIN_coax (свод 708К. 4/5): карта обжима экрана PRS_SLEEVE_coax давала пину инструкцию и матрицу HEX гильзы.
+    // Нет карты — сборка остановлена (fakraTemplateProblem_), а не подмена.
     const crimpOp = (sd: Side): OpSpec => ({ type: "coaxPinCrimp", side: sd, opKey: "coaxPinCrimp" + sd,
       label: `Опрессовка центрального контакта (${sd === "B" ? "B" : "А"})`,
-      tmplHint: hasOperation_(COAX_PIN_CRIMP_CODE_) ? COAX_PIN_CRIMP_CODE_ : "PRS_SLEEVE_coax", tmplWant: COAX_PIN_CRIMP_CODE_ });
+      tmplHint: COAX_PIN_CRIMP_CODE_, tmplWant: COAX_PIN_CRIMP_CODE_ });
     // Цанговый центральный контакт (владелец 16.10, «не требует пайки») — пайки пина нет, жилу зажимает корпус.
     const pushPin = (sd: Side, pin: string) => {
       if (pin === COAX_PIN_CRIMP) ops.push(crimpOp(sd));
@@ -4051,7 +4053,9 @@ export function makeGen(D: GenData, S: GenState) {
    *  cutWire1…N идут по порядку партий, и при перегруппировке тот же ключ достаётся резке другого вида. */
   function templateIdFor(spec: OpSpec) {
     // Dedicated assembly stages cannot inherit a generic coax card, including an old manual selection.
-    if (S.tab === "coax" && ((isFakra_() && (spec.side || S.coax.fakraCutStrip)) || spec.connColor || spec.markMaterial === "tape" || spec.protective)) return pickTemplateForOp_(spec);
+    // A crimped centre contact never keeps the shield-crimp card (PRS_SLEEVE_coax), even as an old manual choice.
+    if (S.tab === "coax" && ((isFakra_() && (spec.side || S.coax.fakraCutStrip)) || spec.connColor || spec.markMaterial === "tape" || spec.protective
+      || spec.type === "coaxPinCrimp")) return pickTemplateForOp_(spec);
     // Залипший (не ручной) шаблон с другим кодом, чем просит правило генератора, тоже пересчитывается, если карта с
     // нужным кодом есть: 713К.4 КБ1 (17.10) — резка маркировки ушла на PRINT_MARK_TUBE, а у ключа cutMark остался
     // CUT_TUT_short (резка трубок: не тот станок, не те дефекты).
@@ -4452,7 +4456,7 @@ export function makeGen(D: GenData, S: GenState) {
   function fakraTemplateProblem_(): string {
     if (S.tab !== "coax") return "";
     return getActiveOpsCoax_().filter((spec) => ((isFakra_() && (spec.side || S.coax.fakraCutStrip))
-      || spec.markMaterial === "tape" || spec.protective || spec.connColor) && !templateIdFor(spec))
+      || spec.markMaterial === "tape" || spec.protective || spec.connColor || spec.type === "coaxPinCrimp") && !templateIdFor(spec))
       .map((spec) => `Нет специализированной карты ${spec.tmplHint} для операции «${spec.label}» — создание сборки остановлено.`).join("\n");
   }
   /** FAKRA/HFM: лишние концы, детали без главной, метки по умолчанию, длина кабеля HFM и нерешённая герметизация. */
