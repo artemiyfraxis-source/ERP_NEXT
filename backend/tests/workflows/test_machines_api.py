@@ -340,7 +340,9 @@ def test_the_card_of_ob019_shows_live_values_settings_by_hmi_page_journal_and_co
     # Every group is read now; a word the snapshot lacks is «—», a field ERP does not write has no key.
     assert all(field["read"] for group in pages.values() for field in group.values())
     assert pages["Задание"]["Пауза между пучками"]["value"] is None
-    assert pages["Скорости"]["Нож"]["key"] is None and pages["Маркировка"]["Текст у начала"]["key"] == "mark_front"
+    assert pages["Скорости"]["Нож"]["key"] == "speed_cutter" and pages["Маркировка"]["Текст у начала"]["key"] == "mark_front"
+    assert pages["Задание"]["Программа"]["key"] is None
+    assert pages["Намотка"]["Параметр D390 (назначение не установлено)"]["key"] is None
     assert card["positions"]["title"] == "Положение осей"
     assert card["connection"]["pc"] == "PC-108" and card["connection"]["agent"] == "Агент ERP · станок"
     assert card["journal"][-1]["text"] == "Агент станка привязан к ПК PC-108"

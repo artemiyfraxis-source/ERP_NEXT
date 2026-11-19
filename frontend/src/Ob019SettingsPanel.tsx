@@ -18,6 +18,8 @@ const STATES: Record<number, string> = {
   106: "Пучок готов", 107: "Тираж готов",
 };
 const MODES: [string, string][] = [["0", "Пошаговый"], ["1", "Один цикл"], ["2", "Автомат"]];
+/** Переключатель страницы пульта (бит 0 слова): сервер меняет только этот бит. */
+const SWITCH: [string, string][] = [["1", "Вкл"], ["0", "Выкл"]];
 const CASES: [CorrectionCase, string][] = [
   ["machine", "Станок режет не так"], ["etk", "Размер в ЭТК неверный"], ["both", "И станок, и ЭТК"],
 ];
@@ -60,7 +62,7 @@ export function enteredDiffers(field: SettingField | undefined, entered: string)
   if (!field || field.value === null || field.value === undefined) return true;
   if (field.kind === "mode") return String(field.value) !== entered.trim();
   if (typeof field.value === "string") return field.value !== entered.split(/\s+/).filter(Boolean).join(" ");
-  if (typeof field.value === "boolean") return false;
+  if (typeof field.value === "boolean") return (entered.trim() === "1") !== field.value;
   const number = decimal(entered);
   return number === null || Math.abs(number - field.value) >= 0.005;
 }
@@ -282,7 +284,8 @@ export function Ob019SettingsPanel({ inventory, live = null, old = false }: {
         ? <Confirm state={control?.state ?? null} busy={busy} onNo={() => setConfirming("")} onYes={() => void writeSettings()}
           lines={changes.map(([key, value]) => {
             const field = fields.get(key);
-            const after = field?.kind === "mode" ? MODES.find(([code]) => code === value)?.[1] ?? value : value || "пусто";
+            const after = field?.kind === "mode" ? MODES.find(([code]) => code === value)?.[1] ?? value
+              : field?.kind === "bit0" ? SWITCH.find(([code]) => code === value)?.[1] ?? value : value || "пусто";
             return `${field?.label ?? key}: ${field ? shown(field) : EMPTY} → ${after}${field?.unit && field.kind !== "mode" ? ` ${field.unit}` : ""}`;
           })} />
         : <div className="machine-actions">
@@ -315,7 +318,13 @@ export function Ob019SettingsPanel({ inventory, live = null, old = false }: {
             className={field.key && enteredDiffers(field, edits[field.key] ?? "") ? "is-diff" : undefined}>
             <th scope="row">{field.label}</th>
             <td>{field.read ? shown(field) : EMPTY}</td>
-            <td>{field.key && control?.can_edit
+            <td>{field.key && control?.can_edit && field.kind === "bit0"
+              ? <select aria-label={`${field.label}: новое значение`} value={edits[field.key] ?? ""}
+                onChange={(event) => edit(field.key as string, event.target.value)}>
+                <option value="">Не менять</option>
+                {SWITCH.map(([code, text]) => <option key={code} value={code}>{text}</option>)}
+              </select>
+              : field.key && control?.can_edit
               ? <input aria-label={`${field.label}: новое значение`} value={edits[field.key] ?? ""}
                 inputMode={field.kind === "text15" ? "text" : "decimal"} maxLength={field.kind === "text15" ? 30 : 12}
                 placeholder={field.kind === "text15" ? "латиница, до 30 знаков" : field.unit}

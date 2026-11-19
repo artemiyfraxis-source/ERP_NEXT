@@ -143,6 +143,8 @@ class FieldWrite:
 
 
 def _plain(value: object) -> str:
+    if isinstance(value, bool):
+        return "Вкл" if value else "Выкл"
     if isinstance(value, Decimal):
         return format(value.normalize(), "f").replace(".", ",") if value != value.to_integral_value() \
             else format(value.quantize(Decimal(1)), "f")
@@ -162,8 +164,11 @@ def plan_writes(writes: list[FieldWrite], words: dict[int, int]) -> tuple[list[d
         if item.key in seen:
             raise rules.MachineWriteInvalid("Параметр указан дважды")
         seen.add(item.key)
-        field, values, value = rules.encode_field(item.key, item.value)
+        field, values, value = rules.encode_field(item.key, item.value, words)
         for offset, word in enumerate(values):
+            if field.address + offset in targets:  # D103: «Скорость намотки» and «Передний прижим» are one register
+                raise rules.MachineWriteInvalid(f"{field.label}: этот регистр (D{field.address + offset}) уже "
+                                                "записывается другим параметром — оставьте один")
             targets[field.address + offset] = word
         before = rules.field_value(item.key, words)
         shown.append({"key": item.key, "label": field.label, "unit": field.unit, "before": _plain(before),

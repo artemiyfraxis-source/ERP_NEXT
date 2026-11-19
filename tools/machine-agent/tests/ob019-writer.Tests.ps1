@@ -26,10 +26,19 @@ Describe 'write allow-list' {
         Test-BlockWritable @{ addr = 440; values = @(17201) + @(0) * 14 } | Should Be $true
         Test-BlockWritable @{ addr = 20; values = @(2) } | Should Be $true
     }
-    It 'refuses commands, the HMI context, speeds and out-of-range words' {
-        Test-BlockWritable @{ addr = 599; values = @(1) } | Should Be $false
-        Test-BlockWritable @{ addr = 730; values = @(13) } | Should Be $false
-        Test-BlockWritable @{ addr = 100; values = @(5) } | Should Be $false
+    It 'accepts the other HMI pages: speeds, middle strip, slitting, coiling, marking' {
+        Test-BlockWritable @{ addr = 100; values = @(5, 5, 5, 5, 5) } | Should Be $true
+        Test-BlockWritable @{ addr = 132; values = @(1) } | Should Be $true
+        Test-BlockWritable @{ addr = 197; values = @(65486) } | Should Be $true
+        Test-BlockWritable @{ addr = 1703; values = @(1250, 0, 300) } | Should Be $true
+        Test-BlockWritable @{ addr = 1750; values = @(100, 900, 50, 999) } | Should Be $true
+        Test-BlockWritable @{ addr = 400; values = @(1, 500, 0) } | Should Be $true
+    }
+    It 'refuses commands, the HMI context, passwords, SHA, date, unknown registers and out-of-range words' {
+        foreach ($a in @(599, 600, 730, 1087, 1088, 1089, 1203, 1207, 1211, 1682, 1684, 1686, 390, 133, 142, 200, 44, 403)) {
+            Test-BlockWritable @{ addr = $a; values = @(1) } | Should Be $false
+        }
+        Test-BlockWritable @{ addr = 1722; values = @(1, 0, 0) } | Should Be $false
         Test-BlockWritable @{ addr = 42; values = @(1, 2, 3) } | Should Be $false
         Test-BlockWritable @{ addr = 32; values = @(70000) } | Should Be $false
     }
@@ -259,6 +268,16 @@ Describe 'against mbd.ps1 -Mock -LocalOnly' {
             $result['ok'] | Should Be $true
             $result['readback']['940'] | Should Be 17732
             $result['readback']['954'] | Should Be 0
+        }
+        It 'the real service refuses a write of command bits, the HMI page, the date, passwords and SHA' {
+            $MbdPort = $port
+            foreach ($a in @(599, 600, 730, 1087, 1203, 1682, 1686, 44)) {
+                $reply = $script:Json.DeserializeObject((Invoke-MbdLine (ConvertTo-JsonLite @{ cmd = 'write'; addr = $a; values = @(1) })))
+                $reply['ok'] | Should Be $false
+                $reply['error'] | Should Match 'write not allowed'
+            }
+            $reply = $script:Json.DeserializeObject((Invoke-MbdLine (ConvertTo-JsonLite @{ cmd = 'write'; addr = 100; values = @(7) })))
+            $reply['ok'] | Should Be $true
         }
         It 'pulses Stop through the real service: bit set, held, cleared' {
             $MbdPort = $port

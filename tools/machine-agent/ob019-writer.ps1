@@ -30,7 +30,7 @@ $ErrorActionPreference = 'Stop'
 $script:Self = $MyInvocation.InvocationName
 if (-not $BridgeScript) { $BridgeScript = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'ob019-bridge.ps1' }
 . $BridgeScript -Server $Server -TokenPath $TokenPath -MbdHost $MbdHost -MbdPort $MbdPort -MbdScript $MbdScript -LogPath $LogPath -PollMs $PollMs -Once:$Once
-$script:RunnerVersion = '1.1.0'
+$script:RunnerVersion = '1.2.0'
 # Machine commands: the bit held and the machine states (D766) each may run in, empty = any state. Mirrors
 # ALLOWED_STATES of backend production/machine_control.py (a backend test compares them).
 $script:HoldMs = 1500
@@ -40,10 +40,13 @@ $script:Controls = @{
     reset = @{ addr = 600; bit = 1; states = @(100, 105, 107) }
     alarm_clear = @{ addr = 600; bit = 4; states = @() }
 }
-# D20 mode, D22..D28 job and quantities, D32..D43 wire and strip lengths, D440..D484 marking texts, D940..D969 order
-# number and product. Mirrors the writable fields of OB019_FIELDS (backend test checks it).
+# D20 mode, D22..D28 job and quantities, D32..D43 wire and strip lengths, D940..D969 order number and product; the
+# other HMI pages (1.2.0): middle strip D132/D197/D199, slitting D67..D74/D1703..D1705, coiling D391..D395/D1750..D1753
+# (D390 not: its meaning is not established), marking D400..D436/D1722 and its texts D440..D484, speeds D100..D104/
+# D120..D123. Mirrors the writable fields of OB019_FIELDS and mbd.ps1 $script:allowedWrite (a backend test compares the
+# three). Never: passwords D1682..D1687, SHA-256 D1203..D1211, command bits D599/D600, D730, date D1087..D1089.
 $script:Writable = @{}
-foreach ($a in @(20) + (22..28) + (32..43) + (440..484) + (940..969)) { $script:Writable[[int]$a] = $true }
+foreach ($a in @(20, 74, 132, 197, 199) + (22..28) + (32..43) + (67..72) + (100..104) + (120..123) + (391..395) + (400..402) + (404..415) + (421..423) + (430..432) + (434..436) + (440..484) + (940..969) + (1703..1705) + (1722..1723) + (1750..1753)) { $script:Writable[[int]$a] = $true }
 
 function Test-BlockWritable($Block) {
     $first = [int]$Block['addr']; $values = @($Block['values'])

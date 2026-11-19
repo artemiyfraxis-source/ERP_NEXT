@@ -342,11 +342,17 @@ def decode_ob019(words: dict[int, int]) -> dict:
     }
 
 
-# Settings of ОБ.019 grouped like its PXS_HMI pages (register map docs/data/ob019-register-map-2026-11-18.md, PR #919):
-# every group of the vendor panel the shop uses — Задание, Провод и зачистка, Средняя зачистка, Разделение жил, Намотка,
-# Маркировка, Скорости. Labels are Russian renderings of the HMI captions; a field the HMI leaves unnamed is named by
-# its place. `key`: ERP may write it from the card (slice 4, owner 19.11) — the job, mode and quantities, the wire and
-# strip lengths, the marking texts. Everything else is shown, not written.
+# Settings of ОБ.019 grouped like its PXS_HMI pages (register map docs/data/ob019-register-map-2026-11-18.md,
+# appendix «Все элементы PXS_HMI»), in the order of the vendor panel: Задание, Провод и зачистка, Средняя зачистка,
+# Разделение жил, Намотка, Маркировка, Скорости (the last one is the speed block of the HMI page «Функции»). Labels are
+# Russian renderings of the HMI captions (the Chinese caption decides where the English one is a copy-paste); a field
+# the map gives no meaning for is «Параметр D<n> (назначение не установлено)» and is never written.
+# `key`: ERP may write it from the card — the job, mode and quantities, the wire and strip lengths (slice 4, owner 19.11)
+# and every named input of the five other pages (on-screen-keyboard inputs and switches of the HMI). The limits are the
+# HMI's own input ranges (`minimum`/`maximum` in the field's units). A `bit0` switch is the low bit of its word; ERP
+# writes the whole word from the last snapshot with only bit 0 changed (the HMI reads, changes the bit, writes the word).
+# Never writable (test): passwords D1682..D1687, the SHA-256 handshake D1203..D1211, the command bits D599/D600, the HMI
+# page D730 and the date D1087..D1089 — mbd.ps1 writes the last ones itself for a held command, never on request.
 @dataclass(frozen=True)
 class SettingField:
     label: str
@@ -356,6 +362,7 @@ class SettingField:
     unit: str = ""
     key: str = ""
     maximum: Decimal | None = None
+    minimum: Decimal = Decimal(0)
 
     @property
     def writable(self) -> bool:
@@ -363,8 +370,14 @@ class SettingField:
 
 
 def _f(label: str, address: int, kind: str, scale: str = "1", unit: str = "", key: str = "",
-       maximum: str | None = None) -> SettingField:
-    return SettingField(label, address, kind, Decimal(scale), unit, key, None if maximum is None else Decimal(maximum))
+       maximum: str | None = None, minimum: str = "0") -> SettingField:
+    return SettingField(label, address, kind, Decimal(scale), unit, key, None if maximum is None else Decimal(maximum),
+                        Decimal(minimum))
+
+
+def _unknown(address: int, kind: str, scale: str = "1", unit: str = "") -> SettingField:
+    """A register the HMI shows without a caption the map could name: shown, never written."""
+    return _f(f"Параметр D{address} (назначение не установлено)", address, kind, scale, unit)
 
 
 MM, SEC = "0.01", "0.001"
@@ -397,46 +410,79 @@ OB019_SETTINGS: tuple[tuple[str, tuple[SettingField, ...]], ...] = (
         _f("Зазор переднего прижима", 60, "u16"),
         _f("Зазор заднего прижима", 61, "u16"),
     )),
+    # FmMcut: the switch «Midcut On» (中剥), the end and diameter corrections; the 4 × 8 table of the page has only row
+    # numbers on the HMI — what its columns mean is not established.
     ("Средняя зачистка", (
-        _f("Средняя зачистка", 132, "bit0"), _f("Поправка конца", 197, "i16", MM, "мм"),
-        _f("Поправка диаметра", 199, "i16", MM, "мм"),
-        *(_f(f"Колонка {column + 1}, строка {row + 1}", first + 2 * row, "u32", MM, "мм")
-          for column, first in enumerate((200, 216, 250, 266)) for row in range(8)),
+        _f("Средняя зачистка", 132, "bit0", key="middle_strip"),
+        _f("Поправка конца", 197, "i16", MM, "мм", key="middle_end_fix_mm", minimum="-5", maximum="5"),
+        _f("Поправка диаметра", 199, "i16", MM, "мм", key="middle_dia_fix_mm", minimum="-5", maximum="5"),
+        *(_unknown(first + 2 * row, "u32", MM, "мм") for first in (200, 216, 250, 266) for row in range(8)),
     )),
+    # FmNcut (开排 — разделение): two switches without a caption, the lengths, intervals, cylinder delay and the die.
     ("Разделение жил", (
-        _f("Переключатель 1", 133, "bit0"), _f("Переключатель 2", 142, "bit0"),
-        _f("Разделение в начале", 69, "u32", MM, "мм"), _f("Разделение в конце", 71, "u32", MM, "мм"),
-        _f("Интервал разделения в начале", 67, "u16", MM, "мм"), _f("Интервал разделения в конце", 68, "u16", MM, "мм"),
-        _f("Задержка цилиндра", 74, "u16", SEC, "с"), _f("Шаг матрицы", 1703, "u32", MM, "мм"),
-        _f("Ширина пуансона", 1705, "u16", MM, "мм"),
+        _unknown(133, "bit0"), _unknown(142, "bit0"),
+        _f("Разделение в начале", 69, "u32", MM, "мм", key="split_front_mm", maximum="9999.99"),
+        _f("Разделение в конце", 71, "u32", MM, "мм", key="split_back_mm", maximum="999.99"),
+        _f("Интервал разделения в начале", 67, "u16", MM, "мм", key="split_gap_front_mm", maximum="655.35"),
+        _f("Интервал разделения в конце", 68, "u16", MM, "мм", key="split_gap_back_mm", maximum="655.35"),
+        _f("Задержка цилиндра", 74, "u16", SEC, "с", key="split_delay_s", maximum="9.999"),
+        _f("Шаг матрицы", 1703, "u32", MM, "мм", key="split_die_pitch_mm", maximum="9999.99"),
+        _f("Ширина пуансона", 1705, "u16", MM, "мм", key="split_punch_width_mm", maximum="655.35"),
     )),
+    # FmColl. D103 is also «Передний прижим» on «Скорости» (the HMI page «Функции» limits it to 0..99, FmColl does
+    # not): the stricter limit holds for both keys, and one write may not carry both (plan_writes).
     ("Намотка", (
-        _f("Намотка", 390, "bit0"), _f("Скорость намотки", 103, "u16"), _f("Поправка скорости", 395, "i16"),
-        _f("Отвод при намотке", 391, "u16", MM, "мм"), _f("Хвост намотки", 392, "u32", MM, "мм"),
-        _f("Диаметр намотки", 394, "u16", MM, "мм"), _f("Диаметр намотки, наименьший", 1750, "u16", MM, "мм"),
-        _f("Диаметр намотки, наибольший", 1751, "u16", MM, "мм"),
-        _f("Коэффициент намотки, наименьший", 1752, "u16", MM), _f("Коэффициент намотки, наибольший", 1753, "u16", MM),
+        _unknown(390, "bit0"),
+        _f("Скорость намотки", 103, "u16", key="coil_speed", maximum="99"),
+        _f("Поправка скорости", 395, "i16", key="coil_speed_fix", minimum="-9999", maximum="32767"),
+        _f("Отвод при намотке", 391, "u16", MM, "мм", key="coil_back_mm", maximum="655.35"),
+        _f("Хвост намотки", 392, "u32", MM, "мм", key="coil_end_mm", maximum="9999.99"),
+        _f("Диаметр намотки", 394, "u16", MM, "мм", key="coil_dia_mm", maximum="655.35"),
+        _f("Диаметр намотки, наименьший", 1750, "u16", MM, "мм", key="coil_dia_min_mm", maximum="655.35"),
+        _f("Диаметр намотки, наибольший", 1751, "u16", MM, "мм", key="coil_dia_max_mm", maximum="655.35"),
+        _f("Коэффициент намотки, наименьший", 1752, "u16", MM, key="coil_ratio_min", minimum="0.5", maximum="9.99"),
+        _f("Коэффициент намотки, наибольший", 1753, "u16", MM, key="coil_ratio_max", minimum="0.5", maximum="9.99"),
     )),
+    # FmPrint + FmPrintSTR; the switches and numbers named by the map §3.5 and the order table (AddrParam.bin).
     ("Маркировка", (
-        _f("Маркировка", 400, "bit0"),
+        _f("Маркировка", 400, "bit0", key="marking"),
         _f("Текст у начала", 440, "text15", key="mark_front"), _f("Текст в середине", 455, "text15", key="mark_middle"),
         _f("Текст у конца", 470, "text15", key="mark_back"),
-        _f("Метка у начала", 405, "u32", MM, "мм"), _f("Метка у конца", 407, "u32", MM, "мм"),
-        _f("Средние метки по шагу", 422, "bit0"), _f("Шаг средних меток", 409, "u32", MM, "мм"),
-        _f("Число средних меток", 411, "u32", unit="шт"), _f("Длина текста у конца", 413, "u32", MM, "мм"),
-        _f("Расстояние до головки", 401, "u32", MM, "мм"), _f("Удержание сигнала печати", 404, "u16", SEC, "с"),
-        _f("Скорость роликов при печати", 415, "u16"), _f("Передача текста в маркиратор", 421, "bit0"),
-        _f("Ширина символа", 423, "u16", MM, "мм"), _f("Размер шрифта", 430, "i16"), _f("Жирность", 431, "i16"),
-        _f("Делитель частоты", 432, "i16"), _f("Поворот текста у начала", 434, "bit0"),
-        _f("Поворот текста в середине", 435, "bit0"), _f("Поворот текста у конца", 436, "bit0"),
-        _f("Отбраковка при маркировке", 1722, "u32", MM, "мм"),
+        _f("Метка у начала", 405, "u32", MM, "мм", key="mark_pos_front_mm", maximum="9999.99"),
+        _f("Метка у конца", 407, "u32", MM, "мм", key="mark_pos_back_mm", maximum="9999.99"),
+        _f("Средние метки по шагу", 422, "bit0", key="mark_by_step"),
+        _f("Шаг средних меток", 409, "u32", MM, "мм", key="mark_step_mm", maximum="9999.99"),
+        _f("Число средних меток", 411, "u32", unit="шт", key="mark_count", maximum="9999"),
+        _f("Длина текста у конца", 413, "u32", MM, "мм", key="mark_tail_mm", maximum="999.99"),
+        _f("Расстояние до головки", 401, "u32", MM, "мм", key="mark_head_mm", maximum="9999.99"),
+        _f("Удержание сигнала печати", 404, "u16", SEC, "с", key="mark_hold_s", maximum="9.999"),
+        _f("Скорость роликов при печати", 415, "u16", key="mark_roll_speed", maximum="99"),
+        _f("Передача текста в маркиратор", 421, "bit0", key="mark_send"),
+        _f("Ширина символа", 423, "u16", MM, "мм", key="mark_char_mm", maximum="99.99"),
+        _f("Размер шрифта", 430, "i16", key="mark_font", minimum="1", maximum="6"),
+        _f("Жирность", 431, "i16", key="mark_bold", minimum="1", maximum="9"),
+        _f("Делитель частоты", 432, "i16", key="mark_divider", minimum="4", maximum="60"),
+        _f("Поворот текста у начала", 434, "bit0", key="mark_turn_front"),
+        _f("Поворот текста в середине", 435, "bit0", key="mark_turn_middle"),
+        _f("Поворот текста у конца", 436, "bit0", key="mark_turn_back"),
+        _f("Отход провода при маркировке", 1722, "u32", MM, "мм", key="mark_drop_mm", maximum="9999.99"),
     )),
+    # The speed block of FmFunction, 0..99 each.
     ("Скорости", (
-        _f("Подача провода", 100, "u16"), _f("Нож", 101, "u16"), _f("Трубка", 102, "u16"),
-        _f("Передний прижим", 103, "u16"), _f("Задний прижим", 104, "u16"), _f("Замедление при резке", 120, "u16"),
-        _f("Зачистка", 121, "u16"), _f("Вывод провода", 122, "u16"), _f("Прокатка плёнки", 123, "u16"),
+        _f("Подача провода", 100, "u16", key="speed_feed", maximum="99"),
+        _f("Нож", 101, "u16", key="speed_cutter", maximum="99"),
+        _f("Трубка", 102, "u16", key="speed_pipe", maximum="99"),
+        _f("Передний прижим", 103, "u16", key="speed_clamp_front", maximum="99"),
+        _f("Задний прижим", 104, "u16", key="speed_clamp_back", maximum="99"),
+        _f("Замедление при резке", 120, "u16", key="speed_cut_slow", maximum="99"),
+        _f("Зачистка", 121, "u16", key="speed_strip", maximum="99"),
+        _f("Вывод провода", 122, "u16", key="speed_out", maximum="99"),
+        _f("Прокатка плёнки", 123, "u16", key="speed_film", maximum="99"),
     )),
 )
+# Registers ERP never writes, whatever the settings above say (backend test against the three write lists).
+OB019_NEVER_WRITTEN: frozenset[int] = frozenset(
+    set(range(1682, 1688)) | set(range(1203, 1212)) | {599, 600, 730} | set(range(1087, 1090)))
 # Axis positions (Jog page): read by the HMI, not yet by the bridge; the scale is not confirmed at the machine.
 OB019_POSITIONS: tuple[SettingField, ...] = tuple(
     _f(label, 660 + 2 * axis, "i32", MM, "мм") for axis, label in enumerate((
@@ -512,12 +558,26 @@ def _number(value: object, label: str) -> Decimal:
     return number
 
 
-def encode_field(key: str, value: object) -> tuple[SettingField, list[int], object]:
-    """A value for the machine → the words of its registers: 32-bit low word first; a text is ASCII, two characters a
-    word, high byte first, the tail filled with zeros so no rest of an old text survives. → (field, words, value)."""
+SWITCH_ON = {"1", "true", "вкл", "on"}
+SWITCH_OFF = {"0", "false", "выкл", "off"}
+
+
+def encode_field(key: str, value: object, words: dict[int, int] | None = None) -> tuple[SettingField, list[int], object]:
+    """A value for the machine → the words of its registers: 32-bit low word first, signed values in two's complement;
+    a text is ASCII, two characters a word, high byte first, the tail filled with zeros so no rest of an old text
+    survives; a switch is its word from the last snapshot `words` with bit 0 set or cleared. → (field, words, value)."""
     field = OB019_FIELDS.get(key)
     if field is None:
         raise MachineWriteInvalid("Этот параметр ERP на станок не записывает")
+    if field.kind == "bit0":
+        text = str(value).strip().lower() if value is not None else ""
+        if text not in SWITCH_ON | SWITCH_OFF:
+            raise MachineWriteInvalid(f"{field.label}: «Вкл» или «Выкл»")
+        current = (words or {}).get(field.address)
+        if current is None:
+            raise MachineWriteInvalid(f"{field.label}: агент станка ещё не прочитал этот переключатель")
+        on = text in SWITCH_ON
+        return field, [(current & ~1 & WORD_MAX) | int(on)], on
     if field.kind == "text15":
         text = " ".join(str(value or "").split())
         if len(text) > TEXT_CHARS:
@@ -532,17 +592,20 @@ def encode_field(key: str, value: object) -> tuple[SettingField, list[int], obje
         if number not in (0, 1, 2):
             raise MachineWriteInvalid("Режим: пошаговый, один цикл или автомат")
         return field, [int(number)], int(number)
-    if number < 0 or (field.maximum is not None and number > field.maximum):
+    if number < field.minimum or (field.maximum is not None and number > field.maximum):
         raise MachineWriteInvalid(f"{field.label}: значение вне диапазона станка")
     raw = number / field.scale
     if raw != raw.to_integral_value():
         step = format(field.scale.normalize(), "f").replace(".", ",")
         raise MachineWriteInvalid(f"{field.label}: точность станка — {step}" + (f" {field.unit}" if field.unit else ""))
     raw_int = int(raw)
-    if field.kind == "u16":
-        if raw_int > WORD_MAX:
+    if field.kind in ("u16", "i16"):
+        if not (-0x8000 <= raw_int <= 0x7FFF if field.kind == "i16" else 0 <= raw_int <= WORD_MAX):
             raise MachineWriteInvalid(f"{field.label}: значение вне диапазона станка")
-        return field, [raw_int], number
+        return field, [raw_int & WORD_MAX], number
+    if field.kind == "u32" and raw_int > 0xFFFFFFFF:
+        raise MachineWriteInvalid(f"{field.label}: значение вне диапазона станка")
+    raw_int &= 0xFFFFFFFF
     return field, [raw_int & WORD_MAX, raw_int >> 16], number
 
 

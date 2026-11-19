@@ -10,7 +10,12 @@ Add-Type -AssemblyName System.Web.Extensions
 $script:js = New-Object System.Web.Script.Serialization.JavaScriptSerializer
 $script:log = Join-Path $Dir 'mbd.log'
 $script:sp = $null
-$script:allowedWrite = @(@(20, 53), @(400, 484), @(599, 599), @(600, 600), @(730, 730), @(940, 969), @(1087, 1089))
+# Registers a 'write' request may set (1.2.0, 19.11.2026): exactly ERP's writable settings - ob019-writer.ps1
+# $script:Writable and OB019_FIELDS of backend production/machines.py (a backend test compares the three). The command
+# bits D599/D600, the HMI page D730 and the date D1087..D1089 are written only by 'pulse' / Write-HmiContext below,
+# never on request; passwords D1682..D1687 and the SHA-256 handshake D1203..D1211 never.
+$script:MbdVersion = '1.2.0'
+$script:allowedWrite = @(@(20, 20), @(22, 28), @(32, 43), @(67, 72), @(74, 74), @(100, 104), @(120, 123), @(132, 132), @(197, 197), @(199, 199), @(391, 395), @(400, 402), @(404, 415), @(421, 423), @(430, 432), @(434, 436), @(440, 484), @(940, 969), @(1703, 1705), @(1722, 1723), @(1750, 1753))
 $script:allowedPulse = @{ 599 = @(0, 2); 600 = @(1, 4) }
 
 # Log rotation (PowerShell 2.0): when the log reaches $MaxBytes it becomes .1, .1 becomes .2 and so on; the oldest
@@ -248,7 +253,7 @@ function Start-Service2 {
     if ($LocalOnly) { $bind = [System.Net.IPAddress]::Loopback; $allowed = @('127.0.0.1') }
     $listener = New-Object System.Net.Sockets.TcpListener ($bind, $Port)
     $listener.Start()
-    Write-MbLog ('listening on ' + $bind + ':' + $Port + ' allow ' + ($allowed -join ',') + ' mock=' + [bool]$Mock)
+    Write-MbLog ('mbd ' + $script:MbdVersion + ' listening on ' + $bind + ':' + $Port + ' allow ' + ($allowed -join ',') + ' mock=' + [bool]$Mock)
     while ($true) {
         $client = $listener.AcceptTcpClient()
         $remote = $client.Client.RemoteEndPoint.Address.ToString()

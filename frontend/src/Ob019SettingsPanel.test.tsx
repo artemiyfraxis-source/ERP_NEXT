@@ -125,6 +125,28 @@ it("writes a changed value only after the confirmation with the machine state", 
   expect(await screen.findByText("Запись настроек: ждёт агента станка")).toBeInTheDocument();
 });
 
+it("writes a switch of another HMI page as Вкл / Выкл and leaves unknown registers read-only", async () => {
+  const window: MachineWindow = { ...WINDOW, settings: [...WINDOW.settings, { title: "Маркировка", fields: [
+    { label: "Маркировка", value: false, unit: "", read: true, key: "marking", kind: "bit0" },
+    { label: "Параметр D390 (назначение не установлено)", value: true, unit: "", read: true, key: null, kind: "bit0" }] }] };
+  const posts = server(CONTROL, { window });
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  fireEvent.click(await screen.findByRole("button", { name: /Остальные параметры/ }));
+  fireEvent.click(screen.getByRole("tab", { name: "Маркировка" }));
+  const table = screen.getByRole("table", { name: "Маркировка" });
+  expect(within(table).getByRole("row", { name: /^Маркировка Выкл/ })).toBeInTheDocument();
+  expect(within(table).queryByLabelText("Параметр D390 (назначение не установлено): новое значение")).toBeNull();
+  const marking = within(table).getByLabelText("Маркировка: новое значение");
+  fireEvent.change(marking, { target: { value: "1" } });
+  expect(marking.closest("tr")!.className).toContain("is-diff");
+  fireEvent.click(screen.getByRole("button", { name: "Записать на станок (1)" }));
+  const dialog = screen.getByRole("alertdialog");
+  expect(within(dialog).getByText("Маркировка: Выкл → Вкл")).toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Подтвердить запись" }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].body).toEqual({ values: { marking: "1" }, confirm_state: 102 });
+});
+
 it("transfers the ETK job with the machine correction and refuses while the machine runs", async () => {
   const posts = server();
   render(<Ob019SettingsPanel inventory="ОБ.019" />);

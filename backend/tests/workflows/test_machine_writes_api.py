@@ -60,20 +60,78 @@ def test_encoding_texts_zero_filled_ascii_lengths_in_hundredths():
         with pytest.raises(rules.MachineWriteInvalid, match=message):
             rules.encode_field(key, value)
     with pytest.raises(rules.MachineWriteInvalid):
-        rules.encode_field("speed_cutter", 5)  # not writable from ERP
+        rules.encode_field("program", 5)  # not writable from ERP
 
 
-def test_the_runner_writes_exactly_the_registers_erp_writes():
-    source = (Path(__file__).parents[3] / "tools" / "machine-agent" / "ob019-writer.ps1").read_text(encoding="ascii")
+def test_encoding_of_the_other_hmi_pages_switches_signed_and_limits():
+    # A switch keeps the other bits of its word from the snapshot; without a snapshot word it is not written.
+    field, words, value = rules.encode_field("marking", "Вкл", {400: 0b1010})
+    assert field.address == 400 and words == [0b1011] and value is True
+    assert rules.encode_field("middle_strip", "0", {132: 0xFFFF})[1] == [0xFFFE]
+    with pytest.raises(rules.MachineWriteInvalid, match="ещё не прочитал"):
+        rules.encode_field("marking", "1", {})
+    with pytest.raises(rules.MachineWriteInvalid, match="Вкл"):
+        rules.encode_field("marking", "да", {400: 0})
+    assert rules.encode_field("middle_end_fix_mm", "-0,5")[1] == [0x10000 - 50]
+    assert rules.encode_field("coil_speed_fix", "-9999")[1] == [0x10000 - 9999]
+    assert rules.encode_field("split_front_mm", "12,5")[1] == [1250, 0]
+    assert rules.encode_field("split_delay_s", "0,25")[1] == [250]
+    assert rules.encode_field("speed_cutter", 5)[1] == [5]
+    assert rules.encode_field("mark_font", 6)[1] == [6]
+    for key, value in (("middle_dia_fix_mm", "5,01"), ("middle_dia_fix_mm", "-5,01"), ("speed_feed", "100"),
+                       ("mark_font", "0"), ("mark_divider", "61"), ("coil_ratio_min", "0,49"), ("coil_speed", "-1")):
+        with pytest.raises(rules.MachineWriteInvalid, match="диапазона"):
+            rules.encode_field(key, value)
+
+
+def test_one_register_is_written_by_one_field():
+    with pytest.raises(rules.MachineWriteInvalid, match="D103"):
+        commands.plan_writes([commands.FieldWrite("coil_speed", "5"), commands.FieldWrite("speed_clamp_front", "6")], {})
+    blocks, shown = commands.plan_writes([commands.FieldWrite("marking", "1")], {400: 0})
+    assert blocks == [{"addr": 400, "values": [1]}] and shown[0]["before"] == "Выкл" and shown[0]["after"] == "Вкл"
+
+
+def test_unknown_registers_are_labelled_and_never_written():
+    labels = [field.label for _title, fields in rules.OB019_SETTINGS for field in fields]
+    assert not [label for label in labels if label.startswith(("Колонка", "Переключатель"))]
+    for _title, fields in rules.OB019_SETTINGS:
+        for field in fields:
+            if "назначение не установлено" in field.label:
+                assert field.label == f"Параметр D{field.address} (назначение не установлено)" and not field.key
+    assert [title for title, _fields in rules.OB019_SETTINGS] == [
+        "Задание", "Провод и зачистка", "Средняя зачистка", "Разделение жил", "Намотка", "Маркировка", "Скорости"]
+
+
+ROOT = Path(__file__).parents[3] / "tools" / "machine-agent"
+
+
+def _runner_writable() -> set[int]:
+    source = (ROOT / "ob019-writer.ps1").read_text(encoding="ascii")
     line = next(row for row in source.splitlines() if row.startswith("foreach ($a in "))
     allowed = {int(item) for group in re.findall(r"@\(([\d, ]+)\)", line) for item in group.split(",")}
-    allowed |= {address for low, high in re.findall(r"\((\d+)\.\.(\d+)\)", line)
-                for address in range(int(low), int(high) + 1)}
-    assert allowed == {address for field in rules.OB019_FIELDS.values() for address in rules.field_words(field)}
-    mbd = (Path(__file__).parents[3] / "tools" / "machine-agent" / "mbd.ps1").read_text(encoding="utf-8-sig")
-    spans = [(int(low), int(high)) for low, high in re.findall(r"@\((\d+), (\d+)\)", next(
-        row for row in mbd.splitlines() if row.startswith("$script:allowedWrite")))]
-    assert all(any(low <= address <= high for low, high in spans) for address in allowed)
+    return allowed | {address for low, high in re.findall(r"\((\d+)\.\.(\d+)\)", line)
+                      for address in range(int(low), int(high) + 1)}
+
+
+def _mbd_writable() -> set[int]:
+    mbd = (ROOT / "mbd.ps1").read_text(encoding="utf-8-sig")
+    line = next(row for row in mbd.splitlines() if row.startswith("$script:allowedWrite"))
+    return {address for low, high in re.findall(r"@\((\d+), (\d+)\)", line)
+            for address in range(int(low), int(high) + 1)}
+
+
+def test_erp_the_runner_and_mbd_write_exactly_the_same_registers():
+    erp = {address for field in rules.OB019_FIELDS.values() for address in rules.field_words(field)}
+    assert _runner_writable() == erp
+    assert _mbd_writable() == erp
+
+
+def test_passwords_sha_command_bits_page_and_date_are_never_writable():
+    erp = {address for field in rules.OB019_FIELDS.values() for address in rules.field_words(field)}
+    denied = set(range(1682, 1688)) | set(range(1203, 1212)) | {599, 600, 730} | set(range(1087, 1090))
+    assert rules.OB019_NEVER_WRITTEN == denied
+    for name, allowed in (("ERP", erp), ("ob019-writer.ps1", _runner_writable()), ("mbd.ps1", _mbd_writable())):
+        assert not allowed & denied, f"{name} may write {sorted(allowed & denied)}"
 
 
 def test_card_write_is_queued_claimed_written_and_confirmed_by_read_back(machines_api):
