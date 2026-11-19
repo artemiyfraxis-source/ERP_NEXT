@@ -8,7 +8,7 @@ From then on only the same token from the same PC reports for it — anything el
 ОБ (UNIQUE), an ОБ has one link (PK). The latest snapshot per ОБ is kept (no history in this slice); an older or
 repeated sequence number of the same bridge run is ignored, never written over a newer one.
 
-Decoding is pure (`decode_ob019`): raw 16-bit words → Russian states and values (register map:
+Decoding is pure (`decode_ob019`; ОБ.099 — `ob099.decode`): raw 16-bit words → Russian states and values (register map:
 docs/data/ob019-register-map-2026-11-18.md). Staleness is computed on read: no report for `STALE_AFTER` → «Нет связи
 с ПК станка» (the E-stop of ОБ.019 also powers its PC off)."""
 
@@ -23,19 +23,20 @@ from sqlalchemy import JSON, BigInteger, CheckConstraint, DateTime, ForeignKey, 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
+from app.modules.production import ob099
 from app.shared.persistence import Base
 
 SCOPE = "machine:report"
 PROTO = 1
 STALE_AFTER = timedelta(seconds=10)
 KIND_OB019 = "ob019_modbus"
-KINDS = (KIND_OB019,)
+KINDS = (KIND_OB019, ob099.KIND)
 # The ОБ an ERP bridge exists for (inventory number → kind). Others are refused until a bridge is written for them.
-SUPPORTED = {"ОБ.019": KIND_OB019}
+# ОБ.099 — the BZW crimp presses ОБ.099.1/.2 (production/ob099.py; agent tools/machine-agent/ob099-agent.ps1, FINS read only).
+SUPPORTED = {"ОБ.019": KIND_OB019, **{inventory: ob099.KIND for inventory in ob099.INVENTORIES}}
 
 # ОБ whose bridge is planned but not written yet: shown in «Станки» as «Мост не установлен» (owner 18.11.2026), never
-# accepted as a reporter. ОБ.099 — servo crimp press BZW (Omron CP2E, BZW2.5 on its PC; docs/data/ob099-*). The
-# catalogue keeps it as ОБ.099.1/ОБ.099.2, so the row takes its name from those units.
+# accepted as a reporter. ОБ.099 has its own read-only agent now (SUPPORTED above).
 @dataclass(frozen=True)
 class PlannedMachine:
     device: str
@@ -44,7 +45,6 @@ class PlannedMachine:
 
 
 PLANNED = {
-    "ОБ.099": PlannedMachine(device="ПЛК пресса", pc="DESKTOP-K6M7O0U", ip="192.168.1.82"),
     # BZW-886+Q2 cut/strip machine: a PLC with a vendor MES port, no ERP connection yet (memory bzw-machine-control).
     "ОБ.094": PlannedMachine(device="ПЛК станка"),
 }
@@ -53,8 +53,8 @@ LINK_STATES = ("ok", "port_busy", "no_plc", "no_service")
 # after «·» says what it does there. The bridge and the print agent are still two programs — merging them is later.
 AGENT_NAME = "Агент ERP"
 AGENT_PARTS = ("печать", "приборы", "станок")
-KIND_NAMES = {KIND_OB019: f"{AGENT_NAME} · станок"}
-DEVICE_NAMES = {KIND_OB019: "ПЛК линии резки"}
+KIND_NAMES = {KIND_OB019: f"{AGENT_NAME} · станок", ob099.KIND: f"{AGENT_NAME} · станок"}
+DEVICE_NAMES = {KIND_OB019: "ПЛК линии резки", ob099.KIND: "ПЛК пресса"}
 
 WORD_MAX = 0xFFFF
 
@@ -94,6 +94,10 @@ class MachineRefused(Exception):
 
 class MachineReportInvalid(ValueError):
     """The snapshot breaks the protocol: an address outside the allow-list, a value outside 16 bits (422)."""
+
+
+class MachineNotBound(Exception):
+    """Records came from a bridge before its first snapshot bound it (409)."""
 
 
 class MachineLinkRow(Base):
@@ -176,8 +180,23 @@ def _clean(value: object, limit: int) -> str:
     return " ".join(str(value or "").split())[:limit]
 
 
-def checked_registers(kind: str, raw: dict) -> dict[int, int]:
-    """The words of a report: every address on the kind's allow-list, every value a 16-bit word."""
+def _word(name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= WORD_MAX:
+        raise MachineReportInvalid(f"Значение {name} — не 16-битное слово")
+    return value
+
+
+def checked_registers(kind: str, raw: dict) -> dict:
+    """The words of a report: every address on the kind's allow-list, every value a 16-bit word.
+    ОБ.019 — Modbus holding registers by number; ОБ.099 — FINS words by area and address («D5006», «H60», «W80»)."""
+    if kind == ob099.KIND:
+        named: dict[str, int] = {}
+        for key, value in (raw or {}).items():
+            name = str(key).upper()
+            if name not in ob099.ALLOWED:
+                raise MachineReportInvalid(f"Слово {key} не входит в список чтения станка")
+            named[name] = _word(name, value)
+        return named
     allowed = OB019_ALLOWED if kind == KIND_OB019 else frozenset()
     result: dict[int, int] = {}
     for key, value in (raw or {}).items():
@@ -187,9 +206,7 @@ def checked_registers(kind: str, raw: dict) -> dict[int, int]:
             raise MachineReportInvalid(f"Адрес регистра «{key}» — не число") from None
         if address not in allowed:
             raise MachineReportInvalid(f"Регистр D{address} не входит в список чтения станка")
-        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= WORD_MAX:
-            raise MachineReportInvalid(f"Значение D{address} — не 16-битное слово")
-        result[address] = value
+        result[address] = _word(f"D{address}", value)
     return result
 
 
@@ -440,6 +457,7 @@ OB019_ALLOWED: frozenset[int] = frozenset(
     {20, 641, 642, 643, 644, 645, 646, 649, 650, 711, 766, 782, 1280}
     | {address for _title, fields in OB019_SETTINGS for field in fields for address in field_words(field)}
 )
+REGISTERS_MAX = max(len(OB019_ALLOWED), len(ob099.ALLOWED))
 
 
 def _field_value(words: dict[int, int], field: SettingField) -> object:
@@ -537,6 +555,25 @@ def snapshot_words(snapshot: MachineSnapshotRow | None) -> dict[int, int]:
     if snapshot is None:
         return {}
     return {int(key): int(value) for key, value in (snapshot.registers or {}).items()}
+
+
+def decode(kind: str, snapshot: MachineSnapshotRow | None) -> dict | None:
+    """The live card of a linked ОБ by its kind; None while no words came (link lost before the first reading)."""
+    if snapshot is None or not snapshot.registers:
+        return None
+    if kind == ob099.KIND:
+        return ob099.decode(ob099.words(snapshot.registers))
+    return decode_ob019(snapshot_words(snapshot))
+
+
+def bound_link(session: Session, *, inventory: str, token_id: UUID, machine_id: str) -> MachineLinkRow:
+    """The link of an ОБ that this token and PC already reported a snapshot for — records need a bound bridge."""
+    link = session.scalar(select(MachineLinkRow).where(MachineLinkRow.inventory_number == inventory))
+    if link is None:
+        raise MachineNotBound(f"{inventory}: сначала нужен снимок станка от его агента")
+    if link.token_id != token_id or link.machine_id != _clean(machine_id, 80):
+        raise MachineRefused(f"Этот ПК или токен не привязан к {link.inventory_number}")
+    return link
 
 
 def links(session: Session) -> list[tuple[MachineLinkRow, MachineSnapshotRow | None]]:

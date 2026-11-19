@@ -146,6 +146,8 @@ def _link(session, inventory: str) -> rules.MachineLinkRow:
     link = session.scalar(select(rules.MachineLinkRow).where(rules.MachineLinkRow.inventory_number == _inventory(inventory)))
     if link is None:
         raise HTTPException(404, f"{inventory}: станок не подключён к ERP")
+    if link.kind != rules.KIND_OB019:
+        raise HTTPException(409, f"{inventory}: запись с ERP есть только у ОБ.019")
     return link
 
 
@@ -210,9 +212,9 @@ def control(inventory: str, principal: Reader, factory: Factory, now: Now) -> di
         session = uow.session
         link = session.scalar(select(rules.MachineLinkRow).where(
             rules.MachineLinkRow.inventory_number == _inventory(inventory)))
-        if link is None:
-            return {"problem": "Станок не подключён к ERP", "state": None, "commands": [], "offsets": [],
-                    "can_edit": False}
+        if link is None or link.kind != rules.KIND_OB019:
+            return {"problem": "Станок не подключён к ERP" if link is None else "Запись с ERP есть только у ОБ.019",
+                    "state": None, "commands": [], "offsets": [], "can_edit": False}
         snapshot = session.get(rules.MachineSnapshotRow, link.equipment_id)
         rows = commands.latest(session, link.equipment_id, now)
         result = {
@@ -459,7 +461,8 @@ def correction(inventory: str, payload: CorrectionPayload, request: Request, pri
 def _agent_link(session, bridge: Principal, payload: AgentPayload) -> rules.MachineLinkRow:
     link = session.scalar(select(rules.MachineLinkRow).where(
         rules.MachineLinkRow.inventory_number == _inventory(payload.inventory)))
-    if link is None or link.token_id != bridge.actor.id or link.machine_id != " ".join(payload.machine_id.split()):
+    if link is None or link.kind != rules.KIND_OB019 or link.token_id != bridge.actor.id \
+            or link.machine_id != " ".join(payload.machine_id.split()):
         raise HTTPException(403, f"Этот ПК или токен не привязан к {payload.inventory}")
     return link
 

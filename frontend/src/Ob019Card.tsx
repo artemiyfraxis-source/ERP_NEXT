@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { PageWindow } from "./PageWindow";
 import { EMPTY, formatMoment, formatNumber } from "./format";
 import { machinesApi, usePolled, type MachineCard, type Ob019Live, type Tone } from "./machinesApi";
+import { Ob099CardView } from "./Ob099Card";
 import { Ob019Controls } from "./Ob019Controls";
 import { Ob019SettingsPanel } from "./Ob019SettingsPanel";
 
@@ -112,8 +113,10 @@ export function Ob019Card({ equipmentId, title, close }: { equipmentId: string; 
       </header>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {!data && !error && <p className="empty">Загрузка…</p>}
-      {data && <Ob019Controls card={data} />}
-      {data && <Ob019CardView card={data} />}
+      {data && (data.kind === "ob099_fins" ? <Ob099CardView card={data} /> : <>
+        <Ob019Controls card={data} />
+        <Ob019CardView card={data} />
+      </>)}
     </section>
   </PageWindow>;
 }

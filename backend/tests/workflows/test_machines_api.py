@@ -240,17 +240,19 @@ def test_the_ip_column_prefers_the_lan_then_tailscale_over_a_virtual_adapter():
     assert _address("", "") == ""
 
 
-def test_ob099_waits_for_its_bridge_with_the_catalogue_name(machines_api):
+def test_both_ob099_presses_wait_for_their_agent_with_the_catalogue_name(machines_api):
+    """ОБ.099 is two presses, ОБ.099.1 and ОБ.099.2: one row each until its read-only agent reports."""
     sessions, clock, admin, _, _ = machines_api
     with sessions.begin() as session:
         _unit(session, "ОБ.099.1", "Пресс сервоприводный для опрессовки контактов в ленте")
         _unit(session, "ОБ.099.2", "Пресс сервоприводный для опрессовки контактов в ленте")
-    [press] = [row for row in admin.get(LIST).json()["rows"] if row["inventory"] == "ОБ.099"]
-    assert press["name"] == "Пресс сервоприводный для опрессовки контактов в ленте"
-    assert (press["link"]["text"], press["card"], press["pc"], press["ip"]) == (
-        "Агент не установлен", False, "DESKTOP-K6M7O0U", "192.168.1.82")
+    rows = {row["inventory"]: row for row in admin.get(LIST).json()["rows"] if row["inventory"].startswith("ОБ.099")}
+    assert list(rows) == ["ОБ.099.1", "ОБ.099.2"]
+    for press in rows.values():
+        assert press["name"] == "Пресс сервоприводный для опрессовки контактов в ленте"
+        assert (press["link"]["text"], press["card"], press["device"]) == ("Агент не установлен", False, "ПЛК пресса")
     report = _report(_bridge(admin), inventory="ОБ.099")
-    assert report.status_code == 403  # no bridge yet: a planned ОБ never reports
+    assert report.status_code == 403  # the presses report by unit number only
 
 
 @pytest.mark.parametrize("permissions, opens", [
@@ -313,7 +315,8 @@ def test_the_machines_tab_lists_production_equipment_only(machines_api):
                               last_seen=now))
     body = admin.get(LIST).json()
     machines = {row["inventory"]: row for row in body["machines"]}
-    assert list(machines) == ["ОБ.019", "ОБ.094", "ОБ.099"]  # ОБ.101 is not bound to a printer here
+    assert list(machines) == ["ОБ.019", "ОБ.094", "ОБ.099.1", "ОБ.099.2"]  # ОБ.101 is not bound to a printer here
+    assert machines["ОБ.099.1"]["kind"] == "ob099"
     assert machines["ОБ.094"]["state"] == {"text": "Не подключён", "tone": "neutral"}
     assert machines["ОБ.094"]["name"] == "Станок резки провода с роторной зачисткой"
     assert [row["device"] for row in body["rows"] if row["kind"] == "device"] == ["Arinst VNA-DL"]
@@ -345,9 +348,13 @@ def test_the_card_of_ob019_shows_live_values_settings_by_hmi_page_journal_and_co
 
 def test_the_card_of_a_machine_without_an_agent_and_an_unknown_number(machines_api):
     sessions, clock, admin, _, _ = machines_api
-    card = admin.get(CARD + "ОБ.099").json()
+    card = admin.get(CARD + "ОБ.094").json()
     assert card["kind"] == "planned" and card["state"]["text"] == "Не подключён" and card["settings"] == []
-    assert card["connection"]["link"]["text"] == "Агент не установлен" and card["connection"]["ip"] == "192.168.1.82"
+    assert card["connection"]["link"]["text"] == "Агент не установлен"
+    press = admin.get(CARD + "ОБ.099.2").json()
+    assert press["kind"] == "ob099" and press["live"] is None and press["setup"] is False
+    assert press["connection"]["link"]["text"] == "Агент не установлен"
+    assert admin.get(CARD + "ОБ.099").status_code == 404
     unlinked = admin.get(CARD + "ОБ.019").json()
     assert unlinked["live"] is None and unlinked["settings"][1]["fields"][0]["value"] is None
     assert admin.get(CARD + "ОБ.555").status_code == 404

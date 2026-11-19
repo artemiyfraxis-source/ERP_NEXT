@@ -7,11 +7,16 @@
   report (by serial / the registry СИ) stands on the PC with the latest real presence, the others are named in «Также
   на ПК» (owner 18.11.2026). ОБ with a planned bridge (`rules.PLANNED`) show «Агент не установлен». Column «Агент»: one name «Агент ERP · <parts>»
   per PC (печать, приборы, станок — whatever that PC does), whichever program it is.
-- `GET /api/production/machines/{equipment_id}` (same gate) → the live card of a bridged ОБ (decoded PLC words).
+- `GET /api/production/machines/{equipment_id}` (same gate) → the live card of a bridged ОБ (decoded PLC words by
+  `kind`); a press ОБ.099 adds `today` — its crimps OK/NG with NG reasons and its alarm journal for the shop day.
 - `POST /api/production/machines/agent/report` — the bridge only: `Authorization: Bearer <token with machine:report>`;
   a person's session is refused (403), so is a token or PC not bound to that ОБ (403). Body: `{proto, inventory,
   machine_id, pc_name, ip_lan, bridge_version, service_version, boot, seq, link, error, registers: {"766": 102, …}}`
-  → `{ok, accepted, bound}`; `accepted: false` — an older snapshot of the same bridge run, ignored."""
+  → `{ok, accepted, bound}`; `accepted: false` — an older snapshot of the same bridge run, ignored. ОБ.099 sends FINS
+  words keyed by area («D5006», «H60», «W80»).
+- `POST /api/production/machines/agent/events` — the same bridge, after its first snapshot bound it (409 before):
+  append-only records of an ОБ.099 press `{proto, inventory, machine_id, crimps: [{key, at, result, peak, …}],
+  alarms: [{key, at, text}]}` → `{ok, crimps, alarms}` (how many were new; a key already stored is ignored)."""
 
 from __future__ import annotations
 
@@ -23,10 +28,11 @@ from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Security
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field
 from sqlalchemy import func, select
 
 from app.modules.production import machines as rules
+from app.modules.production import ob099
 from app.modules.production.api import production_uow_factory
 from app.modules.production.infrastructure import ProductionInstrumentRow
 from app.modules.references.equipment import INV_KEY, NAME_KEYS, field
@@ -83,7 +89,34 @@ class ReportPayload(BaseModel):
     seq: int = Field(ge=0, le=2**62)
     link: Literal["ok", "port_busy", "no_plc", "no_service"]
     error: str = Field(default="", max_length=2000)
-    registers: dict[str, int] = Field(default_factory=dict, max_length=len(rules.OB019_ALLOWED))
+    registers: dict[str, int] = Field(default_factory=dict, max_length=rules.REGISTERS_MAX)
+
+
+class CrimpPayload(BaseModel):
+    key: str = Field(min_length=1, max_length=64)
+    at: AwareDatetime
+    result: Literal["OK", "NG"]
+    peak: float | None = Field(default=None, ge=0, le=1e7)
+    equipment_no: str = Field(default="", max_length=ob099.TEXT_MAX)
+    product: str = Field(default="", max_length=ob099.TEXT_MAX)
+    wire: str = Field(default="", max_length=ob099.TEXT_MAX)
+    terminal: str = Field(default="", max_length=ob099.TEXT_MAX)
+    applicator: str = Field(default="", max_length=ob099.TEXT_MAX)
+    scan_code: str = Field(default="", max_length=ob099.SCAN_MAX)
+
+
+class AlarmPayload(BaseModel):
+    key: str = Field(min_length=1, max_length=400)
+    at: AwareDatetime
+    text: str = Field(min_length=1, max_length=ob099.ALARM_TEXT_MAX)
+
+
+class EventsPayload(BaseModel):
+    proto: Literal[1]
+    inventory: str = Field(min_length=1, max_length=64)
+    machine_id: str = Field(min_length=1, max_length=80)
+    crimps: list[CrimpPayload] = Field(default_factory=list, max_length=ob099.BATCH_MAX)
+    alarms: list[AlarmPayload] = Field(default_factory=list, max_length=ob099.BATCH_MAX)
 
 
 def _inventory(value: object) -> str:
@@ -120,12 +153,12 @@ def _tone(code: str) -> dict:
     return {"code": code, "text": text, "tone": tone}
 
 
-def _machine_state(link_code: str, words: dict[int, int]) -> dict:
+def _machine_state(kind: str, link_code: str, snapshot: rules.MachineSnapshotRow | None) -> dict:
     if link_code in ("stale", "not_installed"):
         return {"text": "—", "tone": "neutral"}
-    if link_code != "ok":
+    decoded = rules.decode(kind, snapshot) if link_code == "ok" else None
+    if decoded is None:
         return {"text": "Нет данных ПЛК", "tone": "neutral"}
-    decoded = rules.decode_ob019(words)
     return {"text": decoded["state"]["text"], "tone": decoded["state"]["tone"]}
 
 
@@ -141,7 +174,7 @@ def _machine_rows(session, equipment, now) -> list[dict]:
             "ip": _address(link.ip_lan, link.ip_seen),
             "service": rules.KIND_NAMES[link.kind], "version": link.bridge_version, "link": _tone(code),
             "last_seen": _moment(snapshot.reported_at, now) if snapshot else None,
-            "device": rules.DEVICE_NAMES[link.kind], "state": _machine_state(code, rules.snapshot_words(snapshot)),
+            "device": rules.DEVICE_NAMES[link.kind], "state": _machine_state(link.kind, code, snapshot),
             "card": True, "others": "",
         })
     for inventory, kind in rules.SUPPORTED.items():
@@ -386,6 +419,21 @@ def _ob019_summary(snapshot, now: datetime) -> dict:
             "last_seen": _moment(snapshot.reported_at, now) if snapshot else None}
 
 
+def _ob099_summary(snapshot, now: datetime) -> dict:
+    """A BZW press ОБ.099.x in the list: its state, the product in the press and the total counter."""
+    code = rules.link_status(snapshot, now)
+    decoded = rules.decode(ob099.KIND, snapshot) if code == "ok" else None
+    if decoded is None:
+        text, tone = rules.LINK_TEXTS[code]
+        state, job, counter = {"text": text, "tone": tone}, "", {"value": None, "of": None, "today": False}
+    else:
+        state = {"text": decoded["state"]["text"], "tone": decoded["state"]["tone"]}
+        job = decoded["job"]["product"] or NO_JOB
+        counter = {"value": decoded["counters"]["total_done"], "of": decoded["counters"]["total_set"], "today": False}
+    return {"state": state, "job": job, "counter": counter,
+            "last_seen": _moment(snapshot.reported_at, now) if snapshot else None}
+
+
 def _start_of_day(now: datetime) -> datetime:
     return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -431,8 +479,10 @@ def _machine_entries(session, equipment, now: datetime) -> dict[str, dict]:
     """Every production machine of «Станки» by inventory number: its summary and what its card needs."""
     found: dict[str, dict] = {}
     for link, snapshot in rules.links(session):
-        found[link.inventory_number] = {"kind": "ob019", "equipment_id": str(link.equipment_id), "link": link,
-                                        "snapshot": snapshot, **_ob019_summary(snapshot, now)}
+        press = link.kind == ob099.KIND
+        found[link.inventory_number] = {"kind": "ob099" if press else "ob019", "equipment_id": str(link.equipment_id),
+                                        "link": link, "snapshot": snapshot,
+                                        **(_ob099_summary if press else _ob019_summary)(snapshot, now)}
     units = {row.id: row for rows in equipment.values() for row in rows}
     for binding in session.scalars(select(MarkingBindingRow)):
         unit = units.get(binding.equipment_id)
@@ -444,7 +494,8 @@ def _machine_entries(session, equipment, now: datetime) -> dict[str, dict]:
         if inventory not in found:
             own = equipment.get(_inventory(inventory), [])
             found[inventory] = {
-                "kind": "ob019" if inventory in rules.SUPPORTED else "planned",
+                "kind": ("ob099" if rules.SUPPORTED[inventory] == ob099.KIND else "ob019")
+                if inventory in rules.SUPPORTED else "planned",
                 "equipment_id": str(own[0].id) if len(own) == 1 else None, "link": None, "snapshot": None,
                 "state": NOT_CONNECTED, "job": "", "counter": {"value": None, "of": None, "today": False},
                 "last_seen": None}
@@ -463,7 +514,7 @@ def _journal_ob019(session, entry: dict, now: datetime) -> list[dict]:
     events = []
     snapshot = entry.get("snapshot")
     if snapshot is not None:
-        words = rules.snapshot_words(snapshot)
+        words = rules.snapshot_words(snapshot) if entry["kind"] == "ob019" else {}
         alarm = rules.decode_ob019(words)["alarm"] if words else None
         if alarm and alarm["code"] not in (None, 0):
             events.append({"at": _moment(snapshot.reported_at, now), "text": "Сейчас: " + alarm["text"],
@@ -496,11 +547,12 @@ def _journal_marking(session, binding: MarkingBindingRow, now: datetime) -> list
 
 
 def _connection(entry: dict, now: datetime) -> dict:
-    if entry["kind"] == "ob019" and entry.get("link") is not None:
+    if entry["kind"] in ("ob019", "ob099") and entry.get("link") is not None:
         link = entry["link"]
         return {"pc": link.pc_name, "ip": _address(link.ip_lan, link.ip_seen), "agent": rules.KIND_NAMES[link.kind],
                 "version": link.bridge_version, "link": _tone(rules.link_status(entry["snapshot"], now)),
-                "last_seen": entry["last_seen"], "extra": [["Служба Modbus", link.service_version]],
+                "last_seen": entry["last_seen"],
+                "extra": [["Служба Modbus", link.service_version]] if entry["kind"] == "ob019" else [],
                 "error": entry["snapshot"].error if entry["snapshot"] else ""}
     if entry["kind"] == "marking":
         agent = entry["agent"]
@@ -532,6 +584,11 @@ def machine_window(inventory: str, _principal: Reader, factory: Factory, now: No
             card["live"] = rules.decode_ob019(words) if words else None
             card["positions"] = rules.setting_group("Положение осей", rules.OB019_POSITIONS, words)
             card["settings"] = rules.ob019_settings(words)
+            card["journal"] = _journal_ob019(session, entry, now)
+        elif entry["kind"] == "ob099":
+            card["live"] = rules.decode(ob099.KIND, entry["snapshot"])
+            if entry["equipment_id"]:
+                card["today"] = ob099.today(session, UUID(entry["equipment_id"]), now)
             card["journal"] = _journal_ob019(session, entry, now)
         elif entry["kind"] == "marking":
             binding = entry["binding"]
@@ -581,17 +638,20 @@ def machine_card(equipment_id: UUID, _principal: Reader, factory: Factory, now: 
         unit = next(iter(_equipment(session).get(_inventory(link.inventory_number), [])), None)
         code = rules.link_status(snapshot, now)
         reported = snapshot.reported_at if snapshot else None
-        words = rules.snapshot_words(snapshot)
-        return {
-            "equipment_id": str(link.equipment_id), "inventory": link.inventory_number, "name": _name(unit),
+        card = {
+            "kind": link.kind, "equipment_id": str(link.equipment_id), "inventory": link.inventory_number,
+            "name": _name(unit),
             "pc": link.pc_name, "ip": link.ip_lan or link.ip_seen, "service": rules.KIND_NAMES[link.kind],
             "service_version": link.service_version, "bridge_version": link.bridge_version,
             "link": _tone(code), "reported_at": _moment(reported, now),
             "age_seconds": None if reported is None else max(0, int(rules.since(reported, now).total_seconds())),
             "error": snapshot.error if snapshot else "",
             # The last words stay visible when the link is lost, marked by `link` and `reported_at` as old.
-            "live": rules.decode_ob019(words) if words else None,
+            "live": rules.decode(link.kind, snapshot),
         }
+        if link.kind == ob099.KIND:
+            card["today"] = ob099.today(session, link.equipment_id, now)
+        return card
 
 
 def _client_ip(request: Request) -> str:
@@ -629,3 +689,24 @@ def agent_report(payload: ReportPayload, request: Request, bridge: Bridge, facto
                 occurred_at=now, details={"inventory": inventory, "machine_id": link.machine_id, "pc_name": link.pc_name}))
         uow.commit()
     return {"ok": True, "accepted": accepted, "bound": bound}
+
+
+@router.post("/agent/events")
+def agent_events(payload: EventsPayload, bridge: Bridge, factory: Factory, now: Now) -> dict:
+    inventory = _inventory(payload.inventory)
+    if rules.SUPPORTED.get(inventory) != ob099.KIND:
+        raise HTTPException(status_code=403, detail=f"{payload.inventory} не присылает поштучные записи")
+    with factory() as uow:
+        session = uow.session
+        try:
+            link = rules.bound_link(session, inventory=inventory, token_id=bridge.actor.id, machine_id=payload.machine_id)
+        except rules.MachineRefused as error:
+            raise HTTPException(status_code=403, detail=str(error)) from error
+        except rules.MachineNotBound as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        crimps, alarms = ob099.store(
+            session, equipment_id=link.equipment_id,
+            crimps=[ob099.Crimp(**item.model_dump()) for item in payload.crimps],
+            alarms=[ob099.Alarm(**item.model_dump()) for item in payload.alarms], now=now)
+        uow.commit()
+    return {"ok": True, "crimps": crimps, "alarms": alarms}
