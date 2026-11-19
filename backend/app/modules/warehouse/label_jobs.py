@@ -13,6 +13,8 @@ A job never goes back to pending. Finished TSPL jobs older than 30 days are purg
 Godex marking (migration 0190) uses an exact machine/queue, immutable PNG and attempt token;
 spool acceptance is `spooled`, while expiration becomes `unknown` and pauses that printer until the operator resolves
 it in ERP. A late agent receipt is stored on the `unknown` job; re-sending it answers the job's current status.
+«Отменить оставшиеся» (0203) moves only never-handed-out marking jobs `pending → cancelled` with the reason.
+A failed peel-off check (`halt` receipt) stops the rest of its batch until the operator acts (marking_halts).
 Marking history is retained. `warehouse_label_agent` remains the warehouse TSPL heartbeat only."""
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ ERROR_MAX = 2000
 NO_REASON = "Агент печати не напечатал этикетку и не сказал почему"
 QUEUED = "В очереди принтера."
 
-PENDING, TAKEN, PRINTED, FAILED = "pending", "taken", "printed", "failed"
+PENDING, TAKEN, PRINTED, FAILED, CANCELLED = "pending", "taken", "printed", "failed", "cancelled"
 OPEN_STATUSES = (PENDING, TAKEN)
 FINISHED_STATUSES = (PRINTED, FAILED)
 
@@ -53,21 +55,21 @@ class LabelJobRow(Base):
         CheckConstraint("kind <> 'lot' OR lot_id IS NOT NULL", name="ck_warehouse_label_jobs_lot"),
         CheckConstraint("copies >= 1 AND copies <= 50", name="ck_warehouse_label_jobs_copies"),
         CheckConstraint("(format = 'tspl' AND length(tspl) > 0) OR (format = 'gdi_png' AND length(png) > 0)", name="ck_warehouse_label_jobs_tspl"),
-        CheckConstraint("status IN ('pending', 'taken', 'printed', 'failed', 'spooled', 'unknown')", name="ck_warehouse_label_jobs_status"),
+        CheckConstraint("status IN ('pending', 'taken', 'printed', 'failed', 'spooled', 'unknown', 'cancelled')", name="ck_warehouse_label_jobs_status"),
         CheckConstraint("taken_at IS NULL OR status <> 'pending'", name="ck_warehouse_label_jobs_pending_untaken"),
-        CheckConstraint("status = 'pending' OR taken_at IS NOT NULL", name="ck_warehouse_label_jobs_taken_at"),
+        CheckConstraint("status IN ('pending', 'cancelled') OR taken_at IS NOT NULL", name="ck_warehouse_label_jobs_taken_at"),
         CheckConstraint("lease_until IS NULL OR status = 'taken'", name="ck_warehouse_label_jobs_lease_only_taken"),
         CheckConstraint("status <> 'taken' OR lease_until IS NOT NULL", name="ck_warehouse_label_jobs_taken_lease"),
         CheckConstraint("lease_until IS NULL OR lease_until > taken_at", name="ck_warehouse_label_jobs_lease_after"),
         CheckConstraint(
-            "finished_at IS NULL OR status IN ('printed', 'failed', 'spooled', 'unknown')",
+            "finished_at IS NULL OR status IN ('printed', 'failed', 'spooled', 'unknown', 'cancelled')",
             name="ck_warehouse_label_jobs_finished_only_final",
         ),
         CheckConstraint(
             "status = 'pending' OR status = 'taken' OR finished_at IS NOT NULL",
             name="ck_warehouse_label_jobs_final_finished",
         ),
-        CheckConstraint("error IS NULL OR status IN ('failed', 'unknown')", name="ck_warehouse_label_jobs_error_only_failed"),
+        CheckConstraint("error IS NULL OR status IN ('failed', 'unknown', 'cancelled')", name="ck_warehouse_label_jobs_error_only_failed"),
         CheckConstraint("status <> 'failed' OR error IS NOT NULL", name="ck_warehouse_label_jobs_failed_error"),
         CheckConstraint("(format = 'tspl' AND kind <> 'marking' AND batch_id IS NULL AND png IS NULL AND status NOT IN ('spooled', 'unknown')) OR "
                         "(format = 'gdi_png' AND kind = 'marking' AND copies = 1 AND png IS NOT NULL AND length(png) BETWEEN 1 AND 2097152 "
@@ -75,7 +77,10 @@ class LabelJobRow(Base):
                         "AND batch_id IS NOT NULL AND sequence IS NOT NULL AND sequence >= 1 "
                         "AND width_mm IS NOT NULL AND width_mm BETWEEN 5 AND 150 AND height_mm IS NOT NULL AND height_mm BETWEEN 5 AND 150 "
                         "AND orientation IS NOT NULL AND orientation IN ('portrait', 'landscape') AND status <> 'printed')", name="ck_label_job_payload"),
-        CheckConstraint("format <> 'gdi_png' OR status = 'pending' OR (attempt IS NOT NULL AND claim_token_id IS NOT NULL)", name="ck_label_job_attempt"),
+        CheckConstraint("format <> 'gdi_png' OR status IN ('pending', 'cancelled') OR (attempt IS NOT NULL AND claim_token_id IS NOT NULL)", name="ck_label_job_attempt"),
+        # 0203: «Отменить оставшиеся» — only a never-handed-out marking job, with the operator's reason.
+        CheckConstraint("status <> 'cancelled' OR (format = 'gdi_png' AND taken_at IS NULL AND attempt IS NULL "
+                        "AND claim_token_id IS NULL AND finished_at IS NOT NULL AND error IS NOT NULL AND trim(error) <> '')", name="ck_label_job_cancelled"),
         UniqueConstraint("batch_id", "sequence", name="uq_label_job_sequence"),
         ForeignKeyConstraint(["target_machine_id", "target_printer"], ["warehouse_agent_printers.machine_id", "warehouse_agent_printers.name"],
                              name="fk_label_job_printer", ondelete="RESTRICT"),
@@ -293,9 +298,102 @@ def expire_marking(session, now):
             error="Агент не подтвердил результат — проверьте принтер перед продолжением"))
 
 
+def cancel_pending_marking(session, batch_id, *, reason, now) -> list[int]:
+    """«Отменить оставшиеся»: every never-handed-out job of the batch becomes `cancelled` with the reason; a job the
+    agent already took (or spooled) is not touched. Returns the cancelled sequence numbers (the caller journals them)."""
+    reason = " ".join(reason.split())
+    if not reason:
+        raise ValueError("Укажите причину отмены")
+    text = f"Отменено: {reason}"[:ERROR_MAX]
+    sequences = list(session.scalars(select(LabelJobRow.sequence).where(LabelJobRow.batch_id == batch_id,
+        LabelJobRow.format == "gdi_png", LabelJobRow.status == PENDING).order_by(LabelJobRow.sequence).with_for_update()))
+    if not sequences:
+        return []
+    changed = session.execute(update(LabelJobRow).where(LabelJobRow.batch_id == batch_id, LabelJobRow.format == "gdi_png",
+        LabelJobRow.status == PENDING, LabelJobRow.sequence.in_(sequences)).values(status=CANCELLED, finished_at=now, error=text)
+        .execution_options(synchronize_session=False))
+    if changed.rowcount != len(sequences):
+        # The agent took one between the read and the write (engines without FOR UPDATE): the caller retries.
+        raise JobFinished("Очередь изменилась — повторите отмену")
+    return sequences
+
+
+def pending_marking_by_printer(session, machine_id, printer) -> dict:
+    """Never-handed-out marking jobs on this queue: batch id → sequences."""
+    result: dict = {}
+    for batch_id, sequence in session.execute(select(LabelJobRow.batch_id, LabelJobRow.sequence).where(LabelJobRow.format == "gdi_png",
+            LabelJobRow.target_machine_id == machine_id, LabelJobRow.target_printer == printer, LabelJobRow.status == PENDING)
+            .order_by(LabelJobRow.batch_id, LabelJobRow.sequence)):
+        result.setdefault(batch_id, []).append(sequence)
+    return result
+
+
+def reprint_tree(session, root) -> dict:
+    """`root` and every «Перепечатать номера…» batch below it, at any depth: batch id → row."""
+    from .marking_profiles import MarkingBatchRow
+
+    tree = {root.id: root} if root is not None else {}
+    frontier = list(tree)
+    while frontier:
+        children = [row for row in session.scalars(select(MarkingBatchRow).where(MarkingBatchRow.reprint_of.in_(frontier)))
+                    if row.id not in tree]
+        tree.update({row.id: row for row in children})
+        frontier = [row.id for row in children]
+    return tree
+
+
+def ancestor_sequence(tree, batch, sequence, ancestor_id):
+    """The label number in `ancestor_id` that job `sequence` of `batch` reprints (manifest.reprint.sequences per step;
+    an older whole-batch reprint without them keeps the numbering). None — out of range or not below the ancestor."""
+    while batch is not None and batch.id != ancestor_id:
+        sources = ((batch.manifest or {}).get("reprint") or {}).get("sequences")
+        if sources is not None:
+            if not 0 < sequence <= len(sources):
+                return None
+            sequence = sources[sequence - 1]
+        batch = tree.get(batch.reprint_of)
+    return sequence if batch is not None else None
+
+
+def marking_halts(session, batch_ids) -> dict:
+    """Peel-off check failures nobody has dealt with yet: batch id → sequences. The agent (2.11.0+) marks such a failed
+    receipt `halt`: nothing was printed, so the rest of the batch must not print past the gap. Dealt with:
+    «Продолжить без неё» (`halt_released`, workflows.marking_labels.resolve) or a «Перепечатать номера…» batch below
+    this one (at any depth) has spooled that label and it was not removed from the Windows queue afterwards.
+    «Отменить оставшиеся» leaves nothing to hold."""
+    from .marking_profiles import MarkingBatchRow
+
+    batch_ids = list(batch_ids)
+    if not batch_ids:
+        return {}
+    failed = [(batch_id, sequence) for batch_id, sequence, receipt in session.execute(select(LabelJobRow.batch_id,
+        LabelJobRow.sequence, LabelJobRow.receipt).where(LabelJobRow.batch_id.in_(batch_ids), LabelJobRow.status == FAILED))
+        if (receipt or {}).get("halt") and not (receipt or {}).get("halt_released")]
+    if not failed:
+        return {}
+    covered = set()
+    for halted_id in {batch_id for batch_id, _ in failed}:
+        tree = reprint_tree(session, session.get(MarkingBatchRow, halted_id))
+        for reprint in tree.values():
+            if reprint.id == halted_id:
+                continue
+            # Spooled and not removed from the Windows queue afterwards («Очистить принтер» → print state cancelled).
+            for sequence, receipt in session.execute(select(LabelJobRow.sequence, LabelJobRow.receipt).where(
+                    LabelJobRow.batch_id == reprint.id, LabelJobRow.status == "spooled")):
+                if (receipt or {}).get("print_state") != "cancelled":
+                    covered.add((halted_id, ancestor_sequence(tree, reprint, sequence, halted_id)))
+    result: dict = {}
+    for batch_id, sequence in failed:
+        if (batch_id, sequence) not in covered:
+            result.setdefault(batch_id, []).append(sequence)
+    return result
+
+
 def claim_marking(uow, *, machine_id, token_id, now):
     from .devices import PrinterRow
-    from .scan_agents import LIVE_FOR
+    from .marking_profiles import MarkingBatchRow
+    from .printer_commands import agent_executes_commands, marking_printers, open_command_printers
+    from .scan_agents import LIVE_FOR, ScanAgentRow
 
     with uow:
         session = _session(uow)
@@ -303,7 +401,16 @@ def claim_marking(uow, *, machine_id, token_id, now):
         printers = session.scalars(select(PrinterRow).where(PrinterRow.machine_id == machine_id,
             PrinterRow.kind == "gdi_png", PrinterRow.present.is_(True), PrinterRow.last_seen >= now - LIVE_FOR)
             .order_by(PrinterRow.name).with_for_update()).all()
+        # «Очистить принтер» in progress: nothing new is spooled under the clearing.
+        clearing = open_command_printers(session, machine_id)
+        # Peel-off now (the bound profiles) as well as when the batch was queued: a batch from before 0203 or before the
+        # flag was switched on carries no snapshot flag. Only an agent that checks ^O1 (2.11.0+) gets a peel-off job.
+        peel_now = {item["name"]: item["peel"] for item in marking_printers(session, machine_id)}
+        agent = session.get(ScanAgentRow, machine_id)
+        checks_peel = agent is not None and agent_executes_commands(agent.version)
         for printer in printers:
+            if printer.name in clearing:
+                continue
             # Row locking handles PostgreSQL. CAS also arbitrates engines without FOR UPDATE.
             version = printer.queue_version
             changed = session.execute(update(PrinterRow).where(PrinterRow.machine_id == machine_id,
@@ -316,11 +423,25 @@ def claim_marking(uow, *, machine_id, token_id, now):
             if session.scalar(select(LabelJobRow.id).where(*target, LabelJobRow.status.in_((TAKEN, "unknown"))).limit(1)):
                 continue
             started_batches = select(LabelJobRow.batch_id).where(*target, LabelJobRow.status != PENDING)
-            job = session.scalar(select(LabelJobRow).where(*target, LabelJobRow.status == PENDING)
-                .order_by(LabelJobRow.batch_id.in_(started_batches).desc(), LabelJobRow.created_at,
+            # A batch stopped by a failed peel-off check waits for the operator; other batches of the queue go on.
+            halted = list(marking_halts(session, session.scalars(select(LabelJobRow.batch_id).where(*target,
+                LabelJobRow.status == PENDING).distinct())))
+            waiting = (LabelJobRow.batch_id.not_in(halted),) if halted else ()
+            # Reprints below a halted batch fill its gap: they go before any other waiting batch of the queue.
+            rescues = [batch_id for halted_id in halted
+                       for batch_id in reprint_tree(session, session.get(MarkingBatchRow, halted_id)) if batch_id != halted_id]
+            order = (LabelJobRow.batch_id.in_(rescues).desc(),) if rescues else ()
+            job = session.scalar(select(LabelJobRow).where(*target, LabelJobRow.status == PENDING, *waiting)
+                .order_by(*order, LabelJobRow.batch_id.in_(started_batches).desc(), LabelJobRow.created_at,
                           LabelJobRow.batch_id, LabelJobRow.sequence).limit(1).with_for_update())
             if job is None:
                 continue
+            # The profile's peel-off dispenser (0203): the agent refuses the job unless the driver emits ^O1.
+            batch = session.get(MarkingBatchRow, job.batch_id)
+            geometry = ((batch.manifest if batch else {}).get("profile_snapshot") or {}).get("geometry") or {}
+            peel = bool(geometry.get("peel")) or bool(peel_now.get(printer.name))
+            if peel and not checks_peel:
+                continue  # stays pending; the print window says the agent needs an update (marking_labels.machines)
             attempt = str(uuid4())
             taken = session.execute(update(LabelJobRow).where(LabelJobRow.id == job.id, LabelJobRow.status == PENDING)
                 .values(status=TAKEN, taken_at=now, lease_until=now + LEASE, attempt=attempt, claim_token_id=token_id))
@@ -329,17 +450,19 @@ def claim_marking(uow, *, machine_id, token_id, now):
             result = {"id": str(job.id), "attempt": attempt, "format": "gdi_png", "printer": printer.name,
                       "width_mm": job.width_mm, "height_mm": job.height_mm, "orientation": job.orientation,
                       "dpi": 300, "copies": 1, "png_b64": base64.b64encode(job.png).decode("ascii"),
-                      "sha256": hashlib.sha256(job.png).hexdigest()}
+                      "sha256": hashlib.sha256(job.png).hexdigest(), "peel": peel}
             uow.commit()
             return result
         uow.commit()
     return None
 
 
-def report_marking(uow, job_id, *, machine_id, token_id, attempt, outcome, message, spool_job_id, now, tracked=False) -> str:
+def report_marking(uow, job_id, *, machine_id, token_id, attempt, outcome, message, spool_job_id, now, tracked=False,
+                   halt=False) -> str:
     """The agent's receipt for one attempt → the job's status after it. Idempotent: the same receipt again answers
     the current status, so an agent holding an `unknown` receipt learns when the operator resolved the job.
-    A receipt after the lease ran out (the job is `unknown` by then) is stored for the operator, the status stays."""
+    A receipt after the lease ran out (the job is `unknown` by then) is stored for the operator, the status stays.
+    `halt` (a failed peel-off check, agent 2.11.0+) stops the rest of the batch until the operator acts (marking_halts)."""
     if outcome not in ("spooled", "failed", "unknown"):
         raise ValueError("Неизвестный результат печати")
     with uow:
@@ -355,6 +478,8 @@ def report_marking(uow, job_id, *, machine_id, token_id, attempt, outcome, messa
         if tracked:
             # The agent keeps watching the Windows spool job and reports its end via report_print_state.
             receipt["tracked"] = True
+        if halt and outcome == FAILED:
+            receipt["halt"] = True
         if row.receipt and {key: value for key, value in row.receipt.items() if not key.startswith("print_")} == receipt:
             return row.status
         if row.status == TAKEN:

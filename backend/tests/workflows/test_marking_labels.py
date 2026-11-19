@@ -49,7 +49,7 @@ def marking(production_api):
                 normalized_search="", source_sheet="", sort_key="", fields={"Инв. номер": "ОБ.101"}),
             MarkingProfileRow(id=profile_id, equipment_id=equipment_id, inventory_number="ОБ.101", name="Флажок",
                 version=1, calibrated=True, geometry=presets()[-1][2]),
-            ScanAgentRow(machine_id="godex-pc", pc_name="Цех", version="2.9.0", first_seen=NOW, last_seen=NOW),
+            ScanAgentRow(machine_id="godex-pc", pc_name="Цех", version="2.11.0", first_seen=NOW, last_seen=NOW),
             PrinterRow(machine_id="godex-pc", name="Godex EZ2350i", driver="Godex", port="USB001", kind="gdi_png",
                 present=True, last_seen=NOW),
             MarkingBindingRow(equipment_id=equipment_id, version=1, machine_id="godex-pc", printer="Godex EZ2350i"),

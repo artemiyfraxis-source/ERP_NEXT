@@ -168,6 +168,37 @@ Describe 'Ink inside the driver printable area (Godex/Seagull 92.5 x 20: offset 
     }
 }
 
+Describe 'Margin compensation (Godex/Seagull vs shift, from PR #933)' {
+    It 'shift keeps the driver offset, none drops it' {
+        [ErpGdiPrinter]::EffectiveOffsetX(36, 'shift') | Should Be 36
+        [ErpGdiPrinter]::EffectiveOffsetX(36, 'none') | Should Be 0
+    }
+    It 'rejects an unknown mode' {
+        { [ErpGdiPrinter]::EffectiveOffsetX(36, 'x') } | Should Throw 'Unknown margin compensation'
+    }
+    It 'defaults to shift for other drivers and none for Godex/Seagull' {
+        Resolve-MarginCompensation @{ } 'TSC TE200' | Should Be 'shift'
+        Resolve-MarginCompensation @{ } 'Seagull Scientific Godex EZ2350i' | Should Be 'none'
+        Resolve-MarginCompensation @{ } 'Godex EZ2350i' | Should Be 'none'
+    }
+    It 'lets the job override the driver default' {
+        Resolve-MarginCompensation @{ margin_compensation = 'shift' } 'Godex EZ2350i' | Should Be 'shift'
+        Resolve-MarginCompensation @{ margin_compensation = 'none' } 'TSC' | Should Be 'none'
+        { Resolve-MarginCompensation @{ margin_compensation = 'bad' } 'TSC' } | Should Throw
+    }
+    It 'in none mode ink at the left edge is allowed and ink beyond printable width is refused' {
+        $bitmap = New-Object Drawing.Bitmap 1093, 236
+        $g = [Drawing.Graphics]::FromImage($bitmap); try { $g.Clear([Drawing.Color]::White) } finally { $g.Dispose() }
+        try {
+            $bitmap.SetPixel(0, 0, [Drawing.Color]::Black); $bitmap.SetPixel(1041, 10, [Drawing.Color]::Black)
+            [ErpGdiPrinter]::CheckInk($bitmap, [ErpGdiPrinter]::EffectiveOffsetX(36, 'none'), 0, 1042, 237)
+            { [ErpGdiPrinter]::CheckInk($bitmap, [ErpGdiPrinter]::EffectiveOffsetX(36, 'shift'), 0, 1042, 237) } | Should Throw 'outside printable bounds'
+            $bitmap.SetPixel(1042, 10, [Drawing.Color]::Black)
+            { [ErpGdiPrinter]::CheckInk($bitmap, 0, 0, 1042, 237) } | Should Throw 'outside printable bounds'
+        } finally { $bitmap.Dispose() }
+    }
+}
+
 Describe 'Marking payload' {
     It 'decodes the exact approved one-bit PNG' {
         $job = New-TestMarkingJob
@@ -213,7 +244,9 @@ Describe 'Marking discovery and protocol' {
         Mock Send-PngToPrinter { @{ outcome = 'spooled'; message = 'Передано принтеру'; spool_job_id = 77 } }
         Mock Save-PrintReceipt { & $script:RealSavePrintReceipt $Path $Receipt }
         Mock Send-RawToPrinter {}
-        Mock Invoke-ErpApi { if ($Url -like '*/claim') { @{ job = (New-TestMarkingJob) } } }
+        Mock Get-PrintJob { @() }
+        # The server hands out marking only to a claim that asks for it (an empty claim polls printer commands).
+        Mock Invoke-ErpApi { if ($Url -like '*/claim') { if ($Body.capabilities -contains 'gdi_png') { @{ job = (New-TestMarkingJob) } } else { @{ job = $null } } } }
     }
     It 'reports driver, port, kind and missing target without enumerating arbitrary queues' {
         $targets = @(Get-AgentPrinters 'TSC' 'Renamed Godex')
@@ -250,6 +283,7 @@ Describe 'Marking discovery and protocol' {
         Assert-MockCalled Invoke-ErpApi -Times 0 -Exactly -Scope It
     }
     It 'a renamed queue fails the job and never receives TSPL' {
+        Mock Invoke-ErpApi { if ($Url -like '*/claim') { @{ job = (New-TestMarkingJob) } } }  # a server that hands it out anyway
         Invoke-MarkingPollOnce 'http://test' 'token' 'TSC' 'Renamed Godex' | Should Be 'done'
         Assert-MockCalled Send-PngToPrinter -Times 0 -Exactly -Scope It
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Body.outcome -eq 'failed' }
@@ -278,7 +312,7 @@ Describe 'Marking discovery and protocol' {
         { Invoke-MarkingPollOnce 'http://test' 'token' '' 'Godex 中文' } | Should Throw 'process interrupted'
         Invoke-MarkingPollOnce 'http://test' 'token' '' 'Godex 中文' | Should Be 'blocked'
         Assert-MockCalled Send-PngToPrinter -Times 1 -Exactly -Scope It
-        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Url -like '*/claim' }
+        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Url -like '*/claim' -and $Body.capabilities -contains 'gdi_png' }
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Body.outcome -eq 'unknown' }
     }
     It 'a GDI submission error with uncertain delivery pauses the lane' {

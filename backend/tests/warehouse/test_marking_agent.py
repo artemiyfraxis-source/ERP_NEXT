@@ -251,3 +251,30 @@ def test_legacy_agent_receipt_is_not_claimed_as_printed(tokens_api):
     with sessions() as session:
         view = batch_view(session.get(MarkingBatchRow, batch_id), session, clock.now + timedelta(hours=1))
     assert view["untracked"] == 1 and not view["stuck"] and view["jobs"][0]["print_state"] == "untracked"
+
+
+def test_a_long_hold_reason_is_cut_not_refused(tokens_api):
+    sessions, _clock = tokens_api
+    admin, service = _login("admin"), TestClient(app)
+    agent = _agent(admin, "pc-1")
+    printer = {"name": "Godex EZ2350i", "driver": "Godex", "port": "USB001", "kind": "gdi_png", "present": True,
+               "hold": "Godex: отделитель выключен " * 200}
+    response = service.post(HEARTBEAT, headers=agent, json={"machine_id": "pc-1", "version": "2.11.0", "printers": [printer]})
+    assert response.status_code == 200, response.text
+    with sessions() as session:
+        hold = session.get(PrinterRow, ("pc-1", "Godex EZ2350i")).hold
+        assert len(hold) == 500 and hold.startswith("Godex: отделитель выключен")
+
+
+def test_a_halt_receipt_stops_the_rest_of_the_batch(tokens_api):
+    sessions, clock = tokens_api
+    admin, service = _login("admin"), TestClient(app)
+    agent = _agent(admin, "pc-1")
+    _batch(sessions, clock.now)
+    payload = {"machine_id": "pc-1", "capabilities": ["gdi_png"]}
+    job = service.post(CLAIM, json=payload, headers=agent).json()["job"]
+    result = {"attempt": job["attempt"], "outcome": "failed", "message": "Godex: отделитель выключен", "halt": True}
+    assert service.post(f"/api/stock/labels/jobs/{job['id']}/result", json=result, headers=agent).json()["status"] == "failed"
+    assert service.post(CLAIM, json=payload, headers=agent).json()["job"] is None
+    with sessions() as session:
+        assert session.get(LabelJobRow, UUID(job["id"])).receipt["halt"] is True
