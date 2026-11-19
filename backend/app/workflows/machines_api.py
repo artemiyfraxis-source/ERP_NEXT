@@ -56,7 +56,7 @@ DEVICE_NAMES = {"scan": "Сканер", "s2vna": "Анализатор цепе�
 PRINT_SERVICE = f"{rules.AGENT_NAME} · печать"
 DEVICE_SERVICE = f"{rules.AGENT_NAME} · приборы"
 VNA_APPS = {"s2vna": "S2VNA", "arinst": "Arinst VL"}  # agent source → «Программа ВАЦ» of the СИ registry
-ARINST_PRESENCE_VERSION = (2, 9, 4)  # from this agent «arinst» means the analyser is in use, not just installed
+ARINST_PRESENCE_VERSION = (2, 9, 7)  # from this agent «arinst» means the analyser is in use, not just installed
 
 
 def bridge_principal(
@@ -283,8 +283,8 @@ class _Presence:
 
 
 def _presence(device: DeviceRow, agent: ScanAgentRow, captures: dict[str, datetime], now: datetime) -> _Presence:
-    """S2VNA reports a serial only with the Planar on USB (VID_2226) and its IDN read. Arinst before agent 2.9.4 meant
-    «Arinst VL installed»; from 2.9.4 it needs Arinst VL running or a fresh trace — or a capture came from that PC."""
+    """S2VNA reports a serial only with the Planar on USB (VID_2226) and its IDN read. Arinst before agent 2.9.7 meant
+    «Arinst VL installed»; from 2.9.7 it needs Arinst VL running or a fresh trace — or a capture came from that PC."""
     live = bool(device.present) and _fresh(device.last_seen, now)
     captured = captures.get(device.machine_id) if device.kind == "arinst" else None
     real = live and (device.kind != "arinst" or captured is not None

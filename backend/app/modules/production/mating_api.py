@@ -17,7 +17,8 @@ from app.shared.http_auth import Principal, production_overview_principal, produ
 from .api import production_uow_factory
 from .application import ConcurrentProductionUpdate
 from .domain import ProductionValidationError
-from .mating_infrastructure import InstrumentMatingRow, MatingBatchRow, MatingRepository, event_result
+from .mating_infrastructure import (InstrumentMatingRow, MatingBatchRow, MatingRepository, control_result, event_result,
+                                    instrument_control)
 from .matings import MAX_COUNT
 
 router = APIRouter(prefix="/api/production", tags=["production"])
@@ -61,13 +62,18 @@ class BatchPayload(BaseModel):
     entries: list[BatchEntry] = Field(min_length=1, max_length=200)
 
 
+def _with_control(session, instrument_id: UUID, snapshot: dict, now: datetime) -> dict:
+    """The card's «Следующий контроль»: 12 months or 100 matings since the last measurement."""
+    return {**snapshot, "control": control_result(instrument_control(session, instrument_id, now.date()))}
+
+
 @router.get("/instruments/{instrument_id}/matings")
 def get_matings(instrument_id: UUID, _principal: Annotated[Principal, Depends(production_overview_principal)],
-                factory: Factory):
+                factory: Factory, now: Now):
     with factory() as uow:
         if uow.instruments.get(instrument_id) is None:
             raise HTTPException(404, "СИ не найдено")
-        return MatingRepository(uow.session).snapshot(instrument_id)
+        return _with_control(uow.session, instrument_id, MatingRepository(uow.session).snapshot(instrument_id), now)
 
 
 def _audit(uow, event, principal, now):
@@ -88,7 +94,7 @@ def post_mating(instrument_id: UUID, payload: MatingPayload, principal: Editor, 
             repository = MatingRepository(uow.session)
             event = repository.append(instrument_id, **payload.model_dump(), source=None, actor=principal.actor.name, now=now)
             _audit(uow, event, principal, now)
-            result = repository.snapshot(instrument_id)
+            result = _with_control(uow.session, instrument_id, repository.snapshot(instrument_id), now)
             uow.commit()
             return result
     except ProductionValidationError as error:

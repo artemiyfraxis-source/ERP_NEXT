@@ -57,7 +57,7 @@ def test_machine_writes_one_open_per_machine_and_offsets_in_range(tmp_path, monk
     monkeypatch.delenv("ERP_DATABASE_URL", raising=False)
     path = tmp_path / "commands.db"
     config = _config(path)
-    command.upgrade(config, "0195_machine_writes")
+    command.upgrade(config, "0196_machine_writes")
     unit, other = uuid.uuid4().hex, uuid.uuid4().hex
     done = "2026-11-19 10:00:05"
     with sqlite3.connect(path) as connection:

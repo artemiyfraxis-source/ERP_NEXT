@@ -13,6 +13,7 @@ from app.modules.production.instrument_characterization import characterization
 from app.modules.production.instrument_passport import public_passport_pdf
 from app.modules.production.instrument_public import history_entry, public_measurement_download, public_passport
 from app.modules.production.instrument_public_html import PUBLIC_STYLE, public_passport_html
+from app.modules.production.mating_infrastructure import MatingRepository
 from app.modules.production.rf_infrastructure import RfRepository
 from app.shared.clock import moscow_now
 from app.shared.public_passport_limits import PassportLimitsUnavailable, PublicPassportLimits
@@ -101,7 +102,9 @@ def _view_public_passport(locator: str, request: Request) -> Response:
                         del summary
                     del previous
                 projection = public_passport(item, rf, measured, history=tuple(history), today=now.date(), registry=registry,
-                                             repeats=same_day_repeats(session, item.id, measured))
+                                             repeats=same_day_repeats(session, item.id, measured),
+                                             matings_since=MatingRepository(session).matings_since(item.id, measured.measured_on)
+                                             if measured else None)
                 if match[3] == ".pdf":
                     content = public_passport_pdf(projection, generated=now,
                                                   public_url=public_passport_url(instrument_id, settings))

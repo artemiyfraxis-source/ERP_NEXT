@@ -302,6 +302,28 @@ def test_loss_failure_overrides_a_vswr_border():
     assert usage.fit_ghz == 3
 
 
+def test_loss_is_judged_on_the_worse_of_s21_and_s12():
+    """СТО ФРАК-002-2026 п. 13.1: a clean S21 does not hide an S12 over the norm; label steps and passport lines too."""
+    from app.modules.production.instrument_characterization import application
+    from app.modules.production.instrument_norms import LossNorm, LossSegment, Norm, Segment
+    from app.modules.production.instrument_passport import band_rows
+
+    norm = Norm("Лист", "", 0.0, (Segment(18, 1.30),), loss=LossNorm("Лист", 0.0, (LossSegment(18, 0.5),)))
+    vswr = {0.01: 1.02, 3: 1.02, 9: 1.02}
+    forward = {0.01: 0.01, 3: 0.02, 9: 0.05}
+    measured = summary(vswr, forward, reverse_loss_by_ghz={0.01: 0.01, 3: 0.02, 9: 0.9})
+    clean = summary(vswr, forward)
+    loss = assess_loss(measured, norm.loss, loss_uncertainty_for("S50180"))
+    assert loss.status == "fail" and loss.at_ghz == 9 and loss.loss == pytest.approx(0.9)
+    assert assess_loss(clean, norm.loss, loss_uncertainty_for("S50180")).status == "pass"
+    usage = application(measured, (), norm, uncertainty=uncertainty_for("S50180"), loss_uncertainty=loss_uncertainty_for("S50180"))
+    assert usage.steps[-1].loss_db == pytest.approx(0.9) and usage.fit_ghz == 3
+    assert measured.loss_line == "Потери ≤ 0,91 дБ"  # 0,9 dB rounded up
+    assert list(band_rows(measured))[-1][-1] == "0,91"
+    swapped = summary(vswr, {0.01: 0.01, 3: 0.02, 9: 0.9}, reverse_loss_by_ghz=forward)
+    assert assess_loss(swapped, norm.loss, loss_uncertainty_for("S50180")).loss == pytest.approx(0.9)
+
+
 def test_both_failures_are_named():
     result = _conclusion([(0.01, 0.01, 0.999), (9, 0.01, 0.999), (18, 0.2, 0.95)])
     assert result.verdict == "Не соответствует норме выше 9 ГГц"  # the /55 loss is below the VNA's accuracy

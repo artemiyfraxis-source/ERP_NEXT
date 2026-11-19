@@ -29,8 +29,12 @@ export interface MarkingPreview extends MarkingDimensions {
   source_snapshot: unknown; labels: MarkingLabel[]; total: number;
 }
 export type MarkingStatus = "pending" | "taken" | "spooled" | "failed" | "unknown";
-export interface MarkingJob { id: string; sequence: number; status: MarkingStatus; status_label: string; message: string; spool_job_id?: number | string | null }
-export interface MarkingBatch { id: string; status: MarkingStatus; status_label: string; total: number; jobs: MarkingJob[]; reprint_of: string | null }
+export type MarkingPrintState = "queued" | "printed" | "error" | "cancelled" | "untracked";
+export interface MarkingJob { id: string; sequence: number; status: MarkingStatus; status_label: string; message: string; spool_job_id?: number | string | null; print_state?: MarkingPrintState | null }
+export interface MarkingBatch { id: string; status: MarkingStatus; status_label: string; total: number; jobs: MarkingJob[]; reprint_of: string | null
+  // Honest print progress (agent 2.9.6+ watches the Windows queue); absent on older servers.
+  printed?: number; queued?: number; print_errors?: number; cancelled?: number; untracked?: number
+  progress_label?: string | null; stuck?: boolean; stuck_label?: string | null }
 export interface MarkingBatchRequest extends MarkingRequest { manifest_hash: string; idempotency_key: string; reprint_of?: string; reason?: string }
 
 const root = "/api/production/marking";

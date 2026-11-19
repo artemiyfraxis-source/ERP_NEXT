@@ -40,7 +40,7 @@ from app.shared.http_auth import (
 
 from .api import warehouse_uow_factory
 from .application import UnitOfWork
-from .label_jobs import JobFinished, LabelJobRow, agent_status, claim, claim_marking, report, report_marking
+from .label_jobs import JobFinished, LabelJobRow, agent_status, claim, claim_marking, report, report_marking, report_print_state
 from .scan_jobs import AgentMachineRefused, AgentTokenRow, agent_machine
 from .label_templates import StaleTemplate
 from .labels.settings import CODE_TYPE_LABELS, PrintSettings
@@ -85,6 +85,14 @@ class ResultPayload(BaseModel):
     outcome: Literal["spooled", "failed", "unknown"] | None = None
     message: str = Field(default="", max_length=2000)
     spool_job_id: str | int | None = None
+    tracked: bool = False
+
+
+class PrintStatePayload(BaseModel):
+    machine_id: str = Field(default="", max_length=80)
+    attempt: str = Field(max_length=36)
+    state: Literal["printed", "error", "cancelled"]
+    message: str = Field(default="", max_length=2000)
 
 
 def agent_principal(
@@ -348,7 +356,7 @@ def agent_result(
             machine = agent_machine(uow_factory(), _agent.actor.id, payload.machine_id or bound_machine)
             status = report_marking(uow_factory(), job_id, machine_id=machine, token_id=_agent.actor.id,
                 attempt=payload.attempt, outcome=payload.outcome, message=payload.message,
-                spool_job_id=payload.spool_job_id, now=now)
+                spool_job_id=payload.spool_job_id, now=now, tracked=payload.tracked)
             # `status` tells the agent whether an `unknown` job was resolved by the operator (spooled/failed).
             return {"ok": True, "status": status}
         else:
@@ -362,6 +370,31 @@ def agent_result(
     except (AgentMachineRefused, PermissionError) as error:
         raise HTTPException(status_code=403, detail=str(error)) from error
     return {"ok": True}
+
+
+@router.post("/labels/jobs/{job_id}/print-state")
+def agent_print_state(
+    job_id: UUID,
+    payload: PrintStatePayload,
+    _agent: Annotated[Principal, Depends(agent_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: UowFactory,
+) -> dict:
+    """How a spooled marking job ended in the Windows queue (the agent watches it): printed / error / cancelled."""
+    try:
+        with uow_factory() as uow:
+            token = uow.session.get(AgentTokenRow, _agent.actor.id)
+            bound_machine = token.machine_id if token else ""
+        machine = agent_machine(uow_factory(), _agent.actor.id, payload.machine_id or bound_machine)
+        state = report_print_state(uow_factory(), job_id, machine_id=machine, token_id=_agent.actor.id,
+            attempt=payload.attempt, state=payload.state, message=payload.message, now=now)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=error.args[0]) from error
+    except JobFinished as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except (AgentMachineRefused, PermissionError) as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    return {"ok": True, "print_state": state}
 
 
 @router.get("/labels/agent/status")

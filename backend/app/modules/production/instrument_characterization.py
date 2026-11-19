@@ -9,7 +9,7 @@ import re
 from .instrument_serials import CONNECTOR_LETTERS, IN_HOUSE_SERIAL
 from .rf_interfaces import RfDetails, parse_interfaces
 from .instrument_norms import (REPEAT_CONNECTIONS, Assessment, LossAssessment, LossUncertainty, Norm, Uncertainty, assess,
-                              assess_loss, ghz_text, loss_db, norms_data, worst)
+                              assess_loss, ghz_text, loss_db, norms_data, transfer_points, worst)
 from .traceability import InstrumentFile
 from .vna_characterization import is_characterization_file
 from .vna_files import VSWR_CEILING, VnaFileError, VnaTrace, _decode, parse_vna_traces
@@ -167,7 +167,7 @@ def application(summary, series: tuple[str, ...] = (), norm: Norm | None = None,
 
     `repeats` — the other connections of the same control (rotated 120°): with REPEAT_CONNECTIONS in all the worst one
     decides and a result still within the uncertainty fails; before that it reads «на границе допуска»."""
-    first, second, transfer = summary.points("S11"), summary.points("S22"), summary.points("S21")
+    first, second, transfer = summary.points("S11"), summary.points("S22"), transfer_points(summary)
     highest = min(first[-1][0] / 1e9, series_cap_ghz(series) or math.inf)
     steps = []
     for stop in step_stops(highest):
@@ -242,7 +242,7 @@ class Characterization:
 
     @property
     def loss_line(self) -> str:
-        loss = max(loss_db(value) for _, value in self.points("S21"))
+        loss = max(loss_db(value) for _, value in transfer_points(self))
         return "Потери: ∞ дБ" if not math.isfinite(loss) else f"Потери ≤ {upper_two(loss)} дБ"
 
     @property

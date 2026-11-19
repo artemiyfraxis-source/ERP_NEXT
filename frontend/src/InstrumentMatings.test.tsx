@@ -45,6 +45,26 @@ it("shows independent totals and Russian warnings without disabling increments a
   expect(screen.getByRole("button", { name: "Задать начальное значение стороны B" })).toBeEnabled();
 });
 
+it("shows the next control by date or matings and marks it overdue", async () => {
+  const control = { measured_on: "2026-11-16", due_on: "2027-11-16", matings_since: 13, matings_left: 87, overdue: false,
+    line: "следующий контроль до 16.11.2027 или ещё 87 сочленений из 100 — что раньше" };
+  const { unmount } = setup({ ...snapshot, control });
+  const fresh = await screen.findByText(control.line);
+  expect(fresh.parentElement).toHaveTextContent("Замер 16.11.2026 · следующий контроль до 16.11.2027");
+  expect(fresh.parentElement).not.toHaveClass("tone-danger");
+  unmount();
+  vi.restoreAllMocks();
+  setup({ ...snapshot, control: { ...control, matings_since: 100, matings_left: 0, overdue: true,
+    line: "контроль просрочен: 100 сочленений с замера 16.11.2026 (норма 100)" } });
+  expect((await screen.findByText(/контроль просрочен/)).parentElement).toHaveClass("tone-danger");
+});
+
+it("shows no control line for an item never measured", async () => {
+  setup({ ...snapshot, control: null });
+  await screen.findByText(/A: 2.*400/);
+  expect(screen.queryByText(/контроль/)).not.toBeInTheDocument();
+});
+
 it("posts exactly one increment for the chosen side and refreshes the registry", async () => {
   const { writes, onChanged, onBusy } = setup();
   fireEvent.click(await screen.findByRole("button", { name: "+1 сочленение стороны A" }));
