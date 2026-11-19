@@ -193,7 +193,13 @@ Describe 'mysql.exe runs as SYSTEM only when ordinary users cannot change it' {
         Get-UserWritablePath $exe | Should Be ''
     }
     It 'names the first folder ordinary users can change (D: of the press PC: Authenticated Users Modify)' {
-        Mock Get-PathAccessRules { if ($Path -like 'D:\Program Files*') { ,@($admins, $usersRead) } else { ,@($admins, $authModify) } }
+        Mock Get-PathAccessRules { if ($Path -like 'D:\Program Files\*') { ,@($admins, $usersRead) } else { ,@($admins, $authModify) } }
+        Get-UserWritablePath $exe | Should Be 'D:\Program Files'
+    }
+    It 'ignores Modify on the drive root itself (a root cannot be renamed) but not deleting its folders' {
+        Mock Get-PathAccessRules { if ($Path -eq 'D:\') { ,@($admins, $authModify) } else { ,@($admins, $usersRead) } }
+        Get-UserWritablePath $exe | Should Be ''
+        Mock Get-PathAccessRules { if ($Path -eq 'D:\') { ,@($admins, @{ sid = 'S-1-5-11'; rights = 0x40 }) } else { ,@($admins, $usersRead) } }
         Get-UserWritablePath $exe | Should Be 'D:\'
         Mock Get-PathAccessRules { ,@($admins, $usersRead, $authModify) }
         Get-UserWritablePath $exe | Should Be $exe

@@ -31,7 +31,7 @@ param(
 #     itself is the queue: no line is lost while the network or ERP is down, a resend is deduplicated by ERP.
 # API token scope machine:report. The file is ASCII on purpose (OB.099 in Cyrillic is built from code points).
 $ErrorActionPreference = 'Stop'
-$script:AgentVersion = '1.0.2'
+$script:AgentVersion = '1.0.3'
 $script:Proto = 1
 $script:Inventory = [string][char]0x041E + [string][char]0x0411 + '.099.' + $Unit
 
@@ -286,12 +286,15 @@ function Get-PathAccessRules([string]$Path) {
 function Get-UserWritablePath([string]$Exe) {
     $path = $Exe; $mask = $script:ExeWriteMask; $level = 0
     while ($path) {
+        $parent = [IO.Path]::GetDirectoryName($path)
+        # A drive root cannot be deleted or renamed: its own Delete right (Modify on D:\ of the press PC) does not count.
+        $own = if ($parent) { $mask } else { $mask -band (-bnot 0x10000) }
         foreach ($rule in (Get-PathAccessRules $path)) {
-            if ($script:UserSids -contains $rule['sid'] -and ($rule['rights'] -band $mask)) { return $path }
+            if ($script:UserSids -contains $rule['sid'] -and ($rule['rights'] -band $own)) { return $path }
         }
         $level++
         $mask = if ($level -eq 1) { $script:BinWriteMask } else { $script:PathWriteMask }
-        $path = [IO.Path]::GetDirectoryName($path)
+        $path = $parent
     }
     return ''
 }
