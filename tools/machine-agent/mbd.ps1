@@ -13,9 +13,24 @@ $script:sp = $null
 $script:allowedWrite = @(@(20, 53), @(400, 484), @(599, 599), @(600, 600), @(730, 730), @(940, 969), @(1087, 1089))
 $script:allowedPulse = @{ 599 = @(0, 2); 600 = @(1, 4) }
 
+# Log rotation (PowerShell 2.0): when the log reaches $MaxBytes it becomes .1, .1 becomes .2 and so on; the oldest
+# (.$Keep) is dropped. Same function in mbd.ps1, ob019-bridge.ps1 (also used by ob019-writer.ps1) and ob099-agent.ps1.
+function Invoke-LogRotation([string]$Path, [long]$MaxBytes = 5242880, [int]$Keep = 3) {
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    if ((Get-Item -LiteralPath $Path).Length -lt $MaxBytes) { return $false }
+    $oldest = $Path + '.' + $Keep
+    if (Test-Path -LiteralPath $oldest) { Remove-Item -Force -LiteralPath $oldest }
+    for ($i = $Keep - 1; $i -ge 1; $i--) {
+        $from = $Path + '.' + $i
+        if (Test-Path -LiteralPath $from) { Move-Item -Force -LiteralPath $from ($Path + '.' + ($i + 1)) }
+    }
+    Move-Item -Force -LiteralPath $Path ($Path + '.1')
+    return $true
+}
+
 function Write-MbLog([string]$s) {
     $line = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff') + ' ' + $s
-    try { Add-Content -Path $script:log -Value $line -Encoding UTF8 } catch { }
+    try { [void](Invoke-LogRotation $script:log); Add-Content -Path $script:log -Value $line -Encoding UTF8 } catch { }
 }
 
 function Get-Crc([byte[]]$b, [int]$n) {

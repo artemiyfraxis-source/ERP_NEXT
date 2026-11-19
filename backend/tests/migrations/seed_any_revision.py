@@ -182,9 +182,8 @@ def _row(table: Table, index: int, parents: dict[str, list[Any]], lots: list[Any
         if _database_assigns(table, column, dialect):
             continue
         name = column.name
-        if (table.name, name) in {("warehouse_scan_jobs", "capture_settings"),
-                                  ("production_vswr_measurements", "repeat_set")}:
-            # Reflection forgets JSON(none_as_null=True); omission keeps SQL NULL (0200: a repeat set needs repeat_of).
+        if (table.name, name) in {("warehouse_scan_jobs", "capture_settings"), ("production_vswr_measurements", "repeat_set")}:
+            # Reflection forgets JSON(none_as_null=True); omission keeps SQL NULL (a repeat set needs its repeat, 0200).
             continue
         if (table.name, name) in _OVER_CHECK:
             row[name] = _OVER_CHECK[(table.name, name)]
@@ -207,10 +206,7 @@ def _row(table: Table, index: int, parents: dict[str, list[Any]], lots: list[Any
         if name == "lot_id" and lots:
             row[name] = lots[index % len(lots)]
             continue
-        # A coupled value is explicit intent and wins over a value read off a CHECK: 0200's verdict rule names
-        # `verdict_manual OR (... verdict = 'fail') ... verdict IN (...)`, which the IN-reader pins on verdict_manual.
-        if ((table.name, name) in checks and (table.name, name) not in _SHAPED_VALUES
-                and (table.name, name) not in _COUPLED_VALUES):
+        if (table.name, name) in checks and (table.name, name) not in _SHAPED_VALUES:
             row[name] = checks[(table.name, name)]
             continue
         row[name] = _value(table.name, column, index)
