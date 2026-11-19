@@ -150,6 +150,14 @@ def _close_run(session, row, now: datetime, principal, why: str) -> None:
         raise HTTPException(409, str(error)) from error
 
 
+def _lock_run(session, job_id: UUID) -> None:
+    """Lock the machine's run row before the job row: the card close and the write check lock run → job, so finish and
+    cancel take the same order (no deadlock on PostgreSQL)."""
+    job = session.get(jobs.ManualJobRow, job_id)
+    if job is not None:
+        runs.current(session, job.equipment_id, for_update=True)
+
+
 def _errors(error: Exception) -> HTTPException:
     if isinstance(error, KeyError):
         return HTTPException(404, error.args[0] if error.args else "Не найдено")
@@ -254,6 +262,7 @@ def finish(job_id: UUID, payload: FinishPayload, principal: Writer, factory: Fac
         session = uow.session
         result = jobs.Finish(payload.good, payload.defect, payload.defect_reason, payload.material,
                              payload.material_note)
+        _lock_run(session, job_id)
         try:
             row = jobs.finish(session, job_id, payload.version, result, actor_name=principal.actor.name, now=now)
         except (KeyError, jobs.ManualJobInvalid, jobs.ManualJobConflict) as error:
@@ -272,6 +281,7 @@ def finish(job_id: UUID, payload: FinishPayload, principal: Writer, factory: Fac
 def cancel(job_id: UUID, payload: CancelPayload, principal: Writer, factory: Factory, now: Now) -> dict:
     with factory() as uow:
         session = uow.session
+        _lock_run(session, job_id)
         try:
             row = jobs.cancel(session, job_id, payload.version, payload.reason, actor_name=principal.actor.name, now=now)
         except (KeyError, jobs.ManualJobInvalid, jobs.ManualJobConflict) as error:

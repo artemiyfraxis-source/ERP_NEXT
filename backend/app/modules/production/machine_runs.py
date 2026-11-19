@@ -295,6 +295,7 @@ MISMATCH = "Тираж на станке не совпадает с задани
 TOO_MANY = "Тираж на станке больше, чем осталось по заданию, — передайте задание заново"
 DONE_ALREADY = "Тираж задания уже выполнен — завершите задание или передайте новое"
 CUTTING = "Станок режет — сначала нажмите «Стоп», потом завершайте задание"
+CLOSE_CHECKING = "Запись задания ещё проверяется по счётчику станка — повторите через секунду"
 
 
 class RunRefused(Exception):
@@ -357,4 +358,6 @@ def close_for_manual(session: Session, equipment_id: UUID, job_id: UUID, now: da
     words, link_ok = rules.snapshot_words(snapshot), rules.link_status(snapshot, now) == "ok"
     if cutting_now(words, link_ok):
         raise RunRefused(CUTTING)
+    if run.get("check") == "pending":
+        raise RunRefused(CLOSE_CHECKING)
     return close(row, words, link_ok, now, actor_name, why)

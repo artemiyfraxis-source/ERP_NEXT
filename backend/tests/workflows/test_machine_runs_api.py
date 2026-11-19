@@ -473,3 +473,24 @@ def test_a_manual_job_is_not_finished_or_cancelled_from_its_window_while_the_mac
     done = _post(admin, path + "/finish", {"version": version, "good": 2, "material": "pending"})
     assert done.status_code == 200, done.text
     assert admin.get(RUN).json()["run"]["machine_count"] == 2
+
+
+def test_a_manual_job_is_not_closed_from_its_window_while_its_write_is_still_checked(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    machine.report()
+    job = _post(admin, "/api/production/manual-jobs", {"equipment_id": str(ob019), "purpose": "Проба",
+                                                       "quantity_planned": 4}).json()
+    sent = _post(admin, RUN, {"kind": "manual", "job_id": job["id"]}).json()["id"]
+    clock.now += timedelta(seconds=1)
+    machine.written(sent, fresh=False)  # answered before the bridge's next report: «проверяется»
+    version = admin.get(RUN).json()["manual"]["version"]
+    path = f"/api/production/manual-jobs/{job['id']}"
+    cancelled = _post(admin, path + "/cancel", {"version": version, "reason": "не тот провод"})
+    assert cancelled.status_code == 409 and cancelled.json()["detail"] == runs.CLOSE_CHECKING
+    assert _check(sessions, sent) == "pending"  # nothing saved
+    machine.report()  # the next report settles the check; now the window may close the job
+    state = admin.get(RUN).json()
+    assert state["run"]["stage"] == "ready"
+    cancelled = _post(admin, path + "/cancel", {"version": state["manual"]["version"], "reason": "не тот провод"})
+    assert cancelled.status_code == 200, cancelled.text
