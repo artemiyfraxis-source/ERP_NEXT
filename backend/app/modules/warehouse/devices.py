@@ -113,9 +113,10 @@ def control_capability(session, machine_id: str, now: datetime) -> list[str]:
         installed = tuple(int(p) for p in pc.version.split(".")) if pc else ()
     except ValueError:
         installed = ()
+    # Protocol 2 is a superset of 1: a v2 agent still serves v1 session commands.
     if (not pc or pc.legacy or len(installed) != 3 or installed <= (2, 7, 0) or not control
-            or control.version != 1 or reported < now - LIVE_FOR):
-        raise ScanJobClosed("Агент не поддерживает актуальный протокол vna_control версии 1")
+            or control.version not in (1, 2) or reported < now - LIVE_FOR):
+        raise ScanJobClosed("Агент не поддерживает актуальный протокол vna_control версии 1 или 2")
     return control.methods
 
 
