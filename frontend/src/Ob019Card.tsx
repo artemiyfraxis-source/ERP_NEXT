@@ -83,13 +83,14 @@ export function Ob019CardView({ card, controls }: { card: MachineCard; controls?
   </>;
 }
 
-export function Ob019Card({ equipmentId, title, close }: { equipmentId: string; title: string; close: () => void }) {
+export function Ob019Card({ equipmentId, title, close, actions }: { equipmentId: string; title: string; close: () => void; actions?: ReactNode }) {
   const load = useCallback((signal: AbortSignal) => machinesApi.card(equipmentId, signal), [equipmentId]);
   const { data, error } = usePolled(load, undefined, "Не удалось загрузить станок");
   return <PageWindow label={title} close={close} width={1100} dismissable>
     <section className="panel machine-card">
       <header className="machine-card-head">
         <h2>{title}</h2>
+        {actions}
         <button className="secondary small" onClick={close}>Закрыть</button>
       </header>
       {error && <div className="error-banner" role="alert">{error}</div>}

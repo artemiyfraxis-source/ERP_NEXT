@@ -110,7 +110,7 @@ it("shows the machine value beside each field and highlights an entered value th
 it("writes a changed value only after the confirmation with the machine state", async () => {
   const posts = server();
   render(<Ob019SettingsPanel inventory="ОБ.019" />);
-  expect(await screen.findByText("Можно записывать: готов, ждёт пуска, пульт PXS_HMI закрыт")).toBeInTheDocument();
+  expect(await screen.findByText("Можно записывать: готов, ждёт пуска, пульт станка на ПК закрыт")).toBeInTheDocument();
   await screen.findByText("на станке 325,00 мм");
   fireEvent.change(screen.getByLabelText("Длина провода: новое значение"), { target: { value: "326" } });
   fireEvent.click(screen.getByRole("button", { name: "Записать на станок (1)" }));
