@@ -74,28 +74,26 @@ export function progressText(control: VswrControl, required: { total: number; me
   return `померено ${required.measured} из ${required.total}${required.failed ? ` · брак ${required.failed}` : ""}`;
 }
 
-/* «На границе» (владелец 19.11: «годен / брак / на границе»): годен, но запас до нормы меньше 10 % отражения — КСВН
-   выше 1 + 0,9 × (норма − 1); при норме 1,35 это от 1,315. Вердикт ставит сервер, граница — только подсказка контролёру. */
-export const EDGE_SHARE = 0.1;
+/* «На границе» (владелец 19.11: «годен / брак / на границе») — решение сервера по правилу СТО ФРАК-002-2026 п. 13.3, как
+   у паспорта СИ: наибольший КСВН в пределах ±U ВАЦ от нормы — на границе допуска, повторить замер в 3 подключениях.
+   Экран границу не вычисляет; нет решения сервера — вердикт как записан. */
 export type VswrTone = "pass" | "edge" | "fail" | "none";
 export const VSWR_TONES: Record<VswrTone, { label: string; tone: Tone; hint: string }> = {
   pass: { label: "Годен", tone: "success", hint: "в норме" },
-  edge: { label: "На границе", tone: "warning", hint: "годен, запас до нормы меньше 10 %" },
-  fail: { label: "Брак", tone: "danger", hint: "выше нормы" },
+  edge: { label: "На границе", tone: "warning", hint: "в пределах погрешности ВАЦ от нормы — повторить 3 подключения" },
+  fail: { label: "Брак", tone: "danger", hint: "не соответствует норме" },
   none: { label: "Не измерено", tone: "neutral", hint: "замера нет" },
 };
 
-export function vswrTone(measurement: Pick<VswrMeasurement, "verdict" | "max_vswr" | "norm_vswr_max"> | null): VswrTone {
+export function vswrTone(measurement: Pick<VswrMeasurement, "verdict" | "decision"> | null): VswrTone {
   if (!measurement) return "none";
-  if (measurement.verdict === "fail") return "fail";
-  const { max_vswr: peak, norm_vswr_max: limit } = measurement;
-  if (peak != null && limit != null && limit > 1 && peak >= 1 + (1 - EDGE_SHARE) * (limit - 1)) return "edge";
-  return "pass";
+  if (measurement.decision?.status === "border") return "edge";
+  return measurement.verdict === "fail" ? "fail" : "pass";
 }
 
 const verdictChip = (measurement: VswrMeasurement | null) => {
   const tone = VSWR_TONES[vswrTone(measurement)];
-  return <StatusChip status={tone.label} tone={tone.tone} title={tone.hint} />;
+  return <StatusChip status={tone.label} tone={tone.tone} title={measurement?.decision?.text || measurement?.verdict_reason || tone.hint} />;
 };
 
 const LOOKALIKE: Record<string, string> = { A: "А", B: "В", C: "С", E: "Е", H: "Н", K: "К", M: "М", O: "О", P: "Р", T: "Т", X: "Х", Y: "У" };
@@ -232,6 +230,7 @@ export function VswrSection({ instruments, choices, taskId, onTaskChange, onOver
   const sample = control.mode === "sample";
   const measuredAny = Boolean(overview?.serials.some((row) => row.latest));
   const failed = overview?.serials.filter((row) => row.latest?.verdict === "fail").length ?? 0;
+  const reasons = Boolean(overview?.serials.some((row) => row.latest?.verdict === "fail" && row.latest.verdict_reason));
   const anyMax = choices.some((item) => item.required.max_vswr != null);
   const anyFailed = choices.some((item) => item.required.failed);
 
@@ -261,6 +260,9 @@ export function VswrSection({ instruments, choices, taskId, onTaskChange, onOver
     ...(sample ? [{ key: "sample", title: "Выборка", filter: true, value: (row: VswrSerialRow) => (row.in_sample ? "в выборке" : "вне выборки"),
       render: (row: VswrSerialRow) => (row.in_sample ? <StatusChip status="в выборке" tone="info" /> : <span className="muted">вне выборки</span>) }] : []),
     { key: "verdict", title: "Вердикт", value: (row) => VSWR_TONES[vswrTone(row.latest)].label, filter: true, render: (row) => verdictChip(row.latest) },
+    // Почему брак — как записал сервер («Не измерен конец Б», «Конец А: КСВН выше нормы»); колонка — только когда есть брак с причиной.
+    ...(reasons ? [{ key: "reason", title: "Причина", wrap: true, value: (row: VswrSerialRow) => (row.latest?.verdict === "fail" ? row.latest.verdict_reason : ""),
+      render: (row: VswrSerialRow) => (row.latest?.verdict === "fail" && row.latest.verdict_reason ? row.latest.verdict_reason : <span className="muted">—</span>) }] : []),
     // Колонки замера — только когда в задании есть хоть один замер: до замеров не рисуем столбцы из одних прочерков.
     ...(measuredAny ? [
       { key: "max", title: "Макс. КСВН", value: (row: VswrSerialRow) => row.latest?.max_vswr ?? "", numeric: true,
@@ -480,6 +482,8 @@ function VswrUploadWindow({ task, norm, row, instruments, capture, flow, close, 
         {result.norm_vswr_max !== null && <> · норма ≤ {num(result.norm_vswr_max)}</>}
       </p>
       {result.verdict_manual && <p className="vswr-norm is-undefined">Вердикт назначен контролёром: {result.verdict_reason}</p>}
+      {result.decision?.status === "border" && <p className="warning-inline" role="status">{result.decision.text}{result.decision.uncertainty != null ? ` (погрешность ВАЦ ±${num(result.decision.uncertainty, 3)})` : ""}.</p>}
+      {!result.verdict_manual && result.verdict === "fail" && result.verdict_reason && result.decision?.status !== "border" && <p className="danger-text">{result.verdict_reason}</p>}
       <VswrChart trace={result.trace ?? []} normMax={result.norm_vswr_max} band={result.band_mhz} maxVswr={result.max_vswr} maxMhz={result.max_vswr_mhz} />
       <div className="form-actions">
         {result.verdict === "fail" && canReject && <button className="secondary small" onClick={() => onReject({

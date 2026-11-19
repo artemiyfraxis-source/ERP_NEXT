@@ -639,12 +639,23 @@ it("shows the units with their latest measurement and verdict colours", async ()
   expect(within(group).getByRole("link", { name: "Файл" })).toHaveAttribute("href", "/api/production/vswr/measurements/78000000-0000-0000-0000-000000000001/file");
 });
 
-it("calls a pass close to the norm «на границе»", () => {
+it("takes «на границе» from the server decision, never from its own margin", () => {
   expect(vswrTone(null)).toBe("none");
-  expect(vswrTone({ verdict: "fail", max_vswr: 1.1, norm_vswr_max: 1.35 })).toBe("fail");
-  expect(vswrTone({ verdict: "pass", max_vswr: 1.32, norm_vswr_max: 1.35 })).toBe("edge");
-  expect(vswrTone({ verdict: "pass", max_vswr: 1.3, norm_vswr_max: 1.35 })).toBe("pass");
-  expect(vswrTone({ verdict: "pass", max_vswr: 1.3, norm_vswr_max: null })).toBe("pass");
+  expect(vswrTone({ verdict: "fail" })).toBe("fail");
+  expect(vswrTone({ verdict: "pass" })).toBe("pass");
+  // 1,34 при норме 1,35 без решения сервера (ВАЦ без известной погрешности) — годен, экран границу не придумывает.
+  expect(vswrTone({ verdict: "pass", decision: { status: "pass", uncertainty: null, text: "" } })).toBe("pass");
+  expect(vswrTone({ verdict: "fail", decision: { status: "border", uncertainty: 0.022, text: "На границе допуска" } })).toBe("edge");
+});
+
+it("shows the server's border decision and why a unit is rejected", async () => {
+  const border = measurement("fail", { max_vswr: 2.07, verdict_reason: "Конец А: КСВН выше нормы",
+    decision: { status: "border", uncertainty: 0.022, text: "На границе допуска — нужен повторный замер (3 подключения с поворотом 120°)" } });
+  const group = await openVswr(okNorm, border);
+  const row = within(group).getByText("ПЗ-0001-01").closest("tr") as HTMLElement;
+  expect(within(row).getByText("На границе")).toHaveAttribute("title", "На границе допуска — нужен повторный замер (3 подключения с поворотом 120°)");
+  expect(within(row).getByText("Конец А: КСВН выше нормы")).toBeInTheDocument();
+  expect(within(group).getByRole("columnheader", { name: "Причина" })).toBeInTheDocument();
 });
 
 it("resolves a scanned serial: the ERP number, the factory FRX label within the project, or a position", () => {
