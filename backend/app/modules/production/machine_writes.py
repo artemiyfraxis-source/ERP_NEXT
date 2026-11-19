@@ -27,6 +27,7 @@ from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, Index, Integ
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
+from app.shared.clock import MOSCOW
 from app.shared.persistence import Base
 
 from . import machines as rules
@@ -269,12 +270,20 @@ def latest(session: Session, equipment_id: UUID, now: datetime, limit: int = 5) 
                                 .order_by(MachineWriteRow.created_at.desc()).limit(limit)))
 
 
+def moment(value: datetime | None) -> str | None:
+    """A stored moment for the screen, always with its zone: SQLite (tests, preview) returns it naive in shop time —
+    without the zone the browser read it as its own local time and «Последние записи» disagreed with «Последний сигнал»."""
+    if value is None:
+        return None
+    return (value.replace(tzinfo=MOSCOW) if value.tzinfo is None else value).isoformat()
+
+
 def command_view(row: MachineWriteRow) -> dict:
     text, tone = STATUS_TEXTS[row.status]
     return {"id": str(row.id), "status": row.status, "status_text": text, "tone": tone, "purpose": row.purpose,
             "summary": row.summary, "fields": row.payload.get("fields", []), "error": row.error,
-            "created_by": row.created_by_name, "created_at": row.created_at.isoformat(),
-            "finished_at": row.finished_at.isoformat() if row.finished_at else None}
+            "created_by": row.created_by_name, "created_at": moment(row.created_at),
+            "finished_at": moment(row.finished_at)}
 
 
 # --- corrections «станок режет не так» ---

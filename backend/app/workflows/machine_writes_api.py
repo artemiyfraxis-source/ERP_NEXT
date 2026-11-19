@@ -182,7 +182,7 @@ def _offset_rows(session, equipment_id: UUID) -> list[dict]:
         row = stored.get(key)
         rows.append({"key": key, "label": rules.OB019_FIELDS[key].label, "offset": _shown(commands.offset_value(row)),
                      "reason": row.reason if row else "", "updated_by": row.updated_by_name if row else "",
-                     "updated_at": row.updated_at.isoformat() if row else None, "etk": key in ETK_SIDES})
+                     "updated_at": commands.moment(row.updated_at) if row else None, "etk": key in ETK_SIDES})
     return rows
 
 
