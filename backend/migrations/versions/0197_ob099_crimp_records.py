@@ -8,8 +8,8 @@ Nothing existing is rewritten. Not destructive."""
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0195_ob099_crimp_records"
-down_revision = "0194_si_norm_assignment"
+revision = "0197_ob099_crimp_records"
+down_revision = "0196_machine_writes"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False
