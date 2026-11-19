@@ -65,7 +65,7 @@ def test_etk_nominal_without_recipe_full_partial_and_no_strip():
     values = by_key(ob019_proposal(None, EtkNominal("МГТФ 0,12", Decimal(160), Decimal(4), Decimal(0),
                                                     partial_front=False, conductor_mm=Decimal("0.39"))))
     assert values["strip_front_mm"] == (Decimal(4), "ЭТК")
-    assert values["pull_front_mm"] == (Decimal(4), "ЭТК: полное снятие")
+    assert values["pull_front_mm"] == (Decimal("6.00"), "ЭТК: стягивание (зачистка + 2,00)")  # past the 4 мм strip
     assert values["pull_back_mm"] == (Decimal(0), "ЭТК: без зачистки")
     assert values["diameter_mm"] == (Decimal("0.49"), "Ø жилы + 0,10")  # owner 19.11.2026
     assert values["knife_back_mm"] == (None, "Нет данных")
