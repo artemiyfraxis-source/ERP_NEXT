@@ -226,6 +226,44 @@ def _wire_marks(op: Mapping[str, Any]) -> bool:
     return bool(op.get("wireMarks")) and _mark_tube(op)
 
 
+LASER_CUT_TYPES = {"cutWire", "cutWireStrip"}
+
+
+def _laser_mark(op: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """Лазерная маркировка провода на ОБ.019 (generator, owner 20.11): only a cut without crimping carries it."""
+    mark = op.get("laserMark")
+    return mark if op.get("type") in LASER_CUT_TYPES and isinstance(mark, Mapping) else None
+
+
+def _mark_media(op: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """Чем печатать маркировку проводов (generator, owner 20.11): `{kind: tube|tape, sizeMm}`; None — as before 20.11."""
+    media = op.get("markMedia")
+    return media if _wire_marks(op) and isinstance(media, Mapping) and media.get("kind") in {"tube", "tape"} else None
+
+
+def _laser_step_text(mark: Mapping[str, Any]) -> str:
+    text = lambda key: str(mark.get(key) or "").strip()  # noqa: E731
+    if mark.get("mode") == "full":
+        return f"Маркировка лазером: по всей длине «{text('middle') or text('front')}» шаг {_format(mark.get('stepMm'))} мм"
+    front, back = _format(mark.get("frontMm")), _format(mark.get("backMm"))
+    offsets = front if front == back else f"{front} / {back}"
+    return f"Маркировка лазером: по краям «{text('front')}» / «{text('back')}», {offsets} мм от торца"
+
+
+def _media_step_text(media: Mapping[str, Any], op: Mapping[str, Any]) -> str:
+    size = _format(media.get("sizeMm"))
+    head = f"Маркировка: трубка Ø {size}" if media.get("kind") == "tube" else f"Маркировка: лента {size} мм"
+    texts = [str(text).strip() for text in _list(op.get("markTexts")) if str(text).strip()]
+    return f"{head} " + "; ".join(f"«{text}»" for text in texts) if texts else head
+
+
+def _with_mark_step(steps: list[dict[str, Any]], text: str) -> list[dict[str, Any]]:
+    """The marking line goes before the first check (the checks see the marks too); the steps are renumbered."""
+    at = next((index for index, step in enumerate(steps) if step.get("kind") == "Контроль"), len(steps))
+    line = {"number": "", "kind": "Операция", "text": text, "tolerance": ""}
+    return [{**step, "number": str(index)} for index, step in enumerate([*steps[:at], line, *steps[at:]], start=1)]
+
+
 def _tut_parts(op: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Pieces of a cut of several kit tubes (`tutParts`: art, name, count per item, length); [] — one tube (`tutArt`)."""
     parts = []
@@ -902,6 +940,9 @@ def _components(
         metres = _cut_tube_metres(op, quantity)
         if metres:
             return metres
+    if operation_type == "cutTut" and (_mark_media(op) or {}).get("kind") == "tape":
+        # Лента маркировки проводов (владелец 20.11) — расходник маркиратора, не позиция состава.
+        return []
     if operation_type == "cutTut" and _wire_marks(op) and (parts := _tut_parts(op)) and all(_decimal(part["len"]) > 0 for part in parts):
         # Маркировка проводов: трубка в комплектации в метрах — отрезков × длина на партию.
         return [{"art": part["art"], "name": part["name"], "norm": _format(part["count"] * _decimal(part["len"]) / 1000 * quantity),
@@ -1830,6 +1871,10 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
             fields["coaxFakraPrep"] = end["kind"]
     if op.get("connColor"):
         fields["connColor"] = deepcopy(op["connColor"])
+    if (laser := _laser_mark(op)) is not None:
+        fields["laserMark"] = deepcopy(dict(laser))  # карта станка ОБ.019 читает поле как есть
+    if (media := _mark_media(op)) is not None:
+        fields["markMedia"] = deepcopy(dict(media))
     fields.update(coax_sketch_fields(op, config))
     if operation_type == "coaxShield":
         hexes = coax_crimp_hex(config)
@@ -2770,6 +2815,10 @@ def _typed_operation(
                                           for i, text in enumerate(extra, start=1)] + operation["card"]["steps"]
             for i, step in enumerate(operation["card"]["steps"], start=1):
                 step["number"] = str(i)
+    if operation["card"] is not None and (laser := _laser_mark(op)) is not None:
+        operation["card"]["steps"] = _with_mark_step(operation["card"]["steps"], _laser_step_text(laser))
+    if operation["card"] is not None and op.get("type") == "cutTut" and (media := _mark_media(op)) is not None:
+        operation["card"]["steps"] = _with_mark_step(operation["card"]["steps"], _media_step_text(media, op))
     if config.get("mode") == "rework":
         operation["title"] = label
         if operation["card"] is not None:
