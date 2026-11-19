@@ -134,9 +134,9 @@ def test_clear_printer_command_holds_the_queue_until_the_agent_reports(marking):
     path = BASE + f"/machines/{equipment_id}/printer/clear"
     body = {"reason": "Старые флажки в буфере"}
     refused = client.post(path, json=body)
-    assert refused.status_code == 409 and "2.10.0" in refused.json()["detail"]  # the fixture agent is 2.9.0
+    assert refused.status_code == 409 and "2.11.0" in refused.json()["detail"]  # the fixture agent is 2.9.0
     with factory() as uow:
-        uow.session.get(ScanAgentRow, "godex-pc").version = "2.10.0"
+        uow.session.get(ScanAgentRow, "godex-pc").version = "2.11.0"
         uow.commit()
     assert client.post(path, json={"reason": ""}).status_code == 422
     response = client.post(path, json=body)
@@ -160,7 +160,7 @@ def test_clear_printer_command_holds_the_queue_until_the_agent_reports(marking):
 def test_clear_printer_command_not_taken_expires_as_failed(marking):
     client, factory, _payload, _task, _card, equipment_id, _ = marking
     with factory() as uow:
-        uow.session.get(ScanAgentRow, "godex-pc").version = "2.10.0"
+        uow.session.get(ScanAgentRow, "godex-pc").version = "2.11.0"
         uow.commit()
     assert client.post(BASE + f"/machines/{equipment_id}/printer/clear", json={"reason": "Сбой"}).status_code == 200
     assert claim_command(factory(), machine_id="godex-pc", token_id=uuid4(), now=NOW + timedelta(minutes=3)) is None
@@ -189,3 +189,56 @@ def test_peel_flag_travels_to_the_agent_and_does_not_reset_calibration(marking):
     assert response.json()["calibrated"] is True and response.json()["geometry"]["peel"] is False
     [event] = events(factory, "production.marking_profile_saved")
     assert event.details["peel"] is False
+
+
+def test_reprint_is_refused_when_the_task_serial_range_moved(marking, monkeypatch):
+    import app.workflows.marking_labels as workflow
+
+    client, factory, *_ = marking
+    batch, _, _ = enqueue(marking)
+    spool_all(factory, uuid4())
+    monkeypatch.setattr(workflow, "issue_mark_serials_in", lambda *args, **kwargs: (90, 94))
+    response = client.post(BASE + f"/batches/{batch['id']}/reprint", json={"sequences": [1], "reason": "Брак", "idempotency_key": "moved"})
+    assert response.status_code == 409 and "Номера задания изменились" in response.json()["detail"]
+    with factory() as uow:
+        assert len(list(uow.session.scalars(select(MarkingBatchRow)))) == 1
+
+
+def test_reprint_is_refused_for_pending_and_taken_labels(marking):
+    client, factory, *_ = marking
+    batch, _, _ = enqueue(marking)
+    claim_marking(factory(), machine_id="godex-pc", token_id=uuid4(), now=NOW)  # №1 taken, the rest pending
+    path = BASE + f"/batches/{batch['id']}/reprint"
+    for sequence in (1, 5):
+        response = client.post(path, json={"sequences": [sequence], "reason": "Брак", "idempotency_key": f"q-{sequence}"})
+        assert response.status_code == 409 and f"Этикетка №{sequence}" in response.json()["detail"]
+
+
+def test_clear_can_also_cancel_the_waiting_labels_of_the_queue(marking):
+    client, factory, _payload, _task, _card, equipment_id, _ = marking
+    batch, _, _ = enqueue(marking)
+    with factory() as uow:
+        uow.session.get(ScanAgentRow, "godex-pc").version = "2.11.0"
+        uow.commit()
+    machine = next(item for item in client.get(BASE + "/machines").json()["machines"] if item["equipment_id"] == str(equipment_id))
+    assert machine["binding"]["pending_jobs"] == 15
+    response = client.post(BASE + f"/machines/{equipment_id}/printer/clear", json={"reason": "Буфер", "cancel_pending": True})
+    assert response.status_code == 200, response.text
+    assert response.json()["cancelled_jobs"] == 15
+    view = client.get(BASE + f"/batches/{batch['id']}").json()
+    assert view["withdrawn"] == 15 and view["jobs"][0]["message"] == "Отменено: очистка принтера: Буфер"
+    [event] = events(factory, "production.marking_cancelled")
+    assert event.details["count"] == 15 and event.details["reason"] == "Очистка принтера: Буфер"
+    [requested] = events(factory, "production.marking_printer_clear_requested")
+    assert requested.details["cancelled_jobs"] == 15
+
+
+def test_machines_show_the_agent_hold_reason_of_the_printer(marking):
+    client, factory, *_ = marking
+    with factory() as uow:
+        from app.modules.warehouse.devices import PrinterRow
+
+        uow.session.get(PrinterRow, ("godex-pc", "Godex EZ2350i")).hold = "Godex: отделитель (peel-off) выключен"
+        uow.commit()
+    [printer] = client.get(BASE + "/machines").json()["printers"]
+    assert printer["hold"] == "Godex: отделитель (peel-off) выключен"

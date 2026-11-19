@@ -17,13 +17,17 @@ export interface MarkingPrinterCommand {
   requested_by: string; created_at: string; finished_at: string | null; message: string;
   result: { removed_jobs?: number; buffer_cleared?: boolean };
 }
-export interface MarkingBinding { version: number; machine_id: string; printer: string; command?: MarkingPrinterCommand | null }
+export interface MarkingBinding { version: number; machine_id: string; printer: string; command?: MarkingPrinterCommand | null
+  /** Batch labels still waiting for this queue: they keep printing after «Очистить принтер» unless cancelled too. */
+  pending_jobs?: number }
 export interface MarkingMachine {
   equipment_id: string; inventory_number: string; name: string; profiles: MarkingProfile[]; binding: MarkingBinding | null;
 }
 export interface MarkingPrinter {
   machine_id: string; pc: string; name: string; driver: string; port: string; kind: string; present: boolean; online: boolean;
   ip?: string;
+  /** Why the agent holds marking on this queue (peel-off check failed); empty — printing. */
+  hold?: string;
 }
 export interface MarkingCatalog { machines: MarkingMachine[]; printers: MarkingPrinter[] }
 export type MarkingSource = { task_id: string; operation_id: string; version: number } | { group_id: string; version: number };
@@ -70,7 +74,8 @@ export const markingApi = {
     post<MarkingBatch>(`/batches/${encodeURIComponent(batchId)}/jobs/${encodeURIComponent(jobId)}/resolve`, { outcome, reason }),
   cancelRest: (batchId: string, reason: string) => post<MarkingBatch>(`/batches/${encodeURIComponent(batchId)}/cancel`, { reason }),
   reprint: (batchId: string, body: MarkingReprintRequest) => post<MarkingBatch>(`/batches/${encodeURIComponent(batchId)}/reprint`, body),
-  clearPrinter: (equipmentId: string, reason: string) => post<MarkingPrinterCommand>(`/machines/${encodeURIComponent(equipmentId)}/printer/clear`, { reason }),
+  clearPrinter: (equipmentId: string, reason: string, cancelPending = false) =>
+    post<MarkingPrinterCommand & { cancelled_jobs?: number }>(`/machines/${encodeURIComponent(equipmentId)}/printer/clear`, { reason, cancel_pending: cancelPending }),
   printerCommand: (equipmentId: string, signal?: AbortSignal) =>
     api<MarkingPrinterCommand | null>(`${root}/machines/${encodeURIComponent(equipmentId)}/printer/command`, { signal }),
 };

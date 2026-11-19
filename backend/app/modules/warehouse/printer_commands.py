@@ -20,12 +20,13 @@ from uuid import UUID, uuid4
 from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Index, String, Text, Uuid, select, text, update
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.shared.events import AuditEvent
 from app.shared.persistence import Base
 
 COMMAND_LEASE = timedelta(seconds=90)
 COMMAND_WAIT = timedelta(minutes=2)
 # The first agent that executes printer commands and enforces peel-off (tools/print-agent/agent.ps1).
-MIN_AGENT_VERSION = (2, 10, 0)
+MIN_AGENT_VERSION = (2, 11, 0)
 OPEN = ("pending", "taken")
 STATUS_LABELS = {"pending": "Ждёт агента", "taken": "Выполняется", "done": "Выполнено", "failed": "Не выполнено"}
 NOT_TAKEN = "Агент печати не забрал команду — проверьте, что он запущен на ПК принтера"
@@ -174,8 +175,8 @@ def claim_command(uow, *, machine_id: str, token_id: UUID, now: datetime) -> dic
 
 
 def report_command(uow, command_id: UUID, *, machine_id: str, token_id: UUID, attempt: str, outcome: str, message: str,
-                   result: dict, now: datetime) -> str:
-    """The agent's result for one attempt. Idempotent for the same attempt and outcome; KeyError — no such command."""
+                   result: dict, now: datetime, actor=None) -> str:
+    """The agent's result for one attempt, journaled. Idempotent for the same attempt and outcome; KeyError — no such command."""
     if outcome not in ("done", "failed"):
         raise ValueError("Неизвестный итог команды")
     message = " ".join((message or "").split())[:2000]
@@ -198,5 +199,9 @@ def report_command(uow, command_id: UUID, *, machine_id: str, token_id: UUID, at
             .execution_options(synchronize_session=False))
         if changed.rowcount != 1:
             raise CommandFinished("Итог команды уже записан")
+        if actor is not None:
+            uow.audit.add(AuditEvent(id=uuid4(), aggregate_id=row.equipment_id, event_type="production.marking_printer_cleared",
+                actor=actor, occurred_at=now, details={"command_id": str(row.id), "machine_id": row.machine_id,
+                    "printer": row.printer, "outcome": outcome, "message": message, **(result or {})}))
         uow.commit()
         return outcome

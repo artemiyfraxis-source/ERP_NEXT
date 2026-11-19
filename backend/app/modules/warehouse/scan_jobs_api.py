@@ -293,6 +293,8 @@ class PrinterCapability(BaseModel):
     port: str = Field(default="", max_length=255)
     kind: Literal["tspl", "gdi_png"]
     present: bool = True
+    # Agent 2.11.0+: why marking on this queue is held (peel-off check failed); empty — printing.
+    hold: str = Field(default="", max_length=2000)
 
 
 AgentHeartbeatInput.model_rebuild()

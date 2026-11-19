@@ -58,6 +58,8 @@ it("reprints a serial range as a new batch and reuses the key after a lost answe
   const onReprinted = vi.fn();
   render(<MarkingBatchProgress initial={batch} onReprinted={onReprinted} />);
   fireEvent.click(await screen.findByRole("button", { name: "Перепечатать номера…" }));
+  expect(screen.getByLabelText("№ этикеток партии")).toHaveValue("1–5");
+  fireEvent.change(screen.getByLabelText("Что перепечатать"), { target: { value: "serials" } });
   expect(screen.getByLabelText("Номер с")).toHaveValue(11);
   expect(screen.getByLabelText("Номер по")).toHaveValue(13);
   fireEvent.change(screen.getByLabelText("Номер с"), { target: { value: "12" } });
@@ -78,7 +80,6 @@ it("reprints selected labels of a batch by number and refuses numbers outside it
   vi.spyOn(markingApi, "reprint").mockResolvedValue({ ...structuredClone(batch), id: "batch-3" });
   render(<MarkingBatchProgress initial={batch} />);
   fireEvent.click(await screen.findByRole("button", { name: "Перепечатать номера…" }));
-  fireEvent.change(screen.getByLabelText("Что перепечатать"), { target: { value: "labels" } });
   fireEvent.change(screen.getByLabelText("№ этикеток партии"), { target: { value: "2, 9" } });
   fireEvent.change(screen.getByLabelText("Причина повторной печати"), { target: { value: "Брак" } });
   expect(screen.getByRole("button", { name: "Перепечатать" })).toBeDisabled();
@@ -107,7 +108,7 @@ it("clears the printer from the machine card with a reason and follows the agent
   expect(submit).toBeDisabled();
   fireEvent.change(screen.getByLabelText("Причина очистки"), { target: { value: "Старые флажки" } });
   fireEvent.click(submit);
-  await waitFor(() => expect(markingApi.clearPrinter).toHaveBeenCalledExactlyOnceWith("unit", "Старые флажки"));
+  await waitFor(() => expect(markingApi.clearPrinter).toHaveBeenCalledExactlyOnceWith("unit", "Старые флажки", false));
   expect(await screen.findByText("Очистка принтера: Ждёт агента")).toBeVisible();
   expect(screen.getByRole("button", { name: "Очистить принтер…" })).toBeDisabled();
   expect(await screen.findByText("Очистка принтера: Выполнено", {}, { timeout: 4000 })).toBeVisible();
@@ -122,4 +123,22 @@ it("toggles the peel-off dispenser without dropping calibration", async () => {
   expect(screen.getByText("Откалиброван")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Сохранить профиль" }));
   await waitFor(() => expect(markingApi.profile).toHaveBeenCalledExactlyOnceWith(profile, { ...profile.geometry, peel: false }, true, profile.name));
+});
+
+it("tells that waiting batch labels keep printing after the clearing and can cancel them too", async () => {
+  const withPending = structuredClone(catalog);
+  withPending.machines[0].binding = { ...withPending.machines[0].binding!, pending_jobs: 7 };
+  withPending.printers[0].hold = "Godex: отделитель (peel-off) выключен";
+  vi.mocked(markingApi.machines).mockResolvedValue(withPending);
+  vi.spyOn(markingApi, "clearPrinter").mockResolvedValue({ ...structuredClone(command), cancelled_jobs: 7 });
+  vi.spyOn(markingApi, "printerCommand").mockResolvedValue(structuredClone(command));
+  render(<MarkingProfilesWindow equipmentIds={["unit"]} canEdit close={vi.fn()} />);
+  expect(await screen.findByText("Маркировка на паузе: Godex: отделитель (peel-off) выключен")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Очистить принтер…" }));
+  expect(screen.getByText(/ещё не переданные принтеру \(7 шт\.\), после очистки продолжат печататься/)).toBeVisible();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Отменить оставшиеся 7 эт. партий на этом принтере" }));
+  fireEvent.change(screen.getByLabelText("Причина очистки"), { target: { value: "Старые флажки" } });
+  fireEvent.click(screen.getByRole("button", { name: "Очистить принтер" }));
+  await waitFor(() => expect(markingApi.clearPrinter).toHaveBeenCalledExactlyOnceWith("unit", "Старые флажки", true));
+  expect(await screen.findByText("Отменено этикеток партий: 7")).toBeVisible();
 });

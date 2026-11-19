@@ -23,7 +23,9 @@ from app.modules.references.infrastructure import EquipmentMachineRow
 from app.modules.techcards.etk_read import issued_card_for_item, pinned_card
 from app.modules.techcards.infrastructure import ProjectTechcardRow, SqlAlchemyTechcardRepository
 from app.modules.warehouse.devices import PrinterRow, printer_online
-from app.modules.warehouse.label_jobs import JobFinished, LabelJobRow, add_marking_job, cancel_pending_marking, expire_marking
+from app.modules.warehouse.label_jobs import (
+    JobFinished, LabelJobRow, add_marking_job, cancel_pending_marking, expire_marking, pending_marking_by_printer,
+)
 from app.modules.warehouse.marking_profiles import MarkingBatchRow, MarkingBindingRow, MarkingProfileRow
 from app.modules.warehouse.marking_render import Geometry, halves, render
 from app.modules.warehouse.printer_commands import CommandBusy, command_view, expire_commands, latest_command, request_clear
@@ -113,8 +115,9 @@ def binding_view(row, session=None):
         return None
     result = {"version": row.version, "machine_id": row.machine_id, "printer": row.printer}
     if session is not None:
-        # «Очистить принтер»: the latest command on this queue and how it ended.
+        # «Очистить принтер»: the latest command on this queue and how it ended; batch labels still waiting for it.
         result["command"] = command_view(latest_command(session, row.machine_id, row.printer))
+        result["pending_jobs"] = sum(len(items) for items in pending_marking_by_printer(session, row.machine_id, row.printer).values())
     return result
 
 
@@ -160,7 +163,8 @@ def machines(_principal: ReadUser, factory: Factory, now: Now):
             # Cloned PCs share a hostname: the IP and machine id tell them apart in the printer list.
             printers.append({"machine_id": pc.machine_id, "pc": pc.pc_name, "ip": pc.ip_lan or pc.ip_seen, "name": printer.name,
                 "driver": printer.driver, "port": printer.port, "kind": printer.kind, "present": printer.present,
-                "online": printer.present and seen >= now - LIVE_FOR})
+                "online": printer.present and seen >= now - LIVE_FOR,
+                "hold": printer.hold if printer.present and seen >= now - LIVE_FOR else ""})
         uow.commit()
         return {"machines": list(grouped.values()), "printers": printers}
 
@@ -804,13 +808,16 @@ def reprint_labels(batch_id: UUID, payload: ReprintInput, principal: PrintUser, 
 class ClearInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     reason: str = Field(min_length=1, max_length=1000, pattern=r"\S")
+    # Also «Отменить оставшиеся» of every batch on this queue: otherwise they keep printing after the clearing.
+    cancel_pending: bool = False
 
 
 @router.post("/machines/{equipment_id}/printer/clear")
 def clear_printer(equipment_id: UUID, payload: ClearInput,
                   principal: Annotated[Principal, Depends(production_edit_principal)], factory: Factory, now: Now):
     """«Очистить принтер»: the agent removes the queue's ERP marking jobs from Windows and empties the Godex buffer
-    (~S,BUFCLR). Jobs it removed are reported «Отменено» by the spool watch; the batch's pending jobs stay queued."""
+    (~S,BUFCLR). Jobs it removed are reported «Отменено» by the spool watch. The batches' pending jobs keep printing after
+    the clearing unless `cancel_pending` cancels them too (journaled per batch like «Отменить оставшиеся»)."""
     def run():
         with factory() as uow:
             binding = uow.session.get(MarkingBindingRow, equipment_id)
@@ -818,9 +825,18 @@ def clear_printer(equipment_id: UUID, payload: ClearInput,
                 raise KeyError("Принтер станка не привязан")
             row = request_clear(uow.session, equipment_id=equipment_id, machine_id=binding.machine_id, printer=binding.printer,
                                 reason=payload.reason, actor=principal.actor, now=now)
+            cancelled = 0
+            if payload.cancel_pending:
+                expire_marking(uow.session, now)
+                for batch_id in pending_marking_by_printer(uow.session, binding.machine_id, binding.printer):
+                    sequences = cancel_pending_marking(uow.session, batch_id, reason=f"очистка принтера: {row.reason}", now=now)
+                    if sequences:
+                        cancelled += len(sequences)
+                        audit(uow, principal.actor, now, batch_id, "cancelled", sequences=sequences, count=len(sequences),
+                              reason=f"Очистка принтера: {row.reason}")
             audit(uow, principal.actor, now, equipment_id, "printer_clear_requested", command_id=str(row.id),
-                  machine_id=binding.machine_id, printer=binding.printer, reason=row.reason)
-            result = command_view(row)
+                  machine_id=binding.machine_id, printer=binding.printer, reason=row.reason, cancelled_jobs=cancelled)
+            result = {**command_view(row), "cancelled_jobs": cancelled}
             uow.commit()
             return result
     return checked(run)

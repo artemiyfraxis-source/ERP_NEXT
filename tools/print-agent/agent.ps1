@@ -8,7 +8,7 @@
  Свой сканер (28.10.2026): задание приходит с выбранным человеком сканером (WIA DeviceID или имя) - сканирует он;
  его нет на этом ПК - ошибка без подмены; без выбора WIA допускает только единственное устройство.
  Новая версия агента лежит на сервере: агент скачивает её, сверяет SHA-256, подменяет себя и перезапускает задачу.
- Управление Godex из ERP (2.10.0, 19.11.2026): режим отделителя (peel-off) по профилю станка — агент держит его в DevMode
+ Управление Godex из ERP (2.11.0, 19.11.2026): режим отделителя (peel-off) по профилю станка — агент держит его в DevMode
  своей учётной записи и .DEFAULT и перед каждой этикеткой проверяет вывод драйвера на ^O1; этикетки маркировки уходят в
  очередь Windows по одной; команда «Очистить принтер» из ERP убирает задания ERP из очереди и очищает буфер Godex.
 #>
@@ -33,7 +33,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.10.0'
+$script:AgentVersion = '2.11.0'
 $script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
@@ -453,7 +453,9 @@ function Get-AgentPrinters {
     foreach ($target in @(@{ name = $PrinterName; kind = 'tspl' }, @{ name = $MarkingPrinterName; kind = 'gdi_png' })) {
         if (-not $target.name) { continue }
         $queue = $installed | Where-Object { $_.Name -eq $target.name } | Select-Object -First 1
-        @{ name = $target.name; driver = [string]$queue.DriverName; port = [string]$queue.PortName; kind = $target.kind; present = [bool]$queue }
+        $item = @{ name = $target.name; driver = [string]$queue.DriverName; port = [string]$queue.PortName; kind = $target.kind; present = [bool]$queue }
+        if ($target.kind -eq 'gdi_png') { $item.hold = [string]$script:MarkingHoldReason }
+        $item
     }
 }
 
@@ -693,7 +695,7 @@ function Invoke-MarkingPollOnce {
     try { Update-PrintWatches $Base $AuthToken } catch { Write-Log "Слежение за очередью печати: $($_.Exception.Message)" }
     $printers = @(Get-AgentPrinters $PrinterName $MarkingPrinterName)
     $markingPresent = [bool]($printers | Where-Object { $_.present -and $_.kind -eq 'gdi_png' })
-    # One marking label at a time (2.10.0): the next is claimed only after the previous one left the Windows queue,
+    # One marking label at a time (2.11.0): the next is claimed only after the previous one left the Windows queue,
     # so a reboot mid-spool can never reorder a long queue; a failed peel-off check holds the lane too.
     $hold = if ($markingPresent -and -not $paused) { Get-MarkingHold $Base $MarkingPrinterName } else { '' }
     if ($hold -and $hold -ne $script:LastMarkingHold) { Write-Log "Маркировка ждёт: $hold" }
@@ -705,13 +707,16 @@ function Invoke-MarkingPollOnce {
     # The server routes TSPL by the exact queue name (and records the host), so both are always sent.
     $claimBody = @{ machine_id = $machine; capabilities = $capabilities; printer = [string]$PrinterName; host = [string]$env:COMPUTERNAME }
     $claim = Invoke-ErpApi -Url "$Base/api/stock/labels/jobs/claim" -Body $claimBody -AuthToken $AuthToken -MachineId $machine
-    if ($null -ne $claim.marking_printers) { Update-MarkingPrinterSettings @($claim.marking_printers) $MarkingPrinterName -DryRun:$DryRun }
+    if ($null -ne $claim.marking_printers) { Update-MarkingPrinterSettings @($claim.marking_printers) $MarkingPrinterName }
     if ($claim.command) {
         Invoke-PrinterCommand $Base $AuthToken $claim.command $MarkingPrinterName -DryRun:$DryRun
         return 'done'
     }
     $job = $claim.job
-    if (-not $job) { if ($paused -or $hold) { return 'blocked' }; return 'idle' }
+    if (-not $job) {
+        if ($markingPresent -and -not $paused) { Invoke-PeelMaintenance $Base $MarkingPrinterName -DryRun:$DryRun }
+        if ($paused -or $hold) { return 'blocked' }; return 'idle'
+    }
     # TSPL keeps its established receipt and payload shapes, even on a capable agent.
     if ($job.format -eq 'tspl' -or (-not $job.format -and $job.tspl_b64)) {
         Invoke-TsplJob $Base $AuthToken $PrinterName $job -DryRun:$DryRun
@@ -746,12 +751,15 @@ function Invoke-MarkingPollOnce {
     return 'done'
 }
 
-# --- Godex control from ERP (2.10.0, owner 19.11.2026) -----------------------------------------------------------
+# --- Godex control from ERP (2.11.0, owner 19.11.2026) -----------------------------------------------------------
 # Peel-off: the ОБ.101 profile says the flags are handed out one by one through the dispenser. EZPL `^On`
 # (GoDEX EZPL User Manual, «^On — label dispenser (peel) / applicator»: 0 off, 1 dispenser, 2 applicator) comes from
-# the driver's DevMode. The agent runs as SYSTEM, whose own DevModePerUser once had it off while the printer default
-# had it on: every job carried ^O0 and flags crumpled. So the driver output itself is checked: a blank page is
-# rendered through the driver into a file (DOCINFO.lpszOutput) and its EZPL header must carry ^O1.
+# the driver's DevMode. Jobs use the DevModePerUser of the account the agent runs as (install.ps1 registers the task
+# for the installing user, Interactive/Limited; only a SYSTEM install uses HKU\S-1-5-18, alias HKU\.DEFAULT). On
+# 19.11 that per-user DevMode had peel off while the printer default had it on: every job carried ^O0 and flags
+# crumpled. So the driver output itself is checked: a blank page is rendered through the driver into a file
+# (DOCINFO.lpszOutput) and its EZPL header must carry ^O1. The check never runs in front of warehouse TSPL labels:
+# before a marking job, or when the shared claim found nothing to print.
 $script:PeelDocName = 'ERP peel check'
 $script:CommandDocName = 'ERP printer command'
 $script:PeelCaptureTimeoutSec = 20
@@ -760,6 +768,9 @@ $script:PeelRetrySec = 60
 $script:PeelRequired = @{}
 $script:PeelInitialized = @{}
 $script:PeelBlocked = @{}
+# Why marking is held (peel-off check failed), sent to ERP in the heartbeat (printers[].hold) and shown there.
+$script:MarkingHoldReason = ''
+$script:HeartbeatSoon = $false
 $script:LastMarkingHold = ''
 
 function Get-MarkingDocName { param([string]$JobId) return "ERP marking $JobId" }
@@ -813,6 +824,14 @@ function Get-PeelDefaultMode { param([string]$PrinterName) Initialize-GdiPrinter
 function Set-PeelUserMode { param([string]$PrinterName, [byte[]]$Mode) Initialize-GdiPrinter; [ErpGdiPrinter]::SetUserMode($PrinterName, $Mode) }
 function Get-JobDriverMode { param($Job) Initialize-GdiPrinter; return ,([ErpGdiPrinter]::ValidateWithDriver($Job.printer, [double]$Job.width_mm, [double]$Job.height_mm)) }
 function Get-AgentAccountSid { return [Security.Principal.WindowsIdentity]::GetCurrent().User.Value }
+# The per-user DevMode hives the agent's jobs read: its own account; HKU\.DEFAULT only when it runs as SYSTEM.
+function Get-PeelHives {
+    param([string]$PrinterName)
+    $sid = Get-AgentAccountSid
+    if ($sid -eq 'S-1-5-18') { return @($sid, '.DEFAULT') }
+    Write-Log "Godex '$PrinterName': агент работает от $sid, не от SYSTEM — HKU\.DEFAULT не трогаю"
+    return @($sid)
+}
 function Get-PerUserDevMode {
     param([string]$Hive, [string]$PrinterName)
     $key = "Registry::HKEY_USERS\$Hive\Printers\DevModePerUser"
@@ -828,12 +847,12 @@ function Set-PerUserDevMode {
     New-ItemProperty -LiteralPath $key -Name $PrinterName -Value $Mode -PropertyType Binary -Force | Out-Null
 }
 
-# Before any DevMode write: the agent account's and .DEFAULT per-user DevMode of this queue, as they were.
+# Before any DevMode write: the per-user DevMode of this queue in the hives about to be written, as it was.
 function Save-DevModeBackup {
-    param([string]$PrinterName)
+    param([string]$PrinterName, [string[]]$Hives)
     $root = Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($ConfigPath))) 'devmode-backup'
     $entries = @()
-    foreach ($hive in @(@((Get-AgentAccountSid), '.DEFAULT') | Select-Object -Unique)) {
+    foreach ($hive in $Hives) {
         $value = Get-PerUserDevMode $hive $PrinterName
         $entries += @{ hive = $hive; devmode_b64 = $(if ($value) { [Convert]::ToBase64String($value) } else { $null }) }
     }
@@ -843,16 +862,17 @@ function Save-DevModeBackup {
 }
 
 # The queue's current DevMode must make the driver emit ^O1. If not, and the printer's default DevMode does, the
-# default becomes the per-user DevMode of the agent's account and .DEFAULT (backup first). Throws a Russian reason.
+# default becomes the per-user DevMode of the agent's account (and .DEFAULT for SYSTEM), backup first. Throws a Russian reason.
 function Initialize-PeelMode {
     param([string]$PrinterName)
     $found = Get-DispenserMode (Invoke-DriverCapture $PrinterName (Get-PeelCurrentMode $PrinterName))
     if ($found -eq 1) { return 'ok' }
-    $backup = Save-DevModeBackup $PrinterName
+    $hives = @(Get-PeelHives $PrinterName)
+    $backup = Save-DevModeBackup $PrinterName $hives
     $default = Get-PeelDefaultMode $PrinterName
     $defaultFound = Get-DispenserMode (Invoke-DriverCapture $PrinterName $default)
     if ($defaultFound -ne 1) { throw (Format-PeelError $defaultFound ' и в настройках агента, и в настройках принтера по умолчанию') }
-    foreach ($hive in @(@((Get-AgentAccountSid), '.DEFAULT') | Select-Object -Unique)) { Set-PerUserDevMode $hive $PrinterName $default }
+    foreach ($hive in $hives) { Set-PerUserDevMode $hive $PrinterName $default }
     try { Set-PeelUserMode $PrinterName $default } catch { Write-Log "Godex '$PrinterName': SetPrinter(9) не принят: $($_.Exception.Message)" }
     $after = Get-DispenserMode (Invoke-DriverCapture $PrinterName (Get-PeelCurrentMode $PrinterName))
     if ($after -ne 1) { throw (Format-PeelError $after ' после восстановления из настроек по умолчанию') }
@@ -864,6 +884,13 @@ function Initialize-PeelMode {
 function Set-PeelBlocked {
     param([string]$PrinterName, [string]$Message)
     $script:PeelBlocked[$PrinterName] = @{ message = $Message; retry = (Get-Date).AddSeconds($script:PeelRetrySec) }
+    if ($script:MarkingHoldReason -ne $Message) { $script:MarkingHoldReason = $Message; $script:HeartbeatSoon = $true }
+}
+
+function Clear-PeelBlocked {
+    param([string]$PrinterName)
+    $script:PeelBlocked.Remove($PrinterName)
+    if ($script:MarkingHoldReason) { $script:MarkingHoldReason = ''; $script:HeartbeatSoon = $true }
 }
 
 # Before each peel-off job: the very DEVMODE of the job must produce ^O1; one repair attempt, else the job fails
@@ -886,19 +913,31 @@ function Confirm-JobPeelMode {
     }
 }
 
-# The claim reply says which marking queues run peel-off. The first time per process (agent start) the DevMode is
-# checked and repaired.
+# The claim reply says which marking queues run peel-off. Only remembered here: the check itself runs later, never in
+# front of a warehouse label (Invoke-PeelMaintenance, Confirm-JobPeelMode).
 function Update-MarkingPrinterSettings {
-    param($Settings, [string]$MarkingPrinterName, [switch]$DryRun)
+    param($Settings, [string]$MarkingPrinterName)
     if (-not $MarkingPrinterName) { return }
     $mine = @($Settings | Where-Object { [string]$_.name -ceq $MarkingPrinterName }) | Select-Object -First 1
     $peel = [bool]($mine -and $mine.peel)
     $script:PeelRequired[$MarkingPrinterName] = $peel
-    if (-not $peel) { $script:PeelBlocked.Remove($MarkingPrinterName); return }
-    if ($script:PeelInitialized[$MarkingPrinterName] -or $DryRun) { return }
-    $script:PeelInitialized[$MarkingPrinterName] = $true
-    try { Write-Log "Godex '$MarkingPrinterName': режим отделителя — $(Initialize-PeelMode $MarkingPrinterName)" }
-    catch { Set-PeelBlocked $MarkingPrinterName $_.Exception.Message; Write-Log "Godex '$MarkingPrinterName': $($_.Exception.Message)" }
+    if (-not $peel) { Clear-PeelBlocked $MarkingPrinterName }
+}
+
+# When the shared claim found nothing to print: the first check after the agent starts (repairing the DevMode if
+# needed), or the retry of a failed one once its minute is up. Not while a marking label is still in the queue.
+function Invoke-PeelMaintenance {
+    param([string]$Base, [string]$PrinterName, [switch]$DryRun)
+    if (-not $PrinterName -or -not $script:PeelRequired[$PrinterName] -or $DryRun) { return }
+    $block = $script:PeelBlocked[$PrinterName]
+    if ($block -and (Get-Date) -lt $block.retry) { return }
+    if (-not $block -and $script:PeelInitialized[$PrinterName]) { return }
+    if (Test-MarkingQueueBusy $Base $PrinterName) { return }
+    $script:PeelInitialized[$PrinterName] = $true
+    try {
+        Write-Log "Godex '$PrinterName': режим отделителя — $(Initialize-PeelMode $PrinterName)"
+        Clear-PeelBlocked $PrinterName
+    } catch { Set-PeelBlocked $PrinterName $_.Exception.Message; Write-Log "Godex '$PrinterName': $($_.Exception.Message)" }
 }
 
 # '' when the marking lane may take the next label, else why it waits.
@@ -915,22 +954,17 @@ function Test-MarkingQueueBusy {
     }
     try { $jobs = @(Get-PrintJob -PrinterName $PrinterName -ErrorAction Stop) }
     catch { return "очередь «$PrinterName» не прочитана: $($_.Exception.Message)" }
-    $ours = @($jobs | Where-Object { [string]$_.DocumentName -like 'ERP marking*' })
+    # A finished job kept in the queue («Сохранять напечатанные документы») has left the printer: it does not hold the lane.
+    $ours = @($jobs | Where-Object { [string]$_.DocumentName -like 'ERP marking*' -and [string]$_.JobStatus -notmatch 'Printed|Complete' })
     if ($ours.Count) { return "в очереди Windows задание маркировки ($($ours[0].DocumentName))" }
     return ''
 }
 
+# Why the marking lane may not take a label now ('' — it may). No driver check here: this runs in the shared poll.
 function Get-MarkingHold {
     param([string]$Base, [string]$PrinterName)
     $block = $script:PeelBlocked[$PrinterName]
-    if ($block) {
-        if ((Get-Date) -lt $block.retry) { return $block.message }
-        try {
-            [void](Initialize-PeelMode $PrinterName)
-            $script:PeelBlocked.Remove($PrinterName)
-            Write-Log "Godex '$PrinterName': режим отделителя в порядке, маркировка продолжается"
-        } catch { Set-PeelBlocked $PrinterName $_.Exception.Message; return $_.Exception.Message }
-    }
+    if ($block) { return $block.message }
     return (Test-MarkingQueueBusy $Base $PrinterName)
 }
 
@@ -1499,6 +1533,7 @@ function Start-AgentLoop {
         $controlActive = ($script:VnaWorker -and $script:VnaWorker.command) -or ($owner -and -not $owner.restored)
         $beatEvery = if ($controlActive) { [Math]::Min(60, $script:HeartbeatEverySec) } else { $script:HeartbeatEverySec }
         if ($controlActive -and $nextBeat -gt $lastBeat.AddSeconds($beatEvery)) { $nextBeat = $lastBeat.AddSeconds($beatEvery) }
+        if ($script:HeartbeatSoon -and -not $controlActive) { $script:HeartbeatSoon = $false; $nextBeat = Get-Date }
         if ((Get-Date) -ge $nextBeat -or ($lastBeatWasLightweight -and -not $controlActive)) {
             try { Send-Heartbeat -Base $Base -AuthToken $AuthToken -PrinterName $PrinterName -ScannerAddress $ScannerAddress -Lightweight:$controlActive -MarkingPrinterName $MarkingPrinterName }
             catch { Write-Log "Отчёт серверу не ушёл: $($_.Exception.Message)" }

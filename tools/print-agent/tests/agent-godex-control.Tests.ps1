@@ -62,21 +62,48 @@ Describe 'Peel-off DevMode of the agent account' {
         { Initialize-PeelMode 'Godex' } | Should Throw 'отделитель (peel-off) выключен'
         Assert-MockCalled Set-PerUserDevMode -Times 0 -Exactly -Scope It
     }
-    It 'checks and repairs once per process when the claim reply says peel' {
-        $script:PeelInitialized = @{}; $script:PeelBlocked = @{}
+    It 'repairs only the account the agent runs as and leaves .DEFAULT alone for a user install' {
+        Mock Get-AgentAccountSid { 'S-1-5-21-1-2-3-1001' }
+        Mock Write-Log {}
+        Initialize-PeelMode 'Godex' | Should Be 'repaired'
+        @($script:Steps) -join ',' | Should Be 'read S-1-5-21-1-2-3-1001,backup,write S-1-5-21-1-2-3-1001,setprinter'
+        Assert-MockCalled Write-Log -Scope It -ParameterFilter { $Message -match 'HKU\\.DEFAULT не трогаю' }
+    }
+    It 'only remembers the peel setting from the claim reply; the check waits for an idle poll' {
+        $script:PeelInitialized = @{}; $script:PeelBlocked = @{}; $script:PeelRequired = @{}
+        Mock Test-MarkingQueueBusy { '' }
         Update-MarkingPrinterSettings @([pscustomobject]@{ name = 'Godex'; peel = $true }) 'Godex'
-        Update-MarkingPrinterSettings @([pscustomobject]@{ name = 'Godex'; peel = $true }) 'Godex'
-        Assert-MockCalled Set-PerUserDevMode -Times 2 -Exactly -Scope It
+        Assert-MockCalled Invoke-DriverCapture -Times 0 -Exactly -Scope It
+        Invoke-PeelMaintenance 'http://test' 'Godex'
+        Invoke-PeelMaintenance 'http://test' 'Godex'
+        Assert-MockCalled Set-PerUserDevMode -Times 2 -Exactly -Scope It  # once per process, both SYSTEM hives
         $script:PeelBlocked.ContainsKey('Godex') | Should Be $false
     }
-    It 'holds the lane when the repair fails and skips profiles without peel' {
-        $script:PeelInitialized = @{}; $script:PeelBlocked = @{}
+    It 'holds the lane with the reason for ERP when the repair fails, and skips profiles without peel' {
+        $script:PeelInitialized = @{}; $script:PeelBlocked = @{}; $script:PeelRequired = @{}; $script:MarkingHoldReason = ''
         $script:Default = New-PeelMode 0
+        Mock Test-MarkingQueueBusy { '' }
         Update-MarkingPrinterSettings @([pscustomobject]@{ name = 'Other'; peel = $true }) 'Godex'
+        Invoke-PeelMaintenance 'http://test' 'Godex'
         Assert-MockCalled Invoke-DriverCapture -Times 0 -Exactly -Scope It
         Update-MarkingPrinterSettings @([pscustomobject]@{ name = 'Godex'; peel = $true }) 'Godex'
+        Invoke-PeelMaintenance 'http://test' 'Godex'
         $script:PeelBlocked['Godex'].message | Should Match '\^O0'
         Get-MarkingHold 'http://test' 'Godex' | Should Match 'отделитель'
+        $script:MarkingHoldReason | Should Match 'отделитель'
+        $script:HeartbeatSoon | Should Be $true
+        Mock Get-Printer { @([pscustomobject]@{ Name = 'Godex'; DriverName = 'Seagull'; PortName = 'USB001' }) }
+        @(Get-AgentPrinters '' 'Godex')[0].hold | Should Match 'отделитель'
+        # Turned off in the profile: the hold and its reason go away.
+        Update-MarkingPrinterSettings @([pscustomobject]@{ name = 'Godex'; peel = $false }) 'Godex'
+        Get-MarkingHold 'http://test' 'Godex' | Should Be ''
+        $script:MarkingHoldReason | Should Be ''
+    }
+    It 'does not check while a marking label is still in the queue' {
+        $script:PeelInitialized = @{}; $script:PeelBlocked = @{}; $script:PeelRequired = @{ Godex = $true }
+        Mock Test-MarkingQueueBusy { 'предыдущая этикетка ещё в очереди Windows' }
+        Invoke-PeelMaintenance 'http://test' 'Godex'
+        Assert-MockCalled Invoke-DriverCapture -Times 0 -Exactly -Scope It
     }
 }
 
@@ -158,6 +185,10 @@ Describe 'One marking label at a time and «Очистить принтер»' {
     It 'holds marking while any ERP marking job sits in the Windows queue, even without a watch' {
         $script:Queue = @([pscustomobject]@{ ID = 1; JobStatus = 'Spooling'; DocumentName = 'ERP marking older' })
         Test-MarkingQueueBusy 'http://test' 'Godex' | Should Match 'ERP marking older'
+        # «Сохранять напечатанные документы» (KeepPrintedJobs): a finished job stays listed but no longer holds the lane.
+        $script:Queue = @([pscustomobject]@{ ID = 1; JobStatus = 'Printed'; DocumentName = 'ERP marking older' },
+            [pscustomobject]@{ ID = 2; JobStatus = 'Complete, Retained'; DocumentName = 'ERP marking other' })
+        Test-MarkingQueueBusy 'http://test' 'Godex' | Should Be ''
         $script:Queue = @([pscustomobject]@{ ID = 1; JobStatus = 'Printing'; DocumentName = 'Документ Word' })
         Test-MarkingQueueBusy 'http://test' 'Godex' | Should Be ''
         Mock Get-PrintJob { throw 'spooler stopped' }
@@ -170,6 +201,26 @@ Describe 'One marking label at a time and «Очистить принтер»' {
         Test-Path -LiteralPath (Get-PrintWatchPath 'mark-1' 'a-1') | Should Be $false
         $state = @($script:Calls | Where-Object { $_.Url -like '*/print-state' })
         $state.Count | Should Be 1
+    }
+    It 'keeps printing warehouse TSPL labels while the peel-off check fails, without a driver check in front of them' {
+        Mock Invoke-DriverCapture { throw 'must not capture in front of TSPL' }
+        Mock Initialize-PeelMode { throw 'must not check in front of TSPL' }
+        $script:PeelRequired = @{ Godex = $true }; $script:PeelInitialized = @{}
+        Set-PeelBlocked 'Godex' (Format-PeelError 0)
+        $script:PeelBlocked['Godex'].retry = (Get-Date).AddSeconds(-1)  # the retry is already due
+        Mock Get-Printer { @([pscustomobject]@{ Name = 'Godex'; DriverName = 'Seagull'; PortName = 'USB001' },
+            [pscustomobject]@{ Name = 'TSC'; DriverName = 'TSC'; PortName = 'USB002' }) }
+        Mock Invoke-ErpApi {
+            [void]$script:Calls.Add(@{ Url = $Url; Body = $Body })
+            if ($Url -like '*/claim') { return @{ job = @{ id = 'tspl-1'; format = 'tspl'; printer = 'TSC'; copies = 1; tspl_b64 = 'UFJJTlQgMQ==' }; marking_printers = @() } }
+            return @{ ok = $true }
+        }
+        Invoke-MarkingPollOnce 'http://test' 'token' 'TSC' 'Godex' | Should Be 'done'
+        Assert-MockCalled Send-RawToPrinter -Times 1 -Exactly -Scope It -ParameterFilter { $PrinterName -eq 'TSC' }
+        $claim = @($script:Calls | Where-Object { $_.Url -like '*/claim' })[0].Body
+        @($claim.capabilities) -join ',' | Should Be 'tspl'
+        Assert-MockCalled Initialize-PeelMode -Times 0 -Exactly -Scope It
+        $script:PeelBlocked = @{}; $script:MarkingHoldReason = ''
     }
     It 'clears the printer: ERP jobs out of Windows, ~S,BUFCLR to the Godex, result to ERP' {
         Save-PrintWatch 'mark-1' 'a-1' 'http://test' 'machine-1' 'Godex' 41

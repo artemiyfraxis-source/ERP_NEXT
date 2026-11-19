@@ -30,10 +30,7 @@ export function MarkingPrintWindow({ source, storageKey, title, close }: {
   const [selected, setSelected] = useState<string[]>([]);
   const [labelIndex, setLabelIndex] = useState(0);
   const [batch, setBatch] = useState<MarkingBatch | null>(restored.record?.batch ?? null);
-  const [reprinting, setReprinting] = useState(false);
   const [creatingNew, setCreatingNew] = useState(false);
-  const [reprintId, setReprintId] = useState("");
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(restored.error);
   const [reload, setReload] = useState(0);
@@ -61,11 +58,10 @@ export function MarkingPrintWindow({ source, storageKey, title, close }: {
   const printer = catalog ? boundPrinter(catalog, machine) : undefined;
   const online = Boolean(printer?.present && printer.online);
   const ready = Boolean(profile?.calibrated && machine?.binding);
-  const choosing = (!batch || reprinting || creatingNew) && !outstanding && !restored.error;
+  const choosing = (!batch || creatingNew) && !outstanding && !restored.error;
   const usedKeys = new Set(record?.usedKeys ?? record?.request.selected ?? []);
   const overlapsPrevious = creatingNew && Boolean(preview?.labels.some((label) => usedKeys.has(label.key)));
   const history = record?.history?.length ? record.history : batch && record ? [{ id: batch.id, request: record.pending ? record.previousRequest ?? record.request : record.request, total: batch.total }] : [];
-  const reprint = history.find((item) => item.id === reprintId);
   const approvedKeys = new Set(approved?.selected.length ? approved.selected : preview?.labels.map((row) => row.key));
   const selectionChanged = selected.length !== approvedKeys.size || selected.some((key) => !approvedKeys.has(key));
 
@@ -101,7 +97,7 @@ export function MarkingPrintWindow({ source, storageKey, title, close }: {
       const result = await markingApi.enqueue(request);
       const completed: PrintRecord = { ...pending, pending: false, batch: result, history: [...history.filter((item) => item.id !== result.id), { id: result.id, request, total: result.total }] };
       sessionStorage.setItem(storageName, JSON.stringify(completed));
-      setRecord(completed); setBatch(result); setOutstanding(false); setReprinting(false); setCreatingNew(false); setReason("");
+      setRecord(completed); setBatch(result); setOutstanding(false); setCreatingNew(false);
       retry.current = { payload: "", key: "" };
     } catch (problem) {
       if (problem instanceof ApiError && problem.status >= 400 && problem.status < 500) {
@@ -114,9 +110,8 @@ export function MarkingPrintWindow({ source, storageKey, title, close }: {
     finally { inFlight.current = false; setBusy(false); }
   }
   async function print() {
-    if (!preview || !approved || selectionChanged || overlapsPrevious || !online || (reprinting && (!reprint || !reason.trim()))) return;
-    const payload = { ...approved, manifest_hash: preview.manifest_hash,
-      ...(reprinting && reprint ? { reprint_of: reprint.id, reason: reason.trim() } : {}) };
+    if (!preview || !approved || selectionChanged || overlapsPrevious || !online) return;
+    const payload = { ...approved, manifest_hash: preview.manifest_hash };
     const fingerprint = JSON.stringify(payload);
     if (retry.current.payload !== fingerprint) retry.current = { payload: fingerprint, key: crypto.randomUUID() };
     await submit({ ...payload, idempotency_key: retry.current.key });
@@ -147,13 +142,11 @@ export function MarkingPrintWindow({ source, storageKey, title, close }: {
           <div className="marking-target"><span className="muted">Принтер</span><b>{machine?.binding?.printer || "Не привязан"}</b>
             {machine?.binding && <span className={online ? "tone-ok" : "tone-warn"}>{printer?.pc ? `${printer.pc} · ` : ""}{online ? "На связи" : "Не на связи"}</span>}</div>
         </div>
+        {printer?.hold && <p className="warning-inline" role="alert">Маркировка на паузе: {printer.hold}</p>}
         {profile && !profile.calibrated && <p className="warning-inline">Профиль не откалиброван — выполните пробную печать в карточке оборудования.</p>}
         {machine && !machine.binding && <p className="warning-inline">Привяжите принтер в карточке оборудования.</p>}
-        {reprinting && history.length > 1 && <label>Партия для повторной печати<select name="marking-reprint-batch" autoComplete="off" disabled={busy} value={reprintId}
-          onChange={(event) => { setReprintId(event.target.value); invalidate(); }}>
-          {history.map((item, index) => <option key={item.id} value={item.id}>Партия {index + 1} · {formatNumber(item.total)} шт.</option>)}</select></label>}
         {choosing && <div className="form-actions">
-          <button type="button" className="secondary" disabled={busy || !ready} onClick={() => void inspect(reprinting ? reprint?.request.selected ?? [] : [])}>{busy ? "Обработка…" : "Обновить предпросмотр"}</button>
+          <button type="button" className="secondary" disabled={busy || !ready} onClick={() => void inspect([])}>{busy ? "Обработка…" : "Обновить предпросмотр"}</button>
           <button type="button" className="secondary" disabled={busy} onClick={() => { invalidate(); setCatalog(null); setMachineId(""); setProfileId(""); setReload(reload + 1); }}>Обновить станки</button>
           {preview && <strong className="tnum" role="status">К печати: {formatNumber(preview.total)} шт.</strong>}
         </div>}
@@ -168,7 +161,7 @@ export function MarkingPrintWindow({ source, storageKey, title, close }: {
                 { key: "material", title: "Материал", value: (row) => row.material, wrap: true },
                 { key: "quantity", title: "Шт.", numeric: true, value: (row) => row.quantity },
               ]} />
-            {choosing && !reprinting && selectable.length > 1 && <details className="marking-selection"><summary>Выбрать надписи</summary>
+            {choosing && selectable.length > 1 && <details className="marking-selection"><summary>Выбрать надписи</summary>
               {selectable.map((row) => <label className="check-inline" key={row.key}><input type="checkbox" name={`mark-${row.key}`} checked={selectedKeys.has(row.key)} disabled={busy || (creatingNew && usedKeys.has(row.key))}
                 onChange={(event) => { const keys = new Set(selectedKeys); if (event.target.checked) keys.add(row.key); else keys.delete(row.key); setSelected([...keys]); }} />{row.text}</label>)}
               <button type="button" className="secondary" disabled={busy || !selected.length} onClick={() => void inspect(selected)}>Показать выбранные</button>
@@ -182,13 +175,11 @@ export function MarkingPrintWindow({ source, storageKey, title, close }: {
               <button type="button" className="secondary small" disabled={labelIndex === preview.labels.length - 1} onClick={() => setLabelIndex(labelIndex + 1)}>Следующая</button></div>
           </figure>}
         </div>}
-        {reprinting && <label>Причина повторной печати<textarea name="marking-reprint-reason" autoComplete="off" maxLength={1000} disabled={busy} value={reason} onChange={(event) => setReason(event.target.value)} /></label>}
         {selectionChanged && preview && <p className="warning-inline">Обновите предпросмотр выбранных надписей.</p>}
-        {overlapsPrevious && <p className="warning-inline">В новую партию можно выбрать только оставшиеся надписи. Для уже поставленных в очередь используйте повторную печать.</p>}
-        {choosing && <div className="form-actions marking-submit"><button type="button" className="primary" disabled={busy || !canPrint || !online || !preview?.total || !approved || selectionChanged || overlapsPrevious || (reprinting && !reason.trim())}
-          onClick={() => void print()}>{busy ? "Обработка…" : reprinting ? "Повторить печать" : "Поставить в очередь"}</button>
-          {creatingNew && <button type="button" className="secondary" disabled={busy} onClick={() => { setCreatingNew(false); invalidate(); }}>Отменить новую партию</button>}
-          {reprinting && <button type="button" className="secondary" disabled={busy} onClick={() => setReprinting(false)}>Отменить повторную печать</button>}</div>}
+        {overlapsPrevious && <p className="warning-inline">В новую партию можно выбрать только оставшиеся надписи. Для уже поставленных в очередь — «Перепечатать номера…».</p>}
+        {choosing && <div className="form-actions marking-submit"><button type="button" className="primary" disabled={busy || !canPrint || !online || !preview?.total || !approved || selectionChanged || overlapsPrevious}
+          onClick={() => void print()}>{busy ? "Обработка…" : "Поставить в очередь"}</button>
+          {creatingNew && <button type="button" className="secondary" disabled={busy} onClick={() => { setCreatingNew(false); invalidate(); }}>Отменить новую партию</button>}</div>}
       </>}
       {!catalog && error && <button type="button" className="secondary" onClick={() => setReload(reload + 1)}>Повторить загрузку</button>}
       {batch && <>
@@ -201,9 +192,7 @@ export function MarkingPrintWindow({ source, storageKey, title, close }: {
           }
           setBatch(next);
         }} />
-        {!reprinting && !creatingNew && canPrint && <div className="form-actions">
-          <button type="button" className="secondary" disabled={busy || outstanding || batch.jobs.some((job) => ["pending", "taken", "unknown"].includes(job.status))}
-            onClick={() => { setReprinting(true); setReprintId(batch.id); setReason(""); invalidate(); }}>Повторная печать…</button>
+        {!creatingNew && canPrint && <div className="form-actions">
           <button type="button" className="secondary" disabled={busy || outstanding || batch.jobs.some((job) => ["pending", "taken", "unknown"].includes(job.status))}
             onClick={() => { setCreatingNew(true); invalidate(); }}>Новая партия…</button>
         </div>}
@@ -309,8 +298,9 @@ export function MarkingBatchProgress({ initial, onChange, onReprinted }: {
         onClick={() => { setNotice(""); setAction({ kind: "cancel", reason: "" }); }}>Отменить оставшиеся</button>}
       {canPrint && <button type="button" className="secondary small" disabled={busy} onClick={() => {
         setNotice("");
-        setAction({ kind: "reprint", by: serials.length ? "serials" : "labels", from: serials.length ? String(Math.min(...serials)) : "",
-          to: serials.length ? String(Math.max(...serials)) : "", labels: "", reason: "" });
+        // The whole batch by default; narrow it to label numbers or a serial range.
+        setAction({ kind: "reprint", by: "labels", from: serials.length ? String(Math.min(...serials)) : "",
+          to: serials.length ? String(Math.max(...serials)) : "", labels: batch.jobs.length > 1 ? `1–${batch.jobs.length}` : "1", reason: "" });
       }}>Перепечатать номера…</button>}
     </div>}
     {action?.kind === "cancel" && <div className="marking-resolution">
@@ -324,7 +314,7 @@ export function MarkingBatchProgress({ initial, onChange, onReprinted }: {
       <strong className="marking-action-note">Перепечатать номера — новой партией с теми же номерами изделий</strong>
       <label>Что перепечатать<select name="marking-reprint-by" autoComplete="off" disabled={busy} value={action.by}
         onChange={(event) => setAction({ ...action, by: event.target.value as "serials" | "labels" })}>
-        {serials.length > 0 && <option value="serials">Диапазон номеров изделий</option>}<option value="labels">Этикетки партии по №</option></select></label>
+        <option value="labels">Этикетки партии по №</option>{serials.length > 0 && <option value="serials">Диапазон номеров изделий</option>}</select></label>
       {action.by === "serials" ? <>
         <label>Номер с<input type="number" name="marking-reprint-from" autoComplete="off" inputMode="numeric" min={0} step="1" disabled={busy} value={action.from}
           onChange={(event) => setAction({ ...action, from: event.target.value })} /></label>

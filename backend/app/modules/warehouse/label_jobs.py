@@ -317,6 +317,16 @@ def cancel_pending_marking(session, batch_id, *, reason, now) -> list[int]:
     return sequences
 
 
+def pending_marking_by_printer(session, machine_id, printer) -> dict:
+    """Never-handed-out marking jobs on this queue: batch id → sequences."""
+    result: dict = {}
+    for batch_id, sequence in session.execute(select(LabelJobRow.batch_id, LabelJobRow.sequence).where(LabelJobRow.format == "gdi_png",
+            LabelJobRow.target_machine_id == machine_id, LabelJobRow.target_printer == printer, LabelJobRow.status == PENDING)
+            .order_by(LabelJobRow.batch_id, LabelJobRow.sequence)):
+        result.setdefault(batch_id, []).append(sequence)
+    return result
+
+
 def claim_marking(uow, *, machine_id, token_id, now):
     from .devices import PrinterRow
     from .marking_profiles import MarkingBatchRow

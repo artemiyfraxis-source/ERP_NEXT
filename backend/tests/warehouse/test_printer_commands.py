@@ -3,20 +3,23 @@
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.main import app
 from app.modules.references.infrastructure import EquipmentModelRow, EquipmentUnitRow
+from app.modules.warehouse.devices import PrinterRow
 from app.modules.warehouse.marking_profiles import MarkingBindingRow, MarkingProfileRow
 from app.modules.warehouse.marking_render import presets
 from app.modules.warehouse.printer_commands import PrinterCommandRow, agent_executes_commands
 from app.shared.identity import Actor
+from app.shared.persistence import AuditEventRow
 from tests.identity.test_api_tokens import _bearer, _issue, _login, tokens_api  # noqa: F401
 
 CLAIM = "/api/stock/labels/jobs/claim"
 HEARTBEAT = "/api/stock/scan/agent/heartbeat"
 
 
-def _agent(admin, machine, version="2.10.0"):
+def _agent(admin, machine, version="2.11.0"):
     headers = _bearer(_issue(admin, scopes=("labels:print", "scan:upload"), name=machine)["token"])
     payload = {"machine_id": machine, "pc_name": machine, "version": version,
                "printers": [{"name": "Godex EZ2350i", "driver": "Godex", "port": "USB001", "kind": "gdi_png", "present": True}]}
@@ -69,6 +72,24 @@ def test_claim_reply_carries_peel_setting_and_the_command_before_any_job(tokens_
     with sessions() as session:
         row = session.get(PrinterCommandRow, command_id)
         assert (row.status, row.result) == ("done", {"removed_jobs": 1, "buffer_cleared": True})
+        # The agent's result is journaled once (the idempotent repeat adds nothing).
+        events = list(session.scalars(select(AuditEventRow.details).where(AuditEventRow.event_type == "production.marking_printer_cleared")))
+        assert len(events) == 1 and events[0]["outcome"] == "done" and events[0]["removed_jobs"] == 1
+
+
+def test_heartbeat_stores_the_marking_hold_reason(tokens_api):
+    sessions, _clock = tokens_api
+    admin = _login("admin")
+    headers = _agent(admin, "pc-1")
+    payload = {"machine_id": "pc-1", "pc_name": "pc-1", "version": "2.11.0", "printers": [{"name": "Godex EZ2350i", "driver": "Godex",
+               "port": "USB001", "kind": "gdi_png", "present": True, "hold": "Godex: отделитель (peel-off) выключен"}]}
+    assert TestClient(app).post(HEARTBEAT, headers=headers, json=payload).status_code == 200
+    with sessions() as session:
+        assert session.get(PrinterRow, ("pc-1", "Godex EZ2350i")).hold == "Godex: отделитель (peel-off) выключен"
+    payload["printers"][0]["hold"] = ""
+    assert TestClient(app).post(HEARTBEAT, headers=headers, json=payload).status_code == 200
+    with sessions() as session:
+        assert session.get(PrinterRow, ("pc-1", "Godex EZ2350i")).hold == ""
 
 
 def test_failed_command_keeps_the_agent_reason(tokens_api):
@@ -86,5 +107,7 @@ def test_failed_command_keeps_the_agent_reason(tokens_api):
 
 
 def test_agent_version_gate():
-    assert agent_executes_commands("2.10.0") and agent_executes_commands("3.0.0")
-    assert not agent_executes_commands("2.9.7") and not agent_executes_commands("") and not agent_executes_commands("2.10")
+    assert agent_executes_commands("2.11.0") and agent_executes_commands("3.0.0")
+    # 2.10.0 is the agent of PR #966, without printer commands.
+    assert not agent_executes_commands("2.10.0") and not agent_executes_commands("2.9.7")
+    assert not agent_executes_commands("") and not agent_executes_commands("2.11")

@@ -320,7 +320,7 @@ def agent_claim(
         except AgentMachineRefused as error:
             raise HTTPException(403, str(error)) from error
         capabilities = payload.capabilities if payload.capabilities is not None else ["tspl"]
-        # Agent 2.10.0+: the peel-off setting of its marking queues and a pending printer command ride on every claim
+        # Agent 2.11.0+: the peel-off setting of its marking queues and a pending printer command ride on every claim
         # reply (an older agent ignores both). A command goes first: no job is handed out with it.
         with uow_factory() as uow:
             extra = {"marking_printers": marking_printers(uow.session, machine)}
@@ -370,7 +370,7 @@ def agent_command_result(
         machine = agent_machine(uow_factory(), _agent.actor.id, payload.machine_id or bound_machine)
         status = report_command(uow_factory(), command_id, machine_id=machine, token_id=_agent.actor.id,
             attempt=payload.attempt, outcome=payload.outcome, message=payload.message,
-            result={"removed_jobs": payload.removed_jobs, "buffer_cleared": payload.buffer_cleared}, now=now)
+            result={"removed_jobs": payload.removed_jobs, "buffer_cleared": payload.buffer_cleared}, now=now, actor=_agent.actor)
     except KeyError as error:
         raise HTTPException(status_code=404, detail=error.args[0]) from error
     except CommandFinished as error:

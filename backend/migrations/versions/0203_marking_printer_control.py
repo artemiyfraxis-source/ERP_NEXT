@@ -4,7 +4,8 @@
    (never handed to an agent: no taken_at, attempt or claim token), with the reason as `error`.
 2. `warehouse_printer_commands`: «Очистить принтер» — one command per printer queue, pending → taken → done/failed,
    with at most one open command per queue (partial UNIQUE). While it is open the queue hands out no marking jobs.
-3. ОБ.101 profiles get `geometry.peel = true` (the flag machine always works with the peel-off dispenser): the print
+3. `warehouse_agent_printers.hold`: why the agent holds that marking queue (peel-off check failed), from the heartbeat.
+4. ОБ.101 profiles get `geometry.peel = true` (the flag machine always works with the peel-off dispenser): the print
    agent then keeps the driver's peel-off DevMode and refuses a job whose driver output lacks `^O1`.
 Not destructive. 0202 is taken by the manual-jobs PR (#964); if it lands first, this one is re-parented onto it.
 """
@@ -53,11 +54,17 @@ PEEL_INVENTORY = "ОБ.101"
 
 
 def _set_peel(value):
+    """Upgrade: peel = true on ОБ.101 profiles. Downgrade: the key leaves every profile (older code forbids it)."""
     bind = op.get_bind()
     profiles = sa.table("warehouse_marking_profiles", sa.column("id", sa.Uuid()), sa.column("inventory_number", sa.String()),
                         sa.column("geometry", sa.JSON()))
-    for row in bind.execute(sa.select(profiles.c.id, profiles.c.geometry).where(profiles.c.inventory_number == PEEL_INVENTORY)):
+    query = sa.select(profiles.c.id, profiles.c.geometry)
+    if value:
+        query = query.where(profiles.c.inventory_number == PEEL_INVENTORY)
+    for row in bind.execute(query):
         geometry = row.geometry if isinstance(row.geometry, dict) else json.loads(row.geometry)
+        if not value and "peel" not in geometry:
+            continue
         geometry = {key: item for key, item in geometry.items() if key != "peel"}
         if value:
             geometry["peel"] = True
@@ -70,6 +77,8 @@ def upgrade() -> None:
             batch.drop_constraint(name, type_="check")
             batch.create_check_constraint(name, expression)
         batch.create_check_constraint("ck_label_job_cancelled", CANCELLED)
+    with op.batch_alter_table("warehouse_agent_printers") as batch:
+        batch.add_column(sa.Column("hold", sa.String(500), nullable=False, server_default=""))
     op.create_table(
         "warehouse_printer_commands",
         sa.Column("id", sa.Uuid(), primary_key=True),
@@ -106,6 +115,8 @@ def downgrade() -> None:
     op.drop_index("uq_printer_command_open", table_name="warehouse_printer_commands")
     op.drop_index("ix_printer_commands_target", table_name="warehouse_printer_commands")
     op.drop_table("warehouse_printer_commands")
+    with op.batch_alter_table("warehouse_agent_printers") as batch:
+        batch.drop_column("hold")
     with op.batch_alter_table("warehouse_label_jobs") as batch:
         batch.drop_constraint("ck_label_job_cancelled", type_="check")
         for name, expression in OLD_CHECKS.items():
