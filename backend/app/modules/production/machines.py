@@ -406,6 +406,10 @@ def _unknown(address: int, kind: str, scale: str = "1", unit: str = "") -> Setti
 
 
 MM, SEC = "0.01", "0.001"
+# The register of the switch «Подъём подающих роликов» (1 = rollers lifted). D136.0 vs D604.0 — settle by bench probe:
+# D136.0 is «Feed Wheel Off / On» on the Функции page, D604.0 «Wheel» on the Jog page (Y18). Mirrors $script:FeedWheelAddress
+# of ob019-bridge.ps1 (a backend test compares them).
+OB019_FEED_WHEEL_ADDRESS = 136
 OB019_SETTINGS: tuple[tuple[str, tuple[SettingField, ...]], ...] = (
     ("Задание", (
         _f("Режим", 20, "mode", key="mode"),
@@ -503,6 +507,7 @@ OB019_SETTINGS: tuple[tuple[str, tuple[SettingField, ...]], ...] = (
         _f("Зачистка", 121, "u16", key="speed_strip", maximum="99"),
         _f("Вывод провода", 122, "u16", key="speed_out", maximum="99"),
         _f("Прокатка плёнки", 123, "u16", key="speed_film", maximum="99"),
+        _f("Подъём подающих роликов", OB019_FEED_WHEEL_ADDRESS, "bit0", key="feed_wheel"),
     )),
 )
 # Registers ERP never writes, whatever the settings above say (backend test against the three write lists).
