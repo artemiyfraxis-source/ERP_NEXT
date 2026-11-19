@@ -16,10 +16,12 @@ from app.modules.production.machines import MachineLinkRow
 from app.modules.references.infrastructure import (EquipmentApplicatorRow, EquipmentMachineRow, EquipmentModelRow,
                                                    EquipmentUnitRow)
 from app.modules.identity.infrastructure import IdentityApiTokenRow
+from app.shared.persistence import AuditEventRow
 from app.workflows.equipment_setup_model import seed
 from tests.identity.test_api_tokens import _issue, _login, tokens_api  # noqa: F401
 
 LIST = "/api/production/setup-model"
+SEEDED = select(func.count()).select_from(AuditEventRow).where(AuditEventRow.event_type.like("equipment_setup.%"))
 HEADER = ("inv", "requires_setup", "param_key", "param_name", "unit", "source", "source_field", "register", "reason",
           "reviewed")
 
@@ -95,6 +97,29 @@ def test_seed_refuses_an_unknown_inventory_number(setup_db):
         result = seed(session, rows, now=clock(), apply=True, source="test.csv")
         assert "ОБ.555" in result["refused"]
         assert session.scalar(select(func.count()).select_from(SetupModelRow)) == 0
+
+
+def test_seed_journals_each_change_once_and_takes_a_recorded_decision(setup_db):
+    sessions, clock, _admin, units = setup_db
+    decision = "решение Claude 19.11 (владелец: не ждать)"
+    rows = [{**row, "reviewed": decision} for row in _rows()]
+    with sessions() as session:
+        plan = seed(session, rows, now=clock(), apply=False, source="test.csv")
+    assert plan["units"] == 6 and plan["skipped_not_reviewed"] == []
+    with sessions() as session:
+        assert session.scalar(SEEDED) == 0  # the dry run left no journal
+        seed(session, rows, now=clock(), apply=True, source="test.csv")
+    with sessions() as session:
+        events = session.scalars(select(AuditEventRow).where(AuditEventRow.event_type.like("equipment_setup.%"))).all()
+        assert sorted(event.event_type for event in events) == ["equipment_setup.model_seeded"] * 4 + [
+            "equipment_setup.unit_override_seeded"]
+        override = next(event for event in events if event.event_type.endswith("override_seeded"))
+        assert override.aggregate_id == units["ОБ.100.3"] and override.details["parameters"] == "−diameter_mm"
+        assert {event.actor_name for event in events} == {"Модель наладки (CSV владельца)"}
+        again = seed(session, rows, now=clock(), apply=True, source="test.csv")
+    assert again["overrides"] == {} and all(text.endswith("без изменений") for text in again["models"].values())
+    with sessions() as session:
+        assert session.scalar(SEEDED) == len(events)
 
 
 def test_list_and_card_show_classes_online_configuration_and_references(setup_db):

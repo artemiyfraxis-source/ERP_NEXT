@@ -81,6 +81,8 @@ from .workflows import machines_api
 from .workflows import equipment_setup_model
 from .workflows import machine_writes_api
 from .workflows import machine_control_api
+from .workflows import manual_jobs_api
+from .workflows import machine_runs_api
 from .modules.production import rf_interfaces_api
 from .modules.production import mating_api as production_mating_api
 from .modules.production import vna_check_api as production_vna_check_api
@@ -202,6 +204,8 @@ app.include_router(instrument_public_passport.router)
 app.include_router(marking_labels.router)
 app.include_router(machine_writes_api.router)
 app.include_router(machine_control_api.router)
+app.include_router(manual_jobs_api.router)
+app.include_router(machine_runs_api.router)
 app.include_router(machines_api.router)
 app.include_router(equipment_setup_model.router)
 

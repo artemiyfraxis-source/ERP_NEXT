@@ -11,7 +11,7 @@ import pytest
 from app.modules.equipment_setup.setup_model import (CurrentConfiguration, MachineCorrection, ParameterOverride,
                                                      SetupModel, SetupParameter, SetupReference, SetupValidationError,
                                                      UnitOverride, changeover, corrected, effective, etk_reason,
-                                                     model_and_overrides, next_reference_version, read_proposal,
+                                                     model_and_overrides, next_reference_version, read_proposal, reviewed,
                                                      setup_values)
 
 PROPOSAL = Path(__file__).parents[3] / "docs" / "data" / "equipment-setup-model-proposal-2026-11-18.csv"
@@ -129,11 +129,20 @@ def test_units_of_one_model_give_the_common_answer_and_overrides():
 def test_the_proposal_csv_parses_once_reviewed():
     with PROPOSAL.open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
+    assert {row["reviewed"] for row in rows} == {"решение Claude 19.11 (владелец: не ждать)"}
     units, skipped = read_proposal(rows)
-    assert units == [] and len(skipped) > 200  # nothing is seeded before the owner's review
-    units, skipped = read_proposal([{**row, "reviewed": "да"} for row in rows])
     classes = [unit.model.requires_setup for unit in units]
-    assert skipped == [] and classes.count("full") >= 10 and classes.count("simple") >= 20
+    assert skipped == [] and len(units) == 279 and classes.count("full") == 17 and classes.count("simple") == 33
+    decided = {unit.inventory: unit.model.requires_setup for unit in units}
+    assert decided["ОБ.001"] == decided["ОБ.002"] == "simple" and decided["ОБ.093"] == "full"
+    assert decided["ОБ.009"] == decided["ОБ.092"] == "simple"
+    assert all(code == "none" for inventory, code in decided.items() if inventory.startswith(("ОБ.024.", "ОБ.060.")))
     ob019 = next(unit for unit in units if unit.inventory == "ОБ.019")
     assert ob019.model.parameter("strip_front_mm").register == "D34"
     assert all(unit.model.requires_setup == "none" for unit in units if unit.inventory.startswith(("ОБ.070", "ОБ.071")))
+
+
+def test_reviewed_cell_is_yes_or_a_recorded_decision():
+    assert reviewed("да") and reviewed(" Да ") and reviewed("+")
+    assert reviewed("решение Claude 19.11 (владелец: не ждать)") and reviewed("Решение  владельца 20.11")
+    assert not reviewed("") and not reviewed("нет") and not reviewed("решение") and not reviewed("на проверке")

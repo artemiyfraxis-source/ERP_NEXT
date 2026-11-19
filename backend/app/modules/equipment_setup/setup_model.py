@@ -339,6 +339,14 @@ CSV_SOURCES = {label: code for code, label in SOURCE_LABELS.items()}
 CSV_COLUMNS = ("inv", "requires_setup", "param_key", "param_name", "unit", "source", "source_field", "register",
                "reason", "reviewed")
 REVIEWED = {"да", "yes", "1", "+"}
+# A decision recorded on the owner's authority counts as reviewed: «решение Claude 19.11 (владелец: не ждать)» — owner
+# 19.11 «не ждать моей проверки», the open questions decided by the main session (docs/data/*-decisions-*.md).
+DECISION_PREFIX = "решение "
+
+
+def reviewed(cell: object) -> bool:
+    text = " ".join(str(cell or "").split()).casefold()
+    return text in REVIEWED or text.startswith(DECISION_PREFIX)
 
 
 @dataclass(frozen=True)
@@ -349,7 +357,8 @@ class ProposalUnit:
 
 def read_proposal(rows: Iterable[Mapping[str, str]]) -> tuple[list[ProposalUnit], list[str]]:
     """Rows of the CSV (one per unit × parameter) → the reviewed units and the inventory numbers skipped as not reviewed.
-    A unit is taken only when every one of its rows says «да» in `reviewed`; a contradiction refuses the whole file."""
+    A unit is taken only when every one of its rows says «да» (or records a decision, «решение …») in `reviewed`; a
+    contradiction refuses the whole file."""
     grouped: dict[str, list[Mapping[str, str]]] = {}
     for row in rows:
         missing = [name for name in CSV_COLUMNS if name not in row]
@@ -361,7 +370,7 @@ def read_proposal(rows: Iterable[Mapping[str, str]]) -> tuple[list[ProposalUnit]
         grouped.setdefault(inventory, []).append(row)
     units, skipped = [], []
     for inventory, items in grouped.items():
-        if not all(str(item["reviewed"] or "").strip().casefold() in REVIEWED for item in items):
+        if not all(reviewed(item["reviewed"]) for item in items):
             skipped.append(inventory)
             continue
         classes = {str(item["requires_setup"]).strip() for item in items}
