@@ -9,7 +9,7 @@ import json
 from typing import Sequence
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, text, update
+from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, text, update, false
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, aliased, mapped_column, relationship, sessionmaker, validates
 
@@ -639,12 +639,20 @@ class ProductionInstrumentRow(Base):
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
 
+REFERENCE_CURVE_CHECK = "NOT is_reference OR lower(file_name) LIKE '%.s2p'"
+
+
 class ProductionInstrumentFileRow(Base):
     __tablename__ = "production_instrument_files"
     __table_args__ = (
         CheckConstraint("kind IN ('Паспорт', 'Свидетельство о поверке', 'Руководство', 'Прочее')", name="ck_production_instrument_files_kind"),
         CheckConstraint("length(trim(file_name)) > 0", name="ck_production_instrument_files_name"),
         CheckConstraint("length(content) BETWEEN 1 AND 20971520", name="ck_production_instrument_files_size"),
+        # The weekly control check compares a control standard with its reference curve (СТО ФРАК-002-2026, разд. 14):
+        # at most one per instrument, and only a Touchstone measurement file (0201_instrument_reference_curve).
+        CheckConstraint(REFERENCE_CURVE_CHECK, name="ck_production_instrument_files_reference"),
+        Index("uq_production_instrument_files_reference", "instrument_id", unique=True,
+              sqlite_where=text("is_reference"), postgresql_where=text("is_reference")),
     )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     instrument_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_instruments.id", ondelete="RESTRICT"), nullable=False, index=True)
@@ -653,6 +661,7 @@ class ProductionInstrumentFileRow(Base):
     content: Mapped[bytes] = mapped_column(LargeBinary(), nullable=False, deferred=True)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     uploaded_by: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("identity_users.id", ondelete="RESTRICT"), nullable=False)
+    is_reference: Mapped[bool] = mapped_column(Boolean(), nullable=False, server_default=false())
 
 
 class ProductionQcInspectionRow(Base):
@@ -2059,7 +2068,7 @@ class SqlAlchemyInstrumentFileRepository:
         return InstrumentFile(id=row.id, instrument_id=row.instrument_id, kind=InstrumentFileKind(row.kind),
                               file_name=row.file_name, size=size, uploaded_at=uploaded_at,
                               uploaded_by=row.uploaded_by, uploaded_by_name=name,
-                              content=row.content if content else None)
+                              content=row.content if content else None, is_reference=bool(row.is_reference))
 
     def list(self) -> list[InstrumentFile]:
         return [self._domain(row) for row in self.session.execute(self._query().order_by(
@@ -2077,6 +2086,16 @@ class SqlAlchemyInstrumentFileRepository:
             id=file.id, instrument_id=file.instrument_id, kind=file.kind.value, file_name=file.file_name,
             content=file.content, uploaded_at=file.uploaded_at, uploaded_by=file.uploaded_by,
         ))
+
+    def set_reference(self, instrument_id: UUID, file_id: UUID) -> UUID | None:
+        """Moves the instrument's reference-curve mark to this file; returns the file that held it before."""
+        row = ProductionInstrumentFileRow
+        previous = self.session.scalar(select(row.id).where(row.instrument_id == instrument_id, row.is_reference.is_(True)))
+        self.session.execute(update(row).where(row.instrument_id == instrument_id, row.is_reference.is_(True)).values(is_reference=False))
+        self.session.flush()
+        self.session.execute(update(row).where(row.instrument_id == instrument_id, row.id == file_id).values(is_reference=True))
+        self.session.flush()
+        return previous
 
     def delete(self, instrument_id: UUID, file_id: UUID) -> bool:
         return self.session.execute(delete(ProductionInstrumentFileRow).where(

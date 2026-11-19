@@ -252,6 +252,13 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
             {(record.files ?? []).filter((file) => file.kind === value).map((file) => <div className="instrument-file" key={file.id}>
               <a href={productionApi.instrumentFileUrl(record.id, file.id)} target="_blank" rel="noopener noreferrer">{file.file_name}</a>
               <span>{formatNumber(file.size)} байт · {formatDay(file.uploaded_at)} · {file.uploaded_by_name}</span>
+              {file.is_reference && <span className="tone-ok instrument-file-reference">Эталонная кривая</span>}
+              {!file.is_reference && /\.s2p$/i.test(file.file_name) && <button type="button" className="secondary small" disabled={busy}
+                aria-label={`Сделать эталонной кривой: ${file.file_name}`} onClick={() => {
+                  const current = (record.files ?? []).find((item) => item.is_reference);
+                  if (current && !window.confirm(`Эталонной кривой сейчас назначен «${current.file_name}». Заменить на «${file.file_name}»?`)) return;
+                  void run(async () => { await productionApi.setInstrumentReferenceCurve(record.id, file.id); setNotice("Эталонная кривая назначена"); await refreshFiles(); });
+                }}>Сделать эталонной кривой</button>}
               <button className="danger small" disabled={busy} aria-label={`Удалить файл ${file.file_name}`} onClick={() => {
                 if (window.confirm(`Удалить файл «${file.file_name}»?`)) void run(async () => { await productionApi.deleteInstrumentFile(record.id, file.id); setNotice("Файл удалён"); await refreshFiles(); });
               }}>Удалить</button>
