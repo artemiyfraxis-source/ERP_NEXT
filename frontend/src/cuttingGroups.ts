@@ -30,7 +30,13 @@ export interface CuttingMember {
   norm_seconds: number;
   boxes: { id: string; number: string; quantity: string }[];
   etk_url: string;
+  /** Tube cuts of this КБ (group kind «tubes»): material, cut length, pieces. */
+  tubes?: CuttingTube[];
 }
+
+export interface CuttingTube { material: string; length_mm: string | number; quantity: string | number }
+
+export type CuttingKind = "cut" | "labels" | "tubes";
 
 export interface CuttingGroup {
   id: string;
@@ -38,6 +44,9 @@ export interface CuttingGroup {
   version: number;
   recipe_version: number;
   recipe_key: string;
+  /** Kind of the preparation PF (owner 20.11); missing in old groups. */
+  kind?: CuttingKind;
+  kind_name?: string;
   project: string;
   site: string;
   state: "open" | "frozen" | "cancelled";
@@ -69,6 +78,20 @@ export interface CuttingWorkResult {
 export const cuttingState: Record<CuttingMember["state"], string> = {
   waiting: "Не назначено", assigned: "Назначено", started: "В работе", done: "Выполнено", split: "Выдано отдельно", cancelled: "Отменено",
 };
+
+/** Printed / remaining labels per КБ: `GET /api/production/marking/progress?group_id=…`. */
+export interface MarkingProgressRow { task_id: string; task_number: string; item: string; quantity: number; printed: number; remaining: number }
+export interface MarkingProgress { rows: MarkingProgressRow[]; printed: number; remaining: number }
+
+export const cuttingKindTitle: Record<CuttingKind, string> = { cut: "Резка кабеля", labels: "Печать этикеток", tubes: "Резка трубок" };
+
+/** The card look: a kind group shows only its own table; an old mixed group (no kind, or a cut group that still carries
+ *  label layouts from the pre-split «Заготовки» PF) keeps the single wide table with the label block. */
+export function cuttingLook(group: CuttingGroup): CuttingKind | "mixed" {
+  if (group.kind === "labels" || group.kind === "tubes") return group.kind;
+  if (group.kind === "cut" && cuttingRows(group).every((row) => !row.labels?.length)) return "cut";
+  return "mixed";
+}
 
 export function cuttingRows(group: CuttingGroup): CuttingMember[] {
   return group.rows.filter((row) => row.membership_state === "active").sort((a, b) => a.position - b.position);
