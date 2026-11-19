@@ -6,7 +6,7 @@ function New-SafeVnaContext {
     $time = [datetimeoffset]::UtcNow
     $device = [pscustomobject]@{ Ready = $true; VnaSerial = 'TEST-VNA'; AcmSerial = 'TEST-ACM'; VnaTemperature = 30.2; VnaTemperatures = @(30.2, 31.4); AcmTemperature = 28.1 }
     $cal = [pscustomobject]@{ Id = 'cal-1'; Time = $time.AddMinutes(-10).ToString('o'); VnaSerial = 'TEST-VNA'; AcmSerial = 'TEST-ACM';
-        VnaTemperature = 30.2; VnaTemperatures = @(30.2,31.4); AcmTemperature = 28.1; LoadCheck = 'pass' }
+        VnaTemperature = 30.2; VnaTemperatures = @(30.2,31.4); AcmTemperature = 28.1; ConfidenceCheck = 'pass'; LoadCheck = 'pass' }
     $data = New-VnaData -Frequencies @(10e6,18e9) -S11 @([Numerics.Complex]::new(0.01,0),[Numerics.Complex]::new(0.02,0)) `
         -S21 @([Numerics.Complex]::new(0.98,0),[Numerics.Complex]::new(0.97,0)) -S12 @([Numerics.Complex]::new(0.98,0),[Numerics.Complex]::new(0.97,0)) `
         -S22 @([Numerics.Complex]::new(0.02,0),[Numerics.Complex]::new(0.01,0))
@@ -57,9 +57,11 @@ Describe 'Measurement safety before attachment' {
     }
     It 'refuses an uncorrected live trace and an uncorrected captured trace' {
         $script:ctx.States.S21 = 'C?'
-        { Assert-VnaMeasurementSafe $script:ctx.Sweep $script:ctx.Calibration $script:ctx.Device $script:ctx.States } | Should Throw
+        { Assert-VnaMeasurementSafe $script:ctx.Sweep $script:ctx.Calibration $script:ctx.Device $script:ctx.States } | Should Throw 'Трасса S21: калибровка интерполирована («К?»)'
         $script:ctx.States.S21 = 'COR'; $script:ctx.Sweep.TraceStatus.S12 = 'C!'
-        { Assert-VnaMeasurementSafe $script:ctx.Sweep $script:ctx.Calibration $script:ctx.Device $script:ctx.States } | Should Throw
+        { Assert-VnaMeasurementSafe $script:ctx.Sweep $script:ctx.Calibration $script:ctx.Device $script:ctx.States } | Should Throw 'Трасса S12: калибровка экстраполирована («К!»)'
+        $script:ctx.Sweep.TraceStatus.S12 = 'NONE'
+        { Assert-VnaMeasurementSafe $script:ctx.Sweep $script:ctx.Calibration $script:ctx.Device $script:ctx.States } | Should Throw 'без COR'
     }
     It 'refuses calibration older than four hours, including after operator delay' {
         { Assert-VnaMeasurementSafe $script:ctx.Sweep $script:ctx.Calibration $script:ctx.Device $script:ctx.States -Now $script:ctx.Now.AddHours(4) } | Should Throw
@@ -83,6 +85,12 @@ Describe 'Measurement safety before attachment' {
         { Assert-VnaMeasurementSafe $script:ctx.Sweep $script:ctx.Calibration $script:ctx.Device $script:ctx.States } | Should Throw
         $script:ctx.Calibration.LoadCheck = 'fail'
         { Assert-VnaMeasurementSafe $script:ctx.Sweep $script:ctx.Calibration $script:ctx.Device $script:ctx.States } | Should Throw
+    }
+    It 'refuses recording without a passed ACM confidence test' {
+        foreach ($state in 'not_checked', 'fail', $null) {
+            $script:ctx.Calibration.ConfidenceCheck = $state
+            { Assert-VnaMeasurementSafe $script:ctx.Sweep $script:ctx.Calibration $script:ctx.Device $script:ctx.States -SkipLoadCheck } | Should Throw 'Доверительный тест АКМ'
+        }
     }
     It 'refuses a sweep predating calibration' {
         $script:ctx.Sweep.CapturedAt = $script:ctx.Now.AddHours(-1).ToString('o')
@@ -222,6 +230,13 @@ Describe 'Offline complete session' {
         $events = @(Get-VnaJournal (Join-Path $folder 'calibrations.jsonl'))
         $events.Count | Should Be 2
         $events[1].LoadCheck | Should Be 'pass'
+        $events[0].ConfidenceCheck | Should Be 'pass'
+        $checks = @(Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $folder 'mock\checks.json') | ConvertFrom-Json)
+        $checks.Count | Should Be 1
+        $checks[0].kind | Should Be 'session'
+        $checks[0].passed | Should Be $true
+        $checks[0].load_p1_vswr | Should BeLessThan 1.06
+        @(Get-ChildItem -LiteralPath (Join-Path $folder 'pending-checks') -Filter '*.json').Count | Should Be 0
         (Test-Path -LiteralPath (Join-Path $folder 'operator-backup.json')) | Should Be $false
         Assert-MockCalled New-VnaApplication -Times 0 -Exactly
         Assert-MockCalled Invoke-RestMethod -Times 0 -Exactly
@@ -429,7 +444,7 @@ Describe 'Offline correction loss after calibration and load check' {
         $events = @(Get-VnaJournal (Join-Path $folder 'calibrations.jsonl'))
         $events[0].Result | Should Be 'pass'
         $events[1].LoadCheck | Should Be 'pass'
-        ($script:refusalOutput -join "`n") | Should Match 'Нет полной коррекции S21; калибровки нет — выполните пункт 2'
+        ($script:refusalOutput -join "`n") | Should Match 'Трасса S21: калибровка интерполирована \(«К\?»\) — замер не принимается; выполните пункт 2'
         (Test-Path -LiteralPath (Join-Path $folder 'raw')) | Should Be $false
         (Test-Path -LiteralPath (Join-Path $folder 'used-sweeps.jsonl')) | Should Be $false
         $script:answers.Count | Should Be 0

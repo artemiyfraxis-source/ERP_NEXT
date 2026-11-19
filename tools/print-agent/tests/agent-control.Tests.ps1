@@ -558,7 +558,7 @@ Describe 'Управление ВАЦ: основной цикл и блокир
             @{ id = "wia-$($script:discoveryCount)"; name = "Scanner $($script:discoveryCount)" }
         }
         Mock Get-LanIp { if ($script:holding) { throw 'Blocking network discovery' }; '192.168.1.20' }
-        Mock Test-ArinstInstalled { if ($script:holding) { throw 'Blocking file discovery' }; $true }
+        Mock Test-ArinstPresent { if ($script:holding) { throw 'Blocking file discovery' }; $true }
         Mock Get-VnaCapability { throw 'Must not enter COM' }
         Mock Get-VnaApplication { throw 'Must not enter COM' }
         Mock Get-WiaScanners { throw 'Must not enter WIA' }
@@ -612,7 +612,7 @@ Describe 'Управление ВАЦ: основной цикл и блокир
         ($script:beats[-1].at - $light[-1].at).TotalSeconds | Should Be 10
         Assert-MockCalled Get-AgentScanners -Times 2 -Exactly -Scope It
         Assert-MockCalled Get-LanIp -Times 2 -Exactly -Scope It
-        Assert-MockCalled Test-ArinstInstalled -Times 2 -Exactly -Scope It
+        Assert-MockCalled Test-ArinstPresent -Times 2 -Exactly -Scope It
         Assert-MockCalled Invoke-AgentUpdate -Times 2 -Exactly -Scope It
         Assert-MockCalled Invoke-PollOnce -Times 1 -Exactly -Scope It
         Assert-MockCalled Get-WiaScanners -Times 0 -Exactly -Scope It
@@ -625,7 +625,7 @@ Describe 'Управление ВАЦ: основной цикл и блокир
         Mock Send-Heartbeat { & $script:realSendHeartbeat $Base $AuthToken $PrinterName $ScannerAddress -Lightweight:$Lightweight }
         Mock Get-AgentScanners { throw 'Must not discover scanners' }
         Mock Get-LanIp { throw 'Must not discover network' }
-        Mock Test-ArinstInstalled { throw 'Must not discover files' }
+        Mock Test-ArinstPresent { throw 'Must not discover files' }
         Mock Get-VnaCapability { throw 'Must not enter COM' }
         Mock Get-MachineId { 'pc-1' }
         Mock Invoke-AgentUpdate {}
@@ -637,7 +637,7 @@ Describe 'Управление ВАЦ: основной цикл и блокир
         }
         Assert-MockCalled Get-AgentScanners -Times 0 -Exactly -Scope It
         Assert-MockCalled Get-LanIp -Times 0 -Exactly -Scope It
-        Assert-MockCalled Test-ArinstInstalled -Times 0 -Exactly -Scope It
+        Assert-MockCalled Test-ArinstPresent -Times 0 -Exactly -Scope It
         Assert-MockCalled Get-VnaCapability -Times 0 -Exactly -Scope It
         Assert-MockCalled Invoke-AgentUpdate -Times 0 -Exactly -Scope It
     }
@@ -934,7 +934,7 @@ Describe 'Управление ВАЦ: журнал, опрос, watchdog' {
         Mock Get-VnaObservation { @{ ready = $true; serial = '26030095'; name = 'Planar, S50180, 26030095, 26.2' } }
         Mock Get-VnaManifest { @{ instrument_serial = '26030095'; ordinary_state_verified = $true; kits = @(
             @{ method = 'acm'; registry_fingerprint = ('a' * 64); definition = @{ serial = '26140008' } }) } }
-        Mock Get-AgentScanners { @() }; Mock Get-LanIp { '' }; Mock Get-MachineId { 'pc-1' }; Mock Test-ArinstInstalled { $false }
+        Mock Get-AgentScanners { @() }; Mock Get-LanIp { '' }; Mock Get-MachineId { 'pc-1' }; Mock Test-ArinstPresent { $false }
         Mock Invoke-ErpApi { @{} }
         Send-Heartbeat 'http://test' 'token'
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {

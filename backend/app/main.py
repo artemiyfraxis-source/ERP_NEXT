@@ -78,8 +78,10 @@ from .workflows import finished_goods_api
 from .workflows import production_intake_api
 from .workflows import coax_vswr_api, instrument_from_stock, instrument_labels, instrument_public_passport, marking_labels
 from .workflows import machines_api
+from .workflows import machine_writes_api
 from .modules.production import rf_interfaces_api
 from .modules.production import mating_api as production_mating_api
+from .modules.production import vna_check_api as production_vna_check_api
 from .workflows import vna_plan_api
 from .workflows import vna_measurement_api
 from .workflows import receiving_by_upd_api
@@ -186,12 +188,14 @@ app.include_router(production_intake_api.router)
 app.include_router(coax_vswr_api.router)
 app.include_router(rf_interfaces_api.router)
 app.include_router(production_mating_api.router)
+app.include_router(production_vna_check_api.router)
 app.include_router(vna_plan_api.router)
 app.include_router(vna_measurement_api.router)
 app.include_router(instrument_from_stock.router)
 app.include_router(instrument_labels.router)
 app.include_router(instrument_public_passport.router)
 app.include_router(marking_labels.router)
+app.include_router(machine_writes_api.router)
 app.include_router(machines_api.router)
 
 _equipment_enabled = equipment_setup_enabled()
@@ -201,7 +205,9 @@ elif _equipment_enabled:
     raise RuntimeError("ERP_DATABASE_URL is required when equipment setup is enabled")
 if _equipment_enabled:
     from .modules.equipment_setup.api import router as equipment_setup_router
+    from .workflows.ob019_setup import router as ob019_setup_router
     app.include_router(equipment_setup_router)
+    app.include_router(ob019_setup_router)
 watch_stop_file()  # локальная ERP на ПК: обновление останавливает API файлом-стопом (scripts/update-local.ps1)
 
 

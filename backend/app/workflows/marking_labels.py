@@ -1,7 +1,7 @@
 """Compose equipment identity, pinned production marks and the targeted print queue."""
 
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import json
 from types import SimpleNamespace
@@ -54,6 +54,28 @@ ReadUser = Annotated[Principal, Depends(marking_read_principal)]
 STALE = "Источник или профиль изменился — обновите предпросмотр"
 STATUS_LABELS = {"pending": "В очереди", "taken": "Печатается", "spooled": "Передано принтеру",
                  "failed": "Ошибка печати", "unknown": "Результат неизвестен"}
+
+
+# Spooled jobs the agent (2.9.6+) keeps watching in the Windows queue; the printer may hold them (peel-off mode).
+PRINT_STATE_LABELS = {"queued": "В очереди принтера", "printed": "Напечатано", "error": "Ошибка принтера",
+                      "cancelled": "Отменено", "untracked": "Передано принтеру"}
+STUCK_AFTER = timedelta(minutes=3)
+STUCK_TEXT = "Принтер ждёт (снимите этикетку / проверьте принтер)"
+
+
+def print_state(job):
+    if job.status != "spooled":
+        return None
+    receipt = job.receipt or {}
+    if not receipt.get("tracked"):
+        return "untracked"
+    return receipt.get("print_state") or "queued"
+
+
+def _moment(value):
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value)
+    return value.replace(tzinfo=None) if value is not None and value.tzinfo else value
 
 
 def digest(value):
@@ -393,14 +415,35 @@ def preview(payload: PreviewInput, principal: PrintUser, factory: Factory, now: 
     return checked(run)
 
 
-def batch_view(batch, session):
+def batch_view(batch, session, now=None):
     jobs = list(session.scalars(select(LabelJobRow).where(LabelJobRow.batch_id == batch.id).order_by(LabelJobRow.sequence)))
     statuses = {job.status for job in jobs}
     status = next((value for value in ("unknown", "failed", "taken", "pending") if value in statuses), "spooled")
-    return {"id": str(batch.id), "status": status, "status_label": STATUS_LABELS[status], "total": batch.total,
+    states = {job.id: print_state(job) for job in jobs}
+    counts = {key: sum(1 for value in states.values() if value == key) for key in PRINT_STATE_LABELS}
+    status_label = STATUS_LABELS[status]
+    if status == "spooled" and jobs and counts["printed"] == len(jobs):
+        status_label = PRINT_STATE_LABELS["printed"]
+    elif status == "spooled" and (counts["queued"] or counts["error"]):
+        status_label = "Печатается"
+    # «Принтер ждёт»: nothing finished for a few minutes while tracked labels still sit in the printer's queue.
+    stuck = False
+    if now is not None and counts["queued"]:
+        marks = [_moment((job.receipt or {}).get("print_state_at")) for job in jobs if states[job.id] == "printed"]
+        marks += [_moment(job.finished_at) for job in jobs if states[job.id] in ("queued", "error") and job.finished_at]
+        last = max((mark for mark in marks if mark), default=None)
+        stuck = last is not None and _moment(now) - last > STUCK_AFTER
+    progress = f"Напечатано {counts['printed']} из {batch.total} · в очереди {counts['queued'] + counts['error']}"
+    return {"id": str(batch.id), "status": status, "status_label": status_label, "total": batch.total,
         "reprint_of": str(batch.reprint_of) if batch.reprint_of else None,
+        "printed": counts["printed"], "queued": counts["queued"], "print_errors": counts["error"],
+        "cancelled": counts["cancelled"], "untracked": counts["untracked"], "tracked": counts["untracked"] == 0,
+        "progress_label": progress if status == "spooled" and jobs and counts["untracked"] != len(jobs) else None,
+        "stuck": stuck, "stuck_label": STUCK_TEXT if stuck else None,
         "jobs": [{"id": str(job.id), "sequence": job.sequence, "status": job.status,
-            "status_label": STATUS_LABELS[job.status], "message": job_message(job),
+            "print_state": states[job.id],
+            "status_label": PRINT_STATE_LABELS[states[job.id]] if states[job.id] else STATUS_LABELS[job.status],
+            "message": job_message(job),
             "spool_job_id": (job.receipt or {}).get("spool_job_id")} for job in jobs]}
 
 
@@ -410,6 +453,8 @@ def job_message(job):
         # The agent answered after its lease ran out: the operator decides, the agent's word is a hint.
         late = STATUS_LABELS[receipt["outcome"]] + (f": {receipt['message']}" if receipt.get("message") else "")
         return f"{job.error or ''} Агент сообщил позже — {late}".strip()
+    if job.status == "spooled" and receipt.get("print_state") in ("error", "cancelled") and receipt.get("print_message"):
+        return receipt["print_message"]
     return job.error or receipt.get("message", "")
 
 
@@ -453,7 +498,7 @@ def enqueue(payload: BatchInput, principal: PrintUser, factory: Factory, now: No
                 batch_access(old, principal, uow)
                 if old.fingerprint != fingerprint:
                     raise ConcurrentProductionUpdate("Ключ запроса уже использован")
-                return batch_view(old, uow.session)
+                return batch_view(old, uow.session, now)
             manifest, binding = build_preview(payload, principal, uow, now)
             if manifest["manifest_hash"] != payload.manifest_hash:
                 raise ConcurrentProductionUpdate(STALE)
@@ -468,7 +513,7 @@ def enqueue(payload: BatchInput, principal: PrintUser, factory: Factory, now: No
                 if content(original.manifest) != content(manifest):
                     raise ConcurrentProductionUpdate("Надписи повторной печати расходятся с исходной партией")
             batch = persist_batch(uow, manifest, binding, payload, principal, now, fingerprint)
-            result = batch_view(batch, uow.session)
+            result = batch_view(batch, uow.session, now)
             uow.commit()
             return result
     def race_safe():
@@ -485,7 +530,7 @@ def enqueue(payload: BatchInput, principal: PrintUser, factory: Factory, now: No
                 batch_access(existing, principal, uow)
                 if existing.fingerprint != digest(payload.model_dump(mode="json")):
                     raise ConcurrentProductionUpdate("Ключ запроса уже использован")
-                return batch_view(existing, uow.session)
+                return batch_view(existing, uow.session, now)
     return checked(race_safe)
 
 
@@ -496,7 +541,7 @@ def get_batch(batch_id: UUID, principal: ReadUser, factory: Factory, now: Now):
             batch = uow.session.get(MarkingBatchRow, batch_id)
             batch_access(batch, principal, uow)
             expire_marking(uow.session, now)
-            result = batch_view(batch, uow.session)
+            result = batch_view(batch, uow.session, now)
             uow.commit()
             return result
     return checked(run)
@@ -581,7 +626,7 @@ def resolve(batch_id: UUID, job_id: UUID, payload: ResolveInput,
             if changed.rowcount != 1:
                 raise ConcurrentProductionUpdate("Задание не ожидает проверки результата")
             audit(uow, principal.actor, now, batch_id, "reconciled", job_id=str(job_id), outcome=payload.outcome, reason=payload.reason)
-            result = batch_view(batch, uow.session)
+            result = batch_view(batch, uow.session, now)
             uow.commit()
             return result
     return checked(run)

@@ -234,9 +234,15 @@ Describe 'Marking discovery and protocol' {
         }
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
             $Url -eq 'http://test/api/stock/labels/jobs/mark-1/result' -and $Body.attempt -eq 'attempt-1' -and
-            $Body.outcome -eq 'spooled' -and $Body.spool_job_id -eq 77 -and $MachineId -eq 'machine-1'
+            $Body.outcome -eq 'spooled' -and $Body.spool_job_id -eq 77 -and $Body.tracked -eq $true -and $MachineId -eq 'machine-1'
         }
         Assert-MockCalled Send-RawToPrinter -Times 0 -Exactly -Scope It
+    }
+    It 'starts watching the spooled job in the Windows queue' {
+        Invoke-MarkingPollOnce 'http://test' 'token' 'TSC' 'Godex 中文' | Should Be 'done'
+        $watch = Get-Content -Raw -Encoding UTF8 (Get-PrintWatchPath 'mark-1' 'attempt-1') | ConvertFrom-Json
+        $watch.spool_job_id | Should Be 77
+        $watch.printer | Should Be 'Godex 中文'
     }
     It 'never claims when configured queues are absent' {
         Mock Get-Printer { @() }
@@ -389,7 +395,7 @@ Describe 'Marking heartbeat' {
     BeforeEach {
         $script:VnaControlInitialized = $false; $script:HeartbeatDevices = $null
         Mock Get-MachineId { 'machine-1' }; Mock Get-LanIp { '' }; Mock Get-AgentScanners { @() }
-        Mock Test-ArinstInstalled { $false }; Mock Get-VnaCapability { $null }; Mock Invoke-AgentUpdate {}
+        Mock Test-ArinstPresent { $false }; Mock Get-VnaCapability { $null }; Mock Invoke-AgentUpdate {}
         Mock Get-Printer { [pscustomobject]@{ Name = 'Godex 中文'; DriverName = 'Seagull'; PortName = 'USB001' } }
         Mock Invoke-ErpApi { @{} }
     }
@@ -412,3 +418,80 @@ Describe 'Marking heartbeat' {
         }
     }
 }
+
+Describe 'Honest print status (spool job watch)' {
+    BeforeEach {
+        $script:ConfigPath = Join-Path (Join-Path $TestDrive ([guid]::NewGuid().ToString())) 'config.json'
+        Mock Get-MachineId { 'machine-1' }
+        $script:Reports = @()
+        Mock Invoke-ErpApi { $script:Reports += ,@{ Url = $Url; Body = $Body }; @{ ok = $true } }
+        Save-PrintWatch 'mark-9' 'attempt-9' 'http://test' 'machine-1' 'Godex 中文' 31
+    }
+    It 'classifies the Windows job status' {
+        (Resolve-SpoolJobState ([pscustomobject]@{ JobStatus = 'Printing' })).state | Should Be 'queued'
+        (Resolve-SpoolJobState ([pscustomobject]@{ JobStatus = 'Spooling, Printing' })).final | Should Be $false
+        (Resolve-SpoolJobState ([pscustomobject]@{ JobStatus = 'Printed' })).state | Should Be 'printed'
+        (Resolve-SpoolJobState ([pscustomobject]@{ JobStatus = 'Complete' })).final | Should Be $true
+        (Resolve-SpoolJobState $null).state | Should Be 'printed'
+        (Resolve-SpoolJobState $null $true).state | Should Be 'cancelled'
+        (Resolve-SpoolJobState ([pscustomobject]@{ JobStatus = 'Deleting' })).deleting | Should Be $true
+        $error1 = Resolve-SpoolJobState ([pscustomobject]@{ JobStatus = 'Printing, Offline' })
+        $error1.state | Should Be 'error'
+        $error1.message | Should Match 'не в сети'
+        (Resolve-SpoolJobState ([pscustomobject]@{ JobStatus = 'PaperOut' })).message | Should Match 'бумаги'
+        (Resolve-SpoolJobState ([pscustomobject]@{ JobStatus = 'Paused' })).state | Should Be 'error'
+    }
+    It 'keeps a job the printer still holds silent and unfinished' {
+        Mock Get-PrintJob { [pscustomobject]@{ ID = 31; JobStatus = 'Printing' } }
+        Update-PrintWatches 'http://test' 'token'
+        $script:Reports.Count | Should Be 0
+        Test-Path -LiteralPath (Get-PrintWatchPath 'mark-9' 'attempt-9') | Should Be $true
+    }
+    It 'reports printed once the job leaves the queue and ends the watch' {
+        Mock Get-PrintJob { @() }
+        Update-PrintWatches 'http://test' 'token'
+        $script:Reports.Count | Should Be 1
+        $script:Reports[0].Url | Should Be 'http://test/api/stock/labels/jobs/mark-9/print-state'
+        $script:Reports[0].Body.state | Should Be 'printed'
+        $script:Reports[0].Body.attempt | Should Be 'attempt-9'
+        Test-Path -LiteralPath (Get-PrintWatchPath 'mark-9' 'attempt-9') | Should Be $false
+    }
+    It 'reports an error once, keeps watching, and reports printed after it clears' {
+        $script:Queue = @([pscustomobject]@{ ID = 31; JobStatus = 'Offline' })
+        Mock Get-PrintJob { $script:Queue }
+        Update-PrintWatches 'http://test' 'token'
+        Update-PrintWatches 'http://test' 'token'
+        $script:Reports.Count | Should Be 1
+        $script:Reports[0].Body.state | Should Be 'error'
+        $script:Queue = @()
+        Update-PrintWatches 'http://test' 'token'
+        $script:Reports.Count | Should Be 2
+        $script:Reports[1].Body.state | Should Be 'printed'
+    }
+    It 'reports cancelled when the job was deleted from the queue' {
+        $script:Queue = @([pscustomobject]@{ ID = 31; JobStatus = 'Deleting' })
+        Mock Get-PrintJob { $script:Queue }
+        Update-PrintWatches 'http://test' 'token'
+        $script:Reports.Count | Should Be 0
+        $script:Queue = @()
+        Update-PrintWatches 'http://test' 'token'
+        $script:Reports[0].Body.state | Should Be 'cancelled'
+    }
+    It 'keeps the watch when ERP is unreachable and drops it when ERP will never take it' {
+        Mock Get-PrintJob { @() }
+        Mock Get-ErpErrorStatus { 0 }
+        Mock Invoke-ErpApi { throw 'network lost' }
+        Update-PrintWatches 'http://test' 'token'
+        Test-Path -LiteralPath (Get-PrintWatchPath 'mark-9' 'attempt-9') | Should Be $true
+        Mock Get-ErpErrorStatus { 409 }
+        Update-PrintWatches 'http://test' 'token'
+        Test-Path -LiteralPath (Get-PrintWatchPath 'mark-9' 'attempt-9') | Should Be $false
+    }
+    It 'does not decide anything while the Windows queue cannot be read' {
+        Mock Get-PrintJob { throw 'spooler stopped' }
+        Update-PrintWatches 'http://test' 'token'
+        $script:Reports.Count | Should Be 0
+        Test-Path -LiteralPath (Get-PrintWatchPath 'mark-9' 'attempt-9') | Should Be $true
+    }
+}
+

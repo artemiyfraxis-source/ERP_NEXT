@@ -32,12 +32,18 @@ function pause(signal: AbortSignal): Promise<void> {
   });
 }
 
+/** Почему ERP не примет замер с этими настройками (СТО ФРАК-002-2026 п. 11.1, 11.5) — та же проверка, что на сервере. */
+export function captureRefusals(settings: VnaCaptureSettings): string[] {
+  const status = settings.correction_status ?? "";
+  if (status === "NONE" || settings.correction_enabled === false) return ["Нет калибровки (коррекция выключена) — замер не принимается: откалибруйте ВАЦ на полосе замера"];
+  if (status === "C?" || status === "RC?") return ["Калибровка интерполирована («К?») — замер не принимается: откалибруйте ВАЦ на полосе и точках замера"];
+  if (status === "C!" || status === "RC!") return ["Калибровка экстраполирована («К!») — замер не принимается: откалибруйте ВАЦ на полосе замера"];
+  if (settings.smoothing_enabled === true) return ["Включено сглаживание — замер не принимается: выключите сглаживание и повторите"];
+  return [];
+}
+
 export function captureWarnings(settings: VnaCaptureSettings, norm: VswrNorm): string[] {
   const warnings: string[] = [];
-  if (settings.smoothing_enabled === true) warnings.push("Сглаживание включено — пики КСВН занижаются, выключите");
-  if (settings.correction_enabled === false || ["NONE", "C?", "C!", "RC?", "RC!"].includes(settings.correction_status ?? "")) {
-    warnings.push("Нет калибровки на этом диапазоне");
-  }
   const [from, to] = norm.band_mhz ?? [];
   if ((from != null && settings.start_hz != null && settings.start_hz > from * 1e6)
     || (to != null && settings.stop_hz != null && settings.stop_hz < to * 1e6)) {
@@ -68,6 +74,7 @@ export function VnaSettings({ settings, norm, warnings = [] }: { settings: VnaCa
       <div>Коррекция: <b>{enabled(settings.correction_enabled)}</b> · калибровка: {calibration[settings.correction_status ?? ""] ?? "не прочитано"}</div>
     </div>
     {settings.unavailable?.length ? <p className="muted-text">Часть настроек ВАЦ не удалось прочитать.</p> : null}
+    {captureRefusals(settings).map((refusal) => <p key={refusal} className="error-banner" role="alert">{refusal}</p>)}
     {[...new Set([...captureWarnings(settings, norm), ...warnings])].map((warning) => <p key={warning} className="warning-inline" role="status">{warning}</p>)}
   </section>;
 }

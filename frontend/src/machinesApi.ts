@@ -26,8 +26,10 @@ export interface MachineRow {
   last_seen: string | null;
   device: string;
   state: { text: string; tone: Tone };
-  /** Есть живая карточка (ОБ с мостом). */
+  /** Есть живая карточка (ОБ с агентом станка). */
   card: boolean;
+  /** Другие ПК, которые сообщают тот же прибор (не вторая строка), «» — нет. */
+  others: string;
 }
 
 export interface MachinesList {

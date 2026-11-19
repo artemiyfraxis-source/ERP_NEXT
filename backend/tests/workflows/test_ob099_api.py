@@ -93,6 +93,15 @@ def test_the_press_reports_fins_words_and_the_card_decodes_state_job_height_and_
                              "last": None, "alarms": []}
     [row] = [row for row in admin.get(LIST).json()["rows"] if row["inventory"] == "ОБ.099.1"]
     assert (row["state"]["text"], row["device"], row["card"]) == ("Работа", "ПЛК пресса", True)
+    [summary] = [row for row in admin.get(LIST).json()["machines"] if row["inventory"] == "ОБ.099.1"]
+    assert (summary["kind"], summary["state"]["text"], summary["job"]) == ("ob099", "Работа", "61117-4")
+    assert summary["counter"] == {"value": 156, "of": 1400, "today": False}
+    window = admin.get(f"{LIST}/card/ОБ.099.1").json()
+    assert window["kind"] == "ob099" and window["setup"] is False and window["settings"] == []
+    assert window["live"]["crimp"]["height_mm"] == 2.5 and window["today"]["total"] == 0
+    assert window["connection"]["pc"] == "DESKTOP-K6M7O0U" and window["connection"]["extra"] == []
+    # Writes from ERP are ОБ.019 only: the press's control panel says so, its agent cannot take commands.
+    assert admin.get(f"{LIST}/card/ОБ.099.1/control").json()["can_edit"] is False
 
 
 def test_alarm_bits_and_warnings_decode_to_russian_and_alarm_wins_the_state():
