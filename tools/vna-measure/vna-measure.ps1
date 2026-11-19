@@ -465,6 +465,9 @@ function Start-VnaMeasure {
                             } else {
                                 Write-Host 'Доверительный тест не пройден: запись замеров запрещена. Проверьте соединения и откалибруйте заново (2).' -ForegroundColor Red
                             }
+                            # The test turns memory on for every trace: put the measuring screen back (display only, calibration stays).
+                            try { Set-VnaMeasureScreen $connection (Get-VnaScreenLimits $norms $null) $screenBackup }
+                            catch { Write-Host "Экран «$script:VnaDefaultPreset» не поставлен: $($_.Exception.Message) Выберите его пунктом 6." -ForegroundColor Yellow }
                         } finally {
                             Add-VnaJournalEvent $calLog $attempt
                             if ($attempt.Result -eq 'pass') { $calibration = [pscustomobject]$attempt }
