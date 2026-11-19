@@ -1,6 +1,6 @@
 """ОБ.019 machine commands from the card (owner 18.11.2026, plan «Станки», slice 3): Стоп, Сброс, Пуск, Сброс аварии.
 
-They ride the write queue of production/machine_writes.py (purpose `control`, column `command`, migration 0196): the
+They ride the write queue of production/machine_writes.py (purpose `control`, column `command`, migration 0197): the
 command runner on the machine PC (`tools/machine-agent/ob019-writer.ps1`, the bridge's `machine:report` token, PC bound)
 claims them with the parameter writes and holds the PLC bit through the local Modbus service (mbd `pulse`: it writes
 the HMI context D730=13 + date while holding, 1.5 s, and clears the bit) — proven on ОБ.019 18.11.2026.

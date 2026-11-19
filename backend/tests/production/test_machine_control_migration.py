@@ -1,6 +1,6 @@
-"""Migration 0196: machine commands on the write queue — a command only with purpose `control`, known commands and
+"""Migration 0197: machine commands on the write queue — a command only with purpose `control`, known commands and
 statuses, finished ⇔ finish time, one open non-Stop command per machine (writes included), one queued Stop; the
-downgrade drops the commands and restores the 0195 table."""
+downgrade drops the commands and restores the 0196 table."""
 
 import sqlite3
 import uuid
@@ -10,7 +10,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 
-REVISION = "0196_machine_control"
+REVISION = "0197_machine_control"
 INSERT = ("INSERT INTO production_machine_writes (id, equipment_id, purpose, command, status, payload, summary, created_by,"
           " created_at, taken_at, finished_at) VALUES (?, ?, ?, ?, ?, '{}', 'Пуск', ?, '2026-11-19 10:00:00', ?, ?)")
 T = "2026-11-19 10:00:01"

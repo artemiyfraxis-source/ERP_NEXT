@@ -11,7 +11,7 @@ what it asked for: equal → «done», different → «failed» with the registe
 - Allowed only while the machine is idle: state 102 «Готов, ждёт пуска» or 107 «Тираж готов» in a fresh snapshot with
   the link «На связи» (PXS_HMI closed); the runner re-checks D766 right before writing.
 
-Machine commands Стоп / Сброс / Пуск / Сброс аварии (purpose `control`, column `command`, migration 0196) ride the
+Machine commands Стоп / Сброс / Пуск / Сброс аварии (purpose `control`, column `command`, migration 0197) ride the
 same queue; their rules are in production/machine_control.py: 5 s to be claimed, Stop first and exempt from the one-open
 index (it may queue while a write runs, it cancels what is queued), no answer → «unknown», never assumed done.
 

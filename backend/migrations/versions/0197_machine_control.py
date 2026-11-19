@@ -1,4 +1,4 @@
-"""ОБ.019 machine commands Стоп / Сброс / Пуск / Сброс аварии (plan «Станки», slice 3) on the write queue of 0195.
+"""ОБ.019 machine commands Стоп / Сброс / Пуск / Сброс аварии (plan «Станки», slice 3) on the write queue of 0196.
 
 `production_machine_writes` gets the column `command` (stop / reset / start / alarm_clear, only for the new purpose
 `control`) and the statuses `unknown` (no answer — never assumed done) and `cancelled` (a Stop cancelled it). The
@@ -7,14 +7,14 @@ Stop per machine. The access section «Управление станками» (
 it until the owner grants it in «Доступы». Not destructive; the downgrade drops the machine commands (their history
 stays in the audit journal).
 
-Revision after 0195_machine_writes (PR #948); when merged after parallel ones only `down_revision` changes.
+Revision after 0196_machine_writes (PR #948); when merged after parallel ones only `down_revision` changes.
 """
 
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0196_machine_control"
-down_revision = "0195_machine_writes"
+revision = "0197_machine_control"
+down_revision = "0196_machine_writes"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False
@@ -71,4 +71,4 @@ def downgrade():
         batch.drop_column("command")
     op.create_index("ux_production_machine_writes_open", TABLE, ["equipment_id"], unique=True,
                     sqlite_where=sa.text(OLD_OPEN), postgresql_where=sa.text(OLD_OPEN))
-    print(f"0196_machine_control (откат): удалено команд станку: {removed}")
+    print(f"0197_machine_control (откат): удалено команд станку: {removed}")
