@@ -48,33 +48,72 @@ function card(overrides: Partial<MachineCard> = {}): MachineCard {
 
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
-it("lists connected equipment one value per column and opens the live card of ОБ.019 only", async () => {
-  const calls: string[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    calls.push(String(input));
-    return String(input).endsWith("/u19") ? json(card()) : json({ now: "2026-11-18T10:00:02+03:00", rows: [OB019, GODEX, PLANAR] });
+const NOT_INSTALLED: MachineRow = {
+  key: "machine:u37", kind: "machine", equipment_id: null, inventory: "ОБ.037", name: "Автомат резки BZW-880", pc: "", ip: "",
+  service: "Агент ERP · станок", version: "", link: { code: "not_installed", text: "Агент не установлен", tone: "neutral" },
+  last_seen: null, device: "ПЛК линии резки", state: { text: "—", tone: "neutral" }, card: false, others: "",
+};
+
+function machines(calls: string[] = []) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = decodeURIComponent(String(input));
+    calls.push(url);
+    if (url.endsWith("/u19")) return json(card());
+    if (url.endsWith("/control")) return json({ problem: "", state: 105, commands: [], offsets: [], can_edit: false });
+    if (url.endsWith("/transfer")) return json({ choices: [] });
+    if (url.endsWith("/card/ОБ.019")) return json({ inventory: "ОБ.019", settings: [{ title: "Провод и зачистка", fields: [
+      { label: "Длина провода", value: 325, unit: "мм", read: true, key: "length_mm", kind: "u32" }] }] });
+    return json({ now: "2026-11-18T10:00:02+03:00", rows: [OB019, NOT_INSTALLED, GODEX, PLANAR] });
   });
+}
+
+it("shows connected equipment as tiles in groups and opens the live card of ОБ.019", async () => {
+  const calls: string[] = [];
+  machines(calls);
   render(<MachinesPage />);
-  const table = await screen.findByRole("table");
-  for (const title of ["№", "Название", "ПК", "IP", "Агент", "Версия", "Связь", "Последний сигнал", "Устройство", "Состояние",
-    "Также на ПК"]) {
-    expect(within(table).getByRole("columnheader", { name: new RegExp(`^${title}`) })).toBeTruthy();
-  }
-  // One analyser — one row with its СИ number; the other PC that reports it is a muted note, not a second row.
-  expect(within(table).getAllByText("СИ.002")).toHaveLength(1);
-  expect(within(table).getByText("DESKTOP-5O46RH6 — не найден").className).toContain("machine-muted");
-  expect(within(table).getByText("Аварийный стоп").className).toContain("tone-danger");
-  expect(within(table).getByText("Нет связи с ПК").className).toContain("tone-danger");
-  fireEvent.click(within(table).getByText("ОБ.101"));
-  expect(screen.queryByRole("dialog")).toBeNull();
-  fireEvent.click(within(table).getByText("ОБ.019"));
+  const tools = await screen.findByRole("region", { name: "Станки" });
+  const printers = screen.getByRole("region", { name: "Принтеры" });
+  const devices = screen.getByRole("region", { name: "Приборы и сканеры" });
+  expect(within(tools).getByText("ОБ.019")).toBeTruthy();
+  expect(within(tools).getByText("ОБ.037")).toBeTruthy();
+  expect(within(printers).getByText("ОБ.101")).toBeTruthy();
+  // One analyser — one tile with its СИ number; the other PC that reports it is in its details, not a second tile.
+  expect(within(devices).getAllByText("СИ.002")).toHaveLength(1);
+  expect(screen.queryByText("DESKTOP-5O46RH6 — не найден")).toBeNull();
+  expect(within(tools).getByText("Аварийный стоп").className).toContain("tone-danger");
+  expect(within(printers).getByText("Нет связи с ПК").className).toContain("tone-danger");
+  expect(within(tools).getByText("PC-108 · 192.168.1.108")).toBeTruthy();
+  // A machine without the agent is muted but still opens its details.
+  const absent = within(tools).getByText("ОБ.037").closest("button")!;
+  expect(absent.className).toContain("is-absent");
+  fireEvent.click(absent);
+  const info = await screen.findByRole("dialog", { name: /ОБ\.037/ });
+  expect(within(info).getByText(/Агент ERP на ПК станка не установлен/)).toBeTruthy();
+  fireEvent.click(within(info).getByRole("button", { name: "Закрыть" }));
+  fireEvent.click(within(devices).getByText("СИ.002"));
+  expect(within(await screen.findByRole("dialog", { name: /СИ\.002/ })).getByText("DESKTOP-5O46RH6 — не найден")).toBeTruthy();
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Закрыть" }));
+  expect(calls.some((url) => url.endsWith("/u101"))).toBe(false);
+
+  fireEvent.click(within(tools).getByText("ОБ.019"));
   const dialog = await screen.findByRole("dialog", { name: /ОБ\.019/ });
-  expect(await within(dialog).findByText("325,00 мм")).toBeTruthy();
-  const estop = within(dialog).getAllByText("Аварийный стоп");
-  expect(estop).toHaveLength(2);  // big in the head line and in «Станок»
-  for (const item of estop) expect(item.className).toContain("tone-danger");
+  expect(await within(dialog).findByText("на станке 325,00 мм")).toBeTruthy();
+  const estop = within(dialog).getByText("Аварийный стоп");
+  expect(estop.className).toContain("tone-danger");
   expect(within(dialog).getByText("3 621 шт/ч")).toBeTruthy();
   expect(calls).toContain("/api/production/machines/u19");
+});
+
+it("searches tiles by number, name, PC or IP", async () => {
+  machines();
+  render(<MachinesPage />);
+  const search = await screen.findByRole("searchbox", { name: "Поиск станков" });
+  fireEvent.change(search, { target: { value: "pc-108" } });
+  expect(screen.getByText("ОБ.019")).toBeTruthy();
+  expect(screen.queryByText("ОБ.101")).toBeNull();
+  expect(screen.queryByRole("region", { name: "Принтеры" })).toBeNull();
+  fireEvent.change(search, { target: { value: "нет такого" } });
+  expect(screen.getByText("Ничего не найдено по «нет такого»")).toBeTruthy();
 });
 
 it("polls every 3 seconds only while the tab is visible", async () => {

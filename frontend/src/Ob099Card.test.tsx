@@ -77,7 +77,7 @@ it("opens the press card from «Станки»", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
     String(input).endsWith("/u99") ? json(card()) : json({ now: "2026-11-19T10:00:02+03:00", rows: [PRESS] }));
   render(<MachinesPage />);
-  fireEvent.click(within(await screen.findByRole("table")).getByText("ОБ.099.1"));
+  fireEvent.click(within(await screen.findByRole("region", { name: "Станки" })).getByText("ОБ.099.1"));
   const dialog = await screen.findByRole("dialog", { name: /ОБ\.099\.1/ });
   expect(await within(dialog).findByText("2,500 мм ± 0,050")).toBeTruthy();
 });
