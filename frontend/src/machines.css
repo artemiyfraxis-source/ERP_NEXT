@@ -55,3 +55,17 @@
 .machine-cases label { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
 @media (max-width: 1100px) { .machine-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (pointer: coarse) { .machine-table th, .machine-table td { height: 40px; } }
+
+/* Команды станку вверху карточки ОБ.019 (Ob019Controls.tsx): большой «Стоп», подтверждение «руки убраны». */
+.machine-controls { display: grid; gap: 8px; }
+.machine-controls-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.machine-controls-bar button { min-height: 40px; min-width: 112px; }
+button.machine-stop { min-width: 160px; min-height: 48px; font-size: 18px; font-weight: 600; letter-spacing: 0.02em; }
+.machine-controls-note { color: var(--muted-foreground); font-size: 13px; }
+.machine-command-now { font-weight: 500; }
+.machine-confirm-command { border-color: var(--tone-warn); padding: 12px 16px; gap: 8px; }
+.machine-confirm-command p { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin: 0; }
+.machine-confirm-command p > strong { font-size: 16px; }
+.machine-confirm-check { display: flex; align-items: center; gap: 8px; font-weight: 500; min-height: 40px; }
+.machine-confirm-check input { width: 20px; height: 20px; }
+.machine-confirm-command .machine-actions button { min-height: 40px; }

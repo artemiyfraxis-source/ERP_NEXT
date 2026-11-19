@@ -540,6 +540,10 @@ LEVEL_SECTION_LABELS: dict[str, str] = {
     # «Кадры» (cabinet plan, phase 2): a section key, not a role — edit registers leave requests (identity/leave.py)
     # and substitutes for a missing manager. Closed for every level until granted in «Доступы».
     "hr": "Кадры",
+    # «Станки», commands (owner 18.11.2026): edit = Сброс / Пуск / Сброс аварии from the ОБ.019 card
+    # (production/machine_control.py). Стоп needs only the card's view. No level seed: closed below the full levels
+    # until granted in «Доступы».
+    "machine_control": "Управление станками",
 }
 # The plan's default matrix: a level nobody holds yet (and a fresh database) starts from it. A level with people gets
 # its row from what they could really do (level_migration). «Оформить заявку» and «Мои заявки» stay open to everyone,

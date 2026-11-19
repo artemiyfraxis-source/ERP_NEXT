@@ -103,6 +103,8 @@ def test_card_write_is_queued_claimed_written_and_confirmed_by_read_back(machine
     assert _result(bridge, view["id"], {}).json()["status"] == "done"  # a repeated report changes nothing
     control = admin.get(CARD + "/control").json()
     assert control["commands"][0]["status_text"] == "Записано и проверено"
+    # Times carry the shop zone even from SQLite: the screen shows them next to «Последний сигнал» without a shift.
+    assert control["commands"][0]["created_at"].endswith("+03:00") and control["commands"][0]["finished_at"].endswith("+03:00")
     texts = [text for kind, text in _events(sessions, ob019) if kind.startswith("production.machine_write")]
     assert texts[0].startswith("Запись настроек с карточки: Длина провода 325 → 326")
     assert texts[1] == "Записано и проверено: Запись настроек с карточки"

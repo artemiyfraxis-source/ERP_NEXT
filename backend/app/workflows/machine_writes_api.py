@@ -15,8 +15,12 @@ The machine card («Настройки» part):
 `confirm_state` is the machine state the person confirmed in the dialog: a different state now → 409.
 
 The command runner on the machine PC (`tools/machine-agent/ob019-writer.ps1`, token `machine:report`, PC bound):
-- `POST /api/production/machines/agent/writes/next` `{inventory, machine_id}` → `{command: null | {id, blocks,
-  states}}`; `POST …/agent/writes/{id}/result` `{inventory, machine_id, ok, readback: {"32": 32500}, error}`."""
+- `POST /api/production/machines/agent/writes/next` `{inventory, machine_id}` → `{command: null | {id, kind: "write",
+  blocks, states}}`; `POST …/agent/writes/{id}/result` `{inventory, machine_id, ok, readback: {"32": 32500}, error}`.
+- Machine commands (Стоп / Сброс / Пуск / Сброс аварии, workflows/machine_control_api.py) ride the same queue: `next`
+  gives `{id, kind: "control", action, deadline_ms}` — Stop first; the result adds `outcome` (done / failed / expired /
+  unknown), `reason` (a code, production/machine_control.py REASONS), `detail` (journal only) and `before` / `after`
+  `{"766": state, "782": alarm}` read on the PC."""
 
 from __future__ import annotations
 
@@ -32,6 +36,7 @@ from sqlalchemy import select
 
 from app.modules.equipment_setup.recipe_infrastructure import SqlAlchemyRecipes
 from app.modules.equipment_setup.recipes import EtkNominal, latest_for_wire, ob019_proposal
+from app.modules.production import machine_control
 from app.modules.production import machine_writes as commands
 from app.modules.production import machines as rules
 from app.modules.production.api import production_uow_factory
@@ -41,7 +46,7 @@ from app.modules.techcards.application import EditTechcardOperationCommand, edit
 from app.modules.techcards.project_cards import TechcardValidationError, operation_key
 from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
-from app.shared.http_auth import Principal, require_section
+from app.shared.http_auth import Principal, require_section, section_allowed
 from app.shared.notifications import TECHNOLOGIST_AUDIENCE, notification_requested
 
 from .machines_api import Bridge, Reader, _inventory
@@ -112,6 +117,12 @@ class ResultPayload(AgentPayload):
     ok: bool
     readback: dict[str, int] = Field(default_factory=dict, max_length=200)
     error: str = Field(default="", max_length=500)
+    # Machine commands only (kind "control").
+    outcome: Literal["done", "failed", "expired", "unknown"] | None = None
+    reason: str = Field(default="", max_length=32)
+    detail: str = Field(default="", max_length=500)
+    before: dict[str, int] | None = None
+    after: dict[str, int] | None = None
 
 
 # --- helpers ---
@@ -155,8 +166,13 @@ def _journal(uow, equipment_id: UUID, event: str, actor, now: datetime, text: st
 
 def _closed(uow, rows: list[commands.MachineWriteRow], actor, now: datetime) -> None:
     for row in rows:
-        _journal(uow, row.equipment_id, "write_failed", actor, now, f"Не записано: {row.summary} — {row.error}",
-                 command_id=str(row.id))
+        if row.purpose == commands.CONTROL:
+            text = commands.CONTROL_TEXTS[row.status][0]
+            _journal(uow, row.equipment_id, "command_finished", actor, now, f"{row.summary}: {text} — {row.error}",
+                     command_id=str(row.id), command=row.command or "", status=row.status)
+        else:
+            _journal(uow, row.equipment_id, "write_failed", actor, now, f"Не записано: {row.summary} — {row.error}",
+                     command_id=str(row.id))
 
 
 def _enqueue(uow, link, principal: Principal, purpose: str, writes, summary: str, now: datetime) -> dict:
@@ -184,7 +200,7 @@ def _offset_rows(session, equipment_id: UUID) -> list[dict]:
         row = stored.get(key)
         rows.append({"key": key, "label": rules.OB019_FIELDS[key].label, "offset": _shown(commands.offset_value(row)),
                      "reason": row.reason if row else "", "updated_by": row.updated_by_name if row else "",
-                     "updated_at": row.updated_at.isoformat() if row else None, "etk": key in ETK_SIDES})
+                     "updated_at": commands.moment(row.updated_at) if row else None, "etk": key in ETK_SIDES})
     return rows
 
 
@@ -207,9 +223,15 @@ def control(inventory: str, principal: Reader, factory: Factory, now: Now) -> di
             "commands": [commands.command_view(row) for row in rows],
             "offsets": _offset_rows(session, link.equipment_id),
             "can_edit": _can_edit(principal),
+            "can_control": can_control(principal),
         }
         uow.commit()
     return result
+
+
+def can_control(principal: Principal) -> bool:
+    """Сброс / Пуск / Сброс аварии: «Управление станками» on edit (Стоп needs only the card's view)."""
+    return not principal.service and section_allowed(principal, (machine_control.SECTION,), "edit")
 
 
 def _can_edit(principal: Principal) -> bool:
@@ -439,7 +461,8 @@ def correction(inventory: str, payload: CorrectionPayload, request: Request, pri
 def _agent_link(session, bridge: Principal, payload: AgentPayload) -> rules.MachineLinkRow:
     link = session.scalar(select(rules.MachineLinkRow).where(
         rules.MachineLinkRow.inventory_number == _inventory(payload.inventory)))
-    if link is None or link.kind != rules.KIND_OB019 or link.token_id != bridge.actor.id             or link.machine_id != " ".join(payload.machine_id.split()):
+    if link is None or link.kind != rules.KIND_OB019 or link.token_id != bridge.actor.id \
+            or link.machine_id != " ".join(payload.machine_id.split()):
         raise HTTPException(403, f"Этот ПК или токен не привязан к {payload.inventory}")
     return link
 
@@ -453,7 +476,11 @@ def next_command(payload: AgentPayload, bridge: Bridge, factory: Factory, now: N
         uow.commit()
         if row is None:
             return {"command": None}
-        return {"command": {"id": str(row.id), "blocks": row.payload["blocks"], "states": list(commands.IDLE_STATES)}}
+        if row.purpose == commands.CONTROL:
+            return {"command": {"id": str(row.id), "kind": "control", "action": row.command,
+                                "deadline_ms": machine_control.deadline_ms(row, now)}}
+        return {"command": {"id": str(row.id), "kind": "write", "blocks": row.payload["blocks"],
+                            "states": list(commands.IDLE_STATES)}}
 
 
 @router.post("/agent/writes/{command_id}/result")
@@ -461,6 +488,28 @@ def command_result(command_id: UUID, payload: ResultPayload, bridge: Bridge, fac
     with factory() as uow:
         link = _agent_link(uow.session, bridge, payload)
         before = uow.session.get(commands.MachineWriteRow, command_id)
+        if before is not None and before.equipment_id == link.equipment_id and before.purpose == commands.CONTROL:
+            try:
+                recorded = machine_control.finish(uow.session, before, outcome=payload.outcome or "failed",
+                                                  reason=payload.reason or "unknown_command", before=payload.before,
+                                                  after=payload.after, now=now)
+            except rules.MachineWriteInvalid as error:
+                raise HTTPException(422, str(error)) from error
+            if recorded:
+                text = commands.CONTROL_TEXTS[before.status][0]
+                states = before.readback or {}
+                _journal(uow, link.equipment_id, "command_finished", bridge.actor, now,
+                         f"{before.summary}: {text}" + (f" — {before.error}" if before.error else ""),
+                         command_id=str(before.id), command=before.command or "", status=before.status,
+                         reason=payload.reason, detail=" ".join(payload.detail.split())[:300],
+                         state_before=str((states.get("before") or {}).get("766", "")),
+                         state_after=str((states.get("after") or {}).get("766", "")),
+                         alarm_before=str((states.get("before") or {}).get("782", "")),
+                         alarm_after=str((states.get("after") or {}).get("782", "")))
+            uow.commit()
+            if not recorded:
+                raise HTTPException(409, "Результат команды уже записан")
+            return {"status": before.status, "error": before.error}
         was_taken = before is not None and before.status == "taken"
         try:
             row = commands.finish(uow.session, equipment_id=link.equipment_id, command_id=command_id, ok=payload.ok,

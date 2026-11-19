@@ -12,7 +12,7 @@ const PRESS: MachineRow = {
   key: "machine:u99", kind: "machine", equipment_id: "u99", inventory: "ОБ.099.1",
   name: "Пресс сервоприводный для опрессовки контактов", pc: "DESKTOP-K6M7O0U", ip: "192.168.1.82",
   service: "Агент ERP · станок", version: "1.0.0", link: { code: "ok", text: "На связи", tone: "ok" },
-  last_seen: "2026-11-19T10:00:00+03:00", device: "ПЛК пресса", state: { text: "Работа", tone: "ok" }, card: true,
+  last_seen: "2026-11-19T10:00:00+03:00", device: "ПЛК пресса", state: { text: "Работа", tone: "ok" }, card: true, others: "",
 };
 
 function card(overrides: Partial<Ob099MachineCard> = {}): Ob099MachineCard {
