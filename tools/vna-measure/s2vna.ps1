@@ -166,10 +166,11 @@ function Get-VnaProfileSettings {
         'SENSe(1).SWEep.POINts' = 1601; 'SENSe(1).AVERage.STATe' = $false
         'SENSe(1).CORRection.IMPedance.INPut.MAGNitude' = 50; 'SOURce(1).POWer.PORT(1).COUPle' = $false
         'CALCulate(1).FSIMulator.STATe' = $false; 'SENSe(1).CORRection.EXTension.STATe' = $false
+        # Power slope is one channel setting on S50180/S2VNA 26.2.2: a per-port SLOPe.STATe does not exist (seen live 19.11).
+        'SOURce(1).POWer.LEVel.SLOPe.STATe' = $false
     }
     foreach ($portNumber in 1,2) {
         $settings["SOURce(1).POWer.PORT($portNumber).LEVel.IMMediate.AMPLitude"] = 0
-        $settings["SOURce(1).POWer.PORT($portNumber).LEVel.SLOPe.STATe"] = $false
     }
     return $settings
 }
@@ -830,6 +831,13 @@ function Invoke-VnaConfidenceTest {
     }
     Invoke-VnaComIo $Connection 'SENSe(1).CORRection.COLLect.ECAL.CCHeck.ACQuire' call
     $null = Invoke-VnaComIo $Connection 'IEEE4882.OPC'
+    # CCH only switches the ACM to its attenuator and loads the stored values into memory; the data trace is filled
+    # by the next sweep (seen live 19.11: with the trigger held the data stayed 0 → «передача ∞ дБ»). One fresh sweep.
+    Invoke-VnaComIo $Connection 'INITiate(1).CONTinuous' set $true
+    Invoke-VnaComIo $Connection 'TRIGger.SEQuence.SOURce' set 'BUS'
+    Invoke-VnaComIo $Connection 'TRIGger.SEQuence.SINGle' call
+    $complete = Invoke-VnaComIo $Connection 'IEEE4882.OPC'
+    if ([string]$complete -notin @('1','True')) { throw 'Доверительный тест: S2VNA не подтвердил завершение свипа.' }
     $frequencies = [double[]]@(Invoke-VnaComIo $Connection 'SENSe(1).FREQuency.DATA')
     $data = @{ Frequencies = $frequencies }; $memory = @{ Frequencies = $frequencies }
     for ($traceIndex = 1; $traceIndex -le 4; $traceIndex++) {
@@ -837,6 +845,9 @@ function Invoke-VnaConfidenceTest {
         if ($parameter -notin @('S11','S21','S12','S22') -or $data.ContainsKey($parameter)) { throw 'Доверительный тест: на местах 1–4 нужны трассы S11/S21/S12/S22.' }
         $data[$parameter] = Read-VnaTraceComplex $Connection $traceIndex SDATa $frequencies.Count
         $memory[$parameter] = Read-VnaTraceComplex $Connection $traceIndex SMEMory $frequencies.Count
+        foreach ($pair in @(@('измерения', $data[$parameter]), @('из памяти АКМ', $memory[$parameter]))) {
+            if (-not @($pair[1] | Where-Object { $_.Magnitude -gt 0 }).Count) { throw "Доверительный тест: S2VNA не дал данных $($pair[0]) по $parameter — тест не выполнен, повторите пункт 2." }
+        }
     }
     $infoAfter = Assert-VnaDeviceReady $Connection
     if ($infoBefore.VnaSerial -cne $infoAfter.VnaSerial -or $infoBefore.AcmSerial -cne $infoAfter.AcmSerial) { throw 'Прибор или АКМ заменены во время доверительного теста.' }

@@ -18,3 +18,16 @@ def test_capability_freshness_preserves_aware_offsets_and_supports_sqlite_naive(
     control.reported_at -= timedelta(minutes=4)
     with pytest.raises(ScanJobClosed):
         control_capability(session, "pc", now)
+
+
+@pytest.mark.parametrize("version,accepted", [(1, True), (2, True), (3, False)])
+def test_capability_accepts_protocols_one_and_two_only(version, accepted):
+    now = datetime(2026, 11, 19, 10, tzinfo=timezone.utc)
+    control = SimpleNamespace(version=version, methods=["acm"], reported_at=now)
+    pc = SimpleNamespace(version="2.10.0", legacy=False)
+    session = SimpleNamespace(get=lambda model, key: control if model is VnaControlRow else pc)
+    if accepted:
+        assert control_capability(session, "pc", now) == ["acm"]
+    else:
+        with pytest.raises(ScanJobClosed):
+            control_capability(session, "pc", now)

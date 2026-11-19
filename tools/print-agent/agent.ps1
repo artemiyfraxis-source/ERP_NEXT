@@ -1522,7 +1522,7 @@ function Send-Heartbeat {
     }
     # Recovery still needs a live protocol report when the instrument observation is unavailable.
     # Empty methods allow no new calibration; readiness and serial are never inferred.
-    if ($Lightweight -and -not $body.vna_control) { $body.vna_control = @{ version = 1; methods = @() } }
+    if ($Lightweight -and -not $body.vna_control) { $body.vna_control = New-VnaControlAdvert @() }
     $body.vna_sources = @()
     if ($vna) { $body.vna_sources += 's2vna' }
     if ($devices.arinst) { $body.vna_sources += 'arinst' }
@@ -1554,7 +1554,7 @@ function Start-AgentLoop {
         # Winspool and scanner discovery can block without a timeout. Keep them out of
         # the control path, including gaps between commands while the session still needs restoration.
         $owner = Read-VnaJson (Join-Path (Get-VnaControlRoot) 'owner.json')
-        $controlActive = ($script:VnaWorker -and $script:VnaWorker.command) -or ($owner -and -not $owner.restored)
+        $controlActive = ($script:VnaWorker -and $script:VnaWorker.command) -or ($owner -and -not $owner.restored -and -not $owner.released)
         $beatEvery = if ($controlActive) { [Math]::Min(60, $script:HeartbeatEverySec) } else { $script:HeartbeatEverySec }
         if ($controlActive -and $nextBeat -gt $lastBeat.AddSeconds($beatEvery)) { $nextBeat = $lastBeat.AddSeconds($beatEvery) }
         if ($script:HeartbeatSoon -and -not $controlActive) { $script:HeartbeatSoon = $false; $nextBeat = Get-Date }
@@ -1954,7 +1954,7 @@ function Invoke-ScanPollOnce {
             if ($DryRun) { throw 'ВАЦ: управление запрещено в пробном режиме' }
             $command = $claim.job
             [void][guid]::Parse($command.command_id); [void][guid]::Parse($command.session_id)
-            if ($command.protocol_version -ne 1 -or $command.id -cne $command.command_id) { throw 'ВАЦ: неподдерживаемый конверт команды' }
+            if ($command.protocol_version -notin @(1,2) -or $command.id -cne $command.command_id) { throw 'ВАЦ: неподдерживаемый конверт команды' }
             if ($script:VnaWorker -and $script:VnaWorker.command) {
                 if ($script:VnaWorker.command.command_id -cne $command.command_id) {
                     Stop-VnaWorker $script:VnaWorker 'ВАЦ: команда заменена сервером; выполнение неизвестно'
@@ -2199,6 +2199,8 @@ function Get-S2ProfileWrites {
         'SENSe(1).FREQuency.STOP' = $Profile.stop_hz; 'SENSe(1).SWEep.POINts' = $Profile.points
         'SENSe(1).BANDwidth.RESolution' = $Profile.if_bandwidth_hz; 'SENSe(1).AVERage.STATe' = $false
         'SENSe(1).CORRection.IMPedance.INPut.MAGNitude' = 50; 'SOURce(1).POWer.PORT(1).COUPle' = $false
+        # Port extension shifts the reference plane after calibration: always off, as tools/vna-measure set it.
+        'SENSe(1).CORRection.EXTension.STATe' = $false
     }
     foreach ($port in 1,2) {
         $writes["SOURce(1).POWer.PORT($port).LEVel.IMMediate.AMPLitude"] = $Profile.power_dbm
@@ -2322,8 +2324,599 @@ function ConvertTo-S2Artifact {
     $extension = if ($traces.Count -eq 4) { 's2p' } else { 's1p' }
     return @{ file_name = "measurement.$extension"; content_base64 = [Convert]::ToBase64String($bytes); traces = $traces }
 }
+# ---------------------------------------------------------------- ВАЦ: рабочее место, протокол v2
+# Contract: docs/vna/bench-protocol-v2.md. Typed ops only; every COM path below is a fixed driver literal.
+# ERP owns norms, scales and limit lines; the agent applies its screen, reads it back and refuses on its own
+# before every sweep when the operator changed S2VNA (screen, profile, smoothing, averaging, calibration, devices).
+$script:VnaControlOps = @('device_status','apply_screen','acm_confidence','store_memory','release')
+$script:VnaScreenFormats = @('SWR','MLOG','PHAS','GDEL','SMIT')
+$script:VnaSParameters = @('S11','S21','S12','S22')
+$script:VnaConfidencePointsMax = 4001
+
+Add-Type -AssemblyName System.Numerics
+function ConvertTo-VnaSig9 {
+    param($Value)
+    # Exactly Python's float(f"{x:.9g}") used by the ERP schema: the exact binary value of the double is rounded
+    # half-to-even to 9 significant digits. .NET Framework 'G9' rounds through 15 digits first, and rounding the
+    # 'R' string disagrees with Python on ties such as 1.000000015, so the rounding is done on exact integers.
+    $number = [double]$Value
+    if ([double]::IsNaN($number) -or [double]::IsInfinity($number)) { throw 'ВАЦ: недопустимое число экрана' }
+    if ($number -eq 0) { return $number }
+    $bits = [BitConverter]::DoubleToInt64Bits($number)
+    $exponentBits = [int](($bits -shr 52) -band 0x7FF)
+    $mantissa = $bits -band 0xFFFFFFFFFFFFF
+    if ($exponentBits -eq 0) { $exponent = -1074 } else { $mantissa = $mantissa -bor 0x10000000000000; $exponent = $exponentBits - 1075 }
+    $numerator = [Numerics.BigInteger]$mantissa; $denominator = [Numerics.BigInteger]::One
+    if ($exponent -ge 0) { $numerator = $numerator * [Numerics.BigInteger]::Pow(2, $exponent) }
+    else { $denominator = [Numerics.BigInteger]::Pow(2, -$exponent) }
+    $low = [Numerics.BigInteger]::Pow(10, 8); $high = [Numerics.BigInteger]::Pow(10, 9)
+    $decimalExponent = [int][Math]::Floor([Math]::Log10([Math]::Abs($number)))
+    for ($attempt = 0; $attempt -lt 4; $attempt++) {
+        # quotient = |x| * 10^(8 - e) must have exactly 9 digits; the log estimate can be off by one.
+        $shift = 8 - $decimalExponent; $scaledNumerator = $numerator; $scaledDenominator = $denominator
+        if ($shift -ge 0) { $scaledNumerator = $scaledNumerator * [Numerics.BigInteger]::Pow(10, $shift) }
+        else { $scaledDenominator = $scaledDenominator * [Numerics.BigInteger]::Pow(10, -$shift) }
+        $remainder = [Numerics.BigInteger]::Zero
+        $quotient = [Numerics.BigInteger]::DivRem($scaledNumerator, $scaledDenominator, [ref]$remainder)
+        if ($quotient -ge $high) { $decimalExponent++ } elseif ($quotient -lt $low) { $decimalExponent-- } else { break }
+    }
+    $half = [Numerics.BigInteger]::Compare($remainder * 2, $scaledDenominator)
+    if ($half -gt 0 -or ($half -eq 0 -and -not $quotient.IsEven)) { $quotient = $quotient + 1 }
+    if ($quotient -ge $high) { $quotient = $low; $decimalExponent++ }
+    # .NET Framework double.Parse is not correctly rounded for every short decimal (seen at ~1e-11): build the nearest
+    # double from the exact rational quotient * 10^(e - 8) instead.
+    $power = $decimalExponent - 8
+    if ($power -ge 0) { $rounded = ConvertFrom-VnaRational ($quotient * [Numerics.BigInteger]::Pow(10, $power)) ([Numerics.BigInteger]::One) }
+    else { $rounded = ConvertFrom-VnaRational $quotient ([Numerics.BigInteger]::Pow(10, -$power)) }
+    if ($number -lt 0) { return -$rounded }
+    return $rounded
+}
+function ConvertFrom-VnaRational {
+    param([Numerics.BigInteger]$Numerator, [Numerics.BigInteger]$Denominator)
+    # Nearest double (ties to even) to a positive rational: a 53-bit mantissa m and a binary exponent b, assembled as bits.
+    $two52 = [Numerics.BigInteger]::Pow(2, 52); $two53 = [Numerics.BigInteger]::Pow(2, 53)
+    $binaryExponent = [int][Math]::Floor([Numerics.BigInteger]::Log($Numerator, 2) - [Numerics.BigInteger]::Log($Denominator, 2)) - 52
+    for ($attempt = 0; $attempt -lt 6; $attempt++) {
+        if ($binaryExponent -lt -1074) { $binaryExponent = -1074 }
+        $scaledNumerator = $Numerator; $scaledDenominator = $Denominator
+        if ($binaryExponent -ge 0) { $scaledDenominator = $scaledDenominator * [Numerics.BigInteger]::Pow(2, $binaryExponent) }
+        else { $scaledNumerator = $scaledNumerator * [Numerics.BigInteger]::Pow(2, -$binaryExponent) }
+        $remainder = [Numerics.BigInteger]::Zero
+        $mantissa = [Numerics.BigInteger]::DivRem($scaledNumerator, $scaledDenominator, [ref]$remainder)
+        if ($mantissa -ge $two53) { $binaryExponent++ }
+        elseif ($mantissa -lt $two52 -and $binaryExponent -gt -1074) { $binaryExponent-- }
+        else { break }
+    }
+    $half = [Numerics.BigInteger]::Compare($remainder * 2, $scaledDenominator)
+    if ($half -gt 0 -or ($half -eq 0 -and -not $mantissa.IsEven)) { $mantissa = $mantissa + 1 }
+    if ($mantissa -ge $two53) { $mantissa = $two52; $binaryExponent++ }
+    if ($mantissa -lt $two52) { return [BitConverter]::Int64BitsToDouble([long]$mantissa) }  # subnormal, exponent field 0
+    if ($binaryExponent + 1075 -ge 2047) { throw 'ВАЦ: число экрана вне диапазона' }
+    $bits = ([long]($binaryExponent + 1075) -shl 52) -bor [long]($mantissa - $two52)
+    return [BitConverter]::Int64BitsToDouble($bits)
+}
+function ConvertTo-VnaNumber {
+    param($Value, [double]$Min, [double]$Max, [string]$Label, [switch]$ExclusiveMin)
+    if ($null -eq $Value -or $Value -is [bool] -or $Value -isnot [ValueType]) { throw "ВАЦ: недопустимое число экрана ($Label)" }
+    $number = [double]$Value
+    if ([double]::IsNaN($number) -or [double]::IsInfinity($number) -or $number -lt $Min -or $number -gt $Max -or
+        ($ExclusiveMin -and $number -le $Min)) { throw "ВАЦ: число экрана вне допустимых границ ($Label)" }
+    return ConvertTo-VnaSig9 $number
+}
+function ConvertTo-VnaInteger {
+    param($Value, [int]$Min, [int]$Max, [string]$Label)
+    if ($null -eq $Value -or $Value -is [bool] -or $Value -isnot [ValueType] -or [double]::IsNaN([double]$Value) -or
+        [double]$Value -ne [Math]::Truncate([double]$Value) -or [double]$Value -lt $Min -or [double]$Value -gt $Max) { throw "ВАЦ: недопустимое целое число ($Label)" }
+    return [int]$Value
+}
+function Get-VnaFlag {
+    param($Object, [string]$Name)
+    $value = $Object.$Name
+    if ($null -eq $value) { return $false }
+    if ($value -isnot [bool]) { throw "ВАЦ: признак $Name должен быть логическим" }
+    return $value
+}
+function Assert-VnaScreenHash {
+    param($Value)
+    # Also a journal file name: \A…\z, because $ accepts a trailing newline in .NET.
+    if ($Value -isnot [string] -or $Value -cnotmatch '\A[0-9a-f]{64}\z') { throw 'ВАЦ: неверный отпечаток экрана' }
+    return $Value
+}
+function Test-S2On {
+    param($Value)
+    if ($Value -is [bool]) { return $Value }
+    return ([string]$Value).Trim().ToUpperInvariant() -in @('1','ON','TRUE')
+}
+function ConvertTo-VnaScreen {
+    param($Screen)
+    # Validated, normalized copy of a screen with the bounds of the Pydantic Screen schema. Readbacks pass through
+    # the same function, so a requested screen and a COM readback compare after identical rounding.
+    if ($null -eq $Screen) { throw 'ВАЦ: нет описания экрана' }
+    $traces = @($Screen.traces | Where-Object { $null -ne $_ })
+    if ($traces.Count -lt 1 -or $traces.Count -gt 16) { throw 'ВАЦ: на экране должно быть от 1 до 16 графиков' }
+    $normalized = New-Object 'Collections.Generic.List[object]'
+    foreach ($trace in $traces) {
+        if ($trace.param -isnot [string] -or $trace.param -cnotin $script:VnaSParameters -or
+            $trace.format -isnot [string] -or $trace.format -cnotin $script:VnaScreenFormats) { throw 'ВАЦ: неверный параметр или формат графика' }
+        $smith = $trace.format -ceq 'SMIT'
+        if ($trace.scale -is [string]) {
+            if ($trace.scale -cne 'auto') { throw 'ВАЦ: неверная шкала графика' }
+            $scale = 'auto'
+        } elseif ($null -ne $trace.scale) {
+            $pdiv = ConvertTo-VnaNumber $trace.scale.pdiv 0 1e6 'pdiv' -ExclusiveMin
+            if ($smith) {
+                if ($null -ne $trace.scale.rlev -or $null -ne $trace.scale.rpos) { throw 'ВАЦ: шкала Вольперта-Смита задаётся только pdiv' }
+                $scale = [ordered]@{ pdiv = $pdiv; rlev = $null; rpos = $null }
+            } else {
+                $scale = [ordered]@{ pdiv = $pdiv; rlev = (ConvertTo-VnaNumber $trace.scale.rlev (-1e6) 1e6 'rlev')
+                    rpos = (ConvertTo-VnaInteger $trace.scale.rpos 0 10 'rpos') }
+            }
+        } else { throw 'ВАЦ: не задана шкала графика' }
+        $rawLimits = @($trace.limits | Where-Object { $null -ne $_ })
+        if ($rawLimits.Count -gt 20 -or ($smith -and $rawLimits.Count)) { throw 'ВАЦ: недопустимые линии допуска графика' }
+        $limits = New-Object 'Collections.Generic.List[object]'
+        foreach ($segment in $rawLimits) {
+            if ($segment.kind -isnot [string] -or $segment.kind -cnotin @('upper','lower')) { throw 'ВАЦ: неверный вид линии допуска' }
+            $start = ConvertTo-VnaNumber $segment.start_hz 0 1e12 'start_hz' -ExclusiveMin
+            $stop = ConvertTo-VnaNumber $segment.stop_hz 0 1e12 'stop_hz' -ExclusiveMin
+            if ($start -ge $stop) { throw 'ВАЦ: отрезок линии допуска: начало должно быть меньше конца' }
+            $limits.Add([ordered]@{ kind = $segment.kind; start_hz = $start; stop_hz = $stop
+                start_value = (ConvertTo-VnaNumber $segment.start_value (-1e6) 1e6 'start_value')
+                stop_value = (ConvertTo-VnaNumber $segment.stop_value (-1e6) 1e6 'stop_value') })
+        }
+        $normalized.Add([ordered]@{ param = $trace.param; format = $trace.format; scale = $scale
+            hidden = (Get-VnaFlag $trace 'hidden'); memory = (Get-VnaFlag $trace 'memory'); limits = $limits.ToArray() })
+    }
+    $rawMarkers = @($Screen.markers_hz | Where-Object { $null -ne $_ })
+    if ($rawMarkers.Count -gt 15) { throw 'ВАЦ: не более 15 маркеров' }
+    $markers = New-Object 'Collections.Generic.List[double]'
+    foreach ($marker in $rawMarkers) {
+        $value = ConvertTo-VnaNumber $marker 0 1e12 'markers_hz' -ExclusiveMin
+        if ($markers.Count -and $markers[$markers.Count - 1] -ge $value) { throw 'ВАЦ: маркеры задаются по возрастанию частоты без повторов' }
+        $markers.Add($value)
+    }
+    $title = $Screen.title
+    if ($null -eq $title) { $title = '' }
+    if ($title -isnot [string] -or $title.Length -gt 256 -or $title -match '[\x00-\x1f\x7f]') { throw 'ВАЦ: недопустимый заголовок экрана' }
+    return [ordered]@{ split = (ConvertTo-VnaInteger $Screen.split 1 16 'split'); traces = $normalized.ToArray()
+        markers_hz = $markers.ToArray(); title = $title }
+}
+function Get-VnaScreenPath {
+    param([string]$ScreenHash)
+    [void](Assert-VnaScreenHash $ScreenHash)
+    $directory = Join-Path (Get-VnaControlRoot) 'screens'
+    [void][IO.Directory]::CreateDirectory($directory)
+    return Join-Path $directory ($ScreenHash + '.json')
+}
+function Save-VnaScreenSpec {
+    param([string]$ScreenHash, $Spec, [string]$Serial, [string]$SessionId)
+    # The agent never recomputes ERP's fingerprint: it journals the description under it and later only echoes it.
+    $path = Get-VnaScreenPath $ScreenHash
+    $existing = Read-VnaJson $path
+    if ($existing) {
+        if ((ConvertTo-VnaCanonical (ConvertTo-VnaScreen $existing.screen)) -cne (ConvertTo-VnaCanonical $Spec)) { throw 'ВАЦ: под этим отпечатком в журнале агента другой экран' }
+        return
+    }
+    Write-VnaJson $path @{ screen_hash = $ScreenHash; screen = $Spec; serial = $Serial; session_id = $SessionId; saved_at = [DateTime]::UtcNow.ToString('o') }
+}
+function Get-VnaScreenSpec {
+    param([string]$ScreenHash)
+    $entry = Read-VnaJson (Get-VnaScreenPath $ScreenHash)
+    if (-not $entry -or $entry.screen_hash -cne $ScreenHash) { throw 'ВАЦ: экран с этим отпечатком не применялся агентом' }
+    return ConvertTo-VnaScreen $entry.screen
+}
+function ConvertFrom-S2LimitData {
+    param([object[]]$Data)
+    # S2VNA limit table: N, then per segment type (1 upper, 2 lower), start/stop stimulus, start/stop response.
+    $values = @($Data | Where-Object { $null -ne $_ } | ForEach-Object { [double]$_ })
+    if (-not $values.Count) { return }
+    $count = [int]$values[0]
+    if ($count -lt 0 -or $values.Count -ne 1 + 5 * $count) { return [ordered]@{ kind = 'invalid' } }
+    for ($segment = 0; $segment -lt $count; $segment++) {
+        $offset = 1 + 5 * $segment
+        $kind = switch ([int]$values[$offset]) { 1 { 'upper' } 2 { 'lower' } default { 'type' + [int]$values[$offset] } }
+        [ordered]@{ kind = $kind; start_hz = $values[$offset + 1]; stop_hz = $values[$offset + 2]
+            start_value = $values[$offset + 3]; stop_value = $values[$offset + 4] }
+    }
+}
+function Read-S2Screen {
+    param($Scpi, $Spec)
+    # Reads the live screen in the shape of the ERP Screen. Scale of an "auto" graph has nothing to read back.
+    $count = [int](Invoke-S2Io $Scpi 'CALCulate(1).PARameter(1).COUNt')
+    if ($count -lt 1 -or $count -gt 16) { throw 'ВАЦ: на приборе недопустимое число графиков' }
+    $selected = [int](Invoke-S2Io $Scpi 'SERVice.CHANnel(1).TRACe(1).ACTive')
+    $specTraces = if ($Spec) { @($Spec.traces) } else { @() }
+    $traces = New-Object 'Collections.Generic.List[object]'
+    $markerSets = New-Object 'Collections.Generic.List[string]'
+    $issues = New-Object 'Collections.Generic.List[string]'
+    $firstMarkers = @()
+    try {
+        for ($index = 1; $index -le $count; $index++) {
+            $param = ([string](Invoke-S2Io $Scpi "CALCulate(1).PARameter($index).DEFine")).Trim().ToUpperInvariant()
+            Invoke-S2Io $Scpi "CALCulate(1).PARameter($index).SELect" call
+            $format = ([string](Invoke-S2Io $Scpi 'CALCulate(1).SELected.FORMat')).Trim().ToUpperInvariant()
+            # СТО ФРАК-002-2026 п. 11.1: smoothing hides ripple; time domain, gating, math and conversion change what is measured.
+            if (Test-S2On (Invoke-S2Io $Scpi 'CALCulate(1).SELected.SMOothing.STATe')) { $issues.Add("график ${index} ($param): включено сглаживание — замер не принимается") }
+            if (Test-S2On (Invoke-S2Io $Scpi 'CALCulate(1).SELected.TRANsform.TIME.STATe')) { $issues.Add("график ${index} ($param): включена временная область — замер не принимается") }
+            if (Test-S2On (Invoke-S2Io $Scpi 'CALCulate(1).SELected.FILTer.GATE.TIME.STATe')) { $issues.Add("график ${index} ($param): включено стробирование — замер не принимается") }
+            if (([string](Invoke-S2Io $Scpi 'CALCulate(1).SELected.MATH.FUNCtion')).Trim().ToUpperInvariant() -cne 'OFF') { $issues.Add("график ${index} ($param): включена математика трасс — замер не принимается") }
+            if (Test-S2On (Invoke-S2Io $Scpi 'CALCulate(1).SELected.CONVersion.STATe')) { $issues.Add("график ${index} ($param): включено преобразование — замер не принимается") }
+            $window = "DISPlay.WINDow(1).TRACe($index)"
+            $auto = $index -le $specTraces.Count -and $specTraces[$index - 1].scale -is [string]
+            $scale = if ($auto) { 'auto' } elseif ($format -ceq 'SMIT') {
+                [ordered]@{ pdiv = (Invoke-S2Io $Scpi "$window.Y.SCALe.PDIVision"); rlev = $null; rpos = $null }
+            } else {
+                [ordered]@{ pdiv = (Invoke-S2Io $Scpi "$window.Y.SCALe.PDIVision"); rlev = (Invoke-S2Io $Scpi "$window.Y.SCALe.RLEVel")
+                    rpos = [int](Invoke-S2Io $Scpi "$window.Y.SCALe.RPOSition") }
+            }
+            $limits = @()
+            if (Test-S2On (Invoke-S2Io $Scpi 'CALCulate(1).SELected.LIMit.DISPlay.STATe')) {
+                $limits = @(ConvertFrom-S2LimitData @(Invoke-S2Io $Scpi 'CALCulate(1).SELected.LIMit.DATA'))
+            }
+            $markers = New-Object 'Collections.Generic.List[double]'
+            for ($marker = 1; $marker -le 15; $marker++) {
+                if (Test-S2On (Invoke-S2Io $Scpi "CALCulate(1).SELected.MARKer($marker).STATe")) {
+                    $markers.Add([double](Invoke-S2Io $Scpi "CALCulate(1).SELected.MARKer($marker).X"))
+                }
+            }
+            if ($index -eq 1) { $firstMarkers = $markers.ToArray() }
+            $markerSets.Add((ConvertTo-VnaCanonical @($markers.ToArray())))
+            $traces.Add([ordered]@{ param = $param; format = $format; scale = $scale
+                hidden = -not (Test-S2On (Invoke-S2Io $Scpi "$window.STATe")); memory = (Test-S2On (Invoke-S2Io $Scpi "$window.MEMory.STATe"))
+                limits = $limits })
+        }
+    } finally {
+        if ($selected -ge 1 -and $selected -le $count) { Invoke-S2Io $Scpi "CALCulate(1).PARameter($selected).SELect" call }
+    }
+    $title = if (Test-S2On (Invoke-S2Io $Scpi 'DISPlay.WINDow(1).TITLe.STATe')) { [string](Invoke-S2Io $Scpi 'DISPlay.WINDow(1).TITLe.DATA') } else { '' }
+    $screen = [ordered]@{ split = [int](Invoke-S2Io $Scpi 'DISPlay.WINDow(1).SPLit'); traces = $traces.ToArray()
+        markers_hz = @($firstMarkers); title = $title }
+    return @{ screen = $screen; issues = $issues.ToArray(); markers_consistent = @($markerSets | Select-Object -Unique).Count -le 1 }
+}
+function Test-VnaScreenMatch {
+    param($Read, $Spec)
+    if (-not $Read.markers_consistent) { return $false }
+    try { return (ConvertTo-VnaCanonical (ConvertTo-VnaScreen $Read.screen)) -ceq (ConvertTo-VnaCanonical $Spec) }
+    catch { return $false }
+}
+function Set-S2Screen {
+    param($Scpi, $Spec)
+    # Ported from tools/vna-measure/s2vna.ps1 Set-VnaScreen; the content now comes only from ERP.
+    $traces = @($Spec.traces)
+    Invoke-S2Io $Scpi 'DISPlay.SPLit' set 1
+    Set-S2Checked $Scpi 'CALCulate(1).PARameter(1).COUNt' $traces.Count
+    Invoke-S2Io $Scpi 'DISPlay.WINDow(1).SPLit' set ([int]$Spec.split)
+    $markers = @($Spec.markers_hz)
+    for ($index = 1; $index -le $traces.Count; $index++) {
+        $trace = $traces[$index - 1]; $window = "DISPlay.WINDow(1).TRACe($index)"
+        Invoke-S2Io $Scpi "CALCulate(1).PARameter($index).DEFine" set ([string]$trace.param)
+        Invoke-S2Io $Scpi "CALCulate(1).PARameter($index).SELect" call
+        Invoke-S2Io $Scpi 'CALCulate(1).SELected.FORMat' set ([string]$trace.format)
+        Invoke-S2Io $Scpi 'CALCulate(1).SELected.SMOothing.STATe' set $false
+        Invoke-S2Io $Scpi 'CALCulate(1).SELected.TRANsform.TIME.STATe' set $false
+        Invoke-S2Io $Scpi 'CALCulate(1).SELected.FILTer.GATE.TIME.STATe' set $false
+        Invoke-S2Io $Scpi 'CALCulate(1).SELected.MATH.FUNCtion' set 'OFF'
+        Invoke-S2Io $Scpi 'CALCulate(1).SELected.CONVersion.STATe' set $false
+        Invoke-S2Io $Scpi "$window.STATe" set (-not $trace.hidden)
+        Invoke-S2Io $Scpi "$window.MEMory.STATe" set ([bool]$trace.memory)
+        if ($trace.scale -isnot [string]) {
+            Invoke-S2Io $Scpi "$window.Y.SCALe.PDIVision" set ([double]$trace.scale.pdiv)
+            if ($trace.format -cne 'SMIT') {
+                Invoke-S2Io $Scpi "$window.Y.SCALe.RLEVel" set ([double]$trace.scale.rlev)
+                # RPOSition is a COM Long; a Double there fails with «Specified cast is not valid» (seen live 18.11).
+                Invoke-S2Io $Scpi "$window.Y.SCALe.RPOSition" set ([int]$trace.scale.rpos)
+            }
+        }
+        $segments = @($trace.limits)
+        if ($segments.Count) {
+            $data = New-Object 'Collections.Generic.List[double]'
+            $data.Add($segments.Count)
+            foreach ($segment in $segments) {
+                $type = if ($segment.kind -ceq 'upper') { 1 } else { 2 }
+                foreach ($value in $type, $segment.start_hz, $segment.stop_hz, $segment.start_value, $segment.stop_value) { $data.Add([double]$value) }
+            }
+            Invoke-S2Io $Scpi 'CALCulate(1).SELected.LIMit.DATA' set ([double[]]$data.ToArray())
+        }
+        # S2VNA rejects an empty table (N = 0) over COM: a graph without a norm keeps its table, hidden and not tested.
+        Invoke-S2Io $Scpi 'CALCulate(1).SELected.LIMit.DISPlay.STATe' set ([bool]$segments.Count)
+        Invoke-S2Io $Scpi 'CALCulate(1).SELected.LIMit.STATe' set ([bool]$segments.Count)
+        # S2VNA chains markers: n on switches 1..n on, n off switches n..15 off.
+        if ($markers.Count -lt 15) { Invoke-S2Io $Scpi "CALCulate(1).SELected.MARKer($($markers.Count + 1)).STATe" set $false }
+        if ($markers.Count) { Invoke-S2Io $Scpi "CALCulate(1).SELected.MARKer($($markers.Count)).STATe" set $true }
+        for ($marker = 1; $marker -le $markers.Count; $marker++) {
+            Invoke-S2Io $Scpi "CALCulate(1).SELected.MARKer($marker).X" set ([double]$markers[$marker - 1])
+        }
+    }
+    # The title is data: assigned to the COM property, never assembled into an instrument command.
+    Invoke-S2Io $Scpi 'DISPlay.WINDow(1).TITLe.DATA' set ([string]$Spec.title)
+    Invoke-S2Io $Scpi 'DISPlay.WINDow(1).TITLe.STATe' set ([bool]$Spec.title)
+    Update-S2AutoScale $Scpi $Spec
+}
+function Update-S2AutoScale {
+    param($Scpi, $Spec)
+    if (-not $Spec) { return }
+    $traces = @($Spec.traces)
+    for ($index = 1; $index -le $traces.Count; $index++) {
+        if ($traces[$index - 1].scale -is [string]) { Invoke-S2Io $Scpi "DISPlay.WINDow(1).TRACe($index).Y.SCALe.AUTO" call }
+    }
+}
+function Restore-S2Selection {
+    param($Scpi, [int]$Selected, [int]$Count)
+    # The operator keeps the graph they had active; a graph beyond the new screen falls back to graph 1.
+    $target = if ($Selected -ge 1 -and $Selected -le $Count) { $Selected } else { 1 }
+    Invoke-S2Io $Scpi "CALCulate(1).PARameter($target).SELect" call
+}
+function Get-S2BenchCorrection {
+    param($Scpi, [string[]]$Traces, [switch]$RequireAll, [switch]$Report)
+    # Correction is read per graph after selecting it. -Report returns the worst code of each S-parameter on screen.
+    $codes = [ordered]@{}
+    $count = [int](Invoke-S2Io $Scpi 'CALCulate(1).PARameter(1).COUNt')
+    $selected = [int](Invoke-S2Io $Scpi 'SERVice.CHANnel(1).TRACe(1).ACTive')
+    try {
+        for ($index = 1; $index -le $count; $index++) {
+            $param = ([string](Invoke-S2Io $Scpi "CALCulate(1).PARameter($index).DEFine")).Trim().ToUpperInvariant()
+            if ($param -cnotin $script:VnaSParameters -or (-not $Report -and $param -cnotin $Traces)) { continue }
+            Invoke-S2Io $Scpi "CALCulate(1).PARameter($index).SELect" call
+            $code = ([string](Invoke-S2Io $Scpi 'CALCulate(1).SELected.CORRection.STATus')).Trim().ToUpperInvariant()
+            if ($code -cnotmatch '\A[A-Z?!]{1,8}\z') { throw "ВАЦ: не прочитано состояние калибровки $param" }
+            if (-not $codes.Contains($param) -or $codes[$param] -ceq 'COR') { $codes[$param] = $code }
+        }
+    } finally {
+        if ($selected -ge 1 -and $selected -le $count) { Invoke-S2Io $Scpi "CALCulate(1).PARameter($selected).SELect" call }
+    }
+    if ($Report) { return $codes }
+    foreach ($param in @($Traces)) {
+        if ($RequireAll -and -not $codes.Contains($param)) { throw "ВАЦ: трассы $param нет на экране ERP" }
+    }
+    if (-not $codes.Count) { throw 'ВАЦ: на экране нет трасс калибровочного профиля' }
+    foreach ($param in @($codes.Keys)) {
+        $code = $codes[$param]
+        # СТО ФРАК-002-2026 п. 11.5: C? interpolated / C! extrapolated calibration lowers accuracy — refused.
+        if ($code -cin @('C?','RC?')) { throw "ВАЦ: трасса ${param}: калибровка интерполирована (C?) — замер не принимается; откалибруйте на сетке замера" }
+        if ($code -cin @('C!','RC!')) { throw "ВАЦ: трасса ${param}: калибровка экстраполирована (C!) — замер не принимается; откалибруйте на полосе замера" }
+        if ($code -cne 'COR') { throw "ВАЦ: трасса ${param}: нет полной калибровки ($code)" }
+    }
+    return $codes
+}
+function Get-S2AcmInfoOptional {
+    param($Scpi)
+    # The ACM may be disconnected after calibration (the DUT takes its place): unknown, not an error.
+    try { return ConvertFrom-S2AcmInfo ([string](Invoke-S2Io $Scpi 'SENSe(1).CORRection.COLLect.ECAL.INFormation')) } catch { return $null }
+}
+function Assert-S2AcmUnchanged {
+    param($Scpi, $Owner)
+    if (-not $Owner.calibration -or $Owner.calibration.method -cne 'acm') { return }
+    $expected = [string]$Owner.calibration.definition.serial
+    $info = Get-S2AcmInfoOptional $Scpi
+    if ($info -and $expected -and $info.serial -cne $expected) { throw 'ВАЦ: подключён другой АКМ, чем при калибровке' }
+}
+function ConvertTo-S2Temperature {
+    param($Value)
+    if ($null -eq $Value -or [string]::IsNullOrWhiteSpace([string]$Value)) { return $null }
+    $number = 0.0
+    $typeCode = [int][Type]::GetTypeCode($Value.GetType())
+    if ($typeCode -ge 5 -and $typeCode -le 15) { $number = [double]$Value }
+    elseif (-not [double]::TryParse([string]$Value, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$number)) { return $null }
+    if ([double]::IsNaN($number) -or [double]::IsInfinity($number) -or $number -lt -50 -or $number -gt 150) { return $null }
+    return $number
+}
+function Get-S2Temperatures {
+    param($Scpi)
+    # Unknown telemetry stays null; never a fabricated 0 °C.
+    $vna = New-Object 'Collections.Generic.List[object]'
+    foreach ($sensor in 1,2) {
+        $reading = $null
+        try { $reading = ConvertTo-S2Temperature (Invoke-S2Io $Scpi "SYSTem.TEMPerature.SENSor($sensor)") } catch {}
+        $vna.Add($reading)
+    }
+    $acm = $null
+    try { $acm = ConvertTo-S2Temperature (Invoke-S2Io $Scpi 'SYSTem.COMMunicate.ECAL.TEMPerature.SENSor') } catch {}
+    return [ordered]@{ vna_c = $vna.ToArray(); acm_c = $acm }
+}
+function Get-VnaWarmupMinutes {
+    # S2VNA start time stands in for the VNA power-on (the VNA is powered before S2VNA finds it).
+    try {
+        $process = @(Get-Process -Name S2VNA -ErrorAction Stop | Sort-Object StartTime | Select-Object -First 1)
+        if (-not $process.Count -or -not $process[0].StartTime) { return $null }
+        $minutes = ([DateTime]::Now - $process[0].StartTime).TotalMinutes
+        if ($minutes -lt 0) { return $null }
+        return [Math]::Round($minutes, 1)
+    } catch { return $null }
+}
+function Get-S2TraceIndex {
+    param($Scpi, [string]$Parameter)
+    $count = [int](Invoke-S2Io $Scpi 'CALCulate(1).PARameter(1).COUNt')
+    for ($index = 1; $index -le $count; $index++) {
+        if (([string](Invoke-S2Io $Scpi "CALCulate(1).PARameter($index).DEFine")).Trim().ToUpperInvariant() -ceq $Parameter) { return $index }
+    }
+    throw "ВАЦ: трассы $Parameter нет на экране ERP"
+}
+function Set-VnaOwnerField {
+    param($Owner, [string]$Name, $Value)
+    $Owner | Add-Member NoteProperty $Name $Value -Force
+}
+function Get-S2ActiveScreenHash {
+    param($Scpi, [string]$Serial)
+    $active = Read-VnaJson (Join-Path (Get-VnaControlRoot) 'screen-active.json')
+    if (-not $active -or $active.serial -cne $Serial) { return $null }
+    try { $spec = Get-VnaScreenSpec ([string]$active.screen_hash) } catch { return $null }
+    $read = Read-S2Screen $Scpi $spec
+    if (@($read.issues).Count -or -not (Test-VnaScreenMatch $read $spec)) { return $null }
+    return [string]$active.screen_hash
+}
+function Assert-S2BenchReady {
+    param($Scpi, $Owner, $Profile, [string]$ScreenHash, [switch]$RequireAllTraces, [switch]$SkipScreen)
+    # The agent's own refusal before every sweep or screen write; ERP checks the receipts again.
+    if (-not $Owner.profile) { throw 'ВАЦ: профиль ещё не применён' }
+    if ($null -ne $Profile) { Assert-VnaEqual $Profile $Owner.profile 'сохранённый профиль' }
+    if (Test-S2On (Invoke-S2Io $Scpi 'SENSe(1).AVERage.STATe')) { throw 'ВАЦ: включено усреднение — замер не принимается; профиль задаёт только ERP' }
+    if (Test-S2On (Invoke-S2Io $Scpi 'SENSe(1).CORRection.EXTension.STATe')) { throw 'ВАЦ: включено расширение портов — замер не принимается; профиль задаёт только ERP' }
+    $writes = Get-S2ProfileWrites $Owner.profile
+    $writes.Remove('CALCulate(1).PARameter(1).COUNt')
+    foreach ($path in @($writes.Keys)) {
+        $actual = Invoke-S2Io $Scpi $path
+        $same = $true
+        try { Assert-VnaEqual $actual $writes[$path] $path } catch { $same = $false }
+        if (-not $same) { throw "ВАЦ: профиль или сетка частот изменены после настройки из ERP ($path)" }
+    }
+    if (-not $SkipScreen) {
+        $spec = $null
+        if ($ScreenHash) {
+            if ($Owner.screen_hash -cne $ScreenHash) { throw 'ВАЦ: экран ERP с этим отпечатком не применялся в этой сессии' }
+            $spec = Get-VnaScreenSpec $ScreenHash
+        }
+        $read = Read-S2Screen $Scpi $spec
+        if (@($read.issues).Count) { throw ('ВАЦ: ' + $read.issues[0]) }
+        if ($spec -and -not (Test-VnaScreenMatch $read $spec)) { throw 'ВАЦ: экран S2VNA изменён после настройки из ERP; повторите настройку экрана из ERP' }
+    }
+    [void](Get-S2BenchCorrection $Scpi @($Owner.profile.traces) -RequireAll:$RequireAllTraces)
+    Assert-S2AcmUnchanged $Scpi $Owner
+}
+function Assert-S2Grid {
+    param($Frequencies, $Profile)
+    $values = @($Frequencies)
+    if ($values.Count -ne [int]$Profile.points) { throw 'ВАЦ: неполная сетка частот' }
+    for ($i = 0; $i -lt $values.Count; $i++) {
+        $expected = [double]$Profile.start_hz + ([double]$Profile.stop_hz - [double]$Profile.start_hz) * $i / ($values.Count - 1)
+        $frequency = [double]$values[$i]
+        if ([double]::IsNaN($frequency) -or [Math]::Abs($frequency - $expected) -gt [Math]::Max(0.001, [Math]::Abs($expected) * 1e-10)) { throw 'ВАЦ: сетка частот не соответствует профилю калибровки' }
+    }
+}
+function ConvertTo-S2Pairs {
+    param($Raw, [int]$Count, [string]$Label)
+    $values = @($Raw)
+    if ($values.Count -ne 2 * $Count) { throw "ВАЦ: неполные данные трассы $Label" }
+    $pairs = New-Object 'Collections.Generic.List[object]'
+    for ($i = 0; $i -lt $Count; $i++) {
+        $re = [double]$values[2 * $i]; $im = [double]$values[2 * $i + 1]
+        if ([double]::IsNaN($re) -or [double]::IsInfinity($re) -or [double]::IsNaN($im) -or [double]::IsInfinity($im)) { throw "ВАЦ: недопустимое число в трассе $Label" }
+        $pairs.Add([double[]]@($re, $im))
+    }
+    return ,$pairs.ToArray()
+}
+function Invoke-S2SweepOnce {
+    param($Scpi)
+    # Proven fresh-sweep sequence (16.11): continuous, BUS trigger, single, then *OPC? as the completion barrier.
+    Set-S2Checked $Scpi 'INITiate(1).CONTinuous' $true
+    Set-S2Checked $Scpi 'TRIGger.SEQuence.SOURce' 'BUS'
+    Invoke-S2Io $Scpi 'TRIGger.SEQuence.SINGle' call
+    if ((Invoke-S2Io $Scpi 'IEEE4882.OPC') -ne 1) { throw 'ВАЦ: развёртка не завершена' }
+}
+function Invoke-S2BenchOp {
+    param($Application, $Scpi, $Command, $Owner, [string]$OwnerPath, [string]$Serial, [hashtable]$Result)
+    $argsValue = $Command.args
+    switch -CaseSensitive ($Command.op) {
+        'device_status' {
+            $Result.name = [string]$Application.Name; $Result.ready = [bool]$Application.Ready
+            $Result.warmup_min = Get-VnaWarmupMinutes
+            $Result.temperatures = Get-S2Temperatures $Scpi
+            $acm = Get-S2AcmInfoOptional $Scpi
+            $Result.acm = if ($acm) { [ordered]@{ model = $acm.model; serial = $acm.serial; min_hz = $acm.min_hz; max_hz = $acm.max_hz } } else { $null }
+            $Result.correction = Get-S2BenchCorrection $Scpi $null -Report
+            $Result.screen_hash = Get-S2ActiveScreenHash $Scpi $Serial
+        }
+        'apply_screen' {
+            $screenHash = Assert-VnaScreenHash $argsValue.screen_hash
+            $spec = ConvertTo-VnaScreen $argsValue.screen
+            Assert-S2BenchReady $Scpi $Owner $null '' -SkipScreen
+            Save-VnaScreenSpec $screenHash $spec $Serial $Command.session_id
+            $selected = [int](Invoke-S2Io $Scpi 'SERVice.CHANnel(1).TRACe(1).ACTive')
+            try { Set-S2Screen $Scpi $spec }
+            finally { Restore-S2Selection $Scpi $selected @($spec.traces).Count }
+            $read = Read-S2Screen $Scpi $spec
+            if (@($read.issues).Count) { throw ('ВАЦ: ' + $read.issues[0]) }
+            if (-not (Test-VnaScreenMatch $read $spec)) { throw 'ВАЦ: прочитанный экран S2VNA не совпадает с заданным в ERP' }
+            Set-VnaOwnerField $Owner 'screen_hash' $screenHash; Write-VnaJson $OwnerPath $Owner
+            Write-VnaJson (Join-Path (Get-VnaControlRoot) 'screen-active.json') @{
+                serial = $Serial; screen_hash = $screenHash; session_id = $Command.session_id; applied_at = [DateTime]::UtcNow.ToString('o') }
+            $Result.screen = $read.screen; $Result.screen_hash = $screenHash
+        }
+        'acm_confidence' {
+            if (-not $Owner.calibration -or $Owner.calibration.method -cne 'acm') { throw 'ВАЦ: доверительный тест выполняется только после калибровки АКМ' }
+            $profile = $argsValue.profile
+            if ([int]$profile.points -gt $script:VnaConfidencePointsMax) { throw "ВАЦ: доверительный тест АКМ — не более $($script:VnaConfidencePointsMax) точек" }
+            $screenHash = if ($Owner.screen_hash) { [string]$Owner.screen_hash } else { '' }
+            Assert-S2BenchReady $Scpi $Owner $profile $screenHash -RequireAllTraces
+            $info = Assert-S2Acm $Scpi ([string]$argsValue.module_serial) ([double]$profile.start_hz) ([double]$profile.stop_hz) $Owner.calibration.definition
+            $indices = [ordered]@{}
+            foreach ($param in @($profile.traces)) { $indices[[string]$param] = Get-S2TraceIndex $Scpi ([string]$param) }
+            # Hold sweeps and use the internal trigger, as during the ECAL itself: a BUS trigger left by a capture
+            # must not block the module's own acquisition, and free-running sweeps must not overwrite its data.
+            Set-S2Checked $Scpi 'INITiate(1).CONTinuous' $false
+            Set-S2Checked $Scpi 'TRIGger.SEQuence.SOURce' 'INT'
+            Invoke-S2Io $Scpi 'SENSe(1).CORRection.COLLect.ECAL.CCHeck.ACQuire' call
+            if ((Invoke-S2Io $Scpi 'IEEE4882.OPC') -ne 1) { throw 'ВАЦ: доверительный тест не завершён' }
+            $frequencies = [double[]]@(Invoke-S2Io $Scpi 'SENSe(1).FREQuency.DATA')
+            Assert-S2Grid $frequencies $profile
+            $data = [ordered]@{}; $memory = [ordered]@{}
+            foreach ($param in @($indices.Keys)) {
+                $index = $indices[$param]
+                $data[$param] = ConvertTo-S2Pairs (Invoke-S2Io $Scpi "CALCulate(1).TRACe($index).DATA.SDATa") $frequencies.Count $param
+                $memory[$param] = ConvertTo-S2Pairs (Invoke-S2Io $Scpi "CALCulate(1).TRACe($index).DATA.SMEMory") $frequencies.Count ($param + ' (память АКМ)')
+            }
+            if ($screenHash) { Update-S2AutoScale $Scpi (Get-VnaScreenSpec $screenHash) }
+            $after = Assert-S2Acm $Scpi ([string]$argsValue.module_serial) ([double]$profile.start_hz) ([double]$profile.stop_hz) $Owner.calibration.definition
+            if ($after.serial -cne $info.serial -or (Get-VnaSerial $Application) -cne $Serial) { throw 'ВАЦ: прибор или АКМ заменены во время доверительного теста' }
+            $Result.module_serial = $info.serial; $Result.frequencies_hz = $frequencies
+            $Result.data = $data; $Result.memory = $memory; $Result.temperatures = Get-S2Temperatures $Scpi
+        }
+        'store_memory' {
+            $screenHash = Assert-VnaScreenHash $argsValue.screen_hash
+            Assert-S2BenchReady $Scpi $Owner $null $screenHash
+            $count = @((Get-VnaScreenSpec $screenHash).traces).Count
+            $numbers = @(foreach ($number in @($argsValue.traces)) { ConvertTo-VnaInteger $number 1 $count 'номер графика' })
+            if (-not $numbers.Count -or @($numbers | Select-Object -Unique).Count -ne $numbers.Count) { throw 'ВАЦ: графики для памяти повторяются или не заданы' }
+            $selected = [int](Invoke-S2Io $Scpi 'SERVice.CHANnel(1).TRACe(1).ACTive')
+            try {
+                foreach ($number in $numbers) {
+                    Invoke-S2Io $Scpi "CALCulate(1).PARameter($number).SELect" call
+                    Invoke-S2Io $Scpi 'CALCulate(1).SELected.MATH.MEMorize' call
+                }
+            } finally { Restore-S2Selection $Scpi $selected $count }
+            $Result.screen_hash = $screenHash; $Result.memorized = $numbers
+        }
+        'release' {
+            $screenHash = $null
+            if ($null -ne $argsValue.screen_hash) {
+                $screenHash = Assert-VnaScreenHash $argsValue.screen_hash
+                if ($Owner.screen_hash -cne $screenHash) { throw 'ВАЦ: экран ERP с этим отпечатком не применялся в этой сессии' }
+            }
+            # Unlike restore, the operator state is not loaded: the ERP screen and calibration stay for viewing.
+            Set-S2Checked $Scpi 'TRIGger.SEQuence.SOURce' 'INT'
+            Set-S2Checked $Scpi 'INITiate(1).CONTinuous' $true
+            Set-VnaOwnerField $Owner 'released' $true; Write-VnaJson $OwnerPath $Owner
+            $Result.released = $true; $Result.continuous = $true; $Result.screen_hash = $screenHash
+        }
+        default { throw 'ВАЦ: неизвестная операция рабочего места' }
+    }
+}
+function Invoke-S2CaptureV2 {
+    param($Application, $Scpi, $ArgsValue, $Owner, [string]$Serial, [hashtable]$Result)
+    $screenHash = Assert-VnaScreenHash $ArgsValue.screen_hash
+    $profile = $ArgsValue.profile
+    Assert-S2BenchReady $Scpi $Owner $profile $screenHash -RequireAllTraces
+    $indices = [ordered]@{}
+    foreach ($param in @($profile.traces)) { $indices[[string]$param] = Get-S2TraceIndex $Scpi ([string]$param) }
+    Invoke-S2SweepOnce $Scpi
+    $frequencies = @(Invoke-S2Io $Scpi 'SENSe(1).FREQuency.DATA')
+    $data = @{}
+    foreach ($param in @($indices.Keys)) { $data[$param] = @(Invoke-S2Io $Scpi "CALCulate(1).TRACe($($indices[$param])).DATA.SDATa") }
+    Update-S2AutoScale $Scpi (Get-VnaScreenSpec $screenHash)
+    Assert-S2BenchReady $Scpi $Owner $profile $screenHash -RequireAllTraces
+    Assert-VnaEqual @(Invoke-S2Io $Scpi 'SENSe(1).FREQuency.DATA') $frequencies 'частоты после чтения'
+    if ((Get-VnaSerial $Application) -cne $Serial) { throw 'ВАЦ: прибор заменён во время развёртки' }
+    $correction = @{}; foreach ($param in @($indices.Keys)) { $correction[$param] = 'COR' }
+    $Result.correction = $correction; $Result.profile = $profile
+    $Result.artifacts = @((ConvertTo-S2Artifact $frequencies $data $profile))
+    $Result.temperatures = Get-S2Temperatures $Scpi; $Result.screen_hash = $screenHash
+}
 function Get-VnaManifest {
     return Read-VnaJson (Join-Path (Get-VnaControlRoot) 'commissioned.json')
+}
+function New-VnaControlAdvert {
+    param([string[]]$Methods)
+    # Protocol 2 (bench ops) is a superset of 1: the server still hands this agent v1 session commands.
+    return @{ version = 2; methods = @($Methods); ops = @($script:VnaControlOps) }
 }
 function Get-VnaControlCapability {
     param($Observation)
@@ -2334,7 +2927,7 @@ function Get-VnaControlCapability {
             if ($kit.method -ceq 'acm' -and $kit.registry_fingerprint -match '^[a-f0-9]{64}$' -and $kit.definition.serial) { $methods = @('acm'); break }
         }
     }
-    return @{ version = 1; methods = $methods }
+    return New-VnaControlAdvert $methods
 }
 function Invoke-VnaSessionApi {
     param([string]$Base, [string]$AuthToken, [string]$Path, $Body, [string]$Method = 'Get')
@@ -2400,6 +2993,10 @@ function Invoke-S2Command {
     # A pre-existing owner/fence means missing files do not prove an untouched instrument.
     if ($Preparation -and ((Test-Path -LiteralPath $OwnerPath) -or
         (Test-Path -LiteralPath (Join-Path (Get-VnaControlRoot) 'quarantine.json')))) { $Preparation.backup_saved = $null }
+    # Protocol 2 is a superset of 1; bench ops exist only in protocol 2 (docs/vna/bench-protocol-v2.md).
+    $protocol = if ($null -eq $Command.protocol_version) { 1 } else { [int]$Command.protocol_version }
+    if ($protocol -notin @(1,2)) { throw 'ВАЦ: неподдерживаемая версия протокола управления' }
+    if ($Command.op -cin $script:VnaControlOps -and $protocol -ne 2) { throw 'ВАЦ: операция рабочего места требует протокол управления версии 2' }
     $serial = Get-VnaSerial $Application
     if ($serial -cne $Command.instrument_serial) { throw 'ВАЦ: серийный номер прибора не соответствует сессии' }
     Assert-VnaLease $Command $Status
@@ -2418,9 +3015,20 @@ function Invoke-S2Command {
     $scpi = $Application.SCPI; $argsValue = $Command.args
     $owner = Read-VnaJson $OwnerPath
     if ($owner -and ($owner.session_id -cne $Command.session_id -or $owner.serial -cne $serial)) { throw 'ВАЦ: локальная копия принадлежит другой сессии; требуется сверка с ERP' }
-    if ($Command.op -ne 'prepare' -and -not $owner) { throw 'ВАЦ: исходное состояние не сохранено' }
+    # device_status only reads: it may run before prepare to show the station header.
+    if ($Command.op -cnotin @('prepare','device_status') -and -not $owner) { throw 'ВАЦ: исходное состояние не сохранено' }
+    if ($owner -and $owner.released -and $Command.op -cnotin @('abort','restore','device_status')) { throw 'ВАЦ: управление прибором в этой сессии уже завершено' }
     $result = @{ serial = $serial }
     $collect = 'SENSe(1).CORRection.COLLect'
+    if ($Command.op -cin $script:VnaControlOps) {
+        Invoke-S2BenchOp $Application $scpi $Command $owner $OwnerPath $serial $result
+        return $result
+    }
+    if ($Command.op -ceq 'capture' -and $protocol -eq 2) {
+        Assert-VnaEqual $argsValue.profile $owner.profile 'сохранённый профиль'
+        Invoke-S2CaptureV2 $Application $scpi $argsValue $owner $serial $result
+        return $result
+    }
     switch -CaseSensitive ($Command.op) {
         'prepare' {
             if ($owner) { throw 'ВАЦ: исходное состояние этой сессии уже сохранено' }
@@ -2440,7 +3048,7 @@ function Invoke-S2Command {
             $owner = [pscustomobject]@{ session_id = $Command.session_id; serial = $serial; backup_id = $backupId
                 state_path = $statePath; kit_path = $kitPath; slot = $slot; original = $original
                 state_hash = ''; kit_hash = ''; definition_hash = ''; calibration = $null; profile = $null; restored = $false
-                prepare_command_id = $Command.command_id }
+                prepare_command_id = $Command.command_id; screen_hash = $null; released = $false }
             # Reserve durable ownership before any state/kit store write, even if backup subsequently fails.
             Write-VnaJson $OwnerPath $owner
             if ($Preparation) { $Preparation.backup_saved = $null }
@@ -2753,12 +3361,14 @@ function Sync-VnaReceipts {
                 $receipt.command.instrument_serial -ceq $owner.serial -and $receipt.payload.error -and
                 $receipt.payload.backup_saved -is [bool] -and $receipt.payload.backup_saved -eq $false
         }
-        if (-not $owner.restored -and -not $untouched) { return }
+        # release (protocol 2) ends control like restore, leaving the ERP screen on the instrument.
+        $settled = $owner.restored -or $owner.released
+        if (-not $settled -and -not $untouched) { return }
         $status = Invoke-VnaSessionApi $Base $AuthToken ("/api/stock/vna/sessions/" + $owner.session_id)
         $prepareFailed = $untouched -and $status.state -ceq 'failed' -and
             @($status.commands | Where-Object { $_.command_id -ceq $owner.prepare_command_id -and $_.status -ceq 'failed' }).Count -eq 1
         if (-not $status.lease_held -and $status.session_id -ceq $owner.session_id -and $status.instrument_serial -ceq $owner.serial -and
-            (($owner.restored -and $status.state -in @('recorded','aborted','failed')) -or $prepareFailed)) {
+            (($settled -and $status.state -in @('recorded','aborted','failed')) -or $prepareFailed)) {
             # Keep private backup files and journals for diagnostics; release only the local ownership marker.
             Remove-Item -LiteralPath $ownerPath -Force
         }

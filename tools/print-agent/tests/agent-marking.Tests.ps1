@@ -448,7 +448,7 @@ Describe 'Marking heartbeat' {
         Send-Heartbeat 'http://test' 'token' -PrinterName 'TSC' -MarkingPrinterName 'Godex 中文' -Lightweight
         Assert-MockCalled Get-Printer -Times 0 -Exactly -Scope It
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
-            $Body.printers.Count -eq 1 -and $Body.printers[0].name -eq 'Godex 中文' -and $Body.vna_control.version -eq 1
+            $Body.printers.Count -eq 1 -and $Body.printers[0].name -eq 'Godex 中文' -and $Body.vna_control.version -eq 2
         }
     }
 }

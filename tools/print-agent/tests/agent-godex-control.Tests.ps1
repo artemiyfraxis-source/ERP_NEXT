@@ -1,4 +1,4 @@
-﻿# Pester 3.4+, Windows PowerShell 5.1. Godex control from ERP (2.10.0): peel-off DevMode, one label at a time,
+﻿# Pester 3.4+, Windows PowerShell 5.1. Godex control from ERP (2.11.0): peel-off DevMode, one label at a time,
 # «Очистить принтер». Every printer, registry and network boundary is mocked.
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('pa-godex-' + [guid]::NewGuid())
