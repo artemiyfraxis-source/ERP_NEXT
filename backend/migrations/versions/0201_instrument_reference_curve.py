@@ -8,8 +8,8 @@ Every existing file starts unmarked. Not destructive.
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0200_instrument_reference_curve"
-down_revision = "0199_equipment_setup_model"
+revision = "0201_instrument_reference_curve"
+down_revision = "0200_vswr_border_repeat"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False

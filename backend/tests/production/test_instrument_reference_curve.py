@@ -83,7 +83,7 @@ def test_database_allows_one_reference_per_instrument_and_only_s2p(production_ap
 def test_migration_adds_unmarked_column_with_constraints(tmp_path):
     path = tmp_path / "reference.db"
     config = _config(path)
-    command.upgrade(config, "0200_instrument_reference_curve")
+    command.upgrade(config, "0201_instrument_reference_curve")
     with sqlite3.connect(path) as connection:
         columns = {row[1]: row for row in connection.execute("PRAGMA table_info(production_instrument_files)")}
         assert "is_reference" in columns and columns["is_reference"][3] == 1

@@ -649,7 +649,7 @@ class ProductionInstrumentFileRow(Base):
         CheckConstraint("length(trim(file_name)) > 0", name="ck_production_instrument_files_name"),
         CheckConstraint("length(content) BETWEEN 1 AND 20971520", name="ck_production_instrument_files_size"),
         # The weekly control check compares a control standard with its reference curve (СТО ФРАК-002-2026, разд. 14):
-        # at most one per instrument, and only a Touchstone measurement file (0200_instrument_reference_curve).
+        # at most one per instrument, and only a Touchstone measurement file (0201_instrument_reference_curve).
         CheckConstraint(REFERENCE_CURVE_CHECK, name="ck_production_instrument_files_reference"),
         Index("uq_production_instrument_files_reference", "instrument_id", unique=True,
               sqlite_where=text("is_reference"), postgresql_where=text("is_reference")),
