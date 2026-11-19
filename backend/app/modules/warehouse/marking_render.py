@@ -50,7 +50,8 @@ class Geometry(BaseModel):
         if self.min_font_mm > self.max_font_mm:
             raise ValueError("Минимальный шрифт больше максимального")
         for zone in [*self.zones, *self.blank_zones]:
-            if zone.x + zone.width > self.width_mm or zone.y + zone.height > self.height_mm:
+            # 1e-6 mm: 139.4 + 10.3 is 149.70000000000002 in floating point — a zone flush with the edge fits.
+            if zone.x + zone.width > self.width_mm + 1e-6 or zone.y + zone.height > self.height_mm + 1e-6:
                 raise ValueError("Зона выходит за размер этикетки")
         for i, zone in enumerate(self.zones):
             if any(zone.overlaps(other) for other in [*self.zones[i + 1:], *self.blank_zones]):
