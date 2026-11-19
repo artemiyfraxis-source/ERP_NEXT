@@ -168,7 +168,7 @@ def test_a_switch_is_claimed_as_a_bit_and_confirmed_by_its_bit_only(machines_api
     third = _post(admin, CARD + "/write", {"values": {"marking": "0"}}).json()["id"]
     TestClient(app).post(NEXT, headers=bridge, json=AGENT_NEW)
     old = _result(bridge, third, {}, ok=False, error="mbd outdated: no version, need 1.2.0", agent=AGENT_NEW).json()
-    assert old == {"status": "failed", "error": "Служба обмена со станком устарела — обновите"}
+    assert old == {"status": "failed", "error": "Служба обмена со станком (mbd) устарела — обновите до 1.2.0"}
 
 
 def test_an_old_runner_never_gets_a_write_it_could_do_only_in_part(machines_api):
@@ -449,6 +449,29 @@ def test_measured_correction_without_fresh_machine_data_is_refused(machines_api)
     assert manual.status_code == 200 and manual.json()["written"] is None and manual.json()["offset"] == "0,50"
 
 
+def test_measured_correction_refuses_a_value_the_card_did_not_show_and_an_open_write(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    bridge = _bridge(admin)
+    _report(bridge, registers={**WORDS, "34": 540})
+    body = {"parameter": "strip_front_mm", "case": "machine", "measured": "4,6"}
+    # The card showed 5,30 but the machine holds 5,40 now (a hand edit on the panel after the trial): refused.
+    changed = _post(admin, CARD + "/correction", {**body, "seen": "5,30"})
+    assert changed.status_code == 409 and changed.json()["detail"] == machine_writes_api.LIVE_CHANGED
+    assert _offsets(admin)["strip_front_mm"] == "0,00"
+    # A write of the card still on its way: the live value is about to change — wait.
+    queued = _post(admin, CARD + "/write", {"values": {"strip_front_mm": "5,5"}})
+    assert queued.status_code == 200, queued.text
+    busy = _post(admin, CARD + "/correction", {**body, "seen": "5,40"})
+    assert busy.status_code == 409 and busy.json()["detail"] == machine_writes_api.WRITE_OPEN
+    clock.now += timedelta(seconds=11)  # not claimed in 10 s → expired, no longer open
+    _report(bridge, seq=2, registers={**WORDS, "34": 540})
+    ok = _post(admin, CARD + "/correction", {**body, "seen": "5,40"})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["offset"] == "0,80" and _offsets(admin)["strip_front_mm"] == "0,80"
+    # Without `seen` (an older card) the live value is used as before.
+    assert _post(admin, CARD + "/correction", body).json()["offset"] == "0,80"
+
+
 def _wire_reference(sessions):
     from app.modules.references.infrastructure import HookupWireRow, WireGaugeRow
     with sessions.begin() as session:
@@ -494,7 +517,7 @@ def test_wire_plan_without_a_job_falls_back_to_the_reference_plus_the_offset(mac
     assert plan["group_id"] is None and plan["wire"] == "ПВАМ 0,35" and plan["length_mm"] == "120,00"
     rows = _rows(plan)
     assert rows["length_mm"] == ("120,50", "0,50", "Задание")
-    assert rows["diameter_mm"] == ("0,82", "-0,05", "Ø жилы + 0,10")
+    assert rows["diameter_mm"] == ("0,87", "-0,05", "Ø жилы + 0,15")
     assert rows["strip_front_mm"][0] is None and rows["knife_back_mm"][0] is None
     assert plan["blocking"] == ["Зачистка начала", "Зачистка конца"]
     assert plan["job"]["product"] == "PVAM 0,35 L120,00" and plan["quantity"] is None
@@ -509,7 +532,7 @@ def test_a_recipe_value_is_final_and_the_offset_is_not_counted_twice(machines_ap
     # A job with no recipe yet: the job's diameter is the fallback + the offset.
     group_id = _job(sessions)
     rows = _rows(admin.get(CARD + "/transfer", params={"group_id": str(group_id), "length_mm": "325"}).json())
-    assert rows["diameter_mm"] == ("0,82", "-0,05", "Ø жилы + 0,10") and rows["knife_back_mm"][0] is None
+    assert rows["diameter_mm"] == ("0,87", "-0,05", "Ø жилы + 0,15") and rows["knife_back_mm"][0] is None
     _recipe(sessions, ob019)
     assert admin.get(CARD + "/transfer").json()["wires"] == [
         {"label": "ПВАМ 0,35", "conductor_mm": "0,77", "has_recipe": True}]

@@ -23,10 +23,12 @@ type Note = { text: string; tone: Tone };
 
 const toneClass = (tone?: Tone) => (tone && tone !== "neutral" ? `tone-${tone}` : "");
 
-/** Почему команду сейчас не отправить, коротко для подписи под кнопкой ('' — можно). */
-function blocked(command: ControlCommand, card: MachineCard, open: MachineCommand | undefined): string {
+/** Почему команду сейчас не отправить, коротко для подписи под кнопкой ('' — можно). Пуск с поднятыми роликами
+ *  запрещён (сервер: machine_control.BLOCKED_BY_BITS, агент — то же на ПК). */
+export function blocked(command: ControlCommand, card: MachineCard, open: MachineCommand | undefined, lifted: boolean | null = null): string {
   if (card.link.code !== "ok" || !card.live) return "нет связи";
   if (open && open.command !== "stop") return `ждёт: ${open.summary}`;
+  if (command === "start" && lifted === true) return "сначала опустите ролики";
   const state = card.live.state.code;
   if (command === "alarm_clear") return card.live.alarm.code ? "" : "аварии нет";
   const allowed = CONTROL_STATES[command];
@@ -122,7 +124,7 @@ export function Ob019Controls({ card }: { card: MachineCard }) {
       {cell("stop", <button type="button" className="primary danger machine-stop" onClick={() => void sendCommand("stop")}>Стоп</button>,
         card.link.code !== "ok" ? "без связи может не дойти" : "")}
       {canControl && ACTIONS.map((command) => {
-        const why = blocked(command, card, open);
+        const why = blocked(command, card, open, lifted);
         return cell(command, <button type="button" className="secondary machine-command" disabled={Boolean(why) || busy}
           onClick={() => void sendCommand(command)}>{CONTROL_NAMES[command]}</button>, why);
       })}

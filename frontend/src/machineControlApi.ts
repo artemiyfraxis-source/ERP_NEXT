@@ -103,7 +103,7 @@ export interface TransferRow {
   label: string;
   unit: string;
   nominal: string | null;
-  /** Откуда значение: «Задание», «ЭТК…», «Рецепт, версия N», «Ø жилы + 0,10», «Нет данных». */
+  /** Откуда значение: «Задание», «ЭТК…», «Рецепт, версия N», «Ø жилы + 0,15», «Нет данных». */
   source: string;
   /** Поправка станка поверх номинала; null — значение из настройки провода, поправка не добавляется. */
   offset: string | null;
@@ -133,6 +133,8 @@ export interface CorrectionBody {
   etk_value?: string;
   group_id?: string;
   measured?: string;
+  /** Значение станка, которое показал предпросмотр, мм: на станке уже другое — сервер откажет (409). */
+  seen?: string;
   note?: string;
 }
 

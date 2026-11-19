@@ -329,6 +329,15 @@ def enqueue(session: Session, *, equipment_id: UUID, purpose: str, writes: list[
     return row, expired
 
 
+def open_write(session: Session, equipment_id: UUID, now: datetime) -> MachineWriteRow | None:
+    """A parameter write (not a machine command) still queued or running on this machine; expired ones are closed first
+    (not committed here — the caller's unit of work decides)."""
+    _expire(session, equipment_id, now)
+    return session.scalar(select(MachineWriteRow).where(MachineWriteRow.equipment_id == equipment_id,
+                                                        MachineWriteRow.status.in_(OPEN),
+                                                        MachineWriteRow.purpose != CONTROL).limit(1))
+
+
 def claim(session: Session, equipment_id: UUID, now: datetime,
           runner_version: str | None = None) -> tuple[MachineWriteRow | None, list[MachineWriteRow]]:
     """The runner takes the oldest queued command still in time. A write its version cannot run whole fails here,
@@ -403,7 +412,9 @@ def finish(session: Session, *, equipment_id: UUID, command_id: UUID, ok: bool, 
         if "busy" in reason or "PXS_HMI" in reason:
             reason = "Открыт пульт станка на ПК — запись из ERP недоступна"
         elif reason.startswith("mbd outdated"):
-            reason = "Служба обмена со станком устарела — обновите"
+            # «mbd outdated: 1.2.0, need 1.3.0» (the runner): the feed-roller bit needs mbd 1.3.0, the rest 1.2.0.
+            need = reason.rsplit("need ", 1)[1].strip() if "need " in reason else ""
+            reason = "Служба обмена со станком (mbd) устарела — обновите" + (f" до {need}" if need else "")
         elif reason.startswith("state "):
             reason = "Станок не в ожидании: " + reason.removeprefix("state ")
         if not reason and differ:

@@ -38,7 +38,7 @@ Describe 'write allow-list' {
 
 Describe 'version' {
     It 'answers its version' {
-        (Invoke-Request @{ cmd = 'version' })['version'] | Should Be '1.2.0'
+        (Invoke-Request @{ cmd = 'version' })['version'] | Should Be '1.3.0'
     }
 }
 

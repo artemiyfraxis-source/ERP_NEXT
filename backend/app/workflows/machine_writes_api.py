@@ -14,8 +14,9 @@ The machine card («Настройки» part):
   `machine` «станок режет не так» → the machine's stored offset of that parameter (ETK unchanged); `etk` «размер в ЭТК
   неверный» → a new revision of every issued ETK of the job with reason «правка наладчика: …», the technologist is
   notified (not asked); `both`. Each correction is journaled on the machine. `measured` without `offset` → the server
-  computes the offset from the machine's live value (offset = на станке − получилось); response `{offset, etk, written,
-  measured}`.
+  computes the offset from the machine's live value (offset = на станке − получилось); `seen` — the live value the card
+  showed: 409 when the machine holds another one now, 409 while a parameter write is open on the machine; response
+  `{offset, etk, written, measured}`.
 `confirm_state` is the machine state the person confirmed in the dialog: a different state now → 409.
 
 The command runner on the machine PC (`tools/machine-agent/ob019-writer.ps1`, token `machine:report`, PC bound):
@@ -110,6 +111,9 @@ class CorrectionPayload(Payload):
     etk_value: str | None = Field(default=None, max_length=20)  # the right ETK size, мм
     group_id: UUID | None = None  # the cutting job whose ETK is corrected
     measured: str | None = Field(default=None, max_length=20)
+    # The machine value the card's preview showed («На станке 325,00…»): the server refuses when the machine holds
+    # another one now, so the offset is never computed from a value the person did not see (review 19.11.2026).
+    seen: str | None = Field(default=None, max_length=20)
     note: str = Field(default="", max_length=200)
 
 
@@ -472,6 +476,8 @@ def _correct_etk(request: Request, *, card_ids: list[UUID], parameter: str, valu
 
 
 STALE_LIVE = "Нет свежих данных со станка — повторите, когда станок на связи"
+LIVE_CHANGED = "Значение на станке изменилось после пробы — проверьте и повторите"
+WRITE_OPEN = "Идёт запись на станок — подождите"
 
 
 def _live_value(session, link: rules.MachineLinkRow, key: str, now: datetime) -> Decimal | None:
@@ -526,6 +532,10 @@ def correction(inventory: str, payload: CorrectionPayload, request: Request, pri
                 raise HTTPException(422, "Укажите, сколько получилось, или поправку станка")
             elif written is None:
                 raise HTTPException(422, STALE_LIVE)
+            elif commands.open_write(session, equipment_id, now) is not None:
+                raise HTTPException(409, WRITE_OPEN)
+            elif payload.seen not in (None, "") and _decimal(payload.seen, "На станке").quantize(commands.STEP) != written:
+                raise HTTPException(409, LIVE_CHANGED)
             else:
                 offset = written - got
                 reason = f"{CASES[payload.case]}, на станке {_shown(written)}{measured}" + (f"; {note}" if note else "")

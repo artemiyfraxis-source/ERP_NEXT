@@ -44,7 +44,7 @@ collapsed; «Подключение» goes last and collapsed.
   difference. Units on every number, comma decimals, fixed decimals per field, tabular figures, input width
   fits the value.
 - Before any bus write: confirmation listing old → new for the changed fields only.
-- Defaults come from data and say where from: «0,74 = Ø жилы 0,64 + 0,10», «из рецепта 18.11», «из ЭТК».
+- Defaults come from data and say where from: «0,79 = Ø жилы 0,64 + 0,15», «из рецепта 18.11», «из ЭТК».
 
 ## 5. Trial and correction
 - The operator enters only what he measured («Получилось, мм»). The system computes the correction from the value

@@ -149,3 +149,20 @@ it("an old writer on the machine PC refuses the rollers inline; a running machin
   await waitFor(() => expect(noteOf(/Ролики/)).toBe("только когда станок готов или тираж готов"));
   expect(button(/Ролики/).disabled).toBe(true);
 });
+
+it("Start is closed while the feed rollers are lifted and says so on the row", async () => {
+  const posts = mockApi(control(), undefined, rollers(true));
+  render(<Ob019Controls card={card(102, "Готов, ждёт пуска")} />);
+  await waitFor(() => expect(button(/Ролики подняты/)).toBeEnabled());
+  expect(button("Пуск")).toBeDisabled();
+  expect(noteOf("Пуск")).toBe("сначала опустите ролики");
+  fireEvent.click(button("Пуск"));
+  expect(posts).toEqual([]);
+});
+
+it("Start opens again once the rollers read back lowered", async () => {
+  mockApi(control(), undefined, rollers(false));
+  render(<Ob019Controls card={card(102, "Готов, ждёт пуска")} />);
+  await waitFor(() => expect(button(/Ролики опущены/)).toBeEnabled());
+  expect(button("Пуск")).toBeEnabled();
+});

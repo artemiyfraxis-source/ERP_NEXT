@@ -5,7 +5,8 @@ import { machineControlApi, type CorrectionCase, type MachineControl, type Trans
 
 /** «Проба и поправка» карточки ОБ.019 (навык erp-machine-hmi, владелец 19.11.2026): наладчик вводит только то, что
  *  намерил («Получилось, мм»); сервер считает поправку от значения на станке (на станке − получилось). Предпросмотр
- *  словами — только показ, решает сервер. Ручная поправка со знаком — свёрнута. Диаметр и отвод ножа так не правятся:
+ *  словами — только показ, решает сервер: показанное значение станка уходит с правкой (`seen`), и если на станке уже
+ *  другое или туда идёт запись, сервер откажет — причина видна у кнопки. Ручная поправка со знаком — свёрнута. Диаметр и отвод ножа так не правятся:
  *  их подбирают на чертеже, настройка провода сохраняется сама. */
 
 /** Что можно измерить линейкой после пробы; стягивание — режимом на чертеже (владелец 19.11.2026). */
@@ -73,6 +74,8 @@ export function Ob019Correction({ inventory, control, plan, machine, linkUp, onS
     try {
       const answer = await machineControlApi.correct(inventory, {
         parameter, case: kind, measured: measured.trim() || undefined, note: note.trim() || undefined,
+        // The machine value the preview showed: the server refuses (409) when the machine holds another one now.
+        seen: preview && written !== null ? mm(written) : undefined,
         offset: kind !== "etk" && manual && offset.trim() ? offset.trim() : undefined,
         etk_value: kind !== "machine" ? etkValue.trim() : undefined, group_id: kind !== "machine" ? plan?.group_id ?? undefined : undefined,
       });

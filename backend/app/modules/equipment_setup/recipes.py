@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
 
 from .domain import SetupValidationError, _instant, _integer, _required, _uuid
@@ -95,7 +95,10 @@ WIRE_LABEL = "Провод"
 PLC_STEP = Decimal("0.01")
 PLC_MAX = Decimal("655.35")  # u16 ×0,01 of D34–D43; D32 (length) is u32
 LENGTH_MAX = Decimal("99999.99")
-DIAMETER_OVER_CONDUCTOR = Decimal("0.10")  # cut diameter without a recipe: Ø жилы + 0,10 мм (owner 19.11.2026)
+# Cut diameter without a recipe: Ø жилы + 0,15 мм (owner 20.11.2026, was + 0,10 since 19.11: a safer start — shallower
+# than the tested 0,80 for ПВАМ 0,35, which gives 0,79).
+DIAMETER_OVER_CONDUCTOR = Decimal("0.15")
+DIAMETER_SOURCE = "Ø жилы + 0,15"
 HALF_PULL = Decimal("0.5")  # «полустягивание»: the slug moves half the strip length and stays on the end (owner 19.11.2026)
 FULL_PULL_EXTRA = Decimal("2.00")  # «стягивание»: the pull runs past the strip so the slug comes off (owner 19.11.2026: «должно быть больше»)
 
@@ -245,16 +248,18 @@ def ob019_proposal(recipe: ManualRecipeVersion | None, etk: EtkNominal | None,
         elif proposed_strip == 0:
             result[key] = ProposedValue(key, Decimal(0), "ЭТК: без зачистки")
         elif getattr(etk, partial):
-            # Three pull-off modes (owner 19.11.2026): full = the strip length, half = half of it, none = 0.
-            result[key] = ProposedValue(key, (proposed_strip * HALF_PULL).quantize(PLC_STEP), "ЭТК: полустягивание")
+            # Three pull-off modes (owner 19.11.2026): full = strip + 2,00, half = half of it, none = 0. Half rounds
+            # 0,005 up (ROUND_HALF_UP) — the card's pullFor (Ob019SettingsPanel.tsx) rounds the same way.
+            result[key] = ProposedValue(key, (proposed_strip * HALF_PULL).quantize(PLC_STEP, rounding=ROUND_HALF_UP),
+                                        "ЭТК: полустягивание")
         else:
             result[key] = ProposedValue(key, min(proposed_strip + FULL_PULL_EXTRA, PLC_MAX), "ЭТК: стягивание (зачистка + 2,00)")
     if saved.get("diameter_mm") is not None:
         result["diameter_mm"] = ProposedValue("diameter_mm", saved["diameter_mm"], tag)
     elif etk.conductor_mm is not None:
-        # The knife closes just above the conductor (owner 19.11.2026): Ø жилы of the reference + 0,10 мм.
+        # The knife closes just above the conductor (owner 20.11.2026): Ø жилы of the reference + 0,15 мм.
         diameter = (etk.conductor_mm + DIAMETER_OVER_CONDUCTOR).quantize(PLC_STEP)
-        result["diameter_mm"] = ProposedValue("diameter_mm", diameter, "Ø жилы + 0,10")
+        result["diameter_mm"] = ProposedValue("diameter_mm", diameter, DIAMETER_SOURCE)
     else:
         result["diameter_mm"] = ProposedValue("diameter_mm", None, NO_DATA)
     back = saved.get("knife_back_mm")

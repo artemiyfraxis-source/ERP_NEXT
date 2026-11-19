@@ -43,7 +43,8 @@ it("asks only for the measured length by default, previews in words and posts th
   expect(screen.getByText("На станке 325,00, получилось 320,00 → поправка +5,00, следующая запись 330,00")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Записать поправку" }));
   await waitFor(() => expect(posts).toHaveLength(1));
-  expect(posts[0]).toEqual({ url: "/api/production/machines/card/ОБ.019/correction", body: { parameter: "length_mm", case: "machine", measured: "320" } });
+  // The machine value the preview showed goes with it: the server refuses if the machine holds another one now.
+  expect(posts[0]).toEqual({ url: "/api/production/machines/card/ОБ.019/correction", body: { parameter: "length_mm", case: "machine", measured: "320", seen: "325,00" } });
   expect(await screen.findByText("Поправка записана: на станке 325,00, получилось 320,00 → поправка +5,00 мм. Длина провода 330,00 мм записывается на станок")).toBeInTheDocument();
   expect(saved).toHaveBeenCalledWith("length_mm");
 });
@@ -68,4 +69,17 @@ it("shows the server's refusal next to the button", async () => {
   fireEvent.change(screen.getByLabelText("Получилось, мм"), { target: { value: "320" } });
   fireEvent.click(screen.getByRole("button", { name: "Записать поправку" }));
   expect(await screen.findByText(/Нет свежих данных со станка/)).toBeInTheDocument();
+});
+
+it("a machine value changed after the trial or a write on its way: the 409 shows next to the button", async () => {
+  const posts = server({ detail: "Значение на станке изменилось после пробы — проверьте и повторите" }, 409);
+  const saved = vi.fn(async () => "");
+  render(<Ob019Correction inventory="ОБ.019" control={CONTROL} plan={null} machine={{ ...MACHINE, strip_front_mm: 5.4 }} linkUp onSaved={saved} />);
+  fireEvent.change(screen.getByLabelText("Что мерили"), { target: { value: "strip_front_mm" } });
+  fireEvent.change(screen.getByLabelText("Получилось, мм"), { target: { value: "4,6" } });
+  fireEvent.click(screen.getByRole("button", { name: "Записать поправку" }));
+  expect(await screen.findByText("Значение на станке изменилось после пробы — проверьте и повторите")).toHaveClass("tone-danger");
+  expect(posts[0].body).toEqual({ parameter: "strip_front_mm", case: "machine", measured: "4,6", seen: "5,40" });
+  expect(saved).not.toHaveBeenCalled();
+  expect(screen.getByLabelText("Получилось, мм")).toHaveValue("4,6");  // kept for the repeat
 });

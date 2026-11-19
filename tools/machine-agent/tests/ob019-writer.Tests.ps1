@@ -101,6 +101,20 @@ Describe 'running a command' {
             $script:sent.Count | Should Be 1
         }
     }
+    It 'the feed-roller bit D604.0 needs mbd 1.3.0; 1.2.0 still does everything else' {
+        $script:sent = @()
+        Mock Invoke-MbdLine { $script:sent += $Line; Reply-Mbd $Line 102 '1.2.0' }
+        $result = Invoke-MachineCommand (New-Command @() @(102, 107) @(@{ addr = 604; bit = 0; value = 1 }))
+        $result['ok'] | Should Be $false
+        $result['error'] | Should Be 'mbd outdated: 1.2.0, need 1.3.0'
+        $script:sent.Count | Should Be 1
+        (Invoke-MachineCommand (New-Command @() @(102, 107) @(@{ addr = 400; bit = 0; value = 1 })))['ok'] | Should Be $true
+        $script:sent = @()
+        Mock Invoke-MbdLine { $script:sent += $Line; Reply-Mbd $Line 102 '1.3.0' }
+        $result = Invoke-MachineCommand (New-Command @() @(102, 107) @(@{ addr = 604; bit = 0; value = 1 }))
+        $result['ok'] | Should Be $true
+        $script:Json.DeserializeObject($script:sent[2])['cmd'] | Should Be 'setbit'
+    }
     It 'writes nothing while the machine runs' {
         $script:sent = @()
         Mock Invoke-MbdLine { $script:sent += $Line; Reply-Mbd $Line 103 }
@@ -163,14 +177,15 @@ function Reply-Machine([string]$Line) {
         return ConvertTo-JsonLite @{ ok = $true; ms = 1600; result = @{ addr = $request['addr']; bit = $request['bit']
             hold_ms = $request['hold_ms']; before = 0; set = $true; cleared = $script:clears; after = 0 } }
     }
+    if ([int]$request['addr'] -eq 604) { return ConvertTo-JsonLite @{ ok = $true; ms = 1; result = @{ addr = 604; values = @($script:wheel) } } }
     $values = @()
     for ($i = 0; $i -lt [int]$request['count']; $i++) { $values += 0 }
     $values[0] = $script:state; $values[16] = $script:alarm
     return ConvertTo-JsonLite @{ ok = $true; ms = 1; result = @{ addr = [int]$request['addr']; values = $values } }
 }
 
-function Reset-Machine([int]$State, [int]$Alarm = 0, [int]$After = 103) {
-    $script:state = $State; $script:alarm = $Alarm; $script:stateAfter = $After
+function Reset-Machine([int]$State, [int]$Alarm = 0, [int]$After = 103, [int]$Wheel = 0) {
+    $script:state = $State; $script:alarm = $Alarm; $script:stateAfter = $After; $script:wheel = $Wheel
     $script:bus = @(); $script:pulsed = @(); $script:pulseFails = $false; $script:clears = $true
 }
 
@@ -196,6 +211,17 @@ Describe 'machine commands on the PC' {
         $outcome = Invoke-ControlCommand (New-Control 'start') (Get-Fresh)
         ($outcome['outcome'] + '/' + $outcome['reason']) | Should Be 'failed/state'
         $script:pulsed.Count | Should Be 0
+    }
+    It 'Start with the feed rollers lifted (D604.0 = 1) is refused on the PC: nothing pulsed' {
+        Mock Test-HmiOpen { $false }; Mock Invoke-MbdLine { Reply-Machine $Line }
+        Reset-Machine 102 0 103 0x0A01
+        $outcome = Invoke-ControlCommand (New-Control 'start') (Get-Fresh)
+        ($outcome['outcome'] + '/' + $outcome['reason'] + '/' + $outcome['detail']) | Should Be 'failed/rollers_up/D604.0=1'
+        $script:pulsed.Count | Should Be 0
+        Reset-Machine 102 0 103 0x0A00
+        (Invoke-ControlCommand (New-Control 'start') (Get-Fresh))['outcome'] | Should Be 'done'
+        Reset-Machine 103 0 104 1
+        (Invoke-ControlCommand (New-Control 'stop') (Get-Fresh))['outcome'] | Should Be 'done'
     }
     It 'Reset only in Please reset / E-stop / Total finish' {
         Mock Test-HmiOpen { $false }; Mock Invoke-MbdLine { Reply-Machine $Line }
@@ -331,7 +357,7 @@ Describe 'against mbd.ps1 -Mock -LocalOnly' {
         }
         It 'sets a switch bit through the real service after checking its version' {
             $MbdPort = $port
-            Get-MbdVersion | Should Be '1.2.0'
+            Get-MbdVersion | Should Be '1.3.0'
             $result = Invoke-MachineCommand (New-Command @() @(0) @(@{ addr = 434; bit = 0; value = 1 }))
             $result['error'] | Should Be ''
             $result['readback']['434'] | Should Be 1
