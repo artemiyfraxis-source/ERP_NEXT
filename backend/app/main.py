@@ -86,7 +86,7 @@ from .modules.production import mating_api as production_mating_api
 from .modules.production import vna_check_api as production_vna_check_api
 from .workflows import vna_plan_api
 from .workflows import qc_plan_api
-from .workflows import vna_measurement_api
+from .workflows import vna_bench_api, vna_measurement_api
 from .workflows import receiving_by_upd_api
 from .workflows import shipping_upd_scan_api
 from .workflows import scan_agent_install
@@ -195,6 +195,7 @@ app.include_router(production_vna_check_api.router)
 app.include_router(vna_plan_api.router)
 app.include_router(qc_plan_api.router)
 app.include_router(vna_measurement_api.router)
+app.include_router(vna_bench_api.router)
 app.include_router(instrument_from_stock.router)
 app.include_router(instrument_labels.router)
 app.include_router(instrument_public_passport.router)
