@@ -11,9 +11,11 @@ HTTP (read only; the same gate as «Станки»: Производство or 
 
 Seed (owner-reviewed CSV only; dry run by default):
 `python -m app.workflows.equipment_setup_model --seed docs/data/equipment-setup-model-proposal-2026-11-18.csv [--apply]`
-with the application's ERP_DATABASE_URL. Only units whose every CSV row says «да» in `reviewed` are taken; an unknown
-or ambiguous inventory number refuses the whole run. Units of one equipment model → the model's setup model (the most
-common answer) plus overrides for the units that differ."""
+with the application's ERP_DATABASE_URL. Only units whose every CSV row says «да» (or records a decision, «решение …»)
+in `reviewed` are taken; an unknown or ambiguous inventory number refuses the whole run. Units of one equipment model →
+the model's setup model (the most common answer) plus overrides for the units that differ. Idempotent: keyed by the equipment model / unit (ОБ) and param_key, a repeated run changes nothing. Every
+created or changed model / override is journaled (`audit_events`, `equipment_setup.model_seeded` /
+`equipment_setup.unit_override_seeded`, actor «Модель наладки (CSV владельца)»)."""
 
 from __future__ import annotations
 
@@ -26,7 +28,7 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -42,6 +44,8 @@ from app.modules.references.infrastructure import EQUIPMENT_ROWS
 from app.modules.warehouse.marking_profiles import MarkingBindingRow
 from app.modules.warehouse.scan_agents import LIVE_FOR, ScanAgentRow
 from app.shared.clock import moscow_now
+from app.shared.identity import Actor
+from app.shared.persistence import AuditEventRow
 from app.shared.http_auth import Principal
 
 from .machines_api import machines_view_principal
@@ -52,6 +56,7 @@ Now = Annotated[datetime, Depends(moscow_now)]
 Reader = Annotated[Principal, Depends(machines_view_principal)]
 NOT_SET = "не задано"
 SEED_ACTOR = "Модель наладки (CSV владельца)"
+SEED_JOURNAL_ACTOR = Actor(id=UUID(int=0), name=SEED_ACTOR, department="Система")
 
 
 def inventory_of(value: object) -> str:
@@ -193,13 +198,24 @@ def seed(session, rows, *, now: datetime, apply: bool, source: str) -> dict:
     for model_id, members in sorted(grouped.items(), key=lambda pair: min(pair[1])):
         base, overrides = model_and_overrides(members)
         names = ", ".join(sorted(members))
-        plan["models"][names] = f"{base.label}, параметров {len(base.parameters)}: " + store.put_model(
-            model_id, base, source=source, actor_name=SEED_ACTOR, now=now)
+        outcome = store.put_model(model_id, base, source=source, actor_name=SEED_ACTOR, now=now)
+        plan["models"][names] = f"{base.label}, параметров {len(base.parameters)}: {outcome}"
+        if outcome != "без изменений":
+            _journal(session, model_id, "equipment_setup.model_seeded", now, units=names, outcome=outcome,
+                     requires_setup=base.label, parameters=", ".join(item.key for item in base.parameters),
+                     source=source)
         for inventory in sorted(members):
-            outcome = store.put_override(by_inventory[inventory][0].id, overrides.get(inventory), actor_name=SEED_ACTOR,
-                                         now=now)
+            override = overrides.get(inventory)
+            unit_id = by_inventory[inventory][0].id
+            outcome = store.put_override(unit_id, override, actor_name=SEED_ACTOR, now=now)
             if outcome != "без изменений":
                 plan["overrides"][inventory] = outcome
+                _journal(session, unit_id, "equipment_setup.unit_override_seeded", now, unit=inventory, outcome=outcome,
+                         requires_setup=REQUIRES_LABELS[override.requires_setup] if override and override.requires_setup
+                         else "как у модели",
+                         parameters=", ".join(("−" if change.removed else "") + change.key
+                                              for change in (override.parameters if override else ())),
+                         source=source)
     session.flush()
     counts = {label: sum(1 for item in proposal if item.model.requires_setup == code) for code, label in REQUIRES_LABELS.items()}
     result = {"applied": apply, "units": len(proposal), "by_class": counts, "skipped_not_reviewed": skipped, **plan}
@@ -210,9 +226,16 @@ def seed(session, rows, *, now: datetime, apply: bool, source: str) -> dict:
     return result
 
 
+def _journal(session, aggregate_id: UUID, event_type: str, now: datetime, **details: str) -> None:
+    session.add(AuditEventRow(id=uuid4(), aggregate_id=aggregate_id, event_type=event_type,
+                              actor_id=SEED_JOURNAL_ACTOR.id, actor_name=SEED_JOURNAL_ACTOR.name,
+                              actor_department=SEED_JOURNAL_ACTOR.department, occurred_at=now,
+                              details={name: str(value)[:500] for name, value in details.items()}))
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Модель наладки БД.ОБ из CSV, проверенного владельцем")
-    parser.add_argument("--seed", required=True, type=Path, help="CSV (колонка reviewed = «да» у каждой строки ОБ)")
+    parser.add_argument("--seed", required=True, type=Path, help="CSV (колонка reviewed = «да» или «решение …» у каждой строки ОБ)")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--apply", action="store_true", help="записать (по умолчанию только показать)")
     mode.add_argument("--dry-run", action="store_true", help="только показать (по умолчанию)")
