@@ -5,7 +5,7 @@
 2. `warehouse_printer_commands`: «Очистить принтер» — one command per printer queue, pending → taken → done/failed,
    with at most one open command per queue (partial UNIQUE). While it is open the queue hands out no marking jobs.
 3. `warehouse_agent_printers.hold`: why the agent holds that marking queue (peel-off check failed), from the heartbeat.
-4. ОБ.101 profiles get `geometry.peel = true` (the flag machine always works with the peel-off dispenser): the print
+4. ОБ.101 profiles get `geometry.peel = true` and a new `version` (the flag machine always works with the peel-off dispenser): the print
    agent then keeps the driver's peel-off DevMode and refuses a job whose driver output lacks `^O1`.
 Not destructive. 0202 is taken by the manual-jobs PR (#964); if it lands first, this one is re-parented onto it.
 """
@@ -57,8 +57,8 @@ def _set_peel(value):
     """Upgrade: peel = true on ОБ.101 profiles. Downgrade: the key leaves every profile (older code forbids it)."""
     bind = op.get_bind()
     profiles = sa.table("warehouse_marking_profiles", sa.column("id", sa.Uuid()), sa.column("inventory_number", sa.String()),
-                        sa.column("geometry", sa.JSON()))
-    query = sa.select(profiles.c.id, profiles.c.geometry)
+                        sa.column("geometry", sa.JSON()), sa.column("version", sa.Integer()))
+    query = sa.select(profiles.c.id, profiles.c.geometry, profiles.c.version)
     if value:
         query = query.where(profiles.c.inventory_number == PEEL_INVENTORY)
     for row in bind.execute(query):
@@ -68,7 +68,8 @@ def _set_peel(value):
         geometry = {key: item for key, item in geometry.items() if key != "peel"}
         if value:
             geometry["peel"] = True
-        bind.execute(sa.update(profiles).where(profiles.c.id == row.id).values(geometry=geometry))
+        # A changed profile gets a new version: an editor still holding the old one gets the usual 409, never saves over it.
+        bind.execute(sa.update(profiles).where(profiles.c.id == row.id).values(geometry=geometry, version=row.version + 1))
 
 
 def upgrade() -> None:

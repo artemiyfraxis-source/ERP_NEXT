@@ -43,13 +43,17 @@ export interface MarkingPreview extends MarkingDimensions {
 export type MarkingStatus = "pending" | "taken" | "spooled" | "failed" | "unknown" | "cancelled";
 export type MarkingPrintState = "queued" | "printed" | "error" | "cancelled" | "untracked";
 export interface MarkingJob { id: string; sequence: number; status: MarkingStatus; status_label: string; message: string; spool_job_id?: number | string | null; print_state?: MarkingPrintState | null
-  text?: string; serial?: number | null }
+  text?: string; serial?: number | null
+  /** The label failed its peel-off check and stops the rest of its batch (reprint it or continue without it). */
+  halted?: boolean }
 export interface MarkingBatch { id: string; status: MarkingStatus; status_label: string; total: number; jobs: MarkingJob[]; reprint_of: string | null
   // Honest print progress (agent 2.9.6+ watches the Windows queue); absent on older servers.
   printed?: number; queued?: number; print_errors?: number; cancelled?: number; untracked?: number
   progress_label?: string | null; stuck?: boolean; stuck_label?: string | null
   /** Jobs withdrawn by «Отменить оставшиеся» and still waiting for the agent. */
-  withdrawn?: number; pending?: number; reason?: string }
+  withdrawn?: number; pending?: number; reason?: string
+  /** A failed peel-off check stopped the batch: why, in Russian. */
+  halted?: boolean; halt_label?: string | null }
 export type MarkingReprintRequest = ({ sequences: number[] } | { serial_from: number; serial_to: number }) & { reason: string; idempotency_key: string };
 export interface MarkingBatchRequest extends MarkingRequest { manifest_hash: string; idempotency_key: string; reprint_of?: string; reason?: string }
 

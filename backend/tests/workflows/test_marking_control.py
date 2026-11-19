@@ -133,8 +133,11 @@ def test_clear_printer_command_holds_the_queue_until_the_agent_reports(marking):
     enqueue(marking)
     path = BASE + f"/machines/{equipment_id}/printer/clear"
     body = {"reason": "Старые флажки в буфере"}
+    with factory() as uow:
+        uow.session.get(ScanAgentRow, "godex-pc").version = "2.9.0"
+        uow.commit()
     refused = client.post(path, json=body)
-    assert refused.status_code == 409 and "2.11.0" in refused.json()["detail"]  # the fixture agent is 2.9.0
+    assert refused.status_code == 409 and "2.11.0" in refused.json()["detail"]
     with factory() as uow:
         uow.session.get(ScanAgentRow, "godex-pc").version = "2.11.0"
         uow.commit()
@@ -242,3 +245,131 @@ def test_machines_show_the_agent_hold_reason_of_the_printer(marking):
         uow.commit()
     [printer] = client.get(BASE + "/machines").json()["printers"]
     assert printer["hold"] == "Godex: отделитель (peel-off) выключен"
+
+
+def report(factory, job, token, outcome="spooled", **extra):
+    return report_marking(factory(), UUID(job["id"]), machine_id="godex-pc", token_id=token, attempt=job["attempt"],
+                          outcome=outcome, message=extra.pop("message", "Передано принтеру"), spool_job_id=1, now=NOW, **extra)
+
+
+def set_peel(factory, payload, peel):
+    from app.modules.warehouse.marking_profiles import MarkingProfileRow
+
+    with factory() as uow:
+        profile = uow.session.get(MarkingProfileRow, UUID(payload["profile_id"]))
+        profile.geometry = {**profile.geometry, "peel": peel}
+        uow.commit()
+
+
+def test_peel_follows_the_profile_now_even_for_a_batch_without_the_snapshot_flag(marking):
+    _client, factory, payload, *_ = marking
+    batch, _, _ = enqueue(marking)
+    with factory() as uow:
+        # A batch queued before 0203 (or before «отделитель» was ticked): its snapshot has no peel flag.
+        row = uow.session.get(MarkingBatchRow, UUID(batch["id"]))
+        snapshot = row.manifest["profile_snapshot"]
+        row.manifest = {**row.manifest, "profile_snapshot": {**snapshot, "geometry": {
+            key: value for key, value in snapshot["geometry"].items() if key != "peel"}}}
+        uow.commit()
+    token = uuid4()
+    first = claim_marking(factory(), machine_id="godex-pc", token_id=token, now=NOW)
+    assert first["peel"] is True  # the bound ОБ.101 profile runs the dispenser now
+    report(factory, first, token)
+    set_peel(factory, payload, False)
+    assert claim_marking(factory(), machine_id="godex-pc", token_id=token, now=NOW)["peel"] is False
+
+
+def test_an_agent_older_than_2_11_gets_no_peel_off_job_and_the_window_says_why(marking):
+    client, factory, *_ = marking
+    batch, _, _ = enqueue(marking)
+    with factory() as uow:
+        uow.session.get(ScanAgentRow, "godex-pc").version = "2.10.0"
+        uow.commit()
+    assert claim_marking(factory(), machine_id="godex-pc", token_id=uuid4(), now=NOW) is None
+    assert client.get(BASE + f"/batches/{batch['id']}").json()["pending"] == 15
+    [printer] = client.get(BASE + "/machines").json()["printers"]
+    assert "версии 2.10.0" in printer["hold"] and "2.11.0" in printer["hold"]
+    with factory() as uow:
+        uow.session.get(ScanAgentRow, "godex-pc").version = "2.11.0"
+        uow.commit()
+    assert client.get(BASE + "/machines").json()["printers"][0]["hold"] == ""
+    assert claim_marking(factory(), machine_id="godex-pc", token_id=uuid4(), now=NOW)["peel"] is True
+
+
+def test_concurrent_reprints_of_the_same_labels_are_refused_until_the_first_finished(marking):
+    client, factory, *_ = marking
+    batch, _, _ = enqueue(marking)
+    token = uuid4()
+    spool_all(factory, token)
+    path = BASE + f"/batches/{batch['id']}/reprint"
+    first = client.post(path, json={"sequences": [2, 3], "reason": "Смялись", "idempotency_key": "a"})
+    assert first.status_code == 200, first.text
+    assert client.post(path, json={"sequences": [2, 3], "reason": "Смялись", "idempotency_key": "a"}).json()["id"] == first.json()["id"]
+    overlap = client.post(path, json={"sequences": [3, 4], "reason": "Смялись", "idempotency_key": "b"})
+    assert overlap.status_code == 409 and "№3 уже перепечатывается" in overlap.json()["detail"]
+    assert client.post(path, json={"sequences": [5], "reason": "Смялся", "idempotency_key": "c"}).status_code == 200
+    spool_all(factory, token)  # the first reprint printed: its labels may be reprinted again
+    again = client.post(path, json={"sequences": [3, 4], "reason": "Опять смялись", "idempotency_key": "b"})
+    assert again.status_code == 200, again.text
+
+
+def test_a_failed_peel_check_stops_the_batch_until_its_label_is_reprinted(marking):
+    client, factory, *_ = marking
+    batch, _, _ = enqueue(marking)
+    token = uuid4()
+    first = claim_marking(factory(), machine_id="godex-pc", token_id=token, now=NOW)
+    assert report(factory, first, token, outcome="failed", message="Godex: отделитель выключен", halt=True) == "failed"
+    assert claim_marking(factory(), machine_id="godex-pc", token_id=token, now=NOW) is None  # no gap: №2 waits
+    view = client.get(BASE + f"/batches/{batch['id']}").json()
+    assert view["halted"] is True and "№1" in view["halt_label"] and "отделителя" in view["halt_label"]
+    assert view["jobs"][0]["halted"] is True and view["jobs"][1]["halted"] is False
+    copy = client.post(BASE + f"/batches/{batch['id']}/reprint", json={"sequences": [1], "reason": "Отделитель", "idempotency_key": "p"})
+    assert copy.status_code == 200, copy.text
+    reprinted = claim_marking(factory(), machine_id="godex-pc", token_id=token, now=NOW)
+    assert reprinted["id"] == copy.json()["jobs"][0]["id"]  # the missing label first
+    assert client.get(BASE + f"/batches/{batch['id']}").json()["halted"] is True  # not printed yet
+    report(factory, reprinted, token)
+    following = claim_marking(factory(), machine_id="godex-pc", token_id=token, now=NOW)
+    assert following["id"] == view["jobs"][1]["id"]
+    assert client.get(BASE + f"/batches/{batch['id']}").json()["halted"] is False
+
+
+def test_continue_without_the_failed_label_releases_the_batch(marking):
+    client, factory, *_ = marking
+    batch, _, _ = enqueue(marking)
+    token = uuid4()
+    first = claim_marking(factory(), machine_id="godex-pc", token_id=token, now=NOW)
+    report(factory, first, token, outcome="failed", message="Godex: отделитель выключен", halt=True)
+    path = BASE + f"/batches/{batch['id']}/jobs/{first['id']}/resolve"
+    refused = client.post(path, json={"outcome": "spooled", "reason": "Напечаталась"})
+    assert refused.status_code == 409 and "не печаталась" in refused.json()["detail"]
+    released = client.post(path, json={"outcome": "failed", "reason": "Номер 1 перепечатаем позже"})
+    assert released.status_code == 200, released.text
+    assert released.json()["halted"] is False and released.json()["jobs"][0]["status"] == "failed"
+    assert claim_marking(factory(), machine_id="godex-pc", token_id=token, now=NOW)["id"] == released.json()["jobs"][1]["id"]
+    [event] = events(factory, "production.marking_halt_released")
+    assert event.details["sequence"] == 1
+    assert client.post(path, json={"outcome": "failed", "reason": "Ещё раз"}).status_code == 409
+
+
+def test_an_ordinary_print_failure_does_not_stop_the_batch(marking):
+    _client, factory, *_ = marking
+    enqueue(marking)
+    token = uuid4()
+    first = claim_marking(factory(), machine_id="godex-pc", token_id=token, now=NOW)
+    report(factory, first, token, outcome="failed", message="Ошибка GDI")
+    assert claim_marking(factory(), machine_id="godex-pc", token_id=token, now=NOW) is not None
+
+
+def test_reprint_works_for_a_task_cancelled_after_its_flags_were_printed(marking):
+    from app.modules.production.infrastructure import ProductionTaskRow
+
+    client, factory, _payload, task, *_ = marking
+    batch, _, _ = enqueue(marking)
+    spool_all(factory, uuid4())
+    with factory() as uow:
+        uow.session.get(ProductionTaskRow, task.id).status = "Отменено"  # cancelled after work: keeps its serials
+        uow.commit()
+    response = client.post(BASE + f"/batches/{batch['id']}/reprint", json={"sequences": [2], "reason": "Потерян", "idempotency_key": "lost"})
+    assert response.status_code == 200, response.text
+    assert response.json()["jobs"][0]["serial"] == 2

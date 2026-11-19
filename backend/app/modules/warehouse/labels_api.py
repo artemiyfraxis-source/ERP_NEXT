@@ -87,6 +87,8 @@ class ResultPayload(BaseModel):
     message: str = Field(default="", max_length=2000)
     spool_job_id: str | int | None = None
     tracked: bool = False
+    # Agent 2.11.0+: the label failed its peel-off check — the rest of its batch waits for the operator.
+    halt: bool = False
 
 
 class PrintStatePayload(BaseModel):
@@ -401,7 +403,7 @@ def agent_result(
             machine = agent_machine(uow_factory(), _agent.actor.id, payload.machine_id or bound_machine)
             status = report_marking(uow_factory(), job_id, machine_id=machine, token_id=_agent.actor.id,
                 attempt=payload.attempt, outcome=payload.outcome, message=payload.message,
-                spool_job_id=payload.spool_job_id, now=now, tracked=payload.tracked)
+                spool_job_id=payload.spool_job_id, now=now, tracked=payload.tracked, halt=payload.halt)
             # `status` tells the agent whether an `unknown` job was resolved by the operator (spooled/failed).
             return {"ok": True, "status": status}
         else:

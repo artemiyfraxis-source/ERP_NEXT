@@ -27,8 +27,14 @@ def test_0203_keeps_rows_sets_peel_for_ob101_and_round_trips(tmp_path, monkeypat
         tables = [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
         counts = {table: db.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0] for table in tables}
         jobs = db.execute("SELECT * FROM warehouse_label_jobs ORDER BY id").fetchall()
+        versions = dict(db.execute("SELECT id, version FROM warehouse_marking_profiles"))
+        inventory = dict(db.execute("SELECT id, inventory_number FROM warehouse_marking_profiles"))
     command.upgrade(config, REVISION)
     with sqlite3.connect(path) as db:
+        # A profile that got peel = true has a new version (a stale editor gets 409); the others are untouched.
+        assert dict(db.execute("SELECT id, version FROM warehouse_marking_profiles")) == {
+            key: version + (inventory[key] == "ОБ.101") for key, version in versions.items()}
+        assert "ОБ.101" in inventory.values() and "ОБ.102" in inventory.values()
         assert {table: db.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0] for table in tables} == counts
         assert db.execute("SELECT * FROM warehouse_label_jobs ORDER BY id").fetchall() == jobs
         geometry = {inventory: json.loads(raw) for inventory, raw in

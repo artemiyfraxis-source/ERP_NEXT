@@ -142,3 +142,18 @@ it("tells that waiting batch labels keep printing after the clearing and can can
   await waitFor(() => expect(markingApi.clearPrinter).toHaveBeenCalledExactlyOnceWith("unit", "Старые флажки", true));
   expect(await screen.findByText("Отменено этикеток партий: 7")).toBeVisible();
 });
+
+it("says why a batch stopped after a failed peel-off check and continues without that label", async () => {
+  const halted: MarkingBatch = { ...structuredClone(batch), status: "failed", status_label: "Ошибка печати", halted: true,
+    halt_label: "Печать партии остановлена на этикетке №3: она не напечатана — не прошла проверка отделителя Godex.",
+    jobs: batch.jobs.map((job, index) => index === 2 ? { ...job, status: "failed", status_label: "Ошибка печати", halted: true } : job) };
+  vi.mocked(markingApi.batch).mockResolvedValue(structuredClone(halted));
+  vi.spyOn(markingApi, "resolve").mockResolvedValue({ ...structuredClone(halted), halted: false, halt_label: null });
+  render(<MarkingBatchProgress initial={halted} />);
+  expect(await screen.findByText(/остановлена на этикетке №3/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Продолжить без неё" }));
+  expect(screen.queryByLabelText("Результат проверки")).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Почему продолжить без неё"), { target: { value: "Перепечатаем позже" } });
+  fireEvent.click(screen.getByRole("button", { name: "Продолжить без этикетки №3" }));
+  await waitFor(() => expect(markingApi.resolve).toHaveBeenCalledExactlyOnceWith("batch-1", "job-2", "failed", "Перепечатаем позже"));
+});

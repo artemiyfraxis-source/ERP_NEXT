@@ -211,7 +211,7 @@ export function MarkingBatchProgress({ initial, onChange, onReprinted }: {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [reload, setReload] = useState(0);
-  const [resolution, setResolution] = useState<{ job: string; outcome: "spooled" | "failed"; reason: string } | null>(null);
+  const [resolution, setResolution] = useState<{ job: string; outcome: "spooled" | "failed"; reason: string; halt?: number } | null>(null);
   const [action, setAction] = useState<BatchAction | null>(null);
   const [busy, setBusy] = useState(false);
   const reprintKey = useRef({ payload: "", key: "" });
@@ -286,6 +286,7 @@ export function MarkingBatchProgress({ initial, onChange, onReprinted }: {
     <div className="marking-head"><h3>{batch.status_label}</h3><strong className="tnum" role="status">{progress ?? `Передано принтеру: ${spooled} из ${batch.total}`}</strong></div>
     <progress max={batch.total} value={done} aria-label={progress ? "Напечатано" : "Передано принтеру"} />
     {batch.stuck && <p className="warning-inline" role="alert">{batch.stuck_label ?? "Принтер ждёт (снимите этикетку / проверьте принтер)"}</p>}
+    {batch.halted && batch.halt_label && <p className="warning-inline" role="alert">{batch.halt_label}</p>}
     {!!batch.print_errors && <p className="warning-inline">Ошибок принтера: {batch.print_errors}. Проверьте принтер — печать продолжится после устранения.</p>}
     {!!batch.cancelled && <p className="warning-inline">Отменено в очереди Windows: {batch.cancelled}.</p>}
     <p className="muted">Проверьте напечатанные этикетки перед нанесением.</p>
@@ -335,13 +336,15 @@ export function MarkingBatchProgress({ initial, onChange, onReprinted }: {
       { key: "status", title: "Состояние", value: (job) => job.status_label },
       { key: "message", title: "Сообщение", value: (job) => job.message, grow: true, wrap: true },
       { key: "resolve", title: "Проверка", value: () => "", render: (job) => job.status === "unknown" && canResolve
-        ? <button type="button" className="secondary small" disabled={busy} onClick={() => setResolution({ job: job.id, outcome: "failed", reason: "" })}>Указать результат</button> : "—" },
+        ? <button type="button" className="secondary small" disabled={busy} onClick={() => setResolution({ job: job.id, outcome: "failed", reason: "" })}>Указать результат</button>
+        : job.halted && batch.halted && canResolve
+        ? <button type="button" className="secondary small" disabled={busy} onClick={() => setResolution({ job: job.id, outcome: "failed", reason: "", halt: job.sequence })}>Продолжить без неё</button> : "—" },
     ]} />
     {resolution && <div className="marking-resolution">
-      <label>Результат проверки<select name="marking-outcome" autoComplete="off" disabled={busy} value={resolution.outcome}
-        onChange={(event) => setResolution({ ...resolution, outcome: event.target.value as "spooled" | "failed" })}><option value="failed">Не напечатано</option><option value="spooled">Передано принтеру</option></select></label>
-      <label>Комментарий проверки<input name="marking-resolution-reason" autoComplete="off" maxLength={1000} disabled={busy} value={resolution.reason} onChange={(event) => setResolution({ ...resolution, reason: event.target.value })} /></label>
-      <div className="form-actions"><button type="button" className="primary" disabled={busy || !resolution.reason.trim()} onClick={() => void resolve()}>Подтвердить проверку</button>
+      {resolution.halt === undefined && <label>Результат проверки<select name="marking-outcome" autoComplete="off" disabled={busy} value={resolution.outcome}
+        onChange={(event) => setResolution({ ...resolution, outcome: event.target.value as "spooled" | "failed" })}><option value="failed">Не напечатано</option><option value="spooled">Передано принтеру</option></select></label>}
+      <label>{resolution.halt === undefined ? "Комментарий проверки" : "Почему продолжить без неё"}<input name="marking-resolution-reason" autoComplete="off" maxLength={1000} disabled={busy} value={resolution.reason} onChange={(event) => setResolution({ ...resolution, reason: event.target.value })} /></label>
+      <div className="form-actions"><button type="button" className="primary" disabled={busy || !resolution.reason.trim()} onClick={() => void resolve()}>{resolution.halt === undefined ? "Подтвердить проверку" : `Продолжить без этикетки №${resolution.halt}`}</button>
         <button type="button" className="secondary" disabled={busy} onClick={() => setResolution(null)}>Отмена</button></div>
     </div>}
   </section>;

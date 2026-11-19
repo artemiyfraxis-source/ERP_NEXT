@@ -24,11 +24,14 @@ from app.modules.techcards.etk_read import issued_card_for_item, pinned_card
 from app.modules.techcards.infrastructure import ProjectTechcardRow, SqlAlchemyTechcardRepository
 from app.modules.warehouse.devices import PrinterRow, printer_online
 from app.modules.warehouse.label_jobs import (
-    JobFinished, LabelJobRow, add_marking_job, cancel_pending_marking, expire_marking, pending_marking_by_printer,
+    JobFinished, LabelJobRow, add_marking_job, cancel_pending_marking, expire_marking, marking_halts, pending_marking_by_printer,
 )
 from app.modules.warehouse.marking_profiles import MarkingBatchRow, MarkingBindingRow, MarkingProfileRow
 from app.modules.warehouse.marking_render import Geometry, halves, render
-from app.modules.warehouse.printer_commands import CommandBusy, command_view, expire_commands, latest_command, request_clear
+from app.modules.warehouse.printer_commands import (
+    MIN_AGENT_VERSION, CommandBusy, agent_executes_commands, command_view, expire_commands, latest_command, marking_printers,
+    request_clear,
+)
 from app.modules.warehouse.scan_agents import LIVE_FOR, ScanAgentRow
 from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
@@ -64,6 +67,11 @@ PRINT_STATE_LABELS = {"queued": "В очереди принтера", "printed":
                       "cancelled": "Отменено", "untracked": "Передано принтеру"}
 STUCK_AFTER = timedelta(minutes=3)
 STUCK_TEXT = "Принтер ждёт (снимите этикетку / проверьте принтер)"
+OLD_AGENT_HOLD = ("Агент печати на ПК принтера — версии {version}: печать с отделителем выполняет агент "
+                  f"{'.'.join(map(str, MIN_AGENT_VERSION))} и новее, задания ждут его обновления")
+HALT_TEXT = ("Печать партии остановлена на этикетке №{sequence}: она не напечатана — не прошла проверка отделителя Godex. "
+             "Включите отделитель, затем «Перепечатать номера…» этой этикетки (партия продолжится после неё), "
+             "«Продолжить без неё» или «Отменить оставшиеся».")
 
 
 def print_state(job):
@@ -157,14 +165,20 @@ def machines(_principal: ReadUser, factory: Factory, now: Now):
                 "inventory_number": machine.fields.get(INV_KEY, profile.inventory_number), "name": machine.display_text,
                 "binding": binding_view(uow.session.get(MarkingBindingRow, machine.id), uow.session), "profiles": []})
             item["profiles"].append(profile_view(profile))
-        printers = []
+        printers, peel = [], {}
         for printer, pc in uow.session.execute(select(PrinterRow, ScanAgentRow).join(ScanAgentRow)):
             seen = printer.last_seen.replace(tzinfo=now.tzinfo) if printer.last_seen.tzinfo is None else printer.last_seen
+            online = printer.present and seen >= now - LIVE_FOR
+            hold = printer.hold if online else ""
+            if printer.kind == "gdi_png" and not hold and not agent_executes_commands(pc.version):
+                if pc.machine_id not in peel:
+                    peel[pc.machine_id] = {item["name"] for item in marking_printers(uow.session, pc.machine_id) if item["peel"]}
+                if printer.name in peel[pc.machine_id]:
+                    hold = OLD_AGENT_HOLD.format(version=pc.version or "без номера")  # claim_marking holds the jobs
             # Cloned PCs share a hostname: the IP and machine id tell them apart in the printer list.
             printers.append({"machine_id": pc.machine_id, "pc": pc.pc_name, "ip": pc.ip_lan or pc.ip_seen, "name": printer.name,
                 "driver": printer.driver, "port": printer.port, "kind": printer.kind, "present": printer.present,
-                "online": printer.present and seen >= now - LIVE_FOR,
-                "hold": printer.hold if printer.present and seen >= now - LIVE_FOR else ""})
+                "online": online, "hold": hold})
         uow.commit()
         return {"machines": list(grouped.values()), "printers": printers}
 
@@ -464,15 +478,20 @@ def batch_view(batch, session, now=None):
     progress = f"Напечатано {counts['printed']} из {batch.total - withdrawn} · в очереди {counts['queued'] + counts['error']}"
     if withdrawn:
         progress += f" · отменено {withdrawn}"
+    # A failed peel-off check stops the rest of the batch (label_jobs.marking_halts); nothing to stop once none wait.
+    halts = set(marking_halts(session, [batch.id]).get(batch.id, []))
+    pending = sum(1 for job in jobs if job.status == "pending")
+    halt_label = HALT_TEXT.format(sequence=min(halts)) if halts and pending else None
     return {"id": str(batch.id), "status": status, "status_label": status_label, "total": batch.total,
         "reprint_of": str(batch.reprint_of) if batch.reprint_of else None,
         "printed": counts["printed"], "queued": counts["queued"], "print_errors": counts["error"],
         "cancelled": counts["cancelled"], "untracked": counts["untracked"], "tracked": counts["untracked"] == 0,
         "progress_label": progress if status == "spooled" and live and counts["untracked"] != len(live) else None,
-        "withdrawn": withdrawn, "pending": sum(1 for job in jobs if job.status == "pending"),
+        "withdrawn": withdrawn, "pending": pending,
         "reason": batch.reason or "",
         "stuck": stuck, "stuck_label": STUCK_TEXT if stuck else None,
-        "jobs": [{"id": str(job.id), "sequence": job.sequence, "status": job.status,
+        "halted": halt_label is not None, "halt_label": halt_label,
+        "jobs": [{"id": str(job.id), "sequence": job.sequence, "status": job.status, "halted": job.sequence in halts,
             "text": rows[job.sequence - 1].get("text", "") if job.sequence <= len(rows) else "",
             "serial": rows[job.sequence - 1].get("serial") if job.sequence <= len(rows) else None,
             "print_state": states[job.id],
@@ -654,6 +673,19 @@ def resolve(batch_id: UUID, job_id: UUID, payload: ResolveInput,
             batch = uow.session.get(MarkingBatchRow, batch_id)
             batch_access(batch, principal, uow)
             expire_marking(uow.session, now)
+            job = uow.session.scalar(select(LabelJobRow).where(LabelJobRow.id == job_id, LabelJobRow.batch_id == batch_id)
+                                     .with_for_update())
+            if job is not None and job.status == "failed" and job.sequence in marking_halts(uow.session, [batch_id]).get(batch_id, []):
+                # «Продолжить без неё»: the label failed its peel-off check and was never printed; the rest of the batch goes on.
+                if payload.outcome != "failed":
+                    raise ConcurrentProductionUpdate("Эта этикетка не печаталась — её можно только перепечатать или продолжить без неё")
+                job.receipt = {**(job.receipt or {}), "halt_released": True, "halt_released_reason": " ".join(payload.reason.split())}
+                uow.session.flush()
+                audit(uow, principal.actor, now, batch_id, "halt_released", job_id=str(job_id), sequence=job.sequence,
+                      reason=payload.reason)
+                result = batch_view(batch, uow.session, now)
+                uow.commit()
+                return result
             changed = uow.session.execute(update(LabelJobRow).where(LabelJobRow.id == job_id,
                 LabelJobRow.batch_id == batch_id, LabelJobRow.status == "unknown").values(status=payload.outcome,
                     finished_at=now, error=payload.reason if payload.outcome == "failed" else None))
@@ -731,11 +763,27 @@ def reprint_selection(batch, jobs, payload):
     return chosen, rows
 
 
+def reprint_not_in_flight(session, original, chosen):
+    """Two reprints of the same labels must not both print (a duplicate serial): while an earlier reprint batch of this
+    one still has a label waiting, taken or unresolved, the same labels are refused. Its finished labels free them."""
+    picked = set(chosen)
+    for other in session.scalars(select(MarkingBatchRow).where(MarkingBatchRow.reprint_of == original.id)):
+        sources = ((other.manifest or {}).get("reprint") or {}).get("sequences") or []
+        open_jobs = session.scalars(select(LabelJobRow.sequence).where(LabelJobRow.batch_id == other.id,
+            LabelJobRow.status.in_(("pending", "taken", "unknown"))))
+        busy = sorted({sources[index - 1] for index in open_jobs if 0 < index <= len(sources)} & picked)
+        if busy:
+            raise ConcurrentProductionUpdate(f"Этикетка №{busy[0]} уже перепечатывается другой партией — дождитесь её печати "
+                                             "или отмените оставшиеся в ней")
+
+
 def reprint_tasks_still_own_serials(batch, principal, uow, now):
-    """The reprint reuses the serials already issued to the tasks; a cancelled task or a moved range refuses it."""
+    """The reprint reuses the serials already issued to the tasks; a task that released them (cancelled without work)
+    or a moved range refuses it."""
     for item in batch.manifest.get("source_snapshot", {}).get("tasks", []):
         task = uow.production.get(UUID(item["task_id"]))
-        task_access(task, UUID(item["operation_id"]), principal, uow)
+        # A finished task still owns its serials: a lost flag of it is reprinted (like batch_access reads it).
+        task_access(task, UUID(item["operation_id"]), principal, uow, historical=True)
         if item.get("serial"):
             current = issue_mark_serials_in(task, False, principal.actor, now, uow)  # numbered=False never issues
             if list(current or ()) != list(item["serial"]):
@@ -756,11 +804,13 @@ def reprint_labels(batch_id: UUID, payload: ReprintInput, principal: PrintUser, 
                 if old.fingerprint != fingerprint:
                     raise ConcurrentProductionUpdate("Ключ запроса уже использован")
                 return batch_view(old, uow.session, now)
-            original = uow.session.get(MarkingBatchRow, batch_id)
+            # The original batch row serializes reprints of it (PostgreSQL; SQLite writes one at a time anyway).
+            original = uow.session.scalar(select(MarkingBatchRow).where(MarkingBatchRow.id == batch_id).with_for_update())
             batch_access(original, principal, uow)
             expire_marking(uow.session, now)
             jobs = list(uow.session.scalars(select(LabelJobRow).where(LabelJobRow.batch_id == batch_id)))
             chosen, rows = reprint_selection(original, jobs, payload)
+            reprint_not_in_flight(uow.session, original, chosen)
             reprint_tasks_still_own_serials(original, principal, uow, now)
             trial = not original.manifest.get("source_snapshot", {}).get("tasks")
             current = uow.session.get(MarkingProfileRow, original.profile_id)

@@ -454,7 +454,11 @@ function Get-AgentPrinters {
         if (-not $target.name) { continue }
         $queue = $installed | Where-Object { $_.Name -eq $target.name } | Select-Object -First 1
         $item = @{ name = $target.name; driver = [string]$queue.DriverName; port = [string]$queue.PortName; kind = $target.kind; present = [bool]$queue }
-        if ($target.kind -eq 'gdi_png') { $item.hold = [string]$script:MarkingHoldReason }
+        if ($target.kind -eq 'gdi_png') {
+            # ERP keeps 500 characters of it; a longer Windows error text must not cost the heartbeat.
+            $hold = [string]$script:MarkingHoldReason
+            $item.hold = if ($hold.Length -gt 500) { $hold.Substring(0, 500) } else { $hold }
+        }
         $item
     }
 }
@@ -519,6 +523,7 @@ function Sync-PrintReceipts {
         $body = @{ attempt = $receipt.payload.attempt; outcome = $receipt.payload.outcome; message = $receipt.payload.message }
         if ($receipt.payload.spool_job_id) { $body.spool_job_id = $receipt.payload.spool_job_id }
         if ($receipt.payload.tracked) { $body.tracked = $true }
+        if ($receipt.payload.halt) { $body.halt = $true }
         $status = ''
         try {
             $reply = Invoke-ErpApi -Url "$Base/api/stock/labels/jobs/$($receipt.job_id)/result" -Body $body -AuthToken $AuthToken -MachineId $receipt.machine_id
@@ -586,19 +591,29 @@ function Send-PngToPrinter {
     param($Job, [byte[]]$Bytes)
     $stream = New-Object IO.MemoryStream(,$Bytes)
     $bitmap = $controller = $null
+    $peelCheck = $false
     try {
         $bitmap = New-Object Drawing.Bitmap($stream)
         $driver = ''
         try { $driver = [string](Get-Printer -Name $Job.printer -ErrorAction Stop).DriverName } catch {}
         $compensation = Resolve-MarginCompensation $Job $driver
         $mode = Get-JobDriverMode $Job
-        if ($Job.peel) { $mode = Confirm-JobPeelMode $Job $mode }
+        # The job's own flag (batch snapshot) or the queue's profile now (claim reply marking_printers): an older batch
+        # or one queued before «отделитель» was ticked carries no flag.
+        if ($Job.peel -or $script:PeelRequired[[string]$Job.printer]) {
+            $peelCheck = $true
+            $mode = Confirm-JobPeelMode $Job $mode
+            $peelCheck = $false
+        }
         $controller = New-Object ErpGdiPrinter+Controller($Job.printer, $mode, $bitmap, [double]$Job.width_mm, [double]$Job.height_mm, $compensation)
         $controller.DocName = Get-MarkingDocName ([string]$Job.id)
         [ErpGdiPrinter]::Print($Job.printer, $bitmap, [double]$Job.width_mm, [double]$Job.height_mm, $controller)
         return @{ outcome = 'spooled'; message = 'Передано принтеру'; spool_job_id = $controller.JobId }
     } catch {
-        return @{ outcome = $(if ($controller -and $controller.SubmissionStarted) { 'unknown' } else { 'failed' }); message = $_.Exception.Message }
+        $result = @{ outcome = $(if ($controller -and $controller.SubmissionStarted) { 'unknown' } else { 'failed' }); message = $_.Exception.Message }
+        # Nothing printed: ERP stops the rest of the batch until the operator reprints this label or continues without it.
+        if ($peelCheck) { $result.halt = $true }
+        return $result
     } finally {
         if ($controller) { $controller.Cleanup() }
         if ($bitmap) { $bitmap.Dispose() }
@@ -802,7 +817,7 @@ function Invoke-DriverCapture {
     [void][IO.Directory]::CreateDirectory($dir)
     $file = Join-Path $dir ([guid]::NewGuid().ToString('N') + '.prn')
     try {
-        $id = [ErpGdiPrinter]::Capture($PrinterName, $Mode, $file, $script:PeelDocName)
+        $id = Invoke-GdiCapture $PrinterName $Mode $file
         $deadline = (Get-Date).AddSeconds($script:PeelCaptureTimeoutSec)
         while ($true) {
             $left = @(Get-PrintJob -PrinterName $PrinterName -ErrorAction Stop | Where-Object {
@@ -814,11 +829,18 @@ function Invoke-DriverCapture {
             }
             Start-Sleep -Milliseconds 200
         }
-        return ,([IO.File]::ReadAllBytes($file))
+        $bytes = [IO.File]::ReadAllBytes($file)
+        # «Сохранять напечатанные документы» (KeepPrintedJobs) keeps the finished check in the queue: remove our own.
+        foreach ($done in @(Get-PrintJob -PrinterName $PrinterName -ErrorAction SilentlyContinue | Where-Object {
+                [int]$_.ID -eq $id -and [string]$_.DocumentName -eq $script:PeelDocName })) {
+            try { Remove-SpoolJob $done } catch { Write-Log "Godex '$PrinterName': задание проверки отделителя не удалено: $($_.Exception.Message)" }
+        }
+        return ,$bytes
     } finally { if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue } }
 }
 
 # Device boundaries, one function each so the tests replace them.
+function Invoke-GdiCapture { param([string]$PrinterName, [byte[]]$Mode, [string]$File) return [ErpGdiPrinter]::Capture($PrinterName, $Mode, $File, $script:PeelDocName) }
 function Get-PeelCurrentMode { param([string]$PrinterName) Initialize-GdiPrinter; return ,([ErpGdiPrinter]::CurrentMode($PrinterName)) }
 function Get-PeelDefaultMode { param([string]$PrinterName) Initialize-GdiPrinter; return ,([ErpGdiPrinter]::GlobalMode($PrinterName)) }
 function Set-PeelUserMode { param([string]$PrinterName, [byte[]]$Mode) Initialize-GdiPrinter; [ErpGdiPrinter]::SetUserMode($PrinterName, $Mode) }
@@ -867,11 +889,12 @@ function Initialize-PeelMode {
     param([string]$PrinterName)
     $found = Get-DispenserMode (Invoke-DriverCapture $PrinterName (Get-PeelCurrentMode $PrinterName))
     if ($found -eq 1) { return 'ok' }
-    $hives = @(Get-PeelHives $PrinterName)
-    $backup = Save-DevModeBackup $PrinterName $hives
     $default = Get-PeelDefaultMode $PrinterName
     $defaultFound = Get-DispenserMode (Invoke-DriverCapture $PrinterName $default)
     if ($defaultFound -ne 1) { throw (Format-PeelError $defaultFound ' и в настройках агента, и в настройках принтера по умолчанию') }
+    # The backup only right before a write: a failing check every minute must not pile up copies.
+    $hives = @(Get-PeelHives $PrinterName)
+    $backup = Save-DevModeBackup $PrinterName $hives
     foreach ($hive in $hives) { Set-PerUserDevMode $hive $PrinterName $default }
     try { Set-PeelUserMode $PrinterName $default } catch { Write-Log "Godex '$PrinterName': SetPrinter(9) не принят: $($_.Exception.Message)" }
     $after = Get-DispenserMode (Invoke-DriverCapture $PrinterName (Get-PeelCurrentMode $PrinterName))
@@ -1017,8 +1040,9 @@ function Invoke-PrinterCommand {
         if (-not $MarkingPrinterName -or [string]$Command.printer -cne $MarkingPrinterName) {
             throw "Очередь «$($Command.printer)» не настроена для маркировки на этом ПК"
         }
+        # A dry run never touches the real Windows queue or the printer.
+        if ($DryRun) { throw 'DRY RUN: задания Windows не удалялись, буфер Godex не очищался' }
         $body.removed_jobs = Remove-ErpMarkingJobs $MarkingPrinterName
-        if ($DryRun) { throw "DRY RUN: удалено заданий $($body.removed_jobs), буфер Godex не очищался" }
         # GoDEX EZPL User Manual, «~S,n — analogue press control keys» (p. 34): n = BUFCLR — the printer stops printing
         # immediately, empties its buffer (serial and variable data too) and stays in standby. ~S,CANCEL is only the
         # Cancel key that clears an error state. https://www.manualsdir.com/manuals/736893/godex-ezpl.html?page=34

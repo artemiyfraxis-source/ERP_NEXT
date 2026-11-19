@@ -61,6 +61,9 @@ Describe 'Peel-off DevMode of the agent account' {
         $script:Default = New-PeelMode 0
         { Initialize-PeelMode 'Godex' } | Should Throw 'отделитель (peel-off) выключен'
         Assert-MockCalled Set-PerUserDevMode -Times 0 -Exactly -Scope It
+        # No write, no backup: a check failing every minute leaves no pile of copies.
+        Assert-MockCalled Save-PrintReceipt -Times 0 -Exactly -Scope It
+        Test-Path -LiteralPath (Join-Path (Split-Path -Parent $script:ConfigPath) 'devmode-backup') | Should Be $false
     }
     It 'repairs only the account the agent runs as and leaves .DEFAULT alone for a user install' {
         Mock Get-AgentAccountSid { 'S-1-5-21-1-2-3-1001' }
@@ -110,7 +113,7 @@ Describe 'Peel-off DevMode of the agent account' {
 Describe 'Peel-off check before every job' {
     BeforeEach {
         $script:ConfigPath = Join-Path (Join-Path $TestDrive ([guid]::NewGuid().ToString())) 'config.json'
-        $script:PeelBlocked = @{}
+        $script:PeelBlocked = @{}; $script:PeelRequired = @{}
         Mock Invoke-DriverCapture { if ($Mode[0] -eq 1) { ConvertTo-Ezpl "^O1`r`n" } else { ConvertTo-Ezpl "^O0`r`n" } }
         Mock Write-Log {}
     }
@@ -134,13 +137,48 @@ Describe 'Peel-off check before every job' {
         $result = Send-PngToPrinter (New-PeelJob) $png
         $result.outcome | Should Be 'failed'
         $result.message | Should Match '\^O0 вместо \^O1'
+        $result.halt | Should Be $true  # ERP stops the rest of the batch
         $script:PeelBlocked['Godex'].message | Should Match 'Этикетка не напечатана'
+    }
+    It 'checks a job without the flag when the claim reply marks its queue peel-off' {
+        $script:PeelRequired = @{ Godex = $true }
+        Mock Initialize-PeelMode { throw (Format-PeelError 0) }
+        Mock Get-JobDriverMode { ,(New-PeelMode 0) }
+        $png = [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQAAAAA3bvkkAAAACklEQVR4AWNgAAAAAgABc3UBGAAAAABJRU5ErkJggg==')
+        try { $result = Send-PngToPrinter (New-PeelJob $false) $png } finally { $script:PeelRequired = @{} }
+        Assert-MockCalled Invoke-DriverCapture -Scope It
+        $result.outcome | Should Be 'failed'
+        $result.halt | Should Be $true
+    }
+    It 'does not mark an ordinary print failure as a halt' {
+        Mock Get-JobDriverMode { throw 'Драйвер не принял размер' }
+        $png = [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQAAAAA3bvkkAAAACklEQVR4AWNgAAAAAgABc3UBGAAAAABJRU5ErkJggg==')
+        $result = Send-PngToPrinter (New-PeelJob) $png
+        $result.outcome | Should Be 'failed'
+        $result.ContainsKey('halt') | Should Be $false
     }
     It 'does not check a profile without peel' {
         Mock Get-JobDriverMode { throw 'stop here' }
         $png = [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQAAAAA3bvkkAAAACklEQVR4AWNgAAAAAgABc3UBGAAAAABJRU5ErkJggg==')
         (Send-PngToPrinter (New-PeelJob $false) $png).message | Should Be 'stop here'
         Assert-MockCalled Invoke-DriverCapture -Times 0 -Exactly -Scope It
+    }
+}
+
+Describe 'Driver capture of the peel-off check' {
+    BeforeEach {
+        $script:ConfigPath = Join-Path (Join-Path $TestDrive ([guid]::NewGuid().ToString())) 'config.json'
+        Mock Invoke-GdiCapture { [IO.File]::WriteAllBytes($File, [Text.Encoding]::ASCII.GetBytes("^O1`r`n")); 77 }
+        # KeepPrintedJobs: the finished check stays listed next to a foreign job.
+        $script:Queue = @([pscustomobject]@{ ID = 77; JobStatus = 'Printed, Retained'; DocumentName = 'ERP peel check' },
+            [pscustomobject]@{ ID = 78; JobStatus = 'Printing'; DocumentName = 'Документ Word' })
+        Mock Get-PrintJob { $script:Queue }
+        Mock Remove-SpoolJob {}
+    }
+    It 'reads the output, then removes only its own finished check job' {
+        Get-DispenserMode (Invoke-DriverCapture 'Godex' (New-PeelMode 1)) | Should Be 1
+        Assert-MockCalled Remove-SpoolJob -Times 1 -Exactly -Scope It -ParameterFilter { $Job.ID -eq 77 }
+        @(Get-ChildItem (Join-Path (Split-Path -Parent $script:ConfigPath) 'peel-check')).Count | Should Be 0
     }
 }
 
@@ -263,5 +301,28 @@ Describe 'One marking label at a time and «Очистить принтер»' {
         $result = @($script:Calls | Where-Object { $_.Url -like '*/printer-commands/cmd-3/result' })[0].Body
         $result.outcome | Should Be 'failed'
         $result.message | Should Match 'не принял команду очистки'
+    }
+    It 'never deletes real Windows jobs in a dry run' {
+        $script:Queue = @([pscustomobject]@{ ID = 41; JobStatus = 'Printing'; DocumentName = 'ERP marking mark-1' })
+        $script:Command = [pscustomobject]@{ id = 'cmd-4'; attempt = 'c-4'; kind = 'clear'; printer = 'Godex' }
+        Invoke-MarkingPollOnce 'http://test' 'token' '' 'Godex' -DryRun | Should Be 'done'
+        Assert-MockCalled Remove-SpoolJob -Times 0 -Exactly -Scope It
+        Assert-MockCalled Send-RawToPrinter -Times 0 -Exactly -Scope It
+        $result = @($script:Calls | Where-Object { $_.Url -like '*/printer-commands/cmd-4/result' })[0].Body
+        $result.outcome | Should Be 'failed'
+        $result.removed_jobs | Should Be 0
+        $result.message | Should Match 'DRY RUN'
+    }
+    It 'sends the halt of a failed peel-off check with the receipt' {
+        Mock Send-PngToPrinter { @{ outcome = 'failed'; message = 'Godex: отделитель выключен'; halt = $true } }
+        Invoke-MarkingPollOnce 'http://test' 'token' '' 'Godex' | Should Be 'done'
+        $result = @($script:Calls | Where-Object { $_.Url -like '*/labels/jobs/mark-1/result' })[0].Body
+        $result.outcome | Should Be 'failed'
+        $result.halt | Should Be $true
+    }
+    It 'cuts the hold reason for the heartbeat to 500 characters' {
+        $script:MarkingHoldReason = 'Godex: отделитель выключен ' * 40
+        try { $hold = @(Get-AgentPrinters '' 'Godex')[0].hold } finally { $script:MarkingHoldReason = '' }
+        $hold.Length | Should Be 500
     }
 }
