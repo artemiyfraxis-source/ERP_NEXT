@@ -53,8 +53,11 @@ def test_machine_strips_both_ends_and_preserves_side_ownership(fixture):
         assert sum(step["text"].startswith(f"Сторона {side}") for step in ops[0]["card"]["steps"]) == 1
     assert not any(op["type"] == "coaxStrip" for op in ops)
     route = doc["route"]
+    # The marking tube printed on the marker is its own ПФ apart from the cable cut (owner 20.11).
     assert [block["name"] for block in route["blocks"]][:-1] == [
-        "Заготовки", "Кабель с метками и деталями", "Сторона А собрана", "Сторона В собрана"]
+        "Нарезанный и разделанный кабель", "Напечатанная маркировка", "Кабель с метками и деталями",
+        "Сторона А собрана", "Сторона В собрана"]
+    assert [block["ops"] for block in route["blocks"][:2]] == [[1], [2]]
     for side, name in (("A", "Сторона А собрана"), ("B", "Сторона В собрана")):
         block = next(block for block in route["blocks"] if block["name"] == name)
         assert all(fixture["config"]["ops"][position - 1]["side"] == side for position in block["ops"])

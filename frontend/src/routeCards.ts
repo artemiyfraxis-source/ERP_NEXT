@@ -209,15 +209,23 @@ export function linkGeometry(from: Rect, to: Rect, obstacles: readonly Rect[] = 
 
 /* ── «Схема полуфабрикатов» генератора: карточки из операций ─────────────────────────────────────────────────── */
 
-/** Полуфабрикат генератора: нарезанные провода, нарезанные трубки, обжатые провода (до первой стороны), обжим
+/** Полуфабрикат генератора: нарезанные провода, этикетки (печать маркировки — своё задание, владелец 20.11),
+    нарезанные трубки, кабель с метками и деталями (FAKRA), обжатые провода (до первой стороны), обжим
     стороны после сборки другой (`crimpedA` / `crimpedB`: резка, обжим А, сторона А, обжим В, сторона В — владелец
     14.10), собранные стороны А и В, готовое изделие. */
-export type GenStage = "blanks" | "marked" | "wires" | "tubes" | "crimped" | "crimpedA" | "A" | "crimpedB" | "B" | "final";
-const STAGES: GenStage[] = ["blanks", "marked", "wires", "tubes", "crimped", "crimpedA", "A", "crimpedB", "B", "final"];
+export type GenStage = "marked" | "wires" | "labels" | "tubes" | "crimped" | "crimpedA" | "A" | "crimpedB" | "B" | "final";
+const STAGES: GenStage[] = ["marked", "wires", "labels", "tubes", "crimped", "crimpedA", "A", "crimpedB", "B", "final"];
+/** ПФ без входов, что делаются параллельно до сборки: нарезанный кабель, этикетки, нарезанные трубки. */
+const SOURCE_STAGES: ReadonlySet<GenStage> = new Set<GenStage>(["wires", "labels", "tubes"]);
 /** Карточки обжатых проводов. */
 export const CRIMP_STAGES: ReadonlySet<GenStage> = new Set<GenStage>(["crimped", "crimpedA", "crimpedB"]);
 const WIRE_CUTS = new Set(["cutWire", "cutWireStrip", "cutWireCrimp", "coaxCut"]);
 const TUBE_CUTS = new Set(["cutTut", "coaxCutTut"]);
+/** Резка трубки, что печатает: этикетки на ленте вкладок коаксиала (opKey `coaxPrintLabel`, карта PRINT_MARK_LABEL) и
+    маркировочные трубки, напечатанные и нарезанные на маркираторе (PRINT_MARK_TUBE). */
+const LABEL_PRINT_KEY = "coaxPrintLabel";
+const isLabelPrint = (op: RouteOp) => TUBE_CUTS.has(op.type) && (op.key === LABEL_PRINT_KEY || op.code.toUpperCase().startsWith("PRINT_MARK"));
+const isTapeLabels = (op: RouteOp) => op.key === LABEL_PRINT_KEY || op.code.toUpperCase().startsWith("PRINT_MARK_LABEL");
 /** Разделка коаксиала отдельной операцией готовит нарезанный кабель (владелец 14.10: «зачистка идёт до всего остального»),
     а не сторону: резка, разделка А, разделка В — один полуфабрикат с резкой. */
 const COAX_STRIPS = new Set(["coaxStrip"]);
@@ -247,13 +255,15 @@ function wireEndPrep(op: RouteOp): boolean {
 
 function cutStage(op: RouteOp): GenStage | null {
   const code = op.code.toUpperCase();
+  if (isLabelPrint(op)) return "labels";
   if (TUBE_CUTS.has(op.type) || code.startsWith("CUT_TUT")) return "tubes";
   return WIRE_CUTS.has(op.type) || isCableStrip(op) || code.startsWith("CUT_") ? "wires" : null;
 }
 
 /** Полуфабрикат каждой операции (по номеру в ЭТК): резка проводов и кабеля и разделка коаксиала — «Нарезанные провода»
-    («Нарезанный и разделанный кабель»), резка ТУТ и
-    термоусадки — «Нарезанные трубки»; подготовка концов стороны до последней операции сторон — обжим этой стороны
+    («Нарезанный и разделанный кабель»), печать этикеток и маркировки — «Этикетки» («Напечатанная маркировка»),
+    резка ТУТ и термоусадки — «Нарезанные трубки» (у FAKRA тоже: каждая — свой ПФ без входов); подготовка концов
+    стороны до последней операции сторон — обжим этой стороны
     (`crimpedA` / `crimpedB`, прямо перед стороной: резка, обжим А, сторона А, обжим В, сторона В — владелец 14.10),
     если среди неё есть обжим руками (обжато всё на станке резки — отдельной карточки нет, зачистка и лужение остаются
     у стороны); подготовка без стороны до первой стороны — общие «Провода со сростками» (`crimped`), если в ней есть
@@ -263,7 +273,7 @@ function cutStage(op: RouteOp): GenStage | null {
 export function opStages(ops: readonly RouteOp[]): Map<number, GenStage> {
   const sorted = [...ops].sort((a, b) => a.position - b.position);
   if (ops.some((op) => op.key === "coaxFakraCutStrip")) {
-    return new Map(ops.map((op) => [op.position, WIRE_CUTS.has(op.type) || TUBE_CUTS.has(op.type) ? "blanks"
+    return new Map(ops.map((op): [number, GenStage] => [op.position, WIRE_CUTS.has(op.type) || TUBE_CUTS.has(op.type) ? cutStage(op)!
       : op.type === "coaxInsSleeve" || op.type === "coaxInsTut" ? "marked" : op.side || "final"]));
   }
   const assembly = (op: RouteOp) => !!op.side && !cutStage(op) && !wireEndPrep(op) && !CONTACT_SOLDERS.has(op.type);
@@ -285,7 +295,7 @@ export function opStages(ops: readonly RouteOp[]): Map<number, GenStage> {
   let waiting: number[] = [];
   for (const op of sorted) {
     const stage: GenStage | null = cutStage(op) ?? crimped.get(op.position) ?? op.side ?? null;
-    if (stage && stage !== "wires" && stage !== "tubes") { waiting.forEach((position) => result.set(position, stage)); waiting = []; }
+    if (stage && !SOURCE_STAGES.has(stage)) { waiting.forEach((position) => result.set(position, stage)); waiting = []; }
     if (stage) result.set(op.position, stage); else waiting.push(op.position);
   }
   waiting.forEach((position) => result.set(position, "final"));
@@ -303,7 +313,7 @@ export type GenCard = {
 export type GenLink = { id: string; from: GenStage; to: GenStage; qty: number | null; edges: RouteEdge[] };
 
 function genTitle(stage: GenStage, final: boolean, ops: RouteOp[]): string {
-  if (stage === "blanks") return "Заготовки";
+  if (stage === "labels") return ops.length && ops.every(isTapeLabels) ? "Этикетки" : "Напечатанная маркировка";
   if (stage === "marked") return "Кабель с метками и деталями";
   if (stage === "wires") {
     if (ops.length && ops.every((op) => op.type === "coaxCut" || isCableStrip(op))) {
@@ -347,7 +357,7 @@ export function genCards(route: Route, ops: readonly RouteOp[]): { cards: GenCar
       .map((position) => byPosition.get(position)).filter((op): op is RouteOp => !!op);
     const final = stage === finalStage;
     return {
-      id: stage, kind: final ? "final" : stage === "blanks" || stage === "wires" || stage === "tubes" || CRIMP_STAGES.has(stage) ? "semiFinished" : "assembly",
+      id: stage, kind: final ? "final" : SOURCE_STAGES.has(stage) || CRIMP_STAGES.has(stage) ? "semiFinished" : "assembly",
       title: genTitle(stage, final, cardOps), blocks: blocks.map((block) => block.key), ops: cardOps, final,
     };
   });
@@ -481,6 +491,7 @@ export function genArtHeight(stage: GenStage, art: GenArt, final: boolean): numb
   if (stage === "wires") return wireRows(art.wires);
   if (CRIMP_STAGES.has(stage) && !final) return wireRows(crimpWires(stage, art));
   if (stage === "tubes") return rows(art.tubes.length, 22);
+  if (stage === "labels") return 0; // Этикетки — без рисунка разъёмов стороны.
   if (final) return art.faces.A.length || art.faces.B.length ? 72 : 0;
   return art.faces[stage === "B" ? "B" : "A"].length ? 72 : 0;
 }

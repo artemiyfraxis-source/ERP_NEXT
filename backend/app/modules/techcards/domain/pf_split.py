@@ -1,7 +1,7 @@
 """The generator's ПФ split (owner + Vasily 13.10: «автоматику надо оставлять, генератор Вася оценил»).
 
 The ETK is cut into semi-finished products the way the generator's «Схема полуфабрикатов» draws its cards
-(`frontend/src/routeCards.ts` `opStages` / `genCards`): cut wires, cut tubes, wires with splices, crimped wires of
+(`frontend/src/routeCards.ts` `opStages` / `genCards`): cut wires, printed labels, cut tubes, wires with splices, crimped wires of
 side A, side A assembled, crimped wires of side B, side B assembled, the finished product. Every ETK operation goes to the ПФ of its stage, ops of one stage form one ПФ in ETK
 order, and the links between ПФ follow the operations' own links (the existing scheme, `per_unit` included).
 
@@ -22,11 +22,19 @@ WIRES, TUBES, CRIMPED, SIDE_A, SIDE_B, FINAL = "wires", "tubes", "crimped", "A",
 # The hand crimp of a side, right before that side (owner 14.10: «резка, обжимка А, монтаж А, обжим Б, монтаж Б»);
 # CRIMPED — splices and the like without a side, before the first side.
 CRIMPED_A, CRIMPED_B = "crimpedA", "crimpedB"
-BLANKS, MARKED = "blanks", "marked"
-STAGES = (BLANKS, MARKED, WIRES, TUBES, CRIMPED, CRIMPED_A, SIDE_A, CRIMPED_B, SIDE_B, FINAL)
+MARKED = "marked"
+# Printing labels and marks is its own task on the printer, apart from cutting the cable and the tubes (owner 20.11:
+# «задание на печать маркировок, маркировку и на нарезку почему-то в одном, трубки тоже в одном»).
+LABELS = "labels"
+STAGES = (MARKED, WIRES, LABELS, TUBES, CRIMPED, CRIMPED_A, SIDE_A, CRIMPED_B, SIDE_B, FINAL)
+# Input-less ПФ made in parallel before the assembly: nothing of the scheme feeds them.
+SOURCE_STAGES = frozenset({WIRES, LABELS, TUBES})
 CRIMP_STAGES = frozenset({CRIMPED, CRIMPED_A, CRIMPED_B})
 WIRE_CUTS = frozenset({"cutWire", "cutWireStrip", "cutWireCrimp", "coaxCut"})
 TUBE_CUTS = frozenset({"cutTut", "coaxCutTut"})
+# A tube-cut type that prints: tape labels of the coax tabs (opKey `coaxPrintLabel`, card PRINT_MARK_LABEL) and
+# printed marking tubes (PRINT_MARK_TUBE, printed and cut on the marker).
+LABEL_PRINT_KEY = "coaxPrintLabel"
 # Coax stripping as its own operation prepares the cut cable, not a side (owner 14.10: «зачистка идёт до всего
 # остального»): cut, strip A, strip B are one semi-finished product with the cut.
 COAX_STRIPS = frozenset({"coaxStrip"})
@@ -63,8 +71,18 @@ def _cable_strip(op: RouteOp) -> bool:
     return op.type in COAX_STRIPS and not op.key.startswith(SIDE_STRIP_KEY)
 
 
+def _label_print(op: RouteOp) -> bool:
+    return op.type in TUBE_CUTS and (op.key == LABEL_PRINT_KEY or op.code.upper().startswith("PRINT_MARK"))
+
+
+def _tape_labels(op: RouteOp) -> bool:
+    return op.key == LABEL_PRINT_KEY or op.code.upper().startswith("PRINT_MARK_LABEL")
+
+
 def _cut_stage(op: RouteOp) -> str:
     code = op.code.upper()
+    if _label_print(op):
+        return LABELS
     if op.type in TUBE_CUTS or code.startswith("CUT_TUT"):
         return TUBES
     if op.type in WIRE_CUTS or _cable_strip(op) or code.startswith("CUT_"):
@@ -84,17 +102,17 @@ def _wire_end_prep(op: RouteOp) -> bool:
 
 
 def op_stages(ops: Sequence[RouteOp]) -> dict[int, str]:
-    """The stage of every operation (by its ETK position): wire and cable cuts and coax stripping — cut wires, TUT and heat-shrink cuts —
-    cut tubes; the end preparation of a side before the last side operation — the crimp of that side (`crimpedA` /
-    `crimpedB`, placed right before the side: cut, crimp A, side A, crimp B, side B — owner 14.10) when some of it is
-    a hand crimp or a coax centre contact soldered before its housing (all crimped on the cutting machine — no card of
+    """The stage of every operation (by its ETK position): wire and cable cuts and coax stripping — cut wires, printing
+    labels and marks — labels, TUT and heat-shrink cuts — cut tubes (FAKRA too: each its own input-less ПФ); the end
+    preparation of a side before the last side operation — the crimp of that side (`crimpedA` / `crimpedB`, placed
+    right before the side: cut, crimp A, side A, crimp B, side B — owner 14.10) when some of it is a hand crimp or a coax centre contact soldered before its housing (all crimped on the cutting machine — no card of
     its own, stripping and tinning stay with the side);
     the end preparation without a side before the first side — the shared crimped wires (`crimped`) when there are
     splices in it, else it prepares the next crimp or side; a side operation — its side; an operation without a side
     (twisting, marking, wrapping) prepares the next crimp or side, and after the last side — the finished product."""
     ordered = sorted(ops, key=lambda op: op.position)
     if any(op.key == "coaxFakraCutStrip" for op in ops):
-        return {op.position: BLANKS if op.type in WIRE_CUTS | TUBE_CUTS else
+        return {op.position: _cut_stage(op) if op.type in WIRE_CUTS | TUBE_CUTS else
                 MARKED if op.type in {"coaxInsSleeve", "coaxInsTut"} else _side(op) or FINAL for op in ops}
 
     def assembly(op: RouteOp) -> bool:
@@ -122,7 +140,7 @@ def op_stages(ops: Sequence[RouteOp]) -> dict[int, str]:
     waiting: list[int] = []
     for op in ordered:
         stage = _cut_stage(op) or crimped.get(op.position) or _side(op)
-        if stage and stage not in (WIRES, TUBES):
+        if stage and stage not in SOURCE_STAGES:
             result.update((position, stage) for position in waiting)
             waiting = []
         if stage:
@@ -134,8 +152,8 @@ def op_stages(ops: Sequence[RouteOp]) -> dict[int, str]:
 
 
 def _title(stage: str, ops: Sequence[RouteOp]) -> str:
-    if stage == BLANKS:
-        return "Заготовки"
+    if stage == LABELS:
+        return "Этикетки" if ops and all(_tape_labels(op) for op in ops) else "Напечатанная маркировка"
     if stage == MARKED:
         return "Кабель с метками и деталями"
     if stage == WIRES:
@@ -166,17 +184,17 @@ def _op_links(route: Route) -> list[tuple[int, int, Decimal]]:
 
 def _tubes_where_used(links: list[tuple[int, int, Decimal]], ops: Sequence[RouteOp], final_name: str,
                       stages: dict[int, str]) -> list[tuple[int, int, Decimal]]:
-    """The links of a stored scheme with every tube cut going where its pieces are put on, as the derived scheme takes
-    them («Надеть ТУТ», the cap of a free end, the coax «Монтаж ТУТ»), its pieces per unit kept. A scheme derived
-    before 16.10 sent the coax tubes into the first operation after the cut (796К.2 КБ1: «Пайка центрального контакта
-    А», although «Монтаж ТУТ» takes them)."""
+    """The links of a stored scheme with every tube cut and label print going where its pieces are put on, as the
+    derived scheme takes them («Надеть ТУТ», the cap of a free end, the coax «Монтаж ТУТ», «Наклейка этикеток»), its
+    pieces per unit kept. A scheme derived before 16.10 sent the coax tubes into the first operation after the cut
+    (796К.2 КБ1: «Пайка центрального контакта А», although «Монтаж ТУТ» takes them)."""
     taken: dict[int, list[int]] = {}
     for source, target, _per_unit in _op_links(derive_route(ops, final_name)):
-        if stages.get(source) == TUBES:
+        if stages.get(source) in (TUBES, LABELS):
             taken.setdefault(source, []).append(target)
     result: list[tuple[int, int, Decimal]] = []
     for source, target, per_unit in links:
-        targets = taken.get(source, []) if stages.get(source) == TUBES else []
+        targets = taken.get(source, []) if stages.get(source) in (TUBES, LABELS) else []
         result.extend((source, end, per_unit) for end in targets or [target])
     return result
 
@@ -186,7 +204,9 @@ def generator_split(ops: Sequence[RouteOp], final_name: str = "", current: Route
     Links between ПФ: the operations' links that go forward in the course of assembly (a ПФ by its first operation,
     the product last) — a link back joins nothing, as on the generator's cards; `per_unit` — the largest of the links
     between the two. Side A built feeds the crimp of side B that follows it (the wires go through); cut wires feed the
-    crimped wires before the first side even without a link, and a ПФ left without a way on feeds the next one.
+    crimped wires before the first side even without a link, and a ПФ left without a way on feeds the next one. Cut
+    wires, labels and cut tubes take nothing: a stored scheme that cut them in one block (FAKRA «Заготовки» before
+    20.11) links none of them to another.
     Raises RouteError when the operations make no scheme."""
     if not ops:
         raise RouteError("нет операций")
@@ -206,7 +226,7 @@ def generator_split(ops: Sequence[RouteOp], final_name: str = "", current: Route
     links: dict[tuple[str, str], Decimal] = {}
     for source, target, per_unit in _tubes_where_used(_op_links(base), ops, final_name, stages):
         start, end = stages.get(source), stages.get(target)
-        if start and end and start != end and rank[start] < rank[end]:
+        if start and end and start != end and rank[start] < rank[end] and (end not in SOURCE_STAGES or end == final_stage):
             links[(start, end)] = max(links.get((start, end), Decimal(0)), per_unit)
     # Crimped wires are made of cut wires even without a link; the crimp of a side after another side takes the wires
     # through that side (its link), and only when nothing feeds it — the cut wires.
@@ -215,12 +235,13 @@ def generator_split(ops: Sequence[RouteOp], final_name: str = "", current: Route
             links.setdefault((WIRES, stage), Decimal(1))
     for index, stage in enumerate(order[:-1]):
         if not any(start == stage for start, _ in links):
-            links[(stage, order[index + 1])] = Decimal(1)
+            later = next((other for other in order[index + 1:] if other not in SOURCE_STAGES or other == final_stage), order[-1])
+            links[(stage, later)] = Decimal(1)
     last_op = by_position.get(final_block.ops[-1])
     blocks = [
         Block(stage, (final_name or (last_op.name if last_op else "")) if stage == final_stage
               else _title(stage, [by_position[position] for position in members[stage] if position in by_position]),
-              tuple(members[stage]), stage == final_stage, kit=stage == BLANKS)
+              tuple(members[stage]), stage == final_stage)
         for stage in order
     ]
     edges = [Edge(start, end, per_unit) for (start, end), per_unit in links.items()]
