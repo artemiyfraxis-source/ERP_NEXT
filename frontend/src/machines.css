@@ -71,27 +71,38 @@
   .wire-back-top, .wire-back-bottom { justify-content: flex-start; }
 }
 
-/* Поле значения на чертеже и в строке «Тираж / Пучок / Режим»: ввод, рядом — что на станке; отличие — жёлтым. */
+/* Поле значения на чертеже и в строке задания: в поле — значение станка, правка уходит сразу; под полем — итог записи
+   («записывается…», «✓ на станке», «отказ») или откуда значение. −/+ — крупные для перчаток. */
 .machine-input { display: grid; align-content: start; gap: 2px; min-width: 0; }
 .machine-input-label { color: var(--muted-foreground); font-size: 12px; }
 .machine-input-box { display: flex; align-items: center; gap: 4px; }
-.machine-input-box input { width: 96px; text-align: right; font-variant-numeric: tabular-nums; }
+.machine-input-box input { width: 88px; height: 36px; text-align: right; font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .machine-input-unit { color: var(--muted-foreground); font-size: 12px; }
-.machine-input-live { color: var(--muted-foreground); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.machine-input-live.is-old { opacity: .7; }
-.machine-input.is-diff input, .machine-input.is-diff select { border-color: var(--warn-border); background: var(--warn-soft); }
-.machine-input.is-diff .machine-input-live { color: var(--tone-warn); font-weight: 500; }
+.machine-step { min-width: 36px; height: 36px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--card);
+  color: var(--foreground); font-size: 18px; line-height: 1; }
+.machine-step:disabled { opacity: .4; }
+.machine-input-note { font-size: 12px; line-height: 1.3; font-variant-numeric: tabular-nums; }
+.machine-input.is-old input, .machine-input.is-old select { color: var(--muted-foreground); }
+.machine-input.is-writing input, .machine-input.is-writing select { border-color: var(--warn-border); background: var(--warn-soft); }
+.machine-input.is-missing input { border-color: var(--warn-border); }
+/* Стягивание конца на чертеже: три режима одной кнопкой (владелец 19.11.2026), под ним — точное значение. */
+.machine-pull-modes { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.machine-pull-modes button { min-height: 44px; min-width: 64px; padding: 0 10px; border: 0; border-right: 1px solid var(--border);
+  border-radius: 0; background: var(--card); color: var(--foreground); font-size: 13px; font-weight: 500; }
+.machine-pull-modes button:last-child { border-right: 0; }
+.machine-pull-modes button.on { background: var(--primary); color: #fff; }
+.machine-pull-modes button:disabled:not(.on) { color: var(--muted-foreground); }
+.machine-pull-modes button:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.machine-input-note { display: flex; flex-wrap: wrap; gap: 0 8px; }
 .machine-job-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 24px; }
-.machine-job-row .machine-input > select { width: 160px; }
-.machine-job-row .machine-etk { flex: 1 1 320px; }
-.machine-job-row .machine-etk > select { width: 100%; max-width: 560px; }
-.machine-job-row .machine-etk .machine-input-live { white-space: normal; }
+.machine-job-row .machine-input > .machine-input-box > select { width: 160px; height: 36px; }
 .machine-plan-note { font-size: 12px; }
 .machine-more-toggle { justify-self: start; display: inline-flex; align-items: baseline; gap: 6px; padding: 4px 0; border: 0;
   background: none; color: var(--foreground); font-weight: 500; }
 .machine-more-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
-.machine-table tr.is-diff input { border-color: var(--warn-border); background: var(--warn-soft); }
-@media (pointer: coarse) { .machine-more-toggle { min-height: 40px; } }
+.machine-table tr.is-writing input, .machine-table tr.is-writing select { border-color: var(--warn-border); background: var(--warn-soft); }
+@media (pointer: coarse) { .machine-more-toggle { min-height: 44px; } .machine-step { min-width: 44px; height: 44px; }
+  .machine-input-box input, .machine-job-row .machine-input > .machine-input-box > select { height: 44px; } }
 @media (max-width: 720px) { .machine-table { display: block; overflow-x: auto; } }
 
 .machine-card { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
@@ -137,8 +148,7 @@
 .machine-pick { display: grid; gap: 4px; max-width: 720px; }
 .machine-pick span, .machine-form label > span { color: var(--muted-foreground); font-size: 13px; }
 .machine-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.machine-confirm { border: 1px solid var(--primary); border-radius: 8px; padding: 10px 14px; display: grid; gap: 6px; }
-.machine-confirm ul, .machine-commands { margin: 0; padding-left: 18px; font-size: 13px; }
+.machine-commands { margin: 8px 0 0; padding-left: 18px; font-size: 13px; }
 .machine-commands li { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .machine-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 12px; align-items: end; }
 .machine-form label { display: grid; gap: 4px; }
@@ -150,19 +160,53 @@
 @media (max-width: 1100px) { .machine-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (pointer: coarse) { .machine-table th, .machine-table td { height: 40px; } }
 
-/* Команды станку вверху карточки ОБ.019 (Ob019Controls.tsx): большой «Стоп», подтверждение «руки убраны». */
+/* Команды станку вверху карточки ОБ.019 (Ob019Controls.tsx): одна строка, у каждой кнопки под ней — итог или причина. */
 .machine-controls { display: grid; gap: 8px; }
-.machine-controls-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-.machine-controls-bar button { min-height: 40px; min-width: 112px; }
+.machine-controls-bar { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 12px; }
+.machine-cmd { display: grid; gap: 4px; justify-items: start; min-width: 0; max-width: 220px; }
+.machine-cmd button { min-height: 44px; min-width: 120px; }
+.machine-cmd-note { min-height: 16px; font-size: 12px; line-height: 1.3; font-variant-numeric: tabular-nums; }
 button.machine-stop { min-width: 160px; min-height: 48px; font-size: 18px; font-weight: 600; letter-spacing: 0.02em; }
-.machine-controls-note { color: var(--muted-foreground); font-size: 13px; }
-.machine-command-now { font-weight: 500; }
-.machine-confirm-command { border-color: var(--tone-warn); padding: 12px 16px; gap: 8px; }
-.machine-confirm-command p { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin: 0; }
-.machine-confirm-command p > strong { font-size: 16px; }
-.machine-confirm-check { display: flex; align-items: center; gap: 8px; font-weight: 500; min-height: 40px; }
-.machine-confirm-check input { width: 20px; height: 20px; }
-.machine-confirm-command .machine-actions button { min-height: 40px; }
+.machine-rollers span { color: var(--muted-foreground); font-weight: 400; }
+.machine-rollers[aria-pressed="true"] { border-color: var(--warn-border); background: var(--warn-soft); }
+
+/* Строка состояния ОБ.019 (Ob019Card.tsx): один раз — станок словами, связь, следующий шаг. Норма — спокойно. */
+.machine-status { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; padding: 10px 14px;
+  border: 1px solid var(--border); border-left-width: 4px; border-radius: 8px; background: var(--card); }
+.machine-status.is-warn { border-color: var(--warn-border); background: var(--warn-soft); }
+.machine-status.is-danger { border-color: var(--tone-danger); background: var(--danger-soft); }
+.machine-status-title { font-size: 18px; font-weight: 600; }
+.machine-status-link { color: var(--muted-foreground); font-size: 13px; font-variant-numeric: tabular-nums; }
+.machine-status-hint { flex-basis: 100%; font-size: 14px; }
+.machine-status-estop { flex-basis: 100%; color: var(--muted-foreground); font-size: 12px; }
+
+/* «Что режем»: задание из ЭТК и провод вручную рядом. */
+.machine-what h3, .machine-correction h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.machine-ways { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; }
+.machine-way { display: grid; gap: 4px; align-content: start; min-width: 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.machine-way.is-on { border-color: var(--primary); }
+.machine-way-title { font-size: 13px; font-weight: 500; }
+.machine-way > select { width: 100%; height: 36px; }
+.machine-way > .machine-muted { font-size: 12px; }
+.wire-picker { position: relative; }
+.wire-picker > input { width: 100%; height: 36px; }
+.wire-picker-list { position: absolute; z-index: 5; top: calc(100% + 2px); left: 0; right: 0; max-height: 280px; overflow-y: auto;
+  margin: 0; padding: 4px 0; list-style: none; border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .12); }
+.wire-picker-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
+.wire-picker-list li.is-active, .wire-picker-list li:hover { background: var(--accent); }
+.wire-picker-name { font-weight: 500; }
+.machine-message { margin: 0; font-size: 13px; }
+.machine-preview { margin: 0; font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.machine-action-row { align-items: center; }
+.machine-action-row button { min-height: 44px; }
+.machine-hint { font-size: 12px; }
+.machine-offsets { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; font-size: 13px; font-variant-numeric: tabular-nums; }
+.machine-offsets li { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.machine-fold > summary { cursor: pointer; padding: 6px 0; font-size: 14px; font-weight: 500; }
+.machine-fold > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+@media (pointer: coarse) { .machine-fold > summary { min-height: 44px; display: flex; align-items: center; } .wire-picker > input, .machine-way > select { height: 44px; } }
+@media (max-width: 720px) { .machine-ways { grid-template-columns: minmax(0, 1fr); } }
 
 /* «Оборудование»: вкладки, участок, артикул и наладка на плитке (MachinesPage.tsx), часть «Наладка» (MachineSetup.tsx). */
 .machine-toolbar { flex-wrap: wrap; align-items: center; }
