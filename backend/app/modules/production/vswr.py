@@ -46,6 +46,31 @@ class VswrVerdict(str, Enum):
 
 VERDICT_NAMES = {VswrVerdict.PASS: "Годно", VswrVerdict.FAIL: "Не годно"}
 
+# СТО ФРАК-002-2026 п. 11.1, 11.5 (РЭ ч. 1 п. 3.3.3; РЭ ч. 2, табл. 73): калибровка, пересчитанная на другую сетку
+# («К?» — интерполяция, «К!» — экстраполяция), замер без коррекции («Нет», коррекция выключена) и сглаживание трассы
+# искажают КСВН — такой замер не принимается.
+INTERPOLATED_CALIBRATION = {"C?": "К?", "RC?": "К?", "C!": "К!", "RC!": "К!"}
+
+
+def capture_refusal(settings: Mapping[str, Any] | None) -> str:
+    """Почему замер с этими настройками ВАЦ не принимается; "" — принимается (или настройки не прочитаны)."""
+    if not isinstance(settings, Mapping):
+        return ""
+    raw_status = str(settings.get("correction_status") or "")
+    if raw_status == "NONE" or settings.get("correction_enabled") is False:
+        return ("нет калибровки (коррекция выключена или статус «Нет»): замер без коррекции не отражает изделие — "
+                "откалибруйте ВАЦ на полосе замера и повторите")
+    status = INTERPOLATED_CALIBRATION.get(raw_status)
+    if status == "К?":
+        return ("калибровка интерполирована («К?»): сетка замера не совпадает с сеткой калибровки — "
+                "откалибруйте ВАЦ на полосе и точках замера и повторите")
+    if status == "К!":
+        return ("калибровка экстраполирована («К!»): полоса замера шире калиброванной — "
+                "откалибруйте ВАЦ на полосе замера и повторите")
+    if settings.get("smoothing_enabled") is True:
+        return "включено сглаживание трассы: оно занижает пики КСВН — выключите сглаживание и повторите замер"
+    return ""
+
 
 @dataclass(frozen=True)
 class VswrTrace:
@@ -427,6 +452,8 @@ def _prepare_files(
             end_traces[end] = name
             traces = (VnaTrace(name, source.points, source.complex_points),)
             ends = (end,)
+        if refusal := capture_refusal(item.capture_settings):
+            raise ProductionValidationError("Замер не принят: " + refusal)
         file_meta = vna_header(content)
         if item.capture_settings is not None:
             file_meta.update(capture_settings=item.capture_settings, capture_verified=item.capture_verified)

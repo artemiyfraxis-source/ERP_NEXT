@@ -185,7 +185,7 @@ def test_one_analyser_is_one_row_on_the_pc_where_it_really_is(machines_api):
     with sessions.begin() as session:
         _instrument(session, "СИ.001", "Arinst VNA-DL 1–8800 МГц", "Arinst VL")
         _instrument(session, "СИ.002", "Planar S50180", "S2VNA", serial="26030095")
-        _agent(session, "otk", "DESKTOP-PTA57QF", "2.9.4", now, ip_lan="192.168.1.121")
+        _agent(session, "otk", "DESKTOP-PTA57QF", "2.9.7", now, ip_lan="192.168.1.121")
         _agent(session, "owner", "DESKTOP-5O46RH6", "2.9.2", now, ip_lan="172.19.0.1", ip_seen="100.75.209.90")
         session.add_all([
             DeviceRow(machine_id="otk", kind="arinst", device_id="arinst", name="Arinst VNA-DL", present=True, last_seen=now),
@@ -308,7 +308,7 @@ def test_the_machines_tab_lists_production_equipment_only(machines_api):
     now = clock.now
     with sessions.begin() as session:
         _unit(session, "ОБ.094", "Станок резки провода с роторной зачисткой")
-        _agent(session, "otk", "DESKTOP-PTA57QF", "2.9.4", now, ip_lan="192.168.1.121")
+        _agent(session, "otk", "DESKTOP-PTA57QF", "2.9.7", now, ip_lan="192.168.1.121")
         session.add(DeviceRow(machine_id="otk", kind="arinst", device_id="arinst", name="Arinst VNA-DL", present=True,
                               last_seen=now))
     body = admin.get(LIST).json()

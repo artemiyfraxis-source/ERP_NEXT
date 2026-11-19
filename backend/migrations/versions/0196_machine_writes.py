@@ -9,8 +9,8 @@ Two new tables, nothing existing changes:
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0195_machine_writes"
-down_revision = "0194_si_norm_assignment"
+revision = "0196_machine_writes"
+down_revision = "0195_vna_check_journal"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False
