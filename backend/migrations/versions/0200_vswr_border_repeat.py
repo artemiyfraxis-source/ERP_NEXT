@@ -8,8 +8,8 @@ norm + U. Existing rows are untouched and keep satisfying the widened constraint
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0196_vswr_border_repeat"
-down_revision = "0195_vna_check_journal"
+revision = "0200_vswr_border_repeat"
+down_revision = "0199_equipment_setup_model"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False
