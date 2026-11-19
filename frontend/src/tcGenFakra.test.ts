@@ -440,7 +440,9 @@ describe("FAKRA flow 16.11", () => {
     expect((makeGen(data, restored).buildConfig().coax as any).cableLength).toBe(4855);
     const ops: RouteOp[] = cfg.ops.map((op: any, i: number) => ({ position: i + 1, key: op.opKey, type: op.type, code: op.templateId, label: op.label, side: op.side || undefined, minutes: 0 }));
     const route = deriveRoute(ops), cards = genCards(route, ops).cards;
-    expect(cards.map((card) => card.title)).toEqual(["Заготовки", "Кабель с метками и деталями", "Сторона А собрана", "Сторона В собрана", "Готовый кабель"]);
+    expect(cards.map((card) => card.title)).toEqual(["Нарезанный и разделанный кабель", "Этикетки", "Нарезанные трубки",
+      "Кабель с метками и деталями", "Сторона А собрана", "Сторона В собрана", "Готовый кабель"]);
+    expect(cards.slice(0, 3).map((card) => card.ops.map((op) => op.position))).toEqual([[1], [2], [3]]);
     expect(cards.flatMap((card) => card.ops).map((op) => op.position)).toEqual(ops.map((op) => op.position));
     expect(route.edges.filter((edge) => ["b1", "b2", "b3"].includes(edge.to))).toEqual([]);
     expect(route.edges).toContainEqual({ from: "b2", to: "b7", per_unit: 1 });

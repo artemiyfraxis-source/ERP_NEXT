@@ -204,6 +204,7 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
     if (asBlocks) return null;
     if (card.id === "wires") return art.wires.length ? <WireThumbs wires={art.wires} /> : null;
     if (card.id === "tubes") return art.tubes.length ? <TubeThumbs tubes={art.tubes} /> : null;
+    if (card.id === "labels") return null;
     if (CRIMP_STAGES.has(card.id as GenStage) && !card.final) {
       const wires = crimpWires(card.id as GenStage, art);
       return wires.length ? <WireThumbs wires={wires} /> : null;
