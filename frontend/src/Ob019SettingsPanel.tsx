@@ -47,6 +47,7 @@ function CommandLine({ command }: { command: MachineCommand }) {
   return <li>
     <span className={`tone-${command.tone}`}>{command.status_text}</span>
     <span>{command.summary}</span>
+    {(command.state_before || command.state_after) && <span>{command.state_before ?? EMPTY} → {command.state_after ?? EMPTY}</span>}
     <span className="machine-muted">{command.created_by} · {formatMoment(command.created_at)}</span>
     {command.error && <span className="tone-danger">{command.error}</span>}
   </li>;

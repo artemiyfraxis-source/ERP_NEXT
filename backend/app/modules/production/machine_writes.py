@@ -11,6 +11,10 @@ what it asked for: equal → «done», different → «failed» with the registe
 - Allowed only while the machine is idle: state 102 «Готов, ждёт пуска» or 107 «Тираж готов» in a fresh snapshot with
   the link «На связи» (PXS_HMI closed); the runner re-checks D766 right before writing.
 
+Machine commands Стоп / Сброс / Пуск / Сброс аварии (purpose `control`, column `command`, migration 0197) ride the
+same queue; their rules are in production/machine_control.py: 5 s to be claimed, Stop first and exempt from the one-open
+index (it may queue while a write runs, it cancels what is queued), no answer → «unknown», never assumed done.
+
 Corrections (migration 0195, `production_machine_offsets`): «станок режет не так» — the ETK size is right but this
 machine cuts/strips it off by a constant. One offset per machine and wire parameter, in 0,01 мм; every later
 «Передать на станок» adds it to the ETK nominal (the ETK stays as it is). The ETK side («размер в ЭТК неверный») goes
@@ -35,12 +39,28 @@ from . import machines as rules
 COMMAND_TTL = timedelta(seconds=10)
 RESULT_WAIT = timedelta(seconds=30)
 IDLE_STATES = (102, 107)
-STATUSES = ("queued", "taken", "done", "failed", "expired")
+STATUSES = ("queued", "taken", "done", "failed", "expired", "unknown", "cancelled")
 OPEN = ("queued", "taken")
-PURPOSES = ("settings", "transfer")
+PURPOSES = ("settings", "transfer", "control")
+CONTROL = "control"
+STOP = "stop"
+COMMANDS = ("stop", "reset", "start", "alarm_clear")
+CONTROL_TTL = timedelta(seconds=5)  # a machine command older than this by the server clock never runs
+CONTROL_RESULT_WAIT = timedelta(seconds=15)  # taken without an answer → «Результат неизвестен»
+CONTROL_TOO_OLD = "ПК станка не забрал команду за 5 с — она не выполнялась"
+CONTROL_NO_ANSWER = "ПК станка не сообщил результат — проверьте станок"
+CANCELLED_BY_STOP = "Отменена: нажат «Стоп»"
+_SQL = lambda values: ", ".join(repr(value) for value in values)  # noqa: E731
+OPEN_WHERE = f"status IN ({_SQL(OPEN)}) AND (command IS NULL OR command <> '{STOP}')"
+STOP_WHERE = f"status = 'queued' AND command = '{STOP}'"
 STATUS_TEXTS = {"queued": ("Ждёт агента станка", "info"), "taken": ("Записывается", "info"),
                 "done": ("Записано и проверено", "ok"), "failed": ("Не записано", "danger"),
-                "expired": ("Не записано: агент не забрал команду за 10 с", "warn")}
+                "expired": ("Не записано: агент не забрал команду за 10 с", "warn"),
+                "unknown": ("Результат неизвестен", "danger"), "cancelled": ("Отменено стопом", "neutral")}
+CONTROL_TEXTS = {"queued": ("Передаётся на станок", "info"), "taken": ("Выполняется", "info"),
+                 "done": ("Выполнена", "ok"), "failed": ("Не выполнена", "danger"),
+                 "expired": ("Не выполнена — опоздала", "warn"), "unknown": ("Результат неизвестен", "danger"),
+                 "cancelled": ("Отменена стопом", "neutral")}
 # Wire parameters a machine correction may shift (keys of production/machines.py OB019_FIELDS, ×0,01 мм).
 OFFSET_KEYS = ("length_mm", "strip_front_mm", "pull_front_mm", "strip_back_mm", "pull_back_mm", "diameter_mm",
                "knife_back_mm")
@@ -63,12 +83,16 @@ class MachineWriteRow(Base):
                         name="ck_production_machine_writes_queued"),
         CheckConstraint("status <> 'taken' OR (taken_at IS NOT NULL AND finished_at IS NULL)",
                         name="ck_production_machine_writes_taken"),
-        CheckConstraint("status NOT IN ('done', 'failed', 'expired') OR finished_at IS NOT NULL",
+        CheckConstraint("status IN ('queued', 'taken') OR finished_at IS NOT NULL",
                         name="ck_production_machine_writes_finished"),
         CheckConstraint("trim(summary) <> ''", name="ck_production_machine_writes_summary"),
+        CheckConstraint(f"(purpose = '{CONTROL}') = (command IS NOT NULL)", name="ck_production_machine_writes_control"),
+        CheckConstraint(f"command IS NULL OR command IN ({_SQL(COMMANDS)})", name="ck_production_machine_writes_command"),
+        # One controller: one open command per machine, except a Stop (it may queue while a write or a Start runs).
         Index("ux_production_machine_writes_open", "equipment_id", unique=True,
-              sqlite_where=text("status IN ('queued', 'taken')"),
-              postgresql_where=text("status IN ('queued', 'taken')")),
+              sqlite_where=text(OPEN_WHERE), postgresql_where=text(OPEN_WHERE)),
+        Index("ux_production_machine_writes_stop", "equipment_id", unique=True,
+              sqlite_where=text(STOP_WHERE), postgresql_where=text(STOP_WHERE)),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
@@ -76,6 +100,8 @@ class MachineWriteRow(Base):
         Uuid, ForeignKey("production_machine_links.equipment_id", ondelete="CASCADE",
                          name="fk_production_machine_writes_link"), nullable=False, index=True)
     purpose: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Machine command of purpose `control` (stop / reset / start / alarm_clear); NULL for parameter writes.
+    command: Mapped[str | None] = mapped_column(String(16), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     # {"blocks": [{"addr": 32, "values": [32500, 0]}], "fields": [{"key", "label", "before", "after", "unit"}]}
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
@@ -156,6 +182,15 @@ def _expire(session: Session, equipment_id: UUID, now: datetime) -> list[Machine
     changed = []
     for row in session.scalars(select(MachineWriteRow).where(MachineWriteRow.equipment_id == equipment_id,
                                                                MachineWriteRow.status.in_(OPEN))):
+        if row.purpose == CONTROL:
+            if row.status == "queued" and rules.since(row.created_at, now) > CONTROL_TTL:
+                row.status, row.finished_at, row.error = "expired", now, CONTROL_TOO_OLD
+                changed.append(row)
+            elif (row.status == "taken" and row.taken_at is not None
+                  and rules.since(row.taken_at, now) > CONTROL_RESULT_WAIT):
+                row.status, row.finished_at, row.error = "unknown", now, CONTROL_NO_ANSWER
+                changed.append(row)
+            continue
         if row.status == "queued" and rules.since(row.created_at, now) > COMMAND_TTL:
             row.status, row.finished_at, row.error = "expired", now, "Агент станка не забрал команду за 10 с"
             changed.append(row)
@@ -210,9 +245,11 @@ def enqueue(session: Session, *, equipment_id: UUID, purpose: str, writes: list[
 def claim(session: Session, equipment_id: UUID, now: datetime) -> tuple[MachineWriteRow | None, list[MachineWriteRow]]:
     """The runner takes the oldest queued command still in time. → (command or None, commands expired meanwhile)."""
     expired = _expire(session, equipment_id, now)
-    row = session.scalar(select(MachineWriteRow).where(MachineWriteRow.equipment_id == equipment_id,
-                                                         MachineWriteRow.status == "queued")
-                         .order_by(MachineWriteRow.created_at))
+    queued = session.scalars(select(MachineWriteRow).where(MachineWriteRow.equipment_id == equipment_id,
+                                                           MachineWriteRow.status == "queued")
+                             .order_by(MachineWriteRow.created_at, MachineWriteRow.id)).all()
+    # Stop jumps the queue: a Stop pressed while another command waits is taken first.
+    row = next((item for item in queued if item.command == STOP), queued[0] if queued else None)
     if row is None:
         return None, expired
     taken = session.execute(update(MachineWriteRow).where(MachineWriteRow.id == row.id,
@@ -278,9 +315,19 @@ def moment(value: datetime | None) -> str | None:
     return (value.replace(tzinfo=MOSCOW) if value.tzinfo is None else value).isoformat()
 
 
+def _state_text(words: object) -> str | None:
+    code = words.get("766") if isinstance(words, dict) else None
+    if code is None:
+        return None
+    return rules.OB019_STATES.get(code, (f"Код {code}", ""))[0]
+
+
 def command_view(row: MachineWriteRow) -> dict:
-    text, tone = STATUS_TEXTS[row.status]
+    text, tone = (CONTROL_TEXTS if row.purpose == CONTROL else STATUS_TEXTS)[row.status]
+    states = row.readback if row.purpose == CONTROL and isinstance(row.readback, dict) else {}
     return {"id": str(row.id), "status": row.status, "status_text": text, "tone": tone, "purpose": row.purpose,
+            "command": row.command, "state_before": _state_text(states.get("before")),
+            "state_after": _state_text(states.get("after")),
             "summary": row.summary, "fields": row.payload.get("fields", []), "error": row.error,
             "created_by": row.created_by_name, "created_at": moment(row.created_at),
             "finished_at": moment(row.finished_at)}
