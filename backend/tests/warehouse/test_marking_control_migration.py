@@ -17,7 +17,7 @@ def test_0203_keeps_rows_sets_peel_for_ob101_and_round_trips(tmp_path, monkeypat
     path = tmp_path / "control.db"
     config = Config(Path(__file__).parents[2] / "alembic.ini")
     config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{path.as_posix()}")
-    command.upgrade(config, "0201_instrument_reference_curve")
+    command.upgrade(config, "0202_manual_jobs")
     engine = create_engine(f"sqlite+pysqlite:///{path.as_posix()}")
     try:
         seed(engine, rows=2)
@@ -45,7 +45,7 @@ def test_0203_keeps_rows_sets_peel_for_ob101_and_round_trips(tmp_path, monkeypat
         with pytest.raises(sqlite3.IntegrityError):
             db.execute("UPDATE warehouse_label_jobs SET status = 'cancelled', finished_at = '2026-11-19', error = 'x'")
         assert db.execute("PRAGMA foreign_key_check").fetchall() == []
-    command.downgrade(config, "0201_instrument_reference_curve")
+    command.downgrade(config, "0202_manual_jobs")
     with sqlite3.connect(path) as db:
         assert "warehouse_printer_commands" not in {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         assert all("peel" not in json.loads(raw) for (raw,) in db.execute("SELECT geometry FROM warehouse_marking_profiles"))
@@ -69,7 +69,7 @@ def test_0203_downgrade_strips_peel_from_every_profile(tmp_path, monkeypatch):
         # The owner ticked «отделитель» on an ОБ.102 profile too: older code forbids the key on any profile.
         row_id, raw = db.execute("SELECT id, geometry FROM warehouse_marking_profiles WHERE inventory_number = 'ОБ.102' LIMIT 1").fetchone()
         db.execute("UPDATE warehouse_marking_profiles SET geometry = ? WHERE id = ?", (json.dumps({**json.loads(raw), "peel": True}), row_id))
-    command.downgrade(config, "0201_instrument_reference_curve")
+    command.downgrade(config, "0202_manual_jobs")
     with sqlite3.connect(path) as db:
         assert all("peel" not in json.loads(raw) for (raw,) in db.execute("SELECT geometry FROM warehouse_marking_profiles"))
         assert "hold" not in [row[1] for row in db.execute("PRAGMA table_info(warehouse_agent_printers)")]
@@ -84,6 +84,6 @@ def test_0203_downgrade_is_refused_while_cancelled_jobs_exist(tmp_path, monkeypa
                    "(?, '2026-11-19', 'test', 'marking', 1, x'', 'cancelled', '2026-11-19', 'Отменено: тест', 'gdi_png', x'01', "
                    "'pc', 'Godex', 92.5, 20, 'portrait', ?, 1)", ("a" * 32, "b" * 32))
     with pytest.raises(RuntimeError, match="отменённые задания"):
-        command.downgrade(config, "0201_instrument_reference_curve")
+        command.downgrade(config, "0202_manual_jobs")
     with sqlite3.connect(path) as db:
         assert db.execute("SELECT version_num FROM alembic_version").fetchone() == (REVISION,)

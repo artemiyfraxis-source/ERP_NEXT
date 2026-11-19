@@ -7,7 +7,7 @@
 3. `warehouse_agent_printers.hold`: why the agent holds that marking queue (peel-off check failed), from the heartbeat.
 4. ОБ.101 profiles get `geometry.peel = true` and a new `version` (the flag machine always works with the peel-off dispenser): the print
    agent then keeps the driver's peel-off DevMode and refuses a job whose driver output lacks `^O1`.
-Not destructive. 0202 is taken by the manual-jobs PR (#964); if it lands first, this one is re-parented onto it.
+Not destructive. Follows 0202_manual_jobs (#964).
 """
 
 import json
@@ -16,7 +16,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "0203_marking_printer_control"
-down_revision = "0201_instrument_reference_curve"
+down_revision = "0202_manual_jobs"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False
