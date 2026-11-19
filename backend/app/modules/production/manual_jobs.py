@@ -260,13 +260,33 @@ def start(session: Session, job: NewJob, *, actor_id: UUID, actor_name: str, now
             with session.begin_nested():
                 session.add(row)
                 session.flush()
-        except IntegrityError:
-            current = running(session, job.equipment_id)
-            if current is not None:
-                raise _busy(current) from None
-            continue
+        except IntegrityError as error:
+            kind = integrity_kind(error)
+            if kind == "number":
+                continue
+            if kind == "running":
+                current = running(session, job.equipment_id)
+                raise (_busy(current) if current is not None else ManualJobConflict(
+                    "На станке уже идёт ручная работа — обновите список")) from None
+            if kind == "foreign":
+                raise ManualJobInvalid("Станок или эталон не найден — обновите окно") from None
+            raise
         return row
     raise ManualJobConflict("Номер ручной работы заняли одновременно — повторите")
+
+
+def integrity_kind(error: IntegrityError) -> str:
+    """Which rule refused the insert: the number taken by a parallel start (retry), a job already running on the machine,
+    a missing machine / эталон, or anything else (a bug — raised as is). PostgreSQL names the constraint, SQLite the
+    columns."""
+    text = str(getattr(error, "orig", error)).lower()
+    if "uq_production_manual_jobs_number" in text or "production_manual_jobs.number" in text:
+        return "number"
+    if "ux_production_manual_jobs_running" in text or "production_manual_jobs.equipment_id" in text:
+        return "running"
+    if "foreign key" in text or "fk_production_manual_jobs" in text:
+        return "foreign"
+    return "other"
 
 
 def _changed(session: Session, row: ManualJobRow, version: int, values: dict) -> ManualJobRow:

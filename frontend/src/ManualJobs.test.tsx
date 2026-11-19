@@ -137,6 +137,27 @@ it("opens «Ручная работа» from a machine's details on «Станк
   expect((await within(dialog).findByRole("combobox", { name: "Станок" }) as HTMLInputElement).value).toBe("ОБ.037 · BZW-880");
 });
 
+it("opens the job already running on the machine instead of a new one", async () => {
+  const machine: MachineRow = {
+    key: "machine:u19", kind: "machine", equipment_id: "u19", inventory: "ОБ.019", name: "Автомат резки", pc: "", ip: "",
+    service: "Агент ERP · станок", version: "", link: { code: "not_installed", text: "Агент не установлен", tone: "neutral" },
+    last_seen: null, device: "ПЛК линии резки", state: { text: "—", tone: "neutral" }, card: false, others: "",
+  };
+  const calls: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = decodeURIComponent(String(input));
+    calls.push(url);
+    if (url.includes("/manual-jobs?")) return json({ date_from: "2026-11-19", date_to: "2026-11-19", rows: [DONE, RUNNING], can_edit: true });
+    return json({ now: "2026-11-19T10:00:00+03:00", rows: [machine] });
+  });
+  render(<MachinesPage />);
+  fireEvent.click(await screen.findByText("ОБ.019"));
+  fireEvent.click(await screen.findByRole("button", { name: "Ручная работа" }));
+  const dialog = await screen.findByRole("dialog", { name: "Ручная работа Р-000001" });
+  expect(within(dialog).getByRole("button", { name: "Завершить работу" })).toBeTruthy();
+  expect(calls.some((url) => url.includes("/manual-jobs?") && url.endsWith("equipment_id=u19"))).toBe(true);
+});
+
 it("shows «Ручная работа» to Производство or Задания", () => {
   const user = { id: "1", email: "u@example.test", name: "Сотрудник", department: "Цех" };
   const as = (permissions: Record<string, AccessMode>): Principal => ({ user, roles: ["operator"], access_level: "operator", permissions });

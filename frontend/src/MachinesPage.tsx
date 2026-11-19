@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { EMPTY, formatMoment } from "./format";
 import { machinesApi, usePolled, type MachineRow, type Tone } from "./machinesApi";
 import { ManualJobWindow } from "./ManualJobWindow";
+import { manualJobsApi, type ManualJob } from "./manualJobsApi";
 import { Ob019Card } from "./Ob019Card";
 import { PageWindow } from "./PageWindow";
 import "./machines.css";
@@ -74,7 +75,19 @@ export function MachinesPage() {
   const load = useCallback((signal: AbortSignal) => machinesApi.list(signal), []);
   const { data, error } = usePolled(load);
   const [open, setOpen] = useState<MachineRow | null>(null);
-  const [manual, setManual] = useState<MachineRow | null>(null);
+  const [manual, setManual] = useState<{ row: MachineRow; job: ManualJob | null } | null>(null);
+  /** Идёт ручная работа на этом станке — открываем её (завершить / отменить), иначе — новую с этим станком. */
+  const openManual = useCallback(async (row: MachineRow) => {
+    let job: ManualJob | null = null;
+    if (row.equipment_id) {
+      const now = new Date();
+      const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      try {
+        job = (await manualJobsApi.list(day, day, row.equipment_id)).rows.find((item) => item.status === "running") ?? null;
+      } catch { /* нет связи — окно новой работы скажет об этом само */ }
+    }
+    setManual({ row, job });
+  }, []);
   const [query, setQuery] = useState("");
   const rows = useMemo(() => data?.rows ?? [], [data]);
   const found = useMemo(() => {
@@ -105,8 +118,9 @@ export function MachinesPage() {
     {open?.card && open.equipment_id
       ? <Ob019Card equipmentId={open.equipment_id} title={[open.inventory, open.name].filter(Boolean).join(" · ")}
         close={() => setOpen(null)}
-        actions={<button type="button" className="secondary small machine-manual" onClick={() => setManual(open)}>Ручная работа</button>} />
-      : open && <MachineInfo row={open} close={() => setOpen(null)} manual={open.kind === "machine" ? () => setManual(open) : undefined} />}
-    {manual && <ManualJobWindow equipmentId={manual.equipment_id} inventory={manual.inventory} close={() => setManual(null)} />}
+        actions={<button type="button" className="secondary small machine-manual" onClick={() => void openManual(open)}>Ручная работа</button>} />
+      : open && <MachineInfo row={open} close={() => setOpen(null)} manual={open.kind === "machine" ? () => void openManual(open) : undefined} />}
+    {manual && <ManualJobWindow job={manual.job} equipmentId={manual.row.equipment_id} inventory={manual.row.inventory}
+      close={() => setManual(null)} />}
   </section>;
 }

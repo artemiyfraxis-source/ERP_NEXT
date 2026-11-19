@@ -5,6 +5,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.modules.equipment_setup.setup_model_infrastructure import SetupReferenceRow
 from app.modules.production import manual_jobs as jobs
@@ -118,3 +119,38 @@ def test_a_number_taken_meanwhile_is_retried_not_duplicated(machines_api, monkey
     answer = _start(admin, ob101)
     assert answer.status_code == 200, answer.text
     assert answer.json()["number"] == "Р-000002"
+
+
+def test_only_the_number_is_retried_other_refusals_say_what_happened(machines_api, monkeypatch):
+    sessions, clock, admin, ob019, ob101 = machines_api
+    first = _start(admin, ob019).json()
+    real = jobs.running
+    calls = iter([None])  # the pre-check misses the parallel start; the index refuses the insert
+    monkeypatch.setattr(jobs, "running", lambda session, equipment_id: next(calls, "real") and real(session, equipment_id))
+    busy = _start(admin, ob019)
+    assert busy.status_code == 409 and first["number"] in busy.json()["detail"]
+    monkeypatch.setattr(jobs, "running", real)
+
+    def refused(text):
+        return IntegrityError("INSERT", {}, Exception(text))
+
+    assert jobs.integrity_kind(refused("UNIQUE constraint failed: production_manual_jobs.number")) == "number"
+    assert jobs.integrity_kind(refused('duplicate key value violates unique constraint "uq_production_manual_jobs_number"')) == "number"
+    assert jobs.integrity_kind(refused('duplicate key value violates unique constraint "ux_production_manual_jobs_running"')) == "running"
+    assert jobs.integrity_kind(refused('insert or update violates foreign key constraint "fk_production_manual_jobs_reference"')) == "foreign"
+    assert jobs.integrity_kind(refused("CHECK constraint failed: ck_production_manual_jobs_purpose")) == "other"
+    attempts = []
+
+    def check_failure(session):
+        attempts.append(1)
+        raise refused("CHECK constraint failed: ck_production_manual_jobs_purpose")
+
+    with sessions() as session:
+        monkeypatch.setattr(session, "flush", lambda *args, **kwargs: check_failure(session))
+        try:
+            jobs.start(session, jobs.NewJob(ob101, "Проба"), actor_id=uuid4(), actor_name="Слава", now=clock.now)
+        except IntegrityError:
+            pass
+        else:
+            raise AssertionError("a CHECK refusal must not be retried or hidden")
+    assert attempts == [1]
