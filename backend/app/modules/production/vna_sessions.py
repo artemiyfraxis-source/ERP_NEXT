@@ -12,7 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 STATES = ("draft", "planned", "preparing", "awaiting_standard", "acquiring_standard",
           "saving_calibration", "awaiting_dut", "acquiring_dut", "review", "recorded",
-          "failed", "aborting", "aborted", "recovery_required")
+          "failed", "aborting", "aborted", "recovery_required",
+          "ready", "releasing")  # the last two: bench sessions only (vna_bench.py, 0205_vna_bench_sessions)
 TERMINAL = ("recorded", "failed", "aborted")
 OPS = ("prepare", "apply_profile", "begin_calibration", "measure_standard", "acm_calibrate",
        "save_calibration", "capture", "abort", "restore")

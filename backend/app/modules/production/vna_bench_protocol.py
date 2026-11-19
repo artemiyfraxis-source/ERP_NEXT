@@ -15,7 +15,7 @@ from .vna_sessions import (ARGS, OPS, RESULTS, CaptureArgs, Captured, Digest, Em
                            StrictModel, Trace, fingerprint, validate_result)
 
 PROTOCOL_VERSIONS = (1, 2)
-V2_OPS = ("device_status", "apply_screen", "acm_confidence", "store_memory", "release")
+V2_OPS = ("device_status", "apply_screen", "acm_confidence", "store_memory", "release", "read_kit")
 OPS_V2 = OPS + V2_OPS
 SCREEN_TRACES_MAX = 16
 MARKERS_MAX = 15
@@ -205,15 +205,45 @@ class Released(Result):
     screen_hash: Digest | None
 
 
+KitType = Literal["OPEN", "SHORT", "LOAD", "THRU"]
+Coefficient = Annotated[float, Field(ge=-1e6, le=1e6)]
+KitLabel = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[^\x00-\x1f\x7f]*\S[^\x00-\x1f\x7f]*$")]
+
+
+class ReadKitArgs(StrictModel):
+    """The commissioned manual kit by its S2VNA label (e.g. 6650F27); the agent finds its slot itself."""
+
+    label: KitLabel
+
+
+class KitStandardDefinition(StrictModel):
+    """One standard as S2VNA defines it (vna_checks.KitStandard): C0…C3 in 1e-15/-27/-36/-45 F, L0…L3 in
+    1e-12/-24/-33/-42 H, offset delay in s, offset loss in Ω/s, offset Z0 in Ω."""
+
+    label: str = Field(default="", max_length=64, pattern=r"^[^\x00-\x1f\x7f]*$")
+    type: KitType
+    delay: Annotated[float, Field(ge=-1, le=1)] = 0.0
+    loss: Annotated[float, Field(ge=0, le=1e15)] = 0.0
+    z0: Annotated[float, Field(gt=0, le=1e4)] = 50.0
+    c: tuple[Coefficient, Coefficient, Coefficient, Coefficient] = (0.0, 0.0, 0.0, 0.0)
+    l: tuple[Coefficient, Coefficient, Coefficient, Coefficient] = (0.0, 0.0, 0.0, 0.0)  # noqa: E741 — S2VNA's own name
+
+
+class KitRead(Result):
+    label: KitLabel
+    standards: list[KitStandardDefinition] = Field(min_length=1, max_length=12)
+
+
 class CapturedV2(Captured):
     temperatures: Temperatures
     screen_hash: Digest
 
 
 ARGS_V2 = {**ARGS, "capture": CaptureArgsV2, "device_status": EmptyArgs, "apply_screen": ApplyScreenArgs,
-           "acm_confidence": AcmConfidenceArgs, "store_memory": StoreMemoryArgs, "release": ReleaseArgs}
+           "acm_confidence": AcmConfidenceArgs, "store_memory": StoreMemoryArgs, "release": ReleaseArgs,
+           "read_kit": ReadKitArgs}
 RESULTS_V2 = {**RESULTS, "capture": CapturedV2, "device_status": DeviceStatus, "apply_screen": ScreenApplied,
-              "acm_confidence": AcmConfidence, "store_memory": MemoryStored, "release": Released}
+              "acm_confidence": AcmConfidence, "store_memory": MemoryStored, "release": Released, "read_kit": KitRead}
 
 
 def command_args(protocol: int, op: str, raw: dict) -> dict:
@@ -262,4 +292,6 @@ def validate_result_v2(op: str, args: dict, serial: str, raw: dict):
             raise ValueError("В память записаны не те графики")
     elif op == "release" and result.screen_hash != args["screen_hash"]:
         raise ValueError("После освобождения на ВАЦ не экран ERP")
+    elif op == "read_kit" and result.label != args["label"]:
+        raise ValueError("Прочитан другой калибровочный набор")
     return result.model_dump(mode="json"), []

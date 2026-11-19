@@ -9,10 +9,47 @@ from sqlalchemy import (JSON, CheckConstraint, DateTime, ForeignKey, Index, Inte
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.shared.persistence import Base
+from . import vna_bench as bench
 from . import vna_sessions as domain
+from .vna_bench_protocol import OPS_V2, command_args, validate_result_v2
 
 ACTIVE_SQL = "state NOT IN ('recorded','failed','aborted')"
 COMMAND_TIMEOUT = timedelta(seconds=180)
+BENCH_IDLE = timedelta(hours=12)   # a bench session idle in `ready` this long is closed and frees the instrument
+# Bench sessions (0205_vna_bench_sessions): purpose, nullable task fields and an all-or-nothing calibration.
+SESSION_CHECKS = {
+    "ck_vna_sessions_purpose": "purpose IN ('assembly','bench')",
+    "ck_vna_sessions_target": "(purpose = 'assembly' AND task_id IS NOT NULL AND operation_id IS NOT NULL AND "
+                              "product_position IS NOT NULL) OR (purpose = 'bench' AND task_id IS NULL AND "
+                              "operation_id IS NULL AND product_position IS NULL)",
+    "ck_vna_sessions_bench_state": "purpose = 'bench' OR state NOT IN ('ready','releasing')",
+    "ck_vna_sessions_bench_only": "purpose = 'bench' OR (calibrated_at IS NULL AND calibration_temps IS NULL AND "
+                                  "profile_hash IS NULL AND calibration_check_id IS NULL)",
+    "ck_vna_sessions_calibrated": "(calibrated_at IS NULL) = (calibration_temps IS NULL) AND "
+                                  "(calibrated_at IS NULL) = (profile_hash IS NULL) AND "
+                                  "(calibrated_at IS NULL) = (calibration_check_id IS NULL)",
+    "ck_vna_sessions_profile_hash": "profile_hash IS NULL OR length(profile_hash) = 64",
+}
+ITEM_CHECKS = {
+    "ck_vna_bench_items_kind": "kind IN (" + ",".join(repr(k) for k in bench.ITEM_KINDS) + ")",
+    "ck_vna_bench_items_target": "target IN (" + ",".join(repr(t) for t in bench.TARGETS) + ")",
+    "ck_vna_bench_items_kind_target": "(kind IN ('instrument','assembly','control_standard') AND target = 'dut') OR "
+                                      "(kind = 'load' AND target IN ('port1','port2')) OR "
+                                      "(kind = 'flex' AND target IN ('port1','port2','thru','thru_bent')) OR "
+                                      "(kind = 'kit_standards' AND target IN ('port1','port2','thru'))",
+    "ck_vna_bench_items_standard": "(kind = 'kit_standards' AND standard IN ('OPEN','SHORT','LOAD','THRU') AND "
+                                   "(standard = 'THRU') = (target = 'thru')) OR (kind <> 'kit_standards' AND standard IS NULL)",
+    "ck_vna_bench_items_connection": "connection_no BETWEEN 1 AND 3",
+    "ck_vna_bench_items_verdict": "verdict IS NULL OR verdict IN ('pass','border','fail','not_judged')",
+    "ck_vna_bench_items_object": "(kind IN ('instrument','control_standard','kit_standards') AND instrument_id IS NOT NULL) OR "
+                                 "(kind NOT IN ('instrument','control_standard','kit_standards') AND instrument_id IS NULL)",
+    "ck_vna_bench_items_assembly": "(kind = 'assembly' AND task_id IS NOT NULL AND product_position >= 1) OR "
+                                   "(kind <> 'assembly' AND task_id IS NULL AND product_position IS NULL)",
+    "ck_vna_bench_items_repeat": "connection_no = 1 OR kind IN ('instrument','assembly','kit_standards')",
+    "ck_vna_bench_items_recorded_file": "recorded_file_id IS NULL OR kind = 'instrument'",
+    "ck_vna_bench_items_vswr": "vswr_measurement_id IS NULL OR kind = 'assembly'",
+    "ck_vna_bench_items_recorded": "(recorded_at IS NULL) = (recorded_file_id IS NULL AND vswr_measurement_id IS NULL)",
+}
 
 
 class VnaSessionRow(Base):
@@ -22,6 +59,7 @@ class VnaSessionRow(Base):
         CheckConstraint("version >= 1 AND step >= 0 AND product_position >= 1", name="ck_vna_sessions_counters"),
         CheckConstraint("trim(instrument_serial) <> ''", name="ck_vna_sessions_serial"),
         CheckConstraint("trim(machine_id) <> ''", name="ck_vna_sessions_machine"),
+        *(CheckConstraint(sql, name=name) for name, sql in SESSION_CHECKS.items()),
         Index("uq_vna_sessions_instrument_active", "instrument_id", unique=True,
               sqlite_where=text(ACTIVE_SQL), postgresql_where=text(ACTIVE_SQL)),
         Index("uq_vna_sessions_serial_active", "instrument_serial", unique=True,
@@ -36,13 +74,20 @@ class VnaSessionRow(Base):
     machine_id: Mapped[str] = mapped_column(String(80), nullable=False)
     instrument_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("production_instruments.id", ondelete="RESTRICT"), nullable=False)
     instrument_serial: Mapped[str] = mapped_column(String(300), nullable=False)
-    task_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("production_tasks.id", ondelete="RESTRICT"), nullable=False)
-    operation_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("production_operations.id", ondelete="RESTRICT"), nullable=False)
-    product_position: Mapped[int] = mapped_column(Integer, nullable=False)
+    purpose: Mapped[str] = mapped_column(String(16), nullable=False, default="assembly", server_default="assembly")
+    task_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("production_tasks.id", ondelete="RESTRICT"))
+    operation_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("production_operations.id", ondelete="RESTRICT"))
+    product_position: Mapped[int | None] = mapped_column(Integer)
     snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
     steps: Mapped[list] = mapped_column(JSON, nullable=False)
     error: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     recorded_reference: Mapped[str] = mapped_column(String(128), nullable=False, default="", server_default="")
+    # Bench only: the valid calibration (СТО ФРАК-002-2026 п. 11.5) — all set together with its passed journal row.
+    calibrated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    calibration_temps: Mapped[dict | None] = mapped_column(JSON(none_as_null=True))   # None is SQL NULL for the CHECK
+    profile_hash: Mapped[str | None] = mapped_column(String(64))
+    calibration_check_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("production_vna_checks.id", ondelete="RESTRICT", name="fk_vna_sessions_calibration_check"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -50,7 +95,7 @@ class VnaSessionRow(Base):
 class VnaCommandRow(Base):
     __tablename__ = "production_vna_commands"
     __table_args__ = (
-        CheckConstraint("op IN (" + ",".join(repr(s) for s in domain.OPS) + ")", name="ck_vna_commands_op"),
+        CheckConstraint("op IN (" + ",".join(repr(s) for s in OPS_V2) + ")", name="ck_vna_commands_op"),
         CheckConstraint("status IN ('pending','claimed','done','failed','cancelled','uncertain')", name="ck_vna_commands_status"),
         CheckConstraint("expected_version >= 1 AND expected_step >= 0", name="ck_vna_commands_counters"),
         CheckConstraint("status <> 'claimed' OR claimed_at IS NOT NULL", name="ck_vna_commands_claimed"),
@@ -86,6 +131,47 @@ class VnaArtifactRow(Base):
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     evidence: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class VnaBenchItemRow(Base):
+    """One accepted bench measurement: what was connected, its connection 1..3 in a judged series, its verdict."""
+
+    __tablename__ = "production_vna_bench_items"
+    __table_args__ = (
+        *(CheckConstraint(sql, name=name) for name, sql in ITEM_CHECKS.items()),
+        UniqueConstraint("command_id", name="uq_vna_bench_items_command"),
+        UniqueConstraint("artifact_id", name="uq_vna_bench_items_artifact"),
+        UniqueConstraint("group_id", "connection_no", name="uq_vna_bench_items_connection"),
+        UniqueConstraint("recorded_file_id", name="uq_vna_bench_items_recorded_file"),
+        UniqueConstraint("vswr_measurement_id", name="uq_vna_bench_items_vswr"),
+        Index("ix_vna_bench_items_session", "session_id", "created_at"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    session_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("production_vna_sessions.id", ondelete="RESTRICT"), nullable=False)
+    command_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("production_vna_commands.id", ondelete="RESTRICT"), nullable=False)
+    artifact_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("production_vna_artifacts.id", ondelete="RESTRICT"), nullable=False)
+    run_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    group_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    connection_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    target: Mapped[str] = mapped_column(String(12), nullable=False)
+    standard: Mapped[str | None] = mapped_column(String(8))
+    instrument_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("production_instruments.id", ondelete="RESTRICT"))
+    task_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("production_tasks.id", ondelete="RESTRICT"))
+    product_position: Mapped[int | None] = mapped_column(Integer)
+    verdict: Mapped[str | None] = mapped_column(String(12))
+    result: Mapped[dict] = mapped_column(JSON, nullable=False)
+    recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    recorded_file_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("production_instrument_files.id", ondelete="RESTRICT"))
+    vswr_measurement_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("production_vswr_measurements.id", ondelete="RESTRICT"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+def protocol(row) -> int:
+    """Bench sessions speak protocol v2; the one-position ОТК session stays on v1."""
+    return 2 if row.purpose == "bench" else 1
 
 
 class VnaSessionRepository:
@@ -137,7 +223,7 @@ class VnaSessionRepository:
         self.session.refresh(row)
 
     def _enqueue(self, row, op, args, now):
-        args = domain.ARGS[op].model_validate(args).model_dump(mode="json")
+        args = command_args(protocol(row), op, args)
         command = VnaCommandRow(id=uuid4(), session_id=row.id, expected_version=row.version,
                                 expected_step=row.step, op=op, args=args, status="pending", created_at=now)
         self.session.add(command)
@@ -146,25 +232,40 @@ class VnaSessionRepository:
 
     def _next(self, row, step, now):
         if step == len(row.steps):
-            self._change(row, now, step=step, state="review", error="")
+            # A bench session waits for the operator's next item; the ОТК session goes to review.
+            self._change(row, now, step=step, state="ready" if row.purpose == "bench" else "review", error="")
             return
         next_step = row.steps[step]
-        state = domain.waiting_state(next_step) if next_step["human"] else domain.executing_state(next_step["op"])
+        state = domain.waiting_state(next_step) if next_step["human"] else self._executing(row, next_step["op"])
         self._change(row, now, step=step, state=state, error="")
         if not next_step["human"]:
             self._enqueue(row, next_step["op"], next_step["args"], now)
 
+    @staticmethod
+    def _executing(row, op):
+        return bench.executing_state(op) if row.purpose == "bench" else domain.executing_state(op)
+
     def act(self, row, action, version, step, now):
         self.lock(row)
         self.expect(row, version, step)
+        is_bench = row.purpose == "bench"
         if action == "plan" and row.state == "draft":
             self._change(row, now, state="planned")
         elif action == "start" and row.state == "planned":
             self._next(row, 0, now)
         elif action == "confirm" and row.state in ("awaiting_standard", "awaiting_dut"):
             current = row.steps[row.step]
-            self._change(row, now, state=domain.executing_state(current["op"]))
+            self._change(row, now, state=self._executing(row, current["op"]))
             self._enqueue(row, current["op"], current["args"], now)
+        elif is_bench and action == "recalibrate" and row.state == "ready":
+            # СТО ФРАК-002-2026 п. 11.5: a lost calibration is redone in the same session; nothing of the old one stays.
+            self.append(row, bench.calibration_steps(row.snapshot), now, **bench.UNCALIBRATED)
+        elif is_bench and action == "close" and row.state == "ready":
+            self.append(row, [bench.release_step(bench.last_screen_hash(row.steps))], now)
+        elif is_bench and action == "cancel_item" and row.state in ("awaiting_standard", "awaiting_dut"):
+            # The human step was never sent to the agent: drop it and the rest of its item.
+            self._change(row, now, steps=row.steps[:row.step])
+            self._next(row, row.step, now)
         elif action == "abort" and row.state not in (*domain.TERMINAL, "aborting"):
             self._abort(row, now)
         elif action == "recover" and row.state == "recovery_required":
@@ -190,6 +291,7 @@ class VnaSessionRepository:
             self._enqueue(row, "abort", {}, now)
 
     def expire(self, now, *, machine_id=None, session_id=None):
+        self._expire_idle_bench(now, machine_id=machine_id, session_id=session_id)
         query = select(VnaCommandRow).join(VnaSessionRow).where(
             VnaCommandRow.status == "claimed", VnaCommandRow.claimed_at < now - COMMAND_TIMEOUT,
             VnaSessionRow.state.not_in(domain.TERMINAL))
@@ -202,6 +304,20 @@ class VnaSessionRepository:
             self.expect(row, command.expected_version, command.expected_step)
             self._change(row, now, state="recovery_required", error="Ответ ВАЦ потерян; требуется остановка и восстановление")
             command.status, command.finished_at = "uncertain", now
+        self.session.flush()
+
+    def _expire_idle_bench(self, now, *, machine_id=None, session_id=None):
+        """A forgotten workplace session must not hold the instrument for ever: idle in `ready` for 12 h → aborted.
+        Nothing is queued in `ready`, so no device work is left; the operator's S2VNA state is not restored."""
+        query = select(VnaSessionRow).where(VnaSessionRow.purpose == "bench", VnaSessionRow.state == "ready",
+                                            VnaSessionRow.updated_at < now - BENCH_IDLE)
+        if machine_id is not None:
+            query = query.where(VnaSessionRow.machine_id == machine_id)
+        if session_id is not None:
+            query = query.where(VnaSessionRow.id == session_id)
+        for row in list(self.session.scalars(query)):
+            self._change(row, now, state="aborted", error="Сеанс рабочего места простоял больше 12 ч и закрыт; "
+                                                          "настройки оператора на ВАЦ не восстанавливались")
         self.session.flush()
 
     def pending(self, machine_id):
@@ -223,7 +339,10 @@ class VnaSessionRepository:
             raise domain.SessionConflict("Команда уже закрыта")
         return self.command_view(command, row)
 
-    def complete(self, row, command_id, version, step, result, error, now, *, backup_saved: bool | None = None):
+    def complete(self, row, command_id, version, step, result, error, now, *, backup_saved: bool | None = None,
+                 advance: bool = True):
+        """Store one receipt. With `advance=False` (bench) an accepted success is returned for the workflow to judge
+        and continue (`proceed`); a replay, an error or an abort path returns None."""
         command = self.session.get(VnaCommandRow, command_id, populate_existing=True)
         if command is None or command.session_id != row.id:
             raise KeyError("Команда ВАЦ не найдена")
@@ -238,7 +357,7 @@ class VnaSessionRepository:
         if command.status in ("done", "failed"):
             if command.result_hash != digest:
                 raise domain.SessionConflict("Повторный ответ отличается от сохранённого")
-            return  # Lost HTTP acknowledgement: no state mutation, no second artifact or execution.
+            return None  # Lost HTTP acknowledgement: no state mutation, no second artifact or execution.
         if command.status != "claimed" or (row.state == "aborting" and command.op not in ("abort", "restore")):
             raise domain.SessionConflict("Команда не ожидает результат")
         self.expect(row, version, step)
@@ -250,6 +369,8 @@ class VnaSessionRepository:
             # Only a completed prepare failure explicitly preceding backup can release the physical lease.
             # Missing information, timeouts, cancelled commands and later operations remain conservative.
             state = "failed" if command.op == "prepare" and backup_saved is False else "recovery_required"
+        elif protocol(row) == 2:
+            saved, artifacts = validate_result_v2(command.op, command.args, row.instrument_serial, result)
         else:
             saved, artifacts = domain.validate_result(command.op, command.args, row.instrument_serial, result)
         # CAS the session before writing a receipt/evidence. A competing abort rolls everything back.
@@ -266,14 +387,81 @@ class VnaSessionRepository:
                               correction=saved["correction"]), created_at=now))
         self.session.flush()
         if error:
-            return
+            return None
         if row.state == "aborting":
             if command.op == "abort":
                 self._enqueue(row, "restore", {}, now)
             else:
                 self._change(row, now, state="aborted", error="")
-        else:
+        elif advance:
             self._next(row, row.step + 1, now)
+        else:
+            return command
+        return None
+
+    # ---- bench sessions: the workflow judges each receipt, then continues ----------------------------------------
+
+    def append(self, row, steps, now, **values):
+        """Bench, from `ready`: add an item's (or the calibration's / closing) steps and start the first one."""
+        if row.purpose != "bench" or row.state != "ready":
+            raise domain.SessionConflict("Сессия рабочего места не ожидает новый шаг")
+        start = len(row.steps)
+        self._change(row, now, steps=row.steps + steps, **values)
+        self._next(row, start, now)
+
+    def proceed(self, row, now, *, tail: list | None = None, error: str = "", **values):
+        """Bench, after a judged receipt: optionally replace every step after the current one, then run the next.
+        `error` is the operator-facing reason when an item stopped (kept until the next action)."""
+        if tail is not None or values:
+            steps = row.steps if tail is None else row.steps[:row.step + 1] + tail
+            self._change(row, now, steps=steps, **values)
+        self._next(row, row.step + 1, now)
+        if error:
+            self._change(row, now, error=error[:2000])
+
+    def finish(self, row, now):
+        """Bench: `release` was accepted — the agent keeps the ERP screen and calibration for viewing only."""
+        self._change(row, now, state="recorded", step=len(row.steps))
+
+    def add_item(self, row, command, artifact_id, item: dict, verdict, result, now, *,
+                 vswr_measurement_id=None) -> VnaBenchItemRow:
+        record = VnaBenchItemRow(
+            id=uuid4(), session_id=row.id, command_id=command.id, artifact_id=artifact_id, run_id=UUID(item["run_id"]),
+            group_id=UUID(item["group_id"]), connection_no=item["connection_no"], kind=item["kind"], target=item["target"],
+            standard=item.get("standard"), instrument_id=UUID(item["instrument_id"]) if item.get("instrument_id") else None,
+            task_id=UUID(item["task_id"]) if item.get("task_id") else None, product_position=item.get("product_position"),
+            verdict=verdict, result=result, created_at=now, vswr_measurement_id=vswr_measurement_id,
+            recorded_at=now if vswr_measurement_id is not None else None)
+        self.session.add(record)
+        self.session.flush()
+        return record
+
+    def record_file(self, item: VnaBenchItemRow, file_id, now):
+        """«Записать в карточку»: the connection's file is on the card — once (UNIQUE file, CHECK on kind)."""
+        if item.recorded_file_id is None:
+            item.recorded_file_id, item.recorded_at = file_id, now
+            self.session.flush()
+
+    def items(self, session_id, run_id=None) -> list[VnaBenchItemRow]:
+        query = select(VnaBenchItemRow).where(VnaBenchItemRow.session_id == session_id)
+        if run_id is not None:
+            query = query.where(VnaBenchItemRow.run_id == UUID(str(run_id)))
+        # In the order the sweeps were commanded: the command version grows with every session change.
+        query = query.join(VnaCommandRow, VnaCommandRow.id == VnaBenchItemRow.command_id)
+        return list(self.session.scalars(query.order_by(VnaCommandRow.expected_version)))
+
+    def artifact(self, command_id) -> VnaArtifactRow:
+        artifact = self.session.scalar(select(VnaArtifactRow).where(VnaArtifactRow.command_id == command_id))
+        if artifact is None:
+            raise ValueError("Замер не сохранён")
+        if hashlib.sha256(bytes(artifact.content)).hexdigest() != artifact.sha256:
+            raise ValueError("Контрольная сумма замера не совпадает")
+        return artifact
+
+    def receipts(self, row, op: str) -> list[VnaCommandRow]:
+        return list(self.session.scalars(select(VnaCommandRow).where(
+            VnaCommandRow.session_id == row.id, VnaCommandRow.op == op, VnaCommandRow.status == "done",
+        ).order_by(VnaCommandRow.created_at, VnaCommandRow.expected_version)))
 
     def completed(self, session_id: UUID) -> dict:
         """P4 integration port: immutable server evidence; no browser calibration claims."""
@@ -295,7 +483,7 @@ class VnaSessionRepository:
 
     @staticmethod
     def command_view(command, row):
-        return dict(id=str(command.id), command_id=str(command.id), kind="vna_control", protocol_version=1,
+        return dict(id=str(command.id), command_id=str(command.id), kind="vna_control", protocol_version=protocol(row),
                     session_id=str(row.id), expected_version=command.expected_version,
                     expected_step=command.expected_step, instrument_id=str(row.instrument_id),
                     instrument_serial=row.instrument_serial, op=command.op, args=command.args)
@@ -304,11 +492,29 @@ class VnaSessionRepository:
         commands = list(self.session.scalars(select(VnaCommandRow).where(
             VnaCommandRow.session_id == row.id).order_by(VnaCommandRow.created_at, VnaCommandRow.expected_version)))
         artifacts = list(self.session.scalars(select(VnaArtifactRow).where(VnaArtifactRow.session_id == row.id)))
-        return dict(id=str(row.id), state=row.state, version=row.version, step=row.step,
+        bench_view = {}
+        if row.purpose == "bench":
+            bench_view = dict(calibrated_at=row.calibrated_at, calibration_temps=row.calibration_temps,
+                              profile_hash=row.profile_hash,
+                              calibration_check_id=str(row.calibration_check_id) if row.calibration_check_id else None,
+                              items=[self.item_view(item) for item in self.items(row.id)])
+        return dict(id=str(row.id), purpose=row.purpose, state=row.state, version=row.version, step=row.step,
                     operator_id=str(row.operator_id), machine_id=row.machine_id, instrument_id=str(row.instrument_id),
-                    instrument_serial=row.instrument_serial, task_id=str(row.task_id), operation_id=str(row.operation_id),
+                    instrument_serial=row.instrument_serial, task_id=str(row.task_id) if row.task_id else None,
+                    operation_id=str(row.operation_id) if row.operation_id else None,
                     product_position=row.product_position, snapshot=row.snapshot, steps=row.steps, error=row.error,
-                    recorded_reference=row.recorded_reference,
+                    recorded_reference=row.recorded_reference, **bench_view,
                     commands=[dict(**self.command_view(c, row), status=c.status, result=c.result) for c in commands],
                     artifacts=[dict(id=str(a.id), command_id=str(a.command_id), file_name=a.file_name,
                                     sha256=a.sha256, metadata=a.evidence) for a in artifacts])
+
+    @staticmethod
+    def item_view(item: VnaBenchItemRow) -> dict:
+        return dict(id=str(item.id), command_id=str(item.command_id), artifact_id=str(item.artifact_id),
+                    run_id=str(item.run_id), group_id=str(item.group_id), connection_no=item.connection_no, kind=item.kind,
+                    target=item.target, standard=item.standard,
+                    instrument_id=str(item.instrument_id) if item.instrument_id else None,
+                    task_id=str(item.task_id) if item.task_id else None, product_position=item.product_position,
+                    verdict=item.verdict, result=item.result, created_at=item.created_at, recorded_at=item.recorded_at,
+                    recorded_file_id=str(item.recorded_file_id) if item.recorded_file_id else None,
+                    vswr_measurement_id=str(item.vswr_measurement_id) if item.vswr_measurement_id else None)

@@ -269,7 +269,7 @@ class VnaCapability(BaseModel):
     reason: Literal["", "s2vna_not_running", "device_not_connected", "probe_failed"] = ""
 
 
-VNA_CONTROL_V2_OPS = ("device_status", "apply_screen", "acm_confidence", "store_memory", "release")
+VNA_CONTROL_V2_OPS = ("device_status", "apply_screen", "acm_confidence", "store_memory", "release", "read_kit")
 
 
 class VnaControlCapability(BaseModel):

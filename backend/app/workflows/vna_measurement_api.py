@@ -9,14 +9,15 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import Field, ValidationError, model_validator
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from starlette.concurrency import run_in_threadpool
 
 from app.modules.production.api import production_uow_factory, techcards_uow_factory
 from app.modules.production.autoplan_api import references_uow_factory
 from app.modules.production.rf_infrastructure import RfRepository
-from app.modules.production.vna_session_infrastructure import VnaArtifactRow, VnaSessionRepository
+from app.modules.production.vna_bench_protocol import V2_OPS
+from app.modules.production.vna_session_infrastructure import VnaArtifactRow, VnaSessionRepository, VnaSessionRow
 from app.modules.production.vna_sessions import TERMINAL, Override, SessionConflict, StrictModel, ordered_steps, resolved_profile
 from app.modules.production.vswr import RecordVswrCommand, VswrFileInput, VswrVerdict, record_vswr
 from app.modules.warehouse import devices, vna_jobs
@@ -104,6 +105,12 @@ def create_session(payload: StartInput, principal: Person, now: Now, factory: Fa
                    techcards_factory: Annotated[Callable | None, Depends(techcards_uow_factory)],
                    refs_factory: Annotated[Callable | None, Depends(references_uow_factory)]):
     with _errors():
+        with factory() as uow:
+            # Expire the instrument's sessions first: a stale command or a 12 h idle bench session frees the lease.
+            active = [row.id for row in uow.session.scalars(select(VnaSessionRow).where(
+                VnaSessionRow.instrument_id == payload.instrument_id, VnaSessionRow.state.not_in(TERMINAL)))]
+        for session_id in active:
+            _expire(factory, now, session_id=session_id)
         instrument = capture_instrument(factory(), payload.instrument_id)
         if instrument["source"] != "s2vna" or not instrument["serial"]:
             raise ValueError("Управление доступно для S2VNA с серийным номером; используйте импорт файла")
@@ -325,8 +332,11 @@ def claim_session_command(factory, machine_id, observed_serial, now):
         if observed_serial != row.instrument_serial:
             raise ScanJobClosed("Перед командой прочитайте серийный номер подключённого ВАЦ; он не совпадает с сессией")
         methods = {s["args"]["method"] for s in row.steps if s["op"] == "begin_calibration"}
+        recovery = command.op in ("abort", "restore")
+        # A bench session (protocol 2) goes only to an agent advertising version 2 and this very op.
+        ops = None if row.purpose != "bench" else set() if recovery or command.op not in V2_OPS else {command.op}
         vna_jobs.control_station(uow.session, row.instrument_serial, now, machine_id=machine_id,
-                                methods=methods if command.op not in ("abort", "restore") else None)
+                                methods=methods if not recovery else None, ops=ops)
         try:
             envelope = repository.claim(command, now)
         except SessionConflict as error:
@@ -363,7 +373,7 @@ def agent_session_status(session_id: UUID, request: Request,
 @router.post("/api/stock/vna/commands/{command_id}/result")
 async def command_result(command_id: UUID, request: Request,
                          agent: Annotated[Principal, Depends(scan_agent_principal)], now: Now,
-                         uow_factory: UowFactory):
+                         uow_factory: UowFactory, production_factory: Factory):
     machine_id = await run_in_threadpool(lambda: _queue(lambda: agent_machine(
         uow_factory(), agent.actor.id, request.headers.get("x-agent-machine-id", ""))))
     body = bytearray()
@@ -382,7 +392,18 @@ async def command_result(command_id: UUID, request: Request,
                 row = VnaSessionRepository(uow.session).get(payload.session_id)
                 if row.machine_id != machine_id:
                     raise HTTPException(403, "Сессия выдана другому ПК")
+                purpose = row.purpose
             _expire(uow_factory, now, session_id=payload.session_id)
+            if purpose == "bench":
+                from .vna_bench_api import complete_command
+
+                # The bench judges each receipt on the server: card file, matings, journal and next step in one UoW.
+                with production_factory() as uow:
+                    row = VnaSessionRepository(uow.session).get(payload.session_id)
+                    complete_command(uow, row, command_id, payload, now)
+                    response = dict(ok=True, session_id=str(row.id), state=row.state, version=row.version, step=row.step)
+                    uow.commit()
+                    return response
             with uow_factory() as uow:
                 repository = VnaSessionRepository(uow.session)
                 row = repository.get(payload.session_id)
