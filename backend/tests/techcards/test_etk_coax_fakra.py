@@ -50,7 +50,7 @@ def test_new_fakra_route_independent_preparations_and_label_inputs(fixture):
     assert "прозрачную ТУТ" in texts
     heat = next(op for op in ops if op["type"] == "coaxHeat")
     heat_text = " ".join(step["text"] for step in heat["card"]["steps"])
-    assert "этикетку" in heat_text
+    assert "этикетк" in heat_text
     assert "зону соединения" not in heat_text
     assert "нахлёст" not in heat_text
     assert "coaxParts" not in heat["fields"]  # no misleading sleeve-over-connector sketch
@@ -112,8 +112,10 @@ def test_saved_protective_lengths_recount_by_place(cables, old_length, assembly_
     for operation in (cut, install, heat):
         assert operation["time"][0]["norm"] == str(ends + middle)
         text = "\n".join(step["text"] for step in operation["card"]["steps"])
-        assert f"{ends} отрезков по 35 мм (концевые)" in text
-        assert f"{middle} отрезков по 55 мм (центральные)" in text
+        # Short cards: the cut names the batch, putting on and shrinking — one assembly.
+        each = 1 if operation is cut else 15
+        assert f"{ends // each} отрез" in text and "по 35 мм (концевые)" in text
+        assert f"{middle // each} отрез" in text and "по 55 мм (центральные)" in text
         assert f"по {old_length} мм" not in text
     assert "35 мм (концевые)" in cut["fields"]["lengthKd"]
     assert "55 мм (центральные)" in cut["fields"]["lengthKd"]
@@ -168,11 +170,16 @@ def test_mixed_end_cut_card_commands_only_machine_strippable_side():
     config["coax"]["sideA"]["kind"] = "bulkhead"
     cut = build_etk(config, _fresh_cards(config))["operations"][0]
     text = " ".join(step["text"] for step in cut["card"]["steps"])
+    assert "разделку стороны В" in text
+    assert "сторон А и В" not in text and "Сторона А" not in text
+    assert "coax" not in cut["fields"]
+    assert cut["fields"]["coaxB"]["connector"] == "59K25H-1M4A4"
+    del config["coax"]["shortCards"]  # the generic card keeps its own side rewording
+    legacy = build_etk(config, _fresh_cards(config))["operations"][0]
+    text = " ".join(step["text"] for step in legacy["card"]["steps"])
     assert "ТОЛЬКО СО СТОРОНЫ В" in text
     assert "С ДВУХ СТОРОН" not in text
     assert "обеих сторон" not in text
-    assert "coax" not in cut["fields"]
-    assert cut["fields"]["coaxB"]["connector"] == "59K25H-1M4A4"
 
 
 def test_unprotected_labels_are_not_described_as_tubes():

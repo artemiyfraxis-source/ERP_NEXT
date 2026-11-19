@@ -558,7 +558,7 @@ Describe 'Управление ВАЦ: основной цикл и блокир
             @{ id = "wia-$($script:discoveryCount)"; name = "Scanner $($script:discoveryCount)" }
         }
         Mock Get-LanIp { if ($script:holding) { throw 'Blocking network discovery' }; '192.168.1.20' }
-        Mock Test-ArinstInstalled { if ($script:holding) { throw 'Blocking file discovery' }; $true }
+        Mock Test-ArinstPresent { if ($script:holding) { throw 'Blocking file discovery' }; $true }
         Mock Get-VnaCapability { throw 'Must not enter COM' }
         Mock Get-VnaApplication { throw 'Must not enter COM' }
         Mock Get-WiaScanners { throw 'Must not enter WIA' }
@@ -602,7 +602,7 @@ Describe 'Управление ВАЦ: основной цикл и блокир
             $beat.body.lan_ip | Should Be '192.168.1.20'
             ($beat.body.vna_sources -join ',') | Should Be 's2vna,arinst'
             $beat.body.vna.ready | Should Be $true
-            $beat.body.vna_control.version | Should Be 1
+            $beat.body.vna_control.version | Should Be 2
             if (($beat.at - $script:loopStart).TotalSeconds -lt 120) { ($beat.body.vna_control.methods -join ',') | Should Be 'acm' }
             else { @($beat.body.vna_control.methods).Count | Should Be 0 }
         }
@@ -612,7 +612,7 @@ Describe 'Управление ВАЦ: основной цикл и блокир
         ($script:beats[-1].at - $light[-1].at).TotalSeconds | Should Be 10
         Assert-MockCalled Get-AgentScanners -Times 2 -Exactly -Scope It
         Assert-MockCalled Get-LanIp -Times 2 -Exactly -Scope It
-        Assert-MockCalled Test-ArinstInstalled -Times 2 -Exactly -Scope It
+        Assert-MockCalled Test-ArinstPresent -Times 2 -Exactly -Scope It
         Assert-MockCalled Invoke-AgentUpdate -Times 2 -Exactly -Scope It
         Assert-MockCalled Invoke-PollOnce -Times 1 -Exactly -Scope It
         Assert-MockCalled Get-WiaScanners -Times 0 -Exactly -Scope It
@@ -625,19 +625,19 @@ Describe 'Управление ВАЦ: основной цикл и блокир
         Mock Send-Heartbeat { & $script:realSendHeartbeat $Base $AuthToken $PrinterName $ScannerAddress -Lightweight:$Lightweight }
         Mock Get-AgentScanners { throw 'Must not discover scanners' }
         Mock Get-LanIp { throw 'Must not discover network' }
-        Mock Test-ArinstInstalled { throw 'Must not discover files' }
+        Mock Test-ArinstPresent { throw 'Must not discover files' }
         Mock Get-VnaCapability { throw 'Must not enter COM' }
         Mock Get-MachineId { 'pc-1' }
         Mock Invoke-AgentUpdate {}
         Mock Invoke-ErpApi { @{ update = @{ version = '9.9.9' } } }
         Send-Heartbeat 'http://test' 'token' -PrinterName 'TSC' -Lightweight
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
-            $Body.vna_control.version -eq 1 -and @($Body.vna_control.methods).Count -eq 0 -and
+            $Body.vna_control.version -eq 2 -and @($Body.vna_control.methods).Count -eq 0 -and ($Body.vna_control.ops -join ',') -eq 'device_status,apply_screen,acm_confidence,store_memory,release' -and
             @($Body.scanners).Count -eq 0 -and $Body.printer -eq 'TSC' -and -not $Body.vna
         }
         Assert-MockCalled Get-AgentScanners -Times 0 -Exactly -Scope It
         Assert-MockCalled Get-LanIp -Times 0 -Exactly -Scope It
-        Assert-MockCalled Test-ArinstInstalled -Times 0 -Exactly -Scope It
+        Assert-MockCalled Test-ArinstPresent -Times 0 -Exactly -Scope It
         Assert-MockCalled Get-VnaCapability -Times 0 -Exactly -Scope It
         Assert-MockCalled Invoke-AgentUpdate -Times 0 -Exactly -Scope It
     }
@@ -837,14 +837,14 @@ Describe 'Управление ВАЦ: журнал, опрос, watchdog' {
     It 'обновление откладывается пока прибор принадлежит сессии' {
         $script:VnaWorker = @{ command = $script:command }
         Mock Invoke-WebRequest { throw 'must not download during session' }
-        (Invoke-AgentUpdate 'http://test' @{ version = '2.9.0'; sha256 = ('a' * 64) } -AgentPath (Join-Path $TestDrive 'agent.ps1') -NoRestart) | Should Be $false
+        (Invoke-AgentUpdate 'http://test' @{ version = '99.0.0'; sha256 = ('a' * 64) } -AgentPath (Join-Path $TestDrive 'agent.ps1') -NoRestart) | Should Be $false
         Assert-MockCalled Invoke-WebRequest -Times 0 -Exactly -Scope It
     }
     It 'фоновая проверка прибора не мешает самообновлению' {
         $script:VnaWorker = @{ command = $null }
         Mock Stop-VnaWorker { $script:VnaWorker = $null }
         Mock Invoke-WebRequest { throw 'download reached' }
-        [void](Invoke-AgentUpdate 'http://test' @{ version = '2.9.0'; sha256 = ('a' * 64); path = '/agent.ps1' } -AgentPath (Join-Path $TestDrive 'agent.ps1') -NoRestart)
+        [void](Invoke-AgentUpdate 'http://test' @{ version = '99.0.0'; sha256 = ('a' * 64); path = '/agent.ps1' } -AgentPath (Join-Path $TestDrive 'agent.ps1') -NoRestart)
         Assert-MockCalled Stop-VnaWorker -Times 1 -Exactly -Scope It
         Assert-MockCalled Invoke-WebRequest -Times 1 -Exactly -Scope It
     }
@@ -915,7 +915,8 @@ Describe 'Управление ВАЦ: журнал, опрос, watchdog' {
         Mock Get-VnaManifest { @{ instrument_serial = '26030095'; ordinary_state_verified = $true; kits = @(
             @{ method = 'acm'; registry_fingerprint = ('a' * 64); definition = @{ serial = '26140008' } }, @{ method = 'solt2' }) } }
         $capability = Get-VnaControlCapability @{ ready = $true; serial = '26030095' }
-        $capability.version | Should Be 1
+        $capability.version | Should Be 2
+        ($capability.ops -join ',') | Should Be 'device_status,apply_screen,acm_confidence,store_memory,release'
         ($capability.methods -join ',') | Should Be 'acm'
     }
     It 'без манифеста методы не объявляются' {
@@ -934,11 +935,11 @@ Describe 'Управление ВАЦ: журнал, опрос, watchdog' {
         Mock Get-VnaObservation { @{ ready = $true; serial = '26030095'; name = 'Planar, S50180, 26030095, 26.2' } }
         Mock Get-VnaManifest { @{ instrument_serial = '26030095'; ordinary_state_verified = $true; kits = @(
             @{ method = 'acm'; registry_fingerprint = ('a' * 64); definition = @{ serial = '26140008' } }) } }
-        Mock Get-AgentScanners { @() }; Mock Get-LanIp { '' }; Mock Get-MachineId { 'pc-1' }; Mock Test-ArinstInstalled { $false }
+        Mock Get-AgentScanners { @() }; Mock Get-LanIp { '' }; Mock Get-MachineId { 'pc-1' }; Mock Test-ArinstPresent { $false }
         Mock Invoke-ErpApi { @{} }
         Send-Heartbeat 'http://test' 'token'
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
-            $Body.version -eq '2.9.0' -and $Body.vna_control.version -eq 1 -and ($Body.vna_control.methods -join ',') -eq 'acm'
+            $Body.version -eq $script:AgentVersion -and $Body.vna_control.version -eq 2 -and ($Body.vna_control.methods -join ',') -eq 'acm' -and ($Body.vna_control.ops -join ',') -eq 'device_status,apply_screen,acm_confidence,store_memory,release'
         }
         Assert-MockCalled Get-VnaApplication -Times 0 -Exactly -Scope It
     }

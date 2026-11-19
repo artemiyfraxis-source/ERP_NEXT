@@ -10,7 +10,8 @@ Rules the designer relies on:
 - Code128 (set B): bars the full height of the box, whole dots per module (0.25 mm at most, less when the box is
   narrow) and the 10-module light fields inside the box, placed by `align`; fewer than 2 dots a module → ValueError;
   a ГРН set B cannot carry (Cyrillic) leaves the box empty (`skipped`);
-- line: the box filled (a zero side is drawn `STROKE_MM` thick); box: an outline `STROKE_MM` thick."""
+- line: the box filled, at least 2 dots thick (a zero side is drawn `STROKE_MM` thick); box: an outline
+  `STROKE_MM` thick."""
 
 from __future__ import annotations
 
@@ -34,6 +35,7 @@ SHRINK_FLOOR = 0.5
 MIN_FONT_DOTS = 6
 STROKE_MM = 0.3
 MIN_MODULE_DOTS = 2
+MIN_RULE_DOTS = 2
 BAR_MODULE_MM = 0.25
 
 
@@ -242,6 +244,9 @@ def _draw_rule(canvas: _Canvas, element: Element) -> None:
     x0, y0, x1, y1 = canvas.box(element)
     stroke = max(1, js_round(STROKE_MM * canvas.dots_per_mm))
     if element.kind == "line":
+        if x1 > x0 and y1 > y0:
+            # Both sides given: a hairline rule as drawn (owner 18.11: thin rules), never thinner than 2 dots.
+            stroke = MIN_RULE_DOTS
         canvas.fill(x0, y0, max(x1, x0 + stroke), max(y1, y0 + stroke))
         return
     for left, top, right, bottom in (

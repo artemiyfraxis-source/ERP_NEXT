@@ -307,3 +307,22 @@ def document_diff(old: Mapping[str, Any] | None, new: Mapping[str, Any] | None) 
         changes.append({"operation_key": "", "label": "Карта", "field": "Предупреждения сборки",
                         "old": warnings_old, "new": warnings_new})
     return changes
+
+
+def title_diff(old: Mapping[str, Any] | None, new: Mapping[str, Any] | None) -> list[dict[str, str]]:
+    """Operation titles only (the operation title and its card name), same shape as `document_diff`. Not part of
+    `document_diff` on purpose: a title alone never re-issues an ETK; a caller that renames on purpose asks for it."""
+    before, after = _by_key(old), _by_key(new)
+    changes: list[dict[str, str]] = []
+    for key, op_new in after.items():
+        op_old = before.get(key)
+        if op_old is None:
+            continue
+        name = lambda op: _text((op.get("card") or {}).get("name") if isinstance(op.get("card"), Mapping) else "")  # noqa: E731
+        for read in (lambda op: _text(op.get("title")), name):
+            left, right = read(op_old), read(op_new)
+            if left != right:
+                changes.append({"operation_key": key, "label": _label(op_new), "field": "Название операции",
+                                "old": left, "new": right})
+                break
+    return changes

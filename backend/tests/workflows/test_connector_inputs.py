@@ -21,7 +21,9 @@ from app.modules.references.infrastructure import (
     EquipmentModelRow, SqlAlchemyReferencesUnitOfWork, SqlAlchemyTechOperationRepository,
 )
 from app.modules.techcards import etk_derive
-from app.modules.techcards.infrastructure import ProjectTechcardRow, RefreshRequestRow, SqlAlchemyTechcardsUnitOfWork
+from app.modules.techcards.infrastructure import (
+    ProjectTechcardRow, RefreshRequestRow, SqlAlchemyTechcardsUnitOfWork, TechcardRevisionRow,
+)
 from app.modules.techcards.operation_cards import parse_operation_library
 from app.modules.techcards.project_cards import ProjectTechcard, TechcardRevision
 from app.shared.persistence import Base, create_schema
@@ -60,7 +62,8 @@ LIBRARY = [*_json(ROOT / "backend/data/techcard-library.json")["templates"],
 LIBRARY_CODE = {item["id"]: item["title"].split(" | ", 1)[0] for item in LIBRARY}
 CARDS = tuple(parse_operation_library(LIBRARY))
 CODE_OF = SCRIPT.code_resolver(CARDS)
-DELIVERED = {item["code"] for item in _json(DATA / "operation-templates-fakra-1114/payload.json")} | {"PRS_HFM_SUPPORT"}
+# PRS_PIN_coax (19.11) is delivered later by docs/data/etk-pin-coax-1119: production before it has no such card.
+DELIVERED = {item["code"] for item in _json(DATA / "operation-templates-fakra-1114/payload.json")} | {"PRS_HFM_SUPPORT", "PRS_PIN_coax"}
 ANALOGS = ("INS_SLEEVE_coax", "STRIP_COAX_hand", "PRS_SLEEVE_coax", "INS_housing_COAX", "PRS_CAP_COAX",
            "SDR_COAX_pin", "HEAT_TTK_short")
 OLD_WORDS = ("до щелчка", "0,18 мм", "CPA")
@@ -196,13 +199,13 @@ def _store_production(sessions):
     return cards
 
 
-def _run(sessions, *, templates=None, expect=None, commit=True):
+def _run(sessions, *, templates=None, expect=None, commit=True, reissue=False):
     refs = _refs(sessions)  # before the transaction: in-memory SQLite shares one connection between sessions
     with _uow(sessions) as uow:
         uow.serialise()
         if templates is not None:
             TEMPLATES.apply_payload(templates, uow, who=TEMPLATES.actor(), now=NOW)
-        out = SCRIPT.migrate_inputs(uow, who=SCRIPT.actor(), now=NOW, expect=expect, refs=refs)
+        out = SCRIPT.migrate_inputs(uow, who=SCRIPT.actor(), now=NOW, expect=expect, refs=refs, reissue=reissue)
         if commit:
             uow.commit()
         return out
@@ -285,6 +288,69 @@ def test_one_transaction_with_the_short_cards_issues_one_revision_matching_the_g
     assert run_refresh(prod, now=LATER, everything=True).count("revised", "refreshed", "failed", "conflict") == 0
     again, plan_again, _ = _run(prod, templates=PAYLOAD, commit=False)
     assert not again["changed"] and plan_again["cards"] == []
+
+
+def _cards_already_delivered(sessions):
+    """Production on 18.11: a release delivered the short cards and the worker re-issued the ETK with their text,
+    while the saved inputs still carry the old generated titles."""
+    cards = _store_production(sessions)
+    _deliver(sessions, "operation-templates-connectors-1118")
+    assert run_refresh(sessions, now=NOW).count("revised") == 5
+    return cards
+
+
+def _titles(document):
+    return [(op.get("title"), (op.get("card") or {}).get("name")) for op in document["operations"]]
+
+
+def test_reissue_makes_the_renamed_titles_a_revision_when_the_cards_are_already_in_place(prod):
+    cards = _cards_already_delivered(prod)
+    before = {kb: _row(prod, card) for kb, card in cards.items()}
+    assert all(before[kb].revision == 2 for kb in ("КБ1", "КБ2", "КБ3", "КБ28", "other"))
+    # Without the flag the guard still holds: titles alone are not re-issued.
+    plain, plan, _ = _run(prod, commit=False)
+    assert len(plain["inputs_only"]) == 4 and not plain["revised"]
+    with pytest.raises(ValueError, match="--reissue"):
+        _run(prod, expect=plan)
+    snapshot = _snapshot(prod)
+    dry, dry_plan, _ = _run(prod, commit=False, reissue=True)
+    assert _snapshot(prod) == snapshot  # the dry run issues inside the transaction and rolls it all back
+    assert len(dry["revised"]) == 4 and not dry["inputs_only"]
+    assert dry_plan == plan
+    result, _, rollback = _run(prod, expect=plan, reissue=True)
+    assert len(result["revised"]) == 4 and {item["item_index"] for item in rollback["cards"]} == {"КБ1", "КБ2", "КБ3", "КБ28"}
+    with prod() as session:
+        for kb, source in (("КБ1", FRESH["КБ1"]), ("КБ2", FRESH["КБ2"]), ("КБ3", BATCH["КБ3"]), ("КБ28", BATCH["КБ28"])):
+            row = session.get(ProjectTechcardRow, cards[kb].id)
+            assert row.revision == 3 and row.inputs == _bind(prod, source)
+            assert not [title for pair in _titles(row.document) for title in pair
+                        if title and any(word in title for word in OLD_WORDS)]
+            assert _titles(row.document) != _titles(before[kb].document)
+            assert _quantities(row.document) == _quantities(before[kb].document)
+            revision = session.scalar(select(TechcardRevisionRow).where(
+                TechcardRevisionRow.project_card_id == row.id, TechcardRevisionRow.revision == 3))
+            assert revision.reason == "Переименование операций по своду инструкций (18.11.2026)"
+            assert revision.document == row.document
+            assert {item["field"] for item in revision.diff["changes"]} == {"Название операции"}
+    assert _row(prod, cards["other"]).revision == 2 and _row(prod, cards["КБ11"]).revision == 1
+    # The worker finds nothing left to issue, and a second run changes nothing.
+    assert run_refresh(prod, now=LATER, everything=True).count("revised", "refreshed", "failed", "conflict") == 0
+    again, plan_again, _ = _run(prod, commit=False, reissue=True)
+    assert not again["changed"] and plan_again["cards"] == []
+
+
+def test_refresh_without_a_rename_reason_still_ignores_titles(prod):
+    cards = _cards_already_delivered(prod)
+    with prod() as session:  # a title-only edit of the saved inputs, outside the script
+        row = session.get(ProjectTechcardRow, cards["КБ1"].id)
+        inputs = deepcopy(row.inputs)
+        op = next(op for op in inputs["ops"] if op.get("opKey") == "coaxBodyA")
+        op["label"] = "Своё название (А)"
+        row.inputs, row.version = inputs, row.version + 1
+        session.commit()
+    report = run_refresh(prod, now=LATER, everything=True)
+    assert report.count("revised", "refreshed") == 0, report.text()
+    assert _row(prod, cards["КБ1"]).revision == 2
 
 
 def test_apply_follows_the_reviewed_plan_or_writes_nothing(prod):

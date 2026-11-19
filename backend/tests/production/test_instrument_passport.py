@@ -9,7 +9,8 @@ from pydantic import SecretStr
 import pytest
 
 from app.modules.production.instrument_characterization import application, characterization, connector_line, impedance_warning, upper_two
-from app.modules.production.instrument_passport import LOSS_SCALE, VSWR_SCALE, band_rows, passport_pdf
+from app.modules.production.instrument_norms import norm_for
+from app.modules.production.instrument_passport import band_rows, chart_scale, passport_pdf
 from app.modules.production.rf_interfaces import RfDetails, RfInterface
 from app.modules.production.traceability import InstrumentFile, InstrumentFileKind, InstrumentKind, InstrumentStatus, MeasurementInstrument
 from app.modules.warehouse.labels.defaults import default_template
@@ -17,6 +18,7 @@ from app.modules.warehouse.labels.layout import label_png
 from app.modules.warehouse.labels.render import render
 from app.modules.warehouse.labels.settings import PrintSettings
 from app.modules.warehouse.labels.template import FORMATS, instrument_content
+from app.workflows.instrument_labels import band_cells
 from app.shared.public_url import PublicSettings, instrument_card_url, public_passport_url
 
 
@@ -34,7 +36,9 @@ def instrument():
 
 
 def rf(impedance=50):
-    return RfDetails(interfaces=(RfInterface("SMA", "розетка", "гнездо", impedance, 18),) * 2, role="adapter")
+    # The norm is assigned per item (owner 18.11); these fixtures pin MIL-PRF-55339/55 explicitly for their numbers.
+    return RfDetails(interfaces=(RfInterface("SMA", "розетка", "гнездо", impedance, 18),) * 2, role="adapter",
+                     norm_id="mil-55339-55" if impedance == 50 else "")
 
 
 def test_characterization_rounds_both_sides_up_and_uses_full_stored_band():
@@ -99,11 +103,18 @@ def test_sma_reversed_contact_is_labelled_rp_sma():
     assert connector_line("", "", details) == "RP-SMA розетка – RP-SMA вилка"
 
 
-def test_passport_includes_stored_lower_and_upper_datasheet_band():
-    pdf = passport_pdf(instrument(), replace(rf(), f_min_ghz=2), None, generated=datetime(2026, 11, 17))
-    text = "\n".join(page.extract_text() for page in PdfReader(BytesIO(pdf)).pages)
-    assert "сторона 1: 2–18 ГГц" in text
-    assert "сторона 2: 2–18 ГГц" in text
+def test_passport_header_is_one_value_per_line_without_sources():
+    details = replace(rf(), f_min_ghz=2, source="https://maker.example/datasheet.pdf",
+                      interfaces=tuple(replace(p, f_source="https://maker.example/a.pdf") for p in rf().interfaces))
+    pdf = passport_pdf(replace(instrument(), storage_location="Шкаф 1"), details, None, generated=datetime(2026, 11, 17))
+    lines = [line.strip() for page in PdfReader(BytesIO(pdf)).pages for line in page.extract_text().splitlines()]
+    for expected in ("Заводской №: ADP-ss-26-034", "Обозначение: S-322", "Изготовитель: Изготовитель",
+                     "Разъёмы: SMA розетка – SMA розетка", "Сопротивление: 50 Ом", "Диапазон: 2–18 ГГц",
+                     "Рабочие температуры: −65…+165 °C", "Ресурс сочленений: 500"):
+        assert expected in lines
+    text = " ".join(lines)
+    for gone in ("maker.example", "Хранение", "Сторона 1", "Пределы по карточке", "Источник", "Номер:", "Модель / артикул"):
+        assert gone not in text
 
 
 @pytest.mark.parametrize("stop,impedance,measured", [(18, 50, True), (11, 50, True), (18, 75, True), (18, 50, False)])
@@ -115,28 +126,46 @@ def test_pdf_is_readable_with_serial_measured_unmeasured_limited_and_75_ohm(stop
     reader = PdfReader(BytesIO(pdf))
     text = "\n".join(page.extract_text() for page in reader.pages)
     assert item.serial_number in text and "Паспорт СИ.034" in text
-    assert "Методика: —" in text and "erp.example.test" in text
+    assert "Методика: СТО ФРАК-002-2026" in text and "erp.example.test" in text
     assert ("Результаты замера" in text) == measured
     assert ("Замер не проведён" in text) != measured
     if measured:
-        assert "Planar S50180" in text and "АКМ №456" in text and "Иван" in text
-        assert "de-embedding" in text and "27 C" in text
-        assert len(list(band_rows(data))) == (4 if stop == 18 else 3)
-        assert list(band_rows(data))[-1][0].endswith(str(stop))
+        assert "Замер 16.11.2026, Иван, ВАЦ Планар S50180, калибровка АКМ" in " ".join(text.split())
+        for gone in ("de-embedding", "27 C", "опорное", "Условия", "ILAC", "Погрешность", "относятся только"):
+            assert gone not in text
+        rows = list(band_rows(data))
+        assert [row[0] for row in rows] == ["0,01–1", "0,01–3", "0,01–6"] + (["0,01–12", "0,01–18"] if stop == 18 else ["0,01–11"])
+        assert "Заключение" in text and "контроль характеристик" not in text
+        flat = " ".join(text.split())
+        assert ("Норма: MIL-PRF-55339/55 — КСВН ≤ 1,05 + 0,005·F в полосе 0,5–27 ГГц" in flat) == (impedance == 50)
+        assert ("Норма не назначена" in flat) == (impedance == 75)
     if impedance == 75:
         assert "не для 50 Ом тракта" in text
-    assert VSWR_SCALE == (1.0, 2.0, 0.1)
-    assert LOSS_SCALE == (-3.0, 0.0, 0.3)
+
+
+def test_chart_scales_follow_the_data_and_the_norm():
+    measured = characterization(measured_file())   # VSWR 1,02–1,04, |S21| 0,98–0,99
+    norm = norm_for("", "", rf())                    # /55: 1,05 + 0,005·F from 0,5 GHz; loss 0,03·√F
+    vswr = chart_scale(measured, True, norm)
+    assert vswr.minimum == 1.0 and 1.14 <= vswr.maximum <= 1.2 and len(vswr.ticks) <= 11
+    assert vswr.limit[0][0] == 0.5 and vswr.limit_label == "норма ≤ 1,05 + 0,005·F"
+    assert vswr.band_edges == (1.0, 3.0, 6.0, 12.0)
+    loss = chart_scale(measured, False, norm)
+    assert loss.maximum == 0 and -0.3 <= loss.minimum <= -0.15 and loss.limit[-1][1] < 0
+    bare = chart_scale(measured, True)
+    assert bare.limit == () and bare.maximum <= 1.06
 
 
 @pytest.mark.parametrize("label_format", FORMATS)
 @pytest.mark.parametrize("impedance", [50, 75])
 def test_measured_labels_use_real_link_and_show_parameters_at_203_dpi(label_format, impedance):
     item, measured = instrument(), characterization(measured_file(stop=11))
+    usage = application(measured)  # no norm: all measured bands on the grid (the norm-based range: test_instrument_application)
     data = instrument_content(item.inventory_number, item.name, item.serial_number, model=item.doc_designation,
         accessory=True, in_house_serial=True, connector_line=connector_line(item.name, item.serial_number, rf()),
-        range_line=application(measured).range_line, table=application(measured).table_lines(),
-        table_long=application(measured).table_lines(long=True), measured_on=measured.measured_on,
+        range_line=usage.range_line, table=usage.table_lines(),
+        table_long=usage.table_lines(long=True), measured_on=measured.measured_on,
+        bands=band_cells(usage),
         measurement_date=measured.measurement_date, impedance_warning=impedance_warning(rf(impedance)),
         card_url=public_passport_url(item.id, PublicSettings(public_base_url="https://erp.example.test",
             passport_secret=SecretStr("test-only-passport-key-do-not-deploy-123456789"))))
@@ -145,7 +174,10 @@ def test_measured_labels_use_real_link_and_show_parameters_at_203_dpi(label_form
     layout = render(default_template("instrument", label_format, "qr"), data, settings)
     assert not layout.overflow and layout.qr_module_dots >= 2
     joined = " ".join(layout.texts)
-    for value in (item.inventory_number, "ADP-ss-26-034", "Частотный диапазон 0–", "КСВН ≤", "Потери, дБ ≤", "16.11.2026"):
+    # The 58 mm card states the range by its band grid («Частота до, ГГц»), the 100 × 50 one also in words.
+    for value in (item.inventory_number, "ADP-ss-26-034", "КСВН ≤", "Потери, дБ ≤", "16.11.2026",
+                  "Норма не назначена" if width >= 90
+                  else "Частота до, ГГц"):
         assert value in joined
     if impedance == 75:
         assert "75 Ом — не для 50 Ом тракта" in joined

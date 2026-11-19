@@ -128,7 +128,7 @@ function productionData(fixture: ProductionFixture, dedicated = true) {
   }
   const genericCode = (operation: SavedOp) => operation.opNum || (operation.type === "coaxCapCrimp" ? "PRS_CAP" : "CTRL_VSWR_coax");
   const templates = Array.from(new Map(config.ops.map((operation) => [operation.templateId, {
-    id: operation.templateId, title: `${genericCode(operation)} | ${operation.label || operation.type} (${operation.side})`,
+    id: operation.templateId, title: `${genericCode(operation)} | ${operation.label || operation.type}`,
     category: operation.type === "coaxCapCrimp" ? "Опрессовка крышки коакс" : "",
   }])).values());
   const refs: BatchRefs = {
@@ -202,14 +202,32 @@ describe("production 708К. fixture preservation", () => {
     }
   });
 
-  it("КБ11 generator bytes stay unchanged with dedicated cards in the library", async () => {
+  it("КБ11: the crimped centre contact moves to its own PRS_PIN_coax card; every other byte stays (свод 4/5)", async () => {
     const fixture = fixtures.find((item) => item.kb === "КБ11")!;
-    const config = autoConfig(productionData(fixture)).config;
-    const bytes = new TextEncoder().encode(JSON.stringify(withoutShrinkMaterials(config)));
+    const withPin = (dedicated: boolean) => {
+      const data = productionData(fixture, dedicated);
+      data.templates = [...data.templates, T("PRS_PIN_coax", "Опрессовка")];
+      data.ops = [...(data.ops || []), { opNumber: "PRS_PIN_coax", opName: "Обжим центрального контакта", tPrep: "", tOp: "", tMachine: "" }];
+      return data;
+    };
+    const config = autoConfig(withPin(true)).config as typeof fixture.config;
+    const pin = config.ops.filter((operation) => operation.type === "coaxPinCrimp");
+    // The saved-route correction (docs/data/etk-pin-coax-1119) writes exactly this: the card, its code and its own
+    // (not yet set) times; the shield crimp stays a separate PRS_SLEEVE_coax operation.
+    expect(pin.map(({ side, templateId, opNum, tPrep, tOp, tMachine }) => [side, templateId, opNum, tPrep, tOp, tMachine]))
+      .toEqual([["A", "PRS_PIN_coax", "PRS_PIN_coax", "", "", ""]]);
+    expect(config.ops.filter((operation) => operation.type === "coaxShield").map((operation) => operation.opNum)).toEqual(["PRS_SLEEVE_coax"]);
+    // Put the former shield-card binding back: the bytes are the 18.11 output exactly — nothing else moved.
+    const sleeve = fixture.config.ops.find((operation) => operation.type === "coaxPinCrimp")!;
+    const before = { ...config, ops: config.ops.map((operation) => operation.type !== "coaxPinCrimp" ? operation
+      : { ...operation, templateId: sleeve.templateId, opNum: sleeve.opNum, tPrep: sleeve.tPrep, tOp: sleeve.tOp, tMachine: sleeve.tMachine }) };
+    const bytes = new TextEncoder().encode(JSON.stringify(withoutShrinkMaterials(before)));
     const digest = await crypto.subtle.digest("SHA-256", bytes);
     expect(Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(""))
-      .toBe("73b3bcf31283d39f53241504c7c25bd1bdc870f20cac337ab2fda58894694ded");
-    expect(config).toEqual(autoConfig(productionData(fixture, false)).config);
+      .toBe("508266ccd3e42a51b7f7dbaba7df3c21621f02e9e7447db80cf3994d3d3328fc");
+    expect(config).toEqual(autoConfig(withPin(false)).config);
+    // Without the card the generator stops instead of giving the pin the shield card.
+    expect(autoConfig(productionData(fixture)).error).toContain("PRS_PIN_coax");
   });
 });
 

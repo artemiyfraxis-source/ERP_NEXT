@@ -89,7 +89,7 @@ def test_invalid_piece_quantities_fail(value):
 
 def test_missing_template_and_unselected_manufacturing_operations_fail():
     raw = config()
-    raw["ops"][1]["templateId"] = "missing"
+    raw["ops"][1].update(templateId="missing", opNum="NO_SUCH_CODE")
     with pytest.raises(ValueError, match="карточка"):
         build_etk(raw, CARDS)
     raw = config()

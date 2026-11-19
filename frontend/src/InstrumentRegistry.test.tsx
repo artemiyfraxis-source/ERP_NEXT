@@ -40,6 +40,8 @@ function setup(rows: ProductionInstrument[] = [instrument], handle?: (request: R
     const custom = handle?.(request);
     if (custom) return custom;
     if (request.path === `${base}/next-number`) return json({ inventory_number: "СИ.006" });
+    if (request.path.endsWith("/matings")) return json({ instrument_id: "x", resource: null, status: "unknown", has_connectors: false, ends: [{ end: "A", total: 0, version: 0, percent_used: null, status: "unknown", initial_recorded: false, can_initialize: true }], events: [] });
+    if (request.path.endsWith("/vna-checks")) return json({ instrument_id: "x", applicable: false, due: [], records: [] });
     if (request.path.endsWith("/rf-interfaces")) return json({ rf: { version: 0, interfaces: [], role: "unknown", confirmed: false, source: "", f_min_ghz: null, max_points: null, kit_definition: "" } });
     if (request.path === base && request.method === "GET") return json({ instruments: records });
     if (request.path.startsWith("/api/stock")) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
@@ -541,6 +543,30 @@ it("uploads a passport as base64, displays its link and metadata, and deletes on
   fireEvent.click(screen.getByRole("button", { name: "Удалить файл паспорт.pdf" }));
   await waitFor(() => expect(screen.queryByRole("link", { name: "паспорт.pdf" })).not.toBeInTheDocument());
   expect(writes(requests)[1]).toMatchObject({ path: `${base}/ruler/files/file`, method: "DELETE" });
+});
+
+it("marks one .s2p measurement as the reference curve, asking before replacing the current one", async () => {
+  const curve = (id: string, name: string, is_reference = false) => ({ id, kind: "Прочее" as const, file_name: name, size: 9, uploaded_at: "2026-11-16", uploaded_by_name: "Иванов", is_reference });
+  let files = [curve("old", "Замер ВАЦ 16.11.2026, СИ.005.s2p", true), curve("new", "Замер ВАЦ 18.11.2026, СИ.005.s2p"), curve("pdf", "паспорт.pdf")];
+  const { requests } = setup([{ ...unverified, files }], ({ path, method }) => {
+    if (method === "POST" && path.endsWith("/reference")) {
+      files = files.map((file) => ({ ...file, is_reference: path.includes("/files/new/") ? file.id === "new" : file.is_reference }));
+      return json({ file: files[1] });
+    }
+    if (method === "GET" && path === base) return json({ instruments: [{ ...unverified, files }] });
+    return null;
+  });
+  open(unverified.inventory_number);
+  expect(screen.getByText("Эталонная кривая")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Сделать эталонной кривой: паспорт.pdf" })).not.toBeInTheDocument();
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  fireEvent.click(screen.getByRole("button", { name: "Сделать эталонной кривой: Замер ВАЦ 18.11.2026, СИ.005.s2p" }));
+  expect(writes(requests)).toHaveLength(0);
+  confirm.mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Сделать эталонной кривой: Замер ВАЦ 18.11.2026, СИ.005.s2p" }));
+  expect(await screen.findByText("Эталонная кривая назначена")).toBeInTheDocument();
+  expect(writes(requests)).toEqual([{ path: `${base}/ruler/files/new/reference`, method: "POST", body: {} }]);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Сделать эталонной кривой: Замер ВАЦ 16.11.2026, СИ.005.s2p" })).toBeInTheDocument());
 });
 
 it("shows passport presence and file counts in the registry", () => {

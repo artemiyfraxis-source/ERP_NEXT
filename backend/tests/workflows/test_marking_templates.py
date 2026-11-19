@@ -218,17 +218,13 @@ def test_prep_applied_by_the_14_november_script_gains_only_the_neutral_clarifica
                        for step in row.edited["steps"]) == 1
 
 
-def test_human_edit_on_one_variant_protects_both_siblings(base):
+def test_human_edit_protects_the_template(base):
+    """One template per code since 0192 (the (A)/(B) siblings were merged): a human edit protects the code."""
     _apply(base)
     code = "INS_MARK_LABEL"
     with base() as session:
         original = session.scalar(select(OperationCardTemplateRow).where(OperationCardTemplateRow.code == code))
-        original.side = "A"
-        sibling = OperationCardTemplateRow(**{column.name: deepcopy(getattr(original, column.name))
-                                             for column in OperationCardTemplateRow.__table__.columns})
-        sibling.id += "-b"
-        sibling.side, sibling.edited_by = "B", "Технолог Иван"
-        session.add(sibling)
+        original.edited_by = "Технолог Иван"
         session.commit()
     before = _snapshot(base)
     item = next(item for item in PAYLOAD if item["code"] == code)

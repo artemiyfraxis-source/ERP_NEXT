@@ -5,10 +5,9 @@ import { deriveRoute, type RouteOp } from "./routeLogic";
 
 const templates = [
   { id: "cut", title: "CUT_WIRE_auto | Резка", category: "Резка" },
-  { id: "prsA", title: "PRS_TERMINAL_2.50 | Опрессовка терминалов (А)", category: "Опрессовка терминалов" },
-  { id: "prsB", title: "PRS_TERMINAL_2.50 | Опрессовка терминалов (В)", category: "Опрессовка терминалов" },
-  { id: "insA", title: "INS_terminal_2.50 | Монтаж терминалов (А)", category: "Монтаж терминалов" },
-  { id: "insB", title: "INS_terminal_2.50 | Монтаж терминалов (В)", category: "Монтаж терминалов" },
+  // Один шаблон на код (миграция 0192): обе стороны берут одну карту, сторона — у операции.
+  { id: "prs", title: "PRS_TERMINAL_2.50 | Опрессовка терминалов", category: "Опрессовка терминалов" },
+  { id: "ins", title: "INS_terminal_2.50 | Монтаж терминалов", category: "Монтаж терминалов" },
   { id: "sdrXt", title: "SDR_XT60 | Пайка XT60", category: "Пайка" },
   { id: "cutTut", title: "CUT_TUT_short | Резка ТУТ", category: "Резка" },
   { id: "insTut", title: "INS_TUT | Надеть ТУТ", category: "Монтаж" },
@@ -41,7 +40,7 @@ it("builds the interboard config the /build endpoint reads (TcGenInline buildCon
   // 150 по чертежу + L+ обеих сторон из БД.ТЕР = 160; проводов по терминалам: 4 контакта / 2 разъёма
   expect(cfg.wires).toEqual([{ name: "МГТФ 0,12", art: "МГТФ 0,12", qty: 2, length: 160 }]);
   expect(cfg.ops.map((op: any) => [op.type, op.side ?? "", op.templateId])).toEqual([
-    ["cutWire", "", "cut"], ["prsTerm", "A", "prsA"], ["insTerm", "A", "insA"], ["prsTerm", "B", "prsB"], ["insTerm", "B", "insB"],
+    ["cutWire", "", "cut"], ["prsTerm", "A", "prs"], ["insTerm", "A", "ins"], ["prsTerm", "B", "prs"], ["insTerm", "B", "ins"],
   ]);
   expect(cfg.ops[0]).toMatchObject({ opNum: "CUT_WIRE_auto", tOp: "12", tPrep: "60", tMachine: "3" });
   expect(cfg.ops[1]).toMatchObject({ firstTerm: true, ep: { connArt: "XHP-2", termArt: "SXH-001T-P0.6" }, wireSources: [""] });
@@ -344,8 +343,7 @@ describe("коакс: резка с разделкой на роторном с�
       const clampHousings = (G: GenData) => opsOf(G, initState(G)).filter((op) => op.type === "coaxHousing");
       expect(clampHousings(D).map((op) => op.tmplHint)).toEqual(["INS_housing_COAX", "INS_housing_COAX"]);
       const withCards: GenData = { ...D, templates: [...coaxTemplates,
-        { id: "ha", title: "INS_housing_COAX_clamp | Монтаж корпуса с прижимом (A)", category: "Монтаж корпуса" },
-        { id: "hb", title: "INS_housing_COAX_clamp | Монтаж корпуса с прижимом (B)", category: "Монтаж корпуса" }] };
+        { id: "h", title: "INS_housing_COAX_clamp | Монтаж корпуса с прижимом", category: "Монтаж корпуса" }] };
       expect(clampHousings(withCards).map((op) => [op.tmplHint, op.tmplWant])).toEqual([
         ["INS_housing_COAX_clamp", "INS_housing_COAX_clamp"], ["INS_housing_COAX_clamp", "INS_housing_COAX_clamp"]]);
     });
@@ -374,10 +372,22 @@ describe("коакс: резка с разделкой на роторном с�
     const ops = opsOf(D, S);
     const crimp = ops.filter((op) => op.type === "coaxPinCrimp");
     expect(crimp.map((op) => [op.side, op.label])).toEqual([["A", "Опрессовка центрального контакта (А)"]]);
-    // Своей карты PRS_PIN_coax ещё нет — карта опрессовки коакса, с пометкой, какой карты не хватает.
-    expect(crimp[0]).toMatchObject({ tmplWant: "PRS_PIN_coax" });
+    // Свод 708К. 4/5: только своя карта PRS_PIN_coax, без подмены картой обжима экрана PRS_SLEEVE_coax.
+    expect(crimp[0]).toMatchObject({ tmplHint: "PRS_PIN_coax", tmplWant: "PRS_PIN_coax" });
     expect(ops.filter((op) => op.type === "coaxPin").map((op) => op.side)).toEqual(["B"]);
     expect((makeGen(D, S).buildConfig() as Record<string, any>).coax.sideA.pinType).toBe("обжим");
+    // Нет карты в библиотеке — не подмена, а остановка «Создать» с названием недостающей карты.
+    const shield = { id: "sleeve", title: "PRS_SLEEVE_coax | Опрессовка", category: "Опрессовка" };
+    const noPin: GenData = { ...D, templates: [...coaxTemplates, shield] };
+    expect(makeGen(noPin, S).templateIdFor(crimp[0])).toBe("");
+    expect(makeGen(noPin, S).validate().error).toContain("PRS_PIN_coax");
+    // Карта есть — операция идёт ею, даже если раньше вручную выбрали карту экрана.
+    const withPin: GenData = { ...noPin, templates: [...noPin.templates, { id: "pin", title: "PRS_PIN_coax | Обжим центрального контакта", category: "Опрессовка" }] };
+    const manual = { ...S, selectedTemplates: { ...S.selectedTemplates, coaxPinCrimpA: "sleeve" }, manualTemplates: ["coaxPinCrimpA"] };
+    expect(makeGen(withPin, manual).templateIdFor(crimp[0])).toBe("pin");
+    expect(makeGen(withPin, S).validate().error || "").not.toContain("PRS_PIN_coax");
+    // Экран — по-прежнему своей картой и отдельной операцией.
+    expect(ops.find((op) => op.type === "coaxShield")?.tmplHint).toBe("PRS_SLEEVE_coax");
   });
 
   it("the 2.92 mm and SMP stock articles are matched by article, dots and hyphens ignored (19.10); «Тип пина» цанга → no pin solder (20.10)", () => {
@@ -736,7 +746,7 @@ it("a technologist's operation order (opOrder) reorders the ops and the config, 
   const g = makeGen(plain.D, { ...plain.S, opOrder: order });
   expect(kinds(g.getActiveOps())).toEqual(["cutWireCrimp:A", "insTerm:B", "insTerm:A"]);
   const cfg = g.buildConfig() as Record<string, any>;
-  expect(cfg.ops.map((op: any) => [op.type, op.side, op.templateId])).toEqual([["cutWireCrimp", "A", "cw2c"], ["insTerm", "B", "insB"], ["insTerm", "A", "insA"]]);
+  expect(cfg.ops.map((op: any) => [op.type, op.side, op.templateId])).toEqual([["cutWireCrimp", "A", "cw2c"], ["insTerm", "B", "ins"], ["insTerm", "A", "ins"]]);
   expect(cfg.opOrder).toEqual(order);
   expect(plain.g.buildConfig()).not.toHaveProperty("opOrder");
   expect(opOrderFromConfig(cfg)).toEqual(order);

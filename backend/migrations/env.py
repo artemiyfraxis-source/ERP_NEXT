@@ -16,8 +16,10 @@ from app.modules.warehouse import marking_profiles as _marking_profiles  # noqa:
 from app.modules.fulfillment import infrastructure as _fulfillment  # noqa: F401
 from app.modules.production import infrastructure as _production  # noqa: F401
 from app.modules.production import rf_infrastructure as _production_rf  # noqa: F401
+from app.modules.production import mating_infrastructure as _production_matings  # noqa: F401
 from app.modules.production import vna_session_infrastructure as _production_vna_sessions  # noqa: F401
 from app.modules.production import downtime_infrastructure as _production_downtime  # noqa: F401
+from app.modules.production import machines as _production_machines  # noqa: F401
 from app.modules.production import resource_infrastructure as _production_resources  # noqa: F401
 from app.modules.production import resource_assignment_infrastructure as _production_allocations  # noqa: F401
 from app.modules.equipment_setup import infrastructure as _equipment_setup  # noqa: F401

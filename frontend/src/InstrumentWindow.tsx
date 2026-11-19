@@ -7,6 +7,8 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { formatDay, formatNumber } from "./format";
 import { PageWindow } from "./PageWindow";
 import { InstrumentRfInterfaces } from "./InstrumentRfInterfaces";
+import { InstrumentMatings } from "./InstrumentMatings";
+import { InstrumentVnaChecks } from "./InstrumentVnaChecks";
 import { InstrumentLabelPrint } from "./InstrumentLabelPrint";
 
 const fileKinds: InstrumentFileKind[] = ["Паспорт", "Свидетельство о поверке", "Руководство", "Прочее"];
@@ -53,6 +55,9 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
   const [busy, setBusy] = useState(false);
   const [rfDirty, setRfDirty] = useState(false);
   const [rfBusy, setRfBusy] = useState(false);
+  const [matingsDirty, setMatingsDirty] = useState(false);
+  const [matingsBusy, setMatingsBusy] = useState(false);
+  const [rfRevision, setRfRevision] = useState(0);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [conflict, setConflict] = useState(false);
@@ -63,7 +68,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
   const [numberAttempt, setNumberAttempt] = useState(0);
   const verificationInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const dirty = rfDirty || JSON.stringify(draft) !== JSON.stringify(baseline);
+  const dirty = rfDirty || matingsDirty || JSON.stringify(draft) !== JSON.stringify(baseline);
   const accessory = draft.kind === "Принадлежность";
   const showVnaApp = !accessory && (Boolean(draft.vna_app) || /ВАЦ|VNA|векторн.*анализ|анализ.*(?:векторн|цеп)/i.test(`${draft.instrument_type} ${draft.name}`));
   const parents = instruments.filter((item) => item.kind === "Средство измерений" && item.id !== record?.id && !isDescendant(item, record?.id, instruments));
@@ -92,7 +97,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
   }, [dirty]);
 
   function requestClose() {
-    if (!busy && !rfBusy && (!dirty || window.confirm("Закрыть без сохранения изменений?"))) close();
+    if (!busy && !rfBusy && !matingsBusy && (!dirty || window.confirm("Закрыть без сохранения изменений?"))) close();
   }
   const field = <K extends keyof InstrumentInput>(key: K, value: InstrumentInput[K]) => setDraft((current) => ({ ...current, [key]: value }));
   const text = (key: "inventory_number" | "name" | "instrument_type" | "serial_number" | "manufacturer" | "doc_designation" | "storage_location" | "warehouse_grn", label: string, required = false) =>
@@ -227,8 +232,12 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
       <InstrumentRfInterfaces instrumentId={record?.id} locked={busy} onDirty={setRfDirty} onBusy={setRfBusy}
         onSaved={async (suggestion) => {
           if (suggestion !== undefined) setRecord((current) => current ? { ...current, suggested_serial_number: suggestion } : current);
+          setRfRevision((value) => value + 1);
           await onChanged();
         }} />
+      {record && <InstrumentMatings instrumentId={record.id} locked={busy || rfBusy} refreshKey={rfRevision} onChanged={onChanged}
+        onDirty={setMatingsDirty} onBusy={setMatingsBusy} />}
+      {record && <InstrumentVnaChecks instrumentId={record.id} refreshKey={rfRevision} />}
       <section className="instrument-files"><h3>Файлы</h3>
         {record ? <>
           <div className="instrument-upload"><label>Вид файла<select disabled={busy} value={fileKind} onChange={(event) => setFileKind(event.target.value as InstrumentFileKind)}>{fileKinds.map((value) => <option key={value}>{value}</option>)}</select></label>
@@ -243,6 +252,13 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
             {(record.files ?? []).filter((file) => file.kind === value).map((file) => <div className="instrument-file" key={file.id}>
               <a href={productionApi.instrumentFileUrl(record.id, file.id)} target="_blank" rel="noopener noreferrer">{file.file_name}</a>
               <span>{formatNumber(file.size)} байт · {formatDay(file.uploaded_at)} · {file.uploaded_by_name}</span>
+              {file.is_reference && <span className="tone-ok instrument-file-reference">Эталонная кривая</span>}
+              {!file.is_reference && /\.s2p$/i.test(file.file_name) && <button type="button" className="secondary small" disabled={busy}
+                aria-label={`Сделать эталонной кривой: ${file.file_name}`} onClick={() => {
+                  const current = (record.files ?? []).find((item) => item.is_reference);
+                  if (current && !window.confirm(`Эталонной кривой сейчас назначен «${current.file_name}». Заменить на «${file.file_name}»?`)) return;
+                  void run(async () => { await productionApi.setInstrumentReferenceCurve(record.id, file.id); setNotice("Эталонная кривая назначена"); await refreshFiles(); });
+                }}>Сделать эталонной кривой</button>}
               <button className="danger small" disabled={busy} aria-label={`Удалить файл ${file.file_name}`} onClick={() => {
                 if (window.confirm(`Удалить файл «${file.file_name}»?`)) void run(async () => { await productionApi.deleteInstrumentFile(record.id, file.id); setNotice("Файл удалён"); await refreshFiles(); });
               }}>Удалить</button>

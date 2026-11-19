@@ -41,6 +41,8 @@ import { PurchasingRefsPage } from "./PurchasingRefsPage";
 import { PrimaryDocsPage } from "./PrimaryDocsPage";
 import { ProductionPage } from "./ProductionPage";
 import { equipmentSetupApi } from "./equipmentSetupApi";
+const MachinesPage = lazy(() => import("./MachinesPage").then(module => ({ default: module.MachinesPage })));
+const ManualJobsPage = lazy(() => import("./ManualJobsPage").then(module => ({ default: module.ManualJobsPage })));
 const EquipmentSetupPage = lazy(() => import("./EquipmentSetupPage").then(module => ({ default: module.EquipmentSetupPage })));
 import { ProductionPlanPage } from "./ProductionPlanPage";
 import { QualityPage } from "./QualityPage";
@@ -416,6 +418,8 @@ export function App() {
                 {setupState.state === "disabled" ? "Наладка оборудования ещё не включена." : setupState.state === "denied" ? "Наладка недоступна этому сотруднику." : setupState.error}
               </p><button className="secondary" onClick={() => setSetupRetry(value => value + 1)}>Проверить снова</button></>}
           </section>)}
+        {activeSection === "machines" && <Suspense fallback={<p className="empty">Загрузка…</p>}><MachinesPage /></Suspense>}
+        {activeSection === "manualjobs" && <Suspense fallback={<p className="empty">Загрузка…</p>}><ManualJobsPage /></Suspense>}
         {activeSection === "myops" && <ProductionPage principal={principal} mine />}
         {activeSection === "quality" && <QualityPage principal={principal} />}
         {activeSection === "references" && <ReferencesPage key={visit} principal={principal} />}

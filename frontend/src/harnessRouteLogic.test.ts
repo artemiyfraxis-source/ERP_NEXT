@@ -68,8 +68,8 @@ describe("маршрут позиции на холсте", () => {
   });
 
   it("takes an operation from the ERP library with its БД.ОП norm and card code", () => {
-    const operation = libraryOperation({ id: "t1", code: "PRS_TERMINAL_auto", side: "A", title: "PRS_TERMINAL_auto | Опрессовка терминалов (А)", name: "", category: "Опрессовка", norms: { operation_seconds: "6", setup_seconds: "1800" } });
-    expect(operation).toMatchObject({ title: "Опрессовка терминалов (А)", kind: "static", quantity: 1, minutesEach: 0.1, code: "PRS_TERMINAL_auto", templateId: "t1" });
+    const operation = libraryOperation({ id: "t1", code: "PRS_TERMINAL_auto", title: "PRS_TERMINAL_auto | Опрессовка терминалов", name: "", category: "Опрессовка", norms: { operation_seconds: "6", setup_seconds: "1800" } });
+    expect(operation).toMatchObject({ title: "Опрессовка терминалов", kind: "static", quantity: 1, minutesEach: 0.1, code: "PRS_TERMINAL_auto", templateId: "t1" });
     const route = updateCard(built(), "route-v3:final", { operations: [operation, { ...operation, id: "o2", quantity: 4 }] });
     expect(nodeMeta(route.nodes.find((node) => node.id === "route-v3:final")!)).toBe("6 комплектующих · 1 шт · 0,5 мин");
   });

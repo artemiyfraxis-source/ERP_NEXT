@@ -32,10 +32,41 @@ def test_label_workflow_classifies_new_legacy_and_vendor_serials(serial, prefix)
     assert instrument_labels._content(item).value("serial_number") == prefix + serial
 
 
-def setup(client, *, online=True):
+@pytest.mark.parametrize("name,model,series,norm,line", [
+    ("Переходник SMA female–SMA female S-322", "S-322", "SMA", "mil-55339-55", "Ресурс 500 сочл. · −65…+165 °C"),
+    ("Переход коаксиальный ADP1A-35F-35F", "ADP1A-35F-35F", "3.5mm", "adp1a-35", "Ресурс 3000 сочл. · −60…+85 °C"),  # tag
+    ("Переходник SMA female–SMA female S-322", "S-322", "SMA", "", ""),  # unassigned: no norm, no spec, no row
+    ("Нагрузка", "", "", "", ""),
+])
+def test_label_resource_and_temperature_come_from_the_passport_spec(monkeypatch, name, model, series, norm, line):
+    from app.modules.production.rf_interfaces import RfDetails, RfInterface
+
+    item = MeasurementInstrument(id=uuid4(), version=1, inventory_number="СИ.034", name=name,
+        instrument_type="Принадлежность", kind=InstrumentKind.ACCESSORY, status=InstrumentStatus.ACTIVE,
+        verification_number=None, verified_at=None, verification_due=None, serial_number="S-322.1",
+        doc_designation=model)
+    ports = (RfInterface(series, "розетка", "гнездо", 50),) * 2 if series else ()
+    details = RfDetails(ports, "adapter" if series else "unknown", norm_id=norm)
+
+    class Repository:  # the card's RF details; no measurement
+        def __init__(self, session): pass
+        def get(self, instrument_id): return details
+        def latest_characterization_file_ids(self, ids): return iter(())
+
+    monkeypatch.setattr(instrument_labels, "RfRepository", Repository)
+    assert instrument_labels._content(item, object()).value("resource_line") == line
+
+
+def setup(client, *, online=True, assigned=True):
     _as({"quality": "edit", "production": "view"})
     item = create(client, "СИ.034", name="SMA розетка – SMA розетка, S-322", serial_number="N8B139")
     sessions = app.state.production_uow_factory().session_factory
+    if assigned:  # the norm is assigned per item (owner 18.11): MIL-PRF-55339/55 for these tests
+        from app.modules.production.rf_infrastructure import RfRepository
+        from app.modules.production.rf_interfaces import RfDetails, RfInterface
+        with sessions.begin() as session:
+            RfRepository(session).save(UUID(item["id"]), RfDetails(
+                (RfInterface("SMA", "розетка", "гнездо", 50),) * 2, "adapter", norm_id="mil-55339-55"))
     if online:
         with sessions.begin() as session:
             session.add(LabelAgentRow(id=1, last_seen=NOW, host="Склад", printer="TSC"))
@@ -250,13 +281,13 @@ def test_latest_attachment_recomputes_label_and_passport(production_api):
             return instrument_labels._content(SqlAlchemyInstrumentRepository(session).get(UUID(item["id"])), session)
     assert content().value("parameters_line") == "Не измерен"
     upload(measured_file(stop=18), 1)
-    assert content().value("range_line") == "Частотный диапазон 0–18 ГГц"
+    assert content().value("range_line") == "Применять до 18 ГГц"
     before = client.get(f"{BASE}/{item['id']}/label.png").content
     upload(measured_file(stop=11), 2)
-    assert content().value("range_line") == "Частотный диапазон 0–11 ГГц"
+    assert content().value("range_line") == "Применять до 11 ГГц"
     assert before != client.get(f"{BASE}/{item['id']}/label.png").content
     upload(replace(measured_file(stop=6), file_name="unrelated.s2p"), 3)
-    assert content().value("range_line") == "Частотный диапазон 0–11 ГГц"
+    assert content().value("range_line") == "Применять до 11 ГГц"
     upload(replace(measured_file(), content=b"invalid"), 4)
     assert content().value("parameters_line") == "Не измерен"
 

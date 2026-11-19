@@ -9,6 +9,8 @@ from app.modules.production.quality import InspectBoxCommand, RegisterInstrument
 from app.modules.production.traceability import InstrumentStatus, ProductionBox, SerialStatus, format_box_number
 from app.modules.production.vswr import (
     TRACE_LIMIT,
+    decide_by_rule,
+    vna_uncertainty,
     RecordVswrCommand,
     VswrVerdict,
     downsample,
@@ -253,3 +255,31 @@ def test_long_sweep_trace_is_thinned_but_keeps_the_in_band_peak(setup):
     assert (751.0, 1.33) in measured.trace and (1501.0, 2.0) in measured.trace
     factory, *_rest = setup
     assert latest_vswr(measured.serial_id, factory()).trace == measured.trace
+
+
+def test_otk_and_passport_use_one_rounded_uncertainty_and_one_resolvability_rule():
+    """СТО 13.3: U for the norm value, rounded half up to 0,0001 — the same number in the passport and the ОТК record;
+    (норма − 1) < 2U — no «на границе» zone, the norm alone decides."""
+    from types import SimpleNamespace
+
+    from app.modules.production.instrument_norms import uncertainty_for
+
+    planar = SimpleNamespace(name="Анализатор цепей Planar S50180", doc_designation="")
+    assert vna_uncertainty(planar, Decimal("5000"), Decimal("1.05")) == Decimal("0.0193")   # 0,01925 → half up
+    assert uncertainty_for("S50180").for_value(5, 1.05) == 0.0193
+    assert vna_uncertainty(planar, Decimal("1800"), Decimal("1.35")) == Decimal("0.0248")   # 0,02475 → half up
+    assert decide_by_rule(Decimal("1.3748"), Decimal("1800"), Decimal("1.35"), Decimal("0.0248"), [])[0] is VswrVerdict.BORDER
+    assert decide_by_rule(Decimal("1.3749"), Decimal("1800"), Decimal("1.35"), Decimal("0.0248"), [])[0] is VswrVerdict.FAIL
+    # 1,02: not resolvable at any band — decided by the norm alone, never «на границе».
+    for mhz in ("5000", "12000"):
+        u = vna_uncertainty(planar, Decimal(mhz), Decimal("1.02"))
+        verdict, reason, _, _ = decide_by_rule(Decimal("1.019"), Decimal(mhz), Decimal("1.02"), u, [])
+        assert verdict is VswrVerdict.PASS and "ниже точности ВАЦ" in reason
+        assert decide_by_rule(Decimal("1.021"), Decimal(mhz), Decimal("1.02"), u, [])[0] is VswrVerdict.FAIL
+    # 1,05: border zone to 10 GHz (U 0,0193), none above (U 0,0254: 0,05 < 0,0508).
+    assert decide_by_rule(Decimal("1.06"), Decimal("5000"), Decimal("1.05"), Decimal("0.0193"), [])[0] is VswrVerdict.BORDER
+    u12 = vna_uncertainty(planar, Decimal("12000"), Decimal("1.05"))
+    assert u12 == Decimal("0.0254") and decide_by_rule(Decimal("1.06"), Decimal("12000"), Decimal("1.05"), u12, [])[0] is VswrVerdict.FAIL
+    # 1,10: border zone everywhere.
+    u12 = vna_uncertainty(planar, Decimal("12000"), Decimal("1.10"))
+    assert decide_by_rule(Decimal("1.12"), Decimal("12000"), Decimal("1.10"), u12, [])[0] is VswrVerdict.BORDER

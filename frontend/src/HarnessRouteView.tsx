@@ -51,7 +51,7 @@ let libraryCache: Promise<LibraryCard[]> | null = null;
 function loadLibrary(): Promise<LibraryCard[]> {
   if (!libraryCache) {
     libraryCache = techcardsApi.templates().then((result) => (result?.items ?? []).map((item): LibraryCard => ({
-      id: item.id, code: item.code || "", side: item.side || "", title: item.title, name: item.name || "", category: item.category,
+      id: item.id, code: item.code || "", title: item.title, name: item.name || "", category: item.category,
       norms: item.norms, first_step: item.first_step,
     }))).catch((reason) => { libraryCache = null; throw reason; });
   }

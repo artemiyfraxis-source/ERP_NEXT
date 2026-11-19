@@ -55,6 +55,8 @@ class PrinterRow(Base):
     present: Mapped[bool] = mapped_column(Boolean, nullable=False)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     queue_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # Why the agent holds this marking queue (0203): the peel-off check failed. Empty — no hold.
+    hold: Mapped[str] = mapped_column(String(500), nullable=False, default="", server_default="")
 
 
 def printer_heartbeat(uow, machine_id, printers, now):
@@ -68,6 +70,7 @@ def printer_heartbeat(uow, machine_id, printers, now):
                 session.add(row)
             row.driver, row.port, row.kind = item["driver"], item["port"], item["kind"]
             row.present, row.last_seen = item["present"], now
+            row.hold = " ".join(str(item.get("hold") or "").split())[:500]
         uow.commit()
 
 
@@ -113,9 +116,10 @@ def control_capability(session, machine_id: str, now: datetime) -> list[str]:
         installed = tuple(int(p) for p in pc.version.split(".")) if pc else ()
     except ValueError:
         installed = ()
+    # Protocol 2 is a superset of 1: a v2 agent still serves v1 session commands.
     if (not pc or pc.legacy or len(installed) != 3 or installed <= (2, 7, 0) or not control
-            or control.version != 1 or reported < now - LIVE_FOR):
-        raise ScanJobClosed("Агент не поддерживает актуальный протокол vna_control версии 1")
+            or control.version not in (1, 2) or reported < now - LIVE_FOR):
+        raise ScanJobClosed("Агент не поддерживает актуальный протокол vna_control версии 1 или 2")
     return control.methods
 
 

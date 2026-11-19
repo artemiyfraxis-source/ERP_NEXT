@@ -54,7 +54,7 @@ def test_a_customer_norm_holds_even_when_the_components_give_none():
 def test_the_step_text_gives_the_customer_norm_and_the_components_for_reference():
     document = build_etk(enrich_coax_vswr_norm(_with_customer(), ROWS, (CABLE,)), list(CARDS.values()))
     step = _control(document)
-    assert step["text"] == ("Измерить КСВН (S11) в полосе 700…2700 МГц, сторона Б нагружена согласованной нагрузкой 50 Ом. "
+    assert step["text"] == ("Измерить КСВН с двух концов (S11 — сторона А, S22 — сторона Б) в полосе 700…2700 МГц, метод — по СТО ФРАК-002-2026. "
                             "Норма заказчика ≤ 1,5 в полосе 700…2700 МГц (ТУ 16-505.123, п. 3.4); "
                             "по комплектующим ≤ 2,06 — справочно.")
     assert step["tolerance"] == "≤ 1,5"

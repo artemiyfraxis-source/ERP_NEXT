@@ -13,10 +13,15 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.modules.production.api import production_uow_factory
 from app.modules.production.infrastructure import SqlAlchemyInstrumentFileRepository, SqlAlchemyInstrumentRepository
 from app.modules.production.instrument_serials import article_of
-from app.modules.production.instrument_characterization import application, characterization, connector_line, impedance_warning
+from app.modules.production.instrument_characterization import (
+    application, characterization, connector_line, impedance_warning, number,
+)
+from app.modules.production.instrument_norms import (item_spec, loss_uncertainty_for, norm_for, resolve_vna,
+                                                     uncertainty_for)
 from app.modules.production.instrument_passport import passport_pdf
+from app.modules.production.mating_infrastructure import MatingRepository, instrument_control
 from app.modules.production.rf_infrastructure import RfRepository
-from app.modules.production.rf_interfaces import RfDetails
+from app.modules.production.rf_interfaces import ROLE_LABELS, RfDetails, is_adapter_name
 from app.modules.production.traceability import InstrumentKind
 from app.modules.warehouse.infrastructure import SqlAlchemyLabelSettings
 from app.modules.warehouse.label_jobs import LabelAgentRow, add_job
@@ -79,14 +84,17 @@ def _characterization(session, instrument_id):
     return None
 
 
-def _next_control(measured_on):
-    """Same interval as the passport (CONTROL_INTERVAL_MONTHS), day clamped to the month's end."""
-    from calendar import monthrange
-    from datetime import date
-    from app.modules.production.instrument_public import CONTROL_INTERVAL_MONTHS
-    month = measured_on.month - 1 + CONTROL_INTERVAL_MONTHS
-    year, month = measured_on.year + month // 12, month % 12 + 1
-    return date(year, month, min(measured_on.day, monthrange(year, month)[1]))
+def same_day_repeats(session, instrument_id, measured) -> tuple:
+    """The other named connections of the same control: earlier uploads measured the same day (rotated 120°)."""
+    if session is None or measured is None:
+        return ()
+    files, repeats = SqlAlchemyInstrumentFileRepository(session), []
+    for file_id in RfRepository(session).characterization_history_file_ids(instrument_id):
+        file = files.get(instrument_id, file_id)
+        previous = characterization(file) if file else None
+        if previous is not None and previous.measured_on == measured.measured_on:
+            repeats.append(previous)
+    return tuple(repeats)
 
 
 def type_line(name: str) -> str:
@@ -100,10 +108,35 @@ def type_line(name: str) -> str:
     return " ".join(words).strip(" ,–—-")
 
 
-def _content(item, session=None):
+def _limit(value: float | None) -> str:
+    return f"{value:.2f}".replace(".", ",") if value is not None else ">2"
+
+
+def band_cells(steps) -> tuple[tuple[str, str, str], ...]:
+    """The label grid's cells per band: (up to, GHz; VSWR ≤; loss ≤, dB) — the round limits the passport quotes."""
+    return tuple((number(step.stop_ghz), _limit(step.vswr_round), _limit(step.loss_round)) for step in steps.bands)
+
+
+def kind_line(name: str, rf: RfDetails) -> str:
+    """The label's kind: an adapter reads «Переход коаксиальный» (ГОСТ term, owner 18.11) whatever its old name says."""
+    return ROLE_LABELS["adapter"] if rf.role == "adapter" or is_adapter_name(name) else type_line(name)
+
+
+def _application(item, rf: RfDetails, measured, repeats=()):
+    """«Применять до X ГГц»: the same norm and VNA uncertainty as the passport (no shop-wide VSWR threshold)."""
+    model, _ = resolve_vna((*measured.comments, measured.file_name))
+    return application(measured, tuple(port.series for port in rf.interfaces),
+                       norm_for(item.name, item.doc_designation or "", rf),
+                       uncertainty=uncertainty_for(model), loss_uncertainty=loss_uncertainty_for(model), repeats=repeats)
+
+
+def _content(item, session=None, today=None):
     rf = RfRepository(session).get(item.id) if session is not None else RfDetails()
     measured = _characterization(session, item.id) if session is not None else None
-    steps = application(measured, tuple(port.series for port in rf.interfaces)) if measured else None
+    control = instrument_control(session, item.id, today or moscow_now().date(), measured) if measured else None
+    steps = _application(item, rf, measured, same_day_repeats(session, item.id, measured)) if measured else None
+    # The passport's spec: the card's own mating resource, else the maker's/MIL sheet's; the count waits for PR #913.
+    spec = item_spec(item.name, item.doc_designation or "", rf)
     return instrument_content(
         item.inventory_number, item.name, item.serial_number,
         item.verification_due.date() if item.verification_due else None,
@@ -116,11 +149,15 @@ def _content(item, session=None):
         range_line=steps.range_line if steps else "Не измерен",
         table=steps.table_lines() if steps else ("", "", ""),
         table_long=steps.table_lines(long=True) if steps else ("", "", ""),
-        type_line=type_line(item.name), model_line=item.doc_designation or article_of(item) or "",
+        bands=band_cells(steps) if steps else (),
+        type_line=kind_line(item.name, rf), model_line=item.doc_designation or article_of(item) or "",
         measured_on=measured.measured_on if measured else None,
-        next_control=_next_control(measured.measured_on) if measured else None,
+        next_control=control.due_on if control else None, control_short=control.short if control else "",
+        control_line=control.label_line if control else "",
         measurement_date=measured.measurement_date if measured else "",
         impedance_warning=impedance_warning(rf), card_url=public_passport_url(item.id),
+        mating_resource=spec.mating_resource if spec else None, mating_count=None,
+        temp_min_c=spec.temp_min_c if spec else None, temp_max_c=spec.temp_max_c if spec else None,
     )
 
 
@@ -217,7 +254,12 @@ def instrument_passport(
             item = SqlAlchemyInstrumentRepository(session).get(instrument_id)
             if item is None:
                 raise KeyError("СИ не найдено")
-            return passport_pdf(item, RfRepository(session).get(item.id), _characterization(session, item.id),
-                                generated=now, card_url=instrument_card_url(item.inventory_number))
+            measured = _characterization(session, item.id)
+            return passport_pdf(item, RfRepository(session).get(item.id), measured,
+                                generated=now, card_url=instrument_card_url(item.inventory_number),
+                                registry=SqlAlchemyInstrumentRepository(session).list(),
+                                repeats=same_day_repeats(session, item.id, measured),
+                                matings_since=MatingRepository(session).matings_since(item.id, measured.measured_on)
+                                if measured else None)
     return Response(content=_rendered(build), media_type="application/pdf",
                     headers={"Cache-Control": "no-store", "Content-Disposition": 'inline; filename="instrument-passport.pdf"'})

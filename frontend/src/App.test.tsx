@@ -375,6 +375,8 @@ it("preserves the scanned inventory link through login and opens its passport ca
     if (path === "/api/production/boxes") return json({ boxes: [] });
     if (path === "/api/production/instruments") return json({ instruments: [adapter] });
     if (path === "/api/production/vswr/tasks") return json({ tasks: [] });
+    if (path.endsWith("/matings")) return json({ instrument_id: "x", resource: null, status: "unknown", has_connectors: false, ends: [{ end: "A", total: 0, version: 0, percent_used: null, status: "unknown", initial_recorded: false, can_initialize: true }], events: [] });
+    if (path.endsWith("/vna-checks")) return json({ instrument_id: "x", applicable: false, due: [], records: [] });
     if (path.endsWith("/rf-interfaces")) return json({ rf: { version: 0, interfaces: [], role: "unknown", confirmed: false, source: "", f_min_ghz: null } });
     if (path === "/api/notifications/unread") return json({ unread: 0 });
     return json({}, 404);

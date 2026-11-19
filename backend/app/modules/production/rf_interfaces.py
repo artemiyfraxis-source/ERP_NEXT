@@ -10,7 +10,9 @@ from .domain import ProductionValidationError
 
 SERIES = ("SMA", "3.5mm", "N", "TNC", "BNC", "F", "RP-SMA", "тип III")
 ROLES = ("unknown", "vna", "adapter", "test_cable", "auto_calibration", "solt_kit", "load", "load_kit")
-ROLE_LABELS = dict(zip(ROLES, ("Не указано", "ВАЦ", "Переходник", "Тестовый кабель", "АКМ", "Набор SOLT", "Нагрузка", "Нагрузки SMA-MF06")))
+# Roles that carry an assigned VSWR/loss norm (production_rf_details.ck_rf_details_norm).
+NORM_ROLES = ("adapter", "test_cable")
+ROLE_LABELS = dict(zip(ROLES, ("Не указано", "ВАЦ", "Переход коаксиальный", "Тестовый кабель", "АКМ", "Набор SOLT", "Нагрузка", "Нагрузки SMA-MF06")))
 
 
 @dataclass(frozen=True)
@@ -50,8 +52,17 @@ class RfDetails:
     # This definition explicitly means the complete M+F SOL set and all three named thrus.
     kit_definition: str = ""
     version: int = 0
+    mating_resource: int | None = None
+    # The norm ASSIGNED to this adapter/cable: an id of backend/data/rf-norms.json (checked against the catalog on save).
+    norm_id: str = ""
 
     def __post_init__(self):
+        if not isinstance(self.norm_id, str) or not re.fullmatch(r"[a-z0-9.-]{0,64}", self.norm_id):
+            raise ProductionValidationError("Некорректный идентификатор нормы СИ")
+        if self.norm_id and self.role not in NORM_ROLES:
+            raise ProductionValidationError("Норма назначается только переходу или тестовому кабелю")
+        if self.mating_resource is not None and (type(self.mating_resource) is not int or not 0 < self.mating_resource <= 2_147_483_647):
+            raise ProductionValidationError("Ресурс сочленений должен быть положительным целым числом")
         if len(self.interfaces) > 2 or self.role not in ROLES:
             raise ProductionValidationError("Допустимы не более двух ВЧ-интерфейсов и известное назначение")
         if len(self.source) > 2000 or self.version < 0:
@@ -75,6 +86,14 @@ class RfDetails:
                 raise ProductionValidationError("Для подтверждения интерфейсов укажите сопротивление")
             if self.role in definitions and self.kit_definition != definitions[self.role]:
                 raise ProductionValidationError("Подтвердите состав набора калибровки или нагрузок")
+
+
+# «Переход коаксиальный» (ГОСТ term, owner 18.11) and the older «переходник»; not «переходная» / «переходы».
+_ADAPTER_WORD = re.compile(r"(?<![\w])переход(?:ник)?(?![\w])", re.I)
+
+
+def is_adapter_name(name: str) -> bool:
+    return bool(_ADAPTER_WORD.search(name))
 
 
 def mates(left: RfInterface, right: RfInterface) -> bool:
@@ -175,5 +194,5 @@ def propose_details(inventory_number: str, name: str) -> RfDetails:
         from dataclasses import replace
         interfaces = tuple(replace(p, impedance_ohm=75, f_source=f"{p.f_source}; перечень владельца: 75 Ом") for p in interfaces)
     # A kit name without its contents never becomes a two-port adapter or a valid SOLT kit.
-    role = "adapter" if len(interfaces) == 2 and "переходник" in name.lower() else "unknown"
+    role = "adapter" if len(interfaces) == 2 and is_adapter_name(name) else "unknown"
     return RfDetails(interfaces, role, source=f"Наименование: {name}")

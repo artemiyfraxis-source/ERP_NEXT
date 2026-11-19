@@ -26,7 +26,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.modules.production.api import production_uow_factory, techcards_uow_factory
+from app.modules.production.api import production_uow_factory, shipped_task_ids, techcards_uow_factory
 from app.modules.production.domain import ProductionValidationError
 from app.modules.production.vswr import (
     VERDICT_NAMES,
@@ -188,11 +188,44 @@ def document_customer(document: Mapping[str, Any] | None) -> dict[str, Any] | No
 
 def task_norm(
     document: Mapping[str, Any] | None, current: Mapping[str, Any] | None, current_revision: int | None,
-    refs: CoaxRefs, now: datetime,
+    refs: CoaxRefs, now: datetime, *, measured: Callable[[], bool] = lambda: False,
 ) -> dict[str, Any]:
     """Норма для новых замеров задания: закреплённой ревизии ЭТК (`etk_norm`), но норма заказчика ТЕКУЩЕЙ выданной
     ревизии (`current`; None — задание и так на текущей) перекрывает закреплённую, когда её там нет или она другая.
-    Справочная норма по комплектующим и факты сборки — из закреплённой ревизии."""
+    «Контроль КСВН» (все / 1 из N / не проверять) тоже берётся из текущей выданной ревизии, когда он там задан: технолог
+    снял контроль (708К., владелец 19.11: «нет переходников» к ВАЦ) — запущенное задание больше не ждёт замеров. Но
+    задание, у которого замеры уже есть (`measured`, спрашивается только тогда), «не проверять» новой ревизии не
+    снимает: его замеры и вердикты остаются на виду с прежним контролем. Ужесточение («не проверять» → «все») действует
+    всегда. Справочная норма по комплектующим и факты сборки — из закреплённой ревизии."""
+    norm = _task_norm(document, current, current_revision, refs, now)
+    control = document_control(current) if current is not None else None
+    if control is None or control == vswr_control(norm.get("control")):
+        return norm
+    if control["mode"] == "none" and measured():
+        return norm
+    return {**norm, "control": control}
+
+
+def task_measured(uow_factory: Callable[[], Any], task_id: UUID) -> Callable[[], bool]:
+    """Есть ли у задания хоть один замер КСВН — лениво, для `task_norm`."""
+    return lambda: bool(list_vswr_for_task(task_id, uow_factory()))
+
+
+def document_control(document: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """«Контроль КСВН» документа ЭТК: из его нормы (`coaxVswrNorm.control`), иначе из build_config; не задан — None."""
+    if not isinstance(document, Mapping):
+        return None
+    norm = document.get(NORM_KEY)
+    config = document.get("build_config")
+    coax = config.get("coax") if isinstance(config, Mapping) else None
+    return (vswr_control(norm.get("control") if isinstance(norm, Mapping) else None)
+            or vswr_control(coax.get("vswrControl") if isinstance(coax, Mapping) else None))
+
+
+def _task_norm(
+    document: Mapping[str, Any] | None, current: Mapping[str, Any] | None, current_revision: int | None,
+    refs: CoaxRefs, now: datetime,
+) -> dict[str, Any]:
     norm = etk_norm(document, refs, now)
     # Only an explicit norm requirement may narrow the pinned assembly's physical ends.
     if "requiredEnds" not in norm:
@@ -257,6 +290,14 @@ def _num(value: Any) -> float | None:
     return float(value) if value is not None else None
 
 
+def vswr_decision(item: VswrMeasurement) -> dict[str, Any]:
+    """Решение по замеру сборки — как его записал сервер по правилу СТО ФРАК-002-2026 п. 13.3 (`vswr.decide_by_rule`):
+    «border» — в пределах ±U ВАЦ от нормы, нужен повтор в 3 подключениях; текст — причина решения."""
+    status = item.verdict.value
+    return {"status": status, "uncertainty": _num(item.uncertainty),
+            "text": item.verdict_reason if status == "border" else ""}
+
+
 def _measurement_result(item: VswrMeasurement, *, trace: bool = False) -> dict[str, Any]:
     result = {
         "id": str(item.id), "serial_id": str(item.serial_id), "serial_number": item.serial_number,
@@ -266,6 +307,8 @@ def _measurement_result(item: VswrMeasurement, *, trace: bool = False) -> dict[s
         "norm": item.norm, "norm_vswr_max": _num(item.norm_vswr_max),
         "verdict": item.verdict.value, "verdict_name": VERDICT_NAMES[item.verdict],
         "verdict_manual": item.verdict_manual, "verdict_reason": item.verdict_reason,
+        "decision": vswr_decision(item),
+        "repeat_of": str(item.repeat_of) if item.repeat_of is not None else None, "repeat_set": list(item.repeat_set),
         "inspector": {"id": str(item.inspector_id), "name": item.inspector_name},
         "measured_at": item.measured_at.isoformat(),
         "file_name": item.file_name, "points": item.points, "file_meta": item.file_meta,
@@ -424,7 +467,8 @@ def upload_measurement(
     заказчика текущей ревизии перекрывает — `task_norm`); вердикт по ней сам, а без нормы — вручную."""
     task = _task(uow_factory, payload.task_id)
     document, etk, current = _task_etk(techcards_factory, task)
-    norm = (task_norm(document, current, etk["current_revision"], CoaxRefs(refs_factory), now) if etk["techcard_id"]
+    norm = (task_norm(document, current, etk["current_revision"], CoaxRefs(refs_factory), now,
+                      measured=task_measured(uow_factory, task.id)) if etk["techcard_id"]
             else undefined_norm(NO_ETK_REASON))
     files = tuple(_file_input(file, payload.instrument_id, principal.actor.id, uow_factory) for file in payload.files or ())
     legacy = None if files else _file_input(payload, payload.instrument_id, principal.actor.id, uow_factory)
@@ -450,12 +494,16 @@ def coax_tasks(
     refs_factory: Annotated[Callable[[], Any] | None, Depends(references_uow_factory)],
 ) -> dict:
     """Список для выбора задания в «Замерах КСВН»: только задания, чья закреплённая ЭТК — коаксиальная сборка. Каждая
-    ЭТК читается один раз, справочники — один раз и только если нужна норма старой ЭТК; файлов замеров не грузим."""
+    ЭТК читается один раз, справочники — один раз и только если нужна норма старой ЭТК; файлов замеров не грузим.
+    Задания КБ, уехавшей целиком (`shipped_task_ids`), не показываем — мерить уже нечего (владелец 18.11). Задания, чья
+    ЭТК говорит «Контроль КСВН: не проверять» (с учётом текущей выданной ревизии, `task_norm`) и у которых нет ни
+    одного замера, тоже не показываем — КСВН у них не измеряется (708К.: нет переходников к ВАЦ, владелец 19.11)."""
     with uow_factory() as uow:
         tasks = [task for task in uow.production.list(limit=1000) if task.status is not ProductionStatus.CANCELLED]
+        shipped = shipped_task_ids(uow, tasks)
+        tasks = [task for task in tasks if task.id not in shipped]
     documents = _etk_documents(techcards_factory, tasks)
     refs = CoaxRefs(refs_factory)
-    norms: dict[tuple[Any, Any, Any, Any], dict[str, Any]] = {}
     rows = []
     for task in tasks:
         key = (task.techcard_id, task.techcard_revision, task.project, task.item)
@@ -463,18 +511,22 @@ def coax_tasks(
         if found is None or coax_config(found[0]) is None:
             continue
         document, current, current_revision = found
-        if key not in norms:
-            norms[key] = task_norm(document, current, current_revision, refs, now)
-        norm = norms[key]
-        shown = _norm_result(norm)
+        measured = task_measured(uow_factory, task.id)
+        norm = task_norm(document, current, current_revision, refs, now, measured=measured)
         control = etk_control(document, norm)
+        if control["mode"] == "none" and not measured():
+            continue  # КСВН не измеряется и замеров нет — в списке делать нечего
+        shown = _norm_result(norm)
         required = [position for position in range(1, task.quantity + 1) if vswr_in_sample(control, position)]
+        # Экран ОТК группирует замеры по заданию/КБ (владелец 19.11): проект, КБ, ревизия ЭТК, полоса нормы и брак.
         rows.append({
-            "id": str(task.id), "number": task.number, "name": task.name, "item": task.item,
+            "id": str(task.id), "number": task.number, "name": task.name, "item": task.item, "project": task.project,
             "quantity": task.quantity, "status": task.status.value,
-            "norm": {"status": shown["status"], "vswr_max": shown["vswr_max"], "source": shown["source"]},
+            "etk_revision": task.techcard_revision if task.techcard_revision is not None else current_revision,
+            "norm": {"status": shown["status"], "vswr_max": shown["vswr_max"], "source": shown["source"],
+                     "band_mhz": shown["band_mhz"]},
             "control": control,
-            "required": {"total": len(required), "measured": _measured_count(uow_factory, task, required)},
+            "required": {"total": len(required), **_progress(uow_factory, task, required)},
         })
     return {"tasks": rows}
 
@@ -507,18 +559,26 @@ def _etk_documents(techcards_factory: Callable[[], Any] | None, tasks) -> dict[t
     return found
 
 
-def _measured_count(uow_factory, task, required: list[int]) -> int:
-    """Сколько из требуемых изделий задания уже имеют замер; заданию без замеров изделия не перебираем."""
-    measured_ids = {item.serial_id for item in list_vswr_for_task(task.id, uow_factory())}
-    if not measured_ids:
-        return 0
+def _progress(uow_factory, task, required: list[int]) -> dict[str, Any]:
+    """Сколько из требуемых изделий задания уже имеют замер, сколько изделий в браке по последнему замеру и наибольший
+    КСВН последних замеров; заданию без замеров изделия не перебираем."""
+    latest: dict[UUID, VswrMeasurement] = {}
+    for item in list_vswr_for_task(task.id, uow_factory()):  # позиция, попытка — последняя перекрывает
+        latest[item.serial_id] = item
+    if not latest:
+        return {"measured": 0, "failed": 0, "max_vswr": None}
     count = 0
     with uow_factory() as uow:
         for position in required:
             serial = uow.serials.by_position(task.id, position)
-            if serial is not None and serial.id in measured_ids:
+            if serial is not None and serial.id in latest:
                 count += 1
-    return count
+    peaks = [item.max_vswr for item in latest.values() if item.max_vswr is not None]
+    return {
+        "measured": count,
+        "failed": sum(item.verdict is VswrVerdict.FAIL for item in latest.values()),
+        "max_vswr": _num(max(peaks)) if peaks else None,
+    }
 
 
 @router.get("/tasks/{task_id}")
@@ -545,14 +605,17 @@ def task_measurements(
             if serial is not None:
                 serials.append((position, serial))
     document, etk, current = _task_etk(techcards_factory, task)
-    norm = (task_norm(document, current, etk["current_revision"], CoaxRefs(refs_factory), now) if etk["techcard_id"]
+    norm = (task_norm(document, current, etk["current_revision"], CoaxRefs(refs_factory), now,
+                      measured=task_measured(uow_factory, task.id)) if etk["techcard_id"]
             else undefined_norm(NO_ETK_REASON))
     control = etk_control(document, norm)
     # Требуемые замеры — по всей партии задания (выборка 1 из N: первое и каждое N-е), замерено — у кого есть замер.
     measured = {position for position, serial in serials if serial.id in latest}
     required = [position for position in range(1, task.quantity + 1) if vswr_in_sample(control, position)]
     return {
-        "task": {"id": str(task.id), "number": task.number, "name": task.name, "quantity": task.quantity},
+        "task": {"id": str(task.id), "number": task.number, "name": task.name, "quantity": task.quantity,
+                 "project": task.project, "item": task.item},
+        "etk": {"item_index": etk["item_index"], "revision": etk["revision"], "current_revision": etk["current_revision"]},
         "norm": _norm_result(norm),
         "control": control,
         "required": {"total": len(required), "measured": len(measured.intersection(required))},
@@ -617,7 +680,8 @@ def serial_passport(
     serial, rows = _serial_measurements(uow_factory, task, position)
     document, etk, current = _task_etk(techcards_factory, task)
     refs = CoaxRefs(refs_factory)
-    etk_side = (task_norm(document, current, etk["current_revision"], refs, now) if etk["techcard_id"]
+    etk_side = (task_norm(document, current, etk["current_revision"], refs, now,
+                          measured=task_measured(uow_factory, task.id)) if etk["techcard_id"]
                 else undefined_norm(NO_ETK_REASON))
     latest = rows[-1] if rows else None
     # Норма паспорта — та, по которой судили последний замер (снимок); замера ещё нет — норма из ЭТК задания.

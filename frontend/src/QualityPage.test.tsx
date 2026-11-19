@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { QualityPage } from "./QualityPage";
-import type { Principal, ProductionInstrument, ProductionOperation, ProductionTask } from "./api";
+import { resolveScan, vswrTone } from "./VswrSection";
+import { productionApi, type CableAssemblyPassport, type Principal, type ProductionInstrument, type ProductionOperation, type ProductionTask, type QcPlan, type VswrTaskListItem } from "./api";
 
 const user = { id: "10000000-0000-0000-0000-000000000001", email: "u@example.test", name: "Сотрудник", department: "Производство" };
 // Access levels: the section «ОТК» (`quality`) holds the inspection and the instrument registry, «Ресурсное планирование»
@@ -77,8 +78,41 @@ interface Data {
   rejections?: unknown[];
   defects?: unknown[];
   vswrTasks?: unknown[];
+  /** Ответ окна ОТК `/qc/plan/…`: план или готовый ответ (ошибка); по умолчанию — ЭТК без проверок. */
+  plan?: QcPlan | Response;
   get?: (path: string) => Response | null;
 }
+
+const emptyPlan: QcPlan = {
+  task: { id: "", number: "ПЗ-0001", project: "591K.3", item: "591K.3.КБ1", name: "Жгут", quantity: 10 },
+  etk: { item_index: "КБ1", product_name: "Жгут", revision: 3, current_revision: 3 },
+  checks: [], instruments: [], missing_instruments: [], vswr: null, defects: [],
+  sto: { designation: "СТО ФРАК-001-2026", revision: "3", title: "Типовые дефекты" },
+};
+// План трёхоперационной ЭТК коаксиальной сборки — как его собирает сервер (test_qc_plan_api).
+const richPlan: QcPlan = {
+  ...emptyPlan,
+  checks: [
+    { kind: "visual", title: "Внешний осмотр", method: "СТО ФРАК-001-2026, разд. 4.1, 4.4.5", tools: ["Лупа 4×", "Визуально"],
+      items: [{ operation: "2. Пайка центрального контакта", text: "Галтель ровная, без наплывов", tolerance: "" }] },
+    { kind: "dimensions", title: "Размеры", method: "СТО ФРАК-001-2026, разд. 4.1", tools: ["Штангенциркуль"],
+      items: [{ operation: "1. Резка кабеля", text: "Длина отрезка по ЭТК", tolerance: "500 ± 5 мм" }] },
+    { kind: "vswr", title: "КСВН", method: "СТО ФРАК-002-2026; СТО ФРАК-001-2026, разд. 4.8", tools: ["ВАЦ (S11, S22)"], required: true,
+      items: [{ operation: "3. Контроль КСВН", text: "Измерить КСВН с двух концов", tolerance: "≤ 1,35" }] },
+    { kind: "continuity", title: "Прозвонка", method: "СТО ФРАК-001-2026, разд. 4.4.5", tools: ["Тестер цепей"], items: [] },
+  ],
+  instruments: [{ id: "75000000-0000-0000-0000-000000000001", inventory_number: "СИ-014", name: "Микрометр МК-25", purpose: "Размеры" }],
+  missing_instruments: [{ tool: "Тестер цепей", purpose: "Прозвонка" }],
+  vswr: { mode: "all", every: null, total: 20, measured: 12, failed: 1, max_vswr: 1.42, norm_vswr_max: 1.35, band_mhz: [1000, 3000],
+    norm_status: "ok", norm_reason: "", units: [
+      { position: 1, serial_number: "ПЗ-0001-0001", verdict: "pass", verdict_name: "Годно", max_vswr: 1.2, instrument_id: "vna" },
+      { position: 5, serial_number: "ПЗ-0001-0005", verdict: "fail", verdict_name: "Не годно", max_vswr: 1.42, instrument_id: "vna" },
+    ] },
+  defects: [
+    { code: "4.1.17", section: "4.1", defect: "Длина вне допуска", criterion: "Длина не по КД", class: "Значительный" },
+    { code: "4.8.16", section: "4.8", defect: "КСВН вне нормы", criterion: "КСВН сборки больше нормы КД", class: "Критический" },
+  ],
+};
 
 function qualityFetch(data: Data = {}, post: (path: string, body: unknown) => Response | null = () => null) {
   const requested: string[] = [];
@@ -98,6 +132,7 @@ function qualityFetch(data: Data = {}, post: (path: string, body: unknown) => Re
     if (path === "/api/production/qc/rejections") return json({ rejections: data.rejections ?? [] });
     if (path === "/api/production/defects") return json({ defects: data.defects ?? [] });
     if (path === "/api/production/vswr/tasks") return json({ tasks: data.vswrTasks ?? [] });
+    if (path.startsWith("/api/production/qc/plan/")) return data.plan instanceof Response ? data.plan.clone() : json(data.plan ?? emptyPlan);
     const handled = data.get?.(path);
     if (handled) return handled;
     throw new Error(`Unexpected request: ${path}`);
@@ -107,6 +142,17 @@ function qualityFetch(data: Data = {}, post: (path: string, body: unknown) => Re
 
 beforeEach(() => { window.history.replaceState({}, "", "/?section=quality"); localStorage.clear(); });
 afterEach(() => { vi.restoreAllMocks(); });
+
+/** Окно ОТК коробки: щелчок по её строке в очереди. */
+async function openBox(number: string) {
+  fireEvent.click(await screen.findByRole("row", { name: new RegExp(number) }));
+  return screen.findByRole("dialog", { name: `ОТК · ${number}` });
+}
+function decide(dialog: HTMLElement, accepted: string, rejected: string) {
+  const number = within(dialog).getByLabelText(/^Годные ОТК/).getAttribute("aria-label")!.replace("Годные ОТК ", "");
+  fireEvent.change(within(dialog).getByLabelText(`Годные ОТК ${number}`), { target: { value: accepted } });
+  fireEvent.change(within(dialog).getByLabelText(`Брак ОТК ${number}`), { target: { value: rejected } });
+}
 
 const headings = () => screen.queryAllByRole("heading", { level: 2 }).map((heading) => heading.textContent);
 
@@ -149,7 +195,8 @@ it("does not give the QC actions to edit on planning alone: that key decides rej
 it("gives the QC actions by edit on «ОТК» whatever the level is called", async () => {
   qualityFetch({ boxes: [box("000003-4", 3, assembly)] });
   render(<QualityPage principal={as("operator", { quality: "edit", production: "view" })} />);
-  expect(await screen.findByRole("button", { name: "Принять ОТК" })).toBeInTheDocument();
+  await openBox("000003-4");
+  expect(screen.getByRole("button", { name: "Принять ОТК" })).toBeInTheDocument();
 });
 
 it("tells the QC inspector when no box waits for inspection", async () => {
@@ -158,12 +205,13 @@ it("tells the QC inspector when no box waits for inspection", async () => {
   expect(await screen.findByText(/Коробок на проверку нет/)).toBeInTheDocument();
 });
 
+const queued = () => screen.getAllByRole("row").map((row) => row.textContent ?? "");
+
 it("sends to QC only the box of the final operation of the scheme", async () => {
   qualityFetch({ boxes: [box("000001-8", 1, cutA), box("000002-6", 2, cutB), box("000003-4", 3, assembly)] });
   render(<QualityPage principal={qc} />);
-  expect(await screen.findByLabelText("Годные ОТК 000003-4")).toBeInTheDocument();
-  expect(screen.queryByLabelText("Годные ОТК 000001-8")).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("Годные ОТК 000002-6")).not.toBeInTheDocument();
+  expect(await screen.findByRole("row", { name: /000003-4/ })).toBeInTheDocument();
+  expect(queued().some((text) => /000001-8|000002-6/.test(text))).toBe(false);
 });
 
 // Подтверждает только ОТК (13.10.2026): сданная монтажником коробка последней операции — сразу в очереди.
@@ -174,29 +222,50 @@ const handed = (number: string, position: number, operationId: string) => ({
 it("queues the box of the final operation as soon as the fitter hands it in, and old master-confirmed ones too", async () => {
   qualityFetch({ boxes: [handed("000001-8", 1, cutA), handed("000003-4", 3, assembly), box("000004-2", 3, assembly), { ...handed("000005-0", 3, assembly), status: "Возвращена" }] });
   render(<QualityPage principal={qc} />);
-  expect(await screen.findByLabelText("Годные ОТК 000003-4")).toBeInTheDocument();
-  expect(screen.getByLabelText("Годные ОТК 000004-2")).toBeInTheDocument();
-  expect(screen.queryByLabelText("Годные ОТК 000001-8")).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("Годные ОТК 000005-0")).not.toBeInTheDocument();
+  expect(await screen.findByRole("row", { name: /000003-4.*сдана монтажником/ })).toBeInTheDocument();
+  expect(screen.getByRole("row", { name: /000004-2.*подтверждена мастером/ })).toBeInTheDocument();
+  expect(queued().some((text) => /000001-8|000005-0/.test(text))).toBe(false);
 });
 
-it("returns a handed box to its fitter from the QC queue with a reason", async () => {
+it("returns a handed box to its fitter from the OTK window with a reason", async () => {
   let returned: { path: string; body: unknown } | null = null;
   qualityFetch({ boxes: [handed("000003-4", 3, assembly)] }, (path, body) => {
     if (path.endsWith("/return")) { returned = { path, body }; return json({ box: { ...handed("000003-4", 3, assembly), status: "Возвращена" } }); }
     return null;
   });
   render(<QualityPage principal={qc} />);
+  const dialog = await openBox("000003-4");
 
-  fireEvent.click(await screen.findByRole("button", { name: "Вернуть…" }));
-  const send = screen.getByRole("button", { name: "Вернуть монтажнику" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Вернуть монтажнику…" }));
+  const send = within(dialog).getByRole("button", { name: "Вернуть монтажнику" });
   expect(send).toBeDisabled();
-  fireEvent.change(screen.getByLabelText("Причина возврата 000003-4"), { target: { value: " Пересчитать " } });
+  fireEvent.change(within(dialog).getByLabelText("Причина возврата 000003-4"), { target: { value: " Пересчитать " } });
   fireEvent.click(send);
 
   await waitFor(() => expect(returned).toEqual({
     path: "/api/production/boxes/74000000-0000-0000-0000-000000000103/return", body: { version: 1, reason: "Пересчитать" },
   }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+});
+
+it("shows what to check from the ETK with the methodology, the VSWR status and passports, and fills the planned instruments", async () => {
+  qualityFetch({ boxes: [box("000003-4", 3, assembly)], instruments: [micrometer, vna], plan: richPlan });
+  render(<QualityPage principal={admin} />);
+  const dialog = await openBox("000003-4");
+
+  const checks = await within(dialog).findByRole("table", { name: "Проверки ОТК по ЭТК" });
+  const dims = within(checks).getByRole("row", { name: /Размеры/ });
+  expect(within(dims).getByText("1. Резка кабеля")).toBeInTheDocument();
+  expect(within(dims).getByText("500 ± 5 мм")).toBeInTheDocument();
+  expect(within(dims).getByText("СТО ФРАК-001-2026, разд. 4.1")).toBeInTheDocument();
+  expect(within(checks).getByRole("row", { name: /Прозвонка.*Цепи и подключение экрана/ })).toBeInTheDocument();
+  expect(within(dialog).getByText("померено 12 из 20 · брак 1 · макс. КСВН 1,42 при норме ≤ 1,35")).toHaveClass("tone-danger");
+  expect(within(dialog).getByRole("button", { name: "№ 1" })).toHaveAttribute("title", "Паспорт ПЗ-0001-0001");
+  expect(within(dialog).getByRole("button", { name: "Убрать СИ-014 Микрометр МК-25" })).toBeInTheDocument();
+  expect(within(dialog).getByText(/Нет действующего СИ в реестре: тестер цепей \(прозвонка\)/)).toBeInTheDocument();
+  // Годные не подставлены: контролёр вводит оба числа.
+  expect(within(dialog).getByLabelText("Годные ОТК 000003-4")).toHaveValue(null);
+  expect(within(dialog).getByRole("button", { name: "Принять ОТК" })).toBeDisabled();
 });
 
 it("accepts a box at QC against the registered instruments that are still valid", async () => {
@@ -206,29 +275,30 @@ it("accepts a box at QC against the registered instruments that are still valid"
     (path, body) => { if (path.endsWith("/qc")) { payload = body; return json({ box: box("000003-4", 3, assembly), inspection_id: "1", defect_number: null, serials: [] }); } return null; },
   );
   render(<QualityPage principal={qc} />);
+  const dialog = await openBox("000003-4");
 
-  const picker = await screen.findByLabelText("Средства измерения 000003-4");
+  const picker = await within(dialog).findByLabelText("Средства измерения 000003-4");
   expect(within(picker).getAllByRole("button")).toHaveLength(1);
   expect(within(picker).getByText("не выбраны")).toBeInTheDocument();
   fireEvent.click(within(picker).getByRole("button", { name: "+ СИ" }));
   const popup = screen.getByRole("dialog", { name: "Выбрать СИ · 000003-4" });
   expect(within(popup).getAllByRole("checkbox")).toHaveLength(1);
   const toggle = within(popup).getByRole("checkbox", { name: "СИ-014 Микрометр МК-25" });
-  expect(toggle).not.toBeChecked();
   fireEvent.click(toggle);
-  expect(toggle).toBeChecked();
   expect(within(picker).getByRole("button", { name: "Убрать СИ-014 Микрометр МК-25" })).toHaveAttribute("title", expect.stringContaining("поверка до 01.09.2027"));
-  expect(within(picker).queryByText("не выбраны")).not.toBeInTheDocument();
   fireEvent.keyDown(toggle, { key: "Escape" });
-  fireEvent.click(screen.getByRole("button", { name: "Принять ОТК" }));
+  decide(dialog, "5", "0");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Принять ОТК: годных 5" }));
 
-  await waitFor(() => expect(payload).toMatchObject({ version: 1, accepted: 5, rejected: 0, instrument_ids: [micrometer.id] }));
+  await waitFor(() => expect(payload).toMatchObject({ version: 1, accepted: 5, rejected: 0, defect_character: "", instrument_ids: [micrometer.id] }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 });
 
 it("removes a selected chip and restores the empty selection with focus on the add button", async () => {
   localStorage.setItem("erp-quality-last-instruments", JSON.stringify([micrometer.id]));
   qualityFetch({ boxes: [box("000003-4", 3, assembly)], instruments: [micrometer] });
   render(<QualityPage principal={qc} />);
+  await openBox("000003-4");
   fireEvent.click(await screen.findByRole("button", { name: "Убрать СИ-014 Микрометр МК-25" }));
   expect(screen.queryByRole("button", { name: /^Убрать/ })).not.toBeInTheDocument();
   expect(screen.getByText("не выбраны")).toBeInTheDocument();
@@ -243,6 +313,7 @@ it("searches more than eight active instruments, preserves selection across sear
   const instruments = Array.from({ length: 9 }, (_, index) => ({ ...micrometer, id: `si-${index}`, inventory_number: `СИ.${index + 1}`, name: `Микрометр ${index + 1} · полное наименование` }));
   qualityFetch({ boxes: [box("000003-4", 3, assembly)], instruments });
   render(<QualityPage principal={qc} />);
+  await openBox("000003-4");
   const add = await screen.findByRole("button", { name: "+ СИ" });
   fireEvent.click(add);
   const search = screen.getByRole("searchbox", { name: "Найти СИ" });
@@ -258,7 +329,7 @@ it("searches more than eight active instruments, preserves selection across sear
   fireEvent.change(search, { target: { value: "нет такого прибора" } });
   expect(screen.getByText("СИ не найдены")).toBeInTheDocument();
   fireEvent.keyDown(search, { key: "Escape" });
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: /Выбрать СИ/ })).not.toBeInTheDocument();
   expect(add).toHaveFocus();
   expect(add).toHaveAttribute("aria-expanded", "false");
   expect(screen.getAllByRole("button", { name: /^Убрать/ })).toHaveLength(2);
@@ -272,14 +343,15 @@ it("searches more than eight active instruments, preserves selection across sear
 it("dismisses the instrument popup on outside pointer or focus and offers an honest empty list", async () => {
   qualityFetch({ boxes: [box("000003-4", 3, assembly)] });
   render(<QualityPage principal={qc} />);
+  await openBox("000003-4");
   const add = await screen.findByRole("button", { name: "+ СИ" });
   fireEvent.click(add);
   expect(screen.getByText("Нет действующих СИ")).toBeInTheDocument();
   fireEvent.pointerDown(document.body);
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: /Выбрать СИ/ })).not.toBeInTheDocument();
   fireEvent.click(add);
   fireEvent.focusIn(screen.getByLabelText("Годные ОТК 000003-4"));
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: /Выбрать СИ/ })).not.toBeInTheDocument();
 });
 
 it("opens the instrument editor in a modal and lists verification dates without time", async () => {
@@ -341,27 +413,38 @@ it("shows the administrator all four tabs, with only the selected job visible", 
   expect(headings()).toEqual(["Средства измерения"]);
 });
 
+it("leaves boxes of a fully shipped КБ out of the QC queue", async () => {
+  qualityFetch({ boxes: [box("000003-4", 3, assembly), { ...box("000004-2", 4, assembly), kb_shipped: true }] });
+  render(<QualityPage principal={qc} />);
+  expect(await screen.findByRole("row", { name: /000003-4/ })).toBeInTheDocument();
+  expect(queued().some((text) => text.includes("000004-2"))).toBe(false);
+  expect(screen.getByRole("tab", { name: "Очередь ОТК · 1" })).toBeInTheDocument();
+});
+
 it("shows the load failure instead of a blank section", async () => {
   vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Нет связи с ERP"));
   render(<QualityPage principal={qc} />);
   expect(await screen.findByRole("alert")).toHaveTextContent("Нет связи с ERP");
 });
 
-it("keeps tab URLs, queue drafts and loaded data when switching jobs", async () => {
+it("keeps tab URLs, the box draft and loaded data when switching jobs", async () => {
   const requested = qualityFetch({ boxes: [box("000003-4", 3, assembly)], instruments: [micrometer] });
   render(<QualityPage principal={qc} />);
-  fireEvent.change(await screen.findByLabelText("Брак ОТК 000003-4"), { target: { value: "1" } });
-  fireEvent.click(screen.getByRole("button", { name: "+ СИ" }));
+  let dialog = await openBox("000003-4");
+  fireEvent.change(within(dialog).getByLabelText("Брак ОТК 000003-4"), { target: { value: "1" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "+ СИ" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "СИ-014 Микрометр МК-25" }));
   fireEvent.keyDown(document, { key: "Escape" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
   const before = [...requested];
   fireEvent.click(screen.getByRole("tab", { name: "Средства измерения" }));
   expect(new URL(window.location.href).searchParams.get("tab")).toBe("instruments");
   expect(screen.queryByRole("heading", { name: "Очередь ОТК" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: "Очередь ОТК · 1" }));
-  expect(screen.getByLabelText("Брак ОТК 000003-4")).toHaveValue(1);
-  expect(screen.getByRole("button", { name: "Убрать СИ-014 Микрометр МК-25" })).toBeInTheDocument();
   expect(requested).toEqual(before);
+  dialog = await openBox("000003-4");
+  expect(within(dialog).getByLabelText("Брак ОТК 000003-4")).toHaveValue(1);
+  expect(within(dialog).getByRole("button", { name: "Убрать СИ-014 Микрометр МК-25" })).toBeInTheDocument();
 });
 
 it("falls back to the first permitted tab for a forbidden deep link", async () => {
@@ -372,33 +455,53 @@ it("falls back to the first permitted tab for a forbidden deep link", async () =
   expect(new URL(window.location.href).searchParams.get("tab")).toBe("rejects");
 });
 
-it("validates quantities before opening a rejection dialog, then sends its details", async () => {
+it("validates quantities, takes the reject reason from the STO list and sends its details", async () => {
   let payload: unknown;
-  qualityFetch({ boxes: [box("000003-4", 3, assembly)] }, (path, body) => {
+  qualityFetch({ boxes: [box("000003-4", 3, assembly)], plan: richPlan }, (path, body) => {
     if (!path.endsWith("/qc")) return null;
     payload = body; return json({ box: box("000003-4", 3, assembly) });
   });
   render(<QualityPage principal={qc} />);
-  fireEvent.change(await screen.findByLabelText("Брак ОТК 000003-4"), { target: { value: "1" } });
-  expect(screen.getByRole("button", { name: "Принять ОТК" })).toBeDisabled();
-  expect(screen.getByText("Сумма должна быть 5.")).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Годные ОТК 000003-4"), { target: { value: "4" } });
-  fireEvent.click(screen.getByRole("button", { name: "Принять ОТК" }));
-  const dialog = screen.getByRole("dialog");
+  const dialog = await openBox("000003-4");
+  await within(dialog).findByRole("table", { name: "Проверки ОТК по ЭТК" });
+  decide(dialog, "", "1");
   expect(within(dialog).getByRole("button", { name: "Принять ОТК" })).toBeDisabled();
-  fireEvent.change(within(dialog).getByLabelText("Характер"), { target: { value: "Обрыв" } });
-  fireEvent.change(within(dialog).getByLabelText("Описание"), { target: { value: "Нет контакта" } });
-  fireEvent.click(within(dialog).getByRole("button", { name: "Принять ОТК" }));
-  await waitFor(() => expect(payload).toMatchObject({ accepted: 4, rejected: 1, defect_character: "Обрыв", defect_description: "Нет контакта" }));
+  expect(within(dialog).getByText(/Введите годные и брак/)).toBeInTheDocument();
+  decide(dialog, "3", "1");
+  expect(within(dialog).getByText(/Годные и брак вместе — 5 шт, сейчас 4/)).toBeInTheDocument();
+  expect(within(dialog).getByText("В коробке 5 шт · не распределено 1")).toBeInTheDocument();
+  decide(dialog, "4", "1");
+  const reason = within(dialog).getByLabelText(/Причина брака \(СТО ФРАК-001-2026\)/);
+  expect(within(reason).getByRole("group", { name: "Раздел 4.8" })).toBeInTheDocument();
+  fireEvent.change(reason, { target: { value: "4.8.16" } });
+  expect(within(dialog).getByLabelText("Описание брака")).toHaveValue("КСВН сборки больше нормы КД");
+  fireEvent.change(within(dialog).getByLabelText("Описание брака"), { target: { value: "Изделие 0005: КСВН 1,42" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Принять ОТК: годных 4, брак 1" }));
+  await waitFor(() => expect(payload).toMatchObject({ accepted: 4, rejected: 1, defect_character: "4.8.16 КСВН вне нормы", defect_description: "Изделие 0005: КСВН 1,42" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+});
+
+it("takes another reject reason by hand when the STO list has none", async () => {
+  let payload: unknown;
+  qualityFetch({ boxes: [box("000003-4", 3, assembly)] }, (path, body) => (path.endsWith("/qc") ? (payload = body, json({})) : null));
+  render(<QualityPage principal={qc} />);
+  const dialog = await openBox("000003-4");
+  decide(dialog, "4", "1");
+  fireEvent.change(within(dialog).getByLabelText(/Причина брака/), { target: { value: "other" } });
+  fireEvent.change(within(dialog).getByLabelText("Характер брака"), { target: { value: "Обрыв" } });
+  fireEvent.change(within(dialog).getByLabelText("Описание брака"), { target: { value: "Нет контакта" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Принять ОТК: годных 4, брак 1" }));
+  await waitFor(() => expect(payload).toMatchObject({ accepted: 4, rejected: 1, defect_character: "Обрыв", defect_description: "Нет контакта" }));
 });
 
 it("remembers successfully accepted instruments and ignores inactive saved IDs", async () => {
   localStorage.setItem("erp-quality-last-instruments", JSON.stringify([micrometer.id, unverifiedInstrument.id]));
   qualityFetch({ boxes: [box("000003-4", 3, assembly)], instruments: [micrometer, unverifiedInstrument] }, (path) => path.endsWith("/qc") ? json({}) : null);
   render(<QualityPage principal={qc} />);
-  expect(await screen.findByRole("button", { name: "Убрать СИ-014 Микрометр МК-25" })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Принять ОТК" }));
+  const dialog = await openBox("000003-4");
+  expect(await within(dialog).findByRole("button", { name: "Убрать СИ-014 Микрометр МК-25" })).toBeInTheDocument();
+  decide(dialog, "5", "0");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Принять ОТК: годных 5" }));
   await waitFor(() => expect(JSON.parse(localStorage.getItem("erp-quality-last-instruments")!)).toEqual([micrometer.id]));
 });
 
@@ -411,42 +514,51 @@ it("accepts a box when browser storage is unavailable", async () => {
     payload = body; return json({});
   });
   render(<QualityPage principal={qc} />);
-  fireEvent.click(await screen.findByRole("button", { name: "+ СИ" }));
+  const dialog = await openBox("000003-4");
+  fireEvent.click(await within(dialog).findByRole("button", { name: "+ СИ" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "СИ-014 Микрометр МК-25" }));
   fireEvent.keyDown(document, { key: "Escape" });
-  fireEvent.click(screen.getByRole("button", { name: "Принять ОТК" }));
+  decide(dialog, "5", "0");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Принять ОТК: годных 5" }));
   await waitFor(() => expect(payload).toMatchObject({ accepted: 5, rejected: 0, instrument_ids: [micrometer.id] }));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Принять ОТК" })).toBeEnabled());
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
-it("accepts without browser storage and keeps a failed rejection dialog open", async () => {
-  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Storage disabled"); });
-  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("Storage disabled"); });
+it("keeps a failed rejection in the open OTK window", async () => {
   qualityFetch({ boxes: [box("000003-4", 3, assembly)] }, (path) => path.endsWith("/qc") ? new Response(JSON.stringify({ detail: "Коробка изменена" }), { status: 400 }) : null);
   render(<QualityPage principal={qc} />);
-  fireEvent.change(await screen.findByLabelText("Годные ОТК 000003-4"), { target: { value: "4" } });
-  fireEvent.change(screen.getByLabelText("Брак ОТК 000003-4"), { target: { value: "1" } });
-  fireEvent.click(screen.getByRole("button", { name: "Принять ОТК" }));
-  const dialog = screen.getByRole("dialog");
-  fireEvent.change(within(dialog).getByLabelText("Характер"), { target: { value: "Обрыв" } });
-  fireEvent.change(within(dialog).getByLabelText("Описание"), { target: { value: "Нет контакта" } });
-  fireEvent.click(within(dialog).getByRole("button", { name: "Принять ОТК" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Коробка изменена");
+  const dialog = await openBox("000003-4");
+  decide(dialog, "4", "1");
+  fireEvent.change(within(dialog).getByLabelText(/Причина брака/), { target: { value: "other" } });
+  fireEvent.change(within(dialog).getByLabelText("Характер брака"), { target: { value: "Обрыв" } });
+  fireEvent.change(within(dialog).getByLabelText("Описание брака"), { target: { value: "Нет контакта" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Принять ОТК: годных 4, брак 1" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("Коробка изменена");
   expect(dialog).toBeInTheDocument();
+});
+
+it("says so when the checks cannot be loaded, and still lets the inspector decide", async () => {
+  qualityFetch({ boxes: [box("000003-4", 3, assembly)], plan: new Response(JSON.stringify({ detail: "ЭТК недоступна" }), { status: 500 }) });
+  render(<QualityPage principal={qc} />);
+  const dialog = await openBox("000003-4");
+  expect(await within(dialog).findByText(/ЭТК недоступна — проверьте по ЭТК задания/)).toBeInTheDocument();
+  decide(dialog, "5", "0");
+  expect(within(dialog).getByRole("button", { name: "Принять ОТК: годных 5" })).toBeEnabled();
 });
 
 // --- Замеры КСВН ------------------------------------------------------------------------------------------------------
 
 const vswrBase = `/api/production/vswr/tasks/${branched.id}`;
 const trace = [{ mhz: 1700, vswr: 1.3 }, { mhz: 1800, vswr: 1.6 }, { mhz: 1900, vswr: 1.45 }];
-const measurement = (verdict: "pass" | "fail", extra: object = {}) => ({
+const measurement = (verdict: "pass" | "fail" | "border", extra: object = {}) => ({
   id: "78000000-0000-0000-0000-000000000001", serial_number: "ПЗ-0001-01", attempt: 1, band_mhz: [1700, 1900], max_vswr: 1.6, max_vswr_mhz: 1800,
   norm: {}, norm_vswr_max: 2.06, verdict, verdict_name: verdict === "pass" ? "Годно" : "Не годно", verdict_manual: false, verdict_reason: "",
   inspector: { id: "u", name: "Контролёр Иванов" }, measured_at: "2026-10-22T10:00:00+03:00", file_name: "a.s1p", points: 3, file_meta: {}, trace, ...extra,
 });
 const overview = (norm: object, latest: unknown = null, control: { mode: string; every: number | null } = { mode: "all", every: null }) => ({
-  task: { id: branched.id, number: "ПЗ-0001", name: "Жгут", quantity: 10 }, norm, control,
+  task: { id: branched.id, number: "ПЗ-0001", name: "Жгут", quantity: 10, project: "591K.3", item: "591K.3.КБ1" },
+  etk: { item_index: "КБ1", revision: 3, current_revision: 3 }, norm, control,
   required: control.mode === "sample" ? { total: 1, measured: latest ? 1 : 0 } : { total: 10, measured: latest ? 1 : 0 },
   serials: [
     { position: 1, serial_id: "s1", serial_number: "ПЗ-0001-01", status: "В работе", attempts: latest ? 1 : 0, in_sample: true, latest },
@@ -456,24 +568,29 @@ const overview = (norm: object, latest: unknown = null, control: { mode: string;
 const okNorm = { status: "ok", reason: "", vswr_max: 2.06, band_mhz: [1700, 1900], source: "SMA-J 1,25, SMA-J 1,3" };
 const noNorm = { status: "undefined", reason: "у разъёма нет КСВ в справочнике", vswr_max: null, band_mhz: null };
 const listed = (extra: object = {}) => ({
-  id: branched.id, number: "ПЗ-0001", name: "Жгут", item: branched.item, quantity: 10, status: "Запущено",
-  norm: { status: "ok", vswr_max: 2.06, source: null }, control: { mode: "all", every: null }, required: { total: 10, measured: 3 }, ...extra,
+  id: branched.id, number: "ПЗ-0001", name: "Жгут", item: branched.item, project: "591K.3", quantity: 10, status: "Запущено", etk_revision: 3,
+  norm: { status: "ok", vswr_max: 2.06, source: null, band_mhz: [1700, 1900] }, control: { mode: "all", every: null },
+  required: { total: 10, measured: 3, failed: 0, max_vswr: null }, ...extra,
 });
-const vna = { ...micrometer, name: "Анализатор цепей", instrument_type: "ВАЦ" };
+const vna = { ...micrometer, id: "75000000-0000-0000-0000-0000000000aa", inventory_number: "СИ-020", name: "Анализатор цепей", instrument_type: "ВАЦ" };
 
-// Список заданий приходит отдельным запросом: ждём строку выбора, потом выбираем.
+// Задания коаксиальных сборок — таблица: щелчок по строке показывает изделия задания.
 async function pickTask() {
   fireEvent.click(await screen.findByRole("tab", { name: "Замеры КСВН" }));
-  const picker = await screen.findByLabelText("Задание");
-  await within(picker).findByRole("option", { name: /ПЗ-0001/ });
-  fireEvent.change(picker, { target: { value: branched.id } });
+  const tasks = await screen.findByRole("region", { name: "Задания коаксиальных сборок" });
+  fireEvent.click(await within(tasks).findByText("ПЗ-0001"));
+  return screen.findByRole("region", { name: "Изделия задания ПЗ-0001" });
 }
 
 async function openVswr(norm: object, latest: unknown = null, extra: Partial<Data> = {}) {
   qualityFetch({ instruments: [vna], vswrTasks: [listed()], get: (path) => (path === vswrBase ? json(overview(norm, latest)) : null), ...extra });
   render(<QualityPage principal={qc} />);
-  await pickTask();
+  return pickTask();
 }
+const fromFile = async (serial = "ПЗ-0001-01") => {
+  fireEvent.click(await screen.findByRole("button", { name: `Замер из файла ${serial}` }));
+  return screen.findByRole("dialog", { name: `Замер КСВН ${serial}` });
+};
 
 // После выбора задания подменяем ответы: POST замера и тот же обзор.
 function postVswr(posted: Record<string, unknown>[], norm: object, answer: unknown) {
@@ -488,22 +605,87 @@ function postVswr(posted: Record<string, unknown>[], norm: object, answer: unkno
   });
 }
 
-it("shows the vswr section: the norm line and a dense table of units with their latest measurement", async () => {
-  await openVswr(okNorm, measurement("pass"));
-  expect(await screen.findByText(/Норма ≤ 2,06 по комплектующим: SMA-J 1,25, SMA-J 1,3/)).toBeInTheDocument();
-  const table = (await screen.findByRole("heading", { name: "Замеры КСВН" })).closest(".panel") as HTMLElement;
+it("groups the measurements by task: project, КБ, ETK revision, norm, band and progress", async () => {
+  qualityFetch({ instruments: [vna], vswrTasks: [listed({ required: { total: 10, measured: 3, failed: 1, max_vswr: 2.4 } }), listed({ id: "done", number: "ПЗ-0002", required: { total: 2, measured: 2, failed: 0, max_vswr: 1.2 } })] });
+  render(<QualityPage principal={qc} />);
+  fireEvent.click(await screen.findByRole("tab", { name: "Замеры КСВН" }));
+  const tasks = await screen.findByRole("region", { name: "Задания коаксиальных сборок" });
+  const row = within(tasks).getByText("ПЗ-0001").closest("tr") as HTMLElement;
+  for (const text of ["591K.3", "591K.3.КБ1", "ред. 3", "≤ 2,06", "1 700 … 1 900", "каждое", "3 из 10", "2,4"]) expect(within(row).getByText(text)).toBeInTheDocument();
+  expect(within(row).getByText("1")).toHaveClass("tone-danger");
+  fireEvent.click(screen.getByRole("button", { name: /Не померены · 1/ }));
+  expect(within(tasks).queryByText("ПЗ-0002")).not.toBeInTheDocument();
+});
+
+it("shows no measurement columns of dashes before anything is measured", async () => {
+  const group = await openVswr(okNorm);
+  expect(within(group).getByRole("heading", { name: "591K.3 · 591K.3.КБ1 · ПЗ-0001" })).toBeInTheDocument();
+  expect(within(group).getByText("ЭТК КБ1, ред. 3")).toBeInTheDocument();
+  expect(within(group).getByText("померено 0 из 10")).toBeInTheDocument();
+  for (const title of ["Макс. КСВН", "На частоте, МГц", "Контролёр", "Дата"]) expect(within(group).queryByRole("columnheader", { name: title })).not.toBeInTheDocument();
+  expect(within(group).getAllByText("Не измерено").length).toBeGreaterThan(0);
+});
+
+it("shows the units with their latest measurement and verdict colours", async () => {
+  const group = await openVswr(okNorm, measurement("pass"));
+  expect(within(group).getByText(/Норма ≤ 2,06 по комплектующим: SMA-J 1,25, SMA-J 1,3/)).toBeInTheDocument();
   for (const title of ["Серийный номер", "Попыток", "Макс. КСВН", "На частоте, МГц", "Вердикт", "Контролёр", "Дата"]) {
-    expect(within(table).getAllByText(title).length).toBeGreaterThan(0);
+    expect(within(group).getAllByText(title).length).toBeGreaterThan(0);
   }
-  expect(within(table).getAllByText("Годно").length).toBeGreaterThan(0);
-  expect(within(table).getByText("Контролёр Иванов")).toBeInTheDocument();
-  expect(within(table).getAllByRole("button", { name: "Загрузить замер" })).toHaveLength(2);
-  expect(within(table).getByRole("link", { name: "Файл" })).toHaveAttribute("href", "/api/production/vswr/measurements/78000000-0000-0000-0000-000000000001/file");
+  const first = within(group).getByText("ПЗ-0001-01").closest("tr") as HTMLElement;
+  expect(within(first).getByText("Годен")).toHaveAttribute("data-tone", "success");
+  expect(within(group).getByText("Контролёр Иванов")).toBeInTheDocument();
+  expect(within(group).getAllByRole("button", { name: /^Снять с ВАЦ / })).toHaveLength(2);
+  expect(within(group).getByRole("link", { name: "Файл" })).toHaveAttribute("href", "/api/production/vswr/measurements/78000000-0000-0000-0000-000000000001/file");
+});
+
+it("takes «на границе» from the server decision, never from its own margin", () => {
+  expect(vswrTone(null)).toBe("none");
+  expect(vswrTone({ verdict: "fail" })).toBe("fail");
+  expect(vswrTone({ verdict: "pass" })).toBe("pass");
+  // 1,34 при норме 1,35 без решения сервера (ВАЦ без известной погрешности) — годен, экран границу не придумывает.
+  expect(vswrTone({ verdict: "pass", decision: { status: "pass", uncertainty: null, text: "" } })).toBe("pass");
+  expect(vswrTone({ verdict: "fail", decision: { status: "border", uncertainty: 0.022, text: "На границе допуска" } })).toBe("edge");
+});
+
+it("shows the server's border decision and why a unit is rejected", async () => {
+  const border = measurement("fail", { max_vswr: 2.07, verdict_reason: "Конец А: КСВН выше нормы",
+    decision: { status: "border", uncertainty: 0.022, text: "На границе допуска — нужен повторный замер (3 подключения с поворотом 120°)" } });
+  const group = await openVswr(okNorm, border);
+  const row = within(group).getByText("ПЗ-0001-01").closest("tr") as HTMLElement;
+  expect(within(row).getByText("На границе")).toHaveAttribute("title", "На границе допуска — нужен повторный замер (3 подключения с поворотом 120°)");
+  expect(within(row).getByText("Конец А: КСВН выше нормы")).toBeInTheDocument();
+  expect(within(group).getByRole("columnheader", { name: "Причина" })).toBeInTheDocument();
+});
+
+it("resolves a scanned serial: the ERP number, the factory FRX label within the project, or a position", () => {
+  const tasks = [listed(), listed({ id: "t2", number: "ПЗ-0002", project: "708К" })] as VswrTaskListItem[];
+  expect(resolveScan(" пз-0002-0004 ", tasks, branched.id)).toEqual({ taskId: "t2", position: 4 });
+  expect(resolveScan("FRX.708K.120907/AA.7", tasks, branched.id)).toEqual({ taskId: "t2", position: 7 });
+  expect(resolveScan("3", tasks, branched.id)).toEqual({ taskId: branched.id, position: 3 });
+  expect(resolveScan("11", tasks, branched.id)).toBeNull();
+  expect(resolveScan("ПЗ-0009-0001", tasks, branched.id)).toBeNull();
+});
+
+it("flow mode: a scanned serial opens its measurement with the VNA capture", async () => {
+  await openVswr(okNorm);
+  fireEvent.click(screen.getByRole("button", { name: "Поток: скан → замер → следующий" }));
+  const scan = screen.getByLabelText("Серийный номер");
+  await waitFor(() => expect(scan).toHaveFocus());
+  fireEvent.change(scan, { target: { value: "ПЗ-0001-0002" } });
+  fireEvent.click(screen.getByRole("button", { name: "Замерить" }));
+  expect(await screen.findByRole("dialog", { name: "Замер КСВН ПЗ-0001-02" })).toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: "Снять с ВАЦ" })).toBeInTheDocument();
+  fireEvent.keyDown(screen.getByRole("dialog", { name: "Снять с ВАЦ" }), { key: "Escape" });
+  fireEvent.keyDown(screen.getByRole("dialog", { name: "Замер КСВН ПЗ-0001-02" }), { key: "Escape" });
+  fireEvent.change(screen.getByLabelText("Серийный номер"), { target: { value: "чужой" } });
+  fireEvent.click(screen.getByRole("button", { name: "Замерить" }));
+  expect(screen.getByRole("alert")).toHaveTextContent("«чужой» — не серийный номер заданий на замер КСВН.");
 });
 
 it("does not offer an unverified instrument for VSWR measurements", async () => {
   await openVswr(okNorm, null, { instruments: [unverifiedInstrument, { ...vna, id: "adapter", kind: "Принадлежность", name: "Переходник", parent_id: vna.id }, { ...vna, id: "inactive", name: "Старый анализатор", status: "Не используется" }, vna] });
-  fireEvent.click((await screen.findAllByRole("button", { name: "Загрузить замер" }))[0]);
+  await fromFile();
   const picker = screen.getByLabelText("Прибор (средство измерения)");
   expect(within(picker).queryByRole("option", { name: /Тестовый прибор/ })).not.toBeInTheDocument();
   expect(within(picker).queryByRole("option", { name: /Переходник|Старый анализатор/ })).not.toBeInTheDocument();
@@ -512,41 +694,28 @@ it("does not offer an unverified instrument for VSWR measurements", async () => 
 
 it("sample 1 of N: marks the units in and out of the sample, counts the required ones, still lets measure the rest", async () => {
   qualityFetch({ instruments: [vna], vswrTasks: [listed()], get: (path) => (path === vswrBase ? json(overview(okNorm, measurement("pass"), { mode: "sample", every: 50 })) : null) });
-  render(<QualityPage principal={qc} />);
-  await pickTask();
-  expect(await screen.findByText("· выборочно 1 из 50")).toBeInTheDocument();
-  expect(screen.getByText("замерено 1 из 1 требуемых")).toBeInTheDocument();
-  const table = screen.getByRole("heading", { name: "Замеры КСВН" }).closest(".panel") as HTMLElement;
-  const [first, second] = ["ПЗ-0001-01", "ПЗ-0001-02"].map((serial) => within(table).getByText(serial).closest("tr") as HTMLElement);
+  render(<QualityPage principal={admin} />);
+  const group = await pickTask();
+  expect(within(group).getByText("· выборочно 1 из 50")).toBeInTheDocument();
+  expect(within(group).getByText("померено 1 из 1")).toBeInTheDocument();
+  const [first, second] = ["ПЗ-0001-01", "ПЗ-0001-02"].map((serial) => within(group).getByText(serial).closest("tr") as HTMLElement);
   expect(within(first).getByText("в выборке")).toBeInTheDocument();
   expect(within(second).getByText("вне выборки")).toBeInTheDocument();
-  expect(within(second).getByRole("button", { name: "Загрузить замер" })).toBeEnabled();
+  expect(within(second).getByRole("button", { name: "Снять с ВАЦ ПЗ-0001-02" })).toBeEnabled();
   expect(within(second).getByRole("button", { name: "Паспорт" })).toBeEnabled(); // паспорт ссылается на выборку партии
 });
 
 it("every unit: the norm line says so and every unit is required", async () => {
-  await openVswr(okNorm);
-  expect(await screen.findByText("· контроль: каждое изделие")).toBeInTheDocument();
-  expect(screen.getByText("замерено 0 из 10 требуемых")).toBeInTheDocument();
-  expect(screen.queryByText("вне выборки")).not.toBeInTheDocument();
+  const group = await openVswr(okNorm);
+  expect(within(group).getByText("· контроль: каждое изделие")).toBeInTheDocument();
+  expect(within(group).queryByText("вне выборки")).not.toBeInTheDocument();
 });
 
-it("the task picker lists only the coax tasks from the vswr endpoint, with the measured count", async () => {
-  qualityFetch({ instruments: [vna], vswrTasks: [listed()] }); // /api/production/tasks has a task too, but it is not a coax one
-  render(<QualityPage principal={qc} />);
-  fireEvent.click(await screen.findByRole("tab", { name: "Замеры КСВН" }));
-  const picker = await screen.findByLabelText("Задание");
-  await within(picker).findByRole("option", { name: /ПЗ-0001/ });
-  const options = within(picker).getAllByRole("option").map((option) => option.textContent);
-  expect(options).toEqual(["— выберите задание —", "ПЗ-0001 · Жгут · 10 шт · замерено 3 из 10"]);
-});
-
-it("the task picker says there are no coax tasks when the list is empty", async () => {
+it("lists only the coax tasks from the vswr endpoint and says so when there are none", async () => {
   qualityFetch({ instruments: [vna], vswrTasks: [] });
   render(<QualityPage principal={qc} />);
   fireEvent.click(await screen.findByRole("tab", { name: "Замеры КСВН" }));
-  expect(await screen.findByText("Нет заданий на коаксиальные сборки")).toBeInTheDocument();
-  expect(within(await screen.findByLabelText("Задание")).getAllByRole("option")).toHaveLength(1);
+  expect(await screen.findByText(/Нет заданий на коаксиальные сборки/)).toBeInTheDocument();
 });
 
 it("a computed norm shows its basis instead of the service word", async () => {
@@ -562,8 +731,7 @@ it("a customer norm shows its band, basis and the components norm for reference;
   await openVswr(customer);
   const line = await screen.findByText(/^Норма заказчика ≤ 1,5 в полосе 700/);
   expect(line.textContent!.replace(/\s+/g, " ")).toBe("Норма заказчика ≤ 1,5 в полосе 700 … 2 700 МГц (ТУ 16-505.123, п. 3.4; норма заказчика из ревизии 4 ЭТК); по комплектующим ≤ 2,06 — справочно");
-  fireEvent.click((await screen.findAllByRole("button", { name: "Загрузить замер" }))[0]);
-  const dialog = await screen.findByRole("dialog");
+  const dialog = await fromFile();
   expect(within(dialog).getByLabelText("Полоса от, МГц")).toHaveValue("700");
   expect(within(dialog).getByLabelText("Полоса до, МГц")).toHaveAttribute("readonly");
 });
@@ -575,8 +743,7 @@ it("says why the norm is undefined", async () => {
 
 it("validates the upload form: needs a file and the band must be ordered", async () => {
   await openVswr(okNorm);
-  fireEvent.click((await screen.findAllByRole("button", { name: "Загрузить замер" }))[0]);
-  const dialog = await screen.findByRole("dialog");
+  const dialog = await fromFile();
   const submit = within(dialog).getByRole("button", { name: "Загрузить замер" });
   expect(submit).toBeDisabled();
   expect(within(dialog).getByText(/Приложите файл замера/)).toBeInTheDocument();
@@ -592,8 +759,7 @@ it("requires a verdict and a reason when the norm is undefined, and sends them",
   const posted: Record<string, unknown>[] = [];
   await openVswr(noNorm);
   postVswr(posted, noNorm, measurement("fail", { verdict_manual: true, verdict_reason: "Нет КСВ", norm_vswr_max: null }));
-  fireEvent.click((await screen.findAllByRole("button", { name: "Загрузить замер" }))[0]);
-  const dialog = await screen.findByRole("dialog");
+  const dialog = await fromFile();
   const submit = within(dialog).getByRole("button", { name: "Загрузить замер" });
   fireEvent.change(within(dialog).getByLabelText("Файл замера"), { target: { files: [new File(["x"], "a.s1p")] } });
   expect(submit).toBeDisabled();
@@ -606,65 +772,90 @@ it("requires a verdict and a reason when the norm is undefined, and sends them",
   fireEvent.click(submit);
   expect(await within(dialog).findByRole("img", { name: /График КСВН/ })).toBeInTheDocument();
   expect(posted).toMatchObject([{ task_id: branched.id, position: 1, instrument_id: vna.id, file_name: "a.s1p", verdict: "fail", reason: "Нет КСВ" }]);
-  expect(within(dialog).getByText("Не годно")).toBeInTheDocument();
+  expect(within(dialog).getByText("Брак")).toBeInTheDocument();
 });
 
-it("sends no verdict when the norm is defined: the server judges", async () => {
+it("sends no verdict when the norm is defined, prints the passport of a pass at once and offers the next unit", async () => {
   const posted: Record<string, unknown>[] = [];
   await openVswr(okNorm);
   postVswr(posted, okNorm, measurement("pass"));
-  fireEvent.click((await screen.findAllByRole("button", { name: "Загрузить замер" }))[0]);
-  const dialog = await screen.findByRole("dialog");
+  const passport = vi.spyOn(productionApi, "vswrPassport").mockResolvedValue({} as CableAssemblyPassport);
+  const dialog = await fromFile();
   fireEvent.change(within(dialog).getByLabelText("Файл замера"), { target: { files: [new File(["x"], "a.s1p")] } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Загрузить замер" }));
   await within(dialog).findByRole("img", { name: /норма не более 2,06/ });
   expect(posted[0]).not.toHaveProperty("verdict");
   expect(posted[0]).toMatchObject({ band_from_mhz: 1700, band_to_mhz: 1900 });
+  expect(within(dialog).getByText("Годен")).toBeInTheDocument();
+  await waitFor(() => expect(passport).toHaveBeenCalledWith(branched.id, 1));
+  expect(within(dialog).getByRole("button", { name: "Следующий: ПЗ-0001-02" })).toHaveFocus();
 });
 
-it("leads a failed unit into the QC queue with the reject prefilled", async () => {
-  await openVswr(okNorm, measurement("fail", { max_vswr: 2.4 }), { boxes: [box("000003-4", 3, assembly)] });
-  fireEvent.click(await screen.findByRole("button", { name: "В брак ОТК" }));
-  await waitFor(() => expect(screen.getByLabelText("Брак ОТК 000003-4")).toHaveValue(1));
-  expect(screen.getByLabelText("Годные ОТК 000003-4")).toHaveValue(4);
-  expect(screen.getByDisplayValue("КСВН выше нормы")).toBeInTheDocument();
-  expect(screen.getByDisplayValue(/Изделие ПЗ-0001-01: макс\. КСВН 2,4 на/)).toBeInTheDocument();
+it("a border result offers the repeat connection of the same unit instead of the passport", async () => {
+  const posted: Record<string, unknown>[] = [];
+  await openVswr(okNorm);
+  postVswr(posted, okNorm, measurement("border", { max_vswr: 2.07, verdict_name: "На границе допуска",
+    verdict_reason: "На границе допуска — нужен повторный замер (3 подключения с поворотом 120°)",
+    decision: { status: "border", uncertainty: 0.022, text: "На границе допуска — нужен повторный замер (3 подключения с поворотом 120°)" } }));
+  const passport = vi.spyOn(productionApi, "vswrPassport");
+  const dialog = await fromFile();
+  fireEvent.change(within(dialog).getByLabelText("Файл замера"), { target: { files: [new File(["x"], "a.s1p")] } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Загрузить замер" }));
+  const repeat = await within(dialog).findByRole("button", { name: "Повторный замер (поворот 120°)" });
+  expect(within(dialog).getByText("На границе")).toBeInTheDocument();
+  expect(within(dialog).queryByRole("button", { name: "Паспорт" })).not.toBeInTheDocument();
+  expect(passport).not.toHaveBeenCalled();
+  fireEvent.click(repeat);
+  expect(await screen.findByRole("dialog", { name: "Замер КСВН ПЗ-0001-01" })).toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: "Снять с ВАЦ" })).toBeInTheDocument();
+});
+
+it("leads a failed unit into the OTK window of its box with the reject prefilled", async () => {
+  const group = await openVswr(okNorm, measurement("fail", { max_vswr: 2.4 }), { boxes: [box("000003-4", 3, assembly)], plan: richPlan });
+  fireEvent.click(within(group).getByRole("button", { name: "В брак ОТК" }));
+  const dialog = await screen.findByRole("dialog", { name: "ОТК · 000003-4" });
+  await waitFor(() => expect(within(dialog).getByLabelText(/Причина брака/)).toHaveValue("4.8.16"));
+  expect(within(dialog).getByLabelText("Брак ОТК 000003-4")).toHaveValue(1);
+  expect(within(dialog).getByLabelText("Годные ОТК 000003-4")).toHaveValue(null);
+  expect(within(dialog).getByDisplayValue(/Изделие ПЗ-0001-01: макс\. КСВН 2,4 на/)).toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Очередь ОТК · 1", selected: true })).toBeInTheDocument();
-  expect(screen.getByRole("dialog", { name: "Приёмка с браком · 000003-4" })).toBeInTheDocument();
 });
 
 it("offers no way into rejects for a failed unit when no box of the task waits in the queue", async () => {
-  await openVswr(okNorm, measurement("fail"));
-  await screen.findAllByText("Не годно");
-  expect(screen.queryByRole("button", { name: "В брак ОТК" })).not.toBeInTheDocument();
+  const group = await openVswr(okNorm, measurement("fail"));
+  expect(within(group).getAllByText("Брак").length).toBeGreaterThan(0);
+  expect(within(group).queryByRole("button", { name: "В брак ОТК" })).not.toBeInTheDocument();
 });
 
 it("links the queued box to its coax task, preferring it to the first task, without refetching on tab switches", async () => {
-  const requested = qualityFetch({ boxes: [box("000003-4", 3, assembly)],
+  const requested = qualityFetch({ boxes: [box("000003-4", 3, assembly)], plan: richPlan,
     vswrTasks: [listed({ id: "other", number: "ПЗ-0002" }), listed()],
     get: (path) => path === vswrBase ? json({ ...overview(okNorm), required: { measured: 3, total: 10 } }) : null });
   render(<QualityPage principal={qc} />);
-  const link = await screen.findByRole("button", { name: "замерено 3 из 10" });
-  expect(link).toHaveClass("tone-warn");
+  const row = await screen.findByRole("row", { name: /000003-4/ });
+  expect(within(row).getByText("померено 3 из 10")).toHaveClass("tone-warn");
   await waitFor(() => expect(requested).toContain(vswrBase));
-  const before = [...requested];
-  fireEvent.click(link);
+  const dialog = await openBox("000003-4");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Протокол замеров" }));
   expect(screen.getByRole("tab", { name: "Замеры КСВН", selected: true })).toBeInTheDocument();
-  expect(screen.getByLabelText("Задание")).toHaveValue(branched.id);
+  expect(await screen.findByRole("region", { name: "Изделия задания ПЗ-0001" })).toBeInTheDocument();
   expect(new URL(window.location.href).searchParams.get("tab")).toBe("vswr");
+  const before = [...requested];
   fireEvent.click(screen.getByRole("tab", { name: "Очередь ОТК · 1" }));
   fireEvent.click(screen.getByRole("tab", { name: "Замеры КСВН" }));
   expect(requested).toEqual(before);
 });
 
 it.each([
-  [{ mode: "all", every: null }, { measured: 10, total: 10 }, "замерено 10 из 10", "tone-ok"],
-  [{ mode: "none", every: null }, { measured: 0, total: 0 }, "не требуется", "tone-neutral"],
+  [{ mode: "all", every: null }, { measured: 10, total: 10 }, "померено 10 из 10", "tone-ok"],
+  [{ mode: "none", every: null }, { measured: 0, total: 0 }, "контроль не проводится", ""],
 ])("shows the completed or unnecessary VSWR state of a queued coax task", async (control, required, label, tone) => {
   qualityFetch({ boxes: [box("000003-4", 3, assembly)], vswrTasks: [listed({ control, required })],
     get: (path) => path === vswrBase ? json({ ...overview(okNorm), control, required }) : null });
   render(<QualityPage principal={qc} />);
-  expect(await screen.findByRole("button", { name: label as string })).toHaveClass(tone as string);
+  const row = await screen.findByRole("row", { name: /000003-4/ });
+  const cell = await within(row).findByText(label as string);
+  if (tone) expect(cell).toHaveClass(tone as string);
 });
 
 it("updates the queue measurement count after uploading a trace", async () => {
@@ -677,14 +868,14 @@ it("updates the queue measurement count after uploading a trace", async () => {
   });
   render(<QualityPage principal={qc} />);
   await pickTask();
-  fireEvent.click((await screen.findAllByRole("button", { name: "Загрузить замер" }))[0]);
-  const dialog = screen.getByRole("dialog");
+  const dialog = await fromFile();
   fireEvent.change(within(dialog).getByLabelText("Файл замера"), { target: { files: [new File(["x"], "a.s1p")] } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Загрузить замер" }));
   await within(dialog).findByRole("img", { name: /График КСВН/ });
   fireEvent.click(within(dialog).getByRole("button", { name: "Закрыть" }));
   fireEvent.click(screen.getByRole("tab", { name: "Очередь ОТК · 1" }));
-  expect(await screen.findByRole("button", { name: "замерено 1 из 10" })).toBeInTheDocument();
+  const row = await screen.findByRole("row", { name: /000003-4/ });
+  expect(await within(row).findByText("померено 1 из 10")).toBeInTheDocument();
 });
 
 it("opens a deep-linked tab and follows keyboard and browser navigation", async () => {

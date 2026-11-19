@@ -77,15 +77,23 @@ def test_bundled_cut_2strip_tin_card_cuts_strips_both_ends_and_tins_without_crim
     assert "Контроль" in {step.kind for step in card.steps}
 
 
-def test_bundled_vswr_card_measures_s11_with_a_matched_load_and_leaves_the_norm_to_the_builder():
-    """Контроль КСВН коаксиальной сборки (владелец 22.10): анализатор цепей, нагрузка 50 Ом, шаг контроля про КСВН —
-    норму в него пишет сборка ЭТК по комплектующим, в шаблоне её нет."""
+def test_bundled_vswr_card_measures_both_ends_and_leaves_the_norm_to_the_builder():
+    """Контроль КСВН коаксиальной сборки (владелец 22.10; СТО ФРАК-002-2026, 12.3 и СТО ФРАК-001-2026, 4.8.16): замер
+    с двух концов после полной двухпортовой калибровки, прогрев 40 мин, моменты затяжки числами; нагрузка 50 Ом —
+    только запасной однопортовый замер. Норму в шаг контроля пишет сборка ЭТК по комплектующим, в шаблоне её нет."""
     card = _card("CTRL_VSWR_coax")
     assert (card.source_id, card.name, card.category) == (VSWR_ID, "Контроль КСВН", "Контроль")
     assert [tool.name for tool in card.tooling if tool.section == "Оборудование"] == ["Векторный анализатор цепей (VNA)"]
     [control] = [step for step in card.steps if step.kind == "Контроль"]
-    assert "КСВН (S11)" in control.text and not any(char.isdigit() for char in control.text.replace("S11", ""))
-    assert "50 Ом" in " ".join(step.text for step in card.steps)
+    assert "с двух концов (S11 со стороны А, S22 со стороны Б)" in control.text
+    assert not any(char.isdigit() for char in control.text.replace("S11", "").replace("S22", ""))
+    text = " ".join(step.text for step in card.steps)
+    assert "не менее 40 мин" in text and "30 мин" not in text and "OSL" not in text
+    assert "полную двухпортовую калибровку" in text and "по СТО ФРАК-002-2026" in text
+    assert "только если сборку нельзя подключить двумя концами, с согласования ОТК" in text
+    [connect] = [step for step in card.steps if "к порту 2" in step.text]
+    assert connect.tolerance == "N — 1,1–1,5 Н·м; 3,5 мм и SMA — 0,8–1,0 Н·м"
+    assert "документации производителя" not in " ".join(step.tolerance for step in card.steps)
 
 
 def test_seed_creates_the_template_once_beside_the_base_library(operation_library_api):
@@ -102,8 +110,8 @@ def test_seed_creates_the_template_once_beside_the_base_library(operation_librar
                if card.code in marking_codes}
     assert len(marking) == 5
     assert ids == {"cut-wire", TIN_ID, COAX_CUT_ID, MARK_TUBE_ID, CUT_2STRIP_TIN_ID,
-                   "ins-housing-coax-clamp-монтаж-корпуса-с-прижимом-a",
-                   "ins-housing-coax-clamp-монтаж-корпуса-с-прижимом-b", VSWR_ID} | fakra | marking
+                   "ins-housing-coax-clamp-монтаж-корпуса-с-прижимом", VSWR_ID,
+                   "prs-pin-coax-обжим-центрального-контакта"} | fakra | marking  # свод 708К. 4/5
     detail = operation_library_api.get(f"/api/techcards/templates/{TIN_ID}").json()
     assert detail["code"] == "CUT_WIRE+1crimp+tin"
 

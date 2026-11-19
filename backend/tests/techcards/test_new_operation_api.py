@@ -9,7 +9,7 @@ from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.identity import Actor
 
 from .library import load_library
-from .test_operation_card_api import EDIT, _sided, _template, operation_library_api  # noqa: F401
+from .test_operation_card_api import EDIT, _template, operation_library_api  # noqa: F401
 
 CUT_ROW = {
     "Номер": "CUT_WIRE", "Название": "Резка", "Машина": "EW-05F", "Время операции": "3,50",
@@ -45,7 +45,7 @@ def test_blank_operation_gets_a_row_and_a_card_with_one_hint_step(operation_libr
     body = response.json()
     assert (body["code"], body["name"]) == ("NEW_OP", "Пайка гильзы")
     [card] = body["templates"]
-    assert (card["code"], card["name"], card["side"]) == ("NEW_OP", "Пайка гильзы", "")
+    assert (card["code"], card["name"]) == ("NEW_OP", "Пайка гильзы") and "side" not in card
     assert [step["text"] for step in card["document"]["steps"]] == [BLANK_STEP]
     assert card["document"]["tooling"] == [] and card["document"]["safety"] == ""
     assert card["norms"] == {"operation_seconds": "", "setup_seconds": ""}
@@ -85,17 +85,15 @@ def test_copy_takes_steps_tooling_defects_safety_and_norms_with_the_record_edit(
     assert again["document"] == source and again["code"] == "CUT_WIRE"
 
 
-def test_copy_of_a_two_sided_operation_copies_both_blocks(operation_library_api):
-    _seed(operation_library_api, [_sided("sdr-a", "SDR_X", "A"), _sided("sdr-b", "SDR_X", "B")])
+def test_copy_of_an_operation_is_one_template_without_a_side(operation_library_api):
+    _seed(operation_library_api, [_template("sdr", "SDR_X")])
 
     response = operation_library_api.post("/api/techcards/operations", json={
         "code": "SDR_Y", "name": "Пайка Y", "copy_of": "SDR_X",
     })
 
     assert response.status_code == 201, response.text
-    assert [(card["code"], card["side"], card["title"]) for card in response.json()["templates"]] == [
-        ("SDR_Y", "A", "SDR_Y | Пайка Y (A)"), ("SDR_Y", "B", "SDR_Y | Пайка Y (B)"),
-    ]
+    assert [(card["code"], card["title"]) for card in response.json()["templates"]] == [("SDR_Y", "SDR_Y | Пайка Y")]
     # no БД.ОП row to copy from: the row is still made, with the number and the name
     assert response.json()["record"]["fields"] == {"opNumber": "SDR_Y", "opName": "Пайка Y"}
 

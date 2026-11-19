@@ -28,10 +28,10 @@ function New-TestMarkingJob {
 Describe 'Exact marking DEVMODE' {
     It 'keeps 92.5 mm as 925 tenths and preserves driver-private bytes' {
         $original = New-TestMode
-        $requested = [ErpGdiPrinter]::RequestMode($original,92.5,20,$false)
+        $requested = [ErpGdiPrinter]::RequestMode($original,92.5,20)
         [BitConverter]::ToInt16($requested,82) | Should Be 925
         [BitConverter]::ToInt16($requested,80) | Should Be 200
-        [BitConverter]::ToInt16($requested,78) | Should Be 0
+        [BitConverter]::ToInt16($requested,78) | Should Be 256
         [BitConverter]::ToInt16($requested,84) | Should Be 100
         [BitConverter]::ToInt16($requested,86) | Should Be 1
         [BitConverter]::ToInt16($requested,90) | Should Be 300
@@ -40,33 +40,45 @@ Describe 'Exact marking DEVMODE' {
         $original[82] | Should Be 0
         [ErpGdiPrinter]::ValidateMode($requested,$requested)
     }
-    It 'landscape swaps portrait stock dimensions once' {
-        $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20,$true)
-        [BitConverter]::ToInt16($mode,82) | Should Be 200
-        [BitConverter]::ToInt16($mode,80) | Should Be 925
-        [BitConverter]::ToInt16($mode,76) | Should Be 2
+    It 'maps a wide raster 1:1 onto portrait stock: width across the head, height along the feed' {
+        $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20)
+        [BitConverter]::ToInt16($mode,82) | Should Be 925
+        [BitConverter]::ToInt16($mode,80) | Should Be 200
+        [BitConverter]::ToInt16($mode,76) | Should Be 1
     }
-    foreach ($offset in @(76,78,80,82,90)) {
+    It 'accepts the driver''s own paper index when exact length and width are kept (Godex/Seagull, 18.11)' {
+        $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20)
+        $returned = $mode.Clone()
+        [Buffer]::BlockCopy([BitConverter]::GetBytes([int16]32003),0,$returned,78,2)
+        [ErpGdiPrinter]::ValidateMode($mode,$returned)
+    }
+    It 'rejects a driver that clamps the 20 mm stock width to 25.4 mm' {
+        $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),20,92.5)
+        $returned = $mode.Clone()
+        [Buffer]::BlockCopy([BitConverter]::GetBytes([int16]254),0,$returned,82,2)
+        { [ErpGdiPrinter]::ValidateMode($mode,$returned) } | Should Throw 'substituted DEVMODE field at 82'
+    }
+    foreach ($offset in @(76,80,82,90)) {
         It "rejects driver substitution of required field $offset" {
-            $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20,$false)
+            $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20)
             $returned = $mode.Clone(); $returned[$offset] = $returned[$offset] -bxor 1
             { [ErpGdiPrinter]::ValidateMode($mode,$returned) } | Should Throw 'substituted'
         }
     }
     It 'requests only required fields from a driver that offers nothing else' {
-        $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20,$false)
+        $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20)
         [BitConverter]::ToInt32($mode,72) | Should Be (1 -bor 2 -bor 4 -bor 8 -bor 1024)
     }
     It 'requests optional fields the driver offers' {
         $original = New-TestMode
         [Buffer]::BlockCopy([BitConverter]::GetBytes([int](16 -bor 256 -bor 2048 -bor 4096 -bor 8192 -bor 32768 -bor 65536)),0,$original,72,4)
-        $fields = [BitConverter]::ToInt32([ErpGdiPrinter]::RequestMode($original,92.5,20,$false),72)
+        $fields = [BitConverter]::ToInt32([ErpGdiPrinter]::RequestMode($original,92.5,20),72)
         $fields | Should Be (1 -bor 2 -bor 4 -bor 8 -bor 1024 -bor 16 -bor 256 -bor 2048 -bor 4096 -bor 8192 -bor 32768)
     }
     It 'accepts a label driver that drops duplex, collate, colour, scale, copies and Y resolution' {
         $original = New-TestMode
         [Buffer]::BlockCopy([BitConverter]::GetBytes([int](16 -bor 256 -bor 2048 -bor 4096 -bor 8192 -bor 32768)),0,$original,72,4)
-        $mode = [ErpGdiPrinter]::RequestMode($original,92.5,20,$false)
+        $mode = [ErpGdiPrinter]::RequestMode($original,92.5,20)
         $returned = $mode.Clone()
         [Buffer]::BlockCopy([BitConverter]::GetBytes([int](1 -bor 2 -bor 4 -bor 8 -bor 1024)),0,$returned,72,4)
         foreach ($offset in @(84,86,92,94,96,100)) { $returned[$offset] = $returned[$offset] -bxor 1 }
@@ -75,7 +87,7 @@ Describe 'Exact marking DEVMODE' {
     It 'accepts colour, duplex and collation the driver kept but changed' {
         $original = New-TestMode
         [Buffer]::BlockCopy([BitConverter]::GetBytes([int](2048 -bor 4096 -bor 32768)),0,$original,72,4)
-        $mode = [ErpGdiPrinter]::RequestMode($original,92.5,20,$false)
+        $mode = [ErpGdiPrinter]::RequestMode($original,92.5,20)
         $returned = $mode.Clone()
         foreach ($offset in @(92,94,100)) { $returned[$offset] = $returned[$offset] -bxor 1 }
         [ErpGdiPrinter]::ValidateMode($mode,$returned)
@@ -84,19 +96,19 @@ Describe 'Exact marking DEVMODE' {
         It "rejects a kept field $($case[1]) with another scale, copy count or Y resolution" {
             $original = New-TestMode
             [Buffer]::BlockCopy([BitConverter]::GetBytes([int]$case[0]),0,$original,72,4)
-            $mode = [ErpGdiPrinter]::RequestMode($original,92.5,20,$false)
+            $mode = [ErpGdiPrinter]::RequestMode($original,92.5,20)
             $returned = $mode.Clone(); $returned[$case[1]] = $returned[$case[1]] -bxor 2
             { [ErpGdiPrinter]::ValidateMode($mode,$returned) } | Should Throw 'substituted'
         }
     }
     It 'rejects a driver that removes required fields' {
-        $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20,$false)
+        $mode = [ErpGdiPrinter]::RequestMode((New-TestMode),92.5,20)
         $returned = $mode.Clone(); $returned[72] = $returned[72] -band (-bnot 8)
         { [ErpGdiPrinter]::ValidateMode($mode,$returned) } | Should Throw 'removed'
     }
     It 'rejects missing private DEVMODE data' {
         $mode = New-TestMode
-        { [ErpGdiPrinter]::RequestMode([byte[]]$mode[0..219],92.5,20,$false) } | Should Throw 'complete'
+        { [ErpGdiPrinter]::RequestMode([byte[]]$mode[0..219],92.5,20) } | Should Throw 'complete'
     }
     foreach ($value in @(0,-1,92.55,501,[double]::NaN,[double]::PositiveInfinity)) {
         It "rejects invalid media $value" { { [ErpGdiPrinter]::Tenths($value) } | Should Throw }
@@ -124,6 +136,66 @@ Describe 'Marking device geometry' {
     }
     It 'rejects impossible printable bounds' {
         { [ErpGdiPrinter]::ValidateGeometry(92.5,20,1093,236,300,300,1093,236,5,0,1093,236) } | Should Throw 'bounds'
+    }
+}
+
+Describe 'Ink inside the driver printable area (Godex/Seagull 92.5 x 20: offset 36, printable 1042 x 237)' {
+    function New-WhiteRaster {
+        $bitmap = New-Object Drawing.Bitmap 1093, 236
+        $g = [Drawing.Graphics]::FromImage($bitmap); try { $g.Clear([Drawing.Color]::White) } finally { $g.Dispose() }
+        return ,$bitmap
+    }
+    It 'accepts white margins and ink inside the printable rect' {
+        $bitmap = New-WhiteRaster
+        try {
+            $bitmap.SetPixel(36, 0, [Drawing.Color]::Black); $bitmap.SetPixel(1077, 235, [Drawing.Color]::Black)
+            [ErpGdiPrinter]::CheckInk($bitmap, 36, 0, 1042, 237)
+        } finally { $bitmap.Dispose() }
+    }
+    It 'refuses ink in the left hard margin and names both rectangles in mm' {
+        $bitmap = New-WhiteRaster
+        try {
+            $bitmap.SetPixel(12, 12, [Drawing.Color]::Black); $bitmap.SetPixel(600, 100, [Drawing.Color]::Black)
+            { [ErpGdiPrinter]::CheckInk($bitmap, 36, 0, 1042, 237) } | Should Throw 'по ширине 3,05–91,27 мм, по подаче 0,00–20,07 мм; краска по ширине 1,02–50,88 мм'
+        } finally { $bitmap.Dispose() }
+    }
+    It 'refuses ink in the right hard margin' {
+        $bitmap = New-WhiteRaster
+        try {
+            $bitmap.SetPixel(1078, 10, [Drawing.Color]::Black)
+            { [ErpGdiPrinter]::CheckInk($bitmap, 36, 0, 1042, 237) } | Should Throw 'outside printable bounds'
+        } finally { $bitmap.Dispose() }
+    }
+}
+
+Describe 'Margin compensation (Godex/Seagull vs shift, from PR #933)' {
+    It 'shift keeps the driver offset, none drops it' {
+        [ErpGdiPrinter]::EffectiveOffsetX(36, 'shift') | Should Be 36
+        [ErpGdiPrinter]::EffectiveOffsetX(36, 'none') | Should Be 0
+    }
+    It 'rejects an unknown mode' {
+        { [ErpGdiPrinter]::EffectiveOffsetX(36, 'x') } | Should Throw 'Unknown margin compensation'
+    }
+    It 'defaults to shift for other drivers and none for Godex/Seagull' {
+        Resolve-MarginCompensation @{ } 'TSC TE200' | Should Be 'shift'
+        Resolve-MarginCompensation @{ } 'Seagull Scientific Godex EZ2350i' | Should Be 'none'
+        Resolve-MarginCompensation @{ } 'Godex EZ2350i' | Should Be 'none'
+    }
+    It 'lets the job override the driver default' {
+        Resolve-MarginCompensation @{ margin_compensation = 'shift' } 'Godex EZ2350i' | Should Be 'shift'
+        Resolve-MarginCompensation @{ margin_compensation = 'none' } 'TSC' | Should Be 'none'
+        { Resolve-MarginCompensation @{ margin_compensation = 'bad' } 'TSC' } | Should Throw
+    }
+    It 'in none mode ink at the left edge is allowed and ink beyond printable width is refused' {
+        $bitmap = New-Object Drawing.Bitmap 1093, 236
+        $g = [Drawing.Graphics]::FromImage($bitmap); try { $g.Clear([Drawing.Color]::White) } finally { $g.Dispose() }
+        try {
+            $bitmap.SetPixel(0, 0, [Drawing.Color]::Black); $bitmap.SetPixel(1041, 10, [Drawing.Color]::Black)
+            [ErpGdiPrinter]::CheckInk($bitmap, [ErpGdiPrinter]::EffectiveOffsetX(36, 'none'), 0, 1042, 237)
+            { [ErpGdiPrinter]::CheckInk($bitmap, [ErpGdiPrinter]::EffectiveOffsetX(36, 'shift'), 0, 1042, 237) } | Should Throw 'outside printable bounds'
+            $bitmap.SetPixel(1042, 10, [Drawing.Color]::Black)
+            { [ErpGdiPrinter]::CheckInk($bitmap, 0, 0, 1042, 237) } | Should Throw 'outside printable bounds'
+        } finally { $bitmap.Dispose() }
     }
 }
 
@@ -172,7 +244,9 @@ Describe 'Marking discovery and protocol' {
         Mock Send-PngToPrinter { @{ outcome = 'spooled'; message = 'Передано принтеру'; spool_job_id = 77 } }
         Mock Save-PrintReceipt { & $script:RealSavePrintReceipt $Path $Receipt }
         Mock Send-RawToPrinter {}
-        Mock Invoke-ErpApi { if ($Url -like '*/claim') { @{ job = (New-TestMarkingJob) } } }
+        Mock Get-PrintJob { @() }
+        # The server hands out marking only to a claim that asks for it (an empty claim polls printer commands).
+        Mock Invoke-ErpApi { if ($Url -like '*/claim') { if ($Body.capabilities -contains 'gdi_png') { @{ job = (New-TestMarkingJob) } } else { @{ job = $null } } } }
     }
     It 'reports driver, port, kind and missing target without enumerating arbitrary queues' {
         $targets = @(Get-AgentPrinters 'TSC' 'Renamed Godex')
@@ -193,9 +267,15 @@ Describe 'Marking discovery and protocol' {
         }
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
             $Url -eq 'http://test/api/stock/labels/jobs/mark-1/result' -and $Body.attempt -eq 'attempt-1' -and
-            $Body.outcome -eq 'spooled' -and $Body.spool_job_id -eq 77 -and $MachineId -eq 'machine-1'
+            $Body.outcome -eq 'spooled' -and $Body.spool_job_id -eq 77 -and $Body.tracked -eq $true -and $MachineId -eq 'machine-1'
         }
         Assert-MockCalled Send-RawToPrinter -Times 0 -Exactly -Scope It
+    }
+    It 'starts watching the spooled job in the Windows queue' {
+        Invoke-MarkingPollOnce 'http://test' 'token' 'TSC' 'Godex 中文' | Should Be 'done'
+        $watch = Get-Content -Raw -Encoding UTF8 (Get-PrintWatchPath 'mark-1' 'attempt-1') | ConvertFrom-Json
+        $watch.spool_job_id | Should Be 77
+        $watch.printer | Should Be 'Godex 中文'
     }
     It 'never claims when configured queues are absent' {
         Mock Get-Printer { @() }
@@ -203,6 +283,7 @@ Describe 'Marking discovery and protocol' {
         Assert-MockCalled Invoke-ErpApi -Times 0 -Exactly -Scope It
     }
     It 'a renamed queue fails the job and never receives TSPL' {
+        Mock Invoke-ErpApi { if ($Url -like '*/claim') { @{ job = (New-TestMarkingJob) } } }  # a server that hands it out anyway
         Invoke-MarkingPollOnce 'http://test' 'token' 'TSC' 'Renamed Godex' | Should Be 'done'
         Assert-MockCalled Send-PngToPrinter -Times 0 -Exactly -Scope It
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Body.outcome -eq 'failed' }
@@ -231,7 +312,7 @@ Describe 'Marking discovery and protocol' {
         { Invoke-MarkingPollOnce 'http://test' 'token' '' 'Godex 中文' } | Should Throw 'process interrupted'
         Invoke-MarkingPollOnce 'http://test' 'token' '' 'Godex 中文' | Should Be 'blocked'
         Assert-MockCalled Send-PngToPrinter -Times 1 -Exactly -Scope It
-        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Url -like '*/claim' }
+        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Url -like '*/claim' -and $Body.capabilities -contains 'gdi_png' }
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Body.outcome -eq 'unknown' }
     }
     It 'a GDI submission error with uncertain delivery pauses the lane' {
@@ -348,7 +429,7 @@ Describe 'Marking heartbeat' {
     BeforeEach {
         $script:VnaControlInitialized = $false; $script:HeartbeatDevices = $null
         Mock Get-MachineId { 'machine-1' }; Mock Get-LanIp { '' }; Mock Get-AgentScanners { @() }
-        Mock Test-ArinstInstalled { $false }; Mock Get-VnaCapability { $null }; Mock Invoke-AgentUpdate {}
+        Mock Test-ArinstPresent { $false }; Mock Get-VnaCapability { $null }; Mock Invoke-AgentUpdate {}
         Mock Get-Printer { [pscustomobject]@{ Name = 'Godex 中文'; DriverName = 'Seagull'; PortName = 'USB001' } }
         Mock Invoke-ErpApi { @{} }
     }
@@ -367,7 +448,84 @@ Describe 'Marking heartbeat' {
         Send-Heartbeat 'http://test' 'token' -PrinterName 'TSC' -MarkingPrinterName 'Godex 中文' -Lightweight
         Assert-MockCalled Get-Printer -Times 0 -Exactly -Scope It
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
-            $Body.printers.Count -eq 1 -and $Body.printers[0].name -eq 'Godex 中文' -and $Body.vna_control.version -eq 1
+            $Body.printers.Count -eq 1 -and $Body.printers[0].name -eq 'Godex 中文' -and $Body.vna_control.version -eq 2
         }
     }
 }
+
+Describe 'Honest print status (spool job watch)' {
+    BeforeEach {
+        $script:ConfigPath = Join-Path (Join-Path $TestDrive ([guid]::NewGuid().ToString())) 'config.json'
+        Mock Get-MachineId { 'machine-1' }
+        $script:Reports = @()
+        Mock Invoke-ErpApi { $script:Reports += ,@{ Url = $Url; Body = $Body }; @{ ok = $true } }
+        Save-PrintWatch 'mark-9' 'attempt-9' 'http://test' 'machine-1' 'Godex 中文' 31
+    }
+    It 'classifies the Windows job status' {
+        (Resolve-SpoolJobState ([pscustomobject]@{ JobStatus = 'Printing' })).state | Should Be 'queued'
+        (Resolve-SpoolJobState ([pscustomobject]@{ JobStatus = 'Spooling, Printing' })).final | Should Be $false
+        (Resolve-SpoolJobState ([pscustomobject]@{ JobStatus = 'Printed' })).state | Should Be 'printed'
+        (Resolve-SpoolJobState ([pscustomobject]@{ JobStatus = 'Complete' })).final | Should Be $true
+        (Resolve-SpoolJobState $null).state | Should Be 'printed'
+        (Resolve-SpoolJobState $null $true).state | Should Be 'cancelled'
+        (Resolve-SpoolJobState ([pscustomobject]@{ JobStatus = 'Deleting' })).deleting | Should Be $true
+        $error1 = Resolve-SpoolJobState ([pscustomobject]@{ JobStatus = 'Printing, Offline' })
+        $error1.state | Should Be 'error'
+        $error1.message | Should Match 'не в сети'
+        (Resolve-SpoolJobState ([pscustomobject]@{ JobStatus = 'PaperOut' })).message | Should Match 'бумаги'
+        (Resolve-SpoolJobState ([pscustomobject]@{ JobStatus = 'Paused' })).state | Should Be 'error'
+    }
+    It 'keeps a job the printer still holds silent and unfinished' {
+        Mock Get-PrintJob { [pscustomobject]@{ ID = 31; JobStatus = 'Printing' } }
+        Update-PrintWatches 'http://test' 'token'
+        $script:Reports.Count | Should Be 0
+        Test-Path -LiteralPath (Get-PrintWatchPath 'mark-9' 'attempt-9') | Should Be $true
+    }
+    It 'reports printed once the job leaves the queue and ends the watch' {
+        Mock Get-PrintJob { @() }
+        Update-PrintWatches 'http://test' 'token'
+        $script:Reports.Count | Should Be 1
+        $script:Reports[0].Url | Should Be 'http://test/api/stock/labels/jobs/mark-9/print-state'
+        $script:Reports[0].Body.state | Should Be 'printed'
+        $script:Reports[0].Body.attempt | Should Be 'attempt-9'
+        Test-Path -LiteralPath (Get-PrintWatchPath 'mark-9' 'attempt-9') | Should Be $false
+    }
+    It 'reports an error once, keeps watching, and reports printed after it clears' {
+        $script:Queue = @([pscustomobject]@{ ID = 31; JobStatus = 'Offline' })
+        Mock Get-PrintJob { $script:Queue }
+        Update-PrintWatches 'http://test' 'token'
+        Update-PrintWatches 'http://test' 'token'
+        $script:Reports.Count | Should Be 1
+        $script:Reports[0].Body.state | Should Be 'error'
+        $script:Queue = @()
+        Update-PrintWatches 'http://test' 'token'
+        $script:Reports.Count | Should Be 2
+        $script:Reports[1].Body.state | Should Be 'printed'
+    }
+    It 'reports cancelled when the job was deleted from the queue' {
+        $script:Queue = @([pscustomobject]@{ ID = 31; JobStatus = 'Deleting' })
+        Mock Get-PrintJob { $script:Queue }
+        Update-PrintWatches 'http://test' 'token'
+        $script:Reports.Count | Should Be 0
+        $script:Queue = @()
+        Update-PrintWatches 'http://test' 'token'
+        $script:Reports[0].Body.state | Should Be 'cancelled'
+    }
+    It 'keeps the watch when ERP is unreachable and drops it when ERP will never take it' {
+        Mock Get-PrintJob { @() }
+        Mock Get-ErpErrorStatus { 0 }
+        Mock Invoke-ErpApi { throw 'network lost' }
+        Update-PrintWatches 'http://test' 'token'
+        Test-Path -LiteralPath (Get-PrintWatchPath 'mark-9' 'attempt-9') | Should Be $true
+        Mock Get-ErpErrorStatus { 409 }
+        Update-PrintWatches 'http://test' 'token'
+        Test-Path -LiteralPath (Get-PrintWatchPath 'mark-9' 'attempt-9') | Should Be $false
+    }
+    It 'does not decide anything while the Windows queue cannot be read' {
+        Mock Get-PrintJob { throw 'spooler stopped' }
+        Update-PrintWatches 'http://test' 'token'
+        $script:Reports.Count | Should Be 0
+        Test-Path -LiteralPath (Get-PrintWatchPath 'mark-9' 'attempt-9') | Should Be $true
+    }
+}
+

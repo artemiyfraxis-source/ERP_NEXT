@@ -860,7 +860,7 @@ export interface FulfillmentRequest {
   /** «main» — комплект КБ (одна живая заявка на КБ проекта); «extra» — «Довыдача» сверх выданного комплекта. */
   kind?: "main" | "extra";
   handout_location: string | null;
-  /** «Укомплектован» only: the place «Отправить на выдачу» offers — the last one used at the kit's site, else «Зона выдачи». */
+  /** «Укомплектован», or a kit «Выдать набранное» takes: the place «Отправить на выдачу» offers — the last one used at the kit's site, else «Зона выдачи». */
   handout_place?: string;
   return_location: string | null;
   fully_reserved: boolean;
@@ -1349,6 +1349,8 @@ export interface ProductionBox {
   confirmed_by: string | null;
   return_reason: string;
   qc_inspected?: boolean;
+  /** КБ коробки уехала целиком (отгружено ≥ заказано) — в «Очередь ОТК» не идёт. */
+  kb_shipped?: boolean;
 }
 
 export interface ProductionWorkSession {
@@ -1434,10 +1436,16 @@ export interface VswrMeasurement {
   max_vswr_mhz: number | null;
   norm: unknown;
   norm_vswr_max: number | null;
-  verdict: "pass" | "fail";
+  /** «border» — на границе допуска (±U ВАЦ от нормы), решение после повтора в 3 подключениях. */
+  verdict: "pass" | "fail" | "border";
   verdict_name: string;
   verdict_manual: boolean;
   verdict_reason: string;
+  /** Решение сервера по СТО ФРАК-002-2026 п. 13.3: «border» — КСВН в пределах ±U ВАЦ от нормы, нужен повтор (3 подключения). */
+  decision?: { status: "pass" | "fail" | "border"; uncertainty: number | null; text: string };
+  /** Замер «на границе», который этот замер повторяет; у решившего повтор — все подключения повтора. */
+  repeat_of?: string | null;
+  repeat_set?: Array<{ attempt: number; max_vswr: number; max_vswr_mhz: number; uncertainty: number }>;
   inspector: { id: string; name: string };
   measured_at: string;
   file_name: string;
@@ -1464,12 +1472,43 @@ export interface VswrTaskListItem {
   id: string;
   number: string;
   name: string;
+  /** КБ задания («КБ1»). */
   item: string;
+  project?: string;
   quantity: number;
   status: string;
-  norm: { status: "ok" | "undefined"; vswr_max: number | null; source: string | null };
+  /** Ревизия ЭТК, на которой запущено задание. */
+  etk_revision?: number | null;
+  norm: { status: "ok" | "undefined"; vswr_max: number | null; source: string | null; band_mhz?: [number | null, number | null] | null };
   control: VswrControl;
-  required: { total: number; measured: number };
+  /** Требуемые замеры партии, сколько замерено; брак и наибольший КСВН — по последним замерам изделий. */
+  required: { total: number; measured: number; failed?: number; max_vswr?: number | null };
+}
+/** Окно ОТК коробки: проверки из шагов «Контроль» ЭТК и СТО ФРАК-001, СИ из реестра, замеры КСВН, причины брака по СТО. */
+export interface QcCheck {
+  kind: "visual" | "dimensions" | "vswr" | "continuity";
+  title: string;
+  /** Методика: «СТО ФРАК-001-2026, разд. 4.1, 4.2». */
+  method: string;
+  tools: string[];
+  items: Array<{ operation: string; text: string; tolerance: string }>;
+  /** Только у КСВН: false — ЭТК контроль не требует. */
+  required?: boolean;
+}
+export interface QcPlan {
+  task: { id: string; number: string; project: string; item: string; name: string; quantity: number };
+  etk: { item_index: string; product_name: string; revision: number | null; current_revision: number | null };
+  checks: QcCheck[];
+  instruments: Array<{ id: string; inventory_number: string; name: string; purpose: string }>;
+  missing_instruments: Array<{ tool: string; purpose: string }>;
+  vswr: {
+    mode: VswrControl["mode"]; every: number | null; total: number; measured: number; failed: number;
+    max_vswr: number | null; norm_vswr_max: number | null; band_mhz: [number | null, number | null] | null;
+    norm_status: "ok" | "undefined"; norm_reason: string;
+    units: Array<{ position: number; serial_number: string; verdict: "pass" | "fail"; verdict_name: string; max_vswr: number | null; instrument_id: string }>;
+  } | null;
+  defects: Array<{ code: string; section: string; defect: string; criterion: string; class: string }>;
+  sto: { designation: string; revision: string; title: string };
 }
 export interface VswrSerialRow {
   position: number;
@@ -1482,7 +1521,8 @@ export interface VswrSerialRow {
   latest: VswrMeasurement | null;
 }
 export interface VswrTaskOverview {
-  task: { id: string; number: string; name: string; quantity: number };
+  task: { id: string; number: string; name: string; quantity: number; project?: string; item?: string };
+  etk?: { item_index: string; revision: number | null; current_revision: number | null };
   norm: VswrNorm;
   control: VswrControl;
   /** Требуемые замеры по всей партии задания и сколько из них замерено. */
@@ -1549,6 +1589,8 @@ export interface InstrumentFile {
   size: number;
   uploaded_at: string;
   uploaded_by_name: string;
+  /** Эталонная кривая СИ: с ней еженедельно сравнивают контрольную меру (СТО ФРАК-002-2026, разд. 14). */
+  is_reference?: boolean;
 }
 
 export interface ProductionInstrument {
@@ -1594,7 +1636,111 @@ export interface InstrumentRfDetails {
   f_min_ghz: number | null;
   max_points: number | null;
   kit_definition: string;
+  mating_resource?: number | null;
 }
+export type MatingStatus = "unknown" | "ok" | "warning" | "exhausted";
+export interface InstrumentMatingEnd {
+  end: "A" | "B";
+  total: number;
+  version: number;
+  percent_used: number | null;
+  status: MatingStatus;
+  initial_recorded: boolean;
+  can_initialize: boolean;
+}
+export interface InstrumentMatingEvent {
+  id: string;
+  instrument_id: string;
+  end: "A" | "B";
+  delta: number;
+  total_after: number;
+  kind: "measurement" | "calibration" | "manual" | "initial" | "correction";
+  note: string;
+  source: string | null;
+  actor: string;
+  created_at: string;
+}
+export interface InstrumentMatingsSnapshot {
+  instrument_id: string;
+  resource: number | null;
+  status: MatingStatus;
+  has_connectors: boolean;
+  ends: InstrumentMatingEnd[];
+  events: InstrumentMatingEvent[];
+  /** Следующий контроль: 12 мес. или 100 сочленений с последнего замера, что раньше; null — замера нет. */
+  control?: InstrumentControl | null;
+}
+export interface InstrumentControl {
+  measured_on: string;
+  due_on: string | null;
+  matings_since: number | null;
+  matings_left: number | null;
+  overdue: boolean;
+  /** Готовая строка сервера: «следующий контроль до 16.11.2027 или ещё 87 сочленений из 100 — что раньше». */
+  line: string;
+}
+export interface InstrumentMatingInput {
+  end: "A" | "B";
+  delta: number;
+  kind: "manual" | "initial" | "correction";
+  note: string;
+  version?: number;
+}
+export const instrumentMatingsApi = {
+  get: (id: string) => api<InstrumentMatingsSnapshot>(`/api/production/instruments/${encodeURIComponent(id)}/matings`),
+  append: (id: string, input: InstrumentMatingInput) => api<InstrumentMatingsSnapshot>(`/api/production/instruments/${encodeURIComponent(id)}/matings`, {
+    method: "POST", body: JSON.stringify(input),
+  }),
+};
+export type VnaCheckKind = "session" | "flex" | "control_standard" | "kit_standards";
+export type VnaDueStatus = "ok" | "overdue" | "never" | "failed";
+export interface VnaCheckDue {
+  kind: "control_standard" | "kit_standards";
+  label: string;
+  last_at: string | null;
+  last_passed: boolean | null;
+  due_at: string | null;
+  status: VnaDueStatus;
+  status_label: string;
+}
+export interface VnaCheckRecord {
+  id: string;
+  kind: VnaCheckKind;
+  kind_label: string;
+  passed: boolean;
+  performed_at: string;
+  recorded_at: string;
+  source: string;
+  operator: string;
+  actor: string;
+  calibration_id: string;
+  acm_serial: string;
+  profile: string;
+  vna_temperature_c: number | null;
+  acm_temperature_c: number | null;
+  confidence_passed: boolean | null;
+  confidence_tx_dev_db: number | null;
+  confidence_rx_dev_db: number | null;
+  load_p1_vswr: number | null;
+  load_p2_vswr: number | null;
+  standard_inventory: string | null;
+  reference: string;
+  vswr_dev: number | null;
+  vswr_limit: number | null;
+  s21_dev_db: number | null;
+  s21_limit_db: number | null;
+  kit_ratio: number | null;
+  note: string;
+}
+export interface VnaChecksSnapshot {
+  instrument_id: string;
+  applicable: boolean;
+  due: VnaCheckDue[];
+  records: VnaCheckRecord[];
+}
+export const vnaChecksApi = {
+  get: (id: string) => api<VnaChecksSnapshot>(`/api/production/instruments/${encodeURIComponent(id)}/vna-checks`),
+};
 export const rfInterfacesApi = {
   get: (id: string) => api<{ rf: InstrumentRfDetails }>(`/api/production/instruments/${encodeURIComponent(id)}/rf-interfaces`),
   save: (id: string, rf: InstrumentRfDetails) => api<{ rf: InstrumentRfDetails; suggested_serial_number?: string | null }>(`/api/production/instruments/${encodeURIComponent(id)}/rf-interfaces`, {
@@ -2266,7 +2412,6 @@ export interface TechcardRevision {
 export interface OperationCardSummary {
   id: string;
   code: string;
-  side: string;
   title: string;
   name: string;
   category: string;
@@ -3857,6 +4002,13 @@ export const fulfillmentApi = {
       method: "POST",
       body: JSON.stringify({ requests }),
     }),
+  /** «Выдать набранное» (owner 17.11.2026): the picked lines of a kit still being picked are issued, the rest moves
+      into a new «Довыдача» (`extra`) unchanged. */
+  issuePicked: (requestId: string, version: number) =>
+    api<{ request: FulfillmentRequest; extra: FulfillmentRequest; message: string }>(`/api/issues/${requestId}/issue-picked`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
   returned: (requestId: string, version: number, returnLocation: string) =>
     api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/returned`, {
       method: "POST",
@@ -4221,6 +4373,7 @@ export const productionApi = {
     api<CableAssemblyPassport>(`/api/production/vswr/tasks/${taskId}/serials/${position}/passport`),
   vswrFileUrl: (measurementId: string) => `/api/production/vswr/measurements/${measurementId}/file`,
   qcRejections: () => api<{ rejections: ProductionQcRejection[] }>("/api/production/qc/rejections"),
+  qcPlan: (taskId: string) => api<QcPlan>(`/api/production/qc/plan/${taskId}`),
   decideQcRejection: (inspectionId: string, disposition: "Доработка" | "Списание" | "Использовать как есть", actReference: string) =>
     api(`/api/production/qc/rejections/${inspectionId}/decide`, {
       method: "POST", body: JSON.stringify({ disposition, act_reference: actReference }),
@@ -4237,6 +4390,8 @@ export const productionApi = {
   uploadInstrumentFile: (id: string, payload: { kind: InstrumentFileKind; file_name: string; content_base64: string }) =>
     api(`/api/production/instruments/${encodeURIComponent(id)}/files`, { method: "POST", body: JSON.stringify(payload) }),
   instrumentFileUrl: (id: string, fileId: string) => `/api/production/instruments/${encodeURIComponent(id)}/files/${encodeURIComponent(fileId)}`,
+  setInstrumentReferenceCurve: (id: string, fileId: string) =>
+    api(`/api/production/instruments/${encodeURIComponent(id)}/files/${encodeURIComponent(fileId)}/reference`, { method: "POST" }),
   deleteInstrumentFile: (id: string, fileId: string) =>
     api(`/api/production/instruments/${encodeURIComponent(id)}/files/${encodeURIComponent(fileId)}`, { method: "DELETE" }),
   instrumentFromStock: (payload: InstrumentFromStockInput) =>

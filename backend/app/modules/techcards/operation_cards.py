@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import datetime
-import json
 import re
-from typing import Mapping, Sequence
+from typing import Container, Mapping, Sequence
 
 
 SPECIAL_CODES = {
     "PRS_CAP | Опрессовка крышки коакс": "PRS_CAP_COAX",
     "INS_MARK | Монтаж маркировки": "INS_MARK_HARNESS",
 }
-SIDE_PATTERN = re.compile(r"\s*\(([AА]|[BВ])\)$")
 # Плейсхолдер ревизии из шаблона («‹рев.›») — не значение (SUPPLYMAP TcRecord.gs tcRecordNormalize_,
 # TcRecordDb.gs tcRecordDbRows_): пишем пусто вместо него.
 REVISION_PLACEHOLDER_PATTERN = re.compile(r"^‹.*›$")
@@ -24,12 +23,38 @@ TOOL_COLUMNS = {
     "Оборудование": {"number": 1, "name": 2, "inventory_number": 5, "program": 6},
     "Расходники": {"number": 1, "name": 2, "parameters": 3, "norm": 4, "unit": 6},
 }
-# Где стороны блока (A)/(B) расходятся по содержанию — чья сторона владеет записью
-# (SUPPLYMAP TcRecord.gs TC_REC_SIDE_PICK_, решение владельца 17.09).
-RECORD_SIDE_PICK = {
-    "SDR_COAX_housing": "B",
-    "SDR_COAX_pin": "A",
-}
+
+
+# Migration 0192 merged each (A)/(B) template pair into one template per code; the merged id is the side's id without
+# its suffix («-a»/«-b» — the slug of «(A)»/«(B)», Latin or Cyrillic). Saved history may still name a side's id.
+FORMER_SIDE_ID = re.compile(r"^(.+)-[abав]$")
+# The codes whose templates were (A)/(B) pairs in the library: their ETK title keeps the side mark («(А)»/«(В)»).
+FORMER_PAIR_CODES = frozenset({
+    "INS_housing_COAX", "INS_housing_COAX_clamp", "INS_terminal_1.00", "INS_terminal_1.25", "INS_terminal_1.5",
+    "INS_terminal_2", "INS_terminal_2,54-6,3", "PRS_TERMINAL_auto", "SDR_COAX_pin", "SDR_COAX_pin_R/A",
+    "SDR_COAX_housing", "STRIP_COAX_auto",
+})
+
+
+def resolve_template_id(
+    template_id: object, op_num: object, known_ids: Container[str],
+    ids_by_code: Mapping[str, Sequence[str]] | None = None,
+) -> str | None:
+    """The library template an operation names: its own id; for a former side's id (0192) — the merged template (the
+    id without the side suffix), else the one template of the operation's code. Any other unknown id — None (the
+    card is gone from the library: the ETK keeps «нет карточки»)."""
+    clean = str(template_id or "").strip()
+    if not clean:
+        return None
+    if clean in known_ids:
+        return clean
+    former = FORMER_SIDE_ID.match(clean)
+    if former is None:
+        return None
+    if former.group(1) in known_ids:
+        return former.group(1)
+    found = (ids_by_code or {}).get(str(op_num or "").strip(), ())
+    return found[0] if len(found) == 1 else None
 
 
 def _cell(rows: Sequence[Sequence[object]], row: int, column: int) -> str:
@@ -78,7 +103,6 @@ class OperationCardImage:
 class OperationCardTemplate:
     source_id: str
     code: str
-    side: str
     title: str
     name: str
     category: str
@@ -105,7 +129,6 @@ class OperationCardTemplate:
     def document(self) -> dict:
         return {
             "code": self.code,
-            "side": self.side,
             "title": self.title,
             "name": self.name,
             "category": self.category,
@@ -144,13 +167,8 @@ def parse_operation_template(
     clean_title = str(title or _cell(rows, 0, 0)).strip()
     if not clean_id or not clean_title or not rows:
         raise ValueError("У шаблона техкарты нет id, заголовка или строк")
-    side_match = SIDE_PATTERN.search(clean_title)
-    side = ""
-    if side_match:
-        side = "A" if side_match.group(1) in {"A", "А"} else "B"
-    base_title = SIDE_PATTERN.sub("", clean_title).strip()
-    code = SPECIAL_CODES.get(base_title, base_title.split(" | ", 1)[0].strip())
-    name = base_title.split(" | ", 1)[1].strip() if " | " in base_title else ""
+    code = SPECIAL_CODES.get(clean_title, clean_title.split(" | ", 1)[0].strip())
+    name = clean_title.split(" | ", 1)[1].strip() if " | " in clean_title else ""
     if not code:
         raise ValueError("В заголовке шаблона нет кода операции")
 
@@ -187,7 +205,6 @@ def parse_operation_template(
     return OperationCardTemplate(
         source_id=clean_id,
         code=code,
-        side=side,
         title=clean_title,
         name=name,
         category=str(category or "").strip(),
@@ -203,6 +220,7 @@ def parse_operation_template(
 
 
 def parse_operation_library(items: Sequence[Mapping[str, object]]) -> tuple[OperationCardTemplate, ...]:
+    """The bundled library: one template per id and one per operation code."""
     ids = [str(item.get("id") or "").strip() for item in items]
     if len(ids) != len(set(ids)):
         raise ValueError("В библиотеке есть повторяющийся id шаблона")
@@ -218,75 +236,11 @@ def parse_operation_library(items: Sequence[Mapping[str, object]]) -> tuple[Oper
             images=item.get("images"),
             rows=rows,
         ))
+    codes = Counter(card.code.casefold() for card in cards)
+    repeated = sorted({card.code for card in cards if codes[card.code.casefold()] > 1})
+    if repeated:
+        raise ValueError(f"В библиотеке у кода операции больше одного шаблона: {', '.join(repeated)}")
     return tuple(cards)
-
-
-@dataclass(frozen=True)
-class OperationCardRecord:
-    """One БД.ОП-style record — a template's (A)/(B) block pair resolved to a single code
-    (SUPPLYMAP TcRecord.gs tcRecordsByCode_, used both at first transfer and by
-    tcRecordResyncFromTemplate since commit e272b7d)."""
-
-    code: str
-    name: str
-    category: str
-    designation: str
-    revision: str
-    safety: str
-    defects: str
-    steps: tuple[OperationCardStep, ...]
-    tooling: tuple[OperationCardTool, ...]
-    images: tuple[OperationCardImage, ...]
-    sides: tuple[str, ...]
-
-
-def _record_of(card: OperationCardTemplate) -> OperationCardRecord:
-    return OperationCardRecord(
-        code=card.code, name=card.name, category=card.category, designation=card.designation,
-        revision=card.revision, safety=card.safety, defects=card.defects,
-        steps=card.steps, tooling=card.tooling, images=card.images,
-        sides=(card.side,) if card.side else (),
-    )
-
-
-def _record_signature(record: OperationCardRecord) -> str:
-    """Content used to tell whether two (A)/(B) blocks of the same code actually agree
-    (SUPPLYMAP TcRecord.gs tcRecContent_, restricted to fields a template block carries)."""
-    return json.dumps({
-        "designation": record.designation,
-        "revision": record.revision,
-        "safety": record.safety,
-        "defects": record.defects,
-        "steps": [step.__dict__ for step in record.steps],
-        "tooling": [tool.__dict__ for tool in record.tooling],
-    }, ensure_ascii=False, sort_keys=True)
-
-
-def build_operation_records(cards: Sequence[OperationCardTemplate]) -> tuple[OperationCardRecord, ...]:
-    """Group (A)/(B) blocks of the same operation code into one record (SUPPLYMAP TcRecord.gs
-    tcRecordsByCode_). A code without a side, or with only one side present, passes through
-    unchanged. Two blocks under one code with identical content merge silently; if they
-    disagree, RECORD_SIDE_PICK must say whose side owns the record, otherwise this raises —
-    same as GAS refusing a silent pick."""
-    by_code: dict[str, OperationCardRecord] = {}
-    for card in cards:
-        record = _record_of(card)
-        previous = by_code.get(card.code)
-        if previous is None:
-            by_code[card.code] = record
-            continue
-        if not card.side or not previous.sides:
-            raise ValueError(f"Два шаблона под кодом {card.code} без сторон (A)/(B)")
-        combined_sides = previous.sides + record.sides
-        if _record_signature(previous) == _record_signature(record):
-            by_code[card.code] = replace(previous, sides=combined_sides, images=previous.images + record.images)
-            continue
-        pick = RECORD_SIDE_PICK.get(card.code)
-        if pick is None:
-            raise ValueError(f"Стороны {card.code} расходятся, а выбора владельца нет")
-        winner = record if pick == card.side else previous
-        by_code[card.code] = replace(winner, sides=combined_sides, images=previous.images + record.images)
-    return tuple(by_code[code] for code in sorted(by_code))
 
 
 # ── Правка записи в ERP (SUPPLYMAP TcRecord.gs «Правка записи в портале», этап 3) ──

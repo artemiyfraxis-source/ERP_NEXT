@@ -4,8 +4,9 @@ from html import escape
 import math
 
 from .instrument_characterization import number
-from .instrument_passport import FREQUENCY_LIMIT_GHZ, LOSS_SCALE, VSWR_SCALE, _envelope, band_rows
-from .instrument_public import PublicMeasurement, PublicPassport, conclusion, control_line, public_fields, public_measurement_fields
+from .instrument_norms import TRANSFER_TITLE, Norm
+from .instrument_passport import _envelope, band_rows, chart_scale, curves
+from .instrument_public import PublicMeasurement, PublicPassport, conclusion, control_line, measurement_line, public_fields
 
 
 PUBLIC_STYLE = """
@@ -17,7 +18,7 @@ h1{font-size:26px;margin:4px 0 0}h2{font-size:19px;margin:0 0 16px}h3{font-size:
 section{background:white;border:1px solid #dadce0;border-radius:10px;padding:22px;margin-bottom:16px}
 a.download{background:#008577;color:white;text-decoration:none;padding:12px 18px;border-radius:6px;white-space:nowrap;font-weight:600;min-height:44px}
 .actions{display:flex;gap:10px;flex-wrap:wrap}.conclusion{border-left:5px solid #008577}.conclusion p{line-height:1.5;margin:8px 0}.verdict{font-size:18px;font-weight:600}.warning{color:#9c2f20;font-weight:600}.history{padding-left:20px;line-height:1.8;font-variant-numeric:tabular-nums}
-a:focus-visible{outline:3px solid #202124;outline-offset:4px}dl{display:grid;grid-template-columns:minmax(130px,1fr) 2fr;gap:10px 18px;margin:0;line-height:1.45}
+a:focus-visible{outline:3px solid #202124;outline-offset:4px}dd.full{grid-column:1/-1}dl{display:grid;grid-template-columns:minmax(130px,1fr) 2fr;gap:10px 18px;margin:0;line-height:1.45}
 dt{color:#555}dd{margin:0;font-weight:500;overflow-wrap:anywhere}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px;font-variant-numeric:tabular-nums}
 th,td{padding:10px 8px;border-bottom:1px solid #dadce0;text-align:right}th:first-child,td:first-child{text-align:left}th{font-weight:600;color:#555}
 svg{display:block;width:100%;height:auto;font-variant-numeric:tabular-nums}svg text{font-family:Arial,sans-serif;font-size:12px;fill:#444}.chart-narrow{display:none}.chart-narrow text{font-size:14px}
@@ -27,36 +28,47 @@ footer{color:#666;font-size:12px;text-align:center;margin-top:24px}@media(max-wi
 
 
 def _fields(rows) -> str:
-    return "<dl>" + "".join(f"<dt>{escape(label)}</dt><dd>{escape(value)}</dd>" for label, value in rows) + "</dl>"
+    return "<dl>" + "".join(f"<dt>{escape(label)}</dt><dd>{escape(value)}</dd>" if label
+                            else f'<dd class="full">{escape(value)}</dd>' for label, value in rows) + "</dl>"
 
 
-def _svg(measured: PublicMeasurement, reflection: bool, *, compact=False) -> str:
-    minimum, maximum, step = VSWR_SCALE if reflection else LOSS_SCALE
-    stop = min(FREQUENCY_LIMIT_GHZ, measured.band[1]) or FREQUENCY_LIMIT_GHZ
-    title = "КСВН" if reflection else "Передача S21, дБ"
-    left, top, width, height = (34, 12, 300, 250) if compact else (44, 12, 640, 220)
+def _svg(measured: PublicMeasurement, reflection: bool, norm: Norm | None = None, *, compact=False) -> str:
+    """Scaled to the data and the norm (the same scale as the PDF); the norm is a red dashed line with its value."""
+    scale = chart_scale(measured, reflection, norm)
+    minimum, maximum, stop = scale.minimum, scale.maximum, scale.stop_ghz
+    title = "КСВН" if reflection else TRANSFER_TITLE
+    left, top, width, height = (40, 12, 294, 250) if compact else (50, 12, 634, 220)
     viewbox = "0 0 350 310" if compact else "0 0 710 270"
     variant = "chart-narrow" if compact else "chart-wide"
+
+    def x_of(ghz):
+        return left + ghz / stop * width
+
+    def y_of(value):
+        return top + (maximum - min(maximum, max(minimum, value))) / (maximum - minimum) * height
+
     body = [f'<div class="{variant}"><svg viewBox="{viewbox}" role="img" aria-label="{title}"><title>{title}</title>']
-    for index in range(11):
-        y = top + index * height / 10
-        label = number(round(maximum - index * step, 1))
+    for value in scale.ticks:
+        y = y_of(value)
         body.append(f'<line x1="{left}" y1="{y:g}" x2="{left + width}" y2="{y:g}" stroke="#ddd"/>')
-        body.append(f'<text x="{left - 8}" y="{y + 4:g}" text-anchor="end">{label}</text>')
-    for index in range(7):
-        x = left + index * width / 6
-        label = number(round(stop * index / 6, 2))
-        body.append(f'<line x1="{x:g}" y1="{top}" x2="{x:g}" y2="{top + height}" stroke="#ddd"/>')
-        body.append(f'<text x="{x:g}" y="{top + height + 19}" text-anchor="middle">{label}</text>')
+        body.append(f'<text x="{left - 8}" y="{y + 4:g}" text-anchor="end">{scale.label(value)}</text>')
+    for edge in (0.0, *scale.band_edges, stop):
+        x = x_of(edge)
+        body.append(f'<line x1="{x:g}" y1="{top}" x2="{x:g}" y2="{top + height}" stroke="#e6e6e6"/>')
+        body.append(f'<text x="{x:g}" y="{top + height + 19}" text-anchor="middle">{number(round(edge, 2))}</text>')
     body.append(f'<text x="{left + width}" y="{307 if compact else 267}" text-anchor="end">ГГц</text>')
+    if scale.limit:
+        coords = " ".join(f"{x_of(f):.2f},{y_of(v):.2f}" for f, v in scale.limit)
+        body.append(f'<polyline points="{coords}" fill="none" stroke="#c81e1e" stroke-width="1.4" stroke-dasharray="6 4"/>')
+        span = [y_of(v) for f, v in scale.limit if f >= scale.limit[-1][0] - stop * 0.3]
+        body.append(f'<text x="{x_of(scale.limit[-1][0]) - 4:.2f}" y="{min(span) - 5 if scale.label_above else max(span) + 14:.2f}" '
+                    f'text-anchor="end" fill="#c81e1e">{escape(scale.limit_label)}</text>')
     clipped = False
-    for name, color in zip(("S11", "S22") if reflection else ("S21",), ("#1950be", "#be2d23")):
-        points = measured.points(name)
+    for points, color in zip(curves(measured, reflection), ("#1950be", "#be2d23")):
         if not reflection:
             points = tuple((f, 20 * math.log10(v) if v > 0 else -math.inf) for f, v in points)
-        clipped |= any(v < minimum or v > maximum for _, v in points)
-        coords = " ".join(f"{left + f / (stop * 1e9) * width:.2f},{top + (maximum - min(maximum, max(minimum, v))) / (maximum - minimum) * height:.2f}"
-                          for f, v in _envelope(points, stop))
+        clipped |= any(v < minimum or v > maximum for f, v in points if f <= stop * 1e9 + 0.5)
+        coords = " ".join(f"{x_of(f / 1e9):.2f},{y_of(v):.2f}" for f, v in _envelope(points, stop))
         body.append(f'<polyline points="{coords}" fill="none" stroke="{color}" stroke-width="1.8"/>')
     body.append("</svg>")
     if clipped:
@@ -83,32 +95,35 @@ def public_passport_html(passport: PublicPassport, *, pdf_path: str) -> str:
         parts.append(f'<p><strong>{escape(passport.impedance_warning)}</strong></p>')
     parts.append('</section>')
     measured = passport.measurement
-    if measured:
-        verdict, warning = conclusion(measured)
-        parts += ['<section class="conclusion" aria-labelledby="conclusion"><h2 id="conclusion">Заключение</h2>',
-                  f'<p class="verdict">{escape(verdict)}</p>', f'<p>{escape(control_line(passport))}</p>']
-        if warning:
-            parts.append(f'<p class="warning">{escape(warning)}</p>')
+    result = conclusion(passport) if measured else None
+    if result:
+        parts += ['<section class="conclusion" aria-labelledby="conclusion">',
+                  f'<h2 id="conclusion">{escape(result.title)}</h2>', f'<p class="verdict">{escape(result.verdict)}</p>']
+        if result.warning:
+            parts.append(f'<p class="warning">{escape(result.warning)}</p>')
+        parts.append(_fields(result.lines))
+        parts.append(f'<p>{escape(control_line(passport))}</p>')
         if passport.control_overdue:
             parts.append('<p class="warning">Требуется повторный замер</p>')
+        parts += [f'<p class="note">{escape(text)}</p>' for text in result.closing]
         parts.append('</section>')
     parts.append('<section aria-labelledby="measurement"><h2 id="measurement">Результаты замера</h2>')
     if measured is None:
         parts.append('<p class="empty">Замер не проведён</p>')
     else:
-        parts += [_fields(public_measurement_fields(measured)), '<h3>Параметры по диапазонам</h3><div class="table-wrap"><table><thead><tr>',
-                  '<th scope="col">Диапазон, ГГц</th><th scope="col">КСВН 1, макс.</th><th scope="col">КСВН 2, макс.</th><th scope="col">Потери, дБ</th></tr></thead><tbody>']
+        norm = passport.norm_check.norm if passport.norm_check else None
+        parts += [f'<p>{escape(measurement_line(passport))}</p>', '<h3>Параметры по диапазонам</h3><div class="table-wrap"><table><thead><tr>',
+                  '<th scope="col">Полоса, ГГц</th><th scope="col">КСВН 1, макс.</th><th scope="col">КСВН 2, макс.</th><th scope="col">Потери, дБ</th></tr></thead><tbody>']
         for row in band_rows(measured):
             parts.append("<tr>" + "".join(f"<td>{escape(value)}</td>" for value in row) + "</tr>")
         parts += ['</tbody></table></div><h3>КСВН</h3><div class="legend"><span class="side-one">Сторона 1</span><span class="side-two">Сторона 2</span></div>',
-                  _svg(measured, True), _svg(measured, True, compact=True), '<h3>Передача S21, дБ</h3>',
-                  _svg(measured, False), _svg(measured, False, compact=True)]
+                  _svg(measured, True, norm), _svg(measured, True, norm, compact=True), f'<h3>{TRANSFER_TITLE}</h3>',
+                  _svg(measured, False, norm), _svg(measured, False, norm, compact=True)]
     parts.append('</section>')
     if passport.history:
         parts.append('<section aria-labelledby="history"><h2 id="history">История контроля</h2><ul class="history">')
         for previous in passport.history:
-            band = previous.band.band_line if previous.band else "Не годен для 50 Ом тракта"
-            parts.append(f'<li>{previous.measured_on:%d.%m.%Y} · {escape(band)}</li>')
+            parts.append(f'<li>{previous.measured_on:%d.%m.%Y} · {escape(previous.summary)}</li>')
         parts.append('</ul></section>')
     parts.append('<footer>Fraxis ERP</footer></main></body></html>')
     return "".join(parts)

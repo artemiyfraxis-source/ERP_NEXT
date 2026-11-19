@@ -9,14 +9,16 @@ from uuid import UUID
 from fastapi import APIRouter, Request, Response
 
 from app.modules.production.infrastructure import SqlAlchemyInstrumentFileRepository, SqlAlchemyInstrumentRepository
-from app.modules.production.instrument_characterization import characterization, working_band
+from app.modules.production.instrument_characterization import characterization
 from app.modules.production.instrument_passport import public_passport_pdf
-from app.modules.production.instrument_public import PublicHistory, public_measurement_download, public_passport
+from app.modules.production.instrument_public import history_entry, public_measurement_download, public_passport
 from app.modules.production.instrument_public_html import PUBLIC_STYLE, public_passport_html
+from app.modules.production.mating_infrastructure import MatingRepository
 from app.modules.production.rf_infrastructure import RfRepository
 from app.shared.clock import moscow_now
 from app.shared.public_passport_limits import PassportLimitsUnavailable, PublicPassportLimits
 from app.shared.public_url import public_passport_url, public_settings, verify_passport_token
+from app.workflows.instrument_labels import same_day_repeats
 
 router = APIRouter(prefix="/p", tags=["public-passports"])
 _STYLE_HASH = base64.b64encode(hashlib.sha256(PUBLIC_STYLE.encode()).digest()).decode()
@@ -91,13 +93,18 @@ def _view_public_passport(locator: str, request: Request) -> Response:
                                     media_type="application/octet-stream",
                                     headers={**PUBLIC_HEADERS, "Content-Disposition": 'attachment; filename="measurement.s2p"'})
                 history = []
+                rf = rf_repository.get(item.id)
+                registry = SqlAlchemyInstrumentRepository(session).list()  # the VNA model by its serial
                 for file_id in rf_repository.characterization_history_file_ids(item.id):
                     previous = files.get(item.id, file_id)
                     if previous and (summary := characterization(previous)):
-                        history.append(PublicHistory(summary.measured_on, working_band(summary)))
+                        history.append(history_entry(item, rf, summary, registry))
                         del summary
                     del previous
-                projection = public_passport(item, rf_repository.get(item.id), measured, history=tuple(history), today=now.date())
+                projection = public_passport(item, rf, measured, history=tuple(history), today=now.date(), registry=registry,
+                                             repeats=same_day_repeats(session, item.id, measured),
+                                             matings_since=MatingRepository(session).matings_since(item.id, measured.measured_on)
+                                             if measured else None)
                 if match[3] == ".pdf":
                     content = public_passport_pdf(projection, generated=now,
                                                   public_url=public_passport_url(instrument_id, settings))
