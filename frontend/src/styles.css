@@ -5461,5 +5461,14 @@ a.button-link { display: inline-block; text-decoration: none; text-align: center
 .vna-bench-check-list { margin-bottom: 12px; }
 .vna-bench-active-check { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 .vna-bench-close { margin-top: 0; }
+.vna-bench-chain { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 24px; }
+.vna-bench-chain label, .vna-bench-fmax { display: grid; gap: 4px; font-size: 12px; color: var(--muted-foreground); }
+.vna-bench-fixture { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.vna-bench-fixture select { min-width: 260px; max-width: 420px; }
+.vna-bench-fmax input { width: 120px; font-variant-numeric: tabular-nums; }
+.vna-bench-chain label.vna-bench-check { display: flex; align-items: center; gap: 4px; padding-bottom: 8px; font-size: 13px; color: var(--foreground); }
+.vna-bench-recorded { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.vna-bench-body { display: grid; gap: 12px; min-width: 0; }
+.vna-bench-target > button, .vna-bench-result > button, .vna-bench-start > button { justify-self: start; }
 @media (max-width: 1100px) { .vna-bench-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 8px; } .vna-bench-steps li:nth-child(3) { border-left: 0; padding-left: 0; } }
 @media (pointer: coarse) { .vna-bench button { min-height: 40px; } }

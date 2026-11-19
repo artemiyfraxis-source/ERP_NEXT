@@ -905,5 +905,5 @@ it("shows «ВАЦ — рабочее место» only when the server answers 
   render(<QualityPage principal={qc} />);
   fireEvent.click(await screen.findByRole("tab", { name: "ВАЦ — рабочее место" }));
   expect(await screen.findByText("Калибровки нет")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Начать сеанс" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Открыть сеанс для СИ и проверок" })).toBeEnabled();
 });

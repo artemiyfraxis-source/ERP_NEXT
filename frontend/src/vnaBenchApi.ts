@@ -1,8 +1,8 @@
 import { api, type VswrTracePoint } from "./api";
 
-/* Клиент «ВАЦ — рабочее место» (план «ВАЦ только через ERP», слайс S5). Все формы, которые ждёт экран, — в этом
-   одном файле: сервер (S3/S4, `workflows/vna_bench_api.py`) пишется параллельно, и при выравнивании правится только
-   он. Пути — под /api/production/vna-bench/*. Команды прибору асинхронны: POST ставит команду агенту и сразу
+/* Клиент «ВАЦ — рабочее место» (план «ВАЦ только через ERP», слайс S5). Все формы экрана — в этом одном файле, по
+   контракту сервера `backend/app/workflows/vna_bench_api.py` (S3/S4): входы — его модели SessionInput/Target/CheckInput,
+   ответы — `_state`, `_plan`, `resolve`. Пути — под /api/production/vna-bench/*. Команды прибору асинхронны: POST ставит команду агенту и сразу
    возвращает состояние; экран опрашивает `state`, пока что-то выполняется. Тексты отказов — по-русски с сервера;
    известные коды экран переводит сам (`refusalText`), код наружу не показывается. */
 
@@ -49,6 +49,7 @@ export interface VnaBenchCalibration {
   temperatures: VnaBenchTemperatures | null;
 }
 
+/** Срок проверки; `flex` — шевеление: «ok» — пройдено после текущей калибровки, «due» — ещё нет. */
 export interface VnaBenchDue {
   kind: VnaBenchCheckKind;
   due_at: string | null;
@@ -68,9 +69,19 @@ export interface VnaBenchStep {
 /** Что сейчас выполняет агент: экран показывает «Выполняется: …» и опрашивает состояние. */
 export interface VnaBenchCommand { label: string; state: "queued" | "running"; since: string }
 
+/** Оснастка перехода (СТО 12.2): своя карточка СИ с файлом .s2p; `reversed` — её сторона 2 обращена к порту 1. */
+export interface VnaBenchFixture { instrument_id: string; reversed: boolean }
+
 export type VnaBenchTarget =
-  | { kind: "instrument"; instrument_id: string; number: string; name: string; serial_number: string | null }
-  | { kind: "assembly"; task_id: string; task_number: string; position: number; serial: number | null; name: string; item: string };
+  | {
+    kind: "instrument"; instrument_id: string; number: string; name: string; serial_number: string | null;
+    /** Цепочка оснастки и верхняя частота ниже, чем позволяют серия и норма; без них — «напрямую», по серии. */
+    left?: VnaBenchFixture | null; right?: VnaBenchFixture | null; fmax_ghz?: number | null;
+  }
+  | {
+    kind: "assembly"; task_id: string; task_number: string; position: number; serial: string | number | null; name: string;
+    item: string; operation_id?: string | null;
+  };
 
 export interface VnaBenchPlanTrace { label: string; scale: string }
 
@@ -129,10 +140,12 @@ export interface VnaBenchItem {
   recorded_at: string | null;
   /** Куда записано: «карточка СИ.035» / «ПЗ-0001, изделие № 3». */
   recorded_to: string | null;
+  /** После записи СИ — его карточка для «Печать этикетки». */
+  label_instrument_id?: string | null;
 }
 
 export interface VnaBenchCheckPhase {
-  /** flex: load_memory/load_flex/thru_memory/thru_flex; weekly: si009; monthly: open_p1…thru_c. */
+  /** flex: load_p1/load_p2/thru_memory/thru_flex; weekly: si009; monthly: open_p1…load_p2 и thru, по 3 подключения. */
   key: string;
   label: string;
   status: VnaBenchStatus;
@@ -157,6 +170,11 @@ export interface VnaBenchSession {
   id: string;
   version: number;
   status: "open" | "closed" | "aborted";
+  /** Состояние сеанса на сервере (ready, awaiting_standard, …) — только для отладки, на экран не выводится. */
+  state?: string;
+  /** Сеанс открыл этот пользователь: управлять им может только он. */
+  owned?: boolean;
+  error?: string | null;
   started_at: string;
   operator: string | null;
   steps: VnaBenchStep[];
@@ -172,6 +190,17 @@ export interface VnaBenchState {
   session: VnaBenchSession | null;
 }
 
+/** Тело «Открыть сеанс»: без `assembly` — сетка «ОТК — переход» (СИ и проверки); с ним — полоса ЭТК задания. */
+export interface VnaBenchSessionInput { assembly?: { task_id: string; operation_id?: string | null } }
+
+export interface VnaBenchCheckInput {
+  kind: VnaBenchCheckKind;
+  instrument_id?: string;
+  label?: string;
+  /** Выбор меры, когда в наборе их несколько одного типа: {"THRU": "MA6666B"}. */
+  selection?: Record<string, string>;
+}
+
 const BASE = "/api/production/vna-bench";
 const post = <T>(path: string, body: unknown = {}) => api<T>(`${BASE}${path}`, { method: "POST", body: JSON.stringify(body) });
 const id = encodeURIComponent;
@@ -180,8 +209,8 @@ export const vnaBenchApi = {
   /** Состояние рабочего места: прибор, калибровка, сроки проверок, открытый сеанс. */
   state: () => api<VnaBenchState>(`${BASE}/state`),
   /** Открыть сеанс рабочего места (purpose='bench'). */
-  startSession: () => post<VnaBenchState>("/sessions"),
-  /** Выполнить шаг сеанса: калибровка АКМ, доверительный тест, нагрузка на порт 1 / 2. */
+  startSession: (input: VnaBenchSessionInput = {}) => post<VnaBenchState>("/sessions", input),
+  /** Подтвердить шаг после подключения: калибровка АКМ (и повтор), нагрузка на порт 1 / 2. Доверительный тест идёт сам. */
   runStep: (sessionId: string, version: number, step: VnaBenchStepKey) =>
     post<VnaBenchState>(`/sessions/${id(sessionId)}/steps/${step}`, { version }),
   /** Найти объект по скану или номеру: СИ («СИ.035»), задание и позиция («ПЗ-0001/3»), серийный номер изделия. */
@@ -198,8 +227,8 @@ export const vnaBenchApi = {
   record: (sessionId: string, itemId: string, version: number) =>
     post<VnaBenchState>(`/sessions/${id(sessionId)}/items/${id(itemId)}/record`, { version }),
   /** Начать проверку: шевеление кабелей, еженедельная (СИ.009), ежемесячная (6650F27). */
-  startCheck: (sessionId: string, version: number, kind: VnaBenchCheckKind) =>
-    post<VnaBenchState>(`/sessions/${id(sessionId)}/checks`, { version, kind }),
+  startCheck: (sessionId: string, version: number, input: VnaBenchCheckInput) =>
+    post<VnaBenchState>(`/sessions/${id(sessionId)}/checks`, { version, ...input }),
   /** Выполнить текущую фазу проверки (после того, как оператор подключил то, что сказано). */
   checkNext: (sessionId: string, checkId: string, version: number) =>
     post<VnaBenchState>(`/sessions/${id(sessionId)}/checks/${id(checkId)}/next`, { version }),
@@ -239,9 +268,24 @@ const REFUSALS: Record<string, string> = {
   no_band: "В ЭТК нет полосы для замера КСВН — технолог должен задать её в операции «Контроль КСВН».",
   other_calibration: "Этому объекту нужна другая калибровка (другая полоса или число точек) — откройте новый сеанс.",
   stale: "Состояние уже изменилось (другая вкладка или контролёр) — экран обновлён, повторите действие.",
+  calibration_required: "Калибровка не подтверждена (доверительный тест или нагрузка не пройдены) — проверьте соединения и откалибруйте заново.",
+  control_failed: "Еженедельная или ежемесячная проверка не пройдена — замеры СИ и КБ остановлены до выяснения причины.",
+  not_final: "Решение ещё не окончательное — выполните все подключения, затем записывайте.",
+  stopped: "Прервано — начат следующий объект или проверка.",
+  station_setup: "Рабочее место не собрано в реестре СИ: у карточки ВАЦ нужны АКМ и два тестовых кабеля.",
+  no_fixture_file: "У оснастки нет своего файла .s2p — замер с ней не выполняют (СТО п. 12.2).",
+  no_reference: "У контрольной меры нет эталонной кривой — отметьте файл в её карточке СИ.",
+  kit_choice: "В наборе несколько мер одного типа — укажите, какую подключаете.",
+  conflict: "Действие не выполнено: сеанс в другом состоянии. Экран обновлён.",
+  invalid: "Данные не приняты сервером.",
+  not_found: "Не найдено — возможно, сеанс уже закрыт.",
+  refused: "Команда не выполнена.",
 };
+/** Коды, у которых текст сервера точнее общего: в нём номер СИ, список мер, имя поля. */
+const DETAILED = new Set(["station_setup", "no_fixture_file", "no_reference", "kit_choice", "conflict", "invalid", "not_found", "refused"]);
 
 export function refusalText(refusal: VnaBenchRefusal | null | undefined): string {
   if (!refusal) return "";
+  if (DETAILED.has(refusal.code) && refusal.message) return refusal.message;
   return REFUSALS[refusal.code] ?? refusal.message;
 }

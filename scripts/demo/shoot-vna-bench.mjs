@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Shots of «ОТК → ВАЦ — рабочее место» over a MOCKED /api/production/vna-bench/* (the server part, S3/S4, lands later).
+// Shots of «ОТК → ВАЦ — рабочее место» over a MOCKED /api/production/vna-bench/* in the server's shapes (PR #973,
+// workflows/vna_bench_api.py) — for screens the local stand cannot reach (a КБ needs a task with ETK).
 // Everything else comes from the running ERP (preview or demo). Without the mock the tab stays hidden — shot «off».
 //   ERP_URL=http://127.0.0.1:8091 SHOTS_DIR=<dir> node scripts/demo/shoot-vna-bench.mjs
 import { execSync } from "node:child_process";
@@ -26,6 +27,7 @@ const trace = Array.from({ length: 241 }, (_, index) => {
 });
 trace.push({ mhz: 17200, vswr: 1.065 });
 trace.sort((a, b) => a.mhz - b.mhz);
+const kb = { kind: "assembly", task_id: "t1", task_number: "ПЗ-0001", position: 3, serial: null, name: "Кабель коаксиальный КБ1", item: "591К.3.КБ1", operation_id: "op1" };
 const target = { kind: "instrument", instrument_id: "si-035", number: "СИ.035", name: "Переход ADP1A 3,5 мм (розетка) — 3,5 мм (вилка)", serial_number: "N8B141" };
 const plan = {
   screen_name: "ОТК — переход", band_mhz: [10, 18000], points: 1601, ifbw_hz: 1000, power_dbm: 0,
@@ -49,7 +51,7 @@ const allPassed = [
   step("load_port1", "passed", "КСВН 1,032 ≤ 1,06 на 17 940 МГц"),
   step("load_port2", "passed", "КСВН 1,028 ≤ 1,06 на 16 120 МГц"),
 ];
-const session = (extra) => ({ id: "s1", version: 5, status: "open", started_at: at("14:30"), operator: "Артемий", steps: allPassed, command: null, items: [], checks: [], ...extra });
+const session = (extra) => ({ id: "s1", version: 5, status: "open", state: "ready", owned: true, error: null, started_at: at("14:30"), operator: "Артемий", steps: allPassed, command: null, items: [], checks: [], ...extra });
 
 const scenarios = {
   idle: { device: { ...device, s2vna_ready: false, warmup_min: 28 }, calibration: { valid: false, calibrated_at: null, valid_until: null, reason: "нет — сеанс не открыт", temperatures: null }, due, session: null },
@@ -58,12 +60,14 @@ const scenarios = {
   }) },
   border: { device, calibration: validCal, due, session: session({ items: [{
     id: "i1", version: 2, target, plan, connections_total: 3,
-    connections: [{ no: 1, status: "passed", max_vswr: 1.065, max_mhz: 17200, measured_at: at("15:00") }],
+    connections: [{ no: 1, status: "passed", max_vswr: 1.065, max_mhz: 17200, measured_at: at("15:00") },
+      { no: 2, status: "pending", max_vswr: null, max_mhz: null, measured_at: null }, { no: 3, status: "pending", max_vswr: null, max_mhz: null, measured_at: null }],
     trace, verdict: { code: "border", worst_vswr: 1.065, worst_mhz: 17200, norm_vswr: 1.06, uncertainty: 0.012, reason: "Норма < результат ≤ норма + U — повтор по СТО 12.4", final: false },
-    refusal: null, recorded_at: null, recorded_to: null,
+    refusal: null, recorded_at: null, recorded_to: null, label_instrument_id: null,
   }] }) },
+  kb: { device, calibration: validCal, due, session: null },
   checks: { device, calibration: validCal, due: [due[0], { ...due[1], status: "overdue", due_at: at("00:00").replace("11-19", "11-18") }], session: session({ checks: [
-    { id: "c0", version: 3, kind: "flex", status: "passed", result_text: "LOAD 1,041 ≤ 1,06; S21 ±0,021 дБ ≤ 0,05", refusal: null, started_at: at("14:50"), finished_at: at("14:55"), phases: [] },
+    { id: "c0", version: 3, kind: "flex", status: "passed", result_text: "S21 0,021 дБ ≤ 0,05; КСВН 1,041", refusal: null, started_at: at("14:50"), finished_at: at("14:55"), phases: [] },
     { id: "c1", version: 2, kind: "monthly", status: "running", result_text: null, refusal: null, started_at: at("15:00"), finished_at: null, phases: [
       { key: "open_p1", label: "OPEN, порт 1", status: "passed", connection_no: 1, connections_total: 3, result_text: "0,31 допуска" },
       { key: "open_p1", label: "OPEN, порт 1", status: "passed", connection_no: 2, connections_total: 3, result_text: "0,28 допуска" },
@@ -91,18 +95,18 @@ for (const vp of [{ tag: "16", width: 1536, height: 864 }, { tag: "27", width: 2
   let scenario = "idle";
   await page.route("**/api/production/vna-bench/**", (route) => {
     const url = new URL(route.request().url());
-    const body = url.pathname.endsWith("/resolve") ? { candidates: [target] } : url.pathname.endsWith("/plan") ? plan : scenarios[scenario];
+    const body = url.pathname.endsWith("/resolve") ? { candidates: [scenario === "kb" ? kb : target] } : url.pathname.endsWith("/plan") ? plan : scenarios[scenario];
     return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });
-  for (const name of ["idle", "steps", "border", "checks"]) {
+  for (const name of ["idle", "steps", "border", "checks", "kb"]) {
     scenario = name;
     await page.goto(`${BASE}/?section=quality&tab=vna`, { waitUntil: "networkidle" });
     await page.getByRole("tab", { name: "ВАЦ — рабочее место", selected: true }).waitFor();
     await page.locator(".vna-bench-head").waitFor();
-    if (name === "border") {
-      await page.getByLabel("СИ или КБ — скан или номер").fill("СИ.035");
+    if (name === "border" || name === "kb") {
+      await page.getByLabel("СИ или КБ — скан или номер").fill(name === "kb" ? "ПЗ-0001/3" : "СИ.035");
       await page.getByRole("button", { name: "Найти" }).click();
-      await page.getByText("На границе допуска").waitFor();
+      await (name === "kb" ? page.getByRole("button", { name: "Открыть сеанс для КБ" }) : page.getByText("На границе допуска")).waitFor();
     }
     if (name === "checks") await page.getByRole("tab", { name: "Проверки" }).click();
     await page.waitForTimeout(300);
