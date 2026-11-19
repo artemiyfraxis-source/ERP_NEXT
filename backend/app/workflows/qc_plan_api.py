@@ -27,7 +27,7 @@ from app.modules.techcards.td_sto import sto_defects, sto_reference, sto_section
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, production_overview_principal
 
-from .coax_vswr_api import NO_ETK_REASON, CoaxRefs, _norm_result, _num, _task, _task_etk, coax_config, etk_control, task_norm, undefined_norm
+from .coax_vswr_api import NO_ETK_REASON, CoaxRefs, _norm_result, _num, _task, _task_etk, coax_config, etk_control, task_measured, task_norm, undefined_norm
 
 router = APIRouter(prefix="/api/production/qc", tags=["production"])
 
@@ -164,7 +164,8 @@ def qc_plan(
     coax = coax_config(document) is not None
     vswr = None
     if coax:
-        norm = (task_norm(document, current, etk["current_revision"], CoaxRefs(refs_factory), now) if etk["techcard_id"]
+        norm = (task_norm(document, current, etk["current_revision"], CoaxRefs(refs_factory), now,
+                          measured=task_measured(uow_factory, task.id)) if etk["techcard_id"]
                 else undefined_norm(NO_ETK_REASON))
         vswr = _vswr_progress(uow_factory, task, etk_control(document, norm), norm)
         # КСВН и затухание вне нормы (СТО 4.8) — причины брака любой коаксиальной сборки, даже без операций раздела 4.8.
