@@ -241,6 +241,10 @@ def _mark_media(op: Mapping[str, Any]) -> Mapping[str, Any] | None:
     return media if _wire_marks(op) and isinstance(media, Mapping) and media.get("kind") in {"tube", "tape"} else None
 
 
+def _is_tape_mark(op: Mapping[str, Any]) -> bool:
+    return (_mark_media(op) or {}).get("kind") == "tape"
+
+
 def _laser_step_text(mark: Mapping[str, Any]) -> str:
     text = lambda key: str(mark.get(key) or "").strip()  # noqa: E731
     if mark.get("mode") == "full":
@@ -491,7 +495,12 @@ def _harness_step(
                 f"{part['art']} — {_format(part['count'])} шт" + (f" по {part['len']} мм" if part["len"] else "") for part in parts)
             texts = [str(text).strip() for text in _list(op.get("markTexts")) if str(text).strip()] if _wire_marks(op) else []
             head = f"Маркировка нарезана: {listed}" if listed else "Маркировка нарезана"
+            if _is_tape_mark(op):
+                # Лента маркиратора печатается и клеится, не нарезается (владелец 20.11).
+                head = f"Маркировка напечатана: Лента {_format((_mark_media(op) or {}).get('sizeMm'))} мм"
             return (f"{head}. Надписи: {'; '.join(texts)}" if texts else head), []
+        if operation_type == "insTut" and _is_tape_mark(op):
+            return base, _with_fact(facts, "mark", "маркировка наклеена")
         return base, _with_fact(facts, "mark", "маркировка надета" if operation_type == "insTut" else "маркировка усажена")
     if _braid_cut(op):
         material = str(op.get("tutArt") or "")
@@ -3697,6 +3706,8 @@ def _scheme_step(op: Mapping[str, Any]) -> str:
     if kind == "prs":
         return "Терминалы обжаты"
     if _mark_tube(op):
+        if operation_type == "insTut" and _is_tape_mark(op):
+            return "Маркировка наклеена"
         return "Маркировка надета" if operation_type == "insTut" else "Маркировка усажена"
     if operation_type == "insWrap":
         return "Оплётка надета" if op.get("wrapKind") == "braid" else "Лента намотана"

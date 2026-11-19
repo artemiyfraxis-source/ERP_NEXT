@@ -1,7 +1,7 @@
 import { Seg } from "./GenControls";
 import {
   LASER_END_MM, LASER_MODES, LASER_STEP_MM, LASER_TEXT_MAX, mmRu, WIRE_MARK_DIST_MM, WIRE_MARK_KINDS, WIRE_MARK_LEN_MM, WIRE_MARK_TAPE_WIDTHS_MM,
-  WIRE_MARK_TUBE_SIZES_MM, wireMarkKindOf, type LaserMode, type WireMarkCfg, type WireMarkKind, type WireMarkRow, type WireMarkSkip,
+  WIRE_MARK_TUBE_SIZES_MM, laserTextWarnings, wireMarkKindOf, type LaserMode, type WireMarkCfg, type WireMarkKind, type WireMarkRow, type WireMarkSkip,
 } from "./tcGenWireMarks";
 
 export const wireMarksOff = (): WireMarkCfg => ({ enabled: false, mat: "", len: "", dist: "" });
@@ -35,6 +35,7 @@ export function WireMarks({ cfg, onChange, rows, skipped, tubes, autoTube, note 
     patch({ texts });
   };
   const full = kind === "laser" && laser.mode === "full";
+  const warnings = kind === "laser" ? laserTextWarnings(own, rows) : {};
   const marks = full ? rows.length : rows.length * 2;
   const hint = kind === "none" ? "две метки на провод — «X1.1 to X2.2» в начале и «X2.2 to X1.1» в конце"
     : !rows.length ? "нет проводов с известными концами — задайте распиновку"
@@ -87,7 +88,7 @@ export function WireMarks({ cfg, onChange, rows, skipped, tubes, autoTube, note 
         <colgroup><col className="c-n" /><col className="c-wm" /><col className="c-wm" /></colgroup>
         <thead><tr><th title="Номер провода в строке «Кабели»">№</th><th>Метка на конце А</th><th>Метка на конце В</th></tr></thead>
         <tbody>{rows.map((row) => <tr key={row.key}>
-          <td className="num">{row.num}</td>
+          <td className="num" title={warnings[row.key]?.join("; ")}>{row.num}{warnings[row.key] && <span className="warning-inline" role="alert"> ⚠ {warnings[row.key].join("; ")}</span>}</td>
           <td><input aria-label={`Метка конца А, провод ${row.num}`} maxLength={kind === "laser" ? LASER_TEXT_MAX : undefined} value={row.textA} onChange={(event) => setText(row, "A", event.target.value)} /></td>
           <td><input aria-label={`Метка конца В, провод ${row.num}`} maxLength={kind === "laser" ? LASER_TEXT_MAX : undefined} value={row.textB} onChange={(event) => setText(row, "B", event.target.value)} /></td>
         </tr>)}</tbody>

@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
 import { complexByHand, initState, makeGen, toggleLengthMode, updateEndpoint, type GenState } from "./tcGenLogic";
-import { laserMarkOf, markMediaOf, pickWireMarkTube, tubeBeforeShrink, WIRE_MARK_TAPE_WIDTHS_MM, WIRE_MARK_TUBE_SIZES_MM, wireMarkKindOf, wireMarkTubeBySize } from "./tcGenWireMarks";
+import { laserMarkOf, laserPrintedKey, laserTextWarnings, markMediaOf, pickWireMarkTube, tubeBeforeShrink, WIRE_MARK_TAPE_WIDTHS_MM, WIRE_MARK_TUBE_SIZES_MM, wireMarkKindOf, wireMarkTubeBySize } from "./tcGenWireMarks";
 import { assignPinJoined, joinSplice, renameSplice, setTail, spliceLabel } from "./tcGenSplices";
 import { pinConns, pinRows, spliceLines } from "./tcGenPinTable";
 import { pinoutEnds, pinUnits } from "./pinoutCheck";
@@ -215,4 +215,32 @@ it("старый черновик (трубка без поля kind) и фор�
   expect(JSON.stringify(makeGen(DSA, before).buildConfig())).not.toMatch(/markMedia|laserMark/);
   const full = fullHarness(DSA);
   same(full, { ...full, wireMarks: { enabled: false, mat: "", len: "", dist: "", kind: "tape", tapeMm: "9" } });
+});
+
+const wmRow = (key: string, num: string, textA: string, textB: string) => ({ key, idx: 0, unit: 0, num, from: "", to: "", textA, textB, autoA: textA, autoB: textB });
+const FULL_CFG = (middle: string) => ({ enabled: true, mat: "", len: "", dist: "", kind: "laser" as const, laser: { mode: "full" as const, middle } });
+const ENDS_CFG = { enabled: true, mat: "", len: "", dist: "", kind: "laser" as const, laser: { mode: "ends" as const } };
+
+it("партии резки лазером: по всей длине делит печатаемая надпись, а не пара надписей концов; по краям — пара", () => {
+  const a = wmRow("0.0", "1", "XS1.1 to X2.2", "X2.2 to XS1.1"), b = wmRow("0.1", "2", "XS1.2 to X2.3", "X2.3 to XS1.2");
+  expect(laserPrintedKey(FULL_CFG("ЖГУТ-7"), a)).toBe(laserPrintedKey(FULL_CFG("ЖГУТ-7"), b));
+  expect(laserPrintedKey(FULL_CFG(""), a)).not.toBe(laserPrintedKey(FULL_CFG(""), b));
+  expect(laserPrintedKey(ENDS_CFG, a)).not.toBe(laserPrintedKey(ENDS_CFG, b));
+  expect(laserPrintedKey(ENDS_CFG, a)).toBe(laserPrintedKey(ENDS_CFG, { ...a }));
+  // Обрезка до 30 знаков тоже считается: станок напечатает одно и то же.
+  const l1 = wmRow("0.2", "3", "A".repeat(30) + "1", "x"), l2 = wmRow("0.3", "4", "A".repeat(30) + "2", "x");
+  expect(laserPrintedKey(FULL_CFG(""), l1)).toBe(laserPrintedKey(FULL_CFG(""), l2));
+});
+
+it("лазер: надпись длиннее 30 знаков — предупреждение у провода, одинаковые после обрезки — отдельное", () => {
+  const long1 = "A".repeat(30) + "1", long2 = "A".repeat(30) + "2";
+  const rows = [wmRow("0.0", "1", long1, "B1"), wmRow("0.1", "2", long2, "B2"), wmRow("0.2", "3", "short", "B3")];
+  const w = laserTextWarnings(ENDS_CFG, rows);
+  expect(w["0.0"].join(" ")).toContain(`надпись длиннее 30 знаков — на станке обрежется до «${"A".repeat(30)}»`);
+  expect(w["0.0"].join(" ")).toMatch(/совпадает с проводом № 2 — напечатается одинаковая метка/);
+  expect(w["0.1"].join(" ")).toMatch(/совпадает с проводом № 1/);
+  expect(w["0.2"]).toBeUndefined();
+  // По всей длине со своей надписью концы не печатаются — предупреждений нет.
+  expect(laserTextWarnings(FULL_CFG("ЖГУТ-7"), rows)).toEqual({});
+  expect(Object.keys(laserTextWarnings(FULL_CFG(""), rows))).toEqual(["0.0", "0.1"]);
 });

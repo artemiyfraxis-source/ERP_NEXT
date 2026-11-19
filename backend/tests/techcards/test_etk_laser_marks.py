@@ -77,6 +77,27 @@ def test_mark_media_tape_is_a_printer_consumable():
     assert cut["components"] == []
 
 
+def test_tape_marks_are_printed_and_stuck_not_cut_and_put_on():
+    tape = build(wire_mark_config({"kind": "tape", "sizeMm": 9}))
+    tube = build(wire_mark_config({"kind": "tube", "sizeMm": 3.2}))
+    text = json.dumps(tape, ensure_ascii=False)
+    assert "Маркировка напечатана: Лента 9 мм" in text
+    assert "Маркировка нарезана" not in text
+    assert "Маркировка нарезана" in json.dumps(tube, ensure_ascii=False)
+    assert "Маркировка напечатана" not in json.dumps(tube, ensure_ascii=False)
+
+
+def test_tape_put_on_result_is_stuck_on_tube_stays_put_on():
+    for media, word in (({"kind": "tape", "sizeMm": 9}, "наклеена"), ({"kind": "tube", "sizeMm": 3.2}, "надета"), (None, "надета")):
+        extra = {"markMedia": media} if media else {}
+        document = build(with_op(CONFIG, "onMarkA2", wireMarks=True, markTexts=TEXTS, **extra))
+        text = json.dumps(op_by_key(document, "onMarkA2"), ensure_ascii=False)
+        assert f"аркировка {word}" in text
+        assert ("аркировка наклеена" in text) == (word == "наклеена")
+        handed = json.dumps(op_by_key(document, "heatMarkA2"), ensure_ascii=False)
+        assert ("Маркировка наклеена" in handed) is False
+
+
 def test_without_the_fields_the_document_is_as_before():
     text = json.dumps(build(wire_mark_config(None)), ensure_ascii=False)
     assert "laserMark" not in text and "markMedia" not in text and "Маркировка лазером" not in text

@@ -73,6 +73,39 @@ export function laserMarkOf(cfg: WireMarkCfg | undefined, front: string, back: s
   };
 }
 
+/** Что станок напечатает на проводе: по всей длине — одну надпись (своя или конца А), по краям — пару надписей концов. */
+export function laserPrintedOf(cfg: WireMarkCfg | undefined, row: Pick<WireMarkRow, "textA" | "textB">): string[] {
+  return cfg?.laser?.mode === "full" ? [clampText((cfg.laser.middle || "").trim() || row.textA)] : [clampText(row.textA), clampText(row.textB)];
+}
+
+/** Подпись партии резки: провода с одной подписью режутся вместе (по всей длине — по общей надписи, по краям — по паре). */
+export const laserPrintedKey = (cfg: WireMarkCfg | undefined, row: Pick<WireMarkRow, "textA" | "textB"> | undefined): string => (row ? JSON.stringify(laserPrintedOf(cfg, row)) : "");
+
+/** Предупреждения по проводам лазерной метки: надпись длиннее станка и разные надписи, ставшие одинаковыми после обрезки. */
+export function laserTextWarnings(cfg: WireMarkCfg | undefined, rows: WireMarkRow[]): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  const add = (key: string, text: string) => { (out[key] ||= []).includes(text) || out[key].push(text); };
+  const full = cfg?.laser?.mode === "full";
+  const own = full ? (cfg?.laser?.middle || "").trim() : "";
+  // Надписи, которые уйдут на станок: (провод, исходный текст, конец).
+  const sources = rows.flatMap((row) => (full ? (own ? [] : [{ row, raw: row.textA.trim() }]) : [{ row, raw: row.textA.trim() }, { row, raw: row.textB.trim() }]));
+  sources.forEach(({ row, raw }) => {
+    if (raw.length > LASER_TEXT_MAX) add(row.key, `надпись длиннее ${LASER_TEXT_MAX} знаков — на станке обрежется до «${clampText(raw)}»`);
+  });
+  const byCut = new Map<string, { rows: WireMarkRow[]; raws: Set<string> }>();
+  sources.forEach(({ row, raw }) => {
+    const hit = byCut.get(clampText(raw)) || { rows: [], raws: new Set<string>() };
+    hit.raws.add(raw);
+    if (!hit.rows.includes(row)) hit.rows.push(row);
+    byCut.set(clampText(raw), hit);
+  });
+  byCut.forEach((hit, cut) => {
+    if (hit.raws.size < 2) return;
+    hit.rows.forEach((row) => add(row.key, `после обрезки до «${cut}» надпись совпадает с проводом ${hit.rows.filter((r) => r !== row).map((r) => `№ ${r.num}`).join(", ") || "этого же"} — напечатается одинаковая метка`));
+  });
+  return out;
+}
+
 /** Трубка маркиратора выбранного Ø из списка (до усадки, светлая первой); нет такой — "". */
 export function wireMarkTubeBySize(names: string[], sizeMm: number): string {
   const fits = names.filter((name) => { const d = tubeBeforeShrink(name); return d !== null && Math.abs(d - sizeMm) < 0.05; });

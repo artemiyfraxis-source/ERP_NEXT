@@ -9,7 +9,7 @@
  */
 import { matchCableRec } from "./cableMatch";
 import { COAX_PROTECTIVE_TUT_LENGTHS, coaxMarkDefaults, coaxMarksFromName, sumCoaxMaterial, type CoaxMark, type ConnColor, markIsTube, markLabel, markSpecs, markTubeShrinks, markTubeSplit, type MarkMat, type MarkRow, type MarkSpec, type MarkTube } from "./tcGenMarks";
-import { laserMarkOf, markMediaOf, pickWireMarkTube, WIRE_MARK_DIST_MM, WIRE_MARK_LEN_MM, wireMarkKey, wireMarkKindOf, wireMarkRow, wireMarkTexts, wireMarkTubeBySize, type LaserMark, type MarkMedia, type WireMarkCfg, type WireMarkRow, type WireMarkSkip } from "./tcGenWireMarks";
+import { laserMarkOf, laserPrintedKey, markMediaOf, pickWireMarkTube, WIRE_MARK_DIST_MM, WIRE_MARK_LEN_MM, wireMarkKey, wireMarkKindOf, wireMarkRow, wireMarkTexts, wireMarkTubeBySize, type LaserMark, type MarkMedia, type WireMarkCfg, type WireMarkRow, type WireMarkSkip } from "./tcGenWireMarks";
 import { twistGroupProblems, twistGroupsOf, type TwistRow } from "./twistGroups";
 import { pickTerminals, type TerminalPairs } from "./terminalPick";
 import { LUG_CRIMP_CARD, LUG_CRIMP_NAMES, lugArt, lugByArt, lugCrimpOf, lugTypes, type LugCrimp, type LugRec } from "./tcGenLugs";
@@ -3090,13 +3090,13 @@ export function makeGen(D: GenData, S: GenState) {
       const markOf = (piece: Piece) => {
         if (!laserRows) return undefined;
         const rows = piece.ks.map((k) => laserRows.get(wireMarkKey(piece.w.idx, k)));
-        const pair = (row: WireMarkRow | undefined) => (row ? JSON.stringify([row.textA, row.textB]) : "");
+        const pair = (row: WireMarkRow | undefined) => laserPrintedKey(S.wireMarks, row);
         return rows.every((row) => !!row && pair(row) === pair(rows[0])) ? rows[0] : undefined;
       };
       const cutPieces = !laserRows ? pieces : pieces.flatMap((piece) => {
         if (!piece.ends || piece.ks.length < 2) return [piece];
         const byPair = new Map<string, number[]>();
-        piece.ks.forEach((k) => { const row = laserRows.get(wireMarkKey(piece.w.idx, k)); const sig = row ? JSON.stringify([row.textA, row.textB]) : ""; byPair.set(sig, [...(byPair.get(sig) || []), k]); });
+        piece.ks.forEach((k) => { const row = laserRows.get(wireMarkKey(piece.w.idx, k)); const sig = laserPrintedKey(S.wireMarks, row); byPair.set(sig, [...(byPair.get(sig) || []), k]); });
         return byPair.size < 2 ? [piece] : [...byPair.values()].map((ks): Piece => ({ ...piece, units: ks.length, ks }));
       });
       cutPieces.forEach((piece) => {
@@ -3110,7 +3110,7 @@ export function makeGen(D: GenData, S: GenState) {
         // Резку с обжимом и хвосты режет BZW — лазера там нет, партии по надписям не делятся.
         const mark = !crimpA && !crimpB && !tail ? markOf(piece) : undefined;
         const sig = `${s.a}|${s.b}|${crimpA ? "A" : ""}${crimpB ? "B" : ""}${tin ? "T" : ""}|${termOf(crimpA)}/${termOf(crimpB)}|${rot ? "R" : ""}${tail ? "|L" : ""}`
-          + (mark ? `|M${JSON.stringify([mark.textA, mark.textB])}` : "");
+          + (mark ? `|M${laserPrintedKey(S.wireMarks, mark)}` : "");
         const g = groups[sig] || (groups[sig] = { pieces: [], a: s.a, b: s.b, crimpA: [], crimpB: [], tin, rot, tail, ...(mark ? { mark } : {}) });
         g.pieces.push(piece);
         if (crimpA && !g.crimpA.includes(crimpA)) g.crimpA.push(crimpA);
