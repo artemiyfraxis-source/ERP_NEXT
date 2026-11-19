@@ -96,6 +96,7 @@ PLC_STEP = Decimal("0.01")
 PLC_MAX = Decimal("655.35")  # u16 ×0,01 of D34–D43; D32 (length) is u32
 LENGTH_MAX = Decimal("99999.99")
 DIAMETER_OVER_CONDUCTOR = Decimal("0.10")  # cut diameter without a recipe: Ø жилы + 0,10 мм (owner 19.11.2026)
+HALF_PULL = Decimal("0.5")  # «полустягивание»: the slug moves half the strip length and stays on the end (owner 19.11.2026)
 
 
 @dataclass(frozen=True)
@@ -243,7 +244,8 @@ def ob019_proposal(recipe: ManualRecipeVersion | None, etk: EtkNominal | None,
         elif proposed_strip == 0:
             result[key] = ProposedValue(key, Decimal(0), "ЭТК: без зачистки")
         elif getattr(etk, partial):
-            result[key] = ProposedValue(key, None, "ЭТК: частичная зачистка — задайте")
+            # Three pull-off modes (owner 19.11.2026): full = the strip length, half = half of it, none = 0.
+            result[key] = ProposedValue(key, (proposed_strip * HALF_PULL).quantize(PLC_STEP), "ЭТК: полустягивание")
         else:
             result[key] = ProposedValue(key, proposed_strip, "ЭТК: полное снятие")
     if saved.get("diameter_mm") is not None:

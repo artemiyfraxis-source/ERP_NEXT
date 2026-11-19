@@ -70,7 +70,7 @@ def test_etk_nominal_without_recipe_full_partial_and_no_strip():
     assert values["diameter_mm"] == (Decimal("0.49"), "Ø жилы + 0,10")  # owner 19.11.2026
     assert values["knife_back_mm"] == (None, "Нет данных")
     partial = by_key(ob019_proposal(None, EtkNominal("МГТФ 0,12", None, Decimal(4), None, partial_front=True)))
-    assert partial["pull_front_mm"] == (None, "ЭТК: частичная зачистка — задайте")
+    assert partial["pull_front_mm"] == (Decimal("2.00"), "ЭТК: полустягивание")  # half of the 4 мм strip
     assert partial["strip_back_mm"] == (None, "Нет данных")
     assert partial["diameter_mm"] == (None, "Нет данных")  # no Ø жилы in the reference
 
