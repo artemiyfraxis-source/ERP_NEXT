@@ -205,7 +205,8 @@ function Get-VnaSummary {
     for ($index=0; $index -lt $Data.Frequencies.Count; $index++) {
         $vswr1=[math]::Max($vswr1,(Get-VnaVswr $Data.S11[$index]))
         $vswr2=[math]::Max($vswr2,(Get-VnaVswr $Data.S22[$index]))
-        $magnitude=([System.Numerics.Complex]$Data.S21[$index]).Magnitude
+        # Loss is judged on both directions: the worse of S21 and S12 (СТО ФРАК-002-2026 п. 13.1).
+        $magnitude=[math]::Min(([System.Numerics.Complex]$Data.S21[$index]).Magnitude, ([System.Numerics.Complex]$Data.S12[$index]).Magnitude)
         $pointLoss=[double]::PositiveInfinity
         if ($magnitude -gt 0) { $pointLoss=-20*[math]::Log10($magnitude) }
         $loss=[math]::Max($loss,$pointLoss)

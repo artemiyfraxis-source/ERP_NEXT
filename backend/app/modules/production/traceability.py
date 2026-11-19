@@ -818,6 +818,7 @@ class InstrumentFile:
     uploaded_by: UUID
     uploaded_by_name: str
     content: bytes | None = None
+    is_reference: bool = False
 
 
 @dataclass(frozen=True)

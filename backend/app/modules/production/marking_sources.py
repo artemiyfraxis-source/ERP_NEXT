@@ -11,8 +11,12 @@ def expand_serial(text: str, serial: int) -> str:
     return TOKEN.sub(lambda match: str(serial).zfill(int(match[1] or 0)), text)
 
 
-def labels(document, task, serial_range, selected=()):
-    """Stable keys select inscriptions, never browser-provided text/quantity/serials."""
+def labels(document, task, serial_range, selected=(), interleave=False):
+    """Stable keys select inscriptions, never browser-provided text/quantity/serials.
+
+    interleave («чередовать по изделию», owner 18.11): the machine hands labels out one by one and the operator
+    assembles each item at once, so every item gets its own set in ETK order — fixed marks, then numbered ones —
+    before the next item: XS1, A1 №1, XS1, A1 №2 … A fixed row then carries the item's serial it belongs to."""
     if serial_range is None:
         raise ValueError("Номера задания освобождены — печать недоступна")
     marks = []
@@ -33,10 +37,18 @@ def labels(document, task, serial_range, selected=()):
             if count == 0:
                 continue
             marks.append((key, mark, text, int(count)))
+    first, last = serial_range
+    if interleave and any(TOKEN.search(text) for _key, _mark, text, _count in marks):
+        total = sum(count for *_rest, count in marks) * (last - first + 1)
+        if total > MAX_LABELS:
+            raise ValueError(f"За один раз — не более {MAX_LABELS} этикеток")
+        ordered = sorted(marks, key=lambda item: bool(TOKEN.search(item[2])))  # fixed first, ETK order kept
+        return [{"key": key, "task_id": str(task.id), "text": expand_serial(text, serial),
+                 "material": str(mark.get("material") or ""), "quantity": count, "serial": serial}
+                for serial in range(first, last + 1) for key, mark, text, count in ordered]
     # Match markLabelList: numbered inscriptions first, then fixed inscriptions.
     marks.sort(key=lambda item: not bool(TOKEN.search(item[2])))
     result = []
-    first, last = serial_range
     for key, mark, text, count in marks:
         numbered = bool(TOKEN.search(text))
         quantity = count if numbered else count * task.quantity

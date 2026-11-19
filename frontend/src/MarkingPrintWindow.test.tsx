@@ -96,21 +96,6 @@ it("requires a new preview after selecting inscriptions, never treating an empty
   expect(screen.getByRole("button", { name: "Поставить в очередь" })).toBeEnabled();
 });
 
-it("requires a reason and a fresh manifest for a separate reprint batch", async () => {
-  await openPrint();
-  fireEvent.click(screen.getByRole("button", { name: "Поставить в очередь" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Повторная печать…" }));
-  expect(screen.getByRole("button", { name: "Повторить печать" })).toBeDisabled();
-  fireEvent.change(screen.getByLabelText("Причина повторной печати"), { target: { value: "Повреждена лента" } });
-  expect(screen.getByRole("button", { name: "Повторить печать" })).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "Обновить предпросмотр" }));
-  await screen.findByText("К печати: 6 шт.");
-  fireEvent.click(screen.getByRole("button", { name: "Повторить печать" }));
-  await waitFor(() => expect(markingApi.enqueue).toHaveBeenCalledTimes(2));
-  expect(markingApi.enqueue).toHaveBeenLastCalledWith(expect.objectContaining({ reprint_of: "batch-1", reason: "Повреждена лента" }));
-  expect(vi.mocked(markingApi.enqueue).mock.calls[0][0].idempotency_key).not.toBe(vi.mocked(markingApi.enqueue).mock.calls[1][0].idempotency_key);
-});
-
 it("allows an offline preview but blocks enqueueing and an uncalibrated profile", async () => {
   vi.mocked(markingApi.machines).mockResolvedValue({ ...catalog, printers: [{ ...catalog.printers[0], online: false }] });
   await openPrint();
@@ -184,22 +169,6 @@ it("recovers the identical outstanding enqueue after the window closes and reope
   expect(markingApi.preview).toHaveBeenCalledTimes(1);
 });
 
-it("restores a known batch and preserves its selected inscriptions for explicit reprint", async () => {
-  const selectedPreview = { ...preview, labels: [preview.labels[2]], total: 2 };
-  sessionStorage.setItem("marking-print:local:task:task:operation", JSON.stringify({ pending: false, batch,
-    request: { profile_id: "profile", profile_version: 7, source, selected: ["mark-2"], manifest_hash: "old", idempotency_key: "old-key" } }));
-  vi.mocked(markingApi.preview).mockResolvedValue(selectedPreview);
-  render(<MarkingPrintWindow source={source} title="Задание" close={vi.fn()} />);
-  await screen.findByRole("region", { name: "Очередь печати" });
-  expect(screen.queryByRole("button", { name: "Поставить в очередь" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Повторная печать…" }));
-  await screen.findByRole("option", { name: "ОБ.101 · ZCUT-RT430" });
-  fireEvent.click(screen.getByRole("button", { name: "Обновить предпросмотр" }));
-  await screen.findByRole("img");
-  expect(markingApi.preview).toHaveBeenCalledWith(expect.objectContaining({ selected: ["mark-2"] }));
-  expect(screen.queryByText("Выбрать надписи")).toBeNull();
-});
-
 it("does not send a print request if the browser cannot persist the recovery key", async () => {
   await openPrint();
   vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("storage full"); });
@@ -229,65 +198,10 @@ it("allows a fresh disjoint batch while reserving already queued inscriptions fo
   expect(vi.mocked(markingApi.enqueue).mock.calls[0][0]).not.toHaveProperty("reprint_of");
 });
 
-it("retains the original reprint source after a definitive rejection of a new disjoint batch", async () => {
-  sessionStorage.setItem("marking-print:local:task:task:operation", JSON.stringify({ pending: true, batch, usedKeys: ["mark-1", "mark-2"], previousKeys: ["mark-1"],
-    previousRequest: { profile_id: "profile", profile_version: 7, source, selected: ["mark-1"], manifest_hash: "old", idempotency_key: "old-key" },
-    request: { profile_id: "profile", profile_version: 7, source, selected: ["mark-2"], manifest_hash: "new", idempotency_key: "new-key" } }));
-  vi.mocked(markingApi.enqueue).mockRejectedValueOnce(new ApiError("Источник изменился", 409));
-  render(<MarkingPrintWindow source={source} title="Задание" close={vi.fn()} />);
-  fireEvent.click(screen.getByRole("button", { name: "Повторить запрос" }));
-  await screen.findByRole("alert");
-  fireEvent.click(screen.getByRole("button", { name: "Повторная печать…" }));
-  await screen.findByRole("option", { name: "ОБ.101 · ZCUT-RT430" });
-  fireEvent.click(screen.getByRole("button", { name: "Обновить предпросмотр" }));
-  await waitFor(() => expect(markingApi.preview).toHaveBeenCalledWith(expect.objectContaining({ selected: ["mark-1"] })));
-});
-
 it("disables enqueue and operator reconciliation without the corresponding permissions", async () => {
   setRightsPrincipal({ user: { id: "viewer" }, roles: [], permissions: { myops: "view" } } as unknown as Principal);
   await openPrint();
   expect(screen.getByRole("button", { name: "Поставить в очередь" })).toBeDisabled();
-});
-
-it("can explicitly reprint an earlier subset after another disjoint batch", async () => {
-  vi.mocked(markingApi.preview).mockResolvedValue({ ...preview, labels: preview.labels.slice(0, 2), total: 4 });
-  const request = { profile_id: "profile", profile_version: 7, source, selected: ["mark-1"], manifest_hash: "first", idempotency_key: "first-key" };
-  const second = { ...request, selected: ["mark-2"], manifest_hash: "second", idempotency_key: "second-key" };
-  sessionStorage.setItem("marking-print:local:task:task:operation", JSON.stringify({ pending: false, batch: { ...batch, id: "batch-B" }, request: second, usedKeys: ["mark-1", "mark-2"],
-    history: [{ id: "batch-A", request, total: 4 }, { id: "batch-B", request: second, total: 2 }] }));
-  render(<MarkingPrintWindow source={source} title="Задание" close={vi.fn()} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Повторная печать…" }));
-  fireEvent.change(screen.getByLabelText("Партия для повторной печати"), { target: { value: "batch-A" } });
-  await screen.findByRole("option", { name: "ОБ.101 · ZCUT-RT430" });
-  fireEvent.click(screen.getByRole("button", { name: "Обновить предпросмотр" }));
-  await screen.findByRole("img");
-  expect(markingApi.preview).toHaveBeenCalledWith(expect.objectContaining({ selected: ["mark-1"] }));
-  fireEvent.change(screen.getByLabelText("Причина повторной печати"), { target: { value: "Повреждена первая партия" } });
-  fireEvent.click(screen.getByRole("button", { name: "Повторить печать" }));
-  await waitFor(() => expect(markingApi.enqueue).toHaveBeenCalledWith(expect.objectContaining({ reprint_of: "batch-A", selected: ["mark-1"], reason: "Повреждена первая партия" })));
-});
-
-it("allocates a fresh key for another deliberate reprint of the same original batch and reason", async () => {
-  vi.mocked(markingApi.batch).mockImplementation(async (id) => ({ ...batch, id }));
-  const request = { profile_id: "profile", profile_version: 7, source, selected: ["mark-1"], manifest_hash: "original", idempotency_key: "original-key" };
-  sessionStorage.setItem("marking-print:local:task:task:operation", JSON.stringify({ pending: false, batch: { ...batch, id: "original" },
-    request, usedKeys: ["mark-1"], history: [{ id: "original", request, total: 4 }] }));
-  vi.mocked(markingApi.preview).mockResolvedValue({ ...preview, labels: preview.labels.slice(0, 2), total: 4 });
-  render(<MarkingPrintWindow source={source} title="Задание" close={vi.fn()} />);
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    fireEvent.click(await screen.findByRole("button", { name: "Повторная печать…" }));
-    if (attempt === 2) fireEvent.change(screen.getByLabelText("Партия для повторной печати"), { target: { value: "original" } });
-    await screen.findByRole("option", { name: "ОБ.101 · ZCUT-RT430" });
-    fireEvent.click(screen.getByRole("button", { name: "Обновить предпросмотр" }));
-    await screen.findByRole("img");
-    fireEvent.change(screen.getByLabelText("Причина повторной печати"), { target: { value: "Брак" } });
-    fireEvent.click(screen.getByRole("button", { name: "Повторить печать" }));
-    await waitFor(() => expect(markingApi.enqueue).toHaveBeenCalledTimes(attempt));
-  }
-  const [first, second] = vi.mocked(markingApi.enqueue).mock.calls.map(([payload]) => payload);
-  expect(first).toMatchObject({ reprint_of: "original", reason: "Брак" });
-  expect(second).toEqual({ ...first, idempotency_key: expect.any(String) });
-  expect(second.idempotency_key).not.toBe(first.idempotency_key);
 });
 
 it("shows each half of a flag in its own column when the ETK text differs per half", async () => {
@@ -303,4 +217,36 @@ it("shows each half of a flag in its own column when the ETK text differs per ha
   expect(within(table).getByRole("columnheader", { name: /Правая половина/ })).toBeInTheDocument();
   expect(within(table).getAllByText("Разъём А").length).toBeGreaterThanOrEqual(2);
   expect(within(table).queryByRole("columnheader", { name: /^Надпись/ })).toBeNull();
+});
+
+it("shows honest print progress: printed N of M, queued K, and a waiting printer instead of «Передано принтеру»", async () => {
+  const states = ["printed", "queued", "queued", "queued", "error", "cancelled"] as const;
+  const tracked: MarkingBatch = { ...structuredClone(batch), status_label: "Печатается", printed: 1, queued: 3, print_errors: 1, cancelled: 1, untracked: 0,
+    progress_label: "Напечатано 1 из 6 · в очереди 4", stuck: true, stuck_label: "Принтер ждёт (снимите этикетку / проверьте принтер)",
+    jobs: batch.jobs.map((job, index) => ({ ...job, print_state: states[index], status_label: states[index] === "printed" ? "Напечатано" : "В очереди принтера" })) };
+  vi.mocked(markingApi.batch).mockResolvedValue(structuredClone(tracked));
+  render(<MarkingBatchProgress initial={tracked} />);
+  expect(screen.getByRole("status")).toHaveTextContent("Напечатано 1 из 6 · в очереди 4");
+  expect(screen.queryByText(/Передано принтеру: /)).toBeNull();
+  expect(screen.getByRole("progressbar")).toHaveAttribute("value", "1");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Принтер ждёт (снимите этикетку / проверьте принтер)");
+  expect(screen.getByText(/Ошибок принтера: 1/)).toBeVisible();
+  expect(screen.getByText(/Отменено в очереди Windows: 1/)).toBeVisible();
+});
+
+it("reprints from the batch only by label numbers or serials, the whole batch by default (no full re-preview reprint)", async () => {
+  const reprinted = { ...structuredClone(batch), id: "batch-2", reprint_of: "batch-1" };
+  vi.spyOn(markingApi, "reprint").mockResolvedValue(reprinted);
+  vi.mocked(markingApi.batch).mockImplementation(async (id) => ({ ...structuredClone(batch), id }));
+  await openPrint();
+  fireEvent.click(screen.getByRole("button", { name: "Поставить в очередь" }));
+  await screen.findByRole("region", { name: "Очередь печати" });
+  expect(screen.queryByRole("button", { name: "Повторная печать…" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Перепечатать номера…" }));
+  expect(screen.getByLabelText("№ этикеток партии")).toHaveValue("1–6");
+  fireEvent.change(screen.getByLabelText("Причина повторной печати"), { target: { value: "Повреждена лента" } });
+  fireEvent.click(screen.getByRole("button", { name: "Перепечатать 6 шт." }));
+  await waitFor(() => expect(markingApi.reprint).toHaveBeenCalledWith("batch-1", { sequences: [1, 2, 3, 4, 5, 6], reason: "Повреждена лента", idempotency_key: expect.any(String) }));
+  await waitFor(() => expect(markingApi.batch).toHaveBeenCalledWith("batch-2", expect.anything()));
+  expect(markingApi.enqueue).toHaveBeenCalledTimes(1);
 });

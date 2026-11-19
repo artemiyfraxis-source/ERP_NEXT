@@ -10,3 +10,5 @@
 .cutting-submit .cutting-defect input { width: 100%; text-align: left; }
 .cutting-instruction-picker { display: flex; align-items: center; gap: 8px; margin: 16px; }
 .cutting-instruction-picker select { width: auto; max-width: 100%; }
+/* Число станка из карточки ОБ.019 подставлено в «Сдать группу» (Ob019RunJob.tsx). */
+.cutting-machine-count { margin: 0 0 8px; padding: 6px 10px; border-left: 3px solid var(--primary); background: var(--accent); }

@@ -28,6 +28,7 @@ function setup(status = 200) {
 it("confirms exact interfaces using the loaded version and preserves independent RP contact fields", async () => {
   const { puts, dirty } = setup();
   expect(await screen.findByText(/Частота от: 0,0001 ГГц/)).toBeInTheDocument();
+  expect(screen.queryByText(/Источник/)).toBeNull();  // owner 18.11: sources stay in the data, not on the card
   fireEvent.click(await screen.findByText("Изменить интерфейсы"));
   fireEvent.change(screen.getByLabelText("Серия 1"), { target: { value: "RP-SMA" } });
   fireEvent.change(screen.getByLabelText("Корпус 1"), { target: { value: "вилка" } });

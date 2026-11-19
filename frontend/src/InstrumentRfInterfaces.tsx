@@ -88,7 +88,6 @@ export function InstrumentRfInterfaces({ instrumentId, locked, onDirty, onBusy, 
         {saved.role === "vna" && <> · Максимум точек: {saved.max_points === null ? "не указан" : formatNumber(saved.max_points)}</>}
         {" "}· Ресурс сочленений: {saved.mating_resource == null ? "не указан" : formatNumber(saved.mating_resource)}
       </p>}
-      {saved.source && <p className="muted-text">Источник: {saved.source}</p>}
       {saved.confirmed && (saved.f_min_ghz === null || saved.interfaces.some((port) => !port.f_confirmed)) && <p className="warning-inline">Разъёмы подтверждены; рабочую полосу нужно уточнить.</p>}
     </>}
     {editing && draft && !loading && <form ref={form} onSubmit={(event) => { event.preventDefault(); void save(false); }}>

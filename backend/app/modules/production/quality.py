@@ -318,6 +318,25 @@ def attach_instrument_file(instrument_id: UUID, kind: InstrumentFileKind, file_n
         return item
 
 
+def mark_reference_curve(instrument_id: UUID, file_id: UUID, actor: Actor, now: datetime,
+                         uow: QualityUnitOfWork) -> InstrumentFile:
+    """«Сделать эталонной кривой»: one Touchstone measurement per instrument is the curve the weekly check compares with."""
+    with uow:
+        item = uow.instrument_files.get(instrument_id, file_id)
+        if item is None:
+            raise KeyError("Документ СИ не найден")
+        if not item.file_name.lower().endswith(".s2p"):
+            raise ProductionValidationError("Эталонной кривой может быть только файл замера .s2p")
+        if item.is_reference:
+            return item
+        previous = uow.instrument_files.set_reference(instrument_id, file_id)
+        _audit(instrument_id, "production.instrument_reference_curve_set", actor, now, {
+            "file_id": str(file_id), "file_name": item.file_name, "previous_file_id": str(previous) if previous else None,
+        }, uow)
+        uow.commit()
+        return uow.instrument_files.get(instrument_id, file_id)
+
+
 def delete_instrument_file(instrument_id: UUID, file_id: UUID, actor: Actor, now: datetime,
                            uow: QualityUnitOfWork) -> None:
     with uow:

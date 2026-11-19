@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { productionApi, vnaCaptureApi, warehouseApi, type Principal, type ProductionInstrument, type VswrTaskOverview, type VswrMeasurement, type VnaCaptureJob, type VnaCaptureSettings } from "./api";
 import { VswrSection } from "./VswrSection";
-import { VnaCapture, captureWarnings, VnaSettings } from "./vnaCapture";
+import { VnaCapture, captureRefusals, captureWarnings, VnaSettings } from "./vnaCapture";
 import { setRightsPrincipal } from "./rights";
 
 const principal = (id: string): Principal => ({ user: { id, email: "", name: "", department: "" }, roles: [], permissions: {} });
@@ -50,12 +50,12 @@ async function open(canUpload = true) {
   render(<VswrSection instruments={instruments} choices={[{ ...overview.task, item: "КС", status: "В работе",
     norm: { status: "ok", vswr_max: 1.8, source: "customer" }, control: overview.control, required: overview.required }]}
     taskId="task" onTaskChange={() => {}} canUpload={canUpload} canReject={() => false} onReject={() => {}} />);
-  await screen.findByRole("option", { name: /ПЗ-1/ });
-  fireEvent.change(screen.getByLabelText("Задание"), { target: { value: "task" } });
-  if (canUpload) fireEvent.click(await screen.findByRole("button", { name: "Загрузить замер" }));
+  await screen.findByText("КС-1");
+  // «Снять с ВАЦ» в строке изделия: окно замера сразу с окном съёма трассы.
+  if (canUpload) fireEvent.click(screen.getByRole("button", { name: "Снять с ВАЦ КС-1" }));
 }
 function chooseInstrument(id = "planar") {
-  fireEvent.click(screen.getByRole("button", { name: "Снять с ВАЦ" }));
+  if (!screen.queryByLabelText("Средство измерений")) fireEvent.click(screen.getByRole("button", { name: "Снять с ВАЦ" }));
   fireEvent.change(screen.getByLabelText("Средство измерений"), { target: { value: id } });
   fireEvent.click(screen.getByRole("button", { name: "Снять трассу" }));
 }
@@ -220,19 +220,40 @@ it("passes the original Arinst s2p and the explicitly selected instrument throug
   await waitFor(() => expect(productionApi.uploadVswr).toHaveBeenCalledWith(expect.objectContaining({ instrument_id: "arinst", file_name: "кабель.s2p", file_base64: btoa(arinstTrace) })));
 });
 
-it("shows all four warnings without blocking an upload", async () => {
-  const warned = { ...settings, smoothing_enabled: true, correction_status: "C?", start_hz: 110e6, frequency_step_hz: 20e6 };
+it("shows the warnings without blocking an upload", async () => {
+  const warned = { ...settings, start_hz: 110e6, frequency_step_hz: 20e6 };
   vi.mocked(vnaCaptureApi.start).mockResolvedValue({ ...pending, status: "done", capture_settings: warned });
   await open(); chooseInstrument();
   for (const warning of captureWarnings(warned, overview.norm)) expect(await screen.findByText(warning)).toBeInTheDocument();
-  expect(captureWarnings(warned, overview.norm)).toHaveLength(4);
+  expect(captureWarnings(warned, overview.norm)).toHaveLength(2);
   await waitFor(() => expect(uploadButton()).toBeEnabled());
   fireEvent.click(uploadButton());
   await waitFor(() => expect(productionApi.uploadVswr).toHaveBeenCalled());
 });
 
-it.each(["NONE", "C?", "C!", "RC?", "RC!"])("warns for calibration status %s", (correction_status) => {
-  expect(captureWarnings({ ...settings, correction_status }, overview.norm)).toEqual(["Нет калибровки на этом диапазоне"]);
+it.each([
+  [{ correction_status: "C?" }, "«К?»"], [{ correction_status: "RC?" }, "«К?»"],
+  [{ correction_status: "C!" }, "«К!»"], [{ correction_status: "RC!" }, "«К!»"], [{ smoothing_enabled: true }, "сглаживание"],
+  [{ correction_status: "NONE" }, "Нет калибровки"], [{ correction_enabled: false }, "Нет калибровки"],
+])("refuses a capture with %o: reason shown, upload blocked", async (changes, reason) => {
+  const refused = { ...settings, ...changes };
+  vi.mocked(vnaCaptureApi.start).mockResolvedValue({ ...pending, status: "done", capture_settings: refused });
+  await open(); chooseInstrument();
+  await screen.findByText("Выбран файл: vna.s1p");
+  const [refusal] = captureRefusals(refused);
+  expect(refusal).toContain(reason);
+  expect(screen.getByRole("alert")).toHaveTextContent(refusal);
+  expect(uploadButton()).toBeDisabled();
+  fireEvent.click(uploadButton());
+  expect(productionApi.uploadVswr).not.toHaveBeenCalled();
+});
+
+it("refuses, not warns, without a calibration; refuses nothing for a clean capture or unread settings", () => {
+  expect(captureWarnings({ ...settings, correction_status: "NONE" }, overview.norm)).toEqual([]);
+  expect(captureRefusals({ ...settings, correction_status: "NONE" })[0]).toContain("Нет калибровки");
+  expect(captureWarnings({ ...settings, correction_status: "C?" }, overview.norm)).toEqual([]);
+  expect(captureRefusals(settings)).toEqual([]);
+  expect(captureRefusals({})).toEqual([]);
 });
 
 it("does not fabricate OFF states, coverage or a length-based warning from missing settings", () => {
@@ -422,4 +443,20 @@ it("routes Planar by the chosen instrument without a remembered PC", async () =>
   await waitFor(() => expect(onFile).toHaveBeenCalledTimes(1));
   expect(vnaCaptureApi.start).toHaveBeenCalledExactlyOnceWith("planar", "", false);
   expect(screen.queryByLabelText("Устройство ВАЦ")).not.toBeInTheDocument();
+});
+
+it("opens at once with the only analyser and, in the flow, starts the capture without a click", async () => {
+  const onFile = vi.fn();
+  render(<VnaCapture instruments={[instruments[1]]} onFile={onFile} onBusy={vi.fn()} autoOpen autoStart />);
+  expect(screen.getByLabelText("Средство измерений")).toHaveValue("planar");
+  await waitFor(() => expect(vnaCaptureApi.start).toHaveBeenCalledWith("planar", "", false));
+  await waitFor(() => expect(onFile).toHaveBeenCalled(), { timeout: 3000 });
+  expect(localStorage.getItem("erp.vna.instrument:user-a")).toBe("planar");
+});
+
+it("opens at once with the analyser used last time but waits for «Снять трассу» outside the flow", () => {
+  localStorage.setItem("erp.vna.instrument:user-a", "planar");
+  render(<VnaCapture instruments={instruments} onFile={vi.fn()} onBusy={vi.fn()} autoOpen />);
+  expect(screen.getByLabelText("Средство измерений")).toHaveValue("planar");
+  expect(vnaCaptureApi.start).not.toHaveBeenCalled();
 });

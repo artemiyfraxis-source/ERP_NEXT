@@ -4,5 +4,9 @@
     { "inventory_number": "СИ.100", "end": "B" },
     { "inventory_number": "СИ.101", "end": "B" }
   ],
-  "mating_acm": "СИ.104"
+  "mating_acm": "СИ.104",
+  "control_standard": "СИ.009",
+  "kit_inventory": "СИ.003",
+  "kit_slot": 28,
+  "kit_description_uncertainty": { "reflection_db": 0, "load_gamma": 0.05, "thru_db": 0 }
 }

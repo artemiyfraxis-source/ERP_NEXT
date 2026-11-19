@@ -242,7 +242,7 @@ def test_projection_has_only_approved_fields_and_strict_known_provenance():
     measured = characterization(measured_file(header=header))
     projection = public_passport(replace(instrument(), storage_location="PRIVATE_STORAGE", warehouse_grn="PRIVATE_GRN", doc_designation="PRIVATE_ARTICLE"),
                                  replace(rf(), source="PRIVATE_SOURCE"), measured)
-    assert {field.name for field in fields(projection)} == {"inventory_number", "name", "serial_number", "manufacturer", "connectors", "impedance", "impedance_warning", "measurement", "verification", "status", "next_control", "control_overdue", "history", "spec", "norm_check", "usage", "uncertainty", "loss_check", "loss_uncertainty"}
+    assert {field.name for field in fields(projection)} == {"inventory_number", "name", "serial_number", "manufacturer", "connectors", "impedance", "impedance_warning", "measurement", "verification", "status", "next_control", "control_overdue", "history", "spec", "norm_check", "usage", "uncertainty", "loss_check", "loss_uncertainty", "vna", "control"}
     assert {field.name for field in fields(projection.measurement)} == {"measured_on", "traces", "instrument", "calibration", "conditions", "chain"}
     assert "PRIVATE_" not in repr(projection)
     assert projection.measurement.instrument == "ВАЦ №26030095"
@@ -261,7 +261,7 @@ def test_unknown_comments_are_omitted_and_legacy_metadata_extraction_is_bounded(
 
 def test_html_pdf_whitelist_escape_and_public_routes_do_not_write(production_api):
     client, _ = production_api
-    item, sessions = setup(client, online=False)
+    item, sessions = setup(client, online=False, assigned=False)  # the raw name reaches the page
     identifier = UUID(item["id"])
     header = ("! VNA serial=26030095; ACM serial=26140008\n! Temperatures VNA=26.5; ACM=25.3 degC\n"
               "! Operator=PRIVATE_OPERATOR\n! Chain=PRIVATE_CHAIN\n! Internal note PRIVATE_NOTE\n")
@@ -292,7 +292,9 @@ def test_html_pdf_whitelist_escape_and_public_routes_do_not_write(production_api
     assert "PRIVATE_" not in download.text
     assert "Контролёр" not in html.text and "Контролёр" not in pdf_text(pdf.content)
     assert "&lt;script&gt;" in html.text and "<script>" not in html.text
-    assert "26030095" in html.text and "26140008" in pdf_text(pdf.content)
+    # One measurement line (owner 18.11): the VNA as the file names it, the calibration kind without its serial.
+    assert "ВАЦ №26030095, калибровка АКМ" in html.text
+    assert "ВАЦ №26030095, калибровка АКМ" in " ".join(pdf_text(pdf.content).split())
     assert html.text.count('<svg ') == 4  # two charts, separate narrow/wide geometries
     assert html.text.count('viewBox="0 0 350 310"') == 2
     assert not set(statements) & {"INSERT", "UPDATE", "DELETE"}
@@ -354,10 +356,10 @@ def test_labels_passports_and_planner_select_same_latest_named_upload(production
         assert [(item_id, file_id) for item_id, file_id, _ in RfRepository(session).characterization_files([identifier])] == [(identifier, newest_id)]
     internal = client.get(f"/api/production/instruments/{identifier}/passport.pdf")
     assert internal.status_code == 200
-    assert "Дата: 15.11.2026" in pdf_text(internal.content)
+    assert "Замер 15.11.2026" in pdf_text(internal.content)
     anonymous()
     assert "15.11.2026" in client.get(path(identifier)).text
-    assert "Дата замера: 15.11.2026" in pdf_text(client.get(path(identifier, ".pdf")).content)
+    assert "Замер 15.11.2026" in pdf_text(client.get(path(identifier, ".pdf")).content)
 
 
 @pytest.mark.parametrize("ohms", [50, 75])
@@ -369,40 +371,37 @@ def test_public_html_pdf_show_measurement_reference_and_card_impedance_warning(o
     html = public_passport_html(projected, pdf_path="/p/example.pdf")
     pdf = pdf_text(public_passport_pdf(projected, generated=datetime(2026, 11, 17)))
     internal = pdf_text(passport_pdf(item, details, measurement, generated=datetime(2026, 11, 17)))
-    reference = "Опорное сопротивление измерения"
-    assert (reference in html) == measured
-    assert (reference + ": 50 Ом" in pdf) == measured
-    if measured:
-        assert f"<dt>{reference}</dt><dd>50 Ом</dd>" in html
+    # Owner 18.11: no «опорное сопротивление» line; the item's impedance stays in the header.
+    assert "Опорное сопротивление" not in html + pdf + internal
+    assert "<dt>Сопротивление</dt><dd>" + f"{ohms} Ом</dd>" in html
     warning = "75 Ом — не для 50 Ом тракта"
     assert (warning in html) == (warning in pdf) == (warning in internal) == (ohms == 75)
 
 
 def test_public_conclusion_history_dates_and_hidden_blanks():
     from datetime import date
-    from app.modules.production.rf_interfaces import RfDetails
     from app.modules.production.instrument_public import history_entry
     from tests.production.test_instrument_working_band import summary
 
     measured = replace(summary(), comments=())
     item = replace(instrument(), manufacturer="", status=InstrumentStatus.INACTIVE)
-    projected = public_passport(item, RfDetails(), measured,
-        history=(history_entry(item, RfDetails(), replace(measured, measured_on=date(2025, 11, 10))),), today=date(2027, 11, 17))
+    # rf() carries the assigned norm MIL-PRF-55339/55 (owner 18.11: no norm without an assignment).
+    projected = public_passport(item, rf(), measured,
+        history=(history_entry(item, rf(), replace(measured, measured_on=date(2025, 11, 10))),), today=date(2027, 11, 17))
     html = public_passport_html(projected, pdf_path="/p/example.pdf")
     pdf = pdf_text(public_passport_pdf(projected, generated=datetime(2027, 11, 17), public_url="https://erp.example.test/p/example"))
     assert projected.name == "Переход коаксиальный SMA розетка – SMA розетка, S-322"
     for text in (html, " ".join(pdf.split())):
-        for expected in ("Заключение (контроль характеристик, не поверка)",
-                         "Не соответствует норме", "MIL-PRF-55339/55", "КСВН ≤ 1,05 + 0,005·F в полосе 0,5–27 ГГц",
-                         "КСВН 1,2 на 11,8 ГГц при норме ≤ 1,109", "КСВН ≤ 1,30 (требование цеха) — до 18 ГГц",
-                         "Погрешность измерения КСВН",
-                         "не определена — модель ВАЦ не указана", "Правило принятия решения", "ILAC-G8", "СТО ФРАК-002-2026", "Методика измерений КСВН",
-                         "Результаты относятся только к данному изделию.", "Утвердил: Генеральный директор",
-                         "Следующий контроль: не позднее 16.11.2027 (через 12 мес. или 100 сочленений — что раньше)",
+        for expected in ("Заключение", "Не соответствует норме", "MIL-PRF-55339/55",
+                         "КСВН ≤ 1,05 + 0,005·F в полосе 0,5–27 ГГц", "КСВН 1,2 на 11,8 ГГц при норме ≤ 1,109",
+                         "Методика", "СТО ФРАК-002-2026", "Утвердил: Генеральный директор",
+                         "Замер 16.11.2026 · контроль просрочен: срок 16.11.2027 прошёл",
                          "Требуется повторный замер", "Не используется", "История контроля", "10.11.2025",
-                         "не соответствует норме; применение: КСВН ≤ 1,30 (требование цеха) — до 18 ГГц",
-                         "Рабочие температуры", "−65…+165 °C — MIL-PRF-55339/55", "Скачать .s2p"):
-            assert expected in text
+                         "КСВН: не соответствует норме", "Рабочие температуры", "−65…+165 °C", "Скачать .s2p"):
+            assert expected in text, expected
+        for gone in ("контроль характеристик", "требование цеха", "Погрешность", "ILAC", "Правило",
+                     "относятся только", "Методика измерений КСВН", "— MIL-PRF-55339/55 ", "http"):
+            assert gone not in text.replace("https://erp.example.test/p/example", ""), gone
         assert "Не указан" not in text
         assert "Изготовитель" not in text
         assert "Условия" not in text
@@ -410,7 +409,7 @@ def test_public_conclusion_history_dates_and_hidden_blanks():
     failed = public_passport(item, rf(), summary(left=(1.31,) * 4))
     for text in (public_passport_html(failed, pdf_path="/p/example.pdf"),
                  pdf_text(public_passport_pdf(failed, generated=datetime(2026, 11, 17)))):
-        assert "Не соответствует норме" in text and "КСВН больше требования цеха уже на первой ступени" in text
+        assert "Не соответствует норме" in text and "требование цеха" not in text
 
 
 @pytest.mark.parametrize("source,maker", [("https://gsm-repiteri.ru/catalog/s-322", "gsm-repiteri"),
@@ -523,5 +522,6 @@ def test_label_workflow_reads_the_shared_working_band(production_api):
     with sessions() as session:
         stored = SqlAlchemyInstrumentRepository(session).get(identifier)
         content = instrument_labels._content(stored, session)
-        assert content.value("range_line").startswith("Частотный диапазон 0–")
-        assert content.value("loss_line").startswith("КСВН ≤ 1,")
+        # /55 from 0,5 GHz: the first judged point (11,8 GHz, КСВН 1,17 > 1,109) already fails — no range, no bands.
+        assert content.value("range_line") == "Не соответствует норме"
+        assert content.value("loss_line") == "" and content.value("table_band_5") == ""

@@ -126,6 +126,21 @@ Describe 'VNA fixture identity and local ERP mode' {
             Test-VnaFixtureFileIdentity -Instrument $instrument -File ([pscustomobject]@{ file_name = $name }) | Should Be $true
         }
     }
+    It 'weekly check reads only the file marked as the reference curve' {
+        $session = New-TestVnaOffline -Root $root -Files @(
+            [pscustomobject]@{ id = 'old'; file_name = 'Замер ВАЦ, СИ.009, 16.11.s2p'; is_reference = $false },
+            [pscustomobject]@{ id = 'ref'; file_name = 'Замер ВАЦ, СИ.009, 18.11.s2p'; is_reference = $true })
+        '# HZ S RI R 50' | Set-Content -LiteralPath (Join-Path (Join-Path $root 'files') 'ref.s2p') -Encoding UTF8
+        $instrument = Get-VnaInstrument -Session $session -Number 'СИ.009'
+        $curve = Get-VnaReferenceCurve -Session $session -Instrument $instrument -CacheDirectory $cache
+        $curve.FileName | Should Be 'Замер ВАЦ, СИ.009, 18.11.s2p'
+        Test-Path -LiteralPath $curve.Path | Should Be $true
+    }
+    It 'says the reference curve is not assigned instead of guessing by file name' {
+        $session = New-TestVnaOffline -Root $root -Files @([pscustomobject]@{ id = 'file9'; file_name = 'Замер ВАЦ, СИ.009.s2p' })
+        $instrument = Get-VnaInstrument -Session $session -Number 'СИ.009'
+        { Get-VnaReferenceCurve -Session $session -Instrument $instrument -CacheDirectory $cache } | Should Throw 'Эталонная кривая не назначена'
+    }
     It 'downloads a matching fixture once and reuses the cache' {
         $session = New-TestVnaOffline -Root $root -Files @([pscustomobject]@{ id = 'file9'; file_name = 'Замер ВАЦ, СИ.009.s2p' })
         $source = Join-Path (Join-Path $root 'files') 'file9.s2p'

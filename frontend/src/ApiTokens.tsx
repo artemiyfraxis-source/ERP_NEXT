@@ -13,6 +13,7 @@ const SCOPES: Array<[key: string, label: string]> = [
   ["refs:write", "Загрузка в базу данных"],
   ["labels:print", "Печать этикеток (агент склада)"],
   ["scan:upload", "Сканирование УПД (агент склада)"],
+  ["machine:report", "Снимки станка (мост на ПК станка)"],
 ];
 const SCOPE_LABEL: Record<string, string> = Object.fromEntries(SCOPES);
 const STATUS: Record<ApiTokenStatus, { label: string; tone: string }> = {

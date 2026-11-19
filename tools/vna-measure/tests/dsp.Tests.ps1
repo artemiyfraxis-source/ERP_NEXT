@@ -133,6 +133,11 @@ Describe 'Band and summary' {
         [math]::Abs($summary.LossDb-6.020599913279624) | Should BeLessThan 1e-12
         $summary.FmaxHz | Should Be 18e9
     }
+    It 'judges loss on the worse of S21 and S12' {
+        $data=New-DspTestData -Reflection 0.1 -Transmission 0.5
+        $data.S12[1]=[System.Numerics.Complex]::new(0.25,0)
+        [math]::Abs((Get-VnaSummary $data).LossDb-12.041199826559248) | Should BeLessThan 1e-12
+    }
     It 'reports infinite VSWR for unit reflection and infinite loss for no transmission' {
         $data=New-DspTestData
         $data.S11[0]=[System.Numerics.Complex]::One

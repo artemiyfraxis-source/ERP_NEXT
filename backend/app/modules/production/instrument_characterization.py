@@ -8,7 +8,8 @@ import re
 
 from .instrument_serials import CONNECTOR_LETTERS, IN_HOUSE_SERIAL
 from .rf_interfaces import RfDetails, parse_interfaces
-from .instrument_norms import loss_db, norms_data
+from .instrument_norms import (REPEAT_CONNECTIONS, Assessment, LossAssessment, LossUncertainty, Norm, Uncertainty, assess,
+                              assess_loss, ghz_text, loss_db, norms_data, transfer_points, worst)
 from .traceability import InstrumentFile
 from .vna_characterization import is_characterization_file
 from .vna_files import VSWR_CEILING, VnaFileError, VnaTrace, _decode, parse_vna_traces
@@ -18,9 +19,6 @@ from .vna_files import VSWR_CEILING, VnaFileError, VnaTrace, _decode, parse_vna_
 # future VNA upgrade. A band below a step (series limit or measured top) ends at that maximum instead («или максимум»).
 STEPS_GHZ = (1.0, 3.0, 6.0, 12.0, 18.0, 26.5, 40.0)
 STEP_TOLERANCE_GHZ = 0.05
-# The frequency range ends at the widest band whose worst VSWR stays within the shop requirement (not a type norm).
-APPLICATION_VSWR_LIMIT = float(norms_data()["shop_requirement"]["vswr_max"])
-APPLICATION_BASIS = norms_data()["shop_requirement"]["label"]
 VSWR_LADDER = (1.05, 1.10, 1.15, 1.20, 1.25, 1.30, 1.40, 1.50, 2.0)
 LOSS_LADDER = (0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 1.0, 2.0)
 # Above the band its MIL sheets cover a step is never claimed. N is not capped: /54B and ADP1A rate it to 18 GHz.
@@ -65,12 +63,31 @@ def _loss_text(value: float | None) -> str:
 
 @dataclass(frozen=True)
 class Application:
+    """Where the measured item stays within its own norm (maker spec, else MIL-PRF-55339 sheet), owner 18.11.
+
+    There is no shop-wide VSWR threshold: without a norm the bands are quoted as measured and no range is claimed."""
     steps: tuple[StepLimits, ...]   # every band the measurement and the connector series allow
-    limit_ghz: float | None         # end of the usable range (widest band within APPLICATION_VSWR_LIMIT); None - unusable
+    fit_ghz: float | None = None    # highest measured frequency up to which VSWR (and loss) stay within the norm
+    check: Assessment | None = None
+    loss_check: LossAssessment | None = None
+
+    @property
+    def judged(self) -> bool:
+        return bool(self.check and self.check.status in ("pass", "border", "fail"))
+
+    @property
+    def limit_ghz(self) -> float | None:
+        """The label's range: the last band edge within `fit_ghz` (the grid and the line agree), else `fit_ghz`."""
+        if self.fit_ghz is None:
+            return None
+        edges = [step.stop_ghz for step in self.steps if step.stop_ghz <= self.fit_ghz + STEP_TOLERANCE_GHZ]
+        return edges[-1] if edges else math.floor(self.fit_ghz * 10) / 10 or None
 
     @property
     def bands(self) -> tuple[StepLimits, ...]:
-        """The bands inside the usable frequency range — what the label and the passport quote."""
+        """The bands the label and the passport quote: within the norm's range; all measured bands without a norm."""
+        if not self.judged:
+            return self.steps
         if self.limit_ghz is None:
             return ()
         return tuple(step for step in self.steps if step.stop_ghz <= self.limit_ghz + 1e-9)
@@ -80,14 +97,19 @@ class Application:
         return self.bands[-1] if self.bands else None
 
     @property
-    def requirement_line(self) -> str:
-        """«КСВН ≤ 1,30 (требование цеха) — до 12 ГГц»: the shop requirement is never presented as a type norm."""
-        head = f"КСВН ≤ {_vswr_text(APPLICATION_VSWR_LIMIT)} ({APPLICATION_BASIS})"
-        return f"{head} — до {number(self.limit_ghz)} ГГц" if self.limit_ghz else f"{head} — не выполняется"
+    def fit_line(self) -> str:
+        """«Пригоден до 18 ГГц»; "" without a norm (the verdict says «норма не назначена») or when it fails at once."""
+        return f"Пригоден до {ghz_text(self.fit_ghz)} ГГц" if self.judged and self.fit_ghz else ""
 
     @property
     def range_line(self) -> str:
-        return f"Частотный диапазон 0–{number(self.limit_ghz)} ГГц" if self.limit_ghz else "Не годен для 50 Ом тракта"
+        if not self.judged:
+            below = self.check is not None and self.check.status == "below_accuracy"
+            return "Норма ниже точности ВАЦ" if below else "Норма не назначена"
+        if self.limit_ghz:
+            return f"Применять до {number(self.limit_ghz)} ГГц"
+        statuses = {a.status for a in (self.check, self.loss_check) if a is not None}
+        return "Не соответствует норме" if "fail" in statuses else "На границе допуска — повторить замер"
 
     def table_lines(self, long: bool = False) -> tuple[str, str, str]:
         """Three monospace rows: the band edges, VSWR and loss upper bounds (round values) per band.
@@ -122,9 +144,30 @@ def series_cap_ghz(series: tuple[str, ...]) -> float | None:
     return min(caps) if caps else None
 
 
-def application(summary, series: tuple[str, ...] = ()) -> Application:
-    """Worst-case limits per classic band (cumulative from the lowest frequency) and the usable frequency range."""
-    first, second, transfer = summary.points("S11"), summary.points("S22"), summary.points("S21")
+def fit_ghz(check: Assessment | None, loss: LossAssessment | None) -> float | None:
+    """«Пригоден до X ГГц»: the measured top when VSWR and loss are clean passes; otherwise it stops below the classic
+    band (1 / 3 / 6 / 12 / 18 GHz) holding the first point at the border or outside the norm (owner decision 18.11)."""
+    if check is None or check.status not in ("pass", "border", "fail"):
+        return None
+    failing = [a for a in (check, loss) if a is not None and a.first_bad_ghz is not None]
+    if not failing:
+        return check.stop_ghz
+    if any(a.last_pass_ghz is None for a in failing):
+        return None  # nothing within the norm was measured below the first excess
+    # An edge below the band of the first excess, and one the clean points actually reach.
+    edges = [edge for edge in STEPS_GHZ if all(edge < a.first_bad_ghz - 1e-9 and edge <= a.last_pass_ghz + STEP_TOLERANCE_GHZ
+                                               for a in failing)]
+    return edges[-1] if edges else None
+
+
+def application(summary, series: tuple[str, ...] = (), norm: Norm | None = None, *,
+                uncertainty: Uncertainty | None = None, loss_uncertainty: LossUncertainty | None = None,
+                repeats: tuple = ()) -> Application:
+    """Worst-case limits per classic band (cumulative from the lowest frequency) and the range within the item's norm.
+
+    `repeats` — the other connections of the same control (rotated 120°): with REPEAT_CONNECTIONS in all the worst one
+    decides and a result still within the uncertainty fails; before that it reads «на границе допуска»."""
+    first, second, transfer = summary.points("S11"), summary.points("S22"), transfer_points(summary)
     highest = min(first[-1][0] / 1e9, series_cap_ghz(series) or math.inf)
     steps = []
     for stop in step_stops(highest):
@@ -132,13 +175,11 @@ def application(summary, series: tuple[str, ...] = ()) -> Application:
         vswr = max((v for pts in (first, second) for f, v in pts if f <= edge), default=math.inf)
         loss = max((loss_db(v) for f, v in transfer if f <= edge), default=math.inf)
         steps.append(StepLimits(stop, vswr, loss))
-    limit = None
-    for step in steps:
-        if step.vswr <= APPLICATION_VSWR_LIMIT:
-            limit = step.stop_ghz
-        else:
-            break
-    return Application(tuple(steps), limit)
+    connections = (summary, *repeats)
+    repeated = len(connections) >= REPEAT_CONNECTIONS
+    check = worst([assess(m, norm, uncertainty, repeated=repeated) for m in connections])
+    loss_check = worst([assess_loss(m, norm.loss if norm else None, loss_uncertainty, repeated=repeated) for m in connections])
+    return Application(tuple(steps), fit_ghz(check, loss_check), check, loss_check)
 
 
 def number(value: float) -> str:
@@ -201,7 +242,7 @@ class Characterization:
 
     @property
     def loss_line(self) -> str:
-        loss = max(loss_db(value) for _, value in self.points("S21"))
+        loss = max(loss_db(value) for _, value in transfer_points(self))
         return "Потери: ∞ дБ" if not math.isfinite(loss) else f"Потери ≤ {upper_two(loss)} дБ"
 
     @property

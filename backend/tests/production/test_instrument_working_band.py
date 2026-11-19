@@ -40,7 +40,7 @@ def test_unrepresentable_next_control_date_does_not_break_public_passport():
     from app.modules.production.instrument_public import control_line
     projected = public_passport(instrument(), rf(), replace(summary(), measured_on=date.max))
     assert projected.next_control is None
-    assert control_line(projected) == "Замер: 31.12.9999"
+    assert control_line(projected) == "Замер 31.12.9999 · следующий контроль через 100 сочленений"
 
 
 @pytest.mark.parametrize("label_format", FORMATS)
@@ -51,7 +51,8 @@ def test_working_band_labels_fit_with_left_margin(label_format, dpi):
         loss_line="КСВН ≤ 1,25 · потери ≤ 0,20 дБ", mating_resource=500, temp_min_c=-65, temp_max_c=165,
         bands=(("1", "1,05", "0,05"), ("3", "1,10", "0,10"), ("6", "1,15", "0,10"), ("12", "1,25", "0,20")),
         measurement_date="Замер 16.11.26", impedance_warning="75 Ом — не для 50 Ом тракта",
-        measured_on=date(2026, 11, 16), next_control=date(2027, 11, 16))
+        measured_on=date(2026, 11, 16), next_control=date(2027, 11, 16),
+        control_short="Контроль 16.11.2027 / 100 сочл.", control_line="следующий контроль: 16.11.2027 или 100 сочленений")
     width, height = FORMATS[label_format]
     template = default_template("instrument", label_format, "qr")
     assert all(e.x_mm >= 2 for e in template.elements if e.id.startswith("table_"))
