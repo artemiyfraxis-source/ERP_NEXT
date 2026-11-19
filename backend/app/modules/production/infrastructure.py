@@ -683,6 +683,19 @@ class ProductionQcInstrumentRow(Base):
     instrument_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_instruments.id", ondelete="RESTRICT"), primary_key=True)
 
 
+# Автоматический вердикт сходится с нормой (0142, 0182) и с правилом решения СТО ФРАК-002-2026 п. 13.3 (0200): первый замер —
+# годно ≤ нормы, брак > нормы, «на границе» в пределах ±U ВАЦ; повтор «на границе» — брак > нормы + U, иначе годно или
+# ещё «на границе» (повтор не закончен). Допуск 1e-6 — только шум float в SQLite на самой границе ±U (в PG numeric точен).
+VSWR_AUTO_VERDICT = (
+    "verdict_manual OR (complete IS FALSE AND verdict = 'fail') OR (norm_vswr_max IS NOT NULL AND ("
+    "(repeat_of IS NULL AND ((verdict = 'pass' AND max_vswr <= norm_vswr_max)"
+    " OR (verdict = 'fail' AND max_vswr > norm_vswr_max)"
+    " OR (verdict = 'border' AND uncertainty IS NOT NULL AND abs(max_vswr - norm_vswr_max) <= uncertainty + 0.000001)))"
+    " OR (repeat_of IS NOT NULL AND uncertainty IS NOT NULL AND ((verdict = 'fail' AND max_vswr > norm_vswr_max + uncertainty - 0.000001)"
+    " OR (verdict IN ('pass', 'border') AND max_vswr <= norm_vswr_max + uncertainty + 0.000001)))))"
+)
+
+
 class ProductionVswrMeasurementRow(Base):
     """Замер КСВН изделия (0142): каждый замер хранится, действует последняя попытка по серийному номеру."""
     __tablename__ = "production_vswr_measurements"
@@ -702,13 +715,10 @@ class ProductionVswrMeasurementRow(Base):
             "max_vswr_mhz >= band_from_mhz AND max_vswr_mhz <= band_to_mhz", name="ck_production_vswr_peak_in_band",
         ),
         CheckConstraint("norm_vswr_max IS NULL OR norm_vswr_max >= 1", name="ck_production_vswr_norm"),
-        CheckConstraint("verdict IN ('pass', 'fail')", name="ck_production_vswr_verdict"),
-        CheckConstraint(
-            "verdict_manual OR (complete IS FALSE AND verdict = 'fail') OR "
-            "(norm_vswr_max IS NOT NULL AND ((verdict = 'pass' AND max_vswr <= norm_vswr_max)"
-            " OR (verdict = 'fail' AND max_vswr > norm_vswr_max)))",
-            name="ck_production_vswr_auto_verdict",
-        ),
+        CheckConstraint("verdict IN ('pass', 'fail', 'border')", name="ck_production_vswr_verdict"),
+        CheckConstraint(VSWR_AUTO_VERDICT, name="ck_production_vswr_auto_verdict"),
+        CheckConstraint("repeat_set IS NULL OR repeat_of IS NOT NULL", name="ck_production_vswr_repeat_set"),
+        CheckConstraint("uncertainty IS NULL OR uncertainty > 0", name="ck_production_vswr_uncertainty"),
         CheckConstraint("NOT verdict_manual OR length(trim(verdict_reason)) > 0", name="ck_production_vswr_manual_reason"),
         CheckConstraint("length(trim(file_name)) > 0", name="ck_production_vswr_file_name"),
         CheckConstraint("length(content) BETWEEN 1 AND 2097152", name="ck_production_vswr_file_size"),
@@ -740,6 +750,10 @@ class ProductionVswrMeasurementRow(Base):
     required_ends: Mapped[list | None] = mapped_column(JSON, nullable=True)
     end_results: Mapped[list | None] = mapped_column(JSON, nullable=True)
     complete: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    uncertainty: Mapped[Decimal | None] = mapped_column(Numeric(9, 4), nullable=True)
+    repeat_of: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey(
+        "production_vswr_measurements.id", ondelete="RESTRICT", name="fk_production_vswr_repeat_of"), nullable=True)
+    repeat_set: Mapped[list | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     traces: Mapped[list[ProductionVswrTraceRow]] = relationship(lazy="selectin", order_by="ProductionVswrTraceRow.name")
     files: Mapped[list[ProductionVswrFileRow]] = relationship(lazy="selectin", order_by="ProductionVswrFileRow.end")
 
@@ -2137,7 +2151,9 @@ class SqlAlchemySerialRepository:
         if len(rows) < accepted + rejected:
             raise ProductionValidationError("Недостаточно свободных серийных номеров задания")
         verdicts = SqlAlchemyVswrRepository(self.session).latest_verdicts([row.id for row in rows])
-        failed = [row for row in rows if verdicts.get(row.id) is VswrVerdict.FAIL]
+        # «На границе допуска» (повтор не закончен) годным не принимается, в брак — после явного брака.
+        failed = [row for row in rows if verdicts.get(row.id) is VswrVerdict.FAIL] + [
+            row for row in rows if verdicts.get(row.id) is VswrVerdict.BORDER]
         passed = [row for row in rows if verdicts.get(row.id) is VswrVerdict.PASS]
         unmeasured = [row for row in rows if row.id not in verdicts]
         candidates = passed + unmeasured
@@ -2193,6 +2209,7 @@ class SqlAlchemyVswrRepository:
                 trace=tuple((float(p[0]), float(p[1])) for p in item.trace),
             ) for item in row.traces),
             files=tuple(VswrFile(item.end, item.file_name, dict(item.file_meta)) for item in row.files),
+            uncertainty=row.uncertainty, repeat_of=row.repeat_of, repeat_set=tuple(row.repeat_set or ()),
         )
 
     def _select(self):
@@ -2233,6 +2250,8 @@ class SqlAlchemyVswrRepository:
             required_ends=list(measurement.required_ends) if measurement.complete is not None else None,
             end_results=list(measurement.end_results) if measurement.complete is not None else None,
             complete=measurement.complete,
+            uncertainty=measurement.uncertainty, repeat_of=measurement.repeat_of,
+            repeat_set=list(measurement.repeat_set) or None,
             traces=[ProductionVswrTraceRow(
                 name=item.name, quantity=item.quantity, points=item.points,
                 trace=[list(point) for point in item.trace], samples=[list(point) for point in item.samples],

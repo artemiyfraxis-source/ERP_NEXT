@@ -43,7 +43,6 @@ from app.modules.production.vswr import (
 )
 from app.modules.production.autoplan_api import references_uow_factory
 from app.modules.production.domain import ProductionStatus
-from app.modules.production.instrument_norms import REPEAT_TEXT, Uncertainty, uncertainty_for, vna_model
 from app.modules.references.coax_vswr import (
     SOURCE_CUSTOMER,
     CustomerNormError,
@@ -258,37 +257,15 @@ def _num(value: Any) -> float | None:
     return float(value) if value is not None else None
 
 
-def vswr_decision(item: VswrMeasurement, uncertainty: Uncertainty | None) -> dict[str, Any]:
-    """Решение по замеру сборки по правилу СТО ФРАК-002-2026 (п. 13.3; то же, что у паспорта СИ — `instrument_norms._decide`):
-    наибольший КСВН в пределах ±U ВАЦ от нормы — «на границе допуска», нужен повторный замер (3 подключения с поворотом
-    120°). U — погрешность ВАЦ этого замера на частоте максимума; ВАЦ без известной погрешности, ручной вердикт, неполный
-    замер (не все концы) и уже повторённый замер — вердикт как записан."""
+def vswr_decision(item: VswrMeasurement) -> dict[str, Any]:
+    """Решение по замеру сборки — как его записал сервер по правилу СТО ФРАК-002-2026 п. 13.3 (`vswr.decide_by_rule`):
+    «border» — в пределах ±U ВАЦ от нормы, нужен повтор в 3 подключениях; текст — причина решения."""
     status = item.verdict.value
-    peak, limit = _num(item.max_vswr), _num(item.norm_vswr_max)
-    allowed = uncertainty.at(float(item.max_vswr_mhz) / 1000) if uncertainty is not None and item.max_vswr_mhz is not None else None
-    if (allowed and not item.verdict_manual and item.complete is not False and item.attempt == 1 and peak is not None
-            and limit is not None and limit - 1 > allowed and abs(peak - limit) <= allowed + 1e-12):
-        status = "border"
-    return {"status": status, "uncertainty": allowed,
-            "text": f"На границе допуска — {REPEAT_TEXT}" if status == "border" else ""}
+    return {"status": status, "uncertainty": _num(item.uncertainty),
+            "text": item.verdict_reason if status == "border" else ""}
 
 
-def _uncertainties(uow_factory) -> Callable[[UUID], Uncertainty | None]:
-    """Погрешность КСВН ВАЦ по его модели (справочник ВАЦ норм СИ); каждый прибор читается один раз за запрос."""
-    found: dict[UUID, Uncertainty | None] = {}
-
-    def get(instrument_id: UUID) -> Uncertainty | None:
-        if instrument_id not in found:
-            with uow_factory() as uow:
-                instrument = uow.instruments.get(instrument_id)
-            found[instrument_id] = (uncertainty_for(vna_model(f"{instrument.name} {instrument.doc_designation or ''}"))
-                                    if instrument is not None else None)
-        return found[instrument_id]
-    return get
-
-
-def _measurement_result(item: VswrMeasurement, *, trace: bool = False,
-                        uncertainty: Callable[[UUID], Uncertainty | None] | None = None) -> dict[str, Any]:
+def _measurement_result(item: VswrMeasurement, *, trace: bool = False) -> dict[str, Any]:
     result = {
         "id": str(item.id), "serial_id": str(item.serial_id), "serial_number": item.serial_number,
         "attempt": item.attempt, "instrument_id": str(item.instrument_id),
@@ -297,7 +274,8 @@ def _measurement_result(item: VswrMeasurement, *, trace: bool = False,
         "norm": item.norm, "norm_vswr_max": _num(item.norm_vswr_max),
         "verdict": item.verdict.value, "verdict_name": VERDICT_NAMES[item.verdict],
         "verdict_manual": item.verdict_manual, "verdict_reason": item.verdict_reason,
-        "decision": vswr_decision(item, uncertainty(item.instrument_id) if uncertainty is not None else None),
+        "decision": vswr_decision(item),
+        "repeat_of": str(item.repeat_of) if item.repeat_of is not None else None, "repeat_set": list(item.repeat_set),
         "inspector": {"id": str(item.inspector_id), "name": item.inspector_name},
         "measured_at": item.measured_at.isoformat(),
         "file_name": item.file_name, "points": item.points, "file_meta": item.file_meta,
@@ -470,8 +448,7 @@ def upload_measurement(
         capture_verified=legacy.capture_verified if legacy else False, port_mapping=payload.port_mapping,
         evidence_id=legacy.evidence_id if legacy else None, files=files,
     ), uow_factory()))
-    return {"measurement": _measurement_result(measurement, trace=True, uncertainty=_uncertainties(uow_factory)),
-            "position": payload.position}
+    return {"measurement": _measurement_result(measurement, trace=True), "position": payload.position}
 
 
 @router.get("/tasks")
@@ -595,7 +572,6 @@ def task_measurements(
     norm = (task_norm(document, current, etk["current_revision"], CoaxRefs(refs_factory), now) if etk["techcard_id"]
             else undefined_norm(NO_ETK_REASON))
     control = etk_control(document, norm)
-    uncertainty = _uncertainties(uow_factory)
     # Требуемые замеры — по всей партии задания (выборка 1 из N: первое и каждое N-е), замерено — у кого есть замер.
     measured = {position for position, serial in serials if serial.id in latest}
     required = [position for position in range(1, task.quantity + 1) if vswr_in_sample(control, position)]
@@ -610,7 +586,7 @@ def task_measurements(
             "position": position, "serial_id": str(serial.id), "serial_number": serial.serial_number,
             "status": serial.status.value, "attempts": attempts.get(serial.id, 0),
             "in_sample": vswr_in_sample(control, position),
-            "latest": _measurement_result(latest[serial.id], uncertainty=uncertainty) if serial.id in latest else None,
+            "latest": _measurement_result(latest[serial.id]) if serial.id in latest else None,
         } for position, serial in serials],
     }
 
@@ -627,7 +603,7 @@ def serial_measurements(
     return {
         "task_id": str(task.id), "position": position,
         "serial_number": serial.serial_number if serial else None,
-        "measurements": [_measurement_result(item, uncertainty=_uncertainties(uow_factory)) for item in rows],
+        "measurements": [_measurement_result(item) for item in rows],
     }
 
 
@@ -683,7 +659,7 @@ def serial_passport(
         checks.append({
             "kind": "vswr", "title": "КСВН по ВАЦ", "verdict": latest.verdict.value,
             "verdict_name": VERDICT_NAMES[latest.verdict],
-            "measurement": _measurement_result(latest, trace=True, uncertainty=_uncertainties(uow_factory)),
+            "measurement": _measurement_result(latest, trace=True),
             "instrument": instrument, "attempts": len(rows),
             "inspector": {"id": str(latest.inspector_id), "name": latest.inspector_name},
             "inspected_at": latest.measured_at.isoformat(),

@@ -1436,12 +1436,16 @@ export interface VswrMeasurement {
   max_vswr_mhz: number | null;
   norm: unknown;
   norm_vswr_max: number | null;
-  verdict: "pass" | "fail";
+  /** «border» — на границе допуска (±U ВАЦ от нормы), решение после повтора в 3 подключениях. */
+  verdict: "pass" | "fail" | "border";
   verdict_name: string;
   verdict_manual: boolean;
   verdict_reason: string;
   /** Решение сервера по СТО ФРАК-002-2026 п. 13.3: «border» — КСВН в пределах ±U ВАЦ от нормы, нужен повтор (3 подключения). */
   decision?: { status: "pass" | "fail" | "border"; uncertainty: number | null; text: string };
+  /** Замер «на границе», который этот замер повторяет; у решившего повтор — все подключения повтора. */
+  repeat_of?: string | null;
+  repeat_set?: Array<{ attempt: number; max_vswr: number; max_vswr_mhz: number; uncertainty: number }>;
   inspector: { id: string; name: string };
   measured_at: string;
   file_name: string;
