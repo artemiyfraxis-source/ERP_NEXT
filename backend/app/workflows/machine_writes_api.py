@@ -56,6 +56,7 @@ from app.shared.http_auth import Principal, require_section, section_allowed
 from app.shared.notifications import TECHNOLOGIST_AUDIENCE, notification_requested
 
 from .machines_api import Bridge, Reader, _inventory
+from .ob019_marking import group_laser_mark, marking_plan
 from .ob019_setup import GROUP_STATES, WIRE_CUTS, _conductor, _wires, group_choices, group_nominal, wire_label
 
 router = APIRouter(prefix="/api/production/machines", tags=["production"])
@@ -344,7 +345,8 @@ def _transfer_plan(session, link: rules.MachineLinkRow, group_id: UUID, length_t
     job = {"total_set": quantity, "order_quantity": quantity, "order_number": latin(group.number),
            "product": latin(f"{nominal.wire} L{_shown(length)}")}
     return {"group_id": str(group.id), "number": group.number, "wire": nominal.wire, "length_mm": _shown(length),
-            "quantity": quantity, "rows": rows, "job": job, "missing": missing, "blocking": blocking}
+            "quantity": quantity, "rows": rows, "job": job, "missing": missing, "blocking": blocking,
+            "marking": marking_plan(group_laser_mark(group.recipe or {}), length, latin)}
 
 
 def _wire_plan(session, link: rules.MachineLinkRow, wire_text: str, length_text: str) -> dict:
@@ -358,7 +360,7 @@ def _wire_plan(session, link: rules.MachineLinkRow, wire_text: str, length_text:
     rows, missing, blocking = _plan_rows(session, link, nominal, length, WIRE_RECIPE_KEYS)
     job = {"total_set": None, "order_quantity": None, "order_number": "", "product": latin(f"{wire} L{_shown(length)}")}
     return {"group_id": None, "number": None, "wire": wire, "length_mm": _shown(length), "quantity": None,
-            "rows": rows, "job": job, "missing": missing, "blocking": blocking}
+            "rows": rows, "job": job, "missing": missing, "blocking": blocking, "marking": None}
 
 
 def _wire_choices(session, link: rules.MachineLinkRow) -> list[dict]:
@@ -408,6 +410,12 @@ def transfer(inventory: str, payload: TransferPayload, principal: Writer, factor
             raise HTTPException(422, "В ЭТК не задано: " + ", ".join(plan["blocking"]))
         writes = [commands.FieldWrite(row["key"], row["value"]) for row in plan["rows"] if row["value"] is not None]
         writes += [commands.FieldWrite(key, value) for key, value in plan["job"].items() if value not in ("", None)]
+        marking = plan["marking"]
+        if marking is not None:
+            if marking["blocking"]:
+                raise HTTPException(422, "Маркировка: " + "; ".join(marking["blocking"]))
+            # Cleared texts are real writes (zero-filled), unlike the job's empty strings dropped above.
+            writes += [commands.FieldWrite(row["key"], row["value"]) for row in marking["rows"]]
         summary = f"Передать на станок: группа {plan['number']}, {plan['wire']}, {plan['length_mm']} мм"
         return _enqueue(uow, link, principal, "transfer", writes, summary, now)
 

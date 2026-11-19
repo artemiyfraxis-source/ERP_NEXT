@@ -299,14 +299,15 @@ def test_operator_without_edit_reads_but_does_not_write(machines_api):
     assert operator.get(CARD + "/control").json()["can_edit"] in (True, False)
 
 
-def _job(sessions, *, card_id=None, number="ГР-0007", lengths=(("325", 10), ("325", 2), ("150", 4))):
+def _job(sessions, *, card_id=None, number="ГР-0007", lengths=(("325", 10), ("325", 2), ("150", 4)), laser=None):
     group_id = uuid4()
     with sessions.begin() as session:
         session.add(CuttingGroupRow(
             id=group_id, number=number, idempotency_key=str(uuid4()), project_key="708К.", site="ЦАР",
             recipe_key="k", recipe_version=1, state="open", joinable=True, created_at=machine_writes_api_now(),
             recipe={"cable": "ПВАМ 0,35 красный", "operations": [{"type": "cutWireStrip", "fields": {"strip": {
-                "a": True, "b": True, "lenA": "5", "lenB": "6,5", "modeA": "full", "modeB": "full"}}}]}))
+                "a": True, "b": True, "lenA": "5", "lenB": "6,5", "modeA": "full", "modeB": "full"},
+                **({"laserMark": laser} if laser else {})}}]}))
         session.flush()
         for position, (length, quantity) in enumerate(lengths):
             session.add(CuttingMemberRow(
@@ -548,3 +549,92 @@ def test_a_recipe_value_is_final_and_the_offset_is_not_counted_twice(machines_ap
     assert rows["strip_front_mm"] == ("5,40", "0,40", "ЭТК") and rows["length_mm"] == ("325,50", "0,50", "Задание")
     assert rows["diameter_mm"] == ("0,80", None, "Рецепт, версия 1")
     assert rows["knife_back_mm"] == ("0,10", None, "Рецепт, версия 1")
+
+
+def _claimed_writes(bridge):
+    claimed = TestClient(app).post(NEXT, headers=bridge, json=AGENT_NEW).json()["command"]
+    words = {block["addr"] + index: word for block in claimed["blocks"] for index, word in enumerate(block["values"])}
+    return claimed, words, {bit["addr"]: bit["value"] for bit in claimed["bits"]}
+
+
+def _text_at(words, address):
+    raw = b"".join(bytes((words[address + index] >> 8, words[address + index] & 255)) for index in range(15))
+    return raw.rstrip(b"\x00").decode()
+
+
+def _transfer(admin, group_id):
+    return _post(admin, CARD + "/transfer", {"group_id": str(group_id), "length_mm": "325", "confirm_state": 102})
+
+
+def test_transfer_without_etk_marking_has_no_marking_in_plan_and_the_same_write(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    bridge = _bridge(admin)
+    _report(bridge)
+    group_id = _job(sessions)
+    plan = admin.get(CARD + "/transfer", params={"group_id": str(group_id), "length_mm": "325"}).json()
+    assert plan["marking"] is None
+    assert admin.get(CARD + "/transfer", params={"wire": "ПВАМ 0,35", "length_mm": "120"}).json()["marking"] is None
+    assert _transfer(admin, group_id).status_code == 200
+    claimed, words, bits = _claimed_writes(bridge)
+    # Golden: the job and the ETK lengths only; the machine's marking registers stay untouched.
+    assert claimed["bits"] == []
+    assert not any(address in words for address in (405, 407, 409, 411, 440, 455, 470))
+
+
+def test_marking_plan_json_and_ends_write_clears_the_middle_text(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    bridge = _bridge(admin)
+    _report(bridge)
+    laser = {"mode": "ends", "front": "C1.5 to XS17.7", "back": "XS17.7", "middle": "", "frontMm": "25", "backMm": "30"}
+    group_id = _job(sessions, laser=laser)
+    plan = admin.get(CARD + "/transfer", params={"group_id": str(group_id), "length_mm": "325"}).json()
+    marking = plan["marking"]
+    assert marking["mode"] == "ends" and marking["source"] == "ЭТК"
+    assert marking["warnings"] == [] and marking["blocking"] == []
+    assert [(row["key"], row["value"]) for row in marking["rows"]] == [
+        ("marking", "Вкл"), ("mark_by_step", "Выкл"), ("mark_count", "0"), ("mark_front", "C1.5 to XS17.7"),
+        ("mark_back", "XS17.7"), ("mark_middle", ""), ("mark_pos_front_mm", "25"), ("mark_pos_back_mm", "30")]
+    assert all(set(row) == {"key", "label", "value"} for row in marking["rows"])
+    assert _transfer(admin, group_id).status_code == 200
+    claimed, words, bits = _claimed_writes(bridge)
+    assert bits == {400: 1, 422: 0}
+    assert _text_at(words, 440) == "C1.5 to XS17.7" and _text_at(words, 470) == "XS17.7"
+    assert all(words[455 + index] == 0 for index in range(15))  # the middle text is cleared, not skipped
+    assert (words[405], words[407], words[411]) == (2500, 3000, 0) and 32 in words
+
+
+def test_full_length_marking_and_a_text_changed_to_latin_warns(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    bridge = _bridge(admin)
+    _report(bridge)
+    group_id = _job(sessions, laser={"mode": "full", "front": "Ж1", "back": "Ж2", "middle": "Провод 1"})
+    plan = admin.get(CARD + "/transfer", params={"group_id": str(group_id), "length_mm": "325"}).json()
+    assert plan["marking"]["warnings"] == ["Текст переведён в латиницу: «Провод 1» → «Provod 1»"]
+    assert _transfer(admin, group_id).status_code == 200
+    claimed, words, bits = _claimed_writes(bridge)
+    assert bits == {400: 1, 422: 1}
+    assert _text_at(words, 455) == "Provod 1" and not _text_at(words, 440) and not _text_at(words, 470)
+    assert (words[409], words[405], words[407]) == (10000, 2000, 2000)
+
+
+def test_a_serial_token_or_a_long_text_blocks_the_transfer(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    bridge = _bridge(admin)
+    _report(bridge)
+    for number, (laser, message) in enumerate((({"mode": "ends", "front": "SN {№}"}, "Серийные номера на лазер"),
+                                               ({"mode": "ends", "front": "x" * 31}, "не длиннее 30"))):
+        group_id = _job(sessions, laser=laser, number=f"ГР-010{number}")
+        plan = admin.get(CARD + "/transfer", params={"group_id": str(group_id), "length_mm": "325"}).json()
+        assert message in plan["marking"]["blocking"][0]
+        refused = _transfer(admin, group_id)
+        assert refused.status_code == 422 and message in refused.json()["detail"]
+
+
+def test_none_mode_writes_only_the_marking_switch(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    bridge = _bridge(admin)
+    _report(bridge)
+    group_id = _job(sessions, laser={"mode": "none"})
+    assert _transfer(admin, group_id).status_code == 200
+    claimed, words, bits = _claimed_writes(bridge)
+    assert bits == {400: 0} and not any(address in words for address in (405, 407, 409, 411, 440, 455, 470))
