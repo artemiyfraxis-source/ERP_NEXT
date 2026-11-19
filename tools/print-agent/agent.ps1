@@ -341,6 +341,15 @@ public static class ErpGdiPrinter {
         offsetX+printableW > physicalW+1 || offsetY+printableH > physicalH+1)
       throw new InvalidOperationException("Driver substituted physical media or printable bounds");
   }
+  // Margin compensation (ported from PR #933, agent 2.9.3 there): 'shift' - the raster is moved left by the driver's
+  // PHYSICALOFFSETX so that it lands at its true physical position (TSC and others); 'none' - the driver (Godex/Seagull)
+  // already compensates its hard margin, a second shift would double it (measured on ОБ.101: text ~5 mm too far left).
+  // With 'none' the raster origin is the printable origin and the ink must fit the printable width [0, printableW).
+  public static int EffectiveOffsetX(int offsetX, string compensation) {
+    if (compensation == "none") return 0;
+    if (compensation == "shift") return offsetX;
+    throw new InvalidOperationException("Unknown margin compensation: " + compensation);
+  }
   static string Mm(int dots) { return (dots*25.4/300).ToString("0.00", System.Globalization.CultureInfo.GetCultureInfo("ru-RU")); }
   // Never silently clip or shift ink: the driver's hard margins (Godex/Seagull: 36 dots left, 15 right) are
   // physical. White outside the printable rect is safe. The refusal names both rectangles in mm from the label's
@@ -361,11 +370,11 @@ public static class ErpGdiPrinter {
   // Drive the no-dialog controller's single-page lifecycle explicitly below. Calling the
   // managed PrintDocument.Print loop would rebuild DEVMODE from rounded PaperSize.
   public sealed class Controller : StandardPrintController {
-    readonly string printer; readonly byte[] mode; readonly Bitmap bitmap; readonly double width, height;
+    readonly string printer, compensation; readonly byte[] mode; readonly Bitmap bitmap; readonly double width, height;
     IntPtr dc; Graphics graphics; bool completed;
     public bool SubmissionStarted; public int JobId; public string DocName = "ERP marking";
-    public Controller(string name, byte[] validatedMode, Bitmap image, double w, double h) {
-      printer=name; mode=validatedMode; bitmap=image; width=w; height=h;
+    public Controller(string name, byte[] validatedMode, Bitmap image, double w, double h, string marginCompensation) {
+      compensation=marginCompensation; EffectiveOffsetX(0,compensation); printer=name; mode=validatedMode; bitmap=image; width=w; height=h;
     }
     public override void OnStartPrint(PrintDocument document, PrintEventArgs e) {
       try {
@@ -376,7 +385,7 @@ public static class ErpGdiPrinter {
         int ox=GetDeviceCaps(dc,112), oy=GetDeviceCaps(dc,113), pw=GetDeviceCaps(dc,8), ph=GetDeviceCaps(dc,10);
         ValidateGeometry(width,height,bitmap.Width,bitmap.Height,GetDeviceCaps(dc,88),GetDeviceCaps(dc,90),
           GetDeviceCaps(dc,110),GetDeviceCaps(dc,111),ox,oy,pw,ph);
-        CheckInk(bitmap,ox,oy,pw,ph);
+        CheckInk(bitmap,EffectiveOffsetX(ox,compensation),oy,pw,ph);
         SubmissionStarted=true;
         DocInfo info=new DocInfo(); info.name=DocName;
         JobId=StartDoc(dc,info);
@@ -387,7 +396,7 @@ public static class ErpGdiPrinter {
       if (StartPage(dc)<=0) throw new InvalidOperationException("StartPage failed");
       graphics=Graphics.FromHdc(dc);
       graphics.PageUnit=GraphicsUnit.Pixel; graphics.PageScale=1;
-      graphics.TranslateTransform(-GetDeviceCaps(dc,112),-GetDeviceCaps(dc,113));
+      graphics.TranslateTransform(-EffectiveOffsetX(GetDeviceCaps(dc,112),compensation),-GetDeviceCaps(dc,113));
       graphics.InterpolationMode=InterpolationMode.NearestNeighbor;
       graphics.PixelOffsetMode=PixelOffsetMode.Half;
       return graphics;
@@ -558,15 +567,31 @@ function ConvertFrom-MarkingJob {
     return ,$bytes
 }
 
+# 'shift' (default: TSC and others) or 'none' (Godex/Seagull driver compensates its own margin). The job's
+# margin_compensation field wins; otherwise the queue's driver name decides (PR #933).
+function Resolve-MarginCompensation {
+    param($Job, [string]$DriverName)
+    $explicit = [string]$Job.margin_compensation
+    if ($explicit) {
+        if ($explicit -cnotin @('shift', 'none')) { throw "Неверная компенсация полей: $explicit" }
+        return $explicit
+    }
+    if ($DriverName -match '(?i)godex|seagull') { return 'none' }
+    return 'shift'
+}
+
 function Send-PngToPrinter {
     param($Job, [byte[]]$Bytes)
     $stream = New-Object IO.MemoryStream(,$Bytes)
     $bitmap = $controller = $null
     try {
         $bitmap = New-Object Drawing.Bitmap($stream)
+        $driver = ''
+        try { $driver = [string](Get-Printer -Name $Job.printer -ErrorAction Stop).DriverName } catch {}
+        $compensation = Resolve-MarginCompensation $Job $driver
         $mode = Get-JobDriverMode $Job
         if ($Job.peel) { $mode = Confirm-JobPeelMode $Job $mode }
-        $controller = New-Object ErpGdiPrinter+Controller($Job.printer, $mode, $bitmap, [double]$Job.width_mm, [double]$Job.height_mm)
+        $controller = New-Object ErpGdiPrinter+Controller($Job.printer, $mode, $bitmap, [double]$Job.width_mm, [double]$Job.height_mm, $compensation)
         $controller.DocName = Get-MarkingDocName ([string]$Job.id)
         [ErpGdiPrinter]::Print($Job.printer, $bitmap, [double]$Job.width_mm, [double]$Job.height_mm, $controller)
         return @{ outcome = 'spooled'; message = 'Передано принтеру'; spool_job_id = $controller.JobId }

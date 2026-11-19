@@ -35,7 +35,7 @@
 .marking-resolution .form-actions, .marking-action-note { grid-column: 1 / -1; }
 .marking-reprint { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: end; gap: 12px; }
 .marking-reprint .marking-reprint-wide { grid-column: span 2; }
-.marking-reprint .form-actions { grid-column: 1 / -1; align-items: center; }
+.marking-reprint .form-actions, .marking-reprint .marking-action-note { grid-column: 1 / -1; align-items: center; }
 .marking-clear { display: grid; gap: 8px; }
 .marking-clear-state { display: flex; flex-wrap: wrap; gap: 4px 12px; overflow-wrap: anywhere; }
 .marking-window .marking-peel { align-self: end; }

@@ -168,6 +168,37 @@ Describe 'Ink inside the driver printable area (Godex/Seagull 92.5 x 20: offset 
     }
 }
 
+Describe 'Margin compensation (Godex/Seagull vs shift, from PR #933)' {
+    It 'shift keeps the driver offset, none drops it' {
+        [ErpGdiPrinter]::EffectiveOffsetX(36, 'shift') | Should Be 36
+        [ErpGdiPrinter]::EffectiveOffsetX(36, 'none') | Should Be 0
+    }
+    It 'rejects an unknown mode' {
+        { [ErpGdiPrinter]::EffectiveOffsetX(36, 'x') } | Should Throw 'Unknown margin compensation'
+    }
+    It 'defaults to shift for other drivers and none for Godex/Seagull' {
+        Resolve-MarginCompensation @{ } 'TSC TE200' | Should Be 'shift'
+        Resolve-MarginCompensation @{ } 'Seagull Scientific Godex EZ2350i' | Should Be 'none'
+        Resolve-MarginCompensation @{ } 'Godex EZ2350i' | Should Be 'none'
+    }
+    It 'lets the job override the driver default' {
+        Resolve-MarginCompensation @{ margin_compensation = 'shift' } 'Godex EZ2350i' | Should Be 'shift'
+        Resolve-MarginCompensation @{ margin_compensation = 'none' } 'TSC' | Should Be 'none'
+        { Resolve-MarginCompensation @{ margin_compensation = 'bad' } 'TSC' } | Should Throw
+    }
+    It 'in none mode ink at the left edge is allowed and ink beyond printable width is refused' {
+        $bitmap = New-Object Drawing.Bitmap 1093, 236
+        $g = [Drawing.Graphics]::FromImage($bitmap); try { $g.Clear([Drawing.Color]::White) } finally { $g.Dispose() }
+        try {
+            $bitmap.SetPixel(0, 0, [Drawing.Color]::Black); $bitmap.SetPixel(1041, 10, [Drawing.Color]::Black)
+            [ErpGdiPrinter]::CheckInk($bitmap, [ErpGdiPrinter]::EffectiveOffsetX(36, 'none'), 0, 1042, 237)
+            { [ErpGdiPrinter]::CheckInk($bitmap, [ErpGdiPrinter]::EffectiveOffsetX(36, 'shift'), 0, 1042, 237) } | Should Throw 'outside printable bounds'
+            $bitmap.SetPixel(1042, 10, [Drawing.Color]::Black)
+            { [ErpGdiPrinter]::CheckInk($bitmap, 0, 0, 1042, 237) } | Should Throw 'outside printable bounds'
+        } finally { $bitmap.Dispose() }
+    }
+}
+
 Describe 'Marking payload' {
     It 'decodes the exact approved one-bit PNG' {
         $job = New-TestMarkingJob

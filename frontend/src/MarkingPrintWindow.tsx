@@ -321,6 +321,7 @@ export function MarkingBatchProgress({ initial, onChange, onReprinted }: {
         <button type="button" className="secondary" disabled={busy} onClick={() => setAction(null)}>Назад</button></div>
     </div>}
     {action?.kind === "reprint" && <div className="marking-reprint">
+      <strong className="marking-action-note">Перепечатать номера — новой партией с теми же номерами изделий</strong>
       <label>Что перепечатать<select name="marking-reprint-by" autoComplete="off" disabled={busy} value={action.by}
         onChange={(event) => setAction({ ...action, by: event.target.value as "serials" | "labels" })}>
         {serials.length > 0 && <option value="serials">Диапазон номеров изделий</option>}<option value="labels">Этикетки партии по №</option></select></label>
