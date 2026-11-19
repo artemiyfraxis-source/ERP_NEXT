@@ -62,7 +62,8 @@ LIBRARY = [*_json(ROOT / "backend/data/techcard-library.json")["templates"],
 LIBRARY_CODE = {item["id"]: item["title"].split(" | ", 1)[0] for item in LIBRARY}
 CARDS = tuple(parse_operation_library(LIBRARY))
 CODE_OF = SCRIPT.code_resolver(CARDS)
-DELIVERED = {item["code"] for item in _json(DATA / "operation-templates-fakra-1114/payload.json")} | {"PRS_HFM_SUPPORT"}
+# PRS_PIN_coax (19.11) is delivered later by docs/data/etk-pin-coax-1119: production before it has no such card.
+DELIVERED = {item["code"] for item in _json(DATA / "operation-templates-fakra-1114/payload.json")} | {"PRS_HFM_SUPPORT", "PRS_PIN_coax"}
 ANALOGS = ("INS_SLEEVE_coax", "STRIP_COAX_hand", "PRS_SLEEVE_coax", "INS_housing_COAX", "PRS_CAP_COAX",
            "SDR_COAX_pin", "HEAT_TTK_short")
 OLD_WORDS = ("до щелчка", "0,18 мм", "CPA")
