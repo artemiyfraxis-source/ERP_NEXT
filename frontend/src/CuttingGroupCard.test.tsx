@@ -59,8 +59,10 @@ it("starts one group and renders a working timer with separate PF and blank quan
 });
 
 it("submits all KB quantities atomically and keeps the retry key and form after an error", async () => {
-  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(json({ detail: "Повторите запрос" }, 503))
-    .mockResolvedValueOnce(json({ group: working, outputs: [] }));
+  const answers = [json({ detail: "Повторите запрос" }, 503), json({ group: working, outputs: [] })];
+  const all = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+    String(input).includes("/machines/runs/") ? json({ runs: [] }) : answers.shift()!);
+  const submits = () => all.mock.calls.filter(([input]) => !String(input).includes("/machines/runs/"));
   render(<CuttingGroupCard group={working} readOnly={false} onBehalfOf="operator" renderInstruction={() => null} />);
   fireEvent.click(screen.getByRole("button", { name: "Сдать" }));
   fireEvent.change(screen.getByLabelText("Годные КБ1"), { target: { value: "4" } });
@@ -73,13 +75,26 @@ it("submits all KB quantities atomically and keeps the retry key and form after 
   expect(screen.getByLabelText("Годные КБ1")).toHaveValue(4);
   fireEvent.click(screen.getByRole("button", { name: "Сдать группу" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(fetch).toHaveBeenCalledTimes(2);
+  const fetch = { mock: { calls: submits() } };
+  expect(fetch.mock.calls).toHaveLength(2);
   expect(fetch.mock.calls[0][1]?.headers).toEqual(fetch.mock.calls[1][1]?.headers);
   expect(String(fetch.mock.calls[0][0])).toBe("/api/production/cutting-groups/group-1/submit?on_behalf_of=operator");
   const payload = JSON.parse(String(fetch.mock.calls[0][1]?.body));
   expect(payload.rows).toHaveLength(4);
   expect(payload.rows[0]).toMatchObject({ member_id: "member-0", good_quantity: "4", defect_quantity: "1", defect_description: "Короткий рез" });
   expect(payload.rows[1].good_quantity).toBe("15");
+});
+
+it("fills «Годные» of the КБ of that length from the ОБ.019 count, wires per ПФ taken into account", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => String(input).includes("/machines/runs/cutting/group-1")
+    ? json({ runs: [{ run_id: "w1", inventory: "ОБ.019", length_mm: "700", count: 20, runs: 2, unknown: false,
+      closed_at: "2026-11-19T10:05:00+03:00", closed_by: "Слава" }] })
+    : json({ group: working, outputs: [] }));
+  render(<CuttingGroupCard group={working} readOnly={false} onBehalfOf="operator" renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Сдать" }));
+  await waitFor(() => expect(screen.getByLabelText("Годные КБ1")).toHaveValue(5));
+  expect(screen.getByText(/Счётчик ОБ.019: 20 шт провода 700 мм, прогонов: 2/)).toBeInTheDocument();
+  expect(screen.getByLabelText("Годные КБ2")).toHaveValue(15);
 });
 
 it("starts and stops group downtime and prevents submission during it", async () => {

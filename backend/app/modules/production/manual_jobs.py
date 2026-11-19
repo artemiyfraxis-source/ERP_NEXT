@@ -312,14 +312,33 @@ def _open(session: Session, job_id: UUID, version: int) -> ManualJobRow:
 
 
 def finish(session: Session, job_id: UUID, version: int, result: Finish, *, actor_name: str,
-           now: datetime) -> ManualJobRow:
+           now: datetime, counter_reset: bool = False, counter_unread: bool = False) -> ManualJobRow:
+    """Done with good / defect. Run from the machine card (S2): `counter_reset` — the machine counter went back,
+    `counter_unread` — it was not read (no link); the count was typed by hand, so the job is marked «Вручную» and
+    `params.counter_reset` / `params.counter_unread`."""
     result = check_finish(result)
     row = _open(session, job_id, version)
-    return _changed(session, row, version, {
+    values = {
         "status": "done", "good_quantity": result.good, "defect_quantity": result.defect,
         "defect_reason": result.defect_reason, "machine_count": result.machine_count, "material": result.material,
         "material_note": result.material_note if result.material == "not_issued" else "",
-        "finished_at": max(now, aware(row.started_at, now)), "finished_by_name": clean(actor_name, 200)})
+        "finished_at": max(now, aware(row.started_at, now)), "finished_by_name": clean(actor_name, 200)}
+    if counter_reset or counter_unread:
+        values.update({"count_source": "manual", "machine_count": None,
+                       "params": {**(row.params or {}), "counter_reset" if counter_reset else "counter_unread": True}})
+    return _changed(session, row, version, values)
+
+
+def attach_plc(session: Session, job_id: UUID, *, write_id: UUID, counter_start: int, params: dict) -> ManualJobRow | None:
+    """The job's settings were written to the machine and read back (S2): from now it is counted by the machine's
+    T.Finish from `counter_start`. A job no longer running (finished or cancelled meanwhile) is left as it is → None."""
+    row = session.get(ManualJobRow, job_id)
+    if row is None or row.status != "running":
+        return None
+    if row.count_source == "plc" and row.counter_start is not None:
+        counter_start = row.counter_start  # written again after a correction: the first start stands
+    return _changed(session, row, row.version, {"count_source": "plc", "counter_start": counter_start,
+                                                "write_id": write_id, "params": {**(row.params or {}), **params}})
 
 
 def cancel(session: Session, job_id: UUID, version: int, reason: str, *, actor_name: str,

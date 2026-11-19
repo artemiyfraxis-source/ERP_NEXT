@@ -147,11 +147,18 @@ it("keeps the last PLC values greyed when the machine PC is gone and says so", (
 });
 
 it("says the port is busy while PXS_HMI holds COM8 and there are no PLC words", () => {
-  render(<Ob019CardView card={card({ link: { code: "port_busy", text: "Открыт пульт станка на ПК — запись из ERP недоступна", tone: "warn" },
+  render(<Ob019CardView card={card({ link: { code: "port_busy", text: "Открыт пульт станка на ПК — закройте его, чтобы ERP могла управлять станком", tone: "warn" },
     error: "COM8 занят", live: null })} />);
-  expect(screen.getByText("Открыт пульт станка на ПК — запись из ERP недоступна")).toBeTruthy();
+  expect(screen.getByText("Открыт пульт станка на ПК — закройте его, чтобы ERP могла управлять станком")).toBeTruthy();
   expect(screen.getByText("COM8 занят")).toBeTruthy();
   expect(screen.getByText(/Нет данных ПЛК/)).toBeTruthy();
+});
+
+it("says once, in plain words, that the operator panel is open on the PC (the agent's raw line is translated)", () => {
+  const text = "Открыт пульт станка на ПК — закройте его, чтобы ERP могла управлять станком";
+  render(<Ob019CardView card={card({ link: { code: "port_busy", text, tone: "warn" }, error: text, live: null })} />);
+  expect(screen.getAllByText(text)).toHaveLength(1);
+  expect(screen.queryByText(/PXS_HMI|busy/)).toBeNull();
 });
 
 it("opens «Станки» for Производство or Задания view", () => {

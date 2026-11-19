@@ -253,7 +253,7 @@ def test_a_write_the_machine_did_not_take_fails_with_the_registers(machines_api)
     second = _post(admin, CARD + "/write", {"values": {"length_mm": "326"}}).json()["id"]
     TestClient(app).post(NEXT, headers=bridge, json=AGENT)
     busy = _result(bridge, second, {}, ok=False, error="busy: PXS_HMI is running, bus refused").json()
-    assert busy["error"] == "Открыт пульт станка на ПК — запись из ERP недоступна"
+    assert busy["error"] == rules.HMI_OPEN
     third = _post(admin, CARD + "/write", {"values": {"length_mm": "326"}}).json()["id"]
     TestClient(app).post(NEXT, headers=bridge, json=AGENT)
     assert _result(bridge, third, {}, ok=False, error="state 103").json()["error"] == "Станок не в ожидании: 103"
@@ -268,7 +268,7 @@ def test_only_an_idle_linked_machine_is_written_and_a_late_command_never_runs(ma
     assert running.status_code == 409 and "сейчас: Работает" in running.json()["detail"]
     _report(bridge, seq=2, link="port_busy", registers={})
     busy = _post(admin, CARD + "/write", {"values": {"length_mm": "326"}}).json()["detail"]
-    assert busy == "Открыт пульт станка на ПК — запись из ERP недоступна" and "PXS_HMI" not in busy
+    assert busy == rules.HMI_OPEN and "PXS_HMI" not in busy
     _report(bridge, seq=3)
     moved = _post(admin, CARD + "/write", {"values": {"length_mm": "326"}, "confirm_state": 107})
     assert moved.status_code == 409 and "Состояние станка изменилось" in moved.json()["detail"]
@@ -344,7 +344,9 @@ def test_transfer_writes_etk_nominal_plus_machine_corrections(machines_api):
     assert sent.status_code == 200, sent.text
     claimed = TestClient(app).post(NEXT, headers=bridge, json=AGENT).json()["command"]
     words = {block["addr"] + index: word for block in claimed["blocks"] for index, word in enumerate(block["values"])}
-    assert (words[32], words[34], words[38], words[22], words[24]) == (32500, 540, 650, 12, 12)
+    assert (words[32], words[34], words[38], words[24]) == (32500, 540, 650, 12)
+    # «Тираж» 12 pieces is the target over the cumulative T.Finish: D22 = D649 (65537 in WORDS) + 12.
+    assert words[22] | words[23] << 16 == 0x10001 + 12
     assert 43 not in words  # knife back-off: no эталон yet — the machine keeps its own
     kinds = [kind for kind, _ in _events(sessions, ob019)]
     assert "production.machine_offset_set" in kinds and "production.machine_write_queued" in kinds

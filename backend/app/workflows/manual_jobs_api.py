@@ -28,6 +28,7 @@ from sqlalchemy import select
 
 from app.modules.equipment_setup.recipes import wire_key
 from app.modules.equipment_setup.setup_model_infrastructure import SetupReferenceRow
+from app.modules.production import machine_runs as runs
 from app.modules.production import manual_jobs as jobs
 from app.modules.production.api import production_uow_factory
 from app.modules.production.machine_writes import moment
@@ -141,6 +142,22 @@ def _journal(uow, row: jobs.ManualJobRow, event: str, principal: Principal, now:
                                       "equipment_id": str(row.equipment_id)}))
 
 
+def _close_run(session, row, now: datetime, principal, why: str) -> None:
+    """The job's open run on the machine closes with it; never under a cutting machine (409, nothing saved)."""
+    try:
+        runs.close_for_manual(session, row.equipment_id, row.id, now, principal.actor.name, why)
+    except runs.RunRefused as error:
+        raise HTTPException(409, str(error)) from error
+
+
+def _lock_run(session, job_id: UUID) -> None:
+    """Lock the machine's run row before the job row: the card close and the write check lock run → job, so finish and
+    cancel take the same order (no deadlock on PostgreSQL)."""
+    job = session.get(jobs.ManualJobRow, job_id)
+    if job is not None:
+        runs.current(session, job.equipment_id, for_update=True)
+
+
 def _errors(error: Exception) -> HTTPException:
     if isinstance(error, KeyError):
         return HTTPException(404, error.args[0] if error.args else "Не найдено")
@@ -245,10 +262,12 @@ def finish(job_id: UUID, payload: FinishPayload, principal: Writer, factory: Fac
         session = uow.session
         result = jobs.Finish(payload.good, payload.defect, payload.defect_reason, payload.material,
                              payload.material_note)
+        _lock_run(session, job_id)
         try:
             row = jobs.finish(session, job_id, payload.version, result, actor_name=principal.actor.name, now=now)
         except (KeyError, jobs.ManualJobInvalid, jobs.ManualJobConflict) as error:
             raise _errors(error) from error
+        _close_run(session, row, now, principal, "Ручная работа завершена")
         material = jobs.MATERIAL_TEXTS[row.material][0] + (f": {row.material_note}" if row.material_note else "")
         defect = f", брак {row.defect_quantity} ({row.defect_reason})" if row.defect_quantity else ""
         _journal(uow, row, "finished", principal, now,
@@ -262,10 +281,12 @@ def finish(job_id: UUID, payload: FinishPayload, principal: Writer, factory: Fac
 def cancel(job_id: UUID, payload: CancelPayload, principal: Writer, factory: Factory, now: Now) -> dict:
     with factory() as uow:
         session = uow.session
+        _lock_run(session, job_id)
         try:
             row = jobs.cancel(session, job_id, payload.version, payload.reason, actor_name=principal.actor.name, now=now)
         except (KeyError, jobs.ManualJobInvalid, jobs.ManualJobConflict) as error:
             raise _errors(error) from error
+        _close_run(session, row, now, principal, "Ручная работа отменена")
         _journal(uow, row, "cancelled", principal, now, f"Отменена {jobs.number_text(row.number)}: {row.cancel_reason}")
         answer = view(row, session.get(EquipmentMachineRow, row.equipment_id))
         uow.commit()
