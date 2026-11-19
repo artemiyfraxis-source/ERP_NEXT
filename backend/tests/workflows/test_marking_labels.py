@@ -449,6 +449,43 @@ def test_new_profile_from_copy_is_uncalibrated_audited_and_unique_per_machine(ma
     assert client.post(f"{BASE}/machines/{uuid4()}/profiles", json=body).status_code == 404
 
 
+def test_new_profile_on_another_machine_starts_uncalibrated_from_zero_offsets_and_only_for_marking(marking):
+    client, factory, payload, _task, _card, ob101, _ = marking
+    principal = app.dependency_overrides[authenticated_principal]()
+    app.dependency_overrides[authenticated_principal] = lambda: replace(principal, permissions={**principal.permissions, "erpref": "edit"})
+    wrap, crimper, model = uuid4(), uuid4(), uuid4()
+    shifted = {**presets()[-1][2], "offset_x_mm": 1.5, "offset_y_mm": -0.5}
+    with factory() as uow:
+        source = uow.session.get(MarkingProfileRow, UUID(payload["profile_id"]))
+        source.geometry = shifted
+        uow.session.add_all([EquipmentModelRow(id=model)] + [row for unit, name, inventory in
+            ((wrap, "ZCUT-RT660", "ОБ.102"), (crimper, "Пресс", "ОБ.099")) for row in (
+            EquipmentUnitRow(id=unit, catalog="ob", model_id=model, ob_id=unit),
+            EquipmentMachineRow(id=unit, tab="ob", equipment_model_id=model, display_text=name, normalized_search="",
+                                source_sheet="", sort_key="", fields={"Инв. номер": inventory}))])
+        uow.session.add(MarkingBindingRow(equipment_id=wrap, version=1, machine_id="godex-pc", printer="Godex EZ2350i"))
+        uow.commit()
+    body = {"name": "100×20", "copy_from": payload["profile_id"]}
+    # A crimper is not a marking machine: no profile, no bound printer.
+    refused = client.post(f"{BASE}/machines/{crimper}/profiles", json=body)
+    assert refused.status_code == 422 and "не станок маркировки" in refused.text
+    created = client.post(f"{BASE}/machines/{wrap}/profiles", json=body)
+    assert created.status_code == 200, created.text
+    geometry = created.json()["geometry"]
+    # The other printer's calibration offsets are not carried over; the layout is.
+    assert geometry["offset_x_mm"] == 0 and geometry["offset_y_mm"] == 0 and geometry["zones"] == shifted["zones"]
+    assert created.json()["calibrated"] is False
+    # Same machine: its own printer, the offsets stay.
+    same = client.post(f"{BASE}/machines/{ob101}/profiles", json={"name": "Копия", "copy_from": payload["profile_id"]})
+    assert same.status_code == 200 and same.json()["geometry"]["offset_x_mm"] == 1.5
+
+
+def test_a_zone_flush_with_the_edge_fits_despite_float_rounding():
+    from app.modules.warehouse.marking_render import Geometry
+    Geometry.model_validate({**presets()[0][2], "width_mm": 149.7, "zones": [{"x": 139.4, "y": 1, "width": 10.3, "height": 13}],
+                             "blank_zones": []})
+
+
 def test_new_profile_geometry_overrides_the_copy_and_is_validated(marking):
     client, factory, payload, _task, _card, equipment_id, _ = marking
     principal = app.dependency_overrides[authenticated_principal]()

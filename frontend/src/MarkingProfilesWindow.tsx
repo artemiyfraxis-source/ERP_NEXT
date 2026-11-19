@@ -107,7 +107,9 @@ function scaledGeometry(source: MarkingGeometry, width: number, height: number):
   const kx = width / source.width_mm, ky = height / source.height_mm;
   const fit = (zone: MarkingRect): MarkingRect => {
     const w = Math.min(round2(zone.width * kx), width), h = Math.min(round2(zone.height * ky), height);
-    return { x: Math.max(0, Math.min(round2(zone.x * kx), round2(width - w))), y: Math.max(0, Math.min(round2(zone.y * ky), round2(height - h))), width: w, height: h };
+    // Rounded down to 0.01 mm: x + width must never exceed the label by a float hair (the server refuses that).
+    const floor2 = (value: number) => Math.floor(value * 100 + 1e-6) / 100;
+    return { x: Math.max(0, Math.min(round2(zone.x * kx), floor2(width - w))), y: Math.max(0, Math.min(round2(zone.y * ky), floor2(height - h))), width: w, height: h };
   };
   return { ...source, width_mm: width, height_mm: height, zones: source.zones.map(fit), blank_zones: source.blank_zones.map(fit) };
 }

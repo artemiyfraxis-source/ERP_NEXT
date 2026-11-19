@@ -227,6 +227,14 @@ def create_profile(equipment_id: UUID, payload: NewProfileInput, principal: Conf
             if machine is None:
                 raise KeyError("Оборудование маркировки не найдено")
             inventory = str(machine.fields.get(INV_KEY) or machine.fields.get("inventoryNumber") or "").strip().upper()
+            if not inventory:
+                raise ValueError("У станка нет инвентарного номера — профиль маркировки не заводится")
+            owner = (MarkingProfileRow.inventory_number == inventory) | (MarkingProfileRow.equipment_id == equipment_id)
+            own = list(uow.session.scalars(select(MarkingProfileRow).where(owner)))
+            # Only a marking machine (it already has a profile or a bound printer) gets one: not a crimper by its UUID.
+            if not own and uow.session.scalar(select(MarkingBindingRow.equipment_id)
+                                               .where(MarkingBindingRow.equipment_id == equipment_id)) is None:
+                raise ValueError("Это не станок маркировки: у него нет ни профилей, ни привязанного принтера")
             name = " ".join(payload.name.split())
             if not name:
                 raise ValueError("Укажите название профиля")
@@ -245,12 +253,17 @@ def create_profile(equipment_id: UUID, payload: NewProfileInput, principal: Conf
                 geometry = Geometry.model_validate(source.geometry).model_dump()
             else:
                 raise ValueError("Укажите разметку или профиль, с которого её копировать")
+            if source is not None and source.equipment_id != equipment_id:
+                # Offsets are the other printer's calibration result: the new profile starts from zero and is calibrated
+                # on its own printer.
+                geometry["offset_x_mm"] = geometry["offset_y_mm"] = 0
+            if own:
+                # The peel-off dispenser belongs to the machine, not to the copied layout.
+                geometry["peel"] = any(bool((row.geometry or {}).get("peel")) for row in own)
             zones = geometry["zones"]
             if len(zones) == 2 and zones[0]["x"] >= zones[1]["x"]:
                 raise ValueError("Текст 1 — левая половина флажка: его зона должна начинаться левее зоны «Текст 2»")
-            owner = (MarkingProfileRow.inventory_number == inventory) | (MarkingProfileRow.equipment_id == equipment_id)
-            taken = uow.session.scalars(select(MarkingProfileRow.name).where(owner))
-            if any(other.casefold() == name.casefold() for other in taken):
+            if any(other.name.casefold() == name.casefold() for other in own):
                 raise ConcurrentProductionUpdate(f"У этого станка уже есть профиль «{name}»")
             row = MarkingProfileRow(id=uuid4(), equipment_id=equipment_id, inventory_number=inventory, name=name,
                                     version=1, calibrated=False, geometry=geometry)
