@@ -15,7 +15,10 @@ generator saves «Контроль КСВН: не проверять»: `coax.vs
 `gen_state.S.coax.vswrMode` = none, and the coaxVswr operation leaves `ops` (the builder drops it for «none» anyway).
 The ETK revision is issued here through the refresh's own evaluate/save path (journal, automatic ТД issue), with the
 owner's reason instead of «обновлено по справочнику»; after it a second evaluate of every changed card must be
-«unchanged», otherwise the whole run rolls back. Cards with hand-edited operations keep them (the refresh path keeps
+«unchanged», otherwise the whole run rolls back. Every change the refresh reports is printed per card (dry run too), and
+the run refuses when anything but the «Контроль КСВН» operation itself would change — allowed besides it: the ПФ
+scheme losing exactly that operation and the operation before it taking over the finished-product name in its
+«Результат» / «Норма времени» rows (same quantities, units, times) — a dry run with such a card ends with an error, not «dry run». Cards with hand-edited operations keep them (the refresh path keeps
 overrides); a refresh conflict refuses --apply. Non-coax cards (the Orange Pi harness КБ1) and cards without inputs
 (КБ41) are never touched. Production tasks, serials, labels, measurements, cutting groups and stock are not written:
 launched tasks keep their pinned revision, and «Замеры КСВН» follows the current revision's «Контроль КСВН»
@@ -25,6 +28,7 @@ launched tasks keep their pinned revision, and «Замеры КСВН» follows
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import replace
 import hashlib
@@ -41,6 +45,7 @@ from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
 from app.modules.techcards import etk_derive
 from app.modules.techcards.etk_derive import route_override
 from app.modules.techcards.infrastructure import ProjectTechcardRow, SqlAlchemyTechcardsUnitOfWork
+from app.modules.techcards.project_cards import TechcardValidationError, operation_key
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 from app.shared.project_number import normalize_project_number
@@ -89,6 +94,67 @@ def without_vswr(inputs):
     return inputs, changes
 
 
+def _key(op):
+    try:
+        return operation_key(dict(op))
+    except TechcardValidationError:
+        return None
+
+
+def _vswr_keys(*documents) -> set[str]:
+    """Keys of the «Контроль КСВН» operations in any of the documents."""
+    return {_key(op) for document in documents for op in (document or {}).get("operations") or ()
+            if isinstance(op, Mapping) and (str(op.get("code") or "").upper().startswith("CTRL_VSWR")
+                                            or op.get("type") == "coaxVswr")}
+
+
+def _route(document, drop):
+    """The ПФ scheme by operation keys, without the `drop` operations."""
+    keys = {op.get("position"): _key(op) for op in (document or {}).get("operations") or () if isinstance(op, Mapping)}
+    route = (document or {}).get("route")
+    blocks = route.get("blocks") if isinstance(route, Mapping) else None
+    return [(block.get("key"), block.get("label"), block.get("name"),
+             [key for key in (keys.get(position) for position in block.get("ops") or ()) if key not in drop])
+            for block in blocks or () if isinstance(block, Mapping)]
+
+
+_ROWS = {"Результат": "result", "Норма времени": "time"}
+
+
+def _ops(document) -> dict:
+    return {_key(op): op for op in (document or {}).get("operations") or () if isinstance(op, Mapping)}
+
+
+def unexpected_changes(old, new, changes) -> list[dict]:
+    """The refresh changes that are NOT the «Контроль КСВН» operation leaving (or, on rollback, coming back), the ПФ
+    scheme losing (gaining) exactly that operation, or the operation before it taking over (handing back) the finished
+    product as its «Результат» / «Норма времени» row name — quantities, units and times unchanged. Pure."""
+    drop = _vswr_keys(old, new)
+    same_route = _route(old, drop) == _route(new, drop)
+    before, after = _ops(old), _ops(new)
+    products = {row.get("name") for ops in (before, after) for key, op in ops.items() if key in drop
+                for row in op.get("result") or () if isinstance(row, Mapping)}
+
+    def handed_over(item) -> bool:
+        part = _ROWS.get(item.get("field"))
+        op_old, op_new = before.get(item.get("operation_key")), after.get(item.get("operation_key"))
+        if part is None or op_old is None or op_new is None:
+            return False
+        rows_old, rows_new = list(op_old.get(part) or ()), list(op_new.get(part) or ())
+        return len(rows_old) == len(rows_new) > 0 and all(
+            isinstance(x, Mapping) and isinstance(y, Mapping) and (x.get("name") in products or y.get("name") in products)
+            and {**x, "name": y.get("name")} == dict(y) for x, y in zip(rows_old, rows_new))
+
+    return [item for item in changes
+            if not (item.get("field") == "Операция" and item.get("operation_key") in drop)
+            and not (item.get("field") == "Схема ПФ" and same_route)
+            and not handed_over(item)]
+
+
+def _change_line(item) -> str:
+    return f"{item.get('label') or '—'}: {item.get('field')}: «{item.get('old') or ''}» → «{item.get('new') or ''}»"
+
+
 def _manual(row) -> bool:
     overrides = row.overrides if isinstance(row.overrides, dict) else {}
     return bool(row.manual_operation_keys or overrides.get("operations") or overrides.get("route")
@@ -117,18 +183,29 @@ def _issue(uow, refs, now, rows, reason):
     inner = getattr(uow, "inner", uow)
     uow.session.flush()
     ctx = _context(uow, refs, now)
-    statuses, refused = {}, []
+    statuses, refused, details = {}, [], {}
     for row in rows:
-        updated, revision, result = etk_refresh.evaluate(inner.techcards.get(row.id), ctx)
+        card = inner.techcards.get(row.id)
+        updated, revision, result = etk_refresh.evaluate(card, ctx)
         statuses[row.id] = result.status
+        details[row.id] = [_change_line(item) for item in result.changes]
         if result.status not in VISIBLE or result.conflicts:
             refused.append(f"{row.item_index} [{row.id}]: {result.status}"
                            + "".join(f"; {item['message']}" for item in result.conflicts))
+            continue
+        extra = unexpected_changes(card.document, updated.document, result.changes)
+        if extra:
+            refused.append(f"{row.item_index} [{row.id}]: меняется не только «Контроль КСВН» — "
+                           + "; ".join(_change_line(item) for item in extra))
             continue
         if revision is not None:
             text = f"{reason} ({now.strftime('%d.%m.%Y')})"
             revision = replace(revision, reason=text, diff={**(revision.diff or {}), "reason": text})
         etk_refresh.save_result(inner, updated, revision, result, now)
+    for row in rows:
+        print(f"  {row.item_index} [{row.id}]: {statuses[row.id]}, изменения ЭТК:")
+        for line in details[row.id] or ["—"]:
+            print(f"    {line}")
     if refused:
         raise ValueError("ЭТК не перевыпущены — выпуск отменён: " + "; ".join(refused))
     uow.session.flush()

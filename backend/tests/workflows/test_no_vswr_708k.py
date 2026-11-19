@@ -61,10 +61,12 @@ def test_inputs_are_what_the_generator_saves_for_no_check():
     assert SCRIPT.without_vswr(inputs) == (inputs, [])
 
 
-def test_dry_run_writes_nothing(prod):
+def test_dry_run_writes_nothing_and_prints_every_change(prod, capsys):
     cards = _production(prod)
     before = _snapshot(prod)
     report, plan, _rollback = _run(prod, commit=False)
+    printed = capsys.readouterr().out
+    assert printed.count("изменения ЭТК:") == 2 and "Контроль КСВН" in printed and ": Операция: «есть» → «»" in printed
     assert _snapshot(prod) == before
     assert [item["item_index"] for item in plan["cards"]] == ["КБ1", "КБ11"]
     assert len(report["issued"]) == 2 and all("revised" in line for line in report["issued"])
@@ -118,3 +120,40 @@ def test_rollback_restores_the_inputs_and_the_check(prod):
     assert row.revision == 3 and _has_vswr(row.document) and row.inputs == saved
     assert saved["coax"]["vswrControl"] == {"mode": "all", "every": None}
     assert (DATA / "etk-708k-novswr-1119/no_vswr_708k.py").read_bytes().count(b"\r\n") == 0
+
+
+def test_any_other_change_refuses_the_run(prod, monkeypatch):
+    _production(prod)
+    plain = SCRIPT.without_vswr
+
+    def also_longer(inputs):  # a run whose inputs would also move the cut length
+        changed, changes = plain(inputs)
+        if changes:
+            changed["coax"]["cableLength"] = float(changed["coax"].get("cableLength") or 0) + 100
+        return changed, changes
+
+    monkeypatch.setattr(SCRIPT, "without_vswr", also_longer)
+    before = _snapshot(prod)
+    with pytest.raises(ValueError, match="меняется не только «Контроль КСВН»"):
+        _run(prod, commit=False)
+    assert _snapshot(prod) == before
+
+
+def test_only_the_vswr_operation_and_its_scheme_slot_are_expected():
+    vswr = {"code": "CTRL_VSWR_coax", "position": 3, "result": [{"name": "Сборка 122664/AA", "norm": "15", "unit": "Шт."}]}
+    heat = {"code": "HEAT_TYT_short", "position": 2, "result": [{"name": "Кабель с ТУТ", "norm": "15", "unit": "Шт."}]}
+    heat_final = {**heat, "result": [{"name": "Сборка 122664/AA", "norm": "15", "unit": "Шт."}]}
+    cut = {"code": "CUT_COAX", "position": 1}
+    old = {"operations": [cut, heat, vswr], "route": {"blocks": [{"key": "final", "label": "1", "name": "Сборка", "ops": [1, 2, 3]}]}}
+    new = {"operations": [cut, heat_final], "route": {"blocks": [{"key": "final", "label": "1", "name": "Сборка", "ops": [1, 2]}]}}
+    gone = {"operation_key": "CTRL_VSWR_coax::::", "label": "Контроль КСВН", "field": "Операция", "old": "есть", "new": ""}
+    scheme = {"operation_key": "", "label": "Схема ПФ", "field": "Схема ПФ", "old": "a", "new": "b"}
+    result = {"operation_key": "HEAT_TYT_short::::", "label": "Усадка", "field": "Результат", "old": "a", "new": "b"}
+    assert SCRIPT.unexpected_changes(old, new, [gone, scheme, result]) == []
+    more = {"operations": [cut, {**heat, "result": [{"name": "Сборка 122664/AA", "norm": "16", "unit": "Шт."}]}],
+            "route": new["route"]}
+    assert SCRIPT.unexpected_changes(old, more, [gone, result]) == [result]
+    other = {"operation_key": "HEAT_TYT_short::::", "label": "Усадка", "field": "Время", "old": "1", "new": "2"}
+    assert SCRIPT.unexpected_changes(old, new, [gone, other]) == [other]
+    moved = {**new, "route": {"blocks": [{"key": "final", "label": "1", "name": "Сборка", "ops": [2]}]}}
+    assert SCRIPT.unexpected_changes(old, moved, [gone, scheme]) == [scheme]
