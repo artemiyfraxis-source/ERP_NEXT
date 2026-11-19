@@ -253,7 +253,7 @@ def test_a_write_the_machine_did_not_take_fails_with_the_registers(machines_api)
     second = _post(admin, CARD + "/write", {"values": {"length_mm": "326"}}).json()["id"]
     TestClient(app).post(NEXT, headers=bridge, json=AGENT)
     busy = _result(bridge, second, {}, ok=False, error="busy: PXS_HMI is running, bus refused").json()
-    assert busy["error"] == "Открыт пульт станка на ПК — запись из ERP недоступна"
+    assert busy["error"] == rules.HMI_OPEN
     third = _post(admin, CARD + "/write", {"values": {"length_mm": "326"}}).json()["id"]
     TestClient(app).post(NEXT, headers=bridge, json=AGENT)
     assert _result(bridge, third, {}, ok=False, error="state 103").json()["error"] == "Станок не в ожидании: 103"
@@ -268,7 +268,7 @@ def test_only_an_idle_linked_machine_is_written_and_a_late_command_never_runs(ma
     assert running.status_code == 409 and "сейчас: Работает" in running.json()["detail"]
     _report(bridge, seq=2, link="port_busy", registers={})
     busy = _post(admin, CARD + "/write", {"values": {"length_mm": "326"}}).json()["detail"]
-    assert busy == "Открыт пульт станка на ПК — запись из ERP недоступна" and "PXS_HMI" not in busy
+    assert busy == rules.HMI_OPEN and "PXS_HMI" not in busy
     _report(bridge, seq=3)
     moved = _post(admin, CARD + "/write", {"values": {"length_mm": "326"}, "confirm_state": 107})
     assert moved.status_code == 409 and "Состояние станка изменилось" in moved.json()["detail"]

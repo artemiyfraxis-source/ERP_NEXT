@@ -1,5 +1,6 @@
 import { api } from "./api";
 import type { Tone } from "./machinesApi";
+import type { ManualJob } from "./manualJobsApi";
 
 /* ОБ.019 — запись настроек из ERP (план «Станки», часть 4; владелец 19.11.2026). Сервер:
    `workflows/machine_writes_api.py`, правила — `production/machine_writes.py`. */
@@ -126,6 +127,73 @@ export interface CorrectionBody {
   note?: string;
 }
 
+/** «Выполнение задания» (владелец 19.11.2026): одна передача задания на станок и её счёт по T.Finish (D649).
+ *  Сервер: `workflows/machine_runs_api.py`, правила — `production/machine_runs.py`. */
+export type RunStage = "writing" | "failed" | "ready" | "running" | "finished" | "reset" | "nolink" | "closed";
+
+export interface MachineRun {
+  id: string;
+  kind: "cutting" | "manual";
+  label: string;
+  group_id: string | null;
+  length_mm: string | null;
+  job_id: string | null;
+  /** Сколько нужно сделать (тираж задания); null — не задано. */
+  quantity: number | null;
+  write: { status: MachineCommand["status"]; status_text: string; tone: Tone; error: string };
+  verified_at: string | null;
+  closed_at: string | null;
+  closed_why: string;
+  machine_count: number | null;
+  closed_reset: boolean;
+  created_by: string;
+  created_at: string;
+  stage: RunStage;
+  counter_start: number | null;
+  counter: number | null;
+  /** Сделано по счётчику станка: D649 − старт; null — счёт недоступен. */
+  done: number | null;
+  reset: boolean;
+  state: number | null;
+  alarm: number | null;
+  total_set: number | null;
+}
+
+export interface MachineRunState {
+  run: MachineRun | null;
+  /** Ручная работа, которая сейчас идёт на этом станке. */
+  manual: ManualJob | null;
+  link_ok: boolean;
+  /** Почему ERP не управляет станком сейчас (нет связи, открыт пульт на ПК); «» — управляет. */
+  problem: string;
+  can_edit: boolean;
+  can_control: boolean;
+}
+
+export type RunRequest =
+  | { kind: "cutting"; group_id: string; length_mm: string; values?: Record<string, string> }
+  | { kind: "manual"; job_id: string; values?: Record<string, string> };
+
+export interface RunClose {
+  run_id: string;
+  version?: number;
+  good?: number;
+  defect?: number;
+  defect_reason?: string;
+  material?: "pending" | "not_issued";
+  material_note?: string;
+}
+
+/** Закрытый прогон группы резки, ещё не сданный: «Сдать группу» подставляет его число. */
+export interface CuttingMachineRun {
+  run_id: string;
+  inventory: string;
+  length_mm: string;
+  count: number | null;
+  closed_at: string;
+  closed_by: string;
+}
+
 const card = (inventory: string) => `/api/production/machines/card/${encodeURIComponent(inventory)}`;
 const post = (body: unknown) => ({ method: "POST", body: JSON.stringify(body) });
 
@@ -142,6 +210,13 @@ export const machineControlApi = {
   command: (inventory: string, command: ControlCommand, confirmState?: number | null) =>
     api<MachineCommand>(`${card(inventory)}/command`, post(command === "stop" ? { command }
       : { command, confirm_state: confirmState ?? null, hands_clear: true })),
+  run: (inventory: string, signal?: AbortSignal) => api<MachineRunState>(`${card(inventory)}/run`, { signal }),
+  startRun: (inventory: string, body: RunRequest, confirmState: number | null) =>
+    api<MachineCommand>(`${card(inventory)}/run`, post({ ...body, confirm_state: confirmState })),
+  closeRun: (inventory: string, body: RunClose) =>
+    api<{ run: MachineRun; manual: ManualJob | null }>(`${card(inventory)}/run/close`, post(body)),
+  cuttingRuns: (groupId: string, signal?: AbortSignal) =>
+    api<{ runs: CuttingMachineRun[] }>(`/api/production/machines/runs/cutting/${encodeURIComponent(groupId)}`, { signal }),
   correct: (inventory: string, body: CorrectionBody) =>
     api<{ offset: string | null; etk: { card_id: string; project: string; revision: number }[] }>(`${card(inventory)}/correction`, post(body)),
 };

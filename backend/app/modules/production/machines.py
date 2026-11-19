@@ -78,9 +78,12 @@ OB019_ALARMS = {
 OB019_NORMAL_ALARMS = {0, 4, 5}
 OB019_MODES = {0: "Пошаговый", 1: "Один цикл", 2: "Автомат"}
 
+# The vendor's operator panel program on the machine PC holds the bus: ERP neither writes nor commands. The screen never
+# names the program (owner 19.11.2026).
+HMI_OPEN = "Открыт пульт станка на ПК — закройте его, чтобы ERP могла управлять станком"
 LINK_TEXTS = {
     "ok": ("На связи", "ok"),
-    "port_busy": ("Открыт пульт станка на ПК — запись из ERP недоступна", "warn"),
+    "port_busy": (HMI_OPEN, "warn"),
     "no_plc": ("ПЛК не отвечает", "danger"),
     "no_service": ("Служба mbd на ПК не отвечает", "danger"),
     "stale": ("Нет связи с ПК станка", "danger"),
@@ -300,6 +303,26 @@ def since(moment: datetime, now: datetime) -> timedelta:
     elif moment.tzinfo is not None and now.tzinfo is None:
         now = now.replace(tzinfo=moment.tzinfo)
     return now - moment
+
+
+# The agent's own error lines (ASCII, tools/machine-agent) → what people read; an unknown one stays as it came.
+AGENT_ERRORS = (
+    (("busy:", "PXS_HMI", "Access to the port", "denied"), HMI_OPEN),
+    (("no reply", "timeout", "timed out"), "ПЛК не отвечает"),
+    (("connection refused", "mbd unreachable", "No connection could be made"), "Служба обмена со станком на ПК не отвечает"),
+)
+
+
+def agent_error(text: str | None) -> str:
+    """«mbd: busy: PXS_HMI is running, bus refused» → «Открыт пульт станка на ПК — закройте его…»."""
+    clean = " ".join(str(text or "").split())
+    if not clean:
+        return ""
+    low = clean.lower()
+    for needles, shown in AGENT_ERRORS:
+        if any(needle.lower() in low for needle in needles):
+            return shown
+    return clean
 
 
 def link_status(snapshot: MachineSnapshotRow | None, now: datetime) -> str:

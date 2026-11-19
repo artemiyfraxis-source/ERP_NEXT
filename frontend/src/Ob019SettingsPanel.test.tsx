@@ -49,6 +49,7 @@ function server(control: MachineControl = CONTROL, { window = WINDOW, plan = PLA
         summary: "Запись", fields: [], error: "", created_by: "Слава", created_at: "2026-11-19T10:00:00+03:00", finished_at: null });
     }
     if (url.endsWith("/control")) return json(control);
+    if (url.endsWith("/run")) return json({ run: null, manual: null, link_ok: true, problem: "", can_edit: true, can_control: true });
     if (url.includes("/transfer?")) { await planGate; return json(plan); }
     if (url.endsWith("/transfer")) return json({ choices: [{ key: "g1:325", group_id: "g1", number: "ГР-0007", project: "708К.",
       wire: "ПВАМ 0,35", length_mm: "325", quantity: "12" }] });
@@ -58,8 +59,8 @@ function server(control: MachineControl = CONTROL, { window = WINDOW, plan = PLA
 }
 
 async function pickJob() {
-  const pick = await screen.findByLabelText("Задание резки");
-  await waitFor(() => expect(within(pick).getAllByRole("option")).toHaveLength(2));
+  const pick = await screen.findByLabelText("Задание");
+  await waitFor(() => expect(within(pick).getAllByRole("option")).toHaveLength(3));
   fireEvent.change(pick, { target: { value: "g1:325" } });
   return pick;
 }
@@ -165,8 +166,8 @@ it("keeps the other HMI pages read-only while the writer on the machine PC is ol
 it("transfers the ETK job with the machine correction and refuses while the machine runs", async () => {
   const posts = server();
   render(<Ob019SettingsPanel inventory="ОБ.019" />);
-  const pick = await screen.findByLabelText("Задание резки");
-  await waitFor(() => expect(within(pick).getAllByRole("option")).toHaveLength(2));
+  const pick = await screen.findByLabelText("Задание");
+  await waitFor(() => expect(within(pick).getAllByRole("option")).toHaveLength(3));
   fireEvent.change(pick, { target: { value: "g1:325" } });
   // The ETK job fills the drawing with what «Передать на станок» writes.
   await waitFor(() => expect(screen.getByLabelText("Зачистка начала: новое значение")).toHaveValue("5,40"));
@@ -177,24 +178,26 @@ it("transfers the ETK job with the machine correction and refuses while the mach
   fireEvent.click(screen.getByRole("button", { name: "Передать на станок" }));
   fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Подтвердить запись" }));
   await waitFor(() => expect(posts).toHaveLength(1));
-  expect(posts[0].body).toEqual({ group_id: "g1", length_mm: "325", confirm_state: 102 });
+  // «Передать на станок» of a picked job starts its run on the machine card (the same ETK words as before).
+  expect(posts[0]).toEqual({ url: "/api/production/machines/card/%D0%9E%D0%91.019/run",
+    body: { kind: "cutting", group_id: "g1", length_mm: "325", confirm_state: 102 } });
 });
 
-it("writes the edited ETK values as settings once a prefilled field is changed", async () => {
+it("transfers the edited ETK values with the job once a prefilled field is changed", async () => {
   const posts = server();
   render(<Ob019SettingsPanel inventory="ОБ.019" />);
-  const pick = await screen.findByLabelText("Задание резки");
-  await waitFor(() => expect(within(pick).getAllByRole("option")).toHaveLength(2));
+  const pick = await screen.findByLabelText("Задание");
+  await waitFor(() => expect(within(pick).getAllByRole("option")).toHaveLength(3));
   fireEvent.change(pick, { target: { value: "g1:325" } });
   await waitFor(() => expect(screen.getByLabelText("Длина провода: новое значение")).toHaveValue("325,00"));
   fireEvent.change(screen.getByLabelText("Длина провода: новое значение"), { target: { value: "326" } });
   expect(screen.queryByRole("button", { name: "Передать на станок" })).toBeNull();
-  // Only fields the machine page knows are written (this window: length and run), through the same /write path.
-  fireEvent.click(screen.getByRole("button", { name: "Записать на станок (2)" }));
+  // Only fields the machine page knows are written (this window: length and run), still as the job's run.
+  fireEvent.click(screen.getByRole("button", { name: "Передать на станок (2)" }));
   fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Подтвердить запись" }));
   await waitFor(() => expect(posts).toHaveLength(1));
-  expect(posts[0]).toEqual({ url: "/api/production/machines/card/%D0%9E%D0%91.019/write",
-    body: { values: { length_mm: "326", total_set: "12" }, confirm_state: 102 } });
+  expect(posts[0]).toEqual({ url: "/api/production/machines/card/%D0%9E%D0%91.019/run",
+    body: { kind: "cutting", group_id: "g1", length_mm: "325", values: { length_mm: "326", total_set: "12" }, confirm_state: 102 } });
 });
 
 it("blocks writing with the reason when the machine is not idle", async () => {
@@ -208,8 +211,8 @@ it("blocks writing with the reason when the machine is not idle", async () => {
 it("records «станок режет не так» with the offset suggested from the measured size", async () => {
   const posts = server();
   render(<Ob019SettingsPanel inventory="ОБ.019" />);
-  const pick = await screen.findByLabelText("Задание резки");
-  await waitFor(() => expect(within(pick).getAllByRole("option")).toHaveLength(2));
+  const pick = await screen.findByLabelText("Задание");
+  await waitFor(() => expect(within(pick).getAllByRole("option")).toHaveLength(3));
   fireEvent.change(pick, { target: { value: "g1:325" } });
   await waitFor(() => expect(screen.getByLabelText("Зачистка начала: новое значение")).toHaveValue("5,40"));
   fireEvent.change(screen.getByLabelText("Получилось, мм"), { target: { value: "4,6" } });
@@ -231,14 +234,15 @@ it("refuses to write an ETK job with a size missing in the ETK until that size i
   expect(await screen.findByRole("button", { name: "Передать на станок" })).toBeDisabled();
   fireEvent.change(screen.getByLabelText("Длина провода: новое значение"), { target: { value: "326" } });
   // Editing any field must not open the /write path with the old machine value standing in for the missing size.
-  expect(screen.getByRole("button", { name: "Записать на станок (2)" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Передать на станок (2)" })).toBeDisabled();
   expect(screen.getByText("В ЭТК не задано: Зачистка конца — введите на чертеже или выберите другое задание")).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Зачистка конца: новое значение"), { target: { value: "6" } });
   expect(screen.getByText("В ЭТК не задано: Зачистка конца — введено вручную")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Записать на станок (3)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Передать на станок (3)" }));
   fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Подтвердить запись" }));
   await waitFor(() => expect(posts).toHaveLength(1));
-  expect(posts[0].body).toEqual({ values: { length_mm: "326", total_set: "12", strip_back_mm: "6" }, confirm_state: 102 });
+  expect(posts[0].body).toEqual({ kind: "cutting", group_id: "g1", length_mm: "325",
+    values: { length_mm: "326", total_set: "12", strip_back_mm: "6" }, confirm_state: 102 });
 });
 
 it("keeps what was typed while the ETK job loaded and asks before replacing hand edits", async () => {

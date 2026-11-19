@@ -37,6 +37,8 @@ from sqlalchemy import select
 from app.modules.equipment_setup.recipe_infrastructure import SqlAlchemyRecipes
 from app.modules.equipment_setup.recipes import EtkNominal, latest_for_wire, ob019_proposal
 from app.modules.production import machine_control
+from app.modules.production import machine_runs as runs
+from app.modules.production import manual_jobs as manual
 from app.modules.production import machine_writes as commands
 from app.modules.production import machines as rules
 from app.modules.production.api import production_uow_factory
@@ -177,7 +179,11 @@ def _closed(uow, rows: list[commands.MachineWriteRow], actor, now: datetime) -> 
                      command_id=str(row.id))
 
 
-def _enqueue(uow, link, principal: Principal, purpose: str, writes, summary: str, now: datetime) -> dict:
+def _enqueue(uow, link, principal: Principal, purpose: str, writes, summary: str, now: datetime,
+             run: dict | None = None) -> dict:
+    """Queue a write; `run` (production/machine_runs.py) makes it the start of a job run from the card."""
+    if run is not None:
+        run = runs.supersede(uow.session, link.equipment_id, run, now, principal.actor.name)
     try:
         row, expired = commands.enqueue(uow.session, equipment_id=link.equipment_id, purpose=purpose, writes=writes,
                                         summary=summary, actor_id=principal.actor.id, actor_name=principal.actor.name,
@@ -187,6 +193,8 @@ def _enqueue(uow, link, principal: Principal, purpose: str, writes, summary: str
     except rules.MachineWriteInvalid as error:
         raise HTTPException(422, str(error)) from error
     _closed(uow, expired, principal.actor, now)
+    if run is not None:
+        runs.tag(row, run)
     changes = "; ".join(f"{item['label']} {item['before'] or '—'} → {item['after'] or '—'}"
                         for item in row.payload["fields"])
     _journal(uow, link.equipment_id, "write_queued", principal.actor, now, f"{summary}: {changes}",
@@ -340,13 +348,31 @@ def transfer(inventory: str, payload: TransferPayload, principal: Writer, factor
         session = uow.session
         link = _link(session, inventory)
         _confirm(session, link, payload.confirm_state)
+        refuse_while_manual(session, link.equipment_id)
         plan = _transfer_plan(session, link, payload.group_id, payload.length_mm)
         if plan["blocking"]:
             raise HTTPException(422, "В ЭТК не задано: " + ", ".join(plan["blocking"]))
         writes = [commands.FieldWrite(row["key"], row["value"]) for row in plan["rows"] if row["value"] is not None]
         writes += [commands.FieldWrite(key, value) for key, value in plan["job"].items() if value not in ("", None)]
-        summary = f"Передать на станок: группа {plan['number']}, {plan['wire']}, {plan['length_mm']} мм"
-        return _enqueue(uow, link, principal, "transfer", writes, summary, now)
+        return _enqueue(uow, link, principal, "transfer", writes, transfer_summary(plan), now,
+                        run=cutting_run(plan, payload.length_mm))
+
+
+def transfer_summary(plan: dict) -> str:
+    return f"Передать на станок: группа {plan['number']}, {plan['wire']}, {plan['length_mm']} мм"
+
+
+def cutting_run(plan: dict, length_mm: str) -> dict:
+    return runs.cutting(UUID(plan["group_id"]), length_mm,
+                        f"{plan['number']} · {plan['wire']} · {plan['length_mm']} мм", plan["quantity"])
+
+
+def refuse_while_manual(session, equipment_id: UUID) -> None:
+    """A cutting job is not written while a manual job runs on the machine: the counter would mix both (plan S2)."""
+    job = manual.running(session, equipment_id)
+    if job is not None:
+        raise HTTPException(409, f"На станке идёт ручная работа {manual.number_text(job.number)} — "
+                                 "завершите или отмените её")
 
 
 # --- corrections after a trial ---
@@ -463,6 +489,26 @@ def correction(inventory: str, payload: CorrectionPayload, request: Request, pri
 
 # --- the command runner on the machine PC ---
 
+def _run_verified(uow, row: commands.MachineWriteRow, actor, now: datetime) -> None:
+    """A job run's write read back right: its counter start; a manual job is counted by the machine from now."""
+    run = runs.verified(uow.session, row, now)
+    if run is None:
+        return
+    start = run.get("counter_start")
+    if run["kind"] == "manual" and start is not None:
+        params = {item["key"]: item["after"] for item in row.payload.get("fields", [])}
+        job = manual.attach_plc(uow.session, UUID(run["job_id"]), write_id=row.id, counter_start=start, params=params)
+        if job is not None:
+            uow.audit.add(AuditEvent(id=uuid4(), aggregate_id=job.id, event_type="production.manual_job_counted",
+                                     actor=actor, occurred_at=now, details={
+                                         "text": f"{manual.number_text(job.number)}: записано на станок и проверено, "
+                                                 f"счёт по станку с {start}", "number": manual.number_text(job.number),
+                                         "equipment_id": str(job.equipment_id)}))
+    text = f"Задание на станке: {run.get('label', '')} — " + (
+        f"счётчик станка {start}" if start is not None else "нет свежих данных станка, счёт вручную")
+    _journal(uow, row.equipment_id, "run_verified", actor, now, text, command_id=str(row.id))
+
+
 def _agent_link(session, bridge: Principal, payload: AgentPayload) -> rules.MachineLinkRow:
     link = session.scalar(select(rules.MachineLinkRow).where(
         rules.MachineLinkRow.inventory_number == _inventory(payload.inventory)))
@@ -525,6 +571,7 @@ def command_result(command_id: UUID, payload: ResultPayload, bridge: Bridge, fac
             if row.status == "done":
                 _journal(uow, link.equipment_id, "write_done", bridge.actor, now,
                          f"Записано и проверено: {row.summary}", command_id=str(row.id))
+                _run_verified(uow, row, bridge.actor, now)
             else:
                 _journal(uow, link.equipment_id, "write_failed", bridge.actor, now,
                          f"Не записано: {row.summary} — {row.error}", command_id=str(row.id))

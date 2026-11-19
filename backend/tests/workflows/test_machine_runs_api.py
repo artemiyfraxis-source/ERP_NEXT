@@ -1,0 +1,205 @@
+"""«Выполнение задания» on the ОБ.019 card (owner 19.11.2026, S2): a run starts with a write read back right, counts
+from T.Finish (D649) at that moment, shows done of planned, closes with the machine count — the cutting hand-in is
+pre-filled from it, a manual job is finished with it; a counter that went back or was not read means manual entry."""
+
+from datetime import timedelta
+from uuid import UUID
+
+from fastapi.testclient import TestClient
+from sqlalchemy import select
+
+from app.main import app
+from app.modules.production import machine_runs as runs
+from app.modules.production import machines as rules
+from app.modules.production import manual_jobs as manual
+from app.shared.persistence import AuditEventRow
+from tests.identity.test_api_tokens import _csrf, tokens_api  # noqa: F401
+from tests.workflows.test_machine_writes_api import AGENT, CARD, NEXT, _job, _result
+from tests.workflows.test_machines_api import WORDS, _bridge, _report, machines_api  # noqa: F401
+
+RUN = CARD + "/run"
+START = 0x10001  # D649 = 1, D650 = 1 in WORDS
+
+
+def _post(client, path, body):
+    return client.post(path, json=body, headers=_csrf(client))
+
+
+def _counter(value: int, state: int = 102, alarm: int = 0) -> dict:
+    return {**WORDS, "649": value & 0xFFFF, "650": value >> 16, "766": state, "782": alarm}
+
+
+class Machine:
+    """The bridge and the runner on the machine PC; the clock moves a second per write so runs keep their order."""
+
+    def __init__(self, admin, clock):
+        self.clock = clock
+        self.bridge = _bridge(admin)
+        self.seq = 0
+        self.report()
+
+    def report(self, registers=None, **extra):
+        self.seq += 1
+        answer = _report(self.bridge, seq=self.seq, registers=registers, **extra)
+        assert answer.status_code == 200, answer.text
+
+    def written(self, command_id: str) -> dict:
+        """The runner claims the command and reads back exactly what it was asked to write."""
+        claimed = TestClient(app).post(NEXT, headers=self.bridge, json=AGENT).json()["command"]
+        assert claimed["id"] == command_id
+        readback = {str(block["addr"] + index): word for block in claimed["blocks"]
+                    for index, word in enumerate(block["values"])}
+        assert _result(self.bridge, command_id, readback).json()["status"] == "done"
+        self.clock.now += timedelta(seconds=1)
+        return readback
+
+
+def test_a_cutting_run_counts_from_the_verified_write_and_prefills_the_hand_in(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    group_id = _job(sessions)
+    assert admin.get(RUN).json()["run"] is None
+    sent = _post(admin, RUN, {"kind": "cutting", "group_id": str(group_id), "length_mm": "325", "confirm_state": 102})
+    assert sent.status_code == 200, sent.text
+    run = admin.get(RUN).json()["run"]
+    assert (run["stage"], run["kind"], run["label"], run["quantity"]) == ("writing", "cutting", "ГР-0007 · ПВАМ 0,35 · 325,00 мм", 12)
+    # The machine counted on before the write was verified: the start is the counter at the verified moment.
+    machine.report(_counter(START + 3))
+    words = machine.written(sent.json()["id"])
+    assert (words["32"], words["22"]) == (32500, 12)  # the same words as «Передать на станок»
+    run = admin.get(RUN).json()["run"]
+    assert (run["stage"], run["counter_start"], run["done"]) == ("ready", START + 3, 0)
+    # Still «Тираж готов» from the previous job: not finished before anything was cut.
+    machine.report(_counter(START + 3, state=107, alarm=5))
+    assert admin.get(RUN).json()["run"]["stage"] == "ready"
+    machine.report(_counter(START + 8, state=103))
+    run = admin.get(RUN).json()["run"]
+    assert (run["stage"], run["done"]) == ("running", 5)
+    machine.report(_counter(START + 15, state=107, alarm=5))
+    run = admin.get(RUN).json()["run"]
+    assert (run["stage"], run["done"]) == ("finished", 12)
+    closed = _post(admin, RUN + "/close", {"run_id": run["id"]})
+    assert closed.status_code == 200, closed.text
+    assert (closed.json()["run"]["stage"], closed.json()["run"]["machine_count"]) == ("closed", 12)
+    assert _post(admin, RUN + "/close", {"run_id": run["id"]}).status_code == 409
+    handed = admin.get(f"/api/production/machines/runs/cutting/{group_id}").json()["runs"]
+    assert [(item["inventory"], item["length_mm"], item["count"]) for item in handed] == [("ОБ.019", "325", 12)]
+    with sessions() as session:
+        texts = [row.details["text"] for row in session.scalars(select(AuditEventRow).where(
+            AuditEventRow.aggregate_id == ob019, AuditEventRow.event_type.like("production.machine_run%"))
+            .order_by(AuditEventRow.occurred_at))]
+    assert texts == [f"Задание на станке: ГР-0007 · ПВАМ 0,35 · 325,00 мм — счётчик станка {START + 3}",
+                     "Задание завершено: ГР-0007 · ПВАМ 0,35 · 325,00 мм — по станку 12 шт"]
+
+
+def test_a_reset_counter_or_a_failed_write_never_gives_a_machine_count(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    group_id = _job(sessions)
+    first = _post(admin, RUN, {"kind": "cutting", "group_id": str(group_id), "length_mm": "325"}).json()["id"]
+    TestClient(app).post(NEXT, headers=machine.bridge, json=AGENT)
+    assert _result(machine.bridge, first, {"32": 1}).json()["status"] == "failed"
+    clock.now += timedelta(seconds=1)
+    assert admin.get(RUN).json()["run"]["stage"] == "failed"
+    assert _post(admin, RUN + "/close", {"run_id": first}).status_code == 409  # nothing ran
+    second = _post(admin, RUN, {"kind": "cutting", "group_id": str(group_id), "length_mm": "325"}).json()["id"]
+    machine.written(second)
+    machine.report(_counter(4, state=103))  # the counter went back below the start
+    run = admin.get(RUN).json()["run"]
+    assert (run["stage"], run["reset"], run["done"]) == ("reset", True, None)
+    closed = _post(admin, RUN + "/close", {"run_id": second}).json()["run"]
+    assert closed["machine_count"] is None and closed["closed_reset"] is True
+    assert admin.get(f"/api/production/machines/runs/cutting/{group_id}").json()["runs"][0]["count"] is None
+
+
+def test_the_same_job_written_again_keeps_its_start_another_job_closes_the_first(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    group_id = _job(sessions)
+    body = {"kind": "cutting", "group_id": str(group_id), "length_mm": "325"}
+    machine.written(_post(admin, RUN, body).json()["id"])
+    machine.report(_counter(START + 2))
+    # After a trial Слава corrects a size and writes the job again: the two pieces already cut still count.
+    again = _post(admin, RUN, {**body, "length_mm": "325,00", "values": {"length_mm": "326", "total_set": "12"}})
+    assert again.status_code == 200, again.text
+    machine.written(again.json()["id"])
+    run = admin.get(RUN).json()["run"]
+    assert (run["counter_start"], run["done"], run["quantity"]) == (START, 2, 12)
+    other = _post(admin, RUN, {**body, "length_mm": "150"}).json()["id"]
+    with sessions() as session:
+        from app.modules.production.machine_writes import MachineWriteRow
+        old = runs.info(session.get(MachineWriteRow, UUID(run["id"])))
+    assert (old["closed_why"], old["machine_count"]) == ("Передано другое задание", 2)
+    assert admin.get(RUN).json()["run"]["id"] == other
+
+
+def test_a_manual_job_runs_on_the_machine_counter_and_blocks_a_cutting_job(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    group_id = _job(sessions)
+    job = _post(admin, "/api/production/manual-jobs", {"equipment_id": str(ob019), "purpose": "Проба для ОТК",
+                                                       "wire": "ПВАМ 0,35", "length_mm": "100", "quantity_planned": 5})
+    job = job.json()
+    assert admin.get(RUN).json()["manual"]["number"] == "Р-000001"
+    blocked = _post(admin, RUN, {"kind": "cutting", "group_id": str(group_id), "length_mm": "325"})
+    assert blocked.status_code == 409 and "Р-000001" in blocked.json()["detail"]
+    old_path = _post(admin, CARD + "/transfer", {"group_id": str(group_id), "length_mm": "325"})
+    assert old_path.status_code == 409
+    sent = _post(admin, RUN, {"kind": "manual", "job_id": job["id"], "values": {"strip_front_mm": "5"},
+                              "confirm_state": 102})
+    assert sent.status_code == 200, sent.text
+    words = machine.written(sent.json()["id"])
+    assert (words["32"], words["34"], words["22"]) == (10000, 500, 5)
+    assert rules._text({int(key): value for key, value in words.items()}, 940, 15) == "R-000001"
+    assert rules._text({int(key): value for key, value in words.items()}, 955, 15) == "PVAM 0,35 L100"
+    state = admin.get(RUN).json()
+    assert (state["run"]["label"], state["manual"]["count_text"]) == ("Р-000001 · ПВАМ 0,35 · 100 мм", "Счётчик станка")
+    machine.report(_counter(START + 5, state=107, alarm=5))
+    assert admin.get(RUN).json()["run"]["stage"] == "finished"
+    version = admin.get(RUN).json()["manual"]["version"]
+    assert _post(admin, RUN + "/close", {"run_id": state["run"]["id"]}).status_code == 422  # good is required
+    closed = _post(admin, RUN + "/close", {"run_id": state["run"]["id"], "version": version, "good": 4, "defect": 1,
+                                           "defect_reason": "надрез", "material": "pending"})
+    assert closed.status_code == 200, closed.text
+    finished = closed.json()["manual"]
+    assert (finished["status"], finished["good"], finished["defect"], finished["machine_count"], finished["count_text"]) \
+        == ("done", 4, 1, 5, "Счётчик станка")
+    with sessions() as session:
+        row = session.get(manual.ManualJobRow, UUID(job["id"]))
+        assert (row.counter_start, row.write_id) == (START, UUID(sent.json()["id"]))
+        assert row.params["length_mm"] == "100" and row.params["strip_front_mm"] == "5"
+    assert _post(admin, RUN, {"kind": "cutting", "group_id": str(group_id), "length_mm": "325"}).status_code == 200
+
+
+def test_a_manual_job_with_a_reset_counter_is_finished_by_hand_with_a_mark(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    job = _post(admin, "/api/production/manual-jobs", {"equipment_id": str(ob019), "purpose": "Проба"}).json()
+    sent = _post(admin, RUN, {"kind": "manual", "job_id": job["id"], "values": {"length_mm": "50"}}).json()["id"]
+    machine.written(sent)
+    machine.report(_counter(0, state=100))
+    state = admin.get(RUN).json()
+    assert state["run"]["stage"] == "reset"
+    closed = _post(admin, RUN + "/close", {"run_id": sent, "version": state["manual"]["version"], "good": 7,
+                                           "material": "not_issued", "material_note": "обрезки"}).json()["manual"]
+    assert (closed["count_text"], closed["machine_count"], closed["good"]) == ("Вручную", None, 7)
+    with sessions() as session:
+        assert session.get(manual.ManualJobRow, UUID(job["id"])).params["counter_reset"] is True
+
+
+def test_the_operator_panel_open_on_the_pc_is_said_in_plain_words(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    bridge = _bridge(admin)
+    body_error = "mbd: busy: PXS_HMI is running, bus refused"
+    answer = TestClient(app).post("/api/production/machines/agent/report", headers=bridge, json={
+        "proto": 1, "inventory": "ОБ.019", "machine_id": "guid-108", "pc_name": "PC-108", "ip_lan": "192.168.1.108",
+        "bridge_version": "1.0.0", "service_version": "mbd 1", "boot": "boot-1", "seq": 1, "link": "port_busy",
+        "error": body_error, "registers": {}})
+    assert answer.status_code == 200, answer.text
+    card = admin.get(f"/api/production/machines/{ob019}").json()
+    assert card["link"]["text"] == rules.HMI_OPEN == "Открыт пульт станка на ПК — закройте его, чтобы ERP могла управлять станком"
+    assert card["error"] == rules.HMI_OPEN
+    assert admin.get(RUN).json()["problem"] == rules.HMI_OPEN
+    assert rules.agent_error("Access to the port 'COM8' is denied.") == rules.HMI_OPEN
+    assert rules.agent_error("PLC: no reply") == "ПЛК не отвечает"
+    assert rules.agent_error("что-то своё") == "что-то своё"
