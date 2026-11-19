@@ -193,3 +193,4 @@ button.machine-stop { min-width: 160px; min-height: 48px; font-size: 18px; font-
 .machine-setup-history summary { cursor: pointer; font-size: 13px; font-weight: 500; }
 .machine-setup-history ul { margin: 8px 0 0; padding-left: 18px; font-size: 13px; }
 @media (pointer: coarse) { .machine-setup-tasks label { min-height: 40px; align-items: center; } }
+.machine-toolbar .search { flex: 1 1 240px; max-width: 420px; }
