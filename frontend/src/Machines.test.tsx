@@ -13,20 +13,27 @@ function json(body: unknown, status = 200) {
 const OB019: MachineRow = {
   key: "machine:u19", kind: "machine", equipment_id: "u19", inventory: "ОБ.019",
   name: "Автомат резки и зачистки провода с лазерной маркировкой", pc: "PC-108", ip: "192.168.1.108",
-  service: "Мост ERP", version: "1.0.0", link: { code: "ok", text: "На связи", tone: "ok" },
+  service: "Агент ERP · станок", version: "1.0.0", link: { code: "ok", text: "На связи", tone: "ok" },
   last_seen: "2026-11-18T10:00:00+03:00", device: "ПЛК линии резки", state: { text: "Аварийный стоп", tone: "danger" }, card: true,
+  others: "",
 };
 const GODEX: MachineRow = {
   key: "printer:pc:godex", kind: "printer", equipment_id: "u101", inventory: "ОБ.101", name: "Godex EZ2350i", pc: "Цех",
-  ip: "192.168.1.50", service: "Агент печати", version: "2.9.1",
+  ip: "192.168.1.50", service: "Агент ERP · печать", version: "2.9.1",
   link: { code: "stale", text: "Нет связи с ПК", tone: "danger" }, last_seen: null, device: "Godex EZ2350i",
-  state: { text: "Принтер не найден", tone: "warn" }, card: false,
+  state: { text: "Принтер не найден", tone: "warn" }, card: false, others: "",
+};
+const PLANAR: MachineRow = {
+  key: "device:instrument:si2", kind: "device", equipment_id: null, inventory: "СИ.002", name: "Planar S50180", pc: "DESKTOP-PTA57QF",
+  ip: "192.168.1.121", service: "Агент ERP · печать", version: "2.9.4", link: { code: "ok", text: "На связи", tone: "ok" },
+  last_seen: "2026-11-18T10:00:00+03:00", device: "Planar, S50180, 26030095, 26.2.2/2", state: { text: "Подключён", tone: "ok" },
+  card: false, others: "DESKTOP-5O46RH6 — не найден",
 };
 
 function card(overrides: Partial<MachineCard> = {}): MachineCard {
   return {
     equipment_id: "u19", inventory: "ОБ.019", name: OB019.name, pc: "PC-108", ip: "192.168.1.108",
-    service: "Мост ERP", service_version: "mbd 1", bridge_version: "1.0.0",
+    service: "Агент ERP · станок", service_version: "mbd 1", bridge_version: "1.0.0",
     link: { code: "ok", text: "На связи", tone: "ok" }, reported_at: "2026-11-18T10:00:00+03:00", age_seconds: 2, error: "",
     live: {
       state: { code: 105, text: "Аварийный стоп", tone: "danger" }, alarm: { code: 0, text: "Аварий нет", tone: "neutral" },
@@ -45,13 +52,17 @@ it("lists connected equipment one value per column and opens the live card of О
   const calls: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     calls.push(String(input));
-    return String(input).endsWith("/u19") ? json(card()) : json({ now: "2026-11-18T10:00:02+03:00", rows: [OB019, GODEX] });
+    return String(input).endsWith("/u19") ? json(card()) : json({ now: "2026-11-18T10:00:02+03:00", rows: [OB019, GODEX, PLANAR] });
   });
   render(<MachinesPage />);
   const table = await screen.findByRole("table");
-  for (const title of ["ОБ", "Название", "ПК", "IP", "Служба", "Версия", "Связь", "Последний сигнал", "Устройство", "Состояние"]) {
+  for (const title of ["№", "Название", "ПК", "IP", "Агент", "Версия", "Связь", "Последний сигнал", "Устройство", "Состояние",
+    "Также на ПК"]) {
     expect(within(table).getByRole("columnheader", { name: new RegExp(`^${title}`) })).toBeTruthy();
   }
+  // One analyser — one row with its СИ number; the other PC that reports it is a muted note, not a second row.
+  expect(within(table).getAllByText("СИ.002")).toHaveLength(1);
+  expect(within(table).getByText("DESKTOP-5O46RH6 — не найден").className).toContain("machine-muted");
   expect(within(table).getByText("Аварийный стоп").className).toContain("tone-danger");
   expect(within(table).getByText("Нет связи с ПК").className).toContain("tone-danger");
   fireEvent.click(within(table).getByText("ОБ.101"));

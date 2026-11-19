@@ -2,9 +2,12 @@ import { useCallback } from "react";
 import { PageWindow } from "./PageWindow";
 import { EMPTY, formatMoment, formatNumber } from "./format";
 import { machinesApi, usePolled, type MachineCard, type Ob019Live, type Tone } from "./machinesApi";
+import { Ob099CardView } from "./Ob099Card";
+import { Ob019Controls } from "./Ob019Controls";
+import { Ob019SettingsPanel } from "./Ob019SettingsPanel";
 
-/** Живая карточка ОБ.019 (линия резки и зачистки с лазерной маркировкой): состояние ПЛК, задание и счётчики,
- *  параметры провода — только чтение, опрос раз в 3 с, пока окно открыто и вкладка видна. */
+/** Живая карточка ОБ.019 (линия резки и зачистки с лазерной маркировкой): команды станку (Ob019Controls.tsx), состояние
+ *  ПЛК, задание и счётчики, параметры провода, настройки (Ob019SettingsPanel.tsx); опрос раз в 3 с, пока окно открыто. */
 
 type Fact = [label: string, value: string, tone?: Tone];
 
@@ -85,14 +88,15 @@ export function Ob019CardView({ card }: { card: MachineCard }) {
     </p>
     {card.error && card.link.code !== "ok" && <p className="warning-inline">{card.error}</p>}
     {!blocks
-      ? <p className="empty">Нет данных ПЛК — мост на связи, но станок ещё не ответил</p>
+      ? <p className="empty">Нет данных ПЛК — агент на связи, но станок ещё не ответил</p>
       : <div className={`machine-grid${old ? " machine-old" : ""}`} aria-label={old ? "Последние полученные данные" : "Данные станка"}>
         <Facts title="Станок" facts={blocks[0]} />
         <Facts title="Задание и счётчики" facts={blocks[1]} />
         <Facts title="Провод" facts={blocks[2]} />
       </div>}
+    <Ob019SettingsPanel inventory={card.inventory} />
     <Facts title="Подключение" facts={[
-      ["ПК", plain(card.pc)], ["IP", plain(card.ip)], ["Версия моста", plain(card.bridge_version)],
+      ["ПК", plain(card.pc)], ["IP", plain(card.ip)], ["Версия агента", plain(card.bridge_version)],
       ["Служба Modbus", plain(card.service_version)],
     ]} />
   </>;
@@ -109,7 +113,10 @@ export function Ob019Card({ equipmentId, title, close }: { equipmentId: string; 
       </header>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {!data && !error && <p className="empty">Загрузка…</p>}
-      {data && <Ob019CardView card={data} />}
+      {data && (data.kind === "ob099_fins" ? <Ob099CardView card={data} /> : <>
+        <Ob019Controls card={data} />
+        <Ob019CardView card={data} />
+      </>)}
     </section>
   </PageWindow>;
 }

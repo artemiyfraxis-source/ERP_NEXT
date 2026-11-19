@@ -8,7 +8,7 @@ From then on only the same token from the same PC reports for it — anything el
 ОБ (UNIQUE), an ОБ has one link (PK). The latest snapshot per ОБ is kept (no history in this slice); an older or
 repeated sequence number of the same bridge run is ignored, never written over a newer one.
 
-Decoding is pure (`decode_ob019`): raw 16-bit words → Russian states and values (register map:
+Decoding is pure (`decode_ob019`; ОБ.099 — `ob099.decode`): raw 16-bit words → Russian states and values (register map:
 docs/data/ob019-register-map-2026-11-18.md). Staleness is computed on read: no report for `STALE_AFTER` → «Нет связи
 с ПК станка» (the E-stop of ОБ.019 also powers its PC off)."""
 
@@ -16,31 +16,46 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import JSON, BigInteger, CheckConstraint, DateTime, ForeignKey, Integer, String, Uuid, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
+from app.modules.production import ob099
 from app.shared.persistence import Base
 
 SCOPE = "machine:report"
 PROTO = 1
 STALE_AFTER = timedelta(seconds=10)
 KIND_OB019 = "ob019_modbus"
-KINDS = (KIND_OB019,)
+KINDS = (KIND_OB019, ob099.KIND)
 # The ОБ an ERP bridge exists for (inventory number → kind). Others are refused until a bridge is written for them.
-SUPPORTED = {"ОБ.019": KIND_OB019}
-LINK_STATES = ("ok", "port_busy", "no_plc", "no_service")
-KIND_NAMES = {KIND_OB019: "Мост ERP"}
-DEVICE_NAMES = {KIND_OB019: "ПЛК линии резки"}
+# ОБ.099 — the BZW crimp presses ОБ.099.1/.2 (production/ob099.py; agent tools/machine-agent/ob099-agent.ps1, FINS read only).
+SUPPORTED = {"ОБ.019": KIND_OB019, **{inventory: ob099.KIND for inventory in ob099.INVENTORIES}}
 
-# Registers the ОБ.019 bridge may read and send (Dn = holding register n). Mirrors `$script:Allowed` in
-# ob019-bridge.ps1; 32-bit values take two words (low word first), strings 15 words.
-OB019_ALLOWED: frozenset[int] = frozenset(
-    {20, 22, 23, 24, 25, 26, 27, *range(32, 44), 641, 642, 643, 644, 645, 646, 649, 650, 711, 766, 782,
-     *range(940, 970), 1280}
-)
+# ОБ whose bridge is planned but not written yet: shown in «Станки» as «Мост не установлен» (owner 18.11.2026), never
+# accepted as a reporter. ОБ.099 has its own read-only agent now (SUPPORTED above).
+@dataclass(frozen=True)
+class PlannedMachine:
+    device: str
+    pc: str = ""
+    ip: str = ""
+
+
+PLANNED = {
+    # BZW-886+Q2 cut/strip machine: a PLC with a vendor MES port, no ERP connection yet (memory bzw-machine-control).
+    "ОБ.094": PlannedMachine(device="ПЛК станка"),
+}
+LINK_STATES = ("ok", "port_busy", "no_plc", "no_service")
+# One name for every ERP agent on a PC (owner 18.11.2026: «Мост ERP» next to «Агент печати» confused him); the part
+# after «·» says what it does there. The bridge and the print agent are still two programs — merging them is later.
+AGENT_NAME = "Агент ERP"
+AGENT_PARTS = ("печать", "приборы", "станок")
+KIND_NAMES = {KIND_OB019: f"{AGENT_NAME} · станок", ob099.KIND: f"{AGENT_NAME} · станок"}
+DEVICE_NAMES = {KIND_OB019: "ПЛК линии резки", ob099.KIND: "ПЛК пресса"}
+
 WORD_MAX = 0xFFFF
 
 OB019_STATES = {
@@ -69,7 +84,7 @@ LINK_TEXTS = {
     "no_plc": ("ПЛК не отвечает", "danger"),
     "no_service": ("Служба mbd на ПК не отвечает", "danger"),
     "stale": ("Нет связи с ПК станка", "danger"),
-    "not_installed": ("Мост не установлен", "neutral"),
+    "not_installed": ("Агент не установлен", "neutral"),
 }
 
 
@@ -79,6 +94,10 @@ class MachineRefused(Exception):
 
 class MachineReportInvalid(ValueError):
     """The snapshot breaks the protocol: an address outside the allow-list, a value outside 16 bits (422)."""
+
+
+class MachineNotBound(Exception):
+    """Records came from a bridge before its first snapshot bound it (409)."""
 
 
 class MachineLinkRow(Base):
@@ -161,8 +180,23 @@ def _clean(value: object, limit: int) -> str:
     return " ".join(str(value or "").split())[:limit]
 
 
-def checked_registers(kind: str, raw: dict) -> dict[int, int]:
-    """The words of a report: every address on the kind's allow-list, every value a 16-bit word."""
+def _word(name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= WORD_MAX:
+        raise MachineReportInvalid(f"Значение {name} — не 16-битное слово")
+    return value
+
+
+def checked_registers(kind: str, raw: dict) -> dict:
+    """The words of a report: every address on the kind's allow-list, every value a 16-bit word.
+    ОБ.019 — Modbus holding registers by number; ОБ.099 — FINS words by area and address («D5006», «H60», «W80»)."""
+    if kind == ob099.KIND:
+        named: dict[str, int] = {}
+        for key, value in (raw or {}).items():
+            name = str(key).upper()
+            if name not in ob099.ALLOWED:
+                raise MachineReportInvalid(f"Слово {key} не входит в список чтения станка")
+            named[name] = _word(name, value)
+        return named
     allowed = OB019_ALLOWED if kind == KIND_OB019 else frozenset()
     result: dict[int, int] = {}
     for key, value in (raw or {}).items():
@@ -172,9 +206,7 @@ def checked_registers(kind: str, raw: dict) -> dict[int, int]:
             raise MachineReportInvalid(f"Адрес регистра «{key}» — не число") from None
         if address not in allowed:
             raise MachineReportInvalid(f"Регистр D{address} не входит в список чтения станка")
-        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= WORD_MAX:
-            raise MachineReportInvalid(f"Значение D{address} — не 16-битное слово")
-        result[address] = value
+        result[address] = _word(f"D{address}", value)
     return result
 
 
@@ -192,12 +224,12 @@ def report(session: Session, *, equipment_id: UUID, inventory: str, token_id: UU
         raise MachineReportInvalid("Неизвестное состояние связи")
     boot = _clean(snapshot.boot, 64)
     if not boot or snapshot.seq < 0:
-        raise MachineReportInvalid("Нужны идентификатор запуска моста и номер снимка")
+        raise MachineReportInvalid("Нужны идентификатор запуска агента станка и номер снимка")
     link, bound = session.get(MachineLinkRow, equipment_id), False
     if link is None:
         taken = session.scalar(select(MachineLinkRow.inventory_number).where(MachineLinkRow.token_id == token_id))
         if taken is not None:
-            raise MachineRefused(f"Токен моста уже привязан к {taken}")
+            raise MachineRefused(f"Токен агента станка уже привязан к {taken}")
         try:
             with session.begin_nested():
                 session.add(MachineLinkRow(
@@ -209,7 +241,7 @@ def report(session: Session, *, equipment_id: UUID, inventory: str, token_id: UU
             pass
         link = session.get(MachineLinkRow, equipment_id)
         if link is None:
-            raise MachineRefused(f"{inventory} уже привязан к другому мосту")
+            raise MachineRefused(f"{inventory} уже привязан к другому агенту станка")
     if link.token_id != token_id or link.machine_id != machine_id:
         raise MachineRefused(f"Этот ПК или токен не привязан к {link.inventory_number}")
     details = {
@@ -310,10 +342,238 @@ def decode_ob019(words: dict[int, int]) -> dict:
     }
 
 
+# Settings of ОБ.019 grouped like its PXS_HMI pages (register map docs/data/ob019-register-map-2026-11-18.md, PR #919):
+# every group of the vendor panel the shop uses — Задание, Провод и зачистка, Средняя зачистка, Разделение жил, Намотка,
+# Маркировка, Скорости. Labels are Russian renderings of the HMI captions; a field the HMI leaves unnamed is named by
+# its place. `key`: ERP may write it from the card (slice 4, owner 19.11) — the job, mode and quantities, the wire and
+# strip lengths, the marking texts. Everything else is shown, not written.
+@dataclass(frozen=True)
+class SettingField:
+    label: str
+    address: int
+    kind: str  # u16, i16, u32, i32, bit0, text15, mode
+    scale: Decimal = Decimal(1)
+    unit: str = ""
+    key: str = ""
+    maximum: Decimal | None = None
+
+    @property
+    def writable(self) -> bool:
+        return bool(self.key)
+
+
+def _f(label: str, address: int, kind: str, scale: str = "1", unit: str = "", key: str = "",
+       maximum: str | None = None) -> SettingField:
+    return SettingField(label, address, kind, Decimal(scale), unit, key, None if maximum is None else Decimal(maximum))
+
+
+MM, SEC = "0.01", "0.001"
+OB019_SETTINGS: tuple[tuple[str, tuple[SettingField, ...]], ...] = (
+    ("Задание", (
+        _f("Режим", 20, "mode", key="mode"),
+        _f("Тираж", 22, "u32", unit="шт", key="total_set", maximum="99999999"),
+        _f("Пучок", 26, "u32", unit="шт", key="batch_set", maximum="99999999"),
+        _f("Пауза между пучками", 28, "u16", SEC, "с", key="batch_delay_s", maximum="9.999"),
+        _f("Количество по заказу", 24, "u32", unit="шт", key="order_quantity", maximum="99999999"),
+        _f("Заказ", 940, "text15", key="order_number"),
+        _f("Изделие", 955, "text15", key="product"),
+        _f("Строка заказа", 938, "u32"),
+        _f("Программа", 1280, "u16"),
+    )),
+    ("Провод и зачистка", (
+        _f("Длина провода", 32, "u32", MM, "мм", key="length_mm", maximum="99999.99"),
+        _f("Зачистка начала", 34, "u32", MM, "мм", key="strip_front_mm", maximum="999.99"),
+        _f("Стягивание начала", 36, "u32", MM, "мм", key="pull_front_mm", maximum="999.99"),
+        _f("Зачистка конца", 38, "u32", MM, "мм", key="strip_back_mm", maximum="999.99"),
+        _f("Стягивание конца", 40, "u32", MM, "мм", key="pull_back_mm", maximum="999.99"),
+        _f("Диаметр реза", 42, "u16", MM, "мм", key="diameter_mm", maximum="655.35"),
+        _f("Отвод ножа", 43, "u16", MM, "мм", key="knife_back_mm", maximum="5.00"),
+        _f("Внутренний слой: зачистка начала", 44, "u32", MM, "мм"),
+        _f("Внутренний слой: стягивание начала", 46, "u32", MM, "мм"),
+        _f("Внутренний слой: зачистка конца", 48, "u32", MM, "мм"),
+        _f("Внутренний слой: стягивание конца", 50, "u32", MM, "мм"),
+        _f("Внутренний слой: диаметр реза", 52, "u16", MM, "мм"),
+        _f("Внутренний слой: отвод ножа", 53, "u16", MM, "мм"),
+        _f("Зазор переднего прижима", 60, "u16"),
+        _f("Зазор заднего прижима", 61, "u16"),
+    )),
+    ("Средняя зачистка", (
+        _f("Средняя зачистка", 132, "bit0"), _f("Поправка конца", 197, "i16", MM, "мм"),
+        _f("Поправка диаметра", 199, "i16", MM, "мм"),
+        *(_f(f"Колонка {column + 1}, строка {row + 1}", first + 2 * row, "u32", MM, "мм")
+          for column, first in enumerate((200, 216, 250, 266)) for row in range(8)),
+    )),
+    ("Разделение жил", (
+        _f("Переключатель 1", 133, "bit0"), _f("Переключатель 2", 142, "bit0"),
+        _f("Разделение в начале", 69, "u32", MM, "мм"), _f("Разделение в конце", 71, "u32", MM, "мм"),
+        _f("Интервал разделения в начале", 67, "u16", MM, "мм"), _f("Интервал разделения в конце", 68, "u16", MM, "мм"),
+        _f("Задержка цилиндра", 74, "u16", SEC, "с"), _f("Шаг матрицы", 1703, "u32", MM, "мм"),
+        _f("Ширина пуансона", 1705, "u16", MM, "мм"),
+    )),
+    ("Намотка", (
+        _f("Намотка", 390, "bit0"), _f("Скорость намотки", 103, "u16"), _f("Поправка скорости", 395, "i16"),
+        _f("Отвод при намотке", 391, "u16", MM, "мм"), _f("Хвост намотки", 392, "u32", MM, "мм"),
+        _f("Диаметр намотки", 394, "u16", MM, "мм"), _f("Диаметр намотки, наименьший", 1750, "u16", MM, "мм"),
+        _f("Диаметр намотки, наибольший", 1751, "u16", MM, "мм"),
+        _f("Коэффициент намотки, наименьший", 1752, "u16", MM), _f("Коэффициент намотки, наибольший", 1753, "u16", MM),
+    )),
+    ("Маркировка", (
+        _f("Маркировка", 400, "bit0"),
+        _f("Текст у начала", 440, "text15", key="mark_front"), _f("Текст в середине", 455, "text15", key="mark_middle"),
+        _f("Текст у конца", 470, "text15", key="mark_back"),
+        _f("Метка у начала", 405, "u32", MM, "мм"), _f("Метка у конца", 407, "u32", MM, "мм"),
+        _f("Средние метки по шагу", 422, "bit0"), _f("Шаг средних меток", 409, "u32", MM, "мм"),
+        _f("Число средних меток", 411, "u32", unit="шт"), _f("Длина текста у конца", 413, "u32", MM, "мм"),
+        _f("Расстояние до головки", 401, "u32", MM, "мм"), _f("Удержание сигнала печати", 404, "u16", SEC, "с"),
+        _f("Скорость роликов при печати", 415, "u16"), _f("Передача текста в маркиратор", 421, "bit0"),
+        _f("Ширина символа", 423, "u16", MM, "мм"), _f("Размер шрифта", 430, "i16"), _f("Жирность", 431, "i16"),
+        _f("Делитель частоты", 432, "i16"), _f("Поворот текста у начала", 434, "bit0"),
+        _f("Поворот текста в середине", 435, "bit0"), _f("Поворот текста у конца", 436, "bit0"),
+        _f("Отбраковка при маркировке", 1722, "u32", MM, "мм"),
+    )),
+    ("Скорости", (
+        _f("Подача провода", 100, "u16"), _f("Нож", 101, "u16"), _f("Трубка", 102, "u16"),
+        _f("Передний прижим", 103, "u16"), _f("Задний прижим", 104, "u16"), _f("Замедление при резке", 120, "u16"),
+        _f("Зачистка", 121, "u16"), _f("Вывод провода", 122, "u16"), _f("Прокатка плёнки", 123, "u16"),
+    )),
+)
+# Axis positions (Jog page): read by the HMI, not yet by the bridge; the scale is not confirmed at the machine.
+OB019_POSITIONS: tuple[SettingField, ...] = tuple(
+    _f(label, 660 + 2 * axis, "i32", MM, "мм") for axis, label in enumerate((
+        "Передние ролики", "Задние ролики", "Нож", "Трубка", "Передний прижим", "Задний прижим", "Сдвиг ножа")))
+_WORDS = {"u16": 1, "i16": 1, "bit0": 1, "mode": 1, "u32": 2, "i32": 2, "text15": 15}
+OB019_FIELDS: dict[str, SettingField] = {
+    field.key: field for _title, fields in OB019_SETTINGS for field in fields if field.key}
+TEXT_CHARS = 30
+
+
+def field_words(field: SettingField) -> range:
+    return range(field.address, field.address + _WORDS[field.kind])
+
+
+# What the bridge reads and sends (Dn = holding register n): the state words and every setting above. Mirrors
+# `$script:Allowed` in ob019-bridge.ps1; 32-bit values take two words (low word first), strings 15 words.
+OB019_ALLOWED: frozenset[int] = frozenset(
+    {20, 641, 642, 643, 644, 645, 646, 649, 650, 711, 766, 782, 1280}
+    | {address for _title, fields in OB019_SETTINGS for field in fields for address in field_words(field)}
+)
+REGISTERS_MAX = max(len(OB019_ALLOWED), len(ob099.ALLOWED))
+
+
+def _field_value(words: dict[int, int], field: SettingField) -> object:
+    if field.kind == "text15":
+        return _text(words, field.address, 15)
+    if any(address not in words for address in field_words(field)):
+        return None
+    if field.kind == "bit0":
+        return bool(words[field.address] & 1)
+    raw = words[field.address] if _WORDS[field.kind] == 1 else words[field.address] | (words[field.address + 1] << 16)
+    if field.kind == "i16" and raw >= 0x8000:
+        raw -= 0x10000
+    elif field.kind == "i32" and raw >= 0x80000000:
+        raw -= 0x100000000
+    return raw if field.scale == 1 else float(Decimal(raw) * field.scale)
+
+
+def _readable(field: SettingField) -> bool:
+    return all(address in OB019_ALLOWED for address in field_words(field))
+
+
+def setting_group(title: str, fields: tuple[SettingField, ...], words: dict[int, int]) -> dict:
+    """One HMI page: its fields with the values of the last snapshot; `read` — the bridge reads it; `key` — ERP writes
+    it from the card («Записать на станок»)."""
+    result = []
+    for field in fields:
+        value = _field_value(words, field) if _readable(field) else None
+        item = {"label": field.label, "value": value, "unit": field.unit, "read": _readable(field),
+                "key": field.key or None, "kind": field.kind}
+        if field.kind == "mode":
+            item["text"] = None if value is None else OB019_MODES.get(int(value), f"Код {value}")
+        result.append(item)
+    return {"title": title, "fields": result}
+
+
+def ob019_settings(words: dict[int, int]) -> list[dict]:
+    return [setting_group(title, fields, words) for title, fields in OB019_SETTINGS]
+
+
+class MachineWriteInvalid(ValueError):
+    """A value the machine cannot hold, or a register ERP does not write (422)."""
+
+
+def _number(value: object, label: str) -> Decimal:
+    text = "" if isinstance(value, bool) else str(value if value is not None else "").strip().replace(",", ".")
+    try:
+        number = Decimal(text.replace(" ", ""))
+    except ArithmeticError:
+        raise MachineWriteInvalid(f"{label}: нужно число") from None
+    if not number.is_finite():
+        raise MachineWriteInvalid(f"{label}: нужно число")
+    return number
+
+
+def encode_field(key: str, value: object) -> tuple[SettingField, list[int], object]:
+    """A value for the machine → the words of its registers: 32-bit low word first; a text is ASCII, two characters a
+    word, high byte first, the tail filled with zeros so no rest of an old text survives. → (field, words, value)."""
+    field = OB019_FIELDS.get(key)
+    if field is None:
+        raise MachineWriteInvalid("Этот параметр ERP на станок не записывает")
+    if field.kind == "text15":
+        text = " ".join(str(value or "").split())
+        if len(text) > TEXT_CHARS:
+            raise MachineWriteInvalid(f"{field.label}: не длиннее {TEXT_CHARS} знаков")
+        if any(not 32 <= ord(char) <= 126 for char in text):
+            raise MachineWriteInvalid(f"{field.label}: только латинские буквы, цифры и знаки — кириллицу станок "
+                                      "не хранит")
+        raw = text.encode("ascii").ljust(TEXT_CHARS, b"\x00")
+        return field, [(raw[2 * index] << 8) | raw[2 * index + 1] for index in range(15)], text
+    number = _number(value, field.label)
+    if field.kind == "mode":
+        if number not in (0, 1, 2):
+            raise MachineWriteInvalid("Режим: пошаговый, один цикл или автомат")
+        return field, [int(number)], int(number)
+    if number < 0 or (field.maximum is not None and number > field.maximum):
+        raise MachineWriteInvalid(f"{field.label}: значение вне диапазона станка")
+    raw = number / field.scale
+    if raw != raw.to_integral_value():
+        step = format(field.scale.normalize(), "f").replace(".", ",")
+        raise MachineWriteInvalid(f"{field.label}: точность станка — {step}" + (f" {field.unit}" if field.unit else ""))
+    raw_int = int(raw)
+    if field.kind == "u16":
+        if raw_int > WORD_MAX:
+            raise MachineWriteInvalid(f"{field.label}: значение вне диапазона станка")
+        return field, [raw_int], number
+    return field, [raw_int & WORD_MAX, raw_int >> 16], number
+
+
+def field_value(key: str, words: dict[int, int]) -> object:
+    """The value of a writable field in a snapshot (None — not read)."""
+    return _field_value(words, OB019_FIELDS[key])
+
+
 def snapshot_words(snapshot: MachineSnapshotRow | None) -> dict[int, int]:
     if snapshot is None:
         return {}
     return {int(key): int(value) for key, value in (snapshot.registers or {}).items()}
+
+
+def decode(kind: str, snapshot: MachineSnapshotRow | None) -> dict | None:
+    """The live card of a linked ОБ by its kind; None while no words came (link lost before the first reading)."""
+    if snapshot is None or not snapshot.registers:
+        return None
+    if kind == ob099.KIND:
+        return ob099.decode(ob099.words(snapshot.registers))
+    return decode_ob019(snapshot_words(snapshot))
+
+
+def bound_link(session: Session, *, inventory: str, token_id: UUID, machine_id: str) -> MachineLinkRow:
+    """The link of an ОБ that this token and PC already reported a snapshot for — records need a bound bridge."""
+    link = session.scalar(select(MachineLinkRow).where(MachineLinkRow.inventory_number == inventory))
+    if link is None:
+        raise MachineNotBound(f"{inventory}: сначала нужен снимок станка от его агента")
+    if link.token_id != token_id or link.machine_id != _clean(machine_id, 80):
+        raise MachineRefused(f"Этот ПК или токен не привязан к {link.inventory_number}")
+    return link
 
 
 def links(session: Session) -> list[tuple[MachineLinkRow, MachineSnapshotRow | None]]:

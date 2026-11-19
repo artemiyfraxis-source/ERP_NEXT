@@ -432,8 +432,32 @@ Describe 'Arinst: настройки и heartbeat' {
         Mock Get-ChildItem { @() } -ParameterFilter { $Path -eq (Join-Path $env:APPDATA 'ArinstVL*\ArinstVL.exe') -and $File }
         Test-ArinstInstalled | Should Be $false
     }
-    It 'heartbeat с одним Arinst не добавляет S2VNA' {
+    It 'установленная Arinst VL без запущенной программы и свежей трассы — прибора нет' {
         Mock Test-ArinstInstalled { $true }
+        Mock Get-Process { $null } -ParameterFilter { $Name -eq 'ArinstVL' }
+        Mock Find-ArinstTraces { @() }
+        Test-ArinstPresent | Should Be $false
+    }
+    It 'Arinst есть, когда программа запущена или за 15 минут сохранена трасса' {
+        Mock Test-ArinstInstalled { $true }
+        Mock Get-Process { [pscustomobject]@{ Name = 'ArinstVL' } } -ParameterFilter { $Name -eq 'ArinstVL' }
+        Mock Find-ArinstTraces { throw 'Must not search files while the program runs' }
+        Test-ArinstPresent | Should Be $true
+        Mock Get-Process { $null } -ParameterFilter { $Name -eq 'ArinstVL' }
+        Mock Find-ArinstTraces { @([pscustomobject]@{ FullName = 'C:\Arinst\замер.s1p' }) }
+        Test-ArinstPresent | Should Be $true
+    }
+    It 'без установленной Arinst VL прибора нет; ошибка поиска файлов — тоже нет' {
+        Mock Test-ArinstInstalled { $false }
+        Mock Get-Process { throw 'Must not look at processes' } -ParameterFilter { $Name -eq 'ArinstVL' }
+        Test-ArinstPresent | Should Be $false
+        Mock Test-ArinstInstalled { $true }
+        Mock Get-Process { $null } -ParameterFilter { $Name -eq 'ArinstVL' }
+        Mock Find-ArinstTraces { throw 'access denied' }
+        Test-ArinstPresent | Should Be $false
+    }
+    It 'heartbeat с одним Arinst не добавляет S2VNA' {
+        Mock Test-ArinstPresent { $true }
         Mock Get-VnaCapability { $null }
         Mock Get-MachineId { 'pc-1' }
         Mock Get-LanIp { '' }
@@ -443,7 +467,7 @@ Describe 'Arinst: настройки и heartbeat' {
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { ($Body.vna_sources -join ',') -eq 'arinst' -and -not $Body.vna }
     }
     It 'heartbeat может объявить оба источника' {
-        Mock Test-ArinstInstalled { $true }
+        Mock Test-ArinstPresent { $true }
         Mock Get-VnaCapability { @{ name = 'S2VNA'; ready = $false } }
         Mock Get-MachineId { 'pc-1' }
         Mock Get-LanIp { '' }

@@ -21,7 +21,7 @@ from app.modules.shipping import api as shipping_api
 from app.modules.warehouse import scan_jobs_api
 from app.shared import http_auth
 from app.shared.http_auth import Principal, authenticated_principal
-from app.workflows import employee_card_api, machines_api, marking_labels
+from app.workflows import employee_card_api, machine_writes_api, machines_api, marking_labels
 from tests.access_levels import principal_as
 
 # Every route dependency of the contract; references_suppliers is `_map_rights` inside references/api.py.
@@ -41,6 +41,8 @@ DEPENDENCIES = {
     "marking_read": marking_labels.marking_read_principal,
     # «Станки» (0193, after the transfer): the master (Производство) and the fitter (Задания) read the list and the card.
     "machines_view": machines_api.machines_view_principal,
+    # ОБ.019 writes (0195): the fitter and the master write settings, transfers and corrections.
+    "machines_edit": machine_writes_api.machines_edit_principal,
 }
 
 
@@ -156,7 +158,7 @@ def test_level_sections_are_the_old_ones_without_staffdir_plus_the_split_section
     # «Кадры» (`hr`, 0089), «Сканирование документов» / «Печать документов» (`scan`, `print`, 0159), «Отгрузка без
     # УПД — разрешение» (`ship_no_upd`, 0162) came after the transfer: the matrix offers them, the transfer never saw them.
     assert set(LEVEL_SECTION_LABELS) == (set(OLD_SECTIONS) - {"staffdir"}) | {
-        "myops", "quality", "shipping_goods", "hr", "scan", "print", "ship_no_upd"}
+        "myops", "quality", "shipping_goods", "hr", "scan", "print", "ship_no_upd", "machine_control"}
     # "admin" stays full only as the «Режим админа» session level; it is no level a person holds (14.10.2026).
     assert domain.FULL_ACCESS_LEVELS == {"superadmin", domain.ADMIN_MODE_LEVEL} == {"superadmin", "admin"}
     assert domain.LEVEL_LABELS == {

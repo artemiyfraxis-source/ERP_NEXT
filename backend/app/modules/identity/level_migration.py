@@ -54,8 +54,8 @@ _BY_RANK = {1: VIEW, 2: EDIT}
 # level below superadmin/admin and is granted in «Доступы»; the transfer and its frozen copy never see it. «Сканирование
 # документов» / «Печать документов» (`scan`, `print`, owner 28.10.2026) came later the same way: migration 0159 writes
 # their cells, the transfer never sees them. «Отгрузка без УПД — разрешение» (`ship_no_upd`, owner 29.10.2026, 0162)
-# too: closed below the full levels until granted in «Доступы».
-SECTIONS_AFTER_TRANSFER = ("hr", "scan", "print", "ship_no_upd")
+# too: closed below the full levels until granted in «Доступы». «Управление станками» (`machine_control`) the same.
+SECTIONS_AFTER_TRANSFER = ("hr", "scan", "print", "ship_no_upd", "machine_control")
 TRANSFER_SECTIONS = tuple(section for section in LEVEL_SECTION_LABELS if section not in SECTIONS_AFTER_TRANSFER)
 
 # ── The old model, frozen ────────────────────────────────────────────────────────────────────────────

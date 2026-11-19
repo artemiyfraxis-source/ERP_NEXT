@@ -8,7 +8,10 @@ import { EquipmentSetupForm, type SetupOperationChoice } from "./EquipmentSetupF
 import { EquipmentRecipeEditor } from "./EquipmentRecipeEditor";
 import { EquipmentSetupTrials } from "./EquipmentSetupTrials";
 import { equipmentSetupApi, type SetupAction, type SetupExecutor, type SetupMachine, type SetupRecipe, type SetupStatus, type SetupTask, type SetupViewer } from "./equipmentSetupApi";
+import { Ob019SetupPanel } from "./Ob019SetupPanel";
 import "./equipmentSetup.css";
+
+export const isOb019 = (inventory?: string) => (inventory ?? "").replace(/\s+/g, "").toUpperCase() === "ОБ.019";
 
 const statuses: Record<SetupStatus, string> = { New: "Назначена", InProgress: "В работе", Blocked: "Заблокирована", Ready: "Готова", Cancelled: "Отменена" };
 const tones = { New: "neutral", InProgress: "info", Blocked: "warning", Ready: "success", Cancelled: "neutral" } as const;
@@ -28,7 +31,9 @@ export function EquipmentSetupPage({ principal }: { principal?: Principal }) {
   const [viewer, setViewer] = useState<SetupViewer | null>(null), [loaded, setLoaded] = useState(false), [error, setError] = useState(""), [contextError, setContextError] = useState("");
   const [more, setMore] = useState(false), [busy, setBusy] = useState(false), [create, setCreate] = useState(false), [selected, setSelected] = useState<SetupTask | null>(null);
   const [productionCursor, setProductionCursor] = useState<string | null>(null), [productionBusy, setProductionBusy] = useState(false);
-  const [refresh, setRefresh] = useState(0);
+  const [refresh, setRefresh] = useState(0), [panel, setPanel] = useState(false);
+  // ОБ.019 — станок с мостом в ERP: своя панель наладки (предложение, значения станка, журнал правок).
+  const ob019 = machines.find(item => isOb019(item.inventory_number));
   useEffect(() => {
     let alive = true; setLoaded(false); setError(""); setContextError(""); setViewer(null); setSelected(null); setCreate(false);
     Promise.all([equipmentSetupApi.viewer(), equipmentSetupApi.tasks(), equipmentSetupApi.machines()]).then(([who, rows, catalog]) => {
@@ -55,6 +60,7 @@ export function EquipmentSetupPage({ principal }: { principal?: Principal }) {
   return <div className="equipment-setup">
     <div className="page-head"><div><h1>Наладка оборудования</h1><span className="muted">{viewer?.site || "Все доступные площадки"}</span></div><div className="setup-actions">
       <button className="secondary" disabled={!loaded || busy} onClick={() => setRefresh(value => value + 1)}>Обновить</button>
+      {ob019 && viewer && <button className="secondary" onClick={() => setPanel(true)}>Наладка {ob019.inventory_number}</button>}
       {viewer?.can_assign && viewer.writable && <button className="primary" onClick={() => setCreate(true)}>Назначить наладку</button>}
     </div></div>
     {error && <p className="error-banner" role="alert">{error}</p>}
@@ -71,6 +77,7 @@ export function EquipmentSetupPage({ principal }: { principal?: Principal }) {
     </section>}
     {create && <EquipmentSetupForm choices={choices} close={() => setCreate(false)} saved={changed}
       moreChoices={productionCursor ? () => void moreProduction() : undefined} loadingChoices={productionBusy} choicesError={contextError} />}
+    {panel && ob019 && viewer && <Ob019SetupPanel machineId={ob019.id} viewer={viewer} close={() => setPanel(false)} />}
     {selected && viewer && <SetupDetail key={selected.id} task={selected} viewer={viewer} machine={machines.find(item => item.id === selected.machine_id)} label={operationLabel(selected)} changed={changed} close={() => setSelected(null)} />}
   </div>;
 }

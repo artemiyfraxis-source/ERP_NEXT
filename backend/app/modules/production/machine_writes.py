@@ -1,0 +1,373 @@
+"""ОБ.019: writing parameters from ERP (plan «Станки», slice 4; owner 19.11.2026) — commands and machine corrections.
+
+Commands (migration 0195, `production_machine_writes`). ERP never talks to the PLC: a write is queued here and the
+command runner on the machine PC (`tools/machine-agent/ob019-writer.ps1`, pull transport like the bridge, the same
+`machine:report` token and PC binding) claims it, checks the machine state itself, writes through the local Modbus
+service mbd.ps1 (which refuses while PXS_HMI holds COM8) and reports the words it read back. ERP compares them with
+what it asked for: equal → «done», different → «failed» with the registers that differ.
+- queued → taken → done | failed; queued → expired (not claimed within `COMMAND_TTL` — never runs late: the state it
+  was confirmed against may be gone); taken → failed («Агент не сообщил результат») after `RESULT_WAIT`.
+- One open command per machine (UNIQUE partial index): a single controller, a second write waits for the first.
+- Allowed only while the machine is idle: state 102 «Готов, ждёт пуска» or 107 «Тираж готов» in a fresh snapshot with
+  the link «На связи» (PXS_HMI closed); the runner re-checks D766 right before writing.
+
+Machine commands Стоп / Сброс / Пуск / Сброс аварии (purpose `control`, column `command`, migration 0197) ride the
+same queue; their rules are in production/machine_control.py: 5 s to be claimed, Stop first and exempt from the one-open
+index (it may queue while a write runs, it cancels what is queued), no answer → «unknown», never assumed done.
+
+Corrections (migration 0195, `production_machine_offsets`): «станок режет не так» — the ETK size is right but this
+machine cuts/strips it off by a constant. One offset per machine and wire parameter, in 0,01 мм; every later
+«Передать на станок» adds it to the ETK nominal (the ETK stays as it is). The ETK side («размер в ЭТК неверный») goes
+through the ETK revision path in app/workflows/machine_writes_api.py."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from decimal import Decimal
+from uuid import UUID, uuid4
+
+from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Uuid, select, text, update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Mapped, Session, mapped_column
+
+from app.shared.clock import MOSCOW
+from app.shared.persistence import Base
+
+from . import machines as rules
+
+COMMAND_TTL = timedelta(seconds=10)
+RESULT_WAIT = timedelta(seconds=30)
+IDLE_STATES = (102, 107)
+STATUSES = ("queued", "taken", "done", "failed", "expired", "unknown", "cancelled")
+OPEN = ("queued", "taken")
+PURPOSES = ("settings", "transfer", "control")
+CONTROL = "control"
+STOP = "stop"
+COMMANDS = ("stop", "reset", "start", "alarm_clear")
+CONTROL_TTL = timedelta(seconds=5)  # a machine command older than this by the server clock never runs
+CONTROL_RESULT_WAIT = timedelta(seconds=15)  # taken without an answer → «Результат неизвестен»
+CONTROL_TOO_OLD = "ПК станка не забрал команду за 5 с — она не выполнялась"
+CONTROL_NO_ANSWER = "ПК станка не сообщил результат — проверьте станок"
+CANCELLED_BY_STOP = "Отменена: нажат «Стоп»"
+_SQL = lambda values: ", ".join(repr(value) for value in values)  # noqa: E731
+OPEN_WHERE = f"status IN ({_SQL(OPEN)}) AND (command IS NULL OR command <> '{STOP}')"
+STOP_WHERE = f"status = 'queued' AND command = '{STOP}'"
+STATUS_TEXTS = {"queued": ("Ждёт агента станка", "info"), "taken": ("Записывается", "info"),
+                "done": ("Записано и проверено", "ok"), "failed": ("Не записано", "danger"),
+                "expired": ("Не записано: агент не забрал команду за 10 с", "warn"),
+                "unknown": ("Результат неизвестен", "danger"), "cancelled": ("Отменено стопом", "neutral")}
+CONTROL_TEXTS = {"queued": ("Передаётся на станок", "info"), "taken": ("Выполняется", "info"),
+                 "done": ("Выполнена", "ok"), "failed": ("Не выполнена", "danger"),
+                 "expired": ("Не выполнена — опоздала", "warn"), "unknown": ("Результат неизвестен", "danger"),
+                 "cancelled": ("Отменена стопом", "neutral")}
+# Wire parameters a machine correction may shift (keys of production/machines.py OB019_FIELDS, ×0,01 мм).
+OFFSET_KEYS = ("length_mm", "strip_front_mm", "pull_front_mm", "strip_back_mm", "pull_back_mm", "diameter_mm",
+               "knife_back_mm")
+OFFSET_LIMIT = 10000  # ±100,00 мм
+STEP = Decimal("0.01")
+
+
+class MachineCommandRefused(Exception):
+    """The machine may not be written now (409): not idle, no link, PXS_HMI open, another write in progress."""
+
+
+class MachineWriteRow(Base):
+    __tablename__ = "production_machine_writes"
+    __table_args__ = (
+        CheckConstraint(f"status IN ({', '.join(repr(item) for item in STATUSES)})",
+                        name="ck_production_machine_writes_status"),
+        CheckConstraint(f"purpose IN ({', '.join(repr(item) for item in PURPOSES)})",
+                        name="ck_production_machine_writes_purpose"),
+        CheckConstraint("status <> 'queued' OR (taken_at IS NULL AND finished_at IS NULL)",
+                        name="ck_production_machine_writes_queued"),
+        CheckConstraint("status <> 'taken' OR (taken_at IS NOT NULL AND finished_at IS NULL)",
+                        name="ck_production_machine_writes_taken"),
+        CheckConstraint("status IN ('queued', 'taken') OR finished_at IS NOT NULL",
+                        name="ck_production_machine_writes_finished"),
+        CheckConstraint("trim(summary) <> ''", name="ck_production_machine_writes_summary"),
+        CheckConstraint(f"(purpose = '{CONTROL}') = (command IS NOT NULL)", name="ck_production_machine_writes_control"),
+        CheckConstraint(f"command IS NULL OR command IN ({_SQL(COMMANDS)})", name="ck_production_machine_writes_command"),
+        # One controller: one open command per machine, except a Stop (it may queue while a write or a Start runs).
+        Index("ux_production_machine_writes_open", "equipment_id", unique=True,
+              sqlite_where=text(OPEN_WHERE), postgresql_where=text(OPEN_WHERE)),
+        Index("ux_production_machine_writes_stop", "equipment_id", unique=True,
+              sqlite_where=text(STOP_WHERE), postgresql_where=text(STOP_WHERE)),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    equipment_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("production_machine_links.equipment_id", ondelete="CASCADE",
+                         name="fk_production_machine_writes_link"), nullable=False, index=True)
+    purpose: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Machine command of purpose `control` (stop / reset / start / alarm_clear); NULL for parameter writes.
+    command: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    # {"blocks": [{"addr": 32, "values": [32500, 0]}], "fields": [{"key", "label", "before", "after", "unit"}]}
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    summary: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_by: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    created_by_name: Mapped[str] = mapped_column(String(200), nullable=False, default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    taken_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    readback: Mapped[dict | None] = mapped_column(JSON)
+    error: Mapped[str] = mapped_column(String(500), nullable=False, default="", server_default="")
+
+
+class MachineOffsetRow(Base):
+    __tablename__ = "production_machine_offsets"
+    __table_args__ = (
+        CheckConstraint(f"parameter IN ({', '.join(repr(item) for item in OFFSET_KEYS)})",
+                        name="ck_production_machine_offsets_parameter"),
+        CheckConstraint(f"offset_hundredths BETWEEN {-OFFSET_LIMIT} AND {OFFSET_LIMIT}",
+                        name="ck_production_machine_offsets_range"),
+        CheckConstraint("version >= 1", name="ck_production_machine_offsets_version"),
+    )
+
+    equipment_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("equipment_units.id", ondelete="RESTRICT", name="fk_production_machine_offsets_equipment"),
+        primary_key=True)
+    parameter: Mapped[str] = mapped_column(String(32), primary_key=True)
+    offset_hundredths: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(String(300), nullable=False, default="", server_default="")
+    updated_by_name: Mapped[str] = mapped_column(String(200), nullable=False, default="", server_default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+@dataclass(frozen=True)
+class FieldWrite:
+    key: str
+    value: object
+
+
+def _plain(value: object) -> str:
+    if isinstance(value, Decimal):
+        return format(value.normalize(), "f").replace(".", ",") if value != value.to_integral_value() \
+            else format(value.quantize(Decimal(1)), "f")
+    if isinstance(value, float):
+        return _plain(Decimal(str(value)))
+    return "" if value is None else str(value)
+
+
+def plan_writes(writes: list[FieldWrite], words: dict[int, int]) -> tuple[list[dict], list[dict]]:
+    """Field values → contiguous register blocks (one bus write each) and the shown before → after of every field."""
+    if not writes:
+        raise rules.MachineWriteInvalid("Нечего записывать")
+    seen: set[str] = set()
+    targets: dict[int, int] = {}
+    shown = []
+    for item in writes:
+        if item.key in seen:
+            raise rules.MachineWriteInvalid("Параметр указан дважды")
+        seen.add(item.key)
+        field, values, value = rules.encode_field(item.key, item.value)
+        for offset, word in enumerate(values):
+            targets[field.address + offset] = word
+        before = rules.field_value(item.key, words)
+        shown.append({"key": item.key, "label": field.label, "unit": field.unit, "before": _plain(before),
+                      "after": _plain(value)})
+    blocks: list[dict] = []
+    for address in sorted(targets):
+        if blocks and blocks[-1]["addr"] + len(blocks[-1]["values"]) == address and len(blocks[-1]["values"]) < 60:
+            blocks[-1]["values"].append(targets[address])
+        else:
+            blocks.append({"addr": address, "values": [targets[address]]})
+    return blocks, shown
+
+
+def _expire(session: Session, equipment_id: UUID, now: datetime) -> list[MachineWriteRow]:
+    """Queued too long → expired; taken without a result too long → failed. → the rows changed (for the journal)."""
+    changed = []
+    for row in session.scalars(select(MachineWriteRow).where(MachineWriteRow.equipment_id == equipment_id,
+                                                               MachineWriteRow.status.in_(OPEN))):
+        if row.purpose == CONTROL:
+            if row.status == "queued" and rules.since(row.created_at, now) > CONTROL_TTL:
+                row.status, row.finished_at, row.error = "expired", now, CONTROL_TOO_OLD
+                changed.append(row)
+            elif (row.status == "taken" and row.taken_at is not None
+                  and rules.since(row.taken_at, now) > CONTROL_RESULT_WAIT):
+                row.status, row.finished_at, row.error = "unknown", now, CONTROL_NO_ANSWER
+                changed.append(row)
+            continue
+        if row.status == "queued" and rules.since(row.created_at, now) > COMMAND_TTL:
+            row.status, row.finished_at, row.error = "expired", now, "Агент станка не забрал команду за 10 с"
+            changed.append(row)
+        elif row.status == "taken" and row.taken_at is not None and rules.since(row.taken_at, now) > RESULT_WAIT:
+            row.status, row.finished_at, row.error = "failed", now, "Агент станка не сообщил результат записи"
+            changed.append(row)
+    session.flush()
+    return changed
+
+
+def idle_problem(link: rules.MachineLinkRow | None, snapshot: rules.MachineSnapshotRow | None, now: datetime) -> str:
+    """Why the machine may not be written now; "" — it may."""
+    if link is None:
+        return "Станок не подключён к ERP"
+    code = rules.link_status(snapshot, now)
+    if code != "ok":
+        return rules.LINK_TEXTS[code][0]
+    state = rules.snapshot_words(snapshot).get(766)
+    if state not in IDLE_STATES:
+        text = rules.OB019_STATES.get(state, (f"код {state}", ""))[0] if state is not None else "неизвестно"
+        return f"Записывать можно, когда станок готов и ждёт пуска или тираж готов; сейчас: {text}"
+    return ""
+
+
+def enqueue(session: Session, *, equipment_id: UUID, purpose: str, writes: list[FieldWrite], summary: str,
+            actor_id: UUID, actor_name: str, now: datetime) -> tuple[MachineWriteRow, list[MachineWriteRow]]:
+    """Queue one write. → (the command, commands that expired meanwhile)."""
+    if purpose not in PURPOSES:
+        raise ValueError("Неизвестное назначение команды")
+    link = session.get(rules.MachineLinkRow, equipment_id)
+    snapshot = session.get(rules.MachineSnapshotRow, equipment_id)
+    problem = idle_problem(link, snapshot, now)
+    if problem:
+        raise MachineCommandRefused(problem)
+    blocks, shown = plan_writes(writes, rules.snapshot_words(snapshot))
+    expired = _expire(session, equipment_id, now)
+    if session.scalar(select(MachineWriteRow.id).where(MachineWriteRow.equipment_id == equipment_id,
+                                                         MachineWriteRow.status.in_(OPEN))) is not None:
+        raise MachineCommandRefused("На станок уже идёт запись — дождитесь её результата")
+    row = MachineWriteRow(id=uuid4(), equipment_id=equipment_id, purpose=purpose, status="queued",
+                            payload={"blocks": blocks, "fields": shown}, summary=" ".join(summary.split())[:500],
+                            created_by=actor_id, created_by_name=actor_name[:200], created_at=now)
+    try:
+        with session.begin_nested():
+            session.add(row)
+            session.flush()
+    except IntegrityError:
+        raise MachineCommandRefused("На станок уже идёт запись — дождитесь её результата") from None
+    return row, expired
+
+
+def claim(session: Session, equipment_id: UUID, now: datetime) -> tuple[MachineWriteRow | None, list[MachineWriteRow]]:
+    """The runner takes the oldest queued command still in time. → (command or None, commands expired meanwhile)."""
+    expired = _expire(session, equipment_id, now)
+    queued = session.scalars(select(MachineWriteRow).where(MachineWriteRow.equipment_id == equipment_id,
+                                                           MachineWriteRow.status == "queued")
+                             .order_by(MachineWriteRow.created_at, MachineWriteRow.id)).all()
+    # Stop jumps the queue: a Stop pressed while another command waits is taken first.
+    row = next((item for item in queued if item.command == STOP), queued[0] if queued else None)
+    if row is None:
+        return None, expired
+    taken = session.execute(update(MachineWriteRow).where(MachineWriteRow.id == row.id,
+                                                            MachineWriteRow.status == "queued")
+                            .values(status="taken", taken_at=now)).rowcount == 1
+    session.expire(row)
+    session.refresh(row)
+    return (row if taken else None), expired
+
+
+def expected_words(row: MachineWriteRow) -> dict[int, int]:
+    return {block["addr"] + offset: int(word) for block in row.payload["blocks"]
+            for offset, word in enumerate(block["values"])}
+
+
+def finish(session: Session, *, equipment_id: UUID, command_id: UUID, ok: bool, readback: dict, error: str,
+           now: datetime) -> MachineWriteRow:
+    """The runner's report. Done only when every written register reads back as asked."""
+    row = session.get(MachineWriteRow, command_id)
+    if row is None or row.equipment_id != equipment_id:
+        raise KeyError("Команда станка не найдена")
+    if row.status != "taken":
+        return row  # repeated or late report: the first word stands
+    read: dict[int, int] = {}
+    for key, value in (readback or {}).items():
+        try:
+            address = int(str(key))
+        except ValueError:
+            continue
+        if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= rules.WORD_MAX:
+            read[address] = value
+    expected = expected_words(row)
+    differ = sorted(address for address, word in expected.items() if read.get(address) != word)
+    row.readback = {str(address): word for address, word in sorted(read.items()) if address in expected}
+    row.finished_at = now
+    if ok and not differ:
+        row.status, row.error = "done", ""
+    else:
+        row.status = "failed"
+        reason = " ".join(str(error or "").split())
+        if "busy" in reason or "PXS_HMI" in reason:
+            reason = "Пульт PXS_HMI открыт — порт занят"
+        elif reason.startswith("state "):
+            reason = "Станок не в ожидании: " + reason.removeprefix("state ")
+        if not reason and differ:
+            reason = "Станок не принял: " + ", ".join(f"D{address}" for address in differ[:8])
+        row.error = (reason or "Запись не удалась")[:500]
+    session.flush()
+    return row
+
+
+def latest(session: Session, equipment_id: UUID, now: datetime, limit: int = 5) -> list[MachineWriteRow]:
+    _expire(session, equipment_id, now)
+    return list(session.scalars(select(MachineWriteRow).where(MachineWriteRow.equipment_id == equipment_id)
+                                .order_by(MachineWriteRow.created_at.desc()).limit(limit)))
+
+
+def moment(value: datetime | None) -> str | None:
+    """A stored moment for the screen, always with its zone: SQLite (tests, preview) returns it naive in shop time —
+    without the zone the browser read it as its own local time and «Последние записи» disagreed with «Последний сигнал»."""
+    if value is None:
+        return None
+    return (value.replace(tzinfo=MOSCOW) if value.tzinfo is None else value).isoformat()
+
+
+def _state_text(words: object) -> str | None:
+    code = words.get("766") if isinstance(words, dict) else None
+    if code is None:
+        return None
+    return rules.OB019_STATES.get(code, (f"Код {code}", ""))[0]
+
+
+def command_view(row: MachineWriteRow) -> dict:
+    text, tone = (CONTROL_TEXTS if row.purpose == CONTROL else STATUS_TEXTS)[row.status]
+    states = row.readback if row.purpose == CONTROL and isinstance(row.readback, dict) else {}
+    return {"id": str(row.id), "status": row.status, "status_text": text, "tone": tone, "purpose": row.purpose,
+            "command": row.command, "state_before": _state_text(states.get("before")),
+            "state_after": _state_text(states.get("after")),
+            "summary": row.summary, "fields": row.payload.get("fields", []), "error": row.error,
+            "created_by": row.created_by_name, "created_at": moment(row.created_at),
+            "finished_at": moment(row.finished_at)}
+
+
+# --- corrections «станок режет не так» ---
+
+def offsets(session: Session, equipment_id: UUID) -> dict[str, MachineOffsetRow]:
+    return {row.parameter: row for row in session.scalars(
+        select(MachineOffsetRow).where(MachineOffsetRow.equipment_id == equipment_id))}
+
+
+def offset_value(row: MachineOffsetRow | None) -> Decimal:
+    return Decimal(0) if row is None else (Decimal(row.offset_hundredths) * STEP).quantize(STEP)
+
+
+def set_offset(session: Session, *, equipment_id: UUID, parameter: str, offset: Decimal, reason: str, actor_name: str,
+               now: datetime) -> tuple[Decimal, Decimal]:
+    """Store this machine's correction of one parameter. → (old offset, new offset)."""
+    if parameter not in OFFSET_KEYS:
+        raise rules.MachineWriteInvalid("Поправку станка можно задать только для длины, зачистки и реза провода")
+    if not isinstance(offset, Decimal) or not offset.is_finite() or offset != offset.quantize(STEP):
+        raise rules.MachineWriteInvalid("Поправка: число с точностью 0,01 мм")
+    hundredths = int(offset / STEP)
+    if abs(hundredths) > OFFSET_LIMIT:
+        raise rules.MachineWriteInvalid("Поправка станка не больше ±100 мм")
+    row = session.get(MachineOffsetRow, (equipment_id, parameter))
+    old = offset_value(row)
+    clean = " ".join(reason.split())[:300]
+    if row is None:
+        session.add(MachineOffsetRow(equipment_id=equipment_id, parameter=parameter, offset_hundredths=hundredths,
+                                     reason=clean, updated_by_name=actor_name[:200], updated_at=now, version=1))
+    else:
+        changed = session.execute(update(MachineOffsetRow).where(
+            MachineOffsetRow.equipment_id == equipment_id, MachineOffsetRow.parameter == parameter,
+            MachineOffsetRow.version == row.version).values(
+            offset_hundredths=hundredths, reason=clean, updated_by_name=actor_name[:200], updated_at=now,
+            version=row.version + 1)).rowcount
+        if changed != 1:
+            raise MachineCommandRefused("Поправку станка только что изменили — обновите карточку")
+        session.expire(row)
+    session.flush()
+    return old, offset_value(session.get(MachineOffsetRow, (equipment_id, parameter)))

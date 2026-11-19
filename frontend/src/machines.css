@@ -20,6 +20,52 @@
 .machine-card > .machine-facts dl { grid-template-columns: repeat(auto-fit, minmax(200px, max-content)); column-gap: 32px; }
 .machine-card > .machine-facts dl > div { grid-template-columns: max-content max-content; }
 .machine-state { font-size: 18px; }
+.machine-alarms { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 0; list-style: none; font-weight: 500; }
+.machine-none { margin: 0; font-size: 13px; }
 
 @media (max-width: 1100px) { .machine-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 720px) { .machine-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* «Настройки» ОБ.019: страницы пульта, запись на станок, передача из ЭТК, правка после пробы (Ob019SettingsPanel.tsx). */
+.machine-settings { display: grid; gap: 10px; border-top: 1px solid var(--border); padding-top: 12px; }
+.machine-settings h3 { margin: 0; font-size: 16px; }
+.machine-settings h4 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
+.machine-settings p { margin: 0; }
+.machine-block { border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; display: grid; gap: 8px; }
+.machine-block .seg-tabs { margin: 0; }
+.machine-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.machine-table th, .machine-table td { padding: 4px 10px; height: 30px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
+.machine-table thead th { color: var(--muted-foreground); font-weight: 500; }
+.machine-table tbody th { font-weight: 500; }
+.machine-table tbody th small { display: block; color: var(--muted-foreground); font-weight: 400; font-size: 12px; }
+.machine-table tbody tr:nth-child(even) td, .machine-table tbody tr:nth-child(even) th { background: var(--accent); }
+.machine-table input, .machine-table select { width: 100%; max-width: 260px; }
+.machine-strong { font-weight: 600; }
+.machine-pick { display: grid; gap: 4px; max-width: 720px; }
+.machine-pick span, .machine-form label > span { color: var(--muted-foreground); font-size: 13px; }
+.machine-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.machine-confirm { border: 1px solid var(--primary); border-radius: 8px; padding: 10px 14px; display: grid; gap: 6px; }
+.machine-confirm ul, .machine-commands { margin: 0; padding-left: 18px; font-size: 13px; }
+.machine-commands li { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.machine-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 12px; align-items: end; }
+.machine-form label { display: grid; gap: 4px; }
+.machine-form label.wide { grid-column: span 2; }
+.machine-cases { grid-column: span 2; display: flex; flex-wrap: wrap; gap: 4px 16px; border: 0; margin: 0; padding: 0; }
+.machine-cases legend { color: var(--muted-foreground); font-size: 13px; padding: 0; margin-bottom: 4px; }
+.machine-cases label { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
+@media (max-width: 1100px) { .machine-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (pointer: coarse) { .machine-table th, .machine-table td { height: 40px; } }
+
+/* Команды станку вверху карточки ОБ.019 (Ob019Controls.tsx): большой «Стоп», подтверждение «руки убраны». */
+.machine-controls { display: grid; gap: 8px; }
+.machine-controls-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.machine-controls-bar button { min-height: 40px; min-width: 112px; }
+button.machine-stop { min-width: 160px; min-height: 48px; font-size: 18px; font-weight: 600; letter-spacing: 0.02em; }
+.machine-controls-note { color: var(--muted-foreground); font-size: 13px; }
+.machine-command-now { font-weight: 500; }
+.machine-confirm-command { border-color: var(--tone-warn); padding: 12px 16px; gap: 8px; }
+.machine-confirm-command p { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin: 0; }
+.machine-confirm-command p > strong { font-size: 16px; }
+.machine-confirm-check { display: flex; align-items: center; gap: 8px; font-weight: 500; min-height: 40px; }
+.machine-confirm-check input { width: 20px; height: 20px; }
+.machine-confirm-command .machine-actions button { min-height: 40px; }

@@ -7,9 +7,11 @@ param(
     [string]$LogPath = 'D:\fraxis-mb\bridge.log',
     [int]$PollMs = 2000,
     [int]$HeartbeatSec = 5,
+    [int]$SettingsSec = 10,
     [switch]$Once
 )
-# ERP bridge of OB.019 (ERP_NEXT, section "Stanki", slice 1): READ ONLY.
+# ERP bridge of OB.019 (ERP_NEXT, section "Stanki", slices 1 and 4): READ ONLY. Writes ERP asks for are made by the
+# separate command runner ob019-writer.ps1, never by this script.
 # Reads an allow-list of PLC registers through the local Modbus service mbd.ps1 (127.0.0.1:5020, the only COM8 owner)
 # and reports them to ERP outbound: POST /api/production/machines/agent/report, API token with scope machine:report.
 # Sends a snapshot when something changed or every $HeartbeatSec seconds; ERP shows "no link" after ~10 s of silence.
@@ -22,22 +24,32 @@ param(
 # (it writes the HMI context D730 and the date D1087..D1089 first), "write" and "pulse" move the machine.
 # The file is ASCII on purpose (PowerShell 2 reads BOM-less files in the ANSI code page).
 $ErrorActionPreference = 'Stop'
-$script:BridgeVersion = '1.0.0'
+$script:BridgeVersion = '1.1.0'
 $script:Proto = 1
 # OB.019 in Cyrillic, built from code points to keep this file ASCII.
 $script:Inventory = [string][char]0x041E + [string][char]0x0411 + '.019'
-# Register ranges read each cycle: @(first address, count). As few requests as possible: mbd opens COM8 for each one,
-# and while it holds the port the vendor HMI cannot start. Words outside OB019_ALLOWED of
-# backend/app/modules/production/machines.py are read (FC3 has no side effects) but never sent (ERP refuses them, 422).
+# Register ranges: @(first address, count). As few requests as possible: mbd opens COM8 for each one, and while it
+# holds the port the vendor HMI cannot start. $script:Ranges are read every cycle (state, job, counters, wire),
+# $script:SlowRanges (the other HMI pages: middle strip, slitting, coiling, marking, speeds) every $SettingsSec seconds
+# and sent from the last reading in between. Words outside OB019_ALLOWED of backend/app/modules/production/machines.py
+# are read (FC3 has no side effects) but never sent (ERP refuses them, 422).
 $script:Ranges = @(
-    @(20, 24),    # D20 mode, D22..D27 total set / order qty / batch, D32..D43 wire parameters
+    @(20, 62),    # D20 mode, D22..D28 job, D32..D53 wire and inner layer, D60..D74 clamp gaps and slitting
     @(641, 10),   # D641 UPH, D643 order done, D645 batch done, D649 total done
     @(711, 72),   # D711.0 order lamp, D766 machine state, D782 alarm
-    @(940, 30),   # D940..D969 order number, product name
+    @(938, 32),   # D938 order row, D940..D969 order number, product name
     @(1280, 1)    # D1280 program
 )
+$script:SlowRanges = @(
+    @(100, 43),   # D100..D123 speeds, D132 middle strip, D133/D142 slitting switches
+    @(197, 85),   # D197..D281 middle strip corrections and tables
+    @(390, 95),   # D390..D395 coiling, D400..D484 marking and its texts
+    @(1703, 51)   # D1703/D1705 slitting die, D1722 marking drop, D1750..D1753 coiling limits
+)
 $script:Allowed = @{}
-foreach ($a in @(20) + (22..27) + (32..43) + (641..646) + (649..650) + @(711, 766, 782) + (940..969) + @(1280)) { $script:Allowed[[int]$a] = $true }
+foreach ($a in @(20, 74, 142, 197, 711, 766, 782, 1280) + (22..28) + (32..53) + (60..61) + (67..72) + (100..104) + (120..123) + (132..133) + (199..231) + (250..281) + (390..395) + (400..402) + (404..415) + (421..423) + (430..432) + (434..436) + (440..484) + (641..646) + (649..650) + (938..969) + (1703..1705) + (1722..1723) + (1750..1753)) { $script:Allowed[[int]$a] = $true }
+$script:SlowWords = @{}
+$script:SlowAt = [datetime]::MinValue
 $script:ReadOnlyCommands = @('read')
 $script:ServiceVersion = ''
 
@@ -125,23 +137,36 @@ function Get-LinkState([string]$Message) {
     return 'no_service'
 }
 
+function Read-Ranges($Ranges, $Words) {
+    foreach ($range in $Ranges) {
+        $values = Read-Range $range[0] $range[1]
+        if ($values.Count -ne $range[1]) { throw (New-Object System.InvalidOperationException ('mbd: short reply reading D' + $range[0])) }
+        for ($i = 0; $i -lt $range[1]; $i++) {
+            $address = $range[0] + $i
+            if ($script:Allowed.ContainsKey($address)) { $Words[[string]$address] = [int]$values[$i] }
+        }
+    }
+}
+
 function Read-Snapshot {
     $words = @{}
     try {
-        foreach ($range in $script:Ranges) {
-            $values = Read-Range $range[0] $range[1]
-            if ($values.Count -ne $range[1]) { throw (New-Object System.InvalidOperationException ('mbd: short reply reading D' + $range[0])) }
-            for ($i = 0; $i -lt $range[1]; $i++) {
-                $address = $range[0] + $i
-                if ($script:Allowed.ContainsKey($address)) { $words[[string]$address] = [int]$values[$i] }
-            }
+        Read-Ranges $script:Ranges $words
+        if ($script:SlowWords.Count -eq 0 -or ((Get-Date) - $script:SlowAt).TotalSeconds -ge $SettingsSec) {
+            $slow = @{}
+            Read-Ranges $script:SlowRanges $slow
+            $script:SlowWords = $slow; $script:SlowAt = Get-Date
         }
+        foreach ($key in $script:SlowWords.Keys) { $words[$key] = $script:SlowWords[$key] }
         return @{ link = 'ok'; error = ''; registers = $words }
     } catch [System.InvalidOperationException] {
-        # mbd answered with an error: the bus is busy, the client is refused or the PLC is silent.
+        # mbd answered with an error: the bus is busy, the client is refused or the PLC is silent. The vendor HMI may
+        # change settings meanwhile, so the next good cycle reads the slow pages again.
+        $script:SlowWords = @{}
         return @{ link = (Get-LinkState $_.Exception.Message); error = $_.Exception.Message; registers = @{} }
     } catch {
         # No answer from mbd at all (not running, not listening on this address, connection dropped).
+        $script:SlowWords = @{}
         return @{ link = 'no_service'; error = $_.Exception.Message; registers = @{} }
     }
 }
