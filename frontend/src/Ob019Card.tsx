@@ -3,10 +3,11 @@ import { PageWindow } from "./PageWindow";
 import { EMPTY, formatMoment, formatNumber } from "./format";
 import { machinesApi, usePolled, type MachineCard, type Ob019Live, type Tone } from "./machinesApi";
 import { Ob099CardView } from "./Ob099Card";
+import { Ob019Controls } from "./Ob019Controls";
 import { Ob019SettingsPanel } from "./Ob019SettingsPanel";
 
-/** Живая карточка ОБ.019 (линия резки и зачистки с лазерной маркировкой): состояние ПЛК, задание и счётчики,
- *  параметры провода — только чтение, опрос раз в 3 с, пока окно открыто и вкладка видна. */
+/** Живая карточка ОБ.019 (линия резки и зачистки с лазерной маркировкой): команды станку (Ob019Controls.tsx), состояние
+ *  ПЛК, задание и счётчики, параметры провода, настройки (Ob019SettingsPanel.tsx); опрос раз в 3 с, пока окно открыто. */
 
 type Fact = [label: string, value: string, tone?: Tone];
 
@@ -112,7 +113,10 @@ export function Ob019Card({ equipmentId, title, close }: { equipmentId: string; 
       </header>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {!data && !error && <p className="empty">Загрузка…</p>}
-      {data && (data.kind === "ob099_fins" ? <Ob099CardView card={data} /> : <Ob019CardView card={data} />)}
+      {data && (data.kind === "ob099_fins" ? <Ob099CardView card={data} /> : <>
+        <Ob019Controls card={data} />
+        <Ob019CardView card={data} />
+      </>)}
     </section>
   </PageWindow>;
 }

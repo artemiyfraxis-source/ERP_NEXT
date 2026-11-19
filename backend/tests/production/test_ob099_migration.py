@@ -6,7 +6,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 
-REVISION = "0197_ob099_crimp_records"
+REVISION = "0198_ob099_crimp_records"
 LINK = ("INSERT INTO production_machine_links (equipment_id, inventory_number, kind, token_id, machine_id, bound_at,"
         " version) VALUES (?, ?, ?, ?, ?, '2026-11-18 10:00:00', 1)")
 CRIMP = ("INSERT INTO production_crimp_records (id, equipment_id, source_key, crimped_at, result, peak, received_at)"

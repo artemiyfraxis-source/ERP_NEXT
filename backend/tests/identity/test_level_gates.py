@@ -158,7 +158,7 @@ def test_level_sections_are_the_old_ones_without_staffdir_plus_the_split_section
     # «Кадры» (`hr`, 0089), «Сканирование документов» / «Печать документов» (`scan`, `print`, 0159), «Отгрузка без
     # УПД — разрешение» (`ship_no_upd`, 0162) came after the transfer: the matrix offers them, the transfer never saw them.
     assert set(LEVEL_SECTION_LABELS) == (set(OLD_SECTIONS) - {"staffdir"}) | {
-        "myops", "quality", "shipping_goods", "hr", "scan", "print", "ship_no_upd"}
+        "myops", "quality", "shipping_goods", "hr", "scan", "print", "ship_no_upd", "machine_control"}
     # "admin" stays full only as the «Режим админа» session level; it is no level a person holds (14.10.2026).
     assert domain.FULL_ACCESS_LEVELS == {"superadmin", domain.ADMIN_MODE_LEVEL} == {"superadmin", "admin"}
     assert domain.LEVEL_LABELS == {
