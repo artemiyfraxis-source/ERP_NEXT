@@ -346,11 +346,13 @@ def decode_ob019(words: dict[int, int]) -> dict:
 # appendix «Все элементы PXS_HMI»), in the order of the vendor panel: Задание, Провод и зачистка, Средняя зачистка,
 # Разделение жил, Намотка, Маркировка, Скорости (the last one is the speed block of the HMI page «Функции»). Labels are
 # Russian renderings of the HMI captions (the Chinese caption decides where the English one is a copy-paste); a field
-# the map gives no meaning for is «Параметр D<n> (назначение не установлено)» and is never written.
+# the map gives no meaning for is «Параметр D<n> (назначение не установлено)» and is never written. D421.0 «Передача
+# символов» is read only: the order transfer of PXS_HMI uses it (map §6, open question 8) until a sniffer shows how.
 # `key`: ERP may write it from the card — the job, mode and quantities, the wire and strip lengths (slice 4, owner 19.11)
 # and every named input of the five other pages (on-screen-keyboard inputs and switches of the HMI). The limits are the
-# HMI's own input ranges (`minimum`/`maximum` in the field's units). A `bit0` switch is the low bit of its word; ERP
-# writes the whole word from the last snapshot with only bit 0 changed (the HMI reads, changes the bit, writes the word).
+# HMI's own input ranges (`minimum`/`maximum` in the field's units). A `bit0` switch is the low bit of its word: ERP
+# sends only the intent (address, bit, 0/1) and mbd.ps1 reads the word and writes it back with that bit changed in one
+# request (`setbit`, as the HMI does), so no other bit of the word is ever written from an old snapshot.
 # Never writable (test): passwords D1682..D1687, the SHA-256 handshake D1203..D1211, the command bits D599/D600, the HMI
 # page D730 and the date D1087..D1089 — mbd.ps1 writes the last ones itself for a held command, never on request.
 @dataclass(frozen=True)
@@ -457,7 +459,7 @@ OB019_SETTINGS: tuple[tuple[str, tuple[SettingField, ...]], ...] = (
         _f("Расстояние до головки", 401, "u32", MM, "мм", key="mark_head_mm", maximum="9999.99"),
         _f("Удержание сигнала печати", 404, "u16", SEC, "с", key="mark_hold_s", maximum="9.999"),
         _f("Скорость роликов при печати", 415, "u16", key="mark_roll_speed", maximum="99"),
-        _f("Передача текста в маркиратор", 421, "bit0", key="mark_send"),
+        _f("Передача текста в маркиратор", 421, "bit0"),
         _f("Ширина символа", 423, "u16", MM, "мм", key="mark_char_mm", maximum="99.99"),
         _f("Размер шрифта", 430, "i16", key="mark_font", minimum="1", maximum="6"),
         _f("Жирность", 431, "i16", key="mark_bold", minimum="1", maximum="9"),
@@ -495,6 +497,14 @@ TEXT_CHARS = 30
 
 def field_words(field: SettingField) -> range:
     return range(field.address, field.address + _WORDS[field.kind])
+
+
+# What a write command may set (mirrors ob019-writer.ps1 $Writable / $WritableBits and mbd.ps1 allowedWrite /
+# allowedBits; a backend test compares them): whole words of the numbers and texts, single bits of the switches.
+OB019_WRITTEN_WORDS: frozenset[int] = frozenset(
+    address for field in OB019_FIELDS.values() if field.kind != "bit0" for address in field_words(field))
+OB019_WRITTEN_BITS: frozenset[tuple[int, int]] = frozenset(
+    (field.address, 0) for field in OB019_FIELDS.values() if field.kind == "bit0")
 
 
 # What the bridge reads and sends (Dn = holding register n): the state words and every setting above. Mirrors
@@ -562,10 +572,11 @@ SWITCH_ON = {"1", "true", "вкл", "on"}
 SWITCH_OFF = {"0", "false", "выкл", "off"}
 
 
-def encode_field(key: str, value: object, words: dict[int, int] | None = None) -> tuple[SettingField, list[int], object]:
+def encode_field(key: str, value: object) -> tuple[SettingField, list[int], object]:
     """A value for the machine → the words of its registers: 32-bit low word first, signed values in two's complement;
     a text is ASCII, two characters a word, high byte first, the tail filled with zeros so no rest of an old text
-    survives; a switch is its word from the last snapshot `words` with bit 0 set or cleared. → (field, words, value)."""
+    survives. A switch gives [1] or [0]: the value of its bit 0, written by mbd's `setbit`, never as a word.
+    → (field, words, value)."""
     field = OB019_FIELDS.get(key)
     if field is None:
         raise MachineWriteInvalid("Этот параметр ERP на станок не записывает")
@@ -573,11 +584,8 @@ def encode_field(key: str, value: object, words: dict[int, int] | None = None) -
         text = str(value).strip().lower() if value is not None else ""
         if text not in SWITCH_ON | SWITCH_OFF:
             raise MachineWriteInvalid(f"{field.label}: «Вкл» или «Выкл»")
-        current = (words or {}).get(field.address)
-        if current is None:
-            raise MachineWriteInvalid(f"{field.label}: агент станка ещё не прочитал этот переключатель")
         on = text in SWITCH_ON
-        return field, [(current & ~1 & WORD_MAX) | int(on)], on
+        return field, [int(on)], on
     if field.kind == "text15":
         text = " ".join(str(value or "").split())
         if len(text) > TEXT_CHARS:

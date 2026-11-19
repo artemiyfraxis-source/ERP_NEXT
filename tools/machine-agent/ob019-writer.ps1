@@ -11,11 +11,16 @@ param(
 )
 # ERP command runner of OB.019 (ERP_NEXT, section "Stanki", slice 4): writes the parameters ERP asks for.
 # Pull transport like the bridge: POST /api/production/machines/agent/writes/next (the bridge's token, scope
-# machine:report, the same PC binding) -> one command {id, blocks: [{addr, values}], states}; the runner
+# machine:report, the same PC binding) -> one command {id, blocks: [{addr, values}], bits: [{addr, bit, value}],
+# states}; the runner
+#   0. asks mbd its version ("version", no bus) and refuses the whole command unless it is $script:MbdMinVersion or
+#      newer: an old mbd has no "setbit" and a wider "write" list, so a new runner never writes part of a command;
 #   1. reads D766 and refuses unless the machine is idle (102 ready / 107 total finished);
 #   2. writes each block through the local Modbus service mbd.ps1 ("write" = FC16 + read-back; mbd itself refuses
-#      while PXS_HMI holds COM8 and checks its own write allow-list);
-#   3. reports the words it read back: POST .../agent/writes/{id}/result. ERP compares them with what it asked.
+#      while PXS_HMI holds COM8 and checks its own write allow-list), then each switch bit ("setbit" = read the word,
+#      change that bit only, write it back, read back - in one mbd request);
+#   3. reports the words it read back: POST .../agent/writes/{id}/result. ERP compares them with what it asked
+#      (for a switch only its bit).
 # Only the registers of $script:Writable (ERP's writable fields, backend production/machines.py OB019_FIELDS) are ever
 # written. Same runtime as the bridge: Windows 7, PowerShell 2.0, ASCII file. The bridge's helpers are dot-sourced.
 #
@@ -40,13 +45,17 @@ $script:Controls = @{
     reset = @{ addr = 600; bit = 1; states = @(100, 105, 107) }
     alarm_clear = @{ addr = 600; bit = 4; states = @() }
 }
-# D20 mode, D22..D28 job and quantities, D32..D43 wire and strip lengths, D940..D969 order number and product; the
-# other HMI pages (1.2.0): middle strip D132/D197/D199, slitting D67..D74/D1703..D1705, coiling D391..D395/D1750..D1753
-# (D390 not: its meaning is not established), marking D400..D436/D1722 and its texts D440..D484, speeds D100..D104/
-# D120..D123. Mirrors the writable fields of OB019_FIELDS and mbd.ps1 $script:allowedWrite (a backend test compares the
-# three). Never: passwords D1682..D1687, SHA-256 D1203..D1211, command bits D599/D600, D730, date D1087..D1089.
+# Words: D20 mode, D22..D28 job and quantities, D32..D43 wire and strip lengths, D940..D969 order number and product;
+# the other HMI pages (1.2.0): middle strip D197/D199, slitting D67..D74/D1703..D1705, coiling D391..D395/D1750..D1753,
+# marking D401..D432 numbers, D1722 and the texts D440..D484, speeds D100..D104/D120..D123. Switch bits (setbit only,
+# never a whole word): middle strip D132.0, marking D400.0, D422.0, D434.0..D436.0. Not: D390/D133/D142 (meaning not
+# established), D421 (order transfer handshake, map open question 8). Mirrors OB019_WRITTEN_WORDS / _BITS of backend
+# production/machines.py and mbd.ps1 allowedWrite / allowedBits (a backend test compares the three). Never: passwords
+# D1682..D1687, SHA-256 D1203..D1211, command bits D599/D600, D730, date D1087..D1089.
+$script:MbdMinVersion = '1.2.0'
 $script:Writable = @{}
-foreach ($a in @(20, 74, 132, 197, 199) + (22..28) + (32..43) + (67..72) + (100..104) + (120..123) + (391..395) + (400..402) + (404..415) + (421..423) + (430..432) + (434..436) + (440..484) + (940..969) + (1703..1705) + (1722..1723) + (1750..1753)) { $script:Writable[[int]$a] = $true }
+foreach ($a in @(20, 74, 197, 199, 423) + (22..28) + (32..43) + (67..72) + (100..104) + (120..123) + (391..395) + (401..402) + (404..415) + (430..432) + (440..484) + (940..969) + (1703..1705) + (1722..1723) + (1750..1753)) { $script:Writable[[int]$a] = $true }
+$script:WritableBits = @{ 132 = @(0); 400 = @(0); 422 = @(0); 434 = @(0); 435 = @(0); 436 = @(0) }
 
 function Test-BlockWritable($Block) {
     $first = [int]$Block['addr']; $values = @($Block['values'])
@@ -59,10 +68,30 @@ function Test-BlockWritable($Block) {
     return $true
 }
 
+function Test-BitWritable($Bit) {
+    $a = [int]$Bit['addr']; $b = [int]$Bit['bit']; $v = [int]$Bit['value']
+    if ($v -ne 0 -and $v -ne 1) { return $false }
+    return ($script:WritableBits.ContainsKey($a) -and ($script:WritableBits[$a] -contains $b))
+}
+
+# mbd's version ("version" needs no bus), '' when mbd does not know the command (before 1.2.0).
+function Get-MbdVersion {
+    $reply = $script:Json.DeserializeObject((Invoke-MbdLine (ConvertTo-JsonLite @{ cmd = 'version' })))
+    if (-not $reply['ok']) { return '' }
+    return [string]$reply['result']['version']
+}
+
+function Test-MbdCurrent([string]$Version) {
+    if (-not $Version) { return $false }
+    try { return ([version]$Version) -ge ([version]$script:MbdMinVersion) } catch { return $false }
+}
+
 # One command -> @{ ok; readback = @{ "addr" = word }; error }. Never throws.
 function Invoke-MachineCommand($Command) {
     $readback = @{}
     try {
+        $version = Get-MbdVersion
+        if (-not (Test-MbdCurrent $version)) { return @{ ok = $false; readback = $readback; error = ('mbd outdated: ' + $(if ($version) { $version } else { 'no version' }) + ', need ' + $script:MbdMinVersion) } }
         $states = @($Command['states'] | ForEach-Object { [int]$_ })
         $state = [int](Read-Range 766 1)[0]
         if ($states -notcontains $state) { return @{ ok = $false; readback = $readback; error = ('state ' + $state) } }
@@ -70,12 +99,22 @@ function Invoke-MachineCommand($Command) {
         foreach ($block in $blocks) {
             if (-not (Test-BlockWritable $block)) { return @{ ok = $false; readback = $readback; error = ('refused: D' + $block['addr'] + ' is not writable') } }
         }
+        $bits = @($Command['bits'] | Where-Object { $_ -ne $null })
+        foreach ($bit in $bits) {
+            if (-not (Test-BitWritable $bit)) { return @{ ok = $false; readback = $readback; error = ('refused: D' + $bit['addr'] + '.' + $bit['bit'] + ' is not writable') } }
+        }
         foreach ($block in $blocks) {
             $values = [int[]]@($block['values'] | ForEach-Object { [int]$_ })
             $reply = $script:Json.DeserializeObject((Invoke-MbdLine (ConvertTo-JsonLite @{ cmd = 'write'; addr = [int]$block['addr']; values = $values })))
             if (-not $reply['ok']) { return @{ ok = $false; readback = $readback; error = [string]$reply['error'] } }
             $read = @($reply['result']['readback'])
             for ($i = 0; $i -lt $read.Count; $i++) { $readback[[string]([int]$block['addr'] + $i)] = [int]$read[$i] }
+        }
+        foreach ($bit in $bits) {
+            $line = ConvertTo-JsonLite @{ cmd = 'setbit'; addr = [int]$bit['addr']; bit = [int]$bit['bit']; value = [int]$bit['value'] }
+            $reply = $script:Json.DeserializeObject((Invoke-MbdLine $line))
+            if (-not $reply['ok']) { return @{ ok = $false; readback = $readback; error = [string]$reply['error'] } }
+            $readback[[string]([int]$bit['addr'])] = [int](@($reply['result']['readback'])[0])
         }
         return @{ ok = $true; readback = $readback; error = '' }
     } catch {

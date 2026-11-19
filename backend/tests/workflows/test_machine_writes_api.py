@@ -64,14 +64,14 @@ def test_encoding_texts_zero_filled_ascii_lengths_in_hundredths():
 
 
 def test_encoding_of_the_other_hmi_pages_switches_signed_and_limits():
-    # A switch keeps the other bits of its word from the snapshot; without a snapshot word it is not written.
-    field, words, value = rules.encode_field("marking", "Вкл", {400: 0b1010})
-    assert field.address == 400 and words == [0b1011] and value is True
-    assert rules.encode_field("middle_strip", "0", {132: 0xFFFF})[1] == [0xFFFE]
-    with pytest.raises(rules.MachineWriteInvalid, match="ещё не прочитал"):
-        rules.encode_field("marking", "1", {})
+    # A switch is only the intent for its bit; the word is read and written back on the PC (mbd `setbit`).
+    field, words, value = rules.encode_field("marking", "Вкл")
+    assert field.address == 400 and words == [1] and value is True
+    assert rules.encode_field("middle_strip", "0")[1] == [0]
     with pytest.raises(rules.MachineWriteInvalid, match="Вкл"):
-        rules.encode_field("marking", "да", {400: 0})
+        rules.encode_field("marking", "да")
+    with pytest.raises(rules.MachineWriteInvalid, match="не записывает"):
+        rules.encode_field("mark_send", "1")  # D421: order transfer handshake, map open question 8
     assert rules.encode_field("middle_end_fix_mm", "-0,5")[1] == [0x10000 - 50]
     assert rules.encode_field("coil_speed_fix", "-9999")[1] == [0x10000 - 9999]
     assert rules.encode_field("split_front_mm", "12,5")[1] == [1250, 0]
@@ -84,11 +84,14 @@ def test_encoding_of_the_other_hmi_pages_switches_signed_and_limits():
             rules.encode_field(key, value)
 
 
-def test_one_register_is_written_by_one_field():
+def test_switches_go_as_bits_and_one_register_is_written_by_one_field():
     with pytest.raises(rules.MachineWriteInvalid, match="D103"):
         commands.plan_writes([commands.FieldWrite("coil_speed", "5"), commands.FieldWrite("speed_clamp_front", "6")], {})
-    blocks, shown = commands.plan_writes([commands.FieldWrite("marking", "1")], {400: 0})
-    assert blocks == [{"addr": 400, "values": [1]}] and shown[0]["before"] == "Выкл" and shown[0]["after"] == "Вкл"
+    blocks, bits, shown = commands.plan_writes(
+        [commands.FieldWrite("marking", "1"), commands.FieldWrite("mark_step_mm", "10")], {400: 0b1010})
+    assert blocks == [{"addr": 409, "values": [1000, 0]}]
+    assert bits == [{"addr": 400, "bit": 0, "value": 1}]  # no word from the snapshot goes to the machine
+    assert shown[0]["before"] == "Выкл" and shown[0]["after"] == "Вкл"
 
 
 def test_unknown_registers_are_labelled_and_never_written():
@@ -120,18 +123,50 @@ def _mbd_writable() -> set[int]:
             for address in range(int(low), int(high) + 1)}
 
 
-def test_erp_the_runner_and_mbd_write_exactly_the_same_registers():
-    erp = {address for field in rules.OB019_FIELDS.values() for address in rules.field_words(field)}
-    assert _runner_writable() == erp
-    assert _mbd_writable() == erp
+def _bits(path: str, prefix: str) -> set[tuple[int, int]]:
+    source = (ROOT / path).read_text(encoding="utf-8-sig")
+    line = next(row for row in source.splitlines() if row.startswith(prefix))
+    return {(int(address), int(bit)) for address, group in re.findall(r"(\d+) = @\(([\d, ]+)\)", line)
+            for bit in group.split(",")}
 
 
-def test_passwords_sha_command_bits_page_and_date_are_never_writable():
-    erp = {address for field in rules.OB019_FIELDS.values() for address in rules.field_words(field)}
+def test_erp_the_runner_and_mbd_write_exactly_the_same_registers_and_bits():
+    assert rules.OB019_WRITTEN_WORDS | {address for address, _bit in rules.OB019_WRITTEN_BITS} == {
+        address for field in rules.OB019_FIELDS.values() for address in rules.field_words(field)}
+    assert _runner_writable() == rules.OB019_WRITTEN_WORDS
+    assert _mbd_writable() == rules.OB019_WRITTEN_WORDS
+    assert rules.OB019_WRITTEN_BITS == {(132, 0), (400, 0), (422, 0), (434, 0), (435, 0), (436, 0)}
+    assert _bits("ob019-writer.ps1", "$script:WritableBits") == rules.OB019_WRITTEN_BITS
+    assert _bits("mbd.ps1", "$script:allowedBits") == rules.OB019_WRITTEN_BITS
+    # A switch word is never written whole.
+    assert not {address for address, _bit in rules.OB019_WRITTEN_BITS} & (_runner_writable() | _mbd_writable())
+
+
+def test_passwords_sha_command_bits_page_date_and_order_handshake_are_never_writable():
     denied = set(range(1682, 1688)) | set(range(1203, 1212)) | {599, 600, 730} | set(range(1087, 1090))
     assert rules.OB019_NEVER_WRITTEN == denied
-    for name, allowed in (("ERP", erp), ("ob019-writer.ps1", _runner_writable()), ("mbd.ps1", _mbd_writable())):
-        assert not allowed & denied, f"{name} may write {sorted(allowed & denied)}"
+    erp = {address for field in rules.OB019_FIELDS.values() for address in rules.field_words(field)}
+    for name, allowed in (("ERP", erp), ("ob019-writer.ps1", _runner_writable()), ("mbd.ps1", _mbd_writable()),
+                          ("writer bits", {a for a, _ in _bits("ob019-writer.ps1", "$script:WritableBits")}),
+                          ("mbd bits", {a for a, _ in _bits("mbd.ps1", "$script:allowedBits")})):
+        assert not allowed & (denied | {421}), f"{name} may write {sorted(allowed & (denied | {421}))}"
+
+
+def test_a_switch_is_claimed_as_a_bit_and_confirmed_by_its_bit_only(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    bridge = _bridge(admin)
+    _report(bridge)
+    command_id = _post(admin, CARD + "/write", {"values": {"marking": "1"}}).json()["id"]
+    claimed = TestClient(app).post(NEXT, headers=bridge, json=AGENT).json()["command"]
+    assert claimed["blocks"] == [] and claimed["bits"] == [{"addr": 400, "bit": 0, "value": 1}]
+    assert _result(bridge, command_id, {"400": 0x0A0B}).json() == {"status": "done", "error": ""}
+    second = _post(admin, CARD + "/write", {"values": {"marking": "0"}}).json()["id"]
+    TestClient(app).post(NEXT, headers=bridge, json=AGENT)
+    assert _result(bridge, second, {"400": 0x0A0B}).json() == {"status": "failed", "error": "Станок не принял: D400.0"}
+    third = _post(admin, CARD + "/write", {"values": {"marking": "0"}}).json()["id"]
+    TestClient(app).post(NEXT, headers=bridge, json=AGENT)
+    old = _result(bridge, third, {}, ok=False, error="mbd outdated: no version, need 1.2.0").json()
+    assert old == {"status": "failed", "error": "Служба обмена со станком устарела — обновите"}
 
 
 def test_card_write_is_queued_claimed_written_and_confirmed_by_read_back(machines_api):

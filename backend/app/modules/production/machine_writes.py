@@ -103,7 +103,8 @@ class MachineWriteRow(Base):
     # Machine command of purpose `control` (stop / reset / start / alarm_clear); NULL for parameter writes.
     command: Mapped[str | None] = mapped_column(String(16), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
-    # {"blocks": [{"addr": 32, "values": [32500, 0]}], "fields": [{"key", "label", "before", "after", "unit"}]}
+    # {"blocks": [{"addr": 32, "values": [32500, 0]}], "bits": [{"addr": 400, "bit": 0, "value": 1}],
+    #  "fields": [{"key", "label", "before", "after", "unit"}]} — "bits" (switches, mbd `setbit`) since 19.11.2026.
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     summary: Mapped[str] = mapped_column(String(500), nullable=False)
     created_by: Mapped[UUID] = mapped_column(Uuid, nullable=False)
@@ -153,20 +154,29 @@ def _plain(value: object) -> str:
     return "" if value is None else str(value)
 
 
-def plan_writes(writes: list[FieldWrite], words: dict[int, int]) -> tuple[list[dict], list[dict]]:
-    """Field values → contiguous register blocks (one bus write each) and the shown before → after of every field."""
+def plan_writes(writes: list[FieldWrite], words: dict[int, int]) -> tuple[list[dict], list[dict], list[dict]]:
+    """Field values → contiguous register blocks (one bus write each), switch bits (one read-modify-write each on the
+    PC — the intent only, never a word from the snapshot) and the shown before → after of every field.
+    → (blocks, bits, shown)."""
     if not writes:
         raise rules.MachineWriteInvalid("Нечего записывать")
     seen: set[str] = set()
     targets: dict[int, int] = {}
+    bits: list[dict] = []
     shown = []
     for item in writes:
         if item.key in seen:
             raise rules.MachineWriteInvalid("Параметр указан дважды")
         seen.add(item.key)
-        field, values, value = rules.encode_field(item.key, item.value, words)
+        field, values, value = rules.encode_field(item.key, item.value)
+        if field.kind == "bit0":
+            if any(bit["addr"] == field.address for bit in bits) or field.address in targets:
+                raise rules.MachineWriteInvalid(f"{field.label}: этот регистр (D{field.address}) уже записывается "
+                                                "другим параметром — оставьте один")
+            bits.append({"addr": field.address, "bit": 0, "value": values[0]})
+            values = []
         for offset, word in enumerate(values):
-            if field.address + offset in targets:  # D103: «Скорость намотки» and «Передний прижим» are one register
+            if field.address + offset in targets or any(bit["addr"] == field.address + offset for bit in bits):  # D103: «Скорость намотки» and «Передний прижим» are one register
                 raise rules.MachineWriteInvalid(f"{field.label}: этот регистр (D{field.address + offset}) уже "
                                                 "записывается другим параметром — оставьте один")
             targets[field.address + offset] = word
@@ -179,7 +189,7 @@ def plan_writes(writes: list[FieldWrite], words: dict[int, int]) -> tuple[list[d
             blocks[-1]["values"].append(targets[address])
         else:
             blocks.append({"addr": address, "values": [targets[address]]})
-    return blocks, shown
+    return blocks, sorted(bits, key=lambda bit: bit["addr"]), shown
 
 
 def _expire(session: Session, equipment_id: UUID, now: datetime) -> list[MachineWriteRow]:
@@ -230,13 +240,13 @@ def enqueue(session: Session, *, equipment_id: UUID, purpose: str, writes: list[
     problem = idle_problem(link, snapshot, now)
     if problem:
         raise MachineCommandRefused(problem)
-    blocks, shown = plan_writes(writes, rules.snapshot_words(snapshot))
+    blocks, bits, shown = plan_writes(writes, rules.snapshot_words(snapshot))
     expired = _expire(session, equipment_id, now)
     if session.scalar(select(MachineWriteRow.id).where(MachineWriteRow.equipment_id == equipment_id,
                                                          MachineWriteRow.status.in_(OPEN))) is not None:
         raise MachineCommandRefused("На станок уже идёт запись — дождитесь её результата")
     row = MachineWriteRow(id=uuid4(), equipment_id=equipment_id, purpose=purpose, status="queued",
-                            payload={"blocks": blocks, "fields": shown}, summary=" ".join(summary.split())[:500],
+                            payload={"blocks": blocks, "bits": bits, "fields": shown}, summary=" ".join(summary.split())[:500],
                             created_by=actor_id, created_by_name=actor_name[:200], created_at=now)
     try:
         with session.begin_nested():
@@ -270,6 +280,10 @@ def expected_words(row: MachineWriteRow) -> dict[int, int]:
             for offset, word in enumerate(block["values"])}
 
 
+def expected_bits(row: MachineWriteRow) -> list[dict]:
+    return list(row.payload.get("bits") or [])
+
+
 def finish(session: Session, *, equipment_id: UUID, command_id: UUID, ok: bool, readback: dict, error: str,
            now: datetime) -> MachineWriteRow:
     """The runner's report. Done only when every written register reads back as asked."""
@@ -287,8 +301,13 @@ def finish(session: Session, *, equipment_id: UUID, command_id: UUID, ok: bool, 
         if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= rules.WORD_MAX:
             read[address] = value
     expected = expected_words(row)
-    differ = sorted(address for address, word in expected.items() if read.get(address) != word)
-    row.readback = {str(address): word for address, word in sorted(read.items()) if address in expected}
+    switches = expected_bits(row)
+    differ = [f"D{address}" for address in sorted(address for address, word in expected.items()
+                                                  if read.get(address) != word)]
+    differ += [f"D{bit['addr']}.{bit['bit']}" for bit in switches if bit["addr"] not in read
+               or (read[bit["addr"]] >> int(bit["bit"])) & 1 != int(bit["value"])]
+    kept = set(expected) | {int(bit["addr"]) for bit in switches}
+    row.readback = {str(address): word for address, word in sorted(read.items()) if address in kept}
     row.finished_at = now
     if ok and not differ:
         row.status, row.error = "done", ""
@@ -297,10 +316,12 @@ def finish(session: Session, *, equipment_id: UUID, command_id: UUID, ok: bool, 
         reason = " ".join(str(error or "").split())
         if "busy" in reason or "PXS_HMI" in reason:
             reason = "Пульт PXS_HMI открыт — порт занят"
+        elif reason.startswith("mbd outdated"):
+            reason = "Служба обмена со станком устарела — обновите"
         elif reason.startswith("state "):
             reason = "Станок не в ожидании: " + reason.removeprefix("state ")
         if not reason and differ:
-            reason = "Станок не принял: " + ", ".join(f"D{address}" for address in differ[:8])
+            reason = "Станок не принял: " + ", ".join(differ[:8])
         row.error = (reason or "Запись не удалась")[:500]
     session.flush()
     return row

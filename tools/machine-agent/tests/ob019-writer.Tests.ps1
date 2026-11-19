@@ -7,12 +7,20 @@ $tmp = Join-Path ([IO.Path]::GetTempPath()) ('ob019c-' + [guid]::NewGuid())
 New-Item -ItemType Directory $tmp | Out-Null
 . (Join-Path $root 'ob019-writer.ps1') -LogPath (Join-Path $tmp 'commands.log') -MbdScript (Join-Path $root 'mbd.ps1') -BridgeScript (Join-Path $root 'ob019-bridge.ps1')
 
-function New-Command($Blocks, $States = @(102, 107)) {
-    return $script:Json.DeserializeObject((ConvertTo-JsonLite @{ id = 'c-1'; blocks = $Blocks; states = $States }))
+function New-Command($Blocks, $States = @(102, 107), $Bits = @()) {
+    return $script:Json.DeserializeObject((ConvertTo-JsonLite @{ id = 'c-1'; blocks = $Blocks; bits = $Bits; states = $States }))
 }
 
-function Reply-Mbd([string]$Line, [int]$State = 102) {
+function Reply-Mbd([string]$Line, [int]$State = 102, [string]$Version = '1.2.0') {
     $request = $script:Json.DeserializeObject($Line)
+    if ($request['cmd'] -eq 'version') {
+        if (-not $Version) { return '{"ok":false,"error":"unknown cmd version"}' }
+        return ConvertTo-JsonLite @{ ok = $true; result = @{ version = $Version } }
+    }
+    if ($request['cmd'] -eq 'setbit') {
+        $word = 0x0A0A -bor [int]$request['value']
+        return ConvertTo-JsonLite @{ ok = $true; result = @{ addr = [int]$request['addr']; bit = 0; value = [int]$request['value']; readback = @($word) } }
+    }
     if ($request['cmd'] -eq 'read') {
         return ConvertTo-JsonLite @{ ok = $true; result = @{ addr = [int]$request['addr']; values = @($State) } }
     }
@@ -28,14 +36,23 @@ Describe 'write allow-list' {
     }
     It 'accepts the other HMI pages: speeds, middle strip, slitting, coiling, marking' {
         Test-BlockWritable @{ addr = 100; values = @(5, 5, 5, 5, 5) } | Should Be $true
-        Test-BlockWritable @{ addr = 132; values = @(1) } | Should Be $true
         Test-BlockWritable @{ addr = 197; values = @(65486) } | Should Be $true
         Test-BlockWritable @{ addr = 1703; values = @(1250, 0, 300) } | Should Be $true
         Test-BlockWritable @{ addr = 1750; values = @(100, 900, 50, 999) } | Should Be $true
-        Test-BlockWritable @{ addr = 400; values = @(1, 500, 0) } | Should Be $true
+        Test-BlockWritable @{ addr = 401; values = @(500, 0) } | Should Be $true
+    }
+    It 'writes switches only as single bits, never as whole words' {
+        foreach ($a in @(132, 400, 422, 434, 435, 436)) {
+            Test-BlockWritable @{ addr = $a; values = @(1) } | Should Be $false
+            Test-BitWritable @{ addr = $a; bit = 0; value = 1 } | Should Be $true
+        }
+        foreach ($pair in @(@(421, 0), @(390, 0), @(133, 0), @(142, 0), @(599, 0), @(600, 1), @(400, 1))) {
+            Test-BitWritable @{ addr = $pair[0]; bit = $pair[1]; value = 1 } | Should Be $false
+        }
+        Test-BitWritable @{ addr = 400; bit = 0; value = 2 } | Should Be $false
     }
     It 'refuses commands, the HMI context, passwords, SHA, date, unknown registers and out-of-range words' {
-        foreach ($a in @(599, 600, 730, 1087, 1088, 1089, 1203, 1207, 1211, 1682, 1684, 1686, 390, 133, 142, 200, 44, 403)) {
+        foreach ($a in @(599, 600, 730, 1087, 1088, 1089, 1203, 1207, 1211, 1682, 1684, 1686, 390, 133, 142, 200, 44, 403, 421)) {
             Test-BlockWritable @{ addr = $a; values = @(1) } | Should Be $false
         }
         Test-BlockWritable @{ addr = 1722; values = @(1, 0, 0) } | Should Be $false
@@ -52,8 +69,37 @@ Describe 'running a command' {
         $result['ok'] | Should Be $true
         $result['readback']['32'] | Should Be 32600
         $result['readback']['33'] | Should Be 0
-        $script:Json.DeserializeObject($script:sent[0])['cmd'] | Should Be 'read'
-        $script:Json.DeserializeObject($script:sent[1])['cmd'] | Should Be 'write'
+        $script:Json.DeserializeObject($script:sent[0])['cmd'] | Should Be 'version'
+        $script:Json.DeserializeObject($script:sent[1])['cmd'] | Should Be 'read'
+        $script:Json.DeserializeObject($script:sent[2])['cmd'] | Should Be 'write'
+    }
+    It 'sets a switch bit through setbit and reports the word read back' {
+        $script:sent = @()
+        Mock Invoke-MbdLine { $script:sent += $Line; Reply-Mbd $Line 102 }
+        $result = Invoke-MachineCommand (New-Command @() @(102, 107) @(@{ addr = 400; bit = 0; value = 1 }))
+        $result['ok'] | Should Be $true
+        $result['readback']['400'] | Should Be 0x0A0B
+        $setbit = $script:Json.DeserializeObject($script:sent[2])
+        ($setbit['cmd'] + ' D' + $setbit['addr'] + '.' + $setbit['bit'] + '=' + $setbit['value']) | Should Be 'setbit D400.0=1'
+        ($script:sent -join ' ') -match '"write"' | Should Be $false
+    }
+    It 'refuses the whole command for a switch bit ERP may not write: nothing written' {
+        $script:sent = @()
+        Mock Invoke-MbdLine { $script:sent += $Line; Reply-Mbd $Line 102 }
+        $result = Invoke-MachineCommand (New-Command @(@{ addr = 32; values = @(1, 0) }) @(102, 107) @(@{ addr = 421; bit = 0; value = 1 }))
+        $result['ok'] | Should Be $false
+        $result['error'] | Should Match 'D421.0'
+        ($script:sent -join ' ') -match '"write"|"setbit"' | Should Be $false
+    }
+    It 'an old mbd (no version, or older than 1.2.0) gets nothing of the command' {
+        foreach ($old in @('', '1.1.9')) {
+            $script:sent = @(); $script:old = $old
+            Mock Invoke-MbdLine { $script:sent += $Line; Reply-Mbd $Line 102 $script:old }
+            $result = Invoke-MachineCommand (New-Command @(@{ addr = 32; values = @(1, 0) }) @(102, 107) @(@{ addr = 400; bit = 0; value = 1 }))
+            $result['ok'] | Should Be $false
+            $result['error'] | Should Match '^mbd outdated'
+            $script:sent.Count | Should Be 1
+        }
     }
     It 'writes nothing while the machine runs' {
         $script:sent = @()
@@ -72,7 +118,10 @@ Describe 'running a command' {
         ($script:sent -join ' ') -match '"write"' | Should Be $false
     }
     It 'reports the vendor HMI holding the port' {
-        Mock Invoke-MbdLine { '{"ok":false,"error":"busy: PXS_HMI is running, bus refused"}' }
+        Mock Invoke-MbdLine {
+            if ($Line -match '"version"') { return '{"ok":true,"result":{"version":"1.2.0"}}' }
+            '{"ok":false,"error":"busy: PXS_HMI is running, bus refused"}'
+        }
         $result = Invoke-MachineCommand (New-Command @(@{ addr = 32; values = @(1, 0) }))
         $result['ok'] | Should Be $false
         $result['error'] | Should Match 'PXS_HMI'
@@ -278,6 +327,13 @@ Describe 'against mbd.ps1 -Mock -LocalOnly' {
             }
             $reply = $script:Json.DeserializeObject((Invoke-MbdLine (ConvertTo-JsonLite @{ cmd = 'write'; addr = 100; values = @(7) })))
             $reply['ok'] | Should Be $true
+        }
+        It 'sets a switch bit through the real service after checking its version' {
+            $MbdPort = $port
+            Get-MbdVersion | Should Be '1.2.0'
+            $result = Invoke-MachineCommand (New-Command @() @(0) @(@{ addr = 434; bit = 0; value = 1 }))
+            $result['error'] | Should Be ''
+            $result['readback']['434'] | Should Be 1
         }
         It 'pulses Stop through the real service: bit set, held, cleared' {
             $MbdPort = $port

@@ -16,7 +16,7 @@ The machine card («Настройки» part):
 
 The command runner on the machine PC (`tools/machine-agent/ob019-writer.ps1`, token `machine:report`, PC bound):
 - `POST /api/production/machines/agent/writes/next` `{inventory, machine_id}` → `{command: null | {id, kind: "write",
-  blocks, states}}`; `POST …/agent/writes/{id}/result` `{inventory, machine_id, ok, readback: {"32": 32500}, error}`.
+  blocks, bits: [{addr, bit, value}], states}}`; `POST …/agent/writes/{id}/result` `{inventory, machine_id, ok, readback: {"32": 32500}, error}`.
 - Machine commands (Стоп / Сброс / Пуск / Сброс аварии, workflows/machine_control_api.py) ride the same queue: `next`
   gives `{id, kind: "control", action, deadline_ms}` — Stop first; the result adds `outcome` (done / failed / expired /
   unknown), `reason` (a code, production/machine_control.py REASONS), `detail` (journal only) and `before` / `after`
@@ -480,7 +480,7 @@ def next_command(payload: AgentPayload, bridge: Bridge, factory: Factory, now: N
             return {"command": {"id": str(row.id), "kind": "control", "action": row.command,
                                 "deadline_ms": machine_control.deadline_ms(row, now)}}
         return {"command": {"id": str(row.id), "kind": "write", "blocks": row.payload["blocks"],
-                            "states": list(commands.IDLE_STATES)}}
+                            "bits": commands.expected_bits(row), "states": list(commands.IDLE_STATES)}}
 
 
 @router.post("/agent/writes/{command_id}/result")
