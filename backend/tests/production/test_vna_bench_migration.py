@@ -11,7 +11,7 @@ from sqlalchemy import create_engine
 
 from tests.migrations.seed_any_revision import seed
 
-PARENT = "0201_instrument_reference_curve"
+PARENT = "0202_manual_jobs"
 REVISION = "0205_vna_bench_sessions"
 TABLES = ("production_vna_sessions", "production_vna_commands", "production_instruments", "warehouse_vna_control")
 
