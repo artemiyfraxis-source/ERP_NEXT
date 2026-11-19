@@ -371,11 +371,12 @@ def launch_task(command: LaunchProductionCommand, uow: UnitOfWork) -> tuple[Prod
     uow.serials.ensure_task(task.id, task.number, task.quantity)
     _audit(task, "production.launched", command.actor, command.now, {"number": task.number}, uow)
     if command.cutting_document is not None and getattr(uow, "cutting", None) is not None:
-        from .cutting import cutting_recipe
+        from .cutting import cutting_recipes
         operator = uow.operators.get(command.actor.id)
         site = command.cutting_site if command.cutting_site is not None else (operator.site if operator else "")
-        recipe, _reason = cutting_recipe(task.project, site, command.cutting_document, task.operations)
-        if recipe:
+        # Each preparation PF (cable cut, labels, tubes) joins its own group of the same kind (owner 20.11).
+        recipes, _refused = cutting_recipes(task.project, site, command.cutting_document, task.operations)
+        for recipe in recipes:
             uow.cutting.attach(task, recipe, command.now, uow.production, separate=command.issue_separately,
                                document=command.cutting_document, card_version=command.cutting_card_version)
     return task, True

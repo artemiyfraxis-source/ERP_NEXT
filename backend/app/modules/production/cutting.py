@@ -14,8 +14,41 @@ from uuid import UUID
 from .domain import ProductionOperation, unit_factors
 from .plan import normalize_project_number
 
+# Version 1 — a PF with the cable cut (the mixed «Заготовки» of ETKs before 20.11 and a cut-only PF): its identity is
+# unchanged, so stored group keys stay valid; its kind is «cut». Version 2 — a PF of only labels or only tubes, with an
+# explicit `kind` in the key. Keys of different kinds can never be equal (owner 20.11: cut, labels, tubes — separate tasks).
 RECIPE_VERSION = 1
+KIND_RECIPE_VERSION = 2
 SUPPORTED = frozenset({"coaxCut", "coaxCutTut", "cutWire", "cutWireStrip", "cutTut"})
+CABLE_CUTS = frozenset({"coaxCut", "cutWire", "cutWireStrip"})
+CUT, LABELS, TUBES = "cut", "labels", "tubes"
+KIND_NAMES = {CUT: "Резка кабеля", LABELS: "Печать маркировки", TUBES: "Резка трубок"}
+
+
+def recipe_kind(snapshot: Mapping | None) -> str:
+    """The kind of a stored recipe: version 2 names it, version 1 always holds the cable cut."""
+    return str((snapshot or {}).get("kind") or CUT)
+
+
+def printed(raw: Mapping, code: object = "") -> bool:
+    """A printing operation: tape labels (markMaterial «tape») or printed marking tubes (PRINT_MARK…, the generator's
+    «Напечатанная маркировка» PF since 20.11)."""
+    return raw.get("markMaterial") == "tape" or str(code or raw.get("opNumber") or "").upper().startswith("PRINT_MARK")
+
+
+def pf_kind(types_and_printing: Sequence[tuple[str, bool]]) -> str:
+    """Kind of one PF from its ETK operations (type, is printing). A PF with a cable cut is «cut» — the old mixed
+    «Заготовки» PF (cut + labels + tubes) stays one recipe of that kind, as it was issued. Without a cut: only printing
+    (tape labels, printed marking tubes) — «labels», only tube cuts — «tubes»; both together without a cut are not
+    grouped."""
+    if any(kind in CABLE_CUTS for kind, _printing in types_and_printing):
+        return CUT
+    printing = [bool(value) for _kind, value in types_and_printing]
+    if printing and all(printing):
+        return LABELS
+    if printing and not any(printing):
+        return TUBES
+    raise ValueError("ПФ смешивает печать маркировки и резку трубок без резки кабеля")
 
 
 def digest(value: object) -> str:
@@ -92,6 +125,7 @@ class CuttingRecipe:
     snapshot: dict
     row: dict
     tooling: tuple = ()  # display-only equipment/tooling with names, per operation; not part of the key
+    kind: str = CUT
 
 
 def cutting_project_label(project: str, document: Mapping | None = None) -> str:
@@ -104,27 +138,80 @@ def cutting_project_label(project: str, document: Mapping | None = None) -> str:
     return ""
 
 
+def _own_ops(document: Mapping, pf: ProductionOperation) -> list[tuple[dict, dict]]:
+    config = document.get("build_config") or {}
+    raw_ops, issued = config.get("ops") or [], document.get("operations") or []
+    if len(raw_ops) != len(issued):
+        raise ValueError("Операции ЭТК не совпадают с параметрами")
+    return [(issued[pos - 1], raw_ops[pos - 1]) for pos in pf.etk_positions]
+
+
+def _preparation_pfs(document: Mapping, operations: Sequence[ProductionOperation]) -> list[ProductionOperation]:
+    """Input-less PFs made only of cutting/preparation ETK operations, in route order."""
+    result = []
+    for pf in sorted(operations, key=lambda op: op.position):
+        if pf.inputs or not pf.etk_ops or not pf.stage_key:
+            continue
+        try:
+            own = _own_ops(document, pf)
+        except IndexError:
+            continue
+        if own and all(op.get("type") in SUPPORTED for op, _raw in own):
+            result.append(pf)
+    return result
+
+
 def cutting_recipe(project: str, site: str, document: Mapping | None,
                    operations: Sequence[ProductionOperation]) -> tuple[CuttingRecipe | None, str]:
     """Only the first issued PF, without incoming edges, consisting exclusively of preparation.
 
     Identity is deliberately conservative: only documented length and label-text fields vary.
     A frozen card body hash supplies a revision when the issued document has no revision stamp.
+    The launch fingerprint and the launch response keep using this first PF; grouping uses `cutting_recipes`.
     """
+    if not document or not operations:
+        return None, "Нет выданного снимка ЭТК"
+    return _pf_recipe(project, site, document, operations, min(operations, key=lambda op: op.position))
+
+
+def cutting_recipes(project: str, site: str, document: Mapping | None, operations: Sequence[ProductionOperation],
+                    ) -> tuple[list[CuttingRecipe], list[tuple[UUID, str]]]:
+    """One recipe per input-less preparation PF (owner 20.11: cable cut, labels and tubes are separate grouped tasks).
+    Returns the eligible recipes in route order and (PF id, reason) for preparation PFs that cannot be grouped."""
+    if not document or not operations:
+        return [], []
+    recipes, refused = [], []
+    for pf in _preparation_pfs(document, operations):
+        recipe, reason = _pf_recipe(project, site, document, operations, pf)
+        if recipe is None:
+            refused.append((pf.id, reason))
+        else:
+            recipes.append(recipe)
+    return recipes, refused
+
+
+def recipe_for_operation(project: str, site: str, document: Mapping | None,
+                         operations: Sequence[ProductionOperation], operation_id: UUID) -> tuple[CuttingRecipe | None, str]:
+    """The recipe of one given PF (a group member), whatever its position in the route."""
+    pf = next((op for op in operations if op.id == operation_id), None)
+    if not document or pf is None:
+        return None, "Нет выданного снимка ЭТК" if pf is not None else "ПФ нет в задании"
+    return _pf_recipe(project, site, document, operations, pf)
+
+
+def _pf_recipe(project: str, site: str, document: Mapping, operations: Sequence[ProductionOperation],
+               pf: ProductionOperation) -> tuple[CuttingRecipe | None, str]:
     try:
-        if not document or not operations:
-            raise ValueError("Нет выданного снимка ЭТК")
-        first = min(operations, key=lambda op: op.position)
-        if first.inputs or not first.etk_ops or not first.stage_key:
+        if pf.inputs or not pf.etk_ops or not pf.stage_key:
             raise ValueError("Нет начального ПФ резки без входов")
         config = document.get("build_config") or {}
         raw_ops, issued = config.get("ops") or [], document.get("operations") or []
-        if len(raw_ops) != len(issued):
-            raise ValueError("Операции ЭТК не совпадают с параметрами")
-        own = [(issued[pos - 1], raw_ops[pos - 1]) for pos in first.etk_positions]
+        own = _own_ops(document, pf)
         if any(op.get("type") not in SUPPORTED or op.get("type") != raw.get("type") for op, raw in own):
             raise ValueError("ПФ содержит операции помимо резки и подготовки")
-        cuts = [(op, raw) for op, raw in own if op.get("type") in {"coaxCut", "cutWire", "cutWireStrip"}]
+        recipe_kind_ = pf_kind([(op.get("type"), printed(raw, op.get("code"))) for op, raw in own])
+        # Labels and tubes PFs take the cable multiplicity (and the cut length for the row) from the ETK's only cable cut.
+        cuts = [(op, raw) for op, raw in (own if recipe_kind_ == CUT else zip(issued, raw_ops)) if op.get("type") in CABLE_CUTS]
         if len(cuts) != 1:
             raise ValueError("Требуется одна однозначная операция резки кабеля")
         cut, raw_cut = cuts[0]
@@ -280,11 +367,17 @@ def cutting_recipe(project: str, site: str, document: Mapping | None,
                             "template_id": _required(op.get("template_id"), "шаблон операции"),
                             "card_revision": op.get("card_changed_at") or digest(card),
                             "card": card, "parameters": parameters, "fields": fields})
-        snapshot = {"version": RECIPE_VERSION, "project": normalize_project_number(project), "site": site,
-                    "cable": cable, "cables_per_assembly": multiplicity,
-                    "pf_per_assembly": number(unit_factors(operations)[first.id]), "operations": recipes}
-        return CuttingRecipe(first.id, digest(snapshot), snapshot,
+        if recipe_kind_ == CUT:
+            snapshot = {"version": RECIPE_VERSION, "project": normalize_project_number(project), "site": site,
+                        "cable": cable, "cables_per_assembly": multiplicity,
+                        "pf_per_assembly": number(unit_factors(operations)[pf.id]), "operations": recipes}
+        else:
+            # Printing labels or cutting tubes does not depend on which cable they go on: no cable in the key.
+            snapshot = {"version": KIND_RECIPE_VERSION, "kind": recipe_kind_, "project": normalize_project_number(project),
+                        "site": site, "cables_per_assembly": multiplicity,
+                        "pf_per_assembly": number(unit_factors(operations)[pf.id]), "operations": recipes}
+        return CuttingRecipe(pf.id, digest(snapshot), snapshot,
                              {"cut_length_mm": length, "cables_per_assembly": multiplicity, "labels": labels},
-                             tuple(display_tooling)), ""
+                             tuple(display_tooling), recipe_kind_), ""
     except (ValueError, TypeError, KeyError, IndexError, AttributeError) as error:
         return None, str(error) or "Недостаточно параметров резки"
