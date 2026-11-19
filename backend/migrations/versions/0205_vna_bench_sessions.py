@@ -18,7 +18,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "0205_vna_bench_sessions"
-down_revision = "0202_manual_jobs"
+down_revision = "0203_marking_printer_control"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False
