@@ -14,7 +14,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.shared.persistence import Base
 
-from .devices import DeviceRow, VnaBindingRow, control_capability, idn_serial
+from .devices import DeviceRow, VnaBindingRow, control_capability, control_ops, idn_serial
 from .scan_agents import LIVE_FOR, ScanAgentRow
 from .scan_jobs import CLAIMED, DONE, VNA_FILE_LIMIT, ScanJobClosed, ScanJobRow, _closed, _session, open_for_result
 
@@ -144,7 +144,7 @@ def content(uow, job_id: UUID) -> bytes:
 
 
 def control_station(session, serial: str, now: datetime, *, machine_id: str | None = None,
-                    methods: set[str] | None = None) -> str:
+                    methods: set[str] | None = None, ops: set[str] | None = None) -> str:
     """Resolve/lock the registry's existing physical owner, never an arbitrary browser PC header."""
     binding = session.get(VnaBindingRow, serial)
     if binding is None or (machine_id is not None and binding.machine_id != machine_id):
@@ -162,6 +162,15 @@ def control_station(session, serial: str, now: datetime, *, machine_id: str | No
     supported = control_capability(session, owner, now)
     if methods and not methods.issubset(supported):
         raise ScanJobClosed("Метод калибровки не подтверждён агентом на этом ПК")
+    if ops is not None:
+        # A bench session speaks protocol 2: the agent must advertise exactly version 2 and every op it will receive.
+        available = control_ops(session, owner, now)
+        if available is None:
+            raise ScanJobClosed("Агент на этом ПК говорит по протоколу vna_control версии 1; рабочему месту ВАЦ нужна версия 2")
+        missing = sorted(set(ops) - available)
+        if missing:
+            raise ScanJobClosed("Агент на этом ПК не поддерживает рабочее место ВАЦ (vna_control версии 2): нет операций "
+                                + ", ".join(missing))
     return owner
 
 

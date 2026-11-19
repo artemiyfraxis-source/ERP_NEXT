@@ -348,6 +348,9 @@ class RecordVswrCommand:
     # Set only by a workflow after resolving owned, completed server evidence (capture/session).
     evidence_id: UUID | None = None
     files: tuple[VswrFileInput, ...] = ()
+    # False: this attempt starts a new decision even after an open «на границе» series — the VNA workplace sets it
+    # when the series' calibration was replaced (a repeat must be made under one calibration, СТО п. 11.5, 12.4).
+    continue_series: bool = True
 
 
 def required_ends(norm: Mapping[str, Any]) -> tuple[str, ...]:
@@ -576,7 +579,8 @@ def record_vswr(
         repeat_of, repeat_set = None, ()
         if complete and not manual and limit is not None:
             verdict, rule_reason, repeat_of, repeat_set = decide_by_rule(
-                max_vswr, max_mhz, limit, allowance, uow.vswr.list_for_serial(serial.id))
+                max_vswr, max_mhz, limit, allowance,
+                uow.vswr.list_for_serial(serial.id) if command.continue_series else ())
             reason = rule_reason or reason
         primary_name = next((item["trace_name"] for item in results if item["max_vswr"] == float(max_vswr)), None)
         primary = next(item for item in traces if item.name == primary_name) if primary_name else next(
