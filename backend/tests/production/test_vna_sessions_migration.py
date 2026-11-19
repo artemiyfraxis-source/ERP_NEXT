@@ -116,8 +116,9 @@ def test_session_machine_is_a_nonempty_workflow_reference_not_a_cross_module_fk(
 def test_production_session_subset_has_no_warehouse_dependencies():
     from app.modules.identity.infrastructure import IdentityUserRow
     from app.modules.production.infrastructure import ProductionInstrumentRow, ProductionOperationRow, ProductionTaskRow
+    from app.modules.production.vna_check_infrastructure import VnaCheckRow  # bench calibration's journal row (0205)
 
-    rows = (IdentityUserRow, ProductionInstrumentRow, ProductionTaskRow, ProductionOperationRow,
+    rows = (IdentityUserRow, ProductionInstrumentRow, ProductionTaskRow, ProductionOperationRow, VnaCheckRow,
             VnaSessionRow, VnaCommandRow, VnaArtifactRow)
     metadata = MetaData()
     for row in rows:

@@ -22,7 +22,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Column, MetaData, Table, create_engine, inspect, select
+from sqlalchemy import Column, MetaData, Table, create_engine, inspect, null, select
 from sqlalchemy import types as sqltypes
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.schema import sort_tables
@@ -289,6 +289,10 @@ _OVER_CHECK: dict[tuple[str, str], Any] = {
     ("production_vna_sessions", "state"): "recorded",
     ("production_vna_commands", "status"): "done",
     ("production_vna_commands", "claimed_at"): None,
+    # 0205_vna_bench_sessions: a seeded session is the ОТК kind; only a bench session holds a calibration.
+    ("production_vna_sessions", "purpose"): "assembly",
+    **{("production_vna_sessions", name): None for name in ("calibrated_at", "profile_hash", "calibration_check_id")},
+    ("production_vna_sessions", "calibration_temps"): null(),   # SQL NULL, not the JSON value null
     # 0182_vswr_traces: preserve the legacy manual verdict without claiming a multi-trace evaluation.
     ("production_vswr_measurements", "complete"): None,
     ("production_vswr_measurements", "evidence_key"): None,
@@ -349,7 +353,9 @@ _ROW_CAPS = {"warehouse_label_templates": len(_LABEL_TEMPLATE_KINDS) * len(_LABE
               "production_machine_writes": 0,
               # A manual job's fields follow its status and count source (0202_manual_jobs); an issue needs its job,
               # lot and write-off. Empty is a valid journal.
-              "production_manual_jobs": 0, "production_manual_job_issues": 0}
+              "production_manual_jobs": 0, "production_manual_job_issues": 0,
+              # A bench measurement's kind, target, standard, object and record are tied by CHECKs (0205); empty is valid.
+              "production_vna_bench_items": 0}
 # One row per installation (CHECK `id = 1`): seeded with a single row (the label print agent's heartbeat, 0141, too).
 _SINGLE_ROW_TABLES = frozenset({"warehouse_label_settings", "warehouse_label_agent", "warehouse_upd_llm_settings"})
 
