@@ -284,8 +284,14 @@ const REFUSALS: Record<string, string> = {
 /** Коды, у которых текст сервера точнее общего: в нём номер СИ, список мер, имя поля. */
 const DETAILED = new Set(["station_setup", "no_fixture_file", "no_reference", "kit_choice", "conflict", "invalid", "not_found", "refused"]);
 
+/** Ни кода в словаре, ни текста сервера — всё равно понятная строка, никогда не пустой баннер. */
+export const REFUSAL_FALLBACK = "Команда ВАЦ не выполнена";
+/** Отказы, после которых калибровка недействительна и нужна новая (СТО 11.4, 11.5); прочие — повтор того же шага. */
+export const CALIBRATION_REFUSALS = new Set(["calibration_required", "calibration_expired", "correction_lost", "profile_changed",
+  "temperature_drift", "temperature_unknown", "acm_missing"]);
+
 export function refusalText(refusal: VnaBenchRefusal | null | undefined): string {
   if (!refusal) return "";
   if (DETAILED.has(refusal.code) && refusal.message) return refusal.message;
-  return REFUSALS[refusal.code] ?? refusal.message;
+  return REFUSALS[refusal.code] || refusal.message || REFUSAL_FALLBACK;
 }

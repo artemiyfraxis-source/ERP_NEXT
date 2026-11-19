@@ -1,13 +1,16 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiError, failureText, productionApi, type ProductionInstrument } from "./api";
 import { formatMoment, formatNumber, toNumber } from "./format";
 import { VswrChart } from "./VswrChart";
 import {
+  CALIBRATION_REFUSALS,
+  REFUSAL_FALLBACK,
   refusalText,
   vnaBenchApi,
   type VnaBenchCheck,
   type VnaBenchCheckKind,
   type VnaBenchCheckPhase,
+  type VnaBenchConnection,
   type VnaBenchDue,
   type VnaBenchFixture,
   type VnaBenchItem,
@@ -121,6 +124,7 @@ export const targetTitle = (target: VnaBenchTarget) => target.kind === "instrume
   : `${target.task_number} · ${target.item}, изделие № ${target.position}${target.serial !== null && target.serial !== undefined ? ` (${target.serial})` : ""} · ${target.name}`;
 
 type Act = (key: string, operation: () => Promise<VnaBenchState>) => Promise<void>;
+const TABS: { id: "measure" | "checks"; label: string }[] = [{ id: "measure", label: "Замер" }, { id: "checks", label: "Проверки" }];
 
 export function VnaBench({ canEdit }: { canEdit: boolean }) {
   const [state, setState] = useState<VnaBenchState | null>(null);
@@ -153,9 +157,9 @@ export function VnaBench({ canEdit }: { canEdit: boolean }) {
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 409) setAttempt((value) => value + 1);
       const detail = reason instanceof ApiError ? reason.detail as { code?: unknown; message?: unknown } | undefined : undefined;
-      setError(detail && typeof detail.code === "string"
-        ? refusalText({ code: detail.code, message: typeof detail.message === "string" ? detail.message : failureText(reason, "") })
-        : failureText(reason, "Команда ВАЦ не выполнена"));
+      setError((detail && typeof detail.code === "string"
+        ? refusalText({ code: detail.code, message: typeof detail.message === "string" ? detail.message : "" })
+        : failureText(reason, "")) || REFUSAL_FALLBACK);
     } finally {
       setBusy("");
     }
@@ -174,6 +178,16 @@ export function VnaBench({ canEdit }: { canEdit: boolean }) {
   const canAct = canEdit && (!session || session.owned !== false);
   const notReady = state.device.s2vna_ready === false || Boolean(state.device.refusal);
   /** Открыть сеанс (для КБ — на полосе ЭТК задания); открытый сеанс сначала закрывается. */
+  // Стрелки, Home и End переключают вкладки (как «Разделы ОТК»).
+  const tabKeys = (event: KeyboardEvent<HTMLDivElement>) => {
+    const index = TABS.findIndex((item) => item.id === tab);
+    const next = event.key === "ArrowRight" ? (index + 1) % TABS.length : event.key === "ArrowLeft" ? (index + TABS.length - 1) % TABS.length
+      : event.key === "Home" ? 0 : event.key === "End" ? TABS.length - 1 : -1;
+    if (next < 0) return;
+    event.preventDefault();
+    setTab(TABS[next].id);
+    document.getElementById(`vna-bench-tab-${TABS[next].id}`)?.focus();
+  };
   const open = (assembly?: { task_id: string; operation_id?: string | null }) => act(assembly ? "open-kb" : "open", async () => {
     if (session) await vnaBenchApi.close(session.id, session.version);
     return vnaBenchApi.startSession(assembly ? { assembly } : {});
@@ -189,11 +203,10 @@ export function VnaBench({ canEdit }: { canEdit: boolean }) {
       {canAct && <button type="button" className="secondary small" disabled={Boolean(busy)}
         onClick={() => void act("abort", () => vnaBenchApi.abort(session.id, session.version))}>Прервать</button>}
     </div>}
-    <div className="seg-tabs sub" role="tablist" aria-label="Разделы рабочего места ВАЦ">
-      <button type="button" role="tab" id="vna-bench-tab-measure" aria-controls="vna-bench-panel" aria-selected={tab === "measure"}
-        className={tab === "measure" ? "on" : ""} onClick={() => setTab("measure")}>Замер</button>
-      <button type="button" role="tab" id="vna-bench-tab-checks" aria-controls="vna-bench-panel" aria-selected={tab === "checks"}
-        className={tab === "checks" ? "on" : ""} onClick={() => setTab("checks")}>Проверки</button>
+    <div className="seg-tabs sub" role="tablist" aria-label="Разделы рабочего места ВАЦ" onKeyDown={tabKeys}>
+      {TABS.map((item) => <button key={item.id} type="button" role="tab" id={`vna-bench-tab-${item.id}`} aria-controls="vna-bench-panel"
+        aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} className={tab === item.id ? "on" : ""}
+        onClick={() => setTab(item.id)}>{item.label}</button>)}
     </div>
     <div className="vna-bench-body" role="tabpanel" id="vna-bench-panel" aria-labelledby={`vna-bench-tab-${tab}`}>
       {!session && tab === "measure" && <div className="panel vna-bench-start">
@@ -267,12 +280,16 @@ function StepList({ session, calibrationValid, calibrationReason, canEdit, busy,
   const byKey = new Map(session.steps.map((step) => [step.key, step]));
   const current = STEP_ORDER.find((key) => byKey.get(key)?.status !== "passed");
   const currentStep = current ? byKey.get(current) : undefined;
-  const failed = currentStep?.status === "failed" || currentStep?.status === "refused";
+  // «Не годен» или отказ из-за калибровки (К?, температура, 4 ч) — только новая калибровка (СТО 11.4, 11.5).
+  // Отказ по другой причине (прибор занят, агент не на связи) — причина и «Повторить» того же шага.
+  const failed = currentStep?.status === "failed"
+    || (currentStep?.status === "refused" && CALIBRATION_REFUSALS.has(currentStep.refusal?.code ?? ""));
+  const refused = currentStep?.status === "refused" && !failed;
   const running = currentStep?.status === "running" || Boolean(session.command);
-  // Не пройден доверительный тест или LOAD, истекла калибровка — только новая калибровка (СТО 11.4, 11.5).
   const expired = !current && !calibrationValid;
   const action: { label: string; step: VnaBenchStepKey } | null = failed || expired ? { label: RECALIBRATE, step: "calibration" }
-    : current && STEP_ACTIONS[current] ? { label: STEP_ACTIONS[current] as string, step: current } : null;
+    : refused && current ? { label: "Повторить", step: current }
+      : current && STEP_ACTIONS[current] ? { label: STEP_ACTIONS[current] as string, step: current } : null;
   return <div className="panel vna-bench-steps-panel">
     <ol className="vna-bench-steps" aria-label="Шаги сеанса">
       {STEP_ORDER.map((key, index) => {
@@ -290,6 +307,8 @@ function StepList({ session, calibrationValid, calibrationReason, canEdit, busy,
       <span>{expired ? <><strong>Калибровка недействительна.</strong> {calibrationReason ?? ""} {STEP_HINTS.calibration}</>
         : failed ? <><strong>{STEP_TITLES[current as VnaBenchStepKey]}: не пройдено.</strong> Проверьте соединения и затяжку, затем
           откалибруйте заново. {STEP_HINTS.calibration}</>
+          : refused ? <><strong>{STEP_TITLES[current as VnaBenchStepKey]}: команда не выполнена.</strong>{" "}
+            {refusalText(currentStep?.refusal ?? { code: "refused", message: "" })} Устраните причину и повторите.</>
           : <><strong>{STEP_TITLES[current as VnaBenchStepKey]}.</strong> {STEP_HINTS[current as VnaBenchStepKey]}</>}</span>
       {canEdit && action && <button type="button" className="primary small" disabled={busy || running}
         onClick={() => run(action.step)}>{action.label}</button>}
@@ -344,22 +363,27 @@ function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, a
   const [looking, setLooking] = useState(false);
   const [fixtures, setFixtures] = useState<ProductionInstrument[] | null>(null);
   const [fmaxText, setFmaxText] = useState("");
+  const [fmaxError, setFmaxError] = useState("");
+  // Только последний запрос плана: ответ на устаревший (сменили оснастку, объект, сеанс) отбрасывается.
+  const planRequest = useRef(0);
   const sessionId = session?.id ?? null;
   const stepsDone = session ? STEP_ORDER.every((key) => session.steps.find((step) => step.key === key)?.status === "passed") : false;
   const ready = stepsDone && calibrationValid;
 
   async function loadPlan(next: VnaBenchTarget) {
     if (!sessionId) return;
+    const request = ++planRequest.current;
     setPlan(null); setError("");
     try {
-      setPlan(await vnaBenchApi.plan(sessionId, next));
+      const result = await vnaBenchApi.plan(sessionId, next);
+      if (request === planRequest.current) setPlan(result);
     } catch (reason) {
-      setError(failureText(reason, "Не удалось составить план замера"));
+      if (request === planRequest.current) setError(failureText(reason, "Не удалось составить план замера"));
     }
   }
 
   async function pick(next: VnaBenchTarget) {
-    setTarget(next); setFmaxText("");
+    setTarget(next); setFmaxText(""); setFmaxError("");
     if (next.kind === "instrument" && fixtures === null) {
       productionApi.instruments().then((result) => setFixtures(result.instruments)).catch(() => setFixtures([]));
     }
@@ -373,6 +397,7 @@ function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, a
     event.preventDefault();
     const text = query.trim();
     if (!text || looking) return;
+    planRequest.current += 1;
     setLooking(true); setError(""); setCandidates(null); setTarget(null); setPlan(null);
     try {
       const result = await vnaBenchApi.resolve(text);
@@ -395,12 +420,20 @@ function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, a
 
   function applyFmax() {
     if (!target || target.kind !== "instrument") return;
-    const value = fmaxText.trim() ? toNumber(fmaxText) : null;
-    if (value !== null && value <= 0) return;
+    const text = fmaxText.trim();
+    const value = text ? toNumber(text) : null;
+    if (text && (value === null || value <= 0)) {
+      // В плане остаётся прежнее значение; поле говорит, что не так.
+      setFmaxError("Введите число гигагерц больше нуля, например 6 или 12,4");
+      return;
+    }
+    setFmaxError("");
     if ((value ?? null) !== (target.fmax_ghz ?? null)) retarget({ fmax_ghz: value });
   }
 
   const item = target && session ? [...session.items].reverse().find((entry) => targetKey(entry.target) === targetKey(target)) ?? null : null;
+  // Замер объекта идёт (не окончательный и не отказ) — цепочку и частоту не меняют.
+  const inProgress = item !== null && !itemDone(item);
   const blocked = !session ? "" : !ready ? (stepsDone ? "Калибровка недействительна — откалибруйте заново."
     : "Сначала пройдите калибровку и нагрузку на обоих портах.") : "";
   const wrongCalibration = plan?.refusal?.code === "other_calibration";
@@ -419,7 +452,7 @@ function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, a
     {candidates && candidates.length > 1 && <ul className="vna-bench-candidates" aria-label="Найденные объекты">
       {candidates.map((candidate) => <li key={targetKey(candidate)}>
         <button type="button" className={target && targetKey(target) === targetKey(candidate) ? "secondary small on" : "secondary small"}
-          onClick={() => void pick(candidate)}>{targetTitle(candidate)}</button>
+          aria-pressed={Boolean(target && targetKey(target) === targetKey(candidate))} onClick={() => void pick(candidate)}>{targetTitle(candidate)}</button>
       </li>)}
     </ul>}
     {target && <div className="vna-bench-target">
@@ -435,15 +468,17 @@ function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, a
       {session && plan && <>
         {target.kind === "instrument" && !wrongCalibration && <div className="vna-bench-chain">
           <FixturePicker side="left" fixtures={(fixtures ?? []).filter((f) => isFixture(f, target.instrument_id) && f.id !== target.right?.instrument_id)}
-            value={target.left ?? null} disabled={busy || Boolean(item)} onChange={(left) => retarget({ left })} />
+            value={target.left ?? null} disabled={busy || inProgress} onChange={(left) => retarget({ left })} />
           <FixturePicker side="right" fixtures={(fixtures ?? []).filter((f) => isFixture(f, target.instrument_id) && f.id !== target.left?.instrument_id)}
-            value={target.right ?? null} disabled={busy || Boolean(item)} onChange={(right) => retarget({ right })} />
+            value={target.right ?? null} disabled={busy || inProgress} onChange={(right) => retarget({ right })} />
           <label className="vna-bench-fmax">Верхняя частота, ГГц
-            <input inputMode="decimal" value={fmaxText} disabled={busy || Boolean(item)}
+            <input inputMode="decimal" value={fmaxText} disabled={busy || inProgress} aria-invalid={Boolean(fmaxError)}
+              aria-describedby={fmaxError ? "vna-bench-fmax-error" : undefined}
               placeholder={suggestedGhz !== null ? formatNumber(suggestedGhz, { digits: 2 }) : ""}
               onChange={(event) => setFmaxText(event.target.value)} onBlur={applyFmax}
               onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); applyFmax(); } }} />
-            <span className="muted-text">{suggestedGhz !== null ? `по серии и норме: до ${formatNumber(suggestedGhz, { digits: 2 })} ГГц` : ""}</span>
+            {fmaxError ? <span id="vna-bench-fmax-error" className="tone-danger" role="alert">{fmaxError}</span>
+              : <span className="muted-text">{suggestedGhz !== null ? `по серии и норме: до ${formatNumber(suggestedGhz, { digits: 2 })} ГГц` : ""}</span>}
           </label>
         </div>}
         {!wrongCalibration && <PlanCard plan={plan} />}
@@ -458,11 +493,16 @@ function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, a
             onClick={() => void act("measure", () => vnaBenchApi.measure(session.id, session.version, target))}>Измерить</button>}
         </>}
       </>}
-      {session && item && <ItemResult item={item} session={session} canEdit={canEdit} busy={busy || Boolean(blocked)} act={act} />}
+      {session && item && <ItemResult item={item} session={session} canEdit={canEdit} busy={busy || Boolean(blocked)} act={act}
+        remeasure={plan && !plan.refusal ? () => void act("measure", () => vnaBenchApi.measure(session.id, session.version, target)) : null} />}
     </div>}
     {!target && !candidates && <p className="muted-text">Отсканируйте этикетку СИ или изделия, или введите номер — экран покажет план замера.</p>}
   </div>;
 }
+
+/** Замер объекта закончен: решение окончательное или отказ без идущей команды — можно мерить заново. */
+const itemDone = (item: VnaBenchItem) => Boolean(item.verdict?.final)
+  || (Boolean(item.refusal) && !item.connections.some((connection) => connection.status === "running"));
 
 /** Подпись подключения: у СИ — «2 из 3», у КБ — первое и три повтора «на границе». */
 const connectionName = (item: VnaBenchItem, no: number) => item.target.kind === "assembly"
@@ -478,6 +518,15 @@ export function connectionPrompt(item: VnaBenchItem): string | null {
   return `${name} — отключите ${what}, поверните разъём на 120° и подключите снова. Кабели не двигайте.`;
 }
 
+/** Подключение выше нормы, но в пределах нормы + U — «в пределах нормы + U», не «Годен»: не спорит с «на границе». */
+function ConnectionChip({ item, connection }: { item: VnaBenchItem; connection: VnaBenchConnection }) {
+  const norm = item.plan?.norm_vswr ?? item.verdict?.norm_vswr ?? null;
+  if (connection.status === "passed" && norm !== null && connection.max_vswr !== null && connection.max_vswr > norm) {
+    return <span className="status-chip" data-tone="warning">в пределах нормы + U</span>;
+  }
+  return <Chip status={connection.status} />;
+}
+
 function verdictNumbers(verdict: VnaBenchVerdict, item: VnaBenchItem): string {
   const parts: string[] = [];
   if (verdict.worst_vswr !== null) parts.push(`наибольший КСВН ${vswr(verdict.worst_vswr)}${verdict.worst_mhz !== null ? ` на ${formatNumber(verdict.worst_mhz, { digits: 0 })} МГц` : ""}`);
@@ -488,8 +537,8 @@ function verdictNumbers(verdict: VnaBenchVerdict, item: VnaBenchItem): string {
   return parts.join(" · ");
 }
 
-function ItemResult({ item, session, canEdit, busy, act }: {
-  item: VnaBenchItem; session: VnaBenchSession; canEdit: boolean; busy: boolean; act: Act;
+function ItemResult({ item, session, canEdit, busy, act, remeasure }: {
+  item: VnaBenchItem; session: VnaBenchSession; canEdit: boolean; busy: boolean; act: Act; remeasure: (() => void) | null;
 }) {
   const [printing, setPrinting] = useState(false);
   const [printed, setPrinted] = useState("");
@@ -528,7 +577,7 @@ function ItemResult({ item, session, canEdit, busy, act }: {
       <tbody>{item.connections.map((connection) => <tr key={connection.no}>
         <td>{connectionName(item, connection.no)}</td><td className="num">{vswr(connection.max_vswr)}</td>
         <td className="num">{connection.max_mhz != null ? formatNumber(connection.max_mhz, { digits: 0 }) : "—"}</td>
-        <td>{connection.status === "pending" ? <span className="muted-text">не измерено</span> : <Chip status={connection.status} />}</td>
+        <td>{connection.status === "pending" ? <span className="muted-text">не измерено</span> : <ConnectionChip item={item} connection={connection} />}</td>
       </tr>)}</tbody>
     </table>}
     {item.trace.length > 0 && <VswrChart trace={item.trace} normMax={item.plan?.norm_vswr ?? null} fineScale
@@ -541,6 +590,8 @@ function ItemResult({ item, session, canEdit, busy, act }: {
       </div>
       : canEdit && verdict?.final && item.target.kind === "instrument" && <button type="button" className="primary" disabled={busy}
         onClick={() => void act("record", () => vnaBenchApi.record(session.id, item.id, item.version))}>Записать в карточку</button>}
+    {canEdit && remeasure && itemDone(item) && <button type="button" className="secondary" disabled={busy || Boolean(session.command)}
+      onClick={remeasure}>Измерить заново</button>}
     {verdict?.final && item.target.kind === "assembly" && !item.recorded_at
       && <p className="muted-text">Каждый замер КБ уже записан в «Замеры КСВН» изделия.</p>}
     {printed && <div className="success-banner" role="status">{printed}</div>}

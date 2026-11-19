@@ -232,6 +232,8 @@ it("asks an adapter on the border for connection 2 of 3, turned by 120°", async
   expect(screen.getByRole("img", { name: /норма не более 1,06/ })).toBeInTheDocument();
   expect(screen.getByText("Норма ± U 0,012")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Записать в карточку" })).not.toBeInTheDocument();
+  expect(within(screen.getByRole("table", { name: "Подключения" })).getByText("в пределах нормы + U")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Измерить заново" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Измерить: 2 из 3" }));
   await waitFor(() => expect(next).toHaveBeenCalledWith("s1", "i1", 3));
 });
@@ -362,4 +364,92 @@ it("is switched on only when the server answers the bench state", async () => {
   expect(await vnaBenchAvailable()).toBe(false);
   read.mockResolvedValueOnce(state());
   expect(await vnaBenchAvailable()).toBe(true);
+});
+
+it("measures the same object again after a final verdict, with its chain", async () => {
+  const done = item({ connections: [{ no: 1, status: "failed", max_vswr: 1.2, max_mhz: 9000, measured_at: null }],
+    verdict: { code: "fail", worst_vswr: 1.2, worst_mhz: 9000, norm_vswr: 1.06, uncertainty: 0.012, reason: null, final: true } });
+  vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: session({ steps: allPassed, items: [done] }) }));
+  vi.spyOn(vnaBenchApi, "resolve").mockResolvedValue({ candidates: [si035] });
+  vi.spyOn(vnaBenchApi, "plan").mockResolvedValue(plan);
+  vi.spyOn(productionApi, "instruments").mockResolvedValue({ instruments: [] });
+  const measure = vi.spyOn(vnaBenchApi, "measure").mockResolvedValue(state({ session: session({ steps: allPassed, items: [done] }) }));
+  render(<VnaBench canEdit />);
+  await findObject("СИ.035");
+  expect(await screen.findByText("Не соответствует")).toBeInTheDocument();
+  expect(screen.getByLabelText(/Верхняя частота, ГГц/)).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Измерить заново" }));
+  await waitFor(() => expect(measure).toHaveBeenCalledWith("s1", 3, si035));
+});
+
+it("repeats a step refused for a reason other than the calibration; a calibration refusal asks for a new calibration", async () => {
+  const refused = (code: string) => state({ session: session({ steps: [step("calibration", "passed"), step("confidence", "passed"),
+    { ...step("load_port1", "refused"), refusal: { code, message: "" } }] }) });
+  const read = vi.spyOn(vnaBenchApi, "state").mockResolvedValue(refused("device_busy"));
+  const run = vi.spyOn(vnaBenchApi, "runStep").mockResolvedValue(state());
+  const { unmount } = render(<VnaBench canEdit />);
+  expect(await screen.findByText("Нагрузка: порт 1: команда не выполнена.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Откалибровать заново" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
+  await waitFor(() => expect(run).toHaveBeenCalledWith("s1", 3, "load_port1"));
+  unmount();
+  read.mockResolvedValue(refused("temperature_drift"));
+  render(<VnaBench canEdit />);
+  expect(await screen.findByRole("button", { name: "Откалибровать заново" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Повторить" })).not.toBeInTheDocument();
+});
+
+it("never shows an empty refusal banner", async () => {
+  expect(refusalText({ code: "unknown_code", message: "" })).toBe("Команда ВАЦ не выполнена");
+  vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: session({ steps: [step("calibration", "pending")] }) }));
+  vi.spyOn(vnaBenchApi, "runStep").mockRejectedValue(new ApiError("", 409, { code: "unknown_code", message: "" }));
+  render(<VnaBench canEdit />);
+  fireEvent.click(await screen.findByRole("button", { name: "Калибровать АКМ" }));
+  expect(await screen.findByText("Команда ВАЦ не выполнена")).toBeInTheDocument();
+});
+
+it("keeps only the newest plan when an older answer comes late", async () => {
+  vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: session({ steps: allPassed }) }));
+  const other: VnaBenchTarget = { ...si035, instrument_id: "si-036", number: "СИ.036" };
+  vi.spyOn(vnaBenchApi, "resolve").mockResolvedValue({ candidates: [si035, other] });
+  vi.spyOn(productionApi, "instruments").mockResolvedValue({ instruments: [] });
+  let first: (value: VnaBenchPlan) => void = () => undefined;
+  vi.spyOn(vnaBenchApi, "plan")
+    .mockImplementationOnce(() => new Promise((resolve) => { first = resolve; }))
+    .mockResolvedValueOnce({ ...plan, screen_name: "План СИ.036" });
+  render(<VnaBench canEdit />);
+  await findObject("СИ");
+  fireEvent.click(await screen.findByRole("button", { name: /^СИ.035/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^СИ.036/ }));
+  expect(await screen.findByText("План СИ.036")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /^СИ.036/ })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: /^СИ.035/ })).toHaveAttribute("aria-pressed", "false");
+  await act(async () => { first({ ...plan, screen_name: "План СИ.035" }); });
+  expect(screen.queryByText("План СИ.035")).not.toBeInTheDocument();
+  expect(screen.getByText("План СИ.036")).toBeInTheDocument();
+});
+
+it("refuses a non-numeric top frequency inline and keeps the previous one", async () => {
+  vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: session({ steps: allPassed }) }));
+  vi.spyOn(vnaBenchApi, "resolve").mockResolvedValue({ candidates: [si035] });
+  vi.spyOn(productionApi, "instruments").mockResolvedValue({ instruments: [] });
+  const planned = vi.spyOn(vnaBenchApi, "plan").mockResolvedValue(plan);
+  render(<VnaBench canEdit />);
+  await findObject("СИ.035");
+  const top = await screen.findByLabelText(/Верхняя частота, ГГц/);
+  fireEvent.change(top, { target: { value: "шесть" } });
+  fireEvent.keyDown(top, { key: "Enter" });
+  expect(await screen.findByText("Введите число гигагерц больше нуля, например 6 или 12,4")).toBeInTheDocument();
+  expect(top).toHaveAttribute("aria-invalid", "true");
+  expect(planned).toHaveBeenCalledTimes(1);
+});
+
+it("switches the bench tabs with the arrow keys", async () => {
+  vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state());
+  render(<VnaBench canEdit />);
+  const measure = await screen.findByRole("tab", { name: "Замер" });
+  fireEvent.keyDown(measure, { key: "ArrowRight" });
+  expect(screen.getByRole("tab", { name: "Проверки", selected: true })).toHaveFocus();
+  fireEvent.keyDown(screen.getByRole("tab", { name: "Проверки" }), { key: "Home" });
+  expect(screen.getByRole("tab", { name: "Замер", selected: true })).toHaveFocus();
 });
