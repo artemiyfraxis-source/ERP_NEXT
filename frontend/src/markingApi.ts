@@ -67,6 +67,8 @@ export const markingApi = {
   profile: (profile: MarkingProfile, geometry: MarkingGeometry, calibrated: boolean, name = profile.name) => api<MarkingProfile>(`${root}/profiles/${encodeURIComponent(profile.id)}`, {
     method: "PUT", body: JSON.stringify({ version: profile.version, geometry, calibrated, name }),
   }),
+  createProfile: (equipmentId: string, body: { name: string; copy_from?: string; geometry?: MarkingGeometry }) =>
+    post<MarkingProfile>(`/machines/${encodeURIComponent(equipmentId)}/profiles`, body),
   bind: (equipmentId: string, body: MarkingBinding) => api<MarkingBinding>(`${root}/machines/${encodeURIComponent(equipmentId)}/binding`, {
     method: "PUT", body: JSON.stringify(body),
   }),

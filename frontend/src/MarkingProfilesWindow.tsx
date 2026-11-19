@@ -4,7 +4,7 @@ import { DataTable } from "./DataTable";
 import { PageWindow } from "./PageWindow";
 import { formatDateTime, formatNumber } from "./format";
 import { useCanAct, useCanPrint, useCurrentUserId } from "./rights";
-import { boundPrinter, joinHalves, markingApi, splitHalves, type MarkingCatalog, type MarkingGeometry, type MarkingPrinterCommand, type MarkingProfile, type MarkingRaster, type MarkingRect } from "./markingApi";
+import { boundPrinter, joinHalves, markingApi, splitHalves, type MarkingCatalog, type MarkingGeometry, type MarkingMachine, type MarkingPrinterCommand, type MarkingProfile, type MarkingRaster, type MarkingRect } from "./markingApi";
 import { MarkingBatchProgress } from "./MarkingPrintWindow";
 import "./marking.css";
 
@@ -16,6 +16,8 @@ function workplaceName(printer: { pc: string; machine_id: string; ip?: string })
 
 export function MarkingProfilesWindow({ equipmentIds, canEdit, close }: { equipmentIds: string[]; canEdit: boolean; close: () => void }) {
   const [catalog, setCatalog] = useState<MarkingCatalog | null>(null);
+  // Every machine's profiles, not only this window's: «Новый профиль…» copies a layout from any machine (ОБ.102 ← ОБ.101).
+  const [allProfiles, setAllProfiles] = useState<MarkingProfile[]>([]);
   const [machineId, setMachineId] = useState("");
   const [profileId, setProfileId] = useState("");
   const [target, setTarget] = useState("");
@@ -33,6 +35,7 @@ export function MarkingProfilesWindow({ equipmentIds, canEdit, close }: { equipm
       const allowed = new Set<string>(JSON.parse(ids));
       const machines = result.machines.filter((machine) => allowed.has(machine.equipment_id));
       setCatalog({ ...result, machines });
+      setAllProfiles(result.machines.flatMap((item) => item.profiles));
       if (machines.length === 1) { setMachineId(machines[0].equipment_id); setProfileId(machines[0].profiles[0]?.id ?? ""); }
     }).catch((problem) => { if (!controller.signal.aborted) setError(failureText(problem, "Не удалось загрузить профили")); });
     return () => controller.abort();
@@ -80,12 +83,84 @@ export function MarkingProfilesWindow({ equipmentIds, canEdit, close }: { equipm
             <option value="">Выберите принтер…</option>{printers.map((item) => <option key={JSON.stringify([item.machine_id, item.name])} value={JSON.stringify([item.machine_id, item.name])}>{workplaceName(item)} · {item.name}{item.online ? "" : " · Не на связи"}</option>)}</select></label>
           <button type="button" className="secondary" disabled={locked || !target} onClick={() => void bind()}>{busy ? "Сохранение…" : "Привязать принтер"}</button>
         </div>}
+        {canEdit && machine && <NewProfile key={machine.equipment_id} machine={machine} sources={sourceProfiles(catalog, allProfiles)} locked={locked}
+          onCreated={(created) => { setCatalog((current) => current && { ...current, machines: current.machines.map((item) => item.equipment_id === machine.equipment_id ? { ...item, profiles: [...item.profiles, created] } : item) }); setProfileId(created.id); }} />}
         {profile && <ProfileEditor key={profile.id} profile={profile} canEdit={canEdit} online={Boolean(printer?.online && printer.present)} onBusy={setEditorBusy} onDirty={setEditorDirty}
           onSaved={(updated) => setCatalog((current) => current && { ...current, machines: current.machines.map((item) => ({ ...item, profiles: item.profiles.map((row) => row.id === updated.id ? updated : row) })) })} />}
       </>}
       {!catalog && error && <button type="button" className="secondary" onClick={() => setReload(reload + 1)}>Повторить загрузку</button>}
     </div>
   </PageWindow>;
+}
+
+const mm = (value: number) => String(Math.round(value * 100) / 100).replace(".", ",");
+const round2 = (value: number) => Math.round(value * 100) / 100;
+/** This window's profiles (with unsaved-to-catalog edits applied) first, then every other machine's. */
+function sourceProfiles(catalog: MarkingCatalog, all: MarkingProfile[]): MarkingProfile[] {
+  const own = catalog.machines.flatMap((item) => item.profiles);
+  const ids = new Set(own.map((item) => item.id));
+  return [...own, ...all.filter((item) => !ids.has(item.id))];
+}
+
+/** The copied layout, with every zone scaled in proportion to the new label size and kept inside it. */
+function scaledGeometry(source: MarkingGeometry, width: number, height: number): MarkingGeometry {
+  const kx = width / source.width_mm, ky = height / source.height_mm;
+  const fit = (zone: MarkingRect): MarkingRect => {
+    const w = Math.min(round2(zone.width * kx), width), h = Math.min(round2(zone.height * ky), height);
+    // Rounded down to 0.01 mm: x + width must never exceed the label by a float hair (the server refuses that).
+    const floor2 = (value: number) => Math.floor(value * 100 + 1e-6) / 100;
+    return { x: Math.max(0, Math.min(round2(zone.x * kx), floor2(width - w))), y: Math.max(0, Math.min(round2(zone.y * ky), floor2(height - h))), width: w, height: h };
+  };
+  return { ...source, width_mm: width, height_mm: height, zones: source.zones.map(fit), blank_zones: source.blank_zones.map(fit) };
+}
+
+function NewProfile({ machine, sources, locked, onCreated }: { machine: MarkingMachine; sources: MarkingProfile[]; locked: boolean; onCreated: (profile: MarkingProfile) => void }) {
+  const [open, setOpen] = useState(false);
+  const [width, setWidth] = useState("");
+  const [height, setHeight] = useState("");
+  const [name, setName] = useState("");
+  const [named, setNamed] = useState(false);
+  const [source, setSource] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const w = Number(width.replace(",", ".")), h = Number(height.replace(",", "."));
+  const sized = width.trim() !== "" && height.trim() !== "" && w >= 5 && w <= 150 && h >= 5 && h <= 150;
+  const distance = (item: MarkingProfile) => Math.abs(item.geometry.width_mm - w) + Math.abs(item.geometry.height_mm - h);
+  const pool = machine.profiles.length ? machine.profiles : sources;
+  // A profile of the same size on any machine is the best layout (100×20 on ОБ.102 takes ОБ.101's flag zones);
+  // otherwise the closest size of this machine. Scaling between different proportions distorts the zones.
+  const sameSize = sized ? sources.find((item) => distance(item) < 0.01) : undefined;
+  const chosen = sources.find((item) => item.id === source) ?? sameSize ?? (sized ? [...pool].sort((a, b) => distance(a) - distance(b))[0] : pool[0]);
+  const shownName = named ? name : sized ? `${mm(w)}×${mm(h)}` : "";
+  function start() {
+    const first = pool[0];
+    setWidth(first ? mm(first.geometry.width_mm) : ""); setHeight(first ? mm(first.geometry.height_mm) : "");
+    setName(""); setNamed(false); setSource(""); setError(""); setOpen(true);
+  }
+  async function create() {
+    if (busy || !sized || !chosen || !shownName.trim()) return;
+    setBusy(true); setError("");
+    try {
+      const created = await markingApi.createProfile(machine.equipment_id, { name: shownName, copy_from: chosen.id, geometry: scaledGeometry(chosen.geometry, w, h) });
+      setOpen(false); onCreated(created);
+    } catch (problem) { setError(failureText(problem, "Профиль не создан")); }
+    finally { setBusy(false); }
+  }
+  if (!open) return <div className="marking-binding"><button type="button" className="secondary" disabled={locked} onClick={start}>Новый профиль…</button></div>;
+  return <fieldset className="form-grid marking-new-profile" disabled={busy}>
+    <legend>Новый профиль станка {machine.inventory_number}</legend>
+    <label>Название<input name="new-profile-name" autoComplete="off" value={shownName} onChange={(event) => { setName(event.target.value); setNamed(true); }} maxLength={80} /></label>
+    <label>Ширина, мм<input name="new-profile-width" inputMode="decimal" autoComplete="off" value={width} onChange={(event) => setWidth(event.target.value)} /></label>
+    <label>Высота, мм<input name="new-profile-height" inputMode="decimal" autoComplete="off" value={height} onChange={(event) => setHeight(event.target.value)} /></label>
+    <label>Копировать разметку из<select name="new-profile-source" autoComplete="off" value={chosen?.id ?? ""} onChange={(event) => setSource(event.target.value)}>
+      {sources.map((item) => <option key={item.id} value={item.id}>{item.name} · {mm(item.geometry.width_mm)}×{mm(item.geometry.height_mm)} мм</option>)}</select></label>
+    <p className="muted wide">Разметка берётся с профиля того же размера, если он есть у любого станка; иначе зоны масштабируются под новый размер. Профиль создаётся неоткалиброванным — нужна пробная печать.</p>
+    {!sized && (width || height) && <p className="warning-inline wide" role="alert">Размер — от 5 до 150 мм по каждой стороне.</p>}
+    {error && <p className="warning-inline wide" role="alert">{error}</p>}
+    <div className="form-actions wide">
+      <button type="button" className="primary" disabled={!sized || !chosen || !shownName.trim()} onClick={() => void create()}>{busy ? "Создание…" : "Создать профиль"}</button>
+      <button type="button" className="secondary" onClick={() => setOpen(false)}>Отмена</button></div>
+  </fieldset>;
 }
 
 function ProfileEditor({ profile, canEdit, online, onSaved, onBusy, onDirty }: {
