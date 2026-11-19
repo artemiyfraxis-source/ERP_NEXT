@@ -30,7 +30,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.9.2'
+$script:AgentVersion = '2.9.6'
 $script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
@@ -427,6 +427,7 @@ function Sync-PrintReceipts {
         }
         $body = @{ attempt = $receipt.payload.attempt; outcome = $receipt.payload.outcome; message = $receipt.payload.message }
         if ($receipt.payload.spool_job_id) { $body.spool_job_id = $receipt.payload.spool_job_id }
+        if ($receipt.payload.tracked) { $body.tracked = $true }
         $status = ''
         try {
             $reply = Invoke-ErpApi -Url "$Base/api/stock/labels/jobs/$($receipt.job_id)/result" -Body $body -AuthToken $AuthToken -MachineId $receipt.machine_id
@@ -496,10 +497,92 @@ function Send-PngToPrinter {
     }
 }
 
+# --- Honest print status -----------------------------------------------------------------------------------------
+# «Передано принтеру» only means Windows accepted the job. The printer (Godex in peel-off mode takes one label per
+# take) may still hold it, so the agent keeps watching each spooled job in the Windows queue until it leaves it:
+# printed / cancelled are final, an error (offline, paper out, paused...) is reported and watched until it clears.
+# The state goes to ERP at /labels/jobs/<id>/print-state; ERP shows «напечатано N из M · в очереди K».
+function Get-PrintWatchRoot { return Join-Path (Get-PrintReceiptRoot) 'watch' }
+
+function Get-PrintWatchPath {
+    param([string]$JobId, [string]$Attempt)
+    return Join-Path (Get-PrintWatchRoot) ([IO.Path]::GetFileName((Get-PrintReceiptPath $JobId $Attempt)))
+}
+
+# One Windows spool job (Get-PrintJob row, or $null once it left the queue) -> the job's print state for ERP.
+# printed: Printed/Complete flag, or gone from the queue without being deleted; cancelled: gone after a Deleting
+# flag; error: a blocking flag; queued: still spooling/printing (the printer may be holding it).
+function Resolve-SpoolJobState {
+    param($Job, [bool]$WasDeleting = $false)
+    if (-not $Job) {
+        if ($WasDeleting) { return @{ state = 'cancelled'; message = 'Задание удалено из очереди печати'; final = $true; deleting = $true } }
+        return @{ state = 'printed'; message = ''; final = $true; deleting = $false }
+    }
+    $status = [string]$Job.JobStatus
+    if ($status -match 'Printed|Complete') { return @{ state = 'printed'; message = ''; final = $true; deleting = $false } }
+    if ($status -match 'Deleting|Deleted') { return @{ state = 'queued'; message = ''; final = $false; deleting = $true } }
+    $reasons = @()
+    if ($status -match 'Offline') { $reasons += 'принтер не в сети' }
+    if ($status -match 'PaperOut') { $reasons += 'нет бумаги или этикеток' }
+    if ($status -match 'Paused') { $reasons += 'очередь приостановлена' }
+    if ($status -match 'UserIntervention') { $reasons += 'нужно вмешательство оператора' }
+    if ($status -match 'Blocked') { $reasons += 'очередь устройства заблокирована' }
+    if ($status -match 'Error' -and -not $reasons.Count) { $reasons += 'ошибка печати' }
+    if ($reasons.Count) { return @{ state = 'error'; message = 'Ошибка: ' + ($reasons -join ', '); final = $false; deleting = $false } }
+    return @{ state = 'queued'; message = ''; final = $false; deleting = $false }
+}
+
+function Save-PrintWatch {
+    param([string]$JobId, [string]$Attempt, [string]$Base, [string]$MachineId, [string]$Printer, $SpoolJobId)
+    $watch = @{ base = $Base; machine_id = $MachineId; job_id = $JobId; attempt = $Attempt; printer = $Printer
+        spool_job_id = [int]$SpoolJobId; deleting = $false; last_state = ''; last_message = ''
+        started_at = (Get-Date).ToUniversalTime().ToString('o') }
+    Save-PrintReceipt (Get-PrintWatchPath $JobId $Attempt) $watch
+}
+
+# Walks every watched job once: reads the Windows queue per printer, reports a changed state to ERP. Network errors
+# keep the watch for the next pass; 403/404/409 mean ERP will never take it, so the watch ends.
+function Update-PrintWatches {
+    param([string]$Base, [string]$AuthToken)
+    $root = Get-PrintWatchRoot
+    if (-not (Test-Path -LiteralPath $root)) { return }
+    $queues = @{}
+    foreach ($file in @(Get-ChildItem -LiteralPath $root -Filter '*.json' -File)) {
+        $watch = [IO.File]::ReadAllText($file.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json
+        if ($watch.base -ne $Base -or $watch.machine_id -ne (Get-MachineId)) { continue }
+        $printer = [string]$watch.printer
+        if (-not $queues.ContainsKey($printer)) {
+            try { $queues[$printer] = @(Get-PrintJob -PrinterName $printer -ErrorAction Stop) }
+            catch { Write-Log "Очередь '$printer' не прочитана: $($_.Exception.Message)"; $queues[$printer] = $null }
+        }
+        if ($null -eq $queues[$printer]) { continue }
+        $job = $queues[$printer] | Where-Object { [int]$_.ID -eq [int]$watch.spool_job_id } | Select-Object -First 1
+        $result = Resolve-SpoolJobState $job ([bool]$watch.deleting)
+        $changed = $false
+        if ([bool]$watch.deleting -ne [bool]$result.deleting) { $watch.deleting = [bool]$result.deleting; $changed = $true }
+        $report = $result.state -ne 'queued' -and ($result.state -ne $watch.last_state -or $result.message -ne $watch.last_message)
+        if ($report) {
+            $body = @{ attempt = $watch.attempt; state = $result.state; message = $result.message }
+            try { Invoke-ErpApi -Url "$Base/api/stock/labels/jobs/$($watch.job_id)/print-state" -Body $body -AuthToken $AuthToken -MachineId $watch.machine_id | Out-Null }
+            catch {
+                $code = Get-ErpErrorStatus $_
+                if ($code -in @(403, 404, 409)) { Write-Log "Итог печати задания $($watch.job_id) не принят (HTTP $code)"; [IO.File]::Delete($file.FullName); continue }
+                Write-Log "Итог печати не ушёл в ERP: $($_.Exception.Message)"; continue
+            }
+            Write-Log "Задание $($watch.job_id): $($result.state) $($result.message)"
+            $watch.last_state = $result.state; $watch.last_message = $result.message; $changed = $true
+        }
+        if ($result.final) { [IO.File]::Delete($file.FullName) }
+        elseif ($changed) { Save-PrintReceipt $file.FullName $watch }
+    }
+}
+
 function Invoke-MarkingPollOnce {
     param([string]$Base, [string]$AuthToken, [string]$PrinterName, [string]$MarkingPrinterName, [switch]$DryRun)
     # An unresolved unknown pauses only the marking lane; warehouse TSPL labels keep printing.
     $paused = Sync-PrintReceipts $Base $AuthToken
+    # Never let the status watcher stop the print lane.
+    try { Update-PrintWatches $Base $AuthToken } catch { Write-Log "Слежение за очередью печати: $($_.Exception.Message)" }
     $printers = @(Get-AgentPrinters $PrinterName $MarkingPrinterName)
     $capabilities = @($printers | Where-Object { $_.present -and -not ($paused -and $_.kind -eq 'gdi_png') } | ForEach-Object { $_.kind })
     if (-not $capabilities.Count) { if ($paused) { return 'blocked' }; return 'idle' }
@@ -531,6 +614,12 @@ function Invoke-MarkingPollOnce {
         Save-PrintReceipt $path $receipt
         $receipt.payload = Send-PngToPrinter $job $bytes
         $receipt.payload.attempt = $job.attempt
+        $spoolId = 0
+        if ($receipt.payload.outcome -eq 'spooled' -and [int]::TryParse([string]$receipt.payload.spool_job_id, [ref]$spoolId) -and $spoolId -gt 0) {
+            # Watch before the receipt: after a crash the agent still reports how the job ended.
+            Save-PrintWatch ([string]$job.id) ([string]$job.attempt) $Base $machine ([string]$job.printer) $spoolId
+            $receipt.payload.tracked = $true
+        }
         Save-PrintReceipt $path $receipt
     }
     [void](Sync-PrintReceipts $Base $AuthToken)

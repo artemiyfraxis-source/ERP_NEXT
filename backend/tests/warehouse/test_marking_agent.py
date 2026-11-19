@@ -191,3 +191,63 @@ def test_agent_claim_body_with_both_printers_hands_out_tspl_and_survives_a_renam
     assert renamed["id"] == str(second)
     with sessions() as session:
         assert session.get(LabelAgentRow, 1).printer == "TSC MB341 (копия 1)"
+
+
+def test_tracked_spool_job_reports_final_print_state_and_batch_progress(tokens_api):
+    from app.workflows.marking_labels import STUCK_TEXT, batch_view
+    sessions, clock = tokens_api
+    admin, service = _login("admin"), TestClient(app)
+    agent = _agent(admin, "pc-1")
+    batch_id = _batch(sessions, clock.now)
+    payload = {"machine_id": "pc-1", "capabilities": ["gdi_png"]}
+    jobs = []
+    for _ in range(2):
+        job = service.post(CLAIM, json=payload, headers=agent).json()["job"]
+        spooled = {"attempt": job["attempt"], "outcome": "spooled", "message": "Передано принтеру",
+                   "spool_job_id": 7, "tracked": True}
+        assert service.post(f"/api/stock/labels/jobs/{job['id']}/result", json=spooled, headers=agent).json()["status"] == "spooled"
+        jobs.append(job)
+
+    def view(now=None):
+        with sessions() as session:
+            return batch_view(session.get(MarkingBatchRow, batch_id), session, now)
+
+    first = view(clock.now)
+    assert (first["printed"], first["queued"], first["progress_label"]) == (0, 2, "Напечатано 0 из 2 · в очереди 2")
+    assert not first["stuck"] and first["status_label"] == "Печатается"
+    assert first["jobs"][0]["status_label"] == "В очереди принтера"
+    # No label taken for a while: the printer is waiting (peel-off mode / paper / offline).
+    assert view(clock.now + timedelta(minutes=5))["stuck_label"] == STUCK_TEXT
+    state = f"/api/stock/labels/jobs/{jobs[0]['id']}/print-state"
+    body = {"attempt": jobs[0]["attempt"], "state": "printed", "message": ""}
+    assert service.post(state, json=body, headers=agent).json() == {"ok": True, "print_state": "printed"}
+    assert service.post(state, json={**body, "attempt": str(uuid4())}, headers=agent).status_code == 409
+    # A later `error` never undoes a final state.
+    assert service.post(state, json={**body, "state": "error"}, headers=agent).json()["print_state"] == "printed"
+    done = view(clock.now)
+    assert (done["printed"], done["queued"], done["progress_label"]) == (1, 1, "Напечатано 1 из 2 · в очереди 1")
+    assert not done["stuck"]
+    error = {"attempt": jobs[1]["attempt"], "state": "error", "message": "Принтер: нет бумаги"}
+    assert service.post(f"/api/stock/labels/jobs/{jobs[1]['id']}/print-state", json=error, headers=agent).status_code == 200
+    failed = view(clock.now)
+    assert failed["print_errors"] == 1 and failed["jobs"][1]["message"] == "Принтер: нет бумаги"
+    assert failed["jobs"][1]["status_label"] == "Ошибка принтера"
+    # The same spooled receipt again stays idempotent after print-state was added.
+    again = {"attempt": jobs[1]["attempt"], "outcome": "spooled", "message": "Передано принтеру", "spool_job_id": 7, "tracked": True}
+    assert service.post(f"/api/stock/labels/jobs/{jobs[1]['id']}/result", json=again, headers=agent).json()["status"] == "spooled"
+
+
+def test_legacy_agent_receipt_is_not_claimed_as_printed(tokens_api):
+    from app.workflows.marking_labels import batch_view
+    sessions, clock = tokens_api
+    admin, service = _login("admin"), TestClient(app)
+    agent = _agent(admin, "pc-1")
+    batch_id = _batch(sessions, clock.now)
+    job = service.post(CLAIM, json={"machine_id": "pc-1", "capabilities": ["gdi_png"]}, headers=agent).json()["job"]
+    result = {"attempt": job["attempt"], "outcome": "spooled", "message": "Передано", "spool_job_id": 1}
+    assert service.post(f"/api/stock/labels/jobs/{job['id']}/result", json=result, headers=agent).status_code == 200
+    assert service.post(f"/api/stock/labels/jobs/{job['id']}/print-state", headers=agent,
+                        json={"attempt": job["attempt"], "state": "printed"}).status_code == 409
+    with sessions() as session:
+        view = batch_view(session.get(MarkingBatchRow, batch_id), session, clock.now + timedelta(hours=1))
+    assert view["untracked"] == 1 and not view["stuck"] and view["jobs"][0]["print_state"] == "untracked"

@@ -336,7 +336,7 @@ def claim_marking(uow, *, machine_id, token_id, now):
     return None
 
 
-def report_marking(uow, job_id, *, machine_id, token_id, attempt, outcome, message, spool_job_id, now) -> str:
+def report_marking(uow, job_id, *, machine_id, token_id, attempt, outcome, message, spool_job_id, now, tracked=False) -> str:
     """The agent's receipt for one attempt → the job's status after it. Idempotent: the same receipt again answers
     the current status, so an agent holding an `unknown` receipt learns when the operator resolved the job.
     A receipt after the lease ran out (the job is `unknown` by then) is stored for the operator, the status stays."""
@@ -352,7 +352,10 @@ def report_marking(uow, job_id, *, machine_id, token_id, attempt, outcome, messa
         if row.format != "gdi_png" or row.attempt != attempt:
             raise JobFinished("Попытка печати устарела")
         receipt = {"outcome": outcome, "message": message[:ERROR_MAX], "spool_job_id": spool_job_id}
-        if row.receipt == receipt:
+        if tracked:
+            # The agent keeps watching the Windows spool job and reports its end via report_print_state.
+            receipt["tracked"] = True
+        if row.receipt and {key: value for key, value in row.receipt.items() if not key.startswith("print_")} == receipt:
             return row.status
         if row.status == TAKEN:
             lease = row.lease_until.replace(tzinfo=now.tzinfo) if row.lease_until.tzinfo is None else row.lease_until
@@ -376,6 +379,33 @@ def report_marking(uow, job_id, *, machine_id, token_id, attempt, outcome, messa
         status = row.status
         uow.commit()
         return status
+
+
+PRINT_STATES = ("printed", "error", "cancelled")
+
+
+def report_print_state(uow, job_id, *, machine_id, token_id, attempt, state, message, now) -> str:
+    """The agent's word on how a spooled job ended in the Windows queue: printed / error (still watched, may recover)
+    / cancelled. The job's own status stays `spooled`; the state lives in the receipt. A final state is never
+    downgraded by a later `error` (a re-sent receipt after an answer lost on the way)."""
+    if state not in PRINT_STATES:
+        raise ValueError("Неизвестное состояние печати")
+    with uow:
+        session = _session(uow)
+        row = session.scalar(select(LabelJobRow).where(LabelJobRow.id == job_id).with_for_update())
+        if row is None:
+            raise KeyError("Задание печати не найдено")
+        if row.target_machine_id != machine_id or row.claim_token_id != token_id:
+            raise PermissionError("Задание выдано другому агенту")
+        if row.format != "gdi_png" or row.attempt != attempt or row.status != "spooled" or not (row.receipt or {}).get("tracked"):
+            raise JobFinished("Задание не ждёт итога печати")
+        current = (row.receipt or {}).get("print_state")
+        if current in ("printed", "cancelled") and state == "error":
+            return current
+        row.receipt = {**row.receipt, "print_state": state, "print_message": message[:ERROR_MAX],
+                       "print_state_at": now.isoformat()}
+        uow.commit()
+        return state
 
 
 def agent_status(uow) -> dict:

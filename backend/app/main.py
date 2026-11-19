@@ -80,6 +80,7 @@ from .workflows import coax_vswr_api, instrument_from_stock, instrument_labels, 
 from .workflows import machines_api
 from .modules.production import rf_interfaces_api
 from .modules.production import mating_api as production_mating_api
+from .modules.production import vna_check_api as production_vna_check_api
 from .workflows import vna_plan_api
 from .workflows import qc_plan_api
 from .workflows import vna_measurement_api
@@ -187,6 +188,7 @@ app.include_router(production_intake_api.router)
 app.include_router(coax_vswr_api.router)
 app.include_router(rf_interfaces_api.router)
 app.include_router(production_mating_api.router)
+app.include_router(production_vna_check_api.router)
 app.include_router(vna_plan_api.router)
 app.include_router(qc_plan_api.router)
 app.include_router(vna_measurement_api.router)
