@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from typing import Annotated, Literal
 
-from pydantic import Field, model_validator
+from pydantic import AfterValidator, Field, model_validator
 
 from .vna_sessions import (ARGS, OPS, RESULTS, CaptureArgs, Captured, Digest, EmptyArgs, Profile, Result,
                            StrictModel, Trace, fingerprint, validate_result)
@@ -23,7 +23,15 @@ LIMIT_SEGMENTS_MAX = 20
 CONFIDENCE_POINTS_MAX = 4001  # keeps Data+Memory arrays of four traces well inside the 3 MiB result request
 
 Hz = Annotated[float, Field(gt=0, le=1e12)]
-Level = Annotated[float, Field(ge=-1e6, le=1e6)]
+
+
+def _sig9(value: float) -> float:
+    """Screen numbers carry 9 significant digits on both sides, so a COM readback echo can equal the request."""
+    return float(f"{value:.9g}")
+
+
+ScreenHz = Annotated[float, Field(gt=0, le=1e12), AfterValidator(_sig9)]
+Level = Annotated[float, Field(ge=-1e6, le=1e6), AfterValidator(_sig9)]
 Celsius = Annotated[float, Field(ge=-50, le=150)]
 Serial = Annotated[str, Field(min_length=1, max_length=300, pattern=r"\S")]
 Format = Literal["SWR", "MLOG", "PHAS", "GDEL", "SMIT"]
@@ -35,15 +43,15 @@ Position = Annotated[int, Field(ge=1, le=SCREEN_TRACES_MAX, strict=True)]
 class Scale(StrictModel):
     """Y scale of one graph: value per division, reference level and reference line (0..10 divisions)."""
 
-    pdiv: float = Field(gt=0, le=1e6)
+    pdiv: Annotated[float, Field(gt=0, le=1e6), AfterValidator(_sig9)]
     rlev: Level | None = None
     rpos: int | None = Field(default=None, ge=0, le=10, strict=True)
 
 
 class LimitSegment(StrictModel):
     kind: Literal["upper", "lower"]
-    start_hz: Hz
-    stop_hz: Hz
+    start_hz: ScreenHz
+    stop_hz: ScreenHz
     start_value: Level
     stop_value: Level
 
@@ -76,7 +84,7 @@ class ScreenTrace(StrictModel):
 class Screen(StrictModel):
     split: int = Field(ge=1, le=SCREEN_TRACES_MAX, strict=True)
     traces: list[ScreenTrace] = Field(min_length=1, max_length=SCREEN_TRACES_MAX)
-    markers_hz: list[Hz] = Field(default_factory=list, max_length=MARKERS_MAX)
+    markers_hz: list[ScreenHz] = Field(default_factory=list, max_length=MARKERS_MAX)
     title: str = Field(default="", max_length=256, pattern=r"^[^\x00-\x1f\x7f]*$")
 
     @model_validator(mode="after")

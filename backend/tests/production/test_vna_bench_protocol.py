@@ -1,5 +1,4 @@
 import base64
-import typing
 from copy import deepcopy
 
 import pytest
@@ -8,7 +7,7 @@ from pydantic import ValidationError
 from app.modules.production.vna_bench_protocol import (ARGS_V2, CONFIDENCE_POINTS_MAX, OPS_V2, RESULTS_V2, V2_OPS,
                                                       Screen, command_args, screen_hash, validate_result_v2)
 from app.modules.production.vna_sessions import ARGS, OPS, RESULTS, validate_result
-from app.modules.warehouse.scan_jobs_api import VnaControlCapability
+from app.modules.warehouse.scan_jobs_api import VNA_CONTROL_V2_OPS, VnaControlCapability
 from tests.production.test_vna_sessions import steps_for
 
 SERIAL = "26030095"
@@ -47,8 +46,34 @@ def test_v2_extends_v1_tables_without_changing_them():
     assert set(ARGS) == set(RESULTS) == set(OPS) and not set(V2_OPS) & set(OPS)
     assert all(ARGS_V2[op] is ARGS[op] and RESULTS_V2[op] is RESULTS[op] for op in OPS if op != "capture")
     # The heartbeat (warehouse) spells the same op list without importing production.
-    advertised = typing.get_args(typing.get_args(VnaControlCapability.model_fields["ops"].annotation)[0])
-    assert advertised == V2_OPS
+    assert VNA_CONTROL_V2_OPS == V2_OPS
+
+
+def test_heartbeat_ops_strict_for_v2_and_filtered_for_newer_protocols():
+    newer = VnaControlCapability.model_validate(dict(version=3, ops=["release", "future_op", "release", "device_status"]))
+    assert newer.ops == ["release", "device_status"]
+    with pytest.raises(ValidationError):
+        VnaControlCapability.model_validate(dict(version=2, ops=["release", "future_op"]))
+    with pytest.raises(ValidationError):
+        VnaControlCapability.model_validate(dict(version=1, ops=["release"]))
+
+
+def test_screen_numbers_normalized_so_a_com_readback_echo_matches():
+    third = deepcopy(SCREEN)
+    third["traces"][0]["scale"]["pdiv"] = 0.1 / 3
+    third["traces"][0]["limits"][0]["start_value"] = 1 + 0.1 / 3
+    third["markers_hz"][0] = 1e9 / 3
+    args = command_args(2, "apply_screen", screen_args(third))
+    assert args["screen"]["traces"][0]["scale"]["pdiv"] == 0.0333333333
+    assert args["screen"]["markers_hz"][0] == 333333333.0
+    readback = deepcopy(args)  # COM returns doubles with noise beyond 9 significant digits
+    readback["screen"]["traces"][0]["scale"]["pdiv"] = 0.033333333300000004
+    readback["screen"]["traces"][0]["limits"][0]["start_value"] = 1.0333333330000001
+    readback["screen"]["markers_hz"][0] = 333333333.00000006
+    assert validate_result_v2("apply_screen", args, SERIAL, dict(serial=SERIAL, **readback))
+    rounded = deepcopy(third)
+    rounded["traces"][0]["scale"]["pdiv"] = 0.0333333333
+    assert screen_hash(Screen.model_validate(rounded)) == args["screen_hash"]
 
 
 def test_apply_screen_round_trip_and_readback_mismatch():

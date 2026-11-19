@@ -259,6 +259,13 @@ def test_heartbeat_rejects_malformed_bench_capability(env, control):
     assert TestClient(app).post(HEARTBEAT, json=data, headers=env[1]).status_code == 422
 
 
+def test_newer_protocol_heartbeat_survives_unknown_ops_but_gets_no_session_commands(env):
+    data = dict(machine_id="pc-1", pc_name="pc-1", version="3.0.0", vna=dict(name=NAME, ready=True),
+                vna_control=dict(version=3, methods=["acm"], ops=["release", "future_op"]))
+    assert TestClient(app).post(HEARTBEAT, json=data, headers=env[1]).status_code == 200
+    assert create(env).status_code == 409
+
+
 def test_capture_only_heartbeat_revokes_control_without_disabling_capture(env):
     heartbeat(env[1])
     assert create(env).status_code == 409
