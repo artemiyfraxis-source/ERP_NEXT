@@ -142,6 +142,14 @@ def _journal(uow, row: jobs.ManualJobRow, event: str, principal: Principal, now:
                                       "equipment_id": str(row.equipment_id)}))
 
 
+def _close_run(session, row, now: datetime, principal, why: str) -> None:
+    """The job's open run on the machine closes with it; never under a cutting machine (409, nothing saved)."""
+    try:
+        runs.close_for_manual(session, row.equipment_id, row.id, now, principal.actor.name, why)
+    except runs.RunRefused as error:
+        raise HTTPException(409, str(error)) from error
+
+
 def _errors(error: Exception) -> HTTPException:
     if isinstance(error, KeyError):
         return HTTPException(404, error.args[0] if error.args else "Не найдено")
@@ -250,7 +258,7 @@ def finish(job_id: UUID, payload: FinishPayload, principal: Writer, factory: Fac
             row = jobs.finish(session, job_id, payload.version, result, actor_name=principal.actor.name, now=now)
         except (KeyError, jobs.ManualJobInvalid, jobs.ManualJobConflict) as error:
             raise _errors(error) from error
-        runs.close_for_manual(session, row.equipment_id, row.id, now, principal.actor.name, "Ручная работа завершена")
+        _close_run(session, row, now, principal, "Ручная работа завершена")
         material = jobs.MATERIAL_TEXTS[row.material][0] + (f": {row.material_note}" if row.material_note else "")
         defect = f", брак {row.defect_quantity} ({row.defect_reason})" if row.defect_quantity else ""
         _journal(uow, row, "finished", principal, now,
@@ -268,7 +276,7 @@ def cancel(job_id: UUID, payload: CancelPayload, principal: Writer, factory: Fac
             row = jobs.cancel(session, job_id, payload.version, payload.reason, actor_name=principal.actor.name, now=now)
         except (KeyError, jobs.ManualJobInvalid, jobs.ManualJobConflict) as error:
             raise _errors(error) from error
-        runs.close_for_manual(session, row.equipment_id, row.id, now, principal.actor.name, "Ручная работа отменена")
+        _close_run(session, row, now, principal, "Ручная работа отменена")
         _journal(uow, row, "cancelled", principal, now, f"Отменена {jobs.number_text(row.number)}: {row.cancel_reason}")
         answer = view(row, session.get(EquipmentMachineRow, row.equipment_id))
         uow.commit()

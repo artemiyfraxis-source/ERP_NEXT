@@ -25,7 +25,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 
 from app.modules.production import machine_runs as runs
 from app.modules.production import machine_writes as commands
@@ -41,7 +41,7 @@ from app.shared.http_auth import Principal
 
 from .machine_writes_api import (_can_edit, _confirm, _enqueue, _journal, _link, _transfer_plan, can_control,
                                  cutting_run, latin, machines_edit_principal, refuse_when_done,
-                                 refuse_while_manual, transfer_summary)
+                                 refuse_while_manual, settle_run, transfer_summary)
 from .machines_api import Reader
 from .manual_jobs_api import view as manual_view
 
@@ -91,6 +91,7 @@ def run_state(inventory: str, principal: Reader, factory: Factory, now: Now) -> 
         session = uow.session
         link = _link(session, inventory)
         commands.latest(session, link.equipment_id, now, limit=1)  # what timed out meanwhile shows as such
+        settle_run(uow, link.equipment_id, principal.actor, now)
         words, link_ok, problem = _live(session, link.equipment_id, now)
         row = runs.current(session, link.equipment_id)
         result = {"run": runs.view(row, words, link_ok) if row is not None else None,
@@ -164,11 +165,14 @@ def close_run(inventory: str, payload: ClosePayload, principal: Writer, factory:
     with factory() as uow:
         session = uow.session
         link = _link(session, inventory)
+        settle_run(uow, link.equipment_id, principal.actor, now)
         row = runs.current(session, link.equipment_id, for_update=True)  # a parallel close or re-send waits here
         if row is None or row.id != payload.run_id or not runs.is_open(row):
             raise HTTPException(409, "Это задание на станке уже завершено или сменилось — обновите карточку")
         if row.status in commands.OPEN:
             raise HTTPException(409, "Задание ещё записывается на станок — дождитесь результата")
+        if runs.pending(row):
+            raise HTTPException(409, "Запись задания проверяется по счётчику станка — повторите через секунду")
         if (runs.info(row) or {}).get("kind") == "manual" and (payload.version is None or payload.good is None):
             raise HTTPException(422, "Укажите годные и брак")
         words, link_ok, _problem = _live(session, link.equipment_id, now)
@@ -184,15 +188,14 @@ def close_run(inventory: str, payload: ClosePayload, principal: Writer, factory:
                                    payload.material_note, machine_count=count)
             try:
                 job = manual.finish(session, UUID(run["job_id"]), payload.version, result,
-                                    actor_name=principal.actor.name, now=now, counter_reset=count is None)
+                                    actor_name=principal.actor.name, now=now, counter_reset=run["reset"],
+                                    counter_unread=run["unread"])
             except KeyError as error:
                 raise HTTPException(404, str(error.args[0])) from error
             except manual.ManualJobConflict as error:
                 raise HTTPException(409, str(error)) from error
             except manual.ManualJobInvalid as error:
                 raise HTTPException(422, str(error)) from error
-            if run["unread"]:
-                job = _mark_unread(session, job)
             defect = f", брак {job.defect_quantity} ({job.defect_reason})" if job.defect_quantity else ""
             uow.audit.add(AuditEvent(
                 id=uuid4(), aggregate_id=job.id, event_type="production.manual_job_finished", actor=principal.actor,
@@ -205,19 +208,6 @@ def close_run(inventory: str, payload: ClosePayload, principal: Writer, factory:
         result = {"run": runs.view(row, words, link_ok), "manual": _manual_view(session, job)}
         uow.commit()
     return result
-
-
-def _mark_unread(session, job: manual.ManualJobRow) -> manual.ManualJobRow:
-    """A count typed by hand because the counter was not read (no link) is not a reset: `params.counter_unread`."""
-    params = {key: value for key, value in (job.params or {}).items() if key != "counter_reset"}
-    changed = session.execute(update(manual.ManualJobRow).where(
-        manual.ManualJobRow.id == job.id, manual.ManualJobRow.version == job.version).values(
-        params={**params, "counter_unread": True}, version=job.version + 1)).rowcount
-    if changed != 1:
-        raise HTTPException(409, "Ручную работу уже изменили — обновите и проверьте ещё раз")
-    session.expire(job)
-    session.refresh(job)
-    return job
 
 
 @router.get("/runs/cutting/{group_id}")

@@ -197,6 +197,7 @@ def _enqueue(uow, link, principal: Principal, purpose: str, writes, summary: str
     if run is not None:
         if quantity is None:
             raise HTTPException(422, "Укажите тираж — штук в этом задании: без него станок не остановится на нужном числе")
+        settle_run(uow, link.equipment_id, principal.actor, now)
         run = runs.with_quantity(runs.supersede(uow.session, link.equipment_id, run, now, principal.actor.name), quantity)
     try:
         row, expired = commands.enqueue(uow.session, equipment_id=link.equipment_id, purpose=purpose, writes=writes,
@@ -241,6 +242,7 @@ def control(inventory: str, principal: Reader, factory: Factory, now: Now) -> di
                     "state": None, "commands": [], "offsets": [], "can_edit": False}
         snapshot = session.get(rules.MachineSnapshotRow, link.equipment_id)
         rows = commands.latest(session, link.equipment_id, now)
+        settle_run(uow, link.equipment_id, principal.actor, now)
         result = {
             "problem": commands.idle_problem(link, snapshot, now),
             "state": rules.snapshot_words(snapshot).get(766),
@@ -513,8 +515,17 @@ def correction(inventory: str, payload: CorrectionPayload, request: Request, pri
 
 # --- the command runner on the machine PC ---
 
+def settle_run(uow, equipment_id: UUID, actor, now: datetime) -> None:
+    """The machine's run whose counter check waits for a fresh snapshot (production/machine_runs.py `pending`) is
+    checked now — on every card, control and command request, without anyone pressing anything."""
+    row = runs.current(uow.session, equipment_id)
+    if runs.pending(row):
+        _run_verified(uow, row, actor, now)
+
+
 def _run_verified(uow, row: commands.MachineWriteRow, actor, now: datetime) -> None:
-    """A job run's write read back right: its counter start; a manual job is counted by the machine from now."""
+    """A job run's write read back right: its counter start; a manual job is counted by the machine from now. Nothing
+    while the check still waits for a snapshot after the write (it settles on a later read: `settle_run`)."""
     run = runs.verified(uow.session, row, now)
     if run is None:
         return

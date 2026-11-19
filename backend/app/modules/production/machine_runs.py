@@ -6,8 +6,10 @@ purpose `transfer`) as `payload["run"]`; the words the command writes (`blocks`,
 - Tagged when queued: `{kind, group_id, length_mm | job_id, label}` plus the quantity it was written with: `counter`
   (D649 the target was computed from), `target` (D22 = counter + pieces), `pieces`, `counter_start` (= counter, or the
   first start of the same job written again) and `quantity` (pieces counted from that start).
-- Verified (the runner read every word back): the machine's snapshot then must still show D649 = `counter` (`check`
-  ok); a counter that moved or could not be read (`moved` / `unknown`) makes the run void — «передайте заново», no
+- Verified (the runner read every word back): the first snapshot reported after the runner took the write must still
+  show D649 = `counter` (`check` ok). Until it comes (at most `PENDING_WAIT` after the answer) the check is `pending`
+  («проверяется», no «Пуск») and is re-evaluated on the next card / control read (machine_writes_api.settle_run); a
+  counter that moved or still could not be read after that (`moved` / `unknown`) makes the run void — «передайте заново», no
   «Пуск». A manual job is counted by the machine only after an ok check (`count_source` plc, `write_id`).
 - While it runs: done = D649 − counter_start; a counter below the start → «счётчик станка сброшен» (manual entry).
 - «Пуск» from ERP only for an open, checked run whose target is still on the machine (`start_blocker`): a fresh snapshot
@@ -21,7 +23,7 @@ A run of the same job again (after a correction) keeps the first `counter_start`
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from uuid import UUID
 
@@ -40,6 +42,7 @@ FINISHED_ALARM = 5  # «Тираж готов» in the alarm word: normal, not a
 RUNNING_STATES = (103, 104, 106)
 FAILED = ("failed", "expired", "unknown", "cancelled")
 LOOKBACK = 30  # the newest transfer writes of a machine searched for its open run
+PENDING_WAIT = timedelta(seconds=10)  # how long a finished write waits for a snapshot reported after it was taken
 COUNTER_RESET = "Счётчик станка сброшен — введите количество вручную"
 NO_COUNTER = "Нет свежих данных станка — количество вводится вручную"
 
@@ -162,6 +165,8 @@ def progress(row: queue.MachineWriteRow, words: dict[int, int], link_ok: bool) -
         stage = "failed"
     elif run.get("check") in VOID_CHECKS:
         stage = "moved"
+    elif run.get("check") == "pending":
+        stage = "writing"  # read back right, the counter check waits for a fresh snapshot
     elif start is None and not run.get("verified_at"):
         stage = "writing"
     elif reset:
@@ -178,27 +183,42 @@ def progress(row: queue.MachineWriteRow, words: dict[int, int], link_ok: bool) -
             "state": state, "alarm": alarm, "total_set": rules._u32(words, 22)}
 
 
+def pending(row: queue.MachineWriteRow | None) -> bool:
+    """A run whose write was read back right and whose counter check is not settled yet."""
+    run = info(row)
+    return run is not None and row.status == "done" and not run.get("verified_at")
+
+
 def verified(session: Session, row: queue.MachineWriteRow, now: datetime) -> dict | None:
-    """The write of a run read back right: its counter start from the fresh snapshot. → the run, or None (no run)."""
-    if info(row) is None:
+    """The write of a run read back right: its counter start from the fresh snapshot. → the run when its check settled
+    by this call; None — no run, settled before, or still `pending` (no snapshot after the write yet, within
+    `PENDING_WAIT` of the answer)."""
+    if not pending(row):
         return None
     lock(session, row)
-    run = info(row)
-    if run is None or run.get("verified_at"):
-        return run
-    run = dict(run)
+    if not pending(row):
+        return None
+    run = dict(info(row))
     # Only a snapshot reported after the runner took the write says what D649 was while it wrote: an older one may
     # predate a piece cut meanwhile.
     snapshot = session.get(rules.MachineSnapshotRow, row.equipment_id)
     fresh = (row.taken_at is not None and snapshot is not None and rules.link_status(snapshot, now) == "ok"
              and aware(snapshot.reported_at) >= aware(row.taken_at))
+    finished = aware(row.finished_at) or aware(now)
+    if not fresh and aware(now) - finished < PENDING_WAIT:
+        if run.get("check") != "pending":
+            _set(row, {**run, "check": "pending"})
+            session.flush()
+        return None
     seen = counter(rules.snapshot_words(snapshot)) if fresh else None
     run["counter_seen"] = seen
     if run.get("counter") is not None:
         # The target D22 was computed from `counter`: anything else on the machine now makes it wrong.
         run["check"] = "unknown" if seen is None else "ok" if seen == run["counter"] else "moved"
-    elif run.get("counter_start") is None:
-        run["counter_start"] = seen
+    else:
+        run.pop("check", None)
+        if run.get("counter_start") is None:
+            run["counter_start"] = seen
     run["verified_at"] = queue.moment(now)
     _set(row, run)
     session.flush()
@@ -240,6 +260,8 @@ def view(row: queue.MachineWriteRow, words: dict[int, int], link_ok: bool) -> di
     run = info(row) or {}
     seen = progress(row, words, link_ok)
     text, tone = queue.STATUS_TEXTS[row.status]
+    if run.get("check") == "pending":
+        text, tone = "Проверяется по счётчику станка", "info"
     return {"id": str(row.id), "kind": run.get("kind"), "label": run.get("label", ""), "group_id": run.get("group_id"),
             "length_mm": run.get("length_mm"), "job_id": run.get("job_id"), "quantity": run.get("quantity"),
             "write": {"status": row.status, "status_text": text, "tone": tone, "error": row.error},
@@ -267,11 +289,16 @@ def done_before(session: Session, equipment_id: UUID, new: dict, now: datetime) 
 
 NO_JOB = "Нет открытого задания — Пуск из ERP только по заданию: передайте задание на станок"
 WRITING = "Задание ещё записывается на станок — дождитесь результата"
+CHECKING = "Запись задания проверяется по счётчику станка — повторите «Пуск» через секунду"
 NOT_FRESH = "Нет свежих данных станка после записи задания — проверьте связь и повторите Пуск через секунду"
 MISMATCH = "Тираж на станке не совпадает с заданием — передайте задание заново"
 TOO_MANY = "Тираж на станке больше, чем осталось по заданию, — передайте задание заново"
 DONE_ALREADY = "Тираж задания уже выполнен — завершите задание или передайте новое"
 CUTTING = "Станок режет — сначала нажмите «Стоп», потом завершайте задание"
+
+
+class RunRefused(Exception):
+    """The run may not change now (409): the machine is cutting."""
 
 
 def cutting_now(words: dict[int, int], link_ok: bool) -> bool:
@@ -292,6 +319,8 @@ def start_blocker(session: Session, equipment_id: UUID, now: datetime) -> str:
         return WRITING
     if run.get("check") == "moved":
         return MOVED
+    if run.get("check") == "pending":
+        return CHECKING
     if run.get("check") != "ok" or run.get("target") is None or run.get("counter_start") is None:
         return UNREAD
     last = session.scalar(select(queue.MachineWriteRow.finished_at).where(
@@ -318,10 +347,14 @@ def start_blocker(session: Session, equipment_id: UUID, now: datetime) -> str:
 
 def close_for_manual(session: Session, equipment_id: UUID, job_id: UUID, now: datetime, actor_name: str,
                      why: str) -> dict | None:
-    """A manual job finished or cancelled from its own window closes its open run on the machine. → the closed run."""
+    """A manual job finished or cancelled from its own window closes its open run on the machine. → the closed run.
+    RunRefused while the machine cuts it: «Стоп» first."""
     row = current(session, equipment_id, for_update=True)
     run = info(row)
     if not is_open(row) or run.get("kind") != "manual" or run.get("job_id") != str(job_id):
         return None
     snapshot = session.get(rules.MachineSnapshotRow, equipment_id)
-    return close(row, rules.snapshot_words(snapshot), rules.link_status(snapshot, now) == "ok", now, actor_name, why)
+    words, link_ok = rules.snapshot_words(snapshot), rules.link_status(snapshot, now) == "ok"
+    if cutting_now(words, link_ok):
+        raise RunRefused(CUTTING)
+    return close(row, words, link_ok, now, actor_name, why)

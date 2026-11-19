@@ -312,9 +312,10 @@ def _open(session: Session, job_id: UUID, version: int) -> ManualJobRow:
 
 
 def finish(session: Session, job_id: UUID, version: int, result: Finish, *, actor_name: str,
-           now: datetime, counter_reset: bool = False) -> ManualJobRow:
-    """Done with good / defect. `counter_reset` (run from the machine card, S2): the machine counter was reset or not
-    read — the count was typed by hand, so the job is marked «Вручную» and `params.counter_reset`."""
+           now: datetime, counter_reset: bool = False, counter_unread: bool = False) -> ManualJobRow:
+    """Done with good / defect. Run from the machine card (S2): `counter_reset` — the machine counter went back,
+    `counter_unread` — it was not read (no link); the count was typed by hand, so the job is marked «Вручную» and
+    `params.counter_reset` / `params.counter_unread`."""
     result = check_finish(result)
     row = _open(session, job_id, version)
     values = {
@@ -322,9 +323,9 @@ def finish(session: Session, job_id: UUID, version: int, result: Finish, *, acto
         "defect_reason": result.defect_reason, "machine_count": result.machine_count, "material": result.material,
         "material_note": result.material_note if result.material == "not_issued" else "",
         "finished_at": max(now, aware(row.started_at, now)), "finished_by_name": clean(actor_name, 200)}
-    if counter_reset:
+    if counter_reset or counter_unread:
         values.update({"count_source": "manual", "machine_count": None,
-                       "params": {**(row.params or {}), "counter_reset": True}})
+                       "params": {**(row.params or {}), "counter_reset" if counter_reset else "counter_unread": True}})
     return _changed(session, row, version, values)
 
 

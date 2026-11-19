@@ -359,17 +359,42 @@ def test_start_goes_only_for_an_open_run_whose_target_is_on_the_machine(machines
     assert _start(admin).json()["detail"] == runs.NO_JOB
 
 
-def test_a_snapshot_older_than_the_taken_write_is_no_check_and_blocks_start(machines_api):
+def _check(sessions, command_id: str) -> str | None:
+    with sessions() as session:
+        return runs.info(session.get(MachineWriteRow, UUID(command_id))).get("check")
+
+
+def test_a_write_answered_before_the_next_report_waits_for_it_then_starts(machines_api):
     sessions, clock, admin, ob019, _ = machines_api
     machine = Machine(admin, clock)
     group_id = _job(sessions)
     sent = _post(admin, RUN, {"kind": "cutting", "group_id": str(group_id), "length_mm": "325"}).json()["id"]
     clock.now += timedelta(seconds=1)  # the runner takes it a second after the last report
-    machine.written(sent, fresh=False)  # and answers before the next one
+    machine.written(sent, fresh=False)  # and answers before the next one: «проверяется», not void
+    run = admin.get(RUN).json()["run"]
+    assert (run["stage"], run["write"]["status_text"], _check(sessions, sent)) == (
+        "writing", "Проверяется по счётчику станка", "pending")
+    assert _start(admin).json()["detail"] == runs.CHECKING
+    machine.report()  # the bridge's next report, a second later: the card's next read settles the check
+    run = admin.get(RUN).json()["run"]
+    assert (run["stage"], run["counter_start"], _check(sessions, sent)) == ("ready", START, "ok")
+    started = _start(admin)
+    assert started.status_code == 200, started.text
+
+
+def test_no_snapshot_after_the_write_for_10_s_makes_its_check_unknown(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    group_id = _job(sessions)
+    sent = _post(admin, RUN, {"kind": "cutting", "group_id": str(group_id), "length_mm": "325"}).json()["id"]
+    clock.now += timedelta(seconds=1)
+    machine.written(sent, fresh=False)
+    assert _check(sessions, sent) == "pending"
+    clock.now += runs.PENDING_WAIT  # still no report after the write: the control poll gives up
+    assert admin.get(CARD + "/control").status_code == 200
+    assert _check(sessions, sent) == "unknown"
     assert admin.get(RUN).json()["run"]["stage"] == "moved"
-    with sessions() as session:
-        assert runs.info(session.get(MachineWriteRow, UUID(sent)))["check"] == "unknown"
-    machine.report()
+    machine.report()  # a report now is too late: the counter may have moved meanwhile
     assert _start(admin).json()["detail"] == runs.UNREAD
     # SQLite gives the moments back naive in shop time, PostgreSQL aware: compared as the same instant.
     naive, utc = datetime(2026, 11, 19, 10, 0), datetime(2026, 11, 19, 7, 0, tzinfo=timezone.utc)
@@ -427,3 +452,24 @@ def test_an_unread_counter_closes_a_run_as_unknown_not_as_reset(machines_api):
             AuditEventRow.event_type == "production.machine_run_closed"))]
     assert params["counter_unread"] is True and "counter_reset" not in params
     assert texts[-1].endswith("счётчик станка не прочитан — вручную")
+
+
+def test_a_manual_job_is_not_finished_or_cancelled_from_its_window_while_the_machine_cuts(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    job = _post(admin, "/api/production/manual-jobs", {"equipment_id": str(ob019), "purpose": "Проба",
+                                                       "quantity_planned": 4}).json()
+    machine.written(_post(admin, RUN, {"kind": "manual", "job_id": job["id"]}).json()["id"])
+    machine.report(_counter(START + 2, state=103))
+    version = admin.get(RUN).json()["manual"]["version"]
+    path = f"/api/production/manual-jobs/{job['id']}"
+    finished = _post(admin, path + "/finish", {"version": version, "good": 2, "material": "pending"})
+    assert finished.status_code == 409 and finished.json()["detail"] == runs.CUTTING
+    cancelled = _post(admin, path + "/cancel", {"version": version, "reason": "не тот провод"})
+    assert cancelled.status_code == 409 and cancelled.json()["detail"] == runs.CUTTING
+    state = admin.get(RUN).json()
+    assert (state["manual"]["status"], state["run"]["stage"]) == ("running", "running")  # nothing saved
+    machine.report(_counter(START + 2, state=102))  # «Стоп»
+    done = _post(admin, path + "/finish", {"version": version, "good": 2, "material": "pending"})
+    assert done.status_code == 200, done.text
+    assert admin.get(RUN).json()["run"]["machine_count"] == 2
