@@ -42,7 +42,7 @@ Describe 'write allow-list' {
         Test-BlockWritable @{ addr = 401; values = @(500, 0) } | Should Be $true
     }
     It 'writes switches only as single bits, never as whole words' {
-        foreach ($a in @(132, 136, 400, 422, 434, 435, 436)) {
+        foreach ($a in @(132, 400, 422, 434, 435, 436, 604)) {
             Test-BlockWritable @{ addr = $a; values = @(1) } | Should Be $false
             Test-BitWritable @{ addr = $a; bit = 0; value = 1 } | Should Be $true
         }

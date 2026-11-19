@@ -1,5 +1,5 @@
 """ОБ.019 «Подъём подающих роликов» (key feed_wheel, one switch bit, runner 1.3.0+): read-only display, a write as one
-bit, the old runner's refusal. D136.0 vs D604.0 is settled by a bench probe; the register is one constant per side."""
+bit, the old runner's refusal. The register is D604.0 (Jog «Wheel», owner bench probe 19.11), one constant per side."""
 
 import re
 from pathlib import Path
@@ -32,12 +32,12 @@ def _result(bridge, command_id, readback, agent, ok=True, error=""):
 
 def test_the_register_is_one_constant_and_the_agent_mirrors_it():
     field = rules.OB019_FIELDS["feed_wheel"]
-    assert (field.label, field.kind, field.address) == ("Подъём подающих роликов", "bit0", 136)
-    assert field.address == rules.OB019_FEED_WHEEL_ADDRESS and (136, 0) in rules.OB019_WRITTEN_BITS
-    assert 136 in rules.OB019_ALLOWED and 136 not in rules.OB019_WRITTEN_WORDS
+    assert (field.label, field.kind, field.address) == ("Подъём подающих роликов", "bit0", 604)
+    assert field.address == rules.OB019_FEED_WHEEL_ADDRESS and (604, 0) in rules.OB019_WRITTEN_BITS
+    assert 604 in rules.OB019_ALLOWED and 604 not in rules.OB019_WRITTEN_WORDS
     bridge = (ROOT / "ob019-bridge.ps1").read_text(encoding="ascii")
     assert re.search(r"^\$script:FeedWheelAddress = (\d+)$", bridge, re.M).group(1) == str(rules.OB019_FEED_WHEEL_ADDRESS)
-    assert "@(20, 74, 136, 142" in bridge
+    assert "@(20, 74, 142, 197, 604" in bridge
     assert "$script:RunnerVersion = '1.3.0'" in (ROOT / "ob019-writer.ps1").read_text(encoding="ascii")
     assert commands.runner_current("1.3.0", commands.RUNNER_FEED_WHEEL) and not commands.runner_current("1.2.0", "1.3.0")
     assert commands.field_needs_runner(field)
@@ -46,11 +46,11 @@ def test_the_register_is_one_constant_and_the_agent_mirrors_it():
 def test_the_snapshot_shows_the_switch_read_only_on_any_runner(machines_api):
     sessions, clock, admin, ob019, _ = machines_api
     bridge = _bridge(admin)
-    _report(bridge, registers={**WORDS, "136": 1})
+    _report(bridge, registers={**WORDS, "604": 1})
     fields = {f["label"]: f for g in admin.get(CARD).json()["settings"] for f in g["fields"]}
     assert fields["Подъём подающих роликов"]["value"] is True
     assert fields["Подъём подающих роликов"]["key"] == "feed_wheel" and fields["Подъём подающих роликов"]["read"]
-    _report(bridge, seq=2, registers={**WORDS, "136": 0x0002})
+    _report(bridge, seq=2, registers={**WORDS, "604": 0x0002})
     fields = {f["label"]: f for g in admin.get(CARD).json()["settings"] for f in g["fields"]}
     assert fields["Подъём подающих роликов"]["value"] is False
 
@@ -59,15 +59,15 @@ def test_the_lift_is_claimed_as_one_bit_and_confirmed_by_that_bit_only(machines_
     sessions, clock, admin, ob019, _ = machines_api
     commands._runners.clear()
     bridge = _bridge(admin)
-    _report(bridge, registers={**WORDS, "136": 0x0A00})
+    _report(bridge, registers={**WORDS, "604": 0x0A00})
     first = _post(admin, CARD + "/write", {"values": {"feed_wheel": "1"}}).json()["id"]
     claimed = TestClient(app).post(NEXT, headers=bridge, json=AGENT_13).json()["command"]
-    assert claimed["blocks"] == [] and claimed["bits"] == [{"addr": 136, "bit": 0, "value": 1}]
-    assert _result(bridge, first, {"136": 0x0A01}, AGENT_13).json() == {"status": "done", "error": ""}
+    assert claimed["blocks"] == [] and claimed["bits"] == [{"addr": 604, "bit": 0, "value": 1}]
+    assert _result(bridge, first, {"604": 0x0A01}, AGENT_13).json() == {"status": "done", "error": ""}
     second = _post(admin, CARD + "/write", {"values": {"feed_wheel": "0"}}).json()["id"]
     TestClient(app).post(NEXT, headers=bridge, json=AGENT_13)
-    assert _result(bridge, second, {"136": 0x0A01}, AGENT_13).json() == {
-        "status": "failed", "error": "Станок не принял: D136.0"}
+    assert _result(bridge, second, {"604": 0x0A01}, AGENT_13).json() == {
+        "status": "failed", "error": "Станок не принял: D604.0"}
 
 
 def test_a_runner_older_than_1_3_0_refuses_the_lift_at_once_and_at_the_claim(machines_api):

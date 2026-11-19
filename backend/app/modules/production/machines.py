@@ -406,10 +406,10 @@ def _unknown(address: int, kind: str, scale: str = "1", unit: str = "") -> Setti
 
 
 MM, SEC = "0.01", "0.001"
-# The register of the switch «Подъём подающих роликов» (1 = rollers lifted). D136.0 vs D604.0 — settle by bench probe:
-# D136.0 is «Feed Wheel Off / On» on the Функции page, D604.0 «Wheel» on the Jog page (Y18). Mirrors $script:FeedWheelAddress
+# The register of the switch «Подъём подающих роликов» (1 = rollers lifted): D604.0 «Wheel» (Y18) of the Jog page — the owner's
+# bench probe 19.11: one press lifts, the next lowers (D136.0 «Feed Wheel» is a cycle option, not this). Mirrors $script:FeedWheelAddress
 # of ob019-bridge.ps1 (a backend test compares them).
-OB019_FEED_WHEEL_ADDRESS = 136
+OB019_FEED_WHEEL_ADDRESS = 604
 OB019_SETTINGS: tuple[tuple[str, tuple[SettingField, ...]], ...] = (
     ("Задание", (
         _f("Режим", 20, "mode", key="mode"),

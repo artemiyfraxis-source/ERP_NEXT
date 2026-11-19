@@ -35,7 +35,7 @@ $script:Inventory = [string][char]0x041E + [string][char]0x0411 + '.019'
 # are read (FC3 has no side effects) but never sent (ERP refuses them, 422).
 $script:Ranges = @(
     @(20, 62),    # D20 mode, D22..D28 job, D32..D53 wire and inner layer, D60..D74 clamp gaps and slitting
-    @(641, 10),   # D641 UPH, D643 order done, D645 batch done, D649 total done
+    @(604, 47),   # D604 Jog outputs (bit0 feed-roller lift), D641 UPH, D643 order done, D645 batch done, D649 total done
     @(711, 72),   # D711.0 order lamp, D766 machine state, D782 alarm
     @(938, 32),   # D938 order row, D940..D969 order number, product name
     @(1280, 1)    # D1280 program
@@ -46,11 +46,11 @@ $script:SlowRanges = @(
     @(390, 95),   # D390..D395 coiling, D400..D484 marking and its texts
     @(1703, 51)   # D1703/D1705 slitting die, D1722 marking drop, D1750..D1753 coiling limits
 )
-# D136.0 vs D604.0 - settle by bench probe. Mirrors OB019_FEED_WHEEL_ADDRESS of backend production/machines.py (136 lies
-# inside the SlowRanges read above and is sent with the other words; the lift switch is the field feed_wheel).
-$script:FeedWheelAddress = 136
+# D604.0 Wheel (Y18, Jog page): one press lifts the feed rollers, the next lowers (owner bench probe 19.11). Mirrors
+# OB019_FEED_WHEEL_ADDRESS of backend production/machines.py; read every cycle by the D604..D650 range above.
+$script:FeedWheelAddress = 604
 $script:Allowed = @{}
-foreach ($a in @(20, 74, 136, 142, 197, 711, 766, 782, 1280) + (22..28) + (32..53) + (60..61) + (67..72) + (100..104) + (120..123) + (132..133) + (199..231) + (250..281) + (390..395) + (400..402) + (404..415) + (421..423) + (430..432) + (434..436) + (440..484) + (641..646) + (649..650) + (938..969) + (1703..1705) + (1722..1723) + (1750..1753)) { $script:Allowed[[int]$a] = $true }
+foreach ($a in @(20, 74, 142, 197, 604, 711, 766, 782, 1280) + (22..28) + (32..53) + (60..61) + (67..72) + (100..104) + (120..123) + (132..133) + (199..231) + (250..281) + (390..395) + (400..402) + (404..415) + (421..423) + (430..432) + (434..436) + (440..484) + (641..646) + (649..650) + (938..969) + (1703..1705) + (1722..1723) + (1750..1753)) { $script:Allowed[[int]$a] = $true }
 $script:SlowWords = @{}
 $script:SlowAt = [datetime]::MinValue
 $script:ReadOnlyCommands = @('read')

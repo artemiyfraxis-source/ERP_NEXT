@@ -20,7 +20,7 @@ $script:sp = $null
 # passwords D1682..D1687 and the SHA-256 handshake D1203..D1211 never.
 $script:MbdVersion = '1.2.0'
 $script:allowedWrite = @(@(20, 20), @(22, 28), @(32, 43), @(67, 72), @(74, 74), @(100, 104), @(120, 123), @(197, 197), @(199, 199), @(391, 395), @(401, 402), @(404, 415), @(423, 423), @(430, 432), @(440, 484), @(940, 969), @(1703, 1705), @(1722, 1723), @(1750, 1753))
-$script:allowedBits = @{ 132 = @(0); 136 = @(0); 400 = @(0); 422 = @(0); 434 = @(0); 435 = @(0); 436 = @(0) }
+$script:allowedBits = @{ 132 = @(0); 400 = @(0); 604 = @(0); 422 = @(0); 434 = @(0); 435 = @(0); 436 = @(0) }
 $script:allowedPulse = @{ 599 = @(0, 2); 600 = @(1, 4) }
 
 # Log rotation (PowerShell 2.0): when the log reaches $MaxBytes it becomes .1, .1 becomes .2 and so on; the oldest
