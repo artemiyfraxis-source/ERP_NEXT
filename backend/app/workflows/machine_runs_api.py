@@ -13,7 +13,7 @@ production/machine_runs.py; the write itself is the card's write queue (machine_
   `{version, good, defect, defect_reason, material, material_note}` → the manual job is finished (`count_source` plc, or
   «Вручную» with a mark when the counter was reset or not read).
 - `GET  /api/production/machines/runs/cutting/{group_id}` (view) → `{runs}`: closed machine runs of the group not handed
-  in yet (no output of that length recorded after the run closed) — «Сдать группу» pre-fills from them."""
+  in yet (no output of that length after the run closed), summed per length — «Сдать группу» pre-fills from them."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.modules.production import machine_runs as runs
 from app.modules.production import machine_writes as commands
@@ -39,7 +39,8 @@ from app.shared.events import AuditEvent
 from app.shared.http_auth import Principal
 
 from .machine_writes_api import (_can_edit, _confirm, _enqueue, _journal, _link, _transfer_plan, can_control,
-                                 cutting_run, latin, machines_edit_principal, refuse_while_manual, transfer_summary)
+                                 cutting_run, latin, machines_edit_principal, refuse_when_done,
+                                 refuse_while_manual, transfer_summary)
 from .machines_api import Reader
 from .manual_jobs_api import view as manual_view
 
@@ -117,7 +118,7 @@ def start_run(inventory: str, payload: RunPayload, principal: Writer, factory: F
             if payload.group_id is None or not payload.length_mm.strip():
                 raise HTTPException(422, "Выберите задание резки")
             refuse_while_manual(session, link.equipment_id)
-            plan = _transfer_plan(session, link, payload.group_id, payload.length_mm)
+            plan = _transfer_plan(session, link, payload.group_id, payload.length_mm, now)
             if payload.values:
                 writes = [commands.FieldWrite(key, value) for key, value in payload.values.items()]
                 run = cutting_run({**plan, "quantity": _whole(payload.values.get("total_set")) or plan["quantity"]},
@@ -125,6 +126,7 @@ def start_run(inventory: str, payload: RunPayload, principal: Writer, factory: F
             else:
                 if plan["blocking"]:
                     raise HTTPException(422, "В ЭТК не задано: " + ", ".join(plan["blocking"]))
+                refuse_when_done(plan)
                 writes = [commands.FieldWrite(row["key"], row["value"]) for row in plan["rows"] if row["value"] is not None]
                 writes += [commands.FieldWrite(key, value) for key, value in plan["job"].items() if value not in ("", None)]
                 run = cutting_run(plan, payload.length_mm)
@@ -139,7 +141,9 @@ def start_run(inventory: str, payload: RunPayload, principal: Writer, factory: F
         if job.length_mm is not None:
             values.setdefault("length_mm", format(job.length_mm, "f"))
         if job.quantity_planned:
-            values.setdefault("total_set", job.quantity_planned)
+            # Written again after part of it was made: only the rest (the run keeps counting from its first start).
+            done = runs.done_before(session, link.equipment_id, runs.manual(job.id, "", None), now)
+            values.setdefault("total_set", max(job.quantity_planned - done, 0))
         values.setdefault("order_number", manual.plc_number(job.number))
         product = " ".join(part for part in (job.wire, f"L{format(job.length_mm.normalize(), 'f')}"
                                              if job.length_mm is not None else "") if part)
@@ -199,7 +203,8 @@ def close_run(inventory: str, payload: ClosePayload, principal: Writer, factory:
 
 @router.get("/runs/cutting/{group_id}")
 def cutting_runs(group_id: UUID, _principal: Reader, factory: Factory) -> dict:
-    """Closed machine runs of a cutting group whose pieces are not handed in yet — newest per cut length."""
+    """Machine runs of a cutting group closed after the last hand-in of their cut length — summed per length (a job
+    cut in several runs, by one machine or more, is handed in at once)."""
     with factory() as uow:
         session = uow.session
         members = list(session.scalars(select(CuttingMemberRow).where(CuttingMemberRow.group_id == group_id)))
@@ -207,19 +212,33 @@ def cutting_runs(group_id: UUID, _principal: Reader, factory: Factory) -> dict:
         for member in members:
             operations.setdefault(runs.length_key((member.row_snapshot or {}).get("cut_length_mm")), []) \
                 .append(member.operation_id)
+        handed: dict[str, datetime] = {}
+        for length, ids in operations.items():
+            last = session.scalar(select(func.max(ProductionOutputRow.finished_at))
+                                  .where(ProductionOutputRow.operation_id.in_(ids)))
+            if last is not None:
+                handed[length] = last
         links = {link.equipment_id: link.inventory_number for link in session.scalars(select(rules.MachineLinkRow))}
         found: dict[str, dict] = {}
         for row in session.scalars(select(commands.MachineWriteRow).where(commands.MachineWriteRow.purpose == "transfer")
                                    .order_by(commands.MachineWriteRow.created_at.desc()).limit(500)):
             run = runs.info(row)
             if (run is None or run["kind"] != "cutting" or run.get("group_id") != str(group_id)
-                    or not run.get("closed_at") or run.get("continued") or run["length_mm"] in found):
+                    or not run.get("closed_at") or run.get("continued") or run.get("check") in runs.VOID_CHECKS):
                 continue
             closed = datetime.fromisoformat(run["closed_at"])
-            handed = session.scalar(select(ProductionOutputRow.id).where(
-                ProductionOutputRow.operation_id.in_(operations.get(run["length_mm"], [])),
-                ProductionOutputRow.finished_at >= closed).limit(1)) if operations.get(run["length_mm"]) else None
-            found[run["length_mm"]] = None if handed else {
-                "run_id": str(row.id), "inventory": links.get(row.equipment_id, ""), "length_mm": run["length_mm"],
-                "count": run.get("machine_count"), "closed_at": run["closed_at"], "closed_by": run.get("closed_by", "")}
-    return {"runs": [item for item in found.values() if item is not None]}
+            last = handed.get(run["length_mm"])
+            if last is not None and (last.replace(tzinfo=closed.tzinfo) if last.tzinfo is None else last) >= closed:
+                continue  # handed in after this run closed
+            entry = found.setdefault(run["length_mm"], {
+                "run_id": str(row.id), "inventory": "", "length_mm": run["length_mm"], "count": None, "runs": 0,
+                "unknown": False, "closed_at": run["closed_at"], "closed_by": run.get("closed_by", "")})
+            entry["runs"] += 1
+            inventory = links.get(row.equipment_id, "")
+            if inventory and inventory not in entry["inventory"].split(", "):
+                entry["inventory"] = ", ".join(part for part in (entry["inventory"], inventory) if part)
+            if run.get("machine_count") is None:
+                entry["unknown"] = True
+            else:
+                entry["count"] = (entry["count"] or 0) + run["machine_count"]
+    return {"runs": list(found.values())}

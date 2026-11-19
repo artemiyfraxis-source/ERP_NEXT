@@ -67,20 +67,18 @@ def test_a_cutting_run_counts_from_the_verified_write_and_prefills_the_hand_in(m
     assert sent.status_code == 200, sent.text
     run = admin.get(RUN).json()["run"]
     assert (run["stage"], run["kind"], run["label"], run["quantity"]) == ("writing", "cutting", "ГР-0007 · ПВАМ 0,35 · 325,00 мм", 12)
-    # The machine counted on before the write was verified: the start is the counter at the verified moment.
-    machine.report(_counter(START + 3))
     words = machine.written(sent.json()["id"])
     # The same words as «Передать на станок»; «Тираж» 12 = the target over T.Finish at the moment it was queued.
     assert (words["32"], _u32(words, 22)) == (32500, START + 12)
     run = admin.get(RUN).json()["run"]
-    assert (run["stage"], run["counter_start"], run["done"]) == ("ready", START + 3, 0)
+    assert (run["stage"], run["counter_start"], run["done"]) == ("ready", START, 0)
     # Still «Тираж готов» from the previous job: not finished before anything was cut.
-    machine.report(_counter(START + 3, state=107, alarm=5))
+    machine.report(_counter(START, state=107, alarm=5))
     assert admin.get(RUN).json()["run"]["stage"] == "ready"
-    machine.report(_counter(START + 8, state=103))
+    machine.report(_counter(START + 5, state=103))
     run = admin.get(RUN).json()["run"]
     assert (run["stage"], run["done"]) == ("running", 5)
-    machine.report(_counter(START + 15, state=107, alarm=5))
+    machine.report(_counter(START + 12, state=107, alarm=5))
     run = admin.get(RUN).json()["run"]
     assert (run["stage"], run["done"]) == ("finished", 12)
     closed = _post(admin, RUN + "/close", {"run_id": run["id"]})
@@ -93,7 +91,7 @@ def test_a_cutting_run_counts_from_the_verified_write_and_prefills_the_hand_in(m
         texts = [row.details["text"] for row in session.scalars(select(AuditEventRow).where(
             AuditEventRow.aggregate_id == ob019, AuditEventRow.event_type.like("production.machine_run%"))
             .order_by(AuditEventRow.occurred_at))]
-    assert texts == [f"Задание на станке: ГР-0007 · ПВАМ 0,35 · 325,00 мм — счётчик станка {START + 3}",
+    assert texts == [f"Задание на станке: ГР-0007 · ПВАМ 0,35 · 325,00 мм — счётчик станка {START}, цель {START + 12}",
                      "Задание завершено: ГР-0007 · ПВАМ 0,35 · 325,00 мм — по станку 12 шт"]
 
 
@@ -124,8 +122,11 @@ def test_the_same_job_written_again_keeps_its_start_another_job_closes_the_first
     body = {"kind": "cutting", "group_id": str(group_id), "length_mm": "325"}
     machine.written(_post(admin, RUN, body).json()["id"])
     machine.report(_counter(START + 2))
-    # After a trial Слава corrects a size and writes the job again: the two pieces already cut still count.
-    again = _post(admin, RUN, {**body, "length_mm": "325,00", "values": {"length_mm": "326", "total_set": "12"}})
+    # After a trial Слава corrects a size and writes the job again: only the rest is asked of the machine, the two
+    # pieces already cut still count.
+    plan = admin.get(CARD + "/transfer", params={"group_id": str(group_id), "length_mm": "325"}).json()
+    assert (plan["planned"], plan["done"], plan["quantity"], plan["job"]["total_set"]) == (12, 2, 10, 10)
+    again = _post(admin, RUN, {**body, "length_mm": "325,00", "values": {"length_mm": "326", "total_set": "10"}})
     assert again.status_code == 200, again.text
     machine.written(again.json()["id"])
     run = admin.get(RUN).json()["run"]
@@ -180,7 +181,10 @@ def test_a_manual_job_with_a_reset_counter_is_finished_by_hand_with_a_mark(machi
     sessions, clock, admin, ob019, _ = machines_api
     machine = Machine(admin, clock)
     job = _post(admin, "/api/production/manual-jobs", {"equipment_id": str(ob019), "purpose": "Проба"}).json()
-    sent = _post(admin, RUN, {"kind": "manual", "job_id": job["id"], "values": {"length_mm": "50"}}).json()["id"]
+    no_quantity = _post(admin, RUN, {"kind": "manual", "job_id": job["id"], "values": {"length_mm": "50"}})
+    assert no_quantity.status_code == 422 and "Укажите тираж" in no_quantity.json()["detail"]
+    sent = _post(admin, RUN, {"kind": "manual", "job_id": job["id"],
+                              "values": {"length_mm": "50", "total_set": "7"}}).json()["id"]
     machine.written(sent)
     machine.report(_counter(0, state=100))
     state = admin.get(RUN).json()
@@ -233,3 +237,71 @@ def test_tirazh_is_pieces_in_this_job_written_as_a_target_over_the_machine_count
         texts = [row.details["text"] for row in session.scalars(select(AuditEventRow).where(
             AuditEventRow.aggregate_id == ob019, AuditEventRow.event_type == "production.machine_write_queued"))]
     assert "тираж 12 шт: счётчик станка 570 → цель 582" in texts[0]
+
+
+def test_a_counter_that_moved_while_writing_voids_the_run_and_a_reset_one_blocks_start(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    group_id = _job(sessions)
+    body = {"kind": "cutting", "group_id": str(group_id), "length_mm": "325"}
+    sent = _post(admin, RUN, body).json()["id"]  # target D22 = START + 12
+    machine.report(_counter(START + 3))  # the counter moved before the write was checked
+    machine.written(sent)
+    run = admin.get(RUN).json()["run"]
+    assert run["stage"] == "moved"
+    start = _post(admin, CARD + "/command", {"command": "start", "confirm_state": 102, "hands_clear": True})
+    assert start.status_code == 409 and start.json()["detail"] == runs.MOVED
+    assert _post(admin, RUN + "/close", {"run_id": sent}).status_code == 409  # nothing to count
+    # Written again: a new run from the current counter, «Пуск» allowed; then the counter goes back below the start.
+    again = _post(admin, RUN, body).json()["id"]
+    machine.written(again)
+    assert admin.get(RUN).json()["run"]["counter_start"] == START + 3
+    machine.report(_counter(2, state=102))
+    start = _post(admin, CARD + "/command", {"command": "start", "confirm_state": 102, "hands_clear": True})
+    assert start.status_code == 409 and start.json()["detail"] == runs.RESET_START
+
+
+def test_a_manual_job_closed_in_its_own_window_closes_its_run_and_the_write_stays_verified(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    job = _post(admin, "/api/production/manual-jobs", {"equipment_id": str(ob019), "purpose": "Проба",
+                                                       "quantity_planned": 4}).json()
+    sent = _post(admin, RUN, {"kind": "manual", "job_id": job["id"]}).json()["id"]
+    # Cancelled in «Ручная работа» while the runner is still writing: the run closes in the same transaction…
+    cancelled = _post(admin, f"/api/production/manual-jobs/{job['id']}/cancel", {"version": 1, "reason": "не тот провод"})
+    assert cancelled.status_code == 200, cancelled.text
+    assert admin.get(RUN).json()["run"]["closed_why"] == "Ручная работа отменена"
+    # …and the runner's true answer is still recorded as written and checked.
+    machine.written(sent)
+    with sessions() as session:
+        row = session.get(manual.ManualJobRow, UUID(job["id"]))
+        assert (row.status, row.count_source, row.write_id) == ("cancelled", "manual", None)
+    # A job finished by hand in its window closes its verified run with the machine count.
+    second = _post(admin, "/api/production/manual-jobs", {"equipment_id": str(ob019), "purpose": "Проба",
+                                                          "quantity_planned": 4}).json()
+    machine.written(_post(admin, RUN, {"kind": "manual", "job_id": second["id"]}).json()["id"])
+    machine.report(_counter(START + 4, state=107, alarm=5))
+    version = admin.get(RUN).json()["manual"]["version"]
+    done = _post(admin, f"/api/production/manual-jobs/{second['id']}/finish",
+                 {"version": version, "good": 4, "material": "pending"})
+    assert done.status_code == 200, done.text
+    run = admin.get(RUN).json()["run"]
+    assert (run["stage"], run["closed_why"], run["machine_count"]) == ("closed", "Ручная работа завершена", 4)
+
+
+def test_the_hand_in_sums_every_run_of_a_length_not_handed_in_yet(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    group_id = _job(sessions)
+    body = {"kind": "cutting", "group_id": str(group_id), "length_mm": "325"}
+    first = _post(admin, RUN, body).json()["id"]
+    machine.written(first)
+    machine.report(_counter(START + 3, state=107, alarm=5))
+    assert _post(admin, RUN + "/close", {"run_id": first}).status_code == 200
+    second = _post(admin, RUN, body).json()["id"]  # a new run: the first one was closed
+    machine.written(second)
+    machine.report(_counter(START + 7, state=107, alarm=5))
+    assert _post(admin, RUN + "/close", {"run_id": second}).status_code == 200
+    [entry] = admin.get(f"/api/production/machines/runs/cutting/{group_id}").json()["runs"]
+    assert (entry["length_mm"], entry["count"], entry["runs"], entry["unknown"], entry["inventory"]) == \
+        ("325", 7, 2, False, "ОБ.019")

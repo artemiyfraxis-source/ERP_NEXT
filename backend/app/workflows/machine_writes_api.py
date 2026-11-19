@@ -33,6 +33,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.modules.equipment_setup.recipe_infrastructure import SqlAlchemyRecipes
 from app.modules.equipment_setup.recipes import EtkNominal, latest_for_wire, ob019_proposal
@@ -194,7 +195,9 @@ def _enqueue(uow, link, principal: Principal, purpose: str, writes, summary: str
         summary = (f"{summary}; тираж {quantity['pieces']} шт: счётчик станка {quantity['counter']} → "
                    f"цель {quantity['target']}")
     if run is not None:
-        run = runs.supersede(uow.session, link.equipment_id, run, now, principal.actor.name)
+        if quantity is None:
+            raise HTTPException(422, "Укажите тираж — штук в этом задании: без него станок не остановится на нужном числе")
+        run = runs.with_quantity(runs.supersede(uow.session, link.equipment_id, run, now, principal.actor.name), quantity)
     try:
         row, expired = commands.enqueue(uow.session, equipment_id=link.equipment_id, purpose=purpose, writes=writes,
                                         summary=summary, actor_id=principal.actor.id, actor_name=principal.actor.name,
@@ -296,8 +299,10 @@ def _quantity(session, group_id: UUID, length: Decimal) -> int:
     return int(total.to_integral_value(rounding=ROUND_CEILING))
 
 
-def _transfer_plan(session, link: rules.MachineLinkRow, group_id: UUID, length_text: str) -> dict:
-    """ETK nominal of the job + this machine's corrections → what «Передать на станок» writes."""
+def _transfer_plan(session, link: rules.MachineLinkRow, group_id: UUID, length_text: str,
+                   now: datetime | None = None) -> dict:
+    """ETK nominal of the job + this machine's corrections → what «Передать на станок» writes. The same job written
+    again after part of it was cut asks only for the rest (`planned` − `done`)."""
     length = _decimal(length_text, "Длина провода")
     if length <= 0:
         raise HTTPException(422, "Длина провода: нужно положительное число")
@@ -327,18 +332,20 @@ def _transfer_plan(session, link: rules.MachineLinkRow, group_id: UUID, length_t
                      "source": base.source, "offset": _shown(offset), "value": _shown(value),
                      "live": None if rules.field_value(key, words) is None
                      else _shown(Decimal(str(rules.field_value(key, words))))})
-    quantity = _quantity(session, group.id, length)
+    planned = _quantity(session, group.id, length)
+    done = runs.done_before(session, link.equipment_id, runs.cutting(group.id, length, "", None), now) if now else 0
+    quantity = max(planned - done, 0)
     job = {"total_set": quantity, "order_quantity": quantity, "order_number": latin(group.number),
            "product": latin(f"{nominal.wire} L{_shown(length)}")}
     return {"group_id": str(group.id), "number": group.number, "wire": nominal.wire, "length_mm": _shown(length),
-            "quantity": quantity, "rows": rows, "job": job, "missing": missing,
+            "quantity": quantity, "planned": planned, "done": done, "rows": rows, "job": job, "missing": missing,
             "blocking": [label for key, label in ((key, rules.OB019_FIELDS[key].label)
                                                   for key in ("length_mm", "strip_front_mm", "strip_back_mm"))
                          if label in missing]}
 
 
 @router.get("/card/{inventory}/transfer")
-def transfer_preview(inventory: str, _principal: Reader, factory: Factory,
+def transfer_preview(inventory: str, _principal: Reader, factory: Factory, now: Now,
                      group_id: UUID | None = None, length_mm: Annotated[str, Query(max_length=20)] = "") -> dict:
     with factory() as uow:
         session = uow.session
@@ -350,7 +357,7 @@ def transfer_preview(inventory: str, _principal: Reader, factory: Factory,
                 CuttingMemberRow.state == "active", CuttingMemberRow.group_id.in_([group.id for group in groups])))) \
                 if groups else []
             return {"choices": group_choices(groups, members)}
-        return _transfer_plan(session, link, group_id, length_mm)
+        return _transfer_plan(session, link, group_id, length_mm, now)
 
 
 @router.post("/card/{inventory}/transfer")
@@ -360,9 +367,10 @@ def transfer(inventory: str, payload: TransferPayload, principal: Writer, factor
         link = _link(session, inventory)
         _confirm(session, link, payload.confirm_state)
         refuse_while_manual(session, link.equipment_id)
-        plan = _transfer_plan(session, link, payload.group_id, payload.length_mm)
+        plan = _transfer_plan(session, link, payload.group_id, payload.length_mm, now)
         if plan["blocking"]:
             raise HTTPException(422, "В ЭТК не задано: " + ", ".join(plan["blocking"]))
+        refuse_when_done(plan)
         writes = [commands.FieldWrite(row["key"], row["value"]) for row in plan["rows"] if row["value"] is not None]
         writes += [commands.FieldWrite(key, value) for key, value in plan["job"].items() if value not in ("", None)]
         return _enqueue(uow, link, principal, "transfer", writes, transfer_summary(plan), now,
@@ -376,6 +384,11 @@ def transfer_summary(plan: dict) -> str:
 def cutting_run(plan: dict, length_mm: str) -> dict:
     return runs.cutting(UUID(plan["group_id"]), length_mm,
                         f"{plan['number']} · {plan['wire']} · {plan['length_mm']} мм", plan["quantity"])
+
+
+def refuse_when_done(plan: dict) -> None:
+    if plan["quantity"] < 1:
+        raise HTTPException(422, f"По станку уже сделано {plan['done']} из {plan['planned']} — завершите задание")
 
 
 def refuse_while_manual(session, equipment_id: UUID) -> None:
@@ -506,9 +519,18 @@ def _run_verified(uow, row: commands.MachineWriteRow, actor, now: datetime) -> N
     if run is None:
         return
     start = run.get("counter_start")
-    if run["kind"] == "manual" and start is not None:
+    check = run.get("check", "ok")
+    job = None
+    if run["kind"] == "manual" and start is not None and check == "ok":
         params = {item["key"]: item["after"] for item in row.payload.get("fields", [])}
-        job = manual.attach_plc(uow.session, UUID(run["job_id"]), write_id=row.id, counter_start=start, params=params)
+        try:
+            # The write itself is verified whatever happens to the job meanwhile: a job changed or closed in the same
+            # moment stays counted by hand, never turns the write into «агент не сообщил результат».
+            with uow.session.begin_nested():
+                job = manual.attach_plc(uow.session, UUID(run["job_id"]), write_id=row.id, counter_start=start,
+                                        params=params)
+        except (manual.ManualJobConflict, IntegrityError):
+            job = None
         if job is not None:
             uow.audit.add(AuditEvent(id=uuid4(), aggregate_id=job.id, event_type="production.manual_job_counted",
                                      actor=actor, occurred_at=now, details={
@@ -516,7 +538,9 @@ def _run_verified(uow, row: commands.MachineWriteRow, actor, now: datetime) -> N
                                                  f"счёт по станку с {start}", "number": manual.number_text(job.number),
                                          "equipment_id": str(job.equipment_id)}))
     text = f"Задание на станке: {run.get('label', '')} — " + (
-        f"счётчик станка {start}" if start is not None else "нет свежих данных станка, счёт вручную")
+        runs.MOVED if check == "moved" else runs.UNREAD if check == "unknown"
+        else f"счётчик станка {start}, цель {run['target']}" if run.get("target") is not None
+        else f"счётчик станка {start}" if start is not None else "нет свежих данных станка, счёт вручную")
     _journal(uow, row.equipment_id, "run_verified", actor, now, text, command_id=str(row.id))
 
 

@@ -3,10 +3,12 @@
 A run is one «Передать на станок» of a job: a cutting-group job (group + cut length, the ETK path) or a «Ручная работа»
 (production/manual_jobs.py). No table of its own: the run rides its write command (`production_machine_writes`,
 purpose `transfer`) as `payload["run"]`; the words the command writes (`blocks`, `bits`) are not touched by it.
-- Tagged when queued: `{kind, group_id, length_mm | job_id, label, quantity}`.
-- Verified (the runner read every word back): `counter_start` = T.Finish (D649–D650, u32) from the machine's fresh
-  snapshot at that moment; a manual job gets it too (`count_source` plc, `write_id`). No fresh snapshot → no start, the
-  count is typed by hand with a mark.
+- Tagged when queued: `{kind, group_id, length_mm | job_id, label}` plus the quantity it was written with: `counter`
+  (D649 the target was computed from), `target` (D22 = counter + pieces), `pieces`, `counter_start` (= counter, or the
+  first start of the same job written again) and `quantity` (pieces counted from that start).
+- Verified (the runner read every word back): the machine's snapshot then must still show D649 = `counter` (`check`
+  ok); a counter that moved or could not be read (`moved` / `unknown`) makes the run void — «передайте заново», no
+  «Пуск». A manual job is counted by the machine only after an ok check (`count_source` plc, `write_id`).
 - While it runs: done = D649 − counter_start; a counter below the start → «счётчик станка сброшен» (manual entry).
 - Closed by «Завершить» (or a newer run of another job on the machine): `machine_count`, `counter_end`, `reset`,
   `closed_at`. A cutting run's count then pre-fills «Сдать группу» in «Мои задания» (the operator confirms, materials
@@ -86,9 +88,30 @@ def current(session: Session, equipment_id: UUID) -> queue.MachineWriteRow | Non
     return None
 
 
+VOID_CHECKS = ("moved", "unknown")
+MOVED = "Счётчик станка сдвинулся, пока задание записывалось, — передайте задание заново"
+UNREAD = "При проверке записи не было свежего счётчика станка — передайте задание заново"
+RESET_START = ("Счётчик станка сброшен после записи тиража — передайте задание заново, иначе станок не остановится "
+               "на нужном числе")
+
+
 def is_open(row: queue.MachineWriteRow | None) -> bool:
     run = info(row)
-    return run is not None and not run.get("closed_at") and row.status not in FAILED
+    return (run is not None and not run.get("closed_at") and row.status not in FAILED
+            and run.get("check") not in VOID_CHECKS)
+
+
+def with_quantity(run: dict, quantity: dict | None) -> dict:
+    """The quantity the write carries (production/machine_writes.quantity_as_target) → the run's counter, target and
+    start; a continued run keeps its first start and counts the pieces done before plus the new ones."""
+    run = dict(run)
+    if quantity is None:
+        return run
+    run.update(counter=quantity["counter"], target=quantity["target"], pieces=quantity["pieces"])
+    if run.get("counter_start") is None:
+        run["counter_start"] = quantity["counter"]
+    run["quantity"] = quantity["counter"] - run["counter_start"] + quantity["pieces"]
+    return run
 
 
 def progress(row: queue.MachineWriteRow, words: dict[int, int], link_ok: bool) -> dict:
@@ -105,6 +128,8 @@ def progress(row: queue.MachineWriteRow, words: dict[int, int], link_ok: bool) -
         stage = "writing"
     elif row.status in FAILED:
         stage = "failed"
+    elif run.get("check") in VOID_CHECKS:
+        stage = "moved"
     elif start is None and not run.get("verified_at"):
         stage = "writing"
     elif reset:
@@ -127,10 +152,14 @@ def verified(session: Session, row: queue.MachineWriteRow, now: datetime) -> dic
     if run is None or run.get("verified_at"):
         return run
     run = dict(run)
-    if run.get("counter_start") is None:  # a continued run keeps the start of its first write
-        snapshot = session.get(rules.MachineSnapshotRow, row.equipment_id)
-        run["counter_start"] = counter(rules.snapshot_words(snapshot)) \
-            if rules.link_status(snapshot, now) == "ok" else None
+    snapshot = session.get(rules.MachineSnapshotRow, row.equipment_id)
+    seen = counter(rules.snapshot_words(snapshot)) if rules.link_status(snapshot, now) == "ok" else None
+    run["counter_seen"] = seen
+    if run.get("counter") is not None:
+        # The target D22 was computed from `counter`: anything else on the machine now makes it wrong.
+        run["check"] = "unknown" if seen is None else "ok" if seen == run["counter"] else "moved"
+    elif run.get("counter_start") is None:
+        run["counter_start"] = seen
     run["verified_at"] = queue.moment(now)
     _set(row, run)
     session.flush()
@@ -159,7 +188,8 @@ def supersede(session: Session, equipment_id: UUID, new: dict, now: datetime, ac
     snapshot = session.get(rules.MachineSnapshotRow, equipment_id)
     link_ok = rules.link_status(snapshot, now) == "ok"
     words = rules.snapshot_words(snapshot)
-    if same_job(old, new) and old.get("counter_start") is not None:
+    if same_job(old, new) and old.get("counter_start") is not None \
+            and progress(row, words, link_ok)["stage"] not in ("reset", "nolink"):
         _set(row, {**old, "closed_at": queue.moment(now), "closed_by": actor_name[:200],
                    "closed_why": "Передано на станок ещё раз", "continued": True})
         return {**new, "counter_start": old["counter_start"]}
@@ -183,3 +213,41 @@ def view(row: queue.MachineWriteRow, words: dict[int, int], link_ok: bool) -> di
 def tag(row: queue.MachineWriteRow, run: dict) -> None:
     """Mark a queued write as the start of a job run."""
     _set(row, run)
+
+
+def done_before(session: Session, equipment_id: UUID, new: dict, now: datetime) -> int:
+    """Pieces the open run of this same job has already made (a re-transfer writes only the rest); 0 — none."""
+    row = current(session, equipment_id)
+    if not is_open(row) or not same_job(info(row) or {}, new):
+        return 0
+    snapshot = session.get(rules.MachineSnapshotRow, equipment_id)
+    seen = progress(row, rules.snapshot_words(snapshot), rules.link_status(snapshot, now) == "ok")
+    return seen["done"] or 0 if seen["stage"] not in ("reset", "nolink") else 0
+
+
+def start_blocker(session: Session, equipment_id: UUID, now: datetime) -> str:
+    """Why «Пуск» must wait for the job to be written again ('' — it need not): the run's counter moved while it was
+    written, or went back below the start after it (the target D22 no longer stops the machine at the right count)."""
+    row = current(session, equipment_id)
+    run = info(row)
+    if run is None or run.get("closed_at") or row.status in FAILED or row.status in queue.OPEN:
+        return ""
+    if run.get("check") == "moved":
+        return MOVED
+    if run.get("check") == "unknown":
+        return UNREAD
+    snapshot = session.get(rules.MachineSnapshotRow, equipment_id)
+    if progress(row, rules.snapshot_words(snapshot), rules.link_status(snapshot, now) == "ok")["stage"] == "reset":
+        return RESET_START
+    return ""
+
+
+def close_for_manual(session: Session, equipment_id: UUID, job_id: UUID, now: datetime, actor_name: str,
+                     why: str) -> dict | None:
+    """A manual job finished or cancelled from its own window closes its open run on the machine. → the closed run."""
+    row = current(session, equipment_id)
+    run = info(row)
+    if not is_open(row) or run.get("kind") != "manual" or run.get("job_id") != str(job_id):
+        return None
+    snapshot = session.get(rules.MachineSnapshotRow, equipment_id)
+    return close(row, rules.snapshot_words(snapshot), rules.link_status(snapshot, now) == "ok", now, actor_name, why)

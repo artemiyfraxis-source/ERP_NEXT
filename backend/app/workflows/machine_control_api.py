@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.production import machine_control
+from app.modules.production import machine_runs as runs
 from app.modules.production import machine_writes as commands
 from app.modules.production import machines as rules
 from app.modules.production.api import production_uow_factory
@@ -41,6 +42,11 @@ class CommandPayload(BaseModel):
 def send_command(inventory: str, payload: CommandPayload, principal: Reader, factory: Factory, now: Now) -> dict:
     with factory() as uow:
         link = _link(uow.session, inventory)
+        if payload.command == "start":
+            # A job whose counter moved or was reset after its Тираж was written must be written again first.
+            blocker = runs.start_blocker(uow.session, link.equipment_id, now)
+            if blocker:
+                raise HTTPException(409, blocker)
         try:
             row, closed = machine_control.request(
                 uow.session, equipment_id=link.equipment_id, command=payload.command, actor_id=principal.actor.id,

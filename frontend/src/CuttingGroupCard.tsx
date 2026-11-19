@@ -160,10 +160,12 @@ function GroupSubmit({ group, close, submit, busy, error }: { group: CuttingGrou
     <div className="panel cutting-submit">
       <h2>Сдать группу · {group.project} · {rows.length} КБ</h2>
       {error && <div className="error-banner" role="alert">{error}</div>}
-      {machineRuns.map((item) => <p key={item.run_id} className={item.count === null ? "warning-inline" : "cutting-machine-count"} role="status">
+      {machineRuns.map((item) => <p key={item.run_id} className={item.count === null || item.unknown ? "warning-inline" : "cutting-machine-count"} role="status">
         {item.count === null
           ? `${item.inventory}: счётчик станка сброшен — введите годные длины ${item.length_mm.replace(".", ",")} мм вручную`
-          : `Счётчик ${item.inventory}: ${formatNumber(item.count)} шт провода ${item.length_mm.replace(".", ",")} мм (завершено ${formatMoment(item.closed_at)}) — годные заполнены, проверьте и укажите брак`}
+          : `Счётчик ${item.inventory}: ${formatNumber(item.count)} шт провода ${item.length_mm.replace(".", ",")} мм`
+            + `${item.runs > 1 ? `, прогонов: ${item.runs}` : ""} (последний — ${formatMoment(item.closed_at)}) — годные заполнены, проверьте и укажите брак`
+            + `${item.unknown ? "; часть прогонов без счётчика станка — добавьте их вручную" : ""}`}
       </p>)}
       <DataTable rows={rows} rowKey={rowKey} label="Сдача по КБ" compactBelow={Infinity} pageSize={1000} columns={[
         { key: "item", title: "КБ", value: (row) => row.item },

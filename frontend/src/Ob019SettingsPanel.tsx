@@ -144,11 +144,18 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
 
   const picked = choices?.find((item) => item.key === choice) ?? null;
   const manualJob = [runState?.manual, started].find((job) => job && choice === manualKey(job.id)) ?? null;
+  const sameRun = runState?.run && !["closed", "failed", "moved", "reset", "nolink"].includes(runState.run.stage) ? runState.run : null;
+  const manualDone = manualJob && sameRun?.kind === "manual" && sameRun.job_id === manualJob.id ? sameRun.done ?? 0 : 0;
+  /** Уже сделано по станку в идущем прогоне этого же задания и его план — для строки подтверждения. */
+  const doneOf = (): [number, number] | null => plan?.done ? [plan.done, plan.planned ?? plan.quantity + plan.done]
+    : manualJob && manualDone ? [manualDone, manualJob.quantity_planned ?? manualDone] : null;
   // A manual job fills the drawing with its length and quantity; the rest stays as on the machine or as typed.
   useEffect(() => {
     if (!manualJob) return;
+    // Written again after part of it was made: only the rest (owner review 19.11 — never the full plan again).
+    const rest = manualJob.quantity_planned ? Math.max(manualJob.quantity_planned - manualDone, 0) : 0;
     setEdits((values) => ({ ...(manualJob.length_mm ? { length_mm: manualJob.length_mm } : {}),
-      ...(manualJob.quantity_planned ? { total_set: String(manualJob.quantity_planned) } : {}), ...values }));
+      ...(rest ? { total_set: String(rest) } : {}), ...values }));
   }, [manualJob?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // Fields typed by hand since the plan request started: a late plan must not overwrite them.
   const touched = useRef(new Set<string>());
@@ -227,9 +234,14 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
         ...(asTransfer ? {} : { values: values() }) } : null;
     if (body && await run(() => machineControlApi.startRun(inventory, body, control?.state ?? null), "Передать на станок")) reloadRun();
   };
+  const tirazhLine = (pieces: string) => {
+    const before = doneOf();
+    return `Тираж: ${pieces} шт в этом задании${before ? ` (уже сделано ${before[0]} из ${before[1]})` : ""}`
+      + ` — цель станка = счётчик + ${pieces}`;
+  };
   const changeLines = () => changes.map(([key, value]) => {
     const field = fields.get(key);
-    if (key === "total_set") return `Тираж: ${value} шт в этом задании (цель станка = счётчик + ${value})`;
+    if (key === "total_set") return tirazhLine(value);
     const after = field?.kind === "mode" ? MODES.find(([code]) => code === value)?.[1] ?? value
       : field?.kind === "bit0" ? SWITCH.find(([code]) => code === value)?.[1] ?? value : value || "пусто";
     return `${field?.label ?? key}: ${field ? shown(field) : EMPTY} → ${after}${field?.unit && field.kind !== "mode" ? ` ${field.unit}` : ""}`;
@@ -321,7 +333,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     {confirming === "transfer" && (plan || manualJob)
       ? <Confirm state={control?.state ?? null} busy={busy} onNo={() => setConfirming("")} onYes={() => void transfer()}
         lines={plan && asTransfer
-          ? [...plan.rows.filter((row) => row.value !== null).map((row) => `${row.label}: ${row.value} мм`), `Тираж: ${plan.quantity} шт в этом задании (цель станка = счётчик + ${plan.quantity})`]
+          ? [...plan.rows.filter((row) => row.value !== null).map((row) => `${row.label}: ${row.value} мм`), tirazhLine(String(plan.quantity))]
           : [...changeLines(), ...(manualJob ? [`Заказ: ${manualJob.plc_number}`] : [])]} />
       : confirming === "settings"
         ? <Confirm state={control?.state ?? null} busy={busy} onNo={() => setConfirming("")} onYes={() => void writeSettings()}

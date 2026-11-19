@@ -41,10 +41,11 @@ function stageLine(run: MachineRun, live: Ob019Live | null): [string, string] {
   switch (run.stage) {
     case "writing": return [`Передаётся на станок — ${run.write.status_text.toLowerCase()}`, "info"];
     case "failed": return [`Не записано: ${run.write.error || run.write.status_text} — проверьте станок и передайте ещё раз`, "danger"];
+    case "moved": return ["Счётчик станка сдвинулся, пока задание записывалось, — передайте задание заново; «Пуск» не нажимать", "danger"];
     case "ready": return [`Записано и проверено · счёт станка с ${count(run.counter_start)} · станок: ${state.toLowerCase()}`, "ok"];
     case "running": return [`Идёт: сделано ${count(run.done)}${of} · станок: ${state.toLowerCase()}`, "info"];
     case "finished": return [`Тираж готов: сделано ${count(run.done)}${of}`, "ok"];
-    case "reset": return ["Счётчик станка сброшен — введите количество вручную", "warn"];
+    case "reset": return ["Счётчик станка сброшен — введите количество вручную; «Пуск» — только после новой передачи задания", "warn"];
     case "nolink": return ["Нет свежих данных станка — счёт недоступен, количество вводится вручную", "warn"];
     case "closed": return [`Завершено ${run.closed_at ? formatMoment(run.closed_at) : ""}: ${run.machine_count === null
       ? "количество вручную" : `по станку ${formatNumber(run.machine_count)} шт`}`, "neutral"];
@@ -230,7 +231,7 @@ export function Ob019RunJob({ inventory, equipmentId, state, live, choices, choi
         {run.stage === "ready" && <button type="button" className="primary machine-command" disabled={busy || !canStart}
           title={canStart ? undefined : !state?.can_control ? "Пуск — право «Управление станками»" : `Пуск возможен, когда станок готов и ждёт пуска`}
           aria-pressed={asking === "start"} onClick={() => { setAsking("start"); setHandsClear(false); }}>Пуск</button>}
-        {!finishing && state?.can_edit && <button type="button" className="secondary" disabled={busy}
+        {!finishing && state?.can_edit && run.stage !== "moved" && <button type="button" className="secondary" disabled={busy}
           onClick={() => setFinishing(true)}>Завершить</button>}
       </div>}
     </div>}
@@ -252,7 +253,7 @@ export function Ob019RunJob({ inventory, equipmentId, state, live, choices, choi
       </div>
     </div>}
 
-    {finishing && run && open && run.stage !== "writing" && run.stage !== "failed" &&
+    {finishing && run && open && run.stage !== "writing" && run.stage !== "failed" && run.stage !== "moved" &&
       <Finish key={run.id} inventory={inventory} run={run} manual={manual && manual.id === run.job_id ? manual : null}
         onCancel={() => setFinishing(false)}
         onDone={(text) => { setFinishing(false); setMessage({ tone: "ok", text }); reload(); }} />}

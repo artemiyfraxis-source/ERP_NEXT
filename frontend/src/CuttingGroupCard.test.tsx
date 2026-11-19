@@ -87,12 +87,13 @@ it("submits all KB quantities atomically and keeps the retry key and form after 
 
 it("fills «Годные» of the КБ of that length from the ОБ.019 count, wires per ПФ taken into account", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => String(input).includes("/machines/runs/cutting/group-1")
-    ? json({ runs: [{ run_id: "w1", inventory: "ОБ.019", length_mm: "700", count: 20, closed_at: "2026-11-19T10:05:00+03:00", closed_by: "Слава" }] })
+    ? json({ runs: [{ run_id: "w1", inventory: "ОБ.019", length_mm: "700", count: 20, runs: 2, unknown: false,
+      closed_at: "2026-11-19T10:05:00+03:00", closed_by: "Слава" }] })
     : json({ group: working, outputs: [] }));
   render(<CuttingGroupCard group={working} readOnly={false} onBehalfOf="operator" renderInstruction={() => null} />);
   fireEvent.click(screen.getByRole("button", { name: "Сдать" }));
   await waitFor(() => expect(screen.getByLabelText("Годные КБ1")).toHaveValue(5));
-  expect(screen.getByText(/Счётчик ОБ.019: 20 шт провода 700 мм/)).toBeInTheDocument();
+  expect(screen.getByText(/Счётчик ОБ.019: 20 шт провода 700 мм, прогонов: 2/)).toBeInTheDocument();
   expect(screen.getByLabelText("Годные КБ2")).toHaveValue(15);
 });
 

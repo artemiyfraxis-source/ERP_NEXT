@@ -144,7 +144,8 @@ it("finishes a manual job with the machine count when the machine says «Тир�
 it("asks for a manual count when the machine counter was reset, and sends a cutting job to «Сдать группу»", async () => {
   const posts = server({ run: makeRun("reset", { done: null, counter: 3, reset: true, state: 100 }) });
   render(<Ob019SettingsPanel inventory="ОБ.019" live={live(100, "Не сброшен — нужен сброс")} />);
-  expect(await screen.findByText("Счётчик станка сброшен — введите количество вручную")).toBeInTheDocument();
+  expect(await screen.findByText(/Счётчик станка сброшен — введите количество вручную; «Пуск» — только после новой передачи/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Пуск" })).toBeNull();
   const finish = await screen.findByRole("group", { name: "Завершение задания" });
   expect(within(finish).getByText(/количество вручную/)).toBeInTheDocument();
   fireEvent.click(within(finish).getByRole("button", { name: "Завершить задание" }));
@@ -159,4 +160,30 @@ it("spreads the machine count over the КБ of that length, never above what eac
   const rows = [row("a", "325", "10", "10", "2"), row("b", "325,00", "4", "8"), row("c", "150", "5", "5")];
   expect(machineGood(rows, "325", 12)).toEqual({ a: "8", b: "2" });
   expect(machineGood(rows, "325", 3)).toEqual({ a: "3", b: "0" });
+});
+
+it("voids a run whose counter moved while it was written: no «Пуск», no «Завершить», only «Стоп»", async () => {
+  server({ run: makeRun("moved") });
+  render(<Ob019SettingsPanel inventory="ОБ.019" live={live(102, "Готов, ждёт пуска")} />);
+  const now = await screen.findByRole("status", { name: "Задание на станке" });
+  expect(now).toHaveTextContent("Счётчик станка сдвинулся, пока задание записывалось, — передайте задание заново");
+  expect(within(now).getByRole("button", { name: "Стоп" })).toBeInTheDocument();
+  expect(within(now).queryByRole("button", { name: "Пуск" })).toBeNull();
+  expect(within(now).queryByRole("button", { name: "Завершить" })).toBeNull();
+});
+
+it("writes a manual job again only for the rest and says how much is done", async () => {
+  const posts = server({ manual: { ...MANUAL, quantity_planned: 10 },
+    run: makeRun("running", { kind: "manual", job_id: "m1", group_id: null, label: "Р-000003", quantity: 10, done: 4, state: 102 }) });
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  const pick = await screen.findByLabelText("Задание");
+  await waitFor(() => expect(within(pick).getByRole("option", { name: /Р-000003/ })).toBeInTheDocument());
+  fireEvent.change(pick, { target: { value: "manual:m1" } });
+  await waitFor(() => expect(screen.getByLabelText("Тираж: новое значение")).toHaveValue("6"));
+  fireEvent.click(screen.getByRole("button", { name: "Передать на станок (2)" }));
+  expect(within(screen.getByRole("alertdialog")).getByText("Тираж: 6 шт в этом задании (уже сделано 4 из 10) — цель станка = счётчик + 6"))
+    .toBeInTheDocument();
+  fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Подтвердить запись" }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].body).toMatchObject({ kind: "manual", job_id: "m1", values: { total_set: "6" } });
 });

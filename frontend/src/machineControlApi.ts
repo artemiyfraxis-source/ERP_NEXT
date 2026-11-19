@@ -108,7 +108,10 @@ export interface TransferPlan {
   number: string;
   wire: string;
   length_mm: string;
+  /** Тираж этой передачи: план минус уже сделанное по станку в идущем прогоне того же задания. */
   quantity: number;
+  planned?: number;
+  done?: number;
   rows: TransferRow[];
   job: { total_set: number; order_quantity: number; order_number: string; product: string };
   missing: string[];
@@ -129,7 +132,7 @@ export interface CorrectionBody {
 
 /** «Выполнение задания» (владелец 19.11.2026): одна передача задания на станок и её счёт по T.Finish (D649).
  *  Сервер: `workflows/machine_runs_api.py`, правила — `production/machine_runs.py`. */
-export type RunStage = "writing" | "failed" | "ready" | "running" | "finished" | "reset" | "nolink" | "closed";
+export type RunStage = "writing" | "failed" | "moved" | "ready" | "running" | "finished" | "reset" | "nolink" | "closed";
 
 export interface MachineRun {
   id: string;
@@ -189,7 +192,11 @@ export interface CuttingMachineRun {
   run_id: string;
   inventory: string;
   length_mm: string;
+  /** Сумма по всем закрытым и ещё не сданным прогонам этой длины; null — ни один не посчитан станком. */
   count: number | null;
+  runs: number;
+  /** Часть прогонов без счёта станка (счётчик сброшен или не прочитан). */
+  unknown: boolean;
   closed_at: string;
   closed_by: string;
 }

@@ -124,7 +124,7 @@ it("takes «Тираж» as pieces in this job and shows the machine counter and
   expect(tirazh.closest("label")!.className).toContain("is-diff");
   fireEvent.click(screen.getByRole("button", { name: "Записать на станок (1)" }));
   const confirm = screen.getByRole("alertdialog");
-  expect(within(confirm).getByText("Тираж: 20 шт в этом задании (цель станка = счётчик + 20)")).toBeInTheDocument();
+  expect(within(confirm).getByText("Тираж: 20 шт в этом задании — цель станка = счётчик + 20")).toBeInTheDocument();
   fireEvent.click(within(confirm).getByRole("button", { name: "Подтвердить запись" }));
   await waitFor(() => expect(posts).toHaveLength(1));
   expect(posts[0].body).toEqual({ values: { total_set: "20" }, confirm_state: 102 });  // the server adds the counter
