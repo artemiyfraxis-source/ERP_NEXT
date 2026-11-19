@@ -192,7 +192,31 @@ def task_norm(
 ) -> dict[str, Any]:
     """Норма для новых замеров задания: закреплённой ревизии ЭТК (`etk_norm`), но норма заказчика ТЕКУЩЕЙ выданной
     ревизии (`current`; None — задание и так на текущей) перекрывает закреплённую, когда её там нет или она другая.
+    «Контроль КСВН» (все / 1 из N / не проверять) тоже берётся из текущей выданной ревизии, когда он там задан: технолог
+    снял контроль (708К., владелец 19.11: «нет переходников» к ВАЦ) — запущенное задание больше не ждёт замеров.
     Справочная норма по комплектующим и факты сборки — из закреплённой ревизии."""
+    norm = _task_norm(document, current, current_revision, refs, now)
+    control = document_control(current) if current is not None else None
+    if control is not None and control != vswr_control(norm.get("control")):
+        norm = {**norm, "control": control, "controlRevision": current_revision}
+    return norm
+
+
+def document_control(document: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """«Контроль КСВН» документа ЭТК: из его нормы (`coaxVswrNorm.control`), иначе из build_config; не задан — None."""
+    if not isinstance(document, Mapping):
+        return None
+    norm = document.get(NORM_KEY)
+    config = document.get("build_config")
+    coax = config.get("coax") if isinstance(config, Mapping) else None
+    return (vswr_control(norm.get("control") if isinstance(norm, Mapping) else None)
+            or vswr_control(coax.get("vswrControl") if isinstance(coax, Mapping) else None))
+
+
+def _task_norm(
+    document: Mapping[str, Any] | None, current: Mapping[str, Any] | None, current_revision: int | None,
+    refs: CoaxRefs, now: datetime,
+) -> dict[str, Any]:
     norm = etk_norm(document, refs, now)
     # Only an explicit norm requirement may narrow the pinned assembly's physical ends.
     if "requiredEnds" not in norm:
@@ -461,7 +485,9 @@ def coax_tasks(
 ) -> dict:
     """Список для выбора задания в «Замерах КСВН»: только задания, чья закреплённая ЭТК — коаксиальная сборка. Каждая
     ЭТК читается один раз, справочники — один раз и только если нужна норма старой ЭТК; файлов замеров не грузим.
-    Задания КБ, уехавшей целиком (`shipped_task_ids`), не показываем — мерить уже нечего (владелец 18.11)."""
+    Задания КБ, уехавшей целиком (`shipped_task_ids`), не показываем — мерить уже нечего (владелец 18.11). Задания, чья
+    ЭТК говорит «Контроль КСВН: не проверять» (с учётом текущей выданной ревизии, `task_norm`), тоже не показываем —
+    КСВН у них не измеряется (708К.: нет переходников к ВАЦ, владелец 19.11)."""
     with uow_factory() as uow:
         tasks = [task for task in uow.production.list(limit=1000) if task.status is not ProductionStatus.CANCELLED]
         shipped = shipped_task_ids(uow, tasks)
@@ -479,8 +505,10 @@ def coax_tasks(
         if key not in norms:
             norms[key] = task_norm(document, current, current_revision, refs, now)
         norm = norms[key]
-        shown = _norm_result(norm)
         control = etk_control(document, norm)
+        if control["mode"] == "none":
+            continue
+        shown = _norm_result(norm)
         required = [position for position in range(1, task.quantity + 1) if vswr_in_sample(control, position)]
         # Экран ОТК группирует замеры по заданию/КБ (владелец 19.11): проект, КБ, ревизия ЭТК, полоса нормы и брак.
         rows.append({
