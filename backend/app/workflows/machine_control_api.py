@@ -4,7 +4,8 @@
   (the same view as the card's writes in `GET …/control`, which also says `can_control`).
   `stop` — the card's gate only (Производство or Задания, view), no confirmation. `reset` / `start` / `alarm_clear` —
   also «Управление станками» on edit (403), `hands_clear: true` and the D766 state the person confirmed (409 when it
-  changed, when the state does not allow the command or another command is open).
+  changed, when the state does not allow the command or another command is open). `start` only for an open job run
+  whose «Тираж» is on the machine (production/machine_runs.py `start_blocker`, 409 otherwise).
 The runner on the machine PC takes them through `…/agent/writes/next` (workflows/machine_writes_api.py)."""
 
 from __future__ import annotations
@@ -17,12 +18,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.production import machine_control
+from app.modules.production import machine_runs as runs
 from app.modules.production import machine_writes as commands
 from app.modules.production import machines as rules
 from app.modules.production.api import production_uow_factory
 from app.shared.clock import moscow_now
 
-from .machine_writes_api import _closed, _journal, _link, can_control
+from .machine_writes_api import _closed, _journal, _link, can_control, settle_run
 from .machines_api import Reader
 
 router = APIRouter(prefix="/api/production/machines", tags=["production"])
@@ -41,6 +43,12 @@ class CommandPayload(BaseModel):
 def send_command(inventory: str, payload: CommandPayload, principal: Reader, factory: Factory, now: Now) -> dict:
     with factory() as uow:
         link = _link(uow.session, inventory)
+        if payload.command == "start" and can_control(principal):  # without the right: 403 from the request below
+            # «Пуск» from ERP only for an open checked run whose target D22 is on the machine (production/machine_runs).
+            settle_run(uow, link.equipment_id, principal.actor, now)
+            blocker = runs.start_blocker(uow.session, link.equipment_id, now)
+            if blocker:
+                raise HTTPException(409, blocker)
         try:
             row, closed = machine_control.request(
                 uow.session, equipment_id=link.equipment_id, command=payload.command, actor_id=principal.actor.id,

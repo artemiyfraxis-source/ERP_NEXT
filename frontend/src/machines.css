@@ -13,11 +13,14 @@
   border-radius: 8px; background: var(--card); color: var(--foreground); font-weight: 400; text-align: left; }
 .machine-tile:hover { border-color: var(--primary); }
 .machine-tile:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
-.machine-tile-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.machine-tile-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .machine-tile-no { font-size: 20px; font-weight: 600; letter-spacing: -.01em; font-variant-numeric: tabular-nums slashed-zero; }
 .machine-tile-no.is-none { font-size: 14px; font-weight: 500; color: var(--muted-foreground); }
-.machine-tile-link { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; white-space: nowrap; }
-.machine-tile-link::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.machine-tile-head .machine-tile-no { flex: none; }
+/* A warning wraps onto more lines, never cut with «…» (owner 19.11: the busy-console text was cut). */
+.machine-tile-link { display: inline-flex; align-items: flex-start; gap: 6px; min-width: 0; padding-top: 4px; font-size: 13px;
+  font-weight: 500; line-height: 1.3; text-align: right; overflow-wrap: anywhere; }
+.machine-tile-link::before { content: ""; flex: none; width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; background: currentColor; }
 .machine-tile-name { display: -webkit-box; min-height: 2.6em; overflow: hidden; font-size: 14px; line-height: 1.3;
   -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .machine-tile-state { font-size: 14px; font-weight: 600; }
@@ -96,6 +99,7 @@
 .machine-card-head h2 { min-width: 0; overflow-wrap: anywhere; }
 .machine-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .machine-card-head h2 { margin: 0; font-size: 16px; }
+.machine-card-head .machine-manual { margin-left: auto; }
 .machine-link { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin: 0; }
 .machine-link span { color: var(--muted-foreground); font-size: 13px; font-variant-numeric: tabular-nums; }
 .machine-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
@@ -159,3 +163,22 @@ button.machine-stop { min-width: 160px; min-height: 48px; font-size: 18px; font-
 .machine-confirm-check { display: flex; align-items: center; gap: 8px; font-weight: 500; min-height: 40px; }
 .machine-confirm-check input { width: 20px; height: 20px; }
 .machine-confirm-command .machine-actions button { min-height: 40px; }
+
+/* «Выполнение задания» (Ob019RunJob.tsx): выбор задания, ход по счётчику станка, Пуск / Стоп / Завершить. */
+.machine-run { display: grid; gap: 8px; padding: 12px 16px; border: 1px solid var(--primary); border-radius: 8px; background: var(--card); }
+.machine-run-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 24px; }
+.machine-run-head h3 { margin: 0 0 8px; font-size: 16px; }
+.machine-run-pick { flex: 1 1 360px; }
+.machine-run-pick > select { width: 100%; max-width: 640px; }
+.machine-run-blocker { font-weight: 600; }
+.machine-run-now { display: grid; gap: 8px; }
+.machine-run-now.is-closed { color: var(--muted-foreground); }
+.machine-run-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin: 0; }
+.machine-run-line > span { font-weight: 500; }
+.machine-run-progress { display: flex; align-items: center; gap: 12px; }
+.machine-run-bar { flex: 1 1 auto; max-width: 640px; height: 12px; border-radius: 6px; background: var(--accent); overflow: hidden; }
+.machine-run-bar > span { display: block; height: 100%; background: var(--primary); transition: width .3s; }
+.machine-run-count { font-size: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.machine-run-actions button { min-height: 40px; min-width: 112px; }
+.machine-run-finish p { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin: 0; }
+.machine-run-order { flex: 1 1 320px; align-self: center; margin: 0; }

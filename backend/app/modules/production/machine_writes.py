@@ -278,6 +278,42 @@ def idle_problem(link: rules.MachineLinkRow | None, snapshot: rules.MachineSnaps
     return ""
 
 
+# «Тираж» (D22) is not a count but the target the PLC compares with its cumulative T.Finish (D649): 18.11.2026 D22 =
+# T.Finish + 1 cut one wire, the card showed «задано 570 / сделано 570». ERP takes «Тираж» as pieces in this job (N) and
+# writes D22 = D649 + N from a snapshot at most `COUNTER_FRESH` old of an idle machine; the read-back expects D649 + N.
+QUANTITY_KEY = "total_set"
+COUNTER_FRESH = timedelta(seconds=5)
+
+
+def quantity_as_target(writes: list[FieldWrite], snapshot: rules.MachineSnapshotRow | None,
+                       now: datetime) -> tuple[list[FieldWrite], dict | None]:
+    """«Тираж» N → D22 = D649 + N. → (the writes with the target, {"pieces", "counter", "target"} or None — no Тираж)."""
+    item = next((write for write in writes if write.key == QUANTITY_KEY), None)
+    if item is None:
+        return writes, None
+    try:
+        pieces = int(str(item.value).strip().replace(" ", ""))
+    except ValueError:
+        raise rules.MachineWriteInvalid("Тираж: целое число штук в этом задании") from None
+    if pieces < 1:
+        raise rules.MachineWriteInvalid("Тираж: целое число штук больше нуля")
+    if snapshot is None or rules.link_status(snapshot, now) != "ok" or rules.since(snapshot.reported_at, now) > COUNTER_FRESH:
+        raise MachineCommandRefused("Тираж не записан: нет свежего счётчика станка (данные старше 5 с) — "
+                                    "проверьте связь и повторите")
+    words = rules.snapshot_words(snapshot)
+    state = words.get(766)
+    if state not in IDLE_STATES:
+        text = rules.OB019_STATES.get(state, (f"код {state}", ""))[0] if state is not None else "неизвестно"
+        raise MachineCommandRefused(f"Тираж не записан: станок не готов и не в «Тираж готов» (сейчас: {text}) — "
+                                    "счётчик может идти")
+    counter = rules._u32(words, 649)
+    if counter is None:
+        raise MachineCommandRefused("Тираж не записан: счётчик станка (T.Finish) не прочитан")
+    target = counter + pieces
+    return ([FieldWrite(write.key, target) if write is item else write for write in writes],
+            {"pieces": pieces, "counter": counter, "target": target})
+
+
 def enqueue(session: Session, *, equipment_id: UUID, purpose: str, writes: list[FieldWrite], summary: str,
             actor_id: UUID, actor_name: str, now: datetime) -> tuple[MachineWriteRow, list[MachineWriteRow]]:
     """Queue one write. → (the command, commands that expired meanwhile)."""
@@ -378,7 +414,7 @@ def finish(session: Session, *, equipment_id: UUID, command_id: UUID, ok: bool, 
         row.status = "failed"
         reason = " ".join(str(error or "").split())
         if "busy" in reason or "PXS_HMI" in reason:
-            reason = "Пульт PXS_HMI открыт — порт занят"
+            reason = rules.HMI_OPEN
         elif reason.startswith("mbd outdated"):
             reason = "Служба обмена со станком устарела — обновите"
         elif reason.startswith("state "):

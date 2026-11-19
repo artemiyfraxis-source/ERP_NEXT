@@ -7,8 +7,8 @@ import { Ob019Controls } from "./Ob019Controls";
 import { Ob019SettingsPanel } from "./Ob019SettingsPanel";
 
 /** Живая карточка ОБ.019 (линия резки и зачистки с лазерной маркировкой): состояние ПЛК и строка задания, команды станку
- *  (Ob019Controls.tsx), под ними чертёж провода и запись настроек (Ob019SettingsPanel.tsx); опрос раз в 3 с, пока окно
- *  открыто. */
+ *  (Ob019Controls.tsx), под ними «Выполнение задания», чертёж провода и запись настроек (Ob019SettingsPanel.tsx); опрос
+ *  раз в 3 с, пока окно открыто. Открытый на ПК пульт станка — одной строкой, без кода программы. */
 
 type Fact = [label: string, value: string, tone?: Tone];
 
@@ -72,10 +72,10 @@ export function Ob019CardView({ card, controls }: { card: MachineCard; controls?
         <dd className={toneClass(tone)}>{value}</dd>
       </div>)}
     </dl>}
-    {card.error && card.link.code !== "ok" && <p className="warning-inline">{card.error}</p>}
+    {card.error && card.link.code !== "ok" && card.error !== card.link.text && <p className="warning-inline">{card.error}</p>}
     {controls}
     {!card.live && <p className="empty">Нет данных ПЛК — агент на связи, но станок ещё не ответил</p>}
-    <Ob019SettingsPanel inventory={card.inventory} live={card.live} old={old} />
+    <Ob019SettingsPanel inventory={card.inventory} equipmentId={card.equipment_id} live={card.live} old={old} />
     <Facts title="Подключение" facts={[
       ["ПК", plain(card.pc)], ["IP", plain(card.ip)], ["Версия агента", plain(card.bridge_version)],
       ["Служба Modbus", plain(card.service_version)],
@@ -83,13 +83,14 @@ export function Ob019CardView({ card, controls }: { card: MachineCard; controls?
   </>;
 }
 
-export function Ob019Card({ equipmentId, title, close }: { equipmentId: string; title: string; close: () => void }) {
+export function Ob019Card({ equipmentId, title, close, actions }: { equipmentId: string; title: string; close: () => void; actions?: ReactNode }) {
   const load = useCallback((signal: AbortSignal) => machinesApi.card(equipmentId, signal), [equipmentId]);
   const { data, error } = usePolled(load, undefined, "Не удалось загрузить станок");
   return <PageWindow label={title} close={close} width={1100} dismissable>
     <section className="panel machine-card">
       <header className="machine-card-head">
         <h2>{title}</h2>
+        {actions}
         <button className="secondary small" onClick={close}>Закрыть</button>
       </header>
       {error && <div className="error-banner" role="alert">{error}</div>}

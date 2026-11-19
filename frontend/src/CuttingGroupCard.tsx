@@ -2,9 +2,10 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { failureText, productionApi, type ProductionWorkSession } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { PageWindow } from "./PageWindow";
-import { formatNumber } from "./format";
+import { formatMoment, formatNumber } from "./format";
+import { machineControlApi, type CuttingMachineRun } from "./machineControlApi";
 import { windowText } from "./productionGraph";
-import { cuttingLabels, cuttingRows, cuttingState, cuttingLabelsPage, cuttingLabelsTitle, type CuttingGroup, type CuttingLabel, type CuttingMember, type CuttingSubmission, type CuttingWorkResult } from "./cuttingGroups";
+import { cuttingLabels, cuttingRows, cuttingState, cuttingLabelsPage, cuttingLabelsTitle, machineGood, type CuttingGroup, type CuttingLabel, type CuttingMember, type CuttingSubmission, type CuttingWorkResult } from "./cuttingGroups";
 import { clock, useNow, workedSeconds } from "./productionTime";
 import { DOWNTIME_REASONS, type DowntimeReason } from "./downtimeApi";
 import type { MarkSerialRange } from "./markSerial";
@@ -123,6 +124,22 @@ function GroupSubmit({ group, close, submit, busy, error }: { group: CuttingGrou
   const [values, setValues] = useState(() => Object.fromEntries(rows.map((row) => [row.id, {
     good: String(Math.max(0, Number(row.operation_quantity) - Number(row.good) - Number(row.defects))), defects: "0", character: "", description: "",
   }])));
+  // Pieces counted by the machine card («Выполнение задания» on ОБ.019) fill «Годные» of the КБ of that length once.
+  const [machineRuns, setMachineRuns] = useState<CuttingMachineRun[]>([]);
+  useEffect(() => {
+    let alive = true;
+    machineControlApi.cuttingRuns(group.id).then((answer) => {
+      if (!alive || !Array.isArray(answer?.runs)) return;
+      setMachineRuns(answer.runs);
+      const filled = Object.assign({}, ...answer.runs.filter((item) => item.count !== null)
+        .map((item) => machineGood(rows, item.length_mm, item.count ?? 0)));
+      if (Object.keys(filled).length) {
+        setValues((current) => Object.fromEntries(Object.entries(current).map(([id, value]) =>
+          [id, id in filled ? { ...value, good: filled[id] } : value])));
+      }
+    }).catch(() => { /* no machine count: the plan stays as before */ });
+    return () => { alive = false; };
+  }, [group.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const valid = rows.every((row) => {
     const v = values[row.id];
     return v.good !== "" && v.defects !== "" && Number.isFinite(Number(v.good)) && Number.isFinite(Number(v.defects)) && Number(v.good) >= 0 && Number(v.defects) >= 0
@@ -143,6 +160,13 @@ function GroupSubmit({ group, close, submit, busy, error }: { group: CuttingGrou
     <div className="panel cutting-submit">
       <h2>Сдать группу · {group.project} · {rows.length} КБ</h2>
       {error && <div className="error-banner" role="alert">{error}</div>}
+      {machineRuns.map((item) => <p key={item.run_id} className={item.count === null || item.unknown ? "warning-inline" : "cutting-machine-count"} role="status">
+        {item.count === null
+          ? `${item.inventory}: счётчик станка сброшен — введите годные длины ${item.length_mm.replace(".", ",")} мм вручную`
+          : `Счётчик ${item.inventory}: ${formatNumber(item.count)} шт провода ${item.length_mm.replace(".", ",")} мм`
+            + `${item.runs > 1 ? `, прогонов: ${item.runs}` : ""} (последний — ${formatMoment(item.closed_at)}) — годные заполнены, проверьте и укажите брак`
+            + `${item.unknown ? "; часть прогонов без счётчика станка — добавьте их вручную" : ""}`}
+      </p>)}
       <DataTable rows={rows} rowKey={rowKey} label="Сдача по КБ" compactBelow={Infinity} pageSize={1000} columns={[
         { key: "item", title: "КБ", value: (row) => row.item },
         { key: "name", title: "Изделие", value: (row) => row.name, grow: true },
