@@ -25,7 +25,7 @@
 .marking-geometry .marking-name { grid-column: span 2; }
 .marking-window .tnum, .marking-window input[type="number"] { font-variant-numeric: tabular-nums; }
 .marking-window input[type="number"] { text-align: right; min-width: 72px; width: 100%; }
-.marking-window .check-inline { flex-direction: row; align-items: center; gap: 8px; }
+.marking-window .check-inline { flex-direction: row; align-items: center; gap: 8px; white-space: normal; }
 .marking-selection { display: grid; gap: 8px; }
 .marking-selection summary { cursor: pointer; }
 .marking-selection label { padding-block: 4px; overflow-wrap: anywhere; }

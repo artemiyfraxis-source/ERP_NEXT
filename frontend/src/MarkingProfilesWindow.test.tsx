@@ -191,3 +191,48 @@ it("offers no halves choice for a single-zone label", async () => {
   await screen.findByLabelText("Текст пробной этикетки");
   expect(screen.queryByLabelText("Текст на половинах")).toBeNull();
 });
+
+it("creates a new profile from a copy, scaled to the typed size, and selects it", async () => {
+  const created: MarkingProfile = { ...profile, id: "new", name: "100×20", version: 1, calibrated: false, geometry: { ...profile.geometry, width_mm: 100 } };
+  const create = vi.spyOn(markingApi, "createProfile").mockResolvedValue(created);
+  openProfiles();
+  fireEvent.click(await screen.findByRole("button", { name: "Новый профиль…" }));
+  fireEvent.change(screen.getByLabelText("Ширина, мм"), { target: { value: "100" } });
+  expect(screen.getByLabelText("Название")).toHaveValue("100×20");
+  fireEvent.click(screen.getByRole("button", { name: "Создать профиль" }));
+  await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+  const [equipmentId, body] = create.mock.calls[0];
+  expect(equipmentId).toBe("unit");
+  expect(body.copy_from).toBe("profile");
+  expect(body.name).toBe("100×20");
+  expect(body.geometry?.width_mm).toBe(100);
+  expect(body.geometry?.zones[0]).toEqual({ x: 1.08, y: 1, width: 41.08, height: 18 });
+  await waitFor(() => expect(screen.getByLabelText("Материал / профиль")).toHaveValue("new"));
+});
+
+it("copies the layout of a same-size profile from another machine unscaled", async () => {
+  const wrap: MarkingProfile = { ...profile, id: "wrap", equipment_id: "unit2", name: "40×60", version: 1, calibrated: false,
+    geometry: { ...profile.geometry, width_mm: 40, height_mm: 60, zones: [{ x: 1, y: 1, width: 38, height: 13 }], blank_zones: [{ x: 0, y: 15, width: 40, height: 45 }] } };
+  vi.mocked(markingApi.machines).mockResolvedValue({ ...catalog, machines: [
+    { equipment_id: "unit2", inventory_number: "ОБ.102", name: "Обмотчик", profiles: [wrap], binding: null }, ...catalog.machines] });
+  const create = vi.spyOn(markingApi, "createProfile").mockResolvedValue({ ...wrap, id: "new", name: "92.5×20" });
+  // Opened from the ОБ.102 card: only that machine in the window, yet ОБ.101's same-size layout is offered.
+  render(<MarkingProfilesWindow equipmentIds={["unit2"]} canEdit close={vi.fn()} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Новый профиль…" }));
+  fireEvent.change(screen.getByLabelText("Ширина, мм"), { target: { value: "92,5" } });
+  fireEvent.change(screen.getByLabelText("Высота, мм"), { target: { value: "20" } });
+  expect(screen.getByLabelText("Копировать разметку из")).toHaveValue("profile");
+  fireEvent.click(screen.getByRole("button", { name: "Создать профиль" }));
+  await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+  const [equipmentId, body] = create.mock.calls[0];
+  expect(equipmentId).toBe("unit2");
+  expect(body.copy_from).toBe("profile");
+  expect(body.geometry?.zones).toEqual(profile.geometry.zones);
+  expect(body.geometry?.blank_zones).toEqual(profile.geometry.blank_zones);
+});
+
+it("hides «Новый профиль…» without edit rights", async () => {
+  openProfiles(false);
+  await screen.findByLabelText("Станок");
+  expect(screen.queryByRole("button", { name: "Новый профиль…" })).toBeNull();
+});

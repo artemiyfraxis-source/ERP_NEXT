@@ -212,6 +212,76 @@ def profile_name(session, profile, requested):
     return name
 
 
+class NewProfileInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(max_length=200)
+    copy_from: UUID | None = None
+    geometry: Geometry | None = None
+
+
+@router.post("/machines/{equipment_id}/profiles")
+def create_profile(equipment_id: UUID, payload: NewProfileInput, principal: ConfigUser, factory: Factory, now: Now):
+    """A new label size for a machine. Never calibrated: a copied calibration is not valid for another size or printer."""
+    def create():
+        with factory() as uow:
+            machine = resolve_equipment(uow.session).get(equipment_id)
+            if machine is None:
+                raise KeyError("Оборудование маркировки не найдено")
+            inventory = str(machine.fields.get(INV_KEY) or machine.fields.get("inventoryNumber") or "").strip().upper()
+            if not inventory:
+                raise ValueError("У станка нет инвентарного номера — профиль маркировки не заводится")
+            owner = (MarkingProfileRow.inventory_number == inventory) | (MarkingProfileRow.equipment_id == equipment_id)
+            own = list(uow.session.scalars(select(MarkingProfileRow).where(owner)))
+            # Only a marking machine (it already has a profile or a bound printer) gets one: not a crimper by its UUID.
+            if not own and uow.session.scalar(select(MarkingBindingRow.equipment_id)
+                                               .where(MarkingBindingRow.equipment_id == equipment_id)) is None:
+                raise ValueError("Это не станок маркировки: у него нет ни профилей, ни привязанного принтера")
+            name = " ".join(payload.name.split())
+            if not name:
+                raise ValueError("Укажите название профиля")
+            if len(name) > 80:
+                raise ValueError("Название профиля — не длиннее 80 знаков")
+            source = None
+            if payload.copy_from is not None:
+                source = uow.session.get(MarkingProfileRow, payload.copy_from)
+                if source is None:
+                    raise KeyError("Профиль-образец не найден")
+            if payload.geometry is not None:
+                geometry = payload.geometry.model_dump()
+                if source is not None and "peel" not in payload.geometry.model_fields_set:
+                    geometry["peel"] = bool((source.geometry or {}).get("peel"))
+            elif source is not None:
+                geometry = Geometry.model_validate(source.geometry).model_dump()
+            else:
+                raise ValueError("Укажите разметку или профиль, с которого её копировать")
+            if source is not None and source.equipment_id != equipment_id:
+                # Offsets are the other printer's calibration result: the new profile starts from zero and is calibrated
+                # on its own printer.
+                geometry["offset_x_mm"] = geometry["offset_y_mm"] = 0
+            if own:
+                # The peel-off dispenser belongs to the machine, not to the copied layout.
+                geometry["peel"] = any(bool((row.geometry or {}).get("peel")) for row in own)
+            zones = geometry["zones"]
+            if len(zones) == 2 and zones[0]["x"] >= zones[1]["x"]:
+                raise ValueError("Текст 1 — левая половина флажка: его зона должна начинаться левее зоны «Текст 2»")
+            if any(other.name.casefold() == name.casefold() for other in own):
+                raise ConcurrentProductionUpdate(f"У этого станка уже есть профиль «{name}»")
+            row = MarkingProfileRow(id=uuid4(), equipment_id=equipment_id, inventory_number=inventory, name=name,
+                                    version=1, calibrated=False, geometry=geometry)
+            uow.session.add(row)
+            try:
+                uow.session.flush()
+            except IntegrityError as error:
+                raise ConcurrentProductionUpdate(f"У этого станка уже есть профиль «{name}»") from error
+            audit(uow, principal.actor, now, row.id, "profile_created", equipment_id=str(equipment_id), name=name,
+                  copy_from=str(payload.copy_from) if payload.copy_from else None,
+                  width_mm=geometry["width_mm"], height_mm=geometry["height_mm"])
+            result = profile_view(row)
+            uow.commit()
+            return result
+    return checked(create)
+
+
 @router.put("/profiles/{profile_id}")
 def save_profile(profile_id: UUID, payload: ProfileInput, principal: ConfigUser, factory: Factory, now: Now):
     def save():
