@@ -600,6 +600,9 @@ def machine_window(inventory: str, _principal: Reader, factory: Factory, now: No
                 "profiles": [{"id": str(row.id), "name": row.name, "calibrated": row.calibrated, "version": row.version}
                              for row in profiles]}
             card["journal"] = _journal_marking(session, binding, now)
+        from .equipment_setup_model import unit_setup  # lazy: that module reuses this one's gate
+
+        card["setup_model"] = unit_setup(session, entry["inventory"], now)
         return card
 
 

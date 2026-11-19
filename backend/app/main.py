@@ -78,6 +78,7 @@ from .workflows import finished_goods_api
 from .workflows import production_intake_api
 from .workflows import coax_vswr_api, instrument_from_stock, instrument_labels, instrument_public_passport, marking_labels
 from .workflows import machines_api
+from .workflows import equipment_setup_model
 from .workflows import machine_writes_api
 from .workflows import machine_control_api
 from .modules.production import rf_interfaces_api
@@ -201,6 +202,7 @@ app.include_router(marking_labels.router)
 app.include_router(machine_writes_api.router)
 app.include_router(machine_control_api.router)
 app.include_router(machines_api.router)
+app.include_router(equipment_setup_model.router)
 
 _equipment_enabled = equipment_setup_enabled()
 if database_url := os.getenv("ERP_DATABASE_URL"):
