@@ -155,7 +155,9 @@ def _check_values(connection: Connection, metadata: MetaData) -> dict[tuple[str,
 def _parent_values(connection: Connection, table: Table) -> dict[str, list[Any]]:
     """column → the parent values a row may point at (each foreign key, composite ones as aligned columns)."""
     values: dict[str, list[Any]] = {}
-    for key in table.foreign_key_constraints:
+    # A column shared by a single and a composite key (0199: configurations.unit_id → units and, with reference_id, →
+    # references) takes the composite key's aligned values — set order must not decide which parent wins.
+    for key in sorted(table.foreign_key_constraints, key=lambda key: (len(key.elements), key.name or "")):
         parent = key.referred_table
         if parent is table:
             continue  # self reference (a correction of an earlier row): left NULL
@@ -180,8 +182,8 @@ def _row(table: Table, index: int, parents: dict[str, list[Any]], lots: list[Any
         if _database_assigns(table, column, dialect):
             continue
         name = column.name
-        if table.name == "warehouse_scan_jobs" and name == "capture_settings":
-            # Reflection forgets JSON(none_as_null=True); omission keeps SQL NULL on scan rows.
+        if (table.name, name) in {("warehouse_scan_jobs", "capture_settings"), ("production_vswr_measurements", "repeat_set")}:
+            # Reflection forgets JSON(none_as_null=True); omission keeps SQL NULL (a repeat set needs its repeat, 0200).
             continue
         if (table.name, name) in _OVER_CHECK:
             row[name] = _OVER_CHECK[(table.name, name)]

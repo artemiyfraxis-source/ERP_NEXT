@@ -26,7 +26,6 @@ from app.modules.warehouse.scan_jobs_api import UowFactory, _queue, scan_agent_p
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, production_quality_principal
 from app.shared.stored_files import file_response
-from app.modules.production.instrument_norms import uncertainty_for, vna_model
 from .coax_vswr_api import CoaxRefs, _measurement_result, _task_etk, task_norm
 from .vna_capture_instrument import capture_instrument
 from .vna_plan_api import vna_plan
@@ -285,10 +284,7 @@ def record_session(session_id: UUID, payload: RecordInput, principal: Person, no
                             if str(item.id) == row.recorded_reference), None) if serial else None
         if measurement is None:
             raise SessionConflict("Записанная попытка сессии не найдена")
-        analyser = uow.instruments.get(measurement.instrument_id)
-        uncertainty = uncertainty_for(vna_model(f"{analyser.name} {analyser.doc_designation or ''}")) if analyser is not None else None
-        response = {"measurement": _measurement_result(measurement, trace=True, uncertainty=lambda _id: uncertainty),
-                    "position": row.product_position,
+        response = {"measurement": _measurement_result(measurement, trace=True), "position": row.product_position,
                     "session": repository.view(row)}
         uow.commit()
         return response

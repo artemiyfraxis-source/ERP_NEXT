@@ -135,7 +135,8 @@ export function buildCoaxPassportHtml(passport: CableAssemblyPassport): string {
   const checks = passport.checks.length
     ? passport.checks.map((check) => `<section class="check"><h2>${escapeHtml(check.title)}</h2>${(CHECK_RENDERERS[check.kind] ?? genericCheck)(check, passport)}</section>`).join("")
     : passport.vswr_sample ? vswrSampleSection(passport.vswr_sample) : `<p>Проверки ОТК по изделию ещё не проводились.</p>`;
-  const overall = passport.verdict === null ? DASH : passport.verdict === "pass" ? "Годно" : "Не годно";
+  const overall = passport.verdict === null ? DASH : passport.verdict === "pass" ? "Годно"
+    : passport.verdict === "border" ? "На границе допуска — нужен повторный замер" : "Не годно";
   const inspector = passport.inspector?.name ?? "";
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${PASSPORT_CSS}</style></head><body>` +
     `<h1>Паспорт кабельной сборки</h1>` +

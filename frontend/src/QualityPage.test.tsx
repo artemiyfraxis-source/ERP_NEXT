@@ -551,7 +551,7 @@ it("says so when the checks cannot be loaded, and still lets the inspector decid
 
 const vswrBase = `/api/production/vswr/tasks/${branched.id}`;
 const trace = [{ mhz: 1700, vswr: 1.3 }, { mhz: 1800, vswr: 1.6 }, { mhz: 1900, vswr: 1.45 }];
-const measurement = (verdict: "pass" | "fail", extra: object = {}) => ({
+const measurement = (verdict: "pass" | "fail" | "border", extra: object = {}) => ({
   id: "78000000-0000-0000-0000-000000000001", serial_number: "ПЗ-0001-01", attempt: 1, band_mhz: [1700, 1900], max_vswr: 1.6, max_vswr_mhz: 1800,
   norm: {}, norm_vswr_max: 2.06, verdict, verdict_name: verdict === "pass" ? "Годно" : "Не годно", verdict_manual: false, verdict_reason: "",
   inspector: { id: "u", name: "Контролёр Иванов" }, measured_at: "2026-10-22T10:00:00+03:00", file_name: "a.s1p", points: 3, file_meta: {}, trace, ...extra,
@@ -789,6 +789,25 @@ it("sends no verdict when the norm is defined, prints the passport of a pass at 
   expect(within(dialog).getByText("Годен")).toBeInTheDocument();
   await waitFor(() => expect(passport).toHaveBeenCalledWith(branched.id, 1));
   expect(within(dialog).getByRole("button", { name: "Следующий: ПЗ-0001-02" })).toHaveFocus();
+});
+
+it("a border result offers the repeat connection of the same unit instead of the passport", async () => {
+  const posted: Record<string, unknown>[] = [];
+  await openVswr(okNorm);
+  postVswr(posted, okNorm, measurement("border", { max_vswr: 2.07, verdict_name: "На границе допуска",
+    verdict_reason: "На границе допуска — нужен повторный замер (3 подключения с поворотом 120°)",
+    decision: { status: "border", uncertainty: 0.022, text: "На границе допуска — нужен повторный замер (3 подключения с поворотом 120°)" } }));
+  const passport = vi.spyOn(productionApi, "vswrPassport");
+  const dialog = await fromFile();
+  fireEvent.change(within(dialog).getByLabelText("Файл замера"), { target: { files: [new File(["x"], "a.s1p")] } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Загрузить замер" }));
+  const repeat = await within(dialog).findByRole("button", { name: "Повторный замер (поворот 120°)" });
+  expect(within(dialog).getByText("На границе")).toBeInTheDocument();
+  expect(within(dialog).queryByRole("button", { name: "Паспорт" })).not.toBeInTheDocument();
+  expect(passport).not.toHaveBeenCalled();
+  fireEvent.click(repeat);
+  expect(await screen.findByRole("dialog", { name: "Замер КСВН ПЗ-0001-01" })).toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: "Снять с ВАЦ" })).toBeInTheDocument();
 });
 
 it("leads a failed unit into the OTK window of its box with the reject prefilled", async () => {
