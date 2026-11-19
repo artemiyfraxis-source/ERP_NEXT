@@ -217,8 +217,10 @@ function Invoke-Erp([string]$Path, [string]$Body, [string]$Token) {
     }
 }
 
+# runner_version (1.2.0): ERP hands a command with switch bits or the other HMI pages only to a runner that names
+# 1.2.0 or newer; without it ERP fails such a command unsent (a 1.1.0 runner would write its words but not its bits).
 function Get-Identity {
-    return @{ inventory = $script:Inventory; machine_id = (Get-MachineId) }
+    return @{ inventory = $script:Inventory; machine_id = (Get-MachineId); runner_version = $script:RunnerVersion }
 }
 
 # One poll: take a command, run it, report. Returns the run result or $null when there was nothing to do.

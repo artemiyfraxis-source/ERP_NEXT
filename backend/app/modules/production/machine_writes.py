@@ -11,6 +11,11 @@ what it asked for: equal → «done», different → «failed» with the registe
 - Allowed only while the machine is idle: state 102 «Готов, ждёт пуска» or 107 «Тираж готов» in a fresh snapshot with
   the link «На связи» (PXS_HMI closed); the runner re-checks D766 right before writing.
 
+Runner versions (19.11.2026): the runner 1.2.0 writes the other HMI pages and switch bits (mbd `setbit`); 1.1.0
+ignores `bits` and refuses the new words. The runner names its version (`runner_version`) when it asks for a command;
+a command it cannot run whole is never handed to it — it fails at once with `RUNNER_OUTDATED`, nothing is written. The
+version last seen per machine is kept in memory (the runner asks twice a second; no table needed) for the card hint.
+
 Machine commands Стоп / Сброс / Пуск / Сброс аварии (purpose `control`, column `command`, migration 0197) ride the
 same queue; their rules are in production/machine_control.py: 5 s to be claimed, Stop first and exempt from the one-open
 index (it may queue while a write runs, it cancels what is queued), no answer → «unknown», never assumed done.
@@ -66,6 +71,49 @@ OFFSET_KEYS = ("length_mm", "strip_front_mm", "pull_front_mm", "strip_back_mm", 
                "knife_back_mm")
 OFFSET_LIMIT = 10000  # ±100,00 мм
 STEP = Decimal("0.01")
+RUNNER_NEEDED = "1.2.0"
+RUNNER_OUTDATED = "Служба записи на ПК станка устарела — обновите (нужна 1.2.0)"
+# The words the runner 1.1.0 writes (ob019-writer.ps1 before 19.11.2026): mode, job and quantities, wire and strip,
+# marking texts, order number and product. Anything else, and any switch bit, needs `RUNNER_NEEDED`.
+LEGACY_WORDS = frozenset({20, *range(22, 29), *range(32, 44), *range(440, 485), *range(940, 970)})
+RUNNER_SEEN = timedelta(seconds=60)
+_runners: dict[UUID, tuple[str, datetime]] = {}
+
+
+def _version(text: str) -> tuple[int, ...] | None:
+    try:
+        return tuple(int(part) for part in str(text or "").strip().split("."))
+    except ValueError:
+        return None
+
+
+def runner_current(version: str | None) -> bool:
+    """The runner may write the other HMI pages and switch bits: its version is `RUNNER_NEEDED` or newer."""
+    parsed = _version(version or "")
+    return parsed is not None and parsed >= _version(RUNNER_NEEDED)
+
+
+def field_needs_runner(field: rules.SettingField) -> bool:
+    return field.kind == "bit0" or any(address not in LEGACY_WORDS for address in rules.field_words(field))
+
+
+def needs_runner(row: "MachineWriteRow") -> bool:
+    """A write the runner 1.1.0 could do only in part (bits) or not at all (new words)."""
+    if row.purpose == CONTROL:
+        return False
+    return bool(row.payload.get("bits")) or any(address not in LEGACY_WORDS for address in expected_words(row))
+
+
+def note_runner(equipment_id: UUID, version: str | None, now: datetime) -> None:
+    _runners[equipment_id] = (str(version or ""), now)
+
+
+def runner_outdated(equipment_id: UUID, now: datetime) -> bool:
+    """The runner asked recently and is older than `RUNNER_NEEDED` (no version = 1.1.0); not seen — not known."""
+    seen = _runners.get(equipment_id)
+    if seen is None or rules.since(seen[1], now) > RUNNER_SEEN:
+        return False
+    return not runner_current(seen[0])
 
 
 class MachineCommandRefused(Exception):
@@ -241,6 +289,9 @@ def enqueue(session: Session, *, equipment_id: UUID, purpose: str, writes: list[
     if problem:
         raise MachineCommandRefused(problem)
     blocks, bits, shown = plan_writes(writes, rules.snapshot_words(snapshot))
+    if runner_outdated(equipment_id, now) and (bits or any(
+            block["addr"] + offset not in LEGACY_WORDS for block in blocks for offset in range(len(block["values"])))):
+        raise MachineCommandRefused(RUNNER_OUTDATED)
     expired = _expire(session, equipment_id, now)
     if session.scalar(select(MachineWriteRow.id).where(MachineWriteRow.equipment_id == equipment_id,
                                                          MachineWriteRow.status.in_(OPEN))) is not None:
@@ -257,12 +308,24 @@ def enqueue(session: Session, *, equipment_id: UUID, purpose: str, writes: list[
     return row, expired
 
 
-def claim(session: Session, equipment_id: UUID, now: datetime) -> tuple[MachineWriteRow | None, list[MachineWriteRow]]:
-    """The runner takes the oldest queued command still in time. → (command or None, commands expired meanwhile)."""
+def claim(session: Session, equipment_id: UUID, now: datetime,
+          runner_version: str | None = None) -> tuple[MachineWriteRow | None, list[MachineWriteRow]]:
+    """The runner takes the oldest queued command still in time. A write its version cannot run whole fails here,
+    unsent. → (command or None, commands expired or failed meanwhile)."""
+    note_runner(equipment_id, runner_version, now)
     expired = _expire(session, equipment_id, now)
-    queued = session.scalars(select(MachineWriteRow).where(MachineWriteRow.equipment_id == equipment_id,
-                                                           MachineWriteRow.status == "queued")
-                             .order_by(MachineWriteRow.created_at, MachineWriteRow.id)).all()
+    queued = list(session.scalars(select(MachineWriteRow).where(MachineWriteRow.equipment_id == equipment_id,
+                                                                MachineWriteRow.status == "queued")
+                                  .order_by(MachineWriteRow.created_at, MachineWriteRow.id)).all())
+    if not runner_current(runner_version):
+        for item in [item for item in queued if needs_runner(item)]:
+            if session.execute(update(MachineWriteRow).where(MachineWriteRow.id == item.id,
+                                                             MachineWriteRow.status == "queued")
+                               .values(status="failed", finished_at=now, error=RUNNER_OUTDATED)).rowcount == 1:
+                session.expire(item)
+                session.refresh(item)
+                expired.append(item)
+            queued.remove(item)
     # Stop jumps the queue: a Stop pressed while another command waits is taken first.
     row = next((item for item in queued if item.command == STOP), queued[0] if queued else None)
     if row is None:

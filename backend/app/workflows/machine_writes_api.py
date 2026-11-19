@@ -111,6 +111,8 @@ class CorrectionPayload(Payload):
 class AgentPayload(Payload):
     inventory: str = Field(min_length=1, max_length=64)
     machine_id: str = Field(min_length=1, max_length=80)
+    # The command runner names its version since 1.2.0; none = 1.1.0 (no switch bits, no other HMI pages).
+    runner_version: str = Field(default="", max_length=32)
 
 
 class ResultPayload(AgentPayload):
@@ -224,6 +226,9 @@ def control(inventory: str, principal: Reader, factory: Factory, now: Now) -> di
             "offsets": _offset_rows(session, link.equipment_id),
             "can_edit": _can_edit(principal),
             "can_control": can_control(principal),
+            # The runner on the PC is older than 1.2.0: the other HMI pages and switches are not written yet.
+            "runner_outdated": commands.runner_outdated(link.equipment_id, now),
+            "runner_keys": sorted(key for key, field in rules.OB019_FIELDS.items() if commands.field_needs_runner(field)),
         }
         uow.commit()
     return result
@@ -471,7 +476,7 @@ def _agent_link(session, bridge: Principal, payload: AgentPayload) -> rules.Mach
 def next_command(payload: AgentPayload, bridge: Bridge, factory: Factory, now: Now) -> dict:
     with factory() as uow:
         link = _agent_link(uow.session, bridge, payload)
-        row, expired = commands.claim(uow.session, link.equipment_id, now)
+        row, expired = commands.claim(uow.session, link.equipment_id, now, payload.runner_version)
         _closed(uow, expired, bridge.actor, now)
         uow.commit()
         if row is None:

@@ -26,7 +26,8 @@ from tests.workflows.test_machines_api import WORDS, _bridge, _report, machines_
 
 CARD = "/api/production/machines/card/ОБ.019"
 NEXT = "/api/production/machines/agent/writes/next"
-AGENT = {"inventory": "ОБ.019", "machine_id": "guid-108"}
+AGENT = {"inventory": "ОБ.019", "machine_id": "guid-108"}  # a runner 1.1.0: it names no version
+AGENT_NEW = {**AGENT, "runner_version": "1.2.0"}
 
 
 def _post(client, path, body):
@@ -39,9 +40,9 @@ def _events(sessions, equipment_id):
             select(AuditEventRow).where(AuditEventRow.aggregate_id == equipment_id).order_by(AuditEventRow.occurred_at))]
 
 
-def _result(bridge, command_id, readback, ok=True, error=""):
+def _result(bridge, command_id, readback, ok=True, error="", agent=AGENT):
     return TestClient(app).post(f"/api/production/machines/agent/writes/{command_id}/result", headers=bridge,
-                                json={**AGENT, "ok": ok, "readback": readback, "error": error})
+                                json={**agent, "ok": ok, "readback": readback, "error": error})
 
 
 def test_encoding_texts_zero_filled_ascii_lengths_in_hundredths():
@@ -157,16 +158,52 @@ def test_a_switch_is_claimed_as_a_bit_and_confirmed_by_its_bit_only(machines_api
     bridge = _bridge(admin)
     _report(bridge)
     command_id = _post(admin, CARD + "/write", {"values": {"marking": "1"}}).json()["id"]
-    claimed = TestClient(app).post(NEXT, headers=bridge, json=AGENT).json()["command"]
+    claimed = TestClient(app).post(NEXT, headers=bridge, json=AGENT_NEW).json()["command"]
     assert claimed["blocks"] == [] and claimed["bits"] == [{"addr": 400, "bit": 0, "value": 1}]
-    assert _result(bridge, command_id, {"400": 0x0A0B}).json() == {"status": "done", "error": ""}
+    assert _result(bridge, command_id, {"400": 0x0A0B}, agent=AGENT_NEW).json() == {"status": "done", "error": ""}
     second = _post(admin, CARD + "/write", {"values": {"marking": "0"}}).json()["id"]
-    TestClient(app).post(NEXT, headers=bridge, json=AGENT)
-    assert _result(bridge, second, {"400": 0x0A0B}).json() == {"status": "failed", "error": "Станок не принял: D400.0"}
+    TestClient(app).post(NEXT, headers=bridge, json=AGENT_NEW)
+    assert _result(bridge, second, {"400": 0x0A0B}, agent=AGENT_NEW).json() == {
+        "status": "failed", "error": "Станок не принял: D400.0"}
     third = _post(admin, CARD + "/write", {"values": {"marking": "0"}}).json()["id"]
-    TestClient(app).post(NEXT, headers=bridge, json=AGENT)
-    old = _result(bridge, third, {}, ok=False, error="mbd outdated: no version, need 1.2.0").json()
+    TestClient(app).post(NEXT, headers=bridge, json=AGENT_NEW)
+    old = _result(bridge, third, {}, ok=False, error="mbd outdated: no version, need 1.2.0", agent=AGENT_NEW).json()
     assert old == {"status": "failed", "error": "Служба обмена со станком устарела — обновите"}
+
+
+def test_an_old_runner_never_gets_a_write_it_could_do_only_in_part(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    commands._runners.clear()
+    bridge = _bridge(admin)
+    _report(bridge)
+    # Nothing heard from the runner yet: the card does not block, the claim decides.
+    assert admin.get(CARD + "/control").json()["runner_outdated"] is False
+    mixed = _post(admin, CARD + "/write", {"values": {"length_mm": "326", "marking": "1"}}).json()["id"]
+    assert TestClient(app).post(NEXT, headers=bridge, json=AGENT).json() == {"command": None}
+    with sessions() as session:
+        row = session.get(commands.MachineWriteRow, UUID(mixed))
+        assert (row.status, row.error, row.taken_at) == ("failed", commands.RUNNER_OUTDATED, None)
+    assert any("устарела" in text for kind, text in _events(sessions, ob019) if kind == "production.machine_write_failed")
+    # The card now knows the runner is old: new pages are refused, the old ones still go to it.
+    control = admin.get(CARD + "/control").json()
+    assert control["runner_outdated"] is True and "marking" in control["runner_keys"]
+    assert "speed_cutter" in control["runner_keys"] and "length_mm" not in control["runner_keys"]
+    refused = _post(admin, CARD + "/write", {"values": {"speed_cutter": "5"}})
+    assert refused.status_code == 409 and refused.json()["detail"] == commands.RUNNER_OUTDATED
+    legacy = _post(admin, CARD + "/write", {"values": {"length_mm": "326"}}).json()["id"]
+    claimed = TestClient(app).post(NEXT, headers=bridge, json=AGENT).json()["command"]
+    assert claimed["id"] == legacy and claimed["bits"] == []
+    _result(bridge, legacy, {"32": 32600, "33": 0})
+    # The runner 1.2.0 names itself and gets the new pages.
+    assert TestClient(app).post(NEXT, headers=bridge, json=AGENT_NEW).json() == {"command": None}
+    assert admin.get(CARD + "/control").json()["runner_outdated"] is False
+    speed = _post(admin, CARD + "/write", {"values": {"speed_cutter": "5", "marking": "0"}}).json()["id"]
+    claimed = TestClient(app).post(NEXT, headers=bridge, json=AGENT_NEW).json()["command"]
+    assert claimed["id"] == speed and claimed["blocks"] == [{"addr": 101, "values": [5]}]
+    assert claimed["bits"] == [{"addr": 400, "bit": 0, "value": 0}]
+    # A runner that is newer still is current; garbage is not.
+    assert commands.runner_current("1.10.0") and not commands.runner_current("1.1.9")
+    assert not commands.runner_current("") and not commands.runner_current("abc")
 
 
 def test_card_write_is_queued_claimed_written_and_confirmed_by_read_back(machines_api):
