@@ -36,7 +36,9 @@ const PLAN: TransferPlan = {
   job: { total_set: 12, order_quantity: 12, order_number: "GR-0007", product: "PVAM 0,35 L325,00" }, missing: ["Отвод ножа"], blocking: [],
 };
 
-function server(control: MachineControl = CONTROL) {
+function server(control: MachineControl = CONTROL, { window = WINDOW, plan = PLAN, planGate }: {
+  window?: MachineWindow; plan?: TransferPlan; planGate?: Promise<void>;
+} = {}) {
   const posts: { url: string; body: unknown }[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
@@ -47,12 +49,19 @@ function server(control: MachineControl = CONTROL) {
         summary: "Запись", fields: [], error: "", created_by: "Слава", created_at: "2026-11-19T10:00:00+03:00", finished_at: null });
     }
     if (url.endsWith("/control")) return json(control);
-    if (url.includes("/transfer?")) return json(PLAN);
+    if (url.includes("/transfer?")) { await planGate; return json(plan); }
     if (url.endsWith("/transfer")) return json({ choices: [{ key: "g1:325", group_id: "g1", number: "ГР-0007", project: "708К.",
       wire: "ПВАМ 0,35", length_mm: "325", quantity: "12" }] });
-    return json(WINDOW);
+    return json(window);
   });
   return posts;
+}
+
+async function pickJob() {
+  const pick = await screen.findByLabelText("Задание резки");
+  await waitFor(() => expect(within(pick).getAllByRole("option")).toHaveLength(2));
+  fireEvent.change(pick, { target: { value: "g1:325" } });
+  return pick;
 }
 
 afterEach(() => { vi.restoreAllMocks(); });
@@ -172,4 +181,62 @@ it("records «станок режет не так» with the offset suggested fr
   await waitFor(() => expect(posts).toHaveLength(1));
   expect(posts[0].body).toEqual({ parameter: "strip_front_mm", case: "machine", measured: "4,6", offset: "0,40" });
   expect(await screen.findByText("Правка записана: поправка станка 0,40 мм")).toBeInTheDocument();
+});
+
+it("refuses to write an ETK job with a size missing in the ETK until that size is typed by hand", async () => {
+  const window: MachineWindow = { ...WINDOW, settings: [...WINDOW.settings, { title: "Зачистка", fields: [
+    { label: "Зачистка конца", value: 5, unit: "мм", read: true, key: "strip_back_mm", kind: "u32" }] }] };
+  const plan: TransferPlan = { ...PLAN, rows: [...PLAN.rows, { key: "strip_back_mm", label: "Зачистка конца", unit: "мм",
+    nominal: null, source: "Нет данных", offset: "0,00", value: null, live: "5,00" }], blocking: ["Зачистка конца"] };
+  const posts = server(CONTROL, { window, plan });
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  await pickJob();
+  expect(await screen.findByRole("button", { name: "Передать на станок" })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Длина провода: новое значение"), { target: { value: "326" } });
+  // Editing any field must not open the /write path with the old machine value standing in for the missing size.
+  expect(screen.getByRole("button", { name: "Записать на станок (2)" })).toBeDisabled();
+  expect(screen.getByText("В ЭТК не задано: Зачистка конца — введите на чертеже или выберите другое задание")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Зачистка конца: новое значение"), { target: { value: "6" } });
+  expect(screen.getByText("В ЭТК не задано: Зачистка конца — введено вручную")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Записать на станок (3)" }));
+  fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Подтвердить запись" }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].body).toEqual({ values: { length_mm: "326", total_set: "12", strip_back_mm: "6" }, confirm_state: 102 });
+});
+
+it("keeps what was typed while the ETK job loaded and asks before replacing hand edits", async () => {
+  let release = () => {};
+  const planGate = new Promise<void>((resolve) => { release = resolve; });
+  server(CONTROL, { planGate });
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  const pick = await pickJob();
+  fireEvent.change(screen.getByLabelText("Длина провода: новое значение"), { target: { value: "330" } });
+  release();
+  await waitFor(() => expect(screen.getByLabelText("Зачистка начала: новое значение")).toHaveValue("5,40"));
+  expect(screen.getByLabelText("Длина провода: новое значение")).toHaveValue("330");
+  const ask = vi.spyOn(window, "confirm").mockReturnValue(false);
+  fireEvent.change(pick, { target: { value: "" } });
+  expect(ask).toHaveBeenCalledWith("Заменить введённые значения?");
+  expect(pick).toHaveValue("g1:325");
+  expect(screen.getByLabelText("Длина провода: новое значение")).toHaveValue("330");
+  ask.mockReturnValue(true);
+  fireEvent.change(pick, { target: { value: "" } });
+  expect(pick).toHaveValue("");
+  expect(screen.getByLabelText("Длина провода: новое значение")).toHaveValue("");
+});
+
+it("highlights a differing value under «Остальные параметры» and counts it on the toggle", async () => {
+  const window: MachineWindow = { ...WINDOW, settings: [...WINDOW.settings, { title: "Маркировка", fields: [
+    { label: "Текст у начала", value: "X1", unit: "", read: true, key: "mark_front", kind: "text15" }] }] };
+  server(CONTROL, { window });
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  fireEvent.click(await screen.findByRole("button", { name: /Остальные параметры/ }));
+  fireEvent.click(await screen.findByRole("tab", { name: "Маркировка" }));
+  const input = screen.getByLabelText("Текст у начала: новое значение");
+  fireEvent.change(input, { target: { value: "X1" } });
+  expect(input.closest("tr")!.className).not.toContain("is-diff");
+  expect(screen.getByRole("button", { name: /Остальные параметры/ }).textContent).not.toContain("изменено");
+  fireEvent.change(input, { target: { value: "X2" } });
+  expect(input.closest("tr")!.className).toContain("is-diff");
+  expect(screen.getByRole("button", { name: /Остальные параметры/ }).textContent).toContain("изменено 1");
 });

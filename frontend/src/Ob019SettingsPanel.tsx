@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { failureText } from "./api";
 import { EMPTY, formatMoment, formatNumber } from "./format";
 import {
@@ -128,14 +128,19 @@ export function Ob019SettingsPanel({ inventory, live = null, old = false }: {
   }, [inventory]);
 
   const picked = choices?.find((item) => item.key === choice) ?? null;
+  // Fields typed by hand since the plan request started: a late plan must not overwrite them.
+  const touched = useRef(new Set<string>());
   useEffect(() => {
     setPlan(null);
+    touched.current = new Set();
     if (!picked) return;
     let alive = true;
     machineControlApi.plan(inventory, picked.group_id, picked.length_mm).then((answer) => {
       if (!alive) return;
       setPlan(answer);
-      setEdits(planValues(answer));  // «Передать на станок из ЭТК» заполняет чертёж тем, что будет записано
+      // «Передать на станок из ЭТК» заполняет чертёж тем, что будет записано; набранное за время загрузки остаётся.
+      setEdits((values) => ({ ...planValues(answer),
+        ...Object.fromEntries(Object.entries(values).filter(([key]) => touched.current.has(key))) }));
     }).catch((reason) => { if (alive) setMessage({ tone: "danger", text: failureText(reason, "Не удалось посчитать значения") }); });
     return () => { alive = false; };
   }, [inventory, picked?.group_id, picked?.length_mm]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -149,6 +154,23 @@ export function Ob019SettingsPanel({ inventory, live = null, old = false }: {
   const canWrite = !!control && control.can_edit && !control.problem;
   // Значения ЭТК не тронуты — пишем тем же путём «Передать на станок» (сервер сам пересчитает их из ЭТК).
   const asTransfer = !!plan && sameValues(edits, planValues(plan));
+  // A job whose ETK lacks a size is written only when the operator has typed that size by hand.
+  const unfilled = plan ? plan.blocking.filter((label) => {
+    const row = plan.rows.find((item) => item.label === label);
+    return !row || !(edits[row.key] ?? "").trim();
+  }) : [];
+  /** Набранное вручную: не пусто и не то, что подставило задание из ЭТК. */
+  const handEdits = () => {
+    const fromPlan = plan ? planValues(plan) : {};
+    return Object.entries(edits).some(([key, value]) => value.trim() !== "" && value.trim() !== (fromPlan[key] ?? "").trim());
+  };
+  const pickJob = (key: string) => {
+    if (key === choice) return;
+    if (handEdits() && !window.confirm("Заменить введённые значения?")) return;
+    setChoice(key);
+    setEdits({});
+    setConfirming("");
+  };
 
   const run = async (action: () => Promise<MachineCommand>, done: string) => {
     setBusy(true);
@@ -174,7 +196,11 @@ export function Ob019SettingsPanel({ inventory, live = null, old = false }: {
   // The picked job stays after a transfer: «Правка после пробы» corrects its ETK.
   const transfer = () => plan && run(() => machineControlApi.transfer(inventory, plan.group_id, picked?.length_mm ?? plan.length_mm,
     control?.state ?? null), "Передать на станок");
-  const edit = (key: string, value: string) => { setEdits((values) => ({ ...values, [key]: value })); setConfirming(""); };
+  const edit = (key: string, value: string) => {
+    touched.current.add(key);
+    setEdits((values) => ({ ...values, [key]: value }));
+    setConfirming("");
+  };
 
   const error = cardError || controlError;
   const groups = (card?.settings ?? []).map((item) => ({ ...item, fields: item.fields.filter((field) => !field.key || !ON_TOP.has(field.key)) }))
@@ -224,7 +250,7 @@ export function Ob019SettingsPanel({ inventory, live = null, old = false }: {
       {input("mode", "Режим")}
       <label className="machine-input machine-etk">
         <span className="machine-input-label">Передать на станок из ЭТК</span>
-        <select aria-label="Задание резки" value={choice} onChange={(event) => { setChoice(event.target.value); setEdits({}); setConfirming(""); }}>
+        <select aria-label="Задание резки" value={choice} onChange={(event) => pickJob(event.target.value)}>
           <option value="">{choices === null ? "Загрузка…" : choices.length ? "Выберите задание резки" : "Нет открытых групп резки провода"}</option>
           {(choices ?? []).map((item) => <option key={item.key} value={item.key}>
             {`${item.number} · ${item.project} · ${item.wire} · ${item.length_mm.replace(".", ",")} мм · ${item.quantity} шт`}
@@ -239,7 +265,11 @@ export function Ob019SettingsPanel({ inventory, live = null, old = false }: {
       {[...plan.rows.filter((row) => row.value !== null && row.offset !== "0,00").map((row) => `${row.label}: ЭТК ${row.nominal ?? EMPTY}, поправка станка ${row.offset}`),
         ...plan.rows.filter((row) => row.value === null).map((row) => `${row.label} — остаётся как на станке`)].join(" · ")}
     </p>}
-    {plan && plan.blocking.length > 0 && <p className="warning-inline">В ЭТК не задано: {plan.blocking.join(", ")}</p>}
+    {plan && plan.blocking.length > 0 && <p className="warning-inline" role="status">
+      {unfilled.length
+        ? `В ЭТК не задано: ${unfilled.join(", ")} — введите на чертеже или выберите другое задание`
+        : `В ЭТК не задано: ${plan.blocking.join(", ")} — введено вручную`}
+    </p>}
 
     {control && <p className={control.problem ? "warning-inline" : "machine-muted"} role="status">
       {control.problem || `Можно записывать: ${stateText(control.state).toLowerCase()}, пульт PXS_HMI закрыт`}
@@ -259,7 +289,8 @@ export function Ob019SettingsPanel({ inventory, live = null, old = false }: {
           {asTransfer
             ? <button className="primary" disabled={!canWrite || busy || plan!.blocking.length > 0}
               onClick={() => setConfirming("transfer")}>Передать на станок</button>
-            : <button className="primary" disabled={!canWrite || busy || changes.length === 0}
+            : <button className="primary" disabled={!canWrite || busy || changes.length === 0 || unfilled.length > 0}
+              title={unfilled.length ? `В ЭТК не задано: ${unfilled.join(", ")}` : undefined}
               onClick={() => setConfirming("settings")}>{changes.length ? `Записать на станок (${changes.length})` : "Записать на станок"}</button>}
           {(changes.length > 0 || choice) && <button className="secondary" disabled={busy} onClick={reset}>Сбросить</button>}
         </div>}
