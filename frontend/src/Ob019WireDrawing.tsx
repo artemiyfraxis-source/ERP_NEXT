@@ -95,7 +95,7 @@ export function Ob019WireDrawing({ sizes, middle, field, marks, markRow }: {
       {middle && <rect className="wire-insulation-cut" x={W / 2 - 30} y={8} width={60} height={32} />}
       {slugFront > 0 && <rect className="wire-slug" x={0} y={10} width={slugFront} height={28} />}
       {slugBack > 0 && <rect className="wire-slug" x={W - slugBack} y={10} width={slugBack} height={28} />}
-      {xs.map((x) => <Mark key={x} x={x} />)}
+      {xs.map((x, index) => <Mark key={`${index}-${x}`} x={x} />)}
       <line className="wire-cut" x1={front} y1={0} x2={front} y2={48} />
       <line className="wire-cut" x1={back} y1={0} x2={back} y2={48} />
     </svg>

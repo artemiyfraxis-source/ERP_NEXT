@@ -72,3 +72,10 @@ def test_bad_numbers_and_unknown_mode_block():
     assert _plan({"mode": "ends", "frontMm": "abc"})["blocking"]
     assert _plan({"mode": "full", "stepMm": "0"})["blocking"]
     assert _plan({"mode": "spiral"})["blocking"]
+
+
+def test_positions_and_step_outside_the_machine_limits_block_in_the_plan():
+    """A value the machine can't hold shows in the plan, not as a 422 at «Передать на станок» (review 20.11)."""
+    plan = marking_plan({"mode": "full", "middle": "W1", "frontMm": 20.005, "backMm": 20, "stepMm": 15000},
+                                Decimal(500), lambda text: text)
+    assert len(plan["blocking"]) == 2

@@ -91,6 +91,13 @@ def marking_plan(mark: Mapping | None, length: Decimal, translate: Callable[[str
             values += [("mark_by_step", "Вкл"), ("mark_step_mm", _plain(step)), ("mark_middle", texts["mark_middle"]),
                        ("mark_front", ""), ("mark_back", ""), ("mark_count", "0")]
         values += [("mark_pos_front_mm", _plain(front_mm)), ("mark_pos_back_mm", _plain(back_mm))]
+    # The machine's own limits (range, 0,01 precision) checked here, so the plan shows them instead of a 422 at transfer.
+    for key, value in values:
+        if key in ("mark_pos_front_mm", "mark_pos_back_mm", "mark_step_mm"):
+            try:
+                rules.encode_field(key, value)
+            except rules.MachineWriteInvalid as error:
+                blocking.append(str(error))
     rows = [{"key": key, "label": rules.OB019_FIELDS[key].label, "value": value} for key, value in values]
     return {"mode": mode, "mode_label": MODES[mode], "source": "ЭТК", "rows": rows, "warnings": warnings,
             "blocking": blocking}
