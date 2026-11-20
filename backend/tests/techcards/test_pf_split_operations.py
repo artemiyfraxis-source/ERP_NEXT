@@ -147,3 +147,60 @@ def test_a_plain_tube_cut_stays_cut_tubes_and_carries_its_per_unit():
     assert blocks(route)[:2] == [("wires", (1,), "Нарезанные провода"), ("tubes", (2,), "Нарезанные трубки")]
     assert {(edge.source, edge.target): edge.per_unit for edge in route.edges}[("tubes", "crimpedA")] == Decimal(2)
     assert ("wires", "tubes") not in edges(route)
+
+
+# Owner 20.11: the wire marks are printed on the TP80E (ОБ.057, card PRINT_MARK), the marking tubes on a Godex marker
+# (PRINT_MARK_TUBE, ОБ.102) — two printers, two operators in parallel, so two ПФ (two tasks). The clear cover over the
+# printed mark is cut on the tube cutter with the other tubes.
+WIRE_MARKS_AND_MARKING_TUBES = [
+    RouteOp(1, "cutWire", "CUT_WIRE_auto", "Провод", key="cutWire"),
+    RouteOp(2, "cutTut", "PRINT_MARK_TUBE", "Маркировка", key="cutMark"),
+    RouteOp(3, "cutTut", "PRINT_MARK", "Маркировка проводов", key="cutWireMark"),
+    RouteOp(4, "cutTut", "CUT_TUT_short", "Прозрачная ТУТ", key="cutWireMarkCover"),
+    RouteOp(5, "insTut", "INS_TUT", "Маркировка на проводах", key="onWireMark"),
+    RouteOp(6, "insTut", "INS_TUT", "Прозрачная ТУТ надета", key="onWireMarkCover"),
+    RouteOp(7, "heatTut", "HEAT_TYT_short", "Прозрачная ТУТ усажена", key="heatWireMarkCover"),
+    RouteOp(8, "prsTerm", "PRS_TERMINAL_auto", "Терминалы А", side="A", key="prsTermA1"),
+    RouteOp(9, "insTerm", "INS_terminal_2,54-6,3", "Сторона А", side="A", key="insTermA1"),
+    RouteOp(10, "insTut", "INS_TUT", "Маркировка надета", key="onMark"),
+    RouteOp(11, "prsTerm", "PRS_TERMINAL_auto", "Терминалы В", side="B", key="prsTermB1"),
+    RouteOp(12, "insTerm", "INS_terminal_2,54-6,3", "Сторона В", side="B", key="insTermB1"),
+]
+
+
+def test_a_godex_mark_and_a_tp80e_wire_mark_are_two_print_pf():
+    stages = op_stages(WIRE_MARKS_AND_MARKING_TUBES)
+    assert [stages[position] for position in (1, 2, 3, 4)] == ["wires", "labels", "printed", "tubes"]
+
+    route = generator_split(WIRE_MARKS_AND_MARKING_TUBES, "Жгут")
+
+    assert blocks(route)[:4] == [
+        ("wires", (1,), "Нарезанные провода"), ("labels", (2,), "Маркировочные трубки"),
+        ("printed", (3,), "Напечатанная маркировка"), ("tubes", (4,), "Нарезанные трубки"),
+    ]
+    # The derived scheme gives every cut piece to the first «Надеть ТУТ» (5): the crimp of side A.
+    assert edges(route) == [("A", "crimpedB"), ("crimpedA", "A"), ("crimpedB", "B"), ("labels", "crimpedA"),
+                            ("printed", "crimpedA"), ("tubes", "crimpedA"), ("wires", "crimpedA")]
+
+
+def test_a_tp80e_mark_alone_is_the_printed_pf_and_godex_labels_keep_their_names():
+    tp80e_only = [op for op in WIRE_MARKS_AND_MARKING_TUBES if op.key != "cutMark"]
+    assert ("printed", (3,), "Напечатанная маркировка") in blocks(generator_split(tp80e_only, "Жгут"))
+    godex_only = [op for op in WIRE_MARKS_AND_MARKING_TUBES if op.key not in {"cutWireMark", "onWireMark"}]
+    assert ("labels", (2,), "Напечатанная маркировка") in blocks(generator_split(godex_only, "Жгут"))
+
+
+def test_flag_marks_printed_apart_go_to_the_godex_pf():
+    ops = [
+        RouteOp(1, "cutWire", "CUT_WIRE_auto", "Провод", key="cutWire"),
+        RouteOp(2, "insMark", "INS_MARK_AUTO", "Флажки", key="printMarks"),
+        RouteOp(3, "cutTut", "PRINT_MARK", "Маркировка проводов", key="cutWireMark"),
+        RouteOp(4, "insTut", "INS_TUT", "Маркировка на проводах", key="onWireMark"),
+        RouteOp(5, "prsTerm", "PRS_TERMINAL_auto", "Терминалы А", side="A", key="prsTermA1"),
+        RouteOp(6, "insTerm", "INS_terminal_2,54-6,3", "Сторона А", side="A", key="insTermA1"),
+        RouteOp(7, "insMark", "INS_MARK", "Флажки на жгуте", key="insMark"),
+    ]
+    stages = op_stages(ops)
+    assert (stages[2], stages[3], stages[7]) == ("labels", "printed", "final")
+    route = generator_split(ops, "Жгут")
+    assert [block.name for block in route.blocks if block.key in {"labels", "printed"}] == ["Этикетки", "Напечатанная маркировка"]

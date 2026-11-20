@@ -83,6 +83,7 @@ from .generator_drafts import (
     save_generator_draft,
 )
 from .etk_builder import attach_route, propose_route
+from .mark_defaults import last_builds, project_mark_defaults
 from .etk_parts import attach_parts
 from .template_sheets import TemplateDraftConflict, TemplateSheetNotFound
 from .template_sheet_service import (
@@ -1209,6 +1210,23 @@ def write_generator_draft(
             "updated_at": current.updated_at.isoformat() if current.version else None,
         }) from error
     return _generator_draft_json(draft)
+
+
+@router.get("/techcards/generator-mark-defaults")
+def generator_mark_defaults(
+    _principal: Annotated[Principal, Depends(generator_person_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+    project: Annotated[str, Query(max_length=255)] = "",
+) -> dict:
+    """Последний выбор маркировки проводов в проекте (владелец 20.11): `{kind, tapeMm, tubeByDia}` — `kind` последней
+    собранной КБ («none» / «tube» / «tape» / «laser»), размеры — последней КБ, где они были (mark_defaults.py)."""
+    project = project.strip()
+    if not project:
+        raise HTTPException(status_code=422, detail="Укажите проект.")
+    with uow_factory() as uow:
+        cards = uow.techcards.for_project(project)
+        built = last_builds(uow.session, [card.id for card in cards])
+    return project_mark_defaults(cards, built)
 
 
 @router.delete("/techcards/generator-draft")

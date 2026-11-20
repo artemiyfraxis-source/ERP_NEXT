@@ -1,7 +1,7 @@
 """The generator's ПФ split (owner + Vasily 13.10: «автоматику надо оставлять, генератор Вася оценил»).
 
 The ETK is cut into semi-finished products the way the generator's «Схема полуфабрикатов» draws its cards
-(`frontend/src/routeCards.ts` `opStages` / `genCards`): cut wires, printed labels, cut tubes, wires with splices, crimped wires of
+(`frontend/src/routeCards.ts` `opStages` / `genCards`): cut wires, printed labels (a ПФ per printer), cut tubes, wires with splices, crimped wires of
 side A, side A assembled, crimped wires of side B, side B assembled, the finished product. Every ETK operation goes to the ПФ of its stage, ops of one stage form one ПФ in ETK
 order, and the links between ПФ follow the operations' own links (the existing scheme, `per_unit` included).
 
@@ -25,16 +25,27 @@ CRIMPED_A, CRIMPED_B = "crimpedA", "crimpedB"
 MARKED = "marked"
 # Printing labels and marks is its own task on the printer, apart from cutting the cable and the tubes (owner 20.11:
 # «задание на печать маркировок, маркировку и на нарезку почему-то в одном, трубки тоже в одном»).
+# A printer is its own operator working in parallel (owner 20.11), so each printer's marks are their own ПФ:
+# LABELS («labels») — the Godex markers ZCUT-RT430 ОБ.101 / ZCUT-RT660 ОБ.102: tape labels (PRINT_MARK_LABEL, opKey
+# `coaxPrintLabel`), printed and cut marking tubes (PRINT_MARK_TUBE), flag marks printed apart (INS_MARK_AUTO, opKey
+# `printMarks`); PRINTED («printed», «Напечатанная маркировка») — the Supvan TP80E ОБ.057: wire marks on a marker tube
+# or tape (card PRINT_MARK). Stage keys are a contract: frontend `routeCards.ts` `opStages` mirrors them.
 LABELS = "labels"
-STAGES = (MARKED, WIRES, LABELS, TUBES, CRIMPED, CRIMPED_A, SIDE_A, CRIMPED_B, SIDE_B, FINAL)
+PRINTED = "printed"
+STAGES = (MARKED, WIRES, LABELS, PRINTED, TUBES, CRIMPED, CRIMPED_A, SIDE_A, CRIMPED_B, SIDE_B, FINAL)
 # Input-less ПФ made in parallel before the assembly: nothing of the scheme feeds them.
-SOURCE_STAGES = frozenset({WIRES, LABELS, TUBES})
+SOURCE_STAGES = frozenset({WIRES, LABELS, PRINTED, TUBES})
+PRINT_STAGES = frozenset({LABELS, PRINTED})
 CRIMP_STAGES = frozenset({CRIMPED, CRIMPED_A, CRIMPED_B})
 WIRE_CUTS = frozenset({"cutWire", "cutWireStrip", "cutWireCrimp", "coaxCut"})
 TUBE_CUTS = frozenset({"cutTut", "coaxCutTut"})
 # A tube-cut type that prints: tape labels of the coax tabs (opKey `coaxPrintLabel`, card PRINT_MARK_LABEL) and
 # printed marking tubes (PRINT_MARK_TUBE, printed and cut on the marker).
 LABEL_PRINT_KEY = "coaxPrintLabel"
+# The TP80E card (БД.ОП PRINT_MARK «Печать маркировок»); PRINT_MARK_LABEL / PRINT_MARK_TUBE are the Godex ones.
+TP80E_CODE = "PRINT_MARK"
+# Flag marks printed apart from their mounting («Сложная сборка», insMark with markPhase print, card INS_MARK_AUTO).
+FLAG_PRINT_KEY = "printMarks"
 # Coax stripping as its own operation prepares the cut cable, not a side (owner 14.10: «зачистка идёт до всего
 # остального»): cut, strip A, strip B are one semi-finished product with the cut.
 COAX_STRIPS = frozenset({"coaxStrip"})
@@ -75,14 +86,23 @@ def _label_print(op: RouteOp) -> bool:
     return op.type in TUBE_CUTS and (op.key == LABEL_PRINT_KEY or op.code.upper().startswith("PRINT_MARK"))
 
 
+def _print_stage(op: RouteOp) -> str:
+    """The printer's ПФ of a print operation: TP80E (`printed`), a Godex marker (`labels`), "" — no print."""
+    if op.type in TUBE_CUTS and op.code.strip().upper() == TP80E_CODE and op.key != LABEL_PRINT_KEY:
+        return PRINTED
+    if _label_print(op) or (op.type == "insMark" and op.key == FLAG_PRINT_KEY):
+        return LABELS
+    return ""
+
+
 def _tape_labels(op: RouteOp) -> bool:
     return op.key == LABEL_PRINT_KEY or op.code.upper().startswith("PRINT_MARK_LABEL")
 
 
 def _cut_stage(op: RouteOp) -> str:
     code = op.code.upper()
-    if _label_print(op):
-        return LABELS
+    if printer := _print_stage(op):
+        return printer
     if op.type in TUBE_CUTS or code.startswith("CUT_TUT"):
         return TUBES
     if op.type in WIRE_CUTS or _cable_strip(op) or code.startswith("CUT_"):
@@ -103,7 +123,7 @@ def _wire_end_prep(op: RouteOp) -> bool:
 
 def op_stages(ops: Sequence[RouteOp]) -> dict[int, str]:
     """The stage of every operation (by its ETK position): wire and cable cuts and coax stripping — cut wires, printing
-    labels and marks — labels, TUT and heat-shrink cuts — cut tubes (FAKRA too: each its own input-less ПФ); the end
+    labels and marks — the ПФ of its printer (Godex `labels`, TP80E `printed`), TUT and heat-shrink cuts — cut tubes (FAKRA too: each its own input-less ПФ); the end
     preparation of a side before the last side operation — the crimp of that side (`crimpedA` / `crimpedB`, placed
     right before the side: cut, crimp A, side A, crimp B, side B — owner 14.10) when some of it is a hand crimp or a coax centre contact soldered before its housing (all crimped on the cutting machine — no card of
     its own, stripping and tinning stay with the side);
@@ -151,9 +171,17 @@ def op_stages(ops: Sequence[RouteOp]) -> dict[int, str]:
     return result
 
 
-def _title(stage: str, ops: Sequence[RouteOp]) -> str:
+def _title(stage: str, ops: Sequence[RouteOp], printed: bool = False) -> str:
+    """`printed` — the scheme has the TP80E ПФ «Напечатанная маркировка» too: the Godex one is named by what it holds."""
+    if stage == PRINTED:
+        return "Напечатанная маркировка"
     if stage == LABELS:
-        return "Этикетки" if ops and all(_tape_labels(op) for op in ops) else "Напечатанная маркировка"
+        if ops and all(_tape_labels(op) for op in ops):
+            return "Этикетки"
+        if not printed:
+            return "Напечатанная маркировка"
+        tubes = [op for op in ops if op.code.upper().startswith("PRINT_MARK_TUBE")]
+        return "Маркировочные трубки" if len(tubes) == len(ops) else "Этикетки и маркировочные трубки" if tubes else "Этикетки"
     if stage == MARKED:
         return "Кабель с метками и деталями"
     if stage == WIRES:
@@ -190,11 +218,11 @@ def _tubes_where_used(links: list[tuple[int, int, Decimal]], ops: Sequence[Route
     (796К.2 КБ1: «Пайка центрального контакта А», although «Монтаж ТУТ» takes them)."""
     taken: dict[int, list[int]] = {}
     for source, target, _per_unit in _op_links(derive_route(ops, final_name)):
-        if stages.get(source) in (TUBES, LABELS):
+        if stages.get(source) in {TUBES} | PRINT_STAGES:
             taken.setdefault(source, []).append(target)
     result: list[tuple[int, int, Decimal]] = []
     for source, target, per_unit in links:
-        targets = taken.get(source, []) if stages.get(source) in (TUBES, LABELS) else []
+        targets = taken.get(source, []) if stages.get(source) in {TUBES} | PRINT_STAGES else []
         result.extend((source, end, per_unit) for end in targets or [target])
     return result
 
@@ -240,7 +268,8 @@ def generator_split(ops: Sequence[RouteOp], final_name: str = "", current: Route
     last_op = by_position.get(final_block.ops[-1])
     blocks = [
         Block(stage, (final_name or (last_op.name if last_op else "")) if stage == final_stage
-              else _title(stage, [by_position[position] for position in members[stage] if position in by_position]),
+              else _title(stage, [by_position[position] for position in members[stage] if position in by_position],
+                          PRINTED in members),
               tuple(members[stage]), stage == final_stage)
         for stage in order
     ]

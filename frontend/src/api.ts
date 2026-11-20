@@ -5748,6 +5748,10 @@ export const generatorDraftApi = {
     api<GeneratorDraftRecord>(generatorDraftUrl(project, itemIndex), { method: "PUT", body: JSON.stringify(body), keepalive, safe: true }),
   remove: (project: string, itemIndex: string) =>
     api<{ deleted: boolean }>(generatorDraftUrl(project, itemIndex), { method: "DELETE", safe: true }),
+  /** Последний выбор печатной маркировки проводов в проекте (владелец 20.11): чем метить, ширина ленты, Ø трубки по Ø провода. */
+  markDefaults: (project: string) =>
+    api<{ kind: "tube" | "tape" | null; tapeMm: number | null; tubeByDia: Record<string, number> }>(
+      `/api/techcards/generator-mark-defaults?project=${encodeURIComponent(project)}`),
 };
 
 /* Токены API (генератор техкарт, черновики сборки): выпускает и отзывает только полный доступ. */
