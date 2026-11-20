@@ -12,7 +12,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (Principal, production_edit_principal, production_overview_principal,
-                                  production_view_principal, production_view_work_principal)
+                                  production_view_principal, production_view_work_principal, section_allowed)
 from .api import (MachineBindingPayload, production_uow_factory, techcards_uow_factory, cutting_current_cards,
                   cutting_refresh_cards, mark_stale_etk, _performer, _replay_key, MaterialInputPayload,
                   pinned_card, _item_index, TechcardStatus)
@@ -287,8 +287,8 @@ def queue_rows(principal: Annotated[Principal, Depends(production_view_principal
                references_factory: Annotated[Callable | None, Depends(references_uow_factory)],
                machine_id: Annotated[str | None, Query(min_length=1, max_length=64)] = None,
                equipment_id: UUID | None = None):
-    """`machine_id=none` — cuts whose card names no machine («Станок не указан»). `equipment_id` — a physical unit:
-    its own rows plus the pool rows of its model («любой свободный»)."""
+    """`machine_id=none` — cuts whose card names no machine («Станок не указан»); `machine_id=all` — «Все станки»,
+    every row once. `equipment_id` — a physical unit: its own rows plus the pool rows of its model («любой свободный»)."""
     machine = (machine_id or "").strip()
     if not machine and equipment_id is None:
         raise HTTPException(422, "Нужен станок: machine_id или equipment_id")
@@ -342,8 +342,9 @@ def queue_done(payload: QueueDonePayload,
             raise HTTPException(422, str(error)) from error
     try:
         return cutting_queue.mark_done(payload.task_id, payload.operation_id, payload.quantity, key,
-                                       principal.actor, worker, now, factory(), document=document, unit=unit,
-                                       catalog=catalog)
+                                       principal.actor, worker, now, factory(), document=document,
+                                       manual_output=section_allowed(principal, ("production",), "edit"),
+                                       unit=unit, catalog=catalog)
     except (ConcurrentProductionUpdate, ResourceConflict, IntegrityError, StaleDataError) as error:
         raise HTTPException(409, str(error) if isinstance(error, ConcurrentProductionUpdate) else
                             "Задание или ресурсы изменились — обновите очередь") from error
