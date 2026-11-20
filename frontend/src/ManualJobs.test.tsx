@@ -38,11 +38,15 @@ function serve(calls: { url: string; body?: unknown }[], list: ManualJob[] = [RU
     const url = decodeURIComponent(String(input));
     calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
     if (url.includes("/setup-model/")) return json({ detail: "нет" }, 404);
+    if (url.includes("/machine-queue")) return json({ equipment_id: "x", inventory: "", version: "v", rows: [] });
+    if (url.includes("/cutting-queue")) return json({ machine_id: null, version: "v", rows: [] });
     if (url.includes("/manual-jobs/options")) return json(OPTIONS);
     if (url.endsWith("/finish")) return json({ ...DONE, id: "j1", number: "Р-000001" });
     if (url.endsWith("/cancel")) return json({ ...RUNNING, status: "cancelled", status_text: "Отменена", tone: "neutral", cancel_reason: "брак провода", version: 2 });
     if (url.endsWith("/manual-jobs") && init?.method === "POST") return json({ ...RUNNING, id: "j9", number: "Р-000009" });
     if (url.includes("/setup-model/")) return json({ detail: "нет" }, 404);
+    if (url.includes("/machine-queue")) return json({ equipment_id: "x", inventory: "", version: "v", rows: [] });
+    if (url.includes("/cutting-queue")) return json({ machine_id: null, version: "v", rows: [] });
     if (url.includes("/manual-jobs?")) return json({ date_from: "2026-11-16", date_to: "2026-11-19", rows: list, can_edit: true });
     return json({ now: "2026-11-19T10:00:00+03:00", rows: [] });
   });
@@ -121,7 +125,7 @@ it("refuses a second job on a busy machine before sending", async () => {
   expect((screen.getByRole("button", { name: "Начать работу" }) as HTMLButtonElement).disabled).toBe(true);
 });
 
-it("opens «Ручная работа» from a machine's details on «Оборудование»", async () => {
+it("a machine without control starts work outside a task from its work card", async () => {
   const machine: MachineRow = {
     key: "machine:u37", kind: "machine", equipment_id: "u37", inventory: "ОБ.037", name: "Автомат резки BZW-880", pc: "", ip: "",
     service: "Агент ERP · станок", version: "", link: { code: "not_installed", text: "Агент не установлен", tone: "neutral" },
@@ -131,18 +135,21 @@ it("opens «Ручная работа» from a machine's details on «Обору
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = decodeURIComponent(String(input));
     if (url.includes("/setup-model/")) return json({ detail: "нет" }, 404);
+    if (url.includes("/machine-queue")) return json({ equipment_id: "x", inventory: "", version: "v", rows: [] });
+    if (url.includes("/cutting-queue")) return json({ machine_id: null, version: "v", rows: [] });
     if (url.includes("/manual-jobs/options")) return json({ ...OPTIONS, machines: [...OPTIONS.machines, { id: "u37", inventory: "ОБ.037", name: "BZW-880", running: null }] });
     return json({ now: "2026-11-19T10:00:00+03:00", rows: [machine] });
   });
-  render(<MachinesPage />);
+  render(<MachinesPage canWrite />);
   fireEvent.click(await screen.findByRole("tab", { name: /Без управления/ }));
   fireEvent.click(await screen.findByText("ОБ.037"));
-  fireEvent.click(await screen.findByRole("button", { name: "Ручная работа" }));
-  const dialog = await screen.findByRole("dialog", { name: "Новая ручная работа" });
-  expect((await within(dialog).findByRole("combobox", { name: "Станок" }) as HTMLInputElement).value).toBe("ОБ.037 · BZW-880");
+  // A machine without control opens its work card; work outside a task starts on «Вне задания».
+  const card = await screen.findByRole("dialog", { name: /ОБ\.037/ });
+  fireEvent.click(await within(card).findByRole("tab", { name: "Вне задания" }));
+  expect((await within(card).findByRole("combobox", { name: "Станок" }) as HTMLInputElement).value).toBe("ОБ.037 · BZW-880");
 });
 
-it("opens the job already running on the machine instead of a new one", async () => {
+it("the work card shows the job already running on the machine", async () => {
   const machine: MachineRow = {
     key: "machine:u19", kind: "machine", equipment_id: "u19", inventory: "ОБ.019", name: "Автомат резки", pc: "", ip: "",
     service: "Агент ERP · станок", version: "", link: { code: "not_installed", text: "Агент не установлен", tone: "neutral" },
@@ -154,15 +161,18 @@ it("opens the job already running on the machine instead of a new one", async ()
     const url = decodeURIComponent(String(input));
     calls.push(url);
     if (url.includes("/setup-model/")) return json({ detail: "нет" }, 404);
+    if (url.includes("/machine-queue")) return json({ equipment_id: "x", inventory: "", version: "v", rows: [] });
+    if (url.includes("/cutting-queue")) return json({ machine_id: null, version: "v", rows: [] });
     if (url.includes("/manual-jobs?")) return json({ date_from: "2026-11-19", date_to: "2026-11-19", rows: [DONE, RUNNING], can_edit: true });
     return json({ now: "2026-11-19T10:00:00+03:00", rows: [machine] });
   });
-  render(<MachinesPage />);
+  render(<MachinesPage canWrite />);
   fireEvent.click(await screen.findByRole("tab", { name: /Без управления/ }));
   fireEvent.click(await screen.findByText("ОБ.019"));
-  fireEvent.click(await screen.findByRole("button", { name: "Ручная работа" }));
-  const dialog = await screen.findByRole("dialog", { name: "Ручная работа Р-000001" });
-  expect(within(dialog).getByRole("button", { name: "Завершить работу" })).toBeTruthy();
+  // The work card shows the job already running on the machine, not a new start.
+  const card = await screen.findByRole("dialog", { name: /ОБ\.019/ });
+  expect(await within(card).findByText(/Работает: Р-000001/)).toBeTruthy();
+  expect(within(card).getByRole("button", { name: "Готово" })).toBeTruthy();
   expect(calls.some((url) => url.includes("/manual-jobs?") && url.endsWith("equipment_id=u19"))).toBe(true);
 });
 
