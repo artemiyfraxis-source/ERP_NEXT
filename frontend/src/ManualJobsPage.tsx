@@ -74,8 +74,8 @@ export function ManualJobsPage() {
           const on = !waiting && value.from === period.from && value.to === period.to;
           return <button key={key} type="button" className={on ? "secondary small on" : "secondary small"} aria-pressed={on} onClick={() => { setWaiting(false); setPeriod(value); }}>{title}</button>;
         })}
-        <label>с<input type="date" aria-label="Начало периода" value={period.from} max={period.to} disabled={waiting} onChange={(event) => event.target.value && setPeriod({ ...period, from: event.target.value })} /></label>
-        <label>по<input type="date" aria-label="Конец периода" value={period.to} min={period.from} disabled={waiting} onChange={(event) => event.target.value && setPeriod({ ...period, to: event.target.value })} /></label>
+        <label>с<input type="date" name="from" autoComplete="off" aria-label="Начало периода" value={period.from} max={period.to} disabled={waiting} onChange={(event) => event.target.value && setPeriod({ ...period, from: event.target.value })} /></label>
+        <label>по<input type="date" name="to" autoComplete="off" aria-label="Конец периода" value={period.to} min={period.from} disabled={waiting} onChange={(event) => event.target.value && setPeriod({ ...period, to: event.target.value })} /></label>
       </div>
       <button type="button" className={waiting ? "secondary small on mj-waiting" : "secondary small mj-waiting"} aria-pressed={waiting}
         onClick={() => setWaiting(!waiting)}>Ждёт решения склада<span className={waitingCount ? "mj-count tone-warn" : "mj-count"}>{waitingCount}</span></button>

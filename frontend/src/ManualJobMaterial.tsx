@@ -164,12 +164,12 @@ function Decide({ view, onSaved }: { view: ManualJobMaterialView; onSaved: (view
       <div className="form-grid mj-grid">
         {job.wire && <>
           <p className="mj-calc">Провод: {formatNumber(pieces)} шт × {formatNumber(length)} мм = <b>{formatQty(wireMetres, "м")}</b></p>
-          <label>Отходы наладки, м<input inputMode="decimal" autoComplete="off" placeholder="0" value={waste}
+          <label>Отходы наладки, м<input name="waste" inputMode="decimal" autoComplete="off" placeholder="0" value={waste}
             aria-invalid={wasteValue === null || undefined} onChange={(event) => setWaste(event.target.value)} /></label>
         </>}
         {job.contact && <>
           <p className="mj-calc">Контакты: {formatNumber(pieces)} шт × {ends} = <b>{formatQty(contacts, "шт")}</b></p>
-          <label>Концов на изделие<select value={ends} onChange={(event) => setEnds(Number(event.target.value))}>
+          <label>Концов на изделие<select name="ends" value={ends} onChange={(event) => setEnds(Number(event.target.value))}>
             <option value={1}>1</option><option value={2}>2</option></select></label>
         </>}
       </div>
