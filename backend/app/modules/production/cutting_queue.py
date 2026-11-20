@@ -326,7 +326,7 @@ def resolve_unit(record, catalog: EquipmentCatalog) -> PoolUnit:
     machine = catalog.machine({"inventory_number": number, "equipment_model_id": str(record.equipment_model_id or "")})
     model = catalog.models.get(machine.key) if machine is not None else None
     unit = next((item for item in model.physical if item.number == number), None) if model else None
-    if unit is None:
+    if unit is None or not unit.machine_type:  # a hand tool with an ОБ number (ОБ.048 DT-8920) is no machine
         raise ProductionValidationError("Это не физический станок БД.ОБ — выберите станок с инвентарным номером")
     return PoolUnit(record.id, unit.number, unit.site, frozenset({unit.number, machine.key}))
 
@@ -523,9 +523,10 @@ def mark_done(task_id: UUID, operation_id: UUID, quantity: int, key: str, actor,
                     f"Станок {unit.number} другой модели, чем в ЭТК этой строки ({(values or {}).get('machine_name') or NO_MACHINE_NAME})")
             people = _People(uow)
             sites = _sites(task, operation, people)
-            for person in (worker, actor):  # the hands at the machine count even before the PF has assignees
-                known = people.get(person.id)
-                sites |= {known.site} - {"", None} if known else set()
+            # The worker's hands at the machine count even before the PF has assignees; the actor's own site does not —
+            # an admin may enter «Готово» for a worker of another site (his access is checked by _site_allowed).
+            known = people.get(worker.id)
+            sites |= {known.site} - {"", None} if known else set()
             if unit.site and any(other != unit.site for other in sites):
                 raise ProductionValidationError(f"Станок {unit.number} стоит на площадке {unit.site}, а задание — другой площадки")
         if member is None and uow.session.scalar(select(ProductionWorkSessionRow.id).where(ProductionWorkSessionRow.operation_id == operation_id,

@@ -443,6 +443,39 @@ def test_first_done_is_refused_when_the_worker_is_on_another_site_than_the_unit(
     assert ok.status_code == 200, ok.text
 
 
+def test_the_worker_site_decides_the_unit(production_api):
+    """The worker's site decides which units fit; the actor's own access is checked by the site gate, not here."""
+    from app.modules.identity.infrastructure import IdentityUserRow
+
+    client, operator = production_api
+    ids = seed_units()
+    batch(client, [issue("708К.", "КБ1", standalone(pooled(document())))])
+    row = queue(client, next(item["machine_id"] for item in client.get(f"{URL}/machines").json()["machines"]))["rows"][0]
+    with app.state.production_uow_factory() as uow:
+        for person in (operator, UUID("10000000-0000-0000-0000-000000000001")):  # the worker and his master
+            uow.session.get(IdentityUserRow, person).site = "ЖУК"
+        uow.commit()
+    ok = client.post(f"{URL}/done", params={"on_behalf_of": str(operator)}, headers={"Idempotency-Key": "m-1"},
+                     json={"task_id": row["task_id"], "operation_id": row["operation_id"], "quantity": 2,
+                           "equipment_id": str(ids["ОБ.100.3"])})
+    assert ok.status_code == 200, ok.text
+
+
+def test_a_hand_tool_with_an_ob_number_is_no_machine(production_api):
+    from app.modules.references.domain import TechOperationRecord, TechOperationTab
+
+    client, _ = production_api
+    seed_units()
+    with app.state.references_uow_factory() as references:
+        record = TechOperationRecord.create(tab=TechOperationTab.EQUIPMENT, display_text="ОБ.048", search_text="ОБ.048",
+            source_sheet="БД.ОБ", sort_key="ОБ.048", fields={"Тип": "Инструмент", "Инв. номер": "ОБ.048",
+                                                             "Наименование": "Мультиметр", "Артикул": "DT-8920", "Расположение": "ЦАР"})
+        references.tech_operations.save(record)
+        references.commit()
+    response = client.get(URL, params={"equipment_id": str(record.id)})
+    assert response.status_code == 422 and "не физический станок" in response.json()["detail"]
+
+
 def test_without_the_reference_catalog_pool_rows_keep_the_raw_key_and_a_unit_gets_503(production_api):
     client, operator = production_api
     batch(client, [issue("708К.", "КБ1", standalone(pooled(document())))])
