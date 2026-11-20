@@ -12,7 +12,9 @@ Visuals follow the ERP's own style (section 5) and should read better than the s
 on a 27" monitor (2560 px), a 16" laptop (~1536×864 CSS px — owner, 04.10: «на 16 дюймах склад не читаемый») or a
 12.7" tablet (~1400 px, touch). Every screen change is checked at all three; key columns fit 1536 px without sideways scroll. Generic design advice
 (`design-critique`) applies on top; where it conflicts, this file wins. Data-heavy screens (tables, boards, load
-charts) also follow `erp-dense-ui` — the style yardstick for density, type, color and numbers.
+charts) also follow `erp-dense-ui` — the style yardstick for density, type, color and numbers. Live machine cards
+and control screens follow `erp-machine-hmi` (status first, commands with their own result, setpoint vs machine,
+measured-value corrections).
 
 ## 1. Words on the screen
 

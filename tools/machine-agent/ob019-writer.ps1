@@ -14,7 +14,9 @@ param(
 # machine:report, the same PC binding) -> one command {id, blocks: [{addr, values}], bits: [{addr, bit, value}],
 # states}; the runner
 #   0. asks mbd its version ("version", no bus) and refuses the whole command unless it is $script:MbdMinVersion or
-#      newer: an old mbd has no "setbit" and a wider "write" list, so a new runner never writes part of a command;
+#      newer (a switch of $script:MbdBitVersions needs that newer mbd: the feed-roller lift D604.0 is in mbd 1.3.0's
+#      allowedBits only): an old mbd has no "setbit" and a wider "write" list, so a new runner never writes part of a
+#      command;
 #   1. reads D766 and refuses unless the machine is idle (102 ready / 107 total finished);
 #   2. writes each block through the local Modbus service mbd.ps1 ("write" = FC16 + read-back; mbd itself refuses
 #      while PXS_HMI holds COM8 and checks its own write allow-list), then each switch bit ("setbit" = read the word,
@@ -35,27 +37,30 @@ $ErrorActionPreference = 'Stop'
 $script:Self = $MyInvocation.InvocationName
 if (-not $BridgeScript) { $BridgeScript = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'ob019-bridge.ps1' }
 . $BridgeScript -Server $Server -TokenPath $TokenPath -MbdHost $MbdHost -MbdPort $MbdPort -MbdScript $MbdScript -LogPath $LogPath -PollMs $PollMs -Once:$Once
-$script:RunnerVersion = '1.2.0'
-# Machine commands: the bit held and the machine states (D766) each may run in, empty = any state. Mirrors
-# ALLOWED_STATES of backend production/machine_control.py (a backend test compares them).
+$script:RunnerVersion = '1.3.0'
+# Machine commands: the bit held and the machine states (D766) each may run in, empty = any state; "off" = switch bits
+# ('addr.bit') that must read 0 right before the pulse (Start with the feed rollers lifted D604.0 is refused). Mirrors
+# ALLOWED_STATES and BLOCKED_BY_BITS of backend production/machine_control.py (a backend test compares them).
 $script:HoldMs = 1500
 $script:Controls = @{
     stop = @{ addr = 599; bit = 2; states = @() }
-    start = @{ addr = 599; bit = 0; states = @(102) }
+    start = @{ addr = 599; bit = 0; states = @(102); off = @('604.0') }
     reset = @{ addr = 600; bit = 1; states = @(100, 105, 107) }
     alarm_clear = @{ addr = 600; bit = 4; states = @() }
 }
 # Words: D20 mode, D22..D28 job and quantities, D32..D43 wire and strip lengths, D940..D969 order number and product;
 # the other HMI pages (1.2.0): middle strip D197/D199, slitting D67..D74/D1703..D1705, coiling D391..D395/D1750..D1753,
 # marking D401..D432 numbers, D1722 and the texts D440..D484, speeds D100..D104/D120..D123. Switch bits (setbit only,
-# never a whole word): middle strip D132.0, marking D400.0, D422.0, D434.0..D436.0. Not: D390/D133/D142 (meaning not
+# never a whole word): middle strip D132.0, feed-roller lift D604.0 (Jog "Wheel", Y18), marking D400.0, D422.0, D434.0..D436.0. Not: D390/D133/D142 (meaning not
 # established), D421 (order transfer handshake, map open question 8). Mirrors OB019_WRITTEN_WORDS / _BITS of backend
 # production/machines.py and mbd.ps1 allowedWrite / allowedBits (a backend test compares the three). Never: passwords
 # D1682..D1687, SHA-256 D1203..D1211, command bits D599/D600, D730, date D1087..D1089.
 $script:MbdMinVersion = '1.2.0'
+# Switch words whose bit only a newer mbd may set (its allowedBits): D604 feed-roller lift since mbd 1.3.0.
+$script:MbdBitVersions = @{ 604 = '1.3.0' }
 $script:Writable = @{}
 foreach ($a in @(20, 74, 197, 199, 423) + (22..28) + (32..43) + (67..72) + (100..104) + (120..123) + (391..395) + (401..402) + (404..415) + (430..432) + (440..484) + (940..969) + (1703..1705) + (1722..1723) + (1750..1753)) { $script:Writable[[int]$a] = $true }
-$script:WritableBits = @{ 132 = @(0); 400 = @(0); 422 = @(0); 434 = @(0); 435 = @(0); 436 = @(0) }
+$script:WritableBits = @{ 132 = @(0); 400 = @(0); 604 = @(0); 422 = @(0); 434 = @(0); 435 = @(0); 436 = @(0) }
 
 function Test-BlockWritable($Block) {
     $first = [int]$Block['addr']; $values = @($Block['values'])
@@ -81,17 +86,30 @@ function Get-MbdVersion {
     return [string]$reply['result']['version']
 }
 
-function Test-MbdCurrent([string]$Version) {
+function Test-MbdCurrent([string]$Version, [string]$Needed = '') {
+    if (-not $Needed) { $Needed = $script:MbdMinVersion }
     if (-not $Version) { return $false }
-    try { return ([version]$Version) -ge ([version]$script:MbdMinVersion) } catch { return $false }
+    try { return ([version]$Version) -ge ([version]$Needed) } catch { return $false }
+}
+
+# The mbd version a command needs: $script:MbdMinVersion, or newer for a switch of $script:MbdBitVersions.
+function Get-MbdNeeded($Bits) {
+    $needed = $script:MbdMinVersion
+    foreach ($bit in @($Bits)) {
+        if ($bit -eq $null) { continue }
+        $a = [int]$bit['addr']
+        if ($script:MbdBitVersions.ContainsKey($a) -and ([version]$script:MbdBitVersions[$a]) -gt ([version]$needed)) { $needed = $script:MbdBitVersions[$a] }
+    }
+    return $needed
 }
 
 # One command -> @{ ok; readback = @{ "addr" = word }; error }. Never throws.
 function Invoke-MachineCommand($Command) {
     $readback = @{}
     try {
+        $needed = Get-MbdNeeded $Command['bits']
         $version = Get-MbdVersion
-        if (-not (Test-MbdCurrent $version)) { return @{ ok = $false; readback = $readback; error = ('mbd outdated: ' + $(if ($version) { $version } else { 'no version' }) + ', need ' + $script:MbdMinVersion) } }
+        if (-not (Test-MbdCurrent $version $needed)) { return @{ ok = $false; readback = $readback; error = ('mbd outdated: ' + $(if ($version) { $version } else { 'no version' }) + ', need ' + $needed) } }
         $states = @($Command['states'] | ForEach-Object { [int]$_ })
         $state = [int](Read-Range 766 1)[0]
         if ($states -notcontains $state) { return @{ ok = $false; readback = $readback; error = ('state ' + $state) } }
@@ -167,6 +185,17 @@ function Invoke-ControlCommand($Command, [Diagnostics.Stopwatch]$Since) {
     $states = @($spec['states'])
     if ($states.Count -gt 0 -and $states -notcontains $before['766']) { return (New-Outcome 'failed' 'state' ('D766=' + $before['766']) $before $before) }
     if ($name -eq 'alarm_clear' -and $before['782'] -eq 0) { return (New-Outcome 'failed' 'no_alarm' 'D782=0' $before $before) }
+    foreach ($off in @($spec['off'])) {
+        if (-not $off) { continue }
+        $pair = ([string]$off).Split('.')
+        try { $word = [int](Read-Range ([int]$pair[0]) 1)[0] } catch {
+            $message = $_.Exception.Message
+            if ($message -like 'mbd: busy:*') { return (New-Outcome 'failed' 'hmi_open' $message $before $before) }
+            return (New-Outcome 'failed' 'mbd_error' $message $before $before)
+        }
+        $mask = [int][math]::Pow(2, [int]$pair[1])
+        if (($word -band $mask) -ne 0) { return (New-Outcome 'failed' 'rollers_up' ('D' + $off + '=1') $before $before) }
+    }
     if ($Since.ElapsedMilliseconds -ge $deadline) { return (New-Outcome 'expired' 'too_late' ([string]$Since.ElapsedMilliseconds + ' ms') $before $null) }
     Write-BridgeLog ('control ' + $name + ' D' + $spec['addr'] + '.' + $spec['bit'] + ' state ' + $before['766'])
     try { $reply = Invoke-Pulse ([int]$spec['addr']) ([int]$spec['bit']) }
