@@ -241,7 +241,7 @@ def _machine_rows(session, equipment, printers: list[dict], now) -> list[dict]:
         unit_id = row["equipment_id"]
         rows.append({**row, **_catalog(unit), "controlled": controlled,
                      "setup": classes.get(UUID(unit_id), NO_SETUP) if unit_id else NO_SETUP,
-                     "pending_setup": pending.get(unit_id, 0) if unit_id else 0})
+                     "pending_setup": pending.get(unit_id, 0) if unit_id and unit is not None and unit.setup_by == "technician" else 0})
 
     for link, snapshot in rules.links(session):
         shown.add(_inventory(link.inventory_number))
