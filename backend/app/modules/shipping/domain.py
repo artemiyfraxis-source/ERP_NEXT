@@ -1031,7 +1031,7 @@ class Shipment:
         if not any(line.picked > 0 for line in self.lines):
             raise ShippingValidationError("Нельзя отгрузить: ни одна позиция не набрана")
         if allow_missing:
-            if no_upd_offered(self):
+            if upd_absent_unapproved(self):
                 raise ShippingValidationError(
                     "Нельзя отгрузить: УПД нет — нужно разрешение «Без УПД…» по PIN, даже при отгрузке без данных"
                 )
@@ -1056,17 +1056,14 @@ class Shipment:
 
     def approve_no_upd(self, approver: str, now: datetime) -> Shipment:
         """«Отгрузить без УПД»: разрешил человек с разделом «Отгрузка без УПД — разрешение» (PIN проверен снаружи).
-        После этого УПД не входит в `shipping_gaps` этой отправки; ТК и трек по-прежнему нужны."""
+        После этого УПД (тип, файл, №) не входит в `shipping_gaps` этой отправки — DN формируется и печатается «без УПД»;
+        ТК и трек по-прежнему нужны."""
         if self.status not in {ShipmentStatus.NEW, ShipmentStatus.ASSEMBLED, ShipmentStatus.PACKED}:
             raise ShippingValidationError("Разрешить отгрузку без УПД можно только до отгрузки")
         if self.no_upd_approved_at is not None:
             raise ShippingValidationError(f"Отгрузку без УПД уже разрешил {self.no_upd_approved_by}")
         if not no_upd_offered(self):
-            # Владелец 06.11.2026: «без УПД» — только когда самого УПД нет; не хватает лишь № — его вписывают.
-            raise ShippingValidationError(
-                "УПД есть, не хватает только его № — впишите № УПД" if GAP_UPD_NUMBER in shipping_gap_codes(self)
-                else "УПД у отправки есть — разрешение «без УПД» не нужно"
-            )
+            raise ShippingValidationError("УПД у отправки есть — разрешение «без УПД» не нужно")
         return replace(
             self, no_upd_approved_by=_text(approver, "Кто разрешил"), no_upd_approved_at=now, version=self.version + 1,
         )
@@ -1183,9 +1180,10 @@ GAP_LABELS = {
     GAP_NO_UPD_APPROVAL: NO_UPD_APPROVAL_GAP, GAP_UPD_FILE: "файл УПД", GAP_UPD_NUMBER: "№ УПД",
     GAP_TRACK: "трек-номер", GAP_DN: "DN не сформирован",
 }
-# Самого УПД нет (тип не выбран, «Без УПД», бумажная без файла) — только тогда предлагается «Без УПД…» по PIN.
-# ЭДО или бумажная с файлом без № — не хватает лишь номера (`GAP_UPD_NUMBER`): его вписывают, а не разрешают.
+# Самого УПД нет (тип не выбран, «Без УПД», бумажная без файла): «Отгрузить без данных» без PIN не пускает.
 UPD_ABSENT_GAPS = frozenset({GAP_UPD_TYPE, GAP_NO_UPD_APPROVAL, GAP_UPD_FILE})
+# Всё, что держит отправку из-за УПД. «Без УПД…» по PIN предлагается при любом из них (владелец 20.11.2026: ЭДО ещё
+# без № — разрешение «без УПД» даёт сформировать и напечатать DN; раньше, 06.11, такой отправке разрешение не давали).
 _UPD_GAPS = UPD_ABSENT_GAPS | {GAP_UPD_NUMBER}
 
 
@@ -1256,7 +1254,14 @@ def shipping_gaps(shipment: Shipment, *, with_track: bool = True) -> tuple[str, 
 
 
 def no_upd_offered(shipment: Shipment) -> bool:
-    """Предлагать «Без УПД…» по PIN: отправку держит отсутствие самого УПД, а не только его № (владелец 06.11.2026)."""
+    """Предлагать «Без УПД…» по PIN: отправку держит УПД — его нет совсем или нет его № (владелец 20.11.2026: ЭДО без №
+    с разрешением печатает DN «без УПД»)."""
+    return shipment.no_upd_approved_at is None and bool(_UPD_GAPS & set(shipping_gap_codes(shipment)))
+
+
+def upd_absent_unapproved(shipment: Shipment) -> bool:
+    """Самого УПД нет и разрешения нет: «Отгрузить без данных» требует разрешения (владелец 18.11.2026); ЭДО без № —
+    УПД есть, такая отгрузка его не требует."""
     return shipment.no_upd_approved_at is None and bool(UPD_ABSENT_GAPS & set(shipping_gap_codes(shipment)))
 
 

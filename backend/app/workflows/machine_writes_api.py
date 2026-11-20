@@ -56,6 +56,7 @@ from app.modules.techcards.project_cards import TechcardValidationError, operati
 from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
 from app.shared.http_auth import Principal, require_section, section_allowed
+from app.shared.identity import Actor
 from app.shared.notifications import TECHNOLOGIST_AUDIENCE, notification_requested
 
 from .machines_api import Bridge, Reader, _inventory
@@ -209,7 +210,7 @@ def _enqueue(uow, link, principal: Principal, purpose: str, writes, summary: str
     if run is not None:
         if quantity is None:
             raise HTTPException(422, "Укажите тираж — штук в этом задании: без него станок не остановится на нужном числе")
-        settle_run(uow, link.equipment_id, principal.actor, now)
+        settle_run(uow, link.equipment_id, now)
         run = runs.with_quantity(runs.supersede(uow.session, link.equipment_id, run, now, principal.actor.name), quantity)
     try:
         row, expired = commands.enqueue(uow.session, equipment_id=link.equipment_id, purpose=purpose, writes=writes,
@@ -257,20 +258,26 @@ def control(inventory: str, principal: Reader, factory: Factory, now: Now) -> di
                     "state": None, "commands": [], "offsets": [], "can_edit": False}
         snapshot = session.get(rules.MachineSnapshotRow, link.equipment_id)
         rows = commands.latest(session, link.equipment_id, now)
-        settle_run(uow, link.equipment_id, principal.actor, now)
+        settle_run(uow, link.equipment_id, now)
         result = {
             "problem": commands.idle_problem(link, snapshot, now),
             "state": rules.snapshot_words(snapshot).get(766),
             "commands": [commands.command_view(row) for row in rows],
             "offsets": _offset_rows(session, link.equipment_id),
             "can_edit": _can_edit(principal),
-            "can_control": can_control(principal),
+            "can_control": can_control(principal) and can_stop(principal),
+            # «Стоп» and every other command: Производство / Задания only (ОТК reads the card, never commands).
+            "can_stop": can_stop(principal),
             # The runner on the PC is older than 1.2.0: the other HMI pages and switches are not written yet.
             "runner_outdated": commands.runner_outdated(link.equipment_id, now),
             "runner_keys": sorted(key for key, field in rules.OB019_FIELDS.items() if commands.field_needs_runner(field)),
         }
         uow.commit()
     return result
+
+
+def can_stop(principal: Principal) -> bool:
+    return not principal.service and section_allowed(principal, ("production", "myops"), "view")
 
 
 def can_control(principal: Principal) -> bool:
@@ -641,12 +648,17 @@ def correction(inventory: str, payload: CorrectionPayload, request: Request, pri
 
 # --- the command runner on the machine PC ---
 
-def settle_run(uow, equipment_id: UUID, actor, now: datetime) -> None:
+# The run check below is the system's, not the person's whose request happened to trigger it (a viewer opening the card).
+SETTLE_ACTOR = Actor(id=UUID(int=0), name="ERP · проверка станка", department="Система")
+
+
+def settle_run(uow, equipment_id: UUID, now: datetime) -> None:
     """The machine's run whose counter check waits for a fresh snapshot (production/machine_runs.py `pending`) is
-    checked now — on every card, control and command request, without anyone pressing anything."""
+    checked now — on every card, control and command request, without anyone pressing anything; the journal names
+    the system as its author."""
     row = runs.current(uow.session, equipment_id)
     if runs.pending(row):
-        _run_verified(uow, row, actor, now)
+        _run_verified(uow, row, SETTLE_ACTOR, now)
 
 
 def _run_verified(uow, row: commands.MachineWriteRow, actor, now: datetime) -> None:

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// Shots of «ОТК → ВАЦ — рабочее место» over a MOCKED /api/production/vna-bench/* in the server's shapes (PR #973,
+// Shots of the VNA workplace — the analyser card in «Оборудовании» (since 20.11.2026; the old «ОТК → ВАЦ — рабочее место»
+// link `?section=quality&tab=vna` lands there) over a MOCKED /api/production/vna-bench/* in the server's shapes (PR #973,
 // workflows/vna_bench_api.py) — for screens the local stand cannot reach (a КБ needs a task with ETK).
-// Everything else comes from the running ERP (preview or demo). Without the mock the tab stays hidden — shot «off».
+// Everything else comes from the running ERP (preview or demo). Without the mock ОТК has no workplace tab — shot «off».
 //   ERP_URL=http://127.0.0.1:8091 SHOTS_DIR=<dir> node scripts/demo/shoot-vna-bench.mjs
 import { execSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
@@ -107,8 +108,7 @@ for (const vp of [{ tag: "16", width: 1536, height: 864 }, { tag: "27", width: 2
   for (const name of names) {
     scenario = name;
     await page.goto(`${BASE}/?section=quality&tab=vna`, { waitUntil: "networkidle" });
-    await page.getByRole("tab", { name: "ВАЦ — рабочее место", selected: true }).waitFor();
-    await page.locator(".vna-bench-head").waitFor();
+    await page.locator(".analyser-card .vna-bench-head").waitFor();
     if (name === "border" || name === "kb") {
       await page.getByLabel("СИ или КБ — скан или номер").fill(name === "kb" ? "ПЗ-0001/3" : "СИ.035");
       await page.getByRole("button", { name: "Найти" }).click();
@@ -121,7 +121,7 @@ for (const vp of [{ tag: "16", width: 1536, height: 864 }, { tag: "27", width: 2
     }
     if (name === "screen-edit") {
       await page.getByText("ОТК — переход", { exact: true }).click();
-      await page.getByRole("dialog").waitFor();
+      await page.getByRole("dialog").last().waitFor();  // the screen editor over the analyser card
       await page.getByLabel("График 1: шкала").selectOption("manual");
       await page.getByLabel("График 1: деление").fill("0,02");
       await page.getByLabel("График 1: уровень").fill("1");
@@ -132,7 +132,7 @@ for (const vp of [{ tag: "16", width: 1536, height: 864 }, { tag: "27", width: 2
     // Весь экран целиком: страница прокручивается внутри приложения, поэтому на время снимка окно выше.
     await page.setViewportSize({ width: vp.width, height: 2400 });
     await page.waitForTimeout(200);
-    await page.locator(name === "screen-edit" ? ".page-window" : ".vna-bench").screenshot({ path: path.join(OUT, `vna-bench-${name}-${vp.tag}-full.png`) });
+    await page.locator(name === "screen-edit" ? ".page-window >> nth=-1" : ".vna-bench").screenshot({ path: path.join(OUT, `vna-bench-${name}-${vp.tag}-full.png`) });
     await page.setViewportSize({ width: vp.width, height: vp.height });
   }
   await context.close();

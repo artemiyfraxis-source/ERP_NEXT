@@ -301,14 +301,15 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
 
   /** «Принять досрочно» из «В производстве»: сколько можно принять сверх уже сданного цехом. */
   const earlyQuantity = (line: IntakeLine) => round2(Math.min(line.quantity, Math.max(num(line.kb.remaining) - piecesOf(line.kb).ready, 0)));
-  /** «Трек…» упакованной отправки строки: одно действие — «Трек…», «Без УПД…» (УПД нет совсем) или выключенный «Трек…» с причиной. */
+  /** «Трек…» упакованной отправки строки: одно действие — «Трек…», «Без УПД…» (УПД или его № нет — разрешение по ПИН,
+   *  и у набранной с DN: без него DN не печатается) или выключенный «Трек…» с причиной. */
   const trackAction = (shipment: DispatchShipment, title: string) => {
-    if (shipment.status !== "Упакована" || !canDispatch) return null;
+    if (!["Собрана", "Упакована"].includes(shipment.status) || !canDispatch) return null;
     const needing = needsTrack(shipment);
     const ready = needing && (readyForTrack(shipment) || Boolean(shipment.track_number));
-    if (!ready && canWarehouse && onlyUpdBlocks(shipment)) return <button type="button" className="secondary small intake-print" title="УПД нет — отгрузку без УПД разрешает уполномоченный по ПИН"
+    if (!ready && canWarehouse && onlyUpdBlocks(shipment) && (shipment.status === "Упакована" || Boolean(shipment.dn_number))) return <button type="button" className="secondary small intake-print" title="УПД нет — отгрузку без УПД разрешает уполномоченный по ПИН"
       aria-label={`Без УПД ${title}`} onClick={() => setOpened({ kind: "noupd", shipment })}>Без УПД…</button>;
-    if (!needing) return null;
+    if (!needing || shipment.status !== "Упакована") return null;
     const gaps = shipment.missing_ship.filter((gap) => gap !== "трек-номер");
     const button = <button type="button" className="secondary small intake-print" disabled={!ready}
       title={ready ? "Вписать трек-номер ТК" : `Трек вносится, когда есть УПД и ТК${gaps.length ? ` — не хватает: ${gaps.join(", ")}` : ""}. Ждём данные менеджера`}
@@ -465,7 +466,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     for (const line of shipment.lines) if (line.project === first.project) totals.set(line.unit, round2((totals.get(line.unit) ?? 0) + num(line.picked)));
     cells.quantity = [...totals].map(([unit, quantity]) => `${formatNumber(quantity)}${NBSP}${unit}`).join(", ");
     cells.action = <span className="ship-group-head">
-      {first.stage === "packed" && trackAction(shipment, shipment.number)}
+      {(first.stage === "packed" || shipment.status === "Собрана") && trackAction(shipment, shipment.number)}
       {canDispatch && ["Новая", "Собрана", "Упакована"].includes(shipment.status) && <button type="button" className="secondary small"
         onClick={() => setOpened({ kind: "pack", project: first.project })}>Короба и PL/DN</button>}
       {canDispatch && ["Отгружена", "Закрыта"].includes(shipment.status) && <button type="button" className="secondary small"

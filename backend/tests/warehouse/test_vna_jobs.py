@@ -486,3 +486,31 @@ def test_same_instrument_moves_only_after_explicit_admin_transfer(capture):
     answer = start(admin)
     assert answer["agent"]["id"] == "pc-2"
     assert claim(other, "pc-2", ["vna"])["id"] == answer["id"]
+
+
+def test_recent_captures_list_the_persons_own_finished_files_of_one_instrument(capture):
+    """The analyser card in «Оборудовании» (owner 20.11.2026) lists the last files taken from ArinstVL: own, done,
+    this СИ only, newest first; the file itself stays behind the requester check."""
+    admin, agent, clock, sessions = capture
+    heartbeat(agent, vna=False, sources=["arinst"])
+    first = start(admin, source="arinst")["id"]
+    claim(agent, kinds=["vna"])
+    assert result(agent, first, b"! Arinst\r\n# MHz S RI R 50\r\n100 0.1 0\r\n", name="first.s1p").status_code == 200
+    clock.now += timedelta(seconds=30)
+    second = start(admin, source="arinst")["id"]
+    claim(agent, kinds=["vna"])
+    assert result(agent, second, b"! Arinst\r\n# MHz S RI R 50\r\n100 0.2 0\r\n", name="second.s1p").status_code == 200
+    clock.now += timedelta(seconds=30)
+    start(admin, source="arinst")  # not finished — not listed
+    listed = admin.get(JOBS, params={"instrument_id": ARINST_INSTRUMENT}).json()["captures"]
+    assert [(row["file_name"], row["source"], row["pc"]) for row in listed] == [
+        ("second.s1p", "arinst", "PC-1"), ("first.s1p", "arinst", "PC-1")]
+    assert admin.get(JOBS, params={"instrument_id": ARINST_INSTRUMENT, "limit": 1}).json()["captures"][0]["id"] == second
+    assert admin.get(JOBS, params={"instrument_id": S2_INSTRUMENT}).json()["captures"] == []
+    with sessions() as session:
+        session.get(ScanJobRow, UUID(first)).requested_by = "another-user-id"
+        session.commit()
+    assert [row["id"] for row in admin.get(JOBS, params={"instrument_id": ARINST_INSTRUMENT}).json()["captures"]] == [second]
+    operator = _login("operator")
+    assert operator.get(JOBS, params={"instrument_id": ARINST_INSTRUMENT}).status_code == 403
+    assert admin.get(JOBS, params={"instrument_id": ARINST_INSTRUMENT, "limit": 0}).status_code == 422

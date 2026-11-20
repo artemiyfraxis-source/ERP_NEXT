@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnalyserCard, drivesBench } from "./AnalyserCard";
 import { EMPTY, formatMoment } from "./format";
 import { equipmentSetupApi, type SetupViewer } from "./equipmentSetupApi";
 import { EquipmentSetupPage } from "./EquipmentSetupPage";
@@ -8,8 +9,10 @@ import { ManualJobWindow } from "./ManualJobWindow";
 import { MarkingMachineCard } from "./MarkingMachineCard";
 import { manualJobsApi, type ManualJob } from "./manualJobsApi";
 import { Ob019Card } from "./Ob019Card";
+import { urlParam } from "./navigation";
 import { Ob019SetupPanel } from "./Ob019SetupPanel";
 import { PageWindow } from "./PageWindow";
+import { vnaBenchApi } from "./vnaBenchApi";
 import "./machines.css";
 
 /** «Оборудование» (Производство; бывшие «Станки», владелец 19.11.2026): «Запросы на наладку» — список заданий наладки
@@ -18,7 +21,9 @@ import "./machines.css";
  *  через агента: живое состояние, запись на станок) и «Без управления» (отмечены в БД.ОБ галочкой «Показывать в
  *  «Оборудовании»»), плитками по семействам операций; принтеры склада и анализаторы цепей — своими группами среди
  *  «С управлением» (владелец 20.11.2026); «Все» — всё сразу.
- *  На плитке — артикул, участок, «Ждёт наладки» по открытому заданию; в карточке станка — «Наладка» и «Ручная работа». */
+ *  На плитке — артикул, участок, «Ждёт наладки» по открытому заданию; в карточке станка — «Наладка» и «Ручная работа».
+ *  Анализатор цепей открывает свою карточку (`AnalyserCard`): Planar — рабочее место ВАЦ (бывшая вкладка ОТК, владелец
+ *  20.11.2026; старая ссылка `?section=quality&tab=vna` ведёт сюда, `&tab=vna` открывает эту карточку), Arinst — замер файлом. */
 
 export type View = "setup" | "controlled" | "manual" | "all";
 type Site = "" | "ЦАР" | "ЖУК";
@@ -48,7 +53,7 @@ function MachineTile({ row, open }: { row: MachineRow; open: (row: MachineRow) =
   const pending = row.pending_setup ?? 0;
   const setup = row.setup?.code ? row.setup : null;
   return <button type="button" className={`machine-tile${absent ? " is-absent" : ""}${row.card ? " has-card" : ""}`}
-    onClick={() => open(row)} title={row.card ? "Открыть карточку станка" : "Сведения и наладка"}>
+    onClick={() => open(row)} title={row.card ? "Открыть карточку станка" : row.vna ? "Открыть карточку прибора" : "Сведения и наладка"}>
     <span className="machine-tile-head">
       <strong className={`machine-tile-no${row.inventory ? "" : " is-none"}`}>{row.inventory || "Без номера"}</strong>
       <span className={`machine-tile-link ${toneClass(row.link.tone)}`}>{row.link.text}</span>
@@ -127,15 +132,26 @@ const OPEN_SETUP = new Set(["New", "InProgress", "Blocked"]);
 
 /** `initialView` — вкладка, выбранная ссылкой; без неё «Запросы на наладку» открываются первыми, когда у сотрудника
  *  с доступом к наладке есть открытые задания, иначе — «С управлением» (владелец 19.11.2026). */
-export function MachinesPage({ setupViewer = false, canWrite = false, initialView }: {
-  setupViewer?: boolean; canWrite?: boolean; initialView?: View;
+export function MachinesPage({ setupViewer = false, canWrite = false, canQuality = false, initialView }: {
+  setupViewer?: boolean; canWrite?: boolean; canQuality?: boolean; initialView?: View;
 }) {
   const load = useCallback((signal: AbortSignal) => machinesApi.list(signal), []);
   const { data, error } = usePolled(load);
-  const [open, setOpen] = useState<MachineRow | null>(null);
+  /** Открытая карточка; «bench» — рабочее место ВАЦ по ссылке, когда прибора нет в списке агентов. */
+  const [open, setOpen] = useState<MachineRow | "bench" | null>(null);
+  // СИ, которым управляет рабочее место ВАЦ (сервер называет его сам); «» — рабочее место не отвечает.
+  const [benchNumber, setBenchNumber] = useState<string | null>(canQuality ? null : "");
+  useEffect(() => {
+    if (!canQuality) return;
+    let live = true;
+    vnaBenchApi.state().then((state) => { if (live) setBenchNumber(state?.device?.instrument_number || ""); })
+      .catch(() => { if (live) setBenchNumber(""); });
+    return () => { live = false; };
+  }, [canQuality]);
   const [setupOf, setSetupOf] = useState<MachineRow | null>(null);
   const [manual, setManual] = useState<{ row: MachineRow; job: ManualJob | null } | null>(null);
-  const [chosen, setView] = useState<View | null>(initialView ?? null);
+  const wantsBench = useRef(urlParam("tab") === "vna");
+  const [chosen, setView] = useState<View | null>(initialView ?? (wantsBench.current ? "controlled" : null));
   useEffect(() => {
     if (!setupViewer || chosen !== null) return;
     let live = true;
@@ -162,6 +178,22 @@ export function MachinesPage({ setupViewer = false, canWrite = false, initialVie
   }, []);
   const [query, setQuery] = useState("");
   const rows = useMemo(() => data?.rows ?? [], [data]);
+  // Ссылка на рабочее место ВАЦ (`&tab=vna`, в т. ч. старая из ОТК): карточка Planar, которым оно управляет.
+  useEffect(() => {
+    if (!wantsBench.current || !data || benchNumber === null) return;
+    wantsBench.current = false;
+    const row = rows.find((item) => drivesBench(item, benchNumber)) ?? rows.find((item) => item.vna === "s2vna");
+    setOpen(row ?? (benchNumber ? "bench" : null));
+  }, [data, benchNumber, rows]);
+  // Открытая карточка Planar держит `&tab=vna` в адресе — её можно сохранить закладкой.
+  const opened = open === "bench" ? null : open && (rows.find((row) => row.key === open.key) ?? open);
+  const benchOpen = open === "bench" || opened?.vna === "s2vna";
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if ((url.searchParams.get("tab") === "vna") === benchOpen) return;
+    if (benchOpen) url.searchParams.set("tab", "vna"); else url.searchParams.delete("tab");
+    window.history.replaceState(window.history.state, "", url);
+  }, [benchOpen]);
   const found = useMemo(() => {
     const words = query.toLocaleLowerCase("ru").split(/\s+/).filter(Boolean);
     return words.length ? rows.filter((row) => { const haystack = searchText(row); return words.every((word) => haystack.includes(word)); })
@@ -204,18 +236,21 @@ export function MachinesPage({ setupViewer = false, canWrite = false, initialVie
           <div className="machine-tiles">{group.map((row) => <MachineTile key={row.key} row={row} open={setOpen} />)}</div>
         </section>)}
       </>}
-    {open?.card && open.equipment_id
-      ? <Ob019Card equipmentId={open.equipment_id} title={[titleOf(open), open.article].filter(Boolean).join(" · ")}
+    {/* Карточка по признакам строки, без пересечений: живая ОБ.019 → станок маркировки → анализатор цепей → паспорт. */}
+    {opened?.card && opened.equipment_id
+      ? <Ob019Card equipmentId={opened.equipment_id} title={[titleOf(opened), opened.article].filter(Boolean).join(" · ")}
         close={() => setOpen(null)}
         actions={<>
-          <button type="button" className="secondary small machine-manual" onClick={() => setSetupOf(open)}>
-            Наладка{open.pending_setup ? " · ждёт" : ""}</button>
-          <button type="button" className="secondary small" onClick={() => void openManual(open)}>Ручная работа</button>
+          <button type="button" className="secondary small machine-manual" onClick={() => setSetupOf(opened)}>
+            Наладка{opened.pending_setup ? " · ждёт" : ""}</button>
+          <button type="button" className="secondary small" onClick={() => void openManual(opened)}>Ручная работа</button>
         </>} />
-      : open?.marking && open.equipment_id
-        ? <MarkingMachineCard row={open} canWrite={canWrite} close={() => setOpen(null)} />
-      : open && <MachineInfo row={open} close={() => setOpen(null)} canWrite={canWrite} saved={() => undefined}
-        manual={open.kind === "machine" ? () => void openManual(open) : undefined} />}
+      : opened?.marking && opened.equipment_id
+        ? <MarkingMachineCard row={opened} canWrite={canWrite} close={() => setOpen(null)} />
+        : open === "bench" || opened?.vna
+          ? <AnalyserCard row={opened} benchNumber={benchNumber} canQuality={canQuality} close={() => setOpen(null)} />
+          : opened && <MachineInfo row={opened} close={() => setOpen(null)} canWrite={canWrite} saved={() => undefined}
+            manual={opened.kind === "machine" ? () => void openManual(opened) : undefined} />}
     {setupOf && <SetupWindow row={setupOf} canWrite={canWrite} setupViewer={setupViewer} close={() => setSetupOf(null)} saved={() => undefined} />}
     {manual && <ManualJobWindow job={manual.job} equipmentId={manual.row.equipment_id} inventory={manual.row.inventory}
       close={() => setManual(null)} />}

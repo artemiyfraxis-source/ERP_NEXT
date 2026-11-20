@@ -57,8 +57,15 @@ router = APIRouter(prefix="/api/production/machines", tags=["production"])
 Factory = Annotated[Callable, Depends(production_uow_factory)]
 Now = Annotated[datetime, Depends(moscow_now)]
 # A named gate of the access contract (tests/identity/test_level_gates.py DEPENDENCIES): the master and the fitter read.
-machines_view_principal = require_section(("production", "myops"), "view", detail="Раздел «Станки» вам не открыт.")
+# ОТК (`quality`) reads it too: the VNA workplace lives in the analyser card of «Оборудование» (owner 20.11.2026).
+machines_view_principal = require_section(("production", "myops", "quality"), "view",
+                                          detail="Раздел «Оборудование» вам не открыт.")
 Reader = Annotated[Principal, Depends(machines_view_principal)]
+# Commands to a machine («Стоп» included) — the shop's own (Производство / Задания), never ОТК, which only reads the
+# section for its analyser cards.
+machines_command_principal = require_section(("production", "myops"), "view",
+                                             detail="Команды станку подаёт производство или исполнитель задания.")
+Commander = Annotated[Principal, Depends(machines_command_principal)]
 BRIDGE_ONLY = "Снимки станка присылает только агент ERP на ПК станка (токен API «machine:report»)."
 
 PRINTER_NAMES = {"tspl": "Принтер этикеток", "gdi_png": "Принтер маркировки"}
@@ -479,6 +486,9 @@ def _device_rows(session, now) -> list[dict]:
             **NO_CATALOG, "controlled": True,
             "article": articles.get(_inventory(instrument.inventory_number), "") if instrument else "",
             # The MFP of the warehouse scans and prints: it stands with the warehouse printer (owner 20.11.2026).
+            # The analyser card picks its work by this: «s2vna» — the VNA workplace, «arinst» — files from ArinstVL.
+            "vna": device.kind if device.kind in VNA_APPS else None,
+            "instrument_id": str(instrument.id) if instrument else None,
             "family": rules.ANALYSER_FAMILY if device.kind in VNA_APPS
             else rules.WAREHOUSE_PRINTERS if device.kind == "scan" else rules.OTHER_FAMILY,
         })
