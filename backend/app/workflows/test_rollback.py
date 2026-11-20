@@ -86,7 +86,8 @@ EXECUTION_TYPES = frozenset({
     "production.work_started", "production.work_paused", "production.work_resumed", "production.work_cancelled",
     "production.output_recorded",
 })
-DOWNTIME_TYPES = frozenset({"production.downtime_started", "production.downtime_ended"})
+DOWNTIME_TYPES = frozenset({"production.downtime_started", "production.downtime_ended",
+                            "production.machine_downtime_started", "production.machine_downtime_ended"})
 # Статус задания после события; «до» — статус после предыдущего такого события по заданию (или «Запущено»).
 STATUS_AFTER = {
     "production.done": ProductionStatus.DONE.value,
@@ -547,7 +548,7 @@ def _collect_downtimes(session, scope: Scope, plan: Plan, read: _Reader, start, 
     if scope.employee_id is not None:
         query = query.where(down.operator_id == scope.employee_id)
     for row in session.scalars(query.order_by(down.started_at)):
-        label = f"Простой {read.task_label(row.task_id) if row.task_id else row.task_number} · {_reason(row.reason)} · {row.operator_name}"
+        label = _downtime_label(row, read)
         if row.ended_by_id is not None and row.ended_by_id not in scope.actor_ids:
             plan.conflicts.append(f"{label}: закончил(а) не тестирующий — {row.ended_by_name} {_at(row.ended_at)}")
             continue
@@ -559,14 +560,26 @@ def _collect_downtimes(session, scope: Scope, plan: Plan, read: _Reader, start, 
     for row in session.scalars(query.order_by(down.ended_at)):
         if row.id in plan.downtime_deletes:
             continue
-        label = f"Простой {read.task_label(row.task_id) if row.task_id else row.task_number} · {_reason(row.reason)} · {row.operator_name}"
+        label = _downtime_label(row, read)
         if row.task_id is not None and session.scalar(select(down.id).where(
             down.task_id == row.task_id, down.ended_at.is_(None), down.id != row.id,
         )) is not None:
             plan.conflicts.append(f"{label}: снова открыть нельзя — у задания уже открыт другой простой")
             continue
+        # A machine keeps one open downtime (uq_production_downtimes_open_equipment, migration 0209).
+        if row.equipment_id is not None and session.scalar(select(down.id).where(
+            down.equipment_id == row.equipment_id, down.ended_at.is_(None), down.id != row.id,
+        )) is not None:
+            plan.conflicts.append(f"{label}: снова открыть нельзя — у станка уже открыт другой простой")
+            continue
         plan.downtime_reopens.add(row.id)
         plan.lines.append(f"{label}: «закончить» {_at(row.ended_at)} снимается — простой снова открыт")
+
+
+def _downtime_label(row: ProductionDowntimeRow, read: _Reader) -> str:
+    if row.equipment_id is not None:  # the machine's own downtime: no task, no person
+        return f"Простой станка {row.item} · {_reason(row.reason)}"
+    return f"Простой {read.task_label(row.task_id) if row.task_id else row.task_number} · {_reason(row.reason)} · {row.operator_name}"
 
 
 def _reason(value: str) -> str:

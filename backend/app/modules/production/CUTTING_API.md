@@ -420,6 +420,13 @@ row. `cutting_queue.py`, routes in `cutting_api.py`. Computed on every read — 
   `ОБ.095` (BZW-50X) if listed, else the first, with «в ЭТК ещё станки: <the others>». None — never put on a real
   machine: the row gets `machine_id: null`, «нет в ЭТК: станок», and its own bucket «Станок не указан»
   (`machine_id=none`).
+- Pool (owner 20.11, «любой свободный»): a row the БД.ОБ catalog (`EquipmentCatalog.machine`, article tie-break
+  included) resolves to a model with SEVERAL physical units, none of them the row's exact number (`ОБ.100.X`, bare
+  `ОБ.100`, a model id only), is keyed by the MODEL id (`machine_id` = model id, not the inventory number) and labelled
+  «ОБ.100 BZW-D2.0S · любой свободный (3)» — 3 = physical units of the model. A model with one physical unit is not a
+  pool: its row is keyed by that unit's inventory number. Exact-unit rows (`ОБ.095`, still preferred when listed) and
+  rows the catalog cannot resolve keep today's key. `/machines` lists the pool as one machine, sorted by catalog code
+  then label. The catalog is read only when the app has the references factory.
 - A missing or odd ETK value never drops a row: the value is `null` and `warnings` says «нет в ЭТК: длина / провод /
   зачистка А / режим зачистки А / …». A grouped row whose frozen ETK lacks the cut stays with «нет в ЭТК: резка кабеля».
 - Order: setup key (wire, then side A and B strip values/mode/diameters, then laser marking mode), then length short →
@@ -428,7 +435,9 @@ row. `cutting_queue.py`, routes in `cutting_api.py`. Computed on every read — 
   зачистка Б: … · лазер по краям»; «без зачистки» when no side is stripped).
 
 `GET /api/production/cutting-queue?machine_id=ОБ.095` (myops view; `machine_id=none` — the «Станок не указан» bucket,
-answered with `machine_id: null`):
+answered with `machine_id: null`). `?equipment_id=<БД.ОБ unit uuid>` instead: the unit's own rows (its inventory
+number) plus the pool rows of its model; the answer carries `equipment_id`; a record that is not a physical machine
+(`.X`, `(R)`, non-machine, unknown) → 422; no references factory → 503; neither parameter → 422 (`machine_id` alone works as before):
 
 ```text
 {machine_id, version, rows: [{key, task_id, operation_id, task_version, task_number, project, item,
@@ -448,7 +457,8 @@ change detection. `project` is the issued ETK's spelling (`row_project`), the sa
 — machines with open cut work, by id; the bucket without a machine (`machine_id: null`, «Станок не указан») last.
 
 `POST /api/production/cutting-queue/done` (myops edit, optional `?on_behalf_of=`, required `Idempotency-Key`):
-`{task_id, operation_id, quantity}` (integer > 0). One transaction, lock order project → group → task:
+`{task_id, operation_id, quantity, equipment_id?}` (integer > 0; `equipment_id` — the physical unit that did the work).
+One transaction, lock order project → group → task:
 
 0. Only queue rows: an active member of an `open`/`frozen` cut-kind group, or a standalone input-less PF whose pinned
    issued ETK holds a cable cut. Anything else (labels/tubes PF grouped or split off, a PF with inputs) → 422 «В очереди
@@ -473,7 +483,10 @@ Returns `{notice: "Готово: 708К. · КБ3 · 120 шт", assigned, box: {i
 row: {key, task_id, operation_id, task_version, planned, done, left}}`. The receipt is an audit event
 `production.cutting_queue_done` whose id is `uuid5(key)`: the same key and payload (task, PF, quantity, performer) replays
 the stored response without a second output; the same key with another payload → 409. 403 another site, 404 unknown
-task/PF. No who/when traceability beyond the output's performer and the audit event; auto-write to ОБ.019 is a later PR.
+task/PF. With `equipment_id` the unit must serve the row's machine (its inventory number, or its model for a pool
+row) and, when the PF has a site (handed-to site or its assignees'), stand on the same site — else 422 with the reason. The worker's and the acting user's sites count too, so the first «Готово» of an unassigned PF is checked; a unit with an unknown site is allowed;
+the unit id and inventory number go into the receipt details (`equipment_id`, `inventory_number`) and into the replay
+fingerprint. No who/when traceability beyond the output's performer and the audit event; auto-write to ОБ.019 is a later PR.
 
 ## Decisions for coordinator review
 

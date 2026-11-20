@@ -16,7 +16,17 @@ Started, finished and cancelled by «Производство» or «Задан�
   → done; `material` is `not_issued` (with a reason) or `pending` («Ждёт решения склада», decided afterwards in the
   material window — «Списать с партии» is never part of the finish).
 - `POST /api/production/manual-jobs/{id}/cancel` `{version, reason}` → cancelled.
-Each change carries the `version` the person saw (409 when it moved) and is journaled on the job."""
+- `POST /api/production/manual-jobs/{id}/progress` `{quantity, version}` → the running job with «Сделано» typed at a
+  machine without control (migration 0209): quantity >= 0, more than planned is allowed (`progress_over_plan` warns);
+  a finished or cancelled job → 409.
+Each change carries the `version` the person saw (409 when it moved) and is journaled on the job.
+
+Machine downtime (owner 20.11.2026, migration 0209) — of the machine itself, not of a task (no PF is paused):
+- `POST /api/production/manual-jobs/downtime` `{equipment_id, reason, comment}` → `{downtime}`; the reasons are those of
+  the task downtimes (production/downtime.py, «Другое» needs a comment); 409 while one is open on that machine.
+- `POST /api/production/manual-jobs/downtime/{id}/stop` → `{downtime}` ended; 409 when it was already ended.
+Read: `options` gives each machine its open `downtime` and the `reasons`; the journal gives `downtimes` — the open
+machine downtimes (of `equipment_id` when given). Journaled on the machine (`production.machine_downtime_*`)."""
 
 from __future__ import annotations
 
@@ -29,12 +39,17 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.modules.equipment_setup.recipes import wire_key
 from app.modules.equipment_setup.setup_model_infrastructure import SetupReferenceRow
 from app.modules.production import machine_runs as runs
 from app.modules.production import manual_jobs as jobs
 from app.modules.production.api import production_uow_factory
+from app.modules.production.domain import ProductionValidationError
+from app.modules.production.downtime import (COMMENT_LIMIT, REASON_NAMES, Downtime, DowntimeConflict, DowntimeReason,
+                                             moscow)
+from app.modules.production.downtime_infrastructure import SqlAlchemyDowntimeRepository
 from app.modules.production.machine_writes import moment
 from app.modules.references.domain import TERMINAL_TABS
 from app.modules.references.equipment import INV_KEY, NAME_KEYS, field
@@ -106,6 +121,20 @@ class CancelPayload(Payload):
     reason: str = Field(min_length=1, max_length=300)
 
 
+class ProgressPayload(Payload):
+    version: int = Field(ge=1)
+    quantity: int = Field(ge=0, le=jobs.LIMIT)
+
+
+class DowntimePayload(Payload):
+    equipment_id: UUID
+    reason: DowntimeReason
+    comment: str = Field(default="", max_length=COMMENT_LIMIT)
+
+
+DOWNTIME_OPEN = "У станка уже открыт простой — сначала закончите его"
+
+
 # --- helpers ---
 
 def _inventory(row: EquipmentMachineRow) -> str:
@@ -152,7 +181,28 @@ def view(row: jobs.ManualJobRow, machine: EquipmentMachineRow | None) -> dict:
         "material_tone": material_tone, "material_note": row.material_note, "cancel_reason": row.cancel_reason,
         "operator": row.operator_name, "finished_by": row.finished_by_name,
         "started_at": moment(row.started_at), "finished_at": moment(row.finished_at), "version": row.version,
+        "progress_quantity": row.progress_quantity, "progress_at": moment(row.progress_at),
+        "progress_over_plan": jobs.over_plan(row),
     }
+
+
+def downtime_view(item: Downtime, now: datetime) -> dict:
+    end = item.ended_at if item.ended_at is not None else now
+    return {
+        "id": str(item.id), "equipment_id": str(item.equipment_id), "machine": item.item,
+        "reason": item.reason.value, "reason_name": item.reason_name, "comment": item.comment,
+        "started_at": moscow(item.started_at).isoformat(), "started_by": item.started_by_name,
+        "ended_at": moscow(item.ended_at).isoformat() if item.ended_at is not None else None,
+        "ended_by": item.ended_by_name, "open": item.open,
+        "seconds": max(0, int((moscow(end) - moscow(item.started_at)).total_seconds())),
+    }
+
+
+def _downtime_journal(uow, item: Downtime, event: str, principal: Principal, now: datetime, text: str) -> None:
+    uow.audit.add(AuditEvent(id=uuid4(), aggregate_id=item.equipment_id, event_type=f"production.machine_downtime_{event}",
+                             actor=principal.actor, occurred_at=now,
+                             details={"text": text[:500], "downtime_id": str(item.id), "reason": item.reason.value,
+                                      "comment": item.comment}))
 
 
 def _machines(session, ids) -> dict[UUID, EquipmentMachineRow]:
@@ -219,24 +269,29 @@ def journal(principal: JournalReader, factory: Factory, now: Now, date_from: dat
         machines = _machines(uow.session, [row.equipment_id for row in rows])
         result = [view(row, machines.get(row.equipment_id)) for row in rows]
         count = jobs.waiting_count(uow.session)
+        downtimes = [downtime_view(item, now)
+                     for item in SqlAlchemyDowntimeRepository(uow.session).open_of_machines(equipment_id)]
     return {"date_from": start.isoformat(), "date_to": end.isoformat(), "rows": result, "can_edit": _can_edit(principal),
-            "can_issue": can_issue(principal), "can_decide": can_decide(principal), "waiting_count": count}
+            "can_issue": can_issue(principal), "can_decide": can_decide(principal), "waiting_count": count,
+            "downtimes": downtimes}
 
 
 @router.get("/options")
-def options(principal: Reader, factory: Factory) -> dict:
+def options(principal: Reader, factory: Factory, now: Now) -> dict:
     with factory() as uow:
         session = uow.session
         running = {row.equipment_id: row for row in session.scalars(
             select(jobs.ManualJobRow).where(jobs.ManualJobRow.status == "running"))}
+        stopped = {item.equipment_id: item for item in SqlAlchemyDowntimeRepository(session).open_of_machines()}
         machines = []
         for row in session.scalars(select(EquipmentMachineRow)):
             inventory = _inventory(row)
             if not inventory:
                 continue
-            job = running.get(row.id)
+            job, downtime = running.get(row.id), stopped.get(row.id)
             machines.append({"id": str(row.id), "inventory": inventory, "name": _machine_name(row),
-                             "running": jobs.number_text(job.number) if job else None})
+                             "running": jobs.number_text(job.number) if job else None,
+                             "downtime": downtime_view(downtime, now) if downtime else None})
         machines.sort(key=lambda item: (item["inventory"], item["name"]))
         wires = sorted(_wires(session), key=str.casefold)
         contacts: dict[str, dict] = {}
@@ -256,7 +311,8 @@ def options(principal: Reader, factory: Factory) -> dict:
                       for row in sorted(latest.values(), key=lambda item: (item.wire_key, item.contact_key))]
     return {"machines": machines, "wires": wires,
             "contacts": sorted(contacts.values(), key=lambda item: item["label"].casefold()),
-            "references": references, "can_edit": _can_edit(principal)}
+            "references": references, "can_edit": _can_edit(principal),
+            "reasons": [{"key": reason.value, "name": name} for reason, name in REASON_NAMES.items()]}
 
 
 @router.post("")
@@ -323,3 +379,71 @@ def cancel(job_id: UUID, payload: CancelPayload, principal: Writer, factory: Fac
         answer = view(row, session.get(EquipmentMachineRow, row.equipment_id))
         uow.commit()
     return answer
+
+
+@router.post("/{job_id}/progress")
+def progress(job_id: UUID, payload: ProgressPayload, principal: Writer, factory: Factory, now: Now) -> dict:
+    with factory() as uow:
+        session = uow.session
+        try:
+            row = jobs.progress(session, job_id, payload.version, payload.quantity, now=now)
+        except (KeyError, jobs.ManualJobInvalid, jobs.ManualJobConflict) as error:
+            raise _errors(error) from error
+        plan = f" из {row.quantity_planned}" if row.quantity_planned else ""
+        over = " — больше плана" if jobs.over_plan(row) else ""
+        _journal(uow, row, "progress", principal, now,
+                 f"Сделано по {jobs.number_text(row.number)}: {row.progress_quantity}{plan}{over}")
+        answer = view(row, session.get(EquipmentMachineRow, row.equipment_id))
+        uow.commit()
+    return answer
+
+
+@router.post("/downtime")
+def start_downtime(payload: DowntimePayload, principal: Writer, factory: Factory, now: Now) -> dict:
+    with factory() as uow:
+        session = uow.session
+        machine = session.get(EquipmentMachineRow, payload.equipment_id)
+        if machine is None:
+            raise HTTPException(404, "Станок не найден в БД.ОБ")
+        repository = SqlAlchemyDowntimeRepository(session)
+        if repository.open_for_equipment(machine.id) is not None:
+            raise HTTPException(409, DOWNTIME_OPEN)
+        label = " ".join(part for part in (_inventory(machine), _machine_name(machine)) if part)[:255]
+        try:
+            item = Downtime(id=uuid4(), task_id=None, operation_id=None, operator_id=None, operator_name="",
+                            reason=payload.reason, comment=payload.comment, started_at=now,
+                            started_by_id=principal.actor.id, started_by_name=principal.actor.name, project="",
+                            task_number="", item=label, equipment_id=machine.id)
+        except ProductionValidationError as error:
+            raise HTTPException(422, str(error)) from error
+        try:
+            with session.begin_nested():
+                repository.add(item)
+        except IntegrityError as error:  # a parallel «Простой» on the same machine took the open slot first
+            raise HTTPException(409, DOWNTIME_OPEN) from error
+        comment = f": {item.comment}" if item.comment else ""
+        _downtime_journal(uow, item, "started", principal, now,
+                          f"Простой станка {_inventory(machine)}: {item.reason_name}{comment}")
+        answer = downtime_view(item, now)
+        uow.commit()
+    return {"downtime": answer}
+
+
+@router.post("/downtime/{downtime_id}/stop")
+def stop_downtime(downtime_id: UUID, principal: Writer, factory: Factory, now: Now) -> dict:
+    with factory() as uow:
+        repository = SqlAlchemyDowntimeRepository(uow.session)
+        item = repository.get(downtime_id)
+        if item is None or item.equipment_id is None:
+            raise HTTPException(404, "Простой станка не найден")
+        try:
+            closed = item.close(now, principal.actor.id, principal.actor.name)
+            repository.close(closed)
+        except DowntimeConflict as error:
+            raise HTTPException(409, str(error)) from error
+        except ProductionValidationError as error:
+            raise HTTPException(422, str(error)) from error
+        _downtime_journal(uow, closed, "ended", principal, now, f"Закончен простой станка {closed.item}")
+        answer = downtime_view(closed, now)
+        uow.commit()
+    return {"downtime": answer}
