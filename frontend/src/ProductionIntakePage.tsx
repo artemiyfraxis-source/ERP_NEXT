@@ -4,14 +4,14 @@ import { cellContent, DataTable, type DataColumn } from "./DataTable";
 import { DispatchCard } from "./DispatchCard";
 import { ItemDeliveryWindow } from "./ProjectData";
 import { DISPATCH_STAGES, stageLabel, type DispatchStage } from "./dispatchStage";
-import { formatDay, formatNumber, NBSP } from "./format";
+import { formatDay, formatNumber, NBSP, plural } from "./format";
 import { StatusChip } from "./StatusChip";
 import type { Tone } from "./statusTone";
 import { actShares, dataRows } from "./dispatchPositionRows";
 import { defaultTab, dispatchBoard, hasWork, kbKey, num, ofProject, permittedPack, recentShipment, round2, SHIPPED_DAYS, stagePieces, type Tab } from "./intakeStages";
 import { isPickup, termsText } from "./carriers";
 import { canAct, canSee, hasFullAccess, urlParam } from "./navigation";
-import { intakeApi, type DispatchShipment, type IntakeAct, type IntakeRow as ApiIntakeRow } from "./productionIntakeApi";
+import { deliveryGroups, intakeApi, type DispatchShipment, type IntakeAct, type IntakeRow as ApiIntakeRow } from "./productionIntakeApi";
 import { IntakeWindow, keyOf, leftOf } from "./IntakeWindow";
 import { PrintOutcome, type PrintResult } from "./LabelPrint";
 import { PackWindow } from "./PackWindow";
@@ -243,6 +243,59 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     setNotice(`Принято на склад: ${pieceCount} шт`);
     await reload();
   }
+  /** «Упаковать всё» проекта: каждая КБ с разрешением — своими «Упаковать · n»; по одной отправке на группу доставки, как в окне упаковки. */
+  async function packAll(project: string, list: Array<{ kb: IntakeRow; quantity: number }>, skipped: number) {
+    if (busy) return;
+    const total = round2(list.reduce((sum, entry) => sum + entry.quantity, 0));
+    const buckets = new Map<number, typeof list>();
+    const groups = deliveryGroups((itemAddressees[project] ?? []).filter((item) => list.some((entry) => entry.kb.item_index === item.item_index)));
+    for (const entry of list) {
+      const index = groups.findIndex((group) => group.items.includes(entry.kb.item_index));
+      buckets.set(index, [...(buckets.get(index) ?? []), entry]);
+    }
+    const question = `Упаковать ${list.length} КБ · ${formatNumber(total)} шт проекта ${project}?`
+      + (buckets.size > 1 ? ` У КБ разные данные доставки — будет ${buckets.size} отправки, по одной на группу.` : "")
+      + (skipped ? ` Без разрешения пропущено: ${skipped} КБ.` : "");
+    if (!window.confirm(question)) return;
+    setBusy(`bulk-pack:${project}`); setError(""); setNotice("");
+    const numbers: string[] = []; const failed: string[] = [];
+    let packedKb = 0; let packedPieces = 0;
+    for (const entries of buckets.values()) {
+      try {
+        const card = await intakeApi.dispatch(project);
+        const result = await shippingApi.projectShip({
+          project, addressee_version: card.addressee?.version ?? 0, ship: false,
+          lines: entries.map((entry) => ({ good_id: String(entry.kb.good_id), version: entry.kb.good_version ?? 0, quantity: String(entry.quantity) })),
+          ...(canManage ? { documents: { upd_number: "", upd_date: null, deadline: null } } : {}),
+        }, crypto.randomUUID());
+        numbers.push(result.shipment.number); packedKb += entries.length; packedPieces += entries.reduce((sum, entry) => sum + entry.quantity, 0);
+      } catch (reason) {
+        failed.push(`${entries.map((entry) => entry.kb.item_index).join(", ")}: ${failureText(reason, "не упаковано")}`);
+      }
+    }
+    if (packedKb) setNotice(`Упаковано ${packedKb} КБ · ${formatNumber(round2(packedPieces))} шт${numbers.length ? ` · ${numbers.join(", ")}` : ""}`);
+    await reload();
+    if (failed.length) setError(`Не упаковано ${list.length - packedKb} КБ — ${failed.join("; ")}`);
+    setBusy("");
+  }
+  /** «Отгрузить всё» проекта: готовые отправки — тем же «Отгрузить», что в строке; неготовые перечислены с пробелами. */
+  async function shipAll(project: string, ready: DispatchShipment[], skipped: DispatchShipment[]) {
+    if (busy) return;
+    const count = `${ready.length} ${plural(ready.length, ["отправку", "отправки", "отправок"])}`;
+    const question = `Отгрузить ${count} проекта ${project}?`
+      + (skipped.length ? ` Не готовы и пропущены: ${skipped.map((shipment) => `${shipment.number} — ${shipment.missing_ship.join(", ") || "не хватает данных"}`).join("; ")}.` : "");
+    if (!window.confirm(question)) return;
+    setBusy(`bulk-ship:${project}`); setError(""); setNotice("");
+    let shippedCount = 0; const failed: string[] = [];
+    for (const shipment of ready) {
+      try { await shippingApi.action(shipment.id, "ship", shipment.version); shippedCount += 1; }
+      catch (reason) { failed.push(`${shipment.number}: ${failureText(reason, "не отгружена")}`); }
+    }
+    if (shippedCount) setNotice(`Отгружено ${shippedCount} ${plural(shippedCount, ["отправка", "отправки", "отправок"])}`);
+    await reload();
+    if (failed.length) setError(`Не отгружено ${failed.length} — ${failed.join("; ")}`);
+    setBusy("");
+  }
   const accept = (kbs: IntakeRow[], quantity: (row: IntakeRow) => number) =>
     setAccepting({ rows: kbs, quantities: Object.fromEntries(kbs.map((row) => [keyOf(row), quantity(row)])) });
 
@@ -365,6 +418,19 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       .map((line) => [kbKey(line.kb), line.kb])).values()] : [];
     const quantity = (row: IntakeRow) => tab === "ready" ? piecesOf(row).ready : num(row.remaining);
     const total = round2(bulk.reduce((sum, row) => sum + quantity(row), 0));
+    // «Принято»: КБ проекта, которые можно упаковать сейчас (по «Упаковать · n» строк), и сколько ждут разрешения.
+    const packKbs = new Map<string, { kb: IntakeRow; quantity: number }>(); const blockedKbs = new Set<string>();
+    if (tab === "accepted" && canDispatch) for (const line of groupRows.filter((item) => item.stage === "accepted" && !item.shipment)) {
+      const key = kbKey(line.kb); const quantity = round2((packKbs.get(key)?.quantity ?? 0) + line.packNow);
+      if (quantity > 0 && line.kb.good_id) packKbs.set(key, { kb: line.kb, quantity: Math.min(quantity, permittedPack(line.kb)) }); else if (!packKbs.has(key)) blockedKbs.add(key);
+    }
+    for (const key of packKbs.keys()) blockedKbs.delete(key);
+    const packList = [...packKbs.values()]; const packTotal = round2(packList.reduce((sum, entry) => sum + entry.quantity, 0));
+    // «Упаковано» / «На отгрузку»: готовые отправки проекта и неготовые с их пробелами.
+    const projectShipments = (tab === "packed" || tab === "to_ship") && canDispatch
+      ? shipments.filter((shipment) => ofProject(shipment, project) && ["Собрана", "Упакована"].includes(shipment.status)) : [];
+    const readyShipments = canDispatch ? projectShipments.filter(readyToShip) : [];
+    const blockedShipments = projectShipments.filter((shipment) => !readyToShip(shipment));
     return <span className="ship-group-head">
       <strong>{project}</strong><span> · {head[project]?.customer || first.shipment?.customer || "—"}</span>
       <button type="button" className="secondary small" aria-label={`Изменить данные отправки ${project}`}
@@ -373,6 +439,15 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
         aria-label={`Всем КБ проекта ${project}`} onClick={() => setDeliveryEdit({ project, items: itemAddressees[project] })}>Всем КБ проекта</button>}
       {canWarehouse && bulk.length > 1 && <button type="button" className="primary small" onClick={() => accept(bulk, quantity)}>
         Принять всё: {bulk.length} КБ · {formatNumber(total)} шт</button>}
+      {packList.length > 1 && <button type="button" className="primary small" disabled={Boolean(busy)} title={blockedKbs.size ? `Без разрешения упаковки пропущено: ${blockedKbs.size} КБ` : "Упаковать каждую КБ проекта на столько, сколько указано в её «Упаковать»"}
+        onClick={() => void packAll(project, packList, blockedKbs.size)}>
+        Упаковать всё: {packList.length} КБ · {formatNumber(packTotal)} шт</button>}
+      {packList.length > 1 && blockedKbs.size > 0 && <span className="muted ship-group-hint">без разрешения: {blockedKbs.size} КБ</span>}
+      {readyShipments.length > 1 && <button type="button" className="primary small" disabled={Boolean(busy)}
+        title={blockedShipments.length ? `Не готовы и будут пропущены: ${blockedShipments.map((shipment) => `${shipment.number} — ${shipment.missing_ship.join(", ")}`).join("; ")}` : "Отгрузить все готовые отправки проекта"}
+        onClick={() => void shipAll(project, readyShipments, blockedShipments)}>
+        Отгрузить всё: {readyShipments.length} {plural(readyShipments.length, ["отправка", "отправки", "отправок"])}</button>}
+      {readyShipments.length > 1 && blockedShipments.length > 0 && <span className="muted ship-group-hint" title={blockedShipments.map((shipment) => `${shipment.number} — ${shipment.missing_ship.join(", ")}`).join("; ")}>не готовы: {blockedShipments.length}</span>}
     </span>;
   };
   const shipmentCells = (_key: string, groupRows: IntakeLine[], _filtered: IntakeLine[], visible: DataColumn<IntakeLine>[]) => {

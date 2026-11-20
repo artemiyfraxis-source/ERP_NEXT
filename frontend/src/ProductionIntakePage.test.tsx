@@ -878,3 +878,71 @@ it("loads a linked older shipment outside the journal list, including cancelled 
   expect(within(journal).getByText("Отменена", { selector: ".status-chip" })).toBeInTheDocument();
   expect(within(journal).getByText(/В отгрузке нет позиций/)).toBeInTheDocument();
 });
+
+describe("Приёмка с производства: «Упаковать всё» и «Отгрузить всё» по проекту", () => {
+  const today = "2026-11-09";
+  const kb = (index: string, over: Record<string, unknown> = {}) => row({ item_index: index, name: `Жгут ${index}`, good_id: `g-${index}`, accepted: "6", remaining: "0", delivered: "6", tasks: [],
+    pack_allowed: true, pack_permission_remaining: "10000", acts: [act(`ГП.${index}`, "6", today)], ...over });
+  const confirmSpy = () => vi.spyOn(window, "confirm").mockReturnValue(true);
+  const packCalls = () => calls.filter((call) => call.url === "/api/shipping/project-ship");
+
+  it("«Упаковать всё»: пакует КБ с разрешением своими количествами, без разрешения пропускает и говорит сколько", async () => {
+    const ask = confirmSpy();
+    intakeRows = [kb("КБ1"), kb("КБ2", { accepted: "4", acts: [act("ГП.КБ2", "4", today)] }), kb("КБ3", { pack_allowed: false, pack_permission_remaining: "0" })];
+    render(<ProductionIntakePage principal={principal} />);
+    const button = await screen.findByRole("button", { name: "Упаковать всё: 2 КБ · 10 шт" });
+    expect(screen.getByText("без разрешения: 1 КБ")).toBeInTheDocument();
+    fireEvent.click(button);
+    await screen.findByText(/^Упаковано 2 КБ · 10 шт · ОТГ-9/);
+    expect(ask).toHaveBeenCalledWith(expect.stringContaining("Упаковать 2 КБ · 10 шт проекта 591К.3?"));
+    expect(ask).toHaveBeenCalledWith(expect.stringContaining("пропущено: 1 КБ"));
+    expect(packCalls()).toHaveLength(1);
+    expect(packCalls()[0].body).toEqual({ project: "591К.3", addressee_version: 2, ship: false, lines: [
+      { good_id: "g-КБ1", version: 1, quantity: "6" }, { good_id: "g-КБ2", version: 1, quantity: "4" },
+    ] });
+  });
+
+  it("«Упаковать всё»: разные данные доставки — отдельная отправка на каждую группу; отказ группы виден в итоге", async () => {
+    confirmSpy();
+    intakeRows = [kb("КБ1"), kb("КБ2")];
+    itemDeliveries = [kbDelivery("КБ1"), { ...kbDelivery("КБ2"), effective: { ...kbDelivery("КБ2").effective, shipping_point: "Другой адрес" } }];
+    const base = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    let shipCalls = 0;
+    vi.stubGlobal("fetch", vi.fn((input, init) => String(input) === "/api/shipping/project-ship" && ++shipCalls === 2
+      ? Promise.resolve(json({ detail: "Остаток изменился" }, 409)) : base(input, init)));
+    render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Упаковать всё: 2 КБ · 12 шт" }));
+    await screen.findByText(/^Упаковано 1 КБ · 6 шт/);
+    expect(await screen.findByText(/Не упаковано 1 КБ — КБ2/)).toBeInTheDocument();
+    expect(shipCalls).toBe(2);
+  });
+
+  it("«Упаковать всё»: без согласия в диалоге ничего не отправляется; без права склада кнопки нет", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    intakeRows = [kb("КБ1"), kb("КБ2")];
+    const { unmount } = render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Упаковать всё/ }));
+    expect(writes()).toEqual([]);
+    unmount();
+    render(<ProductionIntakePage principal={viewer} />);
+    await screen.findAllByText("Жгут КБ1");
+    expect(screen.queryByRole("button", { name: /^Упаковать всё/ })).not.toBeInTheDocument();
+  });
+
+  it("«Отгрузить всё»: отгружает готовые отправки проекта, неготовые пропускает с пробелами", async () => {
+    const ask = confirmSpy();
+    const ready = (id: string, index: string) => ({ ...packedShipment, id, number: `ОТГ-${id}`, ready_to_ship: true, ready_for_track: true, track_number: "TRK", missing_ship: [], missing_data: [],
+      lines: [shipmentLine({ id: `l-${id}`, good_id: `g-${index}`, item_index: index, name: `Жгут ${index}` })] });
+    const gap = { ...packedShipment, id: "z", number: "ОТГ-z", lines: [shipmentLine({ id: "l-z", item_index: "КБ3", name: "Жгут КБ3" })] };
+    intakeRows = [kb("КБ1", { accepted: "4", packed: "4" }), kb("КБ2", { accepted: "4", packed: "4" }), kb("КБ3", { accepted: "4", packed: "4" })];
+    shipments = [ready("a", "КБ1"), ready("b", "КБ2"), gap];
+    window.history.replaceState({}, "", "/?tab=to_ship");
+    render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Отгрузить всё: 2 отправки" }));
+    await screen.findByText("Отгружено 2 отправки");
+    expect(ask).toHaveBeenCalledWith(expect.stringContaining("Отгрузить 2 отправки проекта 591К.3?"));
+    expect(ask).toHaveBeenCalledWith(expect.stringContaining("ОТГ-z — № УПД, трек-номер"));
+    expect(writes().map((call) => call.url)).toEqual(["/api/shipping/shipments/a/ship", "/api/shipping/shipments/b/ship"]);
+    expect(writes()[0].body).toEqual({ version: 3 });
+  });
+});
