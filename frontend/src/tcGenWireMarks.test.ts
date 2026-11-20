@@ -1,7 +1,10 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
 import { complexByHand, initState, makeGen, toggleLengthMode, updateEndpoint, type GenState } from "./tcGenLogic";
-import { laserMarkOf, laserPrintedKey, laserTextWarnings, markMediaOf, pickWireMarkTube, tubeBeforeShrink, WIRE_MARK_TAPE_WIDTHS_MM, WIRE_MARK_TUBE_SIZES_MM, wireMarkKindOf, wireMarkTubeBySize } from "./tcGenWireMarks";
+import {
+  laserMarkOf, laserPrintedKey, laserTextWarnings, markMediaOf, markTubeForWire, pickCoverTube, pickWireMarkTube, savedWireMarks, tubeBeforeShrink, WIRE_MARK_TAPE_WIDTHS_MM,
+  WIRE_MARK_TUBE_SIZES_MM, wireMarkCoverLen, wireMarkCoverOn, wireMarkKindOf, wireMarksFromDefaults, wireMarkTubeBySize, withTubeMm, type WireMarkCfg,
+} from "./tcGenWireMarks";
 import { assignPinJoined, joinSplice, renameSplice, setTail, spliceLabel } from "./tcGenSplices";
 import { pinConns, pinRows, spliceLines } from "./tcGenPinTable";
 import { pinoutEnds, pinUnits } from "./pinoutCheck";
@@ -186,7 +189,7 @@ it("переключатель: трубка, лента и лазер взаи�
   expect(json({ ...soldered(), wireMarks: { enabled: false, mat: "", len: "", dist: "", kind: "laser" } })).not.toMatch(/laserMark|markMedia|wireMarks/);
 });
 
-it("трубка маркиратора: выбранный Ø — в markMedia всех трёх операций и трубка этого Ø; без выбора — как до 20.11", () => {
+it("трубка маркиратора: выбранный Ø — в markMedia всех трёх операций и трубка этого Ø; без выбора — Ø TP80E по Ø провода", () => {
   expect(WIRE_MARK_TUBE_SIZES_MM).toEqual([2.4, 3.2, 4.8, 6, 8]);
   const data = { ...DSA, markMats: [{ name: "ТУТ 3,2/1,6 белая", group: "ТУТ", unit: "м" }, { name: "ТУТ 2,4/1,2 белая", group: "ТУТ", unit: "м" }] };
   const S = on(threeWires(), { kind: "tube", tubeMm: "3.2" });
@@ -196,7 +199,7 @@ it("трубка маркиратора: выбранный Ø — в markMedia 
   expect(ops[0].tutArt).toBe("ТУТ 3,2/1,6 белая");
   expect(wireMarkTubeBySize(["ТУТ 3,2/1,6 черная", "ТУТ 3,2/1,6 белая"], 3.2)).toBe("ТУТ 3,2/1,6 белая");
   expect(wireMarkTubeBySize(["ТУТ 4/2мм"], 3.2)).toBe("");
-  expect(markMediaOf({ enabled: true, mat: "", len: "", dist: "", kind: "tube" })).toBeNull();
+  expect(markMediaOf({ enabled: true, mat: "", len: "", dist: "", kind: "tube" })).toEqual({ kind: "tube", sizeMm: 2.4 });
 });
 
 it("лента маркиратора: печать этикеток и наклейка, без усадки; ширина по умолчанию — первая из списка", () => {
@@ -208,11 +211,12 @@ it("лента маркиратора: печать этикеток и накл
   expect(markMediaOf({ enabled: true, mat: "", len: "", dist: "", kind: "tape" })).toEqual({ kind: "tape", sizeMm: 6 });
 });
 
-it("старый черновик (трубка без поля kind) и форма без метки — операции и конфиг байт в байт как до 20.11", () => {
+it("старый черновик (трубка без поля kind) — как трубка «по Ø провода»: Ø TP80E в markMedia, без лазера; форма без метки — байт в байт", () => {
   const before = on(soldered(), { len: "12", dist: "25" });
   const same = (a: GenState, b: GenState) => expect(JSON.stringify(makeGen(DSA, a).buildConfig())).toBe(JSON.stringify(makeGen(DSA, b).buildConfig()));
   same(before, on(soldered(), { len: "12", dist: "25", kind: "tube", tubeMm: "", laser: { mode: "full" } }));
-  expect(JSON.stringify(makeGen(DSA, before).buildConfig())).not.toMatch(/markMedia|laserMark/);
+  expect(JSON.stringify(makeGen(DSA, before).buildConfig())).not.toMatch(/laserMark/);
+  expect(rawOps(before).find((o) => o.opKey === "cutWireMark")!.markMedia).toEqual({ kind: "tube", sizeMm: 2.4 });
   const full = fullHarness(DSA);
   same(full, { ...full, wireMarks: { enabled: false, mat: "", len: "", dist: "", kind: "tape", tapeMm: "9" } });
 });
@@ -243,4 +247,124 @@ it("лазер: надпись длиннее 30 знаков — предупр
   // По всей длине со своей надписью концы не печатаются — предупреждений нет.
   expect(laserTextWarnings(FULL_CFG("ЖГУТ-7"), rows)).toEqual({});
   expect(Object.keys(laserTextWarnings(FULL_CFG(""), rows))).toEqual(["0.0", "0.1"]);
+});
+
+/*
+ * Печать на Supvan TP80E ОБ.057 (владелец 20.11): карта PRINT_MARK для трубки и ленты, «по Ø провода» — Ø TP80E, прозрачная
+ * трубка поверх метки и запомненный выбор проекта.
+ */
+const cfg = (patch: Partial<WireMarkCfg> = {}): WireMarkCfg => ({ enabled: true, mat: "", len: "", dist: "", ...patch });
+const TP80E = { ...DSA, templates: [...DSA.templates, { id: "print-mark-печать-маркировки-на-трубке-и-ленте", title: "PRINT_MARK | Печать маркировки на трубке и ленте", category: "Монтаж маркировки" }] };
+
+it("TP80E: трубка и лента печатаются картой PRINT_MARK, если она есть в библиотеке; нет её — карты Godex, как раньше", () => {
+  const tube = makeGen(TP80E, on(threeWires(), { kind: "tube" })).getActiveOps().find((o) => o.opKey === "cutWireMark")!;
+  expect([tube.tmplHint, tube.tmplWant]).toEqual(["PRINT_MARK", "PRINT_MARK"]);
+  expect(tube.label).toMatch(/^Печать и резка маркировки проводов/);
+  const tape = makeGen(TP80E, on(threeWires(), { kind: "tape" })).getActiveOps().find((o) => o.opKey === "cutWireMark")!;
+  expect([tape.tmplHint, tape.tmplWant]).toEqual(["PRINT_MARK", "PRINT_MARK"]);
+  expect((makeGen(TP80E, on(threeWires(), { kind: "tape" })).buildConfig() as Raw).ops.find((o) => o.opKey === "cutWireMark")!.templateId)
+    .toBe("print-mark-печать-маркировки-на-трубке-и-ленте");
+  expect(makeGen(DSA, on(threeWires(), { kind: "tube" })).getActiveOps().find((o) => o.opKey === "cutWireMark")!.tmplHint).toBe("PRINT_MARK_TUBE");
+  // Метки-трубки состава (cutMark) остаются на Godex.
+  expect(makeGen(TP80E, fullHarness(TP80E)).getActiveOps().find((o) => o.opKey === "cutMark")!.tmplHint).toBe("PRINT_MARK_TUBE");
+});
+
+it("«по Ø провода» — ближайший Ø TP80E не меньше Ø провода; запомненный для этого Ø провода — раньше; выбранный — всегда", () => {
+  expect([0, 1.1, 2.4, 2.5, 4.9, 7.9, 9].map(markTubeForWire)).toEqual([2.4, 2.4, 2.4, 3.2, 6, 8, 8]);
+  expect(markMediaOf(cfg({ kind: "tube" }), 3)).toEqual({ kind: "tube", sizeMm: 3.2 });
+  expect(markMediaOf(cfg({ kind: "tube", tubeByDia: { "1.1": "4.8" } }), 1.1)).toEqual({ kind: "tube", sizeMm: 4.8 });
+  expect(markMediaOf(cfg({ kind: "tube", tubeByDia: { "1.4": "4.8" } }), 1.1)).toEqual({ kind: "tube", sizeMm: 2.4 });
+  expect(markMediaOf(cfg({ kind: "tube", tubeMm: "6", tubeByDia: { "1.1": "4.8" } }), 1.1)).toEqual({ kind: "tube", sizeMm: 6 });
+  // Жгут: самый толстый маркируемый провод НВ4 0,2 — Ø 1,1 → трубка 2,4; запомненный Ø для 1,1 — в операции.
+  const g = makeGen(DSA, on(threeWires()));
+  expect(g.wireMarkDia_(g.wireMarkList_().rows)).toBe(1.1);
+  const media = (S: GenState) => makeGen(DSA, S).getActiveOps().find((o) => o.opKey === "cutWireMark")!.markMedia;
+  expect(media(on(threeWires(), { kind: "tube" }))).toEqual({ kind: "tube", sizeMm: 2.4 });
+  expect(media(on(threeWires(), { kind: "tube", tubeByDia: { "1.1": "3.2" } }))).toEqual({ kind: "tube", sizeMm: 3.2 });
+});
+
+it("выбор Ø трубки запоминается за Ø провода; «по Ø провода» запомненное убирает; Ø провода неизвестен — только выбор", () => {
+  const picked = withTubeMm(cfg({ kind: "tube", tubeByDia: { "2": "4.8" } }), "3.2", 1.1);
+  expect(picked).toMatchObject({ tubeMm: "3.2", tubeByDia: { "2": "4.8", "1.1": "3.2" } });
+  expect(withTubeMm(picked, "", 1.1)).toMatchObject({ tubeMm: "", tubeByDia: { "2": "4.8" } });
+  expect(withTubeMm(cfg({ kind: "tube" }), "6", 0)).toEqual(cfg({ kind: "tube", tubeMm: "6" }));
+});
+
+it("выбор уходит в рецепт (build_config.wireMarks): чем метить, размер, запомненные Ø, покрытие; выключено — ничего", () => {
+  const raw = (S: GenState) => (makeGen(DSA, S).buildConfig() as Record<string, unknown>).wireMarks;
+  expect(raw(on(threeWires(), { kind: "tube", tubeMm: "3.2", tubeByDia: { "1.1": "3.2" } })))
+    .toEqual({ enabled: true, kind: "tube", tubeMm: "3.2", tubeByDia: { "1.1": "3.2" }, cover: false });
+  expect(raw(on(threeWires(), { kind: "tape", tapeMm: "9", tubeMm: "3.2" }))).toEqual({ enabled: true, kind: "tape", tapeMm: "9", cover: true });
+  expect(raw(on(threeWires(), { kind: "tape" }))).toMatchObject({ tapeMm: "6" });
+  expect(raw({ ...threeWires(), wireMarks: cfg({ enabled: false, kind: "tape" }) })).toBeUndefined();
+  expect(savedWireMarks(cfg({ kind: "laser" }))).toEqual({ enabled: true, kind: "laser" });
+});
+
+it("выбор проекта для новой КБ: трубка или лента, ширина ленты, Ø трубки по Ø провода; ничего не печатали — форму не трогаем", () => {
+  expect(wireMarksFromDefaults({ kind: null, tapeMm: null, tubeByDia: {} })).toBeUndefined();
+  expect(wireMarksFromDefaults(null)).toBeUndefined();
+  expect(wireMarksFromDefaults({ kind: "tape", tapeMm: 9, tubeByDia: {} })).toEqual(cfg({ kind: "tape", tapeMm: "9" }));
+  const tube = wireMarksFromDefaults({ kind: "tube", tapeMm: null, tubeByDia: { "1.1": 3.2, "1.60": 4.8, x: 6 } })!;
+  expect(tube).toEqual(cfg({ kind: "tube", tubeByDia: { "1.1": "3.2", "1.6": "4.8" } }));
+  // Новая КБ того же проекта: провод Ø 1,1 — трубка 3,2, как выбрали в прошлый раз.
+  const ops = makeGen(DSA, { ...threeWires(), wireMarks: tube }).getActiveOps();
+  expect(ops.find((o) => o.opKey === "cutWireMark")!.markMedia).toEqual({ kind: "tube", sizeMm: 3.2 });
+});
+
+it("прозрачная трубка поверх метки: у ленты по умолчанию да, у трубки нет; переключатель решает; лазер — никогда", () => {
+  expect(wireMarkCoverOn(cfg({ kind: "tape" }))).toBe(true);
+  expect(wireMarkCoverOn(cfg({ kind: "tube" }))).toBe(false);
+  expect(wireMarkCoverOn(cfg())).toBe(false);
+  expect(wireMarkCoverOn(cfg({ kind: "tape", cover: false }))).toBe(false);
+  expect(wireMarkCoverOn(cfg({ kind: "tube", cover: true }))).toBe(true);
+  expect(wireMarkCoverOn(cfg({ kind: "laser", cover: true }))).toBe(false);
+  expect(wireMarkCoverOn(cfg({ enabled: false, kind: "tape" }))).toBe(false);
+  expect([wireMarkCoverLen(cfg()), wireMarkCoverLen(cfg({ len: "12" })), wireMarkCoverLen(cfg({ len: "7,5" }))]).toEqual(["25", "22", "17.5"]);
+  expect(keysOf(on(threeWires(), { kind: "tube" }))).not.toContain("cutWireMarkCover");
+  expect(keysOf(on(soldered(), { kind: "laser", cover: true }))).not.toContain("cutWireMarkCover");
+});
+
+it("прозрачная трубка: Ø над проводом (лента) или над трубкой маркиратора; меньшая прозрачная ТУТ состава / БД.МАТ, иначе КВТ ТУТ(HF)", () => {
+  expect(pickCoverTube([], 1.1)).toEqual({ art: "83266", name: "ТУТ(HF) 4/2 прозрачная", mm: 4 });
+  expect(pickCoverTube([], 4.8)).toEqual({ art: "ТУТ 6/3 прозрачная", name: "ТУТ 6/3 прозрачная", mm: 6 });
+  expect(pickCoverTube([], 8)).toEqual({ art: "83269", name: "ТУТ(HF) 10/5 прозрачная", mm: 10 });
+  const mats = [{ name: "ТУТ 3/1,5 белая" }, { name: "ТТК 6/2 прозрачная" }, { name: "ТУТ 3/1,5 прозрачная" }, { name: "ТУТ 6/3 прозрачная", art: "ПР-6" }];
+  expect(pickCoverTube(mats, 1.1)).toEqual({ art: "ТУТ 3/1,5 прозрачная", name: "ТУТ 3/1,5 прозрачная", mm: 3 });
+  expect(pickCoverTube(mats, 3.2)).toEqual({ art: "ПР-6", name: "ТУТ 6/3 прозрачная", mm: 6 });
+  expect(pickCoverTube(mats, 6)).toEqual({ art: "ТУТ 8/4 прозрачная", name: "ТУТ 8/4 прозрачная", mm: 8 });
+});
+
+it("покрытие ленты: три операции (резка ОБ.018, надеть сразу после метки, усадка после неё), отрезок = метка + 10 мм, без флагов метки", () => {
+  const S = on(threeWires(), { kind: "tape", len: "12" });
+  const g = makeGen(DSA, S);
+  const ops = g.getActiveOps();
+  const keys = ops.map((o) => o.opKey);
+  const cover = ops.filter((o) => /WireMarkCover$/.test(o.opKey));
+  expect(cover.map((o) => [o.opKey, o.type, o.tmplHint])).toEqual([
+    ["cutWireMarkCover", "cutTut", "CUT_TUT_short"], ["onWireMarkCover", "insTut", "INS_TUT"], ["heatWireMarkCover", "heatTut", "HEAT_TYT_short"]]);
+  expect(keys.indexOf("onWireMarkCover")).toBe(keys.indexOf("onWireMark") + 1);
+  expect(keys.indexOf("heatWireMarkCover")).toBe(keys.indexOf("onWireMarkCover") + 1);
+  const terminal = ops.findIndex((o) => !!o.epId);
+  if (terminal >= 0) expect(keys.indexOf("heatWireMarkCover")).toBeLessThan(terminal);
+  expect(cover[0]).toMatchObject({ tutArt: "83266", tutName: "ТУТ(HF) 4/2 прозрачная", tutCount: 4, coverMm: 4,
+    tutParts: [{ art: "83266", name: "ТУТ(HF) 4/2 прозрачная", count: 4, len: "22" }], tutSegs: [{ len: "22", count: 4 }] });
+  cover.forEach((o) => { expect(o.markTube).toBeFalsy(); expect(o.wireMarks).toBeFalsy(); expect(o.shrinkMaterials).toEqual([{ art: "83266", name: "ТУТ(HF) 4/2 прозрачная" }]); });
+  const raw = (g.buildConfig() as Raw).ops.filter((o) => /WireMarkCover$/.test(String(o.opKey)));
+  expect(raw.map((o) => o.templateId)).toEqual(["cut-tut-short-резка", "ins-tut-монтаж", "heat-tyt-short-усадка"]);
+  expect(raw[0]).toMatchObject({ coverMm: 4, tutParts: [{ len: "22", count: 4 }] });
+  raw.forEach((o) => { expect(o).not.toHaveProperty("markTube"); expect(o).not.toHaveProperty("wireMarks"); });
+  // Схема ПФ: резка — с прочими трубками («Резка трубок»), надеть и усадка — в «Провода с маркировкой».
+  const graph = g.pfGraph()!;
+  const pf = new Map(ops.map((o) => [o.opKey, o.pf]));
+  expect([pf.get("cutWireMarkCover"), pf.get("onWireMarkCover"), pf.get("heatWireMarkCover")]).toEqual(["pf-tubes", "pf-wiremark", "pf-wiremark"]);
+  expect(graph.blocks.find((b) => b.key === "pf-tubes")).toMatchObject({ name: "Резка трубок", kit: true });
+  expect(graph.edges.find((e) => e.from === "pf-tubes" && e.to === "pf-wiremark")?.items).toEqual(["ТУТ(HF) 4/2 прозрачная 22 мм — 4 шт"]);
+});
+
+it("покрытие трубки маркиратора: Ø над трубкой TP80E, надеть сразу после метки, усадка последней", () => {
+  const data = { ...DSA, markMats: [{ name: "ТУТ 4,8/2,4 белая", group: "ТУТ", unit: "м" }] };
+  const ops = makeGen(data, on(threeWires(), { kind: "tube", tubeMm: "4.8", cover: true })).getActiveOps();
+  const keys = ops.map((o) => o.opKey).filter((k) => /WireMark/.test(k));
+  expect(keys).toEqual(["cutWireMarkCover", "cutWireMark", "onWireMark", "onWireMarkCover", "heatWireMark", "heatWireMarkCover"]);
+  expect(ops.find((o) => o.opKey === "cutWireMarkCover")).toMatchObject({ tutName: "ТУТ 6/3 прозрачная", coverMm: 6, tutParts: [{ len: "25", count: 4 }] });
 });

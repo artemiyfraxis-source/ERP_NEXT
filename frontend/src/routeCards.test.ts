@@ -172,6 +172,41 @@ describe("карточки «Схемы полуфабрикатов» гене�
       .toEqual(["Нарезанные провода", "Напечатанная маркировка", "Нарезанные трубки", "Готовый кабель"]);
   });
 
+  it("a ПФ per printer: Godex marks and the TP80E wire marks are two input-less cards, Godex named by what it holds (owner 20.11)", () => {
+    // Зеркало backend test_pf_split_operations: Godex PRINT_MARK_TUBE, TP80E PRINT_MARK, прозрачная трубка — с трубками.
+    const ops = [op(1, "cutWire", "Провод", { key: "cutWire", code: "CUT_WIRE_auto" }),
+      op(2, "cutTut", "Маркировка", { key: "cutMark", code: "PRINT_MARK_TUBE" }),
+      op(3, "cutTut", "Маркировка проводов", { key: "cutWireMark", code: "PRINT_MARK" }),
+      op(4, "cutTut", "Прозрачная ТУТ", { key: "cutWireMarkCover", code: "CUT_TUT_short" }),
+      op(5, "insTut", "Маркировка на проводах", { key: "onWireMark", code: "INS_TUT" }),
+      op(6, "insTut", "Прозрачная ТУТ надета", { key: "onWireMarkCover", code: "INS_TUT" }),
+      op(7, "heatTut", "Прозрачная ТУТ усажена", { key: "heatWireMarkCover", code: "HEAT_TYT_short" }),
+      op(8, "prsTerm", "Терминалы А", { side: "A", key: "prsTermA1" }), op(9, "insTerm", "Сторона А", { side: "A", key: "insTermA1" }),
+      op(10, "insTut", "Маркировка надета", { key: "onMark", code: "INS_TUT" }),
+      op(11, "prsTerm", "Терминалы В", { side: "B", key: "prsTermB1" }), op(12, "insTerm", "Сторона В", { side: "B", key: "insTermB1" })];
+    const stages = opStages(ops);
+    expect([1, 2, 3, 4].map((position) => stages.get(position))).toEqual(["wires", "labels", "printed", "tubes"]);
+    const cards = genCards(deriveRoute(ops), ops).cards;
+    expect(cards.slice(0, 4).map((card) => [card.id, card.kind, card.title])).toEqual([
+      ["wires", "semiFinished", "Нарезанные провода"], ["labels", "semiFinished", "Маркировочные трубки"],
+      ["printed", "semiFinished", "Напечатанная маркировка"], ["tubes", "semiFinished", "Нарезанные трубки"]]);
+    expect(genArtHeight("printed", { ...EMPTY_ART, faces: { A: [{ key: "X1", label: "X1", housing: null, byPin: null }], B: [] } }, false)).toBe(0);
+    // Только TP80E — «Напечатанная маркировка»; только Godex — названия как до 20.11.
+    const titleOf = (list: RouteOp[], id: string) => genCards(deriveRoute(list), list).cards.find((card) => card.id === id)?.title;
+    expect(titleOf(ops.filter((item) => item.key !== "cutMark"), "printed")).toBe("Напечатанная маркировка");
+    expect(titleOf(ops.filter((item) => !["cutWireMark", "onWireMark"].includes(item.key)), "labels")).toBe("Напечатанная маркировка");
+    // Godex: этикетка и трубка вместе — «Этикетки и маркировочные трубки»; флажки по КД (printMarks) — у Godex, «Этикетки».
+    const mixed = [...ops.slice(0, 2), op(13, "coaxCutTut", "Этикетки", { key: "coaxPrintLabel", code: "PRINT_MARK_LABEL" }), ...ops.slice(2)];
+    expect(titleOf(mixed, "labels")).toBe("Этикетки и маркировочные трубки");
+    const flags = [op(1, "cutWire", "Провод", { key: "cutWire", code: "CUT_WIRE_auto" }), op(2, "insMark", "Флажки", { key: "printMarks", code: "INS_MARK_AUTO" }),
+      op(3, "cutTut", "Маркировка проводов", { key: "cutWireMark", code: "PRINT_MARK" }), op(4, "insTut", "Маркировка на проводах", { key: "onWireMark", code: "INS_TUT" }),
+      op(5, "prsTerm", "Терминалы А", { side: "A", key: "prsTermA1" }), op(6, "insTerm", "Сторона А", { side: "A", key: "insTermA1" }),
+      op(7, "insMark", "Флажки на жгуте", { key: "insMark", code: "INS_MARK" })];
+    const flagStages = opStages(flags);
+    expect([flagStages.get(2), flagStages.get(3), flagStages.get(7)]).toEqual(["labels", "printed", "final"]);
+    expect([titleOf(flags, "labels"), titleOf(flags, "printed")]).toEqual(["Этикетки", "Напечатанная маркировка"]);
+  });
+
   it("puts the number on a link from its single arrow and nothing when the arrows differ", () => {
     const route = deriveRoute(OPS);
     const edited = { ...route, edges: route.edges.map((edge) => (edge.from === "b2" ? { ...edge, per_unit: 4 } : edge)) };

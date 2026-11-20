@@ -9,7 +9,7 @@
  */
 import { matchCableRec } from "./cableMatch";
 import { COAX_PROTECTIVE_TUT_LENGTHS, coaxMarkDefaults, coaxMarksFromName, sumCoaxMaterial, type CoaxMark, type ConnColor, markIsTube, markLabel, markSpecs, markTubeShrinks, markTubeSplit, type MarkMat, type MarkRow, type MarkSpec, type MarkTube } from "./tcGenMarks";
-import { laserMarkOf, laserPrintedKey, markMediaOf, pickWireMarkTube, WIRE_MARK_DIST_MM, WIRE_MARK_LEN_MM, wireMarkKey, wireMarkKindOf, wireMarkRow, wireMarkTexts, wireMarkTubeBySize, type LaserMark, type MarkMedia, type WireMarkCfg, type WireMarkRow, type WireMarkSkip } from "./tcGenWireMarks";
+import { laserMarkOf, laserPrintedKey, markMediaOf, pickCoverTube, pickWireMarkTube, savedWireMarks, WIRE_MARK_DIST_MM, WIRE_MARK_LEN_MM, wireMarkCoverLen, wireMarkCoverOn, wireMarkKey, wireMarkKindOf, wireMarkRow, wireMarkTexts, wireMarkTubeBySize, type LaserMark, type MarkMedia, type WireMarkCfg, type WireMarkRow, type WireMarkSkip } from "./tcGenWireMarks";
 import { twistGroupProblems, twistGroupsOf, type TwistRow } from "./twistGroups";
 import { pickTerminals, type TerminalPairs } from "./terminalPick";
 import { LUG_CRIMP_CARD, LUG_CRIMP_NAMES, lugArt, lugByArt, lugCrimpOf, lugTypes, type LugCrimp, type LugRec } from "./tcGenLugs";
@@ -245,6 +245,9 @@ export const TAIL_CUT_CODE_ = "CUT_WIRE+2strip+tin";
 export const MARK_CUT_CODE_ = "PRINT_MARK_TUBE";
 /** Прежний код той же карты (до 25.10.2026): библиотека, где переименование ещё не записано, и сохранённые конфиги. */
 export const MARK_CUT_CODE_OLD_ = "INS_MARK_TUBE_AUTO";
+/** Печать маркировки проводов на трубке и ленте — Supvan TP80E ОБ.057 (владелец 20.11, БД.ОП PRINT_MARK). Метки-трубки
+ *  состава (cutMark) и этикетки коаксиала остаются на Godex. */
+export const PRINT_MARK_CODE_ = "PRINT_MARK";
 /** Резка оплётки (линейных материалов). */
 export const BRAID_CUT_CODE_ = "CUT_NEYLON";
 export type CoaxStripMode = "machine" | "separate";
@@ -545,6 +548,8 @@ export type OpSpec = {
   wireMarks?: boolean; markTexts?: string[]; markDist?: string;
   /** Чем печатать маркировку проводов (трубка Ø / лента шириной, владелец 20.11); нет — как до 20.11. */
   markMedia?: MarkMedia;
+  /** Прозрачная трубка поверх маркировки проводов (cutWireMarkCover / onWireMarkCover / heatWireMarkCover): её Ø до усадки, мм. */
+  coverMm?: number;
   /** Резка на ОБ.019 (cutWire / cutWireStrip): лазерная маркировка провода партии (владелец 20.11). */
   laserMark?: LaserMark;
   /** Метки по КД «Сложной сборки» (26.10): `print` — печать в ПФ «Маркировка», `install` — монтаж на месте метки (ЭТК делит ход по фазам). */
@@ -3506,17 +3511,21 @@ export function makeGen(D: GenData, S: GenState) {
     const kit = markComps_().filter((c) => markIsTube(`${c.name || ""} ${c.art || ""}`) && !/["«"][^"»"]+["»"]/.test(c.name || c.art || "")).map((c) => c.art || c.name || "");
     return [...new Set([...kit, ...(D.markMats || []).filter((m) => markIsTube(m.name)).map((m) => m.name)].filter(Boolean))];
   }
-  /** Выбранная трубка; не выбрана — по Ø изоляции самого толстого из маркируемых проводов. */
+  /** Ø изоляции самого толстого из маркируемых проводов (0 — неизвестен): по нему трубка «по Ø провода» и запомненный Ø. */
+  function wireMarkDia_(rows: WireMarkRow[]): number {
+    const idxs = new Set(rows.map((r) => r.idx));
+    return Math.max(0, ...activeWires_().filter((w) => idxs.has(w.idx)).map((w) => { const c = getCompById(w.compId); return c ? (Number(lookupWireDia_(c.art)) || Number(lookupWireDia_(c.name)) || 0) : 0; }));
+  }
+  /** Чем печатать маркировку проводов: трубка — выбранного, запомненного или ближайшего к Ø провода Ø TP80E, лента — ширины. */
+  const wireMarkMedia_ = (rows: WireMarkRow[]) => markMediaOf(S.wireMarks, wireMarkDia_(rows));
+  /** Выбранная трубка; не выбрана — трубка Ø маркиратора из состава и БД.МАТ, нет такой — по Ø изоляции самого толстого провода. */
   function wireMarkTube_(rows: WireMarkRow[]): string {
     const chosen = (S.wireMarks?.mat || "").trim();
     if (chosen) return chosen;
-    // Выбран Ø трубки маркиратора (владелец 20.11) — трубка этого Ø из состава и БД.МАТ; нет такой — по Ø провода, как раньше.
-    const media = markMediaOf(S.wireMarks);
+    const media = wireMarkMedia_(rows);
     const sized = media?.kind === "tube" ? wireMarkTubeBySize(wireMarkTubeOptions_(), media.sizeMm) : "";
     if (sized) return sized;
-    const idxs = new Set(rows.map((r) => r.idx));
-    const dia = Math.max(0, ...activeWires_().filter((w) => idxs.has(w.idx)).map((w) => { const c = getCompById(w.compId); return c ? (Number(lookupWireDia_(c.art)) || Number(lookupWireDia_(c.name)) || 0) : 0; }));
-    return pickWireMarkTube(wireMarkTubeOptions_(), dia);
+    return pickWireMarkTube(wireMarkTubeOptions_(), wireMarkDia_(rows));
   }
   /** Провода, у которых конец обжимается на станке при резке: трубка маркировки на готовый терминал не налезет. Номера через запятую. */
   function wireMarkCrimpNote_(rows: WireMarkRow[]): string {
@@ -3529,21 +3538,25 @@ export function makeGen(D: GenData, S: GenState) {
     return kind === "laser" ? `${head} — их режет станок с обжимом, лазер ОБ.019 их не маркирует`
       : `${head} — ${kind === "tape" ? "лента маркировки наклеивается до терминала" : "трубка маркировки на готовый терминал не наденется"}`;
   }
-  /** Печать и резка → надеть на провода (до терминалов) → усадка; нет известных концов — ничего. */
+  /** Карта печати маркировки проводов (владелец 20.11): Supvan TP80E ОБ.057 — PRINT_MARK; нет её в библиотеке — карты Godex,
+   *  как до 20.11. */
+  const tp80eCard_ = () => hasTemplateCode_(PRINT_MARK_CODE_);
+  /** Печать и резка → надеть на провода (до терминалов) → усадка; прозрачная трубка поверх — своими тремя операциями
+   *  (wireMarkCoverOps_). Нет известных концов — ничего. */
   function wireMarkOps_(): OpSpec[] {
     if (laserOn_()) return [];
     const { rows } = wireMarkList_();
     if (!rows.length) return [];
     const cfg = S.wireMarks!;
-    const media = markMediaOf(cfg);
-    if (media?.kind === "tape") return wireMarkTapeOps_(rows, media);
+    const media = wireMarkMedia_(rows);
+    if (media?.kind === "tape") return withWireMarkCover_(wireMarkTapeOps_(rows, media), rows, media);
     const tube = wireMarkTube_(rows);
     const nk = (v: string) => v.trim().toLowerCase().replace(/\s+/g, " ");
     const comp = tube ? comps().find((c) => nk(c.art || "") === nk(tube) || nk(c.name || "") === nk(tube)) : undefined;
     const art = comp ? comp.art || comp.name || tube : tube, name = comp ? comp.name || comp.art || tube : tube;
     const len = (cfg.len || "").trim() || WIRE_MARK_LEN_MM, dist = (cfg.dist || "").trim() || WIRE_MARK_DIST_MM;
     const count = rows.length * 2, texts = wireMarkTexts(rows);
-    const markCode = [MARK_CUT_CODE_, MARK_CUT_CODE_OLD_].find(hasTemplateCode_);
+    const markCode = tp80eCard_() ? PRINT_MARK_CODE_ : [MARK_CUT_CODE_, MARK_CUT_CODE_OLD_].find(hasTemplateCode_);
     const common = { markTube: true, wireMarks: true, markDist: dist, shrinkMaterials: [{ art, name }], ...(media ? { markMedia: media } : {}) };
     const out: OpSpec[] = [
       { ...common, type: "cutTut", opKey: "cutWireMark", tmplHint: markCode || "CUT_TUT_short", tmplWant: markCode || MARK_CUT_CODE_, cat: "Резка", markTexts: texts,
@@ -3555,7 +3568,7 @@ export function makeGen(D: GenData, S: GenState) {
     if (markTubeShrinks(`${name} ${art}`)) {
       out.push({ ...common, type: "heatTut", opKey: "heatWireMark", tmplHint: "HEAT_TYT_short", cat: "Усадка", tutCount: count, label: `Усадка маркировки проводов — ${count} шт` });
     }
-    return out;
+    return media ? withWireMarkCover_(out, rows, media) : out;
   }
   /** Лента маркиратора (владелец 20.11): печать этикеток и наклейка на провода; лента — расходник маркиратора, не состав,
    *  усадки нет. Ключи операций те же, что у трубки, — схема ПФ и сохранённые маршруты их узнают. */
@@ -3564,13 +3577,51 @@ export function makeGen(D: GenData, S: GenState) {
     const len = (cfg.len || "").trim() || WIRE_MARK_LEN_MM, dist = (cfg.dist || "").trim() || WIRE_MARK_DIST_MM;
     const count = rows.length * 2, tape = `Лента ${mmRu(media.sizeMm)} мм`;
     const common = { markTube: true, wireMarks: true, markDist: dist, shrinkMaterials: [], markMedia: media };
+    const printCode = tp80eCard_() ? PRINT_MARK_CODE_ : hasTemplateCode_("PRINT_MARK_LABEL") ? "PRINT_MARK_LABEL" : "CUT_TUT_short";
     return [
-      { ...common, type: "cutTut", opKey: "cutWireMark", tmplHint: hasTemplateCode_("PRINT_MARK_LABEL") ? "PRINT_MARK_LABEL" : "CUT_TUT_short", tmplWant: "PRINT_MARK_LABEL",
+      { ...common, type: "cutTut", opKey: "cutWireMark", tmplHint: printCode, tmplWant: tp80eCard_() ? PRINT_MARK_CODE_ : "PRINT_MARK_LABEL",
         cat: "Резка", markTexts: wireMarkTexts(rows), label: `Печать маркировки проводов на ленте ${mmRu(media.sizeMm)} мм — ${count} шт × ${len.replace(".", ",")} мм`,
         tutArt: tape, tutName: tape, tutCount: count, tutSegs: [{ len, count }], tutParts: [{ art: tape, name: tape, count, len }] },
       { ...common, type: "insTut", opKey: "onWireMark", tmplHint: hasTemplateCode_("INS_MARK_LABEL") ? "INS_MARK_LABEL" : "INS_TUT", cat: "Монтаж", tutCount: count,
         label: `Наклеить маркировку на провода — ${count} шт, ${dist.replace(".", ",")} мм от конца` },
     ];
+  }
+  /** Прозрачные трубки на выбор поверх метки: позиции состава, затем БД.МАТ (pickCoverTube оставит прозрачные ТУТ). */
+  function wireMarkCoverOptions_(): Array<{ art: string; name: string }> {
+    const kit = comps().map((c) => ({ art: c.art || c.name || "", name: c.name || c.art || "" }));
+    const ref = (D.markMats || []).map((m) => ({ art: m.art || m.name, name: m.name }));
+    const seen = new Set<string>();
+    return [...kit, ...ref].filter((item) => item.name && !seen.has(item.name.toLowerCase()) && !!seen.add(item.name.toLowerCase()));
+  }
+  /** «Покрыть прозрачной трубкой» (владелец 20.11; контракт с сервером T1, etk_builder MARK_COVER_KEYS): отрезок прозрачной ТУТ
+   *  на каждую метку длиной метка + 10 мм — резка на ОБ.018 (ПФ «Нарезанные трубки»), надеть сразу после метки, усадка после
+   *  неё. Ø — над проводом (лента) или над трубкой маркиратора (трубка). Без флагов `markTube` / `wireMarks`: это не метка. */
+  function wireMarkCoverOps_(rows: WireMarkRow[], media: MarkMedia): OpSpec[] {
+    const cfg = S.wireMarks!;
+    if (!wireMarkCoverOn(cfg)) return [];
+    const count = rows.length * 2, len = wireMarkCoverLen(cfg);
+    const over = media.kind === "tube" ? media.sizeMm : wireMarkDia_(rows);
+    const tube = pickCoverTube(wireMarkCoverOptions_(), over);
+    const part = { art: tube.art, name: tube.name, count, len };
+    const common = { tutArt: tube.art, tutName: tube.name, tutCount: count, shrinkMaterials: [{ art: tube.art, name: tube.name }], coverMm: tube.mm };
+    return [
+      { ...common, type: "cutTut", opKey: "cutWireMarkCover", tmplHint: "CUT_TUT_short", cat: "Резка", tutSegs: [{ len, count }], tutParts: [part],
+        label: `Резка прозрачной трубки поверх маркировки — ${tube.name}, ${count} шт × ${len.replace(".", ",")} мм` },
+      { ...common, type: "insTut", opKey: "onWireMarkCover", tmplHint: "INS_TUT", cat: "Монтаж",
+        label: `Надеть прозрачную трубку поверх маркировки — ${count} шт` },
+      { ...common, type: "heatTut", opKey: "heatWireMarkCover", tmplHint: "HEAT_TYT_short", cat: "Усадка",
+        label: `Усадка прозрачной трубки поверх маркировки — ${count} шт` },
+    ];
+  }
+  /** Операции метки и её прозрачной трубки по порядку: печать, резка трубки, надеть метку, надеть трубку, усадка метки, усадка трубки. */
+  function withWireMarkCover_(ops: OpSpec[], rows: WireMarkRow[], media: MarkMedia): OpSpec[] {
+    const [cut, on, heat] = wireMarkCoverOps_(rows, media);
+    if (!cut) return ops;
+    const out = [...ops];
+    out.splice(1, 0, cut);
+    out.splice(out.findIndex((o) => o.opKey === "onWireMark") + 1, 0, on);
+    out.push(heat);
+    return out;
   }
   // ── Схема ПФ «Сложной сборки» (владелец 16.10, 713К.4 КБ1: «остальное сам додумай») ──
   /** Слоты оплётки формы (вид «оплётка», материал выбран). */
@@ -3756,7 +3807,7 @@ export function makeGen(D: GenData, S: GenState) {
         label: `Монтаж маркировки ${blockKey === FINAL ? "на изделие" : blockName} — ${own.map((m) => `«${m.text || m.target}»`).join(", ")}` }];
     };
     const rebuilt = (o: OpSpec) => o === insMarkKd || o.type === "cutTut"
-      || ["insSleeves", "onMark", "heatMark", "onWireMark", "heatWireMark", "insSpl", "heatSpl", "splice", "stripSpl"].includes(o.opKey)
+      || ["insSleeves", "onMark", "heatMark", "onWireMark", "heatWireMark", "onWireMarkCover", "heatWireMarkCover", "insSpl", "heatSpl", "splice", "stripSpl"].includes(o.opKey)
       || (o.opKey === "twist" && !finalTwist)
       || (o.type === "insWrap" && o.wrapKind === "braid")
       || (o.type === "heatTut" && /^heatShr/.test(o.opKey) && !!branchOf(epOfOp(o)));
@@ -3818,7 +3869,8 @@ export function makeGen(D: GenData, S: GenState) {
     const flows: Array<{ from: string; to: string; art: string }> = [];
     // Маркировка проводов (26.10): провод с метками идёт из резки в свой ПФ «Провода с маркировкой», оттуда — дальше по цепочке.
     const wmCut = generic.find((o) => o.opKey === "cutWireMark");
-    const wmOps = generic.filter((o) => o.opKey === "onWireMark" || o.opKey === "heatWireMark");
+    // Надеть и усадить метку и прозрачную трубку поверх неё (владелец 20.11) — в ПФ «Провода с маркировкой», по порядку генератора.
+    const wmOps = generic.filter((o) => ["onWireMark", "onWireMarkCover", "heatWireMark", "heatWireMarkCover"].includes(o.opKey));
     const wmKeys = new Set(wmCut ? wireMarkList_().rows.map((r) => r.key) : []);
     cutOps.forEach((op) => (op.cutUnits || []).forEach(([idx, k]) => {
       const w = wireOf(idx);
@@ -3867,6 +3919,13 @@ export function makeGen(D: GenData, S: GenState) {
         label: `Резка трубок — ${own.map((p) => `${short(p.art)} ${p.count}×${mm(p.len)}`).join(", ")}`,
         tutArt: one ? one.art : "", tutName: one ? one.name : "", tutCount: own.reduce((n, p) => n + p.count, 0), tutSegs: segsOf(own), tutParts: own });
       tubeList.forEach((p) => link(TUBES, p.to, short(p.art), p.count));
+    }
+    // Прозрачная трубка поверх маркировки проводов (владелец 20.11) режется с прочими трубками (ОБ.018) — своей операцией: её
+    // ключ узнаёт сервер (etk_builder MARK_COVER_KEYS); отрезки идут в «Провода с маркировкой».
+    const coverCut = generic.find((o) => o.opKey === "cutWireMarkCover");
+    if (coverCut) {
+      sources.push({ ...coverCut, pf: TUBES });
+      link(TUBES, WM, `${coverCut.tutName || coverCut.tutArt || "Прозрачная трубка"} ${mm(coverCut.tutParts?.[0]?.len || "")}`, coverCut.tutCount || 0);
     }
     // ── 1. Резка оплётки: отрезок на каждую ветвь ──
     const braids = braidSlots_();
@@ -4400,6 +4459,7 @@ export function makeGen(D: GenData, S: GenState) {
         // Резка оплётки ветвей (CUT_NEYLON): отрезки — по `tutParts`, материал в метрах — у этой операции.
         if (spec.type === "cutTut" && spec.wrapKind) op.wrapKind = spec.wrapKind;
         if (spec.tutParts) op.tutParts = spec.tutParts;
+        if (spec.coverMm) op.coverMm = spec.coverMm;
       }
       if (spec.type === "insWrap") {
         op.wrapArt = spec.wrapArt; op.wrapName = spec.wrapName; op.wrapLen = spec.wrapLen; op.wrapKind = spec.wrapKind;
@@ -4496,6 +4556,8 @@ export function makeGen(D: GenData, S: GenState) {
       ...(topologyOn_() && S.topology?.tubes ? { tubePlacements: S.topology.tubes.map((t) => ({ ...t, material: topologyMaterial_(t.material) })) } : {}),
       ...(route ? { route } : {}),
       ...(S.opOrder?.length ? { opOrder: S.opOrder } : {}),
+      // Выбор маркировки проводов — в рецепт: новая КБ проекта начнёт с него (GET /api/techcards/generator-mark-defaults).
+      ...(wireMarksOn_() ? { wireMarks: savedWireMarks(S.wireMarks!) } : {}),
       ...usedColorHex_(wires),
     };
   }
@@ -4615,7 +4677,7 @@ export function makeGen(D: GenData, S: GenState) {
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, twistProblems_, autoDetectTwistPairs,
     twistGeom_, twistDiaValue, twistDiaMissing_, twistDiaOld_, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxFakra_, coaxCables_, coaxFakraMarks_, getActiveOpsFakra_, coaxBomConnectors_, coaxBomCable_, coaxBomCableComp_,
     coaxBomTut_, coaxCableDiaLookup_, matchCoaxRec_, coaxInfo, coaxMachineAuto_, coaxMachine_, coaxShieldOf_, coaxCableOuterMm_, getActiveOps, templateIdFor, stickTemplates, opRow, buildConfig, validate,
-    wireMarkList_, wireMarkTubeOptions_, wireMarkTube_, wireMarkCrimpNote_, harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, hsComp_, hsRowSkip_, hsTubeOptions_, markComps_, bomTut_, shrinkCandidates_, defaultShrinkComp_, shrinkOf_,
+    wireMarkList_, wireMarkTubeOptions_, wireMarkTube_, wireMarkDia_, wireMarkCrimpNote_, harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, hsComp_, hsRowSkip_, hsTubeOptions_, markComps_, bomTut_, shrinkCandidates_, defaultShrinkComp_, shrinkOf_,
     defaultJacketShrinkComp_, cableJacketShrink_, jacketShrinkItems_, freeJacketShrinkComp_, housingOn_, housingDefault_, sleeveWarning_,
     /** Разъёмы сторон для меток: обозначение (подпись разъёма, иначе А1/В1) и артикул. */
     markConnectors_: () => (["A", "B"] as Side[]).flatMap((side) => endpointsOnSide_(side).filter((e) => e.connId).map((e) => {
