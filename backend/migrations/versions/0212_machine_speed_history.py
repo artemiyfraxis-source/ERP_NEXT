@@ -14,8 +14,8 @@ Not destructive; the downgrade drops the table (the history since this revision 
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0210_machine_speed_history"
-down_revision = "0209_machine_work_counter"
+revision = "0212_machine_speed_history"
+down_revision = "0211_machine_hmi_commands"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False
