@@ -18,6 +18,8 @@ from app.modules.production.application import ConcurrentProductionUpdate, issue
 from app.modules.production.cutting_application import locked_group
 from app.modules.production.domain import ProductionStatus
 from app.modules.production.marking_sources import check_materials, labels
+from app.workflows.marking_progress import (fixed_keys, numbered_keys, printed_counts, remaining_rows, serial_range_of,
+                                            task_progress)
 from app.modules.references.equipment import INV_KEY
 from app.modules.references.infrastructure import EquipmentMachineRow
 from app.modules.techcards.etk_read import issued_card_for_item, pinned_card
@@ -371,6 +373,8 @@ class PreviewInput(BaseModel):
     selected: list[str] = Field(default_factory=list, max_length=500)
     # «Чередовать по изделию»: per item, fixed marks then numbered ones (XS1, A1 №1, XS1, A1 №2 …).
     interleave: bool = False
+    # «Печатать оставшиеся» (owner 20.11): skip labels already printed or queued for these tasks (marking_progress).
+    remaining: bool = False
 
 
 class BatchInput(PreviewInput):
@@ -398,23 +402,25 @@ def task_access(task, operation_id, principal, uow, *, historical=False):
         raise ConcurrentProductionUpdate("Задание отменено")
 
 
-def issued_document(task, uow):
+def issued_document(task, uow, *, lock=True):
+    """The task's pinned ETK document. `lock=False` — a plain read for views (GET /progress): no FOR UPDATE on the card."""
     techcards = SimpleNamespace(techcards=SqlAlchemyTechcardRepository(uow.session))
     card = issued_card_for_item(techcards, task.project, task.item)
     if card is None:
         raise KeyError("Нет выданной ЭТК по этой позиции")
-    uow.session.scalar(select(ProjectTechcardRow).where(ProjectTechcardRow.id == card.id).with_for_update()
-                       .execution_options(populate_existing=True))
-    card = issued_card_for_item(techcards, task.project, task.item)
-    if card is None:
-        raise ConcurrentProductionUpdate(STALE)
+    if lock:
+        uow.session.scalar(select(ProjectTechcardRow).where(ProjectTechcardRow.id == card.id).with_for_update()
+                           .execution_options(populate_existing=True))
+        card = issued_card_for_item(techcards, task.project, task.item)
+        if card is None:
+            raise ConcurrentProductionUpdate(STALE)
     shown, revision = pinned_card(techcards, card, task.techcard_revision)
     if task.techcard_revision is not None and revision["fallback"]:
         raise ConcurrentProductionUpdate("Закреплённая ревизия ЭТК не найдена")
     return shown.document, {"card_id": str(card.id), "card_version": card.version, "revision": shown.revision}
 
 
-def source_rows(source, selected, principal, uow, now, interleave=False):
+def source_rows(source, selected, principal, uow, now, interleave=False, remaining=False):
     if len(set(selected)) != len(selected):
         raise ValueError("Надпись выбрана несколько раз")
     if source.group_id:
@@ -441,6 +447,8 @@ def source_rows(source, selected, principal, uow, now, interleave=False):
             raise ConcurrentProductionUpdate("Состав группы изменился — обновите предпросмотр")
         entries, group_snapshot = [(task, source.operation_id, member)], None
     rows, snapshots = [], []
+    # One print-queue read for every task of the source (keys carry the task id), not one per task under the locks.
+    printed = printed_counts(uow.session, [task.id for task, _operation, _member in entries if task]) if remaining else None
     for task, operation_id, member in entries:
         task_access(task, operation_id, principal, uow)
         if member:
@@ -457,13 +465,17 @@ def source_rows(source, selected, principal, uow, now, interleave=False):
         # Calculate and reserve through the established issuance semantics in this same transaction.
         serial = issue_mark_serials_in(task, False, principal.actor, now, uow)
         expanded = labels(document, task, serial, selected, interleave)
+        if remaining:
+            expanded = remaining_rows(expanded, printed, fixed_keys(document, task), numbered_keys(document, task, serial))
         if any(row["serial"] is not None for row in expanded):
             issue_mark_serials_in(task, True, principal.actor, now, uow)
         rows.extend(expanded)
         snapshots.append({"task_id": str(task.id), "operation_id": str(operation_id), "version": task.version,
             "quantity": task.quantity, "serial": list(serial) if serial else None,
             "document_hash": digest(document), **revision})
-    if selected and set(selected) != {row["key"] for row in rows}:
+    if remaining and not rows:
+        raise ValueError("Все выбранные надписи уже напечатаны или стоят в очереди печати")
+    if selected and not remaining and set(selected) != {row["key"] for row in rows}:
         raise ConcurrentProductionUpdate("Выбранные надписи изменились — обновите предпросмотр")
     if not rows:
         raise ValueError("В ЭТК нет выбранных надписей fields.marks для печати")
@@ -492,7 +504,8 @@ def profile_target(session, profile_id, version, now, *, calibration=False, onli
 
 
 def build_preview(payload, principal, uow, now):
-    rows, source = source_rows(payload.source, payload.selected, principal, uow, now, payload.interleave)
+    rows, source = source_rows(payload.source, payload.selected, principal, uow, now, payload.interleave,
+                               payload.remaining)
     profile, binding = profile_target(uow.session, payload.profile_id, payload.profile_version, now, online=False)
     geometry = Geometry.model_validate(profile.geometry)
     rendered, cache = [], {}
@@ -668,6 +681,35 @@ def get_batch(batch_id: UUID, principal: ReadUser, factory: Factory, now: Now):
             result = batch_view(batch, uow.session, now)
             uow.commit()
             return result
+    return checked(run)
+
+
+@router.get("/progress")
+def progress(principal: ReadUser, factory: Factory, group_id: UUID | None = None, task_id: UUID | None = None,
+             operation_id: UUID | None = None):
+    """Printed / remaining items per KB of a cutting group (labels group) or of one task operation (owner 20.11)."""
+    def run():
+        with factory() as uow:
+            if group_id is not None:
+                group = uow.cutting.get(group_id)
+                if group is None:
+                    raise KeyError("Группа резки не найдена")
+                entries = [(uow.production.get(m.task_id), m.operation_id, m.row_snapshot.get("document"))
+                           for m in uow.cutting.members(group.id)]
+            elif task_id is not None and operation_id is not None:
+                task = uow.production.get(task_id)
+                entries = [(task, operation_id, None)]
+            else:
+                raise ValueError("Укажите группу резки или задание и операцию")
+            counts = printed_counts(uow.session, [task.id for task, _op, _doc in entries if task is not None])
+            rows = []
+            for task, operation, document in entries:
+                task_access(task, operation, principal, uow, historical=True)
+                rows.append(task_progress(task, document or issued_document(task, uow, lock=False)[0],
+                                          serial_range_of(task, uow), counts))
+            return {"rows": rows, "printed": sum(row["printed"] for row in rows),
+                    "remaining": sum(row["remaining"] for row in rows),
+                    "remaining_labels": sum(row["remaining_labels"] for row in rows)}
     return checked(run)
 
 

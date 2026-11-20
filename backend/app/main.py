@@ -82,13 +82,14 @@ from .workflows import equipment_setup_model
 from .workflows import machine_writes_api
 from .workflows import machine_control_api
 from .workflows import manual_jobs_api
+from .workflows import manual_job_stock
 from .workflows import machine_runs_api
 from .modules.production import rf_interfaces_api
 from .modules.production import mating_api as production_mating_api
 from .modules.production import vna_check_api as production_vna_check_api
 from .workflows import vna_plan_api
 from .workflows import qc_plan_api
-from .workflows import vna_bench_api, vna_measurement_api
+from .workflows import vna_bench_api, vna_measurement_api, vna_screens_api
 from .workflows import receiving_by_upd_api
 from .workflows import shipping_upd_scan_api
 from .workflows import scan_agent_install
@@ -198,6 +199,7 @@ app.include_router(vna_plan_api.router)
 app.include_router(qc_plan_api.router)
 app.include_router(vna_measurement_api.router)
 app.include_router(vna_bench_api.router)
+app.include_router(vna_screens_api.router)
 app.include_router(instrument_from_stock.router)
 app.include_router(instrument_labels.router)
 app.include_router(instrument_public_passport.router)
@@ -205,6 +207,7 @@ app.include_router(marking_labels.router)
 app.include_router(machine_writes_api.router)
 app.include_router(machine_control_api.router)
 app.include_router(manual_jobs_api.router)
+app.include_router(manual_job_stock.router)
 app.include_router(machine_runs_api.router)
 app.include_router(machines_api.router)
 app.include_router(equipment_setup_model.router)

@@ -25,7 +25,7 @@ from .vna_bench_protocol import Screen, command_args, screen_hash
 from .vna_checks import KitStandard, LOAD_LIMIT
 from .vna_dsp import TwoPort, remove_fixtures, select_band, write_touchstone
 from .vna_sessions import Profile, Standard, fingerprint
-from .vna_screens import FULL_BAND_HZ, screen as bench_screen
+from .vna_screens import FULL_BAND_HZ, ScreenDef, screen as bench_screen
 
 ITEM_KINDS = ("instrument", "assembly", "load", "flex", "control_standard", "kit_standards")
 TARGETS = ("dut", "port1", "port2", "thru", "thru_bent")
@@ -117,12 +117,13 @@ def release_step(hash_: str | None) -> dict:
     return step("release", dict(screen_hash=hash_), item=dict(kind="close"))
 
 
-def calibration_steps(snapshot: dict, *, acm_connected: bool = False) -> list[dict]:
+def calibration_steps(snapshot: dict, *, acm_connected: bool = False, load: ScreenDef | None = None) -> list[dict]:
     """11.2 + 11.4: ACM calibration, its confidence test and LOAD on each port, on the session profile.
-    `acm_connected` — the operator's click already says the ACM is on the cables (no separate confirmation)."""
+    `acm_connected` — the operator's click already says the ACM is on the cables (no separate confirmation);
+    `load` — the stored «нагрузка» screen (production_vna_screens), the code preset without it."""
     profile, acm = Profile.model_validate(snapshot["profile"]), snapshot["acm"]
     calibration = run("calibration")
-    load_screen = fit_screen(bench_screen("load_check"), profile)
+    load_screen = fit_screen(bench_screen(load or "load_check"), profile)
     hash_ = screen_hash(load_screen)
     loads = run("load", calibration_run=calibration["run_id"])
     standard = Standard(kind="ACM", ports=[1, 2], label="Подключите АКМ", kit_ports=[1, 2])
@@ -140,9 +141,9 @@ def calibration_steps(snapshot: dict, *, acm_connected: bool = False) -> list[di
     ]
 
 
-def session_steps(snapshot: dict) -> list[dict]:
+def session_steps(snapshot: dict, *, load: ScreenDef | None = None) -> list[dict]:
     profile = Profile.model_validate(snapshot["profile"])
-    return [step("prepare"), step("apply_profile", dict(profile=profile)), *calibration_steps(snapshot)]
+    return [step("prepare"), step("apply_profile", dict(profile=profile)), *calibration_steps(snapshot, load=load)]
 
 
 def item_steps(profile: Profile, screen: Screen, capture_label: str | None, item: dict, target: str = "dut",

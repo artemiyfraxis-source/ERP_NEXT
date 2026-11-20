@@ -1,16 +1,20 @@
 """HTTP «Ручная работа» (plan «Станки вне проекта», slice S1; 19.11.2026). Rules and tables: production/manual_jobs.py.
 
-Read by «Производство» or «Задания» on view, written by them on edit — the same named gates as «Станки»
-(`machines_view_principal`, `machines_edit_principal`, tests/identity/test_level_gates.py).
-- `GET  /api/production/manual-jobs?date_from=&date_to=&equipment_id=` → `{date_from, date_to, rows, can_edit}`: the
-  jobs that overlap the period (a running job started earlier is in it), newest first.
+Started, finished and cancelled by «Производство» or «Задания» on edit — the same named gate as «Станки»
+(`machines_edit_principal`, tests/identity/test_level_gates.py). The journal is read by them and by «Склад» too
+(`manual_jobs_view_principal`, slice S3): the warehouse finds there the jobs whose material waits for it.
+- `GET  /api/production/manual-jobs?date_from=&date_to=&equipment_id=&waiting=` → `{date_from, date_to, rows,
+  can_edit, can_issue, can_decide, waiting_count}`: the jobs that overlap the period (a running job started earlier is
+  in it), newest first; `waiting=true` — instead every finished job whose material «Ждёт решения склада», any date.
+  `waiting_count` counts those always. Deciding the material: app/workflows/manual_job_stock.py.
 - `GET  /api/production/manual-jobs/options` → machines of БД.ОБ (with the running job, if any), wires and contacts of
   the references, the эталоны of each machine, may this person start one — what the window offers; own values may
   be typed instead.
 - `POST /api/production/manual-jobs` `{equipment_id, purpose, wire, contact, length_mm, quantity_planned, reference_id}`
   → the new running job (409 while another runs on that machine).
 - `POST /api/production/manual-jobs/{id}/finish` `{version, good, defect, defect_reason, material, material_note}`
-  → done; `material` is `not_issued` (with a reason) or `pending` («Ждёт решения склада») until the warehouse slice.
+  → done; `material` is `not_issued` (with a reason) or `pending` («Ждёт решения склада», decided afterwards in the
+  material window — «Списать с партии» is never part of the finish).
 - `POST /api/production/manual-jobs/{id}/cancel` `{version, reason}` → cancelled.
 Each change carries the `version` the person saw (409 when it moved) and is journaled on the job."""
 
@@ -37,7 +41,7 @@ from app.modules.references.equipment import INV_KEY, NAME_KEYS, field
 from app.modules.references.infrastructure import EquipmentMachineRow, TechOperationRecordRow
 from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
-from app.shared.http_auth import Principal
+from app.shared.http_auth import Principal, require_section, warehouse_edit_principal
 
 from .machine_writes_api import _can_edit, machines_edit_principal
 from .machines_api import machines_view_principal
@@ -48,7 +52,30 @@ Factory = Annotated[Callable, Depends(production_uow_factory)]
 Now = Annotated[datetime, Depends(moscow_now)]
 Reader = Annotated[Principal, Depends(machines_view_principal)]
 Writer = Annotated[Principal, Depends(machines_edit_principal)]
+# Slice S3: the journal and the material window open to «Склад» as well; «Не списывать» is said by either side on edit,
+# «Списать с партии» only with «Склад» on edit (`warehouse_edit_principal`, the gate of every write-off).
+MANUAL_SECTIONS = ("production", "myops", "warehouse")
+manual_jobs_view_principal = require_section(MANUAL_SECTIONS, "view", detail="Раздел «Ручная работа» вам не открыт.")
+manual_jobs_material_principal = require_section(MANUAL_SECTIONS, "edit",
+                                                 detail="Решать, что делать с материалом ручной работы, вам не разрешено.")
+JournalReader = Annotated[Principal, Depends(manual_jobs_view_principal)]
 MAX_DAYS = 366
+
+
+def _passes(gate, principal: Principal) -> bool:
+    try:
+        gate(principal)
+    except HTTPException:
+        return False
+    return True
+
+
+def can_issue(principal: Principal) -> bool:
+    return _passes(warehouse_edit_principal, principal)
+
+
+def can_decide(principal: Principal) -> bool:
+    return _passes(manual_jobs_material_principal, principal)
 
 
 class Payload(BaseModel):
@@ -179,16 +206,21 @@ def _period(date_from: date | None, date_to: date | None, now: datetime) -> tupl
 # --- routes ---
 
 @router.get("")
-def journal(principal: Reader, factory: Factory, now: Now, date_from: date | None = None, date_to: date | None = None,
-            equipment_id: UUID | None = None) -> dict:
+def journal(principal: JournalReader, factory: Factory, now: Now, date_from: date | None = None,
+            date_to: date | None = None, equipment_id: UUID | None = None, waiting: bool = False) -> dict:
     start, end = _period(date_from, date_to, now)
     zone = now.tzinfo
     with factory() as uow:
-        rows = jobs.in_period(uow.session, datetime.combine(start, time(), zone),
-                              datetime.combine(end + timedelta(days=1), time(), zone), equipment_id)
+        if waiting:
+            rows = jobs.waiting(uow.session)
+        else:
+            rows = jobs.in_period(uow.session, datetime.combine(start, time(), zone),
+                                  datetime.combine(end + timedelta(days=1), time(), zone), equipment_id)
         machines = _machines(uow.session, [row.equipment_id for row in rows])
         result = [view(row, machines.get(row.equipment_id)) for row in rows]
-    return {"date_from": start.isoformat(), "date_to": end.isoformat(), "rows": result, "can_edit": _can_edit(principal)}
+        count = jobs.waiting_count(uow.session)
+    return {"date_from": start.isoformat(), "date_to": end.isoformat(), "rows": result, "can_edit": _can_edit(principal),
+            "can_issue": can_issue(principal), "can_decide": can_decide(principal), "waiting_count": count}
 
 
 @router.get("/options")

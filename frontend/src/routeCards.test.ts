@@ -140,6 +140,38 @@ describe("карточки «Схемы полуфабрикатов» гене�
     expect(genCards(deriveRoute(machine), machine).cards[0].title).toBe("Нарезанный и разделанный кабель");
   });
 
+  it("prints labels apart from cutting the cable and the tubes, FAKRA too (owner 20.11)", () => {
+    // 708К. КБ1: резка с разделкой, печать этикеток, резка прозрачной ТУТ — три ПФ без входов, все в «Кабель с метками».
+    const fakra = [op(1, "coaxCut", "Резка с разделкой (А и В)", { key: "coaxFakraCutStrip", code: "CUT_COAX+2strip" }),
+      op(2, "coaxCutTut", "Печать этикеток", { key: "coaxPrintLabel", code: "PRINT_MARK_LABEL" }),
+      op(3, "coaxCutTut", "Резка прозрачной ТУТ", { key: "coaxProtectCut", code: "CUT_TUT_short" }),
+      op(4, "coaxInsTut", "Надеть ТУТ", { key: "coaxProtectIns", code: "INS_TUT" }),
+      op(5, "coaxInsSleeve", "Детали А", { side: "A", key: "coaxInsSleeveA" }),
+      op(6, "coaxInsTut", "Наклейка этикеток", { key: "coaxInsLabel", code: "INS_MARK_LABEL" }),
+      op(7, "coaxHousing", "Корпус А", { side: "A", key: "coaxBodyA" }), op(8, "coaxHousing", "Корпус В", { side: "B", key: "coaxBodyB" }),
+      op(9, "coaxHeat", "Усадка", { key: "coaxHeat" })];
+    expect([...opStages(fakra).entries()].map(([, stage]) => stage))
+      .toEqual(["wires", "labels", "tubes", "marked", "marked", "marked", "A", "B", "final"]);
+    const cards = genCards(deriveRoute(fakra), fakra);
+    expect(cards.cards.map((card) => [card.id, card.kind, card.title, card.ops.map((item) => item.position)])).toEqual([
+      ["wires", "semiFinished", "Нарезанный и разделанный кабель", [1]], ["labels", "semiFinished", "Этикетки", [2]],
+      ["tubes", "semiFinished", "Нарезанные трубки", [3]], ["marked", "assembly", "Кабель с метками и деталями", [4, 5, 6]],
+      ["A", "assembly", "Сторона А собрана", [7]], ["B", "assembly", "Сторона В собрана", [8]], ["final", "final", "Готовый кабель", [9]],
+    ]);
+    expect(cards.links.map((link) => `${link.from}>${link.to}`).sort())
+      .toEqual(["A>B", "B>final", "labels>marked", "marked>A", "tubes>marked", "wires>marked"]);
+    // Коаксиал без FAKRA: этикетки — своя карточка, а не «Нарезанные трубки»; маркировочная трубка с печатью — тоже.
+    const coax = [op(1, "coaxCut", "Резка кабеля"), op(2, "coaxCutTut", "Печать этикеток", { key: "coaxPrintLabel", code: "PRINT_MARK_LABEL" }),
+      op(3, "coaxCutTut", "Резка ТУТ", { key: "coaxProtectCut", code: "CUT_TUT_short" }), op(4, "coaxPin", "Пайка А", { side: "A" }),
+      op(5, "coaxPin", "Пайка В", { side: "B" }), op(6, "coaxInsTut", "Наклейка этикеток", { key: "coaxInsLabel" })];
+    expect([...opStages(coax).entries()].map(([, stage]) => stage)).toEqual(["wires", "labels", "tubes", "A", "B", "final"]);
+    const printed = [op(1, "cutWire", "Провод"), op(2, "cutTut", "Печать и резка маркировки", { key: "cutMark", code: "PRINT_MARK_TUBE" }),
+      op(3, "cutTut", "Резка ТУТ", { key: "cutJs1", code: "CUT_TUT_short" }), op(4, "insTerm", "Сторона А", { side: "A" })];
+    expect([...opStages(printed).entries()].map(([, stage]) => stage)).toEqual(["wires", "labels", "tubes", "A"]);
+    expect(genCards(deriveRoute(printed), printed).cards.map((card) => card.title))
+      .toEqual(["Нарезанные провода", "Напечатанная маркировка", "Нарезанные трубки", "Готовый кабель"]);
+  });
+
   it("puts the number on a link from its single arrow and nothing when the arrows differ", () => {
     const route = deriveRoute(OPS);
     const edited = { ...route, edges: route.edges.map((edge) => (edge.from === "b2" ? { ...edge, per_unit: 4 } : edge)) };
@@ -161,6 +193,10 @@ describe("карточки «Схемы полуфабрикатов» гене�
     const art = { ...EMPTY_ART, wires: Array.from({ length: 6 }, (_, i) => ({ key: `w${i}`, label: "", title: "", color: "#000000", left: "cut" as const, right: "cut" as const })) };
     expect(genArtHeight("wires", art, false)).toBe(4 * 22 + 16 + 8);
     expect(genArtHeight("A", art, false)).toBe(0);
+    // Карточка этикеток не рисует разъёмы стороны А.
+    const faced = { ...EMPTY_ART, faces: { A: [{ key: "X1", label: "X1", housing: null, byPin: null }], B: [] } };
+    expect(genArtHeight("A", faced, false)).toBe(72);
+    expect(genArtHeight("labels", faced, false)).toBe(0);
   });
 });
 

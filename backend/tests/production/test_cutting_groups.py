@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import select
 
 from app.main import app
-from app.modules.production.cutting import cutting_recipe, digest
+from app.modules.production.cutting import cutting_recipe, cutting_recipes, digest
 from app.modules.production.domain import ProductionStatus
 from app.modules.production.cutting_infrastructure import CuttingGroupRow, CuttingMemberRow
 from app.modules.production.infrastructure import ProductionTaskRow
@@ -60,6 +60,34 @@ def document(length=1000, strip=3, cables=1):
 
 def recipe(doc, project="708К.", site="ЦАР"):
     return cutting_recipe(project, site, doc, launch_operations(launch_route(doc).steps, 10))
+
+
+def recipes(doc, project="708К.", site="ЦАР"):
+    """Every preparation PF recipe: one mixed «Заготовки» PF (ETKs before 20.11) or cut/labels/tubes PFs (after)."""
+    found, refused = cutting_recipes(project, site, doc, launch_operations(launch_route(doc).steps, 10))
+    assert found, refused
+    return found
+
+
+def tube_recipe(doc):
+    """The recipe holding the tube cut, whatever the PF shape; and that cut's parameters."""
+    for item in recipes(doc):
+        for op in item.snapshot["operations"]:
+            if "tube" in op["parameters"]:
+                return item, op["parameters"]["tube"]
+    raise AssertionError("нет резки трубок")
+
+
+def split_document(**kwargs):
+    """The same ETK split by the generator since 20.11: cable cut, labels and tubes are separate input-less PFs."""
+    doc = document(**kwargs)
+    doc["route"]["blocks"] = [
+        {"key": "cut", "ops": [1], "name": "Нарезанный и разделанный кабель"},
+        {"key": "labels", "ops": [2], "name": "Этикетки"},
+        {"key": "tubes", "ops": [3], "name": "Нарезанные трубки"},
+        {"key": "assembly", "ops": [4], "name": "Сборка", "final": True}]
+    doc["route"]["edges"] = [{"from": key, "to": "assembly", "per_unit": 1} for key in ("cut", "labels", "tubes")]
+    return doc
 
 
 @pytest.mark.parametrize("place", ["A", "B", "middle"])
@@ -118,16 +146,14 @@ def test_protective_cutting_key_ignores_batch_size_but_keeps_manual_instructions
         return doc
 
     doc15, doc20 = issued(15), issued(20)
-    first, why = recipe(doc15)
-    assert first is not None, why
-    second, why = recipe(doc20)
-    assert second is not None, why
+    first, tube = tube_recipe(doc15)
+    second, _tube = tube_recipe(doc20)
     assert doc15["operations"][2]["card"]["steps"] != doc20["operations"][2]["card"]["steps"]
+    assert [r.key for r in recipes(doc15)] == [r.key for r in recipes(doc20)]
     assert first.key == second.key
-    assert first.snapshot["operations"][2]["parameters"]["tube"]["lengths"] == {"A": "35", "B": "35", "middle": "55"}
+    assert tube["lengths"] == {"A": "35", "B": "35", "middle": "55"}
     doc20["operations"][2]["card"]["steps"][0]["text"] += " Проверить по образцу."
-    manual, why = recipe(doc20)
-    assert manual is not None, why
+    manual, _tube = tube_recipe(doc20)
     assert manual.key != first.key
 
 
@@ -146,11 +172,8 @@ def test_short_card_protective_cut_groups_across_batch_sizes_by_article():
             op["card"]["tooling"] = [{"section": "Оборудование", "inventory_number": "ОБ.1"}]
         return doc
 
-    first, why = recipe(issued(15))
-    assert first is not None, why
-    second, why = recipe(issued(20))
-    assert second is not None, why
-    assert first.key == second.key
+    first, second = recipes(issued(15)), recipes(issued(20))
+    assert [r.key for r in first] == [r.key for r in second]
 
 
 def test_real_fakra_recipe_ignores_length_and_labels_but_keeps_boundaries(fakra_document):

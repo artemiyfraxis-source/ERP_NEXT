@@ -12,6 +12,7 @@ from app.shared.persistence import Base
 from . import vna_bench as bench
 from . import vna_sessions as domain
 from .vna_bench_protocol import OPS_V2, command_args, validate_result_v2
+from .vna_screen_infrastructure import VnaScreenRepository
 
 ACTIVE_SQL = "state NOT IN ('recorded','failed','aborted')"
 COMMAND_TIMEOUT = timedelta(seconds=180)
@@ -259,7 +260,8 @@ class VnaSessionRepository:
             self._enqueue(row, current["op"], current["args"], now)
         elif is_bench and action == "recalibrate" and row.state == "ready":
             # СТО ФРАК-002-2026 п. 11.5: a lost calibration is redone in the same session; nothing of the old one stays.
-            self.append(row, bench.calibration_steps(row.snapshot), now, **bench.UNCALIBRATED)
+            self.append(row, bench.calibration_steps(row.snapshot, load=VnaScreenRepository(self.session).default("load")),
+                        now, **bench.UNCALIBRATED)
         elif is_bench and action == "close" and row.state == "ready":
             self.append(row, [bench.release_step(bench.last_screen_hash(row.steps))], now)
         elif is_bench and action == "cancel_item" and row.state in ("awaiting_standard", "awaiting_dut"):

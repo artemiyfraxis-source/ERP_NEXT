@@ -146,10 +146,17 @@ rows: [{id, task_id, operation_id, task_version, task_number, project, item, nam
         assembly_quantity, blank_quantity, operation_quantity, cables_per_assembly,
         cut_length_mm, labels, techcard_revision, good, defects,
         membership_state (active|split|cancelled),
+        tubes: [{material, length_mm, quantity}],
         state (waiting|assigned|started|done|split|cancelled),
         operator_ids, planned_start, planned_finish, norm_seconds,
         boxes: [{id, number, quantity}], etk_url}]
 ```
+
+`tubes` (owner 20.11, «Резка трубок»: КБ | Материал | Длина, мм | Шт) is filled only in `tubes` groups, from the
+group's frozen recipe: tube article, piece length and pieces for the row's whole assembly quantity, merged by material
+and length — protective tubes per cut group of the issued card (`coaxProtectiveTubes`; older cards: one piece per
+label place, per cable unless the mark is per assembly), plain tubes `tutLength` × `units` per assembly. `[]` in other
+kinds or when the snapshot lacks a positive length/count. `length_mm`/`quantity` are decimal strings.
 
 Decimal quantities are strings; assembly counts/norm seconds are integers. `operation_quantity` is the
 existing PF output quantity. For a kit of four cable blanks it may differ from `blank_quantity`.
@@ -167,15 +174,141 @@ All control actions require production edit permission and an optimistic `versio
   Existing task cancellation/restoration changes only that child's membership and preserves history.
 - `POST /.../{id}/revalidate`: `{version}`. After an issued card changes, explicitly acknowledges a
   still-identical preparation recipe and row values. Changed cut/label/recipe values refuse; launch new
-  work separately. It does not silently replace the issued task document or later PFs.
+  work separately. It does not silently replace the issued task document or later PFs. A row whose task was
+  re-pinned (`tasks/{id}/norms/refresh`) to another ETK revision than the row's frozen one is refused (422, «Обновить
+  из ЭТК»): acknowledging only the card version would let the group start and then refuse every later task change.
 
 - `POST /.../{id}/refresh-etk`: `{version}`, edit permission. For an unstarted (`open`, no work session) group: atomically
   re-pins every active member task to its current issued ETK revision (same effect as `tasks/{id}/norms/refresh`),
-  recomputes the recipe and refreshes the member rows (cut length, labels). All members must keep the group's recipe
-  key; otherwise 422 lists the diverging КБ (issue them separately via split) and nothing is written. The group keeps
-  its id, number and member positions; its version is bumped. Already current group: no-op, version unchanged.
-  Started/frozen group: 422. Group views carry `etk_stale` (some member pinned older than the issued ETK).
+  recomputes each member's recipe for its own PF and refreshes the member rows (cut length, labels). Since 20.11 a
+  member whose new recipe differs is not refused: the most common new recipe keeps this group (id, number, positions;
+  tie — the lowest row position), every other recipe moves its rows to an open unstarted group of the same project,
+  site, kind and recipe, or to a new explicit group; moved rows are `split` here (`regroup`). Since 20.11 (T2b) a member
+  whose reissued ETK changed the PF composition (`cutting_refresh_cards` gives norms `None`) is rebuilt in place by the
+  same `rebuild_task` as the CLI restructure below, and all its unstarted preparation PFs are regrouped by kind (the
+  cut keeps this group's id and number). Same refusal rules and messages as the CLI (work/output/box on the task, a PF
+  in a started group, a disappearing PF with group history or equipment); any refusal is 422 with nothing written.
+  Still 422 with nothing written: a member whose new ETK gives no recipe at all. Already current group: no-op, version
+  unchanged. Started/frozen group: 422. Group views carry `etk_stale` (some member pinned older than the issued ETK).
+  Lock order: project → every group of the project (by id) → member tasks (by id).
   CLI: `python -m app.workflows.cutting_group_existing --project X --refresh-etk [--apply]` (dry-run by default).
+- Re-pinning a grouped task (`tasks/{id}/norms/refresh`) is no longer refused while its group is open and has no work
+  session: the row keeps its frozen document (the group shows `etk_stale`) until `refresh-etk` moves it. A row behind
+  its task's revision counts as stale for `refresh-etk` (also when the card version was already revalidated), and both
+  starts refuse it until then with «Обновить из ЭТК» (group start: 422, a member's standalone start: 409), besides
+  the card-version check.
+  A started/frozen group still refuses the re-pin.
+
+## Kinds: cable cut, labels, tubes (owner 20.11)
+
+Grouping takes **every** input-less PF made only of supported preparation operations (`cutting_recipes`), not only
+the first; each PF is its own `ProductionOperation`, so one active membership per operation still holds and a КБ may
+be a member of up to three groups. `cutting_recipe` (first PF only) is kept for the launch fingerprint and the
+`POST /tasks` `cutting` response.
+
+Kind of a PF (`pf_kind`): any cable cut (`coaxCut`, `cutWire`, `cutWireStrip`) → `cut`; otherwise only printing
+operations (tape labels `markMaterial = tape`, printed marking tubes `PRINT_MARK…`) → `labels`; only tube cuts →
+`tubes`; printing and tube cuts together without a cut → not grouped. The old mixed «Заготовки» PF (cut + labels +
+tubes in one PF, ETKs before the generator split) is kind `cut` with all its operations, exactly as before.
+
+Recipe JSON: kind `cut` keeps version 1 and its identity unchanged (stored keys of existing groups stay valid; no
+`kind` field); `labels`/`tubes` are version 2 with `"kind"` in the key and **without** the cable (printing a label or
+cutting a tube does not depend on the cable; multiplicity, layout, material, tube article/lengths, cards and equipment
+still do). A key of one kind never equals a key of another, so a group never mixes kinds. Labels/tubes rows still carry
+`cut_length_mm` (from the ETK's only cable cut) for display. Group reads, the launch preview and the from-existing
+proposal add `kind` (`cut|labels|tubes`) and `kind_name`. Launch-ready runs items sharing any proposed group in one
+transaction.
+
+## Restructure unstarted tasks in place (owner 20.11)
+
+`restructure_project` (whole project, CLI); per group over HTTP through `refresh-etk` above — both use `rebuild_task`:
+
+```powershell
+.\.venv\Scripts\python -m app.workflows.cutting_group_existing --project '708К.' --restructure            # dry run
+.\.venv\Scripts\python -m app.workflows.cutting_group_existing --project '708К.' --restructure --apply
+.\.venv\Scripts\python -m app.workflows.cutting_group_existing --project '708К.' --restructure --release-moved-equipment
+```
+
+One transaction for the project (project lock, then its groups by id, then tasks). The dry run executes everything and
+rolls back. For every running task whose issued ETK revision differs from the pinned one: refused (task untouched)
+when it has any work trace (`worked`: session, output, box, defect, delivery, started share), a PF in a started/frozen
+group, a disappearing PF with cutting-group history or with an equipment allocation, a kept PF (e.g. the old
+«Заготовки» id keeping the cut) with equipment chosen for an ETK operation that moves to another PF or disappears,
+or whose code now occurs a different number of times in that PF (ЗАЧ-A/ЗАЧ-B: which one is meant is unknown — the
+master binds it again). Inside the PF an operation is followed by its code and its occurrence among the PF's
+operations with that code, not by number: an operation inserted elsewhere shifts numbers only, and the binding is
+renumbered. A bound number that is not an operation of the old PF stays allowed while the rebuilt PF has that number.
+Only current allocations (with a current member) are checked and renumbered; retired ones are history and stay as they
+are. CLI option `--release-moved-equipment` (only with `--restructure`, default off): a binding of the kept PF whose
+operation moved to another rebuilt PF (labels, tubes) is removed from the kept PF's current allocation instead of
+refusing the task — one audit `production.equipment_released` per binding (task id and number, PF, op code, ETK
+number, machine, allocation, the new PF and the op's new ETK number); the new PFs stay unbound (planning places them).
+Only operations landing in a NEW PF (not a kept one, e.g. assembly) split out of the bound PF itself are released,
+matched by occurrence among that code's operations of those new PFs (a same-code operation of another old PF or a
+newly inserted one never counts); a different count, a disappearing operation or ambiguity still refuse; retired
+allocations are untouched. Renumbering that would put two bindings of one allocation on one ETK number refuses (rebind
+by hand). A dry run executes the rebuild and rolls back, but the resource reflow (`sync_reflow`, machine/person
+plan claims) runs only on commit, i.e. with `--apply`: a claim conflict can still appear there. Output `released` lists the bindings per КБ (in a dry run: what would be released).
+HTTP «Обновить из ЭТК» never releases. Otherwise the task keeps its id,
+number, quantity, serial numbers and mark events; operations are rebuilt from the new route
+(`restructured_operations`): same ETK operations → same operation (id, assignees, window), PFs split out of one old PF
+→ the first keeps the old id and window, the others get its assignees without a window; same scheme block → same
+operation; the rest are new. Audit `production.restructured` (with `origins`: new PF → the old PF it was split out
+of — for every new PF and every kept PF whose ETK operations changed and whose lineage is not its own id: the old PF
+that alone holds all its known operation codes; else the position rule of `restructured_operations` and the code
+match (code and occurrence across the whole task) must agree, otherwise the parent is unknown, stored as `null`). A PF
+of unknown lineage in a task with a separated PF («Выдать отдельно» or split off by the master) stays standalone (its
+own separate group, or ungrouped); equipment on an operation whose new PF has an unknown or another parent is never
+released. Known limitation, left as is: the domain (`restructured_operations`) still hands old ids, assignees and
+windows by positions, so after an inserted operation a PF may take the id and assignees of an unrelated old PF (e.g.
+the tubes PF those of the assembly). Then all unstarted preparation PFs of the project's
+tasks are regrouped by recipe (`regroup`): the old group of the cut keeps its id and number; labels and tubes get their
+own explicit groups; emptied groups are cancelled. A rerun changes nothing.
+
+Regrouping rules (review of PR #977):
+- A group takes a new recipe key only when every active row of it outside the PFs being regrouped already has that
+  key (computed from the row's frozen ETK with the current code). Rows of tasks whose rebuild was refused, tasks outside
+  `--task-id`, or not running tasks keep their recipe: the regrouped PFs then go to another (or a new) group.
+- The master's separation is honoured. A PF without an active membership whose row was `split` from a group (split on
+  the group card or the group cancelled) stays standalone while its recipe key equals that row's key; with a changed
+  key it is regrouped. Splits the system made (a rebuild, a regroup move) carry `split_by` in the row snapshot and do
+  not count, so a PF a rebuild left ungrouped is regrouped on a rerun. New PFs a rebuild split out of such a PF (labels,
+  tubes) stay standalone too, also on a rerun: the lineage is read back from the stored `origins` of the task's audit. A PF of a «Выдать отдельно» launch group (`joinable = false`, idempotency key `cutting:…`)
+  stays in that group alone: regrouping never moves it elsewhere and never puts other PFs into it; new PFs split out of
+  it get one separate group each, as a separate launch makes; a separate group that cannot take its PF back is replaced
+  by a new separate group (`cutting:separate:…`), so a rerun changes nothing. Explicit groups (`cutting-existing:…`, from
+  existing work or regrouping) merge as before.
+
+Output: `restructured`, `unchanged`, `refused`, `groups`, `moved`, `cancelled`, `released`, `counts.before/after` (tasks,
+operations, serials, groups by state and kind, members by state, marking batches, label jobs, mark events),
+`invariants` (tasks, serials, batches, jobs, mark events unchanged), `labels` (printed/remaining items and
+`remaining_labels` per КБ), `labels_unchanged` (printed, remaining and remaining_labels equal before and after — a
+changed fixed label shows in `remaining_labels`), `printed_one_per_kb`. «Before» labels come from the ETK revision each task is pinned to before the
+rebuild (a missing stored revision gives none, so the check reports a change); «after» — from the reissued ETK for a
+rebuilt task and from its pinned revision for a refused one. A changed label text therefore shows as a change.
+
+## Printed and remaining labels (owner 20.11)
+
+`workflows/marking_progress.py`: no counter is stored; per task, marking batches whose manifest names it and their
+jobs. A label counts as printed when its job is `spooled` (unless the tracked printer reported error/cancel) or still
+`pending`/`taken`/`unknown`; `failed`/`cancelled` are not printed. Rows match by (task, serial, text), not by the ETK
+operation index. An item (serial) is printed when all its numbered labels are. A batch printed «чередовать по
+изделию» gives fixed labels the item serial too: a fixed row of a plain preview also takes fixed labels of interleaved
+items, a fixed row of an interleaved preview also takes fixed labels of plain batches — neither is printed again.
+A numbered label whose expanded text equals a fixed text (numbered «{№}» of item 1 and fixed «1») is never taken as a
+fixed one (accepted: a fixed «1» printed inside an interleaved item 1 is then printed again — the safer error).
+A reprint job («Перепечатать номера…») resolves to the label it reprints; one label counts once.
+
+- `GET /api/production/marking/progress?group_id=…` or `?task_id=…&operation_id=…` (marking read gate):
+  `{rows: [{task_id, task_number, item, quantity, serial_first, serial_last, printed, remaining, printed_serials,
+  remaining_serials, remaining_labels}], printed, remaining, remaining_labels}`. A plain read: the issued ETK is read
+  without `FOR UPDATE`. `printed`/`remaining` count items by serial; `remaining_labels` counts label pieces still to
+  print, numbered and fixed (0 when the task released its serials). «Печатать оставшиеся» on the labels group card is
+  enabled while `remaining_labels > 0`, so fixed labels left after every serial is printed can still be printed.
+- Preview/batch input `remaining: true` («Печатать оставшиеся»): the same rows minus printed ones; nothing left → 422.
+  The print queue is read once per preview for all tasks of the source.
+- Batches are found by a text match of the task id over every manifest (base64 PNG included): no table links batches
+  to tasks; an indexed lookup needs one (a migration, not done).
 
 All controls return `{group: ...}`. Stale versions/concurrent resource changes: 409; forbidden site: 403;
 invalid state/settings: 422. The first row start or manual output freezes membership and recipe.
@@ -238,6 +371,12 @@ An identical key, actor-authorized performer, group, action and payload replays 
 before rejecting a stale version. A different payload/action/performer for that key returns 409.
 Other version/resource conflicts return 409, unauthorized membership/site returns 403, invalid state
 or quantities return 422. Group and child locks use the existing resource/project/task lock order.
+
+Lock order (T2b, every cutting path): project advisory lock → groups (`with_for_update`, sorted by id) → tasks (sorted
+by id). `locked_group` takes this group (refresh: every group of the project), restructure every project group;
+launch late-join locks candidate groups by id; `task_changed` re-locks the task's groups by id (already held on cutting
+paths; elsewhere the project lock taken first serializes it). Verified by a lock-sequence spy on SQLite only —
+PostgreSQL concurrency is unproven.
 
 Group start selects no material. Optional material selections belong to each submission row and
 consume only that KB's own issued request's available balance, including ordinary session reservations.

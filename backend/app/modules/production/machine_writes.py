@@ -73,6 +73,9 @@ OFFSET_LIMIT = 10000  # ±100,00 мм
 STEP = Decimal("0.01")
 RUNNER_NEEDED = "1.2.0"
 RUNNER_OUTDATED = "Служба записи на ПК станка устарела — обновите (нужна 1.2.0)"
+# The feed-roller lift switch (machines.OB019_FEED_WHEEL_ADDRESS) is written by the runner 1.3.0 or newer.
+RUNNER_FEED_WHEEL = "1.3.0"
+RUNNER_FEED_WHEEL_OUTDATED = "Служба записи на ПК станка устарела — обновите (нужна 1.3.0)"
 # The words the runner 1.1.0 writes (ob019-writer.ps1 before 19.11.2026): mode, job and quantities, wire and strip,
 # marking texts, order number and product. Anything else, and any switch bit, needs `RUNNER_NEEDED`.
 LEGACY_WORDS = frozenset({20, *range(22, 29), *range(32, 44), *range(440, 485), *range(940, 970)})
@@ -87,33 +90,50 @@ def _version(text: str) -> tuple[int, ...] | None:
         return None
 
 
-def runner_current(version: str | None) -> bool:
-    """The runner may write the other HMI pages and switch bits: its version is `RUNNER_NEEDED` or newer."""
+def runner_current(version: str | None, needed: str = RUNNER_NEEDED) -> bool:
+    """The runner may write the other HMI pages and switch bits: its version is `needed` (1.2.0) or newer."""
     parsed = _version(version or "")
-    return parsed is not None and parsed >= _version(RUNNER_NEEDED)
+    return parsed is not None and parsed >= _version(needed)
 
 
 def field_needs_runner(field: rules.SettingField) -> bool:
     return field.kind == "bit0" or any(address not in LEGACY_WORDS for address in rules.field_words(field))
 
 
+def runner_needed_for(bits: list[dict], addresses) -> str | None:
+    """The oldest runner version that runs this write whole; None — any (1.1.0 does it)."""
+    if any(int(bit["addr"]) == rules.OB019_FEED_WHEEL_ADDRESS for bit in bits):
+        return RUNNER_FEED_WHEEL
+    if bits or any(address not in LEGACY_WORDS for address in addresses):
+        return RUNNER_NEEDED
+    return None
+
+
+def runner_refusal(needed: str) -> str:
+    return RUNNER_FEED_WHEEL_OUTDATED if needed == RUNNER_FEED_WHEEL else RUNNER_OUTDATED
+
+
+def runner_needed_for_row(row: "MachineWriteRow") -> str | None:
+    if row.purpose == CONTROL:
+        return None
+    return runner_needed_for(list(row.payload.get("bits") or []), expected_words(row))
+
+
 def needs_runner(row: "MachineWriteRow") -> bool:
     """A write the runner 1.1.0 could do only in part (bits) or not at all (new words)."""
-    if row.purpose == CONTROL:
-        return False
-    return bool(row.payload.get("bits")) or any(address not in LEGACY_WORDS for address in expected_words(row))
+    return runner_needed_for_row(row) is not None
 
 
 def note_runner(equipment_id: UUID, version: str | None, now: datetime) -> None:
     _runners[equipment_id] = (str(version or ""), now)
 
 
-def runner_outdated(equipment_id: UUID, now: datetime) -> bool:
-    """The runner asked recently and is older than `RUNNER_NEEDED` (no version = 1.1.0); not seen — not known."""
+def runner_outdated(equipment_id: UUID, now: datetime, needed: str = RUNNER_NEEDED) -> bool:
+    """The runner asked recently and is older than `needed` (no version = 1.1.0); not seen — not known."""
     seen = _runners.get(equipment_id)
     if seen is None or rules.since(seen[1], now) > RUNNER_SEEN:
         return False
-    return not runner_current(seen[0])
+    return not runner_current(seen[0], needed)
 
 
 class MachineCommandRefused(Exception):
@@ -325,9 +345,10 @@ def enqueue(session: Session, *, equipment_id: UUID, purpose: str, writes: list[
     if problem:
         raise MachineCommandRefused(problem)
     blocks, bits, shown = plan_writes(writes, rules.snapshot_words(snapshot))
-    if runner_outdated(equipment_id, now) and (bits or any(
-            block["addr"] + offset not in LEGACY_WORDS for block in blocks for offset in range(len(block["values"])))):
-        raise MachineCommandRefused(RUNNER_OUTDATED)
+    needed = runner_needed_for(bits, [block["addr"] + offset for block in blocks
+                                      for offset in range(len(block["values"]))])
+    if needed and runner_outdated(equipment_id, now, needed):
+        raise MachineCommandRefused(runner_refusal(needed))
     expired = _expire(session, equipment_id, now)
     if session.scalar(select(MachineWriteRow.id).where(MachineWriteRow.equipment_id == equipment_id,
                                                          MachineWriteRow.status.in_(OPEN))) is not None:
@@ -344,6 +365,15 @@ def enqueue(session: Session, *, equipment_id: UUID, purpose: str, writes: list[
     return row, expired
 
 
+def open_write(session: Session, equipment_id: UUID, now: datetime) -> MachineWriteRow | None:
+    """A parameter write (not a machine command) still queued or running on this machine; expired ones are closed first
+    (not committed here — the caller's unit of work decides)."""
+    _expire(session, equipment_id, now)
+    return session.scalar(select(MachineWriteRow).where(MachineWriteRow.equipment_id == equipment_id,
+                                                        MachineWriteRow.status.in_(OPEN),
+                                                        MachineWriteRow.purpose != CONTROL).limit(1))
+
+
 def claim(session: Session, equipment_id: UUID, now: datetime,
           runner_version: str | None = None) -> tuple[MachineWriteRow | None, list[MachineWriteRow]]:
     """The runner takes the oldest queued command still in time. A write its version cannot run whole fails here,
@@ -353,15 +383,17 @@ def claim(session: Session, equipment_id: UUID, now: datetime,
     queued = list(session.scalars(select(MachineWriteRow).where(MachineWriteRow.equipment_id == equipment_id,
                                                                 MachineWriteRow.status == "queued")
                                   .order_by(MachineWriteRow.created_at, MachineWriteRow.id)).all())
-    if not runner_current(runner_version):
-        for item in [item for item in queued if needs_runner(item)]:
-            if session.execute(update(MachineWriteRow).where(MachineWriteRow.id == item.id,
-                                                             MachineWriteRow.status == "queued")
-                               .values(status="failed", finished_at=now, error=RUNNER_OUTDATED)).rowcount == 1:
-                session.expire(item)
-                session.refresh(item)
-                expired.append(item)
-            queued.remove(item)
+    for item in list(queued):
+        needed = runner_needed_for_row(item)
+        if needed is None or runner_current(runner_version, needed):
+            continue
+        if session.execute(update(MachineWriteRow).where(MachineWriteRow.id == item.id,
+                                                         MachineWriteRow.status == "queued")
+                           .values(status="failed", finished_at=now, error=runner_refusal(needed))).rowcount == 1:
+            session.expire(item)
+            session.refresh(item)
+            expired.append(item)
+        queued.remove(item)
     # Stop jumps the queue: a Stop pressed while another command waits is taken first.
     row = next((item for item in queued if item.command == STOP), queued[0] if queued else None)
     if row is None:
@@ -416,7 +448,9 @@ def finish(session: Session, *, equipment_id: UUID, command_id: UUID, ok: bool, 
         if "busy" in reason or "PXS_HMI" in reason:
             reason = rules.HMI_OPEN
         elif reason.startswith("mbd outdated"):
-            reason = "Служба обмена со станком устарела — обновите"
+            # «mbd outdated: 1.2.0, need 1.3.0» (the runner): the feed-roller bit needs mbd 1.3.0, the rest 1.2.0.
+            need = reason.rsplit("need ", 1)[1].strip() if "need " in reason else ""
+            reason = "Служба обмена со станком (mbd) устарела — обновите" + (f" до {need}" if need else "")
         elif reason.startswith("state "):
             reason = "Станок не в ожидании: " + reason.removeprefix("state ")
         if not reason and differ:

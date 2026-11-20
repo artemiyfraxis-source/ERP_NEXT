@@ -4,7 +4,7 @@ import type { AccessMode, Principal } from "./api";
 import type { MachineCard, MachineRow, UnitSetup } from "./machinesApi";
 import { MachinesPage } from "./MachinesPage";
 import { visibleNav } from "./navigation";
-import { Ob019CardView } from "./Ob019Card";
+import { machineStatus, Ob019CardView } from "./Ob019Card";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -138,7 +138,8 @@ it("splits machines into «С управлением» and «Без управл
   fireEvent.click(screen.getByRole("tab", { name: /С управлением/ }));
   fireEvent.click(screen.getByText("ОБ.019"));
   const dialog = await screen.findByRole("dialog", { name: /ОБ\.019/ });
-  expect(await within(dialog).findByText("на станке 325,00 мм")).toBeTruthy();
+  // The drawing shows what is on the machine now.
+  await waitFor(() => expect(within(dialog).getByLabelText("Длина провода")).toHaveValue("325,00"));
   expect(within(dialog).getByText("3 621 шт/ч")).toBeTruthy();
   expect(calls).toContain("/api/production/machines/u19");
   fireEvent.click(within(dialog).getByRole("button", { name: "Наладка · ждёт" }));
@@ -220,20 +221,54 @@ it("polls every 3 seconds only while the tab is visible", async () => {
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
 });
 
-it("keeps the last PLC values greyed when the machine PC is gone and says so", () => {
+it("keeps the last PLC values greyed when the machine PC is gone and says so once, in one line", () => {
   const { container } = render(<Ob019CardView card={card({
     link: { code: "stale", text: "Нет связи с ПК станка", tone: "danger" }, age_seconds: 75 })} />);
-  expect(screen.getByText("Нет связи с ПК станка").closest("p")?.className).toContain("tone-danger");
-  expect(screen.getByText(/1 мин назад/)).toBeTruthy();
+  const status = screen.getByRole("status", { name: "Состояние станка" });
+  expect(status.className).toContain("is-danger");
+  expect(within(status).getByText("Нет связи с ПК станка")).toBeTruthy();
+  expect(within(status).getByText(/1 мин назад/)).toBeTruthy();
+  expect(screen.getAllByText("Нет связи с ПК станка")).toHaveLength(1);
   expect(container.querySelector(".machine-old")).not.toBeNull();
+  expect(screen.queryByText(/на станке —/)).toBeNull();
 });
 
-it("says the port is busy while PXS_HMI holds COM8 and there are no PLC words", () => {
-  render(<Ob019CardView card={card({ link: { code: "port_busy", text: "Открыт пульт станка на ПК — закройте его, чтобы ERP могла управлять станком", tone: "warn" },
-    error: "COM8 занят", live: null })} />);
-  expect(screen.getByText("Открыт пульт станка на ПК — закройте его, чтобы ERP могла управлять станком")).toBeTruthy();
-  expect(screen.getByText("COM8 занят")).toBeTruthy();
-  expect(screen.getByText(/Нет данных ПЛК/)).toBeTruthy();
+it("names the open operator panel in operator words instead of the agent's raw error, without an empty panel", () => {
+  const text = "Открыт пульт станка на ПК — закройте его, чтобы ERP могла управлять станком";
+  render(<Ob019CardView card={card({ link: { code: "port_busy", text, tone: "warn" },
+    error: "mbd: busy: PXS_HMI is running, bus refused", live: null })} />);
+  const status = screen.getByRole("status", { name: "Состояние станка" });
+  expect(status.className).toContain("is-warn");
+  expect(within(status).getByText(text)).toBeTruthy();
+  expect(screen.getAllByText(text)).toHaveLength(1);
+  expect(screen.queryByText(/Нет данных ПЛК/)).toBeNull();
+  // An untranslated raw agent line is the same cause: not repeated in the folded «Подключение».
+  expect(screen.queryByText(/PXS_HMI|busy/)).toBeNull();
+});
+
+it("keeps an agent answer the state line does not say in the folded «Подключение»", () => {
+  render(<Ob019CardView card={card({ link: { code: "no_plc", text: "ПЛК не отвечает", tone: "danger" }, error: "COM8 занят", live: null })} />);
+  expect(within(screen.getByRole("status", { name: "Состояние станка" })).getByText("ПЛК не отвечает")).toBeTruthy();
+  expect(screen.getByText("COM8 занят").closest("details")).not.toBeNull();
+});
+
+it("says the state, the link and the next step once at the top; an alarm leads", () => {
+  const { rerender } = render(<Ob019CardView card={card()} />);
+  let status = screen.getByRole("status", { name: "Состояние станка" });
+  expect(within(status).getByText("Аварийный стоп")).toBeTruthy();
+  expect(within(status).getByText(/На связи · сигнал/)).toBeTruthy();
+  expect(within(status).getByText("Отпустите аварийную кнопку на станке и нажмите «Сброс»")).toBeTruthy();
+  expect(within(status).getByText("Аварийная остановка — кнопкой на станке")).toBeTruthy();
+  const running = card();
+  running.live = { ...running.live!, state: { code: 103, text: "Работает", tone: "ok" } };
+  rerender(<Ob019CardView card={running} />);
+  status = screen.getByRole("status", { name: "Состояние станка" });
+  expect(within(status).getByText("Режет 12 из 300")).toBeTruthy();
+  expect(status.className).not.toContain("is-");
+  const alarm = card();
+  alarm.live = { ...alarm.live!, alarm: { code: 6, text: "Нет провода", tone: "danger" } };
+  rerender(<Ob019CardView card={alarm} />);
+  expect(within(screen.getByRole("status", { name: "Состояние станка" })).getByText("Авария: Нет провода")).toBeTruthy();
 });
 
 it("says once, in plain words, that the operator panel is open on the PC (the agent's raw line is translated)", () => {
@@ -261,4 +296,18 @@ it("a planned machine without a БД.ОБ entry says so calmly instead of a setu
   expect(within(dialog).getByText(/Станка нет в БД\.ОБ/)).toBeTruthy();
   expect(within(dialog).queryByRole("alert")).toBeNull();
   expect(calls.some((url) => url.includes("/setup-model/"))).toBe(false);
+});
+
+it("the next step of a ready machine is the Пуск reason of the command row, or «нажмите Пуск» when nothing is missing", () => {
+  const ready = card();
+  ready.live = { ...ready.live!, state: { code: 102, text: "Готов, ждёт пуска", tone: "ok" } };
+  expect(machineStatus(ready, "").hint).toBe("Значения на станке ✓ — нажмите «Пуск»");
+  expect(machineStatus(ready, "выберите задание").hint).toBe("Выберите задание");
+  expect(machineStatus(ready, "опустите ролики").hint).toBe("Опустите ролики");
+  expect(machineStatus(ready, "ждём записи задания").hint).toBe("Ждём записи задания");
+  // Unknown (no right to start, not loaded yet): the general step.
+  expect(machineStatus(ready).hint).toBe("Выберите, что режем, проверьте значения на чертеже и нажмите «Пуск»");
+  const running = card();
+  running.live = { ...running.live!, state: { code: 103, text: "Работает", tone: "ok" } };
+  expect(machineStatus(running, "уже режет").hint).not.toMatch(/Стоп/);  // «Стоп» is a button, not a step to repeat
 });

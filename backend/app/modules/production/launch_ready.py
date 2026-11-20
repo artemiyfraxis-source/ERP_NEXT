@@ -39,7 +39,7 @@ from app.shared.identity import Actor
 
 from .application import ConcurrentProductionUpdate, UnitOfWork, launch_task
 from .board import BOARD_KEY_PREFIX, CardSnapshot, launch_command, _open_card, run_of, unlaunched_cards
-from .cutting import cutting_recipe, digest
+from .cutting import cutting_recipes, digest
 from .cutting_application import describe_group
 from .domain import ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, unit_factors
 from .launchable import ReadyCard, launch_operations
@@ -188,17 +188,21 @@ def preview_cutting(command: LaunchReadyCommand, uow, ready: Sequence[ReadyCard]
         try:
             quantity = run_of(card, item.quantity)
             operations = launch_operations(card.route.steps, quantity)
-            recipe, reason = cutting_recipe(card.project, site, card.document, operations)
+            recipes, reasons = cutting_recipes(card.project, site, card.document, operations)
         except ProductionValidationError as error:
-            recipe, reason = None, str(error)
-        if recipe is None:
-            refused.append({"techcard_id": str(item.techcard_id), "reason": reason})
+            recipes, reasons = [], [(None, str(error))]
+        if not recipes:
+            refused.append({"techcard_id": str(item.techcard_id),
+                            "reason": "; ".join(reason for _pf, reason in reasons) or "Нет начального ПФ резки без входов"})
             continue
-        key = recipe.key if not item.issue_separately else f"separate:{item.techcard_id}"
-        group = groups.setdefault(key, {"key": key, "recipe_key": recipe.key, "recipe_version": 1,
-                                       "site": site, "members": []})
-        group["members"].append({"techcard_id": str(item.techcard_id), "index": card.index,
-                                  "quantity": quantity, **recipe.row})
+        # One group per kind (cable cut, labels, tubes); the KB is a member of each of its PF groups.
+        for recipe in recipes:
+            key = recipe.key if not item.issue_separately else f"separate:{item.techcard_id}:{recipe.kind}"
+            group = groups.setdefault(key, {"key": key, "recipe_key": recipe.key,
+                                           "recipe_version": recipe.snapshot["version"], "kind": recipe.kind,
+                                           "site": site, "members": []})
+            group["members"].append({"techcard_id": str(item.techcard_id), "index": card.index,
+                                      "quantity": quantity, **recipe.row})
     current = uow.cutting.fingerprint() if getattr(uow, "cutting", None) else []
     result = {"groups": list(groups.values()), "grouping_refused": refused}
     result["fingerprint"] = digest({**result, "membership": current,
@@ -228,10 +232,22 @@ def launch_ready(
         if command.fingerprint is not None and preview["fingerprint"] != command.fingerprint:
             raise ConcurrentProductionUpdate("Группы изменились после предпросмотра — обновите список")
         membership = uow.cutting.fingerprint() if getattr(uow, "cutting", None) else []
+    # Items sharing any proposed group launch in one transaction (a KB may be in a cut, a labels and a tubes group).
+    parent = {str(item.techcard_id): str(item.techcard_id) for item in items}
+
+    def root(node):
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    for group in preview["groups"]:
+        ids = [member["techcard_id"] for member in group["members"] if member["techcard_id"] in parent]
+        for other in ids[1:]:
+            parent[root(other)] = root(ids[0])
     buckets = {}
-    key_of = {member["techcard_id"]: group["key"] for group in preview["groups"] for member in group["members"]}
     for item in items:
-        buckets.setdefault(key_of.get(str(item.techcard_id), str(item.techcard_id)), []).append(item)
+        buckets.setdefault(root(str(item.techcard_id)), []).append(item)
     created: list[ProductionTask] = []
     refused: list[Refused] = []
     group_ids = set()

@@ -148,18 +148,21 @@ it.each(["2FA1-NZSP-C30E2", "AMK11D-1M4Z5-Z"])("offers full stripping at cut for
   expect(screen.getByRole("switch", { name: "Резка с разделкой" })).toBeChecked();
 });
 
-it("renders the generated five-block coax route with independent preparation operations", async () => {
+it("renders the generated coax route with the cable cut, labels and tubes as separate preparation cards", async () => {
   const { container, onBuild } = mount(); await ready();
   fireEvent.click(screen.getByRole("button", { name: "Подтвердить L" }));
   const scheme = await screen.findByRole("region", { name: "Схема полуфабрикатов" });
   expect([...container.querySelectorAll(".rc-card .rc-title")].map((el) => el.textContent)).toEqual([
-    "Заготовки", "Кабель с метками и деталями", "Сторона А собрана", "Сторона В собрана", "Готовый кабель",
+    "Нарезанный и разделанный кабель", "Этикетки", "Нарезанные трубки", "Кабель с метками и деталями", "Сторона А собрана",
+    "Сторона В собрана", "Готовый кабель",
   ]);
   expect(within(scheme).getByText("автоматическая")).toBeInTheDocument();
-  const prep = container.querySelector(".rc-card")!;
-  expect(within(prep as HTMLElement).getByText("Резка с разделкой (А и В)")).toBeInTheDocument();
-  expect(within(prep as HTMLElement).getByText("Печать этикеток ×3")).toBeInTheDocument();
-  expect(within(prep as HTMLElement).getByText("Резка прозрачной ТУТ ×3")).toBeInTheDocument();
+  const [cut, labels, tubes] = [...container.querySelectorAll(".rc-card")] as HTMLElement[];
+  expect(within(cut).getByText("Резка с разделкой (А и В)")).toBeInTheDocument();
+  expect(within(cut).queryByText("Печать этикеток ×3")).toBeNull();
+  expect(within(labels).getByText("Печать этикеток ×3")).toBeInTheDocument();
+  expect(labels.querySelector(".rc-faces")).toBeNull();
+  expect(within(tubes).getByText("Резка прозрачной ТУТ ×3")).toBeInTheDocument();
   vi.spyOn(window, "confirm").mockReturnValue(true);
   pressBuild(); await waitFor(() => expect(onBuild).toHaveBeenCalled());
   expect(onBuild.mock.calls[0][0]).not.toHaveProperty("route"); // Automatic coax route is derived from operations.

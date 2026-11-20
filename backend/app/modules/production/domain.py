@@ -373,6 +373,63 @@ def unit_factors(operations: tuple[ProductionOperation, ...]) -> dict[UUID, Deci
     return factors
 
 
+def restructured_operations(
+    old: tuple[ProductionOperation, ...],
+    fresh: tuple[ProductionOperation, ...],
+) -> tuple[tuple[ProductionOperation, ...], frozenset[UUID]]:
+    """Операции нового маршрута ЭТК (`launch_operations`) на месте старых операций задания (владелец 20.11).
+
+    ПФ с тем же составом операций ЭТК (номера и коды) — прежняя операция: её id, исполнители и плановое окно, нормы —
+    новые. ПФ, выделенные из одного старого (резка, этикетки и трубки из прежних «Заготовок»): первый по номеру
+    сохраняет id и окно старого, остальные получают его исполнителей без окна (окно им ставит планирование). Иначе
+    ПФ с тем же блоком схемы — прежняя операция. Остальные — новые, без назначения. Входы переписываются на итоговые id.
+    Возвращает операции и id старых операций, которые остались; прочие старые операции задание теряет."""
+    def etk(operation: ProductionOperation) -> tuple[tuple[int, str], ...]:
+        return tuple((item.position, item.code) for item in operation.etk_ops)
+
+    reused: dict[UUID, ProductionOperation] = {}  # fresh id -> old operation whose id, shares and window it keeps
+    copied: dict[UUID, ProductionOperation] = {}  # fresh id -> old operation whose people it gets without a window
+    free = list(old)
+    for operation in fresh:
+        same = next((item for item in free if item.etk_ops and etk(item) == etk(operation)), None)
+        if same is not None:
+            reused[operation.id] = same
+            free.remove(same)
+    for operation in sorted(fresh, key=lambda item: item.position):
+        if operation.id in reused or not operation.etk_ops:
+            continue
+        positions = {item.position for item in operation.etk_ops}
+        parent = next((item for item in old if item.etk_ops and positions < set(item.etk_positions)), None)
+        if parent is None:
+            continue
+        if parent in free:
+            reused[operation.id] = parent
+            free.remove(parent)
+        else:
+            copied[operation.id] = parent
+    for operation in fresh:
+        if operation.id in reused or operation.id in copied or not operation.stage_key:
+            continue
+        same = next((item for item in free if item.stage_key == operation.stage_key), None)
+        if same is not None:
+            reused[operation.id] = same
+            free.remove(same)
+    ids = {operation.id: reused[operation.id].id if operation.id in reused else operation.id for operation in fresh}
+    result = []
+    for operation in fresh:
+        inputs = tuple(replace(item, input_operation_id=ids[item.input_operation_id]) for item in operation.inputs)
+        current = replace(operation, id=ids[operation.id], inputs=inputs)
+        if operation.id in reused:
+            source = reused[operation.id]
+            current = current.with_shares(source.shares, source.assigned_by)
+        elif operation.id in copied:
+            source = copied[operation.id]
+            current = current.with_shares(tuple(
+                OperationShare(share.operator_id, share.quantity) for share in source.shares), source.assigned_by)
+        result.append(current)
+    return tuple(result), frozenset(source.id for source in reused.values())
+
+
 def _check_network(operations: tuple[ProductionOperation, ...]) -> None:
     """Граф входов задания: входы — операции этого же задания, без самоссылок и повторов, без циклов, финал один."""
     ids = {operation.id for operation in operations}
@@ -662,6 +719,30 @@ class ProductionTask:
             self, operations=tuple(operations), techcard_id=techcard_id, techcard_revision=revision,
             version=self.version + 1,
         )
+
+    def restructure(
+        self,
+        operations: tuple[ProductionOperation, ...],
+        techcard_id: UUID,
+        revision: int,
+    ) -> ProductionTask:
+        """Новый состав ПФ из перевыпущенной ЭТК в том же задании (владелец 20.11): номер, тираж, серийные номера и
+        назначения остаются. Только для задания без работы — это проверяет вызывающий; операции уже сопоставлены
+        со старыми (`restructured_operations`)."""
+        self._check_open("состав ПФ не меняется")
+        if revision < 1:
+            raise ProductionValidationError("Ревизия техкарты должна быть больше нуля")
+        if not operations or len({operation.position for operation in operations}) != len(operations):
+            raise ProductionValidationError("Номера этапов маршрута должны быть уникальны")
+        ordered = tuple(sorted(operations, key=lambda operation: operation.position))
+        _check_network(ordered)
+        factors = unit_factors(ordered)
+        return replace(self, operations=tuple(
+            replace(operation, norm_seconds=ceil(
+                operation.setup_seconds + operation.seconds_per_unit * self.quantity * factors.get(operation.id, Decimal(1)),
+            ))
+            for operation in ordered
+        ), techcard_id=techcard_id, techcard_revision=revision, version=self.version + 1)
 
     def hand_over(self, site: str, delivered: int = 0) -> ProductionTask:
         """Отдать задание площадке целиком ("" — вернуть на распределение по людям). Назначения и план по часам

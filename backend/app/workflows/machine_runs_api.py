@@ -6,7 +6,8 @@ production/machine_runs.py; the write itself is the card's write queue (machine_
   machine's newest run with live progress (done of planned from T.Finish), the manual job running on it.
 - `POST /api/production/machines/card/{ОБ}/run` (edit) `{kind: "cutting", group_id, length_mm, values?, confirm_state}`
   or `{kind: "manual", job_id, values?, confirm_state}` → the queued write that starts a run. Cutting without `values`
-  writes the ETK plan (the same words as «Передать на станок»); with `values` — those (the drawing edited by hand).
+  writes the ETK plan (the same words as «Передать на станок»); with `values` — those (the drawing edited by hand)
+  plus the ETK marking (422 «Маркировка: …» when it is blocked, nothing written).
   A manual job writes `values` plus its own order number «R-000001», product line and planned quantity.
 - `POST /api/production/machines/card/{ОБ}/run/close` (edit) `{run_id}` for a cutting run → closed with the machine
   count (the hand-in in «Мои задания» is pre-filled with it, the operator confirms there); for a manual run also
@@ -40,7 +41,7 @@ from app.shared.events import AuditEvent
 from app.shared.http_auth import Principal
 
 from .machine_writes_api import (_can_edit, _confirm, _enqueue, _journal, _link, _transfer_plan, can_control,
-                                 cutting_run, latin, machines_edit_principal, refuse_when_done,
+                                 cutting_run, latin, machines_edit_principal, marking_writes, refuse_when_done,
                                  refuse_while_manual, settle_run, transfer_summary)
 from .machines_api import Reader
 from .manual_jobs_api import view as manual_view
@@ -122,15 +123,39 @@ def start_run(inventory: str, payload: RunPayload, principal: Writer, factory: F
             refuse_while_manual(session, link.equipment_id)
             plan = _transfer_plan(session, link, payload.group_id, payload.length_mm, now)
             if payload.values:
+                # A size missing in the ETK comes with the values the first time (a re-send of the open run of this job,
+                # e.g. «Тираж» changed, keeps what is on the machine); the ETK marking goes with them as without (a
+                # blocked marking refuses the whole job, nothing is written). A marking value typed wins.
+                typed = {field.label for key in payload.values if (field := rules.OB019_FIELDS.get(key)) is not None}
+                last = runs.current(session, link.equipment_id)
+                again = runs.is_open(last) and runs.same_job(runs.info(last), runs.cutting(payload.group_id,
+                                                                                           payload.length_mm, "", None))
+                # The open run of this job written again (e.g. «Тираж» only): its length, order and product stay as the
+                # run wrote them (a length typed for a job the ETK lacked keeps its guard, the plan's is not written
+                # back over the operator's) — unless typed now.
+                kept = (runs.info(last) or {}).get("expect") if again else None
+                missing = [] if again else [label for label in plan["blocking"] if label not in typed]
+                if missing:
+                    raise HTTPException(422, "В ЭТК не задано: " + ", ".join(missing))
                 writes = [commands.FieldWrite(key, value) for key, value in payload.values.items()]
+                # The job's length, order and product as the plan has them unless typed: what the run expects on the
+                # machine before «Пуск» (production/machine_runs.start_blocker).
+                identity = {row["key"]: row["value"] for row in plan["rows"] if row["key"] == "length_mm"} | {
+                    key: plan["job"].get(key) for key in ("order_number", "product")}
+                writes += [commands.FieldWrite(key, value) for key, value in identity.items()
+                           if kept is None and key not in payload.values and value not in ("", None)]
+                writes += [item for item in marking_writes(plan) if item.key not in payload.values]
                 run = cutting_run({**plan, "quantity": _whole(payload.values.get("total_set")) or plan["quantity"]},
-                                  payload.length_mm)
+                                  payload.length_mm, payload.values)
+                if kept is not None:
+                    run["expect"] = {**kept, **runs.expect(payload.values)}
             else:
                 if plan["blocking"]:
                     raise HTTPException(422, "В ЭТК не задано: " + ", ".join(plan["blocking"]))
                 refuse_when_done(plan)
                 writes = [commands.FieldWrite(row["key"], row["value"]) for row in plan["rows"] if row["value"] is not None]
                 writes += [commands.FieldWrite(key, value) for key, value in plan["job"].items() if value not in ("", None)]
+                writes += marking_writes(plan)
                 run = cutting_run(plan, payload.length_mm)
             return _enqueue(uow, link, principal, "transfer", writes, transfer_summary(plan), now, run=run)
         job = session.get(manual.ManualJobRow, payload.job_id) if payload.job_id else None
@@ -155,7 +180,7 @@ def start_run(inventory: str, payload: RunPayload, principal: Writer, factory: F
         label = " · ".join(part for part in (manual.number_text(job.number), job.wire,
                                              f"{format(job.length_mm.normalize(), 'f').replace('.', ',')} мм"
                                              if job.length_mm is not None else "") if part)
-        run = runs.manual(job.id, label, _whole(values.get("total_set")))
+        run = {**runs.manual(job.id, label, _whole(values.get("total_set"))), "expect": runs.expect(values)}
         return _enqueue(uow, link, principal, "transfer", writes, f"Передать на станок: ручная работа {label}", now,
                         run=run)
 

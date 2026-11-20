@@ -1,4 +1,4 @@
-import type { CuttingGroup, CuttingSubmission, CuttingWorkResult } from "./cuttingGroups";
+import type { CuttingGroup, CuttingSubmission, CuttingWorkResult, MarkingProgress } from "./cuttingGroups";
 import type { Sto, TdFinding, TdIssue, TdIssueInput, TdPrintModel } from "./tdTypes";
 
 export type AccessMode = "view" | "edit";
@@ -4315,6 +4315,7 @@ export const productionApi = {
   boxes: (taskId?: string) => api<{ boxes: ProductionBox[] }>(`/api/production/boxes${taskId ? `?task_id=${taskId}` : ""}`),
   // «Задания»: work.onBehalfOf — работа за выбранного сотрудника (право проверяет сервер), work.key — ключ повтора:
   // тот же ключ второй раз не делает действие дважды (двойной клик, повтор после обрыва связи).
+  markingProgress: (groupId: string) => api<MarkingProgress>(`/api/production/marking/progress?group_id=${encodeURIComponent(groupId)}`),
   refreshCuttingGroupEtk: (groupId: string, version: number) =>
     api<{ group: CuttingGroup }>(`/api/production/cutting-groups/${groupId}/refresh-etk`, {
       method: "POST", body: JSON.stringify({ version }),

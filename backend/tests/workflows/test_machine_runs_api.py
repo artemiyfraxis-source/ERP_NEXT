@@ -13,11 +13,13 @@ from app.main import app
 from app.modules.production import machine_runs as runs
 from app.modules.production import machines as rules
 from app.modules.production import manual_jobs as manual
+from app.modules.production.cutting_infrastructure import CuttingGroupRow
 from app.modules.production.machine_writes import MachineWriteRow
 from app.shared.clock import MOSCOW
 from app.shared.persistence import AuditEventRow
 from tests.identity.test_api_tokens import _csrf, tokens_api  # noqa: F401
-from tests.workflows.test_machine_writes_api import AGENT, CARD, NEXT, _job, _result
+from tests.workflows.test_machine_writes_api import (AGENT, CARD, NEXT, _claimed_writes, _job, _result,
+                                                     _text_at)
 from tests.workflows.test_machines_api import WORDS, _bridge, _report, machines_api  # noqa: F401
 
 RUN = CARD + "/run"
@@ -494,3 +496,160 @@ def test_a_manual_job_is_not_closed_from_its_window_while_its_write_is_still_che
     assert state["run"]["stage"] == "ready"
     cancelled = _post(admin, path + "/cancel", {"version": state["manual"]["version"], "reason": "не тот провод"})
     assert cancelled.status_code == 200, cancelled.text
+
+
+def _transfers(sessions) -> int:
+    with sessions() as session:
+        return len(list(session.scalars(select(MachineWriteRow).where(MachineWriteRow.purpose == "transfer"))))
+
+
+def test_a_job_run_with_typed_values_writes_the_etk_marking_and_a_blocked_one_writes_nothing(machines_api):
+    """The card sends a job with the drawing edited by hand (`values`): the ETK marking goes with it exactly as without."""
+    sessions, clock, admin, ob019, _ = machines_api
+    bridge = _bridge(admin)
+    _report(bridge)
+    blocked = _job(sessions, laser={"mode": "ends", "front": "SN {№}"}, number="ГР-0200")
+    refused = _post(admin, RUN, {"kind": "cutting", "group_id": str(blocked), "length_mm": "325",
+                                 "values": {"strip_front_mm": "5,5", "total_set": "12"}, "confirm_state": 102})
+    assert refused.status_code == 422 and refused.json()["detail"].startswith("Маркировка: ")
+    assert "Серийные номера на лазер" in refused.json()["detail"] and _transfers(sessions) == 0
+    group_id = _job(sessions, laser={"mode": "ends", "front": "C1.5 to XS17.7", "back": "XS17.7", "middle": ""})
+    sent = _post(admin, RUN, {"kind": "cutting", "group_id": str(group_id), "length_mm": "325",
+                              "values": {"strip_front_mm": "5,5", "total_set": "12"}, "confirm_state": 102})
+    assert sent.status_code == 200, sent.text
+    claimed, words, bits = _claimed_writes(bridge)
+    assert claimed["id"] == sent.json()["id"] and bits == {400: 1, 422: 0}
+    assert _text_at(words, 440) == "C1.5 to XS17.7" and _text_at(words, 470) == "XS17.7"
+    assert 405 in words and words[34] == 550  # the marking margin and the strip typed by hand
+    assert _text_at(words, 955) == "PVAM 0,35 L325,00"  # the job's product, written for the run's check
+
+
+def _pult_edit(machine, address: int, text: str) -> None:
+    """A text changed on the machine's own panel, not through ERP (the words stay on the machine)."""
+    raw = text.encode("ascii").ljust(30, b"\x00")
+    machine.held.update({str(address + index): (raw[2 * index] << 8) | raw[2 * index + 1] for index in range(15)})
+    machine.report()
+
+
+def test_start_is_refused_when_the_machine_was_set_to_another_job_outside_erp(machines_api):
+    """The open job's length, order and product changed past ERP (on the machine's panel): «Пуск» would cut something
+    else into job A. Picking the job again settles it."""
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    group_id = _job(sessions)
+    body = {"kind": "cutting", "group_id": str(group_id), "length_mm": "325", "confirm_state": 102}
+    machine.written(_post(admin, RUN, body).json()["id"])
+    _pult_edit(machine, 955, "PV-3 0,5 L325")
+    refused = _start(admin)
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == runs.other_setup("ГР-0007 · ПВАМ 0,35 · 325,00 мм")
+    assert refused.json()["detail"].startswith("Станок настроен не на задание «ГР-0007")
+    machine.written(_post(admin, RUN, body).json()["id"])  # the job picked again
+    started = _start(admin)
+    assert started.status_code == 200, started.text
+
+
+def test_erp_own_length_edit_or_correction_during_an_open_job_keeps_start_allowed(machines_api):
+    """A length corrected on the drawing, or after «Проба и поправка», is written through ERP: the open run follows it."""
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    group_id = _job(sessions)
+    body = {"kind": "cutting", "group_id": str(group_id), "length_mm": "325", "confirm_state": 102}
+    sent = machine.written(_post(admin, RUN, body).json()["id"])
+    machine.written(_post(admin, CARD + "/write", {"values": {"length_mm": "326"}}).json()["id"])
+    machine.written(_post(admin, CARD + "/write", {"values": {"order_number": "GR-0007-2"}}).json()["id"])
+    stored = _post(admin, CARD + "/correction", {"parameter": "length_mm", "case": "machine", "offset": "1,5",
+                                                 "note": "проба"})
+    assert stored.status_code == 200, stored.text
+    machine.written(_post(admin, CARD + "/write", {"values": {"length_mm": "326,5"}}).json()["id"])  # the card's write
+    started = _start(admin)
+    assert started.status_code == 200, started.text
+    assert sent["32"] == 32500  # the run itself was written with the job's length
+
+
+def test_a_manual_run_expects_its_length_order_and_product(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    job = _post(admin, "/api/production/manual-jobs", {"equipment_id": str(ob019), "purpose": "Проба для ОТК",
+                                                       "wire": "ПВАМ 0,35", "length_mm": "100", "quantity_planned": 5})
+    sent = _post(admin, RUN, {"kind": "manual", "job_id": job.json()["id"], "confirm_state": 102}).json()["id"]
+    machine.written(sent)
+    with sessions() as session:
+        expected = runs.info(session.get(MachineWriteRow, UUID(sent)))["expect"]
+    assert expected["32"] == 10000 and "940" in expected and "955" in expected
+    _pult_edit(machine, 940, "R-000099")
+    assert _start(admin).json()["detail"].startswith("Станок настроен не на задание «Р-000001")
+
+
+def test_a_run_written_before_the_check_has_no_expect_and_is_not_checked(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    group_id = _job(sessions)
+    sent = _post(admin, RUN, {"kind": "cutting", "group_id": str(group_id), "length_mm": "325", "confirm_state": 102})
+    machine.written(sent.json()["id"])
+    with sessions.begin() as session:
+        row = session.get(MachineWriteRow, UUID(sent.json()["id"]))
+        run = dict(row.payload["run"])
+        run.pop("expect")
+        row.payload = {**row.payload, "run": run}
+    _pult_edit(machine, 955, "PV-3 0,5 L325")
+    started = _start(admin)
+    assert started.status_code == 200, started.text
+
+
+def test_a_marking_value_typed_wins_over_the_etk_marking(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    bridge = _bridge(admin)
+    _report(bridge)
+    group_id = _job(sessions, laser={"mode": "ends", "front": "C1.5 to XS17.7", "back": "XS17.7", "middle": ""})
+    sent = _post(admin, RUN, {"kind": "cutting", "group_id": str(group_id), "length_mm": "325",
+                              "values": {"mark_front": "W12", "total_set": "12"}, "confirm_state": 102})
+    assert sent.status_code == 200, sent.text
+    claimed, words, bits = _claimed_writes(bridge)
+    assert _text_at(words, 440) == "W12" and _text_at(words, 470) == "XS17.7"
+
+
+def test_a_tirazh_re_send_of_n_minus_done_ends_with_the_job_quantity_and_start_allowed(machines_api):
+    """The card shows the job's «Тираж» N and sends N − done: the run counts N from its first start."""
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    group_id = _job(sessions)
+    body = {"kind": "cutting", "group_id": str(group_id), "length_mm": "325", "confirm_state": 102}
+    machine.written(_post(admin, RUN, body).json()["id"])
+    machine.report(_counter(START + 2))
+    sent = _post(admin, RUN, {**body, "values": {"total_set": "13"}})  # N 15 for the job, 2 done
+    assert sent.status_code == 200, sent.text
+    machine.written(sent.json()["id"])
+    run = admin.get(RUN).json()["run"]
+    assert (run["quantity"], run["done"], run["counter_start"]) == (15, 2, START)
+    started = _start(admin)
+    assert started.status_code == 200, started.text
+
+
+def test_a_tirazh_re_send_of_the_open_job_keeps_sizes_typed_for_a_job_missing_them(machines_api):
+    """A job whose ETK lacks a strip size goes once with the typed size; «Тираж» changed later re-sends the same job with
+    only the new quantity — the size stays as written, not refused again."""
+    sessions, clock, admin, ob019, _ = machines_api
+    machine = Machine(admin, clock)
+    group_id = _job(sessions)
+    with sessions.begin() as session:
+        group = session.get(CuttingGroupRow, group_id)
+        recipe = dict(group.recipe)
+        recipe["operations"] = [{"type": "cutWireStrip", "fields": {"strip": {"a": True, "b": True, "lenB": "6,5",
+                                                                              "modeA": "full", "modeB": "full"}}}]
+        group.recipe = recipe
+    body = {"kind": "cutting", "group_id": str(group_id), "length_mm": "325", "confirm_state": 102}
+    refused = _post(admin, RUN, {**body, "values": {"total_set": "12"}})
+    assert refused.status_code == 422 and refused.json()["detail"].startswith("В ЭТК не задано: ")
+    # The size the ETK lacks and a length of the operator's own go with the first send.
+    machine.written(_post(admin, RUN, {**body, "values": {"strip_front_mm": "5", "length_mm": "326",
+                                                          "total_set": "12"}}).json()["id"])
+    again = _post(admin, RUN, {**body, "values": {"total_set": "10"}})
+    assert again.status_code == 200, again.text
+    words = machine.written(again.json()["id"])
+    # The run keeps its own length: the plan's 325 is not written back over the operator's 326, and «Пуск» goes.
+    assert words.get("32") in (None, 32600)
+    with sessions() as session:
+        assert runs.info(session.get(MachineWriteRow, UUID(again.json()["id"])))["expect"]["32"] == 32600
+    started = _start(admin)
+    assert started.status_code == 200, started.text

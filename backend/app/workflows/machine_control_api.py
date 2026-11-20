@@ -3,9 +3,11 @@
 - `POST /api/production/machines/card/{ОБ}/command` `{command, confirm_state?, hands_clear?}` → the queued command
   (the same view as the card's writes in `GET …/control`, which also says `can_control`).
   `stop` — the card's gate only (Производство or Задания, view), no confirmation. `reset` / `start` / `alarm_clear` —
-  also «Управление станками» on edit (403), `hands_clear: true` and the D766 state the person confirmed (409 when it
-  changed, when the state does not allow the command or another command is open). `start` only for an open job run
-  whose «Тираж» is on the machine (production/machine_runs.py `start_blocker`, 409 otherwise).
+  also «Управление станками» on edit (403), `hands_clear: true` and the D766 state the card saw (409 when it changed,
+  when the state does not allow the command — Пуск with the feed rollers lifted included — or another command is open).
+  Since 19.11.2026 the card sends `hands_clear` with every press, no dialog: the journal records it as «одним нажатием
+  с карточки» (`auto_confirm`), not as a person's confirmation; the field name stays for the API contract. `start`
+  only for an open job run whose «Тираж» is on the machine (production/machine_runs.py `start_blocker`, 409 otherwise).
 The runner on the machine PC takes them through `…/agent/writes/next` (workflows/machine_writes_api.py)."""
 
 from __future__ import annotations
@@ -61,8 +63,9 @@ def send_command(inventory: str, payload: CommandPayload, principal: Reader, fac
         state = row.payload.get("state_seen")
         state_text = rules.OB019_STATES.get(state, (f"код {state}", ""))[0] if state is not None else "—"
         _journal(uow, link.equipment_id, "command_requested", principal.actor, now,
-                 f"{row.summary}: станок «{state_text}»" + (", руки убраны — подтверждено" if payload.hands_clear else ""),
-                 command_id=str(row.id), command=row.command or "", state_seen="" if state is None else str(state))
+                 f"{row.summary}: станок «{state_text}»" + (", одним нажатием с карточки" if payload.hands_clear else ""),
+                 command_id=str(row.id), command=row.command or "", state_seen="" if state is None else str(state),
+                 auto_confirm="1" if payload.hands_clear else "")
         view = commands.command_view(row)
         uow.commit()
     return view

@@ -88,7 +88,9 @@ def test_start_goes_through_the_runner_with_the_state_before_and_after_and_is_jo
     assert [event.event_type for event in journal] == [
         "production.machine_command_requested", "production.machine_command_finished"]
     requested, finished = journal
-    assert requested.details["state_seen"] == "102" and "руки убраны" in requested.details["text"]
+    # One press on the card, no dialog: the journal does not claim a person confirmed «руки убраны».
+    assert requested.details["state_seen"] == "102" and "руки убраны" not in requested.details["text"]
+    assert "одним нажатием с карточки" in requested.details["text"] and requested.details["auto_confirm"] == "1"
     assert (finished.details["status"], finished.details["state_before"], finished.details["state_after"],
             finished.details["detail"]) == ("done", "102", "103", "held 1500 ms")
     assert _result(bridge, claimed["id"]).status_code == 409  # the answer is written once
@@ -216,3 +218,24 @@ def test_the_runner_holds_the_same_preconditions_and_only_the_four_bits():
     pulses = set(re.findall(r"addr = (\d+); bit = (\d)", source))
     assert pulses == {("599", "2"), ("599", "0"), ("600", "1"), ("600", "4")}  # never D599.3 (E-stop)
     assert set(control.REASONS) >= set(re.findall(r"New-Outcome '\w+' '(\w+)'", source))
+    blocked = dict(re.findall(r"^\s+(\w+) = @\{ addr = \d+; bit = \d; states = @\([\d, ]*\); off = @\(([^)]*)\)",
+                              source, re.MULTILINE))
+    assert {command: tuple(tuple(int(part) for part in item.strip(" '").split(".")) for item in bits.split(","))
+            for command, bits in blocked.items()} == control.BLOCKED_BY_BITS
+
+
+def test_start_is_refused_while_the_feed_rollers_are_lifted(ob019):
+    sessions, clock, admin, unit, bridge = ob019
+    clock.now = clock.now + timedelta(milliseconds=100)
+    assert _report(bridge, seq=next(_seq), registers={**WORDS, "766": 102, "782": 0, "604": 0x0A01}).status_code == 200
+    refused = _send(admin, "start", 102)
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == "«Пуск» невозможен: подающие ролики подняты — сначала опустите их"
+    assert _commands(admin) == []
+    assert _send(admin, "stop").status_code == 200  # Stop is never blocked
+    clock.now = clock.now + timedelta(milliseconds=100)
+    assert _report(bridge, seq=next(_seq), registers={**WORDS, "766": 102, "782": 0, "604": 0x0A00}).status_code == 200
+    _next(bridge)  # the Stop is taken off the queue
+    assert control.precondition_error("start", 102, 0, {604: 0x0A00}) == ""
+    assert control.precondition_error("start", 102, 0, {}) == ""  # not read (older bridge): not blocked
+    assert control.precondition_error("reset", 107, 0, {604: 1}) == ""

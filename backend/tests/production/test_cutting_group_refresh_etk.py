@@ -56,11 +56,47 @@ def test_refresh_repins_all_members_keeps_group_and_is_idempotent(production_api
     assert pinned() == [("КБ1", 2), ("КБ2", 2)]
 
 
-def test_diverged_recipe_is_refused_without_partial_writes(production_api):
+def test_diverged_member_moves_to_its_own_group_and_the_rest_stays(production_api):
+    """РЗ-0018 (owner 20.11): a KB whose recipe changed leaves the group for a new one instead of a 422 for all."""
     client, _ = production_api
     cards, group = setup(client)
     reissue(cards[0], document(length=1200))
     reissue(cards[1], document(strip=4))
+    response = refresh(client, group)
+    assert response.status_code == 200, response.text
+    fresh = response.json()["group"]
+    assert (fresh["id"], fresh["number"]) == (group["id"], group["number"])
+    assert {row["item"]: row["membership_state"] for row in fresh["rows"]} == {"КБ1": "active", "КБ2": "split"}
+    assert pinned() == [("КБ1", 2), ("КБ2", 2)]
+    current = {g["id"]: g for g in groups(client)}
+    moved = next(g for g in current.values() if g["id"] != group["id"] and g["state"] == "open")
+    assert [row["item"] for row in moved["rows"]] == ["КБ2"] and moved["number"] != group["number"]
+    assert all(g["etk_stale"] is False for g in current.values() if g["state"] == "open")
+    again = refresh(client, fresh)
+    assert again.status_code == 200 and again.json()["group"]["version"] == fresh["version"], again.text
+
+
+def test_member_moves_into_an_existing_matching_group(production_api):
+    client, _ = production_api
+    cards = [issue("КБ1"), issue("КБ2"), issue("КБ3", document(strip=4))]
+    batch(client, cards)
+    first = next(g for g in groups(client) if len(g["rows"]) == 2)
+    other = next(g for g in groups(client) if len(g["rows"]) == 1)
+    reissue(cards[1], document(strip=4, length=1500))
+    response = refresh(client, first)
+    assert response.status_code == 200, response.text
+    joined = next(g for g in groups(client) if g["id"] == other["id"])
+    assert sorted(row["item"] for row in joined["rows"] if row["membership_state"] == "active") == ["КБ2", "КБ3"]
+    assert len([g for g in groups(client) if g["state"] == "open"]) == 2
+
+
+def test_card_without_recipe_is_still_refused_without_partial_writes(production_api):
+    client, _ = production_api
+    cards, group = setup(client)
+    broken = document()
+    broken["operations"][0]["card"]["tooling"] = [{"section": "Оснастка", "name": "нож"}]
+    reissue(cards[0], document(length=1200))
+    reissue(cards[1], broken)
     response = refresh(client, group)
     assert response.status_code == 422, response.text
     assert "КБ2" in response.json()["detail"] and "КБ1" not in response.json()["detail"]
@@ -184,11 +220,13 @@ def test_equipment_rename_without_revision_still_refreshes_and_stores_new_key(pr
     assert _group_key(group) != "legacy-key-from-older-code"
 
 
-def test_rename_plus_real_change_and_diverging_members_are_refused(production_api):
+def test_rename_plus_real_change_moves_only_the_diverging_member(production_api):
     client, _ = production_api
     cards, group = setup(client)
     reissue(cards[0], _named(document(), "Другое имя"))
     reissue(cards[1], _named(document(strip=4), "Другое имя"))
     response = refresh(client, group)
-    assert response.status_code == 422 and "КБ2" in response.json()["detail"], response.text
-    assert pinned() == [("КБ1", 1), ("КБ2", 1)]
+    assert response.status_code == 200, response.text
+    rows = {row["item"]: row["membership_state"] for row in response.json()["group"]["rows"]}
+    assert rows == {"КБ1": "active", "КБ2": "split"}
+    assert pinned() == [("КБ1", 2), ("КБ2", 2)]

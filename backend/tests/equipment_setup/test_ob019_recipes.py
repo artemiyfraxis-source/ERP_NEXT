@@ -65,13 +65,26 @@ def test_etk_nominal_without_recipe_full_partial_and_no_strip():
     values = by_key(ob019_proposal(None, EtkNominal("МГТФ 0,12", Decimal(160), Decimal(4), Decimal(0),
                                                     partial_front=False, conductor_mm=Decimal("0.39"))))
     assert values["strip_front_mm"] == (Decimal(4), "ЭТК")
-    assert values["pull_front_mm"] == (Decimal(4), "ЭТК: полное снятие")
+    assert values["pull_front_mm"] == (Decimal("6.00"), "ЭТК: стягивание (зачистка + 2,00)")  # past the 4 мм strip
     assert values["pull_back_mm"] == (Decimal(0), "ЭТК: без зачистки")
-    assert values["diameter_mm"] == (Decimal("0.39"), "Ø жилы по справочнику")
+    assert values["diameter_mm"] == (Decimal("0.54"), "Ø жилы + 0,15")  # owner 20.11.2026: 0,39 + 0,15
     assert values["knife_back_mm"] == (None, "Нет данных")
     partial = by_key(ob019_proposal(None, EtkNominal("МГТФ 0,12", None, Decimal(4), None, partial_front=True)))
-    assert partial["pull_front_mm"] == (None, "ЭТК: частичная зачистка — задайте")
+    assert partial["pull_front_mm"] == (Decimal("2.00"), "ЭТК: полустягивание")  # half of the 4 мм strip
     assert partial["strip_back_mm"] == (None, "Нет данных")
+    assert partial["diameter_mm"] == (None, "Нет данных")  # no Ø жилы in the reference
+    # Half of 4,15 is 2,075: rounded half up to 2,08 like the card (banker's rounding would give 2,08 too; 4,05 → 2,03
+    # half up vs 2,02 half even); full stays within the PLC word (655,35).
+    odd = by_key(ob019_proposal(None, EtkNominal("МГТФ 0,12", None, Decimal("4.05"), None, partial_front=True)))
+    assert odd["pull_front_mm"] == (Decimal("2.03"), "ЭТК: полустягивание")
+    top = by_key(ob019_proposal(None, EtkNominal("МГТФ 0,12", None, Decimal("654.00"), None, partial_front=False)))
+    assert top["pull_front_mm"][0] == Decimal("655.35")
+
+
+def test_recipe_holds_only_the_recorded_panel_values():
+    from app.modules.equipment_setup.recipes import recipe_holds
+    assert recipe_holds(recipe(), "diameter_mm") and recipe_holds(recipe(), "strip_front_mm")
+    assert not recipe_holds(recipe(), "length_mm") and not recipe_holds(None, "diameter_mm")
 
 
 def test_newest_version_of_the_same_wire_is_picked_first():
