@@ -15,15 +15,15 @@ import "./machines.css";
  *  с окном задания (все шаги бывшего экрана «Наладка оборудования»: назначить, начать, продолжить, подтвердить
  *  готовность, заблокировать, отменить, рецепт и пробные измерения); станки цеха — «С управлением» (ERP достаёт их
  *  через агента: живое состояние, запись на станок) и «Без управления» (отмечены в БД.ОБ галочкой «Показывать в
- *  «Оборудовании»»), плитками по семействам операций; принтеры и приборы агентов — своя вкладка; «Все» — всё сразу.
+ *  «Оборудовании»»), плитками по семействам операций; принтеры склада и анализаторы цепей — своими группами среди
+ *  «С управлением» (владелец 20.11.2026); «Все» — всё сразу.
  *  На плитке — артикул, участок, «Ждёт наладки» по открытому заданию; в карточке станка — «Наладка» и «Ручная работа». */
 
-export type View = "setup" | "controlled" | "manual" | "agents" | "all";
+export type View = "setup" | "controlled" | "manual" | "all";
 type Site = "" | "ЦАР" | "ЖУК";
 const VIEWS: [View, string][] = [["setup", "Запросы на наладку"], ["controlled", "С управлением"], ["manual", "Без управления"],
-  ["agents", "Принтеры и приборы"], ["all", "Все"]];
+  ["all", "Все"]];
 const SITES: [Site, string][] = [["", "Все участки"], ["ЦАР", "ЦАР"], ["ЖУК", "ЖУК"]];
-const AGENT_GROUPS: [MachineRow["kind"], string][] = [["printer", "Принтеры"], ["device", "Приборы и сканеры"]];
 const OTHER_FAMILY = "Прочее оборудование";
 
 const toneClass = (tone: Tone) => (tone === "neutral" ? "machine-muted" : `tone-${tone}`);
@@ -31,7 +31,8 @@ const text = (value: string) => value || EMPTY;
 /** «—» с сервера — состояние неизвестно: на плитке его не показываем. */
 const known = (value: string) => Boolean(value && value !== EMPTY);
 const byNumber = (a: MachineRow, b: MachineRow) => a.inventory.localeCompare(b.inventory, "ru", { numeric: true }) || a.name.localeCompare(b.name, "ru");
-const viewOf = (row: MachineRow): View => (row.kind !== "machine" ? "agents" : row.controlled ? "controlled" : "manual");
+/** Принтеры и приборы агентов ERP достаёт сама — они «С управлением». */
+const viewOf = (row: MachineRow): View => (row.kind !== "machine" || row.controlled ? "controlled" : "manual");
 const titleOf = (row: MachineRow) => [row.inventory, row.name].filter(Boolean).join(" · ");
 
 function searchText(row: MachineRow): string {
@@ -168,18 +169,15 @@ export function MachinesPage({ setupViewer = false, canWrite = false, initialVie
   const atSite = (row: MachineRow) => row.kind !== "machine" || !site || row.site === site;
   const inView = (row: MachineRow, which: View) => which === "all" || viewOf(row) === which;
   const count = (which: View) => found.filter((row) => inView(row, which) && atSite(row)).length;
-  const siteCount = (which: Site) => found.filter((row) => row.kind === "machine" && inView(row, view) && (!which || row.site === which)).length;
+  // Принтеры и приборы без участка видны на любом участке — и в счётчике тоже.
+  const siteCount = (which: Site) => found.filter((row) => inView(row, view) && (row.kind !== "machine" || !which || row.site === which)).length;
   const shown = view === "setup" ? [] : found.filter((row) => inView(row, view) && atSite(row)).sort(byNumber);
   const families = data?.families ?? [];
-  const machineRows = shown.filter((row) => row.kind === "machine");
-  const familyGroups: [string, MachineRow[]][] = [...families, ...new Set(machineRows.map((row) => row.family || OTHER_FAMILY)
-    .filter((family) => !families.includes(family)))].map((family) => [family, machineRows.filter((row) => (row.family || OTHER_FAMILY) === family)]);
-  const agentGroups: [string, MachineRow[]][] = AGENT_GROUPS.map(([kind, title]) => [title, shown.filter((row) => row.kind === kind)]);
-  const groups = view === "agents" ? agentGroups : view === "all" ? [...familyGroups, ...agentGroups] : familyGroups;
-  const empty = view === "controlled" ? "Нет станков с агентом ERP — установите агент на ПК станка"
+  const groups: [string, MachineRow[]][] = [...families, ...new Set(shown.map((row) => row.family || OTHER_FAMILY)
+    .filter((family) => !families.includes(family)))].map((family) => [family, shown.filter((row) => (row.family || OTHER_FAMILY) === family)]);
+  const empty = view === "controlled" ? "Нет оборудования с агентом ERP — установите агент на ПК станка или прибора"
     : view === "manual" ? "Нет станков без управления — отметьте станок в БД.ОБ галочкой «Показывать в «Оборудовании»»"
-      : view === "all" ? "Ничего не подключено и не отмечено — установите агент ERP или отметьте станок в БД.ОБ"
-        : "Принтеры и приборы агентов не найдены";
+      : "Ничего не подключено и не отмечено — установите агент ERP или отметьте станок в БД.ОБ";
   return <section className="page machines-page">
     <header className="page-head"><h1>Оборудование</h1></header>
     {error && <div className="error-banner" role="alert">{error}</div>}
@@ -191,7 +189,7 @@ export function MachinesPage({ setupViewer = false, canWrite = false, initialVie
             {views.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={view === id} className={view === id ? "on" : ""}
               onClick={() => setView(id)}>{label}{id !== "setup" && <span className="ship-tab-count">{count(id)}</span>}</button>)}
           </div>
-          {view !== "agents" && view !== "setup" && <div className="seg-tabs sub" role="radiogroup" aria-label="Участок">
+          {view !== "setup" && <div className="seg-tabs sub" role="radiogroup" aria-label="Участок">
             {SITES.map(([id, label]) => <button key={id || "all"} type="button" role="radio" aria-checked={site === id} className={site === id ? "on" : ""}
               onClick={() => setSite(id)}>{label}<span className={`ship-tab-count${siteCount(id) ? "" : " is-zero"}`}>{siteCount(id)}</span></button>)}
           </div>}
