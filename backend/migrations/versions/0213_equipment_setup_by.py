@@ -3,7 +3,8 @@ the наладчик («Наладчик»). Setup tasks for the наладчи�
 of a task or of the cutting queue never waits for a setup task.
 
 `equipment_machines.setup_by` — VARCHAR(16), NOT NULL, CHECK IN ('operator', 'technician'), server default 'operator'.
-Backfill: every existing machine → 'operator' (the owner's default for ALL machines; the server default fills them).
+Backfill: every existing machine → 'operator' (the owner's default for ALL machines; the NOT NULL server default fills
+them during the ALTER, so no separate UPDATE is needed).
 One plain ALTER on both dialects (PostgreSQL: a constant default is metadata-only, no table rewrite); no table
 recreation. Not destructive: the downgrade drops only the new column (its CHECK goes with it)."""
 
@@ -21,7 +22,6 @@ def upgrade() -> None:
     op.execute(sa.text(
         "ALTER TABLE equipment_machines ADD COLUMN setup_by VARCHAR(16) DEFAULT 'operator' NOT NULL "
         "CONSTRAINT ck_equipment_machines_setup_by CHECK (setup_by IN ('operator', 'technician'))"))
-    op.execute(sa.text("UPDATE equipment_machines SET setup_by = 'operator' WHERE setup_by IS NULL"))
 
 
 def downgrade() -> None:
