@@ -23,7 +23,8 @@ from .api import _performer, _period, production_uow_factory
 from .application import UnitOfWork
 from .domain import ProductionStatus, ProductionValidationError
 from .launchable import stage_name
-from .downtime import COMMENT_LIMIT, REASON_NAMES, REPORT_KEYS, Downtime, DowntimeConflict, DowntimeReason, moscow, report
+from .downtime import (COMMENT_LIMIT, REASON_NAMES, REPORT_KEYS, Downtime, DowntimeConflict, DowntimeReason, moscow,
+                       people_total, report)
 from .downtime_infrastructure import SqlAlchemyDowntimeRepository
 
 
@@ -71,13 +72,15 @@ def _result(item: Downtime, now: datetime) -> dict:
         "id": str(item.id), "task_id": str(item.task_id) if item.task_id else None,
         "operation_id": str(item.operation_id) if item.operation_id else None,
         "operator_id": str(item.operator_id) if item.operator_id else None, "operator_name": item.operator_name,
-        "whole_task": item.operator_id is None,
+        # Простой станка (миграция 0209) — не «задание целиком»: у него нет ни сотрудника, ни задания.
+        "whole_task": item.operator_id is None and item.equipment_id is None,
         "reason": item.reason.value, "reason_name": item.reason_name, "comment": item.comment,
         "started_at": moscow(item.started_at).isoformat(), "started_by_name": item.started_by_name,
         "ended_at": moscow(item.ended_at).isoformat() if item.ended_at is not None else None,
         "ended_by_name": item.ended_by_name, "open": item.open,
         "seconds": max(0, int((moscow(end) - moscow(item.started_at)).total_seconds())),
         "project": item.project, "task_number": item.task_number, "item": item.item, "stage": stage_name(item.stage),
+        "equipment_id": str(item.equipment_id) if item.equipment_id else None,
     }
 
 
@@ -173,6 +176,8 @@ def stop_downtime(
         item = repository.get(downtime_id)
         if item is None:
             raise HTTPException(status_code=404, detail="Простой не найден")
+        if item.equipment_id is not None:
+            raise HTTPException(422, "Простой станка заканчивают на карточке станка")
         from sqlalchemy import select
         from .cutting_infrastructure import CuttingWorkRow
         if uow.session.scalar(select(CuttingWorkRow.session_id).where(CuttingWorkRow.downtime_id == downtime_id)):
@@ -208,14 +213,18 @@ def downtime_report(
         items = SqlAlchemyDowntimeRepository(uow.session).overlapping(since, until)
         work = uow.work_log.summary("operator", since=since, until=until)
     rows = report(items, by=by, since=since, until=until, now=now)
+    total_seconds, total_count = people_total(rows)  # простои станков — время станков, не людей: не в итоге
     work_by_operator = {str(row["key"]): int(row["actual_seconds"]) for row in work}
     return {
         "by": by, "date_from": date_from.isoformat(), "date_to": date_to.isoformat(),
         "rows": [{
             "key": row.key, "label": row.label, "count": row.count, "seconds": row.seconds, "open": row.open,
+            "machine": row.machine,
             "work_seconds": work_by_operator.get(row.key) if by == "operator" else None,
         } for row in rows],
-        "total_seconds": sum(row.seconds for row in rows), "total_count": sum(row.count for row in rows),
+        "total_seconds": total_seconds, "total_count": total_count,
+        "machine_seconds": sum(row.seconds for row in rows if row.machine),
+        "machine_count": sum(row.count for row in rows if row.machine),
         "work_seconds": sum(work_by_operator.values()),
         "entries": [{**_result(item, now), "period_seconds": item.seconds_within(since, until, now)} for item in items],
     }

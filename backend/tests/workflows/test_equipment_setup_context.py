@@ -243,3 +243,23 @@ def test_catalog_reads_the_model_and_role_of_each_unit(db):
     context = SqlAlchemySetupContext(db, resolve_issued_operation=lambda reference: None)
     assert context.machine(unit).operational is False
     assert context.machine_choices(site=None, limit=100, offset=0) == ()
+
+
+def test_one_number_two_models_resolves_by_the_article_in_the_row_name():
+    ew, wl = uuid4(), uuid4()
+    catalog = (MachineUnit(uuid4(), "ОБ.027.1", "Автомат", "EW-50A", "ЦАР", ew),
+               MachineUnit(uuid4(), "ОБ.027.4", "Автомат", "WL-2.0ВТ", "ЦАР", wl))
+    tool = SqlAlchemyProductionResourceContext._tool_model
+    assert tool({"inventory_number": "ОБ.027.X", "name": "EW-50A(R) | автомат"}, catalog) == ew
+    assert tool({"inventory_number": "ОБ.027.X", "name": "wl-2.0вт(R)"}, catalog) == wl
+    with pytest.raises(ResourceConflict, match="несколько моделей"):
+        tool({"inventory_number": "ОБ.027.X", "name": "Автомат"}, catalog)
+
+
+def test_exact_unit_number_decides_before_the_article():
+    ew, wl = uuid4(), uuid4()
+    catalog = (MachineUnit(uuid4(), "ОБ.027.1", "Автомат", "EW-50A", "ЦАР", ew, model_article="EW-50A"),
+               MachineUnit(uuid4(), "ОБ.027.4", "Автомат", "WL-2.0ВТ", "ЦАР", wl, model_article="WL-2.0ВТ"))
+    tool = SqlAlchemyProductionResourceContext._tool_model
+    assert tool({"inventory_number": "ОБ.027.4", "name": "Автомат"}, catalog) == wl
+    assert tool({"inventory_number": "ОБ.027.X", "name": "EW-50A(R)"}, catalog) == ew

@@ -24,6 +24,8 @@ from .resource_assignments import MachineBinding
 from .resource_claims import ResourceConflict
 from .cutting_execution import execute_group
 from .downtime import DowntimeReason, COMMENT_LIMIT
+from .autoplan_api import references_uow_factory
+from .equipment_catalog import EMPTY, load_catalog
 
 router = APIRouter(prefix="/api/production/cutting-groups", tags=["production"])
 
@@ -248,30 +250,58 @@ def _documents(techcards_factory, keys):
     return result
 
 
-def _queue(principal, factory, techcards_factory, machine_id=None):
+def _catalog(references_factory):
+    return load_catalog(references_factory) if references_factory is not None else EMPTY
+
+
+def _unit(references_factory, catalog, equipment_id):
+    """The physical БД.ОБ unit `equipment_id` as the queue sees it; 422 when it is not a machine unit."""
+    if references_factory is None:
+        raise HTTPException(503, "Справочник БД.ОБ недоступен — станок не проверить")
+    with references_factory() as references:
+        record = references.tech_operations.get(equipment_id)
+    return cutting_queue.resolve_unit(record, catalog)
+
+
+def _queue(principal, factory, techcards_factory, machine_id=None, *, catalog=EMPTY, unit=None):
     with factory() as uow:
         candidates = cutting_queue.collect(uow, principal.actor)
     documents = _documents(techcards_factory, cutting_queue.document_keys(candidates))
-    return cutting_queue.queue_rows(candidates, documents, machine_id)
+    return cutting_queue.queue_rows(candidates, documents, machine_id, unit=unit, catalog=catalog)
 
 
 @queue_router.get("/machines")
 def queue_machines(principal: Annotated[Principal, Depends(production_view_principal)],
                    factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
-                   techcards_factory: Annotated[Callable | None, Depends(techcards_uow_factory)]):
-    return {"machines": cutting_queue.machines(_queue(principal, factory, techcards_factory))}
+                   techcards_factory: Annotated[Callable | None, Depends(techcards_uow_factory)],
+                   references_factory: Annotated[Callable | None, Depends(references_uow_factory)]):
+    catalog = _catalog(references_factory)
+    rows = _queue(principal, factory, techcards_factory, catalog=catalog)
+    return {"machines": cutting_queue.machines(rows, catalog)}
 
 
 @queue_router.get("")
-def queue_rows(machine_id: Annotated[str, Query(min_length=1, max_length=64)],
-               principal: Annotated[Principal, Depends(production_view_principal)],
+def queue_rows(principal: Annotated[Principal, Depends(production_view_principal)],
                factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
-               techcards_factory: Annotated[Callable | None, Depends(techcards_uow_factory)]):
+               techcards_factory: Annotated[Callable | None, Depends(techcards_uow_factory)],
+               references_factory: Annotated[Callable | None, Depends(references_uow_factory)],
+               machine_id: Annotated[str | None, Query(min_length=1, max_length=64)] = None,
+               equipment_id: UUID | None = None):
     """`machine_id=none` — cuts whose card names no machine («Станок не указан»); `machine_id=all` — «Все станки»,
-    every row once."""
-    machine = machine_id.strip()
-    rows = _queue(principal, factory, techcards_factory, machine)
-    return {"machine_id": None if machine == cutting_queue.NO_MACHINE else machine,
+    every row once. `equipment_id` — a physical unit: its own rows plus the pool rows of its model («любой свободный»)."""
+    machine = (machine_id or "").strip()
+    if not machine and equipment_id is None:
+        raise HTTPException(422, "Нужен станок: machine_id или equipment_id")
+    catalog = _catalog(references_factory)
+    unit = None
+    if equipment_id is not None:
+        try:
+            unit = _unit(references_factory, catalog, equipment_id)
+        except ProductionValidationError as error:
+            raise HTTPException(422, str(error)) from error
+    rows = _queue(principal, factory, techcards_factory, machine or None, catalog=catalog, unit=unit)
+    return {"machine_id": None if machine in ("", cutting_queue.NO_MACHINE) else machine,
+            "equipment_id": str(equipment_id) if equipment_id else None,
             "version": cutting_queue.queue_version(rows), "rows": rows}
 
 
@@ -279,6 +309,7 @@ class QueueDonePayload(BaseModel):
     task_id: UUID
     operation_id: UUID
     quantity: int = Field(gt=0, le=1_000_000)
+    equipment_id: UUID | None = None  # the physical unit that did the work (pool rows: «любой свободный»)
 
 
 @queue_router.post("/done")
@@ -287,6 +318,7 @@ def queue_done(payload: QueueDonePayload,
                now: Annotated[datetime, Depends(moscow_now)],
                factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
                techcards_factory: Annotated[Callable | None, Depends(techcards_uow_factory)],
+               references_factory: Annotated[Callable | None, Depends(references_uow_factory)],
                idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=255)],
                on_behalf_of: UUID | None = None):
     worker = _performer(factory, principal, on_behalf_of) or principal.actor
@@ -301,10 +333,18 @@ def queue_done(payload: QueueDonePayload,
         grouped = uow.cutting.for_operation(payload.operation_id) is not None
         source = cutting_queue.document_key(task)
     document = None if grouped else _documents(techcards_factory, {source}).get(source)
+    catalog, unit = EMPTY, None
+    if payload.equipment_id is not None:
+        catalog = _catalog(references_factory)
+        try:
+            unit = _unit(references_factory, catalog, payload.equipment_id)
+        except ProductionValidationError as error:
+            raise HTTPException(422, str(error)) from error
     try:
         return cutting_queue.mark_done(payload.task_id, payload.operation_id, payload.quantity, key,
                                        principal.actor, worker, now, factory(), document=document,
-                                       manual_output=section_allowed(principal, ("production",), "edit"))
+                                       manual_output=section_allowed(principal, ("production",), "edit"),
+                                       unit=unit, catalog=catalog)
     except (ConcurrentProductionUpdate, ResourceConflict, IntegrityError, StaleDataError) as error:
         raise HTTPException(409, str(error) if isinstance(error, ConcurrentProductionUpdate) else
                             "Задание или ресурсы изменились — обновите очередь") from error
