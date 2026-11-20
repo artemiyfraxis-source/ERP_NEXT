@@ -1,9 +1,10 @@
-// Печать PL / DN отгрузки по образцам владельца 15.10.2026 — PL533К.10-1.docx (форма 04.2 / Rev.4 / 25.05.2026) и
-// DN533К.10-1.docx (форма 04.1 / Rev.4 / 24.05.2026): логотип Fraxis и реквизиты сверху, номер документа клетками,
-// нумерованные разделы с серой полосой заголовка, подписи по-русски с английскими курсивом ниже, блок подписей внизу
-// листа. Значения строит backend (shipping/documents.py); печать — через тот же скрытый iframe, что и остальные бланки
-// (print.ts → openPrintHtml). В английских подписях образца исправлены опечатки («DECRIPTION», «PACKAGE SIZE, mm» при
-// габаритах в см).
+// Печать PL / DN отгрузки. Поля — форм 04.2 (PL) и 04.1 (DN) по образцам владельца 15.10.2026; вид — свой (владелец
+// 20.11.2026: «PL отвратительно выглядит»): A4 книжный, шапка с логотипом и реквизитами Fraxis, номер документа крупно,
+// данные отправки сеткой «подпись — значение», плотная таблица позиций с итогами, сводка мест, подписи «сдал / принял»,
+// номер страницы в поле листа. Подписи только по-русски; пустая клетка — дописать от руки, ERP заглушек не пишет.
+// Значения строит backend (shipping/documents.py); печать — через тот же скрытый iframe, что и остальные бланки
+// (print.ts → openPrintHtml). Длинный текст переносится, лист не обрезается: таблица переходит на следующую страницу
+// с повтором шапки столбцов.
 import { api, type DeliveryNoteForm, type PackingListForm, type ShippingForm, type ShippingFormRow } from "./api";
 import logo from "./assets/fraxis-logo.png?inline";
 import { openPrintHtml } from "./print";
@@ -18,175 +19,193 @@ function escapeHtml(value: string | undefined): string {
 }
 
 // Реквизиты отправителя — как в образце; в ERP их больше нигде нет.
-const REQUISITES = `ИНН 5040191181 / КПП 504001001<br>ОГРН 1245000065100<br>Адрес:140188, М.О., г. Жуковский, ул. Молодежная, д. 29<br>` +
-  `Сайт: <a href="https://fraxis.ru">https://fraxis.ru</a><br>Телефон для связи: +7 (495) 085-14-79 Доб.1<br>+7 (910) 084-54-25<br>` +
-  `Электронный адрес: <a href="mailto:order@fraxis.ru">order@fraxis.ru</a>`;
+const REQUISITES = `ИНН 5040191181 / КПП 504001001 · ОГРН 1245000065100<br>140188, М.О., г. Жуковский, ул. Молодежная, д. 29<br>` +
+  `+7 (495) 085-14-79 доб. 1 · +7 (910) 084-54-25<br>order@fraxis.ru · fraxis.ru`;
 
-// Образец: Cambria 10 pt, английские подписи — курсив 8 pt тёмно-синим, серые клетки подписей D9D9D9, поля 12,7 мм.
+// Один вид для PL и DN: рубленый шрифт Windows, 9 pt, табличные цифры, тонкие серые линии, подписи клеток мелким серым.
 const FORM_CSS = `
-  @page { size: A4 portrait; margin: 12.7mm; }
-  /* Серые клетки печатаются и без галочки «Фон» в окне печати. */
-  body { margin: 0; color: #000; font-family: Cambria, Caladea, Georgia, serif; font-size: 10pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .form { height: 270mm; display: flex; flex-direction: column; page-break-after: always; overflow: hidden; }
-  .form:last-child { page-break-after: auto; }
-  .top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4mm; }
-  .brand { width: 80mm; text-align: center; }
-  .brand img { width: 80mm; display: block; }
-  .brand h1 { font-size: 15pt; margin: 4mm 0 0; letter-spacing: .02em; }
-  .brand .en { font-size: 12pt; color: #1f497d; }
-  .requisites { text-align: right; line-height: 1.35; }
-  a { color: #00f; text-decoration: underline; }
+  @page { size: A4 portrait; margin: 11mm 11mm 13mm; }
+  @page { @bottom-right { content: "Стр. " counter(page) " из " counter(pages); font: 7.5pt "Segoe UI", Arial, sans-serif; color: #555; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; color: #111; font: 9pt/1.3 "Segoe UI", Arial, "Liberation Sans", sans-serif; font-variant-numeric: tabular-nums;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .form { page-break-after: always; break-after: page; }
+  .form:last-child { page-break-after: auto; break-after: auto; }
+  .top { display: grid; grid-template-columns: 1fr auto; gap: 6mm; align-items: start; padding-bottom: 3mm; border-bottom: 1.5pt solid #111; }
+  .brand img { width: 46mm; display: block; }
+  .requisites { margin-top: 2mm; font-size: 7.5pt; line-height: 1.35; color: #444; }
+  .doc { text-align: right; }
+  .doc .kind { font-size: 10.5pt; font-weight: 700; letter-spacing: .04em; }
+  .doc .kind small { display: block; font-size: 7.5pt; font-weight: 400; letter-spacing: .08em; color: #555; text-transform: uppercase; }
+  .doc .number { font-size: 19pt; font-weight: 700; line-height: 1.1; margin-top: 1.5mm; white-space: nowrap; }
+  .doc .meta { margin-top: 1mm; font-size: 9pt; }
+  .doc .meta b { font-weight: 700; }
+  .doc .place-badge { display: inline-block; margin-top: 2mm; padding: 1mm 3mm; border: 1.5pt solid #111; font-size: 13pt; font-weight: 700; }
+  .keep { break-inside: avoid; page-break-inside: avoid; }
+  h2 { break-after: avoid; page-break-after: avoid; margin: 4.5mm 0 1.5mm; font-size: 8pt; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #333; }
   table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-  td, th { border: 1px solid #000; padding: 1px 4px; vertical-align: middle; font-weight: normal; }
-  .grey, th { background: #d9d9d9; }
-  .lbl { text-align: right; line-height: 1.15; }
-  .lbl.left { text-align: left; }
-  .lbl.mid, th { text-align: center; line-height: 1.15; }
-  i { display: block; font-size: 8pt; font-weight: bold; color: #1f497d; }
-  .section { margin-top: 4mm; }
-  .section td.head { background: #d9d9d9; font-size: 12pt; font-weight: bold; text-align: left; }
-  .section td.head i { display: inline; margin-left: 2px; }
-  .docno { width: 58mm; margin-top: 0; }
-  .docno td.head { background: #fff; }
-  .num td { font-size: 12pt; font-weight: bold; text-align: center; }
-  .val { text-align: center; }
-  .strong { font-weight: bold; font-size: 11pt; }
-  .items td { height: 6mm; }
-  .items .name { text-align: left; }
-  .box { font-size: 18pt; font-weight: bold; text-align: center; }
-  .sign { background: #d9d9d9; border: 0; border-collapse: separate; border-spacing: 0 4px; padding: 0 3mm; }
-  .sign td { border: 0; }
-  .sign td.white { background: #fff; height: 8mm; }
-  .sign td.big { font-size: 18pt; }
-  .spacer { flex: 1; }
-  .bottom td.white { background: #fff; }
-  .foot { display: flex; justify-content: space-between; font-size: 8pt; font-weight: bold; margin-top: 1mm; }
-  .check { font-size: 20pt; text-align: center; line-height: 1; }
+  th, td { border: .6pt solid #9a9a9a; padding: 1.2mm 1.6mm; vertical-align: top; text-align: left; overflow-wrap: anywhere; }
+  .fields th, .fields td { vertical-align: middle; }
+  .fields th { background: #f1f1f1; font-weight: 400; color: #444; font-size: 8pt; }
+  .fields td { font-weight: 600; }
+  .fields td:empty::after, .boxrow td:empty::after { content: "\\00a0"; }
+  .boxrow th { background: #f1f1f1; font-weight: 400; color: #444; font-size: 8pt; text-align: center; }
+  .boxrow td { text-align: center; font-size: 12pt; font-weight: 700; height: 9mm; vertical-align: middle; }
+  .items thead { display: table-header-group; }
+  .items th, .summary th { background: #e6e6e6; font-size: 8pt; font-weight: 700; vertical-align: bottom; }
+  .items tr { break-inside: avoid; page-break-inside: avoid; }
+  .items tbody tr:nth-child(even) td { background: #fafafa; }
+  .num, .items .num { text-align: right; white-space: nowrap; }
+  .center { text-align: center; }
+  .kb { font-weight: 700; white-space: nowrap; }
+  .items tfoot td, .summary tfoot td { font-weight: 700; background: #f1f1f1; border-top: 1.2pt solid #111; }
+  .summary .current td { font-weight: 700; background: #fff4cc; }
+  .note { margin-top: 2mm; font-size: 8pt; color: #333; }
+  .ticks > span { display: block; }
+  .check { font-size: 11pt; line-height: 1; vertical-align: -1px; }
+  .signs { display: grid; grid-template-columns: repeat(var(--signs, 2), 1fr); gap: 6mm; margin-top: 5mm; break-inside: avoid; page-break-inside: avoid; }
+  .sign .who { font-size: 8pt; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #333; }
+  .sign .line { display: grid; grid-template-columns: 22mm 1fr; align-items: end; margin-top: 2.5mm; }
+  .sign .line span { font-size: 8pt; color: #555; }
+  .sign .line b { border-bottom: .6pt solid #111; min-height: 5mm; padding: 0 1mm; font-weight: 600; }
+  .foot { margin-top: 4mm; font-size: 7pt; color: #777; }
 `;
 
-/** Подпись клетки, как в образце: по-русски, ниже английская курсивом. */
-function label(ru: string, en: string): string {
-  return `${escapeHtml(ru)}<i>‘${escapeHtml(en)}’</i>`;
+// Сетка «подпись — значение» в две пары: ширины одни на всех строках, и в строках на всю ширину тоже.
+const FIELD_COLS = `<colgroup><col style="width:19%"><col style="width:31%"><col style="width:19%"><col style="width:31%"></colgroup>`;
+
+function headRow(cells: [string, string, string?][]): string {
+  return `<tr>${cells.map(([title, value, css]) => `<th scope="row">${escapeHtml(title)}</th><td${css ? ` class="${css}"` : ""}>${escapeHtml(value)}</td>`).join("")}</tr>`;
 }
 
-function sectionHead(colspan: number, ru: string, en: string): string {
-  return `<tr><td class="head" colspan="${colspan}">${escapeHtml(ru)} <i>‘${escapeHtml(en)}’</i></td></tr>`;
+/** Строка «подпись — значение» на всю ширину. */
+function wideRow(title: string, value: string, css = ""): string {
+  return `<tr><th scope="row">${escapeHtml(title)}</th><td colspan="3"${css ? ` class="${css}"` : ""}>${escapeHtml(value)}</td></tr>`;
 }
 
-function top(ru: string, en: string): string {
-  return `<div class="top"><div class="brand"><img src="${logo}" alt="Fraxis"><h1>${escapeHtml(ru)}</h1>` +
-    `<div class="en">${escapeHtml(en)}</div></div><div class="requisites">${REQUISITES}</div></div>`;
+function top(kind: string, kindEn: string, number: string, meta: string, badge = ""): string {
+  return `<header class="top"><div class="brand"><img src="${logo}" alt="Fraxis"><div class="requisites">${REQUISITES}</div></div>` +
+    `<div class="doc"><div class="kind">${escapeHtml(kind)}<small>${escapeHtml(kindEn)}</small></div>` +
+    `<div class="number">${escapeHtml(number)}</div><div class="meta">${meta}</div>${badge}</div></header>`;
 }
 
-function foot(form: string, sheet: number): string {
-  return `<div class="foot"><span>${escapeHtml(form)}</span><span>${sheet}</span></div>`;
+function sign(who: string, lines: [string, string, string?][]): string {
+  return `<div class="sign"><div class="who">${escapeHtml(who)}</div>` +
+    lines.map(([caption, value, css]) => `<div class="line"><span>${escapeHtml(caption)}</span><b${css ? ` class="${css}"` : ""}>${escapeHtml(value)}</b></div>`).join("") + `</div>`;
 }
 
-/** Строки «Описания»: позиции и одна пустая пронумерованная — дописать от руки, как в образце. */
-function itemRows(rows: ShippingFormRow[], cells: (row: ShippingFormRow) => string[]): string {
-  const blank: ShippingFormRow = { part: "", name: "", quantity: "", unit: "", batch: "", pl: "", boxes: "" };
-  return [...rows, blank].map((row, index) => {
-    const [part, name, ...rest] = cells(row);
-    return `<tr><td class="val">${index + 1}.</td><td class="val">${escapeHtml(part)}</td><td class="name">${escapeHtml(name)}</td>` +
-      rest.map((value) => `<td class="val">${escapeHtml(value)}</td>`).join("") + "</tr>";
+function signs(blocks: string[]): string {
+  return `<div class="signs" style="--signs:${blocks.length}">${blocks.join("")}</div>`;
+}
+
+/** КБ и артикул по клеткам; старый ответ без них — «КБ1 FRX.…» целиком в КБ. */
+function partCells(row: ShippingFormRow): [string, string] {
+  return row.item_index !== undefined ? [row.item_index, row.article ?? ""] : [row.part, ""];
+}
+
+const joinNonEmpty = (parts: (string | undefined)[], separator = " · ") => parts.map((part) => (part ?? "").trim()).filter(Boolean).join(separator);
+
+function packingListHtml(form: PackingListForm): string {
+  const date = `Дата упаковки <b>${escapeHtml(form.packed_at)}</b>`;
+  const badge = `<div class="place-badge">Место ${escapeHtml(form.place)} из ${escapeHtml(form.places)}</div>`;
+  const rows = form.rows.map((row, index) => {
+    const [kb, article] = partCells(row);
+    return `<tr><td class="num">${index + 1}</td><td class="kb">${escapeHtml(kb)}</td><td>${escapeHtml(article)}</td>` +
+      `<td class="name">${escapeHtml(row.name)}</td><td>${escapeHtml(row.batch)}</td>` +
+      `<td class="num qty">${escapeHtml(row.quantity)}</td><td class="center">${escapeHtml(row.unit)}</td></tr>`;
   }).join("");
+  const summary = form.summary?.length
+    ? `<div class="keep"><h2>Места отправки</h2><table class="summary"><colgroup><col style="width:8%"><col style="width:15%"><col style="width:13%">` +
+      `<col style="width:9%"><col style="width:9%"><col style="width:11%"><col></colgroup>` +
+      `<thead><tr><th class="num">Место</th><th>Вид упаковки</th><th>Габариты, см</th><th class="num">Нетто, кг</th>` +
+      `<th class="num">Брутто, кг</th><th>Пломба</th><th>Состав</th></tr></thead><tbody>` +
+      form.summary.map((place) => `<tr${place.place === form.place ? ` class="current"` : ""}><td class="num">${escapeHtml(place.place)}</td>` +
+        `<td>${escapeHtml(place.package)}</td><td>${escapeHtml(place.dims)}</td><td class="num">${escapeHtml(place.net)}</td>` +
+        `<td class="num">${escapeHtml(place.gross)}</td><td>${escapeHtml(place.seal)}</td><td>${escapeHtml(place.contents)}</td></tr>`).join("") +
+      `</tbody><tfoot><tr><td colspan="4">Всего мест: ${escapeHtml(form.places)}</td><td class="num total-gross">${escapeHtml(form.total_gross)}</td><td colspan="2"></td></tr></tfoot></table></div>`
+    : "";
+  return `<section class="form pl" aria-label="${escapeHtml(form.title)} место ${escapeHtml(form.place)}">` +
+    top("Упаковочная ведомость", "Packing list", form.title, date, badge) +
+    `<h2>Отправка</h2><table class="fields parties">${FIELD_COLS}` +
+    headRow([["Отправитель", form.shipper ?? "", "shipper"], ["Проект", form.project ?? "", "project"]]) +
+    headRow([["Заказчик", form.customer ?? "", "customer"], ["Отправка", form.shipment ?? "", "shipment"]]) +
+    headRow([["Грузополучатель", form.consignee ?? "", "consignee"], ["Отгрузочная ведомость", form.dn ?? "", "dn"]]) +
+    wideRow("Адрес доставки", form.shipping_address ?? "", "shipping-address") +
+    headRow([["Получатель", form.contact ?? "", "contact"], ["Телефон", form.phone ?? "", "phone"]]) +
+    headRow([["Доставка", joinNonEmpty([form.terms, form.carrier]), "delivery"], ["Трек / ТТН", form.track ?? "", "track"]]) +
+    `</table>` +
+    `<h2>Характеристики места</h2>` +
+    `<table class="boxrow"><thead><tr><th>Вид упаковки</th><th>Габариты (Ш×Д×В), см</th><th>Вес нетто, кг</th><th>Вес брутто, кг</th><th>Пломба</th></tr></thead>` +
+    `<tbody><tr><td class="package">${escapeHtml(form.package)}</td><td class="dims">${escapeHtml(form.dims)}</td><td class="net">${escapeHtml(form.net)}</td>` +
+    `<td class="gross">${escapeHtml(form.gross)}</td><td class="seal">${escapeHtml(form.seal)}</td></tr></tbody></table>` +
+    `<h2>Содержимое места</h2><table class="items"><colgroup><col style="width:5%"><col style="width:9%"><col style="width:14%"><col>` +
+    `<col style="width:15%"><col style="width:9%"><col style="width:6%"></colgroup>` +
+    `<thead><tr><th class="num">№</th><th>КБ</th><th>Обозначение</th><th>Наименование</th><th>ГРН (этикетка)</th><th class="num">Кол-во</th><th class="center">Ед.</th></tr></thead>` +
+    `<tbody>${rows}</tbody><tfoot><tr><td colspan="5" class="positions">Итого в месте: ${escapeHtml(form.positions || String(form.rows.length))}</td>` +
+    `<td colspan="2" class="num quantity">${escapeHtml(form.quantity)}</td></tr></tfoot></table>` +
+    summary +
+    `<p class="note">Вес короба может различаться на ________ г из-за расхода упаковочных материалов.</p>` +
+    signs([
+      sign("Сдал — кладовщик", [["ФИО", form.packer, "packer"], ["Подпись", ""], ["Дата отгрузки", form.shipped_at, "shipped"]]),
+      sign("Проверил", [["ФИО", ""], ["Подпись", ""], ["Дата", ""]]),
+      sign("Принял — получатель", [["ФИО", ""], ["Подпись", ""], ["Дата", ""]]),
+    ]) +
+    `<div class="foot">Форма/Form 04.2 / Rev.4 / 25.05.2026</div></section>`;
 }
 
-function packingListHtml(form: PackingListForm, sheet: number): string {
-  const [prefix, project, dash, index] = form.number;
-  return `<section class="form" aria-label="${escapeHtml(form.title)}">${top("УПАКОВОЧНАЯ ВЕДОМОСТЬ", "PACKING LIST")}` +
-    `<table class="section docno"><colgroup><col style="width:22%"><col style="width:46%"><col style="width:12%"><col style="width:20%"></colgroup>` +
-    sectionHead(4, "1. Номер документа", "Doc. №") +
-    `<tr class="num"><td>${escapeHtml(prefix)}</td><td>${escapeHtml(project)}</td><td>${escapeHtml(dash)}</td><td>${escapeHtml(index)}</td></tr></table>` +
-    `<table class="section place"><colgroup><col style="width:30%"><col style="width:8%"><col style="width:4%"><col style="width:4%"><col style="width:8%"><col style="width:26%"><col style="width:20%"></colgroup>` +
-    sectionHead(7, "2. ХАРАКТЕРИСТИКИ МЕСТА", "PACKAGE DESCRIPTION") +
-    `<tr><td class="grey lbl">${label("УПАКОВКА №", "PACKAGE #")}</td><td class="val">BXN</td><td class="val">${escapeHtml(form.place)}</td>` +
-    `<td class="val">/</td><td class="val">${escapeHtml(form.places)}</td><td class="grey lbl">${label("ВИД УПАКОВКИ", "PACKAGE TYPE")}</td>` +
-    `<td class="val">${escapeHtml(form.package)}</td></tr>` +
-    `<tr><td class="grey lbl">${label("ГАБАРИТЫ УПАКОВКИ (ШхДхВ), см", "PACKAGE SIZE, cm")}</td><td class="val strong dims" colspan="4">${escapeHtml(form.dims)}</td>` +
-    `<td class="grey lbl">${label("ВЕС ИЗДЕЛИЙ (нетто), кг", "PRODUCT WEIGHT, kg")}</td><td class="val strong net">${escapeHtml(form.net)}</td></tr></table>` +
-    `<table class="section items"><colgroup><col style="width:5.5%"><col style="width:16%"><col style="width:41%"><col style="width:13%"><col style="width:8.5%"><col style="width:16%"></colgroup>` +
-    sectionHead(6, "3. ОПИСАНИЕ", "DESCRIPTION") +
-    `<tr><th>#</th><th>${label("Чертежный номер/Артикул", "Part number")}</th><th>${label("Описание", "Description")}</th>` +
-    `<th>${label("Кол-во", "QTY")}</th><th>${label("Ед. изм.", "E.A.")}</th><th>${label("Номер этикетки", "Batch number")}</th></tr>` +
-    itemRows(form.rows, (row) => [row.part, row.name, row.quantity, row.unit, row.batch]) + `</table>` +
-    `<table class="section notes">${sectionHead(1, "4. ПРИМЕЧАНИЯ", "NOTES")}` +
-    `<tr><td><b>Вес короба может различаться на ________ грамм ввиду разницы расхода упаковочных материалов.</b></td></tr><tr><td>&nbsp;</td></tr></table>` +
-    `<table class="section sign"><colgroup><col style="width:30%"><col style="width:70%"></colgroup>` +
-    `<tr><td class="lbl">${label("Штамп/подпись исполнителя:", "Storekeeper stamp/sign")}</td><td class="white"></td></tr>` +
-    `<tr><td class="lbl">${label("Дата упаковки:", "Packing Date")}</td><td class="white big packed">${escapeHtml(form.packed_at)}</td></tr>` +
-    `<tr><td class="lbl">${label("Проверил:", "Checked")}</td><td class="white"></td></tr></table>` +
-    `<div class="spacer"></div>` +
-    `<table class="bottom"><colgroup><col style="width:17.5%"><col style="width:34%"><col style="width:22%"><col style="width:26.5%"></colgroup>` +
-    `<tr><td class="grey lbl mid">${label("Вес (брутто) [кг]", "PACKAGE WEIGHT, kg")}</td><td class="white gross">${escapeHtml(form.gross)}</td>` +
-    `<td class="grey lbl">${label("Номер пломбы", "Seal number")}</td><td class="white seal">${escapeHtml(form.seal)}</td></tr>` +
-    `<tr><td class="grey lbl mid" rowspan="2">${label("ФИО:", "Name")}</td><td class="white val packer" rowspan="2">${escapeHtml(form.packer)}</td>` +
-    `<td class="grey lbl">${label("Штамп/подпись кладовщика:", "Storekeeper stamp/sign")}</td><td class="white"></td></tr>` +
-    `<tr><td class="grey lbl">${label("Дата отгрузки:", "Shipping Date")}</td><td class="white val shipped">${escapeHtml(form.shipped_at)}</td></tr></table>` +
-    foot("Форма/Form 04.2 / Rev.4 / 25.05.2026", sheet) + `</section>`;
+const tick = (on: boolean) => `<span class="check">${on ? "☒" : "☐"}</span>`;
+
+function deliveryNoteHtml(form: DeliveryNoteForm): string {
+  // Заказ заказчика — «PO # номер»; без него номер проекта как есть.
+  const po = form.po_from_card ? `PO # ${form.po}` : form.po;
+  const rows = form.rows.map((row, index) => {
+    const [kb, article] = partCells(row);
+    return `<tr><td class="num">${index + 1}</td><td class="kb">${escapeHtml(kb)}</td><td>${escapeHtml(article)}</td>` +
+      `<td class="name">${escapeHtml(row.name)}</td><td class="num qty">${escapeHtml(row.quantity)}</td><td class="center">${escapeHtml(row.unit)}</td>` +
+      `<td>${escapeHtml(row.pl)}</td><td>${escapeHtml(row.boxes)}</td></tr>`;
+  }).join("");
+  return `<section class="form dn" aria-label="${escapeHtml(form.title)}">` +
+    top("Отгрузочная ведомость", "Delivery note", form.title, `Дата <b class="date">${escapeHtml(form.date)}</b>`) +
+    `<h2>Заказ</h2><table class="fields refs">${FIELD_COLS}` +
+    headRow([["Заказчик", form.customer, "customer"], ["Заказ №", po, "po"]]) +
+    headRow([["Номер договора", form.contract, "contract"], ["Номер спецификации", form.spec, "spec"]]) +
+    headRow([["Номер счёта", form.invoice, "invoice"], ["Время работы", form.hours, "hours"]]) +
+    `</table>` +
+    `<h2>Данные о поставке</h2><table class="fields delivery">${FIELD_COLS}` +
+    wideRow("Условия поставки", form.terms, "terms") +
+    wideRow("Адрес доставки", form.shipping_address, "shipping-address") +
+    headRow([["Получатель", form.contact, "contact"], ["Телефон", form.phone, "phone"]]) +
+    headRow([["Перевозчик / ТК", form.carrier, "carrier"], ["№ ТТН / перевозки", form.track, "track"]]) +
+    wideRow("Примечания для ТК", form.tk_note, "tk-note") +
+    `</table>` +
+    `<h2>Описание</h2><table class="items"><colgroup><col style="width:5%"><col style="width:9%"><col style="width:13%"><col>` +
+    `<col style="width:8%"><col style="width:5.5%"><col style="width:13%"><col style="width:10%"></colgroup>` +
+    `<thead><tr><th class="num">№</th><th>КБ</th><th>Обозначение</th><th>Наименование</th><th class="num">Кол-во</th><th class="center">Ед.</th>` +
+    `<th>Упаковочная ведомость</th><th>Места</th></tr></thead><tbody>${rows}</tbody>` +
+    `<tfoot><tr><td colspan="4" class="positions">Итого: ${escapeHtml(form.positions || String(form.rows.length))}</td>` +
+    `<td colspan="2" class="num quantity">${escapeHtml(form.quantity)}</td><td colspan="2"></td></tr></tfoot></table>` +
+    `<h2>Итоги и УПД</h2><table class="fields totals">${FIELD_COLS}` +
+    headRow([["Мест (упаковок)", form.places, "places"], ["Общий вес брутто, кг", form.gross, "gross"]]) +
+    `<tr><th scope="row">Номер УПД / ТТН</th><td class="upd">${escapeHtml(form.upd)}</td><th scope="row">УПД</th>` +
+    `<td class="upd-ticks"><span class="ticks"><span>${tick(form.upd_edo)} передан по ЭДО</span>` +
+    `<span>${tick(form.upd_paper)} бумажный в ${escapeHtml(form.paper_box)}</span></span></td></tr>` +
+    `</table>` +
+    `<h2>Примечания</h2><table class="fields notes">` +
+    `<tr><td>1. Упаковочные ведомости (PL) лежат внутри мест; место (BXN) каждой позиции — в столбце «Места».</td></tr>` +
+    (form.note ? `<tr><td class="note-text">2. ${escapeHtml(form.note)}</td></tr>` : "") + `</table>` +
+    signs([
+      sign("Сдал — кладовщик", [["ФИО", form.packer, "packer"], ["Подпись", ""], ["Дата отгрузки", form.shipped_at, "shipped"]]),
+      sign("Принял — получатель / ТК", [["ФИО", ""], ["Подпись", ""], ["Дата", ""]]),
+    ]) +
+    `<div class="foot">Форма/Form 04.1 Rev.4 / 24.05.2026</div></section>`;
 }
 
-const tick = (on: boolean) => `<td class="check">${on ? "☒" : "☐"}</td>`;
-
-function deliveryNoteHtml(form: DeliveryNoteForm, sheet: number): string {
-  const [prefix, project, dash, index] = form.number;
-  // Сетка шапки образца: у трёх строк разные границы клеток — 10 колонок покрывают их все.
-  const grid = [24.3, 6.8, 5.3, 8.3, 2.7, 8.6, 10, 1.6, 18.1, 14.3].map((width) => `<col style="width:${width}%">`).join("");
-  // Заказ заказчика — «PO | # | номер»; без него в клетке номер проекта, без одинокого «PO #».
-  const poCells = form.po_from_card
-    ? `<td class="val strong">PO</td><td class="val strong">#</td><td class="val strong po" colspan="2">${escapeHtml(form.po)}</td>`
-    : `<td class="val strong po" colspan="4">${escapeHtml(form.po)}</td>`;
-  const wide = (value: string, css = "") => `<td colspan="3"${css ? ` class="${css}"` : ""}>${escapeHtml(value)}</td>`;
-  return `<section class="form" aria-label="${escapeHtml(form.title)}">${top("ОТГРУЗОЧНАЯ ВЕДОМОСТЬ", "DELIVERY NOTE")}` +
-    `<table class="head"><colgroup>${grid}</colgroup>` +
-    `<tr><td class="grey lbl mid">${label("Номер документа", "Ref №")}</td><td class="val strong">${escapeHtml(prefix)}</td>` +
-    `<td class="val" colspan="2">${escapeHtml(project)}</td><td class="val">${escapeHtml(dash === "-" ? "−" : dash)}</td>` +
-    `<td class="val strong">${escapeHtml(index)}</td><td class="grey lbl mid">${label("Дата", "Date")}</td>` +
-    `<td class="strong date" colspan="3">${escapeHtml(form.date)}</td></tr>` +
-    `<tr><td class="grey lbl mid">${label("Заказчик", "Customer")}</td><td class="grey lbl mid" colspan="4">${label("Заказ №", "Request #")}</td>` +
-    `<td class="grey lbl mid" colspan="3">${label("Номер договора", "Contract number")}</td>` +
-    `<td class="grey lbl mid">${label("Номер спецификации", "Specification number")}</td><td class="grey lbl mid">${label("Номер счета", "Invoice number")}</td></tr>` +
-    `<tr class="refs"><td class="val customer">${escapeHtml(form.customer)}</td>${poCells}` +
-    `<td class="val contract" colspan="3">${escapeHtml(form.contract)}</td>` +
-    `<td class="val spec">${escapeHtml(form.spec)}</td><td class="val strong invoice">${escapeHtml(form.invoice)}</td></tr></table>` +
-    `<table class="section delivery"><colgroup><col style="width:24%"><col style="width:28%"><col style="width:22%"><col style="width:26%"></colgroup>` +
-    sectionHead(4, "1. ДАННЫЕ О ПОСТАВКЕ ИЗДЕЛИЙ", "DELIVERY DATA") +
-    `<tr><td class="grey lbl">${label("Условия поставки:", "Delivery terms")}</td>${wide(form.terms, "terms")}</tr>` +
-    `<tr><td class="grey lbl">${label("Адрес доставки изделий:", "Shipping address")}</td>${wide(form.shipping_address, "shipping-address")}</tr>` +
-    `<tr><td class="grey lbl">Время работы:</td>${wide(form.hours, "hours")}</tr>` +
-    `<tr><td class="grey lbl">${label("Получатель:", "Recipient")}</td><td class="contact">${escapeHtml(form.contact)}</td>` +
-    `<td class="grey lbl">${label("Телефон:", "Phone")}</td><td class="phone">${escapeHtml(form.phone)}</td></tr>` +
-    `<tr><td class="grey lbl">${label("Наименование перевозчика/ТК:", "Name shipping company")}</td><td class="carrier">${escapeHtml(form.carrier)}</td>` +
-    `<td class="grey lbl">${label("Номер ТТН/перевозки:", "Shipment number")}</td><td class="track">${escapeHtml(form.track)}</td></tr>` +
-    `<tr><td class="grey lbl">${label("Примечания для перевозчика/ТК:", "Notes")}</td>${wide(form.tk_note, "tk-note")}</tr></table>` +
-    `<table class="section items"><colgroup><col style="width:3.6%"><col style="width:15.5%"><col style="width:31.2%"><col style="width:10%"><col style="width:12.1%"><col style="width:15.5%"><col style="width:12.1%"></colgroup>` +
-    sectionHead(7, "2. ОПИСАНИЕ", "DESCRIPTION") +
-    `<tr><th>#</th><th>${label("Чертеж. номер/Арт.", "Part number")}</th><th>${label("Описание", "Description")}</th><th>${label("Кол-во", "QTY")}</th>` +
-    `<th>${label("Ед.изм.", "e.a.")}</th><th>${label("Упаковочная ведомость №", "Packing list #")}</th><th>${label("Номер места", "Box number")}</th></tr>` +
-    itemRows(form.rows, (row) => [row.part, row.name, row.quantity, row.unit, row.pl, row.boxes]) + `</table>` +
-    `<table class="section notes"><colgroup><col style="width:4%"><col style="width:28%"><col style="width:12%"><col style="width:41%"><col style="width:15%"></colgroup>` +
-    sectionHead(5, "3. ПРИМЕЧАНИЯ", "NOTES") +
-    `<tr><td class="grey val" colspan="2">УПД передано посредством ЭДО</td>${tick(form.upd_edo)}` +
-    `<td class="grey val">УПД в бумажном виде находятся в ${escapeHtml(form.paper_box)}</td>${tick(form.upd_paper)}</tr>` +
-    `<tr><td class="val">1.</td><td colspan="4"><b>Упаковочные ведомости (PL) находятся внутри короба. Соотносить Упаковочную Ведомость (PL) ` +
-    `с номером места BXN необходимо согласно п.2. Описание.</b></td></tr>` +
-    `<tr><td class="val">2.</td><td colspan="4" class="note">${escapeHtml(form.note)}</td></tr></table>` +
-    `<div class="spacer"></div>` +
-    `<table class="bottom"><colgroup><col style="width:15%"><col style="width:17.5%"><col style="width:16.5%"><col style="width:22%"><col style="width:29%"></colgroup>` +
-    `<tr><td class="grey lbl mid">${label("Общее кол-во упаковок [шт]", "Total boxes [e.a.]")}</td><td class="grey lbl mid">${label("Общий вес (брутто) [кг]", "Total weight [kg]")}</td>` +
-    `<td class="grey lbl mid">${label("Номер УПД/ТТН", "UPD/TTN number")}</td><td class="grey lbl">${label("Штамп/подпись кладовщика:", "Storekeeper stamp/sign")}</td>` +
-    `<td class="white val packer">${escapeHtml(form.packer)}</td></tr>` +
-    `<tr><td class="val places">${escapeHtml(form.places)}</td><td class="val gross">${escapeHtml(form.gross)}</td><td class="val upd">${escapeHtml(form.upd)}</td>` +
-    `<td class="grey lbl">${label("Дата отгрузки:", "Shipping Date")}</td><td class="white val shipped">${escapeHtml(form.shipped_at)}</td></tr></table>` +
-    foot("Форма/Form 04.1 Rev.4 / 24.05.2026", sheet) + `</section>`;
-}
-
-/** HTML печати: каждая форма (PL на короб или DN) — отдельный лист A4. */
+/** HTML печати: каждая форма (PL на короб или DN) — с нового листа A4. */
 export function buildShippingFormsHtml(forms: ShippingForm[]): string {
   // Заголовок окна печати = имя файла при «Сохранить как PDF»: номер документа, как в папке проекта.
   const title = forms[0]?.title ?? "";
-  const sheets = forms.map((form, index) => form.kind === "pl" ? packingListHtml(form, index + 1) : deliveryNoteHtml(form, index + 1));
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>` +
+  const sheets = forms.map((form) => form.kind === "pl" ? packingListHtml(form) : deliveryNoteHtml(form));
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>` +
     `<style>${FORM_CSS}</style></head><body>${sheets.join("")}</body></html>`;
 }
 

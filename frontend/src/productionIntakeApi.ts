@@ -52,7 +52,7 @@ export type DispatchShipment = Shipment & {
    *  upd_number, track_number; слова — в `missing_data` / `missing_ship`. */
   missing_data_codes?: string[];
   missing_ship_codes?: string[];
-  /** Предлагать «Без УПД…» (разрешение по ПИН): держит только УПД, и его нет совсем; ЭДО без номера — нет. */
+  /** Предлагать «Без УПД…» (разрешение по ПИН): отправку держит УПД — его нет совсем или нет его № (владелец 20.11). */
   no_upd_offered?: boolean;
 };
 
