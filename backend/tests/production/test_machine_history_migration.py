@@ -76,8 +76,9 @@ def test_speed_rows_start_empty_refuse_bad_rows_and_roundtrip_leaves_other_table
                 connection.execute(INSERT, {**good, "seq": 3, **bad})
         ids = [row_id for (row_id,) in connection.execute(f"SELECT id FROM {TABLE} ORDER BY id")]
         assert ids == [1, 2]
-        assert connection.execute("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ?"
-                                  " AND name = 'ix_production_machine_speed_rows_time'", (TABLE,)).fetchone()
+        indexes = {name for (name,) in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ?", (TABLE,))}
+        assert {"ix_production_machine_speed_rows_time", "ix_production_machine_speed_rows_equipment_id_id"} <= indexes
     command.downgrade(config, PREVIOUS)
     with sqlite3.connect(path) as connection:
         tables = {name for (name,) in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}

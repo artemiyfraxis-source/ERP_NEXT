@@ -36,6 +36,7 @@ CHECKS = {
     "ck_production_machine_speed_rows_reason": "reason IN ('start', 'counter', 'state', 'run', 'setup')",
 }
 INDEX = "ix_production_machine_speed_rows_time"
+LATEST_INDEX = "ix_production_machine_speed_rows_equipment_id_id"  # the newest row of a machine
 
 
 def upgrade() -> None:
@@ -66,8 +67,10 @@ def upgrade() -> None:
         *(sa.CheckConstraint(sql, name=name) for name, sql in CHECKS.items()),
     )
     op.create_index(INDEX, TABLE, ["equipment_id", "recorded_at"])
+    op.create_index(LATEST_INDEX, TABLE, ["equipment_id", "id"])
 
 
 def downgrade() -> None:
+    op.drop_index(LATEST_INDEX, table_name=TABLE)
     op.drop_index(INDEX, table_name=TABLE)
     op.drop_table(TABLE)

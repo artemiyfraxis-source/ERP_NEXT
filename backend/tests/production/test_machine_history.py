@@ -2,6 +2,7 @@
 run or setup changed — `start` on the first report and a new boot; UPH alone, an unchanged or re-sent snapshot, another
 machine or a lost link write nothing; a clock stepped back never puts a row before the previous one."""
 
+import logging
 from datetime import timedelta
 
 import pytest
@@ -9,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.modules.production import machine_history as history
+from app.modules.production import machine_runs as runs
 from app.modules.production import machines as rules
 from app.modules.production.machine_history import MachineSpeedRow
 from tests.identity.test_api_tokens import _csrf, tokens_api  # noqa: F401
@@ -113,7 +115,7 @@ def test_a_counter_drop_is_written_and_a_new_boot_writes_start(machines_api):
         ("start", "boot-1", 1, 50), ("counter", "boot-1", 2, 0), ("start", "boot-2", 1, 0)]
 
 
-def test_a_resent_snapshot_writes_no_second_row_and_raises_nothing(machines_api):
+def test_a_resent_snapshot_writes_no_second_row_and_raises_nothing(machines_api, caplog):
     sessions, clock, admin, ob019, _ = machines_api
     bridge = Bridge(admin)
     bridge.report()
@@ -125,19 +127,71 @@ def test_a_resent_snapshot_writes_no_second_row_and_raises_nothing(machines_api)
     with sessions() as session:
         link = session.get(rules.MachineLinkRow, ob019)
         words = rules.checked_registers(link.kind, _words(**{"649": 9}))
-        assert history.record(session, link, words, "boot-1", 1, clock.now) is None
+        with caplog.at_level(logging.ERROR, logger=history.__name__):
+            assert history.record(session, link, words, "boot-1", 1, clock.now) is None
         session.commit()
     assert len(_rows(sessions)) == 1
+    assert caplog.records == []  # a duplicate is not an error
 
 
-def test_only_the_unique_violation_is_swallowed(machines_api):
+def test_any_other_history_error_is_logged_and_swallowed(machines_api, caplog):
     sessions, clock, admin, ob019, _ = machines_api
     Bridge(admin).report()
     with sessions() as session:
         link = session.get(rules.MachineLinkRow, ob019)
         words = {**rules.checked_registers(link.kind, WORDS), 766: 70000}  # breaks the state CHECK, not the UNIQUE
-        with pytest.raises(IntegrityError):
-            history.record(session, link, words, "boot-1", 2, clock.now)
+        with caplog.at_level(logging.ERROR, logger=history.__name__):
+            assert history.record(session, link, words, "boot-1", 2, clock.now) is None
+        session.commit()  # the outer transaction survived the failed savepoint
+    assert [record.levelno for record in caplog.records] == [logging.ERROR]
+    assert str(ob019) in caplog.records[0].getMessage()
+    assert len(_rows(sessions)) == 1
+
+
+@pytest.mark.parametrize("broken", ["integrity", "exception"])
+def test_a_failing_history_never_fails_the_machine_report(machines_api, monkeypatch, caplog, broken):
+    sessions, clock, admin, ob019, _ = machines_api
+    if broken == "integrity":
+        monkeypatch.setattr(history, "setup_key", lambda wire, words: " ")  # the setup CHECK refuses the row
+    else:
+        def fail(*args):
+            raise RuntimeError("сбой чтения прогона")
+        monkeypatch.setattr(history, "open_run", fail)
+    with caplog.at_level(logging.ERROR, logger=history.__name__):
+        answer = Bridge(admin).report(_words(**{"649": 7, "650": 0}))
+    assert answer["accepted"] is True
+    with sessions() as session:
+        snapshot = session.get(rules.MachineSnapshotRow, ob019)
+        assert snapshot is not None and snapshot.registers["649"] == 7
+    assert _rows(sessions) == []
+    assert len(caplog.records) == 1 and str(ob019) in caplog.records[0].getMessage()
+
+
+def test_a_duplicate_is_told_by_postgres_sqlstate_and_constraint_name():
+    class Diag:
+        def __init__(self, name):
+            self.constraint_name = name
+
+    class Orig(Exception):
+        def __init__(self, sqlstate, name):
+            super().__init__("duplicate key value violates unique constraint")
+            self.sqlstate, self.diag = sqlstate, Diag(name)
+
+    def error(orig):
+        return IntegrityError("INSERT", {}, orig)
+
+    assert history._duplicate(error(Orig("23505", history.UNIQUE_NAME)))
+    assert not history._duplicate(error(Orig("23505", "pk_production_machine_speed_rows")))
+    assert not history._duplicate(error(Orig("23514", history.UNIQUE_NAME)))
+    sqlite = Exception("UNIQUE constraint failed: production_machine_speed_rows.equipment_id, "
+                       "production_machine_speed_rows.boot, production_machine_speed_rows.seq")
+    assert history._duplicate(error(sqlite))
+    assert not history._duplicate(error(Exception("CHECK constraint failed: ck_production_machine_speed_rows_state")))
+
+
+def test_run_kinds_match_the_frozen_check_of_0208():
+    # Migration 0208 froze CHECK run_kind IN ('cutting', 'manual'): a new run kind needs a new migration.
+    assert runs.KINDS == ("cutting", "manual")
 
 
 def test_a_clock_stepped_back_is_clamped_to_the_previous_row(machines_api):
