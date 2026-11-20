@@ -34,6 +34,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Security
 from pydantic import AwareDatetime, BaseModel, Field
 from sqlalchemy import func, select
 
+from app.modules.equipment_setup.recipes import wire_key
+from app.modules.production import machine_history as history
 from app.modules.production import machines as rules
 from app.modules.production import ob099
 from app.modules.production.api import production_uow_factory
@@ -51,14 +53,22 @@ from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
 from app.shared.persistence import AuditEventRow
 from app.workflows.marking_labels import STATUS_LABELS
+from app.workflows.ob019_setup import wire_label
 from app.shared.http_auth import TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, require_section
 
 router = APIRouter(prefix="/api/production/machines", tags=["production"])
 Factory = Annotated[Callable, Depends(production_uow_factory)]
 Now = Annotated[datetime, Depends(moscow_now)]
 # A named gate of the access contract (tests/identity/test_level_gates.py DEPENDENCIES): the master and the fitter read.
-machines_view_principal = require_section(("production", "myops"), "view", detail="Раздел «Станки» вам не открыт.")
+# ОТК (`quality`) reads it too: the VNA workplace lives in the analyser card of «Оборудование» (owner 20.11.2026).
+machines_view_principal = require_section(("production", "myops", "quality"), "view",
+                                          detail="Раздел «Оборудование» вам не открыт.")
 Reader = Annotated[Principal, Depends(machines_view_principal)]
+# Commands to a machine («Стоп» included) — the shop's own (Производство / Задания), never ОТК, which only reads the
+# section for its analyser cards.
+machines_command_principal = require_section(("production", "myops"), "view",
+                                             detail="Команды станку подаёт производство или исполнитель задания.")
+Commander = Annotated[Principal, Depends(machines_command_principal)]
 BRIDGE_ONLY = "Снимки станка присылает только агент ERP на ПК станка (токен API «machine:report»)."
 
 PRINTER_NAMES = {"tspl": "Принтер этикеток", "gdi_png": "Принтер маркировки"}
@@ -280,8 +290,9 @@ def _machine_rows(session, equipment, printers: list[dict], now) -> list[dict]:
         for unit in units:
             printer = by_unit.get(str(unit.id))
             if printer is not None:  # a marking machine: its printer's agent is its connection to ERP
+                # `marking`: the tile opens the marking printer card (print from a job or own text), not the passport.
                 add({**printer, "key": f"machine:{unit.id}", "kind": "machine", "equipment_id": str(unit.id),
-                     "inventory": inventory, "name": _name(unit)}, unit, True)
+                     "inventory": inventory, "name": _name(unit), "marking": True}, unit, True)
             elif unit.show_in_equipment:
                 add({
                     "key": f"machine:{unit.id}", "kind": "machine", "equipment_id": str(unit.id), "inventory": inventory,
@@ -478,6 +489,9 @@ def _device_rows(session, now) -> list[dict]:
             **NO_CATALOG, "controlled": True,
             "article": articles.get(_inventory(instrument.inventory_number), "") if instrument else "",
             # The MFP of the warehouse scans and prints: it stands with the warehouse printer (owner 20.11.2026).
+            # The analyser card picks its work by this: «s2vna» — the VNA workplace, «arinst» — files from ArinstVL.
+            "vna": device.kind if device.kind in VNA_APPS else None,
+            "instrument_id": str(instrument.id) if instrument else None,
             "family": rules.ANALYSER_FAMILY if device.kind in VNA_APPS
             else rules.WAREHOUSE_PRINTERS if device.kind == "scan" else rules.OTHER_FAMILY,
         })
@@ -795,6 +809,10 @@ def agent_report(payload: ReportPayload, request: Request, bridge: Bridge, facto
             uow.audit.add(AuditEvent(
                 id=uuid4(), aggregate_id=link.equipment_id, event_type="production.machine_bound", actor=bridge.actor,
                 occurred_at=now, details={"inventory": inventory, "machine_id": link.machine_id, "pc_name": link.pc_name}))
+        if accepted and link.kind == rules.KIND_OB019 and payload.link == "ok":
+            # Speed history (machine_history): a row when the counter, state, run or setup changed.
+            history.record(session, link, rules.checked_registers(link.kind, payload.registers), payload.boot,
+                           payload.seq, now, wire_of=lambda text: wire_key(wire_label(text)))
         uow.commit()
     return {"ok": True, "accepted": accepted, "bound": bound}
 

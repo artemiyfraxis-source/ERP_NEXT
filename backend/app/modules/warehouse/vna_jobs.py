@@ -143,6 +143,22 @@ def content(uow, job_id: UUID) -> bytes:
         )) or b""
 
 
+def recent_captures(uow, requested_by: str, instrument_id: UUID, limit: int) -> list[dict]:
+    """The person's last finished captures of one analyser, newest first (the analyser card in «Оборудовании»): only
+    their own, as the file endpoint serves only the requester."""
+    with uow:
+        rows = _session(uow).execute(
+            select(ScanJobRow.id, ScanJobRow.capture_file_name, ScanJobRow.finished_at, ScanJobRow.source,
+                   ScanJobRow.capture_settings, ScanAgentRow.pc_name)
+            .outerjoin(ScanAgentRow, ScanAgentRow.machine_id == ScanJobRow.target_machine_id)
+            .where(ScanJobRow.kind == "vna", ScanJobRow.status == DONE, ScanJobRow.instrument_id == instrument_id,
+                   ScanJobRow.requested_by == requested_by)
+            .order_by(ScanJobRow.finished_at.desc(), ScanJobRow.id).limit(limit)).all()
+    return [{"id": str(row.id), "file_name": row.capture_file_name or "vna.s1p", "source": row.source,
+             "finished_at": row.finished_at.isoformat() if row.finished_at else None,
+             "pc": row.pc_name or "", "capture_settings": row.capture_settings} for row in rows]
+
+
 def control_station(session, serial: str, now: datetime, *, machine_id: str | None = None,
                     methods: set[str] | None = None, ops: set[str] | None = None) -> str:
     """Resolve/lock the registry's existing physical owner, never an arbitrary browser PC header."""

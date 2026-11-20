@@ -28,6 +28,8 @@ export interface MachineRow {
   state: { text: string; tone: Tone };
   /** Есть живая карточка (ОБ с агентом станка). */
   card: boolean;
+  /** Станок маркировки (принтер Godex через агента печати): плитка открывает карточку печати. */
+  marking?: boolean;
   /** Другие ПК, которые сообщают тот же прибор (не вторая строка), «» — нет. */
   others: string;
   /** Из БД.ОБ: артикул (модель), участок ЦАР/ЖУК, операции и их семейство. */
@@ -41,6 +43,10 @@ export interface MachineRow {
   setup?: { code: SetupClass | null; label: string };
   /** Открытые задания наладки, по которым настройка ещё не записана («Ждёт наладки»). */
   pending_setup?: number;
+  /** Анализатор цепей: какая программа его сообщает — «s2vna» (рабочее место ВАЦ) или «arinst» (файлы ArinstVL). */
+  vna?: "s2vna" | "arinst" | null;
+  /** СИ реестра, которым этот прибор является; null — прибора нет в реестре. */
+  instrument_id?: string | null;
 }
 
 export type SetupClass = "none" | "simple" | "full";

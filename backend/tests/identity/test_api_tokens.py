@@ -462,6 +462,7 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
         ("POST", "/api/references/tech-operations/{record_id}/crimps/terminals/{terminal_id}"),
         ("POST", "/api/references/tech-operations/{record_id}/duplicate"),
         ("POST", "/api/references/wire-gauges"),
+        ("POST", "/api/production/machine-speed/norm-suggestions/accept"),
         ("PUT", "/api/references/cables/diameters"),
         ("PUT", "/api/references/cables/{record_id}/hookup"),
         ("PUT", "/api/references/cables/{record_id}/kind"),

@@ -245,3 +245,81 @@ def test_without_an_approval_pin_the_person_is_told_where_to_set_it(env):
     assert refused.status_code == 403
     assert refused.json()["detail"] == "У сотрудника не задан разрешительный ПИН — его задают в личном кабинете."
     assert _failures(sessions, "approval:zinger") == 0
+
+
+def _pickup(client, upd_type, *, carrier: bool = False) -> dict:
+    """Набранная отправка без PL/DN: «Без УПД», ЭДО или бумажная без №, или без типа УПД."""
+    good = client.post("/api/shipping/goods", json={
+        "project": PROJECT, "item_index": "КБ1", "customer": "Заказчик", "name": "Жгут", "ordered": "6", "unit": "шт",
+    }).json()["good"]
+    _as(STOREKEEPER)
+    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "6"}).json()["good"]
+    _as(MANAGER)
+    client.post("/api/shipping/project-pack-permissions", json={
+        "project": PROJECT, "lines": [{"item_index": "КБ1", "quantity": "6", "version": 0}],
+    })
+    delivery = ({"terms": "ДОСТАВКА ТК", "carrier": "СДЭК", "shipping_point": "Москва"} if carrier else {"terms": "САМОВЫВОЗ"})
+    made = client.post("/api/shipping/shipments", json={
+        "receiver": "Получатель", "phone": "+7 900", **delivery, "upd_type": upd_type, "upd_number": "", "no_docs": True,
+        "lines": [{"good_id": good["id"], "quantity": "6"}],
+    })
+    assert made.status_code == 200, made.text
+    _as(STOREKEEPER)
+    return made.json()["shipment"]
+
+
+def _issue(client, shipment: dict, document: str) -> dict:
+    issued = client.post(f"/api/shipping/shipments/{shipment['id']}/issue-document",
+                         json={"version": shipment["version"], "document": document})
+    assert issued.status_code == 200, issued.text
+    return issued.json()["shipment"]
+
+
+def _dn(client, shipment: dict):
+    return client.get(f"/api/shipping/shipments/{shipment['id']}/print", params={"document": "dn"})
+
+
+@pytest.mark.parametrize("upd_type", ["БЕЗ УПД", "ЭДО", "БУМАГА", None])
+@pytest.mark.parametrize("order", ["approve_then_pl_dn", "pl_then_approve_then_dn", "dn_then_approve"])
+def test_an_approved_shipment_without_a_upd_forms_and_prints_the_dn(env, upd_type, order):
+    """Владелец 20.11.2026: «при разрешении без УПД нельзя DN». С разрешением «без УПД» (PIN) — при любом типе УПД без №
+    и в любом порядке (до упаковки, после PL, после DN) — DN формируется и печатается, в «Номер УПД» — «без УПД»."""
+    client, _ = env
+    shipment = _pickup(client, upd_type)
+    assert shipment["no_upd_offered"] is True and shipment["missing_data"]
+    if order == "approve_then_pl_dn":
+        shipment = _approve(client, shipment).json()["shipment"]
+        shipment = _issue(client, _issue(client, shipment, "pl"), "dn")
+    elif order == "pl_then_approve_then_dn":
+        shipment = _issue(client, shipment, "pl")
+        # PL без DN: пробел «DN не сформирован» держит только «Отгрузить», не выдачу и не печать DN.
+        assert "DN не сформирован" in shipment["missing_ship"] and "DN не сформирован" not in shipment["missing_data"]
+        assert _dn(client, shipment).status_code == 409
+        shipment = _approve(client, shipment).json()["shipment"]
+        shipment = _issue(client, shipment, "dn")
+    else:
+        shipment = _issue(client, shipment, "dn")
+        refused = _dn(client, shipment)
+        assert refused.status_code == 409 and refused.json()["detail"].startswith("Нельзя печатать DN: не хватает — ")
+        shipment = _approve(client, shipment).json()["shipment"]
+
+    assert shipment["no_upd_approved_by"] == "Зингер" and shipment["missing_data"] == []
+    printed = _dn(client, shipment)
+    assert printed.status_code == 200, printed.text
+    form = printed.json()["forms"][0]
+    assert (form["upd"], form["upd_edo"], form["upd_paper"]) == ("без УПД", False, False)
+
+
+def test_edo_without_a_number_is_offered_the_permit_and_ships_without_the_number(env):
+    """ЭДО ещё без № (прод 20.11: ОТГ-20261120-03): раньше «Без УПД…» не предлагали и DN не печатался — теперь
+    разрешение по PIN снимает пробел № УПД; ТК и трек по-прежнему нужны."""
+    client, _ = env
+    shipment = _issue(client, _pickup(client, "ЭДО", carrier=True), "pl")
+    shipment = _issue(client, shipment, "dn")
+    assert (shipment["missing_data"], shipment["missing_data_codes"], shipment["no_upd_offered"]) == (["№ УПД"], ["upd_number"], True)
+    approved = _approve(client, shipment)
+
+    assert approved.status_code == 200, approved.text
+    body = approved.json()["shipment"]
+    assert (body["missing_data"], body["missing_ship"], body["no_upd_offered"]) == ([], ["трек-номер"], False)
+    assert _dn(client, body).status_code == 200

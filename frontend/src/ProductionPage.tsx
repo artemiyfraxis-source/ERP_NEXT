@@ -54,7 +54,8 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [cuttingGroups, setCuttingGroups] = useState<CuttingGroup[]>([]);
   const [queueHasWork, setQueueHasWork] = useState(false);
   // Операции, которые сдаются в «Очереди резки»: их карточки не дублируются (кроме начатой).
-  const [queueOps, setQueueOps] = useState<Set<string>>(() => new Set());
+  // null — первая загрузка очереди ещё не закончилась (успехом или ошибкой): карточки, которые могут оказаться строками очереди, не рисуем.
+  const [queueOps, setQueueOps] = useState<Set<string> | null>(null);
   const [operators, setOperators] = useState<ProductionOperator[]>([]);
   const [viewerSite, setViewerSite] = useState("");
   const [execution, setExecution] = useState<{ session: ProductionWorkSession | null; boxes: ProductionBox[] }>({ session: null, boxes: [] });
@@ -86,6 +87,10 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const canEdit = canAct(principal, "production");
   const canOverview = canSee(principal, "production");
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
+  // С «Работать за сотрудника» очередь не прячет карточки (onRows не передаётся): ждать нечего.
+  const queueSettled = Boolean(viewAs) || queueOps !== null;
+  // Возврат с «Работать за сотрудника» к своему виду: очередь грузится заново, а не «загружена пустой».
+  useEffect(() => { if (!viewAs) setQueueOps(null); }, [viewAs]);
   const groupedOperations = new Set(cuttingGroups.flatMap((group) => cuttingRows(group).map((row) => `${row.task_id}:${row.operation_id}`)));
   const queueCount = tasks.filter((task) => !isDoneCard(task) && !groupedOperations.has(`${task.id}:${task.operations[0]?.id}`)).length
     + cuttingGroups.filter((group) => cuttingRows(group).some((row) => row.state !== "done")).length;
@@ -204,7 +209,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {!mine && canOverview && !selectedTask && view === "today" && <ProductionToday principal={principal} openSkills={canEdit ? () => setShowSkills(true) : undefined} openWorkload={() => setView("workload")}
       openTask={(taskId, operationId) => { if (tasks.some((task) => task.id === taskId)) { setSelectedTaskId(taskId); setSelectedOperationId(operationId ?? ""); } }} />}
     {!mine && canOverview && !selectedTask && view === "workload" && <ShopWorkloadView />}
-    {!mine && canOverview && !selectedTask && view === "normfact" && <ProductionNormFact />}
+    {!mine && canOverview && !selectedTask && view === "normfact" && <ProductionNormFact machines={canSee(principal, "production") || canSee(principal, "myops")} />}
     {!mine && canOverview && !selectedTask && view === "cutqueue" && canSee(principal, "myops") && <CuttingQueue readOnly />}
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
     {/* «Коробки на подтверждение» убраны (владелец, 13.10.2026: «ОТК подтверждает и все»): сданная коробка сразу идёт
@@ -212,7 +217,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {mine && <CuttingQueue key={viewAs} hideWhenEmpty readOnly={readOnly || !canAct(principal, "myops")} onBehalfOf={onBehalfOf}
       onHasWork={viewAs ? undefined : setQueueHasWork} onRows={viewAs ? undefined : setQueueOps} onChanged={() => void reload()} />}
     {/* «Очередь резки» — сверху (владелец 20.11); дальше карточки заданий, коробки сотрудника — под ними. */}
-    {mine && <MyQueue principal={principal} tasks={tasks.filter((task) => { const id = task.operations[0]?.id; return !id || !queueOps.has(id) || execution.session?.operation_id === id; })} cuttingGroups={cuttingGroups} queueOps={queueOps} master={canOverview} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} onBehalfOf={onBehalfOf} onSubmitted={(number, box) => setShown({ number, box, fixed: false })} />}
+    {mine && <MyQueue principal={principal} tasks={tasks.filter((task) => { const id = task.operations[0]?.id; return !id || execution.session?.operation_id === id || (queueSettled && !queueOps?.has(id)); })} cuttingGroups={queueSettled ? cuttingGroups : cuttingGroups.filter((group) => group.session || cuttingLook(group) !== "cut")} queueOps={queueOps ?? undefined} master={canOverview} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} onBehalfOf={onBehalfOf} onSubmitted={(number, box) => setShown({ number, box, fixed: false })} />}
     {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} readOnly={readOnly} ownerName={viewAs ? viewedName : ""} onBehalfOf={onBehalfOf}
       onSubmitted={(number, box) => setShown({ number, box, fixed: false })} onCorrected={(number, box) => setShown({ number, box, fixed: true })} />}
     {shown && <ShownBox shown={shown} boxes={execution.boxes} tasks={tasks} close={() => setShown(null)} />}
