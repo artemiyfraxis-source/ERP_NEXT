@@ -70,13 +70,14 @@ function New-BridgeTaskXml([string]$Command, [string]$Arguments, [string]$Descri
 }
 
 # On-demand task in the session of whoever is logged on interactively (the operator's auto-logon user): INTERACTIVE
-# group, least privilege, no trigger, at most 2 minutes, never twice at once.
+# group, highest available level (the panel may run elevated: WM_CLOSE across UIPI would be dropped), no trigger, at
+# most 2 minutes, never twice at once. Proven on OB.019 20.11.2026: schtasks /Run from session 0 starts it in session 1.
 function New-PultTaskXml([string]$Command, [string]$Arguments, [string]$Description) {
     return @(
         '<?xml version="1.0" encoding="UTF-16"?>'
         '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">'
         ('  <RegistrationInfo><Description>' + (ConvertTo-XmlText $Description) + '</Description></RegistrationInfo>')
-        '  <Principals><Principal id="Author"><GroupId>S-1-5-4</GroupId><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>'
+        '  <Principals><Principal id="Author"><GroupId>S-1-5-4</GroupId><RunLevel>HighestAvailable</RunLevel></Principal></Principals>'
         '  <Settings>'
         '    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>'
         '    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>'

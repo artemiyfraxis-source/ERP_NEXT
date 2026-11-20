@@ -123,7 +123,8 @@ export function Ob019CardView({ card, controls = false }: { card: MachineCard; c
       {facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
     </dl>}
     {controls && <Ob019Controls card={card} run={runState ? runState.run : undefined} onStartWhy={setStartWhy} onControl={setControl} />}
-    <Ob019SettingsPanel inventory={card.inventory} equipmentId={card.equipment_id} live={card.live} old={old} onRun={setRunState} />
+    <Ob019SettingsPanel inventory={card.inventory} equipmentId={card.equipment_id} live={card.live} old={old}
+      pult={card.link.code === "port_busy"} onRun={setRunState} />
     <details className="machine-fold machine-connection">
       <summary>Подключение</summary>
       <dl className="machine-summary">

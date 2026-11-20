@@ -8,14 +8,14 @@
   Existing rows start with NULL (never read since this revision) and fill on the next report «На связи».
 Not destructive; the downgrade drops the panel commands (their history stays in the audit journal) and the columns.
 
-Revision after 0208_marking_outside_prints; when merged after parallel ones only `down_revision` changes.
+Revision after 0209_machine_work_counter; when merged after parallel ones only `down_revision` changes.
 """
 
 from alembic import op
 import sqlalchemy as sa
 
 revision = "0211_machine_hmi_commands"
-down_revision = "0208_marking_outside_prints"
+down_revision = "0209_machine_work_counter"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False

@@ -15,9 +15,10 @@ param(
 # Windows 7, PowerShell 2.0, ASCII file: the default path is built from code points.
 $ErrorActionPreference = 'Stop'
 $script:Self = $MyInvocation.InvocationName
-# E:\DY\<kebiancheng shangweiji>_V1.00_new\binexe\PXS_HMI.exe (programmable host computer, the vendor's folder name).
-$script:DefaultHmiPath = 'E:\DY\' + [string][char]0x53EF + [char]0x7F16 + [char]0x7A0B + [char]0x4E0A + [char]0x4F4D +
-    [char]0x673A + '_V1.00_new\binexe\PXS_HMI.exe'
+# E:\DY\<paidan shangweiji>_V1.00_new\binexe\PXS_HMI.exe (dispatch host computer, the vendor's folder name; seen on the
+# OB.019 PC 20.11.2026).
+$script:DefaultHmiPath = 'E:\DY\' + [string][char]0x6D3E + [char]0x5355 + [char]0x4E0A + [char]0x4F4D + [char]0x673A +
+    '_V1.00_new\binexe\PXS_HMI.exe'
 
 function Write-PultLog([string]$Text) {
     try { Add-Content -Path (Join-Path $Dir 'pult.log') -Value ((Get-Date).ToString('yyyy-MM-dd HH:mm:ss') + ' ' + $Text) -Encoding UTF8 } catch { }

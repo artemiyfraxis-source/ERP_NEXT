@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { failureText } from "./api";
 import {
-  CONTROL_NAMES, CONTROL_STATES, IDLE_STATES, commandResult, machineControlApi, operatorText, pultResult,
+  CONTROL_NAMES, CONTROL_STATES, IDLE_STATES, PULT_STILL_OPEN, commandResult, machineControlApi, operatorText, pultResult,
   type MachineCommand, type MachineControl, type MachineRun, type MachineWindow, type PulseCommand,
   type PultCommand,
 } from "./machineControlApi";
@@ -62,16 +62,19 @@ function feedWheel(settings: MachineWindow | null): boolean | null {
 }
 
 /** Вопрос перед командой пульту: что потеряет человек у станка. */
-export const PULT_CONFIRM: Record<PultCommand, string> = {
-  hmi_close: "Оператор у станка потеряет пульт. Закрыть пульт на ПК станка?",
+export const PULT_CONFIRM: Record<PultCommand | "force", string> = {
+  hmi_close: "Пока открыт пульт, ERP не видит станок. Оператор у станка потеряет пульт. Закрыть пульт на ПК станка?",
   hmi_open: "ERP перестанет видеть станок, пока пульт открыт. Открыть пульт на ПК станка?",
+  force: "ERP не видит, режет ли станок, пока открыт пульт. Убедитесь, что станок стоит. Закрыть пульт принудительно?",
 };
 
 /** «Закрыть пульт на ПК» в строке состояния, пока пульт открыт; «Открыть пульт на ПК» — тише, когда станок на связи.
  *  С правом «Управление станками», после вопроса (PULT_CONFIRM); итог и отказ сервера — рядом с кнопкой, как есть.
+ *  Пульт не закрылся сам (`still_open`, возможно, ждёт ответа оператора) — вторая кнопка «Закрыть принудительно» со
+ *  своим вопросом. Итог — по строке команды (что отправлено, то и написано), а не по кнопке, которая видна сейчас.
  *  `control` — то, что опрашивает строка команд (Ob019Controls): второй опрос не нужен. */
 export function Ob019Pult({ card, control }: { card: MachineCard; control: MachineControl | null }) {
-  const [sent, setSent] = useState("");
+  const [sent, setSent] = useState<{ id: string; command: PultCommand; force: boolean } | null>(null);
   const [refused, setRefused] = useState("");
   const [busy, setBusy] = useState(false);
   const pult = card.link.code === "port_busy";
@@ -79,27 +82,38 @@ export function Ob019Pult({ card, control }: { card: MachineCard; control: Machi
   const command: PultCommand = pult ? "hmi_close" : "hmi_open";
   const commands = Array.isArray(control.commands) ? control.commands : [];
   const open = commands.find((row) => OPEN.includes(row.status));
-  const row = sent ? commands.find((item) => item.id === sent) : undefined;
+  const row = sent ? commands.find((item) => item.id === sent.id) : undefined;
+  // The newest panel command of anyone: a close that did not work stays offered until the panel closes.
+  const last = commands.find((item) => item.command === "hmi_close" || item.command === "hmi_open");
+  // Its failure stays said next to the button it belongs to (no helper, did not close) until the next try.
+  const failed = last && last.command === command && last.status === "failed" ? last : undefined;
+  const stuck = pult && failed?.reason === PULT_STILL_OPEN ? failed : undefined;
+  const pending = sent && !row ? pultResult({ command: sent.command, force: sent.force, status: "queued", status_text: "",
+    error: "", finished_at: null }) : null;
   const result: Note | null = refused ? { text: `отказ: ${refused}`, tone: "danger" } : row ? pultResult(row)
-    : sent ? { text: command === "hmi_close" ? "закрывается…" : "открывается…", tone: "info" } : null;
-  const waiting = open && open.id !== sent ? `ждёт: ${open.summary}` : "";
-  async function send() {
-    if (!window.confirm(PULT_CONFIRM[command])) return;
+    : pending ?? (failed ? pultResult(failed) : null);
+  const waiting = open && open.id !== sent?.id ? `ждёт: ${open.summary}` : "";
+  async function send(force: boolean) {
+    if (!window.confirm(PULT_CONFIRM[force ? "force" : command])) return;
     setBusy(true);
     setRefused("");
     try {
-      setSent((await machineControlApi.command(card.inventory, command)).id);
+      const queued = await machineControlApi.command(card.inventory, command, null, force);
+      setSent({ id: queued.id, command, force });
     } catch (reason) {
-      setSent("");
+      setSent(null);
       setRefused(failureText(reason, "команда не отправлена"));
     } finally {
       setBusy(false);
     }
   }
   const working = !!row && OPEN.includes(row.status);
+  const blocked = busy || working || Boolean(waiting);
   return <div className={`machine-pult${pult ? " is-open" : ""}`}>
     <button type="button" className={pult ? "primary machine-pult-close" : "secondary small machine-pult-open"}
-      disabled={busy || working || Boolean(waiting)} onClick={() => void send()}>{CONTROL_NAMES[command]}</button>
+      disabled={blocked} onClick={() => void send(false)}>{CONTROL_NAMES[command]}</button>
+    {stuck && <button type="button" className="secondary machine-pult-force" disabled={blocked}
+      onClick={() => void send(true)}>Закрыть принудительно</button>}
     {(result || waiting) && <span className={`machine-cmd-note ${result ? toneClass(result.tone) : "machine-muted"}`}
       role={result ? "status" : undefined}>{result ? result.text : waiting}</span>}
   </div>;

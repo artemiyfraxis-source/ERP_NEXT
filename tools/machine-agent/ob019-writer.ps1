@@ -9,7 +9,6 @@ param(
     [int]$PollMs = 500,
     [string]$PultCloseTask = 'Fraxis OB019 pult close',
     [string]$PultOpenTask = 'Fraxis OB019 pult open',
-    [string]$TextLogDir = 'D:\TextLog',
     [switch]$Once
 )
 # ERP command runner of OB.019 (ERP_NEXT, section "Stanki", slice 4): writes the parameters ERP asks for.
@@ -42,13 +41,13 @@ param(
 # then, as before) and never touch the bus. PXS_HMI lives in the operator's desktop session; this runner is SYSTEM in
 # session 0, so it asks the helper tasks $PultCloseTask / $PultOpenTask (ob019-pult.ps1 in the operator's session,
 # registered by install-bridge.ps1) to send WM_CLOSE or to start PXS_HMI.exe.
-#   hmi_close: not running -> done (method none). Otherwise the panel's own journal decides first (Get-HmiCycle: the
-#     last line of the newest D:\TextLog\*.csv; a cycle start / run / pause / batch line -> refused in_cycle; a stop /
-#     finish / reset / open-close line -> idle; another line younger than $script:HmiQuietSec -> refused in_cycle; no
-#     journal -> refused no_log). Then the helper closes it (graceful); still running after $script:HmiWaitMs -> the
-#     journal is read AGAIN and only an idle machine gets Stop-Process -Force (forced). Never killed mid-cycle.
+#   hmi_close: not running -> done (method none). Otherwise the helper closes it (WM_CLOSE) and the runner waits
+#     $script:HmiWaitMs: gone -> done (graceful); still running (the panel may be asking the operator) -> failed
+#     still_open, nothing is killed. With force (the card's "Zakryt prinuditelno" after its own confirmation that the
+#     machine stands) -> Stop-Process -Force at once (forced). No helper task -> failed no_helper, nothing is killed.
+#     Nothing on this PC says whether the machine cuts while PXS_HMI holds COM8 (its TextLog has only Open-System /
+#     Close-System): ERP decides from the last state it read (backend production/machine_control.py).
 #   hmi_open: already running -> refused; else the helper starts it, done once the process is seen (started).
-# ERP refuses hmi_close itself when the machine was in a cycle when last seen (backend production/machine_control.py).
 $ErrorActionPreference = 'Stop'
 $script:Self = $MyInvocation.InvocationName
 if (-not $BridgeScript) { $BridgeScript = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'ob019-bridge.ps1' }
@@ -199,60 +198,6 @@ function New-Outcome([string]$Status, [string]$Reason, [string]$Detail, $Before,
 # Mirrors HMI_COMMANDS of backend production/machine_writes.py (a backend test compares them).
 $script:HmiCommands = @('hmi_close', 'hmi_open')
 $script:HmiWaitMs = 15000
-$script:HmiQuietSec = 120
-
-function ConvertFrom-CodePoints([int[]]$Codes) {
-    $text = ''
-    foreach ($code in $Codes) { $text += [string][char]$code }
-    return $text
-}
-
-# The TXT column of the panel's journal, matched without case. A line matching both lists counts as a cycle ("Batch
-# finish" = bundle done, the next one follows). Chinese words from code points (this file stays ASCII): qidong
-# (start), yunxing (run), zanting (pause) / tingzhi (stop), wancheng (finish), fuwei (reset).
-$script:HmiCyclePattern = 'start|run|pause|batch|auto|' + (ConvertFrom-CodePoints @(0x542F, 0x52A8)) + '|' +
-    (ConvertFrom-CodePoints @(0x8FD0, 0x884C)) + '|' + (ConvertFrom-CodePoints @(0x6682, 0x505C))
-$script:HmiIdlePattern = 'stop|finish|reset|system|' + (ConvertFrom-CodePoints @(0x505C, 0x6B62)) + '|' +
-    (ConvertFrom-CodePoints @(0x5B8C, 0x6210)) + '|' + (ConvertFrom-CodePoints @(0x590D, 0x4F4D))
-
-# The last line of the newest journal file -> @{ text = TXT column; at = when the file was last written } or $null.
-# PXS_HMI may hold the file open: shared read. ANSI code page of the PC (the panel writes Chinese in it).
-function Get-HmiLogLine {
-    $file = Get-ChildItem -Path (Join-Path $TextLogDir '*.csv') -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
-    if (-not $file) { return $null }
-    $stream = New-Object IO.FileStream($file.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
-    try { $text = (New-Object IO.StreamReader($stream, [Text.Encoding]::Default)).ReadToEnd() } finally { $stream.Close() }
-    $last = ''
-    foreach ($line in ($text -split "`r?`n")) {
-        $clean = $line.Trim()
-        if ($clean -and $clean -notlike 'DTIM*') { $last = $clean }
-    }
-    if (-not $last) { return $null }
-    $parts = $last.Split(',')
-    if ($parts.Count -ge 3) { $last = [string]::Join(',', $parts, 2, $parts.Count - 2) }
-    return @{ text = $last; at = $file.LastWriteTime }
-}
-
-# Is the machine in a cycle by the panel's journal? -> @{ state = idle | cycle | unknown; text }. Never throws.
-function Get-HmiCycle([datetime]$Now = (Get-Date)) {
-    try { $entry = Get-HmiLogLine } catch { return @{ state = 'unknown'; text = $_.Exception.Message } }
-    if ($null -eq $entry) { return @{ state = 'unknown'; text = 'no journal in ' + $TextLogDir } }
-    $text = [string]$entry['text']
-    if ($text -match $script:HmiCyclePattern) { return @{ state = 'cycle'; text = $text } }
-    if ($text -match $script:HmiIdlePattern) { return @{ state = 'idle'; text = $text } }
-    if (($Now - [datetime]$entry['at']).TotalSeconds -lt $script:HmiQuietSec) { return @{ state = 'cycle'; text = 'recent: ' + $text } }
-    return @{ state = 'idle'; text = $text }
-}
-
-# $null when the journal says the machine stands; otherwise the refusal.
-function Test-HmiIdle {
-    $cycle = Get-HmiCycle
-    $detail = [string]$cycle['text']
-    if ($detail.Length -gt 200) { $detail = $detail.Substring(0, 200) }
-    if ($cycle['state'] -eq 'idle') { return $null }
-    if ($cycle['state'] -eq 'unknown') { return (New-Outcome 'failed' 'no_log' $detail $null $null) }
-    return (New-Outcome 'failed' 'in_cycle' $detail $null $null)
-}
 
 function Get-HmiProcesses { return @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like 'PXS_HMI*' }) }
 
@@ -285,28 +230,25 @@ function Wait-Hmi([bool]$Running, [int]$Ms) {
 function Stop-HmiForced { foreach ($process in (Get-HmiProcesses)) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } }
 
 # hmi_close / hmi_open -> outcome with method (graceful / forced / none / started). Never touches the bus.
-function Invoke-HmiCommand([string]$Name) {
-    if ($Name -eq 'hmi_open') {
+function Invoke-HmiCommand($Command) {
+    $name = [string]$Command['action']
+    if ($name -eq 'hmi_open') {
         if (Test-HmiOpen) { return (New-Outcome 'failed' 'hmi_already_open' 'PXS_HMI is running' $null $null) }
         if (-not (Invoke-PultTask $PultOpenTask)) { return (New-Outcome 'failed' 'no_helper' ('schtasks /Run ' + $PultOpenTask) $null $null) }
         if (Wait-Hmi $true $script:HmiWaitMs) { return (New-Outcome 'done' 'ok' 'started' $null $null 'started') }
         return (New-Outcome 'failed' 'hmi_not_started' ('not running after ' + $script:HmiWaitMs + ' ms') $null $null)
     }
     if (-not (Test-HmiOpen)) { return (New-Outcome 'done' 'ok' 'not running' $null $null 'none') }
-    $refusal = Test-HmiIdle
-    if ($refusal) { return $refusal }
     Save-HmiPath
-    $asked = Invoke-PultTask $PultCloseTask
-    if ($asked -and (Wait-Hmi $false $script:HmiWaitMs)) { return (New-Outcome 'done' 'ok' 'closed' $null $null 'graceful') }
-    # Still running (a dialog of the panel, or no helper): forced - but never mid-cycle, so the journal is read again.
-    $refusal = Test-HmiIdle
-    if ($refusal) { return $refusal }
-    Write-BridgeLog 'control hmi_close: PXS_HMI still running, forced'
-    Stop-HmiForced
-    $how = 'forced'
-    if (-not $asked) { $how = 'forced, no helper task ' + $PultCloseTask }
-    if (Wait-Hmi $false 3000) { return (New-Outcome 'done' 'ok' $how $null $null 'forced') }
-    return (New-Outcome 'failed' 'hmi_still_open' 'PXS_HMI still running' $null $null)
+    if ($Command['force'] -eq $true) {
+        Write-BridgeLog 'control hmi_close: forced from the card'
+        Stop-HmiForced
+        if (Wait-Hmi $false 3000) { return (New-Outcome 'done' 'ok' 'forced' $null $null 'forced') }
+        return (New-Outcome 'failed' 'hmi_still_open' 'PXS_HMI still running' $null $null)
+    }
+    if (-not (Invoke-PultTask $PultCloseTask)) { return (New-Outcome 'failed' 'no_helper' ('schtasks /Run ' + $PultCloseTask) $null $null) }
+    if (Wait-Hmi $false $script:HmiWaitMs) { return (New-Outcome 'done' 'ok' 'closed' $null $null 'graceful') }
+    return (New-Outcome 'failed' 'still_open' ('PXS_HMI still running after ' + $script:HmiWaitMs + ' ms') $null $null)
 }
 
 # Run one machine command @{ id; kind = 'control'; action; deadline_ms }; $Since started when the runner asked ERP.
@@ -318,7 +260,7 @@ function Invoke-ControlCommand($Command, [Diagnostics.Stopwatch]$Since) {
         # The panel commands run while PXS_HMI runs (that is what they are for) and never touch the bus.
         if ($Since.ElapsedMilliseconds -ge $deadline) { return (New-Outcome 'expired' 'too_late' ([string]$Since.ElapsedMilliseconds + ' ms') $null $null) }
         Write-BridgeLog ('control ' + $name)
-        try { return (Invoke-HmiCommand $name) } catch { return (New-Outcome 'unknown' 'pc_error' $_.Exception.Message $null $null) }
+        try { return (Invoke-HmiCommand $Command) } catch { return (New-Outcome 'unknown' 'pc_error' $_.Exception.Message $null $null) }
     }
     if (-not $script:Controls.ContainsKey($name)) { return (New-Outcome 'failed' 'unknown_command' $name $null $null) }
     $spec = $script:Controls[$name]

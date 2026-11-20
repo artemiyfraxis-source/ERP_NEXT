@@ -20,7 +20,7 @@ Machine commands Стоп / Сброс / Пуск / Сброс аварии (pur
 same queue; their rules are in production/machine_control.py: 5 s to be claimed, Stop first and exempt from the one-open
 index (it may queue while a write runs, it cancels what is queued), no answer → «unknown», never assumed done.
 «Закрыть / Открыть пульт на ПК» (`hmi_close` / `hmi_open`, migration 0211) are machine commands too; they need the
-runner 1.4.0 and get `HMI_RESULT_WAIT` for their answer (a graceful close waits up to 15 s before the forced one).
+runner 1.4.0 and get `HMI_RESULT_WAIT` for their answer (a graceful close waits up to 15 s for the panel).
 
 Corrections (migration 0195, `production_machine_offsets`): «станок режет не так» — the ETK size is right but this
 machine cuts/strips it off by a constant. One offset per machine and wire parameter, in 0,01 мм; every later
@@ -55,7 +55,7 @@ HMI_COMMANDS = ("hmi_close", "hmi_open")
 COMMANDS = ("stop", "reset", "start", "alarm_clear", *HMI_COMMANDS)
 CONTROL_TTL = timedelta(seconds=5)  # a machine command older than this by the server clock never runs
 CONTROL_RESULT_WAIT = timedelta(seconds=15)  # taken without an answer → «Результат неизвестен»
-HMI_RESULT_WAIT = timedelta(seconds=45)  # the runner waits 15 s for a graceful close, then forces it, then reports
+HMI_RESULT_WAIT = timedelta(seconds=45)  # the runner waits up to 15 s for the panel to close or start, then reports
 CONTROL_TOO_OLD = "ПК станка не забрал команду за 5 с — она не выполнялась"
 CONTROL_NO_ANSWER = "ПК станка не сообщил результат — проверьте станок"
 CANCELLED_BY_STOP = "Отменена: нажат «Стоп»"
@@ -504,8 +504,11 @@ def command_view(row: MachineWriteRow) -> dict:
     return {"id": str(row.id), "status": row.status, "status_text": text, "tone": tone, "purpose": row.purpose,
             "command": row.command, "state_before": _state_text(states.get("before")),
             "state_after": _state_text(states.get("after")),
-            # «Закрыть пульт на ПК»: how the runner closed it — graceful / forced / none (it was not open) / started.
+            # «Закрыть пульт на ПК»: how the runner closed it — graceful / forced / none (it was not open) / started —,
+            # the runner's reason (`still_open` → the card offers «Закрыть принудительно») and the force flag.
             "method": states.get("method") if isinstance(states.get("method"), str) else None,
+            "reason": states.get("reason") if isinstance(states.get("reason"), str) else None,
+            "force": bool(row.payload.get("force")) if row.purpose == CONTROL else False,
             "summary": row.summary, "fields": row.payload.get("fields", []), "error": row.error,
             "created_by": row.created_by_name, "created_at": moment(row.created_at),
             "finished_at": moment(row.finished_at)}

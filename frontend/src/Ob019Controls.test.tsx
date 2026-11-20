@@ -224,3 +224,27 @@ it("a live machine offers the quieter «Открыть пульт на ПК»; t
   expect(pultResult(forced).text).toBe("закрыт принудительно");
   expect(pultResult({ ...forced, method: "none" }).text).toBe("пульт уже был закрыт");
 });
+
+it("a close the panel did not answer offers «Закрыть принудительно» with its own question; the progress follows the sent command", async () => {
+  const posts = mockApi(control(), () => json({ ...RUNNING, id: "f1", command: "hmi_close", status: "queued", force: true,
+    summary: "Закрыть пульт на ПК принудительно" }));
+  const ask = vi.spyOn(window, "confirm").mockReturnValue(true);
+  const stuck: MachineCommand = { ...RUNNING, id: "s1", command: "hmi_close", status: "failed", reason: "still_open",
+    error: "Пульт не закрылся (возможно, ждёт ответа оператора)", summary: "Закрыть пульт на ПК" };
+  render(<Ob019Pult card={pultCard()} control={control({ commands: [stuck] })} />);
+  expect(screen.getByRole("status")).toHaveTextContent("Пульт не закрылся (возможно, ждёт ответа оператора)");
+  fireEvent.click(button("Закрыть принудительно"));
+  expect(ask).toHaveBeenCalledWith("ERP не видит, режет ли станок, пока открыт пульт. Убедитесь, что станок стоит. Закрыть пульт принудительно?");
+  await waitFor(() => expect(posts.map((post) => post.body)).toEqual([{ command: "hmi_close", hands_clear: true, force: true }]));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("закрывается принудительно…"));
+  expect(PULT_CONFIRM.hmi_close).toContain("ERP не видит станок");
+});
+
+it("no forced close is offered unless the last close stayed open; a missing helper is said as the server says it", async () => {
+  mockApi(control());
+  const failed: MachineCommand = { ...RUNNING, id: "n1", command: "hmi_close", status: "failed", reason: "no_helper",
+    error: "На ПК станка нет помощника пульта — обновите службу", summary: "Закрыть пульт на ПК" };
+  render(<Ob019Pult card={pultCard()} control={control({ commands: [failed] })} />);
+  expect(screen.queryByRole("button", { name: "Закрыть принудительно" })).toBeNull();
+  expect(screen.getByRole("status")).toHaveTextContent("отказ: На ПК станка нет помощника пульта — обновите службу");
+});

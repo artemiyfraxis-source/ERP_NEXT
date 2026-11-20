@@ -21,19 +21,22 @@ Rules:
 - No ERP emergency stop: E-stop (D599.3) is the physical button only; neither ERP nor the runner knows that bit.
 
 «Закрыть пульт на ПК» / «Открыть пульт на ПК» (owner 20.11.2026, `hmi_close` / `hmi_open`, migration 0211): COM8 has one
-master — the vendor operator panel PXS_HMI or ERP's Modbus service; while the panel runs ERP sees nothing. Same right
-and one-press rule as Сброс / Пуск (the card asks its own confirmation first), runner 1.4.0 or newer
-(machine_writes.RUNNER_HMI). The runner closes the panel through a helper task in the operator's session (graceful
-WM_CLOSE), after 15 s forcibly; it opens it the same way. Refusal rule of `hmi_close` — never close the panel of a
-machine in a cycle (D766 103 «Работает», 104 «Пауза», 106 «Пучок готов», `IN_CYCLE`); when in doubt, refuse:
-1. ERP (`hmi_problem`): the PC must be on the link (a fresh snapshot). With the panel closed the live D766 decides. With
-   the panel open (link `port_busy`, no words) ERP cannot read the machine: the state of the last snapshot read before
-   the panel took the port (`last_state`, kept by production/machines.report) decides — never read → refused, in a
-   cycle → refused. Any other link state (PLC or Modbus service silent) → refused.
-2. The runner on the PC (ob019-writer.ps1 `Get-HmiCycle`), before asking the panel to close AND again right before the
-   forced close: the last line of the panel's own journal D:/TextLog/<newest>.csv — a cycle start / run / pause / batch
-   line → refused («in_cycle»); a stop / finish / reset / open-close line → idle; any other line younger than 120 s →
-   refused; the journal missing or unreadable → refused («no_log»). The panel is never killed mid-cycle."""
+master — the vendor operator panel PXS_HMI or ERP's Modbus service; while the panel runs ERP sees nothing, and nothing on
+the machine PC says whether the machine cuts (its TextLog holds only Open-System / Close-System, checked 20.11.2026).
+Same right as Сброс / Пуск, runner 1.4.0 or newer (machine_writes.RUNNER_HMI); the card asks its own confirmation, which
+says that ERP cannot see the machine while the panel is open (`hands_clear`).
+- `hmi_close`: the runner asks a helper task in the operator's session to close the panel (WM_CLOSE) and waits 15 s:
+  closed → done; still open (it may be asking the operator something) → failed `still_open`, and the card offers
+  «Закрыть принудительно» — the same command with `force` after its own confirmation that the machine stands; then the
+  runner ends the process at once (journaled with the flag). No helper → failed `no_helper`, nothing is killed.
+- Refusal rule of `hmi_close` (`hmi_problem`; graceful or forced alike). The PC must report (a fresh snapshot). Panel
+  closed (link «На связи»): refused while the live D766 is in a cycle (103 «Работает», 104 «Пауза», 106 «Пучок готов»,
+  `IN_CYCLE`). Panel open (link `port_busy`, no words): ERP cannot read the machine, so the state of the last snapshot
+  read before the panel took the port decides (`last_state`, kept by production/machines.report): in a cycle → refused,
+  and the text says it is the state before the panel opened; never read → allowed only after the card's confirmation
+  (the person at the card vouches). PLC or Modbus service silent → refused.
+- `hmi_open`: refused while the panel is open, while the live D766 is in a cycle, and while an ERP job run is open on
+  the machine (production/machine_runs.py) — the panel would take the port from under it."""
 
 from __future__ import annotations
 
@@ -54,6 +57,11 @@ HMI_COMMANDS = queue.HMI_COMMANDS
 # D766 states of a running cycle: «Работает», «Пауза», «Пучок готов» (the next bundle follows by itself).
 IN_CYCLE = frozenset({103, 104, 106})
 IN_CYCLE_TEXT = "Станок в цикле — пульт закрывать нельзя, дождитесь остановки"
+BEFORE_PULT_TEXT = ("До открытия пульта станок был в цикле — ERP не видит, остановился ли он; закройте пульт на ПК, "
+                    "когда станок встанет")
+OPEN_IN_CYCLE_TEXT = "Станок в цикле — откройте пульт после остановки"
+OPEN_RUN_TEXT = "Станок выполняет задание из ERP — откройте пульт после остановки"
+FORCED = "Закрыть пульт на ПК принудительно"
 # D766 states a command may run in; None — any state (Сброс аварии: any state with an alarm, D782 ≠ 0).
 ALLOWED_STATES: dict[str, frozenset[int] | None] = {
     "stop": None,
@@ -79,12 +87,11 @@ REASONS = {
     "rollers_up": "Подающие ролики подняты — сначала опустите их; команда не выполнялась",
     # «Закрыть / Открыть пульт на ПК» (runner 1.4.0). Never the words of the panel-open banner: the card would read
     # them as that banner (machineControlApi.operatorText).
-    "in_cycle": IN_CYCLE_TEXT,
-    "no_log": "Журнал пульта на ПК не прочитан — не видно, что станок стоит; пульт не закрыт",
+    "still_open": "Пульт не закрылся (возможно, ждёт ответа оператора)",
     "hmi_still_open": "Пульт на ПК не закрылся — закройте его на ПК станка",
     "hmi_already_open": "Пульт на ПК уже запущен",
     "hmi_not_started": "Пульт на ПК не запустился — запустите его на ПК станка",
-    "no_helper": "Помощник пульта на ПК не установлен — обновите агент станка",
+    "no_helper": "На ПК станка нет помощника пульта — обновите службу",
     "pc_error": "Ошибка на ПК станка — проверьте пульт на ПК",
 }
 # How the runner handled the panel (readback["method"]).
@@ -118,33 +125,46 @@ def _first_low(text: str) -> str:
     return text[:1].lower() + text[1:]
 
 
-def hmi_problem(command: str, snapshot: rules.MachineSnapshotRow | None, now: datetime) -> tuple[str, int | None]:
+def hmi_problem(command: str, snapshot: rules.MachineSnapshotRow | None, now: datetime,
+                run_open: bool = False) -> tuple[str, int | None]:
     """Why «Закрыть / Открыть пульт на ПК» may not be queued ('' — it may) and the machine state it was decided on
-    (the live D766, or with the panel holding the port the last one read before it)."""
+    (the live D766, or with the panel holding the port the last one read before it; None — not known). `run_open` —
+    an ERP job run is open on the machine (hmi_open only)."""
     code = rules.link_status(snapshot, now)
     if code in ("stale", "not_installed"):
         return f"{NAMES[command]} нельзя: {_first_low(rules.LINK_TEXTS[code][0])}", None
     live = rules.snapshot_words(snapshot).get(766) if code == "ok" else None
     if command == "hmi_open":
-        return ("Пульт на ПК уже открыт" if code == "port_busy" else ""), live
+        if code == "port_busy":
+            return "Пульт на ПК уже открыт", None
+        if live in IN_CYCLE:
+            return OPEN_IN_CYCLE_TEXT, live
+        return (OPEN_RUN_TEXT if run_open else ""), live
     if code == "ok":
         return (IN_CYCLE_TEXT if live in IN_CYCLE else ""), live
     if code != "port_busy":
         return f"Пульт не закрыть: {_first_low(rules.LINK_TEXTS[code][0])} — состояние станка неизвестно", None
     last = snapshot.last_state if snapshot is not None else None
-    if last is None:
-        return "Пульт не закрыть: ERP ещё не видела станок до открытия пульта — не ясно, стоит ли он", None
     if last in IN_CYCLE:
-        return IN_CYCLE_TEXT, last
-    return "", last
+        return BEFORE_PULT_TEXT, last
+    return "", last  # never read: the card's confirmation said ERP cannot see the machine
+
+
+def _run_open(session: Session, equipment_id: UUID) -> bool:
+    from . import machine_runs  # machine_runs imports the queue only; imported here to keep this module light
+
+    return machine_runs.is_open(machine_runs.current(session, equipment_id))
 
 
 def request(session: Session, *, equipment_id: UUID, command: str, actor_id: UUID, actor_name: str, can_control: bool,
-            state_seen: int | None, hands_clear: bool, now: datetime
+            state_seen: int | None, hands_clear: bool, now: datetime, force: bool = False
             ) -> tuple[queue.MachineWriteRow, list[queue.MachineWriteRow]]:
-    """Queue a command. → (the command, commands that expired or were cancelled meanwhile — for the journal)."""
+    """Queue a command. → (the command, commands that expired or were cancelled meanwhile — for the journal).
+    `force` — «Закрыть принудительно» (hmi_close only): the runner ends the panel's process without asking it."""
     if command not in NAMES:
         raise CommandRefused("Неизвестная команда", 422)
+    if force and command != "hmi_close":
+        raise CommandRefused("Принудительно можно только закрыть пульт", 422)
     link = session.get(rules.MachineLinkRow, equipment_id)
     if link is None:
         raise CommandRefused("Станок ещё не подключён к ERP", 404)
@@ -171,7 +191,8 @@ def request(session: Session, *, equipment_id: UUID, command: str, actor_id: UUI
             raise CommandRefused("Команда без подтверждения карточки — обновите страницу")
         if queue.runner_outdated(equipment_id, now, queue.RUNNER_HMI):
             raise CommandRefused(queue.RUNNER_HMI_OUTDATED)
-        reason, state_value = hmi_problem(command, session.get(rules.MachineSnapshotRow, equipment_id), now)
+        run_open = command == "hmi_open" and _run_open(session, equipment_id)
+        reason, state_value = hmi_problem(command, session.get(rules.MachineSnapshotRow, equipment_id), now, run_open)
         if reason:
             raise CommandRefused(reason)
     else:
@@ -192,7 +213,8 @@ def request(session: Session, *, equipment_id: UUID, command: str, actor_id: UUI
             raise CommandRefused(reason)
     row = queue.MachineWriteRow(
         id=uuid4(), equipment_id=equipment_id, purpose=queue.CONTROL, command=command, status="queued",
-        payload={"command": command, "state_seen": state_value}, summary=NAMES[command], created_by=actor_id,
+        payload={"command": command, "state_seen": state_value, **({"force": True} if force else {})},
+        summary=FORCED if force else NAMES[command], created_by=actor_id,
         created_by_name=actor_name[:200], created_at=now)
     try:
         with session.begin_nested():
@@ -238,8 +260,10 @@ def finish(session: Session, row: queue.MachineWriteRow, *, outcome: str, reason
     if row.status != "taken" and not (row.status == "unknown" and row.error == queue.CONTROL_NO_ANSWER):
         return False
     states: dict = {"before": _words(before), "after": _words(after)}
-    if method and row.command in HMI_COMMANDS:
-        states["method"] = method
+    if row.command in HMI_COMMANDS:  # the card offers «Закрыть принудительно» on `still_open`
+        states["reason"] = reason
+        if method:
+            states["method"] = method
     done = session.execute(update(queue.MachineWriteRow).where(
         queue.MachineWriteRow.id == row.id, queue.MachineWriteRow.status == row.status)
         .values(status=outcome, error=REASONS[reason], readback=states, finished_at=now)

@@ -67,6 +67,8 @@ const IN_FLIGHT_MAX_MS = 45000;
 const STATE_PROBLEM = "Записывать можно, когда";
 /** «Остальные параметры» без свежих данных станка: одна строка вместо таблицы прочерков. */
 export const NO_DATA = "Нет связи со станком — параметры появятся, когда ERP получит данные";
+/** То же, когда порт держит открытый на ПК пульт станка. */
+export const PULT_NO_DATA = "Открыт пульт станка на ПК — параметры появятся, когда пульт закроют";
 /** Состояния, когда станок в цикле (работает, пауза, пучок готов): правка — после остановки. */
 const RUNNING_STATES = [103, 104, 106];
 const RECIPE_WAIT_MS = 5000;
@@ -198,9 +200,10 @@ function sameRun(run: MachineRun, job: RunRequest): boolean {
     && Number((run.length_mm ?? "").replace(",", ".")) === Number(job.length_mm.replace(",", "."));
 }
 
-/** `onRun` — прогон станка, как его видит эта панель (карточка показывает по нему строку состояния и «Пуск»). */
-export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = false, onRun }: {
-  inventory: string; equipmentId?: string; live?: Ob019Live | null; old?: boolean;
+/** `onRun` — прогон станка, как его видит эта панель (карточка показывает по нему строку состояния и «Пуск»); `pult` —
+ *  порт держит открытый на ПК пульт станка. */
+export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = false, pult = false, onRun }: {
+  inventory: string; equipmentId?: string; live?: Ob019Live | null; old?: boolean; pult?: boolean;
   onRun?: (state: MachineRunState | null) => void;
 }) {
   const [fast, setFast] = useState(false);
@@ -941,7 +944,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
         <span aria-hidden="true">{more ? "▾" : "▸"}</span> Остальные параметры
         <span className="machine-muted"> · {groups.map((item) => item.title).join(", ")}</span>
       </button>
-      {more && !hasData && <p className="machine-muted machine-nodata" role="status">{NO_DATA}</p>}
+      {more && !hasData && <p className="machine-muted machine-nodata" role="status">{pult ? PULT_NO_DATA : NO_DATA}</p>}
       {more && hasData && <>
         <div className="seg-tabs" role="tablist" aria-label="Страницы пульта">
           {groups.map((item, index) => <button key={item.title} role="tab" aria-selected={index === group}

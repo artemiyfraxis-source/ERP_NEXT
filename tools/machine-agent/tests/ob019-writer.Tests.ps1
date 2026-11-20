@@ -336,28 +336,22 @@ Describe 'machine commands through the ERP exchange' {
     }
 }
 
-function Set-Journal([string[]]$Lines, [int]$AgeSec = 600) {
-    $script:journal = Join-Path $tmp ('textlog-' + [guid]::NewGuid())
-    New-Item -ItemType Directory $script:journal | Out-Null
-    if ($Lines.Count -gt 0) {
-        $file = Join-Path $script:journal '261120.csv'
-        [IO.File]::WriteAllLines($file, (@('DTIM,NA,TXT') + $Lines), [Text.Encoding]::Default)
-        (Get-Item $file).LastWriteTime = (Get-Date).AddSeconds(-$AgeSec)
-    }
-    return $script:journal
-}
-
 function Reset-Pult([bool]$Open = $true) {
     $script:hmiOpen = $Open; $script:tasks = @(); $script:killed = 0; $script:closes = $true; $script:taskOk = $true
+}
+
+function New-Pult([string]$Action, [bool]$Force = $false, [int]$DeadlineMs = 4000) {
+    return @{ id = 'p-1'; kind = 'control'; action = $Action; deadline_ms = $DeadlineMs; force = $Force }
 }
 
 Describe 'the operator panel on the PC (hmi_close / hmi_open)' {
     Mock Test-HmiOpen { $script:hmiOpen }
     Mock Invoke-PultTask {
         $script:tasks += $Name
+        if (-not $script:taskOk) { return $false }
         if ($Name -eq $PultCloseTask -and $script:closes) { $script:hmiOpen = $false }
         if ($Name -eq $PultOpenTask) { $script:hmiOpen = $true }
-        return $script:taskOk
+        return $true
     }
     Mock Stop-HmiForced { $script:killed++; $script:hmiOpen = $false }
     Mock Save-HmiPath { }
@@ -365,98 +359,69 @@ Describe 'the operator panel on the PC (hmi_close / hmi_open)' {
     Mock Invoke-MbdLine { throw 'the panel commands never touch the bus' }
     $script:HmiWaitMs = 0
 
-    It 'reads the journal: a cycle line is a cycle, a stop line is idle, an unknown line only when it is old' {
-        $TextLogDir = Set-Journal @('2026/11/20 10:00:00,admin,Open-System', '2026/11/20 10:01:00,admin,Start')
-        (Get-HmiCycle)['state'] | Should Be 'cycle'
-        $TextLogDir = Set-Journal @('2026/11/20 10:01:00,admin,Batch finish!')
-        (Get-HmiCycle)['state'] | Should Be 'cycle'
-        $TextLogDir = Set-Journal @('2026/11/20 10:01:00,admin,Start', '2026/11/20 10:05:00,admin,Total finish!')
-        (Get-HmiCycle)['state'] | Should Be 'idle'
-        $TextLogDir = Set-Journal @('2026/11/20 10:00:00,admin,Open-System')
-        (Get-HmiCycle)['state'] | Should Be 'idle'
-        # The panel writes Chinese in the ANSI code page of its PC; here the words are matched directly.
-        (ConvertFrom-CodePoints @(0x8FD0, 0x884C)) -match $script:HmiCyclePattern | Should Be $true
-        (ConvertFrom-CodePoints @(0x505C, 0x6B62)) -match $script:HmiIdlePattern | Should Be $true
-        (ConvertFrom-CodePoints @(0x505C, 0x6B62)) -match $script:HmiCyclePattern | Should Be $false
-        $TextLogDir = Set-Journal @('2026/11/20 10:01:00,admin,Param save') 30
-        (Get-HmiCycle)['state'] | Should Be 'cycle'
-        $TextLogDir = Set-Journal @('2026/11/20 10:01:00,admin,Param save') 600
-        (Get-HmiCycle)['state'] | Should Be 'idle'
-        $TextLogDir = Set-Journal @()
-        (Get-HmiCycle)['state'] | Should Be 'unknown'
-    }
-    It 'closes an idle machine through the helper in the operator session: graceful, the bus untouched' {
+    It 'closes the panel through the helper in the operator session: graceful, nothing killed, the bus untouched' {
         Reset-Pult
-        $TextLogDir = Set-Journal @('2026/11/20 10:00:00,admin,Open-System')
-        $outcome = Invoke-ControlCommand (New-Control 'hmi_close') (Get-Fresh)
+        $outcome = Invoke-ControlCommand (New-Pult 'hmi_close') (Get-Fresh)
         ($outcome['outcome'] + '/' + $outcome['reason'] + '/' + $outcome['method']) | Should Be 'done/ok/graceful'
         $script:tasks -join ',' | Should Be 'Fraxis OB019 pult close'
         $script:killed | Should Be 0
     }
-    It 'never closes the panel of a machine in a cycle, and says why' {
-        Reset-Pult
-        $TextLogDir = Set-Journal @('2026/11/20 10:01:00,admin,Start')
-        $outcome = Invoke-ControlCommand (New-Control 'hmi_close') (Get-Fresh)
-        ($outcome['outcome'] + '/' + $outcome['reason']) | Should Be 'failed/in_cycle'
-        $script:tasks.Count | Should Be 0
-        $script:killed | Should Be 0
-        $TextLogDir = Set-Journal @()
-        (Invoke-ControlCommand (New-Control 'hmi_close') (Get-Fresh))['reason'] | Should Be 'no_log'
-    }
-    It 'forces the close after the wait only when the journal still says idle' {
+    It 'a panel that stays open is reported still_open and never killed without the card asking' {
         Reset-Pult; $script:closes = $false
-        $TextLogDir = Set-Journal @('2026/11/20 10:00:00,admin,Stop')
-        $outcome = Invoke-ControlCommand (New-Control 'hmi_close') (Get-Fresh)
+        $outcome = Invoke-ControlCommand (New-Pult 'hmi_close') (Get-Fresh)
+        ($outcome['outcome'] + '/' + $outcome['reason']) | Should Be 'failed/still_open'
+        $script:killed | Should Be 0
+    }
+    It 'force from the card ends the process at once, without the graceful step' {
+        Reset-Pult; $script:closes = $false
+        $outcome = Invoke-ControlCommand (New-Pult 'hmi_close' $true) (Get-Fresh)
         ($outcome['outcome'] + '/' + $outcome['method']) | Should Be 'done/forced'
         $script:killed | Should Be 1
+        $script:tasks.Count | Should Be 0
     }
-    It 'checks the journal again right before the forced close: a cycle started meanwhile is never killed' {
-        Reset-Pult; $script:closes = $false
-        # The journal said Stop when asked first; a Start came while the panel showed its close dialog.
-        Mock Get-HmiLogLine {
-            $script:reads++
-            if ($script:reads -eq 1) { return @{ text = 'Stop'; at = (Get-Date).AddMinutes(-10) } }
-            return @{ text = 'Start'; at = (Get-Date) }
-        }
-        $script:reads = 0
-        $outcome = Invoke-ControlCommand (New-Control 'hmi_close') (Get-Fresh)
-        ($outcome['outcome'] + '/' + $outcome['reason']) | Should Be 'failed/in_cycle'
-        $script:reads | Should Be 2
+    It 'no helper task: no_helper, nothing killed' {
+        Reset-Pult; $script:taskOk = $false
+        $outcome = Invoke-ControlCommand (New-Pult 'hmi_close') (Get-Fresh)
+        ($outcome['outcome'] + '/' + $outcome['reason']) | Should Be 'failed/no_helper'
         $script:killed | Should Be 0
+        Reset-Pult $false; $script:taskOk = $false
+        (Invoke-ControlCommand (New-Pult 'hmi_open') (Get-Fresh))['reason'] | Should Be 'no_helper'
     }
     It 'a closed panel needs nothing; opening one that runs is refused; a closed one is started' {
         Reset-Pult $false
-        $outcome = Invoke-ControlCommand (New-Control 'hmi_close') (Get-Fresh)
+        $outcome = Invoke-ControlCommand (New-Pult 'hmi_close') (Get-Fresh)
         ($outcome['outcome'] + '/' + $outcome['method']) | Should Be 'done/none'
         $script:tasks.Count | Should Be 0
         Reset-Pult $true
-        (Invoke-ControlCommand (New-Control 'hmi_open') (Get-Fresh))['reason'] | Should Be 'hmi_already_open'
+        (Invoke-ControlCommand (New-Pult 'hmi_open') (Get-Fresh))['reason'] | Should Be 'hmi_already_open'
         Reset-Pult $false
-        $outcome = Invoke-ControlCommand (New-Control 'hmi_open') (Get-Fresh)
+        $outcome = Invoke-ControlCommand (New-Pult 'hmi_open') (Get-Fresh)
         ($outcome['outcome'] + '/' + $outcome['method']) | Should Be 'done/started'
         $script:tasks -join ',' | Should Be 'Fraxis OB019 pult open'
-        Reset-Pult $false; $script:taskOk = $false
-        (Invoke-ControlCommand (New-Control 'hmi_open') (Get-Fresh))['reason'] | Should Be 'no_helper'
     }
     It 'a panel command past its deadline does nothing; the other commands are still refused while the panel runs' {
         Reset-Pult
-        (Invoke-ControlCommand (New-Control 'hmi_close' 0) (Get-Fresh))['reason'] | Should Be 'too_late'
+        (Invoke-ControlCommand (New-Pult 'hmi_close' $true 0) (Get-Fresh))['reason'] | Should Be 'too_late'
         $script:tasks.Count | Should Be 0
+        $script:killed | Should Be 0
         (Invoke-ControlCommand (New-Control 'start') (Get-Fresh))['reason'] | Should Be 'hmi_open'
     }
-    It 'posts the method with the result' {
-        Reset-Pult
-        $TextLogDir = Set-Journal @('2026/11/20 10:00:00,admin,Open-System')
-        Mock Get-HmiLogLine { @{ text = 'Open-System'; at = (Get-Date).AddMinutes(-10) } }
+    It 'takes the force flag from ERP and posts the method with the result' {
+        Reset-Pult; $script:closes = $false
         $script:posted = @()
         Mock Invoke-Erp {
             $script:posted += @{ path = $Path; body = $Body }
-            if ($Path -like '*/next') { return @{ code = 200; text = '{"command":{"id":"k-9","kind":"control","action":"hmi_close","deadline_ms":4500}}' } }
+            if ($Path -like '*/next') { return @{ code = 200; text = '{"command":{"id":"k-9","kind":"control","action":"hmi_close","deadline_ms":4500,"force":true}}' } }
             return @{ code = 200; text = '{"status":"done"}' }
         }
         [void](Step-Commands 'token')
         $result = $script:Json.DeserializeObject($script:posted[1]['body'])
-        ($result['outcome'] + '/' + $result['reason'] + '/' + $result['method'] + '/' + $result['runner_version']) | Should Be 'done/ok/graceful/1.4.0'
+        ($result['outcome'] + '/' + $result['reason'] + '/' + $result['method'] + '/' + $result['runner_version']) | Should Be 'done/ok/forced/1.4.0'
+        $script:killed | Should Be 1
+    }
+    It 'has no journal guessing left: nothing reads the TextLog' {
+        $source = Get-Content (Join-Path $root 'ob019-writer.ps1') -Raw
+        $source -match 'Get-HmiCycle|HmiCyclePattern|TextLogDir' | Should Be $false
     }
 }
 

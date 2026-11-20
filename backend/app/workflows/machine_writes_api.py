@@ -701,7 +701,8 @@ def next_command(payload: AgentPayload, bridge: Bridge, factory: Factory, now: N
             return {"command": None}
         if row.purpose == commands.CONTROL:
             return {"command": {"id": str(row.id), "kind": "control", "action": row.command,
-                                "deadline_ms": machine_control.deadline_ms(row, now)}}
+                                "deadline_ms": machine_control.deadline_ms(row, now),
+                                "force": bool(row.payload.get("force"))}}
         return {"command": {"id": str(row.id), "kind": "write", "blocks": row.payload["blocks"],
                             "bits": commands.expected_bits(row), "states": list(commands.IDLE_STATES)}}
 

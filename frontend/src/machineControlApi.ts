@@ -54,6 +54,10 @@ export interface MachineCommand {
   state_after?: string | null;
   /** Пульт на ПК: как его закрыли или открыли — graceful, forced (принудительно), none (не был открыт), started. */
   method?: "graceful" | "forced" | "none" | "started" | null;
+  /** Пульт на ПК: код ответа агента; `still_open` — пульт не закрылся сам, карточка предлагает «Закрыть принудительно». */
+  reason?: string | null;
+  /** «Закрыть принудительно»: агент завершает программу пульта без вопроса ей. */
+  force?: boolean;
   summary: string;
   fields: CommandChange[];
   error: string;
@@ -255,9 +259,9 @@ export const machineControlApi = {
     api<TransferPlan>(`${card(inventory)}/transfer?wire=${encodeURIComponent(wire)}&length_mm=${encodeURIComponent(lengthMm)}`),
   transfer: (inventory: string, groupId: string, lengthMm: string, confirmState: number | null) =>
     api<MachineCommand>(`${card(inventory)}/transfer`, post({ group_id: groupId, length_mm: lengthMm, confirm_state: confirmState })),
-  command: (inventory: string, command: ControlCommand, confirmState?: number | null) =>
+  command: (inventory: string, command: ControlCommand, confirmState?: number | null, force = false) =>
     api<MachineCommand>(`${card(inventory)}/command`, post(command === "stop" ? { command }
-      : command === "hmi_close" || command === "hmi_open" ? { command, hands_clear: true }
+      : command === "hmi_close" || command === "hmi_open" ? { command, hands_clear: true, ...(force ? { force: true } : {}) }
       : { command, confirm_state: confirmState ?? null, hands_clear: true })),
   run: (inventory: string, signal?: AbortSignal) => api<MachineRunState>(`${card(inventory)}/run`, { signal }),
   startRun: (inventory: string, body: RunRequest, confirmState: number | null) =>
@@ -300,11 +304,18 @@ export function commandResult(command: MachineCommand): { text: string; tone: To
   return { text: `отказ: ${operatorText(command.error || command.status_text.toLowerCase())}`, tone: "danger" };
 }
 
-/** Итог команды пульту рядом с кнопкой: «закрывается…», «закрыт 14:05», «закрыт принудительно 14:05», «отказ: …» —
- *  отказ словами сервера, как есть. */
-export function pultResult(command: MachineCommand): { text: string; tone: Tone } {
+/** Пульт не закрылся сам (агент: `still_open`) — карточка предлагает «Закрыть принудительно». */
+export const PULT_STILL_OPEN = "still_open";
+
+/** Итог команды пульту рядом с кнопкой — по самой команде: «закрывается…», «закрыт 14:05», «закрыт принудительно 14:05»,
+ *  «Пульт не закрылся (возможно, ждёт ответа оператора)», «отказ: …» — слова сервера, как есть. */
+export function pultResult(command: Pick<MachineCommand, "command" | "status" | "status_text" | "error" | "finished_at"
+  | "method" | "reason" | "force">): { text: string; tone: Tone } {
   const closing = command.command === "hmi_close";
-  if (command.status === "queued" || command.status === "taken") return { text: closing ? "закрывается…" : "открывается…", tone: "info" };
+  if (command.status === "queued" || command.status === "taken") {
+    return { text: !closing ? "открывается…" : command.force ? "закрывается принудительно…" : "закрывается…", tone: "info" };
+  }
+  if (command.status === "failed" && command.reason === PULT_STILL_OPEN) return { text: command.error, tone: "warn" };
   if (command.status === "done") {
     const at = clock(command.finished_at);
     const text = !closing ? "открыт" : command.method === "none" ? "пульт уже был закрыт"

@@ -89,10 +89,10 @@ Describe 'operator panel helper tasks' {
     $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
     $ns.AddNamespace('t', 'http://schemas.microsoft.com/windows/2004/02/mit/task')
     function Get-Node([string]$Path) { return $xml.SelectSingleNode($Path, $ns) }
-    It 'runs in the session of the interactive user, not as SYSTEM, only on demand' {
+    It 'runs in the session of the interactive user at its highest level, not as SYSTEM, only on demand' {
         (Get-Node '/t:Task/t:Principals/t:Principal/t:GroupId').InnerText | Should Be 'S-1-5-4'
         ($null -eq (Get-Node '/t:Task/t:Principals/t:Principal/t:UserId')) | Should Be $true
-        (Get-Node '/t:Task/t:Principals/t:Principal/t:RunLevel').InnerText | Should Be 'LeastPrivilege'
+        (Get-Node '/t:Task/t:Principals/t:Principal/t:RunLevel').InnerText | Should Be 'HighestAvailable'
         ($null -eq (Get-Node '/t:Task/t:Triggers')) | Should Be $true
         (Get-Node '/t:Task/t:Settings/t:AllowStartOnDemand').InnerText | Should Be 'true'
         (Get-Node '/t:Task/t:Settings/t:ExecutionTimeLimit').InnerText | Should Be 'PT2M'
@@ -114,7 +114,7 @@ Describe 'operator panel helper' {
         $source = Get-Content (Join-Path $root 'ob019-pult.ps1') -Raw
         [Text.Encoding]::ASCII.GetString([Text.Encoding]::ASCII.GetBytes($source)) | Should Be $source
         $script:DefaultHmiPath | Should Match '^E:\\DY\\.+_V1\.00_new\\binexe\\PXS_HMI\.exe$'
-        $script:DefaultHmiPath.Substring(6, 6) | Should Be ([string][char]0x53EF + [char]0x7F16 + [char]0x7A0B + [char]0x4E0A + [char]0x4F4D + [char]0x673A)
+        $script:DefaultHmiPath.Substring(6, 5) | Should Be ([string][char]0x6D3E + [char]0x5355 + [char]0x4E0A + [char]0x4F4D + [char]0x673A)
     }
     It 'sends WM_CLOSE to every panel window and starts the panel in its own folder' {
         $script:closed = 0

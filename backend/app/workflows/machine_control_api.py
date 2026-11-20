@@ -9,8 +9,9 @@
   с карточки» (`auto_confirm`), not as a person's confirmation; the field name stays for the API contract. `start`
   only for an open job run whose «Тираж» is on the machine (production/machine_runs.py `start_blocker`, 409 otherwise).
   `hmi_close` / `hmi_open` («Закрыть / Открыть пульт на ПК», 20.11.2026) — «Управление станками» on edit, `hands_clear`
-  (the card asked its own confirmation), no state to confirm: with the panel open ERP reads no state; the refusal rule
-  is production/machine_control.py `hmi_problem` (409 with the reason, e.g. «Станок в цикле — …»).
+  (the card asked its own confirmation), no state to confirm: with the panel open ERP reads no state; `force: true`
+  (hmi_close only, 422 otherwise) — «Закрыть принудительно». The refusal rule is production/machine_control.py
+  `hmi_problem` (409 with the reason, e.g. «Станок в цикле — …»).
 The runner on the machine PC takes them through `…/agent/writes/next` (workflows/machine_writes_api.py)."""
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ class CommandPayload(BaseModel):
     command: Literal["stop", "reset", "start", "alarm_clear", "hmi_close", "hmi_open"]
     confirm_state: int | None = Field(default=None, ge=0, le=rules.WORD_MAX)
     hands_clear: bool = False
+    force: bool = False
 
 
 @router.post("/card/{inventory}/command")
@@ -58,7 +60,7 @@ def send_command(inventory: str, payload: CommandPayload, principal: Reader, fac
             row, closed = machine_control.request(
                 uow.session, equipment_id=link.equipment_id, command=payload.command, actor_id=principal.actor.id,
                 actor_name=principal.actor.name, can_control=can_control(principal), state_seen=payload.confirm_state,
-                hands_clear=payload.hands_clear, now=now)
+                hands_clear=payload.hands_clear, now=now, force=payload.force)
         except machine_control.CommandRefused as error:
             uow.commit()  # what expired meanwhile stays expired
             raise HTTPException(error.status, str(error)) from error
@@ -74,7 +76,8 @@ def send_command(inventory: str, payload: CommandPayload, principal: Reader, fac
         _journal(uow, link.equipment_id, "command_requested", principal.actor, now,
                  f"{row.summary}: станок «{state_text}»" + how,
                  command_id=str(row.id), command=row.command or "", state_seen="" if state is None else str(state),
-                 auto_confirm="1" if payload.hands_clear else "")
+                 auto_confirm="1" if payload.hands_clear and row.command not in machine_control.HMI_COMMANDS else "",
+                 force="1" if row.payload.get("force") else "")
         view = commands.command_view(row)
         uow.commit()
     return view

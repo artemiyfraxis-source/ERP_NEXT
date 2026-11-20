@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { MachineCommand, MachineControl, MachineRun, MachineWindow, TransferPlan } from "./machineControlApi";
-import { NO_DATA, Ob019SettingsPanel, pullFor, pullMode, SELECT_WAIT_MS, sourceText } from "./Ob019SettingsPanel";
+import { NO_DATA, Ob019SettingsPanel, PULT_NO_DATA, pullFor, pullMode, SELECT_WAIT_MS, sourceText } from "./Ob019SettingsPanel";
 import { wireZones } from "./Ob019WireDrawing";
 
 function json(body: unknown, status = 200) {
@@ -632,4 +632,12 @@ it("every writable parameter there has «Задать» next to «На стан�
   await waitFor(() => expect(posts.map((post) => post.body.values)).toContainEqual({ pull_front_mm: "6" }));
   fireEvent.click(screen.getByRole("tab", { name: "Скорости" }));
   expect(within(screen.getByRole("table", { name: "Скорости" })).getByText("только просмотр")).toBeInTheDocument();
+});
+
+it("with the operator panel open on the PC «Остальные параметры» says so instead of «нет связи»", async () => {
+  server();
+  render(<Ob019SettingsPanel inventory="ОБ.019" old pult />);
+  fireEvent.click(await screen.findByRole("button", { name: /Остальные параметры/ }));
+  expect(screen.getByText(PULT_NO_DATA)).toBeInTheDocument();
+  expect(screen.queryByText(NO_DATA)).toBeNull();
 });
