@@ -10,12 +10,12 @@ import "./marking.css";
 type BatchHistory = { id: string; request: MarkingBatchRequest; total: number };
 type PrintRecord = { request: MarkingBatchRequest; pending: boolean; batch: MarkingBatch | null; usedKeys?: string[]; previousRequest?: MarkingBatchRequest; previousKeys?: string[]; history?: BatchHistory[] };
 
-export function MarkingPrintWindow({ source, storageKey, title, close }: {
-  source: MarkingSource | (() => Promise<MarkingSource>); storageKey?: string; title: string; close: () => void;
+export function MarkingPrintWindow({ source, storageKey, title, close, remaining = false }: {
+  source: MarkingSource | (() => Promise<MarkingSource>); storageKey?: string; title: string; close: () => void; remaining?: boolean;
 }) {
   const userId = useCurrentUserId();
   const identity = storageKey ?? (typeof source === "function" ? title : "group_id" in source ? `group:${source.group_id}` : `task:${source.task_id}:${source.operation_id}`);
-  const storageName = `marking-print:${userId ?? "local"}:${identity}`;
+  const storageName = `marking-print:${userId ?? "local"}:${identity}${remaining ? ":remaining" : ""}`;
   const [restored] = useState(() => {
     try { return { record: JSON.parse(sessionStorage.getItem(storageName) || "null") as PrintRecord | null, error: "" }; }
     catch { return { record: null, error: "Не удалось восстановить очередь печати — проверьте доступность хранилища браузера" }; }
@@ -71,7 +71,7 @@ export function MarkingPrintWindow({ source, storageKey, title, close }: {
     inFlight.current = true; setBusy(true); setError(""); setPreview(null);
     try {
       const resolved = typeof source === "function" ? await source() : source;
-      const request: MarkingRequest = { profile_id: profile.id, profile_version: profile.version, source: resolved, selected: keys };
+      const request: MarkingRequest = { profile_id: profile.id, profile_version: profile.version, source: resolved, selected: keys, ...(remaining ? { remaining: true } : {}) };
       const result = await markingApi.preview(request);
       setPreview(result); setApproved(request);
       setSelected([...new Set(result.labels.map((row) => row.key))].filter((key) => !creatingNew || !usedKeys.has(key))); setLabelIndex(0);

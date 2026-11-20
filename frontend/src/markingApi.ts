@@ -31,7 +31,8 @@ export interface MarkingPrinter {
 }
 export interface MarkingCatalog { machines: MarkingMachine[]; printers: MarkingPrinter[] }
 export type MarkingSource = { task_id: string; operation_id: string; version: number } | { group_id: string; version: number };
-export interface MarkingRequest { profile_id: string; profile_version: number; source: MarkingSource; selected: string[] }
+/** `remaining` — «Печатать оставшиеся»: the server drops labels already printed or queued. */
+export interface MarkingRequest { profile_id: string; profile_version: number; source: MarkingSource; selected: string[]; remaining?: boolean }
 export interface MarkingDimensions { width_mm: number; height_mm: number; orientation: string; dpi: number }
 export interface MarkingRaster extends MarkingDimensions { png_b64: string; sha256: string }
 /** `halves` — the text of each text zone: «X1 | X2» in the ETK prints X1 on the left half of a flag and X2 on the right. */

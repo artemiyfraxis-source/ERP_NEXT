@@ -9,7 +9,7 @@ from sqlalchemy import select
 from app.modules.fulfillment.domain import FulfillmentStatus
 from .application import ConcurrentProductionUpdate, lock_reflow_projects, record_fact
 from .cutting import cutting_project_label, digest
-from .cutting_application import audit, check_access, describe_group, locked_group
+from .cutting_application import audit, check_access, describe_group, locked_group, row_behind
 from .cutting_infrastructure import CuttingActionRow, CuttingOutputRow, CuttingWorkRow
 from .domain import ProductionStatus, ProductionValidationError
 from .downtime import Downtime, DowntimeReason
@@ -199,6 +199,10 @@ def execute_group(group_id, payload, action, key, actor, worker, now, uow, *, cu
             return result
         group = locked_group(group_id, payload["version"], uow, actor, now)
         if action == "start" and group.state == "open":
+            if any(row_behind(member, task) for member, task, _ in members):
+                # 422, not 409: the cutting API shows 409 as a generic «обновите данные»; this needs the refresh button.
+                raise ProductionValidationError(
+                    "ЭТК задания новее строки группы — нажмите «Обновить из ЭТК», затем начните группу")
             if any(member.task_id not in (current_cards or {}) or current_cards[member.task_id][1] !=
                    member.row_snapshot.get("validated_card_version") for member, _, _ in members):
                 raise ConcurrentProductionUpdate("ЭТК группы изменилась — требуется повторная проверка группы резки")

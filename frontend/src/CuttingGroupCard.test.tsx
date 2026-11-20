@@ -211,3 +211,52 @@ it("shows «Обновить из ЭТК» only for a stale open group and re-pi
   expect(String(fetch.mock.calls[0][0])).toContain("/cutting-groups/group-1/refresh-etk");
   expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual({ version: 1 });
 });
+
+const plain = (rows: CuttingGroup["rows"]) => rows.map((row) => ({ ...row, labels: [] }));
+
+it("cut group: «Резка кабеля» with КБ, length and pieces only, no label block", () => {
+  render(<CuttingGroupCard group={{ ...group, kind: "cut", kind_name: "Резка кабеля", rows: plain(group.rows) }} readOnly={false} renderInstruction={() => null} />);
+  expect(screen.getByRole("heading", { name: "Резка кабеля · 708К. · 4 КБ" })).toBeTruthy();
+  expect(screen.getAllByRole("columnheader").map((cell) => cell.textContent?.trim())).toEqual(["КБ", "Длина, мм", "Шт."]);
+  expect(screen.queryByRole("button", { name: "Этикетки группы" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Печатать оставшиеся" })).toBeNull();
+});
+
+it("labels group: printed / remaining per КБ and «Печатать оставшиеся» follows label pieces left", async () => {
+  const answer = (remaining: number, labels = remaining * 3) => ({ rows: group.rows.map((row, index) => ({ task_id: row.task_id,
+    task_number: row.task_number, item: row.item, quantity: 15, printed: 15 - remaining, remaining: index === 0 ? remaining : 0,
+    remaining_labels: index === 0 ? labels : 0 })), printed: 0, remaining, remaining_labels: labels });
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json(answer(5)));
+  const { unmount } = render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly={false} renderInstruction={() => null} />);
+  expect(screen.getByRole("heading", { name: "Печать этикеток · 708К. · 4 КБ" })).toBeTruthy();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Печатать оставшиеся" })).toBeEnabled());
+  expect(String(fetch.mock.calls[0][0])).toBe("/api/production/marking/progress?group_id=group-1");
+  expect(screen.getAllByRole("columnheader").map((cell) => cell.textContent?.trim())).toEqual(["КБ", "Напечатано", "Осталось"]);
+  expect(screen.queryByText("Длина, мм")).toBeNull();
+  unmount();
+  fetch.mockResolvedValue(json(answer(0)));
+  const second = render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly={false} renderInstruction={() => null} />);
+  await waitFor(() => expect(screen.getAllByText("15").length).toBeGreaterThan(0));
+  expect(screen.getByRole("button", { name: "Печатать оставшиеся" })).toBeDisabled();
+  second.unmount();
+  // Every item's numbered labels printed, fixed ones left: no item remains, the button stays enabled.
+  fetch.mockResolvedValue(json(answer(0, 30)));
+  render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly={false} renderInstruction={() => null} />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Печатать оставшиеся" })).toBeEnabled());
+});
+
+it("tubes group: material, length and pieces, one value per column", () => {
+  const rows = plain(group.rows).map((row, index) => ({ ...row, tubes: [
+    { material: "ТУТ 2:1 Ø3", length_mm: 35, quantity: 30 + index }, { material: "ТУТ 2:1 Ø3", length_mm: 55, quantity: 15 }] }));
+  render(<CuttingGroupCard group={{ ...group, kind: "tubes", rows }} readOnly={false} renderInstruction={() => null} />);
+  expect(screen.getByRole("heading", { name: "Резка трубок · 708К. · 4 КБ" })).toBeTruthy();
+  expect(screen.getAllByRole("columnheader").map((cell) => cell.textContent?.trim())).toEqual(["КБ", "Материал", "Длина, мм", "Шт."]);
+  expect(screen.getAllByRole("row")).toHaveLength(9);
+});
+
+it("old mixed group (no kind) keeps the wide table and the label block", () => {
+  render(<CuttingGroupCard group={group} readOnly={false} renderInstruction={() => null} />);
+  expect(screen.getByRole("heading", { name: "Резка · 708К. · ПФ-1 Заготовки · 4 КБ" })).toBeTruthy();
+  expect(screen.getByText("Длина реза, мм")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Этикетки группы" })).toBeTruthy();
+});

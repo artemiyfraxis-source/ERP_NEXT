@@ -592,9 +592,10 @@ FAKRA_KB28 = [
 def test_fakra_ends_are_built_in_their_own_blocks_and_the_cut_block_is_the_cut_only():
     route = generator_split(FAKRA_KB28, "Кабельная сборка 2FA1 - FAKRA")
 
+    # The marking tube printed and cut on the marker is a print task of its own (owner 20.11), not «Нарезанные трубки».
     assert [(block.key, block.ops, block.name) for block in route.blocks] == [
-        ("wires", (1,), "Нарезанный кабель"), ("tubes", (2,), "Нарезанные трубки"),
+        ("wires", (1,), "Нарезанный кабель"), ("labels", (2,), "Напечатанная маркировка"),
         ("A", (3, 4, 5, 6, 7, 8, 9), "Сторона А собрана"), ("B", (10, 11, 12, 13, 14, 15, 16), "Сторона В собрана"),
         ("final", (17, 18), "Кабельная сборка 2FA1 - FAKRA"),
     ]
-    assert sorted((edge.source, edge.target) for edge in route.edges) == [("A", "B"), ("B", "final"), ("tubes", "A"), ("wires", "A")]
+    assert sorted((edge.source, edge.target) for edge in route.edges) == [("A", "B"), ("B", "final"), ("labels", "A"), ("wires", "A")]

@@ -10,7 +10,7 @@ from sqlalchemy import (JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Fo
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.shared.persistence import Base
-from .cutting import CuttingRecipe, RECIPE_VERSION, digest
+from .cutting import CuttingRecipe, digest
 from .domain import ProductionStatus, ProductionValidationError
 
 
@@ -176,22 +176,52 @@ class SqlAlchemyCuttingRepository:
 
     def create_existing(self, candidates, now):
         """Caller holds project/task locks and has rechecked every member; never late-join another group."""
-        recipe = candidates[0][1]
+        group = self.create_explicit(candidates[0][1], now)
+        for task, recipe, document, card_version in candidates:
+            self.place(group, task, recipe, document, card_version)
+        return group
+
+    def create_explicit(self, recipe, now):
+        """A new open group that later launches do not join (grouped existing work, regrouping)."""
         identifier = uuid4()
         group = CuttingGroupRow(id=identifier, number=self.reserve_number(),
             idempotency_key=f"cutting-existing:{identifier}", project_key=recipe.snapshot["project"],
-            site=recipe.snapshot["site"], recipe_key=recipe.key, recipe_version=RECIPE_VERSION,
+            site=recipe.snapshot["site"], recipe_key=recipe.key, recipe_version=recipe.snapshot["version"],
             recipe=recipe.snapshot, version=1, state="open", joinable=False, created_at=now)
         self.session.add(group)
         self.session.flush()
-        for position, (task, recipe, document, card_version) in enumerate(candidates, 1):
-            self.session.add(CuttingMemberRow(id=uuid4(), group_id=group.id, task_id=task.id,
-                operation_id=recipe.operation_id, position=position, assembly_quantity=task.quantity,
-                blank_quantity=task.quantity * Decimal(recipe.row["cables_per_assembly"]),
-                row_snapshot={**recipe.row, "document": deepcopy(document), "validated_card_version": card_version,
-                              "techcard_revision": task.techcard_revision}, state="active"))
+        return group
+
+    def create_separate(self, recipe, now):
+        """A new open group of one separately issued PF (`cutting:` key, not joinable — like `attach(separate=True)`):
+        regrouping keeps the master's separation on a rerun."""
+        group = self.create_explicit(recipe, now)
+        group.idempotency_key = f"cutting:separate:{group.id}"
         self.session.flush()
         return group
+
+    def place(self, group, task, recipe, document, card_version):
+        """Make the PF an active member of `group` with fresh row values. A row this group already had for the PF
+        (split earlier, e.g. a rerun) is reactivated: one row per group and PF. Returns True when anything changed.
+        The caller deactivated any other active membership of the PF and holds the project/group/task locks."""
+        snapshot = {**recipe.row, "document": deepcopy(document), "validated_card_version": card_version,
+                    "techcard_revision": task.techcard_revision}
+        blanks = task.quantity * Decimal(recipe.row["cables_per_assembly"])
+        row = self.session.scalar(select(CuttingMemberRow).where(
+            CuttingMemberRow.group_id == group.id, CuttingMemberRow.operation_id == recipe.operation_id))
+        if row is None:
+            self.session.add(CuttingMemberRow(id=uuid4(), group_id=group.id, task_id=task.id,
+                operation_id=recipe.operation_id,
+                position=max((m.position for m in self.members(group.id, active=False)), default=0) + 1,
+                assembly_quantity=task.quantity, blank_quantity=blanks, row_snapshot=snapshot, state="active"))
+            self.session.flush()
+            return True
+        changed = (row.state != "active" or row.row_snapshot != snapshot or row.assembly_quantity != task.quantity
+                   or Decimal(row.blank_quantity) != blanks)
+        if changed:
+            row.state, row.row_snapshot, row.assembly_quantity, row.blank_quantity = "active", snapshot, task.quantity, blanks
+            self.session.flush()
+        return changed
 
     def attach(self, task, recipe: CuttingRecipe, now, production, *, separate=False, document=None, card_version=None):
         """Caller holds the normalized project lock; use the same transaction as task/serial creation."""
@@ -200,19 +230,23 @@ class SqlAlchemyCuttingRepository:
             return self.get(existing.group_id)
         group = None
         if not separate:
+            # Lock by id (the one group lock order); the oldest compatible group is still chosen.
             candidates = self.session.scalars(select(CuttingGroupRow).where(
                 CuttingGroupRow.recipe_key == recipe.key, CuttingGroupRow.state == "open",
-                CuttingGroupRow.joinable.is_(True)).order_by(CuttingGroupRow.created_at, CuttingGroupRow.id).with_for_update()).all()
-            for candidate in candidates:
+                CuttingGroupRow.joinable.is_(True)).order_by(CuttingGroupRow.id).with_for_update()).all()
+            for candidate in sorted(candidates, key=lambda row: (row.created_at, str(row.id))):
                 members = self.members(candidate.id)
                 if members and all(not production.get(m.task_id).operation(m.operation_id).operator_ids for m in members):
                     group = candidate
                     break
         if group is None:
             identifier = uuid4()
+            # The first PF keeps the original launch key; other PFs of the same launch (labels, tubes) get their own.
+            first = min(task.operations, key=lambda op: op.position).id == recipe.operation_id
+            source = task.source_idempotency_key if first else [task.source_idempotency_key, str(recipe.operation_id)]
             group = CuttingGroupRow(id=identifier, number=self.reserve_number(),
-                idempotency_key=f"cutting:{digest(task.source_idempotency_key)}", project_key=recipe.snapshot["project"],
-                site=recipe.snapshot["site"], recipe_key=recipe.key, recipe_version=RECIPE_VERSION,
+                idempotency_key=f"cutting:{digest(source)}", project_key=recipe.snapshot["project"],
+                site=recipe.snapshot["site"], recipe_key=recipe.key, recipe_version=recipe.snapshot["version"],
                 recipe=recipe.snapshot, version=1, state="open", joinable=not separate, created_at=now)
             self.session.add(group)
             self.session.flush()
@@ -230,17 +264,25 @@ class SqlAlchemyCuttingRepository:
         """Any child edit invalidates group previews; cancellation keeps restrictive history references."""
         members = self.session.scalars(select(CuttingMemberRow).where(
             CuttingMemberRow.task_id == task.id, CuttingMemberRow.state.in_(("active", "cancelled")))).all()
-        for member in members:
-            group = self.get(member.group_id, lock=True)
+        # Groups by id, like every cutting path (project → groups → tasks); cutting paths hold them already.
+        for group_id in sorted({member.group_id for member in members}, key=str):
+            self.get(group_id, lock=True)
+        for member in sorted(members, key=lambda item: (str(item.group_id), item.position)):
+            group = self.get(member.group_id)
             if group.state == "cancelled":
                 continue
             if task.status is not ProductionStatus.CANCELLED:
                 operation = task.operation(member.operation_id)
                 if (task.quantity != member.assembly_quantity or operation.inputs
-                        or task.techcard_revision != member.row_snapshot.get("techcard_revision")
                         or [op.code for op in operation.etk_ops] != [op["code"] for op in group.recipe["operations"]]
                         or Decimal(task.unit_factors[operation.id]) != Decimal(group.recipe["pf_per_assembly"])):
                     raise ProductionValidationError("Маршрут или тираж группы резки изменился — сначала отделите строку")
+                if task.techcard_revision != member.row_snapshot.get("techcard_revision") and (
+                        group.state != "open" or self.work(group.id)):
+                    raise ProductionValidationError(
+                        "Группа резки уже начата и работает по закреплённой ЭТК — новую ревизию к строке не применить")
+                # Re-pinned row of an unstarted group: it keeps its frozen document until «Обновить из ЭТК» moves it
+                # to the group of its new recipe (refresh_group_etk); the group cannot start before that.
                 if task.handed_to and group.site and task.handed_to != group.site:
                     raise ProductionValidationError("Перед передачей на другую площадку отделите строку от группы резки")
             member.state = "cancelled" if task.status is ProductionStatus.CANCELLED else "active"

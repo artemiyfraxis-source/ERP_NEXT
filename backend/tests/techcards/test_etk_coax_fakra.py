@@ -28,9 +28,13 @@ def test_new_fakra_route_independent_preparations_and_label_inputs(fixture):
     config = deepcopy(fixture["config"])
     doc = build_etk(config, _fresh_cards(config))
     ops = doc["operations"]
+    # Cutting the cable, printing labels and cutting tubes are separate ПФ without inputs (owner 20.11).
     assert [block["name"] for block in doc["route"]["blocks"]][:-1] == [
-        "Заготовки", "Кабель с метками и деталями", "Сторона А собрана", "Сторона В собрана"]
-    assert len(doc["route"]["blocks"]) == 5
+        "Нарезанный и разделанный кабель", "Этикетки", "Нарезанные трубки", "Кабель с метками и деталями",
+        "Сторона А собрана", "Сторона В собрана"]
+    assert len(doc["route"]["blocks"]) == 7
+    assert [block["ops"] for block in doc["route"]["blocks"][:3]] == [[1], [2], [3]]
+    assert not any(edge["to"] in {"wires", "labels", "tubes"} for edge in doc["route"]["edges"])
     assert [position for block in doc["route"]["blocks"] for position in block["ops"]] == list(range(1, len(ops) + 1))
     assert all(not op["semis"] for op in ops[:3])
     assert len({op["result"][0]["name"] for op in ops[:3]}) == 3
