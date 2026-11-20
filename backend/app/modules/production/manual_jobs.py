@@ -9,8 +9,9 @@ needs its reason) and a material decision — or cancelled with a reason. Constr
 - the эталон a job follows belongs to that same machine (composite FK onto `equipment_setup_references`);
 - every change after the start compares and swaps `version`.
 The job never writes stock off by itself (plan, decision A): at the finish the person says «Не списывать» (with a reason)
-or «Ждёт решения склада»; «Списать с партии» (`issued`, rows of `production_manual_job_issues`) comes with the
-warehouse slice S3."""
+or «Ждёт решения склада»; a finished job still pending is decided later (`decide_material`, slice S3): «Не списывать»
+with a reason, or «Списать с партии» (`issued`, rows of `production_manual_job_issues`, each backed by its own
+warehouse write-off — app/workflows/manual_job_stock.py)."""
 
 from __future__ import annotations
 
@@ -29,7 +30,7 @@ from app.shared.persistence import Base
 STATUSES = ("running", "done", "cancelled")
 COUNT_SOURCES = ("plc", "crimp_log", "manual")
 MATERIALS = ("pending", "issued", "not_issued")
-# What the finish may say in S1: «Списать с партии» needs the warehouse (slice S3).
+# What the finish may say: «Списать с партии» is the warehouse's step after the finish (decide_material, slice S3).
 FINISH_MATERIALS = ("pending", "not_issued")
 RUNNING_WHERE = "status = 'running'"
 NUMBER_PREFIX = "Р"  # Cyrillic Р: what people read
@@ -216,7 +217,7 @@ def check_finish(finish: Finish) -> Finish:
     if finish.defect and not reason:
         raise ManualJobInvalid("Укажите причину брака")
     if finish.material == "issued":
-        raise ManualJobInvalid("Списание с партии появится со складом — пока выберите «Ждёт решения склада»")
+        raise ManualJobInvalid("С партии списывают после завершения — выберите «Ждёт решения склада»")
     if finish.material not in FINISH_MATERIALS:
         raise ManualJobInvalid("Выберите, что делать с материалом")
     note = clean(finish.material_note, 300)
@@ -350,6 +351,59 @@ def cancel(session: Session, job_id: UUID, version: int, reason: str, *, actor_n
     return _changed(session, row, version, {
         "status": "cancelled", "cancel_reason": reason, "finished_at": max(now, aware(row.started_at, now)),
         "finished_by_name": clean(actor_name, 200)})
+
+
+DECISIONS = ("issued", "not_issued")
+
+
+def decide_material(session: Session, job_id: UUID, version: int, material: str, note: str = "") -> ManualJobRow:
+    """The material of a finished job still «Ждёт решения склада» (slice S3): «Не списывать» with a reason, or «Списать
+    с партии» — the caller writes the lots off in the same transaction. Compare-and-swap on `version` AND on the job
+    being done and still pending: the UPDATE locks the job row, so a parallel decision waits for it and then finds the
+    version moved (409) — of two decisions exactly one stands."""
+    if material not in DECISIONS:
+        raise ManualJobInvalid("Выберите, что делать с материалом")
+    note = clean(note, 300)
+    if material == "not_issued" and not note:
+        raise ManualJobInvalid("Укажите, почему материал не списывается")
+    row = session.get(ManualJobRow, job_id)
+    if row is None:
+        raise KeyError("Ручная работа не найдена")
+    if row.status == "running":
+        raise ManualJobConflict(f"Ручная работа {number_text(row.number)} ещё идёт — сначала завершите её")
+    if row.status != "done":
+        raise ManualJobConflict(f"Ручная работа {number_text(row.number)} отменена — материал по ней не списывают")
+    if row.material != "pending":
+        raise ManualJobConflict(f"Материал по {number_text(row.number)} уже решён: {MATERIAL_TEXTS[row.material][0]}")
+    if row.version != version:
+        raise ManualJobConflict("Ручную работу уже изменили — обновите и проверьте ещё раз")
+    count = session.execute(update(ManualJobRow).where(
+        ManualJobRow.id == row.id, ManualJobRow.version == version, ManualJobRow.status == "done",
+        ManualJobRow.material == "pending",
+    ).values(material=material, material_note=note if material == "not_issued" else "", version=version + 1)).rowcount
+    if count != 1:
+        raise ManualJobConflict("Ручную работу уже изменили — обновите и проверьте ещё раз")
+    session.expire(row)
+    session.refresh(row)
+    return row
+
+
+def issues_of(session: Session, job_id: UUID) -> list[ManualJobIssueRow]:
+    return list(session.scalars(select(ManualJobIssueRow).where(ManualJobIssueRow.job_id == job_id)
+                                .order_by(ManualJobIssueRow.created_at, ManualJobIssueRow.id)))
+
+
+WAITING_WHERE = (ManualJobRow.status == "done", ManualJobRow.material == "pending")
+
+
+def waiting(session: Session, limit: int = 1000) -> list[ManualJobRow]:
+    """Finished jobs whose material «Ждёт решения склада», whatever their date — the warehouse's queue."""
+    return list(session.scalars(select(ManualJobRow).where(*WAITING_WHERE)
+                                .order_by(ManualJobRow.finished_at.desc(), ManualJobRow.number.desc()).limit(limit)))
+
+
+def waiting_count(session: Session) -> int:
+    return int(session.scalar(select(func.count()).select_from(ManualJobRow).where(*WAITING_WHERE)) or 0)
 
 
 def aware(value: datetime, now: datetime) -> datetime:

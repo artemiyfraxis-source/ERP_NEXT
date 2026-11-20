@@ -2,15 +2,17 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { failureText } from "./api";
 import { ComboBox, type ComboOption } from "./ComboBox";
 import { EMPTY, formatWallMoment } from "./format";
+import { ManualJobMaterial } from "./ManualJobMaterial";
 import { manualJobsApi, type ManualJob, type ManualJobOptions } from "./manualJobsApi";
 import { PageWindow } from "./PageWindow";
 import "./manualJobs.css";
 
 /** Окно «Ручная работа»: новая работа на станке (станок, эталон, провод / контакт из справочников или свои, длина,
  *  количество, «Зачем»), завершение (годные, брак с причиной, что делать с материалом) и отмена с причиной.
- *  «Списать с партии» появится со складом (срез S3) — пока кнопка видна, но выключена. */
+ *  «Списать с партии» (срез S3) — у кого правка «Склада»: работа завершается с «Ждёт решения склада» и сразу
+ *  открывается окно «Материал» (`ManualJobMaterial`); там же решают по уже завершённой работе. */
 
-type Material = "pending" | "not_issued";
+type Material = "pending" | "not_issued" | "issue";
 
 const text = (value: string | number | null | undefined) => (value === null || value === undefined || value === "" ? EMPTY : String(value));
 const whole = (value: string) => (/^\d+$/.test(value.trim()) ? Number(value.trim()) : null);
@@ -104,7 +106,9 @@ export function StartForm({ options, equipmentId, inventory, onStarted }: {
   </form>;
 }
 
-function FinishForm({ job, onSaved }: { job: ManualJob; onSaved: (job: ManualJob) => void }) {
+function FinishForm({ job, canIssue, onSaved, onIssue }: {
+  job: ManualJob; canIssue: boolean; onSaved: (job: ManualJob) => void; onIssue: (job: ManualJob) => void;
+}) {
   const [good, setGood] = useState("");
   const [defect, setDefect] = useState("0");
   const [reason, setReason] = useState("");
@@ -122,11 +126,11 @@ function FinishForm({ job, onSaved }: { job: ManualJob; onSaved: (job: ManualJob
         : !material ? "Выберите, что делать с материалом"
           : material === "not_issued" && !note.trim() ? "Укажите, почему материал не списывается" : "";
 
-  const run = async (action: () => Promise<ManualJob>, fallback: string) => {
+  const run = async (action: () => Promise<ManualJob>, fallback: string, then = onSaved) => {
     setBusy(true);
     setError("");
     try {
-      onSaved(await action());
+      then(await action());
     } catch (failure) {
       setError(failureText(failure, fallback));
     } finally {
@@ -136,8 +140,10 @@ function FinishForm({ job, onSaved }: { job: ManualJob; onSaved: (job: ManualJob
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (problem || busy || !material) return;
+    // «Списать с партии»: the job finishes waiting for the warehouse, the lots are picked in the next window.
     void run(() => manualJobsApi.finish(job.id, { version: job.version, good: goodValue ?? 0, defect: defectValue ?? 0,
-      defect_reason: reason, material, material_note: note }), "Ручная работа не завершена");
+      defect_reason: reason, material: material === "issue" ? "pending" : material, material_note: note }),
+    "Ручная работа не завершена", material === "issue" ? onIssue : onSaved);
   };
   return <>
     <form className="mj-form" onSubmit={submit} aria-label="Завершить работу">
@@ -151,8 +157,9 @@ function FinishForm({ job, onSaved }: { job: ManualJob; onSaved: (job: ManualJob
       </div>
       <fieldset className="mj-material">
         <legend>Материал</legend>
-        <label className="mj-choice is-off" title="Появится со складом">
-          <input type="radio" name="mj-material" disabled />Списать с партии<small>появится со складом</small>
+        <label className={canIssue ? "mj-choice" : "mj-choice is-off"}>
+          <input type="radio" name="mj-material" disabled={!canIssue} checked={material === "issue"}
+            onChange={() => setMaterial("issue")} />Списать с партии{!canIssue && <small>списывает склад</small>}
         </label>
         <label className="mj-choice"><input type="radio" name="mj-material" checked={material === "not_issued"}
           onChange={() => setMaterial("not_issued")} />Не списывать</label>
@@ -178,12 +185,13 @@ function FinishForm({ job, onSaved }: { job: ManualJob; onSaved: (job: ManualJob
   </>;
 }
 
-export function ManualJobWindow({ job, equipmentId, inventory, canEdit, close, onSaved }: {
-  /** `canEdit` не задан — решает сервер (`options.can_edit`). */
-  job?: ManualJob | null; equipmentId?: string | null; inventory?: string; canEdit?: boolean; close: () => void;
-  onSaved?: (job: ManualJob) => void;
+export function ManualJobWindow({ job, equipmentId, inventory, canEdit, canIssue = false, close, onSaved }: {
+  /** `canEdit` не задан — решает сервер (`options.can_edit`). `canIssue` — правка «Склада»: «Списать с партии». */
+  job?: ManualJob | null; equipmentId?: string | null; inventory?: string; canEdit?: boolean; canIssue?: boolean;
+  close: () => void; onSaved?: (job: ManualJob) => void;
 }) {
   const [current, setCurrent] = useState<ManualJob | null>(job ?? null);
+  const [materialOpen, setMaterialOpen] = useState(false);
   const [options, setOptions] = useState<ManualJobOptions | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -194,6 +202,7 @@ export function ManualJobWindow({ job, equipmentId, inventory, canEdit, close, o
     return () => controller.abort();
   }, [current]);
   const saved = (next: ManualJob) => { setCurrent(next); onSaved?.(next); };
+  if (current && materialOpen) return <ManualJobMaterial job={current} close={() => setMaterialOpen(false)} onSaved={saved} />;
   const title = current ? `Ручная работа ${current.number}` : "Новая ручная работа";
   return <PageWindow label={title} close={close} width={920}>
     <section className="panel mj-window">
@@ -203,7 +212,12 @@ export function ManualJobWindow({ job, equipmentId, inventory, canEdit, close, o
         <button type="button" className="secondary small" onClick={close}>Закрыть</button>
       </header>
       {current && <Facts job={current} />}
-      {current?.status === "running" && (canEdit ?? true) && <FinishForm key={current.version} job={current} onSaved={saved} />}
+      {current?.status === "running" && (canEdit ?? true) && <FinishForm key={current.version} job={current} canIssue={canIssue}
+        onSaved={saved} onIssue={(next) => { saved(next); setMaterialOpen(true); }} />}
+      {current?.status === "done" && <div className="mj-actions">
+        <button type="button" className={current.material === "pending" ? "primary" : "secondary"} onClick={() => setMaterialOpen(true)}>
+          {current.material === "pending" ? "Решить по материалу…" : "Материал…"}</button>
+      </div>}
       {!current && error && <div className="error-banner" role="alert">{error}</div>}
       {!current && !error && !options && <p className="empty">Загрузка…</p>}
       {!current && options && ((canEdit ?? options.can_edit)

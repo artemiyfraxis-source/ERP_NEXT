@@ -124,6 +124,9 @@ class WriteOffCommand:
     now: datetime
     entry_date: date | None = None  # ДАТА строки СПИСАНИЯ (Writeoff.html), None — сегодня
     writeoff_id: UUID = field(default_factory=uuid4)
+    # The movement's key in the СПИСАНИЕ journal (UNIQUE there): a workflow's write-off that must happen once
+    # («manual-job:{job}:{lot}»). Internal workflow capability; never accepted by the stock API.
+    source_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1011,12 +1014,16 @@ INSTRUMENT_RETURN_MESSAGE = "Это принадлежность СИ — вер
 
 
 def write_off(command: WriteOffCommand, uow: UnitOfWork) -> StockLot:
-    """SUPPLYMAP stock05Writeoff_: НАЗНАЧЕНИЕ is required on the server, an empty ОСНОВАНИЕ is «Выдача»."""
+    """SUPPLYMAP stock05Writeoff_: НАЗНАЧЕНИЕ is required on the server, an empty ОСНОВАНИЕ is «Выдача».
+    A `source_key` already in the journal refuses the whole write-off: the journal skips a known key silently, so the
+    lot must not be written off a second time either."""
     purpose = str(command.purpose or "").strip()
     if not purpose:
         raise WarehouseValidationError("Укажи назначение: номер проекта или фамилию ответственного.")
     reason = str(command.reason or "").strip() or WRITEOFF_DEFAULT_REASON
     with uow:
+        if command.source_key is not None and uow.writeoffs.by_source_key(command.source_key) is not None:
+            raise ConcurrentWarehouseUpdate("Это списание уже проведено")
         current = _versioned(command.lot_id, command.expected_version, uow)
         updated = current.write_off(command.quantity)
         uow.warehouse.add(updated)
@@ -1028,7 +1035,7 @@ def write_off(command: WriteOffCommand, uow: UnitOfWork) -> StockLot:
                 if command.entry_date and command.entry_date != command.now.date()
                 else command.now
             ),
-            remaining_after=updated.balance,
+            remaining_after=updated.balance, source_key=command.source_key,
         ), id=command.writeoff_id))
         uow.audit.add(
             AuditEvent(
