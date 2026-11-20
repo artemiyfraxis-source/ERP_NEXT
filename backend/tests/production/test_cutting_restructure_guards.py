@@ -541,7 +541,11 @@ def test_release_moved_equipment_removes_only_bindings_of_moved_operations(produ
     events = _released_events(task)
     assert sorted((e["code"], e["etk_position"], e["stage"]) for e in events) == [
         ("CUT_TUT_short", 3, first.stage), ("PRINT_MARK_LABEL", 2, first.stage)]
-    assert all(e["machine_id"] and e["task_id"] == str(task.id) for e in events)
+    assert all(e["machine_id"] and e["task_id"] == str(task.id) and e["task_number"] == task.number for e in events)
+    rebuilt = _tasks()["КБ1"]
+    landed = {op.etk_ops[0].code: (str(op.id), op.etk_ops[0].position) for op in rebuilt.operations if op.etk_ops}
+    assert {(e["code"], e["to_operation_id"], e["to_etk_position"]) for e in events} == {
+        ("PRINT_MARK_LABEL", *landed["PRINT_MARK_LABEL"]), ("CUT_TUT_short", *landed["CUT_TUT_short"])}
     with app.state.production_uow_factory() as uow:
         from app.modules.production.resource_assignment_infrastructure import ResourceAllocationRow as Allocation
         moved = [op.id for op in _tasks()["КБ1"].operations if op.id != first.id]
@@ -559,3 +563,32 @@ def test_release_moved_equipment_still_refuses_an_ambiguous_binding(production_a
     result = _cli(monkeypatch, capsys, "--apply", "--release-moved-equipment")
     assert not result["restructured"] and "ЗАЧ" in result["refused"][0]["reason"] and not result["released"]
     assert _bound(allocation) == [4]
+
+
+def test_release_never_frees_an_operation_that_lands_in_a_kept_pf(production_api, monkeypatch, capsys):
+    client, _ = production_api
+    cards = [issue("КБ1", _tail_document([("ASM", "assembly")], cut=["ЗАЧ"]))]  # cut PF: №1 cut, №2 ЗАЧ
+    batch(client, cards)
+    task = _tasks()["КБ1"]
+    cut = task.operations[0]
+    allocation = _bind(task, cut, 2)
+    moved = _tail_document([("ASM", "assembly")], cut=["ЗАЧ"])
+    blocks = {block["key"]: block for block in moved["route"]["blocks"]}
+    blocks["cut"]["ops"], blocks["assembly"]["ops"] = [1], [2, 5]  # ЗАЧ №2 goes to the kept assembly PF
+    reissue(cards[0], moved)
+    result = _cli(monkeypatch, capsys, "--apply", "--release-moved-equipment")
+    assert not result["restructured"] and "ЗАЧ" in result["refused"][0]["reason"] and not result["released"]
+    assert _bound(allocation) == [2]
+
+
+def test_renumbering_onto_a_kept_stale_number_is_refused(production_api, monkeypatch, capsys):
+    client, _ = production_api
+    cards = [issue("КБ1")]
+    batch(client, cards)
+    task = _tasks()["КБ1"]
+    assembly = task.operations[1]  # ETK №4 «ASM»; the allocation also holds a stale №5
+    allocation = _bind(task, assembly, 4, 5)
+    reissue(cards[0], _inserted_operation(split_document()))  # «ASM» №4 → №5
+    result = _cli(monkeypatch, capsys, "--apply")
+    assert not result["restructured"] and "№5" in result["refused"][0]["reason"], result["refused"]
+    assert _bound(allocation) == [4, 5]

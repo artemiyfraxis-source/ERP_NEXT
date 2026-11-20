@@ -642,9 +642,12 @@ def binding_moves(task, operations, kept, uow, *, release=False):
     PF refuses, and so does one whose code occurs a different number of times in the PF now (which of them is meant is
     not known — the master binds it again); one that stays under a new number is renumbered. A bound number that is not
     an ETK operation of the PF stays allowed while the rebuilt PF still has that number.
-    `release` (CLI `--release-moved-equipment`): a bound operation that moved to another rebuilt PF is not a refusal but
-    is returned in `released` [(allocation id, PF id, ETK number, code, machine id)] for removal; ambiguous counts and
-    disappearing operations still refuse. Returns (refusal, renumbering, released)."""
+    `release` (CLI `--release-moved-equipment`): a bound operation that moved to a NEW rebuilt PF (labels, tubes — not
+    a kept one) is not a refusal but is returned in `released` [(allocation id, PF id, ETK number, code, machine id,
+    new PF id, new ETK number)] for removal; it is found by its occurrence among that code's operations of the new PFs,
+    and a different count there, a code only in kept PFs or a disappearing operation still refuses. Renumbering that
+    would put two bindings of one allocation on one number refuses too (the master binds them again).
+    Returns (refusal, renumbering, released)."""
     from sqlalchemy import select
 
     from .resource_assignment_infrastructure import (ResourceAllocationMachineRow, ResourceAllocationMemberRow,
@@ -663,6 +666,7 @@ def binding_moves(task, operations, kept, uow, *, release=False):
         return sorted(item.position for item in operation.etk_ops if item.code == code)
 
     renumber, released = [], []
+    fresh = sorted((item.position, op.id, item.code) for op in operations if op.id not in set(kept) for item in op.etk_ops)
     for allocation_id, operation_id, position, machine_id in rows:
         before = task.operation(operation_id)
         after = next(op for op in operations if op.id == operation_id)
@@ -674,8 +678,10 @@ def binding_moves(task, operations, kept, uow, *, release=False):
             continue
         old, new = numbers(before, code), numbers(after, code)
         if not new:
-            if release and any(item.code == code for op in operations if op.id != operation_id for item in op.etk_ops):
-                released.append((allocation_id, operation_id, position, code, machine_id))
+            landed = [(number, op_id) for number, op_id, other in fresh if other == code]
+            if release and landed and len(landed) == len(old):
+                target_position, target_op = landed[old.index(position)]
+                released.append((allocation_id, operation_id, position, code, machine_id, target_op, target_position))
                 continue
             return (f"У ПФ «{before.stage}» назначено оборудование на операцию {code}, которая переходит в другой ПФ "
                     "или исчезает из новой ЭТК — снимите назначение и повторите"), [], []
@@ -686,13 +692,31 @@ def binding_moves(task, operations, kept, uow, *, release=False):
         target = new[old.index(position)]
         if target != position:
             renumber.append((allocation_id, position, target))
+    gone = {(item[0], item[2]) for item in released}
+    moves = {(allocation_id, old): new for allocation_id, old, new in renumber}
+    final = {}
+    for allocation_id, operation_id, position, _machine in rows:
+        if (allocation_id, position) in gone:
+            continue
+        number = moves.get((allocation_id, position), position)
+        if number in final.setdefault(allocation_id, set()):
+            return (f"У ПФ «{task.operation(operation_id).stage}» после перенумерации две привязки оборудования "
+                    f"попадают на операцию №{number} — снимите назначение, повторите и назначьте оборудование "
+                    "заново"), [], []
+        final[allocation_id].add(number)
     return "", renumber, released
 
 
 def _parents(task, operations, kept):
-    """{new PF id: the old PF it was split out of}. An ETK operation is followed by its code and its occurrence among
-    operations with that code (ETK order); a new PF whose operations all come from one old PF has that parent. If that
-    is not unique, the position rule of `restructured_operations` (numbers a strict subset of one old PF's)."""
+    """{new PF id: the old PF it was split out of}. Per old PF first: a new PF whose codes all occur in one old PF only
+    has that parent. Otherwise an ETK operation is followed by its code and its occurrence among the whole task's
+    operations with that code (ETK order; an inserted or dropped same-code operation elsewhere can mislead it), then
+    the position rule of `restructured_operations` (numbers a strict subset of one old PF's)."""
+    holders = {}
+    for operation in task.operations:
+        for item in operation.etk_ops:
+            holders.setdefault(item.code, set()).add(operation.id)
+
     def index(ops):
         found, seen = {}, {}
         for op_id, item in sorted(((op.id, item) for op in ops for item in op.etk_ops), key=lambda pair: pair[1].position):
@@ -711,6 +735,10 @@ def _parents(task, operations, kept):
     result = {}
     for op_id, items in keyed(operations).items():
         if op_id in kept:
+            continue
+        owners = set().union(*(holders.get(code, {None}) for code, _occurrence in items))
+        if len(owners) == 1 and None not in owners:
+            result[op_id] = owners.pop()
             continue
         found = {old.get(item) for item in items}
         if len(found) == 1 and None not in found:
@@ -795,13 +823,14 @@ def _release_bindings(task, freed, uow, actor, now, released):
 
     from .resource_assignment_infrastructure import ResourceAllocationMachineRow
 
-    for allocation_id, operation_id, position, code, machine_id in freed:
+    for allocation_id, operation_id, position, code, machine_id, target_op, target_position in freed:
         uow.session.execute(delete(ResourceAllocationMachineRow).where(
             ResourceAllocationMachineRow.allocation_id == allocation_id,
             ResourceAllocationMachineRow.etk_position == position))
-        details = {"task_id": str(task.id), "item": task.item, "operation_id": str(operation_id),
-                   "stage": task.operation(operation_id).stage, "code": code, "etk_position": position,
-                   "machine_id": str(machine_id), "allocation_id": str(allocation_id)}
+        details = {"task_id": str(task.id), "task_number": task.number, "item": task.item,
+                   "operation_id": str(operation_id), "stage": task.operation(operation_id).stage, "code": code,
+                   "etk_position": position, "machine_id": str(machine_id), "allocation_id": str(allocation_id),
+                   "to_operation_id": str(target_op), "to_etk_position": target_position}
         _audit(task, "production.equipment_released", actor, now, details, uow)
         released.append(details)
     uow.session.flush()
