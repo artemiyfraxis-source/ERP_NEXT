@@ -25,6 +25,8 @@
 .marking-geometry .marking-name { grid-column: span 2; }
 .marking-window .tnum, .marking-window input[type="number"] { font-variant-numeric: tabular-nums; }
 .marking-window input[type="number"] { text-align: right; min-width: 72px; width: 100%; }
+.marking-window input[inputmode="decimal"]:not([type="number"]) { font-variant-numeric: tabular-nums; text-align: right; }
+.marking-window :is(.warning-inline, .error-banner, .success-banner) { overflow-wrap: anywhere; }
 .marking-window .check-inline { flex-direction: row; align-items: center; gap: 8px; white-space: normal; }
 .marking-selection { display: grid; gap: 8px; }
 .marking-selection summary { cursor: pointer; }
@@ -55,5 +57,6 @@
 @media (pointer: coarse) {
   .marking-geometry { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .marking-window :is(button, input:not([type="checkbox"]), select) { min-height: 40px; }
-  .marking-window .check-inline { min-height: 40px; }
+  .marking-window .check-inline, .marking-window summary { min-height: 40px; }
+  .marking-selection summary { display: flex; align-items: center; }
 }

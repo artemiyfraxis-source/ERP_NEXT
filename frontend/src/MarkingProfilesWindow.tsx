@@ -150,8 +150,8 @@ function NewProfile({ machine, sources, locked, onCreated }: { machine: MarkingM
   return <fieldset className="form-grid marking-new-profile" disabled={busy}>
     <legend>Новый профиль станка {machine.inventory_number}</legend>
     <label>Название<input name="new-profile-name" autoComplete="off" value={shownName} onChange={(event) => { setName(event.target.value); setNamed(true); }} maxLength={80} /></label>
-    <label>Ширина, мм<input name="new-profile-width" inputMode="decimal" autoComplete="off" value={width} onChange={(event) => setWidth(event.target.value)} /></label>
-    <label>Высота, мм<input name="new-profile-height" inputMode="decimal" autoComplete="off" value={height} onChange={(event) => setHeight(event.target.value)} /></label>
+    <label>Ширина, мм<input name="new-profile-width" inputMode="decimal" autoComplete="off" spellCheck={false} value={width} onChange={(event) => setWidth(event.target.value)} /></label>
+    <label>Высота, мм<input name="new-profile-height" inputMode="decimal" autoComplete="off" spellCheck={false} value={height} onChange={(event) => setHeight(event.target.value)} /></label>
     <label>Копировать разметку из<select name="new-profile-source" autoComplete="off" value={chosen?.id ?? ""} onChange={(event) => setSource(event.target.value)}>
       {sources.map((item) => <option key={item.id} value={item.id}>{item.name} · {mm(item.geometry.width_mm)}×{mm(item.geometry.height_mm)} мм</option>)}</select></label>
     <p className="muted wide">Разметка берётся с профиля того же размера, если он есть у любого станка; иначе зоны масштабируются под новый размер. Профиль создаётся неоткалиброванным — нужна пробная печать.</p>
