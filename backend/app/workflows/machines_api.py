@@ -232,6 +232,8 @@ def _machine_rows(session, equipment, printers: list[dict], now) -> list[dict]:
     the БД.ОБ article, site, operations and family, its setup class and the open setup tasks waiting for it."""
     rows, shown = [], set()
     classes, pending = _setup_classes(session), pending_setup(session)
+    # «Ждёт наладки» only where БД.ОБ says «Кто налаживает: Наладчик» (owner 20.11), keyed by the row's own unit id.
+    technicians = {str(unit.id) for units in equipment.values() for unit in units if unit.setup_by == "technician"}
 
     def unit_of(inventory: str) -> EquipmentMachineRow | None:
         units = equipment.get(_inventory(inventory), [])
@@ -241,7 +243,7 @@ def _machine_rows(session, equipment, printers: list[dict], now) -> list[dict]:
         unit_id = row["equipment_id"]
         rows.append({**row, **_catalog(unit), "controlled": controlled,
                      "setup": classes.get(UUID(unit_id), NO_SETUP) if unit_id else NO_SETUP,
-                     "pending_setup": pending.get(unit_id, 0) if unit_id else 0})
+                     "pending_setup": pending.get(unit_id, 0) if unit_id in technicians else 0})
 
     for link, snapshot in rules.links(session):
         shown.add(_inventory(link.inventory_number))
