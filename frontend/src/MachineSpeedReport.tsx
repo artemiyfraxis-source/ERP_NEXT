@@ -13,6 +13,7 @@ import "./normFact.css";
  *  против циклограммы БД.ОП, наладка, простои и предложение новой скорости. «Принять» пишет ячейки циклограммы. */
 
 const DAYS = 30;
+const ETK_NOTE_FALLBACK = "Выпущенные ЭТК с этой операцией получат новую ревизию автоматически";
 
 function isoDay(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -83,6 +84,7 @@ export function MachineSpeedReport() {
   const [machines, setMachines] = useState<MachineRef[]>([]);
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState("");
+  const [forbidden, setForbidden] = useState(false);
   const [notice, setNotice] = useState("");
   const [reload, setReload] = useState(0);
   const [drill, setDrill] = useState<MachineSpeedRow | null>(null);
@@ -99,11 +101,16 @@ export function MachineSpeedReport() {
         setReport(loaded);
         if (!equipmentId) setMachines(loaded.machines);
       })
-      .catch((reason) => { if (live) setError(failureText(reason, "История станков не загружена")); });
+      .catch((reason) => {
+        if (!live) return;
+        if (reason instanceof ApiError && reason.status === 403) setForbidden(true);
+        else setError(failureText(reason, "История станков не загружена"));
+      });
     return () => { live = false; };
   }, [period.since, period.until, equipmentId, reload]);
 
   const label = `${formatDay(period.since)} – ${formatDay(period.until)}`;
+  if (forbidden) return null;  // нет права на «Станки» — раздела нет, без красной плашки
 
   const columns: DataColumn<MachineSpeedRow>[] = [
     { key: "machine", title: "Станок", width: 70, filter: true, value: (row) => row.inventory_number, render: (row) => <b>{row.inventory_number}</b> },
@@ -206,10 +213,8 @@ function AcceptWindow({ row, scope, close, refresh, done }: {
       await machineSpeedApi.accept(suggestion, scope);
       done(`Записано в циклограмму «${row.operation.name || row.operation.code}»: ${suggestion.cells.length} яч.`);
     } catch (reason) {
-      if (reason instanceof ApiError && reason.status === 409) {
-        setStale(true);
-        setError("Данные изменились, обновите отчёт и примите предложение заново.");
-      } else setError(failureText(reason, "Циклограмма не записана"));
+      if (reason instanceof ApiError && reason.status === 409) setStale(true);
+      setError(failureText(reason, "Циклограмма не записана"));
       setBusy(false);
     }
   }
@@ -234,7 +239,7 @@ function AcceptWindow({ row, scope, close, refresh, done }: {
         <div><dt>Период</dt><dd>{formatDay(evidence.since)} – {formatDay(evidence.until)}</dd></div>
       </dl>
       {suggestion.note && <div className="warning-inline">{suggestion.note}</div>}
-      <p className="nf-muted ms-hint">Время человека, машины и операции в записи пересчитается автоматически.</p>
+      <div className="warning-inline">{suggestion.etk_note || ETK_NOTE_FALLBACK}</div>
       {error && <div className="error-banner" role="alert">{error}</div>}
       <div className="ms-actions">
         {stale

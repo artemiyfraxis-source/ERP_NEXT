@@ -33,6 +33,8 @@ export interface MachineSuggestion {
   cells: SuggestionCell[];
   evidence: SuggestionEvidence;
   note: string | null;
+  /** Что будет с выпущенными ЭТК после записи (сервер); нет — показываем общий текст. */
+  etk_note?: string;
 }
 
 export interface MachineSpeedRow {

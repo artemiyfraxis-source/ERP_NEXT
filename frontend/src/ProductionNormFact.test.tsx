@@ -4,7 +4,7 @@ import { ProductionNormFact, hoursText, lastDays, pieceTime, ratioText } from ".
 import type { NormFactFact, NormFactReport } from "./normFactApi";
 
 // Раздел «Станки» проверяется в MachineSpeedReport.test.tsx; здесь он не должен ходить в сеть.
-vi.mock("./MachineSpeedReport", () => ({ MachineSpeedReport: () => null }));
+vi.mock("./MachineSpeedReport", () => ({ MachineSpeedReport: () => <section aria-label="Станки" /> }));
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -95,6 +95,16 @@ it("shows two tables with colored ratios, few-data marker and suggestions with l
   // Период и легенда цветов видны.
   expect(screen.getByLabelText("Начало периода")).toHaveValue(period.from);
   expect(screen.getByRole("list", { name: "Цвета факт / норма" })).toHaveTextContent("мало данных — меньше 5 фактов");
+});
+
+it("has no stray text and mounts «Станки» only with the right", async () => {
+  serve(() => json(report()));
+  const { container, rerender } = render(<ProductionNormFact />);
+  await screen.findByRole("region", { name: "По операциям" });
+  expect(container.textContent).not.toMatch(/return/i);
+  expect(screen.queryByRole("region", { name: "Станки" })).toBeNull();
+  rerender(<ProductionNormFact machines />);
+  expect(screen.getByRole("region", { name: "Станки" })).toBeInTheDocument();
 });
 
 it("opens the individual facts of a template in a window", async () => {
