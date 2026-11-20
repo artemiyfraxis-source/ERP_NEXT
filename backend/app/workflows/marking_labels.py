@@ -17,7 +17,8 @@ from app.modules.production.api import production_uow_factory
 from app.modules.production.application import ConcurrentProductionUpdate, issue_mark_serials_in
 from app.modules.production.cutting_application import locked_group
 from app.modules.production.domain import ProductionStatus
-from app.modules.production.marking_sources import check_materials, labels
+from app.modules.production.machine_load import normalized_site
+from app.modules.production.marking_sources import MAX_LABELS, check_materials, labels, manual_labels
 from app.workflows.marking_progress import (fixed_keys, numbered_keys, printed_counts, remaining_rows, serial_range_of,
                                             task_progress)
 from app.modules.references.equipment import INV_KEY
@@ -485,8 +486,14 @@ def source_rows(source, selected, principal, uow, now, interleave=False, remaini
     return rows, {"group": group_snapshot, "tasks": snapshots}
 
 
-def profile_target(session, profile_id, version, now, *, calibration=False, online=True):
-    profile = session.scalar(select(MarkingProfileRow).where(MarkingProfileRow.id == profile_id).with_for_update())
+def _locked(statement, lock):
+    return statement.with_for_update() if lock else statement
+
+
+def profile_target(session, profile_id, version, now, *, calibration=False, online=True, lock=True):
+    """The profile and binding a print runs on. `lock=False` (previews) reads without row locks: a preview renders for
+    seconds and must not hold up the printer's other enqueues."""
+    profile = session.scalar(_locked(select(MarkingProfileRow).where(MarkingProfileRow.id == profile_id), lock))
     if profile is None:
         raise KeyError("Профиль не найден")
     if profile.version != version:
@@ -495,7 +502,7 @@ def profile_target(session, profile_id, version, now, *, calibration=False, onli
         raise ConcurrentProductionUpdate("Профиль не связан с оборудованием")
     if not calibration and not profile.calibrated:
         raise ConcurrentProductionUpdate("Профиль не откалиброван")
-    binding = session.scalar(select(MarkingBindingRow).where(MarkingBindingRow.equipment_id == profile.equipment_id).with_for_update())
+    binding = session.scalar(_locked(select(MarkingBindingRow).where(MarkingBindingRow.equipment_id == profile.equipment_id), lock))
     if not binding:
         raise ConcurrentProductionUpdate("Оборудование не связано с принтером")
     if online and not printer_online(session, binding.machine_id, binding.printer, now):
@@ -507,6 +514,11 @@ def build_preview(payload, principal, uow, now):
     rows, source = source_rows(payload.source, payload.selected, principal, uow, now, payload.interleave,
                                payload.remaining)
     profile, binding = profile_target(uow.session, payload.profile_id, payload.profile_version, now, online=False)
+    return rendered_manifest(rows, source, profile, binding), binding
+
+
+def rendered_manifest(rows, source, profile, binding):
+    """The PNG of every distinct text with the profile's geometry, and the manifest hash the batch must match."""
     geometry = Geometry.model_validate(profile.geometry)
     rendered, cache = [], {}
     for row in rows:
@@ -519,7 +531,7 @@ def build_preview(payload, principal, uow, now):
         "profile_snapshot": {"equipment_id": str(profile.equipment_id), "geometry": profile.geometry},
         "machine_id": binding.machine_id, "printer": binding.printer, "source_snapshot": source,
         "labels": rendered, "total": sum(row["quantity"] for row in rows), **dimensions}
-    return {**result, "manifest_hash": digest(result)}, binding
+    return {**result, "manifest_hash": digest(result)}
 
 
 @router.post("/preview")
@@ -598,7 +610,15 @@ def job_message(job):
 def batch_access(batch, principal, uow):
     if batch is None:
         raise KeyError("Партия печати не найдена")
-    tasks = batch.manifest.get("source_snapshot", {}).get("tasks", [])
+    snapshot = batch.manifest.get("source_snapshot", {})
+    tasks = snapshot.get("tasks", [])
+    if snapshot.get("manual") is not None:
+        # «Свой текст»: no task to check — the one who printed it, a master, or anyone who prints marking.
+        if (batch.created_by != principal.actor.id and not section_allowed(principal, ("production",), "view")
+                and not section_allowed(principal, ("print",), "edit")):
+            raise PermissionError("Партия другого сотрудника")
+        own_site_only(uow, principal, UUID(snapshot["manual"]["equipment_id"]))
+        return
     if not tasks and not section_allowed(principal, ("erpref",), "edit"):
         raise PermissionError("Пробная печать доступна только настройщику оборудования")
     for item in tasks:
@@ -711,6 +731,134 @@ def progress(principal: ReadUser, factory: Factory, group_id: UUID | None = None
                     "remaining": sum(row["remaining"] for row in rows),
                     "remaining_labels": sum(row["remaining_labels"] for row in rows)}
     return checked(run)
+
+
+class ManualLine(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(max_length=300)
+    quantity: int = Field(default=1, ge=1, le=MAX_LABELS, strict=True)
+
+
+class ManualNumbering(BaseModel):
+    """{№} in a line: one label per number «с» … «по»."""
+    model_config = ConfigDict(extra="forbid")
+    first: int = Field(ge=0, le=999999, strict=True)
+    last: int = Field(ge=0, le=999999, strict=True)
+
+    @model_validator(mode="after")
+    def ordered(self):
+        if self.first > self.last:
+            raise ValueError("Номера: «с» не больше «по»")
+        if self.last - self.first + 1 > MAX_LABELS:
+            raise ValueError(f"Номеров за один раз — не более {MAX_LABELS}")
+        return self
+
+
+class ManualInput(BaseModel):
+    """«Свой текст» of the marking printer card: the operator's lines printed with a profile of that printer."""
+    model_config = ConfigDict(extra="forbid")
+    profile_id: UUID
+    profile_version: int = Field(ge=1, strict=True)
+    lines: list[ManualLine] = Field(min_length=1, max_length=MAX_LABELS)
+    order: Literal["listed", "number"] = "listed"
+    numbering: ManualNumbering | None = None
+    # «Пробная»: only the first label, one copy.
+    trial: bool = False
+
+
+class ManualBatchInput(ManualInput):
+    manifest_hash: str = Field(min_length=64, max_length=64)
+    idempotency_key: str = Field(min_length=1, max_length=128, pattern=r"\S")
+
+
+AUDIT_LINES = 100
+SITE_KEY = "Расположение"
+OTHER_SITE = "Принтер стоит на площадке {site}, а ваша площадка — {own}"
+
+
+def own_site_only(uow, principal, equipment_id):
+    """A manual print goes only to a printer of the user's own site (ЦАР/ЖУК); an employee without a site, the
+    administrator and the production manager (production: edit) may use any. A printer with no known site is open."""
+    if section_allowed(principal, ("production",), "edit"):
+        return
+    viewer = uow.operators.get(principal.actor.id)
+    own = (viewer.site if viewer else "") or ""
+    if not own:
+        return
+    machine = uow.session.get(EquipmentMachineRow, equipment_id) if equipment_id else None
+    site = normalized_site(machine.fields.get(SITE_KEY)) if machine is not None else ""
+    if site and site != own:
+        raise PermissionError(OTHER_SITE.format(site=site, own=own))
+
+
+def build_manual(payload, principal, uow, now, *, lock=True):
+    numbering = (payload.numbering.first, payload.numbering.last) if payload.numbering else None
+    rows = manual_labels([(line.text, line.quantity) for line in payload.lines], payload.order, numbering)
+    if payload.trial:
+        rows = [{**rows[0], "quantity": 1}]
+    profile, binding = profile_target(uow.session, payload.profile_id, payload.profile_version, now, online=False, lock=lock)
+    own_site_only(uow, principal, profile.equipment_id)
+    source = {"tasks": [], "manual": {"equipment_id": str(profile.equipment_id), "order": payload.order,
+                                      "numbering": list(numbering) if numbering else None, "trial": payload.trial}}
+    return rendered_manifest(rows, source, profile, binding), binding
+
+
+@router.post("/manual/preview")
+def manual_preview(payload: ManualInput, principal: PrintUser, factory: Factory, now: Now):
+    def run():
+        with factory() as uow:
+            result, _binding = build_manual(payload, principal, uow, now, lock=False)
+            return result
+    return checked(run)
+
+
+@router.post("/manual/batches")
+def manual_enqueue(payload: ManualBatchInput, principal: PrintUser, factory: Factory, now: Now):
+    """«Печатать N этикеток» of «Свой текст»: the same marking queue and agent as an ETK batch; nothing is issued."""
+    fingerprint = digest({"manual": payload.model_dump(mode="json")})
+
+    def existing(uow):
+        old = uow.session.scalar(select(MarkingBatchRow).where(MarkingBatchRow.created_by == principal.actor.id,
+            MarkingBatchRow.idempotency_key == payload.idempotency_key))
+        if old is None:
+            return None
+        batch_access(old, principal, uow)
+        if old.fingerprint != fingerprint:
+            raise ConcurrentProductionUpdate("Ключ запроса уже использован")
+        return batch_view(old, uow.session, now)
+
+    def run():
+        with factory() as uow:
+            if (result := existing(uow)) is not None:
+                return result
+            manifest, binding = build_manual(payload, principal, uow, now)
+            if manifest["manifest_hash"] != payload.manifest_hash:
+                raise ConcurrentProductionUpdate(STALE)
+            if not printer_online(uow.session, binding.machine_id, binding.printer, now):
+                raise ConcurrentProductionUpdate("Принтер не на связи")
+            request = SimpleNamespace(idempotency_key=payload.idempotency_key,
+                                      reason="Пробная печать" if payload.trial else "")
+            batch = persist_batch(uow, manifest, binding, request, principal, now, fingerprint)
+            # Who printed what: the texts as typed, with copies and numbering (the manifest keeps every label).
+            audit(uow, principal.actor, now, batch.id, "manual_queued", equipment_id=manifest["source_snapshot"]["manual"]["equipment_id"],
+                  total=batch.total, order=payload.order, trial=payload.trial,
+                  numbering=manifest["source_snapshot"]["manual"]["numbering"],
+                  lines=[{"text": line.text.strip(), "quantity": line.quantity} for line in payload.lines[:AUDIT_LINES]],
+                  lines_total=len(payload.lines), lines_cut=len(payload.lines) > AUDIT_LINES)
+            result = batch_view(batch, uow.session, now)
+            uow.commit()
+            return result
+
+    def race_safe():
+        try:
+            return run()
+        except IntegrityError:
+            with factory() as uow:
+                result = existing(uow)
+            if result is None:
+                raise
+            return result
+    return checked(race_safe)
 
 
 class CalibrationInput(BaseModel):
@@ -951,7 +1099,8 @@ def reprint_labels(batch_id: UUID, payload: ReprintInput, principal: PrintUser, 
             chosen, rows = reprint_selection(original, jobs, payload)
             reprint_not_in_flight(uow.session, root, original, chosen)
             reprint_tasks_still_own_serials(original, principal, uow, now)
-            trial = not original.manifest.get("source_snapshot", {}).get("tasks")
+            snapshot = original.manifest.get("source_snapshot", {})
+            trial = not snapshot.get("tasks") and snapshot.get("manual") is None  # a calibration print, not «Свой текст»
             current = uow.session.get(MarkingProfileRow, original.profile_id)
             if current is None:
                 raise KeyError("Профиль не найден")

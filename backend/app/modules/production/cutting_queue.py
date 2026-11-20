@@ -64,6 +64,21 @@ def _text(value: object) -> str:
     return " ".join(str(value if value is not None else "").split())
 
 
+WIRE_NAME_MAX = 40
+
+
+def _wire_name(name: str, art: str) -> str:
+    """Short name for the queue row: a long marketing description (supplier text in the cable card) is never shown.
+
+    A short name stays; a long one yields to the article (the cable mark, «RTK 031»); with no article it is cut at a word.
+    """
+    if len(name) <= WIRE_NAME_MAX:
+        return name
+    if art:
+        return art  # the article is shown in full, never cut
+    return name[:WIRE_NAME_MAX].rsplit(" ", 1)[0].rstrip(" ,.;:-") + "…"
+
+
 def _decimal(value: object) -> Decimal | None:
     """«1000», «1000,0», «12.7 мм» → Decimal; anything else (empty, «-», text) → None."""
     raw = _text(value).replace(",", ".").removesuffix("мм").strip()
@@ -250,7 +265,7 @@ def _side_key(side: dict | None) -> tuple[str, str, str]:
 
 
 def _setup_text(values: dict) -> str:
-    wire = values["wire"] or values["wire_name"] or "провод (нет в ЭТК)"
+    wire = values["wire"] or _wire_name(values["wire_name"], "") or "провод (нет в ЭТК)"
     parts = [f"Заправьте {wire}"]
     for name, side in values["sides"].items():
         if side is not None:
@@ -446,7 +461,8 @@ def queue_rows(candidates: list[dict], documents: Mapping[DocumentKey, Mapping |
             "group_state": group["state"] if group else None,
             "machine_id": shown, "machine_name": named[shown] if shown is not None else NO_MACHINE_NAME,
             "machines": [{"machine_id": identity, "machine_name": name} for identity, name in named.items()],
-            "wire": values["wire"], "wire_name": values["wire_name"], "length_mm": _plain(values["length"]) or None,
+            "wire": values["wire"], "wire_name": _wire_name(values["wire_name"], values["wire"]),
+            "wire_title": values["wire_name"] or values["wire"], "length_mm": _plain(values["length"]) or None,
             "planned": _count(item["planned"]), "done": _count(item["done"]),
             "left": _count(item["planned"] - item["done"]),
             **{f"strip_{name.lower()}{suffix}": (side or {}).get(field) or None for name, side in sides.items()

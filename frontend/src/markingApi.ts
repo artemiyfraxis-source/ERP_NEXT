@@ -1,4 +1,5 @@
-import { ApiError, api, productionApi, type ProductionOperation } from "./api";
+import { ApiError, api, failureText, productionApi, type ProductionOperation } from "./api";
+import type { CuttingGroup } from "./cuttingGroups";
 
 export interface MarkingRect { x: number; y: number; width: number; height: number }
 export interface MarkingGeometry {
@@ -58,8 +59,32 @@ export interface MarkingBatch { id: string; status: MarkingStatus; status_label:
 export type MarkingReprintRequest = ({ sequences: number[] } | { serial_from: number; serial_to: number }) & { reason: string; idempotency_key: string };
 export interface MarkingBatchRequest extends MarkingRequest { manifest_hash: string; idempotency_key: string; reprint_of?: string; reason?: string }
 
+/** «Свой текст» (карточка принтера маркировки): строка — надпись × копий; {№} в строке — номера «с»…«по». */
+export interface MarkingManualLine { text: string; quantity: number }
+export type MarkingOrder = "listed" | "number";
+export interface MarkingManualRequest {
+  profile_id: string; profile_version: number; lines: MarkingManualLine[]; order: MarkingOrder;
+  numbering?: { first: number; last: number } | null;
+  /** «Пробная»: только первая этикетка, одна копия. */
+  trial?: boolean;
+}
+export interface MarkingManualBatchRequest extends MarkingManualRequest { manifest_hash: string; idempotency_key: string }
+/** Состояние станка маркировки для строки состояния карточки: `GET /api/production/machines/card/{инв. №}`. */
+export interface MarkingMachineState {
+  inventory: string; name: string; state: { text: string; tone: "ok" | "warn" | "danger" | "info" | "neutral" };
+  counter: { value: number | null }; last_seen: string | null;
+  marking: { printer: string; present: boolean; queue: number;
+    last_job: { status: string; tone: string; finished_at: string | null; error: string } | null } | null;
+  connection: { pc: string; ip: string; agent: string; version: string; link: { code: string; text: string; tone: string };
+    last_seen: string | null; extra: [string, string][]; error: string };
+  journal: { at: string | null; text: string; tone: string }[];
+}
+/** Напечатано / осталось по КБ источника (`GET /marking/progress`). */
+export interface MarkingSourceProgress { printed: number; remaining: number; remaining_labels: number }
+
 const root = "/api/production/marking";
-const post = <T>(path: string, body: unknown, safe = false) => api<T>(root + path, { method: "POST", body: JSON.stringify(body), safe });
+const post = <T>(path: string, body: unknown, safe = false, signal?: AbortSignal) =>
+  api<T>(root + path, { method: "POST", body: JSON.stringify(body), safe, signal });
 export const markingApi = {
   machines: (signal?: AbortSignal) => api<MarkingCatalog>(`${root}/machines`, { signal }),
   preview: (body: MarkingRequest) => post<MarkingPreview>("/preview", body),
@@ -83,9 +108,40 @@ export const markingApi = {
   reprint: (batchId: string, body: MarkingReprintRequest) => post<MarkingBatch>(`/batches/${encodeURIComponent(batchId)}/reprint`, body),
   clearPrinter: (equipmentId: string, reason: string, cancelPending = false) =>
     post<MarkingPrinterCommand & { cancelled_jobs?: number }>(`/machines/${encodeURIComponent(equipmentId)}/printer/clear`, { reason, cancel_pending: cancelPending }),
+  manualPreview: (body: MarkingManualRequest, signal?: AbortSignal) => post<MarkingPreview>("/manual/preview", body, true, signal),
+  manualEnqueue: (body: MarkingManualBatchRequest) => post<MarkingBatch>("/manual/batches", body),
+  progress: (source: { group_id: string } | { task_id: string; operation_id: string }, signal?: AbortSignal) =>
+    api<MarkingSourceProgress>(`${root}/progress?${new URLSearchParams(source).toString()}`, { signal }),
+  /** Группы резки, видимые сотруднику (мастер — все своей площадки); из них берутся группы печати этикеток. */
+  cuttingGroups: (signal?: AbortSignal) => api<{ groups: CuttingGroup[] }>("/api/production/cutting-groups", { signal }),
+  machineState: (inventory: string, signal?: AbortSignal) =>
+    api<MarkingMachineState>(`/api/production/machines/card/${encodeURIComponent(inventory)}`, { signal }),
   printerCommand: (equipmentId: string, signal?: AbortSignal) =>
     api<MarkingPrinterCommand | null>(`${root}/machines/${encodeURIComponent(equipmentId)}/printer/command`, { signal }),
 };
+
+const FIELD_NAMES: Record<string, string> = { lines: "Надписи", quantity: "Копий", text: "Текст надписи", first: "Номер «с»", last: "Номер «по»",
+  numbering: "Номера", order: "Порядок" };
+const LIMIT_TEXT: Record<string, (ctx: Record<string, unknown>) => string> = {
+  greater_than_equal: (ctx) => `не меньше ${String(ctx.ge)}`, less_than_equal: (ctx) => `не больше ${String(ctx.le)}`,
+  too_long: (ctx) => `не больше ${String(ctx.max_length)}`, too_short: () => "нужна хотя бы одна запись",
+  string_too_long: (ctx) => `не длиннее ${String(ctx.max_length)} знаков`, string_too_short: () => "не может быть пустым",
+};
+
+/** Ошибка запроса «Своего текста» по-русски: 422 Pydantic (список {loc, msg, type}) → «Копий: не больше 500». */
+export function markingProblem(problem: unknown, fallback: string): string {
+  if (problem instanceof ApiError && Array.isArray(problem.detail)) {
+    const parts = (problem.detail as { loc?: unknown[]; msg?: string; type?: string; ctx?: Record<string, unknown> }[]).map((item) => {
+      const name = [...(item.loc ?? [])].reverse().map(String).find((key) => FIELD_NAMES[key]);
+      const limit = item.type && LIMIT_TEXT[item.type] ? LIMIT_TEXT[item.type](item.ctx ?? {}) : "";
+      const message = limit || String(item.msg ?? "").replace(/^Value error,\s*/, "");
+      return name && limit ? `${FIELD_NAMES[name]}: ${message}` : message;
+    }).filter(Boolean);
+    if (parts.length) return [...new Set(parts)].join("; ");
+    return fallback;
+  }
+  return failureText(problem, fallback);
+}
 
 /** «3, 5–7» → [3, 5, 6, 7]; null when the text is not a list of label numbers. */
 export function parseSequences(text: string): number[] | null {
