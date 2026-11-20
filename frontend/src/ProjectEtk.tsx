@@ -14,7 +14,7 @@ import {
   type EtkSetupUnit,
 } from "./api";
 import { ETK_CONNECTION_COLUMNS, ETK_TUBE_COLUMNS, ETK_NOT_SET, etkDocumentConnectionRows, etkPhysicalConfig, etkTubePlacementRows, etkContactSpecs, etkDrawHarness, etkDrawTubeCut, etkFigure, etkParams, type EtkParams, type EtkTopologyData } from "./etkDraw";
-import { poolSetupLabel, setupUnitLabel } from "./equipmentPool";
+import { poolSetupParts, setupUnitLabel } from "./equipmentPool";
 import { etkMarkLabelsPage, etkPrintPages } from "./etkPrint";
 import { hasMarkSerial, markLabelList, markSerialTemplate, type MarkSerialRange } from "./markSerial";
 import { etkPartSource, etkRouteOf, etkSemiSource, etkSourceLines, formatMinutes, type EtkPfGroup } from "./etkRoute";
@@ -519,6 +519,16 @@ function OperationSketchView({ cardId, operationKey, canEdit, sketch, onChanged,
 
 /** Оснастка по разделам. `fixed` — операция ЭТК (erp-screens §6): три раздела Инструмент · Оборудование · Расходники
  *  всегда, пустой — «нет» серым; без `fixed` (шаблон в базе) — только заполненные разделы. */
+/** Tooling row title. Card view: units set up on open tasks as inventory chips after the pool text (same look as a
+ *  concrete unit's number); task view: the one set-up unit; otherwise the pool text or name + inventory chip. */
+function toolTitle(tool: EtkTool, unit?: EtkSetupUnit, poolUnits?: EtkSetupUnit[]): ReactNode {
+  const parts = poolUnits ? poolSetupParts(tool.name, tool.inventory_number, poolUnits) : null;
+  if (parts) return <>{parts.main} · налажены:{parts.units.map((number) => <span key={number} className="tr-inv">{number}</span>)}
+    {parts.tail && ` · ${parts.tail}`}</>;
+  return setupUnitLabel(tool.name, tool.inventory_number, unit)
+    ?? <>{tool.name}{tool.inventory_number && <span className="tr-inv">{tool.inventory_number}</span>}</>;
+}
+
 export function ToolingBySection({ tooling, fixed = false, unit, poolUnits }: { tooling: EtkTool[]; fixed?: boolean; unit?: EtkSetupUnit; poolUnits?: EtkSetupUnit[] }) {
   if (!tooling.length && !fixed) return <div className="empty">Инструмент, оборудование и расходники не указаны.</div>;
   const sections = toolingSections([...(fixed ? ETK_TOOLING_SECTIONS : []), ...tooling.map((tool) => tool.section || "")]);
@@ -529,7 +539,7 @@ export function ToolingBySection({ tooling, fixed = false, unit, poolUnits }: { 
       {!tools.length && <div className="tr-none">нет</div>}
       {tools.map((tool, index) => <div className="tr-tool" key={`${section}:${index}`}>
         <span className="tr-n">{tool.number}</span>
-        <span>{(poolUnits ? poolSetupLabel(tool.name, tool.inventory_number, poolUnits) : setupUnitLabel(tool.name, tool.inventory_number, unit)) ?? <>{tool.name}{tool.inventory_number && <span className="tr-inv">{tool.inventory_number}</span>}</>}
+        <span>{toolTitle(tool, unit, poolUnits)}
           {toolSub(tool) && <small>{toolSub(tool)}</small>}</span>
       </div>)}
     </div>;
