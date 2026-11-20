@@ -12,6 +12,7 @@ import {
   type ProductionAbsence,
   type ProductionBox,
   type ProjectTechcard,
+  type EtkSetupUnit,
   type ProductionMaterialSource,
   type ProductionAssignPlan,
   type EtkRevisionNotice,
@@ -972,12 +973,17 @@ export function etkRevisionNotice(revision: EtkRevisionNotice | undefined): stri
 
 function OperationEtk({ principal, task, operation, title, close }: { principal: Principal; task: Pick<ProductionTask, "id">; operation: Pick<ProductionOperation, "id">; title: string; close: () => void }) {
   const [view, setView] = useState<{ card: ProjectTechcard; focus: { position: number; code: string }; revision?: EtkRevisionNotice; serial?: MarkSerialRange } | undefined>(undefined);
+  const [units, setUnits] = useState<EtkSetupUnit[]>([]);
   const [error, setError] = useState("");
   useEffect(() => {
     let live = true;
     productionApi.operationEtk(task.id, operation.id)
       .then((result) => { if (live) setView(result); })
       .catch((reason) => { if (live) setError(reason instanceof Error ? reason.message : "ЭТК не открылась"); });
+    // Set-up units are optional: a failed fetch leaves the pool text «любой свободный …».
+    productionApi.operationEtkUnits(task.id, operation.id)
+      .then((result) => { if (live) setUnits(result.units ?? []); })
+      .catch(() => { if (live) setUnits([]); });
     return () => { live = false; };
   }, [task.id, operation.id]);
   // Только чтение: правка и пересборка ЭТК — у технолога.
@@ -987,7 +993,7 @@ function OperationEtk({ principal, task, operation, title, close }: { principal:
     {error && <div className="error-banner" role="alert">{error}</div>}
     {!error && !view && <div className="empty">Загрузка…</div>}
     {view && etkRevisionNotice(view.revision) && <div className="warning-inline" role="status">{etkRevisionNotice(view.revision)}</div>}
-    {view && <EtkSheet card={view.card} principal={viewer} onChange={() => undefined} focus={view.focus} task taskId={task.id} serial={view.serial} sketchSource={{
+    {view && <EtkSheet card={view.card} principal={viewer} onChange={() => undefined} focus={view.focus} task taskId={task.id} serial={view.serial} units={units} sketchSource={{
       list: () => productionApi.operationEtkSketches(task.id, operation.id),
       url: (key, at) => productionApi.operationEtkSketchUrl(task.id, operation.id, key, at),
     }} />}

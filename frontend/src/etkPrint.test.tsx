@@ -201,3 +201,20 @@ it("shows a pool machine row as «любой свободный» on screen and 
   expect(printed).not.toContain("ОБ.027.X");
   expect(printed).toContain("ОБ.027.4");
 });
+
+it("shows the set-up unit in a pool tooling row of a task ETK, on screen and in print; card views keep the pool text", async () => {
+  stubFetch();
+  const card = techcard({ card: { name: "Резка", steps: [], tooling: [
+    { section: "Оборудование", number: "1", name: "EW-50A(R) | Полуавтомат", inventory_number: "ОБ.027.X" },
+  ] } });
+  const units = [{ etk_position: 1, unit_id: "u1", inventory_number: "ОБ.027.2", model: "EW-50A", name: null,
+    ready_at: new Date(2026, 10, 20, 14, 30).toISOString(), task_number: "ПЗ-1" }];
+  const { unmount } = render(<EtkSheet card={card} principal={principal} onChange={() => undefined} task units={units} />);
+  const tooling = await screen.findByRole("region", { name: "Оснастка" });
+  expect(within(tooling).getByText(/EW-50A — ОБ\.027\.2 · налажен 20\.11 14:30 · Полуавтомат/)).toBeVisible();
+  expect(buildPrintDocumentHtml("ЭТК", etkPrintPages(card, [], {}, null, null, units))).toContain("EW-50A — ОБ.027.2 · налажен 20.11 14:30 · Полуавтомат");
+  unmount();
+  render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+  expect(within(await screen.findByRole("region", { name: "Оснастка" })).getByText(/EW-50A — любой свободный ОБ\.027\.\* · Полуавтомат/)).toBeVisible();
+  expect(buildPrintDocumentHtml("ЭТК", etkPrintPages(card, []))).toContain("любой свободный ОБ.027.*");
+});

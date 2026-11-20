@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { equipmentPool, poolToolLabel } from "./equipmentPool";
+import { equipmentPool, poolToolLabel, setupUnitLabel } from "./equipmentPool";
 
 describe("equipmentPool", () => {
   it("пул по инв. № .X и по артикулу (R)", () => {
@@ -34,5 +34,31 @@ describe("equipmentPool", () => {
     expect(poolToolLabel("", "")).toBeNull();
     expect(poolToolLabel("(R)", "")).toBeNull();
     expect(equipmentPool("Пинцет", "")).toBeNull();
+  });
+});
+
+describe("setupUnitLabel", () => {
+  const ready = new Date(2026, 10, 20, 14, 30).toISOString();
+  const unit = { inventory_number: "ОБ.027.2", ready_at: ready };
+  it("налаженный станок пула заменяет «любой свободный»", () => {
+    expect(setupUnitLabel("EW-50A(R)", "ОБ.027.X", unit)).toBe("EW-50A — ОБ.027.2 · налажен 20.11 14:30");
+  });
+  it("описание и примечание остаются хвостом", () => {
+    expect(setupUnitLabel("EW-50A(R) | Полуавтомат — до 5", "ОБ.027.X", unit)).toBe("EW-50A — ОБ.027.2 · налажен 20.11 14:30 · Полуавтомат · до 5");
+  });
+  it("станок другого пула игнорируется", () => {
+    expect(setupUnitLabel("EW-50A(R)", "ОБ.027.X", { ...unit, inventory_number: "ОБ.100.1" })).toBe("EW-50A — любой свободный ОБ.027.*");
+  });
+  it("без налаженного станка — текст пула", () => {
+    expect(setupUnitLabel("EW-50A(R)", "ОБ.027.X")).toBe("EW-50A — любой свободный ОБ.027.*");
+    expect(setupUnitLabel("EW-50A(R)", "ОБ.027.X", null)).toBe("EW-50A — любой свободный ОБ.027.*");
+  });
+  it("обычный станок и пул-номер вместо станка не заменяются", () => {
+    expect(setupUnitLabel("Пинцет", "", unit)).toBeNull();
+    expect(setupUnitLabel("EW-50A(R)", "ОБ.027.X", { ...unit, inventory_number: "ОБ.027.X" })).toBe("EW-50A — любой свободный ОБ.027.*");
+  });
+  it("формат даты dd.MM HH:mm с нулями", () => {
+    const early = new Date(2026, 0, 5, 7, 4).toISOString();
+    expect(setupUnitLabel("EW-50A(R)", "ОБ.027.X", { ...unit, ready_at: early })).toBe("EW-50A — ОБ.027.2 · налажен 05.01 07:04");
   });
 });
