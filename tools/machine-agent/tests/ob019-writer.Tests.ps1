@@ -52,11 +52,11 @@ Describe 'write allow-list' {
         Test-BitWritable @{ addr = 400; bit = 0; value = 2 } | Should Be $false
     }
     It 'refuses commands, the HMI context, passwords, SHA, date, unknown registers and out-of-range words' {
-        foreach ($a in @(599, 600, 730, 1087, 1088, 1089, 1203, 1207, 1211, 1682, 1684, 1686, 390, 133, 142, 200, 44, 403, 421)) {
+        foreach ($a in @(599, 600, 730, 1087, 1088, 1089, 1203, 1207, 1211, 1682, 1684, 1686, 390, 133, 142, 200, 60, 61, 403, 421, 938, 1280)) {
             Test-BlockWritable @{ addr = $a; values = @(1) } | Should Be $false
         }
         Test-BlockWritable @{ addr = 1722; values = @(1, 0, 0) } | Should Be $false
-        Test-BlockWritable @{ addr = 42; values = @(1, 2, 3) } | Should Be $false
+        Test-BlockWritable @{ addr = 52; values = @(1, 2, 3) } | Should Be $false
         Test-BlockWritable @{ addr = 32; values = @(70000) } | Should Be $false
     }
 }
@@ -115,6 +115,18 @@ Describe 'running a command' {
         $result['ok'] | Should Be $true
         $script:Json.DeserializeObject($script:sent[2])['cmd'] | Should Be 'setbit'
     }
+    It 'the inner layer D44..D53 needs mbd 1.4.0; older mbd gets nothing of the command' {
+        Test-BlockWritable @{ addr = 44; values = @(500, 0, 200, 0, 500, 0, 200, 0, 80, 10) } | Should Be $true
+        Get-MbdNeeded @() @(@{ addr = 42; values = @(80, 10, 500) }) | Should Be '1.4.0'
+        Get-MbdNeeded @() @(@{ addr = 32; values = @(1, 0) }) | Should Be '1.2.0'
+        $script:sent = @()
+        Mock Invoke-MbdLine { $script:sent += $Line; Reply-Mbd $Line 102 '1.3.0' }
+        $result = Invoke-MachineCommand (New-Command @(@{ addr = 52; values = @(80, 10) }))
+        $result['error'] | Should Be 'mbd outdated: 1.3.0, need 1.4.0'
+        $script:sent.Count | Should Be 1
+        Mock Invoke-MbdLine { $script:sent += $Line; Reply-Mbd $Line 102 '1.4.0' }
+        (Invoke-MachineCommand (New-Command @(@{ addr = 52; values = @(80, 10) })))['ok'] | Should Be $true
+    }
     It 'writes nothing while the machine runs' {
         $script:sent = @()
         Mock Invoke-MbdLine { $script:sent += $Line; Reply-Mbd $Line 103 }
@@ -158,7 +170,7 @@ Describe 'ERP exchange' {
         $script:posted[1]['body'] | Should Match '"readback":\{"20":1\}'
         $script:posted[1]['body'] | Should Match '"ok":true'
         $script:posted[1]['body'] | Should Match '"inventory":"\\u041e\\u0411.019"'
-        $script:posted[0]['body'] | Should Match '"runner_version":"1.3.0"'
+        $script:posted[0]['body'] | Should Match '"runner_version":"1.4.0"'
     }
     It 'does nothing when ERP has no command' {
         Mock Invoke-Erp { @{ code = 200; text = '{"command":null}' } }
@@ -324,6 +336,95 @@ Describe 'machine commands through the ERP exchange' {
     }
 }
 
+function Reset-Pult([bool]$Open = $true) {
+    $script:hmiOpen = $Open; $script:tasks = @(); $script:killed = 0; $script:closes = $true; $script:taskOk = $true
+}
+
+function New-Pult([string]$Action, [bool]$Force = $false, [int]$DeadlineMs = 4000) {
+    return @{ id = 'p-1'; kind = 'control'; action = $Action; deadline_ms = $DeadlineMs; force = $Force }
+}
+
+Describe 'the operator panel on the PC (hmi_close / hmi_open)' {
+    Mock Test-HmiOpen { $script:hmiOpen }
+    Mock Invoke-PultTask {
+        $script:tasks += $Name
+        if (-not $script:taskOk) { return $false }
+        if ($Name -eq $PultCloseTask -and $script:closes) { $script:hmiOpen = $false }
+        if ($Name -eq $PultOpenTask) { $script:hmiOpen = $true }
+        return $true
+    }
+    Mock Stop-HmiForced { $script:killed++; $script:hmiOpen = $false }
+    Mock Save-HmiPath { }
+    Mock Start-Sleep { }
+    Mock Invoke-MbdLine { throw 'the panel commands never touch the bus' }
+    $script:HmiWaitMs = 0
+
+    It 'closes the panel through the helper in the operator session: graceful, nothing killed, the bus untouched' {
+        Reset-Pult
+        $outcome = Invoke-ControlCommand (New-Pult 'hmi_close') (Get-Fresh)
+        ($outcome['outcome'] + '/' + $outcome['reason'] + '/' + $outcome['method']) | Should Be 'done/ok/graceful'
+        $script:tasks -join ',' | Should Be 'Fraxis OB019 pult close'
+        $script:killed | Should Be 0
+    }
+    It 'a panel that stays open is reported still_open and never killed without the card asking' {
+        Reset-Pult; $script:closes = $false
+        $outcome = Invoke-ControlCommand (New-Pult 'hmi_close') (Get-Fresh)
+        ($outcome['outcome'] + '/' + $outcome['reason']) | Should Be 'failed/still_open'
+        $script:killed | Should Be 0
+    }
+    It 'force from the card ends the process at once, without the graceful step' {
+        Reset-Pult; $script:closes = $false
+        $outcome = Invoke-ControlCommand (New-Pult 'hmi_close' $true) (Get-Fresh)
+        ($outcome['outcome'] + '/' + $outcome['method']) | Should Be 'done/forced'
+        $script:killed | Should Be 1
+        $script:tasks.Count | Should Be 0
+    }
+    It 'no helper task: no_helper, nothing killed' {
+        Reset-Pult; $script:taskOk = $false
+        $outcome = Invoke-ControlCommand (New-Pult 'hmi_close') (Get-Fresh)
+        ($outcome['outcome'] + '/' + $outcome['reason']) | Should Be 'failed/no_helper'
+        $script:killed | Should Be 0
+        Reset-Pult $false; $script:taskOk = $false
+        (Invoke-ControlCommand (New-Pult 'hmi_open') (Get-Fresh))['reason'] | Should Be 'no_helper'
+    }
+    It 'a closed panel needs nothing; opening one that runs is refused; a closed one is started' {
+        Reset-Pult $false
+        $outcome = Invoke-ControlCommand (New-Pult 'hmi_close') (Get-Fresh)
+        ($outcome['outcome'] + '/' + $outcome['method']) | Should Be 'done/none'
+        $script:tasks.Count | Should Be 0
+        Reset-Pult $true
+        (Invoke-ControlCommand (New-Pult 'hmi_open') (Get-Fresh))['reason'] | Should Be 'hmi_already_open'
+        Reset-Pult $false
+        $outcome = Invoke-ControlCommand (New-Pult 'hmi_open') (Get-Fresh)
+        ($outcome['outcome'] + '/' + $outcome['method']) | Should Be 'done/started'
+        $script:tasks -join ',' | Should Be 'Fraxis OB019 pult open'
+    }
+    It 'a panel command past its deadline does nothing; the other commands are still refused while the panel runs' {
+        Reset-Pult
+        (Invoke-ControlCommand (New-Pult 'hmi_close' $true 0) (Get-Fresh))['reason'] | Should Be 'too_late'
+        $script:tasks.Count | Should Be 0
+        $script:killed | Should Be 0
+        (Invoke-ControlCommand (New-Control 'start') (Get-Fresh))['reason'] | Should Be 'hmi_open'
+    }
+    It 'takes the force flag from ERP and posts the method with the result' {
+        Reset-Pult; $script:closes = $false
+        $script:posted = @()
+        Mock Invoke-Erp {
+            $script:posted += @{ path = $Path; body = $Body }
+            if ($Path -like '*/next') { return @{ code = 200; text = '{"command":{"id":"k-9","kind":"control","action":"hmi_close","deadline_ms":4500,"force":true}}' } }
+            return @{ code = 200; text = '{"status":"done"}' }
+        }
+        [void](Step-Commands 'token')
+        $result = $script:Json.DeserializeObject($script:posted[1]['body'])
+        ($result['outcome'] + '/' + $result['reason'] + '/' + $result['method'] + '/' + $result['runner_version']) | Should Be 'done/ok/forced/1.4.0'
+        $script:killed | Should Be 1
+    }
+    It 'has no journal guessing left: nothing reads the TextLog' {
+        $source = Get-Content (Join-Path $root 'ob019-writer.ps1') -Raw
+        $source -match 'Get-HmiCycle|HmiCyclePattern|TextLogDir' | Should Be $false
+    }
+}
+
 Describe 'against mbd.ps1 -Mock -LocalOnly' {
     $listener = New-Object System.Net.Sockets.TcpListener ([System.Net.IPAddress]::Loopback, 0)
     $listener.Start(); $port = $listener.LocalEndpoint.Port; $listener.Stop()
@@ -347,7 +448,7 @@ Describe 'against mbd.ps1 -Mock -LocalOnly' {
         }
         It 'the real service refuses a write of command bits, the HMI page, the date, passwords and SHA' {
             $MbdPort = $port
-            foreach ($a in @(599, 600, 730, 1087, 1203, 1682, 1686, 44)) {
+            foreach ($a in @(599, 600, 730, 1087, 1203, 1682, 1686, 60)) {
                 $reply = $script:Json.DeserializeObject((Invoke-MbdLine (ConvertTo-JsonLite @{ cmd = 'write'; addr = $a; values = @(1) })))
                 $reply['ok'] | Should Be $false
                 $reply['error'] | Should Match 'write not allowed'
@@ -357,7 +458,7 @@ Describe 'against mbd.ps1 -Mock -LocalOnly' {
         }
         It 'sets a switch bit through the real service after checking its version' {
             $MbdPort = $port
-            Get-MbdVersion | Should Be '1.3.0'
+            Get-MbdVersion | Should Be '1.4.0'
             $result = Invoke-MachineCommand (New-Command @() @(0) @(@{ addr = 434; bit = 0; value = 1 }))
             $result['error'] | Should Be ''
             $result['readback']['434'] | Should Be 1

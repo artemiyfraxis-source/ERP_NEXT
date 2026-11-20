@@ -36,7 +36,10 @@ export interface CommandChange {
 }
 
 /** Команды станку (Ob019Controls.tsx): Стоп — всем, кто видит карточку; остальные — право «Управление станками». */
-export type ControlCommand = "stop" | "reset" | "start" | "alarm_clear";
+export type PulseCommand = "stop" | "reset" | "start" | "alarm_clear";
+/** Пульт производителя на ПК станка: закрыть (ERP снова видит станок) или открыть (наладчику на ПК). */
+export type PultCommand = "hmi_close" | "hmi_open";
+export type ControlCommand = PulseCommand | PultCommand;
 
 export interface MachineCommand {
   id: string;
@@ -49,6 +52,12 @@ export interface MachineCommand {
   /** Состояние станка до и после команды станку, как его прочитал агент на ПК. */
   state_before?: string | null;
   state_after?: string | null;
+  /** Пульт на ПК: как его закрыли или открыли — graceful, forced (принудительно), none (не был открыт), started. */
+  method?: "graceful" | "forced" | "none" | "started" | null;
+  /** Пульт на ПК: код ответа агента; `still_open` — пульт не закрылся сам, карточка предлагает «Закрыть принудительно». */
+  reason?: string | null;
+  /** «Закрыть принудительно»: агент завершает программу пульта без вопроса ей. */
+  force?: boolean;
   summary: string;
   fields: CommandChange[];
   error: string;
@@ -250,8 +259,9 @@ export const machineControlApi = {
     api<TransferPlan>(`${card(inventory)}/transfer?wire=${encodeURIComponent(wire)}&length_mm=${encodeURIComponent(lengthMm)}`),
   transfer: (inventory: string, groupId: string, lengthMm: string, confirmState: number | null) =>
     api<MachineCommand>(`${card(inventory)}/transfer`, post({ group_id: groupId, length_mm: lengthMm, confirm_state: confirmState })),
-  command: (inventory: string, command: ControlCommand, confirmState?: number | null) =>
+  command: (inventory: string, command: ControlCommand, confirmState?: number | null, force = false) =>
     api<MachineCommand>(`${card(inventory)}/command`, post(command === "stop" ? { command }
+      : command === "hmi_close" || command === "hmi_open" ? { command, hands_clear: true, ...(force ? { force: true } : {}) }
       : { command, confirm_state: confirmState ?? null, hands_clear: true })),
   run: (inventory: string, signal?: AbortSignal) => api<MachineRunState>(`${card(inventory)}/run`, { signal }),
   startRun: (inventory: string, body: RunRequest, confirmState: number | null) =>
@@ -294,11 +304,33 @@ export function commandResult(command: MachineCommand): { text: string; tone: To
   return { text: `отказ: ${operatorText(command.error || command.status_text.toLowerCase())}`, tone: "danger" };
 }
 
+/** Пульт не закрылся сам (агент: `still_open`) — карточка предлагает «Закрыть принудительно». */
+export const PULT_STILL_OPEN = "still_open";
+
+/** Итог команды пульту рядом с кнопкой — по самой команде: «закрывается…», «закрыт 14:05», «закрыт принудительно 14:05»,
+ *  «Пульт не закрылся (возможно, ждёт ответа оператора)», «отказ: …» — слова сервера, как есть. */
+export function pultResult(command: Pick<MachineCommand, "command" | "status" | "status_text" | "error" | "finished_at"
+  | "method" | "reason" | "force">): { text: string; tone: Tone } {
+  const closing = command.command === "hmi_close";
+  if (command.status === "queued" || command.status === "taken") {
+    return { text: !closing ? "открывается…" : command.force ? "закрывается принудительно…" : "закрывается…", tone: "info" };
+  }
+  if (command.status === "failed" && command.reason === PULT_STILL_OPEN) return { text: command.error, tone: "warn" };
+  if (command.status === "done") {
+    const at = clock(command.finished_at);
+    const text = !closing ? "открыт" : command.method === "none" ? "пульт уже был закрыт"
+      : command.method === "forced" ? "закрыт принудительно" : "закрыт";
+    return { text: at && command.method !== "none" ? `${text} ${at}` : text, tone: "ok" };
+  }
+  return { text: `отказ: ${command.error || command.status_text.toLowerCase()}`, tone: "danger" };
+}
+
 /** Когда команда станку возможна — та же таблица, что на сервере (production/machine_control.py) и в агенте (D766). */
-export const CONTROL_STATES: Record<ControlCommand, number[] | null> = {
+export const CONTROL_STATES: Record<PulseCommand, number[] | null> = {
   stop: null, start: [102], reset: [100, 105, 107], alarm_clear: null,
 };
 
 export const CONTROL_NAMES: Record<ControlCommand, string> = {
   stop: "Стоп", reset: "Сброс", start: "Пуск", alarm_clear: "Сброс аварии",
+  hmi_close: "Закрыть пульт на ПК", hmi_open: "Открыть пульт на ПК",
 };

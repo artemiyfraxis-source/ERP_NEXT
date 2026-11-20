@@ -2,6 +2,8 @@
 // называет не станок, а пул модели. Единственное место с этим правилом (экран ЭТК, печать ЭТК, печать ТД).
 // Номер конкретного станка (ОБ.027.1) всегда главнее «(R)».
 
+import type { EtkSetupUnit } from "./api";
+
 const POOL_NUMBER = /^\s*[ОO][БB]\s*\.\s*(\d+)\s*(?:\.\s*([XХ]|\d+)\s*)?$/i;
 const RETIRED_MARK = /\(R\)/gi;
 
@@ -38,5 +40,28 @@ export function poolToolLabel(name: string | null | undefined, inventory: string
   const parsed = equipmentPool(name, inventory);
   if (!parsed) return null;
   const main = `${parsed.model} — любой свободный${parsed.pool ? ` ${parsed.pool}` : ""}`;
+  return parsed.tail ? `${main} · ${parsed.tail}` : main;
+}
+
+/** dd.MM HH:mm in local time; "" for an unparsable value. */
+function readyStamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const two = (n: number) => String(n).padStart(2, "0");
+  return `${two(date.getDate())}.${two(date.getMonth() + 1)} ${two(date.getHours())}:${two(date.getMinutes())}`;
+}
+
+/** «EW-50A — ОБ.027.2 · налажен 20.11 14:30»: the pool row of a task ETK with a ready setup of a concrete unit of that
+ *  pool. A unit of another pool (or none) leaves the pool text of `poolToolLabel`; non-pool rows stay null. */
+export function setupUnitLabel(
+  name: string | null | undefined, inventory: string | null | undefined, unit?: Pick<EtkSetupUnit, "inventory_number" | "ready_at"> | null,
+): string | null {
+  const parsed = equipmentPool(name, inventory);
+  if (!parsed) return null;
+  const match = unit ? POOL_NUMBER.exec(unit.inventory_number) : null;
+  const poolNumber = /^ОБ\.(\d+)\.\*$/.exec(parsed.pool)?.[1];
+  if (!unit || !match || !match[2] || !/^\d+$/.test(match[2]) || !poolNumber || Number(match[1]) !== Number(poolNumber)) return poolToolLabel(name, inventory);
+  const stamp = readyStamp(unit.ready_at);
+  const main = `${parsed.model} — ОБ.${match[1]}.${match[2]}${stamp ? ` · налажен ${stamp}` : ""}`;
   return parsed.tail ? `${main} · ${parsed.tail}` : main;
 }

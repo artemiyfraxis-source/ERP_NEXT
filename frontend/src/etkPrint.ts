@@ -3,9 +3,9 @@
 // (1 Вход · 2 Оснастка · 3 Ход операции · 4 Типовые дефекты · 5 Эскиз · 6 Результат), подписи. Через общий print.ts.
 // Схема жгута (титул) и эскизы операций — SVG-строки из etkDraw.ts (порт etkDrawHarness_ / etkDraw*). Есть распиновка или
 // таблица соединений — на титуле схема связей Э4, та же, что на экране ЭТК и в генераторе (etkLinkScheme.tsx).
-import type { EtkRoute, ProjectTechcard, TechcardRevision } from "./api";
+import type { EtkRoute, EtkSetupUnit, ProjectTechcard, TechcardRevision } from "./api";
 import { etkLinkScheme, etkLinkSchemeMarkup } from "./etkLinkScheme";
-import { poolToolLabel } from "./equipmentPool";
+import { setupUnitLabel } from "./equipmentPool";
 import { pinCoreColor, withCoreColors } from "./etkCoreColors";
 import {
   ETK_CONNECTION_COLUMNS, ETK_TUBE_COLUMNS, etkDocumentConnectionRows, etkPhysicalConfig, etkTubePlacementRows, etkContactSpecs, etkDrawHarness, etkFigure, etkParams, type EtkParam,
@@ -108,18 +108,18 @@ function harnessPinsOf(operations: Row[]): Record<string, Record<number, string>
 
 /** Строки оснастки по разделам; Инструмент · Оборудование · Расходники есть всегда — пустой раздел строкой «нет»
  *  (erp-screens §6, как на экране). */
-function toolNameAndInventory(tool: Row): [string, string] {
-  const label = poolToolLabel(text(tool.name), text(tool.inventory_number));
+function toolNameAndInventory(tool: Row, unit?: EtkSetupUnit): [string, string] {
+  const label = setupUnitLabel(text(tool.name), text(tool.inventory_number), unit);
   return label ? [label, ""] : [text(tool.name), text(tool.inventory_number)];
 }
 
-function toolingRows(items: Row[]): string[][] {
+function toolingRows(items: Row[], unit?: EtkSetupUnit): string[][] {
   const order = toolingSections([...ETK_TOOLING_SECTIONS, ...items.map((tool) => text(tool.section))]);
   return order.flatMap((section) => {
     const tools = items.filter((tool) => text(tool.section) === section);
     if (!tools.length) return [[section, "", "нет", "", "", "", ""]];
     return tools.map((tool) => [
-      text(tool.section), text(tool.number), ...toolNameAndInventory(tool),
+      text(tool.section), text(tool.number), ...toolNameAndInventory(tool, unit),
       [tool.program && tool.program !== "-" ? text(tool.program) : "", text(tool.parameters)].filter(Boolean).join(" · "),
       text(tool.norm), unitLabel(text(tool.unit)),
     ]);
@@ -167,7 +167,7 @@ function defectFigures(defects: string, figures: EtkPrintFigures | null | undefi
  *  `serial` supplies the task's label numbers, expanded in both the operation and the separate label list;
  *  without a task, serial inscriptions retain their template and project quantity. */
 export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision[], sketches: Record<string, string> = {},
-  serial?: MarkSerialRange | null, figures?: EtkPrintFigures | null): PrintPage[] {
+  serial?: MarkSerialRange | null, figures?: EtkPrintFigures | null, units?: EtkSetupUnit[] | null): PrintPage[] {
   const document = object(card.document);
   const kit = { project: card.project, index: card.item_index, name: card.product_name, ...object(document.kit) };
   const revision = card.revision || 1;
@@ -266,7 +266,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
         ...table(["Раздел", "№", "Наименование", "Инв. №", "№ прог. / параметры", "Норма", "Ед."],
           [...solderRows(operation), ...shrinkRequirementLines(operation).map((item) =>
             ["Температурный режим", "", `${item.material}. ${item.text}${item.sourceUrl ? ` · Источник: ${item.sourceUrl}` : ""}`, "", "", "", ""]),
-            ...toolingRows(rows(opCard.tooling))]),
+            ...toolingRows(rows(opCard.tooling), units?.find((unit) => unit.etk_position === Number(operation.position || index + 1)))]),
         ...(marks.length || steps.length ? [
           section("Ход операции"),
           ...table(labels?.columns ?? ["№", "Что маркируем", "Надпись", "Материал", "Где", ...(withLength ? ["Длина, мм"] : []), "На изделие", "На партию"], marks),
