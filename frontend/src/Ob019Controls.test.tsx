@@ -1,8 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import type { MachineCommand, MachineControl, MachineRun, MachineWindow } from "./machineControlApi";
+import { pultResult, type MachineCommand, type MachineControl, type MachineRun, type MachineWindow } from "./machineControlApi";
 import type { MachineCard } from "./machinesApi";
-import { Ob019Controls } from "./Ob019Controls";
+import { FORCE_WINDOW_MS, Ob019Controls, Ob019Pult, PULT_CONFIRM } from "./Ob019Controls";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -180,4 +180,82 @@ it("Start says in advance what the server would refuse: no open job, its write n
   await waitFor(() => expect(button("Пуск")).toBeEnabled());
   expect(why).toEqual(expect.arrayContaining(["выберите задание", "ждём записи задания", ""]));
   expect(posts).toEqual([]);
+});
+
+const PULT_TEXT = "Открыт пульт станка на ПК — закройте его, чтобы ERP могла управлять станком";
+const pultCard = () => card(102, "Готов, ждёт пуска", { link: { code: "port_busy", text: PULT_TEXT, tone: "warn" }, live: null });
+
+it("the open panel on the PC gets «Закрыть пульт на ПК» after a question; the server's refusal shows as it is", async () => {
+  const posts = mockApi(control(), () => json({ detail: "Станок в цикле — пульт закрывать нельзя, дождитесь остановки" }, 409));
+  const ask = vi.spyOn(window, "confirm").mockReturnValue(true);
+  render(<Ob019Pult card={pultCard()} control={control()} />);
+  fireEvent.click(button("Закрыть пульт на ПК"));
+  expect(ask).toHaveBeenCalledWith(PULT_CONFIRM.hmi_close);
+  expect(PULT_CONFIRM.hmi_close).not.toMatch(/PXS|HMI/);
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].body).toEqual({ command: "hmi_close", hands_clear: true });
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("отказ: Станок в цикле — пульт закрывать нельзя, дождитесь остановки"));
+});
+
+it("a «no» to the question sends nothing; without the right there is no panel button", async () => {
+  const posts = mockApi(control());
+  vi.spyOn(window, "confirm").mockReturnValue(false);
+  const { rerender } = render(<Ob019Pult card={pultCard()} control={control()} />);
+  fireEvent.click(button("Закрыть пульт на ПК"));
+  expect(posts).toHaveLength(0);
+  rerender(<Ob019Pult card={pultCard()} control={control({ can_control: false })} />);
+  expect(screen.queryByRole("button", { name: /пульт/ })).toBeNull();
+  rerender(<Ob019Pult card={card(102, "Готов", { link: { code: "stale", text: "Нет связи с ПК станка", tone: "danger" } })} control={control()} />);
+  expect(screen.queryByRole("button", { name: /пульт/ })).toBeNull();
+});
+
+it("a live machine offers the quieter «Открыть пульт на ПК»; the result says how the panel went", async () => {
+  const posts = mockApi(control(), () => json({ ...RUNNING, id: "p1", command: "hmi_open", status: "queued", summary: "Открыть пульт на ПК" }));
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  const { rerender } = render(<Ob019Pult card={card(102, "Готов, ждёт пуска")} control={control()} />);
+  expect(button("Открыть пульт на ПК").className).toContain("small");
+  fireEvent.click(button("Открыть пульт на ПК"));
+  await waitFor(() => expect(posts.map((post) => post.body)).toEqual([{ command: "hmi_open", hands_clear: true }]));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("открывается…"));
+  rerender(<Ob019Pult card={card(102, "Готов, ждёт пуска")} control={control({ commands: [{ ...RUNNING, id: "p1", command: "hmi_open",
+    status: "done", finished_at: "2026-11-20T14:05:00", summary: "Открыть пульт на ПК" }] })} />);
+  expect(screen.getByRole("status")).toHaveTextContent(/^открыт \d\d:\d\d$/);
+  const forced = { ...RUNNING, command: "hmi_close" as const, status: "done" as const, method: "forced" as const, finished_at: null };
+  expect(pultResult(forced).text).toBe("закрыт принудительно");
+  expect(pultResult({ ...forced, method: "none" }).text).toBe("пульт уже был закрыт");
+});
+
+it("a close the panel did not answer offers «Закрыть принудительно» with its own question; the progress follows the sent command", async () => {
+  const posts = mockApi(control(), () => json({ ...RUNNING, id: "f1", command: "hmi_close", status: "queued", force: true,
+    summary: "Закрыть пульт на ПК принудительно" }));
+  const ask = vi.spyOn(window, "confirm").mockReturnValue(true);
+  const stuck: MachineCommand = { ...RUNNING, id: "s1", command: "hmi_close", status: "failed", reason: "still_open",
+    error: "Пульт не закрылся (возможно, ждёт ответа оператора)", summary: "Закрыть пульт на ПК", finished_at: new Date().toISOString() };
+  render(<Ob019Pult card={pultCard()} control={control({ commands: [stuck] })} />);
+  expect(screen.getByRole("status")).toHaveTextContent("Пульт не закрылся (возможно, ждёт ответа оператора)");
+  fireEvent.click(button("Закрыть принудительно"));
+  expect(ask).toHaveBeenCalledWith("ERP не видит, режет ли станок, пока открыт пульт. Убедитесь, что станок стоит. Закрыть пульт принудительно?");
+  await waitFor(() => expect(posts.map((post) => post.body)).toEqual([{ command: "hmi_close", hands_clear: true, force: true }]));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("закрывается принудительно…"));
+  expect(PULT_CONFIRM.hmi_close).toContain("ERP не видит станок");
+});
+
+it("no forced close is offered unless the last close stayed open; a missing helper is said as the server says it", async () => {
+  mockApi(control());
+  const failed: MachineCommand = { ...RUNNING, id: "n1", command: "hmi_close", status: "failed", reason: "no_helper",
+    error: "На ПК станка нет помощника пульта — обновите службу", summary: "Закрыть пульт на ПК" };
+  render(<Ob019Pult card={pultCard()} control={control({ commands: [failed] })} />);
+  expect(screen.queryByRole("button", { name: "Закрыть принудительно" })).toBeNull();
+  expect(screen.getByRole("status")).toHaveTextContent("отказ: На ПК станка нет помощника пульта — обновите службу");
+});
+
+it("«Закрыть принудительно» is offered only for a close that stayed open in the last 5 minutes", () => {
+  mockApi(control());
+  const old: MachineCommand = { ...RUNNING, id: "s2", command: "hmi_close", status: "failed", reason: "still_open",
+    error: "Пульт не закрылся (возможно, ждёт ответа оператора)", summary: "Закрыть пульт на ПК",
+    finished_at: new Date(Date.now() - FORCE_WINDOW_MS - 1000).toISOString() };
+  const { rerender } = render(<Ob019Pult card={pultCard()} control={control({ commands: [old] })} />);
+  expect(screen.queryByRole("button", { name: "Закрыть принудительно" })).toBeNull();
+  rerender(<Ob019Pult card={pultCard()} control={control({ commands: [{ ...old, finished_at: new Date(Date.now() - 60000).toISOString() }] })} />);
+  expect(screen.getByRole("button", { name: "Закрыть принудительно" })).toBeTruthy();
 });

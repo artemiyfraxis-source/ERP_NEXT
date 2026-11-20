@@ -82,3 +82,49 @@ Describe 'one installer for the three tasks' {
         $source | Should Match 'Get-BusyMachineSoftware'
     }
 }
+
+Describe 'operator panel helper tasks' {
+    $arguments = Get-PultArguments 'D:\fraxis-mb\ob019-pult.ps1' 'close' 'D:\fraxis-mb'
+    $xml = [xml](New-PultTaskXml 'powershell.exe' $arguments 'pult <close>')
+    $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
+    $ns.AddNamespace('t', 'http://schemas.microsoft.com/windows/2004/02/mit/task')
+    function Get-Node([string]$Path) { return $xml.SelectSingleNode($Path, $ns) }
+    It 'runs in the session of the interactive user at its highest level, not as SYSTEM, only on demand' {
+        (Get-Node '/t:Task/t:Principals/t:Principal/t:GroupId').InnerText | Should Be 'S-1-5-4'
+        ($null -eq (Get-Node '/t:Task/t:Principals/t:Principal/t:UserId')) | Should Be $true
+        (Get-Node '/t:Task/t:Principals/t:Principal/t:RunLevel').InnerText | Should Be 'HighestAvailable'
+        ($null -eq (Get-Node '/t:Task/t:Triggers')) | Should Be $true
+        (Get-Node '/t:Task/t:Settings/t:AllowStartOnDemand').InnerText | Should Be 'true'
+        (Get-Node '/t:Task/t:Settings/t:ExecutionTimeLimit').InnerText | Should Be 'PT2M'
+    }
+    It 'runs the helper hidden with its action and folder' {
+        (Get-Node '/t:Task/t:Actions/t:Exec/t:Arguments').InnerText | Should Match '-WindowStyle Hidden -File "D:\\fraxis-mb\\ob019-pult\.ps1" -Action close -Dir "D:\\fraxis-mb"$'
+    }
+    $source = Get-Content (Join-Path $root 'install-bridge.ps1') -Raw
+    It 'registers both helper tasks with the writer and copies the helper' {
+        $source | Should Match 'Register-BridgeTask \$PultCloseTaskName'
+        $source | Should Match 'Register-BridgeTask \$PultOpenTaskName'
+        $source | Should Match 'Copy-Item -Force \(Join-Path \$here ''ob019-pult\.ps1''\)'
+    }
+}
+
+Describe 'operator panel helper' {
+    . (Join-Path $root 'ob019-pult.ps1') -Dir ([IO.Path]::GetTempPath())
+    It 'stays ASCII for PowerShell 2 and knows the vendor path' {
+        $source = Get-Content (Join-Path $root 'ob019-pult.ps1') -Raw
+        [Text.Encoding]::ASCII.GetString([Text.Encoding]::ASCII.GetBytes($source)) | Should Be $source
+        $script:DefaultHmiPath | Should Match '^E:\\DY\\.+_V1\.00_new\\binexe\\PXS_HMI\.exe$'
+        $script:DefaultHmiPath.Substring(6, 5) | Should Be ([string][char]0x6D3E + [char]0x5355 + [char]0x4E0A + [char]0x4F4D + [char]0x673A)
+    }
+    It 'sends WM_CLOSE to every panel window and starts the panel in its own folder' {
+        $script:closed = 0
+        Mock Get-Process { @(New-Object psobject -Property @{ ProcessName = 'PXS_HMI' } | Add-Member -PassThru ScriptMethod CloseMainWindow { $script:closed++; $true }) }
+        Close-Hmi | Should Be 1
+        Mock Get-Process { @() }
+        Mock Test-Path { $true }
+        Mock Start-Process { $script:started = $FilePath + '|' + $WorkingDirectory }
+        $HmiPath = 'E:\DY\x\binexe\PXS_HMI.exe'
+        Open-Hmi | Should Be 'started'
+        $script:started | Should Be 'E:\DY\x\binexe\PXS_HMI.exe|E:\DY\x\binexe'
+    }
+}

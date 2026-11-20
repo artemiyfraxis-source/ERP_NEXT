@@ -267,6 +267,8 @@ _OVER_CHECK: dict[tuple[str, str], Any] = {
     # record_id is filled from its parent (or NULL where the historical CHECK requires it).
     **{("reference_stock_links", name): None for name in ("equipment_unit_id", "heat_shrink_id", "covering_id")},
     ("tech_operation_records", "ter_kind"): "contact",
+    # The last state seen and its time are set together (0211); the CHECK leaves the state empty, so the time too.
+    ("production_machine_snapshots", "last_state_at"): None,
     ("warehouse_scan_jobs", "instrument_id"): None,
     # Before 0167 arbitrary statuses were allowed; ACTIVE now needs all evidence despite nullable-date CHECKs.
     ("production_instruments", "status"): "Действует",

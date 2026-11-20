@@ -4053,6 +4053,10 @@ export const fulfillmentApi = {
     }),
 };
 
+/** Set-up unit of a concrete machine for an ETK position of a task (ready setup, one per position). */
+export type EtkSetupUnit = { etk_position: number; unit_id: string; inventory_number: string; model: string | null;
+  name: string | null; ready_at: string; task_number: string | null };
+
 export interface ProductionMachineBinding { etk_position: number; machine_id: string }
 export interface ProductionResources {
   enabled: boolean;
@@ -4304,6 +4308,9 @@ export const productionApi = {
     api<{ items: OperationSketch[] }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk/sketches`),
   operationEtkSketchUrl: (taskId: string, operationId: string, operationKey: string, at = "") =>
     `/api/production/my/tasks/${taskId}/operations/${operationId}/etk/sketches/${encodeURIComponent(operationKey)}${at ? `?v=${encodeURIComponent(at)}` : ""}`,
+  /** Налаженные станки по позициям ЭТК операции задания (подставляются вместо «любой свободный …»). */
+  operationEtkUnits: (taskId: string, operationId: string) =>
+    api<{ units: EtkSetupUnit[] }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk/units`),
   /** Сохранённый чертёж жгута позиции задания — только чтение, без раздела «Проекты» (нет чертежа — `design: null`). */
   taskHarness: (taskId: string) => api<HarnessDrawing>(`/api/production/my/tasks/${taskId}/harness`),
   operationEtk: (taskId: string, operationId: string) =>

@@ -657,3 +657,23 @@ def test_none_mode_writes_only_the_marking_switch(machines_api):
     assert _transfer(admin, group_id).status_code == 200
     claimed, words, bits = _claimed_writes(bridge)
     assert bits == {400: 0} and not any(address in words for address in (405, 407, 409, 411, 440, 455, 470))
+
+
+def test_the_inner_layer_is_written_from_runner_and_mbd_1_4_0_and_the_unknown_stay_read_only():
+    keys = ("inner_strip_front_mm", "inner_pull_front_mm", "inner_strip_back_mm", "inner_pull_back_mm",
+            "inner_diameter_mm", "inner_knife_back_mm")
+    assert [rules.OB019_FIELDS[key].address for key in keys] == [44, 46, 48, 50, 52, 53]
+    assert rules.encode_field("inner_strip_front_mm", "5,5")[1] == [550, 0]
+    assert rules.encode_field("inner_knife_back_mm", "0,10")[1] == [10]
+    with pytest.raises(rules.MachineWriteInvalid):
+        rules.encode_field("inner_knife_back_mm", "5,01")
+    assert commands.runner_needed_for([], [52, 53]) == commands.RUNNER_HMI
+    assert commands.runner_needed_for([{"addr": 604, "bit": 0, "value": 1}], [44]) == commands.RUNNER_HMI
+    assert commands.runner_needed_for([{"addr": 604, "bit": 0, "value": 1}], [32]) == commands.RUNNER_FEED_WHEEL
+    assert commands.runner_refusal(commands.RUNNER_HMI) == commands.RUNNER_HMI_OUTDATED
+    writer = (ROOT / "ob019-writer.ps1").read_text(encoding="ascii")
+    assert "foreach ($w in (44..53)) { $script:MbdWordVersions[[int]$w] = '1.4.0' }" in writer
+    assert set(commands.RUNNER_WORDS) == set(range(44, 54))
+    read_only = {field.label for _title, fields in rules.OB019_SETTINGS for field in fields if not field.key}
+    assert {"Строка заказа", "Программа", "Зазор переднего прижима", "Зазор заднего прижима",
+            "Передача текста в маркиратор"} <= read_only
