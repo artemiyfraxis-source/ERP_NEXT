@@ -4,7 +4,7 @@ import type { AccessMode, Principal } from "./api";
 import type { MachineCard, MachineRow, UnitSetup } from "./machinesApi";
 import { MachinesPage } from "./MachinesPage";
 import { visibleNav } from "./navigation";
-import { Ob019CardView } from "./Ob019Card";
+import { machineStatus, Ob019CardView } from "./Ob019Card";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -296,4 +296,18 @@ it("a planned machine without a БД.ОБ entry says so calmly instead of a setu
   expect(within(dialog).getByText(/Станка нет в БД\.ОБ/)).toBeTruthy();
   expect(within(dialog).queryByRole("alert")).toBeNull();
   expect(calls.some((url) => url.includes("/setup-model/"))).toBe(false);
+});
+
+it("the next step of a ready machine is the Пуск reason of the command row, or «нажмите Пуск» when nothing is missing", () => {
+  const ready = card();
+  ready.live = { ...ready.live!, state: { code: 102, text: "Готов, ждёт пуска", tone: "ok" } };
+  expect(machineStatus(ready, "").hint).toBe("Значения на станке ✓ — нажмите «Пуск»");
+  expect(machineStatus(ready, "выберите задание").hint).toBe("Выберите задание");
+  expect(machineStatus(ready, "опустите ролики").hint).toBe("Опустите ролики");
+  expect(machineStatus(ready, "ждём записи задания").hint).toBe("Ждём записи задания");
+  // Unknown (no right to start, not loaded yet): the general step.
+  expect(machineStatus(ready).hint).toBe("Выберите, что режем, проверьте значения на чертеже и нажмите «Пуск»");
+  const running = card();
+  running.live = { ...running.live!, state: { code: 103, text: "Работает", tone: "ok" } };
+  expect(machineStatus(running, "уже режет").hint).not.toMatch(/Стоп/);  // «Стоп» is a button, not a step to repeat
 });

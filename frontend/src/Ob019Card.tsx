@@ -1,7 +1,7 @@
-import { useCallback, type ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import { PageWindow } from "./PageWindow";
 import { EMPTY, formatMoment, formatNumber } from "./format";
-import { PULT_OPEN, operatorText } from "./machineControlApi";
+import { PULT_OPEN, operatorText, type MachineRunState } from "./machineControlApi";
 import { machinesApi, usePolled, type MachineCard, type Ob019Live, type Tone } from "./machinesApi";
 import { Ob099CardView } from "./Ob099Card";
 import { Ob019Controls } from "./Ob019Controls";
@@ -22,7 +22,7 @@ const NEXT_STEP: Record<number, string> = {
   100: "Нажмите «Сброс»",
   101: "Дождитесь конца сброса",
   102: "Выберите, что режем, проверьте значения на чертеже и нажмите «Пуск»",
-  103: "Остановить — «Стоп»",
+  103: "Дождитесь конца тиража",
   104: "Пауза: продолжите на станке или нажмите «Стоп»",
   105: "Отпустите аварийную кнопку на станке и нажмите «Сброс»",
   106: "Пучок готов — заберите провод",
@@ -42,8 +42,11 @@ function count(value: number | null): string {
 
 export interface MachineStatus { title: string; tone: Tone; link: string; hint: string }
 
-/** Одна строка состояния: станок словами, связь с возрастом сигнала и следующий шаг. */
-export function machineStatus(card: MachineCard): MachineStatus {
+const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+/** Одна строка состояния: станок словами, связь с возрастом сигнала и следующий шаг. `startWhy` — почему «Пуск» не пойдёт
+ *  (та же причина, что под кнопкой; '' — пойдёт; undefined — неизвестно): у готового станка шаг называет её. */
+export function machineStatus(card: MachineCard, startWhy?: string): MachineStatus {
   const linkOk = card.link.code === "ok";
   const pult = card.link.code === "port_busy" || operatorText(card.error || "") === PULT_OPEN;
   const signal = card.reported_at ? `сигнал ${formatMoment(card.reported_at)}${card.age_seconds === null ? "" : `, ${ago(card.age_seconds)}`}`
@@ -66,15 +69,18 @@ export function machineStatus(card: MachineCard): MachineStatus {
   const { total_set: set, total_finished: done } = live.job;
   const title = code === 103 && set ? `Режет ${count(done)} из ${count(set)}` : live.state.text;
   const tone = live.state.tone === "danger" ? "danger" : live.state.tone === "warn" ? "warn" : "neutral";
-  return { title, tone, link, hint: code === null ? "" : NEXT_STEP[code] ?? "" };
+  const ready = code === 102 && startWhy !== undefined
+    ? startWhy ? capital(startWhy) : "Значения на станке ✓ — нажмите «Пуск»" : null;
+  return { title, tone, link, hint: ready ?? (code === null ? "" : NEXT_STEP[code] ?? "") };
 }
 
-/** Ход задания на станке одной строкой; пустое не показывается. */
-function liveFacts(live: Ob019Live): Fact[] {
+/** Ход задания на станке одной строкой; пустое не показывается. «Сделано» — только без открытого задания: при нём счёт
+ *  уже в строке состояния и в «Выполнении задания». */
+function liveFacts(live: Ob019Live, running: boolean): Fact[] {
   const { job } = live;
   const facts: Fact[] = [
     ["Режим", live.mode.text],
-    ["Сделано", job.total_set === null ? "" : `${count(job.total_finished)} из ${count(job.total_set)} шт`],
+    ["Сделано", job.total_set === null || running ? "" : `${count(job.total_finished)} из ${count(job.total_set)} шт`],
     ["Пучок", job.batch_set ? `${count(job.batch_finished)} из ${count(job.batch_set)} шт` : ""],
     ["Заказ", job.order_number ?? ""],
     ["Изделие", job.product ?? ""],
@@ -87,10 +93,17 @@ function plain(value: string | null | undefined): string {
   return value ? value : EMPTY;
 }
 
-export function Ob019CardView({ card, controls }: { card: MachineCard; controls?: ReactNode }) {
+/** `controls` — строка команд (Ob019Controls.tsx) под строкой состояния. */
+export function Ob019CardView({ card, controls = false }: { card: MachineCard; controls?: boolean }) {
   const old = card.link.code !== "ok";
-  const status = machineStatus(card);
-  const facts = card.live ? liveFacts(card.live) : [];
+  // The run «Выполнение задания» polls (Ob019SettingsPanel) and why «Пуск» would not go (Ob019Controls): the status
+  // strip and the command row say the same.
+  const [runState, setRunState] = useState<MachineRunState | null>(null);
+  const [startWhy, setStartWhy] = useState<string | undefined>(undefined);
+  const run = runState?.run;
+  const running = !!run && !["closed", "failed", "moved"].includes(run.stage);
+  const status = machineStatus(card, startWhy);
+  const facts = card.live ? liveFacts(card.live, running) : [];
   // The agent's answer only when it says more than the state line above (the server already translates known ones).
   const agentNote = card.error && card.error !== card.link.text && operatorText(card.error) !== PULT_OPEN ? card.error : "";
   return <>
@@ -105,8 +118,8 @@ export function Ob019CardView({ card, controls }: { card: MachineCard; controls?
       {old && card.reported_at && <div><dt>Данные на</dt><dd>{formatMoment(card.reported_at)}</dd></div>}
       {facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
     </dl>}
-    {controls}
-    <Ob019SettingsPanel inventory={card.inventory} equipmentId={card.equipment_id} live={card.live} old={old} />
+    {controls && <Ob019Controls card={card} run={runState ? runState.run : undefined} onStartWhy={setStartWhy} />}
+    <Ob019SettingsPanel inventory={card.inventory} equipmentId={card.equipment_id} live={card.live} old={old} onRun={setRunState} />
     <details className="machine-fold machine-connection">
       <summary>Подключение</summary>
       <dl className="machine-summary">
@@ -131,7 +144,7 @@ export function Ob019Card({ equipmentId, title, close, actions }: { equipmentId:
       {error && <div className="error-banner" role="alert">{error}</div>}
       {!data && !error && <p className="empty">Загрузка…</p>}
       {data && (data.kind === "ob099_fins" ? <Ob099CardView card={data} />
-        : <Ob019CardView card={data} controls={<Ob019Controls card={data} />} />)}
+        : <Ob019CardView card={data} controls />)}
     </section>
   </PageWindow>;
 }

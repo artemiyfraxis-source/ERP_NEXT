@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import type { MachineCommand, MachineControl, MachineWindow } from "./machineControlApi";
+import type { MachineCommand, MachineControl, MachineRun, MachineWindow } from "./machineControlApi";
 import type { MachineCard } from "./machinesApi";
 import { Ob019Controls } from "./Ob019Controls";
 
@@ -155,7 +155,7 @@ it("Start is closed while the feed rollers are lifted and says so on the row", a
   render(<Ob019Controls card={card(102, "Готов, ждёт пуска")} />);
   await waitFor(() => expect(button(/Ролики подняты/)).toBeEnabled());
   expect(button("Пуск")).toBeDisabled();
-  expect(noteOf("Пуск")).toBe("сначала опустите ролики");
+  expect(noteOf("Пуск")).toBe("опустите ролики");
   fireEvent.click(button("Пуск"));
   expect(posts).toEqual([]);
 });
@@ -165,4 +165,19 @@ it("Start opens again once the rollers read back lowered", async () => {
   render(<Ob019Controls card={card(102, "Готов, ждёт пуска")} />);
   await waitFor(() => expect(button(/Ролики опущены/)).toBeEnabled());
   expect(button("Пуск")).toBeEnabled();
+});
+
+it("Start says in advance what the server would refuse: no open job, its write not checked yet; the reason goes up", async () => {
+  const posts = mockApi(control());
+  const why: (string | undefined)[] = [];
+  const run = { id: "w1", kind: "cutting", label: "ГР-0007", stage: "writing" } as MachineRun;
+  const { rerender } = render(<Ob019Controls card={card(102, "Готов, ждёт пуска")} run={null} onStartWhy={(text) => why.push(text)} />);
+  await waitFor(() => expect(noteOf("Пуск")).toBe("выберите задание"));
+  expect(button("Пуск")).toBeDisabled();
+  rerender(<Ob019Controls card={card(102, "Готов, ждёт пуска")} run={run} onStartWhy={(text) => why.push(text)} />);
+  await waitFor(() => expect(noteOf("Пуск")).toBe("ждём записи задания"));
+  rerender(<Ob019Controls card={card(102, "Готов, ждёт пуска")} run={{ ...run, stage: "ready" }} onStartWhy={(text) => why.push(text)} />);
+  await waitFor(() => expect(button("Пуск")).toBeEnabled());
+  expect(why).toEqual(expect.arrayContaining(["выберите задание", "ждём записи задания", ""]));
+  expect(posts).toEqual([]);
 });

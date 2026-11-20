@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import type { MachineCommand, MachineControl, MachineWindow, TransferPlan } from "./machineControlApi";
+import type { MachineCommand, MachineControl, MachineRun, MachineWindow, TransferPlan } from "./machineControlApi";
 import { Ob019SettingsPanel, pullFor, pullMode, SELECT_WAIT_MS, sourceText } from "./Ob019SettingsPanel";
 import { wireZones } from "./Ob019WireDrawing";
 
@@ -51,8 +51,9 @@ const WIRE_PLAN: TransferPlan = {
 const WIRES = [{ label: "ПВАМ 0,35", conductor_mm: "0,52", has_recipe: true }, { label: "ПВАМ 0,50", conductor_mm: "0,64", has_recipe: false }];
 
 /** A fake machine: a write is taken at once and read back into the window on the next poll. */
-function server({ control = CONTROL, plan = PLAN, wirePlan = WIRE_PLAN, refuse = "", refuseTransfer = "", live = {} }: {
+function server({ control = CONTROL, plan = PLAN, wirePlan = WIRE_PLAN, refuse = "", refuseTransfer = "", live = {}, run = null }: {
   control?: MachineControl; plan?: TransferPlan; wirePlan?: TransferPlan; refuse?: string; refuseTransfer?: string; live?: Record<string, number>;
+  run?: MachineRun | null;
 } = {}) {
   const posts: { url: string; body: Record<string, unknown> }[] = [];
   const gets: string[] = [];
@@ -81,7 +82,7 @@ function server({ control = CONTROL, plan = PLAN, wirePlan = WIRE_PLAN, refuse =
       return json({ ...commands[0], status: "queued", status_text: "Ждёт агента станка" });
     }
     gets.push(url);
-    if (url.endsWith("/run")) return json({ run: null, manual: null, link_ok: true, problem: "", can_edit: true, can_control: true });
+    if (url.endsWith("/run")) return json({ run, manual: null, link_ok: true, problem: "", can_edit: true, can_control: true });
     if (url.endsWith("/control")) return json({ ...control, commands });
     if (url.includes("/proposal")) return json({ wire: "ПВАМ 0,35", recipe: { recipe_id: "r1", version: 2, title: "ПВАМ 0,35", created_at: "2026-11-18T12:00:00+01:00", source: "" },
       publish: { recipe_id: "r1", expected_version: 2 }, etk: null, values: [] });
@@ -134,7 +135,7 @@ it("shows what is on the machine now in the drawing; rare HMI pages stay under �
   expect(within(drawing).getByLabelText("Диаметр провода")).toHaveValue("0,80");
   // «Тираж» is pieces in this job (target − counter): no live counter in this render, so it is unknown, not D22 = 300.
   expect(screen.getByLabelText("Тираж")).toHaveValue("");
-  expect(screen.getByText("счётчик станка — / цель —")).toBeInTheDocument();
+  expect(screen.queryByText(/счётчик станка|цель/)).toBeNull();  // no raw counter / target under «Тираж»
   expect(screen.queryByText(/на станке —/)).toBeNull();
   expect(screen.queryByRole("button", { name: /Записать на станок/ })).toBeNull();
   const toggle = screen.getByRole("button", { name: /Остальные параметры/ });
@@ -216,11 +217,11 @@ const LIVE = { state: { code: 107, text: "Тираж готов", tone: "ok" as 
     order_quantity: null, order_finished: null, order_number: null, product: null, order_running: false },
   wire: { length_mm: 325, strip_front_mm: 5, pull_front_mm: 0, strip_back_mm: 5, pull_back_mm: 0, diameter_mm: 0.8, knife_back_mm: 0.1 } };
 
-it("takes «Тираж» as pieces in this job: target − counter in the field, the raw counter and target under it", async () => {
+it("takes «Тираж» without an open job as pieces left to the target (target − counter), no raw counter under it", async () => {
   const { posts } = server();
   render(<Ob019SettingsPanel inventory="ОБ.019" live={LIVE} />);
   expect(await screen.findByText("Тираж (штук в этом задании)")).toBeInTheDocument();
-  expect(screen.getByText("счётчик станка 570 / цель 582")).toBeInTheDocument();
+  expect(screen.queryByText(/счётчик станка|цель/)).toBeNull();
   const tirazh = screen.getByLabelText("Тираж");
   await waitFor(() => expect(tirazh).toHaveValue("12"));
   fireEvent.change(tirazh, { target: { value: "12" } });
@@ -544,4 +545,51 @@ it("the card's own live state closes the drawing before this panel's poll sees t
   expect(await screen.findByText("Станок режет — правка после остановки")).toBeInTheDocument();
   await waitFor(() => expect(screen.getByLabelText("Длина провода")).toHaveValue("325,00"));
   expect(screen.getByLabelText("Длина провода")).toBeDisabled();
+});
+
+const OPEN_RUN: MachineRun = { id: "w1", kind: "cutting", label: "ГР-0007 · ПВАМ 0,35 · 325,00 мм", group_id: "g9", length_mm: "150",
+  job_id: null, quantity: 120, write: { status: "done", status_text: "Записано", tone: "ok", error: "" },
+  verified_at: "2026-11-20T01:30:00+01:00", closed_at: null, closed_why: "", machine_count: null, closed_reset: false,
+  created_by: "Слава", created_at: "2026-11-20T01:30:00+01:00", stage: "ready", counter_start: 523, counter: 570, done: 47,
+  reset: false, state: 102, alarm: 0, total_set: 643 };
+
+it("with a job open «Тираж» is the job's тираж with «сделано · осталось» under it; an edit writes the pieces left", async () => {
+  const { posts } = server({ run: OPEN_RUN });
+  render(<Ob019SettingsPanel inventory="ОБ.019" live={{ ...LIVE, state: { code: 102, text: "Готов, ждёт пуска", tone: "ok" as const } }} />);
+  const tirazh = await screen.findByLabelText("Тираж");
+  await waitFor(() => expect(tirazh).toHaveValue("120"));
+  expect(screen.getByText("сделано 47 · осталось 73")).toBeInTheDocument();
+  fireEvent.change(tirazh, { target: { value: "40" } });
+  fireEvent.keyDown(tirazh, { key: "Enter" });
+  expect(await screen.findByText("отказ: уже сделано 47 — тираж больше")).toBeInTheDocument();
+  fireEvent.change(tirazh, { target: { value: "150" } });
+  fireEvent.keyDown(tirazh, { key: "Enter" });
+  await waitFor(() => expect(posts).toHaveLength(1));
+  // 150 for the job, 47 done: the machine is asked for 103 more (its target = counter + 103 = the job's start + 150).
+  expect(posts[0]).toEqual({ url: "/api/production/machines/card/ОБ.019/write", body: { values: { total_set: "103" }, confirm_state: 102 } });
+});
+
+it("the hand-wire picker is closed while a job is open: a wire over it would be counted into the job", async () => {
+  const { posts } = server({ run: OPEN_RUN });
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  expect(await screen.findByText("Открыто задание «ГР-0007 · ПВАМ 0,35 · 325,00 мм» — провод вручную после «Завершить»")).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "Провод" })).toBeDisabled();
+  expect(posts).toEqual([]);
+});
+
+it("a «Тираж» typed while the job waits for a missing size goes with the job instead of the job's own quantity", async () => {
+  const plan: TransferPlan = { ...PLAN, rows: [...PLAN.rows, { key: "strip_back_mm", label: "Зачистка конца", unit: "мм",
+    nominal: null, source: "Нет данных", offset: "0,00", value: null, live: "5,00" }], blocking: ["Зачистка конца"] };
+  const { posts } = server({ plan });
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  await pickJob();
+  await screen.findByText(/В ЭТК не задано: Зачистка конца/);
+  const tirazh = screen.getByLabelText("Тираж");
+  fireEvent.change(tirazh, { target: { value: "20" } });
+  fireEvent.keyDown(tirazh, { key: "Enter" });
+  const back = screen.getByLabelText("Зачистка конца");
+  fireEvent.change(back, { target: { value: "6" } });
+  fireEvent.keyDown(back, { key: "Enter" });
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect((posts[0].body.values as Record<string, string>).total_set).toBe("20");
 });

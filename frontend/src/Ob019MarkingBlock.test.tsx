@@ -180,7 +180,7 @@ it("an ETK job with marking says what the ETK marks and sends the job; the marki
   expect(posts[0].url).toBe("/api/production/machines/card/ОБ.019/run");
 });
 
-it("blocking marking in the ETK is shown and the server's refusal of the job is said at the fields", async () => {
+it("blocking marking in the ETK is shown and the job is not sent at all (not without its marking)", async () => {
   const blocked = { ...ENDS, blocking: ["Серийные номера на лазер — не поддерживается"] };
   const job = plan(blocked);
   const { posts } = server({ transferPlan: { ...job, rows: [{ ...job.rows[0], value: "326,00" }] },
@@ -188,8 +188,19 @@ it("blocking marking in the ETK is shown and the server's refusal of the job is 
   render(<Ob019SettingsPanel inventory="ОБ.019" />);
   await pickJob();
   expect(await screen.findByText(/Маркировка из ЭТК не записывается: Серийные номера на лазер/)).toBeInTheDocument();
-  expect((await screen.findAllByText("отказ: Маркировка: Серийные номера на лазер — не поддерживается")).length).toBeGreaterThan(0);
-  expect(posts.map((post) => post.url)).toEqual(["/api/production/machines/card/ОБ.019/run"]);
+  expect(await screen.findByText("Задание не передано: маркировка из ЭТК с ошибкой — исправьте ЭТК")).toBeInTheDocument();
+  expect(posts).toEqual([]);
+});
+
+it("a job missing a size and with a blocked marking is not held for the size: nothing is posted", async () => {
+  const blocked = { ...ENDS, blocking: ["Серийные номера на лазер — не поддерживается"] };
+  const job = plan(blocked);
+  const { posts } = server({ transferPlan: { ...job, blocking: [job.rows[0].label], rows: [{ ...job.rows[0], value: null }] } });
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  await pickJob();
+  expect(await screen.findByText("Задание не передано: маркировка из ЭТК с ошибкой — исправьте ЭТК")).toBeInTheDocument();
+  expect(screen.queryByText(/задание уйдёт на станок, когда все размеры заданы/)).toBeNull();
+  expect(posts).toEqual([]);
 });
 
 it("while the machine cuts the marking is closed with the drawing", async () => {

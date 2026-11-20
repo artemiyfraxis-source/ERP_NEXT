@@ -3,7 +3,8 @@ import { failureText } from "./api";
 import { equipmentSetupApi } from "./equipmentSetupApi";
 import { EMPTY, formatMoment, formatNumber } from "./format";
 import {
-  clock, commandResult, IDLE_STATES, machineControlApi, operatorText, type MachineCommand, type MachineWindow, type RunRequest,
+  clock, commandResult, IDLE_STATES, machineControlApi, operatorText, type MachineCommand, type MachineRun, type MachineRunState,
+  type MachineWindow, type RunRequest,
   type SettingField, type TransferChoice, type TransferPlan, type TransferRow, type WireChoice,
 } from "./machineControlApi";
 import { usePolled, type Ob019Live } from "./machinesApi";
@@ -27,8 +28,10 @@ import { Ob019WirePicker } from "./Ob019WirePicker";
  *  Задание (резка из ЭТК или ручная работа) — это прогон станка (Ob019RunJob.tsx, сервер production/machine_runs.py):
  *  выбор пишет его через `POST …/run`, и только такой прогон с тиражом на станке открывает «Пуск». Задание ЭТК, где не
  *  задан размер, не пишется, пока размер не введён на чертеже: тогда уходит одной записью прогона со всеми значениями.
- *  «Тираж» — штук в этом задании (станку пишется цель D22 = счётчик D649 + N); правка тиража при выбранном задании
- *  тоже идёт прогоном. */
+ *  «Тираж» — штук в задании: при открытом прогоне — тираж задания (под полем «сделано · осталось»; станку пишется цель
+ *  D22 = счётчик D649 + (тираж − сделано)), без него — сколько станку осталось до цели; правка тиража при выбранном
+ *  задании тоже идёт прогоном. Пока прогон открыт, «Провод вручную» закрыт: провод поверх задания станок посчитал бы в
+ *  задание (сервер тоже не даст «Пуск»: machine_runs.start_blocker). */
 
 const MODES: [string, string][] = [["0", "Пошаговый"], ["1", "Один цикл"], ["2", "Автомат"]];
 /** Переключатель страницы пульта (бит 0 слова): сервер меняет только этот бит. */
@@ -182,8 +185,17 @@ function CommandLine({ command }: { command: MachineCommand }) {
 const without = <T,>(values: Record<string, T>, keys: string[]) =>
   Object.fromEntries(Object.entries(values).filter(([key]) => !keys.includes(key)));
 
-export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = false }: {
+/** Тот же прогон: резка — группа и длина, ручная работа — сама работа. */
+function sameRun(run: MachineRun, job: RunRequest): boolean {
+  if (job.kind === "manual") return run.kind === "manual" && run.job_id === job.job_id;
+  return run.kind === "cutting" && run.group_id === job.group_id
+    && Number((run.length_mm ?? "").replace(",", ".")) === Number(job.length_mm.replace(",", "."));
+}
+
+/** `onRun` — прогон станка, как его видит эта панель (карточка показывает по нему строку состояния и «Пуск»). */
+export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = false, onRun }: {
   inventory: string; equipmentId?: string; live?: Ob019Live | null; old?: boolean;
+  onRun?: (state: MachineRunState | null) => void;
 }) {
   const [fast, setFast] = useState(false);
   const period = fast ? FAST_MS : IDLE_MS;
@@ -257,11 +269,16 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   const linkUp = !old && !!card;
   const runManual = runState?.manual ?? null;
   const runNow = runState?.run ?? null;
+  // A run that still counts on the machine (not closed, failed or void).
+  const runOpen = runNow && !["closed", "failed", "moved"].includes(runNow.stage) ? runNow : null;
+  useEffect(() => { onRun?.(runState); }, [runState, onRun]);
   const manualJob = [runManual, started].find((item) => item && choice === manualKey(item.id)) ?? null;
   /** «Тираж» — штук в этом задании: сколько станку осталось до цели (цель D22 − счётчик D649). */
   const counter = typeof live?.job?.total_finished === "number" ? live.job.total_finished : null;
   const target = typeof live?.job?.total_set === "number" ? live.job.total_set : null;
   const left = counter !== null && target !== null ? target - counter : null;
+  /** «Тираж» в поле: при открытом прогоне — тираж задания, иначе — сколько станку осталось до цели. */
+  const tirazh = runOpen?.quantity ?? left;
 
   const markWire = (wire: string | undefined, result: WireWrite, plan = false) => {
     if (!wire) return;
@@ -333,8 +350,9 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     const batch = queue;
     setQueue({});
     setSending(true);
-    const values = Object.fromEntries(keys.map((key) => [key, batch[key].value]));
-    const job = "total_set" in values ? jobRequest() : null;
+    const typed = Object.fromEntries(keys.map((key) => [key, batch[key].value]));
+    const job = "total_set" in typed ? jobRequest() : null;
+    const values = pieces(typed, job);
     (job ? machineControlApi.startRun(inventory, { ...job, values }, control.state) : machineControlApi.write(inventory, values, control.state))
       .then((command) => {
         setInFlight({ id: command.id, at: Date.now() });
@@ -405,14 +423,21 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   }, [due, control, canWrite, free]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Значение без набираемого: то, что уже уходит на станок, иначе то, что на станке. */
-  const liveOf = (key: string) => key === "total_set" ? (left === null ? "" : String(left)) : liveText(fields.get(key));
+  const liveOf = (key: string) => key === "total_set" ? (tirazh === null ? "" : String(tirazh)) : liveText(fields.get(key));
   const settledOf = (key: string) => {
     const st = status[key];
     return st && (st.kind === "queued" || st.kind === "held" || st.kind === "writing") ? st.value : liveOf(key);
   };
   /** Отличается ли значение от станка; «Тираж» — от того, сколько станку осталось до цели. */
   const differs = (key: string, value: string) => key === "total_set"
-    ? !!value.trim() && (left === null || decimal(value) !== left) : enteredDiffers(fields.get(key), value);
+    ? !!value.trim() && (tirazh === null || decimal(value) !== tirazh) : enteredDiffers(fields.get(key), value);
+  /** «Тираж» задания при открытом прогоне этого задания → штук станку: тираж − уже сделано (сервер пишет цель от счётчика). */
+  const pieces = (values: Record<string, string>, job: RunRequest | null): Record<string, string> => {
+    const done = runOpen?.quantity !== null && runOpen?.quantity !== undefined ? runOpen.done : null;
+    const typed = "total_set" in values ? decimal(values.total_set) : null;
+    if (!runOpen || done === null || typed === null || (job && !sameRun(runOpen, job))) return values;
+    return { ...values, total_set: String(Math.max(typed - done, 0)) };
+  };
 
   /** Поле изменено — на станок. Пусто, то же, что на станке, или не число — запись не уходит. Зачистка уходит вместе со
    *  стягиванием своего конца по текущему режиму (стягивание = зачистка + 2,00, полу = половина, без = 0; своё
@@ -425,6 +450,10 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     if (!field || !value || !differs(key, value)) return;
     if (numeric(field) && typeof field.value !== "string" && decimal(value) === null) {
       setStatus((current) => ({ ...current, [key]: { kind: "failed", value, text: "нужно число" } }));
+      return;
+    }
+    if (key === "total_set" && runOpen?.done !== null && runOpen?.done !== undefined && (decimal(value) ?? 0) <= runOpen.done) {
+      setStatus((current) => ({ ...current, [key]: { kind: "failed", value, text: `уже сделано ${runOpen.done} — тираж больше` } }));
       return;
     }
     const values: Record<string, string> = { [key]: value };
@@ -532,7 +561,8 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     ? machineControlApi.plan(inventory, next.group_id, next.length)
     : machineControlApi.wirePlan(inventory, next.wire!, next.length);
 
-  /** Значения плана, которые отличаются от станка (и маркировка ЭТК, если она без ошибок). */
+  /** Значения плана, которые отличаются от станка, и маркировка ЭТК. Маркировку с ошибкой сюда не берут: такое задание
+   *  не пишется вовсе (`markingRefused` — до записи; сервер тоже отказывает 422 «Маркировка: …»). */
   function planDiff(next: TransferPlan): Record<string, string> {
     const values: Record<string, string> = {};
     for (const row of next.rows) if (row.value !== null && fields.has(row.key) && differs(row.key, row.value)) values[row.key] = row.value;
@@ -546,12 +576,24 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     return values;
   }
 
+  /** Маркировка ЭТК с ошибкой: задание не пишется вовсе (без маркировки оно ушло бы молча). true — отказано. */
+  function markingRefused(next: TransferPlan): boolean {
+    const blocking = next.marking?.blocking ?? [];
+    if (!blocking.length) return false;
+    markWire(next.wire, "failed", true);
+    setHeld(null);
+    // The reason itself is in «Маркировка» (Ob019MarkingBlock: «Маркировка из ЭТК не записывается: …»).
+    setMessage({ tone: "danger", text: "Задание не передано: маркировка из ЭТК с ошибкой — исправьте ЭТК" });
+    return true;
+  }
+
   /** Ключи размеров, которых нет в ЭТК задания. */
   const blockingKeys = (next: TransferPlan) => next.rows.filter((row) => row.value === null && next.blocking.includes(row.label)).map((row) => row.key);
 
   /** Задание ЭТК без размера: введённое ждёт, пока введены все недостающие размеры, затем всё уходит одним прогоном
    *  (сервер: значения прогона вместо плана ЭТК, тираж — задания). Раньше на станок не пишется ничего. */
   function holdForJob(next: TransferPlan, values: Record<string, string>) {
+    if (markingRefused(next)) return;
     const typed = { ...(held ?? {}), ...values };
     const missing = blockingKeys(next).filter((key) => !(key in typed));
     if (missing.length) {
@@ -561,7 +603,8 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     }
     setHeld(null);
     const all: Record<string, string> = { ...planDiff(next), ...typed };
-    if (fields.has("total_set") && next.quantity !== null) all.total_set = String(next.quantity);
+    // The job's own quantity, unless the operator typed «Тираж» meanwhile.
+    if (fields.has("total_set") && next.quantity !== null && !("total_set" in typed)) all.total_set = String(next.quantity);
     runJob({ kind: "cutting", group_id: next.group_id!, length_mm: query.current?.length ?? next.length_mm, values: all }, all, next.wire);
   }
 
@@ -572,7 +615,8 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     const values = planDiff(next);
     const wire = next.wire;
     if (next.group_id) {
-      // Marking with an error in the ETK: the server refuses the whole job (422 «Маркировка: …»), said at the fields.
+      if (markingRefused(next)) return;
+      // A size missing in the ETK: nothing is written until it is typed on the drawing (`holdForJob`).
       if (next.blocking.length) {
         markWire(wire, "pending", true);
         setHeld({});
@@ -654,6 +698,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   const pickManualRef = useRef(pickManual);
   pickManualRef.current = pickManual;
   const pickWire = (label: string) => {
+    if (runOpen) return;  // the picker is closed while a run is open
     clearTimeout(pickTimer.current);
     setWire(label);
     setChoice("");
@@ -712,7 +757,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     if (st.kind === "held") return { tone: "warn", text: "уйдёт с заданием, когда введены все размеры" };
     if (st.kind === "done") {
       // «Тираж» without the live counter cannot be compared: written is written.
-      if ((key !== "total_set" || left !== null) && differs(key, st.value)) return { tone: "info", text: "записывается…" };
+      if ((key !== "total_set" || tirazh !== null) && differs(key, st.value)) return { tone: "info", text: "записывается…" };
       return Date.now() - (st.at ?? 0) < DONE_SHOWN_MS ? { tone: "ok", text: "✓ на станке" } : null;
     }
     return { tone: "info", text: "записывается…" };
@@ -807,10 +852,19 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     onCommit={(value) => commitText(key, value)} onCancel={() => setDrafts((current) => without(current, [key]))} />;
   const markRow = hasMarking ? <Ob019MarkingRow mode={markNow} text={markText} number={(key, label) => input(key, label)} /> : null;
 
+  // The job just picked, before its run shows up in «Выполнение задания»: its write in words — «записывается…» or the
+  // refusal (said there, not again in «Что режем»; a size still missing is said at the fields).
+  const jobPicked = !!choice && choice !== NEW_MANUAL;
+  const runSent = !!inFlight && inFlight.id in runWrites.current && runNow?.id !== inFlight.id;
+  const refusedPick = jobPicked && message?.tone === "danger" ? message : null;
+  const pickNote = !jobPicked ? null : refusedPick ? { tone: "danger", text: refusedPick.text }
+    : planLoading || !!due || runSent ? { tone: "info", text: "записывается на станок…" } : null;
+  // The machine's last known job, greyed in the empty «Задание» (pult open, nothing picked here).
+  const lastJob = runNow?.label || [live?.job?.order_number, live?.job?.product].filter(Boolean).join(" · ");
   return <section className="machine-settings" aria-label="Настройки станка">
     {error && <div className="error-banner" role="alert">{error}</div>}
     <Ob019RunJob inventory={inventory} equipmentId={equipmentId} picker={false} live={live} state={runState} choices={choices}
-      choice={choice} onPick={pickJob} reload={reloadRun}
+      choice={choice} onPick={pickJob} reload={reloadRun} pickNote={pickNote}
       onStarted={(job) => { clearTimeout(pickTimer.current); setStarted(job); setChoice(manualKey(job.id)); setWire(""); query.current = null;
         setPlan(null); pickManual(job); }} />
     <section className="machine-block machine-what" aria-label="Что режем">
@@ -818,14 +872,15 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
       <div className="machine-ways">
         <div className={`machine-way${choice ? " is-on" : ""}`}>
           <label className="machine-way-title" htmlFor="ob019-job">Задание</label>
-          <JobSelect id="ob019-job" choices={choices} manual={runManual} open={!!runNow && runNow.stage !== "closed"} choice={choice}
+          <JobSelect id="ob019-job" choices={choices} manual={runManual} open={!!runNow && runNow.stage !== "closed"} choice={choice} last={lastJob}
             onPick={pickJob} />
           {picked && plan && <span className="machine-muted">Заказ {plan.job.order_number || EMPTY} · провод {plan.wire}</span>}
           {manualJob && <span className="machine-muted">На станок: заказ {manualJob.plc_number}</span>}
         </div>
         <div className={`machine-way${wire ? " is-on" : ""}`}>
           <span className="machine-way-title">Провод вручную</span>
-          <Ob019WirePicker wires={wires} value={wire} onPick={pickWire} />
+          <Ob019WirePicker wires={wires} value={wire} onPick={pickWire} disabled={!!runOpen} />
+          {runOpen && <span className="machine-muted">Открыто задание «{runOpen.label}» — провод вручную после «Завершить»</span>}
           {wireInfo && <span className="machine-muted">
             {[wireInfo.conductor_mm ? `Ø жилы ${wireInfo.conductor_mm} мм` : "", wireInfo.has_recipe ? "есть настройка" : "настройки ещё нет"].filter(Boolean).join(" · ")}
           </span>}
@@ -833,15 +888,16 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
       </div>
       <div className="machine-job-row">
         {input("total_set", "Тираж (штук в этом задании)",
-          `счётчик станка ${counter === null ? EMPTY : formatNumber(counter)} / цель ${target === null ? EMPTY : formatNumber(target)}`)}
+          runOpen && runOpen.done !== null && runOpen.quantity !== null
+            ? `сделано ${formatNumber(runOpen.done)} · осталось ${formatNumber(Math.max(runOpen.quantity - runOpen.done, 0))}` : "")}
         {input("batch_set", "Пучок", typeof job?.batch_finished === "number" ? `сделано ${formatNumber(job.batch_finished)}` : "")}
         {input("mode", "Режим")}
       </div>
-      {planLoading && <p className="machine-muted">Считаю значения…</p>}
+      {planLoading && !choice && <p className="machine-muted">Считаю значения…</p>}
       {plan && plan.blocking.length > 0 && held !== null && <p className="warning-inline" role="status">
         В ЭТК не задано: {plan.blocking.join(", ")} — введите на чертеже; задание уйдёт на станок, когда все размеры заданы
       </p>}
-      {message && <p className={`machine-message tone-${message.tone}`} role="status">{message.text}</p>}
+      {message && !refusedPick && <p className={`machine-message tone-${message.tone}`} role="status">{message.text}</p>}
     </section>
 
     {problem && <p className="warning-inline" role="status">{problem}</p>}

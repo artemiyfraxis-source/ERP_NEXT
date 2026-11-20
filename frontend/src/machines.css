@@ -199,6 +199,7 @@ button.machine-stop { min-width: 160px; min-height: 48px; font-size: 18px; font-
 .machine-way.is-on { border-color: var(--primary); }
 .machine-way-title { font-size: 13px; font-weight: 500; }
 .machine-way > select { width: 100%; height: 36px; }
+.machine-way > select.is-last { color: var(--muted-foreground); }
 .machine-way > .machine-muted { font-size: 12px; }
 .wire-picker { position: relative; }
 .wire-picker > input { width: 100%; height: 36px; }

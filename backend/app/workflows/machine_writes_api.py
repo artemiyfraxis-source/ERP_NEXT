@@ -461,9 +461,15 @@ def transfer_summary(plan: dict) -> str:
     return f"Передать на станок: группа {plan['number']}, {plan['wire']}, {plan['length_mm']} мм"
 
 
-def cutting_run(plan: dict, length_mm: str) -> dict:
-    return runs.cutting(UUID(plan["group_id"]), length_mm,
-                        f"{plan['number']} · {plan['wire']} · {plan['length_mm']} мм", plan["quantity"])
+def cutting_run(plan: dict, length_mm: str, values: dict | None = None) -> dict:
+    """The run of a job plan; `values` — what the card writes instead of the plan (the drawing edited by hand). The run
+    expects the machine to keep the job's length, order and product as written (production/machine_runs.start_blocker)."""
+    rows = {row["key"]: row["value"] for row in plan["rows"]}
+    identity = {"length_mm": rows.get("length_mm"), "order_number": plan["job"].get("order_number"),
+                "product": plan["job"].get("product"), **(values or {})}
+    return {**runs.cutting(UUID(plan["group_id"]), length_mm,
+                           f"{plan['number']} · {plan['wire']} · {plan['length_mm']} мм", plan["quantity"]),
+            "expect": runs.expect(identity)}
 
 
 def refuse_when_done(plan: dict) -> None:

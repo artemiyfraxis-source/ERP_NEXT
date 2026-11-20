@@ -14,7 +14,9 @@ purpose `transfer`) as `payload["run"]`; the words the command writes (`blocks`,
 - While it runs: done = D649 − counter_start; a counter below the start → «счётчик станка сброшен» (manual entry).
 - «Пуск» from ERP only for an open, checked run whose target is still on the machine (`start_blocker`): a fresh snapshot
   taken after the last write must show D22 = `target` and 0 < D22 − D649 ≤ the pieces left — a «Тираж» written from
-  the settings, a closed run or a counter that moved never start the machine.
+  the settings, a closed run or a counter that moved never start the machine. The machine must also still hold the
+  job itself — its length D32, order and product texts as the run wrote them (`expect`): a wire picked by hand over the
+  job's settings would otherwise be counted into the job.
 - Closed by «Завершить» (or a newer run of another job on the machine): `machine_count`, `counter_end`, `reset` (the
   counter went back), `unread` (no fresh counter: count unknown, not a reset), `closed_at`. Never while it cuts.
   Every change of a run's payload locks its write row first (`lock`): a close and a re-send never both count it. A cutting run's count then pre-fills «Сдать группу» in «Мои задания» (the operator confirms, materials
@@ -73,6 +75,26 @@ def manual(job_id: UUID, label: str, quantity: int | None) -> dict:
 def info(row: queue.MachineWriteRow | None) -> dict | None:
     run = (row.payload or {}).get(KEY) if row is not None else None
     return run if isinstance(run, dict) and run.get("kind") in KINDS else None
+
+
+# What says which job the machine is set for: its length and the order / product texts on the operator panel.
+IDENTITY_KEYS = ("length_mm", "order_number", "product")
+
+
+def expect(values: dict) -> dict[str, int]:
+    """The words the machine holds for the job's identity once the run's write went through: {address: word}. An empty
+    value (not written) or one the machine refuses (the write fails anyway) is not expected."""
+    words: dict[str, int] = {}
+    for key in IDENTITY_KEYS:
+        value = values.get(key)
+        if value in ("", None):
+            continue
+        try:
+            field, encoded, _value = rules.encode_field(key, value)
+        except rules.MachineWriteInvalid:
+            continue
+        words.update({str(field.address + index): word for index, word in enumerate(encoded)})
+    return words
 
 
 def same_job(a: dict, b: dict) -> bool:
@@ -298,6 +320,10 @@ CUTTING = "Станок режет — сначала нажмите «Стоп�
 CLOSE_CHECKING = "Запись задания ещё проверяется по счётчику станка — повторите через секунду"
 
 
+def other_setup(label: str) -> str:
+    return f"Станок настроен не на задание «{label}» — выберите задание заново или закройте его"
+
+
 class RunRefused(Exception):
     """The run may not change now (409): the machine is cutting."""
 
@@ -309,9 +335,9 @@ def cutting_now(words: dict[int, int], link_ok: bool) -> bool:
 
 def start_blocker(session: Session, equipment_id: UUID, now: datetime) -> str:
     """Why «Пуск» from ERP must not go ('' — it may): only an open run whose write was checked starts the machine, and
-    only while a fresh snapshot after the last write shows its target D22 with 0 < D22 − D649 ≤ the pieces left. A
-    «Тираж» written from the settings, a closed or void run, a counter moved or reset — the machine would not stop at
-    the job's count."""
+    only while a fresh snapshot after the last write shows its target D22 with 0 < D22 − D649 ≤ the pieces left and the
+    job's length, order and product (`expect`). A «Тираж» written from the settings, a closed or void run, a counter
+    moved or reset — the machine would not stop at the job's count; another wire set by hand — it would cut that."""
     row = current(session, equipment_id)
     run = info(row)
     if run is None or run.get("closed_at") or row.status in FAILED:
@@ -333,6 +359,9 @@ def start_blocker(session: Session, equipment_id: UUID, now: datetime) -> str:
     seen = progress(row, words, True)
     if seen["stage"] == "reset":
         return RESET_START
+    # A wire picked by hand (or a length / order typed) after the job's write: the machine cuts something else.
+    if any(words.get(int(address)) != word for address, word in (run.get("expect") or {}).items()):
+        return other_setup(run.get("label", ""))
     target, now_count = rules._u32(words, 22), seen["counter"]
     if target is None or now_count is None or seen["done"] is None:
         return NOT_FRESH

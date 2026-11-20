@@ -1,8 +1,8 @@
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { failureText } from "./api";
 import {
   CONTROL_NAMES, CONTROL_STATES, IDLE_STATES, commandResult, machineControlApi, operatorText,
-  type ControlCommand, type MachineCommand, type MachineControl, type MachineWindow,
+  type ControlCommand, type MachineCommand, type MachineControl, type MachineRun, type MachineWindow,
 } from "./machineControlApi";
 import { usePolled, type MachineCard, type Tone } from "./machinesApi";
 
@@ -23,20 +23,35 @@ type Note = { text: string; tone: Tone };
 
 const toneClass = (tone?: Tone) => (tone && tone !== "neutral" ? `tone-${tone}` : "");
 
-/** Почему команду сейчас не отправить, коротко для подписи под кнопкой ('' — можно). Пуск с поднятыми роликами
- *  запрещён (сервер: machine_control.BLOCKED_BY_BITS, агент — то же на ПК). */
-export function blocked(command: ControlCommand, card: MachineCard, open: MachineCommand | undefined, lifted: boolean | null = null): string {
+/** Почему «Пуск» не пойдёт из-за задания (сервер: production/machine_runs.start_blocker): ERP пускает станок только по
+ *  открытому, записанному и проверенному прогону. `run` undefined — прогон ещё не загружен (причины нет). */
+export function runBlocker(run: MachineRun | null | undefined): string {
+  if (run === undefined) return "";
+  if (!run || run.stage === "closed" || run.stage === "failed") return "выберите задание";
+  if (run.stage === "writing") return "ждём записи задания";
+  if (run.stage === "moved" || run.stage === "reset") return "передайте задание заново";
+  if (run.stage === "finished") return "тираж готов — завершите задание";
+  if (run.stage === "nolink") return "нет свежих данных станка";
+  return "";
+}
+
+/** Почему команду сейчас не отправить, коротко для подписи под кнопкой ('' — можно). Пуск — только по открытому
+ *  заданию (`runBlocker`) и с опущенными роликами (сервер: machine_control.BLOCKED_BY_BITS, агент — то же на ПК). */
+export function blocked(command: ControlCommand, card: MachineCard, open: MachineCommand | undefined, lifted: boolean | null = null,
+  run?: MachineRun | null): string {
   if (card.link.code !== "ok" || !card.live) return "нет связи";
   if (open && open.command !== "stop") return `ждёт: ${open.summary}`;
-  if (command === "start" && lifted === true) return "сначала опустите ролики";
   const state = card.live.state.code;
   if (command === "alarm_clear") return card.live.alarm.code ? "" : "аварии нет";
   const allowed = CONTROL_STATES[command];
-  if (!allowed || (state !== null && allowed.includes(state))) return "";
-  if (state === 101) return "идёт сброс";
-  if (state === 103) return command === "reset" ? "станок режет — сначала «Стоп»" : "уже режет";
-  if (command === "start") return state === 100 || state === 105 || state === 107 ? "сначала «Сброс»" : "станок не готов";
-  return state === 102 ? "уже сброшен" : "не нужен сейчас";
+  if (allowed && (state === null || !allowed.includes(state))) {
+    if (state === 101) return "идёт сброс";
+    if (state === 103) return command === "reset" ? "станок режет — сначала «Стоп»" : "уже режет";
+    if (command === "start") return state === 100 || state === 105 || state === 107 ? "сначала «Сброс»" : "станок не готов";
+    return state === 102 ? "уже сброшен" : "не нужен сейчас";
+  }
+  if (command !== "start") return "";
+  return runBlocker(run) || (lifted === true ? "опустите ролики" : "");
 }
 
 /** Положение подающих роликов, прочитанное со станка: true — подняты; null — неизвестно. */
@@ -45,7 +60,11 @@ function feedWheel(settings: MachineWindow | null): boolean | null {
   return field && field.read && typeof field.value === "boolean" ? field.value : null;
 }
 
-export function Ob019Controls({ card }: { card: MachineCard }) {
+/** `run` — прогон станка из «Выполнения задания» (undefined — не загружен); `onStartWhy` — почему «Пуск» не пойдёт
+ *  ('' — пойдёт; undefined — без права пуска): та же причина — следующим шагом в строке состояния. */
+export function Ob019Controls({ card, run, onStartWhy }: {
+  card: MachineCard; run?: MachineRun | null; onStartWhy?: (why: string | undefined) => void;
+}) {
   const [fast, setFast] = useState(false);
   const load = useCallback((signal: AbortSignal) => machineControlApi.control(card.inventory, signal), [card.inventory]);
   const loadWindow = useCallback((signal: AbortSignal) => machineControlApi.window(card.inventory, signal), [card.inventory]);
@@ -102,6 +121,8 @@ export function Ob019Controls({ card }: { card: MachineCard }) {
       setBusy(false);
     }
   }
+  const startWhy = canControl ? blocked("start", card, open, lifted, run) : undefined;
+  useEffect(() => { onStartWhy?.(startWhy); }, [startWhy, onStartWhy]);
   const rollersWhy = card.link.code !== "ok" || !card.live ? "нет связи"
     : !data ? "" : !data.can_edit ? "нет права записи"
     : data.state === null || !IDLE_STATES.includes(data.state) ? "только когда станок готов или тираж готов"
@@ -124,7 +145,7 @@ export function Ob019Controls({ card }: { card: MachineCard }) {
       {cell("stop", <button type="button" className="primary danger machine-stop" onClick={() => void sendCommand("stop")}>Стоп</button>,
         card.link.code !== "ok" ? "без связи может не дойти" : "")}
       {canControl && ACTIONS.map((command) => {
-        const why = blocked(command, card, open, lifted);
+        const why = command === "start" ? startWhy ?? "" : blocked(command, card, open, lifted, run);
         return cell(command, <button type="button" className="secondary machine-command" disabled={Boolean(why) || busy}
           onClick={() => void sendCommand(command)}>{CONTROL_NAMES[command]}</button>, why);
       })}
