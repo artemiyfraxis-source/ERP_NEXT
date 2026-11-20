@@ -1,7 +1,8 @@
 /* «Данные отправки» (DispatchCard / DispatchFields): окно в «Приёмке с производства» и тот же набор в «Отгрузке». */
 .dispatch-grid.form-grid { padding: 0; }
 /* Четыре поля в ряд на широком экране: адрес длиннее остальных, тип УПД — короткий список. */
-@media (min-width: 1600px) { .dispatch-grid.form-grid { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.9fr) minmax(0, 1fr) minmax(0, .8fr); } }
+/* Шесть полей (с УПД) — три в ряд без дыры; без УПД «Способ доставки» занимает два места. */
+@media (min-width: 1600px) { .dispatch-grid.form-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .dispatch-grid .dispatch-carrier-wide { grid-column: span 2; } }
 /* Самовывоз: адреса нет — три поля в ряд без дыры. */
 @media (min-width: 1600px) { .dispatch-grid.dispatch-grid-3.form-grid { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, .8fr); } }
 .dispatch-card .page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }

@@ -27,10 +27,10 @@ from .application import (
     ItemAddresseeChange, set_item_addressees,
     AttachCardUpdCommand, AttachUpdCommand, attach_upd_file, store_card_upd_file, UPD_FILE_URL_PREFIX, upd_file_url,
     ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand, EditHeadCommand, HistoryCorrectionCommand,
-    LayOutCommand, PickCommand, PackPermissionChange, SetPackPermissionsCommand, set_pack_permissions, PackProjectCommand, ProjectShipCommand, ProjectShipLine, QueueProjectCommand, RegisterGoodCommand,
+    IssueDocumentCommand, LayOutCommand, PickCommand, PackPermissionChange, SetPackPermissionsCommand, set_pack_permissions, PackProjectCommand, ProjectShipCommand, ProjectShipLine, QueueProjectCommand, RegisterGoodCommand,
     RequestedGood, RollbackShippedCommand, SetProjectAddresseeCommand, SetRequestedCommand, ShipmentCommand,
     ShipCommand, ShippingPermissionError, UnitOfWork, UnpickCommand, UpdUpload, UpdateDocumentsCommand, cancel_shipment,
-    close_shipment, correct_shipment_history, create_shipment, drop_project, edit_shipment_head, lay_out_shipment, mark_shipped, pack_project,
+    close_shipment, correct_shipment_history, create_shipment, drop_project, edit_shipment_head, issue_document, lay_out_shipment, mark_shipped, pack_project,
     pack_shipment, pick_shipment, queue_project, register_good, rollback_shipped, set_project_addressee, set_requested,
     ship_project, unpick_line, update_documents,
 )
@@ -192,6 +192,10 @@ class ProjectPackPayload(BaseModel):
 
 class VersionPayload(BaseModel):
     version: int = Field(ge=1)
+
+
+class IssueDocumentPayload(VersionPayload):
+    document: Literal["pl", "dn"]
 
 
 class UnpickPayload(VersionPayload):
@@ -762,6 +766,15 @@ def unpick(shipment_id: UUID, payload: UnpickPayload, principal: Annotated[Princ
 @router.post("/shipments/{shipment_id}/pack")
 def pack(shipment_id: UUID, payload: VersionPayload, principal: Annotated[Principal, Depends(shipping_warehouse_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)]) -> dict:
     shipment = _run(lambda: pack_shipment(_command(shipment_id, payload, principal, now), uow_factory()))
+    return {"shipment": _shipment_result(shipment)}
+
+
+@router.post("/shipments/{shipment_id}/issue-document")
+# «Сформировать» PL или DN отдельно (владелец 20.11.2026); редактор — менеджер ИЛИ склад, как у «Короба и PL/DN».
+def issue_shipment_document(shipment_id: UUID, payload: IssueDocumentPayload, principal: Annotated[Principal, Depends(shipping_editor_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)]) -> dict:
+    shipment = _run(lambda: issue_document(IssueDocumentCommand(
+        shipment_id=shipment_id, expected_version=payload.version, actor=principal.actor, now=now, document=payload.document,
+    ), uow_factory()))
     return {"shipment": _shipment_result(shipment)}
 
 

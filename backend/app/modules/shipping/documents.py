@@ -173,18 +173,20 @@ def _projects(shipment: Shipment) -> tuple[str, ...]:
     return tuple(dict.fromkeys(line.project for line in shipment.lines if line.project))
 
 
-def _prepare(shipment: Shipment) -> tuple[list[PackedItem], tuple[ShipmentBox, ...]]:
+def _prepare(shipment: Shipment, document: str) -> tuple[list[PackedItem], tuple[ShipmentBox, ...]]:
     packed = packed_by_index(shipment.lines)
     if not packed:
         raise ShippingValidationError("Нечего печатать: в отправке ничего не упаковано.")
-    if not shipment.pl_number or not shipment.dn_number:
-        raise ShippingValidationError("Сначала сформируйте отгрузочные документы")
+    if not (shipment.pl_number if document == "pl" else shipment.dn_number):
+        raise ShippingValidationError(
+            "Сначала сформируйте отгрузочные документы" if not shipment.pl_number and not shipment.dn_number
+            else f"Сначала сформируйте {'PL' if document == 'pl' else 'DN'}")
     return packed, shipment.boxes or default_boxes(packed)
 
 
 def build_packing_lists(shipment: Shipment, packer: str = "") -> list[PackingList]:
     """PL на каждый короб (владелец 15.09.2026): у всех коробов один № PL, место — «BXN i / N»."""
-    packed, boxes = _prepare(shipment)
+    packed, boxes = _prepare(shipment, "pl")
     by_index = {item.item_index: item for item in packed}
     forms = []
     for box in boxes:
@@ -244,7 +246,7 @@ def build_delivery_note(
         gaps = shipping_gaps(shipment, with_track=False)
         if gaps:
             raise ShippingValidationError("Нельзя печатать DN: не хватает — " + ", ".join(gaps))
-    packed, boxes = _prepare(shipment)
+    packed, boxes = _prepare(shipment, "dn")
     rows = tuple(FormRow(
         part=_part(item, item.item_index, _projects(shipment)), name=item.name, quantity=_qty(item.quantity), unit=item.unit or "шт",
         pl=shipment.pl_number, batch=item.grn,
@@ -315,7 +317,7 @@ def _person(value: str) -> str:
 
 def build_box_labels(shipment: Shipment) -> list[BoxLabel]:
     """Этикетка на каждый короб (как PL): у всех один № PL, место — «Упаковка i/N»."""
-    packed, boxes = _prepare(shipment)
+    packed, boxes = _prepare(shipment, "pl")
     units = {item.item_index: item.unit for item in packed}
     projects = list(dict.fromkeys(line.project for line in shipment.lines if line.picked > 0 and line.project))
     return [

@@ -53,8 +53,13 @@ def test_carrier_close_requires_upd_file_number_date_and_track():
         shipped.close()
 
 
-@pytest.mark.parametrize("carrier, required", [("Курьер (наш)", False), (" Курьер (наш) ", False), ("СДЭК", True), ("Яндекс Доставка", True), ("Курьер внешний", True), ("курьер (наш)", True), ("Старый перевозчик", True)])
-def test_track_rule_allows_only_exact_own_courier_without_track(carrier, required):
+@pytest.mark.parametrize("carrier, required", [
+    ("Курьер (наш)", False), (" Курьер (наш) ", False), ("Яндекс Доставка", False), ("Самовывоз", False),
+    ("СДЭК", True), ("Деловые линии", True), ("Почта России", True),
+    ("Курьер внешний", True), ("курьер (наш)", True), ("Старый перевозчик", True),
+])
+def test_track_only_for_carriers_that_issue_one(carrier, required):
+    """Трек — только у ТК, которая его выдаёт (владелец 20.11.2026): самовывоз, наш курьер и Яндекс Доставка уезжают без трека."""
     item = good().accept(Decimal("10"), date(2026, 9, 22), "ГП.26.0000001")
     picked, _ = shipment(item, terms=DeliveryTerms.CARRIER, carrier=carrier).pick({item.id: item.remaining}, {item.id: item.grn or ""})
     packed = picked.pack("PL1", "DN1", date(2026, 9, 22))
