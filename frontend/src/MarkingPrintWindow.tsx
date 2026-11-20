@@ -10,8 +10,10 @@ import "./marking.css";
 type BatchHistory = { id: string; request: MarkingBatchRequest; total: number };
 type PrintRecord = { request: MarkingBatchRequest; pending: boolean; batch: MarkingBatch | null; usedKeys?: string[]; previousRequest?: MarkingBatchRequest; previousKeys?: string[]; history?: BatchHistory[] };
 
-export function MarkingPrintWindow({ source, storageKey, title, close, remaining = false }: {
+/** `equipmentId` / `profileId` — окно открыто из карточки принтера: станок (и профиль) уже выбраны. */
+export function MarkingPrintWindow({ source, storageKey, title, close, remaining = false, equipmentId, profileId: initialProfile }: {
   source: MarkingSource | (() => Promise<MarkingSource>); storageKey?: string; title: string; close: () => void; remaining?: boolean;
+  equipmentId?: string; profileId?: string;
 }) {
   const userId = useCurrentUserId();
   const identity = storageKey ?? (typeof source === "function" ? title : "group_id" in source ? `group:${source.group_id}` : `task:${source.task_id}:${source.operation_id}`);
@@ -44,15 +46,16 @@ export function MarkingPrintWindow({ source, storageKey, title, close, remaining
       if (controller.signal.aborted) return;
       setCatalog(result);
       // An inventory number is a display label; the choice and binding use the equipment UUID.
-      const candidates = result.machines.filter((machine) => machine.binding && machine.profiles.some((profile) => profile.calibrated));
+      const candidates = result.machines.filter((machine) => machine.binding && machine.profiles.some((profile) => profile.calibrated)
+        && (!equipmentId || machine.equipment_id === equipmentId));
       if (candidates.length === 1) {
         setMachineId(candidates[0].equipment_id);
         const profiles = candidates[0].profiles.filter((profile) => profile.calibrated);
-        setProfileId(profiles.length === 1 ? profiles[0].id : "");
-      }
+        setProfileId(profiles.some((profile) => profile.id === initialProfile) ? initialProfile ?? "" : profiles.length === 1 ? profiles[0].id : "");
+      } else if (equipmentId && result.machines.some((machine) => machine.equipment_id === equipmentId)) setMachineId(equipmentId);
     }).catch((problem) => { if (!controller.signal.aborted) setError(failureText(problem, "Не удалось загрузить станки")); });
     return () => controller.abort();
-  }, [reload]);
+  }, [reload, equipmentId, initialProfile]);
   const machine = catalog?.machines.find((item) => item.equipment_id === machineId);
   const profile = machine?.profiles.find((item) => item.id === profileId);
   const printer = catalog ? boundPrinter(catalog, machine) : undefined;

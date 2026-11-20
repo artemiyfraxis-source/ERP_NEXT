@@ -1,4 +1,5 @@
 import { ApiError, api, productionApi, type ProductionOperation } from "./api";
+import type { CuttingGroup } from "./cuttingGroups";
 
 export interface MarkingRect { x: number; y: number; width: number; height: number }
 export interface MarkingGeometry {
@@ -58,6 +59,29 @@ export interface MarkingBatch { id: string; status: MarkingStatus; status_label:
 export type MarkingReprintRequest = ({ sequences: number[] } | { serial_from: number; serial_to: number }) & { reason: string; idempotency_key: string };
 export interface MarkingBatchRequest extends MarkingRequest { manifest_hash: string; idempotency_key: string; reprint_of?: string; reason?: string }
 
+/** «Свой текст» (карточка принтера маркировки): строка — надпись × копий; {№} в строке — номера «с»…«по». */
+export interface MarkingManualLine { text: string; quantity: number }
+export type MarkingOrder = "listed" | "number";
+export interface MarkingManualRequest {
+  profile_id: string; profile_version: number; lines: MarkingManualLine[]; order: MarkingOrder;
+  numbering?: { first: number; last: number } | null;
+  /** «Пробная»: только первая этикетка, одна копия. */
+  trial?: boolean;
+}
+export interface MarkingManualBatchRequest extends MarkingManualRequest { manifest_hash: string; idempotency_key: string }
+/** Состояние станка маркировки для строки состояния карточки: `GET /api/production/machines/card/{инв. №}`. */
+export interface MarkingMachineState {
+  inventory: string; name: string; state: { text: string; tone: "ok" | "warn" | "danger" | "info" | "neutral" };
+  counter: { value: number | null }; last_seen: string | null;
+  marking: { printer: string; present: boolean; queue: number;
+    last_job: { status: string; tone: string; finished_at: string | null; error: string } | null } | null;
+  connection: { pc: string; ip: string; agent: string; version: string; link: { code: string; text: string; tone: string };
+    last_seen: string | null; extra: [string, string][]; error: string };
+  journal: { at: string | null; text: string; tone: string }[];
+}
+/** Напечатано / осталось по КБ источника (`GET /marking/progress`). */
+export interface MarkingSourceProgress { printed: number; remaining: number; remaining_labels: number }
+
 const root = "/api/production/marking";
 const post = <T>(path: string, body: unknown, safe = false) => api<T>(root + path, { method: "POST", body: JSON.stringify(body), safe });
 export const markingApi = {
@@ -83,6 +107,14 @@ export const markingApi = {
   reprint: (batchId: string, body: MarkingReprintRequest) => post<MarkingBatch>(`/batches/${encodeURIComponent(batchId)}/reprint`, body),
   clearPrinter: (equipmentId: string, reason: string, cancelPending = false) =>
     post<MarkingPrinterCommand & { cancelled_jobs?: number }>(`/machines/${encodeURIComponent(equipmentId)}/printer/clear`, { reason, cancel_pending: cancelPending }),
+  manualPreview: (body: MarkingManualRequest) => post<MarkingPreview>("/manual/preview", body),
+  manualEnqueue: (body: MarkingManualBatchRequest) => post<MarkingBatch>("/manual/batches", body),
+  progress: (source: { group_id: string } | { task_id: string; operation_id: string }, signal?: AbortSignal) =>
+    api<MarkingSourceProgress>(`${root}/progress?${new URLSearchParams(source).toString()}`, { signal }),
+  /** Группы резки, видимые сотруднику (мастер — все своей площадки); из них берутся группы печати этикеток. */
+  cuttingGroups: (signal?: AbortSignal) => api<{ groups: CuttingGroup[] }>("/api/production/cutting-groups", { signal }),
+  machineState: (inventory: string, signal?: AbortSignal) =>
+    api<MarkingMachineState>(`/api/production/machines/card/${encodeURIComponent(inventory)}`, { signal }),
   printerCommand: (equipmentId: string, signal?: AbortSignal) =>
     api<MarkingPrinterCommand | null>(`${root}/machines/${encodeURIComponent(equipmentId)}/printer/command`, { signal }),
 };
