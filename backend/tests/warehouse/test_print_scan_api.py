@@ -272,7 +272,7 @@ def test_the_label_printer_card_lists_recent_tsc_jobs(stand):
     admin, _agent, _clock, _sessions, _read = stand
     assert admin.post("/api/stock/labels/test", headers=_csrf(admin)).status_code == 200
     card = admin.get("/api/stock/devices/labels").json()
-    assert card["agent"]["queue"] == 1
+    assert card["agent"]["queue"] == 1 and card["online"] is False, "no TSC agent has asked for jobs"
     job = card["jobs"][0]
     assert (job["what"], job["copies"], job["by"], job["status"], job["lot_id"]) == ("Пробная этикетка", 1, "Admin", "pending", None)
 

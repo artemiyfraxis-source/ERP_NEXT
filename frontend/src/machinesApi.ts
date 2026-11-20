@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, failureText } from "./api";
+import type { WarehouseStation } from "./warehouseDevicesApi";
 
 /* «Станки» (владелец 18.11.2026: «в разделе производство — станки: всё, что мы подключили, и управление ими»), часть 1 —
    только чтение. Сервер: `workflows/machines_api.py`, правила и расшифровка ПЛК — `production/machines.py`. */
@@ -41,6 +42,8 @@ export interface MachineRow {
   setup?: { code: SetupClass | null; label: string };
   /** Открытые задания наладки, по которым настройка ещё не записана («Ждёт наладки»). */
   pending_setup?: number;
+  /** «Принтеры склада»: карточка принтера этикеток или МФУ (WarehouseDeviceCard.tsx). */
+  station?: WarehouseStation;
 }
 
 export type SetupClass = "none" | "simple" | "full";

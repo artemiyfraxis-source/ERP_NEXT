@@ -9,6 +9,7 @@ import { manualJobsApi, type ManualJob } from "./manualJobsApi";
 import { Ob019Card } from "./Ob019Card";
 import { Ob019SetupPanel } from "./Ob019SetupPanel";
 import { PageWindow } from "./PageWindow";
+import { WarehouseDeviceCard } from "./WarehouseDeviceCard";
 import "./machines.css";
 
 /** «Оборудование» (Производство; бывшие «Станки», владелец 19.11.2026): «Запросы на наладку» — список заданий наладки
@@ -46,13 +47,15 @@ function MachineTile({ row, open }: { row: MachineRow; open: (row: MachineRow) =
   const model = [row.article, row.site].filter(Boolean).join(" · ");
   const pending = row.pending_setup ?? 0;
   const setup = row.setup?.code ? row.setup : null;
+  // Принтер или МФУ склада без номера ОБ называется тем, что он есть («МФУ Pantum BM2300»), а не «Без номера».
+  const named = !row.inventory && Boolean(row.station);
   return <button type="button" className={`machine-tile${absent ? " is-absent" : ""}${row.card ? " has-card" : ""}`}
-    onClick={() => open(row)} title={row.card ? "Открыть карточку станка" : "Сведения и наладка"}>
+    onClick={() => open(row)} title={row.card ? "Открыть карточку станка" : row.station ? "Открыть карточку" : "Сведения и наладка"}>
     <span className="machine-tile-head">
-      <strong className={`machine-tile-no${row.inventory ? "" : " is-none"}`}>{row.inventory || "Без номера"}</strong>
+      <strong className={`machine-tile-no${named ? " is-named" : row.inventory ? "" : " is-none"}`}>{row.inventory || (named ? row.name : "Без номера")}</strong>
       <span className={`machine-tile-link ${toneClass(row.link.tone)}`}>{row.link.text}</span>
     </span>
-    <span className="machine-tile-name" title={row.name}>{text(row.name)}</span>
+    {!named && <span className="machine-tile-name" title={row.name}>{text(row.name)}</span>}
     {model && <span className="machine-tile-article machine-mono" title={model}>{model}</span>}
     {row.operations?.length > 0 && <span className="machine-tile-ops" title={row.operations.join(", ")}>{row.operations.join(", ")}</span>}
     {known(row.state.text) && <span className={`machine-tile-state ${toneClass(row.state.tone)}`}>{row.state.text}</span>}
@@ -211,6 +214,7 @@ export function MachinesPage({ setupViewer = false, canWrite = false, initialVie
             Наладка{open.pending_setup ? " · ждёт" : ""}</button>
           <button type="button" className="secondary small" onClick={() => void openManual(open)}>Ручная работа</button>
         </>} />
+      : open?.station ? <WarehouseDeviceCard row={open} station={open.station} close={() => setOpen(null)} />
       : open && <MachineInfo row={open} close={() => setOpen(null)} canWrite={canWrite} saved={() => undefined}
         manual={open.kind === "machine" ? () => void openManual(open) : undefined} />}
     {setupOf && <SetupWindow row={setupOf} canWrite={canWrite} setupViewer={setupViewer} close={() => setSetupOf(null)} saved={() => undefined} />}

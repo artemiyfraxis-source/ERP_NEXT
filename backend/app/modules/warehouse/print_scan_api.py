@@ -3,7 +3,7 @@ label printer and of the МФУ. Migration 0214; queues in `label_jobs.py`, `doc
 
 Label printer (warehouse view; printing goes through the existing `POST /api/stock/labels/test` and
 `POST /api/stock/batches/{lot_id}/label`, warehouse edit):
-- `GET /api/stock/devices/labels` → `{agent, jobs}`: the print agent's last call and queue (`label_jobs.agent_status`)
+- `GET /api/stock/devices/labels` → `{now, online, agent, jobs}`: the print agent's last call and queue (`label_jobs.agent_status`)
   and the last TSPL jobs — what (lot ГРН, article, name / «Пробная этикетка» / «Этикетка СИ»), copies, who, when, state.
 
 МФУ of a PC (`machine_id` — the agent's PC id; «Сканирование документов» on edit, like every scan button):
@@ -43,7 +43,7 @@ from .application import UnitOfWork
 from .devices import DeviceRow, PrinterRow
 from .domain import WarehouseValidationError
 from .infrastructure import StockLotRow
-from .label_jobs import LabelJobRow, agent_status
+from .label_jobs import LabelAgentRow, LabelJobRow, agent_status
 from .labels_api import agent_principal
 from .receipts_api import multipart_file
 from .receipts_application import as_pdf
@@ -79,8 +79,10 @@ def _moment(value: datetime | None) -> str | None:
 
 
 @router.get("/devices/labels")
-def label_printer(_principal: Annotated[Principal, Depends(warehouse_view_principal)], uow_factory: UowFactory) -> dict:
+def label_printer(_principal: Annotated[Principal, Depends(warehouse_view_principal)], now: Now,
+                  uow_factory: UowFactory) -> dict:
     with uow_factory() as uow:
+        seen = uow.session.scalar(select(LabelAgentRow.last_seen).where(LabelAgentRow.id == 1))
         rows = uow.session.execute(select(LabelJobRow.id, LabelJobRow.kind, LabelJobRow.lot_id, LabelJobRow.copies,
             LabelJobRow.created_by, LabelJobRow.created_at, LabelJobRow.status, LabelJobRow.finished_at, LabelJobRow.error)
             .where(LabelJobRow.format == "tspl").order_by(LabelJobRow.created_at.desc(), LabelJobRow.id).limit(LABEL_JOBS)).all()
@@ -95,7 +97,8 @@ def label_printer(_principal: Annotated[Principal, Depends(warehouse_view_princi
                      "lot_id": str(row.lot_id) if lot else None, "copies": row.copies, "by": row.created_by,
                      "at": _moment(row.created_at), "status": row.status, "finished_at": _moment(row.finished_at),
                      "error": row.error or ""})
-    return {"agent": agent_status(uow_factory()), "jobs": jobs}
+    # `online` — the TSC's agent asked for jobs lately (it polls every 3 s); the card says «Нет связи с ПК» otherwise.
+    return {"now": now.isoformat(), "online": _fresh(seen, now), "agent": agent_status(uow_factory()), "jobs": jobs}
 
 
 def _fresh(moment: datetime | None, now: datetime) -> bool:
