@@ -53,6 +53,26 @@ it("opens marking profiles from the equipment card only on demand", async () => 
   expect(await screen.findByText(/Профилей для этих экземпляров нет/)).toBeVisible();
 });
 
+it("sets who sets up a machine from its card next to the «Оборудование» checkbox", async () => {
+  const puts: Array<{ path: string; body: unknown }> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if ((init?.method ?? "GET") === "PUT") { puts.push({ path, body: JSON.parse(String(init?.body)) }); return new Response("{}", { status: 200 }); }
+    if (path === "/api/references/equipment-shown") return new Response(JSON.stringify({ ids: ["unit"] }), { status: 200 });
+    if (path === "/api/references/equipment-setup-by") return new Response(JSON.stringify({ technician_ids: [] }), { status: 200 });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  card("Оборудование", "ОБ.019");
+  const select = await screen.findByRole("combobox", { name: "Кто налаживает ОБ.019" });
+  expect(select).toHaveValue("operator");
+  expect(within(select).getAllByRole("option").map((option) => option.textContent)).toEqual(["Сам оператор", "Наладчик"]);
+  expect(within(select.closest("table") as HTMLElement).getByRole("columnheader", { name: "Кто налаживает" })).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Показывать ОБ.019 в «Оборудовании»" })).toBeChecked();
+  fireEvent.change(select, { target: { value: "technician" } });
+  await waitFor(() => expect(puts).toEqual([{ path: "/api/references/equipment/unit/setup-by", body: { setup_by: "technician" } }]));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Кто налаживает ОБ.019" })).toHaveValue("technician"));
+});
+
 function capabilities(tab: EquipmentTab, code = "A14", fail = false, fieldColumns: string[] = [TARGETS_KEY], links?: CrimpSeries[]) {
   vi.spyOn(referencesApi, "crimpCodes").mockResolvedValue({ owners: {}, missing: [] });
   vi.spyOn(referencesApi, "equipmentModels").mockResolvedValue({ models: [] });

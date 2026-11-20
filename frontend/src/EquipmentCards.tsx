@@ -26,6 +26,9 @@ import { MarkingProfilesWindow } from "./MarkingProfilesWindow";
 
 // DB_SCHEMA keys the importer stores next to the sheet's own columns — shown once, by the sheet header.
 const SCHEMA_KEYS = new Set(["baseValue", "obType"]);
+// «Кто налаживает» станок (владелец 20.11.2026): значение API → подпись.
+type SetupBy = "operator" | "technician";
+const SETUP_BY_LABELS: Record<SetupBy, string> = { operator: "Сам оператор", technician: "Наладчик" };
 const SHOWN_KEYS = new Set(["Тип", "Наменование", "Наименование", "Полное наименование ", "Полное наименование", "Артикул", "Производитель",
   "Расположение", "Инв. номер", "№", "Для базы", "Описание", CODE_KEY, TOOL_KEY, TARGETS_KEY]);
 const ECONOMY = /^(стоимость|коэффициент|[cс]рок окупаемости|кол-во сек|желаемый срок|потребление)/i;
@@ -179,6 +182,25 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     await api(`/api/references/equipment/${encodeURIComponent(item.id)}/shown`, { method: "PUT", body: JSON.stringify({ shown }) });
     setShownIds((ids) => { const next = new Set(ids ?? []); if (shown) next.add(item.id); else next.delete(item.id); return next; });
   }, `${invOf(item) || "Экземпляр"}: ${shown ? "показывается" : "не показывается"} в «Оборудовании»`);
+  // «Кто налаживает» (владелец 20.11.2026, миграция 0213): «Сам оператор» у всех станков, пока не выбран «Наладчик».
+  // Задания для наладчика — только там, где станок говорит «Наладчик»; запуск задания наладку не ждёт.
+  const [technicianIds, setTechnicianIds] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    if (tab !== "ob") return;
+    let live = true;
+    api<{ technician_ids: string[] }>("/api/references/equipment-setup-by").then((result) => { if (live) setTechnicianIds(new Set(result?.technician_ids ?? [])); })
+      .catch(() => { if (live) setTechnicianIds(null); });
+    return () => { live = false; };
+  }, [records, tab]);
+  const setSetupBy = (item: TechOperationRecord, setupBy: SetupBy) => guarded(async () => {
+    await api(`/api/references/equipment/${encodeURIComponent(item.id)}/setup-by`, { method: "PUT", body: JSON.stringify({ setup_by: setupBy }) });
+    setTechnicianIds((ids) => { const next = new Set(ids ?? []); if (setupBy === "technician") next.add(item.id); else next.delete(item.id); return next; });
+  }, `${invOf(item) || "Экземпляр"}: налаживает ${SETUP_BY_LABELS[setupBy].toLowerCase()}`);
+  const setupByOf = (model: EquipmentModel) => {
+    if (!technicianIds) return "";
+    const labels = [...new Set(model.items.map((item) => SETUP_BY_LABELS[technicianIds.has(item.id) ? "technician" : "operator"]))];
+    return labels.length === 1 ? labels[0] : "по-разному";
+  };
   const shownOf = (model: EquipmentModel) => {
     const count = model.items.filter((item) => shownIds?.has(item.id)).length;
     return !shownIds ? "" : count === 0 ? "нет" : count === model.items.length ? "да" : `${count} из ${model.items.length}`;
@@ -274,7 +296,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
         <div className="tr-block"><h4>Экземпляры <span>{open.items.length}</span></h4>
           {open.items.some((item) => ["ОБ.101", "ОБ.102"].includes(invOf(item))) && <button type="button" className="secondary small" aria-haspopup="dialog"
             onClick={() => setMarkingUnits(open.items.map((item) => item.id))}>Профили маркировки</button>}
-          <table className="eq-table"><thead><tr><th>Инв. №</th><th className="num">№</th><th>Расположение</th>{withCodes && <th>Код терминалов</th>}{tab === "ob" && shownIds && <th>В «Оборудовании»</th>}{canEdit && <th aria-label="Действия" />}</tr></thead>
+          <table className="eq-table"><thead><tr><th>Инв. №</th><th className="num">№</th><th>Расположение</th>{withCodes && <th>Код терминалов</th>}{tab === "ob" && shownIds && <th>В «Оборудовании»</th>}{tab === "ob" && technicianIds && <th>Кто налаживает</th>}{canEdit && <th aria-label="Действия" />}</tr></thead>
             <tbody>{open.items.map((item) => <tr key={item.id}>
               <td className="tnum"><b>{typeOf(item) === APPLICATOR_TYPE ? invOf(item) || "—" : unitCell(item, INV_KEY, "Инв. №", invOf(item))}</b></td><td className="tnum num">{unitCell(item, "№", "№")}</td>
               <td>{unitCell(item, "Расположение", "Расположение", valueLabel("Расположение", placeOf(item)))}</td>
@@ -282,6 +304,13 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
               {tab === "ob" && shownIds && <td><label className="check-inline"><input type="checkbox" checked={shownIds.has(item.id)} disabled={!canEdit || busy}
                 aria-label={`Показывать ${invOf(item) || "экземпляр"} в «Оборудовании»`} onChange={(event) => void setShown(item, event.target.checked)} />
                 {shownIds.has(item.id) ? "показывать" : "нет"}</label></td>}
+              {tab === "ob" && technicianIds && <td>{canEdit
+                ? <select aria-label={`Кто налаживает ${invOf(item) || "экземпляр"}`} value={technicianIds.has(item.id) ? "technician" : "operator"} disabled={busy}
+                  onChange={(event) => void setSetupBy(item, event.target.value as SetupBy)}>
+                  <option value="operator">{SETUP_BY_LABELS.operator}</option>
+                  <option value="technician">{SETUP_BY_LABELS.technician}</option>
+                </select>
+                : SETUP_BY_LABELS[technicianIds.has(item.id) ? "technician" : "operator"]}</td>}
               {canEdit && <td><button type="button" className="secondary small" aria-label={`Удалить ${invOf(item) || "экземпляр"}`} disabled={busy} onClick={() => setDeleteId(item.id)}>Удалить</button></td>}
             </tr>)}</tbody></table>
         </div>
@@ -319,6 +348,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     { key: "maker", title: "Производитель", value: (model) => model.maker },
     { key: "place", title: "Расположение", value: (model) => model.places.map((item) => valueLabel("Расположение", item)).join(", "), filter: true },
     { key: "shown", title: "В «Оборудовании»", value: shownOf, filter: true, hint: "Галочка «Показывать в «Оборудовании»» — станок на экране «Производство → Оборудование»" },
+    { key: "setupBy", title: "Кто налаживает", value: setupByOf, filter: true, hint: "«Сам оператор» или «Наладчик» — кто налаживает станок перед заданием" },
     { key: "ops", title: "Операций", numeric: true, value: (model) => opsOf(model).length, hint: "Сколько операций БД.ОП привязано к этой модели" },
     { key: TARGETS_KEY, title: "Обжимает (артикулы контактов)", wrap: true, minWidth: 230,
       value: (model) => (targetsByModel.get(model.key) ?? []).map((part) => part.text).join(", "),
@@ -332,7 +362,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     + report.counts.models_without_units + report.counts.models_units_disagree + report.counts.roles_unconfirmed : 0;
   const allowed = new Set(["inv", "name", "count", "maker", "place", ...(tab === "ob_applicators" ? [] : ["article"]),
     ...(withTargets ? [TARGETS_KEY] : []),
-    ...(tab === "ob_applicators" ? ["kind"] : []), ...(tab === "ob" ? ["ops", ...(shownIds ? ["shown"] : [])] : []),
+    ...(tab === "ob_applicators" ? ["kind"] : []), ...(tab === "ob" ? ["ops", ...(shownIds ? ["shown"] : []), ...(technicianIds ? ["setupBy"] : [])] : []),
     ...(tab === "ob_tools" ? ["type", "code"] : []), ...(tab === "ob_dies" ? ["code"] : [])]);
   const visibleColumns = columns.filter((column) => allowed.has(column.key));
   for (const field of [...new Set([...fieldColumns, ...ownColumns])].filter((name) => !["Инв. номер", "Наименование", "Наменование", "Артикул", "Производитель", "Расположение", "Подтип", "Код в базе терминалов", TARGETS_KEY].includes(name))) visibleColumns.push({
