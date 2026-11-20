@@ -1,7 +1,9 @@
 """HTTP «Станки» (Производство), slice 1 — read only; rules and storage in production/machines.py.
 
-- `GET /api/production/machines` (Производство or Задания, view) → `{now, rows}`: one row per connected thing —
-  ОБ with an ERP bridge (and supported ОБ still waiting for one), marking and label printers of the print agents,
+- `GET /api/production/machines` (Производство or Задания, view) → `{now, rows, families}`: one row per machine of
+  «Оборудование» — a БД.ОБ unit with the checkbox «Показывать в «Оборудовании»» or any unit an ERP agent reaches
+  (owner 19.11.2026), with its article, site, operations and family (`families` — their order), `controlled`, setup
+  class and open setup tasks — then marking and label printers of the print agents,
   scanners and network analysers the agents see. One value per column: № (ОБ or СИ), Название, ПК, IP, Служба, Версия,
   Связь, Последний сигнал, Устройство, Состояние, Также на ПК. One row per physical device: an analyser several PCs
   report (by serial / the registry СИ) stands on the PC with the latest real presence, the others are named in «Также
@@ -35,8 +37,9 @@ from app.modules.production import machines as rules
 from app.modules.production import ob099
 from app.modules.production.api import production_uow_factory
 from app.modules.production.infrastructure import ProductionInstrumentRow
-from app.modules.references.equipment import INV_KEY, NAME_KEYS, field
-from app.modules.references.infrastructure import EquipmentMachineRow
+from app.modules.production.machine_load import normalized_site
+from app.modules.references.equipment import ARTICLE_KEY, INV_KEY, NAME_KEYS, field
+from app.modules.references.infrastructure import EquipmentMachineRow, EquipmentMeasuringRow, EquipmentUnitRow
 from app.modules.warehouse.agent_release import version_tuple
 from app.modules.warehouse.devices import DeviceRow, PrinterRow
 from app.modules.warehouse.label_jobs import OPEN_STATUSES as LABEL_OPEN, LabelAgentRow, LabelJobRow
@@ -162,13 +165,78 @@ def _machine_state(kind: str, link_code: str, snapshot: rules.MachineSnapshotRow
     return {"text": decoded["state"]["text"], "tone": decoded["state"]["tone"]}
 
 
-def _machine_rows(session, equipment, now) -> list[dict]:
-    rows, linked = [], set()
+OPERATIONS_KEY = "Операции"
+SITE_KEY = "Расположение"
+NO_CATALOG = {"article": "", "site": "", "operations": [], "family": ""}
+
+
+def _catalog(unit: EquipmentMachineRow | None) -> dict:
+    """What БД.ОБ says about a machine for its tile: article (model), site ЦАР/ЖУК, operations and their family."""
+    if unit is None:
+        return dict(NO_CATALOG)
+    fields = unit.fields or {}
+    operations = [item.strip() for item in field(fields, OPERATIONS_KEY).split(",") if item.strip()]
+    return {"article": field(fields, ARTICLE_KEY), "site": normalized_site(field(fields, SITE_KEY)),
+            "operations": operations, "family": rules.machine_family(operations, _name(unit))}
+
+
+SETUP_OPEN = ("New", "InProgress", "Blocked")
+SETUP_CONFIGURED = "production.setup_configured"
+NO_SETUP = {"code": None, "label": ""}
+
+
+def _setup_classes(session) -> dict[UUID, dict]:
+    """«Наладка: нет / простая / полная» of every unit with a setup model (equipment_setup_models, 0199); independent
+    of the checkbox. A unit whose stored model breaks the rules gets no class rather than breaking the list."""
+    from app.modules.equipment_setup.setup_model import REQUIRES_LABELS, SetupValidationError, effective
+    from app.modules.equipment_setup.setup_model_infrastructure import SqlAlchemySetupModels
+    store = SqlAlchemySetupModels(session)
+    models, overrides = store.models(), store.overrides()
+    found: dict[UUID, dict] = {}
+    for unit_id, model_id in session.execute(select(EquipmentUnitRow.id, EquipmentUnitRow.model_id)):
+        try:
+            model = effective(models.get(model_id), overrides.get(unit_id))
+        except SetupValidationError:
+            model = None
+        if model is not None:
+            found[unit_id] = {"code": model.requires_setup, "label": REQUIRES_LABELS[model.requires_setup]}
+    return found
+
+
+def pending_setup(session) -> dict[str, int]:
+    """«Ждёт наладки»: open setup tasks (Назначена / В работе / Заблокирована) per unit — a task leaves it when it is
+    «Готова» («Подтвердить готовность наладки» or «Настроено по заданию») or «Отменена». Counted in SQL: the list polls."""
+    from app.modules.equipment_setup.infrastructure import SetupTaskRow
+    return {str(machine_id): count for machine_id, count in session.execute(
+        select(SetupTaskRow.machine_id, func.count()).where(SetupTaskRow.status.in_(SETUP_OPEN))
+        .group_by(SetupTaskRow.machine_id))}
+
+
+def _machine_rows(session, equipment, printers: list[dict], now) -> list[dict]:
+    """The machines of «Оборудование» (owner 19.11.2026: «просто галочку для вытягивания»): a unit of БД.ОБ
+    «Оборудование» with the checkbox «Показывать в «Оборудовании»» (`show_in_equipment`, 0206) plus every unit an ERP
+    agent reaches whatever the checkbox — a machine bridge (live state), a supported or planned bridge not installed
+    yet («Агент не установлен»), the print agent of a marking machine's printer. `controlled` — ERP reaches it through
+    an agent now (the tab «С управлением»); a ticked unit without one says «Нет подключения к ERP». Every row carries
+    the БД.ОБ article, site, operations and family, its setup class and the open setup tasks waiting for it."""
+    rows, shown = [], set()
+    classes, pending = _setup_classes(session), pending_setup(session)
+
+    def unit_of(inventory: str) -> EquipmentMachineRow | None:
+        units = equipment.get(_inventory(inventory), [])
+        return units[0] if len(units) == 1 else None
+
+    def add(row: dict, unit: EquipmentMachineRow | None, controlled: bool) -> None:
+        unit_id = row["equipment_id"]
+        rows.append({**row, **_catalog(unit), "controlled": controlled,
+                     "setup": classes.get(UUID(unit_id), NO_SETUP) if unit_id else NO_SETUP,
+                     "pending_setup": pending.get(unit_id, 0) if unit_id else 0})
+
     for link, snapshot in rules.links(session):
-        linked.add(link.inventory_number)
+        shown.add(_inventory(link.inventory_number))
         code = rules.link_status(snapshot, now)
         unit = next(iter(equipment.get(_inventory(link.inventory_number), [])), None)
-        rows.append({
+        add({
             "key": f"machine:{link.equipment_id}", "kind": "machine", "equipment_id": str(link.equipment_id),
             "inventory": link.inventory_number, "name": _name(unit), "pc": link.pc_name,
             "ip": _address(link.ip_lan, link.ip_seen),
@@ -176,27 +244,50 @@ def _machine_rows(session, equipment, now) -> list[dict]:
             "last_seen": _moment(snapshot.reported_at, now) if snapshot else None,
             "device": rules.DEVICE_NAMES[link.kind], "state": _machine_state(link.kind, code, snapshot),
             "card": True, "others": "",
-        })
+        }, unit, True)
     for inventory, kind in rules.SUPPORTED.items():
-        units = equipment.get(_inventory(inventory), [])
-        if inventory in linked or len(units) != 1:
+        unit = unit_of(inventory)
+        if _inventory(inventory) in shown or unit is None:
             continue
-        rows.append({
-            "key": f"machine:{units[0].id}", "kind": "machine", "equipment_id": str(units[0].id), "inventory": inventory,
-            "name": _name(units[0]), "pc": "", "ip": "", "service": rules.KIND_NAMES[kind], "version": "",
+        shown.add(_inventory(inventory))
+        add({
+            "key": f"machine:{unit.id}", "kind": "machine", "equipment_id": str(unit.id), "inventory": inventory,
+            "name": _name(unit), "pc": "", "ip": "", "service": rules.KIND_NAMES[kind], "version": "",
             "link": _tone("not_installed"), "last_seen": None, "device": rules.DEVICE_NAMES[kind],
             "state": {"text": "—", "tone": "neutral"}, "card": False, "others": "",
-        })
+        }, unit, False)
     for inventory, planned in rules.PLANNED.items():
-        if inventory in linked:
+        if _inventory(inventory) in shown:
             continue
-        rows.append({
-            "key": f"machine:planned:{inventory}", "kind": "machine", "equipment_id": None, "inventory": inventory,
-            "name": _planned_name(equipment, inventory), "pc": planned.pc, "ip": planned.ip,
+        shown.add(_inventory(inventory))
+        unit = unit_of(inventory)
+        add({
+            "key": f"machine:planned:{inventory}", "kind": "machine", "equipment_id": str(unit.id) if unit else None,
+            "inventory": inventory, "name": _planned_name(equipment, inventory), "pc": planned.pc, "ip": planned.ip,
             "service": rules.KIND_NAMES[rules.KIND_OB019], "version": "", "link": _tone("not_installed"),
             "last_seen": None, "device": planned.device, "state": {"text": "—", "tone": "neutral"}, "card": False,
             "others": "",
-        })
+        }, unit, False)
+    # A marking machine reaches ERP through the print agent of its bound printer (ОБ.101 and ОБ.102 share one Godex).
+    by_key = {row["key"]: row for row in printers}
+    by_unit = {str(binding.equipment_id): by_key[f"printer:{binding.machine_id}:{binding.printer}"]
+               for binding in session.scalars(select(MarkingBindingRow))
+               if f"printer:{binding.machine_id}:{binding.printer}" in by_key}
+    for inventory, units in sorted(equipment.items()):
+        if inventory in shown:
+            continue
+        for unit in units:
+            printer = by_unit.get(str(unit.id))
+            if printer is not None:  # a marking machine: its printer's agent is its connection to ERP
+                add({**printer, "key": f"machine:{unit.id}", "kind": "machine", "equipment_id": str(unit.id),
+                     "inventory": inventory, "name": _name(unit)}, unit, True)
+            elif unit.show_in_equipment:
+                add({
+                    "key": f"machine:{unit.id}", "kind": "machine", "equipment_id": str(unit.id), "inventory": inventory,
+                    "name": _name(unit), "pc": "", "ip": "", "service": "", "version": "",
+                    "link": _tone("not_connected"), "last_seen": None, "device": "",
+                    "state": {"text": "—", "tone": "neutral"}, "card": False, "others": "",
+                }, unit, False)
     return rows
 
 
@@ -263,7 +354,7 @@ def _printer_rows(session, equipment, now) -> list[dict]:
             "version": agent.version, "link": _agent_link(agent, now), "last_seen": _moment(agent.last_seen, now),
             "device": printer.name,
             "state": _present(printer.present, printer.last_seen, now, "Принтер виден", "Принтер не найден"),
-            "card": False, "others": "",
+            "card": False, "others": "", **_catalog(unit),
         })
     # The TSC of the warehouse PC: an agent that reports no printer list is known only by its singleton heartbeat.
     if session.scalar(select(PrinterRow.name).where(PrinterRow.kind == "tspl").limit(1)) is None:
@@ -278,7 +369,7 @@ def _printer_rows(session, equipment, now) -> list[dict]:
                 "last_seen": _moment(label.last_seen, now), "device": label.printer,
                 "state": {"text": "Ошибка печати", "tone": "danger"} if label.last_error
                 else {"text": "Принтер виден" if fresh else "—", "tone": "ok" if fresh else "neutral"},
-                "card": False, "others": "",
+                "card": False, "others": "", **NO_CATALOG,
             })
     return rows
 
@@ -347,6 +438,8 @@ def _device_rows(session, now) -> list[dict]:
     only its program installed) is one row on the PC with the latest real presence; the others go to «Также на ПК»."""
     by_serial, arinst = _vna_registry(session)
     captures = _arinst_captures(session)
+    articles = {_inventory(field(row.fields or {}, INV_KEY, "inventoryNumber")): field(row.fields or {}, ARTICLE_KEY)
+                for row in session.scalars(select(EquipmentMeasuringRow))}
     groups: dict[str, list[tuple[DeviceRow, ScanAgentRow]]] = {}
     instruments: dict[str, ProductionInstrumentRow | None] = {}
     for device, agent in session.execute(select(DeviceRow, ScanAgentRow).join(
@@ -380,6 +473,8 @@ def _device_rows(session, now) -> list[dict]:
             "last_seen": _moment(device.last_seen, now), "device": device.name,
             "state": _state(presence), "card": False,
             "others": "; ".join(_other_note(other_agent, other_presence) for _, other_agent, other_presence in others),
+            **NO_CATALOG,
+            "article": articles.get(_inventory(instrument.inventory_number), "") if instrument else "",
         })
     rows.sort(key=lambda row: (row["inventory"] == "", row["inventory"], row["name"], row["pc"]))
     return rows
@@ -567,7 +662,7 @@ def _connection(entry: dict, now: datetime) -> dict:
 
 
 @router.get("/card/{inventory}")
-def machine_window(inventory: str, _principal: Reader, factory: Factory, now: Now) -> dict:
+def machine_window(inventory: str, principal: Reader, factory: Factory, now: Now) -> dict:
     """The machine's card: «Состояние», «Настройки», «Наладка и рецепты», «Журнал», «Связь» — read only."""
     with factory() as uow:
         session = uow.session
@@ -602,7 +697,7 @@ def machine_window(inventory: str, _principal: Reader, factory: Factory, now: No
             card["journal"] = _journal_marking(session, binding, now)
         from .equipment_setup_model import unit_setup  # lazy: that module reuses this one's gate
 
-        card["setup_model"] = unit_setup(session, entry["inventory"], now)
+        card["setup_model"] = unit_setup(session, entry["inventory"], now, principal)
         return card
 
 
@@ -611,10 +706,11 @@ def machines(_principal: Reader, factory: Factory, now: Now) -> dict:
     with factory() as uow:
         session = uow.session
         equipment = _equipment(session)
-        rows = [*_machine_rows(session, equipment, now), *_printer_rows(session, equipment, now),
-                *_device_rows(session, now)]
+        printers = _printer_rows(session, equipment, now)
+        rows = [*_machine_rows(session, equipment, printers, now), *printers, *_device_rows(session, now)]
         machine_list = _machine_list(session, equipment, now)
-    return {"now": now.isoformat(), "machines": machine_list, "rows": _agent_names(rows)}
+    return {"now": now.isoformat(), "machines": machine_list, "rows": _agent_names(rows),
+            "families": list(rules.FAMILIES)}
 
 
 def _agent_names(rows: list[dict]) -> list[dict]:

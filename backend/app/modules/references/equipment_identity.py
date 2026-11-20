@@ -599,6 +599,22 @@ class SqlAlchemyEquipmentRepository:
         prune_models(self.session)
         return str(model.id)
 
+    # «Показывать в «Оборудовании»» (owner 19.11.2026, migration 0206): machines of the tab «Оборудование» only.
+    def shown_ids(self) -> list[str]:
+        from .infrastructure import EquipmentMachineRow
+        return sorted(str(item) for item in self.session.scalars(
+            select(EquipmentMachineRow.id).where(EquipmentMachineRow.show_in_equipment.is_(True))))
+
+    def set_shown(self, unit_id: UUID, shown: bool) -> tuple[str, bool]:
+        """(inventory number, changed); a unit outside «Оборудование» → LookupError."""
+        from .infrastructure import EquipmentMachineRow
+        row = self.session.get(EquipmentMachineRow, unit_id)
+        if row is None:
+            raise LookupError("Галочка «Показывать в «Оборудовании»» есть только у станков вкладки «Оборудование»")
+        changed = row.show_in_equipment != shown
+        row.show_in_equipment = shown
+        return field(row.fields or {}, INV_KEY), changed
+
     def report(self) -> dict:
         return links_report(self.session)
 

@@ -91,7 +91,7 @@ it("groups existing permission keys by navigation and lists their shared screens
     { key: "operations", label: "Системный журнал" },
   ] });
   render(<AccessPage />);
-  expect(await screen.findByText("Ресурсное планирование · Станки · Ручная работа · Производственный план")).toBeInTheDocument();
+  expect(await screen.findByText("Ресурсное планирование · Оборудование · Ручная работа · Производственный план")).toBeInTheDocument();
   expect(screen.getByText("Снабжение · Первичная документация · Закупка")).toBeInTheDocument();
   const table = screen.getByRole("table");
   for (const group of ["Производство", "Снабжение", "Администрирование"]) {
@@ -127,14 +127,14 @@ it("the existing sections have one editable row for the six matrix levels", asyn
   render(<AccessPage />);
   await screen.findByLabelText("Склад · Бригадир");
   const table = screen.getByRole("table");
-  for (const name of ["Станки · Ручная работа · Задания", "ОТК", "Приёмка с производства — складские действия"]) {
+  for (const name of ["Оборудование · Ручная работа · Задания", "ОТК", "Приёмка с производства — складские действия"]) {
     const row = within(table).getByText(name).closest("tr") as HTMLElement;
     expect(within(row).getAllByRole("combobox")).toHaveLength(6);
     for (const level of ["Коммерческое руководство", "Технический руководитель", "Менеджер по проектам", "Кладовщик", "Бригадир", "Оператор"]) {
       expect(screen.getByLabelText(`${name} · ${level}`)).toBeInTheDocument();
     }
   }
-  expect((screen.getByLabelText("Станки · Ручная работа · Задания · Бригадир") as HTMLSelectElement).value).toBe("edit");
+  expect((screen.getByLabelText("Оборудование · Ручная работа · Задания · Бригадир") as HTMLSelectElement).value).toBe("edit");
   expect((screen.getByLabelText("Приёмка с производства — складские действия · Оператор") as HTMLSelectElement).value).toBe("");
 });
 
@@ -174,8 +174,8 @@ it("shows each cell as a chip in the tone of its mode; an empty or stored «за
   render(<AccessPage />);
   await screen.findByLabelText("Склад · Бригадир");
   const chip = (label: string) => screen.getByLabelText(label).parentElement as HTMLElement;
-  expect(chip("Станки · Ручная работа · Задания · Бригадир")).toHaveTextContent(/^полный/);
-  expect(chip("Станки · Ручная работа · Задания · Бригадир")).toHaveClass("tone-ok", "access-set");
+  expect(chip("Оборудование · Ручная работа · Задания · Бригадир")).toHaveTextContent(/^полный/);
+  expect(chip("Оборудование · Ручная работа · Задания · Бригадир")).toHaveClass("tone-ok", "access-set");
   // Склад: a stored «none» and Заявки: nothing stored both read as a closed section, and neither is a change.
   for (const label of ["Склад · Бригадир", "Заявки · Бригадир"]) {
     expect(chip(label)).toHaveTextContent(/^закрыт/);
@@ -209,7 +209,7 @@ it("saves the whole level matrix to /access/levels, without the rows that open n
   fireEvent.change(screen.getByLabelText("Заявки · Коммерческое руководство"), { target: { value: "" } }); // the only cell of the row
   fireEvent.change(screen.getByLabelText("ОТК · Технический руководитель"), { target: { value: "view" } });
   fireEvent.change(screen.getByLabelText("Склад · Бригадир"), { target: { value: "edit" } });
-  fireEvent.change(screen.getByLabelText("Станки · Ручная работа · Задания · Оператор"), { target: { value: "edit" } });
+  fireEvent.change(screen.getByLabelText("Оборудование · Ручная работа · Задания · Оператор"), { target: { value: "edit" } });
   expect(save).toBeEnabled();
   fireEvent.click(save);
 
@@ -307,7 +307,7 @@ it("edits one person's exceptions against what the level gives", async () => {
 
   fireEvent.change(screen.getByLabelText("Исключение: Склад"), { target: { value: "view" } });
   fireEvent.change(screen.getByLabelText("Исключение: ОТК"), { target: { value: "" } });
-  fireEvent.change(screen.getByLabelText("Исключение: Станки · Ручная работа · Задания"), { target: { value: "none" } });
+  fireEvent.change(screen.getByLabelText("Исключение: Оборудование · Ручная работа · Задания"), { target: { value: "none" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить исключения" }));
 
   await waitFor(() => expect(saved).toEqual([{ access: { warehouse: "view", myops: "none" } }]));

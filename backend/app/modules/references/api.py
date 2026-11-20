@@ -32,7 +32,8 @@ from .crimps import change_target, change_terminal, crimp_codes, crimp_overview,
 from .equipment import EXTRA_KEYS, next_instance_inventory, next_model_inventory, next_row_number
 from .application import LinkStockCommand, link_stock_article, stock_links
 from .application import (
-    equipment_links_report, equipment_models, set_equipment_model, set_equipment_role, set_equipment_serves,
+    equipment_links_report, equipment_models, equipment_shown_ids, set_equipment_model, set_equipment_role,
+    set_equipment_serves, set_equipment_shown,
 )
 from .application import (
     CableCatalog, duplicate_equipment, SaveGaugeCommand, SaveHookupCommand, cable_catalog, coax_dia_rows, delete_gauge,
@@ -1171,3 +1172,29 @@ def equipment_unit_model(
 ) -> dict:
     return {"equipment_model_id": _run_edit(lambda: set_equipment_model(
         record_id, payload.model_id, principal.actor, now, uow_factory()))}
+
+
+# «Показывать в «Оборудовании»» (owner 19.11.2026, migration 0206): the checkbox of a БД.ОБ machine that puts it on the
+# screen «Производство → Оборудование». Machines of the tab «Оборудование» only; every change is journaled.
+class ShownPayload(BaseModel):
+    shown: bool
+
+
+@router.get("/equipment-shown")
+def equipment_shown(
+    _principal: Annotated[Principal, Depends(references_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    return {"ids": equipment_shown_ids(uow_factory())}
+
+
+@router.put("/equipment/{record_id}/shown")
+def equipment_shown_set(
+    record_id: UUID,
+    payload: ShownPayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    return {"id": str(record_id), "shown": _run_edit(lambda: set_equipment_shown(
+        record_id, payload.shown, principal.actor, now, uow_factory()))}

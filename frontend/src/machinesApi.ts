@@ -30,11 +30,52 @@ export interface MachineRow {
   card: boolean;
   /** Другие ПК, которые сообщают тот же прибор (не вторая строка), «» — нет. */
   others: string;
+  /** Из БД.ОБ: артикул (модель), участок ЦАР/ЖУК, операции и их семейство. */
+  article: string;
+  site: string;
+  operations: string[];
+  family: string;
+  /** Станок: ERP достаёт его через агента (вкладка «С управлением»). */
+  controlled?: boolean;
+  /** Модель наладки: нет / простая / полная; `code: null` — модель не задана. */
+  setup?: { code: SetupClass | null; label: string };
+  /** Открытые задания наладки, по которым настройка ещё не записана («Ждёт наладки»). */
+  pending_setup?: number;
 }
+
+export type SetupClass = "none" | "simple" | "full";
 
 export interface MachinesList {
   now: string;
   rows: MachineRow[];
+  /** Порядок семейств станков. */
+  families?: string[];
+}
+
+/** Часть «Наладка» карточки станка: модель наладки, что стоит сейчас, эталоны, открытые задания, журнал. */
+export interface UnitSetup {
+  unit_id: string;
+  inventory: string;
+  name: string;
+  model: string;
+  requires_setup: { code: SetupClass | null; label: string };
+  reason: string;
+  parameters: { key: string; label: string; unit: string; source: string; source_field: string; register: string }[];
+  configuration: { values: Record<string, string>; wire: string; contact: string; set_by: string; set_at: string | null; version: number } | null;
+  references: { id: string; wire: string; contact: string; version: number; values: Record<string, string>; created_by: string; created_at: string }[];
+  /** Открытые задания наладки, которые сотрудник видит в «Запросах на наладку»; `mine` — назначены ему,
+   *  `can_confirm` — он может записать «Настроено по заданию» (назначенный наладчик или мастер площадки). */
+  open_tasks: { id: string; version: number; status: string; operation: string; planned_start: string | null; planned_finish: string | null; mine: boolean; can_confirm: boolean }[];
+  history: { at: string; by: string; operation: string; reason: string; values: Record<string, string> }[];
+  online: boolean;
+}
+
+export interface ConfigurationDraft {
+  expected_version: number;
+  task_id: string | null;
+  task_version?: number | null;
+  values: Record<string, string>;
+  reason: string;
 }
 
 export interface Ob019Live {
@@ -110,6 +151,9 @@ export type AnyMachineCard = MachineCard | Ob099MachineCard;
 export const machinesApi = {
   list: (signal?: AbortSignal) => api<MachinesList>("/api/production/machines", { signal }),
   card: (id: string, signal?: AbortSignal) => api<AnyMachineCard>(`/api/production/machines/${encodeURIComponent(id)}`, { signal }),
+  setup: (inventory: string) => api<UnitSetup>(`/api/production/setup-model/${encodeURIComponent(inventory)}`),
+  configure: (inventory: string, draft: ConfigurationDraft) => api<{ ok: boolean; version: number; values: Record<string, string>; task_status?: string }>(
+    `/api/production/setup-model/${encodeURIComponent(inventory)}/configuration`, { method: "POST", body: JSON.stringify(draft) }),
 };
 
 export const POLL_MS = 3000;

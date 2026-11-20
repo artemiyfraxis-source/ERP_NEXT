@@ -37,10 +37,12 @@ function serve(calls: { url: string; body?: unknown }[], list: ManualJob[] = [RU
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = decodeURIComponent(String(input));
     calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    if (url.includes("/setup-model/")) return json({ detail: "нет" }, 404);
     if (url.includes("/manual-jobs/options")) return json(OPTIONS);
     if (url.endsWith("/finish")) return json({ ...DONE, id: "j1", number: "Р-000001" });
     if (url.endsWith("/cancel")) return json({ ...RUNNING, status: "cancelled", status_text: "Отменена", tone: "neutral", cancel_reason: "брак провода", version: 2 });
     if (url.endsWith("/manual-jobs") && init?.method === "POST") return json({ ...RUNNING, id: "j9", number: "Р-000009" });
+    if (url.includes("/setup-model/")) return json({ detail: "нет" }, 404);
     if (url.includes("/manual-jobs?")) return json({ date_from: "2026-11-16", date_to: "2026-11-19", rows: list, can_edit: true });
     return json({ now: "2026-11-19T10:00:00+03:00", rows: [] });
   });
@@ -119,18 +121,21 @@ it("refuses a second job on a busy machine before sending", async () => {
   expect((screen.getByRole("button", { name: "Начать работу" }) as HTMLButtonElement).disabled).toBe(true);
 });
 
-it("opens «Ручная работа» from a machine's details on «Станки»", async () => {
+it("opens «Ручная работа» from a machine's details on «Оборудование»", async () => {
   const machine: MachineRow = {
     key: "machine:u37", kind: "machine", equipment_id: "u37", inventory: "ОБ.037", name: "Автомат резки BZW-880", pc: "", ip: "",
     service: "Агент ERP · станок", version: "", link: { code: "not_installed", text: "Агент не установлен", tone: "neutral" },
     last_seen: null, device: "ПЛК линии резки", state: { text: "—", tone: "neutral" }, card: false, others: "",
+    article: "", site: "ЦАР", operations: [], family: "Резка и зачистка", controlled: false,
   };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = decodeURIComponent(String(input));
+    if (url.includes("/setup-model/")) return json({ detail: "нет" }, 404);
     if (url.includes("/manual-jobs/options")) return json({ ...OPTIONS, machines: [...OPTIONS.machines, { id: "u37", inventory: "ОБ.037", name: "BZW-880", running: null }] });
     return json({ now: "2026-11-19T10:00:00+03:00", rows: [machine] });
   });
   render(<MachinesPage />);
+  fireEvent.click(await screen.findByRole("tab", { name: /Без управления/ }));
   fireEvent.click(await screen.findByText("ОБ.037"));
   fireEvent.click(await screen.findByRole("button", { name: "Ручная работа" }));
   const dialog = await screen.findByRole("dialog", { name: "Новая ручная работа" });
@@ -142,15 +147,18 @@ it("opens the job already running on the machine instead of a new one", async ()
     key: "machine:u19", kind: "machine", equipment_id: "u19", inventory: "ОБ.019", name: "Автомат резки", pc: "", ip: "",
     service: "Агент ERP · станок", version: "", link: { code: "not_installed", text: "Агент не установлен", tone: "neutral" },
     last_seen: null, device: "ПЛК линии резки", state: { text: "—", tone: "neutral" }, card: false, others: "",
+    article: "", site: "ЦАР", operations: [], family: "Резка и зачистка", controlled: false,
   };
   const calls: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = decodeURIComponent(String(input));
     calls.push(url);
+    if (url.includes("/setup-model/")) return json({ detail: "нет" }, 404);
     if (url.includes("/manual-jobs?")) return json({ date_from: "2026-11-19", date_to: "2026-11-19", rows: [DONE, RUNNING], can_edit: true });
     return json({ now: "2026-11-19T10:00:00+03:00", rows: [machine] });
   });
   render(<MachinesPage />);
+  fireEvent.click(await screen.findByRole("tab", { name: /Без управления/ }));
   fireEvent.click(await screen.findByText("ОБ.019"));
   fireEvent.click(await screen.findByRole("button", { name: "Ручная работа" }));
   const dialog = await screen.findByRole("dialog", { name: "Ручная работа Р-000001" });

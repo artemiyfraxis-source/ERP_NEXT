@@ -422,11 +422,11 @@ def test_transition_replay_requires_current_assignee_site(env):
     assert effects(uow) == before
 
 
-@pytest.mark.parametrize("action", [SetupAction.START, SetupAction.BLOCK, SetupAction.RESUME, SetupAction.READY])
+@pytest.mark.parametrize("action", [SetupAction.START, SetupAction.BLOCK, SetupAction.RESUME])
 def test_only_assignee_can_transition_even_admin_cannot_work_on_behalf(env, action):
     uow, manager, _, _, _ = env
     task = assign(env)
-    if action in {SetupAction.BLOCK, SetupAction.RESUME, SetupAction.READY}:
+    if action in {SetupAction.BLOCK, SetupAction.RESUME}:
         task = change(env, task, SetupAction.START)
     if action is SetupAction.RESUME:
         task = change(env, task, SetupAction.BLOCK, reason="нет", machine_available=False)
@@ -435,6 +435,26 @@ def test_only_assignee_can_transition_even_admin_cannot_work_on_behalf(env, acti
         change(env, task, action, caller=principal(manager, full_access=True),
                **({"reason": "нет", "machine_available": False} if action is SetupAction.BLOCK else {}))
     assert effects(uow) == before
+
+
+def test_ready_is_confirmed_by_the_assignee_or_the_master_of_the_site(env):
+    """Owner 19.11.2026: the master of the task's site may confirm readiness too; the fact names the master. The
+    master of another site, an administrator who is no site master and a plain colleague may not."""
+    uow, manager, technician, outsider, _ = env
+    task = change(env, assign(env), SetupAction.START)
+    colleague = SetupPerson(Actor(uuid4(), "Монтажник", "Производство"), "ЦАР", True)
+    admin = SetupPerson(Actor(uuid4(), "Администратор", "ИТ"), "ЦАР", True)
+    for person in (colleague, admin):
+        uow.context.people[person.actor.id] = person
+    before = effects(uow)
+    for caller in (principal(outsider), principal(colleague), principal(admin, full_access=True)):
+        with pytest.raises(SetupPermissionError, match="мастер площадки"):
+            change(env, task, SetupAction.READY, caller=caller)
+    assert effects(uow) == before
+    ready = change(env, task, SetupAction.READY, caller=principal(manager))
+    assert ready.status is SetupStatus.READY and ready.technician_id == technician.actor.id
+    assert uow.transitions.items[-1].actor_id == manager.actor.id
+    assert uow.audit.items[-1].actor == manager.actor
 
 
 @pytest.mark.parametrize("state", ["new", "started", "blocked_available", "blocked_unavailable"])
