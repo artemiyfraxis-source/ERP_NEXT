@@ -28,10 +28,25 @@ function share(part: number, whole: number): string {
 
 const PRESETS: Array<[Preset, string]> = [["today", "Сегодня"], ["week", "Неделя"], ["month", "Месяц"]];
 
+/* Простой станка (миграция 0209): без сотрудника и задания, `item` — станок; время станка, не людей — в итог и
+ * «Простои к работе» не входит, в группах — своими строками «Станок …». */
+type Entry = Downtime & { equipment_id?: string | null };
+type GroupRow = DowntimeReportRow & { machine?: boolean };
+type Loaded = Report & { machine_seconds?: number; machine_count?: number };
+
+function who(row: Entry): string {
+  if (row.equipment_id) return `Станок ${row.item}`.trim();
+  return row.whole_task ? "Задание целиком" : row.operator_name;
+}
+
+function taskText(row: Entry): string {
+  return row.equipment_id ? "—" : [row.task_number, row.project, row.item].filter(Boolean).join(" · ") || "—";
+}
+
 export function DowntimeReport({ close }: { close: () => void }) {
   const [period, setPeriod] = useState(() => presetPeriod("month"));
   const [by, setBy] = useState<DowntimeGroup>("reason");
-  const [report, setReport] = useState<Report | null>(null);
+  const [report, setReport] = useState<Loaded | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -46,23 +61,23 @@ export function DowntimeReport({ close }: { close: () => void }) {
   }, [period.from, period.to, by]);
 
   const total = report?.total_seconds ?? 0;
-  const groupColumns: DataColumn<DowntimeReportRow>[] = [
+  const groupColumns: DataColumn<GroupRow>[] = [
     { key: "label", title: by === "reason" ? "Причина" : "Сотрудник", width: 240, value: (row) => row.label, render: (row) => <b>{row.label}</b> },
     { key: "count", title: "Случаев", numeric: true, width: 90, value: (row) => row.count, render: (row) => <>{row.count}{row.open ? <span className="dwn-open-note"> · {row.open} идёт</span> : null}</> },
     { key: "seconds", title: "Время", numeric: true, width: 120, value: (row) => row.seconds, render: (row) => downtimeDuration(row.seconds) },
-    { key: "share", title: "Доля простоев", numeric: true, width: 130, value: (row) => (total ? row.seconds / total : 0), render: (row) => share(row.seconds, total) },
+    { key: "share", title: "Доля простоев", numeric: true, width: 130, value: (row) => (total && !row.machine ? row.seconds / total : 0), render: (row) => (row.machine ? "—" : share(row.seconds, total)) },
     ...(by === "operator" ? [{
-      key: "work", title: "Работа по журналу", numeric: true, width: 160, value: (row: DowntimeReportRow) => row.work_seconds ?? 0,
-      render: (row: DowntimeReportRow) => (row.work_seconds == null ? "—" : downtimeDuration(row.work_seconds)),
+      key: "work", title: "Работа по журналу", numeric: true, width: 160, value: (row: GroupRow) => row.work_seconds ?? 0,
+      render: (row: GroupRow) => (row.work_seconds == null ? "—" : downtimeDuration(row.work_seconds)),
     }] : []),
   ];
-  const entryColumns: DataColumn<Downtime>[] = [
+  const entryColumns: DataColumn<Entry>[] = [
     { key: "start", title: "Начало", width: 110, value: (row) => row.started_at, render: (row) => formatMoment(row.started_at) },
     { key: "end", title: "Конец", width: 110, value: (row) => row.ended_at ?? "", render: (row) => (row.ended_at ? formatMoment(row.ended_at) : <span className="dwn-open-note">идёт</span>) },
     { key: "time", title: "В периоде", numeric: true, width: 110, value: (row) => row.period_seconds ?? row.seconds, render: (row) => downtimeDuration(row.period_seconds ?? row.seconds) },
     { key: "reason", title: "Причина", filter: true, width: 150, value: (row) => row.reason_name, render: (row) => <b>{row.reason_name}</b> },
-    { key: "who", title: "Сотрудник", filter: true, width: 170, value: (row) => (row.whole_task ? "Задание целиком" : row.operator_name) },
-    { key: "task", title: "Задание", width: 220, value: (row) => `${row.task_number} ${row.project} ${row.item}`, render: (row) => <>{row.task_number} · {row.project}{row.item ? ` · ${row.item}` : ""}{row.stage ? <small className="dwn-sub">{row.stage}</small> : null}</> },
+    { key: "who", title: "Сотрудник", filter: true, width: 170, value: who },
+    { key: "task", title: "Задание", width: 220, value: taskText, render: (row) => <>{taskText(row)}{row.stage ? <small className="dwn-sub">{row.stage}</small> : null}</> },
     { key: "comment", title: "Комментарий", wrap: true, grow: true, value: (row) => row.comment },
     { key: "by", title: "Отметил", hidden: true, value: (row) => [row.started_by_name, row.ended_by_name].filter(Boolean).join(" / ") },
   ];
@@ -94,6 +109,7 @@ export function DowntimeReport({ close }: { close: () => void }) {
         <div><dt>Простои</dt><dd>{downtimeDuration(report.total_seconds)} · {report.total_count} сл.</dd></div>
         <div><dt>Работа по журналу</dt><dd>{downtimeDuration(report.work_seconds)}</dd></div>
         <div><dt>Простои к работе</dt><dd>{share(report.total_seconds, report.work_seconds)}</dd></div>
+        {report.machine_seconds ? <div><dt>Простои станков</dt><dd>{downtimeDuration(report.machine_seconds)} · {report.machine_count ?? 0} сл.</dd></div> : null}
       </dl>
       {!report.rows.length
         ? <div className="empty">Простоев за {label} нет — их отмечают кнопкой «Простой…» на карточке задания.</div>

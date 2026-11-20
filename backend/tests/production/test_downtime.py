@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.main import app
 from app.modules.production.domain import ProductionValidationError
-from app.modules.production.downtime import Downtime, DowntimeConflict, DowntimeReason, report
+from app.modules.production.downtime import Downtime, DowntimeConflict, DowntimeReason, people_total, report
 from app.modules.production.downtime_infrastructure import ProductionDowntimeRow, SqlAlchemyDowntimeRepository
 from app.shared.clock import MOSCOW, moscow_now
 from app.shared.persistence import AuditEventRow
@@ -84,9 +84,17 @@ def test_machine_downtime_has_no_task_and_reports_as_the_machine():
     item = Downtime(**{**_downtime(DowntimeReason.EQUIPMENT, start=(22, 9, 0), end=(22, 9, 45)).__dict__,
                        "task_id": None, "project": "", "task_number": "", "item": "ОБ.027.1 EW-50A",
                        "equipment_id": machine})
-    rows = report([item], by="operator", since=_period(22, 22)[0], until=_period(22, 22)[1],
-                  now=datetime(2026, 9, 22, 12, 0, tzinfo=MOSCOW))
-    assert [(row.key, row.label, row.seconds) for row in rows] == [(f"machine:{machine}", "Станок ОБ.027.1 EW-50A", 2700)]
+    person = _downtime(DowntimeReason.EQUIPMENT, start=(22, 10, 0), end=(22, 10, 30), operator_id=uuid4())
+    since, until = _period(22, 22)
+    now = datetime(2026, 9, 22, 12, 0, tzinfo=MOSCOW)
+    rows = report([item, person], by="operator", since=since, until=until, now=now)
+    assert [(row.key, row.label, row.seconds, row.machine) for row in rows] == [
+        (str(person.operator_id), "Оператор", 1800, False), (f"machine:{machine}", "Станок ОБ.027.1 EW-50A", 2700, True)]
+    # Machine time is not people time: its own rows by reason too, and out of the total «Простои к работе» uses.
+    rows = report([item, person], by="reason", since=since, until=until, now=now)
+    assert [(row.key, row.label, row.seconds, row.machine) for row in rows] == [
+        ("equipment", "Оборудование", 1800, False), ("machine:equipment", "Станок: Оборудование", 2700, True)]
+    assert people_total(rows) == (1800, 1)
 
 
 # --- база ---

@@ -156,7 +156,7 @@ def test_only_the_number_is_retried_other_refusals_say_what_happened(machines_ap
     assert attempts == [1]
 
 
-# --- «Сделано» and the machine's downtime (machine without control, migration 0208) ---
+# --- «Сделано» and the machine's downtime (machine without control, migration 0209) ---
 
 def test_progress_is_typed_while_running_with_version_and_kept_after_the_finish(machines_api):
     sessions, clock, admin, ob019, _ = machines_api
@@ -241,3 +241,22 @@ def test_a_parallel_downtime_start_is_refused_by_the_index(machines_api, monkeyp
     monkeypatch.setattr(SqlAlchemyDowntimeRepository, "open_for_equipment", lambda self, equipment_id: None)
     raced = _post(admin, f"{BASE}/downtime", {"equipment_id": str(ob019), "reason": "no_material"})
     assert raced.status_code == 409 and "уже открыт простой" in raced.json()["detail"]
+
+
+def test_machine_downtime_is_machine_time_in_the_shop_report(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    item = _post(admin, f"{BASE}/downtime", {"equipment_id": str(ob019), "reason": "equipment"}).json()["downtime"]
+    opened = [row for row in admin.get("/api/production/downtime/open").json()["downtimes"] if row["id"] == item["id"]]
+    assert [(row["whole_task"], row["equipment_id"]) for row in opened] == [(False, str(ob019))]
+    clock.now += timedelta(minutes=30)
+    _post(admin, f"{BASE}/downtime/{item['id']}/stop", {})
+    day = clock.now.date().isoformat()
+    for by in ("reason", "operator"):
+        answer = admin.get("/api/production/downtime/report", params={"date_from": day, "date_to": day, "by": by})
+        assert answer.status_code == 200, answer.text
+        result = answer.json()
+        assert (result["total_seconds"], result["total_count"]) == (0, 0)  # not in «Простои к работе»
+        assert (result["machine_seconds"], result["machine_count"]) == (1800, 1)
+        groups = [(row["label"].startswith("Станок"), row["machine"], row["seconds"]) for row in result["rows"]]
+        assert groups == [(True, True, 1800)]
+        assert [row["id"] for row in result["entries"]] == [item["id"]]  # still listed in the period

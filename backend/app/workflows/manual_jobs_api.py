@@ -17,11 +17,11 @@ Started, finished and cancelled by «Производство» or «Задан�
   material window — «Списать с партии» is never part of the finish).
 - `POST /api/production/manual-jobs/{id}/cancel` `{version, reason}` → cancelled.
 - `POST /api/production/manual-jobs/{id}/progress` `{quantity, version}` → the running job with «Сделано» typed at a
-  machine without control (migration 0208): quantity >= 0, more than planned is allowed (`progress_over_plan` warns);
+  machine without control (migration 0209): quantity >= 0, more than planned is allowed (`progress_over_plan` warns);
   a finished or cancelled job → 409.
 Each change carries the `version` the person saw (409 when it moved) and is journaled on the job.
 
-Machine downtime (owner 20.11.2026, migration 0208) — of the machine itself, not of a task (no PF is paused):
+Machine downtime (owner 20.11.2026, migration 0209) — of the machine itself, not of a task (no PF is paused):
 - `POST /api/production/manual-jobs/downtime` `{equipment_id, reason, comment}` → `{downtime}`; the reasons are those of
   the task downtimes (production/downtime.py, «Другое» needs a comment); 409 while one is open on that machine.
 - `POST /api/production/manual-jobs/downtime/{id}/stop` → `{downtime}` ended; 409 when it was already ended.

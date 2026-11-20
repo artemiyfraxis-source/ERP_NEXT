@@ -32,7 +32,7 @@ class ProductionDowntimeRow(Base):
         CheckConstraint("equipment_id IS NULL OR (task_id IS NULL AND operation_id IS NULL)",
                         name="ck_production_downtimes_equipment"),
         Index(OPEN_INDEX, "task_id", unique=True, sqlite_where=text(OPEN_WHERE), postgresql_where=text(OPEN_WHERE)),
-        # Migration 0208: one open downtime per machine.
+        # Migration 0209: one open downtime per machine.
         Index(OPEN_EQUIPMENT_INDEX, "equipment_id", unique=True,
               sqlite_where=text(OPEN_WHERE), postgresql_where=text(OPEN_WHERE)),
         Index("ix_production_downtimes_started_at", "started_at"),

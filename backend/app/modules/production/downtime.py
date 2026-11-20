@@ -6,7 +6,7 @@ PRODUCTION_PLANNER Василия (src/domain/idle.ts, перенос с раз�
 целиком. Причина — из короткого списка; у «Другое» обязателен комментарий. Начало пишется нажатием «Простой»,
 конец — «Закончить простой»; у задания открыт не больше одного простоя (база держит частичным UNIQUE).
 
-Простой станка (владелец, 20.11.2026; миграция 0208): у станка без управления — простой самого станка
+Простой станка (владелец, 20.11.2026; миграция 0209): у станка без управления — простой самого станка
 (`equipment_id`), без задания и операции, задание он не останавливает. У станка открыт не больше одного простоя
 (частичный UNIQUE). Отмечают и заканчивают его на карточке станка (app/workflows/manual_jobs_api.py).
 
@@ -127,12 +127,15 @@ class ReportRow:
     count: int
     seconds: int
     open: int
+    # Простой станка (миграция 0209) — время станка, не людей: в итог и «Простои к работе» не входит.
+    machine: bool = False
 
 
 def report(
     downtimes: Iterable[Downtime], *, by: str, since: datetime, until: datetime, now: datetime,
 ) -> list[ReportRow]:
-    """Сумма простоев за период: по причинам — в порядке списка причин (без пустых), по сотрудникам — по убыванию."""
+    """Сумма простоев за период: по причинам — в порядке списка причин (без пустых), простои станков — отдельными
+    строками «Станок: <причина>» после них; по сотрудникам — по убыванию, станок — строкой «Станок <станок>»."""
     if by not in REPORT_KEYS:
         raise ProductionValidationError("Отчёт по простоям группируется по причине или по сотруднику")
     sums: dict[str, list] = {}
@@ -140,20 +143,29 @@ def report(
         seconds = item.seconds_within(since, until, now)
         if seconds <= 0:
             continue
+        machine = item.equipment_id is not None
         if by == "reason":
-            key, label = item.reason.value, item.reason_name
+            key, label = ((f"machine:{item.reason.value}", f"{MACHINE}: {item.reason_name}") if machine
+                          else (item.reason.value, item.reason_name))
         elif item.operator_id:
             key, label = str(item.operator_id), item.operator_name
-        elif item.equipment_id:
+        elif machine:
             key, label = f"machine:{item.equipment_id}", f"{MACHINE} {item.item}".strip()
         else:
             key, label = "task", WHOLE_TASK
-        row = sums.setdefault(key, [label, 0, 0, 0])
+        row = sums.setdefault(key, [label, 0, 0, 0, machine])
         row[1] += 1
         row[2] += seconds
         row[3] += int(item.open)
-    rows = [ReportRow(key, label, count, seconds, opened) for key, (label, count, seconds, opened) in sums.items()]
+    rows = [ReportRow(key, label, count, seconds, opened, machine)
+            for key, (label, count, seconds, opened, machine) in sums.items()]
     if by == "reason":
         order = {reason.value: position for position, reason in enumerate(DowntimeReason)}
-        return sorted(rows, key=lambda row: order[row.key])
-    return sorted(rows, key=lambda row: (-row.seconds, row.label))
+        return sorted(rows, key=lambda row: (row.machine, order[row.key.removeprefix("machine:")]))
+    return sorted(rows, key=lambda row: (row.machine, -row.seconds, row.label))
+
+
+def people_total(rows: Iterable[ReportRow]) -> tuple[int, int]:
+    """Итог простоев людей и заданий (секунды, случаи) — без простоев станков: к нему считают «Простои к работе»."""
+    people = [row for row in rows if not row.machine]
+    return sum(row.seconds for row in people), sum(row.count for row in people)
