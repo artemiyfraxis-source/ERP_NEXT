@@ -4215,6 +4215,10 @@ export interface VnaCaptureJob {
   instrument_id: string;
   capture_settings: VnaCaptureSettings | null;
 }
+/** Снятый файл замера из «Последних файлов» карточки анализатора: только свои, завершённые. */
+export interface VnaCaptureFile {
+  id: string; file_name: string; source: VnaSource; finished_at: string | null; pc: string; capture_settings: VnaCaptureSettings | null;
+}
 export type VnaCaptureStart = VnaCaptureJob | { status: "choose"; agents: VnaAgent[]; preferred_agent_id?: string } | { status: "no_agent"; message?: string; transfer?: VnaTransfer | null };
 const VNA_JOBS = "/api/stock/vna/jobs";
 export const vnaCaptureApi = {
@@ -4223,6 +4227,8 @@ export const vnaCaptureApi = {
   status: (id: string, signal?: AbortSignal) => api<VnaCaptureJob>(`${VNA_JOBS}/${encodeURIComponent(id)}`, { signal }),
   file: (id: string, signal?: AbortSignal) => api<Blob>(`${VNA_JOBS}/${encodeURIComponent(id)}/file`, { blob: true, signal }),
   cancel: (id: string) => api<VnaCaptureJob>(`${VNA_JOBS}/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  recent: (instrumentId: string, limit = 10) =>
+    api<{ captures: VnaCaptureFile[] }>(`${VNA_JOBS}?instrument_id=${encodeURIComponent(instrumentId)}&limit=${limit}`),
 };
 
 export const productionApi = {

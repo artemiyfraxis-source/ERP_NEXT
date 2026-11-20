@@ -86,6 +86,8 @@ export interface MachineControl {
   can_edit: boolean;
   /** Право «Управление станками»: Сброс, Пуск, Сброс аварии. */
   can_control?: boolean;
+  /** «Стоп» и любые команды станку: Производство или Задания; ОТК карточку только читает. */
+  can_stop?: boolean;
   /** Служба записи на ПК станка старше 1.2.0: поля `runner_keys` (остальные страницы пульта) не записываются. */
   runner_outdated?: boolean;
   runner_keys?: string[];

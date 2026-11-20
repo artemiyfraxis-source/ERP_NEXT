@@ -70,6 +70,13 @@ it("Stop is there for everyone who sees the card and goes in one click; the rest
   expect(posts[0].body).toEqual({ command: "stop" });
 });
 
+it("ОТК reads the card but gets no Stop or any other command (review of #999)", async () => {
+  mockApi(control({ can_control: false, can_stop: false, can_edit: false }));
+  render(<Ob019Controls card={card(103, "Работает")} />);
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Стоп" })).toBeNull());
+  for (const name of ["Пуск", "Сброс", "Сброс аварии"]) expect(screen.queryByRole("button", { name })).toBeNull();
+});
+
 it("Start goes in one click with the state the card saw, no «руки убраны» dialog, and its result shows under it", async () => {
   const posts = mockApi(control());
   render(<Ob019Controls card={card(102, "Готов, ждёт пуска")} />);

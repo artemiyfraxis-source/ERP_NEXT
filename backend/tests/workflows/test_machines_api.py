@@ -217,6 +217,8 @@ def test_one_analyser_is_one_row_on_the_pc_where_it_really_is(machines_api):
     assert arinst["name"] == "Arinst VNA-DL 1–8800 МГц" and arinst["state"]["text"] == "Подключён"
     assert arinst["others"] == "DESKTOP-5O46RH6 — только программа, без прибора (агент 2.9.2)"
     assert vna["ip"] == "192.168.1.121" and vna["device"] == planar and vna["others"] == "DESKTOP-5O46RH6 — не найден"
+    # The analyser card picks its work by the reporting program and opens the СИ it is (owner 20.11.2026).
+    assert (arinst["vna"], vna["vna"]) == ("arinst", "s2vna") and arinst["instrument_id"] and vna["instrument_id"]
     # Nowhere now → the PC where it was seen last, «Не найден», and since when.
     with sessions.begin() as session:
         session.get(DeviceRow, ("otk", "s2vna", "26030095")).present = False
@@ -271,8 +273,9 @@ def test_both_ob099_presses_wait_for_their_agent_with_the_catalogue_name(machine
 
 
 @pytest.mark.parametrize("permissions, opens", [
-    ({"production": "view"}, True), ({"myops": "view"}, True), ({"warehouse": "edit"}, False), ({}, False)])
-def test_the_list_opens_for_production_or_myops_view_only(permissions, opens):
+    ({"production": "view"}, True), ({"myops": "view"}, True), ({"quality": "view"}, True), ({"warehouse": "edit"}, False),
+    ({}, False)])
+def test_the_list_opens_for_production_myops_or_quality_view_only(permissions, opens):
     from fastapi import HTTPException
     from dataclasses import replace
     from tests.identity.test_level_gates import _principal

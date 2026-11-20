@@ -92,7 +92,7 @@ def run_state(inventory: str, principal: Reader, factory: Factory, now: Now) -> 
         session = uow.session
         link = _link(session, inventory)
         commands.latest(session, link.equipment_id, now, limit=1)  # what timed out meanwhile shows as such
-        settle_run(uow, link.equipment_id, principal.actor, now)
+        settle_run(uow, link.equipment_id, now)
         words, link_ok, problem = _live(session, link.equipment_id, now)
         row = runs.current(session, link.equipment_id)
         result = {"run": runs.view(row, words, link_ok) if row is not None else None,
@@ -190,7 +190,7 @@ def close_run(inventory: str, payload: ClosePayload, principal: Writer, factory:
     with factory() as uow:
         session = uow.session
         link = _link(session, inventory)
-        settle_run(uow, link.equipment_id, principal.actor, now)
+        settle_run(uow, link.equipment_id, now)
         row = runs.current(session, link.equipment_id, for_update=True)  # a parallel close or re-send waits here
         if row is None or row.id != payload.run_id or not runs.is_open(row):
             raise HTTPException(409, "Это задание на станке уже завершено или сменилось — обновите карточку")

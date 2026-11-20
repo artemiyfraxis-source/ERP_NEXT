@@ -43,6 +43,10 @@ export interface MachineRow {
   setup?: { code: SetupClass | null; label: string };
   /** Открытые задания наладки, по которым настройка ещё не записана («Ждёт наладки»). */
   pending_setup?: number;
+  /** Анализатор цепей: какая программа его сообщает — «s2vna» (рабочее место ВАЦ) или «arinst» (файлы ArinstVL). */
+  vna?: "s2vna" | "arinst" | null;
+  /** СИ реестра, которым этот прибор является; null — прибора нет в реестре. */
+  instrument_id?: string | null;
 }
 
 export type SetupClass = "none" | "simple" | "full";
