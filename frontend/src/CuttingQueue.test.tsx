@@ -155,3 +155,16 @@ it("reports the operations it lists and clears them on unmount", async () => {
   view.unmount();
   expect(listed).toHaveBeenLastCalledWith(new Set());
 });
+
+it("lists «Все станки» first and asks for machine_id=all", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.includes("/machines")) return json({ machines: [{ machine_id: "all", machine_name: "Все станки", rows: 3, left: "175", projects: 2 }, ...MACHINES.machines] });
+    return json({ machine_id: url.includes("machine_id=all") ? "all" : "ОБ.095", version: "v", rows: ROWS });
+  });
+  render(<CuttingQueue />);
+  await screen.findByText("708К.");
+  expect(screen.getByLabelText("Станок")).toHaveValue("all");
+  expect(screen.getAllByRole("option")[0]).toHaveTextContent("Все станки · 3 строк");
+  expect(fetchMock.mock.calls.some(([url]) => String(url).includes("machine_id=all"))).toBe(true);
+});

@@ -17,7 +17,7 @@ import "./cuttingGroups.css";
 
 const rowKey = (row: CuttingMember) => row.id;
 
-export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruction, mutate, onBehalfOf = "", performerId, busy = false, activeSession, canRefreshEtk = false }: {
+export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruction, mutate, onBehalfOf = "", performerId, busy = false, activeSession, canRefreshEtk = false, master = false }: {
   group: CuttingGroup;
   readOnly: boolean;
   renderInstruction: (row: CuttingMember, close: () => void) => ReactNode;
@@ -28,6 +28,8 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
   activeSession?: ProductionWorkSession | null;
   /** Master only: re-pin the unstarted group to the current ETK revision. */
   canRefreshEtk?: boolean;
+  /** Норму группы видит только мастер; оператору она не нужна (владелец 20.11). */
+  master?: boolean;
 }) {
   const [group, setGroup] = useState(initialGroup);
   useEffect(() => setGroup(initialGroup), [initialGroup]);
@@ -73,16 +75,44 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
     catch { /* The actionable error stays in the card and open form. */ }
     finally { inFlight.current = false; setPending(false); }
   }
+  // «Готово» по строке (владелец 20.11): годные одной КБ уходят общей сдачей группы с одной строкой; брак — окно «Брак…».
+  const perRow = look === "cut" || look === "mixed";
+  const [rowQty, setRowQty] = useState<Record<string, string>>({});
+  const rowRetry = useRef<Record<string, { payload: string; key: string }>>({});
+  const left = (row: CuttingMember) => Math.max(0, Number(row.operation_quantity) - Number(row.good) - Number(row.defects));
+  // Ключ с уже сданным: после «Готово» поле возвращается к остатку само.
+  const qtyKey = (row: CuttingMember) => `${row.id}:${row.good}:${row.defects}`;
+  const qtyOf = (row: CuttingMember) => rowQty[qtyKey(row)] ?? String(left(row));
+  const qtyOk = (row: CuttingMember) => { const n = Number(qtyOf(row)); return Number.isFinite(n) && n > 0 && n <= left(row); };
+  function rowDone(row: CuttingMember) {
+    if (!qtyOk(row)) return;
+    const result: CuttingSubmission[] = [{ member_id: row.id, good_quantity: qtyOf(row), defect_quantity: "0", defect_character: "", defect_description: "" }];
+    const payload = JSON.stringify({ version: group.version, rows: result });
+    if (rowRetry.current[row.id]?.payload !== payload) rowRetry.current[row.id] = { payload, key: crypto.randomUUID() };
+    const key = rowRetry.current[row.id].key;
+    void act(() => productionApi.submitCuttingGroup(group.id, group.version, result, { onBehalfOf, key }));
+  }
   const [instructionId, setInstructionId] = useState(rows[0]?.id ?? "");
   const instruction = rows.find((row) => row.id === instructionId) ?? rows[0];
   if (!rows.length) return null;
   const done = rows.every((row) => row.state === "done");
   const progressOf = (row: CuttingMember) => progress?.rows.find((item) => item.task_id === row.task_id);
+  const working = !readOnly && !done && ownsSession && session?.status === "В работе" && !group.partial_view;
+  const doneColumns: DataColumn<CuttingMember>[] = !perRow || readOnly ? [] : [
+    { key: "left", title: "Осталось, шт", numeric: true, value: (row) => left(row) },
+    { key: "qty", title: "Готово, шт", numeric: true, value: (row) => qtyOf(row), render: (row) => row.state === "done" ? "—"
+      : <input type="number" name={`ready-${row.id}`} autoComplete="off" min="1" max={left(row)} step="any" inputMode="decimal" aria-label={`Сколько готово ${row.item}`}
+        disabled={!working || disabled} value={qtyOf(row)} onChange={(event) => setRowQty((current) => ({ ...current, [qtyKey(row)]: event.target.value }))} /> },
+    { key: "act", title: "", value: () => "", render: (row) => row.state === "done" ? <span className="cutting-row-done">Сдано</span>
+      : <button type="button" className="primary small" disabled={!working || disabled || !qtyOk(row)} aria-label={`Готово ${row.item}`}
+        title={working ? undefined : "Сначала нажмите «Начать»"} onClick={() => rowDone(row)}>Готово</button> },
+  ];
   const kindColumns: Record<"cut" | "labels" | "tubes", DataColumn<CuttingMember>[]> = {
     cut: [
       { key: "item", title: "КБ", value: (row) => row.item, render: (row) => <b>{row.item}</b> },
       { key: "length", title: "Длина, мм", numeric: true, value: (row) => row.cut_length_mm == null ? null : Number(row.cut_length_mm) },
       { key: "blanks", title: "Шт.", numeric: true, value: (row) => Number(row.blank_quantity) },
+      ...doneColumns,
     ],
     labels: [
       { key: "item", title: "КБ", value: (row) => row.item, render: (row) => <b>{row.item}</b> },
@@ -112,6 +142,7 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
     { key: "good", title: "Годные", numeric: true, value: (row) => Number(row.good) },
     { key: "defects", title: "Брак", numeric: true, value: (row) => Number(row.defects) },
     { key: "state", title: "Состояние", value: (row) => cuttingState[row.state] },
+    ...doneColumns,
   ];
   const title = look === "mixed" ? `Резка · ${group.project} · ПФ-1 Заготовки · ${rows.length} КБ`
     : `${cuttingKindTitle[look]} · ${group.project} · ${rows.length} КБ`;
@@ -123,7 +154,7 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
           {!session && <button type="button" className="primary" disabled={disabled || Boolean(activeSession) || group.partial_view}
             onClick={() => void act(() => productionApi.startCuttingGroup(group.id, group.version, work("start")))}>Начать</button>}
           <button type="button" className="secondary" disabled={disabled || !ownsSession || session?.status !== "В работе" || group.partial_view}
-            aria-haspopup="dialog" onClick={() => { setError(""); setView("submit"); }}>Сдать</button>
+            aria-haspopup="dialog" onClick={() => { setError(""); setView("submit"); }}>{perRow ? "Брак…" : "Сдать…"}</button>
           {group.downtime ? <button type="button" className="secondary" disabled={disabled || !ownsSession || group.partial_view}
             onClick={() => void act(() => productionApi.cuttingDowntime(group.id, group.version, "stop", {}, work("downtime-stop")))}>Закончить простой</button>
             : <button type="button" className="secondary" disabled={disabled || !ownsSession || group.partial_view} aria-haspopup="dialog"
@@ -137,7 +168,7 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
         {(look === "mixed" || look === "labels") && <button type="button" className="secondary" aria-haspopup="dialog" onClick={() => setView("labels")}>Этикетки группы</button>}
       </div>
     </div>
-    <div className="mo-s mo-plan">План {windowText(group.planned_start, group.planned_finish)} · норма {formatNumber(group.norm_seconds / 60)} мин</div>
+    <div className="mo-s mo-plan">План {windowText(group.planned_start, group.planned_finish)} {master && <> · норма {formatNumber(group.norm_seconds / 60)} мин</>}</div>
     {session && <div className="mo-fact" role="status">{session.status === "Пауза" ? "На простое" : "В работе"} · время {clock(workedSeconds(session, now))}
       {group.downtime && <> · {group.downtime.reason_name}{group.downtime.comment ? ` · ${group.downtime.comment}` : ""}</>}</div>}
     {group.partial_view && <div className="warning-inline">Показаны только назначенные вам КБ. Этикетки — для показанных КБ.</div>}

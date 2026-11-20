@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { CuttingGroupCard } from "./CuttingGroupCard";
-import { ProductionPage } from "./ProductionPage";
+import { ProductionPage, cutGroupInQueue } from "./ProductionPage";
 import { cuttingLabels, cuttingLabelsPage, cuttingLabelsTitle, cuttingRows, type CuttingGroup } from "./cuttingGroups";
 import type { Principal, ProductionTask } from "./api";
 import { buildPrintDocumentHtml, openPrintDocument } from "./print";
@@ -39,8 +39,8 @@ it("starts one group and renders a working timer with separate PF and blank quan
   expect(screen.getByText("РЗ-0001 · ЦАР")).toBeTruthy();
   expect(screen.getAllByRole("button", { name: "Начать" })).toHaveLength(1);
   expect(screen.getByRole("button", { name: "Начать" })).toBeEnabled();
-  expect(screen.getByRole("button", { name: "Сдать" })).toBeDisabled();
-  expect(screen.getAllByRole("button", { name: "Сдать" })).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "Брак…" })).toBeDisabled();
+  expect(screen.getAllByRole("button", { name: "Брак…" })).toHaveLength(1);
   expect(screen.getAllByRole("button", { name: "Простой" })).toHaveLength(1);
   expect(screen.getAllByRole("row")).toHaveLength(5);
   expect(screen.getAllByText("60")).toHaveLength(4);
@@ -49,7 +49,7 @@ it("starts one group and renders a working timer with separate PF and blank quan
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(String(fetch.mock.calls[0][0])).toContain("/cutting-groups/group-1/start");
   expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual({ version: 1 });
-  fireEvent.click(screen.getByRole("button", { name: "Сдать" }));
+  fireEvent.click(screen.getByRole("button", { name: "Брак…" }));
   const dialog = screen.getByRole("dialog", { name: "Сдать группу резки" });
   for (const row of group.rows) {
     expect(within(dialog).getByLabelText(`Годные ${row.item}`)).toHaveValue(15);
@@ -64,7 +64,7 @@ it("submits all KB quantities atomically and keeps the retry key and form after 
     String(input).includes("/machines/runs/") ? json({ runs: [] }) : answers.shift()!);
   const submits = () => all.mock.calls.filter(([input]) => !String(input).includes("/machines/runs/"));
   render(<CuttingGroupCard group={working} readOnly={false} onBehalfOf="operator" renderInstruction={() => null} />);
-  fireEvent.click(screen.getByRole("button", { name: "Сдать" }));
+  fireEvent.click(screen.getByRole("button", { name: "Брак…" }));
   fireEvent.change(screen.getByLabelText("Годные КБ1"), { target: { value: "4" } });
   fireEvent.change(screen.getByLabelText("Брак КБ1"), { target: { value: "1" } });
   expect(screen.getByRole("button", { name: "Сдать группу" })).toBeDisabled();
@@ -91,7 +91,7 @@ it("fills «Годные» of the КБ of that length from the ОБ.019 count, w
       closed_at: "2026-11-19T10:05:00+03:00", closed_by: "Слава" }] })
     : json({ group: working, outputs: [] }));
   render(<CuttingGroupCard group={working} readOnly={false} onBehalfOf="operator" renderInstruction={() => null} />);
-  fireEvent.click(screen.getByRole("button", { name: "Сдать" }));
+  fireEvent.click(screen.getByRole("button", { name: "Брак…" }));
   await waitFor(() => expect(screen.getByLabelText("Годные КБ1")).toHaveValue(5));
   expect(screen.getByText(/Счётчик ОБ.019: 20 шт провода 700 мм, прогонов: 2/)).toBeInTheDocument();
   expect(screen.getByLabelText("Годные КБ2")).toHaveValue(15);
@@ -108,9 +108,9 @@ it("starts and stops group downtime and prevents submission during it", async ()
   fireEvent.change(screen.getByLabelText("Комментарий"), { target: { value: "Настройка" } });
   fireEvent.click(screen.getByRole("button", { name: "Начать простой" }));
   const stop = await screen.findByRole("button", { name: "Закончить простой" });
-  expect(screen.getByRole("button", { name: "Сдать" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Брак…" })).toBeDisabled();
   fireEvent.click(stop);
-  await waitFor(() => expect(screen.getByRole("button", { name: "Сдать" })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: "Брак…" })).toBeEnabled());
   expect(String(fetch.mock.calls[0][0])).toContain("/downtime/start");
   expect(String(fetch.mock.calls[1][0])).toContain("/downtime/stop");
 });
@@ -121,7 +121,7 @@ it("blocks execution for partial views, another active session, and a different 
   rerender(<CuttingGroupCard group={group} activeSession={working.session} readOnly={false} renderInstruction={() => null} />);
   expect(screen.getByRole("button", { name: "Начать" })).toBeDisabled();
   rerender(<CuttingGroupCard group={working} performerId="someone-else" readOnly={false} renderInstruction={() => null} />);
-  expect(screen.getByRole("button", { name: "Сдать" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Брак…" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Простой" })).toBeDisabled();
 });
 
@@ -217,7 +217,7 @@ const plain = (rows: CuttingGroup["rows"]) => rows.map((row) => ({ ...row, label
 it("cut group: «Резка кабеля» with КБ, length and pieces only, no label block", () => {
   render(<CuttingGroupCard group={{ ...group, kind: "cut", kind_name: "Резка кабеля", rows: plain(group.rows) }} readOnly={false} renderInstruction={() => null} />);
   expect(screen.getByRole("heading", { name: "Резка кабеля · 708К. · 4 КБ" })).toBeTruthy();
-  expect(screen.getAllByRole("columnheader").map((cell) => cell.textContent?.trim())).toEqual(["КБ", "Длина, мм", "Шт."]);
+  expect(screen.getAllByRole("columnheader").map((cell) => cell.textContent?.trim())).toEqual(["КБ", "Длина, мм", "Шт.", "Осталось, шт", "Готово, шт", ""]);
   expect(screen.queryByRole("button", { name: "Этикетки группы" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Печатать оставшиеся" })).toBeNull();
 });
@@ -259,4 +259,38 @@ it("old mixed group (no kind) keeps the wide table and the label block", () => {
   expect(screen.getByRole("heading", { name: "Резка · 708К. · ПФ-1 Заготовки · 4 КБ" })).toBeTruthy();
   expect(screen.getByText("Длина реза, мм")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Этикетки группы" })).toBeTruthy();
+});
+
+it("«Готово» on a KB row posts a one-row group submit; the input is locked until the group is started", async () => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+    String(input).includes("/machines/runs/") ? json({ runs: [] }) : json({ group: working, outputs: [] }));
+  const cut = { ...group, kind: "cut" as const, rows: plain(group.rows) };
+  const { rerender } = render(<CuttingGroupCard group={cut} readOnly={false} renderInstruction={() => null} />);
+  expect(screen.getByLabelText("Сколько готово КБ2")).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Готово КБ2" })).toBeDisabled();
+  rerender(<CuttingGroupCard group={{ ...cut, session: working.session }} readOnly={false} renderInstruction={() => null} />);
+  expect(screen.getByLabelText("Сколько готово КБ2")).toHaveValue(15);
+  fireEvent.change(screen.getByLabelText("Сколько готово КБ2"), { target: { value: "6" } });
+  fireEvent.click(screen.getByRole("button", { name: "Готово КБ2" }));
+  await waitFor(() => expect(fetch.mock.calls.some(([input]) => String(input).includes("/submit"))).toBe(true));
+  const call = fetch.mock.calls.find(([input]) => String(input).includes("/submit"))!;
+  const body = JSON.parse(String((call[1] as RequestInit).body));
+  expect(body.rows).toHaveLength(1);
+  expect(body.rows[0]).toMatchObject({ member_id: "member-1", good_quantity: "6", defect_quantity: "0" });
+});
+
+it("shows the group norm to the master only", () => {
+  const { rerender } = render(<CuttingGroupCard group={group} readOnly={false} renderInstruction={() => null} />);
+  expect(screen.queryByText(/норма \d/)).toBeNull();
+  rerender(<CuttingGroupCard group={group} readOnly={false} master renderInstruction={() => null} />);
+  expect(screen.getByText(/норма 240 мин/)).toBeTruthy();
+});
+
+it("hides a «Резка кабеля» group that is wholly in the cutting queue, unless it was started", () => {
+  const cut: CuttingGroup = { ...group, kind: "cut", rows: plain(group.rows) };
+  const ops = new Set(cut.rows.map((row) => row.operation_id));
+  expect(cutGroupInQueue(cut, ops)).toBe(true);
+  expect(cutGroupInQueue(cut, new Set())).toBe(false);
+  expect(cutGroupInQueue({ ...cut, session: working.session }, ops)).toBe(false);
+  expect(cutGroupInQueue({ ...group, kind: "labels" }, ops)).toBe(false);
 });
