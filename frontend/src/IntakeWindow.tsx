@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ApiError, failureText } from "./api";
 import { PageWindow } from "./PageWindow";
 import { intakeApi, type IntakeAct, type IntakeRow } from "./productionIntakeApi";
 import { isoDay } from "./Gantt";
 import { formatDay, formatNumber } from "./format";
+import { kbKey } from "./intakeStages";
 
 /* Окно приёмки на склад (владелец 22.10): число в колонке «Можно принять» открывает его; та же форма — для
    «Принять всё» проекта. Количество по умолчанию — всё, что можно принять; место — своё у каждой КБ (пусто — прежнее).
@@ -20,7 +21,10 @@ export const leftOf = (row: IntakeRow) => round2(Math.max(num(row.needed) - num(
 /** Сдано цехом по заданиям и ещё не принято (N) — тот же счёт, что у сервера (`handed_over`). */
 export const handedOf = (row: IntakeRow) => round2(Math.max(num(row.delivered) - num(row.accepted), 0));
 
-type Beyond = { row: IntakeRow; handed: number; quantity: number };
+/** Строка сверх сданного: N, M и есть ли у КБ задания в ERP (нет — N = 0 не потому, что цех ничего не сдал). */
+type Beyond = { row: IntakeRow; handed: number; quantity: number; hasTasks: boolean };
+/** 409 сервера «подтвердите приёмку сверх сданного»: строки с N сервера (`finished_goods_api._guarded`). */
+type ServerBeyond = { code?: string; rows?: Array<{ project: string; item_index: string; handed_over: string; quantity: string; has_tasks: boolean }> };
 
 /** `quantities` — сколько предложить по умолчанию (штуки строки, с которой открыли окно); предел — всё, что можно принять
  *  по КБ. `blank` — поле пустое: «Принять досрочно» (сверх сданного) не подставляет остаток до тиража. */
@@ -36,7 +40,9 @@ export function IntakeWindow({ rows, quantities, blank = false, close, onDone }:
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState<Beyond[] | null>(null);
   // Ключ повтора живёт до успеха: повтор после обрыва связи вернёт уже сделанную приёмку, а не примет второй раз.
-  const [idempotencyKey] = useState(() => crypto.randomUUID());
+  // Отказ «подтвердите сверх сданного» ничего не записал — повтор с подтверждением идёт с новым ключом.
+  const idempotencyKey = useRef<string>(crypto.randomUUID());
+  const confirmedKeys = useRef<Set<string>>(new Set());
   const total = round2(rows.reduce((sum, row) => sum + num(qty[keyOf(row)]), 0));
   const single = rows.length === 1;
 
@@ -50,7 +56,7 @@ export function IntakeWindow({ rows, quantities, blank = false, close, onDone }:
     }
     setProblems(bad);
     if (Object.keys(bad).length) return;
-    const beyond = rows.map((row) => ({ row, handed: handedOf(row), quantity: round2(num(qty[keyOf(row)])) }))
+    const beyond = rows.map((row) => ({ row, handed: handedOf(row), quantity: round2(num(qty[keyOf(row)])), hasTasks: row.tasks.length > 0 }))
       .filter((item) => item.quantity > item.handed);
     if (beyond.length) setConfirming(beyond);
     else void send(new Set());
@@ -58,6 +64,7 @@ export function IntakeWindow({ rows, quantities, blank = false, close, onDone }:
 
   async function send(confirmed: Set<string>) {
     setConfirming(null);
+    confirmedKeys.current = confirmed;
     const lines = rows.map((row) => {
       const place = (places[keyOf(row)] ?? "").trim();
       return { project: row.project, item_index: row.item_index, quantity: String(qty[keyOf(row)]).replace(",", "."),
@@ -65,9 +72,21 @@ export function IntakeWindow({ rows, quantities, blank = false, close, onDone }:
     });
     setBusy(true); setError("");
     try {
-      await intakeApi.accept(lines, day || null, "", idempotencyKey);
+      await intakeApi.accept(lines, day || null, "", idempotencyKey.current);
       await onDone(total);
     } catch (reason) {
+      // Сервер насчитал сданного меньше, чем видел экран: спросить о его строках с его N и повторить с новым ключом.
+      const server = reason instanceof ApiError && reason.status === 409 ? reason.body as ServerBeyond | undefined : undefined;
+      const asked = server?.code === "beyond_tasks" ? (server.rows ?? []).flatMap((item): Beyond[] => {
+        const row = rows.find((candidate) => kbKey(candidate) === kbKey(item));
+        return row ? [{ row, handed: num(item.handed_over), quantity: num(item.quantity), hasTasks: item.has_tasks }] : [];
+      }) : [];
+      if (asked.length) {
+        idempotencyKey.current = crypto.randomUUID();
+        setError(""); setProblems({});
+        setConfirming(asked);
+        return;
+      }
       // Пакет — все строки или ни одной: сервер называет строку («591К.3 КБ1: сдано цехом …»), показываем её у строки.
       const text = reason instanceof Error ? reason.message : "";
       const hit = reason instanceof ApiError && [409, 422].includes(reason.status) ? rows.find((row) => text.startsWith(`${row.project} ${row.item_index}:`)) : undefined;
@@ -85,7 +104,7 @@ export function IntakeWindow({ rows, quantities, blank = false, close, onDone }:
         <button type="button" className="secondary small" onClick={close}>Закрыть</button></header>
       {error && <div className="error-banner" role="alert">{error}</div>}
       <table className="grid compact intake-window-table">
-        <thead><tr><th>КБ</th><th className="grow">Наименование</th><th className="num">Заказано</th><th className="num">Принято</th><th className="num">Сдано цехом</th><th className="num">Остаток</th><th className="num">Принять, шт</th><th>Место хранения</th></tr></thead>
+        <thead><tr><th>КБ</th><th className="grow">Наименование</th><th className="num">Заказано</th><th className="num">Принято</th><th className="num">Сдано, не принято</th><th className="num">Остаток</th><th className="num">Принять, шт</th><th>Место хранения</th></tr></thead>
         <tbody>{rows.map((row) => {
           const key = keyOf(row);
           return <tr key={key}>
@@ -108,24 +127,25 @@ export function IntakeWindow({ rows, quantities, blank = false, close, onDone }:
       </div>
     </section>
     {confirming && <BeyondConfirm items={confirming} total={total} cancel={() => setConfirming(null)}
-      confirm={() => void send(new Set(confirming.map((item) => keyOf(item.row))))} />}
+      confirm={() => void send(new Set([...confirmedKeys.current, ...confirming.map((item) => keyOf(item.row))]))} />}
   </PageWindow>;
 }
 
 /** Подтверждение приёмки сверх сданного цехом по заданиям: по строкам — сдано N, принимаете M, сверх M−N. */
 function BeyondConfirm({ items, total, cancel, confirm }: { items: Beyond[]; total: number; cancel: () => void; confirm: () => void }) {
   const beyond = round2(items.reduce((sum, item) => sum + item.quantity - item.handed, 0));
-  const title = items.length === 1 ? `Цех сдал по заданиям ${formatNumber(items[0].handed)}, принимаете ${formatNumber(items[0].quantity)}`
-    : `Сверх сданного цехом — ${items.length} КБ`;
+  const title = items.length > 1 ? `Сверх сданного цехом — ${items.length} КБ`
+    : items[0].hasTasks ? `Цех сдал по заданиям ${formatNumber(items[0].handed)}, принимаете ${formatNumber(items[0].quantity)}`
+      : `У КБ нет заданий в ERP — принимаете ${formatNumber(items[0].quantity)}`;
   return <PageWindow label={title} close={cancel} width={640}>
     <section className="panel intake-window intake-confirm">
       <header className="page-head"><h2>{title}</h2></header>
       <table className="grid compact intake-window-table">
         <thead><tr><th>КБ</th><th className="grow">Наименование</th><th className="num">Сдано по заданиям</th><th className="num">Принимаете</th><th className="num">Сверх сданного</th></tr></thead>
-        <tbody>{items.map(({ row, handed, quantity }) => <tr key={keyOf(row)}>
+        <tbody>{items.map(({ row, handed, quantity, hasTasks }) => <tr key={keyOf(row)}>
           <td><strong>{row.item_index}</strong></td>
           <td className="grow"><span className="intake-clip intake-name" title={row.name}>{row.name}</span></td>
-          <td className="num">{formatNumber(handed)}</td><td className="num">{formatNumber(quantity)}</td>
+          <td className="num">{hasTasks ? formatNumber(handed) : <span className="muted">нет заданий</span>}</td><td className="num">{formatNumber(quantity)}</td>
           <td className="num tone-warn">{formatNumber(round2(quantity - handed))}</td>
         </tr>)}</tbody>
       </table>

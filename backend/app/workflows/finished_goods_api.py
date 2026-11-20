@@ -13,6 +13,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.modules.shipping.api import _good_result, _number, _run
@@ -69,11 +70,15 @@ def _flow(request: Request) -> Callable[[], object]:
 
 
 def _guarded(operation):
-    """Приёмка сверх сданного по заданиям без подтверждения — 409 со словами для кладовщика; ничего не принято."""
+    """Приёмка сверх сданного по заданиям без подтверждения — 409: `detail` словами для кладовщика, `code`
+    «beyond_tasks» и `rows` [{project, item_index, good_id, handed_over, quantity, beyond, has_tasks}] — N сервера;
+    ничего не принято. Повтор — с `confirm_beyond_tasks` у этих строк."""
     try:
         return _run(operation)
     except BeyondTasksNotConfirmed as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
+        return JSONResponse(status_code=409, content={
+            "detail": str(error), "code": error.code, "rows": [row.as_dict() for row in error.rows],
+        })
 
 
 def _share(task) -> dict:
@@ -115,6 +120,8 @@ def accept_from_production(
                                line.confirm_beyond_tasks) for line in payload.lines),
         received_at=payload.received_at, actor=principal.actor, now=now,
     ), flow))
+    if isinstance(result, JSONResponse):
+        return result
     return {"goods": [_good_result(good) for good in result.goods], "replayed": result.replayed}
 
 
@@ -130,6 +137,8 @@ def receive_good(
         received_at=payload.received_at, actor=principal.actor, now=now, location=payload.location,
         confirm_beyond_tasks=payload.confirm_beyond_tasks,
     ), flow))
+    if isinstance(good, JSONResponse):
+        return good
     return {"good": _good_result(good)}
 
 

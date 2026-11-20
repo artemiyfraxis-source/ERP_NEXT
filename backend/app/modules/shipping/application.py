@@ -1704,7 +1704,8 @@ def rollback_acceptance(command: RollbackAcceptanceCommand, uow: UnitOfWork) -> 
     if not key:
         raise ShippingValidationError("Не передан ключ повтора (Idempotency-Key)")
     grn = str(command.grn or "").strip()
-    seed = uuid5(ROLLBACK_ACCEPTANCE_NAMESPACE, f"{key}|{grn}")
+    # Ключ, акт и причина задают id хода: тот же ключ с другой причиной — уже не повтор, а новый откат (409, акт откачен).
+    seed = uuid5(ROLLBACK_ACCEPTANCE_NAMESPACE, f"{key}|{grn}|{reason}")
     with uow:
         good_id = uow.goods.act_owner(grn)
         if good_id is None:

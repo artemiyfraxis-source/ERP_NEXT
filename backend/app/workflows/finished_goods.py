@@ -276,15 +276,38 @@ class AcceptLine:
     confirm_beyond_tasks: bool = False
 
 
-class BeyondTasksNotConfirmed(RuntimeError):
-    """Принимают больше, чем цех сдал по заданиям, без явного подтверждения (HTTP 409): ничего не принято."""
+@dataclass(frozen=True)
+class BeyondRow:
+    """Строка пакета сверх сданного без подтверждения: N (`handed`) — по серверу, M — сколько принимают."""
 
-    def __init__(self, good: FinishedGood, handed: Decimal, quantity: Decimal):
-        self.project, self.item_index, self.handed, self.quantity = good.project, good.item_index, handed, quantity
-        super().__init__(
-            f"{good.project} {good.item_index}: Цех сдал по заданиям {_plain(handed)}, принимаете {_plain(quantity)} — "
-            f"{BEYOND_TASKS_ASK}"
-        )
+    project: str
+    item_index: str
+    good_id: UUID
+    handed: Decimal
+    quantity: Decimal
+    has_tasks: bool
+
+    @property
+    def text(self) -> str:
+        said = (f"Цех сдал по заданиям {_plain(self.handed)}, принимаете {_plain(self.quantity)}" if self.has_tasks
+                else f"У КБ нет заданий в ERP — принимаете {_plain(self.quantity)}")
+        return f"{self.project} {self.item_index}: {said} — {BEYOND_TASKS_ASK}"
+
+    def as_dict(self) -> dict:
+        return {"project": self.project, "item_index": self.item_index, "good_id": str(self.good_id),
+                "handed_over": _plain(self.handed), "quantity": _plain(self.quantity),
+                "beyond": _plain(self.quantity - self.handed), "has_tasks": self.has_tasks}
+
+
+class BeyondTasksNotConfirmed(RuntimeError):
+    """Принимают больше, чем цех сдал по заданиям, без явного подтверждения (HTTP 409): ничего не принято. `rows` —
+    все такие строки пакета с N сервера, чтобы экран спросил о них и повторил с подтверждением."""
+
+    code = "beyond_tasks"
+
+    def __init__(self, rows: tuple[BeyondRow, ...]):
+        self.rows = rows
+        super().__init__("; ".join(row.text for row in rows))
 
 
 def _plain(value: Decimal) -> str:
@@ -297,19 +320,22 @@ def handed_over(kb: KbProduction | None, good: FinishedGood) -> Decimal:
     return max((kb.delivered if kb is not None else ZERO) - good.accepted, ZERO)
 
 
-def beyond_tasks(
-    kb: KbProduction | None, good: FinishedGood, quantity: Decimal, limit: Decimal, confirmed: bool, actor: Actor,
-) -> dict | None:
-    """Приёмка M сверх сданного N (M > N) — только с подтверждением; подробности подтверждения для аудита (кто, N, M)
-    или None, когда принимают не больше сданного. Сверх предела (тиража) не спрашиваем — откажет `accept_into_stock`."""
+def beyond_row(kb: KbProduction | None, good: FinishedGood, quantity: Decimal, limit: Decimal) -> BeyondRow | None:
+    """Приёмка M сверх сданного N (M > N) — строка для подтверждения, иначе None. Сверх предела (тиража) не
+    спрашиваем — откажет `accept_into_stock`."""
     amount = Decimal(quantity)
     handed = handed_over(kb, good)
     if not amount.is_finite() or amount <= handed or good.accepted + amount > limit:
         return None
-    if not confirmed:
-        raise BeyondTasksNotConfirmed(good, handed, amount)
-    return {"confirmed_by": actor.name, "confirmed_by_id": str(actor.id), "handed_over": _plain(handed),
-            "accepted": _plain(amount), "beyond": _plain(amount - handed)}
+    return BeyondRow(good.project, good.item_index, good.id, handed, amount, kb is not None)
+
+
+def confirmation(row: BeyondRow | None, actor: Actor) -> dict | None:
+    """Подтверждение приёмки сверх сданного для аудита: кто, N, M, сверх, были ли задания в ERP."""
+    if row is None:
+        return None
+    return {"confirmed_by": actor.name, "confirmed_by_id": str(actor.id), "handed_over": _plain(row.handed),
+            "accepted": _plain(row.quantity), "beyond": _plain(row.quantity - row.handed), "has_tasks": row.has_tasks}
 
 
 @dataclass(frozen=True)
@@ -398,16 +424,22 @@ def accept_batch(command: AcceptBatchCommand, uow_factory) -> AcceptBatchResult:
         production: dict[str, KbProduction] = {}
         for project in dict.fromkeys(normalize_project_number(line.project) for line in command.lines):
             production.update(read_delivered(uow, uow.production.for_project(project)))
-        accepted = []
+        # Сначала все строки сверх сданного без подтверждения — одним отказом, чтобы экран спросил о каждой.
+        planned = []
         for line, kb_key in zip(command.lines, keys):
             kb = production.get(kb_key)
             good = _good_for(uow, line.project.strip(), line.item_index.strip(), kb, command.actor, command.now)
             limit, basis, reason = _limit(kb, good)
-            confirmed = beyond_tasks(kb, good, line.quantity, limit, line.confirm_beyond_tasks, command.actor)
+            planned.append((line, good, limit, basis, reason, beyond_row(kb, good, line.quantity, limit)))
+        unconfirmed = tuple(row for line, *_, row in planned if row is not None and not line.confirm_beyond_tasks)
+        if unconfirmed:
+            raise BeyondTasksNotConfirmed(unconfirmed)
+        accepted = []
+        for line, good, limit, basis, reason, row in planned:
             accepted.append(accept_into_stock(
                 uow, good, line.quantity, received_at=received_at, actor=command.actor, now=command.now,
                 limit=limit, limit_basis=basis, reason=reason, id_seed=batch_id, location=line.location,
-                beyond_tasks=confirmed,
+                beyond_tasks=confirmation(row, command.actor),
             ))
         uow.audit.add(AuditEvent(
             id=uuid5(batch_id, "batch"), aggregate_id=batch_id, event_type=BATCH_EVENT, actor=command.actor,
@@ -448,11 +480,13 @@ def accept_one(command: AcceptOneCommand, uow_factory) -> FinishedGood:
             raise ConcurrentShippingUpdate("Позиция готовой продукции изменилась после загрузки формы")
         kb = read_delivered(uow, uow.production.for_project(good.project)).get(kit_stage_key(good.project, good.item_index))
         limit, basis, reason = _limit(kb, good)
-        confirmed = beyond_tasks(kb, good, command.quantity, limit, command.confirm_beyond_tasks, command.actor)
+        row = beyond_row(kb, good, command.quantity, limit)
+        if row is not None and not command.confirm_beyond_tasks:
+            raise BeyondTasksNotConfirmed((row,))
         updated = accept_into_stock(
             uow, good, command.quantity, received_at=command.received_at or command.now.date(), actor=command.actor,
             now=command.now, limit=limit, limit_basis=basis, reason=reason, location=command.location,
-            beyond_tasks=confirmed,
+            beyond_tasks=confirmation(row, command.actor),
         )
         notify_dispatch_gaps(uow, updated.project, (updated.item_index,), f"good:{updated.id}:v{updated.version}", command.now)
         uow.commit()

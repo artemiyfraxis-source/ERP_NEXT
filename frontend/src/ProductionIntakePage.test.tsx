@@ -1000,7 +1000,7 @@ describe("Приёмка с производства: подтверждение
     fireEvent.click(within(dialog).getByRole("button", { name: "Принять на склад · 56 шт" }));
     const confirm = await screen.findByRole("dialog", { name: "Сверх сданного цехом — 2 КБ" });
     const lines = within(confirm).getAllByRole("row").slice(1).map((tr) => tr.textContent);
-    expect(lines).toEqual(["КБ1Жгут54035", "КБ3Шлейф066"]);
+    expect(lines).toEqual(["КБ1Жгут54035", "КБ3Шлейфнет заданий66"]);  // у КБ3 нет заданий в ERP
     fireEvent.click(within(confirm).getByRole("button", { name: "Принять 56, из них сверх сданного 41" }));
     await screen.findByText("Принято на склад: 56 шт");
     expect((calls.find((call) => call.method === "POST")!.body as { lines: unknown[] }).lines).toEqual([
@@ -1010,15 +1010,50 @@ describe("Приёмка с производства: подтверждение
     ]);
   });
 
-  it("сервер отказал (цех сдал меньше, чем видел экран): ничего не принято, причина — у строки", async () => {
+  it("сервер насчитал сданного меньше, чем экран: окно подтверждения с N сервера и повтор с новым ключом", async () => {
     intakeRows = [row({ needed: "40", accepted: "0", delivered: "20", remaining: "40" })];
     render(<ProductionIntakePage principal={principal} />);
     const detail = "591К.3 КБ1: Цех сдал по заданиям 10, принимаете 20 — подтвердите приёмку сверх сданного";
     fireEvent.click(await screen.findByRole("button", { name: "Принять 591К.3 КБ1: 20" }));
     const dialog = await screen.findByRole("dialog", { name: "Приёмка 591К.3 КБ1" });
-    vi.mocked(fetch).mockImplementationOnce(async () => json({ detail }, 409));
+    // Экран считает N = 20 и не спрашивает; сервер видит 10 и отвечает 409 со строками.
+    vi.mocked(fetch).mockImplementationOnce(async () => json({ detail, code: "beyond_tasks", rows: [
+      { project: "591К.3", item_index: "КБ1", good_id: "g1", handed_over: "10", quantity: "20", beyond: "10", has_tasks: true },
+    ] }, 409));
     fireEvent.click(within(dialog).getByRole("button", { name: "Принять на склад · 20 шт" }));
-    expect(await within(dialog).findByText("Цех сдал по заданиям 10, принимаете 20 — подтвердите приёмку сверх сданного")).toHaveClass("ship-row-error");
+    const confirm = await screen.findByRole("dialog", { name: "Цех сдал по заданиям 10, принимаете 20" });
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(within(confirm).getByRole("button", { name: "Принять 20, из них сверх сданного 10" }));
+    await screen.findByText("Принято на склад: 20 шт");
+    const posts = vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === "/api/shipping/finished-goods/accept");
+    expect(posts).toHaveLength(2);
+    const key = (index: number) => new Headers(posts[index][1]!.headers).get("Idempotency-Key");
+    expect(key(0)).toBeTruthy();
+    expect(key(1)).not.toBe(key(0));
+    expect(JSON.parse(String(posts[1][1]!.body)).lines).toEqual([{ project: "591К.3", item_index: "КБ1", quantity: "20", confirm_beyond_tasks: true }]);
+  });
+
+  it("другой отказ сервера — причина у строки, окна подтверждения нет", async () => {
+    intakeRows = [row({ needed: "40", accepted: "0", delivered: "20", remaining: "40" })];
+    render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Принять 591К.3 КБ1: 20" }));
+    const dialog = await screen.findByRole("dialog", { name: "Приёмка 591К.3 КБ1" });
+    vi.mocked(fetch).mockImplementationOnce(async () => json({ detail: "591К.3 КБ1: тираж 40 шт, уже принято 30 — принять можно ещё 10" }, 422));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Принять на склад · 20 шт" }));
+    expect(await within(dialog).findByText("тираж 40 шт, уже принято 30 — принять можно ещё 10")).toHaveClass("ship-row-error");
+    expect(screen.queryByRole("dialog", { name: /Цех сдал/ })).not.toBeInTheDocument();
+  });
+
+  it("у КБ без заданий в ERP окно говорит «нет заданий», а не «цех сдал 0»; колонка — «Сдано, не принято»", async () => {
+    intakeRows = [row({ stage: "Готово", needed: "8", accepted: "2", delivered: "0", remaining: "6", tasks: [] })];
+    render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Принять 591К.3 КБ1: 6" }));
+    const dialog = await screen.findByRole("dialog", { name: "Приёмка 591К.3 КБ1" });
+    expect(within(dialog).getByRole("columnheader", { name: "Сдано, не принято" })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Принять на склад · 6 шт" }));
+    const confirm = await screen.findByRole("dialog", { name: "У КБ нет заданий в ERP — принимаете 6" });
+    expect(within(confirm).getByText("нет заданий")).toBeInTheDocument();
+    expect(within(confirm).getByRole("button", { name: "Принять 6, из них сверх сданного 6" })).toBeInTheDocument();
   });
 
   const accepted = () => row({ needed: "40", delivered: "1", accepted: "15", packed: "0", remaining: "25", pack_decided: true, pack_permission_remaining: "0",

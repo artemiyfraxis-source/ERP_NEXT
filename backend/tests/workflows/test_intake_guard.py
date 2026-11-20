@@ -81,7 +81,12 @@ def test_batch_above_handed_over_needs_the_confirm_and_records_who_confirmed_n_a
     # КБ1: цех сдал по заданиям 30, принято 0 — 30 принимаются без вопросов, 31 — только с подтверждением.
     refused = _accept(client, _line("КБ1", "31"), key="g-1")
     assert refused.status_code == 409
-    assert refused.json()["detail"] == "708К.4 КБ1: Цех сдал по заданиям 30, принимаете 31 — подтвердите приёмку сверх сданного"
+    body = refused.json()
+    assert body["detail"] == "708К.4 КБ1: Цех сдал по заданиям 30, принимаете 31 — подтвердите приёмку сверх сданного"
+    assert body["code"] == "beyond_tasks"
+    good_id = client.get("/api/shipping/goods").json()["goods"][0]["id"]
+    assert body["rows"] == [{"project": "708К.4", "item_index": "КБ1", "good_id": good_id, "handed_over": "30",
+                             "quantity": "31", "beyond": "1", "has_tasks": True}]
     assert _moves(sessions) == []
 
     confirmed = _accept(client, _line("КБ1", "31", confirm=True), key="g-1")  # тот же ключ: отказ ничего не записал
@@ -92,6 +97,7 @@ def test_batch_above_handed_over_needs_the_confirm_and_records_who_confirmed_n_a
     assert details["reason"] == OUTSIDE_TASKS_REASON
     assert details["beyond_tasks"] == {
         "confirmed_by": "Кладовщик", "confirmed_by_id": str(STOREKEEPER.id), "handed_over": "30", "accepted": "31", "beyond": "1",
+        "has_tasks": True,
     }
 
 
@@ -106,15 +112,26 @@ def test_n_counts_only_what_is_handed_over_and_not_yet_accepted(flow_api):  # no
 
 def test_mixed_batch_asks_only_for_the_rows_above_handed_over_and_is_all_or_nothing(flow_api):  # noqa: F811
     client, sessions = flow_api
-    # КБ2: площадка сдала 10 — в пределах; КБ3: задание запущено, сдано 0 — сверх сданного.
-    refused = _accept(client, _line("КБ2", "10"), _line("КБ3", "5"), key="m-1")
-    assert refused.status_code == 409 and refused.json()["detail"].startswith("708К.4 КБ3: Цех сдал по заданиям 0, принимаете 5")
+    # КБ2: площадка сдала 10 — в пределах; КБ1: сдано 30, принимают 31; КБ3: задание запущено, сдано 0 — обе сверх.
+    refused = _accept(client, _line("КБ1", "31"), _line("КБ2", "10"), _line("КБ3", "5"), key="m-1")
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == (
+        "708К.4 КБ1: Цех сдал по заданиям 30, принимаете 31 — подтвердите приёмку сверх сданного; "
+        "708К.4 КБ3: Цех сдал по заданиям 0, принимаете 5 — подтвердите приёмку сверх сданного"
+    )
+    assert [(row["item_index"], row["handed_over"], row["quantity"], row["beyond"]) for row in refused.json()["rows"]] == [
+        ("КБ1", "30", "31", "1"), ("КБ3", "0", "5", "5"),
+    ]
     assert _moves(sessions) == []
-    done = _accept(client, _line("КБ2", "10"), _line("КБ3", "5", confirm=True), key="m-1")
+    half = _accept(client, _line("КБ1", "31", confirm=True), _line("КБ2", "10"), _line("КБ3", "5"), key="m-1")
+    assert half.status_code == 409 and [row["item_index"] for row in half.json()["rows"]] == ["КБ3"]
+    done = _accept(client, _line("КБ1", "31", confirm=True), _line("КБ2", "10"), _line("КБ3", "5", confirm=True), key="m-1")
     assert done.status_code == 200, done.text
-    assert len(_audit(sessions, "shipping.good_accepted")) == 2
+    assert len(_audit(sessions, "shipping.good_accepted")) == 3
     beyond = [item["beyond_tasks"] for item in _audit(sessions, "shipping.good_accepted") if "beyond_tasks" in item]
-    assert beyond == [{"confirmed_by": "Кладовщик", "confirmed_by_id": str(STOREKEEPER.id), "handed_over": "0", "accepted": "5", "beyond": "5"}]
+    assert sorted(item["accepted"] for item in beyond) == ["31", "5"]
+    assert {"confirmed_by": "Кладовщик", "confirmed_by_id": str(STOREKEEPER.id), "handed_over": "0", "accepted": "5",
+            "beyond": "5", "has_tasks": True} in beyond
 
 
 def test_single_accept_without_tasks_asks_too_and_over_the_order_stays_422(flow_api):  # noqa: F811
@@ -122,7 +139,9 @@ def test_single_accept_without_tasks_asks_too_and_over_the_order_stays_422(flow_
     _head()
     good = client.post("/api/shipping/goods", json={"project": "708К.4", "item_index": "КБ9", "name": "Жгут", "ordered": "5"}).json()["good"]
     plain = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "2"})
-    assert plain.status_code == 409 and "Цех сдал по заданиям 0, принимаете 2" in plain.json()["detail"]
+    assert plain.status_code == 409
+    assert plain.json()["detail"] == "708К.4 КБ9: У КБ нет заданий в ERP — принимаете 2 — подтвердите приёмку сверх сданного"
+    assert plain.json()["rows"][0]["has_tasks"] is False and plain.json()["rows"][0]["good_id"] == good["id"]
     over = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "6"})
     assert over.status_code == 422  # сверх тиража — прежний отказ, без вопроса о подтверждении
     ok = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "2", "confirm_beyond_tasks": True})
@@ -170,6 +189,8 @@ def test_rollback_of_an_act_writes_one_correction_back_to_production_and_shows_i
 
     replay = _rollback(client, second.grn)
     assert replay.status_code == 200 and replay.json()["replayed"] is True
+    other_reason = _rollback(client, second.grn, reason="другая причина")  # тот же ключ, другая причина — не повтор
+    assert other_reason.status_code == 409 and "уже откачена" in other_reason.json()["detail"]
     assert len(_moves(sessions, "correction")) == 1
     again = _rollback(client, second.grn, key="r-2")
     assert again.status_code == 409 and "уже откачена" in again.json()["detail"]

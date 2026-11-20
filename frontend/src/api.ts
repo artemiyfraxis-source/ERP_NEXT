@@ -2819,6 +2819,8 @@ export class ApiError extends Error {
     message: string,
     public readonly status: number,
     public readonly detail?: unknown,
+    /** Всё тело ответа с ошибкой: рядом с `detail` сервер кладёт разбор (`code`, `rows`). */
+    public readonly body?: unknown,
   ) {
     super(message);
   }
@@ -2970,7 +2972,7 @@ export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
       if (response.status === 401 && path !== "/api/auth/login" && path !== "/api/auth/pin-login") {
         window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
       }
-      throw new ApiError(errorMessage(payload.detail, response.status), response.status, payload.detail);
+      throw new ApiError(errorMessage(payload.detail, response.status), response.status, payload.detail, payload);
     }
     if (response.status === 204) return undefined as T;
     // `blob` — a picture (label preview PNG), not JSON.
@@ -4499,9 +4501,6 @@ export const shippingApi = {
   registerGood: (payload: Record<string, unknown>) => api<{ good: FinishedGood }>("/api/shipping/goods", {
     method: "POST", body: JSON.stringify(payload),
   }),
-  accept: (goodId: string, version: number, quantity: string, receivedAt?: string) => api<{ good: FinishedGood }>(`/api/shipping/goods/${goodId}/accept`, {
-    method: "POST", body: JSON.stringify(receivedAt ? { version, quantity, received_at: receivedAt } : { version, quantity }),
-  }),
   create: (payload: Record<string, unknown>) => api<{ shipment: Shipment }>("/api/shipping/shipments", {
     method: "POST", body: JSON.stringify(payload),
   }),
@@ -4610,12 +4609,6 @@ export const shippingApi = {
   }),
   /** «Из производства»: что цех сдал, а склад ещё не принял, и что ещё в производстве. */
   fromProduction: () => api<{ rows: FromProductionRow[] }>("/api/shipping/finished-goods/from-production"),
-  /** Приёмка пакетом: все отмеченные КБ или ни одной; не больше сданного цехом. Тот же ключ с тем же телом — уже сделанное. */
-  acceptFromProduction: (lines: Array<{ project: string; item_index: string; quantity: string }>, receivedAt: string | null, idempotencyKey: string) =>
-    api<{ goods: FinishedGood[]; replayed: boolean }>("/api/shipping/finished-goods/accept", {
-      method: "POST", headers: { "Idempotency-Key": idempotencyKey },
-      body: JSON.stringify(receivedAt ? { lines, received_at: receivedAt } : { lines }),
-    }),
   /** Сквозной статус проекта по КБ и журнал ходов. */
   projectGoods: (project: string) => api<ProjectGoodsStatus>(`/api/shipping/finished-goods/project?project=${encodeURIComponent(project)}`),
   /** Откат «Отгружено» — только администратор, с причиной; штуки снова «Упаковано». */

@@ -132,6 +132,7 @@ const EVENT_NAMES: Record<string, string> = {
   "shipping.good_registered": "ГП заведена",
   "shipping.good_queued": "ГП ждёт приёмки",
   "shipping.good_accepted": "ГП принята от цеха",
+  "shipping.accept_rolled_back": "Отгрузка: откат приёмки",
   "shipping.good_dropped": "ГП убрана",
   "shipping.good_reordered": "ГП переупорядочена",
   "shipping.picked": "Отобрано в отправку",
@@ -233,6 +234,7 @@ const DETAIL_LABELS: Record<string, string> = {
   level: "уровень", access_level: "уровень доступа", shop_worker: "монтажник", site_master: "мастер площадки",
   login: "логин", role: "прежняя роль", changes: "изменения", exceptions: "исключения", levels: "уровни", people: "люди",
   note: "примечание", viewed: "сотрудник",
+  act_quantity: "кол-во по акту", location: "место",
   source: "сайт", tls: "сертификат", topic: "задание", attempts: "попыток", error: "ошибка", released: "снято",
 };
 
@@ -253,7 +255,16 @@ const FIELD_LABELS: Record<string, string> = {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /* Служебное: id, ключ повтора, отпечаток и сохранённый ответ повтора — не для людей. */
-const HIDDEN_KEY = /(^id$|_id$|_ids$|commit$|^replay_key$|^fingerprint$|^result$)/;
+const HIDDEN_KEY = /(^id$|_id$|_ids$|commit$|^replay_key$|^idempotency_key$|^fingerprint$|^result$)/;
+
+/** Подтверждение приёмки сверх сданного (20.11): «Сдано по заданиям 1 · принято 15 · сверх 14 · подтвердил Алексей». */
+function beyondTasks(value: unknown): string {
+  if (!value || typeof value !== "object") return shown(value);
+  const item = value as Record<string, unknown>;
+  const handed = item.has_tasks === false ? "Заданий в ERP нет" : `Сдано по заданиям ${shown(item.handed_over) || "0"}`;
+  return [handed, `принято ${shown(item.accepted)}`, `сверх ${shown(item.beyond)}`, item.confirmed_by ? `подтвердил ${shown(item.confirmed_by)}` : ""]
+    .filter(Boolean).join(" · ");
+}
 
 export function auditModule(eventType: string): string {
   const head = eventType.split(".")[0];
@@ -292,13 +303,13 @@ export function auditDetails(details: Record<string, unknown>): string {
   const replay = "fingerprint" in details;
   const parts = entries
     .filter(([key]) => !HIDDEN_KEY.test(key) && !UUID.test(key) && !(replay && key === "key"))
-    .map(([key, value]) => [
+    .map(([key, value]) => key === "beyond_tasks" ? ["", beyondTasks(value)] as const : [
       DETAIL_LABELS[key] ?? key.replace(/_/g, " "),
       LEVEL_KEYS.has(key) && typeof value === "string" ? LEVEL_NAMES[value] ?? shown(value)
         : key === "topic" && typeof value === "string" ? auditEventName(value) : shown(value),
     ] as const)
     .filter(([, value]) => value)
-    .map(([label, value]) => `${label}: ${value}`);
+    .map(([label, value]) => label ? `${label}: ${value}` : value);
   if (keyed) parts.push(`строк: ${keyed}`);
   return parts.join(" · ");
 }

@@ -76,3 +76,19 @@ it("names the access-level events and the level and flag details in Russian", ()
   );
   expect(auditDetails({ access_level: "unknown_level" })).toBe("уровень доступа: unknown_level");
 });
+
+it("names the acceptance rollback and reads the confirm beyond handed-over in words", () => {
+  expect(auditEventName("shipping.accept_rolled_back")).toBe("Отгрузка: откат приёмки");
+  expect(auditDetails({
+    grn: "ГП.26.0000102", act_id: "15a1ac70-e92c-4a5f-ad12-4a14d7ee5138", project: "708К.", item_index: "КБ20",
+    quantity: "14", act_quantity: "14", reason: "приняли вне заданий", idempotency_key: "k-1",
+  })).toBe("ГРН: ГП.26.0000102 · проект: 708К. · КБ: КБ20 · кол-во: 14 · кол-во по акту: 14 · причина: приняли вне заданий");
+  expect(auditDetails({
+    quantity: "15", grn: "ГП.26.0000102", reason: "Цех сдал по заданиям меньше: принято до тиража вне заданий",
+    beyond_tasks: { confirmed_by: "Алексей", confirmed_by_id: "15a1ac70-e92c-4a5f-ad12-4a14d7ee5138", handed_over: "1", accepted: "15", beyond: "14", has_tasks: true },
+  })).toBe("кол-во: 15 · ГРН: ГП.26.0000102 · причина: Цех сдал по заданиям меньше: принято до тиража вне заданий · "
+    + "Сдано по заданиям 1 · принято 15 · сверх 14 · подтвердил Алексей");
+  expect(auditDetails({ beyond_tasks: { confirmed_by: "Алексей", handed_over: "0", accepted: "2", beyond: "2", has_tasks: false } }))
+    .toBe("Заданий в ERP нет · принято 2 · сверх 2 · подтвердил Алексей");
+  expect(auditDetails({ beyond_tasks: { handed_over: "0", accepted: "5", beyond: "5" } })).not.toMatch(/beyond|object/);
+});
