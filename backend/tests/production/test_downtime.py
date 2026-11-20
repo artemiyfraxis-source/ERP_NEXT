@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.main import app
 from app.modules.production.domain import ProductionValidationError
-from app.modules.production.downtime import Downtime, DowntimeConflict, DowntimeReason, report
+from app.modules.production.downtime import Downtime, DowntimeConflict, DowntimeReason, people_total, report
 from app.modules.production.downtime_infrastructure import ProductionDowntimeRow, SqlAlchemyDowntimeRepository
 from app.shared.clock import MOSCOW, moscow_now
 from app.shared.persistence import AuditEventRow
@@ -75,6 +75,26 @@ def test_report_sums_only_the_part_inside_the_period_and_counts_open_until_now()
     assert [(row.label, row.seconds) for row in people] == [("Оператор", 7200), ("Задание целиком", 5400)]
     with pytest.raises(ProductionValidationError):
         report(items, by="project", since=since, until=until, now=now)
+
+
+def test_machine_downtime_has_no_task_and_reports_as_the_machine():
+    machine = uuid4()
+    with pytest.raises(ProductionValidationError, match="без задания"):
+        Downtime(**{**_downtime().__dict__, "equipment_id": machine})  # a task AND a machine
+    item = Downtime(**{**_downtime(DowntimeReason.EQUIPMENT, start=(22, 9, 0), end=(22, 9, 45)).__dict__,
+                       "task_id": None, "project": "", "task_number": "", "item": "ОБ.027.1 EW-50A",
+                       "equipment_id": machine})
+    person = _downtime(DowntimeReason.EQUIPMENT, start=(22, 10, 0), end=(22, 10, 30), operator_id=uuid4())
+    since, until = _period(22, 22)
+    now = datetime(2026, 9, 22, 12, 0, tzinfo=MOSCOW)
+    rows = report([item, person], by="operator", since=since, until=until, now=now)
+    assert [(row.key, row.label, row.seconds, row.machine) for row in rows] == [
+        (str(person.operator_id), "Оператор", 1800, False), (f"machine:{machine}", "Станок ОБ.027.1 EW-50A", 2700, True)]
+    # Machine time is not people time: its own rows by reason too, and out of the total «Простои к работе» uses.
+    rows = report([item, person], by="reason", since=since, until=until, now=now)
+    assert [(row.key, row.label, row.seconds, row.machine) for row in rows] == [
+        ("equipment", "Оборудование", 1800, False), ("machine:equipment", "Станок: Оборудование", 2700, True)]
+    assert people_total(rows) == (1800, 1)
 
 
 # --- база ---

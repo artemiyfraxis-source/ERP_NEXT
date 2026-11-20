@@ -7,7 +7,8 @@ needs its reason) and a material decision — or cancelled with a reason. Constr
 - one running job per machine (UNIQUE partial index), a sequential number (UNIQUE, «Р-000001» on screen, «R-000001» for
   the PLC later), every status carries exactly its own fields (CHECKs below);
 - the эталон a job follows belongs to that same machine (composite FK onto `equipment_setup_references`);
-- every change after the start compares and swaps `version`.
+- every change after the start compares and swaps `version`;
+- «Сделано» typed while it runs (`progress`, migration 0209) is NULL or >= 0 and carries its moment (CHECKs).
 The job never writes stock off by itself (plan, decision A): at the finish the person says «Не списывать» (with a reason)
 or «Ждёт решения склада»; a finished job still pending is decided later (`decide_material`, slice S3): «Не списывать»
 with a reason, or «Списать с партии» (`issued`, rows of `production_manual_job_issues`, each backed by its own
@@ -86,6 +87,12 @@ class ManualJobRow(Base):
         CheckConstraint("status <> 'cancelled' OR trim(cancel_reason) <> ''", name="ck_production_manual_jobs_cancel"),
         CheckConstraint("trim(operator_name) <> ''", name="ck_production_manual_jobs_operator"),
         CheckConstraint("version >= 1", name="ck_production_manual_jobs_version"),
+        # «Сделано» typed at a machine without control (migration 0209): both or neither, not before the start; entered
+        # while the job runs, kept after the finish as history.
+        CheckConstraint("progress_quantity IS NULL OR progress_quantity >= 0", name="ck_production_manual_jobs_progress"),
+        CheckConstraint("(progress_quantity IS NULL) = (progress_at IS NULL)", name="ck_production_manual_jobs_progress_at"),
+        CheckConstraint("progress_at IS NULL OR progress_at >= started_at",
+                        name="ck_production_manual_jobs_progress_order"),
         # One running job per machine: a second start waits for the first to be finished or cancelled.
         Index("ux_production_manual_jobs_running", "equipment_id", unique=True,
               sqlite_where=text(RUNNING_WHERE), postgresql_where=text(RUNNING_WHERE)),
@@ -125,6 +132,8 @@ class ManualJobRow(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    progress_quantity: Mapped[int | None] = mapped_column(Integer)
+    progress_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ManualJobIssueRow(Base):
@@ -328,6 +337,21 @@ def finish(session: Session, job_id: UUID, version: int, result: Finish, *, acto
         values.update({"count_source": "manual", "machine_count": None,
                        "params": {**(row.params or {}), "counter_reset" if counter_reset else "counter_unread": True}})
     return _changed(session, row, version, values)
+
+
+def progress(session: Session, job_id: UUID, version: int, quantity: int, *, now: datetime) -> ManualJobRow:
+    """«Сделано» so far on a machine without control (migration 0209): only while the job runs, compare-and-swap on
+    `version`. More than planned is allowed while the shop tests (the screen warns, `over_plan`)."""
+    if isinstance(quantity, bool) or not isinstance(quantity, int) or not 0 <= quantity <= LIMIT:
+        raise ManualJobInvalid("Сделано: целое число от 0")
+    row = _open(session, job_id, version)
+    return _changed(session, row, version, {"progress_quantity": quantity,
+                                            "progress_at": max(now, aware(row.started_at, now))})
+
+
+def over_plan(row: ManualJobRow) -> bool:
+    return (row.quantity_planned is not None and row.progress_quantity is not None
+            and row.progress_quantity > row.quantity_planned)
 
 
 def attach_plc(session: Session, job_id: UUID, *, write_id: UUID, counter_start: int, params: dict) -> ManualJobRow | None:

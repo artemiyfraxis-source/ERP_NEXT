@@ -1435,6 +1435,15 @@ append-only комментарий, блокер/снятие блокера, д
 причиной — «Производство», «Задания» или «Склад» на правку. Журнал читает и «Склад»; `waiting=true` — все работы
 «Ждёт решения склада» за любые даты, `waiting_count` — их число.
 
+Станок без управления (2026-11-20, миграция 0209): «Сделано» идущей работы вводят вручную —
+`POST /api/production/manual-jobs/{id}/progress` `{quantity, version}` (только идущая, CAS по `version`; больше плана
+можно, `progress_over_plan` предупреждает; `progress_quantity` NULL или ≥ 0 вместе с `progress_at` — CHECK, после
+завершения остаётся историей). Простой станка — строка `production_downtimes` с `equipment_id` (FK RESTRICT на
+`equipment_units`, без задания и операции — CHECK, один открытый на станок — частичный UNIQUE по `ended_at IS NULL`);
+задание он не останавливает. `POST /api/production/manual-jobs/downtime` `{equipment_id, reason, comment}` и
+`…/downtime/{id}/stop`, причины — те же, что у простоев заданий; «Закончить простой» заданий простой станка не
+закрывает. Открытый простой — в `options` (у станка) и в журнале (`downtimes`); права — как у ручной работы.
+
 ### «Выполнение задания» с карточки ОБ.019 (2026-11-19, план «Станки вне проекта», срез S2)
 Прогон задания на станке: `production/machine_runs.py` (без своей таблицы — `payload["run"]` записи «Передать на
 станок» в `production_machine_writes`; слова записи не меняются), HTTP — `workflows/machine_runs_api.py`

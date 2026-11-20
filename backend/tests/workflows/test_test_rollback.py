@@ -417,3 +417,61 @@ def test_actor_email_selects_exactly_the_user_with_that_email(shop):
             resolve_user(session, "nobody@example.test")
         with pytest.raises(RollbackError, match="не найден"):
             resolve_user(session, "other@example")  # часть адреса не подбирает чужого
+
+
+# --- простой станка (migration 0209): без задания и сотрудника, один открытый на станок ---
+
+def _machine(shop) -> UUID:
+    from tests.workflows.test_machines_api import _unit
+    with shop.sessions() as session:
+        unit = _unit(session, "ОБ.027.1", "EW-50A")
+        session.commit()
+    return unit
+
+
+def _machine_downtime(shop, unit, *, by, start, ended_by=None, end=None):
+    row = ProductionDowntimeRow(
+        id=uuid4(), task_id=None, operation_id=None, operator_id=None, operator_name="", reason="equipment", comment="",
+        started_at=start, started_by_id=by.id, started_by_name=by.name, project="", task_number="",
+        item="ОБ.027.1 EW-50A", stage="", ended_at=end, ended_by_id=ended_by.id if ended_by else None,
+        ended_by_name=ended_by.name if ended_by else "", equipment_id=unit,
+    )
+    with shop.sessions() as session:
+        session.add(row)
+        session.commit()
+    return row
+
+
+def _event(shop, kind, aggregate, by, when, **details):
+    with shop.sessions() as session:
+        session.add(AuditEventRow(id=uuid4(), aggregate_id=aggregate, event_type=kind, actor_id=by.id,
+                                  actor_name=by.name, actor_department=by.department, occurred_at=when, details=details))
+        session.commit()
+
+
+def test_a_tester_machine_downtime_is_removed_with_its_journal(shop):
+    unit = _machine(shop)
+    row = _machine_downtime(shop, unit, by=OWNER, start=at(10, 0), ended_by=OWNER, end=at(10, 20))
+    _event(shop, "production.machine_downtime_started", unit, OWNER, at(10, 0), downtime_id=str(row.id))
+    _event(shop, "production.machine_downtime_ended", unit, OWNER, at(10, 20), downtime_id=str(row.id))
+
+    text, code = shop.rollback(apply=True, employee=None)
+
+    assert code == 0, text
+    assert "Простой станка ОБ.027.1 EW-50A · Оборудование" in text and "не откатывается автоматически" not in text
+    assert shop.rows(ProductionDowntimeRow) == []
+    journal = {str(row.id) for row in shop.rows(AuditEventRow, AuditEventRow.event_type.like("production.machine_downtime_%"))}
+    rollback = shop.rows(AuditEventRow, AuditEventRow.event_type == "test_rollback")
+    assert len(journal) == 2 and journal <= set(rollback[0].details["audit_ids"])  # covered, not left over
+
+
+def test_a_machine_downtime_is_not_reopened_while_the_machine_has_another_open(shop):
+    unit = _machine(shop)
+    ended = _machine_downtime(shop, unit, by=MASTER, start=at(9, 0), ended_by=OWNER, end=at(10, 30))
+    _machine_downtime(shop, unit, by=MASTER, start=at(11, 0))  # the shop's real one, open now
+
+    text, code = shop.rollback(apply=True, employee=None)
+
+    assert code == 1, text
+    assert "Простой станка ОБ.027.1 EW-50A · Оборудование: снова открыть нельзя — у станка уже открыт другой простой" in text
+    assert shop.rows(ProductionDowntimeRow, ProductionDowntimeRow.id == ended.id)[0].ended_at is not None
