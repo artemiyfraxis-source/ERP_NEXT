@@ -2,6 +2,7 @@ import { useEffect, useState, type MouseEvent } from "react";
 import { failureText } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { EMPTY, formatDay, formatMoment, formatNumber } from "./format";
+import { MachineSpeedReport } from "./MachineSpeedReport";
 import { openPlace } from "./navigation";
 import { PageWindow } from "./PageWindow";
 import { normFactApi, type NormFactFact, type NormFactOperator, type NormFactReport, type NormFactTemplate } from "./normFactApi";
@@ -145,6 +146,7 @@ export function ProductionNormFact() {
         : <span className="nf-muted">{EMPTY}</span> },
   ];
 
+  return <>
   return <section className="panel nf-report" aria-label="Норма и факт">
     <div className="nf-head">
       <h2>Норма и факт</h2>
@@ -183,7 +185,9 @@ export function ProductionNormFact() {
         exportName={`Норма и факт — монтажники ${label}`} onRowClick={(row) => setDrill({ kind: "operator", row })} rowTitle={(row) => `Факты: ${row.operator_name}`} />
     </>}
     {drill && report && <FactsWindow drill={drill} facts={report.facts} slow={slow} fast={fast} label={label} close={() => setDrill(null)} />}
-  </section>;
+  </section>
+    <MachineSpeedReport />
+  </>;
 }
 
 function FactsWindow({ drill, facts, slow, fast, label, close }: {
