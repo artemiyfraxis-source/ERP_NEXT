@@ -24,7 +24,8 @@ export function setupOperationChoices(tasks: ProductionTask[]): SetupOperationCh
     }))) : []);
 }
 
-export function EquipmentSetupPage({ principal }: { principal?: Principal }) {
+/** Список заданий наладки; `embedded` — вкладка «Запросы на наладку» раздела «Оборудование» (без своего заголовка). */
+export function EquipmentSetupPage({ principal, embedded = false }: { principal?: Principal; embedded?: boolean }) {
   const [tasks, setTasks] = useState<SetupTask[]>([]), [machines, setMachines] = useState<SetupMachine[]>([]), [production, setProduction] = useState<ProductionTask[]>([]);
   // Станок задания хранится по ID экземпляра БД.ОБ (миграция 0172); показываем его инвентарный номер.
   const machineLabel = (id: string) => machines.find(item => item.id === id)?.inventory_number || id;
@@ -58,7 +59,7 @@ export function EquipmentSetupPage({ principal }: { principal?: Principal }) {
     finally { setProductionBusy(false); }
   }
   return <div className="equipment-setup">
-    <div className="page-head"><div><h1>Наладка оборудования</h1><span className="muted">{viewer?.site || "Все доступные площадки"}</span></div><div className="setup-actions">
+    <div className="page-head"><div>{!embedded && <h1>Наладка оборудования</h1>}<span className="muted">{viewer?.site || "Все доступные площадки"}</span></div><div className="setup-actions">
       <button className="secondary" disabled={!loaded || busy} onClick={() => setRefresh(value => value + 1)}>Обновить</button>
       {ob019 && viewer && <button className="secondary" onClick={() => setPanel(true)}>Наладка {ob019.inventory_number}</button>}
       {viewer?.can_assign && viewer.writable && <button className="primary" onClick={() => setCreate(true)}>Назначить наладку</button>}
@@ -90,6 +91,8 @@ function SetupDetail({ task, viewer, machine, label, changed, close }: { task: S
   const attempt = useRef({ fingerprint: "", key: "" });
   const own = viewer.writable && task.technician_id === viewer.actor_id;
   const canManage = viewer.writable && viewer.can_assign;
+  // Готовность подтверждает назначенный наладчик или мастер площадки станка (владелец 19.11.2026).
+  const confirms = own || (viewer.writable && Boolean(viewer.site_master) && Boolean(machine) && machine?.site === viewer.site);
   useEffect(() => {
     let alive = true; setLoaded(false);
     Promise.all([equipmentSetupApi.recipe(task.recipe.recipe_id, task.recipe.version), equipmentSetupApi.executors(task.machine_id)])
@@ -117,7 +120,8 @@ function SetupDetail({ task, viewer, machine, label, changed, close }: { task: S
     <div className="setup-actions">
       {own && task.status === "New" && <button className="primary" disabled={busy} onClick={() => void transition("start")}>Начать наладку</button>}
       {own && task.status === "Blocked" && <button className="primary" disabled={busy} onClick={() => void transition("resume")}>Продолжить наладку</button>}
-      {own && task.status === "InProgress" && <><button className="primary" disabled={busy} onClick={() => void transition("ready")}>Подтвердить готовность наладки</button><button className="secondary" disabled={busy} onClick={() => setMode("block")}>Заблокировать</button></>}
+      {confirms && task.status === "InProgress" && <button className="primary" disabled={busy} onClick={() => void transition("ready")}>Подтвердить готовность наладки</button>}
+      {own && task.status === "InProgress" && <button className="secondary" disabled={busy} onClick={() => setMode("block")}>Заблокировать</button>}
       {canManage && !["Ready", "Cancelled"].includes(task.status) && <button className="secondary" disabled={busy} onClick={() => setMode("cancel")}>Отменить наладку</button>}
     </div>
     {mode && <form className="setup-grid" onSubmit={event => { event.preventDefault(); void transition(mode); }}>

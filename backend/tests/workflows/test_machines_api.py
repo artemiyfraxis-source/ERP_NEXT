@@ -25,13 +25,14 @@ WORDS = {"20": 2, "22": 300, "23": 0, "26": 10, "27": 0, "32": 0x7EF4, "33": 0, 
          "940": 0x4544, "941": 0x2046, **{str(address): 0 for address in range(942, 955)}, "1280": 3}
 
 
-def _unit(session, inventory, name):
+def _unit(session, inventory, name, **extra):
     unit_id, model_id = uuid4(), uuid4()
     session.add_all([
         EquipmentModelRow(id=model_id),
         EquipmentUnitRow(id=unit_id, catalog="ob", model_id=model_id, ob_id=unit_id),
         EquipmentMachineRow(id=unit_id, tab="ob", equipment_model_id=model_id, display_text=name, normalized_search="",
-                            source_sheet="", sort_key="", fields={"Инв. номер": inventory, "Наименование": name}),
+                            source_sheet="", sort_key="",
+                            fields={"Инв. номер": inventory, "Наименование": name, **extra}),
     ])
     return unit_id
 
@@ -39,13 +40,16 @@ def _unit(session, inventory, name):
 @pytest.fixture
 def machines_api(tokens_api):
     sessions, clock = tokens_api
+    from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
     app.state.production_uow_factory = lambda: SqlAlchemyProductionUnitOfWork(sessions)
+    app.state.references_uow_factory = lambda: SqlAlchemyReferencesUnitOfWork(sessions)
     with sessions.begin() as session:
         ob019 = _unit(session, "ОБ.019", "Автомат резки и зачистки провода с лазерной маркировкой")
         ob101 = _unit(session, "ОБ.101", "Godex EZ2350i")
     admin = _login("admin")
     yield sessions, clock, admin, ob019, ob101
     del app.state.production_uow_factory
+    del app.state.references_uow_factory
 
 
 def _bridge(admin, name="Мост ОБ.019", scopes=("machine:report",)):
@@ -399,3 +403,300 @@ def test_the_card_of_a_godex_shows_its_queue_profiles_and_print_journal(machines
     assert [item["text"] for item in card["journal"]] == ["Этикетка 2 · В очереди", "Этикетка 1 · Передано принтеру"] \
         or [item["text"] for item in card["journal"]] == ["Этикетка 1 · Передано принтеру", "Этикетка 2 · В очереди"]
     assert card["connection"]["pc"] == "SK-20250818JOKI" and card["connection"]["extra"] == [["Принтер", "Godex EZ2350i"]]
+
+
+def test_the_screen_shows_ticked_machines_and_every_agent_linked_one(machines_api):
+    """Owner 19.11: «просто галочку для вытягивания» — a БД.ОБ machine is on «Оборудование» when its checkbox
+    «Показывать в «Оборудовании»» is on, or when an ERP agent reaches it (whatever the checkbox). СИ never. Every tile
+    carries the article, site, operations and family; ОБ.101's printer agent is its link."""
+    from app.modules.references.infrastructure import EquipmentMeasuringRow
+    sessions, clock, admin, ob019, ob101 = machines_api
+    now = clock.now
+    with sessions.begin() as session:
+        twist = _unit(session, "ОБ.005", "Полуавтомат для скрутки проводов", **{
+            "Артикул": "SR-W01", "Расположение": "Цар", "Операции": "Свивка"})
+        solder = _unit(session, "ОБ.070.1", "Станция паяльная термовоздушная", **{
+            "Артикул": "8620DX-Pro", "Расположение": "Жук", "Операции": "Пайка, Усадка"})
+        bath = _unit(session, "ОБ.017", "Ванна ультразвуковая 10 л с нагревом", **{"Артикул": "VBS-10DS"})
+        session.flush()
+        for unit_id in (twist, solder):
+            session.get(EquipmentMachineRow, unit_id).show_in_equipment = True
+        unit_id, model_id = uuid4(), uuid4()
+        session.add_all([EquipmentModelRow(id=model_id),
+                         EquipmentUnitRow(id=unit_id, catalog="ob_measuring", model_id=model_id, ob_measuring_id=unit_id),
+                         EquipmentMeasuringRow(id=unit_id, tab="ob_measuring", equipment_model_id=model_id,
+                                               display_text="Микрометр", normalized_search="", source_sheet="", sort_key="",
+                                               fields={"Инв. номер": "СИ.110", "Наименование": "Микрометр",
+                                                       "Артикул": "EW-2550"})])
+        _agent(session, "godex-pc", "Цех", "2.9.2", now, ip_lan="192.168.1.70")
+        session.add(PrinterRow(machine_id="godex-pc", name="Godex EZ2350i", driver="Godex", port="USB001",
+                               kind="gdi_png", present=True, last_seen=now))
+        session.flush()
+        session.add(MarkingBindingRow(equipment_id=ob101, version=1, machine_id="godex-pc", printer="Godex EZ2350i"))
+        ob102 = _unit(session, "ОБ.102", "Полуавтомат для печати и намотки этикеток на провода")
+        session.flush()
+        session.add(MarkingBindingRow(equipment_id=ob102, version=1, machine_id="godex-pc", printer="Godex EZ2350i"))
+    body = admin.get(LIST).json()
+    assert body["families"] == ["Резка и зачистка", "Опрессовка", "Пайка и усадка", "Маркировка", "Прочее оборудование"]
+    machines = {row["inventory"]: row for row in body["rows"] if row["kind"] == "machine"}
+    # ОБ.017 is not ticked; СИ.110 is no machine; ОБ.019 / ОБ.094 wait for their bridge; ОБ.101 has an agent.
+    assert sorted(machines) == ["ОБ.005", "ОБ.019", "ОБ.070.1", "ОБ.094", "ОБ.101", "ОБ.102"]
+    # One Godex serves both marking machines: both are reached by its print agent.
+    assert machines["ОБ.102"]["controlled"] is True and machines["ОБ.102"]["equipment_id"] == str(ob102)
+    row = machines["ОБ.005"]
+    assert (row["article"], row["site"], row["operations"], row["family"]) == ("SR-W01", "ЦАР", ["Свивка"], "Резка и зачистка")
+    assert row["link"] == {"code": "not_connected", "text": "Нет подключения к ERP", "tone": "neutral"}
+    assert row["equipment_id"] == str(twist) and row["card"] is False and row["controlled"] is False
+    assert (machines["ОБ.070.1"]["site"], machines["ОБ.070.1"]["family"]) == ("ЖУК", "Пайка и усадка")
+    assert machines["ОБ.019"]["controlled"] is False and machines["ОБ.019"]["link"]["code"] == "not_installed"
+    marking = machines["ОБ.101"]
+    assert (marking["link"]["text"], marking["pc"], marking["equipment_id"], marking["controlled"]) == (
+        "На связи", "Цех", str(ob101), True)
+    [printer] = [row for row in body["rows"] if row["kind"] == "printer"]  # one Godex — one printer tile
+    assert printer["inventory"] in {"ОБ.101", "ОБ.102"}
+    # The bridge of ОБ.019 reports → «С управлением», with or without the checkbox.
+    assert _report(_bridge(admin)).status_code == 200
+    linked = {row["inventory"]: row for row in admin.get(LIST).json()["rows"] if row["kind"] == "machine"}["ОБ.019"]
+    assert linked["controlled"] is True and linked["card"] is True
+
+    # The checkbox is changed from БД.ОБ (edit right, journaled) and the screen follows.
+    shown = admin.put(f"/api/references/equipment/{bath}/shown", json={"shown": True}, headers=_csrf(admin))
+    assert shown.status_code == 200, shown.text
+    assert "ОБ.017" in {row["inventory"] for row in admin.get(LIST).json()["rows"]}
+    assert str(bath) in admin.get("/api/references/equipment-shown").json()["ids"]
+    assert admin.put(f"/api/references/equipment/{twist}/shown", json={"shown": False}, headers=_csrf(admin)).status_code == 200
+    assert "ОБ.005" not in {row["inventory"] for row in admin.get(LIST).json()["rows"]}
+    with sessions() as session:
+        events = session.scalars(select(AuditEventRow).where(AuditEventRow.event_type == "references.equipment_shown")).all()
+        assert sorted(event.details["shown"] for event in events) == ["да", "нет"]
+    # A СИ has no such checkbox.
+    assert admin.put(f"/api/references/equipment/{unit_id}/shown", json={"shown": True},
+                     headers=_csrf(admin)).status_code == 404
+
+
+class _FreeMachines:
+    """Test reservations: every window is free (occupancy has its own tests)."""
+
+    def __init__(self, session):
+        self.session = session
+
+    def acquire(self):
+        pass
+
+    def reserve(self, task):
+        pass
+
+    def release(self, task):
+        pass
+
+    def block(self, task):
+        pass
+
+
+def _person(session, login, level, site, master=False):
+    from app.modules.identity.domain import IdentityUser, hash_password
+    from app.modules.identity.infrastructure import IdentityUserRow, provision_user
+    user_id = uuid4()
+    provision_user(session, IdentityUser(id=user_id, login=login, email=f"{login}@example.test", name=login.title(),
+                                         department="Цех", role="installer", site=site, active=True, access_level=level,
+                                         site_master=master), hash_password(f"{login}-password"))
+    session.flush()
+    session.get(IdentityUserRow, user_id).site_master = master
+    return user_id
+
+
+@pytest.fixture
+def setup_world(machines_api):
+    """ОБ.019 on ЦАР with a setup model, a recipe and one «Назначена» task of the technician `tech`; people of both
+    sites; the setup unit of work over the same database (the issued operation resolves to ОБ.019, windows are free)."""
+    from datetime import timedelta as delta
+    from app.modules.equipment_setup.application import IssuedSetupOperation
+    from app.modules.equipment_setup.domain import IssuedOperationRef, RecipeVersionRef, SetupTask
+    from app.modules.equipment_setup.infrastructure import SqlAlchemySetupTasks, SqlAlchemySetupUnitOfWork
+    from app.modules.equipment_setup.recipe_infrastructure import RecipeVersionRow
+    from app.modules.equipment_setup.setup_model_infrastructure import SetupModelParameterRow, SetupModelRow
+    from app.workflows.equipment_setup_context import SqlAlchemySetupContext
+    sessions, clock, admin, ob019, _ = machines_api
+    now = clock.now
+    with sessions.begin() as session:
+        machine = session.get(EquipmentMachineRow, ob019)
+        machine.fields = {**machine.fields, "Тип": "Оборудование", "Расположение": "ЦАР"}
+        model_id = session.get(EquipmentUnitRow, ob019).model_id
+        session.add(SetupModelRow(model_id=model_id, requires_setup="full", updated_at=now, version=1))
+        session.flush()
+        session.add(SetupModelParameterRow(model_id=model_id, param_key="strip_mm", position=0, label="Зачистка",
+                                           unit="мм", source="etk", source_field="Зачистка А"))
+        people = {login: _person(session, login, level, site, master) for login, level, site, master in (
+            ("tech", "operator", "ЦАР", False), ("fitter", "operator", "ЦАР", False),
+            ("master", "foreman", "ЦАР", True), ("stranger", "foreman", "ЖУК", True), ("reader", "pm", "ЦАР", False))}
+        recipe = uuid4()
+        session.add(RecipeVersionRow(recipe_id=recipe, version=1, machine_id=ob019, title="Рецепт", geometry=[],
+                                     panel_settings=[], source="тест", created_by=uuid4(), created_at=now))
+        session.flush()
+        task = SetupTask.create(operation=IssuedOperationRef(uuid4(), 1, uuid4(), uuid4(), 3), machine_id=ob019,
+                                technician_id=people["tech"], recipe=RecipeVersionRef(recipe, 1), planned_start=now,
+                                planned_finish=now + delta(hours=1), now=now)
+        SqlAlchemySetupTasks(session).save(task, expected_version=0)
+
+    def context(session):
+        return SqlAlchemySetupContext(session, resolve_issued_operation=lambda reference: IssuedSetupOperation(
+            reference, "", (ob019,)))
+    before = getattr(app.state, "equipment_setup_uow_factory", None)
+    app.state.equipment_setup_uow_factory = lambda: SqlAlchemySetupUnitOfWork(
+        sessions, context_factory=context, reservations_factory=_FreeMachines)
+    yield sessions, admin, ob019, task.id
+    app.state.equipment_setup_uow_factory = before
+
+
+SETUP_CARD = "/api/production/setup-model/ОБ.019"
+CONFIGURE = f"{SETUP_CARD}/configuration"
+
+
+def test_configuring_by_task_moves_the_task_to_ready_and_clears_waiting(setup_world):
+    """«Ждёт наладки» — an open task; «Настроено по заданию» by its technician takes it New → В работе → Готова through
+    the existing transitions, in one transaction with the configuration; «Настроено вручную» needs a reason."""
+    from app.modules.equipment_setup.infrastructure import SetupTaskRow, SetupTransitionRow
+    from app.modules.equipment_setup.setup_model_infrastructure import SetupConfigurationRow
+    sessions, admin, ob019, task = setup_world
+    row = {r["inventory"]: r for r in admin.get(LIST).json()["rows"]}["ОБ.019"]
+    assert row["setup"] == {"code": "full", "label": "полная"} and row["pending_setup"] == 1
+    tech = _login("tech")
+    card = tech.get(SETUP_CARD).json()
+    assert [(item["id"], item["version"], item["status"], item["operation"], item["mine"])
+            for item in card["open_tasks"]] == [(str(task), 1, "Назначена", "ЭТК 3", True)]
+    manual = tech.post(CONFIGURE, json={"expected_version": 0, "values": {"strip_mm": "5"}}, headers=_csrf(tech))
+    assert manual.status_code == 422 and "причину" in manual.json()["detail"]
+    stray = tech.post(CONFIGURE, json={"expected_version": 0, "task_id": str(task), "values": {"length": "5"}},
+                      headers=_csrf(tech))
+    assert stray.status_code == 422
+    stale_task = tech.post(CONFIGURE, json={"expected_version": 0, "task_id": str(task), "task_version": 2,
+                                            "values": {"strip_mm": "5"}}, headers=_csrf(tech))
+    assert stale_task.status_code == 409
+    with sessions() as session:  # a refused request leaves nothing behind
+        assert session.get(SetupConfigurationRow, ob019) is None
+        assert session.get(SetupTaskRow, task).status == "New"
+    done = tech.post(CONFIGURE, json={"expected_version": 0, "task_id": str(task), "task_version": 1,
+                                      "values": {"strip_mm": "5,5"}}, headers=_csrf(tech))
+    assert done.status_code == 200, done.text
+    assert done.json() == {"ok": True, "version": 1, "values": {"strip_mm": "5.5"}, "task_status": "Ready"}
+    with sessions() as session:
+        assert (session.get(SetupTaskRow, task).status, session.get(SetupTaskRow, task).version) == ("Ready", 3)
+        assert [item.version for item in session.scalars(select(SetupTransitionRow).where(
+            SetupTransitionRow.task_id == task).order_by(SetupTransitionRow.version))] == [2, 3]
+        assert {event.event_type for event in session.scalars(select(AuditEventRow).where(
+            AuditEventRow.aggregate_id == task))} == {"equipment_setup.start", "equipment_setup.ready"}
+    row = {r["inventory"]: r for r in admin.get(LIST).json()["rows"]}["ОБ.019"]
+    assert row["pending_setup"] == 0
+    again = tech.post(CONFIGURE, json={"expected_version": 1, "task_id": str(task), "values": {"strip_mm": "6"}},
+                      headers=_csrf(tech))
+    assert again.status_code == 409  # the task is closed
+    stale = tech.post(CONFIGURE, json={"expected_version": 0, "values": {"strip_mm": "6"}, "reason": "смена ножа"},
+                      headers=_csrf(tech))
+    assert stale.status_code == 409
+    by_hand = tech.post(CONFIGURE, json={"expected_version": 1, "values": {"strip_mm": "6"}, "reason": "смена ножа"},
+                        headers=_csrf(tech))
+    assert by_hand.status_code == 200 and by_hand.json()["version"] == 2
+    card = tech.get(SETUP_CARD).json()
+    assert card["configuration"]["values"] == {"strip_mm": "6"} and card["configuration"]["version"] == 2
+    assert [(item["reason"], item["operation"], item["values"]) for item in card["history"]] == [
+        ("смена ножа", "", {"strip_mm": "6"}), ("", "ЭТК 3", {"strip_mm": "5.5"})]
+    assert card["open_tasks"] == []
+
+
+def test_setup_card_and_configuration_follow_the_task_list_rules(setup_world):
+    """Old «Наладка» rules: another site sees no tasks and no journal and may not record; on the site a master sees
+    every task, anyone else only their own; «Настроено по заданию» — the assigned technician or the master of the
+    machine's site (owner 19.11.2026), the journal names who; view-only users may not record at all."""
+    from app.modules.equipment_setup.infrastructure import SetupTaskRow, SetupTransitionRow
+    sessions, admin, ob019, task = setup_world
+    cards = {login: _login(login).get(SETUP_CARD).json()["open_tasks"] for login in ("tech", "fitter", "master", "stranger")}
+    assert {login: [(item["id"], item["can_confirm"]) for item in items] for login, items in cards.items()} == {
+        "tech": [(str(task), True)], "fitter": [], "master": [(str(task), True)], "stranger": []}
+    assert [(item["id"], item["can_confirm"]) for item in admin.get(SETUP_CARD).json()["open_tasks"]] == [(str(task), False)]
+    by_hand = {"expected_version": 0, "values": {"strip_mm": "5"}, "reason": "смена ножа"}
+    stranger = _login("stranger")
+    refused = stranger.post(CONFIGURE, json=by_hand, headers=_csrf(stranger))
+    assert refused.status_code == 403 and "другой площадки" in refused.json()["detail"]
+    reader = _login("reader")
+    assert reader.get(SETUP_CARD).status_code == 200
+    assert reader.post(CONFIGURE, json=by_hand, headers=_csrf(reader)).status_code == 403
+    fitter = _login("fitter")
+    assert fitter.post(CONFIGURE, json=by_hand, headers=_csrf(fitter)).status_code == 200
+    assert stranger.get(SETUP_CARD).json()["history"] == [] and len(fitter.get(SETUP_CARD).json()["history"]) == 1
+    body = {"expected_version": 1, "task_id": str(task), "values": {"strip_mm": "5"}}
+    for login in ("fitter", "stranger"):  # a plain colleague; the master of another site
+        client = _login(login)
+        refused = client.post(CONFIGURE, json=body, headers=_csrf(client))
+        assert refused.status_code == 403, (login, refused.text)
+        assert "мастер площадки" in refused.json()["detail"]
+    master = _login("master")
+    done = master.post(CONFIGURE, json=body, headers=_csrf(master))
+    assert done.status_code == 200, done.text
+    assert done.json()["task_status"] == "Ready"
+    with sessions() as session:
+        row = session.get(SetupTaskRow, task)
+        transitions = session.scalars(select(SetupTransitionRow).where(SetupTransitionRow.task_id == task)
+                                      .order_by(SetupTransitionRow.version)).all()
+        master_id = str(session.scalar(select(AuditEventRow.actor_id).where(
+            AuditEventRow.aggregate_id == task, AuditEventRow.event_type == "equipment_setup.ready")))
+    assert row.status == "Ready" and {item.snapshot["actor_id"] for item in transitions} == {master_id}
+    assert master_id != str(row.technician_id)
+    assert master.get(SETUP_CARD).json()["history"][0]["by"] == "Master"
+
+
+def test_only_a_reference_editor_ticks_the_shown_checkbox(setup_world):
+    sessions, admin, ob019, task = setup_world
+    reader = _login("reader")  # «База данных»: view only
+    assert reader.get("/api/references/equipment-shown").status_code == 200
+    refused = reader.put(f"/api/references/equipment/{ob019}/shown", json={"shown": True}, headers=_csrf(reader))
+    assert refused.status_code == 403
+    with sessions() as session:
+        assert session.get(EquipmentMachineRow, ob019).show_in_equipment is False
+
+
+def test_a_machine_without_a_setup_model_takes_free_values(machines_api):
+    sessions, clock, admin, _, _ = machines_api
+    with sessions.begin() as session:
+        _unit(session, "ОБ.025", "Машина бандажная для кабельных жгутов")
+    url = "/api/production/setup-model/ОБ.025/configuration"
+    answer = admin.post(url, json={"expected_version": 0, "values": {"Натяжение ленты": "3", "Лента": ""},
+                                   "reason": "новая лента"}, headers=_csrf(admin))
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["values"] == {"Натяжение ленты": "3"}
+    empty = admin.post(url, json={"expected_version": 1, "values": {}, "reason": "x"}, headers=_csrf(admin))
+    assert empty.status_code == 422
+
+
+def test_the_article_of_an_instrument_comes_from_its_si_card(machines_api):
+    from app.modules.references.infrastructure import EquipmentMeasuringRow
+    sessions, clock, admin, _, _ = machines_api
+    now = clock.now
+    with sessions.begin() as session:
+        _instrument(session, "СИ.001", "Arinst VNA-DL", "Arinst VL")
+        unit_id, model_id = uuid4(), uuid4()
+        session.add_all([EquipmentModelRow(id=model_id),
+                         EquipmentUnitRow(id=unit_id, catalog="ob_measuring", model_id=model_id, ob_measuring_id=unit_id),
+                         EquipmentMeasuringRow(id=unit_id, tab="ob_measuring", equipment_model_id=model_id,
+                                               display_text="ВАЦ", normalized_search="", source_sheet="", sort_key="",
+                                               fields={"Инв. номер": "СИ.001", "Артикул": "VNA-DL 1-8800 MHz"})])
+        _agent(session, "otk", "DESKTOP-PTA57QF", "2.9.7", now)
+        session.add(DeviceRow(machine_id="otk", kind="arinst", device_id="arinst", name="Arinst VNA-DL", present=True,
+                              last_seen=now))
+    [row] = [row for row in admin.get(LIST).json()["rows"] if row["kind"] == "device"]
+    assert (row["inventory"], row["article"]) == ("СИ.001", "VNA-DL 1-8800 MHz")
+
+
+@pytest.mark.parametrize("operations, name, family", [
+    (["Резка", "Резка с разделкой", "Резка с разделкой+ маркировка"], "Автомат", "Резка и зачистка"),
+    (["Автомат резка + опрессовка", "Лужение"], "Автомат", "Резка и зачистка"),
+    (["Опрессовка наконечников", "Опрессовка"], "Пресс", "Опрессовка"),
+    (["Ленточный обжим"], "Пресс", "Опрессовка"),
+    (["Пайка", "Монтаж корпуса"], "Установка", "Пайка и усадка"),
+    (["Монтаж маркировки"], "Полуавтомат", "Маркировка"),
+    ([], "Маркиратор флажковый", "Маркировка"),
+    ([], "Полуавтомат для снятия изоляции с проводов", "Резка и зачистка"),
+    (["Литье пластика"], "Машина литьевая", "Прочее оборудование"),
+    ([], "Принтер 3D экструзионный", "Прочее оборудование"),
+])
+def test_machine_family_by_operations_then_name(operations, name, family):
+    assert rules.machine_family(operations, name) == family

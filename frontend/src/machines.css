@@ -164,6 +164,37 @@ button.machine-stop { min-width: 160px; min-height: 48px; font-size: 18px; font-
 .machine-confirm-check input { width: 20px; height: 20px; }
 .machine-confirm-command .machine-actions button { min-height: 40px; }
 
+/* «Оборудование»: вкладки, участок, артикул и наладка на плитке (MachinesPage.tsx), часть «Наладка» (MachineSetup.tsx). */
+.machine-toolbar { flex-wrap: wrap; align-items: center; }
+.machine-toolbar .seg-tabs { margin: 0; }
+.machine-tile-article { overflow: hidden; color: var(--foreground); font-size: 13px; white-space: nowrap; text-overflow: ellipsis; }
+.machine-tile-ops { overflow: hidden; color: var(--muted-foreground); font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
+.machine-tile-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.machine-badge { display: inline-flex; align-items: center; padding: 0 8px; border: 1px solid var(--border); border-radius: 999px;
+  color: var(--muted-foreground); font-size: 12px; line-height: 20px; }
+.machine-badge.tone-warn { border-color: var(--warn-border); background: var(--warn-soft); color: var(--tone-warn); font-weight: 500; }
+.machine-setup { display: grid; gap: 8px; }
+.machine-setup-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.machine-setup-head h3 { margin: 0; }
+.machine-setup-head > button { margin-left: auto; }
+.machine-setup-note { margin: 0; font-size: 13px; }
+.machine-setup-tasks { display: grid; gap: 4px; }
+.machine-setup-tasks label { display: flex; align-items: flex-start; gap: 8px; padding: 4px 8px; border-radius: 8px; font-size: 13px; }
+.machine-setup-tasks label.is-on { background: var(--accent); }
+.machine-setup-tasks input { width: auto; margin: 2px 0 0; }
+.machine-setup-table td small, .machine-setup-table th small { font-size: 12px; }
+.machine-setup-table input { max-width: 160px; text-align: right; font-variant-numeric: tabular-nums; }
+.machine-setup-free { display: grid; gap: 8px; }
+.machine-setup-free p { margin: 0; font-size: 13px; }
+.machine-setup-free-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 8px; max-width: 640px; }
+.machine-setup-actions { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; }
+.machine-setup-reason { display: grid; gap: 4px; flex: 1 1 320px; max-width: 560px; }
+.machine-setup-reason span { color: var(--muted-foreground); font-size: 13px; }
+.machine-setup-history summary { cursor: pointer; font-size: 13px; font-weight: 500; }
+.machine-setup-history ul { margin: 8px 0 0; padding-left: 18px; font-size: 13px; }
+@media (pointer: coarse) { .machine-setup-tasks label { min-height: 40px; align-items: center; } }
+.machine-toolbar .search { flex: 1 1 240px; max-width: 420px; }
+
 /* «Выполнение задания» (Ob019RunJob.tsx): выбор задания, ход по счётчику станка, Пуск / Стоп / Завершить. */
 .machine-run { display: grid; gap: 8px; padding: 12px 16px; border: 1px solid var(--primary); border-radius: 8px; background: var(--card); }
 .machine-run-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 24px; }

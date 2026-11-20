@@ -96,9 +96,12 @@ export const NAV: NavItem[] = [
   { id: "references", label: "База данных", sub: "операции · оборудование · терминалы · коаксиал · провода · СПР.КАБ · соответствия", anyPermission: ["erpref", "erptctpl"], block: "refs" },
   { id: "tctemplates", label: "Шаблоны техкарт", sub: "карточки операций · шаги и оснастка", permission: "erptctpl", block: "refs", within: "references" },
   { id: "production", label: "Ресурсное планирование", sub: "назначение операторов · автоплан · график", permission: "production", block: "prod" },
-  { id: "equipmentsetup", label: "Наладка оборудования", sub: "станки · рецепты · пробные измерения", capability: "equipmentSetup", block: "prod" },
-  // «Станки» (владелец 18.11.2026): подключённое к ERP оборудование и его живое состояние; читают мастер и монтажник.
-  { id: "machines", label: "Станки", sub: "подключённое оборудование · состояние на станке", anyPermission: ["production", "myops"], block: "prod" },
+  // «Наладка оборудования» живёт в карточке станка раздела «Оборудование» (владелец 19.11.2026): старая ссылка
+  // ?section=equipmentsetup открывает «Оборудование»; пункт меню остаётся только тому, кому «Оборудование» закрыто.
+  { id: "equipmentsetup", label: "Наладка оборудования", sub: "станки · рецепты · пробные измерения", capability: "equipmentSetup", block: "prod", within: "machines", menuWithoutParent: true },
+  // «Оборудование» (бывшие «Станки», владелец 19.11.2026): станки цеха с управлением из ERP и без, их наладка, принтеры и
+  // приборы агентов; читают мастер и монтажник.
+  { id: "machines", label: "Оборудование", sub: "станки цеха · наладка · состояние на станке", anyPermission: ["production", "myops"], block: "prod" },
   // «Ручная работа» (план «Станки вне проекта», 19.11.2026): журнал работ на любом станке вне проекта; те же ключи, что у «Станков».
   { id: "manualjobs", label: "Ручная работа", sub: "работа на станке вне проекта · журнал за период", anyPermission: ["production", "myops"], block: "prod" },
   // «Задания» (`myops`) и «ОТК» (`quality`) — разделы матрицы со своими ключами (owner 04.10.2026), не часть `production`.
