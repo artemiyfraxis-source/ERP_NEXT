@@ -615,6 +615,22 @@ class SqlAlchemyEquipmentRepository:
         row.show_in_equipment = shown
         return field(row.fields or {}, INV_KEY), changed
 
+    # «Кто налаживает» (owner 20.11.2026, migration 0213): machines of the tab «Оборудование» only; the rest is 'operator'.
+    def technician_ids(self) -> list[str]:
+        from .infrastructure import EquipmentMachineRow
+        return sorted(str(item) for item in self.session.scalars(
+            select(EquipmentMachineRow.id).where(EquipmentMachineRow.setup_by == "technician")))
+
+    def set_setup_by(self, unit_id: UUID, setup_by: str) -> tuple[str, bool]:
+        """(inventory number, changed); a unit outside «Оборудование» → LookupError."""
+        from .infrastructure import EquipmentMachineRow
+        row = self.session.get(EquipmentMachineRow, unit_id)
+        if row is None:
+            raise LookupError("«Кто налаживает» задаётся только у станков вкладки «Оборудование»")
+        changed = row.setup_by != setup_by
+        row.setup_by = setup_by
+        return field(row.fields or {}, INV_KEY), changed
+
     def report(self) -> dict:
         return links_report(self.session)
 
