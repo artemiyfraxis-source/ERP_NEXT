@@ -33,7 +33,7 @@ from uuid import UUID
 
 from sqlalchemy import (
     BigInteger, CheckConstraint, DateTime, ForeignKey, Identity, Index, Integer, PrimaryKeyConstraint, String,
-    UniqueConstraint, Uuid, select,
+    UniqueConstraint, Uuid, select, text,
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
@@ -49,6 +49,8 @@ TABLE = "production_machine_speed_rows"
 U32_MAX = 0xFFFFFFFF
 REASONS = ("start", "counter", "state", "run", "setup")
 UNIQUE_NAME = "uq_production_machine_speed_rows_seq"
+FK_EQUIPMENT = "fk_production_machine_speed_rows_equipment"
+FK_RUN = "fk_production_machine_speed_rows_run"
 WIRE_MAX = 200
 SETUP_MAX = 300
 UNKNOWN = "?"
@@ -86,7 +88,7 @@ class MachineSpeedRow(Base):
 
     id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer(), "sqlite"), Identity())
     equipment_id: Mapped[UUID] = mapped_column(
-        Uuid, ForeignKey("equipment_units.id", ondelete="RESTRICT", name="fk_production_machine_speed_rows_equipment"),
+        Uuid, ForeignKey("equipment_units.id", ondelete="RESTRICT", name=FK_EQUIPMENT),
         nullable=False)
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     boot: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -99,7 +101,7 @@ class MachineSpeedRow(Base):
     alarm_code: Mapped[int | None] = mapped_column(Integer)
     run_write_id: Mapped[UUID | None] = mapped_column(
         Uuid, ForeignKey("production_machine_writes.id", ondelete="SET NULL",
-                         name="fk_production_machine_speed_rows_run"))
+                         name=FK_RUN))
     run_kind: Mapped[str | None] = mapped_column(String(16))
     wire_key: Mapped[str] = mapped_column(String(WIRE_MAX), nullable=False, default="", server_default="")
     setup_key: Mapped[str] = mapped_column(String(SETUP_MAX), nullable=False)
@@ -230,6 +232,10 @@ def _record(session: Session, link: rules.MachineLinkRow, words: dict[int, int],
         recorded_at = last.recorded_at  # the server clock stepped back: never before the previous row
     row = MachineSpeedRow(equipment_id=link.equipment_id, recorded_at=recorded_at, boot=boot, seq=seq, reason=reason,
                           **values)
+    if session.get_bind().dialect.name == "postgresql":
+        # Every FK is DEFERRABLE INITIALLY DEFERRED (migrations/env.py): checked now, inside the savepoint, a broken key
+        # is this history row's failure — not a failed commit of the whole machine report.
+        session.execute(text(f"SET CONSTRAINTS {FK_EQUIPMENT}, {FK_RUN} IMMEDIATE"))
     session.add(row)
     session.flush()
     return row
