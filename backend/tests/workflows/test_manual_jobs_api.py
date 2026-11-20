@@ -56,7 +56,7 @@ def test_finish_rules_version_and_material(machines_api):
     body = {"version": 1, "good": 18, "defect": 2, "defect_reason": "надрез жилы", "material": "not_issued",
             "material_note": "обрезки из отходов"}
     assert _post(admin, finish, {**body, "defect_reason": ""}).status_code == 422
-    assert "складом" in _post(admin, finish, {**body, "material": "issued"}).json()["detail"]
+    assert "после завершения" in _post(admin, finish, {**body, "material": "issued"}).json()["detail"]
     assert _post(admin, finish, {**body, "material_note": " "}).status_code == 422
     stale = _post(admin, finish, {**body, "version": 2})
     assert stale.status_code == 409 and "обновите" in stale.json()["detail"]

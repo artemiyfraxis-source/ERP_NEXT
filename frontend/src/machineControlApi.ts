@@ -92,30 +92,54 @@ export interface TransferChoice {
   quantity: string;
 }
 
+/** Монтажный провод для «Провод вручную»: Ø жилы из базы проводов, есть ли записанная настройка на этом станке. */
+export interface WireChoice {
+  label: string;
+  conductor_mm: string | null;
+  has_recipe: boolean;
+}
+
 export interface TransferRow {
   key: string;
   label: string;
   unit: string;
   nominal: string | null;
+  /** Откуда значение: «Задание», «ЭТК…», «Рецепт, версия N», «Ø жилы + 0,15», «Нет данных». */
   source: string;
-  offset: string;
+  /** Поправка станка поверх номинала; null — значение из настройки провода, поправка не добавляется. */
+  offset: string | null;
   value: string | null;
   live: string | null;
 }
 
+/** Лазерная маркировка из ЭТК (сервер: workflows/ob019_marking.py): регистры, которые «Передать на станок» пишет вместе
+ *  с заданием; `blocking` — сервер откажет в передаче (422 «Маркировка: …»). Значения переключателей — «Вкл»/«Выкл». */
+export interface MarkingPlan {
+  mode: "none" | "ends" | "full";
+  mode_label: string;
+  source: string;
+  rows: { key: string; label: string; value: string }[];
+  warnings: string[];
+  blocking: string[];
+}
+
+/** Что запишется на станок: по заданию резки ЭТК (`group_id`) или по проводу, выбранному вручную (`group_id: null`). */
 export interface TransferPlan {
-  group_id: string;
-  number: string;
+  group_id: string | null;
+  number: string | null;
   wire: string;
   length_mm: string;
-  /** Тираж этой передачи: план минус уже сделанное по станку в идущем прогоне того же задания. */
-  quantity: number;
+  /** Тираж этой передачи: план минус уже сделанное по станку в идущем прогоне того же задания; null — провод выбран
+   *  вручную, без задания. */
+  quantity: number | null;
   planned?: number;
   done?: number;
   rows: TransferRow[];
-  job: { total_set: number; order_quantity: number; order_number: string; product: string };
+  job: { total_set: number | null; order_quantity: number | null; order_number: string; product: string };
   missing: string[];
   blocking: string[];
+  /** Маркировка из ЭТК; null — в ЭТК её нет (или провод выбран вручную), регистры маркировки не трогаются. */
+  marking?: MarkingPlan | null;
 }
 
 export type CorrectionCase = "machine" | "etk" | "both";
@@ -127,7 +151,17 @@ export interface CorrectionBody {
   etk_value?: string;
   group_id?: string;
   measured?: string;
+  /** Значение станка, которое показал предпросмотр, мм: на станке уже другое — сервер откажет (409). */
+  seen?: string;
   note?: string;
+}
+
+/** Ответ на правку: поправка станка (сервер считает «на станке − получилось»), ревизии ЭТК, что было на станке. */
+export interface CorrectionResult {
+  offset: string | null;
+  etk: { card_id: string; project: string; revision: number }[];
+  written?: string | null;
+  measured?: string | null;
 }
 
 /** «Выполнение задания» (владелец 19.11.2026): одна передача задания на станок и её счёт по T.Finish (D649).
@@ -209,9 +243,11 @@ export const machineControlApi = {
   control: (inventory: string, signal?: AbortSignal) => api<MachineControl>(`${card(inventory)}/control`, { signal }),
   write: (inventory: string, values: Record<string, string | number>, confirmState: number | null) =>
     api<MachineCommand>(`${card(inventory)}/write`, post({ values, confirm_state: confirmState })),
-  choices: (inventory: string) => api<{ choices: TransferChoice[] }>(`${card(inventory)}/transfer`),
+  choices: (inventory: string) => api<{ choices: TransferChoice[]; wires?: WireChoice[] }>(`${card(inventory)}/transfer`),
   plan: (inventory: string, groupId: string, lengthMm: string) =>
     api<TransferPlan>(`${card(inventory)}/transfer?group_id=${encodeURIComponent(groupId)}&length_mm=${encodeURIComponent(lengthMm)}`),
+  wirePlan: (inventory: string, wire: string, lengthMm: string) =>
+    api<TransferPlan>(`${card(inventory)}/transfer?wire=${encodeURIComponent(wire)}&length_mm=${encodeURIComponent(lengthMm)}`),
   transfer: (inventory: string, groupId: string, lengthMm: string, confirmState: number | null) =>
     api<MachineCommand>(`${card(inventory)}/transfer`, post({ group_id: groupId, length_mm: lengthMm, confirm_state: confirmState })),
   command: (inventory: string, command: ControlCommand, confirmState?: number | null) =>
@@ -224,9 +260,39 @@ export const machineControlApi = {
     api<{ run: MachineRun; manual: ManualJob | null }>(`${card(inventory)}/run/close`, post(body)),
   cuttingRuns: (groupId: string, signal?: AbortSignal) =>
     api<{ runs: CuttingMachineRun[] }>(`/api/production/machines/runs/cutting/${encodeURIComponent(groupId)}`, { signal }),
-  correct: (inventory: string, body: CorrectionBody) =>
-    api<{ offset: string | null; etk: { card_id: string; project: string; revision: number }[] }>(`${card(inventory)}/correction`, post(body)),
+  correct: (inventory: string, body: CorrectionBody) => api<CorrectionResult>(`${card(inventory)}/correction`, post(body)),
 };
+
+/** Состояния, в которых служба станка пишет настройки и ролики (сервер: machine_writes.IDLE_STATES). */
+export const IDLE_STATES = [102, 107];
+
+/** Пульт производителя на ПК держит порт станка — словами наладчика, без имени программы (владелец 19.11.2026); тот же
+ *  текст, что у сервера (production/machines.py HMI_OPEN). */
+export const PULT_OPEN = "Открыт пульт станка на ПК — закройте его, чтобы ERP могла управлять станком";
+const PULT_SIGNS = /PXS_HMI|busy|refused|Открыт пульт станка/i;
+
+/** Отказ агента или сервера словами оператора: занятый пульт — одной фразой, остальное как есть. */
+export function operatorText(text: string): string {
+  return PULT_SIGNS.test(text) ? PULT_OPEN : text;
+}
+
+/** «14:05» по часам этого компьютера; пусто — пустая строка. */
+export function clock(value: string | null | undefined): string {
+  if (!value) return "";
+  const moment = new Date(value);
+  if (Number.isNaN(moment.getTime())) return "";
+  return `${String(moment.getHours()).padStart(2, "0")}:${String(moment.getMinutes()).padStart(2, "0")}`;
+}
+
+/** Итог команды рядом с кнопкой: «отправлено…», «выполнено 14:05», «отказ: причина». */
+export function commandResult(command: MachineCommand): { text: string; tone: Tone } {
+  if (command.status === "queued" || command.status === "taken") return { text: "отправлено…", tone: "info" };
+  if (command.status === "done") {
+    const at = clock(command.finished_at);
+    return { text: at ? `выполнено ${at}` : "выполнено", tone: "ok" };
+  }
+  return { text: `отказ: ${operatorText(command.error || command.status_text.toLowerCase())}`, tone: "danger" };
+}
 
 /** Когда команда станку возможна — та же таблица, что на сервере (production/machine_control.py) и в агенте (D766). */
 export const CONTROL_STATES: Record<ControlCommand, number[] | null> = {

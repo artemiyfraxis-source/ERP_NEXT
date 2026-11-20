@@ -7,13 +7,16 @@ the HMI context D730=13 + date while holding, 1.5 s, and clears the bit) — pro
 
 Rules:
 - Стоп — anyone who sees the card (view), no confirmation; it cancels every queued command and is claimed first.
-- Сброс / Пуск / Сброс аварии — section «Управление станками» on edit, the confirmation «руки убраны» and the state the
-  person saw (a different state now → refused); the state must allow the command (`ALLOWED_STATES`); one controller —
-  nothing else open on the machine (the queue's UNIQUE index).
+- Сброс / Пуск / Сброс аварии — section «Управление станками» on edit and the state the person saw (a different state
+  now → refused); one press on the card, no dialog (owner 19.11.2026): the card sends `hands_clear: true` itself, the
+  journal says «одним нажатием с карточки», not a person's confirmation. The state must allow the command
+  (`ALLOWED_STATES`), no switch of `BLOCKED_BY_BITS` may be on (Пуск with the feed rollers lifted, D604.0); one
+  controller — nothing else open on the machine (the queue's UNIQUE index).
 - A command older than 5 s by the server clock is never handed out; the claim carries the time left and the runner
   counts it from the moment it asked, so it never starts one older than 5 s.
-- Checked again ON the PC right before the bit is held: PXS_HMI closed, the state (`$script:Controls` of the runner
-  holds the same table as `ALLOWED_STATES`; a test compares them), an alarm present for Сброс аварии.
+- Checked again ON the PC right before the bit is held: PXS_HMI closed, the state and the blocking bits
+  (`$script:Controls` of the runner holds the same tables as `ALLOWED_STATES` / `BLOCKED_BY_BITS`; a test compares
+  them), an alarm present for Сброс аварии.
 - No answer for 15 s → «Результат неизвестен», never assumed done; a late true answer still replaces it.
 - No ERP emergency stop: E-stop (D599.3) is the physical button only; neither ERP nor the runner knows that bit."""
 
@@ -38,6 +41,10 @@ ALLOWED_STATES: dict[str, frozenset[int] | None] = {
     "reset": frozenset({100, 105, 107}),
     "alarm_clear": None,
 }
+# Switch bits (address, bit) that must be off for a command: Пуск with the feed rollers lifted would run the cycle with
+# no wire feed (owner 19.11.2026). Not read (old bridge) — not blocked; the runner re-reads it on the PC.
+BLOCKED_BY_BITS: dict[str, tuple[tuple[int, int], ...]] = {"start": ((rules.OB019_FEED_WHEEL_ADDRESS, 0),)}
+BLOCKED_TEXTS = {rules.OB019_FEED_WHEEL_ADDRESS: "подающие ролики подняты — сначала опустите их"}
 # The runner's reason codes (the script is ASCII) → what the card shows.
 REASONS = {
     "ok": "",
@@ -49,6 +56,7 @@ REASONS = {
     "no_reply": "Служба Modbus не ответила во время команды — проверьте станок",
     "not_cleared": "Бит команды не снят — проверьте станок",
     "unknown_command": "Агент на ПК станка не знает этой команды",
+    "rollers_up": "Подающие ролики подняты — сначала опустите их; команда не выполнялась",
 }
 OUTCOMES = ("done", "failed", "expired", "unknown")
 
@@ -59,8 +67,8 @@ class CommandRefused(Exception):
         self.status = status
 
 
-def precondition_error(command: str, state: int | None, alarm: int | None) -> str:
-    """Why the command may not run in this state ('' — it may)."""
+def precondition_error(command: str, state: int | None, alarm: int | None, words: dict[int, int] | None = None) -> str:
+    """Why the command may not run in this state ('' — it may). `words` — the snapshot, for `BLOCKED_BY_BITS`."""
     allowed = ALLOWED_STATES[command]
     if allowed is not None and state not in allowed:
         now = rules.OB019_STATES.get(state, (f"код {state}", ""))[0] if state is not None else "неизвестно"
@@ -68,6 +76,10 @@ def precondition_error(command: str, state: int | None, alarm: int | None) -> st
         return f"«{NAMES[command]}» возможен, только когда станок: {need}. Сейчас: {now.lower()}"
     if command == "alarm_clear" and not alarm:
         return "Аварии нет — сбрасывать нечего"
+    for address, bit in BLOCKED_BY_BITS.get(command, ()):
+        word = (words or {}).get(address)
+        if word is not None and (word >> bit) & 1:
+            return f"«{NAMES[command]}» невозможен: {BLOCKED_TEXTS.get(address, f'включён D{address}.{bit}')}"
     return ""
 
 
@@ -99,8 +111,8 @@ def request(session: Session, *, equipment_id: UUID, command: str, actor_id: UUI
     else:
         if not can_control:
             raise CommandRefused("«Сброс», «Пуск», «Сброс аварии» — только с правом «Управление станками»", 403)
-        if not hands_clear:
-            raise CommandRefused("Подтвердите, что руки убраны и в зоне станка никого нет")
+        if not hands_clear:  # the card sends it with every press (no dialog since 19.11.2026)
+            raise CommandRefused("Команда без подтверждения карточки — обновите страницу")
         snapshot = session.get(rules.MachineSnapshotRow, equipment_id)
         code = rules.link_status(snapshot, now)
         if code != "ok":
@@ -109,7 +121,7 @@ def request(session: Session, *, equipment_id: UUID, command: str, actor_id: UUI
         state_value = words.get(766)
         if state_seen is None or state_seen != state_value:
             raise CommandRefused("Состояние станка изменилось — проверьте его и подтвердите ещё раз")
-        reason = precondition_error(command, state_value, words.get(782))
+        reason = precondition_error(command, state_value, words.get(782), words)
         if reason:
             raise CommandRefused(reason)
     row = queue.MachineWriteRow(
