@@ -935,17 +935,19 @@ export function ProjectEtk({ card, principal, onChange }: { card: ProjectTechcar
 }
 
 /** Карточка ТК по id — из общего списка (отдельной ручки на одну карту нет). */
+const NO_SETUP_UNITS: EtkSetupUnit[] = [];
+
 /** Units set up on open tasks for the card; a failed fetch or 403 silently means «none». */
 export function useCardSetupUnits(cardId: string): EtkSetupUnit[] {
-  const [units, setUnits] = useState<EtkSetupUnit[]>([]);
+  // Keyed by card: right after a card switch the previous card's units are never rendered.
+  const [loaded, setLoaded] = useState<{ cardId: string; units: EtkSetupUnit[] }>({ cardId: "", units: [] });
   useEffect(() => {
     let live = true;
-    setUnits([]);
     if (!cardId) return;
-    void techcardsApi.setupUnits(cardId).then((found) => { if (live) setUnits(found.units); }, () => undefined);
+    void techcardsApi.setupUnits(cardId).then((found) => { if (live) setLoaded({ cardId, units: found.units }); }, () => undefined);
     return () => { live = false; };
   }, [cardId]);
-  return units;
+  return loaded.cardId === cardId ? loaded.units : NO_SETUP_UNITS;
 }
 
 export function useTechcard(cardId: string) {

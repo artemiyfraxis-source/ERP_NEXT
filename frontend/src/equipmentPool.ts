@@ -81,7 +81,8 @@ export function poolSetupLabel(
   for (const unit of units) {
     const match = POOL_NUMBER.exec(unit.inventory_number);
     if (!match || !match[2] || !/^\d+$/.test(match[2]) || Number(match[1]) !== Number(poolNumber)) continue;
-    found.set(`ОБ.${match[1]}.${match[2]}`, { pool: Number(match[1]), unit: Number(match[2]) });
+    // Canonical label from the pool itself: «ОБ.27.2», «OB.027.02» and «ОБ.027.2» are one unit.
+    found.set(parsed.pool.replace("*", String(Number(match[2]))), { pool: Number(match[1]), unit: Number(match[2]) });
   }
   if (!found.size) return base;
   const list = [...found.entries()].sort((a, b) => a[1].unit - b[1].unit || a[0].localeCompare(b[0])).map(([label]) => label);
