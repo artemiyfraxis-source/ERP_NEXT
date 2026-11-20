@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { pultResult, type MachineCommand, type MachineControl, type MachineRun, type MachineWindow } from "./machineControlApi";
 import type { MachineCard } from "./machinesApi";
-import { Ob019Controls, Ob019Pult, PULT_CONFIRM } from "./Ob019Controls";
+import { FORCE_WINDOW_MS, Ob019Controls, Ob019Pult, PULT_CONFIRM } from "./Ob019Controls";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -230,7 +230,7 @@ it("a close the panel did not answer offers «Закрыть принудите�
     summary: "Закрыть пульт на ПК принудительно" }));
   const ask = vi.spyOn(window, "confirm").mockReturnValue(true);
   const stuck: MachineCommand = { ...RUNNING, id: "s1", command: "hmi_close", status: "failed", reason: "still_open",
-    error: "Пульт не закрылся (возможно, ждёт ответа оператора)", summary: "Закрыть пульт на ПК" };
+    error: "Пульт не закрылся (возможно, ждёт ответа оператора)", summary: "Закрыть пульт на ПК", finished_at: new Date().toISOString() };
   render(<Ob019Pult card={pultCard()} control={control({ commands: [stuck] })} />);
   expect(screen.getByRole("status")).toHaveTextContent("Пульт не закрылся (возможно, ждёт ответа оператора)");
   fireEvent.click(button("Закрыть принудительно"));
@@ -247,4 +247,15 @@ it("no forced close is offered unless the last close stayed open; a missing help
   render(<Ob019Pult card={pultCard()} control={control({ commands: [failed] })} />);
   expect(screen.queryByRole("button", { name: "Закрыть принудительно" })).toBeNull();
   expect(screen.getByRole("status")).toHaveTextContent("отказ: На ПК станка нет помощника пульта — обновите службу");
+});
+
+it("«Закрыть принудительно» is offered only for a close that stayed open in the last 5 minutes", () => {
+  mockApi(control());
+  const old: MachineCommand = { ...RUNNING, id: "s2", command: "hmi_close", status: "failed", reason: "still_open",
+    error: "Пульт не закрылся (возможно, ждёт ответа оператора)", summary: "Закрыть пульт на ПК",
+    finished_at: new Date(Date.now() - FORCE_WINDOW_MS - 1000).toISOString() };
+  const { rerender } = render(<Ob019Pult card={pultCard()} control={control({ commands: [old] })} />);
+  expect(screen.queryByRole("button", { name: "Закрыть принудительно" })).toBeNull();
+  rerender(<Ob019Pult card={pultCard()} control={control({ commands: [{ ...old, finished_at: new Date(Date.now() - 60000).toISOString() }] })} />);
+  expect(screen.getByRole("button", { name: "Закрыть принудительно" })).toBeTruthy();
 });

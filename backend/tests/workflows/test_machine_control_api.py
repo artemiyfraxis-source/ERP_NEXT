@@ -389,3 +389,43 @@ def test_the_last_state_outlives_a_report_without_words_and_only_a_live_one_move
         assert (snapshot.link_state, snapshot.registers, snapshot.last_state) == ("port_busy", {}, 107)
         assert control.hmi_problem("hmi_close", snapshot, clock.now) == ("", 107)
         assert control.hmi_problem("hmi_open", snapshot, clock.now)[0] == "Пульт на ПК уже открыт"
+
+
+def test_force_only_answers_a_fresh_close_that_stayed_open(ob019):
+    sessions, clock, admin, unit, bridge = ob019
+    queue._runners.clear()
+    _pult(bridge, clock, 102)
+    first = _close(admin, force=True)  # no graceful close before
+    assert first.status_code == 409 and first.json()["detail"] == control.FORCE_FIRST
+    assert _close(admin).status_code == 200
+    claimed = _next(bridge, **AGENT_14).json()["command"]
+    assert _result(bridge, claimed["id"], outcome="failed", reason="still_open", **AGENT_14).status_code == 200
+    clock.now = clock.now + control.FORCE_WINDOW + timedelta(seconds=1)  # the answer is too old
+    _pult(bridge, clock, None)
+    old = _close(admin, force=True)
+    assert old.status_code == 409 and old.json()["detail"] == control.FORCE_FIRST
+    _pult(bridge, clock, None)
+    assert _close(admin).status_code == 200  # a graceful close the runner finds without a helper
+    claimed = _next(bridge, **AGENT_14).json()["command"]
+    assert _result(bridge, claimed["id"], outcome="failed", reason="no_helper", **AGENT_14).status_code == 200
+    assert _close(admin, force=True).status_code == 409  # the newest panel command is not a still_open
+    _pult(bridge, clock, None)
+    assert _close(admin).status_code == 200
+    claimed = _next(bridge, **AGENT_14).json()["command"]
+    assert _result(bridge, claimed["id"], outcome="failed", reason="still_open", **AGENT_14).status_code == 200
+    clock.now = clock.now + timedelta(seconds=30)
+    _pult(bridge, clock, None)
+    fresh = _close(admin, force=True)
+    assert fresh.status_code == 200, fresh.text
+    assert fresh.json()["force"] is True
+
+
+def test_a_still_open_from_before_the_panel_was_closed_and_opened_again_does_not_count(ob019):
+    sessions, clock, admin, unit, bridge = ob019
+    queue._runners.clear()
+    _pult(bridge, clock, 102)
+    assert _close(admin).status_code == 200
+    claimed = _next(bridge, **AGENT_14).json()["command"]
+    assert _result(bridge, claimed["id"], outcome="failed", reason="still_open", **AGENT_14).status_code == 200
+    _pult(bridge, clock, 102)  # the operator closed the panel (the machine was read again), then opened it again
+    assert _close(admin, force=True).json()["detail"] == control.FORCE_FIRST

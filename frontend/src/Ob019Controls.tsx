@@ -62,6 +62,9 @@ function feedWheel(settings: MachineWindow | null): boolean | null {
 }
 
 /** Вопрос перед командой пульту: что потеряет человек у станка. */
+/** Сколько после «пульт не закрылся» предлагается «Закрыть принудительно» (сервер: machine_control.FORCE_WINDOW). */
+export const FORCE_WINDOW_MS = 5 * 60 * 1000;
+
 export const PULT_CONFIRM: Record<PultCommand | "force", string> = {
   hmi_close: "Пока открыт пульт, ERP не видит станок. Оператор у станка потеряет пульт. Закрыть пульт на ПК станка?",
   hmi_open: "ERP перестанет видеть станок, пока пульт открыт. Открыть пульт на ПК станка?",
@@ -87,7 +90,9 @@ export function Ob019Pult({ card, control }: { card: MachineCard; control: Machi
   const last = commands.find((item) => item.command === "hmi_close" || item.command === "hmi_open");
   // Its failure stays said next to the button it belongs to (no helper, did not close) until the next try.
   const failed = last && last.command === command && last.status === "failed" ? last : undefined;
-  const stuck = pult && failed?.reason === PULT_STILL_OPEN ? failed : undefined;
+  // «Закрыть принудительно» only as the answer to a close that stayed open in the last 5 minutes (the server: the same).
+  const stuck = pult && failed?.reason === PULT_STILL_OPEN && !!failed.finished_at
+    && Date.now() - new Date(failed.finished_at).getTime() <= FORCE_WINDOW_MS ? failed : undefined;
   const pending = sent && !row ? pultResult({ command: sent.command, force: sent.force, status: "queued", status_text: "",
     error: "", finished_at: null }) : null;
   const result: Note | null = refused ? { text: `отказ: ${refused}`, tone: "danger" } : row ? pultResult(row)

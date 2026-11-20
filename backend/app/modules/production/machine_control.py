@@ -28,7 +28,8 @@ says that ERP cannot see the machine while the panel is open (`hands_clear`).
 - `hmi_close`: the runner asks a helper task in the operator's session to close the panel (WM_CLOSE) and waits 15 s:
   closed → done; still open (it may be asking the operator something) → failed `still_open`, and the card offers
   «Закрыть принудительно» — the same command with `force` after its own confirmation that the machine stands; then the
-  runner ends the process at once (journaled with the flag). No helper → failed `no_helper`, nothing is killed.
+  runner ends the process at once (journaled with the flag). The server takes `force` only as the answer to such a
+  failure (`force_allowed`: the newest panel command, within 5 minutes, after the machine was last read «На связи»). No helper → failed `no_helper`, nothing is killed.
 - Refusal rule of `hmi_close` (`hmi_problem`; graceful or forced alike). The PC must report (a fresh snapshot). Panel
   closed (link «На связи»): refused while the live D766 is in a cycle (103 «Работает», 104 «Пауза», 106 «Пучок готов»,
   `IN_CYCLE`). Panel open (link `port_busy`, no words): ERP cannot read the machine, so the state of the last snapshot
@@ -40,7 +41,7 @@ says that ERP cannot see the machine while the panel is open (`hands_clear`).
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, update
@@ -62,6 +63,9 @@ BEFORE_PULT_TEXT = ("До открытия пульта станок был в �
 OPEN_IN_CYCLE_TEXT = "Станок в цикле — откройте пульт после остановки"
 OPEN_RUN_TEXT = "Станок выполняет задание из ERP — откройте пульт после остановки"
 FORCED = "Закрыть пульт на ПК принудительно"
+# «Закрыть принудительно» answers one graceful close that did not work, and only for a while.
+FORCE_WINDOW = timedelta(minutes=5)
+FORCE_FIRST = "Сначала нажмите «Закрыть пульт на ПК»: принудительно — только если пульт не закрылся"
 # D766 states a command may run in; None — any state (Сброс аварии: any state with an alarm, D782 ≠ 0).
 ALLOWED_STATES: dict[str, frozenset[int] | None] = {
     "stop": None,
@@ -150,6 +154,24 @@ def hmi_problem(command: str, snapshot: rules.MachineSnapshotRow | None, now: da
     return "", last  # never read: the card's confirmation said ERP cannot see the machine
 
 
+def force_allowed(session: Session, equipment_id: UUID, snapshot: rules.MachineSnapshotRow | None, now: datetime) -> bool:
+    """«Закрыть принудительно» answers a graceful close that did not work: the newest panel command of this machine is
+    an `hmi_close` that finished `still_open` within `FORCE_WINDOW`, and after the last snapshot that read the machine
+    «На связи» (`last_state_at`): ERP keeps no moment the panel took the port, so the last moment it was certainly
+    closed stands for it — a still_open from before the panel was closed and opened again does not count."""
+    last = session.scalar(select(queue.MachineWriteRow).where(
+        queue.MachineWriteRow.equipment_id == equipment_id,
+        queue.MachineWriteRow.command.in_(HMI_COMMANDS)).order_by(queue.MachineWriteRow.created_at.desc()).limit(1))
+    if last is None or last.command != "hmi_close" or last.status != "failed" or last.finished_at is None:
+        return False
+    if not isinstance(last.readback, dict) or last.readback.get("reason") != "still_open":
+        return False
+    if rules.since(last.finished_at, now) > FORCE_WINDOW:
+        return False
+    seen = snapshot.last_state_at if snapshot is not None else None
+    return seen is None or rules.since(seen, last.finished_at) > timedelta(0)
+
+
 def _run_open(session: Session, equipment_id: UUID) -> bool:
     from . import machine_runs  # machine_runs imports the queue only; imported here to keep this module light
 
@@ -192,9 +214,12 @@ def request(session: Session, *, equipment_id: UUID, command: str, actor_id: UUI
         if queue.runner_outdated(equipment_id, now, queue.RUNNER_HMI):
             raise CommandRefused(queue.RUNNER_HMI_OUTDATED)
         run_open = command == "hmi_open" and _run_open(session, equipment_id)
-        reason, state_value = hmi_problem(command, session.get(rules.MachineSnapshotRow, equipment_id), now, run_open)
+        snapshot = session.get(rules.MachineSnapshotRow, equipment_id)
+        reason, state_value = hmi_problem(command, snapshot, now, run_open)
         if reason:
             raise CommandRefused(reason)
+        if force and not force_allowed(session, equipment_id, snapshot, now):
+            raise CommandRefused(FORCE_FIRST)
     else:
         if not can_control:
             raise CommandRefused("«Сброс», «Пуск», «Сброс аварии» — только с правом «Управление станками»", 403)
