@@ -63,7 +63,7 @@ _SQL = lambda values: ", ".join(repr(value) for value in values)  # noqa: E731
 
 
 class MachineSpeedRow(Base):
-    """One change of an ОБ.019 counter, state, run or setup (migration 0208), append-only."""
+    """One change of an ОБ.019 counter, state, run or setup (migration 0209), append-only."""
 
     __tablename__ = TABLE
     __table_args__ = (

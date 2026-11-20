@@ -1,4 +1,4 @@
-"""0208_machine_speed_history over a seeded database: the new table starts empty, no other table changes, every
+"""0209_machine_speed_history over a seeded database: the new table starts empty, no other table changes, every
 constraint refuses its bad row, and the downgrade drops the table and nothing else."""
 
 import sqlite3
@@ -12,8 +12,8 @@ from sqlalchemy import create_engine
 
 from tests.migrations.seed_any_revision import seed
 
-PREVIOUS = "0207_vna_screens"
-REVISION = "0208_machine_speed_history"
+PREVIOUS = "0208_marking_outside_prints"
+REVISION = "0209_machine_speed_history"
 TABLE = "production_machine_speed_rows"
 INSERT = (f"INSERT INTO {TABLE} (equipment_id, recorded_at, boot, seq, counter_total, counter_batch, counter_order, uph,"
           " state_code, alarm_code, run_write_id, run_kind, wire_key, setup_key, reason)"
@@ -86,7 +86,7 @@ def test_speed_rows_start_empty_refuse_bad_rows_and_roundtrip_leaves_other_table
     assert TABLE not in tables
     assert _counts(path) == before
     command.upgrade(config, REVISION)
-    # The generic seeder of the CI migration job fills the table once a later revision makes 0208 the head-1.
+    # The generic seeder of the CI migration job fills the table once a later revision makes 0209 the head-1.
     engine = create_engine(config.get_main_option("sqlalchemy.url"))
     try:
         assert seed(engine).get(TABLE, 0) > 0
