@@ -32,11 +32,14 @@ export interface CuttingQueueProps {
   hideWhenEmpty?: boolean;
   /** Сообщает, есть ли что резать (скрыть пустую подсказку «Заданий»). */
   onHasWork?: (hasWork: boolean) => void;
+  /** Операции, которые очередь показывает строками (их карточки в «Заданиях» скрывают: сдают здесь). */
+  onRows?: (operationIds: Set<string>) => void;
+  /** «Готово» принято: страница перечитывает свои задания. */
+  onChanged?: () => void;
 }
 
-export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty = false, onHasWork }: CuttingQueueProps = {}) {
+export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty = false, onHasWork, onRows, onChanged }: CuttingQueueProps = {}) {
   const [machines, setMachines] = useState<CuttingQueueMachine[] | null>(null);
-  useEffect(() => { if (machines) onHasWork?.(machines.length > 0); }, [machines, onHasWork]);
   const [selected, setSelected] = useState("");
   const [queue, setQueue] = useState<Queue | null>(null);
   const [error, setError] = useState("");
@@ -46,6 +49,12 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const retry = useRef<Record<string, { payload: string; key: string }>>({});
   const ticket = useRef(0);
+  useEffect(() => { if (machines && !error) onHasWork?.(machines.length > 0); }, [machines, error, onHasWork]);
+  useEffect(() => {
+    if (!onRows) return;
+    onRows(new Set((queue?.rows ?? []).map((item) => item.operation_id)));
+    return () => onRows(new Set());
+  }, [queue, onRows]);
   const chosen = useRef("");
   chosen.current = selected;
 
@@ -85,7 +94,7 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
   async function done(row: CuttingQueueRow) {
     const quantity = Number(quantities[row.key] ?? Math.trunc(Number(row.left)));
     if (!Number.isInteger(quantity) || quantity <= 0) { setError("Укажите целое число штук больше нуля"); return; }
-    const payload = `${row.task_id}|${row.operation_id}|${quantity}`;
+    const payload = `${row.task_id}|${row.operation_id}|${quantity}|${onBehalfOf}`;
     if (retry.current[row.key]?.payload !== payload) retry.current[row.key] = { payload, key: crypto.randomUUID() };
     setBusy(row.key);
     try {
@@ -95,6 +104,7 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
       setQuantities((current) => { const next = { ...current }; delete next[row.key]; return next; });
       setError("");
       await load();
+      onChanged?.();
     } catch (reason) {
       const message = failureText(reason, "");
       await load();
@@ -104,7 +114,7 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
     }
   }
 
-  if (hideWhenEmpty && machines && !machines.length) return null;
+  if (hideWhenEmpty && !error && (!machines || !machines.length)) return null;
   if (!machines) return error ? <div className="error-banner" role="alert">{error}</div> : <div className="empty">Загрузка…</div>;
 
   const rows = queue?.rows ?? [];

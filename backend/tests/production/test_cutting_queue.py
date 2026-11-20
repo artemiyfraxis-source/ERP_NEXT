@@ -253,3 +253,22 @@ def test_finished_frozen_groups_are_not_checked_or_read(production_api, monkeypa
     rows = queue(client)["rows"]
     assert [row["project"] for row in rows] == ["709К."]
     assert finished["id"] not in visited and visited == [rows[0]["group_id"]]
+
+
+def test_done_is_refused_while_the_pf_has_an_open_work_session(production_api):
+    from datetime import timedelta
+
+    from app.modules.production.infrastructure import ProductionWorkSessionRow
+
+    client, operator = production_api
+    batch(client, [issue("708К.", "КБ1", standalone())])
+    row = queue(client)["rows"][0]
+    with app.state.production_uow_factory() as uow:
+        uow.session.add(ProductionWorkSessionRow(id=uuid4(), task_id=UUID(row["task_id"]), operation_id=UUID(row["operation_id"]),
+                                                 operator_id=operator, started_at=NOW - timedelta(minutes=5), status="В работе",
+                                                 pause_started_at=None, pause_seconds=0))
+        uow.commit()
+    refused = done(client, row, 1, operator=operator)
+    assert refused.status_code == 422 and "идёт работа на карточке" in refused.json()["detail"]
+    with app.state.production_uow_factory() as uow:
+        assert uow.session.scalars(select(ProductionOutputRow)).all() == []

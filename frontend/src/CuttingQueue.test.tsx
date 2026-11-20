@@ -129,3 +129,29 @@ it("reloads the queue after a refused «Готово» and keeps the server text
   await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/machines")).length).toBeGreaterThan(before));
   expect(await screen.findByRole("alert")).toHaveTextContent("уже сдано 10 из 10");
 });
+
+it("hides itself when there is nothing to cut and reports it, but never hides a load error", async () => {
+  const hasWork = vi.fn();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ machines: [] }));
+  const view = render(<CuttingQueue hideWhenEmpty onHasWork={hasWork} />);
+  await waitFor(() => expect(hasWork).toHaveBeenLastCalledWith(false));
+  expect(view.container).toBeEmptyDOMElement();
+  view.unmount();
+
+  const failing = vi.fn();
+  vi.restoreAllMocks();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ detail: "Раздел закрыт" }, 403));
+  render(<CuttingQueue hideWhenEmpty onHasWork={failing} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Раздел закрыт");
+  expect(failing).not.toHaveBeenCalled();
+});
+
+it("reports the operations it lists and clears them on unmount", async () => {
+  mockApi();
+  const listed = vi.fn();
+  const view = render(<CuttingQueue onRows={listed} />);
+  await screen.findByText("708К.");
+  await waitFor(() => expect(listed).toHaveBeenLastCalledWith(new Set(["o1", "o2"])));
+  view.unmount();
+  expect(listed).toHaveBeenLastCalledWith(new Set());
+});

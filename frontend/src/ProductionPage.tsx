@@ -52,6 +52,8 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [tasks, setTasks] = useState<ProductionTask[]>([]);
   const [cuttingGroups, setCuttingGroups] = useState<CuttingGroup[]>([]);
   const [queueHasWork, setQueueHasWork] = useState(false);
+  // Операции, которые сдаются в «Очереди резки»: их карточки не дублируются (кроме начатой).
+  const [queueOps, setQueueOps] = useState<Set<string>>(() => new Set());
   const [operators, setOperators] = useState<ProductionOperator[]>([]);
   const [viewerSite, setViewerSite] = useState("");
   const [execution, setExecution] = useState<{ session: ProductionWorkSession | null; boxes: ProductionBox[] }>({ session: null, boxes: [] });
@@ -196,19 +198,20 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
       <button type="button" role="tab" aria-selected={view === "board"} className={view === "board" ? "on" : undefined} onClick={() => setView("board")}>Доска</button>
       <button type="button" role="tab" aria-selected={view === "workload"} className={view === "workload" ? "on" : undefined} onClick={() => setView("workload")}>Загрузка</button>
       <button type="button" role="tab" aria-selected={view === "normfact"} className={view === "normfact" ? "on" : undefined} onClick={() => setView("normfact")}>Норма и факт</button>
-      <button type="button" role="tab" aria-selected={view === "cutqueue"} className={view === "cutqueue" ? "on" : undefined} onClick={() => setView("cutqueue")}>Очередь резки</button>
+      {canSee(principal, "myops") && <button type="button" role="tab" aria-selected={view === "cutqueue"} className={view === "cutqueue" ? "on" : undefined} onClick={() => setView("cutqueue")}>Очередь резки</button>}
     </div>}
     {!mine && canOverview && !selectedTask && view === "today" && <ProductionToday principal={principal} openSkills={canEdit ? () => setShowSkills(true) : undefined} openWorkload={() => setView("workload")}
       openTask={(taskId, operationId) => { if (tasks.some((task) => task.id === taskId)) { setSelectedTaskId(taskId); setSelectedOperationId(operationId ?? ""); } }} />}
     {!mine && canOverview && !selectedTask && view === "workload" && <ShopWorkloadView />}
     {!mine && canOverview && !selectedTask && view === "normfact" && <ProductionNormFact />}
-    {!mine && canOverview && !selectedTask && view === "cutqueue" && <CuttingQueue readOnly />}
+    {!mine && canOverview && !selectedTask && view === "cutqueue" && canSee(principal, "myops") && <CuttingQueue readOnly />}
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
     {/* «Коробки на подтверждение» убраны (владелец, 13.10.2026: «ОТК подтверждает и все»): сданная коробка сразу идёт
         на вход следующей операции, коробку последней операции принимает или возвращает «Очередь ОТК». */}
     {/* Задания — первыми (кнопки действий видны сразу), коробки сотрудника — под ними. */}
-    {mine && <MyQueue principal={principal} tasks={tasks} cuttingGroups={cuttingGroups} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} onBehalfOf={onBehalfOf} onSubmitted={(number, box) => setShown({ number, box, fixed: false })} />}
-    {mine && <CuttingQueue hideWhenEmpty readOnly={readOnly} onBehalfOf={onBehalfOf} onHasWork={setQueueHasWork} />}
+    {mine && <MyQueue principal={principal} tasks={tasks.filter((task) => { const id = task.operations[0]?.id; return !id || !queueOps.has(id) || execution.session?.operation_id === id; })} cuttingGroups={cuttingGroups} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} onBehalfOf={onBehalfOf} onSubmitted={(number, box) => setShown({ number, box, fixed: false })} />}
+    {mine && <CuttingQueue key={viewAs} hideWhenEmpty readOnly={readOnly || !canAct(principal, "myops")} onBehalfOf={onBehalfOf}
+      onHasWork={viewAs ? undefined : setQueueHasWork} onRows={viewAs ? undefined : setQueueOps} onChanged={() => void reload()} />}
     {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} readOnly={readOnly} ownerName={viewAs ? viewedName : ""} onBehalfOf={onBehalfOf}
       onSubmitted={(number, box) => setShown({ number, box, fixed: false })} onCorrected={(number, box) => setShown({ number, box, fixed: true })} />}
     {shown && <ShownBox shown={shown} boxes={execution.boxes} tasks={tasks} close={() => setShown(null)} />}

@@ -28,6 +28,8 @@ from .cutting_application import check_access
 from .cutting_infrastructure import CuttingGroupRow, CuttingMemberRow, CuttingWorkRow
 from .domain import ProductionStatus, ProductionValidationError
 from .execution import ManualOutputCommand, enter_manual_output, operation_quantity
+from .infrastructure import ProductionWorkSessionRow
+from .traceability import WorkStatus
 
 # 708К. cuts on the big rotary BZW (owner 20.11): preferred when a card lists several machines. A card that names none
 # goes to its own bucket (machine_id null, GET `machine_id=none`), never onto a real machine's list.
@@ -36,6 +38,7 @@ NO_MACHINE = "none"
 NO_MACHINE_NAME = "Станок не указан"
 NO_DOCUMENT = "нет в ЭТК: выданная карта"
 UNCONFIRMED = "Нет ЭТК задания — не понять, резка ли это: готовые вводит мастер"
+WORK_OPEN = "По этому ПФ идёт работа на карточке — сдайте там"
 NOT_A_CUT = "В очереди резки сдаётся только резка кабеля — этот ПФ сдают на его карточке"
 RECEIPT = "production.cutting_queue_done"
 _RECEIPTS = UUID("6f1c2a52-6d0e-4d43-9a43-2a7c1f0e0951")
@@ -441,6 +444,9 @@ def mark_done(task_id: UUID, operation_id: UUID, quantity: int, key: str, actor,
                 raise ProductionValidationError(NOT_A_CUT)
             if not _site_allowed(task, operation, _People(uow), actor):
                 raise PermissionError("Задание другой площадки")
+        if member is None and uow.session.scalar(select(ProductionWorkSessionRow.id).where(ProductionWorkSessionRow.operation_id == operation_id,
+                ProductionWorkSessionRow.status.in_((WorkStatus.ACTIVE.value, WorkStatus.PAUSED.value))).limit(1)) is not None:
+            raise ProductionValidationError(WORK_OPEN)
         uow.production.lock(task_id)
         task = uow.production.get(task_id)
         operation = task.operation(operation_id)
