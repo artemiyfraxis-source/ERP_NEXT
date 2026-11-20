@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 
 import { ApiError, failureText, productionApi, type ProductionInstrument } from "./api";
 import { formatMoment, formatNumber, toNumber } from "./format";
 import { VswrChart } from "./VswrChart";
+import { ScreenSwitcher, VnaScreensEditor } from "./VnaScreensEditor";
 import {
   CALIBRATION_REFUSALS,
   REFUSAL_FALLBACK,
@@ -124,14 +125,16 @@ export const targetTitle = (target: VnaBenchTarget) => target.kind === "instrume
   : `${target.task_number} · ${target.item}, изделие № ${target.position}${target.serial !== null && target.serial !== undefined ? ` (${target.serial})` : ""} · ${target.name}`;
 
 type Act = (key: string, operation: () => Promise<VnaBenchState>) => Promise<void>;
-const TABS: { id: "measure" | "checks"; label: string }[] = [{ id: "measure", label: "Замер" }, { id: "checks", label: "Проверки" }];
+type Tab = "measure" | "checks" | "screens";
+const TABS: { id: Tab; label: string }[] = [{ id: "measure", label: "Замер" }, { id: "checks", label: "Проверки" },
+  { id: "screens", label: "Экраны" }];
 
 export function VnaBench({ canEdit }: { canEdit: boolean }) {
   const [state, setState] = useState<VnaBenchState | null>(null);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [busy, setBusy] = useState("");
-  const [tab, setTab] = useState<"measure" | "checks">("measure");
+  const [tab, setTab] = useState<Tab>("measure");
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
@@ -149,17 +152,35 @@ export function VnaBench({ canEdit }: { canEdit: boolean }) {
     return () => window.clearTimeout(timer);
   }, [polling, state, attempt]);
 
+  const refusalOf = (reason: unknown): string => {
+    if (reason instanceof ApiError && reason.status === 409) setAttempt((value) => value + 1);
+    const detail = reason instanceof ApiError ? reason.detail as { code?: unknown; message?: unknown } | undefined : undefined;
+    return (detail && typeof detail.code === "string"
+      ? refusalText({ code: detail.code, message: typeof detail.message === "string" ? detail.message : "" })
+      : failureText(reason, "")) || REFUSAL_FALLBACK;
+  };
   const act: Act = async (key, operation) => {
     if (busy) return;
     setBusy(key); setError("");
     try {
       setState(await operation());
     } catch (reason) {
-      if (reason instanceof ApiError && reason.status === 409) setAttempt((value) => value + 1);
-      const detail = reason instanceof ApiError ? reason.detail as { code?: unknown; message?: unknown } | undefined : undefined;
-      setError((detail && typeof detail.code === "string"
-        ? refusalText({ code: detail.code, message: typeof detail.message === "string" ? detail.message : "" })
-        : failureText(reason, "")) || REFUSAL_FALLBACK);
+      setError(refusalOf(reason));
+    } finally {
+      setBusy("");
+    }
+  };
+  /** «Показать на ВАЦ»: отказ возвращается строкой — его показывает тот, кто вызвал (окно экрана, строка вида). */
+  const showScreen = async (screenId: string): Promise<string> => {
+    const open = state?.session?.status === "open" ? state.session : null;
+    if (!open) return "Сеанс не открыт — откройте его на вкладке «Замер»";
+    if (busy) return "Дождитесь окончания предыдущего действия и нажмите ещё раз";
+    setBusy("show-screen");
+    try {
+      setState(await vnaBenchApi.showScreen(open.id, open.version, screenId));
+      return "";
+    } catch (reason) {
+      return refusalOf(reason);
     } finally {
       setBusy("");
     }
@@ -220,6 +241,8 @@ export function VnaBench({ canEdit }: { canEdit: boolean }) {
       {session && tab === "measure" && <StepList session={session} calibrationValid={state.calibration.valid}
         calibrationReason={state.calibration.reason} canEdit={canAct} busy={Boolean(busy)}
         run={(step) => void act(`step:${step}`, () => vnaBenchApi.runStep(session.id, session.version, step))} />}
+      {session && tab === "measure" && canAct && state.calibration.valid && <ScreenSwitcher session={session}
+        disabled={Boolean(busy) || Boolean(session.command)} show={showScreen} />}
       {tab === "measure" && <ObjectPanel session={session} calibrationValid={state.calibration.valid} canEdit={canAct}
         busy={Boolean(busy)} blockedStart={notReady} act={act} open={(assembly) => void open(assembly)} />}
       {session && tab === "measure" && canAct && <div className="form-actions vna-bench-close">
@@ -227,6 +250,8 @@ export function VnaBench({ canEdit }: { canEdit: boolean }) {
           onClick={() => void act("close", () => vnaBenchApi.close(session.id, session.version))}>Закрыть сеанс</button>
       </div>}
       {tab === "checks" && <ChecksPanel state={state} session={session} canEdit={canAct} busy={Boolean(busy)} act={act} />}
+      {tab === "screens" && <VnaScreensEditor session={session} calibrationValid={state.calibration.valid} canEdit={canEdit}
+        show={showScreen} />}
     </div>
   </section>;
 }
