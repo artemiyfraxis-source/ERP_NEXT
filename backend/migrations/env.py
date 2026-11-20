@@ -18,6 +18,7 @@ from app.modules.production import infrastructure as _production  # noqa: F401
 from app.modules.production import rf_infrastructure as _production_rf  # noqa: F401
 from app.modules.production import mating_infrastructure as _production_matings  # noqa: F401
 from app.modules.production import vna_session_infrastructure as _production_vna_sessions  # noqa: F401
+from app.modules.production import vna_screen_infrastructure as _production_vna_screens  # noqa: F401
 from app.modules.production import downtime_infrastructure as _production_downtime  # noqa: F401
 from app.modules.production import machines as _production_machines  # noqa: F401
 from app.modules.production import resource_infrastructure as _production_resources  # noqa: F401

@@ -179,6 +179,8 @@ export interface VnaBenchSession {
   operator: string | null;
   steps: VnaBenchStep[];
   command: VnaBenchCommand | null;
+  /** Сохранённый экран, который оператор вывел на S2VNA («Показать на ВАЦ»), пока его не сменил следующий замер. */
+  view_screen_id?: string | null;
   items: VnaBenchItem[];
   checks: VnaBenchCheck[];
 }
@@ -200,6 +202,55 @@ export interface VnaBenchCheckInput {
   /** Выбор меры, когда в наборе их несколько одного типа: {"THRU": "MA6666B"}. */
   selection?: Record<string, string>;
 }
+
+/* «Экраны» (S5b): экраны ВАЦ хранятся в ERP и правятся ОТК. Линия допуска — источник, а не числа: норма СИ,
+   норма ЭТК, своё число или без линии; сами отрезки сервер рисует для объекта замера. */
+export type VnaScreenPurpose = "adapter" | "assembly" | "one_port" | "load" | "flex" | "engineer";
+export type VnaScreenParam = "S11" | "S21" | "S12" | "S22";
+export type VnaScreenFormat = "SWR" | "MLOG" | "PHAS" | "GDEL" | "SMIT";
+export type VnaScreenLimit = "norm" | "etk" | "fixed" | "none";
+export interface VnaScreenScale { pdiv: number; rlev: number | null; rpos: number | null }
+export interface VnaScreenTrace {
+  param: VnaScreenParam;
+  format: VnaScreenFormat;
+  /** "auto" — автомасштаб после каждой развёртки; "norm" — КСВН 1,00…max(норма×1,15; 1,20); иначе своя шкала. */
+  scale: VnaScreenScale | "auto" | "norm";
+  limit: VnaScreenLimit;
+  fixed: { kind: "upper" | "lower"; value: number } | null;
+  hidden: boolean;
+  memory: boolean;
+}
+export interface VnaScreenFields {
+  name: string;
+  purpose: VnaScreenPurpose;
+  /** Код расположения окон S2VNA (DISPlay:WINDow:SPLit), 1…16. */
+  split: number;
+  traces: VnaScreenTrace[];
+  markers_hz: number[];
+  note: string;
+  /** Основной экран назначения: его рабочее место ставит само. */
+  is_default: boolean;
+}
+export interface VnaScreen extends VnaScreenFields {
+  id: string;
+  active: boolean;
+  version: number;
+  updated_by: string | null;
+  updated_at: string;
+}
+
+const SCREENS = "/api/production/vna-bench/screens";
+
+export const vnaScreensApi = {
+  list: () => api<{ screens: VnaScreen[] }>(SCREENS),
+  create: (fields: VnaScreenFields) => api<VnaScreen>(SCREENS, { method: "POST", body: JSON.stringify(fields) }),
+  /** «Сохранить»: новая версия; устаревшая `version` — отказ 409 (экран уже сохранили в другом месте). */
+  save: (id: string, version: number, fields: VnaScreenFields) =>
+    api<VnaScreen>(`${SCREENS}/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ ...fields, version }) }),
+  setActive: (id: string, version: number, active: boolean) =>
+    api<VnaScreen>(`${SCREENS}/${encodeURIComponent(id)}/${active ? "activate" : "deactivate"}`,
+      { method: "POST", body: JSON.stringify({ version }) }),
+};
 
 const BASE = "/api/production/vna-bench";
 const post = <T>(path: string, body: unknown = {}) => api<T>(`${BASE}${path}`, { method: "POST", body: JSON.stringify(body) });
@@ -234,6 +285,9 @@ export const vnaBenchApi = {
     post<VnaBenchState>(`/sessions/${id(sessionId)}/checks/${id(checkId)}/next`, { version }),
   /** Прервать текущую команду и вернуть прибор оператору. */
   abort: (sessionId: string, version: number) => post<VnaBenchState>(`/sessions/${id(sessionId)}/abort`, { version }),
+  /** «Показать на ВАЦ»: сохранённый экран — на S2VNA в откалиброванном сеансе, без развёртки; калибровка остаётся. */
+  showScreen: (sessionId: string, version: number, screenId: string) =>
+    post<VnaBenchState>(`/sessions/${id(sessionId)}/screen`, { version, screen_id: screenId }),
   /** Закрыть сеанс: экран ERP и калибровка остаются на приборе для просмотра. */
   close: (sessionId: string, version: number) => post<VnaBenchState>(`/sessions/${id(sessionId)}/close`, { version }),
 };
