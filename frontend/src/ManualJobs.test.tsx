@@ -126,7 +126,7 @@ it("opens «Ручная работа» from a machine's details on «Обору
     key: "machine:u37", kind: "machine", equipment_id: "u37", inventory: "ОБ.037", name: "Автомат резки BZW-880", pc: "", ip: "",
     service: "Агент ERP · станок", version: "", link: { code: "not_installed", text: "Агент не установлен", tone: "neutral" },
     last_seen: null, device: "ПЛК линии резки", state: { text: "—", tone: "neutral" }, card: false, others: "",
-    article: "", site: "ЦАР", operations: [], family: "Резка и зачистка", controlled: false,
+    article: "", site: "ЦАР", operations: [], family: "Резка", controlled: false,
   };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = decodeURIComponent(String(input));
@@ -147,7 +147,7 @@ it("opens the job already running on the machine instead of a new one", async ()
     key: "machine:u19", kind: "machine", equipment_id: "u19", inventory: "ОБ.019", name: "Автомат резки", pc: "", ip: "",
     service: "Агент ERP · станок", version: "", link: { code: "not_installed", text: "Агент не установлен", tone: "neutral" },
     last_seen: null, device: "ПЛК линии резки", state: { text: "—", tone: "neutral" }, card: false, others: "",
-    article: "", site: "ЦАР", operations: [], family: "Резка и зачистка", controlled: false,
+    article: "", site: "ЦАР", operations: [], family: "Резка", controlled: false,
   };
   const calls: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {

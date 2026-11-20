@@ -3,8 +3,9 @@
 - `GET /api/production/machines` (Производство or Задания, view) → `{now, rows, families}`: one row per machine of
   «Оборудование» — a БД.ОБ unit with the checkbox «Показывать в «Оборудовании»» or any unit an ERP agent reaches
   (owner 19.11.2026), with its article, site, operations and family (`families` — their order), `controlled`, setup
-  class and open setup tasks — then marking and label printers of the print agents,
-  scanners and network analysers the agents see. One value per column: № (ОБ or СИ), Название, ПК, IP, Служба, Версия,
+  class and open setup tasks — then the label printers of the print agents (a marking machine's printer is that
+  machine's row, not its own), scanners and network analysers the agents see; these are `controlled` too, in the
+  families «Принтеры склада» and «Анализаторы цепей» (owner 20.11.2026). One value per column: № (ОБ or СИ), Название, ПК, IP, Служба, Версия,
   Связь, Последний сигнал, Устройство, Состояние, Также на ПК. One row per physical device: an analyser several PCs
   report (by serial / the registry СИ) stands on the PC with the latest real presence, the others are named in «Также
   на ПК» (owner 18.11.2026). ОБ with a planned bridge (`rules.PLANNED`) show «Агент не установлен». Column «Агент»: one name «Агент ERP · <parts>»
@@ -354,7 +355,8 @@ def _printer_rows(session, equipment, now) -> list[dict]:
             "version": agent.version, "link": _agent_link(agent, now), "last_seen": _moment(agent.last_seen, now),
             "device": printer.name,
             "state": _present(printer.present, printer.last_seen, now, "Принтер виден", "Принтер не найден"),
-            "card": False, "others": "", **_catalog(unit),
+            "card": False, "others": "", "controlled": True,
+            **(_catalog(unit) if unit else {**NO_CATALOG, "family": rules.WAREHOUSE_PRINTERS}),
         })
     # The TSC of the warehouse PC: an agent that reports no printer list is known only by its singleton heartbeat.
     if session.scalar(select(PrinterRow.name).where(PrinterRow.kind == "tspl").limit(1)) is None:
@@ -369,7 +371,7 @@ def _printer_rows(session, equipment, now) -> list[dict]:
                 "last_seen": _moment(label.last_seen, now), "device": label.printer,
                 "state": {"text": "Ошибка печати", "tone": "danger"} if label.last_error
                 else {"text": "Принтер виден" if fresh else "—", "tone": "ok" if fresh else "neutral"},
-                "card": False, "others": "", **NO_CATALOG,
+                "card": False, "others": "", "controlled": True, **NO_CATALOG, "family": rules.WAREHOUSE_PRINTERS,
             })
     return rows
 
@@ -473,8 +475,11 @@ def _device_rows(session, now) -> list[dict]:
             "last_seen": _moment(device.last_seen, now), "device": device.name,
             "state": _state(presence), "card": False,
             "others": "; ".join(_other_note(other_agent, other_presence) for _, other_agent, other_presence in others),
-            **NO_CATALOG,
+            **NO_CATALOG, "controlled": True,
             "article": articles.get(_inventory(instrument.inventory_number), "") if instrument else "",
+            # The MFP of the warehouse scans and prints: it stands with the warehouse printer (owner 20.11.2026).
+            "family": rules.ANALYSER_FAMILY if device.kind in VNA_APPS
+            else rules.WAREHOUSE_PRINTERS if device.kind == "scan" else rules.OTHER_FAMILY,
         })
     rows.sort(key=lambda row: (row["inventory"] == "", row["inventory"], row["name"], row["pc"]))
     return rows
@@ -707,7 +712,11 @@ def machines(_principal: Reader, factory: Factory, now: Now) -> dict:
         session = uow.session
         equipment = _equipment(session)
         printers = _printer_rows(session, equipment, now)
-        rows = [*_machine_rows(session, equipment, printers, now), *printers, *_device_rows(session, now)]
+        machines = _machine_rows(session, equipment, printers, now)
+        # The printer of a marking machine is that machine's connection, not a second tile (ОБ.101, ОБ.102).
+        units = {row["equipment_id"] for row in machines if row["equipment_id"]}
+        printers = [row for row in printers if row["equipment_id"] not in units]
+        rows = [*machines, *printers, *_device_rows(session, now)]
         machine_list = _machine_list(session, equipment, now)
     return {"now": now.isoformat(), "machines": machine_list, "rows": _agent_names(rows),
             "families": list(rules.FAMILIES)}
