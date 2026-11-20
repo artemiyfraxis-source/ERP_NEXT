@@ -890,7 +890,8 @@ describe("Приёмка с производства: «Упаковать вс�
     const ask = confirmSpy();
     intakeRows = [kb("КБ1"), kb("КБ2", { accepted: "4", acts: [act("ГП.КБ2", "4", today)] }), kb("КБ3", { pack_allowed: false, pack_permission_remaining: "0" })];
     render(<ProductionIntakePage principal={principal} />);
-    const button = await screen.findByRole("button", { name: "Упаковать всё: 2 КБ · 10 шт (без разрешения: 1)" });
+    const button = await screen.findByRole("button", { name: "Упаковать всё: 2 КБ · 10 шт" });
+    expect(screen.getByText("без разрешения: 1 КБ")).toBeInTheDocument();
     fireEvent.click(button);
     await screen.findByText(/^Упаковано 2 КБ · 10 шт · ОТГ-9/);
     expect(ask).toHaveBeenCalledWith(expect.stringContaining("Упаковать 2 КБ · 10 шт проекта 591К.3?"));
@@ -937,7 +938,7 @@ describe("Приёмка с производства: «Упаковать вс�
     shipments = [ready("a", "КБ1"), ready("b", "КБ2"), gap];
     window.history.replaceState({}, "", "/?tab=to_ship");
     render(<ProductionIntakePage principal={principal} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Отгрузить всё: 2 отправки (не готовы: 1)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Отгрузить всё: 2 отправки" }));
     await screen.findByText("Отгружено 2 отправки");
     expect(ask).toHaveBeenCalledWith(expect.stringContaining("Отгрузить 2 отправки проекта 591К.3?"));
     expect(ask).toHaveBeenCalledWith(expect.stringContaining("ОТГ-z — № УПД, трек-номер"));

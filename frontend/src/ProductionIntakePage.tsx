@@ -441,11 +441,13 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
         Принять всё: {bulk.length} КБ · {formatNumber(total)} шт</button>}
       {packList.length > 1 && <button type="button" className="primary small" disabled={Boolean(busy)} title={blockedKbs.size ? `Без разрешения упаковки пропущено: ${blockedKbs.size} КБ` : "Упаковать каждую КБ проекта на столько, сколько указано в её «Упаковать»"}
         onClick={() => void packAll(project, packList, blockedKbs.size)}>
-        Упаковать всё: {packList.length} КБ · {formatNumber(packTotal)} шт{blockedKbs.size ? ` (без разрешения: ${blockedKbs.size})` : ""}</button>}
+        Упаковать всё: {packList.length} КБ · {formatNumber(packTotal)} шт</button>}
+      {packList.length > 1 && blockedKbs.size > 0 && <span className="muted ship-group-hint">без разрешения: {blockedKbs.size} КБ</span>}
       {readyShipments.length > 1 && <button type="button" className="primary small" disabled={Boolean(busy)}
         title={blockedShipments.length ? `Не готовы и будут пропущены: ${blockedShipments.map((shipment) => `${shipment.number} — ${shipment.missing_ship.join(", ")}`).join("; ")}` : "Отгрузить все готовые отправки проекта"}
         onClick={() => void shipAll(project, readyShipments, blockedShipments)}>
-        Отгрузить всё: {readyShipments.length} {plural(readyShipments.length, ["отправка", "отправки", "отправок"])}{blockedShipments.length ? ` (не готовы: ${blockedShipments.length})` : ""}</button>}
+        Отгрузить всё: {readyShipments.length} {plural(readyShipments.length, ["отправка", "отправки", "отправок"])}</button>}
+      {readyShipments.length > 1 && blockedShipments.length > 0 && <span className="muted ship-group-hint" title={blockedShipments.map((shipment) => `${shipment.number} — ${shipment.missing_ship.join(", ")}`).join("; ")}>не готовы: {blockedShipments.length}</span>}
     </span>;
   };
   const shipmentCells = (_key: string, groupRows: IntakeLine[], _filtered: IntakeLine[], visible: DataColumn<IntakeLine>[]) => {
