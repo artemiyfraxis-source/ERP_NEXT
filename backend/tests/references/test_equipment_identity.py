@@ -350,3 +350,38 @@ def test_explicit_supporting_type_makes_a_new_model_supporting():
     assert role_of("Насос вакуумный", "Обеспечивающее оборудование") == SUPPORTING
     assert role_of("Насос вакуумный", "Оборудование") == OPERATIONAL
     assert role_of("Компрессор воздушный", "Оборудование") == SUPPORTING
+
+
+def test_setup_by_is_the_operator_by_default_changes_by_edit_right_and_is_journaled(references_api):
+    """«Кто налаживает» (owner 20.11.2026, migration 0213): «Сам оператор» for every machine until set; a change is
+    journaled with the Russian label, a repeat writes nothing, a СИ / a die has no such setting, a viewer cannot change it."""
+    from app.shared.http_auth import Principal, authenticated_principal
+    from app.shared.persistence import AuditEventRow
+    from tests.factories import Actor
+
+    _snapshot(references_api)
+    units = _rows(references_api, "ob")
+    station, die = units["ОБ.070.1"]["id"], units["ОСН.001"]["id"]
+    assert references_api.get("/api/references/equipment-setup-by").json() == {"technician_ids": []}
+
+    changed = references_api.put(f"/api/references/equipment/{station}/setup-by", json={"setup_by": "technician"})
+    assert changed.status_code == 200 and changed.json() == {"id": station, "setup_by": "technician"}
+    assert references_api.put(f"/api/references/equipment/{station}/setup-by", json={"setup_by": "technician"}).status_code == 200
+    assert references_api.get("/api/references/equipment-setup-by").json() == {"technician_ids": [station]}
+    _snapshot(references_api)  # a reload of БД.ОБ keeps the setting with the unit id
+    assert references_api.get("/api/references/equipment-setup-by").json() == {"technician_ids": [station]}
+    assert references_api.put(f"/api/references/equipment/{station}/setup-by", json={"setup_by": "operator"}).status_code == 200
+    assert references_api.get("/api/references/equipment-setup-by").json() == {"technician_ids": []}
+    with _sessions()() as session:
+        events = session.scalars(select(AuditEventRow).where(AuditEventRow.event_type == "references.equipment_setup_by")
+                                 .order_by(AuditEventRow.details["setup_by"].as_string())).all()
+        assert [(event.details["inventory"], event.details["setup_by"]) for event in events] == [
+            ("ОБ.070.1", "Наладчик"), ("ОБ.070.1", "Сам оператор")]
+
+    assert references_api.put(f"/api/references/equipment/{station}/setup-by", json={"setup_by": "Наладчик"}).status_code == 422
+    assert references_api.put(f"/api/references/equipment/{die}/setup-by", json={"setup_by": "technician"}).status_code == 404
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(id=UUID("10000000-0000-0000-0000-000000000002"), name="Сотрудник", department="Производство"),
+        email="staff@example.test", roles=frozenset({"staff"}), permissions={"erpref": "view"})
+    assert references_api.get("/api/references/equipment-setup-by").status_code == 200
+    assert references_api.put(f"/api/references/equipment/{station}/setup-by", json={"setup_by": "technician"}).status_code == 403

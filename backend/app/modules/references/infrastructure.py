@@ -168,6 +168,10 @@ class EquipmentMachineRow(EquipmentRecordRow):
     __mapper_args__ = {"polymorphic_identity": "ob", "concrete": True, "exclude_properties": ["type"]}
     # «Показывать в «Оборудовании»» (migration 0206): the machine is on the screen «Производство → Оборудование».
     show_in_equipment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa_false())
+    # «Кто налаживает» (owner 20.11.2026, migration 0213): «Сам оператор» ('operator', the default) or «Наладчик».
+    setup_by: Mapped[str] = mapped_column(
+        String(16), CheckConstraint("setup_by IN ('operator', 'technician')", name="ck_equipment_machines_setup_by"),
+        nullable=False, default="operator", server_default="operator")
 
 
 class EquipmentMeasuringRow(EquipmentRecordRow):

@@ -33,7 +33,7 @@ from .equipment import EXTRA_KEYS, next_instance_inventory, next_model_inventory
 from .application import LinkStockCommand, link_stock_article, stock_links
 from .application import (
     equipment_links_report, equipment_models, equipment_shown_ids, set_equipment_model, set_equipment_role,
-    set_equipment_serves, set_equipment_shown,
+    set_equipment_serves, set_equipment_shown, equipment_technician_ids, set_equipment_setup_by,
 )
 from .application import (
     CableCatalog, duplicate_equipment, SaveGaugeCommand, SaveHookupCommand, cable_catalog, coax_dia_rows, delete_gauge,
@@ -1198,3 +1198,29 @@ def equipment_shown_set(
 ) -> dict:
     return {"id": str(record_id), "shown": _run_edit(lambda: set_equipment_shown(
         record_id, payload.shown, principal.actor, now, uow_factory()))}
+
+
+# «Кто налаживает» (owner 20.11.2026, migration 0213): «Сам оператор» (the default for every machine) or «Наладчик».
+# Machines of the tab «Оборудование» only; every change is journaled. Nothing waits for setup because of it.
+class SetupByPayload(BaseModel):
+    setup_by: Literal["operator", "technician"]
+
+
+@router.get("/equipment-setup-by")
+def equipment_setup_by(
+    _principal: Annotated[Principal, Depends(references_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    return {"technician_ids": equipment_technician_ids(uow_factory())}
+
+
+@router.put("/equipment/{record_id}/setup-by")
+def equipment_setup_by_set(
+    record_id: UUID,
+    payload: SetupByPayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    return {"id": str(record_id), "setup_by": _run_edit(lambda: set_equipment_setup_by(
+        record_id, payload.setup_by, principal.actor, now, uow_factory()))}
