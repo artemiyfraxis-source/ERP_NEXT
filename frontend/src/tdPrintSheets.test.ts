@@ -275,3 +275,17 @@ it("коды БД.ОП убираются, наименование по КД с
   expect(cleanCodes("Кабельная сборка SHR-03V-S-B to Open-End 28AWG 100mm LED_STRIP"))
     .toBe("Кабельная сборка SHR-03V-S-B to Open-End 28AWG 100mm LED_STRIP");
 });
+
+it("строка станка из пула в ТД: «любой свободный», пул в рабочем месте и ВО; станок с номером — как есть", () => {
+  const base = model();
+  const doc = base.card.document as unknown as { operations: Array<Record<string, any>> };
+  const pooled = { ...cut, card: { ...cut.card, tooling: [
+    { section: "Оборудование", name: "EW-50A(R) | Полуавтомат", inventory_number: "ОБ.027.X" },
+    { section: "Оборудование", name: "EW-50A(R)", inventory_number: "ОБ.027.1" },
+  ] } };
+  const html = buildTdKitHtml({ ...base, card: { ...base.card, document: { ...doc, operations: [pooled, second, third] } } as never });
+  expect(html).toContain("EW-50A — любой свободный ОБ.027.* · Полуавтомат");
+  expect(html).toContain("ОБ.027.*");
+  expect(html).not.toContain("ОБ.027.X");
+  expect(html).toContain("ОБ.027.1");
+});

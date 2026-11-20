@@ -5,6 +5,7 @@
 // таблица соединений — на титуле схема связей Э4, та же, что на экране ЭТК и в генераторе (etkLinkScheme.tsx).
 import type { EtkRoute, ProjectTechcard, TechcardRevision } from "./api";
 import { etkLinkScheme, etkLinkSchemeMarkup } from "./etkLinkScheme";
+import { poolToolLabel } from "./equipmentPool";
 import { pinCoreColor, withCoreColors } from "./etkCoreColors";
 import {
   ETK_CONNECTION_COLUMNS, ETK_TUBE_COLUMNS, etkDocumentConnectionRows, etkPhysicalConfig, etkTubePlacementRows, etkContactSpecs, etkDrawHarness, etkFigure, etkParams, type EtkParam,
@@ -107,13 +108,18 @@ function harnessPinsOf(operations: Row[]): Record<string, Record<number, string>
 
 /** Строки оснастки по разделам; Инструмент · Оборудование · Расходники есть всегда — пустой раздел строкой «нет»
  *  (erp-screens §6, как на экране). */
+function toolNameAndInventory(tool: Row): [string, string] {
+  const label = poolToolLabel(text(tool.name), text(tool.inventory_number));
+  return label ? [label, ""] : [text(tool.name), text(tool.inventory_number)];
+}
+
 function toolingRows(items: Row[]): string[][] {
   const order = toolingSections([...ETK_TOOLING_SECTIONS, ...items.map((tool) => text(tool.section))]);
   return order.flatMap((section) => {
     const tools = items.filter((tool) => text(tool.section) === section);
     if (!tools.length) return [[section, "", "нет", "", "", "", ""]];
     return tools.map((tool) => [
-      text(tool.section), text(tool.number), text(tool.name), text(tool.inventory_number),
+      text(tool.section), text(tool.number), ...toolNameAndInventory(tool),
       [tool.program && tool.program !== "-" ? text(tool.program) : "", text(tool.parameters)].filter(Boolean).join(" · "),
       text(tool.norm), unitLabel(text(tool.unit)),
     ]);
