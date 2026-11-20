@@ -11,9 +11,10 @@ import {
   type ProjectTechcard,
   type TechcardRevision,
   failureText,
+  type EtkSetupUnit,
 } from "./api";
 import { ETK_CONNECTION_COLUMNS, ETK_TUBE_COLUMNS, ETK_NOT_SET, etkDocumentConnectionRows, etkPhysicalConfig, etkTubePlacementRows, etkContactSpecs, etkDrawHarness, etkDrawTubeCut, etkFigure, etkParams, type EtkParams, type EtkTopologyData } from "./etkDraw";
-import { poolToolLabel } from "./equipmentPool";
+import { setupUnitLabel } from "./equipmentPool";
 import { etkMarkLabelsPage, etkPrintPages } from "./etkPrint";
 import { hasMarkSerial, markLabelList, markSerialTemplate, type MarkSerialRange } from "./markSerial";
 import { etkPartSource, etkRouteOf, etkSemiSource, etkSourceLines, formatMinutes, type EtkPfGroup } from "./etkRoute";
@@ -333,8 +334,10 @@ function MarksView({ marks, batch }: { marks: EtkMark[]; batch: string }) {
 /** Операция ЭТК в порядке, который задал производство (SUPPLYMAP renderEtk_, доведённый): безопасность (свёрнута) →
  *  1 вход: комплектующие и полуфабрикаты → 2 инструмент, оборудование, расходники + режим пайки (жало, температура) →
  *  3 ход операции → 4 типовые дефекты с пиктограммами → 5 эскиз → 6 результат и расчётное время. */
-function EtkOperationCard({ operation, number, total, batch = "", route = null, actions, sketch }: {
+function EtkOperationCard({ operation, number, total, batch = "", route = null, actions, sketch, units }: {
   operation: EtkOperation; number: number; total: number; batch?: string; route?: EtkRoute | null; actions?: ReactNode; sketch?: ReactNode;
+  /** Task view only: ready setups of concrete units by ETK position. */
+  units?: EtkSetupUnit[];
 }) {
   const raw = operation as Record<string, unknown>;
   const serial = useContext(MarkSerialContext);
@@ -381,7 +384,7 @@ function EtkOperationCard({ operation, number, total, batch = "", route = null, 
             {item.sourceUrl && <a href={item.sourceUrl} target="_blank" rel="noreferrer" title={item.quote || undefined}>Источник</a>}</div>
         </div>)}
       </div>}
-      <ToolingBySection tooling={tooling} fixed />
+      <ToolingBySection tooling={tooling} fixed unit={units?.find((item) => item.etk_position === (operation.position || number))} />
     </EtkSection>
     {operation.card?.steps?.length || marks.length ? <EtkSection label="Ход операции" number={next()}>
       {marks.length > 0 && <MarksView marks={marks} batch={batch} />}
@@ -513,7 +516,7 @@ function OperationSketchView({ cardId, operationKey, canEdit, sketch, onChanged,
 
 /** Оснастка по разделам. `fixed` — операция ЭТК (erp-screens §6): три раздела Инструмент · Оборудование · Расходники
  *  всегда, пустой — «нет» серым; без `fixed` (шаблон в базе) — только заполненные разделы. */
-export function ToolingBySection({ tooling, fixed = false }: { tooling: EtkTool[]; fixed?: boolean }) {
+export function ToolingBySection({ tooling, fixed = false, unit }: { tooling: EtkTool[]; fixed?: boolean; unit?: EtkSetupUnit }) {
   if (!tooling.length && !fixed) return <div className="empty">Инструмент, оборудование и расходники не указаны.</div>;
   const sections = toolingSections([...(fixed ? ETK_TOOLING_SECTIONS : []), ...tooling.map((tool) => tool.section || "")]);
   return <div className="tr-tooling">{sections.map((section) => {
@@ -523,7 +526,7 @@ export function ToolingBySection({ tooling, fixed = false }: { tooling: EtkTool[
       {!tools.length && <div className="tr-none">нет</div>}
       {tools.map((tool, index) => <div className="tr-tool" key={`${section}:${index}`}>
         <span className="tr-n">{tool.number}</span>
-        <span>{poolToolLabel(tool.name, tool.inventory_number) ?? <>{tool.name}{tool.inventory_number && <span className="tr-inv">{tool.inventory_number}</span>}</>}
+        <span>{setupUnitLabel(tool.name, tool.inventory_number, unit) ?? <>{tool.name}{tool.inventory_number && <span className="tr-inv">{tool.inventory_number}</span>}</>}
           {toolSub(tool) && <small>{toolSub(tool)}</small>}</span>
       </div>)}
     </div>;
@@ -589,7 +592,8 @@ export function focusOperations(list: EtkOperation[], focus?: EtkFocus): number[
  *  «← →» по маршруту и правка операции (SUPPLYMAP renderEtk_).
  *  В задании монтажника (`task`) — только операция задания: без списка операций слева, без «← Назад / Далее» и
  *  полосы маршрута (владелец 13.10: «слева не должно быть следующих операций»). */
-function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sketches, onSketches, sketchUrl, focus, task = false }: {
+function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sketches, onSketches, sketchUrl, focus, task = false, units }: {
+  units?: EtkSetupUnit[];
   card: ProjectTechcard; canEdit: boolean; canTemplate?: boolean; onSaved: (updated: ProjectTechcard) => void; onRouteSaved: (updated: ProjectTechcard) => void;
   sketches: OperationSketch[]; onSketches: () => void; sketchUrl: (key: string, at: string) => string; focus?: EtkFocus;
   task?: boolean;
@@ -660,7 +664,7 @@ function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sk
       const item = list[position - 1];
       return <details key={`${etkOperationKey(item)}:${position}`} className="etk-task-op">
         <summary><span className="etk-no">{String(item.position || position).padStart(2, "0")}</span><b>{etkTitle(item)}</b>{navSub(item) && <small>{navSub(item)}</small>}</summary>
-        <EtkOperationCard operation={item} number={item.position || position} total={list.length} batch={batch} route={route}
+        <EtkOperationCard operation={item} number={item.position || position} total={list.length} batch={batch} route={route} units={units}
           sketch={<OperationSketchView cardId={card.id} operationKey={etkOperationKey(item)} canEdit={false} url={sketchUrl}
             sketch={sketches.find((sketch) => sketch.operation_key === etkOperationKey(item))} onChanged={onSketches} />} />
       </details>;
@@ -695,7 +699,7 @@ function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sk
         onSave={save}
       /> : <>
         <EtkOperationCard operation={operation} number={operation.position || index + 1} total={list.length}
-          batch={batch} route={route}
+          batch={batch} route={route} units={units}
           actions={canEdit && operation.card && card.status === "Выдана" ? <button className="secondary small" onClick={() => setEditing(true)}>Править операцию</button> : null}
           sketch={<OperationSketchView cardId={card.id} operationKey={etkOperationKey(operation)} canEdit={canEdit} url={sketchUrl}
             sketch={sketches.find((item) => item.operation_key === etkOperationKey(operation))} onChanged={onSketches} />} />
@@ -717,7 +721,7 @@ function stamp(value: string | null | undefined) {
     ревизий свёрнут. Правят операции здесь («Править операцию»); пересборка — в «Генераторе». */
 export type EtkSketchSource = { list: () => Promise<{ items: OperationSketch[] }>; url: (operationKey: string, at: string) => string };
 
-export function EtkSheet({ card, principal, title, focus, task = false, taskId, serial, onChange, onRebuild, sketchSource }: {
+export function EtkSheet({ card, principal, title, focus, task = false, taskId, serial, units, onChange, onRebuild, sketchSource }: {
   card: ProjectTechcard; principal: Principal; title?: ReactNode; focus?: EtkFocus;
   /** Задание монтажника: только операция `focus`, схема — вид Э4. */
   task?: boolean;
@@ -725,6 +729,8 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
   taskId?: string;
   /** Номера изделий задания: «№ изделия» в надписях меток разворачивается в них; без задания — «№ по партии». */
   serial?: MarkSerialRange;
+  /** Task view: ready setups of concrete units replace «любой свободный …» in the tooling rows. */
+  units?: EtkSetupUnit[];
   onChange: (card: ProjectTechcard) => void; onRebuild?: () => void;
   /** Откуда брать эскизы; по умолчанию раздел техкарт. Монтажнику экран «Мои задания» даёт свой источник. */
   sketchSource?: EtkSketchSource;
@@ -781,7 +787,7 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
       <div className="etk-title">{title ?? <strong>{card.project} · {card.item_index}</strong>}
         <span className="muted">{countLabel(list.length, ["операция", "операции", "операций"])} · {issued ? `ревизия ${card.revision}${card.issued_at ? ` · выдана ${stamp(card.issued_at)}` : ""}` : "черновик, не выдана"}</span></div>
       {canPrint && list.length > 0 && <button className="secondary small etk-print-btn" onClick={() => openPrintDocument(`ТК ${card.project} ${card.item_index}`, etkPrintPages(card, revisions, sketchLinks(), serial,
-        stdFigures ? { index: stdFigures, base: window.location.origin } : null))}>Печать / PDF</button>}
+        stdFigures ? { index: stdFigures, base: window.location.origin } : null, units))}>Печать / PDF</button>}
       {canPrint && taskId && labelsPage && <button type="button" className="secondary small" aria-haspopup="dialog" onClick={() => setMarkingOpen(true)}>Печать надписей</button>}
       {canGenerate && onRebuild && <button className="secondary small" onClick={onRebuild}>Пересобрать</button>}
       {canEdit && !issued && card.document && <button className="primary small" disabled={busy} onClick={() => void issue()}>Выдать ЭТК</button>}
@@ -794,7 +800,7 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
       {warnings(card.document).map((warning) => <div key={warning}>{warning}</div>)}</details>}
     <HarnessView value={topology(card.document)} list={list} connections={etkDocumentConnectionRows(card.document)} document={card.document}
       raw={card.document?.connections} scheme={linkScheme} task={task ? { project: card.project, index: card.item_index, taskId } : undefined} />
-    <EtkView key={card.id} card={card} canEdit={canEdit} canTemplate={principal.permissions.erptctpl === "edit"} focus={focus} task={task} sketches={sketches} onSketches={loadSketches} sketchUrl={source.url} onSaved={(updated) => {
+    <EtkView key={card.id} card={card} canEdit={canEdit} canTemplate={principal.permissions.erptctpl === "edit"} focus={focus} task={task} units={units} sketches={sketches} onSketches={loadSketches} sketchUrl={source.url} onSaved={(updated) => {
       onChange(updated);
       setNotice(`Операция сохранена${updated.status === "Выдана" ? ` · ревизия ${updated.revision}` : ""}`);
     }} onRouteSaved={(updated) => {
