@@ -105,6 +105,7 @@ ETK_PURPOSES = frozenset({"assembly", "one_port"})      # the band comes from th
 LIMIT_SOURCES = ("norm", "etk", "fixed", "none")
 NAME_MAX, NOTE_MAX = 120, 500
 LimitSource = Literal["norm", "etk", "fixed", "none"]
+CAPTURED = ("S11", "S21", "S12", "S22")     # every bench sweep captures all four (vna_bench.ALL_TRACES)
 
 
 class FixedLimit(StrictModel):
@@ -159,6 +160,15 @@ class ScreenDef(StrictModel):
     def fits_contract(self):
         if any(a >= b for a, b in zip(self.markers_hz, self.markers_hz[1:])):
             raise ValueError("Маркеры задаются по возрастанию частоты без повторов")
+        if any(hz < INSTRUMENT_BAND_HZ[0] or hz > INSTRUMENT_BAND_HZ[1] for hz in self.markers_hz):
+            raise ValueError("Маркер вне диапазона ВАЦ 0,1–18000 МГц")
+        # The bench adds every captured S-parameter the screen lacks as a hidden graph (vna_bench.fit_screen).
+        missing = len(set(CAPTURED) - {t.param for t in self.traces})
+        if len(self.traces) + missing > SCREEN_TRACES_MAX:
+            raise ValueError(f"Графиков вместе с недостающими скрытыми ({', '.join(sorted(set(CAPTURED) - {t.param for t in self.traces}))}) "
+                             f"больше {SCREEN_TRACES_MAX} — уберите график")
+        if self.purpose == "flex" and not any(t.memory for t in self.traces):
+            raise ValueError("Экран шевеления сравнивает с памятью — отметьте «Память» хотя бы у одного графика")
         Screen(split=self.split, markers_hz=self.markers_hz, traces=[
             ScreenTrace(param=t.param, format=t.format, scale=_sample_scale(t.scale), hidden=t.hidden, memory=t.memory)
             for t in self.traces])

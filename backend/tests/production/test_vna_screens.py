@@ -108,3 +108,33 @@ def test_etk_purpose_needs_a_band_and_markers_follow_the_definition():
     with pytest.raises(ProductionValidationError, match="полоса по ЭТК"):
         screen(spec)
     assert screen(spec, band_hz=(1e6, 3e9)).markers_hz == [2e9]
+
+
+def test_flex_screen_keeps_a_memory_graph():
+    data = definition("flex").model_dump(mode="json")
+    for trace in data["traces"]:
+        trace["memory"] = False
+    with pytest.raises(ValidationError, match="Память"):
+        ScreenDef.model_validate(data)
+    data["purpose"] = "engineer"   # another purpose may show no memory at all
+    ScreenDef.model_validate(data)
+
+
+def test_graphs_with_the_hidden_captured_ones_fit_sixteen():
+    data = definition("engineer").model_dump(mode="json")
+    s11 = {**data["traces"][0], "limit": "none", "scale": "auto"}
+    # 16 × S11: the bench would add S21, S12 and S22 hidden — 19 graphs, S2VNA takes 16.
+    with pytest.raises(ValidationError, match="S12, S21, S22"):
+        ScreenDef.model_validate({**data, "traces": [s11] * 16})
+    with pytest.raises(ValidationError, match="S12, S21, S22"):
+        ScreenDef.model_validate({**data, "traces": [s11] * 14})
+    ScreenDef.model_validate({**data, "traces": [s11] * 13})
+    ScreenDef.model_validate({**data, "traces": [{**s11, "param": p} for p in ("S11", "S21", "S12", "S22")] * 4})
+
+
+def test_markers_stay_inside_the_vna_band():
+    data = definition("adapter").model_dump(mode="json")
+    with pytest.raises(ValidationError, match="Маркер вне диапазона"):
+        ScreenDef.model_validate({**data, "markers_hz": [1e9, 19e9]})
+    with pytest.raises(ValidationError, match="Маркер вне диапазона"):
+        ScreenDef.model_validate({**data, "markers_hz": [5e4]})

@@ -62,6 +62,12 @@ def definition_of(row: VnaScreenRow) -> ScreenDef:
                      note=row.note)
 
 
+def snapshot(row: VnaScreenRow) -> dict:
+    """The whole screen as the journal keeps it before and after a change."""
+    return dict(name=row.name, purpose=row.purpose, split=row.split, traces=row.traces, markers_hz=row.markers_hz,
+                note=row.note, is_default=row.is_default, active=row.active, version=row.version)
+
+
 def stored(spec: ScreenDef) -> dict:
     data = spec.model_dump(mode="json")
     return dict(name=data["name"], purpose=data["purpose"], split=data["split"], traces=data["traces"],
@@ -71,6 +77,7 @@ def stored(spec: ScreenDef) -> dict:
 class VnaScreenRepository:
     def __init__(self, session: Session):
         self.session = session
+        self.demoted: list[tuple[VnaScreenRow, dict]] = []   # screens that lost default status in this unit of work
 
     def all(self) -> list[VnaScreenRow]:
         rows = self.session.scalars(select(VnaScreenRow)).all()
@@ -110,11 +117,21 @@ class VnaScreenRepository:
         if clash is not None and clash != own:
             raise ProductionValidationError(f"Экран «{name}» уже есть — выберите другое название")
 
-    def _take_default(self, row: VnaScreenRow):
-        """`row` becomes the default of its purpose: the previous default steps down first (one default per purpose)."""
-        self.session.execute(update(VnaScreenRow).where(VnaScreenRow.purpose == row.purpose,
-                                                        VnaScreenRow.is_default.is_(True), VnaScreenRow.id != row.id)
-                             .values(is_default=False))
+    def _take_default(self, row: VnaScreenRow, actor, now):
+        """`row` becomes the default of its purpose. The previous default steps down first (one default per purpose)
+        as a change of its own: version + 1, so an editor still holding it cannot silently take the default back, and
+        it is listed in `self.demoted` (with the screen before) for the journal."""
+        for other in list(self.session.scalars(select(VnaScreenRow).where(
+                VnaScreenRow.purpose == row.purpose, VnaScreenRow.is_default.is_(True), VnaScreenRow.id != row.id))):
+            before = snapshot(other)
+            changed = self.session.execute(update(VnaScreenRow).where(
+                VnaScreenRow.id == other.id, VnaScreenRow.version == other.version).values(
+                is_default=False, version=other.version + 1, updated_by=actor.id, updated_by_name=actor.name,
+                updated_at=now))
+            if changed.rowcount != 1:
+                raise ScreenConflict("Основной экран этого назначения уже изменили — откройте экраны заново")
+            self.session.refresh(other)
+            self.demoted.append((other, before))
         self.session.flush()
 
     def create(self, spec: ScreenDef, make_default: bool, actor, now) -> VnaScreenRow:
@@ -124,7 +141,7 @@ class VnaScreenRepository:
         self.session.add(row)
         self.session.flush()
         if make_default:
-            self._take_default(row)
+            self._take_default(row, actor, now)
             row.is_default = True
             self.session.flush()
         return row
@@ -146,7 +163,7 @@ class VnaScreenRepository:
             raise ScreenConflict("Экран уже изменили — откройте его заново")
         self.session.refresh(row)
         if make_default and not row.is_default:
-            self._take_default(row)
+            self._take_default(row, actor, now)
             row.is_default = True
             self.session.flush()
         return row

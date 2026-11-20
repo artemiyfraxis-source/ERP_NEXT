@@ -17,7 +17,8 @@ from pydantic import Field, ValidationError
 from sqlalchemy.exc import IntegrityError
 
 from app.modules.production.domain import ProductionValidationError
-from app.modules.production.vna_screen_infrastructure import ScreenConflict, VnaScreenRepository, VnaScreenRow
+from app.modules.production.vna_screen_infrastructure import (ScreenConflict, VnaScreenRepository, VnaScreenRow,
+                                                              snapshot as _snapshot)
 from app.modules.production.vna_screens import ScreenDef
 from app.modules.production.vna_sessions import StrictModel
 from app.shared.events import AuditEvent
@@ -45,19 +46,50 @@ class ActiveInput(StrictModel):
     version: int = Field(ge=1, strict=True)
 
 
+def _number(value) -> str:
+    text = f"{value:g}" if isinstance(value, float) else str(value)
+    return text.replace(".", ",").replace("e+", "·10^").replace("-", "−")
+
+
+def _russian(error: dict) -> str:
+    """Pydantic's English bound messages in Russian; our own validators already speak Russian."""
+    kind, ctx = error.get("type", ""), error.get("ctx") or {}
+    bounds = {"greater_than": "должно быть больше {gt}", "greater_than_equal": "должно быть не меньше {ge}",
+              "less_than": "должно быть меньше {lt}", "less_than_equal": "должно быть не больше {le}"}
+    if kind in bounds:
+        return bounds[kind].format(**{k: _number(v) for k, v in ctx.items()})
+    if kind in ("too_long", "too_short"):
+        limit = ctx.get("max_length") if kind == "too_long" else ctx.get("min_length")
+        unit = "символов" if isinstance(error.get("input"), str) else "элементов"
+        return f"{'не больше' if kind == 'too_long' else 'не меньше'} {limit} {unit}"
+    if kind in ("string_too_long", "string_too_short"):
+        limit = ctx.get("max_length") if kind == "string_too_long" else ctx.get("min_length")
+        return f"{'не больше' if kind == 'string_too_long' else 'не меньше'} {limit} символов"
+    if kind == "string_pattern_mismatch":
+        return "пустое значение или служебные символы"
+    if kind == "finite_number":
+        return "нужно конечное число"
+    if kind in ("literal_error", "missing", "extra_forbidden", "int_type", "int_from_float", "float_type", "float_parsing",
+                "int_parsing", "bool_type", "bool_parsing", "string_type", "list_type", "model_type", "dict_type"):
+        return "недопустимое значение"
+    if kind == "value_error":
+        return str(error.get("msg", "")).removeprefix("Value error, ")
+    return "недопустимое значение"
+
+
 def _message(error: ValidationError) -> str:
-    """The first problem in Russian with where it is: «График 2, шкала: …»."""
+    """The first problem in Russian with where it is: «График 2, деление: должно быть больше 0»."""
     first = error.errors()[0]
     where = []
     location = list(first.get("loc", ()))
     if len(location) >= 2 and location[0] == "traces" and isinstance(location[1], int):
         where.append(f"График {location[1] + 1}")
         location = location[2:]
-    where += [FIELDS[p] for p in location if isinstance(p, str) and p in FIELDS][:1]
-    text = str(first.get("msg", "")).removeprefix("Value error, ")
-    if first.get("type") in ("literal_error", "missing", "extra_forbidden", "int_type", "float_type", "bool_type"):
-        text = "недопустимое значение"
-    return ": ".join(filter(None, (", ".join(where), text))) or "Экран не принят"
+    elif len(location) >= 2 and location[0] == "markers_hz" and isinstance(location[1], int):
+        where.append(f"Маркер {location[1] + 1}")
+        location = location[2:]
+    where += [FIELDS[p] for p in location if isinstance(p, str) and p in FIELDS][-1:]
+    return ": ".join(filter(None, (", ".join(where), _russian(first)))) or "Экран не принят"
 
 
 def _parsed(model, raw: Any):
@@ -93,16 +125,16 @@ def _actor(principal: Principal) -> Actor:
     return Actor(id=principal.actor.id, name=principal.actor.name, department=principal.actor.department)
 
 
-def _snapshot(row: VnaScreenRow) -> dict:
-    return dict(name=row.name, purpose=row.purpose, split=row.split, traces=row.traces, markers_hz=row.markers_hz,
-                note=row.note, is_default=row.is_default, active=row.active, version=row.version)
-
-
 def _journal(uow, row: VnaScreenRow, event: str, principal, now, before: dict | None = None):
     """Every change of a screen, with the whole screen before and after (the journal is its version history)."""
     uow.audit.add(AuditEvent(id=uuid4(), aggregate_id=row.id, event_type=f"production.vna_screen_{event}",
                              actor=_actor(principal), occurred_at=now,
                              details={"name": row.name, "before": before, "after": _snapshot(row)}))
+
+
+def _journal_demoted(uow, repository: VnaScreenRepository, principal, now):
+    for other, before in repository.demoted:
+        _journal(uow, other, "default_moved", principal, now, before)
 
 
 @router.get(PREFIX)
@@ -131,6 +163,7 @@ def create_screen(principal: Person, now: Now, factory: Factory, payload: Annota
         repository.ensure_seeded(now)
         row = repository.create(spec, data.is_default, _actor(principal), now)
         _journal(uow, row, "created", principal, now)
+        _journal_demoted(uow, repository, principal, now)
         result = view(row)
         uow.commit()
         return result
@@ -147,6 +180,7 @@ def save_screen(screen_id: UUID, principal: Person, now: Now, factory: Factory, 
         before = _snapshot(row)
         row = repository.update(row, data.version, spec, data.is_default, _actor(principal), now)
         _journal(uow, row, "saved", principal, now, before)
+        _journal_demoted(uow, repository, principal, now)
         result = view(row)
         uow.commit()
         return result

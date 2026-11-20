@@ -145,3 +145,20 @@ it("the switcher on «Замер» shows only active screens and reports a refus
   await waitFor(() => expect(show).toHaveBeenCalledWith("sc-eng"));
   expect((await screen.findByRole("alert")).textContent).toMatch(/Калибровка истекла/);
 });
+
+it("refuses before saving what the server refuses: graph count, flex memory, markers, bounds, name", () => {
+  const draft = draftOf(adapter);
+  expect(fieldsOf({ ...draft, name: "  " })).toEqual({ error: "Название не задано" });
+  const s11 = { ...draft.traces[0], param: "S11" as const };
+  expect(fieldsOf({ ...draft, traces: Array(16).fill(s11) })).toEqual(
+    { error: "Графиков вместе с недостающими скрытыми (S21, S12, S22) больше 16 — уберите график" });
+  expect("fields" in fieldsOf({ ...draft, traces: Array(13).fill(s11) })).toBe(true);
+  expect(fieldsOf({ ...draft, purpose: "flex" })).toEqual(
+    { error: "Экран шевеления сравнивает с памятью — отметьте «Память» хотя бы у одного графика" });
+  expect(fieldsOf({ ...draft, markers: "1; 19" })).toEqual({ error: "Маркеры: 19 ГГц — вне диапазона ВАЦ 0,1–18000 МГц" });
+  expect(fieldsOf({ ...draft, markers: "3; 1" })).toEqual({ error: "Маркеры: по возрастанию частоты, без повторов" });
+  expect(fieldsOf({ ...draft, markers: Array.from({ length: 16 }, (_, i) => String(i + 1)).join("; ") }))
+    .toEqual({ error: "Маркеры: не больше 15" });
+  const big = { ...draft.traces[1], mode: "manual" as const, pdiv: "2000000", rlev: "0", rpos: "10" };
+  expect(fieldsOf({ ...draft, traces: [big] })).toEqual({ error: "График 1: деление — не больше 1 000 000" });
+});

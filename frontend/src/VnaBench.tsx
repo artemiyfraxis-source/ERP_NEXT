@@ -173,7 +173,8 @@ export function VnaBench({ canEdit }: { canEdit: boolean }) {
   /** «Показать на ВАЦ»: отказ возвращается строкой — его показывает тот, кто вызвал (окно экрана, строка вида). */
   const showScreen = async (screenId: string): Promise<string> => {
     const open = state?.session?.status === "open" ? state.session : null;
-    if (!open || busy) return open ? "" : "Сеанс не открыт";
+    if (!open) return "Сеанс не открыт — откройте его на вкладке «Замер»";
+    if (busy) return "Дождитесь окончания предыдущего действия и нажмите ещё раз";
     setBusy("show-screen");
     try {
       setState(await vnaBenchApi.showScreen(open.id, open.version, screenId));

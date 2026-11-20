@@ -80,7 +80,20 @@ export function draftOf(screen: VnaScreenFields): Draft {
 }
 
 /** Черновик → поля для сервера; ошибка набора — понятной строкой с номером графика. */
+/* Те же границы, что у сервера (vna_screens.ScreenDef, протокол v2): отказ виден до «Сохранить». */
+export const LIMITS_OF = { name: 120, markers: 15, markerGhz: [0.0001, 18] as const, level: 1e6, captured: ["S11", "S21", "S12", "S22"] };
+
 export function fieldsOf(draft: Draft): { fields: VnaScreenFields } | { error: string } {
+  const name = draft.name.trim();
+  if (!name) return { error: "Название не задано" };
+  if (name.length > LIMITS_OF.name) return { error: `Название — не больше ${LIMITS_OF.name} символов` };
+  const missing = LIMITS_OF.captured.filter((param) => !draft.traces.some((trace) => trace.param === param));
+  if (draft.traces.length + missing.length > MAX_TRACES) {
+    return { error: `Графиков вместе с недостающими скрытыми (${missing.join(", ")}) больше ${MAX_TRACES} — уберите график` };
+  }
+  if (draft.purpose === "flex" && !draft.traces.some((trace) => trace.memory)) {
+    return { error: "Экран шевеления сравнивает с памятью — отметьте «Память» хотя бы у одного графика" };
+  }
   const traces: VnaScreenTrace[] = [];
   for (const [index, t] of draft.traces.entries()) {
     const where = `График ${index + 1}`;
@@ -88,11 +101,13 @@ export function fieldsOf(draft: Draft): { fields: VnaScreenFields } | { error: s
     if (t.mode === "manual") {
       const pdiv = toNumber(t.pdiv);
       if (pdiv === null || pdiv <= 0) return { error: `${where}: деление — число больше нуля` };
+      if (pdiv > LIMITS_OF.level) return { error: `${where}: деление — не больше 1 000 000` };
       if (t.format === "SMIT") scale = { pdiv, rlev: null, rpos: null };
       else {
         const rlev = toNumber(t.rlev);
         const rpos = toNumber(t.rpos);
         if (rlev === null) return { error: `${where}: уровень — число` };
+        if (Math.abs(rlev) > LIMITS_OF.level) return { error: `${where}: уровень — от −1 000 000 до 1 000 000` };
         if (rpos === null || !Number.isInteger(rpos) || rpos < 0 || rpos > 10) return { error: `${where}: позиция — целое от 0 до 10` };
         scale = { pdiv, rlev, rpos };
       }
@@ -101,6 +116,7 @@ export function fieldsOf(draft: Draft): { fields: VnaScreenFields } | { error: s
     if (t.limit === "fixed") {
       const value = toNumber(t.value);
       if (value === null) return { error: `${where}: своё число линии не задано` };
+      if (Math.abs(value) > LIMITS_OF.level) return { error: `${where}: число линии — от −1 000 000 до 1 000 000` };
       fixed = { kind: t.format === "MLOG" ? "lower" : "upper", value };
     }
     traces.push({ param: t.param, format: t.format, scale, limit: t.limit, fixed, hidden: t.hidden, memory: t.memory });
@@ -109,9 +125,12 @@ export function fieldsOf(draft: Draft): { fields: VnaScreenFields } | { error: s
   for (const part of draft.markers.split(/[;\s]+/).filter(Boolean)) {
     const ghz = toNumber(part);
     if (ghz === null || ghz <= 0) return { error: `Маркеры: «${part}» — не частота в ГГц` };
+    if (ghz < LIMITS_OF.markerGhz[0] || ghz > LIMITS_OF.markerGhz[1]) return { error: `Маркеры: ${part} ГГц — вне диапазона ВАЦ 0,1–18000 МГц` };
     markers.push(Math.round(ghz * 1e9));
   }
-  return { fields: { name: draft.name.trim(), purpose: draft.purpose, split: draft.split, traces, markers_hz: markers,
+  if (markers.length > LIMITS_OF.markers) return { error: `Маркеры: не больше ${LIMITS_OF.markers}` };
+  if (markers.some((hz, index) => index > 0 && hz <= markers[index - 1])) return { error: "Маркеры: по возрастанию частоты, без повторов" };
+  return { fields: { name, purpose: draft.purpose, split: draft.split, traces, markers_hz: markers,
     note: draft.note.trim(), is_default: draft.is_default } };
 }
 

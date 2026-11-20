@@ -1236,8 +1236,9 @@ def check_next(session_id: UUID, check_id: str, payload: Version, principal: Per
             bend = bench.fit_screen(bench_screen(_screen(uow, "flex")), profile)
             hash_ = screen_hash(bend)
             memorized = [n for n, t in enumerate(bend.traces, start=1) if t.memory]
-            steps = [bench.screen_step(bend, meta), bench.capture_step(profile, hash_, phase["label"], item, human=False),
-                     bench.step("store_memory", dict(screen_hash=hash_, traces=memorized), item=meta)]
+            steps = [bench.screen_step(bend, meta), bench.capture_step(profile, hash_, phase["label"], item, human=False)]
+            if memorized:   # a stored flex screen always has one (ScreenDef); an older one without — no memory step
+                steps.append(bench.step("store_memory", dict(screen_hash=hash_, traces=memorized), item=meta))
         else:
             steps = [bench.capture_step(profile, hash_, phase["label"], item, human=False)]
             if hash_ != bench.last_screen_hash(row.steps):

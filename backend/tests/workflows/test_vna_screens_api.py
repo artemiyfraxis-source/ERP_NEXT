@@ -86,6 +86,42 @@ def test_default_moves_between_screens_and_a_default_cannot_be_switched_off(prod
     assert on.status_code == 200 and on.json()["active"]
 
 
+def test_the_screen_losing_default_gets_a_new_version_and_a_journal_row(production_api):
+    client, _ = production_api
+    _as({"quality": "edit"})
+    adapter = screens(client)[0]                                   # the default, version 1, open in a stale editor
+    extra = client.post(URL, json=body(adapter, name="Переход — крупно", is_default=True, version=None)).json()
+    assert extra["is_default"]
+    old = client.get(f"{URL}/{adapter['id']}").json()
+    assert (old["is_default"], old["version"], old["updated_by"]) == (False, 2, "Контролёр")
+    # The stale editor still thinks it is the default: saving it back is a conflict, never a silent takeover.
+    stale = client.put(f"{URL}/{adapter['id']}", json=body(adapter))
+    assert stale.status_code == 409 and stale.json()["detail"]["code"] == "stale"
+    assert client.get(f"{URL}/{extra['id']}").json()["is_default"]
+    with app.state.production_uow_factory() as uow:
+        moved = uow.session.scalars(select(AuditEventRow).where(
+            AuditEventRow.event_type == "production.vna_screen_default_moved")).all()
+        assert [str(e.aggregate_id) for e in moved] == [adapter["id"]]
+        assert moved[0].details["before"]["is_default"] and not moved[0].details["after"]["is_default"]
+
+
+@pytest.mark.parametrize("change,message", [
+    (lambda s: {"markers_hz": [float(i + 1) * 1e9 for i in range(16)]}, "маркеры: не больше 15 элементов"),
+    (lambda s: {"traces": [{**s["traces"][1], "scale": {"pdiv": 0, "rlev": 0.0, "rpos": 10}}]}, "График 1, деление: должно быть больше 0"),
+    (lambda s: {"traces": [{**s["traces"][1], "scale": {"pdiv": 0.1, "rlev": 0.0, "rpos": 11}}]}, "График 1, позиция: должно быть не больше 10"),
+    (lambda s: {"name": " "}, "название: пустое значение или служебные символы"),
+    (lambda s: {"name": "Я" * 121}, "название: не больше 120 символов"),
+    (lambda s: {"split": 17}, "расположение: должно быть не больше 16"),
+    (lambda s: {"markers_hz": [2e10]}, "Маркер вне диапазона ВАЦ"),
+])
+def test_refusals_are_in_russian(production_api, change, message):
+    client, _ = production_api
+    _as({"quality": "edit"})
+    adapter = screens(client)[0]
+    response = client.post(URL, json=body(adapter, name="Новый", is_default=False, version=None) | change(adapter))
+    assert response.status_code == 422 and message in response.json()["detail"]["message"], response.text
+
+
 @pytest.mark.parametrize("permissions,read,write", [
     ({"quality": "view"}, 200, 403), ({"production": "edit"}, 403, 403), ({"quality": "edit"}, 200, 200)])
 def test_rights_view_for_otk_edit_for_quality_edit(production_api, permissions, read, write):
@@ -186,3 +222,25 @@ def test_a_repeat_connection_sweeps_on_the_view_and_a_check_restores_its_own_scr
         assert tail == ["device_status", "apply_screen", "capture"]
         assert row.steps[-1]["args"]["screen_hash"] == row.steps[-2]["args"]["screen_hash"]
     assert state(env)["session"]["checks"][0]["phases"][0]["status"] == "passed"
+
+
+def test_a_flex_screen_without_memory_skips_the_memory_step(env, monkeypatch):
+    from app.modules.production.vna_screens import definition
+    from app.workflows import vna_bench_api
+    stored = definition("flex")
+    # Only a screen stored before the memory rule (or written past the API) can lack memory: the check still runs.
+    bare = stored.model_construct(**{**dict(stored), "traces": [t.model_copy(update={"memory": False}) for t in stored.traces]})
+    original = vna_bench_api._screen
+    monkeypatch.setattr(vna_bench_api, "_screen", lambda uow, purpose: bare if purpose == "flex" else original(uow, purpose))
+    view = calibrate(env)
+    view = post(env, session_path(view, "/checks"), {"version": view["session"]["version"], "kind": "flex"})
+    env["stub"].drive()
+    check = state(env)["session"]["checks"][0]
+    for connected in (("load",), ("load",), ("thru",), ("thru",)):
+        env["stub"].connected = connected
+        view = state(env)
+        post(env, session_path(view, f"/checks/{check['id']}/next"), {"version": view["session"]["version"]})
+        env["stub"].drive()
+    assert state(env)["session"]["checks"][0]["status"] == "passed"
+    with env["sessions"]() as session:
+        assert "store_memory" not in [s["op"] for s in session.scalar(select(VnaSessionRow)).steps]
