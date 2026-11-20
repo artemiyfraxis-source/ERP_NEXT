@@ -12,7 +12,7 @@ from alembic import command
 from alembic.config import Config
 
 REVISION = "0213_equipment_setup_by"
-PREVIOUS = "0209_machine_work_counter"
+PREVIOUS = "0211_machine_hmi_commands"
 
 
 def _config(path: Path) -> Config:
