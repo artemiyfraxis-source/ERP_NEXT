@@ -192,6 +192,14 @@ class SqlAlchemyCuttingRepository:
         self.session.flush()
         return group
 
+    def create_separate(self, recipe, now):
+        """A new open group of one separately issued PF (`cutting:` key, not joinable — like `attach(separate=True)`):
+        regrouping keeps the master's separation on a rerun."""
+        group = self.create_explicit(recipe, now)
+        group.idempotency_key = f"cutting:separate:{group.id}"
+        self.session.flush()
+        return group
+
     def place(self, group, task, recipe, document, card_version):
         """Make the PF an active member of `group` with fresh row values. A row this group already had for the PF
         (split earlier, e.g. a rerun) is reactivated: one row per group and PF. Returns True when anything changed.

@@ -21,7 +21,7 @@ from uuid import UUID
 from sqlalchemy import Text, cast, or_, select
 
 from app.modules.production.domain import mark_serial_range
-from app.modules.production.marking_sources import TOKEN, labels
+from app.modules.production.marking_sources import TOKEN, expand_serial, labels
 from app.modules.warehouse.label_jobs import LabelJobRow
 from app.modules.warehouse.marking_profiles import MarkingBatchRow
 
@@ -105,18 +105,32 @@ def fixed_keys(document: Mapping | None, task) -> set[str]:
             if not TOKEN.search(str(mark.get("text") or ""))}
 
 
-def remaining_rows(rows: Sequence[Mapping], counts: Counter, fixed: Iterable[str] = ()) -> list[dict]:
+def numbered_keys(document: Mapping | None, task, serial_range) -> set[tuple]:
+    """(task, serial, text) of every numbered label of the ETK document over the serial range."""
+    if serial_range is None:
+        return set()
+    return {(str(task.id), serial, expand_serial(str(mark.get("text") or ""), serial))
+            for operation in (document or {}).get("operations") or []
+            for mark in (operation.get("fields") or {}).get("marks") or []
+            if TOKEN.search(str(mark.get("text") or ""))
+            for serial in range(serial_range[0], serial_range[1] + 1)}
+
+
+def remaining_rows(rows: Sequence[Mapping], counts: Counter, fixed: Iterable[str] = (),
+                   numbered: Iterable[tuple] = ()) -> list[dict]:
     """The expanded rows (`marking_sources.labels`) minus what was already printed: «Печатать оставшиеся».
 
     `fixed` — keys of fixed inscriptions (`fixed_keys`): an interleaved preview gives their rows the item serial.
     A row without a serial is always fixed. Numbered rows take exact (task, serial, text) matches first; a fixed row
     then takes its own item's labels, then labels of plain batches (no serial); a fixed row without a serial (plain
-    preview) finally takes fixed labels printed inside any interleaved item."""
+    preview) finally takes fixed labels printed inside any interleaved item — never a numbered label whose expanded
+    text happens to equal the fixed text (`numbered`, `numbered_keys`, plus the numbered rows themselves)."""
     fixed = set(fixed)
     left = Counter(counts)
     keys = [(str(row["task_id"]), row.get("serial"), str(row.get("text") or "")) for row in rows]
     is_fixed = [row.get("serial") is None or row.get("key") in fixed for row in rows]
     done = [0] * len(rows)
+    numbered = set(numbered) | {key for key, fixed_row in zip(keys, is_fixed) if not fixed_row}
 
     def take(index, key):
         part = min(max(left[key], 0), int(rows[index]["quantity"]) - done[index])
@@ -130,7 +144,8 @@ def remaining_rows(rows: Sequence[Mapping], counts: Counter, fixed: Iterable[str
             take(index, (task, None, text))
     for index, (task, serial, text) in enumerate(keys):
         if is_fixed[index] and serial is None:
-            for key in [key for key in left if key[0] == task and key[2] == text and key[1] is not None]:
+            for key in [key for key in left if key[0] == task and key[2] == text and key[1] is not None
+                        and key not in numbered]:
                 take(index, key)
     return [{**row, "quantity": int(row["quantity"]) - done[index]}
             for index, row in enumerate(rows) if int(row["quantity"]) > done[index]]
@@ -148,7 +163,7 @@ def task_progress(task, document: Mapping | None, serial_range, counts: Counter)
     if serial_range is None or not document:
         return view
     rows = labels(document, task, serial_range)
-    left = remaining_rows(rows, counts, fixed_keys(document, task))
+    left = remaining_rows(rows, counts, fixed_keys(document, task), numbered_keys(document, task, serial_range))
     view["remaining_labels"] = sum(int(row["quantity"]) for row in left)
     serials = range(serial_range[0], serial_range[1] + 1)
     numbered = [row for row in rows if row.get("serial") is not None]

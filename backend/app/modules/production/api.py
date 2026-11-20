@@ -1082,8 +1082,14 @@ def _check_cutting_start(operation_id, uow_factory, techcards_factory):
         group = uow.cutting.get(member.group_id)
         if group.state == "frozen":
             return  # Work continues against the immutable issued document, even after another ETK is issued.
-        expected = {m.task_id: m.row_snapshot.get("validated_card_version") for m in uow.cutting.members(group.id)}
+        members = uow.cutting.members(group.id)
+        expected = {m.task_id: m.row_snapshot.get("validated_card_version") for m in members}
+        # A row behind its re-pinned task waits for «Обновить из ЭТК» (the card version alone is not enough).
+        behind = any(uow.production.get(m.task_id).techcard_revision != m.row_snapshot.get("techcard_revision")
+                     for m in members)
         group_id = group.id
+    if behind:
+        raise HTTPException(409, "ЭТК группы изменилась — нажмите «Обновить из ЭТК»")
     current = cutting_current_cards(group_id, uow_factory, techcards_factory)
     if any(identifier not in current or version != current[identifier][1] for identifier, version in expected.items()):
         raise HTTPException(409, "ЭТК группы изменилась — требуется повторная проверка группы резки")

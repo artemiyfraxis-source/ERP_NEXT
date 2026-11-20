@@ -14,7 +14,8 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.modules.production.application import ConcurrentProductionUpdate
 from app.modules.production.resource_claims import ResourceConflict
 from app.modules.production.cutting import recipe_kind
-from app.modules.production.cutting_application import describe_group, group_existing, plan_etk_refresh, refresh_group_etk
+from app.modules.production.cutting_application import (describe_group, group_existing, plan_etk_refresh,
+                                                        refresh_group_etk, row_behind)
 from app.modules.production.domain import ProductionValidationError
 from app.modules.production.plan import normalize_project_number
 from app.modules.techcards.project_cards import TechcardStatus
@@ -61,7 +62,7 @@ def refresh_etk(project, *, factory, techcards_factory, actor, now, dry_run=True
                 group = uow.cutting.get(group_id)
                 steps, problems = plan_etk_refresh(group, uow.cutting.members(group_id), cards, uow)
                 stale = [task.item for member, task, entry, _r in steps if task.techcard_revision != entry[1]
-                         or member.row_snapshot.get("validated_card_version") != entry[3]]
+                         or member.row_snapshot.get("validated_card_version") != entry[3] or row_behind(member, task)]
                 # A key computed by older code (e.g. equipment names in the key) is stale too: refresh adopts the new key.
                 if not stale and steps and any(recipe is None or recipe.key != group.recipe_key
                                                for _m, _t, _e, recipe in steps):
@@ -128,7 +129,7 @@ def _label_check(uow, tasks, documents):
 
     counts = printed_counts(uow.session, [task.id for task in tasks])
     return [{key: row[key] for key in ("task_number", "item", "quantity", "serial_first", "serial_last", "printed",
-                                       "remaining", "printed_serials")}
+                                       "remaining", "printed_serials", "remaining_labels")}
             for row in (task_progress(task, documents.get(task.id), serial_range_of(task, uow), counts) for task in tasks)]
 
 
@@ -175,8 +176,8 @@ def restructure(project, *, factory, techcards_factory, actor, now, dry_run=True
     result.update(dry_run=dry_run, counts={"before": before, "after": after},
                   invariants={name: before[name] == after[name] for name in kept},
                   labels=labels_after, labels_unchanged=[
-                      (row["printed"], row["remaining"]) for row in labels_before] == [
-                      (row["printed"], row["remaining"]) for row in labels_after],
+                      (row["printed"], row["remaining"], row["remaining_labels"]) for row in labels_before] == [
+                      (row["printed"], row["remaining"], row["remaining_labels"]) for row in labels_after],
                   printed_one_per_kb=sum(1 for row in labels_after if row["printed"] == 1))
     return result
 

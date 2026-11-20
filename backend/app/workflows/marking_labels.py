@@ -18,7 +18,8 @@ from app.modules.production.application import ConcurrentProductionUpdate, issue
 from app.modules.production.cutting_application import locked_group
 from app.modules.production.domain import ProductionStatus
 from app.modules.production.marking_sources import check_materials, labels
-from app.workflows.marking_progress import fixed_keys, printed_counts, remaining_rows, serial_range_of, task_progress
+from app.workflows.marking_progress import (fixed_keys, numbered_keys, printed_counts, remaining_rows, serial_range_of,
+                                            task_progress)
 from app.modules.references.equipment import INV_KEY
 from app.modules.references.infrastructure import EquipmentMachineRow
 from app.modules.techcards.etk_read import issued_card_for_item, pinned_card
@@ -465,7 +466,7 @@ def source_rows(source, selected, principal, uow, now, interleave=False, remaini
         serial = issue_mark_serials_in(task, False, principal.actor, now, uow)
         expanded = labels(document, task, serial, selected, interleave)
         if remaining:
-            expanded = remaining_rows(expanded, printed, fixed_keys(document, task))
+            expanded = remaining_rows(expanded, printed, fixed_keys(document, task), numbered_keys(document, task, serial))
         if any(row["serial"] is not None for row in expanded):
             issue_mark_serials_in(task, True, principal.actor, now, uow)
         rows.extend(expanded)

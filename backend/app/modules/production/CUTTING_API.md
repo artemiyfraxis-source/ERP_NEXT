@@ -193,8 +193,10 @@ All control actions require production edit permission and an optimistic `versio
   Lock order: project → every group of the project (by id) → member tasks (by id).
   CLI: `python -m app.workflows.cutting_group_existing --project X --refresh-etk [--apply]` (dry-run by default).
 - Re-pinning a grouped task (`tasks/{id}/norms/refresh`) is no longer refused while its group is open and has no work
-  session: the row keeps its frozen document (the group shows `etk_stale`, start stays blocked by the card-version
-  check) until `refresh-etk` moves it. A started/frozen group still refuses the re-pin.
+  session: the row keeps its frozen document (the group shows `etk_stale`) until `refresh-etk` moves it. A row behind
+  its task's revision counts as stale for `refresh-etk` (also when the card version was already revalidated), and both
+  starts (group start, a member's standalone start) refuse it with 409 until then, besides the card-version check.
+  A started/frozen group still refuses the re-pin.
 
 ## Kinds: cable cut, labels, tubes (owner 20.11)
 
@@ -229,7 +231,10 @@ One transaction for the project (project lock, then its groups by id, then tasks
 rolls back. For every running task whose issued ETK revision differs from the pinned one: refused (task untouched)
 when it has any work trace (`worked`: session, output, box, defect, delivery, started share), a PF in a started/frozen
 group, a disappearing PF with cutting-group history or with an equipment allocation, a kept PF (e.g. the old
-«Заготовки» id keeping the cut) with equipment chosen for ETK operations that move to another PF. Otherwise the task keeps its id,
+«Заготовки» id keeping the cut) with equipment chosen for an ETK operation that moves to another PF or disappears.
+ETK operations are followed by code and occurrence among operations with that code, not by number: a reissued ETK that
+inserts an operation shifts numbers only, and a binding of an operation staying in its PF is renumbered to the new
+number. Otherwise the task keeps its id,
 number, quantity, serial numbers and mark events; operations are rebuilt from the new route
 (`restructured_operations`): same ETK operations → same operation (id, assignees, window), PFs split out of one old PF
 → the first keeps the old id and window, the others get its assignees without a window; same scheme block → same
@@ -243,14 +248,19 @@ Regrouping rules (review of PR #977):
   `--task-id`, or not running tasks keep their recipe: the regrouped PFs then go to another (or a new) group.
 - The master's separation is honoured. A PF without an active membership whose row was `split` from a group (split on
   the group card or the group cancelled) stays standalone while its recipe key equals that row's key; with a changed
-  key it is regrouped. Splits made by this rebuild itself do not count. A PF of a «Выдать отдельно» launch group
-  (`joinable = false`, idempotency key `cutting:…`) stays in that group alone: regrouping never moves it elsewhere and
-  never puts other PFs into it. Explicit groups (`cutting-existing:…`, from existing work or regrouping) merge as before.
+  key it is regrouped. Splits the system made (a rebuild, a regroup move) carry `split_by` in the row snapshot and do
+  not count, so a PF a rebuild left ungrouped is regrouped on a rerun. New PFs a rebuild split out of such a PF (labels,
+  tubes) stay standalone too. A PF of a «Выдать отдельно» launch group (`joinable = false`, idempotency key `cutting:…`)
+  stays in that group alone: regrouping never moves it elsewhere and never puts other PFs into it; new PFs split out of
+  it get one separate group each, as a separate launch makes; a separate group that cannot take its PF back is replaced
+  by a new separate group (`cutting:separate:…`), so a rerun changes nothing. Explicit groups (`cutting-existing:…`, from
+  existing work or regrouping) merge as before.
 
 Output: `restructured`, `unchanged`, `refused`, `groups`, `moved`, `cancelled`, `counts.before/after` (tasks,
 operations, serials, groups by state and kind, members by state, marking batches, label jobs, mark events),
-`invariants` (tasks, serials, batches, jobs, mark events unchanged), `labels` (printed/remaining per КБ),
-`labels_unchanged`, `printed_one_per_kb`. «Before» labels come from the ETK revision each task is pinned to before the
+`invariants` (tasks, serials, batches, jobs, mark events unchanged), `labels` (printed/remaining items and
+`remaining_labels` per КБ), `labels_unchanged` (printed, remaining and remaining_labels equal before and after — a
+changed fixed label shows in `remaining_labels`), `printed_one_per_kb`. «Before» labels come from the ETK revision each task is pinned to before the
 rebuild (a missing stored revision gives none, so the check reports a change); «after» — from the reissued ETK for a
 rebuilt task and from its pinned revision for a refused one. A changed label text therefore shows as a change.
 
@@ -262,6 +272,8 @@ jobs. A label counts as printed when its job is `spooled` (unless the tracked pr
 operation index. An item (serial) is printed when all its numbered labels are. A batch printed «чередовать по
 изделию» gives fixed labels the item serial too: a fixed row of a plain preview also takes fixed labels of interleaved
 items, a fixed row of an interleaved preview also takes fixed labels of plain batches — neither is printed again.
+A numbered label whose expanded text equals a fixed text (numbered «{№}» of item 1 and fixed «1») is never taken as a
+fixed one.
 A reprint job («Перепечатать номера…») resolves to the label it reprints; one label counts once.
 
 - `GET /api/production/marking/progress?group_id=…` or `?task_id=…&operation_id=…` (marking read gate):

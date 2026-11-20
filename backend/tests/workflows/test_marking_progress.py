@@ -179,3 +179,14 @@ def test_fixed_rows_match_in_every_order():
         rows[1], {**rows[2], "quantity": 1}, rows[3]]
     plain = [{"key": "t1:0:1", "task_id": "t1", "text": "XS1", "quantity": 4, "serial": None}]
     assert remaining_rows(plain, Counter({("t1", 1, "XS1"): 2, ("t1", None, "XS1"): 1})) == [{**plain[0], "quantity": 1}]
+
+
+def test_plain_fixed_row_never_takes_a_numbered_label_with_the_same_text():
+    """Fixed «1» and numbered «{№}»: the printed numbered label «1» of item 1 is not a fixed label."""
+    from app.workflows.marking_progress import numbered_keys
+
+    task = SimpleNamespace(id="t1", quantity=3)
+    document = {"operations": [{"fields": {"marks": [{"text": "{№}", "qty": "1"}, {"text": "1", "qty": "1"}]}}]}
+    fixed_only = [{"key": "t1:0:1", "task_id": "t1", "text": "1", "quantity": 3, "serial": None}]  # only «1» selected
+    printed = Counter({("t1", 1, "1"): 1})
+    assert remaining_rows(fixed_only, printed, {"t1:0:1"}, numbered_keys(document, task, (1, 3))) == fixed_only

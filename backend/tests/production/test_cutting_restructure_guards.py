@@ -173,3 +173,210 @@ def test_label_check_unchanged_when_the_label_text_stays(production_api, monkeyp
     result = _cli(monkeypatch, capsys, "--apply")
     assert result["labels_unchanged"] is True and result["printed_one_per_kb"] == 1
     assert (result["labels"][0]["printed"], result["labels"][0]["remaining"]) == (1, 9)
+
+
+# --- second review round ---------------------------------------------------------------------------------------------
+
+def _separate(group_id):
+    from app.modules.production.cutting_application import issued_separately
+
+    with app.state.production_uow_factory() as uow:
+        return issued_separately(uow.cutting.get(UUID(group_id)))
+
+
+def _memberships(task):
+    """{preparation PF stage: its active group id or None} of one task (the assembly PF is not grouped)."""
+    with app.state.production_uow_factory() as uow:
+        current = uow.production.get(task.id)
+        result = {}
+        for operation in current.operations:
+            if operation.inputs:
+                continue
+            member = uow.cutting.for_operation(operation.id)
+            result[operation.stage] = str(member.group_id) if member else None
+        return result
+
+
+def _versions():
+    with app.state.production_uow_factory() as uow:
+        return sorted((str(g.id), g.version, g.state) for g in uow.cutting.list())
+
+
+def test_revalidated_group_then_repinned_task_needs_refresh_before_start(production_api):
+    from tests.production.test_cutting_execution import action
+
+    client, operator = production_api
+    cards = [issue("КБ1"), issue("КБ2")]
+    batch(client, cards)
+    group = groups(client)[0]
+    group = client.post(f"/api/production/cutting-groups/{group['id']}/assign",
+                        json={"version": group["version"], "operator_ids": [str(operator)]}).json()["group"]
+    reissue(cards[1], document())  # same recipe, revision 2
+    revalidated = client.post(f"/api/production/cutting-groups/{group['id']}/revalidate", json={"version": group["version"]})
+    assert revalidated.status_code == 200, revalidated.text
+    row = next(r for r in revalidated.json()["group"]["rows"] if r["item"] == "КБ2")
+    repinned = client.post(f"/api/production/tasks/{row['task_id']}/norms/refresh", json={"version": row["task_version"]})
+    assert repinned.status_code == 200, repinned.text  # the task on revision 2, its row still on 1
+    stale = groups(client)[0]
+    assert stale["etk_stale"] is True
+    single = client.post(f"/api/production/tasks/{row['task_id']}/operations/{row['operation_id']}/work/start",
+                         params={"on_behalf_of": str(operator)}, json={})
+    assert single.status_code == 409, single.text
+    assert action(client, operator, stale, "start").status_code == 409
+
+    refreshed = client.post(f"/api/production/cutting-groups/{group['id']}/refresh-etk", json={"version": stale["version"]})
+    assert refreshed.status_code == 200, refreshed.text
+    fresh = refreshed.json()["group"]
+    assert fresh["version"] > stale["version"]
+    assert {r["item"]: r["techcard_revision"] for r in fresh["rows"]} == {"КБ1": 1, "КБ2": 2}
+    assert groups(client)[0]["etk_stale"] is False
+    started = action(client, operator, fresh, "start")
+    assert started.status_code == 200, started.text
+
+
+def _inserted_operation(doc):
+    """The split ETK with a new operation (its own PF) inserted before the assembly: «ASM» moves from №4 to №5."""
+    from copy import deepcopy
+
+    doc["build_config"]["ops"].insert(3, {"type": "coaxHousing", "opNumber": "CHECK", "templateId": "check", "tOp": 5})
+    extra = deepcopy(doc["operations"][3])
+    extra.update(code="CHECK", template_id="check", fields={})
+    doc["operations"].insert(3, extra)
+    for number, operation in enumerate(doc["operations"], 1):
+        operation["position"] = number
+    route = doc["route"]
+    route["blocks"] = [*route["blocks"][:3], {"key": "check", "ops": [4], "name": "Проверка"},
+                       {**route["blocks"][3], "ops": [5]}]
+    route["edges"] = [*route["edges"], {"from": "check", "to": "assembly", "per_unit": 1}]
+    return doc
+
+
+def test_equipment_follows_its_etk_operation_when_numbers_shift(production_api, monkeypatch, capsys):
+    client, _ = production_api
+    cards = [issue("КБ1")]
+    batch(client, cards)
+    task = _tasks()["КБ1"]
+    assembly = task.operations[1]  # ETK №4 «ASM»
+    allocation = uuid4()
+    with app.state.production_uow_factory() as uow:
+        uow.session.add(ResourceAllocationRow(id=allocation, task_id=task.id, operation_id=assembly.id, crew=False))
+        uow.session.flush()
+        uow.session.add(ResourceAllocationMachineRow(allocation_id=allocation, etk_position=4, machine_id=uuid4()))
+        uow.commit()
+    reissue(cards[0], _inserted_operation(split_document()))
+
+    result = _cli(monkeypatch, capsys, "--apply")
+    assert [r["item"] for r in result["restructured"]] == ["КБ1"] and not result["refused"]
+    rebuilt = _tasks()["КБ1"].operation(assembly.id)
+    assert [(item.position, item.code) for item in rebuilt.etk_ops] == [(5, "ASM")]
+    with app.state.production_uow_factory() as uow:
+        assert [row.etk_position for row in uow.session.query(ResourceAllocationMachineRow).filter_by(
+            allocation_id=allocation)] == [5]
+
+
+def test_pfs_split_out_of_a_separately_issued_task_stay_separate(production_api, monkeypatch, capsys):
+    client, _ = production_api
+    cards = [issue("КБ1"), issue("КБ2"), issue("КБ3")]
+    batch(client, cards[:2])
+    shared = groups(client)[0]
+    alone = client.post("/api/production/tasks", headers={"Idempotency-Key": "separate"},
+                        json={"techcard_id": str(cards[2].id), "quantity": 10, "issue_separately": True})
+    assert alone.status_code == 200, alone.text
+    separate = next(g for g in groups(client) if g["id"] != shared["id"])
+    for card in cards:
+        reissue(card, split_document())
+
+    _cli(monkeypatch, capsys, "--apply")
+    tasks = _tasks()
+    own = _memberships(tasks["КБ3"])
+    assert len(own) == 3 and own[tasks["КБ3"].operations[0].stage] == separate["id"]
+    assert all(group_id and _separate(group_id) and _group(group_id)[2] == {"КБ3"} for group_id in own.values())
+    shared_ids = set(_memberships(tasks["КБ1"]).values())
+    assert shared_ids == set(_memberships(tasks["КБ2"]).values()) and not shared_ids & set(own.values())
+    before = _versions()
+    _cli(monkeypatch, capsys, "--apply")
+    assert _versions() == before
+
+
+def test_pfs_split_out_of_a_pf_the_master_split_off_stay_standalone(production_api, monkeypatch, capsys):
+    client, _ = production_api
+    cards = [issue("КБ1"), issue("КБ2")]
+    batch(client, cards)
+    group = groups(client)[0]
+    row = next(r for r in group["rows"] if r["item"] == "КБ2")
+    client.post(f"/api/production/cutting-groups/{group['id']}/split",
+                json={"version": group["version"], "member_ids": [row["id"]]})
+    for card in cards:
+        reissue(card, split_document())
+
+    result = _cli(monkeypatch, capsys, "--apply")
+    assert sorted(r["item"] for r in result["restructured"]) == ["КБ1", "КБ2"]
+    tasks = _tasks()
+    assert len(_memberships(tasks["КБ2"])) == 3 and set(_memberships(tasks["КБ2"]).values()) == {None}
+    assert None not in _memberships(tasks["КБ1"]).values()
+
+
+def test_separate_group_replaced_keeps_the_separation_on_rerun(production_api, monkeypatch, capsys):
+    client, _ = production_api
+    cards = [issue("КБ1"), issue("КБ2"), issue("КБ3")]
+    batch(client, cards[:2])
+    shared = groups(client)[0]
+    client.post("/api/production/tasks", headers={"Idempotency-Key": "separate"},
+                json={"techcard_id": str(cards[2].id), "quantity": 10, "issue_separately": True})
+    separate = next(g for g in groups(client) if g["id"] != shared["id"])
+    with app.state.production_uow_factory() as uow:
+        uow.cutting.get(UUID(separate["id"])).site = "ЖУК"  # it can no longer take its PF back
+        uow.commit()
+
+    _cli(monkeypatch, capsys, "--apply")
+    cut = _tasks()["КБ3"].operations[0]
+    replacement = _active_group_of(cut.id)
+    assert replacement not in (None, shared["id"], separate["id"]) and _separate(replacement)
+    before = _versions()
+    _cli(monkeypatch, capsys, "--apply")
+    assert _active_group_of(cut.id) == replacement and _versions() == before
+
+
+def test_pf_left_ungrouped_by_an_earlier_rebuild_is_regrouped_on_rerun(production_api, monkeypatch, capsys):
+    client, _ = production_api
+    cards = [issue("КБ1")]
+    batch(client, cards)
+    broken = split_document()
+    broken["operations"][0]["card"]["tooling"] = [{"section": "Оснастка", "name": "нож"}]  # no cut recipe
+    reissue(cards[0], broken)
+    first = _cli(monkeypatch, capsys, "--apply")
+    assert [r["item"] for r in first["restructured"]] == ["КБ1"]
+    cut = _tasks()["КБ1"].operations[0]
+    assert _active_group_of(cut.id) is None
+
+    reissue(cards[0], split_document())
+    _cli(monkeypatch, capsys, "--apply")
+    assert _active_group_of(cut.id) is not None  # a new cut group: the old one was cancelled when it emptied
+
+
+def test_label_check_sees_a_changed_fixed_label(production_api, monkeypatch, capsys):
+    from app.modules.warehouse.label_jobs import LabelJobRow
+    from app.modules.warehouse.marking_profiles import MarkingBatchRow
+
+    client, _ = production_api
+    doc = marked(document())
+    doc["operations"][1]["fields"]["marks"].append({"text": "XS1", "qty": "1"})
+    cards = [_issued("КБ1", doc)]
+    batch(client, cards)
+    task = _tasks()["КБ1"]
+    _print_first_label(task)
+    with app.state.production_uow_factory() as uow:  # the fixed label XS1 of item 1 is printed too
+        printed = uow.session.query(MarkingBatchRow).one()
+        printed.manifest = {"labels": [*printed.manifest["labels"],
+                                       {"task_id": str(task.id), "serial": None, "text": "XS1", "quantity": 1}]}
+        job = uow.session.query(LabelJobRow).one()
+        copy = {column.name: getattr(job, column.name) for column in LabelJobRow.__table__.columns}
+        uow.session.add(LabelJobRow(**{**copy, "id": uuid4(), "sequence": 2}))
+        uow.commit()
+    renamed = marked(split_document())
+    renamed["operations"][1]["fields"]["marks"].append({"text": "XS2", "qty": "1"})
+    reissue(cards[0], renamed)
+
+    result = _cli(monkeypatch, capsys, "--apply")
+    assert (result["labels"][0]["printed"], result["labels"][0]["remaining"]) == (1, 9)  # numbered unchanged
+    assert result["labels"][0]["remaining_labels"] == 19 and result["labels_unchanged"] is False
