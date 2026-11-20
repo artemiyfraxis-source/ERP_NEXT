@@ -140,6 +140,7 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
   const today = `${two(now.getDate())}.${two(now.getMonth() + 1)}.${now.getFullYear()}`;
 
   return <div className="cq">
+    <h2 className="cq-title">Очередь резки</h2>
     <div className="cq-head">
       <label>Станок{" "}
         <select aria-label="Станок" value={selected} onChange={(event) => pick(event.target.value)} disabled={!machines.length}>
@@ -170,12 +171,12 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
             const current = row.key === currentKey;
             const value = quantities[row.key] ?? String(Math.trunc(Number(row.left)));
             return <Fragment key={row.key}>
-              {row.setup_change && <tr className="cq-setup"><td colSpan={columns}>{row.setup_text}</td></tr>}
+              {row.setup_change && <tr className="cq-setup"><td colSpan={columns}><div className="cq-clip" title={row.setup_text}>{row.setup_text}</div></td></tr>}
               <tr className={current ? "cq-current" : undefined} aria-current={current ? "true" : undefined}>
                 <td>{row.project}</td>
                 <td title={row.group_number ?? undefined}>{row.item}</td>
                 {showMachine && <td><Dash value={(row.machines ?? []).map((machine) => machine.machine_name).join(", ")} /></td>}
-                <td><Dash value={row.wire_name || row.wire || ""} /></td>
+                <td className="cq-wire" title={row.wire_name || row.wire || undefined}><Dash value={row.wire_name || row.wire || ""} /></td>
                 <td className="num"><Dash value={num(row.length_mm)} /></td>
                 <td className="num"><b>{num(row.left)}</b></td>
                 <td><Dash value={row.strip_a ?? ""} /></td>

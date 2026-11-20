@@ -64,6 +64,21 @@ def _text(value: object) -> str:
     return " ".join(str(value if value is not None else "").split())
 
 
+WIRE_NAME_MAX = 40
+
+
+def _wire_name(name: str, art: str) -> str:
+    """Short name for the queue row: a long marketing description (supplier text in the cable card) is never shown.
+
+    A short name stays; a long one yields to the article (the cable mark, «RTK 031»); with no article it is cut at a word.
+    """
+    if len(name) <= WIRE_NAME_MAX:
+        return name
+    if art and len(art) <= WIRE_NAME_MAX:
+        return art
+    return name[:WIRE_NAME_MAX].rsplit(" ", 1)[0].rstrip(" ,.;:-") + "…"
+
+
 def _decimal(value: object) -> Decimal | None:
     """«1000», «1000,0», «12.7 мм» → Decimal; anything else (empty, «-», text) → None."""
     raw = _text(value).replace(",", ".").removesuffix("мм").strip()
@@ -215,6 +230,7 @@ def cut_values(document: Mapping | None, operation, *, known_cut: bool = False,
     sides: dict[str, dict | None] = {"A": None, "B": None}
     if kind == "coaxCut":
         wire, wire_name = _text(coax.get("cableArt")), _text(coax.get("cableName"))
+        wire_name = _wire_name(wire_name, wire)
         length = _decimal(coax.get("cableLength"))
         chosen = raw.get("stripSides")
         if not isinstance(chosen, list):
@@ -229,6 +245,7 @@ def cut_values(document: Mapping | None, operation, *, known_cut: bool = False,
             warnings.append("в ЭТК несколько проводов — показан первый")
         first = wires[0] if wires else {}
         wire, wire_name = _text(first.get("art")), _text(first.get("name"))
+        wire_name = _wire_name(wire_name, wire)
         length = _decimal(first.get("length"))
         strip = _mapping(fields.get("strip") or raw.get("strip") or config.get("strip"))
         if not strip:
@@ -251,6 +268,8 @@ def _side_key(side: dict | None) -> tuple[str, str, str]:
 
 def _setup_text(values: dict) -> str:
     wire = values["wire"] or values["wire_name"] or "провод (нет в ЭТК)"
+    if len(wire) > WIRE_NAME_MAX:
+        wire = _wire_name(wire, "")
     parts = [f"Заправьте {wire}"]
     for name, side in values["sides"].items():
         if side is not None:
