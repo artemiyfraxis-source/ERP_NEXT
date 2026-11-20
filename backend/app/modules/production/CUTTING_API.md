@@ -254,8 +254,14 @@ number, quantity, serial numbers and mark events; operations are rebuilt from th
 (`restructured_operations`): same ETK operations → same operation (id, assignees, window), PFs split out of one old PF
 → the first keeps the old id and window, the others get its assignees without a window; same scheme block → same
 operation; the rest are new. Audit `production.restructured` (with `origins`: new PF → the old PF it was split out
-of: the old PF that alone holds all its operation codes; else the position rule of `restructured_operations`; last
-by code and occurrence across the whole task — an inserted or dropped same-code operation elsewhere can mislead it). Then all unstarted preparation PFs of the project's
+of — for every new PF and every kept PF whose ETK operations changed and whose lineage is not its own id: the old PF
+that alone holds all its known operation codes; else the position rule of `restructured_operations` and the code
+match (code and occurrence across the whole task) must agree, otherwise the parent is unknown, stored as `null`). A PF
+of unknown lineage in a task with a separated PF («Выдать отдельно» or split off by the master) stays standalone (its
+own separate group, or ungrouped); equipment on an operation whose new PF has an unknown or another parent is never
+released. Known limitation, left as is: the domain (`restructured_operations`) still hands old ids, assignees and
+windows by positions, so after an inserted operation a PF may take the id and assignees of an unrelated old PF (e.g.
+the tubes PF those of the assembly). Then all unstarted preparation PFs of the project's
 tasks are regrouped by recipe (`regroup`): the old group of the cut keeps its id and number; labels and tubes get their
 own explicit groups; emptied groups are cancelled. A rerun changes nothing.
 

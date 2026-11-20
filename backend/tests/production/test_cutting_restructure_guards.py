@@ -606,3 +606,75 @@ def test_release_ignores_a_same_code_operation_of_another_old_pf(production_api,
     result = _cli(monkeypatch, capsys, "--apply", "--release-moved-equipment")
     assert not result["restructured"] and "ЗАЧ" in result["refused"][0]["reason"] and not result["released"]
     assert _bound(allocation) == [2]
+
+
+def _layout(blocks):
+    """An ETK from the base operations: blocks [(key, [(template, code)])] — template 0 cut, 1 labels, 2 tube, 3 assembly;
+    code None keeps the template's. Repeated codes get their own side (code + side is unique in an ETK)."""
+    from copy import deepcopy
+
+    doc = document()
+    raw, ops = doc["build_config"]["ops"], doc["operations"]
+    doc["build_config"]["ops"], doc["operations"], route = [], [], []
+    number = 0
+    for key, items in blocks:
+        numbers = []
+        for template, code in items:
+            number += 1
+            new_raw, new_op = deepcopy(raw[template]), deepcopy(ops[template])
+            if code:
+                new_raw["opNumber"], new_op["code"] = code, code
+            new_op["position"], new_op["side"] = number, f"S{number}"
+            doc["build_config"]["ops"].append(new_raw)
+            doc["operations"].append(new_op)
+            numbers.append(number)
+        route.append({"key": key, "ops": numbers, "name": key, **({"final": True} if key == "assembly" else {})})
+    doc["route"]["blocks"] = route
+    doc["route"]["edges"] = [{"from": key, "to": "assembly", "per_unit": 1} for key, _items in blocks if key != "assembly"]
+    return doc
+
+
+SHR = "CUT_TUT_short"
+# Old: Z = {№1 cut, №2 labels, №3 SHR}, A = {№4 ASM, №5 SHR}. New: CHK inserted in the cut → tubes T = {№4 SHR}:
+# the position rule says A, the code match says Z — the lineage of T is unknown.
+SHIFT_OLD = [("cut", [(0, None), (1, None), (2, None)]), ("assembly", [(3, None), (2, None)])]
+SHIFT_NEW = [("cut", [(0, None), (3, "CHK")]), ("labels", [(1, None)]), ("tubes", [(2, None)]),
+             ("assembly", [(3, None), (2, None)])]
+
+
+def test_unknown_lineage_keeps_a_separately_issued_task_standalone(production_api, monkeypatch, capsys):
+    client, _ = production_api
+    cards = [issue(f"КБ{i}", _layout(SHIFT_OLD)) for i in (1, 2, 3)]
+    batch(client, cards[:2])
+    alone = client.post("/api/production/tasks", headers={"Idempotency-Key": "separate"},
+                        json={"techcard_id": str(cards[2].id), "quantity": 10, "issue_separately": True})
+    assert alone.status_code == 200, alone.text
+    for card in cards:
+        reissue(card, _layout(SHIFT_NEW))
+
+    result = _cli(monkeypatch, capsys, "--apply")
+    assert sorted(r["item"] for r in result["restructured"]) == ["КБ1", "КБ2", "КБ3"], result["refused"]
+    tasks = _tasks()
+
+    def tubes(task):
+        return next(op for op in task.operations if [item.code for item in op.etk_ops] == [SHR] and not op.inputs)
+
+    own = _active_group_of(tubes(tasks["КБ3"]).id)
+    assert own and _separate(own) and _group(own)[2] == {"КБ3"}
+    shared = _active_group_of(tubes(tasks["КБ1"]).id)
+    assert shared and shared == _active_group_of(tubes(tasks["КБ2"]).id) and shared != own
+    before = _versions()
+    _cli(monkeypatch, capsys, "--apply")
+    assert _versions() == before
+
+
+def test_release_refuses_a_binding_whose_new_pf_lineage_is_unknown(production_api, monkeypatch, capsys):
+    client, _ = production_api
+    cards = [issue("КБ1", _layout(SHIFT_OLD))]
+    batch(client, cards)
+    task = _tasks()["КБ1"]
+    allocation = _bind(task, task.operations[0], 3)  # Z №3 SHR
+    reissue(cards[0], _layout(SHIFT_NEW))
+    result = _cli(monkeypatch, capsys, "--apply", "--release-moved-equipment")
+    assert not result["restructured"] and SHR in result["refused"][0]["reason"] and not result["released"]
+    assert _bound(allocation) == [3]
