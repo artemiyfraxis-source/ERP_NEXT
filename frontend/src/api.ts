@@ -4731,6 +4731,8 @@ export const techcardsApi = {
   list: () => api<{ items: ProjectTechcard[] }>("/api/techcards/projects"),
   /** Одна карточка ТК по id — генератор и вкладка «ТК КБn» не тянут весь список со всеми ЭТК. */
   get: (cardId: string) => api<ProjectTechcard>(`/api/techcards/projects/${encodeURIComponent(cardId)}`),
+  /** Налаженные станки карточки по позициям ЭТК (открытые задания) — для строк пула на экране ЭТК. */
+  setupUnits: (cardId: string) => api<{ units: EtkSetupUnit[] }>(`/api/techcards/projects/${encodeURIComponent(cardId)}/setup-units`),
   templates: () => visitRead<{ items: OperationCardSummary[] }>("/api/techcards/templates"),
   template: (templateId: string) =>
     api<OperationCardDetail>(`/api/techcards/templates/${encodeURIComponent(templateId)}`),

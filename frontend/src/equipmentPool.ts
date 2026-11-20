@@ -65,3 +65,36 @@ export function setupUnitLabel(
   const main = `${parsed.model} — ОБ.${match[1]}.${match[2]}${stamp ? ` · налажен ${stamp}` : ""}`;
   return parsed.tail ? `${main} · ${parsed.tail}` : main;
 }
+
+/** «EW-50A — любой свободный ОБ.027.* · налажены: ОБ.027.2, ОБ.027.4»: the pool row of a card-only ETK with the units of
+ *  that pool set up on open tasks (no dates). Units of another pool are ignored; none left → the pool text of
+ *  `poolToolLabel`; non-pool rows stay null. */
+/** Parts of a card-ETK pool row with units set up on open tasks: the pool text, the canonical unit numbers (same pool
+ *  only, deduped, sorted) and the description tail. null — not a pool row or no matching unit. */
+export function poolSetupParts(
+  name: string | null | undefined, inventory: string | null | undefined, units: Array<Pick<EtkSetupUnit, "inventory_number">>,
+): { main: string; units: string[]; tail: string } | null {
+  const parsed = equipmentPool(name, inventory);
+  const poolNumber = parsed ? /^ОБ\.(\d+)\.\*$/.exec(parsed.pool)?.[1] : undefined;
+  if (!parsed || !poolNumber) return null;
+  const found = new Map<string, number>();
+  for (const unit of units) {
+    const match = POOL_NUMBER.exec(unit.inventory_number);
+    if (!match || !match[2] || !/^\d+$/.test(match[2]) || Number(match[1]) !== Number(poolNumber)) continue;
+    // Canonical label from the pool itself: «ОБ.27.2», «OB.027.02» and «ОБ.027.2» are one unit.
+    found.set(parsed.pool.replace("*", String(Number(match[2]))), Number(match[2]));
+  }
+  if (!found.size) return null;
+  const list = [...found.entries()].sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0])).map(([label]) => label);
+  return { main: `${parsed.model} — любой свободный ${parsed.pool}`, units: list, tail: parsed.tail };
+}
+
+/** «EW-50A — любой свободный ОБ.027.* · налажены: ОБ.027.2, ОБ.027.4 · <tail>»; no matching unit → `poolToolLabel`. */
+export function poolSetupLabel(
+  name: string | null | undefined, inventory: string | null | undefined, units: Array<Pick<EtkSetupUnit, "inventory_number">>,
+): string | null {
+  const parts = poolSetupParts(name, inventory, units);
+  if (!parts) return poolToolLabel(name, inventory);
+  const main = `${parts.main} · налажены: ${parts.units.join(", ")}`;
+  return parts.tail ? `${main} · ${parts.tail}` : main;
+}
