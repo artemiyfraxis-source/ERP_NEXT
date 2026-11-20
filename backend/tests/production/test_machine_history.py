@@ -21,6 +21,13 @@ RUN = "/api/production/machines/card/ОБ.019/run"
 SETUP = "|L325|S5/?|P?/?|M?"  # WORDS: length 325 mm, front strip 5 mm, the rest of the setup not in the snapshot
 
 
+@pytest.fixture(autouse=True)
+def _history_log_on(monkeypatch):
+    """A migration test in the same worker runs alembic's fileConfig, which switches existing loggers off (production
+    migrates in its own process): keep this module's logger on so the error-log assertions see its records."""
+    monkeypatch.setattr(history.log, "disabled", False)
+
+
 def _rows(sessions) -> list[MachineSpeedRow]:
     with sessions() as session:
         return list(session.scalars(select(MachineSpeedRow).order_by(MachineSpeedRow.id)))
