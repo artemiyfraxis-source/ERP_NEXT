@@ -398,6 +398,67 @@ operator and ordered child windows, with no setup saving added. Apply must selec
 when selecting a group cut. It still reports/counts child operations, and actual completion reflows each
 child and its own downstream dependencies. Group membership/version participates in preview fingerprints.
 
+## Очередь резки (owner 20.11, manual mode)
+
+«Оптовая нарезка по станку, через все проекты»: one list per machine of every open cable cut, the operator goes row by
+row. `cutting_queue.py`, routes in `cutting_api.py`. Computed on every read — no table, no migration.
+
+- Rows: active members of `open`/`frozen` groups of kind `cut` (their frozen issued document) and input-less PFs of
+  running tasks without an active membership whose ETK operations include a cable cut (`coaxCut`, `cutWire`,
+  `cutWireStrip`; read from the task's pinned issued revision). Labels/tubes PFs and groups are not rows. A task handed to
+  another site, a cancelled/closed task, a PF whose good + defect output reached its quantity, and work of another site
+  (group: `check_access`; standalone: handed-to/assignee sites vs the viewer's site) are left out. The old mixed
+  «Заготовки» PF is one row: its output covers the whole PF, as everywhere.
+- Machine = the cut operation's card tooling «Оборудование» (`inventory_number`, else `equipment_model_id`). Several —
+  `ОБ.095` (BZW-50X) if listed, else the first, with «в ЭТК ещё станки: <the others>». None — never put on a real
+  machine: the row gets `machine_id: null`, «нет в ЭТК: станок», and its own bucket «Станок не указан»
+  (`machine_id=none`).
+- A missing or odd ETK value never drops a row: the value is `null` and `warnings` says «нет в ЭТК: длина / провод /
+  разделка A / режим разделки A / …». A grouped row whose frozen ETK lacks the cut stays with «нет в ЭТК: резка кабеля».
+- Order: setup key (wire, then side A and B strip values/mode/diameters, then laser marking mode), then length short →
+  long (unknown last), then project, КБ, task number. `setup_change` — the row's setup key differs from the previous
+  row (always true on the first); `setup_text` — the banner («Заправьте RTK 031 · разделка A: 3/7,6/12,7 мм, полная ·
+  разделка B: … · лазер по краям»; «без разделки» when no side is stripped).
+
+`GET /api/production/cutting-queue?machine_id=ОБ.095` (myops view; `machine_id=none` — the «Станок не указан» bucket,
+answered with `machine_id: null`):
+
+```text
+{machine_id, version, rows: [{key, task_id, operation_id, task_version, task_number, project, item,
+  group_id, group_number, group_state (open|frozen|null), machine_id, machine_name,
+  wire, wire_name, length_mm, planned, done, left,
+  strip_a, strip_a_mode (full|partial|null), strip_a_program (confirmed|unconfirmed|absent; wires: null),
+  strip_b, strip_b_mode, strip_b_program, diameters, laser_mark, marking_mode (full|ends|null),
+  operator_ids, operator_names, warnings, blocked, setup_change, setup_text}]}
+```
+
+Decimals are strings (`length_mm` mm; `planned`/`done`/`left` in PF units, `done` = good + defect). `strip_*` is `null`
+when that side is not stripped; coax values are the confirmed program boundaries from the conductor tip, else L1/L2/L3.
+`version` is a digest of (row, left, task version, group state) for change detection.
+
+`GET /api/production/cutting-queue/machines` (myops view): `{machines: [{machine_id, machine_name, rows, left, projects}]}`
+— machines with open cut work, by id; the bucket without a machine (`machine_id: null`, «Станок не указан») last.
+
+`POST /api/production/cutting-queue/done` (myops edit, optional `?on_behalf_of=`, required `Idempotency-Key`):
+`{task_id, operation_id, quantity}` (integer > 0). One transaction, lock order project → group → task:
+
+1. The performer not yet on the PF (unassigned, or assigned to others) joins its assignees through the ordinary
+   `assign_task` (owner: anyone at the machine may press «Готово»); its refusals apply — e.g. «… не монтажник», another
+   site of a grouped row. Existing assignees and their facts stay.
+2. The pieces are the PF's manual output (`enter_manual_output`, as «Ввод готовых»): box and output on that КБ's own PF,
+   no work session and no time-log entry, plan fact moved; over the quantity left → 422 «Этап N «…»: уже сдано X из Y,
+   осталось Z.»; a task not running or handed over → 422.
+3. Grouped rows follow the group card rules: without an open group session the output is accepted and the first one
+   freezes the group (`frozen`, membership fixed); a group started on its card (open group session, whoever runs it)
+   is listed with `blocked` («Группа РЗ-… начата на карточке группы (Имя) — сдают там») and «Готово» is 422 «По этой ПФ
+   выполняется группа резки — используйте карточку группы»: the group session submits there.
+
+Returns `{notice: "Готово: 708К. · КБ3 · 120 шт", assigned, box: {id, number, code}, output_id,
+row: {key, task_id, operation_id, task_version, planned, done, left}}`. The receipt is an audit event
+`production.cutting_queue_done` whose id is `uuid5(key)`: the same key and payload (task, PF, quantity, performer) replays
+the stored response without a second output; the same key with another payload → 409. 403 another site, 404 unknown
+task/PF. No who/when traceability beyond the output's performer and the audit event; auto-write to ОБ.019 is a later PR.
+
 ## Decisions for coordinator review
 
 - Split/cancel dissolves grouping and retains child assignments; cancelling a group does not cancel KBs.
