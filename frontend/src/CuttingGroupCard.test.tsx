@@ -279,6 +279,32 @@ it("«Готово» on a KB row posts a one-row group submit; the input is lock
   expect(body.rows[0]).toMatchObject({ member_id: "member-1", good_quantity: "6", defect_quantity: "0" });
 });
 
+it("row «Готово» takes whole pieces only", () => {
+  const cut = { ...group, kind: "cut" as const, rows: plain(group.rows), session: working.session };
+  render(<CuttingGroupCard group={cut} readOnly={false} renderInstruction={() => null} />);
+  const input = screen.getByLabelText("Сколько готово КБ2");
+  expect(input).toHaveAttribute("step", "1");
+  fireEvent.change(input, { target: { value: "2.5" } });
+  expect(screen.getByRole("button", { name: "Готово КБ2" })).toBeDisabled();
+  fireEvent.change(input, { target: { value: "3" } });
+  expect(screen.getByRole("button", { name: "Готово КБ2" })).toBeEnabled();
+});
+
+it("row «Готово» says why it waits: not started, on downtime, or run by another operator", () => {
+  const cut = { ...group, kind: "cut" as const, rows: plain(group.rows) };
+  const hint = () => screen.getByRole("button", { name: "Готово КБ2" }).getAttribute("title");
+  const { rerender } = render(<CuttingGroupCard group={cut} readOnly={false} renderInstruction={() => null} />);
+  expect(hint()).toBe("Сначала нажмите «Начать»");
+  const paused = { ...working.session!, status: "Пауза", pause_started_at: new Date().toISOString() };
+  rerender(<CuttingGroupCard group={{ ...cut, session: paused }} readOnly={false} renderInstruction={() => null} />);
+  expect(hint()).toBe("Сначала закончите простой");
+  const other = { ...working.session!, operator_id: "someone", operator_name: "Петров" };
+  rerender(<CuttingGroupCard group={{ ...cut, session: other }} readOnly={false} performerId="operator" renderInstruction={() => null} />);
+  expect(hint()).toBe("Группу ведёт Петров");
+  rerender(<CuttingGroupCard group={{ ...cut, session: working.session }} readOnly={false} renderInstruction={() => null} />);
+  expect(hint()).toBeNull();
+});
+
 it("shows the group norm to the master only", () => {
   const { rerender } = render(<CuttingGroupCard group={group} readOnly={false} renderInstruction={() => null} />);
   expect(screen.queryByText(/норма \d/)).toBeNull();

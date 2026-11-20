@@ -1034,6 +1034,7 @@ def describe_group(group, uow):
     finishes = [row["planned_finish"] for row in active if row["planned_finish"]]
     work = uow.cutting.work(group.id)
     session = uow.work.get(work.session_id) if work else None
+    runner = uow.operators.get(session.operator_id) if session else None  # «Группу ведёт <имя>» on the card
     downtime = None
     if work and work.downtime_id:
         from .downtime_infrastructure import SqlAlchemyDowntimeRepository
@@ -1043,7 +1044,7 @@ def describe_group(group, uow):
     return {"id": str(group.id), "number": group.number, "version": group.version,
             "session": {"id": str(session.id), "task_id": str(session.task_id),
                 "operation_id": str(session.operation_id), "operator_id": str(session.operator_id),
-                "cutting_group_id": str(group.id), "started_at": session.started_at.isoformat(),
+                "operator_name": runner.name if runner else "", "cutting_group_id": str(group.id), "started_at": session.started_at.isoformat(),
                 "status": session.status.value, "pause_seconds": session.pause_seconds,
                 "pause_started_at": session.pause_started_at.isoformat() if session.pause_started_at else None} if session else None,
             "downtime": downtime,

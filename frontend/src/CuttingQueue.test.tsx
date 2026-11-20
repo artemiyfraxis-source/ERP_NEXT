@@ -146,13 +146,39 @@ it("hides itself when there is nothing to cut and reports it, but never hides a 
   expect(failing).not.toHaveBeenCalled();
 });
 
-it("reports the operations it lists and clears them on unmount", async () => {
+it("reports the operations it can submit (not blocked ones) and clears them on unmount", async () => {
   mockApi();
   const listed = vi.fn();
   const view = render(<CuttingQueue onRows={listed} />);
   await screen.findByText("708К.");
-  await waitFor(() => expect(listed).toHaveBeenLastCalledWith(new Set(["o1", "o2"])));
+  // o2 is blocked (group started on its card): its card stays in «Задания», where it is submitted.
+  await waitFor(() => expect(listed).toHaveBeenLastCalledWith(new Set(["o1"])));
   view.unmount();
+  expect(listed).toHaveBeenLastCalledWith(new Set());
+});
+
+it("hides nothing when «Все станки» or the whole load fails", async () => {
+  let failAll = false;
+  let failLoad = false;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (failLoad) return json({ detail: "Нет связи" }, 503);
+    if (url.includes("/machines")) return json(MACHINES);
+    if (url.includes("machine_id=all") && failAll) return json({ detail: "Сбой" }, 500);
+    return json({ machine_id: "ОБ.095", version: "v", rows: ROWS });
+  });
+  const listed = vi.fn();
+  render(<CuttingQueue onRows={listed} />);
+  await waitFor(() => expect(listed).toHaveBeenLastCalledWith(new Set(["o1"])));
+  failAll = true;
+  fireEvent.click(screen.getByRole("button", { name: "Обновить" }));
+  await waitFor(() => expect(listed).toHaveBeenLastCalledWith(new Set()));
+  failAll = false;
+  fireEvent.click(screen.getByRole("button", { name: "Обновить" }));
+  await waitFor(() => expect(listed).toHaveBeenLastCalledWith(new Set(["o1"])));
+  failLoad = true;
+  fireEvent.click(screen.getByRole("button", { name: "Обновить" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Нет связи");
   expect(listed).toHaveBeenLastCalledWith(new Set());
 });
 

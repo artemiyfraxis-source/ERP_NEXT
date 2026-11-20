@@ -12,7 +12,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (Principal, production_edit_principal, production_overview_principal,
-                                  production_view_principal, production_view_work_principal)
+                                  production_view_principal, production_view_work_principal, section_allowed)
 from .api import (MachineBindingPayload, production_uow_factory, techcards_uow_factory, cutting_current_cards,
                   cutting_refresh_cards, mark_stale_etk, _performer, _replay_key, MaterialInputPayload,
                   pinned_card, _item_index, TechcardStatus)
@@ -303,7 +303,8 @@ def queue_done(payload: QueueDonePayload,
     document = None if grouped else _documents(techcards_factory, {source}).get(source)
     try:
         return cutting_queue.mark_done(payload.task_id, payload.operation_id, payload.quantity, key,
-                                       principal.actor, worker, now, factory(), document=document)
+                                       principal.actor, worker, now, factory(), document=document,
+                                       manual_output=section_allowed(principal, ("production",), "edit"))
     except (ConcurrentProductionUpdate, ResourceConflict, IntegrityError, StaleDataError) as error:
         raise HTTPException(409, str(error) if isinstance(error, ConcurrentProductionUpdate) else
                             "Задание или ресурсы изменились — обновите очередь") from error

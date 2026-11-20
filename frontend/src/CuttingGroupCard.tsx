@@ -85,7 +85,7 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
   // Ключ с уже сданным: после «Готово» поле возвращается к остатку само.
   const qtyKey = (row: CuttingMember) => `${row.id}:${row.good}:${row.defects}`;
   const qtyOf = (row: CuttingMember) => rowQty[qtyKey(row)] ?? String(left(row));
-  const qtyOk = (row: CuttingMember) => { const n = Number(qtyOf(row)); return Number.isFinite(n) && n > 0 && n <= left(row); };
+  const qtyOk = (row: CuttingMember) => { const n = Number(qtyOf(row)); return Number.isInteger(n) && n > 0 && n <= left(row); };
   function rowDone(row: CuttingMember) {
     if (!qtyOk(row)) return;
     const result: CuttingSubmission[] = [{ member_id: row.id, good_quantity: qtyOf(row), defect_quantity: "0", defect_character: "", defect_description: "" }];
@@ -100,14 +100,19 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
   const done = rows.every((row) => row.state === "done");
   const progressOf = (row: CuttingMember) => progress?.rows.find((item) => item.task_id === row.task_id);
   const working = !readOnly && !done && ownsSession && session?.status === "В работе" && !group.partial_view;
+  // Почему «Готово» по строке недоступно: группу ведёт другой — его имя; своя на простое — закончить простой.
+  const waitHint = working ? undefined
+    : session && !ownsSession ? `Группу ведёт ${session.operator_name || "другой сотрудник"}`
+      : session?.status === "Пауза" ? "Сначала закончите простой"
+        : "Сначала нажмите «Начать»";
   const doneColumns: DataColumn<CuttingMember>[] = !perRow || readOnly ? [] : [
     { key: "left", title: "Осталось, шт", numeric: true, value: (row) => left(row) },
     { key: "qty", title: "Готово, шт", numeric: true, value: (row) => qtyOf(row), render: (row) => row.state === "done" ? "—"
-      : <input type="number" name={`ready-${row.id}`} autoComplete="off" min="1" max={left(row)} step="any" inputMode="decimal" aria-label={`Сколько готово ${row.item}`}
+      : <input type="number" name={`ready-${row.id}`} autoComplete="off" min="1" max={left(row)} step="1" inputMode="numeric" aria-label={`Сколько готово ${row.item}`}
         disabled={!working || disabled} value={qtyOf(row)} onChange={(event) => setRowQty((current) => ({ ...current, [qtyKey(row)]: event.target.value }))} /> },
     { key: "act", title: "", value: () => "", render: (row) => row.state === "done" ? <span className="cutting-row-done">Сдано</span>
       : <button type="button" className="primary small" disabled={!working || disabled || !qtyOk(row)} aria-label={`Готово ${row.item}`}
-        title={working ? undefined : "Сначала нажмите «Начать»"} onClick={() => rowDone(row)}>Готово</button> },
+        title={waitHint} onClick={() => rowDone(row)}>Готово</button> },
   ];
   const kindColumns: Record<"cut" | "labels" | "tubes", DataColumn<CuttingMember>[]> = {
     cut: [
@@ -223,7 +228,7 @@ function GroupSubmit({ group, close, submit, busy, error }: { group: CuttingGrou
   }, [group.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const valid = rows.every((row) => {
     const v = values[row.id];
-    return v.good !== "" && v.defects !== "" && Number.isFinite(Number(v.good)) && Number.isFinite(Number(v.defects)) && Number(v.good) >= 0 && Number(v.defects) >= 0
+    return v.good !== "" && v.defects !== "" && Number.isInteger(Number(v.good)) && Number.isInteger(Number(v.defects)) && Number(v.good) >= 0 && Number(v.defects) >= 0
       && Number(v.good) + Number(v.defects) <= Number(row.operation_quantity) - Number(row.good) - Number(row.defects)
       && (Number(v.defects) === 0 || Boolean(v.character.trim() && v.description.trim()));
   }) && rows.some((row) => Number(values[row.id].good) + Number(values[row.id].defects) > 0);
@@ -234,7 +239,7 @@ function GroupSubmit({ group, close, submit, busy, error }: { group: CuttingGrou
     if (retry.current.payload !== payload) retry.current = { payload, key: crypto.randomUUID() };
     void submit(result, retry.current.key);
   }
-  const field = (row: CuttingMember, kind: "good" | "defects") => <input type="number" name={`${kind}-${row.id}`} autoComplete="off" min="0" step="any" inputMode="decimal"
+  const field = (row: CuttingMember, kind: "good" | "defects") => <input type="number" name={`${kind}-${row.id}`} autoComplete="off" min="0" step="1" inputMode="numeric"
     disabled={busy} aria-label={`${kind === "good" ? "Годные" : "Брак"} ${row.item}`} value={values[row.id][kind]}
     onChange={(event) => setValues((current) => ({ ...current, [row.id]: { ...current[row.id], [kind]: event.target.value } }))} />;
   return <PageWindow label="Сдать группу резки" width={1280} close={() => { if (!busy) close(); }}>

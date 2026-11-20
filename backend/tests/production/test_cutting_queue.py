@@ -240,6 +240,79 @@ def test_done_receipt_is_the_journal_line_of_the_press(production_api):
         "performer": "Оператор", "pressed_by": "Мастер", "operator_id": str(operator)}
 
 
+def receipt_details():
+    from app.shared.persistence import AuditEventRow
+    from app.modules.production.cutting_queue import RECEIPT
+
+    with app.state.production_uow_factory() as uow:
+        return [event.details for event in uow.session.scalars(
+            select(AuditEventRow).where(AuditEventRow.event_type == RECEIPT))]
+
+
+def test_non_fitter_done_on_a_grouped_row_posts_without_assignment_and_journals_the_presser(production_api):
+    client, _ = production_api
+    master = UUID("10000000-0000-0000-0000-000000000001")
+    batch(client, [issue("708К.", "КБ1"), issue("708К.", "КБ2")])
+    row = queue(client)["rows"][0]
+    assert row["group_id"] is not None
+    response = done(client, row, 3)
+    assert response.status_code == 200, response.text
+    assert response.json()["assigned"] is False
+    after = next(item for item in queue(client)["rows"] if item["key"] == row["key"])
+    assert after["group_state"] == "frozen" and after["operator_ids"] == [] and after["left"] == "7"
+    with app.state.production_uow_factory() as uow:
+        assert [(o.operator_id, o.good_quantity) for o in uow.session.scalars(select(ProductionOutputRow))] == [(master, 3)]
+    [details] = receipt_details()
+    assert (details["performer"], details["pressed_by"], details["operator_id"]) == ("Мастер", "Мастер", str(master))
+
+
+def test_done_on_behalf_of_a_non_fitter_is_refused(production_api):
+    from app.modules.identity.infrastructure import IdentityUserRow
+
+    client, _ = production_api
+    clerk = uuid4()
+    with app.state.production_uow_factory() as uow:
+        uow.session.add(IdentityUserRow(id=clerk, login="clerk", email="clerk@example.test", name="Кладовщик",
+                                        department="Производство", role="staff", site="ЦАР", active=True, shop_worker=False))
+        uow.commit()
+    batch(client, [issue("708К.", "КБ1", standalone())])
+    row = queue(client)["rows"][0]
+    refused = done(client, row, 1, operator=clerk)
+    assert refused.status_code == 422 and "не монтажник" in refused.json()["detail"]
+    with app.state.production_uow_factory() as uow:
+        assert uow.session.scalars(select(ProductionOutputRow)).all() == []
+    assert receipt_details() == []
+
+
+def test_done_by_an_account_without_employee_record_needs_production_edit(production_api):
+    from app.shared.http_auth import Principal, authenticated_principal
+    from tests.factories import Actor
+
+    client, _ = production_api
+    stranger = uuid4()
+    batch(client, [issue("708К.", "КБ1", standalone())])
+    row = queue(client)["rows"][0]
+    previous = app.dependency_overrides[authenticated_principal]
+
+    def as_stranger(permissions):
+        app.dependency_overrides[authenticated_principal] = lambda: Principal(
+            actor=Actor(id=stranger, name="Гость", department=""), email="guest@example.test",
+            roles=frozenset({"staff"}), permissions=permissions)
+
+    try:
+        as_stranger({"myops": "edit"})
+        refused = done(client, row, 1)
+        assert refused.status_code == 403 and "нет в справочнике" in refused.json()["detail"]
+        as_stranger({"myops": "edit", "production": "edit"})
+        accepted = done(client, row, 1)
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["assigned"] is False
+    finally:
+        app.dependency_overrides[authenticated_principal] = previous
+    [details] = receipt_details()
+    assert (details["performer"], details["pressed_by"]) == ("Гость", "Гость")
+
+
 def test_repeated_key_does_not_post_twice_and_a_reused_key_is_refused(production_api):
     client, operator = production_api
     batch(client, [issue("708К.", "КБ1", standalone())])
@@ -269,7 +342,7 @@ def test_row_of_a_group_running_on_the_group_card_is_listed_but_refused(producti
     assert rows[0]["blocked"] == f"Группа {group['number']} начата на карточке группы (Оператор) — сдают там"
     refused = done(client, rows[0], 1, operator=operator)
     assert refused.status_code == 422
-    assert "карточку группы" in refused.json()["detail"]
+    assert refused.json()["detail"] == f"Группа {group['number']} начата на карточке — сдайте там"
     with app.state.production_uow_factory() as uow:
         assert not uow.session.scalars(select(ProductionOutputRow)).all()
         assert uow.session.scalars(select(CuttingGroupRow)).one().state == "frozen"

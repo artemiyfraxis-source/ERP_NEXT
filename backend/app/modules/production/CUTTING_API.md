@@ -465,7 +465,10 @@ cut work at all — `[]`.
    (master, technologist; not on the PF) posts as «Ввод готовых»: the output is under the presser, nobody is assigned.
    A монтажник not yet on the PF (himself, or the one worked for via `on_behalf_of`) joins its assignees through the
    ordinary `assign_task`; its refusals apply — e.g. another site of a grouped row, «… не монтажник» when working for a
-   non-монтажник. Site rules and the cut-only rule (step 0) hold for everyone. Existing assignees and their facts stay.
+   non-монтажник. Site rules and the cut-only rule (step 0) hold for everyone. An account without an employee record
+   (no site to limit it) may press only with production edit (master/admin, as «Ввод готовых»; the site rules of the
+   operation/group then apply as for a site-less master); otherwise 403 «Вас нет в справочнике сотрудников — «Готово»
+   без него вводит мастер». Existing assignees and their facts stay.
    Known effect: on a grouped row only that member's PF
    is assigned (the group's own `assign` replaces every row's assignees and refuses a started group, so it is not
    used), so the group card's common assignment becomes inconsistent (`assignment_consistent: false`, no common
@@ -476,8 +479,9 @@ cut work at all — `[]`.
    осталось Z.»; a task not running or handed over → 422.
 3. Grouped rows follow the group card rules: without an open group session the output is accepted and the first one
    freezes the group (`frozen`, membership fixed); a group started on its card (open group session, whoever runs it)
-   is listed with `blocked` («Группа РЗ-… начата на карточке группы (Имя) — сдают там») and «Готово» is 422 «По этой ПФ
-   выполняется группа резки — используйте карточку группы»: the group session submits there.
+   is listed with `blocked` («Группа РЗ-… начата на карточке группы (Имя) — сдают там») and «Готово» is 422 «Группа
+   РЗ-… начата на карточке — сдайте там», checked in `mark_done` before anyone is assigned or anything is posted: the
+   group session submits there.
 
 Returns `{notice: "Готово: 708К. · КБ3 · 120 шт", assigned, box: {id, number, code}, output_id,
 row: {key, task_id, operation_id, task_version, planned, done, left}}`. The receipt is an audit event

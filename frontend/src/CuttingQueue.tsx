@@ -75,7 +75,9 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
         wantAll.current ? cuttingQueueApi.queue(ALL_MACHINES).catch(() => null) : Promise.resolve(null),
       ]);
       if (mine !== ticket.current) return;
-      if (everything) setAllOps(new Set(everything.rows.map((item) => item.operation_id)));
+      // Прячем карточку только у строк, которые здесь можно сдать: заблокированная строка («Нет ЭТК задания…»,
+      // группа на карточке) сдаётся на своей карточке. Нет ответа «Все станки» — ничего не прячем.
+      if (wantAll.current) setAllOps(new Set((everything?.rows ?? []).filter((item) => !item.blocked).map((item) => item.operation_id)));
       setMachines(list);
       if (value !== current) setSelected(value);
       setQueue(result);
@@ -83,7 +85,11 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
       const now = new Date();
       setLoadedAt(`${two(now.getHours())}:${two(now.getMinutes())}`);
     } catch (reason) {
-      if (mine === ticket.current) { setError(failureText(reason, "«Очередь резки» не загрузилась")); setMachines((list) => list ?? []); }
+      if (mine === ticket.current) {
+        setError(failureText(reason, "«Очередь резки» не загрузилась"));
+        setMachines((list) => list ?? []);
+        if (wantAll.current) setAllOps(new Set());  // не держим устаревший список скрытых карточек
+      }
     }
   }, []);
 

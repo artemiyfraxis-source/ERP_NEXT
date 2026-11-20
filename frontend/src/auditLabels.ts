@@ -288,8 +288,10 @@ function trimNumber(value: string): string {
 export function auditDetails(details: Record<string, unknown>): string {
   const entries = Object.entries(details);
   const keyed = entries.filter(([key]) => UUID.test(key)).length;
+  // Квитанция повтора (есть отпечаток): её `key` — ключ повтора, как `replay_key` (старые «Готово» очереди резки).
+  const replay = "fingerprint" in details;
   const parts = entries
-    .filter(([key]) => !HIDDEN_KEY.test(key) && !UUID.test(key))
+    .filter(([key]) => !HIDDEN_KEY.test(key) && !UUID.test(key) && !(replay && key === "key"))
     .map(([key, value]) => [
       DETAIL_LABELS[key] ?? key.replace(/_/g, " "),
       LEVEL_KEYS.has(key) && typeof value === "string" ? LEVEL_NAMES[value] ?? shown(value)

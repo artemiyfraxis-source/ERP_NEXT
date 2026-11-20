@@ -42,6 +42,8 @@ ALL_MACHINES_NAME = "Все станки"
 NO_DOCUMENT = "нет в ЭТК: выданная карта"
 UNCONFIRMED = "Нет ЭТК задания — не понять, резка ли это: готовые вводит мастер"
 WORK_OPEN = "По этому ПФ идёт работа на карточке — сдайте там"
+GROUP_STARTED = "Группа {number} начата на карточке — сдайте там"
+NO_RECORD = "Вас нет в справочнике сотрудников — «Готово» без него вводит мастер"
 NOT_A_CUT = "В очереди резки сдаётся только резка кабеля — этот ПФ сдают на его карточке"
 RECEIPT = "production.cutting_queue_done"
 _RECEIPTS = UUID("6f1c2a52-6d0e-4d43-9a43-2a7c1f0e0951")
@@ -431,9 +433,11 @@ def receipt_id(key: str) -> UUID:
 
 
 def mark_done(task_id: UUID, operation_id: UUID, quantity: int, key: str, actor, worker, now: datetime, uow, *,
-              document: Mapping | None = None) -> dict:
+              document: Mapping | None = None, manual_output: bool = False) -> dict:
     """«Готово» on a queue row: the row's pieces as the PF's manual output, in one transaction with the receipt.
-    `document` — the task's pinned issued ETK (standalone PFs: proves the PF is a cable cut; the notice's project)."""
+    `document` — the task's pinned issued ETK (standalone PFs: proves the PF is a cable cut; the notice's project).
+    `manual_output` — the presser may enter finished pieces («Ввод готовых»: production edit); required of an account
+    without an employee record, which has no site to limit it."""
     fingerprint = digest([str(task_id), str(operation_id), str(quantity), str(worker.id)])
     with uow:
         if uow.production.get(task_id) is None:
@@ -448,6 +452,9 @@ def mark_done(task_id: UUID, operation_id: UUID, quantity: int, key: str, actor,
         operation = next((item for item in task.operations if item.id == operation_id), None)
         if operation is None:
             raise KeyError("ПФ нет в задании")
+        presser = uow.operators.get(actor.id)
+        if presser is None and not manual_output:
+            raise PermissionError(NO_RECORD)
         member = uow.cutting.for_operation(operation_id)
         if member is not None:
             # Lock order of every cutting path: project → group → task.
@@ -455,6 +462,9 @@ def mark_done(task_id: UUID, operation_id: UUID, quantity: int, key: str, actor,
             if group.state not in ("open", "frozen") or recipe_kind(group.recipe) != CUT:
                 raise ProductionValidationError(NOT_A_CUT)
             check_access(group, uow, actor)
+            if uow.session.scalar(select(CuttingWorkRow.session_id).where(CuttingWorkRow.group_id == group.id,
+                                                                   CuttingWorkRow.closed.is_(False)).limit(1)) is not None:
+                raise ProductionValidationError(GROUP_STARTED.format(number=group.number))
             document = member.row_snapshot.get("document")
         else:
             # Only queue rows: an input-less PF whose issued ETK holds a cable cut (labels, tubes, assembly — refused).
@@ -475,8 +485,7 @@ def mark_done(task_id: UUID, operation_id: UUID, quantity: int, key: str, actor,
         assigned = False
         performer = worker
         if worker.id not in operation.operator_ids:
-            person = uow.operators.get(worker.id)
-            if worker.id == actor.id and (person is None or not person.installer):
+            if worker.id == actor.id and (presser is None or not presser.installer):
                 # Owner 20.11 (final): anyone with access to the site's tasks may press «Готово». Not a монтажник
                 # (master, technologist): the pieces are posted as «Ввод готовых» — under the presser, nobody assigned.
                 performer = None

@@ -1359,6 +1359,8 @@ export interface ProductionWorkSession {
   task_id: string;
   operation_id: string;
   operator_id: string;
+  /** Имя того, кто ведёт сессию (сессия группы резки: «Группу ведёт …»). */
+  operator_name?: string;
   started_at: string;
   status: string;
   pause_started_at: string | null;

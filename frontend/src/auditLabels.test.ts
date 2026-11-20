@@ -60,6 +60,9 @@ it("names «Готово» in the cutting queue and shows who pressed it, withou
     pressed_by: "Мастер", operator_id: "15a1ac70-e92c-4a5f-ad12-4a14d7ee5138", replay_key: "press-1",
     fingerprint: "ab12cd", result: { notice: "Готово", assigned: false },
   })).toBe("проект: 708К. · КБ: КБ3 · задание: ПЗ-26-0007 · кол-во: 120 · исполнитель: Оператор · нажал: Мастер");
+  // A receipt written before the rename keeps `key` (the replay key) and no names; a plain `key` elsewhere stays.
+  expect(auditDetails({ key: "press-1", fingerprint: "ab12cd", quantity: 3, result: { notice: "Готово" } })).toBe("кол-во: 3");
+  expect(auditDetails({ key: "ООО Ромашка", supplier: "Ромашка" })).toBe("key: ООО Ромашка · supplier: Ромашка");
 });
 
 it("names the access-level events and the level and flag details in Russian", () => {

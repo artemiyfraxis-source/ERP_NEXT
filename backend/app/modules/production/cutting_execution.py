@@ -115,6 +115,8 @@ def _submit(group, members, work, session, payload, actor, worker, now, key, uow
         good, defect = Decimal(row["good_quantity"]), Decimal(row["defect_quantity"])
         if not good.is_finite() or not defect.is_finite() or good < 0 or defect < 0:
             raise ProductionValidationError("Укажите неотрицательные количества")
+        if good != good.to_integral_value() or defect != defect.to_integral_value():
+            raise ProductionValidationError("Годные и брак — целое число штук")
         if good + defect:
             positive.append((known[identifier], row, good, defect))
         elif row.get("materials"):
