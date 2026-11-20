@@ -176,12 +176,18 @@ it("records the machine setup by the task from its card, by hand only with a rea
     const url = decodeURIComponent(String(input));
     if (init?.method === "POST") { posts.push({ url, body: JSON.parse(String(init.body)) }); return json({ ok: true, version: 4, values: {} }); }
     if (url.includes("/setup-model/")) return json(SETUP);
+    if (url.includes("/machine-queue")) return json({ equipment_id: "u05", inventory: "ОБ.005", version: "v", rows: [] });
+    if (url.includes("/cutting-queue")) return json({ machine_id: null, version: "v", rows: [] });
+    if (url.includes("/manual-jobs")) return json({ date_from: "", date_to: "", rows: [], can_edit: true, downtimes: [] });
     return json({ now: "", rows: [TWISTER], families: FAMILIES });
   });
   render(<MachinesPage canWrite />);
   fireEvent.click(await screen.findByRole("tab", { name: /Без управления/ }));
   fireEvent.click(screen.getByText("ОБ.005"));
-  const dialog = await screen.findByRole("dialog", { name: /ОБ\.005/ });
+  // A machine without control opens its work card; «Наладка» (the setup table) is a window over it.
+  const card = await screen.findByRole("dialog", { name: /ОБ\.005/ });
+  fireEvent.click(within(card).getByRole("button", { name: "Наладка" }));
+  const dialog = await screen.findByRole("dialog", { name: "Наладка ОБ.005" });
   const part = await within(dialog).findByRole("region", { name: "Наладка" });
   expect(await within(part).findByText("Требует наладки: простая")).toBeTruthy();
   expect(within(part).getByRole("radio", { name: /П-104 · Жгут · Свивка · ЭТК 4/ })).toHaveProperty("checked", true);
@@ -315,4 +321,26 @@ it("the next step of a ready machine is the Пуск reason of the command row, 
   const running = card();
   running.live = { ...running.live!, state: { code: 103, text: "Работает", tone: "ok" } };
   expect(machineStatus(running, "уже режет").hint).not.toMatch(/Стоп/);  // «Стоп» is a button, not a step to repeat
+});
+
+it("opens the work card only for a machine without control that is in БД.ОБ; others keep the facts window", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = decodeURIComponent(String(input));
+    if (url.includes("/machine-queue")) return json({ equipment_id: "u70", inventory: "ОБ.070.1", version: "v", rows: [] });
+    if (url.includes("/cutting-queue")) return json({ machine_id: null, version: "v", rows: [] });
+    if (url.includes("/manual-jobs")) return json({ date_from: "", date_to: "", rows: [], can_edit: true, downtimes: [] });
+    return json({ now: "", rows: [SOLDER, NOT_INSTALLED, TSC], families: FAMILIES });
+  });
+  render(<MachinesPage canWrite />);
+  fireEvent.click(await screen.findByRole("tab", { name: /Без управления/ }));
+  fireEvent.click(screen.getByText("ОБ.070.1"));
+  const card = await screen.findByRole("dialog", { name: /ОБ\.070\.1/ });
+  expect(within(card).getByRole("status", { name: "Состояние станка" }).textContent).toContain("Свободен");
+  expect(within(card).queryByRole("button", { name: "Ручная работа" })).toBeNull();
+  fireEvent.click(within(card).getByRole("button", { name: "Закрыть" }));
+  // Without a БД.ОБ record the old facts window stays (nothing to start a job on).
+  fireEvent.click(screen.getByText("ОБ.037"));
+  const info = await screen.findByRole("dialog", { name: /ОБ\.037/ });
+  expect(within(info).getByRole("region", { name: "Сведения" })).toBeTruthy();
+  expect(within(info).queryByRole("status", { name: "Состояние станка" })).toBeNull();
 });

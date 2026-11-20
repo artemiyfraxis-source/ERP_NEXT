@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { failureText } from "./api";
 import { formatNumber } from "./format";
 import { cuttingQueueApi, type CuttingQueue as Queue, type CuttingQueueMachine, type CuttingQueueRow } from "./cuttingQueueApi";
@@ -37,10 +37,15 @@ export interface CuttingQueueProps {
   onRows?: (operationIds: Set<string>) => void;
   /** «Готово» принято: страница перечитывает свои задания. */
   onChanged?: () => void;
+  /** Карточка станка: очередь одного агрегата (его строки и «любой свободный» его модели), без выбора станка;
+   *  «Готово» уходит с `equipment_id`. Без свойства экран работает как раньше. */
+  equipmentId?: string;
 }
 
-export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty = false, onHasWork, onRows, onChanged }: CuttingQueueProps = {}) {
+export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty = false, onHasWork, onRows, onChanged, equipmentId }: CuttingQueueProps = {}) {
   const [machines, setMachines] = useState<CuttingQueueMachine[] | null>(null);
+  const fixed = useMemo<CuttingQueueMachine[] | null>(() => equipmentId
+    ? [{ machine_id: equipmentId, machine_name: "Этот станок", rows: 0, left: "0", projects: 0 }] : null, [equipmentId]);
   const [selected, setSelected] = useState("");
   const [queue, setQueue] = useState<Queue | null>(null);
   const [error, setError] = useState("");
@@ -66,12 +71,13 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
   const load = useCallback(async () => {
     const mine = ++ticket.current;
     try {
-      const list = await cuttingQueueApi.machines();
+      const list = fixed ?? await cuttingQueueApi.machines();
       if (mine !== ticket.current) return;
       const current = chosen.current;
       const value = list.some((machine) => machineValue(machine) === current) ? current : list.length ? machineValue(list[0]) : "";
       const [result, everything] = await Promise.all([
-        value ? cuttingQueueApi.queue(value === NO_MACHINE ? null : value) : Promise.resolve(null),
+        equipmentId ? cuttingQueueApi.queueOfUnit(equipmentId)
+          : value ? cuttingQueueApi.queue(value === NO_MACHINE ? null : value) : Promise.resolve(null),
         wantAll.current ? cuttingQueueApi.queue(ALL_MACHINES).catch(() => null) : Promise.resolve(null),
       ]);
       if (mine !== ticket.current) return;
@@ -91,7 +97,7 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
         if (wantAll.current) setAllOps(new Set());  // не держим устаревший список скрытых карточек
       }
     }
-  }, []);
+  }, [fixed, equipmentId]);
 
   useEffect(() => {
     void load();
@@ -113,7 +119,7 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
     if (retry.current[row.key]?.payload !== payload) retry.current[row.key] = { payload, key: crypto.randomUUID() };
     setBusy(row.key);
     try {
-      const result = await cuttingQueueApi.done(row.task_id, row.operation_id, quantity, retry.current[row.key].key, onBehalfOf);
+      const result = await cuttingQueueApi.done(row.task_id, row.operation_id, quantity, retry.current[row.key].key, onBehalfOf, equipmentId);
       delete retry.current[row.key];
       setLast((current) => [result.notice, ...current].slice(0, 5));
       setQuantities((current) => { const next = { ...current }; delete next[row.key]; return next; });
@@ -141,13 +147,13 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
   const today = `${two(now.getDate())}.${two(now.getMonth() + 1)}.${now.getFullYear()}`;
 
   return <div className="cq">
-    <h2 className="cq-title">Очередь резки</h2>
+    {!equipmentId && <h2 className="cq-title">Очередь резки</h2>}
     <div className="cq-head">
-      <label>Станок{" "}
+      {!equipmentId && <label>Станок{" "}
         <select aria-label="Станок" value={selected} onChange={(event) => pick(event.target.value)} disabled={!machines.length}>
           {machines.map((machine) => <option key={machineValue(machine)} value={machineValue(machine)}>{machine.machine_name} · {machine.rows} строк</option>)}
         </select>
-      </label>
+      </label>}
       {readOnly && <span>«Готово» сдаёт оператор в «Заданиях»</span>}
       <span>Сейчас <b>{today}</b>{loadedAt && <> <b>{loadedAt}</b></>} · в очереди <b>{rows.length}</b> строк</span>
       <span className="cq-refresh" aria-live="polite">
