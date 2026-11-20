@@ -9,7 +9,7 @@
  */
 import { matchCableRec } from "./cableMatch";
 import { COAX_PROTECTIVE_TUT_LENGTHS, coaxMarkDefaults, coaxMarksFromName, sumCoaxMaterial, type CoaxMark, type ConnColor, markIsTube, markLabel, markSpecs, markTubeShrinks, markTubeSplit, type MarkMat, type MarkRow, type MarkSpec, type MarkTube } from "./tcGenMarks";
-import { pickWireMarkTube, WIRE_MARK_DIST_MM, WIRE_MARK_LEN_MM, wireMarkKey, wireMarkRow, wireMarkTexts, type WireMarkCfg, type WireMarkRow, type WireMarkSkip } from "./tcGenWireMarks";
+import { laserMarkOf, laserPrintedKey, markMediaOf, pickWireMarkTube, WIRE_MARK_DIST_MM, WIRE_MARK_LEN_MM, wireMarkKey, wireMarkKindOf, wireMarkRow, wireMarkTexts, wireMarkTubeBySize, type LaserMark, type MarkMedia, type WireMarkCfg, type WireMarkRow, type WireMarkSkip } from "./tcGenWireMarks";
 import { twistGroupProblems, twistGroupsOf, type TwistRow } from "./twistGroups";
 import { pickTerminals, type TerminalPairs } from "./terminalPick";
 import { LUG_CRIMP_CARD, LUG_CRIMP_NAMES, lugArt, lugByArt, lugCrimpOf, lugTypes, type LugCrimp, type LugRec } from "./tcGenLugs";
@@ -543,6 +543,10 @@ export type OpSpec = {
   markTube?: boolean;
   /** Маркировка проводов «откуда → куда» (tcGenWireMarks): печать, надевание и усадка; `markTexts` — надписи по порядку печати. */
   wireMarks?: boolean; markTexts?: string[]; markDist?: string;
+  /** Чем печатать маркировку проводов (трубка Ø / лента шириной, владелец 20.11); нет — как до 20.11. */
+  markMedia?: MarkMedia;
+  /** Резка на ОБ.019 (cutWire / cutWireStrip): лазерная маркировка провода партии (владелец 20.11). */
+  laserMark?: LaserMark;
   /** Метки по КД «Сложной сборки» (26.10): `print` — печать в ПФ «Маркировка», `install` — монтаж на месте метки (ЭТК делит ход по фазам). */
   markPhase?: "print" | "install";
   tutParts?: Array<{ art: string; name: string; count: number; len: string }>;
@@ -3078,9 +3082,24 @@ export function makeGen(D: GenData, S: GenState) {
       // А и В). Конец в сростке или хвосте станок не обжимает. Партия обжимает концы на всех разъёмах своего терминала.
       const rotor = S.rotor;
       const termOf = (e: Endpoint | null) => (e ? e.termId : "");
-      type Group = { pieces: Piece[]; a: string; b: string; crimpA: Endpoint[]; crimpB: Endpoint[]; tin: boolean; rot: boolean; tail: boolean };
+      type Group = { pieces: Piece[]; a: string; b: string; crimpA: Endpoint[]; crimpB: Endpoint[]; tin: boolean; rot: boolean; tail: boolean; mark?: WireMarkRow };
       const groups: Record<string, Group> = {};
-      pieces.forEach((piece) => {
+      // Лазер ОБ.019 (владелец 20.11): у жил с разными надписями — своя партия резки (станок печатает одну пару надписей на
+      // партию). Кабель в оболочке режется целиком — у его жил надписи разные, лазерной метки у него нет.
+      const laserRows = laserOn_() ? new Map(wireMarkList_().rows.map((row) => [row.key, row])) : null;
+      const markOf = (piece: Piece) => {
+        if (!laserRows) return undefined;
+        const rows = piece.ks.map((k) => laserRows.get(wireMarkKey(piece.w.idx, k)));
+        const pair = (row: WireMarkRow | undefined) => laserPrintedKey(S.wireMarks, row);
+        return rows.every((row) => !!row && pair(row) === pair(rows[0])) ? rows[0] : undefined;
+      };
+      const cutPieces = !laserRows ? pieces : pieces.flatMap((piece) => {
+        if (!piece.ends || piece.ks.length < 2) return [piece];
+        const byPair = new Map<string, number[]>();
+        piece.ks.forEach((k) => { const row = laserRows.get(wireMarkKey(piece.w.idx, k)); const sig = laserPrintedKey(S.wireMarks, row); byPair.set(sig, [...(byPair.get(sig) || []), k]); });
+        return byPair.size < 2 ? [piece] : [...byPair.values()].map((ks): Piece => ({ ...piece, units: ks.length, ks }));
+      });
+      cutPieces.forEach((piece) => {
         const w = piece.w;
         const s = stripOf(w, piece);
         const crimpA = piece.ends && epCrimpAtCut_(piece.ends.A) ? piece.ends.A! : null;
@@ -3088,8 +3107,11 @@ export function makeGen(D: GenData, S: GenState) {
         const tin = (!!crimpA || !!crimpB) && tinAtCut.has(w.idx);
         const rot = rotor && isJacketedCable_(w);
         const tail = !!piece.tail && !crimpA && !crimpB;
-        const sig = `${s.a}|${s.b}|${crimpA ? "A" : ""}${crimpB ? "B" : ""}${tin ? "T" : ""}|${termOf(crimpA)}/${termOf(crimpB)}|${rot ? "R" : ""}${tail ? "|L" : ""}`;
-        const g = groups[sig] || (groups[sig] = { pieces: [], a: s.a, b: s.b, crimpA: [], crimpB: [], tin, rot, tail });
+        // Резку с обжимом и хвосты режет BZW — лазера там нет, партии по надписям не делятся.
+        const mark = !crimpA && !crimpB && !tail ? markOf(piece) : undefined;
+        const sig = `${s.a}|${s.b}|${crimpA ? "A" : ""}${crimpB ? "B" : ""}${tin ? "T" : ""}|${termOf(crimpA)}/${termOf(crimpB)}|${rot ? "R" : ""}${tail ? "|L" : ""}`
+          + (mark ? `|M${laserPrintedKey(S.wireMarks, mark)}` : "");
+        const g = groups[sig] || (groups[sig] = { pieces: [], a: s.a, b: s.b, crimpA: [], crimpB: [], tin, rot, tail, ...(mark ? { mark } : {}) });
         g.pieces.push(piece);
         if (crimpA && !g.crimpA.includes(crimpA)) g.crimpA.push(crimpA);
         if (crimpB && !g.crimpB.includes(crimpB)) g.crimpB.push(crimpB);
@@ -3107,6 +3129,7 @@ export function makeGen(D: GenData, S: GenState) {
         const key = ci === 0 ? "cutWire" : "cutWire" + ci; ci++;
         const dashless = (s: string) => (s === "—" ? "" : s);
         const strip = { a: hasA, lenA: dashless(g.a), b: hasB, lenB: dashless(g.b) };
+        const laser = g.mark ? { laserMark: laserMarkOf(S.wireMarks, g.mark.textA, g.mark.textB) } : {};
         const artOf = (ep: Endpoint) => { const t = getCompById(ep.termId)!; return t.art || t.name; };
         const many = (list: Endpoint[]) => (list.length > 1 ? list.map((e) => e.id) : undefined);
         if (g.crimpA.length && g.crimpB.length) {
@@ -3130,12 +3153,12 @@ export function makeGen(D: GenData, S: GenState) {
           ops.push({ type: "cutWireStrip", opKey: key, label: cutLabel(ws, "Резка с зачисткой двух концов и лужением"), ...own,
             tmplHint: TAIL_CUT_CODE_, cat: "Резка", strip, tin: true });
         } else if (n === 0) {
-          ops.push({ type: "cutWire", opKey: key, label: cutLabel(ws, "Резка"), ...own, tmplHint: "CUT_WIRE_auto", cat: "Резка" });
+          ops.push({ type: "cutWire", opKey: key, label: cutLabel(ws, "Резка"), ...own, tmplHint: "CUT_WIRE_auto", cat: "Резка", ...laser });
         } else {
           // Ротор — только оболочка: её длина в названии (жилы зачищает своя операция у разъёма).
           const sizes = g.rot ? `: ${jacketCoreText_({ a: g.a, b: g.b }, { a: "", b: "" })}` : "";
           ops.push({ type: "cutWireStrip", opKey: key, label: cutLabel(ws, `Резка с разделкой${g.rot ? " на роторе" : ""} (${n} ст.${sizes})`),
-            ...own, tmplHint: `${g.rot ? "CUT_COAX" : "CUT_WIRE"}+${n}strip`, strip });
+            ...own, tmplHint: `${g.rot ? "CUT_COAX" : "CUT_WIRE"}+${n}strip`, strip, ...laser });
         }
       });
       if (solderEnds > 0 && (bomTut_() || tutSegs.some((s) => s.len))) {
@@ -3440,6 +3463,8 @@ export function makeGen(D: GenData, S: GenState) {
   }
   // ── Маркировка проводов «откуда → куда» (владелец 26.10, 708К.5 п.8) ──
   const wireMarksOn_ = () => isComplex_() && !!S.wireMarks?.enabled;
+  /** Лазер ОБ.019 (владелец 20.11): надписи — в операциях резки, печатной маркировки нет. */
+  const laserOn_ = () => wireMarksOn_() && wireMarkKindOf(S.wireMarks) === "laser";
   /** Обозначение разъёма в метке: то, что задал технолог («XS1»), иначе X1, X2… подряд — сторона А, потом В, как в схеме ПФ. */
   const xDesig_ = (ep: Endpoint) => (ep.label || "").trim() || `X${[...endpointsOnSide_("A"), ...endpointsOnSide_("B")].findIndex((e) => e.id === ep.id) + 1}`;
   /** Конец жилы для метки: «X1.1» (разъём и контакт), «С2» (сросток); свободный конец и не заданный — причина, метки нет. */
@@ -3485,6 +3510,10 @@ export function makeGen(D: GenData, S: GenState) {
   function wireMarkTube_(rows: WireMarkRow[]): string {
     const chosen = (S.wireMarks?.mat || "").trim();
     if (chosen) return chosen;
+    // Выбран Ø трубки маркиратора (владелец 20.11) — трубка этого Ø из состава и БД.МАТ; нет такой — по Ø провода, как раньше.
+    const media = markMediaOf(S.wireMarks);
+    const sized = media?.kind === "tube" ? wireMarkTubeBySize(wireMarkTubeOptions_(), media.sizeMm) : "";
+    if (sized) return sized;
     const idxs = new Set(rows.map((r) => r.idx));
     const dia = Math.max(0, ...activeWires_().filter((w) => idxs.has(w.idx)).map((w) => { const c = getCompById(w.compId); return c ? (Number(lookupWireDia_(c.art)) || Number(lookupWireDia_(c.name)) || 0) : 0; }));
     return pickWireMarkTube(wireMarkTubeOptions_(), dia);
@@ -3494,13 +3523,20 @@ export function makeGen(D: GenData, S: GenState) {
     const active = activeWires_();
     const nums = rows.filter((r) => { const w = active.find((x) => x.idx === r.idx); return !!w && (["A", "B"] as Side[]).some((side) => epCrimpAtCut_(unitEndpoint_(w, r.unit, side))); }).map((r) => r.num);
     const list = nums.length > 6 ? `${nums.slice(0, 6).join(", ")} и ещё ${nums.length - 6}` : nums.join(", ");
-    return nums.length ? `У ${nums.length} ${nums.length === 1 ? "провода" : "проводов"} конец обжимается при резке (№ ${list}) — трубка маркировки на готовый терминал не наденется` : "";
+    if (!nums.length) return "";
+    const head = `У ${nums.length} ${nums.length === 1 ? "провода" : "проводов"} конец обжимается при резке (№ ${list})`;
+    const kind = wireMarkKindOf(S.wireMarks);
+    return kind === "laser" ? `${head} — их режет станок с обжимом, лазер ОБ.019 их не маркирует`
+      : `${head} — ${kind === "tape" ? "лента маркировки наклеивается до терминала" : "трубка маркировки на готовый терминал не наденется"}`;
   }
   /** Печать и резка → надеть на провода (до терминалов) → усадка; нет известных концов — ничего. */
   function wireMarkOps_(): OpSpec[] {
+    if (laserOn_()) return [];
     const { rows } = wireMarkList_();
     if (!rows.length) return [];
     const cfg = S.wireMarks!;
+    const media = markMediaOf(cfg);
+    if (media?.kind === "tape") return wireMarkTapeOps_(rows, media);
     const tube = wireMarkTube_(rows);
     const nk = (v: string) => v.trim().toLowerCase().replace(/\s+/g, " ");
     const comp = tube ? comps().find((c) => nk(c.art || "") === nk(tube) || nk(c.name || "") === nk(tube)) : undefined;
@@ -3508,7 +3544,7 @@ export function makeGen(D: GenData, S: GenState) {
     const len = (cfg.len || "").trim() || WIRE_MARK_LEN_MM, dist = (cfg.dist || "").trim() || WIRE_MARK_DIST_MM;
     const count = rows.length * 2, texts = wireMarkTexts(rows);
     const markCode = [MARK_CUT_CODE_, MARK_CUT_CODE_OLD_].find(hasTemplateCode_);
-    const common = { markTube: true, wireMarks: true, markDist: dist, shrinkMaterials: [{ art, name }] };
+    const common = { markTube: true, wireMarks: true, markDist: dist, shrinkMaterials: [{ art, name }], ...(media ? { markMedia: media } : {}) };
     const out: OpSpec[] = [
       { ...common, type: "cutTut", opKey: "cutWireMark", tmplHint: markCode || "CUT_TUT_short", tmplWant: markCode || MARK_CUT_CODE_, cat: "Резка", markTexts: texts,
         label: `${markCode ? "Печать и резка" : "Резка"} маркировки проводов — ${count} шт × ${len.replace(".", ",")} мм`,
@@ -3520,6 +3556,21 @@ export function makeGen(D: GenData, S: GenState) {
       out.push({ ...common, type: "heatTut", opKey: "heatWireMark", tmplHint: "HEAT_TYT_short", cat: "Усадка", tutCount: count, label: `Усадка маркировки проводов — ${count} шт` });
     }
     return out;
+  }
+  /** Лента маркиратора (владелец 20.11): печать этикеток и наклейка на провода; лента — расходник маркиратора, не состав,
+   *  усадки нет. Ключи операций те же, что у трубки, — схема ПФ и сохранённые маршруты их узнают. */
+  function wireMarkTapeOps_(rows: WireMarkRow[], media: MarkMedia): OpSpec[] {
+    const cfg = S.wireMarks!;
+    const len = (cfg.len || "").trim() || WIRE_MARK_LEN_MM, dist = (cfg.dist || "").trim() || WIRE_MARK_DIST_MM;
+    const count = rows.length * 2, tape = `Лента ${mmRu(media.sizeMm)} мм`;
+    const common = { markTube: true, wireMarks: true, markDist: dist, shrinkMaterials: [], markMedia: media };
+    return [
+      { ...common, type: "cutTut", opKey: "cutWireMark", tmplHint: hasTemplateCode_("PRINT_MARK_LABEL") ? "PRINT_MARK_LABEL" : "CUT_TUT_short", tmplWant: "PRINT_MARK_LABEL",
+        cat: "Резка", markTexts: wireMarkTexts(rows), label: `Печать маркировки проводов на ленте ${mmRu(media.sizeMm)} мм — ${count} шт × ${len.replace(".", ",")} мм`,
+        tutArt: tape, tutName: tape, tutCount: count, tutSegs: [{ len, count }], tutParts: [{ art: tape, name: tape, count, len }] },
+      { ...common, type: "insTut", opKey: "onWireMark", tmplHint: hasTemplateCode_("INS_MARK_LABEL") ? "INS_MARK_LABEL" : "INS_TUT", cat: "Монтаж", tutCount: count,
+        label: `Наклеить маркировку на провода — ${count} шт, ${dist.replace(".", ",")} мм от конца` },
+    ];
   }
   // ── Схема ПФ «Сложной сборки» (владелец 16.10, 713К.4 КБ1: «остальное сам додумай») ──
   /** Слоты оплётки формы (вид «оплётка», материал выбран). */
@@ -4337,6 +4388,7 @@ export function makeGen(D: GenData, S: GenState) {
         };
         op.wires = activeWires.map((w, pos) => ({ w, pos })).filter((x) => set.has(x.w.idx)).map((x) => own(x.w, wires[x.pos]));
         if (spec.strip) op.strip = spec.strip;
+        if (spec.laserMark && (spec.type === "cutWire" || spec.type === "cutWireStrip")) op.laserMark = spec.laserMark;
       }
       if (["cutTut", "insTut", "heatTut", "endCap", "foldCore", "stripCable"].includes(spec.type)) {
         op.tutArt = spec.tutArt || ""; op.tutName = spec.tutName || ""; op.tutCount = spec.tutCount || 0;
@@ -4344,7 +4396,7 @@ export function makeGen(D: GenData, S: GenState) {
         if (/^(?:insSpl|heatSpl)\d*$/.test(spec.opKey) && welded) op.spliceWeld = true;
         if (spec.tutSegs) op.tutSegs = spec.tutSegs;
         if (spec.markTube) op.markTube = true;
-        if (spec.wireMarks) { op.wireMarks = true; if (spec.markTexts) op.markTexts = spec.markTexts; if (spec.markDist) op.markDist = spec.markDist; }
+        if (spec.wireMarks) { op.wireMarks = true; if (spec.markTexts) op.markTexts = spec.markTexts; if (spec.markDist) op.markDist = spec.markDist; if (spec.markMedia) op.markMedia = spec.markMedia; }
         // Резка оплётки ветвей (CUT_NEYLON): отрезки — по `tutParts`, материал в метрах — у этой операции.
         if (spec.type === "cutTut" && spec.wrapKind) op.wrapKind = spec.wrapKind;
         if (spec.tutParts) op.tutParts = spec.tutParts;
