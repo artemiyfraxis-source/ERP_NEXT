@@ -14,7 +14,7 @@ import {
   type EtkSetupUnit,
 } from "./api";
 import { ETK_CONNECTION_COLUMNS, ETK_TUBE_COLUMNS, ETK_NOT_SET, etkDocumentConnectionRows, etkPhysicalConfig, etkTubePlacementRows, etkContactSpecs, etkDrawHarness, etkDrawTubeCut, etkFigure, etkParams, type EtkParams, type EtkTopologyData } from "./etkDraw";
-import { setupUnitLabel } from "./equipmentPool";
+import { poolSetupParts, setupUnitLabel } from "./equipmentPool";
 import { etkMarkLabelsPage, etkPrintPages } from "./etkPrint";
 import { hasMarkSerial, markLabelList, markSerialTemplate, type MarkSerialRange } from "./markSerial";
 import { etkPartSource, etkRouteOf, etkSemiSource, etkSourceLines, formatMinutes, type EtkPfGroup } from "./etkRoute";
@@ -334,10 +334,12 @@ function MarksView({ marks, batch }: { marks: EtkMark[]; batch: string }) {
 /** Операция ЭТК в порядке, который задал производство (SUPPLYMAP renderEtk_, доведённый): безопасность (свёрнута) →
  *  1 вход: комплектующие и полуфабрикаты → 2 инструмент, оборудование, расходники + режим пайки (жало, температура) →
  *  3 ход операции → 4 типовые дефекты с пиктограммами → 5 эскиз → 6 результат и расчётное время. */
-function EtkOperationCard({ operation, number, total, batch = "", route = null, actions, sketch, units }: {
+function EtkOperationCard({ operation, number, total, batch = "", route = null, actions, sketch, units, setupUnits }: {
   operation: EtkOperation; number: number; total: number; batch?: string; route?: EtkRoute | null; actions?: ReactNode; sketch?: ReactNode;
   /** Task view only: ready setups of concrete units by ETK position. */
   units?: EtkSetupUnit[];
+  /** Card view only: all ready setups on open tasks (several per position), shown on the pool rows. */
+  setupUnits?: EtkSetupUnit[];
 }) {
   const raw = operation as Record<string, unknown>;
   const serial = useContext(MarkSerialContext);
@@ -384,7 +386,8 @@ function EtkOperationCard({ operation, number, total, batch = "", route = null, 
             {item.sourceUrl && <a href={item.sourceUrl} target="_blank" rel="noreferrer" title={item.quote || undefined}>Источник</a>}</div>
         </div>)}
       </div>}
-      <ToolingBySection tooling={tooling} fixed unit={units?.find((item) => item.etk_position === (operation.position || number))} />
+      <ToolingBySection tooling={tooling} fixed unit={units?.find((item) => item.etk_position === (operation.position || number))}
+        poolUnits={setupUnits?.filter((item) => item.etk_position === (operation.position || number))} />
     </EtkSection>
     {operation.card?.steps?.length || marks.length ? <EtkSection label="Ход операции" number={next()}>
       {marks.length > 0 && <MarksView marks={marks} batch={batch} />}
@@ -516,7 +519,17 @@ function OperationSketchView({ cardId, operationKey, canEdit, sketch, onChanged,
 
 /** Оснастка по разделам. `fixed` — операция ЭТК (erp-screens §6): три раздела Инструмент · Оборудование · Расходники
  *  всегда, пустой — «нет» серым; без `fixed` (шаблон в базе) — только заполненные разделы. */
-export function ToolingBySection({ tooling, fixed = false, unit }: { tooling: EtkTool[]; fixed?: boolean; unit?: EtkSetupUnit }) {
+/** Tooling row title. Card view: units set up on open tasks as inventory chips after the pool text (same look as a
+ *  concrete unit's number); task view: the one set-up unit; otherwise the pool text or name + inventory chip. */
+function toolTitle(tool: EtkTool, unit?: EtkSetupUnit, poolUnits?: EtkSetupUnit[]): ReactNode {
+  const parts = poolUnits ? poolSetupParts(tool.name, tool.inventory_number, poolUnits) : null;
+  if (parts) return <>{parts.main} · налажены:{parts.units.map((number) => <span key={number} className="tr-inv">{number}</span>)}
+    {parts.tail && ` · ${parts.tail}`}</>;
+  return setupUnitLabel(tool.name, tool.inventory_number, unit)
+    ?? <>{tool.name}{tool.inventory_number && <span className="tr-inv">{tool.inventory_number}</span>}</>;
+}
+
+export function ToolingBySection({ tooling, fixed = false, unit, poolUnits }: { tooling: EtkTool[]; fixed?: boolean; unit?: EtkSetupUnit; poolUnits?: EtkSetupUnit[] }) {
   if (!tooling.length && !fixed) return <div className="empty">Инструмент, оборудование и расходники не указаны.</div>;
   const sections = toolingSections([...(fixed ? ETK_TOOLING_SECTIONS : []), ...tooling.map((tool) => tool.section || "")]);
   return <div className="tr-tooling">{sections.map((section) => {
@@ -526,7 +539,7 @@ export function ToolingBySection({ tooling, fixed = false, unit }: { tooling: Et
       {!tools.length && <div className="tr-none">нет</div>}
       {tools.map((tool, index) => <div className="tr-tool" key={`${section}:${index}`}>
         <span className="tr-n">{tool.number}</span>
-        <span>{setupUnitLabel(tool.name, tool.inventory_number, unit) ?? <>{tool.name}{tool.inventory_number && <span className="tr-inv">{tool.inventory_number}</span>}</>}
+        <span>{toolTitle(tool, unit, poolUnits)}
           {toolSub(tool) && <small>{toolSub(tool)}</small>}</span>
       </div>)}
     </div>;
@@ -592,8 +605,9 @@ export function focusOperations(list: EtkOperation[], focus?: EtkFocus): number[
  *  «← →» по маршруту и правка операции (SUPPLYMAP renderEtk_).
  *  В задании монтажника (`task`) — только операция задания: без списка операций слева, без «← Назад / Далее» и
  *  полосы маршрута (владелец 13.10: «слева не должно быть следующих операций»). */
-function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sketches, onSketches, sketchUrl, focus, task = false, units }: {
+function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sketches, onSketches, sketchUrl, focus, task = false, units, setupUnits }: {
   units?: EtkSetupUnit[];
+  setupUnits?: EtkSetupUnit[];
   card: ProjectTechcard; canEdit: boolean; canTemplate?: boolean; onSaved: (updated: ProjectTechcard) => void; onRouteSaved: (updated: ProjectTechcard) => void;
   sketches: OperationSketch[]; onSketches: () => void; sketchUrl: (key: string, at: string) => string; focus?: EtkFocus;
   task?: boolean;
@@ -664,7 +678,7 @@ function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sk
       const item = list[position - 1];
       return <details key={`${etkOperationKey(item)}:${position}`} className="etk-task-op">
         <summary><span className="etk-no">{String(item.position || position).padStart(2, "0")}</span><b>{etkTitle(item)}</b>{navSub(item) && <small>{navSub(item)}</small>}</summary>
-        <EtkOperationCard operation={item} number={item.position || position} total={list.length} batch={batch} route={route} units={units}
+        <EtkOperationCard operation={item} number={item.position || position} total={list.length} batch={batch} route={route} units={units} setupUnits={setupUnits}
           sketch={<OperationSketchView cardId={card.id} operationKey={etkOperationKey(item)} canEdit={false} url={sketchUrl}
             sketch={sketches.find((sketch) => sketch.operation_key === etkOperationKey(item))} onChanged={onSketches} />} />
       </details>;
@@ -699,7 +713,7 @@ function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sk
         onSave={save}
       /> : <>
         <EtkOperationCard operation={operation} number={operation.position || index + 1} total={list.length}
-          batch={batch} route={route} units={units}
+          batch={batch} route={route} units={units} setupUnits={setupUnits}
           actions={canEdit && operation.card && card.status === "Выдана" ? <button className="secondary small" onClick={() => setEditing(true)}>Править операцию</button> : null}
           sketch={<OperationSketchView cardId={card.id} operationKey={etkOperationKey(operation)} canEdit={canEdit} url={sketchUrl}
             sketch={sketches.find((item) => item.operation_key === etkOperationKey(operation))} onChanged={onSketches} />} />
@@ -721,7 +735,7 @@ function stamp(value: string | null | undefined) {
     ревизий свёрнут. Правят операции здесь («Править операцию»); пересборка — в «Генераторе». */
 export type EtkSketchSource = { list: () => Promise<{ items: OperationSketch[] }>; url: (operationKey: string, at: string) => string };
 
-export function EtkSheet({ card, principal, title, focus, task = false, taskId, serial, units, onChange, onRebuild, sketchSource }: {
+export function EtkSheet({ card, principal, title, focus, task = false, taskId, serial, units, setupUnits, onChange, onRebuild, sketchSource }: {
   card: ProjectTechcard; principal: Principal; title?: ReactNode; focus?: EtkFocus;
   /** Задание монтажника: только операция `focus`, схема — вид Э4. */
   task?: boolean;
@@ -731,6 +745,8 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
   serial?: MarkSerialRange;
   /** Task view: ready setups of concrete units replace «любой свободный …» in the tooling rows. */
   units?: EtkSetupUnit[];
+  /** Card view: units set up on open tasks per position (screen only; the print does not get them). */
+  setupUnits?: EtkSetupUnit[];
   onChange: (card: ProjectTechcard) => void; onRebuild?: () => void;
   /** Откуда брать эскизы; по умолчанию раздел техкарт. Монтажнику экран «Мои задания» даёт свой источник. */
   sketchSource?: EtkSketchSource;
@@ -800,7 +816,7 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
       {warnings(card.document).map((warning) => <div key={warning}>{warning}</div>)}</details>}
     <HarnessView value={topology(card.document)} list={list} connections={etkDocumentConnectionRows(card.document)} document={card.document}
       raw={card.document?.connections} scheme={linkScheme} task={task ? { project: card.project, index: card.item_index, taskId } : undefined} />
-    <EtkView key={card.id} card={card} canEdit={canEdit} canTemplate={principal.permissions.erptctpl === "edit"} focus={focus} task={task} units={units} sketches={sketches} onSketches={loadSketches} sketchUrl={source.url} onSaved={(updated) => {
+    <EtkView key={card.id} card={card} canEdit={canEdit} canTemplate={principal.permissions.erptctpl === "edit"} focus={focus} task={task} units={units} setupUnits={setupUnits} sketches={sketches} onSketches={loadSketches} sketchUrl={source.url} onSaved={(updated) => {
       onChange(updated);
       setNotice(`Операция сохранена${updated.status === "Выдана" ? ` · ревизия ${updated.revision}` : ""}`);
     }} onRouteSaved={(updated) => {
@@ -929,6 +945,21 @@ export function ProjectEtk({ card, principal, onChange }: { card: ProjectTechcar
 }
 
 /** Карточка ТК по id — из общего списка (отдельной ручки на одну карту нет). */
+const NO_SETUP_UNITS: EtkSetupUnit[] = [];
+
+/** Units set up on open tasks for the card; a failed fetch or 403 silently means «none». */
+export function useCardSetupUnits(cardId: string): EtkSetupUnit[] {
+  // Keyed by card: right after a card switch the previous card's units are never rendered.
+  const [loaded, setLoaded] = useState<{ cardId: string; units: EtkSetupUnit[] }>({ cardId: "", units: [] });
+  useEffect(() => {
+    let live = true;
+    if (!cardId) return;
+    void techcardsApi.setupUnits(cardId).then((found) => { if (live) setLoaded({ cardId, units: found.units }); }, () => undefined);
+    return () => { live = false; };
+  }, [cardId]);
+  return loaded.cardId === cardId ? loaded.units : NO_SETUP_UNITS;
+}
+
 export function useTechcard(cardId: string) {
   const [card, setCard] = useState<ProjectTechcard | null>(null);
   const [error, setError] = useState("");

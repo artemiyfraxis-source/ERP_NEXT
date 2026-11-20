@@ -10,7 +10,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 REVISION = "0214_warehouse_document_devices"
-PARENT = "0211_machine_hmi_commands"
+PARENT = "0213_equipment_setup_by"
 NOW = "2026-11-20 12:00:00"
 
 
@@ -37,7 +37,7 @@ def _print_job(db, job_id: str, **values) -> None:
                list(row.values()))
 
 
-def test_0214_follows_0211(database):
+def test_0214_follows_0213(database):
     _path, config = database
     assert ScriptDirectory.from_config(config).get_revision(REVISION).down_revision == PARENT
 

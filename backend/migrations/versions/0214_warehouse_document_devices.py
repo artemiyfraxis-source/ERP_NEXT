@@ -19,7 +19,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "0214_warehouse_document_devices"
-down_revision = "0211_machine_hmi_commands"
+down_revision = "0213_equipment_setup_by"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False
