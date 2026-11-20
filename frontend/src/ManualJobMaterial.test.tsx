@@ -24,8 +24,9 @@ const lot = (id: string, grn: string, available: string, extra: Partial<ManualJo
   storage_location: "12C-3", balance: available, reserved: "0", available, here: true, match: "exact", ...extra });
 const VIEW: ManualJobMaterialView = {
   job: JOB, site: "ЦАР", pieces: 20, length_mm: "500",
-  wire: { label: "ПВАМ 0,35", lots: [lot("a", "Г-001", "6"), lot("b", "Г-002", "50", { warehouse: "ЖУК", here: false })] },
-  contact: { label: "", lots: [] }, found: [], issues: [], can_issue: true, can_decide: true,
+  wire: { label: "ПВАМ 0,35", lots: [lot("a", "Г-001", "6"), lot("a2", "Г-004", "50"),
+    lot("b", "Г-002", "50", { warehouse: "ЖУК", here: false }), lot("f", "Г-005", "80", { article: "ПВАМ 0,35 син", match: "fuzzy" })] },
+  contact: { label: "", lots: [] }, found: [], issues: [], can_issue: true, can_decide: true, can_search: true, search_note: "",
 };
 const ISSUED: ManualJobMaterialView = {
   ...VIEW, job: { ...JOB, material: "issued", material_text: "Списано с партии", material_tone: "ok", version: 3 },
@@ -41,7 +42,8 @@ function serve(calls: Call[], view: ManualJobMaterialView = VIEW, answer: Respon
     const url = decodeURIComponent(String(input));
     const method = init?.method ?? "GET";
     calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
-    if (url.includes("/material?q=")) return json({ ...view, found: [lot("c", "Г-009", "30", { article: "ПВАМ 0,35 син", match: "" })] });
+    if (url.includes("/material?q=син")) return json({ ...view, found: [lot("c", "Г-009", "30", { article: "ПВАМ 0,35 син", match: "" })] });
+    if (url.includes("/material?q=")) return json({ ...view, found: [lot("d", "Г-010", "30", { article: "ПВАМ 0,35 бел", match: "" })] });
     if (url.endsWith("/material")) return json(view);
     if (url.endsWith("/material/issue") || url.endsWith("/material/not-issued")) return typeof answer === "function" ? answer() : answer;
     if (url.endsWith("/finish")) return json(JOB);
@@ -59,18 +61,19 @@ it("suggests the wire used, spreads it over the lots and writes it off in one re
   render(<ManualJobMaterial job={JOB} close={() => undefined} onSaved={saved} />);
   const dialog = await screen.findByRole("dialog", { name: "Материал Р-000003" });
   expect(await within(dialog).findByText(/Провод: 20 шт × 500 мм =/)).toBeTruthy();
-  const first = within(dialog).getByLabelText("Списать с Г-001") as HTMLInputElement;
-  const second = within(dialog).getByLabelText("Списать с Г-002") as HTMLInputElement;
-  expect([first.value, second.value]).toEqual(["6", "4"]); // 10 m: all of Г-001, the rest from Г-002
+  const value = (grn: string) => (within(dialog).getByLabelText(`Списать с ${grn}`) as HTMLInputElement).value;
+  // 10 m over the exact lots of the machine's warehouse: all of Г-001, the rest from Г-004; the other warehouse's lot
+  // (Г-002) and the look-alike (Г-005) are left for the storekeeper.
+  expect(["Г-001", "Г-004", "Г-002", "Г-005"].map(value)).toEqual(["6", "4", "", ""]);
   fireEvent.change(within(dialog).getByLabelText("Отходы наладки, м"), { target: { value: "0,5" } });
   fireEvent.click(within(dialog).getByRole("button", { name: /Подставить 10,5/ }));
-  expect(second.value).toBe("4,5");
+  expect(["Г-001", "Г-004", "Г-002", "Г-005"].map(value)).toEqual(["6", "4,5", "", ""]);
   const submit = within(dialog).getByRole("button", { name: "Списать с партии (2 партии)" }) as HTMLButtonElement;
   expect(submit.disabled).toBe(false);
   fireEvent.click(submit);
   await waitFor(() => expect(calls.some((call) => call.url.endsWith("/manual-jobs/j3/material/issue"))).toBe(true));
   expect(calls.find((call) => call.url.endsWith("/material/issue"))?.body).toEqual({ version: 2, lines: [
-    { lot_id: "a", lot_version: 1, quantity: "6" }, { lot_id: "b", lot_version: 1, quantity: "4.5" }] });
+    { lot_id: "a", lot_version: 1, quantity: "6" }, { lot_id: "a2", lot_version: 1, quantity: "4.5" }] });
   expect(await within(dialog).findByRole("group", { name: "Списано с партий" })).toBeTruthy();
   expect(within(dialog).getByText("Списано с партии")).toBeTruthy();
   expect(within(dialog).queryByRole("button", { name: /Списать с партии/ })).toBeNull();
@@ -90,22 +93,28 @@ it("refuses more than a lot has before sending and shows the server's refusal", 
   fireEvent.change(first, { target: { value: "6" } });
   fireEvent.click(submit);
   expect(await within(dialog).findByRole("alert")).toHaveProperty("textContent", "Ручную работу уже изменили — обновите и проверьте ещё раз");
-  // A lot found by search can be written off too.
+  // A lot found by search can be written off too; its typed quantity survives the next search.
   fireEvent.change(within(dialog).getByRole("searchbox"), { target: { value: "син" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Найти" }));
-  expect(await within(dialog).findByLabelText("Списать с Г-009")).toBeTruthy();
+  fireEvent.change(await within(dialog).findByLabelText("Списать с Г-009"), { target: { value: "3" } });
   expect(calls.some((call) => call.url.endsWith("/material?q=син"))).toBe(true);
+  fireEvent.change(within(dialog).getByRole("searchbox"), { target: { value: "бел" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Найти" }));
+  expect(await within(dialog).findByLabelText("Списать с Г-010")).toBeTruthy();
+  expect((within(dialog).getByLabelText("Списать с Г-009") as HTMLInputElement).value).toBe("3");
+  expect(within(dialog).getByRole("button", { name: "Списать с партии (3 партии)" })).toBeTruthy(); // Г-001, Г-004, Г-009
 });
 
 it("lets the master say «Не списывать» with a reason but not write off", async () => {
   const calls: Call[] = [];
-  serve(calls, { ...VIEW, can_issue: false }, () => json({ ...VIEW, job: { ...JOB, material: "not_issued", material_text: "Не списывать",
+  serve(calls, { ...VIEW, can_issue: false, can_search: false }, () => json({ ...VIEW, job: { ...JOB, material: "not_issued", material_text: "Не списывать",
     material_tone: "neutral", material_note: "обрезки", version: 3 }, wire: { label: "ПВАМ 0,35", lots: [] } }));
   render(<ManualJobMaterial job={JOB} close={() => undefined} />);
   const dialog = await screen.findByRole("dialog", { name: "Материал Р-000003" });
   expect(await within(dialog).findByText("Списывает склад — нужна правка раздела «Склад»")).toBeTruthy();
   expect((within(dialog).getByRole("button", { name: /Списать с партии/ }) as HTMLButtonElement).disabled).toBe(true);
   expect((within(dialog).getByLabelText("Списать с Г-001") as HTMLInputElement).disabled).toBe(true);
+  expect(within(dialog).queryByRole("searchbox")).toBeNull(); // the free stock search is the warehouse's
   fireEvent.click(within(dialog).getByRole("button", { name: "Не списывать…" }));
   const refuse = within(dialog).getByRole("button", { name: "Не списывать" }) as HTMLButtonElement;
   expect(refuse.disabled).toBe(true);
@@ -151,4 +160,21 @@ it("finishes with «Списать с партии» as waiting for the warehous
   await waitFor(() => expect(calls.find((call) => call.url.endsWith("/finish"))?.body).toEqual({ version: 1, good: 18, defect: 0,
     defect_reason: "", material: "pending", material_note: "" }));
   expect(await screen.findByRole("dialog", { name: "Материал Р-000003" })).toBeTruthy();
+});
+
+it("pre-fills nothing when the machine's warehouse is not known", async () => {
+  serve([], { ...VIEW, site: "", wire: { label: "ПВАМ 0,35", lots: VIEW.wire.lots.map((item) => ({ ...item, here: false })) } });
+  render(<ManualJobMaterial job={JOB} close={() => undefined} />);
+  const dialog = await screen.findByRole("dialog", { name: "Материал Р-000003" });
+  const inputs = await within(dialog).findAllByLabelText(/^Списать с Г-/);
+  expect(inputs.map((input) => (input as HTMLInputElement).value)).toEqual(["", "", "", ""]);
+  expect(within(dialog).queryByRole("button", { name: /Подставить/ })).toBeNull();
+});
+
+it("says «5 партий» on the button", async () => {
+  const five = ["1", "2", "3", "4", "5"].map((n) => lot(`p${n}`, `Г-10${n}`, "2"));
+  serve([], { ...VIEW, wire: { label: "ПВАМ 0,35", lots: five } });
+  render(<ManualJobMaterial job={JOB} close={() => undefined} />);
+  const dialog = await screen.findByRole("dialog", { name: "Материал Р-000003" });
+  expect(await within(dialog).findByRole("button", { name: "Списать с партии (5 партий)" })).toBeTruthy();
 });

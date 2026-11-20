@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { failureText } from "./api";
-import { EMPTY, formatNumber, formatQty, formatWallMoment, toNumber, unitLabel } from "./format";
+import { EMPTY, formatNumber, formatQty, formatWallMoment, plural, toNumber, unitLabel } from "./format";
 import { manualJobsApi, type ManualJob, type ManualJobLot, type ManualJobMaterialView } from "./manualJobsApi";
 import { PageWindow } from "./PageWindow";
 import "./manualJobs.css";
@@ -24,11 +24,15 @@ function factor(kind: Kind, unit: string): number | null {
 const round = (value: number, kind: Kind) => (kind === "contact" ? Math.ceil(value - 1e-9) : Math.round(value * 1000) / 1000);
 const plain = (value: number) => String(value).replace(".", ",");
 
-/** Жадно раскладывает расход по партиям в их порядке, не больше доступного: {партия: количество в её единицах}. */
+/** Партии, на которые расход подставляется сам: точное совпадение с проводом / контактом работы и склад станка.
+ *  Похожие партии и партии другого склада кладовщик заполняет сам; склад станка не известен — не подставляется ничего. */
+const prefillable = (lots: ManualJobLot[]) => lots.filter((lot) => lot.match === "exact" && lot.here);
+
+/** Жадно раскладывает расход по подставляемым партиям в их порядке, не больше доступного: {партия: количество}. */
 function spread(lots: ManualJobLot[], amount: number, kind: Kind): Record<string, string> {
   const result: Record<string, string> = {};
   let left = amount;
-  for (const lot of lots) {
+  for (const lot of prefillable(lots)) {
     const scale = factor(kind, lot.unit);
     const available = toNumber(lot.available) ?? 0;
     if (left <= 1e-9 || scale === null || available <= 0) continue;
@@ -137,7 +141,9 @@ function Decide({ view, onSaved }: { view: ManualJobMaterialView; onSaved: (view
     setError("");
     try {
       const answer = await manualJobsApi.material(job.id, query);
-      setFound(answer.found);
+      // A lot of an earlier search with a typed quantity stays on the screen (and in the request).
+      setFound((previous) => [...answer.found, ...previous.filter((lot) => quantities[lot.id]?.trim()
+        && !answer.found.some((item) => item.id === lot.id))]);
       if (!answer.found.length) setError(`По «${query.trim()}» партий с остатком нет`);
     } catch (failure) {
       setError(failureText(failure, "Поиск партий не выполнен"));
@@ -170,14 +176,14 @@ function Decide({ view, onSaved }: { view: ManualJobMaterialView; onSaved: (view
     </section>
     <form className="mj-form" onSubmit={issue} aria-label="Списать с партии">
       {job.wire && <div className="mj-lot-head"><h3>Провод {job.wire}</h3>
-        {view.can_issue && view.wire.lots.length > 0 && <button type="button" className="secondary small"
+        {view.can_issue && prefillable(view.wire.lots).length > 0 && <button type="button" className="secondary small"
           onClick={() => setQuantities((current) => ({ ...current, ...Object.fromEntries(view.wire.lots.map((lot) => [lot.id, ""])), ...spread(view.wire.lots, wireMetres, "wire") }))}>
           Подставить {formatQty(wireMetres, "м")}</button>}</div>}
       {job.wire && (view.wire.lots.length
         ? <LotTable title={`Партии провода ${job.wire}`} lots={view.wire.lots} quantities={quantities} setQuantity={setQuantity} disabled={!view.can_issue} />
         : <p className="empty">Партий «{job.wire}» с остатком не нашлось — найдите партию ниже</p>)}
       {job.contact && <div className="mj-lot-head"><h3>Контакт {job.contact}</h3>
-        {view.can_issue && view.contact.lots.length > 0 && <button type="button" className="secondary small"
+        {view.can_issue && prefillable(view.contact.lots).length > 0 && <button type="button" className="secondary small"
           onClick={() => setQuantities((current) => ({ ...current, ...Object.fromEntries(view.contact.lots.map((lot) => [lot.id, ""])), ...spread(view.contact.lots, contacts, "contact") }))}>
           Подставить {formatQty(contacts, "шт")}</button>}</div>}
       {job.contact && (view.contact.lots.length
@@ -186,17 +192,17 @@ function Decide({ view, onSaved }: { view: ManualJobMaterialView; onSaved: (view
       {shownFound.length > 0 && <LotTable title="Найденные партии" lots={shownFound} quantities={quantities} setQuantity={setQuantity} disabled={!view.can_issue} />}
       <div className="mj-actions">
         <button type="submit" className="primary" disabled={Boolean(problem) || busy || !view.can_issue}>
-          {busy ? "Списываю…" : `Списать с партии${lines.length > 1 ? ` (${lines.length} партии)` : ""}`}</button>
+          {busy ? "Списываю…" : `Списать с партии${lines.length > 1 ? ` (${lines.length} ${plural(lines.length, ["партия", "партии", "партий"])})` : ""}`}</button>
         <span className="mj-hint" aria-live="polite">{view.can_issue ? problem : "Списывает склад — нужна правка раздела «Склад»"}</span>
         <button type="button" className="secondary small mj-cancel-toggle" aria-expanded={noteOpen} onClick={() => setNoteOpen(!noteOpen)}>
           Не списывать…</button>
       </div>
     </form>
-    <form className="mj-search" role="search" aria-label="Найти другую партию" onSubmit={search}>
+    {view.can_search && <form className="mj-search" role="search" aria-label="Найти другую партию" onSubmit={search}>
       <label>Другая партия<input type="search" autoComplete="off" placeholder="ГРН, артикул или наименование…" value={query}
         onChange={(event) => setQuery(event.target.value)} /></label>
       <button type="submit" className="secondary" disabled={!query.trim() || searching}>{searching ? "Ищу…" : "Найти"}</button>
-    </form>
+    </form>}
     {noteOpen && <form className="mj-cancel" aria-label="Не списывать" onSubmit={(event) => {
       event.preventDefault();
       if (note.trim() && !busy) void run(() => manualJobsApi.notIssued(job.id, job.version, note), "Решение не сохранено");

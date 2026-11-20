@@ -18,6 +18,7 @@ as it is and write nothing; other lines get 409."""
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
@@ -40,11 +41,13 @@ from app.modules.warehouse.domain import WAREHOUSES, StockLot, WarehouseValidati
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseRepository, SqlAlchemyWriteOffJournal, WriteOffEntryRow
 from app.shared import article_match
 from app.shared.clock import moscow_now
-from app.shared.http_auth import Principal, warehouse_edit_principal
+from app.shared.http_auth import Principal, warehouse_edit_principal, warehouse_view_principal
 from app.shared.persistence import SqlAlchemyAuditRepository
 
-from .manual_jobs_api import (JournalReader, _inventory, _journal, _shown, can_decide, can_issue,
+from .manual_jobs_api import (JournalReader, _inventory, _journal, _passes, _shown, can_decide, can_issue,
                               manual_jobs_material_principal, view)
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/production/manual-jobs", tags=["production"])
 Factory = Annotated[Callable, Depends(production_uow_factory)]
@@ -55,6 +58,8 @@ LOT_LIMIT = 30
 MAX_LINES = 20
 SOURCE_PREFIX = "manual-job"
 STALE = "Данные изменились: обновите окно"
+SEARCH_CLOSED = "Поиск по складу — только с правом просмотра раздела «Склад»; показаны партии под провод и контакт работы"
+BROKEN = "Решение не записано: база отклонила данные. Сообщите администратору ERP"
 
 
 class Payload(BaseModel):
@@ -166,7 +171,10 @@ def material_view(session: Session, row: jobs.ManualJobRow, principal: Principal
     stock = SqlAlchemyWarehouseRepository(session)
     lots = stock.filtered() if open_ and (row.wire or row.contact) else []
     found: list[dict] = []
-    if open_ and query.strip():
+    # The free search shows any lot's balance and place: «Склад» on view only; others see the job's own lots.
+    searchable = _passes(warehouse_view_principal, principal)
+    note = SEARCH_CLOSED if query.strip() and not searchable else ""
+    if open_ and query.strip() and searchable:
         hits = sorted((lot for lot in stock.filtered(query=query) if lot.available > 0), key=_order(site))
         found = [_lot(lot, site) for lot in hits[:LOT_LIMIT]]
     pieces = (row.good_quantity or 0) + (row.defect_quantity or 0) if row.status == "done" else None
@@ -176,6 +184,7 @@ def material_view(session: Session, row: jobs.ManualJobRow, principal: Principal
         "contact": {"label": row.contact, "lots": offered(lots, row.contact, site)},
         "found": found, "issues": _issues(session, row.id),
         "can_issue": can_issue(principal), "can_decide": can_decide(principal),
+        "can_search": searchable, "search_note": note,
     }
 
 
@@ -228,13 +237,24 @@ def issue_lots(sessions, job_id: UUID, payload: IssuePayload, principal: Princip
         return material_view(session, row, principal)
 
 
+def is_unique_violation(error: IntegrityError) -> bool:
+    """A UNIQUE refusal (the write-off's source key, the issue row of a lot): a parallel request got there first.
+    PostgreSQL says «duplicate key value violates unique constraint», SQLite «UNIQUE constraint failed»."""
+    text = str(getattr(error, "orig", error)).lower()
+    return "unique" in text or "duplicate key" in text
+
+
 def _refused(error: Exception) -> HTTPException:
     if isinstance(error, KeyError):
         return HTTPException(404, error.args[0] if error.args else "Не найдено")
-    if isinstance(error, (jobs.ManualJobConflict, ConcurrentWarehouseUpdate)):
-        return HTTPException(409, str(error))
-    if isinstance(error, (IntegrityError, StaleDataError)):
-        return HTTPException(409, STALE)
+    if isinstance(error, (jobs.ManualJobConflict, ConcurrentWarehouseUpdate, StaleDataError)):
+        return HTTPException(409, str(error) if not isinstance(error, StaleDataError) else STALE)
+    if isinstance(error, IntegrityError):
+        if is_unique_violation(error):
+            return HTTPException(409, STALE)
+        # A CHECK / FK refusal is a bug or broken data, never «data changed»: logged with its trace, said plainly.
+        log.error("manual job material: the database refused the decision", exc_info=error)
+        return HTTPException(500, BROKEN)
     return HTTPException(422, str(error))
 
 
@@ -276,5 +296,8 @@ def not_issued(job_id: UUID, payload: NotIssuedPayload, principal: Decider, fact
         _journal(uow, row, "material_not_issued", principal, now,
                  f"Материал по {jobs.number_text(row.number)} не списывается: {row.material_note}")
         answer = material_view(session, row, principal)
-        uow.commit()
+        try:
+            uow.commit()
+        except (IntegrityError, StaleDataError) as error:
+            raise _refused(error) from error
     return answer

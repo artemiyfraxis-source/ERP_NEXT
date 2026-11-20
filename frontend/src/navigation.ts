@@ -25,6 +25,9 @@ export interface NavItem {
   permission?: string;
   /** Opens when any of these keys is granted (a section made of tabs with their own keys). */
   anyPermission?: string[];
+  /** Also opens for these keys, which do not own the screen: «Доступы» neither names the screen under them nor
+   *  moves their row («Ручная работа» for «Склад», S3: the warehouse decides the material of finished jobs). */
+  alsoPermission?: string[];
   minimum?: AccessMode;
   /** superadmin / admin only, outside the matrix (backend require_full_access: «Доступы», «Сотрудники»). */
   fullAccessOnly?: boolean;
@@ -103,7 +106,7 @@ export const NAV: NavItem[] = [
   // приборы агентов; читают мастер и монтажник.
   { id: "machines", label: "Оборудование", sub: "станки цеха · наладка · состояние на станке", anyPermission: ["production", "myops"], block: "prod" },
   // «Ручная работа» (план «Станки вне проекта», 19.11.2026): журнал работ на любом станке вне проекта; те же ключи, что у «Станков».
-  { id: "manualjobs", label: "Ручная работа", sub: "работа на станке вне проекта · журнал за период", anyPermission: ["production", "myops", "warehouse"], block: "prod" },
+  { id: "manualjobs", label: "Ручная работа", sub: "работа на станке вне проекта · журнал за период", anyPermission: ["production", "myops"], alsoPermission: ["warehouse"], block: "prod" },
   // «Задания» (`myops`) и «ОТК» (`quality`) — разделы матрицы со своими ключами (owner 04.10.2026), не часть `production`.
   // «ОТК»: очередь на проверку, брак цеха и ОТК, средства измерения; приёмку и реестр ведёт правка `quality`, решение по
   // браку — правка `production` (экран сам прячет то, что не открыто).
@@ -216,6 +219,7 @@ export function hasNavAccess(principal: Principal, item: NavItem, capabilities: 
   if (item.capability) return capabilities[item.capability] === true;
   if (item.fullAccessOnly) return hasFullAccess(principal);
   if (hasFullAccess(principal)) return true;
+  if (item.alsoPermission?.some((key) => hasAccess(principal.permissions, key, item.minimum))) return true;
   return (
     hasAccess(principal.permissions, item.permission, item.minimum) &&
     (!item.anyPermission || item.anyPermission.some((key) => hasAccess(principal.permissions, key, item.minimum)))
@@ -225,7 +229,7 @@ export function hasNavAccess(principal: Principal, item: NavItem, capabilities: 
 /** The card opens for reading only: every key that opens it is granted as «view» (never for a full-access level). */
 export function isViewOnly(principal: Principal, item: NavItem): boolean {
   if (hasFullAccess(principal)) return false;
-  const keys = item.permission ? [item.permission] : item.anyPermission ?? [];
+  const keys = [...(item.permission ? [item.permission] : item.anyPermission ?? []), ...(item.alsoPermission ?? [])];
   const modes = keys.map((key) => principal.permissions[key]).filter(Boolean);
   return modes.length > 0 && !modes.includes("edit");
 }

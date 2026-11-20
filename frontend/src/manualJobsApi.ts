@@ -102,6 +102,10 @@ export interface ManualJobMaterialView {
   issues: ManualJobIssue[];
   can_issue: boolean;
   can_decide: boolean;
+  /** Поиск по всему складу — с правом просмотра «Склада». */
+  can_search: boolean;
+  /** Почему поиск `q` не выполнен («» — выполнен или не просили). */
+  search_note: string;
 }
 
 export interface ManualJobIssueLine { lot_id: string; lot_version: number; quantity: string }

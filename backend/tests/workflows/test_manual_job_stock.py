@@ -281,3 +281,46 @@ def test_the_journal_lists_every_job_waiting_for_the_warehouse(machines_api):
     assert _post(admin, f"{BASE}/{old['id']}/material/issue",
                  {"version": 2, "lines": [_line(lot, 1, "10")]}).status_code == 200
     assert admin.get(BASE, params={"waiting": "true"}).json()["waiting_count"] == 1
+
+
+def test_the_free_stock_search_is_the_warehouses(machines_api, as_person):
+    sessions, clock, admin, ob019, _ = machines_api
+    _lot(sessions, "ЦАР", "Г-001", "100")
+    _lot(sessions, "ЦАР", "Г-003", "40", article="МКЭШ 3x0,5")
+    job = _done_job(admin, ob019)
+    url = f"{BASE}/{job['id']}/material"
+    master = as_person({"production": "edit"}).get(url, params={"q": "МКЭШ"}).json()
+    assert master["found"] == [] and master["can_search"] is False
+    assert "Склад" in master["search_note"] and [lot["grn"] for lot in master["wire"]["lots"]] == ["Г-001"]
+    keeper = as_person({"warehouse": "view"}).get(url, params={"q": "МКЭШ"}).json()
+    assert [lot["grn"] for lot in keeper["found"]] == ["Г-003"] and keeper["can_search"] is True
+    assert keeper["search_note"] == ""
+
+
+def test_only_a_unique_refusal_reads_as_data_changed(machines_api, monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+
+    from app.modules.production.infrastructure import SqlAlchemyProductionUnitOfWork
+    from app.workflows import manual_job_stock as stock
+
+    def refused(text):
+        return IntegrityError("INSERT", {}, Exception(text))
+
+    assert stock._refused(refused("UNIQUE constraint failed: warehouse_writeoffs.source_key")).status_code == 409
+    assert stock._refused(refused('duplicate key value violates unique constraint "uq_production_manual_job_issues_lot"')) \
+        .status_code == 409
+    broken = stock._refused(refused('violates foreign key constraint "fk_production_manual_job_issues_writeoff"'))
+    assert (broken.status_code, broken.detail) == (500, stock.BROKEN)
+    assert stock._refused(refused("CHECK constraint failed: ck_production_manual_jobs_not_issued")).status_code == 500
+
+    sessions, clock, admin, ob019, _ = machines_api
+    job = _done_job(admin, ob019)
+
+    def fail(self):
+        raise refused("FOREIGN KEY constraint failed")
+
+    monkeypatch.setattr(SqlAlchemyProductionUnitOfWork, "commit", fail)
+    answer = _post(admin, f"{BASE}/{job['id']}/material/not-issued", {"version": 2, "note": "обрезки"})
+    assert (answer.status_code, answer.json()["detail"]) == (500, stock.BROKEN)
+    with sessions() as session:
+        assert session.get(jobs.ManualJobRow, UUID(job["id"])).material == "pending"
