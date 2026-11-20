@@ -13,6 +13,7 @@ import {
   failureText,
 } from "./api";
 import { ETK_CONNECTION_COLUMNS, ETK_TUBE_COLUMNS, ETK_NOT_SET, etkDocumentConnectionRows, etkPhysicalConfig, etkTubePlacementRows, etkContactSpecs, etkDrawHarness, etkDrawTubeCut, etkFigure, etkParams, type EtkParams, type EtkTopologyData } from "./etkDraw";
+import { poolToolLabel } from "./equipmentPool";
 import { etkMarkLabelsPage, etkPrintPages } from "./etkPrint";
 import { hasMarkSerial, markLabelList, markSerialTemplate, type MarkSerialRange } from "./markSerial";
 import { etkPartSource, etkRouteOf, etkSemiSource, etkSourceLines, formatMinutes, type EtkPfGroup } from "./etkRoute";
@@ -522,7 +523,7 @@ export function ToolingBySection({ tooling, fixed = false }: { tooling: EtkTool[
       {!tools.length && <div className="tr-none">нет</div>}
       {tools.map((tool, index) => <div className="tr-tool" key={`${section}:${index}`}>
         <span className="tr-n">{tool.number}</span>
-        <span>{tool.name}{tool.inventory_number && <span className="tr-inv">{tool.inventory_number}</span>}
+        <span>{poolToolLabel(tool.name, tool.inventory_number) ?? <>{tool.name}{tool.inventory_number && <span className="tr-inv">{tool.inventory_number}</span>}</>}
           {toolSub(tool) && <small>{toolSub(tool)}</small>}</span>
       </div>)}
     </div>;

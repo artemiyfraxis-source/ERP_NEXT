@@ -43,7 +43,7 @@ it("hosts the setup task list with every step of the old «Наладка» scre
   render(<MachinesPage setupViewer canWrite />);
   const tab = await screen.findByRole("tab", { name: "Запросы на наладку" });
   expect(screen.getAllByRole("tab").map((item) => item.textContent?.replace(/\d+$/, ""))).toEqual(
-    ["Запросы на наладку", "С управлением", "Без управления", "Принтеры и приборы", "Все"]);
+    ["Запросы на наладку", "С управлением", "Без управления", "Все"]);
   fireEvent.click(tab);
   expect(tab.getAttribute("aria-selected")).toBe("true");
   expect(await screen.findByRole("button", { name: "Назначить наладку" })).toBeTruthy();

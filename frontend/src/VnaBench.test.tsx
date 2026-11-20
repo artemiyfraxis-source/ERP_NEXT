@@ -21,7 +21,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 const step = (key: VnaBenchStep["key"], status: VnaBenchStep["status"], text: string | null = null): VnaBenchStep =>
   ({ key, status, result_text: text, refusal: null, finished_at: status === "pending" ? null : "2026-11-19T14:10:00+03:00" });
 const allPassed: VnaBenchStep[] = [
-  step("calibration", "passed"), step("confidence", "passed", "передача 0,031 дБ ≤ 0,1; отражение 0,12 дБ ≤ 0,4/0,5"),
+  step("calibration", "passed"), step("confidence", "passed", "передача 0,031 дБ ≤ 0,1; отражение 0,12 дБ ≤ 0,4/0,5"),
   step("load_port1", "passed", "КСВН 1,032 ≤ 1,06"), step("load_port2", "passed", "КСВН 1,028 ≤ 1,06"),
 ];
 
@@ -52,7 +52,7 @@ const kb: VnaBenchTarget = { kind: "assembly", task_id: "t1", task_number: "ПЗ
   item: "591К.3.КБ1", operation_id: "op-vswr" };
 const plan: VnaBenchPlan = {
   screen_name: "ОТК — переход", band_mhz: [10, 18000], points: 1601, ifbw_hz: 1000, power_dbm: 0,
-  traces: [{ label: "КСВН S11", scale: "1…1,1" }, { label: "Модуль S21", scale: "−0,5…0 дБ" }],
+  traces: [{ label: "КСВН S11", scale: "1…1,1" }, { label: "Модуль S21", scale: "−0,5…0 дБ" }],
   norm_vswr: 1.06, norm_source: "ADP1A, изготовитель", uncertainty: 0.012,
   connection_hint: "Цепочка «напрямую»: сторона 1 — к порту 1 ВАЦ, сторона 2 — к порту 2", refusal: null,
 };
@@ -115,7 +115,7 @@ it("opens a session on the adapter grid and confirms the calibration; the confid
 
 it("offers only a new calibration after a failed confidence test", async () => {
   vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: session({ steps: [step("calibration", "passed"),
-    { ...step("confidence", "failed", "передача 0,141 дБ ≤ 0,1"), refusal: { code: "calibration_required", message: "…" } }] }) }));
+    { ...step("confidence", "failed", "передача 0,141 дБ ≤ 0,1"), refusal: { code: "calibration_required", message: "…" } }] }) }));
   const run = vi.spyOn(vnaBenchApi, "runStep").mockResolvedValue(state());
   render(<VnaBench canEdit />);
   expect(await screen.findByText(/Калибровка не подтверждена/)).toBeInTheDocument();
@@ -149,7 +149,7 @@ it("finds an adapter, shows its plan card with the fixture chain and the suggest
   expect(screen.getByText("1 601")).toBeInTheDocument();
   expect(screen.getByText("1 кГц")).toBeInTheDocument();
   expect(screen.getByText("0 дБм")).toBeInTheDocument();
-  expect(screen.getByText("КСВН S11 (1…1,1) · Модуль S21 (−0,5…0 дБ)")).toBeInTheDocument();
+  expect(screen.getByText("КСВН S11 (1…1,1) · Передача (S21), дБ (−0,5…0 дБ)")).toBeInTheDocument();
   expect(screen.getByText("КСВН ≤ 1,06, U 0,012 · ADP1A, изготовитель")).toBeInTheDocument();
   expect(screen.getByText(/Цепочка «напрямую»/)).toBeInTheDocument();
   expect(screen.getByText("по серии и норме: до 18 ГГц")).toBeInTheDocument();
@@ -307,8 +307,13 @@ it("polls the state while the agent runs a command and offers to abort it", asyn
   expect(await screen.findByText("Выполняется: калибровка АКМ, с 14:30")).toBeInTheDocument();
   await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
   await waitFor(() => expect(read.mock.calls.length).toBeGreaterThanOrEqual(2));
+  const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+  fireEvent.click(screen.getByRole("button", { name: "Прервать" }));
+  expect(confirm).toHaveBeenCalledTimes(1);
+  expect(abort).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Прервать" }));
   await waitFor(() => expect(abort).toHaveBeenCalledWith("s1", 3));
+  confirm.mockRestore();
   const calls = read.mock.calls.length;
   await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
   expect(read.mock.calls.length).toBe(calls);
@@ -351,7 +356,7 @@ it("words the server's flex, weekly and monthly phases and the due states", () =
   const phase = (key: string, label = "", no: number | null = null) =>
     ({ key, label, status: "pending" as const, connection_no: no, connections_total: no ? 3 : null, result_text: null });
   expect(phaseHint("flex", phase("load_p2"))).toMatch(/^Перенесите LOAD на кабель порта 2/);
-  expect(phaseHint("flex", phase("thru_flex"))).toBe("Изогните кабели в рабочих пределах — S21 должен меняться не больше чем на ±0,05 дБ.");
+  expect(phaseHint("flex", phase("thru_flex"))).toBe("Изогните кабели в рабочих пределах — S21 должен меняться не больше чем на ±0,05 дБ.");
   expect(phaseHint("weekly", phase("si009"))).toMatch(/^Подключите контрольный переход СИ.009/);
   expect(phaseHint("monthly", phase("thru", "MA6666B (THRU), перемычка", 1)))
     .toBe("Соедините концы кабелей перемычкой из набора (MA6666B (THRU), перемычка). Подключение 1 из 3.");
@@ -453,3 +458,17 @@ it("switches the bench tabs with the arrow keys", async () => {
   fireEvent.keyDown(screen.getByRole("tab", { name: "Проверки" }), { key: "Home" });
   expect(screen.getByRole("tab", { name: "Замер", selected: true })).toHaveFocus();
 });
+
+it("asks before closing the session and closes it only after the confirmation", async () => {
+  vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: session({ steps: allPassed }) }));
+  const close = vi.spyOn(vnaBenchApi, "close").mockResolvedValue(state({ session: null }));
+  const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+  render(<VnaBench canEdit />);
+  fireEvent.click(await screen.findByRole("button", { name: "Закрыть сеанс" }));
+  expect(close).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Закрыть сеанс" }));
+  await waitFor(() => expect(close).toHaveBeenCalledWith("s1", 3));
+  expect(confirm).toHaveBeenCalledTimes(2);
+  confirm.mockRestore();
+});
+

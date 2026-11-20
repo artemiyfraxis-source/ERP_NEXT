@@ -78,11 +78,11 @@ export function vswrChartSvg(props: VswrChartProps): string {
   }
   for (const value of ticks(yMin, yMax, 6)) {
     parts.push(`<line x1="${left}" x2="${left + plotW}" y1="${esc(py(value))}" y2="${esc(py(value))}" stroke="#d0d0d0" stroke-width="1"/>`,
-      `<text x="${left - 6}" y="${esc(py(value) + 4)}" text-anchor="end" font-size="11" fill="#000">${text(value, 2)}</text>`);
+      `<text x="${left - 6}" y="${esc(py(value) + 4)}" text-anchor="end" font-size="11" font-variant-numeric="tabular-nums" fill="#000">${text(value, 2)}</text>`);
   }
   for (const value of ticks(xMin, xMax, 8)) {
     parts.push(`<line x1="${esc(px(value))}" x2="${esc(px(value))}" y1="${top + plotH}" y2="${top + plotH + 4}" stroke="#000" stroke-width="1"/>`,
-      `<text x="${esc(px(value))}" y="${top + plotH + 16}" text-anchor="middle" font-size="11" fill="#000">${text(value, 0)}</text>`);
+      `<text x="${esc(px(value))}" y="${top + plotH + 16}" text-anchor="middle" font-size="11" font-variant-numeric="tabular-nums" fill="#000">${text(value, 0)}</text>`);
   }
   parts.push(`<rect x="${left}" y="${top}" width="${plotW}" height="${plotH}" fill="none" stroke="#000" stroke-width="1"/>`,
     `<text x="${left + plotW / 2}" y="${height - 6}" text-anchor="middle" font-size="12" fill="#000">Частота, МГц</text>`,
