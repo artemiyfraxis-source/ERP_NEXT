@@ -33,12 +33,32 @@ try:
 except OSError:
     tail = []
 body = {"ok": False, "kind": kind, "at": datetime.datetime.now().strftime("%d.%m.%Y %H:%M"),
-        "reason": reason, "retry": retry or None, "log": tail}
+        "reason": reason, "retry": retry or None, "log": tail,
+        # The button workflow (update-server.yml) fails fast on a status newer than its request: UTC ISO 8601.
+        "finished_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
 open(path + ".tmp", "w", encoding="utf-8").write(json.dumps(body, ensure_ascii=False))
 PY
   mv "$status.tmp" "$status"; chmod 644 "$status"
 }
 clear_status() { [ "$(python3 -c "import json;print(json.load(open('$status')).get('kind',''))" 2>/dev/null)" = "${1:-}" ] && rm -f "$status"; }
+
+write_uptodate() {  # revision: update-result.json in update.sh's «finished» format, so the workflow sees a fresh result
+  python3 - "$status_dir/update-result.json" "$1" <<'PY'
+import json, sys, datetime
+path, rev = sys.argv[1:3]
+try:
+    last = json.load(open(path, encoding="utf-8"))
+except (OSError, ValueError):
+    last = {}
+now = datetime.datetime.now()
+body = {"ok": True, "step": "finished", "message": "уже установлена %s; новых миграций нет" % rev, "revision": rev,
+        "migration": last.get("migration", ""), "db_revision": last.get("db_revision", ""), "approve": "",
+        "at": now.strftime("%d.%m.%Y %H:%M"),
+        "finished_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+open(path + ".tmp", "w", encoding="utf-8").write(json.dumps(body, ensure_ascii=False) + "\n")
+PY
+  chmod 644 "$status_dir/update-result.json.tmp" && mv "$status_dir/update-result.json.tmp" "$status_dir/update-result.json"
+}
 
 # 1. Fetch.
 fetch_log=$status_dir/fetch.log
@@ -63,6 +83,9 @@ current=$(cat "$ERP_HOME/app/REVISION" 2>/dev/null || echo none)
 # 2. Up to date (REVISION may be a short sha written by push.ps1).
 if [ -n "$current" ] && [ "${full#"$current"}" != "$full" ]; then
   [ -f "$status" ] && clear_status update
+  # A button/`erp-update now` request must get an answer, or the workflow waits for its whole timeout (20.11.2026,
+  # runs 44665483896 and 44723206031: main had already been installed). A scheduled run (no request) stays silent.
+  [ -f "$ERP_HOME/update-now" ] && write_uptodate "$current"
   rm -f "$ERP_HOME/update-now"
   echo "уже последняя версия: $current"; exit 0
 fi
