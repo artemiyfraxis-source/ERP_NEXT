@@ -33,7 +33,9 @@ try:
 except OSError:
     tail = []
 body = {"ok": False, "kind": kind, "at": datetime.datetime.now().strftime("%d.%m.%Y %H:%M"),
-        "reason": reason, "retry": retry or None, "log": tail}
+        "reason": reason, "retry": retry or None, "log": tail,
+        # The button workflow (update-server.yml) fails fast on a status newer than its request: UTC ISO 8601.
+        "finished_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
 open(path + ".tmp", "w", encoding="utf-8").write(json.dumps(body, ensure_ascii=False))
 PY
   mv "$status.tmp" "$status"; chmod 644 "$status"

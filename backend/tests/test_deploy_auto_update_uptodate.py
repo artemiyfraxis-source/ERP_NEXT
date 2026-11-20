@@ -90,3 +90,31 @@ def test_scheduled_run_with_current_version_stays_silent(tmp_path: Path) -> None
     home, proc = _setup(tmp_path, request=False)
     assert proc.returncode == 0, proc.stderr
     assert not (home / "status" / "update-result.json").exists()
+
+
+def test_failed_fetch_status_carries_fresh_finished_at(tmp_path: Path) -> None:
+    """The workflow's wait step fails fast on update-status.json ok=false with finished_at after its request."""
+    before = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+    home = tmp_path / "erp"
+    (home / "config").mkdir(parents=True)
+    (home / "config" / "github-deploy-key").write_text("k", encoding="utf-8")
+    (home / "update-now").write_text("", encoding="utf-8")
+    shims = tmp_path / "shims"
+    shims.mkdir()
+    (shims / "flock").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8", newline="\n")
+    (shims / "python3").write_text(f'#!/bin/sh\nexec "{Path(sys.executable).as_posix()}" "$@"\n', encoding="utf-8",
+                                   newline="\n")
+    env = {**os.environ, "ERP_HOME": home.as_posix(), "ERP_GIT_REPO": (tmp_path / "missing").as_posix(),
+           "PATH": shims.as_posix() + os.pathsep + os.environ["PATH"]}
+    proc = subprocess.run([BASH, str(SCRIPT)], env=env, capture_output=True, text=True, encoding="utf-8", timeout=120)
+    assert proc.returncode == 1
+    status = json.loads((home / "status" / "update-status.json").read_text(encoding="utf-8"))
+    assert status["ok"] is False and status["kind"] == "fetch" and status["reason"]
+    finished = datetime.datetime.strptime(status["finished_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=datetime.timezone.utc)
+    assert finished >= before
+
+
+def test_workflow_wait_step_reads_update_status() -> None:
+    text = (SCRIPT.parents[1] / ".github" / "workflows" / "update-server.yml").read_text(encoding="utf-8")
+    assert "/update-status.json" in text and "select(.ok == false)" in text and "finished_at" in text

@@ -51,6 +51,14 @@ jobs:
           deadline=$((start + 45 * 60))
           while [ "$(date -u +%s)" -lt "$deadline" ]; do
             sleep 30
+            # The server could not even start (e.g. GitHub fetch failed): auto-update.sh writes update-status.json
+            # ok=false with a fresh finished_at; fail with its reason instead of waiting out the timeout.
+            sbody=$(curl -fsS --max-time 20 "$SERVER_URL/update-status.json" 2>/dev/null) || sbody=""
+            sfin=$(printf '%s' "$sbody" | jq -r 'select(.ok == false) | .finished_at // empty' 2>/dev/null) || sfin=""
+            if [ -n "$sfin" ] && sfin_epoch=$(date -u -d "$sfin" +%s 2>/dev/null) && [ "$sfin_epoch" -gt "$start" ]; then
+              echo "::error::Сервер не смог обновиться (${sbody:+$(printf '%s' "$sbody" | jq -r '.kind // "?"')}): $(printf '%s' "$sbody" | jq -r '.reason // ""')"
+              exit 1
+            fi
             body=$(curl -fsS --max-time 20 "$SERVER_URL/update-result.json" 2>/dev/null) || continue
             fin=$(printf '%s' "$body" | jq -r '.finished_at // empty' 2>/dev/null) || continue
             [ -n "$fin" ] || continue
