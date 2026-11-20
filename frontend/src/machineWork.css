@@ -13,7 +13,7 @@
 .mw-status.tone-bar-neutral { border-left-color: var(--border); }
 .mw-status-act { margin-left: auto; }
 .mw-table { font-size: 13px; }
-.mw-table th, .mw-table td { padding: 4px 8px; vertical-align: top; }
+.mw-table th, .mw-table td { padding: 4px 8px; vertical-align: middle; }
 .mw-table thead th { white-space: nowrap; font-size: 12px; font-weight: 500; color: var(--muted-foreground); }
 .mw-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 .mw-table tbody tr { cursor: pointer; }

@@ -41,7 +41,8 @@ export function MachineWorkCard({ row, canWrite, close, openSetup }: {
   const [list, setList] = useState<ManualJobsList | null>(null);
   const [error, setError] = useState("");
   const [cutRows, setCutRows] = useState(0);
-  const [tab, setTab] = useState<Tab>("queue");
+  // Cutters and strippers work from the cutting queue: open it first.
+  const [tab, setTab] = useState<Tab>(() => CUT_FAMILIES.has(row.family) ? "cut" : "queue");
   const [picked, setPicked] = useState("");
   const [options, setOptions] = useState<ManualJobOptions | null>(null);
   const [busy, setBusy] = useState(false);
@@ -128,7 +129,7 @@ export function MachineWorkCard({ row, canWrite, close, openSetup }: {
   const tabs: [Tab, string][] = [["queue", `Очередь станка (${rows.length})`], ...(showCut ? [["cut", `Очередь резки (${cutRows})`] as [Tab, string]] : []),
     ["free", "Вне задания"]];
 
-  return <PageWindow label={titleOf(row)} close={close} width={1200}>
+  return <PageWindow label={titleOf(row)} close={close} width={CUT_FAMILIES.has(row.family) ? 1720 : 1200}>
     <section className="panel mw-card">
       <header className="mw-head">
         <h2>{titleOf(row)}</h2>
