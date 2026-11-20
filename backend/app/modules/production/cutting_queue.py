@@ -12,14 +12,17 @@ an audit event whose id is derived from the key (primary key = the constraint ag
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from uuid import UUID, uuid5
 
 from sqlalchemy import select
 
+from app.modules.references.equipment import physical_equipment
 from app.shared.events import AuditEvent
 from app.shared.persistence import AuditEventRow
 from .application import AssignProductionCommand, ConcurrentProductionUpdate, assign_task, lock_reflow_projects
@@ -27,6 +30,7 @@ from .cutting import CABLE_CUTS, CUT, cutting_project_label, digest, recipe_kind
 from .cutting_application import check_access
 from .cutting_infrastructure import CuttingGroupRow, CuttingMemberRow, CuttingWorkRow
 from .domain import ProductionStatus, ProductionValidationError
+from .equipment_catalog import EMPTY, EquipmentCatalog
 from .execution import ManualOutputCommand, enter_manual_output, operation_quantity
 from .infrastructure import ProductionWorkSessionRow
 from .traceability import WorkStatus
@@ -97,19 +101,42 @@ def _cut_ops(document: Mapping | None, operation) -> list[tuple[Mapping, Mapping
     return found
 
 
-def _machine(op: Mapping, warnings: list[str]) -> tuple[str | None, str]:
+_POOL_SUFFIX = re.compile(r"\.[A-ZА-Я]$")
+
+
+def _pool_machine(tool: Mapping, catalog: EquipmentCatalog) -> tuple[str, str] | None:
+    """(key, label) of a tooling row that names «any unit of a model» — a calculation unit «ОБ.100.X» / «(R)» or only a
+    model id; None for a single unit (its inventory number stays the key) or a model the catalog cannot resolve."""
+    inventory = _text(tool.get("inventory_number")).upper()
+    if not (inventory or tool.get("equipment_model_id")) or (inventory and not _POOL_SUFFIX.search(inventory)):
+        return None
+    machine = catalog.machine(tool)
+    if machine is None or not machine.model_id:
+        return None
+    units = catalog.get(machine.key, 0)
+    return machine.key, f"{machine.label} · любой свободный" + (f" ({units})" if units else "")
+
+
+def _machine(op: Mapping, warnings: list[str], catalog: EquipmentCatalog = EMPTY) -> tuple[str | None, str]:
     machines: dict[str, str] = {}
+    pooled: set[str] = set()
     for tool in _mapping(op.get("card")).get("tooling") or []:
         tool = _mapping(tool)
-        identity = _text(tool.get("inventory_number") or tool.get("equipment_model_id"))
-        if tool.get("section") == "Оборудование" and identity:
-            machines.setdefault(identity, _text(tool.get("name")))
+        if tool.get("section") != "Оборудование":
+            continue
+        pool = _pool_machine(tool, catalog)
+        identity = pool[0] if pool else _text(tool.get("inventory_number") or tool.get("equipment_model_id"))
+        if identity:
+            machines.setdefault(identity, pool[1] if pool else _text(tool.get("name")))
+            if pool:
+                pooled.add(identity)
     if not machines:
         warnings.append("нет в ЭТК: станок")
         return None, NO_MACHINE_NAME
     identity = DEFAULT_MACHINE if DEFAULT_MACHINE in machines else next(iter(machines))
     if len(machines) > 1:
-        warnings.append("в ЭТК ещё станки: " + ", ".join(other for other in machines if other != identity))
+        warnings.append("в ЭТК ещё станки: " + ", ".join(
+            machines[other] if other in pooled else other for other in machines if other != identity))
     return identity, machines[identity]
 
 
@@ -157,7 +184,8 @@ def _wire_side(strip: Mapping, side: str, warnings: list[str]) -> dict | None:
     return {"value": _shown(value), "mode": mode, "program": "", "diameters": ""}
 
 
-def cut_values(document: Mapping | None, operation, *, known_cut: bool = False) -> dict | None:
+def cut_values(document: Mapping | None, operation, *, known_cut: bool = False,
+               catalog: EquipmentCatalog = EMPTY) -> dict | None:
     """What the operator sets on the machine for this PF; None — no cable cut is known for it (not a cutting row).
     `known_cut` — a member of a cut-kind group: it stays a row even when its frozen ETK lacks the cut."""
     if document is None and not known_cut:
@@ -178,7 +206,7 @@ def cut_values(document: Mapping | None, operation, *, known_cut: bool = False) 
     fields = _mapping(op.get("fields"))
     config = _mapping(_mapping(document).get("build_config"))
     coax = _mapping(config.get("coax"))
-    machine_id, machine_name = _machine(op, warnings)
+    machine_id, machine_name = _machine(op, warnings, catalog)
     wire, wire_name, length = "", "", None
     sides: dict[str, dict | None] = {"A": None, "B": None}
     if kind == "coaxCut":
@@ -253,17 +281,44 @@ class _People:
         return operator.name if operator else ""
 
 
-def _site_allowed(task, operation, people, actor) -> bool:
-    viewer = people.get(actor.id)
-    site = viewer.site if viewer else ""
-    if not site:
-        return True
+def _sites(task, operation, people) -> set[str]:
+    """Sites the PF belongs to: the one it is handed to and those of its assignees."""
     sites = {task.handed_to} - {"", None}
     for identifier in operation.operator_ids:
         operator = people.get(identifier)
         if operator and operator.site:
             sites.add(operator.site)
-    return all(other == site for other in sites)
+    return sites
+
+
+def _site_allowed(task, operation, people, actor) -> bool:
+    viewer = people.get(actor.id)
+    site = viewer.site if viewer else ""
+    if not site:
+        return True
+    return all(other == site for other in _sites(task, operation, people))
+
+
+@dataclass(frozen=True)
+class PoolUnit:
+    """A physical БД.ОБ unit asked for by the queue: `accept` — the row machine ids it serves (its own inventory number
+    for a single-unit row, its model's key for a pool row)."""
+    id: UUID
+    number: str
+    site: str
+    accept: frozenset[str]
+
+
+def resolve_unit(record, catalog: EquipmentCatalog) -> PoolUnit:
+    """The БД.ОБ record as a physical unit; a calculation row «.X» / «(R)» or a non-machine is refused."""
+    found = physical_equipment((record,)) if record is not None else ()
+    if not found:
+        raise ProductionValidationError("Это не физический станок БД.ОБ — выберите станок с инвентарным номером")
+    unit = found[0]
+    machine = catalog.machine({"inventory_number": unit.inventory_number, "name": unit.name,
+                               "equipment_model_id": str(record.equipment_model_id or "")})
+    keys = {unit.inventory_number} | ({machine.key} if machine is not None and machine.model_id else set())
+    return PoolUnit(record.id, unit.inventory_number, unit.site, frozenset(keys))
 
 
 def collect(uow, actor) -> list[dict]:
@@ -342,15 +397,18 @@ def document_keys(candidates: list[dict]) -> set[DocumentKey]:
 
 
 def queue_rows(candidates: list[dict], documents: Mapping[DocumentKey, Mapping | None],
-               machine_id: str | None = None) -> list[dict]:
-    """Rows from `collect` plus the standalone ETKs; pure — no unit of work."""
-    wanted = None if machine_id == NO_MACHINE else machine_id
+               machine_id: str | None = None, *, unit: PoolUnit | None = None,
+               catalog: EquipmentCatalog = EMPTY) -> list[dict]:
+    """Rows from `collect` plus the standalone ETKs; pure — no unit of work. `unit` — the rows of that physical unit
+    plus its model's pool rows (owner 20.11: «любой свободный»)."""
+    filtering = machine_id is not None or unit is not None
+    wanted = set(unit.accept) if unit else {None if machine_id == NO_MACHINE else machine_id}
     rows = []
     for item in candidates:
         task, operation, group = item["task"], item["operation"], item["group"]
         document = item["document"] if group is not None else documents.get(document_key(task))
-        values = cut_values(document, operation, known_cut=group is not None)
-        if values is None or (machine_id is not None and values["machine_id"] != wanted):
+        values = cut_values(document, operation, known_cut=group is not None, catalog=catalog)
+        if values is None or (filtering and values["machine_id"] not in wanted):
             continue
         sides = values["sides"]
         project = row_project(task, document)
@@ -409,10 +467,12 @@ def receipt_id(key: str) -> UUID:
 
 
 def mark_done(task_id: UUID, operation_id: UUID, quantity: int, key: str, actor, worker, now: datetime, uow, *,
-              document: Mapping | None = None) -> dict:
+              document: Mapping | None = None, unit: PoolUnit | None = None,
+              catalog: EquipmentCatalog = EMPTY) -> dict:
     """«Готово» on a queue row: the row's pieces as the PF's manual output, in one transaction with the receipt.
-    `document` — the task's pinned issued ETK (standalone PFs: proves the PF is a cable cut; the notice's project)."""
-    fingerprint = digest([str(task_id), str(operation_id), str(quantity), str(worker.id)])
+    `document` — the task's pinned issued ETK (standalone PFs: proves the PF is a cable cut; the notice's project).
+    `unit` — the physical machine that made it: must serve the row's machine/model and its site; goes into the receipt."""
+    fingerprint = digest([str(task_id), str(operation_id), str(quantity), str(worker.id)] + ([str(unit.id)] if unit else []))
     with uow:
         if uow.production.get(task_id) is None:
             raise KeyError("Задание не найдено")
@@ -444,6 +504,13 @@ def mark_done(task_id: UUID, operation_id: UUID, quantity: int, key: str, actor,
                 raise ProductionValidationError(NOT_A_CUT)
             if not _site_allowed(task, operation, _People(uow), actor):
                 raise PermissionError("Задание другой площадки")
+        if unit is not None:
+            values = cut_values(document, operation, known_cut=member is not None, catalog=catalog)
+            if values is None or values["machine_id"] not in unit.accept:
+                raise ProductionValidationError(
+                    f"Станок {unit.number} другой модели, чем в ЭТК этой строки ({(values or {}).get('machine_name') or NO_MACHINE_NAME})")
+            if unit.site and any(other != unit.site for other in _sites(task, operation, _People(uow))):
+                raise ProductionValidationError(f"Станок {unit.number} стоит на площадке {unit.site}, а задание — другой площадки")
         if member is None and uow.session.scalar(select(ProductionWorkSessionRow.id).where(ProductionWorkSessionRow.operation_id == operation_id,
                 ProductionWorkSessionRow.status.in_((WorkStatus.ACTIVE.value, WorkStatus.PAUSED.value))).limit(1)) is not None:
             raise ProductionValidationError(WORK_OPEN)
@@ -476,7 +543,9 @@ def mark_done(task_id: UUID, operation_id: UUID, quantity: int, key: str, actor,
                                  occurred_at=now, details={"key": key, "fingerprint": fingerprint,
                                                            "operator_id": str(worker.id), "task_id": str(task_id),
                                                            "operation_id": str(operation_id), "quantity": quantity,
-                                                           "result": result}))
+                                                           "result": result,
+                                                           **({"equipment_id": str(unit.id), "inventory_number": unit.number}
+                                                              if unit else {})}))
         uow.session.flush()
         uow.commit()
         return result

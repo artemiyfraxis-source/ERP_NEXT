@@ -272,3 +272,86 @@ def test_done_is_refused_while_the_pf_has_an_open_work_session(production_api):
     assert refused.status_code == 422 and "идёт работа на карточке" in refused.json()["detail"]
     with app.state.production_uow_factory() as uow:
         assert uow.session.scalars(select(ProductionOutputRow)).all() == []
+
+
+POOL = "ОБ.100.X"
+
+
+def seed_units():
+    """БД.ОБ: three BZW-D2.0S (ЦАР, ЦАР, ЖУК), another model ОБ.101.1, and the pool row «ОБ.100.X» (R)."""
+    from app.modules.references.domain import TechOperationRecord, TechOperationTab
+    from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
+
+    sessions = app.state.techcards_uow_factory().session_factory
+    app.state.references_uow_factory = lambda: SqlAlchemyReferencesUnitOfWork(sessions)
+    ids = {}
+    with app.state.references_uow_factory() as references:
+        for number, name, article, site in (("ОБ.100.1", "Автомат", "BZW-D2.0S", "ЦАР"), ("ОБ.100.2", "Автомат", "BZW-D2.0S", "ЦАР"),
+                                            ("ОБ.100.3", "Автомат", "BZW-D2.0S", "ЖУК"), ("ОБ.101.1", "Другой", "XYZ-1", "ЦАР"),
+                                            (POOL, "Автомат", "BZW-D2.0S(R)", "")):
+            record = TechOperationRecord.create(tab=TechOperationTab.EQUIPMENT, display_text=number, search_text=number,
+                source_sheet="БД.ОБ", sort_key=number, fields={"Тип": "Оборудование", "Инв. номер": number, "Наименование": name,
+                                                              "Артикул": article, "Расположение": site})
+            references.tech_operations.save(record)
+            ids[number] = record.id
+        references.commit()
+    return ids
+
+
+def pooled(doc, inventory=POOL):
+    doc["operations"][0]["card"]["tooling"] = [{"section": "Оборудование", "inventory_number": inventory,
+                                                "name": "BZW-D2.0S(R) | автомат"}]
+    return doc
+
+
+def test_pool_row_is_keyed_by_the_model_and_labelled_any_free(production_api):
+    client, _ = production_api
+    ids = seed_units()
+    batch(client, [issue("708К.", "КБ1", standalone(pooled(document()))),
+                   issue("709К.", "КБ1", standalone(on_machine(document(), "ОБ.100.2")))])
+    machines = client.get(f"{URL}/machines").json()["machines"]
+    pool = next(item for item in machines if item["machine_name"].endswith("любой свободный (3)"))
+    assert pool["machine_name"] == "ОБ.100 Автомат · любой свободный (3)" and pool["rows"] == 1
+    assert pool["machine_id"] != POOL
+    assert queue(client, pool["machine_id"])["rows"][0]["project"] == "708К."
+    # A single-unit row keeps its inventory number as the key.
+    assert [row["project"] for row in queue(client, "ОБ.100.2")["rows"]] == ["709К."]
+    # The unit filter: its own rows plus its model's pool rows, nothing of other units.
+    response = client.get(URL, params={"equipment_id": str(ids["ОБ.100.2"])})
+    assert response.status_code == 200, response.text
+    assert sorted(row["project"] for row in response.json()["rows"]) == ["708К.", "709К."]
+    other = client.get(URL, params={"equipment_id": str(ids["ОБ.100.1"])}).json()["rows"]
+    assert [row["project"] for row in other] == ["708К."]
+    assert client.get(URL, params={"equipment_id": str(ids[POOL])}).status_code == 422
+    assert client.get(URL).status_code == 422
+
+
+def test_done_with_a_unit_checks_model_and_site_and_stamps_the_receipt(production_api):
+    client, operator = production_api
+    ids = seed_units()
+    batch(client, [issue("708К.", "КБ1", standalone(pooled(document())))])
+    row = next(item for item in client.get(URL, params={"equipment_id": str(ids["ОБ.100.1"])}).json()["rows"])
+
+    def post(unit, key, quantity=4):
+        return client.post(f"{URL}/done", params={"on_behalf_of": str(operator)}, headers={"Idempotency-Key": key},
+                           json={"task_id": row["task_id"], "operation_id": row["operation_id"], "quantity": quantity,
+                                 "equipment_id": str(unit)})
+
+    wrong_model = post(ids["ОБ.101.1"], "k-model")
+    assert wrong_model.status_code == 422 and "другой модели" in wrong_model.json()["detail"]
+    assert post(ids[POOL], "k-calc").status_code == 422
+    with app.state.production_uow_factory() as uow:
+        assert uow.session.scalars(select(ProductionOutputRow)).all() == []
+    first = post(ids["ОБ.100.1"], "k-ok")
+    assert first.status_code == 200, first.text
+    # The PF now carries its ЦАР operator, so the site is known: a ЖУК unit is refused.
+    wrong_site = post(ids["ОБ.100.3"], "k-site", 2)
+    assert wrong_site.status_code == 422 and "площадки" in wrong_site.json()["detail"]
+    assert post(ids["ОБ.100.1"], "k-ok").json() == first.json()  # idempotent replay
+    from app.shared.persistence import AuditEventRow
+
+    from app.modules.production.cutting_queue import receipt_id
+    with app.state.production_uow_factory() as uow:
+        details = uow.session.get(AuditEventRow, receipt_id("k-ok")).details
+        assert (details["equipment_id"], details["inventory_number"]) == (str(ids["ОБ.100.1"]), "ОБ.100.1")
+        assert len(uow.session.scalars(select(ProductionOutputRow)).all()) == 1

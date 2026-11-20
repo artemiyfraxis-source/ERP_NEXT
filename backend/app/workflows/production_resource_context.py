@@ -105,6 +105,12 @@ class SqlAlchemyProductionResourceContext:
         if not models:
             raise ResourceConflict(f"Оборудования {family} из ЭТК нет среди единиц БД.ОБ")
         if len(models) > 1:
+            # Same tie-break as EquipmentCatalog.machine: the model whose article is named in the row («EW-50A(R)»).
+            name = " ".join(str(tool.get("name") or "").split()).casefold()
+            named = {unit.model_id for unit in catalog if unit.model_id in models and unit.model and unit.model.casefold() in name}
+            if len(named) == 1:
+                model = next(iter(named))
+                return None if models[model] == SUPPORTING else model
             raise ResourceConflict(f"ЭТК собрана без модели оборудования, а {family} — несколько моделей БД.ОБ: {REBUILD}")
         model, role = next(iter(models.items()))
         return None if role == SUPPORTING else model
