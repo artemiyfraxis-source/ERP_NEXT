@@ -27,7 +27,6 @@ from app.shared.persistence import AuditEventRow
 from .project_cards import ProjectTechcard
 
 KINDS = frozenset({"none", "tube", "tape", "laser"})
-COMPLEX_TAB = "complex"
 # The events that save a recipe into `inputs` (application.auto_build_project_techcard / rebuild_project_techcard).
 BUILD_EVENTS = ("techcards.project_auto_built", "techcards.project_rebuilt")
 
@@ -47,8 +46,8 @@ def _dia_key(value: object) -> str | None:
 
 
 def _wire_marks(inputs: object) -> Mapping[str, Any] | None:
-    """The recipe's wire-mark settings: its `wireMarks`, {} — a «Сложная сборка» recipe without them (marks off),
-    None — a recipe that knows no wire marks."""
+    """The recipe's wire-mark settings: its saved `wireMarks` (an explicit «нет» is saved too since 20.11), None — a recipe
+    without them: old, mostly shipped cards don't count as a choice (owner 20.11: «старые отгруженные нет смысла трогать»)."""
     if not isinstance(inputs, Mapping):
         return None
     for holder in (inputs, inputs.get("config")):
@@ -57,8 +56,6 @@ def _wire_marks(inputs: object) -> Mapping[str, Any] | None:
         marks = holder.get("wireMarks")
         if isinstance(marks, Mapping):
             return marks
-        if holder.get("tab") == COMPLEX_TAB:
-            return {}
     return None
 
 

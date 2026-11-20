@@ -58,10 +58,13 @@ def test_kind_is_the_last_built_recipe_and_sizes_the_last_that_had_them(drafts):
     assert _get("720К.") == EMPTY
 
 
-def test_a_complex_recipe_without_marks_is_none_and_wins_when_built_last(drafts):
+def test_a_recipe_without_saved_marks_is_no_choice(drafts):
+    """Old (mostly shipped) cards have no `wireMarks`: they don't count (owner 20.11); an explicit «нет» does."""
     sessions, _clock = drafts
     _card(sessions, "708К.5", "КБ1", {"tab": "complex", "wireMarks": TAPE}, 1, built=1)
     _card(sessions, "708К.5", "КБ2", {"tab": "complex", "ops": []}, 2, built=2)
+    assert _get("708К.5") == {"kind": "tape", "tapeMm": 9.0, "tubeByDia": {}}
+    _card(sessions, "708К.5", "КБ3", {"tab": "complex", "wireMarks": {"enabled": False, "kind": "none"}}, 3, built=3)
     assert _get("708К.5") == {"kind": "none", "tapeMm": 9.0, "tubeByDia": {}}
 
 
