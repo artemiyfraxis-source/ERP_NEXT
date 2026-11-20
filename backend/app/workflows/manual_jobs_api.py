@@ -11,7 +11,9 @@ Started, finished and cancelled by «Производство» or «Задан�
   the references, the эталоны of each machine, may this person start one — what the window offers; own values may
   be typed instead.
 - `POST /api/production/manual-jobs` `{equipment_id, purpose, wire, contact, length_mm, quantity_planned, reference_id}`
-  → the new running job (409 while another runs on that machine).
+  → the new running job (409 while another runs on that machine). Optional `source: {task_id, operation_id,
+  etk_position}` (the generic machine queue): unknown task/PF/step → 404, task not running or PF done → 422; kept in
+  the job's `params` and returned as `source: {task_id, operation_id, etk_position, label} | null`.
 - `POST /api/production/manual-jobs/{id}/finish` `{version, good, defect, defect_reason, material, material_note}`
   → done; `material` is `not_issued` (with a reason) or `pending` («Ждёт решения склада», decided afterwards in the
   material window — «Списать с партии» is never part of the finish).
@@ -44,6 +46,7 @@ from sqlalchemy.exc import IntegrityError
 from app.modules.equipment_setup.recipes import wire_key
 from app.modules.equipment_setup.setup_model_infrastructure import SetupReferenceRow
 from app.modules.production import machine_runs as runs
+from app.modules.production import machine_queue
 from app.modules.production import manual_jobs as jobs
 from app.modules.production.api import production_uow_factory
 from app.modules.production.domain import ProductionValidationError
@@ -97,6 +100,12 @@ class Payload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SourcePayload(Payload):
+    task_id: UUID
+    operation_id: UUID
+    etk_position: int = Field(ge=1, le=10_000)
+
+
 class StartPayload(Payload):
     equipment_id: UUID
     purpose: str = Field(min_length=1, max_length=500)
@@ -105,6 +114,7 @@ class StartPayload(Payload):
     length_mm: str = Field(default="", max_length=20)
     quantity_planned: int | None = Field(default=None, ge=1, le=jobs.LIMIT)
     reference_id: UUID | None = None
+    source: SourcePayload | None = None  # the task step the job works on (generic machine queue)
 
 
 class FinishPayload(Payload):
@@ -182,7 +192,7 @@ def view(row: jobs.ManualJobRow, machine: EquipmentMachineRow | None) -> dict:
         "operator": row.operator_name, "finished_by": row.finished_by_name,
         "started_at": moment(row.started_at), "finished_at": moment(row.finished_at), "version": row.version,
         "progress_quantity": row.progress_quantity, "progress_at": moment(row.progress_at),
-        "progress_over_plan": jobs.over_plan(row),
+        "progress_over_plan": jobs.over_plan(row), "source": machine_queue.source_of(row.params),
     }
 
 
@@ -328,8 +338,15 @@ def start(payload: StartPayload, principal: Writer, factory: Factory, now: Now) 
             if reference is None or reference.unit_id != payload.equipment_id:
                 raise HTTPException(422, "Эталон не этого станка")
             wire, contact = wire or reference.wire, contact or reference.contact
+        params = None
+        if payload.source is not None:
+            try:
+                params = {machine_queue.SOURCE: machine_queue.check_source(
+                    uow, payload.source.task_id, payload.source.operation_id, payload.source.etk_position)}
+            except (KeyError, ProductionValidationError) as error:
+                raise _errors(error) from error
         new = jobs.NewJob(payload.equipment_id, payload.purpose, wire, wire_key(wire), contact, wire_key(contact),
-                          _length(payload.length_mm), payload.quantity_planned, payload.reference_id)
+                          _length(payload.length_mm), payload.quantity_planned, payload.reference_id, params)
         try:
             row = jobs.start(session, new, actor_id=principal.actor.id, actor_name=principal.actor.name, now=now)
         except (jobs.ManualJobInvalid, jobs.ManualJobConflict) as error:

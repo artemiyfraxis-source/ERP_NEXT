@@ -260,3 +260,14 @@ def test_machine_downtime_is_machine_time_in_the_shop_report(machines_api):
         groups = [(row["label"].startswith("Станок"), row["machine"], row["seconds"]) for row in result["rows"]]
         assert groups == [(True, True, 1800)]
         assert [row["id"] for row in result["entries"]] == [item["id"]]  # still listed in the period
+
+
+def test_a_free_job_has_no_source_and_an_unknown_source_is_refused(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    free = _start(admin, ob019).json()
+    assert free["source"] is None
+    source = {"task_id": str(uuid4()), "operation_id": str(uuid4()), "etk_position": 1}
+    refused = _start(admin, ob019, source=source)
+    assert refused.status_code == 404 and "Задание не найдено" in refused.json()["detail"]
+    assert _start(admin, ob019, source={**source, "etk_position": 0}).status_code == 422  # a position starts at 1
+    assert _post(admin, f"{BASE}/{free['id']}/cancel", {"version": 1, "reason": "проба"}).json()["source"] is None
