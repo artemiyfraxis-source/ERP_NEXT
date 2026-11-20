@@ -347,6 +347,9 @@ def _edits(record, cells: list[CellPayload], suggestion: dict) -> list[FieldEdit
         edits.append(FieldEdit(item.field, item.old, value))
         fields[item.field] = value
     sent = {edit.field for edit in edits}
+    if sent != set(suggested):
+        # A joint fit «a + L / v» is valid only whole: half of it (roll without tool, or the reverse) is not the suggestion.
+        raise HTTPException(status_code=409, detail=CHANGED)
     recomputed = speed.with_cycle_times(fields)
     edits += [FieldEdit(key, str(record.fields.get(key) or ""), value) for key, value in recomputed.items()
               if key not in sent and value != record.fields.get(key, "")]

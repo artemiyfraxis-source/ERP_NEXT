@@ -196,9 +196,13 @@ def test_accept_writes_the_cells_with_evidence_and_a_stale_old_is_409(speed_api)
     [{"field": ROLL, "old": "3", "new": "2,6"}],                      # not the suggested value
     [{"field": ROLL, "old": "3", "new": "0"}],
     [{"field": TOOL, "old": "0,5", "new": "0,3"}],
+    "half",                                                           # one cell of a joint roll + tool fit
 ])
 def test_accept_of_anything_but_the_suggestion_is_409_and_writes_nothing(speed_api, cells):
     sessions, admin, ob019, _, linear = speed_api
+    if cells == "half":
+        assert len(SUGGESTED) == 2
+        cells = _sent(SUGGESTED[:1])
     answer = _accept(admin, linear, cells, ob019)
     assert answer.status_code == 409 and answer.json()["detail"] == "Предложение изменилось — обновите отчёт"
     assert (_fields(linear)[ROLL], _fields(linear)[TOOL]) == ("3", "0,5")
@@ -210,7 +214,8 @@ def test_accept_refuses_a_row_without_a_suggestion_a_stale_old_or_another_field(
     sessions, admin, ob019, _, linear = speed_api
     static = _record(STATIC)  # no runs of CUT_TEST: no suggestion
     assert _accept(admin, static, [{"field": TOOL, "old": "0,5", "new": "1,2"}], ob019).status_code == 409
-    stale = _accept(admin, linear, [{"field": ROLL, "old": "2,9", "new": "2,5"}], ob019)
+    stale = _accept(admin, linear, [{"field": ROLL, "old": "2,9", "new": "2,5"}, {"field": TOOL, "old": "0,5", "new": "0,29"}],
+                    ob019)
     assert stale.status_code == 409 and "уже поменяли" in stale.json()["detail"]
     other = _accept(admin, linear, [{"field": "Время подготовки, сек", "old": "600", "new": "500"}], ob019)
     assert other.status_code == 422
