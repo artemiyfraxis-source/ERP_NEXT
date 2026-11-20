@@ -63,7 +63,7 @@ it("lists the jobs of the period and finishes a running one with the material de
   expect(finish.disabled).toBe(true);
   const issue = within(dialog).getByRole("radio", { name: /Списать с партии/ }) as HTMLInputElement;
   expect(issue.disabled).toBe(true);
-  expect(within(dialog).getByText("появится со складом")).toBeTruthy();
+  expect(within(dialog).getByText("списывает склад")).toBeTruthy();
   fireEvent.change(within(dialog).getByLabelText("Годные, шт"), { target: { value: "18" } });
   fireEvent.change(within(dialog).getByLabelText("Брак, шт"), { target: { value: "2" } });
   fireEvent.click(within(dialog).getByRole("radio", { name: "Не списывать" }));
@@ -166,11 +166,13 @@ it("opens the job already running on the machine instead of a new one", async ()
   expect(calls.some((url) => url.includes("/manual-jobs?") && url.endsWith("equipment_id=u19"))).toBe(true);
 });
 
-it("shows «Ручная работа» to Производство or Задания", () => {
+it("shows «Ручная работа» to Производство, Задания or Склад", () => {
   const user = { id: "1", email: "u@example.test", name: "Сотрудник", department: "Цех" };
   const as = (permissions: Record<string, AccessMode>): Principal => ({ user, roles: ["operator"], access_level: "operator", permissions });
   const item = visibleNav(as({ myops: "view" })).find((entry) => entry.id === "manualjobs");
   expect(item?.label).toBe("Ручная работа");
   expect(visibleNav(as({ production: "edit" })).some((entry) => entry.id === "manualjobs")).toBe(true);
-  expect(visibleNav(as({ warehouse: "edit" })).some((entry) => entry.id === "manualjobs")).toBe(false);
+  // The warehouse finds there the jobs whose material waits for it (S3).
+  expect(visibleNav(as({ warehouse: "view" })).some((entry) => entry.id === "manualjobs")).toBe(true);
+  expect(visibleNav(as({ projects: "edit" })).some((entry) => entry.id === "manualjobs")).toBe(false);
 });
