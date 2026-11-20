@@ -13,6 +13,7 @@ import { hasMarkSerial } from "./markSerial";
 import { openPrintDocument } from "./print";
 import { useCanPrint } from "./rights";
 import { MarkingPrintWindow } from "./MarkingPrintWindow";
+import { MarkingOutsideWindow } from "./MarkingOutsideWindow";
 import "./cuttingGroups.css";
 
 const rowKey = (row: CuttingMember) => row.id;
@@ -32,7 +33,7 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
   const [group, setGroup] = useState(initialGroup);
   useEffect(() => setGroup(initialGroup), [initialGroup]);
   const rows = cuttingRows(group);
-  const [view, setView] = useState<"" | "submit" | "instruction" | "labels" | "downtime" | "remaining">("");
+  const [view, setView] = useState<"" | "submit" | "instruction" | "labels" | "downtime" | "remaining" | "outside">("");
   const look = cuttingLook(group);
   // «Печать этикеток»: printed / remaining per КБ from the print queue; reloaded after the print window closes.
   const [progress, setProgress] = useState<MarkingProgress | null>(null);
@@ -134,6 +135,8 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
         <button type="button" className="secondary" aria-haspopup="dialog" onClick={() => setView("instruction")}>Инструкция</button>
         {look === "labels" && !readOnly && <button type="button" className="primary" disabled={disabled || group.partial_view || !progress || remainingLabels <= 0}
           aria-haspopup="dialog" onClick={() => setView("remaining")}>Печатать оставшиеся</button>}
+        {look === "labels" && !readOnly && <button type="button" className="secondary" disabled={disabled || group.partial_view}
+          aria-haspopup="dialog" onClick={() => setView("outside")}>Отметить напечатанные вне ERP</button>}
         {(look === "mixed" || look === "labels") && <button type="button" className="secondary" aria-haspopup="dialog" onClick={() => setView("labels")}>Этикетки группы</button>}
       </div>
     </div>
@@ -153,6 +156,7 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
     {view === "labels" && <GroupLabels key={`${group.id}:${group.version}`} group={group} close={() => setView("")} />}
     {view === "remaining" && <MarkingPrintWindow source={{ group_id: group.id, version: group.version }} remaining title={`${group.project} · ${group.number}`}
       close={() => { setView(""); setProgressTick((tick) => tick + 1); }} />}
+    {view === "outside" && <MarkingOutsideWindow group={group} close={() => setView("")} onChange={() => setProgressTick((tick) => tick + 1)} />}
     {view === "instruction" && instruction && <PageWindow label="Инструкция группы резки" width={1400} close={() => setView("")}>
       <label className="cutting-instruction-picker">КБ<select value={instruction.id} onChange={(event) => setInstructionId(event.target.value)}>
         {rows.map((row) => <option key={row.id} value={row.id}>{row.item} · {row.name}</option>)}
