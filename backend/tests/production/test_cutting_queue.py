@@ -662,3 +662,49 @@ def test_without_the_reference_catalog_pool_rows_keep_the_raw_key_and_a_unit_get
     posted = client.post(f"{URL}/done", params={"on_behalf_of": str(operator)}, headers={"Idempotency-Key": "e-1"},
                          json={"task_id": row["task_id"], "operation_id": row["operation_id"], "quantity": 1, "equipment_id": unit})
     assert posted.status_code == 503
+
+
+LONG_TEXT = ("Компания Крокс. Разработка, производство и продажа антенн, кабельных сборок и радиочастотных компонентов "
+             "для систем связи")
+
+
+def test_long_supplier_description_is_never_the_wire_name(production_api):
+    client, _ = production_api
+    long_named = document(length=100)
+    long_named["build_config"]["coax"]["cableName"] = LONG_TEXT
+    no_article = document(length=200)
+    no_article["build_config"]["coax"].update(cableArt="", cableName=LONG_TEXT)
+    short = document(length=300)
+    short["build_config"]["coax"].update(cableArt="RTK 031", cableName="LMR-100")
+    batch(client, [issue("708К.", "КБ1", long_named), issue("708К.", "КБ2", no_article), issue("708К.", "КБ3", short)])
+    rows = {row["item"]: row for row in queue(client)["rows"]}
+    assert rows["КБ1"]["wire_name"] == "RTK 031"
+    assert rows["КБ3"]["wire_name"] == "LMR-100"
+    assert rows["КБ2"]["wire"] == "" and rows["КБ2"]["wire_name"].startswith("Компания Крокс") and len(rows["КБ2"]["wire_name"]) <= 41
+    for row in rows.values():
+        assert "антенн" not in row["wire_name"] and "антенн" not in row["setup_text"]
+        assert len(row["setup_text"].split(" · ")[0]) < 60
+
+
+def test_rows_are_grouped_by_the_full_wire_name_and_the_article_is_never_cut(production_api):
+    client, _ = production_api
+    first = "Компания Крокс. Разработка, производство и продажа антенн, версия А"
+    second = "Компания Крокс. Разработка, производство и продажа антенн, версия Б"
+    docs = []
+    for length, text in ((100, first), (200, second), (300, first)):
+        doc = document(length=length)
+        doc["build_config"]["coax"].update(cableArt="", cableName=text)
+        docs.append(doc)
+    long_art = document(length=400)
+    long_art["build_config"]["coax"].update(cableArt="RTK 031-ARTICLE-WITH-A-VERY-LONG-SUFFIX-123456", cableName=LONG_TEXT)
+    batch(client, [issue("708К.", f"КБ{n}", doc) for n, doc in enumerate(docs + [long_art], 1)])
+    rows = {row["item"]: row for row in queue(client)["rows"]}
+    # Same shortened text, different full names: two setups, not one.
+    assert rows["КБ1"]["wire_name"] == rows["КБ2"]["wire_name"] and rows["КБ1"]["wire_title"] != rows["КБ2"]["wire_title"]
+    ordered = [row for row in queue(client)["rows"] if row["item"] in ("КБ1", "КБ2", "КБ3")]
+    assert [row["setup_change"] for row in ordered] == [True, False, True]  # the two «версия А» rows share one setup
+    by_wire = [row["wire_title"] for row in ordered]
+    assert by_wire == sorted(by_wire) and by_wire.count(first) == 2
+    article = rows["КБ4"]
+    assert article["wire_name"] == article["wire"] == "RTK 031-ARTICLE-WITH-A-VERY-LONG-SUFFIX-123456"
+    assert article["setup_text"].startswith("Заправьте RTK 031-ARTICLE-WITH-A-VERY-LONG-SUFFIX-123456")

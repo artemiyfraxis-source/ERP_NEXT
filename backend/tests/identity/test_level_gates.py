@@ -41,6 +41,8 @@ DEPENDENCIES = {
     "marking_read": marking_labels.marking_read_principal,
     # «Станки» (0193, after the transfer): the master (Производство) and the fitter (Задания) read the list and the card.
     "machines_view": machines_api.machines_view_principal,
+    # Commands to a machine, «Стоп» included (20.11.2026): Производство or Задания; ОТК only reads «Оборудование».
+    "machines_command": machines_api.machines_command_principal,
     # ОБ.019 writes (0195): the fitter and the master write settings, transfers and corrections.
     "machines_edit": machine_writes_api.machines_edit_principal,
     # «Ручная работа» (S3, 20.11.2026): the journal and the material window read by Производство, Задания or Склад;

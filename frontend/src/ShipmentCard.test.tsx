@@ -108,3 +108,13 @@ it("does not mention the no-UPD permit when the UPD is present", () => {
   fireEvent.click(screen.getByRole("button", { name: "Отгрузить без данных…" }));
   expect(screen.queryByText(/разрешение запишется/)).toBeNull();
 });
+
+it("prints each document that has a number: DN without PL — only «Печать DN», PL without DN — no «Печать DN»", () => {
+  const dnOnly = render(<Card value={{ ...gappy, status: "Собрана", missing_data: [], dn_number: "DN663К.1-1", pl_number: "" }} full />);
+  expect(screen.getByRole("button", { name: "Печать DN" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Печать PL" })).toBeNull();
+  dnOnly.unmount();
+  render(<Card value={{ ...gappy, pl_number: "PL663К.1-1", dn_number: "" }} full />);
+  expect(screen.getByRole("button", { name: "Печать PL" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Печать DN" })).toBeNull();
+});

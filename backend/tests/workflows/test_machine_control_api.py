@@ -429,3 +429,23 @@ def test_a_still_open_from_before_the_panel_was_closed_and_opened_again_does_not
     assert _result(bridge, claimed["id"], outcome="failed", reason="still_open", **AGENT_14).status_code == 200
     _pult(bridge, clock, 102)  # the operator closed the panel (the machine was read again), then opened it again
     assert _close(admin, force=True).json()["detail"] == control.FORCE_FIRST
+
+
+@pytest.mark.parametrize("permissions, allowed", [
+    ({"quality": "view"}, False), ({"quality": "edit"}, False), ({"myops": "view"}, True), ({"production": "view"}, True)])
+def test_otk_reads_the_equipment_but_never_commands_a_machine_not_even_stop(ob019, permissions, allowed):
+    """«Оборудование» opens for ОТК since 20.11.2026 (the VNA workplace lives in the analyser card); a command, «Стоп»
+    included, stays the shop's own: Производство or Задания."""
+    from tests.identity.test_level_gates import _principal
+    from app.shared.http_auth import authenticated_principal
+    _, _, admin, _, _ = ob019
+    app.dependency_overrides[authenticated_principal] = lambda: _principal("operator", permissions)
+    try:
+        stop = admin.post(f"{CARD}/command", json={"command": "stop"}, headers=_csrf(admin))
+        control_view = admin.get(f"{CARD}/control").json()
+    finally:
+        app.dependency_overrides.pop(authenticated_principal, None)
+    assert (stop.status_code == 200) is allowed, stop.text
+    if not allowed:
+        assert stop.status_code == 403
+    assert (control_view["can_stop"], control_view["can_control"]) == (allowed, False)

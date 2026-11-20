@@ -123,7 +123,8 @@ export const readyForTrack = (shipment: DispatchShipment) =>
   shipment.ready_for_track ?? (shipment.missing_ship.length > 0 && shipment.missing_ship.every((gap) => gap === "трек-номер"));
 /** Трек нужен доставке ТК; самовывоз уезжает без него. */
 export { needsTrack } from "./carriers";
-/** Самого УПД нет: тип не выбран, «Без УПД» или бумажная без номера и файла. ЭДО без номера — УПД есть, ждём номер (06.11). */
+/** Самого УПД нет: тип не выбран, «Без УПД» или бумажная без номера и файла (запасной путь для старого ответа без
+ *  `no_upd_offered`; сервер с 20.11 предлагает «Без УПД…» и ЭДО без №). */
 export function updAbsent(shipment: Shipment) {
   if (!shipment.upd_type || withoutUpd(shipment)) return true;
   if (shipment.upd_type === "ЭДО") return false;
@@ -241,7 +242,7 @@ export function ShipmentCard({ shipment, rights, busy, mutate, openData }: {
       {canUnship && got && SHIPPABLE.includes(shipment.status) && !canShip && shipGaps.length > 0 && <button type="button" className="secondary" disabled={disabled} title="Груз уже уехал, данные внесём позже — только руководитель" onClick={() => setShippingBare(true)}>Отгрузить без данных…</button>}
       {canWarehouse && onlyUpdBlocks(shipment) && <button type="button" className="secondary" disabled={disabled} onClick={() => setApproving(true)}>Разрешить без УПД</button>}
       {canWarehouse && shipment.status === "Новая" && <button type="button" className="secondary" disabled={disabled} onClick={() => void action("pick", "Заявка набрана из доступного остатка")}>Набрать со склада</button>}
-      {shipment.pl_number && got && <>{canPrintDocs && <><button type="button" className="secondary" onClick={() => void print("pl")}>Печать PL</button><button type="button" className="secondary" disabled={dnGaps.length > 0} title={dnGaps.length ? `DN печатается, когда внесены данные. Не хватает: ${dnGaps.join(", ")}` : undefined} onClick={() => void print("dn")}>Печать DN</button></>}<button type="button" className="secondary" onClick={() => void printLabels()}>Печать этикеток</button></>}
+      {(shipment.pl_number || shipment.dn_number) && got && <>{canPrintDocs && <>{shipment.pl_number && <button type="button" className="secondary" onClick={() => void print("pl")}>Печать PL</button>}{shipment.dn_number && <button type="button" className="secondary" disabled={dnGaps.length > 0} title={dnGaps.length ? `DN печатается, когда внесены данные. Не хватает: ${dnGaps.join(", ")}` : undefined} onClick={() => void print("dn")}>Печать DN</button>}</>}{shipment.pl_number && <button type="button" className="secondary" onClick={() => void printLabels()}>Печать этикеток</button>}</>}
       {canEdit && got && (active || (shipment.pl_number && shipment.status === "Отгружена")) && !layout && <button type="button" className="secondary" disabled={disabled} onClick={() => setLayout(true)}>{shipment.pl_number ? "Перевыпустить" : "Сформировать отгрузочные"}</button>}
       {canEdit && open && <button type="button" className="secondary" disabled={disabled} onClick={openData}>Данные отправки</button>}
       {canEdit && open && !withoutUpd(shipment) && <label className="secondary file-button">Загрузить УПД<input type="file" accept=".pdf,image/*" aria-label={`Загрузить УПД ${shipment.number}`} hidden onChange={(event) => { uploadUpd(event.target.files?.[0]); event.target.value = ""; }} /></label>}
