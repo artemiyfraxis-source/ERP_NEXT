@@ -1170,6 +1170,30 @@ def set_equipment_shown(unit_id: UUID, shown: bool, actor: Actor, now: datetime,
     return shown
 
 
+# «Кто налаживает» of a БД.ОБ machine (owner 20.11.2026; migration 0213 holds the CHECK): value → Russian label.
+SETUP_BY_LABELS = {"operator": "Сам оператор", "technician": "Наладчик"}
+
+
+def equipment_technician_ids(uow: UnitOfWork) -> list[str]:
+    """Machines whose «Кто налаживает» is «Наладчик» (owner 20.11.2026, migration 0213); the rest — «Сам оператор»."""
+    with uow:
+        return uow.equipment.technician_ids()
+
+
+def set_equipment_setup_by(unit_id: UUID, setup_by: str, actor: Actor, now: datetime, uow: UnitOfWork) -> str:
+    """«Кто налаживает» of a БД.ОБ machine: «Сам оператор» or «Наладчик»; every change is journaled."""
+    if setup_by not in SETUP_BY_LABELS:
+        raise ReferenceValidationError(f"«Кто налаживает»: «Сам оператор» или «Наладчик», а не «{setup_by}»")
+    with uow:
+        inventory, changed = uow.equipment.set_setup_by(unit_id, setup_by)
+        if changed:
+            uow.audit.add(AuditEvent(
+                id=uuid4(), aggregate_id=unit_id, event_type="references.equipment_setup_by", actor=actor, occurred_at=now,
+                details={"inventory": inventory, "setup_by": SETUP_BY_LABELS[setup_by]}))
+            uow.commit()
+    return setup_by
+
+
 # --- «Кабели и провода»: the three lists, moving a БД.ПРОВ row between them, D1·D2·D3 of a coax cable ---
 
 def cable_overrides(entries: Sequence[ReferenceEntry]) -> dict[str, CableKind]:
