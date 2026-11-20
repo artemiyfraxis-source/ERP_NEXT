@@ -3,6 +3,7 @@
 // A4 альбомная, каждый лист в рамке с полем подшивки 20 мм. Типовые дефекты в комплект не входят — только ссылка на СТО.
 import { etkDrawHarness, etkFigure, etkParams, type EtkTopologyData } from "./etkDraw";
 import { etkLinkScheme, etkLinkSchemeMarkup } from "./etkLinkScheme";
+import { poolInventory, poolToolLabel } from "./equipmentPool";
 import { etkToleranceLines } from "./etkOperation";
 import { etkOperationTitle, operationKeyOf } from "./etkPrint";
 import { unitLabel } from "./format";
@@ -109,12 +110,12 @@ function operationsOf(model: TdPrintModel): Op[] {
     return {
       raw, key, number: operationNumber(index), name: cleanCodes(etkOperationTitle(raw)) || `Операция ${index + 1}`,
       steps: rows(card.steps), tooling, components: rows(raw.components),
-      equipment: tooling.filter((tool) => text(tool.section) === "Оборудование").map((tool) => cleanCodes(text(tool.name))).filter(Boolean),
+      equipment: tooling.filter((tool) => text(tool.section) === "Оборудование").map((tool) => cleanCodes(poolToolLabel(text(tool.name), text(tool.inventory_number)) ?? text(tool.name))).filter(Boolean),
       sto: model.sto_sections?.[key] ?? null,
       norms: model.sto_sections?.[key]?.norms ?? [],
       grade: tdOpGrade(model.card, key),
       workplace: [...new Set(tooling.filter((tool) => text(tool.section) === "Оборудование")
-        .map((tool) => text(tool.inventory_number).trim()).filter(Boolean))].join(", "),
+        .map((tool) => poolInventory(text(tool.inventory_number)) ?? text(tool.inventory_number).trim()).filter(Boolean))].join(", "),
     };
   });
 }
@@ -371,7 +372,7 @@ function operationCardSheets(model: TdPrintModel, ops: Op[], okTk: string): stri
       ...steps.map((step, index): TRow => ({
         cells: ["О", String(index + 1), text(step.text), etkToleranceLines(step.tolerance).map((line) => (line.label ? `${line.label}: ${line.value}` : line.value)).join("\n"), ""],
       })),
-      ...op.tooling.map((tool): TRow => ({ cells: ["Т", "", `${text(tool.section) ? `${text(tool.section)}: ` : ""}${text(tool.name)}`, "", text(tool.inventory_number)] })),
+      ...op.tooling.map((tool): TRow => ({ cells: ["Т", "", `${text(tool.section) ? `${text(tool.section)}: ` : ""}${poolToolLabel(text(tool.name), text(tool.inventory_number)) ?? text(tool.name)}`, "", poolToolLabel(text(tool.name), text(tool.inventory_number)) ? "" : text(tool.inventory_number)] })),
     ];
     const params = operationParams(op);
     if (params) body.push({ cells: ["Р", "", params, "", ""] });
@@ -448,7 +449,8 @@ function toolingSheets(ops: Op[]): string[] {
   const cols: Col[] = [{ h: "№", mm: 10 }, { h: "Раздел", mm: 32 }, { h: "Наименование", mm: 118 }, { h: "Инв. №", mm: 40 }, { h: "Операции", mm: 60 }];
   const sums = new Map<string, { section: string; name: string; inv: string; ops: string[]; count: number }>();
   ops.forEach((op) => op.tooling.forEach((tool) => {
-    const section = text(tool.section) || "Оснастка", name = cleanCodes(text(tool.name)), inv = text(tool.inventory_number).trim();
+    const section = text(tool.section) || "Оснастка", label = poolToolLabel(text(tool.name), text(tool.inventory_number));
+    const name = cleanCodes(label ?? text(tool.name)), inv = label ? "" : text(tool.inventory_number).trim();
     if (!name) return;
     const entry = aggregate(sums, `${section}\u0000${name}\u0000${inv}`, () => ({ section, name, inv, ops: [], count: 0 }));
     if (!entry.ops.includes(op.number)) entry.ops.push(op.number);
