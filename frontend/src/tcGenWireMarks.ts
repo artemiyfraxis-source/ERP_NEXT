@@ -16,7 +16,101 @@ export type WireMarkCfg = {
   dist: string;
   /** Правки надписей: «<провод>.<жила>:A» / «:B» → текст; пусто — надпись по распиновке. */
   texts?: Record<string, string>;
+  /** Чем метить (владелец 20.11): нет поля — трубка, как до 20.11. Трубка и лента — печать на маркираторе, лазер — ОБ.019. */
+  kind?: WireMarkKind;
+  /** Ø трубки на маркираторе, мм (WIRE_MARK_TUBE_SIZES_MM); пусто — трубка по Ø провода, как до 20.11. */
+  tubeMm?: string;
+  /** Ширина ленты, мм (WIRE_MARK_TAPE_WIDTHS_MM); пусто — первая из списка. */
+  tapeMm?: string;
+  /** Лазер ОБ.019: режим, надпись по всей длине (пусто — надпись конца А), отступы от торцов и шаг, мм (пусто — по умолчанию). */
+  laser?: { mode: LaserMode; middle?: string; frontMm?: string; backMm?: string; stepMm?: string };
 };
+
+/** Носитель метки на проводе (владелец 20.11): трубка и лента — печать на маркираторе, лазер — ОБ.019 при резке. */
+export type WireMarkKind = "tube" | "tape" | "laser";
+export const WIRE_MARK_KINDS: ReadonlyArray<readonly ["none" | WireMarkKind, string]> = [["none", "нет"], ["tube", "трубка"], ["tape", "лента"], ["laser", "лазер ОБ.019"]];
+/** Трубки и ленты маркиратора (владелец 20.11): «лента 6, 9, 12; трубки 2,4 / 3,2 / 4,8 / 6 / 8». */
+export const WIRE_MARK_TUBE_SIZES_MM: readonly number[] = [2.4, 3.2, 4.8, 6, 8];
+export const WIRE_MARK_TAPE_WIDTHS_MM: readonly number[] = [6, 9, 12];
+/** Лазер ОБ.019: «По краям» — надпись у каждого торца, «По всей длине» — одна надпись с шагом. */
+export type LaserMode = "ends" | "full";
+export const LASER_MODES: ReadonlyArray<readonly [LaserMode, string]> = [["ends", "По краям"], ["full", "По всей длине"]];
+export const LASER_END_MM = 20;
+export const LASER_STEP_MM = 100;
+/** Станок печатает латиницей (транслитерирует карта станка) и не больше 30 знаков. */
+export const LASER_TEXT_MAX = 30;
+
+/** Поле `laserMark` операции резки (cutWire / cutWireStrip) — его читает карта станка ОБ.019. */
+export type LaserMark = { mode: LaserMode; front: string; back: string; middle: string; frontMm: number; backMm: number; stepMm: number };
+/** Поле `markMedia` операций печатной маркировки проводов: чем печатать. */
+export type MarkMedia = { kind: "tube" | "tape"; sizeMm: number };
+
+/** Что выбрано в переключателе «Метка на проводе». */
+export const wireMarkKindOf = (cfg: WireMarkCfg | undefined): "none" | WireMarkKind => (!cfg?.enabled ? "none" : cfg.kind || "tube");
+/** «3,2» из 3.2. */
+export const mmRu = (mm: number) => String(mm).replace(".", ",");
+const positiveMm = (value: string | undefined, fallback: number) => {
+  const n = Number(String(value ?? "").trim().replace(",", "."));
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+};
+const clampText = (text: string) => text.trim().slice(0, LASER_TEXT_MAX);
+
+/** Носитель печатной метки; трубка без выбранного Ø и лазер — null (операции как до 20.11 / печати нет). */
+export function markMediaOf(cfg: WireMarkCfg | undefined): MarkMedia | null {
+  const kind = wireMarkKindOf(cfg);
+  if (kind === "tape") return { kind: "tape", sizeMm: positiveMm(cfg?.tapeMm, WIRE_MARK_TAPE_WIDTHS_MM[0]) };
+  if (kind === "tube" && (cfg?.tubeMm || "").trim()) return { kind: "tube", sizeMm: positiveMm(cfg?.tubeMm, WIRE_MARK_TUBE_SIZES_MM[0]) };
+  return null;
+}
+
+/** Лазерная метка провода с надписями концов А и В; по всей длине — своя надпись или надпись конца А. */
+export function laserMarkOf(cfg: WireMarkCfg | undefined, front: string, back: string): LaserMark {
+  const laser = cfg?.laser;
+  const mode: LaserMode = laser?.mode === "full" ? "full" : "ends";
+  return {
+    mode, front: clampText(front), back: clampText(back), middle: mode === "full" ? clampText((laser?.middle || "").trim() || front) : "",
+    frontMm: positiveMm(laser?.frontMm, LASER_END_MM), backMm: positiveMm(laser?.backMm, LASER_END_MM), stepMm: positiveMm(laser?.stepMm, LASER_STEP_MM),
+  };
+}
+
+/** Что станок напечатает на проводе: по всей длине — одну надпись (своя или конца А), по краям — пару надписей концов. */
+export function laserPrintedOf(cfg: WireMarkCfg | undefined, row: Pick<WireMarkRow, "textA" | "textB">): string[] {
+  return cfg?.laser?.mode === "full" ? [clampText((cfg.laser.middle || "").trim() || row.textA)] : [clampText(row.textA), clampText(row.textB)];
+}
+
+/** Подпись партии резки: провода с одной подписью режутся вместе (по всей длине — по общей надписи, по краям — по паре). */
+export const laserPrintedKey = (cfg: WireMarkCfg | undefined, row: Pick<WireMarkRow, "textA" | "textB"> | undefined): string => (row ? JSON.stringify(laserPrintedOf(cfg, row)) : "");
+
+/** Предупреждения по проводам лазерной метки: надпись длиннее станка и разные надписи, ставшие одинаковыми после обрезки. */
+export function laserTextWarnings(cfg: WireMarkCfg | undefined, rows: WireMarkRow[]): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  const add = (key: string, text: string) => { (out[key] ||= []).includes(text) || out[key].push(text); };
+  const full = cfg?.laser?.mode === "full";
+  const own = full ? (cfg?.laser?.middle || "").trim() : "";
+  // Надписи, которые уйдут на станок: (провод, исходный текст, конец).
+  const sources = rows.flatMap((row) => (full ? (own ? [] : [{ row, raw: row.textA.trim() }]) : [{ row, raw: row.textA.trim() }, { row, raw: row.textB.trim() }]));
+  sources.forEach(({ row, raw }) => {
+    if (raw.length > LASER_TEXT_MAX) add(row.key, `надпись длиннее ${LASER_TEXT_MAX} знаков — на станке обрежется до «${clampText(raw)}»`);
+  });
+  const byCut = new Map<string, { rows: WireMarkRow[]; raws: Set<string> }>();
+  sources.forEach(({ row, raw }) => {
+    const hit = byCut.get(clampText(raw)) || { rows: [], raws: new Set<string>() };
+    hit.raws.add(raw);
+    if (!hit.rows.includes(row)) hit.rows.push(row);
+    byCut.set(clampText(raw), hit);
+  });
+  byCut.forEach((hit, cut) => {
+    if (hit.raws.size < 2) return;
+    hit.rows.forEach((row) => add(row.key, `после обрезки до «${cut}» надпись совпадает с проводом ${hit.rows.filter((r) => r !== row).map((r) => `№ ${r.num}`).join(", ") || "этого же"} — напечатается одинаковая метка`));
+  });
+  return out;
+}
+
+/** Трубка маркиратора выбранного Ø из списка (до усадки, светлая первой); нет такой — "". */
+export function wireMarkTubeBySize(names: string[], sizeMm: number): string {
+  const fits = names.filter((name) => { const d = tubeBeforeShrink(name); return d !== null && Math.abs(d - sizeMm) < 0.05; });
+  return (fits.find((name) => LIGHT_TUBE.test(name)) || fits[0] || "");
+}
 
 export const WIRE_MARK_LEN_MM = "15";
 export const WIRE_MARK_DIST_MM = "20";

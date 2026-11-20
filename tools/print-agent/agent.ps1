@@ -11,6 +11,8 @@
  Управление Godex из ERP (2.11.0, 19.11.2026): режим отделителя (peel-off) по профилю станка — агент держит его в DevMode
  своей учётной записи и .DEFAULT и перед каждой этикеткой проверяет вывод драйвера на ^O1; этикетки маркировки уходят в
  очередь Windows по одной; команда «Очистить принтер» из ERP убирает задания ERP из очереди и очищает буфер Godex.
+ ВАЦ, чтение описаний мер набора (2.11.1, 19.11.2026): операция read_kit находит набор S2VNA по метке (6650F27),
+ читает меры OPEN/SHORT/LOAD/THRU с коэффициентами и возвращает прежний выбранный набор; ничего не записывает.
 #>
 [CmdletBinding()]
 param(
@@ -33,7 +35,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.11.0'
+$script:AgentVersion = '2.11.1'
 $script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
@@ -2328,7 +2330,14 @@ function ConvertTo-S2Artifact {
 # Contract: docs/vna/bench-protocol-v2.md. Typed ops only; every COM path below is a fixed driver literal.
 # ERP owns norms, scales and limit lines; the agent applies its screen, reads it back and refuses on its own
 # before every sweep when the operator changed S2VNA (screen, profile, smoothing, averaging, calibration, devices).
-$script:VnaControlOps = @('device_status','apply_screen','acm_confidence','store_memory','release')
+$script:VnaControlOps = @('device_status','apply_screen','acm_confidence','store_memory','release','read_kit')
+# read_kit (2.11.1): kit slots are searched by label up to this number (6650F27 was commissioned in slot 28);
+# a slot S2VNA refuses or reads back differently ends the search. A kit's list holds up to VnaKitEntriesMax entries
+# (as the commissioned manifest's standard index), of which at most 12 OPEN/SHORT/LOAD/THRU (contract limit).
+$script:VnaKitSlotsMax = 100
+$script:VnaKitEntriesMax = 100
+$script:VnaKitStandardsMax = 12
+$script:VnaKitTypes = @('OPEN','SHORT','LOAD','THRU')
 $script:VnaScreenFormats = @('SWR','MLOG','PHAS','GDEL','SMIT')
 $script:VnaSParameters = @('S11','S21','S12','S22')
 $script:VnaConfidencePointsMax = 4001
@@ -2802,6 +2811,90 @@ function Invoke-S2SweepOnce {
     Invoke-S2Io $Scpi 'TRIGger.SEQuence.SINGle' call
     if ((Invoke-S2Io $Scpi 'IEEE4882.OPC') -ne 1) { throw 'ВАЦ: развёртка не завершена' }
 }
+function Test-VnaKitText {
+    param($Value, [int]$MinLength)
+    # Contract KitLabel / standard label: up to 64 characters, no control characters.
+    return $Value -is [string] -and $Value.Length -ge $MinLength -and $Value.Length -le 64 -and $Value -notmatch '[\x00-\x1f\x7f]' -and
+        ($MinLength -eq 0 -or $Value.Trim().Length -gt 0)
+}
+function ConvertTo-VnaKitNumber {
+    param($Value, [string]$Label)
+    $number = [double]$Value
+    if ([double]::IsNaN($number) -or [double]::IsInfinity($number)) { throw "ВАЦ: недопустимое число в описании меры ($Label)" }
+    return $number
+}
+function Get-S2KitStandardType {
+    param($Scpi, [int]$Index)
+    # $null: S2VNA rejected the index (no such standard) or has no type for it.
+    try { $type = ([string](Invoke-S2Io $Scpi "SENSe(1).CORRection.COLLect.CKIT.STAN($Index).TYPE")).Trim().ToUpperInvariant() } catch { return $null }
+    if (-not $type) { return $null }
+    return $type
+}
+function Read-S2KitStandards {
+    param($Scpi)
+    # Reads the selected kit as S2VNA defines it (ported from tools/vna-measure Get-VnaKitStandards). Units are S2VNA's
+    # own and pass through unchanged: C0…C3 in 1e-15/-27/-36/-45 F, L0…L3 in 1e-12/-24/-33/-42 H, delay s, loss Ω/s, Z0 Ω.
+    # S2VNA's COM has no standard count, so the list runs until the instrument rejects an index. A rejection counts as
+    # the end only when it repeats and the next index is rejected too: a COM failure inside the list fails the op
+    # instead of returning a truncated kit. Any failure reading a standard's fields fails the op as well.
+    $prefix = 'SENSe(1).CORRection.COLLect.CKIT.STAN'
+    $standards = @(); $ended = $false
+    for ($index = 1; $index -le $script:VnaKitEntriesMax; $index++) {
+        $type = Get-S2KitStandardType $Scpi $index
+        if ($null -eq $type) {
+            if ($null -ne (Get-S2KitStandardType $Scpi $index) -or $null -ne (Get-S2KitStandardType $Scpi ($index + 1))) {
+                throw "ВАЦ: мера $index набора не прочитана — список мер прочитан не полностью"
+            }
+            $ended = $true; break
+        }
+        if ($type -cnotin $script:VnaKitTypes) { continue }
+        $label = ([string](Invoke-S2Io $Scpi "$prefix($index).LABel")).Trim()
+        if (-not (Test-VnaKitText $label 0)) { throw "ВАЦ: недопустимое название меры $index набора" }
+        $c = [double[]]@(0, 0, 0, 0); $l = [double[]]@(0, 0, 0, 0)
+        for ($k = 0; $k -lt 4; $k++) {
+            if ($type -ceq 'OPEN') { $c[$k] = ConvertTo-VnaKitNumber (Invoke-S2Io $Scpi "$prefix($index).C$k") "C$k" }
+            if ($type -ceq 'SHORT') { $l[$k] = ConvertTo-VnaKitNumber (Invoke-S2Io $Scpi "$prefix($index).L$k") "L$k" }
+        }
+        $standards += [ordered]@{ label = $label; type = $type
+            delay = (ConvertTo-VnaKitNumber (Invoke-S2Io $Scpi "$prefix($index).DELay") 'задержка')
+            loss = (ConvertTo-VnaKitNumber (Invoke-S2Io $Scpi "$prefix($index).LOSS") 'потери')
+            z0 = (ConvertTo-VnaKitNumber (Invoke-S2Io $Scpi "$prefix($index).Z0") 'Z0')
+            c = $c; l = $l }
+    }
+    if (-not $ended) { throw "ВАЦ: конец списка мер набора не найден за $($script:VnaKitEntriesMax) позиций" }
+    if ($standards.Count -gt $script:VnaKitStandardsMax) { throw "ВАЦ: в наборе больше $($script:VnaKitStandardsMax) мер OPEN/SHORT/LOAD/THRU ($($standards.Count))" }
+    return ,@($standards)
+}
+function Test-S2KitSlot {
+    param($Scpi, [int]$Slot)
+    # $true when S2VNA accepted this kit number and reads it back; the selection is restored by the caller.
+    $select = 'SENSe(1).CORRection.COLLect.CKIT.SELect'
+    try { Invoke-S2Io $Scpi $select set $Slot; return ([int](Invoke-S2Io $Scpi $select) -eq $Slot) } catch { return $false }
+}
+function Read-S2KitByLabel {
+    param($Scpi, [string]$Label)
+    # Read-only: the kit is found by its S2VNA label (never a slot from ERP), read, and the operator's selected kit
+    # is put back and verified by reading, also when the search or the reading fails.
+    $select = 'SENSe(1).CORRection.COLLect.CKIT.SELect'
+    $previous = [int](Invoke-S2Io $Scpi $select)
+    try {
+        $found = @()
+        for ($slot = 1; $slot -le $script:VnaKitSlotsMax; $slot++) {
+            if (-not (Test-S2KitSlot $Scpi $slot)) {
+                # Same rule as for standards: a refused number ends the list only if it repeats and the next one is refused.
+                if ((Test-S2KitSlot $Scpi $slot) -or (Test-S2KitSlot $Scpi ($slot + 1))) { throw "ВАЦ: набор №$slot в S2VNA не выбран — список наборов прочитан не полностью" }
+                break
+            }
+            if (([string](Invoke-S2Io $Scpi 'SENSe(1).CORRection.COLLect.CKIT.LABel')).Trim() -ceq $Label) { $found += $slot }
+        }
+        if (-not $found.Count) { throw "ВАЦ: в S2VNA нет калибровочного набора «$Label»" }
+        if ($found.Count -gt 1) { throw "ВАЦ: в S2VNA несколько наборов «$Label» (номера $($found -join ', ')) — оставьте один" }
+        Set-S2Checked $Scpi $select ([int]$found[0])
+        $standards = Read-S2KitStandards $Scpi
+        if (-not @($standards).Count) { throw "ВАЦ: в наборе «$Label» нет мер OPEN/SHORT/LOAD/THRU" }
+    } finally { Set-S2Checked $Scpi $select $previous }
+    return @{ label = $Label; standards = @($standards) }
+}
 function Invoke-S2BenchOp {
     param($Application, $Scpi, $Command, $Owner, [string]$OwnerPath, [string]$Serial, [hashtable]$Result)
     $argsValue = $Command.args
@@ -2886,6 +2979,13 @@ function Invoke-S2BenchOp {
             Set-S2Checked $Scpi 'INITiate(1).CONTinuous' $true
             Set-VnaOwnerField $Owner 'released' $true; Write-VnaJson $OwnerPath $Owner
             $Result.released = $true; $Result.continuous = $true; $Result.screen_hash = $screenHash
+        }
+        'read_kit' {
+            if (-not (Test-VnaKitText $argsValue.label 1)) { throw 'ВАЦ: неверная метка калибровочного набора' }
+            # Both labels are compared trimmed; the receipt echoes the ERP label exactly as sent (server checks equality).
+            $kit = Read-S2KitByLabel $Scpi ([string]$argsValue.label).Trim()
+            if ((Get-VnaSerial $Application) -cne $Serial) { throw 'ВАЦ: прибор заменён во время чтения набора' }
+            $Result.label = [string]$argsValue.label; $Result.standards = @($kit.standards)
         }
         default { throw 'ВАЦ: неизвестная операция рабочего места' }
     }

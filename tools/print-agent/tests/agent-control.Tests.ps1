@@ -632,7 +632,7 @@ Describe 'Управление ВАЦ: основной цикл и блокир
         Mock Invoke-ErpApi { @{ update = @{ version = '9.9.9' } } }
         Send-Heartbeat 'http://test' 'token' -PrinterName 'TSC' -Lightweight
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
-            $Body.vna_control.version -eq 2 -and @($Body.vna_control.methods).Count -eq 0 -and ($Body.vna_control.ops -join ',') -eq 'device_status,apply_screen,acm_confidence,store_memory,release' -and
+            $Body.vna_control.version -eq 2 -and @($Body.vna_control.methods).Count -eq 0 -and ($Body.vna_control.ops -join ',') -eq 'device_status,apply_screen,acm_confidence,store_memory,release,read_kit' -and
             @($Body.scanners).Count -eq 0 -and $Body.printer -eq 'TSC' -and -not $Body.vna
         }
         Assert-MockCalled Get-AgentScanners -Times 0 -Exactly -Scope It
@@ -916,7 +916,7 @@ Describe 'Управление ВАЦ: журнал, опрос, watchdog' {
             @{ method = 'acm'; registry_fingerprint = ('a' * 64); definition = @{ serial = '26140008' } }, @{ method = 'solt2' }) } }
         $capability = Get-VnaControlCapability @{ ready = $true; serial = '26030095' }
         $capability.version | Should Be 2
-        ($capability.ops -join ',') | Should Be 'device_status,apply_screen,acm_confidence,store_memory,release'
+        ($capability.ops -join ',') | Should Be 'device_status,apply_screen,acm_confidence,store_memory,release,read_kit'
         ($capability.methods -join ',') | Should Be 'acm'
     }
     It 'без манифеста методы не объявляются' {
@@ -939,7 +939,7 @@ Describe 'Управление ВАЦ: журнал, опрос, watchdog' {
         Mock Invoke-ErpApi { @{} }
         Send-Heartbeat 'http://test' 'token'
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter {
-            $Body.version -eq $script:AgentVersion -and $Body.vna_control.version -eq 2 -and ($Body.vna_control.methods -join ',') -eq 'acm' -and ($Body.vna_control.ops -join ',') -eq 'device_status,apply_screen,acm_confidence,store_memory,release'
+            $Body.version -eq $script:AgentVersion -and $Body.vna_control.version -eq 2 -and ($Body.vna_control.methods -join ',') -eq 'acm' -and ($Body.vna_control.ops -join ',') -eq 'device_status,apply_screen,acm_confidence,store_memory,release,read_kit'
         }
         Assert-MockCalled Get-VnaApplication -Times 0 -Exactly -Scope It
     }

@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
 import { complexByHand, initState, makeGen, toggleLengthMode, updateEndpoint, type GenState } from "./tcGenLogic";
-import { pickWireMarkTube, tubeBeforeShrink } from "./tcGenWireMarks";
+import { laserMarkOf, laserPrintedKey, laserTextWarnings, markMediaOf, pickWireMarkTube, tubeBeforeShrink, WIRE_MARK_TAPE_WIDTHS_MM, WIRE_MARK_TUBE_SIZES_MM, wireMarkKindOf, wireMarkTubeBySize } from "./tcGenWireMarks";
 import { assignPinJoined, joinSplice, renameSplice, setTail, spliceLabel } from "./tcGenSplices";
 import { pinConns, pinRows, spliceLines } from "./tcGenPinTable";
 import { pinoutEnds, pinUnits } from "./pinoutCheck";
@@ -132,3 +132,115 @@ it("трубка метки: размер без «мм» из справочн�
   expect(pickWireMarkTube(["ТУТ 2/1 черная", "ТУТ 3/1,5 черная"], 1.4)).toBe("ТУТ 2/1 черная");
 });
 
+
+/*
+ * Метка на проводе (владелец 20.11): нет / трубка (Ø маркиратора) / лента (ширина) / лазер ОБ.019 при резке. Концы пайкой —
+ * провода режет ОБ.019 (резка с разделкой); резку с обжимом режет BZW, лазера у неё нет.
+ */
+function soldered(): GenState {
+  let S = threeWires();
+  S = updateEndpoint(DSA, S, id(S, "A", 1), { method: "solder" });
+  return updateEndpoint(DSA, S, id(S, "B", 1), { method: "solder" });
+}
+type Raw = { ops: Array<Record<string, unknown>> };
+const rawOps = (S: GenState) => (makeGen(DSA, S).buildConfig() as Raw).ops;
+
+it("лазер «по краям»: у каждой резки ОБ.019 своя пара надписей, жилы с разными надписями — разные партии; печатной маркировки нет", () => {
+  const S = on(soldered(), { kind: "laser" });
+  const cuts = rawOps(S).filter((o) => /^cutWire/.test(String(o.opKey)));
+  expect(makeGen(DSA, S).getActiveOps().filter((o) => /^cutWire\d*$/.test(o.opKey)).map((o) => [o.type, o.wireIdxs])).toEqual([["cutWireStrip", [0]], ["cutWireStrip", [1]], ["cutWireStrip", [2]]]);
+  expect(cuts[0].laserMark).toEqual({ mode: "ends", front: "XS1.1 to X2.2", back: "X2.2 to XS1.1", middle: "", frontMm: 20, backMm: 20, stepMm: 100 });
+  expect(cuts[1].laserMark).toMatchObject({ front: "XS1.2 to С1", back: "С1 to XS1.2" });
+  expect(cuts[2]).not.toHaveProperty("laserMark");  // № 3 со свободным концом — без метки
+  expect(keysOf(S)).not.toContain("cutWireMark");
+  // Без лазера те же провода 2 и 3 — одной партией, как раньше.
+  expect(makeGen(DSA, on(soldered())).getActiveOps().filter((o) => /^cutWire\d*$/.test(o.opKey)).map((o) => o.wireIdxs)).toEqual([[0], [1, 2]]);
+});
+
+it("лазер «по всей длине»: одна надпись с шагом (пусто — надпись конца А), отступы и шаг из формы, надписи до 30 знаков", () => {
+  const S = on(soldered(), { kind: "laser", laser: { mode: "full", stepMm: "150", frontMm: "30", backMm: "30" } });
+  const cut = rawOps(S).find((o) => o.opKey === "cutWire")!;
+  expect(cut.laserMark).toEqual({ mode: "full", front: "XS1.1 to X2.2", back: "X2.2 to XS1.1", middle: "XS1.1 to X2.2", frontMm: 30, backMm: 30, stepMm: 150 });
+  const own = laserMarkOf({ enabled: true, mat: "", len: "", dist: "", kind: "laser", laser: { mode: "full", middle: "  ЖГУТ-7  ", stepMm: "0" } }, "A".repeat(40), "B");
+  expect(own).toMatchObject({ middle: "ЖГУТ-7", stepMm: 100, frontMm: 20 });
+  expect(own.front).toHaveLength(30);
+});
+
+it("лазер не попадает в резку с обжимом (BZW): партии не делятся, предупреждение называет провода", () => {
+  const S = on(threeWires(), { kind: "laser" });
+  const g = makeGen(DSA, S);
+  const ops = rawOps(S);
+  expect(g.getActiveOps().filter((o) => o.type === "cutWireCrimp").map((o) => o.wireIdxs)).toEqual([[0], [1, 2]]);
+  expect(JSON.stringify(ops)).not.toMatch(/laserMark/);
+  expect(g.wireMarkCrimpNote_(g.wireMarkList_().rows)).toMatch(/лазер ОБ\.019 их не маркирует/);
+});
+
+it("переключатель: трубка, лента и лазер взаимоисключающие; «нет» — без операций", () => {
+  expect(wireMarkKindOf(undefined)).toBe("none");
+  expect(wireMarkKindOf({ enabled: false, mat: "", len: "", dist: "", kind: "laser" })).toBe("none");
+  expect(wireMarkKindOf({ enabled: true, mat: "", len: "", dist: "" })).toBe("tube");
+  const json = (S: GenState) => JSON.stringify(rawOps(S));
+  expect(json(on(soldered(), { kind: "laser" }))).not.toMatch(/markMedia|cutWireMark/);
+  expect(json(on(soldered(), { kind: "tape" }))).not.toMatch(/laserMark/);
+  expect(json(on(soldered(), { kind: "tube", tubeMm: "3.2" }))).not.toMatch(/laserMark/);
+  expect(json({ ...soldered(), wireMarks: { enabled: false, mat: "", len: "", dist: "", kind: "laser" } })).not.toMatch(/laserMark|markMedia|wireMarks/);
+});
+
+it("трубка маркиратора: выбранный Ø — в markMedia всех трёх операций и трубка этого Ø; без выбора — как до 20.11", () => {
+  expect(WIRE_MARK_TUBE_SIZES_MM).toEqual([2.4, 3.2, 4.8, 6, 8]);
+  const data = { ...DSA, markMats: [{ name: "ТУТ 3,2/1,6 белая", group: "ТУТ", unit: "м" }, { name: "ТУТ 2,4/1,2 белая", group: "ТУТ", unit: "м" }] };
+  const S = on(threeWires(), { kind: "tube", tubeMm: "3.2" });
+  const ops = (makeGen(data, S).buildConfig() as Raw).ops.filter((o) => o.wireMarks);
+  expect(ops.map((o) => o.opKey)).toEqual(["cutWireMark", "onWireMark", "heatWireMark"]);
+  ops.forEach((o) => expect(o.markMedia).toEqual({ kind: "tube", sizeMm: 3.2 }));
+  expect(ops[0].tutArt).toBe("ТУТ 3,2/1,6 белая");
+  expect(wireMarkTubeBySize(["ТУТ 3,2/1,6 черная", "ТУТ 3,2/1,6 белая"], 3.2)).toBe("ТУТ 3,2/1,6 белая");
+  expect(wireMarkTubeBySize(["ТУТ 4/2мм"], 3.2)).toBe("");
+  expect(markMediaOf({ enabled: true, mat: "", len: "", dist: "", kind: "tube" })).toBeNull();
+});
+
+it("лента маркиратора: печать этикеток и наклейка, без усадки; ширина по умолчанию — первая из списка", () => {
+  expect(WIRE_MARK_TAPE_WIDTHS_MM).toEqual([6, 9, 12]);
+  const ops = rawOps(on(threeWires(), { kind: "tape", tapeMm: "9" })).filter((o) => o.wireMarks);
+  expect(ops.map((o) => o.opKey)).toEqual(["cutWireMark", "onWireMark"]);
+  ops.forEach((o) => expect(o.markMedia).toEqual({ kind: "tape", sizeMm: 9 }));
+  expect(ops[0]).toMatchObject({ markTexts: ["XS1.1 to X2.2", "X2.2 to XS1.1", "XS1.2 to С1", "С1 to XS1.2"], tutCount: 4 });
+  expect(markMediaOf({ enabled: true, mat: "", len: "", dist: "", kind: "tape" })).toEqual({ kind: "tape", sizeMm: 6 });
+});
+
+it("старый черновик (трубка без поля kind) и форма без метки — операции и конфиг байт в байт как до 20.11", () => {
+  const before = on(soldered(), { len: "12", dist: "25" });
+  const same = (a: GenState, b: GenState) => expect(JSON.stringify(makeGen(DSA, a).buildConfig())).toBe(JSON.stringify(makeGen(DSA, b).buildConfig()));
+  same(before, on(soldered(), { len: "12", dist: "25", kind: "tube", tubeMm: "", laser: { mode: "full" } }));
+  expect(JSON.stringify(makeGen(DSA, before).buildConfig())).not.toMatch(/markMedia|laserMark/);
+  const full = fullHarness(DSA);
+  same(full, { ...full, wireMarks: { enabled: false, mat: "", len: "", dist: "", kind: "tape", tapeMm: "9" } });
+});
+
+const wmRow = (key: string, num: string, textA: string, textB: string) => ({ key, idx: 0, unit: 0, num, from: "", to: "", textA, textB, autoA: textA, autoB: textB });
+const FULL_CFG = (middle: string) => ({ enabled: true, mat: "", len: "", dist: "", kind: "laser" as const, laser: { mode: "full" as const, middle } });
+const ENDS_CFG = { enabled: true, mat: "", len: "", dist: "", kind: "laser" as const, laser: { mode: "ends" as const } };
+
+it("партии резки лазером: по всей длине делит печатаемая надпись, а не пара надписей концов; по краям — пара", () => {
+  const a = wmRow("0.0", "1", "XS1.1 to X2.2", "X2.2 to XS1.1"), b = wmRow("0.1", "2", "XS1.2 to X2.3", "X2.3 to XS1.2");
+  expect(laserPrintedKey(FULL_CFG("ЖГУТ-7"), a)).toBe(laserPrintedKey(FULL_CFG("ЖГУТ-7"), b));
+  expect(laserPrintedKey(FULL_CFG(""), a)).not.toBe(laserPrintedKey(FULL_CFG(""), b));
+  expect(laserPrintedKey(ENDS_CFG, a)).not.toBe(laserPrintedKey(ENDS_CFG, b));
+  expect(laserPrintedKey(ENDS_CFG, a)).toBe(laserPrintedKey(ENDS_CFG, { ...a }));
+  // Обрезка до 30 знаков тоже считается: станок напечатает одно и то же.
+  const l1 = wmRow("0.2", "3", "A".repeat(30) + "1", "x"), l2 = wmRow("0.3", "4", "A".repeat(30) + "2", "x");
+  expect(laserPrintedKey(FULL_CFG(""), l1)).toBe(laserPrintedKey(FULL_CFG(""), l2));
+});
+
+it("лазер: надпись длиннее 30 знаков — предупреждение у провода, одинаковые после обрезки — отдельное", () => {
+  const long1 = "A".repeat(30) + "1", long2 = "A".repeat(30) + "2";
+  const rows = [wmRow("0.0", "1", long1, "B1"), wmRow("0.1", "2", long2, "B2"), wmRow("0.2", "3", "short", "B3")];
+  const w = laserTextWarnings(ENDS_CFG, rows);
+  expect(w["0.0"].join(" ")).toContain(`надпись длиннее 30 знаков — на станке обрежется до «${"A".repeat(30)}»`);
+  expect(w["0.0"].join(" ")).toMatch(/совпадает с проводом № 2 — напечатается одинаковая метка/);
+  expect(w["0.1"].join(" ")).toMatch(/совпадает с проводом № 1/);
+  expect(w["0.2"]).toBeUndefined();
+  // По всей длине со своей надписью концы не печатаются — предупреждений нет.
+  expect(laserTextWarnings(FULL_CFG("ЖГУТ-7"), rows)).toEqual({});
+  expect(Object.keys(laserTextWarnings(FULL_CFG(""), rows))).toEqual(["0.0", "0.1"]);
+});
