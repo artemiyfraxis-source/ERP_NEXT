@@ -1,0 +1,25 @@
+/* «Очередь резки»: плотная таблица одного станка; цвета — токены :root. */
+.cq { display: grid; gap: 12px; padding: 16px; }
+.cq-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; font-size: 13px; color: var(--muted-foreground); }
+.cq-head b { color: var(--foreground); font-variant-numeric: tabular-nums; }
+.cq-head select { min-height: 32px; }
+.cq-refresh { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 12px; }
+.cq-table { font-size: 13px; }
+.cq-table th, .cq-table td { padding: 4px 8px; vertical-align: top; }
+.cq-table thead th { white-space: nowrap; font-size: 12px; font-weight: 500; color: var(--muted-foreground); }
+.cq-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.cq-table .cq-sub { display: block; font-size: 12px; color: var(--muted-foreground); }
+.cq-table td:nth-child(3) { white-space: nowrap; }
+.cq-table .cq-empty { color: var(--muted-foreground); }
+.cq-table tr.cq-current > td { background: color-mix(in srgb, var(--primary) 12%, transparent); }
+.cq-table tr.cq-current > td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
+.cq-table tr.cq-setup > td { background: color-mix(in srgb, var(--tone-warn) 14%, transparent); font-weight: 500; color: var(--foreground); }
+.cq-table .cq-warn { color: var(--tone-warn); white-space: normal; min-width: 160px; }
+.cq-table .cq-act { white-space: nowrap; }
+.cq-table .cq-act input { width: 64px; min-height: 28px; text-align: right; font-variant-numeric: tabular-nums; }
+.cq-table .cq-act button { margin-left: 4px; }
+.cq-last { display: grid; gap: 4px; }
+.cq-last h2 { margin: 0; font-size: 14px; font-weight: 600; }
+.cq-last ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; font-size: 13px; }
+.cq-last li:first-child { font-weight: 600; color: var(--tone-ok); }
+@media (pointer: coarse) { .cq button, .cq input, .cq select { min-height: 40px; } }
