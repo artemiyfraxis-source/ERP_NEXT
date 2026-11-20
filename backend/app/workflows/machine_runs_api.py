@@ -127,9 +127,13 @@ def start_run(inventory: str, payload: RunPayload, principal: Writer, factory: F
                 # e.g. «Тираж» changed, keeps what is on the machine); the ETK marking goes with them as without (a
                 # blocked marking refuses the whole job, nothing is written). A marking value typed wins.
                 typed = {field.label for key in payload.values if (field := rules.OB019_FIELDS.get(key)) is not None}
-                row = runs.current(session, link.equipment_id)
-                again = runs.is_open(row) and runs.same_job(runs.info(row), runs.cutting(payload.group_id,
-                                                                                         payload.length_mm, "", None))
+                last = runs.current(session, link.equipment_id)
+                again = runs.is_open(last) and runs.same_job(runs.info(last), runs.cutting(payload.group_id,
+                                                                                           payload.length_mm, "", None))
+                # The open run of this job written again (e.g. «Тираж» only): its length, order and product stay as the
+                # run wrote them (a length typed for a job the ETK lacked keeps its guard, the plan's is not written
+                # back over the operator's) — unless typed now.
+                kept = (runs.info(last) or {}).get("expect") if again else None
                 missing = [] if again else [label for label in plan["blocking"] if label not in typed]
                 if missing:
                     raise HTTPException(422, "В ЭТК не задано: " + ", ".join(missing))
@@ -139,10 +143,12 @@ def start_run(inventory: str, payload: RunPayload, principal: Writer, factory: F
                 identity = {row["key"]: row["value"] for row in plan["rows"] if row["key"] == "length_mm"} | {
                     key: plan["job"].get(key) for key in ("order_number", "product")}
                 writes += [commands.FieldWrite(key, value) for key, value in identity.items()
-                           if key not in payload.values and value not in ("", None)]
+                           if kept is None and key not in payload.values and value not in ("", None)]
                 writes += [item for item in marking_writes(plan) if item.key not in payload.values]
                 run = cutting_run({**plan, "quantity": _whole(payload.values.get("total_set")) or plan["quantity"]},
                                   payload.length_mm, payload.values)
+                if kept is not None:
+                    run["expect"] = {**kept, **runs.expect(payload.values)}
             else:
                 if plan["blocking"]:
                     raise HTTPException(422, "В ЭТК не задано: " + ", ".join(plan["blocking"]))

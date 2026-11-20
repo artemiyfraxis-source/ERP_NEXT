@@ -220,6 +220,9 @@ def _enqueue(uow, link, principal: Principal, purpose: str, writes, summary: str
     _closed(uow, expired, principal.actor, now)
     if run is not None:
         runs.tag(row, run)
+    elif purpose == "settings":
+        # ERP's own edit of the open job's length / order / product: the run follows it (machine_runs.follow).
+        runs.follow(uow.session, link.equipment_id, {item.key: item.value for item in writes})
     changes = "; ".join(f"{item['label']} {item['before'] or '—'} → {item['after'] or '—'}"
                         for item in row.payload["fields"])
     _journal(uow, link.equipment_id, "write_queued", principal.actor, now, f"{summary}: {changes}",

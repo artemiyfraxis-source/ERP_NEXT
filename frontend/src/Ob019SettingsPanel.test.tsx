@@ -565,8 +565,21 @@ it("with a job open «Тираж» is the job's тираж with «сделано
   fireEvent.change(tirazh, { target: { value: "150" } });
   fireEvent.keyDown(tirazh, { key: "Enter" });
   await waitFor(() => expect(posts).toHaveLength(1));
-  // 150 for the job, 47 done: the machine is asked for 103 more (its target = counter + 103 = the job's start + 150).
-  expect(posts[0]).toEqual({ url: "/api/production/machines/card/ОБ.019/write", body: { values: { total_set: "103" }, confirm_state: 102 } });
+  // Nothing picked after the card was opened: the edit goes as the open job's run (its target follows, «Пуск» stays
+  // allowed). 150 for the job, 47 done: the machine is asked for 103 more (target = counter + 103 = start + 150).
+  expect(posts[0]).toEqual({ url: "/api/production/machines/card/ОБ.019/run",
+    body: { kind: "cutting", group_id: "g9", length_mm: "150", values: { total_set: "103" }, confirm_state: 102 } });
+});
+
+it("a «Тираж» of the open job without the machine counter is not written: how many are done is unknown", async () => {
+  const { posts } = server({ run: { ...OPEN_RUN, stage: "nolink", done: null, counter: null } });
+  render(<Ob019SettingsPanel inventory="ОБ.019" live={{ ...LIVE, state: { code: 102, text: "Готов, ждёт пуска", tone: "ok" as const } }} />);
+  const tirazh = await screen.findByLabelText("Тираж");
+  await waitFor(() => expect(tirazh).toHaveValue("120"));
+  fireEvent.change(tirazh, { target: { value: "150" } });
+  fireEvent.keyDown(tirazh, { key: "Enter" });
+  expect(await screen.findByText("отказ: счётчик станка не прочитан — повторите, когда станок на связи")).toBeInTheDocument();
+  expect(posts).toEqual([]);
 });
 
 it("the hand-wire picker is closed while a job is open: a wire over it would be counted into the job", async () => {

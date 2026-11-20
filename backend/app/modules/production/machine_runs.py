@@ -81,13 +81,16 @@ def info(row: queue.MachineWriteRow | None) -> dict | None:
 IDENTITY_KEYS = ("length_mm", "order_number", "product")
 
 
-def expect(values: dict) -> dict[str, int]:
+def expect(values: dict, *, empty: bool = False) -> dict[str, int]:
     """The words the machine holds for the job's identity once the run's write went through: {address: word}. An empty
-    value (not written) or one the machine refuses (the write fails anyway) is not expected."""
+    value (not written; `empty` — a text cleared on purpose, zero words) or one the machine refuses (the write fails
+    anyway) is not expected."""
     words: dict[str, int] = {}
     for key in IDENTITY_KEYS:
-        value = values.get(key)
-        if value in ("", None):
+        if key not in values:
+            continue
+        value = values[key]
+        if value is None or (value == "" and not empty):
             continue
         try:
             field, encoded, _value = rules.encode_field(key, value)
@@ -273,9 +276,23 @@ def supersede(session: Session, equipment_id: UUID, new: dict, now: datetime, ac
             and progress(row, words, link_ok)["stage"] not in ("reset", "nolink"):
         _set(row, {**old, "closed_at": queue.moment(now), "closed_by": actor_name[:200],
                    "closed_why": "Передано на станок ещё раз", "continued": True})
-        return {**new, "counter_start": old["counter_start"]}
+        carried = {"expect": old["expect"]} if "expect" not in new and old.get("expect") is not None else {}
+        return {**new, "counter_start": old["counter_start"], **carried}
     close(row, words, link_ok, now, actor_name, "Передано другое задание")
     return new
+
+
+def follow(session: Session, equipment_id: UUID, values: dict) -> None:
+    """An edit of the job's length, order or product written through ERP while its run is open (a size corrected on the
+    drawing, a «Проба и поправка» length): the run expects the new words from now on, so «Пуск» is not refused for
+    ERP's own edit. A run without `expect` (written before the check) stays unchecked."""
+    row = current(session, equipment_id, for_update=True)
+    run = info(row)
+    if not is_open(row) or run.get("expect") is None:
+        return
+    changed = expect(values, empty=True)
+    if changed:
+        _set(row, {**run, "expect": {**run["expect"], **changed}})
 
 
 def view(row: queue.MachineWriteRow, words: dict[int, int], link_ok: bool) -> dict:

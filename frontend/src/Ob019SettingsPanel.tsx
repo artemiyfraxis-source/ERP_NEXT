@@ -330,7 +330,13 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   /** Выбранное задание как прогон станка: правка тиража при нём идёт прогоном (сервер считает цель от счётчика). */
   const jobRequest = (): RunRequest | null => query.current?.group_id
     ? { kind: "cutting", group_id: query.current.group_id, length_mm: query.current.length }
-    : manualJob ? { kind: "manual", job_id: manualJob.id } : null;
+    : manualJob ? { kind: "manual", job_id: manualJob.id }
+      // Nothing picked here (the card was reopened) but a job is open on the machine: «Тираж» goes as its run, so the
+      // run's target follows and «Пуск» is not refused («Тираж на станке не совпадает с заданием»).
+      : !choice && !query.current && runOpen
+        ? runOpen.kind === "manual" && runOpen.job_id ? { kind: "manual", job_id: runOpen.job_id }
+          : runOpen.group_id && runOpen.length_mm ? { kind: "cutting", group_id: runOpen.group_id, length_mm: runOpen.length_mm } : null
+        : null;
   if (busyWriting !== fast) setFast(busyWriting);
 
   // One write at a time: what was committed meanwhile goes out together once the machine finished the previous one —
@@ -349,10 +355,16 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     if (open || inFlight || due) return;
     const batch = queue;
     setQueue({});
-    setSending(true);
     const typed = Object.fromEntries(keys.map((key) => [key, batch[key].value]));
     const job = "total_set" in typed ? jobRequest() : null;
     const values = pieces(typed, job);
+    if (values === null) {
+      // The job's «Тираж» without the machine counter: how many are done is unknown — nothing is written.
+      setStatus((current) => ({ ...current, ...Object.fromEntries(keys.map((key) =>
+        [key, { kind: "failed", value: batch[key].value, text: "счётчик станка не прочитан — повторите, когда станок на связи" }])) }));
+      return;
+    }
+    setSending(true);
     (job ? machineControlApi.startRun(inventory, { ...job, values }, control.state) : machineControlApi.write(inventory, values, control.state))
       .then((command) => {
         setInFlight({ id: command.id, at: Date.now() });
@@ -431,12 +443,13 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   /** Отличается ли значение от станка; «Тираж» — от того, сколько станку осталось до цели. */
   const differs = (key: string, value: string) => key === "total_set"
     ? !!value.trim() && (tirazh === null || decimal(value) !== tirazh) : enteredDiffers(fields.get(key), value);
-  /** «Тираж» задания при открытом прогоне этого задания → штук станку: тираж − уже сделано (сервер пишет цель от счётчика). */
-  const pieces = (values: Record<string, string>, job: RunRequest | null): Record<string, string> => {
-    const done = runOpen?.quantity !== null && runOpen?.quantity !== undefined ? runOpen.done : null;
-    const typed = "total_set" in values ? decimal(values.total_set) : null;
-    if (!runOpen || done === null || typed === null || (job && !sameRun(runOpen, job))) return values;
-    return { ...values, total_set: String(Math.max(typed - done, 0)) };
+  /** «Тираж» задания при открытом прогоне этого задания → штук станку: тираж − уже сделано (сервер пишет цель от счётчика).
+   *  null — сделано неизвестно (счётчик не прочитан): не писать. */
+  const pieces = (values: Record<string, string>, job: RunRequest | null): Record<string, string> | null => {
+    if (!("total_set" in values) || !runOpen || runOpen.quantity === null || (job && !sameRun(runOpen, job))) return values;
+    const typed = decimal(values.total_set);
+    if (runOpen.done === null || typed === null) return null;
+    return { ...values, total_set: String(Math.max(typed - runOpen.done, 0)) };
   };
 
   /** Поле изменено — на станок. Пусто, то же, что на станке, или не число — запись не уходит. Зачистка уходит вместе со
@@ -452,7 +465,10 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
       setStatus((current) => ({ ...current, [key]: { kind: "failed", value, text: "нужно число" } }));
       return;
     }
-    if (key === "total_set" && runOpen?.done !== null && runOpen?.done !== undefined && (decimal(value) ?? 0) <= runOpen.done) {
+    // «Тираж» of the open job itself (not another job picked meanwhile) must be above what it has made.
+    const sentJob = key === "total_set" ? jobRequest() : null;
+    if (key === "total_set" && runOpen && runOpen.done !== null && (!sentJob || sameRun(runOpen, sentJob))
+      && (decimal(value) ?? 0) <= runOpen.done) {
       setStatus((current) => ({ ...current, [key]: { kind: "failed", value, text: `уже сделано ${runOpen.done} — тираж больше` } }));
       return;
     }
