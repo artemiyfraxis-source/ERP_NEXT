@@ -592,3 +592,17 @@ def test_renumbering_onto_a_kept_stale_number_is_refused(production_api, monkeyp
     result = _cli(monkeypatch, capsys, "--apply")
     assert not result["restructured"] and "№5" in result["refused"][0]["reason"], result["refused"]
     assert _bound(allocation) == [4, 5]
+
+
+def test_release_ignores_a_same_code_operation_of_another_old_pf(production_api, monkeypatch, capsys):
+    """Cut ЗАЧ №2 is dropped; assembly ЗАЧ №6 moves to a new PF split out of the assembly — not the bound one."""
+    client, _ = production_api
+    cards = [issue("КБ1", _tail_document([("ASM", "assembly"), ("ЗАЧ", "assembly")], cut=["ЗАЧ"]))]
+    batch(client, cards)
+    task = _tasks()["КБ1"]
+    cut = task.operations[0]
+    allocation = _bind(task, cut, 2)
+    reissue(cards[0], _tail_document([("ASM", "assembly"), ("ЗАЧ", "check")], cut=["OTHER"]))
+    result = _cli(monkeypatch, capsys, "--apply", "--release-moved-equipment")
+    assert not result["restructured"] and "ЗАЧ" in result["refused"][0]["reason"] and not result["released"]
+    assert _bound(allocation) == [2]

@@ -243,8 +243,9 @@ are. CLI option `--release-moved-equipment` (only with `--restructure`, default 
 operation moved to another rebuilt PF (labels, tubes) is removed from the kept PF's current allocation instead of
 refusing the task — one audit `production.equipment_released` per binding (task id and number, PF, op code, ETK
 number, machine, allocation, the new PF and the op's new ETK number); the new PFs stay unbound (planning places them).
-Only operations landing in a NEW PF (not a kept one, e.g. assembly) are released, matched by occurrence among that
-code's operations of the new PFs; a different count, a disappearing operation or ambiguity still refuse; retired
+Only operations landing in a NEW PF (not a kept one, e.g. assembly) split out of the bound PF itself are released,
+matched by occurrence among that code's operations of those new PFs (a same-code operation of another old PF or a
+newly inserted one never counts); a different count, a disappearing operation or ambiguity still refuse; retired
 allocations are untouched. Renumbering that would put two bindings of one allocation on one ETK number refuses (rebind
 by hand). A dry run executes the rebuild and rolls back, but the resource reflow (`sync_reflow`, machine/person
 plan claims) runs only on commit, i.e. with `--apply`: a claim conflict can still appear there. Output `released` lists the bindings per КБ (in a dry run: what would be released).
@@ -253,9 +254,8 @@ number, quantity, serial numbers and mark events; operations are rebuilt from th
 (`restructured_operations`): same ETK operations → same operation (id, assignees, window), PFs split out of one old PF
 → the first keeps the old id and window, the others get its assignees without a window; same scheme block → same
 operation; the rest are new. Audit `production.restructured` (with `origins`: new PF → the old PF it was split out
-of: the old PF that alone holds all its operation codes; else by code and occurrence across the whole task — an
-inserted or dropped same-code operation elsewhere can mislead it — and last the position rule of
-`restructured_operations`). Then all unstarted preparation PFs of the project's
+of: the old PF that alone holds all its operation codes; else the position rule of `restructured_operations`; last
+by code and occurrence across the whole task — an inserted or dropped same-code operation elsewhere can mislead it). Then all unstarted preparation PFs of the project's
 tasks are regrouped by recipe (`regroup`): the old group of the cut keeps its id and number; labels and tubes get their
 own explicit groups; emptied groups are cancelled. A rerun changes nothing.
 
