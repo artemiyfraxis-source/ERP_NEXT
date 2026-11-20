@@ -164,7 +164,7 @@ def test_bundled_libraries_have_one_template_per_code():
         cards.extend(parse_operation_library(payload["templates"]))
 
     codes = [card.code for card in cards]
-    assert len(codes) == len(set(codes)) == 146  # +PRS_PIN_coax (свод 708К. 4/5)
+    assert len(codes) == len(set(codes)) == 147  # +PRS_PIN_coax (свод 708К. 4/5), +PRINT_MARK (TP80E, 20.11)
     assert not [card.title for card in cards if card.title.endswith(("(A)", "(B)", "(А)", "(В)"))]
     assert not [card.source_id for card in cards if card.source_id.endswith(("-a", "-b"))]
     housing = next(card for card in cards if card.code == "SDR_COAX_housing")

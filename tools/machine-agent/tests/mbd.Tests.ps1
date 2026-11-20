@@ -27,7 +27,7 @@ Describe 'setbit' {
 
 Describe 'write allow-list' {
     It 'refuses command bits, the HMI page, the date, passwords, SHA and whole switch words' {
-        foreach ($a in @(599, 600, 730, 1087, 1088, 1089, 1203, 1211, 1682, 1684, 1686, 132, 400, 421, 422, 434, 44)) {
+        foreach ($a in @(599, 600, 730, 1087, 1088, 1089, 1203, 1211, 1682, 1684, 1686, 132, 400, 421, 422, 434, 60)) {
             { Invoke-Request @{ cmd = 'write'; addr = $a; values = @(1) } } | Should Throw 'write not allowed'
         }
     }
@@ -38,7 +38,7 @@ Describe 'write allow-list' {
 
 Describe 'version' {
     It 'answers its version' {
-        (Invoke-Request @{ cmd = 'version' })['version'] | Should Be '1.3.0'
+        (Invoke-Request @{ cmd = 'version' })['version'] | Should Be '1.4.0'
     }
 }
 

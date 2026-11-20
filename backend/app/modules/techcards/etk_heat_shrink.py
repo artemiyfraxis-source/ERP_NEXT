@@ -89,7 +89,9 @@ def material_association(op: Mapping[str, Any], config: Mapping[str, Any]) -> li
                             and bool(item.get("markTube")) == marking for m in _own(item, marking=marking)])
         return found if len(found) == 1 else []
     counterpart = {"heatTut": "cutTut", "insTut": "cutTut", "endCap": "cutCap", "heatWireMark": "cutWireMark",
-                   "onWireMark": "cutWireMark", "heatMark": "cutMark", "onMark": "cutMark"}.get(key)
+                   "onWireMark": "cutWireMark", "heatMark": "cutMark", "onMark": "cutMark",
+                   # The clear tube over a printed mark (owner 20.11): put on and shrunk what its own cut cut.
+                   "heatWireMarkCover": "cutWireMarkCover", "onWireMarkCover": "cutWireMarkCover"}.get(key)
     if counterpart:
         candidates = [item for item in ops if item.get("opKey") == counterpart]
         return _materials([m for item in candidates for m in _own(item, marking=marking)])

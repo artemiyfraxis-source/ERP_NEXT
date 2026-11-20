@@ -1,7 +1,8 @@
-import { Seg } from "./GenControls";
+import { Chip, Seg } from "./GenControls";
 import {
   LASER_END_MM, LASER_MODES, LASER_STEP_MM, LASER_TEXT_MAX, mmRu, WIRE_MARK_DIST_MM, WIRE_MARK_KINDS, WIRE_MARK_LEN_MM, WIRE_MARK_TAPE_WIDTHS_MM,
-  WIRE_MARK_TUBE_SIZES_MM, laserTextWarnings, wireMarkKindOf, type LaserMode, type WireMarkCfg, type WireMarkKind, type WireMarkRow, type WireMarkSkip,
+  WIRE_MARK_TUBE_SIZES_MM, laserTextWarnings, markTubeMmOf, wireMarkCoverOn, wireMarkKindOf, withTubeMm, type LaserMode, type WireMarkCfg, type WireMarkKind,
+  type WireMarkRow, type WireMarkSkip,
 } from "./tcGenWireMarks";
 
 export const wireMarksOff = (): WireMarkCfg => ({ enabled: false, mat: "", len: "", dist: "" });
@@ -10,7 +11,7 @@ const pluralWires = (n: number) => (n % 10 === 1 && n % 100 !== 11 ? "прово
 
 /** «Метка на проводе» (владелец 26.10, 20.11): нет / трубка / лента маркиратора / лазер ОБ.019. Надписи — из распиновки, по
  *  две на провод; под переключателем — что будет напечатано (провод, надпись конца А, конца В), надпись можно поправить. */
-export function WireMarks({ cfg, onChange, rows, skipped, tubes, autoTube, note }: {
+export function WireMarks({ cfg, onChange, rows, skipped, tubes, autoTube, note, wireDia = 0, cover = "", printedTubeMm }: {
   cfg: WireMarkCfg | undefined;
   onChange: (cfg: WireMarkCfg) => void;
   rows: WireMarkRow[];
@@ -21,6 +22,12 @@ export function WireMarks({ cfg, onChange, rows, skipped, tubes, autoTube, note 
   autoTube: string;
   /** Предупреждение над таблицей (концы, обжатые при резке). */
   note?: string;
+  /** Ø изоляции самого толстого маркируемого провода: трубка «по Ø провода» и запомненный за ним выбор Ø. */
+  wireDia?: number;
+  /** Прозрачная трубка поверх метки, что подобрал генератор («ТУТ(HF) 4/2 прозрачная, 25 мм»). */
+  cover?: string;
+  /** Ø трубки, что уйдёт на печать при «по Ø провода» (по подобранной трубке состава или БД.МАТ); нет — по Ø провода. */
+  printedTubeMm?: number;
 }) {
   const own = cfg ?? wireMarksOff();
   const kind = wireMarkKindOf(own);
@@ -49,14 +56,16 @@ export function WireMarks({ cfg, onChange, rows, skipped, tubes, autoTube, note 
       <div className="gfield"><span className="gfield-label">Метка на проводе <small>{hint}</small></span>
         <Seg label="Метка на проводе" value={kind} options={WIRE_MARK_KINDS} onChange={setKind} /></div>
       {kind === "tube" && <label className="gfield"><span className="gfield-label">Ø трубки</span>
-        <select aria-label="Диаметр трубки маркировки" value={own.tubeMm || ""} onChange={(event) => patch({ tubeMm: event.target.value })}>
-          <option value="">по Ø провода</option>
+        <select aria-label="Диаметр трубки маркировки" value={own.tubeMm || ""} onChange={(event) => onChange(withTubeMm(own, event.target.value, wireDia))}>
+          <option value="">по Ø провода — Ø {mmRu(!own.tubeMm && printedTubeMm ? printedTubeMm : markTubeMmOf({ ...own, tubeMm: "" }, wireDia))} мм</option>
           {WIRE_MARK_TUBE_SIZES_MM.map((mm) => <option key={mm} value={String(mm)}>Ø {mmRu(mm)} мм</option>)}
         </select></label>}
       {kind === "tape" && <label className="gfield"><span className="gfield-label">Ширина ленты</span>
         <select aria-label="Ширина ленты маркировки" value={own.tapeMm || String(WIRE_MARK_TAPE_WIDTHS_MM[0])} onChange={(event) => patch({ tapeMm: event.target.value })}>
           {WIRE_MARK_TAPE_WIDTHS_MM.map((mm) => <option key={mm} value={String(mm)}>{mmRu(mm)} мм</option>)}
         </select></label>}
+      {(kind === "tube" || kind === "tape") && <div className="gfield"><span className="gfield-label">Прозрачная трубка{cover ? <small>{cover}</small> : null}</span>
+        <Chip checked={wireMarkCoverOn(own)} onChange={(on) => patch({ cover: on })}>Покрыть прозрачной трубкой</Chip></div>}
       {kind === "laser" && <div className="gfield"><span className="gfield-label">Как маркировать <small>на станке латиница, до {LASER_TEXT_MAX} знаков</small></span>
         <Seg label="Режим лазерной маркировки" value={laser.mode} options={LASER_MODES} onChange={(mode) => patchLaser({ mode })} /></div>}
     </div>
