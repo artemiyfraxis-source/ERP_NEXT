@@ -10,6 +10,8 @@ A batch printed «чередовать по изделию» carries the item se
 (task, 1, "XS1")); a plain batch prints them without one ((task, None, "XS1")). A fixed row of either preview counts
 both, so neither way of printing makes the other reprint fixed labels. A «Перепечатать номера…» job replaces the label
 it reprints: one physical label of the root batch counts once, however many times it was reprinted.
+
+Labels marked «напечатаны вне ERP» (`production.marking_outside`, owner 20.11) count as printed too.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from uuid import UUID
 from sqlalchemy import Text, cast, or_, select
 
 from app.modules.production.domain import mark_serial_range
+from app.modules.production.marking_outside import MarkingOutsidePrintRow
 from app.modules.production.marking_sources import TOKEN, expand_serial, labels
 from app.modules.warehouse.label_jobs import LabelJobRow
 from app.modules.warehouse.marking_profiles import MarkingBatchRow
@@ -72,7 +75,14 @@ def _original(batches: Mapping, batch, sequence: int) -> tuple:
 
 
 def printed_counts(session, task_ids: Iterable[UUID]) -> Counter:
-    """{(task id, serial, text): labels printed or in the printer queue}; a reprinted label counts once."""
+    """{(task id, serial, text): labels printed or in the printer queue, or marked printed outside the ERP};
+    a reprinted label counts once."""
+    ids = {str(identifier) for identifier in task_ids}
+    return outside_counts(session, ids) + queue_counts(session, ids)
+
+
+def queue_counts(session, task_ids: Iterable) -> Counter:
+    """{(task id, serial, text): labels printed or in the printer queue of the ERP}; a reprinted label counts once."""
     ids = {str(identifier) for identifier in task_ids}
     counts: Counter = Counter()
     batches = task_batches(session, ids)
@@ -94,6 +104,17 @@ def printed_counts(session, task_ids: Iterable[UUID]) -> Counter:
             continue
         seen.add(original)
         counts[(str(label.get("task_id")), label.get("serial"), str(label.get("text") or ""))] += 1
+    return counts
+
+
+def outside_counts(session, task_ids: Iterable) -> Counter:
+    """{(task id, serial, text): pieces} marked «напечатаны вне ERP»."""
+    wanted = sorted({UUID(str(identifier)) for identifier in task_ids}, key=str)
+    counts: Counter = Counter()
+    for start in range(0, len(wanted), CHUNK):
+        query = select(MarkingOutsidePrintRow).where(MarkingOutsidePrintRow.task_id.in_(wanted[start:start + CHUNK]))
+        for row in session.scalars(query):
+            counts[(str(row.task_id), row.serial, row.text)] += row.quantity
     return counts
 
 
