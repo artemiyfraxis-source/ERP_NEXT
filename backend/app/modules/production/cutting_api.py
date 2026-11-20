@@ -5,14 +5,18 @@ from decimal import Decimal
 from typing import Annotated, Callable
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
-from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal, production_view_work_principal
-from .api import MachineBindingPayload, production_uow_factory, techcards_uow_factory, cutting_current_cards, cutting_refresh_cards, mark_stale_etk, _performer, _replay_key, MaterialInputPayload
+from app.shared.http_auth import (Principal, production_edit_principal, production_overview_principal,
+                                  production_view_principal, production_view_work_principal)
+from .api import (MachineBindingPayload, production_uow_factory, techcards_uow_factory, cutting_current_cards,
+                  cutting_refresh_cards, mark_stale_etk, _performer, _replay_key, MaterialInputPayload,
+                  pinned_card, _item_index, TechcardStatus)
+from . import cutting_queue
 from .application import ConcurrentProductionUpdate, UnitOfWork
 from .cutting_application import assign_group, check_access, describe_group, split_group, revalidate_group, refresh_group_etk
 from .domain import ProductionValidationError
@@ -215,3 +219,103 @@ def stop_group_downtime(group_id: UUID, payload: VersionPayload,
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=255)],
     on_behalf_of: UUID | None = None):
     return _work_action(group_id, payload, "downtime/stop", principal, now, factory, idempotency_key, on_behalf_of)
+
+
+# «Очередь резки» по станку (owner 20.11): computed from open cut work of all projects; see CUTTING_API.md.
+queue_router = APIRouter(prefix="/api/production/cutting-queue", tags=["production"])
+
+
+def _documents(techcards_factory, keys):
+    """The pinned issued ETK per (project, КБ, revision); one card read per project. A card taken back to draft still
+    gives the revision the task was launched with; nothing found → no entry (the row says «нет в ЭТК: выданная карта»)."""
+    result = {}
+    if techcards_factory is None or not keys:
+        return result
+    with techcards_factory() as techcards:
+        cards = {project: {card.item_index: card for card in techcards.techcards.for_project(project) if card.project == project}
+                 for project in {key[0] for key in keys}}
+        for key in keys:
+            project, item, revision = key
+            index = _item_index(project, item)
+            card = cards[project].get(index) or cards[project].get(index.upper()) if index else None
+            if card is None:
+                continue
+            shown, info = pinned_card(techcards, card, revision)
+            if card.status is not TechcardStatus.ISSUED and (shown is card or info["fallback"]):
+                continue  # a draft is not what was issued to the task
+            if shown.document:
+                result[key] = shown.document
+    return result
+
+
+def _queue(principal, factory, techcards_factory, machine_id=None):
+    with factory() as uow:
+        candidates = cutting_queue.collect(uow, principal.actor)
+    documents = _documents(techcards_factory, cutting_queue.document_keys(candidates))
+    return cutting_queue.queue_rows(candidates, documents, machine_id)
+
+
+@queue_router.get("/machines")
+def queue_machines(principal: Annotated[Principal, Depends(production_view_principal)],
+                   factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+                   techcards_factory: Annotated[Callable | None, Depends(techcards_uow_factory)]):
+    return {"machines": cutting_queue.machines(_queue(principal, factory, techcards_factory))}
+
+
+@queue_router.get("")
+def queue_rows(machine_id: Annotated[str, Query(min_length=1, max_length=64)],
+               principal: Annotated[Principal, Depends(production_view_principal)],
+               factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+               techcards_factory: Annotated[Callable | None, Depends(techcards_uow_factory)]):
+    """`machine_id=none` — cuts whose card names no machine («Станок не указан»)."""
+    machine = machine_id.strip()
+    rows = _queue(principal, factory, techcards_factory, machine)
+    return {"machine_id": None if machine == cutting_queue.NO_MACHINE else machine,
+            "version": cutting_queue.queue_version(rows), "rows": rows}
+
+
+class QueueDonePayload(BaseModel):
+    task_id: UUID
+    operation_id: UUID
+    quantity: int = Field(gt=0, le=1_000_000)
+
+
+@queue_router.post("/done")
+def queue_done(payload: QueueDonePayload,
+               principal: Annotated[Principal, Depends(production_view_work_principal)],
+               now: Annotated[datetime, Depends(moscow_now)],
+               factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+               techcards_factory: Annotated[Callable | None, Depends(techcards_uow_factory)],
+               idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=255)],
+               on_behalf_of: UUID | None = None):
+    worker = _performer(factory, principal, on_behalf_of) or principal.actor
+    key = _replay_key(idempotency_key)
+    if key is None:
+        raise HTTPException(422, "Нужен ключ повтора")
+    with factory() as uow:
+        task = uow.production.get(payload.task_id)
+        if task is None:
+            raise HTTPException(404, "Задание не найдено")
+        # A grouped row carries its frozen document; only a standalone PF needs the ETK read.
+        grouped = uow.cutting.for_operation(payload.operation_id) is not None
+        source = cutting_queue.document_key(task)
+    document = None if grouped else _documents(techcards_factory, {source}).get(source)
+    try:
+        return cutting_queue.mark_done(payload.task_id, payload.operation_id, payload.quantity, key,
+                                       principal.actor, worker, now, factory(), document=document)
+    except (ConcurrentProductionUpdate, ResourceConflict, IntegrityError, StaleDataError) as error:
+        raise HTTPException(409, str(error) if isinstance(error, ConcurrentProductionUpdate) else
+                            "Задание или ресурсы изменились — обновите очередь") from error
+    except PermissionError as error:
+        raise HTTPException(403, str(error)) from error
+    except KeyError as error:
+        raise HTTPException(404, error.args[0] if error.args else "Не найдено") from error
+    except ProductionValidationError as error:
+        raise HTTPException(422, str(error)) from error
+
+
+# One router for app.main: the group controls and the queue.
+groups_router = router
+router = APIRouter()
+router.include_router(groups_router)
+router.include_router(queue_router)

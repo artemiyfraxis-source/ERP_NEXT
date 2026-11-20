@@ -468,6 +468,32 @@ it("groups the operator queue by plan day and hides start for a completed operat
   expect(screen.getByText(/^Завтра · /).closest("details")).toBeNull();
 });
 
+it("shows a cut in «Задания» only in the cutting queue, not as a second card", async () => {
+  const operatorPrincipal: Principal = {
+    user: { id: "10000000-0000-0000-0000-000000000002", email: "operator@example.test", name: "Оператор", department: "Производство" },
+    roles: ["operator"], access_level: "operator", permissions: { myops: "edit" },
+  };
+  const cut: ProductionTask = { ...task, id: "70000000-0000-0000-0000-0000000000c1", number: "ПЗ-0101", operations: [{ ...task.operations[0], id: "71000000-0000-0000-0000-0000000000c1", state: "не начата", mates: [] }] };
+  const other: ProductionTask = { ...task, id: "70000000-0000-0000-0000-0000000000c2", number: "ПЗ-0102", operations: [{ ...task.operations[0], id: "71000000-0000-0000-0000-0000000000c2", state: "не начата", mates: [] }] };
+  const row = { key: "k", task_id: cut.id, operation_id: cut.operations[0].id, task_number: "ПЗ-0101", project: "708К.", item: "КБ1", group_number: null,
+    wire: "RG316", wire_name: "RG316", length_mm: "100", planned: "10", done: "0", left: "10", strip_a: null, strip_a_mode: null, strip_b: null,
+    strip_b_mode: null, laser_mark: null, marking_mode: null, operator_names: [], warnings: [], blocked: null, setup_change: true, setup_text: "Заправьте RG316" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/production/my") return json({ tasks: [cut, other] });
+    if (path === "/api/production/my/execution") return json({ session: null, boxes: [] });
+    if (path.includes("/cutting-queue/machines")) return json({ machines: [{ machine_id: "ОБ.1", machine_name: "Станок", rows: 1, left: "10", projects: 1 }] });
+    if (path.includes("/cutting-queue")) return json({ machine_id: "ОБ.1", version: "v", rows: [row] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProductionPage principal={operatorPrincipal} mine />);
+
+  await screen.findByText("Заправьте RG316");
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Начать" })).toHaveLength(1));
+  expect(screen.queryByText("Операции вам пока не назначены", { exact: false })).toBeNull();
+});
+
 it.each([false, true])("lets the master hand out operations of issued projects with machine runtime %s", async (machineRuntime) => {
   const bodies: Array<{ path: string; body: unknown }> = [];
   const open: ProductionTask = { ...task, assigned: 0, operations: [
