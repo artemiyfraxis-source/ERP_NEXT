@@ -222,9 +222,10 @@ it("cut group: «Резка кабеля» with КБ, length and pieces only, no
   expect(screen.queryByRole("button", { name: "Печатать оставшиеся" })).toBeNull();
 });
 
-it("labels group: printed / remaining per КБ and «Печатать оставшиеся» is disabled at zero", async () => {
-  const answer = (remaining: number) => ({ rows: group.rows.map((row, index) => ({ task_id: row.task_id, task_number: row.task_number, item: row.item,
-    quantity: 15, printed: 15 - remaining, remaining: index === 0 ? remaining : 0 })), printed: 0, remaining });
+it("labels group: printed / remaining per КБ and «Печатать оставшиеся» follows label pieces left", async () => {
+  const answer = (remaining: number, labels = remaining * 3) => ({ rows: group.rows.map((row, index) => ({ task_id: row.task_id,
+    task_number: row.task_number, item: row.item, quantity: 15, printed: 15 - remaining, remaining: index === 0 ? remaining : 0,
+    remaining_labels: index === 0 ? labels : 0 })), printed: 0, remaining, remaining_labels: labels });
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json(answer(5)));
   const { unmount } = render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly={false} renderInstruction={() => null} />);
   expect(screen.getByRole("heading", { name: "Печать этикеток · 708К. · 4 КБ" })).toBeTruthy();
@@ -234,9 +235,14 @@ it("labels group: printed / remaining per КБ and «Печатать остав
   expect(screen.queryByText("Длина, мм")).toBeNull();
   unmount();
   fetch.mockResolvedValue(json(answer(0)));
-  render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly={false} renderInstruction={() => null} />);
+  const second = render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly={false} renderInstruction={() => null} />);
   await waitFor(() => expect(screen.getAllByText("15").length).toBeGreaterThan(0));
   expect(screen.getByRole("button", { name: "Печатать оставшиеся" })).toBeDisabled();
+  second.unmount();
+  // Every item's numbered labels printed, fixed ones left: no item remains, the button stays enabled.
+  fetch.mockResolvedValue(json(answer(0, 30)));
+  render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly={false} renderInstruction={() => null} />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Печатать оставшиеся" })).toBeEnabled());
 });
 
 it("tubes group: material, length and pieces, one value per column", () => {

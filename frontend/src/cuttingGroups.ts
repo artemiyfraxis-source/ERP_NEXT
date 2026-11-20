@@ -79,9 +79,10 @@ export const cuttingState: Record<CuttingMember["state"], string> = {
   waiting: "Не назначено", assigned: "Назначено", started: "В работе", done: "Выполнено", split: "Выдано отдельно", cancelled: "Отменено",
 };
 
-/** Printed / remaining labels per КБ: `GET /api/production/marking/progress?group_id=…`. */
-export interface MarkingProgressRow { task_id: string; task_number: string; item: string; quantity: number; printed: number; remaining: number }
-export interface MarkingProgress { rows: MarkingProgressRow[]; printed: number; remaining: number }
+/** Printed / remaining labels per КБ: `GET /api/production/marking/progress?group_id=…`. `printed`/`remaining` count
+ *  items (serials); `remaining_labels` — label pieces still to print, numbered and fixed («Печатать оставшиеся»). */
+export interface MarkingProgressRow { task_id: string; task_number: string; item: string; quantity: number; printed: number; remaining: number; remaining_labels: number }
+export interface MarkingProgress { rows: MarkingProgressRow[]; printed: number; remaining: number; remaining_labels: number }
 
 export const cuttingKindTitle: Record<CuttingKind, string> = { cut: "Резка кабеля", labels: "Печать этикеток", tubes: "Резка трубок" };
 

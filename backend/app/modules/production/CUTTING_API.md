@@ -259,13 +259,17 @@ rebuilt task and from its pinned revision for a refused one. A changed label tex
 `workflows/marking_progress.py`: no counter is stored; per task, marking batches whose manifest names it and their
 jobs. A label counts as printed when its job is `spooled` (unless the tracked printer reported error/cancel) or still
 `pending`/`taken`/`unknown`; `failed`/`cancelled` are not printed. Rows match by (task, serial, text), not by the ETK
-operation index. An item (serial) is printed when all its numbered labels are.
+operation index. An item (serial) is printed when all its numbered labels are. A batch printed «чередовать по
+изделию» gives fixed labels the item serial too: a fixed row of a plain preview also takes fixed labels of interleaved
+items, a fixed row of an interleaved preview also takes fixed labels of plain batches — neither is printed again.
+A reprint job («Перепечатать номера…») resolves to the label it reprints; one label counts once.
 
 - `GET /api/production/marking/progress?group_id=…` or `?task_id=…&operation_id=…` (marking read gate):
   `{rows: [{task_id, task_number, item, quantity, serial_first, serial_last, printed, remaining, printed_serials,
-  remaining_serials}], printed, remaining}`. A plain read: the issued ETK is read without `FOR UPDATE`.
-  `printed`/`remaining` count items by serial; fixed (non-numbered) labels left after every serial is printed are not
-  counted, so «Печатать оставшиеся» is disabled then (open: needs a response field and a screen change).
+  remaining_serials, remaining_labels}], printed, remaining, remaining_labels}`. A plain read: the issued ETK is read
+  without `FOR UPDATE`. `printed`/`remaining` count items by serial; `remaining_labels` counts label pieces still to
+  print, numbered and fixed (0 when the task released its serials). «Печатать оставшиеся» on the labels group card is
+  enabled while `remaining_labels > 0`, so fixed labels left after every serial is printed can still be printed.
 - Preview/batch input `remaining: true` («Печатать оставшиеся»): the same rows minus printed ones; nothing left → 422.
   The print queue is read once per preview for all tasks of the source.
 - Batches are found by a text match of the task id over every manifest (base64 PNG included): no table links batches

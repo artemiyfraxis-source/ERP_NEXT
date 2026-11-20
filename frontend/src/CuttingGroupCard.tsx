@@ -100,7 +100,8 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
     { key: "length", title: "Длина, мм", numeric: true, value: (row) => row.length },
     { key: "quantity", title: "Шт.", numeric: true, value: (row) => row.quantity },
   ];
-  const remainingTotal = progress?.remaining ?? 0;
+  // Fixed labels can be left after every item's numbered ones are printed: the button follows label pieces, not items.
+  const remainingLabels = progress?.remaining_labels ?? 0;
   const columns: DataColumn<CuttingMember>[] = [
     { key: "item", title: "КБ", value: (row) => row.item, render: (row) => <b>{row.item}</b> },
     { key: "name", title: "Изделие", value: (row) => row.name, grow: true, wrap: true },
@@ -131,7 +132,7 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
         {canRefreshEtk && !readOnly && group.state === "open" && group.etk_stale && <button type="button" className="secondary" disabled={disabled}
           onClick={() => void act(async () => ({ ...(await productionApi.refreshCuttingGroupEtk(group.id, group.version)), outputs: [] }))}>Обновить из ЭТК</button>}
         <button type="button" className="secondary" aria-haspopup="dialog" onClick={() => setView("instruction")}>Инструкция</button>
-        {look === "labels" && !readOnly && <button type="button" className="primary" disabled={disabled || group.partial_view || !progress || remainingTotal <= 0}
+        {look === "labels" && !readOnly && <button type="button" className="primary" disabled={disabled || group.partial_view || !progress || remainingLabels <= 0}
           aria-haspopup="dialog" onClick={() => setView("remaining")}>Печатать оставшиеся</button>}
         {(look === "mixed" || look === "labels") && <button type="button" className="secondary" aria-haspopup="dialog" onClick={() => setView("labels")}>Этикетки группы</button>}
       </div>
