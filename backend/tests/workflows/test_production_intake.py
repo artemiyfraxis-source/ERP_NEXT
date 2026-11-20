@@ -123,7 +123,7 @@ def intake_api():
     client = TestClient(app)
     # КБ4 сделана до ERP (заданий нет): принята до тиража и уехала целиком.
     assert client.post("/api/shipping/finished-goods/accept", headers={"Idempotency-Key": "k-4"}, json={
-        "lines": [{"project": "708К.4", "item_index": "КБ4", "quantity": "6"}],
+        "lines": [{"project": "708К.4", "item_index": "КБ4", "quantity": "6", "confirm_beyond_tasks": True}],
     }).status_code == 200
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Администратор", department="ERP"), email="a@example.test", roles=frozenset({"admin"}), permissions={},

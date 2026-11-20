@@ -56,6 +56,17 @@
 }
 .intake-window .intake-name { max-width: 240px; }
 .intake-window .intake-place { width: 150px; }
+/* «Откатить приёмку»: сводка акта — пары «подпись — значение» в три колонки, причина на всю ширину. */
+.intake-act-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 16px; margin: 4px 0 12px; }
+.intake-act-facts > div { min-width: 0; }
+.intake-act-facts > .wide { grid-column: span 2; }
+.intake-act-facts dt { color: var(--muted-foreground); font-size: 12px; }
+.intake-act-facts dd { margin: 2px 0 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.intake-act .warning-inline { margin-bottom: 12px; }
+.intake-act-reason { display: grid; gap: 4px; }
+.intake-act-reason textarea { width: 100%; resize: vertical; }
+.intake-confirm .num { font-variant-numeric: tabular-nums; }
+@media (max-width: 720px) { .intake-act-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .intake-window .ship-inline input[type="date"] { min-width: 150px; }
 .intake-print-status { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
 /* Упаковка и отгрузка на этом же экране (владелец 29.10): «Упаковано» и «Отгружено» — числа-кнопки, как «Можно принять».

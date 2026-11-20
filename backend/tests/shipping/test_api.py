@@ -224,7 +224,7 @@ def test_shipping_api_track_required_and_dispatch_without_track(shipping_api, ca
     good = client.post("/api/shipping/goods", json={
         "project": "591К.3", "item_index": "КБ1", "name": "Жгут", "ordered": "2", "unit": "шт",
     }).json()["good"]
-    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "2"}).json()["good"]
+    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"confirm_beyond_tasks": True, "version": good["version"], "quantity": "2"}).json()["good"]
     permit_fixture_goods(client)
     made = client.post("/api/shipping/shipments", json={
         "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": terms, "carrier": carrier,
@@ -248,7 +248,7 @@ def test_finished_good_partial_shipment_and_close_gates(shipping_api):
         "name": "Жгут", "ordered": "40", "unit": "шт",
     })
     good = created.json()["good"]
-    accepted = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "6"})
+    accepted = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"confirm_beyond_tasks": True, "version": good["version"], "quantity": "6"})
     good = accepted.json()["good"]
     permit_fixture_goods(client)
     made = client.post("/api/shipping/shipments", json={
@@ -292,7 +292,7 @@ def _stocked_good(client, item_index: str, quantity: str) -> dict:
         "project": "591К.3", "item_index": item_index, "customer": "Заказчик",
         "name": "Жгут " + item_index, "ordered": "40", "unit": "шт",
     }).json()["good"]
-    return client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": quantity}).json()["good"]
+    return client.post(f"/api/shipping/goods/{good['id']}/accept", json={"confirm_beyond_tasks": True, "version": good["version"], "quantity": quantity}).json()["good"]
 
 
 def _picked_shipment(client, lines: list[tuple[dict, str]]) -> dict:
@@ -385,7 +385,7 @@ def _good_with_stock(client, *, project="591К.3", item_index="КБ1", accepted=
         "project": project, "item_index": item_index, "name": "Жгут", "ordered": "40", "unit": "шт",
     }).json()["good"]
     if accepted:
-        good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": accepted}).json()["good"]
+        good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"confirm_beyond_tasks": True, "version": good["version"], "quantity": accepted}).json()["good"]
     return good
 
 
@@ -404,7 +404,7 @@ def test_acceptance_notifies_about_missing_address_only_for_delivery(shipping_ap
     assert card.status_code == 200, card.text
     good = _good_with_stock(client, accepted="")
 
-    accepted = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "1"})
+    accepted = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"confirm_beyond_tasks": True, "version": good["version"], "quantity": "1"})
 
     assert accepted.status_code == 200, accepted.text
     with app.state.shipping_uow_factory() as uow:
@@ -469,7 +469,7 @@ def test_shipment_without_finished_stock_stays_new_and_is_picked_after_intake(sh
     assert shipment["pl_number"] == ""
 
     good = client.get("/api/shipping/goods").json()["goods"][0]
-    client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "5"})
+    client.post(f"/api/shipping/goods/{good['id']}/accept", json={"confirm_beyond_tasks": True, "version": good["version"], "quantity": "5"})
     picked = client.post(f"/api/shipping/shipments/{shipment['id']}/pick", json={"version": shipment["version"]})
 
     assert picked.status_code == 200
@@ -519,7 +519,7 @@ def test_project_queue_is_idempotent_and_drop_keeps_goods_with_movement(shipping
     assert good["ordered"] == "12"
 
     kb2 = goods["КБ2"]
-    accepted = client.post(f"/api/shipping/goods/{kb2['id']}/accept", json={"version": kb2["version"], "quantity": "1"})
+    accepted = client.post(f"/api/shipping/goods/{kb2['id']}/accept", json={"confirm_beyond_tasks": True, "version": kb2["version"], "quantity": "1"})
     assert accepted.status_code == 200, accepted.text
     permit_fixture_goods(client)
     made = client.post("/api/shipping/shipments", json={

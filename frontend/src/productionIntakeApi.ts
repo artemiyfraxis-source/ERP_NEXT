@@ -5,8 +5,8 @@ import type { PrintResult } from "./LabelPrint";
 
 export interface IntakeTask { number: string; status: string; site: string; quantity: number | string; delivered: string }
 
-/** Акт приёмки КБ складом: свой ГРН, штуки с учётом откатов, дата и место. */
-export interface IntakeAct { grn: string; quantity: string; received_at: string; location: string }
+/** Акт приёмки КБ складом: свой ГРН, штуки с учётом откатов, дата, место и кто принял. */
+export interface IntakeAct { grn: string; quantity: string; received_at: string; location: string; actor?: string }
 
 export interface IntakeRow {
   project: string;
@@ -75,8 +75,9 @@ export type UpdType = "ЭДО" | "БУМАГА" | "БЕЗ УПД";
 /** Данные отправки проекта: карточка получателя + плановая дата и комментарий. */
 export type DispatchData = Omit<ProjectAddressee, "upd_type"> & { upd_type: UpdType | null; plan_date: string | null; note: string };
 
-/** `location` строки заменяет общее место пакета; пусто — общее (или прежнее место КБ). */
-export interface AcceptLine { project: string; item_index: string; quantity: string; location?: string }
+/** `location` строки заменяет общее место пакета; пусто — общее (или прежнее место КБ). `confirm_beyond_tasks` —
+ *  кладовщик подтвердил приёмку сверх сданного цехом по заданиям (без него сервер отвечает 409). */
+export interface AcceptLine { project: string; item_index: string; quantity: string; location?: string; confirm_beyond_tasks?: boolean }
 
 export const intakeApi = {
   rows: () => api<{ rows: IntakeRow[] }>("/api/shipping/intake"),
@@ -85,6 +86,12 @@ export const intakeApi = {
     api<{ replayed: boolean }>("/api/shipping/finished-goods/accept", {
       method: "POST", headers: { "Idempotency-Key": idempotencyKey },
       body: JSON.stringify({ lines, ...(receivedAt ? { received_at: receivedAt } : {}), ...(location.trim() ? { location: location.trim() } : {}) }),
+    }),
+  /** «Откатить приёмку» акта (руководитель, с причиной): штуки акта снова «В производстве». 409 — уже откачен, есть
+   *  более поздний акт или штуки акта набраны / упакованы / уехали; тот же ключ — уже сделанное (`replayed`). */
+  rollbackAct: (grn: string, reason: string, idempotencyKey: string) =>
+    api<{ grn: string; quantity: string; replayed: boolean }>(`/api/shipping/acts/${encodeURIComponent(grn)}/rollback`, {
+      method: "POST", headers: { "Idempotency-Key": idempotencyKey }, body: JSON.stringify({ reason }),
     }),
   /** Этикетка ГРН акта приёмки — в ту же очередь печати склада, что у партий (права «Склад» на правку). */
   printLabel: (grn: string, copies = 1) =>

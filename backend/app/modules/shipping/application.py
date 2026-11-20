@@ -24,7 +24,7 @@ from app.shared.notifications import (
 
 from .domain import (
     ADDRESSEE_CARD_FIELDS, ItemAddressee, item_delivery,
-    HISTORY_CORRECTION_LIMITS, AcceptanceAct, ActStock, DeliveryTerms, GoodLots, FinishedGood, GoodMove, MoveContext, PackPermission, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
+    HISTORY_CORRECTION_LIMITS, AcceptanceAct, ActStock, DeliveryTerms, GoodLots, FinishedGood, GoodMove, GoodsState, MoveContext, MoveKind, PackPermission, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
     ShipmentStatus, ShippingValidationError, StoredFile, UpdType, check_boxes, effective_address, packed_by_index,
     no_upd_offered, shipping_gaps, plan_project_queue, whole_order_accepted,
 )
@@ -36,6 +36,10 @@ class ConcurrentShippingUpdate(RuntimeError):
 
 class ShippingPermissionError(PermissionError):
     """Часть команды, которую этой роли делать нельзя: отказ всей команде (HTTP 403)."""
+
+
+class ShippingConflict(RuntimeError):
+    """Команда не подходит к нынешнему состоянию записи (HTTP 409): например, откат приёмки уже упакованного."""
 
 
 # SUPPLYMAP ограничения не задаёт (Drive принимает что угодно); ERP держит файл в базе — 20 МБ.
@@ -50,6 +54,8 @@ class FinishedGoodsRepository(Protocol):
     def reserve_grn(self, year: int) -> str: ...
     def record_act(self, good: FinishedGood, moves: tuple[GoodMove, ...]) -> AcceptanceAct | None: ...
     def acts(self, good_ids: Sequence[UUID]) -> dict[UUID, tuple[AcceptanceAct, ...]]: ...
+    def act_owner(self, grn: str) -> UUID | None: ...
+    def move_exists(self, move_id: UUID) -> bool: ...
     def by_project(self, project: str) -> Sequence[FinishedGood]: ...
     def for_project(self, project: str) -> Sequence[FinishedGood]: ...
     def in_shipments(self, good_ids: Sequence[UUID]) -> set[UUID]: ...
@@ -470,11 +476,12 @@ def accept_good(command: AcceptGoodCommand, uow: UnitOfWork) -> FinishedGood:
 def accept_into_stock(
     uow, good: FinishedGood, quantity: Decimal, *, received_at: date, actor: Actor, now: datetime,
     limit: Decimal | None = None, limit_basis: str = "сдано цехом", reason: str = "", id_seed: UUID | None = None,
-    location: str = "",
+    location: str = "", beyond_tasks: dict | None = None,
 ) -> FinishedGood:
     """«Принято складом» без фиксации: в производстве → принято, не больше `limit` всего по КБ (сдано цехом).
     Зовут приёмка одной КБ и пакетная «Из производства» — фиксирует вызывающий. `location` — место хранения КБ на
-    складе ГП: непустое заменяет прежнее, пустое его оставляет."""
+    складе ГП: непустое заменяет прежнее, пустое его оставляет. `beyond_tasks` — подтверждение приёмки сверх сданного
+    по заданиям (кто, сдано N, принято M) — в аудит приёмки."""
     amount = Decimal(quantity)
     if not amount.is_finite() or amount <= 0:
         raise ShippingValidationError(f"{good.project} {good.item_index}: количество должно быть больше нуля")
@@ -490,6 +497,7 @@ def accept_into_stock(
     _audit(good.id, "shipping.good_accepted", actor, now, {
         "quantity": str(amount), "grn": act.grn, **({"reason": reason} if reason else {}),
         **({"location": updated.location} if updated.location != good.location else {}),
+        **({"beyond_tasks": beyond_tasks} if beyond_tasks else {}),
     }, uow)
     return updated
 
@@ -1653,3 +1661,88 @@ def rollback_shipped(command: RollbackShippedCommand, uow: UnitOfWork) -> Shipme
         }, uow)
         uow.commit()
         return updated
+
+
+ROLLBACK_ACCEPTANCE_DENIED = "Откатить приёмку может только руководитель (администратор)"
+ROLLBACK_ACCEPTANCE_NAMESPACE = uuid5(NAMESPACE_URL, "erp-next:shipping:rollback-acceptance")
+
+
+@dataclass(frozen=True)
+class RollbackAcceptanceCommand:
+    """«Откатить приёмку» акта (ГРН): все его штуки, ещё числящиеся принятыми, — снова «В производстве». Только
+    руководитель, с причиной; ключ повтора делает повтор той же команды безвредным."""
+
+    grn: str
+    reason: str
+    allowed: bool
+    idempotency_key: str
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class RollbackAcceptanceResult:
+    good: FinishedGood
+    grn: str
+    quantity: Decimal
+    replayed: bool = False
+
+
+def rollback_acceptance(command: RollbackAcceptanceCommand, uow: UnitOfWork) -> RollbackAcceptanceResult:
+    """Откат ошибочной приёмки (20.11: 708К. КБ20 приняли 14 «вне заданий» при одной сданной — откатывали скриптом).
+
+    Акт откатывается целиком (его `net`): ход отката «Принято складом → В производстве» через журнал ГП, как у
+    «Откатить отгрузку»; `roll_back_acts` снимает откат с самого нового акта, поэтому откатывают начиная с последнего
+    акта КБ. Отказ (409): акт уже откачен, после него есть неоткаченный акт, штуки акта набраны / упакованы / уехали
+    или на складе их уже меньше. Повтор с тем же ключом ничего не пишет и возвращает сделанное."""
+    if not command.allowed:
+        raise ShippingPermissionError(ROLLBACK_ACCEPTANCE_DENIED)
+    reason = str(command.reason or "").strip()
+    if not reason:
+        raise ShippingValidationError("Укажите причину отката приёмки")
+    key = str(command.idempotency_key or "").strip()
+    if not key:
+        raise ShippingValidationError("Не передан ключ повтора (Idempotency-Key)")
+    grn = str(command.grn or "").strip()
+    seed = uuid5(ROLLBACK_ACCEPTANCE_NAMESPACE, f"{key}|{grn}")
+    with uow:
+        good_id = uow.goods.act_owner(grn)
+        if good_id is None:
+            raise KeyError(f"Акт приёмки {grn} не найден")
+        found = uow.goods.get(good_id)
+        if found is None:
+            raise KeyError(f"Finished good not found: {good_id}")
+        uow.lock_projects([found.project])
+        good = uow.goods.get(good_id)  # после блокировки проекта: упаковка могла успеть взять штуки
+        acts = uow.goods.acts([good.id]).get(good.id, ())
+        index = next((number for number, act in enumerate(acts) if act.grn == grn), None)
+        if index is None:
+            raise KeyError(f"Акт приёмки {grn} не найден")
+        act = acts[index]
+        move_id = uuid5(seed, f"{good.id}:{MoveKind.CORRECTION.value}:{GoodsState.ACCEPTED.value}")
+        if uow.goods.move_exists(move_id):
+            return RollbackAcceptanceResult(good=good, grn=act.grn, quantity=act.rolled_back, replayed=True)
+        if act.net <= 0:
+            raise ShippingConflict(f"Приёмка по {act.grn} уже откачена")
+        later = next((item for item in acts[index + 1:] if item.net > 0), None)
+        if later is not None:
+            raise ShippingConflict(
+                f"После {act.grn} есть приёмка {later.grn} ({_plain(later.net)} {good.unit}) — сначала откатите её"
+            )
+        taken = uow.shipments.taken_from_acts([act.id]).get(act.id, Decimal("0"))
+        if taken > 0 or act.net > good.remaining:
+            raise ShippingConflict(
+                f"{act.grn}: штуки уже набраны в отправку, упакованы или отгружены — сначала верните их на склад"
+            )
+        updated = good.unaccept(act.net)
+        uow.goods.add(updated, _context(command.actor, command.now, reason=reason, correction=True, id_seed=seed))
+        uow.audit.add(AuditEvent(
+            id=uuid5(seed, "accept-rolled-back"), aggregate_id=good.id, event_type="shipping.accept_rolled_back",
+            actor=command.actor, occurred_at=command.now, details={
+                "grn": act.grn, "act_id": str(act.id), "project": good.project, "item_index": good.item_index,
+                "quantity": _plain(act.net), "act_quantity": _plain(act.quantity), "reason": reason,
+                "idempotency_key": key,
+            },
+        ))
+        uow.commit()
+        return RollbackAcceptanceResult(good=updated, grn=act.grn, quantity=act.net)

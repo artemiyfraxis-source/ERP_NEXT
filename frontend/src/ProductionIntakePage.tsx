@@ -12,7 +12,7 @@ import { defaultTab, dispatchBoard, hasWork, kbKey, num, ofProject, permittedPac
 import { isPickup, termsText } from "./carriers";
 import { canAct, canSee, hasFullAccess, urlParam } from "./navigation";
 import { deliveryGroups, intakeApi, type DispatchShipment, type IntakeAct, type IntakeRow as ApiIntakeRow } from "./productionIntakeApi";
-import { IntakeWindow, keyOf, leftOf } from "./IntakeWindow";
+import { IntakeWindow, keyOf, leftOf, RollbackActWindow } from "./IntakeWindow";
 import { PrintOutcome, type PrintResult } from "./LabelPrint";
 import { PackWindow } from "./PackWindow";
 import { PrintSetupButton } from "./PrintSetupWindow";
@@ -91,7 +91,8 @@ function urlTab(): { tab: Tab | null; journal: boolean } {
 }
 
 type Opened = { kind: "pack" | "ship"; project: string } | { kind: "track"; title: string; shipment: DispatchShipment } | { kind: "noupd"; shipment: DispatchShipment };
-type Accepting = { rows: IntakeRow[]; quantities: Record<string, number> };
+type Accepting = { rows: IntakeRow[]; quantities: Record<string, number>; blank?: boolean };
+type RollingBack = { row: IntakeRow; act: IntakeAct; onStock: number };
 
 export function ProductionIntakePage({ principal }: { principal: Principal }) {
   // Принимает, упаковывает и отгружает кладовщик («Отгрузка — склад»); менеджер («Отгрузка») — данные отправки, заявки.
@@ -99,6 +100,8 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const canManage = canAct(principal, "shipping");
   const canDispatch = canManage || canWarehouse;
   const rights: CardRights = { canManage, canWarehouse, canEdit: canDispatch, canUnship: hasFullAccess(principal) };
+  // «Откатить приёмку» — тот же гейт, что у «Откатить отгрузку»: руководитель (администратор).
+  const canRollback = hasFullAccess(principal);
   const fromUrl = useRef(urlTab());
   const [rows, setRows] = useState<IntakeRow[]>([]);
   const [shipments, setShipments] = useState<DispatchShipment[]>([]);
@@ -112,6 +115,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const [tab, setTab] = useState<Tab>(fromUrl.current.tab ?? "ready");
   const tabChosen = useRef(Boolean(fromUrl.current.tab));
   const [accepting, setAccepting] = useState<Accepting | null>(null);
+  const [rollingBack, setRollingBack] = useState<RollingBack | null>(null);
   const [opened, setOpened] = useState<Opened | null>(null);
   const [header, setHeader] = useState<"journal" | "good" | "request" | null>(fromUrl.current.journal ? "journal" : null);
   const [label, setLabel] = useState<{ grn: string; result: PrintResult | null; error: string; busy: boolean } | null>(null);
@@ -238,6 +242,10 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     catch (reason) { setError(failureText(reason, "Операция не выполнена")); return false; }
     finally { setBusy(""); }
   };
+  async function rolledBack(message: string) {
+    setRollingBack(null); setError(""); setNotice(message);
+    await reload();
+  }
   async function accepted(pieceCount: number) {
     setAccepting(null); setError("");
     setNotice(`Принято на склад: ${pieceCount} шт`);
@@ -296,8 +304,8 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     if (failed.length) setError(`Не отгружено ${failed.length} — ${failed.join("; ")}`);
     setBusy("");
   }
-  const accept = (kbs: IntakeRow[], quantity: (row: IntakeRow) => number) =>
-    setAccepting({ rows: kbs, quantities: Object.fromEntries(kbs.map((row) => [keyOf(row), quantity(row)])) });
+  const accept = (kbs: IntakeRow[], quantity: (row: IntakeRow) => number, blank = false) =>
+    setAccepting({ rows: kbs, quantities: Object.fromEntries(kbs.map((row) => [keyOf(row), quantity(row)])), blank });
 
   /** «Принять досрочно» из «В производстве»: сколько можно принять сверх уже сданного цехом. */
   const earlyQuantity = (line: IntakeLine) => round2(Math.min(line.quantity, Math.max(num(line.kb.remaining) - piecesOf(line.kb).ready, 0)));
@@ -322,7 +330,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       const quantity = earlyQuantity(line);
       if (!canWarehouse || !(quantity > 0)) return dash;
       return <button type="button" className="secondary small intake-early" title="Ещё в производстве — принять досрочно"
-        aria-label={`Принять досрочно ${who(line)}: ${quantity}`} onClick={() => accept([line.kb], () => quantity)}>Принять досрочно · {formatNumber(quantity)}</button>;
+        aria-label={`Принять досрочно ${who(line)}: ${quantity}`} onClick={() => accept([line.kb], () => quantity, true)}>Принять досрочно · {formatNumber(quantity)}</button>;
     }
     if (line.stage === "ready") {
       if (!canWarehouse) return <strong className="tone-ok" title={tasksText(line.kb)}>{formatNumber(line.quantity)}</strong>;
@@ -361,7 +369,12 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       value: (line) => line.stage === "accepted" ? line.packNow || (line.shipment ? line.quantity : 0) : line.stage === "ready" ? line.quantity : "", render: actionCell },
     { key: "tasks", title: "Задания", wrap: true, width: 128, maxWidth: 200, value: (line) => line.kb.tasks.map((task) => task.number).join(", "),
       render: (line) => line.kb.tasks.length ? <span className="intake-clip intake-stage muted" title={tasksText(line.kb)}>{line.kb.tasks.map((task) => task.number).join(", ")}</span> : dash },
-    { key: "grn", title: "ГРН", wrap: true, width: 136, maxWidth: 200, value: (line) => line.grns.join(", ") },
+    { key: "grn", title: "ГРН", wrap: true, width: 136, maxWidth: 200, value: (line) => line.grns.join(", "),
+      // Акт приёмки на складе: руководителю ГРН открывает карточку акта с «Откатить приёмку».
+      render: (line) => canRollback && line.stage === "accepted" && line.act && !line.shipment
+        ? <button type="button" className="link-button intake-act-open" title="Карточка акта приёмки: откат"
+          aria-label={`Акт приёмки ${line.act.grn}`} onClick={() => setRollingBack({ row: line.kb, act: line.act!, onStock: line.quantity })}>{line.act.grn}</button>
+        : line.grns.join(", ") },
     { key: "received", title: "Дата приёмки", width: 104, value: (line) => line.act?.received_at ?? "", render: (line) => line.act ? formatDay(line.act.received_at) : dash },
     { key: "label", title: "Этикетка", width: 88, export: false, value: () => "", render: (line) => canWarehouse && line.stage === "accepted" && !line.shipment && line.grns.length === 1
       ? <button type="button" className="link-button intake-grn-print" title="Печать этикетки ГРН" aria-label={`Печать этикетки ${line.grns[0]}`}
@@ -507,7 +520,8 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
         emptyText={board.rows.length ? EMPTY[tab] : EMPTY.all} />
       {label && <div className="intake-print-status"><strong>Этикетка {label.grn}</strong><PrintOutcome result={label.result} error={label.error} /></div>}
     </>}
-    {accepting && <IntakeWindow rows={accepting.rows} quantities={accepting.quantities} close={() => setAccepting(null)} onDone={accepted} />}
+    {accepting && <IntakeWindow rows={accepting.rows} quantities={accepting.quantities} blank={accepting.blank} close={() => setAccepting(null)} onDone={accepted} />}
+    {rollingBack && <RollbackActWindow row={rollingBack.row} act={rollingBack.act} onStock={rollingBack.onStock} close={() => setRollingBack(null)} onDone={rolledBack} />}
     {opened?.kind === "pack" && <PackWindow project={opened.project} rows={projectRows(opened.project)} shipments={projectShips(opened.project)} rights={rights} reload={reload} close={() => setOpened(null)} />}
     {opened?.kind === "ship" && <ShipWindow project={opened.project} shipments={projectShips(opened.project)} rights={rights} reload={reload} close={() => setOpened(null)} />}
     {opened?.kind === "track" && <TrackWindow title={opened.title} shipments={[shipments.find((shipment) => shipment.id === opened.shipment.id) ?? opened.shipment]} reload={reload} close={() => setOpened(null)} />}

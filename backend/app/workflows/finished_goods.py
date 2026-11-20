@@ -10,7 +10,9 @@
 * «Из производства» (`from_production`): КБ с живыми заданиями, которые склад принял не целиком — сдано, принято,
   можно принять сейчас;
 * приёмка (`accept_batch`, `accept_one`): не больше сданного цехом. КБ без живых заданий в ERP (сделана до ERP, задания
-  закрыты ручным этапом) принимается до тиража — с причиной в журнале (решено агентом 12.10 — проверить); нет данных
+  закрыты ручным этапом) принимается до тиража — с причиной в журнале (решено агентом 12.10 — проверить). Сверх
+  сданного по заданиям (`handed_over`) — только с явным подтверждением кладовщика (`confirm_beyond_tasks`, иначе
+  `BeyondTasksNotConfirmed`, HTTP 409): 20.11 по 708К. КБ20 приняли 14 «до тиража вне заданий» при одной сданной; нет данных
   отправки проекта (получатель, адрес, телефон, вариант УПД, файл бумажной УПД) — уведомление менеджеру проекта, одно
   на приёмку и проект, в той же транзакции (владелец 14.10.2026);
 * сквозной статус проекта (`project_status`): по КБ штуки в каждом состоянии, отправки и журнал.
@@ -66,6 +68,7 @@ DELIVERED_BASIS = "сдано цехом"
 RUN_BASIS = "тираж"
 NO_TASKS_REASON = "КБ без заданий в ERP: принято до тиража"
 OUTSIDE_TASKS_REASON = "Цех сдал по заданиям меньше: принято до тиража вне заданий"
+BEYOND_TASKS_ASK = "подтвердите приёмку сверх сданного"
 ACCEPT_BATCH_NAMESPACE = uuid5(NAMESPACE_URL, "erp-next:shipping:accept-from-production")
 BATCH_EVENT = "shipping.goods_accepted_batch"
 
@@ -269,6 +272,44 @@ class AcceptLine:
     quantity: Decimal
     # Место хранения на складе ГП; пусто — прежнее место КБ.
     location: str = ""
+    # Кладовщик подтвердил приёмку сверх сданного цехом по заданиям (окно подтверждения на экране).
+    confirm_beyond_tasks: bool = False
+
+
+class BeyondTasksNotConfirmed(RuntimeError):
+    """Принимают больше, чем цех сдал по заданиям, без явного подтверждения (HTTP 409): ничего не принято."""
+
+    def __init__(self, good: FinishedGood, handed: Decimal, quantity: Decimal):
+        self.project, self.item_index, self.handed, self.quantity = good.project, good.item_index, handed, quantity
+        super().__init__(
+            f"{good.project} {good.item_index}: Цех сдал по заданиям {_plain(handed)}, принимаете {_plain(quantity)} — "
+            f"{BEYOND_TASKS_ASK}"
+        )
+
+
+def _plain(value: Decimal) -> str:
+    return format(Decimal(value).normalize(), "f")
+
+
+def handed_over(kb: KbProduction | None, good: FinishedGood) -> Decimal:
+    """Сдано цехом по заданиям КБ и ещё не принято складом (N): сданное живыми заданиями (`shop_delivered`) минус
+    принятое по КБ; КБ без заданий в ERP — 0. Тот же счёт у экрана: `delivered − accepted` строки приёмки."""
+    return max((kb.delivered if kb is not None else ZERO) - good.accepted, ZERO)
+
+
+def beyond_tasks(
+    kb: KbProduction | None, good: FinishedGood, quantity: Decimal, limit: Decimal, confirmed: bool, actor: Actor,
+) -> dict | None:
+    """Приёмка M сверх сданного N (M > N) — только с подтверждением; подробности подтверждения для аудита (кто, N, M)
+    или None, когда принимают не больше сданного. Сверх предела (тиража) не спрашиваем — откажет `accept_into_stock`."""
+    amount = Decimal(quantity)
+    handed = handed_over(kb, good)
+    if not amount.is_finite() or amount <= handed or good.accepted + amount > limit:
+        return None
+    if not confirmed:
+        raise BeyondTasksNotConfirmed(good, handed, amount)
+    return {"confirmed_by": actor.name, "confirmed_by_id": str(actor.id), "handed_over": _plain(handed),
+            "accepted": _plain(amount), "beyond": _plain(amount - handed)}
 
 
 @dataclass(frozen=True)
@@ -362,9 +403,11 @@ def accept_batch(command: AcceptBatchCommand, uow_factory) -> AcceptBatchResult:
             kb = production.get(kb_key)
             good = _good_for(uow, line.project.strip(), line.item_index.strip(), kb, command.actor, command.now)
             limit, basis, reason = _limit(kb, good)
+            confirmed = beyond_tasks(kb, good, line.quantity, limit, line.confirm_beyond_tasks, command.actor)
             accepted.append(accept_into_stock(
                 uow, good, line.quantity, received_at=received_at, actor=command.actor, now=command.now,
                 limit=limit, limit_basis=basis, reason=reason, id_seed=batch_id, location=line.location,
+                beyond_tasks=confirmed,
             ))
         uow.audit.add(AuditEvent(
             id=uuid5(batch_id, "batch"), aggregate_id=batch_id, event_type=BATCH_EVENT, actor=command.actor,
@@ -392,10 +435,11 @@ class AcceptOneCommand:
     actor: Actor
     now: datetime
     location: str = ""
+    confirm_beyond_tasks: bool = False
 
 
 def accept_one(command: AcceptOneCommand, uow_factory) -> FinishedGood:
-    """«Принять» одной КБ (экран «Отгрузка»): тот же предел, что у пакета — не больше сданного цехом."""
+    """«Принять» одной КБ (экран «Отгрузка»): тот же предел и то же подтверждение сверх сданного, что у пакета."""
     with uow_factory() as uow:
         good = uow.goods.get(command.good_id)
         if good is None:
@@ -404,9 +448,11 @@ def accept_one(command: AcceptOneCommand, uow_factory) -> FinishedGood:
             raise ConcurrentShippingUpdate("Позиция готовой продукции изменилась после загрузки формы")
         kb = read_delivered(uow, uow.production.for_project(good.project)).get(kit_stage_key(good.project, good.item_index))
         limit, basis, reason = _limit(kb, good)
+        confirmed = beyond_tasks(kb, good, command.quantity, limit, command.confirm_beyond_tasks, command.actor)
         updated = accept_into_stock(
             uow, good, command.quantity, received_at=command.received_at or command.now.date(), actor=command.actor,
             now=command.now, limit=limit, limit_basis=basis, reason=reason, location=command.location,
+            beyond_tasks=confirmed,
         )
         notify_dispatch_gaps(uow, updated.project, (updated.item_index,), f"good:{updated.id}:v{updated.version}", command.now)
         uow.commit()

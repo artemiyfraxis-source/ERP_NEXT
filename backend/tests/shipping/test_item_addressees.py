@@ -238,7 +238,7 @@ def test_project_number_fallback_never_overrides_kb_receiver(env, endpoint):
     from tests.shipping.test_api import decide_pack
     client, _ = env
     good = client.post("/api/shipping/goods", json={"project": PROJECT, "item_index": "КБ1", "name": "Жгут", "ordered": "1"}).json()["good"]
-    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "1"}).json()["good"]
+    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"confirm_beyond_tasks": True, "version": good["version"], "quantity": "1"}).json()["good"]
     assert save(client, fields={"receiver": "Получатель КБ"}).status_code == 200
     decide_pack(client, PROJECT)
     body = _body([(good, "1")], ship=False)

@@ -70,7 +70,7 @@ def test_paper_without_file_is_listed_and_goes_to_the_shipment_manager(flow_api)
         ))
         uow.commit()
 
-    response = client.post(f"/api/shipping/goods/{_good_id(sessions)}/accept", json={"version": _good_version(sessions), "quantity": "3"})
+    response = client.post(f"/api/shipping/goods/{_good_id(sessions)}/accept", json={"confirm_beyond_tasks": True, "version": _good_version(sessions), "quantity": "3"})
 
     notices = _notices(sessions)
     assert response.status_code == 200, response.text

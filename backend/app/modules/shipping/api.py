@@ -28,10 +28,10 @@ from .application import (
     AttachCardUpdCommand, AttachUpdCommand, attach_upd_file, store_card_upd_file, UPD_FILE_URL_PREFIX, upd_file_url,
     ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand, EditHeadCommand, HistoryCorrectionCommand,
     IssueDocumentCommand, LayOutCommand, PickCommand, PackPermissionChange, SetPackPermissionsCommand, set_pack_permissions, PackProjectCommand, ProjectShipCommand, ProjectShipLine, QueueProjectCommand, RegisterGoodCommand,
-    RequestedGood, RollbackShippedCommand, SetProjectAddresseeCommand, SetRequestedCommand, ShipmentCommand,
-    ShipCommand, ShippingPermissionError, UnitOfWork, UnpickCommand, UpdUpload, UpdateDocumentsCommand, cancel_shipment,
+    RequestedGood, RollbackAcceptanceCommand, RollbackShippedCommand, SetProjectAddresseeCommand, SetRequestedCommand, ShipmentCommand,
+    ShipCommand, ShippingConflict, ShippingPermissionError, UnitOfWork, UnpickCommand, UpdUpload, UpdateDocumentsCommand, cancel_shipment,
     close_shipment, correct_shipment_history, create_shipment, drop_project, edit_shipment_head, issue_document, lay_out_shipment, mark_shipped, pack_project,
-    pack_shipment, pick_shipment, queue_project, register_good, rollback_shipped, set_project_addressee, set_requested,
+    pack_shipment, pick_shipment, queue_project, register_good, rollback_acceptance, rollback_shipped, set_project_addressee, set_requested,
     ship_project, unpick_line, update_documents,
 )
 from .documents import build_box_labels, build_delivery_note, build_packing_lists, storekeeper_signature
@@ -450,6 +450,8 @@ def _run(operation):
         raise HTTPException(status_code=409, detail=str(error)) from error
     except ShippingPermissionError as error:
         raise HTTPException(status_code=403, detail=str(error)) from error
+    except ShippingConflict as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except (IntegrityError, StaleDataError) as error:
@@ -881,6 +883,28 @@ def unship(shipment_id: UUID, payload: UnshipPayload, principal: Annotated[Princ
         reason=payload.reason, allowed=principal.full_access and not principal.service,
     ), uow_factory()))
     return {"shipment": _shipment_result(shipment)}
+
+
+class RollbackAcceptancePayload(BaseModel):
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+@router.post("/acts/{grn}/rollback")
+def rollback_accepted(
+    grn: str, payload: RollbackAcceptancePayload,
+    principal: Annotated[Principal, Depends(shipping_editor_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=255)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+) -> dict:
+    """«Откатить приёмку» акта ГРН: тот же гейт, что у «Откатить отгрузку» (руководитель, с причиной); штуки акта —
+    снова «В производстве». 409 — акт уже откачен, после него есть неоткаченный акт или его штуки уже набраны /
+    упакованы / уехали; тот же ключ повтора — `replayed: true` без новой записи."""
+    result = _run(lambda: rollback_acceptance(RollbackAcceptanceCommand(
+        grn=grn, reason=payload.reason, allowed=principal.full_access and not principal.service,
+        idempotency_key=idempotency_key, actor=principal.actor, now=now,
+    ), uow_factory()))
+    return {"good": _good_result(result.good), "grn": result.grn, "quantity": _number(result.quantity), "replayed": result.replayed}
 
 
 @router.put("/shipments/{shipment_id}/lines/{line_id}")

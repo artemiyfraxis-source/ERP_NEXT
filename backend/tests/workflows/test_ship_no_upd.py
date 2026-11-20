@@ -97,7 +97,7 @@ def _without_upd(client) -> dict:
         "project": PROJECT, "item_index": "КБ1", "customer": "Заказчик", "name": "Жгут", "ordered": "6", "unit": "шт",
     }).json()["good"]
     _as(STOREKEEPER)
-    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "6"}).json()["good"]
+    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"confirm_beyond_tasks": True, "version": good["version"], "quantity": "6"}).json()["good"]
     _as(MANAGER)
     permission = client.post("/api/shipping/project-pack-permissions", json={
         "project": PROJECT, "lines": [{"item_index": "КБ1", "quantity": "6", "version": 0}],
@@ -253,7 +253,7 @@ def _pickup(client, upd_type, *, carrier: bool = False) -> dict:
         "project": PROJECT, "item_index": "КБ1", "customer": "Заказчик", "name": "Жгут", "ordered": "6", "unit": "шт",
     }).json()["good"]
     _as(STOREKEEPER)
-    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "6"}).json()["good"]
+    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"confirm_beyond_tasks": True, "version": good["version"], "quantity": "6"}).json()["good"]
     _as(MANAGER)
     client.post("/api/shipping/project-pack-permissions", json={
         "project": PROJECT, "lines": [{"item_index": "КБ1", "quantity": "6", "version": 0}],

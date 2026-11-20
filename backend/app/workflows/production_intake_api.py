@@ -54,6 +54,7 @@ def list_intake(
         "grn": row.good.grn if row.good else None, "location": row.location,
         "acts": [{
             "grn": act.grn, "quantity": _number(act.net), "received_at": act.received_at.isoformat(), "location": act.location,
+            "actor": act.actor,
         } for act in row.acts],
         "tasks": [{
             "number": task.number, "status": task.status, "site": task.site, "quantity": task.quantity,
