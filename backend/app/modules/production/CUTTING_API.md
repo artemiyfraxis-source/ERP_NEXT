@@ -421,11 +421,11 @@ row. `cutting_queue.py`, routes in `cutting_api.py`. Computed on every read — 
   machine: the row gets `machine_id: null`, «нет в ЭТК: станок», and its own bucket «Станок не указан»
   (`machine_id=none`).
 - A missing or odd ETK value never drops a row: the value is `null` and `warnings` says «нет в ЭТК: длина / провод /
-  разделка A / режим разделки A / …». A grouped row whose frozen ETK lacks the cut stays with «нет в ЭТК: резка кабеля».
+  зачистка А / режим зачистки А / …». A grouped row whose frozen ETK lacks the cut stays with «нет в ЭТК: резка кабеля».
 - Order: setup key (wire, then side A and B strip values/mode/diameters, then laser marking mode), then length short →
   long (unknown last), then project, КБ, task number. `setup_change` — the row's setup key differs from the previous
-  row (always true on the first); `setup_text` — the banner («Заправьте RTK 031 · разделка A: 3/7,6/12,7 мм, полная ·
-  разделка B: … · лазер по краям»; «без разделки» when no side is stripped).
+  row (always true on the first); `setup_text` — the banner («Заправьте RTK 031 · зачистка А: 3/7,6/12,7 мм, полная ·
+  зачистка Б: … · лазер по краям»; «без зачистки» when no side is stripped).
 
 `GET /api/production/cutting-queue?machine_id=ОБ.095` (myops view; `machine_id=none` — the «Станок не указан» bucket,
 answered with `machine_id: null`):

@@ -62,8 +62,8 @@ def test_rows_of_all_projects_ordered_by_wire_then_length_with_setup_banner(prod
         ("708К.", "КБ2", "RG 316", "500"), ("709К.", "КБ1", "RTK 031", "1000"), ("708К.", "КБ1", "RTK 031", "2000")]
     # Same wire across projects: no setup change between them; a new wire starts a setup.
     assert [row["setup_change"] for row in rows] == [True, True, False]
-    assert rows[1]["setup_text"] == ("Заправьте RTK 031 · разделка A: 3/7,6/12,7 мм, полная · "
-                                     "разделка B: 3/7,6/12,7 мм, полная")
+    assert rows[1]["setup_text"] == ("Заправьте RTK 031 · зачистка А: 3/7,6/12,7 мм, полная · "
+                                     "зачистка Б: 3/7,6/12,7 мм, полная")
     first = rows[1]
     assert (first["strip_a"], first["strip_a_mode"], first["strip_a_program"]) == ("3/7,6/12,7", "full", "confirmed")
     assert first["diameters"] == "0,81/2,1/3,2"
@@ -85,7 +85,7 @@ def test_missing_etk_value_keeps_the_row_with_a_warning(production_api):
     missing = rows[-1]
     assert missing["group_id"] is None and missing["length_mm"] is None
     assert missing["warnings"] == ["нет в ЭТК: длина"]
-    assert rows[0]["warnings"] == ["нет в ЭТК: режим разделки A"] and rows[0]["strip_a_mode"] is None
+    assert rows[0]["warnings"] == ["нет в ЭТК: режим зачистки А"] and rows[0]["strip_a_mode"] is None
     assert rows[0]["setup_change"] and rows[1]["setup_change"] and not rows[2]["setup_change"]
 
 

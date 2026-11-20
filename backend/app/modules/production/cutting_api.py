@@ -296,8 +296,10 @@ def queue_done(payload: QueueDonePayload,
         task = uow.production.get(payload.task_id)
         if task is None:
             raise HTTPException(404, "Задание не найдено")
+        # A grouped row carries its frozen document; only a standalone PF needs the ETK read.
+        grouped = uow.cutting.for_operation(payload.operation_id) is not None
         source = cutting_queue.document_key(task)
-    document = _documents(techcards_factory, {source}).get(source)
+    document = None if grouped else _documents(techcards_factory, {source}).get(source)
     try:
         return cutting_queue.mark_done(payload.task_id, payload.operation_id, payload.quantity, key,
                                        principal.actor, worker, now, factory(), document=document)

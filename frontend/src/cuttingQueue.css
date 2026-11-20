@@ -6,9 +6,10 @@
 .cq-refresh { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 12px; }
 .cq-table { font-size: 13px; }
 .cq-table th, .cq-table td { padding: 4px 8px; vertical-align: top; }
-.cq-table thead th { font-size: 12px; font-weight: 500; color: var(--muted-foreground); }
+.cq-table thead th { white-space: nowrap; font-size: 12px; font-weight: 500; color: var(--muted-foreground); }
 .cq-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 .cq-table .cq-sub { display: block; font-size: 12px; color: var(--muted-foreground); }
+.cq-table td:nth-child(3) { white-space: nowrap; }
 .cq-table .cq-empty { color: var(--muted-foreground); }
 .cq-table tr.cq-current > td { background: color-mix(in srgb, var(--primary) 12%, transparent); }
 .cq-table tr.cq-current > td:first-child { box-shadow: inset 3px 0 0 var(--primary); }

@@ -51,6 +51,7 @@ import { deadlineChips, feedsText, isFirst, isNetwork, previousStage, requiredNo
 export function ProductionPage({ principal, mine = false }: { principal: Principal; mine?: boolean }) {
   const [tasks, setTasks] = useState<ProductionTask[]>([]);
   const [cuttingGroups, setCuttingGroups] = useState<CuttingGroup[]>([]);
+  const [queueHasWork, setQueueHasWork] = useState(false);
   const [operators, setOperators] = useState<ProductionOperator[]>([]);
   const [viewerSite, setViewerSite] = useState("");
   const [execution, setExecution] = useState<{ session: ProductionWorkSession | null; boxes: ProductionBox[] }>({ session: null, boxes: [] });
@@ -201,12 +202,13 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
       openTask={(taskId, operationId) => { if (tasks.some((task) => task.id === taskId)) { setSelectedTaskId(taskId); setSelectedOperationId(operationId ?? ""); } }} />}
     {!mine && canOverview && !selectedTask && view === "workload" && <ShopWorkloadView />}
     {!mine && canOverview && !selectedTask && view === "normfact" && <ProductionNormFact />}
-    {!mine && canOverview && !selectedTask && view === "cutqueue" && <CuttingQueue />}
+    {!mine && canOverview && !selectedTask && view === "cutqueue" && <CuttingQueue readOnly />}
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
     {/* «Коробки на подтверждение» убраны (владелец, 13.10.2026: «ОТК подтверждает и все»): сданная коробка сразу идёт
         на вход следующей операции, коробку последней операции принимает или возвращает «Очередь ОТК». */}
     {/* Задания — первыми (кнопки действий видны сразу), коробки сотрудника — под ними. */}
     {mine && <MyQueue principal={principal} tasks={tasks} cuttingGroups={cuttingGroups} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} onBehalfOf={onBehalfOf} onSubmitted={(number, box) => setShown({ number, box, fixed: false })} />}
+    {mine && <CuttingQueue hideWhenEmpty readOnly={readOnly} onBehalfOf={onBehalfOf} onHasWork={setQueueHasWork} />}
     {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} readOnly={readOnly} ownerName={viewAs ? viewedName : ""} onBehalfOf={onBehalfOf}
       onSubmitted={(number, box) => setShown({ number, box, fixed: false })} onCorrected={(number, box) => setShown({ number, box, fixed: true })} />}
     {shown && <ShownBox shown={shown} boxes={execution.boxes} tasks={tasks} close={() => setShown(null)} />}
@@ -233,7 +235,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
       openProjectCard={canSee(principal, "projects") ? (project) => openPlace("projects", { project }) : undefined}
       openTask={(taskId, operationId) => { setSelectedTaskId(taskId); setSelectedOperationId(operationId ?? ""); }}
     />}
-    {mine && loaded && !tasks.length && !cuttingGroups.length && <div className="empty">{viewAs ? "Операции сотруднику не назначены." : canPick ? "Вам операции не назначены. Выберите сотрудника, чтобы увидеть его задания." : "Операции вам пока не назначены — мастер назначает их в «Ресурсном планировании»."}</div>}
+    {mine && loaded && !tasks.length && !cuttingGroups.length && !queueHasWork && <div className="empty">{viewAs ? "Операции сотруднику не назначены." : canPick ? "Вам операции не назначены. Выберите сотрудника, чтобы увидеть его задания." : "Операции вам пока не назначены — мастер назначает их в «Ресурсном планировании»."}</div>}
   </section>;
 }
 

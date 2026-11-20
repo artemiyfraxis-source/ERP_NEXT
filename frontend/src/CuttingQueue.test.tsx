@@ -25,7 +25,7 @@ const MACHINES = { machines: [
 const ROWS = [
   row({ setup_change: true, setup_text: "Заправьте RTK 031 · без разделки B" }),
   row({ key: "k2", task_id: "t2", operation_id: "o2", project: "801К.1", item: "КБ1", left: "50", length_mm: "300",
-    warnings: ["нет в ЭТК: разделка B"], blocked: "Группа РЗ-1 начата на карточке группы" }),
+    warnings: ["нет в ЭТК: зачистка Б"], blocked: "Группа РЗ-1 начата на карточке группы" }),
 ];
 
 function mockApi(onDone?: (init: RequestInit) => Response) {
@@ -50,7 +50,7 @@ it("renders rows in API order with the setup banner, warnings and the current ro
   ]);
   expect(lines[1]).toHaveAttribute("aria-current", "true");
   expect(lines[2]).not.toHaveAttribute("aria-current");
-  expect(within(lines[2]).getByText("нет в ЭТК: разделка B")).toBeInTheDocument();
+  expect(within(lines[2]).getByText("нет в ЭТК: зачистка Б")).toBeInTheDocument();
   expect(screen.getByText(/Сейчас/)).toBeInTheDocument();
 });
 
@@ -92,4 +92,40 @@ it("selects the «Станок не указан» bucket", async () => {
   await screen.findByText("999К.");
   expect(screen.getByText("нет в ЭТК: станок")).toBeInTheDocument();
   expect(fetchMock.mock.calls.some(([url]) => String(url).includes("machine_id=none"))).toBe(true);
+});
+
+it("shows the blocked reason as text, skips blocked rows for the current mark and posts on behalf", async () => {
+  const blocked = [row({ key: "b", blocked: "Группа РЗ-1 начата на карточке группы" }), row({ key: "c", task_id: "t3", operation_id: "o3", project: "801К.1" })];
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.includes("/machines")) return json(MACHINES);
+    if (url.includes("/done")) return json({ notice: "Готово: 801К.1 · КБ3 · 120 шт", assigned: true, output_id: "x" });
+    return json({ machine_id: "ОБ.095", version: "v", rows: blocked });
+  });
+  render(<CuttingQueue onBehalfOf="u-7" />);
+  await screen.findByText("Группа РЗ-1 начата на карточке группы");
+  const lines = screen.getAllByRole("row").slice(1);
+  expect(lines[0]).not.toHaveAttribute("aria-current");
+  expect(lines[1]).toHaveAttribute("aria-current", "true");
+  fireEvent.click(screen.getAllByRole("button", { name: "Готово" })[1]);
+  await screen.findByText("Готово: 801К.1 · КБ3 · 120 шт");
+  expect(String(fetchMock.mock.calls.find(([url]) => String(url).includes("/done"))![0])).toContain("on_behalf_of=u-7");
+});
+
+it("read-only mode has no «Готово» and says where it is submitted", async () => {
+  mockApi();
+  render(<CuttingQueue readOnly />);
+  await screen.findByText("708К.");
+  expect(screen.queryByRole("button", { name: "Готово" })).toBeNull();
+  expect(screen.getByText("«Готово» сдаёт оператор в «Заданиях»")).toBeInTheDocument();
+});
+
+it("reloads the queue after a refused «Готово» and keeps the server text", async () => {
+  const fetchMock = mockApi(() => json({ detail: "Этап 1: уже сдано 10 из 10, осталось 0." }, 422));
+  render(<CuttingQueue />);
+  await screen.findByText("708К.");
+  const before = fetchMock.mock.calls.filter(([url]) => String(url).includes("/machines")).length;
+  fireEvent.click(screen.getAllByRole("button", { name: "Готово" })[0]);
+  await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/machines")).length).toBeGreaterThan(before));
+  expect(await screen.findByRole("alert")).toHaveTextContent("уже сдано 10 из 10");
 });

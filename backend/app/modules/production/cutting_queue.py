@@ -110,10 +110,13 @@ def _machine(op: Mapping, warnings: list[str]) -> tuple[str | None, str]:
     return identity, machines[identity]
 
 
+_RU = {"A": "А", "B": "Б"}  # side letters on the screen are Cyrillic, as the «Зачистка А/Б» columns
+
+
 def _coax_side(fields: Mapping, coax: Mapping, side: str, warnings: list[str]) -> dict:
     sizes = _mapping(fields.get("coax" if side == "A" else "coaxB"))
     if not sizes:
-        warnings.append(f"нет в ЭТК: разделка {side}")
+        warnings.append(f"нет в ЭТК: зачистка {_RU[side]}")
         return {"value": "", "mode": "", "program": "absent", "diameters": ""}
     program = sizes.get("stripProgram") if isinstance(sizes.get("stripProgram"), Mapping) else None
     boundaries = [_mapping(item) for item in (program or {}).get("boundaries") or []]
@@ -122,13 +125,13 @@ def _coax_side(fields: Mapping, coax: Mapping, side: str, warnings: list[str]) -
     else:
         values = [_shown(_decimal(sizes.get(name))) for name in ("l1", "l2", "l3")]
     if not any(values):
-        warnings.append(f"нет в ЭТК: размеры разделки {side}")
+        warnings.append(f"нет в ЭТК: размеры зачистки {_RU[side]}")
     unconfirmed = not boundaries or any(phrase in str((program or {}).get("note", "")).casefold()
                                         for phrase in ("не рассчитан", "подтвердить"))
     mode = _text(sizes.get("stripMode") or (program or {}).get("mode")) or (
         "full" if coax.get("fakraCutStrip") is True else "")
     if mode not in MODE_NAMES:
-        warnings.append(f"нет в ЭТК: режим разделки {side}")
+        warnings.append(f"нет в ЭТК: режим зачистки {_RU[side]}")
         mode = ""
     return {"value": "/".join(value or "—" for value in values) if any(values) else "", "mode": mode,
             "program": "absent" if program is None else "unconfirmed" if unconfirmed else "confirmed",
@@ -137,16 +140,16 @@ def _coax_side(fields: Mapping, coax: Mapping, side: str, warnings: list[str]) -
 
 def _wire_side(strip: Mapping, side: str, warnings: list[str]) -> dict | None:
     if side not in strip:
-        warnings.append(f"нет в ЭТК: разделка {side.upper()}")
+        warnings.append(f"нет в ЭТК: зачистка {_RU[side.upper()]}")
         return {"value": "", "mode": "", "program": "", "diameters": ""}
     if not strip.get(side):
         return None
     value = _decimal(strip.get("len" + side.upper()))
     mode = _text(strip.get("mode" + side.upper()))
     if value is None:
-        warnings.append(f"нет в ЭТК: длина разделки {side.upper()}")
+        warnings.append(f"нет в ЭТК: длина зачистки {_RU[side.upper()]}")
     if mode not in MODE_NAMES:
-        warnings.append(f"нет в ЭТК: режим разделки {side.upper()}")
+        warnings.append(f"нет в ЭТК: режим зачистки {_RU[side.upper()]}")
         mode = ""
     return {"value": _shown(value), "mode": mode, "program": "", "diameters": ""}
 
@@ -180,7 +183,7 @@ def cut_values(document: Mapping | None, operation, *, known_cut: bool = False) 
         length = _decimal(coax.get("cableLength"))
         chosen = raw.get("stripSides")
         if not isinstance(chosen, list):
-            warnings.append("нет в ЭТК: стороны разделки")
+            warnings.append("нет в ЭТК: стороны зачистки")
             chosen = []
         for side in ("A", "B"):
             if side in chosen:
@@ -194,7 +197,7 @@ def cut_values(document: Mapping | None, operation, *, known_cut: bool = False) 
         length = _decimal(first.get("length"))
         strip = _mapping(fields.get("strip") or raw.get("strip") or config.get("strip"))
         if not strip:
-            warnings.append("нет в ЭТК: разделка")
+            warnings.append("нет в ЭТК: зачистка")
         else:
             sides = {side.upper(): _wire_side(strip, side, warnings) for side in ("a", "b")}
     if not wire and not wire_name:
@@ -217,9 +220,9 @@ def _setup_text(values: dict) -> str:
     for name, side in values["sides"].items():
         if side is not None:
             mode = MODE_NAMES.get(side["mode"], "режим не задан")
-            parts.append(f"разделка {name}: {side['value'] or '—'} мм, {mode}")
+            parts.append(f"зачистка {_RU[name]}: {side['value'] or '—'} мм, {mode}")
     if all(side is None for side in values["sides"].values()):
-        parts.append("без разделки")
+        parts.append("без зачистки")
     if values["marking"]:
         parts.append(f"лазер {MARKING_NAMES[values['marking']]}")
     return " · ".join(parts)

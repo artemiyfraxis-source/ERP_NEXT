@@ -21,15 +21,22 @@ function marking(row: CuttingQueueRow): string {
   return row.laser_mark ? "лазер" : "";
 }
 
-function strip(value: string | null, mode: "full" | "partial" | null): string {
-  if (!value) return "";
-  return mode ? `${value}, ${STRIP_MODE[mode]}` : value;
-}
-
 function Dash({ value }: { value: string }) { return value ? <>{value}</> : <span className="cq-empty">—</span>; }
 
-export function CuttingQueue() {
+export interface CuttingQueueProps {
+  /** Сдаёт за другого сотрудника (мастер в «Заданиях»): уходит как `on_behalf_of`. */
+  onBehalfOf?: string;
+  /** Только просмотр: без «Готово» (планирование, чужой вид). */
+  readOnly?: boolean;
+  /** В «Заданиях» оператора: ничего не показывать, пока резать нечего. */
+  hideWhenEmpty?: boolean;
+  /** Сообщает, есть ли что резать (скрыть пустую подсказку «Заданий»). */
+  onHasWork?: (hasWork: boolean) => void;
+}
+
+export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty = false, onHasWork }: CuttingQueueProps = {}) {
   const [machines, setMachines] = useState<CuttingQueueMachine[] | null>(null);
+  useEffect(() => { if (machines) onHasWork?.(machines.length > 0); }, [machines, onHasWork]);
   const [selected, setSelected] = useState("");
   const [queue, setQueue] = useState<Queue | null>(null);
   const [error, setError] = useState("");
@@ -82,23 +89,27 @@ export function CuttingQueue() {
     if (retry.current[row.key]?.payload !== payload) retry.current[row.key] = { payload, key: crypto.randomUUID() };
     setBusy(row.key);
     try {
-      const result = await cuttingQueueApi.done(row.task_id, row.operation_id, quantity, retry.current[row.key].key);
+      const result = await cuttingQueueApi.done(row.task_id, row.operation_id, quantity, retry.current[row.key].key, onBehalfOf);
       delete retry.current[row.key];
       setLast((current) => [result.notice, ...current].slice(0, 5));
       setQuantities((current) => { const next = { ...current }; delete next[row.key]; return next; });
       setError("");
       await load();
     } catch (reason) {
-      setError(failureText(reason, "Не удалось отметить «Готово»"));
+      const message = failureText(reason, "");
+      await load();
+      setError(message || "Не удалось отметить «Готово»");
     } finally {
       setBusy("");
     }
   }
 
+  if (hideWhenEmpty && machines && !machines.length) return null;
   if (!machines) return error ? <div className="error-banner" role="alert">{error}</div> : <div className="empty">Загрузка…</div>;
 
   const rows = queue?.rows ?? [];
-  const currentKey = rows.find((row) => Number(row.left) > 0)?.key;
+  const currentKey = rows.find((row) => Number(row.left) > 0 && !row.blocked)?.key;
+  const columns = readOnly ? 11 : 12;
   const now = new Date();
   const today = `${two(now.getDate())}.${two(now.getMonth() + 1)}.${now.getFullYear()}`;
 
@@ -109,6 +120,7 @@ export function CuttingQueue() {
           {machines.map((machine) => <option key={machineValue(machine)} value={machineValue(machine)}>{machine.machine_name} · {machine.rows} строк</option>)}
         </select>
       </label>
+      {readOnly && <span>«Готово» сдаёт оператор в «Заданиях»</span>}
       <span>Сейчас <b>{today}</b>{loadedAt && <> <b>{loadedAt}</b></>} · в очереди <b>{rows.length}</b> строк</span>
       <span className="cq-refresh" aria-live="polite">
         {loadedAt && <>обновлено {loadedAt} · раз в минуту</>}
@@ -121,33 +133,36 @@ export function CuttingQueue() {
       <ul>{last.map((text, index) => <li key={`${index}:${text}`}>{text}</li>)}</ul>
     </section>}
     {!machines.length ? <div className="empty">Нет открытой резки — очередь пуста.</div>
+      : !queue ? <div className="empty">Загрузка…</div>
       : !rows.length ? <div className="empty">На этом станке резать нечего.</div>
         : <div className="table-wrap"><table className="grid cq-table">
           <thead><tr>
             <th>Проект</th><th>КБ</th><th>Провод</th><th className="num">Длина, мм</th><th className="num">Осталось, шт</th>
-            <th>Зачистка А</th><th>Зачистка Б</th><th>Маркировка</th><th>Замечания</th><th>Готово</th>
+            <th>Зачистка А</th><th>Режим А</th><th>Зачистка Б</th><th>Режим Б</th><th>Маркировка</th><th>Замечания</th>{!readOnly && <th>Готово</th>}
           </tr></thead>
           <tbody>{rows.map((row) => {
             const current = row.key === currentKey;
             const value = quantities[row.key] ?? String(Math.trunc(Number(row.left)));
             return <Fragment key={row.key}>
-              {row.setup_change && <tr className="cq-setup"><td colSpan={10}>{row.setup_text}</td></tr>}
+              {row.setup_change && <tr className="cq-setup"><td colSpan={columns}>{row.setup_text}</td></tr>}
               <tr className={current ? "cq-current" : undefined} aria-current={current ? "true" : undefined}>
                 <td>{row.project}</td>
                 <td title={row.group_number ?? undefined}>{row.item}</td>
-                <td><Dash value={row.wire_name ?? row.wire ?? ""} /></td>
+                <td><Dash value={row.wire_name || row.wire || ""} /></td>
                 <td className="num"><Dash value={num(row.length_mm)} /></td>
                 <td className="num"><b>{num(row.left)}</b></td>
-                <td><Dash value={strip(row.strip_a, row.strip_a_mode)} /></td>
-                <td><Dash value={strip(row.strip_b, row.strip_b_mode)} /></td>
+                <td><Dash value={row.strip_a ?? ""} /></td>
+                <td><Dash value={row.strip_a_mode ? STRIP_MODE[row.strip_a_mode] : ""} /></td>
+                <td><Dash value={row.strip_b ?? ""} /></td>
+                <td><Dash value={row.strip_b_mode ? STRIP_MODE[row.strip_b_mode] : ""} /></td>
                 <td><Dash value={marking(row)} /></td>
-                <td className="cq-warn">{row.warnings.map((text) => <div key={text}>{text}</div>)}</td>
-                <td className="cq-act">
+                <td className="cq-warn">{[...(row.blocked ? [row.blocked] : []), ...row.warnings].map((text) => <div key={text}>{text}</div>)}</td>
+                {!readOnly && <td className="cq-act">
                   <input type="number" min={1} step={1} inputMode="numeric" aria-label={`Сколько готово: ${row.project} ${row.item}`} value={value}
                     disabled={Boolean(row.blocked) || busy === row.key} onChange={(event) => setQuantities((all) => ({ ...all, [row.key]: event.target.value }))} />
                   <button type="button" className="primary small" disabled={Boolean(row.blocked) || Boolean(busy)} title={row.blocked ?? undefined}
                     onClick={() => void done(row)}>Готово</button>
-                </td>
+                </td>}
               </tr>
             </Fragment>;
           })}</tbody>
