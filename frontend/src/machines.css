@@ -271,3 +271,5 @@ button.machine-stop { min-width: 160px; min-height: 48px; font-size: 18px; font-
 .machine-run-actions button { min-height: 40px; min-width: 112px; }
 .machine-run-finish p { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin: 0; }
 .machine-run-order { flex: 1 1 320px; align-self: center; margin: 0; }
+
+@media (prefers-reduced-motion: reduce) { .machine-run-bar > span { transition: none; } }

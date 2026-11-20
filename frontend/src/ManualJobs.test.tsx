@@ -176,3 +176,16 @@ it("shows «Ручная работа» to Производство, Задан�
   expect(visibleNav(as({ warehouse: "view" })).some((entry) => entry.id === "manualjobs")).toBe(true);
   expect(visibleNav(as({ projects: "edit" })).some((entry) => entry.id === "manualjobs")).toBe(false);
 });
+
+it("says the count of jobs in the right Russian form (21 работа, 25 работ)", async () => {
+  const many = (n: number) => Array.from({ length: n }, (_, i) => ({ ...DONE, id: `d${i}`, number: `Р-${String(i + 100).padStart(6, "0")}` }));
+  const summary = async () => (await screen.findByText((_, el) => el?.classList.contains("mj-summary") ?? false)).textContent ?? "";
+  serve([], many(21));
+  const first = render(<ManualJobsPage />);
+  expect(await summary()).toMatch(/: 21 работа$/);
+  first.unmount();
+  vi.restoreAllMocks();
+  serve([], many(25));
+  render(<ManualJobsPage />);
+  expect(await summary()).toMatch(/: 25 работ$/);
+});
