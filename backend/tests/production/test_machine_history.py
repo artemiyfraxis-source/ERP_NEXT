@@ -217,8 +217,8 @@ def test_a_duplicate_is_told_by_postgres_sqlstate_and_constraint_name():
     assert not history._duplicate(error(Exception("CHECK constraint failed: ck_production_machine_speed_rows_state")))
 
 
-def test_run_kinds_match_the_frozen_check_of_0209():
-    # Migration 0209 froze CHECK run_kind IN ('cutting', 'manual'): a new run kind needs a new migration.
+def test_run_kinds_match_the_frozen_check_of_0210():
+    # Migration 0210 froze CHECK run_kind IN ('cutting', 'manual'): a new run kind needs a new migration.
     assert runs.KINDS == ("cutting", "manual")
 
 
