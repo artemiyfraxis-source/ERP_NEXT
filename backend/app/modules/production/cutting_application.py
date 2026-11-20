@@ -537,12 +537,20 @@ def regroup(entries, uow, actor, now, *, homes=None, origins=None):
     moving = {entry[1].operation_id for entry in entries}
     separate = {group_id for group_id in set(homes.values()) if issued_separately(uow.cutting.get(group_id))}
 
+    # Tasks with a PF of a «Выдать отдельно» group (now or taken out of it by this rebuild).
+    separate_tasks = {task.id for task, _recipe, _document, _version in entries
+                      if any(homes.get(operation.id) in separate for operation in task.operations)}
+    task_of = {recipe.operation_id: task.id for task, recipe, _document, _version in entries}
+
     def alone(operation_id):
-        """The separate group this PF must stay in, ("new", PF id) for its own new separate group, or None."""
+        """The separate group this PF must stay in, ("new", PF id) for its own new separate group, or None. A PF of
+        unknown lineage (`origins` None) in a separately issued task never joins a shared group either."""
         home = homes.get(operation_id)
         if home in separate:
             return home
         if homes.get(origins.get(operation_id)) in separate:
+            return ("new", operation_id)
+        if operation_id in origins and origins[operation_id] is None and task_of.get(operation_id) in separate_tasks:
             return ("new", operation_id)
         return None
 
@@ -712,47 +720,46 @@ def binding_moves(task, operations, kept, uow, *, release=False):
 
 
 def _parents(task, operations, kept):
-    """{new PF id: the old PF it was split out of}. Per old PF first: a new PF whose codes all occur in one old PF only
-    has that parent. Then the position rule of `restructured_operations` (numbers a strict subset of one old PF's — the
-    lineage the rebuild itself used). Last an ETK operation is followed by its code and its occurrence among the whole
-    task's operations with that code (ETK order; an inserted or dropped same-code operation elsewhere can mislead it)."""
+    """{rebuilt PF id: the old PF it was split out of, or None — unknown}. Covers every new PF and every kept PF whose
+    ETK operations changed and whose lineage is not its own id (the position rule of `restructured_operations` may hand
+    an old id to a PF made of another PF's operations). Only operations whose code existed before count. A PF whose
+    known codes all occur in one old PF only has that parent. Otherwise the position rule (numbers a strict subset of
+    one old PF's) and the code-occurrence match (code and occurrence among the whole task's operations with that code,
+    ETK order) must agree; if they disagree or either is missing the parent is unknown (None): a separated task then
+    keeps that PF standalone, and equipment bound to its operations is never released."""
     holders = {}
     for operation in task.operations:
         for item in operation.etk_ops:
             holders.setdefault(item.code, set()).add(operation.id)
 
-    def index(ops):
-        found, seen = {}, {}
-        for op_id, item in sorted(((op.id, item) for op in ops for item in op.etk_ops), key=lambda pair: pair[1].position):
-            occurrence = seen[item.code] = seen.get(item.code, -1) + 1
-            found[(item.code, occurrence)] = op_id
-        return found
-
     def keyed(ops):
         seen, result = {}, {}
         for op_id, item in sorted(((op.id, item) for op in ops for item in op.etk_ops), key=lambda pair: pair[1].position):
             occurrence = seen[item.code] = seen.get(item.code, -1) + 1
-            result.setdefault(op_id, []).append((item.code, occurrence))
+            result.setdefault(op_id, []).append((item.code, occurrence, item.position))
         return result
 
-    old = index(task.operations)
+    old = {(code, occurrence): op_id for op_id, items in keyed(task.operations).items()
+           for code, occurrence, _position in items}
+    before = {operation.id: [(item.position, item.code) for item in operation.etk_ops] for operation in task.operations}
     result = {}
     for op_id, items in keyed(operations).items():
-        if op_id in kept:
+        if op_id in kept and before.get(op_id) == [(position, code) for code, _occurrence, position in items]:
             continue
-        owners = set().union(*(holders.get(code, {None}) for code, _occurrence in items))
-        if len(owners) == 1 and None not in owners:
-            result[op_id] = owners.pop()
+        known = [item for item in items if item[0] in holders]
+        owners = set().union(*(holders[code] for code, _occurrence, _position in known)) if known else set()
+        if len(owners) == 1:
+            parent = owners.pop()
+        else:
+            positions = {position for _code, _occurrence, position in items}
+            by_position = next((item.id for item in task.operations
+                                if item.etk_ops and positions < set(item.etk_positions)), None)
+            matched = {old.get((code, occurrence)) for code, occurrence, _position in known} - {None}
+            by_code = next(iter(matched)) if len(matched) == 1 else None
+            parent = by_position if by_position is not None and by_position == by_code else None
+        if op_id in kept and parent == op_id:
             continue
-        operation = next(op for op in operations if op.id == op_id)
-        positions = {item.position for item in operation.etk_ops}
-        parent = next((item for item in task.operations if item.etk_ops and positions < set(item.etk_positions)), None)
-        if parent is not None:
-            result[op_id] = parent.id
-            continue
-        found = {old.get(item) for item in items}
-        if len(found) == 1 and None not in found:
-            result[op_id] = found.pop()
+        result[op_id] = parent
     return result
 
 
@@ -767,7 +774,7 @@ def _lineage(task, uow):
             AuditEventRow.aggregate_id == task.id, AuditEventRow.event_type == "production.restructured")
             .order_by(AuditEventRow.occurred_at)):
         for child, parent in ((details or {}).get("origins") or {}).items():
-            found[UUID(child)] = UUID(parent)
+            found[UUID(child)] = UUID(parent) if parent else None  # None: lineage unknown
     return found
 
 
@@ -816,7 +823,8 @@ def rebuild_task(task, entry, uow, actor, now, homes, origins=None, released=Non
     _audit(updated, "production.restructured", actor, now, {
         "techcard_id": str(card_id), "from_revision": task.techcard_revision, "revision": revision,
         "operations": [[op.stage, len(op.etk_ops)] for op in updated.operations],
-        "before": before, "origins": {str(child): str(parent) for child, parent in parents.items()}}, uow)
+        "before": before, "origins": {str(child): str(parent) if parent else None
+                                      for child, parent in parents.items()}}, uow)
     return updated, ""
 
 
@@ -889,6 +897,9 @@ def task_regroup_entries(task, document, card_version, uow, actor, homes=(), ori
         if (uow.cutting.for_operation(recipe.operation_id) is None and recipe.operation_id not in homes
                 and _separated(task, recipe.operation_id, recipe.key, uow)):
             standalone.add(recipe.operation_id)
+    master_split = bool(standalone) or any(
+        uow.cutting.for_operation(operation.id) is None and operation.id not in homes and _master_splits(operation.id, uow)
+        for operation in task.operations)
     for recipe in recipes:
         operation = task.operation(recipe.operation_id)
         member = uow.cutting.for_operation(operation.id)
@@ -897,6 +908,8 @@ def task_regroup_entries(task, document, card_version, uow, actor, homes=(), ori
         if operation.id in standalone or (member is None and _separated_parent(
                 operation.id, origins, homes, standalone, {item.operation_id for item in recipes}, uow)):
             continue
+        if member is None and master_split and operation.id in origins and origins[operation.id] is None:
+            continue  # lineage unknown in a task the master separated: stay standalone rather than join a group
         if member is not None:
             group = uow.cutting.get(member.group_id)
             if group.state != "open" or uow.cutting.work(group.id):
