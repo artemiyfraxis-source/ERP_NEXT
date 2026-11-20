@@ -15,8 +15,8 @@ Not destructive; the downgrade refuses once a counter or a machine downtime was 
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0208_machine_work_counter"
-down_revision = "0207_vna_screens"
+revision = "0209_machine_work_counter"
+down_revision = "0208_marking_outside_prints"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False

@@ -1,4 +1,4 @@
-"""0208_machine_work_counter: «Сделано» of a manual job (NULL or >= 0, with its moment, not before the start) and the
+"""0209_machine_work_counter: «Сделано» of a manual job (NULL or >= 0, with its moment, not before the start) and the
 downtime of a machine (FK RESTRICT onto equipment_units, no task, one open per machine) are held by the schema; the
 downgrade refuses while such rows exist and restores the previous schema once they are gone."""
 
@@ -12,8 +12,8 @@ import pytest
 from alembic import command
 from alembic.config import Config
 
-REVISION = "0208_machine_work_counter"
-PREVIOUS = "0207_vna_screens"
+REVISION = "0209_machine_work_counter"
+PREVIOUS = "0208_marking_outside_prints"
 STARTED = "2026-11-20 10:00:00.000000"
 LATER = "2026-11-20 11:00:00.000000"
 EARLIER = "2026-11-20 09:00:00.000000"
