@@ -6,6 +6,10 @@ PRODUCTION_PLANNER Василия (src/domain/idle.ts, перенос с раз�
 целиком. Причина — из короткого списка; у «Другое» обязателен комментарий. Начало пишется нажатием «Простой»,
 конец — «Закончить простой»; у задания открыт не больше одного простоя (база держит частичным UNIQUE).
 
+Простой станка (владелец, 20.11.2026; миграция 0208): у станка без управления — простой самого станка
+(`equipment_id`), без задания и операции, задание он не останавливает. У станка открыт не больше одного простоя
+(частичный UNIQUE). Отмечают и заканчивают его на карточке станка (app/workflows/manual_jobs_api.py).
+
 Отчёт за период суммирует длительность простоев по причинам или по сотрудникам: в период входит только часть
 простоя, попавшая в его дни; открытый простой считается до «сейчас». Рядом — работа из журнала рабочего времени
 (migration 0105) за тот же период: какую долю времени цех стоял."""
@@ -43,6 +47,7 @@ COMMENT_LIMIT = 500
 # Отчёт группируется по причине или по сотруднику; простой задания целиком — строка «Задание целиком».
 REPORT_KEYS = ("reason", "operator")
 WHOLE_TASK = "Задание целиком"
+MACHINE = "Станок"
 
 
 class DowntimeConflict(Exception):
@@ -75,6 +80,8 @@ class Downtime:
     ended_at: datetime | None = None
     ended_by_id: UUID | None = None
     ended_by_name: str = ""
+    # Простой станка: станок БД.ОБ (`equipment_units`), задания и операции нет; `item` — станок на момент начала.
+    equipment_id: UUID | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "comment", str(self.comment or "").strip())
@@ -88,6 +95,8 @@ class Downtime:
             raise ProductionValidationError("Конец простоя пишется вместе с тем, кто его закончил")
         if self.ended_at is not None and moscow(self.ended_at) < moscow(self.started_at):
             raise ProductionValidationError("Конец простоя раньше начала")
+        if self.equipment_id is not None and (self.task_id is not None or self.operation_id is not None):
+            raise ProductionValidationError("Простой станка отмечается без задания")
 
     @property
     def open(self) -> bool:
@@ -133,8 +142,12 @@ def report(
             continue
         if by == "reason":
             key, label = item.reason.value, item.reason_name
+        elif item.operator_id:
+            key, label = str(item.operator_id), item.operator_name
+        elif item.equipment_id:
+            key, label = f"machine:{item.equipment_id}", f"{MACHINE} {item.item}".strip()
         else:
-            key, label = (str(item.operator_id), item.operator_name) if item.operator_id else ("task", WHOLE_TASK)
+            key, label = "task", WHOLE_TASK
         row = sums.setdefault(key, [label, 0, 0, 0])
         row[1] += 1
         row[2] += seconds

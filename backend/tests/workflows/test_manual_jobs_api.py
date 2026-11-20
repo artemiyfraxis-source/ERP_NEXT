@@ -154,3 +154,90 @@ def test_only_the_number_is_retried_other_refusals_say_what_happened(machines_ap
         else:
             raise AssertionError("a CHECK refusal must not be retried or hidden")
     assert attempts == [1]
+
+
+# --- «Сделано» and the machine's downtime (machine without control, migration 0208) ---
+
+def test_progress_is_typed_while_running_with_version_and_kept_after_the_finish(machines_api):
+    sessions, clock, admin, ob019, _ = machines_api
+    job = _start(admin, ob019, quantity_planned=20).json()
+    assert (job["progress_quantity"], job["progress_at"], job["progress_over_plan"]) == (None, None, False)
+    progress = f"{BASE}/{job['id']}/progress"
+    assert _post(admin, progress, {"version": 1, "quantity": -1}).status_code == 422
+    clock.now += timedelta(minutes=10)
+    first = _post(admin, progress, {"version": 1, "quantity": 12})
+    assert first.status_code == 200, first.text
+    first = first.json()
+    assert (first["progress_quantity"], first["version"], first["progress_over_plan"]) == (12, 2, False)
+    assert first["progress_at"].endswith("+03:00")
+    stale = _post(admin, progress, {"version": 1, "quantity": 13})
+    assert stale.status_code == 409 and "обновите" in stale.json()["detail"]
+    over = _post(admin, progress, {"version": 2, "quantity": 25}).json()  # more than planned: allowed, flagged
+    assert (over["progress_quantity"], over["progress_over_plan"], over["version"]) == (25, True, 3)
+    listed = admin.get(BASE, params={"equipment_id": str(ob019)}).json()
+    assert [(row["progress_quantity"], row["progress_over_plan"]) for row in listed["rows"]] == [(25, True)]
+    done = _post(admin, f"{BASE}/{job['id']}/finish", {"version": 3, "good": 24, "defect": 1, "defect_reason": "надрез",
+                                                       "material": "pending"}).json()
+    assert (done["status"], done["progress_quantity"]) == ("done", 25)  # history
+    late = _post(admin, progress, {"version": 4, "quantity": 26})
+    assert late.status_code == 409 and "уже завершена" in late.json()["detail"]
+    assert _post(admin, f"{BASE}/{uuid4()}/progress", {"version": 1, "quantity": 1}).status_code == 404
+    with sessions() as session:
+        texts = session.scalars(select(AuditEventRow.details["text"].as_string()).where(
+            AuditEventRow.event_type == "production.manual_job_progress").order_by(AuditEventRow.occurred_at)).all()
+    assert texts == ["Сделано по Р-000001: 12 из 20", "Сделано по Р-000001: 25 из 20 — больше плана"]
+
+
+def test_machine_downtime_one_open_per_machine_shown_and_stopped(machines_api):
+    sessions, clock, admin, ob019, ob101 = machines_api
+    down = f"{BASE}/downtime"
+    options = admin.get(BASE + "/options").json()
+    assert [item["downtime"] for item in options["machines"]] == [None, None]
+    assert {"key": "equipment", "name": "Оборудование"} in options["reasons"]
+    assert _post(admin, down, {"equipment_id": str(ob019), "reason": "other", "comment": " "}).status_code == 422
+    assert _post(admin, down, {"equipment_id": str(ob019), "reason": "lunch"}).status_code == 422
+    assert _post(admin, down, {"equipment_id": str(uuid4()), "reason": "equipment"}).status_code == 404
+    job = _start(admin, ob019).json()  # a running job does not stop the machine's downtime, nor the other way round
+    started = _post(admin, down, {"equipment_id": str(ob019), "reason": "equipment", "comment": "заело ролик"})
+    assert started.status_code == 200, started.text
+    item = started.json()["downtime"]
+    assert (item["equipment_id"], item["reason_name"], item["comment"], item["open"]) == \
+        (str(ob019), "Оборудование", "заело ролик", True)
+    assert item["machine"].startswith("ОБ.019")
+    again = _post(admin, down, {"equipment_id": str(ob019), "reason": "no_material"})
+    assert again.status_code == 409 and "уже открыт простой" in again.json()["detail"]
+    assert _post(admin, down, {"equipment_id": str(ob101), "reason": "no_material"}).status_code == 200
+    options = admin.get(BASE + "/options").json()
+    assert [(item["downtime"] or {}).get("reason") for item in options["machines"]] == ["equipment", "no_material"]
+    listed = admin.get(BASE, params={"equipment_id": str(ob019)}).json()
+    assert [row["id"] for row in listed["downtimes"]] == [item["id"]]
+    assert len(admin.get(BASE).json()["downtimes"]) == 2
+    # The task screen's «Закончить простой» does not end a machine's downtime.
+    task_stop = _post(admin, f"/api/production/downtime/{item['id']}/stop", {})
+    assert task_stop.status_code == 422 and "карточке станка" in task_stop.json()["detail"]
+    clock.now += timedelta(minutes=30)
+    stopped = _post(admin, f"{down}/{item['id']}/stop", {})
+    assert stopped.status_code == 200, stopped.text
+    stopped = stopped.json()["downtime"]
+    assert (stopped["open"], stopped["seconds"], stopped["ended_by"] != "") == (False, 1800, True)
+    twice = _post(admin, f"{down}/{item['id']}/stop", {})
+    assert twice.status_code == 409 and "уже закончен" in twice.json()["detail"]
+    assert _post(admin, f"{down}/{uuid4()}/stop", {}).status_code == 404
+    assert admin.get(BASE, params={"equipment_id": str(ob019)}).json()["downtimes"] == []
+    assert _post(admin, down, {"equipment_id": str(ob019), "reason": "waiting_qc"}).status_code == 200  # a new one
+    assert admin.get(f"{BASE}", params={"equipment_id": str(ob019)}).json()["rows"][0]["id"] == job["id"]
+    with sessions() as session:
+        events = session.execute(select(AuditEventRow.event_type, AuditEventRow.aggregate_id).where(
+            AuditEventRow.event_type.like("production.machine_downtime_%"))).all()
+    assert sorted(event for event, _ in events) == ["production.machine_downtime_ended"] + \
+        ["production.machine_downtime_started"] * 3
+    assert {aggregate for _, aggregate in events} == {ob019, ob101}
+
+
+def test_a_parallel_downtime_start_is_refused_by_the_index(machines_api, monkeypatch):
+    sessions, clock, admin, ob019, _ = machines_api
+    from app.modules.production.downtime_infrastructure import SqlAlchemyDowntimeRepository
+    assert _post(admin, f"{BASE}/downtime", {"equipment_id": str(ob019), "reason": "equipment"}).status_code == 200
+    monkeypatch.setattr(SqlAlchemyDowntimeRepository, "open_for_equipment", lambda self, equipment_id: None)
+    raced = _post(admin, f"{BASE}/downtime", {"equipment_id": str(ob019), "reason": "no_material"})
+    assert raced.status_code == 409 and "уже открыт простой" in raced.json()["detail"]

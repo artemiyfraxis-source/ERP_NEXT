@@ -77,6 +77,18 @@ def test_report_sums_only_the_part_inside_the_period_and_counts_open_until_now()
         report(items, by="project", since=since, until=until, now=now)
 
 
+def test_machine_downtime_has_no_task_and_reports_as_the_machine():
+    machine = uuid4()
+    with pytest.raises(ProductionValidationError, match="без задания"):
+        Downtime(**{**_downtime().__dict__, "equipment_id": machine})  # a task AND a machine
+    item = Downtime(**{**_downtime(DowntimeReason.EQUIPMENT, start=(22, 9, 0), end=(22, 9, 45)).__dict__,
+                       "task_id": None, "project": "", "task_number": "", "item": "ОБ.027.1 EW-50A",
+                       "equipment_id": machine})
+    rows = report([item], by="operator", since=_period(22, 22)[0], until=_period(22, 22)[1],
+                  now=datetime(2026, 9, 22, 12, 0, tzinfo=MOSCOW))
+    assert [(row.key, row.label, row.seconds) for row in rows] == [(f"machine:{machine}", "Станок ОБ.027.1 EW-50A", 2700)]
+
+
 # --- база ---
 
 def test_database_keeps_one_open_downtime_per_task(production_api):

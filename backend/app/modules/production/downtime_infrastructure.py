@@ -15,6 +15,8 @@ from .downtime import COMMENT_LIMIT, Downtime, DowntimeConflict, DowntimeReason
 TABLE = "production_downtimes"
 REASONS = tuple(reason.value for reason in DowntimeReason)
 OPEN_INDEX = "uq_production_downtimes_open_task"
+OPEN_EQUIPMENT_INDEX = "uq_production_downtimes_open_equipment"
+OPEN_WHERE = "ended_at IS NULL"
 
 
 class ProductionDowntimeRow(Base):
@@ -27,10 +29,12 @@ class ProductionDowntimeRow(Base):
             "ended_at IS NULL OR (ended_at >= started_at AND ended_by_id IS NOT NULL)", name="ck_production_downtimes_end",
         ),
         CheckConstraint("ended_by_id IS NULL OR ended_at IS NOT NULL", name="ck_production_downtimes_ended_by"),
-        Index(
-            OPEN_INDEX, "task_id", unique=True,
-            sqlite_where=text("ended_at IS NULL"), postgresql_where=text("ended_at IS NULL"),
-        ),
+        CheckConstraint("equipment_id IS NULL OR (task_id IS NULL AND operation_id IS NULL)",
+                        name="ck_production_downtimes_equipment"),
+        Index(OPEN_INDEX, "task_id", unique=True, sqlite_where=text(OPEN_WHERE), postgresql_where=text(OPEN_WHERE)),
+        # Migration 0208: one open downtime per machine.
+        Index(OPEN_EQUIPMENT_INDEX, "equipment_id", unique=True,
+              sqlite_where=text(OPEN_WHERE), postgresql_where=text(OPEN_WHERE)),
         Index("ix_production_downtimes_started_at", "started_at"),
     )
 
@@ -63,6 +67,10 @@ class ProductionDowntimeRow(Base):
         Uuid(as_uuid=True), ForeignKey("identity_users.id", ondelete="RESTRICT", name="fk_production_downtimes_ended_by_id"),
     )
     ended_by_name: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    equipment_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("equipment_units.id", ondelete="RESTRICT", name="fk_production_downtimes_equipment_id"),
+        index=True,
+    )
 
 
 _FIELDS = tuple(Downtime.__dataclass_fields__)
@@ -90,6 +98,20 @@ class SqlAlchemyDowntimeRepository:
             ProductionDowntimeRow.task_id == task_id, ProductionDowntimeRow.ended_at.is_(None),
         ))
         return _domain(row) if row is not None else None
+
+    def open_for_equipment(self, equipment_id: UUID) -> Downtime | None:
+        row = self.session.scalar(select(ProductionDowntimeRow).where(
+            ProductionDowntimeRow.equipment_id == equipment_id, ProductionDowntimeRow.ended_at.is_(None),
+        ))
+        return _domain(row) if row is not None else None
+
+    def open_of_machines(self, equipment_id: UUID | None = None) -> list[Downtime]:
+        """Открытые простои станков (не заданий); `equipment_id` — только этого станка."""
+        query = select(ProductionDowntimeRow).where(ProductionDowntimeRow.equipment_id.is_not(None),
+                                                    ProductionDowntimeRow.ended_at.is_(None))
+        if equipment_id is not None:
+            query = query.where(ProductionDowntimeRow.equipment_id == equipment_id)
+        return [_domain(row) for row in self.session.scalars(query.order_by(ProductionDowntimeRow.started_at))]
 
     def open_all(self, limit: int = 1_000) -> list[Downtime]:
         rows = self.session.scalars(select(ProductionDowntimeRow).where(ProductionDowntimeRow.ended_at.is_(None))

@@ -78,6 +78,7 @@ def _result(item: Downtime, now: datetime) -> dict:
         "ended_by_name": item.ended_by_name, "open": item.open,
         "seconds": max(0, int((moscow(end) - moscow(item.started_at)).total_seconds())),
         "project": item.project, "task_number": item.task_number, "item": item.item, "stage": stage_name(item.stage),
+        "equipment_id": str(item.equipment_id) if item.equipment_id else None,
     }
 
 
@@ -173,6 +174,8 @@ def stop_downtime(
         item = repository.get(downtime_id)
         if item is None:
             raise HTTPException(status_code=404, detail="Простой не найден")
+        if item.equipment_id is not None:
+            raise HTTPException(422, "Простой станка заканчивают на карточке станка")
         from sqlalchemy import select
         from .cutting_infrastructure import CuttingWorkRow
         if uow.session.scalar(select(CuttingWorkRow.session_id).where(CuttingWorkRow.downtime_id == downtime_id)):
