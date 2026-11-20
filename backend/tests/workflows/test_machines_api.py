@@ -536,6 +536,7 @@ def setup_world(machines_api):
     with sessions.begin() as session:
         machine = session.get(EquipmentMachineRow, ob019)
         machine.fields = {**machine.fields, "Тип": "Оборудование", "Расположение": "ЦАР"}
+        machine.setup_by = "technician"
         model_id = session.get(EquipmentUnitRow, ob019).model_id
         session.add(SetupModelRow(model_id=model_id, requires_setup="full", updated_at=now, version=1))
         session.flush()
@@ -565,6 +566,17 @@ def setup_world(machines_api):
 
 SETUP_CARD = "/api/production/setup-model/ОБ.019"
 CONFIGURE = f"{SETUP_CARD}/configuration"
+
+
+def test_waiting_for_setup_badge_only_for_technician_machines(setup_world):
+    """«Ждёт наладки» (owner 20.11): only a unit whose «Кто налаживает» is «Наладчик»; an operator's own unit never
+    shows it, even with an open setup task."""
+    sessions, admin, ob019, task = setup_world
+    find = lambda: {r["inventory"]: r for r in admin.get(LIST).json()["rows"]}["ОБ.019"]
+    assert find()["pending_setup"] == 1
+    with sessions.begin() as session:
+        session.get(EquipmentMachineRow, ob019).setup_by = "operator"
+    assert find()["pending_setup"] == 0
 
 
 def test_configuring_by_task_moves_the_task_to_ready_and_clears_waiting(setup_world):
