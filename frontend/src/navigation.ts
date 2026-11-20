@@ -104,7 +104,8 @@ export const NAV: NavItem[] = [
   { id: "equipmentsetup", label: "Наладка оборудования", sub: "станки · рецепты · пробные измерения", capability: "equipmentSetup", block: "prod", within: "machines", menuWithoutParent: true },
   // «Оборудование» (бывшие «Станки», владелец 19.11.2026): станки цеха с управлением из ERP и без, их наладка, принтеры и
   // приборы агентов; читают мастер и монтажник.
-  { id: "machines", label: "Оборудование", sub: "станки цеха · наладка · состояние на станке", anyPermission: ["production", "myops"], block: "prod" },
+  // ОТК (`quality`) открывает его тоже: рабочее место ВАЦ — в карточке анализатора цепей (владелец 20.11.2026).
+  { id: "machines", label: "Оборудование", sub: "станки цеха · приборы · наладка · состояние на станке", anyPermission: ["production", "myops"], alsoPermission: ["quality"], block: "prod" },
   // «Ручная работа» (план «Станки вне проекта», 19.11.2026): журнал работ на любом станке вне проекта; те же ключи, что у «Станков».
   { id: "manualjobs", label: "Ручная работа", sub: "работа на станке вне проекта · журнал за период", anyPermission: ["production", "myops"], alsoPermission: ["warehouse"], block: "prod" },
   // «Задания» (`myops`) и «ОТК» (`quality`) — разделы матрицы со своими ключами (owner 04.10.2026), не часть `production`.
@@ -156,6 +157,8 @@ export const MOVED_TABS: Readonly<Record<string, Readonly<Record<string, Section
     directory: "purchasingrefs", items: "purchasingrefs", catalog: "purchasingrefs", settings: "purchasingrefs",
     upd: "primarydocs", invoices: "primarydocs", chain: "primarydocs", docsearch: "primarydocs",
   },
+  // «ОТК → ВАЦ — рабочее место» — карточка прибора в «Оборудовании» (владелец 20.11.2026): `&tab=vna` открывает её там.
+  quality: { vna: "machines" },
 };
 
 /** Sections that are gone, and where their old links land: «Отгрузка» merged into «Приёмка с производства» (owner 29.10). */

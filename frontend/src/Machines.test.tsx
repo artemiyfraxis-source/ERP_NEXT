@@ -287,6 +287,7 @@ it("opens «Оборудование» for Производство or Зада�
   const as = (permissions: Record<string, AccessMode>): Principal => ({ user, roles: ["operator"], access_level: "operator", permissions });
   expect(visibleNav(as({ myops: "view" })).some((item) => item.id === "machines")).toBe(true);
   expect(visibleNav(as({ production: "view" })).some((item) => item.id === "machines")).toBe(true);
+  expect(visibleNav(as({ quality: "edit" })).some((item) => item.id === "machines")).toBe(true);  // карточка ВАЦ (20.11)
   expect(visibleNav(as({ warehouse: "edit" })).some((item) => item.id === "machines")).toBe(false);
 });
 

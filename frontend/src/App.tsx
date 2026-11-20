@@ -424,7 +424,7 @@ export function App() {
           </section>)}
         {activeSection === "machines" && <Suspense fallback={<p className="empty">Загрузка…</p>}><MachinesPage setupViewer={setupAvailable}
           initialView={place.section === "equipmentsetup" ? "setup" : undefined}
-          canWrite={canAct(principal, "production") || canAct(principal, "myops")} /></Suspense>}
+          canWrite={canAct(principal, "production") || canAct(principal, "myops")} canQuality={canAct(principal, "quality")} /></Suspense>}
         {activeSection === "manualjobs" && <Suspense fallback={<p className="empty">Загрузка…</p>}><ManualJobsPage /></Suspense>}
         {activeSection === "myops" && <ProductionPage principal={principal} mine />}
         {activeSection === "quality" && <QualityPage principal={principal} />}
