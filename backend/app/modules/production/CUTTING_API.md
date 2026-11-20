@@ -349,8 +349,8 @@ to every active member. A partial view cannot execute the whole group.
   explicit physical machine bindings; the group claims that machine set and the performer once.
 - `POST /.../{id}/submit`: `{version, rows: [{member_id, good_quantity, defect_quantity,
   defect_character?, defect_description?, materials?: [{fulfillment_line_id, quantity}]}]}`.
-  Decimal quantities use PF units. Duplicate/foreign members, overproduction and invalid defect
-  details are refused. Rows may be omitted or have zero quantities; at least one must be positive.
+  Quantities are whole pieces in PF units (sent as decimal strings): a fraction → 422 «Годные и брак — целое
+  число штук». Duplicate/foreign members, overproduction and invalid defect details are refused. Rows may be omitted or have zero quantities; at least one must be positive.
   One transaction creates each positive row's own output, box, defect and optional material
   consumption. A failure in any row rolls back the complete request. A partial submission keeps the
   same session active; it closes when all active members' good + defective quantities reach their
@@ -363,7 +363,8 @@ to every active member. A partial view cannot execute the whole group.
   open a parallel interval on one of its members.
 
 Returns `{group, outputs: [{member_id, output_id, box_id, box_number}]}` (`outputs` empty outside
-submission). Group reads add `session` (ordinary session fields plus `cutting_group_id`, or null)
+submission). Group reads add `session` (ordinary session fields plus `cutting_group_id` and `operator_name` — who
+runs it, for the card's «Группу ведёт <имя>»; "" when the employee is not found — or null)
 and `downtime: {id, reason, reason_name, comment, started_at}` (or null). `/my/execution` also marks
 the shared session with `cutting_group_id`; other work remains blocked until it completes.
 
@@ -413,6 +414,8 @@ row. `cutting_queue.py`, routes in `cutting_api.py`. Computed on every read — 
   draft still gives that revision). No readable ETK (no card, no issued revision, techcards not configured) never drops a
   running input-less PF: it is listed under «Станок не указан» with `warnings: ["нет в ЭТК: выданная карта"]`, values
   `null` and `blocked` «Нет ЭТК задания — не понять, резка ли это: готовые вводит мастер» (it may be a labels or tubes PF).
+  A standalone PF with an open individual work session (active or paused) is listed with `blocked` «По этому ПФ идёт
+  работа на карточке — сдайте там» — the same text «Готово» refuses with; the screen keeps that PF's card.
 - One read per request (`collect`): running tasks, their outputs and the active member ids in a few queries; members
   of finished or closed work are dropped before the group access check and before their snapshot (the frozen document)
   is read; open group sessions and operator names are read once.
@@ -466,9 +469,10 @@ cut work at all — `[]`.
    A монтажник not yet on the PF (himself, or the one worked for via `on_behalf_of`) joins its assignees through the
    ordinary `assign_task`; its refusals apply — e.g. another site of a grouped row, «… не монтажник» when working for a
    non-монтажник. Site rules and the cut-only rule (step 0) hold for everyone. An account without an employee record
-   (no site to limit it) may press only with production edit (master/admin, as «Ввод готовых»; the site rules of the
-   operation/group then apply as for a site-less master); otherwise 403 «Вас нет в справочнике сотрудников — «Готово»
-   без него вводит мастер». Existing assignees and their facts stay.
+   or with an empty site (no site to limit it) may press only with production edit (master/admin, as «Ввод
+   готовых»; the site rules of the operation/group then apply as for a site-less master); otherwise 403 «Вас нет в
+   справочнике сотрудников — …» / «У вас в справочнике сотрудников не указана площадка — …». Existing assignees and
+   their facts stay.
    Known effect: on a grouped row only that member's PF
    is assigned (the group's own `assign` replaces every row's assignees and refuses a started group, so it is not
    used), so the group card's common assignment becomes inconsistent (`assignment_consistent: false`, no common

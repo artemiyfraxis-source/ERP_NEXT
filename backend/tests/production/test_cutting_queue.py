@@ -2,6 +2,7 @@
 
 from uuid import UUID, uuid4
 
+import pytest
 from sqlalchemy import select
 
 from app.main import app
@@ -284,12 +285,21 @@ def test_done_on_behalf_of_a_non_fitter_is_refused(production_api):
     assert receipt_details() == []
 
 
-def test_done_by_an_account_without_employee_record_needs_production_edit(production_api):
+@pytest.mark.parametrize(("record", "refusal"), [(False, "нет в справочнике"), (True, "не указана площадка")])
+def test_done_without_a_site_to_limit_the_presser_needs_production_edit(production_api, record, refusal):
+    """No employee record, or a record with an empty site: «Готово» only with production edit («Ввод готовых»)."""
+    from app.modules.identity.infrastructure import IdentityUserRow
     from app.shared.http_auth import Principal, authenticated_principal
     from tests.factories import Actor
 
     client, _ = production_api
     stranger = uuid4()
+    if record:
+        with app.state.production_uow_factory() as uow:
+            uow.session.add(IdentityUserRow(id=stranger, login="guest", email="guest@example.test", name="Гость",
+                                            department="Производство", role="staff", site="", active=True,
+                                            shop_worker=False))
+            uow.commit()
     batch(client, [issue("708К.", "КБ1", standalone())])
     row = queue(client)["rows"][0]
     previous = app.dependency_overrides[authenticated_principal]
@@ -302,7 +312,7 @@ def test_done_by_an_account_without_employee_record_needs_production_edit(produc
     try:
         as_stranger({"myops": "edit"})
         refused = done(client, row, 1)
-        assert refused.status_code == 403 and "нет в справочнике" in refused.json()["detail"]
+        assert refused.status_code == 403 and refusal in refused.json()["detail"]
         as_stranger({"myops": "edit", "production": "edit"})
         accepted = done(client, row, 1)
         assert accepted.status_code == 200, accepted.text
@@ -407,20 +417,27 @@ def test_finished_frozen_groups_are_not_checked_or_read(production_api, monkeypa
     assert finished["id"] not in visited and visited == [rows[0]["group_id"]]
 
 
-def test_done_is_refused_while_the_pf_has_an_open_work_session(production_api):
+@pytest.mark.parametrize("status", ["В работе", "Пауза"])
+def test_done_is_refused_while_the_pf_has_an_open_work_session(production_api, status):
     from datetime import timedelta
 
+    from app.modules.production.cutting_queue import WORK_OPEN
     from app.modules.production.infrastructure import ProductionWorkSessionRow
 
     client, operator = production_api
     batch(client, [issue("708К.", "КБ1", standalone())])
     row = queue(client)["rows"][0]
+    assert row["blocked"] is None
     with app.state.production_uow_factory() as uow:
         uow.session.add(ProductionWorkSessionRow(id=uuid4(), task_id=UUID(row["task_id"]), operation_id=UUID(row["operation_id"]),
-                                                 operator_id=operator, started_at=NOW - timedelta(minutes=5), status="В работе",
-                                                 pause_started_at=None, pause_seconds=0))
+                                                 operator_id=operator, started_at=NOW - timedelta(minutes=5), status=status,
+                                                 pause_started_at=NOW - timedelta(minutes=1) if status == "Пауза" else None,
+                                                 pause_seconds=0))
         uow.commit()
+    # Listed but blocked with the refusal's own text, so the screen keeps the PF's card where it is submitted.
+    [listed] = queue(client)["rows"]
+    assert listed["blocked"] == WORK_OPEN
     refused = done(client, row, 1, operator=operator)
-    assert refused.status_code == 422 and "идёт работа на карточке" in refused.json()["detail"]
+    assert refused.status_code == 422 and refused.json()["detail"] == WORK_OPEN
     with app.state.production_uow_factory() as uow:
         assert uow.session.scalars(select(ProductionOutputRow)).all() == []

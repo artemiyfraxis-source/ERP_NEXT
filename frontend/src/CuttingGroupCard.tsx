@@ -100,8 +100,10 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
   const done = rows.every((row) => row.state === "done");
   const progressOf = (row: CuttingMember) => progress?.rows.find((item) => item.task_id === row.task_id);
   const working = !readOnly && !done && ownsSession && session?.status === "В работе" && !group.partial_view;
-  // Почему «Готово» по строке недоступно: группу ведёт другой — его имя; своя на простое — закончить простой.
+  // Почему «Готово» по строке недоступно: видна не вся группа — сдают на полной карточке; группу ведёт другой — его
+  // имя; своя на простое — закончить простой; иначе — начать.
   const waitHint = working ? undefined
+    : group.partial_view ? "Видна не вся группа — сдают на полной карточке группы"
     : session && !ownsSession ? `Группу ведёт ${session.operator_name || "другой сотрудник"}`
       : session?.status === "Пауза" ? "Сначала закончите простой"
         : "Сначала нажмите «Начать»";

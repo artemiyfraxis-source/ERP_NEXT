@@ -301,6 +301,9 @@ it("row «Готово» says why it waits: not started, on downtime, or run by 
   const other = { ...working.session!, operator_id: "someone", operator_name: "Петров" };
   rerender(<CuttingGroupCard group={{ ...cut, session: other }} readOnly={false} performerId="operator" renderInstruction={() => null} />);
   expect(hint()).toBe("Группу ведёт Петров");
+  // The viewer runs the session but sees only part of the group: not «Начать» — it is submitted on the full card.
+  rerender(<CuttingGroupCard group={{ ...cut, session: working.session, partial_view: true }} readOnly={false} renderInstruction={() => null} />);
+  expect(hint()).toBe("Видна не вся группа — сдают на полной карточке группы");
   rerender(<CuttingGroupCard group={{ ...cut, session: working.session }} readOnly={false} renderInstruction={() => null} />);
   expect(hint()).toBeNull();
 });

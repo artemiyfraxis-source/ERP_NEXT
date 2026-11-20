@@ -44,6 +44,7 @@ UNCONFIRMED = "Нет ЭТК задания — не понять, резка л
 WORK_OPEN = "По этому ПФ идёт работа на карточке — сдайте там"
 GROUP_STARTED = "Группа {number} начата на карточке — сдайте там"
 NO_RECORD = "Вас нет в справочнике сотрудников — «Готово» без него вводит мастер"
+NO_SITE = "У вас в справочнике сотрудников не указана площадка — «Готово» без неё вводит мастер"
 NOT_A_CUT = "В очереди резки сдаётся только резка кабеля — этот ПФ сдают на его карточке"
 RECEIPT = "production.cutting_queue_done"
 _RECEIPTS = UUID("6f1c2a52-6d0e-4d43-9a43-2a7c1f0e0951")
@@ -326,6 +327,11 @@ def collect(uow, actor) -> list[dict]:
                            "group": {"id": str(group.id), "number": group.number, "state": group.state},
                            "document": _mapping(snapshots.get(member_id)).get("document"), "blocked": blocked,
                            "names": [people.name(identifier) for identifier in operation.operator_ids]})
+    # A standalone PF worked on its own card (open individual session, active or paused) is listed but blocked — the
+    # screen keeps its card, and «Готово» refuses it with the same text (`mark_done`).
+    worked = set(uow.session.scalars(select(ProductionWorkSessionRow.operation_id).where(
+        ProductionWorkSessionRow.task_id.in_(tuple(running)),
+        ProductionWorkSessionRow.status.in_((WorkStatus.ACTIVE.value, WorkStatus.PAUSED.value))))) if running else set()
     for task in running.values():
         for operation in task.operations:
             if operation.inputs or not operation.etk_ops or operation.id in member_ops:
@@ -333,7 +339,7 @@ def collect(uow, actor) -> list[dict]:
             left = open_work(task, operation)
             if left and _site_allowed(task, operation, people, actor):
                 result.append({"task": task, "operation": operation, "planned": left[0], "done": left[1], "group": None,
-                               "document": None, "blocked": None,
+                               "document": None, "blocked": WORK_OPEN if operation.id in worked else None,
                                "names": [people.name(identifier) for identifier in operation.operator_ids]})
     return result
 
@@ -437,7 +443,7 @@ def mark_done(task_id: UUID, operation_id: UUID, quantity: int, key: str, actor,
     """«Готово» on a queue row: the row's pieces as the PF's manual output, in one transaction with the receipt.
     `document` — the task's pinned issued ETK (standalone PFs: proves the PF is a cable cut; the notice's project).
     `manual_output` — the presser may enter finished pieces («Ввод готовых»: production edit); required of an account
-    without an employee record, which has no site to limit it."""
+    without an employee record or with an empty site, which has no site to limit it."""
     fingerprint = digest([str(task_id), str(operation_id), str(quantity), str(worker.id)])
     with uow:
         if uow.production.get(task_id) is None:
@@ -453,8 +459,10 @@ def mark_done(task_id: UUID, operation_id: UUID, quantity: int, key: str, actor,
         if operation is None:
             raise KeyError("ПФ нет в задании")
         presser = uow.operators.get(actor.id)
-        if presser is None and not manual_output:
-            raise PermissionError(NO_RECORD)
+        # No record or no site = no site to limit the presser (`_site_allowed` lets every site through): only someone
+        # who may enter finished pieces («Ввод готовых», production edit) presses «Готово» then.
+        if not manual_output and (presser is None or not presser.site):
+            raise PermissionError(NO_RECORD if presser is None else NO_SITE)
         member = uow.cutting.for_operation(operation_id)
         if member is not None:
             # Lock order of every cutting path: project → group → task.
