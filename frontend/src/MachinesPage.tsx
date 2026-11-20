@@ -83,7 +83,7 @@ function MachineInfo({ row, close, manual, canWrite, saved }: {
       <header className="machine-card-head">
         <h2>{title}</h2>
         {manual && <button type="button" className="secondary small machine-manual" onClick={manual}>Ручная работа</button>}
-        <button className="secondary small" onClick={close}>Закрыть</button>
+        <button type="button" className="secondary small" onClick={close}>Закрыть</button>
       </header>
       {row.link.code === "not_installed" && row.kind === "machine"
         && <p className="warning-inline">Агент ERP на ПК станка не установлен — живой карточки пока нет</p>}
@@ -113,7 +113,7 @@ function SetupWindow({ row, canWrite, setupViewer, close, saved }: {
   }
   return <PageWindow label={`Наладка ${row.inventory}`} close={close} width={960} dismissable>
     <section className="panel machine-card">
-      <header className="machine-card-head"><h2>Наладка · {titleOf(row)}</h2><button className="secondary small" onClick={close}>Закрыть</button></header>
+      <header className="machine-card-head"><h2>Наладка · {titleOf(row)}</h2><button type="button" className="secondary small" onClick={close}>Закрыть</button></header>
       {error && <p className="error-banner" role="alert">{error}</p>}
       <MachineSetupPart inventory={row.inventory} canWrite={canWrite} saved={saved}
         extra={ob019 ? <button type="button" className="secondary small" onClick={() => void openPanel()}>Подбор по эталону и запись на станок</button> : undefined} />
@@ -193,7 +193,7 @@ export function MachinesPage({ setupViewer = false, canWrite = false, initialVie
             {SITES.map(([id, label]) => <button key={id || "all"} type="button" role="radio" aria-checked={site === id} className={site === id ? "on" : ""}
               onClick={() => setSite(id)}>{label}<span className={`ship-tab-count${siteCount(id) ? "" : " is-zero"}`}>{siteCount(id)}</span></button>)}
           </div>}
-          {view !== "setup" && <input className="search" type="search" aria-label="Поиск оборудования" placeholder="№, название, артикул, ПК или IP"
+          {view !== "setup" && <input className="search" type="search" name="equipment-search" autoComplete="off" spellCheck={false} aria-label="Поиск оборудования" placeholder="№, название, артикул, ПК или IP"
             value={query} onChange={(event) => setQuery(event.target.value)} />}
         </div>
         {view === "setup" && <EquipmentSetupPage embedded />}

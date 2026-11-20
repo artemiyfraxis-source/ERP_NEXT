@@ -31,7 +31,8 @@ import "./shipping.css";
    отгрузка на одном экране. Вкладки — шаги пути готовой продукции; КБ, у которой штуки сразу в нескольких шагах, видна в
    каждом. У каждой вкладки свои колонки и одно своё действие (06.11), и кнопка называет штуки своей строки:
    «В производстве» — «Принять досрочно» (предупреждение, не запрет), «Готово» — «Принять», «Принято» — строка на акт
-   приёмки с ГРН и «Упаковать», «Упаковано» — «Трек…» (или «Без УПД…», когда УПД нет совсем), «На отгрузку» — «Отгрузить».
+   приёмки с ГРН и «Упаковать», «Упаковано» — «Трек…» и «Без УПД…» в строке самой отправки (КБ-строки без кнопок; трек — только ТК, что его выдаёт),
+   «На отгрузку» — «Отгрузить» (отправка без трека — самовывоз, наш курьер, Яндекс Доставка — попадает сюда сама, как только есть УПД).
    Короба, PL/DN и этикетки — в окне упаковки и отгрузки. Данные отправки вносят менеджер и склад. */
 
 const TABS: ReadonlyArray<readonly [Tab, string]> = [...DISPATCH_STAGES, ["all", "Все"]];
@@ -203,7 +204,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     return shippingValue(DELIVERY_TITLES[field], text);
   };
   const trackText = (shipment: DispatchShipment | undefined) =>
-    !shipment ? "" : contactText(shipment.track_number) || (!needsTrack(shipment) ? "Не требуется" : "");
+    !shipment ? "" : contactText(shipment.track_number);
   const packStatus = (line: IntakeLine) => line.stage !== "accepted" || line.shipment ? ""
     : line.kb.pack_auto_allowed ? AUTO_PACK_LABEL : line.packNow > 0 ? "Разрешено" : "Нужно разрешение";
   /** Почему «Трек…» выключен — своим столбцом, не только в подсказке кнопки. */
@@ -212,6 +213,14 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     if (!shipment) return [];
     const fieldGaps = new Set(["условия доставки", "организация", "телефон получателя", "перевозчик", "адрес доставки", "тип УПД", "файл УПД", "№ УПД", "трек-номер"]);
     return [...new Set([...shipment.missing_data, ...shipment.missing_ship].filter((gap) => !fieldGaps.has(gap)))];
+  };
+  /** PL и DN по отдельности: номера нет — «Сформировать» этого документа, есть — ссылка на печать. */
+  const docCell = (shipment: DispatchShipment, document: "pl" | "dn") => {
+    if ((document === "pl" ? shipment.pl_number : shipment.dn_number) || !canDispatch || !["Собрана", "Упакована"].includes(shipment.status)) return docLink(shipment, document);
+    const kind = document === "pl" ? "PL" : "DN";
+    return <button type="button" className="secondary small" disabled={Boolean(busy)} aria-label={`Сформировать ${kind} ${shipment.number}`}
+      title={document === "pl" ? "Сформировать PL — отправка станет «Упакована»" : "Сформировать DN"}
+      onClick={(event) => { event.stopPropagation(); void mutate(`${document}:${shipment.id}`, () => shippingApi.issueDocument(shipment.id, shipment.version, document), `${kind} сформирован: ${shipment.number}`); }}>Сформировать</button>;
   };
   const updRequired = (line: IntakeLine) => !["waiting", "production"].includes(line.stage ?? "");
 
@@ -240,18 +249,17 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   /** «Принять досрочно» из «В производстве»: сколько можно принять сверх уже сданного цехом. */
   const earlyQuantity = (line: IntakeLine) => round2(Math.min(line.quantity, Math.max(num(line.kb.remaining) - piecesOf(line.kb).ready, 0)));
   /** «Трек…» упакованной отправки строки: одно действие — «Трек…», «Без УПД…» (УПД нет совсем) или выключенный «Трек…» с причиной. */
-  const trackAction = (line: IntakeLine) => {
-    const shipment = line.shipment;
-    if (!shipment || shipment.status !== "Упакована" || !canDispatch) return null;
+  const trackAction = (shipment: DispatchShipment, title: string) => {
+    if (shipment.status !== "Упакована" || !canDispatch) return null;
     const needing = needsTrack(shipment);
     const ready = needing && (readyForTrack(shipment) || Boolean(shipment.track_number));
     if (!ready && canWarehouse && onlyUpdBlocks(shipment)) return <button type="button" className="secondary small intake-print" title="УПД нет — отгрузку без УПД разрешает уполномоченный по ПИН"
-      aria-label={`Без УПД ${who(line)}`} onClick={() => setOpened({ kind: "noupd", shipment })}>Без УПД…</button>;
+      aria-label={`Без УПД ${title}`} onClick={() => setOpened({ kind: "noupd", shipment })}>Без УПД…</button>;
     if (!needing) return null;
     const gaps = shipment.missing_ship.filter((gap) => gap !== "трек-номер");
     const button = <button type="button" className="secondary small intake-print" disabled={!ready}
       title={ready ? "Вписать трек-номер ТК" : `Трек вносится, когда есть УПД и ТК${gaps.length ? ` — не хватает: ${gaps.join(", ")}` : ""}. Ждём данные менеджера`}
-      aria-label={`Трек ${who(line)}`} onClick={() => setOpened({ kind: "track", title: who(line), shipment })}>Трек…</button>;
+      aria-label={`Трек ${title}`} onClick={() => setOpened({ kind: "track", title, shipment })}>Трек…</button>;
     return button;
   };
   /** Одно действие строки — по её шагу; число на кнопке — штуки этой строки. */
@@ -278,7 +286,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       return <button type="button" className="secondary small" aria-label={`Разрешить упаковку ${line.project} ${line.item_index}`}
         onClick={() => setPermissionProject(line.project)}>Разрешить…</button>;
     }
-    if (line.stage === "packed") return trackAction(line) ?? dash;
+    if (line.stage === "packed") return null;
     if (line.stage === "to_ship" && line.shipment && canDispatch && readyToShip(line.shipment)) return <button type="button" className="primary small intake-print"
       title={`Отгрузить ${line.shipment.number}`} aria-label={`Отгрузить ${who(line)}`} onClick={() => setOpened({ kind: "ship", project: line.project })}>Отгрузить</button>;
     return dash;
@@ -295,7 +303,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     { key: "needed", title: "Заказано", width: 88, numeric: true, value: (line) => num(line.kb.needed), render: (line) => num(line.kb.needed) > 0 ? formatNumber(num(line.kb.needed)) : dash },
     { key: "launched", title: "Запущено", width: 88, numeric: true, value: (line) => num(line.kb.launched), render: (line) => num(line.kb.launched) > 0 ? formatNumber(num(line.kb.launched)) : dash },
     { key: "left", title: "Остаток", width: 88, hint: "Заказано − принято по всем ГРН", numeric: true, value: (line) => leftOf(line.kb), render: (line) => leftOf(line.kb) > 0 ? formatNumber(leftOf(line.kb)) : dash },
-    { key: "action", title: ACTION_TITLE[tab] ?? "Действие", width: tab === "production" || tab === "all" ? 192 : 144,
+    { key: "action", title: ACTION_TITLE[tab] ?? "Действие", width: tab === "production" || tab === "all" ? 192 : tab === "packed" ? 256 : 144,
       value: (line) => line.stage === "accepted" ? line.packNow || (line.shipment ? line.quantity : 0) : line.stage === "ready" ? line.quantity : "", render: actionCell },
     { key: "tasks", title: "Задания", wrap: true, width: 128, maxWidth: 200, value: (line) => line.kb.tasks.map((task) => task.number).join(", "),
       render: (line) => line.kb.tasks.length ? <span className="intake-clip intake-stage muted" title={tasksText(line.kb)}>{line.kb.tasks.map((task) => task.number).join(", ")}</span> : dash },
@@ -322,7 +330,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     ...DELIVERY_COLUMNS.map((key): DataColumn<IntakeLine> => ({ key, title: DELIVERY_TITLES[key], value: (line) => deliveryText(line, key),
       wrap: true, width: key === "address" || key === "warehouseNote" || key === "carrierNote" ? 200 : 128, maxWidth: key === "address" || key === "warehouseNote" || key === "carrierNote" ? 240 : 180,
       render: (line) => deliveryCell(line, key) })),
-    { key: "track", title: "Трек", width: 128, value: (line) => trackText(line.shipment), render: (line) => line.shipment ? trackText(line.shipment) || <span className="tone-warn">не заполнено</span> : dash },
+    { key: "track", title: "Трек", width: 128, value: (line) => trackText(line.shipment), render: (line) => line.shipment ? trackText(line.shipment) || (needsTrack(line.shipment) ? <span className="tone-warn">не заполнено</span> : <span className="muted">не нужен</span>) : dash },
     { key: "upd", title: "УПД", width: 104, value: (line) => updLabel(deliveryOf(line).upd_type),
       render: (line) => updLabel(deliveryOf(line).upd_type) || (updRequired(line) ? <span className="tone-warn">не заполнено</span> : dash) },
     { key: "updNumber", title: "№ УПД", width: 128, value: (line) => deliveryOf(line).upd_number ?? "",
@@ -333,8 +341,8 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       : updRequired(line) && deliveryOf(line).upd_type && !["ЭДО", "БЕЗ УПД"].includes(deliveryOf(line).upd_type!) ? shippingValue("Файл УПД", "") : dash },
     { key: "trackGaps", title: "Ждём для трека", hint: "Чего не хватает, чтобы вписать трек-номер", wrap: true, width: 160, maxWidth: 240,
       value: (line) => trackGaps(line).join(", "), render: (line) => trackGaps(line).length ? <span className="tone-warn">{trackGaps(line).join(", ")}</span> : dash },
-    { key: "pl", title: "PL", width: 136, value: (line) => line.shipment?.pl_number ?? "", render: (line) => line.shipment ? docLink(line.shipment, "pl") : dash },
-    { key: "dn", title: "DN", width: 136, value: (line) => line.shipment?.dn_number ?? "", render: (line) => line.shipment ? docLink(line.shipment, "dn") : dash },
+    { key: "pl", title: "PL", width: 136, value: (line) => line.shipment?.pl_number ?? "", render: (line) => line.shipment ? docCell(line.shipment, "pl") : dash },
+    { key: "dn", title: "DN", width: 136, value: (line) => line.shipment?.dn_number ?? "", render: (line) => line.shipment ? docCell(line.shipment, "dn") : dash },
     { key: "deliveryEdit", title: "Доставка КБ", width: 152, export: false, value: () => "", render: (line) => canDispatch && itemOf(line) ? <button type="button" className="secondary small"
       aria-label={`Доставка ${who(line)}`} onClick={() => setDeliveryEdit({ project: line.project, items: [itemOf(line)!] })}>Изменить доставку</button> : dash },
   ];
@@ -382,6 +390,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     for (const line of shipment.lines) if (line.project === first.project) totals.set(line.unit, round2((totals.get(line.unit) ?? 0) + num(line.picked)));
     cells.quantity = [...totals].map(([unit, quantity]) => `${formatNumber(quantity)}${NBSP}${unit}`).join(", ");
     cells.action = <span className="ship-group-head">
+      {first.stage === "packed" && trackAction(shipment, shipment.number)}
       {canDispatch && ["Новая", "Собрана", "Упакована"].includes(shipment.status) && <button type="button" className="secondary small"
         onClick={() => setOpened({ kind: "pack", project: first.project })}>Короба и PL/DN</button>}
       {canDispatch && ["Отгружена", "Закрыта"].includes(shipment.status) && <button type="button" className="secondary small"

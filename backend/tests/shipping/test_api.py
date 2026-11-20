@@ -215,8 +215,11 @@ def test_shipment_warehouse_comment_max_length(shipping_api):
     assert response.status_code == 422 and comment_notifications() == []
 
 
-@pytest.mark.parametrize("carrier, required", [("Курьер (наш)", False), ("СДЭК", True), ("Яндекс Доставка", True), ("Курьер внешний", True)])
-def test_shipping_api_track_required_and_dispatch_without_track(shipping_api, carrier, required):
+@pytest.mark.parametrize("carrier, terms, required", [
+    ("Курьер (наш)", "ДОСТАВКА ТК", False), ("СДЭК", "ДОСТАВКА ТК", True), ("Яндекс Доставка", "ДОСТАВКА ТК", False),
+    ("Курьер внешний", "ДОСТАВКА ТК", True), ("Самовывоз", "САМОВЫВОЗ", False),
+])
+def test_shipping_api_track_required_and_dispatch_without_track(shipping_api, carrier, terms, required):
     client = shipping_api
     good = client.post("/api/shipping/goods", json={
         "project": "591К.3", "item_index": "КБ1", "name": "Жгут", "ordered": "2", "unit": "шт",
@@ -224,7 +227,7 @@ def test_shipping_api_track_required_and_dispatch_without_track(shipping_api, ca
     good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "2"}).json()["good"]
     permit_fixture_goods(client)
     made = client.post("/api/shipping/shipments", json={
-        "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": "ДОСТАВКА ТК", "carrier": carrier,
+        "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": terms, "carrier": carrier,
         "upd_type": "ЭДО", "upd_number": "123", "upd_url": "https://files.example/upd.pdf", "lines": [{"good_id": good["id"], "quantity": "2"}],
     })
     assert made.status_code == 200, made.text

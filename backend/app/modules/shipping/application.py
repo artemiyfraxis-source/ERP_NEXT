@@ -296,6 +296,11 @@ class SetRequestedCommand(ShipmentCommand):
 
 
 @dataclass(frozen=True)
+class IssueDocumentCommand(ShipmentCommand):
+    document: str
+
+
+@dataclass(frozen=True)
 class LayOutCommand(ShipmentCommand):
     boxes: tuple[dict, ...]
     tk_note: str
@@ -906,16 +911,42 @@ def _pick(
     return updated, taken
 
 
-def _pack(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork) -> Shipment:
+def _document_suffix(shipment: Shipment, uow: UnitOfWork) -> str:
+    """Общий хвост номеров PL и DN: уже выданный номер парного документа сохраняется, иначе — следующий по проекту."""
+    for number, prefix in ((shipment.pl_number, "PL"), (shipment.dn_number, "DN")):
+        if number.startswith(prefix):
+            return number[len(prefix):]
     projects = sorted({line.project for line in shipment.lines if line.picked > 0})
     if len(projects) == 1:
-        suffix = f"{projects[0]}-{uow.shipments.document_sequence(projects[0])}"
-    else:
-        suffix = shipment.number
-    updated = shipment.pack(f"PL{suffix}", f"DN{suffix}", now.date())
+        return f"{projects[0]}-{uow.shipments.document_sequence(projects[0])}"
+    return shipment.number
+
+
+def _pack(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork, *, with_dn: bool = True) -> Shipment:
+    suffix = _document_suffix(shipment, uow)
+    updated = shipment.pack(f"PL{suffix}", f"DN{suffix}" if with_dn and not shipment.dn_number else "", now.date())
     uow.shipments.add(updated)
     _audit(shipment.id, "shipping.packed", actor, now, {"pl": updated.pl_number, "dn": updated.dn_number}, uow)
     return updated
+
+
+def issue_document(command: IssueDocumentCommand, uow: UnitOfWork) -> Shipment:
+    """«Сформировать» PL или DN отдельно (владелец 20.11.2026): PL — упаковка (статус «Упакована», DN не выдаётся),
+    DN — номер без смены статуса. Парный номер сохраняет общий хвост."""
+    with uow:
+        shipment = _packing_shipment(command.shipment_id, command.expected_version, uow, validate_delivery=True)
+        if command.document == "pl":
+            if shipment.pl_number:
+                raise ShippingValidationError(f"PL уже сформирован: {shipment.pl_number}")
+            updated = _pack(shipment, command.actor, command.now, uow, with_dn=False)
+        else:
+            if not any(line.picked > 0 for line in shipment.lines):
+                raise ShippingValidationError("Нельзя сформировать DN: ни одна позиция не набрана")
+            updated = shipment.issue_dn(f"DN{_document_suffix(shipment, uow)}")
+            uow.shipments.add(updated)
+            _audit(shipment.id, "shipping.dn_issued", command.actor, command.now, {"dn": updated.dn_number}, uow)
+        uow.commit()
+        return updated
 
 
 def _addressee_id(project: str) -> UUID:

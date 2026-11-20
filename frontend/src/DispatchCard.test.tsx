@@ -82,10 +82,10 @@ describe("Данные отправки", () => {
     expect(screen.getByLabelText("Дата УПД")).toBeDisabled();
     expect(calls.every(({ method }) => method === "GET")).toBe(true);
   });
-  it("окно проекта: только адрес, получатель, телефон и УПД — без типа доставки, ТК и комментария", async () => {
+  it("окно проекта: адрес, получатель, телефон, способ доставки и УПД — без комментария и плана", async () => {
     const dialog = await open();
     expect(within(dialog).getAllByRole("textbox").map((input) => input.getAttribute("aria-label"))).toEqual(["Организация", "Получатель", "Телефон", "Адрес доставки", "№ УПД"]);
-    expect(within(dialog).getAllByRole("combobox").map((input) => input.getAttribute("aria-label"))).toEqual(["УПД"]);
+    expect(within(dialog).getAllByRole("combobox").map((input) => input.getAttribute("aria-label"))).toEqual(["Способ доставки", "УПД"]);
     for (const hidden of ["Тип доставки", "Перевозчик", "Комментарий для склада", "Контактное лицо", "Условия доставки", "Способ отгрузки / ТК", "Плановая дата отгрузки", "Комментарий"]) {
       expect(within(dialog).queryByLabelText(hidden)).not.toBeInTheDocument();
     }
@@ -93,10 +93,10 @@ describe("Данные отправки", () => {
 
   it.each([
     ["waiting", false], ["production", false], ["ready", true], ["accepted", true], ["packed", true], ["to_ship", true], ["shipped", true],
-  ] as const)("этап %s: адрес, получатель, телефон всегда; УПД с «Готово» (%s); доставки и ТК нет", async (stage, withUpd) => {
+  ] as const)("этап %s: адрес, получатель, телефон и способ доставки всегда; УПД с «Готово» (%s)", async (stage, withUpd) => {
     render(<DispatchCard project="591К.3" stage={stage} canEdit close={() => undefined} />);
     await waitFor(() => expect(screen.getByLabelText("Организация")).toHaveValue("ООО Заказчик"));
-    for (const label of ["Организация", "Адрес доставки", "Телефон"]) expect(screen.getByLabelText(label)).toBeInTheDocument();
+    for (const label of ["Организация", "Адрес доставки", "Телефон", "Способ доставки"]) expect(screen.getByLabelText(label)).toBeInTheDocument();
     expect(Boolean(screen.queryByLabelText("УПД"))).toBe(withUpd);
     for (const hidden of ["Тип доставки", "Перевозчик", "Комментарий для склада"]) expect(screen.queryByLabelText(hidden)).not.toBeInTheDocument();
   });
@@ -110,6 +110,26 @@ describe("Данные отправки", () => {
     await screen.findByText("Данные отправки сохранены");
     expect(calls.find((call) => call.method === "PUT")!.body).toEqual({ project: "591К.3", version: 2, phone: "+7 900" });
     expect(stored.terms).toBe("САМОВЫВОЗ");
+  });
+
+  it("способ доставки: ТК выбирается и сохраняется вместе с условиями; самовывоз адрес не прячет", async () => {
+    await open();
+    expect(screen.getByLabelText("Способ доставки")).toHaveValue("СДЭК");
+    fireEvent.change(screen.getByLabelText("Способ доставки"), { target: { value: "Самовывоз" } });
+    expect(screen.getByLabelText("Адрес доставки")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+    await screen.findByText("Данные отправки сохранены");
+    expect(calls.find((call) => call.method === "PUT")!.body).toEqual({ project: "591К.3", version: 2, carrier: "Самовывоз", terms: "САМОВЫВОЗ" });
+    fireEvent.change(screen.getByLabelText("Способ доставки"), { target: { value: "Деловые линии" } });
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+    await waitFor(() => expect(calls.filter((call) => call.method === "PUT")).toHaveLength(2));
+    expect(calls.filter((call) => call.method === "PUT")[1].body).toEqual({ project: "591К.3", version: 3, carrier: "Деловые линии", terms: "ДОСТАВКА ТК" });
+  });
+
+  it("у ранней карточки (В ожидании) способ доставки виден, УПД скрыта", async () => {
+    render(<DispatchCard project="591К.3" stage="waiting" canEdit close={() => undefined} />);
+    expect(await screen.findByLabelText("Способ доставки")).toHaveValue("СДЭК");
+    expect(screen.queryByLabelText("УПД")).not.toBeInTheDocument();
   });
 
   it("не шлёт скрытые поля: в PUT только версия и изменённое", async () => {
