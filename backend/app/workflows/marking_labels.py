@@ -17,6 +17,7 @@ from app.modules.production.api import production_uow_factory
 from app.modules.production.application import ConcurrentProductionUpdate, issue_mark_serials_in
 from app.modules.production.cutting_application import locked_group
 from app.modules.production.domain import ProductionStatus
+from app.modules.production.machine_load import normalized_site
 from app.modules.production.marking_sources import MAX_LABELS, check_materials, labels, manual_labels
 from app.workflows.marking_progress import (fixed_keys, numbered_keys, printed_counts, remaining_rows, serial_range_of,
                                             task_progress)
@@ -485,8 +486,14 @@ def source_rows(source, selected, principal, uow, now, interleave=False, remaini
     return rows, {"group": group_snapshot, "tasks": snapshots}
 
 
-def profile_target(session, profile_id, version, now, *, calibration=False, online=True):
-    profile = session.scalar(select(MarkingProfileRow).where(MarkingProfileRow.id == profile_id).with_for_update())
+def _locked(statement, lock):
+    return statement.with_for_update() if lock else statement
+
+
+def profile_target(session, profile_id, version, now, *, calibration=False, online=True, lock=True):
+    """The profile and binding a print runs on. `lock=False` (previews) reads without row locks: a preview renders for
+    seconds and must not hold up the printer's other enqueues."""
+    profile = session.scalar(_locked(select(MarkingProfileRow).where(MarkingProfileRow.id == profile_id), lock))
     if profile is None:
         raise KeyError("Профиль не найден")
     if profile.version != version:
@@ -495,7 +502,7 @@ def profile_target(session, profile_id, version, now, *, calibration=False, onli
         raise ConcurrentProductionUpdate("Профиль не связан с оборудованием")
     if not calibration and not profile.calibrated:
         raise ConcurrentProductionUpdate("Профиль не откалиброван")
-    binding = session.scalar(select(MarkingBindingRow).where(MarkingBindingRow.equipment_id == profile.equipment_id).with_for_update())
+    binding = session.scalar(_locked(select(MarkingBindingRow).where(MarkingBindingRow.equipment_id == profile.equipment_id), lock))
     if not binding:
         raise ConcurrentProductionUpdate("Оборудование не связано с принтером")
     if online and not printer_online(session, binding.machine_id, binding.printer, now):
@@ -610,6 +617,7 @@ def batch_access(batch, principal, uow):
         if (batch.created_by != principal.actor.id and not section_allowed(principal, ("production",), "view")
                 and not section_allowed(principal, ("print",), "edit")):
             raise PermissionError("Партия другого сотрудника")
+        own_site_only(uow, principal, UUID(snapshot["manual"]["equipment_id"]))
         return
     if not tasks and not section_allowed(principal, ("erpref",), "edit"):
         raise PermissionError("Пробная печать доступна только настройщику оборудования")
@@ -763,22 +771,43 @@ class ManualBatchInput(ManualInput):
     idempotency_key: str = Field(min_length=1, max_length=128, pattern=r"\S")
 
 
-def build_manual(payload, uow, now):
+AUDIT_LINES = 100
+SITE_KEY = "Расположение"
+OTHER_SITE = "Принтер стоит на площадке {site}, а ваша площадка — {own}"
+
+
+def own_site_only(uow, principal, equipment_id):
+    """A manual print goes only to a printer of the user's own site (ЦАР/ЖУК); an employee without a site, the
+    administrator and the production manager (production: edit) may use any. A printer with no known site is open."""
+    if section_allowed(principal, ("production",), "edit"):
+        return
+    viewer = uow.operators.get(principal.actor.id)
+    own = (viewer.site if viewer else "") or ""
+    if not own:
+        return
+    machine = uow.session.get(EquipmentMachineRow, equipment_id) if equipment_id else None
+    site = normalized_site(machine.fields.get(SITE_KEY)) if machine is not None else ""
+    if site and site != own:
+        raise PermissionError(OTHER_SITE.format(site=site, own=own))
+
+
+def build_manual(payload, principal, uow, now, *, lock=True):
     numbering = (payload.numbering.first, payload.numbering.last) if payload.numbering else None
     rows = manual_labels([(line.text, line.quantity) for line in payload.lines], payload.order, numbering)
     if payload.trial:
         rows = [{**rows[0], "quantity": 1}]
-    profile, binding = profile_target(uow.session, payload.profile_id, payload.profile_version, now, online=False)
+    profile, binding = profile_target(uow.session, payload.profile_id, payload.profile_version, now, online=False, lock=lock)
+    own_site_only(uow, principal, profile.equipment_id)
     source = {"tasks": [], "manual": {"equipment_id": str(profile.equipment_id), "order": payload.order,
                                       "numbering": list(numbering) if numbering else None, "trial": payload.trial}}
     return rendered_manifest(rows, source, profile, binding), binding
 
 
 @router.post("/manual/preview")
-def manual_preview(payload: ManualInput, _principal: PrintUser, factory: Factory, now: Now):
+def manual_preview(payload: ManualInput, principal: PrintUser, factory: Factory, now: Now):
     def run():
         with factory() as uow:
-            result, _binding = build_manual(payload, uow, now)
+            result, _binding = build_manual(payload, principal, uow, now, lock=False)
             return result
     return checked(run)
 
@@ -802,7 +831,7 @@ def manual_enqueue(payload: ManualBatchInput, principal: PrintUser, factory: Fac
         with factory() as uow:
             if (result := existing(uow)) is not None:
                 return result
-            manifest, binding = build_manual(payload, uow, now)
+            manifest, binding = build_manual(payload, principal, uow, now)
             if manifest["manifest_hash"] != payload.manifest_hash:
                 raise ConcurrentProductionUpdate(STALE)
             if not printer_online(uow.session, binding.machine_id, binding.printer, now):
@@ -814,7 +843,8 @@ def manual_enqueue(payload: ManualBatchInput, principal: PrintUser, factory: Fac
             audit(uow, principal.actor, now, batch.id, "manual_queued", equipment_id=manifest["source_snapshot"]["manual"]["equipment_id"],
                   total=batch.total, order=payload.order, trial=payload.trial,
                   numbering=manifest["source_snapshot"]["manual"]["numbering"],
-                  lines=[{"text": line.text.strip(), "quantity": line.quantity} for line in payload.lines[:100]])
+                  lines=[{"text": line.text.strip(), "quantity": line.quantity} for line in payload.lines[:AUDIT_LINES]],
+                  lines_total=len(payload.lines), lines_cut=len(payload.lines) > AUDIT_LINES)
             result = batch_view(batch, uow.session, now)
             uow.commit()
             return result

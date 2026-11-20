@@ -1,12 +1,19 @@
 """«Свой текст» of the marking printer card (owner 20.11.2026): lines × copies, order, {№} numbering, the same queue."""
 
+from dataclasses import replace
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.sql.selectable import Select
 
+from app.main import app
 from app.modules.production.marking_sources import manual_labels
+from app.modules.references.infrastructure import EquipmentMachineRow
+from app.modules.warehouse.marking_profiles import MarkingProfileRow
+from app.modules.warehouse.marking_render import presets
 from app.modules.warehouse.label_jobs import LabelJobRow, claim_marking, report_marking
+from app.shared.http_auth import authenticated_principal
 from app.shared.persistence import AuditEventRow
 from tests.production.test_api import production_api, issue_card  # noqa: F401
 from tests.production.test_my_readiness import _as_operator
@@ -122,3 +129,73 @@ def test_the_marking_machine_tile_opens_the_marking_card(marking):
     assert response.status_code == 200, response.text
     row = next(row for row in response.json()["rows"] if row["equipment_id"] == str(equipment_id))
     assert row["marking"] is True and row["inventory"] == "ОБ.101"
+
+
+def test_more_than_500_labels_by_numbering_times_copies_is_a_422_with_a_readable_text(marking):
+    client, factory, *_ = marking
+    request = body(marking, [{"text": "A{№}", "quantity": 3}], numbering={"first": 1, "last": 200})
+    for path in ("/manual/preview", "/manual/batches"):
+        response = client.post(BASE + path, json={**request, "manifest_hash": "0" * 64, "idempotency_key": "k"} if "batches" in path else request)
+        assert response.status_code == 422, response.text
+        assert "не более 500" in response.json()["detail"]
+    with factory() as uow:
+        assert uow.session.scalar(select(LabelJobRow.id)) is None
+
+
+def test_two_halves_text_on_a_one_zone_profile_is_a_422(marking):
+    client, factory, *_ = marking
+    request = body(marking, [{"text": "ЛЕВО | ПРАВО", "quantity": 1}])
+    assert client.post(BASE + "/manual/preview", json=request).status_code == 200  # the two-zone flag takes it
+    with factory() as uow:
+        uow.session.get(MarkingProfileRow, UUID(request["profile_id"])).geometry = presets()[0][2]
+        uow.commit()
+    response = client.post(BASE + "/manual/preview", json=request)
+    assert response.status_code == 422, response.text
+    assert "двумя текстовыми зонами" in response.json()["detail"]
+
+
+def test_preview_takes_no_row_locks_but_enqueue_does(marking, monkeypatch):
+    locked = []
+    original = Select.with_for_update
+    monkeypatch.setattr(Select, "with_for_update", lambda self, *a, **k: (locked.append(1), original(self, *a, **k))[1])
+    request = body(marking, [{"text": "A", "quantity": 1}])
+    shown = marking[0].post(BASE + "/manual/preview", json=request)
+    assert shown.status_code == 200 and locked == []
+    response = marking[0].post(BASE + "/manual/batches", json={**request, "manifest_hash": shown.json()["manifest_hash"], "idempotency_key": "k"})
+    assert response.status_code == 200 and len(locked) >= 2  # profile and binding
+
+
+def test_manual_print_only_on_a_printer_of_the_own_site(marking):
+    client, factory, _payload, task, _card, equipment_id, operator_id = marking
+    request = body(marking, [{"text": "A", "quantity": 1}])
+    batch, shown = manual_print(marking, request, key="master")  # the master (production: edit) prints anywhere
+    with factory() as uow:
+        uow.session.get(EquipmentMachineRow, equipment_id).fields = {"Инв. номер": "ОБ.101", "Расположение": "ЖУК"}
+        uow.commit()
+    master = app.dependency_overrides[authenticated_principal]()
+    app.dependency_overrides[authenticated_principal] = lambda: replace(
+        master, actor=replace(master.actor, id=operator_id), permissions={"print": "edit", "myops": "edit"}, roles=frozenset({"operator"}))
+    # The operator is of ЦАР, the printer stands in ЖУК: preview, queue, view are refused.
+    assert client.post(BASE + "/manual/preview", json=request).status_code == 403
+    assert client.post(BASE + "/manual/batches", json={**request, "manifest_hash": shown["manifest_hash"], "idempotency_key": "own"}).status_code == 403
+    assert client.get(BASE + f"/batches/{batch['id']}").status_code == 403
+    assert client.post(BASE + f"/batches/{batch['id']}/cancel", json={"reason": "x"}).status_code == 403
+    with factory() as uow:
+        uow.session.get(EquipmentMachineRow, equipment_id).fields = {"Инв. номер": "ОБ.101", "Расположение": "ЦАР"}
+        uow.commit()
+    assert client.post(BASE + "/manual/preview", json=request).status_code == 200
+    assert client.get(BASE + f"/batches/{batch['id']}").status_code == 200
+
+
+def test_journal_keeps_the_first_hundred_lines_and_says_it_was_cut(marking):
+    client, factory, *_ = marking
+    lines = [{"text": f"L{index}", "quantity": 1} for index in range(120)]
+    manual_print(marking, body(marking, lines[:100]), key="whole")
+    manual_print(marking, body(marking, lines), key="cut")
+    with factory() as uow:
+        details = sorted((event.details for event in uow.session.scalars(
+            select(AuditEventRow).where(AuditEventRow.event_type == "production.marking_manual_queued"))),
+            key=lambda item: item["lines_total"])
+        whole, cut = details
+        assert (whole["lines_total"], whole["lines_cut"]) == (100, False)
+        assert (cut["lines_total"], cut["lines_cut"], len(cut["lines"])) == (120, True, 100)

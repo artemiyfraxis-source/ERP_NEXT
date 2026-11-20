@@ -9,7 +9,7 @@ import { MarkingBatchProgress, MarkingPrintWindow } from "./MarkingPrintWindow";
 import { MarkingProfilesWindow } from "./MarkingProfilesWindow";
 import {
   boundPrinter, markingApi, type MarkingBatch, type MarkingCatalog, type MarkingManualLine, type MarkingManualRequest,
-  type MarkingOrder, type MarkingPreview, type MarkingSource, type MarkingSourceProgress,
+  markingProblem, type MarkingOrder, type MarkingPreview, type MarkingSource, type MarkingSourceProgress,
 } from "./markingApi";
 import { PageWindow } from "./PageWindow";
 import { useCanAct, useCanPrint, useCurrentUserId } from "./rights";
@@ -35,8 +35,20 @@ const PREVIEW_SHOWN = 12;
 export function parseManualLines(text: string, copies: number): MarkingManualLine[] {
   return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
     const match = COPIES.exec(line);
-    return match ? { text: line.slice(0, match.index).trim(), quantity: Math.max(1, Number(match[1])) } : { text: line, quantity: copies };
+    return match ? { text: line.slice(0, match.index).trim(), quantity: Number(match[1]) } : { text: line, quantity: copies };
   }).filter((line) => line.text);
+}
+
+const MAX_COPIES = 500;
+/** Что не так с копиями: «× 0» и выход за 1…500 не округляются молча, а отклоняются с текстом. */
+export function copiesProblem(lines: MarkingManualLine[], copies: string): string {
+  const common = Number(copies);
+  if (copies.trim() === "" || !Number.isInteger(common) || common < 1) return "Копий каждой — целое число не меньше 1";
+  if (common > MAX_COPIES) return `Копий каждой — не больше ${MAX_COPIES}`;
+  const zero = lines.find((line) => line.quantity < 1);
+  if (zero) return `Копий в строке «${zero.text}» должно быть не меньше 1 (× 0 не печатает)`;
+  const big = lines.find((line) => line.quantity > MAX_COPIES);
+  return big ? `Копий в строке «${big.text}» — не больше ${MAX_COPIES}` : "";
 }
 
 /** Сколько этикеток выйдет: строка с {№} — по одной на каждый номер «с»…«по». */
@@ -106,7 +118,10 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
   const [profileId, setProfileId] = useState(() => recall(`${storage}:profile`) ?? "");
   const [text, setText] = useState(""), [copies, setCopies] = useState("1"), [order, setOrder] = useState<MarkingOrder>("listed");
   const [first, setFirst] = useState("1"), [last, setLast] = useState("10");
-  const [preview, setPreview] = useState<MarkingPreview | null>(null), [previewError, setPreviewError] = useState("");
+  // Предпросмотр помнит запрос, для которого получен: «Печатать» уходит с хэшем показанного, а не свежего.
+  const [shown, setShown] = useState<{ key: string; result: MarkingPreview } | null>(null), [previewError, setPreviewError] = useState("");
+  const [refreshTick, setRefreshTick] = useState(0);
+  const inflight = useRef("");
   const [batch, setBatch] = useState<MarkingBatch | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState("");
   const [setupOpen, setSetupOpen] = useState(Boolean(row.pending_setup));
@@ -144,29 +159,35 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
   const printer = catalog ? boundPrinter(catalog, machine) : undefined;
   const online = Boolean(printer?.present && printer.online);
 
-  const lines = useMemo(() => parseManualLines(text, Math.max(1, Math.trunc(Number(copies)) || 1)), [text, copies]);
+  const lines = useMemo(() => parseManualLines(text, Number(copies)), [text, copies]);
+  const copiesError = lines.length ? copiesProblem(lines, copies) : "";
   const numbered = lines.some((line) => TOKEN.test(line.text));
   const firstNo = Number(first), lastNo = Number(last);
   const numberingValid = !numbered || (first.trim() !== "" && last.trim() !== "" && Number.isInteger(firstNo) && Number.isInteger(lastNo) && firstNo >= 0 && lastNo >= firstNo);
   const count = manualCount(lines, firstNo, lastNo);
-  const request: MarkingManualRequest | null = profile && lines.length && numberingValid ? {
+  const request: MarkingManualRequest | null = profile && lines.length && numberingValid && !copiesError ? {
     profile_id: profile.id, profile_version: profile.version, lines, order,
     numbering: numbered ? { first: firstNo, last: lastNo } : null,
   } : null;
   const requestText = request ? JSON.stringify(request) : "";
 
-  // Предпросмотр «Своего текста» — сам, через полсекунды после правки.
+  // Предпросмотр «Своего текста» — сам, через полсекунды после правки. Прошлый запрос отменяется (сервер рисует
+  // каждую надпись), по тому же тексту второй не стартует, пока первый в пути.
   useEffect(() => {
-    setPreview(null); setPreviewError("");
+    setShown(null); setPreviewError("");
     if (!requestText || tab !== "text") return;
-    let live = true;
+    const controller = new AbortController();
     const timer = setTimeout(() => {
-      markingApi.manualPreview(JSON.parse(requestText) as MarkingManualRequest)
-        .then((result) => { if (live) setPreview(result); })
-        .catch((problem) => { if (live) setPreviewError(failureText(problem, "Предпросмотр не получен")); });
+      if (inflight.current === requestText) return;
+      inflight.current = requestText;
+      markingApi.manualPreview(JSON.parse(requestText) as MarkingManualRequest, controller.signal)
+        .then((result) => { if (!controller.signal.aborted) setShown({ key: requestText, result }); })
+        .catch((problem) => { if (!controller.signal.aborted) setPreviewError(markingProblem(problem, "Предпросмотр не получен")); })
+        .finally(() => { if (inflight.current === requestText) inflight.current = ""; });
     }, 500);
-    return () => { live = false; clearTimeout(timer); };
-  }, [requestText, tab]);
+    return () => { controller.abort(); clearTimeout(timer); if (inflight.current === requestText) inflight.current = ""; };
+  }, [requestText, tab, refreshTick]);
+  const preview = shown && shown.key === requestText ? shown.result : null;
 
   const running = Boolean(batch?.jobs.some((job) => ["pending", "taken"].includes(job.status)));
   const blocker = !canPrint ? "Печать маркировки вам не открыта"
@@ -181,18 +202,25 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
   async function printManual(trial: boolean) {
     if (!request || busy || blocker) return;
     const body = { ...request, ...(trial ? { trial: true } : {}) };
+    // «Печатать» — по предпросмотру на экране; если запрос изменился после него, сначала обновить и нажать ещё раз.
+    if (!trial && !preview) {
+      if (!inflight.current) setRefreshTick((tick) => tick + 1);
+      setError(""); setNotice("Предпросмотр обновляется — проверьте этикетки и нажмите «Печатать» ещё раз");
+      return;
+    }
     const payload = JSON.stringify(body);
     const slot = trial ? "trial" : "print";
     // Тот же запрос после потерянного ответа — тот же ключ: сервер вернёт уже созданную партию.
     if (keys.current[slot]?.payload !== payload) keys.current[slot] = { payload, key: crypto.randomUUID() };
     setBusy(true); setError(""); setNotice("");
     try {
-      const shown = await markingApi.manualPreview(body);
-      const result = await markingApi.manualEnqueue({ ...body, manifest_hash: shown.manifest_hash, idempotency_key: keys.current[slot].key });
+      // Пробная — одна этикетка: её предпросмотр свой и дешёвый; обычная печать берёт хэш показанного.
+      const hash = trial ? (await markingApi.manualPreview(body)).manifest_hash : (preview as MarkingPreview).manifest_hash;
+      const result = await markingApi.manualEnqueue({ ...body, manifest_hash: hash, idempotency_key: keys.current[slot].key });
       setBatch(result); remember(`${storage}:batch`, result.id);
       keys.current[slot] = { payload: "", key: "" };
       setNotice(trial ? "Пробная этикетка поставлена в очередь" : `${printText(result.total).replace("Печатать", "Поставлено в очередь:")}`);
-    } catch (problem) { setError(failureText(problem, "Печать не поставлена в очередь")); }
+    } catch (problem) { setError(markingProblem(problem, "Печать не поставлена в очередь")); }
     finally { setBusy(false); }
   }
 
@@ -309,8 +337,8 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
             <button type="button" className="primary" disabled={busy || !request || Boolean(blocker) || running} onClick={() => void printManual(false)}>
               {busy ? "Обработка…" : printText(preview?.total ?? count)}</button>
             <button type="button" className="secondary" disabled={busy || !request || Boolean(blocker)} onClick={() => void printManual(true)}>Пробная (1 этикетка)</button>
-            <span className={blocker || !numberingValid ? "tone-warn" : "machine-muted"}>
-              {blocker || (!numberingValid ? "Номера: «с» не больше «по»" : running ? "Дождитесь конца текущей партии" : "")}</span>
+            <span className={blocker || !numberingValid || copiesError ? "tone-warn" : "machine-muted"} role={copiesError ? "alert" : undefined}>
+              {blocker || (!numberingValid ? "Номера: «с» не больше «по»" : copiesError || (running ? "Дождитесь конца текущей партии" : ""))}</span>
           </div>
         </div>}
         {error && <div className="error-banner" role="alert">{error}</div>}

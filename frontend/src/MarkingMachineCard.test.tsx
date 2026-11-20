@@ -1,10 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { productionApi } from "./api";
+import { ApiError, productionApi } from "./api";
 import type { CuttingGroup } from "./cuttingGroups";
 import { machinesApi, type MachineRow, type UnitSetup } from "./machinesApi";
-import { MarkingMachineCard, manualCount, parseManualLines } from "./MarkingMachineCard";
-import { markingApi, type MarkingBatch, type MarkingCatalog, type MarkingMachineState, type MarkingPreview } from "./markingApi";
+import { MarkingMachineCard, copiesProblem, manualCount, parseManualLines } from "./MarkingMachineCard";
+import { markingApi, markingProblem, type MarkingBatch, type MarkingCatalog, type MarkingMachineState, type MarkingPreview } from "./markingApi";
 
 const ROW: MachineRow = {
   key: "machine:unit", kind: "machine", equipment_id: "unit", inventory: "ОБ.101", name: "Полуавтомат флажковых этикеток", pc: "SK-JOKI",
@@ -111,4 +111,73 @@ it("says why it cannot print when the printer is offline", async () => {
   render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} />);
   fireEvent.click(await screen.findByRole("tab", { name: "Свой текст" }));
   expect(await screen.findByText("Принтер не на связи")).toBeVisible();
+});
+
+const shownPreview = (hash: string, total = 1): MarkingPreview => ({ manifest_hash: hash.repeat(64).slice(0, 64), profile_id: "flag", profile_version: 3,
+  binding_version: 1, source_snapshot: {}, labels: [label("A", total)], total, width_mm: 30, height_mm: 12, orientation: "portrait", dpi: 203 });
+
+it("aborts the stale preview when the text changes, and prints with the hash of the preview on screen", async () => {
+  const signals: AbortSignal[] = [];
+  const spy = vi.spyOn(markingApi, "manualPreview").mockImplementation((body, signal) => {
+    if (signal) signals.push(signal);
+    return Promise.resolve(shownPreview(body.lines[0].text === "A" ? "a" : "b"));
+  });
+  const batch: MarkingBatch = { id: "b1", status: "pending", status_label: "В очереди", total: 1, reprint_of: null, jobs: [] };
+  vi.spyOn(markingApi, "manualEnqueue").mockResolvedValue(batch);
+  vi.spyOn(markingApi, "batch").mockResolvedValue(batch);
+  render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} />);
+  await screen.findByText("Готов");
+  fireEvent.click(screen.getByRole("tab", { name: "Свой текст" }));
+  const field = screen.getByLabelText(/одна строка = одна этикетка/);
+  fireEvent.change(field, { target: { value: "A" } });
+  await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+  fireEvent.change(field, { target: { value: "B" } });
+  expect(signals[0].aborted).toBe(true);
+  await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+  const print = await screen.findByRole("button", { name: "Печатать 1 этикетку" });
+  fireEvent.click(print);
+  await waitFor(() => expect(markingApi.manualEnqueue).toHaveBeenCalledTimes(1));
+  expect(vi.mocked(markingApi.manualEnqueue).mock.calls[0][0].manifest_hash).toBe("b".repeat(64));
+  // No fresh preview for the print itself: the two calls above were the debounced ones.
+  expect(spy).toHaveBeenCalledTimes(2);
+});
+
+it("does not enqueue on a preview older than the request: refreshes it and asks for one more click", async () => {
+  let release: (value: MarkingPreview) => void = () => undefined;
+  const spy = vi.spyOn(markingApi, "manualPreview").mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }))
+    .mockResolvedValue(shownPreview("c"));
+  vi.spyOn(markingApi, "manualEnqueue").mockResolvedValue({ id: "b1", status: "pending", status_label: "", total: 1, reprint_of: null, jobs: [] });
+  render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} />);
+  await screen.findByText("Готов");
+  fireEvent.click(screen.getByRole("tab", { name: "Свой текст" }));
+  fireEvent.change(screen.getByLabelText(/одна строка = одна этикетка/), { target: { value: "A" } });
+  await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByRole("button", { name: /^Печатать/ }));
+  expect(markingApi.manualEnqueue).not.toHaveBeenCalled();
+  expect(await screen.findByText(/нажмите «Печатать» ещё раз/)).toBeVisible();
+  release(shownPreview("a"));
+});
+
+it("rejects « × 0» and copies over the cap with a Russian message instead of silently printing one", async () => {
+  expect(parseManualLines("A × 0", 1)).toEqual([{ text: "A", quantity: 0 }]);
+  expect(copiesProblem(parseManualLines("A × 0", 1), "1")).toMatch(/не меньше 1/);
+  expect(copiesProblem(parseManualLines("A", 1), "0")).toMatch(/не меньше 1/);
+  expect(copiesProblem(parseManualLines("A", 501), "501")).toMatch(/не больше 500/);
+  expect(copiesProblem(parseManualLines("A × 4", 1), "1")).toBe("");
+  const spy = vi.spyOn(markingApi, "manualPreview").mockResolvedValue(shownPreview("a"));
+  render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} />);
+  await screen.findByText("Готов");
+  fireEvent.click(screen.getByRole("tab", { name: "Свой текст" }));
+  fireEvent.change(screen.getByLabelText(/одна строка = одна этикетка/), { target: { value: "ПИТАНИЕ × 0" } });
+  expect(await screen.findByRole("alert", { name: "" })).toHaveTextContent(/× 0 не печатает/);
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  expect(spy).not.toHaveBeenCalled();
+});
+
+it("turns a Pydantic 422 into readable Russian", () => {
+  const cap = new ApiError("HTTP 422", 422, [{ loc: ["body", "lines", 0, "quantity"], type: "less_than_equal", msg: "x", ctx: { le: 500 } }]);
+  expect(markingProblem(cap, "?")).toBe("Копий: не больше 500");
+  const order = new ApiError("HTTP 422", 422, [{ loc: ["body", "numbering"], type: "value_error", msg: "Value error, Номера: «с» не больше «по»" }]);
+  expect(markingProblem(order, "?")).toBe("Номера: «с» не больше «по»");
+  expect(markingProblem(new ApiError("За один раз — не более 500 этикеток", 422, "За один раз — не более 500 этикеток"), "?")).toBe("За один раз — не более 500 этикеток");
 });

@@ -1,4 +1,4 @@
-import { ApiError, api, productionApi, type ProductionOperation } from "./api";
+import { ApiError, api, failureText, productionApi, type ProductionOperation } from "./api";
 import type { CuttingGroup } from "./cuttingGroups";
 
 export interface MarkingRect { x: number; y: number; width: number; height: number }
@@ -83,7 +83,8 @@ export interface MarkingMachineState {
 export interface MarkingSourceProgress { printed: number; remaining: number; remaining_labels: number }
 
 const root = "/api/production/marking";
-const post = <T>(path: string, body: unknown, safe = false) => api<T>(root + path, { method: "POST", body: JSON.stringify(body), safe });
+const post = <T>(path: string, body: unknown, safe = false, signal?: AbortSignal) =>
+  api<T>(root + path, { method: "POST", body: JSON.stringify(body), safe, signal });
 export const markingApi = {
   machines: (signal?: AbortSignal) => api<MarkingCatalog>(`${root}/machines`, { signal }),
   preview: (body: MarkingRequest) => post<MarkingPreview>("/preview", body),
@@ -107,7 +108,7 @@ export const markingApi = {
   reprint: (batchId: string, body: MarkingReprintRequest) => post<MarkingBatch>(`/batches/${encodeURIComponent(batchId)}/reprint`, body),
   clearPrinter: (equipmentId: string, reason: string, cancelPending = false) =>
     post<MarkingPrinterCommand & { cancelled_jobs?: number }>(`/machines/${encodeURIComponent(equipmentId)}/printer/clear`, { reason, cancel_pending: cancelPending }),
-  manualPreview: (body: MarkingManualRequest) => post<MarkingPreview>("/manual/preview", body),
+  manualPreview: (body: MarkingManualRequest, signal?: AbortSignal) => post<MarkingPreview>("/manual/preview", body, true, signal),
   manualEnqueue: (body: MarkingManualBatchRequest) => post<MarkingBatch>("/manual/batches", body),
   progress: (source: { group_id: string } | { task_id: string; operation_id: string }, signal?: AbortSignal) =>
     api<MarkingSourceProgress>(`${root}/progress?${new URLSearchParams(source).toString()}`, { signal }),
@@ -118,6 +119,29 @@ export const markingApi = {
   printerCommand: (equipmentId: string, signal?: AbortSignal) =>
     api<MarkingPrinterCommand | null>(`${root}/machines/${encodeURIComponent(equipmentId)}/printer/command`, { signal }),
 };
+
+const FIELD_NAMES: Record<string, string> = { lines: "Надписи", quantity: "Копий", text: "Текст надписи", first: "Номер «с»", last: "Номер «по»",
+  numbering: "Номера", order: "Порядок" };
+const LIMIT_TEXT: Record<string, (ctx: Record<string, unknown>) => string> = {
+  greater_than_equal: (ctx) => `не меньше ${String(ctx.ge)}`, less_than_equal: (ctx) => `не больше ${String(ctx.le)}`,
+  too_long: (ctx) => `не больше ${String(ctx.max_length)}`, too_short: () => "нужна хотя бы одна запись",
+  string_too_long: (ctx) => `не длиннее ${String(ctx.max_length)} знаков`, string_too_short: () => "не может быть пустым",
+};
+
+/** Ошибка запроса «Своего текста» по-русски: 422 Pydantic (список {loc, msg, type}) → «Копий: не больше 500». */
+export function markingProblem(problem: unknown, fallback: string): string {
+  if (problem instanceof ApiError && Array.isArray(problem.detail)) {
+    const parts = (problem.detail as { loc?: unknown[]; msg?: string; type?: string; ctx?: Record<string, unknown> }[]).map((item) => {
+      const name = [...(item.loc ?? [])].reverse().map(String).find((key) => FIELD_NAMES[key]);
+      const limit = item.type && LIMIT_TEXT[item.type] ? LIMIT_TEXT[item.type](item.ctx ?? {}) : "";
+      const message = limit || String(item.msg ?? "").replace(/^Value error,\s*/, "");
+      return name && limit ? `${FIELD_NAMES[name]}: ${message}` : message;
+    }).filter(Boolean);
+    if (parts.length) return [...new Set(parts)].join("; ");
+    return fallback;
+  }
+  return failureText(problem, fallback);
+}
 
 /** «3, 5–7» → [3, 5, 6, 7]; null when the text is not a list of label numbers. */
 export function parseSequences(text: string): number[] | null {
