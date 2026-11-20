@@ -283,15 +283,15 @@ export function MarkingBatchProgress({ initial, onChange, onReprinted }: {
   const progress = batch.progress_label;
   const done = progress ? batch.printed ?? 0 : spooled;
   return <section className="marking-progress" aria-label="Очередь печати">
-    <div className="marking-head"><h3>{batch.status_label}</h3><strong className="tnum" role="status">{progress ?? `Передано принтеру: ${spooled} из ${batch.total}`}</strong></div>
+    <div className="marking-head"><h3>{batch.status_label}</h3><strong className="tnum" role="status">{progress ?? `Передано принтеру: ${formatNumber(spooled)} из ${formatNumber(batch.total)}`}</strong></div>
     <progress max={batch.total} value={done} aria-label={progress ? "Напечатано" : "Передано принтеру"} />
     {batch.stuck && <p className="warning-inline" role="alert">{batch.stuck_label ?? "Принтер ждёт (снимите этикетку / проверьте принтер)"}</p>}
     {batch.halted && batch.halt_label && <p className="warning-inline" role="alert">{batch.halt_label}</p>}
-    {!!batch.print_errors && <p className="warning-inline">Ошибок принтера: {batch.print_errors}. Проверьте принтер — печать продолжится после устранения.</p>}
-    {!!batch.cancelled && <p className="warning-inline">Отменено в очереди Windows: {batch.cancelled}.</p>}
+    {!!batch.print_errors && <p className="warning-inline tnum">Ошибок принтера: {formatNumber(batch.print_errors)}. Проверьте принтер — печать продолжится после устранения.</p>}
+    {!!batch.cancelled && <p className="warning-inline tnum">Отменено в очереди Windows: {formatNumber(batch.cancelled)}.</p>}
     <p className="muted">Проверьте напечатанные этикетки перед нанесением.</p>
     {batch.status === "unknown" && <p className="warning-inline">Результат неизвестен. Очередь приостановлена — проверьте этикетки и подтвердите результат в «Производстве».</p>}
-    {!!batch.withdrawn && <p className="muted">Отменено до печати: {formatNumber(batch.withdrawn)}.</p>}
+    {!!batch.withdrawn && <p className="muted tnum">Отменено до печати: {formatNumber(batch.withdrawn)}.</p>}
     {error && <div className="error-banner" role="alert">{error} <button type="button" className="secondary small" onClick={() => setReload(reload + 1)}>Обновить состояние</button></div>}
     {notice && <p className="success-banner" role="status">{notice}</p>}
     {!action && ((canResolve && !!batch.pending) || canPrint) && <div className="form-actions">
@@ -321,7 +321,7 @@ export function MarkingBatchProgress({ initial, onChange, onReprinted }: {
           onChange={(event) => setAction({ ...action, from: event.target.value })} /></label>
         <label>Номер по<input type="number" name="marking-reprint-to" autoComplete="off" inputMode="numeric" min={0} step="1" disabled={busy} value={action.to}
           onChange={(event) => setAction({ ...action, to: event.target.value })} /></label>
-      </> : <label className="marking-reprint-wide">№ этикеток партии<input name="marking-reprint-labels" autoComplete="off" placeholder="3, 5–7" disabled={busy} value={action.labels}
+      </> : <label className="marking-reprint-wide">№ этикеток партии<input name="marking-reprint-labels" autoComplete="off" spellCheck={false} inputMode="text" placeholder="3, 5–7" disabled={busy} value={action.labels}
         onChange={(event) => setAction({ ...action, labels: event.target.value })} /></label>}
       <label className="marking-reprint-wide">Причина повторной печати<input name="marking-reprint-reason" autoComplete="off" maxLength={1000} disabled={busy} value={action.reason}
         onChange={(event) => setAction({ ...action, reason: event.target.value })} /></label>
