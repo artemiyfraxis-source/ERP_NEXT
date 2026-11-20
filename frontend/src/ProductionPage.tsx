@@ -1,7 +1,7 @@
 import { useNow, clock, workedSeconds } from "./productionTime";
 export { clock, workedSeconds } from "./productionTime";
 import { CuttingGroupCard } from "./CuttingGroupCard";
-import { cuttingRows, type CuttingGroup } from "./cuttingGroups";
+import { cuttingLook, cuttingRows, type CuttingGroup } from "./cuttingGroups";
 import { useEffect, useRef, useState } from "react";
 import { ProductionMachinePicker, type MachineSelection } from "./ProductionMachinePicker";
 import {
@@ -209,10 +209,10 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
     {/* «Коробки на подтверждение» убраны (владелец, 13.10.2026: «ОТК подтверждает и все»): сданная коробка сразу идёт
         на вход следующей операции, коробку последней операции принимает или возвращает «Очередь ОТК». */}
-    {/* Задания — первыми (кнопки действий видны сразу), коробки сотрудника — под ними. */}
-    {mine && <MyQueue principal={principal} tasks={tasks.filter((task) => { const id = task.operations[0]?.id; return !id || !queueOps.has(id) || execution.session?.operation_id === id; })} cuttingGroups={cuttingGroups} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} onBehalfOf={onBehalfOf} onSubmitted={(number, box) => setShown({ number, box, fixed: false })} />}
     {mine && <CuttingQueue key={viewAs} hideWhenEmpty readOnly={readOnly || !canAct(principal, "myops")} onBehalfOf={onBehalfOf}
       onHasWork={viewAs ? undefined : setQueueHasWork} onRows={viewAs ? undefined : setQueueOps} onChanged={() => void reload()} />}
+    {/* «Очередь резки» — сверху (владелец 20.11); дальше карточки заданий, коробки сотрудника — под ними. */}
+    {mine && <MyQueue principal={principal} tasks={tasks.filter((task) => { const id = task.operations[0]?.id; return !id || !queueOps.has(id) || execution.session?.operation_id === id; })} cuttingGroups={cuttingGroups} queueOps={queueOps} master={canOverview} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} onBehalfOf={onBehalfOf} onSubmitted={(number, box) => setShown({ number, box, fixed: false })} />}
     {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} readOnly={readOnly} ownerName={viewAs ? viewedName : ""} onBehalfOf={onBehalfOf}
       onSubmitted={(number, box) => setShown({ number, box, fixed: false })} onCorrected={(number, box) => setShown({ number, box, fixed: true })} />}
     {shown && <ShownBox shown={shown} boxes={execution.boxes} tasks={tasks} close={() => setShown(null)} />}
@@ -665,13 +665,24 @@ function SchedulePlanner({ task, operators, busy, mutate }: {
   </div>;
 }
 
+/** Группа «Резка кабеля» уже целиком в «Очереди резки» (строки любого станка): карточка не нужна, пока группу не начали. */
+export function cutGroupInQueue(group: CuttingGroup, queueOps: Set<string> = new Set()): boolean {
+  if (group.session || cuttingLook(group) !== "cut") return false;
+  const rows = cuttingRows(group);
+  return rows.length > 0 && rows.every((row) => row.state === "done" || queueOps.has(row.operation_id));
+}
+
 // Очередь оператора (myOpsRender_): операции по дням плана — «Сегодня / Завтра / Начато ранее», факт «сдано X из N»,
 // «вместе с», «план истёк». Главное действие карточки — справа вверху, рядом с состоянием (владелец, 12.10.2026: «я не
 // вижу старт»): «Начать», у начатой — «Пауза» / «Продолжить» и «Сдать…»; ЭТК — второстепенная кнопка. Начатая — первой.
-function MyQueue({ principal, tasks, cuttingGroups = [], session, busy, mutate, readOnly = false, onBehalfOf = "", onSubmitted }: {
+function MyQueue({ principal, tasks, cuttingGroups = [], master = false, queueOps, session, busy, mutate, readOnly = false, onBehalfOf = "", onSubmitted }: {
   principal: Principal;
   tasks: ProductionTask[];
   cuttingGroups?: CuttingGroup[];
+  /** Мастер видит норму, «факт/норма» и «из этапов …»; оператору они не нужны (владелец 20.11). */
+  master?: boolean;
+  /** Операции, которые сдаются строками «Очереди резки» (любой станок): карточки группы резки кабеля их не дублируют. */
+  queueOps?: Set<string>;
   session: ProductionWorkSession | null;
   busy: string;
   readOnly?: boolean;
@@ -739,16 +750,17 @@ function MyQueue({ principal, tasks, cuttingGroups = [], session, busy, mutate, 
     const cardChanged = etkCardsChangedNote(operation.etk_cards);
     // Версия на начале — только с датой: «на начале: по шаблону» без даты ничего не говорит.
     const startedNote = etkCardsNote(operation.etk_cards?.started ?? []);
+    // Одна главная кнопка по состоянию (Начать → Сдать…) — первой; «Пауза» и «ЭТК/Инструкция» второстепенные.
     const actions = <>
-            {!readOnly && running && <>
-              {paused
-                ? <button className="primary" disabled={Boolean(busy)} onClick={() => void mutate(running.id, () => productionApi.workAction(running.id, "resume", { ...work, key: stepKey(running, "resume") }))}>Продолжить</button>
-                : <button className="secondary" disabled={Boolean(busy)} onClick={() => void mutate(running.id, () => productionApi.workAction(running.id, "pause", { ...work, key: stepKey(running, "pause") }))}>Пауза</button>}
-              <button className={paused ? "secondary" : "primary"} aria-haspopup="dialog" onClick={() => setSubmitting(true)}>Сдать…</button>
-            </>}
             {!readOnly && !running && !done && <button className="primary" aria-expanded={starting === key} aria-describedby={blocked && state ? stateId : undefined}
               disabled={Boolean(session) || Boolean(busy) || blocked} title={session ? "Сначала сдайте начатую работу" : blocked ? state?.text : undefined}
               onClick={() => setStarting(starting === key ? "" : key)}>Начать</button>}
+            {!readOnly && running && (paused
+              ? <button className="primary" disabled={Boolean(busy)} onClick={() => void mutate(running.id, () => productionApi.workAction(running.id, "resume", { ...work, key: stepKey(running, "resume") }))}>Продолжить</button>
+              : <button className="primary" aria-haspopup="dialog" onClick={() => setSubmitting(true)}>Сдать…</button>)}
+            {!readOnly && running && (paused
+              ? <button className="secondary" aria-haspopup="dialog" onClick={() => setSubmitting(true)}>Сдать…</button>
+              : <button className="secondary" disabled={Boolean(busy)} onClick={() => void mutate(running.id, () => productionApi.workAction(running.id, "pause", { ...work, key: stepKey(running, "pause") }))}>Пауза</button>)}
             <button className="secondary" aria-haspopup="dialog" onClick={() => setEtkOpen(key)}>{pf ? "Инструкция" : "ЭТК"}</button>
     </>;
     const details = <>
@@ -781,8 +793,8 @@ function MyQueue({ principal, tasks, cuttingGroups = [], session, busy, mutate, 
         {/* Монтажнику — без «из этапов … ×0,142857» (коробки и их этапы — в «Получить…» и в форме старта) и без строки кодов
             карт у ПФ (операции — в «Инструкции»); владелец 20.10: «как-то сложно для восприятия». */}
         {!pf && operation.description && !operation.description.startsWith(operation.stage || stage) && <div className="mo-d">{operation.description}</div>}
-        <div className="mo-s mo-plan"><span className="mo-window">{startAt ? `план ${windowText(plannedStart, plannedFinish)}` : "время не назначено"}</span>{early >= EARLY_NOTE_MS ? <span className="mo-early tone-info"> — начато раньше на {spanText(early)}</span> : null} · <span className="mo-norm" title="Как «Расчётное время» в «Результате» ЭТК: подготовка + время на изделие × штуки. «Время» в шапке ЭТК — на одно действие (один обжим, один рез)">{norm}</span>{task.deadline ? ` · срок задания ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
-        {(handed || factParts.length > 0 || fact) && <div className="mo-fact">{handed}{handed && factParts.length ? " · " : ""}{factParts.join(" · ")}{fact ? <> · <span className="mo-tf">факт {clock(fact.actual_seconds)} · норма {clock(fact.norm_seconds)}{fact.percent != null ? ` · ${fact.percent} %` : ""}</span></> : null}</div>}
+        <div className="mo-s mo-plan"><span className="mo-window">{startAt ? `план ${windowText(plannedStart, plannedFinish)}` : "время не назначено"}</span>{early >= EARLY_NOTE_MS ? <span className="mo-early tone-info"> — начато раньше на {spanText(early)}</span> : null} {master && <> · <span className="mo-norm" title="Как «Расчётное время» в «Результате» ЭТК: подготовка + время на изделие × штуки. «Время» в шапке ЭТК — на одно действие (один обжим, один рез)">{norm}</span></>}{task.deadline ? ` · срок задания ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
+        {(handed || factParts.length > 0 || (fact && master)) && <div className="mo-fact">{handed}{handed && factParts.length ? " · " : ""}{factParts.join(" · ")}{fact && master ? <> · <span className="mo-tf">факт {clock(fact.actual_seconds)} · норма {clock(fact.norm_seconds)}{fact.percent != null ? ` · ${fact.percent} %` : ""}</span></> : null}</div>}
         {pf && <PfCardBlocks taskId={task.id} operation={operation} onBehalfOf={onBehalfOf} showInputs={!done && !operation.first} />}
         {details}
       </div>
@@ -865,7 +877,7 @@ function MyQueue({ principal, tasks, cuttingGroups = [], session, busy, mutate, 
     });
   };
   return <div className="my-queue">
-    {cuttingGroups.map((group) => <CuttingGroupCard key={group.id} group={group} readOnly={readOnly}
+    {cuttingGroups.filter((group) => !cutGroupInQueue(group, queueOps)).map((group) => <CuttingGroupCard key={group.id} group={group} readOnly={readOnly} master={master}
       mutate={mutate} onBehalfOf={onBehalfOf} performerId={onBehalfOf || principal.user.id} busy={Boolean(busy)} activeSession={session} canRefreshEtk={canAct(principal, "production")}
       renderInstruction={(row, close) => <OperationEtk key={row.id} principal={principal} task={{ id: row.task_id }} operation={{ id: row.operation_id }} title={`${row.item} · ${row.name}`} close={close} />} />)}
     {renderQueue(active, "active")}

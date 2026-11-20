@@ -126,6 +126,7 @@ const EVENT_NAMES: Record<string, string> = {
   "production.plan_projects_replaced": "Проекты плана обновлены",
   "production.cancelled": "Задание отменено",
   "production.restored": "Задание восстановлено",
+  "production.cutting_queue_done": "Готово в очереди резки",
 
   "shipping.created": "Отправка создана",
   "shipping.good_registered": "ГП заведена",
@@ -228,7 +229,7 @@ const DETAIL_LABELS: Record<string, string> = {
   shift_finish: "до", effective_seconds: "секунд в смене", transfer_batch: "передаточная партия", max_crew: "людей",
   first_ready: "первая готовность", finish: "окончание", idle_seconds: "простой, с", fields: "поля", pl: "PL", dn: "DN",
   moves: "перемещений", materials: "материалов", inputs: "входов", projects: "проектов", replan: "перепланировать",
-  events: "записей",
+  events: "записей", task_number: "задание", performer: "исполнитель", pressed_by: "нажал",
   level: "уровень", access_level: "уровень доступа", shop_worker: "монтажник", site_master: "мастер площадки",
   login: "логин", role: "прежняя роль", changes: "изменения", exceptions: "исключения", levels: "уровни", people: "люди",
   note: "примечание", viewed: "сотрудник",
@@ -251,7 +252,8 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const HIDDEN_KEY = /(^id$|_id$|_ids$|commit$)/;
+/* Служебное: id, ключ повтора, отпечаток и сохранённый ответ повтора — не для людей. */
+const HIDDEN_KEY = /(^id$|_id$|_ids$|commit$|^replay_key$|^fingerprint$|^result$)/;
 
 export function auditModule(eventType: string): string {
   const head = eventType.split(".")[0];
@@ -286,8 +288,10 @@ function trimNumber(value: string): string {
 export function auditDetails(details: Record<string, unknown>): string {
   const entries = Object.entries(details);
   const keyed = entries.filter(([key]) => UUID.test(key)).length;
+  // Квитанция повтора (есть отпечаток): её `key` — ключ повтора, как `replay_key` (старые «Готово» очереди резки).
+  const replay = "fingerprint" in details;
   const parts = entries
-    .filter(([key]) => !HIDDEN_KEY.test(key) && !UUID.test(key))
+    .filter(([key]) => !HIDDEN_KEY.test(key) && !UUID.test(key) && !(replay && key === "key"))
     .map(([key, value]) => [
       DETAIL_LABELS[key] ?? key.replace(/_/g, " "),
       LEVEL_KEYS.has(key) && typeof value === "string" ? LEVEL_NAMES[value] ?? shown(value)
