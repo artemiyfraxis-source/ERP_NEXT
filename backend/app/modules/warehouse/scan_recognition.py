@@ -214,7 +214,8 @@ def recognise_job(uow_factory: Callable[[], UnitOfWork], sources: ScanSources, j
                   pages: list[UUID] | None = None) -> None:
     """The background task: the done job's file read (or, for a merge, its sheets' kept readings combined), the
     answer stored once. Any failure stores an answer that asks to fill the delivery by hand — the poll never hangs."""
-    if job.status != DONE or job.file_id is None or job.result:
+    # A plain scan of the МФУ card (0214) is never read: it is no УПД.
+    if job.status != DONE or job.file_id is None or job.result or job.purpose != "upd":
         return
     # One reading per job in every API process (ERP_API_WORKERS > 1): the upload's task and the screen's poll may land
     # in different processes, and a model call is paid — a second one that finds the lock taken just leaves.

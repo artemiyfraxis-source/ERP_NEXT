@@ -51,6 +51,7 @@ from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
 from app.shared.persistence import AuditEventRow
 from app.workflows.marking_labels import STATUS_LABELS
+from app.workflows.warehouse_stations import stations
 from app.shared.http_auth import TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, require_section
 
 router = APIRouter(prefix="/api/production/machines", tags=["production"])
@@ -716,7 +717,8 @@ def machines(_principal: Reader, factory: Factory, now: Now) -> dict:
         # The printer of a marking machine is that machine's connection, not a second tile (ОБ.101, ОБ.102).
         units = {row["equipment_id"] for row in machines if row["equipment_id"]}
         printers = [row for row in printers if row["equipment_id"] not in units]
-        rows = [*machines, *printers, *_device_rows(session, now)]
+        # The warehouse printers and the МФУ open their device cards (warehouse_stations.py, owner 20.11.2026).
+        rows = stations(session, [*machines, *printers, *_device_rows(session, now)])
         machine_list = _machine_list(session, equipment, now)
     return {"now": now.isoformat(), "machines": machine_list, "rows": _agent_names(rows),
             "families": list(rules.FAMILIES)}

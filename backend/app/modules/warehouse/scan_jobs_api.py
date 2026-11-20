@@ -31,6 +31,7 @@ from .api import warehouse_uow_factory
 from .application import UnitOfWork
 from .domain import RECEIPT_SCAN_PATH
 from .receipts_api import _checked, multipart_file
+from .plain_scans import store_plain_scan
 from .receipts_application import SCAN_FILE_LIMIT, merge_scans, store_edo_file, store_job_scan, store_scan
 from .scan_jobs import (
     DONE,
@@ -101,7 +102,7 @@ def _queue(operation):
 def _recognise_later(background: BackgroundTasks, uow_factory, sources: ScanSources, job: ScanJob,
                      pages: list[UUID] | None = None) -> None:
     """After the answer is sent: the job's reading (`recognise_job` holds a database lock — one per job in every process)."""
-    if job.status == DONE and not job.result:
+    if job.status == DONE and not job.result and job.purpose == "upd":  # a plain scan (0214) is never read
         background.add_task(recognise_job, uow_factory, sources, job, pages)
 
 
@@ -166,7 +167,7 @@ def scan_job(
     uow_factory: UowFactory,
 ) -> dict:
     job = _queue(lambda: get_job(uow_factory(), job_id, now=now))
-    if job.kind != "scan" or (job.target_machine_id and job.requester_id != _principal.actor.id):
+    if job.kind != "scan" or job.purpose != "upd" or (job.target_machine_id and job.requester_id != _principal.actor.id):
         raise HTTPException(404, "Задание сканирования не найдено")
     _recognise_later(background, uow_factory, scan_sources(request, uow_factory), job)
     return job_view(job)
@@ -180,7 +181,7 @@ def cancel_scan_job(
     uow_factory: UowFactory,
 ) -> dict:
     job = _queue(lambda: get_job(uow_factory(), job_id, now=now))
-    if job.kind != "scan" or (job.target_machine_id and job.requester_id != _principal.actor.id):
+    if job.kind != "scan" or job.purpose != "upd" or (job.target_machine_id and job.requester_id != _principal.actor.id):
         raise HTTPException(404, "Задание сканирования не найдено")
     return _brief(_queue(lambda: cancel_job(uow_factory(), job_id, now=now)))
 
@@ -310,7 +311,7 @@ class PrinterCapability(BaseModel):
     name: str = Field(min_length=1, max_length=255, pattern=r"\S")
     driver: str = Field(default="", max_length=255)
     port: str = Field(default="", max_length=255)
-    kind: Literal["tspl", "gdi_png"]
+    kind: Literal["tspl", "gdi_png", "document"]  # 'document' (0214, agent 2.12.0): the МФУ's A4 queue
     present: bool = True
     # Agent 2.11.0+: why marking on this queue is held (peel-off check failed); empty — printing. A longer reason is
     # cut to the stored 500 characters (devices.printer_heartbeat), never refused: the heartbeat must go through.
@@ -346,8 +347,10 @@ def scan_agent_claim(
         if command:
             return {"job": command, "poll_after_ms": 500}
     job = claim(uow_factory(), now=now, machine_id=machine_id, vna="vna" in kinds, scan="scan" in kinds)
+    # `settings` (0214): a plain scan's colour and dpi; an older agent ignores them and scans as for a УПД.
     return {"job": {"id": str(job.id), "target_scanner": job.target_scanner,
-                    **({"kind": job.kind, "source": job.source} if who.kinds else {})} if job else None}
+                    **({"kind": job.kind, "source": job.source} if who.kinds else {}),
+                    **({"settings": job.settings} if job.settings else {})} if job else None}
 
 
 @router.post("/scan/agent/heartbeat")
@@ -411,8 +414,9 @@ async def scan_agent_result(
         if upload is None:
             raise HTTPException(status_code=422, detail=NO_FILE)
         file_name, content = upload
+        store = store_plain_scan if job.purpose == "plain" else store_job_scan
         await run_in_threadpool(
-            lambda: _queue(lambda: _checked(lambda: store_job_scan(uow_factory(), job_id, file_name, content, now))))
+            lambda: _queue(lambda: _checked(lambda: store(uow_factory(), job_id, file_name, content, now))))
         job = await run_in_threadpool(lambda: get_job(uow_factory(), job_id, now=now))
         _recognise_later(background, uow_factory, scan_sources(request, uow_factory), job)
         return {"ok": True, "id": str(job_id), "status": DONE}
