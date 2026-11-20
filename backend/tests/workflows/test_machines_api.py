@@ -148,17 +148,28 @@ def test_list_shows_the_machine_printers_and_devices_and_staleness_means_no_link
             MarkingBindingRow(equipment_id=ob101, version=1, machine_id="godex-pc", printer="Godex EZ2350i"),
             DeviceRow(machine_id="godex-pc", kind="s2vna", device_id="S50180", name="Планар S50180", present=True,
                       last_seen=now),
+            PrinterRow(machine_id="godex-pc", name="TSC MB341", driver="TSC", port="USB002", kind="tspl",
+                       present=True, last_seen=now),
+            DeviceRow(machine_id="godex-pc", kind="scan", device_id="pantum", name="Pantum BM2300 Series Scanner",
+                      present=True, last_seen=now),
         ])
     rows = {row["key"].split(":")[0] + ":" + (row["inventory"] or row["device"]): row for row in admin.get(LIST).json()["rows"]}
     machine = rows["machine:ОБ.019"]
     assert machine["link"]["text"] == rules.HMI_OPEN
     assert (machine["pc"], machine["ip"], machine["version"], machine["card"]) == ("PC-108", "192.168.1.108", "1.0.0", True)
     assert machine["state"]["text"] == "Нет данных ПЛК"
-    printer = rows["printer:ОБ.101"]
-    assert (printer["name"], printer["device"], printer["link"]["text"], printer["state"]["text"]) == (
-        "Godex EZ2350i", "Godex EZ2350i", "На связи", "Принтер виден")
+    # The Godex bound to ОБ.101 is that machine's link — a «Маркировка» tile with the agent, no printer tile of its own.
+    printer = rows["machine:ОБ.101"]
+    assert (printer["device"], printer["link"]["text"], printer["state"]["text"], printer["controlled"]) == (
+        "Godex EZ2350i", "На связи", "Принтер виден", True)
+    assert "printer:ОБ.101" not in rows
     vna = rows["device:Планар S50180"]
     assert (vna["name"], vna["state"]["text"]) == ("Анализатор цепей", "Подключён")
+    # Owner 20.11.2026: analysers are their own group, the warehouse printer and MFP another, all «С управлением».
+    assert (vna["family"], vna["controlled"]) == ("Анализаторы цепей", True)
+    label, scanner = rows["printer:TSC MB341"], rows["device:Pantum BM2300 Series Scanner"]
+    assert (label["family"], label["controlled"], scanner["family"], scanner["controlled"]) == (
+        "Принтеры склада", True, "Принтеры склада", True)
     # One name for the PC's agent, whatever it does there (owner 18.11: «Мост ERP» vs «Агент печати» confused).
     assert printer["service"] == vna["service"] == "Агент ERP · печать, приборы"
     assert machine["service"] == "Агент ERP · станок"
@@ -437,14 +448,15 @@ def test_the_screen_shows_ticked_machines_and_every_agent_linked_one(machines_ap
         session.flush()
         session.add(MarkingBindingRow(equipment_id=ob102, version=1, machine_id="godex-pc", printer="Godex EZ2350i"))
     body = admin.get(LIST).json()
-    assert body["families"] == ["Резка и зачистка", "Опрессовка", "Пайка и усадка", "Маркировка", "Прочее оборудование"]
+    assert body["families"] == ["Резка", "Зачистка", "Опрессовка", "Пайка и усадка", "Маркировка", "Анализаторы цепей",
+                                "Принтеры склада", "Прочее оборудование"]
     machines = {row["inventory"]: row for row in body["rows"] if row["kind"] == "machine"}
     # ОБ.017 is not ticked; СИ.110 is no machine; ОБ.019 / ОБ.094 wait for their bridge; ОБ.101 has an agent.
     assert sorted(machines) == ["ОБ.005", "ОБ.019", "ОБ.070.1", "ОБ.094", "ОБ.101", "ОБ.102"]
     # One Godex serves both marking machines: both are reached by its print agent.
     assert machines["ОБ.102"]["controlled"] is True and machines["ОБ.102"]["equipment_id"] == str(ob102)
     row = machines["ОБ.005"]
-    assert (row["article"], row["site"], row["operations"], row["family"]) == ("SR-W01", "ЦАР", ["Свивка"], "Резка и зачистка")
+    assert (row["article"], row["site"], row["operations"], row["family"]) == ("SR-W01", "ЦАР", ["Свивка"], "Зачистка")
     assert row["link"] == {"code": "not_connected", "text": "Нет подключения к ERP", "tone": "neutral"}
     assert row["equipment_id"] == str(twist) and row["card"] is False and row["controlled"] is False
     assert (machines["ОБ.070.1"]["site"], machines["ОБ.070.1"]["family"]) == ("ЖУК", "Пайка и усадка")
@@ -452,8 +464,8 @@ def test_the_screen_shows_ticked_machines_and_every_agent_linked_one(machines_ap
     marking = machines["ОБ.101"]
     assert (marking["link"]["text"], marking["pc"], marking["equipment_id"], marking["controlled"]) == (
         "На связи", "Цех", str(ob101), True)
-    [printer] = [row for row in body["rows"] if row["kind"] == "printer"]  # one Godex — one printer tile
-    assert printer["inventory"] in {"ОБ.101", "ОБ.102"}
+    # The Godex is the link of ОБ.101 and ОБ.102, not a third tile (owner 20.11.2026).
+    assert [row for row in body["rows"] if row["kind"] == "printer"] == []
     # The bridge of ОБ.019 reports → «С управлением», with or without the checkbox.
     assert _report(_bridge(admin)).status_code == 200
     linked = {row["inventory"]: row for row in admin.get(LIST).json()["rows"] if row["kind"] == "machine"}["ОБ.019"]
@@ -684,17 +696,19 @@ def test_the_article_of_an_instrument_comes_from_its_si_card(machines_api):
                               last_seen=now))
     [row] = [row for row in admin.get(LIST).json()["rows"] if row["kind"] == "device"]
     assert (row["inventory"], row["article"]) == ("СИ.001", "VNA-DL 1-8800 MHz")
+    assert (row["family"], row["controlled"]) == ("Анализаторы цепей", True)
 
 
 @pytest.mark.parametrize("operations, name, family", [
-    (["Резка", "Резка с разделкой", "Резка с разделкой+ маркировка"], "Автомат", "Резка и зачистка"),
-    (["Автомат резка + опрессовка", "Лужение"], "Автомат", "Резка и зачистка"),
+    (["Резка", "Резка с разделкой", "Резка с разделкой+ маркировка"], "Автомат", "Резка"),
+    (["Автомат резка + опрессовка", "Лужение"], "Автомат", "Резка"),
+    (["Разделка"], "Полуавтомат для снятия изоляции с проводов", "Зачистка"),
     (["Опрессовка наконечников", "Опрессовка"], "Пресс", "Опрессовка"),
     (["Ленточный обжим"], "Пресс", "Опрессовка"),
     (["Пайка", "Монтаж корпуса"], "Установка", "Пайка и усадка"),
     (["Монтаж маркировки"], "Полуавтомат", "Маркировка"),
     ([], "Маркиратор флажковый", "Маркировка"),
-    ([], "Полуавтомат для снятия изоляции с проводов", "Резка и зачистка"),
+    ([], "Полуавтомат для снятия изоляции с проводов", "Зачистка"),
     (["Литье пластика"], "Машина литьевая", "Прочее оборудование"),
     ([], "Принтер 3D экструзионный", "Прочее оборудование"),
 ])

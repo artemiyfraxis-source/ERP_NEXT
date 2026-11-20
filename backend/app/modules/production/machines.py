@@ -95,14 +95,21 @@ LINK_TEXTS = {
 # Families of «Станки» (owner 19.11.2026): the machines of БД.ОБ grouped by what they do. The field «Операции» decides,
 # the name only when it says nothing; the first family in this order wins («Автомат резка + опрессовка» → резка, «Пайка,
 # Усадка» → пайка). Matched by word stems, so «Опрессовка терминалов» and «Ленточный обжим» are both опрессовка.
+# «Резка» — everything that cuts, with stripping or crimping too; «Зачистка» — stripping and twisting without a cut
+# (owner 20.11.2026: ОБ.100.x apart from ОБ.094–098).
 FAMILY_STEMS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Резка и зачистка", ("резк", "разделк", "свивк", "изоляци", "скрутк")),
+    ("Резка", ("резк",)),
+    ("Зачистка", ("разделк", "свивк", "изоляци", "скрутк")),
     ("Опрессовка", ("опрессовк", "обжим")),
     ("Пайка и усадка", ("пайк", "лужен", "усадк")),
     ("Маркировка", ("маркир", "маркер", "этикет")),
 )
+# What the agents reach besides machines (owner 20.11.2026): network analysers are their own group, the printer and
+# the MFP of the warehouse another; a printer bound to a marking machine stays in «Маркировка» as that machine.
+ANALYSER_FAMILY = "Анализаторы цепей"
+WAREHOUSE_PRINTERS = "Принтеры склада"
 OTHER_FAMILY = "Прочее оборудование"
-FAMILIES = (*(family for family, _stems in FAMILY_STEMS), OTHER_FAMILY)
+FAMILIES = (*(family for family, _stems in FAMILY_STEMS), ANALYSER_FAMILY, WAREHOUSE_PRINTERS, OTHER_FAMILY)
 
 
 def machine_family(operations: list[str] | tuple[str, ...], name: str) -> str:

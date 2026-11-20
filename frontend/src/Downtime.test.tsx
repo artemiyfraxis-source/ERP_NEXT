@@ -119,6 +119,29 @@ it("reports the period sums by reason and switches to people", async () => {
   expect(await screen.findByText("Работа по журналу", { selector: "th, th *" })).toBeInTheDocument();
 });
 
+it("shows a machine downtime as the machine, outside the people total", async () => {
+  const machine = { ...downtime({ id: "m1", task_id: null, operation_id: null, operator_id: null, operator_name: "",
+    project: "", task_number: "", item: "ОБ.027.1 EW-50A", stage: "", period_seconds: 1800 }), equipment_id: "e1" };
+  serve(() => json({
+    by: "reason", date_from: "2026-10-01", date_to: "2026-10-13", total_seconds: 0, total_count: 0, work_seconds: 90000,
+    machine_seconds: 1800, machine_count: 1,
+    rows: [{ key: "machine:equipment", label: "Станок: Оборудование", count: 1, seconds: 1800, open: 0, work_seconds: null, machine: true }],
+    entries: [machine],
+  }));
+  render(<DowntimeReport close={() => undefined} />);
+
+  const entries = await screen.findByRole("region", { name: "Простои периода" });
+  const row = within(entries).getAllByRole("row").find((item) => item.textContent?.includes("Станок ОБ.027.1 EW-50A"));
+  expect(row).toBeTruthy();
+  expect(row?.textContent).not.toContain(" · ");
+  expect(row?.textContent).not.toContain("Задание целиком");
+  const groups = screen.getByRole("region", { name: "Простои по группам" });
+  const group = within(groups).getAllByRole("row").find((item) => item.textContent?.includes("Станок: Оборудование"));
+  expect(group).toHaveTextContent("—");
+  expect(screen.getByText("30 мин · 1 сл.")).toBeInTheDocument();  // «Простои станков»
+  expect(screen.getByText("0 мин · 0 сл.")).toBeInTheDocument();  // people total stays empty
+});
+
 it("formats durations and week periods", () => {
   expect(downtimeDuration(0)).toBe("0 мин");
   expect(downtimeDuration(1500)).toBe("25 мин");
