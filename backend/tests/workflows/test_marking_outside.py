@@ -19,12 +19,13 @@ OUTSIDE = "/api/production/marking/outside"
 EVENT = "production.marking_printed_outside"
 
 
-def make_group(marking, *extra_keys):
-    """A labels group of the fixture task (+ more tasks of the same ETK): КБ-{№:3} ×1 and АБВ ×2 per item."""
+def make_group(marking, *extra_keys, relaunch=False):
+    """A labels group of the fixture task (+ more tasks of the same ETK): КБ-{№:3} ×1 and АБВ ×2 per item.
+    `relaunch` — the extra tasks are the same КБ launched again: they number the next items (№6–10)."""
     _client, factory, _payload, task, card, _equipment, operator = marking
     route = link_inputs((_op(1, "Нарезка"), _op(2, "Маркировка")), {2: ((1, Decimal(1)),)})
     # Every КБ numbers its own items from 1 (708К.: КБ3…КБ10, №1–15 each).
-    tasks = [task] + [_launch(factory, operator, key, route, item=f"591K.3.КБ{number}")
+    tasks = [task] + [_launch(factory, operator, key, route, item=task.item if relaunch else f"591K.3.КБ{number}")
                       for number, key in enumerate(extra_keys, 2)]
     group_id = uuid4()
     with factory() as uow:
@@ -75,7 +76,8 @@ def test_marks_only_numbered_labels_of_the_serials_and_a_repeat_changes_nothing(
     assert _marks(factory) == 2
     [(details, actor)] = _events(factory)
     assert details == {"change": "mark", "group_number": "РЗ-0023", "serials": [1], "items": sorted(task.item for task in tasks),
-                             "labels": 2, "comment": "Напечатано на старом принтере"}
+                       "labels": 2, "comment": "Напечатано на старом принтере", "labels_detail": [
+                           {"task_id": str(task.id), "serial": 1, "text": "КБ-001", "quantity": 1} for task in tasks]}
     assert actor == "Мастер"
     listed = client.get(OUTSIDE, params={"group_id": group_id}).json()["rows"]
     assert [(row["text"], row["serial"], row["actor"]) for row in listed] == [("КБ-001", 1, "Мастер")] * 2
@@ -84,7 +86,7 @@ def test_marks_only_numbered_labels_of_the_serials_and_a_repeat_changes_nothing(
 def test_refuses_serials_outside_the_range_and_more_pieces_than_the_etk(marking):
     client, factory, _payload, task, *_ = marking
     group_id, _tasks = make_group(marking)
-    beyond = client.post(OUTSIDE, json=body(group_id, serials=[1, task.quantity + 1]))
+    beyond = client.post(OUTSIDE, json=body(group_id, task_ids=[str(task.id)], serials=[1, task.quantity + 1]))
     assert beyond.status_code == 422 and f"номер {task.quantity + 1} вне номеров изделий 1–{task.quantity}" in beyond.json()["detail"]
     assert client.post(OUTSIDE, json=body(group_id, serials=[0])).status_code == 422
     assert client.post(OUTSIDE, json=body(group_id, serials=[])).status_code == 422
@@ -111,6 +113,7 @@ def test_undo_takes_the_marks_back_and_is_journaled(marking):
     group_id, _tasks = make_group(marking)
     assert client.post(OUTSIDE, json=body(group_id, serials=[1, 2])).status_code == 200
     removed = client.post(OUTSIDE + "/undo", json=body(group_id, serials=[2], comment="Ошибся номером"))
+    task_id = removed.json()["rows"][0]["task_id"]
     assert removed.status_code == 200, removed.text
     assert removed.json()["removed"] == 1 and removed.json()["rows"][0]["text"] == "КБ-002"
     assert _marks(factory) == 1
@@ -118,6 +121,10 @@ def test_undo_takes_the_marks_back_and_is_journaled(marking):
     assert nothing.status_code == 200 and nothing.json()["removed"] == 0
     assert sorted((details["change"], details["labels"], details["comment"]) for details, _actor in _events(factory)) == [
         ("mark", 2, "Напечатано на старом принтере"), ("undo", 1, "Ошибся номером")]
+    [undone] = [details for details, _actor in _events(factory) if details["change"] == "undo"]
+    assert undone["labels_detail"] == [{"task_id": task_id, "serial": 2, "text": "КБ-002", "quantity": 1,
+        "actor_id": "10000000-0000-0000-0000-000000000001", "actor": "Мастер", "at": NOW.isoformat(),
+        "comment": "Напечатано на старом принтере"}]
 
 
 def test_marking_needs_the_print_right(marking):
@@ -126,3 +133,35 @@ def test_marking_needs_the_print_right(marking):
     _as_operator(task.operations[0].operator_ids[0])
     assert client.post(OUTSIDE, json=body(group_id)).status_code == 403
     assert client.post(OUTSIDE + "/undo", json=body(group_id)).status_code == 403
+
+
+def test_all_kb_skips_a_relaunched_task_that_does_not_number_the_item(marking):
+    """The same КБ launched again numbers №6–10: «Все КБ группы» №1 marks the first task and skips the second, a chosen
+    КБ still refuses a number it does not have."""
+    client, factory, *_ = marking
+    group_id, tasks = make_group(marking, "relaunch", relaunch=True)
+    first, second = (str(task.id) for task in tasks)
+    shown = client.post(OUTSIDE, json=body(group_id, serials=[1, 6]))
+    assert shown.status_code == 200, shown.text
+    assert [(row["task_id"], row["serial"], row["text"], row["state"]) for row in shown.json()["rows"]] == [
+        (first, 1, "КБ-001", "new"), (first, 6, "", "out_of_range"), (second, 1, "", "out_of_range"), (second, 6, "КБ-006", "new")]
+    assert shown.json()["added"] == 2 and _marks(factory) == 2
+    chosen = client.post(OUTSIDE, json=body(group_id, task_ids=[second], serials=[1]))
+    assert chosen.status_code == 422 and "номер 1 вне номеров изделий 6–10" in chosen.json()["detail"], chosen.text
+
+
+def test_a_label_already_printed_in_the_erp_is_not_marked_again(marking):
+    """КБ-001 went through the ERP queue: «уже напечатана в ERP», skipped, so it never counts twice."""
+    from tests.workflows.test_marking_labels import enqueue
+    from tests.workflows.test_marking_progress import _keep_only_first
+
+    client, factory, *_ = marking
+    group_id, _tasks = make_group(marking)
+    enqueue(marking)
+    _keep_only_first(factory)
+    done = client.post(OUTSIDE, json=body(group_id, serials=[1, 2]))
+    assert done.status_code == 200, done.text
+    assert [(row["text"], row["state"]) for row in done.json()["rows"]] == [("КБ-001", "printed"), ("КБ-002", "new")]
+    assert done.json()["added"] == 1 and _marks(factory) == 1
+    [(details, _actor)] = _events(factory)
+    assert [item["text"] for item in details["labels_detail"]] == ["КБ-002"]

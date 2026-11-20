@@ -78,7 +78,13 @@ def printed_counts(session, task_ids: Iterable[UUID]) -> Counter:
     """{(task id, serial, text): labels printed or in the printer queue, or marked printed outside the ERP};
     a reprinted label counts once."""
     ids = {str(identifier) for identifier in task_ids}
-    counts = outside_counts(session, ids)
+    return outside_counts(session, ids) + queue_counts(session, ids)
+
+
+def queue_counts(session, task_ids: Iterable) -> Counter:
+    """{(task id, serial, text): labels printed or in the printer queue of the ERP}; a reprinted label counts once."""
+    ids = {str(identifier) for identifier in task_ids}
+    counts: Counter = Counter()
     batches = task_batches(session, ids)
     if not batches:
         return counts

@@ -9,6 +9,8 @@ import { markingOutsideApi, type MarkingOutsideAnswer, type MarkingOutsideReques
 
 const LABELS = ["этикетку", "этикетки", "этикеток"] as const;
 const rowKey = (row: MarkingOutsideRow) => `${row.task_id}:${row.serial}:${row.text}`;
+const STATES: Record<MarkingOutsideRow["state"], string> = { new: "Будет отмечена", exists: "Уже отмечена",
+  printed: "Уже напечатана в ERP", out_of_range: "Номер вне диапазона задания", removed: "Отметка снята" };
 
 /** «Отметить напечатанные вне ERP» (owner 20.11): numbered labels of the chosen item serials of the group's КБ were
  *  printed outside the ERP — marked, they count as printed and «Печатать оставшиеся» skips them. */
@@ -80,8 +82,8 @@ export function MarkingOutsideWindow({ group, close, onChange }: { group: Cuttin
   const columns = (extra: DataColumn<MarkingOutsideRow>[]): DataColumn<MarkingOutsideRow>[] => [
     { key: "item", title: "КБ", value: (row) => row.item, render: (row) => <b>{row.item}</b> },
     { key: "serial", title: "№ изделия", numeric: true, value: (row) => row.serial },
-    { key: "text", title: "Надпись", value: (row) => row.text, grow: true, wrap: true },
-    { key: "quantity", title: "Шт.", numeric: true, value: (row) => row.quantity, render: (row) => formatNumber(row.quantity) },
+    { key: "text", title: "Надпись", value: (row) => row.text || "—", grow: true, wrap: true },
+    { key: "quantity", title: "Шт.", numeric: true, value: (row) => row.quantity, render: (row) => row.quantity ? formatNumber(row.quantity) : "—" },
     ...extra,
   ];
   const close_ = () => { if (!inFlight.current) close(); };
@@ -106,12 +108,12 @@ export function MarkingOutsideWindow({ group, close, onChange }: { group: Cuttin
       {shownError && <div className="warning-inline" role="status">{shownError}</div>}
       {!shown && !shownError && <div className="empty" role="status">Загрузка…</div>}
       {shown && <DataTable rows={shown.rows} rowKey={rowKey} label="Будет отмечено" compactBelow={Infinity} pageSize={1000}
-        phoneCards={false} columns={columns([{ key: "state", title: "Состояние", value: (row) => row.state === "new" ? "Будет отмечена" : "Уже отмечена" }])} />}
+        phoneCards={false} columns={columns([{ key: "state", title: "Состояние", value: (row) => STATES[row.state] }])} />}
       <div className="form-actions">
         <button type="button" className="secondary" disabled={busy || !undoable.length} onClick={() => void run("undo")}>
           {undoable.length ? `Снять отметку: ${countLabel(undoable.reduce((sum, row) => sum + row.quantity, 0), LABELS)}` : "Снять отметку"}</button>
         <button type="button" className="primary" disabled={busy || !freshCount} onClick={() => void run("mark")}>
-          {busy ? "Сохранение…" : freshCount ? `Отметить ${countLabel(freshCount, LABELS)}` : "Уже отмечены"}</button>
+          {busy ? "Сохранение…" : freshCount ? `Отметить ${countLabel(freshCount, LABELS)}` : "Отмечать нечего"}</button>
       </div>
       <h3>Отмечено вне ERP</h3>
       {!marks && !error && <div className="empty" role="status">Загрузка…</div>}

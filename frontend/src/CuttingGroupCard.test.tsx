@@ -284,6 +284,19 @@ it("labels group: «Отметить напечатанные вне ERP» opens
   expect(fetch.mock.calls.filter(([url]) => String(url).startsWith("/api/production/marking/progress"))).toHaveLength(2);
 });
 
+it("«Отметить напечатанные вне ERP» needs the print right; «Печатать оставшиеся» stays", async () => {
+  const { setRightsPrincipal } = await import("./rights");
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ rows: [], printed: 0, remaining: 0, remaining_labels: 0 }));
+  setRightsPrincipal({ user: { id: "operator" }, roles: [], permissions: { myops: "edit", print: "view" } } as unknown as Principal);
+  try {
+    render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly={false} renderInstruction={() => null} />);
+    expect(screen.getByRole("button", { name: "Печатать оставшиеся" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Отметить напечатанные вне ERP" })).toBeNull();
+  } finally {
+    setRightsPrincipal(null);
+  }
+});
+
 it("read-only labels group has no «Отметить напечатанные вне ERP»", () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ rows: [], printed: 0, remaining: 0, remaining_labels: 0 }));
   render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly renderInstruction={() => null} />);

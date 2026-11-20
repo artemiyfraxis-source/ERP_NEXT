@@ -17,6 +17,7 @@ from app.modules.production.application import ConcurrentProductionUpdate, issue
 from app.modules.production.cutting_application import locked_group
 from app.modules.production.marking_outside import MarkingOutsidePrintRow, numbered_mark_keys, outside_labels
 from app.workflows.marking_labels import Factory, Now, PrintUser, ReadUser, audit, checked, task_access
+from app.workflows.marking_progress import queue_counts
 
 router = APIRouter(prefix="/api/production/marking/outside", tags=["production"])
 Serial = Annotated[int, Field(ge=1, le=100_000, strict=True)]
@@ -61,10 +62,22 @@ def _row(task, serial, text, quantity, state):
             "quantity": quantity, "state": state}
 
 
-def _journal(uow, principal, now, group, change, rows, payload):
+def _journal(uow, principal, now, group, change, rows, payload, detail):
+    """`labels_detail` — every label marked or taken back, so the change can be rebuilt (undo deletes the rows)."""
     audit(uow, principal.actor, now, group.id, "printed_outside", change=change, group_number=group.number,
           serials=sorted(set(payload.serials)), items=sorted({row["item"] for row in rows}),
-          labels=sum(row["quantity"] for row in rows), comment=payload.comment.strip())
+          labels=sum(row["quantity"] for row in rows), comment=payload.comment.strip(), labels_detail=detail)
+
+
+def _state(label, existing, queued):
+    """new / exists (marked before) / printed (the ERP queue printed it: marking it too would count it twice) /
+    out_of_range (not an item of this task); `quantity` — the pieces a new mark takes."""
+    if label.get("out_of_range"):
+        return "out_of_range", 0
+    if (label["serial"], label["text"]) in existing:
+        return "exists", label["quantity"]
+    left = label["count"] - queued
+    return ("new", min(label["quantity"], left)) if left > 0 else ("printed", label["quantity"])
 
 
 @router.post("")
@@ -72,18 +85,24 @@ def mark(payload: OutsideInput, principal: PrintUser, factory: Factory, now: Now
     def run():
         with factory() as uow:
             group, entries = _scope(payload, principal, uow, now)
+            # «Все КБ группы»: a task that does not number this item is skipped; a chosen КБ refuses it.
+            strict = bool(payload.task_ids)
+            queue = queue_counts(uow.session, [task.id for task, _document in entries])
             rows, new = [], []
             for task, document in entries:
                 if not numbered_mark_keys(document, task):
                     continue
                 serial_range = issue_mark_serials_in(task, False, principal.actor, now, uow)
-                planned = outside_labels(document, task, serial_range, payload.serials, payload.quantity)
+                planned = outside_labels(document, task, serial_range, payload.serials, payload.quantity, strict=strict)
                 existing = set(uow.session.execute(
                     select(MarkingOutsidePrintRow.serial, MarkingOutsidePrintRow.text)
                     .where(MarkingOutsidePrintRow.task_id == task.id)).all())
-                fresh = [label for label in planned if (label["serial"], label["text"]) not in existing]
-                rows.extend(_row(task, label["serial"], label["text"], label["quantity"],
-                                 "new" if label in fresh else "exists") for label in planned)
+                fresh = []
+                for label in planned:
+                    state, quantity = _state(label, existing, queue[(str(task.id), label["serial"], label["text"])])
+                    rows.append(_row(task, label["serial"], label["text"], quantity, state))
+                    if state == "new":
+                        fresh.append({**label, "quantity": quantity})
                 new.extend((task, label) for label in fresh)
                 if fresh and not payload.dry_run:
                     issue_mark_serials_in(task, True, principal.actor, now, uow)  # the serials are spent outside
@@ -95,7 +114,9 @@ def mark(payload: OutsideInput, principal: PrintUser, factory: Factory, now: Now
                         id=uuid4(), task_id=task.id, serial=label["serial"], text=label["text"],
                         quantity=label["quantity"], actor_id=principal.actor.id, actor_name=principal.actor.name,
                         at=now, comment=payload.comment.strip()))
-                _journal(uow, principal, now, group, "mark", [row for row in rows if row["state"] == "new"], payload)
+                _journal(uow, principal, now, group, "mark", [row for row in rows if row["state"] == "new"], payload,
+                         [{"task_id": str(task.id), "serial": label["serial"], "text": label["text"],
+                           "quantity": label["quantity"]} for task, label in new])
                 uow.commit()
             return {"dry_run": payload.dry_run, "rows": rows, "added": sum(row["state"] == "new" for row in rows),
                     "existing": sum(row["state"] == "exists" for row in rows)}
@@ -109,16 +130,19 @@ def undo(payload: OutsideInput, principal: PrintUser, factory: Factory, now: Now
         with factory() as uow:
             group, entries = _scope(payload, principal, uow, now)
             serials = sorted(set(payload.serials))
-            rows, ids = [], []
+            rows, ids, detail = [], [], []
             for task, _document in entries:
                 for row in uow.session.scalars(select(MarkingOutsidePrintRow).where(
                         MarkingOutsidePrintRow.task_id == task.id, MarkingOutsidePrintRow.serial.in_(serials))
                         .order_by(MarkingOutsidePrintRow.serial, MarkingOutsidePrintRow.text)):
                     rows.append(_row(task, row.serial, row.text, row.quantity, "removed"))
                     ids.append(row.id)
+                    detail.append({"task_id": str(task.id), "serial": row.serial, "text": row.text,
+                                   "quantity": row.quantity, "actor_id": str(row.actor_id), "actor": row.actor_name,
+                                   "at": row.at.isoformat(), "comment": row.comment})
             if ids and not payload.dry_run:
                 uow.session.execute(delete(MarkingOutsidePrintRow).where(MarkingOutsidePrintRow.id.in_(ids)))
-                _journal(uow, principal, now, group, "undo", rows, payload)
+                _journal(uow, principal, now, group, "undo", rows, payload, detail)
                 uow.commit()
             return {"dry_run": payload.dry_run, "rows": rows, "removed": len(rows)}
     return checked(run)

@@ -49,25 +49,30 @@ def numbered_mark_keys(document: Mapping | None, task) -> set[str]:
 
 
 def outside_labels(document: Mapping | None, task, serial_range, serials: Iterable[int],
-                   quantity: int | None = None) -> list[dict]:
-    """The numbered labels of these item serials to mark: [{serial, text, quantity}], quantity = the ETK count of the
-    label unless `quantity` asks for fewer pieces. Refuses a serial outside the task's range and more pieces than the
-    ETK has. A task without numbered labels gives nothing."""
+                   quantity: int | None = None, *, strict: bool = True) -> list[dict]:
+    """The numbered labels of these item serials to mark: [{serial, text, quantity, count}], `count` — pieces of the
+    label in the ETK, `quantity` — `count` unless `quantity` asks for fewer pieces. Refuses more pieces than the ETK has.
+    A serial outside the task's range is refused when the КБ was chosen (`strict`); for «Все КБ группы» it comes back
+    as {serial, out_of_range: True} — a relaunched task of the same КБ numbers other items (№16–30). A task without
+    numbered labels gives nothing."""
     keys = numbered_mark_keys(document, task)
     if not keys:
         return []
-    if serial_range is None:
+    if serial_range is None and strict:
         raise ValueError(f"{task.item}: номера изделий освобождены — отмечать нечего")
-    first, last = serial_range
+    first, last = serial_range or (1, 0)
     result = []
     for serial in sorted(set(serials)):
         if not first <= serial <= last:
-            raise ValueError(f"{task.item}: номер {serial} вне номеров изделий {first}–{last}")
+            if strict:
+                raise ValueError(f"{task.item}: номер {serial} вне номеров изделий {first}–{last}")
+            result.append({"serial": serial, "text": "", "quantity": 0, "count": 0, "out_of_range": True})
+            continue
         counts: Counter = Counter()
         for row in labels(document, task, (serial, serial), keys):
             counts[row["text"]] += int(row["quantity"])
         for text, count in counts.items():
             if quantity is not None and quantity > count:
                 raise ValueError(f"{task.item} №{serial}: «{text}» — в ЭТК {count} шт., отметить {quantity} нельзя")
-            result.append({"serial": serial, "text": text, "quantity": quantity or count})
+            result.append({"serial": serial, "text": text, "quantity": quantity or count, "count": count})
     return result

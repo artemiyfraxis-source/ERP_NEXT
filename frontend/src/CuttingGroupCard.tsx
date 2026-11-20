@@ -35,6 +35,7 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
   const rows = cuttingRows(group);
   const [view, setView] = useState<"" | "submit" | "instruction" | "labels" | "downtime" | "remaining" | "outside">("");
   const look = cuttingLook(group);
+  const canPrint = useCanPrint();
   // «Печать этикеток»: printed / remaining per КБ from the print queue; reloaded after the print window closes.
   const [progress, setProgress] = useState<MarkingProgress | null>(null);
   const [progressError, setProgressError] = useState("");
@@ -135,7 +136,7 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
         <button type="button" className="secondary" aria-haspopup="dialog" onClick={() => setView("instruction")}>Инструкция</button>
         {look === "labels" && !readOnly && <button type="button" className="primary" disabled={disabled || group.partial_view || !progress || remainingLabels <= 0}
           aria-haspopup="dialog" onClick={() => setView("remaining")}>Печатать оставшиеся</button>}
-        {look === "labels" && !readOnly && <button type="button" className="secondary" disabled={disabled || group.partial_view}
+        {look === "labels" && !readOnly && canPrint && <button type="button" className="secondary" disabled={disabled || group.partial_view}
           aria-haspopup="dialog" onClick={() => setView("outside")}>Отметить напечатанные вне ERP</button>}
         {(look === "mixed" || look === "labels") && <button type="button" className="secondary" aria-haspopup="dialog" onClick={() => setView("labels")}>Этикетки группы</button>}
       </div>

@@ -3,8 +3,9 @@ import { api } from "./api";
 /** «Отметить напечатанные вне ERP» (owner 20.11): a numbered label of a КБ printed outside the ERP counts as printed. */
 export interface MarkingOutsideRow {
   task_id: string; item: string; task_number: string; serial: number; text: string; quantity: number;
-  /** new — will be / was marked now; exists — marked before; removed — «Снять отметку» took it back. */
-  state: "new" | "exists" | "removed";
+  /** new — will be / was marked now; exists — marked before; printed — the ERP queue printed it (not marked);
+   *  out_of_range — not an item of this task (a relaunched КБ numbers others); removed — «Снять отметку» took it back. */
+  state: "new" | "exists" | "printed" | "out_of_range" | "removed";
   actor?: string; at?: string; comment?: string;
 }
 /** `task_ids` empty — every КБ of the group; `dry_run` — what would be marked, nothing written. */

@@ -57,7 +57,7 @@ it("one КБ, a serial range, a bad entry and «Снять отметку» of e
   await within(dialog).findByText("FRX.708К.КБ4.2");
   fireEvent.change(within(dialog).getByLabelText("Номера изделий"), { target: { value: "абв" } });
   expect(within(dialog).getByText("Укажите номера изделий: 1 или 1, 3–5")).toBeTruthy();
-  expect(within(dialog).getByRole("button", { name: "Уже отмечены" })).toBeDisabled();
+  expect(within(dialog).getByRole("button", { name: "Отмечать нечего" })).toBeDisabled();
   fireEvent.change(within(dialog).getByLabelText("КБ"), { target: { value: "task-1" } });
   fireEvent.change(within(dialog).getByLabelText("Номера изделий"), { target: { value: "2-3" } });
   await waitFor(() => expect(within(dialog).getByRole("button", { name: /^Отметить 1\sэтикетку$/ })).toBeEnabled());
@@ -66,4 +66,14 @@ it("one КБ, a serial range, a bad entry and «Снять отметку» of e
   fireEvent.click(within(dialog).getByRole("button", { name: /^Снять отметку: 1\sэтикетку$/ }));
   await within(dialog).findByText(/^Отметка снята: 1\sэтикетку$/);
   expect(calls.find((call) => call.url.endsWith("/undo"))?.body).toMatchObject({ task_ids: ["task-1"], serials: [2, 3], dry_run: false });
+});
+
+it("a label printed in the ERP and a number outside a relaunched task are shown and not marked", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => String(input).includes("?group_id=") ? json({ rows: [] })
+    : json({ dry_run: true, rows: [label(0, 1, "printed"), { ...label(1, 1, "out_of_range"), text: "", quantity: 0 }] }));
+  render(<MarkingOutsideWindow group={group} close={() => undefined} onChange={() => undefined} />);
+  const dialog = screen.getByRole("dialog", { name: "Отметить напечатанные вне ERP" });
+  expect(await within(dialog).findByText("Уже напечатана в ERP")).toBeTruthy();
+  expect(within(dialog).getByText("Номер вне диапазона задания")).toBeTruthy();
+  expect(within(dialog).getByRole("button", { name: "Отмечать нечего" })).toBeDisabled();
 });
