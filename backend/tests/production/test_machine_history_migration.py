@@ -57,6 +57,8 @@ def test_speed_rows_start_empty_refuse_bad_rows_and_roundtrip_leaves_other_table
                 "run": None, "kind": None, "setup": "|L325|S5/5|P0/0|M0", "reason": "start"}
         connection.execute(INSERT, good)
         connection.execute(INSERT, {**good, "seq": 2, "total": 0, "alarm": 65535, "reason": "counter"})
+        # The run's write may be gone (ON DELETE SET NULL after `machines_admin release`): its kind stays.
+        connection.execute(INSERT, {**good, "seq": 3, "kind": "cutting", "reason": "run"})
         for bad in (
             {"seq": 1},  # the same snapshot twice
             {"boot": "  "},
@@ -65,7 +67,6 @@ def test_speed_rows_start_empty_refuse_bad_rows_and_roundtrip_leaves_other_table
             {"total": -1},
             {"state": 65536},
             {"alarm": -1},
-            {"kind": "cutting"},  # a run kind without its write
             {"run": uuid.uuid4().hex},  # a write without its kind (and not in the queue)
             {"kind": "press", "run": uuid.uuid4().hex},
             {"setup": " "},
@@ -73,9 +74,9 @@ def test_speed_rows_start_empty_refuse_bad_rows_and_roundtrip_leaves_other_table
             {"equipment_id": uuid.uuid4().hex},  # not in БД.ОБ
         ):
             with pytest.raises(sqlite3.IntegrityError):
-                connection.execute(INSERT, {**good, "seq": 3, **bad})
+                connection.execute(INSERT, {**good, "seq": 4, **bad})
         ids = [row_id for (row_id,) in connection.execute(f"SELECT id FROM {TABLE} ORDER BY id")]
-        assert ids == [1, 2]
+        assert ids == [1, 2, 3]
         indexes = {name for (name,) in connection.execute(
             "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ?", (TABLE,))}
         assert {"ix_production_machine_speed_rows_time", "ix_production_machine_speed_rows_equipment_id_id"} <= indexes

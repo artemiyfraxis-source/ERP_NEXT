@@ -31,7 +31,7 @@ CHECKS = {
     "ck_production_machine_speed_rows_state": "state_code BETWEEN 0 AND 65535",
     "ck_production_machine_speed_rows_alarm": "alarm_code IS NULL OR alarm_code BETWEEN 0 AND 65535",
     "ck_production_machine_speed_rows_run_kind": "run_kind IS NULL OR run_kind IN ('cutting', 'manual')",
-    "ck_production_machine_speed_rows_run": "(run_kind IS NULL) = (run_write_id IS NULL)",
+    "ck_production_machine_speed_rows_run": "run_write_id IS NULL OR run_kind IS NOT NULL",
     "ck_production_machine_speed_rows_setup": "trim(setup_key) <> ''",
     "ck_production_machine_speed_rows_reason": "reason IN ('start', 'counter', 'state', 'run', 'setup')",
 }
@@ -61,7 +61,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name="pk_production_machine_speed_rows"),
         sa.ForeignKeyConstraint(["equipment_id"], ["equipment_units.id"], ondelete="RESTRICT",
                                 name="fk_production_machine_speed_rows_equipment"),
-        sa.ForeignKeyConstraint(["run_write_id"], ["production_machine_writes.id"], ondelete="RESTRICT",
+        sa.ForeignKeyConstraint(["run_write_id"], ["production_machine_writes.id"], ondelete="SET NULL",
                                 name="fk_production_machine_speed_rows_run"),
         sa.UniqueConstraint("equipment_id", "boot", "seq", name="uq_production_machine_speed_rows_seq"),
         *(sa.CheckConstraint(sql, name=name) for name, sql in CHECKS.items()),

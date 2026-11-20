@@ -20,8 +20,8 @@ is «?».
 
 Growth: the bridge polls every 2 s, so a running machine writes up to ~1 row per 2 s — about 14.4k rows per 8-hour shift,
 roughly 0.4–1.4 GB a year per shift. Retention: 3 years, no purge job yet; revisit within a year.
-Rows keep RESTRICT keys to the run's write (`production_machine_writes`, which cascades from the machine link): rebinding
-the ОБ.019 bridge must UPDATE its `production_machine_links` row, never delete it."""
+The run's write key is ON DELETE SET NULL: `machines_admin release` deletes the link and (by cascade) its writes; history
+keeps the run kind and counters, only the write reference becomes NULL."""
 
 from __future__ import annotations
 
@@ -76,7 +76,7 @@ class MachineSpeedRow(Base):
                         name="ck_production_machine_speed_rows_alarm"),
         CheckConstraint(f"run_kind IS NULL OR run_kind IN ({_SQL(runs.KINDS)})",
                         name="ck_production_machine_speed_rows_run_kind"),
-        CheckConstraint("(run_kind IS NULL) = (run_write_id IS NULL)", name="ck_production_machine_speed_rows_run"),
+        CheckConstraint("run_write_id IS NULL OR run_kind IS NOT NULL", name="ck_production_machine_speed_rows_run"),
         CheckConstraint("trim(setup_key) <> ''", name="ck_production_machine_speed_rows_setup"),
         CheckConstraint(f"reason IN ({_SQL(REASONS)})", name="ck_production_machine_speed_rows_reason"),
         Index("ix_production_machine_speed_rows_time", "equipment_id", "recorded_at"),
@@ -98,7 +98,7 @@ class MachineSpeedRow(Base):
     state_code: Mapped[int] = mapped_column(Integer, nullable=False)
     alarm_code: Mapped[int | None] = mapped_column(Integer)
     run_write_id: Mapped[UUID | None] = mapped_column(
-        Uuid, ForeignKey("production_machine_writes.id", ondelete="RESTRICT",
+        Uuid, ForeignKey("production_machine_writes.id", ondelete="SET NULL",
                          name="fk_production_machine_speed_rows_run"))
     run_kind: Mapped[str | None] = mapped_column(String(16))
     wire_key: Mapped[str] = mapped_column(String(WIRE_MAX), nullable=False, default="", server_default="")

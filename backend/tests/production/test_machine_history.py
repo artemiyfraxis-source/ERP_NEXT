@@ -102,6 +102,27 @@ def test_an_open_run_writes_a_run_row_with_its_kind_and_wire(machines_api):
     assert rows[1].setup_key == "пвам 0,35" + SETUP  # the colour «красный» does not change the setup
 
 
+def test_releasing_the_machine_link_keeps_the_history_and_only_drops_the_run_reference(machines_api):
+    """`machines_admin release` deletes the link and, by cascade, its writes: the history row stays with its run kind."""
+    sessions, clock, admin, ob019, _ = machines_api
+    bridge = Bridge(admin)
+    bridge.report()
+    group_id = _job(sessions)
+    sent = admin.post(RUN, json={"kind": "cutting", "group_id": str(group_id), "length_mm": "325", "confirm_state": 102},
+                      headers=_csrf(admin))
+    assert sent.status_code == 200, sent.text
+    clock.now += timedelta(seconds=1)
+    bridge.report()
+    with sessions() as session:
+        assert rules.release(session, "ОБ.019") is True
+        session.commit()
+    rows = _rows(sessions)
+    assert [item.reason for item in rows] == ["start", "run"]
+    # PostgreSQL nulls the write reference (ON DELETE SET NULL; checked by the migrations-pg job); SQLite tests do not
+    # enforce foreign keys. Either way the row and its run kind stay.
+    assert (rows[1].run_kind, rows[1].equipment_id) == ("cutting", ob019)
+
+
 def test_a_counter_drop_is_written_and_a_new_boot_writes_start(machines_api):
     sessions, clock, admin, _, _ = machines_api
     bridge = Bridge(admin)
