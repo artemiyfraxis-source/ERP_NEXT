@@ -44,6 +44,8 @@ class DeliveryTerms(str, Enum):
 
 
 OWN_COURIER = "Курьер (наш)"
+# Кто уезжает без трек-номера (владелец 20.11.2026): наш курьер и Яндекс Доставка трек не выдают; самовывоз — `is_pickup`.
+NO_TRACK_CARRIERS = frozenset({OWN_COURIER, "Яндекс Доставка"})
 
 
 class UpdType(str, Enum):
@@ -922,10 +924,19 @@ class Shipment:
             raise ShippingValidationError("Нельзя упаковать: ни одна позиция не набрана")
         if self.status != ShipmentStatus.ASSEMBLED:
             raise ShippingValidationError("В текущем статусе упаковка недоступна")
+        # Пустой DN — «PL отдельно» (владелец 20.11.2026): уже выданный DN сохраняется, свежий не выдаётся.
         return replace(
             self, status=ShipmentStatus.PACKED, pl_number=_text(pl_number, "Номер PL"),
-            dn_number=_text(dn_number, "Номер DN"), packed_at=day, version=self.version + 1,
+            dn_number=str(dn_number or "").strip() or self.dn_number, packed_at=day, version=self.version + 1,
         )
+
+    def issue_dn(self, dn_number: str) -> Shipment:
+        """«Сформировать» DN отдельно от PL (владелец 20.11.2026): статус не меняется, номер выдаётся один раз."""
+        if self.status not in {ShipmentStatus.ASSEMBLED, ShipmentStatus.PACKED}:
+            raise ShippingValidationError("DN формируется у набранной или упакованной отправки")
+        if self.dn_number:
+            raise ShippingValidationError(f"DN уже сформирован: {self.dn_number}")
+        return replace(self, dn_number=_text(dn_number, "Номер DN"), version=self.version + 1)
 
     def update_documents(
         self, *, upd_type: UpdType | None, upd_number: str, upd_date: date | None,
@@ -1110,7 +1121,10 @@ class Shipment:
 
     @property
     def track_required(self) -> bool:
-        return self.terms == DeliveryTerms.CARRIER and self.carrier.strip() != OWN_COURIER
+        return (
+            self.terms == DeliveryTerms.CARRIER and not is_pickup(self.terms, self.carrier)
+            and self.carrier.strip() not in NO_TRACK_CARRIERS
+        )
 
     def close(self) -> Shipment:
         if self.status != ShipmentStatus.SHIPPED:

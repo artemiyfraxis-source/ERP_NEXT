@@ -206,3 +206,40 @@ def test_manager_without_the_warehouse_key_fills_the_data_but_cannot_ship(shippi
     assert documented.json()["shipment"]["missing_data"] == ["файл УПД"]
     assert shipped.status_code == 403
     assert stale.status_code == 409
+
+
+def test_pl_and_dn_are_formed_separately(shipping_api):
+    """«Сформировать» в колонках PL и DN (владелец 20.11.2026): DN — без смены статуса, PL — упаковка; общий хвост номера."""
+    client = shipping_api
+    good = _stocked(client, accepted="4")
+    assembled = _shipment(client, [{"good_id": good["id"], "quantity": "3"}], no_docs=True)
+    url = f"/api/shipping/shipments/{assembled['id']}/issue-document"
+
+    dn = client.post(url, json={"version": assembled["version"], "document": "dn"})
+    assert dn.status_code == 200, dn.text
+    dn_shipment = dn.json()["shipment"]
+    assert dn_shipment["status"] == "Собрана" and dn_shipment["dn_number"].startswith("DN") and not dn_shipment["pl_number"]
+    assert client.post(url, json={"version": dn_shipment["version"], "document": "dn"}).status_code == 422
+
+    pl = client.post(url, json={"version": dn_shipment["version"], "document": "pl"})
+    assert pl.status_code == 200, pl.text
+    packed = pl.json()["shipment"]
+    assert packed["status"] == "Упакована" and packed["dn_number"] == dn_shipment["dn_number"]
+    assert packed["pl_number"] == "PL" + dn_shipment["dn_number"][2:]
+    assert client.post(url, json={"version": packed["version"], "document": "pl"}).status_code == 422
+
+
+def test_pl_alone_leaves_dn_for_later(shipping_api):
+    client = shipping_api
+    good = _stocked(client, accepted="4")
+    assembled = _shipment(client, [{"good_id": good["id"], "quantity": "3"}], no_docs=True)
+    url = f"/api/shipping/shipments/{assembled['id']}/issue-document"
+
+    pl = client.post(url, json={"version": assembled["version"], "document": "pl"}).json()["shipment"]
+    assert pl["status"] == "Упакована" and pl["pl_number"] and not pl["dn_number"]
+    printable = client.get(f"/api/shipping/shipments/{assembled['id']}/print", params={"document": "pl"})
+    refused = client.get(f"/api/shipping/shipments/{assembled['id']}/print", params={"document": "dn"})
+    assert printable.status_code == 200 and refused.status_code == 409 and "DN" in refused.json()["detail"]
+
+    dn = client.post(url, json={"version": pl["version"], "document": "dn"}).json()["shipment"]
+    assert dn["dn_number"] == "DN" + pl["pl_number"][2:] and dn["status"] == "Упакована"

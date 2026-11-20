@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { ApiError, failureText, shippingApi, type ProjectAddressee } from "./api";
+import { CarrierSelect, PICKUP_CARRIER, termsFor } from "./carriers";
 import { PageWindow } from "./PageWindow";
 import { intakeApi, type DispatchData } from "./productionIntakeApi";
 import type { DispatchStage } from "./dispatchStage";
@@ -8,26 +9,31 @@ import "./dispatch.css";
 
 /* «Данные отправки» проекта (владелец 14.10): «надо только получатель, адрес, телефон, вариант УПД; если УПД бумага —
    возможность приложить УПД». Окно в «Приёмке с производства» и тот же набор полей в «Отгрузке» (`DispatchFields`).
-   Окно проекта — только адрес, получатель, телефон и (с «Готово») УПД (владелец 29.10): тип доставки, ТК и комментарий
-   для склада вносятся в окне самой отправки (`ShipmentData.tsx`); контакт, план и реквизиты карточки сохраняются как были. */
+   Окно проекта — адрес, получатель, телефон, способ доставки (владелец 20.11.2026: на любом этапе) и (с «Готово») УПД (владелец 29.10):
+   комментарий для склада вносится в окне самой отправки (`ShipmentData.tsx`); план и реквизиты карточки сохраняются как были. */
 
 const UPD: Array<[string, string]> = [["ЭДО", "ЭДО"], ["БУМАГА", "Бумага"], ["БЕЗ УПД", "Без УПД"]];
 const CONFLICT = "Данные отправки уже изменил другой сотрудник. Закройте окно и откройте его заново.";
 
-export type DispatchKey = "receiver" | "contact" | "shipping_point" | "phone" | "upd_type" | "upd_number" | "upd_date";
+export type DispatchKey = "receiver" | "contact" | "shipping_point" | "phone" | "carrier" | "upd_type" | "upd_number" | "upd_date";
 export type DispatchDraft = Record<DispatchKey, string>;
-const KEYS: DispatchKey[] = ["receiver", "contact", "phone", "shipping_point", "upd_type", "upd_number", "upd_date"];
+const KEYS: DispatchKey[] = ["receiver", "contact", "phone", "shipping_point", "carrier", "upd_type", "upd_number", "upd_date"];
 
 export const dispatchDraft = (card?: Partial<ProjectAddressee> | Partial<DispatchData> | null): DispatchDraft => ({
-  receiver: card?.receiver ?? "", contact: card?.contact ?? "", shipping_point: card?.shipping_point ?? "", phone: card?.phone ?? "", upd_type: card?.upd_type ?? "",
+  receiver: card?.receiver ?? "", contact: card?.contact ?? "", shipping_point: card?.shipping_point ?? "", phone: card?.phone ?? "",
+  // Способ доставки — одно поле «ТК»; карточка с одними условиями САМОВЫВОЗ показывает «Самовывоз».
+  carrier: card?.carrier?.trim() || (card?.terms === "САМОВЫВОЗ" ? PICKUP_CARRIER : ""), upd_type: card?.upd_type ?? "",
   upd_number: card?.upd_number ?? "", upd_date: card?.upd_date ?? "",
 });
 
 /** Только изменённые поля: остальное в карточке не трогается (PUT меняет присланное, пустое стирает). */
 export function changedDispatch(draft: DispatchDraft, card?: Partial<ProjectAddressee> | Partial<DispatchData> | null): Record<string, string | null> {
   const before = dispatchDraft(card);
-  return Object.fromEntries(KEYS.filter((key) => draft[key].trim() !== before[key])
-    .map((key) => [key, key === "upd_type" || key === "upd_date" ? draft[key] || null : draft[key].trim()]));
+  const changed = KEYS.filter((key) => draft[key].trim() !== before[key])
+    .map((key): [string, string | null] => [key, key === "upd_type" || key === "upd_date" ? draft[key] || null : draft[key].trim()]);
+  // Способ доставки задаёт и условия: самовывоз — САМОВЫВОЗ, любая ТК — ДОСТАВКА ТК.
+  if (draft.carrier.trim() !== before.carrier) changed.push(["terms", termsFor(draft.carrier)]);
+  return Object.fromEntries(changed);
 }
 
 export function readFile(file: File) {
@@ -84,10 +90,12 @@ export function DispatchFields({ project, draft, onChange, editable, card, onCar
     aria-label={`Приложить УПД${suffix}`} disabled={busy} onChange={pick} />;
 
   return <>
-    <div className={hideAddress || hideUpd ? "form-grid dispatch-grid dispatch-grid-3" : "form-grid dispatch-grid"}>
+    <div className="form-grid dispatch-grid">
       {FIELDS.filter(([key]) => !(hideAddress && key === "shipping_point")).map(([key, label, placeholder]) => <label key={key}>{label}
         <input aria-label={`${label}${suffix}`} value={draft[key]} disabled={!editable} placeholder={editable ? placeholder : ""}
           inputMode={key === "phone" ? "tel" : undefined} onChange={(event) => onChange({ ...draft, [key]: event.target.value })} /></label>)}
+      <label>Способ доставки<CarrierSelect label={`Способ доставки${suffix}`} value={draft.carrier} disabled={!editable}
+        onChange={(carrier) => onChange({ ...draft, carrier })} /></label>
       {!hideUpd && <label>УПД<select aria-label={`УПД${suffix}`} value={draft.upd_type} disabled={!editable} onChange={(event) => onChange({ ...draft, upd_type: event.target.value })}>
         <option value="">не выбрано</option>{UPD.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
       {!hideUpd && draft.upd_type && draft.upd_type !== "БЕЗ УПД" && <>
