@@ -33,6 +33,28 @@ def _issued(index, doc):
     return card
 
 
+def _bind(task, operation, *positions, current=True):
+    """Equipment bound to ETK operations of the PF (an allocation with one member; `current=False` — a retired one)."""
+    from app.modules.production.resource_assignment_infrastructure import ResourceAllocationMemberRow
+
+    allocation = uuid4()
+    with app.state.production_uow_factory() as uow:
+        uow.session.add(ResourceAllocationRow(id=allocation, task_id=task.id, operation_id=operation.id, crew=False))
+        uow.session.flush()
+        uow.session.add_all([ResourceAllocationMachineRow(allocation_id=allocation, etk_position=position,
+                                                          machine_id=uuid4()) for position in positions])
+        uow.session.add(ResourceAllocationMemberRow(id=uuid4(), allocation_id=allocation, operation_id=operation.id,
+                                                    operator_id=uuid4(), current=current))
+        uow.commit()
+    return allocation
+
+
+def _bound(allocation):
+    with app.state.production_uow_factory() as uow:
+        return sorted(row.etk_position for row in uow.session.query(ResourceAllocationMachineRow).filter_by(
+            allocation_id=allocation))
+
+
 def _active_group_of(operation_id):
     with app.state.production_uow_factory() as uow:
         member = uow.cutting.for_operation(operation_id)
@@ -111,12 +133,7 @@ def test_kept_pf_with_equipment_on_moved_operations_is_refused(production_api, m
     batch(client, cards)
     task = _tasks()["КБ1"]
     first = task.operations[0]  # the old «Заготовки» PF: ETK operations 1 (cut), 2 (labels), 3 (tubes)
-    allocation = uuid4()
-    with app.state.production_uow_factory() as uow:
-        uow.session.add(ResourceAllocationRow(id=allocation, task_id=task.id, operation_id=first.id, crew=False))
-        uow.session.flush()
-        uow.session.add(ResourceAllocationMachineRow(allocation_id=allocation, etk_position=position, machine_id=uuid4()))
-        uow.commit()
+    _bind(task, first, position)
     reissue(cards[0], split_document())
 
     result = _cli(monkeypatch, capsys, "--apply")
@@ -222,7 +239,8 @@ def test_revalidated_group_then_repinned_task_needs_refresh_before_start(product
     single = client.post(f"/api/production/tasks/{row['task_id']}/operations/{row['operation_id']}/work/start",
                          params={"on_behalf_of": str(operator)}, json={})
     assert single.status_code == 409, single.text
-    assert action(client, operator, stale, "start").status_code == 409
+    refused = action(client, operator, stale, "start")
+    assert refused.status_code == 422 and "Обновить из ЭТК" in refused.json()["detail"], refused.text
 
     refreshed = client.post(f"/api/production/cutting-groups/{group['id']}/refresh-etk", json={"version": stale["version"]})
     assert refreshed.status_code == 200, refreshed.text
@@ -257,21 +275,16 @@ def test_equipment_follows_its_etk_operation_when_numbers_shift(production_api, 
     batch(client, cards)
     task = _tasks()["КБ1"]
     assembly = task.operations[1]  # ETK №4 «ASM»
-    allocation = uuid4()
-    with app.state.production_uow_factory() as uow:
-        uow.session.add(ResourceAllocationRow(id=allocation, task_id=task.id, operation_id=assembly.id, crew=False))
-        uow.session.flush()
-        uow.session.add(ResourceAllocationMachineRow(allocation_id=allocation, etk_position=4, machine_id=uuid4()))
-        uow.commit()
+    allocation = _bind(task, assembly, 4)
+    retired = _bind(task, assembly, 4, current=False)
     reissue(cards[0], _inserted_operation(split_document()))
 
     result = _cli(monkeypatch, capsys, "--apply")
     assert [r["item"] for r in result["restructured"]] == ["КБ1"] and not result["refused"]
     rebuilt = _tasks()["КБ1"].operation(assembly.id)
     assert [(item.position, item.code) for item in rebuilt.etk_ops] == [(5, "ASM")]
-    with app.state.production_uow_factory() as uow:
-        assert [row.etk_position for row in uow.session.query(ResourceAllocationMachineRow).filter_by(
-            allocation_id=allocation)] == [5]
+    assert _bound(allocation) == [5]
+    assert _bound(retired) == [4]  # history is not rewritten
 
 
 def test_pfs_split_out_of_a_separately_issued_task_stay_separate(production_api, monkeypatch, capsys):
@@ -314,6 +327,9 @@ def test_pfs_split_out_of_a_pf_the_master_split_off_stay_standalone(production_a
     tasks = _tasks()
     assert len(_memberships(tasks["КБ2"])) == 3 and set(_memberships(tasks["КБ2"]).values()) == {None}
     assert None not in _memberships(tasks["КБ1"]).values()
+    again = _cli(monkeypatch, capsys, "--apply")
+    assert not again["restructured"]
+    assert set(_memberships(tasks["КБ2"]).values()) == {None}  # the rerun keeps them standalone
 
 
 def test_separate_group_replaced_keeps_the_separation_on_rerun(production_api, monkeypatch, capsys):
@@ -380,3 +396,166 @@ def test_label_check_sees_a_changed_fixed_label(production_api, monkeypatch, cap
     result = _cli(monkeypatch, capsys, "--apply")
     assert (result["labels"][0]["printed"], result["labels"][0]["remaining"]) == (1, 9)  # numbered unchanged
     assert result["labels"][0]["remaining_labels"] == 19 and result["labels_unchanged"] is False
+
+
+# --- third review round ----------------------------------------------------------------------------------------------
+
+def _tail_document(tail, *, labels=(), cut=(), tubes=()):
+    """The split ETK whose operations after the labels/tubes are `tail` [(code, block «check»|«assembly»)]; `cut`,
+    `labels`, `tubes` — codes of extra operations appended to those PFs (they shift every later number)."""
+    from copy import deepcopy
+
+    doc = split_document()
+    raw, ops = doc["build_config"]["ops"], doc["operations"]
+    plan = [(raw[0], ops[0], "cut"), *[(raw[3], ops[3], "cut", code) for code in cut],
+            (raw[1], ops[1], "labels"), *[(raw[3], ops[3], "labels", code) for code in labels],
+            (raw[2], ops[2], "tubes"), *[(raw[3], ops[3], "tubes", code) for code in tubes],
+            *[(raw[3], ops[3], block, code) for code, block in tail]]
+    doc["build_config"]["ops"], doc["operations"], blocks = [], [], {}
+    for number, item in enumerate(plan, 1):
+        source_raw, source_op, block = item[:3]
+        new_raw, new_op = deepcopy(source_raw), deepcopy(source_op)
+        if len(item) == 4:
+            new_raw["opNumber"], new_op["code"], new_op["fields"] = item[3], item[3], {}
+        new_op["position"] = number
+        if len(item) == 4:
+            new_op["side"] = f"S{number}"  # code + side is unique in an ETK: ЗАЧ-A, ЗАЧ-B
+        doc["build_config"]["ops"].append(new_raw)
+        doc["operations"].append(new_op)
+        blocks.setdefault(block, []).append(number)
+    names = {"cut": "Нарезанный и разделанный кабель", "labels": "Этикетки", "tubes": "Нарезанные трубки",
+             "check": "Проверка", "assembly": "Сборка"}
+    doc["route"]["blocks"] = [{"key": key, "ops": numbers, "name": names[key], **({"final": True} if key == "assembly"
+                                                                                else {})} for key, numbers in blocks.items()]
+    doc["route"]["edges"] = [{"from": key, "to": "assembly", "per_unit": 1} for key in blocks if key != "assembly"]
+    return doc
+
+
+ZACH = [("ЗАЧ", "assembly"), ("ЗАЧ", "assembly"), ("ASM", "assembly")]  # assembly PF: №4 ЗАЧ-A, №5 ЗАЧ-B, №6 ASM
+
+
+@pytest.mark.parametrize("change,bound,refused,after", [
+    ("drop", 4, True, None),            # ЗАЧ-A dropped: the binding of №4 would land on ЗАЧ-B
+    ("insert_same", 4, True, None),     # a third ЗАЧ in the PF: which one is meant is not known
+    ("insert_other", 5, False, [6]),    # a ЗАЧ in the tubes PF shifts numbers only: ЗАЧ-B №5 → №6
+])
+def test_equipment_matching_counts_same_code_operations_inside_the_pf(
+        production_api, monkeypatch, capsys, change, bound, refused, after):
+    client, _ = production_api
+    cards = [issue("КБ1", _tail_document(ZACH))]
+    batch(client, cards)
+    task = _tasks()["КБ1"]
+    assembly = next(op for op in task.operations if [item.code for item in op.etk_ops] == ["ЗАЧ", "ЗАЧ", "ASM"])
+    allocation = _bind(task, assembly, bound)
+    new = {"drop": _tail_document(ZACH[1:]), "insert_same": _tail_document([("ЗАЧ", "assembly"), *ZACH]),
+           "insert_other": _tail_document(ZACH, tubes=["ЗАЧ"])}[change]
+    reissue(cards[0], new)
+
+    result = _cli(monkeypatch, capsys, "--apply")
+    if refused:
+        assert not result["restructured"] and "ЗАЧ" in result["refused"][0]["reason"], result["refused"]
+        assert _bound(allocation) == [bound]
+    else:
+        assert [r["item"] for r in result["restructured"]] == ["КБ1"] and not result["refused"]
+        assert _bound(allocation) == after
+
+
+def test_binding_outside_the_old_pf_operations_is_kept_while_the_number_exists(production_api, monkeypatch, capsys):
+    client, _ = production_api
+    cards = [issue("КБ1")]
+    batch(client, cards)
+    task = _tasks()["КБ1"]
+    assembly = task.operations[1]  # ETK №4 only; the binding names №5
+    allocation = _bind(task, assembly, 5)
+    reissue(cards[0], _tail_document([("CHECK", "assembly"), ("ASM", "assembly")]))  # assembly PF: №4, №5
+
+    result = _cli(monkeypatch, capsys, "--apply")
+    assert [r["item"] for r in result["restructured"]] == ["КБ1"] and not result["refused"]
+    assert _bound(allocation) == [5]
+
+
+def test_retired_equipment_on_a_moving_operation_does_not_refuse(production_api, monkeypatch, capsys):
+    client, _ = production_api
+    cards = [issue("КБ1")]
+    batch(client, cards)
+    task = _tasks()["КБ1"]
+    retired = _bind(task, task.operations[0], 2, current=False)  # labels operation of the old «Заготовки»
+    reissue(cards[0], split_document())
+
+    result = _cli(monkeypatch, capsys, "--apply")
+    assert [r["item"] for r in result["restructured"]] == ["КБ1"] and not result["refused"]
+    assert _bound(retired) == [2]
+
+
+def test_separated_task_keeps_its_tubes_pf_when_an_inserted_operation_shifts_numbers(production_api, monkeypatch, capsys):
+    client, _ = production_api
+    cards = [issue("КБ1"), issue("КБ2"), issue("КБ3")]
+    batch(client, cards[:2])
+    alone = client.post("/api/production/tasks", headers={"Idempotency-Key": "separate"},
+                        json={"techcard_id": str(cards[2].id), "quantity": 10, "issue_separately": True})
+    assert alone.status_code == 200, alone.text
+    for card in cards:
+        reissue(card, _tail_document([("ASM", "assembly")], cut=["CHECK"]))  # tubes №3 → №4
+
+    _cli(monkeypatch, capsys, "--apply")
+    tasks = _tasks()
+    tubes = next(op for op in tasks["КБ3"].operations if [item.code for item in op.etk_ops] == ["CUT_TUT_short"])
+    group_id = _active_group_of(tubes.id)
+    assert group_id and _separate(group_id) and _group(group_id)[2] == {"КБ3"}
+
+
+# --- prod-copy rehearsal: --release-moved-equipment -------------------------------------------------------------------
+
+def _released_events(task):
+    from sqlalchemy import select
+
+    from app.shared.persistence import AuditEventRow
+
+    with app.state.production_uow_factory() as uow:
+        return [row.details for row in uow.session.scalars(select(AuditEventRow).where(
+            AuditEventRow.aggregate_id == task.id, AuditEventRow.event_type == "production.equipment_released"))]
+
+
+def test_release_moved_equipment_removes_only_bindings_of_moved_operations(production_api, monkeypatch, capsys):
+    client, _ = production_api
+    cards = [issue("КБ1")]
+    batch(client, cards)
+    task = _tasks()["КБ1"]
+    first = task.operations[0]  # the old «Заготовки»: №1 cut, №2 labels, №3 tubes
+    allocation = _bind(task, first, 1, 2, 3)
+    retired = _bind(task, first, 2, current=False)
+    reissue(cards[0], split_document())
+
+    off = _cli(monkeypatch, capsys, "--apply")  # default: refusal as before
+    assert not off["restructured"] and "назначено оборудование" in off["refused"][0]["reason"]
+    assert _bound(allocation) == [1, 2, 3]
+
+    preview = _cli(monkeypatch, capsys, "--release-moved-equipment")
+    assert [(row["item"], row["etk_position"], row["code"]) for row in preview["released"]] == [
+        ("КБ1", 2, "PRINT_MARK_LABEL"), ("КБ1", 3, "CUT_TUT_short")]
+    assert _bound(allocation) == [1, 2, 3] and not _released_events(task)  # dry run rolled back
+
+    applied = _cli(monkeypatch, capsys, "--apply", "--release-moved-equipment")
+    assert [r["item"] for r in applied["restructured"]] == ["КБ1"] and not applied["refused"]
+    assert _bound(allocation) == [1] and _bound(retired) == [2]
+    events = _released_events(task)
+    assert sorted((e["code"], e["etk_position"], e["stage"]) for e in events) == [
+        ("CUT_TUT_short", 3, first.stage), ("PRINT_MARK_LABEL", 2, first.stage)]
+    assert all(e["machine_id"] and e["task_id"] == str(task.id) for e in events)
+    with app.state.production_uow_factory() as uow:
+        from app.modules.production.resource_assignment_infrastructure import ResourceAllocationRow as Allocation
+        moved = [op.id for op in _tasks()["КБ1"].operations if op.id != first.id]
+        assert not uow.session.query(Allocation).filter(Allocation.operation_id.in_(moved)).all()  # new PFs unbound
+
+
+def test_release_moved_equipment_still_refuses_an_ambiguous_binding(production_api, monkeypatch, capsys):
+    client, _ = production_api
+    cards = [issue("КБ1", _tail_document(ZACH))]
+    batch(client, cards)
+    task = _tasks()["КБ1"]
+    assembly = next(op for op in task.operations if [item.code for item in op.etk_ops] == ["ЗАЧ", "ЗАЧ", "ASM"])
+    allocation = _bind(task, assembly, 4)
+    reissue(cards[0], _tail_document([("ЗАЧ", "assembly"), *ZACH]))
+    result = _cli(monkeypatch, capsys, "--apply", "--release-moved-equipment")
+    assert not result["restructured"] and "ЗАЧ" in result["refused"][0]["reason"] and not result["released"]
+    assert _bound(allocation) == [4]

@@ -3,7 +3,7 @@
 from collections import Counter
 from dataclasses import replace
 from decimal import Decimal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent
 from .application import AssignProductionCommand, ConcurrentProductionUpdate, _audit, _checked_names, assign_task, lock_reflow_projects
@@ -602,7 +602,7 @@ def regroup(entries, uow, actor, now, *, homes=None, origins=None):
     return result
 
 
-def restructure_reason(task, uow, kept=None, operations=()):
+def restructure_reason(task, uow, kept=None, operations=(), *, release=False):
     """Why the task's PFs may not be rebuilt in place, or "" (owner 20.11: only before any work or output).
     `kept` — old PF ids the rebuilt route keeps, `operations` — the rebuilt PFs."""
     if task.status is not ProductionStatus.RUNNING:
@@ -629,56 +629,123 @@ def restructure_reason(task, uow, kept=None, operations=()):
             ResourceAllocationRow.operation_id.in_(dropped))).first() if dropped else None
         if allocated is not None:
             return "У исчезающего ПФ назначено оборудование — снимите назначение и повторите"
-        return binding_moves(task, operations, kept, uow)[0]
+        return binding_moves(task, operations, kept, uow, release=release)[0]
     return ""
 
 
-def binding_moves(task, operations, kept, uow):
+def binding_moves(task, operations, kept, uow, *, release=False):
     """Equipment bound to ETK operations of the kept PFs (the old «Заготовки» id keeps the cut), followed into the
-    rebuilt route. An ETK operation is the same when its code and its occurrence among operations with that code (ETK
-    order) match: a reissued ETK that inserts an operation shifts the numbers, not the identity. Returns (refusal,
-    renumbering [(allocation id, old ETK number, new ETK number)]): a bound operation that moves to another PF or
-    disappears refuses; one that stays in its PF under a new number is renumbered."""
+    rebuilt route. Only current allocations count (one with a current member); retired ones are history and stay as
+    they are. Inside the PF an ETK operation is the same when its code and its occurrence among the PF's operations
+    with that code match: a reissued ETK that inserts an operation elsewhere shifts the numbers, not the identity.
+    Returns (refusal, renumbering [(allocation id, old ETK number, new ETK number)]): a bound operation that leaves the
+    PF refuses, and so does one whose code occurs a different number of times in the PF now (which of them is meant is
+    not known — the master binds it again); one that stays under a new number is renumbered. A bound number that is not
+    an ETK operation of the PF stays allowed while the rebuilt PF still has that number.
+    `release` (CLI `--release-moved-equipment`): a bound operation that moved to another rebuilt PF is not a refusal but
+    is returned in `released` [(allocation id, PF id, ETK number, code, machine id)] for removal; ambiguous counts and
+    disappearing operations still refuse. Returns (refusal, renumbering, released)."""
     from sqlalchemy import select
 
-    from .resource_assignment_infrastructure import ResourceAllocationMachineRow, ResourceAllocationRow
+    from .resource_assignment_infrastructure import (ResourceAllocationMachineRow, ResourceAllocationMemberRow,
+                                                     ResourceAllocationRow)
 
     kept_ids = [operation.id for operation in operations if operation.id in set(kept)]
+    current = select(ResourceAllocationMemberRow.allocation_id).where(ResourceAllocationMemberRow.current.is_(True))
     rows = uow.session.execute(select(
-        ResourceAllocationRow.id, ResourceAllocationRow.operation_id, ResourceAllocationMachineRow.etk_position)
+        ResourceAllocationRow.id, ResourceAllocationRow.operation_id, ResourceAllocationMachineRow.etk_position,
+        ResourceAllocationMachineRow.machine_id)
         .join(ResourceAllocationMachineRow, ResourceAllocationMachineRow.allocation_id == ResourceAllocationRow.id)
-        .where(ResourceAllocationRow.operation_id.in_(kept_ids))).all() if kept_ids else []
+        .where(ResourceAllocationRow.operation_id.in_(kept_ids), ResourceAllocationRow.id.in_(current))
+        .order_by(ResourceAllocationRow.id, ResourceAllocationMachineRow.etk_position)).all() if kept_ids else []
 
-    def occurrences(ops):
-        found = {}
+    def numbers(operation, code):
+        return sorted(item.position for item in operation.etk_ops if item.code == code)
+
+    renumber, released = [], []
+    for allocation_id, operation_id, position, machine_id in rows:
+        before = task.operation(operation_id)
+        after = next(op for op in operations if op.id == operation_id)
+        code = next((item.code for item in before.etk_ops if item.position == position), None)
+        if code is None:
+            if position not in after.etk_positions:
+                return (f"У ПФ «{before.stage}» назначено оборудование на операции №{position}, которой нет в новой ЭТК",
+                        [], [])
+            continue
+        old, new = numbers(before, code), numbers(after, code)
+        if not new:
+            if release and any(item.code == code for op in operations if op.id != operation_id for item in op.etk_ops):
+                released.append((allocation_id, operation_id, position, code, machine_id))
+                continue
+            return (f"У ПФ «{before.stage}» назначено оборудование на операцию {code}, которая переходит в другой ПФ "
+                    "или исчезает из новой ЭТК — снимите назначение и повторите"), [], []
+        if len(new) != len(old):
+            return (f"У ПФ «{before.stage}» назначено оборудование на операцию {code}, а таких операций в ПФ теперь "
+                    f"{len(new)} вместо {len(old)} — неясно, к какой оно относится; снимите назначение, повторите и "
+                    "назначьте оборудование заново"), [], []
+        target = new[old.index(position)]
+        if target != position:
+            renumber.append((allocation_id, position, target))
+    return "", renumber, released
+
+
+def _parents(task, operations, kept):
+    """{new PF id: the old PF it was split out of}. An ETK operation is followed by its code and its occurrence among
+    operations with that code (ETK order); a new PF whose operations all come from one old PF has that parent. If that
+    is not unique, the position rule of `restructured_operations` (numbers a strict subset of one old PF's)."""
+    def index(ops):
+        found, seen = {}, {}
         for op_id, item in sorted(((op.id, item) for op in ops for item in op.etk_ops), key=lambda pair: pair[1].position):
-            found.setdefault(item.code, []).append((item.position, op_id))
+            occurrence = seen[item.code] = seen.get(item.code, -1) + 1
+            found[(item.code, occurrence)] = op_id
         return found
 
-    old, new = occurrences(task.operations), occurrences(operations)
-    renumber = []
-    for allocation_id, operation_id, position in rows:
-        before = task.operation(operation_id)
-        if not before.etk_ops:
-            if position not in next(op for op in operations if op.id == operation_id).etk_positions:
-                return f"У ПФ «{before.stage}» назначено оборудование на операции, которой нет в новой ЭТК", []
+    def keyed(ops):
+        seen, result = {}, {}
+        for op_id, item in sorted(((op.id, item) for op in ops for item in op.etk_ops), key=lambda pair: pair[1].position):
+            occurrence = seen[item.code] = seen.get(item.code, -1) + 1
+            result.setdefault(op_id, []).append((item.code, occurrence))
+        return result
+
+    old = index(task.operations)
+    result = {}
+    for op_id, items in keyed(operations).items():
+        if op_id in kept:
             continue
-        code = next((item.code for item in before.etk_ops if item.position == position), None)
-        index = [number for number, _op in old.get(code, [])].index(position) if code is not None else None
-        target = new.get(code, [])[index] if index is not None and index < len(new.get(code, [])) else None
-        if target is None or target[1] != operation_id:
-            return (f"У ПФ «{before.stage}» назначено оборудование на операции, которые переходят в другой ПФ или "
-                    "исчезают из новой ЭТК — снимите назначение и повторите"), []
-        if target[0] != position:
-            renumber.append((allocation_id, position, target[0]))
-    return "", renumber
+        found = {old.get(item) for item in items}
+        if len(found) == 1 and None not in found:
+            result[op_id] = found.pop()
+            continue
+        operation = next(op for op in operations if op.id == op_id)
+        positions = {item.position for item in operation.etk_ops}
+        parent = next((item for item in task.operations if item.etk_ops and positions < set(item.etk_positions)), None)
+        if parent is not None:
+            result[op_id] = parent.id
+    return result
 
 
-def rebuild_task(task, entry, uow, actor, now, homes, origins=None):
+def _lineage(task, uow):
+    """{PF id: the PF it was split out of} stored by every rebuild of the task (audit `production.restructured`)."""
+    from sqlalchemy import select
+
+    from app.shared.persistence import AuditEventRow
+
+    found = {}
+    for details in uow.session.scalars(select(AuditEventRow.details).where(
+            AuditEventRow.aggregate_id == task.id, AuditEventRow.event_type == "production.restructured")
+            .order_by(AuditEventRow.occurred_at)):
+        for child, parent in ((details or {}).get("origins") or {}).items():
+            found[UUID(child)] = UUID(parent)
+    return found
+
+
+def rebuild_task(task, entry, uow, actor, now, homes, origins=None, released=None):
     """Rebuild one locked, unstarted task on its reissued ETK in place: same task id, number, quantity, serials and
     assignments (`restructured_operations`). Its PFs leave their groups first (recorded in `homes`, {PF id: group id})
     so `regroup` can put the rebuilt PFs back; `origins` gets {new PF id: the old PF it was split out of}. Returns
-    (rebuilt task, "") or (task untouched, refusal reason).
+    (rebuilt task, "") or (task untouched, refusal reason). `released` — a list: equipment bound to operations that moved
+    to another PF is removed from the kept PF instead of refusing (CLI `--release-moved-equipment`; audit
+    `production.equipment_released` per binding) and listed there.
     Shared by the CLI restructure and «Обновить из ЭТК»; the caller holds the project, group and task locks."""
     from .launchable import launch_operations, launch_route
 
@@ -691,7 +758,7 @@ def rebuild_task(task, entry, uow, actor, now, homes, origins=None):
             operations, kept = restructured_operations(task.operations, fresh)
         except ProductionValidationError as error:
             reason = str(error)
-    reason = reason or restructure_reason(task, uow, kept, operations)
+    reason = reason or restructure_reason(task, uow, kept, operations, release=released is not None)
     if reason:
         return task, reason
     for operation in task.operations:
@@ -701,16 +768,12 @@ def rebuild_task(task, entry, uow, actor, now, homes, origins=None):
             homes[operation.id] = member.group_id
             _system_split(member, "rebuild")
             uow.cutting.get(member.group_id).version += 1
+    parents = _parents(task, operations, kept)
     if origins is not None:
-        # The same parent rule as `restructured_operations`: a new PF whose ETK operations all were in one old PF.
-        for operation in operations:
-            if operation.id in kept or not operation.etk_ops:
-                continue
-            positions = {item.position for item in operation.etk_ops}
-            parent = next((old for old in task.operations if old.etk_ops and positions <= set(old.etk_positions)), None)
-            if parent is not None:
-                origins[operation.id] = parent.id
-    _renumber_bindings(binding_moves(task, operations, kept, uow)[1], uow)
+        origins.update(parents)
+    _reason, renumber, freed = binding_moves(task, operations, kept, uow, release=released is not None)
+    _release_bindings(task, freed, uow, actor, now, released)
+    _renumber_bindings(renumber, uow)
     before = [(op.stage, len(op.etk_ops)) for op in task.operations]
     # Stage numbers are unique per task: park the old ones out of the way before the new route takes them.
     uow.production.add(replace(task, operations=tuple(
@@ -721,8 +784,27 @@ def rebuild_task(task, entry, uow, actor, now, homes, origins=None):
     _audit(updated, "production.restructured", actor, now, {
         "techcard_id": str(card_id), "from_revision": task.techcard_revision, "revision": revision,
         "operations": [[op.stage, len(op.etk_ops)] for op in updated.operations],
-        "before": before}, uow)
+        "before": before, "origins": {str(child): str(parent) for child, parent in parents.items()}}, uow)
     return updated, ""
+
+
+def _release_bindings(task, freed, uow, actor, now, released):
+    """Remove machine bindings of operations that moved to another PF from the kept PF's current allocation; the new PF
+    stays unbound (planning places it). One audit event per binding."""
+    from sqlalchemy import delete
+
+    from .resource_assignment_infrastructure import ResourceAllocationMachineRow
+
+    for allocation_id, operation_id, position, code, machine_id in freed:
+        uow.session.execute(delete(ResourceAllocationMachineRow).where(
+            ResourceAllocationMachineRow.allocation_id == allocation_id,
+            ResourceAllocationMachineRow.etk_position == position))
+        details = {"task_id": str(task.id), "item": task.item, "operation_id": str(operation_id),
+                   "stage": task.operation(operation_id).stage, "code": code, "etk_position": position,
+                   "machine_id": str(machine_id), "allocation_id": str(allocation_id)}
+        _audit(task, "production.equipment_released", actor, now, details, uow)
+        released.append(details)
+    uow.session.flush()
 
 
 def _renumber_bindings(renumber, uow):
@@ -745,6 +827,19 @@ def _renumber_bindings(renumber, uow):
         uow.session.flush()
 
 
+def _separated_parent(operation_id, origins, homes, standalone, current, uow):
+    """Whether a PF split out of others (following `origins` back) comes from a PF the master separated: one left
+    standalone now, or one no longer a preparation PF that has no group and was split off by the master."""
+    seen, parent = set(), origins.get(operation_id)
+    while parent is not None and parent not in seen and parent not in homes:
+        seen.add(parent)
+        if parent in standalone or (parent not in current and uow.cutting.for_operation(parent) is None
+                                    and _master_splits(parent, uow)):
+            return True
+        parent = origins.get(parent)
+    return False
+
+
 def task_regroup_entries(task, document, card_version, uow, actor, homes=(), origins=None):
     """Regroup entries (task, recipe, document, card version) for every unstarted preparation PF of the task, and the
     grouping refusals. PFs with work or in a started group stay where they are; so does a PF the master separated
@@ -756,7 +851,7 @@ def task_regroup_entries(task, document, card_version, uow, actor, homes=(), ori
         return [], [str(error)]
     recipes, refused = cutting_recipes(task.project, site, document, task.operations)
     entries, standalone = [], set()
-    origins = origins or {}
+    origins = {**_lineage(task, uow), **(origins or {})}  # stored by earlier rebuilds: a rerun keeps the separation
     for recipe in recipes:
         if (uow.cutting.for_operation(recipe.operation_id) is None and recipe.operation_id not in homes
                 and _separated(task, recipe.operation_id, recipe.key, uow)):
@@ -766,10 +861,8 @@ def task_regroup_entries(task, document, card_version, uow, actor, homes=(), ori
         member = uow.cutting.for_operation(operation.id)
         if member is None and uow.cutting.execution_reason(operation):
             continue
-        parent = origins.get(operation.id)
-        if operation.id in standalone or (member is None and parent is not None and parent not in homes and (
-                parent in standalone or (parent not in {item.operation_id for item in recipes}
-                                         and uow.cutting.for_operation(parent) is None and _master_splits(parent, uow)))):
+        if operation.id in standalone or (member is None and _separated_parent(
+                operation.id, origins, homes, standalone, {item.operation_id for item in recipes}, uow)):
             continue
         if member is not None:
             group = uow.cutting.get(member.group_id)
@@ -779,12 +872,14 @@ def task_regroup_entries(task, document, card_version, uow, actor, homes=(), ori
     return entries, [reason for _operation, reason in refused]
 
 
-def restructure_project(project, cards, actor, now, uow, *, task_ids=None):
+def restructure_project(project, cards, actor, now, uow, *, task_ids=None, release_moved_equipment=False):
     """Rebuild unstarted tasks of the project whose issued ETK changed (same task id, number, quantity, serials and
     assignments; `restructured_operations`) and regroup all their unstarted preparation PFs by kind and recipe.
 
     `cards` maps task id -> (card_id, revision, document, card_version[, ...]) of the issued ETK, or an error text.
-    One transaction: the caller commits (apply) or leaves it uncommitted (dry run rolls back)."""
+    One transaction: the caller commits (apply) or leaves it uncommitted (dry run rolls back).
+    `release_moved_equipment` — remove bindings of operations that moved to a new PF instead of refusing the task
+    (`released` in the result, per binding)."""
     key = normalize_project_number(project)
     if not key:
         raise ProductionValidationError("Укажите проект")
@@ -796,7 +891,8 @@ def restructure_project(project, cards, actor, now, uow, *, task_ids=None):
     for task in sorted(tasks, key=lambda item: str(item.id)):
         uow.production.lock(task.id)
     result = {"project": key, "restructured": [], "unchanged": [], "refused": [], "groups": [], "moved": [],
-              "cancelled": []}
+              "cancelled": [], "released": []}
+    released = result["released"] if release_moved_equipment else None
     homes, origins, entries = {}, {}, []
     for task in sorted((uow.production.get(item.id) for item in tasks), key=lambda item: (item.item, item.number)):
         identity = {"task_id": str(task.id), "task_number": task.number, "item": task.item}
@@ -806,7 +902,7 @@ def restructure_project(project, cards, actor, now, uow, *, task_ids=None):
             continue
         _card_id, revision, document, card_version = entry[:4]
         if revision != task.techcard_revision:
-            updated, reason = rebuild_task(task, entry, uow, actor, now, homes, origins)
+            updated, reason = rebuild_task(task, entry, uow, actor, now, homes, origins, released)
             if reason:
                 result["refused"].append({**identity, "reason": reason})
                 continue
