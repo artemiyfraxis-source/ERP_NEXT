@@ -580,7 +580,7 @@ describe("Приёмка с производства: свои колонки и
     expect(rowButtons()).toEqual(["Принять 591К.3 КБ1: 34"]);
   });
 
-  it("«Упаковано»: ЭДО без номера — выключенный «Трек…» с причиной, без «Без УПД…»; УПД нет совсем — «Без УПД…» с ПИН", async () => {
+  it("«Упаковано»: ответ без `no_upd_offered` у ЭДО без номера — выключенный «Трек…»; сервер предлагает «Без УПД…» — кнопка с ПИН", async () => {
     intakeRows = [row({ accepted: "4", packed: "4", remaining: "0", delivered: "4", tasks: [] })];
     shipments = [packedShipment];
     const first = render(<ProductionIntakePage principal={principal} />);
@@ -592,7 +592,7 @@ describe("Приёмка с производства: свои колонки и
     expect(rowButtons()).toEqual([]);
     first.unmount();
 
-    // Сервер решает сам (`no_upd_offered`): ЭДО без номера — не предлагает, даже если слова пробелов похожи.
+    // Сервер решает сам (`no_upd_offered`): не предлагает — выключенный «Трек…», даже если слова пробелов похожи.
     shipments = [{ ...packedShipment, missing_ship_codes: ["upd_number", "track_number"], no_upd_offered: false }];
     const second = render(<ProductionIntakePage principal={principal} />);
     expect(await screen.findByRole("button", { name: "Трек ОТГ-20261029-01" })).toBeDisabled();
@@ -692,6 +692,28 @@ it("PL и DN по отдельности: без номера — «Сформи
   expect(cell(head, "DN")).toContain("DN591К.3-1");
   fireEvent.click(screen.getByRole("button", { name: "Сформировать PL ОТГ-20261029-01" }));
   await waitFor(() => expect(writes().map((call) => [call.url, call.body])).toContainEqual(["/api/shipping/shipments/s1/issue-document", { version: 3, document: "pl" }]));
+});
+
+it("ЭДО без № (владелец 20.11): сервер предлагает «Без УПД…» и у упакованной, и у набранной с DN; без DN — нет", async () => {
+  intakeRows = [row({ accepted: "4", packed: "4", remaining: "0", delivered: "4", tasks: [] })];
+  const offered = { ...packedShipment, missing_data: ["№ УПД"], missing_ship_codes: ["upd_number", "track_number"], no_upd_offered: true };
+  shipments = [offered];
+  const packed = render(<ProductionIntakePage principal={principal} />);
+  expect(await screen.findByRole("button", { name: "Без УПД ОТГ-20261029-01" })).toBeInTheDocument();
+  packed.unmount();
+
+  shipments = [{ ...offered, status: "Собрана", pl_number: "", dn_number: "DN591К.3-1" }];
+  const assembled = render(<ProductionIntakePage principal={principal} />);
+  fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
+  expect(await screen.findByRole("button", { name: "Без УПД ОТГ-20261029-01" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Трек ОТГ-20261029-01" })).not.toBeInTheDocument();
+  assembled.unmount();
+
+  shipments = [{ ...offered, status: "Собрана", pl_number: "", dn_number: "" }];
+  render(<ProductionIntakePage principal={principal} />);
+  fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
+  await screen.findByText("ОТГ-20261029-01");
+  expect(screen.queryByRole("button", { name: "Без УПД ОТГ-20261029-01" })).not.toBeInTheDocument();
 });
 
 it("DN «Сформировать» зовёт выдачу DN у упакованной отправки без DN", async () => {

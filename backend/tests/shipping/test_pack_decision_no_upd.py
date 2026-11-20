@@ -119,16 +119,19 @@ def test_ready_flags_follow_the_track_and_the_permit():
     assert tracked.mark_shipped(DAY).ready_to_ship is False
 
 
-def test_edo_without_number_is_a_number_gap_and_no_upd_is_not_offered():
-    """Владелец 06.11.2026: ЭДО без № — не хватает № (вписать), а не УПД; «Без УПД…» — только когда УПД нет."""
-    from app.modules.shipping.domain import no_upd_offered, shipping_gap_codes
+def test_edo_without_number_is_a_number_gap_and_the_no_upd_permit_is_offered():
+    """ЭДО без № — пробел «№ УПД» (вписать). Владелец 20.11.2026 («при разрешении без УПД нельзя DN»): такой отправке
+    тоже предлагается «Без УПД…» по PIN — с ним пробел снят и DN печатается; было (06.11) — не предлагалось вовсе.
+    «Отгрузить без данных» сама по себе ЭДО без № не держит: УПД есть (`upd_absent_unapproved`)."""
+    from app.modules.shipping.domain import no_upd_offered, shipping_gap_codes, upd_absent_unapproved
     edo = _packed(UpdType.EDO, terms=DeliveryTerms.PICKUP, upd_number="")
     paper_with_file = replace(_packed(UpdType.PAPER, terms=DeliveryTerms.PICKUP, upd_number=" - "), upd_url="/api/shipping/files/1")
 
     assert shipping_gap_codes(edo) == ("upd_number",) and edo.ready_to_ship is False
-    assert no_upd_offered(edo) is False and no_upd_offered(paper_with_file) is False
-    with pytest.raises(ShippingValidationError, match="не хватает только его № — впишите № УПД"):
-        edo.approve_no_upd("Зингер", NOW)
+    assert no_upd_offered(edo) is True and no_upd_offered(paper_with_file) is True
+    assert upd_absent_unapproved(edo) is False and upd_absent_unapproved(paper_with_file) is False
+    approved = edo.approve_no_upd("Зингер", NOW)
+    assert shipping_gap_codes(approved) == () and approved.ready_to_ship is True and no_upd_offered(approved) is False
     with pytest.raises(ShippingValidationError, match="разрешение «без УПД» не нужно"):
         _packed(UpdType.EDO, terms=DeliveryTerms.PICKUP).approve_no_upd("Зингер", NOW)
 

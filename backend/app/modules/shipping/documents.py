@@ -14,7 +14,9 @@
 «Штамп / подпись кладовщика» — фамилия кладовщика, который упаковал, «Фамилия И.О.» как «Гусев А.А.» в образце
 (владелец 13.10.2026, 22.10.2026: «ФИО может быть только кладовщика»): из тех, кто раскладывал по коробам и формировал
 PL/DN (новые первыми), берётся самый свежий, кто сейчас кладовщик (`storekeeper_signature`); таких нет — пустая строка
-под подпись. Этикетки коробов — по одной на место: образца у владельца
+под подпись. PL (владелец 20.11.2026: «PL отвратительно выглядит») — по-прежнему лист на короб, но с шапкой отправки:
+отправитель, заказчик, грузополучатель и адрес, получатель и телефон, проект, отправка, способ доставки, ТК и трек — те же
+значения, что в DN; итоги места и всей отправки, сводка мест. Этикетки коробов — по одной на место: образца у владельца
 нет, поэтому раскладка своя — отправитель, получатель, проект и PL, «Упаковка N/M», КБ с количеством, вес нетто, габариты.
 """
 
@@ -23,6 +25,7 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass
 from datetime import date
+from decimal import Decimal
 from uuid import UUID
 
 from .domain import (
@@ -79,7 +82,8 @@ def storekeeper_signature(packers: list[tuple[UUID, str]], storekeepers: set[UUI
 @dataclass(frozen=True)
 class FormRow:
     """Строка раздела «Описание»: № КБ с артикулом («КБ1 FRX.2600204»), наименование, кол-во, ед.; у PL — номер
-    этикетки (GRN партии ГП), у DN — № упаковочной ведомости и места («BXN 1, 2»)."""
+    этикетки (GRN партии ГП), у DN — № упаковочной ведомости и места («BXN 1, 2»). `item_index` и `article` — та же
+    «КБ … артикул» по клеткам (печать держит их отдельными столбцами)."""
 
     part: str
     name: str
@@ -88,6 +92,21 @@ class FormRow:
     batch: str = ""
     pl: str = ""
     boxes: str = ""
+    item_index: str = ""
+    article: str = ""
+
+
+@dataclass(frozen=True)
+class PlaceSummary:
+    """Строка сводки мест PL: место, вид, габариты, нетто, брутто, пломба, состав «КБ1 — 6 шт; КБ2 — 5 шт»."""
+
+    place: str
+    package: str
+    dims: str
+    net: str
+    gross: str
+    seal: str
+    contents: str
 
 
 @dataclass(frozen=True)
@@ -106,6 +125,24 @@ class PackingList:
     packed_at: str
     shipped_at: str
     packer: str
+    # Шапка отправки — те же значения, что в DN (`_delivery_fields`); пусто — данных нет, ERP не пишет заглушек.
+    shipper: str = SHIPPER_SHORT
+    customer: str = ""
+    consignee: str = ""
+    shipping_address: str = ""
+    contact: str = ""
+    phone: str = ""
+    project: str = ""
+    shipment: str = ""
+    dn: str = ""
+    terms: str = ""
+    carrier: str = ""
+    track: str = ""
+    # Итоги: этого места («2 позиции», «11 шт») и всей отправки (брутто — пусто, пока не взвешен каждый короб).
+    positions: str = ""
+    quantity: str = ""
+    total_gross: str = ""
+    summary: tuple[PlaceSummary, ...] = ()
 
     def to_dict(self) -> dict:
         return {"kind": "pl", "title": "".join(self.number), **asdict(self)}
@@ -141,6 +178,9 @@ class DeliveryNote:
     upd: str
     shipped_at: str
     packer: str
+    # Итоги «Описания»: «4 позиции», «77 шт».
+    positions: str = ""
+    quantity: str = ""
 
     def to_dict(self) -> dict:
         return {"kind": "dn", "title": "".join(self.number), **asdict(self)}
@@ -160,13 +200,38 @@ def _number(text: str) -> tuple[str, ...]:
     return (match.group(1), match.group(2), "-", match.group(3)) if match else (text, "", "", "")
 
 
-def _part(item: PackedItem | None, item_index: str, projects: tuple[str, ...] = ()) -> str:
-    """«КБ1 FRX.2600204»; артикул, который сам — «КБ1» или «проект + КБ» («533К.11КБ1»), не повторяется: «КБ1»."""
+def _article(item: PackedItem | None, item_index: str, projects: tuple[str, ...] = ()) -> str:
+    """Артикул КБ; артикул, который сам — «КБ1» или «проект + КБ» («533К.11КБ1»), не повторяется: пусто."""
     article = item.article if item else ""
     fold = lambda text: "".join(text.split()).casefold()  # noqa: E731
-    if fold(article) in {fold(item_index), *(fold(project + item_index) for project in projects)}:
-        article = ""
-    return " ".join(part for part in (item_index, article) if part)
+    return "" if fold(article) in {fold(item_index), *(fold(project + item_index) for project in projects)} else article
+
+
+def _part(item: PackedItem | None, item_index: str, projects: tuple[str, ...] = ()) -> str:
+    """«КБ1 FRX.2600204»; без своего артикула — «КБ1»."""
+    return " ".join(part for part in (item_index, _article(item, item_index, projects)) if part)
+
+
+def _row(item: PackedItem | None, item_index: str, quantity: Decimal, projects: tuple[str, ...], **extra: str) -> FormRow:
+    return FormRow(
+        part=_part(item, item_index, projects), name=item.name if item else "", quantity=_qty(quantity),
+        unit=(item.unit if item else "") or "шт", item_index=item_index, article=_article(item, item_index, projects),
+        **extra,
+    )
+
+
+def _count(number: int, one: str, few: str, many: str) -> str:
+    tail = number % 100
+    word = many if 11 <= tail <= 14 else one if tail % 10 == 1 else few if 2 <= tail % 10 <= 4 else many
+    return f"{number} {word}"
+
+
+def _quantity_total(rows: list[tuple[Decimal, str]]) -> str:
+    """«11 шт» или «11 шт, 2,5 м»: сумма по единицам в порядке появления."""
+    totals: dict[str, Decimal] = {}
+    for quantity, unit in rows:
+        totals[unit] = totals.get(unit, Decimal("0")) + quantity
+    return ", ".join(f"{_qty(value)} {unit}" for unit, value in totals.items())
 
 
 def _projects(shipment: Shipment) -> tuple[str, ...]:
@@ -184,33 +249,52 @@ def _prepare(shipment: Shipment, document: str) -> tuple[list[PackedItem], tuple
     return packed, shipment.boxes or default_boxes(packed)
 
 
-def build_packing_lists(shipment: Shipment, packer: str = "") -> list[PackingList]:
-    """PL на каждый короб (владелец 15.09.2026): у всех коробов один № PL, место — «BXN i / N»."""
+def build_packing_lists(
+    shipment: Shipment, packer: str = "", customer: str = "", card: ProjectAddressee | None = None,
+) -> list[PackingList]:
+    """PL на каждый короб (владелец 15.09.2026): у всех коробов один № PL, место — «BXN i / N»; шапка отправки — как у DN,
+    сводка мест — когда коробов больше одного."""
     packed, boxes = _prepare(shipment, "pl")
     by_index = {item.item_index: item for item in packed}
+    projects = _projects(shipment)
+    units = {item.item_index: item.unit or "шт" for item in packed}
+    head = _delivery_fields(shipment, customer, card)
+    summary = tuple(PlaceSummary(
+        place=str(box.place), package=box.kind, dims=box.dims, net=box.net, gross=box.gross, seal=box.seal,
+        contents="; ".join(f"{entry.item_index} — {_qty(entry.quantity)} {units.get(entry.item_index, 'шт')}" for entry in box.items),
+    ) for box in boxes) if len(boxes) > 1 else ()
     forms = []
     for box in boxes:
-        rows = []
-        for entry in box.items:
-            item = by_index.get(entry.item_index)
-            rows.append(FormRow(
-                part=_part(item, entry.item_index, _projects(shipment)), name=item.name if item else "", quantity=_qty(entry.quantity),
-                unit=(item.unit if item else "") or "шт", batch=(item.grn if item else "") or "",
-            ))
+        rows = [
+            _row(by_index.get(entry.item_index), entry.item_index, entry.quantity, projects,
+                 batch=(by_index[entry.item_index].grn if entry.item_index in by_index else "") or "")
+            for entry in box.items
+        ]
         forms.append(PackingList(
             number=_number(shipment.pl_number), place=str(box.place), places=str(len(boxes)), package=box.kind,
             dims=box.dims, net=box.net, gross=box.gross, seal=box.seal, rows=tuple(rows),
             # До отгрузки PL печатают при упаковке — в «Shipping Date» стоит дата упаковки, как в образце.
             packed_at=_day(shipment.packed_at), shipped_at=_day(shipment.shipped_at or shipment.packed_at), packer=packer,
+            customer=customer, consignee=shipment.receiver, shipping_address=head["address"], contact=head["contact"],
+            phone=head["phone"], project=", ".join(projects), shipment=shipment.number, dn=shipment.dn_number,
+            terms=head["terms"], carrier=head["carrier"], track=head["track"],
+            positions=_count(len(rows), "позиция", "позиции", "позиций"),
+            quantity=_quantity_total([(entry.quantity, units.get(entry.item_index, "шт")) for entry in box.items]),
+            total_gross=total_gross(boxes), summary=summary,
         ))
     return forms
+
+
+def _without_upd(shipment: Shipment) -> bool:
+    """Отправка уходит без УПД: «Без УПД» или разрешение «без УПД» по PIN, а № УПД так и нет (владелец 20.11.2026)."""
+    return not shipment.upd_number and (shipment.upd_type == UpdType.NONE or shipment.no_upd_approved_at is not None)
 
 
 def _upd(shipment: Shipment) -> str:
     """«Номер УПД/ТТН»: «385 от 18.09.26»; без номера — пусто (дописать), отправка без УПД — «без УПД»."""
     if shipment.upd_number:
         return f"{shipment.upd_number} от {_day(shipment.upd_date)}" if shipment.upd_date else shipment.upd_number
-    return "без УПД" if shipment.upd_type == UpdType.NONE else ""
+    return "без УПД" if _without_upd(shipment) else ""
 
 
 def split_carrier(carrier: str, track: str) -> tuple[str, str]:
@@ -235,6 +319,23 @@ def _places(numbers: list[int]) -> str:
     return f"BXN {', '.join(str(number) for number in numbers)}" if numbers else ""
 
 
+def _delivery_fields(shipment: Shipment, customer: str, card: ProjectAddressee | None) -> dict[str, str]:
+    """Данные доставки DN и шапки PL: отправка, иначе карточка проекта (у отправки без снимка доставки)."""
+    project = (_projects(shipment) or (card.project if card else "",))[0]
+    delivery = (card or ProjectAddressee(project=project)) if shipment.delivery_snapshot_at is None else ProjectAddressee(project=project)
+    carrier, track = split_carrier(shipment.carrier or delivery.carrier, shipment.track_number)
+    terms = shipment.terms or delivery.terms
+    # Получатель, отличный от заказчика, — в адресе доставки DN: ТК везёт ему.
+    receiver = shipment.receiver if shipment.receiver and shipment.receiver != customer else ""
+    return {
+        # Условий нет, но едет ТК — «Доставка ТК».
+        "terms": _TERMS_LABELS[terms] if terms else ("Доставка ТК" if carrier else ""),
+        "receiver": receiver, "address": shipment.shipping_point or delivery.shipping_point,
+        "contact": shipment.contact or delivery.contact, "phone": shipment.phone or delivery.phone,
+        "carrier": carrier, "track": track,
+    }
+
+
 def build_delivery_note(
     shipment: Shipment, customer: str, packer: str = "", card: ProjectAddressee | None = None,
 ) -> DeliveryNote:
@@ -247,35 +348,33 @@ def build_delivery_note(
         if gaps:
             raise ShippingValidationError("Нельзя печатать DN: не хватает — " + ", ".join(gaps))
     packed, boxes = _prepare(shipment, "dn")
-    rows = tuple(FormRow(
-        part=_part(item, item.item_index, _projects(shipment)), name=item.name, quantity=_qty(item.quantity), unit=item.unit or "шт",
-        pl=shipment.pl_number, batch=item.grn,
+    rows = tuple(_row(
+        item, item.item_index, item.quantity, _projects(shipment), pl=shipment.pl_number, batch=item.grn,
         boxes=_places([box.place for box in boxes if any(entry.item_index == item.item_index for entry in box.items)]),
     ) for item in packed)
-    # Получатель, отличный от заказчика, — в адресе доставки: ТК везёт ему.
-    receiver = shipment.receiver if shipment.receiver and shipment.receiver != customer else ""
+    head = _delivery_fields(shipment, customer, card)
     project = (_projects(shipment) or (card.project if card else "",))[0]
     card = card or ProjectAddressee(project=project)
-    delivery = card if shipment.delivery_snapshot_at is None else ProjectAddressee(project=project)
-    carrier, track = split_carrier(shipment.carrier or delivery.carrier, shipment.track_number)
-    terms = shipment.terms or delivery.terms
     hours, note = split_hours(card.hours, shipment.note)
+    without_upd = _without_upd(shipment)
     return DeliveryNote(
         number=_number(shipment.dn_number),
         # До отгрузки DN печатают вместе с PL — в образце стоит дата упаковки.
         date=_day(shipment.shipped_at or shipment.packed_at),
         # «Заказ №» без значения — номер проекта; договор и спецификация необязательны (владелец 28.10.2026) — пусто, пока не внесены; «PO #» печатается только при заказе заказчика.
         customer=customer, po=card.po.strip() or project, po_from_card=bool(card.po.strip()), contract=card.contract,
-        spec=card.spec.strip(), invoice=card.invoice,
-        # Условий нет, но едет ТК — «Доставка ТК».
-        terms=_TERMS_LABELS[terms] if terms else ("Доставка ТК" if carrier else ""),
-        shipping_address=", ".join(part for part in (receiver, shipment.shipping_point or delivery.shipping_point) if part),
-        hours=hours, contact=shipment.contact or delivery.contact, phone=shipment.phone or delivery.phone, carrier=carrier,
-        track=track, tk_note=shipment.tk_note, rows=rows,
-        upd_edo=shipment.upd_type == UpdType.EDO, upd_paper=shipment.upd_type == UpdType.PAPER,
+        spec=card.spec.strip(), invoice=card.invoice, terms=head["terms"],
+        shipping_address=", ".join(part for part in (head["receiver"], head["address"]) if part),
+        hours=hours, contact=head["contact"], phone=head["phone"], carrier=head["carrier"],
+        track=head["track"], tk_note=shipment.tk_note, rows=rows,
+        # Ушла без УПД по разрешению — ни ЭДО, ни бумажной в коробе ещё нет.
+        upd_edo=shipment.upd_type == UpdType.EDO and not without_upd,
+        upd_paper=shipment.upd_type == UpdType.PAPER and not without_upd,
         # Бумажная УПД едет в первом коробе.
         paper_box=_places([boxes[0].place]), note=note, places=str(len(boxes)), gross=total_gross(boxes),
         upd=_upd(shipment), shipped_at=_day(shipment.shipped_at or shipment.packed_at), packer=packer,
+        positions=_count(len(rows), "позиция", "позиции", "позиций"),
+        quantity=_quantity_total([(item.quantity, item.unit or "шт") for item in packed]),
     )
 
 

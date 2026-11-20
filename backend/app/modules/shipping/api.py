@@ -924,7 +924,8 @@ def print_documents(
         project = next((line.project for line in shipment.lines if line.project), "")
         card = _run(lambda: uow.addressees.get(project)) if project else None
     try:
-        forms = build_packing_lists(shipment, packer) if document == "pl" else [build_delivery_note(shipment, customer, packer, card)]
+        forms = (build_packing_lists(shipment, packer, customer, card) if document == "pl"
+                 else [build_delivery_note(shipment, customer, packer, card)])
     except ShippingValidationError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     return {"forms": [form.to_dict() for form in forms]}

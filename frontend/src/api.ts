@@ -792,6 +792,21 @@ export interface ShippingFormRow {
   batch: string;
   pl: string;
   boxes: string;
+  /** Та же «КБ артикул» по клеткам: № КБ и артикул (пусто, если он сам — «КБ1» или «проект + КБ»). */
+  item_index?: string;
+  article?: string;
+}
+
+/** Строка сводки мест PL (shipping/documents.py `PlaceSummary`). */
+export interface PlaceSummary {
+  place: string;
+  package: string;
+  dims: string;
+  net: string;
+  gross: string;
+  seal: string;
+  /** «КБ1 — 12 шт; КБ2 — 25 шт». */
+  contents: string;
 }
 
 /** PL одного короба — форма 04.2 (shipping/documents.py `PackingList`); пустое поле — клетка для руки. */
@@ -811,6 +826,25 @@ export interface PackingListForm {
   packed_at: string;
   shipped_at: string;
   packer: string;
+  /** Шапка отправки — те же значения, что в DN; пусто — данных нет (клетка для руки). */
+  shipper?: string;
+  customer?: string;
+  consignee?: string;
+  shipping_address?: string;
+  contact?: string;
+  phone?: string;
+  project?: string;
+  shipment?: string;
+  dn?: string;
+  terms?: string;
+  carrier?: string;
+  track?: string;
+  /** Итоги места («2 позиции», «37 шт») и брутто всей отправки (пусто, пока не взвешен каждый короб). */
+  positions?: string;
+  quantity?: string;
+  total_gross?: string;
+  /** Сводка мест — когда коробов больше одного. */
+  summary?: PlaceSummary[];
 }
 
 /** DN отправки — форма 04.1 (shipping/documents.py `DeliveryNote`); реквизиты заказа — из карточки проекта. */
@@ -844,6 +878,9 @@ export interface DeliveryNoteForm {
   upd: string;
   shipped_at: string;
   packer: string;
+  /** Итоги «Описания»: «4 позиции», «77 шт». */
+  positions?: string;
+  quantity?: string;
 }
 
 export type ShippingForm = PackingListForm | DeliveryNoteForm;
