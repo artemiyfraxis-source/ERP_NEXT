@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiError, failureText, productionApi, type ProductionInstrument } from "./api";
-import { formatMoment, formatNumber, toNumber } from "./format";
+import { formatMoment, formatNumber, glueUnits, toNumber } from "./format";
 import { VswrChart } from "./VswrChart";
-import { ScreenSwitcher, VnaScreensEditor } from "./VnaScreensEditor";
+import { ScreenSwitcher, VnaScreensEditor, lossTitle } from "./VnaScreensEditor";
 import {
   CALIBRATION_REFUSALS,
   REFUSAL_FALLBACK,
@@ -51,7 +51,7 @@ export const STEP_TITLES: Record<VnaBenchStepKey, string> = {
 const STEP_ORDER: VnaBenchStepKey[] = ["calibration", "confidence", "load_port1", "load_port2"];
 const STEP_HINTS: Record<VnaBenchStepKey, string> = {
   calibration: "Подключите АКМ к концам обоих кабелей: порт 1 и порт 2. Кабели закрепите — после калибровки их не двигать. Калибровка идёт около 30 секунд, сразу за ней — доверительный тест.",
-  confidence: "Тест идёт сам сразу после калибровки — АКМ с кабелей не снимайте. Норма: передача ±0,1 дБ, отражение ±0,4 дБ до 10 ГГц и ±0,5 дБ выше.",
+  confidence: "Тест идёт сам сразу после калибровки — АКМ с кабелей не снимайте. Норма: передача ±0,1 дБ, отражение ±0,4 дБ до 10 ГГц и ±0,5 дБ выше.",
   load_port1: "Отключите АКМ, не сдвигая кабели. Наверните нагрузку LOAD 6650F27 на кабель порта 1 и затяните тарированным ключом. Норма — КСВН не больше 1,06 во всей полосе.",
   load_port2: "Перенесите нагрузку LOAD на кабель порта 2 и затяните ключом. Норма та же — КСВН не больше 1,06.",
 };
@@ -78,9 +78,9 @@ export const VERDICTS: Record<VnaBenchVerdict["code"], { label: string; tone: st
 };
 
 const CHECKS: { kind: VnaBenchCheckKind; title: string; what: string }[] = [
-  { kind: "flex", title: "Шевеление кабелей", what: "При каждой калибровке. LOAD на кабеле: КСВН остаётся ≤ 1,06; перемычка: S21 меняется не больше ±0,05 дБ." },
+  { kind: "flex", title: "Шевеление кабелей", what: "При каждой калибровке. LOAD на кабеле: КСВН остаётся ≤ 1,06; перемычка: S21 меняется не больше ±0,05 дБ." },
   { kind: "weekly", title: "Еженедельная — контрольная мера СИ.009", what: "Переход ADP1A СИ.009 сравнивается с эталонной кривой из его карточки: отклонение КСВН и S21 не больше U." },
-  { kind: "monthly", title: "Ежемесячная — меры 6650F27", what: "OPEN, SHORT, LOAD на каждом порту и перемычка: 0 дБм, ПЧ 1 кГц, три подключения с поворотом на 120°." },
+  { kind: "monthly", title: "Ежемесячная — меры 6650F27", what: "OPEN, SHORT, LOAD на каждом порту и перемычка: 0 дБм, ПЧ 1 кГц, три подключения с поворотом на 120°." },
 ];
 const CHECK_TITLES = Object.fromEntries(CHECKS.map((check) => [check.kind, check.title])) as Record<VnaBenchCheckKind, string>;
 
@@ -93,7 +93,7 @@ export function phaseHint(kind: VnaBenchCheckKind, phase: VnaBenchCheckPhase): s
       load_p1: "Наверните LOAD на кабель порта 1 и изогните кабель в рабочих пределах — КСВН должен остаться не больше 1,06.",
       load_p2: "Перенесите LOAD на кабель порта 2 и изогните кабель в рабочих пределах — КСВН должен остаться не больше 1,06.",
       thru_memory: "Соедините концы кабелей перемычкой и держите кабели в рабочем положении — прибор запомнит графики.",
-      thru_flex: "Изогните кабели в рабочих пределах — S21 должен меняться не больше чем на ±0,05 дБ.",
+      thru_flex: "Изогните кабели в рабочих пределах — S21 должен меняться не больше чем на ±0,05 дБ.",
     }[phase.key] ?? phase.label;
   }
   if (kind === "weekly") {
@@ -144,7 +144,7 @@ export function VnaBench({ canEdit }: { canEdit: boolean }) {
     return () => { active = false; };
   }, [attempt]);
 
-  // Пока агент выполняет команду — опрос раз в 2 с; без команды экран не дёргает сервер.
+  // Пока агент выполняет команду — опрос раз в 2 с; без команды экран не дёргает сервер.
   const polling = sessionBusy(state);
   useEffect(() => {
     if (!polling) return;
@@ -191,7 +191,7 @@ export function VnaBench({ canEdit }: { canEdit: boolean }) {
       {loadError ? <>
         <div className="error-banner" role="alert">{loadError}</div>
         <button type="button" className="secondary small" onClick={() => setAttempt((value) => value + 1)}>Повторить</button>
-      </> : <p className="empty">Загрузка…</p>}
+      </> : <p className="empty" role="status">Загрузка…</p>}
     </section>;
   }
   const session = state.session?.status === "open" ? state.session : null;
@@ -222,7 +222,7 @@ export function VnaBench({ canEdit }: { canEdit: boolean }) {
     {session?.command && <div className="vna-bench-command" role="status">
       <span>Выполняется: {session.command.label}{session.command.state === "queued" ? " — ждёт агента" : ""}, с {clock(session.command.since)}</span>
       {canAct && <button type="button" className="secondary small" disabled={Boolean(busy)}
-        onClick={() => void act("abort", () => vnaBenchApi.abort(session.id, session.version))}>Прервать</button>}
+        onClick={() => { if (window.confirm(`Прервать «${session.command?.label}»? Измерение остановится, результат не сохранится.`)) void act("abort", () => vnaBenchApi.abort(session.id, session.version)); }}>Прервать</button>}
     </div>}
     <div className="seg-tabs sub" role="tablist" aria-label="Разделы рабочего места ВАЦ" onKeyDown={tabKeys}>
       {TABS.map((item) => <button key={item.id} type="button" role="tab" id={`vna-bench-tab-${item.id}`} aria-controls="vna-bench-panel"
@@ -233,7 +233,7 @@ export function VnaBench({ canEdit }: { canEdit: boolean }) {
       {!session && tab === "measure" && <div className="panel vna-bench-start">
         <p>Сеанс не открыт. Перед началом: ВАЦ включён и прогрет не меньше 40 минут, S2VNA показывает «Готов», АКМ подключён по USB
           и горит зелёным, разъёмы осмотрены и почищены. Сеанс для СИ и проверок калибруется на сетке «ОТК — переход»
-          (10 МГц – 18 ГГц); для КБ найдите изделие ниже — сеанс откроется на полосе его ЭТК.</p>
+          (10 МГц – 18 ГГц); для КБ найдите изделие ниже — сеанс откроется на полосе его ЭТК.</p>
         {canAct && state.device.s2vna_ready === false && <p className="tone-warn">Начать можно, когда S2VNA покажет «Готов».</p>}
         {canAct && <button type="button" className="primary" disabled={Boolean(busy) || notReady}
           onClick={() => void open()}>Открыть сеанс для СИ и проверок</button>}
@@ -247,7 +247,7 @@ export function VnaBench({ canEdit }: { canEdit: boolean }) {
         busy={Boolean(busy)} blockedStart={notReady} act={act} open={(assembly) => void open(assembly)} />}
       {session && tab === "measure" && canAct && <div className="form-actions vna-bench-close">
         <button type="button" className="secondary small" disabled={Boolean(busy) || Boolean(session.command)}
-          onClick={() => void act("close", () => vnaBenchApi.close(session.id, session.version))}>Закрыть сеанс</button>
+          onClick={() => { if (window.confirm("Закрыть сеанс? Калибровка и шаги текущего сеанса будут сброшены.")) void act("close", () => vnaBenchApi.close(session.id, session.version)); }}>Закрыть сеанс</button>
       </div>}
       {tab === "checks" && <ChecksPanel state={state} session={session} canEdit={canAct} busy={Boolean(busy)} act={act} />}
       {tab === "screens" && <VnaScreensEditor session={session} calibrationValid={state.calibration.valid} canEdit={canEdit}
@@ -259,8 +259,8 @@ export function VnaBench({ canEdit }: { canEdit: boolean }) {
 function temperatureText(state: VnaBenchState): string {
   const t = state.device.temperatures;
   if (!t) return "нет данных";
-  const vna = t.vna_c.map((value) => value === null ? "—" : `${num(value, 1)} °C`).join(" / ");
-  return `ВАЦ ${vna} · АКМ ${t.acm_c === null ? "—" : `${num(t.acm_c, 1)} °C`}`;
+  const vna = t.vna_c.map((value) => value === null ? "—" : `${num(value, 1)} °C`).join(" / ");
+  return `ВАЦ ${vna} · АКМ ${t.acm_c === null ? "—" : `${num(t.acm_c, 1)} °C`}`;
 }
 
 export function dueText(due: VnaBenchDue | undefined): { text: string; tone: string } {
@@ -287,7 +287,7 @@ function BenchHeader({ state }: { state: VnaBenchState }) {
       <div><dt>ПК</dt><dd>{device.pc_name ?? "—"} <span className={device.agent_online ? "tone-ok" : "tone-danger"}>{device.agent_online ? "на связи" : "нет связи"}</span></dd></div>
       <div><dt>ВАЦ</dt><dd>{device.instrument_number} {device.model}{device.serial ? `, зав. № ${device.serial}` : ""}</dd></div>
       <div><dt>S2VNA</dt><dd className={ready ? "tone-ok" : "tone-warn"}>{ready ? "Готов" : device.s2vna_ready === false
-        ? `Не готов${device.warmup_min !== null ? ` — прогрев ${device.warmup_min} из 40 мин` : ""}` : "нет данных"}</dd></div>
+        ? `Не готов${device.warmup_min !== null ? ` — прогрев ${device.warmup_min} из 40 мин` : ""}` : "нет данных"}</dd></div>
       <div><dt>Температура</dt><dd className="num">{temperatureText(state)}</dd></div>
       <div><dt>Калибровка</dt><dd className={calibration.valid ? "tone-ok" : "tone-warn"}>{calibration.valid
         ? `действует до ${clock(calibration.valid_until)}` : calibration.reason ?? "нет"}</dd></div>
@@ -341,16 +341,22 @@ function StepList({ session, calibrationValid, calibrationReason, canEdit, busy,
   </div>;
 }
 
+/** Подпись графика плана: сервер шлёт «Модуль S21» — на экране «Передача (S21), дБ» (только показ). */
+const planTraceTitle = (label: string) => {
+  const match = /^Модуль (S11|S21|S12|S22)$/.exec(label);
+  return match ? lossTitle(match[1] as "S11" | "S21" | "S12" | "S22") : label;
+};
+
 function PlanCard({ plan }: { plan: VnaBenchPlan }) {
   return <dl className="vna-bench-plan">
     <div><dt>Экран</dt><dd>{plan.screen_name || "—"}</dd></div>
-    <div><dt>Полоса</dt><dd className="num">{formatNumber(plan.band_mhz[0], { digits: 0 })} – {formatNumber(plan.band_mhz[1], { digits: 0 })} МГц</dd></div>
+    <div><dt>Полоса</dt><dd className="num">{formatNumber(plan.band_mhz[0], { digits: 0 })} – {formatNumber(plan.band_mhz[1], { digits: 0 })} МГц</dd></div>
     <div><dt>Точек</dt><dd className="num">{formatNumber(plan.points, { digits: 0 })}</dd></div>
     <div><dt>ПЧ</dt><dd className="num">{formatNumber(plan.ifbw_hz >= 1000 ? plan.ifbw_hz / 1000 : plan.ifbw_hz, { digits: 1 })} {plan.ifbw_hz >= 1000 ? "кГц" : "Гц"}</dd></div>
-    <div><dt>Мощность</dt><dd className="num">{formatNumber(plan.power_dbm, { digits: 1 })} дБм</dd></div>
-    <div className="wide"><dt>Графики</dt><dd>{plan.traces.map((trace) => `${trace.label} (${trace.scale})`).join(" · ") || "—"}</dd></div>
+    <div><dt>Мощность</dt><dd className="num">{formatNumber(plan.power_dbm, { digits: 1 })} дБм</dd></div>
+    <div className="wide"><dt>Графики</dt><dd>{plan.traces.map((trace) => glueUnits(`${planTraceTitle(trace.label)} (${trace.scale})`)).join(" · ") || "—"}</dd></div>
     <div className="wide"><dt>Норма</dt><dd>{plan.norm_vswr === null ? "не установлена — не оценивается"
-      : `КСВН ≤ ${vswr(plan.norm_vswr)}${plan.uncertainty !== null ? `, U ${num(plan.uncertainty, 3)}` : ""}`}{plan.norm_source ? ` · ${plan.norm_source}` : ""}</dd></div>
+      : `КСВН ≤ ${vswr(plan.norm_vswr)}${plan.uncertainty !== null ? `, U ${num(plan.uncertainty, 3)}` : ""}`}{plan.norm_source ? ` · ${glueUnits(plan.norm_source)}` : ""}</dd></div>
   </dl>;
 }
 
@@ -468,7 +474,7 @@ function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, a
     <h2>Объект</h2>
     <form className="vna-bench-find" onSubmit={(event) => void find(event)}>
       <label>СИ или КБ — скан или номер
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="СИ.035, ПЗ-0001/3 или скан этикетки" autoComplete="off" />
+        <input name="vna-object" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="СИ.035, ПЗ-0001/3 или скан этикетки…" autoComplete="off" spellCheck={false} />
       </label>
       <button type="submit" className="secondary" disabled={looking || !query.trim()}>{looking ? "Ищу…" : "Найти"}</button>
     </form>
@@ -489,7 +495,7 @@ function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, a
         {canEdit && target.kind === "assembly" && <button type="button" className="primary" disabled={busy || blockedStart}
           onClick={() => open(assemblyOpen)}>Открыть сеанс для КБ</button>}
       </>}
-      {session && !plan && !error && <p className="empty">Составляю план замера…</p>}
+      {session && !plan && !error && <p className="empty" role="status">Составляю план замера…</p>}
       {session && plan && <>
         {target.kind === "instrument" && !wrongCalibration && <div className="vna-bench-chain">
           <FixturePicker side="left" fixtures={(fixtures ?? []).filter((f) => isFixture(f, target.instrument_id) && f.id !== target.right?.instrument_id)}
@@ -497,13 +503,13 @@ function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, a
           <FixturePicker side="right" fixtures={(fixtures ?? []).filter((f) => isFixture(f, target.instrument_id) && f.id !== target.left?.instrument_id)}
             value={target.right ?? null} disabled={busy || inProgress} onChange={(right) => retarget({ right })} />
           <label className="vna-bench-fmax">Верхняя частота, ГГц
-            <input inputMode="decimal" value={fmaxText} disabled={busy || inProgress} aria-invalid={Boolean(fmaxError)}
+            <input name="vna-fmax" autoComplete="off" spellCheck={false} inputMode="decimal" value={fmaxText} disabled={busy || inProgress} aria-invalid={Boolean(fmaxError)}
               aria-describedby={fmaxError ? "vna-bench-fmax-error" : undefined}
-              placeholder={suggestedGhz !== null ? formatNumber(suggestedGhz, { digits: 2 }) : ""}
+              placeholder={suggestedGhz !== null ? formatNumber(suggestedGhz, { digits: 2 }) : "12,4…"}
               onChange={(event) => setFmaxText(event.target.value)} onBlur={applyFmax}
               onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); applyFmax(); } }} />
             {fmaxError ? <span id="vna-bench-fmax-error" className="tone-danger" role="alert">{fmaxError}</span>
-              : <span className="muted-text">{suggestedGhz !== null ? `по серии и норме: до ${formatNumber(suggestedGhz, { digits: 2 })} ГГц` : ""}</span>}
+              : <span className="muted-text">{suggestedGhz !== null ? `по серии и норме: до ${formatNumber(suggestedGhz, { digits: 2 })} ГГц` : ""}</span>}
           </label>
         </div>}
         {!wrongCalibration && <PlanCard plan={plan} />}
@@ -554,7 +560,7 @@ function ConnectionChip({ item, connection }: { item: VnaBenchItem; connection: 
 
 function verdictNumbers(verdict: VnaBenchVerdict, item: VnaBenchItem): string {
   const parts: string[] = [];
-  if (verdict.worst_vswr !== null) parts.push(`наибольший КСВН ${vswr(verdict.worst_vswr)}${verdict.worst_mhz !== null ? ` на ${formatNumber(verdict.worst_mhz, { digits: 0 })} МГц` : ""}`);
+  if (verdict.worst_vswr !== null) parts.push(`наибольший КСВН ${vswr(verdict.worst_vswr)}${verdict.worst_mhz !== null ? ` на ${formatNumber(verdict.worst_mhz, { digits: 0 })} МГц` : ""}`);
   if (verdict.norm_vswr !== null) parts.push(`норма ≤ ${vswr(verdict.norm_vswr)}`);
   if (verdict.uncertainty !== null) parts.push(`U ${num(verdict.uncertainty, 3)}`);
   const measured = item.connections.filter((connection) => connection.status === "passed" || connection.status === "failed").length;

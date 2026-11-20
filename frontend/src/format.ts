@@ -172,3 +172,6 @@ export function kbLabel(project: string | null | undefined, index?: string | nul
   }
   return left ? `${left} · ${right}` : right;
 }
+
+/** Текст от сервера: пробел между числом и единицей (дБ, ГГц, °C…) — неразрывный, чтобы «0,2 дБ» не рвалось по строкам. */
+export const glueUnits = (text: string): string => text.replace(/(\d) (дБм|дБ|ГГц|МГц|кГц|Гц|мин|°C)(?![\p{L}])/gu, `$1${NBSP}$2`);

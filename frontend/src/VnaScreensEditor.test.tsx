@@ -34,7 +34,7 @@ it("lists screens in Russian with purpose, graphs, layout and state", async () =
   const table = await screen.findByRole("table", { name: "Экраны ВАЦ" });
   const rows = within(table).getAllByRole("row");
   expect(rows[1].textContent).toContain("Переход (СИ)");
-  expect(rows[1].textContent).toContain("КСВН S11 · Потери (LOGM) S21");
+  expect(rows[1].textContent).toContain("КСВН S11 · Передача (S21), дБ");
   expect(rows[1].textContent).toContain("4 — 2 × 2");
   expect(rows[1].textContent).toContain("основной");
   expect(rows[2].textContent).toContain("на ВАЦ");
@@ -155,10 +155,31 @@ it("refuses before saving what the server refuses: graph count, flex memory, mar
   expect("fields" in fieldsOf({ ...draft, traces: Array(13).fill(s11) })).toBe(true);
   expect(fieldsOf({ ...draft, purpose: "flex" })).toEqual(
     { error: "Экран шевеления сравнивает с памятью — отметьте «Память» хотя бы у одного графика" });
-  expect(fieldsOf({ ...draft, markers: "1; 19" })).toEqual({ error: "Маркеры: 19 ГГц — вне диапазона ВАЦ 0,1–18000 МГц" });
+  expect(fieldsOf({ ...draft, markers: "1; 19" })).toEqual({ error: "Маркеры: 19 ГГц — вне диапазона ВАЦ 0,1–18000 МГц" });
   expect(fieldsOf({ ...draft, markers: "3; 1" })).toEqual({ error: "Маркеры: по возрастанию частоты, без повторов" });
   expect(fieldsOf({ ...draft, markers: Array.from({ length: 16 }, (_, i) => String(i + 1)).join("; ") }))
     .toEqual({ error: "Маркеры: не больше 15" });
   const big = { ...draft.traces[1], mode: "manual" as const, pdiv: "2000000", rlev: "0", rpos: "10" };
   expect(fieldsOf({ ...draft, traces: [big] })).toEqual({ error: "График 1: деление — не больше 1 000 000" });
 });
+
+it("warns before closing a window with unsaved edits and closes silently without them", async () => {
+  vi.spyOn(vnaScreensApi, "list").mockResolvedValue({ screens: [adapter] });
+  const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+  render(<VnaScreensEditor session={null} calibrationValid={false} canEdit show={vi.fn()} />);
+  fireEvent.click(await screen.findByText("ОТК — переход"));
+  let dialog = await screen.findByRole("dialog");
+  fireEvent.click(within(dialog).getAllByRole("button", { name: "Закрыть" })[0]);
+  expect(confirm).not.toHaveBeenCalled();
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  fireEvent.click(await screen.findByText("ОТК — переход"));
+  dialog = await screen.findByRole("dialog");
+  fireEvent.change(within(dialog).getByLabelText("Название"), { target: { value: "Переход крупно" } });
+  fireEvent.click(within(dialog).getAllByRole("button", { name: "Закрыть" })[0]);
+  expect(confirm).toHaveBeenCalledWith("Закрыть без сохранения изменений?");
+  expect(screen.getByRole("dialog")).toBeTruthy();
+  fireEvent.click(within(screen.getByRole("dialog")).getAllByRole("button", { name: "Закрыть" })[0]);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  confirm.mockRestore();
+});
+

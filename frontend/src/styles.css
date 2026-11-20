@@ -5339,6 +5339,7 @@ tr.order-row-late > td:first-child { box-shadow: inset 3px 0 0 var(--tone-danger
 }
 a.button-link { display: inline-block; text-decoration: none; text-align: center; }
 .vswr-chart { margin: 8px 0 4px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+.vswr-chart svg text { font-variant-numeric: tabular-nums; }
 .vswr-chart svg { display: block; width: 100%; height: auto; max-height: 340px; }
 .vswr-problems { display: block; padding: 0 20px; }
 .vswr-result { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 14px; }
@@ -5483,7 +5484,7 @@ a.button-link { display: inline-block; text-decoration: none; text-align: center
 .vna-screens-list tr.inactive td { color: var(--muted-foreground); }
 .vna-screen-window { display: grid; gap: 12px; }
 .vna-screen-window h3 { margin: 4px 0 0; font-size: 14px; font-weight: 500; }
-.vna-screen-window p { margin: 0; }
+.vna-screen-window p { margin: 0; } .vna-screen-window .muted-text { color: var(--muted-foreground); font-size: 13px; }
 .vna-screen-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 16px; }
 .vna-screen-fields label { display: grid; gap: 4px; font-size: 12px; color: var(--muted-foreground); }
 .vna-screen-fields label.wide { grid-column: span 2; }
@@ -5501,7 +5502,7 @@ a.button-link { display: inline-block; text-decoration: none; text-align: center
 .vna-screen-preview { display: grid; gap: 8px; }
 .vna-screen-graph { margin: 0; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); min-width: 0; }
 .vna-screen-graph figcaption { font-size: 12px; color: var(--muted-foreground); }
-.vna-screen-graph svg { display: block; width: 100%; height: auto; font-family: Arial, Helvetica, sans-serif; }
+.vna-screen-graph svg { display: block; width: 100%; height: auto; font-family: Arial, Helvetica, sans-serif; font-variant-numeric: tabular-nums; }
 .vna-screen-graph.empty-graph { display: grid; place-items: center; min-height: 80px; }
 .vna-screen-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; }
 .vna-screen-switch { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 12px; }

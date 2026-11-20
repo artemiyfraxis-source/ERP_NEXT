@@ -31,7 +31,7 @@ const kb = { kind: "assembly", task_id: "t1", task_number: "ПЗ-0001", position
 const target = { kind: "instrument", instrument_id: "si-035", number: "СИ.035", name: "Переход ADP1A 3,5 мм (розетка) — 3,5 мм (вилка)", serial_number: "N8B141" };
 const plan = {
   screen_name: "ОТК — переход", band_mhz: [10, 18000], points: 1601, ifbw_hz: 1000, power_dbm: 0,
-  traces: [{ label: "КСВН S11", scale: "1,00–1,10" }, { label: "КСВН S22", scale: "1,00–1,10" }, { label: "Потери S21", scale: "0…−0,5 дБ" }, { label: "Потери S12", scale: "0…−0,5 дБ" }],
+  traces: [{ label: "КСВН S11", scale: "1,00–1,10" }, { label: "КСВН S22", scale: "1,00–1,10" }, { label: "Модуль S21", scale: "0…−0,5 дБ" }, { label: "Модуль S12", scale: "0…−0,5 дБ" }],
   norm_vswr: 1.06, norm_source: "ADP1A, данные изготовителя, до 20 ГГц", uncertainty: 0.012,
   connection_hint: "Сторона 1 перехода — к кабелю порта 1, сторона 2 — к кабелю порта 2. Затяните тарированным ключом.", refusal: null,
 };
