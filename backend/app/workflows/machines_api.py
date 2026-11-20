@@ -33,6 +33,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Security
 from pydantic import AwareDatetime, BaseModel, Field
 from sqlalchemy import func, select
 
+from app.modules.equipment_setup.recipes import wire_key
+from app.modules.production import machine_history as history
 from app.modules.production import machines as rules
 from app.modules.production import ob099
 from app.modules.production.api import production_uow_factory
@@ -50,6 +52,7 @@ from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
 from app.shared.persistence import AuditEventRow
 from app.workflows.marking_labels import STATUS_LABELS
+from app.workflows.ob019_setup import wire_label
 from app.shared.http_auth import TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, require_section
 
 router = APIRouter(prefix="/api/production/machines", tags=["production"])
@@ -786,6 +789,10 @@ def agent_report(payload: ReportPayload, request: Request, bridge: Bridge, facto
             uow.audit.add(AuditEvent(
                 id=uuid4(), aggregate_id=link.equipment_id, event_type="production.machine_bound", actor=bridge.actor,
                 occurred_at=now, details={"inventory": inventory, "machine_id": link.machine_id, "pc_name": link.pc_name}))
+        if accepted and link.kind == rules.KIND_OB019 and payload.link == "ok":
+            # Speed history (machine_history): a row when the counter, state, run or setup changed.
+            history.record(session, link, rules.checked_registers(link.kind, payload.registers), payload.boot,
+                           payload.seq, now, wire_of=lambda text: wire_key(wire_label(text)))
         uow.commit()
     return {"ok": True, "accepted": accepted, "bound": bound}
 
