@@ -14,6 +14,8 @@ export interface CuttingQueueRow {
   group_number: string | null;
   wire: string | null;
   wire_name: string | null;
+  /** Полный текст провода (подсказка); `wire_name` — короткое имя для строки. */
+  wire_title?: string | null;
   length_mm: string | null;
   planned: string;
   done: string;

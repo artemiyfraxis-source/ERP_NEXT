@@ -200,12 +200,11 @@ it("has a section title and keeps a long wire name on one line with a tooltip", 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url.includes("/cutting-queue/machines")) return json(MACHINES);
-    return json({ machine_id: "ОБ.095", version: "v", rows: [row({ wire_name: long, setup_change: true, setup_text: `Заправьте ${long}` })] });
+    return json({ machine_id: "ОБ.095", version: "v", rows: [row({ wire_name: "RTK 031", wire_title: long, setup_change: true, setup_text: `Заправьте ${long}` })] });
   });
   render(<CuttingQueue />);
   expect(await screen.findByRole("heading", { name: "Очередь резки" })).toBeInTheDocument();
-  const cell = screen.getAllByText(long)[0].closest("td")!;
-  expect(cell.className).toContain("cq-wire");
-  expect(cell).toHaveAttribute("title", long);
+  const clip = screen.getByText("RTK 031", { selector: ".cq-wire .cq-clip" });
+  expect(clip).toHaveAttribute("title", long);
   expect(screen.getByTitle(`Заправьте ${long}`)).toBeInTheDocument();
 });

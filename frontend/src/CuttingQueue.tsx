@@ -129,7 +129,8 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
     }
   }
 
-  if (hideWhenEmpty && !error && (!machines || !machines.length)) return null;
+  // Пока список станков грузится, «Загрузка…» (не пустое место): карточки заданий ждут первого ответа очереди.
+  if (hideWhenEmpty && !error && machines && !machines.length) return null;
   if (!machines) return error ? <div className="error-banner" role="alert">{error}</div> : <div className="empty">Загрузка…</div>;
 
   const rows = queue?.rows ?? [];
@@ -171,12 +172,12 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
             const current = row.key === currentKey;
             const value = quantities[row.key] ?? String(Math.trunc(Number(row.left)));
             return <Fragment key={row.key}>
-              {row.setup_change && <tr className="cq-setup"><td colSpan={columns}><div className="cq-clip" title={row.setup_text}>{row.setup_text}</div></td></tr>}
+              {row.setup_change && <tr className="cq-setup"><td className="cq-setup-cell" colSpan={columns}><div className="cq-clip" title={row.setup_text}>{row.setup_text}</div></td></tr>}
               <tr className={current ? "cq-current" : undefined} aria-current={current ? "true" : undefined}>
                 <td>{row.project}</td>
                 <td title={row.group_number ?? undefined}>{row.item}</td>
                 {showMachine && <td><Dash value={(row.machines ?? []).map((machine) => machine.machine_name).join(", ")} /></td>}
-                <td className="cq-wire" title={row.wire_name || row.wire || undefined}><Dash value={row.wire_name || row.wire || ""} /></td>
+                <td className="cq-wire"><div className="cq-clip" title={row.wire_title || row.wire_name || row.wire || undefined}><Dash value={row.wire_name || row.wire || ""} /></div></td>
                 <td className="num"><Dash value={num(row.length_mm)} /></td>
                 <td className="num"><b>{num(row.left)}</b></td>
                 <td><Dash value={row.strip_a ?? ""} /></td>

@@ -1711,3 +1711,60 @@ it("draws no task cards until the first cutting-queue load settles, then hides o
   await screen.findByText("Заправьте RG316");
   await waitFor(() => expect(screen.getAllByRole("button", { name: "Начать" })).toHaveLength(1));
 });
+
+function queueFixture() {
+  const mk = (suffix: string, number: string): ProductionTask => ({ ...task, id: `70000000-0000-0000-0000-0000000000${suffix}`, number, operations: [{ ...task.operations[0], id: `71000000-0000-0000-0000-0000000000${suffix}`, state: "не начата", mates: [] }] });
+  const cut = mk("f1", "ПЗ-0401");
+  const other = mk("f2", "ПЗ-0402");
+  const row = { key: "k", task_id: cut.id, operation_id: cut.operations[0].id, task_number: "ПЗ-0401", project: "708К.", item: "КБ1", group_number: null,
+    wire: "RG316", wire_name: "RG316", wire_title: "RG316", length_mm: "100", planned: "10", done: "0", left: "10", strip_a: null, strip_a_mode: null, strip_b: null,
+    strip_b_mode: null, laser_mark: null, marking_mode: null, operator_names: [], warnings: [], blocked: null, setup_change: true, setup_text: "Заправьте RG316" };
+  const principal: Principal = {
+    user: { id: "10000000-0000-0000-0000-000000000002", email: "operator@example.test", name: "Оператор", department: "Производство" },
+    roles: ["operator"], access_level: "operator", permissions: { myops: "edit" },
+  };
+  return { cut, other, row, principal };
+}
+
+it.each([403, 500])("shows both task cards and the error banner when the cutting queue answers %s", async (status) => {
+  const { cut, other, principal: operatorPrincipal } = queueFixture();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/production/my") return json({ tasks: [cut, other] });
+    if (path === "/api/production/my/execution") return json({ session: null, boxes: [] });
+    if (path.includes("/cutting-queue")) return new Response(JSON.stringify({ detail: "Нет доступа" }), { status, headers: { "Content-Type": "application/json" } });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<ProductionPage principal={operatorPrincipal} mine />);
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Начать" })).toHaveLength(2));
+  expect(screen.getByRole("alert")).toBeInTheDocument();
+});
+
+it("waits for the queue again after returning from an employee's view", async () => {
+  const { cut, other, row, principal: base } = queueFixture();
+  const fitterId = "10000000-0000-0000-0000-000000000009";
+  const master: Principal = { ...base, roles: ["foreman"], access_level: "foreman", permissions: { production: "view", myops: "edit" } };
+  let allCalls = 0;
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path.startsWith("/api/production/my/execution")) return json({ session: null, boxes: [] });
+    if (path.startsWith("/api/production/my")) return json({ tasks: path.includes("operator_id") ? [other] : [cut, other] });
+    if (path === "/api/production/operators") return json({ viewer_site: "ЦАР", operators: [{ id: fitterId, name: "Монтажник", site: "ЦАР" }] });
+    if (path.includes("/cutting-queue/machines")) return json({ machines: [{ machine_id: "all", machine_name: "Все станки", rows: 1, left: "10", projects: 1 }] });
+    if (path.includes("/cutting-queue")) { allCalls += 1; if (allCalls > 2) await gate; return json({ machine_id: "all", version: "v", rows: [row] }); }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<ProductionPage principal={master} mine />);
+  await screen.findByText("Заправьте RG316");
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Начать" })).toHaveLength(1));
+  fireEvent.change(await screen.findByRole("combobox", { name: "Сотрудник" }), { target: { value: fitterId } });
+  await screen.findByText("Вид сотрудника Монтажник — только просмотр");
+  fireEvent.click(screen.getByRole("button", { name: "Вернуться к моим заданиям" }));
+  await waitFor(() => expect(screen.queryByText("Вид сотрудника Монтажник — только просмотр")).toBeNull());
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(screen.queryByRole("button", { name: "Начать" })).toBeNull();
+  release();
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Начать" })).toHaveLength(1));
+});

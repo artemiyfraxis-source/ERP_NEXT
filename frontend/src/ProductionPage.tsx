@@ -88,6 +88,8 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
   // С «Работать за сотрудника» очередь не прячет карточки (onRows не передаётся): ждать нечего.
   const queueSettled = Boolean(viewAs) || queueOps !== null;
+  // Возврат с «Работать за сотрудника» к своему виду: очередь грузится заново, а не «загружена пустой».
+  useEffect(() => { if (!viewAs) setQueueOps(null); }, [viewAs]);
   const groupedOperations = new Set(cuttingGroups.flatMap((group) => cuttingRows(group).map((row) => `${row.task_id}:${row.operation_id}`)));
   const queueCount = tasks.filter((task) => !isDoneCard(task) && !groupedOperations.has(`${task.id}:${task.operations[0]?.id}`)).length
     + cuttingGroups.filter((group) => cuttingRows(group).some((row) => row.state !== "done")).length;

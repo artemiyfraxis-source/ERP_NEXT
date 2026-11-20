@@ -452,11 +452,15 @@ unknown) → 422; no references factory → 503; neither parameter → 422:
 {machine_id, equipment_id, version, rows: [{key, task_id, operation_id, task_version, task_number, project, item,
   group_id, group_number, group_state (open|frozen|null), machine_id, machine_name,
   machines: [{machine_id, machine_name}],
-  wire, wire_name, length_mm, planned, done, left,
+  wire, wire_name, wire_title, length_mm, planned, done, left,
   strip_a, strip_a_mode (full|partial|null), strip_a_program (confirmed|unconfirmed|absent; wires: null),
   strip_b, strip_b_mode, strip_b_program, diameters, laser_mark, marking_mode (full|ends|null),
   operator_ids, operator_names, warnings, blocked, setup_change, setup_text}]}
 ```
+
+`wire` is the article (always full). `wire_name` is for display: a name up to 40 characters as is, a longer one (supplier
+description) is replaced by the article, else cut at a word with «…». `wire_title` is the full text (tooltip). The setup
+sort/grouping uses the full name. The setup text names the article in full.
 
 Decimals are strings (`length_mm` mm; `planned`/`done`/`left` in PF units, `done` = good + defect). `strip_*` is `null`
 when that side is not stripped; coax values are the confirmed program boundaries from the conductor tip, else L1/L2/L3.

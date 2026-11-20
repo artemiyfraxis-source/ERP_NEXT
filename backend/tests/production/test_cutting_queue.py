@@ -684,3 +684,27 @@ def test_long_supplier_description_is_never_the_wire_name(production_api):
     for row in rows.values():
         assert "антенн" not in row["wire_name"] and "антенн" not in row["setup_text"]
         assert len(row["setup_text"].split(" · ")[0]) < 60
+
+
+def test_rows_are_grouped_by_the_full_wire_name_and_the_article_is_never_cut(production_api):
+    client, _ = production_api
+    first = "Компания Крокс. Разработка, производство и продажа антенн, версия А"
+    second = "Компания Крокс. Разработка, производство и продажа антенн, версия Б"
+    docs = []
+    for length, text in ((100, first), (200, second), (300, first)):
+        doc = document(length=length)
+        doc["build_config"]["coax"].update(cableArt="", cableName=text)
+        docs.append(doc)
+    long_art = document(length=400)
+    long_art["build_config"]["coax"].update(cableArt="RTK 031-ARTICLE-WITH-A-VERY-LONG-SUFFIX-123456", cableName=LONG_TEXT)
+    batch(client, [issue("708К.", f"КБ{n}", doc) for n, doc in enumerate(docs + [long_art], 1)])
+    rows = {row["item"]: row for row in queue(client)["rows"]}
+    # Same shortened text, different full names: two setups, not one.
+    assert rows["КБ1"]["wire_name"] == rows["КБ2"]["wire_name"] and rows["КБ1"]["wire_title"] != rows["КБ2"]["wire_title"]
+    ordered = [row for row in queue(client)["rows"] if row["item"] in ("КБ1", "КБ2", "КБ3")]
+    assert [row["setup_change"] for row in ordered] == [True, False, True]  # the two «версия А» rows share one setup
+    by_wire = [row["wire_title"] for row in ordered]
+    assert by_wire == sorted(by_wire) and by_wire.count(first) == 2
+    article = rows["КБ4"]
+    assert article["wire_name"] == article["wire"] == "RTK 031-ARTICLE-WITH-A-VERY-LONG-SUFFIX-123456"
+    assert article["setup_text"].startswith("Заправьте RTK 031-ARTICLE-WITH-A-VERY-LONG-SUFFIX-123456")

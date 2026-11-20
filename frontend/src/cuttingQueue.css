@@ -24,5 +24,7 @@
 .cq-last li:first-child { font-weight: 600; color: var(--tone-ok); }
 @media (pointer: coarse) { .cq button, .cq input, .cq select { min-height: 40px; } }
 .cq-title { margin: 0; font-size: 14px; font-weight: 600; }
-.cq-table .cq-wire { max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Chrome игнорирует max-width у td: сжимаем ячейки (max-width:0 + width:100% у баннера), обрезаем блоком внутри. */
 .cq-table .cq-clip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.cq-table .cq-wire .cq-clip { max-width: 220px; }
+.cq-table td.cq-setup-cell { max-width: 0; width: 100%; }
