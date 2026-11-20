@@ -256,10 +256,10 @@ def _catalog(references_factory):
 
 def _unit(references_factory, catalog, equipment_id):
     """The physical БД.ОБ unit `equipment_id` as the queue sees it; 422 when it is not a machine unit."""
-    record = None
-    if references_factory is not None:
-        with references_factory() as references:
-            record = references.tech_operations.get(equipment_id)
+    if references_factory is None:
+        raise HTTPException(503, "Справочник БД.ОБ недоступен — станок не проверить")
+    with references_factory() as references:
+        record = references.tech_operations.get(equipment_id)
     return cutting_queue.resolve_unit(record, catalog)
 
 
@@ -275,8 +275,9 @@ def queue_machines(principal: Annotated[Principal, Depends(production_view_princ
                    factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
                    techcards_factory: Annotated[Callable | None, Depends(techcards_uow_factory)],
                    references_factory: Annotated[Callable | None, Depends(references_uow_factory)]):
-    rows = _queue(principal, factory, techcards_factory, catalog=_catalog(references_factory))
-    return {"machines": cutting_queue.machines(rows)}
+    catalog = _catalog(references_factory)
+    rows = _queue(principal, factory, techcards_factory, catalog=catalog)
+    return {"machines": cutting_queue.machines(rows, catalog)}
 
 
 @queue_router.get("")

@@ -44,24 +44,29 @@ class MachineUnit:
     site: str  # ЦАР | ЖУК | "" (unknown)
     model_id: UUID | None
     role: str = "operational"
+    model_article: str = ""  # the MODEL's article (equipment_models), the tie-break of a number shared by models
 
     @property
     def operational(self) -> bool:
         return self.role != SUPPORTING
 
 
+def _same(value) -> str:
+    return "".join(str(value or "").split()).upper()
+
+
 def machine_units(session) -> tuple[MachineUnit, ...]:
     """The numbered units of БД.ОБ (no calculation rows «.X» / «(R)», no model counts), by inventory number."""
-    rows = session.execute(select(EquipmentRecordRow, EquipmentModelRow.role).outerjoin(
+    rows = session.execute(select(EquipmentRecordRow, EquipmentModelRow.role, EquipmentModelRow.article).outerjoin(
         EquipmentModelRow, EquipmentModelRow.id == EquipmentRecordRow.equipment_model_id,
     ))
     units = []
-    for row, role in rows:
+    for row, role, article in rows:
         found = physical_equipment((SqlAlchemyTechOperationRepository._domain(row),))
         if found:
             item = found[0]
             units.append(MachineUnit(row.id, item.inventory_number, item.name, item.model, item.site,
-                                     row.equipment_model_id, role or "operational"))
+                                     row.equipment_model_id, role or "operational", article or ""))
     return tuple(sorted(units, key=lambda unit: (unit.inventory_number, str(unit.id))))
 
 
@@ -105,9 +110,15 @@ class SqlAlchemyProductionResourceContext:
         if not models:
             raise ResourceConflict(f"Оборудования {family} из ЭТК нет среди единиц БД.ОБ")
         if len(models) > 1:
-            # Same tie-break as EquipmentCatalog.machine: the model whose article is named in the row («EW-50A(R)»).
+            # Same order as EquipmentCatalog.machine: the exact unit number first («ОБ.027.4» is WL-2.0ВТ), then the
+            # MODEL article named in the row («EW-50A(R)»); one match decides, otherwise the ETK is rebuilt.
+            number = _same(tool.get("inventory_number"))
             name = " ".join(str(tool.get("name") or "").split()).casefold()
-            named = {unit.model_id for unit in catalog if unit.model_id in models and unit.model and unit.model.casefold() in name}
+            named = ({unit.model_id for unit in catalog if unit.model_id in models and _same(unit.inventory_number) == number}
+                     if number else set())
+            if len(named) != 1:
+                named = {unit.model_id for unit in catalog if unit.model_id in models
+                         and (unit.model_article or unit.model) and (unit.model_article or unit.model).casefold() in name}
             if len(named) == 1:
                 model = next(iter(named))
                 return None if models[model] == SUPPORTING else model

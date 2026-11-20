@@ -2,6 +2,7 @@
 
 from uuid import UUID, uuid4
 
+import pytest
 from sqlalchemy import select
 
 from app.main import app
@@ -12,6 +13,16 @@ from tests.production.test_api import production_api  # noqa: F401
 from tests.production.test_cutting_groups import NOW, batch, document, groups
 
 URL = "/api/production/cutting-queue"
+
+
+@pytest.fixture(autouse=True)
+def _no_stale_references():
+    """Tests that seed БД.ОБ set the references factory on the shared app; none must leak into the next test."""
+    if hasattr(app.state, "references_uow_factory"):
+        del app.state.references_uow_factory
+    yield
+    if hasattr(app.state, "references_uow_factory"):
+        del app.state.references_uow_factory
 
 
 def issue(project, index, doc=None):
@@ -355,3 +366,91 @@ def test_done_with_a_unit_checks_model_and_site_and_stamps_the_receipt(productio
         details = uow.session.get(AuditEventRow, receipt_id("k-ok")).details
         assert (details["equipment_id"], details["inventory_number"]) == (str(ids["ОБ.100.1"]), "ОБ.100.1")
         assert len(uow.session.scalars(select(ProductionOutputRow)).all()) == 1
+
+
+def test_single_unit_model_is_not_a_pool_and_bzw_default_wins_next_to_a_pool(production_api):
+    client, _ = production_api
+    seed_units()
+    several = pooled(document())
+    several["operations"][0]["card"]["tooling"].append({"section": "Оборудование", "inventory_number": "ОБ.095", "name": "BZW-50X"})
+    one = on_machine(document(), "ОБ.101.X")
+    batch(client, [issue("708К.", "КБ1", standalone(several)), issue("709К.", "КБ1", standalone(one))])
+    bzw = queue(client, "ОБ.095")["rows"]
+    assert [row["project"] for row in bzw] == ["708К."]
+    assert bzw[0]["warnings"] == ["в ЭТК ещё станки: ОБ.100 BZW-D2.0S · любой свободный (3)"]
+    # ОБ.101 has one physical unit: the row is that unit, not «любой свободный (1)».
+    assert [row["project"] for row in queue(client, "ОБ.101.1")["rows"]] == ["709К."]
+    machines = client.get(f"{URL}/machines").json()["machines"]
+    assert [item["machine_id"] for item in machines] == ["ОБ.095", "ОБ.101.1"]
+
+
+def test_row_with_only_a_model_id_is_a_pool_and_pools_sort_by_code(production_api):
+    client, _ = production_api
+    ids = seed_units()
+    with app.state.references_uow_factory() as references:
+        model = str(references.tech_operations.get(ids["ОБ.100.1"]).equipment_model_id)
+    doc = document()
+    doc["operations"][0]["card"]["tooling"] = [{"section": "Оборудование", "equipment_model_id": model, "name": "Автомат"}]
+    batch(client, [issue("708К.", "КБ1", standalone(doc)), issue("709К.", "КБ1", standalone(on_machine(document(), "ОБ.1")))])
+    machines = client.get(f"{URL}/machines").json()["machines"]
+    assert [item["machine_id"] for item in machines] == ["ОБ.1", model]
+    assert machines[1]["machine_name"] == "ОБ.100 BZW-D2.0S · любой свободный (3)"
+
+
+def test_done_with_a_unit_on_a_grouped_row(production_api):
+    client, operator = production_api
+    ids = seed_units()
+    batch(client, [issue("708К.", "КБ1", pooled(document())), issue("708К.", "КБ2", pooled(document(length=1500)))])
+    row = next(item for item in client.get(URL, params={"equipment_id": str(ids["ОБ.100.2"])}).json()["rows"] if item["item"] == "КБ2")
+    assert row["group_id"]
+    body = {"task_id": row["task_id"], "operation_id": row["operation_id"], "quantity": 3}
+    refused = client.post(f"{URL}/done", params={"on_behalf_of": str(operator)}, headers={"Idempotency-Key": "g-1"},
+                          json={**body, "equipment_id": str(ids["ОБ.101.1"])})
+    assert refused.status_code == 422 and "другой модели" in refused.json()["detail"]
+    ok = client.post(f"{URL}/done", params={"on_behalf_of": str(operator)}, headers={"Idempotency-Key": "g-2"},
+                     json={**body, "equipment_id": str(ids["ОБ.100.2"])})
+    assert ok.status_code == 200, ok.text
+    from app.modules.production.cutting_queue import receipt_id
+    from app.shared.persistence import AuditEventRow
+    with app.state.production_uow_factory() as uow:
+        assert uow.session.get(AuditEventRow, receipt_id("g-2")).details["inventory_number"] == "ОБ.100.2"
+
+
+def test_first_done_is_refused_when_the_worker_is_on_another_site_than_the_unit(production_api):
+    from app.modules.identity.infrastructure import IdentityUserRow
+
+    client, operator = production_api
+    ids = seed_units()
+    batch(client, [issue("708К.", "КБ1", standalone(pooled(document())))])
+    row = queue(client, next(item["machine_id"] for item in client.get(f"{URL}/machines").json()["machines"]))["rows"][0]
+    with app.state.production_uow_factory() as uow:
+        for person in (operator, UUID("10000000-0000-0000-0000-000000000001")):  # the worker and the acting master
+            uow.session.get(IdentityUserRow, person).site = "ЖУК"
+        uow.commit()
+    body = {"task_id": row["task_id"], "operation_id": row["operation_id"], "quantity": 2}
+    params = {"on_behalf_of": str(operator)}
+    refused = client.post(f"{URL}/done", params=params, headers={"Idempotency-Key": "s-1"},
+                          json={**body, "equipment_id": str(ids["ОБ.100.1"])})
+    assert refused.status_code == 422 and "площадки" in refused.json()["detail"]
+    # A unit with an unknown site is allowed.
+    with app.state.references_uow_factory() as references:
+        from dataclasses import replace
+        record = references.tech_operations.get(ids["ОБ.100.1"])
+        references.tech_operations.save(replace(record, fields={**record.fields, "Расположение": ""}))
+        references.commit()
+    ok = client.post(f"{URL}/done", params=params, headers={"Idempotency-Key": "s-2"},
+                     json={**body, "equipment_id": str(ids["ОБ.100.1"])})
+    assert ok.status_code == 200, ok.text
+
+
+def test_without_the_reference_catalog_pool_rows_keep_the_raw_key_and_a_unit_gets_503(production_api):
+    client, operator = production_api
+    batch(client, [issue("708К.", "КБ1", standalone(pooled(document())))])
+    assert [row["project"] for row in queue(client, POOL)["rows"]] == ["708К."]
+    unit = str(uuid4())
+    response = client.get(URL, params={"equipment_id": unit})
+    assert response.status_code == 503 and "Справочник" in response.json()["detail"]
+    row = queue(client, POOL)["rows"][0]
+    posted = client.post(f"{URL}/done", params={"on_behalf_of": str(operator)}, headers={"Idempotency-Key": "e-1"},
+                         json={"task_id": row["task_id"], "operation_id": row["operation_id"], "quantity": 1, "equipment_id": unit})
+    assert posted.status_code == 503

@@ -12,7 +12,6 @@ an audit event whose id is derived from the key (primary key = the constraint ag
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
@@ -22,7 +21,6 @@ from uuid import UUID, uuid5
 
 from sqlalchemy import select
 
-from app.modules.references.equipment import physical_equipment
 from app.shared.events import AuditEvent
 from app.shared.persistence import AuditEventRow
 from .application import AssignProductionCommand, ConcurrentProductionUpdate, assign_task, lock_reflow_projects
@@ -101,29 +99,32 @@ def _cut_ops(document: Mapping | None, operation) -> list[tuple[Mapping, Mapping
     return found
 
 
-_POOL_SUFFIX = re.compile(r"\.[A-ZА-Я]$")
+def _number(value: object) -> str:
+    return "".join(str(value or "").split()).upper().replace("OБ", "ОБ")
 
 
-def _pool_machine(tool: Mapping, catalog: EquipmentCatalog) -> tuple[str, str] | None:
-    """(key, label) of a tooling row that names «any unit of a model» — a calculation unit «ОБ.100.X» / «(R)» or only a
-    model id; None for a single unit (its inventory number stays the key) or a model the catalog cannot resolve."""
-    inventory = _text(tool.get("inventory_number")).upper()
-    if not (inventory or tool.get("equipment_model_id")) or (inventory and not _POOL_SUFFIX.search(inventory)):
-        return None
+def _pool_machine(tool: Mapping, catalog: EquipmentCatalog) -> tuple[str, str | None] | None:
+    """(key, label) of a tooling row that names «any unit of a model»: the catalog resolves it to a model with several
+    physical units, none of them the row's exact number («ОБ.100.X», bare «ОБ.100», a model id only). A model with one
+    physical unit is that unit: (its inventory number, None) — the ETK name stays the label. None — keep the raw
+    identity (a physical unit named exactly, or a model the catalog cannot resolve)."""
     machine = catalog.machine(tool)
-    if machine is None or not machine.model_id:
+    model = catalog.models.get(machine.key) if machine is not None and machine.model_id else None
+    physical = {unit.number for unit in model.physical} if model else set()
+    if not physical or _number(tool.get("inventory_number")) in physical:
         return None
-    units = catalog.get(machine.key, 0)
+    if len(physical) == 1:
+        return next(iter(physical)), None
     # The operator knows a machine by its model («ОБ.100 BZW-D2.0S»), not by the long catalogue name.
-    model = catalog.models.get(machine.key)
-    article = model.article.replace("(R)", "").strip() if model else ""
+    article = model.article.replace("(R)", "").strip()
     label = f"{machine.code} {article}" if article else machine.label
-    return machine.key, f"{label} · любой свободный" + (f" ({units})" if units else "")
+    return machine.key, f"{label} · любой свободный ({len(physical)})"
 
 
 def _machine(op: Mapping, warnings: list[str], catalog: EquipmentCatalog = EMPTY) -> tuple[str | None, str]:
     machines: dict[str, str] = {}
     pooled: set[str] = set()
+    preferred = ""
     for tool in _mapping(op.get("card")).get("tooling") or []:
         tool = _mapping(tool)
         if tool.get("section") != "Оборудование":
@@ -131,13 +132,15 @@ def _machine(op: Mapping, warnings: list[str], catalog: EquipmentCatalog = EMPTY
         pool = _pool_machine(tool, catalog)
         identity = pool[0] if pool else _text(tool.get("inventory_number") or tool.get("equipment_model_id"))
         if identity:
-            machines.setdefault(identity, pool[1] if pool else _text(tool.get("name")))
-            if pool:
+            machines.setdefault(identity, pool[1] if pool and pool[1] else _text(tool.get("name")))
+            if pool and pool[1]:
                 pooled.add(identity)
+            if _number(tool.get("inventory_number")) == DEFAULT_MACHINE:
+                preferred = preferred or identity
     if not machines:
         warnings.append("нет в ЭТК: станок")
         return None, NO_MACHINE_NAME
-    identity = DEFAULT_MACHINE if DEFAULT_MACHINE in machines else next(iter(machines))
+    identity = DEFAULT_MACHINE if DEFAULT_MACHINE in machines else preferred or next(iter(machines))
     if len(machines) > 1:
         warnings.append("в ЭТК ещё станки: " + ", ".join(
             machines[other] if other in pooled else other for other in machines if other != identity))
@@ -314,15 +317,18 @@ class PoolUnit:
 
 
 def resolve_unit(record, catalog: EquipmentCatalog) -> PoolUnit:
-    """The БД.ОБ record as a physical unit; a calculation row «.X» / «(R)» or a non-machine is refused."""
-    found = physical_equipment((record,)) if record is not None else ()
-    if not found:
+    """The БД.ОБ record as a physical unit of the catalog; unknown, a calculation row «.X» / «(R)» or a non-machine is
+    refused. Everything is read from the catalog (model, site) — the record only names the unit."""
+    if record is None:
+        raise ProductionValidationError("Станка нет в БД.ОБ")
+    fields = {" ".join(str(key).split()).casefold(): value for key, value in (record.fields or {}).items()}
+    number = _number(fields.get("инв. номер") or fields.get("inventorynumber"))
+    machine = catalog.machine({"inventory_number": number, "equipment_model_id": str(record.equipment_model_id or "")})
+    model = catalog.models.get(machine.key) if machine is not None else None
+    unit = next((item for item in model.physical if item.number == number), None) if model else None
+    if unit is None:
         raise ProductionValidationError("Это не физический станок БД.ОБ — выберите станок с инвентарным номером")
-    unit = found[0]
-    machine = catalog.machine({"inventory_number": unit.inventory_number, "name": unit.name,
-                               "equipment_model_id": str(record.equipment_model_id or "")})
-    keys = {unit.inventory_number} | ({machine.key} if machine is not None and machine.model_id else set())
-    return PoolUnit(record.id, unit.inventory_number, unit.site, frozenset(keys))
+    return PoolUnit(record.id, unit.number, unit.site, frozenset({unit.number, machine.key}))
 
 
 def collect(uow, actor) -> list[dict]:
@@ -453,8 +459,9 @@ def queue_version(rows: list[dict]) -> str:
                     row["length_mm"], row["setup_text"], row["warnings"], row["blocked"]] for row in rows])
 
 
-def machines(rows: list[dict]) -> list[dict]:
-    """Machines with open cut work: rows, pieces left, projects."""
+def machines(rows: list[dict], catalog: EquipmentCatalog = EMPTY) -> list[dict]:
+    """Machines with open cut work: rows, pieces left, projects; by catalog code and label (a model key is a uuid)."""
+    codes = catalog.codes()
     found: dict[str | None, dict] = {}
     for row in rows:
         entry = found.setdefault(row["machine_id"], {"machine_id": row["machine_id"], "machine_name": row["machine_name"],
@@ -463,7 +470,8 @@ def machines(rows: list[dict]) -> list[dict]:
         entry["left"] += Decimal(row["left"])
         entry["projects"].add(row["project"])
     return [{**entry, "left": _count(entry["left"]), "projects": len(entry["projects"])}
-            for _key, entry in sorted(found.items(), key=lambda item: (item[0] is None, item[0] or ""))]
+            for _key, entry in sorted(found.items(), key=lambda item: (
+                item[0] is None, codes.get(item[0] or "", item[0] or ""), item[1]["machine_name"], item[0] or ""))]
 
 
 def receipt_id(key: str) -> UUID:
@@ -513,7 +521,12 @@ def mark_done(task_id: UUID, operation_id: UUID, quantity: int, key: str, actor,
             if values is None or values["machine_id"] not in unit.accept:
                 raise ProductionValidationError(
                     f"Станок {unit.number} другой модели, чем в ЭТК этой строки ({(values or {}).get('machine_name') or NO_MACHINE_NAME})")
-            if unit.site and any(other != unit.site for other in _sites(task, operation, _People(uow))):
+            people = _People(uow)
+            sites = _sites(task, operation, people)
+            for person in (worker, actor):  # the hands at the machine count even before the PF has assignees
+                known = people.get(person.id)
+                sites |= {known.site} - {"", None} if known else set()
+            if unit.site and any(other != unit.site for other in sites):
                 raise ProductionValidationError(f"Станок {unit.number} стоит на площадке {unit.site}, а задание — другой площадки")
         if member is None and uow.session.scalar(select(ProductionWorkSessionRow.id).where(ProductionWorkSessionRow.operation_id == operation_id,
                 ProductionWorkSessionRow.status.in_((WorkStatus.ACTIVE.value, WorkStatus.PAUSED.value))).limit(1)) is not None:
