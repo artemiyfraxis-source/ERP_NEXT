@@ -45,7 +45,8 @@ from app.modules.production.vna_checks import (LOAD_LIMIT, KitTolerance, assert_
                                                control_standard, expected_verdict, flex, journal_number,
                                                kit_standard as judge_kit_standard, load_vswr, same_grid)
 from app.modules.production.vna_dsp import TRACES, TwoPort, VnaDataError, read_touchstone, select_band, summary, vswr, write_touchstone
-from app.modules.production.vna_screens import item_limits, number_text, screen as bench_screen
+from app.modules.production.vna_screen_infrastructure import VnaScreenRepository, definition_of
+from app.modules.production.vna_screens import ItemLimits, ScreenDef, item_limits, number_text, screen as bench_screen
 from app.modules.production.vna_session_infrastructure import VnaCommandRow, VnaSessionRepository, VnaSessionRow
 from app.modules.production.vna_sessions import TERMINAL, Profile, SessionConflict, StrictModel, resolved_profile
 from app.modules.production.vswr import RecordVswrCommand, VswrFileInput, record_vswr
@@ -180,6 +181,10 @@ class ResolveInput(StrictModel):
     query: str = Field(min_length=1, max_length=200)
 
 
+class ShowScreenInput(Version):
+    screen_id: UUID
+
+
 class CheckInput(Version):
     kind: Literal["flex", "weekly", "monthly"]
     instrument_id: UUID | None = None                                # СИ.009 / the 6650F27 card; default — the only one
@@ -227,6 +232,11 @@ def _actor(snapshot) -> Actor:
 
 def _profile(row) -> Profile:
     return Profile.model_validate(row.snapshot["profile"])
+
+
+def _screen(uow, purpose: str) -> ScreenDef:
+    """The stored default screen of a purpose (production_vna_screens; the code preset while the table is empty)."""
+    return VnaScreenRepository(uow.session).default(purpose)
 
 
 def _commands(uow, row):
@@ -318,6 +328,11 @@ def _run_steps(row, run_id):
     return [(i, s) for i, s in enumerate(row.steps) if (s.get("item") or {}).get("run_id") == run_id]
 
 
+def _run_screen(row, run_id) -> Screen:
+    applied = [s for _, s in _run_steps(row, run_id) if s["op"] == "apply_screen"]
+    return Screen.model_validate(applied[-1]["args"]["screen"])
+
+
 def _latest_run(row, kinds):
     runs = [r for r in _runs(row) if r["kind"] in kinds]
     return runs[-1] if runs else None
@@ -382,6 +397,8 @@ def _command_view(row, commands):
     command = active[-1]
     step = row.steps[command.expected_step] if command.expected_step < len(row.steps) else {}
     label = OP_LABELS.get(command.op, command.op)
+    if command.op == "apply_screen" and (step.get("item") or {}).get("kind") == "view":
+        label = f"экран «{step['item']['name']}» на ВАЦ"
     if command.op == "capture" and step.get("label"):
         label = "развёртка: " + step["label"]
     return dict(label=label, state="queued" if command.status == "pending" else "running",
@@ -540,11 +557,19 @@ def _state(uow, principal, now, vna=None, row=None):
         session = dict(id=str(row.id), version=row.version, status=status, state=row.state, started_at=row.created_at,
                        operator=row.snapshot["operator"]["name"], owned=row.operator_id == principal.actor.id,
                        error=row.error or None, steps=_steps_view(uow, row, commands, items),
+                       view_screen_id=_view_screen_id(row),
                        command=_command_view(row, commands),
                        items=[_item_view(uow, repository, row, r, runs, items, commands) for r in runs if r["kind"] in ITEMS],
                        checks=[_check_view(uow, row, r, runs, items, commands) for r in runs if r["kind"] in CHECK_NAMES])
     return dict(device=_device(uow, vna, row, commands, now), calibration=_calibration(row, now),
                 due=_due(uow, vna, row, now), session=session)
+
+
+def _view_screen_id(row) -> str | None:
+    """The saved screen the operator put on S2VNA, while it is still there (the next item or check replaces it)."""
+    applied = [s for s in row.steps if s["op"] == "apply_screen"]
+    item = (applied[-1].get("item") or {}) if applied else {}
+    return item.get("screen_id") if item.get("kind") == "view" else None
 
 
 @router.get(PREFIX + "/state")
@@ -692,7 +717,7 @@ def open_session(principal: Person, now: Now, factory: Factory, techcards_factor
                     row = repository.create(now=now, operator_id=principal.actor.id, machine_id=owner, purpose="bench",
                                             instrument_id=vna_id, instrument_serial=instrument["serial"], task_id=None,
                                             operation_id=None, product_position=None, snapshot=snapshot,
-                                            steps=bench.session_steps(snapshot))
+                                            steps=bench.session_steps(snapshot, load=_screen(uow, "load")))
             except IntegrityError:
                 if repository.active(vna_id, instrument["serial"]):
                     raise Refusal("device_busy", "Прибор занят активной сессией ВАЦ") from None
@@ -720,7 +745,7 @@ def run_step(session_id: UUID, key: Literal["calibration", "confidence", "load_p
                 repository.act(row, "confirm", row.version, row.step, now)
             elif row.state == "ready":
                 # 11.5: redo the calibration in the same session; the operator has connected the ACM.
-                repository.append(row, bench.calibration_steps(row.snapshot, acm_connected=True), now,
+                repository.append(row, bench.calibration_steps(row.snapshot, acm_connected=True, load=_screen(uow, "load")), now,
                                   error="", **bench.UNCALIBRATED)
             else:
                 raise Refusal("device_busy", "Калибровку сейчас начать нельзя — дождитесь окончания команды")
@@ -885,7 +910,8 @@ def _plan(uow, row, target: Target) -> tuple[dict, dict | None]:
             limits = item_limits(item.inventory_number, item.name, rf, stop_hz=top)
             norm_vswr = max((max(line.start_value, line.stop_value) for line in limits.swr), default=None)
             chain_text = ", ".join(chain) or "напрямую"
-            plan, screen = card("ОТК — переход", bench_screen("adapter", item=limits), (profile.start_hz, top), norm_vswr,
+            spec = _screen(uow, "adapter")
+            plan, screen = card(spec.name, bench_screen(spec, item=limits), (profile.start_hz, top), norm_vswr,
                                 getattr(norm, "reference", None) if norm else None,
                                 f"Цепочка «{chain_text}»: сторона 1 — к порту 1 ВАЦ, сторона 2 — к порту 2")
             meta = bench.run("instrument", instrument_id=str(item.id), number=item.inventory_number, name=item.name,
@@ -901,8 +927,8 @@ def _plan(uow, row, target: Target) -> tuple[dict, dict | None]:
         if task is None or target.position > task.quantity:
             raise ValueError("Позиция изделия выходит за количество задания")
         low, high = (float(v) * 1e6 for v in assembly["band_mhz"])
-        plan, screen = card("ОТК — кабельная сборка", bench_screen("assembly", band_hz=(low, high),
-                                                                  assembly_vswr=assembly["vswr_max"]),
+        spec = _screen(uow, "assembly")
+        plan, screen = card(spec.name, bench_screen(spec, band_hz=(low, high), assembly_vswr=assembly["vswr_max"]),
                             (low, high), assembly["vswr_max"], assembly.get("norm_source"),
                             f"Изделие {task.number} № {target.position}: сторона А — к порту 1, сторона Б — к порту 2")
         meta = bench.run("assembly", task_id=assembly["task_id"], product_position=target.position, task_number=task.number,
@@ -934,6 +960,44 @@ def _gates(uow, row, now, kind):
         if failed:
             raise Refusal("control_failed", f"Последняя проверка «{failed[0]['label']}» не пройдена — замеры остановлены "
                                             "до выяснения причины (СТО ФРАК-002-2026, разд. 14)")
+
+
+def _view_context(uow, row) -> tuple[ItemLimits | None, tuple[float, float], float | None]:
+    """What a view draws its lines from: the ETK band and VSWR norm of an assembly session, else the norm of the СИ
+    measured last (cut at its upper frequency); without either a view has no norm lines."""
+    profile = _profile(row)
+    if assembly := row.snapshot.get("assembly"):
+        low, high = (float(v) * 1e6 for v in assembly["band_mhz"])
+        return None, (low, high), assembly["vswr_max"]
+    run = _latest_run(row, (*ITEMS, *CHECK_NAMES))
+    item = None
+    if run is not None and run["kind"] == "instrument":
+        card, rf = _card(uow, UUID(run["instrument_id"]))
+        item = item_limits(card.inventory_number, card.name, rf, stop_hz=run["fmax_hz"])
+    return item, (profile.start_hz, profile.stop_hz), None
+
+
+@router.post(PREFIX + "/sessions/{session_id}/screen")
+def show_screen(session_id: UUID, payload: ShowScreenInput, principal: Person, now: Now, factory: Factory):
+    """«Показать на ВАЦ»: a saved screen goes onto S2VNA in the operator's calibrated session — apply_screen only, no
+    sweep; the calibration («Кор») stays. Without a valid calibration it is refused (calibration is never touched)."""
+    def action(uow, repository, row):
+        _version(row, payload.version)
+        _gates(uow, row, now, "view")
+        stored = VnaScreenRepository(uow.session).get(payload.screen_id)
+        if not stored.active:
+            raise Refusal("invalid", f"Экран «{stored.name}» отключён — включите его в «Экраны»", 422)
+        item, band, vswr = _view_context(uow, row)
+        screen = bench.fit_screen(bench_screen(definition_of(stored), item=item, band_hz=band, assembly_vswr=vswr),
+                                  _profile(row))
+        view = dict(kind="view", screen_id=str(stored.id), name=stored.name, screen_version=stored.version)
+        repository.append(row, [bench.screen_step(screen, view)], now)
+        uow.audit.add(AuditEvent(id=uuid4(), aggregate_id=stored.id, event_type="production.vna_screen_shown",
+                                 actor=Actor(id=principal.actor.id, name=principal.actor.name,
+                                             department=principal.actor.department), occurred_at=now,
+                                 details={"session_id": str(row.id), "name": stored.name, "version": stored.version,
+                                          "screen_hash": screen_hash(screen)}))
+    return _act(factory, session_id, principal, now, action)
 
 
 @router.post(PREFIX + "/sessions/{session_id}/items")
@@ -996,7 +1060,9 @@ def next_connection(session_id: UUID, item_id: str, payload: Version, principal:
         if restarted:
             label = ("Калибровка сменилась — серия повтора начата заново с подключения 1 (одна калибровка на решение). "
                      + label)
-        hash_ = bench.last_screen_hash([s for _, s in _run_steps(row, item_id)])
+        # The screen on S2VNA now: the item's own or a view the operator put there meanwhile (every bench screen is
+        # fitted to the session profile, so any of them carries the captured traces).
+        hash_ = bench.last_screen_hash(row.steps)
         repository.append(row, [bench.step("device_status", item=head),
                                 bench.capture_step(_profile(row), hash_, label, meta, human=False)], now, error="")
     return _act(factory, session_id, principal, now, action)
@@ -1094,7 +1160,7 @@ def start_check(session_id: UUID, payload: CheckInput, principal: Person, now: N
             raise Refusal("other_calibration", "Проверки мерами — на сетке «ОТК — переход»; откройте сеанс без КБ")
         if kind == "flex":
             meta = bench.run("flex")
-            steps = bench.item_steps(profile, bench_screen("load_check"), None, meta)
+            steps = bench.item_steps(profile, bench_screen(_screen(uow, "load")), None, meta)
         elif kind == "control_standard":
             if payload.instrument_id is not None:
                 card_id = payload.instrument_id
@@ -1111,8 +1177,8 @@ def start_check(session_id: UUID, payload: CheckInput, principal: Person, now: N
             meta = bench.run("control_standard", instrument_id=str(card.id), number=card.inventory_number,
                              reference_id=str(file.id), reference=file.file_name,
                              reference_sha256=hashlib.sha256(file.content).hexdigest())
-            screen = bench_screen("adapter", item=item_limits(card.inventory_number, card.name, rf,
-                                                              stop_hz=reference.frequencies[-1]))
+            screen = bench_screen(_screen(uow, "adapter"), item=item_limits(
+                card.inventory_number, card.name, rf, stop_hz=reference.frequencies[-1]))
             steps = bench.item_steps(profile, screen, None, meta)
         else:
             rf = RfRepository(uow.session)
@@ -1128,7 +1194,7 @@ def start_check(session_id: UUID, payload: CheckInput, principal: Person, now: N
             vna_jobs.control_station(uow.session, row.instrument_serial, now, machine_id=row.machine_id, ops={"read_kit"})
             meta = bench.run("kit_standards", instrument_id=str(card.id), number=card.inventory_number, label=payload.label,
                              selection=payload.selection)
-            steps = bench.item_steps(profile, bench_screen("engineer"), None, meta)
+            steps = bench.item_steps(profile, bench_screen(_screen(uow, "engineer")), None, meta)
             steps.append(bench.step("read_kit", dict(label=payload.label), item=meta))
         repository.append(row, steps, now, error="")
     return _act(factory, session_id, principal, now, action)
@@ -1167,13 +1233,16 @@ def check_next(session_id: UUID, check_id: str, payload: Version, principal: Per
             phase = {**phase, "label": "Калибровка сменилась — проверка начата заново с первой фазы (одна калибровка "
                                        "на проверку). " + phase["label"]}
         if run["kind"] == "flex" and phase["key"] == "thru_memory":
-            bend = bench.fit_screen(bench_screen("flex"), profile)
+            bend = bench.fit_screen(bench_screen(_screen(uow, "flex")), profile)
             hash_ = screen_hash(bend)
             memorized = [n for n, t in enumerate(bend.traces, start=1) if t.memory]
             steps = [bench.screen_step(bend, meta), bench.capture_step(profile, hash_, phase["label"], item, human=False),
                      bench.step("store_memory", dict(screen_hash=hash_, traces=memorized), item=meta)]
         else:
             steps = [bench.capture_step(profile, hash_, phase["label"], item, human=False)]
+            if hash_ != bench.last_screen_hash(row.steps):
+                # The operator put another view on S2VNA meanwhile: a check sweeps on its own screen (memory, lines).
+                steps.insert(0, bench.screen_step(_run_screen(row, check_id), meta))
         steps.insert(0, bench.step("device_status", item=meta))   # the same ACM, «Кор», ±1 °C before each phase
         repository.append(row, steps, now, error="")
     return _act(factory, session_id, principal, now, action)

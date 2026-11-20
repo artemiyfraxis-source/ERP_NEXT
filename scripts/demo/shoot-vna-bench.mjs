@@ -53,6 +53,8 @@ const allPassed = [
 ];
 const session = (extra) => ({ id: "s1", version: 5, status: "open", state: "ready", owned: true, error: null, started_at: at("14:30"), operator: "Артемий", steps: allPassed, command: null, items: [], checks: [], ...extra });
 
+// «Экраны» (S5b): шесть заводских экранов, как их сеет 0207_vna_screens, и один свой.
+const screens = [{"id": "sc-adapter", "name": "ОТК — переход", "purpose": "adapter", "split": 8, "traces": [{"param": "S11", "format": "SWR", "scale": "norm", "limit": "norm", "fixed": null, "hidden": false, "memory": false}, {"param": "S21", "format": "MLOG", "scale": {"pdiv": 0.05, "rlev": 0.0, "rpos": 10}, "limit": "norm", "fixed": null, "hidden": false, "memory": false}, {"param": "S12", "format": "MLOG", "scale": {"pdiv": 0.05, "rlev": 0.0, "rpos": 10}, "limit": "norm", "fixed": null, "hidden": false, "memory": false}, {"param": "S22", "format": "SWR", "scale": "norm", "limit": "norm", "fixed": null, "hidden": false, "memory": false}], "markers_hz": [1000000000.0, 3000000000.0, 6000000000.0, 12000000000.0, 18000000000.0], "note": "замер переходника", "is_default": true, "active": true, "version": 1, "updated_by": null, "updated_at": "2026-11-20T00:00:00+00:00"}, {"id": "sc-assembly", "name": "ОТК — кабельная сборка", "purpose": "assembly", "split": 5, "traces": [{"param": "S11", "format": "SWR", "scale": {"pdiv": 0.05, "rlev": 1.0, "rpos": 0}, "limit": "etk", "fixed": null, "hidden": false, "memory": false}, {"param": "S21", "format": "MLOG", "scale": {"pdiv": 0.3, "rlev": 0.0, "rpos": 10}, "limit": "none", "fixed": null, "hidden": false, "memory": false}, {"param": "S22", "format": "SWR", "scale": {"pdiv": 0.05, "rlev": 1.0, "rpos": 0}, "limit": "etk", "fixed": null, "hidden": false, "memory": false}], "markers_hz": [1000000000.0, 3000000000.0, 6000000000.0, 12000000000.0, 18000000000.0], "note": "сборка с двух сторон, полоса и норма по ЭТК", "is_default": true, "active": true, "version": 1, "updated_by": null, "updated_at": "2026-11-20T00:00:00+00:00"}, {"id": "sc-one_port", "name": "ОТК — один порт", "purpose": "one_port", "split": 3, "traces": [{"param": "S11", "format": "SWR", "scale": {"pdiv": 0.05, "rlev": 1.0, "rpos": 0}, "limit": "etk", "fixed": null, "hidden": false, "memory": false}, {"param": "S11", "format": "MLOG", "scale": {"pdiv": 5.0, "rlev": 0.0, "rpos": 10}, "limit": "none", "fixed": null, "hidden": false, "memory": false}], "markers_hz": [1000000000.0, 3000000000.0, 6000000000.0, 12000000000.0, 18000000000.0], "note": "сборка с одной стороны, на другом конце нагрузка", "is_default": true, "active": true, "version": 1, "updated_by": null, "updated_at": "2026-11-20T00:00:00+00:00"}, {"id": "sc-load", "name": "Проверка калибровки (нагрузка)", "purpose": "load", "split": 3, "traces": [{"param": "S11", "format": "SWR", "scale": {"pdiv": 0.01, "rlev": 1.0, "rpos": 0}, "limit": "fixed", "fixed": {"kind": "upper", "value": 1.06}, "hidden": false, "memory": false}, {"param": "S21", "format": "MLOG", "scale": {"pdiv": 0.05, "rlev": 0.0, "rpos": 10}, "limit": "none", "fixed": null, "hidden": true, "memory": false}, {"param": "S12", "format": "MLOG", "scale": {"pdiv": 0.05, "rlev": 0.0, "rpos": 10}, "limit": "none", "fixed": null, "hidden": true, "memory": false}, {"param": "S22", "format": "SWR", "scale": {"pdiv": 0.01, "rlev": 1.0, "rpos": 0}, "limit": "fixed", "fixed": {"kind": "upper", "value": 1.06}, "hidden": false, "memory": false}], "markers_hz": [1000000000.0, 3000000000.0, 6000000000.0, 12000000000.0, 18000000000.0], "note": "нагрузка 6650F27 на каждом порту", "is_default": true, "active": true, "version": 1, "updated_by": null, "updated_at": "2026-11-20T00:00:00+00:00"}, {"id": "sc-flex", "name": "Проверка кабелей (шевеление)", "purpose": "flex", "split": 8, "traces": [{"param": "S11", "format": "SWR", "scale": {"pdiv": 0.01, "rlev": 1.0, "rpos": 0}, "limit": "none", "fixed": null, "hidden": false, "memory": true}, {"param": "S22", "format": "SWR", "scale": {"pdiv": 0.01, "rlev": 1.0, "rpos": 0}, "limit": "none", "fixed": null, "hidden": false, "memory": true}, {"param": "S21", "format": "MLOG", "scale": {"pdiv": 0.03, "rlev": 0.0, "rpos": 10}, "limit": "none", "fixed": null, "hidden": false, "memory": true}, {"param": "S21", "format": "PHAS", "scale": {"pdiv": 36.0, "rlev": 0.0, "rpos": 5}, "limit": "none", "fixed": null, "hidden": false, "memory": true}], "markers_hz": [1000000000.0, 3000000000.0, 6000000000.0, 12000000000.0, 18000000000.0], "note": "запомнить графики, изогнуть кабель, сравнить", "is_default": true, "active": true, "version": 1, "updated_by": null, "updated_at": "2026-11-20T00:00:00+00:00"}, {"id": "sc-engineer", "name": "Подробно (инженер)", "purpose": "engineer", "split": 15, "traces": [{"param": "S11", "format": "SWR", "scale": "norm", "limit": "norm", "fixed": null, "hidden": false, "memory": false}, {"param": "S21", "format": "MLOG", "scale": {"pdiv": 0.05, "rlev": 0.0, "rpos": 10}, "limit": "norm", "fixed": null, "hidden": false, "memory": false}, {"param": "S12", "format": "MLOG", "scale": {"pdiv": 0.05, "rlev": 0.0, "rpos": 10}, "limit": "norm", "fixed": null, "hidden": false, "memory": false}, {"param": "S22", "format": "SWR", "scale": "norm", "limit": "norm", "fixed": null, "hidden": false, "memory": false}, {"param": "S11", "format": "SMIT", "scale": {"pdiv": 1.0, "rlev": null, "rpos": null}, "limit": "none", "fixed": null, "hidden": false, "memory": false}, {"param": "S21", "format": "PHAS", "scale": {"pdiv": 36.0, "rlev": 0.0, "rpos": 5}, "limit": "none", "fixed": null, "hidden": false, "memory": false}, {"param": "S21", "format": "GDEL", "scale": "auto", "limit": "none", "fixed": null, "hidden": false, "memory": false}, {"param": "S22", "format": "SMIT", "scale": {"pdiv": 1.0, "rlev": null, "rpos": null}, "limit": "none", "fixed": null, "hidden": false, "memory": false}, {"param": "S11", "format": "MLOG", "scale": {"pdiv": 5.0, "rlev": 0.0, "rpos": 10}, "limit": "none", "fixed": null, "hidden": false, "memory": false}, {"param": "S21", "format": "MLOG", "scale": {"pdiv": 5.0, "rlev": 0.0, "rpos": 10}, "limit": "none", "fixed": null, "hidden": false, "memory": false}, {"param": "S12", "format": "MLOG", "scale": {"pdiv": 5.0, "rlev": 0.0, "rpos": 10}, "limit": "none", "fixed": null, "hidden": false, "memory": false}, {"param": "S22", "format": "MLOG", "scale": {"pdiv": 5.0, "rlev": 0.0, "rpos": 10}, "limit": "none", "fixed": null, "hidden": false, "memory": false}], "markers_hz": [1000000000.0, 3000000000.0, 6000000000.0, 12000000000.0, 18000000000.0], "note": "все графики: КСВН, потери, Вольперт-Смит, фаза, ГВЗ, возвратные потери", "is_default": true, "active": true, "version": 1, "updated_by": null, "updated_at": "2026-11-20T00:00:00+00:00"}, {"id": "sc-wide", "name": "КСВН крупно (просмотр)", "purpose": "engineer", "split": 3, "traces": [{"param": "S11", "format": "SWR", "scale": "norm", "limit": "norm", "fixed": null, "hidden": false, "memory": false}, {"param": "S22", "format": "SWR", "scale": {"pdiv": 0.01, "rlev": 1.0, "rpos": 0}, "limit": "fixed", "fixed": {"kind": "upper", "value": 1.1}, "hidden": false, "memory": false}], "markers_hz": [1000000000.0, 3000000000.0, 6000000000.0, 12000000000.0, 18000000000.0], "note": "", "is_default": false, "active": true, "version": 2, "updated_by": "Артемий", "updated_at": "2026-11-20T09:12:00+03:00"}];
 const scenarios = {
   idle: { device: { ...device, s2vna_ready: false, warmup_min: 28 }, calibration: { valid: false, calibrated_at: null, valid_until: null, reason: "нет — сеанс не открыт", temperatures: null }, due, session: null },
   steps: { device, calibration: { ...validCal, valid: false, reason: "калибровка выполнена, проверка не закончена" }, due, session: session({
@@ -66,6 +68,8 @@ const scenarios = {
     refusal: null, recorded_at: null, recorded_to: null, label_instrument_id: null,
   }] }) },
   kb: { device, calibration: validCal, due, session: null },
+  screens: { device, calibration: validCal, due, session: session({ view_screen_id: "sc-wide" }) },
+  "screen-edit": { device, calibration: validCal, due, session: session({ view_screen_id: "sc-wide" }) },
   checks: { device, calibration: validCal, due: [due[0], { ...due[1], status: "overdue", due_at: at("00:00").replace("11-19", "11-18") }], session: session({ checks: [
     { id: "c0", version: 3, kind: "flex", status: "passed", result_text: "S21 0,021 дБ ≤ 0,05; КСВН 1,041", refusal: null, started_at: at("14:50"), finished_at: at("14:55"), phases: [] },
     { id: "c1", version: 2, kind: "monthly", status: "running", result_text: null, refusal: null, started_at: at("15:00"), finished_at: null, phases: [
@@ -95,10 +99,12 @@ for (const vp of [{ tag: "16", width: 1536, height: 864 }, { tag: "27", width: 2
   let scenario = "idle";
   await page.route("**/api/production/vna-bench/**", (route) => {
     const url = new URL(route.request().url());
-    const body = url.pathname.endsWith("/resolve") ? { candidates: [scenario === "kb" ? kb : target] } : url.pathname.endsWith("/plan") ? plan : scenarios[scenario];
+    const body = url.pathname.endsWith("/resolve") ? { candidates: [scenario === "kb" ? kb : target] } : url.pathname.endsWith("/plan") ? plan
+      : url.pathname.endsWith("/screens") ? { screens } : scenarios[scenario];
     return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });
-  for (const name of ["idle", "steps", "border", "checks", "kb"]) {
+  const names = (process.env.VNA_SCENARIOS || "idle,steps,border,checks,kb,screens,screen-edit").split(",");
+  for (const name of names) {
     scenario = name;
     await page.goto(`${BASE}/?section=quality&tab=vna`, { waitUntil: "networkidle" });
     await page.getByRole("tab", { name: "ВАЦ — рабочее место", selected: true }).waitFor();
@@ -109,12 +115,24 @@ for (const vp of [{ tag: "16", width: 1536, height: 864 }, { tag: "27", width: 2
       await (name === "kb" ? page.getByRole("button", { name: "Открыть сеанс для КБ" }) : page.getByText("На границе допуска")).waitFor();
     }
     if (name === "checks") await page.getByRole("tab", { name: "Проверки" }).click();
+    if (name === "screens" || name === "screen-edit") {
+      await page.getByRole("tab", { name: "Экраны" }).click();
+      await page.getByRole("table", { name: "Экраны ВАЦ" }).waitFor();
+    }
+    if (name === "screen-edit") {
+      await page.getByText("ОТК — переход", { exact: true }).click();
+      await page.getByRole("dialog").waitFor();
+      await page.getByLabel("График 1: шкала").selectOption("manual");
+      await page.getByLabel("График 1: деление").fill("0,02");
+      await page.getByLabel("График 1: уровень").fill("1");
+      await page.getByLabel("График 1: позиция").fill("0");
+    }
     await page.waitForTimeout(300);
     await page.screenshot({ path: path.join(OUT, `vna-bench-${name}-${vp.tag}.png`) });
     // Весь экран целиком: страница прокручивается внутри приложения, поэтому на время снимка окно выше.
     await page.setViewportSize({ width: vp.width, height: 2400 });
     await page.waitForTimeout(200);
-    await page.locator(".vna-bench").screenshot({ path: path.join(OUT, `vna-bench-${name}-${vp.tag}-full.png`) });
+    await page.locator(name === "screen-edit" ? ".page-window" : ".vna-bench").screenshot({ path: path.join(OUT, `vna-bench-${name}-${vp.tag}-full.png`) });
     await page.setViewportSize({ width: vp.width, height: vp.height });
   }
   await context.close();
