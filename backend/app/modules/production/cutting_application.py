@@ -643,8 +643,9 @@ def binding_moves(task, operations, kept, uow, *, release=False):
     not known — the master binds it again); one that stays under a new number is renumbered. A bound number that is not
     an ETK operation of the PF stays allowed while the rebuilt PF still has that number.
     `release` (CLI `--release-moved-equipment`): a bound operation that moved to a NEW rebuilt PF (labels, tubes — not
-    a kept one) is not a refusal but is returned in `released` [(allocation id, PF id, ETK number, code, machine id,
-    new PF id, new ETK number)] for removal; it is found by its occurrence among that code's operations of the new PFs,
+    a kept one) split out of its own PF (`_parents`) is not a refusal but is returned in `released` [(allocation id, PF
+    id, ETK number, code, machine id, new PF id, new ETK number)] for removal; it is found by its occurrence among that
+    code's operations of those new PFs,
     and a different count there, a code only in kept PFs or a disappearing operation still refuses. Renumbering that
     would put two bindings of one allocation on one number refuses too (the master binds them again).
     Returns (refusal, renumbering, released)."""
@@ -666,7 +667,10 @@ def binding_moves(task, operations, kept, uow, *, release=False):
         return sorted(item.position for item in operation.etk_ops if item.code == code)
 
     renumber, released = [], []
-    fresh = sorted((item.position, op.id, item.code) for op in operations if op.id not in set(kept) for item in op.etk_ops)
+    parents = _parents(task, operations, kept)
+    # New PFs split out of each kept PF: a bound operation can only have moved into one of its own.
+    fresh = sorted((item.position, op.id, item.code, parents.get(op.id)) for op in operations if op.id not in set(kept)
+                   for item in op.etk_ops)
     for allocation_id, operation_id, position, machine_id in rows:
         before = task.operation(operation_id)
         after = next(op for op in operations if op.id == operation_id)
@@ -678,7 +682,7 @@ def binding_moves(task, operations, kept, uow, *, release=False):
             continue
         old, new = numbers(before, code), numbers(after, code)
         if not new:
-            landed = [(number, op_id) for number, op_id, other in fresh if other == code]
+            landed = [(number, op_id) for number, op_id, other, parent in fresh if other == code and parent == operation_id]
             if release and landed and len(landed) == len(old):
                 target_position, target_op = landed[old.index(position)]
                 released.append((allocation_id, operation_id, position, code, machine_id, target_op, target_position))
@@ -709,9 +713,9 @@ def binding_moves(task, operations, kept, uow, *, release=False):
 
 def _parents(task, operations, kept):
     """{new PF id: the old PF it was split out of}. Per old PF first: a new PF whose codes all occur in one old PF only
-    has that parent. Otherwise an ETK operation is followed by its code and its occurrence among the whole task's
-    operations with that code (ETK order; an inserted or dropped same-code operation elsewhere can mislead it), then
-    the position rule of `restructured_operations` (numbers a strict subset of one old PF's)."""
+    has that parent. Then the position rule of `restructured_operations` (numbers a strict subset of one old PF's — the
+    lineage the rebuild itself used). Last an ETK operation is followed by its code and its occurrence among the whole
+    task's operations with that code (ETK order; an inserted or dropped same-code operation elsewhere can mislead it)."""
     holders = {}
     for operation in task.operations:
         for item in operation.etk_ops:
@@ -740,15 +744,15 @@ def _parents(task, operations, kept):
         if len(owners) == 1 and None not in owners:
             result[op_id] = owners.pop()
             continue
-        found = {old.get(item) for item in items}
-        if len(found) == 1 and None not in found:
-            result[op_id] = found.pop()
-            continue
         operation = next(op for op in operations if op.id == op_id)
         positions = {item.position for item in operation.etk_ops}
         parent = next((item for item in task.operations if item.etk_ops and positions < set(item.etk_positions)), None)
         if parent is not None:
             result[op_id] = parent.id
+            continue
+        found = {old.get(item) for item in items}
+        if len(found) == 1 and None not in found:
+            result[op_id] = found.pop()
     return result
 
 
