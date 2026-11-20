@@ -19,6 +19,8 @@ version last seen per machine is kept in memory (the runner asks twice a second;
 Machine commands Стоп / Сброс / Пуск / Сброс аварии (purpose `control`, column `command`, migration 0197) ride the
 same queue; their rules are in production/machine_control.py: 5 s to be claimed, Stop first and exempt from the one-open
 index (it may queue while a write runs, it cancels what is queued), no answer → «unknown», never assumed done.
+«Закрыть / Открыть пульт на ПК» (`hmi_close` / `hmi_open`, migration 0211) are machine commands too; they need the
+runner 1.4.0 and get `HMI_RESULT_WAIT` for their answer (a graceful close waits up to 15 s before the forced one).
 
 Corrections (migration 0195, `production_machine_offsets`): «станок режет не так» — the ETK size is right but this
 machine cuts/strips it off by a constant. One offset per machine and wire parameter, in 0,01 мм; every later
@@ -49,9 +51,11 @@ OPEN = ("queued", "taken")
 PURPOSES = ("settings", "transfer", "control")
 CONTROL = "control"
 STOP = "stop"
-COMMANDS = ("stop", "reset", "start", "alarm_clear")
+HMI_COMMANDS = ("hmi_close", "hmi_open")
+COMMANDS = ("stop", "reset", "start", "alarm_clear", *HMI_COMMANDS)
 CONTROL_TTL = timedelta(seconds=5)  # a machine command older than this by the server clock never runs
 CONTROL_RESULT_WAIT = timedelta(seconds=15)  # taken without an answer → «Результат неизвестен»
+HMI_RESULT_WAIT = timedelta(seconds=45)  # the runner waits 15 s for a graceful close, then forces it, then reports
 CONTROL_TOO_OLD = "ПК станка не забрал команду за 5 с — она не выполнялась"
 CONTROL_NO_ANSWER = "ПК станка не сообщил результат — проверьте станок"
 CANCELLED_BY_STOP = "Отменена: нажат «Стоп»"
@@ -76,6 +80,10 @@ RUNNER_OUTDATED = "Служба записи на ПК станка устаре
 # The feed-roller lift switch (machines.OB019_FEED_WHEEL_ADDRESS) is written by the runner 1.3.0 or newer.
 RUNNER_FEED_WHEEL = "1.3.0"
 RUNNER_FEED_WHEEL_OUTDATED = "Служба записи на ПК станка устарела — обновите (нужна 1.3.0)"
+# The runner 1.4.0 (20.11.2026): «Закрыть / Открыть пульт на ПК» and the inner layer words D44..D53 (mbd 1.4.0 writes them).
+RUNNER_HMI = "1.4.0"
+RUNNER_HMI_OUTDATED = "Служба записи на ПК станка устарела — обновите (нужна 1.4.0)"
+RUNNER_WORDS: dict[int, str] = {address: RUNNER_HMI for address in range(44, 54)}
 # The words the runner 1.1.0 writes (ob019-writer.ps1 before 19.11.2026): mode, job and quantities, wire and strip,
 # marking texts, order number and product. Anything else, and any switch bit, needs `RUNNER_NEEDED`.
 LEGACY_WORDS = frozenset({20, *range(22, 29), *range(32, 44), *range(440, 485), *range(940, 970)})
@@ -102,20 +110,24 @@ def field_needs_runner(field: rules.SettingField) -> bool:
 
 def runner_needed_for(bits: list[dict], addresses) -> str | None:
     """The oldest runner version that runs this write whole; None — any (1.1.0 does it)."""
+    addresses = list(addresses)
+    newest = [RUNNER_WORDS[address] for address in addresses if address in RUNNER_WORDS]
     if any(int(bit["addr"]) == rules.OB019_FEED_WHEEL_ADDRESS for bit in bits):
-        return RUNNER_FEED_WHEEL
+        newest.append(RUNNER_FEED_WHEEL)
+    if newest:
+        return max(newest, key=_version)
     if bits or any(address not in LEGACY_WORDS for address in addresses):
         return RUNNER_NEEDED
     return None
 
 
 def runner_refusal(needed: str) -> str:
-    return RUNNER_FEED_WHEEL_OUTDATED if needed == RUNNER_FEED_WHEEL else RUNNER_OUTDATED
+    return {RUNNER_FEED_WHEEL: RUNNER_FEED_WHEEL_OUTDATED, RUNNER_HMI: RUNNER_HMI_OUTDATED}.get(needed, RUNNER_OUTDATED)
 
 
 def runner_needed_for_row(row: "MachineWriteRow") -> str | None:
     if row.purpose == CONTROL:
-        return None
+        return RUNNER_HMI if row.command in HMI_COMMANDS else None
     return runner_needed_for(list(row.payload.get("bits") or []), expected_words(row))
 
 
@@ -168,7 +180,7 @@ class MachineWriteRow(Base):
         Uuid, ForeignKey("production_machine_links.equipment_id", ondelete="CASCADE",
                          name="fk_production_machine_writes_link"), nullable=False, index=True)
     purpose: Mapped[str] = mapped_column(String(16), nullable=False)
-    # Machine command of purpose `control` (stop / reset / start / alarm_clear); NULL for parameter writes.
+    # Machine command of purpose `control` (stop / reset / start / alarm_clear / hmi_close / hmi_open); NULL for writes.
     command: Mapped[str | None] = mapped_column(String(16), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     # {"blocks": [{"addr": 32, "values": [32500, 0]}], "bits": [{"addr": 400, "bit": 0, "value": 1}],
@@ -260,6 +272,11 @@ def plan_writes(writes: list[FieldWrite], words: dict[int, int]) -> tuple[list[d
     return blocks, sorted(bits, key=lambda bit: bit["addr"]), shown
 
 
+def result_wait(row: MachineWriteRow) -> timedelta:
+    """How long a taken machine command may stay without an answer before it reads «Результат неизвестен»."""
+    return HMI_RESULT_WAIT if row.command in HMI_COMMANDS else CONTROL_RESULT_WAIT
+
+
 def _expire(session: Session, equipment_id: UUID, now: datetime) -> list[MachineWriteRow]:
     """Queued too long → expired; taken without a result too long → failed. → the rows changed (for the journal)."""
     changed = []
@@ -270,7 +287,7 @@ def _expire(session: Session, equipment_id: UUID, now: datetime) -> list[Machine
                 row.status, row.finished_at, row.error = "expired", now, CONTROL_TOO_OLD
                 changed.append(row)
             elif (row.status == "taken" and row.taken_at is not None
-                  and rules.since(row.taken_at, now) > CONTROL_RESULT_WAIT):
+                  and rules.since(row.taken_at, now) > result_wait(row)):
                 row.status, row.finished_at, row.error = "unknown", now, CONTROL_NO_ANSWER
                 changed.append(row)
             continue
@@ -487,6 +504,8 @@ def command_view(row: MachineWriteRow) -> dict:
     return {"id": str(row.id), "status": row.status, "status_text": text, "tone": tone, "purpose": row.purpose,
             "command": row.command, "state_before": _state_text(states.get("before")),
             "state_after": _state_text(states.get("after")),
+            # «Закрыть пульт на ПК»: how the runner closed it — graceful / forced / none (it was not open) / started.
+            "method": states.get("method") if isinstance(states.get("method"), str) else None,
             "summary": row.summary, "fields": row.payload.get("fields", []), "error": row.error,
             "created_by": row.created_by_name, "created_at": moment(row.created_at),
             "finished_at": moment(row.finished_at)}

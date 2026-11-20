@@ -31,7 +31,11 @@ import { Ob019WirePicker } from "./Ob019WirePicker";
  *  «Тираж» — штук в задании: при открытом прогоне — тираж задания (под полем «сделано · осталось»; станку пишется цель
  *  D22 = счётчик D649 + (тираж − сделано)), без него — сколько станку осталось до цели; правка тиража при выбранном
  *  задании тоже идёт прогоном. Пока прогон открыт, «Провод вручную» закрыт: провод поверх задания станок посчитал бы в
- *  задание (сервер тоже не даст «Пуск»: machine_runs.start_blocker). */
+ *  задание (сервер тоже не даст «Пуск»: machine_runs.start_blocker).
+ *  «Остальные параметры» (владелец 20.11.2026: «можем сделать уже полноценную настройку»): каждая строка — «Задать»
+ *  (поле, пишется так же, как чертёж) рядом с «На станке»; отличие подсвечено. «только просмотр» — лишь у регистров,
+ *  которые ERP не пишет (счётчики, программа, назначение не установлено). Без свежих данных станка таблицы нет — одна
+ *  строка вместо столбца прочерков. */
 
 const MODES: [string, string][] = [["0", "Пошаговый"], ["1", "Один цикл"], ["2", "Автомат"]];
 /** Переключатель страницы пульта (бит 0 слова): сервер меняет только этот бит. */
@@ -61,6 +65,8 @@ export const SELECT_WAIT_MS = 800;
 const IN_FLIGHT_MAX_MS = 45000;
 /** Начало текста сервера «нельзя писать в этом состоянии» (machine_writes.idle_problem) — его заменяет одна причина. */
 const STATE_PROBLEM = "Записывать можно, когда";
+/** «Остальные параметры» без свежих данных станка: одна строка вместо таблицы прочерков. */
+export const NO_DATA = "Нет связи со станком — параметры появятся, когда ERP получит данные";
 /** Состояния, когда станок в цикле (работает, пауза, пучок готов): правка — после остановки. */
 const RUNNING_STATES = [103, 104, 106];
 const RECIPE_WAIT_MS = 5000;
@@ -852,6 +858,8 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   const groups = (card?.settings ?? []).map((item) => ({ ...item, fields: item.fields.filter((field) => !field.key || !ON_TOP.has(field.key)) }))
     .filter((item) => item.fields.length > 0);
   const current = groups[Math.min(group, Math.max(groups.length - 1, 0))];
+  // Fresh words from the machine: the link is up and the snapshot carries values (the panel on the PC sends none).
+  const hasData = !old && (card?.settings ?? []).some((item) => item.fields.some((field) => field.value !== null && field.value !== undefined));
   const machine = Object.fromEntries(DRAWN.map((key) => { const value = fields.get(key)?.value; return [key, typeof value === "number" ? value : null]; }));
   const size = (key: string) => decimal(valueOf(key));
   const job = live?.job;
@@ -933,33 +941,49 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
         <span aria-hidden="true">{more ? "▾" : "▸"}</span> Остальные параметры
         <span className="machine-muted"> · {groups.map((item) => item.title).join(", ")}</span>
       </button>
-      {more && <>
+      {more && !hasData && <p className="machine-muted machine-nodata" role="status">{NO_DATA}</p>}
+      {more && hasData && <>
         <div className="seg-tabs" role="tablist" aria-label="Страницы пульта">
           {groups.map((item, index) => <button key={item.title} role="tab" aria-selected={index === group}
             className={index === group ? "on" : undefined} onClick={() => setGroup(index)}>{item.title}</button>)}
         </div>
-        {current && <table className="machine-table" aria-label={current.title}>
-          <thead><tr><th>Параметр</th><th>На станке</th><th></th></tr></thead>
+        {current && <table className="machine-table machine-params" aria-label={current.title}>
+          <thead><tr><th>Параметр</th><th>Задать</th><th>На станке</th><th aria-label="Итог записи"></th></tr></thead>
           <tbody>{current.fields.map((field) => {
             const key = field.key;
             const note = key ? fieldNote(key) : null;
-            return <tr key={`${field.label}-${field.kind}`} className={note?.text === "записывается…" ? "is-writing" : undefined}>
+            const value = key ? valueOf(key) : "";
+            const differs = !!key && field.read && enteredDiffers(field, value);
+            return <tr key={`${field.label}-${field.kind}`}
+              className={[note?.text === "записывается…" ? "is-writing" : "", differs ? "is-diff" : ""].filter(Boolean).join(" ") || undefined}>
               <th scope="row">{field.label}</th>
-              <td>{key && canWrite && field.kind === "bit0"
-                ? <select aria-label={field.label} value={valueOf(key)} onChange={(event) => commitLater(key, event.target.value, SELECT_WAIT_MS)}>
-                  {!valueOf(key) && <option value="">{EMPTY}</option>}
+              <td>{!key ? <span className="machine-muted">только просмотр</span>
+                : field.kind === "bit0"
+                ? <select aria-label={field.label} value={value} disabled={!canWrite}
+                  onChange={(event) => commitLater(key, event.target.value, SELECT_WAIT_MS)}>
+                  {!value && <option value="">{EMPTY}</option>}
                   {SWITCH.map(([code, text]) => <option key={code} value={code}>{text}</option>)}
                 </select>
-                : key && canWrite
-                ? <input aria-label={field.label} value={valueOf(key)} autoComplete="off"
-                  inputMode={field.kind === "text15" ? "text" : "decimal"} maxLength={field.kind === "text15" ? 30 : 12}
-                  placeholder={field.kind === "text15" ? "латиница, до 30 знаков" : field.unit}
-                  onChange={(event) => setDrafts((values) => ({ ...values, [key]: event.target.value }))}
-                  onBlur={() => { if (key in drafts) commit(key, drafts[key]); }}
-                  onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commit(key, (event.target as HTMLInputElement).value); } }} />
-                : <span className={old ? "machine-muted" : undefined}>{field.read ? shown(field) : EMPTY}</span>}</td>
-              <td>{note ? <span className={`tone-${note.tone}`} role="status">{note.text}</span>
-                : !key ? <span className="machine-muted">только просмотр</span> : field.unit && canWrite ? <span className="machine-muted">{field.unit}</span> : null}</td>
+                : field.kind === "mode"
+                ? <select aria-label={field.label} value={value} disabled={!canWrite}
+                  onChange={(event) => commitLater(key, event.target.value, SELECT_WAIT_MS)}>
+                  {!value && <option value="">{EMPTY}</option>}
+                  {MODES.map(([code, text]) => <option key={code} value={code}>{text}</option>)}
+                </select>
+                : <span className={`machine-param-input${field.kind === "text15" ? " is-text" : ""}`}>
+                  <input aria-label={field.label} value={value} autoComplete="off" disabled={!canWrite}
+                    inputMode={field.kind === "text15" ? "text" : "decimal"} maxLength={field.kind === "text15" ? 30 : 12}
+                    placeholder={field.kind === "text15" ? "латиница, до 30 знаков" : ""}
+                    onChange={(event) => setDrafts((values) => ({ ...values, [key]: event.target.value }))}
+                    onBlur={() => { if (key in drafts) commit(key, drafts[key]); }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") { event.preventDefault(); commit(key, (event.target as HTMLInputElement).value); }
+                      if (event.key === "Escape") setDrafts((values) => without(values, [key]));
+                    }} />
+                  {field.unit && <span className="machine-input-unit">{field.unit}</span>}
+                </span>}</td>
+              <td className="machine-param-live">{field.read ? shown(field) : EMPTY}</td>
+              <td>{note && <span className={`tone-${note.tone}`} role="status">{note.text}</span>}</td>
             </tr>;
           })}</tbody>
         </table>}

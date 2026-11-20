@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { failureText } from "./api";
 import {
-  CONTROL_NAMES, CONTROL_STATES, IDLE_STATES, commandResult, machineControlApi, operatorText,
-  type ControlCommand, type MachineCommand, type MachineControl, type MachineRun, type MachineWindow,
+  CONTROL_NAMES, CONTROL_STATES, IDLE_STATES, commandResult, machineControlApi, operatorText, pultResult,
+  type MachineCommand, type MachineControl, type MachineRun, type MachineWindow, type PulseCommand,
+  type PultCommand,
 } from "./machineControlApi";
 import { usePolled, type MachineCard, type Tone } from "./machinesApi";
 
@@ -13,7 +14,7 @@ import { usePolled, type MachineCard, type Tone } from "./machinesApi";
  *  переключатель с прочитанным со станка положением (поле `feed_wheel`). Итог каждой команды — под её кнопкой, причина
  *  недоступности — там же. Аварийного стопа в ERP нет — только кнопка на станке (это говорит строка состояния). */
 
-const ACTIONS: ControlCommand[] = ["reset", "start", "alarm_clear"];
+const ACTIONS: PulseCommand[] = ["reset", "start", "alarm_clear"];
 const FAST_MS = 1000;
 const IDLE_MS = 3000;
 const OPEN = ["queued", "taken"];
@@ -37,7 +38,7 @@ export function runBlocker(run: MachineRun | null | undefined): string {
 
 /** Почему команду сейчас не отправить, коротко для подписи под кнопкой ('' — можно). Пуск — только по открытому
  *  заданию (`runBlocker`) и с опущенными роликами (сервер: machine_control.BLOCKED_BY_BITS, агент — то же на ПК). */
-export function blocked(command: ControlCommand, card: MachineCard, open: MachineCommand | undefined, lifted: boolean | null = null,
+export function blocked(command: PulseCommand, card: MachineCard, open: MachineCommand | undefined, lifted: boolean | null = null,
   run?: MachineRun | null): string {
   if (card.link.code !== "ok" || !card.live) return "нет связи";
   if (open && open.command !== "stop") return `ждёт: ${open.summary}`;
@@ -60,15 +61,62 @@ function feedWheel(settings: MachineWindow | null): boolean | null {
   return field && field.read && typeof field.value === "boolean" ? field.value : null;
 }
 
+/** Вопрос перед командой пульту: что потеряет человек у станка. */
+export const PULT_CONFIRM: Record<PultCommand, string> = {
+  hmi_close: "Оператор у станка потеряет пульт. Закрыть пульт на ПК станка?",
+  hmi_open: "ERP перестанет видеть станок, пока пульт открыт. Открыть пульт на ПК станка?",
+};
+
+/** «Закрыть пульт на ПК» в строке состояния, пока пульт открыт; «Открыть пульт на ПК» — тише, когда станок на связи.
+ *  С правом «Управление станками», после вопроса (PULT_CONFIRM); итог и отказ сервера — рядом с кнопкой, как есть.
+ *  `control` — то, что опрашивает строка команд (Ob019Controls): второй опрос не нужен. */
+export function Ob019Pult({ card, control }: { card: MachineCard; control: MachineControl | null }) {
+  const [sent, setSent] = useState("");
+  const [refused, setRefused] = useState("");
+  const [busy, setBusy] = useState(false);
+  const pult = card.link.code === "port_busy";
+  if (!control?.can_control || (!pult && card.link.code !== "ok")) return null;
+  const command: PultCommand = pult ? "hmi_close" : "hmi_open";
+  const commands = Array.isArray(control.commands) ? control.commands : [];
+  const open = commands.find((row) => OPEN.includes(row.status));
+  const row = sent ? commands.find((item) => item.id === sent) : undefined;
+  const result: Note | null = refused ? { text: `отказ: ${refused}`, tone: "danger" } : row ? pultResult(row)
+    : sent ? { text: command === "hmi_close" ? "закрывается…" : "открывается…", tone: "info" } : null;
+  const waiting = open && open.id !== sent ? `ждёт: ${open.summary}` : "";
+  async function send() {
+    if (!window.confirm(PULT_CONFIRM[command])) return;
+    setBusy(true);
+    setRefused("");
+    try {
+      setSent((await machineControlApi.command(card.inventory, command)).id);
+    } catch (reason) {
+      setSent("");
+      setRefused(failureText(reason, "команда не отправлена"));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const working = !!row && OPEN.includes(row.status);
+  return <div className={`machine-pult${pult ? " is-open" : ""}`}>
+    <button type="button" className={pult ? "primary machine-pult-close" : "secondary small machine-pult-open"}
+      disabled={busy || working || Boolean(waiting)} onClick={() => void send()}>{CONTROL_NAMES[command]}</button>
+    {(result || waiting) && <span className={`machine-cmd-note ${result ? toneClass(result.tone) : "machine-muted"}`}
+      role={result ? "status" : undefined}>{result ? result.text : waiting}</span>}
+  </div>;
+}
+
 /** `run` — прогон станка из «Выполнения задания» (undefined — не загружен); `onStartWhy` — почему «Пуск» не пойдёт
- *  ('' — пойдёт; undefined — без права пуска): та же причина — следующим шагом в строке состояния. */
-export function Ob019Controls({ card, run, onStartWhy }: {
+ *  ('' — пойдёт; undefined — без права пуска): та же причина — следующим шагом в строке состояния. `onControl` —
+ *  опрос команд станка для кнопки пульта в строке состояния (Ob019Pult). */
+export function Ob019Controls({ card, run, onStartWhy, onControl }: {
   card: MachineCard; run?: MachineRun | null; onStartWhy?: (why: string | undefined) => void;
+  onControl?: (control: MachineControl | null) => void;
 }) {
   const [fast, setFast] = useState(false);
   const load = useCallback((signal: AbortSignal) => machineControlApi.control(card.inventory, signal), [card.inventory]);
   const loadWindow = useCallback((signal: AbortSignal) => machineControlApi.window(card.inventory, signal), [card.inventory]);
   const { data } = usePolled<MachineControl>(load, fast ? FAST_MS : IDLE_MS, "Не удалось загрузить команды станка");
+  useEffect(() => { onControl?.(data ?? null); }, [data, onControl]);
   const { data: settings } = usePolled<MachineWindow>(loadWindow, fast ? FAST_MS : IDLE_MS, "Не удалось прочитать ролики");
   const [busy, setBusy] = useState(false);
   // Command (or «rollers») → id of what this card sent / the refusal it got.
@@ -94,7 +142,7 @@ export function Ob019Controls({ card, run, onStartWhy }: {
     return id ? { text: "отправлено…", tone: "info" } : null;
   };
 
-  async function sendCommand(command: ControlCommand) {
+  async function sendCommand(command: PulseCommand) {
     setBusy(true);
     setRefused((values) => ({ ...values, [command]: "" }));
     try {

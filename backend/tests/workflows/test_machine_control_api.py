@@ -212,7 +212,11 @@ def test_no_answer_means_unknown_and_a_late_answer_still_wins(ob019):
 def test_the_runner_holds_the_same_preconditions_and_only_the_four_bits():
     source = (Path(__file__).parents[3] / "tools" / "machine-agent" / "ob019-writer.ps1").read_text(encoding="ascii")
     table = dict(re.findall(r"^\s+(\w+) = @\{ addr = \d+; bit = \d; states = @\(([\d, ]*)\)", source, re.MULTILINE))
-    assert set(table) == set(control.NAMES) == set(queue.COMMANDS)
+    assert set(table) == set(control.ALLOWED_STATES) == set(queue.COMMANDS) - set(queue.HMI_COMMANDS)
+    assert set(control.NAMES) == set(queue.COMMANDS)
+    # The panel commands are the runner's own, never a bit: the same names on both sides.
+    hmi = re.search(r"^\$script:HmiCommands = @\(([^)]*)\)", source, re.MULTILINE).group(1)
+    assert {name.strip(" '") for name in hmi.split(",")} == set(queue.HMI_COMMANDS)
     for command, states in table.items():
         assert ({int(code) for code in states.split(",") if code.strip()} or None) == control.ALLOWED_STATES[command]
     pulses = set(re.findall(r"addr = (\d+); bit = (\d)", source))
@@ -239,3 +243,125 @@ def test_start_is_refused_while_the_feed_rollers_are_lifted(ob019):
     assert control.precondition_error("start", 102, 0, {604: 0x0A00}) == ""
     assert control.precondition_error("start", 102, 0, {}) == ""  # not read (older bridge): not blocked
     assert control.precondition_error("reset", 107, 0, {604: 1}) == ""
+
+
+# --- «Закрыть / Открыть пульт на ПК» (20.11.2026) ---
+
+AGENT_14 = {"runner_version": "1.4.0"}
+
+
+def _pult(bridge, clock, last_state=102):
+    """The machine was seen in `last_state`, then the operator panel took the port: a report without words."""
+    if last_state is not None:
+        _state(bridge, clock, last_state)
+    clock.now = clock.now + timedelta(milliseconds=100)
+    assert _report(bridge, seq=next(_seq), link="port_busy", registers={}).status_code == 200
+
+
+def _journal(sessions, unit):
+    with sessions() as session:
+        return [event.details for event in session.scalars(
+            select(AuditEventRow).where(AuditEventRow.aggregate_id == unit).order_by(AuditEventRow.occurred_at))
+            if event.event_type.startswith("production.machine_command")]
+
+
+def test_close_the_panel_goes_through_the_runner_and_the_card_learns_how(ob019):
+    sessions, clock, admin, unit, bridge = ob019
+    queue._runners.clear()
+    _pult(bridge, clock, 107)
+    sent = _send(admin, "hmi_close")
+    assert sent.status_code == 200, sent.text
+    assert (sent.json()["command"], sent.json()["summary"]) == ("hmi_close", "Закрыть пульт на ПК")
+    claimed = _next(bridge, **AGENT_14).json()["command"]
+    assert claimed["kind"] == "control" and claimed["action"] == "hmi_close" and 0 < claimed["deadline_ms"] <= 5000
+    # A graceful close waits up to 15 s, then the forced one: no «Результат неизвестен» after the usual 15 s.
+    clock.now = clock.now + queue.CONTROL_RESULT_WAIT + timedelta(seconds=5)
+    assert _commands(admin)[0]["status"] == "taken"
+    answer = _result(bridge, claimed["id"], method="forced", **AGENT_14)
+    assert answer.status_code == 200, answer.text
+    [row] = _commands(admin)
+    assert (row["status"], row["method"], row["error"]) == ("done", "forced", "")
+    requested, finished = _journal(sessions, unit)
+    assert requested["text"] == "Закрыть пульт на ПК: станок «Тираж готов» (до открытия пульта), подтверждено на карточке"
+    assert finished["text"] == "Закрыть пульт на ПК: Выполнена — закрыт принудительно" and finished["method"] == "forced"
+
+
+@pytest.mark.parametrize("last_state", [103, 104, 106])
+def test_close_is_refused_when_the_machine_was_in_a_cycle_before_the_panel_opened(ob019, last_state):
+    sessions, clock, admin, unit, bridge = ob019
+    queue._runners.clear()
+    _pult(bridge, clock, last_state)
+    refused = _send(admin, "hmi_close")
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == "Станок в цикле — пульт закрывать нельзя, дождитесь остановки"
+    assert _commands(admin) == []
+
+
+def test_close_is_refused_in_a_cycle_live_without_link_or_state_and_without_the_right(ob019):
+    sessions, clock, admin, unit, bridge = ob019
+    from app.modules.production import machines as rules
+    queue._runners.clear()
+    _state(bridge, clock, 103)  # the panel is closed, the machine cuts
+    assert _send(admin, "hmi_close").json()["detail"] == control.IN_CYCLE_TEXT
+    _state(bridge, clock, 102)
+    operator = _login("operator")
+    assert _send(operator, "hmi_close").status_code == 403
+    assert _send(admin, "hmi_close", hands_clear=False).status_code == 409
+    with sessions.begin() as session:  # a machine ERP never read before the panel took the port
+        snapshot = session.get(rules.MachineSnapshotRow, unit)
+        snapshot.last_state, snapshot.last_state_at = None, None
+    _pult(bridge, clock, None)
+    unknown = _send(admin, "hmi_close")
+    assert unknown.status_code == 409 and "не ясно, стоит ли он" in unknown.json()["detail"]
+    clock.now = clock.now + timedelta(seconds=30)  # the PC is silent
+    stale = _send(admin, "hmi_close")
+    assert stale.status_code == 409 and stale.json()["detail"] == "Закрыть пульт на ПК нельзя: нет связи с ПК станка"
+    assert _commands(admin) == []
+
+
+def test_open_the_panel_only_when_it_is_closed_and_an_old_runner_never_gets_either(ob019):
+    sessions, clock, admin, unit, bridge = ob019
+    queue._runners.clear()
+    _next(bridge, runner_version="1.3.0")  # the runner on the PC is 1.3.0
+    old = _send(admin, "hmi_open")
+    assert old.status_code == 409 and old.json()["detail"] == queue.RUNNER_HMI_OUTDATED
+    queue._runners.clear()
+    assert _send(admin, "hmi_open").status_code == 200
+    assert _next(bridge, runner_version="1.3.0").json() == {"command": None}  # failed unsent
+    [row] = _commands(admin)
+    assert (row["status"], row["error"]) == ("failed", queue.RUNNER_HMI_OUTDATED)
+    queue._runners.clear()
+    clock.now = clock.now + timedelta(milliseconds=100)
+    sent = _send(admin, "hmi_open").json()
+    claimed = _next(bridge, **AGENT_14).json()["command"]
+    assert claimed["id"] == sent["id"] and claimed["action"] == "hmi_open"
+    assert _result(bridge, claimed["id"], outcome="failed", reason="hmi_not_started", **AGENT_14).status_code == 200
+    assert _commands(admin)[0]["error"] == control.REASONS["hmi_not_started"]
+    _pult(bridge, clock)
+    assert _send(admin, "hmi_open").json()["detail"] == "Пульт на ПК уже открыт"
+
+
+def test_the_runner_reports_only_known_reasons_and_methods(ob019):
+    sessions, clock, admin, unit, bridge = ob019
+    queue._runners.clear()
+    _pult(bridge, clock)
+    assert _send(admin, "hmi_close").status_code == 200
+    claimed = _next(bridge, **AGENT_14).json()["command"]
+    assert _result(bridge, claimed["id"], outcome="failed", reason="in_cycle", method="kill", **AGENT_14).status_code == 422
+    assert _result(bridge, claimed["id"], outcome="failed", reason="in_cycle", **AGENT_14).status_code == 200
+    assert _commands(admin)[0]["error"] == control.IN_CYCLE_TEXT
+    # The panel's refusals never read as the «panel is open» banner on the card (machineControlApi.operatorText).
+    for reason in ("in_cycle", "no_log", "hmi_still_open", "hmi_already_open", "hmi_not_started", "no_helper"):
+        assert not re.search(r"PXS_HMI|busy|refused|открыт пульт станка", control.REASONS[reason], re.IGNORECASE)
+
+
+def test_the_last_state_outlives_a_report_without_words_and_only_a_live_one_moves_it(ob019):
+    sessions, clock, admin, unit, bridge = ob019
+    from app.modules.production import machines as rules
+    _state(bridge, clock, 107)
+    _pult(bridge, clock, None)
+    with sessions() as session:
+        snapshot = session.get(rules.MachineSnapshotRow, unit)
+        assert (snapshot.link_state, snapshot.registers, snapshot.last_state) == ("port_busy", {}, 107)
+        assert control.hmi_problem("hmi_close", snapshot, clock.now) == ("", 107)
+        assert control.hmi_problem("hmi_open", snapshot, clock.now)[0] == "Пульт на ПК уже открыт"

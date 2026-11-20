@@ -1,17 +1,18 @@
 import { useCallback, useState, type ReactNode } from "react";
 import { PageWindow } from "./PageWindow";
 import { EMPTY, formatMoment, formatNumber } from "./format";
-import { PULT_OPEN, operatorText, type MachineRunState } from "./machineControlApi";
+import { PULT_OPEN, operatorText, type MachineControl, type MachineRunState } from "./machineControlApi";
 import { machinesApi, usePolled, type MachineCard, type Ob019Live, type Tone } from "./machinesApi";
 import { Ob099CardView } from "./Ob099Card";
-import { Ob019Controls } from "./Ob019Controls";
+import { Ob019Controls, Ob019Pult } from "./Ob019Controls";
 import { Ob019SettingsPanel } from "./Ob019SettingsPanel";
 
 /** Живая карточка ОБ.019 (линия резки и зачистки с лазерной маркировкой) как пульт у станка (навык erp-machine-hmi,
  *  владелец 19.11.2026): сверху один раз — состояние словами, связь и что делать дальше; под ним команды
  *  (Ob019Controls.tsx), затем «Выполнение задания», «Что режем», чертёж провода, запись, проба и поправка
  *  (Ob019SettingsPanel.tsx); «Подключение» — свёрнуто внизу. Открытый на ПК пульт станка — одной строкой, без имени
- *  программы. Опрос раз в 3 с, пока окно открыто. */
+ *  программы, с кнопкой «Закрыть пульт на ПК»; на связи — тихая «Открыть пульт на ПК» (Ob019Pult). Опрос раз в 3 с,
+ *  пока окно открыто. */
 
 type Fact = [label: string, value: string];
 
@@ -100,6 +101,8 @@ export function Ob019CardView({ card, controls = false }: { card: MachineCard; c
   // strip and the command row say the same.
   const [runState, setRunState] = useState<MachineRunState | null>(null);
   const [startWhy, setStartWhy] = useState<string | undefined>(undefined);
+  // The command poll of the command row: the operator panel button in the status strip shows its progress too.
+  const [control, setControl] = useState<MachineControl | null>(null);
   const run = runState?.run;
   const running = !!run && !["closed", "failed", "moved"].includes(run.stage);
   const status = machineStatus(card, startWhy);
@@ -111,6 +114,7 @@ export function Ob019CardView({ card, controls = false }: { card: MachineCard; c
       <strong className={`machine-status-title ${toneClass(status.tone)}`}>{status.title}</strong>
       <span className="machine-status-link">{status.link}</span>
       {status.hint && <span className="machine-status-hint">{status.hint}</span>}
+      {controls && <Ob019Pult card={card} control={control} />}
       <span className="machine-status-estop">Аварийная остановка — кнопкой на станке</span>
     </div>
     {facts.length > 0 && <dl className={`machine-summary${old ? " machine-old" : ""}`}
@@ -118,7 +122,7 @@ export function Ob019CardView({ card, controls = false }: { card: MachineCard; c
       {old && card.reported_at && <div><dt>Данные на</dt><dd>{formatMoment(card.reported_at)}</dd></div>}
       {facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
     </dl>}
-    {controls && <Ob019Controls card={card} run={runState ? runState.run : undefined} onStartWhy={setStartWhy} />}
+    {controls && <Ob019Controls card={card} run={runState ? runState.run : undefined} onStartWhy={setStartWhy} onControl={setControl} />}
     <Ob019SettingsPanel inventory={card.inventory} equipmentId={card.equipment_id} live={card.live} old={old} onRun={setRunState} />
     <details className="machine-fold machine-connection">
       <summary>Подключение</summary>

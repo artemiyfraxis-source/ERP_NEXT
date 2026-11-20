@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { MachineCommand, MachineControl, MachineRun, MachineWindow, TransferPlan } from "./machineControlApi";
-import { Ob019SettingsPanel, pullFor, pullMode, SELECT_WAIT_MS, sourceText } from "./Ob019SettingsPanel";
+import { NO_DATA, Ob019SettingsPanel, pullFor, pullMode, SELECT_WAIT_MS, sourceText } from "./Ob019SettingsPanel";
 import { wireZones } from "./Ob019WireDrawing";
 
 function json(body: unknown, status = 200) {
@@ -605,4 +605,31 @@ it("a «Тираж» typed while the job waits for a missing size goes with the 
   fireEvent.keyDown(back, { key: "Enter" });
   await waitFor(() => expect(posts).toHaveLength(1));
   expect((posts[0].body.values as Record<string, string>).total_set).toBe("20");
+});
+
+it("«Остальные параметры» without fresh machine data is one line, not a table of dashes", async () => {
+  server();
+  render(<Ob019SettingsPanel inventory="ОБ.019" old />);
+  fireEvent.click(await screen.findByRole("button", { name: /Остальные параметры/ }));
+  expect(screen.getByText(NO_DATA)).toBeInTheDocument();
+  expect(screen.queryByRole("table")).toBeNull();
+  expect(screen.queryByRole("tab")).toBeNull();
+});
+
+it("every writable parameter there has «Задать» next to «На станке»; an edit is written like the drawing", async () => {
+  const { posts } = server();
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  fireEvent.click(await screen.findByRole("button", { name: /Остальные параметры/ }));
+  const table = await screen.findByRole("table", { name: "Провод и зачистка" });
+  expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Параметр", "Задать", "На станке", ""]);
+  const row = within(table).getByText("Стягивание начала").closest("tr")!;
+  const box = within(row).getByLabelText("Стягивание начала");
+  await waitFor(() => expect(box).toHaveValue("5,00"));
+  expect(row).toHaveTextContent("5,00 мм");
+  fireEvent.change(box, { target: { value: "6" } });
+  expect(row.className).toContain("is-diff");
+  fireEvent.keyDown(box, { key: "Enter" });
+  await waitFor(() => expect(posts.map((post) => post.body.values)).toContainEqual({ pull_front_mm: "6" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Скорости" }));
+  expect(within(screen.getByRole("table", { name: "Скорости" })).getByText("только просмотр")).toBeInTheDocument();
 });

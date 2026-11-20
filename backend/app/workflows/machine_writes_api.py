@@ -138,6 +138,8 @@ class ResultPayload(AgentPayload):
     detail: str = Field(default="", max_length=500)
     before: dict[str, int] | None = None
     after: dict[str, int] | None = None
+    # «Закрыть / Открыть пульт на ПК» (runner 1.4.0): graceful / forced / none / started.
+    method: str = Field(default="", max_length=16)
 
 
 # --- helpers ---
@@ -713,16 +715,17 @@ def command_result(command_id: UUID, payload: ResultPayload, bridge: Bridge, fac
             try:
                 recorded = machine_control.finish(uow.session, before, outcome=payload.outcome or "failed",
                                                   reason=payload.reason or "unknown_command", before=payload.before,
-                                                  after=payload.after, now=now)
+                                                  after=payload.after, now=now, method=payload.method or None)
             except rules.MachineWriteInvalid as error:
                 raise HTTPException(422, str(error)) from error
             if recorded:
                 text = commands.CONTROL_TEXTS[before.status][0]
                 states = before.readback or {}
+                method = {"forced": " — закрыт принудительно", "none": " — пульт не был открыт"}.get(payload.method, "")
                 _journal(uow, link.equipment_id, "command_finished", bridge.actor, now,
-                         f"{before.summary}: {text}" + (f" — {before.error}" if before.error else ""),
+                         f"{before.summary}: {text}" + (f" — {before.error}" if before.error else "") + method,
                          command_id=str(before.id), command=before.command or "", status=before.status,
-                         reason=payload.reason, detail=" ".join(payload.detail.split())[:300],
+                         reason=payload.reason, method=payload.method, detail=" ".join(payload.detail.split())[:300],
                          state_before=str((states.get("before") or {}).get("766", "")),
                          state_after=str((states.get("after") or {}).get("766", "")),
                          alarm_before=str((states.get("before") or {}).get("782", "")),
