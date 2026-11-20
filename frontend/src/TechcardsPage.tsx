@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { DataTable, type DataCellEdit, type DataCellOption, type DataColumn } from "./DataTable";
 import { formatDayMonth } from "./format";
-import { EtkSheet, GeneratorPane } from "./ProjectEtk";
+import { EtkSheet, GeneratorPane, useCardSetupUnits } from "./ProjectEtk";
 import { OperationCard } from "./OperationCard";
 import { NewOperationDialog, type NewOperationResult } from "./NewOperationDialog";
 import { StatusChip } from "./StatusChip";
@@ -231,6 +231,7 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
   const canGenerate = Boolean(principal.permissions.tcgen);
   const selected = useMemo(() => cards.find((card) => card.id === selectedId) ?? null, [cards, selectedId]);
   const issued = selected?.status === "Выдана";
+  const setupUnits = useCardSetupUnits(selected?.id ?? "");
   useEffect(() => setRebuilding(false), [selectedId]);
   const shownCards = useMemo(() => {
     const project = projectFilter.trim().toLocaleUpperCase("ru-RU");
@@ -365,7 +366,7 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
       emptyText={projectFilter ? `Карточек проекта ${projectFilter} нет.` : cards.length ? "Ничего не найдено." : "Техкарт пока нет: их заводит «Генератор» в карточке проекта."}
     />}
     {selected && <article className="panel project-etk tc-etk">
-      <EtkSheet card={selected} principal={principal} onChange={replaceCard} onRebuild={issued ? () => setRebuilding(true) : undefined} />
+      <EtkSheet card={selected} principal={principal} setupUnits={setupUnits} onChange={replaceCard} onRebuild={issued ? () => setRebuilding(true) : undefined} />
       {canGenerate && (!issued || rebuilding) && <>
         {issued && <div className="tc-gen-head"><strong>Пересборка ЭТК</strong><button className="secondary small" onClick={() => setRebuilding(false)}>Свернуть генератор</button></div>}
         <GeneratorPane key={selected.id} card={selected} principal={principal} onChange={replaceCard} onDone={(updated) => {

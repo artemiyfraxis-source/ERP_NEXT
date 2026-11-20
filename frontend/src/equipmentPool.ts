@@ -65,3 +65,26 @@ export function setupUnitLabel(
   const main = `${parsed.model} — ОБ.${match[1]}.${match[2]}${stamp ? ` · налажен ${stamp}` : ""}`;
   return parsed.tail ? `${main} · ${parsed.tail}` : main;
 }
+
+/** «EW-50A — любой свободный ОБ.027.* · налажены: ОБ.027.2, ОБ.027.4»: the pool row of a card-only ETK with the units of
+ *  that pool set up on open tasks (no dates). Units of another pool are ignored; none left → the pool text of
+ *  `poolToolLabel`; non-pool rows stay null. */
+export function poolSetupLabel(
+  name: string | null | undefined, inventory: string | null | undefined, units: Array<Pick<EtkSetupUnit, "inventory_number">>,
+): string | null {
+  const base = poolToolLabel(name, inventory);
+  const parsed = equipmentPool(name, inventory);
+  if (!base || !parsed) return base;
+  const poolNumber = /^ОБ\.(\d+)\.\*$/.exec(parsed.pool)?.[1];
+  if (!poolNumber) return base;
+  const found = new Map<string, { pool: number; unit: number }>();
+  for (const unit of units) {
+    const match = POOL_NUMBER.exec(unit.inventory_number);
+    if (!match || !match[2] || !/^\d+$/.test(match[2]) || Number(match[1]) !== Number(poolNumber)) continue;
+    found.set(`ОБ.${match[1]}.${match[2]}`, { pool: Number(match[1]), unit: Number(match[2]) });
+  }
+  if (!found.size) return base;
+  const list = [...found.entries()].sort((a, b) => a[1].unit - b[1].unit || a[0].localeCompare(b[0])).map(([label]) => label);
+  const main = `${parsed.model} — любой свободный ${parsed.pool} · налажены: ${list.join(", ")}`;
+  return parsed.tail ? `${main} · ${parsed.tail}` : main;
+}

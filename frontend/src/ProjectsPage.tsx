@@ -26,7 +26,7 @@ import { canSee } from "./navigation";
 import { DataTable, type DataColumn } from "./DataTable";
 import { KitTile, tcProgress } from "./ProjectCard";
 import { PendingLesson } from "./AssemblyDrafts";
-import { EtkSheet, GeneratorPane, useTechcard } from "./ProjectEtk";
+import { EtkSheet, GeneratorPane, useCardSetupUnits, useTechcard } from "./ProjectEtk";
 import { AutoTextarea } from "./AutoTextarea";
 import { formatDate, formatDateTime, formatDay, formatMoment } from "./format";
 import { StatusChip } from "./StatusChip";
@@ -166,11 +166,12 @@ function GenTab({ card, principal, index, pick, done, builtId, onBuiltChange, op
 /** «ТК КБn»: электронная ТК сборки (SUPPLYMAP renderTc_). «Пересобрать» ведёт в генератор этой сборки. */
 function TcTab({ assembly, principal, rebuild, changed, builtId }: { assembly: KitsetAssembly; principal: Principal; rebuild: () => void; changed: () => void; builtId?: string }) {
   const { card, setCard, error } = useTechcard(assembly.techcard?.card_id || "");
+  const setupUnits = useCardSetupUnits(assembly.techcard?.card_id || "");
   if (error) return <div className="error-banner" role="alert">{error}</div>;
   if (!card) return <div className="empty">Загрузка техкарты…</div>;
   return <>
     {builtId && <PendingLesson draftId={builtId} />}
-    <EtkSheet card={card} principal={principal} onRebuild={rebuild}
+    <EtkSheet card={card} principal={principal} onRebuild={rebuild} setupUnits={setupUnits}
     title={<><strong>{assembly.index}</strong> <span>{assembly.name}</span> <span className="muted">кол-во {assembly.run}</span></>}
     onChange={(updated) => { setCard(updated); changed(); }} />
   </>;
