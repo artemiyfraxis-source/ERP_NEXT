@@ -3,6 +3,9 @@ import { afterEach, expect, it, vi } from "vitest";
 import { ProductionNormFact, hoursText, lastDays, pieceTime, ratioText } from "./ProductionNormFact";
 import type { NormFactFact, NormFactReport } from "./normFactApi";
 
+// Раздел «Станки» проверяется в MachineSpeedReport.test.tsx; здесь он не должен ходить в сеть.
+vi.mock("./MachineSpeedReport", () => ({ MachineSpeedReport: () => null }));
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
