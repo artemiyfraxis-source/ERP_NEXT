@@ -63,7 +63,7 @@ jobs:
               echo "Сервер обновлён."
               exit 0
             fi
-            echo "::error::Обновление сервера не удалось (шаг: $(printf '%s' "$body" | jq -r '.step // "?"'))"
+            echo "::error::Обновление сервера не удалось (шаг: $(printf '%s' "$body" | jq -r '.step // "?"')): $(printf '%s' "$body" | jq -r '.message // ""')"
             exit 1
           done
           echo "::error::Сервер не ответил за 45 минут: нет свежего update-result.json"
