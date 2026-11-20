@@ -318,6 +318,15 @@ def test_rejects_invalid_quantities(assigned, bad):
     assert action(client, operator, group, "submit", rows=rows).status_code == 422
 
 
+@pytest.mark.parametrize("field", ["good_quantity", "defect_quantity"])
+def test_rejects_fractional_pieces(assigned, field):
+    client, operator, group = start(assigned)
+    rows = quantities(group)
+    rows[0][field] = "1.5"
+    response = action(client, operator, group, "submit", rows=rows)
+    assert response.status_code == 422 and "целое число штук" in response.json()["detail"]
+
+
 def test_partial_submissions_count_shared_elapsed_time_once(assigned):
     from app.modules.production.infrastructure import ProductionWorkTimeLogRow
     client, operator, group = start(assigned)

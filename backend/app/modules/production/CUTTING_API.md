@@ -349,8 +349,8 @@ to every active member. A partial view cannot execute the whole group.
   explicit physical machine bindings; the group claims that machine set and the performer once.
 - `POST /.../{id}/submit`: `{version, rows: [{member_id, good_quantity, defect_quantity,
   defect_character?, defect_description?, materials?: [{fulfillment_line_id, quantity}]}]}`.
-  Decimal quantities use PF units. Duplicate/foreign members, overproduction and invalid defect
-  details are refused. Rows may be omitted or have zero quantities; at least one must be positive.
+  Quantities are whole pieces in PF units (sent as decimal strings): a fraction → 422 «Годные и брак — целое
+  число штук». Duplicate/foreign members, overproduction and invalid defect details are refused. Rows may be omitted or have zero quantities; at least one must be positive.
   One transaction creates each positive row's own output, box, defect and optional material
   consumption. A failure in any row rolls back the complete request. A partial submission keeps the
   same session active; it closes when all active members' good + defective quantities reach their
@@ -363,7 +363,8 @@ to every active member. A partial view cannot execute the whole group.
   open a parallel interval on one of its members.
 
 Returns `{group, outputs: [{member_id, output_id, box_id, box_number}]}` (`outputs` empty outside
-submission). Group reads add `session` (ordinary session fields plus `cutting_group_id`, or null)
+submission). Group reads add `session` (ordinary session fields plus `cutting_group_id` and `operator_name` — who
+runs it, for the card's «Группу ведёт <имя>»; "" when the employee is not found — or null)
 and `downtime: {id, reason, reason_name, comment, started_at}` (or null). `/my/execution` also marks
 the shared session with `cutting_group_id`; other work remains blocked until it completes.
 
@@ -413,20 +414,26 @@ row. `cutting_queue.py`, routes in `cutting_api.py`. Computed on every read — 
   draft still gives that revision). No readable ETK (no card, no issued revision, techcards not configured) never drops a
   running input-less PF: it is listed under «Станок не указан» with `warnings: ["нет в ЭТК: выданная карта"]`, values
   `null` and `blocked` «Нет ЭТК задания — не понять, резка ли это: готовые вводит мастер» (it may be a labels or tubes PF).
+  A standalone PF with an open individual work session (active or paused) is listed with `blocked` «По этому ПФ идёт
+  работа на карточке — сдайте там» — the same text «Готово» refuses with; the screen keeps that PF's card.
 - One read per request (`collect`): running tasks, their outputs and the active member ids in a few queries; members
   of finished or closed work are dropped before the group access check and before their snapshot (the frozen document)
   is read; open group sessions and operator names are read once.
-- Machine = the cut operation's card tooling «Оборудование» (`inventory_number`, else `equipment_model_id`). Several —
-  `ОБ.095` (BZW-50X) if listed, else the first, with «в ЭТК ещё станки: <the others>». None — never put on a real
-  machine: the row gets `machine_id: null`, «нет в ЭТК: станок», and its own bucket «Станок не указан»
-  (`machine_id=none`).
-- Pool (owner 20.11, «любой свободный»): a row the БД.ОБ catalog (`EquipmentCatalog.machine`, article tie-break
-  included) resolves to a model with SEVERAL physical units, none of them the row's exact number (`ОБ.100.X`, bare
-  `ОБ.100`, a model id only), is keyed by the MODEL id (`machine_id` = model id, not the inventory number) and labelled
-  «ОБ.100 BZW-D2.0S · любой свободный (3)» — 3 = physical units of the model. A model with one physical unit is not a
-  pool: its row is keyed by that unit's inventory number. Exact-unit rows (`ОБ.095`, still preferred when listed) and
-  rows the catalog cannot resolve keep today's key. `/machines` lists the pool as one machine, sorted by catalog code
-  then label. The catalog is read only when the app has the references factory.
+- Machine = what the cut operation's card tooling «Оборудование» names (`inventory_number`, else
+  `equipment_model_id`; owner 20.11, final — 708К. today names ОБ.094 BZW-886+Q2). Several — the row is on EACH of
+  those machines' lists with the same `key`, so one «Готово» removes it everywhere; on a machine's list its
+  `machine_id`/`machine_name` is that machine, in «Все станки» the first the card names (the default). `machines` lists
+  them all in card order. None — never put on a real machine: the row gets `machine_id: null`, `machines: []`, «нет в
+  ЭТК: станок», and its own bucket «Станок не указан» (`machine_id=none`). No machine is stored per row; «Готово»
+  records a machine only when the screen sends `equipment_id` (below): the operator may work a row on any machine.
+  No machine is preferred any more (the old «ОБ.095 if listed» rule is gone — owner 20.11, final).
+- Pool (owner 20.11, «любой свободный»): a tooling row the БД.ОБ catalog (`EquipmentCatalog.machine`, article
+  tie-break included) resolves to a model with SEVERAL physical units, none of them the row's exact number (`ОБ.100.X`,
+  bare `ОБ.100`, a model id only), is keyed by the MODEL id (`machine_id` = model id, not the inventory number) and
+  labelled «ОБ.100 BZW-D2.0S · любой свободный (3)» — 3 = physical units of the model. A model with one physical unit is
+  not a pool: its row is keyed by that unit's inventory number. Rows the catalog cannot resolve keep their raw key. A
+  pool is one of the row's `machines`, like any other. `/machines` lists the pool as one machine, sorted by catalog
+  code then label. The catalog is read only when the app has the references factory.
 - A missing or odd ETK value never drops a row: the value is `null` and `warnings` says «нет в ЭТК: длина / провод /
   зачистка А / режим зачистки А / …». A grouped row whose frozen ETK lacks the cut stays with «нет в ЭТК: резка кабеля».
 - Order: setup key (wire, then side A and B strip values/mode/diameters, then laser marking mode), then length short →
@@ -435,13 +442,16 @@ row. `cutting_queue.py`, routes in `cutting_api.py`. Computed on every read — 
   зачистка Б: … · лазер по краям»; «без зачистки» when no side is stripped).
 
 `GET /api/production/cutting-queue?machine_id=ОБ.095` (myops view; `machine_id=none` — the «Станок не указан» bucket,
-answered with `machine_id: null`). `?equipment_id=<БД.ОБ unit uuid>` instead: the unit's own rows (its inventory
-number) plus the pool rows of its model; the answer carries `equipment_id`; a record that is not a physical machine
-(`.X`, `(R)`, non-machine, unknown) → 422; no references factory → 503; neither parameter → 422 (`machine_id` alone works as before):
+answered with `machine_id: null`; `machine_id=all` — «Все станки»: every row of every machine once, same order, answered
+with `machine_id: "all"`). `?equipment_id=<БД.ОБ unit uuid>` instead (wins over `machine_id`): the rows naming the unit
+itself (its inventory number) or its model's pool, with that machine as the row's `machine_id`; the answer carries
+`equipment_id`; a record that is not a physical machine (`.X`, `(R)`, a hand tool with an ОБ number, non-machine,
+unknown) → 422; no references factory → 503; neither parameter → 422:
 
 ```text
-{machine_id, version, rows: [{key, task_id, operation_id, task_version, task_number, project, item,
+{machine_id, equipment_id, version, rows: [{key, task_id, operation_id, task_version, task_number, project, item,
   group_id, group_number, group_state (open|frozen|null), machine_id, machine_name,
+  machines: [{machine_id, machine_name}],
   wire, wire_name, length_mm, planned, done, left,
   strip_a, strip_a_mode (full|partial|null), strip_a_program (confirmed|unconfirmed|absent; wires: null),
   strip_b, strip_b_mode, strip_b_program, diameters, laser_mark, marking_mode (full|ends|null),
@@ -450,11 +460,13 @@ number) plus the pool rows of its model; the answer carries `equipment_id`; a re
 
 Decimals are strings (`length_mm` mm; `planned`/`done`/`left` in PF units, `done` = good + defect). `strip_*` is `null`
 when that side is not stripped; coax values are the confirmed program boundaries from the conductor tip, else L1/L2/L3.
-`version` is a digest of (row, left, task version, group state, machine, length, setup text, warnings, blocked) for
-change detection. `project` is the issued ETK's spelling (`row_project`), the same in the «Готово» notice.
+`version` is a digest of (row, left, task version, group state, machine, machines, length, setup text, warnings,
+blocked) for change detection. `project` is the issued ETK's spelling (`row_project`), the same in the «Готово» notice.
 
 `GET /api/production/cutting-queue/machines` (myops view): `{machines: [{machine_id, machine_name, rows, left, projects}]}`
-— machines with open cut work, by id; the bucket without a machine (`machine_id: null`, «Станок не указан») last.
+— «Все станки» (`machine_id: "all"`, every row once) first, then machines with open cut work by catalog code, label and
+id (a row naming several machines counts on each; a pool is one entry), the bucket without a machine (`machine_id: null`, «Станок не указан») last. No open
+cut work at all — `[]`.
 
 `POST /api/production/cutting-queue/done` (myops edit, optional `?on_behalf_of=`, required `Idempotency-Key`):
 `{task_id, operation_id, quantity, equipment_id?}` (integer > 0; `equipment_id` — the physical unit that did the work).
@@ -464,9 +476,16 @@ One transaction, lock order project → group → task:
    issued ETK holds a cable cut. Anything else (labels/tubes PF grouped or split off, a PF with inputs) → 422 «В очереди
    резки сдаётся только резка кабеля — этот ПФ сдают на его карточке»; no readable ETK → 422 «Нет ЭТК задания — …».
    Checked before anyone is assigned or anything is posted.
-1. The performer not yet on the PF (unassigned, or assigned to others) joins its assignees through the ordinary
-   `assign_task` (owner: anyone at the machine may press «Готово»); its refusals apply — e.g. «… не монтажник», another
-   site of a grouped row. Existing assignees and their facts stay. Known effect: on a grouped row only that member's PF
+1. Owner 20.11 (final): any user with access to that site's tasks may press «Готово». The presser who is not a монтажник
+   (master, technologist; not on the PF) posts as «Ввод готовых»: the output is under the presser, nobody is assigned.
+   A монтажник not yet on the PF (himself, or the one worked for via `on_behalf_of`) joins its assignees through the
+   ordinary `assign_task`; its refusals apply — e.g. another site of a grouped row, «… не монтажник» when working for a
+   non-монтажник. Site rules and the cut-only rule (step 0) hold for everyone. An account without an employee record
+   or with an empty site (no site to limit it) may press only with production edit (master/admin, as «Ввод
+   готовых»; the site rules of the operation/group then apply as for a site-less master); otherwise 403 «Вас нет в
+   справочнике сотрудников — …» / «У вас в справочнике сотрудников не указана площадка — …». Existing assignees and
+   their facts stay.
+   Known effect: on a grouped row only that member's PF
    is assigned (the group's own `assign` replaces every row's assignees and refuses a started group, so it is not
    used), so the group card's common assignment becomes inconsistent (`assignment_consistent: false`, no common
    assignees shown) and `assign_task` re-plans that PF's window from now (or from its planned start when it already had
@@ -476,17 +495,24 @@ One transaction, lock order project → group → task:
    осталось Z.»; a task not running or handed over → 422.
 3. Grouped rows follow the group card rules: without an open group session the output is accepted and the first one
    freezes the group (`frozen`, membership fixed); a group started on its card (open group session, whoever runs it)
-   is listed with `blocked` («Группа РЗ-… начата на карточке группы (Имя) — сдают там») and «Готово» is 422 «По этой ПФ
-   выполняется группа резки — используйте карточку группы»: the group session submits there.
+   is listed with `blocked` («Группа РЗ-… начата на карточке группы (Имя) — сдают там») and «Готово» is 422 «Группа
+   РЗ-… начата на карточке — сдайте там», checked in `mark_done` before anyone is assigned or anything is posted: the
+   group session submits there.
 
 Returns `{notice: "Готово: 708К. · КБ3 · 120 шт", assigned, box: {id, number, code}, output_id,
 row: {key, task_id, operation_id, task_version, planned, done, left}}`. The receipt is an audit event
 `production.cutting_queue_done` whose id is `uuid5(key)`: the same key and payload (task, PF, quantity, performer) replays
 the stored response without a second output; the same key with another payload → 409. 403 another site, 404 unknown
-task/PF. With `equipment_id` the unit must serve the row's machine (its inventory number, or its model for a pool
-row) and, when the PF has a site (handed-to site or its assignees'), stand on the same site — else 422 with the reason. The worker's and the acting user's sites count too, so the first «Готово» of an unassigned PF is checked; a unit with an unknown site is allowed;
-the unit id and inventory number go into the receipt details (`equipment_id`, `inventory_number`) and into the replay
-fingerprint. No who/when traceability beyond the output's performer and the audit event; auto-write to ОБ.019 is a later PR.
+task/PF. With `equipment_id` the unit must serve one of the row's machines (its inventory number, or its model for a
+pool) and, when the PF has a site (handed-to site, its assignees' and the performer's — not the presser's own: an admin
+may enter «Готово» for a worker of another site), stand on that site — else 422 with the reason; a unit with an unknown
+site is allowed. The unit id and inventory number go into the receipt details (`equipment_id`, `inventory_number`) and
+into the replay fingerprint. The receipt is also the «Журнал» line «Готово в очереди резки» (`frontend/src/auditLabels.ts`): actor = the
+presser; details `{project, item_index, task_number, quantity, performer, pressed_by, operator_id, pressed_by_id,
+task_id, operation_id, replay_key, fingerprint, result}` (`performer` — whose pieces: the монтажник, or the presser when
+posted as «Ввод готовых»; the journal hides ids, `replay_key`, `fingerprint`, `result`). Receipts written before
+20.11 evening carry `key` instead of `replay_key` and no names. Without `equipment_id` no machine is recorded;
+auto-write to ОБ.019 is a later PR.
 
 ## Decisions for coordinator review
 

@@ -9,6 +9,7 @@ import "./cuttingQueue.css";
 
 export const REFRESH_MS = 60_000;
 const NO_MACHINE = "none";
+const ALL_MACHINES = "all";
 const STRIP_MODE = { full: "полная", partial: "частичная" } as const;
 const MARKING = { full: "по всей длине", ends: "по краям" } as const;
 
@@ -50,11 +51,15 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
   const retry = useRef<Record<string, { payload: string; key: string }>>({});
   const ticket = useRef(0);
   useEffect(() => { if (machines && !error) onHasWork?.(machines.length > 0); }, [machines, error, onHasWork]);
+  // Для скрытия дублей в «Заданиях»: строки всех станков (`machine_id=all`), независимо от выбранного в списке.
+  const [allOps, setAllOps] = useState<Set<string> | null>(null);
   useEffect(() => {
-    if (!onRows) return;
-    onRows(new Set((queue?.rows ?? []).map((item) => item.operation_id)));
+    if (!onRows || !allOps) return;
+    onRows(allOps);
     return () => onRows(new Set());
-  }, [queue, onRows]);
+  }, [allOps, onRows]);
+  const wantAll = useRef(false);
+  wantAll.current = Boolean(onRows);
   const chosen = useRef("");
   chosen.current = selected;
 
@@ -65,8 +70,14 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
       if (mine !== ticket.current) return;
       const current = chosen.current;
       const value = list.some((machine) => machineValue(machine) === current) ? current : list.length ? machineValue(list[0]) : "";
-      const result = value ? await cuttingQueueApi.queue(value === NO_MACHINE ? null : value) : null;
+      const [result, everything] = await Promise.all([
+        value ? cuttingQueueApi.queue(value === NO_MACHINE ? null : value) : Promise.resolve(null),
+        wantAll.current ? cuttingQueueApi.queue(ALL_MACHINES).catch(() => null) : Promise.resolve(null),
+      ]);
       if (mine !== ticket.current) return;
+      // Прячем карточку только у строк, которые здесь можно сдать: заблокированная строка («Нет ЭТК задания…»,
+      // группа на карточке) сдаётся на своей карточке. Нет ответа «Все станки» — ничего не прячем.
+      if (wantAll.current) setAllOps(new Set((everything?.rows ?? []).filter((item) => !item.blocked).map((item) => item.operation_id)));
       setMachines(list);
       if (value !== current) setSelected(value);
       setQueue(result);
@@ -74,7 +85,11 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
       const now = new Date();
       setLoadedAt(`${two(now.getHours())}:${two(now.getMinutes())}`);
     } catch (reason) {
-      if (mine === ticket.current) { setError(failureText(reason, "«Очередь резки» не загрузилась")); setMachines((list) => list ?? []); }
+      if (mine === ticket.current) {
+        setError(failureText(reason, "«Очередь резки» не загрузилась"));
+        setMachines((list) => list ?? []);
+        if (wantAll.current) setAllOps(new Set());  // не держим устаревший список скрытых карточек
+      }
     }
   }, []);
 
@@ -119,7 +134,8 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
 
   const rows = queue?.rows ?? [];
   const currentKey = rows.find((row) => Number(row.left) > 0 && !row.blocked)?.key;
-  const columns = readOnly ? 11 : 12;
+  const showMachine = selected === ALL_MACHINES;
+  const columns = (readOnly ? 11 : 12) + (showMachine ? 1 : 0);
   const now = new Date();
   const today = `${two(now.getDate())}.${two(now.getMonth() + 1)}.${now.getFullYear()}`;
 
@@ -147,7 +163,7 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
       : !rows.length ? <div className="empty">На этом станке резать нечего.</div>
         : <div className="table-wrap"><table className="grid cq-table">
           <thead><tr>
-            <th>Проект</th><th>КБ</th><th>Провод</th><th className="num">Длина, мм</th><th className="num">Осталось, шт</th>
+            <th>Проект</th><th>КБ</th>{showMachine && <th>Станок</th>}<th>Провод</th><th className="num">Длина, мм</th><th className="num">Осталось, шт</th>
             <th>Зачистка А</th><th>Режим А</th><th>Зачистка Б</th><th>Режим Б</th><th>Маркировка</th><th>Замечания</th>{!readOnly && <th>Готово</th>}
           </tr></thead>
           <tbody>{rows.map((row) => {
@@ -158,6 +174,7 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
               <tr className={current ? "cq-current" : undefined} aria-current={current ? "true" : undefined}>
                 <td>{row.project}</td>
                 <td title={row.group_number ?? undefined}>{row.item}</td>
+                {showMachine && <td><Dash value={(row.machines ?? []).map((machine) => machine.machine_name).join(", ")} /></td>}
                 <td><Dash value={row.wire_name || row.wire || ""} /></td>
                 <td className="num"><Dash value={num(row.length_mm)} /></td>
                 <td className="num"><b>{num(row.left)}</b></td>

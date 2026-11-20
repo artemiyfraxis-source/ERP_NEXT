@@ -325,7 +325,7 @@ it("starts the first operation from an issued GRN and package", async () => {
     throw new Error(`Unexpected request: ${path}`);
   });
 
-  render(<ProductionPage principal={operatorPrincipal} mine />);
+  render(<ProductionPage principal={{ ...operatorPrincipal, permissions: { myops: "edit", production: "view" } }} mine />);
   expect(await screen.findByText("норма 0,2 ч на 10 шт (подготовка 2 мин + 1 мин на изделие)")).toBeInTheDocument();
   expect(screen.queryByText("Ещё не сдавали")).not.toBeInTheDocument();
   fireEvent.click(await screen.findByRole("button", { name: "Начать" }));
@@ -1113,6 +1113,9 @@ const fitter: Principal = {
   roles: ["operator"], access_level: "operator", permissions: { myops: "edit" },
 };
 
+// Мастер у своих заданий: видит норму и «факт / норма» (оператор — нет, владелец 20.11).
+const masterFitter: Principal = { ...fitter, permissions: { myops: "edit", production: "view" } };
+
 function readyTask(readiness: ProductionOperation["readiness"], extra: Partial<ProductionOperation> = {}): ProductionTask {
   return { ...task, operations: [{ ...task.operations[0], position: 2, first: false, readiness, ...extra }] };
 }
@@ -1324,7 +1327,7 @@ it("shows the fitter's own share, what was handed of it and how many pieces can 
   const share = { operator_id: fitter.user.id, quantity: 4, planned_start: "2026-09-22T09:00:00+03:00", planned_finish: "2026-09-22T09:06:00+03:00", started_at: null, finished_at: null };
   fitterFetch(readyTask({ state: "ready", text: "можно начинать", boxes: readyBoxes, available: "10" },
     { my_share: share, remaining: "3", fact: { good: "5", defect: "0", processed: "5" }, state: "в работе" }));
-  render(<ProductionPage principal={fitter} mine />);
+  render(<ProductionPage principal={masterFitter} mine />);
 
   expect(await screen.findByText("ваша доля 4 из 10")).toBeInTheDocument();
   expect(screen.getByText("сдано вами 1 из 4 · по этапу 5 из 10")).toBeInTheDocument();
@@ -1452,7 +1455,7 @@ it("puts pause and «Сдать…» on the running card with its timer, and the
     if (path === "/api/production/my/execution") return json({ session, boxes: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
-  render(<ProductionPage principal={fitter} mine />);
+  render(<ProductionPage principal={masterFitter} mine />);
 
   // Начало 42 мин назад: после полуночи это вчера — тогда с датой («в работе с 16.10 23:58»).
   expect(await screen.findByText(/^в работе с (\d\d\.\d\d )?\d\d:\d\d · 0:4[12]$/)).toBeInTheDocument();
@@ -1639,4 +1642,44 @@ it("keeps the running KB timer and disables starting other KB rows", async () =>
   expect(within(running!).getByText("КБ2")).toBeInTheDocument();
   expect(within(running!).getByRole("status")).toHaveTextContent(/в работе с.*0:00/);
   for (const button of within(group).getAllByRole("button", { name: "Начать" })) expect(button).toBeDisabled();
+});
+
+it("hides the norm and the fact/norm from the operator, but keeps the plan window", async () => {
+  fitterFetch(readyTask({ state: "ready", text: "можно начинать", boxes: readyBoxes, available: "10" },
+    { time_fact: { actual_seconds: 98 * 60, norm_seconds: 90 * 60, percent: 109, finishes: 1 } }));
+  render(<ProductionPage principal={fitter} mine />);
+  expect(await screen.findByRole("button", { name: "Начать" })).toBeInTheDocument();
+  expect(screen.getAllByText(/^план /).length).toBeGreaterThan(0);
+  expect(screen.queryByText(/норма \d/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/факт .* норма/)).not.toBeInTheDocument();
+});
+
+it("puts the cutting queue above the cards and hides rows of any machine, whatever the picker shows", async () => {
+  const operatorPrincipal: Principal = {
+    user: { id: "10000000-0000-0000-0000-000000000002", email: "operator@example.test", name: "Оператор", department: "Производство" },
+    roles: ["operator"], access_level: "operator", permissions: { myops: "edit" },
+  };
+  const cut: ProductionTask = { ...task, id: "70000000-0000-0000-0000-0000000000d1", number: "ПЗ-0201", operations: [{ ...task.operations[0], id: "71000000-0000-0000-0000-0000000000d1", state: "не начата" }] };
+  const other: ProductionTask = { ...task, id: "70000000-0000-0000-0000-0000000000d2", number: "ПЗ-0202", operations: [{ ...task.operations[0], id: "71000000-0000-0000-0000-0000000000d2", state: "не начата" }] };
+  const row = (op: ProductionTask, text: string) => ({ key: op.id, task_id: op.id, operation_id: op.operations[0].id, task_number: op.number, project: "708К.", item: "КБ1", group_number: null,
+    wire: "RG316", wire_name: "RG316", length_mm: "100", planned: "10", done: "0", left: "10", strip_a: null, strip_a_mode: null, strip_b: null,
+    strip_b_mode: null, laser_mark: null, marking_mode: null, operator_names: [], warnings: [], blocked: null, setup_change: true, setup_text: text });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/production/my") return json({ tasks: [cut, other] });
+    if (path === "/api/production/my/execution") return json({ session: null, boxes: [] });
+    if (path.includes("/cutting-queue/machines")) return json({ machines: [
+      { machine_id: "all", machine_name: "Все станки", rows: 2, left: "20", projects: 1 },
+      { machine_id: "ОБ.2", machine_name: "Станок 2", rows: 1, left: "10", projects: 1 }] });
+    if (path.includes("machine_id=all")) return json({ machine_id: "all", version: "v", rows: [row(cut, "Строка станка 1"), row(other, "Строка станка 2")] });
+    if (path.includes("/cutting-queue")) return json({ machine_id: "ОБ.2", version: "v", rows: [row(other, "Строка станка 2")] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  const { container } = render(<ProductionPage principal={operatorPrincipal} mine />);
+  await screen.findByText("Строка станка 1");
+  expect(screen.getByRole("option", { name: /Все станки/ })).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Станок"), { target: { value: "ОБ.2" } });
+  await waitFor(() => expect(screen.queryByText("Строка станка 1")).toBeNull());
+  expect(screen.queryByRole("button", { name: "Начать" })).toBeNull();
+  expect(container.querySelector(".cq")!.compareDocumentPosition(container.querySelector(".my-queue")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });

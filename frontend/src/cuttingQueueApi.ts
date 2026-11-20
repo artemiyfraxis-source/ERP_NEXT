@@ -29,6 +29,8 @@ export interface CuttingQueueRow {
   blocked: string | null;
   setup_change: boolean;
   setup_text: string;
+  /** «Все станки» (`machine_id=all`): на каких станках стоит строка. */
+  machines?: { machine_id: string | null; machine_name: string }[];
 }
 
 export interface CuttingQueue { machine_id: string | null; version: string; rows: CuttingQueueRow[] }
