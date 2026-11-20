@@ -5339,6 +5339,7 @@ tr.order-row-late > td:first-child { box-shadow: inset 3px 0 0 var(--tone-danger
 }
 a.button-link { display: inline-block; text-decoration: none; text-align: center; }
 .vswr-chart { margin: 8px 0 4px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+.vswr-chart svg text { font-variant-numeric: tabular-nums; }
 .vswr-chart svg { display: block; width: 100%; height: auto; max-height: 340px; }
 .vswr-problems { display: block; padding: 0 20px; }
 .vswr-result { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 14px; }

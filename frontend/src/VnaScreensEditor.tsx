@@ -24,7 +24,7 @@ export const PURPOSES: Record<VnaScreenPurpose, string> = {
   load: "Проверка нагрузкой", flex: "Шевеление кабелей", engineer: "Подробно (инженер)",
 };
 export const FORMATS: Record<VnaScreenFormat, string> = {
-  SWR: "КСВН", MLOG: "Потери (LOGM)", PHAS: "Фаза", GDEL: "ГВЗ", SMIT: "Вольперт-Смит",
+  SWR: "КСВН", MLOG: "Модуль, дБ", PHAS: "Фаза", GDEL: "ГВЗ", SMIT: "Вольперт-Смит",
 };
 const LIMITS: Record<VnaScreenLimit, string> = { norm: "из нормы СИ", etk: "из ЭТК", fixed: "своё число", none: "без линии" };
 const PARAMS: VnaScreenParam[] = ["S11", "S21", "S12", "S22"];
@@ -45,12 +45,15 @@ export const LAYOUTS: { code: number; rows: number; cols: number; label: string 
   { code: 15, rows: 4, cols: 4, label: "16 — 4 × 4" },
 ];
 const MAX_TRACES = 16;
-/** Пример нормы для превью: линия «из нормы СИ» — КСВН 1,06 и потери 0,2 дБ; «из ЭТК» — КСВН 1,30. */
+/** Пример нормы для превью: линия «из нормы СИ» — КСВН 1,06 и потери 0,2 дБ; «из ЭТК» — КСВН 1,30. */
 const SAMPLE_NORM = { swr: 1.06, loss: -0.2, etk: 1.3 };
 
 export const layoutOf = (code: number) => LAYOUTS.find((layout) => layout.code === code)
   ?? { code, rows: 1, cols: 1, label: `код S2VNA ${code}` };
-export const traceTitle = (trace: Pick<VnaScreenTrace, "param" | "format">) => `${FORMATS[trace.format]} ${trace.param}`;
+/** Подпись графика на экране: без кодов формата (LOGM) — «Отражение (S11), дБ», «Передача (S21), дБ». Только показ, в базе — как было. */
+export const lossTitle = (param: VnaScreenParam) => param === "S11" || param === "S22" ? `Отражение (${param}), дБ` : `Передача (${param}), дБ`;
+export const traceTitle = (trace: Pick<VnaScreenTrace, "param" | "format">) =>
+  trace.format === "MLOG" ? lossTitle(trace.param) : `${FORMATS[trace.format]} ${trace.param}`;
 const plain = (value: number | null | undefined) => (value === null || value === undefined ? "" : formatNumber(value, { digits: 6 }));
 
 // ---- черновик формы: числа — строками, как их набирают (запятая или точка) ------------------------------------------
@@ -125,7 +128,7 @@ export function fieldsOf(draft: Draft): { fields: VnaScreenFields } | { error: s
   for (const part of draft.markers.split(/[;\s]+/).filter(Boolean)) {
     const ghz = toNumber(part);
     if (ghz === null || ghz <= 0) return { error: `Маркеры: «${part}» — не частота в ГГц` };
-    if (ghz < LIMITS_OF.markerGhz[0] || ghz > LIMITS_OF.markerGhz[1]) return { error: `Маркеры: ${part} ГГц — вне диапазона ВАЦ 0,1–18000 МГц` };
+    if (ghz < LIMITS_OF.markerGhz[0] || ghz > LIMITS_OF.markerGhz[1]) return { error: `Маркеры: ${part} ГГц — вне диапазона ВАЦ 0,1–18000 МГц` };
     markers.push(Math.round(ghz * 1e9));
   }
   if (markers.length > LIMITS_OF.markers) return { error: `Маркеры: не больше ${LIMITS_OF.markers}` };
@@ -245,8 +248,8 @@ function Graph({ traces, number, cols }: { traces: DraftTrace[]; number: number;
       <line x1={left + w} x2={left + w} y1={top} y2={top + h} stroke="#9aa5b1" />
       <text x={left - 4} y={top + 4} textAnchor="end" fontSize="12" fill="#57606a">{formatNumber(high, { digits })}</text>
       <text x={left - 4} y={top + h + 3} textAnchor="end" fontSize="12" fill="#57606a">{formatNumber(low, { digits })}</text>
-      <text x={left} y={SVG_H - 4} fontSize="12" fill="#57606a">0,01 ГГц</text>
-      <text x={left + w} y={SVG_H - 4} textAnchor="end" fontSize="12" fill="#57606a">18 ГГц</text>
+      <text x={left} y={SVG_H - 4} fontSize="12" fill="#57606a">0,01 ГГц</text>
+      <text x={left + w} y={SVG_H - 4} textAnchor="end" fontSize="12" fill="#57606a">18 ГГц</text>
       {series.map((s) => <polyline key={s.key} points={s.points} fill="none" stroke={s.color} strokeWidth="1.5" />)}
       {line !== null && line >= low && line <= high && <line x1={left} x2={left + w} y1={y(line)} y2={y(line)} stroke="#c00000"
         strokeWidth="1.5" strokeDasharray="5 3" />}
@@ -277,6 +280,7 @@ function ScreenWindow({ screen, canEdit, canShow, showHint, onClose, onSaved, sh
   const [busy, setBusy] = useState(false);
   const dirty = JSON.stringify(draft) !== JSON.stringify(initial);
   const readOnly = !canEdit;
+  const requestClose = () => { if ((!dirty || !canEdit || window.confirm("Закрыть без сохранения изменений?"))) onClose(); };
   const patch = (change: Partial<Draft>) => { setDraft((current) => ({ ...current, ...change })); setNotice(""); };
   const patchTrace = (index: number, change: Partial<DraftTrace> | ((trace: DraftTrace) => DraftTrace)) =>
     setDraft((current) => ({ ...current, traces: current.traces.map((trace, i) => i !== index ? trace
@@ -302,13 +306,13 @@ function ScreenWindow({ screen, canEdit, canShow, showHint, onClose, onSaved, sh
     if (refusal) setError(refusal); else setNotice(`«${screen.name}» отправлен на ВАЦ — S2VNA покажет его через несколько секунд`);
   });
 
-  return <PageWindow label={screen ? `Экран ВАЦ ${screen.name}` : "Новый экран ВАЦ"} width={1320} close={onClose}>
+  return <PageWindow label={screen ? `Экран ВАЦ ${screen.name}` : "Новый экран ВАЦ"} width={1320} close={requestClose}>
     <form className="panel vna-screen-window" onSubmit={(event) => { event.preventDefault(); if (canEdit) save(); }}>
       <div className="vna-screen-head">
         <h2>{screen ? `Экран «${screen.name}»` : "Новый экран"}</h2>
         {screen && <span className="muted-text num">версия {screen.version}{screen.updated_by ? `, ${screen.updated_by}` : ""}
           {screen.updated_at ? `, ${formatMoment(screen.updated_at)}` : ""}</span>}
-        <button type="button" className="secondary small" onClick={onClose}>Закрыть</button>
+        <button type="button" className="secondary small" onClick={requestClose}>Закрыть</button>
       </div>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner" role="status">{notice}</div>}
@@ -381,7 +385,7 @@ function ScreenWindow({ screen, canEdit, canShow, showHint, onClose, onSaved, sh
       {canEdit && <button type="button" className="secondary small vna-screen-add" disabled={draft.traces.length >= MAX_TRACES}
         onClick={() => setDraft((current) => ({ ...current, traces: [...current.traces, { ...NEW_TRACE }] }))}>Добавить график</button>}
       <h3>Превью на примерных данных</h3>
-      <p className="muted-text">Линия «из нормы СИ» показана для примера нормы КСВН 1,06 и потерь 0,2 дБ, «из ЭТК» — КСВН 1,30;
+      <p className="muted-text">Линия «из нормы СИ» показана для примера нормы КСВН 1,06 и потерь 0,2 дБ, «из ЭТК» — КСВН 1,30;
         на приборе — норма объекта замера.</p>
       <ScreenPreview draft={draft} />
       <div className="form-actions vna-screen-actions">
