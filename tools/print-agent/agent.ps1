@@ -13,6 +13,9 @@
  очередь Windows по одной; команда «Очистить принтер» из ERP убирает задания ERP из очереди и очищает буфер Godex.
  ВАЦ, чтение описаний мер набора (2.11.1, 19.11.2026): операция read_kit находит набор S2VNA по метке (6650F27),
  читает меры OPEN/SHORT/LOAD/THRU с коэффициентами и возвращает прежний выбранный набор; ничего не записывает.
+ МФУ склада (2.12.0, 20.11.2026): очередь Windows того же МФУ, что и найденный сканер (или documentPrinter в config.json),
+ сообщается серверу как принтер документов; агент забирает PDF из ERP, рисует страницы движком Windows (Windows.Data.Pdf)
+ и печатает их в эту очередь нужное число копий. Скан с карточки МФУ приходит с цветом и разрешением — агент их ставит.
 #>
 [CmdletBinding()]
 param(
@@ -35,13 +38,14 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.11.1'
+$script:AgentVersion = '2.12.0'
 $script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
 $script:HeartbeatDevices = $null
 $script:VnaControlInitialized = $false
 $script:VnaWorker = $null
+$script:DocumentPrinterName = ''
 
 function Write-Log {
     param([string]$Message)
@@ -60,13 +64,14 @@ function Write-Log {
 
 function Read-AgentConfig {
     param([string]$Path)
-    $cfg = @{ server = ''; token = ''; printer = ''; markingPrinter = ''; scanner = ''; arinstFolders = $null }
+    $cfg = @{ server = ''; token = ''; printer = ''; markingPrinter = ''; scanner = ''; arinstFolders = $null; documentPrinter = '' }
     if ($Path -and (Test-Path $Path)) {
         $raw = Get-Content -Raw -Encoding UTF8 $Path | ConvertFrom-Json
         if ($raw.server) { $cfg.server = [string]$raw.server }
         if ($raw.printer) { $cfg.printer = [string]$raw.printer }
         if ($raw.markingPrinter) { $cfg.markingPrinter = [string]$raw.markingPrinter }
         if ($raw.scanner) { $cfg.scanner = [string]$raw.scanner }
+        if ($raw.documentPrinter) { $cfg.documentPrinter = [string]$raw.documentPrinter }
         if ($null -ne $raw.arinstFolders) { $cfg.arinstFolders = @($raw.arinstFolders) }
         if ($raw.tokenProtected) {
             # DPAPI: расшифровывается только тем пользователем Windows, который ставил агент
@@ -462,6 +467,40 @@ function Get-AgentPrinters {
             $item.hold = if ($hold.Length -gt 500) { $hold.Substring(0, 500) } else { $hold }
         }
         $item
+    }
+}
+
+# Принтер документов (2.12.0): очередь Windows того же МФУ, что и сканер этого ПК, — её имя или драйвер содержит модель
+# сканера («Pantum BM2300 Series Scanner» → «Pantum BM2300»); documentPrinter в config.json задаёт очередь явно.
+# Очереди этикеток (TSC, Godex) и виртуальные принтеры документами не считаются.
+function Get-ScannerModel {
+    param([string]$Name)
+    $model = (($Name -replace '(?i)\b(scanner|series|wia|twain|сканер)\b', ' ') -replace '\s+', ' ').Trim(' -·,')
+    if ($model.Length -lt 4) { return '' }
+    return $model
+}
+
+function Get-DocumentPrinters {
+    param($Scanners, [string]$Configured, [string[]]$Exclude)
+    $models = @($Scanners | ForEach-Object { Get-ScannerModel ([string]$_.name) } | Where-Object { $_ } | Sort-Object -Unique)
+    if (-not $models.Count -and -not $Configured) { return }
+    $installed = @()
+    try { $installed = @(Get-Printer -ErrorAction Stop) }
+    catch { Write-Log "Не удалось проверить очереди принтеров документов: $($_.Exception.Message)"; return }
+    $virtual = '(?i)(Microsoft Print to PDF|XPS|OneNote|Fax|Факс)'
+    if ($Configured) {
+        $chosen = @($installed | Where-Object { $_.Name -eq $Configured } | Select-Object -First 1)
+        if (-not $chosen.Count) { return @{ name = $Configured; driver = ''; port = ''; kind = 'document'; present = $false } }
+    } else {
+        $chosen = @($installed | Where-Object {
+            $queue = $_
+            $Exclude -notcontains $queue.Name -and $queue.Name -notmatch $virtual -and
+                @($models | Where-Object { ([string]$queue.Name).IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                    ([string]$queue.DriverName).IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -ge 0 }).Count -gt 0
+        })
+    }
+    foreach ($queue in $chosen) {
+        @{ name = [string]$queue.Name; driver = [string]$queue.DriverName; port = [string]$queue.PortName; kind = 'document'; present = $true }
     }
 }
 
@@ -1058,14 +1097,14 @@ function Invoke-PrinterCommand {
 }
 
 function Invoke-ErpApi {
-    param([string]$Url, [hashtable]$Body, [string]$AuthToken, [string]$MachineId)
+    param([string]$Url, [hashtable]$Body, [string]$AuthToken, [string]$MachineId, [int]$TimeoutSec = 20)
     $json = $Body | ConvertTo-Json -Compress -Depth 5
     $bytes = [Text.Encoding]::UTF8.GetBytes($json)
     $headers = @{ Authorization = "Bearer $AuthToken" }
     if ($MachineId) { $headers['X-Agent-Machine-Id'] = $MachineId }
     Invoke-RestMethod -Method Post -Uri $Url -Body $bytes `
         -ContentType 'application/json; charset=utf-8' `
-        -Headers $headers -TimeoutSec 20
+        -Headers $headers -TimeoutSec $TimeoutSec
 }
 
 function Send-JobResult {
@@ -1498,10 +1537,12 @@ function Send-Heartbeat {
     param([string]$Base, [string]$AuthToken, [string]$PrinterName, [string]$ScannerAddress, [switch]$Lightweight, [string]$MarkingPrinterName)
     $devices = $script:HeartbeatDevices
     if (-not $Lightweight) {
+        $scannersFound = @(Get-AgentScanners -ScannerAddress $ScannerAddress)
         $devices = @{
-            scanners = @(Get-AgentScanners -ScannerAddress $ScannerAddress); printer = [string]$PrinterName
+            scanners = $scannersFound; printer = [string]$PrinterName
             lan_ip = (Get-LanIp); arinst = (Test-ArinstPresent)
-            printers = @(Get-AgentPrinters $PrinterName $MarkingPrinterName)
+            printers = @(@(Get-AgentPrinters $PrinterName $MarkingPrinterName) +
+                @(Get-DocumentPrinters $scannersFound $script:DocumentPrinterName @($PrinterName, $MarkingPrinterName)))
         }
         $script:HeartbeatDevices = $devices
     }
@@ -1585,6 +1626,10 @@ function Start-AgentLoop {
         # Скан УПД: свои ошибки ловит сама функция, цикл они не роняют
         $scanState = 'idle'
         try { $scanState = Invoke-ScanPollOnce -Base $Base -AuthToken $AuthToken -ScannerAddress $ScannerAddress } catch { Write-Log "Скан: ошибка $($_.Exception.Message)" }
+        # Печать документов на МФУ (2.12.0): только когда этот ПК сообщил свою очередь документов и ВАЦ не занят.
+        if (-not $controlActive) {
+            try { [void](Invoke-DocumentPollOnce -Base $Base -AuthToken $AuthToken -DryRun:$DryRun) } catch { Write-Log "Печать документов: ошибка $($_.Exception.Message)" }
+        }
         if ($Once) { return }
         if ($scanState -eq 'error' -or $controlError) { $controlDelay = [Math]::Min(30, [Math]::Max(3, $controlDelay * 2)) } else { $controlDelay = 0 }
         $pause = if ($controlDelay) { 1000 * $controlDelay } elseif ($script:VnaWorker -and $script:VnaWorker.command) { 500 } elseif ($script:VnaPollAfterMs -eq 500) { 500 } else { 3000 }
@@ -1611,9 +1656,9 @@ $script:EsclTemplate = @'
 <pwg:XOffset>0</pwg:XOffset><pwg:YOffset>0</pwg:YOffset><pwg:Width>2480</pwg:Width><pwg:Height>3508</pwg:Height>
 </pwg:ScanRegion></pwg:ScanRegions>
 <pwg:InputSource>Platen</pwg:InputSource>
-<scan:ColorMode>Grayscale8</scan:ColorMode>
-<scan:XResolution>300</scan:XResolution>
-<scan:YResolution>300</scan:YResolution>
+<scan:ColorMode>{COLOR}</scan:ColorMode>
+<scan:XResolution>{DPI}</scan:XResolution>
+<scan:YResolution>{DPI}</scan:YResolution>
 <pwg:DocumentFormat>{MIME}</pwg:DocumentFormat>
 <scan:DocumentFormatExt>{MIME}</scan:DocumentFormatExt>
 </scan:ScanSettings>
@@ -1694,10 +1739,26 @@ function Get-EsclCapabilities {
     return $null
 }
 
+# Настройки скана из ERP (2.12.0): цвет 'color' / 'gray' и разрешение 150 / 300 / 600; без них — как для УПД (ч/б, 300).
+function Get-ScanOptions {
+    param($Settings)
+    $color = if ($Settings -and [string]$Settings.color -eq 'color') { 'color' } else { 'gray' }
+    $dpi = 300
+    if ($Settings -and $Settings.dpi) { $asked = [int]$Settings.dpi; if (@(150, 300, 600) -contains $asked) { $dpi = $asked } }
+    return @{ Color = $color; Dpi = $dpi }
+}
+
+function Get-EsclScanXml {
+    param([string]$Mime, $Settings)
+    $options = Get-ScanOptions $Settings
+    $mode = if ($options.Color -eq 'color') { 'RGB24' } else { 'Grayscale8' }
+    return $script:EsclTemplate.Replace('{MIME}', $Mime).Replace('{COLOR}', $mode).Replace('{DPI}', [string]$options.Dpi)
+}
+
 # Скан одним форматом. Connect=$false - нет связи по этой схеме; Retry=$true - формат не принят.
 function Invoke-EsclScanBase {
-    param([string]$Base, [string]$Mime)
-    $xml = $script:EsclTemplate.Replace('{MIME}', $Mime)
+    param([string]$Base, [string]$Mime, $Settings)
+    $xml = Get-EsclScanXml -Mime $Mime -Settings $Settings
     $r = $null
     for ($i = 0; $i -lt 5; $i++) {
         $r = Invoke-EsclRequest -Method POST -Url "$Base/eSCL/ScanJobs" -Body $xml -ContentType 'text/xml' -TimeoutSec 30
@@ -1729,14 +1790,14 @@ function Invoke-EsclScanBase {
 }
 
 function Invoke-EsclScan {
-    param([string]$Address)
+    param([string]$Address, $Settings)
     Initialize-TlsSkip
     [ErpTlsSkip]::On()
     try {
         $lastError = 'нет связи со сканером'
         foreach ($base in (Get-EsclBases $Address)) {
             foreach ($mime in @('application/pdf', 'image/jpeg')) {
-                $r = Invoke-EsclScanBase -Base $base -Mime $mime
+                $r = Invoke-EsclScanBase -Base $base -Mime $mime -Settings $Settings
                 if (-not $r.Connect) { $lastError = "нет связи со сканером $base ($($r.Error))"; break }
                 if ($r.Bytes) { return $r }
                 $lastError = $r.Error
@@ -1844,7 +1905,8 @@ function ConvertTo-ScanDocument {
 }
 
 function Invoke-WiaScan {
-    param([string]$Device)
+    param([string]$Device, $Settings)
+    $options = Get-ScanOptions $Settings
     $dm = New-Object -ComObject WIA.DeviceManager
     $info = Select-WiaDevice -DeviceInfos $dm.DeviceInfos -Device $Device
     if (-not $info) { throw 'Выбранный сканер WIA не найден — проверьте подключение и выберите сканер в ERP' }
@@ -1860,10 +1922,12 @@ function Invoke-WiaScan {
     } catch { Write-Log "Скан: источник WIA по умолчанию: $($_.Exception.Message)" }
     try {
         $item = $scanner.Items.Item(1)
-        foreach ($p in @(@(6146, 2), @(6147, 300), @(6148, 300))) {
+        # 6146 — тип изображения (1 цвет, 2 оттенки серого), 6147/6148 — разрешение; драйвер может их не принять.
+        $intent = if ($options.Color -eq 'color') { 1 } else { 2 }
+        foreach ($p in @(@(6146, $intent), @(6147, $options.Dpi), @(6148, $options.Dpi))) {
             try { $item.Properties.Item([string]$p[0]).Value = $p[1] } catch {}
         }
-        $dpiX = $dpiY = 300
+        $dpiX = $dpiY = $options.Dpi
         try { $dpiX = [double]$item.Properties.Item('6147').Value; $dpiY = [double]$item.Properties.Item('6148').Value } catch {}
         $pages = New-Object 'Collections.Generic.List[object]'
         do {
@@ -1890,15 +1954,16 @@ function Invoke-WiaScan {
 }
 
 function Invoke-ScannerScan {
-    param([string]$Address, [string]$Device)
+    param([string]$Address, [string]$Device, $Settings)
     if ($Address -and ((-not $Device) -or $Device -eq $Address)) {
-        $scan = Invoke-EsclScan -Address $Address
+        $scan = Invoke-EsclScan -Address $Address -Settings $Settings
         if ($scan.Mime -eq 'image/jpeg') {
-            return ConvertTo-ScanDocument -Pages @((ConvertTo-ScanPage -Bytes $scan.Bytes))
+            $dpi = (Get-ScanOptions $Settings).Dpi
+            return ConvertTo-ScanDocument -Pages @((ConvertTo-ScanPage -Bytes $scan.Bytes)) -DpiX $dpi -DpiY $dpi
         }
         return $scan
     }
-    return Invoke-WiaScan -Device $Device
+    return Invoke-WiaScan -Device $Device -Settings $Settings
 }
 
 # multipart/form-data байтами: тело бинарное, заголовки в UTF-8, CRLF.
@@ -1988,7 +2053,8 @@ function Invoke-ScanPollOnce {
             if ($claim.job.source -eq 'arinst') { Invoke-ArinstCapture }
             elseif (-not $claim.job.source -or $claim.job.source -eq 's2vna') { Invoke-VnaCapture }
             else { throw 'Неизвестный источник ВАЦ — обновите агент ERP' }
-        } else { Invoke-ScannerScan -Address $ScannerAddress -Device $device }
+        } elseif ($claim.job.settings) { Invoke-ScannerScan -Address $ScannerAddress -Device $device -Settings $claim.job.settings }
+        else { Invoke-ScannerScan -Address $ScannerAddress -Device $device }
         $fileName = if ($scan.FileName) { $scan.FileName } else { "capture.$($scan.Ext)" }
         Send-ScanFile -Url $resultUrl -AuthToken $AuthToken -Bytes $scan.Bytes -FileName $fileName -ContentType $scan.Mime -MachineId $machineId -CaptureSettings $scan.CaptureSettings
         Write-Log "Скан отправлен: задание $id, $($scan.Bytes.Length) байт, $($scan.Mime)"
@@ -2000,6 +2066,167 @@ function Invoke-ScanPollOnce {
         return 'error'
     }
     return 'done'
+}
+
+# ---------------------------------------------------------------- Печать документов на МФУ (2.12.0)
+# ERP отдаёт PDF (base64, SHA-256) заданию с попыткой attempt; агент рисует страницы движком PDF Windows (WinRT
+# Windows.Data.Pdf, 300 dpi) и печатает их System.Drawing.Printing в очередь МФУ: страницы × копии подряд (разбор по
+# копиям), страница в натуральную величину от угла листа, крупнее листа — уменьшается. Итог: spooled (Windows принял
+# все страницы) или failed с причиной. Задание не повторяется: без ответа ERP пишет «не подтверждено».
+
+function Initialize-PdfRenderer {
+    if ($script:PdfAsTaskOperation) { return }
+    Add-Type -AssemblyName System.Runtime.WindowsRuntime
+    Add-Type -AssemblyName System.Drawing
+    $null = [Windows.Data.Pdf.PdfDocument, Windows.Data.Pdf, ContentType = WindowsRuntime]
+    $null = [Windows.Data.Pdf.PdfPageRenderOptions, Windows.Data.Pdf, ContentType = WindowsRuntime]
+    $null = [Windows.Storage.Streams.InMemoryRandomAccessStream, Windows.Storage.Streams, ContentType = WindowsRuntime]
+    $methods = @([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 })
+    $script:PdfAsTaskAction = $methods | Where-Object { -not $_.IsGenericMethod -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncAction' } | Select-Object -First 1
+    $script:PdfAsTaskOperation = $methods | Where-Object { $_.IsGenericMethod -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' } | Select-Object -First 1
+}
+
+function Wait-WinRt {
+    param($Operation, [Type]$ResultType)
+    $task = if ($ResultType) { $script:PdfAsTaskOperation.MakeGenericMethod($ResultType).Invoke($null, @($Operation)) }
+        else { $script:PdfAsTaskAction.Invoke($null, @($Operation)) }
+    if (-not $task.Wait(60000)) { throw 'Windows не открыл PDF за 60 с' }
+    if ($ResultType) { return $task.Result }
+}
+
+function Open-PdfDocument {
+    param([byte[]]$Bytes)
+    Initialize-PdfRenderer
+    $stream = New-Object Windows.Storage.Streams.InMemoryRandomAccessStream
+    $writer = [System.IO.WindowsRuntimeStreamExtensions]::AsStreamForWrite($stream)
+    $writer.Write($Bytes, 0, $Bytes.Length)
+    $writer.Flush()
+    $stream.Seek(0)
+    $document = Wait-WinRt ([Windows.Data.Pdf.PdfDocument]::LoadFromStreamAsync($stream)) ([Windows.Data.Pdf.PdfDocument])
+    return @{ Document = $document; Stream = $stream; Writer = $writer }
+}
+
+# Страница PDF картинкой (Bitmap) и её размер в дюймах.
+function ConvertFrom-PdfPage {
+    param($Document, [int]$Index, [int]$Dpi = 300)
+    $page = $Document.GetPage([uint32]$Index)
+    $target = New-Object Windows.Storage.Streams.InMemoryRandomAccessStream
+    try {
+        $options = New-Object Windows.Data.Pdf.PdfPageRenderOptions
+        $options.DestinationWidth = [uint32][Math]::Max(1, [Math]::Round($page.Size.Width * $Dpi / 96))
+        $options.DestinationHeight = [uint32][Math]::Max(1, [Math]::Round($page.Size.Height * $Dpi / 96))
+        Wait-WinRt ($page.RenderToStreamAsync($target, $options))
+        $png = [System.IO.WindowsRuntimeStreamExtensions]::AsStreamForRead($target.GetInputStreamAt(0))
+        $copy = New-Object IO.MemoryStream
+        try { $png.CopyTo($copy) } finally { $png.Dispose() }
+        $copy.Position = 0
+        $image = [Drawing.Image]::FromStream($copy)
+        return @{ Image = $image; Stream = $copy; WidthIn = $page.Size.Width / 96; HeightIn = $page.Size.Height / 96 }
+    } finally {
+        $target.Dispose(); $page.Dispose()
+    }
+}
+
+# Прямоугольник страницы на листе в сотых дюйма от физического угла листа; крупнее листа — уменьшается.
+function Get-PrintRectangle {
+    param([double]$WidthIn, [double]$HeightIn, [double]$PaperWidth, [double]$PaperHeight, [double]$HardX, [double]$HardY)
+    $width = $WidthIn * 100; $height = $HeightIn * 100
+    $scale = [Math]::Min([double]1, [Math]::Min($PaperWidth / $width, $PaperHeight / $height))  # [double]: an int 1 picks Min(int, int)
+    return New-Object Drawing.RectangleF ([single](-$HardX)), ([single](-$HardY)), ([single]($width * $scale)), ([single]($height * $scale))
+}
+
+function Invoke-DocumentPrint {
+    param([string]$PrinterName, [byte[]]$Bytes, [int]$Copies, [string]$Title, [string]$ToFile)
+    Add-Type -AssemblyName System.Drawing
+    $opened = Open-PdfDocument -Bytes $Bytes
+    $document = $opened.Document
+    $pages = [int]$document.PageCount
+    $print = New-Object Drawing.Printing.PrintDocument
+    $state = @{ next = 0; total = $pages * [Math]::Max(1, $Copies); failure = $null; printed = 0 }
+    try {
+        if ($pages -lt 1) { throw 'В PDF нет страниц' }
+        $print.PrinterSettings.PrinterName = $PrinterName
+        if (-not $print.PrinterSettings.IsValid) { throw "Очередь Windows «$PrinterName» не найдена" }
+        # Только для проверки на ПК разработчика: «Microsoft Print to PDF» без окна выбора файла.
+        if ($ToFile) { $print.PrinterSettings.PrintToFile = $true; $print.PrinterSettings.PrintFileName = $ToFile }
+        $print.DocumentName = "ERP: $Title"
+        $print.PrintController = New-Object Drawing.Printing.StandardPrintController
+        $print.add_QueryPageSettings({
+            param($sender, $e)
+            try {
+                $size = $document.GetPage([uint32]($state.next % $pages)).Size
+                $e.PageSettings.Landscape = $size.Width -gt $size.Height
+            } catch { $state.failure = $_.Exception.Message }
+        })
+        $print.add_PrintPage({
+            param($sender, $e)
+            $page = $null
+            try {
+                if ($state.failure) { throw $state.failure }
+                $page = ConvertFrom-PdfPage -Document $document -Index ($state.next % $pages)
+                $bounds = $e.PageBounds
+                $rect = Get-PrintRectangle $page.WidthIn $page.HeightIn $bounds.Width $bounds.Height $e.PageSettings.HardMarginX $e.PageSettings.HardMarginY
+                $e.Graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+                $e.Graphics.DrawImage($page.Image, $rect)
+                $state.printed++
+                $state.next++
+                $e.HasMorePages = $state.next -lt $state.total
+            } catch {
+                $state.failure = $_.Exception.Message
+                $e.HasMorePages = $false
+                $e.Cancel = $true
+            } finally {
+                if ($page) { $page.Image.Dispose(); $page.Stream.Dispose() }
+            }
+        })
+        $print.Print()
+        if ($state.failure) { throw "Печать прервана на листе $($state.printed + 1) из $($state.total): $($state.failure)" }
+        return $state.printed
+    } finally {
+        $print.Dispose()
+        $opened.Writer.Dispose(); $opened.Stream.Dispose()
+    }
+}
+
+function Send-DocumentResult {
+    param([string]$Base, [string]$AuthToken, [string]$MachineId, $Job, [string]$Outcome, [string]$Message)
+    $body = @{ machine_id = $MachineId; attempt = [string]$Job.attempt; outcome = $Outcome; message = $Message }
+    Invoke-ErpApi -Url "$Base/api/stock/documents/agent/jobs/$($Job.id)/result" -Body $body -AuthToken $AuthToken -MachineId $MachineId | Out-Null
+}
+
+# Один опрос очереди документов: 'idle' / 'done' / 'error'. Нет очереди документов — сервер не спрашиваем.
+function Invoke-DocumentPollOnce {
+    param([string]$Base, [string]$AuthToken, [switch]$DryRun)
+    $printers = @($script:HeartbeatDevices.printers | Where-Object { $_ -and $_.kind -eq 'document' -and $_.present } | ForEach-Object { [string]$_.name })
+    if (-not $printers.Count) { return 'idle' }
+    $machineId = Get-MachineId
+    # Большой PDF (до 20 МБ) идёт в ответе base64 — дольше обычного запроса.
+    $claim = Invoke-ErpApi -Url "$Base/api/stock/documents/agent/claim" -Body @{ machine_id = $machineId; printers = $printers } `
+        -AuthToken $AuthToken -MachineId $machineId -TimeoutSec 120
+    $job = $claim.job
+    if (-not $job) { return 'idle' }
+    $outcome = 'failed'; $message = ''
+    try {
+        if ($printers -notcontains [string]$job.printer) { throw "Очередь «$($job.printer)» не на этом ПК" }
+        $bytes = [Convert]::FromBase64String([string]$job.pdf_b64)
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $digest = -join ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') }) } finally { $sha.Dispose() }
+        if ($digest -ne [string]$job.sha256) { throw 'PDF пришёл повреждённым (SHA-256 не совпал)' }
+        $copies = [Math]::Max(1, [int]$job.copies)
+        if ($DryRun) {
+            $message = 'dry run'
+            Write-Log "DRY RUN: документ $($job.id) «$($job.title)», $($job.pages) стр. × $copies — печать пропущена"
+        } else {
+            $sheets = Invoke-DocumentPrint -PrinterName ([string]$job.printer) -Bytes $bytes -Copies $copies -Title ([string]$job.title)
+            $outcome = 'spooled'
+            Write-Log "Документ отправлен на печать: $($job.id) «$($job.title)», листов $sheets, очередь «$($job.printer)»"
+        }
+    } catch {
+        $message = $_.Exception.Message
+        Write-Log "Печать документа $($job.id) не удалась: $message"
+    }
+    Send-DocumentResult -Base $Base -AuthToken $AuthToken -MachineId $machineId -Job $job -Outcome $outcome -Message $message
+    return $(if ($outcome -eq 'spooled') { 'done' } else { 'error' })
 }
 
 # -TestScan: один скан выбранным способом в файл, без ERP.
@@ -3506,6 +3733,7 @@ if ($MyInvocation.InvocationName -ne '.') {
     if ($Printer) { $cfg.printer = $Printer }
     if ($MarkingPrinter) { $cfg.markingPrinter = $MarkingPrinter }
     if ($Scanner) { $cfg.scanner = $Scanner }
+    $script:DocumentPrinterName = [string]$cfg.documentPrinter
     if ($TestScan) { Invoke-TestScan -ScannerAddress $cfg.scanner; return }
     if (-not $cfg.server -or -not $cfg.token) {
         Write-Log "Нет настроек (сервер/токен) в $ConfigPath"

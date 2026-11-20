@@ -95,33 +95,43 @@ def _joined(first: bytes, second: bytes) -> bytes:
 
 def store_plain_scan(uow: UnitOfWork, job_id: UUID, file_name: str, content: bytes, now: datetime) -> str:
     """The agent's file for a claimed plain scan: kept as PDF (after the pages of the scan it continues), the job done
-    with its page count; never read. A file ERP does not keep fails the job with the reason (422)."""
+    with its page count; never read. A file ERP does not keep — or a joined PDF over the limit — fails the job with the
+    reason (422), so the card says why at once instead of waiting for the claim to time out."""
     try:
-        _name, kind = checked_scan(file_name, content)
+        name, kind = checked_scan(file_name, content)
     except WarehouseValidationError as error:
         fail_job(uow, job_id, error=str(error), now=now)
         raise
-    _name, kind, content = as_pdf(_name, kind, content)
+    name, kind, content = as_pdf(name, kind, content)
     with uow:
-        session = uow.session
-        job = open_for_result(session, job_id, now)
+        job = open_for_result(uow.session, job_id, now)
         if job.purpose != "plain":
             raise WarehouseValidationError("Это задание — скан УПД")
         settings = dict(job.capture_settings or {})
+        earlier = None
         if settings.get("append_to") and kind == "application/pdf":
-            first = session.get(ScanJobRow, UUID(settings["append_to"]))
-            stored = session.get(WarehouseReceiptFileRow, first.file_id) if first is not None and first.file_id else None
-            if stored is not None:
-                content = _joined(stored.content, content)
+            first = uow.session.get(ScanJobRow, UUID(settings["append_to"]))
+            stored = uow.session.get(WarehouseReceiptFileRow, first.file_id) if first is not None and first.file_id else None
+            earlier = stored.content if stored is not None else None
+    try:
+        if earlier is not None:
+            content = _joined(earlier, content)
         if len(content) > SCAN_FILE_LIMIT:
             raise WarehouseValidationError(TOO_BIG)
-        file_id = uuid4()
-        uow.receipts.add_file(file_id, f"Скан {now:%d.%m.%Y %H-%M}.pdf" if kind == "application/pdf" else _name, kind,
+    except WarehouseValidationError as error:
+        fail_job(uow, job_id, error=str(error), now=now)
+        raise
+    pages = _pdf_pages(content) if kind == "application/pdf" else 1
+    file_id = uuid4()
+    with uow:
+        session = uow.session
+        open_for_result(session, job_id, now)
+        uow.receipts.add_file(file_id, f"Скан {now:%d.%m.%Y %H-%M}.pdf" if kind == "application/pdf" else name, kind,
                               content, job.requested_by, now)
-        session.flush()
+        session.flush()  # the file row before the job points at it
         finish_with_file(session, job_id, file_id, now)
-        row = session.get(ScanJobRow, job_id)
-        row.capture_settings = {**settings, "pages": _pdf_pages(content) if kind == "application/pdf" else 1}
+        row = session.get(ScanJobRow, job_id, populate_existing=True)
+        row.capture_settings = {**settings, "pages": pages}
         uow.commit()
     return str(file_id)
 
@@ -147,14 +157,6 @@ def get(uow, job_id: UUID, now: datetime) -> dict:
         view = _view(row)
         uow.commit()
     return view
-
-
-def requester(uow, job_id: UUID) -> UUID | None:
-    with uow:
-        row = _session(uow).get(ScanJobRow, job_id)
-        if row is None or row.purpose != "plain":
-            raise KeyError("Скан не найден")
-        return row.requester_id
 
 
 def cancel(uow, job_id: UUID, now: datetime) -> dict:
