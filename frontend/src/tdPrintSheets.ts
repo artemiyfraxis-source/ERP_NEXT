@@ -3,7 +3,7 @@
 // A4 альбомная, каждый лист в рамке с полем подшивки 20 мм. Типовые дефекты в комплект не входят — только ссылка на СТО.
 import { etkDrawHarness, etkFigure, etkParams, type EtkTopologyData } from "./etkDraw";
 import { etkLinkScheme, etkLinkSchemeMarkup } from "./etkLinkScheme";
-import { poolInventory, poolToolLabel } from "./equipmentPool";
+import { equipmentPool, poolToolLabel } from "./equipmentPool";
 import { etkToleranceLines } from "./etkOperation";
 import { etkOperationTitle, operationKeyOf } from "./etkPrint";
 import { unitLabel } from "./format";
@@ -115,7 +115,7 @@ function operationsOf(model: TdPrintModel): Op[] {
       norms: model.sto_sections?.[key]?.norms ?? [],
       grade: tdOpGrade(model.card, key),
       workplace: [...new Set(tooling.filter((tool) => text(tool.section) === "Оборудование")
-        .map((tool) => poolInventory(text(tool.inventory_number)) ?? text(tool.inventory_number).trim()).filter(Boolean))].join(", "),
+        .map((tool) => (equipmentPool(text(tool.name), text(tool.inventory_number)) ? equipmentPool(text(tool.name), text(tool.inventory_number))!.pool : text(tool.inventory_number).trim())).filter(Boolean))].join(", "),
     };
   });
 }
@@ -372,7 +372,10 @@ function operationCardSheets(model: TdPrintModel, ops: Op[], okTk: string): stri
       ...steps.map((step, index): TRow => ({
         cells: ["О", String(index + 1), text(step.text), etkToleranceLines(step.tolerance).map((line) => (line.label ? `${line.label}: ${line.value}` : line.value)).join("\n"), ""],
       })),
-      ...op.tooling.map((tool): TRow => ({ cells: ["Т", "", `${text(tool.section) ? `${text(tool.section)}: ` : ""}${poolToolLabel(text(tool.name), text(tool.inventory_number)) ?? text(tool.name)}`, "", poolToolLabel(text(tool.name), text(tool.inventory_number)) ? "" : text(tool.inventory_number)] })),
+      ...op.tooling.map((tool): TRow => {
+        const label = poolToolLabel(text(tool.name), text(tool.inventory_number));
+        return { cells: ["Т", "", `${text(tool.section) ? `${text(tool.section)}: ` : ""}${label ?? text(tool.name)}`, "", label ? "" : text(tool.inventory_number)] };
+      }),
     ];
     const params = operationParams(op);
     if (params) body.push({ cells: ["Р", "", params, "", ""] });
