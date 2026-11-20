@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { failureText } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { presetPeriod } from "./DowntimeReport";
-import { EMPTY, formatDay, formatWallMoment } from "./format";
+import { countLabel, EMPTY, formatDay, formatWallMoment } from "./format";
 import { ManualJobMaterial } from "./ManualJobMaterial";
 import { ManualJobWindow } from "./ManualJobWindow";
 import { manualJobsApi, type ManualJob, type ManualJobsList } from "./manualJobsApi";
@@ -61,7 +61,7 @@ export function ManualJobsPage() {
   const rows = useMemo(() => data?.rows ?? [], [data]);
   const running = rows.filter((row) => row.status === "running").length;
   const waitingCount = data?.waiting_count ?? 0;
-  const count = (value: number) => `${value} ${value === 1 ? "работа" : value > 1 && value < 5 ? "работы" : "работ"}`;
+  const count = (value: number) => countLabel(value, ["работа", "работы", "работ"]);
   const decides = (row: ManualJob) => row.status === "done" && row.material === "pending" && Boolean(data?.can_decide);
   const openRow = (row: ManualJob) => (decides(row) ? setMaterial(row) : setOpen(row));
 
