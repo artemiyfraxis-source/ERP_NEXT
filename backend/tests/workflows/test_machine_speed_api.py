@@ -3,6 +3,7 @@ cyclogram, the runs of a setup, filters, rights, and accepting a suggestion — 
 times written through the references edit with the audit `production.machine_norm_accepted`, 409 on a stale old value."""
 
 from datetime import timedelta
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -15,6 +16,7 @@ from app.modules.production.machine_writes import MachineWriteRow
 from app.modules.references.domain import TechOperationRecord, TechOperationTab
 from app.shared import http_auth
 from app.shared.persistence import AuditEventRow
+from app.workflows import machine_speed_api
 from tests.identity.test_api_tokens import ADMIN_ID, NOW, _csrf, _login, tokens_api  # noqa: F401
 from tests.production.test_machine_history import Bridge
 from tests.workflows.test_machines_api import machines_api  # noqa: F401
@@ -22,7 +24,7 @@ from tests.workflows.test_machines_api import machines_api  # noqa: F401
 URL = "/api/production/machine-speed"
 ACCEPT = f"{URL}/norm-suggestions/accept"
 SHORT = "пвам 0,35|L325|S5/5|P0/0|M0"
-LONG = "пвам 0,35|L1000|S5/5|P0/0|M0"
+LONG = "пвам 0,35|L3000|S5/5|P0/0|M0"
 ROLL, TOOL = "Скорость проката, сек/м", "Скорость работы инструмента"
 HUMAN, MACHINE, OPERATION = "Время Чел, сек/оп; сек/м", "Время машины, сек/оп; сек/м", "Время Операции"
 LINEAR = {
@@ -52,8 +54,8 @@ def _fields(record_id: str) -> dict:
 
 
 def _history(sessions, equipment_id):
-    """Six runs, 325 and 1000 mm by turns, 100 pieces each at t = 2 s + L / 2,5 m/s: 120 s setup («Готов/ждёт» → the
-    first piece), rows every 20 pieces, a minute of «Тираж готов» before the next setup."""
+    """Six runs, 325 and 3000 mm by turns, 100 pieces each at t = 2 s + L / 2,5 m/s: 120 s setup («Готов/ждёт» → the
+    first piece), rows every 10 pieces (under the 60-s cap), a minute of «Тираж готов» before the next setup."""
     rows, moment, counter, seq = [], NOW - timedelta(days=2), 1000, 0
 
     def add(state, reason, key):
@@ -63,28 +65,33 @@ def _history(sessions, equipment_id):
                                     counter_total=counter, counter_batch=0, counter_order=0, uph=0, state_code=state,
                                     alarm_code=0, setup_key=key, reason=reason))
 
-    for key, length in [(SHORT, 325), (LONG, 1000)] * 3:
+    for key, length in [(SHORT, 325), (LONG, 3000)] * 3:
         piece = 2 + length / 1000 / 2.5
         add(102, "setup", key)
         moment += timedelta(seconds=120)
         add(103, "state", key)
-        for _ in range(5):
-            moment += timedelta(seconds=20 * piece)
-            counter += 20
-            add(103 if _ < 4 else 107, "counter", key)
+        for step in range(10):
+            moment += timedelta(seconds=10 * piece)
+            counter += 10
+            add(103 if step < 9 else 107, "counter", key)
         moment += timedelta(seconds=60)
     with sessions.begin() as session:
         session.execute(delete(MachineSpeedRow))
         session.add_all(rows)
+    return moment
 
 
 @pytest.fixture
 def speed_api(machines_api):  # noqa: F811
     sessions, clock, admin, ob019, ob101 = machines_api
-    Bridge(admin).report()  # binds ОБ.019 (its inventory number for the report)
+    Bridge(admin).report()  # binds ОБ.019: the machine link the report lists
     _history(sessions, ob019)
     linear = _record(LINEAR)
     return sessions, admin, ob019, ob101, linear
+
+
+SUGGESTED = [{"field": ROLL, "label": "Скорость проката, м/с", "old": "3", "new": "2,5"},
+             {"field": TOOL, "label": "Скорость работы инструмента, с", "old": "0,5", "new": "0,29"}]
 
 
 def test_the_report_gives_fact_against_the_cyclogram_and_one_suggestion(speed_api):
@@ -99,21 +106,37 @@ def test_the_report_gives_fact_against_the_cyclogram_and_one_suggestion(speed_ap
     assert (short["runs"], short["pieces"], short["running_seconds"]) == (3, 300, 639.0)
     # 2 + 0,325 / 2,5 = 2,13 s against 0,325 / 3 + 0,5 × 7 = 3,61 s
     assert (short["fact_seconds_per_piece"], short["norm_seconds_per_piece"], short["ratio"]) == ("2.13", "3.61", "0.59")
-    assert (long["fact_seconds_per_piece"], long["norm_seconds_per_piece"]) == ("2.40", "3.83")
+    assert (long["fact_seconds_per_piece"], long["norm_seconds_per_piece"]) == ("3.20", "4.50")
     assert (short["setup_fact_seconds"], short["setup_norm_seconds"]) == ("120", "600")
     assert short["stops"] == [{"reason": "idle", "label": "Готов/ждёт", "seconds": 540.0}]
     [suggestion] = [row["suggestion"] for row in body["rows"] if row["suggestion"]]
     assert suggestion == {
-        "record_id": linear, "operation_code": "CUT_WIRE+2strip",
-        "cells": [{"field": ROLL, "label": "Скорость проката, м/с", "old": "3", "new": "2,5"},
-                  {"field": TOOL, "label": "Скорость работы инструмента, с", "old": "0,5", "new": "0,3"}],
-        "evidence": {"pieces": 600, "runs": 6, "lengths": ["325", "1000"], "fit": "2 с + L / 2,5 м/с",
+        "record_id": linear, "operation_code": "CUT_WIRE+2strip", "cells": SUGGESTED,
+        "evidence": {"pieces": 600, "runs": 6, "lengths": ["325", "3000"], "fit": "2 с + L / 2,5 м/с",
                      "since": "2026-09-05", "until": "2026-10-05"},
-        "note": None,
+        "note": None, "etk_note": "Выпущенные ЭТК с операцией CUT_WIRE+2strip получат новую ревизию автоматически",
     }
     runs = admin.get(f"{URL}/runs", params={"equipment_id": str(ob019), "setup_key": SHORT}).json()["runs"]
     assert [(run["pieces"], run["fact_seconds_per_piece"], run["setup_fact_seconds"], run["kind"]) for run in runs] \
         == [(100, "2.13", "120", None)] * 3
+
+
+def test_runs_leave_out_a_segment_without_pieces_and_machines_come_from_the_links(speed_api):
+    sessions, admin, ob019, _, _ = speed_api
+    moment = NOW - timedelta(days=1)
+    with sessions.begin() as session:  # SHORT set up again, stood ready, never cut
+        for seq, (seconds, state, reason) in enumerate([(0, 102, "setup"), (60, 103, "state"), (70, 107, "state")], 500):
+            session.add(MachineSpeedRow(equipment_id=ob019, recorded_at=moment + timedelta(seconds=seconds),
+                                        boot="boot-s2", seq=seq, counter_total=7000, counter_batch=0, counter_order=0,
+                                        uph=0, state_code=state, alarm_code=0, setup_key=SHORT, reason=reason))
+    runs = admin.get(f"{URL}/runs", params={"equipment_id": str(ob019), "setup_key": SHORT}).json()["runs"]
+    assert [run["pieces"] for run in runs] == [100, 100, 100]
+    [short] = [row for row in admin.get(URL).json()["rows"] if row["setup_key"] == SHORT]
+    assert short["runs"] == 3
+    with sessions.begin() as session:
+        session.execute(delete(MachineSpeedRow))
+    body = admin.get(URL).json()
+    assert body["rows"] == [] and [item["inventory_number"] for item in body["machines"]] == ["ОБ.019"]
 
 
 def test_filters_by_machine_and_period(speed_api):
@@ -123,7 +146,8 @@ def test_filters_by_machine_and_period(speed_api):
     assert admin.get(URL, params={"since": "2026-10-04", "until": "2026-10-05"}).json()["rows"] == []
     assert len(admin.get(URL, params={"since": "2026-10-03", "until": "2026-10-03"}).json()["rows"]) == 2
     assert admin.get(URL, params={"since": "2026-10-05", "until": "2026-10-03"}).status_code == 422
-    assert admin.get(URL, params={"since": "2026-01-01", "until": "2026-10-03"}).status_code == 422
+    assert admin.get(URL, params={"since": "2026-08-05", "until": "2026-10-05"}).status_code == 200  # 62 days
+    assert admin.get(URL, params={"since": "2026-08-04", "until": "2026-10-05"}).status_code == 422  # 63 days
     assert admin.get(f"{URL}/runs", params={"equipment_id": str(ob019), "setup_key": "нет"}).json() == {"runs": []}
 
 
@@ -138,17 +162,19 @@ def _audits(sessions, event):
         return list(session.scalars(select(AuditEventRow).where(AuditEventRow.event_type == event)))
 
 
+def _sent(cells):
+    return [{key: cell[key] for key in ("field", "old", "new")} for cell in cells]
+
+
 def test_accept_writes_the_cells_with_evidence_and_a_stale_old_is_409(speed_api):
     sessions, admin, ob019, _, linear = speed_api
-    [suggestion] = [row["suggestion"] for row in admin.get(URL).json()["rows"] if row["suggestion"]]
-    cells = [{key: cell[key] for key in ("field", "old", "new")} for cell in suggestion["cells"]]
-    answer = _accept(admin, linear, cells, ob019)
+    answer = _accept(admin, linear, _sent(SUGGESTED), ob019)
     assert answer.status_code == 200, answer.text
     # «Погонный» with прокат: the times depend on the length — the sheet's formulas leave them
     assert answer.json() == {"record_id": linear, "written": [{"field": ROLL, "old": "3", "new": "2,5"},
-                                                              {"field": TOOL, "old": "0,5", "new": "0,3"}]}
+                                                              {"field": TOOL, "old": "0,5", "new": "0,29"}]}
     fields = _fields(linear)
-    assert (fields[ROLL], fields[TOOL], fields[OPERATION], fields["tOp"]) == ("2,5", "0,3", "6,50", "6,50")
+    assert (fields[ROLL], fields[TOOL], fields[OPERATION], fields["tOp"]) == ("2,5", "0,29", "6,50", "6,50")
     [audit] = _audits(sessions, "production.machine_norm_accepted")
     assert audit.aggregate_id == ob019
     assert audit.details["cells"] == answer.json()["written"]
@@ -156,43 +182,54 @@ def test_accept_writes_the_cells_with_evidence_and_a_stale_old_is_409(speed_api)
     assert audit.details["evidence"]["fact_seconds_per_piece"] == "2.13"
     assert (audit.details["operation_code"], audit.details["setup_key"]) == ("CUT_WIRE+2strip", SHORT)
     assert len(_audits(sessions, "references.tech_record_edited")) == 1
-    # the norm now matches the fact: no suggestion; the same accept again is stale
+    # the norm now matches the fact: no suggestion; the same accept again finds none
     rows = admin.get(URL).json()["rows"]
     assert [row["suggestion"] for row in rows] == [None, None]
-    assert {row["ratio"] for row in rows} == {"0.96"}  # 2,13 / (0,13 + 0,3 × 7) and 2,4 / (0,4 + 2,1)
-    stale = _accept(admin, linear, cells, ob019)
-    assert stale.status_code == 409 and "уже поменяли" in stale.json()["detail"]
+    assert {row["ratio"] for row in rows} == {"0.99"}  # 2,13 / (0,13 + 0,29 × 7) and 3,2 / (1,2 + 2,03)
+    again = _accept(admin, linear, _sent(SUGGESTED), ob019)
+    assert again.status_code == 409 and again.json()["detail"] == "Предложение изменилось — обновите отчёт"
     assert len(_audits(sessions, "production.machine_norm_accepted")) == 1
     assert _fields(linear)[ROLL] == "2,5"
 
 
-def test_accept_recomputes_the_sheet_times_of_a_static_row(speed_api):
-    sessions, admin, ob019, _, _ = speed_api
-    static = _record(STATIC)
-    answer = _accept(admin, static, [{"field": TOOL, "old": "0,5", "new": "1.2"}], ob019)
-    assert answer.status_code == 200, answer.text
-    # hands 2 + 3,5 = 5,5; machine 1,2 × 7 = 8,4; operation = the larger
-    assert answer.json()["written"] == [{"field": TOOL, "old": "0,5", "new": "1,2"},
-                                        {"field": OPERATION, "old": "6,50", "new": "8,40"},
-                                        {"field": HUMAN, "old": "0,00", "new": "5,50"},
-                                        {"field": MACHINE, "old": "6,50", "new": "8,40"}]
-    fields = _fields(static)
-    assert (fields[TOOL], fields[HUMAN], fields[MACHINE], fields[OPERATION]) == ("1,2", "5,50", "8,40", "8,40")
-    assert fields["tOp"] == "8,40" and fields["tMachine"] == "8,40"  # the references sync follows the sheet columns
-    [audit] = _audits(sessions, "production.machine_norm_accepted")
-    assert audit.details["evidence"]["since"] == "2026-09-05"
-
-
-def test_accept_refuses_a_stale_old_a_foreign_field_or_a_bad_number_and_writes_nothing(speed_api):
+@pytest.mark.parametrize("cells", [
+    [{"field": ROLL, "old": "3", "new": "2,6"}],                      # not the suggested value
+    [{"field": ROLL, "old": "3", "new": "0"}],
+    [{"field": TOOL, "old": "0,5", "new": "0,3"}],
+])
+def test_accept_of_anything_but_the_suggestion_is_409_and_writes_nothing(speed_api, cells):
     sessions, admin, ob019, _, linear = speed_api
-    stale = _accept(admin, linear, [{"field": ROLL, "old": "2,9", "new": "2,5"}], ob019)
-    assert stale.status_code == 409
-    assert _accept(admin, linear, [{"field": "Название", "old": "Резка с разделкой", "new": "1"}], ob019).status_code == 422
-    assert _accept(admin, linear, [{"field": ROLL, "old": "3", "new": "0"}], ob019).status_code == 422
-    assert _accept(admin, linear, [{"field": ROLL, "old": "3", "new": "быстро"}], ob019).status_code == 422
-    assert _accept(admin, str(uuid4()), [{"field": ROLL, "old": "3", "new": "2"}], ob019).status_code == 404
-    assert _fields(linear)[ROLL] == "3"
+    answer = _accept(admin, linear, cells, ob019)
+    assert answer.status_code == 409 and answer.json()["detail"] == "Предложение изменилось — обновите отчёт"
+    assert (_fields(linear)[ROLL], _fields(linear)[TOOL]) == ("3", "0,5")
     assert _audits(sessions, "production.machine_norm_accepted") == []
+    assert _audits(sessions, "references.tech_record_edited") == []
+
+
+def test_accept_refuses_a_row_without_a_suggestion_a_stale_old_or_another_field(speed_api):
+    sessions, admin, ob019, _, linear = speed_api
+    static = _record(STATIC)  # no runs of CUT_TEST: no suggestion
+    assert _accept(admin, static, [{"field": TOOL, "old": "0,5", "new": "1,2"}], ob019).status_code == 409
+    stale = _accept(admin, linear, [{"field": ROLL, "old": "2,9", "new": "2,5"}], ob019)
+    assert stale.status_code == 409 and "уже поменяли" in stale.json()["detail"]
+    other = _accept(admin, linear, [{"field": "Время подготовки, сек", "old": "600", "new": "500"}], ob019)
+    assert other.status_code == 422
+    assert _accept(admin, str(uuid4()), [{"field": ROLL, "old": "3", "new": "2,5"}], ob019).status_code == 404
+    assert (_fields(linear)[ROLL], _fields(static)[TOOL]) == ("3", "0,5")
+    assert _audits(sessions, "production.machine_norm_accepted") == []
+
+
+def test_accepted_cells_bring_the_sheet_times_of_a_row_whose_time_does_not_depend_on_length():
+    """The accept's edit list (`_edits`): the cells plus «Время Чел» / «Время машины» / «Время операции» recomputed as
+    opFields.withCycleTimes — they change only on a row whose time is not by length (a suggestion never comes from one,
+    the formula is still the sheet's)."""
+    record = SimpleNamespace(fields=dict(STATIC))
+    suggestion = {"cells": [{"field": TOOL, "new": "1,2"}]}
+    edits = machine_speed_api._edits(record, [machine_speed_api.CellPayload(field=TOOL, old="0,5", new="1.2")],
+                                     suggestion)
+    # hands 2 + 3,5 = 5,5; machine 1,2 × 7 = 8,4; operation = the larger
+    assert [(edit.field, edit.old, edit.value) for edit in edits] == [
+        (TOOL, "0,5", "1,2"), (OPERATION, "6,50", "8,40"), (HUMAN, "0,00", "5,50"), (MACHINE, "6,50", "8,40")]
 
 
 def test_rights_view_needs_machines_and_accept_needs_the_references_edit(speed_api, monkeypatch):

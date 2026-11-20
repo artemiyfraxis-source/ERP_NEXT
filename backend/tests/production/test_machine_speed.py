@@ -107,7 +107,7 @@ def test_fact_is_running_time_over_pieces_and_stops_go_by_reason():
     assert dict(segment.stops) == {"pause": 300.0, "alarm": 50.0, "idle": 160.0}
     [setup] = speed.by_setup([segment])
     assert setup.stops == {"pause": 300.0, "alarm": 50.0, "idle": 160.0}
-    assert setup.setup_fact == 90.0 and len(setup.runs) == 1
+    assert setup.setup_fact(None) == 90.0 and len(setup.runs) == 1
 
 
 def test_a_counter_reset_is_a_stop_and_counting_goes_on_from_the_new_value():
@@ -143,35 +143,81 @@ def test_another_setup_or_run_starts_a_segment():
     assert (third.run_kind, third.pieces, third.setup_seconds) == ("cutting", 4, 0.0)
 
 
-def _point(length: int, pieces: int = 300) -> speed.Point:
-    return speed.Point(Decimal(length), pieces, 2.0 + length / 1000 / 2.5)  # t = 2 s + L / 2,5 m/s
+def _point(length: int, pieces: int = 100, constant: float = 2.0, feed: float = 2.5) -> speed.Point:
+    return speed.Point(Decimal(length), pieces, constant + length / 1000 / feed)  # t = a + L / v
 
 
-def test_two_lengths_give_the_feed_and_the_tool_time():
-    points = [_point(325), _point(1000)]
-    ratios = [0.59, 0.6, 0.62, 0.63, 0.65, 0.64]
-    result = speed.suggest(LINEAR, points, ratios)
-    assert result == {
-        "cells": [{"field": "Скорость проката, сек/м", "label": "Скорость проката, м/с", "old": "3", "new": "2,5"},
-                  {"field": "Скорость работы инструмента", "label": "Скорость работы инструмента, с",
-                   "old": "0,5", "new": "0,3"}],  # 2 s / 7 ходов = 0,29 → 0,3
-        "fit": "2 с + L / 2,5 м/с", "lengths": ["325", "1000"], "note": None,
-    }
+def _runs(*lengths: int, **line) -> list[speed.Point]:
+    """Three runs of each length on the line t = a + L / v."""
+    return [_point(length, **line) for length in lengths for _ in range(3)]
+
+
+TOOL_CELL = {"field": "Скорость работы инструмента", "label": "Скорость работы инструмента, с", "old": "0,5"}
+ROLL_CELL = {"field": "Скорость проката, сек/м", "label": "Скорость проката, м/с", "old": "3"}
+FAST_RATIOS = [0.59, 0.6, 0.62, 0.63, 0.65, 0.64]
+
+
+def test_lengths_far_apart_give_the_feed_and_the_tool_time():
+    result = speed.suggest(LINEAR, _runs(325, 3000), FAST_RATIOS)
+    # feed spread (3 − 0,325) m / 2,5 m/s = 1,07 s ≥ 0,5 s and ≥ 10 % of the piece; 2 s / 7 ходов = 0,2857 → 0,29
+    assert result == {"cells": [{**ROLL_CELL, "new": "2,5"}, {**TOOL_CELL, "new": "0,29"}],
+                      "fit": "2 с + L / 2,5 м/с", "lengths": ["325", "3000"], "note": None}
+
+
+def test_close_lengths_suggest_no_feed_speed():
+    # review 20.11: 4,30 s at 325 mm and 4,31 s at 1000 mm once gave прокат 3 → 67,5 m/s
+    noisy = [speed.Point(Decimal(325), 100, 4.30)] * 3 + [speed.Point(Decimal(1000), 100, 4.31)] * 3
+    result = speed.suggest({**LINEAR, "Скорость работы инструмента": "0,3"}, noisy, [1.9, 1.95, 1.9, 1.77, 1.8, 1.77])
+    assert result["note"] == speed.CLOSE_LENGTHS
+    # прокат stays 3: a = mean(t − L / 3) = 4,084; 4,084 / 7 = 0,583
+    assert result["cells"] == [{**TOOL_CELL, "old": "0,3", "new": "0,58"}]
+    assert result["fit"] == "4,1 с + L / 3 м/с"
 
 
 def test_one_length_suggests_only_the_constant_part():
-    result = speed.suggest(LINEAR, [_point(325, 600)], [0.59] * 6)
-    # a = 2,13 − 0,325 / 3 = 2,0217; 2,0217 / 7 = 0,289 → 0,3; прокат stays
-    assert result["cells"] == [{"field": "Скорость работы инструмента", "label": "Скорость работы инструмента, с",
-                                "old": "0,5", "new": "0,3"}]
+    result = speed.suggest(LINEAR, _runs(325), FAST_RATIOS)
+    # a = 2,13 − 0,325 / 3 = 2,0217; 2,0217 / 7 = 0,2888 → 0,29; прокат stays
+    assert result["cells"] == [{**TOOL_CELL, "new": "0,29"}]
     assert result["note"] == speed.ONE_LENGTH and result["fit"] == "2 с + L / 3 м/с"
 
 
+def test_a_scattered_fit_or_a_falling_line_suggests_no_feed_speed():
+    scattered = [speed.Point(Decimal(325), 100, fact) for fact in (1.5, 2.13, 2.76)] \
+        + [speed.Point(Decimal(3000), 100, fact) for fact in (2.5, 3.2, 3.9)]
+    result = speed.suggest(LINEAR, scattered, FAST_RATIOS)
+    assert result["note"] == speed.UNCLEAR_FEED and [cell["field"] for cell in result["cells"]] == [TOOL_CELL["field"]]
+    falling = [speed.Point(Decimal(325), 100, 2.9)] * 3 + [speed.Point(Decimal(3000), 100, 2.6)] * 3
+    result = speed.suggest(LINEAR, falling, FAST_RATIOS)
+    assert result["note"] == speed.UNCLEAR_FEED and [cell["field"] for cell in result["cells"]] == [TOOL_CELL["field"]]
+
+
+def test_new_values_outside_half_to_double_the_current_are_not_suggested():
+    # v = 1 m/s < 0,5 × 3: no прокат, only the tool part with прокат 3
+    result = speed.suggest(LINEAR, _runs(325, 3000, feed=1), FAST_RATIOS)
+    assert result["note"] == speed.UNCLEAR_FEED and [cell["field"] for cell in result["cells"]] == [TOOL_CELL["field"]]
+    # a = 10 s → 1,43 s per stroke > 2 × 0,5: the tool cell is left out, прокат still suggested
+    result = speed.suggest(LINEAR, _runs(325, 3000, constant=10), FAST_RATIOS)
+    assert result["cells"] == [{**ROLL_CELL, "new": "2,5"}] and result["note"] is None
+
+
+@pytest.mark.parametrize("fields", [
+    {**LINEAR, "Кол-во операций инструмента": ""},
+    {**LINEAR, "Кол-во операций инструмента": "0"},
+    {key: value for key, value in LINEAR.items() if key != "Кол-во операций инструмента"},
+])
+def test_no_tool_strokes_fit_the_feed_through_the_origin(fields):
+    result = speed.suggest(fields, _runs(325, 3000, constant=0), FAST_RATIOS)
+    assert result == {"cells": [{**ROLL_CELL, "new": "2,5"}], "fit": "L / 2,5 м/с", "lengths": ["325", "3000"],
+                      "note": None}
+    # a big constant the formula has no place for: the origin fit gives 0,88 m/s < 0,5 × 3 — nothing suggested
+    assert speed.suggest(fields, _runs(325, 3000), FAST_RATIOS) is None
+
+
 @pytest.mark.parametrize(("points", "ratios"), [
-    ([_point(325, 100), _point(1000, 99)], [0.6] * 6),   # 199 pieces
-    ([_point(325), _point(1000)], [0.6] * 4),            # 4 runs
-    ([_point(325), _point(1000)], [0.6, 0.6, 0.7, 1.1, 1.2, 1.3]),  # not steadily fast
-    ([_point(325), _point(1000)], [1.0] * 6),            # on the norm
+    ([_point(325, 50)] * 2 + [_point(3000, 33)] * 3, FAST_RATIOS),  # 199 pieces
+    (_runs(325, 3000), [0.6] * 4),                                   # 4 runs
+    (_runs(325, 3000), [0.6, 0.6, 0.7, 1.1, 1.2, 1.3]),              # not steadily fast
+    (_runs(325, 3000), [1.0] * 6),                                   # on the norm
 ])
 def test_no_suggestion_without_enough_steady_evidence(points, ratios):
     assert speed.suggest(LINEAR, points, ratios) is None
@@ -179,9 +225,35 @@ def test_no_suggestion_without_enough_steady_evidence(points, ratios):
 
 def test_no_suggestion_for_a_row_without_feed_or_when_nothing_changes():
     static = {**LINEAR, "Тип операции": "Статичный"}
-    assert speed.suggest(static, [_point(325), _point(1000)], [0.6] * 6) is None
-    same = {**LINEAR, "Скорость проката, сек/м": "2,5", "Скорость работы инструмента": "0,3"}
-    assert speed.suggest(same, [_point(325), _point(1000)], [0.6] * 6) is None
+    assert speed.suggest(static, _runs(325, 3000), FAST_RATIOS) is None
+    same = {**LINEAR, "Скорость проката, сек/м": "2,5", "Скорость работы инструмента": "0,29"}
+    assert speed.suggest(same, _runs(325, 3000), FAST_RATIOS) is None
+
+
+def test_setup_fact_leaves_out_pauses_and_an_overnight_gap():
+    rows = _rows(
+        (0, 100, {"state_code": 102, "reason": "setup"}),
+        (30, 100, {"state_code": 104, "reason": "state"}),   # 300 s pause: not setup work
+        (330, 100, {"state_code": 102, "reason": "state"}),
+        (400, 100, {"reason": "state"}),
+        (430, 110, {}),
+    )
+    [segment] = speed.segments(rows, {})
+    assert segment.setup_seconds == 100.0
+    overnight = _rows((0, 100, {"state_code": 102, "reason": "setup"}), (36000, 100, {"reason": "state"}),
+                      (36030, 110, {}))
+    [segment] = speed.segments(overnight, {})
+    assert segment.setup_seconds == 36000.0
+    assert segment.setup_fact(Decimal(600)) is None  # > 4 × «Время подготовки»
+    assert segment.setup_fact(Decimal(10000)) == 36000.0 and segment.setup_fact(None) == 36000.0
+    assert speed.by_setup([segment])[0].setup_fact(Decimal(600)) is None
+
+
+def test_segments_of_one_setup_only_are_still_bounded_by_the_others():
+    rows = _rows((0, 0, {}), (10, 5, {}), (20, 5, {"setup_key": LONG, "reason": "setup"}), (30, 8, {"setup_key": LONG}),
+                 (40, 8, {"reason": "setup"}), (50, 12, {}))
+    first, second = speed.segments(rows, {}, only=KEY)
+    assert (first.pieces, second.pieces) == (5, 4)  # LONG's 3 pieces never join KEY
 
 
 def test_sheet_numbers_round_like_the_browser():
