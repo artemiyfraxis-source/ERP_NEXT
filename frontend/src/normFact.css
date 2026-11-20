@@ -30,3 +30,11 @@
 @media (pointer: coarse) {
   .nf-report button { min-height: 40px; }
 }
+
+/* «Станки» (MachineSpeedReport): окно «Принять» — ячейки циклограммы было → стало. */
+.nf-period select { width: auto; }
+.ms-cells { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ms-cells th, .ms-cells td { padding: 6px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+.ms-cells th { font-size: 12px; font-weight: 400; color: var(--muted-foreground); }
+.ms-cells .num { text-align: right; font-variant-numeric: tabular-nums; }
+.ms-actions { display: flex; gap: 8px; }

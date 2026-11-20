@@ -209,7 +209,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {!mine && canOverview && !selectedTask && view === "today" && <ProductionToday principal={principal} openSkills={canEdit ? () => setShowSkills(true) : undefined} openWorkload={() => setView("workload")}
       openTask={(taskId, operationId) => { if (tasks.some((task) => task.id === taskId)) { setSelectedTaskId(taskId); setSelectedOperationId(operationId ?? ""); } }} />}
     {!mine && canOverview && !selectedTask && view === "workload" && <ShopWorkloadView />}
-    {!mine && canOverview && !selectedTask && view === "normfact" && <ProductionNormFact />}
+    {!mine && canOverview && !selectedTask && view === "normfact" && <ProductionNormFact machines={canSee(principal, "production") || canSee(principal, "myops")} />}
     {!mine && canOverview && !selectedTask && view === "cutqueue" && canSee(principal, "myops") && <CuttingQueue readOnly />}
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
     {/* «Коробки на подтверждение» убраны (владелец, 13.10.2026: «ОТК подтверждает и все»): сданная коробка сразу идёт

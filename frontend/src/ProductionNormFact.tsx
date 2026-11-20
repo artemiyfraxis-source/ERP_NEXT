@@ -2,6 +2,7 @@ import { useEffect, useState, type MouseEvent } from "react";
 import { failureText } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { EMPTY, formatDay, formatMoment, formatNumber } from "./format";
+import { MachineSpeedReport } from "./MachineSpeedReport";
 import { openPlace } from "./navigation";
 import { PageWindow } from "./PageWindow";
 import { normFactApi, type NormFactFact, type NormFactOperator, type NormFactReport, type NormFactTemplate } from "./normFactApi";
@@ -87,7 +88,8 @@ function href(params: Record<string, string>): string {
 
 type Drill = { kind: "template"; row: NormFactTemplate } | { kind: "operator"; row: NormFactOperator };
 
-export function ProductionNormFact() {
+/** `machines` — у пользователя есть право просмотра «Станков» (production или myops): тогда ниже раздел «Станки». */
+export function ProductionNormFact({ machines = false }: { machines?: boolean } = {}) {
   const [period, setPeriod] = useState(() => lastDays(60));
   const [report, setReport] = useState<NormFactReport | null>(null);
   const [error, setError] = useState("");
@@ -145,7 +147,8 @@ export function ProductionNormFact() {
         : <span className="nf-muted">{EMPTY}</span> },
   ];
 
-  return <section className="panel nf-report" aria-label="Норма и факт">
+  return <>
+  <section className="panel nf-report" aria-label="Норма и факт">
     <div className="nf-head">
       <h2>Норма и факт</h2>
       <div className="nf-period" role="group" aria-label="Период">
@@ -183,7 +186,9 @@ export function ProductionNormFact() {
         exportName={`Норма и факт — монтажники ${label}`} onRowClick={(row) => setDrill({ kind: "operator", row })} rowTitle={(row) => `Факты: ${row.operator_name}`} />
     </>}
     {drill && report && <FactsWindow drill={drill} facts={report.facts} slow={slow} fast={fast} label={label} close={() => setDrill(null)} />}
-  </section>;
+  </section>
+    {machines && <MachineSpeedReport />}
+  </>;
 }
 
 function FactsWindow({ drill, facts, slow, fast, label, close }: {
