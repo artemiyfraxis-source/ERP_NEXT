@@ -37,5 +37,4 @@
 .ms-cells th, .ms-cells td { padding: 6px 12px; text-align: left; border-bottom: 1px solid var(--border); }
 .ms-cells th { font-size: 12px; font-weight: 400; color: var(--muted-foreground); }
 .ms-cells .num { text-align: right; font-variant-numeric: tabular-nums; }
-.ms-hint { margin: 0; font-size: 12px; }
 .ms-actions { display: flex; gap: 8px; }

@@ -41,6 +41,7 @@ const SUGGESTED = row({
       { field: "tool_time", label: "Скорость работы инструмента, с", old: "1.5", new: "1.8" }],
     evidence: { pieces: 640, runs: 3, lengths: ["325", "1000"], fit: "6,1 с + L / 0,22 м/с", since: "2026-10-21", until: "2026-11-20" },
     note: "по одной длине — только постоянная часть",
+    etk_note: "Выпущенные ЭТК: 3 шт. — ревизия будет создана автоматически",
   },
 });
 
@@ -84,8 +85,25 @@ it("shows the empty hint when there is no history", async () => {
   expect(await screen.findByText("Нет истории станков за период — она пишется, когда ОБ.019 на связи.")).toBeInTheDocument();
 });
 
+it("shows the fallback ЭТК note when the server sends none", async () => {
+  const bare = row({ suggestion: { ...SUGGESTED.suggestion!, etk_note: undefined } });
+  serve(() => json(report({ rows: [bare] })));
+  render(<MachineSpeedReport />);
+  const table = await screen.findByRole("region", { name: "Станки: скорость" });
+  fireEvent.click(within(table).getByRole("button", { name: "Принять" }));
+  expect(await screen.findByRole("dialog")).toHaveTextContent("Выпущенные ЭТК с этой операцией получат новую ревизию автоматически");
+});
+
+it("renders nothing on 403 instead of a red banner", async () => {
+  const calls = serve(() => json({ detail: "Нет доступа" }, 403));
+  const { container } = render(<MachineSpeedReport />);
+  await waitFor(() => expect(calls).toHaveLength(1));
+  await waitFor(() => expect(container).toBeEmptyDOMElement());
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
 it("shows an error banner when loading fails", async () => {
-  serve(() => json({ detail: "Нет доступа к станкам" }, 403));
+  serve(() => json({ detail: "Станки недоступны" }, 500));
   render(<MachineSpeedReport />);
   expect(await screen.findByRole("alert")).toBeInTheDocument();
 });
@@ -137,6 +155,7 @@ it("accepts a suggestion and reloads the report", async () => {
   expect(within(window).getByText("0,22")).toBeInTheDocument();
   expect(window).toHaveTextContent("6,1 с + L / 0,22 м/с");
   expect(window).toHaveTextContent("по одной длине — только постоянная часть");
+  expect(window).toHaveTextContent("Выпущенные ЭТК: 3 шт. — ревизия будет создана автоматически");
 
   fireEvent.click(within(window).getByRole("button", { name: "Записать в циклограмму" }));
 
@@ -153,14 +172,14 @@ it("accepts a suggestion and reloads the report", async () => {
 it("says the data changed on 409 and offers a refresh", async () => {
   let loads = 0;
   serve((path, init) => {
-    if (init?.method === "POST") return json({ detail: "stale" }, 409);
+    if (init?.method === "POST") return json({ detail: "Предложение изменилось — обновите отчёт" }, 409);
     loads += 1;
     return json(report());
   });
   const window = await openAccept();
   fireEvent.click(within(window).getByRole("button", { name: "Записать в циклограмму" }));
 
-  expect(await within(window).findByRole("alert")).toHaveTextContent("Данные изменились, обновите");
+  expect(await within(window).findByRole("alert")).toHaveTextContent("Предложение изменилось — обновите отчёт");
   fireEvent.click(within(window).getByRole("button", { name: "Обновить отчёт" }));
   await waitFor(() => expect(loads).toBe(2));
   expect(screen.queryByRole("dialog")).toBeNull();

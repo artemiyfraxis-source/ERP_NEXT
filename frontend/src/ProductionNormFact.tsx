@@ -88,7 +88,8 @@ function href(params: Record<string, string>): string {
 
 type Drill = { kind: "template"; row: NormFactTemplate } | { kind: "operator"; row: NormFactOperator };
 
-export function ProductionNormFact() {
+/** `machines` — у пользователя есть право просмотра «Станков» (production или myops): тогда ниже раздел «Станки». */
+export function ProductionNormFact({ machines = false }: { machines?: boolean } = {}) {
   const [period, setPeriod] = useState(() => lastDays(60));
   const [report, setReport] = useState<NormFactReport | null>(null);
   const [error, setError] = useState("");
@@ -147,7 +148,7 @@ export function ProductionNormFact() {
   ];
 
   return <>
-  return <section className="panel nf-report" aria-label="Норма и факт">
+  <section className="panel nf-report" aria-label="Норма и факт">
     <div className="nf-head">
       <h2>Норма и факт</h2>
       <div className="nf-period" role="group" aria-label="Период">
@@ -186,7 +187,7 @@ export function ProductionNormFact() {
     </>}
     {drill && report && <FactsWindow drill={drill} facts={report.facts} slow={slow} fast={fast} label={label} close={() => setDrill(null)} />}
   </section>
-    <MachineSpeedReport />
+    {machines && <MachineSpeedReport />}
   </>;
 }
 
