@@ -138,6 +138,9 @@ def test_a_job_started_from_a_row_is_its_progress_and_round_trips_the_source(pro
     assert {key: job["source"][key] for key in source} == source
     shown = next(item for item in queue(client, unit)["rows"] if item["etk_position"] == 4)
     assert shown["job"] == {"id": job["id"], "number": job["number"], "progress_quantity": None}
+    other = next(value for key, value in ids.items() if key.startswith("ОБ.100.") and value != unit)
+    twice = _start(client, other, source)  # another unit of the pool must not run the same step
+    assert twice.status_code == 422 and "уже идёт работа" in twice.json()["detail"]
     progress = client.post(f"{JOBS}/{job['id']}/progress", json={"version": job["version"], "quantity": 4})
     assert progress.status_code == 200, progress.text
     shown = next(item for item in queue(client, unit)["rows"] if item["etk_position"] == 4)

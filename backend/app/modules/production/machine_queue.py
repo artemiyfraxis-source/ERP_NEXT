@@ -85,6 +85,10 @@ def check_source(uow, task_id: UUID, operation_id: UUID, etk_position: int) -> d
         raise ProductionValidationError(NOT_RUNNING)
     if uow.outputs.total_for_operation(operation_id) >= operation_quantity(task, operation):
         raise ProductionValidationError(PF_DONE)
+    busy = next((job for job, source in _source_jobs(uow.session, {task_id}) if job["status"] == "running"
+                 and source["operation_id"] == str(operation_id) and source["etk_position"] == etk_position), None)
+    if busy is not None:  # two units of one pool must not run the same step
+        raise ProductionValidationError(f"По этой операции уже идёт работа {number_text(busy['number'])}")
     return {"task_id": str(task_id), "operation_id": str(operation_id), "etk_position": etk_position,
             "label": f"{task.project} · {task.item} · {_step_name(part)}"}
 
@@ -159,7 +163,7 @@ def queue_rows(candidates: list[dict], documents: Mapping, unit: PoolUnit,
         rows.append({
             "key": f"{task.id}:{operation.id}:{part.position}", "task_id": str(task.id), "operation_id": str(operation.id),
             "task_number": task.number, "project": project, "item": task.item,
-            "pf": operation.stage, "etk_position": part.position, "step": _step_name(part),
+            "pf": stage_name(operation.stage) or operation.stage, "etk_position": part.position, "step": _step_name(part),
             "planned": _count(Decimal(planned)), "done": _count(Decimal(done)), "left": _count(Decimal(left)),
             "etk": etk_values(built, warnings), "warnings": warnings,
             "job": ({"id": str(running["id"]), "number": number_text(running["number"]),

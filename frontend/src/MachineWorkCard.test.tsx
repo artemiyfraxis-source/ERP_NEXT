@@ -19,7 +19,7 @@ const ROW: MachineRow = {
 const QROW: MachineQueueRow = {
   key: "q1", task_id: "t1", operation_id: "o1", task_number: "ПЗ-1", project: "708К.", item: "КБ3", pf: "ПФ-3", etk_position: 4,
   step: "Пайка", planned: "40", done: "3", left: "37",
-  etk: [{ label: "Жало", value: "T21-BC2", source: "из ЭТК" }, { label: "Температура", value: "", source: "" }],
+  etk: [{ label: "Жало", value: "T21-BC2", source: "etk" }, { label: "Температура", value: "", source: "missing" }],
   warnings: ["нет в ЭТК: температура"], job: null,
 };
 const JOB: ManualJob = {
@@ -81,6 +81,8 @@ it("free machine: «Свободен», the queue with warnings and the amber «
   expect(screen.getByText("нет в ЭТК: температура")).toBeTruthy();
   const etk = screen.getByRole("region", { name: "Режим по ЭТК" });
   expect(within(etk).getByText("T21-BC2")).toBeTruthy();
+  expect(within(etk).getByText(/из ЭТК/)).toBeTruthy();
+  expect(within(etk).queryByText(/etk/)).toBeNull();
   const missing = within(etk).getByText("не задано").closest("li")!;
   expect(missing.className).toContain("is-missing");
   expect(missing.textContent).toContain("Температура");

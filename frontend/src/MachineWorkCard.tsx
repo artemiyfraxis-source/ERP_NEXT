@@ -128,7 +128,7 @@ export function MachineWorkCard({ row, canWrite, close, openSetup }: {
   const tabs: [Tab, string][] = [["queue", `Очередь станка (${rows.length})`], ...(showCut ? [["cut", `Очередь резки (${cutRows})`] as [Tab, string]] : []),
     ["free", "Вне задания"]];
 
-  return <PageWindow label={titleOf(row)} close={close} width={1200} dismissable>
+  return <PageWindow label={titleOf(row)} close={close} width={1200}>
     <section className="panel mw-card">
       <header className="mw-head">
         <h2>{titleOf(row)}</h2>
@@ -174,7 +174,7 @@ export function MachineWorkCard({ row, canWrite, close, openSetup }: {
             </table></div>}
         {editable && job && !running && rows.length > 0 && <p className="mw-hint">{blockStart}</p>}
       </>}
-      {tab === "cut" && <CuttingQueue equipmentId={equipmentId} readOnly={!editable} onChanged={() => void reload()} />}
+      {tab === "cut" && <CuttingQueue equipmentId={equipmentId} readOnly={!canWrite} onChanged={() => void reload()} />}
       {tab === "free" && (!options ? <p className="empty">Загрузка…</p>
         : editable ? (job ? <p className="mw-hint">{blockStart}</p>
           : <StartForm options={options} equipmentId={equipmentId} inventory={row.inventory} onStarted={() => { setNotice("Работа начата"); setTab("queue"); void reload(); }} />)
@@ -182,9 +182,9 @@ export function MachineWorkCard({ row, canWrite, close, openSetup }: {
 
       {tab === "queue" && selected && <section className="mw-etk" aria-label="Режим по ЭТК">
         <h3 className="mw-h">Режим по ЭТК <span className="mw-sub">{[selected.project, selected.item, selected.step].filter(Boolean).join(" · ")}</span></h3>
-        {selected.etk?.length ? <ul className="mw-chips">{selected.etk.map((chip) => <li key={chip.label} className={chip.value ? "" : "is-missing"}>
+        {selected.etk?.length ? <ul className="mw-chips">{selected.etk.map((chip, index) => <li key={`${index}:${chip.label}`} className={chip.value ? "" : "is-missing"}>
           <span className="mw-chip-label">{chip.label}</span> {chip.value ? <b>{chip.value}</b> : <b>не задано</b>}
-          {chip.value && chip.source && <span className="mw-sub"> · {chip.source}</span>}</li>)}</ul>
+          {chip.value && chip.source === "etk" && <span className="mw-sub"> · из ЭТК</span>}</li>)}</ul>
           : <p className="mw-hint">В ЭТК для шага нет режима станка</p>}
       </section>}
 
