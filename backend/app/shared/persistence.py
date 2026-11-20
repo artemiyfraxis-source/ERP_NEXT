@@ -215,6 +215,7 @@ def create_schema(engine: Engine) -> None:
     from app.modules.production import infrastructure as _production  # noqa: F401
     from app.modules.production import downtime_infrastructure as _production_downtime  # noqa: F401
     from app.modules.production import machines as _production_machines  # noqa: F401
+    from app.modules.production import marking_outside as _production_marking_outside  # noqa: F401
     from app.modules.shipping import infrastructure as _shipping  # noqa: F401
     from app.modules.references import infrastructure as _references  # noqa: F401
     from app.modules.operations import infrastructure as _operations  # noqa: F401

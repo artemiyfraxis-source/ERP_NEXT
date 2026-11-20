@@ -294,3 +294,45 @@ it("hides a «Резка кабеля» group that is wholly in the cutting queu
   expect(cutGroupInQueue({ ...cut, session: working.session }, ops)).toBe(false);
   expect(cutGroupInQueue({ ...group, kind: "labels" }, ops)).toBe(false);
 });
+
+it("labels group: «Отметить напечатанные вне ERP» opens its window and a mark reloads «Напечатано / Осталось»", async () => {
+  const progress = (printed: number) => ({ rows: group.rows.map((row) => ({ task_id: row.task_id, task_number: row.task_number,
+    item: row.item, quantity: 15, printed, remaining: 15 - printed, remaining_labels: (15 - printed) * 3 })),
+    printed: printed * 4, remaining: (15 - printed) * 4, remaining_labels: (15 - printed) * 12 });
+  let marked = false;
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.startsWith("/api/production/marking/progress")) return json(progress(marked ? 1 : 0));
+    if (url.startsWith("/api/production/marking/outside?")) return json({ rows: [] });
+    const body = JSON.parse(String(init?.body));
+    if (!body.dry_run) marked = true;
+    return json({ dry_run: body.dry_run, added: 4, rows: group.rows.map((row) => ({ task_id: row.task_id, item: row.item,
+      task_number: row.task_number, serial: 1, text: `FRX.${row.item}.1`, quantity: 1, state: "new" })) });
+  });
+  render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly={false} renderInstruction={() => null} />);
+  await waitFor(() => expect(screen.getAllByText("0")).toHaveLength(4));
+  fireEvent.click(screen.getByRole("button", { name: "Отметить напечатанные вне ERP" }));
+  const dialog = screen.getByRole("dialog", { name: "Отметить напечатанные вне ERP" });
+  fireEvent.click(await within(dialog).findByRole("button", { name: /^Отметить 4\sэтикетки$/ }));
+  await waitFor(() => expect(screen.getAllByText("14").length).toBeGreaterThanOrEqual(4));
+  expect(fetch.mock.calls.filter(([url]) => String(url).startsWith("/api/production/marking/progress"))).toHaveLength(2);
+});
+
+it("«Отметить напечатанные вне ERP» needs the print right; «Печатать оставшиеся» stays", async () => {
+  const { setRightsPrincipal } = await import("./rights");
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ rows: [], printed: 0, remaining: 0, remaining_labels: 0 }));
+  setRightsPrincipal({ user: { id: "operator" }, roles: [], permissions: { myops: "edit", print: "view" } } as unknown as Principal);
+  try {
+    render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly={false} renderInstruction={() => null} />);
+    expect(screen.getByRole("button", { name: "Печатать оставшиеся" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Отметить напечатанные вне ERP" })).toBeNull();
+  } finally {
+    setRightsPrincipal(null);
+  }
+});
+
+it("read-only labels group has no «Отметить напечатанные вне ERP»", () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ rows: [], printed: 0, remaining: 0, remaining_labels: 0 }));
+  render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly renderInstruction={() => null} />);
+  expect(screen.queryByRole("button", { name: "Отметить напечатанные вне ERP" })).toBeNull();
+});
