@@ -4,8 +4,10 @@ export const PICKUP_CARRIER = "Самовывоз";
 export const OWN_COURIER = "Курьер (наш)";
 export const CARRIERS = [PICKUP_CARRIER, "СДЭК", "Деловые линии", "Почта России", OWN_COURIER, "Яндекс Доставка"] as const;
 
+/** Без трек-номера уезжают самовывоз, наш курьер и Яндекс Доставка (владелец 20.11.2026); сервер шлёт `track_required` сам. */
+const NO_TRACK_CARRIERS: readonly string[] = [PICKUP_CARRIER, OWN_COURIER, "Яндекс Доставка"];
 export const needsTrack = (shipment: { terms: string | null; carrier: string; track_required?: boolean }) =>
-  shipment.track_required ?? (shipment.terms === "ДОСТАВКА ТК" && shipment.carrier.trim() !== OWN_COURIER);
+  shipment.track_required ?? (shipment.terms === "ДОСТАВКА ТК" && !NO_TRACK_CARRIERS.includes(shipment.carrier.trim()));
 
 export type DeliveryTerms = "САМОВЫВОЗ" | "ДОСТАВКА ТК";
 const TERMS_TEXT: Record<DeliveryTerms, string> = { "САМОВЫВОЗ": "Самовывоз", "ДОСТАВКА ТК": "Доставка ТК" };

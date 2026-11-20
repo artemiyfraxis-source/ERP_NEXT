@@ -237,7 +237,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
         <header className="eq-head">
           <div className="eq-title"><b>{open.name || "—"}</b>{subtitle && <span className="muted">{subtitle}</span>}</div>
           <div className="eq-head-act">
-            {canEdit && open.type !== APPLICATOR_TYPE && invOf(last) && <button className="secondary small" disabled={busy}
+            {canEdit && open.type !== APPLICATOR_TYPE && invOf(last) && <button type="button" className="secondary small" disabled={busy}
               onClick={() => void guarded(async () => { const copy = await referencesApi.duplicateRecord(last.id); select(copy.id); }, "Добавлен ещё один экземпляр")}>Ещё такой же</button>}
             <button type="button" className="eq-close" aria-label="Закрыть карточку" title="Закрыть (Esc)" onClick={() => select("")}>×</button>
           </div>

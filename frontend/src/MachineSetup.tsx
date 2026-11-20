@@ -91,23 +91,23 @@ export function MachineSetupPart({ inventory, canWrite, extra, saved }: {
           <td>{item.source}{item.source_field && <small className="machine-muted"> · {item.source_field}</small>}</td>
           <td className="machine-mono">{now[item.key] ?? EMPTY}</td>
           <td className="machine-mono">{latest?.values[item.key] ?? EMPTY}</td>
-          <td><input aria-label={`${item.label}, настроено`} value={value(item.key)} disabled={!canWrite || busy} inputMode={item.unit ? "decimal" : "text"}
+          <td><input name={`setup_${item.key}`} autoComplete="off" spellCheck={false} aria-label={`${item.label}, настроено`} value={value(item.key)} disabled={!canWrite || busy} inputMode={item.unit ? "decimal" : "text"}
             onChange={(event) => setValues({ ...values, [item.key]: event.target.value })} /></td>
         </tr>)}</tbody>
       </table>
       : <div className="machine-setup-free">
         <p className="machine-muted">Параметры наладки для этого станка не заданы — запишите, что настроено.</p>
         {free.map((row, index) => <div key={index} className="machine-setup-free-row">
-          <input aria-label={`Параметр ${index + 1}`} placeholder="Параметр" value={row.name} disabled={!canWrite || busy}
+          <input name={`setup_name_${index}`} autoComplete="off" aria-label={`Параметр ${index + 1}`} placeholder="Параметр" value={row.name} disabled={!canWrite || busy}
             onChange={(event) => setFree(free.map((item, at) => at === index ? { ...item, name: event.target.value } : item))} />
-          <input aria-label={`Значение ${index + 1}`} placeholder="Значение" value={row.value} disabled={!canWrite || busy}
+          <input name={`setup_value_${index}`} autoComplete="off" aria-label={`Значение ${index + 1}`} placeholder="Значение" value={row.value} disabled={!canWrite || busy}
             onChange={(event) => setFree(free.map((item, at) => at === index ? { ...item, value: event.target.value } : item))} />
         </div>)}
         {canWrite && <button type="button" className="secondary small" disabled={busy} onClick={() => setFree([...free, { name: "", value: "" }])}>+ Параметр</button>}
       </div>}
     {canWrite && <div className="machine-setup-actions">
       {!byTask && <label className="machine-setup-reason"><span>Причина</span>
-        <input value={reason} maxLength={500} disabled={busy} placeholder="например, смена ножа" onChange={(event) => setReason(event.target.value)} /></label>}
+        <input name="setup_reason" autoComplete="off" value={reason} maxLength={500} disabled={busy} placeholder="например, смена ножа" onChange={(event) => setReason(event.target.value)} /></label>}
       <button type="button" className="primary" disabled={busy || !ready} onClick={() => void save()}>
         {byTask ? "Настроено по заданию" : "Настроено вручную"}</button>
     </div>}

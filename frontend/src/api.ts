@@ -4486,6 +4486,10 @@ export const shippingApi = {
   boxes: (shipmentId: string, payload: Record<string, unknown>) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/boxes`, {
     method: "PUT", body: JSON.stringify(payload),
   }),
+  /** «Сформировать» PL или DN отдельно: PL упаковывает (без DN), DN выдаёт номер без смены статуса. */
+  issueDocument: (shipmentId: string, version: number, document: "pl" | "dn") => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/issue-document`, {
+    method: "POST", body: JSON.stringify({ version, document }),
+  }),
   print: (shipmentId: string, document: "pl" | "dn") => api<{ forms: ShippingForm[] }>(`/api/shipping/shipments/${shipmentId}/print?document=${document}`),
   addressees: (projects?: string[]) => api<{ addressees: ProjectAddressee[] }>(`/api/shipping/project-addressees${projects?.length ? `?${new URLSearchParams(projects.map((project) => ["project", project]))}` : ""}`),
   itemAddressees: (project: string) => api<ItemAddresseesResult>(`/api/shipping/item-addressees?project=${encodeURIComponent(project)}`),
