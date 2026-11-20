@@ -38,6 +38,7 @@ import { DowntimeControl } from "./DowntimeControl";
 import { DataTable } from "./DataTable";
 import { DowntimeReport } from "./DowntimeReport";
 import { ProductionNormFact } from "./ProductionNormFact";
+import { CuttingQueue } from "./CuttingQueue";
 import { ShopWorkloadView } from "./ShopWorkload";
 import { LaunchReady } from "./LaunchReady";
 import { ProductionToday } from "./ProductionToday";
@@ -62,7 +63,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [showSkills, setShowSkills] = useState(false);
   const [showDowntime, setShowDowntime] = useState(false);
   // Вкладки «Ресурсного планирования»: «Сегодня» мастера участка, доска мастера, «Загрузка» (прогноз готовности) и отчёт «Норма и факт».
-  const [view, setView] = useState<"today" | "board" | "workload" | "normfact">("board");
+  const [view, setView] = useState<"today" | "board" | "workload" | "normfact" | "cutqueue">("board");
   const [holidays, setHolidays] = useState<string[]>([]);
   const [skills, setSkills] = useState<ProductionSkill[]>([]);
   const [absences, setAbsences] = useState<ProductionAbsence[]>([]);
@@ -194,11 +195,13 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
       <button type="button" role="tab" aria-selected={view === "board"} className={view === "board" ? "on" : undefined} onClick={() => setView("board")}>Доска</button>
       <button type="button" role="tab" aria-selected={view === "workload"} className={view === "workload" ? "on" : undefined} onClick={() => setView("workload")}>Загрузка</button>
       <button type="button" role="tab" aria-selected={view === "normfact"} className={view === "normfact" ? "on" : undefined} onClick={() => setView("normfact")}>Норма и факт</button>
+      <button type="button" role="tab" aria-selected={view === "cutqueue"} className={view === "cutqueue" ? "on" : undefined} onClick={() => setView("cutqueue")}>Очередь резки</button>
     </div>}
     {!mine && canOverview && !selectedTask && view === "today" && <ProductionToday principal={principal} openSkills={canEdit ? () => setShowSkills(true) : undefined} openWorkload={() => setView("workload")}
       openTask={(taskId, operationId) => { if (tasks.some((task) => task.id === taskId)) { setSelectedTaskId(taskId); setSelectedOperationId(operationId ?? ""); } }} />}
     {!mine && canOverview && !selectedTask && view === "workload" && <ShopWorkloadView />}
     {!mine && canOverview && !selectedTask && view === "normfact" && <ProductionNormFact />}
+    {!mine && canOverview && !selectedTask && view === "cutqueue" && <CuttingQueue />}
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
     {/* «Коробки на подтверждение» убраны (владелец, 13.10.2026: «ОТК подтверждает и все»): сданная коробка сразу идёт
         на вход следующей операции, коробку последней операции принимает или возвращает «Очередь ОТК». */}
