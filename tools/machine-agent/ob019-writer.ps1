@@ -7,6 +7,8 @@ param(
     [string]$BridgeScript = '',
     [string]$LogPath = 'D:\fraxis-mb\commands.log',
     [int]$PollMs = 500,
+    [string]$PultCloseTask = 'Fraxis OB019 pult close',
+    [string]$PultOpenTask = 'Fraxis OB019 pult open',
     [switch]$Once
 )
 # ERP command runner of OB.019 (ERP_NEXT, section "Stanki", slice 4): writes the parameters ERP asks for.
@@ -33,11 +35,24 @@ param(
 # moment this runner asked, so ERP's 5 s by the server clock always holds), PXS_HMI is closed, the state D766 allows it
 # (and an alarm D782 for Clear alarm). The result goes back with D766/D782 before and after and a reason code; no reply
 # from mbd during the hold = "unknown", never "done". One command at a time (the loop is serial).
+#
+# The operator panel (1.4.0, kind "control", actions hmi_close / hmi_open: "Zakryt / Otkryt pult na PK" on the card).
+# COM8 has one master, the vendor HMI PXS_HMI or mbd. These two run while PXS_HMI runs (everything else is refused
+# then, as before) and never touch the bus. PXS_HMI lives in the operator's desktop session; this runner is SYSTEM in
+# session 0, so it asks the helper tasks $PultCloseTask / $PultOpenTask (ob019-pult.ps1 in the operator's session,
+# registered by install-bridge.ps1) to send WM_CLOSE or to start PXS_HMI.exe.
+#   hmi_close: not running -> done (method none). Otherwise the helper closes it (WM_CLOSE) and the runner waits
+#     $script:HmiWaitMs: gone -> done (graceful); still running (the panel may be asking the operator) -> failed
+#     still_open, nothing is killed. With force (the card's "Zakryt prinuditelno" after its own confirmation that the
+#     machine stands) -> Stop-Process -Force at once (forced). No helper task -> failed no_helper, nothing is killed.
+#     Nothing on this PC says whether the machine cuts while PXS_HMI holds COM8 (its TextLog has only Open-System /
+#     Close-System): ERP decides from the last state it read (backend production/machine_control.py).
+#   hmi_open: already running -> refused; else the helper starts it, done once the process is seen (started).
 $ErrorActionPreference = 'Stop'
 $script:Self = $MyInvocation.InvocationName
 if (-not $BridgeScript) { $BridgeScript = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'ob019-bridge.ps1' }
 . $BridgeScript -Server $Server -TokenPath $TokenPath -MbdHost $MbdHost -MbdPort $MbdPort -MbdScript $MbdScript -LogPath $LogPath -PollMs $PollMs -Once:$Once
-$script:RunnerVersion = '1.3.0'
+$script:RunnerVersion = '1.4.0'
 # Machine commands: the bit held and the machine states (D766) each may run in, empty = any state; "off" = switch bits
 # ('addr.bit') that must read 0 right before the pulse (Start with the feed rollers lifted D604.0 is refused). Mirrors
 # ALLOWED_STATES and BLOCKED_BY_BITS of backend production/machine_control.py (a backend test compares them).
@@ -59,8 +74,11 @@ $script:MbdMinVersion = '1.2.0'
 # Switch words whose bit only a newer mbd may set (its allowedBits): D604 feed-roller lift since mbd 1.3.0.
 $script:MbdBitVersions = @{ 604 = '1.3.0' }
 $script:Writable = @{}
-foreach ($a in @(20, 74, 197, 199, 423) + (22..28) + (32..43) + (67..72) + (100..104) + (120..123) + (391..395) + (401..402) + (404..415) + (430..432) + (440..484) + (940..969) + (1703..1705) + (1722..1723) + (1750..1753)) { $script:Writable[[int]$a] = $true }
+foreach ($a in @(20, 74, 197, 199, 423) + (22..28) + (32..53) + (67..72) + (100..104) + (120..123) + (391..395) + (401..402) + (404..415) + (430..432) + (440..484) + (940..969) + (1703..1705) + (1722..1723) + (1750..1753)) { $script:Writable[[int]$a] = $true }
 $script:WritableBits = @{ 132 = @(0); 400 = @(0); 604 = @(0); 422 = @(0); 434 = @(0); 435 = @(0); 436 = @(0) }
+# Words only a newer mbd writes (its allowedWrite): the inner layer D44..D53 since mbd 1.4.0 (ERP: RUNNER_WORDS).
+$script:MbdWordVersions = @{}
+foreach ($w in (44..53)) { $script:MbdWordVersions[[int]$w] = '1.4.0' }
 
 function Test-BlockWritable($Block) {
     $first = [int]$Block['addr']; $values = @($Block['values'])
@@ -92,13 +110,22 @@ function Test-MbdCurrent([string]$Version, [string]$Needed = '') {
     try { return ([version]$Version) -ge ([version]$Needed) } catch { return $false }
 }
 
-# The mbd version a command needs: $script:MbdMinVersion, or newer for a switch of $script:MbdBitVersions.
-function Get-MbdNeeded($Bits) {
+# The mbd version a command needs: $script:MbdMinVersion, or newer for a switch of $script:MbdBitVersions or a word of
+# $script:MbdWordVersions.
+function Get-MbdNeeded($Bits, $Blocks = @()) {
     $needed = $script:MbdMinVersion
     foreach ($bit in @($Bits)) {
         if ($bit -eq $null) { continue }
         $a = [int]$bit['addr']
         if ($script:MbdBitVersions.ContainsKey($a) -and ([version]$script:MbdBitVersions[$a]) -gt ([version]$needed)) { $needed = $script:MbdBitVersions[$a] }
+    }
+    foreach ($block in @($Blocks)) {
+        if ($block -eq $null) { continue }
+        $count = @($block['values']).Count
+        for ($i = 0; $i -lt $count; $i++) {
+            $a = [int]$block['addr'] + $i
+            if ($script:MbdWordVersions.ContainsKey($a) -and ([version]$script:MbdWordVersions[$a]) -gt ([version]$needed)) { $needed = $script:MbdWordVersions[$a] }
+        }
     }
     return $needed
 }
@@ -107,7 +134,7 @@ function Get-MbdNeeded($Bits) {
 function Invoke-MachineCommand($Command) {
     $readback = @{}
     try {
-        $needed = Get-MbdNeeded $Command['bits']
+        $needed = Get-MbdNeeded $Command['bits'] $Command['blocks']
         $version = Get-MbdVersion
         if (-not (Test-MbdCurrent $version $needed)) { return @{ ok = $false; readback = $readback; error = ('mbd outdated: ' + $(if ($version) { $version } else { 'no version' }) + ', need ' + $needed) } }
         $states = @($Command['states'] | ForEach-Object { [int]$_ })
@@ -163,8 +190,65 @@ function Invoke-Pulse([int]$Address, [int]$Bit) {
     return $script:Json.DeserializeObject((Invoke-MbdLine $line))
 }
 
-function New-Outcome([string]$Status, [string]$Reason, [string]$Detail, $Before, $After) {
-    return @{ outcome = $Status; reason = $Reason; detail = $Detail; before = $Before; after = $After }
+function New-Outcome([string]$Status, [string]$Reason, [string]$Detail, $Before, $After, [string]$Method = '') {
+    return @{ outcome = $Status; reason = $Reason; detail = $Detail; before = $Before; after = $After; method = $Method }
+}
+
+# --- the operator panel PXS_HMI (hmi_close / hmi_open, 1.4.0) ---
+# Mirrors HMI_COMMANDS of backend production/machine_writes.py (a backend test compares them).
+$script:HmiCommands = @('hmi_close', 'hmi_open')
+$script:HmiWaitMs = 15000
+
+function Get-HmiProcesses { return @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like 'PXS_HMI*' }) }
+
+# The helper in the operator's session reads where PXS_HMI.exe is from here when it starts it again.
+function Save-HmiPath {
+    try {
+        foreach ($process in (Get-HmiProcesses)) {
+            $path = [string]$process.MainModule.FileName
+            if ($path) { [IO.File]::WriteAllText((Join-Path (Split-Path -Parent $TokenPath) 'pult.path'), $path, [Text.Encoding]::UTF8); return }
+        }
+    } catch { }
+}
+
+# Run a helper task now; $true when Task Scheduler took it.
+function Invoke-PultTask([string]$Name) {
+    & schtasks.exe /Run /TN $Name 2>&1 | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
+# Wait until PXS_HMI runs ($Running) or is gone; $true when it happened within $Ms.
+function Wait-Hmi([bool]$Running, [int]$Ms) {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        if ([bool](Test-HmiOpen) -eq $Running) { return $true }
+        if ($watch.ElapsedMilliseconds -ge $Ms) { return $false }
+        Start-Sleep -Milliseconds 500
+    }
+}
+
+function Stop-HmiForced { foreach ($process in (Get-HmiProcesses)) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } }
+
+# hmi_close / hmi_open -> outcome with method (graceful / forced / none / started). Never touches the bus.
+function Invoke-HmiCommand($Command) {
+    $name = [string]$Command['action']
+    if ($name -eq 'hmi_open') {
+        if (Test-HmiOpen) { return (New-Outcome 'failed' 'hmi_already_open' 'PXS_HMI is running' $null $null) }
+        if (-not (Invoke-PultTask $PultOpenTask)) { return (New-Outcome 'failed' 'no_helper' ('schtasks /Run ' + $PultOpenTask) $null $null) }
+        if (Wait-Hmi $true $script:HmiWaitMs) { return (New-Outcome 'done' 'ok' 'started' $null $null 'started') }
+        return (New-Outcome 'failed' 'hmi_not_started' ('not running after ' + $script:HmiWaitMs + ' ms') $null $null)
+    }
+    if (-not (Test-HmiOpen)) { return (New-Outcome 'done' 'ok' 'not running' $null $null 'none') }
+    Save-HmiPath
+    if ($Command['force'] -eq $true) {
+        Write-BridgeLog 'control hmi_close: forced from the card'
+        Stop-HmiForced
+        if (Wait-Hmi $false 3000) { return (New-Outcome 'done' 'ok' 'forced' $null $null 'forced') }
+        return (New-Outcome 'failed' 'hmi_still_open' 'PXS_HMI still running' $null $null)
+    }
+    if (-not (Invoke-PultTask $PultCloseTask)) { return (New-Outcome 'failed' 'no_helper' ('schtasks /Run ' + $PultCloseTask) $null $null) }
+    if (Wait-Hmi $false $script:HmiWaitMs) { return (New-Outcome 'done' 'ok' 'closed' $null $null 'graceful') }
+    return (New-Outcome 'failed' 'still_open' ('PXS_HMI still running after ' + $script:HmiWaitMs + ' ms') $null $null)
 }
 
 # Run one machine command @{ id; kind = 'control'; action; deadline_ms }; $Since started when the runner asked ERP.
@@ -172,6 +256,12 @@ function New-Outcome([string]$Status, [string]$Reason, [string]$Detail, $Before,
 function Invoke-ControlCommand($Command, [Diagnostics.Stopwatch]$Since) {
     $name = [string]$Command['action']
     $deadline = [int]$Command['deadline_ms']
+    if ($script:HmiCommands -contains $name) {
+        # The panel commands run while PXS_HMI runs (that is what they are for) and never touch the bus.
+        if ($Since.ElapsedMilliseconds -ge $deadline) { return (New-Outcome 'expired' 'too_late' ([string]$Since.ElapsedMilliseconds + ' ms') $null $null) }
+        Write-BridgeLog ('control ' + $name)
+        try { return (Invoke-HmiCommand $Command) } catch { return (New-Outcome 'unknown' 'pc_error' $_.Exception.Message $null $null) }
+    }
     if (-not $script:Controls.ContainsKey($name)) { return (New-Outcome 'failed' 'unknown_command' $name $null $null) }
     $spec = $script:Controls[$name]
     if ($Since.ElapsedMilliseconds -ge $deadline) { return (New-Outcome 'expired' 'too_late' ([string]$Since.ElapsedMilliseconds + ' ms') $null $null) }
@@ -274,7 +364,7 @@ function Step-Control($Command, [Diagnostics.Stopwatch]$Since, [string]$Token) {
     Write-BridgeLog ('control ' + $Command['id'] + ' ' + $Command['action'] + ' ' + $outcome['outcome'] + ' ' + $outcome['reason'] + ' ' + $outcome['detail'])
     $body = Get-Identity
     $body['ok'] = ($outcome['outcome'] -eq 'done'); $body['readback'] = @{}; $body['error'] = ''
-    foreach ($key in @('outcome', 'reason', 'detail', 'before', 'after')) { $body[$key] = $outcome[$key] }
+    foreach ($key in @('outcome', 'reason', 'detail', 'before', 'after', 'method')) { $body[$key] = $outcome[$key] }
     $path = '/api/production/machines/agent/writes/' + [string]$Command['id'] + '/result'
     for ($attempt = 1; $attempt -le 3; $attempt++) {
         $code = (Invoke-Erp $path (ConvertTo-JsonLite $body) $Token)['code']
