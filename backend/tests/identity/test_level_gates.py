@@ -21,7 +21,7 @@ from app.modules.shipping import api as shipping_api
 from app.modules.warehouse import scan_jobs_api
 from app.shared import http_auth
 from app.shared.http_auth import Principal, authenticated_principal
-from app.workflows import employee_card_api, machine_writes_api, machines_api, marking_labels
+from app.workflows import employee_card_api, machine_writes_api, machines_api, marking_labels, vna_screens_api
 from tests.access_levels import principal_as
 
 # Every route dependency of the contract; references_suppliers is `_map_rights` inside references/api.py.
@@ -43,6 +43,8 @@ DEPENDENCIES = {
     "machines_view": machines_api.machines_view_principal,
     # ОБ.019 writes (0195): the fitter and the master write settings, transfers and corrections.
     "machines_edit": machine_writes_api.machines_edit_principal,
+    # «ВАЦ — рабочее место» → «Экраны» (0207, S5b): ОТК reads the saved VNA screens; editing is production_quality.
+    "vna_screens_view": vna_screens_api.vna_screens_view_principal,
 }
 
 

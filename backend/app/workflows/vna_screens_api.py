@@ -28,7 +28,9 @@ from .vna_measurement_api import Factory, Now, Person
 
 router = APIRouter(tags=["production"])
 PREFIX = "/api/production/vna-bench/screens"
-Viewer = Annotated[Principal, Depends(require_section("quality", "view", detail="Раздел «ОТК» вам не открыт."))]
+# A named gate of the access contract (tests/identity/test_level_gates.py DEPENDENCIES): ОТК reads the screens.
+vna_screens_view_principal = require_section("quality", "view", detail="Раздел «ОТК» вам не открыт.")
+Viewer = Annotated[Principal, Depends(vna_screens_view_principal)]
 FIELDS = {"param": "параметр", "format": "формат", "scale": "шкала", "limit": "линия", "fixed": "своё число",
           "pdiv": "деление", "rlev": "уровень", "rpos": "позиция", "name": "название", "purpose": "назначение",
           "split": "расположение", "traces": "графики", "markers_hz": "маркеры", "note": "описание", "value": "число"}
