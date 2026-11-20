@@ -190,3 +190,27 @@ def test_plain_fixed_row_never_takes_a_numbered_label_with_the_same_text():
     fixed_only = [{"key": "t1:0:1", "task_id": "t1", "text": "1", "quantity": 3, "serial": None}]  # only «1» selected
     printed = Counter({("t1", 1, "1"): 1})
     assert remaining_rows(fixed_only, printed, {"t1:0:1"}, numbered_keys(document, task, (1, 3))) == fixed_only
+
+
+def test_a_serial_marked_printed_outside_the_erp_counts_as_printed(marking):
+    """708К.: №1 of every КБ was printed outside the ERP — marked, «Осталось» drops by one and «Печатать оставшиеся»
+    skips it; «Снять отметку» brings it back."""
+    from tests.workflows.test_marking_outside import OUTSIDE, body, make_group
+
+    client, _factory, payload, task, *_ = marking
+    group_id, _tasks = make_group(marking)
+    group_source = {**payload, "source": {"group_id": group_id, "version": 1}}
+    full = preview(marking, group_source)
+    assert client.post(OUTSIDE, json=body(group_id)).status_code == 200
+    progress = client.get(BASE + "/progress", params={"group_id": group_id})
+    assert progress.status_code == 200, progress.text
+    row = progress.json()["rows"][0]
+    assert (row["printed"], row["remaining"], row["printed_serials"]) == (1, task.quantity - 1, [1])
+    assert row["remaining_labels"] == 3 * task.quantity - 1
+    rest = preview(marking, {**group_source, "remaining": True})
+    texts = [label["text"] for label in rest["labels"]]
+    assert "КБ-001" not in texts and texts[0] == "КБ-002"
+    assert rest["total"] == full["total"] - 1
+    assert client.post(OUTSIDE + "/undo", json=body(group_id)).status_code == 200
+    again = client.get(BASE + "/progress", params={"group_id": group_id}).json()["rows"][0]
+    assert (again["printed"], again["remaining"]) == (0, task.quantity)

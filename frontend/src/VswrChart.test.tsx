@@ -46,3 +46,9 @@ it("draws the «norm ± U» band and a fine scale for instrument norms near 1,06
   expect(vswrChartSvg({ trace: [{ mhz: 10, vswr: 1.065 }], normMax: 1.06, fineScale: true, maxVswr: 1.065, maxMhz: 10 })).toContain("Максимум 1,065 на 10");
   expect(vswrChartSvg({ trace, normMax: 2.06 })).not.toContain("Норма ± U");
 });
+
+it("sets tabular numerals on the axis numbers by attribute only", () => {
+  const svg = vswrChartSvg({ trace, normMax: 1.5 });
+  expect(svg).toContain('font-variant-numeric="tabular-nums"');
+  expect(svg).not.toContain("style=");
+});

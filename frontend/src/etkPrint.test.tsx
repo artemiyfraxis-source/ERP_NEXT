@@ -182,3 +182,22 @@ it("numbers only the printed sections: no defects, no sketch, no input", () => {
   expect(headings).toEqual(["1. Вход", "2. Оснастка: инструмент, оборудование, расходники", "3. Ход операции", "4. Результат"]);
   expect(operationPage).toContain("Комплектующих и полуфабрикатов на входе нет.");
 });
+
+it("shows a pool machine row as «любой свободный» on screen and in print, a normal unit as before", async () => {
+  stubFetch();
+  const card = techcard({ card: {
+    name: "Резка", steps: [{ number: "1", kind: "Операция", text: "Отрезать" }],
+    tooling: [
+      { section: "Оборудование", number: "1", name: "EW-50A(R) | Полуавтомат зачистки", inventory_number: "ОБ.027.X" },
+      { section: "Оборудование", number: "2", name: "WL-2.0ВТ", inventory_number: "ОБ.027.4" },
+    ],
+  } });
+  render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+  const tooling = await screen.findByRole("region", { name: "Оснастка" });
+  const rows = [...tooling.querySelectorAll(".tr-tool")].map((node) => node.textContent);
+  expect(rows).toEqual(["1EW-50A — любой свободный ОБ.027.* · Полуавтомат зачистки", "2WL-2.0ВТОБ.027.4"]);
+  const printed = buildPrintDocumentHtml("ЭТК", etkPrintPages(card, []));
+  expect(printed).toContain("EW-50A — любой свободный ОБ.027.* · Полуавтомат зачистки");
+  expect(printed).not.toContain("ОБ.027.X");
+  expect(printed).toContain("ОБ.027.4");
+});
