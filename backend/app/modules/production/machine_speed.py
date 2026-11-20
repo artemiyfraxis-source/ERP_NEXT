@@ -13,7 +13,9 @@ Intervals. Rows of one machine in time order; the interval i→i+1 belongs to ro
 A segment is a stretch of rows with one setup key and one run (`run_write_id`); a run in «Прогонов» is a segment that
 made pieces. Fact s/pc of a setup = Σ running Δt / Σ Δn over its running intervals. Setup fact of a segment opened by a
 new setup (`reason` setup) or a new run (`reason` run with a run): its first row → the start of its first running
-interval with Δn > 0; a setup's figure is the median of its segments.
+interval with Δn > 0, minus the «Пауза» and «Нет связи» stops in between (the machine stands «Готов/ждёт» while it is
+being set up, so that time is the setup itself and stays in); a fact longer than SETUP_LIMIT × «Время подготовки» is
+an overnight gap, not a setup, and is left out. A setup's figure is the median of its segments.
 
 Norm = the CYCLOGRAM of the БД.ОП row (owner 20.11: not one tOp), the same formula as techcards/etk_builder.linear_seconds
 and frontend opFields.linearPiece: a «Погонный» row with «Скорость проката» > 0 — per piece max(L / прокат +
@@ -47,6 +49,14 @@ STOP_LABELS = {"pause": "Пауза", "alarm": "Авария", "idle": "Гото
                "reset": "Сброс счётчика"}
 STATE_STOPS = {104: "pause", 105: "alarm", 100: "idle", 101: "idle", 102: "idle", 106: "idle", 107: "idle"}
 ONE_LENGTH = "по одной длине — только постоянная часть"
+CLOSE_LENGTHS = "длины мало различаются — только постоянная часть"
+UNCLEAR_FEED = "прокат по данным не определяется — только постоянная часть"
+MIN_FEED_SPREAD = 0.5  # s: the feed-time difference between the shortest and the longest observed length…
+MIN_FEED_SHARE = 0.1  # …and its share of the mean piece time, for the data to tell the feed speed
+MAX_RELATIVE_ERROR = 0.25  # standard error of the fitted slope / the slope
+CLAMP_LOW, CLAMP_HIGH = 0.5, 2.0  # a suggested value within these × the current one, else that cell is not suggested
+SETUP_LIMIT = 4  # a setup fact longer than 4 × «Время подготовки» is an overnight gap, not a setup
+SETUP_PAUSES = frozenset({"pause", "offline"})  # stops not counted as setup work («Готов/ждёт» is the setup itself)
 
 # БД.ОП cyclogram cells (frontend opFields CYCLE_COLUMNS): id → card label. The sheet's headers differ in case and units,
 # so a column is found by the start of its header, as the screen does.
@@ -297,41 +307,51 @@ class Segment:
     stops: dict[str, float] = field(default_factory=lambda: defaultdict(float))
     setup_seconds: float | None = None
     setup_open: bool = False
+    setup_stops: float = 0.0  # pause / no link while the setup is open: not setup work
 
     @property
     def fact(self) -> float | None:
         return self.running_seconds / self.pieces if self.pieces > 0 and self.running_seconds > 0 else None
 
+    def setup_fact(self, norm: Decimal | None) -> float | None:
+        """The setup time; None when longer than SETUP_LIMIT × the norm (an overnight gap, not a setup)."""
+        if self.setup_seconds is None or (norm and self.setup_seconds > SETUP_LIMIT * float(norm)):
+            return None
+        return self.setup_seconds
 
-def segments(rows: Iterable[SpeedRow], norms: Mapping[tuple[UUID, str], Decimal | None]) -> list[Segment]:
-    """History rows (any order, any machines) → segments in time order per machine. `norms` — (machine, setup key) → norm
-    s/pc for the running cap (missing — 60 s)."""
-    by_machine: dict[UUID, list[SpeedRow]] = defaultdict(list)
-    for row in rows:
-        by_machine[row.equipment_id].append(row)
+
+def segments(rows: Iterable[SpeedRow], norms: Mapping[tuple[UUID, str], Decimal | None],
+             only: str | None = None) -> list[Segment]:
+    """History rows → segments. Streams: holds only the previous row of each machine, so the rows of every machine must
+    come in time order (recorded_at, id — the API's query orders them so). `norms` — (machine, setup key) → norm s/pc for
+    the running cap (missing — 60 s). `only` — build the segments of this setup key only (the other rows are still read:
+    they bound them)."""
     found: list[Segment] = []
-    for equipment_id, items in by_machine.items():
-        items.sort(key=lambda row: (aware(row.recorded_at), row.id))
-        current: Segment | None = None
-        for index, row in enumerate(items):
-            moment = aware(row.recorded_at)
-            if current is None or (row.setup_key, row.run_write_id) != (current.setup_key, current.run_write_id):
-                current = Segment(equipment_id, row.setup_key, row.run_write_id, row.run_kind, moment, moment,
-                                  setup_open=row.reason == "setup" or (row.reason == "run" and row.run_write_id is not None))
-                found.append(current)
-            if index + 1 == len(items):
-                break
-            following = items[index + 1]
-            kind, seconds, pieces = interval(row, following, cap_seconds(norms.get((equipment_id, row.setup_key))))
-            current.ended_at = aware(following.recorded_at)
+    last: dict[UUID, tuple[SpeedRow, Segment | None]] = {}
+    for row in rows:
+        moment = aware(row.recorded_at)
+        previous, current = last.get(row.equipment_id, (None, None))
+        if previous is not None and current is not None:
+            kind, seconds, pieces = interval(previous, row, cap_seconds(norms.get((row.equipment_id, previous.setup_key))))
+            current.ended_at = moment
             if kind == "running":
                 if pieces > 0 and current.setup_open:
-                    current.setup_seconds = (moment - current.started_at).total_seconds()
+                    elapsed = (aware(previous.recorded_at) - current.started_at).total_seconds()
+                    current.setup_seconds = max(elapsed - current.setup_stops, 0.0)
                     current.setup_open = False
                 current.running_seconds += seconds
                 current.pieces += pieces
             elif kind is not None:
                 current.stops[kind] += seconds
+                if current.setup_open and kind in SETUP_PAUSES:
+                    current.setup_stops += seconds
+        if previous is None or (row.setup_key, row.run_write_id) != (previous.setup_key, previous.run_write_id):
+            current = None
+            if only is None or row.setup_key == only:
+                current = Segment(row.equipment_id, row.setup_key, row.run_write_id, row.run_kind, moment, moment,
+                                  setup_open=row.reason == "setup" or (row.reason == "run" and row.run_write_id is not None))
+                found.append(current)
+        last[row.equipment_id] = (row, current)
     return found
 
 
@@ -357,9 +377,9 @@ class SetupFact:
     def fact(self) -> float | None:
         return self.running_seconds / self.pieces if self.pieces > 0 and self.running_seconds > 0 else None
 
-    @property
-    def setup_fact(self) -> float | None:
-        values = [item.setup_seconds for item in self.segments if item.setup_seconds is not None]
+    def setup_fact(self, norm: Decimal | None) -> float | None:
+        """Median of the segments' setup facts (each within SETUP_LIMIT × the norm)."""
+        values = [value for item in self.segments if (value := item.setup_fact(norm)) is not None]
         return median(values) if values else None
 
     @property
@@ -382,14 +402,14 @@ def by_setup(found: Iterable[Segment]) -> list[SetupFact]:
 
 @dataclass(frozen=True)
 class Point:
-    """One setup of the operation: its cut length, pieces and fact s/pc."""
+    """One run of the operation: its cut length, pieces and fact s/pc."""
     length_mm: Decimal
     pieces: int
     fact: float
 
 
 def _round(value: float, step: str) -> Decimal:
-    return Decimal(repr(value)).quantize(Decimal(step), rounding=ROUND_HALF_UP)
+    return Decimal(repr(float(value))).quantize(Decimal(step), rounding=ROUND_HALF_UP)
 
 
 def ru(value: Decimal) -> str:
@@ -409,15 +429,65 @@ def steady(ratios: Sequence[float]) -> bool:
     return (middle > SLOW and low > 1) or (middle < FAST and high < 1)
 
 
+def _within(new: float | Decimal, now: float) -> bool:
+    """The new value lies in [CLAMP_LOW × now, CLAMP_HIGH × now]; no current value (0) — no bound."""
+    return now <= 0 or CLAMP_LOW * now <= float(new) <= CLAMP_HIGH * now
+
+
+def _scaled(data: Sequence[tuple[float, float, float]]) -> list[tuple[float, float, float]]:
+    """Weights (the runs' pieces) scaled to mean 1: the standard error then reflects the scatter between runs, not the
+    piece count."""
+    total = sum(w for _, _, w in data)
+    return [(x, y, w * len(data) / total) for x, y, w in data]
+
+
+def _line(data: Sequence[tuple[float, float, float]]) -> tuple[float, float] | None:
+    """Weighted least squares t = a + b × L → (b, relative standard error of b; inf with fewer than 3 runs); None — the
+    runs have one length."""
+    weights = _scaled(data)
+    n = len(weights)
+    x_mean = sum(x * w for x, _, w in weights) / n
+    y_mean = sum(y * w for _, y, w in weights) / n
+    sxx = sum(w * (x - x_mean) ** 2 for x, _, w in weights)
+    if sxx <= 0:
+        return None
+    slope = sum(w * (x - x_mean) * (y - y_mean) for x, y, w in weights) / sxx
+    if n < 3 or slope == 0:
+        return slope, math.inf
+    intercept = y_mean - slope * x_mean
+    residual = sum(w * (y - intercept - slope * x) ** 2 for x, y, w in weights) / (n - 2)
+    return slope, math.sqrt(residual / sxx) / abs(slope)
+
+
+def _origin(data: Sequence[tuple[float, float, float]]) -> float | None:
+    """t = L / v through the origin (no tool part): v = Σw·L² / Σw·L·t, kept only when the slope's relative standard
+    error ≤ MAX_RELATIVE_ERROR (fewer than 2 runs — unknown); None otherwise."""
+    weights = _scaled(data)
+    n = len(weights)
+    sxx = sum(w * x * x for x, _, w in weights)
+    sxy = sum(w * x * y for x, y, w in weights)
+    if n < 2 or sxx <= 0 or sxy <= 0:
+        return None
+    slope = sxy / sxx
+    residual = sum(w * (y - slope * x) ** 2 for x, y, w in weights) / (n - 1)
+    if math.sqrt(residual / sxx) / slope > MAX_RELATIVE_ERROR:
+        return None
+    return 1 / slope
+
+
 def suggest(fields: Mapping[str, str], points: Sequence[Point], ratios: Sequence[float]) -> dict | None:
-    """New «Скорость проката» / «Скорость работы инструмента» for a «Погонный» БД.ОП row from its setups on a machine.
+    """New «Скорость проката» / «Скорость работы инструмента» for a «Погонный» БД.ОП row from its runs.
 
     By the cyclogram the machine makes a piece of length L (m) in t = L / v + T × k (v — прокат, м/с; T — ход
-    инструмента, с; k — ходов на штуку; the formula has no other constant). So the facts of setups of different lengths
-    lie on a line t = a + b × L: a weighted least-squares fit (weight — pieces of the setup) gives b = 1 / v and
-    a = T × k, so v = 1 / b and T = a / k. With one length (or a fit whose slope is not > 0) the length part cannot be
-    told from the constant: v stays, a = the weighted mean of t − L / v, and only T is suggested, with the note
-    ONE_LENGTH. v is rounded to 0,01 м/с, T to 0,1 с; a cell is suggested only when it changes.
+    инструмента, с; k — ходов на штуку; the formula has no other constant). So the runs' facts lie on a line t = a + b × L:
+    a weighted least-squares fit (weight — the run's pieces) gives b = 1 / v and a = T × k. v is suggested only when the
+    data can tell it: at least two lengths, b > 0, the feed-time spread across the observed lengths (ΔL × b) at least
+    MIN_FEED_SPREAD s and MIN_FEED_SHARE of the mean piece time, the relative standard error of b at most
+    MAX_RELATIVE_ERROR, and the new v within [CLAMP_LOW, CLAMP_HIGH] × the current one. Otherwise v stays and only T is
+    suggested, a = the weighted mean of t − L / v, with a note saying why (ONE_LENGTH, CLOSE_LENGTHS, UNCLEAR_FEED).
+    T = a / k, also only within [CLAMP_LOW, CLAMP_HIGH] × the current T. A row without tool strokes (k empty or 0, or no
+    tool column) has no constant: v alone from a fit through the origin (`_origin`), or no suggestion. v and T are
+    rounded to 0,01 (the sheet keeps 2 decimals); a cell is suggested only when it changes.
 
     None — not a «Погонный» row with прокат, fewer than MIN_PIECES pieces, fewer than MIN_FACTS runs, the runs not
     steadily slow or fast against the norm (`steady`), or nothing would change. Never applied by itself."""
@@ -426,35 +496,52 @@ def suggest(fields: Mapping[str, str], points: Sequence[Point], ratios: Sequence
     if sum(point.pieces for point in points) < MIN_PIECES or not steady(ratios):
         return None
     keys, cells = cycle_keys(fields), _cells(fields)
-    roll_now, ops = number(cells["roll"]), number(cells["toolOps"])
-    weight = float(sum(point.pieces for point in points))
-    xs = [(float(point.length_mm) / 1000, point.fact, float(point.pieces)) for point in points]
-    x_mean = sum(x * w for x, _, w in xs) / weight
-    y_mean = sum(y * w for _, y, w in xs) / weight
-    sxx = sum(w * (x - x_mean) ** 2 for x, _, w in xs)
-    slope = sum(w * (x - x_mean) * (y - y_mean) for x, y, w in xs) / sxx if sxx > 0 else 0.0
-    roll_new: Decimal | None = None
-    if len({point.length_mm for point in points}) >= 2 and slope > 0 and _round(1 / slope, "0.01") > 0:
-        roll_new = _round(1 / slope, "0.01")
-        constant, note = y_mean - slope * x_mean, None
+    roll_now, tool_now, ops = number(cells["roll"]), number(cells["tool"]), number(cells["toolOps"])
+    data = [(float(point.length_mm) / 1000, point.fact, float(point.pieces)) for point in points]
+    lengths = [ru(value) for value in sorted({point.length_mm for point in points})]
+    if ops <= 0 or "tool" not in keys or "toolOps" not in keys:
+        speed = _origin(data)
+        if speed is None or not _within(speed, roll_now):
+            return None
+        roll_new = _round(speed, "0.01")
+        if roll_new <= 0 or roll_new == _round(roll_now, "0.01"):
+            return None
+        return {"cells": [{"field": keys["roll"], "label": SUGGESTION_LABELS["roll"], "old": cells["roll"],
+                           "new": ru(roll_new)}],
+                "fit": f"L / {ru(roll_new)} м/с", "lengths": lengths, "note": None}
+    weight = sum(w for _, _, w in data)
+    roll_new, note = None, None
+    line = _line(data)
+    if len(lengths) < 2 or line is None:
+        note = ONE_LENGTH
+    elif line[0] <= 0:
+        note = UNCLEAR_FEED
     else:
-        constant, note = sum(w * (y - x / roll_now) for x, y, w in xs) / weight, ONE_LENGTH
+        slope, error = line
+        spread = (max(x for x, _, _ in data) - min(x for x, _, _ in data)) * slope
+        piece = sum(y * w for _, y, w in data) / weight
+        candidate = _round(1 / slope, "0.01")
+        if spread < MIN_FEED_SPREAD or spread < MIN_FEED_SHARE * piece:
+            note = CLOSE_LENGTHS
+        elif error > MAX_RELATIVE_ERROR or candidate <= 0 or not _within(candidate, roll_now):
+            note = UNCLEAR_FEED
+        else:
+            roll_new = candidate
+    speed = float(roll_new) if roll_new is not None else roll_now
+    constant = sum(w * (y - x / speed) for x, y, w in data) / weight
     changes = []
     if roll_new is not None and roll_new != _round(roll_now, "0.01"):
         changes.append(("roll", ru(roll_new)))
-    if ops > 0 and "tool" in keys:
-        tool_new = _round(max(constant, 0.0) / ops, "0.1")
-        if tool_new != _round(number(cells["tool"]), "0.1"):
-            changes.append(("tool", ru(tool_new)))
+    tool_new = _round(max(constant, 0.0) / ops, "0.01")
+    if tool_new != _round(tool_now, "0.01") and _within(tool_new, tool_now):
+        changes.append(("tool", ru(tool_new)))
     if not changes:
         return None
-    speed = roll_new if roll_new is not None else _round(roll_now, "0.01")
     return {
         "cells": [{"field": keys[cell], "label": SUGGESTION_LABELS[cell], "old": cells[cell], "new": value}
                   for cell, value in changes],
-        "fit": f"{ru(_round(constant, '0.1'))} с + L / {ru(speed)} м/с",
-        "lengths": [ru(value) for value in sorted({point.length_mm for point in points})],
-        "note": note,
+        "fit": f"{ru(_round(constant, '0.1'))} с + L / {ru(_round(speed, '0.01'))} м/с",
+        "lengths": lengths, "note": note,
     }
 
 
