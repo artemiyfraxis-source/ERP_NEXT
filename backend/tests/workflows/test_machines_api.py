@@ -151,7 +151,7 @@ def test_list_shows_the_machine_printers_and_devices_and_staleness_means_no_link
         ])
     rows = {row["key"].split(":")[0] + ":" + (row["inventory"] or row["device"]): row for row in admin.get(LIST).json()["rows"]}
     machine = rows["machine:ОБ.019"]
-    assert machine["link"]["text"] == "Открыт пульт станка на ПК — запись из ERP недоступна"
+    assert machine["link"]["text"] == rules.HMI_OPEN
     assert (machine["pc"], machine["ip"], machine["version"], machine["card"]) == ("PC-108", "192.168.1.108", "1.0.0", True)
     assert machine["state"]["text"] == "Нет данных ПЛК"
     printer = rows["printer:ОБ.101"]

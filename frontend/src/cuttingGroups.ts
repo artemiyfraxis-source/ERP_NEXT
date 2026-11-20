@@ -74,6 +74,29 @@ export function cuttingRows(group: CuttingGroup): CuttingMember[] {
   return group.rows.filter((row) => row.membership_state === "active").sort((a, b) => a.position - b.position);
 }
 
+/** Длина реза одной записью: «325», «325,00», 325 → «325». */
+export function lengthKey(value: string | number | null | undefined): string {
+  const number = Number(String(value ?? "").replace(",", ".").replace(/\s/g, ""));
+  return value === null || value === undefined || String(value).trim() === "" || !Number.isFinite(number) ? "" : String(number);
+}
+
+/** Счёт станка за прогон этой длины (штук провода) → «Годные» по КБ той же длины (штук ПФ), по порядку, не больше
+ *  остатка КБ (владелец 19.11.2026: «Сдать группу» заполняется числом станка, подтверждает оператор). → {КБ: штук}. */
+export function machineGood(rows: CuttingMember[], lengthMm: string, count: number): Record<string, string> {
+  const result: Record<string, string> = {};
+  let left = count;
+  for (const row of rows) {
+    if (lengthKey(row.cut_length_mm) !== lengthKey(lengthMm)) continue;
+    const planned = Number(row.operation_quantity);
+    const perUnit = planned > 0 ? Number(row.blank_quantity) / planned || 1 : 1;
+    const remaining = Math.max(0, planned - Number(row.good) - Number(row.defects));
+    const units = Math.max(0, Math.min(remaining, Math.floor(left / perUnit + 1e-9)));
+    result[row.id] = String(units);
+    left -= units * perUnit;
+  }
+  return result;
+}
+
 export type CuttingLabel = MarkLabel & { id: string; item: string; task: string };
 
 /** Use the original KB's issued serial range; never invent a group numbering sequence. */

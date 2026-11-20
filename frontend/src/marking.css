@@ -25,14 +25,20 @@
 .marking-geometry .marking-name { grid-column: span 2; }
 .marking-window .tnum, .marking-window input[type="number"] { font-variant-numeric: tabular-nums; }
 .marking-window input[type="number"] { text-align: right; min-width: 72px; width: 100%; }
-.marking-window .check-inline { flex-direction: row; align-items: center; gap: 8px; }
+.marking-window .check-inline { flex-direction: row; align-items: center; gap: 8px; white-space: normal; }
 .marking-selection { display: grid; gap: 8px; }
 .marking-selection summary { cursor: pointer; }
 .marking-selection label { padding-block: 4px; overflow-wrap: anywhere; }
 .marking-binding { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; }
 .marking-binding label { flex: 1; }
 .marking-resolution { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; }
-.marking-resolution .form-actions { grid-column: 1 / -1; }
+.marking-resolution .form-actions, .marking-action-note { grid-column: 1 / -1; }
+.marking-reprint { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: end; gap: 12px; }
+.marking-reprint .marking-reprint-wide { grid-column: span 2; }
+.marking-reprint .form-actions, .marking-reprint .marking-action-note { grid-column: 1 / -1; align-items: center; }
+.marking-clear { display: grid; gap: 8px; }
+.marking-clear-state { display: flex; flex-wrap: wrap; gap: 4px 12px; overflow-wrap: anywhere; }
+.marking-window .marking-peel { align-self: end; }
 .marking-window :is(button, input, select, textarea, summary):focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .marking-window :is(button, input, select, textarea, summary) { touch-action: manipulation; }
 .marking-window h2, .marking-window h3 { text-wrap: balance; }
@@ -41,6 +47,7 @@
   .marking-controls { grid-template-columns: 1fr 1fr; }
   .marking-target { grid-column: 1 / -1; }
   .marking-geometry { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .marking-reprint { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 700px) {
   .marking-preview, .marking-resolution { grid-template-columns: minmax(0, 1fr); }

@@ -233,16 +233,23 @@ it("keeps the last PLC values greyed when the machine PC is gone and says so onc
   expect(screen.queryByText(/на станке —/)).toBeNull();
 });
 
-it("names the open PXS_HMI console in operator words instead of the agent's raw error, without an empty panel", () => {
-  render(<Ob019CardView card={card({ link: { code: "port_busy", text: "Открыт пульт станка на ПК — запись из ERP недоступна", tone: "warn" },
+it("names the open operator panel in operator words instead of the agent's raw error, without an empty panel", () => {
+  const text = "Открыт пульт станка на ПК — закройте его, чтобы ERP могла управлять станком";
+  render(<Ob019CardView card={card({ link: { code: "port_busy", text, tone: "warn" },
     error: "mbd: busy: PXS_HMI is running, bus refused", live: null })} />);
   const status = screen.getByRole("status", { name: "Состояние станка" });
   expect(status.className).toContain("is-warn");
-  expect(within(status).getByText("На ПК станка открыт пульт PXS_HMI — закройте его, ERP ждёт")).toBeTruthy();
-  expect(screen.getAllByText("На ПК станка открыт пульт PXS_HMI — закройте его, ERP ждёт")).toHaveLength(1);
+  expect(within(status).getByText(text)).toBeTruthy();
+  expect(screen.getAllByText(text)).toHaveLength(1);
   expect(screen.queryByText(/Нет данных ПЛК/)).toBeNull();
-  // The raw agent text lives only in the folded «Подключение».
-  expect(screen.getByText("mbd: busy: PXS_HMI is running, bus refused").closest("details")).not.toBeNull();
+  // An untranslated raw agent line is the same cause: not repeated in the folded «Подключение».
+  expect(screen.queryByText(/PXS_HMI|busy/)).toBeNull();
+});
+
+it("keeps an agent answer the state line does not say in the folded «Подключение»", () => {
+  render(<Ob019CardView card={card({ link: { code: "no_plc", text: "ПЛК не отвечает", tone: "danger" }, error: "COM8 занят", live: null })} />);
+  expect(within(screen.getByRole("status", { name: "Состояние станка" })).getByText("ПЛК не отвечает")).toBeTruthy();
+  expect(screen.getByText("COM8 занят").closest("details")).not.toBeNull();
 });
 
 it("says the state, the link and the next step once at the top; an alarm leads", () => {
@@ -262,6 +269,13 @@ it("says the state, the link and the next step once at the top; an alarm leads",
   alarm.live = { ...alarm.live!, alarm: { code: 6, text: "Нет провода", tone: "danger" } };
   rerender(<Ob019CardView card={alarm} />);
   expect(within(screen.getByRole("status", { name: "Состояние станка" })).getByText("Авария: Нет провода")).toBeTruthy();
+});
+
+it("says once, in plain words, that the operator panel is open on the PC (the agent's raw line is translated)", () => {
+  const text = "Открыт пульт станка на ПК — закройте его, чтобы ERP могла управлять станком";
+  render(<Ob019CardView card={card({ link: { code: "port_busy", text, tone: "warn" }, error: text, live: null })} />);
+  expect(screen.getAllByText(text)).toHaveLength(1);
+  expect(screen.queryByText(/PXS_HMI|busy/)).toBeNull();
 });
 
 it("opens «Оборудование» for Производство or Задания view", () => {

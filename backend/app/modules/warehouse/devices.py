@@ -55,6 +55,8 @@ class PrinterRow(Base):
     present: Mapped[bool] = mapped_column(Boolean, nullable=False)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     queue_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # Why the agent holds this marking queue (0203): the peel-off check failed. Empty — no hold.
+    hold: Mapped[str] = mapped_column(String(500), nullable=False, default="", server_default="")
 
 
 def printer_heartbeat(uow, machine_id, printers, now):
@@ -68,6 +70,7 @@ def printer_heartbeat(uow, machine_id, printers, now):
                 session.add(row)
             row.driver, row.port, row.kind = item["driver"], item["port"], item["kind"]
             row.present, row.last_seen = item["present"], now
+            row.hold = " ".join(str(item.get("hold") or "").split())[:500]
         uow.commit()
 
 
@@ -86,6 +89,8 @@ class VnaControlRow(Base):
     machine_id: Mapped[str] = mapped_column(String(80), ForeignKey("warehouse_scan_agents.machine_id", ondelete="CASCADE"), primary_key=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     methods: Mapped[list] = mapped_column(JSON, nullable=False)
+    # Bench ops of protocol 2 the agent implements (0205_vna_bench_sessions); bench commands go only to them.
+    ops: Mapped[list] = mapped_column(JSON, nullable=False, default=list, server_default="[]")
     reported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -101,6 +106,7 @@ def control_heartbeat(uow, machine_id: str, capability: dict | None, now: dateti
                 row = VnaControlRow(machine_id=machine_id)
                 session.add(row)
             row.version, row.methods, row.reported_at = capability["version"], capability["methods"], now
+            row.ops = list(capability.get("ops") or []) if capability["version"] == 2 else []
         uow.commit()
 
 
@@ -118,6 +124,13 @@ def control_capability(session, machine_id: str, now: datetime) -> list[str]:
             or control.version not in (1, 2) or reported < now - LIVE_FOR):
         raise ScanJobClosed("Агент не поддерживает актуальный протокол vna_control версии 1 или 2")
     return control.methods
+
+
+def control_ops(session, machine_id: str, now: datetime) -> set[str] | None:
+    """Bench ops of a live agent speaking exactly protocol 2; None for protocol 1 (bench sessions route by this)."""
+    control_capability(session, machine_id, now)
+    control = session.get(VnaControlRow, machine_id)
+    return set(control.ops or ()) if control.version == 2 else None
 
 
 def idn_serial(name: str) -> str:

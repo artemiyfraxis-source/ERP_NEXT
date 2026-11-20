@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, failureText } from "./api";
 
 /* «Станки» (владелец 18.11.2026: «в разделе производство — станки: всё, что мы подключили, и управление ими»), часть 1 —
@@ -162,6 +162,9 @@ export const POLL_MS = 3000;
 export function usePolled<T>(load: (signal: AbortSignal) => Promise<T>, period = POLL_MS, failure = "Не удалось загрузить станки") {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState("");
+  // `reload()` asks at once (after an action), then the polling goes on from there.
+  const [nonce, setNonce] = useState(0);
+  const reload = useCallback(() => setNonce((value) => value + 1), []);
   const loader = useRef(load);
   loader.current = load;
   useEffect(() => {
@@ -198,6 +201,6 @@ export function usePolled<T>(load: (signal: AbortSignal) => Promise<T>, period =
       controller?.abort();
       document.removeEventListener("visibilitychange", visible);
     };
-  }, [period, failure]);
-  return { data, error };
+  }, [period, failure, nonce]);
+  return { data, error, reload };
 }

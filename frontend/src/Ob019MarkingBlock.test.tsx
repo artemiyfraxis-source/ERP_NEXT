@@ -50,7 +50,7 @@ function server({ control = CONTROL, transferPlan = plan(null), refuseTransfer =
     if (init?.method === "POST") {
       const body = JSON.parse(String(init.body));
       posts.push({ url, body });
-      if (refuseTransfer && url.endsWith("/transfer")) return json({ detail: refuseTransfer }, 422);
+      if (refuseTransfer && url.endsWith("/run")) return json({ detail: refuseTransfer }, 422);
       const values = (body.values ?? {}) as Record<string, string>;
       for (const group of window.settings) for (const item of group.fields) {
         if (!item.key || !(item.key in values)) continue;
@@ -73,8 +73,8 @@ function server({ control = CONTROL, transferPlan = plan(null), refuseTransfer =
 }
 
 async function pickJob() {
-  const pick = await screen.findByLabelText("Задание резки");
-  await waitFor(() => expect(within(pick).getAllByRole("option")).toHaveLength(2));
+  const pick = await screen.findByLabelText("Задание");
+  await waitFor(() => expect(within(pick).getAllByRole("option")).toHaveLength(3));
   fireEvent.change(pick, { target: { value: "g1:325" } });
   await new Promise((resolve) => setTimeout(resolve, SELECT_WAIT_MS + 50));
 }
@@ -176,7 +176,8 @@ it("an ETK job with marking says what the ETK marks and sends the job; the marki
   expect(await screen.findByText("из ЭТК: По краям «C1.5 to XS17.7» / «XS17.7»")).toBeInTheDocument();
   expect(screen.getByText("Текст переведён в латиницу: «Х1» → «Kh1»")).toBeInTheDocument();
   await waitFor(() => expect(posts).toHaveLength(1));
-  expect(posts[0].url).toBe("/api/production/machines/card/ОБ.019/transfer");
+  // The job goes as a run of the machine; the server writes the ETK marking with it (workflows/machine_runs_api.py).
+  expect(posts[0].url).toBe("/api/production/machines/card/ОБ.019/run");
 });
 
 it("blocking marking in the ETK is shown and the server's refusal of the job is said at the fields", async () => {
@@ -188,7 +189,7 @@ it("blocking marking in the ETK is shown and the server's refusal of the job is 
   await pickJob();
   expect(await screen.findByText(/Маркировка из ЭТК не записывается: Серийные номера на лазер/)).toBeInTheDocument();
   expect((await screen.findAllByText("отказ: Маркировка: Серийные номера на лазер — не поддерживается")).length).toBeGreaterThan(0);
-  expect(posts.map((post) => post.url)).toEqual(["/api/production/machines/card/ОБ.019/transfer"]);
+  expect(posts.map((post) => post.url)).toEqual(["/api/production/machines/card/ОБ.019/run"]);
 });
 
 it("while the machine cuts the marking is closed with the drawing", async () => {

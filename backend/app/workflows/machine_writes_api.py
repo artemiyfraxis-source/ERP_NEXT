@@ -38,11 +38,14 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.modules.equipment_setup.recipe_infrastructure import SqlAlchemyRecipes
 from app.modules.equipment_setup.recipes import (EtkNominal, latest_for_wire, ob019_proposal, recipe_holds, recipe_wire,
                                                  wire_key)
 from app.modules.production import machine_control
+from app.modules.production import machine_runs as runs
+from app.modules.production import manual_jobs as manual
 from app.modules.production import machine_writes as commands
 from app.modules.production import machines as rules
 from app.modules.production.api import production_uow_factory
@@ -187,7 +190,25 @@ def _closed(uow, rows: list[commands.MachineWriteRow], actor, now: datetime) -> 
                      command_id=str(row.id))
 
 
-def _enqueue(uow, link, principal: Principal, purpose: str, writes, summary: str, now: datetime) -> dict:
+def _enqueue(uow, link, principal: Principal, purpose: str, writes, summary: str, now: datetime,
+             run: dict | None = None) -> dict:
+    """Queue a write; `run` (production/machine_runs.py) makes it the start of a job run from the card."""
+    try:
+        # «Тираж» N is pieces in this job: written as the target D22 = D649 + N (production/machine_writes.py).
+        writes, quantity = commands.quantity_as_target(
+            list(writes), uow.session.get(rules.MachineSnapshotRow, link.equipment_id), now)
+    except commands.MachineCommandRefused as error:
+        raise HTTPException(409, str(error)) from error
+    except rules.MachineWriteInvalid as error:
+        raise HTTPException(422, str(error)) from error
+    if quantity is not None:
+        summary = (f"{summary}; тираж {quantity['pieces']} шт: счётчик станка {quantity['counter']} → "
+                   f"цель {quantity['target']}")
+    if run is not None:
+        if quantity is None:
+            raise HTTPException(422, "Укажите тираж — штук в этом задании: без него станок не остановится на нужном числе")
+        settle_run(uow, link.equipment_id, principal.actor, now)
+        run = runs.with_quantity(runs.supersede(uow.session, link.equipment_id, run, now, principal.actor.name), quantity)
     try:
         row, expired = commands.enqueue(uow.session, equipment_id=link.equipment_id, purpose=purpose, writes=writes,
                                         summary=summary, actor_id=principal.actor.id, actor_name=principal.actor.name,
@@ -197,6 +218,8 @@ def _enqueue(uow, link, principal: Principal, purpose: str, writes, summary: str
     except rules.MachineWriteInvalid as error:
         raise HTTPException(422, str(error)) from error
     _closed(uow, expired, principal.actor, now)
+    if run is not None:
+        runs.tag(row, run)
     changes = "; ".join(f"{item['label']} {item['before'] or '—'} → {item['after'] or '—'}"
                         for item in row.payload["fields"])
     _journal(uow, link.equipment_id, "write_queued", principal.actor, now, f"{summary}: {changes}",
@@ -229,6 +252,7 @@ def control(inventory: str, principal: Reader, factory: Factory, now: Now) -> di
                     "state": None, "commands": [], "offsets": [], "can_edit": False}
         snapshot = session.get(rules.MachineSnapshotRow, link.equipment_id)
         rows = commands.latest(session, link.equipment_id, now)
+        settle_run(uow, link.equipment_id, principal.actor, now)
         result = {
             "problem": commands.idle_problem(link, snapshot, now),
             "state": rules.snapshot_words(snapshot).get(766),
@@ -331,8 +355,10 @@ JOB_RECIPE_KEYS = ("diameter_mm", "knife_back_mm")
 WIRE_RECIPE_KEYS = tuple(key for key in WIRE_KEYS if key != "length_mm")
 
 
-def _transfer_plan(session, link: rules.MachineLinkRow, group_id: UUID, length_text: str) -> dict:
-    """ETK nominal of the job + this machine's corrections → what «Передать на станок» writes."""
+def _transfer_plan(session, link: rules.MachineLinkRow, group_id: UUID, length_text: str,
+                   now: datetime | None = None) -> dict:
+    """ETK nominal of the job + this machine's corrections → what «Передать на станок» writes. The same job written
+    again after part of it was cut asks only for the rest (`planned` − `done`)."""
     length = _length(length_text)
     group = _group(session, group_id)
     nominal = group_nominal(group.recipe or {})
@@ -341,11 +367,14 @@ def _transfer_plan(session, link: rules.MachineLinkRow, group_id: UUID, length_t
     nominal = EtkNominal(nominal.wire, length, nominal.strip_front_mm, nominal.strip_back_mm, nominal.partial_front,
                          nominal.partial_back, _conductor(_wires(session), nominal.wire))
     rows, missing, blocking = _plan_rows(session, link, nominal, length, JOB_RECIPE_KEYS)
-    quantity = _quantity(session, group.id, length)
+    planned = _quantity(session, group.id, length)
+    done = runs.done_before(session, link.equipment_id, runs.cutting(group.id, length, "", None), now) if now else 0
+    quantity = max(planned - done, 0)
     job = {"total_set": quantity, "order_quantity": quantity, "order_number": latin(group.number),
            "product": latin(f"{nominal.wire} L{_shown(length)}")}
     return {"group_id": str(group.id), "number": group.number, "wire": nominal.wire, "length_mm": _shown(length),
-            "quantity": quantity, "rows": rows, "job": job, "missing": missing, "blocking": blocking,
+            "quantity": quantity, "planned": planned, "done": done, "rows": rows, "job": job, "missing": missing,
+            "blocking": blocking,
             "marking": marking_plan(group_laser_mark(group.recipe or {}), length, latin)}
 
 
@@ -381,14 +410,14 @@ def _plain(value: Decimal | None) -> str | None:
 
 
 @router.get("/card/{inventory}/transfer")
-def transfer_preview(inventory: str, _principal: Reader, factory: Factory,
+def transfer_preview(inventory: str, _principal: Reader, factory: Factory, now: Now,
                      group_id: UUID | None = None, length_mm: Annotated[str, Query(max_length=20)] = "",
                      wire: Annotated[str, Query(max_length=200)] = "") -> dict:
     with factory() as uow:
         session = uow.session
         link = _link(session, inventory)
         if group_id is not None:
-            return _transfer_plan(session, link, group_id, length_mm)
+            return _transfer_plan(session, link, group_id, length_mm, now)
         if wire.strip():
             return _wire_plan(session, link, wire, length_mm)
         groups = list(session.scalars(select(CuttingGroupRow).where(CuttingGroupRow.state.in_(GROUP_STATES))
@@ -405,19 +434,49 @@ def transfer(inventory: str, payload: TransferPayload, principal: Writer, factor
         session = uow.session
         link = _link(session, inventory)
         _confirm(session, link, payload.confirm_state)
-        plan = _transfer_plan(session, link, payload.group_id, payload.length_mm)
+        refuse_while_manual(session, link.equipment_id)
+        plan = _transfer_plan(session, link, payload.group_id, payload.length_mm, now)
         if plan["blocking"]:
             raise HTTPException(422, "В ЭТК не задано: " + ", ".join(plan["blocking"]))
+        refuse_when_done(plan)
         writes = [commands.FieldWrite(row["key"], row["value"]) for row in plan["rows"] if row["value"] is not None]
         writes += [commands.FieldWrite(key, value) for key, value in plan["job"].items() if value not in ("", None)]
-        marking = plan["marking"]
-        if marking is not None:
-            if marking["blocking"]:
-                raise HTTPException(422, "Маркировка: " + "; ".join(marking["blocking"]))
-            # Cleared texts are real writes (zero-filled), unlike the job's empty strings dropped above.
-            writes += [commands.FieldWrite(row["key"], row["value"]) for row in marking["rows"]]
-        summary = f"Передать на станок: группа {plan['number']}, {plan['wire']}, {plan['length_mm']} мм"
-        return _enqueue(uow, link, principal, "transfer", writes, summary, now)
+        writes += marking_writes(plan)
+        return _enqueue(uow, link, principal, "transfer", writes, transfer_summary(plan), now,
+                        run=cutting_run(plan, payload.length_mm))
+
+
+def marking_writes(plan: dict) -> list[commands.FieldWrite]:
+    """The ETK laser marking of a job plan (workflows/ob019_marking.py) — written with the job, 422 when it cannot be."""
+    marking = plan.get("marking")
+    if marking is None:
+        return []
+    if marking["blocking"]:
+        raise HTTPException(422, "Маркировка: " + "; ".join(marking["blocking"]))
+    # Cleared texts are real writes (zero-filled), unlike the job's empty strings dropped above.
+    return [commands.FieldWrite(row["key"], row["value"]) for row in marking["rows"]]
+
+
+def transfer_summary(plan: dict) -> str:
+    return f"Передать на станок: группа {plan['number']}, {plan['wire']}, {plan['length_mm']} мм"
+
+
+def cutting_run(plan: dict, length_mm: str) -> dict:
+    return runs.cutting(UUID(plan["group_id"]), length_mm,
+                        f"{plan['number']} · {plan['wire']} · {plan['length_mm']} мм", plan["quantity"])
+
+
+def refuse_when_done(plan: dict) -> None:
+    if plan["quantity"] < 1:
+        raise HTTPException(422, f"По станку уже сделано {plan['done']} из {plan['planned']} — завершите задание")
+
+
+def refuse_while_manual(session, equipment_id: UUID) -> None:
+    """A cutting job is not written while a manual job runs on the machine: the counter would mix both (plan S2)."""
+    job = manual.running(session, equipment_id)
+    if job is not None:
+        raise HTTPException(409, f"На станке идёт ручная работа {manual.number_text(job.number)} — "
+                                 "завершите или отмените её")
 
 
 # --- corrections after a trial ---
@@ -571,6 +630,46 @@ def correction(inventory: str, payload: CorrectionPayload, request: Request, pri
 
 # --- the command runner on the machine PC ---
 
+def settle_run(uow, equipment_id: UUID, actor, now: datetime) -> None:
+    """The machine's run whose counter check waits for a fresh snapshot (production/machine_runs.py `pending`) is
+    checked now — on every card, control and command request, without anyone pressing anything."""
+    row = runs.current(uow.session, equipment_id)
+    if runs.pending(row):
+        _run_verified(uow, row, actor, now)
+
+
+def _run_verified(uow, row: commands.MachineWriteRow, actor, now: datetime) -> None:
+    """A job run's write read back right: its counter start; a manual job is counted by the machine from now. Nothing
+    while the check still waits for a snapshot after the write (it settles on a later read: `settle_run`)."""
+    run = runs.verified(uow.session, row, now)
+    if run is None:
+        return
+    start = run.get("counter_start")
+    check = run.get("check", "ok")
+    job = None
+    if run["kind"] == "manual" and start is not None and check == "ok":
+        params = {item["key"]: item["after"] for item in row.payload.get("fields", [])}
+        try:
+            # The write itself is verified whatever happens to the job meanwhile: a job changed or closed in the same
+            # moment stays counted by hand, never turns the write into «агент не сообщил результат».
+            with uow.session.begin_nested():
+                job = manual.attach_plc(uow.session, UUID(run["job_id"]), write_id=row.id, counter_start=start,
+                                        params=params)
+        except (manual.ManualJobConflict, IntegrityError):
+            job = None
+        if job is not None:
+            uow.audit.add(AuditEvent(id=uuid4(), aggregate_id=job.id, event_type="production.manual_job_counted",
+                                     actor=actor, occurred_at=now, details={
+                                         "text": f"{manual.number_text(job.number)}: записано на станок и проверено, "
+                                                 f"счёт по станку с {start}", "number": manual.number_text(job.number),
+                                         "equipment_id": str(job.equipment_id)}))
+    text = f"Задание на станке: {run.get('label', '')} — " + (
+        runs.MOVED if check == "moved" else runs.UNREAD if check == "unknown"
+        else f"счётчик станка {start}, цель {run['target']}" if run.get("target") is not None
+        else f"счётчик станка {start}" if start is not None else "нет свежих данных станка, счёт вручную")
+    _journal(uow, row.equipment_id, "run_verified", actor, now, text, command_id=str(row.id))
+
+
 def _agent_link(session, bridge: Principal, payload: AgentPayload) -> rules.MachineLinkRow:
     link = session.scalar(select(rules.MachineLinkRow).where(
         rules.MachineLinkRow.inventory_number == _inventory(payload.inventory)))
@@ -633,6 +732,7 @@ def command_result(command_id: UUID, payload: ResultPayload, bridge: Bridge, fac
             if row.status == "done":
                 _journal(uow, link.equipment_id, "write_done", bridge.actor, now,
                          f"Записано и проверено: {row.summary}", command_id=str(row.id))
+                _run_verified(uow, row, bridge.actor, now)
             else:
                 _journal(uow, link.equipment_id, "write_failed", bridge.actor, now,
                          f"Не записано: {row.summary} — {row.error}", command_id=str(row.id))

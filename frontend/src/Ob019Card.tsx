@@ -9,8 +9,9 @@ import { Ob019SettingsPanel } from "./Ob019SettingsPanel";
 
 /** Живая карточка ОБ.019 (линия резки и зачистки с лазерной маркировкой) как пульт у станка (навык erp-machine-hmi,
  *  владелец 19.11.2026): сверху один раз — состояние словами, связь и что делать дальше; под ним команды
- *  (Ob019Controls.tsx), затем «Что режем», чертёж провода, запись, проба и поправка (Ob019SettingsPanel.tsx);
- *  «Подключение» — свёрнуто внизу. Опрос раз в 3 с, пока окно открыто. */
+ *  (Ob019Controls.tsx), затем «Выполнение задания», «Что режем», чертёж провода, запись, проба и поправка
+ *  (Ob019SettingsPanel.tsx); «Подключение» — свёрнуто внизу. Открытый на ПК пульт станка — одной строкой, без имени
+ *  программы. Опрос раз в 3 с, пока окно открыто. */
 
 type Fact = [label: string, value: string];
 
@@ -90,6 +91,8 @@ export function Ob019CardView({ card, controls }: { card: MachineCard; controls?
   const old = card.link.code !== "ok";
   const status = machineStatus(card);
   const facts = card.live ? liveFacts(card.live) : [];
+  // The agent's answer only when it says more than the state line above (the server already translates known ones).
+  const agentNote = card.error && card.error !== card.link.text && operatorText(card.error) !== PULT_OPEN ? card.error : "";
   return <>
     <div className={`machine-status${status.tone !== "neutral" ? ` is-${status.tone}` : ""}`} role="status" aria-label="Состояние станка">
       <strong className={`machine-status-title ${toneClass(status.tone)}`}>{status.title}</strong>
@@ -108,7 +111,7 @@ export function Ob019CardView({ card, controls }: { card: MachineCard; controls?
       <summary>Подключение</summary>
       <dl className="machine-summary">
         {([["ПК", plain(card.pc)], ["IP", plain(card.ip)], ["Версия агента", plain(card.bridge_version)],
-          ["Служба Modbus", plain(card.service_version)], ...(card.error ? [["Ответ агента", card.error]] : [])] as Fact[])
+          ["Служба Modbus", plain(card.service_version)], ...(agentNote ? [["Ответ агента", agentNote]] : [])] as Fact[])
           .map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
       </dl>
     </details>

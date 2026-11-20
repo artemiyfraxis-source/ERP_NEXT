@@ -22,7 +22,7 @@ after-shot doesn't answer all three in the top third of the card, it is not done
   is not a status.
 - No link / no data: one compact line plus the last known values greyed with their time. Never a big empty panel,
   never «на станке —» under every field — one banner says it for all.
-- Name the real cause in operator words: «На ПК станка открыт пульт PXS_HMI — закройте его, ERP ждёт» instead of
+- Name the real cause in operator words: «Открыт пульт станка на ПК — закройте его, чтобы ERP могла управлять станком» (never the program's name) instead of
   `mbd: busy … bus refused`.
 
 ## 2. Layout follows the job

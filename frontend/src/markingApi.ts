@@ -5,17 +5,29 @@ export interface MarkingGeometry {
   width_mm: number; height_mm: number; rotation: 0 | 90 | 180 | 270; feed_direction: "height" | "width";
   zones: MarkingRect[]; blank_zones: MarkingRect[]; offset_x_mm: number; offset_y_mm: number;
   min_font_mm: number; max_font_mm: number; max_lines: number; alignment: "center" | "left" | "right";
+  /** Labels go out one by one through the peel-off dispenser; the agent refuses a job without ^O1. */
+  peel?: boolean;
 }
 export interface MarkingProfile {
   id: string; equipment_id: string | null; name: string; version: number; calibrated: boolean; geometry: MarkingGeometry;
 }
-export interface MarkingBinding { version: number; machine_id: string; printer: string }
+/** «Очистить принтер»: the latest command on the bound queue and how it ended. */
+export interface MarkingPrinterCommand {
+  id: string; kind: "clear"; status: "pending" | "taken" | "done" | "failed"; status_label: string; reason: string;
+  requested_by: string; created_at: string; finished_at: string | null; message: string;
+  result: { removed_jobs?: number; buffer_cleared?: boolean };
+}
+export interface MarkingBinding { version: number; machine_id: string; printer: string; command?: MarkingPrinterCommand | null
+  /** Batch labels still waiting for this queue: they keep printing after «Очистить принтер» unless cancelled too. */
+  pending_jobs?: number }
 export interface MarkingMachine {
   equipment_id: string; inventory_number: string; name: string; profiles: MarkingProfile[]; binding: MarkingBinding | null;
 }
 export interface MarkingPrinter {
   machine_id: string; pc: string; name: string; driver: string; port: string; kind: string; present: boolean; online: boolean;
   ip?: string;
+  /** Why the agent holds marking on this queue (peel-off check failed); empty — printing. */
+  hold?: string;
 }
 export interface MarkingCatalog { machines: MarkingMachine[]; printers: MarkingPrinter[] }
 export type MarkingSource = { task_id: string; operation_id: string; version: number } | { group_id: string; version: number };
@@ -28,13 +40,21 @@ export interface MarkingPreview extends MarkingDimensions {
   manifest_hash: string; profile_id: string; profile_version: number; binding_version: number;
   source_snapshot: unknown; labels: MarkingLabel[]; total: number;
 }
-export type MarkingStatus = "pending" | "taken" | "spooled" | "failed" | "unknown";
+export type MarkingStatus = "pending" | "taken" | "spooled" | "failed" | "unknown" | "cancelled";
 export type MarkingPrintState = "queued" | "printed" | "error" | "cancelled" | "untracked";
-export interface MarkingJob { id: string; sequence: number; status: MarkingStatus; status_label: string; message: string; spool_job_id?: number | string | null; print_state?: MarkingPrintState | null }
+export interface MarkingJob { id: string; sequence: number; status: MarkingStatus; status_label: string; message: string; spool_job_id?: number | string | null; print_state?: MarkingPrintState | null
+  text?: string; serial?: number | null
+  /** The label failed its peel-off check and stops the rest of its batch (reprint it or continue without it). */
+  halted?: boolean }
 export interface MarkingBatch { id: string; status: MarkingStatus; status_label: string; total: number; jobs: MarkingJob[]; reprint_of: string | null
   // Honest print progress (agent 2.9.6+ watches the Windows queue); absent on older servers.
   printed?: number; queued?: number; print_errors?: number; cancelled?: number; untracked?: number
-  progress_label?: string | null; stuck?: boolean; stuck_label?: string | null }
+  progress_label?: string | null; stuck?: boolean; stuck_label?: string | null
+  /** Jobs withdrawn by «Отменить оставшиеся» and still waiting for the agent. */
+  withdrawn?: number; pending?: number; reason?: string
+  /** A failed peel-off check stopped the batch: why, in Russian. */
+  halted?: boolean; halt_label?: string | null }
+export type MarkingReprintRequest = ({ sequences: number[] } | { serial_from: number; serial_to: number }) & { reason: string; idempotency_key: string };
 export interface MarkingBatchRequest extends MarkingRequest { manifest_hash: string; idempotency_key: string; reprint_of?: string; reason?: string }
 
 const root = "/api/production/marking";
@@ -47,6 +67,8 @@ export const markingApi = {
   profile: (profile: MarkingProfile, geometry: MarkingGeometry, calibrated: boolean, name = profile.name) => api<MarkingProfile>(`${root}/profiles/${encodeURIComponent(profile.id)}`, {
     method: "PUT", body: JSON.stringify({ version: profile.version, geometry, calibrated, name }),
   }),
+  createProfile: (equipmentId: string, body: { name: string; copy_from?: string; geometry?: MarkingGeometry }) =>
+    post<MarkingProfile>(`/machines/${encodeURIComponent(equipmentId)}/profiles`, body),
   bind: (equipmentId: string, body: MarkingBinding) => api<MarkingBinding>(`${root}/machines/${encodeURIComponent(equipmentId)}/binding`, {
     method: "PUT", body: JSON.stringify(body),
   }),
@@ -56,7 +78,26 @@ export const markingApi = {
     }),
   resolve: (batchId: string, jobId: string, outcome: "spooled" | "failed", reason: string) =>
     post<MarkingBatch>(`/batches/${encodeURIComponent(batchId)}/jobs/${encodeURIComponent(jobId)}/resolve`, { outcome, reason }),
+  cancelRest: (batchId: string, reason: string) => post<MarkingBatch>(`/batches/${encodeURIComponent(batchId)}/cancel`, { reason }),
+  reprint: (batchId: string, body: MarkingReprintRequest) => post<MarkingBatch>(`/batches/${encodeURIComponent(batchId)}/reprint`, body),
+  clearPrinter: (equipmentId: string, reason: string, cancelPending = false) =>
+    post<MarkingPrinterCommand & { cancelled_jobs?: number }>(`/machines/${encodeURIComponent(equipmentId)}/printer/clear`, { reason, cancel_pending: cancelPending }),
+  printerCommand: (equipmentId: string, signal?: AbortSignal) =>
+    api<MarkingPrinterCommand | null>(`${root}/machines/${encodeURIComponent(equipmentId)}/printer/command`, { signal }),
 };
+
+/** «3, 5–7» → [3, 5, 6, 7]; null when the text is not a list of label numbers. */
+export function parseSequences(text: string): number[] | null {
+  const result = new Set<number>();
+  for (const part of text.split(/[,;\s]+/).filter(Boolean)) {
+    const match = /^(\d+)(?:[-–—](\d+))?$/.exec(part);
+    if (!match) return null;
+    const first = Number(match[1]), last = Number(match[2] ?? match[1]);
+    if (first < 1 || last < first || last - first > 500) return null;
+    for (let value = first; value <= last; value += 1) result.add(value);
+  }
+  return result.size ? [...result].sort((a, b) => a - b) : null;
+}
 
 /** Divider of flag halves in a label text, as the server reads it (marking_render.halves). */
 export const MARKING_HALF = "|";

@@ -41,13 +41,17 @@ class Geometry(BaseModel):
     max_font_mm: float = Field(default=5, ge=1.6, le=15)
     max_lines: int = Field(default=3, ge=1, le=3, strict=True)
     alignment: Literal["center", "left", "right"] = "center"
+    # The machine hands labels out one by one through the peel-off dispenser (ОБ.101, owner 19.11, migration 0203):
+    # the print agent keeps the driver's peel-off mode and refuses a job whose driver output lacks ^O1. Not raster.
+    peel: bool = False
 
     @model_validator(mode="after")
     def valid_geometry(self):
         if self.min_font_mm > self.max_font_mm:
             raise ValueError("Минимальный шрифт больше максимального")
         for zone in [*self.zones, *self.blank_zones]:
-            if zone.x + zone.width > self.width_mm or zone.y + zone.height > self.height_mm:
+            # 1e-6 mm: 139.4 + 10.3 is 149.70000000000002 in floating point — a zone flush with the edge fits.
+            if zone.x + zone.width > self.width_mm + 1e-6 or zone.y + zone.height > self.height_mm + 1e-6:
                 raise ValueError("Зона выходит за размер этикетки")
         for i, zone in enumerate(self.zones):
             if any(zone.overlaps(other) for other in [*self.zones[i + 1:], *self.blank_zones]):
@@ -66,7 +70,7 @@ def presets():
             blank_zones=[Rect(x=0, y=15, width=width, height=height - 15)]).model_dump()))
     result.append(("ОБ.101", "92,5×20", Geometry(width_mm=92.5, height_mm=20,
         zones=[Rect(x=1, y=1, width=38.25, height=18), Rect(x=53.25, y=1, width=38.25, height=18)],
-        blank_zones=[Rect(x=40.25, y=0, width=12, height=20)]).model_dump()))
+        blank_zones=[Rect(x=40.25, y=0, width=12, height=20)], peel=True).model_dump()))
     return result
 
 

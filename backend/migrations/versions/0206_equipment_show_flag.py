@@ -3,15 +3,15 @@ that puts it on the screen «Производство → Оборудовани
 
 `equipment_machines.show_in_equipment` — boolean, NOT NULL, default false. Backfill: ON for every unit an ERP agent
 reaches — a machine bridge (`production_machine_links`) or the print agent of its marking printer
-(`warehouse_marking_bindings`); every other unit stays OFF until the owner ticks it. (The setup-model seed is not on
-prod at this revision — `equipment_setup_models` is empty — so no unit is switched on by its setup class.)
+(`warehouse_marking_bindings`); every other unit stays OFF until the owner ticks it. (The setup class does not switch a
+unit on: the setup-model seed is on prod since 19.11, but only an agent link decides the backfill.)
 Not destructive: the downgrade drops only the new column."""
 
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0203_equipment_show_flag"
-down_revision = "0202_manual_jobs"
+revision = "0206_equipment_show_flag"
+down_revision = "0205_vna_bench_sessions"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False

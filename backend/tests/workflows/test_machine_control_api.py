@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from app.main import app
 from app.modules.production import machine_control as control
+from app.modules.production import machine_runs as runs
 from app.modules.production import machine_writes as queue
 from app.shared.persistence import AuditEventRow
 from tests.identity.test_api_tokens import _csrf, _login, tokens_api  # noqa: F401
@@ -45,8 +46,10 @@ def _commands(client):
 
 
 @pytest.fixture
-def ob019(machines_api):
+def ob019(machines_api, monkeypatch):
     sessions, clock, admin, unit, _ = machines_api
+    # The command mechanics here; «Пуск» only for an open job run — test_machine_runs_api.py.
+    monkeypatch.setattr(runs, "start_blocker", lambda *_args: "")
     bridge = _bridge(admin)
     assert _report(bridge, registers={**WORDS, "766": 102, "782": 0}).status_code == 200
     return sessions, clock, admin, unit, bridge

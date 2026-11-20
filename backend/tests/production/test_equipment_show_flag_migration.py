@@ -1,4 +1,4 @@
-"""0203_equipment_show_flag: «Показывать в «Оборудовании»» — NOT NULL, default false; the backfill switches it on for every
+"""0206_equipment_show_flag: «Показывать в «Оборудовании»» — NOT NULL, default false; the backfill switches it on for every
 unit an ERP agent reaches (a machine bridge or a marking printer's print agent) and leaves the rest off; the downgrade
 drops the column only."""
 
@@ -10,8 +10,8 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 
-REVISION = "0203_equipment_show_flag"
-PREVIOUS = "0202_manual_jobs"
+REVISION = "0206_equipment_show_flag"
+PREVIOUS = "0205_vna_bench_sessions"
 NOW = "2026-11-19 10:00:00.000000"
 
 
