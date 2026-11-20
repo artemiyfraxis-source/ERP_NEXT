@@ -15,7 +15,7 @@ from app.shared.http_auth import (Principal, production_edit_principal, producti
                                   production_view_principal, production_view_work_principal)
 from .api import (MachineBindingPayload, production_uow_factory, techcards_uow_factory, cutting_current_cards,
                   cutting_refresh_cards, mark_stale_etk, _performer, _replay_key, MaterialInputPayload,
-                  issued_card_for_item, pinned_card)
+                  pinned_card, _item_index, TechcardStatus)
 from . import cutting_queue
 from .application import ConcurrentProductionUpdate, UnitOfWork
 from .cutting_application import assign_group, check_access, describe_group, split_group, revalidate_group, refresh_group_etk
@@ -225,18 +225,34 @@ def stop_group_downtime(group_id: UUID, payload: VersionPayload,
 queue_router = APIRouter(prefix="/api/production/cutting-queue", tags=["production"])
 
 
+def _documents(techcards_factory, keys):
+    """The pinned issued ETK per (project, КБ, revision); one card read per project. A card taken back to draft still
+    gives the revision the task was launched with; nothing found → no entry (the row says «нет в ЭТК: выданная карта»)."""
+    result = {}
+    if techcards_factory is None or not keys:
+        return result
+    with techcards_factory() as techcards:
+        cards = {project: {card.item_index: card for card in techcards.techcards.for_project(project) if card.project == project}
+                 for project in {key[0] for key in keys}}
+        for key in keys:
+            project, item, revision = key
+            index = _item_index(project, item)
+            card = cards[project].get(index) or cards[project].get(index.upper()) if index else None
+            if card is None:
+                continue
+            shown, info = pinned_card(techcards, card, revision)
+            if card.status is not TechcardStatus.ISSUED and (shown is card or info["fallback"]):
+                continue  # a draft is not what was issued to the task
+            if shown.document:
+                result[key] = shown.document
+    return result
+
+
 def _queue(principal, factory, techcards_factory, machine_id=None):
     with factory() as uow:
-        keys = cutting_queue.needed_documents(uow, principal.actor)
-    documents = {}
-    if techcards_factory is not None and keys:
-        with techcards_factory() as techcards:
-            for key in keys:
-                project, item, revision = key
-                card = issued_card_for_item(techcards, project, item)
-                documents[key] = pinned_card(techcards, card, revision)[0].document if card is not None else None
-    with factory() as uow:
-        return cutting_queue.queue_rows(uow, documents, principal.actor, machine_id)
+        candidates = cutting_queue.collect(uow, principal.actor)
+    documents = _documents(techcards_factory, cutting_queue.document_keys(candidates))
+    return cutting_queue.queue_rows(candidates, documents, machine_id)
 
 
 @queue_router.get("/machines")
@@ -269,15 +285,22 @@ def queue_done(payload: QueueDonePayload,
                principal: Annotated[Principal, Depends(production_view_work_principal)],
                now: Annotated[datetime, Depends(moscow_now)],
                factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+               techcards_factory: Annotated[Callable | None, Depends(techcards_uow_factory)],
                idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=255)],
                on_behalf_of: UUID | None = None):
     worker = _performer(factory, principal, on_behalf_of) or principal.actor
     key = _replay_key(idempotency_key)
     if key is None:
         raise HTTPException(422, "Нужен ключ повтора")
+    with factory() as uow:
+        task = uow.production.get(payload.task_id)
+        if task is None:
+            raise HTTPException(404, "Задание не найдено")
+        source = cutting_queue.document_key(task)
+    document = _documents(techcards_factory, {source}).get(source)
     try:
         return cutting_queue.mark_done(payload.task_id, payload.operation_id, payload.quantity, key,
-                                       principal.actor, worker, now, factory())
+                                       principal.actor, worker, now, factory(), document=document)
     except (ConcurrentProductionUpdate, ResourceConflict, IntegrityError, StaleDataError) as error:
         raise HTTPException(409, str(error) if isinstance(error, ConcurrentProductionUpdate) else
                             "Задание или ресурсы изменились — обновите очередь") from error

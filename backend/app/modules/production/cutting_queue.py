@@ -25,8 +25,8 @@ from app.shared.persistence import AuditEventRow
 from .application import AssignProductionCommand, ConcurrentProductionUpdate, assign_task, lock_reflow_projects
 from .cutting import CABLE_CUTS, CUT, cutting_project_label, digest, recipe_kind
 from .cutting_application import check_access
-from .cutting_infrastructure import CuttingMemberRow
-from .domain import ProductionStatus
+from .cutting_infrastructure import CuttingGroupRow, CuttingMemberRow, CuttingWorkRow
+from .domain import ProductionStatus, ProductionValidationError
 from .execution import ManualOutputCommand, enter_manual_output, operation_quantity
 
 # 708К. cuts on the big rotary BZW (owner 20.11): preferred when a card lists several machines. A card that names none
@@ -34,6 +34,9 @@ from .execution import ManualOutputCommand, enter_manual_output, operation_quant
 DEFAULT_MACHINE = "ОБ.095"
 NO_MACHINE = "none"
 NO_MACHINE_NAME = "Станок не указан"
+NO_DOCUMENT = "нет в ЭТК: выданная карта"
+UNCONFIRMED = "Нет ЭТК задания — не понять, резка ли это: готовые вводит мастер"
+NOT_A_CUT = "В очереди резки сдаётся только резка кабеля — этот ПФ сдают на его карточке"
 RECEIPT = "production.cutting_queue_done"
 _RECEIPTS = UUID("6f1c2a52-6d0e-4d43-9a43-2a7c1f0e0951")
 MODE_NAMES = {"full": "полная", "partial": "частичная"}
@@ -151,6 +154,10 @@ def _wire_side(strip: Mapping, side: str, warnings: list[str]) -> dict | None:
 def cut_values(document: Mapping | None, operation, *, known_cut: bool = False) -> dict | None:
     """What the operator sets on the machine for this PF; None — no cable cut is known for it (not a cutting row).
     `known_cut` — a member of a cut-kind group: it stays a row even when its frozen ETK lacks the cut."""
+    if document is None and not known_cut:
+        # No ETK to read (no issued card, revision missing): the PF is kept, but whether it is a cut is unknown.
+        return {"machine_id": None, "machine_name": NO_MACHINE_NAME, "wire": "", "wire_name": "", "length": None,
+                "sides": {"A": None, "B": None}, "marking": "", "warnings": [NO_DOCUMENT], "confirmed": False}
     cuts = _cut_ops(document, operation)
     warnings: list[str] = []
     if not cuts:
@@ -197,7 +204,7 @@ def cut_values(document: Mapping | None, operation, *, known_cut: bool = False) 
     laser = raw.get("laserMark") if isinstance(raw.get("laserMark"), Mapping) else fields.get("laserMark")
     marking = ("full" if _mapping(laser).get("mode") == "full" else "ends") if isinstance(laser, Mapping) else ""
     return {"machine_id": machine_id, "machine_name": machine_name, "wire": wire, "wire_name": wire_name,
-            "length": length, "sides": sides, "marking": marking, "warnings": warnings}
+            "length": length, "sides": sides, "marking": marking, "warnings": warnings, "confirmed": True}
 
 
 def _side_key(side: dict | None) -> tuple[str, str, str]:
@@ -218,95 +225,150 @@ def _setup_text(values: dict) -> str:
     return " · ".join(parts)
 
 
-def _site_allowed(task, operation, uow, actor) -> bool:
-    viewer = uow.operators.get(actor.id)
+def row_project(task, document: Mapping | None) -> str:
+    """The project as the row and the «Готово» notice show it: the issued spelling of the ETK, else the task's."""
+    return cutting_project_label(task.project, document)
+
+
+class _People:
+    """Operators read once per request; inactive ones (missing from the list) are read on demand."""
+
+    def __init__(self, uow):
+        self.uow = uow
+        self.known = {operator.id: operator for operator in uow.operators.list()}
+
+    def get(self, identifier):
+        if identifier not in self.known:
+            self.known[identifier] = self.uow.operators.get(identifier)
+        return self.known[identifier]
+
+    def name(self, identifier) -> str:
+        operator = self.get(identifier)
+        return operator.name if operator else ""
+
+
+def _site_allowed(task, operation, people, actor) -> bool:
+    viewer = people.get(actor.id)
     site = viewer.site if viewer else ""
     if not site:
         return True
     sites = {task.handed_to} - {"", None}
     for identifier in operation.operator_ids:
-        operator = uow.operators.get(identifier)
+        operator = people.get(identifier)
         if operator and operator.site:
             sites.add(operator.site)
     return all(other == site for other in sites)
 
 
-def _candidates(uow, actor):
-    """(task, operation, group | None) of every open cable cut PF the viewer's site may see: active members of open/frozen
-    cut-kind groups and input-less PFs without an active membership (standalone; non-cut ones drop out on their ETK)."""
-    result = []
+def collect(uow, actor) -> list[dict]:
+    """Open cable cut PFs the viewer's site may see, read once per request: active members of open/frozen cut-kind groups
+    (with their frozen document) and input-less PFs of running tasks without an active membership (their ETK is read by
+    the caller, `document_keys`). Closed/handed-over tasks and PFs whose good + defect reached the quantity are dropped
+    before any group access check or snapshot read, so a finished frozen group costs only its member ids."""
+    people = _People(uow)
+    running = {task.id: task for task in uow.production.with_status(ProductionStatus.RUNNING) if not task.handed_to}
+    made: dict[UUID, Decimal] = {}
+    for output in uow.outputs.active_for_tasks(tuple(running)) if running else ():
+        made[output.operation_id] = made.get(output.operation_id, Decimal(0)) + output.good_quantity + output.defect_quantity
+
+    def open_work(task, operation):
+        planned = operation_quantity(task, operation)
+        done = made.get(operation.id, Decimal(0))
+        return (planned, done) if done < planned else None
+
     member_ops = set(uow.session.scalars(select(CuttingMemberRow.operation_id).where(CuttingMemberRow.state == "active")))
-    for group in uow.cutting.list():
-        if group.state not in ("open", "frozen") or recipe_kind(group.recipe) != CUT:
+    groups = [group for group in uow.session.scalars(select(CuttingGroupRow).where(
+        CuttingGroupRow.state.in_(("open", "frozen"))).order_by(CuttingGroupRow.created_at, CuttingGroupRow.id))
+        if recipe_kind(group.recipe) == CUT]
+    members = uow.session.execute(select(
+        CuttingMemberRow.id, CuttingMemberRow.group_id, CuttingMemberRow.task_id, CuttingMemberRow.operation_id,
+    ).where(CuttingMemberRow.state == "active", CuttingMemberRow.group_id.in_([group.id for group in groups]))
+        .order_by(CuttingMemberRow.position)).all() if groups else []
+    kept: dict[UUID, list] = {}
+    for member_id, group_id, task_id, operation_id in members:
+        task = running.get(task_id)
+        operation = task.operation(operation_id) if task else None
+        left = open_work(task, operation) if operation else None
+        if left:
+            kept.setdefault(group_id, []).append((member_id, task, operation, left))
+    visible = []
+    for group in groups:
+        if group.id not in kept:
             continue
         try:
             check_access(group, uow, actor)
         except PermissionError:
             continue
-        for member in uow.cutting.members(group.id):
-            task = uow.production.get(member.task_id)
-            if task.status is ProductionStatus.RUNNING and not task.handed_to:
-                result.append((task, task.operation(member.operation_id), group, member))
-    for task in uow.production.with_status(ProductionStatus.RUNNING):
-        if task.handed_to:
-            continue
+        visible.append(group)
+    member_ids = [row[0] for group in visible for row in kept[group.id]]
+    snapshots = dict(uow.session.execute(select(CuttingMemberRow.id, CuttingMemberRow.row_snapshot).where(
+        CuttingMemberRow.id.in_(member_ids))).all()) if member_ids else {}
+    works = list(uow.session.scalars(select(CuttingWorkRow).where(
+        CuttingWorkRow.closed.is_(False), CuttingWorkRow.group_id.in_([group.id for group in visible])))) if visible else []
+    sessions = {work.group_id: uow.work.get(work.session_id) for work in works}
+    result = []
+    for group in visible:
+        blocked = None
+        if group.id in sessions:
+            session = sessions[group.id]
+            who = people.name(session.operator_id) if session else ""
+            blocked = f"Группа {group.number} начата на карточке группы{f' ({who})' if who else ''} — сдают там"
+        for member_id, task, operation, (planned, done) in kept[group.id]:
+            result.append({"task": task, "operation": operation, "planned": planned, "done": done,
+                           "group": {"id": str(group.id), "number": group.number, "state": group.state},
+                           "document": _mapping(snapshots.get(member_id)).get("document"), "blocked": blocked,
+                           "names": [people.name(identifier) for identifier in operation.operator_ids]})
+    for task in running.values():
         for operation in task.operations:
-            if (not operation.inputs and operation.etk_ops and operation.id not in member_ops
-                    and _site_allowed(task, operation, uow, actor)):
-                result.append((task, operation, None, None))
+            if operation.inputs or not operation.etk_ops or operation.id in member_ops:
+                continue
+            left = open_work(task, operation)
+            if left and _site_allowed(task, operation, people, actor):
+                result.append({"task": task, "operation": operation, "planned": left[0], "done": left[1], "group": None,
+                               "document": None, "blocked": None,
+                               "names": [people.name(identifier) for identifier in operation.operator_ids]})
     return result
 
 
-def needed_documents(uow, actor) -> set[DocumentKey]:
-    """Issued ETK revisions the standalone candidates are read from (grouped rows use their frozen document)."""
-    return {document_key(task) for task, _operation, group, _member in _candidates(uow, actor) if group is None}
+def document_keys(candidates: list[dict]) -> set[DocumentKey]:
+    """Issued ETK revisions the standalone candidates are read from (grouped rows carry their frozen document)."""
+    return {document_key(item["task"]) for item in candidates if item["group"] is None}
 
 
-def queue_rows(uow, documents: Mapping[DocumentKey, Mapping | None], actor, machine_id: str | None = None) -> list[dict]:
-    candidates = _candidates(uow, actor)
-    task_ids = tuple({task.id for task, *_ in candidates})
-    done: dict[UUID, Decimal] = {}
-    for output in uow.outputs.active_for_tasks(task_ids) if task_ids else ():
-        done[output.operation_id] = done.get(output.operation_id, Decimal(0)) + output.good_quantity + output.defect_quantity
-    names = {operator.id: operator.name for operator in uow.operators.list()}
+def queue_rows(candidates: list[dict], documents: Mapping[DocumentKey, Mapping | None],
+               machine_id: str | None = None) -> list[dict]:
+    """Rows from `collect` plus the standalone ETKs; pure — no unit of work."""
+    wanted = None if machine_id == NO_MACHINE else machine_id
     rows = []
-    for task, operation, group, member in candidates:
-        planned = operation_quantity(task, operation)
-        made = done.get(operation.id, Decimal(0))
-        if made >= planned:
-            continue
-        document = member.row_snapshot.get("document") if member is not None else documents.get(document_key(task))
+    for item in candidates:
+        task, operation, group = item["task"], item["operation"], item["group"]
+        document = item["document"] if group is not None else documents.get(document_key(task))
         values = cut_values(document, operation, known_cut=group is not None)
-        if values is None or (machine_id is not None and values["machine_id"] != (
-                None if machine_id == NO_MACHINE else machine_id)):
+        if values is None or (machine_id is not None and values["machine_id"] != wanted):
             continue
-        blocked = None
-        if group is not None and (work := uow.cutting.work(group.id)) is not None:
-            session = uow.work.get(work.session_id)
-            who = names.get(session.operator_id, "") if session else ""
-            blocked = f"Группа {group.number} начата на карточке группы{f' ({who})' if who else ''} — сдают там"
         sides = values["sides"]
+        project = row_project(task, document)
         rows.append({
             "key": f"{task.id}:{operation.id}", "task_id": str(task.id), "operation_id": str(operation.id),
-            "task_version": task.version, "task_number": task.number,
-            "project": cutting_project_label(task.project, document), "item": task.item,
-            "group_id": str(group.id) if group else None, "group_number": group.number if group else None,
-            "group_state": group.state if group else None,
+            "task_version": task.version, "task_number": task.number, "project": project, "item": task.item,
+            "group_id": group["id"] if group else None, "group_number": group["number"] if group else None,
+            "group_state": group["state"] if group else None,
             "machine_id": values["machine_id"], "machine_name": values["machine_name"],
             "wire": values["wire"], "wire_name": values["wire_name"], "length_mm": _plain(values["length"]) or None,
-            "planned": _count(planned), "done": _count(made), "left": _count(planned - made),
+            "planned": _count(item["planned"]), "done": _count(item["done"]),
+            "left": _count(item["planned"] - item["done"]),
             **{f"strip_{name.lower()}{suffix}": (side or {}).get(field) or None for name, side in sides.items()
                for suffix, field in (("", "value"), ("_mode", "mode"), ("_program", "program"))},
             "diameters": next((side["diameters"] for side in sides.values() if side and side["diameters"]), None),
             "laser_mark": bool(values["marking"]), "marking_mode": values["marking"] or None,
             "operator_ids": [str(identifier) for identifier in operation.operator_ids],
-            "operator_names": [names.get(identifier, "") for identifier in operation.operator_ids],
-            "warnings": values["warnings"], "blocked": blocked,
+            "operator_names": item["names"],
+            "warnings": values["warnings"],
+            "blocked": item["blocked"] or (None if values["confirmed"] else UNCONFIRMED),
             "setup_text": _setup_text(values),
             "_setup": ((values["wire"] or values["wire_name"]).casefold(), _side_key(sides["A"]), _side_key(sides["B"]),
                        values["marking"]),
-            "_order": (values["length"] is None, values["length"] or Decimal(0), cutting_project_label(task.project, document),
-                       task.item, task.number),
+            "_order": (values["length"] is None, values["length"] or Decimal(0), project, task.item, task.number),
         })
     rows.sort(key=lambda row: (row["_setup"], row["_order"]))
     previous = None
@@ -319,12 +381,13 @@ def queue_rows(uow, documents: Mapping[DocumentKey, Mapping | None], actor, mach
 
 
 def queue_version(rows: list[dict]) -> str:
-    return digest([[row["key"], row["left"], row["task_version"], row["group_state"]] for row in rows])
+    return digest([[row["key"], row["left"], row["task_version"], row["group_state"], row["machine_id"],
+                    row["length_mm"], row["setup_text"], row["warnings"], row["blocked"]] for row in rows])
 
 
 def machines(rows: list[dict]) -> list[dict]:
     """Machines with open cut work: rows, pieces left, projects."""
-    found: dict[str, dict] = {}
+    found: dict[str | None, dict] = {}
     for row in rows:
         entry = found.setdefault(row["machine_id"], {"machine_id": row["machine_id"], "machine_name": row["machine_name"],
                                                      "rows": 0, "left": Decimal(0), "projects": set()})
@@ -339,8 +402,10 @@ def receipt_id(key: str) -> UUID:
     return uuid5(_RECEIPTS, f"cutting-queue:{key}")
 
 
-def mark_done(task_id: UUID, operation_id: UUID, quantity: int, key: str, actor, worker, now: datetime, uow) -> dict:
-    """«Готово» on a queue row: the row's pieces as the PF's manual output, in one transaction with the receipt."""
+def mark_done(task_id: UUID, operation_id: UUID, quantity: int, key: str, actor, worker, now: datetime, uow, *,
+              document: Mapping | None = None) -> dict:
+    """«Готово» on a queue row: the row's pieces as the PF's manual output, in one transaction with the receipt.
+    `document` — the task's pinned issued ETK (standalone PFs: proves the PF is a cable cut; the notice's project)."""
     fingerprint = digest([str(task_id), str(operation_id), str(quantity), str(worker.id)])
     with uow:
         if uow.production.get(task_id) is None:
@@ -359,9 +424,20 @@ def mark_done(task_id: UUID, operation_id: UUID, quantity: int, key: str, actor,
         if member is not None:
             # Lock order of every cutting path: project → group → task.
             group = uow.cutting.get(member.group_id, lock=True)
+            if group.state not in ("open", "frozen") or recipe_kind(group.recipe) != CUT:
+                raise ProductionValidationError(NOT_A_CUT)
             check_access(group, uow, actor)
-        elif not _site_allowed(task, operation, uow, actor):
-            raise PermissionError("Задание другой площадки")
+            document = member.row_snapshot.get("document")
+        else:
+            # Only queue rows: an input-less PF whose issued ETK holds a cable cut (labels, tubes, assembly — refused).
+            if operation.inputs or not operation.etk_ops:
+                raise ProductionValidationError(NOT_A_CUT)
+            if document is None:
+                raise ProductionValidationError(UNCONFIRMED)
+            if not _cut_ops(document, operation):
+                raise ProductionValidationError(NOT_A_CUT)
+            if not _site_allowed(task, operation, _People(uow), actor):
+                raise PermissionError("Задание другой площадки")
         uow.production.lock(task_id)
         task = uow.production.get(task_id)
         operation = task.operation(operation_id)
@@ -379,7 +455,7 @@ def mark_done(task_id: UUID, operation_id: UUID, quantity: int, key: str, actor,
         task = uow.production.get(task_id)
         operation = task.operation(operation_id)
         planned, made = operation_quantity(task, operation), uow.outputs.total_for_operation(operation_id)
-        project = cutting_project_label(task.project, member.row_snapshot.get("document") if member else None)
+        project = row_project(task, document)
         result = {"notice": f"Готово: {project} · {task.item} · {_count(Decimal(quantity))} шт",
                   "assigned": assigned,
                   "box": {"id": str(box.id), "number": box.number, "code": box.code},

@@ -409,6 +409,13 @@ row. `cutting_queue.py`, routes in `cutting_api.py`. Computed on every read — 
   another site, a cancelled/closed task, a PF whose good + defect output reached its quantity, and work of another site
   (group: `check_access`; standalone: handed-to/assignee sites vs the viewer's site) are left out. The old mixed
   «Заготовки» PF is one row: its output covers the whole PF, as everywhere.
+- Standalone PFs are read from the ETK revision the task is pinned to (one card read per project; a card taken back to
+  draft still gives that revision). No readable ETK (no card, no issued revision, techcards not configured) never drops a
+  running input-less PF: it is listed under «Станок не указан» with `warnings: ["нет в ЭТК: выданная карта"]`, values
+  `null` and `blocked` «Нет ЭТК задания — не понять, резка ли это: готовые вводит мастер» (it may be a labels or tubes PF).
+- One read per request (`collect`): running tasks, their outputs and the active member ids in a few queries; members
+  of finished or closed work are dropped before the group access check and before their snapshot (the frozen document)
+  is read; open group sessions and operator names are read once.
 - Machine = the cut operation's card tooling «Оборудование» (`inventory_number`, else `equipment_model_id`). Several —
   `ОБ.095` (BZW-50X) if listed, else the first, with «в ЭТК ещё станки: <the others>». None — never put on a real
   machine: the row gets `machine_id: null`, «нет в ЭТК: станок», and its own bucket «Станок не указан»
@@ -434,7 +441,8 @@ answered with `machine_id: null`):
 
 Decimals are strings (`length_mm` mm; `planned`/`done`/`left` in PF units, `done` = good + defect). `strip_*` is `null`
 when that side is not stripped; coax values are the confirmed program boundaries from the conductor tip, else L1/L2/L3.
-`version` is a digest of (row, left, task version, group state) for change detection.
+`version` is a digest of (row, left, task version, group state, machine, length, setup text, warnings, blocked) for
+change detection. `project` is the issued ETK's spelling (`row_project`), the same in the «Готово» notice.
 
 `GET /api/production/cutting-queue/machines` (myops view): `{machines: [{machine_id, machine_name, rows, left, projects}]}`
 — machines with open cut work, by id; the bucket without a machine (`machine_id: null`, «Станок не указан») last.
@@ -442,9 +450,17 @@ when that side is not stripped; coax values are the confirmed program boundaries
 `POST /api/production/cutting-queue/done` (myops edit, optional `?on_behalf_of=`, required `Idempotency-Key`):
 `{task_id, operation_id, quantity}` (integer > 0). One transaction, lock order project → group → task:
 
+0. Only queue rows: an active member of an `open`/`frozen` cut-kind group, or a standalone input-less PF whose pinned
+   issued ETK holds a cable cut. Anything else (labels/tubes PF grouped or split off, a PF with inputs) → 422 «В очереди
+   резки сдаётся только резка кабеля — этот ПФ сдают на его карточке»; no readable ETK → 422 «Нет ЭТК задания — …».
+   Checked before anyone is assigned or anything is posted.
 1. The performer not yet on the PF (unassigned, or assigned to others) joins its assignees through the ordinary
    `assign_task` (owner: anyone at the machine may press «Готово»); its refusals apply — e.g. «… не монтажник», another
-   site of a grouped row. Existing assignees and their facts stay.
+   site of a grouped row. Existing assignees and their facts stay. Known effect: on a grouped row only that member's PF
+   is assigned (the group's own `assign` replaces every row's assignees and refuses a started group, so it is not
+   used), so the group card's common assignment becomes inconsistent (`assignment_consistent: false`, no common
+   assignees shown) and `assign_task` re-plans that PF's window from now (or from its planned start when it already had
+   assignees). Group start still needs one performer on every member — the master reassigns on the group card.
 2. The pieces are the PF's manual output (`enter_manual_output`, as «Ввод готовых»): box and output on that КБ's own PF,
    no work session and no time-log entry, plan fact moved; over the quantity left → 422 «Этап N «…»: уже сдано X из Y,
    осталось Z.»; a task not running or handed over → 422.

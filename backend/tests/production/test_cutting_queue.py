@@ -194,3 +194,62 @@ def test_row_of_a_group_running_on_the_group_card_is_listed_but_refused(producti
     with app.state.production_uow_factory() as uow:
         assert not uow.session.scalars(select(ProductionOutputRow)).all()
         assert uow.session.scalars(select(CuttingGroupRow)).one().state == "frozen"
+
+
+def test_done_refuses_labels_and_tubes_pfs_grouped_or_standalone(production_api):
+    from tests.production.test_cutting_groups import split_document
+
+    client, operator = production_api
+    batch(client, [issue("708К.", "КБ1", split_document())])
+    by_kind = {group["kind"]: group for group in groups(client)}
+    assert [row["operation_id"] for row in queue(client)["rows"]] == [by_kind["cut"]["rows"][0]["operation_id"]]
+    labels = by_kind["labels"]["rows"][0]
+    refused = done(client, labels, 1, operator=operator)
+    assert refused.status_code == 422 and "только резка кабеля" in refused.json()["detail"]
+    tubes = by_kind["tubes"]
+    split = client.post(f"/api/production/cutting-groups/{tubes['id']}/split",
+                        json={"version": tubes["version"], "member_ids": [tubes["rows"][0]["id"]]})
+    assert split.status_code == 200, split.text
+    refused = done(client, tubes["rows"][0], 1, operator=operator)  # now a standalone tubes PF
+    assert refused.status_code == 422 and "только резка кабеля" in refused.json()["detail"]
+    with app.state.production_uow_factory() as uow:
+        assert not uow.session.scalars(select(ProductionOutputRow)).all()
+        operations = [op for task in uow.production.list() for op in task.operations]
+        assert all(op.operator_ids == () for op in operations)  # nobody was self-assigned
+
+
+def test_running_cut_without_readable_etk_is_kept_unconfirmed(production_api):
+    from app.modules.production.api import techcards_uow_factory
+
+    client, operator = production_api
+    batch(client, [issue("708К.", "КБ1", standalone())])
+    app.dependency_overrides[techcards_uow_factory] = lambda: None
+    try:
+        unknown = queue(client, "none")["rows"]
+        assert [(row["machine_id"], row["warnings"], row["length_mm"]) for row in unknown] == [
+            (None, ["нет в ЭТК: выданная карта"], None)]
+        assert unknown[0]["blocked"].startswith("Нет ЭТК задания")
+        assert queue(client)["rows"] == []
+        refused = done(client, unknown[0], 1, operator=operator)
+        assert refused.status_code == 422 and refused.json()["detail"] == unknown[0]["blocked"]
+    finally:
+        app.dependency_overrides.pop(techcards_uow_factory, None)
+    assert len(queue(client)["rows"]) == 1
+
+
+def test_finished_frozen_groups_are_not_checked_or_read(production_api, monkeypatch):
+    from app.modules.production import cutting_queue
+
+    client, operator = production_api
+    batch(client, [issue("708К.", "КБ1"), issue("708К.", "КБ2")])
+    finished = groups(client)[0]
+    for row in queue(client)["rows"]:
+        assert done(client, row, 10, operator=operator).status_code == 200
+    batch(client, [issue("709К.", "КБ1")])
+    visited = []
+    original = cutting_queue.check_access
+    monkeypatch.setattr(cutting_queue, "check_access",
+                        lambda group, uow, actor: (visited.append(str(group.id)), original(group, uow, actor)))
+    rows = queue(client)["rows"]
+    assert [row["project"] for row in rows] == ["709К."]
+    assert finished["id"] not in visited and visited == [rows[0]["group_id"]]
